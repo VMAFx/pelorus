@@ -258,31 +258,28 @@ typedef struct PelorusTileView {
 static float tile_band_score(const PelorusAnalyzeVulkanContext *s,
                              float var, float grad)
 {
-    float flat, slope;
+    /* Smooth-ramp banding detector by VARIANCE band. A tile bands precisely
+     * when it is NOT constant (var above a small floor — a dead-flat colour
+     * has nothing to band) yet NOT textured (var below flat_thr — high detail
+     * masks quantisation and the encoder's own AQ already over-bits it). Unlike
+     * a gradient window, the variance of a smooth ramp is UNIFORM across the
+     * whole gradient, so every gradient tile scores ~1 (full coverage); the
+     * grad signal only gates dead-constant tiles in (rare ties). */
+    const float var_lo = 2e-6f;
+    float flat_thr = (float)s->flat_thr;
+    float score;
 
-    if (var <= 0.0f && grad <= 0.0f)
+    if (var <= var_lo || var >= flat_thr)
         return 0.0f;
-
-    /* Flatness: 1 at var==0, linearly to 0 at var==flat_thr (the variance
-     * above which a tile is "textured enough" for AQ to find on its own). */
-    flat = 1.0f - var / (float)s->flat_thr;
-    flat = av_clipf(flat, 0.0f, 1.0f);
-
-    /* Slope presence: 0 below grad_lo (dead-flat constant — no contour to
-     * protect), ramps to 1 at grad_hi, back to ~0 well above (textured). The
-     * shader already zeroed grad outside [grad_lo, 8*grad_lo]; here we weight
-     * within that band so a mid-slope scores highest. */
-    if (grad <= (float)s->grad_lo)
-        slope = 0.0f;
-    else if (grad >= (float)s->grad_hi)
-        slope = av_clipf(1.0f - (grad - (float)s->grad_hi) /
-                                    (float)s->grad_hi,
-                         0.0f, 1.0f);
-    else
-        slope = (grad - (float)s->grad_lo) /
-                ((float)s->grad_hi - (float)s->grad_lo);
-
-    return av_clipf(flat * slope, 0.0f, 1.0f);
+    /* ~1 just above the constant floor, ramping to 0 as var approaches the
+     * texture threshold — strongest on the flattest real ramps. */
+    score = (flat_thr - var) / (flat_thr - var_lo);
+    /* A truly dead-flat tile (no gradient at all) is constant, not a ramp:
+     * require a minimal slope so a flat colour block with sensor-floor noise
+     * doesn't get bits it cannot use. */
+    if (grad < (float)s->grad_lo * 0.25f)
+        score *= av_clipf(grad / ((float)s->grad_lo * 0.25f), 0.0f, 1.0f);
+    return av_clipf(score, 0.0f, 1.0f);
 }
 
 /* Map a per-tile banding score to an AVRational qoffset (negative => more bits /
