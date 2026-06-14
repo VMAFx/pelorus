@@ -37,10 +37,10 @@ against VMAF using vmafx's autotune loop. See
 3. **No global mutable state / no static-init side effects.** Lifecycle is
    explicit. Banned C functions: `gets`, `strcpy`, `strcat`, `sprintf`,
    `strtok`, `atoi`, `atof`, `rand`, `system` (see docs/principles.md §1.2).
-4. **Keep the two deband implementations in lockstep.** The standalone
-   reference shader (`libpelorus/shaders/pelorus_deband.comp`) and the FFmpeg
-   filter's inline GLSL (`ffmpeg-patches/files/vf_pelorus_deband_vulkan.c`)
-   implement the same algorithm; edit both together.
+4. **Keep each filter's two shader implementations in lockstep.** The standalone
+   reference shaders (`libpelorus/shaders/pelorus_<name>.comp`) and the FFmpeg
+   filters' inline GLSL (`ffmpeg-patches/files/vf_pelorus_<name>_vulkan.c`)
+   implement the same algorithm (deband, analyze, …); edit both together.
 5. **Patch-stack sync.** A change to any `libpelorus` surface the FFmpeg patches
    consume updates `ffmpeg-patches/files/` + the regenerated patch in the same
    PR. Verify with a full series replay (`ffmpeg-patches/test/build-and-run.sh`),

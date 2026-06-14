@@ -1,0 +1,20 @@
+feat(analyze): add vf_pelorus_analyze_vulkan (measured banding/variance maps)
+
+A Vulkan compute analyzer that reduces each frame's luma to per-frame
+banding / variance / edge statistics on the GPU (per-tile shared-memory
+reduction into a sliced SSBO), reads them back, and attaches the *measured*
+Pelorus interop sections (PEL_SEC_VARIANCE + PEL_SEC_BANDING) — the data a
+downstream vmafx vf_libvmaf* uses for perceptually-weighted scoring, and the
+maps the deband filter only approximates today. The frame passes through
+unchanged; only side data is added. Readback follows the vf_scdet_vulkan
+pattern (host-visible pooled buffer, CmdFillBuffer zero, dispatch, host
+barrier, submit+wait, read mapped_mem).
+
+Codec-agnostic: the statistics describe the source, independent of the chosen
+encoder (HEVC, AV1, ...).
+
+AVOptions: flat (per-tile variance threshold for the banding-prone count).
+
+Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
+
+ADR: docs/adr/0109-analyze-filter.md

@@ -1,0 +1,534 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lusoris <lusoris@pm.me>
+Date: Sun, 14 Jun 2026 14:12:21 +0200
+Subject: [PATCH 2/2] feat(analyze): add vf_pelorus_analyze_vulkan (measured
+ banding/variance maps)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A Vulkan compute analyzer that reduces each frame's luma to per-frame
+banding / variance / edge statistics on the GPU (per-tile shared-memory
+reduction into a sliced SSBO), reads them back, and attaches the *measured*
+Pelorus interop sections (PEL_SEC_VARIANCE + PEL_SEC_BANDING) — the data a
+downstream vmafx vf_libvmaf* uses for perceptually-weighted scoring, and the
+maps the deband filter only approximates today. The frame passes through
+unchanged; only side data is added. Readback follows the vf_scdet_vulkan
+pattern (host-visible pooled buffer, CmdFillBuffer zero, dispatch, host
+barrier, submit+wait, read mapped_mem).
+
+Codec-agnostic: the statistics describe the source, independent of the chosen
+encoder (HEVC, AV1, ...).
+
+AVOptions: flat (per-tile variance threshold for the banding-prone count).
+
+Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
+
+ADR: docs/adr/0109-analyze-filter.md
+---
+ configure                               |   2 +
+ libavfilter/Makefile                    |   1 +
+ libavfilter/allfilters.c                |   1 +
+ libavfilter/vf_pelorus_analyze_vulkan.c | 446 ++++++++++++++++++++++++
+ 4 files changed, 450 insertions(+)
+ create mode 100644 libavfilter/vf_pelorus_analyze_vulkan.c
+
+diff --git a/configure b/configure
+index 8fd7a635af..43ca456c92 100755
+--- a/configure
++++ b/configure
+@@ -4177,6 +4177,7 @@ overlay_qsv_filter_deps="libmfx"
+ overlay_qsv_filter_select="qsvvpp"
+ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
+ overlay_vulkan_filter_deps="vulkan spirv_library"
++pelorus_analyze_vulkan_filter_deps="vulkan spirv_library"
+ pelorus_deband_vulkan_filter_deps="vulkan spirv_library"
+ owdenoise_filter_deps="gpl"
+ pad_opencl_filter_deps="opencl"
+@@ -7392,6 +7393,7 @@ enabled libvidstab        && require_pkg_config libvidstab "vidstab >= 0.98" vid
+ enabled libvmaf           && require_pkg_config libvmaf "libvmaf >= 2.0.0" libvmaf.h vmaf_init
+ enabled libvmaf           && check_pkg_config libvmaf_cuda "libvmaf >= 2.0.0" libvmaf_cuda.h vmaf_cuda_state_init
+ enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack
++enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack
+ enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
+                                require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
+ enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
+diff --git a/libavfilter/Makefile b/libavfilter/Makefile
+index a565918c63..48c37887f2 100644
+--- a/libavfilter/Makefile
++++ b/libavfilter/Makefile
+@@ -433,6 +433,7 @@ OBJS-$(CONFIG_PAD_CUDA_FILTER)               += vf_pad_cuda.o vf_pad_cuda.ptx.o
+ OBJS-$(CONFIG_PAD_OPENCL_FILTER)             += vf_pad_opencl.o opencl.o opencl/pad.o
+ OBJS-$(CONFIG_PALETTEGEN_FILTER)             += vf_palettegen.o palette.o
+ OBJS-$(CONFIG_PALETTEUSE_FILTER)             += vf_paletteuse.o framesync.o palette.o
++OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vf_pelorus_analyze_vulkan.o vulkan.o vulkan_filter.o
+ OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER)  += vf_pelorus_deband_vulkan.o vulkan.o vulkan_filter.o
+ OBJS-$(CONFIG_PERMS_FILTER)                  += f_perms.o
+ OBJS-$(CONFIG_PERSPECTIVE_FILTER)            += vf_perspective.o
+diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
+index c02a049dbc..41761c6146 100644
+--- a/libavfilter/allfilters.c
++++ b/libavfilter/allfilters.c
+@@ -405,6 +405,7 @@ extern const FFFilter ff_vf_pad_cuda;
+ extern const FFFilter ff_vf_pad_opencl;
+ extern const FFFilter ff_vf_palettegen;
+ extern const FFFilter ff_vf_paletteuse;
++extern const FFFilter ff_vf_pelorus_analyze_vulkan;
+ extern const FFFilter ff_vf_pelorus_deband_vulkan;
+ extern const FFFilter ff_vf_perms;
+ extern const FFFilter ff_vf_perspective;
+diff --git a/libavfilter/vf_pelorus_analyze_vulkan.c b/libavfilter/vf_pelorus_analyze_vulkan.c
+new file mode 100644
+index 0000000000..a1d14697fe
+--- /dev/null
++++ b/libavfilter/vf_pelorus_analyze_vulkan.c
+@@ -0,0 +1,446 @@
++/*
++ * Copyright 2026 Lusoris
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or modify it under
++ * the terms of the GNU Lesser General Public License as published by the
++ * Free Software Foundation; either version 2.1 of the License, or (at
++ * your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
++ * License for more details.
++ */
++
++/**
++ * @file
++ * Pelorus frame-statistics analyzer, Vulkan compute (zero-copy).
++ *
++ * Reduces each frame's luma to per-frame banding / variance / edge statistics on
++ * the GPU, reads them back, and attaches them as the *measured* Pelorus interop
++ * sections (PEL_SEC_BANDING + PEL_SEC_VARIANCE) — the maps a downstream vmafx
++ * vf_libvmaf* uses for perceptually-weighted scoring, and the data the deband
++ * filter only approximates today. The frame passes through unchanged; only side
++ * data is added. Readback follows the vf_scdet_vulkan pattern. See
++ * <pelorus/interop.h> and docs/metrics/analyze.md.
++ */
++
++#include "libavutil/buffer.h"
++#include "libavutil/frame.h"
++#include "libavutil/mem.h"
++#include "libavutil/opt.h"
++#include "libavutil/pixdesc.h"
++#include "libavutil/vulkan_spirv.h"
++#include "vulkan_filter.h"
++
++#include "filters.h"
++
++#include <math.h>
++#include <string.h>
++
++#include <pelorus/interop.h>
++
++#define PEL_SLICES 16
++
++typedef struct PelorusAnalyzeBuf {
++    uint32_t var_sum[PEL_SLICES];
++    uint32_t edge_sum[PEL_SLICES];
++    uint32_t flat_wg[PEL_SLICES];
++    uint32_t total_wg[PEL_SLICES];
++} PelorusAnalyzeBuf;
++
++typedef struct PelorusAnalyzeVulkanContext {
++    FFVulkanContext vkctx; /* MUST be first */
++
++    int initialized;
++    FFVkExecPool e;
++    AVVulkanDeviceQueueFamily *qf;
++    FFVulkanShader shd;
++    AVBufferPool *stat_buf_pool;
++
++    double flat_thr; /* per-tile variance below which a tile is banding-prone */
++} PelorusAnalyzeVulkanContext;
++
++static av_cold int init_filter(AVFilterContext *ctx)
++{
++    int err;
++    uint8_t *spv_data = NULL;
++    size_t spv_len = 0;
++    void *spv_opaque = NULL;
++    PelorusAnalyzeVulkanContext *s = ctx->priv;
++    FFVulkanContext *vkctx = &s->vkctx;
++    FFVulkanShader *shd = &s->shd;
++    FFVkSPIRVCompiler *spv;
++    const int planes = av_pix_fmt_count_planes(vkctx->input_format);
++
++    spv = ff_vk_spirv_init();
++    if (!spv) {
++        av_log(ctx, AV_LOG_ERROR, "Unable to initialize SPIR-V compiler!\n");
++        return AVERROR_EXTERNAL;
++    }
++
++    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
++    if (!s->qf) {
++        av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
++        err = AVERROR(ENOTSUP);
++        goto fail;
++    }
++
++    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
++    RET(ff_vk_shader_init(vkctx, shd, "pelorus_analyze",
++                          VK_SHADER_STAGE_COMPUTE_BIT, NULL, 0, 32, 32, 1, 0));
++
++    {
++        FFVulkanDescriptorSetBinding desc[] = {
++            {
++                .name = "input_images",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
++                                                   FF_VK_REP_FLOAT),
++                .mem_quali = "readonly",
++                .dimensions = 2,
++                .elems = planes,
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++            },
++            {
++                .name = "stat_buffer",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
++                .mem_layout = "std430",
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++                .buf_content = "uint var_sum[16]; uint edge_sum[16]; "
++                               "uint flat_wg[16]; uint total_wg[16];",
++            },
++        };
++        RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc, 2, 0, 0));
++    }
++
++    GLSLC(0, layout(push_constant, std430) uniform pushConstants {            );
++    GLSLC(1,     float flat_thr;                                              );
++    GLSLC(0, };                                                               );
++    GLSLC(0,                                                                  );
++    ff_vk_shader_add_push_const(shd, 0, sizeof(float), VK_SHADER_STAGE_COMPUTE_BIT);
++
++    GLSLC(0, shared uint s_sum;                                               );
++    GLSLC(0, shared uint s_sumsq;                                             );
++    GLSLC(0, shared uint s_edge;                                              );
++    GLSLC(0, shared uint s_cnt;                                               );
++    GLSLC(0,                                                                  );
++    GLSLC(0, void main()                                                      );
++    GLSLC(0, {                                                                );
++    GLSLC(1,     const float TS = 65535.0;                                    );
++    GLSLC(1,     const float GS = 1000000.0;                                  );
++    GLSLC(1,     if (gl_LocalInvocationIndex == 0u) {                         );
++    GLSLC(2,         s_sum = 0u; s_sumsq = 0u; s_edge = 0u; s_cnt = 0u;       );
++    GLSLC(1,     }                                                            );
++    GLSLC(1,     barrier();                                                   );
++    GLSLC(1,     ivec2 size = imageSize(input_images[0]);                     );
++    GLSLC(1,     ivec2 pos = ivec2(gl_GlobalInvocationID.xy);                 );
++    GLSLC(1,     if (IS_WITHIN(pos, size)) {                                  );
++    GLSLC(2,         float l = imageLoad(input_images[0], pos).x;             );
++    GLSLC(2,         ivec2 rp = clamp(pos + ivec2(1, 0), ivec2(0), size - 1); );
++    GLSLC(2,         ivec2 dp = clamp(pos + ivec2(0, 1), ivec2(0), size - 1); );
++    GLSLC(2,         float gx = abs(imageLoad(input_images[0], rp).x - l);    );
++    GLSLC(2,         float gy = abs(imageLoad(input_images[0], dp).x - l);    );
++    GLSLC(2,         float edge = clamp(gx + gy, 0.0, 1.0);                   );
++    GLSLC(2,         atomicAdd(s_sum,   uint(l * TS));                        );
++    GLSLC(2,         atomicAdd(s_sumsq, uint(l * l * TS));                    );
++    GLSLC(2,         atomicAdd(s_edge,  uint(edge * TS));                     );
++    GLSLC(2,         atomicAdd(s_cnt,   1u);                                  );
++    GLSLC(1,     }                                                            );
++    GLSLC(1,     barrier();                                                   );
++    GLSLC(1,     if (gl_LocalInvocationIndex == 0u && s_cnt > 0u) {           );
++    GLSLC(2,         float n = float(s_cnt);                                  );
++    GLSLC(2,         float mean = (float(s_sum) / TS) / n;                    );
++    GLSLC(2,         float msq  = (float(s_sumsq) / TS) / n;                  );
++    GLSLC(2,         float var  = max(msq - mean * mean, 0.0);                );
++    GLSLC(2,         float edge = (float(s_edge) / TS) / n;                   );
++    GLSLC(2,         uint slice = (gl_WorkGroupID.y * gl_NumWorkGroups.x      );
++    GLSLC(2,                       + gl_WorkGroupID.x) % 16u;                 );
++    GLSLC(2,         atomicAdd(var_sum[slice],  uint(var * GS));              );
++    GLSLC(2,         atomicAdd(edge_sum[slice], uint(edge * GS));             );
++    GLSLC(2,         atomicAdd(flat_wg[slice],  (var < flat_thr) ? 1u : 0u);  );
++    GLSLC(2,         atomicAdd(total_wg[slice], 1u);                          );
++    GLSLC(1,     }                                                            );
++    GLSLC(0, }                                                                );
++
++    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
++                            &spv_opaque));
++    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
++    RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
++
++    s->initialized = 1;
++
++fail:
++    if (spv_opaque)
++        spv->free_shader(spv, &spv_opaque);
++    if (spv)
++        spv->uninit(&spv);
++    return err;
++}
++
++static void pel_sd_free(void *opaque, uint8_t *data)
++{
++    pel_blob_free(data);
++}
++
++/* Derive the frame summaries from the read-back accumulators and attach the
++ * measured PEL_SEC_VARIANCE + PEL_SEC_BANDING sections to the frame. */
++static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
++                        const PelorusAnalyzeBuf *acc)
++{
++    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
++    PelorusSideData meta;
++    PelorusVarianceSection var;
++    PelorusBandingSection band;
++    PelorusPackSection secs[2];
++    uint8_t *blob = NULL;
++    size_t len = 0;
++    AVBufferRef *buf;
++    double var_sum = 0.0, edge_sum = 0.0;
++    uint64_t flat = 0, total = 0;
++    float gvar, gedge, flat_frac;
++    int i;
++
++    for (i = 0; i < PEL_SLICES; i++) {
++        var_sum += acc->var_sum[i];
++        edge_sum += acc->edge_sum[i];
++        flat += acc->flat_wg[i];
++        total += acc->total_wg[i];
++    }
++    if (total == 0)
++        return 0; /* nothing to report (degenerate frame) */
++
++    gvar = (float)(var_sum / 1e6 / (double)total);
++    gedge = (float)(edge_sum / 1e6 / (double)total);
++    flat_frac = (float)((double)flat / (double)total);
++
++    memset(&meta, 0, sizeof(meta));
++    meta.frame_pts = (uint64_t)frame->pts;
++    meta.bit_depth = d ? (uint8_t)d->comp[0].depth : 0;
++    meta.plane_layout = (d && d->log2_chroma_w == 0 && d->log2_chroma_h == 0)
++                            ? PEL_LAYOUT_444
++                            : ((d && d->log2_chroma_h == 0) ? PEL_LAYOUT_422
++                                                            : PEL_LAYOUT_420);
++    meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'A');
++
++    memset(&var, 0, sizeof(var));
++    var.global_variance = gvar;
++    var.edge_density = gedge;
++    var.texture_energy = gedge; /* edge density is the v0.1 texture proxy */
++
++    memset(&band, 0, sizeof(band));
++    band.flat_area_fraction = flat_frac;
++    band.global_banding_risk = flat_frac; /* coarse: low-variance area share */
++    band.contour_strength_mean = gvar;
++
++    secs[0].id = PEL_SEC_VARIANCE;
++    secs[0].data = &var;
++    secs[0].size = (uint32_t)sizeof(var);
++    secs[1].id = PEL_SEC_BANDING;
++    secs[1].data = &band;
++    secs[1].size = (uint32_t)sizeof(band);
++
++    if (pel_blob_pack(&meta, secs, 2, &blob, &len) != PEL_OK || !blob)
++        return AVERROR(ENOMEM);
++
++    buf = av_buffer_create(blob, len, pel_sd_free, NULL, 0);
++    if (!buf) {
++        pel_blob_free(blob);
++        return AVERROR(ENOMEM);
++    }
++    if (!av_frame_new_side_data_from_buf(frame, AV_FRAME_DATA_SEI_UNREGISTERED,
++                                         buf)) {
++        av_buffer_unref(&buf);
++        return AVERROR(ENOMEM);
++    }
++    return 0;
++}
++
++static int analyze_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
++{
++    int err;
++    AVFilterContext *ctx = link->dst;
++    PelorusAnalyzeVulkanContext *s = ctx->priv;
++    AVFilterLink *outlink = ctx->outputs[0];
++
++    VkImageView views[AV_NUM_DATA_POINTERS];
++    VkImageMemoryBarrier2 img_bar[8];
++    int nb_img_bar = 0;
++
++    FFVulkanContext *vkctx = &s->vkctx;
++    FFVulkanFunctions *vk = &vkctx->vkfn;
++    FFVkExecContext *exec = NULL;
++    AVBufferRef *buf = NULL;
++    FFVkBuffer *buf_vk;
++    const PelorusAnalyzeBuf *acc;
++    float flat_thr;
++
++    if (!s->initialized)
++        RET(init_filter(ctx));
++
++    flat_thr = (float)s->flat_thr;
++
++    RET(ff_vk_get_pooled_buffer(vkctx, &s->stat_buf_pool, &buf,
++                                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
++                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
++                                NULL, sizeof(PelorusAnalyzeBuf),
++                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
++                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
++    buf_vk = (FFVkBuffer *)buf->data;
++    acc = (const PelorusAnalyzeBuf *)buf_vk->mapped_mem;
++
++    exec = ff_vk_exec_get(vkctx, &s->e);
++    ff_vk_exec_start(vkctx, exec);
++
++    RET(ff_vk_exec_add_dep_frame(vkctx, exec, in, VK_PIPELINE_STAGE_2_NONE,
++                                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
++    RET(ff_vk_create_imageviews(vkctx, exec, views, in, FF_VK_REP_FLOAT));
++    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, in, views, 0, 0,
++                                  VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
++    ff_vk_frame_barrier(vkctx, exec, in, img_bar, &nb_img_bar,
++                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
++                        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
++                        VK_QUEUE_FAMILY_IGNORED);
++
++    /* zero the accumulators */
++    vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
++        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++        .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2) {
++            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
++            .srcStageMask = VK_PIPELINE_STAGE_2_NONE,
++            .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
++            .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
++            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++            .buffer = buf_vk->buf,
++            .size = buf_vk->size,
++            .offset = 0,
++        },
++        .bufferMemoryBarrierCount = 1,
++    });
++    vk->CmdFillBuffer(exec->buf, buf_vk->buf, 0, buf_vk->size, 0x0);
++    vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
++        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++        .pImageMemoryBarriers = img_bar,
++        .imageMemoryBarrierCount = nb_img_bar,
++        .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2) {
++            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
++            .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
++            .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
++            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
++            .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
++                             VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
++            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++            .buffer = buf_vk->buf,
++            .size = buf_vk->size,
++            .offset = 0,
++        },
++        .bufferMemoryBarrierCount = 1,
++    });
++
++    RET(ff_vk_shader_update_desc_buffer(&s->vkctx, exec, &s->shd, 0, 1, 0,
++                                        buf_vk, 0, buf_vk->size,
++                                        VK_FORMAT_UNDEFINED));
++    ff_vk_exec_bind_shader(vkctx, exec, &s->shd);
++    ff_vk_shader_update_push_const(vkctx, exec, &s->shd,
++                                   VK_SHADER_STAGE_COMPUTE_BIT, 0,
++                                   sizeof(flat_thr), &flat_thr);
++
++    vk->CmdDispatch(exec->buf,
++                    FFALIGN(in->width, s->shd.lg_size[0]) / s->shd.lg_size[0],
++                    FFALIGN(in->height, s->shd.lg_size[1]) / s->shd.lg_size[1],
++                    s->shd.lg_size[2]);
++
++    vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
++        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++        .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2) {
++            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
++            .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
++            .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
++            .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
++                             VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
++            .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
++            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++            .buffer = buf_vk->buf,
++            .size = buf_vk->size,
++            .offset = 0,
++        },
++        .bufferMemoryBarrierCount = 1,
++    });
++
++    RET(ff_vk_exec_submit(vkctx, exec));
++    ff_vk_exec_wait(vkctx, exec);
++
++    err = attach_stats(s, in, acc);
++    if (err < 0)
++        goto fail;
++
++    av_buffer_unref(&buf);
++    return ff_filter_frame(outlink, in);
++
++fail:
++    if (exec)
++        ff_vk_exec_discard_deps(&s->vkctx, exec);
++    av_buffer_unref(&buf);
++    av_frame_free(&in);
++    return err;
++}
++
++static void analyze_vulkan_uninit(AVFilterContext *avctx)
++{
++    PelorusAnalyzeVulkanContext *s = avctx->priv;
++    FFVulkanContext *vkctx = &s->vkctx;
++
++    ff_vk_exec_pool_free(vkctx, &s->e);
++    ff_vk_shader_free(vkctx, &s->shd);
++    av_buffer_pool_uninit(&s->stat_buf_pool);
++    ff_vk_uninit(&s->vkctx);
++    s->initialized = 0;
++}
++
++#define OFFSET(x) offsetof(PelorusAnalyzeVulkanContext, x)
++#define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
++static const AVOption pelorus_analyze_vulkan_options[] = {
++    { "flat", "per-tile variance below which a tile is banding-prone",
++      OFFSET(flat_thr), AV_OPT_TYPE_DOUBLE, { .dbl = 0.0015 }, 0.0, 0.25, FLAGS },
++    { NULL }
++};
++
++AVFILTER_DEFINE_CLASS(pelorus_analyze_vulkan);
++
++static const AVFilterPad pelorus_analyze_vulkan_inputs[] = {
++    {
++        .name = "default",
++        .type = AVMEDIA_TYPE_VIDEO,
++        .filter_frame = &analyze_vulkan_filter_frame,
++        .config_props = &ff_vk_filter_config_input,
++    },
++};
++
++static const AVFilterPad pelorus_analyze_vulkan_outputs[] = {
++    {
++        .name = "default",
++        .type = AVMEDIA_TYPE_VIDEO,
++        .config_props = &ff_vk_filter_config_output,
++    },
++};
++
++const FFFilter ff_vf_pelorus_analyze_vulkan = {
++    .p.name = "pelorus_analyze_vulkan",
++    .p.description = NULL_IF_CONFIG_SMALL("Pelorus frame analyzer (Vulkan)"),
++    .p.priv_class = &pelorus_analyze_vulkan_class,
++    .p.flags = AVFILTER_FLAG_HWDEVICE,
++    .priv_size = sizeof(PelorusAnalyzeVulkanContext),
++    .init = &ff_vk_filter_init,
++    .uninit = &analyze_vulkan_uninit,
++    FILTER_INPUTS(pelorus_analyze_vulkan_inputs),
++    FILTER_OUTPUTS(pelorus_analyze_vulkan_outputs),
++    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_VULKAN),
++    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
++};
+-- 
+2.54.0
+

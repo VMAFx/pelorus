@@ -1,0 +1,86 @@
+/*
+ * pelorus_analyze.comp — frame-statistics reduction (standalone reference).
+ *
+ * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ *
+ * Reduces a luma plane to per-frame banding/variance/edge statistics that
+ * vf_pelorus_analyze reads back and packs into the PEL_SEC_BANDING +
+ * PEL_SEC_VARIANCE interop sections — the *measured* maps the deband filter
+ * currently only approximates. Each workgroup reduces its tile in shared
+ * memory, then one thread atomic-accumulates fixed-point contributions into a
+ * sliced SSBO (slices cut atomic contention, summed on the host).
+ *
+ * The in-tree FFmpeg filter emits an equivalent reduction inline via GLSLC
+ * against normalized float images; keep the two in lockstep (AGENTS.md rule 4).
+ */
+#version 450
+
+layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+
+layout(binding = 0, r16ui) uniform readonly uimage2D srcImg;
+
+#define PEL_SLICES 16
+layout(binding = 1, std430) buffer AnalyzeBuf {
+    uint var_sum[PEL_SLICES];   /* sum of per-workgroup variance (fixed point) */
+    uint edge_sum[PEL_SLICES];  /* sum of per-workgroup edge density           */
+    uint flat_wg[PEL_SLICES];   /* count of low-variance (banding-prone) tiles */
+    uint total_wg[PEL_SLICES];  /* count of contributing tiles                 */
+};
+
+layout(push_constant, std430) uniform Params {
+    int   width;
+    int   height;
+    int   inDepth;     /* source bit depth (8/10/12/16) */
+    float flatThr;     /* per-tile variance below this => "flat"/banding-prone */
+} pc;
+
+const float TILE_SCALE = 65535.0;   /* shared-mem fixed point */
+const float G_SCALE = 1000000.0;    /* global accumulator fixed point */
+
+shared uint s_sum;    /* sum of normalized luma over the tile  */
+shared uint s_sumsq;  /* sum of normalized luma^2              */
+shared uint s_edge;   /* sum of normalized gradient magnitude  */
+shared uint s_cnt;    /* valid pixels in the tile              */
+
+float load_norm(int x, int y) {
+    x = clamp(x, 0, pc.width - 1);
+    y = clamp(y, 0, pc.height - 1);
+    float maxv = float((1 << pc.inDepth) - 1);
+    return float(imageLoad(srcImg, ivec2(x, y)).r) / maxv;
+}
+
+void main() {
+    if (gl_LocalInvocationIndex == 0u) {
+        s_sum = 0u; s_sumsq = 0u; s_edge = 0u; s_cnt = 0u;
+    }
+    barrier();
+
+    int x = int(gl_GlobalInvocationID.x);
+    int y = int(gl_GlobalInvocationID.y);
+    if (x < pc.width && y < pc.height) {
+        float l = load_norm(x, y);
+        float gx = abs(load_norm(x + 1, y) - l);
+        float gy = abs(load_norm(x, y + 1) - l);
+        float edge = clamp(gx + gy, 0.0, 1.0);
+        atomicAdd(s_sum,   uint(l * TILE_SCALE));
+        atomicAdd(s_sumsq, uint(l * l * TILE_SCALE));
+        atomicAdd(s_edge,  uint(edge * TILE_SCALE));
+        atomicAdd(s_cnt,   1u);
+    }
+    barrier();
+
+    if (gl_LocalInvocationIndex == 0u && s_cnt > 0u) {
+        float n = float(s_cnt);
+        float mean = (float(s_sum) / TILE_SCALE) / n;
+        float msq  = (float(s_sumsq) / TILE_SCALE) / n;
+        float var  = max(msq - mean * mean, 0.0);          /* [0, ~0.25] */
+        float edge = (float(s_edge) / TILE_SCALE) / n;      /* [0, 1]    */
+
+        uint slice = (gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x)
+                     % uint(PEL_SLICES);
+        atomicAdd(var_sum[slice],  uint(var * G_SCALE));
+        atomicAdd(edge_sum[slice], uint(edge * G_SCALE));
+        atomicAdd(flat_wg[slice],  (var < pc.flatThr) ? 1u : 0u);
+        atomicAdd(total_wg[slice], 1u);
+    }
+}

@@ -75,7 +75,7 @@ green · the deband shader compiles.**
 |---|---|---|
 | `pelorus_deband_vulkan` | Smart deband (f3kdb): flatten banding + TPDF/blue-noise dither, detail-protected, zero-copy | **Working** |
 | `pelorus_denoise_vulkan` | Edge-preserving spatio-temporal denoise (the biggest BD-rate lever) | Roadmap |
-| `pelorus_analyze_vulkan` | Measured banding/variance/edge maps → interop side data | Roadmap |
+| `pelorus_analyze_vulkan` | Measured banding/variance/edge stats → interop side data (GPU reduction + readback) | **Working** |
 | `pelorus_grain_estimate` | Film-grain estimation — AV1 (AOM) + HEVC/VVC (H.274/SEI FGC), with the matching bitstream filter | Roadmap |
 | `pelorus_mc_vulkan` | Optical-flow motion-vector hints for the encoder | Roadmap |
 
@@ -84,7 +84,8 @@ green · the deband shader compiles.**
 - [x] Step 1 — Core: `libpelorus` interop ABI + deband param contract + tests.
 - [x] Step 2 — Flagship: `vf_pelorus_deband_vulkan` smart deband (Vulkan), inline
       GLSL, side-data emission, patch stack against n8.1.1.
-- [ ] Step 3 — `vf_pelorus_analyze` (measured banding/variance maps).
+- [x] Step 3 — `vf_pelorus_analyze_vulkan`: measured banding/variance/edge stats
+      (GPU reduction + readback) → interop side data.
 - [ ] Step 4 — Temporal denoise.
 - [ ] Step 5 — FGS param estimation + OBU bitstream filter.
 - [ ] Step 6 — Optical-flow motion-vector hints.

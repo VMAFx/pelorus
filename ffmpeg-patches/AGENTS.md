@@ -38,8 +38,9 @@ ffmpeg-patches/
    `extern const FFFilter ff_vf_*` line). An upstream rebase that reflows these
    files can drop a hunk — re-verify with a full series replay, not per-patch
    `git apply --check`.
-2. **The filter's inline GLSL must match `libpelorus/shaders/*.comp`** (the
-   reference shader). Edit both together (root AGENTS.md hard rule 4).
+2. **Each filter's inline GLSL must match its `libpelorus/shaders/*.comp`**
+   reference shader (deband ↔ `pelorus_deband.comp`, analyze ↔
+   `pelorus_analyze.comp`). Edit both together (root AGENTS.md hard rule 4).
 3. **Any `libpelorus` surface the filter consumes** (a `PelorusSideData` field,
    a `deband.h` param) changing requires regenerating the patch in the same PR
    (root AGENTS.md hard rule 5); log it in [docs/rebase-notes.md](../docs/rebase-notes.md).

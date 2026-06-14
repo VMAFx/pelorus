@@ -55,7 +55,7 @@ HEVC/VVC (H.274 / SEI FGC).
 
 | Stage | Filter | Effect | Status |
 |---|---|---|---|
-| analyze | `pelorus_analyze_vulkan` | measure banding/variance/edge maps → side data | roadmap |
+| analyze | `pelorus_analyze_vulkan` | measure banding/variance/edge stats → side data | **working** |
 | deband | `pelorus_deband_vulkan` | flatten contours + dither | **working** |
 | denoise | `pelorus_denoise_vulkan` | edge-preserving spatio-temporal denoise (biggest BD-rate lever) | roadmap |
 | grain | `pelorus_grain_estimate` | estimate film-grain params → side data + bitstream filter; AV1 (AOM OBU) **and** HEVC/VVC (H.274 SEI FGC) | roadmap |

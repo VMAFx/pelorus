@@ -5,18 +5,22 @@
 
 glslang = find_program('glslangValidator', required: false)
 
+reference_shaders = ['pelorus_deband', 'pelorus_analyze']
+
 if glslang.found()
-  pelorus_deband_spv = custom_target(
-    'pelorus_deband.spv',
-    input: 'pelorus_deband.comp',
-    output: 'pelorus_deband.spv',
-    command: [glslang, '-V', '--target-env', 'vulkan1.2', '@INPUT@', '-o', '@OUTPUT@'],
-    build_by_default: true,
-  )
-  test('shader-deband-compile', glslang,
-       args: ['-V', '--target-env', 'vulkan1.2',
-              files('pelorus_deband.comp'), '-o', '/dev/null'],
-       suite: 'fast')
+  foreach shader : reference_shaders
+    custom_target(
+      shader + '.spv',
+      input: shader + '.comp',
+      output: shader + '.spv',
+      command: [glslang, '-V', '--target-env', 'vulkan1.2', '@INPUT@', '-o', '@OUTPUT@'],
+      build_by_default: true,
+    )
+    test('shader-' + shader + '-compile', glslang,
+         args: ['-V', '--target-env', 'vulkan1.2',
+                files(shader + '.comp'), '-o', '/dev/null'],
+         suite: 'fast')
+  endforeach
 else
   message('glslangValidator not found — skipping reference-shader compilation')
 endif
