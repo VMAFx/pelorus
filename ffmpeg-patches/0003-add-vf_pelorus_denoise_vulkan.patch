@@ -1,0 +1,950 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lusoris <lusoris@pm.me>
+Date: Sun, 14 Jun 2026 19:35:31 +0200
+Subject: [PATCH 3/3] feat(denoise): add vf_pelorus_denoise_vulkan (temporal
+ denoise)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+An edge-preserving spatio-temporal denoise filter — the biggest BD-rate
+pre-encode lever. A single Vulkan compute pass over a causal window (the
+current frame + N previous frames held in VRAM, no motion compensation):
+an NLM-lite joint bilateral whose range weight is a 3x3-patch SSD (a real
+edge has high patch SSD across it, so it refuses to average across the
+edge) blended with per-pixel-gated temporal averaging (a delta above tcut
+breaks the walk so motion / scene-cuts cannot ghost), then a dry/wet mix.
+
+The exec is the hand-rolled explicit path (modeled on vf_pelorus_analyze):
+with meta=1 it free-rides a residual reduction on the denoise dispatch and
+emits the pre-reserved PEL_SEC_DENOISE interop section (residual energy,
+applied strength, noise-sigma estimate, PSNR-vs-input); with meta=0 the
+SSBO / readback / sync are skipped. The standalone reference shader
+libpelorus/shaders/pelorus_denoise.comp and the inline GLSL are kept in
+lockstep.
+
+Codec-agnostic: the denoise is on the source, independent of the encoder.
+
+AVOptions: sigma, sigmac, sigmat, strength, strengthc, blend, tdecay, tcut,
+patch, prev, protect, planes, meta. Host-side param contract in
+libpelorus/include/pelorus/denoise.h.
+
+Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
+
+ADR: docs/adr/0112-temporal-denoise.md
+---
+ configure                               |   2 +
+ libavfilter/Makefile                    |   1 +
+ libavfilter/allfilters.c                |   1 +
+ libavfilter/vf_pelorus_denoise_vulkan.c | 855 ++++++++++++++++++++++++
+ 4 files changed, 859 insertions(+)
+ create mode 100644 libavfilter/vf_pelorus_denoise_vulkan.c
+
+diff --git a/configure b/configure
+index 7760e4da19..75d64914bc 100755
+--- a/configure
++++ b/configure
+@@ -4179,6 +4179,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
+ overlay_vulkan_filter_deps="vulkan spirv_library"
+ pelorus_analyze_vulkan_filter_deps="vulkan spirv_library"
+ pelorus_deband_vulkan_filter_deps="vulkan spirv_library"
++pelorus_denoise_vulkan_filter_deps="vulkan spirv_library"
+ owdenoise_filter_deps="gpl"
+ pad_opencl_filter_deps="opencl"
+ pan_filter_deps="swresample"
+@@ -7394,6 +7395,7 @@ enabled libvmaf           && require_pkg_config libvmaf "libvmaf >= 2.0.0" libvm
+ enabled libvmaf           && check_pkg_config libvmaf_cuda "libvmaf >= 2.0.0" libvmaf_cuda.h vmaf_cuda_state_init
+ enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+ enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
++enabled pelorus_denoise_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+ enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
+                                require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
+ enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
+diff --git a/libavfilter/Makefile b/libavfilter/Makefile
+index 48c37887f2..78282543cf 100644
+--- a/libavfilter/Makefile
++++ b/libavfilter/Makefile
+@@ -435,6 +435,7 @@ OBJS-$(CONFIG_PALETTEGEN_FILTER)             += vf_palettegen.o palette.o
+ OBJS-$(CONFIG_PALETTEUSE_FILTER)             += vf_paletteuse.o framesync.o palette.o
+ OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vf_pelorus_analyze_vulkan.o vulkan.o vulkan_filter.o
+ OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER)  += vf_pelorus_deband_vulkan.o vulkan.o vulkan_filter.o
++OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vf_pelorus_denoise_vulkan.o vulkan.o vulkan_filter.o
+ OBJS-$(CONFIG_PERMS_FILTER)                  += f_perms.o
+ OBJS-$(CONFIG_PERSPECTIVE_FILTER)            += vf_perspective.o
+ OBJS-$(CONFIG_PHASE_FILTER)                  += vf_phase.o
+diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
+index 41761c6146..8f49f54808 100644
+--- a/libavfilter/allfilters.c
++++ b/libavfilter/allfilters.c
+@@ -407,6 +407,7 @@ extern const FFFilter ff_vf_palettegen;
+ extern const FFFilter ff_vf_paletteuse;
+ extern const FFFilter ff_vf_pelorus_analyze_vulkan;
+ extern const FFFilter ff_vf_pelorus_deband_vulkan;
++extern const FFFilter ff_vf_pelorus_denoise_vulkan;
+ extern const FFFilter ff_vf_perms;
+ extern const FFFilter ff_vf_perspective;
+ extern const FFFilter ff_vf_phase;
+diff --git a/libavfilter/vf_pelorus_denoise_vulkan.c b/libavfilter/vf_pelorus_denoise_vulkan.c
+new file mode 100644
+index 0000000000..8210f27a48
+--- /dev/null
++++ b/libavfilter/vf_pelorus_denoise_vulkan.c
+@@ -0,0 +1,855 @@
++/*
++ * Copyright 2026 Lusoris
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or modify it under
++ * the terms of the GNU Lesser General Public License as published by the
++ * Free Software Foundation; either version 2.1 of the License, or (at
++ * your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
++ * License for more details.
++ */
++
++/**
++ * @file
++ * Pelorus temporal denoise, Vulkan compute (zero-copy, pre-encode).
++ *
++ * An edge-preserving spatio-temporal denoiser (PEL_DENOISER_BILATERAL_TEMPORAL)
++ * over a CAUSAL window [cur, prev_1 .. prev_n] held in VRAM. The spatial term is
++ * an NLM-lite joint bilateral whose range weight is a 3x3-patch SSD (a real edge
++ * has high patch SSD, collapsing the weight, so the filter refuses to average
++ * across edges while flattening flat-region noise). The temporal term averages
++ * the same-coordinate sample of each previous frame, gated per pixel by a
++ * similarity threshold (a delta above `tcut` breaks the walk so motion /
++ * scene-cuts cannot ghost) and decayed by `tdecay` per frame. No motion
++ * compensation in v0.x — same-coordinate taps only. Runs entirely in VRAM so the
++ * frame never leaves the GPU on its way to a hardware encoder.
++ *
++ * Causal, one-output-per-input: each input frame yields exactly one output. The
++ * filter keeps a ring of up to PEL_DENOISE_MAX_PREV previous frames as cheap
++ * av_frame_clone refcount bumps on the hwframe images (no pixel copy). No
++ * 1-frame latency, no EOF flush.
++ *
++ * Interop: when `meta=1` the filter free-rides a residual reduction in the same
++ * dispatch (atomic accumulation of |in-out| and (in-out)^2 into a HOST_VISIBLE
++ * SSBO) and attaches a Pelorus PEL_SEC_DENOISE blob
++ * (AV_FRAME_DATA_SEI_UNREGISTERED, UUID-keyed) so a downstream vmafx vf_libvmaf*
++ * can react. See <pelorus/interop.h> and docs/metrics/denoise.md.
++ *
++ * The algorithm is kept in lockstep with the standalone reference shader
++ * libpelorus/shaders/pelorus_denoise.comp (AGENTS hard rule 4).
++ */
++
++#include "libavutil/buffer.h"
++#include "libavutil/frame.h"
++#include "libavutil/mem.h"
++#include "libavutil/opt.h"
++#include "libavutil/pixdesc.h"
++#include "libavutil/vulkan_spirv.h"
++#include "vulkan_filter.h"
++
++#include "filters.h"
++#include "video.h"
++
++#include <math.h>
++#include <string.h>
++
++#include <pelorus/denoise.h>
++#include <pelorus/interop.h>
++
++#define PEL_SLICES 16
++
++/* Host-readback accumulator for the meta=1 residual free-ride. Sliced to spread
++ * atomic contention, exactly as vf_pelorus_analyze does; summed host-side. */
++typedef struct PelorusDenoiseBuf {
++    uint32_t abs_sum_y[PEL_SLICES];  /* sum |in-out| * GS, luma                 */
++    uint32_t abs_sum_u[PEL_SLICES];
++    uint32_t abs_sum_v[PEL_SLICES];
++    uint32_t sq_sum_y[PEL_SLICES];   /* sum (in-out)^2 * GS, luma               */
++    uint32_t cnt_y[PEL_SLICES];      /* luma pixel count                        */
++    uint32_t cnt_c[PEL_SLICES];      /* chroma pixel count (per chroma plane)   */
++} PelorusDenoiseBuf;
++
++typedef struct PelorusDenoiseVulkanContext {
++    FFVulkanContext vkctx; /* MUST be first — generic init casts priv to this */
++
++    int initialized;
++    FFVkExecPool e;
++    AVVulkanDeviceQueueFamily *qf;
++    FFVulkanShader shd;
++    AVBufferPool *stat_buf_pool;
++
++    /* push constants — mirror the GLSL std430 block below, byte-for-byte */
++    struct {
++        float sigma_s[4];     /* vec4 : per-plane spatial range sigma    @0  */
++        float sigma_t[4];     /* vec4 : per-plane temporal gate sigma    @16 */
++        float strength[4];    /* vec4 : per-plane dry/wet mix            @32 */
++        float blend;          /*                                         @48 */
++        float temporal_decay; /*                                         @52 */
++        float temporal_cut;   /*                                         @56 */
++        int32_t patch_radius; /*                                         @60 */
++        int32_t n_prev;       /* configured temporal depth (0..MAX_PREV) @64 */
++        int32_t actual_prev;  /* valid previous frames this dispatch     @68 */
++        int32_t nb_planes;    /*                                         @72 */
++        int32_t planes_mask;  /* plane bitmask to process                @76 */
++        int32_t flags;        /* enum pel_denoise_flags                  @80 */
++        uint32_t frame_idx;   /*                                         @84 */
++        int32_t want_meta;    /* 1 => accumulate residual into the SSBO  @88 */
++        int32_t _pad;         /* pad to a 16-byte multiple (96 bytes)    @92 */
++    } opts;
++
++    /* AVOption-backed scalar mirrors (broadcast to all planes at init) */
++    double opt_sigma_y, opt_sigma_c; /* spatial range sigma (sigma_s)         */
++    double opt_sigma_t;              /* temporal gate sigma                   */
++    double opt_strength_y, opt_strength_c;
++    double opt_blend, opt_tdecay, opt_tcut;
++    int patch_radius;
++    int n_prev;
++    int protect_detail;
++    int planes; /* plane bitmask to process (const-folded into shader)        */
++    int meta;   /* attach Pelorus interop side data                          */
++    int64_t frame_idx;
++
++    /* Causal previous-frame ring (clones — refcount bumps, no pixel copy). */
++    AVFrame *ring[PEL_DENOISE_MAX_PREV];
++    int ring_count; /* valid entries in ring[] (0..n_prev)                    */
++} PelorusDenoiseVulkanContext;
++
++/* Pure GLSL helpers + the denoise() function, spliced verbatim (avoids the
++ * comma-in-C()-macro hazard). Kept in lockstep with the standalone reference
++ * shader libpelorus/shaders/pelorus_denoise.comp. Normalized-float domain:
++ * imageLoad returns [0,1] directly (no /65535). The current frame's plane is
++ * cur_images[idx]; previous frames are prev0_images[idx]..prev3_images[idx],
++ * indexed by the temporal walk via pel_prev(). */
++static const char denoise_glsl[] =
++    "const int FLAG_TEMPORAL = 1;\n"
++    "const int FLAG_PROTECT_DETAIL = 4;\n"
++    "const float EPS = 1e-6;\n"
++    "float pel_cur(int idx, ivec2 p, ivec2 sz) {\n"
++    "    return imageLoad(cur_images[idx], clamp(p, ivec2(0), sz - ivec2(1))).x;\n"
++    "}\n"
++    "float pel_prev(int t, int idx, ivec2 p, ivec2 sz) {\n"
++    "    ivec2 c = clamp(p, ivec2(0), sz - ivec2(1));\n"
++    "    if (t == 1) return imageLoad(prev0_images[idx], c).x;\n"
++    "    if (t == 2) return imageLoad(prev1_images[idx], c).x;\n"
++    "    if (t == 3) return imageLoad(prev2_images[idx], c).x;\n"
++    "    return imageLoad(prev3_images[idx], c).x;\n"
++    "}\n"
++    "float denoise(const ivec2 pos, const int idx,\n"
++    "              float sigmaS, float sigmaT, float strength_p) {\n"
++    "    ivec2 sz = imageSize(output_images[idx]);\n"
++    "    float C = pel_cur(idx, pos, sz);\n"
++    "    /* --- spatial NLM-lite joint bilateral over the current frame --- */\n"
++    "    float numS = C; float denS = 1.0;\n"
++    "    if (patch_radius > 0) {\n"
++    "        float hs2 = sigmaS * sigmaS + EPS;\n"
++    "        float sd2 = float(patch_radius * patch_radius) + EPS;\n"
++    "        for (int dy = -patch_radius; dy <= patch_radius; dy++) {\n"
++    "            for (int dx = -patch_radius; dx <= patch_radius; dx++) {\n"
++    "                if (dx == 0 && dy == 0) continue;\n"
++    "                float ssd = 0.0;\n"
++    "                for (int ky = -1; ky <= 1; ky++) {\n"
++    "                    for (int kx = -1; kx <= 1; kx++) {\n"
++    "                        float a = pel_cur(idx, pos + ivec2(kx, ky), sz);\n"
++    "                        float b = pel_cur(idx, pos + ivec2(dx + kx, dy + ky), sz);\n"
++    "                        ssd += (a - b) * (a - b);\n"
++    "                    }\n"
++    "                }\n"
++    "                ssd /= 9.0;\n"
++    "                float wr = exp(-ssd / hs2);\n"
++    "                float wd = exp(-float(dx * dx + dy * dy) / (2.0 * sd2));\n"
++    "                float w = wr * wd;\n"
++    "                numS += w * pel_cur(idx, pos + ivec2(dx, dy), sz);\n"
++    "                denS += w;\n"
++    "            }\n"
++    "        }\n"
++    "    }\n"
++    "    /* --- temporal gated averaging over previous frames (same coord) --- */\n"
++    "    float numT = C; float denT = 1.0;\n"
++    "    if ((flags & FLAG_TEMPORAL) != 0) {\n"
++    "        float ht2 = sigmaT * sigmaT + EPS;\n"
++    "        float decay = 1.0;\n"
++    "        for (int t = 1; t <= actual_prev; t++) {\n"
++    "            float p = pel_prev(t, idx, pos, sz);\n"
++    "            float delta = abs(C - p);\n"
++    "            if (delta > temporal_cut) break;\n"
++    "            decay *= temporal_decay;\n"
++    "            float w = exp(-(delta * delta) / ht2) * decay;\n"
++    "            numT += w * p;\n"
++    "            denT += w;\n"
++    "        }\n"
++    "    }\n"
++    "    /* --- combine, then dry/wet --- */\n"
++    "    float num = (1.0 - blend) * numS + blend * numT;\n"
++    "    float den = (1.0 - blend) * denS + blend * denT;\n"
++    "    float filtered = num / max(den, EPS);\n"
++    "    float strength = strength_p;\n"
++    "    if ((flags & FLAG_PROTECT_DETAIL) != 0 && patch_radius > 0) {\n"
++    "        float mean = 0.0;\n"
++    "        for (int dy = -1; dy <= 1; dy++)\n"
++    "            for (int dx = -1; dx <= 1; dx++)\n"
++    "                mean += pel_cur(idx, pos + ivec2(dx, dy), sz);\n"
++    "        mean /= 9.0;\n"
++    "        float varr = 0.0;\n"
++    "        for (int dy = -1; dy <= 1; dy++) {\n"
++    "            for (int dx = -1; dx <= 1; dx++) {\n"
++    "                float d = pel_cur(idx, pos + ivec2(dx, dy), sz) - mean;\n"
++    "                varr += d * d;\n"
++    "            }\n"
++    "        }\n"
++    "        float activity = sqrt(varr / 9.0);\n"
++    "        float protect = smoothstep(sigmaS, sigmaS * 3.0 + EPS, activity);\n"
++    "        strength *= (1.0 - protect);\n"
++    "    }\n"
++    "    float outv = mix(C, filtered, clamp(strength, 0.0, 1.0));\n"
++    "    return clamp(outv, 0.0, 1.0);\n"
++    "}\n";
++
++static av_cold int init_filter(AVFilterContext *ctx)
++{
++    int err = 0;
++    int i;
++    PelorusDenoiseVulkanContext *s = ctx->priv;
++    FFVulkanContext *vkctx = &s->vkctx;
++    FFVulkanShader *shd = &s->shd; /* GLSL macros require a var named `shd` */
++    FFVkSPIRVCompiler *spv;
++    uint8_t *spv_data = NULL;
++    size_t spv_len = 0;
++    void *spv_opaque = NULL;
++    const int planes = av_pix_fmt_count_planes(vkctx->output_format);
++
++    /* Broadcast luma/chroma scalars into the per-plane vec4s ({Y,Cb,Cr,A}). */
++    s->opts.sigma_s[0] = (float)s->opt_sigma_y;
++    s->opts.strength[0] = (float)s->opt_strength_y;
++    for (i = 1; i < 4; i++) {
++        s->opts.sigma_s[i] = (float)s->opt_sigma_c;
++        s->opts.strength[i] = (float)s->opt_strength_c;
++    }
++    for (i = 0; i < 4; i++)
++        s->opts.sigma_t[i] = (float)s->opt_sigma_t;
++    s->opts.blend = (float)s->opt_blend;
++    s->opts.temporal_decay = (float)s->opt_tdecay;
++    s->opts.temporal_cut = (float)s->opt_tcut;
++    s->opts.patch_radius = s->patch_radius;
++    s->opts.n_prev = s->n_prev;
++    s->opts.nb_planes = planes;
++    s->opts.planes_mask = s->planes;
++    s->opts.flags = PEL_DENOISE_FLAG_TEMPORAL;
++    if (s->protect_detail)
++        s->opts.flags |= PEL_DENOISE_FLAG_PROTECT_DETAIL;
++    s->opts._pad = 0;
++
++    spv = ff_vk_spirv_init();
++    if (!spv) {
++        av_log(ctx, AV_LOG_ERROR, "Unable to initialize SPIR-V compiler!\n");
++        return AVERROR_EXTERNAL;
++    }
++
++    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
++    if (!s->qf) {
++        av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
++        err = AVERROR(ENOTSUP);
++        goto fail;
++    }
++
++    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
++    RET(ff_vk_shader_init(vkctx, shd, "pelorus_denoise",
++                          VK_SHADER_STAGE_COMPUTE_BIT, NULL, 0, 16, 16, 1, 0));
++
++    GLSLC(0, layout(push_constant, std430) uniform pushConstants {            );
++    GLSLC(1,     vec4  sigma_s;                                               );
++    GLSLC(1,     vec4  sigma_t;                                               );
++    GLSLC(1,     vec4  strength;                                              );
++    GLSLC(1,     float blend;                                                 );
++    GLSLC(1,     float temporal_decay;                                        );
++    GLSLC(1,     float temporal_cut;                                          );
++    GLSLC(1,     int   patch_radius;                                          );
++    GLSLC(1,     int   n_prev;                                                );
++    GLSLC(1,     int   actual_prev;                                           );
++    GLSLC(1,     int   nb_planes;                                             );
++    GLSLC(1,     int   planes_mask;                                           );
++    GLSLC(1,     int   flags;                                                 );
++    GLSLC(1,     uint  frame_idx;                                             );
++    GLSLC(1,     int   want_meta;                                             );
++    GLSLC(0, };                                                               );
++    GLSLC(0,                                                                  );
++    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts),
++                                VK_SHADER_STAGE_COMPUTE_BIT);
++
++    /* Descriptor set 0. Inputs FIRST, output LAST (the Nin / bwdif binding-order
++     * contract): binding 0 = current frame, 1..MAX_PREV = previous frames, then
++     * the residual SSBO, then the output image LAST. Each image binding is a
++     * per-plane array (.elems = planes), float representation, storage image
++     * (sampler = VK_NULL_HANDLE, GENERAL layout, imageLoad). */
++    {
++        FFVulkanDescriptorSetBinding desc_set[] = {
++            {
++                .name = "cur_images",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
++                                                   FF_VK_REP_FLOAT),
++                .mem_quali = "readonly",
++                .dimensions = 2,
++                .elems = planes,
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++            },
++            {
++                .name = "prev0_images",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
++                                                   FF_VK_REP_FLOAT),
++                .mem_quali = "readonly",
++                .dimensions = 2,
++                .elems = planes,
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++            },
++            {
++                .name = "prev1_images",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
++                                                   FF_VK_REP_FLOAT),
++                .mem_quali = "readonly",
++                .dimensions = 2,
++                .elems = planes,
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++            },
++            {
++                .name = "prev2_images",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
++                                                   FF_VK_REP_FLOAT),
++                .mem_quali = "readonly",
++                .dimensions = 2,
++                .elems = planes,
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++            },
++            {
++                .name = "prev3_images",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
++                                                   FF_VK_REP_FLOAT),
++                .mem_quali = "readonly",
++                .dimensions = 2,
++                .elems = planes,
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++            },
++            {
++                .name = "stat_buffer",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
++                .mem_layout = "std430",
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++                .buf_content = "uint abs_sum_y[16]; uint abs_sum_u[16]; "
++                               "uint abs_sum_v[16]; uint sq_sum_y[16]; "
++                               "uint cnt_y[16]; uint cnt_c[16];",
++            },
++            {
++                .name = "output_images",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format,
++                                                   FF_VK_REP_FLOAT),
++                .mem_quali = "writeonly",
++                .dimensions = 2,
++                .elems = planes,
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++            },
++        };
++        RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 7, 0, 0));
++    }
++
++    GLSLD(denoise_glsl);
++    GLSLC(0, void main()                                                      );
++    GLSLC(0, {                                                                );
++    GLSLC(1,     const float GS = 1000000.0;                                  );
++    GLSLC(1,     ivec2 size;                                                  );
++    GLSLC(1,     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);           );
++    /* slice = wg_index & 15 — equivalent to % 16u (PEL_SLICES is a power of
++     * two) and avoids a bare `%` in the av_bprintf format string. Kept on ONE
++     * paren-balanced line: an unbalanced `(` in a GLSLC/GLSLF argument makes the
++     * C preprocessor swallow the following macro call into this one's string. */
++    GLSLC(1,     uint wg = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x; );
++    GLSLC(1,     uint slice = wg & 15u;                                       );
++    for (i = 0; i < planes; i++) {
++        GLSLC(0,                                                              );
++        GLSLF(1, size = imageSize(output_images[%i]);                       ,i);
++        GLSLC(1, if (IS_WITHIN(pos, size)) {                                  );
++        if (s->planes & (1 << i)) {
++            GLSLF(2, float inv = imageLoad(cur_images[%i], pos).x;          ,i);
++            GLSLF(2, float ov = denoise(pos, %i, sigma_s[%i], sigma_t[%i], strength[%i]); ,i, i, i, i);
++            GLSLF(2, imageStore(output_images[%i], pos, vec4(ov, 0.0, 0.0, 1.0));,i);
++            if (i == 0) {
++                /* meta=1 residual free-ride: luma plane drives the sigma /
++                 * PSNR estimate; chroma planes feed the U/V residual energy. */
++                GLSLC(2, if (want_meta != 0) {                                );
++                GLSLC(3,     float r = abs(inv - ov);                         );
++                GLSLC(3,     atomicAdd(abs_sum_y[slice], uint(r * GS));       );
++                GLSLC(3,     atomicAdd(sq_sum_y[slice],  uint(r * r * GS));   );
++                GLSLC(3,     atomicAdd(cnt_y[slice],     1u);                 );
++                GLSLC(2, }                                                    );
++            } else if (i == 1) {
++                GLSLC(2, if (want_meta != 0) {                                );
++                GLSLC(3,     atomicAdd(abs_sum_u[slice], uint(abs(inv - ov) * GS)););
++                GLSLC(3,     atomicAdd(cnt_c[slice],     1u);                 );
++                GLSLC(2, }                                                    );
++            } else if (i == 2) {
++                GLSLC(2, if (want_meta != 0) {                                );
++                GLSLC(3,     atomicAdd(abs_sum_v[slice], uint(abs(inv - ov) * GS)););
++                GLSLC(2, }                                                    );
++            }
++        } else {
++            GLSLF(2, imageStore(output_images[%i], pos, imageLoad(cur_images[%i], pos)); ,i, i);
++        }
++        GLSLC(1, }                                                            );
++    }
++    GLSLC(0, }                                                                );
++
++    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
++                            &spv_opaque));
++    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
++    RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
++
++    s->initialized = 1;
++
++fail:
++    if (spv_opaque)
++        spv->free_shader(spv, &spv_opaque);
++    if (spv)
++        spv->uninit(&spv);
++    return err;
++}
++
++static void pel_sd_free(void *opaque, uint8_t *data)
++{
++    pel_blob_free(data);
++}
++
++/* Derive the denoise residual summaries from the read-back accumulators and
++ * attach a measured PEL_SEC_DENOISE section to the output frame. */
++static int attach_interop(PelorusDenoiseVulkanContext *s, AVFrame *out,
++                          const PelorusDenoiseBuf *acc)
++{
++    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
++    PelorusSideData meta;
++    PelorusDenoiseSection den;
++    PelorusPackSection sec;
++    uint8_t *blob = NULL;
++    size_t len = 0;
++    AVBufferRef *buf;
++    double abs_y = 0.0, abs_u = 0.0, abs_v = 0.0, sq_y = 0.0;
++    uint64_t cnt_y = 0, cnt_c = 0;
++    float res_y = 0.0f, res_u = 0.0f, res_v = 0.0f;
++    float sigma_est = 0.0f, psnr = 0.0f, msq = 0.0f;
++    int i;
++
++    for (i = 0; i < PEL_SLICES; i++) {
++        abs_y += acc->abs_sum_y[i];
++        abs_u += acc->abs_sum_u[i];
++        abs_v += acc->abs_sum_v[i];
++        sq_y += acc->sq_sum_y[i];
++        cnt_y += acc->cnt_y[i];
++        cnt_c += acc->cnt_c[i];
++    }
++
++    if (cnt_y > 0) {
++        res_y = (float)(abs_y / 1e6 / (double)cnt_y);
++        msq = (float)(sq_y / 1e6 / (double)cnt_y);
++        sigma_est = sqrtf(msq);
++        /* denoised-vs-input PSNR on a [0,1] domain: peak^2 / mean-square = 1/msq */
++        psnr = msq > 0.0f ? (float)(10.0 * log10(1.0 / (double)msq)) : 0.0f;
++    }
++    if (cnt_c > 0) {
++        res_u = (float)(abs_u / 1e6 / (double)cnt_c);
++        res_v = (float)(abs_v / 1e6 / (double)cnt_c);
++    }
++
++    memset(&meta, 0, sizeof(meta));
++    meta.frame_pts = (uint64_t)out->pts;
++    meta.bit_depth = d ? (uint8_t)d->comp[0].depth : 0;
++    meta.plane_layout = (d && d->log2_chroma_w == 0 && d->log2_chroma_h == 0)
++                            ? PEL_LAYOUT_444
++                            : ((d && d->log2_chroma_h == 0) ? PEL_LAYOUT_422
++                                                            : PEL_LAYOUT_420);
++    meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'D');
++
++    memset(&den, 0, sizeof(den));
++    den.residual_energy_y = res_y;
++    den.residual_energy_u = res_u;
++    den.residual_energy_v = res_v;
++    den.applied_strength = s->opts.strength[0];
++    den.noise_sigma_estimate = sigma_est;
++    den.psnr_vs_input = psnr;
++    den.denoiser_id = PEL_DENOISER_BILATERAL_TEMPORAL;
++    /* den._pad already zeroed by memset */
++
++    sec.id = PEL_SEC_DENOISE;
++    sec.data = &den;
++    sec.size = (uint32_t)sizeof(den);
++
++    if (pel_blob_pack(&meta, &sec, 1, &blob, &len) != PEL_OK || !blob)
++        return AVERROR(ENOMEM);
++
++    buf = av_buffer_create(blob, len, pel_sd_free, NULL, 0);
++    if (!buf) {
++        pel_blob_free(blob);
++        return AVERROR(ENOMEM);
++    }
++    if (!av_frame_new_side_data_from_buf(out, AV_FRAME_DATA_SEI_UNREGISTERED,
++                                         buf)) {
++        av_buffer_unref(&buf);
++        return AVERROR(ENOMEM);
++    }
++    return 0;
++}
++
++/* Bind the current frame, the actual_prev valid previous frames, the (optional)
++ * residual SSBO and the output via the hand-rolled explicit exec path, dispatch,
++ * and (when meta) submit+wait reading the residual back. Inputs first, output
++ * LAST. Unused prev slots are bound to the current frame as harmless filler so
++ * every array descriptor is populated; the shader only reads 1..actual_prev. */
++static int denoise_dispatch(PelorusDenoiseVulkanContext *s, AVFrame *out,
++                            AVFrame *cur, AVFrame *const prev[], int actual_prev,
++                            const PelorusDenoiseBuf **acc_out, AVBufferRef **buf_out)
++{
++    int err = 0;
++    int i;
++    FFVulkanContext *vkctx = &s->vkctx;
++    FFVulkanFunctions *vk = &vkctx->vkfn;
++    FFVkExecContext *exec;
++    AVFrame *bound_prev[PEL_DENOISE_MAX_PREV];
++    VkImageView cur_views[AV_NUM_DATA_POINTERS];
++    VkImageView prev_views[PEL_DENOISE_MAX_PREV][AV_NUM_DATA_POINTERS];
++    VkImageView out_views[AV_NUM_DATA_POINTERS];
++    VkImageMemoryBarrier2 img_bar[64];
++    int nb_img_bar = 0;
++    AVBufferRef *buf = NULL;
++    FFVkBuffer *buf_vk = NULL;
++    int want_meta = s->meta;
++
++    *acc_out = NULL;
++    *buf_out = NULL;
++
++    /* Every prev array descriptor must be populated; fill the slots past
++     * actual_prev with the current frame (never read by the shader). */
++    for (i = 0; i < PEL_DENOISE_MAX_PREV; i++)
++        bound_prev[i] = (i < actual_prev) ? prev[i] : cur;
++
++    s->opts.actual_prev = actual_prev;
++    s->opts.want_meta = want_meta;
++
++    if (want_meta) {
++        RET(ff_vk_get_pooled_buffer(vkctx, &s->stat_buf_pool, &buf,
++                                    VK_BUFFER_USAGE_TRANSFER_DST_BIT |
++                                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
++                                    NULL, sizeof(PelorusDenoiseBuf),
++                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
++                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++                                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
++        buf_vk = (FFVkBuffer *)buf->data;
++    }
++
++    exec = ff_vk_exec_get(vkctx, &s->e);
++    ff_vk_exec_start(vkctx, exec);
++
++    /* Dependencies: output, current frame, every bound previous frame. */
++    RET(ff_vk_exec_add_dep_frame(vkctx, exec, out,
++                                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
++    RET(ff_vk_create_imageviews(vkctx, exec, out_views, out, FF_VK_REP_FLOAT));
++    RET(ff_vk_exec_add_dep_frame(vkctx, exec, cur,
++                                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
++    RET(ff_vk_create_imageviews(vkctx, exec, cur_views, cur, FF_VK_REP_FLOAT));
++    for (i = 0; i < PEL_DENOISE_MAX_PREV; i++) {
++        /* The filler current-frame slots are already a dependency; only add the
++         * real previous frames once each (clones share the underlying frame). */
++        if (i < actual_prev)
++            RET(ff_vk_exec_add_dep_frame(vkctx, exec, bound_prev[i],
++                                         VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                                         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
++        RET(ff_vk_create_imageviews(vkctx, exec, prev_views[i], bound_prev[i],
++                                    FF_VK_REP_FLOAT));
++    }
++
++    /* Bind: cur=0, prev0..prev3 = 1..4, stat_buffer=5, output=6 (LAST). */
++    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, cur, cur_views, 0, 0,
++                                  VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
++    for (i = 0; i < PEL_DENOISE_MAX_PREV; i++)
++        ff_vk_shader_update_img_array(vkctx, exec, &s->shd, bound_prev[i],
++                                      prev_views[i], 0, 1 + i,
++                                      VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
++    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, out, out_views, 0, 6,
++                                  VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
++
++    /* Image barriers: output writable, all inputs readable. */
++    ff_vk_frame_barrier(vkctx, exec, out, img_bar, &nb_img_bar,
++                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
++                        VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
++                        VK_QUEUE_FAMILY_IGNORED);
++    ff_vk_frame_barrier(vkctx, exec, cur, img_bar, &nb_img_bar,
++                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
++                        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
++                        VK_QUEUE_FAMILY_IGNORED);
++    for (i = 0; i < actual_prev; i++)
++        ff_vk_frame_barrier(vkctx, exec, bound_prev[i], img_bar, &nb_img_bar,
++                            VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
++                            VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
++                            VK_QUEUE_FAMILY_IGNORED);
++
++    if (want_meta) {
++        /* Zero the accumulators, then sync TRANSFER->COMPUTE before the dispatch
++         * reads/writes the SSBO; also flush the image barriers in the same call. */
++        vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
++            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++            .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2) {
++                .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
++                .srcStageMask = VK_PIPELINE_STAGE_2_NONE,
++                .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
++                .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
++                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++                .buffer = buf_vk->buf,
++                .size = buf_vk->size,
++                .offset = 0,
++            },
++            .bufferMemoryBarrierCount = 1,
++        });
++        vk->CmdFillBuffer(exec->buf, buf_vk->buf, 0, buf_vk->size, 0x0);
++        vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
++            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++            .pImageMemoryBarriers = img_bar,
++            .imageMemoryBarrierCount = nb_img_bar,
++            .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2) {
++                .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
++                .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
++                .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
++                .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
++                .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
++                                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
++                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++                .buffer = buf_vk->buf,
++                .size = buf_vk->size,
++                .offset = 0,
++            },
++            .bufferMemoryBarrierCount = 1,
++        });
++
++        RET(ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 5, 0,
++                                            buf_vk, 0, buf_vk->size,
++                                            VK_FORMAT_UNDEFINED));
++    } else {
++        vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
++            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++            .pImageMemoryBarriers = img_bar,
++            .imageMemoryBarrierCount = nb_img_bar,
++        });
++    }
++
++    ff_vk_exec_bind_shader(vkctx, exec, &s->shd);
++    ff_vk_shader_update_push_const(vkctx, exec, &s->shd,
++                                   VK_SHADER_STAGE_COMPUTE_BIT, 0,
++                                   sizeof(s->opts), &s->opts);
++
++    vk->CmdDispatch(exec->buf,
++                    FFALIGN(out->width, s->shd.lg_size[0]) / s->shd.lg_size[0],
++                    FFALIGN(out->height, s->shd.lg_size[1]) / s->shd.lg_size[1],
++                    s->shd.lg_size[2]);
++
++    if (want_meta) {
++        vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
++            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++            .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2) {
++                .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
++                .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
++                .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
++                .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
++                                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
++                .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
++                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++                .buffer = buf_vk->buf,
++                .size = buf_vk->size,
++                .offset = 0,
++            },
++            .bufferMemoryBarrierCount = 1,
++        });
++
++        RET(ff_vk_exec_submit(vkctx, exec));
++        ff_vk_exec_wait(vkctx, exec);
++
++        *acc_out = (const PelorusDenoiseBuf *)buf_vk->mapped_mem;
++        *buf_out = buf;
++        return 0;
++    }
++
++    /* meta=0: no readback, no sync point — just submit and return. */
++    RET(ff_vk_exec_submit(vkctx, exec));
++    return 0;
++
++fail:
++    if (exec)
++        ff_vk_exec_discard_deps(vkctx, exec);
++    av_buffer_unref(&buf);
++    return err;
++}
++
++static int denoise_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
++{
++    int err;
++    int i;
++    AVFrame *out = NULL;
++    AVFrame *clone = NULL;
++    AVFilterContext *ctx = link->dst;
++    PelorusDenoiseVulkanContext *s = ctx->priv;
++    AVFilterLink *outlink = ctx->outputs[0];
++    AVFrame *const *prev = (AVFrame *const *)s->ring;
++    const PelorusDenoiseBuf *acc = NULL;
++    AVBufferRef *buf = NULL;
++    int actual_prev;
++
++    out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
++    if (!out) {
++        err = AVERROR(ENOMEM);
++        goto fail;
++    }
++
++    if (!s->initialized)
++        RET(init_filter(ctx));
++
++    s->opts.frame_idx = (uint32_t)(s->frame_idx++);
++
++    /* Causal window: only the frames already seen, capped at the configured
++     * depth. ring[0] is the most recent previous frame. */
++    actual_prev = FFMIN(s->n_prev, s->ring_count);
++
++    RET(denoise_dispatch(s, out, in, prev, actual_prev, &acc, &buf));
++
++    err = av_frame_copy_props(out, in);
++    if (err < 0)
++        goto fail;
++
++    if (s->meta && acc) {
++        err = attach_interop(s, out, acc);
++        if (err < 0)
++            goto fail;
++    }
++    av_buffer_unref(&buf);
++
++    /* Push the current frame into the ring (cheap clone — refcount bump on the
++     * hwframe images, no pixel copy), evicting the oldest. */
++    clone = av_frame_clone(in);
++    if (!clone) {
++        err = AVERROR(ENOMEM);
++        goto fail;
++    }
++    if (s->ring_count == s->n_prev && s->n_prev > 0)
++        av_frame_free(&s->ring[s->n_prev - 1]);
++    for (i = FFMIN(s->ring_count, s->n_prev - 1); i > 0; i--)
++        s->ring[i] = s->ring[i - 1];
++    if (s->n_prev > 0) {
++        s->ring[0] = clone;
++        clone = NULL;
++        if (s->ring_count < s->n_prev)
++            s->ring_count++;
++    } else {
++        av_frame_free(&clone); /* depth 0: temporal disabled, keep no ring */
++    }
++
++    av_frame_free(&in);
++    return ff_filter_frame(outlink, out);
++
++fail:
++    av_buffer_unref(&buf);
++    av_frame_free(&clone);
++    av_frame_free(&in);
++    av_frame_free(&out);
++    return err;
++}
++
++static void denoise_vulkan_uninit(AVFilterContext *avctx)
++{
++    int i;
++    PelorusDenoiseVulkanContext *s = avctx->priv;
++    FFVulkanContext *vkctx = &s->vkctx;
++
++    for (i = 0; i < PEL_DENOISE_MAX_PREV; i++)
++        av_frame_free(&s->ring[i]);
++    s->ring_count = 0;
++
++    ff_vk_exec_pool_free(vkctx, &s->e);
++    ff_vk_shader_free(vkctx, &s->shd);
++    av_buffer_pool_uninit(&s->stat_buf_pool);
++    ff_vk_uninit(&s->vkctx);
++    s->initialized = 0;
++}
++
++#define OFFSET(x) offsetof(PelorusDenoiseVulkanContext, x)
++#define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
++static const AVOption pelorus_denoise_vulkan_options[] = {
++    { "sigma", "luma spatial range sigma (edge sensitivity, normalized)",
++      OFFSET(opt_sigma_y), AV_OPT_TYPE_DOUBLE, { .dbl = 0.03 }, 0.0, 0.5, FLAGS },
++    { "sigmac", "chroma spatial range sigma (normalized)",
++      OFFSET(opt_sigma_c), AV_OPT_TYPE_DOUBLE, { .dbl = 0.04 }, 0.0, 0.5, FLAGS },
++    { "sigmat", "temporal gate bandwidth (normalized)",
++      OFFSET(opt_sigma_t), AV_OPT_TYPE_DOUBLE, { .dbl = 0.05 }, 0.0, 0.5, FLAGS },
++    { "strength", "luma dry/wet mix (0..1)", OFFSET(opt_strength_y),
++      AV_OPT_TYPE_DOUBLE, { .dbl = 0.30 }, 0.0, 1.0, FLAGS },
++    { "strengthc", "chroma dry/wet mix (0..1)", OFFSET(opt_strength_c),
++      AV_OPT_TYPE_DOUBLE, { .dbl = 0.20 }, 0.0, 1.0, FLAGS },
++    { "blend", "spatial<->temporal blend (0=spatial, 1=temporal)",
++      OFFSET(opt_blend), AV_OPT_TYPE_DOUBLE, { .dbl = 0.6 }, 0.0, 1.0, FLAGS },
++    { "tdecay", "per-frame temporal trust falloff", OFFSET(opt_tdecay),
++      AV_OPT_TYPE_DOUBLE, { .dbl = 0.8 }, 0.0, 1.0, FLAGS },
++    { "tcut", "per-pixel scene-cut/fast-motion clamp (normalized)",
++      OFFSET(opt_tcut), AV_OPT_TYPE_DOUBLE, { .dbl = 0.10 }, 0.0, 0.5, FLAGS },
++    { "patch", "spatial window radius (0 = temporal-only)", OFFSET(patch_radius),
++      AV_OPT_TYPE_INT, { .i64 = 1 }, 0, 3, FLAGS },
++    { "prev", "causal temporal depth (previous frames held in VRAM)",
++      OFFSET(n_prev), AV_OPT_TYPE_INT, { .i64 = 3 }, 0, PEL_DENOISE_MAX_PREV, FLAGS },
++    { "protect", "damp strength on textured / edge regions", OFFSET(protect_detail),
++      AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
++    { "planes", "planes to process (bitmask)", OFFSET(planes),
++      AV_OPT_TYPE_INT, { .i64 = 0xF }, 0, 0xF, FLAGS },
++    { "meta", "attach Pelorus interop side data", OFFSET(meta),
++      AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
++    { NULL }
++};
++
++AVFILTER_DEFINE_CLASS(pelorus_denoise_vulkan);
++
++static const AVFilterPad pelorus_denoise_vulkan_inputs[] = {
++    {
++        .name = "default",
++        .type = AVMEDIA_TYPE_VIDEO,
++        .filter_frame = &denoise_vulkan_filter_frame,
++        .config_props = &ff_vk_filter_config_input,
++    },
++};
++
++static const AVFilterPad pelorus_denoise_vulkan_outputs[] = {
++    {
++        .name = "default",
++        .type = AVMEDIA_TYPE_VIDEO,
++        .config_props = &ff_vk_filter_config_output,
++    },
++};
++
++const FFFilter ff_vf_pelorus_denoise_vulkan = {
++    .p.name = "pelorus_denoise_vulkan",
++    .p.description = NULL_IF_CONFIG_SMALL("Pelorus temporal denoise (Vulkan)"),
++    .p.priv_class = &pelorus_denoise_vulkan_class,
++    .p.flags = AVFILTER_FLAG_HWDEVICE,
++    .priv_size = sizeof(PelorusDenoiseVulkanContext),
++    .init = &ff_vk_filter_init,
++    .uninit = &denoise_vulkan_uninit,
++    FILTER_INPUTS(pelorus_denoise_vulkan_inputs),
++    FILTER_OUTPUTS(pelorus_denoise_vulkan_outputs),
++    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_VULKAN),
++    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
++};
+-- 
+2.54.0
+
