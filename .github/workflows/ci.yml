@@ -54,10 +54,11 @@ jobs:
           sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list \
             https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
           sudo apt-get update
-          # vulkan-sdk = current Vulkan-Headers (Ubuntu's are < FFmpeg's min).
-          # libshaderc-dev = the `shaderc` pkg-config FFmpeg's --enable-libshaderc
-          # requires for spirv_library (the runtime GLSL->SPIR-V compiler).
-          sudo apt-get install -y vulkan-sdk libshaderc-dev
+          # The vulkan-sdk metapackage bundles current Vulkan-Headers (Ubuntu's
+          # are < FFmpeg's min) AND shaderc/glslang (spirv_library). Install it
+          # ALONE — adding Ubuntu's libshaderc-dev in the same transaction
+          # collides with LunarG's shaderc deb (dpkg unpack conflict).
+          sudo apt-get install -y vulkan-sdk
           echo "vulkan: $(pkg-config --modversion vulkan 2>/dev/null || echo '?'); shaderc: $(pkg-config --modversion shaderc 2>/dev/null || echo '?')"
       - name: Build + install libpelorus (to /usr so pkg-config finds it)
         run: |
