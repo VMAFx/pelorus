@@ -25,13 +25,25 @@
  * filter only approximates today. The frame passes through unchanged; only side
  * data is added. Readback follows the vf_scdet_vulkan pattern. See
  * <pelorus/interop.h> and docs/metrics/analyze.md.
+ *
+ * The GPU reduction is *per tile* (one 32x32 compute workgroup == one tile): each
+ * tile's luma mean / variance / edge-density / low-amplitude-gradient is written
+ * to a position-preserving SSBO indexed by (tile_y * grid_cols + tile_x). The
+ * frame-scalar PEL_SEC_* summaries are then derived host-side by summing over all
+ * tiles. With `roi=1` the same per-tile signals drive an *auto-detected*
+ * banding-prone ROI map emitted as AV_FRAME_DATA_REGIONS_OF_INTEREST — a negative
+ * qoffset on flat-but-not-constant tiles that variance-AQ starves (ADR-0114
+ * Tier 0; bench-results.md v0.4 proved the concept at −36% banding iso-bitrate
+ * vs x265 aq-mode 2). libx265/libx264/QSV/VAAPI honor it with no patch.
  */
 
 #include "libavutil/buffer.h"
+#include "libavutil/common.h"
 #include "libavutil/frame.h"
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
+#include "libavutil/rational.h"
 #include "libavutil/vulkan_spirv.h"
 #include "vulkan_filter.h"
 
@@ -42,14 +54,25 @@
 
 #include <pelorus/interop.h>
 
-#define PEL_SLICES 16
+/* One 32x32 compute workgroup reduces one tile. */
+#define PEL_TILE 32
 
-typedef struct PelorusAnalyzeBuf {
-    uint32_t var_sum[PEL_SLICES];
-    uint32_t edge_sum[PEL_SLICES];
-    uint32_t flat_wg[PEL_SLICES];
-    uint32_t total_wg[PEL_SLICES];
-} PelorusAnalyzeBuf;
+/* Per-tile reduction record written by the shader (std430, all uint fixed
+ * point). Index = tile_y * grid_cols + tile_x — position preserving, unlike the
+ * old hashed 16-slice scheme that only supported a frame scalar. */
+typedef struct PelorusTile {
+    uint32_t var;   /* tile luma variance         * GS  ([0, ~0.25] range)     */
+    uint32_t edge;  /* tile mean edge density     * GS  ([0, 1])               */
+    uint32_t grad;  /* tile low-amplitude gradient * GS  (flat-but-not-const)  */
+    uint32_t valid; /* 1 if the tile had any in-bounds pixels                  */
+} PelorusTile;
+
+/* Fixed-point scale shared by shader writes and host reads. */
+#define PEL_GS 1000000.0
+
+/* Max ROI rectangles we coalesce banding tiles into (keeps side data compact;
+ * one AVRegionOfInterest is 24 bytes). */
+#define PEL_MAX_ROI 32
 
 typedef struct PelorusAnalyzeVulkanContext {
     FFVulkanContext vkctx; /* MUST be first */
@@ -61,6 +84,16 @@ typedef struct PelorusAnalyzeVulkanContext {
     AVBufferPool *stat_buf_pool;
 
     double flat_thr; /* per-tile variance below which a tile is banding-prone */
+
+    /* ROI auto-detection (ADR-0114 Tier 0). */
+    int roi;             /* emit AV_FRAME_DATA_REGIONS_OF_INTEREST           */
+    double roi_strength; /* max |qoffset| as a fraction of the QP range      */
+    double grad_lo;      /* min tile gradient to count as a real gradient    */
+    double grad_hi;      /* gradient above which a tile is "textured", score 0 */
+
+    /* Allocated lazily at first frame from the tile grid dimensions. */
+    int grid_cols;
+    int grid_rows;
 } PelorusAnalyzeVulkanContext;
 
 static av_cold int init_filter(AVFilterContext *ctx)
@@ -90,7 +123,8 @@ static av_cold int init_filter(AVFilterContext *ctx)
 
     RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
     RET(ff_vk_shader_init(vkctx, shd, "pelorus_analyze",
-                          VK_SHADER_STAGE_COMPUTE_BIT, NULL, 0, 32, 32, 1, 0));
+                          VK_SHADER_STAGE_COMPUTE_BIT, NULL, 0, PEL_TILE,
+                          PEL_TILE, 1, 0));
 
     {
         FFVulkanDescriptorSetBinding desc[] = {
@@ -105,26 +139,32 @@ static av_cold int init_filter(AVFilterContext *ctx)
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
             },
             {
-                .name = "stat_buffer",
+                .name = "tile_buffer",
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .mem_layout = "std430",
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-                .buf_content = "uint var_sum[16]; uint edge_sum[16]; "
-                               "uint flat_wg[16]; uint total_wg[16];",
+                /* One runtime-sized array (GLSL allows only one, and last);
+                 * struct-of-arrays by field: tile[k*ntiles + idx], k in 0..3
+                 * for var/edge/grad/valid. Host reads the four contiguous spans. */
+                .buf_content = "uint tile[];",
             },
         };
         RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc, 2, 0, 0));
     }
 
     GLSLC(0, layout(push_constant, std430) uniform pushConstants {            );
-    GLSLC(1,     float flat_thr;                                              );
+    GLSLC(1,     int grid_cols;                                               );
+    GLSLC(1,     int ntiles;                                                  );
+    GLSLC(1,     float grad_lo;                                               );
     GLSLC(0, };                                                               );
     GLSLC(0,                                                                  );
-    ff_vk_shader_add_push_const(shd, 0, sizeof(float), VK_SHADER_STAGE_COMPUTE_BIT);
+    ff_vk_shader_add_push_const(shd, 0, 2 * sizeof(int) + sizeof(float),
+                                VK_SHADER_STAGE_COMPUTE_BIT);
 
     GLSLC(0, shared uint s_sum;                                               );
     GLSLC(0, shared uint s_sumsq;                                             );
     GLSLC(0, shared uint s_edge;                                              );
+    GLSLC(0, shared uint s_grad;                                              );
     GLSLC(0, shared uint s_cnt;                                               );
     GLSLC(0,                                                                  );
     GLSLC(0, void main()                                                      );
@@ -132,7 +172,8 @@ static av_cold int init_filter(AVFilterContext *ctx)
     GLSLC(1,     const float TS = 65535.0;                                    );
     GLSLC(1,     const float GS = 1000000.0;                                  );
     GLSLC(1,     if (gl_LocalInvocationIndex == 0u) {                         );
-    GLSLC(2,         s_sum = 0u; s_sumsq = 0u; s_edge = 0u; s_cnt = 0u;       );
+    GLSLC(2,         s_sum = 0u; s_sumsq = 0u; s_edge = 0u;                   );
+    GLSLC(2,         s_grad = 0u; s_cnt = 0u;                                 );
     GLSLC(1,     }                                                            );
     GLSLC(1,     barrier();                                                   );
     GLSLC(1,     ivec2 size = imageSize(input_images[0]);                     );
@@ -143,25 +184,40 @@ static av_cold int init_filter(AVFilterContext *ctx)
     GLSLC(2,         ivec2 dp = clamp(pos + ivec2(0, 1), ivec2(0), size - 1); );
     GLSLC(2,         float gx = abs(imageLoad(input_images[0], rp).x - l);    );
     GLSLC(2,         float gy = abs(imageLoad(input_images[0], dp).x - l);    );
-    GLSLC(2,         float edge = clamp(gx + gy, 0.0, 1.0);                   );
+    GLSLC(2,         float g = gx + gy;                                       );
+    GLSLC(2,         float edge = clamp(g, 0.0, 1.0);                         );
+    /* A "real but low-amplitude" step (>= grad_lo) is the banding signature; a
+     * dead-flat constant tile (g < grad_lo) and a textured tile (large g) both
+     * contribute 0 to the gradient accumulator. The window [grad_lo, 8*grad_lo]
+     * isolates the slope that bands. */
+    GLSLC(2,         float band_g = (g >= grad_lo && g < grad_lo * 8.0)       );
+    GLSLC(3,                        ? g : 0.0;                                );
     GLSLC(2,         atomicAdd(s_sum,   uint(l * TS));                        );
     GLSLC(2,         atomicAdd(s_sumsq, uint(l * l * TS));                    );
     GLSLC(2,         atomicAdd(s_edge,  uint(edge * TS));                     );
+    GLSLC(2,         atomicAdd(s_grad,  uint(band_g * TS));                   );
     GLSLC(2,         atomicAdd(s_cnt,   1u);                                  );
     GLSLC(1,     }                                                            );
     GLSLC(1,     barrier();                                                   );
-    GLSLC(1,     if (gl_LocalInvocationIndex == 0u && s_cnt > 0u) {           );
-    GLSLC(2,         float n = float(s_cnt);                                  );
-    GLSLC(2,         float mean = (float(s_sum) / TS) / n;                    );
-    GLSLC(2,         float msq  = (float(s_sumsq) / TS) / n;                  );
-    GLSLC(2,         float var  = max(msq - mean * mean, 0.0);                );
-    GLSLC(2,         float edge = (float(s_edge) / TS) / n;                   );
-    GLSLC(2,         uint slice = (gl_WorkGroupID.y * gl_NumWorkGroups.x      );
-    GLSLC(2,                       + gl_WorkGroupID.x) % 16u;                 );
-    GLSLC(2,         atomicAdd(var_sum[slice],  uint(var * GS));              );
-    GLSLC(2,         atomicAdd(edge_sum[slice], uint(edge * GS));             );
-    GLSLC(2,         atomicAdd(flat_wg[slice],  (var < flat_thr) ? 1u : 0u);  );
-    GLSLC(2,         atomicAdd(total_wg[slice], 1u);                          );
+    GLSLC(1,     if (gl_LocalInvocationIndex == 0u) {                         );
+    GLSLC(2,         uint idx = gl_WorkGroupID.y * uint(grid_cols)            );
+    GLSLC(2,                    + gl_WorkGroupID.x;                           );
+    GLSLC(2,         uint N = uint(ntiles);                                   );
+    GLSLC(2,         if (s_cnt > 0u) {                                        );
+    GLSLC(3,             float n = float(s_cnt);                              );
+    GLSLC(3,             float mean = (float(s_sum) / TS) / n;                );
+    GLSLC(3,             float msq  = (float(s_sumsq) / TS) / n;             );
+    GLSLC(3,             float var  = max(msq - mean * mean, 0.0);           );
+    GLSLC(3,             float edge = (float(s_edge) / TS) / n;              );
+    GLSLC(3,             float grad = (float(s_grad) / TS) / n;             );
+    GLSLC(3,             tile[idx]          = uint(var  * GS);              );
+    GLSLC(3,             tile[N + idx]      = uint(edge * GS);              );
+    GLSLC(3,             tile[2u * N + idx] = uint(grad * GS);              );
+    GLSLC(3,             tile[3u * N + idx] = 1u;                           );
+    GLSLC(2,         } else {                                                 );
+    GLSLC(3,             tile[idx] = 0u; tile[N + idx] = 0u;                 );
+    GLSLC(3,             tile[2u * N + idx] = 0u; tile[3u * N + idx] = 0u;   );
+    GLSLC(2,         }                                                        );
     GLSLC(1,     }                                                            );
     GLSLC(0, }                                                                );
 
@@ -185,10 +241,196 @@ static void pel_sd_free(void *opaque, uint8_t *data)
     pel_blob_free(data);
 }
 
-/* Derive the frame summaries from the read-back accumulators and attach the
- * measured PEL_SEC_VARIANCE + PEL_SEC_BANDING sections to the frame. */
+/* Per-tile accumulators read back from the SSBO, split into four uint arrays
+ * matching the std430 flexible-array layout (t_var[], t_edge[], t_grad[],
+ * t_valid[]). */
+typedef struct PelorusTileView {
+    const uint32_t *t_var;
+    const uint32_t *t_edge;
+    const uint32_t *t_grad;
+    const uint32_t *t_valid;
+    int ntiles;
+} PelorusTileView;
+
+/* Per-tile banding-prone score in [0,1]. A tile bands (and is starved by
+ * variance-AQ) when it is FLAT (low variance) AND carries a real but
+ * low-amplitude gradient (flat-but-not-constant). Textured tiles -> ~0. */
+static float tile_band_score(const PelorusAnalyzeVulkanContext *s,
+                             float var, float grad)
+{
+    float flat, slope;
+
+    if (var <= 0.0f && grad <= 0.0f)
+        return 0.0f;
+
+    /* Flatness: 1 at var==0, linearly to 0 at var==flat_thr (the variance
+     * above which a tile is "textured enough" for AQ to find on its own). */
+    flat = 1.0f - var / (float)s->flat_thr;
+    flat = av_clipf(flat, 0.0f, 1.0f);
+
+    /* Slope presence: 0 below grad_lo (dead-flat constant — no contour to
+     * protect), ramps to 1 at grad_hi, back to ~0 well above (textured). The
+     * shader already zeroed grad outside [grad_lo, 8*grad_lo]; here we weight
+     * within that band so a mid-slope scores highest. */
+    if (grad <= (float)s->grad_lo)
+        slope = 0.0f;
+    else if (grad >= (float)s->grad_hi)
+        slope = av_clipf(1.0f - (grad - (float)s->grad_hi) /
+                                    (float)s->grad_hi,
+                         0.0f, 1.0f);
+    else
+        slope = (grad - (float)s->grad_lo) /
+                ((float)s->grad_hi - (float)s->grad_lo);
+
+    return av_clipf(flat * slope, 0.0f, 1.0f);
+}
+
+/* Map a per-tile banding score to an AVRational qoffset (negative => more bits /
+ * lower QP). Magnitude = score * roi_strength, clamped to [-roi_strength, 0].
+ * Encoded as num/1000 so libx265's qoffset.num/qoffset.den read is exact. */
+static AVRational score_to_qoffset(const PelorusAnalyzeVulkanContext *s,
+                                  float score)
+{
+    int milli = (int)lrintf(-score * (float)s->roi_strength * 1000.0f);
+    milli = av_clip(milli, -1000, 0);
+    return av_make_q(milli, 1000);
+}
+
+/* Greedy row-run coalescing: scan tiles row-major, merge horizontally adjacent
+ * banding tiles of the same qoffset bucket into one rectangle, cap at
+ * PEL_MAX_ROI rectangles (drop the lowest-score remainder once full). Per-tile
+ * rectangles fall out naturally when neighbours differ. Writes into out[] and
+ * returns the rectangle count. */
+static int coalesce_roi(const PelorusAnalyzeVulkanContext *s,
+                        const float *score, AVRegionOfInterest *out, int max)
+{
+    int cols = s->grid_cols, rows = s->grid_rows;
+    int n = 0;
+    int ty, tx;
+
+    for (ty = 0; ty < rows && n < max; ty++) {
+        tx = 0;
+        while (tx < cols && n < max) {
+            float sc = score[ty * cols + tx];
+            int q0, run, x;
+            if (sc <= 0.0f) {
+                tx++;
+                continue;
+            }
+            /* qoffset bucket (milli) of the run head. */
+            q0 = score_to_qoffset(s, sc).num;
+            run = 1;
+            for (x = tx + 1; x < cols; x++) {
+                float scn = score[ty * cols + x];
+                if (scn <= 0.0f || score_to_qoffset(s, scn).num != q0)
+                    break;
+                run++;
+            }
+            out[n] = (AVRegionOfInterest) {
+                .self_size = sizeof(AVRegionOfInterest),
+                .top    = ty * PEL_TILE,
+                .bottom = FFMIN((ty + 1) * PEL_TILE, s->vkctx.output_height),
+                .left   = tx * PEL_TILE,
+                .right  = FFMIN((tx + run) * PEL_TILE, s->vkctx.output_width),
+                .qoffset = av_make_q(q0, 1000),
+            };
+            n++;
+            tx += run;
+        }
+    }
+    return n;
+}
+
+/* Auto-detect banding-prone tiles and attach them as the standard
+ * AV_FRAME_DATA_REGIONS_OF_INTEREST side data (ADR-0114 Tier 0). Mirrors
+ * vf_addroi's attach mechanics: one buffer, nb_regions*sizeof(AVRegionOfInterest),
+ * each region's self_size set. Appends to any pre-existing ROI side data. */
+static int attach_roi(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
+                     const PelorusTileView *tv)
+{
+    AVRegionOfInterest *detected;
+    AVRegionOfInterest *roi;
+    AVFrameSideData *sd_old, *sd_new;
+    AVBufferRef *roi_ref;
+    float *score;
+    int ndet, nb_old = 0, nb_total, i;
+    uint32_t old_size = sizeof(AVRegionOfInterest);
+
+    score = av_calloc((size_t)tv->ntiles, sizeof(*score));
+    detected = av_calloc(PEL_MAX_ROI, sizeof(*detected));
+    if (!score || !detected) {
+        av_free(score);
+        av_free(detected);
+        return AVERROR(ENOMEM);
+    }
+
+    for (i = 0; i < tv->ntiles; i++) {
+        float var = tv->t_valid[i] ? (float)(tv->t_var[i] / PEL_GS) : 0.0f;
+        float grad = tv->t_valid[i] ? (float)(tv->t_grad[i] / PEL_GS) : 0.0f;
+        score[i] = tv->t_valid[i] ? tile_band_score(s, var, grad) : 0.0f;
+    }
+
+    ndet = coalesce_roi(s, score, detected, PEL_MAX_ROI);
+    av_free(score);
+
+    if (ndet == 0) {
+        av_free(detected);
+        return 0; /* no banding-prone tiles — leave the frame to the encoder */
+    }
+
+    /* Append to existing ROI side data (e.g. a manual vf_addroi upstream). */
+    sd_old = av_frame_get_side_data(frame, AV_FRAME_DATA_REGIONS_OF_INTEREST);
+    if (sd_old) {
+        const AVRegionOfInterest *o = (const AVRegionOfInterest *)sd_old->data;
+        old_size = o->self_size;
+        if (!old_size || sd_old->size % old_size != 0) {
+            av_free(detected);
+            return AVERROR(EINVAL);
+        }
+        nb_old = sd_old->size / old_size;
+    }
+
+    nb_total = nb_old + ndet;
+    roi_ref = av_buffer_alloc(sizeof(AVRegionOfInterest) * (size_t)nb_total);
+    if (!roi_ref) {
+        av_free(detected);
+        return AVERROR(ENOMEM);
+    }
+    roi = (AVRegionOfInterest *)roi_ref->data;
+
+    /* Copy the pre-existing regions first (they take precedence on overlap:
+     * libx265 iterates in reverse, so earlier-in-array wins). */
+    for (i = 0; i < nb_old; i++) {
+        const AVRegionOfInterest *o =
+            (const AVRegionOfInterest *)(sd_old->data + (size_t)old_size * i);
+        roi[i] = (AVRegionOfInterest) {
+            .self_size = sizeof(AVRegionOfInterest),
+            .top = o->top, .bottom = o->bottom,
+            .left = o->left, .right = o->right,
+            .qoffset = o->qoffset,
+        };
+    }
+    for (i = 0; i < ndet; i++)
+        roi[nb_old + i] = detected[i];
+    av_free(detected);
+
+    if (sd_old)
+        av_frame_remove_side_data(frame, AV_FRAME_DATA_REGIONS_OF_INTEREST);
+
+    sd_new = av_frame_new_side_data_from_buf(
+        frame, AV_FRAME_DATA_REGIONS_OF_INTEREST, roi_ref);
+    if (!sd_new) {
+        av_buffer_unref(&roi_ref);
+        return AVERROR(ENOMEM);
+    }
+    return 0;
+}
+
+/* Derive the frame summaries from the per-tile records and attach the measured
+ * PEL_SEC_VARIANCE + PEL_SEC_BANDING sections to the frame. Summing over all
+ * tiles reproduces the same frame scalars the old hashed-slice scheme emitted. */
 static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
-                        const PelorusAnalyzeBuf *acc)
+                        const PelorusTileView *tv)
 {
     const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
     PelorusSideData meta;
@@ -203,17 +445,20 @@ static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
     float gvar, gedge, flat_frac;
     int i;
 
-    for (i = 0; i < PEL_SLICES; i++) {
-        var_sum += acc->var_sum[i];
-        edge_sum += acc->edge_sum[i];
-        flat += acc->flat_wg[i];
-        total += acc->total_wg[i];
+    for (i = 0; i < tv->ntiles; i++) {
+        if (!tv->t_valid[i])
+            continue;
+        var_sum += tv->t_var[i];
+        edge_sum += tv->t_edge[i];
+        if ((double)(tv->t_var[i] / PEL_GS) < s->flat_thr)
+            flat++;
+        total++;
     }
     if (total == 0)
         return 0; /* nothing to report (degenerate frame) */
 
-    gvar = (float)(var_sum / 1e6 / (double)total);
-    gedge = (float)(edge_sum / 1e6 / (double)total);
+    gvar = (float)(var_sum / PEL_GS / (double)total);
+    gedge = (float)(edge_sum / PEL_GS / (double)total);
     flat_frac = (float)((double)flat / (double)total);
 
     memset(&meta, 0, sizeof(meta));
@@ -223,6 +468,8 @@ static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
                             ? PEL_LAYOUT_444
                             : ((d && d->log2_chroma_h == 0) ? PEL_LAYOUT_422
                                                             : PEL_LAYOUT_420);
+    meta.grid_cols = (uint16_t)s->grid_cols;
+    meta.grid_rows = (uint16_t)s->grid_rows;
     meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'A');
 
     memset(&var, 0, sizeof(var));
@@ -274,23 +521,45 @@ static int analyze_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     FFVkExecContext *exec = NULL;
     AVBufferRef *buf = NULL;
     FFVkBuffer *buf_vk;
-    const PelorusAnalyzeBuf *acc;
-    float flat_thr;
+    PelorusTileView tv;
+    const uint32_t *base;
+    size_t buf_bytes;
+    int ntiles;
+    struct {
+        int32_t grid_cols;
+        int32_t ntiles;
+        float grad_lo;
+    } pc;
 
     if (!s->initialized)
         RET(init_filter(ctx));
 
-    flat_thr = (float)s->flat_thr;
+    /* The tile grid is fixed by the frame size; compute once. */
+    s->grid_cols = (in->width + PEL_TILE - 1) / PEL_TILE;
+    s->grid_rows = (in->height + PEL_TILE - 1) / PEL_TILE;
+    ntiles = s->grid_cols * s->grid_rows;
+
+    /* Four uint arrays (t_var/t_edge/t_grad/t_valid), each ntiles long. */
+    buf_bytes = (size_t)ntiles * 4 * sizeof(uint32_t);
+
+    pc.grid_cols = s->grid_cols;
+    pc.ntiles = ntiles;
+    pc.grad_lo = (float)s->grad_lo;
 
     RET(ff_vk_get_pooled_buffer(vkctx, &s->stat_buf_pool, &buf,
                                 VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                NULL, sizeof(PelorusAnalyzeBuf),
+                                NULL, buf_bytes,
                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
                                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
     buf_vk = (FFVkBuffer *)buf->data;
-    acc = (const PelorusAnalyzeBuf *)buf_vk->mapped_mem;
+    base = (const uint32_t *)buf_vk->mapped_mem;
+    tv.t_var = base;
+    tv.t_edge = base + ntiles;
+    tv.t_grad = base + 2 * ntiles;
+    tv.t_valid = base + 3 * ntiles;
+    tv.ntiles = ntiles;
 
     exec = ff_vk_exec_get(vkctx, &s->e);
     ff_vk_exec_start(vkctx, exec);
@@ -349,7 +618,7 @@ static int analyze_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     ff_vk_exec_bind_shader(vkctx, exec, &s->shd);
     ff_vk_shader_update_push_const(vkctx, exec, &s->shd,
                                    VK_SHADER_STAGE_COMPUTE_BIT, 0,
-                                   sizeof(flat_thr), &flat_thr);
+                                   sizeof(pc), &pc);
 
     vk->CmdDispatch(exec->buf,
                     FFALIGN(in->width, s->shd.lg_size[0]) / s->shd.lg_size[0],
@@ -377,9 +646,15 @@ static int analyze_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     RET(ff_vk_exec_submit(vkctx, exec));
     ff_vk_exec_wait(vkctx, exec);
 
-    err = attach_stats(s, in, acc);
+    err = attach_stats(s, in, &tv);
     if (err < 0)
         goto fail;
+
+    if (s->roi) {
+        err = attach_roi(s, in, &tv);
+        if (err < 0)
+            goto fail;
+    }
 
     av_buffer_unref(&buf);
     return ff_filter_frame(outlink, in);
@@ -409,6 +684,15 @@ static void analyze_vulkan_uninit(AVFilterContext *avctx)
 static const AVOption pelorus_analyze_vulkan_options[] = {
     { "flat", "per-tile variance below which a tile is banding-prone",
       OFFSET(flat_thr), AV_OPT_TYPE_DOUBLE, { .dbl = 0.0015 }, 0.0, 0.25, FLAGS },
+    { "roi", "auto-detect banding-prone tiles and emit ROI side data",
+      OFFSET(roi), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
+    { "roi_strength", "max |qoffset| for a fully banding tile (frac of QP range)",
+      OFFSET(roi_strength), AV_OPT_TYPE_DOUBLE, { .dbl = 0.333 }, 0.0, 1.0,
+      FLAGS },
+    { "grad_lo", "min per-tile gradient counted as a real (banding) slope",
+      OFFSET(grad_lo), AV_OPT_TYPE_DOUBLE, { .dbl = 0.002 }, 0.0, 0.5, FLAGS },
+    { "grad_hi", "tile gradient at which banding risk peaks before texturing",
+      OFFSET(grad_hi), AV_OPT_TYPE_DOUBLE, { .dbl = 0.01 }, 0.0, 0.5, FLAGS },
     { NULL }
 };
 
