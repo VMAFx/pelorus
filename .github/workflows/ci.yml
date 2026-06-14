@@ -78,8 +78,11 @@ jobs:
         working-directory: ffmpeg
         run: |
           pkg-config --exists libpelorus && echo "libpelorus $(pkg-config --modversion libpelorus) — $(pkg-config --cflags libpelorus)"
+          # Force-enable the Pelorus filters so configure dies with the EXACT
+          # unmet-dependency reason if they cannot be enabled.
           ./configure --enable-vulkan --disable-doc --disable-programs \
-            || { echo '::group::config.log tail'; tail -60 ffbuild/config.log; echo '::endgroup::'; exit 1; }
+            --enable-filter=pelorus_deband_vulkan,pelorus_analyze_vulkan \
+            || { echo '::group::config.log tail'; tail -80 ffbuild/config.log; echo '::endgroup::'; exit 1; }
       - name: Show Vulkan / SPIR-V / libpelorus detection
         working-directory: ffmpeg
         run: |
