@@ -1,0 +1,19 @@
+feat(deband): add vf_pelorus_deband_vulkan (smart deband, Vulkan)
+
+Psychovisual deband modeled on flash3kyuu_deband (f3kdb): the vf_deband.c
+flat-test (4-tap rotated reference sampling, per-plane threshold,
+average-or-keep) extended with TPDF/blue-noise grain injection, a
+local-variance detail-protection mask, and a soft blend. Runs zero-copy in
+VRAM as a pre-encode pass for a hardware encoder.
+
+AVOptions: range, thry/thrc, grainy/grainc, softness, detail,
+sample (column/square/row/square_rot), blur (average/allrefs),
+dither (none/bayer8/bluenoise), dynamic, protect, planes, meta.
+
+When meta=1 the filter links libpelorus and attaches a Pelorus interop blob
+(AV_FRAME_DATA_SEI_UNREGISTERED, UUID-keyed) so a downstream vmafx
+vf_libvmaf* can perceptually weight its score and avoid double-counting.
+Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
+
+ADR: docs/adr/0104-ffmpeg-patch-stack.md
+Research: docs/research/0101-smart-deband.md

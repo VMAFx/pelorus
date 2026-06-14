@@ -1,0 +1,2 @@
+- **`libpelorus`** (`libpelorus/`): the shared core library — the Pelorus⇄vmafx side-data interop ABI (`pelorus/interop.h`, `pelorus/interop.c`) and the smart-deband parameter contract (`pelorus/deband.h`). The `PelorusSideData` blob is a versioned, UUID-keyed, append-only AVFrame side-data format both `vf_pelorus_*` and vmafx's `vf_libvmaf*` read/write. Ships a shared conformance fixture (`libpelorus/test/interop_test.c`). ADR-0103, ADR-0105.
+- **Docs**: `docs/api/interop-abi.md` (the ABI + C API), `docs/architecture/overview.md` (the two interop seams).

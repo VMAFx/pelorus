@@ -1,0 +1,551 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lusoris <lusoris@pm.me>
+Date: Sun, 14 Jun 2026 13:42:24 +0200
+Subject: [PATCH] feat(deband): add vf_pelorus_deband_vulkan (smart deband,
+ Vulkan)
+
+Psychovisual deband modeled on flash3kyuu_deband (f3kdb): the vf_deband.c
+flat-test (4-tap rotated reference sampling, per-plane threshold,
+average-or-keep) extended with TPDF/blue-noise grain injection, a
+local-variance detail-protection mask, and a soft blend. Runs zero-copy in
+VRAM as a pre-encode pass for a hardware encoder.
+
+AVOptions: range, thry/thrc, grainy/grainc, softness, detail,
+sample (column/square/row/square_rot), blur (average/allrefs),
+dither (none/bayer8/bluenoise), dynamic, protect, planes, meta.
+
+When meta=1 the filter links libpelorus and attaches a Pelorus interop blob
+(AV_FRAME_DATA_SEI_UNREGISTERED, UUID-keyed) so a downstream vmafx
+vf_libvmaf* can perceptually weight its score and avoid double-counting.
+Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
+
+ADR: docs/adr/0104-ffmpeg-patch-stack.md
+Research: docs/research/0101-smart-deband.md
+---
+ configure                              |   2 +
+ libavfilter/Makefile                   |   1 +
+ libavfilter/allfilters.c               |   1 +
+ libavfilter/vf_pelorus_deband_vulkan.c | 467 +++++++++++++++++++++++++
+ 4 files changed, 471 insertions(+)
+ create mode 100644 libavfilter/vf_pelorus_deband_vulkan.c
+
+diff --git a/configure b/configure
+index 1759694274..8fd7a635af 100755
+--- a/configure
++++ b/configure
+@@ -4177,6 +4177,7 @@ overlay_qsv_filter_deps="libmfx"
+ overlay_qsv_filter_select="qsvvpp"
+ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
+ overlay_vulkan_filter_deps="vulkan spirv_library"
++pelorus_deband_vulkan_filter_deps="vulkan spirv_library"
+ owdenoise_filter_deps="gpl"
+ pad_opencl_filter_deps="opencl"
+ pan_filter_deps="swresample"
+@@ -7390,6 +7391,7 @@ enabled libv4l2           && require_pkg_config libv4l2 libv4l2 libv4l2.h v4l2_i
+ enabled libvidstab        && require_pkg_config libvidstab "vidstab >= 0.98" vid.stab/libvidstab.h vsMotionDetectInit
+ enabled libvmaf           && require_pkg_config libvmaf "libvmaf >= 2.0.0" libvmaf.h vmaf_init
+ enabled libvmaf           && check_pkg_config libvmaf_cuda "libvmaf >= 2.0.0" libvmaf_cuda.h vmaf_cuda_state_init
++enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack
+ enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
+                                require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
+ enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
+diff --git a/libavfilter/Makefile b/libavfilter/Makefile
+index a530cfae29..a565918c63 100644
+--- a/libavfilter/Makefile
++++ b/libavfilter/Makefile
+@@ -433,6 +433,7 @@ OBJS-$(CONFIG_PAD_CUDA_FILTER)               += vf_pad_cuda.o vf_pad_cuda.ptx.o
+ OBJS-$(CONFIG_PAD_OPENCL_FILTER)             += vf_pad_opencl.o opencl.o opencl/pad.o
+ OBJS-$(CONFIG_PALETTEGEN_FILTER)             += vf_palettegen.o palette.o
+ OBJS-$(CONFIG_PALETTEUSE_FILTER)             += vf_paletteuse.o framesync.o palette.o
++OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER)  += vf_pelorus_deband_vulkan.o vulkan.o vulkan_filter.o
+ OBJS-$(CONFIG_PERMS_FILTER)                  += f_perms.o
+ OBJS-$(CONFIG_PERSPECTIVE_FILTER)            += vf_perspective.o
+ OBJS-$(CONFIG_PHASE_FILTER)                  += vf_phase.o
+diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
+index e26859e159..c02a049dbc 100644
+--- a/libavfilter/allfilters.c
++++ b/libavfilter/allfilters.c
+@@ -405,6 +405,7 @@ extern const FFFilter ff_vf_pad_cuda;
+ extern const FFFilter ff_vf_pad_opencl;
+ extern const FFFilter ff_vf_palettegen;
+ extern const FFFilter ff_vf_paletteuse;
++extern const FFFilter ff_vf_pelorus_deband_vulkan;
+ extern const FFFilter ff_vf_perms;
+ extern const FFFilter ff_vf_perspective;
+ extern const FFFilter ff_vf_phase;
+diff --git a/libavfilter/vf_pelorus_deband_vulkan.c b/libavfilter/vf_pelorus_deband_vulkan.c
+new file mode 100644
+index 0000000000..bc3c73a1b8
+--- /dev/null
++++ b/libavfilter/vf_pelorus_deband_vulkan.c
+@@ -0,0 +1,467 @@
++/*
++ * Copyright 2026 Lusoris
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or modify it under
++ * the terms of the GNU Lesser General Public License as published by the
++ * Free Software Foundation; either version 2.1 of the License, or (at
++ * your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
++ * License for more details.
++ */
++
++/**
++ * @file
++ * Pelorus smart-deband, Vulkan compute (zero-copy, pre-encode).
++ *
++ * A psychovisual debander modeled on flash3kyuu_deband (f3kdb). The flat-test
++ * is the vf_deband.c algorithm (4-tap rotated reference sampling, per-plane
++ * threshold, average-or-keep) extended with TPDF/blue-noise grain injection, a
++ * local-variance detail-protection mask, and a soft blend — run entirely in
++ * VRAM so the frame never leaves the GPU on its way to a hardware encoder.
++ *
++ * Interop: when `meta=1` the filter links libpelorus and attaches a Pelorus
++ * side-data blob (AV_FRAME_DATA_SEI_UNREGISTERED, UUID-keyed) announcing that
++ * deband ran, so a downstream vmafx vf_libvmaf* can weight its score and avoid
++ * double-counting. See <pelorus/interop.h> and docs/api/interop-abi.md.
++ */
++
++#include "libavutil/buffer.h"
++#include "libavutil/frame.h"
++#include "libavutil/mem.h"
++#include "libavutil/opt.h"
++#include "libavutil/pixdesc.h"
++#include "libavutil/vulkan_spirv.h"
++#include "vulkan_filter.h"
++
++#include "filters.h"
++#include "video.h"
++
++#include <string.h>
++
++#include <pelorus/deband.h>
++#include <pelorus/interop.h>
++
++typedef struct PelorusDebandVulkanContext {
++    FFVulkanContext vkctx; /* MUST be first — generic init casts priv to this */
++
++    int initialized;
++    FFVkExecPool e;
++    AVVulkanDeviceQueueFamily *qf;
++    FFVulkanShader shd;
++
++    /* push constants — mirror the GLSL std430 block below, byte-for-byte */
++    struct {
++        float thr[4];      /* vec4  : per-plane normalized threshold        */
++        float grain[4];    /* vec4  : per-plane normalized grain amplitude  */
++        int32_t range;     /* sampling radius                               */
++        int32_t sample_mode;
++        int32_t blur_mode;
++        int32_t dither_mode;
++        float softness;
++        float detail_thr;
++        int32_t flags;     /* enum pel_deband_flags                         */
++        uint32_t frame_seed;
++    } opts;
++
++    /* AVOption-backed scalar mirrors (broadcast to all planes at init) */
++    double opt_thr_y, opt_thr_c;
++    double opt_grain_y, opt_grain_c;
++    int planes;     /* plane bitmask to process (const-folded into shader)   */
++    int dynamic_grain;
++    int protect_detail;
++    int meta;       /* attach Pelorus interop side data                     */
++    int64_t frame_idx;
++} PelorusDebandVulkanContext;
++
++/* Pure GLSL helpers + the deband() function, spliced verbatim (avoids the
++ * comma-in-C()-macro hazard). Kept in lockstep with the standalone reference
++ * shader libpelorus/shaders/pelorus_deband.comp. */
++static const char deband_glsl[] =
++    "float frand(vec2 p) {\n"
++    "    return fract(sin(p.x * 12.9898 + p.y * 78.233) * 43758.545);\n"
++    "}\n"
++    "float hash3(ivec2 p, uint s) {\n"
++    "    uint h = uint(p.x) * 73856093u ^ uint(p.y) * 19349663u ^ s * 83492791u;\n"
++    "    h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;\n"
++    "    return float(h & 0x00FFFFFFu) / float(0x01000000u);\n"
++    "}\n"
++    "float urand(ivec2 p, uint s, int salt) {\n"
++    "    return hash3(p + ivec2(salt * 101, salt * 131), s + uint(salt) * 2654435761u);\n"
++    "}\n"
++    "float tpdf(ivec2 p, uint s, int salt) {\n"
++    "    return urand(p, s, salt) + urand(p, s, salt + 57) - 1.0;\n"
++    "}\n"
++    "float bayer8(ivec2 p) {\n"
++    "    int x = p.x & 7; int y = p.y & 7; int v = 0;\n"
++    "    for (int b = 0; b < 3; b++) {\n"
++    "        v = (v << 2) | (((x >> (2 - b)) & 1) << 1)\n"
++    "                     | (((x >> (2 - b)) & 1) ^ ((y >> (2 - b)) & 1));\n"
++    "    }\n"
++    "    return float(v) / 64.0;\n"
++    "}\n"
++    "vec4 pel_fetch(int idx, ivec2 p, ivec2 sz) {\n"
++    "    return imageLoad(input_images[idx], clamp(p, ivec2(0), sz - ivec2(1)));\n"
++    "}\n"
++    "void deband(const ivec2 pos, const int idx, float thr_p, float grain_p) {\n"
++    "    const float TWO_PI = 6.28318530718;\n"
++    "    const float GOLDEN = 2.39996322973;\n"
++    "    ivec2 sz = imageSize(output_images[idx]);\n"
++    "    vec4 S = imageLoad(input_images[idx], pos);\n"
++    "    bool dynG = (flags & 1) != 0;\n"
++    "    bool protectD = (flags & 2) != 0;\n"
++    "    float r = dynG ? hash3(pos, frame_seed) : frand(vec2(pos));\n"
++    "    float dir = r * TWO_PI;\n"
++    "    if (sample_mode == 4) dir += float(frame_seed) * GOLDEN;\n"
++    "    float dist = r * float(range);\n"
++    "    ivec2 off = ivec2(round(cos(dir) * dist), round(sin(dir) * dist));\n"
++    "    vec4 r0; vec4 r1; vec4 r2; vec4 r3; vec4 avg; int N;\n"
++    "    if (sample_mode == 1) {\n"
++    "        r0 = pel_fetch(idx, pos + ivec2(0, off.y), sz);\n"
++    "        r1 = pel_fetch(idx, pos - ivec2(0, off.y), sz);\n"
++    "        avg = (r0 + r1) * 0.5; N = 2;\n"
++    "    } else if (sample_mode == 3) {\n"
++    "        r0 = pel_fetch(idx, pos + ivec2(off.x, 0), sz);\n"
++    "        r1 = pel_fetch(idx, pos - ivec2(off.x, 0), sz);\n"
++    "        avg = (r0 + r1) * 0.5; N = 2;\n"
++    "    } else {\n"
++    "        r0 = pel_fetch(idx, pos + ivec2( off.x,  off.y), sz);\n"
++    "        r1 = pel_fetch(idx, pos + ivec2( off.x, -off.y), sz);\n"
++    "        r2 = pel_fetch(idx, pos + ivec2(-off.x, -off.y), sz);\n"
++    "        r3 = pel_fetch(idx, pos + ivec2(-off.x,  off.y), sz);\n"
++    "        avg = (r0 + r1 + r2 + r3) * 0.25; N = 4;\n"
++    "    }\n"
++    "    vec4 thr = vec4(thr_p);\n"
++    "    vec4 d = abs(S - avg);\n"
++    "    vec4 maxd = (N == 4) ? max(max(abs(S - r0), abs(S - r1)),\n"
++    "                                max(abs(S - r2), abs(S - r3)))\n"
++    "                         : max(abs(S - r0), abs(S - r1));\n"
++    "    vec4 w;\n"
++    "    if (blur_mode == 0 && softness > 0.0) {\n"
++    "        w = smoothstep(vec4(0.0), vec4(1.0),\n"
++    "                       clamp(1.0 - d / max(thr, vec4(1e-6)), 0.0, 1.0));\n"
++    "    } else if (blur_mode == 0) {\n"
++    "        w = vec4(lessThan(d, thr));\n"
++    "    } else {\n"
++    "        w = vec4(lessThan(maxd, thr));\n"
++    "    }\n"
++    "    if (protectD) {\n"
++    "        float cnt = float(N + 1);\n"
++    "        vec4 mean = (S + r0 + r1 + ((N == 4) ? (r2 + r3) : vec4(0.0))) / cnt;\n"
++    "        vec4 acc = (S - mean) * (S - mean)\n"
++    "                 + (r0 - mean) * (r0 - mean) + (r1 - mean) * (r1 - mean);\n"
++    "        if (N == 4) acc += (r2 - mean) * (r2 - mean) + (r3 - mean) * (r3 - mean);\n"
++    "        vec4 activity = sqrt(acc / cnt);\n"
++    "        vec4 protect = smoothstep(vec4(detail_thr), vec4(detail_thr * 2.0), activity);\n"
++    "        w *= (vec4(1.0) - protect);\n"
++    "    }\n"
++    "    vec4 base = mix(S, avg, w);\n"
++    "    if (dither_mode != 0 && grain_p > 0.0) {\n"
++    "        float n = (dither_mode == 1) ? (bayer8(pos) - 0.5) * 2.0\n"
++    "                                     : tpdf(pos, dynG ? frame_seed : 0u, idx);\n"
++    "        base += vec4(n * grain_p) * mix(vec4(0.25), vec4(1.0), w);\n"
++    "    }\n"
++    "    imageStore(output_images[idx], pos, clamp(base, vec4(0.0), vec4(1.0)));\n"
++    "}\n";
++
++static av_cold int init_filter(AVFilterContext *ctx)
++{
++    int err = 0;
++    int i;
++    PelorusDebandVulkanContext *s = ctx->priv;
++    FFVulkanContext *vkctx = &s->vkctx;
++    FFVulkanShader *shd = &s->shd; /* GLSL macros require a var named `shd` */
++    FFVkSPIRVCompiler *spv;
++    uint8_t *spv_data = NULL;
++    size_t spv_len = 0;
++    void *spv_opaque = NULL;
++    const int planes = av_pix_fmt_count_planes(vkctx->output_format);
++
++    /* Broadcast luma/chroma scalars into the per-plane vec4s. */
++    s->opts.thr[0] = (float)s->opt_thr_y;
++    s->opts.grain[0] = (float)s->opt_grain_y;
++    for (i = 1; i < 4; i++) {
++        s->opts.thr[i] = (float)s->opt_thr_c;
++        s->opts.grain[i] = (float)s->opt_grain_c;
++    }
++    s->opts.flags = 0;
++    if (s->dynamic_grain)
++        s->opts.flags |= PEL_DEBAND_FLAG_DYNAMIC_GRAIN;
++    if (s->protect_detail)
++        s->opts.flags |= PEL_DEBAND_FLAG_PROTECT_DETAIL;
++
++    spv = ff_vk_spirv_init();
++    if (!spv) {
++        av_log(ctx, AV_LOG_ERROR, "Unable to initialize SPIR-V compiler!\n");
++        return AVERROR_EXTERNAL;
++    }
++
++    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
++    if (!s->qf) {
++        av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
++        err = AVERROR(ENOTSUP);
++        goto fail;
++    }
++
++    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
++    RET(ff_vk_shader_init(vkctx, shd, "pelorus_deband",
++                          VK_SHADER_STAGE_COMPUTE_BIT, NULL, 0, 32, 32, 1, 0));
++
++    GLSLC(0, layout(push_constant, std430) uniform pushConstants {            );
++    GLSLC(1,     vec4  thr;                                                   );
++    GLSLC(1,     vec4  grain;                                                 );
++    GLSLC(1,     int   range;                                                 );
++    GLSLC(1,     int   sample_mode;                                           );
++    GLSLC(1,     int   blur_mode;                                             );
++    GLSLC(1,     int   dither_mode;                                           );
++    GLSLC(1,     float softness;                                              );
++    GLSLC(1,     float detail_thr;                                            );
++    GLSLC(1,     int   flags;                                                 );
++    GLSLC(1,     uint  frame_seed;                                            );
++    GLSLC(0, };                                                               );
++    GLSLC(0,                                                                  );
++    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts),
++                                VK_SHADER_STAGE_COMPUTE_BIT);
++
++    {
++        FFVulkanDescriptorSetBinding desc_set[] = {
++            {
++                .name = "input_images",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
++                                                   FF_VK_REP_FLOAT),
++                .mem_quali = "readonly",
++                .dimensions = 2,
++                .elems = planes,
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++            },
++            {
++                .name = "output_images",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format,
++                                                   FF_VK_REP_FLOAT),
++                .mem_quali = "writeonly",
++                .dimensions = 2,
++                .elems = planes,
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++            },
++        };
++        RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0, 0));
++    }
++
++    GLSLD(deband_glsl);
++    GLSLC(0, void main()                                                      );
++    GLSLC(0, {                                                                );
++    GLSLC(1,     ivec2 size;                                                  );
++    GLSLC(1,     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);           );
++    for (i = 0; i < planes; i++) {
++        GLSLC(0,                                                              );
++        GLSLF(1, size = imageSize(output_images[%i]);                       ,i);
++        GLSLC(1, if (!IS_WITHIN(pos, size)) return;                           );
++        if (s->planes & (1 << i)) {
++            GLSLF(1, deband(pos, %i, thr[%i], grain[%i]);                ,i,i,i);
++        } else {
++            GLSLF(1, imageStore(output_images[%i], pos,                      ,i);
++            GLSLF(2,             imageLoad(input_images[%i], pos));          ,i);
++        }
++    }
++    GLSLC(0, }                                                                );
++
++    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
++                            &spv_opaque));
++    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
++    RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
++
++    s->initialized = 1;
++
++fail:
++    if (spv_opaque)
++        spv->free_shader(spv, &spv_opaque);
++    if (spv)
++        spv->uninit(&spv);
++    return err;
++}
++
++/* Attach a Pelorus interop blob announcing deband-applied with these params.
++ * Measured per-cell banding maps are produced by vf_pelorus_analyze (a future
++ * pass); this v0.1 emission marks the section present with summary scalars so
++ * a downstream vmafx scorer can react. */
++static void pel_sd_free(void *opaque, uint8_t *data)
++{
++    pel_blob_free(data);
++}
++
++static int attach_interop(PelorusDebandVulkanContext *s, AVFrame *out)
++{
++    PelorusSideData meta;
++    PelorusBandingSection band;
++    PelorusPackSection sec;
++    uint8_t *blob = NULL;
++    size_t len = 0;
++    AVBufferRef *buf;
++    AVFrameSideData *sd;
++
++    memset(&meta, 0, sizeof(meta));
++    meta.frame_pts = (uint64_t)out->pts;
++    meta.bit_depth = 0; /* depth/layout set by vf_pelorus_analyze; see note */
++    meta.plane_layout = PEL_LAYOUT_420;
++    meta.grid_cols = 0;
++    meta.grid_rows = 0;
++    meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'S');
++
++    memset(&band, 0, sizeof(band));
++    /* Configured aggressiveness as a coarse proxy until vf_pelorus_analyze
++     * lands a measured map; documented in docs/api/interop-abi.md. */
++    band.contour_strength_mean = s->opts.thr[0];
++
++    sec.id = PEL_SEC_BANDING;
++    sec.data = &band;
++    sec.size = (uint32_t)sizeof(band);
++
++    if (pel_blob_pack(&meta, &sec, 1, &blob, &len) != PEL_OK || !blob)
++        return AVERROR(ENOMEM);
++
++    buf = av_buffer_create(blob, len, pel_sd_free, NULL, 0);
++    if (!buf) {
++        pel_blob_free(blob);
++        return AVERROR(ENOMEM);
++    }
++    sd = av_frame_new_side_data_from_buf(out, AV_FRAME_DATA_SEI_UNREGISTERED, buf);
++    if (!sd) {
++        av_buffer_unref(&buf);
++        return AVERROR(ENOMEM);
++    }
++    return 0;
++}
++
++static int pelorus_deband_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
++{
++    int err;
++    AVFrame *out = NULL;
++    AVFilterContext *ctx = link->dst;
++    PelorusDebandVulkanContext *s = ctx->priv;
++    AVFilterLink *outlink = ctx->outputs[0];
++
++    out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
++    if (!out) {
++        err = AVERROR(ENOMEM);
++        goto fail;
++    }
++
++    if (!s->initialized)
++        RET(init_filter(ctx));
++
++    s->opts.frame_seed = (uint32_t)(s->frame_idx++);
++
++    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in,
++                                    VK_NULL_HANDLE, &s->opts, sizeof(s->opts)));
++
++    err = av_frame_copy_props(out, in);
++    if (err < 0)
++        goto fail;
++
++    if (s->meta) {
++        err = attach_interop(s, out);
++        if (err < 0)
++            goto fail;
++    }
++
++    av_frame_free(&in);
++    return ff_filter_frame(outlink, out);
++
++fail:
++    av_frame_free(&in);
++    av_frame_free(&out);
++    return err;
++}
++
++static void pelorus_deband_vulkan_uninit(AVFilterContext *avctx)
++{
++    PelorusDebandVulkanContext *s = avctx->priv;
++    FFVulkanContext *vkctx = &s->vkctx;
++
++    ff_vk_exec_pool_free(vkctx, &s->e);
++    ff_vk_shader_free(vkctx, &s->shd);
++    ff_vk_uninit(&s->vkctx);
++    s->initialized = 0;
++}
++
++#define OFFSET(x) offsetof(PelorusDebandVulkanContext, x)
++#define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
++static const AVOption pelorus_deband_vulkan_options[] = {
++    { "range", "reference-sampling radius in pixels", OFFSET(opts.range),
++      AV_OPT_TYPE_INT, { .i64 = 15 }, 1, 31, FLAGS },
++    { "thry", "luma threshold (normalized)", OFFSET(opt_thr_y),
++      AV_OPT_TYPE_DOUBLE, { .dbl = 0.012 }, 0.0, 0.25, FLAGS },
++    { "thrc", "chroma threshold (normalized)", OFFSET(opt_thr_c),
++      AV_OPT_TYPE_DOUBLE, { .dbl = 0.012 }, 0.0, 0.25, FLAGS },
++    { "grainy", "luma grain amplitude (normalized)", OFFSET(opt_grain_y),
++      AV_OPT_TYPE_DOUBLE, { .dbl = 0.006 }, 0.0, 0.4, FLAGS },
++    { "grainc", "chroma grain amplitude (normalized)", OFFSET(opt_grain_c),
++      AV_OPT_TYPE_DOUBLE, { .dbl = 0.0 }, 0.0, 0.4, FLAGS },
++    { "softness", "soft-blend transition width (0=hard switch)",
++      OFFSET(opts.softness), AV_OPT_TYPE_FLOAT, { .dbl = 0.5 }, 0.0, 1.0, FLAGS },
++    { "detail", "detail-mask activity threshold (normalized)",
++      OFFSET(opts.detail_thr), AV_OPT_TYPE_FLOAT, { .dbl = 0.06 }, 0.0, 0.25, FLAGS },
++    { "sample", "reference-tap topology", OFFSET(opts.sample_mode),
++      AV_OPT_TYPE_INT, { .i64 = 2 }, 1, 4, FLAGS, .unit = "sample" },
++        { "column", "2 vertical taps", 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, 0, 0, FLAGS, .unit = "sample" },
++        { "square", "4 rotated taps", 0, AV_OPT_TYPE_CONST, { .i64 = 2 }, 0, 0, FLAGS, .unit = "sample" },
++        { "row", "2 horizontal taps", 0, AV_OPT_TYPE_CONST, { .i64 = 3 }, 0, 0, FLAGS, .unit = "sample" },
++        { "square_rot", "4 taps + per-frame rotation", 0, AV_OPT_TYPE_CONST, { .i64 = 4 }, 0, 0, FLAGS, .unit = "sample" },
++    { "blur", "flat-test mode", OFFSET(opts.blur_mode),
++      AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, FLAGS, .unit = "blur" },
++        { "average", "|center-avg| < thr", 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, 0, 0, FLAGS, .unit = "blur" },
++        { "allrefs", "every tap within thr", 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, 0, 0, FLAGS, .unit = "blur" },
++    { "dither", "grain / dither mode", OFFSET(opts.dither_mode),
++      AV_OPT_TYPE_INT, { .i64 = 2 }, 0, 2, FLAGS, .unit = "dither" },
++        { "none", "no grain", 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, 0, 0, FLAGS, .unit = "dither" },
++        { "bayer8", "ordered 8x8 Bayer", 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, 0, 0, FLAGS, .unit = "dither" },
++        { "bluenoise", "hashed TPDF", 0, AV_OPT_TYPE_CONST, { .i64 = 2 }, 0, 0, FLAGS, .unit = "dither" },
++    { "dynamic", "re-seed grain each frame", OFFSET(dynamic_grain),
++      AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
++    { "protect", "gate debanding off textured regions", OFFSET(protect_detail),
++      AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
++    { "planes", "planes to process (bitmask)", OFFSET(planes),
++      AV_OPT_TYPE_INT, { .i64 = 0xF }, 0, 0xF, FLAGS },
++    { "meta", "attach Pelorus interop side data", OFFSET(meta),
++      AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
++    { NULL }
++};
++
++AVFILTER_DEFINE_CLASS(pelorus_deband_vulkan);
++
++static const AVFilterPad pelorus_deband_vulkan_inputs[] = {
++    {
++        .name = "default",
++        .type = AVMEDIA_TYPE_VIDEO,
++        .filter_frame = &pelorus_deband_vulkan_filter_frame,
++        .config_props = &ff_vk_filter_config_input,
++    },
++};
++
++static const AVFilterPad pelorus_deband_vulkan_outputs[] = {
++    {
++        .name = "default",
++        .type = AVMEDIA_TYPE_VIDEO,
++        .config_props = &ff_vk_filter_config_output,
++    },
++};
++
++const FFFilter ff_vf_pelorus_deband_vulkan = {
++    .p.name = "pelorus_deband_vulkan",
++    .p.description = NULL_IF_CONFIG_SMALL("Pelorus smart deband (Vulkan)"),
++    .p.priv_class = &pelorus_deband_vulkan_class,
++    .p.flags = AVFILTER_FLAG_HWDEVICE,
++    .priv_size = sizeof(PelorusDebandVulkanContext),
++    .init = &ff_vk_filter_init,
++    .uninit = &pelorus_deband_vulkan_uninit,
++    FILTER_INPUTS(pelorus_deband_vulkan_inputs),
++    FILTER_OUTPUTS(pelorus_deband_vulkan_outputs),
++    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_VULKAN),
++    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
++};
+-- 
+2.54.0
+

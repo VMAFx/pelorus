@@ -1,0 +1,27 @@
+# Build trees (meson/ninja)
+/build/
+/build-*/
+/subprojects/*/
+!/subprojects/*.wrap
+
+# Compiled shaders / objects
+*.spv
+*.o
+*.obj
+
+# Local planning / session state (NOT tracked — see .workingdir/STATE.md
+# "How to use this file"; the vmafx convention + the user's global rule both
+# keep these local rather than committed).
+/.workingdir/
+/.scratch/
+
+# pkg-config / install staging
+/dist/
+
+# Editor / OS cruft
+*.swp
+*~
+.DS_Store
+/.cache/
+/.vscode/
+/compile_commands.json

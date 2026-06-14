@@ -1,0 +1,199 @@
+/*
+ * pelorus_deband.comp — smart-deband compute shader (standalone reference).
+ *
+ * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ *
+ * Psychovisual debander modeled on flash3kyuu_deband (f3kdb). The flat-test is
+ * the FFmpeg vf_deband.c algorithm (4-tap rotated reference sampling, per-plane
+ * threshold, average-or-keep); the grain/dither injection, detail-protection
+ * mask, soft blend, and 16-bit-internal dither-down are the f3kdb extensions
+ * that make it a net-positive pre-encode filter. See deband.h for the host-side
+ * parameter contract and docs/research/0101-smart-deband.md for the rationale.
+ *
+ * This standalone form runs one dispatch per plane against r16ui storage images
+ * (16-bit internal working domain). The in-tree FFmpeg filter
+ * (ffmpeg-patches/files/vf_pelorus_deband_vulkan.c) emits an equivalent shader
+ * inline via FFmpeg's GLSLC macros against its multi-plane image arrays; keep
+ * the two algorithms in lockstep when editing.
+ */
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0, r16ui) uniform readonly  uimage2D srcImg;
+layout(binding = 1, r16ui) uniform writeonly uimage2D dstImg;
+
+layout(push_constant, std430) uniform Params {
+    int   width;       //  0  plane width
+    int   height;      //  4  plane height
+    int   plane;       //  8  0=Y 1=Cb 2=Cr 3=A (selects thr/grain on host)
+    int   range;       // 12  sampling radius in pixels (1..31)
+
+    float thr;         // 16  scaled threshold for THIS plane (normalized)
+    float softness;    // 20  blend transition width (0 = hard vf_deband switch)
+    float grain;       // 24  grain amplitude for THIS plane (normalized)
+    float detailThr;   // 28  detail-mask activity threshold (normalized)
+
+    int   sampleMode;  // 32  1=col 2=square 3=row 4=square+frame-rot
+    int   blurMode;    // 36  0=average 1=all-refs
+    int   ditherMode;  // 40  0=none 1=bayer8 2=blue-noise/TPDF
+    int   flags;       // 44  bit0=dynamicGrain bit1=protectDetail bit2=coupling
+
+    int   inDepth;     // 48  source bit depth (8/10/12/16)
+    int   outDepth;    // 52  output bit depth
+    uint  frameSeed;   // 56  per-frame PRNG seed
+    float direction;   // 60  base angle scale (default 2*pi)
+} pc;
+
+const float GOLDEN = 2.39996322973;
+const float GRAIN_FLOOR = 0.25;
+const int   FLAG_DYNAMIC_GRAIN = 1;
+const int   FLAG_PROTECT_DETAIL = 2;
+
+/* FFmpeg-exact sin-fract hash (matches vf_deband frand) for the static path. */
+float frand(float x, float y) {
+    float r = sin(x * 12.9898 + y * 78.233) * 43758.545;
+    return fract(r);
+}
+
+/* Integer-mix hash with a better spectrum, for the dynamic (per-frame) path. */
+float hash3(int x, int y, uint s) {
+    uint h = uint(x) * 73856093u ^ uint(y) * 19349663u ^ s * 83492791u;
+    h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
+    return float(h & 0x00FFFFFFu) / float(0x01000000u);
+}
+
+float urand(int x, int y, uint s, int salt) {
+    return hash3(x + salt * 101, y + salt * 131, s + uint(salt) * 2654435761u);
+}
+
+/* Zero-mean triangular-PDF noise in ~[-1,1] — decorrelates quant error. */
+float tpdf(int x, int y, uint s, int salt) {
+    return urand(x, y, s, salt) + urand(x, y, s, salt + 57) - 1.0;
+}
+
+/* Ordered 8x8 Bayer, normalized to [0,1). */
+float bayer8(int i, int j) {
+    int x = i & 7, y = j & 7;
+    int v = 0;
+    for (int b = 0; b < 3; b++) {
+        v = (v << 2)
+          | (((x >> (2 - b)) & 1) << 1)
+          | (((x >> (2 - b)) & 1) ^ ((y >> (2 - b)) & 1));
+    }
+    return float(v) / 64.0;
+}
+
+int fetch(int px, int py) {
+    px = clamp(px, 0, pc.width  - 1);
+    py = clamp(py, 0, pc.height - 1);
+    return int(imageLoad(srcImg, ivec2(px, py)).r);
+}
+
+void main() {
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    int x = gid.x, y = gid.y;
+    if (x >= pc.width || y >= pc.height)
+        return;
+
+    bool dynG     = (pc.flags & FLAG_DYNAMIC_GRAIN) != 0;
+    bool protectD = (pc.flags & FLAG_PROTECT_DETAIL) != 0;
+
+    int S   = int(imageLoad(srcImg, ivec2(x, y)).r);  // 16-bit center
+    int THR = int(pc.thr * 65535.0);
+
+    // 1. pseudo-random sampling offset
+    float r   = dynG ? hash3(x, y, pc.frameSeed) : frand(float(x), float(y));
+    float dir = r * pc.direction;
+    if (pc.sampleMode == 4)
+        dir += float(pc.frameSeed) * GOLDEN;
+    float dist = r * float(pc.range);
+    int xoff = int(round(cos(dir) * dist));
+    int yoff = int(round(sin(dir) * dist));
+
+    // 2. reference taps by sampleMode
+    int ref0, ref1, ref2 = 0, ref3 = 0, N, avg;
+    if (pc.sampleMode == 1) {            // column
+        ref0 = fetch(x, y + yoff);
+        ref1 = fetch(x, y - yoff);
+        N = 2; avg = (ref0 + ref1) / 2;
+    } else if (pc.sampleMode == 3) {     // row
+        ref0 = fetch(x + xoff, y);
+        ref1 = fetch(x - xoff, y);
+        N = 2; avg = (ref0 + ref1) / 2;
+    } else {                             // square / square+rot (== vf_deband)
+        ref0 = fetch(x + xoff, y + yoff);
+        ref1 = fetch(x + xoff, y - yoff);
+        ref2 = fetch(x - xoff, y - yoff);
+        ref3 = fetch(x - xoff, y + yoff);
+        N = 4; avg = (ref0 + ref1 + ref2 + ref3) / 4;
+    }
+
+    // 3. flat test (exact compare math; strict '<')
+    int d = abs(S - avg);
+    bool is_flat;
+    if (pc.blurMode == 0) {
+        is_flat = (d < THR);
+    } else if (N == 4) {
+        is_flat = (abs(S - ref0) < THR) && (abs(S - ref1) < THR)
+            && (abs(S - ref2) < THR) && (abs(S - ref3) < THR);
+    } else {
+        is_flat = (abs(S - ref0) < THR) && (abs(S - ref1) < THR);
+    }
+
+    // 4. blend weight (soft in average mode, else hard switch)
+    float w;
+    if (pc.blurMode == 0 && pc.softness > 0.0 && THR > 0) {
+        float t = clamp(1.0 - float(d) / float(THR), 0.0, 1.0);
+        w = smoothstep(0.0, 1.0, t);
+    } else {
+        w = is_flat ? 1.0 : 0.0;
+    }
+
+    // 5. detail-protection mask (suppress debanding on texture/edges)
+    if (protectD) {
+        float cnt  = float(N + 1);
+        float mean = float(S + ref0 + ref1 + (N == 4 ? ref2 + ref3 : 0)) / cnt;
+        float acc  = (float(S)   - mean) * (float(S)   - mean)
+                   + (float(ref0)- mean) * (float(ref0)- mean)
+                   + (float(ref1)- mean) * (float(ref1)- mean);
+        if (N == 4) {
+            acc += (float(ref2) - mean) * (float(ref2) - mean)
+                 + (float(ref3) - mean) * (float(ref3) - mean);
+        }
+        float activity = sqrt(acc / cnt) / 65535.0;
+        float protect  = smoothstep(pc.detailThr, pc.detailThr * 2.0, activity);
+        w *= (1.0 - protect);
+    }
+
+    // 6. base value
+    int base = int(round(mix(float(S), float(avg), w)));
+
+    // 7. grain / dither (the f3kdb stage vf_deband lacks)
+    if (pc.ditherMode != 0 && pc.grain > 0.0) {
+        float amp = pc.grain * 65535.0;
+        amp *= mix(GRAIN_FLOOR, 1.0, w);  // mostly where we debanded
+        float n;
+        if (pc.ditherMode == 1)
+            n = (bayer8(x, y) - 0.5) * 2.0;
+        else
+            n = tpdf(x, y, dynG ? pc.frameSeed : 0u, pc.plane);
+        base += int(round(n * amp));
+    }
+
+    // 8. dither-down to outDepth (LSB shaping)
+    int outv;
+    int outMax = (pc.outDepth >= 16) ? 65535 : ((1 << pc.outDepth) - 1);
+    if (pc.outDepth >= 16) {
+        outv = clamp(base, 0, 65535);
+    } else {
+        int shift  = 16 - pc.outDepth;
+        float lsbN = tpdf(x, y, dynG ? pc.frameSeed : 0u, pc.plane + 8)
+                   * float(1 << (shift - 1));
+        int q = (clamp(base, 0, 65535) + int(round(lsbN)) + (1 << (shift - 1)))
+                >> shift;
+        outv = clamp(q, 0, outMax);
+    }
+
+    imageStore(dstImg, ivec2(x, y), uvec4(uint(outv), 0u, 0u, 0u));
+}
