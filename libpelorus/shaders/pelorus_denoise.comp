@@ -1,0 +1,148 @@
+/*
+ * pelorus_denoise.comp — temporal denoise compute shader (standalone reference).
+ *
+ * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ *
+ * Edge-preserving spatio-temporal denoiser (PEL_DENOISER_BILATERAL_TEMPORAL).
+ * Single compute pass over a CAUSAL window: image 0 is the current frame, images
+ * 1..actualPrev are previous frames (same coordinate; no motion compensation).
+ *
+ *   filtered = num / den,  with
+ *     num = (1-blend)*num_spatial + blend*num_temporal
+ *     den = (1-blend)*den_spatial + blend*den_temporal
+ *   out = mix(cur, filtered, strength)
+ *
+ * Spatial term: an NLM-lite joint bilateral over a (2*patch+1)^2 window of the
+ * current frame. The range weight is a 3x3-patch SSD — a real edge has high
+ * patch SSD across it, so its weight collapses and the filter refuses to average
+ * across the edge (preserves text / facial lines), while flat-region noise (low
+ * patch SSD) is averaged away. The centre carries a self-weight of 1, so den>0.
+ *
+ * Temporal term: the same-coordinate sample of each previous frame, gated by a
+ * per-pixel similarity threshold (a delta above tcut breaks the walk so motion /
+ * scene-cuts cannot ghost) and decayed by tdecay per frame.
+ *
+ * This standalone form runs one dispatch per plane against r16ui storage images
+ * (16-bit internal domain, normalized to [0,1] inside). The in-tree FFmpeg
+ * filter (ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c) emits an equivalent
+ * shader inline via FFmpeg's GLSLC macros over normalized-float image arrays;
+ * keep the two algorithms in lockstep when editing (AGENTS hard rule 4).
+ */
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+/* image 0 = current frame; 1..PEL_DENOISE_MAX_PREV = previous frames. */
+layout(binding = 0, r16ui) uniform readonly  uimage2D srcImg[5];
+layout(binding = 1, r16ui) uniform writeonly uimage2D dstImg;
+
+layout(push_constant, std430) uniform Params {
+    int   width;        //  0  plane width
+    int   height;       //  4  plane height
+    int   plane;        //  8  0=Y 1=Cb 2=Cr 3=A (selects sigma/strength on host)
+    int   actualPrev;   // 12  valid previous frames this dispatch (0..MAX_PREV)
+
+    float sigmaS;       // 16  spatial range sigma for THIS plane (normalized)
+    float sigmaT;       // 20  temporal gate bandwidth (normalized)
+    float strength;     // 24  dry/wet mix for THIS plane (0..1)
+    float blend;        // 28  spatial<->temporal blend (0=spatial 1=temporal)
+
+    int   patchR;       // 32  spatial window radius (0 = temporal-only)
+    float tdecay;       // 36  per-frame temporal trust falloff
+    float tcut;         // 40  per-pixel scene-cut/fast-motion clamp (normalized)
+    int   flags;        // 44  bit0=temporal bit2=protectDetail
+} pc;
+
+const int FLAG_TEMPORAL = 1;
+const int FLAG_PROTECT_DETAIL = 4;
+const float EPS = 1e-6;
+
+float fetchN(int img, int px, int py) {
+    px = clamp(px, 0, pc.width  - 1);
+    py = clamp(py, 0, pc.height - 1);
+    return float(imageLoad(srcImg[img], ivec2(px, py)).r) / 65535.0;
+}
+
+void main() {
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    int x = gid.x, y = gid.y;
+    if (x >= pc.width || y >= pc.height)
+        return;
+
+    float C = fetchN(0, x, y);
+
+    // --- spatial NLM-lite joint bilateral over the current frame ---
+    float numS = C, denS = 1.0;            // centre self-weight
+    if (pc.patchR > 0) {
+        float hs2 = pc.sigmaS * pc.sigmaS + EPS;     // range bandwidth^2
+        float sd2 = float(pc.patchR * pc.patchR) + EPS; // domain (Gaussian) sigma^2
+        for (int dy = -pc.patchR; dy <= pc.patchR; dy++) {
+            for (int dx = -pc.patchR; dx <= pc.patchR; dx++) {
+                if (dx == 0 && dy == 0)
+                    continue;
+                // 3x3-patch SSD between the centre patch and the neighbour patch
+                float ssd = 0.0;
+                for (int ky = -1; ky <= 1; ky++) {
+                    for (int kx = -1; kx <= 1; kx++) {
+                        float a = fetchN(0, x + kx, y + ky);
+                        float b = fetchN(0, x + dx + kx, y + dy + ky);
+                        ssd += (a - b) * (a - b);
+                    }
+                }
+                ssd /= 9.0;
+                float wr = exp(-ssd / hs2);
+                float wd = exp(-float(dx * dx + dy * dy) / (2.0 * sd2));
+                float w = wr * wd;
+                numS += w * fetchN(0, x + dx, y + dy);
+                denS += w;
+            }
+        }
+    }
+
+    // --- temporal gated averaging over previous frames (same coordinate) ---
+    float numT = C, denT = 1.0;            // centre self-weight
+    if ((pc.flags & FLAG_TEMPORAL) != 0) {
+        float ht2 = pc.sigmaT * pc.sigmaT + EPS;
+        float decay = 1.0;
+        for (int t = 1; t <= pc.actualPrev; t++) {
+            float p = fetchN(t, x, y);
+            float delta = abs(C - p);
+            if (delta > pc.tcut)
+                break;                     // anti-ghost: stop at motion / scene-cut
+            decay *= pc.tdecay;
+            float w = exp(-(delta * delta) / ht2) * decay;
+            numT += w * p;
+            denT += w;
+        }
+    }
+
+    // --- combine, then dry/wet ---
+    float num = (1.0 - pc.blend) * numS + pc.blend * numT;
+    float den = (1.0 - pc.blend) * denS + pc.blend * denT;
+    float filtered = num / max(den, EPS);
+
+    float strength = pc.strength;
+    if ((pc.flags & FLAG_PROTECT_DETAIL) != 0 && pc.patchR > 0) {
+        // damp strength where the spatial neighbourhood is textured (high local
+        // stddev) so structure is not over-smoothed; sigmaS sets the knee.
+        float mean = 0.0;
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++)
+                mean += fetchN(0, x + dx, y + dy);
+        mean /= 9.0;
+        float var = 0.0;
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                float d = fetchN(0, x + dx, y + dy) - mean;
+                var += d * d;
+            }
+        }
+        float activity = sqrt(var / 9.0);
+        float protect = smoothstep(pc.sigmaS, pc.sigmaS * 3.0 + EPS, activity);
+        strength *= (1.0 - protect);
+    }
+
+    float outv = mix(C, filtered, clamp(strength, 0.0, 1.0));
+    int o = clamp(int(round(outv * 65535.0)), 0, 65535);
+    imageStore(dstImg, ivec2(x, y), uvec4(uint(o), 0u, 0u, 0u));
+}
