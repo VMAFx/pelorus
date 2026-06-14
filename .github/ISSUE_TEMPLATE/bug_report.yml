@@ -1,0 +1,33 @@
+name: Bug report
+description: A Pelorus filter, libpelorus, or the FFmpeg patch stack misbehaves.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Expected vs actual. Include the exact ffmpeg command / filtergraph or the libpelorus call.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproducer
+      description: Minimal steps. A short clip or YUV fixture if relevant.
+      placeholder: |
+        ffmpeg -init_hw_device vulkan -hwaccel vulkan -hwaccel_output_format vulkan \
+               -i in.mkv -vf "pelorus_deband_vulkan=range=15" -c:v hevc_nvenc out.mkv
+    validations:
+      required: true
+  - type: input
+    id: component
+    attributes:
+      label: Component
+      placeholder: vf_pelorus_deband_vulkan / vf_pelorus_analyze_vulkan / libpelorus / patch stack
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS, GPU + driver, Vulkan/SPIR-V toolchain, FFmpeg base (n8.1.1?), libpelorus + ABI version, `vulkaninfo` summary.
+    validations:
+      required: true

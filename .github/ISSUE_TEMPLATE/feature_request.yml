@@ -1,0 +1,23 @@
+name: Feature request
+description: Propose a new filter, ABI section, or capability.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What encode-quality or pipeline gap does this close? Codec(s) affected (HEVC, AV1, ...).
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The filter / ABI change / capability. If it changes the interop ABI, note it (it is append-only).
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: The runner-up approach(es) — these seed the ADR's decision matrix.

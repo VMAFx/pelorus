@@ -1,0 +1,7 @@
+# Default owner for everything in the repo.
+*                       @lusoris
+
+# The cross-repo interop ABI — changes here affect vmafx; review with extra care.
+/libpelorus/include/pelorus/interop.h   @lusoris
+/libpelorus/src/interop.c               @lusoris
+/docs/adr/                              @lusoris

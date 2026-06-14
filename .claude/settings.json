@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(meson setup:*)",
+      "Bash(meson compile:*)",
+      "Bash(meson test:*)",
+      "Bash(meson configure:*)",
+      "Bash(meson introspect:*)",
+      "Bash(ninja:*)",
+      "Bash(pkg-config:*)",
+      "Bash(make:*)",
+      "Bash(nasm:*)",
+      "Bash(yasm:*)",
+
+      "Bash(gcc:*)",
+      "Bash(g++:*)",
+      "Bash(clang:*)",
+      "Bash(clang++:*)",
+      "Bash(clang-format:*)",
+      "Bash(clang-tidy:*)",
+      "Bash(cppcheck:*)",
+
+      "Bash(glslangValidator:*)",
+      "Bash(glslang:*)",
+      "Bash(spirv-val:*)",
+      "Bash(spirv-opt:*)",
+      "Bash(vulkaninfo:*)",
+
+      "Bash(python:*)",
+      "Bash(python3:*)",
+
+      "Bash(scripts/adr/next-free.sh:*)",
+      "Bash(scripts/release/concat-changelog-fragments.sh:*)",
+      "Bash(ffmpeg-patches/generate.sh:*)",
+      "Bash(ffmpeg-patches/test/build-and-run.sh:*)",
+
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git branch:*)",
+      "Bash(git worktree:*)",
+      "Bash(git am:*)",
+      "Bash(git format-patch:*)",
+      "Bash(git apply:*)",
+
+      "Bash(gh pr:*)",
+      "Bash(gh repo view:*)",
+      "Bash(gh run:*)",
+      "Bash(gh release:*)",
+      "Bash(gh api:*)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": ".claude/hooks/block-unsafe-bash.sh" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": ".claude/hooks/auto-format-on-edit.sh" },
+          { "type": "command", "command": ".claude/hooks/shader-lockstep-warn.sh" },
+          { "type": "command", "command": ".claude/hooks/docs-drift-warn.sh" }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": ".claude/hooks/session-start.sh" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": ".claude/hooks/stop.sh" }
+        ]
+      }
+    ]
+  }
+}

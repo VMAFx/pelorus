@@ -100,11 +100,7 @@ enum pel_section {
 
 /* ---- Plane layout / producer identity ----------------------------------- */
 
-enum pel_plane_layout {
-    PEL_LAYOUT_420 = 0,
-    PEL_LAYOUT_422 = 1,
-    PEL_LAYOUT_444 = 2
-};
+enum pel_plane_layout { PEL_LAYOUT_420 = 0, PEL_LAYOUT_422 = 1, PEL_LAYOUT_444 = 2 };
 
 /* Film-grain synthesis model the estimate targets. The deband/denoise/motion
  * filters are codec-agnostic (they help any HW encoder); only grain synthesis
@@ -112,14 +108,13 @@ enum pel_plane_layout {
  * (SEI film-grain characteristics). The film-grain section carries both. */
 enum pel_grain_model {
     PEL_GRAIN_NONE = 0,
-    PEL_GRAIN_AOM = 1,  /* AV1 — maps to AV_FILM_GRAIN_PARAMS_AV1            */
-    PEL_GRAIN_H274 = 2  /* HEVC/VVC — maps to AV_FILM_GRAIN_PARAMS_H274      */
+    PEL_GRAIN_AOM = 1, /* AV1 — maps to AV_FILM_GRAIN_PARAMS_AV1            */
+    PEL_GRAIN_H274 = 2 /* HEVC/VVC — maps to AV_FILM_GRAIN_PARAMS_H274      */
 };
 
 /* fourcc of the writing stage, for diagnostics (e.g. 'PLRS'). */
-#define PEL_FOURCC(a, b, c, d)                                                 \
-    ((uint32_t)(a) | ((uint32_t)(b) << 8) | ((uint32_t)(c) << 16) |           \
-     ((uint32_t)(d) << 24))
+#define PEL_FOURCC(a, b, c, d)                                                                     \
+    ((uint32_t)(a) | ((uint32_t)(b) << 8) | ((uint32_t)(c) << 16) | ((uint32_t)(d) << 24))
 
 /* ---- Blob framing ------------------------------------------------------- */
 
@@ -137,21 +132,21 @@ typedef struct PelorusSectionDir {
  * offsets are blob-relative (start of magic[0]). header_size lets a consumer
  * find dir[] regardless of future header growth. */
 typedef struct PelorusSideData {
-    uint8_t magic[8];      /* PELORUS_MAGIC_STR                               */
-    uint16_t abi_major;    /* PELORUS_ABI_MAJOR                               */
-    uint16_t abi_minor;    /* producer's PELORUS_ABI_MINOR                    */
-    uint32_t total_size;   /* total blob bytes (header + dir[] + sections)    */
-    uint32_t section_mask; /* OR of present enum pel_section bits             */
-    uint16_t section_count;/* number of PelorusSectionDir entries following   */
-    uint16_t header_size;  /* sizeof(PelorusSideData); dir[] starts here      */
-    uint64_t frame_pts;    /* echo of AVFrame.pts for desync detection        */
-    uint8_t plane_layout;  /* enum pel_plane_layout                           */
-    uint8_t bit_depth;     /* 8 / 10 / 12                                     */
-    uint16_t grid_cols;    /* cell grid shared by all map summaries           */
+    uint8_t magic[8];       /* PELORUS_MAGIC_STR                               */
+    uint16_t abi_major;     /* PELORUS_ABI_MAJOR                               */
+    uint16_t abi_minor;     /* producer's PELORUS_ABI_MINOR                    */
+    uint32_t total_size;    /* total blob bytes (header + dir[] + sections)    */
+    uint32_t section_mask;  /* OR of present enum pel_section bits             */
+    uint16_t section_count; /* number of PelorusSectionDir entries following   */
+    uint16_t header_size;   /* sizeof(PelorusSideData); dir[] starts here      */
+    uint64_t frame_pts;     /* echo of AVFrame.pts for desync detection        */
+    uint8_t plane_layout;   /* enum pel_plane_layout                           */
+    uint8_t bit_depth;      /* 8 / 10 / 12                                     */
+    uint16_t grid_cols;     /* cell grid shared by all map summaries           */
     uint16_t grid_rows;
-    uint16_t _pad0;        /* reserved, zero                                  */
-    uint32_t producer_id;  /* PEL_FOURCC of the writer                        */
-    uint32_t _pad1;        /* reserved, zero (keeps sizeof a multiple of 8)   */
+    uint16_t _pad0;       /* reserved, zero                                  */
+    uint32_t producer_id; /* PEL_FOURCC of the writer                        */
+    uint32_t _pad1;       /* reserved, zero (keeps sizeof a multiple of 8)   */
     /* PelorusSectionDir dir[section_count] follows immediately. */
 } PelorusSideData;
 
@@ -174,10 +169,10 @@ typedef struct PelorusBandingSection {
 
 /* (b) Local variance / edge — written by vf_pelorus_analyze. */
 typedef struct PelorusVarianceSection {
-    float global_variance;  /* spatial activity, normalized                  */
-    float edge_density;     /* fraction of edge pixels                       */
-    float texture_energy;   /* high-frequency energy proxy                   */
-    uint32_t var_cell_offset;  /* blob-relative; float variance per cell     */
+    float global_variance;    /* spatial activity, normalized                  */
+    float edge_density;       /* fraction of edge pixels                       */
+    float texture_energy;     /* high-frequency energy proxy                   */
+    uint32_t var_cell_offset; /* blob-relative; float variance per cell     */
     uint32_t var_cell_size;
     uint32_t edge_cell_offset; /* blob-relative; uint8 edge per cell         */
     uint32_t edge_cell_size;
@@ -208,34 +203,34 @@ typedef struct PelorusDenoiseSection {
  * is authoritative. */
 typedef struct PelorusFilmGrainSection {
     uint64_t seed;
-    int32_t num_y_points;           /* AV1: <= 14                            */
-    int32_t num_uv_points[2];       /* AV1: {cb, cr}, each <= 10             */
-    int32_t scaling_shift;          /* AV1 [8,11]                            */
-    int32_t ar_coeff_lag;           /* AV1: coeff count = 2*lag*(lag+1)      */
-    int32_t ar_coeff_shift;         /* AV1 [6,9]                            */
-    int32_t grain_scale_shift;      /* AV1                                   */
-    int32_t uv_mult[2];             /* AV1                                   */
-    int32_t uv_mult_luma[2];        /* AV1                                   */
-    int32_t uv_offset[2];           /* AV1 9-bit [-256,255]                  */
-    uint8_t apply;                  /* 1 => producer recommends grain synth   */
+    int32_t num_y_points;             /* AV1: <= 14                            */
+    int32_t num_uv_points[2];         /* AV1: {cb, cr}, each <= 10             */
+    int32_t scaling_shift;            /* AV1 [8,11]                            */
+    int32_t ar_coeff_lag;             /* AV1: coeff count = 2*lag*(lag+1)      */
+    int32_t ar_coeff_shift;           /* AV1 [6,9]                            */
+    int32_t grain_scale_shift;        /* AV1                                   */
+    int32_t uv_mult[2];               /* AV1                                   */
+    int32_t uv_mult_luma[2];          /* AV1                                   */
+    int32_t uv_offset[2];             /* AV1 9-bit [-256,255]                  */
+    uint8_t apply;                    /* 1 => producer recommends grain synth   */
     uint8_t chroma_scaling_from_luma; /* AV1                                  */
-    uint8_t overlap_flag;           /* AV1                                   */
-    uint8_t limit_output_range;     /* AV1                                   */
-    uint8_t y_points[14][2];        /* AV1: {value, scaling} (== AOM)        */
-    uint8_t uv_points[2][10][2];    /* AV1 (== AOM)                          */
-    int8_t ar_coeffs_y[24];         /* AV1 (== AOM)                          */
-    int8_t ar_coeffs_uv[2][25];     /* AV1 (== AOM)                          */
-    uint8_t grain_model;            /* enum pel_grain_model (none/aom/h274)  */
-    uint8_t h274_model_id;          /* H.274 FGC model_id (0=freq,1=AR)      */
-    uint8_t h274_blending_mode;     /* H.274 blending_mode_id                */
-    uint8_t h274_log2_scale;        /* H.274 log2_scale_factor               */
-    uint8_t _pad[6];                /* reserved, zero                        */
+    uint8_t overlap_flag;             /* AV1                                   */
+    uint8_t limit_output_range;       /* AV1                                   */
+    uint8_t y_points[14][2];          /* AV1: {value, scaling} (== AOM)        */
+    uint8_t uv_points[2][10][2];      /* AV1 (== AOM)                          */
+    int8_t ar_coeffs_y[24];           /* AV1 (== AOM)                          */
+    int8_t ar_coeffs_uv[2][25];       /* AV1 (== AOM)                          */
+    uint8_t grain_model;              /* enum pel_grain_model (none/aom/h274)  */
+    uint8_t h274_model_id;            /* H.274 FGC model_id (0=freq,1=AR)      */
+    uint8_t h274_blending_mode;       /* H.274 blending_mode_id                */
+    uint8_t h274_log2_scale;          /* H.274 log2_scale_factor               */
+    uint8_t _pad[6];                  /* reserved, zero                        */
     /* --- APPEND-ONLY below this line --- */
 } PelorusFilmGrainSection;
 
 /* (e) Optical-flow motion-vector hint summary — written by vf_pelorus_mc. */
 typedef struct PelorusMotionSection {
-    float global_motion_x;      /* mean MV, pixels                           */
+    float global_motion_x; /* mean MV, pixels                           */
     float global_motion_y;
     float motion_magnitude_mean;
     float motion_magnitude_p95; /* 95th pct — scene-cut / pan detector        */
@@ -287,8 +282,7 @@ typedef struct PelorusPackSection {
  * map payloads (when used) are appended by the caller after pack — see
  * docs/api/interop-abi.md. Returns PEL_OK or a negative pel_result.
  */
-pel_result pel_blob_pack(const PelorusSideData *meta,
-                         const PelorusPackSection *sections, int nb,
+pel_result pel_blob_pack(const PelorusSideData *meta, const PelorusPackSection *sections, int nb,
                          uint8_t **out_blob, size_t *out_len);
 
 /* Free a buffer returned by pel_blob_pack. */
@@ -307,10 +301,9 @@ void pel_blob_free(uint8_t *blob);
  * Returns PEL_OK, PEL_ERR_ABSENT (no Pelorus blob / section not present),
  * PEL_ERR_ABI (uuid/magic/major mismatch), or PEL_ERR_TRUNCATED.
  */
-pel_result pel_blob_find_section(const uint8_t *blob, size_t len,
-                                 enum pel_section sec,
-                                 size_t consumer_known_size,
-                                 const void **out_ptr, size_t *out_size);
+pel_result pel_blob_find_section(const uint8_t *blob, size_t len, enum pel_section sec,
+                                 size_t consumer_known_size, const void **out_ptr,
+                                 size_t *out_size);
 
 /* True if blob/len carries a valid Pelorus blob (uuid + magic + abi_major).
  * Cheap pre-check before iterating sections. */

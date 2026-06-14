@@ -43,9 +43,9 @@ extern "C" {
 #endif
 
 enum pel_deband_sample_mode {
-    PEL_DEBAND_SAMPLE_COLUMN = 1, /* 2 vertical taps                          */
-    PEL_DEBAND_SAMPLE_SQUARE = 2, /* 4 rotated taps (== vf_deband; DEFAULT)   */
-    PEL_DEBAND_SAMPLE_ROW = 3,    /* 2 horizontal taps                        */
+    PEL_DEBAND_SAMPLE_COLUMN = 1,    /* 2 vertical taps                          */
+    PEL_DEBAND_SAMPLE_SQUARE = 2,    /* 4 rotated taps (== vf_deband; DEFAULT)   */
+    PEL_DEBAND_SAMPLE_ROW = 3,       /* 2 horizontal taps                        */
     PEL_DEBAND_SAMPLE_SQUARE_ROT = 4 /* 4 taps + per-frame ring rotation       */
 };
 
@@ -56,15 +56,15 @@ enum pel_deband_blur_mode {
 
 enum pel_deband_dither_mode {
     PEL_DEBAND_DITHER_NONE = 0,
-    PEL_DEBAND_DITHER_BAYER8 = 1,    /* ordered 8x8 Bayer                     */
-    PEL_DEBAND_DITHER_BLUENOISE = 2  /* hashed TPDF (DEFAULT)                 */
+    PEL_DEBAND_DITHER_BAYER8 = 1,   /* ordered 8x8 Bayer                     */
+    PEL_DEBAND_DITHER_BLUENOISE = 2 /* hashed TPDF (DEFAULT)                 */
 };
 
 /* Flag bits, mirrored 1:1 into the shader push-constant `flags` word. */
 enum pel_deband_flags {
-    PEL_DEBAND_FLAG_DYNAMIC_GRAIN = 1u << 0, /* re-seed grain each frame      */
-    PEL_DEBAND_FLAG_PROTECT_DETAIL = 1u << 1,/* gate off textured regions     */
-    PEL_DEBAND_FLAG_COUPLING = 1u << 2       /* all planes must agree (4:4:4)  */
+    PEL_DEBAND_FLAG_DYNAMIC_GRAIN = 1u << 0,  /* re-seed grain each frame      */
+    PEL_DEBAND_FLAG_PROTECT_DETAIL = 1u << 1, /* gate off textured regions     */
+    PEL_DEBAND_FLAG_COUPLING = 1u << 2        /* all planes must agree (4:4:4)  */
 };
 
 /*
@@ -73,17 +73,17 @@ enum pel_deband_flags {
  * 16-bit internal domain). Per-plane order is {Y, Cb, Cr, A}.
  */
 typedef struct PelorusDebandParams {
-    int32_t range;        /* reference-sampling radius in pixels (1..31)      */
-    float thr[4];         /* per-plane normalized threshold                   */
-    float grain[4];       /* per-plane normalized grain amplitude             */
-    float softness;       /* blend transition width (0 = hard vf_deband)      */
-    float detail_thr;     /* detail-mask activity threshold (normalized)      */
-    int32_t sample_mode;  /* enum pel_deband_sample_mode                      */
-    int32_t blur_mode;    /* enum pel_deband_blur_mode                        */
-    int32_t dither_mode;  /* enum pel_deband_dither_mode                      */
-    uint32_t planes;      /* bitmask of planes to process (default 0xF)       */
-    uint32_t flags;       /* enum pel_deband_flags                            */
-    int32_t out_depth;    /* output bit depth (8/10/12/16; 0 = same as input) */
+    int32_t range;       /* reference-sampling radius in pixels (1..31)      */
+    float thr[4];        /* per-plane normalized threshold                   */
+    float grain[4];      /* per-plane normalized grain amplitude             */
+    float softness;      /* blend transition width (0 = hard vf_deband)      */
+    float detail_thr;    /* detail-mask activity threshold (normalized)      */
+    int32_t sample_mode; /* enum pel_deband_sample_mode                      */
+    int32_t blur_mode;   /* enum pel_deband_blur_mode                        */
+    int32_t dither_mode; /* enum pel_deband_dither_mode                      */
+    uint32_t planes;     /* bitmask of planes to process (default 0xF)       */
+    uint32_t flags;      /* enum pel_deband_flags                            */
+    int32_t out_depth;   /* output bit depth (8/10/12/16; 0 = same as input) */
 } PelorusDebandParams;
 
 /* Fill p with the dark-scene pre-encode defaults (range=15, square sampling,
@@ -92,8 +92,7 @@ void pel_deband_params_default(PelorusDebandParams *p);
 
 /* Validate p against documented ranges. Returns PEL_OK or PEL_ERR_RANGE; on
  * error and if `what` is non-NULL, *what points at a static field name. */
-pel_result pel_deband_params_validate(const PelorusDebandParams *p,
-                                      const char **what);
+pel_result pel_deband_params_validate(const PelorusDebandParams *p, const char **what);
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: libpelorus (build · test · format · tidy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build glslang-tools clang clang-format clang-tidy pkg-config
+      - name: Configure + build
+        run: meson setup build && ninja -C build
+      - name: Test (fast suite — interop ABI + shader compile)
+        run: meson test -C build --suite=fast --print-errorlogs
+      - name: clang-format (touched-tree clean)
+        run: |
+          fmt=$(find libpelorus -name '*.c' -o -name '*.h')
+          clang-format --dry-run --Werror $fmt
+      - name: clang-tidy
+        run: clang-tidy -p build libpelorus/src/*.c
+
+  ffmpeg-stack:
+    name: ffmpeg patch stack (apply · configure · compile filters)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain + Vulkan/SPIR-V deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build glslang-tools pkg-config nasm yasm git \
+            libvulkan-dev libshaderc-dev
+      - name: Build + install libpelorus
+        run: |
+          meson setup build --prefix="$GITHUB_WORKSPACE/.local"
+          ninja -C build install
+          echo "PKG_CONFIG_PATH=$GITHUB_WORKSPACE/.local/lib/pkgconfig:$GITHUB_WORKSPACE/.local/lib/x86_64-linux-gnu/pkgconfig" >> "$GITHUB_ENV"
+      - name: Checkout FFmpeg n8.1.1
+        run: git clone --branch n8.1.1 --depth 1 https://github.com/FFmpeg/FFmpeg.git ffmpeg
+      - name: Apply Pelorus patch stack (git am --3way)
+        working-directory: ffmpeg
+        run: |
+          git config user.name CI && git config user.email ci@vmafx.invalid
+          while read -r p; do
+            case "$p" in ''|\#*) continue;; esac
+            echo "applying $p"
+            git am --3way "$GITHUB_WORKSPACE/ffmpeg-patches/$p"
+          done < "$GITHUB_WORKSPACE/ffmpeg-patches/series.txt"
+      - name: Configure (Vulkan + libpelorus)
+        working-directory: ffmpeg
+        run: ./configure --enable-vulkan --disable-doc --disable-programs
+      - name: Confirm filters enabled
+        working-directory: ffmpeg
+        run: |
+          grep -q 'CONFIG_PELORUS_DEBAND_VULKAN_FILTER 1' config_components.h
+          grep -q 'CONFIG_PELORUS_ANALYZE_VULKAN_FILTER 1' config_components.h
+      - name: Compile filter objects (real in-tree build with SPIR-V)
+        working-directory: ffmpeg
+        run: |
+          make -j"$(nproc)" \
+            libavfilter/vf_pelorus_deband_vulkan.o \
+            libavfilter/vf_pelorus_analyze_vulkan.o
+
+  docs:
+    name: docs + changelog hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Changelog fragments render cleanly
+        run: bash scripts/release/concat-changelog-fragments.sh --check
+      - name: Every ADR has an index row
+        run: |
+          missing=0
+          for adr in docs/adr/[0-9]*.md; do
+            n=$(basename "$adr" .md); n=${n%%-*}
+            grep -q "\[$n\](" docs/adr/README.md || { echo "ADR $n missing from index"; missing=1; }
+          done
+          exit $missing

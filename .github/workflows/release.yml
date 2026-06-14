@@ -1,0 +1,48 @@
+name: Release
+
+# Cut a release by pushing a SemVer tag:  git tag v0.1.0 && git push origin v0.1.0
+# Gates on the build + tests, extracts notes from CHANGELOG.md's [Unreleased]
+# block, packages the FFmpeg patch stack, and publishes a GitHub release.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends meson ninja-build glslang-tools pkg-config
+      - name: Gate — build + fast tests
+        run: |
+          meson setup build
+          ninja -C build
+          meson test -C build --suite=fast --print-errorlogs
+      - name: Changelog is rendered
+        run: bash scripts/release/concat-changelog-fragments.sh --check
+      - name: Extract release notes (the [Unreleased] block)
+        run: |
+          awk '/<!-- BEGIN UNRELEASED/{f=1;next} /<!-- END UNRELEASED/{f=0} f' \
+            CHANGELOG.md | sed '/^## \[Unreleased\]/d' > RELEASE_NOTES.md
+          echo "--- notes ---"; cat RELEASE_NOTES.md
+      - name: Package the FFmpeg patch stack
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          tar czf "pelorus-ffmpeg-patches-${tag}.tar.gz" \
+            ffmpeg-patches/series.txt ffmpeg-patches/README.md \
+            ffmpeg-patches/0*.patch ffmpeg-patches/files
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "Pelorus ${GITHUB_REF_NAME}" \
+            --notes-file RELEASE_NOTES.md \
+            "pelorus-ffmpeg-patches-${GITHUB_REF_NAME}.tar.gz"

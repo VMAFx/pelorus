@@ -15,6 +15,10 @@
 /.workingdir/
 /.scratch/
 
+# Claude Code: agent scratch worktrees + local-only settings overrides.
+/.claude/worktrees/
+/.claude/settings.local.json
+
 # pkg-config / install staging
 /dist/
 

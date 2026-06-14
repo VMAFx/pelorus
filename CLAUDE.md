@@ -32,6 +32,41 @@ ffmpeg-patches/test/build-and-run.sh      # apply + build + smoke the filter
 - `ffmpeg-patches/files/vf_pelorus_deband_vulkan.c` — the in-tree filter (inline
   GLSL). Keep its algorithm in lockstep with the `.comp`.
 
+## Skills available
+
+In `.claude/skills/` (invoke via `/<name>`):
+
+| Skill | When |
+|---|---|
+| `build` | configure + build + fast test (the local gate) |
+| `format-all` / `lint-all` | clang-format / clang-tidy + shader compile |
+| `add-vulkan-filter` | scaffold a new `vf_pelorus_*` filter end-to-end |
+| `ffmpeg-build-patches` / `ffmpeg-apply-patches` | regenerate / apply+build the patch stack |
+| `new-adr` | reserve + create an ADR before the commit |
+| `bump-abi` | extend the interop ABI the append-only way |
+| `render-changelog` | render CHANGELOG from `changelog.d/` fragments |
+| `cut-release` | version bump + tag → release workflow |
+
+Plus the vendored [obra/superpowers](https://github.com/obra/superpowers)
+meta-skills under `.claude/skills/superpowers/` (verification-before-completion,
+systematic-debugging, test-driven-development, requesting/receiving-code-review,
+using-git-worktrees, …) — use them as the template for new skills and as process
+guidance. Review subagents live in `.claude/agents/` (c-reviewer,
+vulkan-shader-reviewer, interop-abi-reviewer, ffmpeg-patch-reviewer, doc-reviewer,
+pr-body-checker). Curated topic links: [docs/references.md](docs/references.md).
+
+## Hooks active
+
+In `.claude/hooks/` (wired in `.claude/settings.json`):
+
+- **PreToolUse(Bash)** `block-unsafe-bash` — blocks `rm -rf /`, force-push to
+  master, hard-reset onto origin/master, `git clean -xf`, fork bombs.
+- **PostToolUse(Edit|Write)** `auto-format-on-edit` (clang-format C/H),
+  `shader-lockstep-warn` (.comp ⇄ filter inline GLSL), `docs-drift-warn`
+  (ABI/surface/build-flag → docs/ADR/changelog/patch reminders).
+- **SessionStart** `session-start` — branch + PLAN/STATE orientation, build staleness.
+- **Stop** `stop` — reminds to run the local gate when sources are unverified.
+
 ## Tone
 
 - Be terse. No preamble.

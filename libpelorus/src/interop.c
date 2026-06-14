@@ -34,9 +34,7 @@
 
 /* pelorus-sidedata-v1 = e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64 */
 const uint8_t pelorus_sidedata_uuid[PELORUS_SIDEDATA_UUID_LEN] = {
-    0xe1, 0xd7, 0xc4, 0xa2, 0x6b, 0x93, 0x4f, 0x08,
-    0x9a, 0x55, 0x0f, 0x3c, 0x2d, 0xb1, 0x7e, 0x64
-};
+    0xe1, 0xd7, 0xc4, 0xa2, 0x6b, 0x93, 0x4f, 0x08, 0x9a, 0x55, 0x0f, 0x3c, 0x2d, 0xb1, 0x7e, 0x64};
 
 #define PEL_ALIGN8(x) (((x) + 7u) & ~7u)
 
@@ -55,8 +53,51 @@ static int section_bit_valid(uint32_t id)
     }
 }
 
-pel_result pel_blob_pack(const PelorusSideData *meta,
-                         const PelorusPackSection *sections, int nb,
+/* Validate sections, derive the present-section mask, reject duplicates. */
+static pel_result validate_pack_sections(const PelorusPackSection *sections, int nb,
+                                         uint32_t *out_mask)
+{
+    uint32_t mask = 0;
+    int i;
+
+    for (i = 0; i < nb; i++) {
+        if (sections[i].data == NULL || sections[i].size == 0) {
+            return PEL_ERR_INVALID;
+        }
+        if (!section_bit_valid((uint32_t)sections[i].id)) {
+            return PEL_ERR_RANGE;
+        }
+        if (mask & (uint32_t)sections[i].id) {
+            return PEL_ERR_INVALID; /* duplicate section */
+        }
+        mask |= (uint32_t)sections[i].id;
+    }
+    *out_mask = mask;
+    return PEL_OK;
+}
+
+/* Fill the fixed framing fields of the blob header. */
+static void write_pack_header(PelorusSideData *hdr, const PelorusSideData *meta,
+                              uint32_t total_size, uint32_t section_mask, int nb)
+{
+    memcpy(hdr->magic, PELORUS_MAGIC_STR, PELORUS_MAGIC_LEN);
+    hdr->abi_major = (uint16_t)PELORUS_ABI_MAJOR;
+    hdr->abi_minor = (uint16_t)PELORUS_ABI_MINOR;
+    hdr->total_size = total_size;
+    hdr->section_mask = section_mask;
+    hdr->section_count = (uint16_t)nb;
+    hdr->header_size = (uint16_t)sizeof(PelorusSideData);
+    hdr->frame_pts = meta->frame_pts;
+    hdr->plane_layout = meta->plane_layout;
+    hdr->bit_depth = meta->bit_depth;
+    hdr->grid_cols = meta->grid_cols;
+    hdr->grid_rows = meta->grid_rows;
+    hdr->_pad0 = 0;
+    hdr->producer_id = meta->producer_id;
+    hdr->_pad1 = 0;
+}
+
+pel_result pel_blob_pack(const PelorusSideData *meta, const PelorusPackSection *sections, int nb,
                          uint8_t **out_blob, size_t *out_len)
 {
     const uint32_t header_size = (uint32_t)sizeof(PelorusSideData);
@@ -80,18 +121,11 @@ pel_result pel_blob_pack(const PelorusSideData *meta,
         return PEL_ERR_RANGE;
     }
 
-    /* Validate sections, derive the mask, reject duplicates. */
-    for (i = 0; i < nb; i++) {
-        if (sections[i].data == NULL || sections[i].size == 0) {
-            return PEL_ERR_INVALID;
+    {
+        pel_result rc = validate_pack_sections(sections, nb, &section_mask);
+        if (rc != PEL_OK) {
+            return rc;
         }
-        if (!section_bit_valid((uint32_t)sections[i].id)) {
-            return PEL_ERR_RANGE;
-        }
-        if (section_mask & (uint32_t)sections[i].id) {
-            return PEL_ERR_INVALID; /* duplicate section */
-        }
-        section_mask |= (uint32_t)sections[i].id;
     }
 
     /* Layout: header, dir[], then 8-aligned section payloads. */
@@ -121,32 +155,16 @@ pel_result pel_blob_pack(const PelorusSideData *meta,
 
     /* Header. */
     hdr = (PelorusSideData *)(void *)(blob + PELORUS_SIDEDATA_UUID_LEN);
-    memcpy(hdr->magic, PELORUS_MAGIC_STR, PELORUS_MAGIC_LEN);
-    hdr->abi_major = (uint16_t)PELORUS_ABI_MAJOR;
-    hdr->abi_minor = (uint16_t)PELORUS_ABI_MINOR;
-    hdr->total_size = total_size;
-    hdr->section_mask = section_mask;
-    hdr->section_count = (uint16_t)nb;
-    hdr->header_size = (uint16_t)header_size;
-    hdr->frame_pts = meta->frame_pts;
-    hdr->plane_layout = meta->plane_layout;
-    hdr->bit_depth = meta->bit_depth;
-    hdr->grid_cols = meta->grid_cols;
-    hdr->grid_rows = meta->grid_rows;
-    hdr->_pad0 = 0;
-    hdr->producer_id = meta->producer_id;
-    hdr->_pad1 = 0;
+    write_pack_header(hdr, meta, total_size, section_mask, nb);
 
     /* Directory + payloads. */
-    dir = (PelorusSectionDir *)(void *)(blob + PELORUS_SIDEDATA_UUID_LEN +
-                                        header_size);
+    dir = (PelorusSectionDir *)(void *)(blob + PELORUS_SIDEDATA_UUID_LEN + header_size);
     for (i = 0; i < nb; i++) {
         dir[i].section_id = (uint32_t)sections[i].id;
         dir[i].offset = cursor; /* relative to magic[0] */
         dir[i].size = sections[i].size;
         dir[i].struct_minor = (uint32_t)PELORUS_ABI_MINOR;
-        memcpy(blob + PELORUS_SIDEDATA_UUID_LEN + cursor, sections[i].data,
-               sections[i].size);
+        memcpy(blob + PELORUS_SIDEDATA_UUID_LEN + cursor, sections[i].data, sections[i].size);
         cursor += PEL_ALIGN8(sections[i].size);
     }
 
@@ -164,25 +182,21 @@ int pel_blob_is_present(const uint8_t *blob, size_t len)
 {
     const PelorusSideData *hdr;
 
-    if (blob == NULL ||
-        len < (size_t)PELORUS_SIDEDATA_UUID_LEN + sizeof(PelorusSideData)) {
+    if (blob == NULL || len < (size_t)PELORUS_SIDEDATA_UUID_LEN + sizeof(PelorusSideData)) {
         return 0;
     }
     if (memcmp(blob, pelorus_sidedata_uuid, PELORUS_SIDEDATA_UUID_LEN) != 0) {
         return 0;
     }
-    hdr = (const PelorusSideData *)(const void *)(blob +
-                                                  PELORUS_SIDEDATA_UUID_LEN);
+    hdr = (const PelorusSideData *)(const void *)(blob + PELORUS_SIDEDATA_UUID_LEN);
     if (memcmp(hdr->magic, PELORUS_MAGIC_STR, PELORUS_MAGIC_LEN) != 0) {
         return 0;
     }
     return hdr->abi_major == (uint16_t)PELORUS_ABI_MAJOR;
 }
 
-pel_result pel_blob_find_section(const uint8_t *blob, size_t len,
-                                 enum pel_section sec,
-                                 size_t consumer_known_size,
-                                 const void **out_ptr, size_t *out_size)
+pel_result pel_blob_find_section(const uint8_t *blob, size_t len, enum pel_section sec,
+                                 size_t consumer_known_size, const void **out_ptr, size_t *out_size)
 {
     const PelorusSideData *hdr;
     const PelorusSectionDir *dir;
@@ -220,8 +234,7 @@ pel_result pel_blob_find_section(const uint8_t *blob, size_t len,
     if (hdr->total_size > image_len || hdr->header_size < sizeof(*hdr)) {
         return PEL_ERR_TRUNCATED;
     }
-    if ((size_t)hdr->header_size +
-            (size_t)hdr->section_count * sizeof(PelorusSectionDir) >
+    if ((size_t)hdr->header_size + (size_t)hdr->section_count * sizeof(PelorusSectionDir) >
         image_len) {
         return PEL_ERR_TRUNCATED;
     }

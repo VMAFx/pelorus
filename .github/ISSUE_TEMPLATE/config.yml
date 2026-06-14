@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Pelorus docs
+    url: https://github.com/VMAFx/pelorus/tree/master/docs
+    about: Architecture, the interop ABI, per-filter usage, and the engineering principles.
+  - name: vmafx (the quality oracle)
+    url: https://github.com/VMAFx/vmafx
+    about: VMAF questions, scoring, and the autotune control plane belong here.

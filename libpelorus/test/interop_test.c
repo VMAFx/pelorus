@@ -35,12 +35,12 @@
 
 static int g_fail;
 
-#define CHECK(cond)                                                            \
-    do {                                                                       \
-        if (!(cond)) {                                                         \
-            fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);   \
-            g_fail++;                                                          \
-        }                                                                      \
+#define CHECK(cond)                                                                                \
+    do {                                                                                           \
+        if (!(cond)) {                                                                             \
+            fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                        \
+            g_fail++;                                                                              \
+        }                                                                                          \
     } while (0)
 
 static void fill_meta(PelorusSideData *m)
@@ -102,8 +102,7 @@ static void test_roundtrip(void)
     CHECK(pel_blob_is_present(blob, len) == 1);
 
     /* banding */
-    CHECK(pel_blob_find_section(blob, len, PEL_SEC_BANDING,
-                                sizeof(PelorusBandingSection), &p,
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_BANDING, sizeof(PelorusBandingSection), &p,
                                 &got) == PEL_OK);
     CHECK(got == sizeof(PelorusBandingSection));
     {
@@ -113,8 +112,7 @@ static void test_roundtrip(void)
     }
 
     /* variance */
-    CHECK(pel_blob_find_section(blob, len, PEL_SEC_VARIANCE,
-                                sizeof(PelorusVarianceSection), &p,
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_VARIANCE, sizeof(PelorusVarianceSection), &p,
                                 &got) == PEL_OK);
     {
         const PelorusVarianceSection *v = p;
@@ -122,8 +120,7 @@ static void test_roundtrip(void)
     }
 
     /* film grain — verify the 64-bit seed survived (alignment) */
-    CHECK(pel_blob_find_section(blob, len, PEL_SEC_FILMGRAIN,
-                                sizeof(PelorusFilmGrainSection), &p,
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_FILMGRAIN, sizeof(PelorusFilmGrainSection), &p,
                                 &got) == PEL_OK);
     {
         const PelorusFilmGrainSection *g = p;
@@ -133,8 +130,7 @@ static void test_roundtrip(void)
     }
 
     /* a section we did not write is absent (R3 back-compat fallback) */
-    CHECK(pel_blob_find_section(blob, len, PEL_SEC_MOTION,
-                                sizeof(PelorusMotionSection), &p,
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_MOTION, sizeof(PelorusMotionSection), &p,
                                 &got) == PEL_ERR_ABSENT);
 
     pel_blob_free(blob);
@@ -161,8 +157,8 @@ static void test_forward_compat(void)
     sec.size = (uint32_t)sizeof(var);
 
     CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
-    CHECK(pel_blob_find_section(blob, len, PEL_SEC_VARIANCE,
-                                older_consumer_size, &p, &got) == PEL_OK);
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_VARIANCE, older_consumer_size, &p, &got) ==
+          PEL_OK);
     CHECK(got == older_consumer_size); /* clamped to what the consumer knows */
     pel_blob_free(blob);
 }
@@ -190,8 +186,7 @@ static void test_abi_major_mismatch(void)
     hdr->abi_major = (uint16_t)(PELORUS_ABI_MAJOR + 1u);
 
     CHECK(pel_blob_is_present(blob, len) == 0);
-    CHECK(pel_blob_find_section(blob, len, PEL_SEC_BANDING,
-                                sizeof(PelorusBandingSection), &p,
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_BANDING, sizeof(PelorusBandingSection), &p,
                                 &got) == PEL_ERR_ABI);
     pel_blob_free(blob);
 }
@@ -206,8 +201,7 @@ static void test_foreign_buffer(void)
     memset(foreign, 0xAB, sizeof(foreign));
     CHECK(pel_blob_is_present(foreign, sizeof(foreign)) == 0);
     CHECK(pel_blob_find_section(foreign, sizeof(foreign), PEL_SEC_BANDING,
-                                sizeof(PelorusBandingSection), &p,
-                                &got) == PEL_ERR_ABSENT);
+                                sizeof(PelorusBandingSection), &p, &got) == PEL_ERR_ABSENT);
 }
 
 /* A header-only blob (no sections) is valid and parses. */
@@ -222,8 +216,7 @@ static void test_header_only(void)
     fill_meta(&meta);
     CHECK(pel_blob_pack(&meta, NULL, 0, &blob, &len) == PEL_OK);
     CHECK(pel_blob_is_present(blob, len) == 1);
-    CHECK(pel_blob_find_section(blob, len, PEL_SEC_BANDING,
-                                sizeof(PelorusBandingSection), &p,
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_BANDING, sizeof(PelorusBandingSection), &p,
                                 &got) == PEL_ERR_ABSENT);
     pel_blob_free(blob);
 }
@@ -247,11 +240,9 @@ static void test_truncation(void)
     CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
 
     /* Lie about the length: claim only the uuid + header are present. */
-    CHECK(pel_blob_find_section(blob,
-                                (size_t)PELORUS_SIDEDATA_UUID_LEN +
-                                    sizeof(PelorusSideData),
-                                PEL_SEC_MOTION, sizeof(PelorusMotionSection),
-                                &p, &got) == PEL_ERR_TRUNCATED);
+    CHECK(pel_blob_find_section(blob, (size_t)PELORUS_SIDEDATA_UUID_LEN + sizeof(PelorusSideData),
+                                PEL_SEC_MOTION, sizeof(PelorusMotionSection), &p,
+                                &got) == PEL_ERR_TRUNCATED);
     pel_blob_free(blob);
 }
 
@@ -283,7 +274,7 @@ int main(void)
         fprintf(stderr, "%d check(s) failed\n", g_fail);
         return EXIT_FAILURE;
     }
-    printf("interop: all checks passed (libpelorus %s, ABI %u.%u)\n",
-           pelorus_version_string(), PELORUS_ABI_MAJOR, PELORUS_ABI_MINOR);
+    printf("interop: all checks passed (libpelorus %s, ABI %u.%u)\n", pelorus_version_string(),
+           PELORUS_ABI_MAJOR, PELORUS_ABI_MINOR);
     return EXIT_SUCCESS;
 }
