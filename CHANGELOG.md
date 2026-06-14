@@ -20,6 +20,12 @@ All notable changes to Pelorus are documented here. The format is
 - **`vf_pelorus_analyze_vulkan`** (`ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c`): a pass-through Vulkan compute analyzer that reduces each frame's luma to per-frame banding / variance / edge statistics on the GPU (per-tile shared-memory reduction → sliced SSBO), reads them back (vf_scdet_vulkan pattern), and attaches the *measured* `PEL_SEC_VARIANCE` + `PEL_SEC_BANDING` interop sections — the data the deband filter only approximates. Codec-agnostic. AVOption: `flat`. Shipped as `ffmpeg-patches/0002-add-vf_pelorus_analyze_vulkan.patch` (cumulative on 0001, applies via `git am --3way`). ADR-0109.
 - **Reference shader** (`libpelorus/shaders/pelorus_analyze.comp`): standalone reduction, CI-compiled to SPIR-V.
 - **Docs**: `docs/metrics/analyze.md`.
+- **Control-plane contract** (`docs/api/control-plane.md`): froze the
+  autotune-relevant `vf_pelorus_deband_vulkan` AVOptions (`range`, `thry`,
+  `thrc`, `grainy`, `grainc`, `softness`, `detail`, `dither`, `dynamic`,
+  `protect`) as a stable, versioned contract that vmafx's `vmaf-tune` autotune
+  hard-codes against. Renaming/removing/narrowing any frozen knob is a breaking
+  change requiring a coordinated two-repo PR. ADR-0110 (builds on ADR-0106).
 
 <!-- END UNRELEASED -->
 

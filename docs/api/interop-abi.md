@@ -90,6 +90,8 @@ ignore the blob), `PEL_ERR_TRUNCATED`, `PEL_ERR_INVALID`.
 
 Separately versioned. Pelorus exposes filter strengths as `AVOption`s and the
 banding/variance sections as perceptual-weighting input; vmafx's `libvmaf_tune`
-/ `vmafx-server` `/v1/score` / `vmaf-mcp` drive the VMAF-in-the-loop search. See
-[ADR-0106](../adr/0106-autotune-control-plane.md) and
+/ `vmafx-server` `/v1/score` / `vmaf-mcp` drive the VMAF-in-the-loop search. The
+autotune-relevant deband `AVOption`s are frozen as a stable contract in
+[control-plane.md](control-plane.md) ([ADR-0110](../adr/0110-avoption-control-plane-contract.md)).
+See [ADR-0106](../adr/0106-autotune-control-plane.md) and
 [docs/usage/ffmpeg.md](../usage/ffmpeg.md).

@@ -40,3 +40,10 @@ patches (ADR-0108 deliverable #6).
   an upstream bump can break the readback path — re-test by replaying the stack.
 - **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay
   0001+0002, build, smoke `-h filter=pelorus_analyze_vulkan`).
+- **Frozen control-plane AVOptions (ADR-0110)**: the deband `AVOption` names and
+  ranges `range`, `thry`, `thrc`, `grainy`, `grainc`, `softness`, `detail`,
+  `dither`, `dynamic`, `protect` are a stable contract vmafx's `vmaf-tune` hard-codes
+  against. A rebase/regeneration must **not** rename or narrow these; a deliberate
+  break is a coordinated two-repo PR. See
+  [docs/api/control-plane.md](api/control-plane.md). `sample`, `blur`, `planes`,
+  and `meta` are out-of-contract and free to evolve.
