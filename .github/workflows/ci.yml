@@ -44,7 +44,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build glslang-tools pkg-config nasm yasm git \
-            libvulkan-dev libshaderc-dev
+            libvulkan-dev libshaderc-dev glslang-dev spirv-tools
       - name: Build + install libpelorus
         run: |
           meson setup build --prefix="$GITHUB_WORKSPACE/.local"
@@ -63,12 +63,20 @@ jobs:
           done < "$GITHUB_WORKSPACE/ffmpeg-patches/series.txt"
       - name: Configure (Vulkan + libpelorus)
         working-directory: ffmpeg
-        run: ./configure --enable-vulkan --disable-doc --disable-programs
+        run: |
+          pkg-config --exists libpelorus && echo "libpelorus $(pkg-config --modversion libpelorus) — $(pkg-config --cflags libpelorus)"
+          ./configure --enable-vulkan --disable-doc --disable-programs \
+            || { echo '::group::config.log tail'; tail -60 ffbuild/config.log; echo '::endgroup::'; exit 1; }
+      - name: Show Vulkan / SPIR-V detection
+        working-directory: ffmpeg
+        run: grep -E 'CONFIG_(VULKAN|LIBSHADERC|LIBGLSLANG|SPIRV_COMPILER|SPIRV_LIBRARY|PELORUS)' config.h config_components.h || true
       - name: Confirm filters enabled
         working-directory: ffmpeg
         run: |
-          grep -q 'CONFIG_PELORUS_DEBAND_VULKAN_FILTER 1' config_components.h
-          grep -q 'CONFIG_PELORUS_ANALYZE_VULKAN_FILTER 1' config_components.h
+          grep -q 'CONFIG_PELORUS_DEBAND_VULKAN_FILTER 1' config_components.h \
+            && grep -q 'CONFIG_PELORUS_ANALYZE_VULKAN_FILTER 1' config_components.h \
+            || { echo "Pelorus filters were DISABLED at configure (likely spirv_library not detected)."; \
+                 grep -iE 'spirv|shaderc|glslang|vulkan' ffbuild/config.log | tail -40; exit 1; }
       - name: Compile filter objects (real in-tree build with SPIR-V)
         working-directory: ffmpeg
         run: |
@@ -88,6 +96,7 @@ jobs:
           missing=0
           for adr in docs/adr/[0-9]*.md; do
             n=$(basename "$adr" .md); n=${n%%-*}
+            [ "$n" = "0000" ] && continue   # 0000 is the template, not indexed
             grep -q "\[$n\](" docs/adr/README.md || { echo "ADR $n missing from index"; missing=1; }
           done
           exit $missing
