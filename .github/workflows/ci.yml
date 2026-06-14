@@ -85,7 +85,10 @@ jobs:
           # --enable-libshaderc turns on spirv_library (the runtime GLSL->SPIR-V
           # compiler); it defaults OFF, and without it every vulkan-compute
           # filter (incl. pelorus) is disabled. The filters then auto-enable.
-          ./configure --enable-vulkan --enable-libshaderc --disable-doc --disable-programs \
+          # NOTE: do NOT --disable-programs — the next step links the `ffmpeg`
+          # binary to exercise the libpelorus link (the real gate); disabling
+          # programs removes that target ("No rule to make target 'ffmpeg'").
+          ./configure --enable-vulkan --enable-libshaderc --disable-doc \
             || { echo '::group::config.log tail'; tail -80 ffbuild/config.log; echo '::endgroup::'; exit 1; }
       - name: Show Vulkan / SPIR-V / libpelorus detection
         working-directory: ffmpeg
