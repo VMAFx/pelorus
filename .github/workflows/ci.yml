@@ -39,12 +39,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - name: Install toolchain + Vulkan/SPIR-V deps
+      - name: Install build toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            meson ninja-build glslang-tools pkg-config nasm yasm git \
-            libvulkan-dev libshaderc-dev glslang-dev spirv-tools
+            meson ninja-build pkg-config nasm yasm git wget ca-certificates gnupg
+      - name: Install Vulkan SDK (LunarG — current headers + glslang + shaderc)
+        run: |
+          # Ubuntu's libvulkan-dev headers are older than FFmpeg n8.1 requires
+          # ("vulkan requested but not found"); the LunarG SDK ships current
+          # Vulkan-Headers + glslang + shaderc (spirv_library) together.
+          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc \
+            | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc >/dev/null
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list \
+            https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
+          sudo apt-get update
+          sudo apt-get install -y vulkan-sdk
+          echo "vulkan: $(pkg-config --modversion vulkan 2>/dev/null || echo '?')"
       - name: Build + install libpelorus
         run: |
           meson setup build --prefix="$GITHUB_WORKSPACE/.local"
