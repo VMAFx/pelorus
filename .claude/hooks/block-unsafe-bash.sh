@@ -9,7 +9,9 @@ cmd="$(python3 -c 'import sys,json; print(json.load(sys.stdin).get("tool_input",
 block() { echo "BLOCKED by .claude/hooks/block-unsafe-bash.sh: $1" >&2; exit 2; }
 
 case "$cmd" in
-    *"rm -rf /"*|*"rm -rf /*"*|*"rm -fr /"*)        block "refusing 'rm -rf /' — too destructive";;
+    # root wipe only — match "rm -rf /" at end / before a space / "/*", NOT "/tmp/x"
+    *"rm -rf /"|*"rm -fr /"|*"rm -rf / "*|*"rm -fr / "*|*"rm -rf /*"*|*"rm -fr /*"*) \
+                                                    block "refusing 'rm -rf /' (filesystem root)";;
     *"git push"*"--force"*master*|*"git push"*"-f"*master*) block "no force-push to master (ADR/branch-protection)";;
     *"git push"*"--force"*main*|*"git push"*"-f"*main*)     block "no force-push to main";;
     *"git reset --hard"*origin/master*)              block "refusing hard reset onto origin/master";;
