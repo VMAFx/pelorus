@@ -27,7 +27,11 @@ delta-QP / banding map) feeding progressively more powerful, less portable hooks
   map). Verified consumers in *vanilla* ffmpeg: `libx264`, `libx265`, `libvpx`,
   `qsvenc`, `vaapi_encode`, `d3d12va`. Precondition: keep `-aq-mode != none`
   (x264 silently drops ROI otherwise). This is the cheapest win and the baseline
-  A/B harness target.
+  A/B harness target. **MEASURED (concept, manual ROI): −36% banding (CAMBI
+  0.436→0.280) at iso-bitrate vs `x265 aq-mode 2`, VMAF unchanged** — it beats the
+  encoder's *own* AQ because variance-AQ starves the flat gradients that band
+  (see bench-results.md v0.4). Production needs `vf_pelorus_analyze` to
+  auto-detect banding-prone tiles and emit the ROI map.
 - **Tier 1 — our ffmpeg patches, dense per-block delta-QP** (the BD-rate
   step-up): one analyze→`int8` delta-QP raster drives **NVENC** `qpDeltaMap` +
   `qpMapMode=DELTA` (revive the *dead* `NVENC_HAVE_QP_MAP_MODE` guard;

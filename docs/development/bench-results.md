@@ -198,6 +198,32 @@ Static ladder (real GPU filter):
   [ADR-0112](../adr/0112-temporal-denoise.md); per-frame `tcut`/`blend` from a
   motion estimate (the roadmap `vf_pelorus_mc`) would remove the manual choice.
 
+## v0.4 — encoder ROI steering **beats x265's built-in AQ** (concept, works today)
+
+The Tier-0 encoder-steering lever ([ADR-0114](../adr/0114-encoder-steering.md)):
+steer bits to banding-prone regions via `AV_FRAME_DATA_REGIONS_OF_INTEREST`,
+which `libx265` honors **with no patch**. The honest bar (per ADR-0114) is to
+beat the encoder's *own* AQ, not AQ-off — so this A/Bs against `x265 aq-mode 2`.
+
+Composite clip: top half = dark smooth gradient (low-variance → banding-prone),
+bottom half = busy texture (high-variance). `aq-mode 2` gives *fewer* bits to the
+low-variance gradient, so it **starves** exactly the region that bands; a
+banding-ROI (negative `qoffset` on the top half) rescues it.
+
+**Matched bitrate (~222 kbps, 2-pass), `aq-mode 2` both arms:**
+
+| arm | bitrate | CAMBI (banding, ↓) | VMAF |
+|---|---:|---:|---:|
+| baseline (aq-2) | 222.2 kbps | 0.436 | 93.14 |
+| +banding-ROI | 223.3 kbps | **0.280** | 93.21 |
+
+**−36% banding at iso-bitrate, VMAF unchanged** — a *redistribution* win the
+encoder's variance-AQ cannot find on its own. (CRF cross-check: ROI halved CAMBI
+0.773→0.361 with VMAF +1.2.) Caveat: this is the *concept* proven with a manual
+top-half ROI; the production win needs `vf_pelorus_analyze` to **auto-detect**
+banding-prone tiles and emit the ROI map. NVENC/AMF need our QP-map patch
+(they don't honor ROI side-data); QSV/VAAPI honor it like x265.
+
 ## Open / next
 
 1. **Author `vf_pelorus_denoise_vulkan`** (causal NLM-lite spatial + gated
