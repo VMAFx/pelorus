@@ -81,3 +81,9 @@ ffmpeg -i src.mkv -i src.mkv -filter_complex \
 
 Defaults are the dark-scene preset from research 0101; raise `thry` for heavier
 banding, lower `grainy` if a per-title VMAF regresses.
+
+The subset of options `vmaf-tune` sweeps (`range`, `thry`, `thrc`, `grainy`,
+`grainc`, `softness`, `detail`, `dither`, `dynamic`, `protect`) is a **frozen
+control-plane contract** — see [control-plane.md](../api/control-plane.md)
+([ADR-0110](../adr/0110-avoption-control-plane-contract.md)). `sample`, `blur`,
+`planes`, and `meta` are intentionally out of that contract.
