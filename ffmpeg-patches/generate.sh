@@ -53,8 +53,12 @@ def ins_after(path, anchor, line):
 # libpelorus ...`, which adds its cflags/libs and hard-errors if it is missing.
 LVMAF_CUDA = ('enabled libvmaf           && check_pkg_config libvmaf_cuda '
               '"libvmaf >= 2.0.0" libvmaf_cuda.h vmaf_cuda_state_init\n')
+# require_pkg_config adds the header cflags but NOT the link libs, so append
+# add_extralibs to actually link -lpelorus (otherwise ffmpeg fails at LINK time
+# with undefined references, which a compile-only check never catches).
 REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack\n')
+       '"libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack '
+       '&& add_extralibs $libpelorus_extralibs\n')
 
 if which == 'deband':
     ins_before("libavfilter/allfilters.c",

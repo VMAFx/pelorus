@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 14 Jun 2026 15:01:33 +0200
+Date: Sun, 14 Jun 2026 15:32:33 +0200
 Subject: [PATCH 2/2] feat(analyze): add vf_pelorus_analyze_vulkan (measured
  banding/variance maps)
 MIME-Version: 1.0
@@ -34,7 +34,7 @@ ADR: docs/adr/0109-analyze-filter.md
  create mode 100644 libavfilter/vf_pelorus_analyze_vulkan.c
 
 diff --git a/configure b/configure
-index 8fd7a635af..43ca456c92 100755
+index b9bd2084db..7760e4da19 100755
 --- a/configure
 +++ b/configure
 @@ -4177,6 +4177,7 @@ overlay_qsv_filter_deps="libmfx"
@@ -48,8 +48,8 @@ index 8fd7a635af..43ca456c92 100755
 @@ -7392,6 +7393,7 @@ enabled libvidstab        && require_pkg_config libvidstab "vidstab >= 0.98" vid
  enabled libvmaf           && require_pkg_config libvmaf "libvmaf >= 2.0.0" libvmaf.h vmaf_init
  enabled libvmaf           && check_pkg_config libvmaf_cuda "libvmaf >= 2.0.0" libvmaf_cuda.h vmaf_cuda_state_init
- enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack
-+enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack
+ enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
++enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
  enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
