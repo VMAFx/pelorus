@@ -23,8 +23,9 @@ commits one-per-filter, and `git format-patch`es the whole cumulative range.
 1. Add `ffmpeg-patches/files/vf_pelorus_<name>_vulkan.c`.
 2. Add `ffmpeg-patches/.commit-msg-<name>.txt` (Conventional Commit + `ADR:` trailer).
 3. Add the `<name>` registration block to the python step in `generate.sh`
-   (extern in allfilters.c, OBJS in Makefile, `_filter_deps` + `require_pkg_config
-   libpelorus` in configure) and append `<name>` to the `for filter in …` loop.
+   (extern in allfilters.c, OBJS in Makefile, `_filter_deps="vulkan spirv_library
+   libpelorus"` + a soft `check_pkg_config libpelorus` in configure) and append
+   `<name>` to the `for filter in …` loop.
 4. Add the patch filename to `series.txt`.
 5. Run `generate.sh`, then verify with `/ffmpeg-apply-patches`.
 

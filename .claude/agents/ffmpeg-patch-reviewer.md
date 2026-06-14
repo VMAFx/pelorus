@@ -21,8 +21,8 @@ conventions and the project's rebase rules.
    patch — confirm it's not regressed.
 3. **Registration** — three files: `allfilters.c` (`extern const FFFilter
    ff_vf_*`, alphabetical), `Makefile` (`OBJS-$(CONFIG_*_FILTER) += … vulkan.o
-   vulkan_filter.o`), `configure` (`*_filter_deps="vulkan spirv_library"` +
-   `enabled <filter> && require_pkg_config libpelorus …`).
+   vulkan_filter.o`), `configure` (`*_filter_deps="vulkan spirv_library
+   libpelorus"` + a soft `check_pkg_config libpelorus …`, cf. `libvmaf_cuda`).
 4. **Filter idiom** — modeled on `vf_gblur_vulkan.c` / `vf_scdet_vulkan.c`:
    `FFVulkanContext` first, lazy init, `FILTER_SINGLE_PIXFMT(AV_PIX_FMT_VULKAN)`,
    `AVFILTER_FLAG_HWDEVICE`, LGPL-2.1 header. Side-data freed with `pel_blob_free`

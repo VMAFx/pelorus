@@ -42,15 +42,19 @@ stack is cumulative and later patches' context can depend on earlier ones.
 ## Configure + build
 
 ```bash
-./configure --enable-vulkan --enable-libpelorus-filters   # see note below
+./configure --enable-vulkan                               # filters auto-enable
 make -j libavfilter/vf_pelorus_deband_vulkan.o            # single-TU check
 make -j                                                    # full build
 ```
 
-The filter is gated `pelorus_deband_vulkan_filter_deps="vulkan spirv_library"`
-and, when enabled, `require_pkg_config libpelorus ...` — so configure errors
-early with a clear message if libpelorus is missing, rather than failing at
-link time. Disable with `--disable-filter=pelorus_deband_vulkan`.
+Each filter is gated `*_filter_deps="vulkan spirv_library libpelorus"`, and a
+soft `check_pkg_config libpelorus ...` probe sets the `libpelorus` config item
+(the idiomatic FFmpeg pattern, cf. `libvmaf_cuda`). So the filters auto-enable
+iff Vulkan, a SPIR-V compiler, **and** libpelorus are all present, and quietly
+disable otherwise. Force the issue with `--enable-filter=pelorus_deband_vulkan`
+(errors if a dep is missing) or `--disable-filter=pelorus_deband_vulkan`.
+Install libpelorus where pkg-config can see it (`--prefix=/usr`, or set
+`PKG_CONFIG_PATH`) before configuring FFmpeg.
 
 ## Regenerate
 

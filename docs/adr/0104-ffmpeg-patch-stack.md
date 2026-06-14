@@ -21,8 +21,9 @@ under `ffmpeg-patches/`, exactly mirroring vmafx's model. Canonical filter
 sources live in `ffmpeg-patches/files/`; `generate.sh` checks out a pristine
 n8.1.1 in an isolated git worktree, drops the sources in, wires the registration
 hunks (configure / Makefile / allfilters.c), commits, and `git format-patch`es
-the artifact. Filters `require_pkg_config libpelorus` and are gated
-`vulkan spirv_library`. Apply with `git am --3way`; verify with a full series
+the artifact. Filters are gated `*_filter_deps="vulkan spirv_library libpelorus"`
+with a soft `check_pkg_config libpelorus` probe (idiomatic FFmpeg, cf.
+`libvmaf_cuda`). Apply with `git am --3way`; verify with a full series
 replay (`ffmpeg-patches/test/build-and-run.sh`), never per-patch
 `git apply --check`.
 

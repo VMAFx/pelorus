@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 14 Jun 2026 14:12:21 +0200
+Date: Sun, 14 Jun 2026 14:54:18 +0200
 Subject: [PATCH 1/2] feat(deband): add vf_pelorus_deband_vulkan (smart deband,
  Vulkan)
 
@@ -30,14 +30,14 @@ Research: docs/research/0101-smart-deband.md
  create mode 100644 libavfilter/vf_pelorus_deband_vulkan.c
 
 diff --git a/configure b/configure
-index 1759694274..8fd7a635af 100755
+index 1759694274..9a3e46ed32 100755
 --- a/configure
 +++ b/configure
 @@ -4177,6 +4177,7 @@ overlay_qsv_filter_deps="libmfx"
  overlay_qsv_filter_select="qsvvpp"
  overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
  overlay_vulkan_filter_deps="vulkan spirv_library"
-+pelorus_deband_vulkan_filter_deps="vulkan spirv_library"
++pelorus_deband_vulkan_filter_deps="vulkan spirv_library libpelorus"
  owdenoise_filter_deps="gpl"
  pad_opencl_filter_deps="opencl"
  pan_filter_deps="swresample"
@@ -45,7 +45,7 @@ index 1759694274..8fd7a635af 100755
  enabled libvidstab        && require_pkg_config libvidstab "vidstab >= 0.98" vid.stab/libvidstab.h vsMotionDetectInit
  enabled libvmaf           && require_pkg_config libvmaf "libvmaf >= 2.0.0" libvmaf.h vmaf_init
  enabled libvmaf           && check_pkg_config libvmaf_cuda "libvmaf >= 2.0.0" libvmaf_cuda.h vmaf_cuda_state_init
-+enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack
++check_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack
  enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&

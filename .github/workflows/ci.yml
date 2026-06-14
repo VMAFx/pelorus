@@ -56,11 +56,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y vulkan-sdk
           echo "vulkan: $(pkg-config --modversion vulkan 2>/dev/null || echo '?')"
-      - name: Build + install libpelorus
+      - name: Build + install libpelorus (to /usr so pkg-config finds it)
         run: |
-          meson setup build --prefix="$GITHUB_WORKSPACE/.local"
-          ninja -C build install
-          echo "PKG_CONFIG_PATH=$GITHUB_WORKSPACE/.local/lib/pkgconfig:$GITHUB_WORKSPACE/.local/lib/x86_64-linux-gnu/pkgconfig" >> "$GITHUB_ENV"
+          meson setup build --prefix=/usr
+          ninja -C build
+          sudo ninja -C build install
+          sudo ldconfig
+          pkg-config --exists libpelorus && echo "libpelorus $(pkg-config --modversion libpelorus) OK"
       - name: Checkout FFmpeg n8.1.1
         run: git clone --branch n8.1.1 --depth 1 https://github.com/FFmpeg/FFmpeg.git ffmpeg
       - name: Apply Pelorus patch stack (git am --3way)
