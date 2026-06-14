@@ -7,6 +7,7 @@ libpelorus_inc = include_directories('include')
 libpelorus_sources = files(
   'src/interop.c',
   'src/deband_params.c',
+  'src/denoise_params.c',
   'src/version.c',
 )
 
@@ -14,6 +15,7 @@ libpelorus_headers = files(
   'include/pelorus/pelorus.h',
   'include/pelorus/interop.h',
   'include/pelorus/deband.h',
+  'include/pelorus/denoise.h',
 )
 
 libpelorus = library(

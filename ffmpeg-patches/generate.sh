@@ -28,7 +28,7 @@ git -C "$FFMPEG_REPO" worktree add --detach "$WORKTREE" "$BASE_TAG"
 # One commit per filter, in stack order, so format-patch yields 0001, 0002, ...
 # Each filter's source is dropped in *inside* its own iteration so the commit's
 # `git add -A` captures only that filter's file (not later filters' sources).
-for filter in deband analyze; do
+for filter in deband analyze denoise; do
     cp "$FILES_DIR/vf_pelorus_${filter}_vulkan.c" "$WORKTREE/libavfilter/"
     python3 - "$WORKTREE" "$filter" <<'PY'
 import sys, pathlib
@@ -83,6 +83,18 @@ elif which == 'analyze':
                'pelorus_deband_vulkan_filter_deps="vulkan spirv_library"\n',
                'pelorus_analyze_vulkan_filter_deps="vulkan spirv_library"\n')
     ins_after("configure", REQ % "pelorus_deband_vulkan", REQ % "pelorus_analyze_vulkan")
+elif which == 'denoise':
+    # denoise sorts after deband alphabetically (deban < denoi); insert after it.
+    ins_before("libavfilter/allfilters.c",
+               "extern const FFFilter ff_vf_perms;\n",
+               "extern const FFFilter ff_vf_pelorus_denoise_vulkan;\n")
+    ins_after("libavfilter/Makefile",
+              "OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER)  += vf_pelorus_deband_vulkan.o vulkan.o vulkan_filter.o\n",
+              "OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vf_pelorus_denoise_vulkan.o vulkan.o vulkan_filter.o\n")
+    ins_after("configure",
+              'pelorus_deband_vulkan_filter_deps="vulkan spirv_library"\n',
+              'pelorus_denoise_vulkan_filter_deps="vulkan spirv_library"\n')
+    ins_after("configure", REQ % "pelorus_analyze_vulkan", REQ % "pelorus_denoise_vulkan")
 else:
     sys.exit("unknown filter: " + which)
 print(f"registration applied: {which}")
@@ -101,6 +113,7 @@ git -C "$WORKTREE" format-patch --zero-commit --start-number=1 \
 # Normalize auto-generated filenames to the series.txt names.
 mv "$HERE"/0001-*.patch "$HERE/0001-add-vf_pelorus_deband_vulkan.patch" 2>/dev/null || true
 mv "$HERE"/0002-*.patch "$HERE/0002-add-vf_pelorus_analyze_vulkan.patch" 2>/dev/null || true
+mv "$HERE"/0003-*.patch "$HERE/0003-add-vf_pelorus_denoise_vulkan.patch" 2>/dev/null || true
 
 git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE"
 echo "patch(es) regenerated in $HERE:"

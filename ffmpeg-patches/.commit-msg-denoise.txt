@@ -1,0 +1,27 @@
+feat(denoise): add vf_pelorus_denoise_vulkan (temporal denoise)
+
+An edge-preserving spatio-temporal denoise filter — the biggest BD-rate
+pre-encode lever. A single Vulkan compute pass over a causal window (the
+current frame + N previous frames held in VRAM, no motion compensation):
+an NLM-lite joint bilateral whose range weight is a 3x3-patch SSD (a real
+edge has high patch SSD across it, so it refuses to average across the
+edge) blended with per-pixel-gated temporal averaging (a delta above tcut
+breaks the walk so motion / scene-cuts cannot ghost), then a dry/wet mix.
+
+The exec is the hand-rolled explicit path (modeled on vf_pelorus_analyze):
+with meta=1 it free-rides a residual reduction on the denoise dispatch and
+emits the pre-reserved PEL_SEC_DENOISE interop section (residual energy,
+applied strength, noise-sigma estimate, PSNR-vs-input); with meta=0 the
+SSBO / readback / sync are skipped. The standalone reference shader
+libpelorus/shaders/pelorus_denoise.comp and the inline GLSL are kept in
+lockstep.
+
+Codec-agnostic: the denoise is on the source, independent of the encoder.
+
+AVOptions: sigma, sigmac, sigmat, strength, strengthc, blend, tdecay, tcut,
+patch, prev, protect, planes, meta. Host-side param contract in
+libpelorus/include/pelorus/denoise.h.
+
+Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
+
+ADR: docs/adr/0112-temporal-denoise.md

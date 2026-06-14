@@ -164,6 +164,40 @@ inverting both BD-rate and BD-VMAF (a 50% saving read as ~+75%). Fixed to
 `integ(pelorus) − integ(baseline)` with a self-test (half-bitrate ⇒ −50%,
 identical ⇒ 0%, double ⇒ +100%). All numbers above use the corrected function.
 
+## v0.3 — **real `vf_pelorus_denoise_vulkan` on GPU** (not a stand-in)
+
+The actual Vulkan filter, built into ffmpeg n8.1 + libpelorus and run on the
+RTX 4090 (`hwupload,pelorus_denoise_vulkan,hwdownload`), then encoded with
+`hevc_nvenc -preset p5` and scored against the **clean** original:
+
+| content | params | BD-rate | BD-VMAF |
+|---|---|---:|---:|
+| static / locked-off | `sigmat=0.30 strength=1 prev=4 tcut=0.30 blend=1 patch=0` (pure temporal) | **−35.89%** | +2.18 |
+| BBB, high-motion | `sigma=0.03 sigmat=0.10 strength=0.5 prev=3 tcut=0.08 blend=0.4 patch=1` (spatial-dominant) | **−33.95%** | +1.96 |
+
+Static ladder (real GPU filter):
+
+| CQ | baseline (noisy) | pelorus (GPU-denoised) |
+|---:|---|---|
+| 22 | 2427.0 kbps @ 87.99 | 1714.0 kbps @ 92.10 |
+| 26 | 1246.7 kbps @ 87.31 |  879.7 kbps @ 88.60 |
+| 30 |  583.4 kbps @ 84.38 |  418.7 kbps @ 84.23 |
+| 34 |  256.9 kbps @ 80.50 |  204.8 kbps @ 80.33 |
+
+**This is the real-filter proof on GPU.** Two notes, both honest:
+
+- **The GPU filter is a touch less aggressive than the CPU stand-in** (−36% vs
+  −89% on the static clip): at the strong setting it reaches VMAF 93.7 vs clean
+  pre-encode where atadenoise's adaptive walk reached 95.1. The exp-weighted gate
+  is tunable toward that; the vmafx autotune loop (ADR-0106) sweeps these knobs.
+- **Params are content-dependent, as designed.** Pure temporal (setting A) is
+  ideal for static/locked-off content but *ghosts* on high-motion BBB
+  (pre-encode VMAF 89.0→80.3) because a loose `tcut` averages across motion;
+  switching to spatial-dominant (S3, tight `tcut`) recovers a −33.95% gain on
+  BBB without ghosting. This is the no-motion-compensation envelope from
+  [ADR-0112](../adr/0112-temporal-denoise.md); per-frame `tcut`/`blend` from a
+  motion estimate (the roadmap `vf_pelorus_mc`) would remove the manual choice.
+
 ## Open / next
 
 1. **Author `vf_pelorus_denoise_vulkan`** (causal NLM-lite spatial + gated
