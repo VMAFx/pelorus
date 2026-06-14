@@ -80,9 +80,13 @@ jobs:
           pkg-config --exists libpelorus && echo "libpelorus $(pkg-config --modversion libpelorus) — $(pkg-config --cflags libpelorus)"
           ./configure --enable-vulkan --disable-doc --disable-programs \
             || { echo '::group::config.log tail'; tail -60 ffbuild/config.log; echo '::endgroup::'; exit 1; }
-      - name: Show Vulkan / SPIR-V detection
+      - name: Show Vulkan / SPIR-V / libpelorus detection
         working-directory: ffmpeg
-        run: grep -E 'CONFIG_(VULKAN|LIBSHADERC|LIBGLSLANG|SPIRV_COMPILER|SPIRV_LIBRARY|PELORUS)' config.h config_components.h || true
+        run: |
+          grep -E 'CONFIG_(VULKAN|LIBSHADERC|LIBGLSLANG|SPIRV_COMPILER|SPIRV_LIBRARY|PELORUS)' config.h config_components.h || true
+          echo "::group::config.log — libpelorus + pelorus filter resolution"
+          grep -iE 'libpelorus|pelorus_(deband|analyze)_vulkan_filter' ffbuild/config.log | tail -60 || true
+          echo "::endgroup::"
       - name: Confirm filters enabled
         working-directory: ffmpeg
         run: |

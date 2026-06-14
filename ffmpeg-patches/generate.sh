@@ -46,13 +46,15 @@ def ins_after(path, anchor, line):
     assert line.strip() not in t, f"already present in {path}: {line!r}"
     p.write_text(t.replace(anchor, anchor + line, 1))
 
-# libpelorus is wired the idiomatic FFmpeg way (cf. libvmaf_cuda): a soft
-# check_pkg_config probe sets the `libpelorus` config item, and each filter
-# lists `libpelorus` in its _deps so it auto-enables iff libpelorus is found.
+# libpelorus wiring mirrors vmafx's vf_vmaf_pre: the filter depends only on
+# FFmpeg-KNOWN components (vulkan spirv_library) — `libpelorus` is NOT a known
+# config name, so it must NOT appear in _deps (an unknown dep silently disables
+# the filter). The extra lib is gated by `enabled <filter> && require_pkg_config
+# libpelorus ...`, which adds its cflags/libs and hard-errors if it is missing.
 LVMAF_CUDA = ('enabled libvmaf           && check_pkg_config libvmaf_cuda '
               '"libvmaf >= 2.0.0" libvmaf_cuda.h vmaf_cuda_state_init\n')
-CHECK = ('check_pkg_config libpelorus "libpelorus >= 0.1.0" '
-         'pelorus/interop.h pel_blob_pack\n')
+REQ = ('enabled %s_filter && require_pkg_config libpelorus '
+       '"libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack\n')
 
 if which == 'deband':
     ins_before("libavfilter/allfilters.c",
@@ -63,8 +65,8 @@ if which == 'deband':
                "OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER)  += vf_pelorus_deband_vulkan.o vulkan.o vulkan_filter.o\n")
     ins_after("configure",
               'overlay_vulkan_filter_deps="vulkan spirv_library"\n',
-              'pelorus_deband_vulkan_filter_deps="vulkan spirv_library libpelorus"\n')
-    ins_after("configure", LVMAF_CUDA, CHECK)
+              'pelorus_deband_vulkan_filter_deps="vulkan spirv_library"\n')
+    ins_after("configure", LVMAF_CUDA, REQ % "pelorus_deband_vulkan")
 elif which == 'analyze':
     # analyze sorts before deband alphabetically; insert ahead of it.
     ins_before("libavfilter/allfilters.c",
@@ -74,9 +76,9 @@ elif which == 'analyze':
                "OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER)  += vf_pelorus_deband_vulkan.o vulkan.o vulkan_filter.o\n",
                "OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vf_pelorus_analyze_vulkan.o vulkan.o vulkan_filter.o\n")
     ins_before("configure",
-               'pelorus_deband_vulkan_filter_deps="vulkan spirv_library libpelorus"\n',
-               'pelorus_analyze_vulkan_filter_deps="vulkan spirv_library libpelorus"\n')
-    # libpelorus check_pkg_config is already added by the deband patch (0001).
+               'pelorus_deband_vulkan_filter_deps="vulkan spirv_library"\n',
+               'pelorus_analyze_vulkan_filter_deps="vulkan spirv_library"\n')
+    ins_after("configure", REQ % "pelorus_deband_vulkan", REQ % "pelorus_analyze_vulkan")
 else:
     sys.exit("unknown filter: " + which)
 print(f"registration applied: {which}")
