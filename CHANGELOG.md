@@ -26,6 +26,13 @@ All notable changes to Pelorus are documented here. The format is
   `protect`) as a stable, versioned contract that vmafx's `vmaf-tune` autotune
   hard-codes against. Renaming/removing/narrowing any frozen knob is a breaking
   change requiring a coordinated two-repo PR. ADR-0110 (builds on ADR-0106).
+- **Benchmark harness** (`scripts/bench/`): a pinned, repeatable BD-rate proof that a Pelorus pre-encode pass beats a bare hardware encode. `corpus.lock` (sha256-verified clips) + `fetch-corpus.sh` materialise raw YUV; `run-bench.py` runs the RD ladder and reports BD-rate (`bd_rate.py`, Bjøntegaard) + a CAMBI banding delta. A `--clean-reference` flag scores both arms against the clean ground truth (not the impaired encoder input), and `--vmaf-timeout` reaps the vmaf process that hangs after flushing its JSON. With a temporal-denoise stand-in this shows **−42.94% BD-rate** on high-motion BBB and **−88.94%** on a locked-off scene (both + seeded grain). ADR-0111; [docs/development/benchmarking.md](../../docs/development/benchmarking.md), [bench-results.md](../../docs/development/bench-results.md).
+
+### Fixed
+
+- **FFmpeg link of `libpelorus`**: the patch stack ran `require_pkg_config` (which adds cflags but not link libs), so a fully-linked `ffmpeg` failed with `undefined reference to pel_blob_pack` — a `.o`-only CI build never caught it. `generate.sh` now also emits `add_extralibs $libpelorus_extralibs`, and CI builds + links the `ffmpeg` binary and smoke-tests that the filters register. ADR-0104.
+- **`bd_rate.py` sign**: it computed `integ(baseline) − integ(pelorus)`, sign-flipping both BD-rate and BD-VMAF (a 50% saving read as ~+75%). Corrected to `integ(pelorus) − integ(baseline)`, with a self-test (half-bitrate ⇒ −50%, identical ⇒ 0%, double ⇒ +100%). ADR-0111.
+- **`block-unsafe-bash` hook**: the root-wipe guard matched any `rm -rf /…` path, blocking legitimate `rm -rf /tmp/…`. Narrowed to the filesystem root only.
 
 <!-- END UNRELEASED -->
 
