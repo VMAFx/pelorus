@@ -41,7 +41,7 @@ done < "$PATCHDIR/series.txt"
 
 echo "== configure =="
 ( cd "$WORKTREE" && ./configure \
-    --enable-vulkan \
+    --enable-vulkan --enable-libshaderc \
     --disable-doc --disable-programs --enable-ffmpeg \
     >/tmp/pelorus-ff-configure.log 2>&1 ) || {
     echo "configure failed; tail:"; tail -30 /tmp/pelorus-ff-configure.log; exit 1; }

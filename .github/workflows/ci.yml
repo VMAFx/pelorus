@@ -54,8 +54,11 @@ jobs:
           sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list \
             https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
           sudo apt-get update
-          sudo apt-get install -y vulkan-sdk
-          echo "vulkan: $(pkg-config --modversion vulkan 2>/dev/null || echo '?')"
+          # vulkan-sdk = current Vulkan-Headers (Ubuntu's are < FFmpeg's min).
+          # libshaderc-dev = the `shaderc` pkg-config FFmpeg's --enable-libshaderc
+          # requires for spirv_library (the runtime GLSL->SPIR-V compiler).
+          sudo apt-get install -y vulkan-sdk libshaderc-dev
+          echo "vulkan: $(pkg-config --modversion vulkan 2>/dev/null || echo '?'); shaderc: $(pkg-config --modversion shaderc 2>/dev/null || echo '?')"
       - name: Build + install libpelorus (to /usr so pkg-config finds it)
         run: |
           meson setup build --prefix=/usr
@@ -77,11 +80,11 @@ jobs:
       - name: Configure (Vulkan + libpelorus)
         working-directory: ffmpeg
         run: |
-          pkg-config --exists libpelorus && echo "libpelorus $(pkg-config --modversion libpelorus) — $(pkg-config --cflags libpelorus)"
-          # Force-enable the Pelorus filters so configure dies with the EXACT
-          # unmet-dependency reason if they cannot be enabled.
-          ./configure --enable-vulkan --disable-doc --disable-programs \
-            --enable-filter=pelorus_deband_vulkan,pelorus_analyze_vulkan \
+          pkg-config --exists libpelorus && echo "libpelorus $(pkg-config --modversion libpelorus) OK"
+          # --enable-libshaderc turns on spirv_library (the runtime GLSL->SPIR-V
+          # compiler); it defaults OFF, and without it every vulkan-compute
+          # filter (incl. pelorus) is disabled. The filters then auto-enable.
+          ./configure --enable-vulkan --enable-libshaderc --disable-doc --disable-programs \
             || { echo '::group::config.log tail'; tail -80 ffbuild/config.log; echo '::endgroup::'; exit 1; }
       - name: Show Vulkan / SPIR-V / libpelorus detection
         working-directory: ffmpeg

@@ -42,7 +42,7 @@ stack is cumulative and later patches' context can depend on earlier ones.
 ## Configure + build
 
 ```bash
-./configure --enable-vulkan                               # filters auto-enable
+./configure --enable-vulkan --enable-libshaderc           # filters auto-enable
 make -j libavfilter/vf_pelorus_deband_vulkan.o            # single-TU check
 make -j                                                    # full build
 ```
