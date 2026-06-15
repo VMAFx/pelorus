@@ -38,7 +38,12 @@ delta-QP / banding map) feeding progressively more powerful, less portable hooks
   `nvenc.c` has zero refs today) and **QSV** `mfxExtMBQP` (clean injection via the
   existing `set_encode_ctrl_cb`, no frame-loop fork). Round out software with the
   **x265 qpfile→ROI** bridge (x265 lacks the qpfile path the fork's other SW
-  encoders have). NVENC and QSV are tied for highest value.
+  encoders have). NVENC and QSV are tied for highest value. **NVENC DONE +
+  MEASURED** (`ffmpeg-patches/files/nvenc-pelorus-roi.patch`, `-pelorus_roi 1`):
+  it consumes the standard ROI side data (so the proven `analyze` producer drives
+  it — no separate producer needed) → **−41% banding, +0.10 VMAF, +3% bitrate** at
+  constant-QP (bench-results.md v0.5). Caveat: NVENC's own AQ overrides the map,
+  so use constant-QP / AQ-off; VBR redistribution costs VMAF.
 - **Tier 2 — cross-vendor strategic, "via Vulkan"**: patch `vulkan_encode.c` for
   `VK_KHR_video_encode_quantization_map` (delta map for CQP, emphasis map
   `R8_UNORM` for cbr/vbr — the latter maps almost directly onto analyze's 0..1

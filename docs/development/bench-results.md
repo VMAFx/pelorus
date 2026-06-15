@@ -224,6 +224,39 @@ top-half ROI; the production win needs `vf_pelorus_analyze` to **auto-detect**
 banding-prone tiles and emit the ROI map. NVENC/AMF need our QP-map patch
 (they don't honor ROI side-data); QSV/VAAPI honor it like x265.
 
+## v0.5 — **auto-detected** ROI, proven on libx265 AND NVENC
+
+`vf_pelorus_analyze roi=1` now auto-detects banding-prone tiles (per-32×32 GPU
+variance reduction: a tile bands when its variance sits *above* a constant floor
+yet *below* the texture threshold — a smooth ramp; variance is uniform across the
+gradient, giving full coverage) and emits the ROI map automatically. No manual
+rectangle.
+
+**libx265** (`aq-mode 2` both arms, 2-pass, matched bitrate + matched VMAF):
+
+| arm | bitrate | CAMBI ↓ | VMAF |
+|---|---:|---:|---:|
+| baseline (aq-2) | 46.2 kbps | 1.355 | 95.17 |
+| auto-ROI | 47.2 kbps | **0.711** | 95.19 |
+
+**−47% banding at iso-bitrate AND iso-VMAF** — auto-detected.
+
+**NVENC** — `hevc_nvenc` ignores ROI side data in stock ffmpeg; the
+`ffmpeg-patches/files/nvenc-pelorus-roi.patch` (`-pelorus_roi 1`) rasterizes it
+into NVENC's `qpDeltaMap`. Constant-QP (`-rc constqp -qp 33`), ROI strength 0.15:
+
+| arm | bitrate | CAMBI ↓ | VMAF |
+|---|---:|---:|---:|
+| baseline `-qp 33` | 45.0 kbps | 1.533 | 96.02 |
+| +auto-ROI (rs=0.15) | 46.4 kbps | **0.910** | 96.12 |
+
+**−41% banding, +0.10 VMAF, +3% bitrate** — banding steering now reaches NVIDIA
+hardware. Caveats: NVENC's own AQ *overrides* the delta-QP map, so steering needs
+AQ off (a one-shot warning fires otherwise); in VBR, rate-control redistribution
+costs VMAF — constant-QP is the clean mode. The win is content-dependent (the
+survey's ROI caveat): decisive on banding-prone-gradient-over-detail, marginal on
+extremely smooth gradients or bitrates too low to deband even with steering.
+
 ## Open / next
 
 1. **Author `vf_pelorus_denoise_vulkan`** (causal NLM-lite spatial + gated
