@@ -1,3 +1,5 @@
+diff --git a/libavcodec/qsvenc.c b/libavcodec/qsvenc.c
+index fc1b8795d8..d978301577 100644
 --- a/libavcodec/qsvenc.c
 +++ b/libavcodec/qsvenc.c
 @@ -1113,6 +1113,36 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
@@ -37,7 +39,7 @@
          if (avctx->codec_id == AV_CODEC_ID_HEVC ||
              avctx->codec_id == AV_CODEC_ID_H264) {
              switch (q->p_strategy) {
-@@ -2129,6 +2159,132 @@ static void print_interlace_msg(AVCodecContext *avctx, QSVEncContext *q)
+@@ -2129,6 +2159,131 @@ static void print_interlace_msg(AVCodecContext *avctx, QSVEncContext *q)
      }
  }
  
@@ -65,10 +67,9 @@
 + * small mfxExtMBQP header is per-frame; free_encoder_ctrl() reclaims it like the
 + * existing mfxExtEncoderROI path. A frame with no ROI side data attaches nothing,
 + * so the encoder sees a zero delta and behaviour is unchanged. */
-+static int qsvenc_setup_roi(AVCodecContext *avctx, const AVFrame *frame,
-+                            mfxEncodeCtrl *enc_ctrl)
++static int qsvenc_setup_roi(AVCodecContext *avctx, QSVEncContext *q,
++                            const AVFrame *frame, mfxEncodeCtrl *enc_ctrl)
 +{
-+    QSVEncContext *q = avctx->priv_data;
 +    AVFrameSideData *sd;
 +    const AVRegionOfInterest *roi;
 +    mfxExtMBQP *mbqp;
@@ -170,7 +171,7 @@
  static int set_roi_encode_ctrl(AVCodecContext *avctx, const AVFrame *frame,
                                 mfxEncodeCtrl *enc_ctrl)
  {
-@@ -2517,7 +2673,20 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
+@@ -2517,7 +2672,20 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
          q->set_encode_ctrl_cb(avctx, frame, enc_ctrl);
      }
  
@@ -181,7 +182,7 @@
 +     * are mutually exclusive because attaching both ROI ext-buffers to one
 +     * mfxEncodeCtrl is undefined per the oneVPL spec. */
 +    if (q->pelorus_roi && enc_ctrl) {
-+        ret = qsvenc_setup_roi(avctx, frame, enc_ctrl);
++        ret = qsvenc_setup_roi(avctx, q, frame, enc_ctrl);
 +        if (ret < 0)
 +            goto free;
 +    }
@@ -192,7 +193,7 @@
           avctx->codec_id == AV_CODEC_ID_H265) &&
           enc_ctrl && QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 8)) {
          ret = set_roi_encode_ctrl(avctx, frame, enc_ctrl);
-@@ -2752,6 +2921,10 @@ int ff_qsv_enc_close(AVCodecContext *avctx, QSVEncContext *q)
+@@ -2752,6 +2920,10 @@ int ff_qsv_enc_close(AVCodecContext *avctx, QSVEncContext *q)
      av_freep(&q->extparam_str);
      av_freep(&q->extparam);
  
@@ -203,6 +204,8 @@
      return 0;
  }
  
+diff --git a/libavcodec/qsvenc.h b/libavcodec/qsvenc.h
+index 4bc77f2f7c..b0c4ee4283 100644
 --- a/libavcodec/qsvenc.h
 +++ b/libavcodec/qsvenc.h
 @@ -39,6 +39,13 @@
@@ -237,6 +240,8 @@
      int low_delay_brc;
  
      int co2_idx;
+diff --git a/libavcodec/qsvenc_h264.c b/libavcodec/qsvenc_h264.c
+index 7d39338d6a..a1af783dc1 100644
 --- a/libavcodec/qsvenc_h264.c
 +++ b/libavcodec/qsvenc_h264.c
 @@ -101,6 +101,8 @@ static av_cold int qsv_enc_close(AVCodecContext *avctx)
@@ -248,6 +253,8 @@
      QSV_OPTION_RDO
      QSV_OPTION_MAX_FRAME_SIZE
      QSV_OPTION_MAX_SLICE_SIZE
+diff --git a/libavcodec/qsvenc_hevc.c b/libavcodec/qsvenc_hevc.c
+index ae3981fb72..32855b7001 100644
 --- a/libavcodec/qsvenc_hevc.c
 +++ b/libavcodec/qsvenc_hevc.c
 @@ -305,6 +305,8 @@ static av_cold int qsv_enc_close(AVCodecContext *avctx)
