@@ -425,6 +425,91 @@ pel_result pel_qp_report_from_blocks(const PelorusQpReportInput *in, uint16_t gr
                                      uint16_t grid_rows, PelorusQpReportSection *out_section,
                                      int8_t *qp_cell_out, size_t qp_cell_cap);
 
+/* ---- x265 CSV stat reader (the runnable closed-loop surface) ------------- *
+ *
+ * The QSV `mfxEncodeBlkStats` path (the v1 source named in ADR-0119) needs
+ * Intel HW that is low-power-bugged on the dev box, so per-block readback there
+ * is code-complete-but-unvalidated. To get ONE end-to-end-runnable surface that
+ * actually populates PEL_SEC_QPREPORT with non-synthetic numbers, libpelorus
+ * also reads the per-frame statistics x265 emits with `--csv --csv-log-level 2`
+ * (HEVC software encoder). x265 is a real post-encode honored-QP surface: the
+ * CSV's Type/POC/QP/Bits/PSNR columns are the encoder's ACTUAL per-frame
+ * decisions, and under fixed-QP (`--qp N --aq-mode 0`) the per-slice-type QP the
+ * encoder honors differs from the single requested QP, which is exactly the
+ * "requested vs honored" signal the loop verifies.
+ *
+ * libpelorus stays SDK-free: this reader is pure stdio CSV parsing (no oneVPL,
+ * no libx265 link), so vmafx still vendors interop.c verbatim. The granularity
+ * is FRAME-level (x265 CSV does not expose per-CTU QP); the per-cell qp_cell map
+ * is therefore left unpopulated (qp_valid = 0) by this reader, matching the
+ * frame-stats-only branch of pel_qp_report_from_blocks. ADR-0122. */
+
+/* One parsed x265 CSV frame row (the columns this reader consumes; x265 emits
+ * far more, all ignored). Display-order is irrelevant — rows are matched to the
+ * requested QP array by encode order of appearance, NOT POC, because the
+ * requested per-frame QP a downstream pass holds is in encode order. */
+typedef struct PelorusX265Frame {
+    int32_t poc;     /* picture order count (display order), for diagnostics    */
+    float qp;        /* the QP x265 honored for this frame (CSV "QP" column)    */
+    uint64_t bits;   /* encoded bits for this frame (CSV "Bits" column)         */
+    float psnr_y;    /* CSV "Y PSNR" (dB); 0 if the CSV had no PSNR columns      */
+    float psnr_u;    /* CSV "U PSNR"                                            */
+    float psnr_v;    /* CSV "V PSNR"                                            */
+    char slice_type; /* 'I' / 'P' / 'B' from the CSV "Type" column              */
+} PelorusX265Frame;
+/* Not a wire type, but a public transfer struct written into a caller buffer by
+ * pel_x265_csv_parse — pin the layout so a stray field insert is a build error. */
+_Static_assert(sizeof(PelorusX265Frame) == 32, "PelorusX265Frame helper layout");
+
+/*
+ * Parse an x265 `--csv --csv-log-level 2` file into per-frame rows.
+ *
+ * Reads the column header to locate Type/POC/QP/Bits and (optionally) the
+ * Y/U/V PSNR columns by name, so it is robust to x265's column-set changing
+ * with build flags. Rows are returned in the file's row order (x265 writes one
+ * row per encoded frame in encode order).
+ *
+ *   path       the CSV file written by x265.
+ *   out_frames caller buffer of >= cap PelorusX265Frame; receives the rows.
+ *   cap        capacity of out_frames in entries.
+ *   out_count  receives the number of frame rows parsed (<= cap).
+ *
+ * Returns PEL_OK, PEL_ERR_INVALID (NULL args), PEL_ERR_ABSENT (file missing /
+ * no header / no recognizable QP+Bits columns), or PEL_ERR_RANGE (more rows in
+ * the file than cap — out_count is set to cap and the tail is dropped).
+ */
+pel_result pel_x265_csv_parse(const char *path, PelorusX265Frame *out_frames, size_t cap,
+                              size_t *out_count);
+
+/*
+ * Fold parsed x265 per-frame rows into a single PEL_SEC_QPREPORT section.
+ *
+ * Aggregates the GOP the CSV describes into one frame-stats-only report: avg_qp
+ * is the bit-weighted mean honored QP, total_bits the sum, psnr_* the
+ * bit-weighted mean PSNR (0 if the CSV had none). qp_valid stays 0 (no per-cell
+ * map — x265 CSV is frame-granular). report_source is tagged PEL_QPSRC_NONE
+ * (x265 is a software reference surface, not one of the HW vendor enums).
+ *
+ * honored_fraction is computed when requested_qp is non-NULL: it is the fraction
+ * of frames whose honored QP moved in the SAME direction, relative to the GOP
+ * mean, as the requested QP did — i.e. the sign-agreement between the requested
+ * per-frame delta-QP and the achieved per-frame delta-QP. A frame where both
+ * deltas are ~0 (within eps) counts as agreement. This is the frame-granular
+ * analogue of the per-cell ROI honored-fraction the QSV path will compute. With
+ * requested_qp NULL it is left 0 (no request map to compare against).
+ *
+ *   frames        the parsed rows (from pel_x265_csv_parse).
+ *   nb            number of rows.
+ *   requested_qp  optional: the per-frame QP a downstream pass REQUESTED, same
+ *                 order/length as frames (NULL => honored_fraction stays 0).
+ *   out_section   receives the populated PelorusQpReportSection (qp_valid = 0).
+ *
+ * Returns PEL_OK or PEL_ERR_INVALID (NULL frames/out_section, or nb == 0).
+ */
+pel_result pel_qp_report_from_x265_frames(const PelorusX265Frame *frames, size_t nb,
+                                          const float *requested_qp,
+                                          PelorusQpReportSection *out_section);
+
 #ifdef __cplusplus
 }
 #endif

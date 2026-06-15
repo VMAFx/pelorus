@@ -30,3 +30,7 @@ add_project_arguments(
 )
 
 subdir('libpelorus')
+
+if get_option('tools')
+  subdir('tools')
+endif

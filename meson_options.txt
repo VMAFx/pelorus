@@ -2,3 +2,5 @@ option('tests', type: 'boolean', value: true,
        description: 'Build and register the libpelorus test suite')
 option('shaders', type: 'boolean', value: true,
        description: 'Compile the standalone reference shaders to SPIR-V (needs glslang)')
+option('tools', type: 'boolean', value: true,
+       description: 'Build the libpelorus command-line demonstrators (pelorus_qp_report)')

@@ -113,7 +113,13 @@ green · the deband shader compiles.**
   section `PEL_SEC_QPREPORT` (ABI 1.1) carries the encoder's *honored* per-block
   QP/bit decisions back into the side-data blob, plus a vendor-neutral reader stub
   (`pel_qp_report_from_blocks`). The ABI + pack/parse + conformance test + stub are
-  working; the libavcodec QSV stat-extraction wiring is the documented follow-up.
+  working; the libavcodec QSV per-block stat-extraction is the HW follow-up.
+- Runnable QP-feedback reader (ADR-0122): a SDK-free x265 `--csv` stat reader
+  (`pel_x265_csv_parse` + `pel_qp_report_from_x265_frames`) populates
+  `PEL_SEC_QPREPORT` with the encoder's *actual* per-frame QP/bits/PSNR and a
+  requested-vs-honored `honored_fraction` — the loop is now demonstrable
+  end-to-end on the HEVC software encoder (the `tools/pelorus_qp_report`
+  demonstrator; measured, not synthetic). The QSV per-block path stays HW-blocked.
 
 ## Tooling
 

@@ -63,17 +63,64 @@ The fold averages the encoder blocks that fall in each cell (proportional index
 mapping; guarantees ≥1 sampled block per cell). With no block grid it preserves
 the frame scalars and sets `qp_valid = 0`.
 
-## Status — working ABI vs documented stub
+## The runnable reader — x265 `--csv` (ADR-0122)
+
+The QSV per-block path above is the eventual hardware source, but the dev box's
+Arc-A QSV is low-power-bugged, so it cannot be validated on HW here. To get one
+surface that runs **end-to-end** and populates `PEL_SEC_QPREPORT` with real,
+non-synthetic numbers, libpelorus also reads the per-frame statistics the HEVC
+software reference encoder x265 emits with `--csv --csv-log-level 2`. This stays
+SDK-free (pure stdio CSV parsing — no libx265 link), so vmafx still vendors
+`interop.c` verbatim.
+
+```c
+PelorusX265Frame frames[4096];
+size_t n = 0;
+pel_x265_csv_parse("x265.csv", frames, 4096, &n);   /* locates cols by header name */
+
+float requested_qp[4096];                            /* the QP a pass requested per frame */
+/* ... fill requested_qp[0..n) ... */
+
+PelorusQpReportSection qp;
+pel_qp_report_from_x265_frames(frames, n, requested_qp, &qp);
+/* qp.avg_qp = bit-weighted honored QP; qp.total_bits = sum; qp.psnr_* bit-weighted;
+   qp.honored_fraction = sign-agreement of requested vs honored per-frame delta-QP;
+   qp.qp_valid = 0 (x265 CSV is frame-granular — no per-CTU QP, so no per-cell map). */
+```
+
+`honored_fraction` is the frame-granular analogue of the per-cell ROI
+honored-fraction: the fraction of frames whose honored QP moved in the same
+direction (relative to the GOP mean) as the requested QP did. Under fixed-QP
+(`--qp N --aq-mode 0`) x265 still spreads the one requested QP across slice types
+(I lower, B higher), which is a genuine requested-vs-honored signal. The reader
+admits only coded-frame rows by a positive `Type` test, dropping x265's trailing
+blank + `Summary` block.
+
+The `tools/pelorus_qp_report` demonstrator runs the full loop — parse → fold →
+`pel_blob_pack` → `pel_blob_find_section` → print:
+
+```sh
+x265 --input clip.y4m --y4m --qp 32 --aq-mode 0 --psnr \
+     --csv x265.csv --csv-log-level 2 --output /dev/null
+pelorus_qp_report x265.csv --requested-qp 32
+```
+
+A 17-frame `testsrc2` run produced `avg_qp ≈ 32.21`, `total_bits = 104744`,
+`psnr_y/u/v ≈ 38.6/37.6/37.0 dB`, `honored_fraction = 0.1765` (measured — a flat
+request scores low because x265 spread the QP by slice type).
+
+## Status — working ABI + runnable reader vs deferred HW path
 
 - **Working now**: the `PEL_SEC_QPREPORT` ABI section (pack/parse, byte-frozen,
   `_Static_assert(sizeof == 64)`), the conformance fixture round-trip + fold +
-  forward-compat tests, and the `pel_qp_report_from_blocks` reader stub (the
-  block→cell QP fold).
-- **Documented follow-up (not wired this round)**: the libavcodec QSV consumer
-  that probes `mfxExtCodingOption3::EncodedUnitsInfo` / the `mfxEncodeStats`
+  forward-compat + **CSV-reader** tests, the `pel_qp_report_from_blocks` fold
+  stub, and the **runnable x265 CSV reader** (`pel_x265_csv_parse` +
+  `pel_qp_report_from_x265_frames`, ADR-0122) — proven end-to-end above with
+  measured values, `honored_fraction` included.
+- **Deferred (HW-blocked, code follow-up)**: the libavcodec QSV consumer that
+  probes `mfxExtCodingOption3::EncodedUnitsInfo` / the `mfxEncodeStats`
   container, extracts `mfxEncodeBlkStats` / `mfxEncodeFrameStats` /
   `mfxExtEncodedUnitsInfo`, fills `PelorusQpReportInput`, and packs the section
-  per frame; the `bits_cell` per-cell map; and the populated `honored_fraction`
-  (which needs the *requested* ROI delta-QP map carried alongside to compare
-  against). **No measured honored-fraction or BD-rate number is claimed** until
-  an on-Intel-HW QSV encode run produces one (ADR-0111 methodology).
+  per frame; the per-cell `qp_cell` / `bits_cell` maps (x265 CSV is
+  frame-granular). **No BD-rate number is claimed** — that needs a full RD-ladder
+  run (ADR-0111 methodology); the QSV per-block fidelity needs working Intel HW.

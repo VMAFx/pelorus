@@ -18,6 +18,7 @@ Options (`meson_options.txt`):
 |---|---|---|
 | `tests` | true | build + register the libpelorus test suite |
 | `shaders` | true | compile the standalone reference `.comp` shaders to SPIR-V (needs glslang) |
+| `tools` | true | build the libpelorus CLI demonstrators (`pelorus_qp_report`; not installed) |
 
 ## FFmpeg filters (the patch stack)
 

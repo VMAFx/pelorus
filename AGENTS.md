@@ -82,6 +82,9 @@ Pelorus/
 │   ├── usage/ backends/ development/  #   pipeline, Vulkan path, build/release
 │   └── research/                     #   deep-dive digests
 │
+├── tools/                            # libpelorus CLI demonstrators (not installed)
+│   └── pelorus_qp_report.c           #   x265 --csv -> PEL_SEC_QPREPORT (ADR-0122)
+│
 ├── changelog.d/                      # Keep-a-Changelog fragments (rendered)
 └── AGENTS.md  CLAUDE.md  CONTRIBUTING.md  README.md
 ```
