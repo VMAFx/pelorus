@@ -271,6 +271,20 @@ git -C "$WORKTREE" \
     -c user.name=Lusoris -c user.email=lusoris@pm.me \
     commit -q -F "$HERE/.commit-msg-nvenc-film-grain.txt"
 
+# Pelorus libavcodec edit (NOT a filter): make libaom-av1 honor ROI side data via
+# its segment-based AOME_SET_ROI_MAP (aom_roi_map_t) — the SW-AV1 ROI leg next to
+# the NVENC/QSV dense delta-QP maps (ADR-0114 Tier 1). libaom has no dense
+# per-block QP map: the bridge quantizes each frame's ROI qoffsets into <= 8
+# AV1 segments (4x4-cell grid) and pushes the map per frame. Same hand-maintained
+# -diff model as the NVENC/QSV ROI patches above; applied as its own commit
+# (-> patch 0012 below). Independent of the encoder-specific patches, so it lands
+# last to avoid renumbering any shipped artifact.
+git -C "$WORKTREE" apply "$FILES_DIR/libaom-pelorus-roi.patch"
+git -C "$WORKTREE" add -A
+git -C "$WORKTREE" \
+    -c user.name=Lusoris -c user.email=lusoris@pm.me \
+    commit -q -F "$HERE/.commit-msg-libaom.txt"
+
 # Clean stale patches, regenerate the whole range.
 rm -f "$HERE"/0*.patch
 git -C "$WORKTREE" format-patch --zero-commit --start-number=1 \
@@ -288,6 +302,7 @@ mv "$HERE"/0008-*.patch "$HERE/0008-nvenc-pelorus-me-hints.patch" 2>/dev/null ||
 mv "$HERE"/0009-*.patch "$HERE/0009-vulkan-pelorus-qpmap.patch" 2>/dev/null || true
 mv "$HERE"/0010-*.patch "$HERE/0010-add-pelorus_fgs_bsf.patch" 2>/dev/null || true
 mv "$HERE"/0011-*.patch "$HERE/0011-nvenc-pelorus-film-grain.patch" 2>/dev/null || true
+mv "$HERE"/0012-*.patch "$HERE/0012-libaom-pelorus-roi.patch" 2>/dev/null || true
 
 git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE"
 echo "patch(es) regenerated in $HERE:"

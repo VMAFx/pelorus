@@ -22,3 +22,4 @@
 0009-vulkan-pelorus-qpmap.patch
 0010-add-pelorus_fgs_bsf.patch
 0011-nvenc-pelorus-film-grain.patch
+0012-libaom-pelorus-roi.patch

@@ -32,3 +32,4 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0117](0117-grain-fgs-bsf.md) | pelorus_fgs — H.274/HEVC Film Grain Characteristics SEI bitstream filter (FGS round-trip, HEVC leg) | Accepted |
 | [0118](0118-nvenc-av1-filmgrain.md) | av1_nvenc film grain — carry the FGS estimate into NVENC hardware AV1 film-grain synthesis | Accepted |
 | [0119](0119-qp-feedback.md) | Closed-loop QP feedback — read the encoder's honored QP/bits back into the interop ABI (PEL_SEC_QPREPORT, ABI 1.1) | Accepted |
+| [0120](0120-libaom-steering.md) | libaom ROI steering — honor AV_FRAME_DATA_REGIONS_OF_INTEREST via AOME_SET_ROI_MAP | Accepted |

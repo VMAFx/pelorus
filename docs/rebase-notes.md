@@ -318,3 +318,53 @@ patches (ADR-0108 deliverable #6).
   confirm `-h encoder=av1_nvenc` shows `-pelorus_film_grain`, absent from
   `hevc_nvenc`/`h264_nvenc`. On-HW grain-match / BD-rate is a follow-up
   (ADR-0118 / ADR-0111); needs an SDK-12.0+ driver.
+
+## v0.1.0 — patch 0012 (libaom-av1 ROI; cumulative on 0001–0011)
+
+- **Patch**: `ffmpeg-patches/0012-libaom-pelorus-roi.patch` (hand-maintained
+  libavcodec diff in `files/libaom-pelorus-roi.patch`, applied by `generate.sh`
+  as its own commit after the NVENC AV1 film-grain patch — same model as the
+  NVENC/QSV ROI patches, NOT a filter drop-in).
+- **Numbering**: committed **last** in `generate.sh` so it lands as **0012**; no
+  existing artifact renumbers. **Independent of the encoder-specific patches** —
+  touches only `libavcodec/libaomenc.c`, which nothing else in the stack edits,
+  so it is reorder-tolerant within the libavcodec group. It does depend
+  conceptually on the **0002** `vf_pelorus_analyze` ROI producer (the source of
+  the `AV_FRAME_DATA_REGIONS_OF_INTEREST` side data), but not on its source text.
+- **Touches**: `libavcodec/libaomenc.c` only — five hunks: (1) five
+  `AOMContext` fields (`pelorus_roi`, `roi_seg_map`, `roi_mi_rows`,
+  `roi_mi_cols`, `roi_warned`) after `aom_params`; (2) `roi_seg_map` free +
+  grid reset in `aom_free` after `ff_dovi_ctx_unref`; (3) the grid allocation in
+  `aom_init` anchored **after `set_color_range(avctx);`** (a unique, stable
+  anchor); (4) the `pelorus_aom_*` bridge helpers + the `pelorus_aom_apply_roi`
+  call, inserted before `static int aom_encode(`, with the per-frame hook after
+  the `add_hdr_plus` call inside the `if (frame)` block; (5) the `pelorus_roi`
+  AVOption after `enable-smooth-interintra`, before the
+  `#if AOM_ENCODER_ABI_VERSION >= 23 { "aom-params" ... }` block.
+- **Rebase-fragile spots**: (1) the `aom_init` allocation anchors on
+  `set_color_range(avctx);` followed by `AV1E_SET_SUPERBLOCK_SIZE` — if upstream
+  reorders the init codecctl sequence, re-pick a unique anchor inside `aom_init`;
+  (2) the AVOption insertion is between `enable-smooth-interintra` and the
+  ABI-gated `aom-params` entry — keep it outside the `#if`; (3) the bridge does
+  **not** link any new lib (it uses only `aom/aomcx.h` already pulled in via
+  `libaom.h`), so no `require_pkg_config` / `add_extralibs` configure hunk is
+  needed, unlike the Vulkan filters.
+- **Consumes from aom**: `AOME_SET_ROI_MAP`, `aom_roi_map_t`,
+  `AOM_MAX_SEGMENTS` (`aom/aomcx.h`). A struct/enum change on an aom version bump
+  could break the mapping — re-replay and rebuild `libavcodec/libaomenc.o`.
+- **Consumes from FFmpeg**: `AV_FRAME_DATA_REGIONS_OF_INTEREST`,
+  `AVRegionOfInterest` (`self_size`/`top`/`bottom`/`left`/`right`/`qoffset`),
+  `av_frame_get_side_data`, `av_clip`/`av_clipf`/`lrintf`.
+- **Known upstream limitation (verified, not a patch defect)**: on libaom
+  3.14.1, `AOME_SET_ROI_MAP` returns `AOM_CODEC_INVALID_PARAM` in FFmpeg's
+  encoder configuration (the control is wired only for the RTC delta-q path
+  upstream), so the map is currently ignored and the bridge degrades gracefully
+  (one warning, no bias). It becomes effective for free once a libaom release
+  enables the control on the path FFmpeg uses; re-run the analyze→libaom A/B and
+  capture the CAMBI gain then. See ADR-0120.
+- **Re-test after rebase**: replay 0001–0012 (`git am --3way`); rebuild
+  `libavcodec/libaomenc.o` (`./configure --enable-gpl --enable-libaom … && make
+  libavcodec/libaomenc.o`, warning-clean); build `ffmpeg` and confirm
+  `-h encoder=libaom-av1` shows `-pelorus_roi`. On-HW: `analyze roi=1 →
+  libaom-av1 -pelorus_roi 1` on a banding clip must not crash and must produce
+  valid output (the quality gain awaits the upstream fix above).
