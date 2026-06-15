@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Mon, 15 Jun 2026 14:20:32 +0200
+Date: Mon, 15 Jun 2026 15:09:37 +0200
 Subject: [PATCH 1/7] feat(deband): add vf_pelorus_deband_vulkan (smart deband,
  Vulkan)
 
