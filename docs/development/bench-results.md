@@ -378,9 +378,50 @@ documented as a negative, like the reverted in-filter MC (ADR-0113); it may stil
 help on slower ME engines or higher-motion content, but **no NVENC ME-hint speed
 gain is claimed on the 4090**.
 
+## v0.10 — SVT-AV1 ROI steering: functional + honored, modest CAMBI gain (honest)
+
+`libsvtav1` (`av1_svt`) ignores ROI side data entirely in stock ffmpeg; patch
+0012 (ADR-0121) adds `-pelorus_roi` mapping `AV_FRAME_DATA_REGIONS_OF_INTEREST`
+onto SVT-AV1's per-64×64-superblock segment map (`SvtAv1RoiMapEvt`, ≤ 8 segments,
+`seg_qp` qindex deltas). Real ffmpeg n8.1.1 + full stack, `--enable-libsvtav1`,
+SvtAv1Enc 4.1.0, RTX 4090 Vulkan device. **Executed, not syntax-only.**
+
+Source: 960×270, 96 frames, 10-bit — **localized** banding (left half a
+banding-prone gradient, right half `testsrc2` detail). `vf_pelorus_analyze roi=1`
+emits 19 regions/frame concentrated on the gradient half (so the ROI is not
+whole-frame uniform). Matched CRF, `-preset 6`, A/B = `-pelorus_roi 0` vs `1`.
+
+| CRF | arm | bytes | CAMBI (banding ↓) |
+|---|---:|---:|---:|
+| 35 | base | 202293 | 3.9778 |
+| 35 | +ROI | 213545 (+5.6%) | 3.9196 (**−1.5%**) |
+| 45 | base | 74193 | 4.2876 |
+| 45 | +ROI | 80157 (+8.0%) | 4.2656 (**−0.5%**) |
+
+**Engagement confirmed** (not pass-through): `"Pelorus ROI map enabled: NxM
+superblocks (64 px/SB)"` at init; the bitstream and bitrate change *only* with
+`-pelorus_roi 1`; no crash, valid AV1 output (dav1d-decoded). The +5.6/+8.0%
+bitrate at matched CRF is the expected effect of a negative-`seg_qp` bias pulling
+qindex down on the banding superblocks.
+
+**Honest read of the gain.** The CAMBI improvement is real but **modest**
+(−1.5% / −0.5%), far short of the NVENC −41% (v0.5). Why: (1) the synthetic
+gradient is already mild banding (CAMBI ≈ 4, vs NVENC's harder source); (2) on a
+*whole-frame* pure gradient (854×480, strength 1.0, CRF 40) base and +ROI come
+out **byte-identical** — a uniform delta over one segment covering everything is
+just a global qindex shift the encoder rounds away on a near-trivial clip, so the
+win only appears when the ROI is spatially differentiated; (3) SVT-AV1's 8-segment
+granularity is coarser than the HW per-block maps. The mechanism is proven
+correct and honored; a larger CAMBI gain needs a harder, more realistic
+banding-prone source (a real movie gradient/sky) — that BD-rate run is a
+follow-up, no inflated number is claimed here.
+
 ## Open / next
 
-1. **Per-vendor iso-bitrate BD-rate** for the cross-vendor ROI (v0.6 is a
+1. **SVT-AV1 ROI on real content**: the v0.10 synthetic gain is modest; re-run
+   the A/B on a real banding-prone clip (night sky / slow gradient pan) at iso-
+   bitrate to get a representative CAMBI/BD-rate delta.
+2. **Per-vendor iso-bitrate BD-rate** for the cross-vendor ROI (v0.6 is a
    same-QP mechanism demo); and the analyze→VAAPI dual-device auto pipeline
    (ROI side data surviving `hwupload` to a second GPU).
 2. Re-prove 10-bit deband with a single consistent `yuv420p10le` pipeline

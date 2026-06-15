@@ -89,8 +89,9 @@ ffmpeg ... -vf "...,pelorus_analyze_vulkan=roi=1,..." \
        -c:v hevc_qsv -global_quality 30 -pelorus_roi 1 out.mkv
 ```
 
-The option is registered on `hevc_qsv`, `h264_qsv`, `hevc_nvenc`, `h264_nvenc`
-and `av1_nvenc` (swap the encoder above accordingly). It defaults OFF (zero
+The option is registered on `hevc_qsv`, `h264_qsv`, `hevc_nvenc`, `h264_nvenc`,
+`av1_nvenc` and `libsvtav1` (swap the encoder above accordingly; the SVT-AV1
+mapping differs — see below). It defaults OFF (zero
 behaviour change). Use **constant-QP** and the encoder's own spatial/temporal AQ
 OFF: the encoder AQ overrides the delta-QP map, and VBR rate-control
 redistribution erodes the perceptual win.
@@ -101,6 +102,37 @@ built against a oneVPL/MediaSDK older than API 1.13 (no `mfxExtMBQP`) it likewis
 warns once at init and no-ops. For QSV the dense per-block map fully supersedes
 FFmpeg's coarse `mfxExtEncoderROI` rectangle path when the option is on (the two
 are mutually exclusive). See [ADR-0114](../adr/0114-encoder-steering.md).
+
+### SVT-AV1 software (ADR-0121)
+
+The same `-pelorus_roi 1` AVOption is registered on `libsvtav1` (the `av1_svt`
+flagship modern AV1 software encoder). Vanilla `libsvtav1` consumes **no** ROI
+side data at all — this is the primary gap that patch fills. It consumes the
+**same** `AV_FRAME_DATA_REGIONS_OF_INTEREST` side data, but maps it onto
+SVT-AV1's native **per-superblock ROI segment map** (`SvtAv1RoiMapEvt`) rather
+than a per-block delta-QP map, because that is the ABI SVT-AV1 exposes:
+
+```bash
+# AV1, SVT-AV1, constant-quality CRF (the clean mode for ROI segment steering):
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i in.mkv \
+       -vf "format=p010le,hwupload,pelorus_analyze_vulkan=roi=1,hwdownload,format=p010le" \
+       -c:v libsvtav1 -crf 35 -preset 6 -pelorus_roi 1 out.mkv
+```
+
+Each frame's ROI rectangles are rasterized onto the 64×64-superblock grid and
+quantised into up to 8 AV1 segments (`MAX_SEGMENTS`); each segment carries a
+`seg_qp` qindex *delta* added to the frame base qindex (negative = lower qindex =
+more bits, matching the `qoffset` sign). Segment 0 is the zero-delta background,
+so superblocks no region covers keep the encoder's default decision. The map is
+attached per frame via SVT-AV1's `ROI_MAP_EVENT` private-data node and
+`enable_roi_map` is turned on at init.
+
+Use **constant-quality** (`-crf` / `-qp`); SVT-AV1's own variance AQ can override
+the segment map, and VBR rate-control redistribution erodes the win (same caveat
+as NVENC/QSV). The whole path is compile-gated by SVT-AV1 ≥ 1.6.0 (the release
+that introduced the ROI-map ABI); built against an older SVT-AV1 the option warns
+once at init and no-ops. Defaults OFF (zero behaviour change). See
+[ADR-0121](../adr/0121-svtav1-steering.md).
 
 ### Cross-vendor "via Vulkan" (ADR-0114 Tier 2)
 

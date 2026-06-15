@@ -368,3 +368,51 @@ patches (ADR-0108 deliverable #6).
   `-h encoder=libaom-av1` shows `-pelorus_roi`. On-HW: `analyze roi=1 →
   libaom-av1 -pelorus_roi 1` on a banding clip must not crash and must produce
   valid output (the quality gain awaits the upstream fix above).
+## v0.1.0 — patch 0013 (svtav1 ROI; cumulative on 0001–0011)
+
+- **Patch**: `ffmpeg-patches/0013-svtav1-pelorus-roi.patch` (hand-maintained
+  unified diff `ffmpeg-patches/files/svtav1-pelorus-roi.patch`, applied as its own
+  commit by `generate.sh`). ADR-0121.
+- **Touches** (one file): `libavcodec/libsvtav1.c` — the `pelorus_roi` AVOption +
+  ROI ctx fields (`roi_evts` list, `roi_b64_cols/rows`) in `SvtContext`; an
+  `enable_roi_map` enable block in `eb_enc_init` (before
+  `svt_av1_enc_set_parameter`); the `svtav1_build_roi_evt()` rasterizer + the
+  `EbPrivDataNode`/`ROI_MAP_EVENT` attach in `eb_send_frame` (around
+  `svt_av1_enc_send_picture`); the event free-list teardown in `eb_enc_close`.
+- **Numbering**: committed **last** in `generate.sh` so it lands as **0012**; it
+  touches only `libsvtav1.c`, so it has no dependency on the other encoder
+  patches, but it relies on **0002** (`vf_pelorus_analyze`) to *produce* the ROI
+  side data it consumes — keep it after 0002 in the series.
+- **Consumes from SVT-AV1** (`<EbSvtAv1Enc.h>` / `<EbSvtAv1.h>`):
+  `EbSvtAv1EncConfiguration::enable_roi_map`, `SvtAv1RoiMapEvt`
+  (`b64_seg_map`/`seg_qp[8]`/`max_seg_id`/`start_picture_number`), `EbPrivDataNode`
+  + `ROI_MAP_EVENT` + `EbBufferHeaderType::p_app_private`, and
+  `SVT_AV1_CHECK_VERSION`. A struct/field rename or a change to the `seg_qp` delta
+  semantics on an SVT-AV1 major bump would silently mis-bias — re-verify against
+  `Source/Lib/Encoder/Codec/EbSegmentation.c` (`SEG_LVL_ALT_Q` add) and
+  `EbResourceCoordinationProcess.c` (`update_frame_event` keeps the bare pointer).
+- **Consumes from FFmpeg**: `AV_FRAME_DATA_REGIONS_OF_INTEREST` (`AVRegionOfInterest`,
+  `self_size`/`top`/`bottom`/`left`/`right`/`qoffset`), `av_frame_get_side_data`,
+  `av_pix_fmt_desc_get`, `av_clip`/`av_clipf`/`lrintf`.
+- **Rebase-fragile spots**: (1) the `eb_enc_init` enable block anchors on the
+  `config_enc_params(...)` return-check immediately before
+  `svt_av1_enc_set_parameter` — `enable_roi_map` **must** be set before that call;
+  (2) the `eb_send_frame` attach anchors on the Dolby-Vision tail
+  (`AVERROR_INVALIDDATA`) and the `svt_av1_enc_send_picture` call — both wrapped in
+  `#if SVT_AV1_CHECK_VERSION(1, 6, 0)`; (3) the AVOption anchors on the
+  `svtav1-params` option row. Upstream churn (the vmafx fork's own `-qpfile` ROI
+  bridge edits the same regions on its tree, but the Pelorus base is **pristine**
+  n8.1.1 which has none of it) can fuzz these — regenerate with `generate.sh`
+  rather than hand-resolving.
+- **Lifetime invariant (keep on regeneration)**: each ROI-bearing frame owns its
+  `SvtAv1RoiMapEvt` + `b64_seg_map` on the `roi_evts` list, freed in
+  `eb_enc_close()`. Do **not** "optimise" to a single reused buffer — the library
+  stores the bare pointer and dereferences it later on async pipeline threads, so
+  reuse races the lookahead.
+- **Capability/portability invariants**: `SVT_AV1_CHECK_VERSION(1, 6, 0)` compile
+  guard (older SVT-AV1 → one-shot init warning + pass-through); ≤ 8 segments
+  (`MAX_SEGMENTS`); 64×64 superblock grid; default OFF.
+- **Re-test after rebase**: full series replay via `git am --3way`; rebuild against
+  an SVT-AV1-enabled toolchain (`./configure --enable-libsvtav1 … && make`) and
+  smoke `ffmpeg -h encoder=libsvtav1 | grep pelorus_roi`; ideally re-run the
+  on-HW A/B (`analyze roi=1 → libsvtav1 -pelorus_roi 1`, CAMBI) from

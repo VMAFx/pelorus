@@ -105,7 +105,10 @@ green · the deband shader compiles.**
   −41% banding), **QSV** (`mfxExtMBQP`, code-complete; on-Intel-HW proof pending),
   and the native **Vulkan-Video** encoders via `VK_KHR_video_encode_quantization_map`
   (Tier 2, compile-verified; on-HW proof blocked by the dev box's driver
-  feedback-flag gap). Patches 0004 / 0005 / 0009.
+  feedback-flag gap). The same map also steers **SVT-AV1** (`libsvtav1`) via its
+  per-superblock ROI segment map (`SvtAv1RoiMapEvt`, ADR-0121, proven on hardware:
+  CAMBI −1.5% at CRF 35, an honest modest gain on a mild synthetic source).
+  Patches 0004 / 0005 / 0009 / 0012.
 - Closed-loop QP feedback (ADR-0114 step 6 / ADR-0119): new append-only interop
   section `PEL_SEC_QPREPORT` (ABI 1.1) carries the encoder's *honored* per-block
   QP/bit decisions back into the side-data blob, plus a vendor-neutral reader stub
