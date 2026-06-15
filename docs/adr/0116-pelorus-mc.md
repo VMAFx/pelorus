@@ -52,6 +52,55 @@ The NVENC ME-hint **consumer** (a `libavcodec/nvenc.c` patch reading
 The honest v1 claim is "the MV field is produced and plausible" (direction
 verified on synthetic pans); the measured speedup belongs to the consumer PR.
 
+### NVENC ME-hint consumer (done-code; speedup deferred)
+
+The NVENC consumer is now implemented as the hand-maintained libavcodec diff
+`ffmpeg-patches/files/nvenc-pelorus-me-hints.patch` (patch 0008, cumulative on
+0007). A `-pelorus_me_hints` AVOption (default OFF; registered on `hevc_nvenc`
+and `h264_nvenc`) parses the `PEL_SEC_MOTION` blob off each frame and translates
+the per-block MV field into NVENC's external-ME-hint input:
+`enableExternalMEHints` + `maxMEHintCountsPerBlock[0].numCandsPerBlk16x16 = 1` at
+init, and per frame `NV_ENC_PIC_PARAMS::meExternalHints` +
+`meHintCountsPerBlock`. **Block-geometry mapping**: NVENC's external-hint grid is
+one entry per **16×16 block in raster order** for both H.264 (macroblock) and
+HEVC, so the consumer sizes a `ceil(W/16) × ceil(H/16)` hint buffer and resamples
+the producer's `bsize` grid onto it by sampling the producer cell covering each
+16×16 block's center pixel. **L0/L1**: one **L0** candidate per block
+(`dir = 0`, `partType = 0` for 16×16, `lastofPart = lastOfMB = 1`); **no L1** —
+the producer is a single forward/previous-frame estimator, so `maxMEHintCounts
+PerBlock[1]` stays zero. Each vector is clamped to the NVENC bitfield ranges
+(mvx S12 `[-2048, 2047]`, mvy S10 `[-512, 511]`); the sign convention matches the
+producer (`cur[pos] ≈ ref[pos + mv]`).
+
+**Generality**: default off (zero behaviour change); compile-gated by a new
+`NVENC_HAVE_EXTERNAL_ME_HINTS` macro (defined alongside `NVENC_HAVE_QP_MAP_MODE`
+under the SDK-8.1 version check, the baseline at which these structs are stable);
+the external-ME capability is runtime-probed via `NV_ENC_CAPS_SUPPORT_MEONLY_MODE`
+(the closest proxy NVENC exposes) with graceful degrade + a one-shot warning; AV1
+is skipped (NVENC's AV1 path uses the materially different
+`NVENC_EXTERNAL_ME_SB_HINT` per-superblock struct, S12.2 fixed point — feeding
+the integer-pel block grid there would be wrong, so the option no-ops for AV1).
+
+**Blob parse — inline, no libavcodec→libpelorus link**: the consumer replicates
+the minimum Pelorus-blob reader (UUID + `"PELOR1\0\0"` magic + `abi_major == 1`,
+`section_mask` check, the `PelorusSectionDir` walk, and the `mv_field_offset` /
+`mv_field_size` read) inline in `nvenc.c` rather than linking `libpelorus` into
+all of `libavcodec` for a default-off feature. This mirrors the ROI/QSV patches
+(which stay dependency-free by consuming only standard side data) and is safe
+because the interop ABI is frozen append-only (interop.h R1–R6): an older inline
+reader tolerates a newer producer (reads the bytes it knows, ignores the tail).
+A breaking layout change to `PelorusSideData`/`PelorusSectionDir`/the motion
+section offsets — forbidden by the ABI — is the only thing that would break it.
+
+**Honest scope (unchanged)**: the value is **encode speed, not quality**. No
+speedup number ships with this code: the MV field is wired into NVENC's
+external-ME input and verified to **compile** against the ffnvcodec headers and
+replay onto pristine n8.1.1, but a full nvenc build + on-hardware encode-speed
+A/B (frames/s with vs without `-pelorus_me_hints`, same `-preset`/`-cq`, per
+ADR-0111) was not run in-worktree and is the **documented follow-up**. The honest
+claim is exactly: "MV field wired into NVENC's external-ME-hint input; measured
+speedup deferred."
+
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
@@ -61,6 +110,15 @@ verified on synthetic pans); the measured speedup belongs to the consumer PR.
 | Intra-frame spatial (left/top) EPZS predictors | Closer to the serial CPU EPZS; better MVs on coherent motion | Reading a neighbour block's result mid-dispatch is a cross-workgroup data race | Rejected — use temporal + global predictors only |
 | `VK_NV_optical_flow` HW engine | Dense HW flow, fast | NVIDIA-only; zero in-tree usage; orchestration written blind | Later optional fast-path behind the same `PEL_SEC_MOTION` contract |
 | CPU `vf_mestimate` side-data | No new GPU code | Breaks VRAM-resident zero-copy; CPU ME throughput | Rejected (ADR-0113) |
+
+### Consumer-side alternatives
+
+| Option | Pros | Cons | Why not chosen |
+|---|---|---|---|
+| Inline minimal blob reader in `nvenc.c` (this) | No libavcodec→libpelorus link for a default-off feature; matches the dependency-free ROI/QSV patches; zero footprint when off | Duplicates ~40 lines of ABI-aware parse; must track interop.h if its framing structs ever grow (forbidden by the append-only ABI) | **Chosen** — smallest blast radius |
+| Link `libpelorus` into `libavcodec` (configure `require_pkg_config`) | Single source of the parse logic | Makes every NVENC build depend on libpelorus even with the option off; invasive configure surgery | Rejected — too heavy for a niche default-off lever |
+| Map every producer block to its own NVENC sub-partition (16×8/8×8) | Finer hint granularity | Producer emits one MV per `bsize` block, not per sub-block; no extra information to give | Rejected — one L0 16×16 candidate carries all we have |
+| Populate L1 hints too | Bidirectional seed | Producer is forward/previous-frame only; no L1 vectors exist | Rejected — L0 only |
 
 ## Consequences
 
@@ -90,9 +148,19 @@ verified on synthetic pans); the measured speedup belongs to the consumer PR.
 - `libavfilter/motion_estimation.c` (`ff_me_search_epzs` / `ff_me_search_ds`,
   SAD cost), `libpelorus/include/pelorus/interop.h` (`PEL_SEC_MOTION`,
   `PelorusMotionSection`), `/usr/include/ffnvcodec/nvEncodeAPI.h`
-  (`enableExternalMEHints`, `meExternalHints`, `NV_ENC_EXTERNAL_ME_HINT`).
+  (`enableExternalMEHints`, `meExternalHints`, `NV_ENC_EXTERNAL_ME_HINT`,
+  `NVENC_EXTERNAL_ME_HINT_COUNTS_PER_BLOCKTYPE`, `NV_ENC_CAPS_SUPPORT_MEONLY_MODE`).
+- Consumer patch: `ffmpeg-patches/files/nvenc-pelorus-me-hints.patch` (patch
+  0008), `docs/usage/ffmpeg.md` ("Encoder motion-search seeding"),
+  `docs/rebase-notes.md` (patch 0008 entry).
 - Source: `req` — build the motion estimator as the hardest roadmap item, one
   solid first implementation: the Vulkan compute block-match pass producing a
   per-block integer-pel MV field emitted as Pelorus MV-hint side data, framed
   honestly as encode speed (the NVENC ME-hint consumer) rather than quality, with
   the consumer patch a documented follow-up.
+- Source: `req` — implement the NVENC external ME-hint consumer as the gated
+  Tier-3 follow-up to the merged mc producer: read the `PEL_SEC_MOTION` MV field
+  and feed it to NVENC so the ASIC can skip/shorten its own motion search; frame
+  the value as encode speed, not quality, everywhere; the option is default off,
+  the capability is runtime-probed with graceful degrade, and the measured
+  speedup is deferred (do not fabricate a number).

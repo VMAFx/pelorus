@@ -29,3 +29,6 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0114](0114-encoder-steering.md) | Encoder-steering strategy — feed Pelorus GPU maps to every encoder (ROI today, QP-map patches, Vulkan quant-map) | Proposed |
 | [0115](0115-grain-estimate.md) | vf_pelorus_grain_estimate — film-grain-synthesis parameter estimator (per-band HF-residual → AV1 AOM / H.274) | Accepted |
 | [0116](0116-pelorus-mc.md) | vf_pelorus_mc_vulkan v1 — standalone GPU motion-vector-hint producer (encode-speed, not quality) | Accepted |
+| [0117](0117-grain-fgs-bsf.md) | pelorus_fgs — H.274/HEVC Film Grain Characteristics SEI bitstream filter (FGS round-trip, HEVC leg) | Accepted |
+| [0118](0118-nvenc-av1-filmgrain.md) | av1_nvenc film grain — carry the FGS estimate into NVENC hardware AV1 film-grain synthesis | Accepted |
+| [0119](0119-qp-feedback.md) | Closed-loop QP feedback — read the encoder's honored QP/bits back into the interop ABI (PEL_SEC_QPREPORT, ABI 1.1) | Accepted |

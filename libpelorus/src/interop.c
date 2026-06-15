@@ -47,6 +47,7 @@ static int section_bit_valid(uint32_t id)
     case PEL_SEC_DENOISE:
     case PEL_SEC_FILMGRAIN:
     case PEL_SEC_MOTION:
+    case PEL_SEC_QPREPORT:
         return 1;
     default:
         return 0;
@@ -260,4 +261,76 @@ pel_result pel_blob_find_section(const uint8_t *blob, size_t len, enum pel_secti
         return PEL_OK;
     }
     return PEL_ERR_ABSENT;
+}
+
+pel_result pel_qp_report_from_blocks(const PelorusQpReportInput *in, uint16_t grid_cols,
+                                     uint16_t grid_rows, PelorusQpReportSection *out_section,
+                                     int8_t *qp_cell_out, size_t qp_cell_cap)
+{
+    uint32_t cells;
+    uint16_t cy;
+
+    if (in == NULL || out_section == NULL || grid_cols == 0 || grid_rows == 0) {
+        return PEL_ERR_INVALID;
+    }
+
+    memset(out_section, 0, sizeof(*out_section));
+    out_section->avg_qp = in->avg_qp;
+    out_section->psnr_y = in->psnr_y;
+    out_section->psnr_u = in->psnr_u;
+    out_section->psnr_v = in->psnr_v;
+    out_section->total_bits = in->total_bits;
+    out_section->num_intra_blocks = in->num_intra_blocks;
+    out_section->num_inter_blocks = in->num_inter_blocks;
+    out_section->num_skipped_blocks = in->num_skipped_blocks;
+    out_section->block_size_log2 = in->block_size_log2;
+    out_section->report_source = in->report_source;
+    out_section->honored_fraction = 0.0f; /* no requested map at this layer */
+    out_section->qp_valid = 0;
+
+    /* Frame-stats-only path: caller passed no per-block grid. */
+    if (in->block_qp == NULL || qp_cell_out == NULL || in->blk_cols == 0 || in->blk_rows == 0) {
+        return PEL_OK;
+    }
+
+    cells = (uint32_t)grid_cols * (uint32_t)grid_rows;
+    if (qp_cell_cap < (size_t)cells) {
+        return PEL_ERR_RANGE;
+    }
+
+    /* Fold the block grid onto the cell grid: each cell averages the blocks
+     * whose centre lands in it (nearest-cell box). The block and cell grids are
+     * independent rasters over the same frame, so map by proportional index. */
+    for (cy = 0; cy < grid_rows; cy++) {
+        uint16_t cx;
+        for (cx = 0; cx < grid_cols; cx++) {
+            uint32_t bx0 = (uint32_t)cx * in->blk_cols / grid_cols;
+            uint32_t bx1 = (uint32_t)(cx + 1) * in->blk_cols / grid_cols;
+            uint32_t by0 = (uint32_t)cy * in->blk_rows / grid_rows;
+            uint32_t by1 = (uint32_t)(cy + 1) * in->blk_rows / grid_rows;
+            int64_t sum = 0; /* int64 so the accumulate + divide stay exact and */
+            uint32_t n = 0;  /* sign-correct for any type-legal block count       */
+            uint32_t by;
+
+            if (bx1 <= bx0) {
+                bx1 = bx0 + 1; /* guarantee >=1 sampled block when cells > blocks */
+            }
+            if (by1 <= by0) {
+                by1 = by0 + 1;
+            }
+            for (by = by0; by < by1 && by < in->blk_rows; by++) {
+                uint32_t bx;
+                for (bx = bx0; bx < bx1 && bx < in->blk_cols; bx++) {
+                    sum += in->block_qp[by * (uint32_t)in->blk_cols + bx];
+                    n++;
+                }
+            }
+            qp_cell_out[(uint32_t)cy * grid_cols + cx] = (n > 0U) ? (int8_t)(sum / (int64_t)n) : 0;
+        }
+    }
+
+    out_section->qp_valid = 1;
+    out_section->qp_cell_size = cells; /* int8 per cell */
+    /* qp_cell_offset is filled by the caller after it picks the blob layout. */
+    return PEL_OK;
 }

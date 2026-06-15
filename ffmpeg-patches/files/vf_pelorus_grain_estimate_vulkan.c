@@ -199,7 +199,11 @@ static av_cold int init_filter(AVFilterContext *ctx)
     GLSLC(2,         return;                                                  );
     GLSLC(1,     float resid = clamp(c - mean, -RES_CLAMP, RES_CLAMP);        );
     GLSLC(1,     int band = clamp(int(mean * float(BANDS)), 0, BANDS - 1);    );
-    GLSLC(1,     uint slice = (uint(y) * uint(size.x) + uint(x)) % SLICES;    );
+    /* GLSLC appends its argument as the av_bprintf *format* string, so the GLSL
+     * modulo operator must be escaped '%%' (emits a single '%'); a bare '% S'
+     * is read as the %S wide-string conversion and segfaults. The .comp uses a
+     * literal '%' because glslang compiles it directly (no format pass). */
+    GLSLC(1,     uint slice = (uint(y) * uint(size.x) + uint(x)) %% SLICES;   );
     GLSLC(1,     uint bidx = uint(band) * SLICES + slice;                     );
     GLSLC(1,     atomicAdd(sumsq[bidx], uint(resid * resid * SUMSQ_GS));      );
     GLSLC(1,     atomicAdd(cnt[bidx], 1u);                                    );

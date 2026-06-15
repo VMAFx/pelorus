@@ -1,0 +1,47 @@
+feat(vulkan): cross-vendor "via Vulkan" QP-map steering (ADR-0114 Tier 2)
+
+Patch libavcodec/vulkan_encode.c to drive VK_KHR_video_encode_quantization_map
+so one Pelorus map producer (vf_pelorus_analyze roi=1, emitting the standard
+AV_FRAME_DATA_REGIONS_OF_INTEREST) steers bit allocation on every
+Vulkan-encode-capable GPU (h264_vulkan / hevc_vulkan / av1_vulkan), zero host
+roundtrip. Adds a `pelorus_roi` AVOption (default off) in the shared
+VULKAN_ENCODE_COMMON_OPTIONS macro, so all three codecs expose it at once.
+
+Two driver-probed map kinds, picked by the negotiated rate-control mode:
+  - DELTA map (R8_SINT) under CQP: signed per-texel-block ΔQP, the direct
+    analogue of the Tier-1 NVENC qpDeltaMap / QSV mfxExtMBQP delta maps;
+  - EMPHASIS map (R8_UNORM) under CBR/VBR: a [0,1] per-block emphasis that the
+    analyze 0..1 banding score maps onto almost directly.
+
+The ROI side data is coalesced into a compact, texel-block-aligned rectangle
+list (same qoffset->ΔQP convention as the NVENC/QSV patches: qp_range =
+51 + 6*(depth-8), reverse region precedence) and the map texel image is filled
+ON THE GPU: a pelorus_qpmap compute shader (libpelorus/shaders/pelorus_qpmap.comp,
+mirrored inline) reads the rect SSBO and imageStores the per-texel delta /
+emphasis directly, then a GENERAL -> VIDEO_ENCODE_QUANTIZATION_MAP_KHR barrier
+hands it to the encode. The dispatch records on the encode command buffer, so it
+is used only when the encode queue family also advertises VK_QUEUE_COMPUTE_BIT
+(no cross-queue ownership transfer); otherwise a host raster + staging-buffer
+vkCmdCopyBufferToImage fallback runs. Either way the map is bound at
+vkCmdEncodeVideoKHR by chaining VkVideoEncodeQuantizationMapInfoKHR with the
+WITH_*_MAP flag; the session is created with the matching ALLOW_ENCODE_*_MAP_BIT
+and the session parameters carry the probed quantizationMapTexelSize.
+
+Generality (product patch for all vendors, no device assumptions): the whole
+path is runtime-probed — the extension must be enabled, the codec must advertise
+the delta/emphasis capability flag, and a usable map format + texel size must be
+returned by GetPhysicalDeviceVideoFormatPropertiesKHR. Any miss degrades to a
+one-shot warning + pass-through. A frame with no ROI side data binds no map
+(zero behaviour change). The path is also compile-gated by
+VK_KHR_video_encode_quantization_map so older Vulkan headers build to a clean
+no-op.
+
+VERIFICATION: compile-verified only. vulkan_encode.c and the three
+vulkan_encode_{h264,h265,av1} TUs build clean (zero warnings) under FFmpeg's
+-std=c17 -Wall warning set against the system Vulkan-video headers, with the
+quantization-map ifdef live; the reference shader and the inline GLSL both
+compile under glslang. Runtime on-HW proof
+is BLOCKED on this dev box: hevc_vulkan ENCODE fails at init with "Driver does
+not support required encode feedback flags (BUFFER_OFFSET and BYTES_WRITTEN)",
+before this code runs — a driver limitation (ADR-0114 Tier 2 immaturity caveat),
+not a patch defect. No BD-rate gain is claimed; on-HW A/B is the follow-up.

@@ -289,10 +289,94 @@ VMAF up — banding steering reaches two HW vendors from one map. **Intel** is t
 honest negative: the Arc A380 exposes only the low-power `VAEntrypointEncSliceLP`
 encode path, and iHD's ROI on that path produced a broken encode (PSNR 13.8 dB;
 the VMAF=100 it scored is a model-clamp artifact, not quality). The baseline Intel
-encode is clean (PSNR 44.8 dB, VMAF 96.0), so the pipeline is fine — it is an
-iHD-low-power-ROI driver bug, not a Pelorus issue, and the Arc has no full-power
-entrypoint to fall back to. Combined with libx265 (v0.5, −47%) and NVENC (v0.5,
-−41%), the steering is proven on **three** consumers (libx265, NVENC, AMD).
+encode is clean (PSNR 44.8 dB, VMAF 96.0), so the pipeline is fine — it is the
+**known Arc A-series (Alchemist) low-power encode bug** (fixed only in Arc B /
+Battlemage), not a Pelorus issue, and the A380 has no non-low-power entrypoint to
+fall back to. Treat *all* Arc A low-power encode results as invalid. Combined with
+libx265 (v0.5, −47%) and NVENC (v0.5, −41%), the steering is proven on **three**
+consumers (libx265, NVENC, AMD).
+
+## v0.7 — AMD ROI at **true iso-bitrate** (VBR matched target)
+
+v0.6 was a same-QP mechanism demo (bitrate floated). This upgrades the AMD leg to
+a matched-bitrate proof: `hevc_vaapi` (radeonsi, renderD130), `-rc_mode VBR` with
+the **same `-b:v` both arms**, so +ROI must redistribute *within* the budget.
+Instrumented with actual bitrate (confirm iso) + PSNR (catch the Intel-style
+corruption confound):
+
+| target | arm | bitrate | CAMBI (↓) | VMAF | PSNR (sanity) |
+|---|---|---:|---:|---:|---:|
+| 400k | baseline | 455.3 kbps | 1.646 | 94.50 | 43.1 dB |
+| 400k | **+ROI** | 455.5 kbps | **1.467** (−11%) | **94.96** (+0.46) | 43.1 dB |
+| 800k | baseline | 849.4 kbps | 0.855 | 97.55 | 50.0 dB |
+| 800k | +ROI | 857.8 kbps | 0.832 (−3%) | 97.52 | 49.9 dB |
+
+**−11% banding at iso-bitrate (455 kbps), VMAF +0.46** — a real matched-bitrate
+redistribution win on AMD hardware, PSNR-clean (no corruption). The gain tapers to
+−3% at 850k where there is barely any banding left to fix — the expected
+content/bitrate dependence (ROI helps most where the encoder is starving the flat
+regions). Same `addroi` side data as every other consumer; no patch (radeonsi
+honors ROI vanilla). Confounded-result guard worked: both arms' bitrates match to
+&lt;2% and PSNR is sane, unlike the Intel iHD low-power case (PSNR 13.8, v0.6).
+
+## v0.8 — QSV ROI on the Arc: a crash bug found + fixed, then a driver wall
+
+Built a QSV-enabled ffmpeg (`--enable-libvpl`, oneVPL 2.16) with the `0005`
+patch and ran `hevc_qsv -q:v 30 -low_power 1 -pelorus_roi 1` on the Arc A380
+(renderD129, iHD). On-hardware execution caught what CI cannot (CI builds no QSV):
+
+1. **A real crash bug (fixed).** `-pelorus_roi 1` segfaulted. Root cause (gdb +
+   pahole): `qsvenc_setup_roi()` re-derived `q = avctx->priv_data`, but for the
+   wrapped `hevc_qsv`/`h264_qsv` the real `QSVEncContext` is `&wrapper->qsv` (+8,
+   past the `AVClass*`). `q` was misaligned → `pelorus_roi` read garbage → the ROI
+   write hit `0x100000000` → SIGSEGV. Fixed by passing `q` as a parameter (as every
+   other qsvenc helper does). The patch's `priv_data` assumption was the only bug;
+   the rasterizer was already bounds-correct.
+2. **The map is provably correct.** With the fix in, a gdb dump at the
+   `mfxExtMBQP` attach shows the delta map is exactly right: `−8` across the
+   top-half (banding) blocks, `0` in the bottom; `NumQPAlloc=1200`, `Pitch=40`,
+   `BlockSize=16`, `Mode=MFX_MBQP_MODE_QP_DELTA`.
+3. **Driver wall (gain unvalidated).** Despite a correct map, the encode is
+   anomalous — banding *worse* (CAMBI ↑) and bitrate *explodes* (+45–108% at the
+   same `-q:v`). A correct-but-wrong map would shift bits, not double bitrate and
+   worsen banding. This is the Arc's **low-power encode path** mishandling
+   `mfxExtMBQP` — the same path that corrupted VAAPI ROI (PSNR 13.8, v0.6).
+   **Root cause (authoritative): the Arc A-series (Alchemist) low-power encode is a
+   known hardware/driver bug, fixed only in the Arc B-series (Battlemage).** The
+   A380 exposes *only* the low-power entrypoint (`EncSliceLP`), so every encode on
+   it runs the bugged path — these results are **invalid by construction**, not
+   inconclusive. **Conclusion: the `0005` patch is correct (crash-free, map
+   verified `−8`/`0`); the QSV steering *gain* cannot be validated on Arc A** — it
+   needs an **Arc B (Battlemage)** or other full-`EncSlice` Intel target. No QSV
+   gain is claimed.
+
+## v0.9 — NVENC external ME hints: functional, but **no speed gain** (honest negative)
+
+Built an nvenc-enabled ffmpeg (`--enable-nvenc`, stack `0001–0008`) and measured
+the patch-`0008` ME-hint *consumer* on the RTX 4090: `pelorus_mc_vulkan` (the
+producer) feeds its `PEL_SEC_MOTION` MV field into NVENC's external-ME-hint input
+(`enableExternalMEHints`). Both arms run the **identical** pipeline (src → Vulkan
+→ mc → hwdownload → `hevc_nvenc -preset p7 -rc constqp`), differing only in
+`-pelorus_me_hints` — so the producer/upload cost cancels and the delta is purely
+NVENC's. 1280×720, 600 frames, 3 runs each.
+
+Engagement **confirmed** (not a pass-through): `"Pelorus external ME hints
+enabled: 80x45 16x16 blocks, 1 L0 candidate/block."`
+
+| arm | rtime (s) | fps | speed |
+|---|---:|---:|---:|
+| hints **off** | 5.26 / 5.26 / 5.36 | 114 / 114 / 112 | 3.77× / 3.78× / 3.71× |
+| hints **on** | 5.36 / 5.38 / 5.47 | 112 / 112 / 110 | 3.71× / 3.70× / 3.64× |
+
+**Verdict: no encode-speed gain — a slight ~2–3% *slowdown*.** With the hints
+genuinely engaged, feeding 80×45 candidates/frame costs more (per-frame hint
+upload + NVENC ingesting them) than it saves on Ada's already-fast VDEnc motion
+search at p7. The mc→NVENC round-trip is **functional and correct** (wires in,
+engages, no crash) — the *speed* premise (ADR-0113 Tier-3: let the ASIC skip its
+ME search) simply does not pay off on this GPU/content. Kept default-off and
+documented as a negative, like the reverted in-filter MC (ADR-0113); it may still
+help on slower ME engines or higher-motion content, but **no NVENC ME-hint speed
+gain is claimed on the 4090**.
 
 ## Open / next
 

@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Mon, 15 Jun 2026 14:20:32 +0200
-Subject: [PATCH 1/7] feat(deband): add vf_pelorus_deband_vulkan (smart deband,
- Vulkan)
+Date: Mon, 15 Jun 2026 15:26:57 +0200
+Subject: [PATCH 01/11] feat(deband): add vf_pelorus_deband_vulkan (smart
+ deband, Vulkan)
 
 Psychovisual deband modeled on flash3kyuu_deband (f3kdb): the vf_deband.c
 flat-test (4-tap rotated reference sampling, per-plane threshold,

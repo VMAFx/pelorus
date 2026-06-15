@@ -1,0 +1,320 @@
+/*
+ * Copyright 2026 Lusoris
+ *
+ * This file is part of FFmpeg.
+ *
+ * FFmpeg is free software; you can redistribute it and/or modify it under
+ * the terms of the GNU Lesser General Public License as published by the
+ * Free Software Foundation; either version 2.1 of the License, or (at
+ * your option) any later version.
+ *
+ * FFmpeg is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
+ * License for more details.
+ */
+
+/**
+ * @file
+ * Pelorus film-grain-synthesis (FGS) bitstream filter, H.274 / HEVC leg.
+ *
+ * Inserts an ITU-T H.274 Film Grain Characteristics (FGC) SEI message (HEVC
+ * payload type 19, SEI_TYPE_FILM_GRAIN_CHARACTERISTICS) as a PREFIX NAL into
+ * each HEVC access unit, so a conforming decoder re-synthesizes film grain that
+ * was removed before encode (e.g. by vf_pelorus_denoise_vulkan). It completes
+ * the HEVC/H.274 leg of the round-trip that vf_pelorus_grain_estimate_vulkan
+ * (ADR-0115) started: the estimator measures grain on the GPU and emits the
+ * Pelorus PEL_SEC_FILMGRAIN section + the H.274 mode scalars; the AV1 leg
+ * already round-trips through the native AV_FRAME_DATA_FILM_GRAIN_PARAMS channel
+ * that AV1 encoders consume. There is NO equivalent automatic path for HEVC —
+ * stock FFmpeg encoders do not propagate film-grain frame side data into the
+ * HEVC bitstream — so this BSF carries the parameters into the elementary stream
+ * itself. See docs/usage/grain-fgs-bsf.md and ADR-0117.
+ *
+ * SCOPE / honesty: this BSF inserts a STATIC FGC model that the user supplies
+ * via AVOptions (the canonical FFmpeg metadata-BSF contract — hevc_metadata,
+ * h264_metadata, av1_metadata all set static parameters this way). A BSF
+ * operates on AVPackets, and no stock encoder forwards the estimator's per-frame
+ * film-grain frame side data onto the coded packet, so per-frame estimate ->
+ * SEI plumbing through an arbitrary HEVC encoder is not expressible in n8.1.1;
+ * the static-model path is the honest, fully general one. The producer's
+ * PEL_SEC_FILMGRAIN H.274 scalars (h274_model_id / h274_blending_mode /
+ * h274_log2_scale) and per-band RMS scaling map directly onto the options here;
+ * docs/usage/grain-fgs-bsf.md gives the mapping and a derivation recipe.
+ *
+ * Built on the coded-bitstream (CBS) generic BSF framework (cbs_bsf.c), exactly
+ * like hevc_metadata: each access unit is parsed into a CodedBitstreamFragment,
+ * we add one FGC SEI message via ff_cbs_sei_add_message(), and CBS reassembles
+ * the AU. Opt-in and no-op by construction: the filter does nothing unless the
+ * comp_model_present mask selects at least one colour component.
+ */
+
+#include <string.h>
+
+#include "libavutil/common.h"
+#include "libavutil/opt.h"
+
+#include "bsf.h"
+#include "bsf_internal.h"
+#include "cbs.h"
+#include "cbs_bsf.h"
+#include "cbs_h265.h"
+#include "cbs_sei.h"
+#include "sei.h"
+
+#include "hevc/hevc.h"
+
+/* Comp-model component bitmask for the `components` option. */
+#define PEL_FGS_COMP_Y  (1 << 0)
+#define PEL_FGS_COMP_CB (1 << 1)
+#define PEL_FGS_COMP_CR (1 << 2)
+
+typedef struct PelorusFGSContext {
+    CBSBSFContext common;
+
+    /* H.274 FGC model parameters (the static model inserted into every AU). */
+    int model_id;        /* 0 = frequency filtering, 1 = auto-regression       */
+    int blending_mode;   /* 0 = additive, 1 = multiplicative                   */
+    int log2_scale;      /* H.274 log2_scale_factor, [0,15]                    */
+    int components;      /* bitmask: which colour components carry a model     */
+    int persistence;     /* film_grain_characteristics_persistence_flag        */
+
+    /* The luma scaling model. A single intensity interval [low,high] with a
+     * scale value derived from the estimator's per-band RMS residual. v0.x
+     * emits one interval covering the full luma range; a follow-up maps the
+     * estimator's 8 bands onto multiple intervals. */
+    int intensity_low;   /* intensity_interval_lower_bound[0][0], [0,255]      */
+    int intensity_high;  /* intensity_interval_upper_bound[0][0], [0,255]      */
+    int scale_y;         /* comp_model_value[0][0][0] (grain scale), [0,255]   */
+    int scale_c;         /* chroma scale value when CB/CR selected             */
+
+    /* When set, do not insert a fresh SEI if the AU already carries an FGC SEI
+     * (avoid double-stamping a stream a previous stage already marked). */
+    int skip_existing;
+
+    H265RawFilmGrainCharacteristics fgc;
+    int warned_no_components;
+
+    /* Colour description cached from the active SPS. When the FGC SEI omits its
+     * own colour description (separate_colour_description_present_flag = 0), the
+     * H.265 syntax INFERS these six fields from the active SPS, and the CBS
+     * writer verifies the payload already holds the inferred value. We cache
+     * them from the most recent SPS in the stream so the inferred-value check
+     * passes on inter AUs (which carry no SPS of their own). */
+    int have_colour_desc;
+    uint8_t cd_bit_depth_luma_minus8;
+    uint8_t cd_bit_depth_chroma_minus8;
+    uint8_t cd_full_range_flag;
+    uint8_t cd_colour_primaries;
+    uint8_t cd_transfer_characteristics;
+    uint8_t cd_matrix_coeffs;
+    int warned_no_sps;
+} PelorusFGSContext;
+
+/* Fill the H.274 FGC raw payload from the configured static model. The colour
+ * description is inferred from the active SPS (separate_colour_description = 0),
+ * matching how an encoder-side estimate would be described relative to the
+ * stream. Per H.265 / H.274: model_id in {0,1}; comp_model_value range depends
+ * on model_id (signed and centred for AR, unsigned for frequency filtering) —
+ * the CBS writer enforces the legal range, so we clamp to the [0,255] proxy the
+ * estimator produces and let the AR-centred range be applied by the user via
+ * scale_y when model_id == 1. */
+static void pel_fgs_fill(PelorusFGSContext *ctx)
+{
+    H265RawFilmGrainCharacteristics *fgc = &ctx->fgc;
+    int c;
+
+    memset(fgc, 0, sizeof(*fgc));
+
+    fgc->film_grain_characteristics_cancel_flag = 0;
+    fgc->film_grain_model_id = ctx->model_id;
+    /* The FGC SEI omits its own colour description and INFERS it from the active
+     * SPS. The CBS writer verifies the payload already carries the inferred
+     * value, so pre-fill the cached SPS colour description (see the cache in
+     * pel_fgs_update_fragment). */
+    fgc->separate_colour_description_present_flag = 0;
+    fgc->film_grain_bit_depth_luma_minus8 = ctx->cd_bit_depth_luma_minus8;
+    fgc->film_grain_bit_depth_chroma_minus8 = ctx->cd_bit_depth_chroma_minus8;
+    fgc->film_grain_full_range_flag = ctx->cd_full_range_flag;
+    fgc->film_grain_colour_primaries = ctx->cd_colour_primaries;
+    fgc->film_grain_transfer_characteristics = ctx->cd_transfer_characteristics;
+    fgc->film_grain_matrix_coeffs = ctx->cd_matrix_coeffs;
+    fgc->blending_mode_id = ctx->blending_mode;
+    fgc->log2_scale_factor = ctx->log2_scale;
+
+    for (c = 0; c < 3; c++) {
+        int present = (c == 0) ? !!(ctx->components & PEL_FGS_COMP_Y)
+                    : (c == 1) ? !!(ctx->components & PEL_FGS_COMP_CB)
+                               : !!(ctx->components & PEL_FGS_COMP_CR);
+        if (!present)
+            continue;
+
+        fgc->comp_model_present_flag[c] = 1;
+        /* One intensity interval spanning [low,high]; one model value (the
+         * grain scale). num_*_minus1 are zero-based counts. */
+        fgc->num_intensity_intervals_minus1[c] = 0;
+        fgc->num_model_values_minus1[c] = 0;
+        fgc->intensity_interval_lower_bound[c][0] = (uint8_t)ctx->intensity_low;
+        fgc->intensity_interval_upper_bound[c][0] = (uint8_t)ctx->intensity_high;
+        fgc->comp_model_value[c][0][0] =
+            (int16_t)((c == 0) ? ctx->scale_y : ctx->scale_c);
+    }
+
+    fgc->film_grain_characteristics_persistence_flag = ctx->persistence;
+}
+
+/* Cache the colour description from any SPS present in this access unit, so the
+ * inferred-value check in the FGC SEI writer passes on subsequent inter AUs
+ * (which carry no SPS). Mirrors the H.265 VUI inference defaults: an absent
+ * colour description infers primaries/transfer/matrix = 2 (unspecified), and an
+ * absent video-signal-type infers full_range = 0. */
+static void pel_fgs_cache_colour_desc(PelorusFGSContext *ctx,
+                                      const CodedBitstreamFragment *au)
+{
+    int i;
+    for (i = 0; i < au->nb_units; i++) {
+        if (au->units[i].type == HEVC_NAL_SPS && au->units[i].content) {
+            const H265RawSPS *sps = au->units[i].content;
+            ctx->cd_bit_depth_luma_minus8 = sps->bit_depth_luma_minus8;
+            ctx->cd_bit_depth_chroma_minus8 = sps->bit_depth_chroma_minus8;
+            ctx->cd_full_range_flag =
+                sps->vui.video_signal_type_present_flag
+                    ? sps->vui.video_full_range_flag : 0;
+            ctx->cd_colour_primaries =
+                sps->vui.colour_description_present_flag
+                    ? sps->vui.colour_primaries : 2;
+            ctx->cd_transfer_characteristics =
+                sps->vui.colour_description_present_flag
+                    ? sps->vui.transfer_characteristics : 2;
+            ctx->cd_matrix_coeffs =
+                sps->vui.colour_description_present_flag
+                    ? sps->vui.matrix_coefficients : 2;
+            ctx->have_colour_desc = 1;
+        }
+    }
+}
+
+static int pel_fgs_update_fragment(AVBSFContext *bsf, AVPacket *pkt,
+                                   CodedBitstreamFragment *au)
+{
+    PelorusFGSContext *ctx = bsf->priv_data;
+    SEIRawMessage *existing = NULL;
+    int err;
+
+    /* No-op when no component carries a model: a pure pass-through BSF. */
+    if (!ctx->components) {
+        if (!ctx->warned_no_components) {
+            ctx->warned_no_components = 1;
+            av_log(bsf, AV_LOG_WARNING,
+                   "pelorus_fgs: no components selected; passing through "
+                   "without inserting an FGC SEI.\n");
+        }
+        return 0;
+    }
+
+    /* Track the active SPS colour description (needed by the FGC SEI's inferred
+     * colour fields) across both extradata and picture fragments. */
+    pel_fgs_cache_colour_desc(ctx, au);
+
+    /* Extradata fragment (pkt == NULL) carries no picture; only stamp coded
+     * access units so the SEI rides each frame's prefix, like the synthesizer
+     * expects. */
+    if (!pkt)
+        return 0;
+
+    /* Cannot write a colour-description-omitting FGC SEI before the first SPS
+     * is seen; pass the AU through until one establishes the inferred values. */
+    if (!ctx->have_colour_desc) {
+        if (!ctx->warned_no_sps) {
+            ctx->warned_no_sps = 1;
+            av_log(bsf, AV_LOG_WARNING,
+                   "pelorus_fgs: no SPS seen yet; passing access unit through "
+                   "until the colour description is known.\n");
+        }
+        return 0;
+    }
+
+    if (ctx->skip_existing) {
+        err = ff_cbs_sei_find_message(ctx->common.output, au,
+                                      SEI_TYPE_FILM_GRAIN_CHARACTERISTICS,
+                                      &existing);
+        if (err == 0 && existing)
+            return 0; /* already marked; leave the stream untouched */
+    }
+
+    pel_fgs_fill(ctx);
+
+    err = ff_cbs_sei_add_message(ctx->common.output, au, 1 /* prefix */,
+                                 SEI_TYPE_FILM_GRAIN_CHARACTERISTICS,
+                                 &ctx->fgc, NULL);
+    if (err < 0) {
+        av_log(bsf, AV_LOG_ERROR,
+               "pelorus_fgs: failed to add Film Grain Characteristics SEI.\n");
+        return err;
+    }
+
+    return 0;
+}
+
+static const CBSBSFType pel_fgs_type = {
+    .codec_id        = AV_CODEC_ID_HEVC,
+    .fragment_name   = "access unit",
+    .unit_name       = "NAL unit",
+    .update_fragment = &pel_fgs_update_fragment,
+};
+
+static int pel_fgs_init(AVBSFContext *bsf)
+{
+    return ff_cbs_bsf_generic_init(bsf, &pel_fgs_type);
+}
+
+#define OFFSET(x) offsetof(PelorusFGSContext, x)
+#define FLAGS (AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_BSF_PARAM)
+static const AVOption pel_fgs_options[] = {
+    { "model_id", "H.274 film_grain_model_id (0=frequency filtering, 1=auto-regression)",
+      OFFSET(model_id), AV_OPT_TYPE_INT, { .i64 = 1 }, 0, 1, FLAGS },
+    { "blending_mode", "H.274 blending_mode_id (0=additive, 1=multiplicative)",
+      OFFSET(blending_mode), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, FLAGS },
+    { "log2_scale", "H.274 log2_scale_factor",
+      OFFSET(log2_scale), AV_OPT_TYPE_INT, { .i64 = 8 }, 0, 15, FLAGS },
+    { "components", "colour components that carry a grain model (bitmask: 1=Y, 2=Cb, 4=Cr)",
+      OFFSET(components), AV_OPT_TYPE_FLAGS, { .i64 = PEL_FGS_COMP_Y }, 0, 7,
+      FLAGS, .unit = "components" },
+        { "y",  "luma",      0, AV_OPT_TYPE_CONST, { .i64 = PEL_FGS_COMP_Y },  0, 0, FLAGS, .unit = "components" },
+        { "cb", "chroma Cb", 0, AV_OPT_TYPE_CONST, { .i64 = PEL_FGS_COMP_CB }, 0, 0, FLAGS, .unit = "components" },
+        { "cr", "chroma Cr", 0, AV_OPT_TYPE_CONST, { .i64 = PEL_FGS_COMP_CR }, 0, 0, FLAGS, .unit = "components" },
+    { "intensity_low", "lower bound of the luma intensity interval the model covers",
+      OFFSET(intensity_low), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 255, FLAGS },
+    { "intensity_high", "upper bound of the luma intensity interval the model covers",
+      OFFSET(intensity_high), AV_OPT_TYPE_INT, { .i64 = 255 }, 0, 255, FLAGS },
+    { "scale_y", "luma grain scale (comp_model_value[Y][0][0]); maps the estimator's per-band RMS",
+      OFFSET(scale_y), AV_OPT_TYPE_INT, { .i64 = 16 }, 0, 255, FLAGS },
+    { "scale_c", "chroma grain scale (comp_model_value[Cb/Cr][0][0]) when cb/cr selected",
+      OFFSET(scale_c), AV_OPT_TYPE_INT, { .i64 = 8 }, 0, 255, FLAGS },
+    { "persistence", "film_grain_characteristics_persistence_flag (apply until cancelled)",
+      OFFSET(persistence), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
+    { "skip_existing", "do not insert if the access unit already carries an FGC SEI",
+      OFFSET(skip_existing), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
+    { NULL }
+};
+
+static const AVClass pel_fgs_class = {
+    .class_name = "pelorus_fgs_bsf",
+    .item_name  = av_default_item_name,
+    .option     = pel_fgs_options,
+    .version    = LIBAVUTIL_VERSION_INT,
+};
+
+static const enum AVCodecID pel_fgs_codec_ids[] = {
+    AV_CODEC_ID_HEVC, AV_CODEC_ID_NONE,
+};
+
+const FFBitStreamFilter ff_pelorus_fgs_bsf = {
+    .p.name         = "pelorus_fgs",
+    .p.codec_ids    = pel_fgs_codec_ids,
+    .p.priv_class   = &pel_fgs_class,
+    .priv_data_size = sizeof(PelorusFGSContext),
+    .init           = &pel_fgs_init,
+    .close          = &ff_cbs_bsf_generic_close,
+    .filter         = &ff_cbs_bsf_generic_filter,
+};
