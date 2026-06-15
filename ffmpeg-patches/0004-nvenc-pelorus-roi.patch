@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Mon, 15 Jun 2026 14:20:32 +0200
+Date: Mon, 15 Jun 2026 15:08:02 +0200
 Subject: [PATCH 4/7] feat(nvenc): honor AV_FRAME_DATA_REGIONS_OF_INTEREST via
  the delta-QP map
 MIME-Version: 1.0

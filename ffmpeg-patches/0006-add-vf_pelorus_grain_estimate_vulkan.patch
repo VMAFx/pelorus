@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Mon, 15 Jun 2026 14:20:32 +0200
+Date: Mon, 15 Jun 2026 15:08:02 +0200
 Subject: [PATCH 6/7] feat(grain): add vf_pelorus_grain_estimate_vulkan (FGS
  param estimator)
 MIME-Version: 1.0
@@ -43,8 +43,8 @@ ADR: docs/adr/0115-grain-estimate.md
  configure                                     |   2 +
  libavfilter/Makefile                          |   1 +
  libavfilter/allfilters.c                      |   1 +
- .../vf_pelorus_grain_estimate_vulkan.c        | 650 ++++++++++++++++++
- 4 files changed, 654 insertions(+)
+ .../vf_pelorus_grain_estimate_vulkan.c        | 654 ++++++++++++++++++
+ 4 files changed, 658 insertions(+)
  create mode 100644 libavfilter/vf_pelorus_grain_estimate_vulkan.c
 
 diff --git a/configure b/configure
@@ -93,10 +93,10 @@ index 8f49f54808..5a5f777074 100644
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_grain_estimate_vulkan.c b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
 new file mode 100644
-index 0000000000..68d4d53b6e
+index 0000000000..970a86fa09
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
-@@ -0,0 +1,650 @@
+@@ -0,0 +1,654 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -298,7 +298,11 @@ index 0000000000..68d4d53b6e
 +    GLSLC(2,         return;                                                  );
 +    GLSLC(1,     float resid = clamp(c - mean, -RES_CLAMP, RES_CLAMP);        );
 +    GLSLC(1,     int band = clamp(int(mean * float(BANDS)), 0, BANDS - 1);    );
-+    GLSLC(1,     uint slice = (uint(y) * uint(size.x) + uint(x)) % SLICES;    );
++    /* GLSLC appends its argument as the av_bprintf *format* string, so the GLSL
++     * modulo operator must be escaped '%%' (emits a single '%'); a bare '% S'
++     * is read as the %S wide-string conversion and segfaults. The .comp uses a
++     * literal '%' because glslang compiles it directly (no format pass). */
++    GLSLC(1,     uint slice = (uint(y) * uint(size.x) + uint(x)) %% SLICES;   );
 +    GLSLC(1,     uint bidx = uint(band) * SLICES + slice;                     );
 +    GLSLC(1,     atomicAdd(sumsq[bidx], uint(resid * resid * SUMSQ_GS));      );
 +    GLSLC(1,     atomicAdd(cnt[bidx], 1u);                                    );
