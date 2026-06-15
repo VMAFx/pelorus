@@ -38,10 +38,18 @@ system RAM.
 
 ```bash
 -vf "pelorus_analyze_vulkan,
-     pelorus_deband_vulkan=range=15,
+     pelorus_grain_estimate_vulkan=strength=2.0,
+     pelorus_mc_vulkan=bsize=16:search=24,
      pelorus_denoise_vulkan=sigma=2.0,
-     pelorus_grain_estimate=meta=1"
+     pelorus_deband_vulkan=range=15"
 ```
+
+`pelorus_grain_estimate_vulkan` reads the **source** grain, so it runs before
+denoise removes it; the encoder re-synthesizes the grain from the emitted params.
+`pelorus_mc_vulkan` is a pass-through producer: it emits a per-block motion-vector
+field (`PEL_SEC_MOTION`) as an encoder ME hint (encode-speed, not quality; the
+NVENC `NV_ENC_EXTERNAL_ME_HINT` consumer is a gated follow-up — ADR-0116/0114).
+AVOptions: `bsize` (block edge, default 16), `search` (radius, default 24), `meta`.
 
 Each stage runs in VRAM; the Pelorus side-data blob accumulates sections and
 rides every frame to the encoder.
@@ -62,6 +70,37 @@ can read the Pelorus banding/variance sections for perceptual weighting. For a
 distributed sweep, score finished encodes via `vmafx-server` `POST /v1/score` or
 the `vmaf-mcp` `vmaf_score_encoded` tool. See
 [ADR-0106](../adr/0106-autotune-control-plane.md).
+
+## Encoder ROI steering (NVENC / QSV)
+
+`vf_pelorus_analyze roi=1` emits `AV_FRAME_DATA_REGIONS_OF_INTEREST` (a per-cell
+banding/quality `qoffset` map). Vanilla NVENC ignores ROI side data and vanilla
+QSV honors only coarse rectangle regions; the Pelorus patch stack adds a
+`-pelorus_roi 1` AVOption to both that consumes the **same** side data into the
+encoder's dense per-block delta-QP map (NVENC `qpDeltaMap`, QSV `mfxExtMBQP`):
+
+```bash
+# HEVC, NVENC, constant-QP (the clean mode for QP-map steering):
+ffmpeg ... -vf "hwupload,pelorus_analyze_vulkan=roi=1,hwdownload,format=p010le" \
+       -c:v hevc_nvenc -rc constqp -qp 30 -pelorus_roi 1 out.mkv
+
+# HEVC, Intel QSV, CQP (global_quality); -pelorus_roi requires CQP rate control:
+ffmpeg ... -vf "...,pelorus_analyze_vulkan=roi=1,..." \
+       -c:v hevc_qsv -global_quality 30 -pelorus_roi 1 out.mkv
+```
+
+The option is registered on `hevc_qsv`, `h264_qsv`, `hevc_nvenc`, `h264_nvenc`
+and `av1_nvenc` (swap the encoder above accordingly). It defaults OFF (zero
+behaviour change). Use **constant-QP** and the encoder's own spatial/temporal AQ
+OFF: the encoder AQ overrides the delta-QP map, and VBR rate-control
+redistribution erodes the perceptual win.
+
+Capability degradation is graceful: on QSV under a non-CQP rate-control method
+the option emits a one-shot warning and passes through unchanged; if FFmpeg was
+built against a oneVPL/MediaSDK older than API 1.13 (no `mfxExtMBQP`) it likewise
+warns once at init and no-ops. For QSV the dense per-block map fully supersedes
+FFmpeg's coarse `mfxExtEncoderROI` rectangle path when the option is on (the two
+are mutually exclusive). See [ADR-0114](../adr/0114-encoder-steering.md).
 
 ## Notes
 

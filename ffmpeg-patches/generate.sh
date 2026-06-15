@@ -115,6 +115,89 @@ git -C "$WORKTREE" \
     -c user.name=Lusoris -c user.email=lusoris@pm.me \
     commit -q -F "$HERE/.commit-msg-nvenc.txt"
 
+# Pelorus libavcodec edit (NOT a filter): make Intel QSV honor ROI side data via
+# its dense per-block delta-QP map (mfxExtMBQP). Same hand-maintained-diff model
+# as the NVENC patch above; applied as its own commit (-> patch 0005 below).
+git -C "$WORKTREE" apply "$FILES_DIR/qsv-pelorus-roi.patch"
+git -C "$WORKTREE" add -A
+git -C "$WORKTREE" \
+    -c user.name=Lusoris -c user.email=lusoris@pm.me \
+    commit -q -F "$HERE/.commit-msg-qsv.txt"
+
+# vf_pelorus_grain_estimate_vulkan (FGS parameter estimator) is committed after
+# the encoder patches so it lands as patch 0006 (nvenc keeps 0004, qsv 0005, no
+# renumber of a shipped artifact). Same per-filter registration model as the
+# deband/analyze/denoise loop above.
+cp "$FILES_DIR/vf_pelorus_grain_estimate_vulkan.c" "$WORKTREE/libavfilter/"
+python3 - "$WORKTREE" <<'PY'
+import sys, pathlib
+root = pathlib.Path(sys.argv[1])
+def ins_before(path, anchor, line):
+    p = root / path; t = p.read_text()
+    assert anchor in t, f"anchor missing in {path}: {anchor!r}"
+    assert line.strip() not in t, f"already present in {path}: {line!r}"
+    p.write_text(t.replace(anchor, line + anchor, 1))
+def ins_after(path, anchor, line):
+    p = root / path; t = p.read_text()
+    assert anchor in t, f"anchor missing in {path}: {anchor!r}"
+    assert line.strip() not in t, f"already present in {path}: {line!r}"
+    p.write_text(t.replace(anchor, anchor + line, 1))
+REQ = ('enabled %s_filter && require_pkg_config libpelorus '
+       '"libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack '
+       '&& add_extralibs $libpelorus_extralibs\n')
+ins_before("libavfilter/allfilters.c",
+           "extern const FFFilter ff_vf_perms;\n",
+           "extern const FFFilter ff_vf_pelorus_grain_estimate_vulkan;\n")
+ins_after("libavfilter/Makefile",
+          "OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vf_pelorus_denoise_vulkan.o vulkan.o vulkan_filter.o\n",
+          "OBJS-$(CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vf_pelorus_grain_estimate_vulkan.o vulkan.o vulkan_filter.o\n")
+ins_after("configure",
+          'pelorus_denoise_vulkan_filter_deps="vulkan spirv_library"\n',
+          'pelorus_grain_estimate_vulkan_filter_deps="vulkan spirv_library"\n')
+ins_after("configure", REQ % "pelorus_denoise_vulkan", REQ % "pelorus_grain_estimate_vulkan")
+print("registration applied: grain_estimate")
+PY
+git -C "$WORKTREE" add -A
+git -C "$WORKTREE" \
+    -c user.name=Lusoris -c user.email=lusoris@pm.me \
+    commit -q -F "$HERE/.commit-msg-grain_estimate.txt"
+
+# vf_pelorus_mc_vulkan (motion estimator) is committed last so it lands as patch
+# 0007. Same per-filter registration model as the loop above.
+cp "$FILES_DIR/vf_pelorus_mc_vulkan.c" "$WORKTREE/libavfilter/"
+python3 - "$WORKTREE" <<'PY'
+import sys, pathlib
+root = pathlib.Path(sys.argv[1])
+def ins_before(path, anchor, line):
+    p = root / path; t = p.read_text()
+    assert anchor in t, f"anchor missing in {path}: {anchor!r}"
+    assert line.strip() not in t, f"already present in {path}: {line!r}"
+    p.write_text(t.replace(anchor, line + anchor, 1))
+def ins_after(path, anchor, line):
+    p = root / path; t = p.read_text()
+    assert anchor in t, f"anchor missing in {path}: {anchor!r}"
+    assert line.strip() not in t, f"already present in {path}: {line!r}"
+    p.write_text(t.replace(anchor, anchor + line, 1))
+REQ = ('enabled %s_filter && require_pkg_config libpelorus '
+       '"libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack '
+       '&& add_extralibs $libpelorus_extralibs\n')
+ins_before("libavfilter/allfilters.c",
+           "extern const FFFilter ff_vf_perms;\n",
+           "extern const FFFilter ff_vf_pelorus_mc_vulkan;\n")
+ins_after("libavfilter/Makefile",
+          "OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vf_pelorus_denoise_vulkan.o vulkan.o vulkan_filter.o\n",
+          "OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER)      += vf_pelorus_mc_vulkan.o vulkan.o vulkan_filter.o\n")
+ins_after("configure",
+          'pelorus_denoise_vulkan_filter_deps="vulkan spirv_library"\n',
+          'pelorus_mc_vulkan_filter_deps="vulkan spirv_library"\n')
+ins_after("configure", REQ % "pelorus_denoise_vulkan", REQ % "pelorus_mc_vulkan")
+print("registration applied: mc")
+PY
+git -C "$WORKTREE" add -A
+git -C "$WORKTREE" \
+    -c user.name=Lusoris -c user.email=lusoris@pm.me \
+    commit -q -F "$HERE/.commit-msg-mc.txt"
+
 # Clean stale patches, regenerate the whole range.
 rm -f "$HERE"/0*.patch
 git -C "$WORKTREE" format-patch --zero-commit --start-number=1 \
@@ -125,6 +208,9 @@ mv "$HERE"/0001-*.patch "$HERE/0001-add-vf_pelorus_deband_vulkan.patch" 2>/dev/n
 mv "$HERE"/0002-*.patch "$HERE/0002-add-vf_pelorus_analyze_vulkan.patch" 2>/dev/null || true
 mv "$HERE"/0003-*.patch "$HERE/0003-add-vf_pelorus_denoise_vulkan.patch" 2>/dev/null || true
 mv "$HERE"/0004-*.patch "$HERE/0004-nvenc-pelorus-roi.patch" 2>/dev/null || true
+mv "$HERE"/0005-*.patch "$HERE/0005-qsv-pelorus-roi.patch" 2>/dev/null || true
+mv "$HERE"/0006-*.patch "$HERE/0006-add-vf_pelorus_grain_estimate_vulkan.patch" 2>/dev/null || true
+mv "$HERE"/0007-*.patch "$HERE/0007-add-vf_pelorus_mc_vulkan.patch" 2>/dev/null || true
 
 git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE"
 echo "patch(es) regenerated in $HERE:"

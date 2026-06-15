@@ -1,0 +1,215 @@
+/*
+ * pelorus_mc.comp — block-matching motion estimation (standalone reference).
+ *
+ * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ *
+ * GPU per-block integer-pel motion estimator. ONE WORKGROUP PER BLOCK: the
+ * workgroup's invocations cooperatively evaluate a candidate motion vector by
+ * summing the per-pixel absolute luma difference (SAD) between the current
+ * block and the reference block displaced by the candidate, reducing the SAD in
+ * shared memory. The search is a predictor-seeded diamond descent transcribed
+ * from FFmpeg's libavfilter/motion_estimation.c (ff_me_search_epzs / _ds): seed
+ * the candidate set with the predictors, then small-diamond (dia1) hill-descend
+ * until the centre wins, bounded by the search range.
+ *
+ * Predictors available to a GPU dispatch (no intra-frame neighbour race — every
+ * block runs concurrently, so we only seed from data that is fully resolved
+ * BEFORE the dispatch):
+ *   - the zero MV (static / locked-off content),
+ *   - the global-motion MV from the previous frame (pan / camera move),
+ *   - the COLLOCATED previous-frame block MV (persistent SSBO; temporal MV
+ *     continuity — the strongest EPZS predictor and the one a serial CPU search
+ *     gets from "collocated block in prev frame").
+ * Intra-frame spatial (left/top) predictors are intentionally omitted: reading a
+ * neighbour block's result mid-dispatch is a cross-workgroup data race. The
+ * temporal predictor recovers most of the benefit; the diamond descent does the
+ * rest. The MV field this frame becomes next frame's temporal predictor.
+ *
+ * The MV is integer-pel in LUMA pixels, (dx, dy) = displacement from the current
+ * block to its best match in the reference (previous) frame. Per-block records
+ * are written to a position-preserving SSBO indexed by (by * grid_cols + bx).
+ * The frame scalars (global motion, magnitude mean/p95, entropy, scene-cut) are
+ * derived host-side by reducing over the block grid.
+ *
+ * Honest scope: this is a SPEED tool, not a quality tool. The MV field is a HINT
+ * for an encoder's external motion-search (e.g. NVENC NV_ENC_EXTERNAL_ME_HINT)
+ * so a fixed-function ASIC can skip or shorten its own search; it is not a flow
+ * field for warping. Block-matching on raw pixels matches grain as readily as
+ * motion (ADR-0113 found in-denoise raw-pixel MC NOISE-LIMITED), which is fine
+ * for a search seed but is why this does NOT feed the denoiser. See ADR-0115.
+ *
+ * The in-tree FFmpeg filter (ffmpeg-patches/files/vf_pelorus_mc_vulkan.c) emits
+ * the byte-identical algorithm inline via FFmpeg's GLSLC macros over a
+ * normalized-float image array; keep the two in lockstep (AGENTS hard rule 4).
+ */
+#version 450
+
+/* Workgroup is BLOCK_DIM x BLOCK_DIM; one workgroup reduces one block. The host
+ * dispatches grid_cols x grid_rows workgroups. BLOCK_DIM is the max supported
+ * block edge; the actual block size pc.bsize (<= BLOCK_DIM) gates which
+ * invocations contribute, so a single pipeline serves every bsize option. */
+#define BLOCK_DIM 32
+layout(local_size_x = BLOCK_DIM, local_size_y = BLOCK_DIM, local_size_z = 1) in;
+
+/* image 0 = current frame, image 1 = previous (reference) frame. */
+layout(binding = 0, r16ui) uniform readonly uimage2D curImg;
+layout(binding = 1, r16ui) uniform readonly uimage2D refImg;
+
+/* Per-block MV records, struct-of-arrays (one runtime array per field is the
+ * std430 rule; index = by*grid_cols + bx). mv_x/mv_y are integer-pel luma
+ * displacements; sad is the winning block SAD (fixed point) for confidence /
+ * scene-cut; the host reads all three spans. prev_mv_x/prev_mv_y are LAST
+ * frame's field, read-only this dispatch, the temporal predictor source. */
+layout(binding = 2, std430) buffer MvBuf {
+    int  mv_x[];        /* [nblocks]                                          */
+};
+layout(binding = 3, std430) buffer MvBufY {
+    int  mv_y[];        /* [nblocks]                                          */
+};
+layout(binding = 4, std430) buffer SadBuf {
+    uint sad_out[];     /* [nblocks] winning SAD * SAD_SCALE                  */
+};
+layout(binding = 5, std430) readonly buffer PrevMvBuf {
+    int  prev_mv[];     /* [2*nblocks] interleaved (dx,dy) from last frame    */
+};
+
+layout(push_constant, std430) uniform Params {
+    int   width;        //  0  luma plane width  (pixels)
+    int   height;       //  4  luma plane height (pixels)
+    int   grid_cols;    //  8  blocks per row
+    int   grid_rows;    // 12  blocks per column
+    int   bsize;        // 16  active block edge (<= BLOCK_DIM)
+    int   search;       // 20  max search radius (pixels, per axis)
+    int   gpred_x;      // 24  global-motion predictor (prev frame), pixels
+    int   gpred_y;      // 28
+    int   has_prev;     // 32  1 => refImg + prev_mv are valid (not frame 0)
+    int   _pad0;        // 36
+} pc;
+
+const float SAD_SCALE = 256.0;   /* SAD is summed in normalized [0,1] luma */
+
+/* SAD reduction scratch: one slot per invocation, tree-reduced by thread 0. */
+shared float s_sad[BLOCK_DIM * BLOCK_DIM];
+/* The block's running best (written by thread 0, read by all each step). */
+shared int   s_best_x;
+shared int   s_best_y;
+shared float s_best_cost;
+
+float fetchCur(int px, int py) {
+    px = clamp(px, 0, pc.width  - 1);
+    py = clamp(py, 0, pc.height - 1);
+    return float(imageLoad(curImg, ivec2(px, py)).r) / 65535.0;
+}
+float fetchRef(int px, int py) {
+    px = clamp(px, 0, pc.width  - 1);
+    py = clamp(py, 0, pc.height - 1);
+    return float(imageLoad(refImg, ivec2(px, py)).r) / 65535.0;
+}
+
+/* Cooperative SAD of the current block vs the reference block displaced by
+ * (mvx, mvy). Each invocation owns up to one pixel of the bsize x bsize block
+ * (lx, ly); out-of-block lanes contribute 0. Tree-reduce in shared memory. The
+ * whole workgroup must call this in lockstep (it barriers internally). */
+float block_sad(int blk_x, int blk_y, int mvx, int mvy, uint lidx,
+                int lx, int ly) {
+    float d = 0.0;
+    if (lx < pc.bsize && ly < pc.bsize) {
+        int cx = blk_x + lx;
+        int cy = blk_y + ly;
+        float c = fetchCur(cx, cy);
+        float r = fetchRef(cx + mvx, cy + mvy);
+        d = abs(c - r);
+    }
+    s_sad[lidx] = d;
+    barrier();
+    /* power-of-two tree reduction over BLOCK_DIM*BLOCK_DIM lanes */
+    for (uint stride = (BLOCK_DIM * BLOCK_DIM) / 2u; stride > 0u; stride >>= 1u) {
+        if (lidx < stride)
+            s_sad[lidx] += s_sad[lidx + stride];
+        barrier();
+    }
+    return s_sad[0];
+}
+
+/* Evaluate a candidate MV (clamped to the search window and frame); if it beats
+ * the running best, thread 0 records it. Whole-workgroup lockstep. */
+void eval_candidate(int blk_x, int blk_y, int cand_x, int cand_y, uint lidx,
+                    int lx, int ly) {
+    cand_x = clamp(cand_x, -pc.search, pc.search);
+    cand_y = clamp(cand_y, -pc.search, pc.search);
+    float cost = block_sad(blk_x, blk_y, cand_x, cand_y, lidx, lx, ly);
+    if (lidx == 0u && cost < s_best_cost) {
+        s_best_cost = cost;
+        s_best_x = cand_x;
+        s_best_y = cand_y;
+    }
+    barrier();
+}
+
+void main() {
+    int bx = int(gl_WorkGroupID.x);
+    int by = int(gl_WorkGroupID.y);
+    if (bx >= pc.grid_cols || by >= pc.grid_rows)
+        return;
+
+    int bidx    = by * pc.grid_cols + bx;
+    int blk_x   = bx * pc.bsize;
+    int blk_y   = by * pc.bsize;
+
+    uint lidx = gl_LocalInvocationIndex;
+    int  lx   = int(gl_LocalInvocationID.x);
+    int  ly   = int(gl_LocalInvocationID.y);
+
+    /* Frame 0 (or no reference): emit a zero MV, no search. has_prev is a push
+     * constant, so the whole workgroup takes this branch uniformly and returns
+     * together — the lane-0-only SSBO writes before the barrier-free return are
+     * safe ONLY because the exit is uniform; do not gate this on a non-uniform
+     * condition. */
+    if (pc.has_prev == 0) {
+        if (lidx == 0u) {
+            mv_x[bidx]    = 0;
+            mv_y[bidx]    = 0;
+            sad_out[bidx] = 0u;
+        }
+        return;
+    }
+
+    if (lidx == 0u) {
+        s_best_cost = 1e30;
+        s_best_x = 0;
+        s_best_y = 0;
+    }
+    barrier();
+
+    /* --- seed the predictor set (all resolved before this dispatch) --- */
+    /* zero MV */
+    eval_candidate(blk_x, blk_y, 0, 0, lidx, lx, ly);
+    /* global-motion predictor from the previous frame */
+    eval_candidate(blk_x, blk_y, pc.gpred_x, pc.gpred_y, lidx, lx, ly);
+    /* collocated previous-frame block MV (temporal continuity) */
+    eval_candidate(blk_x, blk_y, prev_mv[2 * bidx], prev_mv[2 * bidx + 1],
+                   lidx, lx, ly);
+
+    /* --- small-diamond (dia1) hill-descent from the best predictor --- */
+    /* dia1 = {(-1,0),(0,-1),(1,0),(0,1)}, scaled by step; step halves when the
+     * centre wins a round (the EPZS / DS refinement loop, bounded by search). */
+    int step = max(pc.search / 2, 1);
+    int guard = 0;
+    while (step > 0 && guard < 64) {
+        int cx = s_best_x;
+        int cy = s_best_y;
+        eval_candidate(blk_x, blk_y, cx - step, cy,        lidx, lx, ly);
+        eval_candidate(blk_x, blk_y, cx + step, cy,        lidx, lx, ly);
+        eval_candidate(blk_x, blk_y, cx,        cy - step, lidx, lx, ly);
+        eval_candidate(blk_x, blk_y, cx,        cy + step, lidx, lx, ly);
+        if (s_best_x == cx && s_best_y == cy)
+            step = step >> 1;   /* converged at this step: refine finer */
+        guard++;
+    }
+
+    if (lidx == 0u) {
+        mv_x[bidx]    = s_best_x;
+        mv_y[bidx]    = s_best_y;
+        sad_out[bidx] = uint(clamp(s_best_cost, 0.0, 1e6) * SAD_SCALE);
+    }
+}

@@ -257,13 +257,53 @@ costs VMAF — constant-QP is the clean mode. The win is content-dependent (the
 survey's ROI caveat): decisive on banding-prone-gradient-over-detail, marginal on
 extremely smooth gradients or bitrates too low to deband even with steering.
 
+**QSV** — code-complete, **on-hardware BD-rate proof pending** (no numbers
+claimed). Stock `hevc_qsv`/`h264_qsv` map ROI side data only onto coarse
+`mfxExtEncoderROI` rectangles; `ffmpeg-patches/files/qsv-pelorus-roi.patch`
+(`-pelorus_roi 1`) instead rasterizes the same side data into the dense
+`mfxExtMBQP` per-block delta map (`MFX_MBQP_MODE_QP_DELTA`, 16×16 blocks,
+`EnableMBQP` on at init), the QSV analogue of the NVENC `qpDeltaMap` path above.
+Same expected envelope and caveats as NVENC: honored under **CQP only** (the
+patch probes `RateControlMethod == MFX_RATECONTROL_CQP` and warns-once / passes
+through otherwise), perceptual win on banding-prone content, ~0 on clean/busy.
+Measure on Intel HW (Arc / iGPU) per ADR-0111 before quoting a magnitude.
+
+## v0.6 — cross-vendor ROI portability (NVENC + AMD + Intel, dev-box validation)
+
+The point this proves: the **same** `AV_FRAME_DATA_REGIONS_OF_INTEREST` side data
+(one `addroi` rectangle on the banding-prone half) steers bit allocation on
+**three different vendors'** HW encoders — Pelorus's steering is not tied to one
+GPU. Run on a box with all three (NVIDIA RTX 4090 / Intel Arc A380 / AMD Ryzen
+9950X3D iGPU). **Mechanism/portability demo: CQP, same base QP both arms** (so the
+ROI redistributes bits into the banding region, raising bitrate a few %% — this is
+*not* an iso-bitrate BD-rate run; per-vendor iso-bitrate BD-rate is a follow-up).
+
+| vendor / encoder | ROI path | bitrate | CAMBI (banding ↓) | VMAF | verdict |
+|---|---|---:|---:|---:|---|
+| NVIDIA `hevc_nvenc` | our `qpDeltaMap` patch | 247→263 kbps | 1.472 → **0.953** (−35%) | +0.86 | ✓ clean |
+| AMD `hevc_vaapi` (radeonsi) | vanilla ROI | 684→744 kbps | 1.229 → **1.027** (−16%) | +0.74 | ✓ clean |
+| Intel `hevc_vaapi` (iHD) | vanilla ROI | — | — | — | ✗ unstable |
+
+**NVENC** (patch) and **AMD radeonsi** (vanilla VAAPI) both reduce banding with
+VMAF up — banding steering reaches two HW vendors from one map. **Intel** is the
+honest negative: the Arc A380 exposes only the low-power `VAEntrypointEncSliceLP`
+encode path, and iHD's ROI on that path produced a broken encode (PSNR 13.8 dB;
+the VMAF=100 it scored is a model-clamp artifact, not quality). The baseline Intel
+encode is clean (PSNR 44.8 dB, VMAF 96.0), so the pipeline is fine — it is an
+iHD-low-power-ROI driver bug, not a Pelorus issue, and the Arc has no full-power
+entrypoint to fall back to. Combined with libx265 (v0.5, −47%) and NVENC (v0.5,
+−41%), the steering is proven on **three** consumers (libx265, NVENC, AMD).
+
 ## Open / next
 
-1. **Author `vf_pelorus_denoise_vulkan`** (causal NLM-lite spatial + gated
-   temporal, fills the pre-reserved `PEL_SEC_DENOISE` slot) and re-prove with the
-   real GPU filter.
+1. **Per-vendor iso-bitrate BD-rate** for the cross-vendor ROI (v0.6 is a
+   same-QP mechanism demo); and the analyze→VAAPI dual-device auto pipeline
+   (ROI side data surviving `hwupload` to a second GPU).
 2. Re-prove 10-bit deband with a single consistent `yuv420p10le` pipeline
    (correctness confirmation; deband's gain is banding, scored by CAMBI).
 3. Harness fixes shipped: `--clean-reference` (decouple scoring ref from encoder
    input) and `--vmaf-timeout` (vmaf hangs at 0% CPU *after* writing its JSON;
    the harness bounds it and reads the already-flushed result).
+4. **Measure QSV ROI on Intel HW** (`hevc_qsv -global_quality <q>` CQP, A/B
+   `-pelorus_roi 0` vs `1`): the patch (0005) is code-complete and
+   syntax/regeneration-verified, but no Intel-hardware BD-rate run exists yet.

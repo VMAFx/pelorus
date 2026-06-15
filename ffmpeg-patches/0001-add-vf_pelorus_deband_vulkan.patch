@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 14 Jun 2026 15:32:33 +0200
-Subject: [PATCH 1/2] feat(deband): add vf_pelorus_deband_vulkan (smart deband,
+Date: Mon, 15 Jun 2026 14:20:32 +0200
+Subject: [PATCH 1/7] feat(deband): add vf_pelorus_deband_vulkan (smart deband,
  Vulkan)
 
 Psychovisual deband modeled on flash3kyuu_deband (f3kdb): the vf_deband.c

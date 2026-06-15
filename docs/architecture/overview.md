@@ -57,9 +57,9 @@ HEVC/VVC (H.274 / SEI FGC).
 |---|---|---|---|
 | analyze | `pelorus_analyze_vulkan` | measure banding/variance/edge stats → side data | **working** |
 | deband | `pelorus_deband_vulkan` | flatten contours + dither | **working** |
-| denoise | `pelorus_denoise_vulkan` | edge-preserving spatio-temporal denoise (biggest BD-rate lever) | roadmap |
-| grain | `pelorus_grain_estimate` | estimate film-grain params → side data + bitstream filter; AV1 (AOM OBU) **and** HEVC/VVC (H.274 SEI FGC) | roadmap |
-| mc | `pelorus_mc_vulkan` | optical-flow MV hints for the encoder | roadmap |
+| denoise | `pelorus_denoise_vulkan` | edge-preserving spatio-temporal denoise (biggest BD-rate lever) | **working** |
+| grain | `pelorus_grain_estimate_vulkan` | estimate film-grain params → PEL_SEC_FILMGRAIN + native AV1 side data (estimator **built**); AV1-OBU/H.274-SEI bitstream filter is a follow-up | estimator built |
+| mc | `pelorus_mc_vulkan` | block-matching motion estimator → per-block MV-hint side data (`PEL_SEC_MOTION`); encode-speed, NVENC ME-hint consumer gated | **working** |
 
 See [docs/backends/vulkan.md](../backends/vulkan.md) for the compute-filter
 authoring model and [docs/usage/ffmpeg.md](../usage/ffmpeg.md) for the end-to-end

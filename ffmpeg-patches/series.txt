@@ -8,10 +8,13 @@
 # `vulkan spirv_library` so it only builds where the Vulkan compute path exists.
 #
 # Roadmap (not yet generated; sources land under files/ first):
-#   00NN-add-vf_pelorus_grain_estimate.patch   FGS param estimation + BSF (AV1 OBU / H.274 SEI)
-#   00NN-add-vf_pelorus_mc_vulkan.patch        optical-flow MV hints
+#   00NN-*-fgs-bsf.patch                        FGS OBU/SEI bitstream filter (consumes 0006's params)
+#   00NN-nvenc-pelorus-me-hints.patch           NVENC external ME hints (consumes 0007's MV field)
 #
 0001-add-vf_pelorus_deband_vulkan.patch
 0002-add-vf_pelorus_analyze_vulkan.patch
 0003-add-vf_pelorus_denoise_vulkan.patch
 0004-nvenc-pelorus-roi.patch
+0005-qsv-pelorus-roi.patch
+0006-add-vf_pelorus_grain_estimate_vulkan.patch
+0007-add-vf_pelorus_mc_vulkan.patch

@@ -27,3 +27,5 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0112](0112-temporal-denoise.md) | vf_pelorus_denoise — causal edge-preserving spatio-temporal denoise | Accepted |
 | [0113](0113-optical-flow-mc.md) | vf_pelorus_mc — GPU motion estimation for MC-temporal denoise (+ gated NVENC ME hints) | Proposed |
 | [0114](0114-encoder-steering.md) | Encoder-steering strategy — feed Pelorus GPU maps to every encoder (ROI today, QP-map patches, Vulkan quant-map) | Proposed |
+| [0115](0115-grain-estimate.md) | vf_pelorus_grain_estimate — film-grain-synthesis parameter estimator (per-band HF-residual → AV1 AOM / H.274) | Accepted |
+| [0116](0116-pelorus-mc.md) | vf_pelorus_mc_vulkan v1 — standalone GPU motion-vector-hint producer (encode-speed, not quality) | Accepted |

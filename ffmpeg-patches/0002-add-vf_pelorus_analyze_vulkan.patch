@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Mon, 15 Jun 2026 00:53:08 +0200
-Subject: [PATCH 2/3] feat(analyze): add vf_pelorus_analyze_vulkan (measured
+Date: Mon, 15 Jun 2026 14:20:32 +0200
+Subject: [PATCH 2/7] feat(analyze): add vf_pelorus_analyze_vulkan (measured
  banding/variance maps)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

@@ -1,0 +1,991 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lusoris <lusoris@pm.me>
+Date: Mon, 15 Jun 2026 14:20:32 +0200
+Subject: [PATCH 7/7] feat(mc): add vf_pelorus_mc_vulkan (block-matching motion
+ estimator)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A GPU per-block integer-pel motion estimator. It produces a per-block
+motion-vector field for the current frame relative to the previous frame
+and attaches it as the pre-reserved PEL_SEC_MOTION interop section (the
+dense int16 (dx,dy) grid + frame scalars). The frame passes through
+UNCHANGED — this is the analyzer shape (pass-through + GPU readback).
+
+ONE WORKGROUP PER BLOCK: the workgroup's invocations cooperatively SAD the
+current block against the reference block displaced by a candidate MV,
+reduced in shared memory. The search is a predictor-seeded diamond descent
+transcribed from libavfilter/motion_estimation.c (ff_me_search_epzs / _ds):
+seed with the zero MV, the previous frame's global-motion MV, and the
+collocated previous-frame block MV (a persistent MV SSBO ping-ponged frame
+to frame), then small-diamond hill-descend until the centre wins, bounded by
+the search range. Intra-frame spatial predictors are omitted on purpose —
+reading a neighbour block's result mid-dispatch is a cross-workgroup race;
+every seed used is resolved before the dispatch.
+
+Honest scope: this is a SPEED tool, not a quality tool. The MV field is a
+HINT for an encoder's external motion search (e.g. NVENC
+NV_ENC_EXTERNAL_ME_HINT) so a fixed-function ASIC can skip or shorten its
+own search; it is not a flow field for warping, and it does NOT feed the
+denoiser (ADR-0113 found in-denoise raw-pixel MC noise-limited). The NVENC
+ME-hint consumer patch is a documented follow-up, gated on a measured win
+(ADR-0114 Tier 3).
+
+Codec-agnostic producer: the MV field is on the source, encoder-independent.
+
+AVOptions: bsize (block edge, default 16), search (radius, default 24),
+meta (attach PEL_SEC_MOTION, default on). No interop ABI bump — PEL_SEC_MOTION
+(bit 1<<4, 32-byte PelorusMotionSection) was reserved at ABI 1.0. The
+standalone reference shader libpelorus/shaders/pelorus_mc.comp and the inline
+GLSL are kept in lockstep.
+
+Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
+
+ADR: docs/adr/0115-pelorus-mc.md
+---
+ configure                          |   2 +
+ libavfilter/Makefile               |   1 +
+ libavfilter/allfilters.c           |   1 +
+ libavfilter/vf_pelorus_mc_vulkan.c | 885 +++++++++++++++++++++++++++++
+ 4 files changed, 889 insertions(+)
+ create mode 100644 libavfilter/vf_pelorus_mc_vulkan.c
+
+diff --git a/configure b/configure
+index 9a9c7983d9..07803cb681 100755
+--- a/configure
++++ b/configure
+@@ -4180,6 +4180,7 @@ overlay_vulkan_filter_deps="vulkan spirv_library"
+ pelorus_analyze_vulkan_filter_deps="vulkan spirv_library"
+ pelorus_deband_vulkan_filter_deps="vulkan spirv_library"
+ pelorus_denoise_vulkan_filter_deps="vulkan spirv_library"
++pelorus_mc_vulkan_filter_deps="vulkan spirv_library"
+ pelorus_grain_estimate_vulkan_filter_deps="vulkan spirv_library"
+ owdenoise_filter_deps="gpl"
+ pad_opencl_filter_deps="opencl"
+@@ -7397,6 +7398,7 @@ enabled libvmaf           && check_pkg_config libvmaf_cuda "libvmaf >= 2.0.0" li
+ enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+ enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+ enabled pelorus_denoise_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
++enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+ enabled pelorus_grain_estimate_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+ enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
+                                require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
+diff --git a/libavfilter/Makefile b/libavfilter/Makefile
+index d5b815a835..1c0de9681e 100644
+--- a/libavfilter/Makefile
++++ b/libavfilter/Makefile
+@@ -436,6 +436,7 @@ OBJS-$(CONFIG_PALETTEUSE_FILTER)             += vf_paletteuse.o framesync.o pale
+ OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vf_pelorus_analyze_vulkan.o vulkan.o vulkan_filter.o
+ OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER)  += vf_pelorus_deband_vulkan.o vulkan.o vulkan_filter.o
+ OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vf_pelorus_denoise_vulkan.o vulkan.o vulkan_filter.o
++OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER)      += vf_pelorus_mc_vulkan.o vulkan.o vulkan_filter.o
+ OBJS-$(CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vf_pelorus_grain_estimate_vulkan.o vulkan.o vulkan_filter.o
+ OBJS-$(CONFIG_PERMS_FILTER)                  += f_perms.o
+ OBJS-$(CONFIG_PERSPECTIVE_FILTER)            += vf_perspective.o
+diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
+index 5a5f777074..45949d7b8e 100644
+--- a/libavfilter/allfilters.c
++++ b/libavfilter/allfilters.c
+@@ -409,6 +409,7 @@ extern const FFFilter ff_vf_pelorus_analyze_vulkan;
+ extern const FFFilter ff_vf_pelorus_deband_vulkan;
+ extern const FFFilter ff_vf_pelorus_denoise_vulkan;
+ extern const FFFilter ff_vf_pelorus_grain_estimate_vulkan;
++extern const FFFilter ff_vf_pelorus_mc_vulkan;
+ extern const FFFilter ff_vf_perms;
+ extern const FFFilter ff_vf_perspective;
+ extern const FFFilter ff_vf_phase;
+diff --git a/libavfilter/vf_pelorus_mc_vulkan.c b/libavfilter/vf_pelorus_mc_vulkan.c
+new file mode 100644
+index 0000000000..e502b33482
+--- /dev/null
++++ b/libavfilter/vf_pelorus_mc_vulkan.c
+@@ -0,0 +1,885 @@
++/*
++ * Copyright 2026 Lusoris
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or modify it under
++ * the terms of the GNU Lesser General Public License as published by the
++ * Free Software Foundation; either version 2.1 of the License, or (at
++ * your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
++ * License for more details.
++ */
++
++/**
++ * @file
++ * Pelorus block-matching motion estimator, Vulkan compute (zero-copy).
++ *
++ * Produces a per-block integer-pel motion-vector field for the CURRENT frame
++ * relative to the PREVIOUS frame, on the GPU, and attaches it as the
++ * pre-reserved Pelorus PEL_SEC_MOTION interop section (the dense int16 (dx,dy)
++ * grid + frame scalars). The frame passes through UNCHANGED; only side data is
++ * added (the analyzer shape). The value is ENCODE SPEED, not quality: the MV
++ * field is a HINT a downstream encoder can feed its external motion-search
++ * (e.g. NVENC NV_ENC_EXTERNAL_ME_HINT) so a fixed-function ASIC skips or
++ * shortens its own search. See <pelorus/interop.h>, docs/metrics/mc.md, and
++ * ADR-0115 (producer) / ADR-0113 (motion-estimation strategy) / ADR-0114 Tier 3
++ * (the gated NVENC ME-hint consumer, a documented follow-up).
++ *
++ * ONE WORKGROUP PER BLOCK: the workgroup's invocations cooperatively SAD the
++ * current block against the reference block displaced by a candidate MV, reduced
++ * in shared memory. The search is a predictor-seeded diamond descent transcribed
++ * from FFmpeg's libavfilter/motion_estimation.c (ff_me_search_epzs / _ds). The
++ * predictors are the zero MV, the previous frame's global-motion MV, and the
++ * collocated previous-frame block MV (a persistent MV SSBO ping-ponged frame to
++ * frame) — every predictor is resolved BEFORE the dispatch, so there is no
++ * cross-workgroup intra-frame neighbour race. Block-matching on raw pixels
++ * matches grain as readily as motion (ADR-0113 found in-denoise raw-pixel MC
++ * noise-limited), which is acceptable for an encoder search seed but is why this
++ * filter does NOT feed the denoiser.
++ *
++ * The algorithm is kept in lockstep with the standalone reference shader
++ * libpelorus/shaders/pelorus_mc.comp (AGENTS hard rule 4).
++ */
++
++#include "libavutil/buffer.h"
++#include "libavutil/common.h"
++#include "libavutil/frame.h"
++#include "libavutil/mem.h"
++#include "libavutil/opt.h"
++#include "libavutil/pixdesc.h"
++#include "libavutil/vulkan_spirv.h"
++#include "vulkan_filter.h"
++
++#include "filters.h"
++
++#include <math.h>
++#include <string.h>
++
++#include <pelorus/interop.h>
++
++/* Workgroup edge: the max supported block size. The active block edge (bsize
++ * AVOption, <= PEL_MC_BLOCK_DIM) gates which lanes contribute, so one pipeline
++ * serves every bsize. Kept byte-identical to BLOCK_DIM in pelorus_mc.comp. */
++#define PEL_MC_BLOCK_DIM 32
++
++/* SAD fixed-point scale shared by shader writes and host reads (the SAD is
++ * summed over a block in normalized [0,1] luma). Mirrors SAD_SCALE in the .comp. */
++#define PEL_MC_SAD_SCALE 256.0
++
++/* Pure GLSL helpers + block_sad/eval_candidate, spliced verbatim (avoids the
++ * comma-in-C()-macro hazard). Kept in LOCKSTEP with the standalone reference
++ * shader libpelorus/shaders/pelorus_mc.comp. Normalized-float domain: imageLoad
++ * over the FF_VK_REP_FLOAT image array returns [0,1] directly (no /65535). The
++ * current frame's luma is cur_image[0], the reference (previous) frame's luma is
++ * ref_image[0]. */
++static const char mc_glsl[] =
++    "const float SAD_SCALE = 256.0;\n"
++    "shared float s_sad[1024];\n" /* PEL_MC_BLOCK_DIM * PEL_MC_BLOCK_DIM */
++    "shared int   s_best_x;\n"
++    "shared int   s_best_y;\n"
++    "shared float s_best_cost;\n"
++    "float fetchCur(int px, int py) {\n"
++    "    px = clamp(px, 0, width  - 1);\n"
++    "    py = clamp(py, 0, height - 1);\n"
++    "    return imageLoad(cur_image[0], ivec2(px, py)).x;\n"
++    "}\n"
++    "float fetchRef(int px, int py) {\n"
++    "    px = clamp(px, 0, width  - 1);\n"
++    "    py = clamp(py, 0, height - 1);\n"
++    "    return imageLoad(ref_image[0], ivec2(px, py)).x;\n"
++    "}\n"
++    "float block_sad(int blk_x, int blk_y, int mvx, int mvy, uint lidx,\n"
++    "                int lx, int ly) {\n"
++    "    float d = 0.0;\n"
++    "    if (lx < bsize && ly < bsize) {\n"
++    "        int cx = blk_x + lx;\n"
++    "        int cy = blk_y + ly;\n"
++    "        float c = fetchCur(cx, cy);\n"
++    "        float r = fetchRef(cx + mvx, cy + mvy);\n"
++    "        d = abs(c - r);\n"
++    "    }\n"
++    "    s_sad[lidx] = d;\n"
++    "    barrier();\n"
++    "    for (uint stride = 512u; stride > 0u; stride >>= 1u) {\n"
++    "        if (lidx < stride)\n"
++    "            s_sad[lidx] += s_sad[lidx + stride];\n"
++    "        barrier();\n"
++    "    }\n"
++    "    return s_sad[0];\n"
++    "}\n"
++    "void eval_candidate(int blk_x, int blk_y, int cand_x, int cand_y, uint lidx,\n"
++    "                    int lx, int ly) {\n"
++    "    cand_x = clamp(cand_x, -search, search);\n"
++    "    cand_y = clamp(cand_y, -search, search);\n"
++    "    float cost = block_sad(blk_x, blk_y, cand_x, cand_y, lidx, lx, ly);\n"
++    "    if (lidx == 0u && cost < s_best_cost) {\n"
++    "        s_best_cost = cost;\n"
++    "        s_best_x = cand_x;\n"
++    "        s_best_y = cand_y;\n"
++    "    }\n"
++    "    barrier();\n"
++    "}\n";
++
++/* Per-frame push constants. Mirrors the GLSL std430 block below + Params in the
++ * .comp, byte-for-byte. */
++typedef struct PelorusMcPush {
++    int32_t width;     /*  0 */
++    int32_t height;    /*  4 */
++    int32_t grid_cols; /*  8 */
++    int32_t grid_rows; /* 12 */
++    int32_t bsize;     /* 16 */
++    int32_t search;    /* 20 */
++    int32_t gpred_x;   /* 24 */
++    int32_t gpred_y;   /* 28 */
++    int32_t has_prev;  /* 32 */
++    int32_t _pad0;     /* 36 */
++} PelorusMcPush;
++
++typedef struct PelorusMcVulkanContext {
++    FFVulkanContext vkctx; /* MUST be first — generic init casts priv to this */
++
++    int initialized;
++    FFVkExecPool e;
++    AVVulkanDeviceQueueFamily *qf;
++    FFVulkanShader shd;
++
++    /* AVOptions */
++    int bsize;  /* block edge in luma pixels (8/16/32)                       */
++    int search; /* max search radius per axis, luma pixels                   */
++    int meta;   /* attach the PEL_SEC_MOTION interop section                 */
++
++    /* Persistent per-block MV field, ping-ponged frame to frame. Allocated at
++     * the first frame from the block grid. cur_mv is written this dispatch;
++     * prev_mv (last frame's field, interleaved (dx,dy)) is the temporal
++     * predictor source; sad holds the winning SAD for confidence/scene-cut. */
++    AVBufferPool *mvx_pool;
++    AVBufferPool *mvy_pool;
++    AVBufferPool *sad_pool;
++    AVBufferPool *prevmv_pool;
++    AVBufferRef *prevmv_buf; /* the interleaved (dx,dy) field of the LAST frame */
++
++    /* Causal previous frame (a clone — refcount bump, no pixel copy). */
++    AVFrame *prev;
++
++    /* Global-motion predictor carried from the previous frame's MV field. */
++    int gpred_x;
++    int gpred_y;
++
++    int grid_cols;
++    int grid_rows;
++} PelorusMcVulkanContext;
++
++static av_cold int init_filter(AVFilterContext *ctx)
++{
++    int err = 0;
++    PelorusMcVulkanContext *s = ctx->priv;
++    FFVulkanContext *vkctx = &s->vkctx;
++    FFVulkanShader *shd = &s->shd; /* GLSL macros require a var named `shd` */
++    FFVkSPIRVCompiler *spv;
++    uint8_t *spv_data = NULL;
++    size_t spv_len = 0;
++    void *spv_opaque = NULL;
++
++    spv = ff_vk_spirv_init();
++    if (!spv) {
++        av_log(ctx, AV_LOG_ERROR, "Unable to initialize SPIR-V compiler!\n");
++        return AVERROR_EXTERNAL;
++    }
++
++    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
++    if (!s->qf) {
++        av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
++        err = AVERROR(ENOTSUP);
++        goto fail;
++    }
++
++    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
++    RET(ff_vk_shader_init(vkctx, shd, "pelorus_mc",
++                          VK_SHADER_STAGE_COMPUTE_BIT, NULL, 0,
++                          PEL_MC_BLOCK_DIM, PEL_MC_BLOCK_DIM, 1, 0));
++
++    GLSLC(0, layout(push_constant, std430) uniform pushConstants {            );
++    GLSLC(1,     int   width;                                                 );
++    GLSLC(1,     int   height;                                                );
++    GLSLC(1,     int   grid_cols;                                             );
++    GLSLC(1,     int   grid_rows;                                             );
++    GLSLC(1,     int   bsize;                                                 );
++    GLSLC(1,     int   search;                                                );
++    GLSLC(1,     int   gpred_x;                                               );
++    GLSLC(1,     int   gpred_y;                                               );
++    GLSLC(1,     int   has_prev;                                              );
++    GLSLC(1,     int   _pad0;                                                 );
++    GLSLC(0, };                                                               );
++    GLSLC(0,                                                                  );
++    ff_vk_shader_add_push_const(shd, 0, sizeof(PelorusMcPush),
++                                VK_SHADER_STAGE_COMPUTE_BIT);
++
++    /* Descriptor set 0: current luma image, reference luma image, the three
++     * output SSBOs (mv_x, mv_y, sad), and the read-only previous-frame MV SSBO.
++     * Each image binding is a per-plane array; we only ever read plane 0 (luma),
++     * so .elems = 1. Float representation, storage image, GENERAL layout. */
++    {
++        FFVulkanDescriptorSetBinding desc[] = {
++            {
++                .name = "cur_image",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
++                                                   FF_VK_REP_FLOAT),
++                .mem_quali = "readonly",
++                .dimensions = 2,
++                .elems = 1,
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++            },
++            {
++                .name = "ref_image",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
++                                                   FF_VK_REP_FLOAT),
++                .mem_quali = "readonly",
++                .dimensions = 2,
++                .elems = 1,
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++            },
++            {
++                .name = "mv_x_buf",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
++                .mem_layout = "std430",
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++                .buf_content = "int mv_x[];",
++            },
++            {
++                .name = "mv_y_buf",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
++                .mem_layout = "std430",
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++                .buf_content = "int mv_y[];",
++            },
++            {
++                .name = "sad_buf",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
++                .mem_layout = "std430",
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++                .buf_content = "uint sad_out[];",
++            },
++            {
++                .name = "prev_mv_buf",
++                .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
++                .mem_layout = "std430",
++                .mem_quali = "readonly",
++                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++                .buf_content = "int prev_mv[];",
++            },
++        };
++        RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc, 6, 0, 0));
++    }
++
++    GLSLD(mc_glsl);
++    GLSLC(0, void main()                                                      );
++    GLSLC(0, {                                                                );
++    GLSLC(1,     int bx = int(gl_WorkGroupID.x);                              );
++    GLSLC(1,     int by = int(gl_WorkGroupID.y);                              );
++    GLSLC(1,     if (bx >= grid_cols || by >= grid_rows)                      );
++    GLSLC(2,         return;                                                  );
++    GLSLC(1,     int bidx  = by * grid_cols + bx;                             );
++    GLSLC(1,     int blk_x = bx * bsize;                                      );
++    GLSLC(1,     int blk_y = by * bsize;                                      );
++    GLSLC(1,     uint lidx = gl_LocalInvocationIndex;                         );
++    GLSLC(1,     int  lx   = int(gl_LocalInvocationID.x);                     );
++    GLSLC(1,     int  ly   = int(gl_LocalInvocationID.y);                     );
++    /* Frame 0 / no reference: emit a zero MV, no search. has_prev is a push
++     * constant, so the whole workgroup takes this branch uniformly and returns
++     * together — the lane-0-only writes before the barrier-free return are safe
++     * ONLY because the exit is uniform (do not gate on a non-uniform cond). */
++    GLSLC(1,     if (has_prev == 0) {                                         );
++    GLSLC(2,         if (lidx == 0u) {                                        );
++    GLSLC(3,             mv_x[bidx]    = 0;                                    );
++    GLSLC(3,             mv_y[bidx]    = 0;                                    );
++    GLSLC(3,             sad_out[bidx] = 0u;                                  );
++    GLSLC(2,         }                                                        );
++    GLSLC(2,         return;                                                  );
++    GLSLC(1,     }                                                            );
++    GLSLC(1,     if (lidx == 0u) {                                            );
++    GLSLC(2,         s_best_cost = 1e30;                                      );
++    GLSLC(2,         s_best_x = 0;                                            );
++    GLSLC(2,         s_best_y = 0;                                            );
++    GLSLC(1,     }                                                            );
++    GLSLC(1,     barrier();                                                   );
++    GLSLC(1,     eval_candidate(blk_x, blk_y, 0, 0, lidx, lx, ly);            );
++    GLSLC(1,     eval_candidate(blk_x, blk_y, gpred_x, gpred_y, lidx, lx, ly););
++    GLSLC(1,     eval_candidate(blk_x, blk_y, prev_mv[2 * bidx], prev_mv[2 * bidx + 1], lidx, lx, ly); );
++    GLSLC(1,     int step = max(search / 2, 1);                               );
++    GLSLC(1,     int guard = 0;                                               );
++    GLSLC(1,     while (step > 0 && guard < 64) {                             );
++    GLSLC(2,         int cx = s_best_x;                                       );
++    GLSLC(2,         int cy = s_best_y;                                       );
++    GLSLC(2,         eval_candidate(blk_x, blk_y, cx - step, cy,        lidx, lx, ly); );
++    GLSLC(2,         eval_candidate(blk_x, blk_y, cx + step, cy,        lidx, lx, ly); );
++    GLSLC(2,         eval_candidate(blk_x, blk_y, cx,        cy - step, lidx, lx, ly); );
++    GLSLC(2,         eval_candidate(blk_x, blk_y, cx,        cy + step, lidx, lx, ly); );
++    GLSLC(2,         if (s_best_x == cx && s_best_y == cy)                    );
++    GLSLC(3,             step = step >> 1;                                    );
++    GLSLC(2,         guard++;                                                 );
++    GLSLC(1,     }                                                            );
++    GLSLC(1,     if (lidx == 0u) {                                            );
++    GLSLC(2,         mv_x[bidx]    = s_best_x;                                );
++    GLSLC(2,         mv_y[bidx]    = s_best_y;                                );
++    GLSLC(2,         sad_out[bidx] = uint(clamp(s_best_cost, 0.0, 1e6) * SAD_SCALE); );
++    GLSLC(1,     }                                                            );
++    GLSLC(0, }                                                                );
++
++    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
++                            &spv_opaque));
++    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
++    RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
++
++    s->initialized = 1;
++
++fail:
++    if (spv_opaque)
++        spv->free_shader(spv, &spv_opaque);
++    if (spv)
++        spv->uninit(&spv);
++    return err;
++}
++
++static void pel_sd_free(void *opaque, uint8_t *data)
++{
++    pel_blob_free(data);
++}
++
++/* Derive the frame scalars from the read-back per-block MV field, pack the dense
++ * int16 (dx,dy) grid + PEL_SEC_MOTION summary, and attach to the frame. The grid
++ * lives contiguously after the section struct (the analyze attach_stats map
++ * pattern). Returns 0 or a negative AVERROR. */
++static int attach_motion(PelorusMcVulkanContext *s, AVFrame *frame,
++                         const int32_t *mvx, const int32_t *mvy,
++                         const uint32_t *sad, int nblocks)
++{
++    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
++    PelorusSideData meta;
++    PelorusMotionSection mo;
++    PelorusPackSection sec;
++    uint8_t *blob = NULL;
++    uint8_t *grid_dst;
++    size_t len = 0;
++    AVBufferRef *buf;
++    double sum_x = 0.0, sum_y = 0.0, sum_mag = 0.0;
++    double mean_mag, mean_sad = 0.0;
++    float *mags = NULL;
++    int i;
++
++    /* Frame scalars. global_motion = mean MV; magnitude mean + p95; a crude
++     * MV-field entropy proxy (mean |MV - global| normalized); scene-cut when the
++     * mean block SAD is high (poor match everywhere => a cut, not motion). */
++    for (i = 0; i < nblocks; i++) {
++        double mag = sqrt((double)mvx[i] * mvx[i] + (double)mvy[i] * mvy[i]);
++        sum_x += mvx[i];
++        sum_y += mvy[i];
++        sum_mag += mag;
++        mean_sad += sad[i] / PEL_MC_SAD_SCALE;
++    }
++    mean_mag = nblocks ? sum_mag / nblocks : 0.0;
++    mean_sad = nblocks ? mean_sad / nblocks : 0.0;
++
++    mags = av_calloc((size_t)FFMAX(nblocks, 1), sizeof(*mags));
++    if (!mags)
++        return AVERROR(ENOMEM);
++    for (i = 0; i < nblocks; i++)
++        mags[i] = (float)sqrt((double)mvx[i] * mvx[i] + (double)mvy[i] * mvy[i]);
++
++    memset(&meta, 0, sizeof(meta));
++    meta.frame_pts = (uint64_t)frame->pts;
++    meta.bit_depth = d ? (uint8_t)d->comp[0].depth : 0;
++    meta.plane_layout = (d && d->log2_chroma_w == 0 && d->log2_chroma_h == 0)
++                            ? PEL_LAYOUT_444
++                            : ((d && d->log2_chroma_h == 0) ? PEL_LAYOUT_422
++                                                            : PEL_LAYOUT_420);
++    meta.grid_cols = (uint16_t)s->grid_cols;
++    meta.grid_rows = (uint16_t)s->grid_rows;
++    meta.producer_id = PEL_FOURCC('P', 'L', 'M', 'C');
++
++    memset(&mo, 0, sizeof(mo));
++    mo.global_motion_x = (float)(nblocks ? sum_x / nblocks : 0.0);
++    mo.global_motion_y = (float)(nblocks ? sum_y / nblocks : 0.0);
++    mo.motion_magnitude_mean = (float)mean_mag;
++
++    /* p95 magnitude: simple selection over a scratch copy (nblocks is small —
++     * O(blocks) cells, e.g. ~8160 for 1080p/16). Insertion is overkill; a
++     * partial nth_element is not in libavutil, so a bounded linear scan picks
++     * the ceil(0.95*N)-th smallest by counting. */
++    {
++        int rank = (int)ceil(0.95 * (double)FFMAX(nblocks, 1)) - 1;
++        float p95 = 0.0f;
++        int k;
++        rank = av_clip(rank, 0, FFMAX(nblocks - 1, 0));
++        for (k = 0; k < nblocks; k++) {
++            int below = 0, j;
++            for (j = 0; j < nblocks; j++)
++                if (mags[j] < mags[k] || (mags[j] == mags[k] && j < k))
++                    below++;
++            if (below == rank) {
++                p95 = mags[k];
++                break;
++            }
++        }
++        mo.motion_magnitude_p95 = p95;
++    }
++
++    /* Entropy proxy: normalized mean deviation of block MVs from the global MV
++     * (0 = rigid global motion, higher = complex / independent block motion). */
++    {
++        double dev = 0.0;
++        double norm = (double)s->search + 1.0;
++        for (i = 0; i < nblocks; i++) {
++            double ex = mvx[i] - mo.global_motion_x;
++            double ey = mvy[i] - mo.global_motion_y;
++            dev += sqrt(ex * ex + ey * ey);
++        }
++        mo.motion_entropy = (float)(nblocks ? (dev / nblocks) / norm : 0.0);
++    }
++
++    /* Scene-cut heuristic: a high mean residual SAD means the diamond found no
++     * good match anywhere — characteristic of a cut, not coherent motion. The
++     * 0.08 threshold is on the per-pixel mean abs diff (mean_sad is summed over
++     * a bsize^2 block, so normalize). Conservative; tune via bench. */
++    {
++        double per_pixel = s->bsize > 0
++                               ? mean_sad / ((double)s->bsize * s->bsize)
++                               : 0.0;
++        mo.has_scene_cut = (per_pixel > 0.08) ? 1 : 0;
++    }
++
++    av_free(mags);
++
++    sec.id = PEL_SEC_MOTION;
++    sec.data = &mo;
++    sec.size = (uint32_t)sizeof(mo);
++
++    if (pel_blob_pack(&meta, &sec, 1, &blob, &len) != PEL_OK || !blob)
++        return AVERROR(ENOMEM);
++
++    /* The MV grid (int16 (dx,dy) per block) is appended after the packed blob
++     * (the analyze map-payload convention). Grow the buffer, fill the grid, and
++     * patch the section's mv_field_offset/size to point at it. The section
++     * struct lives at dir[0].offset; mv_field_offset is blob-relative. */
++    {
++        size_t grid_bytes = (size_t)nblocks * 2 * sizeof(int16_t);
++        size_t uuid = PELORUS_SIDEDATA_UUID_LEN;
++        uint8_t *grown = av_realloc(blob, len + grid_bytes);
++        PelorusSideData *hdr;
++        PelorusSectionDir *dir;
++        PelorusMotionSection *mo_in_blob;
++        uint32_t blob_rel_off;
++
++        if (!grown) {
++            pel_blob_free(blob);
++            return AVERROR(ENOMEM);
++        }
++        blob = grown;
++
++        /* The flat blob image starts after the 16-byte UUID prefix. */
++        hdr = (PelorusSideData *)(blob + uuid);
++        dir = (PelorusSectionDir *)(blob + uuid + hdr->header_size);
++        /* Single section: dir[0] is PEL_SEC_MOTION. */
++        mo_in_blob = (PelorusMotionSection *)(blob + uuid + dir[0].offset);
++
++        /* Grid goes at the current end of the blob image (total_size), i.e.
++         * right after the section payload. blob-relative offset excludes UUID. */
++        blob_rel_off = hdr->total_size;
++        grid_dst = blob + uuid + blob_rel_off;
++        for (i = 0; i < nblocks; i++) {
++            int16_t dx = (int16_t)av_clip_int16(mvx[i]);
++            int16_t dy = (int16_t)av_clip_int16(mvy[i]);
++            memcpy(grid_dst + (size_t)i * 4 + 0, &dx, sizeof(int16_t));
++            memcpy(grid_dst + (size_t)i * 4 + 2, &dy, sizeof(int16_t));
++        }
++        mo_in_blob->mv_field_offset = blob_rel_off;
++        mo_in_blob->mv_field_size = (uint32_t)grid_bytes;
++
++        /* Update the framing sizes so a consumer reads the grid as part of the
++         * blob (total_size and the dir entry's size stay self-describing — the
++         * grid is map payload referenced by offset, not part of the section
++         * struct, exactly like analyze's per-cell maps). */
++        hdr->total_size += (uint32_t)grid_bytes;
++        len += grid_bytes;
++    }
++
++    buf = av_buffer_create(blob, len, pel_sd_free, NULL, 0);
++    if (!buf) {
++        pel_blob_free(blob);
++        return AVERROR(ENOMEM);
++    }
++    if (!av_frame_new_side_data_from_buf(frame, AV_FRAME_DATA_SEI_UNREGISTERED,
++                                         buf)) {
++        av_buffer_unref(&buf);
++        return AVERROR(ENOMEM);
++    }
++    return 0;
++}
++
++/* Bind cur + ref images and the four MV SSBOs via the explicit exec path,
++ * dispatch one workgroup per block, submit+wait, and hand back the host-mapped
++ * MV/SAD spans. The cur-frame MV SSBOs (mvx/mvy/sad) are fresh per frame; the
++ * prev-frame MV field is s->prevmv_buf (read-only this dispatch). */
++static int mc_dispatch(PelorusMcVulkanContext *s, AVFrame *cur, AVFrame *ref,
++                       PelorusMcPush *pc, int nblocks,
++                       AVBufferRef **mvx_ref, AVBufferRef **mvy_ref,
++                       AVBufferRef **sad_ref)
++{
++    int err = 0;
++    FFVulkanContext *vkctx = &s->vkctx;
++    FFVulkanFunctions *vk = &vkctx->vkfn;
++    FFVkExecContext *exec = NULL;
++    VkImageView cur_views[AV_NUM_DATA_POINTERS];
++    VkImageView ref_views[AV_NUM_DATA_POINTERS];
++    VkImageMemoryBarrier2 img_bar[16];
++    int nb_img_bar = 0;
++    AVBufferRef *mvx = NULL, *mvy = NULL, *sad = NULL;
++    FFVkBuffer *mvx_vk, *mvy_vk, *sad_vk, *prev_vk;
++    size_t idx_bytes = (size_t)nblocks * sizeof(int32_t);
++
++    *mvx_ref = *mvy_ref = *sad_ref = NULL;
++
++    RET(ff_vk_get_pooled_buffer(vkctx, &s->mvx_pool, &mvx,
++                                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
++                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
++                                NULL, idx_bytes,
++                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
++                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
++    RET(ff_vk_get_pooled_buffer(vkctx, &s->mvy_pool, &mvy,
++                                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
++                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
++                                NULL, idx_bytes,
++                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
++                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
++    RET(ff_vk_get_pooled_buffer(vkctx, &s->sad_pool, &sad,
++                                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
++                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
++                                NULL, idx_bytes,
++                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
++                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
++    mvx_vk = (FFVkBuffer *)mvx->data;
++    mvy_vk = (FFVkBuffer *)mvy->data;
++    sad_vk = (FFVkBuffer *)sad->data;
++    prev_vk = (FFVkBuffer *)s->prevmv_buf->data;
++
++    exec = ff_vk_exec_get(vkctx, &s->e);
++    ff_vk_exec_start(vkctx, exec);
++
++    RET(ff_vk_exec_add_dep_frame(vkctx, exec, cur,
++                                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
++    RET(ff_vk_create_imageviews(vkctx, exec, cur_views, cur, FF_VK_REP_FLOAT));
++    RET(ff_vk_exec_add_dep_frame(vkctx, exec, ref,
++                                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
++    RET(ff_vk_create_imageviews(vkctx, exec, ref_views, ref, FF_VK_REP_FLOAT));
++
++    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, cur, cur_views, 0, 0,
++                                  VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
++    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, ref, ref_views, 0, 1,
++                                  VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
++
++    ff_vk_frame_barrier(vkctx, exec, cur, img_bar, &nb_img_bar,
++                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
++                        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
++                        VK_QUEUE_FAMILY_IGNORED);
++    ff_vk_frame_barrier(vkctx, exec, ref, img_bar, &nb_img_bar,
++                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
++                        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
++                        VK_QUEUE_FAMILY_IGNORED);
++
++    /* Flush the image barriers + make prev_mv (filled by the CPU on the previous
++     * frame) visible to the shader read. The cur-frame output SSBOs are freshly
++     * pooled and every block writes its slot unconditionally, so no pre-clear is
++     * needed. The prev_mv buffer is HOST_COHERENT and the previous frame's exec
++     * was waited on, but the explicit HOST_WRITE->SHADER_READ barrier is the
++     * spec-correct dependency (keeps validation clean). */
++    vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
++        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++        .pImageMemoryBarriers = img_bar,
++        .imageMemoryBarrierCount = nb_img_bar,
++        .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2) {
++            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
++            .srcStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
++            .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
++            .srcAccessMask = VK_ACCESS_2_HOST_WRITE_BIT,
++            .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
++            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++            .buffer = prev_vk->buf,
++            .size = prev_vk->size,
++            .offset = 0,
++        },
++        .bufferMemoryBarrierCount = 1,
++    });
++
++    RET(ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 2, 0,
++                                        mvx_vk, 0, mvx_vk->size,
++                                        VK_FORMAT_UNDEFINED));
++    RET(ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 3, 0,
++                                        mvy_vk, 0, mvy_vk->size,
++                                        VK_FORMAT_UNDEFINED));
++    RET(ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 4, 0,
++                                        sad_vk, 0, sad_vk->size,
++                                        VK_FORMAT_UNDEFINED));
++    RET(ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 5, 0,
++                                        prev_vk, 0, prev_vk->size,
++                                        VK_FORMAT_UNDEFINED));
++
++    ff_vk_exec_bind_shader(vkctx, exec, &s->shd);
++    ff_vk_shader_update_push_const(vkctx, exec, &s->shd,
++                                   VK_SHADER_STAGE_COMPUTE_BIT, 0,
++                                   sizeof(*pc), pc);
++
++    /* One workgroup per block. */
++    vk->CmdDispatch(exec->buf, (uint32_t)s->grid_cols, (uint32_t)s->grid_rows, 1);
++
++    /* Sync the SSBO writes to the host for readback. */
++    vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
++        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++        .pBufferMemoryBarriers = (VkBufferMemoryBarrier2[]) {
++            {
++                .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
++                .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
++                .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
++                .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
++                .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
++                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++                .buffer = mvx_vk->buf, .size = mvx_vk->size, .offset = 0,
++            },
++            {
++                .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
++                .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
++                .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
++                .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
++                .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
++                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++                .buffer = mvy_vk->buf, .size = mvy_vk->size, .offset = 0,
++            },
++            {
++                .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
++                .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
++                .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
++                .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
++                .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
++                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++                .buffer = sad_vk->buf, .size = sad_vk->size, .offset = 0,
++            },
++        },
++        .bufferMemoryBarrierCount = 3,
++    });
++
++    RET(ff_vk_exec_submit(vkctx, exec));
++    ff_vk_exec_wait(vkctx, exec);
++
++    *mvx_ref = mvx;
++    *mvy_ref = mvy;
++    *sad_ref = sad;
++    return 0;
++
++fail:
++    if (exec)
++        ff_vk_exec_discard_deps(vkctx, exec);
++    av_buffer_unref(&mvx);
++    av_buffer_unref(&mvy);
++    av_buffer_unref(&sad);
++    return err;
++}
++
++static int mc_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
++{
++    int err;
++    int i;
++    AVFilterContext *ctx = link->dst;
++    PelorusMcVulkanContext *s = ctx->priv;
++    AVFilterLink *outlink = ctx->outputs[0];
++    AVFrame *clone = NULL;
++    AVBufferRef *mvx_ref = NULL, *mvy_ref = NULL, *sad_ref = NULL;
++    AVBufferRef *next_prevmv = NULL;
++    FFVkBuffer *next_prevmv_vk;
++    PelorusMcPush pc;
++    int nblocks;
++
++    if (!s->initialized)
++        RET(init_filter(ctx));
++
++    /* The block grid is fixed by the frame size; compute once. */
++    s->grid_cols = (in->width + s->bsize - 1) / s->bsize;
++    s->grid_rows = (in->height + s->bsize - 1) / s->bsize;
++    nblocks = s->grid_cols * s->grid_rows;
++
++    /* Lazily (re)allocate the persistent prev-frame MV field (interleaved
++     * (dx,dy)) sized to the grid; zero it so frame 1's temporal predictor is the
++     * zero MV. Re-create on a grid-size change. */
++    if (!s->prevmv_buf ||
++        ((FFVkBuffer *)s->prevmv_buf->data)->size <
++            (size_t)nblocks * 2 * sizeof(int32_t)) {
++        av_buffer_unref(&s->prevmv_buf);
++        RET(ff_vk_get_pooled_buffer(&s->vkctx, &s->prevmv_pool, &s->prevmv_buf,
++                                    VK_BUFFER_USAGE_TRANSFER_DST_BIT |
++                                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
++                                    NULL, (size_t)nblocks * 2 * sizeof(int32_t),
++                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
++                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++                                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
++        memset(((FFVkBuffer *)s->prevmv_buf->data)->mapped_mem, 0,
++               (size_t)nblocks * 2 * sizeof(int32_t));
++    }
++
++    pc.width = in->width;
++    pc.height = in->height;
++    pc.grid_cols = s->grid_cols;
++    pc.grid_rows = s->grid_rows;
++    pc.bsize = s->bsize;
++    pc.search = s->search;
++    pc.gpred_x = s->prev ? s->gpred_x : 0;
++    pc.gpred_y = s->prev ? s->gpred_y : 0;
++    pc.has_prev = s->prev ? 1 : 0;
++    pc._pad0 = 0;
++
++    /* With no reference yet (first frame), the dispatch emits a zero field but
++     * we still bind a valid ref image — reuse the current frame as a harmless
++     * stand-in (the shader's has_prev==0 path never reads it). */
++    RET(mc_dispatch(s, in, s->prev ? s->prev : in, &pc, nblocks,
++                    &mvx_ref, &mvy_ref, &sad_ref));
++
++    {
++        const int32_t *mvx = (const int32_t *)((FFVkBuffer *)mvx_ref->data)->mapped_mem;
++        const int32_t *mvy = (const int32_t *)((FFVkBuffer *)mvy_ref->data)->mapped_mem;
++        const uint32_t *sad = (const uint32_t *)((FFVkBuffer *)sad_ref->data)->mapped_mem;
++
++        if (s->meta) {
++            err = attach_motion(s, in, mvx, mvy, sad, nblocks);
++            if (err < 0)
++                goto fail;
++        }
++
++        /* Roll the MV field into next frame's prev_mv (interleaved) and update
++         * the global-motion predictor (mean MV, integer-pel). */
++        RET(ff_vk_get_pooled_buffer(&s->vkctx, &s->prevmv_pool, &next_prevmv,
++                                    VK_BUFFER_USAGE_TRANSFER_DST_BIT |
++                                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
++                                    NULL, (size_t)nblocks * 2 * sizeof(int32_t),
++                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
++                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++                                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
++        next_prevmv_vk = (FFVkBuffer *)next_prevmv->data;
++        {
++            int32_t *dst = (int32_t *)next_prevmv_vk->mapped_mem;
++            double sx = 0.0, sy = 0.0;
++            for (i = 0; i < nblocks; i++) {
++                dst[2 * i + 0] = mvx[i];
++                dst[2 * i + 1] = mvy[i];
++                sx += mvx[i];
++                sy += mvy[i];
++            }
++            s->gpred_x = nblocks ? (int)lrint(sx / nblocks) : 0;
++            s->gpred_y = nblocks ? (int)lrint(sy / nblocks) : 0;
++        }
++        av_buffer_unref(&s->prevmv_buf);
++        s->prevmv_buf = next_prevmv;
++        next_prevmv = NULL;
++    }
++
++    av_buffer_unref(&mvx_ref);
++    av_buffer_unref(&mvy_ref);
++    av_buffer_unref(&sad_ref);
++
++    /* Push the current frame into the 1-deep ring (clone — refcount bump on the
++     * hwframe images, no pixel copy) as next frame's reference. */
++    clone = av_frame_clone(in);
++    if (!clone) {
++        err = AVERROR(ENOMEM);
++        goto fail;
++    }
++    av_frame_free(&s->prev);
++    s->prev = clone;
++    clone = NULL;
++
++    return ff_filter_frame(outlink, in);
++
++fail:
++    av_buffer_unref(&mvx_ref);
++    av_buffer_unref(&mvy_ref);
++    av_buffer_unref(&sad_ref);
++    av_buffer_unref(&next_prevmv);
++    av_frame_free(&clone);
++    av_frame_free(&in);
++    return err;
++}
++
++static void mc_vulkan_uninit(AVFilterContext *avctx)
++{
++    PelorusMcVulkanContext *s = avctx->priv;
++    FFVulkanContext *vkctx = &s->vkctx;
++
++    av_frame_free(&s->prev);
++    av_buffer_unref(&s->prevmv_buf);
++
++    ff_vk_exec_pool_free(vkctx, &s->e);
++    ff_vk_shader_free(vkctx, &s->shd);
++    av_buffer_pool_uninit(&s->mvx_pool);
++    av_buffer_pool_uninit(&s->mvy_pool);
++    av_buffer_pool_uninit(&s->sad_pool);
++    av_buffer_pool_uninit(&s->prevmv_pool);
++    ff_vk_uninit(&s->vkctx);
++    s->initialized = 0;
++}
++
++#define OFFSET(x) offsetof(PelorusMcVulkanContext, x)
++#define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
++static const AVOption pelorus_mc_vulkan_options[] = {
++    { "bsize", "motion-estimation block edge in luma pixels", OFFSET(bsize),
++      AV_OPT_TYPE_INT, { .i64 = 16 }, 8, PEL_MC_BLOCK_DIM, FLAGS },
++    { "search", "max search radius per axis in luma pixels", OFFSET(search),
++      AV_OPT_TYPE_INT, { .i64 = 24 }, 1, 256, FLAGS },
++    { "meta", "attach the PEL_SEC_MOTION interop section (the MV field)",
++      OFFSET(meta), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
++    { NULL }
++};
++
++AVFILTER_DEFINE_CLASS(pelorus_mc_vulkan);
++
++static const AVFilterPad pelorus_mc_vulkan_inputs[] = {
++    {
++        .name = "default",
++        .type = AVMEDIA_TYPE_VIDEO,
++        .filter_frame = &mc_vulkan_filter_frame,
++        .config_props = &ff_vk_filter_config_input,
++    },
++};
++
++static const AVFilterPad pelorus_mc_vulkan_outputs[] = {
++    {
++        .name = "default",
++        .type = AVMEDIA_TYPE_VIDEO,
++        .config_props = &ff_vk_filter_config_output,
++    },
++};
++
++const FFFilter ff_vf_pelorus_mc_vulkan = {
++    .p.name = "pelorus_mc_vulkan",
++    .p.description = NULL_IF_CONFIG_SMALL("Pelorus motion estimator (Vulkan)"),
++    .p.priv_class = &pelorus_mc_vulkan_class,
++    .p.flags = AVFILTER_FLAG_HWDEVICE,
++    .priv_size = sizeof(PelorusMcVulkanContext),
++    .init = &ff_vk_filter_init,
++    .uninit = &mc_vulkan_uninit,
++    FILTER_INPUTS(pelorus_mc_vulkan_inputs),
++    FILTER_OUTPUTS(pelorus_mc_vulkan_outputs),
++    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_VULKAN),
++    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
++};
+-- 
+2.54.0
+

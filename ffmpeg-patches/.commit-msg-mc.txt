@@ -1,0 +1,38 @@
+feat(mc): add vf_pelorus_mc_vulkan (block-matching motion estimator)
+
+A GPU per-block integer-pel motion estimator. It produces a per-block
+motion-vector field for the current frame relative to the previous frame
+and attaches it as the pre-reserved PEL_SEC_MOTION interop section (the
+dense int16 (dx,dy) grid + frame scalars). The frame passes through
+UNCHANGED — this is the analyzer shape (pass-through + GPU readback).
+
+ONE WORKGROUP PER BLOCK: the workgroup's invocations cooperatively SAD the
+current block against the reference block displaced by a candidate MV,
+reduced in shared memory. The search is a predictor-seeded diamond descent
+transcribed from libavfilter/motion_estimation.c (ff_me_search_epzs / _ds):
+seed with the zero MV, the previous frame's global-motion MV, and the
+collocated previous-frame block MV (a persistent MV SSBO ping-ponged frame
+to frame), then small-diamond hill-descend until the centre wins, bounded by
+the search range. Intra-frame spatial predictors are omitted on purpose —
+reading a neighbour block's result mid-dispatch is a cross-workgroup race;
+every seed used is resolved before the dispatch.
+
+Honest scope: this is a SPEED tool, not a quality tool. The MV field is a
+HINT for an encoder's external motion search (e.g. NVENC
+NV_ENC_EXTERNAL_ME_HINT) so a fixed-function ASIC can skip or shorten its
+own search; it is not a flow field for warping, and it does NOT feed the
+denoiser (ADR-0113 found in-denoise raw-pixel MC noise-limited). The NVENC
+ME-hint consumer patch is a documented follow-up, gated on a measured win
+(ADR-0114 Tier 3).
+
+Codec-agnostic producer: the MV field is on the source, encoder-independent.
+
+AVOptions: bsize (block edge, default 16), search (radius, default 24),
+meta (attach PEL_SEC_MOTION, default on). No interop ABI bump — PEL_SEC_MOTION
+(bit 1<<4, 32-byte PelorusMotionSection) was reserved at ABI 1.0. The
+standalone reference shader libpelorus/shaders/pelorus_mc.comp and the inline
+GLSL are kept in lockstep.
+
+Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
+
+ADR: docs/adr/0115-pelorus-mc.md

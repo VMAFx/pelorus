@@ -1,0 +1,34 @@
+feat(grain): add vf_pelorus_grain_estimate_vulkan (FGS param estimator)
+
+A film-grain-synthesis parameter ESTIMATOR — the dual of the denoise lever.
+Grain is temporally incoherent, so a block encoder re-codes it as residual
+every frame; the win is to remove it before encode (vf_pelorus_denoise) and
+re-synthesize it at the decoder from a compact parameter set (AV1 AOM
+film_grain OBU / H.274 FGC SEI). This filter measures those parameters on
+the GPU.
+
+A pass-through analyzer modelled on vf_pelorus_analyze_vulkan (lazy SPIR-V
+init, FF_VK_REP_FLOAT, GPU reduction into a HOST_VISIBLE SSBO, submit+wait
+readback, side-data emit). The estimator measures, per luma intensity band,
+the high-frequency residual variance (luma minus a 3x3 box low-pass) over
+locally-flat neighbourhoods (an edge gate excludes structure), plus a global
+lag-1 spatial-correlation accumulator as a coarse AR seed. The per-band RMS
+residual maps to the AV1 AOM piecewise scaling function y_points[value,
+scaling]; the lag-1 proxy seeds ar_coeffs_y.
+
+The filter emits BOTH the pre-reserved PEL_SEC_FILMGRAIN interop section
+(codec-neutral intent + AV1 params + H.274 mode scalars + grain_model tag;
+no ABI bump, the section already exists) AND a native
+AV_FRAME_DATA_FILM_GRAIN_PARAMS (AV_FILM_GRAIN_PARAMS_AV1) so a downstream
+FFmpeg AV1 encoder honours the estimate with no Pelorus-specific BSF. The
+OBU/SEI bitstream writer and the full per-lag AR fit are documented
+follow-ups (ADR-0115).
+
+The standalone reference shader libpelorus/shaders/pelorus_grain_estimate.comp
+and the filter's inline GLSL are kept in lockstep.
+
+AVOptions: edge, strength, model (aom/h274), native.
+
+Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
+
+ADR: docs/adr/0115-grain-estimate.md
