@@ -35,15 +35,34 @@ delta-QP / banding map) feeding progressively more powerful, less portable hooks
 - **Tier 1 — our ffmpeg patches, dense per-block delta-QP** (the BD-rate
   step-up): one analyze→`int8` delta-QP raster drives **NVENC** `qpDeltaMap` +
   `qpMapMode=DELTA` (revive the *dead* `NVENC_HAVE_QP_MAP_MODE` guard;
-  `nvenc.c` has zero refs today) and **QSV** `mfxExtMBQP` (clean injection via the
-  existing `set_encode_ctrl_cb`, no frame-loop fork). Round out software with the
-  **x265 qpfile→ROI** bridge (x265 lacks the qpfile path the fork's other SW
-  encoders have). NVENC and QSV are tied for highest value. **NVENC DONE +
-  MEASURED** (`ffmpeg-patches/files/nvenc-pelorus-roi.patch`, `-pelorus_roi 1`):
-  it consumes the standard ROI side data (so the proven `analyze` producer drives
-  it — no separate producer needed) → **−41% banding, +0.10 VMAF, +3% bitrate** at
-  constant-QP (bench-results.md v0.5). Caveat: NVENC's own AQ overrides the map,
-  so use constant-QP / AQ-off; VBR redistribution costs VMAF.
+  `nvenc.c` has zero refs today) and **QSV** `mfxExtMBQP` (clean injection on the
+  per-frame `mfxEncodeCtrl` ext-buffer chain, no frame-loop fork). Round out
+  software with the **x265 qpfile→ROI** bridge (x265 lacks the qpfile path the
+  fork's other SW encoders have). NVENC and QSV are tied for highest value.
+  **NVENC DONE + MEASURED** (`ffmpeg-patches/files/nvenc-pelorus-roi.patch`,
+  `-pelorus_roi 1`): it consumes the standard ROI side data (so the proven
+  `analyze` producer drives it — no separate producer needed) → **−41% banding,
+  +0.10 VMAF, +3% bitrate** at constant-QP (bench-results.md v0.5). Caveat:
+  NVENC's own AQ overrides the map, so use constant-QP / AQ-off; VBR
+  redistribution costs VMAF. **QSV DONE (code), on-HW proof pending**
+  (`ffmpeg-patches/files/qsv-pelorus-roi.patch`, `-pelorus_roi 1`): same standard
+  ROI side data is rasterized into a dense `mfxExtMBQP` delta map
+  (`MFX_MBQP_MODE_QP_DELTA`, attached per frame), with
+  `mfxExtCodingOption3::EnableMBQP` switched on at init. Dense MBQP, *not* the
+  `mfxExtEncoderROI` rectangle path stock `qsvenc.c` already exposes: the analyze
+  map is per-cell, and coalescing it into ≤`QSV_MAX_ROI_NUM` (256) rectangles
+  loses fidelity, whereas the per-16×16-block MBQP map carries every cell — same
+  value path as the NVENC `qpDeltaMap` it mirrors. When `pelorus_roi` is on it
+  fully supersedes the rectangle path (the two are mutually exclusive — attaching
+  both ROI ext-buffers to one `mfxEncodeCtrl` is undefined per the oneVPL spec). Portable by construction (ships
+  to all users, not the dev box): the 16×16 block size is the SDK-documented MBQP
+  alignment for both AVC and HEVC (HEVC also carries `BlockSize`), *not* any one
+  GPU's coding-tree size; `EnableMBQP` is runtime-capability-probed (it is only
+  honored under CQP rate control, so non-CQP sessions warn once and pass through)
+  and the whole path is compile-gated by `QSV_HAVE_MBQP` (oneVPL/MSDK API ≥ 1.13).
+  No device-node / driver / `-low_power` assumptions; zero behaviour change when
+  off (default). Measured BD-rate on Intel HW (Arc / iGPU) is the follow-up — no
+  numbers are claimed here.
 - **Tier 2 — cross-vendor strategic, "via Vulkan"**: patch `vulkan_encode.c` for
   `VK_KHR_video_encode_quantization_map` (delta map for CQP, emphasis map
   `R8_UNORM` for cbr/vbr — the latter maps almost directly onto analyze's 0..1
@@ -100,7 +119,7 @@ must *beat* it, not merely turn it on.
 0. Finish `vf_pelorus_analyze` per-cell banding/variance map (the one producer).
 1. Tier 0 ROI emitter (`AV_FRAME_DATA_REGIONS_OF_INTEREST`) → measure on libx265.
 2. Validate the same emitter on QSV/VAAPI (capability probe + graceful degrade).
-3. Tier 1 dense delta-QP: QSV `mfxExtMBQP` + NVENC `qpDeltaMap` (one producer) + x265 qpfile bridge; A/B each vs its own AQ.
+3. Tier 1 dense delta-QP: NVENC `qpDeltaMap` (DONE+measured) + QSV `mfxExtMBQP` (DONE, code; on-HW A/B pending) + x265 qpfile bridge; A/B each vs its own AQ.
 4. Tier 2 Vulkan-Video quant-map (patch `vulkan_encode.c` + a `pelorus_qpmap.comp`).
 5. Tier 3 ME hints (after `vf_pelorus_mc`) and FGS (after `vf_pelorus_grain`).
 6. Closed loop: read QSV `mfxExtEncodeStats` / AMF block-QP feedback back into the interop ABI to verify the map was honored and improve it.

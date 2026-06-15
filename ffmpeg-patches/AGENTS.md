@@ -43,12 +43,28 @@ ffmpeg-patches/
    `git apply --check`.
 2. **Each filter's inline GLSL must match its `libpelorus/shaders/*.comp`**
    reference shader (deband ↔ `pelorus_deband.comp`, analyze ↔
-   `pelorus_analyze.comp`). Edit both together (root AGENTS.md hard rule 4).
+   `pelorus_analyze.comp`, denoise ↔ `pelorus_denoise.comp`, grain_estimate ↔
+   `pelorus_grain_estimate.comp`, mc ↔ `pelorus_mc.comp`). Edit both together
+   (root AGENTS.md hard rule 4). For mc, the filter's `PEL_MC_BLOCK_DIM`/
+   `PEL_MC_SAD_SCALE` and the `s_sad[1024]` shared-array size must track the
+   `.comp`'s `BLOCK_DIM`/`SAD_SCALE` / `BLOCK_DIM*BLOCK_DIM`.
 3. **Any `libpelorus` surface the filter consumes** (a `PelorusSideData` field,
    a `deband.h` param) changing requires regenerating the patch in the same PR
    (root AGENTS.md hard rule 5); log it in [docs/rebase-notes.md](../docs/rebase-notes.md).
 4. **GLSL reserved words** (`flat`, `sample`, `filter`, …) are not valid
    identifiers — the standalone shader hit this with `flat`. Lint by compiling.
+5. **Encoder ROI patches (0004 nvenc, 0005 qsv) are libavcodec edits, not
+   filters** — hand-maintained unified diffs in `files/`, applied as their own
+   commits by `generate.sh` (no registration hunks). The QSV patch (0005) is
+   compile-gated by `QSV_HAVE_MBQP` (oneVPL/MSDK API ≥ 1.13) and its dense
+   `mfxExtMBQP` path is **mutually exclusive** with the stock `mfxExtEncoderROI`
+   rectangle path (`set_roi_encode_ctrl` is guarded by `!q->pelorus_roi`) — never
+   let both attach to one `mfxEncodeCtrl`. The 16×16 MBQP block size is the
+   SDK-documented alignment for AVC *and* HEVC; do not substitute a GPU-specific
+   coding-tree size. `EnableMBQP` is honored under CQP only — keep the init probe.
+   An upstream qsvenc reflow can fuzz the `extco3`/`encode_frame`/`QSV_COMMON_OPTS`
+   anchors; regenerate via `generate.sh`, never hand-edit `0005-*.patch`. See
+   [docs/rebase-notes.md](../docs/rebase-notes.md).
 
 ## Don't
 

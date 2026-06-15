@@ -76,8 +76,8 @@ green · the deband shader compiles.**
 | `pelorus_deband_vulkan` | Smart deband (f3kdb): flatten banding + TPDF/blue-noise dither, detail-protected, zero-copy | **Working** |
 | `pelorus_denoise_vulkan` | Edge-preserving spatio-temporal denoise (the biggest BD-rate lever) | Roadmap |
 | `pelorus_analyze_vulkan` | Measured banding/variance/edge stats → interop side data (GPU reduction + readback) | **Working** |
-| `pelorus_grain_estimate` | Film-grain estimation — AV1 (AOM) + HEVC/VVC (H.274/SEI FGC), with the matching bitstream filter | Roadmap |
-| `pelorus_mc_vulkan` | Optical-flow motion-vector hints for the encoder | Roadmap |
+| `pelorus_grain_estimate_vulkan` | Film-grain param estimation (GPU per-band HF-residual) → PEL_SEC_FILMGRAIN + native AV1 side data; AV1-OBU/H.274-SEI bitstream filter is a follow-up | **Estimator built** |
+| `pelorus_mc_vulkan` | Block-matching motion estimator → per-block MV-hint side data for the encoder (speed, not quality) | **Working** |
 
 ## Landed so far
 
@@ -86,9 +86,17 @@ green · the deband shader compiles.**
       GLSL, side-data emission, patch stack against n8.1.1.
 - [x] Step 3 — `vf_pelorus_analyze_vulkan`: measured banding/variance/edge stats
       (GPU reduction + readback) → interop side data.
-- [ ] Step 4 — Temporal denoise.
-- [ ] Step 5 — FGS param estimation + OBU bitstream filter.
-- [ ] Step 6 — Optical-flow motion-vector hints.
+- [x] Step 4 — Temporal denoise (`vf_pelorus_denoise_vulkan`).
+- [x] Step 5 — FGS param estimation (`vf_pelorus_grain_estimate_vulkan`): GPU
+      per-band HF-residual estimate → PEL_SEC_FILMGRAIN + native AV1 side data.
+      The OBU/SEI bitstream filter is a documented follow-up (ADR-0115).
+- [x] Step 6 — Motion-vector hints: `vf_pelorus_mc_vulkan` (block-matching ME
+      producer → `PEL_SEC_MOTION`; the NVENC ME-hint consumer is a gated
+      follow-up — ADR-0114 Tier 3).
+- Encoder steering (ADR-0114, opt-in `-pelorus_roi 1`): the `analyze roi=1`
+  banding map drives dense per-block delta-QP on **NVENC** (`qpDeltaMap`, proven
+  −41% banding) and **QSV** (`mfxExtMBQP`, code-complete; on-Intel-HW proof
+  pending). Patches 0004 / 0005.
 
 ## Tooling
 

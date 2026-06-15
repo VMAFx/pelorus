@@ -1,0 +1,133 @@
+/*
+ * pelorus_grain_estimate.comp — film-grain parameter estimator (reference).
+ *
+ * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ *
+ * Measures the film-grain characteristics of a luma plane so a downstream
+ * encoder / bitstream filter can RE-SYNTHESIZE the grain (AV1 AOM film_grain
+ * OBU / H.274 FGC SEI) instead of spending bitrate coding it as residual.
+ * Pass-through: the frame is unchanged; only an estimate is reduced into an
+ * SSBO and read back (ADR-0115). Kept in lockstep with the in-tree filter's
+ * inline GLSL, ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c
+ * (AGENTS.md hard rule 4).
+ *
+ * Method (per intensity band, the AV1/H.274 scaling function is intensity-
+ * dependent by design):
+ *   1. high-pass:   resid = luma - mean3x3   (box low-pass removes structure)
+ *   2. edge gate:   skip pixels whose 3x3 range is large (that residual is an
+ *                   edge / texture, not grain) — estimate only on flat fields
+ *   3. bin:         accumulate resid^2 into one of PEL_GRAIN_BANDS luma bins
+ *                   with a per-bin pixel count -> per-band grain stddev
+ *   4. AR proxy:    accumulate the lag-1 product resid*resid_right (a coarse
+ *                   spatial-correlation scalar -> conservative AR seed)
+ * The reduction is sliced (PEL_GRAIN_SLICES) to cut atomic contention; the host
+ * sums the slices and fits the AV1 piecewise scaling function + AR seed.
+ *
+ * This standalone form runs against an r16ui storage image (16-bit internal
+ * domain, normalized to [0,1] inside; the implied max is 65535). The in-tree
+ * FFmpeg filter emits the equivalent reduction inline via GLSLC against a
+ * normalized-float image array (imageLoad already returns [0,1]); the algorithm
+ * is identical.
+ */
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0, r16ui) uniform readonly uimage2D srcImg;
+
+#define PEL_GRAIN_BANDS  8
+#define PEL_GRAIN_SLICES 16
+
+/* Signed lag-1 products are bias-encoded into uint atomics: each add stores
+ * (prod + CORR_BIAS) so the unsigned accumulator never underflows; the host
+ * subtracts corr_cnt*CORR_BIAS. prod is in [-1,1] -> CORR_BIAS = 1.0.
+ *
+ * Two distinct fixed-point scales keep both uint32 accumulators from
+ * overflowing up to 8K resolution while preserving precision for real grain.
+ * Residuals are clamped to [-RES_CLAMP, RES_CLAMP] = [-0.08, 0.08] before
+ * squaring — lossless for real grain (sensor/film grain stddev is well under
+ * 0.08 of full scale; the clamp only caps edge-leakage outliers the edge gate
+ * mostly removes already). With resid^2 <= 0.0064, the worst-case per-pixel
+ * contribution times the largest per-slice flat-pixel count (~2M at 8K) stays
+ * under 2^32 at SUMSQ_GS=3e5 / CORR_GS=2000, and a small real-grain residual
+ * still scales to >= 1 (no truncation-to-zero). */
+layout(binding = 1, std430) buffer GrainBuf {
+    uint sumsq[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES]; /* Σ resid^2 * SUMSQ_GS     */
+    uint cnt[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES];   /* flat-pixel count per bin */
+    uint corr[PEL_GRAIN_SLICES];      /* Σ (resid*resid_right + 1.0) * CORR_GS  */
+    uint corr_cnt[PEL_GRAIN_SLICES];  /* lag-1 sample count                     */
+};
+
+layout(push_constant, std430) uniform Params {
+    int   width;       /*  0  plane width                                       */
+    int   height;      /*  4  plane height                                      */
+    float edgeThr;     /*  8  3x3 range above which a pixel is an edge (skipped)*/
+} pc;
+
+const float SUMSQ_GS = 300000.0; /* resid^2 fixed point (overflow-safe to 8K)  */
+const float CORR_GS = 2000.0;    /* lag-1 product fixed point (overflow-safe)  */
+const float CORR_BIAS = 1.0;     /* lag-1 product bias (prod in [-1,1])        */
+const float RES_CLAMP = 0.08;    /* residual clamp (lossless for real grain)   */
+
+float load_norm(int x, int y) {
+    x = clamp(x, 0, pc.width - 1);
+    y = clamp(y, 0, pc.height - 1);
+    return float(imageLoad(srcImg, ivec2(x, y)).r) / 65535.0;
+}
+
+void main() {
+    int x = int(gl_GlobalInvocationID.x);
+    int y = int(gl_GlobalInvocationID.y);
+    if (x >= pc.width || y >= pc.height)
+        return;
+
+    float c = load_norm(x, y);
+
+    /* 3x3 box mean + min/max for the edge gate. */
+    float mean = 0.0, lo = 1.0, hi = 0.0;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            float v = load_norm(x + dx, y + dy);
+            mean += v;
+            lo = min(lo, v);
+            hi = max(hi, v);
+        }
+    }
+    mean /= 9.0;
+
+    /* Edge gate: a large neighbourhood range is structure, not grain. */
+    if ((hi - lo) > pc.edgeThr)
+        return;
+
+    float resid = clamp(c - mean, -RES_CLAMP, RES_CLAMP);
+
+    /* Intensity band from the local mean (grain strength is intensity-dependent
+     * — the AV1/H.274 scaling function models exactly this). */
+    int band = clamp(int(mean * float(PEL_GRAIN_BANDS)), 0, PEL_GRAIN_BANDS - 1);
+
+    uint slice = (uint(y) * uint(pc.width) + uint(x)) % uint(PEL_GRAIN_SLICES);
+    uint bidx = uint(band) * uint(PEL_GRAIN_SLICES) + slice;
+
+    atomicAdd(sumsq[bidx], uint(resid * resid * SUMSQ_GS));
+    atomicAdd(cnt[bidx], 1u);
+
+    /* lag-1 spatial correlation (AR proxy): only when the right neighbour is
+     * also flat, so the product reflects grain, not an edge transition. */
+    float cr = load_norm(x + 1, y);
+    float meanR = 0.0, loR = 1.0, hiR = 0.0;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            float v = load_norm(x + 1 + dx, y + dy);
+            meanR += v;
+            loR = min(loR, v);
+            hiR = max(hiR, v);
+        }
+    }
+    meanR /= 9.0;
+    if ((hiR - loR) <= pc.edgeThr) {
+        float residR = clamp(cr - meanR, -RES_CLAMP, RES_CLAMP);
+        float prod = resid * residR;
+        atomicAdd(corr[slice], uint((prod + CORR_BIAS) * CORR_GS));
+        atomicAdd(corr_cnt[slice], 1u);
+    }
+}
