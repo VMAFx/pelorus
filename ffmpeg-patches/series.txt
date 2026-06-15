@@ -14,3 +14,4 @@
 0001-add-vf_pelorus_deband_vulkan.patch
 0002-add-vf_pelorus_analyze_vulkan.patch
 0003-add-vf_pelorus_denoise_vulkan.patch
+0004-nvenc-pelorus-roi.patch

@@ -105,6 +105,16 @@ PY
         commit -q -F "$HERE/.commit-msg-${filter}.txt"
 done
 
+# Pelorus libavcodec edit (NOT a filter): make NVENC honor ROI side data via its
+# delta-QP map. generate.sh's filter model (drop a new file + inject registration
+# hunks) can't express an edit to an existing file, so this is a hand-maintained
+# unified diff in files/, applied as its own commit (-> patch 0004 below).
+git -C "$WORKTREE" apply "$FILES_DIR/nvenc-pelorus-roi.patch"
+git -C "$WORKTREE" add -A
+git -C "$WORKTREE" \
+    -c user.name=Lusoris -c user.email=lusoris@pm.me \
+    commit -q -F "$HERE/.commit-msg-nvenc.txt"
+
 # Clean stale patches, regenerate the whole range.
 rm -f "$HERE"/0*.patch
 git -C "$WORKTREE" format-patch --zero-commit --start-number=1 \
@@ -114,6 +124,7 @@ git -C "$WORKTREE" format-patch --zero-commit --start-number=1 \
 mv "$HERE"/0001-*.patch "$HERE/0001-add-vf_pelorus_deband_vulkan.patch" 2>/dev/null || true
 mv "$HERE"/0002-*.patch "$HERE/0002-add-vf_pelorus_analyze_vulkan.patch" 2>/dev/null || true
 mv "$HERE"/0003-*.patch "$HERE/0003-add-vf_pelorus_denoise_vulkan.patch" 2>/dev/null || true
+mv "$HERE"/0004-*.patch "$HERE/0004-nvenc-pelorus-roi.patch" 2>/dev/null || true
 
 git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE"
 echo "patch(es) regenerated in $HERE:"

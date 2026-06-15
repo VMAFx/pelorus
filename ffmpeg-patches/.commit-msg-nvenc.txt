@@ -1,0 +1,21 @@
+feat(nvenc): honor AV_FRAME_DATA_REGIONS_OF_INTEREST via the delta-QP map
+
+Stock nvenc.c ignores ROI side data (unlike libx264/libx265/qsv/vaapi). This
+adds a `pelorus_roi` AVOption (default off) that, when set, rasterizes each
+AVRegionOfInterest's qoffset into NVENC's per-block delta-QP map
+(NV_ENC_PIC_PARAMS.qpDeltaMap + rcParams.qpMapMode = NV_ENC_QP_MAP_DELTA,
+under the NVENC_HAVE_QP_MAP_MODE guard). Block granularity is codec-dependent
+(H.264 16x16 / HEVC 32x32 / AV1 64x64 per the SDK); qoffset->delta uses the
+libx264 convention (qp_range = 51 + 6*(depth-8)); region precedence + self_size
+stride mirror libx264's setup_roi.
+
+Lets Pelorus's measured banding-ROI (vf_pelorus_analyze roi=1, ADR-0114 Tier 0)
+steer NVIDIA-hardware bit allocation — which stock ffmpeg cannot. Proven on the
+banding composite (hevc_nvenc -rc constqp -qp 33, ROI strength 0.15):
+  baseline   45.0 kbps  CAMBI 1.533  VMAF 96.02
+  +auto-ROI  46.4 kbps  CAMBI 0.910  VMAF 96.12
+=> -41% banding, +0.10 VMAF, +3% bitrate. NVENC's own AQ overrides the map, so
+the steering is most effective with spatial/temporal-AQ off (a one-shot warning
+is emitted otherwise).
+
+Requires the ffnvcodec headers' qpDeltaMap support (guarded; no-ops without it).

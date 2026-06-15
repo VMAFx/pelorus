@@ -1,0 +1,292 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lusoris <lusoris@pm.me>
+Date: Mon, 15 Jun 2026 08:28:06 +0200
+Subject: [PATCH 4/4] feat(nvenc): honor AV_FRAME_DATA_REGIONS_OF_INTEREST via
+ the delta-QP map
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Stock nvenc.c ignores ROI side data (unlike libx264/libx265/qsv/vaapi). This
+adds a `pelorus_roi` AVOption (default off) that, when set, rasterizes each
+AVRegionOfInterest's qoffset into NVENC's per-block delta-QP map
+(NV_ENC_PIC_PARAMS.qpDeltaMap + rcParams.qpMapMode = NV_ENC_QP_MAP_DELTA,
+under the NVENC_HAVE_QP_MAP_MODE guard). Block granularity is codec-dependent
+(H.264 16x16 / HEVC 32x32 / AV1 64x64 per the SDK); qoffset->delta uses the
+libx264 convention (qp_range = 51 + 6*(depth-8)); region precedence + self_size
+stride mirror libx264's setup_roi.
+
+Lets Pelorus's measured banding-ROI (vf_pelorus_analyze roi=1, ADR-0114 Tier 0)
+steer NVIDIA-hardware bit allocation — which stock ffmpeg cannot. Proven on the
+banding composite (hevc_nvenc -rc constqp -qp 33, ROI strength 0.15):
+  baseline   45.0 kbps  CAMBI 1.533  VMAF 96.02
+  +auto-ROI  46.4 kbps  CAMBI 0.910  VMAF 96.12
+=> -41% banding, +0.10 VMAF, +3% bitrate. NVENC's own AQ overrides the map, so
+the steering is most effective with spatial/temporal-AQ off (a one-shot warning
+is emitted otherwise).
+
+Requires the ffnvcodec headers' qpDeltaMap support (guarded; no-ops without it).
+---
+ libavcodec/nvenc.c      | 150 ++++++++++++++++++++++++++++++++++++++++
+ libavcodec/nvenc.h      |  14 ++++
+ libavcodec/nvenc_av1.c  |   2 +
+ libavcodec/nvenc_h264.c |   2 +
+ libavcodec/nvenc_hevc.c |   2 +
+ 5 files changed, 170 insertions(+)
+
+diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
+index 392230526d..863423b1a9 100644
+--- a/libavcodec/nvenc.c
++++ b/libavcodec/nvenc.c
+@@ -1087,6 +1087,27 @@ static av_cold int nvenc_recalc_surfaces(AVCodecContext *avctx)
+     return 0;
+ }
+ 
++#ifdef NVENC_HAVE_QP_MAP_MODE
++/* Pelorus: size in luma pixels of one NV_ENC_PIC_PARAMS::qpDeltaMap entry.
++ * The NVENC API documents the map as one signed byte per macroblock for H.264,
++ * per CTB for HEVC and per super-block for AV1 (see qpDeltaMap/qpDeltaMapSize in
++ * nvEncodeAPI.h). NVENC fixes the HEVC CTB at 32x32 (maxCUSize is documented as
++ * only ever NV_ENC_HEVC_CUSIZE_32x32) and the AV1 super-block at 64x64, so the
++ * block grid dimensions differ by codec. */
++static int pelorus_roi_block_size(enum AVCodecID codec_id)
++{
++    switch (codec_id) {
++    case AV_CODEC_ID_HEVC:
++        return 32;
++    case AV_CODEC_ID_AV1:
++        return 64;
++    case AV_CODEC_ID_H264:
++    default:
++        return 16;
++    }
++}
++#endif
++
+ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
+ {
+     NvencContext *ctx = avctx->priv_data;
+@@ -1196,6 +1217,35 @@ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
+         av_log(avctx, AV_LOG_VERBOSE, "Temporal AQ enabled.\n");
+     }
+ 
++    if (ctx->pelorus_roi) {
++#ifdef NVENC_HAVE_QP_MAP_MODE
++        int blk = pelorus_roi_block_size(avctx->codec->id);
++
++        /* Block grid: ceil(W/blk) x ceil(H/blk), matching NVENC's per-block
++         * qpDeltaMap layout (per-MB for H.264, per-CTB for HEVC, per-SB for
++         * AV1). Sized once at init from the coded dimensions; the per-frame
++         * rasterizer reuses this scratch buffer. */
++        ctx->qp_delta_map_w    = (avctx->width  + blk - 1) / blk;
++        ctx->qp_delta_map_h    = (avctx->height + blk - 1) / blk;
++        ctx->qp_delta_map_size = ctx->qp_delta_map_w * ctx->qp_delta_map_h;
++
++        ctx->qp_delta_map = av_calloc(ctx->qp_delta_map_size,
++                                      sizeof(*ctx->qp_delta_map));
++        if (!ctx->qp_delta_map)
++            return AVERROR(ENOMEM);
++
++        ctx->encode_config.rcParams.qpMapMode = NV_ENC_QP_MAP_DELTA;
++        av_log(avctx, AV_LOG_VERBOSE,
++               "Pelorus ROI delta-QP map enabled: %dx%d blocks (%d px/block).\n",
++               ctx->qp_delta_map_w, ctx->qp_delta_map_h, blk);
++#else
++        av_log(avctx, AV_LOG_WARNING,
++               "pelorus_roi requested but NVENC qpMapMode is unavailable "
++               "(SDK 8.1 or greater required at compile time); ignoring.\n");
++        ctx->pelorus_roi = 0;
++#endif
++    }
++
+     if (ctx->rc_lookahead > 0) {
+         int lkd_bound = FFMIN(ctx->nb_surfaces, ctx->async_depth) -
+                         ctx->encode_config.frameIntervalP - 4;
+@@ -2223,6 +2273,9 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
+     av_frame_free(&ctx->frame);
+ 
+     av_freep(&ctx->sei_data);
++#ifdef NVENC_HAVE_QP_MAP_MODE
++    av_freep(&ctx->qp_delta_map);
++#endif
+ 
+     if (ctx->nvencoder) {
+         p_nvenc->nvEncDestroyEncoder(ctx->nvencoder);
+@@ -3106,6 +3159,97 @@ static int nvenc_set_mastering_display_data(AVCodecContext *avctx, const AVFrame
+ }
+ #endif
+ 
++#ifdef NVENC_HAVE_QP_MAP_MODE
++/* Pelorus: rasterize AV_FRAME_DATA_REGIONS_OF_INTEREST into NVENC's per-block
++ * delta-QP map. Mirrors libavcodec/libx264.c setup_roi(): regions are iterated
++ * in reverse so that the *first* region in the list wins on overlap, each
++ * AVRegionOfInterest.qoffset (an AVRational in [-1, +1], negative asks for
++ * better quality / lower QP) is scaled by the codec QP range and clamped, then
++ * written to every block the region's pixel rectangle covers. The qp_range
++ * convention matches libx264 (51 + 6*(bit_depth-8)); NVENC qpDeltaMap entries
++ * are signed bytes applied on top of the rate-control QP, so the 8-bit range is
++ * +/-51 for H.264/HEVC, comfortably within int8.
++ *
++ * On success points pic_params->qpDeltaMap/qpDeltaMapSize at the scratch buffer
++ * (qpDeltaMapSize is an *entry count*, i.e. bytes, not a dimension). If the
++ * frame carries no ROI side data the map is left unset for that frame, so
++ * NVENC applies a zero delta and behaviour is unchanged. */
++static int nvenc_setup_roi(AVCodecContext *avctx, const AVFrame *frame,
++                           NV_ENC_PIC_PARAMS *pic_params)
++{
++    NvencContext *ctx = avctx->priv_data;
++    AVFrameSideData *sd;
++    const AVRegionOfInterest *roi;
++    uint32_t roi_size;
++    int nb_rois;
++    int mbx = ctx->qp_delta_map_w;
++    int mby = ctx->qp_delta_map_h;
++    int blk = pelorus_roi_block_size(avctx->codec->id);
++    int bit_depth = av_pix_fmt_desc_get(ctx->data_pix_fmt)->comp[0].depth;
++    int qp_range = 51 + 6 * (bit_depth - 8);
++
++    if (!ctx->pelorus_roi || !ctx->qp_delta_map)
++        return 0;
++
++    sd = av_frame_get_side_data(frame, AV_FRAME_DATA_REGIONS_OF_INTEREST);
++    if (!sd)
++        return 0;
++
++    if (ctx->encode_config.rcParams.enableAQ ||
++        ctx->encode_config.rcParams.enableTemporalAQ) {
++        if (!ctx->roi_warned) {
++            ctx->roi_warned = 1;
++            av_log(avctx, AV_LOG_WARNING, "Spatial/Temporal AQ overrides the "
++                   "delta-QP map; ROI steering may be ineffective.\n");
++        }
++    }
++
++    roi = (const AVRegionOfInterest *)sd->data;
++    roi_size = roi->self_size;
++    if (!roi_size || sd->size % roi_size != 0) {
++        av_log(avctx, AV_LOG_ERROR, "Invalid AVRegionOfInterest.self_size.\n");
++        return AVERROR(EINVAL);
++    }
++    nb_rois = sd->size / roi_size;
++
++    memset(ctx->qp_delta_map, 0, ctx->qp_delta_map_size);
++
++    /* Iterate in reverse: the first region in the list takes precedence on
++     * overlap, so writing it last lets it overwrite later regions. */
++    for (int i = nb_rois - 1; i >= 0; i--) {
++        int startx, endx, starty, endy;
++        float qoffset;
++        int8_t delta;
++
++        roi = (const AVRegionOfInterest *)(sd->data + roi_size * i);
++
++        if (roi->qoffset.den == 0) {
++            av_log(avctx, AV_LOG_ERROR,
++                   "AVRegionOfInterest.qoffset.den must not be zero.\n");
++            return AVERROR(EINVAL);
++        }
++
++        starty = av_clip(roi->top    / blk,                 0, mby);
++        endy   = av_clip((roi->bottom + blk - 1) / blk,     0, mby);
++        startx = av_clip(roi->left   / blk,                 0, mbx);
++        endx   = av_clip((roi->right  + blk - 1) / blk,     0, mbx);
++
++        qoffset = roi->qoffset.num * 1.0f / roi->qoffset.den;
++        delta = av_clip_int8(lrintf(av_clipf(qoffset * qp_range,
++                                             -qp_range, +qp_range)));
++
++        for (int y = starty; y < endy; y++)
++            for (int x = startx; x < endx; x++)
++                ctx->qp_delta_map[x + y * mbx] = delta;
++    }
++
++    pic_params->qpDeltaMap     = ctx->qp_delta_map;
++    pic_params->qpDeltaMapSize = ctx->qp_delta_map_size;
++
++    return 0;
++}
++#endif
++
+ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+ {
+     NVENCSTATUS nv_status;
+@@ -3241,6 +3385,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+         if (res < 0)
+             return res;
+ 
++#ifdef NVENC_HAVE_QP_MAP_MODE
++        res = nvenc_setup_roi(avctx, frame, &pic_params);
++        if (res < 0)
++            return res;
++#endif
++
+         nvenc_codec_specific_pic_params(avctx, frame, &pic_params, ctx->sei_data, sei_count);
+     } else {
+         pic_params.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
+diff --git a/libavcodec/nvenc.h b/libavcodec/nvenc.h
+index 069ba82bc9..160dab315c 100644
+--- a/libavcodec/nvenc.h
++++ b/libavcodec/nvenc.h
+@@ -321,6 +321,20 @@ typedef struct NvencContext
+     int cbr_padding;
+     int multiview, multiview_supported;
+     int display_sei_sent;
++
++    /* Pelorus: per-region QP steering from AV_FRAME_DATA_REGIONS_OF_INTEREST.
++     * Gated by the "pelorus_roi" AVOption (default off). When enabled at init
++     * we switch the rate-control QP map to delta mode and rasterize each
++     * frame's ROI side data into qp_delta_map (one signed byte per encoder
++     * block, raster order), pointed at by NV_ENC_PIC_PARAMS::qpDeltaMap. */
++    int pelorus_roi;
++#ifdef NVENC_HAVE_QP_MAP_MODE
++    int8_t *qp_delta_map;    ///< per-block delta-QP scratch, qp_delta_map_size entries
++    int     qp_delta_map_size; ///< number of int8 entries = blocks_w * blocks_h
++    int     qp_delta_map_w;  ///< blocks across = ceil(width  / block size)
++    int     qp_delta_map_h;  ///< blocks down  = ceil(height / block size)
++    int     roi_warned;      ///< rate-limit incompatibility warnings to once
++#endif
+ } NvencContext;
+ 
+ int ff_nvenc_encode_init(AVCodecContext *avctx);
+diff --git a/libavcodec/nvenc_av1.c b/libavcodec/nvenc_av1.c
+index 98fcc76e39..32112aa98c 100644
+--- a/libavcodec/nvenc_av1.c
++++ b/libavcodec/nvenc_av1.c
+@@ -127,6 +127,8 @@ static const AVOption options[] = {
+                                                             OFFSET(no_scenecut),  AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, VE },
+     { "forced-idr",   "If forcing keyframes, force them as IDR frames.",
+                                                             OFFSET(forced_idr),   AV_OPT_TYPE_BOOL,  { .i64 = 0 }, -1, 1, VE },
++    { "pelorus_roi",  "Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the NVENC delta-QP map",
++                                                            OFFSET(pelorus_roi),  AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, VE },
+     { "b_adapt",      "When lookahead is enabled, set this to 0 to disable adaptive B-frame decision",
+                                                             OFFSET(b_adapt),      AV_OPT_TYPE_BOOL,  { .i64 = 1 }, 0,  1, VE },
+     { "spatial-aq",   "set to 1 to enable Spatial AQ",      OFFSET(aq),           AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, VE },
+diff --git a/libavcodec/nvenc_h264.c b/libavcodec/nvenc_h264.c
+index 842e4eef60..8efb7beb4a 100644
+--- a/libavcodec/nvenc_h264.c
++++ b/libavcodec/nvenc_h264.c
+@@ -147,6 +147,8 @@ static const AVOption options[] = {
+                                                             OFFSET(no_scenecut),  AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0,  1, VE },
+     { "forced-idr",   "If forcing keyframes, force them as IDR frames.",
+                                                             OFFSET(forced_idr),   AV_OPT_TYPE_BOOL,  { .i64 = 0 }, -1, 1, VE },
++    { "pelorus_roi",  "Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the NVENC delta-QP map",
++                                                            OFFSET(pelorus_roi),  AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0,  1, VE },
+     { "b_adapt",      "When lookahead is enabled, set this to 0 to disable adaptive B-frame decision",
+                                                             OFFSET(b_adapt),      AV_OPT_TYPE_BOOL,  { .i64 = 1 }, 0,  1, VE },
+     { "spatial-aq",   "set to 1 to enable Spatial AQ",      OFFSET(aq),           AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0,  1, VE },
+diff --git a/libavcodec/nvenc_hevc.c b/libavcodec/nvenc_hevc.c
+index 31624f45b1..d2e9e4312a 100644
+--- a/libavcodec/nvenc_hevc.c
++++ b/libavcodec/nvenc_hevc.c
+@@ -136,6 +136,8 @@ static const AVOption options[] = {
+                                                             OFFSET(no_scenecut),  AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, VE },
+     { "forced-idr",   "If forcing keyframes, force them as IDR frames.",
+                                                             OFFSET(forced_idr),   AV_OPT_TYPE_BOOL,  { .i64 = 0 }, -1, 1, VE },
++    { "pelorus_roi",  "Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the NVENC delta-QP map",
++                                                            OFFSET(pelorus_roi),  AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, VE },
+     { "b_adapt",      "When lookahead is enabled, set this to 0 to disable adaptive B-frame decision",
+                                                             OFFSET(b_adapt),      AV_OPT_TYPE_BOOL,  { .i64 = 1 }, 0, 1, VE },
+     { "spatial_aq",   "set to 1 to enable Spatial AQ",      OFFSET(aq),           AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, VE },
+-- 
+2.54.0
+
