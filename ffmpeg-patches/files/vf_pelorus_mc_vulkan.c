@@ -66,6 +66,12 @@
  * serves every bsize. Kept byte-identical to BLOCK_DIM in pelorus_mc.comp. */
 #define PEL_MC_BLOCK_DIM 32
 
+/* SAD-reduction lane count, derived from the block dim so a PEL_MC_BLOCK_DIM
+ * change propagates into the inline GLSL (lockstep with pelorus_mc.comp's
+ * BLOCK_DIM*BLOCK_DIM shared-array + tree-reduction expressions, rather than a
+ * silently-diverging hardcoded 1024/512). */
+#define PEL_MC_SAD_LANES_STR AV_STRINGIFY(PEL_MC_BLOCK_DIM * PEL_MC_BLOCK_DIM)
+
 /* SAD fixed-point scale shared by shader writes and host reads (the SAD is
  * summed over a block in normalized [0,1] luma). Mirrors SAD_SCALE in the .comp. */
 #define PEL_MC_SAD_SCALE 256.0
@@ -78,7 +84,7 @@
  * ref_image[0]. */
 static const char mc_glsl[] =
     "const float SAD_SCALE = 256.0;\n"
-    "shared float s_sad[1024];\n" /* PEL_MC_BLOCK_DIM * PEL_MC_BLOCK_DIM */
+    "shared float s_sad[" PEL_MC_SAD_LANES_STR "];\n" /* PEL_MC_BLOCK_DIM^2 */
     "shared int   s_best_x;\n"
     "shared int   s_best_y;\n"
     "shared float s_best_cost;\n"
@@ -104,7 +110,7 @@ static const char mc_glsl[] =
     "    }\n"
     "    s_sad[lidx] = d;\n"
     "    barrier();\n"
-    "    for (uint stride = 512u; stride > 0u; stride >>= 1u) {\n"
+    "    for (uint stride = (" PEL_MC_SAD_LANES_STR ") / 2u; stride > 0u; stride >>= 1u) {\n"
     "        if (lidx < stride)\n"
     "            s_sad[lidx] += s_sad[lidx + stride];\n"
     "        barrier();\n"

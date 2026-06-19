@@ -76,8 +76,9 @@ green · the deband shader compiles.**
 | `pelorus_deband_vulkan` | Smart deband (f3kdb): flatten banding + TPDF/blue-noise dither, detail-protected, zero-copy | **Working** |
 | `pelorus_denoise_vulkan` | Edge-preserving spatio-temporal denoise (the biggest BD-rate lever) | Roadmap |
 | `pelorus_analyze_vulkan` | Measured banding/variance/edge stats → interop side data (GPU reduction + readback) | **Working** |
-| `pelorus_grain_estimate_vulkan` | Film-grain param estimation (GPU per-band HF-residual) → PEL_SEC_FILMGRAIN + native AV1 side data; AV1-OBU/H.274-SEI bitstream filter is a follow-up | **Estimator built** |
+| `pelorus_grain_estimate_vulkan` | Film-grain param estimation (GPU per-band HF-residual) → PEL_SEC_FILMGRAIN + native AV1 side data | **Estimator built** |
 | `pelorus_mc_vulkan` | Block-matching motion estimator → per-block MV-hint side data for the encoder (speed, not quality) | **Working** |
+| `pelorus_fgs` (BSF) | Inserts the H.274 FGC SEI into HEVC so a decoder re-synthesizes grain — the HEVC leg of the FGS round-trip (AV1 round-trips via native side data) | **Working (static model)** |
 
 ## Landed so far
 
@@ -89,14 +90,27 @@ green · the deband shader compiles.**
 - [x] Step 4 — Temporal denoise (`vf_pelorus_denoise_vulkan`).
 - [x] Step 5 — FGS param estimation (`vf_pelorus_grain_estimate_vulkan`): GPU
       per-band HF-residual estimate → PEL_SEC_FILMGRAIN + native AV1 side data.
-      The OBU/SEI bitstream filter is a documented follow-up (ADR-0115).
-- [x] Step 6 — Motion-vector hints: `vf_pelorus_mc_vulkan` (block-matching ME
-      producer → `PEL_SEC_MOTION`; the NVENC ME-hint consumer is a gated
-      follow-up — ADR-0114 Tier 3).
+- [x] Step 6 — Motion-vector hints: `vf_pelorus_mc_vulkan` producer (0007 →
+      `PEL_SEC_MOTION`) + the **NVENC ME-hint consumer** (`-pelorus_me_hints`,
+      patch 0008): the MV field seeds NVENC's external motion search (encode
+      SPEED; on-HW A/B pending). ADR-0116 / 0114 Tier 3.
+- [x] Step 7 — FGS round-trip: `pelorus_fgs` BSF (patch 0010) inserts the H.274
+      FGC SEI into HEVC; `av1_nvenc` carries the estimate into NVENC's hardware
+      AV1 film-grain (`NV_ENC_FILM_GRAIN_PARAMS_AV1`, `-pelorus_film_grain`,
+      patch 0011); AV1 software encoders round-trip via native side data. Static
+      AVOption-driven HEVC model; per-frame + H.264/VVC legs are follow-ups
+      (ADR-0117 / ADR-0118).
 - Encoder steering (ADR-0114, opt-in `-pelorus_roi 1`): the `analyze roi=1`
   banding map drives dense per-block delta-QP on **NVENC** (`qpDeltaMap`, proven
-  −41% banding) and **QSV** (`mfxExtMBQP`, code-complete; on-Intel-HW proof
-  pending). Patches 0004 / 0005.
+  −41% banding), **QSV** (`mfxExtMBQP`, code-complete; on-Intel-HW proof pending),
+  and the native **Vulkan-Video** encoders via `VK_KHR_video_encode_quantization_map`
+  (Tier 2, compile-verified; on-HW proof blocked by the dev box's driver
+  feedback-flag gap). Patches 0004 / 0005 / 0009.
+- Closed-loop QP feedback (ADR-0114 step 6 / ADR-0119): new append-only interop
+  section `PEL_SEC_QPREPORT` (ABI 1.1) carries the encoder's *honored* per-block
+  QP/bit decisions back into the side-data blob, plus a vendor-neutral reader stub
+  (`pel_qp_report_from_blocks`). The ABI + pack/parse + conformance test + stub are
+  working; the libavcodec QSV stat-extraction wiring is the documented follow-up.
 
 ## Tooling
 

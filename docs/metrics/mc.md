@@ -12,7 +12,7 @@ encoder can feed its external motion search (e.g. NVENC's
 `NV_ENC_EXTERNAL_ME_HINT`) so a fixed-function ASIC can skip or shorten its own
 search. It is **not** a flow field for warping, and it does **not** feed the
 denoiser (see the honesty note below). See
-[ADR-0115](../adr/0115-pelorus-mc.md) for the producer decision,
+[ADR-0116](../adr/0116-pelorus-mc.md) for the producer decision,
 [ADR-0113](../adr/0113-optical-flow-mc.md) for the motion-estimation strategy,
 and [ADR-0114](../adr/0114-encoder-steering.md) Tier 3 for the gated NVENC
 ME-hint consumer (a documented follow-up).

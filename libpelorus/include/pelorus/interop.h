@@ -73,9 +73,13 @@ extern "C" {
 #define PELORUS_MAGIC_LEN 8
 
 /* Semantic ABI version of the blob LAYOUT (independent of PELORUS_VERSION_*,
- * which versions the library, and of the vmafx control-plane API version). */
+ * which versions the library, and of the vmafx control-plane API version).
+ *
+ * MINOR history (R6 — bumps on every additive change):
+ *   1.0  initial sections (a..e: banding/variance/denoise/filmgrain/motion).
+ *   1.1  + PEL_SEC_QPREPORT (f): encoder-honored QP / bit readback (ADR-0119). */
 #define PELORUS_ABI_MAJOR 1u
-#define PELORUS_ABI_MINOR 0u
+#define PELORUS_ABI_MINOR 1u
 
 /* The 16-byte UUID prefixing the AV_FRAME_DATA_SEI_UNREGISTERED payload (the
  * leading uuid_iso_iec_11578 mandated by the user-data-unregistered SEI
@@ -94,8 +98,9 @@ enum pel_section {
     PEL_SEC_VARIANCE = 1u << 1,  /* (b) local variance / edge summary        */
     PEL_SEC_DENOISE = 1u << 2,   /* (c) denoise residual statistics          */
     PEL_SEC_FILMGRAIN = 1u << 3, /* (d) film-grain params (AV1-shaped)       */
-    PEL_SEC_MOTION = 1u << 4     /* (e) optical-flow MV hint summary         */
-    /* bits 5..31 reserved — a retired bit is NEVER reused (R2). */
+    PEL_SEC_MOTION = 1u << 4,    /* (e) optical-flow MV hint summary         */
+    PEL_SEC_QPREPORT = 1u << 5   /* (f) encoder-honored QP / bit readback    */
+    /* bits 6..31 reserved — a retired bit is NEVER reused (R2). */
 };
 
 /* ---- Plane layout / producer identity ----------------------------------- */
@@ -110,6 +115,18 @@ enum pel_grain_model {
     PEL_GRAIN_NONE = 0,
     PEL_GRAIN_AOM = 1, /* AV1 — maps to AV_FILM_GRAIN_PARAMS_AV1            */
     PEL_GRAIN_H274 = 2 /* HEVC/VVC — maps to AV_FILM_GRAIN_PARAMS_H274      */
+};
+
+/* Which encoder-feedback surface produced a PEL_SEC_QPREPORT section. The
+ * closed loop (ADR-0114 step 6 / ADR-0119) reads an encoder's ACTUAL per-block
+ * QP + bit decisions back, so a later pass (or vmafx) can verify the ROI /
+ * delta-QP map it requested was honored and refine it. The source tags the
+ * vendor API the numbers came from, for diagnostics + cross-vendor comparison. */
+enum pel_qp_report_source {
+    PEL_QPSRC_NONE = 0,  /* unset / synthetic                                */
+    PEL_QPSRC_QSV = 1,   /* Intel oneVPL mfxEncodeBlkStats / mfxEncodeFrameStats */
+    PEL_QPSRC_NVENC = 2, /* NVENC per-block QP feedback (reserved)           */
+    PEL_QPSRC_VULKAN = 3 /* Vulkan-Video encode feedback (reserved)         */
 };
 
 /* fourcc of the writing stage, for diagnostics (e.g. 'PLRS'). */
@@ -242,6 +259,47 @@ typedef struct PelorusMotionSection {
     /* --- APPEND-ONLY below this line --- */
 } PelorusMotionSection;
 
+/* (f) Encoder-honored QP / bit readback — written by a Pelorus-side closed-loop
+ * encoder-stat reader AFTER the encoder ran (ADR-0114 step 6 / ADR-0119). The
+ * single-writer invariant is unchanged: Pelorus writes this section (a future
+ * libavcodec QSV stat reader within Pelorus), vmafx only reads it. Unlike
+ * sections (a)..(e),
+ * which carry PRE-encode GPU measurements, this section carries the encoder's
+ * ACTUAL post-encode per-block decisions so a later pass — or vmafx — can verify
+ * the requested ROI / delta-QP map was honored and refine it. v1 source is QSV
+ * (oneVPL mfxEncodeBlkStats per-block QP + mfxEncodeFrameStats frame summary +
+ * mfxExtEncodedUnitsInfo bit sizes); NVENC / Vulkan-Video sources are reserved.
+ *
+ * Per-cell maps follow the existing (grid_cols x grid_rows) cell convention via
+ * blob-relative offsets: qp_cell is int8 actual QP per cell (encoder QP scale —
+ * 0..51 for AVC/HEVC, the raw signed value the API reports), bits_cell is uint32
+ * encoded bits per cell. A producer that does not populate a given map MUST
+ * leave its *_offset AND *_size zero (the bits_cell map is a documented
+ * follow-up — ADR-0119 — so v1 producers leave bits_cell_offset/size at 0).
+ * honored_fraction is the consumer's computed agreement between the requested
+ * delta-QP sign and the observed per-cell QP movement (0..1); 0 when no request
+ * map was available to compare against. */
+typedef struct PelorusQpReportSection {
+    float avg_qp;                /* frame mean QP (fractional; mfxEncodeFrameStats.Qp) */
+    float psnr_y;                /* encoder-reported luma PSNR (dB), NaN/0 if absent   */
+    float psnr_u;                /* chroma Cb PSNR (dB)                                */
+    float psnr_v;                /* chroma Cr PSNR (dB)                                */
+    uint64_t total_bits;         /* encoded frame size in bits (sum of unit sizes)     */
+    uint32_t num_intra_blocks;   /* mfxEncodeFrameStats.NumIntraBlock                  */
+    uint32_t num_inter_blocks;   /* mfxEncodeFrameStats.NumInterBlock                  */
+    uint32_t num_skipped_blocks; /* mfxEncodeFrameStats.NumSkippedBlock                */
+    uint32_t qp_cell_offset;     /* blob-relative; int8 actual QP per cell             */
+    uint32_t qp_cell_size;       /* grid_cols*grid_rows bytes (0 if qp_valid == 0)     */
+    uint32_t bits_cell_offset;   /* blob-relative; uint32 encoded bits per cell        */
+    uint32_t bits_cell_size;     /* grid_cols*grid_rows*sizeof(uint32) bytes           */
+    float honored_fraction;      /* 0..1 cells whose QP moved as the ROI map requested */
+    uint8_t report_source;       /* enum pel_qp_report_source                          */
+    uint8_t block_size_log2;     /* log2 of the encoder block edge (4 => 16x16)        */
+    uint8_t qp_valid;            /* 1 => qp_cell map populated; 0 => frame stats only   */
+    uint8_t _pad[5];             /* reserved, zero (keeps sizeof a multiple of 8)      */
+    /* --- APPEND-ONLY below this line --- */
+} PelorusQpReportSection;
+
 /* ---- Layout locks (ABI is frozen byte-for-byte; see R1/R2) -------------- */
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(sizeof(PelorusSectionDir) == 16, "PelorusSectionDir ABI");
@@ -251,6 +309,7 @@ _Static_assert(sizeof(PelorusVarianceSection) == 28, "variance section ABI");
 _Static_assert(sizeof(PelorusDenoiseSection) == 28, "denoise section ABI");
 _Static_assert(sizeof(PelorusFilmGrainSection) == 216, "filmgrain section ABI");
 _Static_assert(sizeof(PelorusMotionSection) == 32, "motion section ABI");
+_Static_assert(sizeof(PelorusQpReportSection) == 64, "qp-report section ABI");
 #endif
 
 /* ---- Pack / parse API (implemented in interop.c; vendored by both repos) - */
@@ -308,6 +367,63 @@ pel_result pel_blob_find_section(const uint8_t *blob, size_t len, enum pel_secti
 /* True if blob/len carries a valid Pelorus blob (uuid + magic + abi_major).
  * Cheap pre-check before iterating sections. */
 int pel_blob_is_present(const uint8_t *blob, size_t len);
+
+/* ---- QP-report reader stub (closed loop; ADR-0114 step 6 / ADR-0119) ----- *
+ *
+ * Abstract per-block QP/bit readback, decoupled from any vendor SDK type so
+ * libpelorus stays dependency-free (it is vendored verbatim by vmafx, which
+ * never links oneVPL/NVENC). The encoder-side reader — e.g. a future
+ * libavcodec QSV consumer — extracts the per-block actual QP from
+ * mfxEncodeBlkStats (mfxMBInfo.Qp for AVC / mfxCTUInfo.QP for HEVC) into a
+ * row-major int8 array, reads the frame summary from mfxEncodeFrameStats, then
+ * calls this helper to fold both into a PEL_SEC_QPREPORT section ready for
+ * pel_blob_pack. v0.1.0 implements the FOLD (block-grid -> cell-grid average
+ * QP); the SDK extraction + honored-fraction comparison against the requested
+ * ROI map are the documented follow-up (see docs/metrics/qp-feedback.md). */
+typedef struct PelorusQpReportInput {
+    const int8_t *block_qp;  /* row-major per-block actual QP, blk_cols*blk_rows */
+    uint16_t blk_cols;       /* encoder block grid width (frame_w / block_edge)   */
+    uint16_t blk_rows;       /* encoder block grid height                         */
+    uint8_t block_size_log2; /* log2 block edge (4 => 16x16)                     */
+    uint8_t report_source;   /* enum pel_qp_report_source                         */
+    uint8_t _pad[2];         /* reserved, zero                                    */
+    float avg_qp;            /* frame mean QP (mfxEncodeFrameStats.Qp)            */
+    float psnr_y;            /* encoder-reported PSNR (dB); pass 0 if absent      */
+    float psnr_u;
+    float psnr_v;
+    uint64_t total_bits;         /* encoded frame size in bits                   */
+    uint32_t num_intra_blocks;   /* mfxEncodeFrameStats.NumIntraBlock            */
+    uint32_t num_inter_blocks;   /* mfxEncodeFrameStats.NumInterBlock            */
+    uint32_t num_skipped_blocks; /* mfxEncodeFrameStats.NumSkippedBlock          */
+} PelorusQpReportInput;
+
+/*
+ * Build a PEL_SEC_QPREPORT section + its per-cell int8 QP map from a readback.
+ *
+ * Folds the encoder's per-block QP grid (in->block_qp, blk_cols x blk_rows)
+ * onto the blob's (grid_cols x grid_rows) cell grid by averaging the blocks
+ * that fall in each cell, writing the result into qp_cell_out and setting the
+ * section's qp_cell_* fields. The frame-summary scalars are copied through.
+ *
+ *   in              the abstract readback (see PelorusQpReportInput).
+ *   grid_cols/rows  the blob cell grid (must match the meta passed to pack).
+ *   out_section     receives the populated PelorusQpReportSection. The caller
+ *                   sets qp_cell_offset to the blob-relative offset where it
+ *                   will append qp_cell_out AFTER pack (mirrors the other
+ *                   per-cell map sections — see docs/api/interop-abi.md).
+ *   qp_cell_out     caller buffer, >= grid_cols*grid_rows bytes, receives the
+ *                   folded int8 per-cell QP map (NULL => frame-stats only,
+ *                   qp_valid = 0).
+ *   qp_cell_cap     capacity of qp_cell_out in bytes.
+ *
+ * honored_fraction is left 0 here (no requested map is available to this fold);
+ * a consumer that holds the requested ROI delta-QP map sets it afterwards.
+ * Returns PEL_OK, PEL_ERR_INVALID (NULL/empty grids), or PEL_ERR_RANGE
+ * (qp_cell_out too small for the cell grid).
+ */
+pel_result pel_qp_report_from_blocks(const PelorusQpReportInput *in, uint16_t grid_cols,
+                                     uint16_t grid_rows, PelorusQpReportSection *out_section,
+                                     int8_t *qp_cell_out, size_t qp_cell_cap);
 
 #ifdef __cplusplus
 }

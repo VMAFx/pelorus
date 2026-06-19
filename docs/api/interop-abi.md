@@ -1,4 +1,4 @@
-<!-- markdownlint-disable MD013 -->
+<!-- markdownlint-disable MD013 MD040 MD060 -->
 # libpelorus interop ABI
 
 The Pelorus⇄vmafx data-plane contract. Public header:
@@ -38,6 +38,15 @@ consumer can cast the returned pointer to the struct without an unaligned access
 | `PEL_SEC_DENOISE` | `PelorusDenoiseSection` | `vf_pelorus_denoise` | telemetry | residual energy, applied strength, sigma estimate |
 | `PEL_SEC_FILMGRAIN` | `PelorusFilmGrainSection` | `vf_pelorus_grain_estimate` | encoder + vmafx | film-grain params: AV1 AOM fields (→ `AV_FILM_GRAIN_PARAMS_AV1`) + a `grain_model` tag and H.274 mode scalars for HEVC/VVC (→ `AV_FILM_GRAIN_PARAMS_H274`) |
 | `PEL_SEC_MOTION` | `PelorusMotionSection` | `vf_pelorus_mc` | `vf_libvmaf*`, autotune | global/peak motion, MV-field offset, scene-cut flag |
+| `PEL_SEC_QPREPORT` | `PelorusQpReportSection` | closed-loop QSV reader (ADR-0119) | next pass, vmafx | encoder-honored: frame mean QP, PSNR Y/U/V, total bits, intra/inter/skipped counts, per-cell actual-QP + bits maps, `honored_fraction`, `report_source` |
+
+`PEL_SEC_QPREPORT` (ABI 1.1) is the **read-back** half of encoder steering: unlike
+sections (a)–(e), which carry *pre-encode* GPU measurements pushed *to* the encoder,
+it carries the encoder's *actual* post-encode QP/bit decisions read *back* so a later
+pass or vmafx can verify the requested ROI / delta-QP map (ADR-0114) was honored. It
+is fed by the vendor-neutral reader stub `pel_qp_report_from_blocks` (libpelorus links
+no encoder SDK); see [docs/metrics/qp-feedback.md](../metrics/qp-feedback.md) and
+[ADR-0119](../adr/0119-qp-feedback.md).
 
 **Single-writer invariant**: Pelorus is the only writer. vmafx reads; if it ever
 needs to annotate back it attaches its *own* distinct-UUID blob, never edits ours.
@@ -70,9 +79,26 @@ it to an `AVBufferRef` with a free callback that calls `pel_blob_free` (do **not
 `av_free` it — allocator mismatch). `pel_blob_find_section` returns a pointer
 into the blob (no copy) and the readable byte count `min(producer, consumer)`.
 
+### QP-report reader stub (closed loop)
+
+`pel_qp_report_from_blocks` folds an encoder's per-block actual-QP grid onto the
+shared cell grid and fills a `PelorusQpReportSection` for packing. It takes an
+abstract `PelorusQpReportInput` (no oneVPL/NVENC types) so libpelorus links no
+encoder SDK — vmafx vendors `interop.c` unchanged. See
+[docs/metrics/qp-feedback.md](../metrics/qp-feedback.md) for the QSV mapping and
+the working-ABI-vs-documented-stub status.
+
+**Ownership / lifetime**: `out_section` and `qp_cell_out` are caller-owned and
+caller-allocated; the function writes into them and retains no reference (it
+allocates nothing). `qp_cell_out` must hold `grid_cols*grid_rows` bytes or the
+call returns `PEL_ERR_RANGE`. **Thread-safety**: the function holds no global or
+static state, so concurrent calls on non-aliased buffers are safe.
+
 Return codes (`pel_result`): `PEL_OK`, `PEL_ERR_ABSENT` (no Pelorus blob / section
 not present — fall back to current behavior), `PEL_ERR_ABI` (major mismatch —
-ignore the blob), `PEL_ERR_TRUNCATED`, `PEL_ERR_INVALID`.
+ignore the blob), `PEL_ERR_TRUNCATED`, `PEL_ERR_INVALID`, `PEL_ERR_RANGE`
+(`pel_qp_report_from_blocks` only — the `qp_cell_out` buffer is smaller than the
+cell grid).
 
 ## Stability rules (normative — see interop.h)
 

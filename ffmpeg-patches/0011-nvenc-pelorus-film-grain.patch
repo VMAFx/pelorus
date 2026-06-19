@@ -1,0 +1,421 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lusoris <lusoris@pm.me>
+Date: Mon, 15 Jun 2026 15:26:58 +0200
+Subject: [PATCH 11/11] feat(nvenc): carry the Pelorus AV1 film-grain estimate
+ into av1_nvenc
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Stock nvenc.c never enables NVENC's AV1 film-grain synthesis, so a grain
+estimate produced upstream is dropped and the grain is coded as residual. This
+adds a `pelorus_film_grain` AVOption (default off, registered on av1_nvenc
+only) that, when set, carries the AV1 (AOM) film-grain-synthesis parameters a
+vf_pelorus_grain_estimate_vulkan stage emits into NVENC's hardware AV1
+film-grain config so the decoder re-synthesizes the grain — the HW-AV1 leg of
+the FGS round-trip (the H.274 BSF, patch 0010, covers HEVC; the AV1 software
+encoders consume the native side data directly).
+
+At init, when enabled, we set NV_ENC_CONFIG_AV1::enableFilmGrainParams and
+point filmGrainParams at a persistent NV_ENC_FILM_GRAIN_PARAMS_AV1 in the
+encoder context (zero-initialised => applyGrain 0, a no-op until a frame
+carries an estimate). Per frame we refill that struct from the frame's grain
+estimate and raise the AV1 pic-params filmGrainParamsUpdate flag (time-varying
+model; a frame with no estimate keeps the last params). The estimate is read
+from the native AV_FRAME_DATA_FILM_GRAIN_PARAMS channel (AV_FILM_GRAIN_PARAMS_AV1,
+preferred — the canonical public field-for-field path) and, failing that, from
+the PEL_SEC_FILMGRAIN interop section parsed inline (mirroring the
+PEL_SEC_MOTION reader in the ME-hints patch). The AVFilmGrainAOMParams set maps
+onto NVENC's struct directly: numbers shifted to its "minus N" / "plus 128"
+bitfield conventions, point and AR-coefficient arrays copied element-wise, all
+writes clamped to the field widths.
+
+Generality: default off (zero behaviour change); compile-gated by a new
+NVENC_HAVE_AV1_FILM_GRAIN macro (SDK 12.0+, where the AV1 encoder and the
+film-grain struct landed) with a one-shot warn + graceful degrade when
+unavailable; registered on av1_nvenc only (H.264/HEVC NVENC have no AV1 film
+grain). The Pelorus blob is parsed inline (no libavcodec->libpelorus link for a
+default-off feature) against the frozen append-only interop ABI (R1..R6). No
+device/box assumptions.
+
+No grain-match or BD-rate number ships here: the estimate is wired into NVENC's
+AV1 film-grain config and verified to compile against the ffnvcodec headers,
+register on av1_nvenc only, and replay onto pristine n8.1.1; the on-hardware
+visual/BD-rate proof is a documented follow-up (ADR-0111 methodology).
+
+If a frame carries no usable AV1 grain estimate the update flag stays clear, so
+NVENC keeps the previous params (or the zero-init no-op), and behaviour is
+unchanged.
+
+ADR: docs/adr/0118-nvenc-av1-filmgrain.md, docs/adr/0115-grain-estimate.md (producer), docs/adr/0114-encoder-steering.md
+---
+ libavcodec/nvenc.c     | 286 +++++++++++++++++++++++++++++++++++++++++
+ libavcodec/nvenc.h     |  20 +++
+ libavcodec/nvenc_av1.c |   2 +
+ 3 files changed, 308 insertions(+)
+
+diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
+index f25bf5763c..82c316155b 100644
+--- a/libavcodec/nvenc.c
++++ b/libavcodec/nvenc.c
+@@ -1970,6 +1970,31 @@ static av_cold int nvenc_setup_av1_config(AVCodecContext *avctx)
+     av1->numFwdRefs = avctx->refs;
+     av1->numBwdRefs = avctx->refs;
+ 
++#ifdef NVENC_HAVE_AV1_FILM_GRAIN
++    /* Pelorus: enable hardware AV1 film-grain synthesis. We point the AV1 config
++     * at a persistent NV_ENC_FILM_GRAIN_PARAMS_AV1 in the encoder context; the
++     * per-frame nvenc_setup_film_grain() refills it from the grain estimate on
++     * each frame and raises filmGrainParamsUpdate in the AV1 pic params. The
++     * struct is zero-initialised (applyGrain == 0), so until a frame carries a
++     * grain estimate the encoder synthesizes nothing - a graceful no-op. */
++    if (ctx->pelorus_film_grain) {
++        memset(&ctx->fg_params, 0, sizeof(ctx->fg_params));
++        av1->enableFilmGrainParams = 1;
++        av1->filmGrainParams = &ctx->fg_params;
++        av_log(avctx, AV_LOG_VERBOSE,
++               "Pelorus AV1 film-grain synthesis enabled; grain params will be "
++               "taken from per-frame side data.\n");
++    }
++#else
++    if (ctx->pelorus_film_grain) {
++        av_log(avctx, AV_LOG_WARNING,
++               "pelorus_film_grain requested but NVENC AV1 film-grain params "
++               "are unavailable (SDK 12.0 or greater required at compile time); "
++               "ignoring.\n");
++        ctx->pelorus_film_grain = 0;
++    }
++#endif
++
+ #ifdef NVENC_HAVE_H264_AND_AV1_TEMPORAL_FILTER
+     if (ctx->tf_level >= 0) {
+         av1->tfLevel = ctx->tf_level;
+@@ -3338,6 +3363,261 @@ static int nvenc_set_mastering_display_data(AVCodecContext *avctx, const AVFrame
+ }
+ #endif
+ 
++#ifdef NVENC_HAVE_AV1_FILM_GRAIN
++/* Pelorus AV1 film-grain mapping --------------------------------------------
++ *
++ * A vf_pelorus_grain_estimate_vulkan stage measures the source film grain on
++ * the GPU and emits AV1 (AOM) film-grain-synthesis parameters as (a) a native
++ * AV_FRAME_DATA_FILM_GRAIN_PARAMS side-data of type AV_FILM_GRAIN_PARAMS_AV1
++ * (the canonical, public, field-for-field channel) and (b) the codec-neutral
++ * PEL_SEC_FILMGRAIN interop section (UUID-keyed AV_FRAME_DATA_SEI_UNREGISTERED).
++ * NVENC re-synthesizes that grain in hardware from NV_ENC_FILM_GRAIN_PARAMS_AV1,
++ * so the encoder spends a few bytes of model instead of megabits of residual.
++ *
++ * We prefer the native channel (no libpelorus link for a default-off feature in
++ * libavcodec), and fall back to parsing the interop blob inline (mirroring the
++ * PEL_SEC_MOTION reader in the external-ME-hints patch). The AOM parameter set
++ * maps onto the NVENC struct directly: numbers shifted to NVENC's "minus N" /
++ * "plus 128" bitfield conventions, point/coefficient arrays copied element-wise,
++ * all writes clamped to the field widths. */
++
++#define PEL_FG_UUID_LEN        16
++#define PEL_FG_SEC_FILMGRAIN   (1u << 3)
++
++static const uint8_t pel_fg_uuid[PEL_FG_UUID_LEN] = {
++    0xe1, 0xd7, 0xc4, 0xa2, 0x6b, 0x93, 0x4f, 0x08,
++    0x9a, 0x55, 0x0f, 0x3c, 0x2d, 0xb1, 0x7e, 0x64,
++};
++
++static uint16_t pel_fg_rd16(const uint8_t *p)
++{
++    return (uint16_t)(p[0] | (p[1] << 8));
++}
++
++static uint32_t pel_fg_rd32(const uint8_t *p)
++{
++    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
++           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
++}
++
++/* Fill *dst from an AVFilmGrainAOMParams. apply selects applyGrain. The
++ * AOM->NVENC field map (see nvEncodeAPI.h NV_ENC_FILM_GRAIN_PARAMS_AV1):
++ *   numYPoints/pointY*        <- num_y_points / y_points
++ *   numCb/CrPoints/pointC*    <- num_uv_points / uv_points
++ *   grainScalingMinus8        <- scaling_shift  - 8   (AV1 [8,11])
++ *   arCoeffLag                <- ar_coeff_lag
++ *   arCoeffShiftMinus6        <- ar_coeff_shift - 6   (AV1 [6,9])
++ *   grainScaleShift           <- grain_scale_shift
++ *   arCoeffs{Y,Cb,Cr}Plus128  <- ar_coeffs_{y,uv} + 128
++ *   cb/crMult, cb/crLumaMult  <- uv_mult / uv_mult_luma
++ *   cb/crOffset               <- uv_offset (9-bit [-256,255]) */
++static void pel_fg_from_aom(NV_ENC_FILM_GRAIN_PARAMS_AV1 *dst,
++                            const AVFilmGrainAOMParams *a, int apply)
++{
++    int i, ny, ncb, ncr, ar_y, ar_uv;
++
++    memset(dst, 0, sizeof(*dst));
++
++    dst->applyGrain            = apply ? 1 : 0;
++    dst->chromaScalingFromLuma = a->chroma_scaling_from_luma ? 1 : 0;
++    dst->overlapFlag           = a->overlap_flag ? 1 : 0;
++    dst->clipToRestrictedRange = a->limit_output_range ? 1 : 0;
++    dst->grainScalingMinus8    = av_clip(a->scaling_shift - 8, 0, 3);
++    dst->arCoeffLag            = av_clip(a->ar_coeff_lag, 0, 3);
++    dst->arCoeffShiftMinus6    = av_clip(a->ar_coeff_shift - 6, 0, 3);
++    dst->grainScaleShift       = av_clip(a->grain_scale_shift, 0, 3);
++
++    ny = av_clip(a->num_y_points, 0, 14);
++    dst->numYPoints = ny;
++    for (i = 0; i < ny; i++) {
++        dst->pointYValue[i]   = a->y_points[i][0];
++        dst->pointYScaling[i] = a->y_points[i][1];
++    }
++
++    ncb = av_clip(a->num_uv_points[0], 0, 10);
++    ncr = av_clip(a->num_uv_points[1], 0, 10);
++    dst->numCbPoints = ncb;
++    dst->numCrPoints = ncr;
++    for (i = 0; i < ncb; i++) {
++        dst->pointCbValue[i]   = a->uv_points[0][i][0];
++        dst->pointCbScaling[i] = a->uv_points[0][i][1];
++    }
++    for (i = 0; i < ncr; i++) {
++        dst->pointCrValue[i]   = a->uv_points[1][i][0];
++        dst->pointCrScaling[i] = a->uv_points[1][i][1];
++    }
++
++    /* AV1 luma AR coeff count = 2*lag*(lag+1); chroma adds 1 if luma present.
++     * Both arrays are stored "+128" by NVENC; copy only the live coefficients. */
++    ar_y  = 2 * dst->arCoeffLag * (dst->arCoeffLag + 1);
++    ar_uv = ar_y + (ny > 0 ? 1 : 0);
++    for (i = 0; i < ar_y && i < 24; i++)
++        dst->arCoeffsYPlus128[i] = (uint8_t)(a->ar_coeffs_y[i] + 128);
++    for (i = 0; i < ar_uv && i < 25; i++) {
++        dst->arCoeffsCbPlus128[i] = (uint8_t)(a->ar_coeffs_uv[0][i] + 128);
++        dst->arCoeffsCrPlus128[i] = (uint8_t)(a->ar_coeffs_uv[1][i] + 128);
++    }
++
++    dst->cbMult     = av_clip_uint8(a->uv_mult[0]);
++    dst->cbLumaMult = av_clip_uint8(a->uv_mult_luma[0]);
++    dst->cbOffset   = (uint16_t)av_clip(a->uv_offset[0], -256, 255);
++    dst->crMult     = av_clip_uint8(a->uv_mult[1]);
++    dst->crLumaMult = av_clip_uint8(a->uv_mult_luma[1]);
++    dst->crOffset   = (uint16_t)av_clip(a->uv_offset[1], -256, 255);
++}
++
++/* Parse the PEL_SEC_FILMGRAIN section out of a Pelorus interop blob into an
++ * AVFilmGrainAOMParams. Bounds-checked, allocation-free; tracks the frozen
++ * PelorusSideData / PelorusSectionDir / PelorusFilmGrainSection byte layouts
++ * (libpelorus interop.h, ABI R1..R6, little-endian). Returns 1 if the producer
++ * recommends synthesis (apply flag set), 0 if absent / present-but-off, <0 on a
++ * malformed blob. */
++static int pel_fg_from_interop(const uint8_t *buf, size_t len,
++                               AVFilmGrainAOMParams *a)
++{
++    const uint8_t *image, *dir;
++    size_t image_len;
++    uint16_t header_size, section_count, abi_major, i;
++    uint32_t total_size, section_mask;
++
++    if (!buf || len < (size_t)PEL_FG_UUID_LEN + 48)
++        return 0;
++    if (memcmp(buf, pel_fg_uuid, PEL_FG_UUID_LEN) != 0)
++        return 0;
++
++    image     = buf + PEL_FG_UUID_LEN;
++    image_len = len - PEL_FG_UUID_LEN;
++
++    if (memcmp(image, "PELOR1\0\0", 8) != 0)
++        return 0;
++    abi_major = pel_fg_rd16(image + 8);
++    if (abi_major != 1)
++        return 0;
++    total_size    = pel_fg_rd32(image + 12);
++    section_mask  = pel_fg_rd32(image + 16);
++    section_count = pel_fg_rd16(image + 20);
++    header_size   = pel_fg_rd16(image + 22);
++
++    if (total_size > image_len || header_size < 48)
++        return -1;
++    if ((section_mask & PEL_FG_SEC_FILMGRAIN) == 0)
++        return 0;
++    if ((size_t)header_size + (size_t)section_count * 16 > image_len)
++        return -1;
++
++    dir = image + header_size;
++    for (i = 0; i < section_count; i++) {
++        const uint8_t *d = dir + (size_t)i * 16;
++        uint32_t sid  = pel_fg_rd32(d + 0);
++        uint32_t soff = pel_fg_rd32(d + 4);
++        uint32_t ssz  = pel_fg_rd32(d + 8);
++        const uint8_t *s;
++        int j, np;
++
++        if (sid != PEL_FG_SEC_FILMGRAIN)
++            continue;
++        /* PelorusFilmGrainSection is 216 bytes; require enough to read it. */
++        if (soff > image_len || ssz > image_len - soff || ssz < 216)
++            return -1;
++        s = image + soff;
++
++        /* Field offsets within PelorusFilmGrainSection (interop.h):
++         *  seed@0(u64) num_y_points@8(i32) num_uv_points@12(i32[2])
++         *  scaling_shift@20 ar_coeff_lag@24 ar_coeff_shift@28 grain_scale_shift@32
++         *  uv_mult@36(i32[2]) uv_mult_luma@44(i32[2]) uv_offset@52(i32[2])
++         *  apply@60(u8) chroma_scaling_from_luma@61 overlap_flag@62
++         *  limit_output_range@63 y_points@64(u8[14][2]) uv_points@92(u8[2][10][2])
++         *  ar_coeffs_y@132(i8[24]) ar_coeffs_uv@156(i8[2][25]). */
++        memset(a, 0, sizeof(*a));
++        a->num_y_points            = (int32_t)pel_fg_rd32(s + 8);
++        a->num_uv_points[0]        = (int32_t)pel_fg_rd32(s + 12);
++        a->num_uv_points[1]        = (int32_t)pel_fg_rd32(s + 16);
++        a->scaling_shift           = (int32_t)pel_fg_rd32(s + 20);
++        a->ar_coeff_lag            = (int32_t)pel_fg_rd32(s + 24);
++        a->ar_coeff_shift          = (int32_t)pel_fg_rd32(s + 28);
++        a->grain_scale_shift       = (int32_t)pel_fg_rd32(s + 32);
++        a->uv_mult[0]              = (int32_t)pel_fg_rd32(s + 36);
++        a->uv_mult[1]              = (int32_t)pel_fg_rd32(s + 40);
++        a->uv_mult_luma[0]         = (int32_t)pel_fg_rd32(s + 44);
++        a->uv_mult_luma[1]         = (int32_t)pel_fg_rd32(s + 48);
++        a->uv_offset[0]            = (int32_t)pel_fg_rd32(s + 52);
++        a->uv_offset[1]            = (int32_t)pel_fg_rd32(s + 56);
++        a->chroma_scaling_from_luma = s[61];
++        a->overlap_flag            = s[62];
++        a->limit_output_range      = s[63];
++        np = av_clip(a->num_y_points, 0, 14);
++        for (j = 0; j < np; j++) {
++            a->y_points[j][0] = s[64 + 2 * j + 0];
++            a->y_points[j][1] = s[64 + 2 * j + 1];
++        }
++        for (j = 0; j < 10; j++) {
++            a->uv_points[0][j][0] = s[92 + (0 * 10 + j) * 2 + 0];
++            a->uv_points[0][j][1] = s[92 + (0 * 10 + j) * 2 + 1];
++            a->uv_points[1][j][0] = s[92 + (1 * 10 + j) * 2 + 0];
++            a->uv_points[1][j][1] = s[92 + (1 * 10 + j) * 2 + 1];
++        }
++        for (j = 0; j < 24; j++)
++            a->ar_coeffs_y[j] = (int8_t)s[132 + j];
++        for (j = 0; j < 25; j++) {
++            a->ar_coeffs_uv[0][j] = (int8_t)s[156 + j];
++            a->ar_coeffs_uv[1][j] = (int8_t)s[156 + 25 + j];
++        }
++        return s[60] ? 1 : 0; /* apply */
++    }
++    return 0;
++}
++
++/* Pelorus: per-frame refill of the AV1 film-grain params from the grain
++ * estimate on this frame. Prefers the native AV_FRAME_DATA_FILM_GRAIN_PARAMS
++ * (AV1) side data; falls back to the PEL_SEC_FILMGRAIN interop blob. When a
++ * frame carries a usable estimate we refill ctx->fg_params and raise
++ * filmGrainParamsUpdate so NVENC reads it; a frame with no estimate leaves the
++ * flag clear, so the encoder keeps the previously-signalled params (or, before
++ * the first estimate, the zero-init no-op). Returns 0 or a negative AVERROR. */
++static int nvenc_setup_film_grain(AVCodecContext *avctx, const AVFrame *frame,
++                                  NV_ENC_PIC_PARAMS *pic_params)
++{
++    NvencContext *ctx = avctx->priv_data;
++    const AVFrameSideData *sd;
++    AVFilmGrainAOMParams aom;
++    int apply = 0;
++
++    if (!ctx->pelorus_film_grain)
++        return 0;
++
++    sd = av_frame_get_side_data(frame, AV_FRAME_DATA_FILM_GRAIN_PARAMS);
++    if (sd && sd->size >= sizeof(AVFilmGrainParams)) {
++        const AVFilmGrainParams *fgp = (const AVFilmGrainParams *)sd->data;
++        if (fgp->type == AV_FILM_GRAIN_PARAMS_AV1) {
++            aom   = fgp->codec.aom;
++            apply = aom.num_y_points > 0 || aom.num_uv_points[0] > 0 ||
++                    aom.num_uv_points[1] > 0;
++        } else {
++            if (!ctx->fg_warned) {
++                ctx->fg_warned = 1;
++                av_log(avctx, AV_LOG_WARNING,
++                       "pelorus_film_grain: frame film-grain params are not "
++                       "AV1/AOM; ignoring.\n");
++            }
++            return 0;
++        }
++    } else {
++        /* Fall back to the Pelorus interop section. */
++        sd = av_frame_get_side_data(frame, AV_FRAME_DATA_SEI_UNREGISTERED);
++        if (!sd)
++            return 0;
++        apply = pel_fg_from_interop(sd->data, sd->size, &aom);
++        if (apply <= 0)
++            return 0;
++    }
++
++    pel_fg_from_aom(&ctx->fg_params, &aom, apply);
++    pic_params->codecPicParams.av1PicParams.filmGrainParamsUpdate = 1;
++    pic_params->codecPicParams.av1PicParams.filmGrainParams = &ctx->fg_params;
++    return 0;
++}
++#endif
++
+ #ifdef NVENC_HAVE_QP_MAP_MODE
+ /* Pelorus: rasterize AV_FRAME_DATA_REGIONS_OF_INTEREST into NVENC's per-block
+  * delta-QP map. Mirrors libavcodec/libx264.c setup_roi(): regions are iterated
+@@ -3657,6 +3937,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+             return res;
+ #endif
+ 
++#ifdef NVENC_HAVE_AV1_FILM_GRAIN
++        res = nvenc_setup_film_grain(avctx, frame, &pic_params);
++        if (res < 0)
++            return res;
++#endif
++
+         nvenc_codec_specific_pic_params(avctx, frame, &pic_params, ctx->sei_data, sei_count);
+     } else {
+         pic_params.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
+diff --git a/libavcodec/nvenc.h b/libavcodec/nvenc.h
+index c4915a2177..781a28da27 100644
+--- a/libavcodec/nvenc.h
++++ b/libavcodec/nvenc.h
+@@ -83,6 +83,9 @@ typedef void ID3D11Device;
+ // SDK 12.0 compile time feature checks
+ #if NVENCAPI_CHECK_VERSION(12, 0)
+ #define NVENC_HAVE_HEVC_OUTPUT_RECOVERY_POINT_SEI
++/* AV1 NVENC support (incl. NV_ENC_FILM_GRAIN_PARAMS_AV1 and the AV1-config
++ * enableFilmGrainParams field) landed in SDK 12.0. */
++#define NVENC_HAVE_AV1_FILM_GRAIN
+ #endif
+ 
+ // SDK 12.1 compile time feature checks
+@@ -352,6 +355,23 @@ typedef struct NvencContext
+     int     me_hints_h;      ///< 16x16 blocks down  = ceil(height / 16)
+     int     me_hints_warned; ///< rate-limit incompatibility/absence warnings to once
+ #endif
++
++    /* Pelorus: AV1 hardware film-grain synthesis. Carries the grain estimate a
++     * vf_pelorus_grain_estimate_vulkan stage emits (the native
++     * AV_FRAME_DATA_FILM_GRAIN_PARAMS / AV_FILM_GRAIN_PARAMS_AV1 channel,
++     * preferred; or the PEL_SEC_FILMGRAIN interop section as a fallback) into
++     * NVENC's AV1 film-grain config so the grain is re-synthesized at decode
++     * instead of coded as residual. Gated by the "pelorus_film_grain" AVOption
++     * (default off); registered on av1_nvenc only (H.264/HEVC NVENC carry no
++     * AV1 film grain). At init we set NV_ENC_CONFIG_AV1::enableFilmGrainParams
++     * and point filmGrainParams at fg_params; per frame we refill it from the
++     * frame's side data and raise the AV1 pic-params filmGrainParamsUpdate flag
++     * (time-varying model; a frame with no side data keeps the last params). */
++    int pelorus_film_grain;
++#ifdef NVENC_HAVE_AV1_FILM_GRAIN
++    NV_ENC_FILM_GRAIN_PARAMS_AV1 fg_params; ///< persistent AV1 grain struct the config points at
++    int fg_warned;  ///< rate-limit incompatibility/codec warnings to once
++#endif
+ } NvencContext;
+ 
+ int ff_nvenc_encode_init(AVCodecContext *avctx);
+diff --git a/libavcodec/nvenc_av1.c b/libavcodec/nvenc_av1.c
+index 32112aa98c..5224ab1238 100644
+--- a/libavcodec/nvenc_av1.c
++++ b/libavcodec/nvenc_av1.c
+@@ -129,6 +129,8 @@ static const AVOption options[] = {
+                                                             OFFSET(forced_idr),   AV_OPT_TYPE_BOOL,  { .i64 = 0 }, -1, 1, VE },
+     { "pelorus_roi",  "Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the NVENC delta-QP map",
+                                                             OFFSET(pelorus_roi),  AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, VE },
++    { "pelorus_film_grain", "Carry the Pelorus AV1 film-grain estimate into NVENC hardware film-grain synthesis",
++                                                            OFFSET(pelorus_film_grain), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VE },
+     { "b_adapt",      "When lookahead is enabled, set this to 0 to disable adaptive B-frame decision",
+                                                             OFFSET(b_adapt),      AV_OPT_TYPE_BOOL,  { .i64 = 1 }, 0,  1, VE },
+     { "spatial-aq",   "set to 1 to enable Spatial AQ",      OFFSET(aq),           AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, VE },
+-- 
+2.54.0
+

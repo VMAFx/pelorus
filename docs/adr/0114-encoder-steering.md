@@ -66,13 +66,61 @@ delta-QP / banding map) feeding progressively more powerful, less portable hooks
 - **Tier 2 — cross-vendor strategic, "via Vulkan"**: patch `vulkan_encode.c` for
   `VK_KHR_video_encode_quantization_map` (delta map for CQP, emphasis map
   `R8_UNORM` for cbr/vbr — the latter maps almost directly onto analyze's 0..1
-  `global_banding_risk`). One Pelorus compute pass turns the cell grid into the
-  map image, bound zero-copy at `vkCmdEncodeVideoKHR`. One producer → all three
-  GPU vendors, no host roundtrip. Gated on driver maturity (see caveats).
+  `global_banding_risk`). The cell grid becomes the map image, bound zero-copy at
+  `vkCmdEncodeVideoKHR`. One producer → all three GPU vendors, no host roundtrip.
+  Gated on driver maturity (see caveats). **DONE (code), runtime-blocked on the
+  dev box** (`ffmpeg-patches/files/vulkan-pelorus-qpmap.patch`, `-pelorus_roi 1`):
+  the same standard ROI side data drives `h264_vulkan`/`hevc_vulkan`/`av1_vulkan`
+  through a single shared edit in `vulkan_encode.c`/`.h` — the `-pelorus_roi`
+  AVOption is added to the shared `VULKAN_ENCODE_COMMON_OPTIONS` macro, so all
+  three codecs gain it at once. At init it **runtime-probes** the extension, the
+  per-codec capability flag (`VK_VIDEO_ENCODE_CAPABILITY_QUANTIZATION_DELTA_MAP_BIT_KHR`
+  / `EMPHASIS_MAP_BIT_KHR`) and a usable map format + `quantizationMapTexelSize`,
+  then picks **delta map** (`R8_SINT`) under CQP or **emphasis map** (`R8_UNORM`)
+  under CBR/VBR. Any miss degrades to a one-shot warning + pass-through; a frame
+  with no ROI binds no map (zero behaviour change); the whole path is also
+  compile-gated by `VK_KHR_video_encode_quantization_map`. The ROI is
+  host-rasterized into a per-texel scratch (same `qoffset`→ΔQP convention as the
+  Tier-1 NVENC/QSV patches), uploaded into a reused device-local map image, and
+  the image view is chained via `VkVideoEncodeQuantizationMapInfoKHR` with the
+  matching `WITH_*_MAP` flag, the session-create `ALLOW_ENCODE_*_MAP_BIT`, and
+  the session-params texel size. The map image is now rasterized **on the GPU**:
+  a `pelorus_qpmap.comp` compute pass reads the coalesced ROI rectangle list from
+  a small SSBO and `imageStore`s the per-texel delta/emphasis directly, replacing
+  the original host per-texel raster + staging upload (the follow-up this patch
+  flagged). The host now uploads only the compact rect list (tens of structs).
+  The dispatch records on the encode command buffer and is preferred only when the
+  encode queue family also advertises `VK_QUEUE_COMPUTE_BIT` (so no cross-queue
+  ownership transfer is needed — the map image stays exclusive to one family);
+  otherwise the path transparently falls back to the host raster +
+  `vkCmdCopyBufferToImage` (functionally identical, same `qoffset`→ΔQP
+  convention). The standalone `.comp` and the patch's inline GLSL stay in lockstep
+  (AGENTS hard rule 4). **Compile-verified only**:
+  `vulkan_encode.c` builds clean (zero warnings) under FFmpeg's `-std=c17 -Wall`
+  set against the system Vulkan-video headers, and the full stack replays onto
+  pristine n8.1.1. **Runtime on-HW proof is blocked on this dev box**:
+  `hevc_vulkan` ENCODE fails at init with "Driver does not support required
+  encode feedback flags (BUFFER_OFFSET and BYTES_WRITTEN)" — verified directly —
+  *before* the probe runs. That is the Tier-2 driver-immaturity caveat below, not
+  a patch defect. No BD-rate gain is claimed; on-HW A/B is the follow-up.
 - **Tier 3 — specialist, producer-gated**: NVENC external ME hints
   (`NVENC_EXTERNAL_ME_HINT`, speed-first — see ADR-0113) once `vf_pelorus_mc`
   exists; AV1 film-grain (NVENC `NV_ENC_FILM_GRAIN_PARAMS_AV1` patch / SVT-AV1
   `fgs_table` / x265 H.274 FGC) once `vf_pelorus_grain` exists.
+  **NVENC ME hints DONE (code), on-HW speedup pending**
+  (`ffmpeg-patches/files/nvenc-pelorus-me-hints.patch`, `-pelorus_me_hints 1`,
+  H.264/HEVC): now that `vf_pelorus_mc_vulkan` ships (ADR-0116), the consumer
+  reads its `PEL_SEC_MOTION` MV field and feeds it to NVENC's external-ME-hint
+  input (`enableExternalMEHints` + per-frame `meExternalHints`, one L0 candidate
+  per 16×16 block). The value is **encode SPEED, not quality** — the ASIC seeds
+  or short-circuits its own motion search. Default off; the external-ME
+  capability is runtime-probed (`NV_ENC_CAPS_SUPPORT_MEONLY_MODE`) with graceful
+  degrade; AV1 is skipped (its `NVENC_EXTERNAL_ME_SB_HINT` struct differs); the
+  blob is parsed inline (no libavcodec→libpelorus link). Verified to compile
+  against the ffnvcodec headers and replay onto pristine n8.1.1; the on-hardware
+  frames/s A/B is the follow-up — **no speedup number is claimed here**.
+  Measured (bench v0.9): no speed gain on RTX 4090 at p7 — ~2–3% slowdown; kept
+  default-off, documented as an honest negative (see bench-results.md v0.9).
 
 ## Alternatives considered (per access tier)
 
@@ -120,9 +168,9 @@ must *beat* it, not merely turn it on.
 1. Tier 0 ROI emitter (`AV_FRAME_DATA_REGIONS_OF_INTEREST`) → measure on libx265.
 2. Validate the same emitter on QSV/VAAPI (capability probe + graceful degrade).
 3. Tier 1 dense delta-QP: NVENC `qpDeltaMap` (DONE+measured) + QSV `mfxExtMBQP` (DONE, code; on-HW A/B pending) + x265 qpfile bridge; A/B each vs its own AQ.
-4. Tier 2 Vulkan-Video quant-map (patch `vulkan_encode.c` + a `pelorus_qpmap.comp`).
-5. Tier 3 ME hints (after `vf_pelorus_mc`) and FGS (after `vf_pelorus_grain`).
-6. Closed loop: read QSV `mfxExtEncodeStats` / AMF block-QP feedback back into the interop ABI to verify the map was honored and improve it.
+4. Tier 2 Vulkan-Video quant-map (patch `vulkan_encode.c`) — **DONE (code), compile-verified; on-HW proof blocked by the dev-box driver's missing encode-feedback flags**. On-GPU `pelorus_qpmap.comp` raster **DONE (code), compile-verified** (replaces the host raster; host path kept as a probed fallback when the encode queue lacks compute).
+5. Tier 3 ME hints (NVENC consumer **DONE in code** after `vf_pelorus_mc`; on-HW speed A/B pending) and FGS — the H.274/HEVC FGC SEI bitstream filter `pelorus_fgs` is **DONE (round-trip verified)**; AV1 round-trips via native side data.
+6. Closed loop: read QSV `mfxExtEncodeStats` / AMF block-QP feedback back into the interop ABI to verify the map was honored and improve it. **ABI DONE (ADR-0118)**: the append-only `PEL_SEC_QPREPORT` section + pack/parse + conformance test + a vendor-neutral reader stub (`pel_qp_report_from_blocks`) land in libpelorus (ABI 1.1); the libavcodec QSV `mfxEncodeStats`/`mfxExtEncodedUnitsInfo` extraction + the populated `honored_fraction` are the documented follow-up — no on-HW number claimed.
 
 ## References
 

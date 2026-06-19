@@ -8,8 +8,8 @@
 # `vulkan spirv_library` so it only builds where the Vulkan compute path exists.
 #
 # Roadmap (not yet generated; sources land under files/ first):
-#   00NN-*-fgs-bsf.patch                        FGS OBU/SEI bitstream filter (consumes 0006's params)
-#   00NN-nvenc-pelorus-me-hints.patch           NVENC external ME hints (consumes 0007's MV field)
+#   00NN-*-fgs-bsf (H.264 / VVC legs)           extend 0010 beyond HEVC/H.274
+#   00NN-qp-feedback-qsv-reader.patch           wire the QSV encode-stat reader into PEL_SEC_QPREPORT (ABI section landed)
 #
 0001-add-vf_pelorus_deband_vulkan.patch
 0002-add-vf_pelorus_analyze_vulkan.patch
@@ -18,3 +18,7 @@
 0005-qsv-pelorus-roi.patch
 0006-add-vf_pelorus_grain_estimate_vulkan.patch
 0007-add-vf_pelorus_mc_vulkan.patch
+0008-nvenc-pelorus-me-hints.patch
+0009-vulkan-pelorus-qpmap.patch
+0010-add-pelorus_fgs_bsf.patch
+0011-nvenc-pelorus-film-grain.patch

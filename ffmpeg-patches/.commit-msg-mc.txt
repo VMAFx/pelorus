@@ -35,4 +35,4 @@ GLSL are kept in lockstep.
 
 Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
 
-ADR: docs/adr/0115-pelorus-mc.md
+ADR: docs/adr/0116-pelorus-mc.md

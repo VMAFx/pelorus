@@ -246,6 +246,130 @@ static void test_truncation(void)
     pel_blob_free(blob);
 }
 
+/* PEL_SEC_QPREPORT (f): pack the encoder-honored QP readback with a per-cell
+ * QP map appended after the blob, parse it back, verify scalars + the map. */
+static void test_qp_report_roundtrip(void)
+{
+    PelorusSideData meta;
+    PelorusQpReportSection qp;
+    PelorusPackSection sec;
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    const void *p = NULL;
+    size_t got = 0;
+    const uint16_t cells = 16 * 9; /* matches fill_meta grid */
+    int8_t cellmap[16 * 9];
+    int i;
+
+    fill_meta(&meta);
+
+    memset(&qp, 0, sizeof(qp));
+    qp.avg_qp = 27.5f;
+    qp.psnr_y = 41.2f;
+    qp.total_bits = 1234567ULL; /* exercises the 64-bit field alignment */
+    qp.num_intra_blocks = 40;
+    qp.num_inter_blocks = 200;
+    qp.num_skipped_blocks = 16;
+    qp.honored_fraction = 0.75f;
+    qp.report_source = PEL_QPSRC_QSV;
+    qp.block_size_log2 = 4; /* 16x16 */
+    qp.qp_valid = 1;
+    qp.qp_cell_size = cells; /* int8 per cell */
+    /* qp_cell_offset is set below once we know the section's blob offset. */
+
+    for (i = 0; i < (int)cells; i++) {
+        cellmap[i] = (int8_t)(20 + (i % 12)); /* a recognizable QP ramp */
+    }
+
+    sec.id = PEL_SEC_QPREPORT;
+    sec.data = &qp;
+    sec.size = (uint32_t)sizeof(qp);
+
+    /* Pack the section and verify the scalars + the map offset/size fields
+     * round-trip (the per-cell map payload itself is appended by the producer
+     * after pack, like every other map section — see docs/api/interop-abi.md;
+     * the fold path is exercised separately in test_qp_report_fold). */
+    qp.qp_cell_offset = 0; /* producer sets this when it appends cellmap */
+    (void)cellmap;
+    CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
+    CHECK(blob != NULL);
+    CHECK(pel_blob_is_present(blob, len) == 1);
+
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_QPREPORT, sizeof(PelorusQpReportSection), &p,
+                                &got) == PEL_OK);
+    CHECK(got == sizeof(PelorusQpReportSection));
+    {
+        const PelorusQpReportSection *r = p;
+        CHECK(r->avg_qp == 27.5f);
+        CHECK(r->psnr_y == 41.2f);
+        CHECK(r->total_bits == 1234567ULL);
+        CHECK(r->num_inter_blocks == 200);
+        CHECK(r->honored_fraction == 0.75f);
+        CHECK(r->report_source == PEL_QPSRC_QSV);
+        CHECK(r->block_size_log2 == 4);
+        CHECK(r->qp_valid == 1);
+        CHECK(r->qp_cell_size == cells);
+        CHECK(r->num_intra_blocks == 40);
+        CHECK(r->num_skipped_blocks == 16);
+        CHECK(r->psnr_u == 0.0f);
+        CHECK(r->psnr_v == 0.0f);
+    }
+
+    /* An older consumer (knows only the first two floats) still parses (R4). */
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_QPREPORT, 8, &p, &got) == PEL_OK);
+    CHECK(got == 8);
+
+    pel_blob_free(blob);
+}
+
+/* The reader stub: fold a per-block QP grid onto the cell grid. With a block
+ * grid that is an integer multiple of the cell grid, each cell averages a clean
+ * block tile, so a uniform block QP folds to the same per-cell QP. */
+static void test_qp_report_fold(void)
+{
+    PelorusQpReportInput in;
+    PelorusQpReportSection out;
+    int8_t blocks[8 * 4];
+    int8_t cells[4 * 2];
+    int i;
+
+    memset(&in, 0, sizeof(in));
+    for (i = 0; i < (int)(sizeof(blocks)); i++) {
+        blocks[i] = 30; /* uniform actual QP across all blocks */
+    }
+    in.block_qp = blocks;
+    in.blk_cols = 8;
+    in.blk_rows = 4;
+    in.block_size_log2 = 4;
+    in.report_source = PEL_QPSRC_QSV;
+    in.avg_qp = 30.0f;
+    in.num_inter_blocks = 32;
+
+    CHECK(pel_qp_report_from_blocks(&in, 4, 2, &out, cells, sizeof(cells)) == PEL_OK);
+    CHECK(out.qp_valid == 1);
+    CHECK(out.qp_cell_size == 4u * 2u);
+    CHECK(out.report_source == PEL_QPSRC_QSV);
+    CHECK(out.avg_qp == 30.0f);
+    for (i = 0; i < (int)(sizeof(cells)); i++) {
+        CHECK(cells[i] == 30); /* uniform block QP -> uniform cell QP */
+    }
+
+    /* Frame-stats-only path: no block grid -> qp_valid 0, scalars preserved. */
+    in.block_qp = NULL;
+    CHECK(pel_qp_report_from_blocks(&in, 4, 2, &out, NULL, 0) == PEL_OK);
+    CHECK(out.qp_valid == 0);
+    CHECK(out.qp_cell_size == 0u);
+    CHECK(out.avg_qp == 30.0f);
+
+    /* Too-small output buffer is rejected, not overrun. */
+    in.block_qp = blocks;
+    CHECK(pel_qp_report_from_blocks(&in, 4, 2, &out, cells, 3) == PEL_ERR_RANGE);
+
+    /* NULL inputs / zero grid are rejected. */
+    CHECK(pel_qp_report_from_blocks(NULL, 4, 2, &out, cells, sizeof(cells)) == PEL_ERR_INVALID);
+    CHECK(pel_qp_report_from_blocks(&in, 0, 2, &out, cells, sizeof(cells)) == PEL_ERR_INVALID);
+}
+
 /* The deband param contract: defaults validate, out-of-range is rejected. */
 static void test_deband_params(void)
 {
@@ -268,6 +392,8 @@ int main(void)
     test_foreign_buffer();
     test_header_only();
     test_truncation();
+    test_qp_report_roundtrip();
+    test_qp_report_fold();
     test_deband_params();
 
     if (g_fail != 0) {

@@ -185,18 +185,91 @@ ins_before("libavfilter/allfilters.c",
            "extern const FFFilter ff_vf_perms;\n",
            "extern const FFFilter ff_vf_pelorus_mc_vulkan;\n")
 ins_after("libavfilter/Makefile",
-          "OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vf_pelorus_denoise_vulkan.o vulkan.o vulkan_filter.o\n",
+          "OBJS-$(CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vf_pelorus_grain_estimate_vulkan.o vulkan.o vulkan_filter.o\n",
           "OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER)      += vf_pelorus_mc_vulkan.o vulkan.o vulkan_filter.o\n")
 ins_after("configure",
-          'pelorus_denoise_vulkan_filter_deps="vulkan spirv_library"\n',
+          'pelorus_grain_estimate_vulkan_filter_deps="vulkan spirv_library"\n',
           'pelorus_mc_vulkan_filter_deps="vulkan spirv_library"\n')
-ins_after("configure", REQ % "pelorus_denoise_vulkan", REQ % "pelorus_mc_vulkan")
+ins_after("configure", REQ % "pelorus_grain_estimate_vulkan", REQ % "pelorus_mc_vulkan")
 print("registration applied: mc")
 PY
 git -C "$WORKTREE" add -A
 git -C "$WORKTREE" \
     -c user.name=Lusoris -c user.email=lusoris@pm.me \
     commit -q -F "$HERE/.commit-msg-mc.txt"
+
+# Pelorus libavcodec edit (NOT a filter): make NVENC honor the PEL_SEC_MOTION MV
+# field (emitted by 0007's vf_pelorus_mc_vulkan) via its external-ME-hint input,
+# so the ASIC seeds/short-circuits its own motion search (encode SPEED, not
+# quality). Same hand-maintained-diff model as the NVENC/QSV ROI patches above;
+# applied as its own commit (-> patch 0008 below). Must land after 0007 (the
+# producer) and after 0004 (it shares the NvencContext block 0004 introduced).
+git -C "$WORKTREE" apply "$FILES_DIR/nvenc-pelorus-me-hints.patch"
+git -C "$WORKTREE" add -A
+git -C "$WORKTREE" \
+    -c user.name=Lusoris -c user.email=lusoris@pm.me \
+    commit -q -F "$HERE/.commit-msg-nvenc-me-hints.txt"
+
+# Pelorus libavcodec edit (NOT a filter): make the native Vulkan-video encoders
+# (h264_vulkan/hevc_vulkan/av1_vulkan) honor ROI side data via the cross-vendor
+# VK_KHR_video_encode_quantization_map (delta map for CQP, emphasis map for
+# CBR/VBR). Same hand-maintained-diff model as the NVENC/QSV patches above;
+# applied as its own commit (-> patch 0009 below). ADR-0114 Tier 2.
+git -C "$WORKTREE" apply "$FILES_DIR/vulkan-pelorus-qpmap.patch"
+git -C "$WORKTREE" add -A
+git -C "$WORKTREE" \
+    -c user.name=Lusoris -c user.email=lusoris@pm.me \
+    commit -q -F "$HERE/.commit-msg-vulkan.txt"
+
+# pelorus_fgs bitstream filter (H.274 / HEVC FGC SEI inserter) lands as patch
+# 0010 — the HEVC leg of the FGS round-trip the grain estimator (0006) started.
+# A BSF is NOT an AVFilter: the source drops into libavcodec/bsf/ and the
+# registration edits target bitstream_filters.c / bsf/Makefile / configure
+# (not allfilters.c / libavfilter/Makefile). It is built on CBS (cbs_h265) and
+# does NOT link libpelorus — it consumes the H.274 model via AVOptions, so no
+# require_pkg_config hunk.
+cp "$FILES_DIR/h265_pelorus_fgs_bsf.c" "$WORKTREE/libavcodec/bsf/pelorus_fgs.c"
+python3 - "$WORKTREE" <<'PY'
+import sys, pathlib
+root = pathlib.Path(sys.argv[1])
+def ins_before(path, anchor, line):
+    p = root / path; t = p.read_text()
+    assert anchor in t, f"anchor missing in {path}: {anchor!r}"
+    assert line.strip() not in t, f"already present in {path}: {line!r}"
+    p.write_text(t.replace(anchor, line + anchor, 1))
+# bitstream_filters.c: alphabetical extern list (pcm < pelorus < pgs).
+ins_before("libavcodec/bitstream_filters.c",
+           "extern const FFBitStreamFilter ff_pgs_frame_merge_bsf;\n",
+           "extern const FFBitStreamFilter ff_pelorus_fgs_bsf;\n")
+# bsf/Makefile: alphabetical OBJS list (pcm_rechunk < pelorus_fgs < pgs_frame_merge).
+ins_before("libavcodec/bsf/Makefile",
+           "OBJS-$(CONFIG_PGS_FRAME_MERGE_BSF)        += bsf/pgs_frame_merge.o\n",
+           "OBJS-$(CONFIG_PELORUS_FGS_BSF)            += bsf/pelorus_fgs.o\n")
+# configure: alphabetical *_bsf_select list (mpeg2 < pelorus < smpte436m); the
+# BSF itself is auto-discovered by find_things scanning bitstream_filters.c.
+ins_before("configure",
+           'smpte436m_to_eia608_bsf_select="smpte_436m"\n',
+           'pelorus_fgs_bsf_select="cbs_h265"\n')
+print("registration applied: pelorus_fgs (bsf)")
+PY
+git -C "$WORKTREE" add -A
+git -C "$WORKTREE" \
+    -c user.name=Lusoris -c user.email=lusoris@pm.me \
+    commit -q -F "$HERE/.commit-msg-fgs-bsf.txt"
+
+# Pelorus libavcodec edit (NOT a filter): make av1_nvenc carry the Pelorus AV1
+# film-grain estimate into NVENC's hardware AV1 film-grain config so the grain
+# is re-synthesized at decode instead of coded as residual — the HW-AV1 leg of
+# the FGS round-trip (0010's BSF is the HEVC/H.274 leg; the AV1 software path
+# round-trips via native side data). Same hand-maintained-diff model as the
+# NVENC/QSV ROI + ME-hint patches above; applied as its own commit (-> patch
+# 0011 below). Must land after 0006 (the grain producer) and after 0004 (it
+# shares the NvencContext block 0004 introduced).
+git -C "$WORKTREE" apply "$FILES_DIR/nvenc-pelorus-film-grain.patch"
+git -C "$WORKTREE" add -A
+git -C "$WORKTREE" \
+    -c user.name=Lusoris -c user.email=lusoris@pm.me \
+    commit -q -F "$HERE/.commit-msg-nvenc-film-grain.txt"
 
 # Clean stale patches, regenerate the whole range.
 rm -f "$HERE"/0*.patch
@@ -211,6 +284,10 @@ mv "$HERE"/0004-*.patch "$HERE/0004-nvenc-pelorus-roi.patch" 2>/dev/null || true
 mv "$HERE"/0005-*.patch "$HERE/0005-qsv-pelorus-roi.patch" 2>/dev/null || true
 mv "$HERE"/0006-*.patch "$HERE/0006-add-vf_pelorus_grain_estimate_vulkan.patch" 2>/dev/null || true
 mv "$HERE"/0007-*.patch "$HERE/0007-add-vf_pelorus_mc_vulkan.patch" 2>/dev/null || true
+mv "$HERE"/0008-*.patch "$HERE/0008-nvenc-pelorus-me-hints.patch" 2>/dev/null || true
+mv "$HERE"/0009-*.patch "$HERE/0009-vulkan-pelorus-qpmap.patch" 2>/dev/null || true
+mv "$HERE"/0010-*.patch "$HERE/0010-add-pelorus_fgs_bsf.patch" 2>/dev/null || true
+mv "$HERE"/0011-*.patch "$HERE/0011-nvenc-pelorus-film-grain.patch" 2>/dev/null || true
 
 git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE"
 echo "patch(es) regenerated in $HERE:"

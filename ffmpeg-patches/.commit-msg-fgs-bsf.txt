@@ -1,0 +1,34 @@
+feat(fgs): add pelorus_fgs bitstream filter (H.274 / HEVC FGC SEI)
+
+Completes the HEVC leg of the film-grain round-trip the grain estimator
+(ADR-0115) started. The estimator measures grain on the GPU and emits the
+Pelorus PEL_SEC_FILMGRAIN section plus the H.274 mode scalars; the AV1 leg
+already round-trips through the native AV_FRAME_DATA_FILM_GRAIN_PARAMS
+channel that AV1 encoders consume. HEVC has no equivalent automatic path —
+stock FFmpeg encoders do not carry film-grain frame side data into the
+HEVC bitstream — so this BSF inserts an ITU-T H.274 Film Grain
+Characteristics SEI (HEVC payload type 19) as a prefix NAL into each access
+unit, and a conforming decoder re-synthesizes the grain.
+
+Built on the coded-bitstream (CBS) generic BSF framework (cbs_h265), like
+hevc_metadata: each AU is parsed into a CodedBitstreamFragment, one FGC SEI
+is added via ff_cbs_sei_add_message(), and CBS reassembles the AU. The H.274
+model is supplied via AVOptions (model_id, blending_mode, log2_scale,
+components, intensity_low/high, scale_y, scale_c, persistence) — the canonical
+FFmpeg metadata-BSF contract. The producer's H.274 scalars (h274_model_id /
+h274_blending_mode / h274_log2_scale) and per-band RMS scaling map directly
+onto these options (mapping recipe in docs/usage/grain-fgs-bsf.md).
+
+Honest scope: this is the STATIC-model leg. A BSF works on AVPackets and no
+stock encoder forwards the estimator's per-frame grain side data onto the
+coded packet, so per-frame estimate -> SEI plumbing through an arbitrary HEVC
+encoder is not expressible in n8.1.1. Opt-in and no-op by construction: the
+filter passes the stream through unchanged unless the components mask selects
+at least one colour component; skip_existing avoids double-stamping. No
+device/box assumptions; does not link libpelorus (consumes the model via
+AVOptions, not the interop ABI).
+
+A BSF is not an AVFilter: the source lands in libavcodec/bsf/pelorus_fgs.c
+and registration targets bitstream_filters.c / bsf/Makefile / configure.
+
+ADR: docs/adr/0117-grain-fgs-bsf.md
