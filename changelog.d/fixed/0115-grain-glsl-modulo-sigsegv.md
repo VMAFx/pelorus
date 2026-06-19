@@ -1,0 +1,1 @@
+- **`vf_pelorus_grain_estimate_vulkan` SIGSEGV on the first GPU frame**: the inline GLSL `% SLICES` modulo was passed unescaped through an `av_bprintf` format string, so `%S` was interpreted as a wide-string (`%ls`) conversion and dereferenced garbage when the shader was assembled. Escaped to `%%` so the literal `%` reaches the GLSL. ADR-0115.

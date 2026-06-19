@@ -119,6 +119,8 @@ delta-QP / banding map) feeding progressively more powerful, less portable hooks
   blob is parsed inline (no libavcodec→libpelorus link). Verified to compile
   against the ffnvcodec headers and replay onto pristine n8.1.1; the on-hardware
   frames/s A/B is the follow-up — **no speedup number is claimed here**.
+  Measured (bench v0.9): no speed gain on RTX 4090 at p7 — ~2–3% slowdown; kept
+  default-off, documented as an honest negative (see bench-results.md v0.9).
 
 ## Alternatives considered (per access tier)
 

@@ -185,12 +185,12 @@ ins_before("libavfilter/allfilters.c",
            "extern const FFFilter ff_vf_perms;\n",
            "extern const FFFilter ff_vf_pelorus_mc_vulkan;\n")
 ins_after("libavfilter/Makefile",
-          "OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vf_pelorus_denoise_vulkan.o vulkan.o vulkan_filter.o\n",
+          "OBJS-$(CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vf_pelorus_grain_estimate_vulkan.o vulkan.o vulkan_filter.o\n",
           "OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER)      += vf_pelorus_mc_vulkan.o vulkan.o vulkan_filter.o\n")
 ins_after("configure",
-          'pelorus_denoise_vulkan_filter_deps="vulkan spirv_library"\n',
+          'pelorus_grain_estimate_vulkan_filter_deps="vulkan spirv_library"\n',
           'pelorus_mc_vulkan_filter_deps="vulkan spirv_library"\n')
-ins_after("configure", REQ % "pelorus_denoise_vulkan", REQ % "pelorus_mc_vulkan")
+ins_after("configure", REQ % "pelorus_grain_estimate_vulkan", REQ % "pelorus_mc_vulkan")
 print("registration applied: mc")
 PY
 git -C "$WORKTREE" add -A
@@ -241,9 +241,9 @@ def ins_before(path, anchor, line):
 ins_before("libavcodec/bitstream_filters.c",
            "extern const FFBitStreamFilter ff_pgs_frame_merge_bsf;\n",
            "extern const FFBitStreamFilter ff_pelorus_fgs_bsf;\n")
-# bsf/Makefile: alphabetical OBJS list (pcm_rechunk < pelorus_fgs < prores).
+# bsf/Makefile: alphabetical OBJS list (pcm_rechunk < pelorus_fgs < pgs_frame_merge).
 ins_before("libavcodec/bsf/Makefile",
-           "OBJS-$(CONFIG_PRORES_METADATA_BSF)        += bsf/prores_metadata.o\n",
+           "OBJS-$(CONFIG_PGS_FRAME_MERGE_BSF)        += bsf/pgs_frame_merge.o\n",
            "OBJS-$(CONFIG_PELORUS_FGS_BSF)            += bsf/pelorus_fgs.o\n")
 # configure: alphabetical *_bsf_select list (mpeg2 < pelorus < smpte436m); the
 # BSF itself is auto-discovered by find_things scanning bitstream_filters.c.

@@ -89,15 +89,19 @@ hwupload → pelorus_grain_estimate → pelorus_denoise → pelorus_deband → (
 
 AV1 (AOM) is the authoritative target for v0.x: FFmpeg has a complete public
 `AVFilmGrainAOMParams` struct and a native side-data channel, so the estimate is
-consumable today with no extra bitstream plumbing. The H.274 path carries its
-mode scalars and the `grain_model` tag, but the **OBU / SEI bitstream writer (a
-bitstream filter) is a documented follow-up** — as are the full per-lag AR
-coefficient fit, explicit chroma-grain estimation, and the H.274 component-model
-tables (ADR-0115). The estimator and the parameter contract are complete and
-codec-neutral; only the final bitstream emission for non-side-data encoders is
-deferred. No BD-rate / visual-match proof is shipped with this filter; it must
-be measured under the [ADR-0111](../adr/0111-benchmark-methodology.md)
-methodology in a follow-up.
+consumable today with no extra bitstream plumbing. Two more encoder legs now
+ship: HEVC/H.265 round-trips through the `pelorus_fgs` H.274 FGC SEI bitstream
+filter ([ADR-0117](../adr/0117-grain-fgs-bsf.md), see
+[grain-fgs-bsf.md](../usage/grain-fgs-bsf.md)), and `av1_nvenc` consumes the
+estimate via the `-pelorus_film_grain` AVOption that drives NVENC's hardware AV1
+film-grain synthesis ([ADR-0118](../adr/0118-nvenc-av1-filmgrain.md)). **Honest
+caveat: the H.274 model written by `pelorus_fgs` is static** (one frequency-domain
+model for the clip, not per-frame), and the full per-lag AR coefficient fit,
+explicit chroma-grain estimation, the H.274 component-model tables, and the
+per-frame / H.264 / VVC legs remain deferred (ADR-0115). The estimator and the
+parameter contract are complete and codec-neutral. No BD-rate / visual-match
+proof is shipped with this filter; it must be measured under the
+[ADR-0111](../adr/0111-benchmark-methodology.md) methodology in a follow-up.
 
 ## Usage
 
@@ -116,15 +120,18 @@ For HEVC/H.265 + VVC/H.266, select `model=h274` to populate the H.274 mode
 scalars in `PEL_SEC_FILMGRAIN`:
 
 ```bash
-# HEVC: estimate + denoise. NOTE: H.274 FGC SEI synthesis is not wired yet —
-# the H.274 scalars are carried in PEL_SEC_FILMGRAIN for the follow-up SEI
-# bitstream filter (ADR-0115). This command denoises but does not yet
-# re-synthesize grain in the HEVC stream.
+# HEVC: estimate + denoise, then re-synthesize the grain in the HEVC stream via
+# the pelorus_fgs H.274 FGC SEI bitstream filter (ADR-0117). The H.274 scalars
+# carried in PEL_SEC_FILMGRAIN drive the SEI the BSF writes. The H.274 model is
+# static (one model per clip), not per-frame.
 ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
   -vf "hwupload,pelorus_grain_estimate_vulkan=model=h274:strength=2.0,pelorus_denoise_vulkan=strength=0.4,hwdownload,format=yuv420p" \
-  -c:v hevc_nvenc -preset p5 -cq 28 out.mkv
+  -c:v hevc_nvenc -preset p5 -cq 28 -bsf:v pelorus_fgs out.mkv
 ```
 
-Only the AV1 path round-trips end-to-end today (via the native
-`AV_FRAME_DATA_FILM_GRAIN_PARAMS` channel); the H.274 SEI writer is the
-documented follow-up.
+All three legs now round-trip end-to-end: AV1 software encoders via the native
+`AV_FRAME_DATA_FILM_GRAIN_PARAMS` channel, HEVC via the `pelorus_fgs` H.274 FGC
+SEI bitstream filter ([ADR-0117](../adr/0117-grain-fgs-bsf.md), static model),
+and `av1_nvenc` via `-pelorus_film_grain` into NVENC's hardware AV1 film-grain
+synthesis ([ADR-0118](../adr/0118-nvenc-av1-filmgrain.md)). The H.264 and VVC
+legs and a per-frame H.274 model remain deferred.

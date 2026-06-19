@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0116: vf_pelorus_mc_vulkan v1 — a standalone GPU motion-vector-hint producer (encode-speed, not quality)
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-06-15
 - **Deciders**: Lusoris
 - **Tags**: motion, vulkan, interop, nvenc, encoder, roadmap

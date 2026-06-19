@@ -174,8 +174,12 @@ struct), a device that reports no external-ME support warns once and passes
 through, and an FFmpeg built against ffnvcodec headers without the external-ME
 structs (pre-SDK-8.1) no-ops at init with a one-shot warning. If a frame carries
 no `PEL_SEC_MOTION` section the hint buffer is left unset for that frame, so
-NVENC runs its own search. No measured speedup ships yet — the MV field is wired
-into NVENC's external-ME input and the on-hardware A/B is a documented follow-up.
+NVENC runs its own search. On-hardware A/B (RTX 4090, `hevc_nvenc -preset p7`,
+1280×720, 600 frames): hints engaged but produced a ~2–3% *slowdown* (hints-off
+114 fps vs hints-on 110 fps) — the per-frame hint upload outweighs ME-search
+savings on Ada VDEnc at p7. Kept default off and documented as an honest negative
+(see bench-results.md v0.9). It may still help on slower ME engines or
+higher-motion content.
 See [ADR-0114](../adr/0114-encoder-steering.md) Tier 3 and
 [ADR-0116](../adr/0116-pelorus-mc.md).
 

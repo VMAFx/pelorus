@@ -2,7 +2,7 @@ diff --git a/libavcodec/qsvenc.c b/libavcodec/qsvenc.c
 index fc1b8795d8..d978301577 100644
 --- a/libavcodec/qsvenc.c
 +++ b/libavcodec/qsvenc.c
-@@ -1113,6 +1113,36 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
+@@ -1113,6 +1113,35 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
          q->extco3.Header.BufferId      = MFX_EXTBUFF_CODING_OPTION3;
          q->extco3.Header.BufferSz      = sizeof(q->extco3);
  
@@ -30,8 +30,7 @@ index fc1b8795d8..d978301577 100644
 +            av_log(avctx, AV_LOG_WARNING,
 +                   "pelorus_roi requested but mfxExtMBQP is unavailable "
 +                   "(oneVPL/MediaSDK API 1.13 or greater required at compile "
-+                   "time); ignoring.
-+");
++                   "time); ignoring.\n");
 +            q->pelorus_roi = 0;
 +        }
 +#endif

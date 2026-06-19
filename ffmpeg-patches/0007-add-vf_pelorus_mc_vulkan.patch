@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Mon, 15 Jun 2026 15:26:58 +0200
+Date: Fri, 19 Jun 2026 19:50:06 +0200
 Subject: [PATCH 07/11] feat(mc): add vf_pelorus_mc_vulkan (block-matching
  motion estimator)
 MIME-Version: 1.0
@@ -42,47 +42,47 @@ GLSL are kept in lockstep.
 
 Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
 
-ADR: docs/adr/0115-pelorus-mc.md
+ADR: docs/adr/0116-pelorus-mc.md
 ---
  configure                          |   2 +
  libavfilter/Makefile               |   1 +
  libavfilter/allfilters.c           |   1 +
- libavfilter/vf_pelorus_mc_vulkan.c | 885 +++++++++++++++++++++++++++++
- 4 files changed, 889 insertions(+)
+ libavfilter/vf_pelorus_mc_vulkan.c | 891 +++++++++++++++++++++++++++++
+ 4 files changed, 895 insertions(+)
  create mode 100644 libavfilter/vf_pelorus_mc_vulkan.c
 
 diff --git a/configure b/configure
-index 9a9c7983d9..07803cb681 100755
+index 9a9c7983d9..07301fd756 100755
 --- a/configure
 +++ b/configure
-@@ -4180,6 +4180,7 @@ overlay_vulkan_filter_deps="vulkan spirv_library"
- pelorus_analyze_vulkan_filter_deps="vulkan spirv_library"
+@@ -4181,6 +4181,7 @@ pelorus_analyze_vulkan_filter_deps="vulkan spirv_library"
  pelorus_deband_vulkan_filter_deps="vulkan spirv_library"
  pelorus_denoise_vulkan_filter_deps="vulkan spirv_library"
-+pelorus_mc_vulkan_filter_deps="vulkan spirv_library"
  pelorus_grain_estimate_vulkan_filter_deps="vulkan spirv_library"
++pelorus_mc_vulkan_filter_deps="vulkan spirv_library"
  owdenoise_filter_deps="gpl"
  pad_opencl_filter_deps="opencl"
-@@ -7397,6 +7398,7 @@ enabled libvmaf           && check_pkg_config libvmaf_cuda "libvmaf >= 2.0.0" li
- enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+ pan_filter_deps="swresample"
+@@ -7398,6 +7399,7 @@ enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpeloru
  enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
  enabled pelorus_denoise_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
-+enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
  enabled pelorus_grain_estimate_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
++enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
  enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
+ enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index d5b815a835..1c0de9681e 100644
+index d5b815a835..61cdb6305a 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
-@@ -436,6 +436,7 @@ OBJS-$(CONFIG_PALETTEUSE_FILTER)             += vf_paletteuse.o framesync.o pale
- OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vf_pelorus_analyze_vulkan.o vulkan.o vulkan_filter.o
+@@ -437,6 +437,7 @@ OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vf_pelorus_analyze_vulkan.o vulk
  OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER)  += vf_pelorus_deband_vulkan.o vulkan.o vulkan_filter.o
  OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vf_pelorus_denoise_vulkan.o vulkan.o vulkan_filter.o
-+OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER)      += vf_pelorus_mc_vulkan.o vulkan.o vulkan_filter.o
  OBJS-$(CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vf_pelorus_grain_estimate_vulkan.o vulkan.o vulkan_filter.o
++OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER)      += vf_pelorus_mc_vulkan.o vulkan.o vulkan_filter.o
  OBJS-$(CONFIG_PERMS_FILTER)                  += f_perms.o
  OBJS-$(CONFIG_PERSPECTIVE_FILTER)            += vf_perspective.o
+ OBJS-$(CONFIG_PHASE_FILTER)                  += vf_phase.o
 diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
 index 5a5f777074..45949d7b8e 100644
 --- a/libavfilter/allfilters.c
@@ -97,10 +97,10 @@ index 5a5f777074..45949d7b8e 100644
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_mc_vulkan.c b/libavfilter/vf_pelorus_mc_vulkan.c
 new file mode 100644
-index 0000000000..e502b33482
+index 0000000000..033766b50d
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_mc_vulkan.c
-@@ -0,0 +1,885 @@
+@@ -0,0 +1,891 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -169,6 +169,12 @@ index 0000000000..e502b33482
 + * serves every bsize. Kept byte-identical to BLOCK_DIM in pelorus_mc.comp. */
 +#define PEL_MC_BLOCK_DIM 32
 +
++/* SAD-reduction lane count, derived from the block dim so a PEL_MC_BLOCK_DIM
++ * change propagates into the inline GLSL (lockstep with pelorus_mc.comp's
++ * BLOCK_DIM*BLOCK_DIM shared-array + tree-reduction expressions, rather than a
++ * silently-diverging hardcoded 1024/512). */
++#define PEL_MC_SAD_LANES_STR AV_STRINGIFY(PEL_MC_BLOCK_DIM * PEL_MC_BLOCK_DIM)
++
 +/* SAD fixed-point scale shared by shader writes and host reads (the SAD is
 + * summed over a block in normalized [0,1] luma). Mirrors SAD_SCALE in the .comp. */
 +#define PEL_MC_SAD_SCALE 256.0
@@ -181,7 +187,7 @@ index 0000000000..e502b33482
 + * ref_image[0]. */
 +static const char mc_glsl[] =
 +    "const float SAD_SCALE = 256.0;\n"
-+    "shared float s_sad[1024];\n" /* PEL_MC_BLOCK_DIM * PEL_MC_BLOCK_DIM */
++    "shared float s_sad[" PEL_MC_SAD_LANES_STR "];\n" /* PEL_MC_BLOCK_DIM^2 */
 +    "shared int   s_best_x;\n"
 +    "shared int   s_best_y;\n"
 +    "shared float s_best_cost;\n"
@@ -207,7 +213,7 @@ index 0000000000..e502b33482
 +    "    }\n"
 +    "    s_sad[lidx] = d;\n"
 +    "    barrier();\n"
-+    "    for (uint stride = 512u; stride > 0u; stride >>= 1u) {\n"
++    "    for (uint stride = (" PEL_MC_SAD_LANES_STR ") / 2u; stride > 0u; stride >>= 1u) {\n"
 +    "        if (lidx < stride)\n"
 +    "            s_sad[lidx] += s_sad[lidx + stride];\n"
 +    "        barrier();\n"

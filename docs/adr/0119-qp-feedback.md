@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0119: Closed-loop QP feedback — read the encoder's honored QP/bits back into the interop ABI
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-06-15
 - **Deciders**: Lusoris
 - **Tags**: interop, abi, qsv, encoder, qp-map, roi, closed-loop, feedback

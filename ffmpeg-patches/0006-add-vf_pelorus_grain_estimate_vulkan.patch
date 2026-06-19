@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Mon, 15 Jun 2026 15:26:58 +0200
+Date: Fri, 19 Jun 2026 19:50:06 +0200
 Subject: [PATCH 06/11] feat(grain): add vf_pelorus_grain_estimate_vulkan (FGS
  param estimator)
 MIME-Version: 1.0
@@ -93,7 +93,7 @@ index 8f49f54808..5a5f777074 100644
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_grain_estimate_vulkan.c b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
 new file mode 100644
-index 0000000000..970a86fa09
+index 0000000000..3d80ab0f44
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
 @@ -0,0 +1,654 @@
@@ -279,7 +279,7 @@ index 0000000000..970a86fa09
 +    GLSLC(1,     const float RES_CLAMP = 0.08;                                );
 +    GLSLC(1,     const int BANDS = 8;                                         );
 +    GLSLC(1,     const uint SLICES = 16u;                                     );
-+    GLSLC(1,     ivec2 size = imageSize(input_images[0]);                     );
++    GLSLC(1,     ivec2 size = ivec2(width, height);                           );
 +    GLSLC(1,     int x = int(gl_GlobalInvocationID.x);                        );
 +    GLSLC(1,     int y = int(gl_GlobalInvocationID.y);                        );
 +    GLSLC(1,     if (x >= size.x || y >= size.y)                              );

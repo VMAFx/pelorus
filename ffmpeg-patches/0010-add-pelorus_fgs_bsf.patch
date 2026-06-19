@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Mon, 15 Jun 2026 15:26:58 +0200
+Date: Fri, 19 Jun 2026 19:50:06 +0200
 Subject: [PATCH 10/11] feat(fgs): add pelorus_fgs bitstream filter (H.274 /
  HEVC FGC SEI)
 MIME-Version: 1.0
@@ -48,7 +48,7 @@ ADR: docs/adr/0117-grain-fgs-bsf.md
  create mode 100644 libavcodec/bsf/pelorus_fgs.c
 
 diff --git a/configure b/configure
-index 07803cb681..9a161babd9 100755
+index 07301fd756..649bd1a4c6 100755
 --- a/configure
 +++ b/configure
 @@ -3709,6 +3709,7 @@ hevc_metadata_bsf_select="cbs_h265"
@@ -72,17 +72,17 @@ index 150cca8939..45704353bd 100644
  extern const FFBitStreamFilter ff_prores_metadata_bsf;
  extern const FFBitStreamFilter ff_remove_extradata_bsf;
 diff --git a/libavcodec/bsf/Makefile b/libavcodec/bsf/Makefile
-index eb090090ef..84d4f8e60b 100644
+index eb090090ef..6195cd407b 100644
 --- a/libavcodec/bsf/Makefile
 +++ b/libavcodec/bsf/Makefile
-@@ -37,6 +37,7 @@ OBJS-$(CONFIG_NULL_BSF)                   += bsf/null.o
+@@ -36,6 +36,7 @@ OBJS-$(CONFIG_NOISE_BSF)                  += bsf/noise.o
+ OBJS-$(CONFIG_NULL_BSF)                   += bsf/null.o
  OBJS-$(CONFIG_OPUS_METADATA_BSF)          += bsf/opus_metadata.o
  OBJS-$(CONFIG_PCM_RECHUNK_BSF)            += bsf/pcm_rechunk.o
- OBJS-$(CONFIG_PGS_FRAME_MERGE_BSF)        += bsf/pgs_frame_merge.o
 +OBJS-$(CONFIG_PELORUS_FGS_BSF)            += bsf/pelorus_fgs.o
+ OBJS-$(CONFIG_PGS_FRAME_MERGE_BSF)        += bsf/pgs_frame_merge.o
  OBJS-$(CONFIG_PRORES_METADATA_BSF)        += bsf/prores_metadata.o
  OBJS-$(CONFIG_REMOVE_EXTRADATA_BSF)       += bsf/remove_extradata.o
- OBJS-$(CONFIG_SETTS_BSF)                  += bsf/setts.o
 diff --git a/libavcodec/bsf/pelorus_fgs.c b/libavcodec/bsf/pelorus_fgs.c
 new file mode 100644
 index 0000000000..9925cd0755

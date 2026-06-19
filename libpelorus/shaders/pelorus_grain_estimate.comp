@@ -61,7 +61,7 @@ layout(binding = 1, std430) buffer GrainBuf {
 layout(push_constant, std430) uniform Params {
     int   width;       /*  0  plane width                                       */
     int   height;      /*  4  plane height                                      */
-    float edgeThr;     /*  8  3x3 range above which a pixel is an edge (skipped)*/
+    float edge_thr;     /*  8  3x3 range above which a pixel is an edge (skipped)*/
 } pc;
 
 const float SUMSQ_GS = 300000.0; /* resid^2 fixed point (overflow-safe to 8K)  */
@@ -96,7 +96,7 @@ void main() {
     mean /= 9.0;
 
     /* Edge gate: a large neighbourhood range is structure, not grain. */
-    if ((hi - lo) > pc.edgeThr)
+    if ((hi - lo) > pc.edge_thr)
         return;
 
     float resid = clamp(c - mean, -RES_CLAMP, RES_CLAMP);
@@ -124,7 +124,7 @@ void main() {
         }
     }
     meanR /= 9.0;
-    if ((hiR - loR) <= pc.edgeThr) {
+    if ((hiR - loR) <= pc.edge_thr) {
         float residR = clamp(cr - meanR, -RES_CLAMP, RES_CLAMP);
         float prod = resid * residR;
         atomicAdd(corr[slice], uint((prod + CORR_BIAS) * CORR_GS));

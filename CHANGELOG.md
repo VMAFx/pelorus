@@ -47,6 +47,8 @@ All notable changes to Pelorus are documented here. The format is
 - **FFmpeg link of `libpelorus`**: the patch stack ran `require_pkg_config` (which adds cflags but not link libs), so a fully-linked `ffmpeg` failed with `undefined reference to pel_blob_pack` — a `.o`-only CI build never caught it. `generate.sh` now also emits `add_extralibs $libpelorus_extralibs`, and CI builds + links the `ffmpeg` binary and smoke-tests that the filters register. ADR-0104.
 - **`bd_rate.py` sign**: it computed `integ(baseline) − integ(pelorus)`, sign-flipping both BD-rate and BD-VMAF (a 50% saving read as ~+75%). Corrected to `integ(pelorus) − integ(baseline)`, with a self-test (half-bitrate ⇒ −50%, identical ⇒ 0%, double ⇒ +100%). ADR-0111.
 - **`block-unsafe-bash` hook**: the root-wipe guard matched any `rm -rf /…` path, blocking legitimate `rm -rf /tmp/…`. Narrowed to the filesystem root only.
+- **QSV ROI (`-pelorus_roi 1`) SIGSEGV under CQP**: `qsvenc_setup_roi()` re-derived its `QSVEncContext` from `avctx->priv_data`, but for the wrapped `hevc_qsv`/`h264_qsv` encoders that pointer is the wrapper struct (the real context is `&wrapper->qsv`), so the ROI write landed on a misaligned pointer and faulted. Fixed by passing the correct `QSVEncContext` in as a parameter, as every other qsvenc helper does. ADR-0114.
+- **`vf_pelorus_grain_estimate_vulkan` SIGSEGV on the first GPU frame**: the inline GLSL `% SLICES` modulo was passed unescaped through an `av_bprintf` format string, so `%S` was interpreted as a wide-string (`%ls`) conversion and dereferenced garbage when the shader was assembled. Escaped to `%%` so the literal `%` reaches the GLSL. ADR-0115.
 
 <!-- END UNRELEASED -->
 

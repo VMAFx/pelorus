@@ -309,6 +309,10 @@ static void test_qp_report_roundtrip(void)
         CHECK(r->block_size_log2 == 4);
         CHECK(r->qp_valid == 1);
         CHECK(r->qp_cell_size == cells);
+        CHECK(r->num_intra_blocks == 40);
+        CHECK(r->num_skipped_blocks == 16);
+        CHECK(r->psnr_u == 0.0f);
+        CHECK(r->psnr_v == 0.0f);
     }
 
     /* An older consumer (knows only the first two floats) still parses (R4). */

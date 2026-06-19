@@ -44,6 +44,11 @@ libpelorus/
 4. **The conformance fixture (`test/interop_test.c`) is shared with vmafx** — an
    N+1-minor blob must stay parseable by an N-minor consumer (R4). Add cases
    when you add fields; never weaken existing ones.
+5. **`PEL_SEC_QPREPORT` (ABI 1.1)**: the `pel_qp_report_from_blocks()` signature,
+   the `PelorusQpReportInput` layout, and the `qp_cell_out` ownership convention
+   are stable once vmafx vendors `interop.c` — changing any of them requires a
+   coordinated two-repo PR. The ABI 1.1 conformance case in `test/interop_test.c`
+   is load-bearing; do not weaken it. (ADR-0119)
 
 ## Don't
 

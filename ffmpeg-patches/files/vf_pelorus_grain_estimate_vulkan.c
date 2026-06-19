@@ -180,7 +180,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
     GLSLC(1,     const float RES_CLAMP = 0.08;                                );
     GLSLC(1,     const int BANDS = 8;                                         );
     GLSLC(1,     const uint SLICES = 16u;                                     );
-    GLSLC(1,     ivec2 size = imageSize(input_images[0]);                     );
+    GLSLC(1,     ivec2 size = ivec2(width, height);                           );
     GLSLC(1,     int x = int(gl_GlobalInvocationID.x);                        );
     GLSLC(1,     int y = int(gl_GlobalInvocationID.y);                        );
     GLSLC(1,     if (x >= size.x || y >= size.y)                              );

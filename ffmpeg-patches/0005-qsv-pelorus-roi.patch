@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Mon, 15 Jun 2026 15:26:58 +0200
+Date: Fri, 19 Jun 2026 19:50:06 +0200
 Subject: [PATCH 05/11] feat(qsv): honor AV_FRAME_DATA_REGIONS_OF_INTEREST via
  the per-block QP map
 MIME-Version: 1.0
@@ -40,17 +40,17 @@ Verified: cc -fsyntax-only of the changed libavcodec TUs against the installed
 oneVPL headers; full-stack regeneration applies cleanly. Full QSV ffmpeg rebuild
 and on-Arc BD-rate proof are a follow-up (no fabricated numbers).
 ---
- libavcodec/qsvenc.c      | 174 ++++++++++++++++++++++++++++++++++++++-
+ libavcodec/qsvenc.c      | 173 ++++++++++++++++++++++++++++++++++++++-
  libavcodec/qsvenc.h      |  18 ++++
  libavcodec/qsvenc_h264.c |   2 +
  libavcodec/qsvenc_hevc.c |   2 +
- 4 files changed, 195 insertions(+), 1 deletion(-)
+ 4 files changed, 194 insertions(+), 1 deletion(-)
 
 diff --git a/libavcodec/qsvenc.c b/libavcodec/qsvenc.c
-index fc1b8795d8..d978301577 100644
+index fc1b8795d8..ee3742f95f 100644
 --- a/libavcodec/qsvenc.c
 +++ b/libavcodec/qsvenc.c
-@@ -1113,6 +1113,36 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
+@@ -1113,6 +1113,35 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
          q->extco3.Header.BufferId      = MFX_EXTBUFF_CODING_OPTION3;
          q->extco3.Header.BufferSz      = sizeof(q->extco3);
  
@@ -78,8 +78,7 @@ index fc1b8795d8..d978301577 100644
 +            av_log(avctx, AV_LOG_WARNING,
 +                   "pelorus_roi requested but mfxExtMBQP is unavailable "
 +                   "(oneVPL/MediaSDK API 1.13 or greater required at compile "
-+                   "time); ignoring.
-+");
++                   "time); ignoring.\n");
 +            q->pelorus_roi = 0;
 +        }
 +#endif
@@ -87,7 +86,7 @@ index fc1b8795d8..d978301577 100644
          if (avctx->codec_id == AV_CODEC_ID_HEVC ||
              avctx->codec_id == AV_CODEC_ID_H264) {
              switch (q->p_strategy) {
-@@ -2129,6 +2159,131 @@ static void print_interlace_msg(AVCodecContext *avctx, QSVEncContext *q)
+@@ -2129,6 +2158,131 @@ static void print_interlace_msg(AVCodecContext *avctx, QSVEncContext *q)
      }
  }
  
@@ -219,7 +218,7 @@ index fc1b8795d8..d978301577 100644
  static int set_roi_encode_ctrl(AVCodecContext *avctx, const AVFrame *frame,
                                 mfxEncodeCtrl *enc_ctrl)
  {
-@@ -2517,7 +2672,20 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
+@@ -2517,7 +2671,20 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
          q->set_encode_ctrl_cb(avctx, frame, enc_ctrl);
      }
  
@@ -241,7 +240,7 @@ index fc1b8795d8..d978301577 100644
           avctx->codec_id == AV_CODEC_ID_H265) &&
           enc_ctrl && QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 8)) {
          ret = set_roi_encode_ctrl(avctx, frame, enc_ctrl);
-@@ -2752,6 +2920,10 @@ int ff_qsv_enc_close(AVCodecContext *avctx, QSVEncContext *q)
+@@ -2752,6 +2919,10 @@ int ff_qsv_enc_close(AVCodecContext *avctx, QSVEncContext *q)
      av_freep(&q->extparam_str);
      av_freep(&q->extparam);
  
