@@ -85,3 +85,10 @@ ffmpeg-patches/
   zero-copy (principles.md §5).
 - Don't `av_free` a `pel_blob_pack` buffer — wrap it in an `AVBufferRef` with a
   `pel_blob_free` callback (allocator match).
+6. **`vf_pelorus_dehalo_vulkan` (patch 0014) is a pure pixel transform that does
+   NOT link libpelorus** — its `configure` registration is **deps-only**
+   (`pelorus_dehalo_vulkan_filter_deps="vulkan spirv_library"`, no
+   `require_pkg_config libpelorus … && add_extralibs` hunk, unlike the
+   deband/analyze/denoise/grain filters); it emits no interop side data. Its
+   inline GLSL stays in lockstep with `libpelorus/shaders/pelorus_dehalo.comp`
+   (root AGENTS.md hard rule 4).

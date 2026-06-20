@@ -416,3 +416,35 @@ patches (ADR-0108 deliverable #6).
   an SVT-AV1-enabled toolchain (`./configure --enable-libsvtav1 … && make`) and
   smoke `ffmpeg -h encoder=libsvtav1 | grep pelorus_roi`; ideally re-run the
   on-HW A/B (`analyze roi=1 → libsvtav1 -pelorus_roi 1`, CAMBI) from
+
+## v0.1.0 — patch 0014 (dehalo; cumulative on 0001–0011)
+
+- **Patch**: `ffmpeg-patches/0014-add-vf_pelorus_dehalo_vulkan.patch`
+  (canonical source `files/vf_pelorus_dehalo_vulkan.c`). A `vf_` filter drop-in,
+  same per-filter registration model as the deband/analyze/denoise loop —
+  **not** a libavcodec edit. **Cumulative on 0001–0011.**
+- **Touches**: `libavfilter/vf_pelorus_dehalo_vulkan.c` (new) + the three
+  registration files. `libavfilter/allfilters.c` (the `extern const FFFilter
+  ff_vf_pelorus_dehalo_vulkan` line, inserted **before** the `denoise` entry —
+  `deband < dehalo < denoise` alphabetically, so dehalo's context lines reference
+  the deband-added line above it); `libavfilter/Makefile` (the
+  `OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER) += vf_pelorus_dehalo_vulkan.o
+  vulkan.o vulkan_filter.o` line, inserted **after** the deband OBJS line);
+  `configure` (`pelorus_dehalo_vulkan_filter_deps="vulkan spirv_library"` —
+  **deps only**).
+- **Consumes from libpelorus**: **none.** Dehalo is a **pure pixel transform** —
+  it does not link libpelorus, emits no interop side data, and so carries **NO
+  `require_pkg_config libpelorus … && add_extralibs` hunk** (unlike the
+  deband/analyze/denoise/grain filters). The `configure` registration is
+  deps-only. Nothing in the interop ABI can break this filter on a rebase.
+- **Consumes from FFmpeg**: the standard `vf_*_vulkan` compute-filter surface
+  (`FFVulkanContext`, lazy SPIR-V init, `FF_VK_REP_FLOAT`, `GLSLC`/`GLSLF`/`GLSLD`
+  inline GLSL, `ff_vk_filter_config_input`/`_output`, the push-const machinery) —
+  the same surface the other `vf_pelorus_*_vulkan` filters use. A change to that
+  surface on an upstream bump can break the dispatch; re-test by replaying.
+- **Shader lockstep**: `libpelorus/shaders/pelorus_dehalo.comp` and the patch's
+  inline GLSL implement the same single-pass `DeHalo_alpha` + `FineDehalo`
+  algorithm (box-blur target → `lowsens`/`highsens` sensitivity mask →
+  remove-only asymmetric `darkstr`/`brightstr` pull → dilated Sobel ring gate).
+  Edit both together (AGENTS hard rule 4).
+- **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay

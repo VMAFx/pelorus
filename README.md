@@ -74,6 +74,7 @@ green · the deband shader compiles.**
 | Filter | Purpose | Status |
 |---|---|---|
 | `pelorus_deband_vulkan` | Smart deband (f3kdb): flatten banding + TPDF/blue-noise dither, detail-protected, zero-copy | **Working** |
+| `pelorus_dehalo_vulkan` | Anime/2D dehalo + dering: single-pass GPU port of DeHalo_alpha + FineDehalo, removes the ring next to line-art (luma-only); foundation of `tune=anime` | **Built (tuning pending)** |
 | `pelorus_denoise_vulkan` | Edge-preserving spatio-temporal denoise (the biggest BD-rate lever) | Roadmap |
 | `pelorus_analyze_vulkan` | Measured banding/variance/edge stats → interop side data (GPU reduction + readback) | **Working** |
 | `pelorus_grain_estimate_vulkan` | Film-grain param estimation (GPU per-band HF-residual) → PEL_SEC_FILMGRAIN + native AV1 side data | **Estimator built** |
@@ -106,6 +107,12 @@ encoder. A documented, retunable composition, not a new meta-filter. See
       patch 0011); AV1 software encoders round-trip via native side data. Static
       AVOption-driven HEVC model; per-frame + H.264/VVC legs are follow-ups
       (ADR-0117 / ADR-0118).
+- [x] Step 8 — Anime dehalo: `vf_pelorus_dehalo_vulkan` (patch 0012), a
+      single-pass zero-copy GPU port of HAvsFunc `DeHalo_alpha` + `FineDehalo`.
+      Removes the bright/dark ring next to line-art (luma-only; pure transform, no
+      interop). Foundation of the planned `tune=anime` pipeline. Compile-verified
+      and glslang-clean; on-content tuning + the SSIMULACRA2 / edge-region
+      VMAF-NEG / CAMBI proof are follow-ups (ADR-0123 / ADR-0111).
 - Encoder steering (ADR-0114, opt-in `-pelorus_roi 1`): the `analyze roi=1`
   banding map drives dense per-block delta-QP on **NVENC** (`qpDeltaMap`, proven
   −41% banding), **QSV** (`mfxExtMBQP`, code-complete; on-Intel-HW proof pending),

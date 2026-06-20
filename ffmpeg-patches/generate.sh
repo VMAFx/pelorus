@@ -298,6 +298,43 @@ git -C "$WORKTREE" \
     -c user.name=Lusoris -c user.email=lusoris@pm.me \
     commit -q -F "$HERE/.commit-msg-svtav1.txt"
 
+# vf_pelorus_dehalo_vulkan (anime dehalo + dering) is a PURE pixel transform that
+# does NOT link libpelorus (no interop emit), so its registration omits the
+# require_pkg_config hunk entirely — just the deps line. Committed last so it
+# lands as patch 0014. Same per-filter registration model as the deband loop.
+cp "$FILES_DIR/vf_pelorus_dehalo_vulkan.c" "$WORKTREE/libavfilter/"
+python3 - "$WORKTREE" <<'PY'
+import sys, pathlib
+root = pathlib.Path(sys.argv[1])
+def ins_before(path, anchor, line):
+    p = root / path; t = p.read_text()
+    assert anchor in t, f"anchor missing in {path}: {anchor!r}"
+    assert line.strip() not in t, f"already present in {path}: {line!r}"
+    p.write_text(t.replace(anchor, line + anchor, 1))
+def ins_after(path, anchor, line):
+    p = root / path; t = p.read_text()
+    assert anchor in t, f"anchor missing in {path}: {anchor!r}"
+    assert line.strip() not in t, f"already present in {path}: {line!r}"
+    p.write_text(t.replace(anchor, anchor + line, 1))
+# allfilters.c: alphabetical (deban < dehal < denoi) -> insert before denoise.
+ins_before("libavfilter/allfilters.c",
+           "extern const FFFilter ff_vf_pelorus_denoise_vulkan;\n",
+           "extern const FFFilter ff_vf_pelorus_dehalo_vulkan;\n")
+# Makefile: insert after deband (deband < dehalo).
+ins_after("libavfilter/Makefile",
+          "OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER)  += vf_pelorus_deband_vulkan.o vulkan.o vulkan_filter.o\n",
+          "OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER)  += vf_pelorus_dehalo_vulkan.o vulkan.o vulkan_filter.o\n")
+# configure: deps ONLY — dehalo does not link libpelorus (no require_pkg_config).
+ins_after("configure",
+          'pelorus_deband_vulkan_filter_deps="vulkan spirv_library"\n',
+          'pelorus_dehalo_vulkan_filter_deps="vulkan spirv_library"\n')
+print("registration applied: dehalo")
+PY
+git -C "$WORKTREE" add -A
+git -C "$WORKTREE" \
+    -c user.name=Lusoris -c user.email=lusoris@pm.me \
+    commit -q -F "$HERE/.commit-msg-dehalo.txt"
+
 # Clean stale patches, regenerate the whole range.
 rm -f "$HERE"/0*.patch
 git -C "$WORKTREE" format-patch --zero-commit --start-number=1 \
@@ -317,6 +354,7 @@ mv "$HERE"/0010-*.patch "$HERE/0010-add-pelorus_fgs_bsf.patch" 2>/dev/null || tr
 mv "$HERE"/0011-*.patch "$HERE/0011-nvenc-pelorus-film-grain.patch" 2>/dev/null || true
 mv "$HERE"/0012-*.patch "$HERE/0012-libaom-pelorus-roi.patch" 2>/dev/null || true
 mv "$HERE"/0013-*.patch "$HERE/0013-svtav1-pelorus-roi.patch" 2>/dev/null || true
+mv "$HERE"/0014-*.patch "$HERE/0014-add-vf_pelorus_dehalo_vulkan.patch" 2>/dev/null || true
 
 git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE"
 echo "patch(es) regenerated in $HERE:"
