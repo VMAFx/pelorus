@@ -448,6 +448,42 @@ nil where a large L2 (the 4090's 72 MB) already caches the window — so `tile`
 defaults **off** (flagship-first) and is opt-in for weak / integrated / mobile
 GPUs. See [ADR-0134](../adr/0134-denoise-shared-mem-tile.md).
 
+## v0.12 — source-side perceptual bit-allocation (perceptual-AQ): honest negative (ADR-0135)
+
+Tested whether a source-side, JND-weighted **perceptual AQ map** (analyze `aq`
+mode — Chou-Li luma adaptation + NAMM texture-masking + edge/banding floors,
+signed mean-centered qoffsets) can **beat the encoder's in-loop variance-AQ** at
+iso-bitrate by redistributing bits perceptually on the clean source. Real ffmpeg
+n8.1.1 + full stack, hevc_nvenc, CBR RD curves (4 points, mean-over-frames),
+BD-rate via `bd_rate.py`. A/B = NVENC's own AQ vs the map + AQ-off.
+
+**Mixed synthetic composite (banding gradient + texture), `reclaim_gain` sweep:**
+
+| `reclaim_gain` | SSIMULACRA2 BD-rate | PSNR BD-rate | CAMBI (per-point) |
+|---|---|---|---|
+| 0.7 | **+13.05 %** (loss) | +7.21 % (loss) | −14 % … −25 % (banding win) |
+| 1.0 (bit-neutral) | **+19.89 %** (loss) | +13.53 % (loss) | larger banding win |
+
+The map strongly cuts banding (CAMBI), but **loses on overall fidelity**
+(SSIMULACRA2/PSNR) — and more starving makes fidelity worse, so no setting wins
+on both. The CAMBI BD-rate is `nan`: the baseline CAMBI is flat across bitrate
+(NVENC's AQ never fixes the gradient), so there is no equal-CAMBI bitrate to
+integrate against.
+
+**Real BBB content (sky + foreground, `reclaim_gain=0.7`):** CAMBI ≈ 0 for both
+arms (no banding present), so the map only starved texture for no benefit —
+SSIMULACRA2 dropped at every point (11.28 → 6.15, 35.18 → 32.93, 49.29 → 48.08)
+at 3–10 % higher bitrate. A pure loss on the common non-banding case.
+
+**Why (iso-bitrate tension).** Reducing banding at iso-bitrate means moving bits
+from texture to flats; SSIMULACRA2/PSNR weight texture fidelity, so the trade only
+nets positive if the starved texture is *truly imperceptible*. The cheap scalar
+masking proxy (`edge/var` per tile, no structure tensor) starves visible detail,
+and SSIMULACRA2 punishes it. **Rejected** (ADR-0135): the code is not merged; the
+incumbent `roi=1` banding mode already captures the banding win *without* the
+texture-starving cost. A structure-tensor + CSF masking discriminator (new GPU
+output) is the only path that could revive it — a documented follow-up, not taken.
+
 ## Open / next
 
 1. **SVT-AV1 ROI on real content**: the v0.10 synthetic gain is modest; re-run
