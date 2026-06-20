@@ -416,6 +416,38 @@ correct and honored; a larger CAMBI gain needs a harder, more realistic
 banding-prone source (a real movie gradient/sky) — that BD-rate run is a
 follow-up, no inflated number is claimed here.
 
+## v0.11 — denoise NLM throughput: fp16 (negative) → shared-memory tiling (ADR-0134)
+
+The denoise spatial NLM re-reads an overlapping `(2·patchR+3)² ≈ 81`-pixel window
+~9× per output pixel — on the order of **441 image loads/pixel** at `patch=3`.
+Two levers were measured on the 3-GPU dev box (real ffmpeg n8.1.1 + full stack;
+8× chained denoise, `patch=3`, 1080p, warm `-benchmark rtime`).
+
+**fp16 inner loop — honest negative, reverted.** Running the 3×3-patch SSD in
+`float16_t` (accumulators kept fp32) is SSIM-lossless (0.999995 / 1.000000 at
+8/10-bit) but **slower**: −2.5% (4090), −0.5% (Arc), **−11.8% (AMD RADV)**. Scalar
+`float16_t` gets no 2:1 rate (that needs packed `f16vec`; Ada is 1:1 anyway), and
+the f32↔f16 casts on the f32 image fetches are pure overhead. The kernel is
+**fetch/memory-bound, not ALU-bound** — fp16 is the wrong tool. (`FF_VK_REP_FLOAT16`
+does not exist; fp16 ALU is `GL_EXT_shader_explicit_arithmetic_types_float16`
+gated on `feats_12.shaderFloat16`.)
+
+**Shared-memory tiling (`tile=1`) — the right lever.** Cooperatively load the
+workgroup's window (16×16 + a 4-px halo → a 24×24 tile) into `shared` once per
+plane, then every spatial read hits shared memory. Output **bit-identical** (SSIM
+1.000000 at `patch` 1/2/3, 8/10-bit, vs the direct path):
+
+| GPU | direct `tile=0` | tiled `tile=1` | Δ |
+|---|---:|---:|---:|
+| Intel Arc A380 | 11.48 s | 3.94 s | **+65.7 % (2.9×)** |
+| AMD RADV (iGPU) | 7.91 s | 7.94 s | −0.3 % (noise) |
+| NVIDIA RTX 4090 | 1.19 s | 1.20 s | −1 to −4 % |
+
+The win tracks memory-bandwidth pressure: huge on the bandwidth-limited Arc,
+nil where a large L2 (the 4090's 72 MB) already caches the window — so `tile`
+defaults **off** (flagship-first) and is opt-in for weak / integrated / mobile
+GPUs. See [ADR-0134](../adr/0134-denoise-shared-mem-tile.md).
+
 ## Open / next
 
 1. **SVT-AV1 ROI on real content**: the v0.10 synthetic gain is modest; re-run

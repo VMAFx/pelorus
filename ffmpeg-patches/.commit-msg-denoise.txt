@@ -19,8 +19,10 @@ lockstep.
 Codec-agnostic: the denoise is on the source, independent of the encoder.
 
 AVOptions: sigma, sigmac, sigmat, strength, strengthc, blend, tdecay, tcut,
-patch, prev, protect, planes, meta. Host-side param contract in
-libpelorus/include/pelorus/denoise.h.
+patch, prev, protect, planes, meta, mc (motion-compensated temporal taps,
+ADR-0131), tile (opt-in shared-memory tiling of the spatial window, ADR-0134;
+bit-identical, a throughput win on bandwidth-limited GPUs). Host-side param
+contract in libpelorus/include/pelorus/denoise.h.
 
 Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
 
