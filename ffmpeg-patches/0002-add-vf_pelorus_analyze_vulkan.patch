@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Mon, 15 Jun 2026 15:26:58 +0200
-Subject: [PATCH 02/11] feat(analyze): add vf_pelorus_analyze_vulkan (measured
+Date: Sat, 20 Jun 2026 19:14:05 +0200
+Subject: [PATCH 02/18] feat(analyze): add vf_pelorus_analyze_vulkan (measured
  banding/variance maps)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -29,8 +29,8 @@ ADR: docs/adr/0109-analyze-filter.md
  configure                               |   2 +
  libavfilter/Makefile                    |   1 +
  libavfilter/allfilters.c                |   1 +
- libavfilter/vf_pelorus_analyze_vulkan.c | 727 ++++++++++++++++++++++++
- 4 files changed, 731 insertions(+)
+ libavfilter/vf_pelorus_analyze_vulkan.c | 774 ++++++++++++++++++++++++
+ 4 files changed, 778 insertions(+)
  create mode 100644 libavfilter/vf_pelorus_analyze_vulkan.c
 
 diff --git a/configure b/configure
@@ -79,10 +79,10 @@ index c02a049dbc..41761c6146 100644
  extern const FFFilter ff_vf_perspective;
 diff --git a/libavfilter/vf_pelorus_analyze_vulkan.c b/libavfilter/vf_pelorus_analyze_vulkan.c
 new file mode 100644
-index 0000000000..affbbcf1e8
+index 0000000000..e4e1d1dcd8
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_analyze_vulkan.c
-@@ -0,0 +1,727 @@
+@@ -0,0 +1,774 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -179,6 +179,11 @@ index 0000000000..affbbcf1e8
 +    /* Allocated lazily at first frame from the tile grid dimensions. */
 +    int grid_cols;
 +    int grid_rows;
++
++    /* Per-frame complexity scalar (ADR-0132), EMA-smoothed across frames and
++     * reset on a scene cut. complexity_seen guards the first frame. */
++    float complexity_ema;
++    int complexity_seen;
 +} PelorusAnalyzeVulkanContext;
 +
 +static av_cold int init_filter(AVFilterContext *ctx)
@@ -518,7 +523,8 @@ index 0000000000..affbbcf1e8
 +    PelorusSideData meta;
 +    PelorusVarianceSection var;
 +    PelorusBandingSection band;
-+    PelorusPackSection secs[2];
++    PelorusComplexitySection cx;
++    PelorusPackSection secs[3];
 +    uint8_t *blob = NULL;
 +    size_t len = 0;
 +    AVBufferRef *buf;
@@ -571,7 +577,48 @@ index 0000000000..affbbcf1e8
 +    secs[1].data = &band;
 +    secs[1].size = (uint32_t)sizeof(band);
 +
-+    if (pel_blob_pack(&meta, secs, 2, &blob, &len) != PEL_OK || !blob)
++    /* Per-frame complexity (ADR-0132): a normalized texture energy from the
++     * variance + edge aggregates, folding in motion when an upstream
++     * pelorus_mc attached PEL_SEC_MOTION, EMA-smoothed and reset on a scene
++     * cut. The per-shot CRF steering maps this to a qoffset (autotune-learned). */
++    {
++        float texture = av_clipf(0.5f * FFMIN(gvar / 0.05f, 1.0f) + 0.5f * gedge,
++                                 0.0f, 1.0f);
++        float motion = 0.0f;
++        int scene_cut = 0;
++        AVFrameSideData *sd =
++            av_frame_get_side_data(frame, AV_FRAME_DATA_SEI_UNREGISTERED);
++        const void *mp = NULL;
++        size_t msz = 0;
++        float craw, cema;
++
++        if (sd && pel_blob_find_section(sd->data, sd->size, PEL_SEC_MOTION,
++                                        sizeof(PelorusMotionSection), &mp, &msz)
++                      == PEL_OK) {
++            const PelorusMotionSection *mo = mp;
++            motion = av_clipf(mo->motion_magnitude_mean / 8.0f, 0.0f, 1.0f);
++            scene_cut = mo->has_scene_cut ? 1 : 0;
++        }
++
++        craw = av_clipf(0.7f * texture + 0.3f * motion, 0.0f, 1.0f);
++        if (!s->complexity_seen || scene_cut)
++            cema = craw; /* reset on first frame / scene cut */
++        else
++            cema = 0.3f * craw + 0.7f * s->complexity_ema;
++        s->complexity_ema = cema;
++        s->complexity_seen = 1;
++
++        memset(&cx, 0, sizeof(cx));
++        cx.complexity = cema;
++        cx.texture_energy = texture;
++        cx.motion_component = motion;
++        cx.has_scene_cut = (uint8_t)scene_cut;
++    }
++    secs[2].id = PEL_SEC_COMPLEXITY;
++    secs[2].data = &cx;
++    secs[2].size = (uint32_t)sizeof(cx);
++
++    if (pel_blob_pack(&meta, secs, 3, &blob, &len) != PEL_OK || !blob)
 +        return AVERROR(ENOMEM);
 +
 +    buf = av_buffer_create(blob, len, pel_sd_free, NULL, 0);

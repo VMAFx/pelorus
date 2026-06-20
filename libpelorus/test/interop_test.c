@@ -394,6 +394,48 @@ static void test_motion_conf_roundtrip(void)
     }
 }
 
+/* PEL_SEC_COMPLEXITY (h): pack the per-frame complexity scalar, round-trip the
+ * fields, and confirm R4 (an older consumer that knows only the first float
+ * still parses). */
+static void test_complexity_roundtrip(void)
+{
+    PelorusSideData meta;
+    PelorusComplexitySection cx;
+    PelorusPackSection sec;
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    const void *p = NULL;
+    size_t got = 0;
+
+    fill_meta(&meta);
+    memset(&cx, 0, sizeof(cx));
+    cx.complexity = 0.625f;
+    cx.texture_energy = 0.5f;
+    cx.motion_component = 0.25f;
+    cx.has_scene_cut = 1;
+
+    sec.id = PEL_SEC_COMPLEXITY;
+    sec.data = &cx;
+    sec.size = (uint32_t)sizeof(cx);
+    CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
+    CHECK(blob != NULL);
+
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_COMPLEXITY, sizeof(PelorusComplexitySection), &p,
+                                &got) == PEL_OK);
+    CHECK(got == sizeof(PelorusComplexitySection));
+    {
+        const PelorusComplexitySection *r = p;
+        CHECK(r->complexity == 0.625f);
+        CHECK(r->texture_energy == 0.5f);
+        CHECK(r->motion_component == 0.25f);
+        CHECK(r->has_scene_cut == 1);
+    }
+    /* R4: a consumer that knows only `complexity` (first 4 bytes) still parses. */
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_COMPLEXITY, 4, &p, &got) == PEL_OK);
+    CHECK(got == 4);
+    pel_blob_free(blob);
+}
+
 /* The reader stub: fold a per-block QP grid onto the cell grid. With a block
  * grid that is an integer multiple of the cell grid, each cell averages a clean
  * block tile, so a uniform block QP folds to the same per-cell QP. */
@@ -551,6 +593,7 @@ int main(void)
     test_truncation();
     test_qp_report_roundtrip();
     test_motion_conf_roundtrip();
+    test_complexity_roundtrip();
     test_qp_report_fold();
     test_x265_csv_reader();
     test_deband_params();

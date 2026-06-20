@@ -40,6 +40,7 @@ consumer can cast the returned pointer to the struct without an unaligned access
 | `PEL_SEC_MOTION` | `PelorusMotionSection` | `vf_pelorus_mc` | `vf_libvmaf*`, autotune | global/peak motion, MV-field offset, scene-cut flag |
 | `PEL_SEC_QPREPORT` | `PelorusQpReportSection` | closed-loop QSV reader (ADR-0119) | next pass, vmafx | encoder-honored: frame mean QP, PSNR Y/U/V, total bits, intra/inter/skipped counts, per-cell actual-QP + bits maps, `honored_fraction`, `report_source` |
 | `PEL_SEC_MOTION_CONF` | `PelorusMotionConfSection` | `vf_pelorus_mc` | `vf_pelorus_denoise` (MC warp), autotune | per-cell motion confidence map (`uint8`, 0..255, low SAD ⇒ high) gating the ADR-0131 MC→denoise warp; offset/size + `conf_metric` |
+| `PEL_SEC_COMPLEXITY` | `PelorusComplexitySection` | `vf_pelorus_analyze` | per-shot CRF steering (ADR-0132), autotune | per-frame complexity scalar `[0,1]` (texture + edge, folds in motion when `PEL_SEC_MOTION` is upstream), EMA-smoothed + scene-cut reset; `texture_energy`/`motion_component`/`has_scene_cut` |
 
 `PEL_SEC_QPREPORT` (ABI 1.1) is the **read-back** half of encoder steering: unlike
 sections (a)–(e), which carry *pre-encode* GPU measurements pushed *to* the encoder,

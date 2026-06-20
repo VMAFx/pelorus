@@ -94,6 +94,11 @@ typedef struct PelorusAnalyzeVulkanContext {
     /* Allocated lazily at first frame from the tile grid dimensions. */
     int grid_cols;
     int grid_rows;
+
+    /* Per-frame complexity scalar (ADR-0132), EMA-smoothed across frames and
+     * reset on a scene cut. complexity_seen guards the first frame. */
+    float complexity_ema;
+    int complexity_seen;
 } PelorusAnalyzeVulkanContext;
 
 static av_cold int init_filter(AVFilterContext *ctx)
@@ -433,7 +438,8 @@ static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
     PelorusSideData meta;
     PelorusVarianceSection var;
     PelorusBandingSection band;
-    PelorusPackSection secs[2];
+    PelorusComplexitySection cx;
+    PelorusPackSection secs[3];
     uint8_t *blob = NULL;
     size_t len = 0;
     AVBufferRef *buf;
@@ -486,7 +492,48 @@ static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
     secs[1].data = &band;
     secs[1].size = (uint32_t)sizeof(band);
 
-    if (pel_blob_pack(&meta, secs, 2, &blob, &len) != PEL_OK || !blob)
+    /* Per-frame complexity (ADR-0132): a normalized texture energy from the
+     * variance + edge aggregates, folding in motion when an upstream
+     * pelorus_mc attached PEL_SEC_MOTION, EMA-smoothed and reset on a scene
+     * cut. The per-shot CRF steering maps this to a qoffset (autotune-learned). */
+    {
+        float texture = av_clipf(0.5f * FFMIN(gvar / 0.05f, 1.0f) + 0.5f * gedge,
+                                 0.0f, 1.0f);
+        float motion = 0.0f;
+        int scene_cut = 0;
+        AVFrameSideData *sd =
+            av_frame_get_side_data(frame, AV_FRAME_DATA_SEI_UNREGISTERED);
+        const void *mp = NULL;
+        size_t msz = 0;
+        float craw, cema;
+
+        if (sd && pel_blob_find_section(sd->data, sd->size, PEL_SEC_MOTION,
+                                        sizeof(PelorusMotionSection), &mp, &msz)
+                      == PEL_OK) {
+            const PelorusMotionSection *mo = mp;
+            motion = av_clipf(mo->motion_magnitude_mean / 8.0f, 0.0f, 1.0f);
+            scene_cut = mo->has_scene_cut ? 1 : 0;
+        }
+
+        craw = av_clipf(0.7f * texture + 0.3f * motion, 0.0f, 1.0f);
+        if (!s->complexity_seen || scene_cut)
+            cema = craw; /* reset on first frame / scene cut */
+        else
+            cema = 0.3f * craw + 0.7f * s->complexity_ema;
+        s->complexity_ema = cema;
+        s->complexity_seen = 1;
+
+        memset(&cx, 0, sizeof(cx));
+        cx.complexity = cema;
+        cx.texture_energy = texture;
+        cx.motion_component = motion;
+        cx.has_scene_cut = (uint8_t)scene_cut;
+    }
+    secs[2].id = PEL_SEC_COMPLEXITY;
+    secs[2].data = &cx;
+    secs[2].size = (uint32_t)sizeof(cx);
+
+    if (pel_blob_pack(&meta, secs, 3, &blob, &len) != PEL_OK || !blob)
         return AVERROR(ENOMEM);
 
     buf = av_buffer_create(blob, len, pel_sd_free, NULL, 0);
