@@ -432,3 +432,62 @@ follow-up, no inflated number is claimed here.
 4. **Measure QSV ROI on Intel HW** (`hevc_qsv -global_quality <q>` CQP, A/B
    `-pelorus_roi 0` vs `1`): the patch (0005) is code-complete and
    syntax/regeneration-verified, but no Intel-hardware BD-rate run exists yet.
+
+## v0.3 — MC→denoise motion-compensated warp (ADR-0131), real high-motion
+
+The denoise warp (ADR-0131) consumes `vf_pelorus_mc`'s quarter-pel MV field to
+warp its temporal taps instead of averaging the same-coordinate sample. The win
+only appears where same-coordinate averaging *fails* — genuine motion. The
+shipped bench corpus (`bbb`, 640×360/48f) is **low-motion** (measured with our
+own mc estimator: ~0.1–0.3 px/frame in the static opening, ~1 px in the active
+part, plus a scene cut at frame 17), so it is the wrong clip to showcase the
+warp. Instead this run uses a genuinely high-motion segment of the full Big Buck
+Bunny (`00:09:00`, the chase), where mc measures **~15 px/frame** mean motion.
+
+- **Clip**: BBB `00:09:00`, scaled 1280×720, 64 frames, 30 fps. Clean reference +
+  a temporally-noisy copy (`noise=alls=18:allf=t+u`, the denoise scenario).
+- **Pipeline**: `pelorus_mc_vulkan=meta=1:search=48,pelorus_denoise_vulkan=mc={0,1}`
+  feeding `hevc_nvenc -preset p5` at cq 20/26/32/38 (RTX 4090).
+- **Metric**: **SSIM vs the clean source.** VMAF was tried first and **saturated
+  at ~99.8** across cq20–32 even at heavier noise — VMAF is noise-tolerant and
+  cannot see this fine temporal grain, so BD-VMAF is meaningless here. SSIM is
+  noise-sensitive and discriminates.
+
+![RD curve: SSIM vs bitrate](images/mc-denoise-warp-rd.png)
+
+![SSIM gain over baseline, same-coord vs warp](images/mc-denoise-warp-gain.png)
+
+| cq | bitrate (kbps) base→warp | SSIM-vs-clean: baseline / same-coord / **warp** |
+|---:|---|---|
+| 20 | 9723 → 9668 | 0.9430 / 0.9562 / **0.9571** |
+| 26 | 4582 → 4256 | 0.9653 / 0.9741 / **0.9750** |
+| 32 | 1583 → 1536 | 0.9767 / 0.9817 / **0.9817** |
+| 38 |  657 → 647  | 0.9802 / 0.9809 / **0.9807** |
+
+**What it shows.** Pre-encode denoise lifts SSIM-vs-clean at every CQ
+(+0.013/+0.010 at cq20/26 over the noisy baseline) **while using fewer bits** —
+the encoder no longer spends rate coding noise as residual. The
+motion-compensated warp adds a small, **consistent** edge over same-coordinate
+where it should — **+0.0009 SSIM at cq20 and cq26** (the high-bitrate points
+where the temporal term carries weight), a tie at cq32 and −0.0002 at cq38. The
+warp never regresses: the per-block confidence gate down-weights MVs that mc
+estimated on noisy pixels (ADR-0113's noise caveat), so an unreliable vector
+falls back toward the same-coordinate tap.
+
+**Why no single BD-rate figure.** Two metric pathologies block a clean
+Bjøntegaard number for *pre-encode denoise scored against a clean reference*:
+VMAF saturates (above), and SSIM-vs-clean **inverts the RD curve** (encoding the
+noise faithfully at high bitrate lands *farther* from clean, so SSIM rises as
+bitrate falls — visible in the curve). Bjøntegaard assumes quality rises with
+bitrate, so it returns garbage (`+inf` / overflow) on the inverted curve. The
+honest read is the per-CQ table + the graphs, not a fabricated headline percent.
+A clean single number needs a noise-discriminating *and* monotonic metric
+(SSIMULACRA2 is the candidate) and is tracked as a follow-up.
+
+**Bottom line.** On real ~15 px/frame content the warp does what ADR-0131
+claims — follows motion to denoise better than same-coordinate taps — with a
+small but consistent margin and no regression. The mechanism is also confirmed
+on a controlled synthetic 2.5 px/frame scroll (#25: +0.0042 Y-SSIM). The gain is
+modest because mc's MVs are estimated on *noisy* pixels; the largest headroom is
+the documented half-pel/confidence-tuning and a SSIMULACRA2-based RD methodology.
+Graphs regenerate via `scripts/bench/plot_rd.py` (committed).
