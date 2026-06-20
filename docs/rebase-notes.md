@@ -639,3 +639,27 @@ patches (ADR-0108 deliverable #6).
   defect is invisible to a `.o`-only or `git apply --check` gate. Confirm chroma
   is bit-exact against a no-op `hwupload,hwdownload` round-trip (`U`/`V` infinite
   PSNR).
+
+## v0.1.0 — ADR-0130 mc sub-pel (regenerates 0007, 0008, 0011)
+
+- **Patches**: `0007` (mc filter), `0008` (nvenc ME-hints hand-diff), `0011`
+  (nvenc film-grain hand-diff — **cascade only**: its `@@` hunk offsets shift by
+  the 2 lines `0008` adds to `nvenc.c`, no content change).
+- **What changed** (see [ADR-0130](adr/0130-mc-subpel-quarterpel.md)): mc refines
+  the integer block-match minimum to sub-pel (parabolic SAD fit) and emits the MV
+  grid in **quarter-pel** (Q2 = round(pel*4)), conforming the
+  `PelorusMotionSection` MV field to ADR-0113's ¼-pel spec. The summary scalars
+  stay pixel-domain (host ÷4). The NVENC ME-hint consumer round-divides the grid
+  by 4 into its integer-pixel `NV_ENC_EXTERNAL_ME_HINT` field.
+- **ABI**: `PelorusMotionSection` is unchanged (32 bytes, frozen) — the quarter-pel
+  unit is a documented convention (interop.h comment), **no `PELORUS_ABI_MINOR`
+  bump**. The interop.h change is comment-only; vmafx reads the pixel-domain
+  scalars (unchanged), not the raw grid, so the vendored mirror needs no update.
+- **Encoder-TU caution**: `0008` edits `libavcodec/nvenc.c`, which the patch-stack
+  CI does NOT compile (it builds only `vf_pelorus_*` objects). The `0008` hand-diff
+  hunk header was hand-adjusted for the +2 lines; **re-verify by building with
+  `--enable-nvenc`** (compile `libavcodec/nvenc.o`), not just `git apply --check`.
+- **Lockstep**: `pelorus_mc.comp` mirrors the sub-pel refinement (AGENTS rule 4).
+- **Re-test after rebase**: replay the full stack, build with `--enable-nvenc`,
+  then run `pelorus_mc_vulkan=meta=1` on a sub-pel-panned still — the measured
+  `global_motion_x` must be fractional (integer-pel mc would round to 0/1).

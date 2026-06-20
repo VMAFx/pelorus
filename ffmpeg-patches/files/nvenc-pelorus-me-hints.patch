@@ -200,7 +200,7 @@
  
      if (ctx->nvencoder) {
          p_nvenc->nvEncDestroyEncoder(ctx->nvencoder);
-@@ -3250,6 +3429,87 @@ static int nvenc_setup_roi(AVCodecContext *avctx, const AVFrame *frame,
+@@ -3250,6 +3429,89 @@ static int nvenc_setup_roi(AVCodecContext *avctx, const AVFrame *frame,
  }
  #endif
  
@@ -253,13 +253,15 @@
 +            int gx   = av_clip(px / bw, 0, gc - 1);
 +            int gy   = av_clip(py / bh, 0, gr - 1);
 +            int gidx = gy * gc + gx;
-+            int dx   = pelorus_mv_at(mv_field, 2 * gidx + 0);
-+            int dy   = pelorus_mv_at(mv_field, 2 * gidx + 1);
++            int dx   = pelorus_mv_at(mv_field, 2 * gidx + 0); /* quarter-pel */
++            int dy   = pelorus_mv_at(mv_field, 2 * gidx + 1); /* quarter-pel */
 +            NVENC_EXTERNAL_ME_HINT *h = &ctx->me_hints[y * ctx->me_hints_w + x];
 +
 +            memset(h, 0, sizeof(*h));
-+            h->mvx        = av_clip(dx, -2048, 2047); /* S12 bitfield */
-+            h->mvy        = av_clip(dy,  -512,  511); /* S10 bitfield */
++            /* The Pelorus grid is quarter-pel (Q2); NVENC_EXTERNAL_ME_HINT.mvx is
++             * integer-pixel (S12.0), so round-divide by 4 (sign-preserving). */
++            h->mvx        = av_clip((dx >= 0 ? dx + 2 : dx - 2) / 4, -2048, 2047);
++            h->mvy        = av_clip((dy >= 0 ? dy + 2 : dy - 2) / 4,  -512,  511);
 +            h->refidx     = 0;   /* one reference per direction for ext hints */
 +            h->dir        = 0;   /* L0 */
 +            h->partType   = 0;   /* 16x16 */

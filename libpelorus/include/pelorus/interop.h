@@ -252,7 +252,8 @@ typedef struct PelorusMotionSection {
     float motion_magnitude_mean;
     float motion_magnitude_p95; /* 95th pct — scene-cut / pan detector        */
     float motion_entropy;       /* MV-field complexity                       */
-    uint32_t mv_field_offset;   /* blob-relative; int16 (dx,dy) per cell      */
+    uint32_t mv_field_offset;   /* blob-relative; int16 (dx,dy) per cell,
+                                 * QUARTER-PEL (Q2 = round(pel*4)) luma units  */
     uint32_t mv_field_size;     /* grid_cols*grid_rows*2*sizeof(int16)        */
     uint8_t has_scene_cut;      /* producer's scene-cut flag                 */
     uint8_t _pad[3];            /* reserved, zero                            */
