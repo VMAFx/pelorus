@@ -28,3 +28,4 @@
 0015-add-vf_pelorus_aa_vulkan.patch
 0016-add-vf_pelorus_scenecut.patch
 0017-add-vf_pelorus_deblock_vulkan.patch
+0018-add-vf_pelorus_borderfix_vulkan.patch

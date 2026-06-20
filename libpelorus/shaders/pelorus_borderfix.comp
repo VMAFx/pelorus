@@ -1,0 +1,53 @@
+/*
+ * pelorus_borderfix.comp — dirty-line / border repair compute shader (reference).
+ *
+ * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ *
+ * Cropped, telecined, and analog-captured sources carry garbage rows/columns at
+ * the frame edge (half-pixels, black/grey clamp lines, head-switching noise).
+ * Left in, they cost the encoder bits (a high-contrast edge against the picture)
+ * and read as a dirty border. This is the GPU equivalent of FFmpeg's
+ * fillborders=smear: each pixel inside the dirty band is replaced by the nearest
+ * CLEAN interior pixel (the edge of the valid region), smearing the good edge
+ * outward. Runs in VRAM so the Pelorus pipeline never has to drop to a CPU
+ * fillborders + the round-trip hwdownload/hwupload it would cost.
+ *
+ *   cx = clamp(x, left, width-1-right);  cy = clamp(y, top, height-1-bottom);
+ *   out = src(cx, cy);   // a pixel in the band samples the clean edge.
+ *
+ * Reference form runs per plane against r16ui storage images. The in-tree FFmpeg
+ * filter (ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c) emits an
+ * equivalent shader inline via GLSLC over FF_VK_REP_FLOAT image arrays — keep
+ * the two in lockstep (AGENTS hard rule 4).
+ */
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0, r16ui) uniform readonly  uimage2D srcImg;
+layout(binding = 1, r16ui) uniform writeonly uimage2D dstImg;
+
+layout(push_constant, std430) uniform Params {
+    int left;    //  0  dirty band width on the left edge   (this plane's px)
+    int right;   //  4  dirty band width on the right edge
+    int top;     //  8  dirty band height on the top edge
+    int bottom;  // 12  dirty band height on the bottom edge
+} pc;
+
+void main() {
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 sz = imageSize(srcImg);
+    int x = gid.x, y = gid.y;
+    if (x >= sz.x || y >= sz.y)
+        return;
+
+    /* The clean interior is [left, width-1-right] x [top, height-1-bottom]; a
+     * pixel inside a dirty band clamps onto the nearest clean edge (smear). The
+     * clamp lower bound is capped so a degenerate band wider than the frame
+     * still yields a valid coordinate. */
+    int cx = clamp(x, min(pc.left, sz.x - 1), max(sz.x - 1 - pc.right, 0));
+    int cy = clamp(y, min(pc.top, sz.y - 1), max(sz.y - 1 - pc.bottom, 0));
+
+    uint v = imageLoad(srcImg, ivec2(cx, cy)).r;
+    imageStore(dstImg, ivec2(x, y), uvec4(v, 0u, 0u, 0u));
+}

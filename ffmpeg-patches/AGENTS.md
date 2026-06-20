@@ -118,3 +118,11 @@ ffmpeg-patches/
    the deband entries (`deband < deblock < dehalo` alphabetically); it emits no
    interop side data. Its inline GLSL stays in lockstep with
    `libpelorus/shaders/pelorus_deblock.comp` (AGENTS hard rule 4).
+7. **`vf_pelorus_borderfix_vulkan` (patch 0018) is a pure transform** — dirty-line
+   / border repair (the zero-copy equivalent of `fillborders=smear`) — that does
+   **NOT** link libpelorus: deps-only registration
+   (`pelorus_borderfix_vulkan_filter_deps="vulkan spirv_library"`, **no**
+   `require_pkg_config libpelorus … && add_extralibs` hunk), inserted **before**
+   the deband entries (`borderfix` sorts after `analyze` and before `deband`
+   alphabetically); it emits no interop side data. Its inline GLSL stays in
+   lockstep with `libpelorus/shaders/pelorus_borderfix.comp` (AGENTS hard rule 4).

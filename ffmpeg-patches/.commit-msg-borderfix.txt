@@ -1,0 +1,16 @@
+feat(borderfix): add vf_pelorus_borderfix_vulkan (dirty-line/border repair, Vulkan)
+
+Cropped, telecined, and analog-captured sources carry garbage rows/columns at
+the frame edge (half-pixels, clamp lines, head-switching noise) that cost the
+encoder bits and read as a dirty border. The GPU equivalent of FFmpeg's
+fillborders=smear: each pixel inside the dirty band is replaced by the nearest
+clean interior pixel, smearing the good edge outward. Runs in VRAM so the
+Pelorus pipeline never has to drop to a CPU fillborders + the hwdownload round
+trip it would cost. Bit-depth-agnostic (FF_VK_REP_FLOAT UNORM); all planes by
+default. Band widths are per-plane pixels.
+
+Pure pixel transform — does NOT link libpelorus (deps-only registration). The
+reference shader libpelorus/shaders/pelorus_borderfix.comp and the inline GLSL
+are kept in lockstep. AVOptions: left/right/top/bottom (band widths), planes.
+
+ADR: docs/adr/0128-borderfix.md

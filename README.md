@@ -175,3 +175,5 @@ If Pelorus is useful to you: [GitHub Sponsors](https://github.com/sponsors/lusor
 | `pelorus_deblock_vulkan` | Re-encode deblock/dering: gated `[1 2 1]` low-pass across the prior codec's DCT block grid, smooths blocking so the new encoder skips it as false residual (luma-only); runs early, before deband | **Built (tuning pending)** |
 - [x] Step 9 — Re-encode deblock: `vf_pelorus_deblock_vulkan` (patch 0016), a
       single-pass zero-copy GPU deblock/dering. At the prior codec's DCT block
+| `pelorus_borderfix_vulkan` | Dirty-line / border repair: clamp the dirty edge band onto the clean interior rect (the zero-copy GPU equivalent of `fillborders=smear`); all planes, per-plane-pixel widths; runs first, before any other stage | **Built (deterministic)** |
+- [x] Step 9 — Border repair: `vf_pelorus_borderfix_vulkan` (patch 0016), a

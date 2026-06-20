@@ -441,6 +441,37 @@ git -C "$WORKTREE" \
     -c user.name=Lusoris -c user.email=lusoris@pm.me \
     commit -q -F "$HERE/.commit-msg-deblock.txt"
 
+# vf_pelorus_borderfix_vulkan (dirty-line/border repair) is a PURE pixel transform
+# that does NOT link libpelorus (deps-only registration). "borderfix" sorts after
+# analyze, before deband. Committed last -> patch 0018.
+cp "$FILES_DIR/vf_pelorus_borderfix_vulkan.c" "$WORKTREE/libavfilter/"
+python3 - "$WORKTREE" <<'PY'
+import sys, pathlib
+root = pathlib.Path(sys.argv[1])
+def ins_before(path, anchor, line):
+    p = root / path; t = p.read_text()
+    assert anchor in t, f"anchor missing in {path}: {anchor!r}"
+    assert line.strip() not in t, f"already present in {path}: {line!r}"
+    p.write_text(t.replace(anchor, line + anchor, 1))
+# allfilters.c: analyze < borderfix < deband -> insert before deband.
+ins_before("libavfilter/allfilters.c",
+           "extern const FFFilter ff_vf_pelorus_deband_vulkan;\n",
+           "extern const FFFilter ff_vf_pelorus_borderfix_vulkan;\n")
+# Makefile: insert before deband.
+ins_before("libavfilter/Makefile",
+           "OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER)  += vf_pelorus_deband_vulkan.o vulkan.o vulkan_filter.o\n",
+           "OBJS-$(CONFIG_PELORUS_BORDERFIX_VULKAN_FILTER) += vf_pelorus_borderfix_vulkan.o vulkan.o vulkan_filter.o\n")
+# configure: deps ONLY (no libpelorus); insert before deband.
+ins_before("configure",
+           'pelorus_deband_vulkan_filter_deps="vulkan spirv_library"\n',
+           'pelorus_borderfix_vulkan_filter_deps="vulkan spirv_library"\n')
+print("registration applied: borderfix")
+PY
+git -C "$WORKTREE" add -A
+git -C "$WORKTREE" \
+    -c user.name=Lusoris -c user.email=lusoris@pm.me \
+    commit -q -F "$HERE/.commit-msg-borderfix.txt"
+
 # Clean stale patches, regenerate the whole range.
 rm -f "$HERE"/0*.patch
 git -C "$WORKTREE" format-patch --zero-commit --start-number=1 \
@@ -464,6 +495,7 @@ mv "$HERE"/0014-*.patch "$HERE/0014-add-vf_pelorus_dehalo_vulkan.patch" 2>/dev/n
 mv "$HERE"/0015-*.patch "$HERE/0015-add-vf_pelorus_aa_vulkan.patch" 2>/dev/null || true
 mv "$HERE"/0016-*.patch "$HERE/0016-add-vf_pelorus_scenecut.patch" 2>/dev/null || true
 mv "$HERE"/0017-*.patch "$HERE/0017-add-vf_pelorus_deblock_vulkan.patch" 2>/dev/null || true
+mv "$HERE"/0018-*.patch "$HERE/0018-add-vf_pelorus_borderfix_vulkan.patch" 2>/dev/null || true
 
 git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE"
 echo "patch(es) regenerated in $HERE:"
