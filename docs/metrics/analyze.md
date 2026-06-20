@@ -30,11 +30,33 @@ reset on a scene cut. It is the input to per-shot CRF steering; the autotune loo
 learns the complexity→qoffset mapping. Validated to track content (flat ≈ 0 <
 textured < high-motion).
 
+With `roi=1` it additionally auto-detects banding-prone tiles and attaches
+`AV_FRAME_DATA_REGIONS_OF_INTEREST` (a negative qoffset, scaled by
+`roi_strength`) so a downstream encoder that honours ROI — `libx265`,
+`pelorus`-patched `*_nvenc`/`*_qsv` — spends bits where contouring would show.
+Detection is **two-scale** (ADR-0133, CAMBI alignment):
+
+- a **fine** per-tile scale — a tile whose own variance sits in the
+  banding-prone window (`flat`…`grad_hi`) and is not yet textured, and
+- a **coarse** inter-tile scale — a flat tile carrying a small but non-zero
+  inter-tile mean-luma gradient (≈1–12 code-values per tile), the signature of
+  a shallow ramp (sky/shadow) that bands across many tiles yet is invisible to
+  any single tile's variance.
+
+A tile is flagged if either scale fires. The coarse scale closes the
+single-scale blind spot: a 0x10→0x30 ramp (CAMBI 0.625) flagged 0 tiles before
+and 27 after, and an A/B encode confirmed lower output CAMBI with no regression
+on textured tiles (the coarse scale is gated to flats).
+
 ## Options
 
 | Option | Type | Default | Meaning |
 |---|---|---|---|
 | `flat` | float 0–0.25 | 0.0015 | per-tile variance below which a tile is counted as banding-prone |
+| `roi` | bool | 0 | auto-detect banding-prone tiles and attach `AV_FRAME_DATA_REGIONS_OF_INTEREST` so a downstream encoder spends bits there |
+| `roi_strength` | float 0–1 | 0.333 | max \|qoffset\| (fraction of the QP range) applied to a fully banding tile |
+| `grad_lo` | float 0–0.5 | 0.002 | min per-tile gradient counted as a real (banding) slope |
+| `grad_hi` | float 0–0.5 | 0.01 | per-tile gradient at which banding risk peaks before the tile turns textured |
 
 ## Example
 
