@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Mon, 15 Jun 2026 15:26:58 +0200
-Subject: [PATCH 08/11] feat(nvenc): feed the Pelorus MV field to NVENC
+Date: Sat, 20 Jun 2026 14:17:22 +0200
+Subject: [PATCH 08/18] feat(nvenc): feed the Pelorus MV field to NVENC
  external ME hints
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -38,14 +38,14 @@ that frame, so NVENC runs its own search and behaviour is unchanged.
 
 ADR: docs/adr/0116-pelorus-mc.md (consumer section), docs/adr/0114-encoder-steering.md (Tier 3)
 ---
- libavcodec/nvenc.c      | 266 ++++++++++++++++++++++++++++++++++++++++
+ libavcodec/nvenc.c      | 268 ++++++++++++++++++++++++++++++++++++++++
  libavcodec/nvenc.h      |  17 +++
  libavcodec/nvenc_h264.c |   2 +
  libavcodec/nvenc_hevc.c |   2 +
- 4 files changed, 287 insertions(+)
+ 4 files changed, 289 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index 863423b1a9..f25bf5763c 100644
+index 863423b1a9..0d83e53662 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
 @@ -1108,6 +1108,131 @@ static int pelorus_roi_block_size(enum AVCodecID codec_id)
@@ -248,7 +248,7 @@ index 863423b1a9..f25bf5763c 100644
  
      if (ctx->nvencoder) {
          p_nvenc->nvEncDestroyEncoder(ctx->nvencoder);
-@@ -3250,6 +3429,87 @@ static int nvenc_setup_roi(AVCodecContext *avctx, const AVFrame *frame,
+@@ -3250,6 +3429,89 @@ static int nvenc_setup_roi(AVCodecContext *avctx, const AVFrame *frame,
  }
  #endif
  
@@ -301,13 +301,15 @@ index 863423b1a9..f25bf5763c 100644
 +            int gx   = av_clip(px / bw, 0, gc - 1);
 +            int gy   = av_clip(py / bh, 0, gr - 1);
 +            int gidx = gy * gc + gx;
-+            int dx   = pelorus_mv_at(mv_field, 2 * gidx + 0);
-+            int dy   = pelorus_mv_at(mv_field, 2 * gidx + 1);
++            int dx   = pelorus_mv_at(mv_field, 2 * gidx + 0); /* quarter-pel */
++            int dy   = pelorus_mv_at(mv_field, 2 * gidx + 1); /* quarter-pel */
 +            NVENC_EXTERNAL_ME_HINT *h = &ctx->me_hints[y * ctx->me_hints_w + x];
 +
 +            memset(h, 0, sizeof(*h));
-+            h->mvx        = av_clip(dx, -2048, 2047); /* S12 bitfield */
-+            h->mvy        = av_clip(dy,  -512,  511); /* S10 bitfield */
++            /* The Pelorus grid is quarter-pel (Q2); NVENC_EXTERNAL_ME_HINT.mvx is
++             * integer-pixel (S12.0), so round-divide by 4 (sign-preserving). */
++            h->mvx        = av_clip((dx >= 0 ? dx + 2 : dx - 2) / 4, -2048, 2047);
++            h->mvy        = av_clip((dy >= 0 ? dy + 2 : dy - 2) / 4,  -512,  511);
 +            h->refidx     = 0;   /* one reference per direction for ext hints */
 +            h->dir        = 0;   /* L0 */
 +            h->partType   = 0;   /* 16x16 */
@@ -336,7 +338,7 @@ index 863423b1a9..f25bf5763c 100644
  static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
  {
      NVENCSTATUS nv_status;
-@@ -3391,6 +3651,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3391,6 +3653,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
              return res;
  #endif
  

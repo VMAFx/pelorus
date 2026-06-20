@@ -56,8 +56,9 @@ layout(binding = 0, r16ui) uniform readonly uimage2D curImg;
 layout(binding = 1, r16ui) uniform readonly uimage2D refImg;
 
 /* Per-block MV records, struct-of-arrays (one runtime array per field is the
- * std430 rule; index = by*grid_cols + bx). mv_x/mv_y are integer-pel luma
- * displacements; sad is the winning block SAD (fixed point) for confidence /
+ * std430 rule; index = by*grid_cols + bx). mv_x/mv_y are QUARTER-PEL luma
+ * displacements (Q2 fixed point, stored = round(pel*4)); sad is the winning
+ * block SAD (fixed point) for confidence /
  * scene-cut; the host reads all three spans. prev_mv_x/prev_mv_y are LAST
  * frame's field, read-only this dispatch, the temporal predictor source. */
 layout(binding = 2, std430) buffer MvBuf {
@@ -207,9 +208,31 @@ void main() {
         guard++;
     }
 
+    /* Sub-pel refinement: fit a parabola to the SAD surface across the integer
+     * minimum and its 4 axis-neighbours; the vertex gives a [-0.5,0.5] offset
+     * per axis. Emit the MV in QUARTER-PEL fixed-point (stored = round(pel*4)).
+     * The four extra block_sad() calls are cooperative (whole workgroup, barrier
+     * internally); the leading barrier publishes s_best_* to all lanes and a
+     * barrier after each SAD prevents a WAR race on s_sad[]. Kept in lockstep
+     * with the in-tree filter's inline GLSL (AGENTS hard rule 4). */
+    barrier();
+    int   bxi = s_best_x;
+    int   byi = s_best_y;
+    float sc  = s_best_cost;
+    float sl  = block_sad(blk_x, blk_y, bxi - 1, byi,     lidx, lx, ly);
+    barrier();
+    float sr  = block_sad(blk_x, blk_y, bxi + 1, byi,     lidx, lx, ly);
+    barrier();
+    float st  = block_sad(blk_x, blk_y, bxi,     byi - 1, lidx, lx, ly);
+    barrier();
+    float sb  = block_sad(blk_x, blk_y, bxi,     byi + 1, lidx, lx, ly);
     if (lidx == 0u) {
-        mv_x[bidx]    = s_best_x;
-        mv_y[bidx]    = s_best_y;
-        sad_out[bidx] = uint(clamp(s_best_cost, 0.0, 1e6) * SAD_SCALE);
+        float dx2 = sl - 2.0 * sc + sr;
+        float dy2 = st - 2.0 * sc + sb;
+        float sx  = (dx2 > 1e-6) ? clamp(0.5 * (sl - sr) / dx2, -0.5, 0.5) : 0.0;
+        float sy  = (dy2 > 1e-6) ? clamp(0.5 * (st - sb) / dy2, -0.5, 0.5) : 0.0;
+        mv_x[bidx]    = int(round((float(bxi) + sx) * 4.0));
+        mv_y[bidx]    = int(round((float(byi) + sy) * 4.0));
+        sad_out[bidx] = uint(clamp(sc, 0.0, 1e6) * SAD_SCALE);
     }
 }

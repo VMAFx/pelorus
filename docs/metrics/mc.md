@@ -2,7 +2,7 @@
 # vf_pelorus_mc_vulkan
 
 A GPU block-matching **motion estimator**, run as a zero-copy pass in VRAM. It
-produces a per-block integer-pel motion-vector field for the current frame
+produces a per-block quarter-pel (sub-pel-refined) motion-vector field for the current frame
 relative to the previous frame and attaches it as the pre-reserved
 `PEL_SEC_MOTION` interop section. **The frame passes through unchanged** — this
 is a producer (the analyzer shape), not a transform.
@@ -41,8 +41,12 @@ A GPU adaptation of FFmpeg's block-matching EPZS
   recover most of the benefit, and this frame's field becomes next frame's
   temporal predictor.
 
-The MV `(dx, dy)` is integer-pel in **luma pixels**: the displacement such that
-`cur[pos] ≈ ref[pos + mv]`. The standalone reference shader is
+The MV `(dx, dy)` is **quarter-pel** in luma units (Q2 fixed-point, stored
+`= round(pel * 4)`): the displacement such that `cur[pos] ≈ ref[pos + mv/4]`.
+The integer block-match minimum is sub-pel refined by a parabolic fit of the SAD
+surface across the minimum and its four axis-neighbours (ADR-0130). The
+`PelorusMotionSection` summary scalars (`global_motion_*`, `motion_magnitude_*`)
+remain in whole luma pixels. The standalone reference shader is
 `libpelorus/shaders/pelorus_mc.comp`; the filter's inline GLSL implements the
 byte-identical algorithm (kept in lockstep, AGENTS hard rule 4).
 

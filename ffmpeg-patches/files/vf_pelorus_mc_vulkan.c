@@ -18,10 +18,12 @@
  * @file
  * Pelorus block-matching motion estimator, Vulkan compute (zero-copy).
  *
- * Produces a per-block integer-pel motion-vector field for the CURRENT frame
+ * Produces a per-block QUARTER-PEL motion-vector field for the CURRENT frame
  * relative to the PREVIOUS frame, on the GPU, and attaches it as the
  * pre-reserved Pelorus PEL_SEC_MOTION interop section (the dense int16 (dx,dy)
- * grid + frame scalars). The frame passes through UNCHANGED; only side data is
+ * grid, Q2 fixed-point = round(pel*4), + pixel-domain frame scalars). The
+ * integer block-match minimum is sub-pel refined by a parabolic fit of the SAD
+ * surface (ADR-0130). The frame passes through UNCHANGED; only side data is
  * added (the analyzer shape). The value is ENCODE SPEED, not quality: the MV
  * field is a HINT a downstream encoder can feed its external motion-search
  * (e.g. NVENC NV_ENC_EXTERNAL_ME_HINT) so a fixed-function ASIC skips or
@@ -38,8 +40,9 @@
  * frame) — every predictor is resolved BEFORE the dispatch, so there is no
  * cross-workgroup intra-frame neighbour race. Block-matching on raw pixels
  * matches grain as readily as motion (ADR-0113 found in-denoise raw-pixel MC
- * noise-limited), which is acceptable for an encoder search seed but is why this
- * filter does NOT feed the denoiser.
+ * noise-limited); the sub-pel refinement (ADR-0130) sharpens the field for a
+ * motion-compensated denoise consumer, which the winning-SAD per-block
+ * confidence (a follow-up) gates so noise-matched vectors are not trusted.
  *
  * The algorithm is kept in lockstep with the standalone reference shader
  * libpelorus/shaders/pelorus_mc.comp (AGENTS hard rule 4).
@@ -334,10 +337,31 @@ static av_cold int init_filter(AVFilterContext *ctx)
     GLSLC(3,             step = step >> 1;                                    );
     GLSLC(2,         guard++;                                                 );
     GLSLC(1,     }                                                            );
+    /* Sub-pel refinement: fit a parabola to the SAD surface across the integer
+     * minimum and its 4 axis-neighbours; the vertex gives a [-0.5,0.5] offset
+     * per axis. Emit the MV in QUARTER-PEL fixed-point (stored = round(pel*4)).
+     * The four extra block_sad() calls are cooperative (whole workgroup, barrier
+     * internally); the leading barrier publishes the search's s_best_* to all
+     * lanes, and a barrier after each SAD prevents a WAR race on s_sad[]. */
+    GLSLC(1,     barrier();                                                   );
+    GLSLC(1,     int   bxi = s_best_x;                                        );
+    GLSLC(1,     int   byi = s_best_y;                                        );
+    GLSLC(1,     float sc  = s_best_cost;                                     );
+    GLSLC(1,     float sl  = block_sad(blk_x, blk_y, bxi - 1, byi,     lidx, lx, ly); );
+    GLSLC(1,     barrier();                                                   );
+    GLSLC(1,     float sr  = block_sad(blk_x, blk_y, bxi + 1, byi,     lidx, lx, ly); );
+    GLSLC(1,     barrier();                                                   );
+    GLSLC(1,     float st  = block_sad(blk_x, blk_y, bxi,     byi - 1, lidx, lx, ly); );
+    GLSLC(1,     barrier();                                                   );
+    GLSLC(1,     float sb  = block_sad(blk_x, blk_y, bxi,     byi + 1, lidx, lx, ly); );
     GLSLC(1,     if (lidx == 0u) {                                            );
-    GLSLC(2,         mv_x[bidx]    = s_best_x;                                );
-    GLSLC(2,         mv_y[bidx]    = s_best_y;                                );
-    GLSLC(2,         sad_out[bidx] = uint(clamp(s_best_cost, 0.0, 1e6) * SAD_SCALE); );
+    GLSLC(2,         float dx2 = sl - 2.0 * sc + sr;                          );
+    GLSLC(2,         float dy2 = st - 2.0 * sc + sb;                          );
+    GLSLC(2,         float sx  = (dx2 > 1e-6) ? clamp(0.5 * (sl - sr) / dx2, -0.5, 0.5) : 0.0; );
+    GLSLC(2,         float sy  = (dy2 > 1e-6) ? clamp(0.5 * (st - sb) / dy2, -0.5, 0.5) : 0.0; );
+    GLSLC(2,         mv_x[bidx]    = int(round((float(bxi) + sx) * 4.0));     );
+    GLSLC(2,         mv_y[bidx]    = int(round((float(byi) + sy) * 4.0));     );
+    GLSLC(2,         sad_out[bidx] = uint(clamp(sc, 0.0, 1e6) * SAD_SCALE);   );
     GLSLC(1,     }                                                            );
     GLSLC(0, }                                                                );
 
@@ -386,9 +410,12 @@ static int attach_motion(PelorusMcVulkanContext *s, AVFrame *frame,
      * MV-field entropy proxy (mean |MV - global| normalized); scene-cut when the
      * mean block SAD is high (poor match everywhere => a cut, not motion). */
     for (i = 0; i < nblocks; i++) {
-        double mag = sqrt((double)mvx[i] * mvx[i] + (double)mvy[i] * mvy[i]);
-        sum_x += mvx[i];
-        sum_y += mvy[i];
+        /* The grid stores quarter-pel (Q2) MVs; the PelorusMotionSection scalars
+         * are documented in luma pixels, so scale by 0.25 here. */
+        double px = mvx[i] * 0.25, py = mvy[i] * 0.25;
+        double mag = sqrt(px * px + py * py);
+        sum_x += px;
+        sum_y += py;
         sum_mag += mag;
         mean_sad += sad[i] / PEL_MC_SAD_SCALE;
     }
@@ -399,7 +426,7 @@ static int attach_motion(PelorusMcVulkanContext *s, AVFrame *frame,
     if (!mags)
         return AVERROR(ENOMEM);
     for (i = 0; i < nblocks; i++)
-        mags[i] = (float)sqrt((double)mvx[i] * mvx[i] + (double)mvy[i] * mvy[i]);
+        mags[i] = (float)(0.25 * sqrt((double)mvx[i] * mvx[i] + (double)mvy[i] * mvy[i]));
 
     memset(&meta, 0, sizeof(meta));
     meta.frame_pts = (uint64_t)frame->pts;
@@ -445,8 +472,8 @@ static int attach_motion(PelorusMcVulkanContext *s, AVFrame *frame,
         double dev = 0.0;
         double norm = (double)s->search + 1.0;
         for (i = 0; i < nblocks; i++) {
-            double ex = mvx[i] - mo.global_motion_x;
-            double ey = mvy[i] - mo.global_motion_y;
+            double ex = mvx[i] * 0.25 - mo.global_motion_x;
+            double ey = mvy[i] * 0.25 - mo.global_motion_y;
             dev += sqrt(ex * ex + ey * ey);
         }
         mo.motion_entropy = (float)(nblocks ? (dev / nblocks) / norm : 0.0);
