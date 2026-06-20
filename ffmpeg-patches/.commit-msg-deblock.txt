@@ -1,0 +1,18 @@
+feat(deblock): add vf_pelorus_deblock_vulkan (re-encode deblock/dering, Vulkan)
+
+The largest real-world pre-encode corpus is re-transcode of already-compressed
+sources, which carry DCT block-edge discontinuities (blocking) the new encoder
+wastes bits coding as false residual. This filter applies, at the prior codec's
+block grid, a weak [1 2 1] low-pass across each boundary, gated by the
+cross-boundary step: a small step is a block-edge artefact (smooth it), a large
+step is real structure (preserve it). Luma only; chroma passes through.
+Zero-copy in VRAM (FF_VK_REP_FLOAT UNORM, bit-depth-agnostic).
+
+Pure pixel transform — does NOT link libpelorus (deps-only registration). The
+reference shader libpelorus/shaders/pelorus_deblock.comp and the inline GLSL are
+kept in lockstep.
+
+AVOptions: bsize (DCT grid, default 8), edge (band half-width), thr (artefact
+step threshold), str (strength), planes.
+
+ADR: docs/adr/0127-deblock.md

@@ -172,3 +172,6 @@ If Pelorus is useful to you: [GitHub Sponsors](https://github.com/sponsors/lusor
 · [Ko-fi](https://ko-fi.com/lusoris).
 | `pelorus_aa_vulkan` | Anime warp anti-aliasing (awarpsharp2) + optional line-darkening (FastLineDarken): de-jaggies line-art via blurred-edge-map gradient warp, luma-only, no side data; 2nd stage of the anime `tune` chain | **Built (defaults unproven)** |
 - [x] Step 8 — Anime `tune` chain: `vf_pelorus_aa_vulkan` (patch 0012) — warp
+| `pelorus_deblock_vulkan` | Re-encode deblock/dering: gated `[1 2 1]` low-pass across the prior codec's DCT block grid, smooths blocking so the new encoder skips it as false residual (luma-only); runs early, before deband | **Built (tuning pending)** |
+- [x] Step 9 — Re-encode deblock: `vf_pelorus_deblock_vulkan` (patch 0016), a
+      single-pass zero-copy GPU deblock/dering. At the prior codec's DCT block

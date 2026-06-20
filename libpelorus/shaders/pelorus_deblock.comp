@@ -1,0 +1,81 @@
+/*
+ * pelorus_deblock.comp — re-encode deblock/dering compute shader (reference).
+ *
+ * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ *
+ * The largest real-world pre-encode corpus is *re-transcode*: archival and
+ * streaming pipelines re-encode already-compressed sources, which carry DCT
+ * block-edge discontinuities (blocking) and ringing from the prior encode. Those
+ * artefacts cost the new encoder bits (it codes the false edges as residual) and
+ * read as quality loss. This filter is an adaptive deblock: at the prior codec's
+ * block grid it applies a weak [1 2 1] low-pass *across* each boundary, gated by
+ * the cross-boundary step — a small step is a block-edge artefact (smooth it), a
+ * large step is real structure (preserve it). Luma only; chroma passes through.
+ *
+ *   for each pixel within `edge` px of a block boundary:
+ *     if |across-boundary step| < thr:  blend toward the [1 2 1] mean by `str`.
+ *
+ * Reference form runs on the luma plane against r16ui storage images. The in-tree
+ * FFmpeg filter (ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c) emits an
+ * equivalent shader inline via GLSLC over FF_VK_REP_FLOAT image arrays — keep
+ * the two in lockstep (AGENTS hard rule 4).
+ */
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0, r16ui) uniform readonly  uimage2D srcImg;
+layout(binding = 1, r16ui) uniform writeonly uimage2D dstImg;
+
+layout(push_constant, std430) uniform Params {
+    int   bsize;   //  0  prior codec block size (DCT grid, usually 8)
+    int   edge;    //  4  half-width of the deblocked band around a boundary (px)
+    float thr;     //  8  cross-boundary step below which it is an artefact (norm)
+    float str;     // 12  deblock strength in [0,1] (blend toward the low-pass)
+} pc;
+
+float load_norm(int x, int y) {
+    ivec2 sz = imageSize(srcImg);
+    x = clamp(x, 0, sz.x - 1);
+    y = clamp(y, 0, sz.y - 1);
+    return float(imageLoad(srcImg, ivec2(x, y)).r) / 65535.0;
+}
+
+void main() {
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 sz = imageSize(srcImg);
+    int x = gid.x, y = gid.y;
+    if (x >= sz.x || y >= sz.y)
+        return;
+
+    int bs = max(pc.bsize, 2);
+    float c = load_norm(x, y);
+    float result = c;
+
+    /* distance into the block in each axis; 0 means this row/col sits on the
+     * boundary plane between two blocks. */
+    int dx = min(x % bs, bs - (x % bs));
+    int dy = min(y % bs, bs - (y % bs));
+
+    /* Vertical boundary (between columns): smooth horizontally across it. */
+    if (dx <= pc.edge) {
+        float l = load_norm(x - 1, y);
+        float r = load_norm(x + 1, y);
+        if (abs(l - r) < pc.thr) {
+            float lp = (l + 2.0 * result + r) * 0.25;
+            result = mix(result, lp, pc.str);
+        }
+    }
+    /* Horizontal boundary (between rows): smooth vertically across it. */
+    if (dy <= pc.edge) {
+        float u = load_norm(x, y - 1);
+        float d = load_norm(x, y + 1);
+        if (abs(u - d) < pc.thr) {
+            float lp = (u + 2.0 * result + d) * 0.25;
+            result = mix(result, lp, pc.str);
+        }
+    }
+
+    int outv = clamp(int(round(clamp(result, 0.0, 1.0) * 65535.0)), 0, 65535);
+    imageStore(dstImg, ivec2(x, y), uvec4(uint(outv), 0u, 0u, 0u));
+}

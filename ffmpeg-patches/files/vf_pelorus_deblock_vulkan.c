@@ -1,0 +1,285 @@
+/*
+ * Copyright 2026 Lusoris
+ *
+ * This file is part of FFmpeg.
+ *
+ * FFmpeg is free software; you can redistribute it and/or modify it under
+ * the terms of the GNU Lesser General Public License as published by the
+ * Free Software Foundation; either version 2.1 of the License, or (at
+ * your option) any later version.
+ *
+ * FFmpeg is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
+ * License for more details.
+ */
+
+/**
+ * @file
+ * Pelorus re-encode deblock/dering, Vulkan compute (zero-copy, pre-encode).
+ *
+ * The largest real-world pre-encode corpus is re-transcode of already-compressed
+ * sources, which carry DCT block-edge discontinuities (blocking) the new encoder
+ * wastes bits coding as false residual. This filter applies, at the prior codec's
+ * block grid, a weak [1 2 1] low-pass *across* each boundary, gated by the
+ * cross-boundary step: a small step is a block-edge artefact (smooth it), a large
+ * step is real structure (preserve it). Luma only; chroma passes through. Runs in
+ * VRAM (FF_VK_REP_FLOAT UNORM, bit-depth-agnostic).
+ *
+ * Kept in lockstep with libpelorus/shaders/pelorus_deblock.comp (AGENTS rule 4).
+ */
+
+#include "libavutil/opt.h"
+#include "libavutil/pixdesc.h"
+#include "libavutil/vulkan_spirv.h"
+#include "vulkan_filter.h"
+
+#include "filters.h"
+#include "video.h"
+
+#include <string.h>
+
+typedef struct PelorusDeblockVulkanContext {
+    FFVulkanContext vkctx; /* MUST be first — generic init casts priv to this */
+
+    int initialized;
+    FFVkExecPool e;
+    AVVulkanDeviceQueueFamily *qf;
+    FFVulkanShader shd;
+
+    /* push constants — mirror the GLSL std430 block below, byte-for-byte */
+    struct {
+        int32_t bsize;  /* prior codec block size (DCT grid, usually 8)     */
+        int32_t edge;   /* half-width of the deblocked band (px)            */
+        float thr;      /* cross-boundary step below which it is artefact   */
+        float str;      /* deblock strength [0,1]                           */
+    } opts;
+
+    int planes; /* plane bitmask to process (luma-only by default)          */
+} PelorusDeblockVulkanContext;
+
+/* Pure GLSL helpers + deblock(), spliced verbatim. Kept in lockstep with the
+ * reference shader libpelorus/shaders/pelorus_deblock.comp — the only intended
+ * difference is the working domain: the .comp reads r16ui and normalizes by
+ * 65535, this inline form reads FF_VK_REP_FLOAT (UNORM) images already in [0,1]. */
+static const char deblock_glsl[] =
+    "float pel_luma(int idx, ivec2 p, ivec2 sz) {\n"
+    "    return imageLoad(input_images[idx], clamp(p, ivec2(0), sz - ivec2(1))).x;\n"
+    "}\n"
+    "void deblock(ivec2 pos, int idx) {\n"
+    "    ivec2 sz = imageSize(output_images[idx]);\n"
+    "    int bs = max(bsize, 2);\n"
+    "    float c = pel_luma(idx, pos, sz);\n"
+    "    float result = c;\n"
+    "    int dx = min(pos.x % bs, bs - (pos.x % bs));\n"
+    "    int dy = min(pos.y % bs, bs - (pos.y % bs));\n"
+    "    if (dx <= edge) {\n"
+    "        float l = pel_luma(idx, pos + ivec2(-1, 0), sz);\n"
+    "        float r = pel_luma(idx, pos + ivec2( 1, 0), sz);\n"
+    "        if (abs(l - r) < thr) {\n"
+    "            float lp = (l + 2.0 * result + r) * 0.25;\n"
+    "            result = mix(result, lp, str);\n"
+    "        }\n"
+    "    }\n"
+    "    if (dy <= edge) {\n"
+    "        float u = pel_luma(idx, pos + ivec2(0, -1), sz);\n"
+    "        float d = pel_luma(idx, pos + ivec2(0,  1), sz);\n"
+    "        if (abs(u - d) < thr) {\n"
+    "            float lp = (u + 2.0 * result + d) * 0.25;\n"
+    "            result = mix(result, lp, str);\n"
+    "        }\n"
+    "    }\n"
+    "    imageStore(output_images[idx], pos, vec4(clamp(result, 0.0, 1.0)));\n"
+    "}\n";
+
+static av_cold int init_filter(AVFilterContext *ctx)
+{
+    int err = 0;
+    int i;
+    PelorusDeblockVulkanContext *s = ctx->priv;
+    FFVulkanContext *vkctx = &s->vkctx;
+    FFVulkanShader *shd = &s->shd; /* GLSL macros require a var named `shd` */
+    FFVkSPIRVCompiler *spv;
+    uint8_t *spv_data = NULL;
+    size_t spv_len = 0;
+    void *spv_opaque = NULL;
+    const int planes = av_pix_fmt_count_planes(vkctx->output_format);
+
+    spv = ff_vk_spirv_init();
+    if (!spv) {
+        av_log(ctx, AV_LOG_ERROR, "Unable to initialize SPIR-V compiler!\n");
+        return AVERROR_EXTERNAL;
+    }
+
+    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
+    if (!s->qf) {
+        av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
+        err = AVERROR(ENOTSUP);
+        goto fail;
+    }
+
+    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
+    RET(ff_vk_shader_init(vkctx, shd, "pelorus_deblock",
+                          VK_SHADER_STAGE_COMPUTE_BIT, NULL, 0, 32, 32, 1, 0));
+
+    GLSLC(0, layout(push_constant, std430) uniform pushConstants {            );
+    GLSLC(1,     int   bsize;                                                 );
+    GLSLC(1,     int   edge;                                                  );
+    GLSLC(1,     float thr;                                                   );
+    GLSLC(1,     float str;                                                   );
+    GLSLC(0, };                                                               );
+    GLSLC(0,                                                                  );
+    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts),
+                                VK_SHADER_STAGE_COMPUTE_BIT);
+
+    {
+        FFVulkanDescriptorSetBinding desc_set[] = {
+            {
+                .name = "input_images",
+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
+                                                   FF_VK_REP_FLOAT),
+                .mem_quali = "readonly",
+                .dimensions = 2,
+                .elems = planes,
+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+            },
+            {
+                .name = "output_images",
+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format,
+                                                   FF_VK_REP_FLOAT),
+                .mem_quali = "writeonly",
+                .dimensions = 2,
+                .elems = planes,
+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+            },
+        };
+        RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0, 0));
+    }
+
+    GLSLD(deblock_glsl);
+    GLSLC(0, void main()                                                      );
+    GLSLC(0, {                                                                );
+    GLSLC(1,     ivec2 size;                                                  );
+    GLSLC(1,     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);           );
+    for (i = 0; i < planes; i++) {
+        GLSLC(0,                                                              );
+        GLSLF(1, size = imageSize(output_images[%i]);                       ,i);
+        GLSLC(1, if (!IS_WITHIN(pos, size)) return;                           );
+        if (s->planes & (1 << i)) {
+            GLSLF(1, deblock(pos, %i);                                      ,i);
+        } else {
+            GLSLF(1, imageStore(output_images[%i], pos,                      ,i);
+            GLSLF(2,             imageLoad(input_images[%i], pos));          ,i);
+        }
+    }
+    GLSLC(0, }                                                                );
+
+    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
+                            &spv_opaque));
+    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
+    RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
+
+    s->initialized = 1;
+
+fail:
+    if (spv_opaque)
+        spv->free_shader(spv, &spv_opaque);
+    if (spv)
+        spv->uninit(&spv);
+    return err;
+}
+
+static int pelorus_deblock_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
+{
+    int err;
+    AVFrame *out = NULL;
+    AVFilterContext *ctx = link->dst;
+    PelorusDeblockVulkanContext *s = ctx->priv;
+    AVFilterLink *outlink = ctx->outputs[0];
+
+    out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
+    if (!out) {
+        err = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+    if (!s->initialized)
+        RET(init_filter(ctx));
+
+    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in,
+                                    VK_NULL_HANDLE, &s->opts, sizeof(s->opts)));
+
+    err = av_frame_copy_props(out, in);
+    if (err < 0)
+        goto fail;
+
+    av_frame_free(&in);
+    return ff_filter_frame(outlink, out);
+
+fail:
+    av_frame_free(&in);
+    av_frame_free(&out);
+    return err;
+}
+
+static void pelorus_deblock_vulkan_uninit(AVFilterContext *avctx)
+{
+    PelorusDeblockVulkanContext *s = avctx->priv;
+    FFVulkanContext *vkctx = &s->vkctx;
+
+    ff_vk_exec_pool_free(vkctx, &s->e);
+    ff_vk_shader_free(vkctx, &s->shd);
+    ff_vk_uninit(&s->vkctx);
+    s->initialized = 0;
+}
+
+#define OFFSET(x) offsetof(PelorusDeblockVulkanContext, x)
+#define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
+static const AVOption pelorus_deblock_vulkan_options[] = {
+    { "bsize", "prior codec block size (DCT grid)", OFFSET(opts.bsize),
+      AV_OPT_TYPE_INT, { .i64 = 8 }, 2, 64, FLAGS },
+    { "edge", "half-width of the deblocked band around a boundary (px)", OFFSET(opts.edge),
+      AV_OPT_TYPE_INT, { .i64 = 1 }, 0, 8, FLAGS },
+    { "thr", "cross-boundary step below which it is an artefact (normalized)", OFFSET(opts.thr),
+      AV_OPT_TYPE_FLOAT, { .dbl = 0.06 }, 0.0, 1.0, FLAGS },
+    { "str", "deblock strength (blend toward the low-pass)", OFFSET(opts.str),
+      AV_OPT_TYPE_FLOAT, { .dbl = 0.6 }, 0.0, 1.0, FLAGS },
+    { "planes", "planes to process (bitmask; default luma only)", OFFSET(planes),
+      AV_OPT_TYPE_INT, { .i64 = 0x1 }, 0, 0xF, FLAGS },
+    { NULL }
+};
+
+AVFILTER_DEFINE_CLASS(pelorus_deblock_vulkan);
+
+static const AVFilterPad pelorus_deblock_vulkan_inputs[] = {
+    {
+        .name = "default",
+        .type = AVMEDIA_TYPE_VIDEO,
+        .filter_frame = &pelorus_deblock_vulkan_filter_frame,
+        .config_props = &ff_vk_filter_config_input,
+    },
+};
+
+static const AVFilterPad pelorus_deblock_vulkan_outputs[] = {
+    {
+        .name = "default",
+        .type = AVMEDIA_TYPE_VIDEO,
+        .config_props = &ff_vk_filter_config_output,
+    },
+};
+
+const FFFilter ff_vf_pelorus_deblock_vulkan = {
+    .p.name = "pelorus_deblock_vulkan",
+    .p.description = NULL_IF_CONFIG_SMALL("Pelorus re-encode deblock/dering (Vulkan)"),
+    .p.priv_class = &pelorus_deblock_vulkan_class,
+    .p.flags = AVFILTER_FLAG_HWDEVICE,
+    .priv_size = sizeof(PelorusDeblockVulkanContext),
+    .init = &ff_vk_filter_init,
+    .uninit = &pelorus_deblock_vulkan_uninit,
+    FILTER_INPUTS(pelorus_deblock_vulkan_inputs),
+    FILTER_OUTPUTS(pelorus_deblock_vulkan_outputs),
+    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_VULKAN),
+    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
+};
