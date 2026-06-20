@@ -26,3 +26,4 @@
 0013-svtav1-pelorus-roi.patch
 0014-add-vf_pelorus_dehalo_vulkan.patch
 0015-add-vf_pelorus_aa_vulkan.patch
+0016-add-vf_pelorus_scenecut.patch

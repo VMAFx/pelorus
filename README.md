@@ -80,6 +80,7 @@ green · the deband shader compiles.**
 | `pelorus_grain_estimate_vulkan` | Film-grain param estimation (GPU per-band HF-residual) → PEL_SEC_FILMGRAIN + native AV1 side data | **Estimator built** |
 | `pelorus_mc_vulkan` | Block-matching motion estimator → per-block MV-hint side data for the encoder (speed, not quality) | **Working** |
 | `pelorus_fgs` (BSF) | Inserts the H.274 FGC SEI into HEVC so a decoder re-synthesizes grain — the HEVC leg of the FGS round-trip (AV1 round-trips via native side data) | **Working (static model)** |
+| `pelorus_scenecut` | Scene-cut → forced IDR: metadata-only consumer (NOT a Vulkan filter) that reads `mc`'s `PEL_SEC_MOTION.has_scene_cut` and sets `pict_type=I` so the encoder opens a fresh GOP at the cut — vendor-neutral, no per-encoder patch | **Built (BD-rate A/B pending)** |
 
 **Anime tune.** For animation, compose the filters into one recommended GPU
 pre-encode chain — `analyze roi=1` (steer bits to the flats) + `dehalo` (rings) +
@@ -113,6 +114,16 @@ encoder. A documented, retunable composition, not a new meta-filter. See
       interop). Foundation of the planned `tune=anime` pipeline. Compile-verified
       and glslang-clean; on-content tuning + the SSIMULACRA2 / edge-region
       VMAF-NEG / CAMBI proof are follow-ups (ADR-0123 / ADR-0111).
+- [x] Step 9 — Scene-cut → forced IDR: `vf_pelorus_scenecut` (patch 0016), a
+      metadata-only encoder-steering consumer (NOT a Vulkan filter — no shader,
+      no GPU work). It reads the `has_scene_cut` flag `vf_pelorus_mc_vulkan`
+      already emits in `PEL_SEC_MOTION` and sets `pict_type=I` on cut frames, so
+      the encoder opens a fresh GOP exactly at the cut. Vendor-neutral
+      (`pict_type==I` honoured by x264/x265/NVENC/QSV/SVT-AV1 with no per-encoder
+      patch); links libpelorus, not gated on Vulkan; run after `hwdownload`.
+      Producer + consumer + mechanism are build-verified; the end-to-end BD-rate
+      A/B (cut-aligned GOPs vs periodic IDR on multi-shot content) is a documented
+      follow-up — no number claimed (ADR-0126 / ADR-0111).
 - Encoder steering (ADR-0114, opt-in `-pelorus_roi 1`): the `analyze roi=1`
   banding map drives dense per-block delta-QP on **NVENC** (`qpDeltaMap`, proven
   −41% banding), **QSV** (`mfxExtMBQP`, code-complete; on-Intel-HW proof pending),

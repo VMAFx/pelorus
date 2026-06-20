@@ -478,3 +478,59 @@ patches (ADR-0108 deliverable #6).
   `FF_VK_REP_FLOAT` UNORM already in `[0,1]`). The inline `MAX_R = 8` warp-radius
   bound must track the `.comp`. Edit both together (AGENTS hard rule 4).
 - **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay
+
+## v0.1.0 — patch 0016 (scenecut; cumulative on 0001–0015)
+
+- **Patch**: `ffmpeg-patches/0016-add-vf_pelorus_scenecut.patch` (canonical source
+  `files/vf_pelorus_scenecut.c`). A `vf_` filter drop-in (same per-filter
+  registration model as the deband/analyze/denoise loop), but a **metadata-only
+  consumer** — **NOT a Vulkan filter**: no shader, no GPU dispatch, no
+  `vf_pelorus_scenecut.comp`. **Cumulative on 0001–0015.** ADR-0126.
+- **CONSUMED surface (the rebase-fragile dependency)**:
+  `PEL_SEC_MOTION.has_scene_cut` from `libpelorus/include/pelorus/interop.h` —
+  the filter reads the frame's `AV_FRAME_DATA_SEI_UNREGISTERED` blob, finds the
+  motion section with `pel_blob_find_section(…, PEL_SEC_MOTION,
+  sizeof(PelorusMotionSection), …)`, and bounds-checks `got >=
+  offsetof(PelorusMotionSection, has_scene_cut) + sizeof(uint8_t)` before reading
+  `mo->has_scene_cut`. **A future ABI reorder of `PelorusMotionSection`** (or any
+  change to where `has_scene_cut` sits in it) **breaks this consumer** — the
+  append-only ABI (interop.h R1/R2) forbids that reorder, but if interop.h ever
+  grows/relocates a motion field, regenerate this patch in the same PR and
+  re-verify the offset check. Also consumes `pel_blob_is_present` and
+  `PEL_SEC_MOTION`/`PelorusMotionSection` from interop.h. No ABI bump — the
+  section was reserved at ABI 1.0; this is consumer-only code.
+- **Consumes from FFmpeg**: the metadata-filter surface only —
+  `av_frame_get_side_data`, `AV_FRAME_DATA_SEI_UNREGISTERED`, `AVFrame.pict_type`
+  (`AV_PICTURE_TYPE_I`), `AVFrame.flags` (`AV_FRAME_FLAG_KEY`),
+  `AVFILTER_FLAG_METADATA_ONLY`, `ff_filter_frame`, the `AVOption`/`FFFilter`
+  machinery. **No** `ff_vk_*` / Vulkan surface is used (it is not a compute
+  filter). A change to the metadata-filter surface on an upstream bump can break
+  the build — re-test by replaying the stack.
+- **Registration anchors** (the three files, same idiom — but with the
+  Vulkan-filter differences called out):
+  - `libavfilter/allfilters.c`: the `extern const FFFilter
+    ff_vf_pelorus_scenecut` line inserted **before** the `ff_vf_perms` entry
+    (`pelorus_scenecut` sorts after the other `pelorus_*` filters — `…mc` <
+    `scenecut` — and before `perms`), so its context references the preceding
+    `pelorus_*` added lines.
+  - `libavfilter/Makefile`: the `OBJS-$(CONFIG_PELORUS_SCENECUT_FILTER) +=
+    vf_pelorus_scenecut.o` line inserted **after** the `mc` OBJS line —
+    **PLAIN `.o`, NO `vulkan.o vulkan_filter.o`** (it is not a compute filter;
+    unlike every `vf_pelorus_*_vulkan` OBJS line, it pulls in no Vulkan objects).
+  - `configure`: **`require_pkg_config libpelorus "<ver>" pelorus/interop.h &&
+    add_extralibs $(…)`** for `pelorus_scenecut` (it links libpelorus to parse
+    the side data), but **NO `pelorus_scenecut_filter_deps="vulkan
+    spirv_library"`** and **NO `_deps` entry at all** — it is *not* a Vulkan
+    filter, so it must not carry the `vulkan spirv_library` deps the
+    `*_vulkan` filters need (an unknown/over-broad dep would gate the filter off
+    on a box without Vulkan, which this consumer does not require). This is the
+    inverse of the dehalo/aa pure-transform pattern (those are `_deps`-only with
+    **no** libpelorus link; scenecut is **libpelorus-link-only with no `_deps`**).
+- **No shader lockstep**: there is no `.comp` for this filter — it touches no
+  pixels and runs no GPU code, so AGENTS hard rule 4 does not apply.
+- **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay
+  0001–0016 via `git am --3way`, build, smoke `ffmpeg -h
+  filter=pelorus_scenecut` and confirm the `force_idr` AVOption). Functional
+  check: a multi-shot clip through `pelorus_mc_vulkan=meta=1,hwdownload,format=
+  yuv420p,pelorus_scenecut` must force `pict_type=I` on the cut frames (inspect
+  with `ffprobe -show_frames` / `-skip_frame nokey`).

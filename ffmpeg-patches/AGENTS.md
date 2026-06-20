@@ -98,3 +98,14 @@ ffmpeg-patches/
    `require_pkg_config libpelorus`/`add_extralibs` line), inserted **before** the
    analyze entries (`aa` < `analyze` alphabetically). Its inline GLSL stays in
    lockstep with `libpelorus/shaders/pelorus_aa.comp` (AGENTS hard rule 4).
+7. **`vf_pelorus_scenecut` (patch 0016) is a metadata-only consumer, NOT a Vulkan
+   filter** — no shader, no GPU work (`AVFILTER_FLAG_METADATA_ONLY`). Its
+   `Makefile` OBJS line is a **plain `vf_pelorus_scenecut.o`** with **no
+   `vulkan.o vulkan_filter.o`**, it carries **no `*_filter_deps="vulkan
+   spirv_library"`** entry (it is not a compute filter), but it **does** link
+   `libpelorus` via the `require_pkg_config libpelorus … && add_extralibs` line
+   (it parses the side data). It **consumes `PEL_SEC_MOTION.has_scene_cut`** (the
+   flag `vf_pelorus_mc_vulkan` emits) and sets `pict_type=I` for a vendor-neutral
+   forced IDR — no per-encoder patch. An ABI reorder of `PelorusMotionSection`
+   would break it (forbidden by interop.h R1/R2). See ADR-0126 and
+   [docs/rebase-notes.md](../docs/rebase-notes.md).
