@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Mon, 15 Jun 2026 15:26:57 +0200
-Subject: [PATCH 01/11] feat(deband): add vf_pelorus_deband_vulkan (smart
+Date: Sat, 20 Jun 2026 13:17:41 +0200
+Subject: [PATCH 01/18] feat(deband): add vf_pelorus_deband_vulkan (smart
  deband, Vulkan)
 
 Psychovisual deband modeled on flash3kyuu_deband (f3kdb): the vf_deband.c
@@ -25,8 +25,8 @@ Research: docs/research/0101-smart-deband.md
  configure                              |   2 +
  libavfilter/Makefile                   |   1 +
  libavfilter/allfilters.c               |   1 +
- libavfilter/vf_pelorus_deband_vulkan.c | 467 +++++++++++++++++++++++++
- 4 files changed, 471 insertions(+)
+ libavfilter/vf_pelorus_deband_vulkan.c | 466 +++++++++++++++++++++++++
+ 4 files changed, 470 insertions(+)
  create mode 100644 libavfilter/vf_pelorus_deband_vulkan.c
 
 diff --git a/configure b/configure
@@ -75,10 +75,10 @@ index e26859e159..c02a049dbc 100644
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_deband_vulkan.c b/libavfilter/vf_pelorus_deband_vulkan.c
 new file mode 100644
-index 0000000000..bc3c73a1b8
+index 0000000000..2d17041727
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_deband_vulkan.c
-@@ -0,0 +1,467 @@
+@@ -0,0 +1,466 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -346,8 +346,7 @@ index 0000000000..bc3c73a1b8
 +        if (s->planes & (1 << i)) {
 +            GLSLF(1, deband(pos, %i, thr[%i], grain[%i]);                ,i,i,i);
 +        } else {
-+            GLSLF(1, imageStore(output_images[%i], pos,                      ,i);
-+            GLSLF(2,             imageLoad(input_images[%i], pos));          ,i);
++            GLSLF(1, imageStore(output_images[%i], pos, imageLoad(input_images[%i], pos)); ,i, i);
 +        }
 +    }
 +    GLSLC(0, }                                                                );

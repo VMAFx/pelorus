@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sat, 20 Jun 2026 10:58:57 +0200
+Date: Sat, 20 Jun 2026 13:17:42 +0200
 Subject: [PATCH 18/18] feat(borderfix): add vf_pelorus_borderfix_vulkan
  (dirty-line/border repair, Vulkan)
 MIME-Version: 1.0
@@ -25,8 +25,8 @@ ADR: docs/adr/0128-borderfix.md
  configure                                 |   1 +
  libavfilter/Makefile                      |   1 +
  libavfilter/allfilters.c                  |   1 +
- libavfilter/vf_pelorus_borderfix_vulkan.c | 266 ++++++++++++++++++++++
- 4 files changed, 269 insertions(+)
+ libavfilter/vf_pelorus_borderfix_vulkan.c | 265 ++++++++++++++++++++++
+ 4 files changed, 268 insertions(+)
  create mode 100644 libavfilter/vf_pelorus_borderfix_vulkan.c
 
 diff --git a/configure b/configure
@@ -67,10 +67,10 @@ index d4dd7c7237..45e6fc2b8a 100644
  extern const FFFilter ff_vf_pelorus_dehalo_vulkan;
 diff --git a/libavfilter/vf_pelorus_borderfix_vulkan.c b/libavfilter/vf_pelorus_borderfix_vulkan.c
 new file mode 100644
-index 0000000000..3cd184d374
+index 0000000000..5243b3f29c
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_borderfix_vulkan.c
-@@ -0,0 +1,266 @@
+@@ -0,0 +1,265 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -224,8 +224,7 @@ index 0000000000..3cd184d374
 +        if (s->planes & (1 << i)) {
 +            GLSLF(1, borderfix(pos, %i);                                    ,i);
 +        } else {
-+            GLSLF(1, imageStore(output_images[%i], pos,                      ,i);
-+            GLSLF(2,             imageLoad(input_images[%i], pos));          ,i);
++            GLSLF(1, imageStore(output_images[%i], pos, imageLoad(input_images[%i], pos)); ,i, i);
 +        }
 +    }
 +    GLSLC(0, }                                                                );

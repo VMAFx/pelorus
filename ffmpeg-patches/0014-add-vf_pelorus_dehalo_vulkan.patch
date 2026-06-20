@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sat, 20 Jun 2026 09:18:00 +0200
-Subject: [PATCH 14/14] feat(dehalo): add vf_pelorus_dehalo_vulkan (anime
+Date: Sat, 20 Jun 2026 13:17:42 +0200
+Subject: [PATCH 14/18] feat(dehalo): add vf_pelorus_dehalo_vulkan (anime
  dehalo + dering, Vulkan)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -28,8 +28,8 @@ ADR: docs/adr/0123-anime-dehalo.md
  configure                              |   1 +
  libavfilter/Makefile                   |   1 +
  libavfilter/allfilters.c               |   1 +
- libavfilter/vf_pelorus_dehalo_vulkan.c | 341 +++++++++++++++++++++++++
- 4 files changed, 344 insertions(+)
+ libavfilter/vf_pelorus_dehalo_vulkan.c | 340 +++++++++++++++++++++++++
+ 4 files changed, 343 insertions(+)
  create mode 100644 libavfilter/vf_pelorus_dehalo_vulkan.c
 
 diff --git a/configure b/configure
@@ -70,10 +70,10 @@ index 45949d7b8e..b4e14df89a 100644
  extern const FFFilter ff_vf_pelorus_mc_vulkan;
 diff --git a/libavfilter/vf_pelorus_dehalo_vulkan.c b/libavfilter/vf_pelorus_dehalo_vulkan.c
 new file mode 100644
-index 0000000000..af5812c5ad
+index 0000000000..9f3a83f75c
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_dehalo_vulkan.c
-@@ -0,0 +1,341 @@
+@@ -0,0 +1,340 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -296,8 +296,7 @@ index 0000000000..af5812c5ad
 +        if (s->planes & (1 << i)) {
 +            GLSLF(1, dehalo(pos, %i);                                       ,i);
 +        } else {
-+            GLSLF(1, imageStore(output_images[%i], pos,                      ,i);
-+            GLSLF(2,             imageLoad(input_images[%i], pos));          ,i);
++            GLSLF(1, imageStore(output_images[%i], pos, imageLoad(input_images[%i], pos)); ,i, i);
 +        }
 +    }
 +    GLSLC(0, }                                                                );

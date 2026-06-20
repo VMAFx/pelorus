@@ -610,3 +610,32 @@ patches (ADR-0108 deliverable #6).
   reads `r16ui`/÷65535, inline reads `FF_VK_REP_FLOAT` UNORM already in `[0,1]`).
   Edit both together (AGENTS hard rule 4).
 - **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay the
+  full stack, build, smoke `-h filter=pelorus_borderfix_vulkan`).
+
+## v0.1.0 — ADR-0129 fix (regenerates 0001, 0007, 0014, 0015, 0017, 0018)
+
+- **Patches**: `0001` (deband), `0007` (mc), `0014` (dehalo), `0015` (aa),
+  `0017` (deblock), `0018` (borderfix) — regenerated from `files/`, **no**
+  renumbering and **no** registration-hunk change. Each diff is confined to the
+  filter's `init_filter` body.
+- **What changed** (two runtime-only defect classes; see
+  [ADR-0129](adr/0129-inline-glsl-chroma-passthrough-fix.md) and the AGENTS
+  rebase-sensitive invariant 7): **(a)** the chroma-passthrough else-branch in
+  the five pixel filters is now a single balanced
+  `GLSLF(1, imageStore(output_images[%i], pos, imageLoad(input_images[%i], pos)); ,i, i);`
+  — it was a paren-unbalanced two-line split that emitted raw `av_bprintf`
+  macro-body text into the shader (shaderc `unexpected COMMA` → `-22`).
+  **(b)** `mc`'s `cur_image`/`ref_image` descriptor bindings are now
+  `.elems = av_pix_fmt_count_planes(input_format)` — they were `.elems = 1`,
+  which overran the array because `ff_vk_shader_update_img_array` writes one
+  descriptor per plane. The `mc` source comment that rationalized `.elems = 1`
+  ("we only ever read plane 0") is superseded by the corrected comment.
+- **No surface change**: the `.comp` files are untouched (the chroma loop and
+  the descriptor bindings are C-emitted, never in the `.comp`; lockstep
+  preserved); no registration hunk, `configure` line, or `libpelorus` surface
+  moves — an upstream FFmpeg bump re-flows nothing new here.
+- **Re-test after rebase**: replay the full stack, then run each pixel filter on
+  a Vulkan device in **both** plane-mask regimes (default and `planes=1`) — the
+  defect is invisible to a `.o`-only or `git apply --check` gate. Confirm chroma
+  is bit-exact against a no-op `hwupload,hwdownload` round-trip (`U`/`V` infinite
+  PSNR).

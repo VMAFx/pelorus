@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Fri, 19 Jun 2026 19:50:06 +0200
-Subject: [PATCH 07/11] feat(mc): add vf_pelorus_mc_vulkan (block-matching
+Date: Sat, 20 Jun 2026 13:17:42 +0200
+Subject: [PATCH 07/18] feat(mc): add vf_pelorus_mc_vulkan (block-matching
  motion estimator)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -47,8 +47,8 @@ ADR: docs/adr/0116-pelorus-mc.md
  configure                          |   2 +
  libavfilter/Makefile               |   1 +
  libavfilter/allfilters.c           |   1 +
- libavfilter/vf_pelorus_mc_vulkan.c | 891 +++++++++++++++++++++++++++++
- 4 files changed, 895 insertions(+)
+ libavfilter/vf_pelorus_mc_vulkan.c | 895 +++++++++++++++++++++++++++++
+ 4 files changed, 899 insertions(+)
  create mode 100644 libavfilter/vf_pelorus_mc_vulkan.c
 
 diff --git a/configure b/configure
@@ -97,10 +97,10 @@ index 5a5f777074..45949d7b8e 100644
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_mc_vulkan.c b/libavfilter/vf_pelorus_mc_vulkan.c
 new file mode 100644
-index 0000000000..033766b50d
+index 0000000000..531259213c
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_mc_vulkan.c
-@@ -0,0 +1,891 @@
+@@ -0,0 +1,895 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -329,8 +329,12 @@ index 0000000000..033766b50d
 +
 +    /* Descriptor set 0: current luma image, reference luma image, the three
 +     * output SSBOs (mv_x, mv_y, sad), and the read-only previous-frame MV SSBO.
-+     * Each image binding is a per-plane array; we only ever read plane 0 (luma),
-+     * so .elems = 1. Float representation, storage image, GENERAL layout. */
++     * The image bindings are per-plane arrays sized .elems = planes. The shader
++     * only ever reads plane 0 (luma), but ff_vk_shader_update_img_array() writes
++     * one descriptor per plane (dstArrayElement 0..nb_planes-1), so the array
++     * must hold every plane or the chroma writes land out of bounds. Float
++     * representation, storage image, GENERAL layout. */
++    const int planes = av_pix_fmt_count_planes(vkctx->input_format);
 +    {
 +        FFVulkanDescriptorSetBinding desc[] = {
 +            {
@@ -340,7 +344,7 @@ index 0000000000..033766b50d
 +                                                   FF_VK_REP_FLOAT),
 +                .mem_quali = "readonly",
 +                .dimensions = 2,
-+                .elems = 1,
++                .elems = planes,
 +                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
 +            },
 +            {
@@ -350,7 +354,7 @@ index 0000000000..033766b50d
 +                                                   FF_VK_REP_FLOAT),
 +                .mem_quali = "readonly",
 +                .dimensions = 2,
-+                .elems = 1,
++                .elems = planes,
 +                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
 +            },
 +            {
