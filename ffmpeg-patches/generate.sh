@@ -405,6 +405,42 @@ git -C "$WORKTREE" \
     -c user.name=Lusoris -c user.email=lusoris@pm.me \
     commit -q -F "$HERE/.commit-msg-scenecut.txt"
 
+# vf_pelorus_deblock_vulkan (re-encode deblock/dering) is a PURE pixel transform
+# that does NOT link libpelorus (deps-only registration). "deblock" sorts after
+# deband, before dehalo. Committed last -> patch 0017.
+cp "$FILES_DIR/vf_pelorus_deblock_vulkan.c" "$WORKTREE/libavfilter/"
+python3 - "$WORKTREE" <<'PY'
+import sys, pathlib
+root = pathlib.Path(sys.argv[1])
+def ins_before(path, anchor, line):
+    p = root / path; t = p.read_text()
+    assert anchor in t, f"anchor missing in {path}: {anchor!r}"
+    assert line.strip() not in t, f"already present in {path}: {line!r}"
+    p.write_text(t.replace(anchor, line + anchor, 1))
+def ins_after(path, anchor, line):
+    p = root / path; t = p.read_text()
+    assert anchor in t, f"anchor missing in {path}: {anchor!r}"
+    assert line.strip() not in t, f"already present in {path}: {line!r}"
+    p.write_text(t.replace(anchor, anchor + line, 1))
+# allfilters.c: deband < deblock < dehalo -> insert before dehalo.
+ins_before("libavfilter/allfilters.c",
+           "extern const FFFilter ff_vf_pelorus_dehalo_vulkan;\n",
+           "extern const FFFilter ff_vf_pelorus_deblock_vulkan;\n")
+# Makefile: insert after deband (deband < deblock).
+ins_after("libavfilter/Makefile",
+          "OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER)  += vf_pelorus_deband_vulkan.o vulkan.o vulkan_filter.o\n",
+          "OBJS-$(CONFIG_PELORUS_DEBLOCK_VULKAN_FILTER) += vf_pelorus_deblock_vulkan.o vulkan.o vulkan_filter.o\n")
+# configure: deps ONLY (no libpelorus); insert after deband.
+ins_after("configure",
+          'pelorus_deband_vulkan_filter_deps="vulkan spirv_library"\n',
+          'pelorus_deblock_vulkan_filter_deps="vulkan spirv_library"\n')
+print("registration applied: deblock")
+PY
+git -C "$WORKTREE" add -A
+git -C "$WORKTREE" \
+    -c user.name=Lusoris -c user.email=lusoris@pm.me \
+    commit -q -F "$HERE/.commit-msg-deblock.txt"
+
 # Clean stale patches, regenerate the whole range.
 rm -f "$HERE"/0*.patch
 git -C "$WORKTREE" format-patch --zero-commit --start-number=1 \
@@ -427,6 +463,7 @@ mv "$HERE"/0013-*.patch "$HERE/0013-svtav1-pelorus-roi.patch" 2>/dev/null || tru
 mv "$HERE"/0014-*.patch "$HERE/0014-add-vf_pelorus_dehalo_vulkan.patch" 2>/dev/null || true
 mv "$HERE"/0015-*.patch "$HERE/0015-add-vf_pelorus_aa_vulkan.patch" 2>/dev/null || true
 mv "$HERE"/0016-*.patch "$HERE/0016-add-vf_pelorus_scenecut.patch" 2>/dev/null || true
+mv "$HERE"/0017-*.patch "$HERE/0017-add-vf_pelorus_deblock_vulkan.patch" 2>/dev/null || true
 
 git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE"
 echo "patch(es) regenerated in $HERE:"

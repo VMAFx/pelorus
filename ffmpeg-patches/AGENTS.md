@@ -109,3 +109,12 @@ ffmpeg-patches/
    forced IDR — no per-encoder patch. An ABI reorder of `PelorusMotionSection`
    would break it (forbidden by interop.h R1/R2). See ADR-0126 and
    [docs/rebase-notes.md](../docs/rebase-notes.md).
+7. **`vf_pelorus_dehalo_vulkan` (patch 0014) is a pure pixel transform that does
+8. **`vf_pelorus_aa_vulkan` (patch 0015) is a pure transform** — anime warp-AA +
+9. **`vf_pelorus_deblock_vulkan` (patch 0017) is a pure transform** — re-encode
+   deblock/dering — that does **NOT** link libpelorus: deps-only registration
+   (`pelorus_deblock_vulkan_filter_deps="vulkan spirv_library"`, **no**
+   `require_pkg_config libpelorus … && add_extralibs` hunk), inserted **after**
+   the deband entries (`deband < deblock < dehalo` alphabetically); it emits no
+   interop side data. Its inline GLSL stays in lockstep with
+   `libpelorus/shaders/pelorus_deblock.comp` (AGENTS hard rule 4).

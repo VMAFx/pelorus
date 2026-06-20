@@ -57,6 +57,7 @@ HEVC/VVC (H.274 / SEI FGC).
 |---|---|---|---|
 | analyze | `pelorus_analyze_vulkan` | measure banding/variance/edge stats → side data | **working** |
 | deband | `pelorus_deband_vulkan` | flatten contours + dither | **working** |
+| deblock | `pelorus_deblock_vulkan` | re-encode deblock/dering — gated `[1 2 1]` low-pass across the prior codec's DCT block grid; smooths blocking so the new encoder does not code it as false residual (luma-only); runs early, before deband | **built** (on-content tuning + SSIMULACRA2/BD-rate proof on a re-transcode corpus pending) |
 | dehalo | `pelorus_dehalo_vulkan` | anime/2D dehalo + dering — single-pass GPU port of DeHalo_alpha + FineDehalo; removes the ring next to line-art (luma-only); foundation of `tune=anime` | **built** (on-content tuning + SSIMULACRA2/edge-VMAF-NEG/CAMBI proof pending) |
 | denoise | `pelorus_denoise_vulkan` | edge-preserving spatio-temporal denoise (biggest BD-rate lever) | **working** |
 | grain | `pelorus_grain_estimate_vulkan` | estimate film-grain params → PEL_SEC_FILMGRAIN + native AV1 side data; HEVC via `pelorus_fgs` BSF (ADR-0117); `av1_nvenc` via `-pelorus_film_grain` (ADR-0118); static H.274 model, per-frame/H.264/VVC legs deferred | estimator working; HEVC BSF working (static); av1_nvenc HW grain wired |

@@ -534,3 +534,40 @@ patches (ADR-0108 deliverable #6).
   check: a multi-shot clip through `pelorus_mc_vulkan=meta=1,hwdownload,format=
   yuv420p,pelorus_scenecut` must force `pict_type=I` on the cut frames (inspect
   with `ffprobe -show_frames` / `-skip_frame nokey`).
+## v0.1.0 — patch 0017 (deblock; cumulative on 0001–0011)
+
+- **Patch**: `ffmpeg-patches/0017-add-vf_pelorus_deblock_vulkan.patch`
+  (canonical source `files/vf_pelorus_deblock_vulkan.c`). A `vf_` filter drop-in,
+  same per-filter registration model as the deband/analyze/denoise/dehalo/aa
+  loop — **not** a libavcodec edit. Committed by `generate.sh` after the prior
+  filter/encoder patches so it lands as 0016 and does **not** renumber a shipped
+  artifact. **Cumulative on 0001–0011.**
+- **Touches**: `libavfilter/vf_pelorus_deblock_vulkan.c` (new) + the three
+  registration files. `libavfilter/allfilters.c` (the `extern const FFFilter
+  ff_vf_pelorus_deblock_vulkan` line, inserted **before** the `dehalo` entry —
+  `deband < deblock < dehalo` alphabetically, so deblock's context lines
+  reference the deband-added line above it); `libavfilter/Makefile` (the
+  `OBJS-$(CONFIG_PELORUS_DEBLOCK_VULKAN_FILTER) += vf_pelorus_deblock_vulkan.o
+  vulkan.o vulkan_filter.o` line, inserted **after** the deband OBJS line);
+  `configure` (`pelorus_deblock_vulkan_filter_deps="vulkan spirv_library"` —
+  **deps only**).
+- **No consumed surfaces — no libpelorus link**: deblock is a **pure pixel
+  transform**. It emits no side data, reads no `PelorusSideData`, and does
+  **not** link `libpelorus`, so it carries **NO `require_pkg_config libpelorus …
+  && add_extralibs` hunk** (unlike the deband/analyze/denoise/grain producers) —
+  the `configure` registration is **deps-only**. Nothing in the interop ABI can
+  break this filter on a rebase.
+- **Consumes from FFmpeg**: the standard `vf_*_vulkan` compute-filter surface
+  (`FFVulkanContext`, lazy SPIR-V init, `FF_VK_REP_FLOAT`, `GLSLC`/`GLSLF`/`GLSLD`
+  inline GLSL, `ff_vk_filter_config_input`/`_output`,
+  `ff_vk_filter_process_simple`, the push-const machinery) — the same surface the
+  other `vf_pelorus_*_vulkan` filters use. A change to that surface on an upstream
+  bump can break the dispatch; re-test by replaying.
+- **Shader lockstep**: `libpelorus/shaders/pelorus_deblock.comp` and the patch's
+  inline GLSL implement the same single-pass conditional `[1 2 1]` deblock — at
+  the prior codec's block grid (`bsize`), within `edge` of a boundary, a
+  cross-boundary `[1 2 1]` low-pass gated by the boundary step (`< thr` smooth,
+  `>= thr` preserve) and blended by `str`. The only intended difference is the
+  working domain (`.comp` reads `r16ui`/÷65535, inline reads `FF_VK_REP_FLOAT`
+  UNORM already in `[0,1]`). Edit both together (AGENTS hard rule 4).
+- **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay the
