@@ -1,0 +1,20 @@
+feat(aa): add vf_pelorus_aa_vulkan (anime warp-AA + line-darkening, Vulkan)
+
+A single-pass GPU port of awarpsharp2 (warp anti-aliasing) plus an optional
+FastLineDarken-style line-darkening pass. Anime line-art accumulates aliasing
+through repeated scale/encode; awarpsharp builds a blurred edge-strength map and
+warps each pixel toward the nearest edge by the gradient of that map, pulling
+stair-stepped samples onto the line (anti-aliasing + thinning) without the
+ringing a sharpen would add. Line-darkening deepens the dark side of edges so
+lines stay crisp. Luma only; chroma passes through. Zero-copy in VRAM
+(FF_VK_REP_FLOAT UNORM, bit-depth-agnostic).
+
+Pure pixel transform — does NOT link libpelorus, so registration is deps-only
+(no require_pkg_config). Second filter of the anime `tune` pipeline. The
+reference shader libpelorus/shaders/pelorus_aa.comp and the inline GLSL are kept
+in lockstep.
+
+AVOptions: blur (edge-map radius), depth (warp scale), thresh (edge clamp),
+darkstr (line-darkening), edge (line threshold), planes.
+
+ADR: docs/adr/0124-anime-aa.md

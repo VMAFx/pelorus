@@ -448,3 +448,33 @@ patches (ADR-0108 deliverable #6).
   remove-only asymmetric `darkstr`/`brightstr` pull → dilated Sobel ring gate).
   Edit both together (AGENTS hard rule 4).
 - **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay
+## v0.1.0 — patch 0015 (aa; cumulative on 0001–0011)
+
+- **Patch**: `ffmpeg-patches/0015-add-vf_pelorus_aa_vulkan.patch`. A pure-transform
+  AVFilter (anime warp-AA + line-darkening); committed by `generate.sh` after the
+  prior filter/encoder patches so it lands as 0012 and does **not** renumber a
+  shipped artifact. **Cumulative**: applies only on top of 0001–0011.
+- **Touches**: `libavfilter/vf_pelorus_aa_vulkan.c` (new) + the same registration
+  files as the other filters (extern/OBJS/deps), inserted **before** the analyze
+  entries — `aa` sorts first among the `pelorus_*` filters (`aa` < `analyze` <
+  `deband` < `denoise` < `grain_estimate` < `mc`), so its `allfilters.c` extern,
+  `Makefile` OBJS, and `configure` `*_filter_deps` hunks insert ahead of the
+  analyze lines and 0012's context references the analyze added lines.
+- **No consumed surfaces — no libpelorus link**: aa is a pure pixel transform. It
+  emits no side data, reads no `PelorusSideData`, and does **not** link
+  `libpelorus`. Registration is **deps-only**: `configure` carries
+  `pelorus_aa_vulkan_filter_deps="vulkan spirv_library"` and there is **NO**
+  `require_pkg_config libpelorus … && add_extralibs` line for this filter (unlike
+  the deband/analyze/denoise/mc producers). It consumes only the stock Vulkan
+  compute-filter surface (`ff_vk_spirv_init`, `ff_vk_shader_init`/
+  `_add_descriptor_set`/`_add_push_const`/`_link`/`_register_exec`,
+  `ff_vk_filter_process_simple`, `ff_vk_filter_config_input`/`_output`, the GLSLC/
+  GLSLF/GLSLD macros) — the same `vf_gblur_vulkan`-style idiom. A change to that
+  surface on an upstream bump can break the build — re-test by replaying the stack.
+- **Shader lockstep**: `libpelorus/shaders/pelorus_aa.comp` and the filter's inline
+  GLSL implement the same warp-AA (blurred-Sobel edge map → gradient warp →
+  bilinear resample) + optional Sobel-gated line-darkening; the only intended
+  difference is the working domain (`.comp` reads `r16ui`/÷65535, inline reads
+  `FF_VK_REP_FLOAT` UNORM already in `[0,1]`). The inline `MAX_R = 8` warp-radius
+  bound must track the `.comp`. Edit both together (AGENTS hard rule 4).
+- **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay

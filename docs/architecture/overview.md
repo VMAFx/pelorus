@@ -61,6 +61,7 @@ HEVC/VVC (H.274 / SEI FGC).
 | denoise | `pelorus_denoise_vulkan` | edge-preserving spatio-temporal denoise (biggest BD-rate lever) | **working** |
 | grain | `pelorus_grain_estimate_vulkan` | estimate film-grain params → PEL_SEC_FILMGRAIN + native AV1 side data; HEVC via `pelorus_fgs` BSF (ADR-0117); `av1_nvenc` via `-pelorus_film_grain` (ADR-0118); static H.274 model, per-frame/H.264/VVC legs deferred | estimator working; HEVC BSF working (static); av1_nvenc HW grain wired |
 | mc | `pelorus_mc_vulkan` | block-matching motion estimator → per-block MV-hint side data (`PEL_SEC_MOTION`); encode-speed; NVENC ME-hint consumer shipped (`-pelorus_me_hints`, patch 0008); measured on 4090: no speed gain (~2–3% slowdown at p7 — see bench-results.md v0.9) | **working** |
+| aa | `pelorus_aa_vulkan` | anime warp anti-aliasing (awarpsharp2) + optional line-darkening (FastLineDarken); luma-only single-pass transform, no side data; second stage of the anime `tune` chain after dehalo (ADR-0124); defaults unproven on content (SSIMULACRA2 / edge-region VMAF-NEG proof deferred) | **built** |
 
 The **anime tune** composes these stages into one recommended GPU pre-encode
 chain — analyze-ROI + dehalo + aa + deband at 10-bit, then encoder ROI steering —

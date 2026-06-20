@@ -1,0 +1,127 @@
+/*
+ * pelorus_aa.comp — anime warp anti-aliasing + line-darkening (reference).
+ *
+ * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ *
+ * A single-pass GPU port of awarpsharp2 (the VapourSynth/AviSynth warp-AA) plus
+ * an optional FastLineDarken-style line-darkening pass. Anime line-art is drawn
+ * once and scaled/encoded many times, so it accumulates aliasing ("jaggies") on
+ * near-horizontal/vertical edges. awarpsharp builds a blurred edge-strength map
+ * and then *warps* each pixel toward the nearest edge by the gradient of that
+ * map — pulling stair-stepped samples onto the line, which anti-aliases and
+ * thins it without the ringing a sharpen would add. Line-darkening then deepens
+ * the dark side of the edge so lines stay crisp after the warp.
+ *
+ *   emask = blur( |Sobel(luma)| )           // edge-strength (the warp field)
+ *   disp  = depth * grad(emask)             // displace toward stronger edges
+ *   warp  = bilinear(luma, pos + disp)      // pull samples onto the line
+ *   line-darken: where warp is on the dark side near an edge, deepen by darkstr.
+ *
+ * Luma only; chroma passes through. Reference form runs on the luma plane
+ * against r16ui storage images; the in-tree FFmpeg filter
+ * (ffmpeg-patches/files/vf_pelorus_aa_vulkan.c) emits an equivalent shader
+ * inline via FFmpeg's GLSLC macros over FF_VK_REP_FLOAT image arrays — keep the
+ * two in lockstep (AGENTS hard rule 4).
+ */
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0, r16ui) uniform readonly  uimage2D srcImg;
+layout(binding = 1, r16ui) uniform writeonly uimage2D dstImg;
+
+layout(push_constant, std430) uniform Params {
+    int   width;     //  0  plane width
+    int   height;    //  4  plane height
+    int   blur;      //  8  edge-map blur passes (box radius), 0..MAX_R
+    float depth;     // 12  warp displacement scale (pixels per unit gradient)
+    float thresh;    // 16  edge-map clamp ceiling (normalized)
+    float darkstr;   // 20  line-darkening strength [0,1] (0 = off)
+    float edge_thr;  // 24  Sobel magnitude that counts as a line (for darken)
+} pc;
+
+const int MAX_R = 8;
+
+float load_norm(int x, int y) {
+    x = clamp(x, 0, pc.width  - 1);
+    y = clamp(y, 0, pc.height - 1);
+    return float(imageLoad(srcImg, ivec2(x, y)).r) / 65535.0;
+}
+
+/* Sobel gradient magnitude at (x,y). */
+float sobel_mag(int x, int y) {
+    float gx = 0.0, gy = 0.0;
+    float kx[9] = float[9](-1.0, 0.0, 1.0, -2.0, 0.0, 2.0, -1.0, 0.0, 1.0);
+    float ky[9] = float[9](-1.0, -2.0, -1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0);
+    int k = 0;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            float v = load_norm(x + dx, y + dy);
+            gx += v * kx[k];
+            gy += v * ky[k];
+            k++;
+        }
+    }
+    return sqrt(gx * gx + gy * gy);
+}
+
+/* Blurred, clamped edge-strength map (the warp field) at (x,y). */
+float emask(int x, int y, int r, float thr) {
+    float acc = 0.0, n = 0.0;
+    for (int dy = -MAX_R; dy <= MAX_R; dy++) {
+        if (dy < -r || dy > r) continue;
+        for (int dx = -MAX_R; dx <= MAX_R; dx++) {
+            if (dx < -r || dx > r) continue;
+            acc += min(sobel_mag(x + dx, y + dy), thr);
+            n   += 1.0;
+        }
+    }
+    return acc / max(n, 1.0);
+}
+
+/* Bilinear sample of luma at a fractional position. */
+float bilinear(float fx, float fy) {
+    int x0 = int(floor(fx)), y0 = int(floor(fy));
+    float tx = fx - float(x0), ty = fy - float(y0);
+    float a = load_norm(x0,     y0);
+    float b = load_norm(x0 + 1, y0);
+    float c = load_norm(x0,     y0 + 1);
+    float d = load_norm(x0 + 1, y0 + 1);
+    return mix(mix(a, b, tx), mix(c, d, tx), ty);
+}
+
+void main() {
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    int x = gid.x, y = gid.y;
+    if (x >= pc.width || y >= pc.height)
+        return;
+
+    int r = clamp(pc.blur, 0, MAX_R);
+    float thr = max(pc.thresh, 0.0001);
+
+    /* 1. warp field gradient (central differences of the blurred edge map). */
+    float gx = (emask(x + 1, y, r, thr) - emask(x - 1, y, r, thr)) * 0.5;
+    float gy = (emask(x, y + 1, r, thr) - emask(x, y - 1, r, thr)) * 0.5;
+
+    /* 2. displace toward the stronger edge and sample (the warp = the AA). */
+    float fx = float(x) + pc.depth * gx;
+    float fy = float(y) + pc.depth * gy;
+    float warp = bilinear(fx, fy);
+
+    /* 3. optional line-darkening: on the dark side of a real edge, deepen so
+     *    the warped line stays crisp. */
+    if (pc.darkstr > 0.0) {
+        float e = sobel_mag(x, y);
+        if (e > pc.edge_thr) {
+            /* local min in the 3x3 = the darkest neighbour (the line core). */
+            float lo = warp;
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++)
+                    lo = min(lo, load_norm(x + dx, y + dy));
+            warp = mix(warp, lo, pc.darkstr);
+        }
+    }
+
+    int outv = clamp(int(round(clamp(warp, 0.0, 1.0) * 65535.0)), 0, 65535);
+    imageStore(dstImg, ivec2(x, y), uvec4(uint(outv), 0u, 0u, 0u));
+}

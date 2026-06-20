@@ -92,3 +92,9 @@ ffmpeg-patches/
    deband/analyze/denoise/grain filters); it emits no interop side data. Its
    inline GLSL stays in lockstep with `libpelorus/shaders/pelorus_dehalo.comp`
    (root AGENTS.md hard rule 4).
+6. **`vf_pelorus_aa_vulkan` (patch 0015) is a pure transform** — anime warp-AA +
+   line-darkening — with **no `libpelorus` link**: deps-only registration
+   (`pelorus_aa_vulkan_filter_deps="vulkan spirv_library"`, **no**
+   `require_pkg_config libpelorus`/`add_extralibs` line), inserted **before** the
+   analyze entries (`aa` < `analyze` alphabetically). Its inline GLSL stays in
+   lockstep with `libpelorus/shaders/pelorus_aa.comp` (AGENTS hard rule 4).

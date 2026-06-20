@@ -159,3 +159,5 @@ FFmpeg when applied.
 
 If Pelorus is useful to you: [GitHub Sponsors](https://github.com/sponsors/lusoris)
 · [Ko-fi](https://ko-fi.com/lusoris).
+| `pelorus_aa_vulkan` | Anime warp anti-aliasing (awarpsharp2) + optional line-darkening (FastLineDarken): de-jaggies line-art via blurred-edge-map gradient warp, luma-only, no side data; 2nd stage of the anime `tune` chain | **Built (defaults unproven)** |
+- [x] Step 8 — Anime `tune` chain: `vf_pelorus_aa_vulkan` (patch 0012) — warp

@@ -335,6 +335,38 @@ git -C "$WORKTREE" \
     -c user.name=Lusoris -c user.email=lusoris@pm.me \
     commit -q -F "$HERE/.commit-msg-dehalo.txt"
 
+# vf_pelorus_aa_vulkan (anime warp-AA + line-darkening) is a PURE pixel transform
+# that does NOT link libpelorus (no interop emit) -> registration is deps-only (no
+# require_pkg_config). "aa" sorts first among the pelorus filters (aa < analyze),
+# so it inserts ahead of analyze. Committed last -> patch 0015.
+cp "$FILES_DIR/vf_pelorus_aa_vulkan.c" "$WORKTREE/libavfilter/"
+python3 - "$WORKTREE" <<'PY'
+import sys, pathlib
+root = pathlib.Path(sys.argv[1])
+def ins_before(path, anchor, line):
+    p = root / path; t = p.read_text()
+    assert anchor in t, f"anchor missing in {path}: {anchor!r}"
+    assert line.strip() not in t, f"already present in {path}: {line!r}"
+    p.write_text(t.replace(anchor, line + anchor, 1))
+# allfilters.c: aa < analyze -> insert before analyze.
+ins_before("libavfilter/allfilters.c",
+           "extern const FFFilter ff_vf_pelorus_analyze_vulkan;\n",
+           "extern const FFFilter ff_vf_pelorus_aa_vulkan;\n")
+# Makefile: aa < analyze -> insert before analyze.
+ins_before("libavfilter/Makefile",
+           "OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vf_pelorus_analyze_vulkan.o vulkan.o vulkan_filter.o\n",
+           "OBJS-$(CONFIG_PELORUS_AA_VULKAN_FILTER)      += vf_pelorus_aa_vulkan.o vulkan.o vulkan_filter.o\n")
+# configure: deps ONLY (aa does not link libpelorus); insert before analyze.
+ins_before("configure",
+           'pelorus_analyze_vulkan_filter_deps="vulkan spirv_library"\n',
+           'pelorus_aa_vulkan_filter_deps="vulkan spirv_library"\n')
+print("registration applied: aa")
+PY
+git -C "$WORKTREE" add -A
+git -C "$WORKTREE" \
+    -c user.name=Lusoris -c user.email=lusoris@pm.me \
+    commit -q -F "$HERE/.commit-msg-aa.txt"
+
 # Clean stale patches, regenerate the whole range.
 rm -f "$HERE"/0*.patch
 git -C "$WORKTREE" format-patch --zero-commit --start-number=1 \
@@ -355,6 +387,7 @@ mv "$HERE"/0011-*.patch "$HERE/0011-nvenc-pelorus-film-grain.patch" 2>/dev/null 
 mv "$HERE"/0012-*.patch "$HERE/0012-libaom-pelorus-roi.patch" 2>/dev/null || true
 mv "$HERE"/0013-*.patch "$HERE/0013-svtav1-pelorus-roi.patch" 2>/dev/null || true
 mv "$HERE"/0014-*.patch "$HERE/0014-add-vf_pelorus_dehalo_vulkan.patch" 2>/dev/null || true
+mv "$HERE"/0015-*.patch "$HERE/0015-add-vf_pelorus_aa_vulkan.patch" 2>/dev/null || true
 
 git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE"
 echo "patch(es) regenerated in $HERE:"
