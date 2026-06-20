@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sat, 20 Jun 2026 19:57:00 +0200
+Date: Sat, 20 Jun 2026 22:05:42 +0200
 Subject: [PATCH 02/18] feat(analyze): add vf_pelorus_analyze_vulkan (measured
  banding/variance maps)
 MIME-Version: 1.0
@@ -23,7 +23,9 @@ spends bits where contouring would show. Detection is two-scale (ADR-0133):
 a fine per-tile variance scale plus a coarse inter-tile mean-luma-gradient
 scale that catches shallow ramps (sky/shadow) spanning many tiles which are
 invisible to any single tile's variance. It additionally emits a per-frame
-complexity scalar (PEL_SEC_COMPLEXITY, ADR-0132) for per-shot CRF steering.
+complexity scalar (PEL_SEC_COMPLEXITY, ADR-0132) for per-shot CRF steering, and
+mirrors the per-frame scalars as lavfi.pelorus.* frame metadata (ADR-0136,
+ffprobe/metadata=print-readable) since the interop blob is not muxed to file.
 
 Codec-agnostic: the statistics describe the source, independent of the chosen
 encoder (HEVC, AV1, ...).
@@ -40,8 +42,8 @@ docs/adr/0133-analyze-coarse-banding-cambi.md
  configure                               |   2 +
  libavfilter/Makefile                    |   1 +
  libavfilter/allfilters.c                |   1 +
- libavfilter/vf_pelorus_analyze_vulkan.c | 823 ++++++++++++++++++++++++
- 4 files changed, 827 insertions(+)
+ libavfilter/vf_pelorus_analyze_vulkan.c | 845 ++++++++++++++++++++++++
+ 4 files changed, 849 insertions(+)
  create mode 100644 libavfilter/vf_pelorus_analyze_vulkan.c
 
 diff --git a/configure b/configure
@@ -90,10 +92,10 @@ index c02a049dbc..41761c6146 100644
  extern const FFFilter ff_vf_perspective;
 diff --git a/libavfilter/vf_pelorus_analyze_vulkan.c b/libavfilter/vf_pelorus_analyze_vulkan.c
 new file mode 100644
-index 0000000000..3d0bae81f1
+index 0000000000..1d4b3ac145
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_analyze_vulkan.c
-@@ -0,0 +1,823 @@
+@@ -0,0 +1,845 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -135,6 +137,7 @@ index 0000000000..3d0bae81f1
 +
 +#include "libavutil/buffer.h"
 +#include "libavutil/common.h"
++#include "libavutil/dict.h"
 +#include "libavutil/frame.h"
 +#include "libavutil/mem.h"
 +#include "libavutil/opt.h"
@@ -573,6 +576,17 @@ index 0000000000..3d0bae81f1
 +/* Derive the frame summaries from the per-tile records and attach the measured
 + * PEL_SEC_VARIANCE + PEL_SEC_BANDING sections to the frame. Summing over all
 + * tiles reproduces the same frame scalars the old hashed-slice scheme emitted. */
++/* Emit a per-frame scalar as FFmpeg frame metadata (the vf_scdet idiom). Lets a
++ * host-side pass read analyze's signals via `ffprobe -show_frames` or the
++ * `metadata=print` filter without decoding the interop blob — the extraction
++ * path for per-shot CRF steering, the autotune loop, and debugging (ADR-0136). */
++static void pel_set_meta_f(AVFrame *frame, const char *key, float v)
++{
++    char buf[32];
++    snprintf(buf, sizeof(buf), "%.6f", (double)v);
++    av_dict_set(&frame->metadata, key, buf, 0);
++}
++
 +static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
 +                        const PelorusTileView *tv)
 +{
@@ -670,6 +684,16 @@ index 0000000000..3d0bae81f1
 +        cx.texture_energy = texture;
 +        cx.motion_component = motion;
 +        cx.has_scene_cut = (uint8_t)scene_cut;
++
++        /* Mirror the per-frame scalars as frame metadata (host-readable). */
++        pel_set_meta_f(frame, "lavfi.pelorus.complexity", cema);
++        pel_set_meta_f(frame, "lavfi.pelorus.texture", texture);
++        pel_set_meta_f(frame, "lavfi.pelorus.motion", motion);
++        pel_set_meta_f(frame, "lavfi.pelorus.variance", gvar);
++        pel_set_meta_f(frame, "lavfi.pelorus.edge", gedge);
++        pel_set_meta_f(frame, "lavfi.pelorus.banding", flat_frac);
++        av_dict_set(&frame->metadata, "lavfi.pelorus.scene_cut",
++                    scene_cut ? "1" : "0", 0);
 +    }
 +    secs[2].id = PEL_SEC_COMPLEXITY;
 +    secs[2].data = &cx;

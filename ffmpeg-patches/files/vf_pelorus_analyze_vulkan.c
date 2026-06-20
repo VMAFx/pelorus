@@ -39,6 +39,7 @@
 
 #include "libavutil/buffer.h"
 #include "libavutil/common.h"
+#include "libavutil/dict.h"
 #include "libavutil/frame.h"
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
@@ -477,6 +478,17 @@ static int attach_roi(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
 /* Derive the frame summaries from the per-tile records and attach the measured
  * PEL_SEC_VARIANCE + PEL_SEC_BANDING sections to the frame. Summing over all
  * tiles reproduces the same frame scalars the old hashed-slice scheme emitted. */
+/* Emit a per-frame scalar as FFmpeg frame metadata (the vf_scdet idiom). Lets a
+ * host-side pass read analyze's signals via `ffprobe -show_frames` or the
+ * `metadata=print` filter without decoding the interop blob — the extraction
+ * path for per-shot CRF steering, the autotune loop, and debugging (ADR-0136). */
+static void pel_set_meta_f(AVFrame *frame, const char *key, float v)
+{
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%.6f", (double)v);
+    av_dict_set(&frame->metadata, key, buf, 0);
+}
+
 static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
                         const PelorusTileView *tv)
 {
@@ -574,6 +586,16 @@ static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
         cx.texture_energy = texture;
         cx.motion_component = motion;
         cx.has_scene_cut = (uint8_t)scene_cut;
+
+        /* Mirror the per-frame scalars as frame metadata (host-readable). */
+        pel_set_meta_f(frame, "lavfi.pelorus.complexity", cema);
+        pel_set_meta_f(frame, "lavfi.pelorus.texture", texture);
+        pel_set_meta_f(frame, "lavfi.pelorus.motion", motion);
+        pel_set_meta_f(frame, "lavfi.pelorus.variance", gvar);
+        pel_set_meta_f(frame, "lavfi.pelorus.edge", gedge);
+        pel_set_meta_f(frame, "lavfi.pelorus.banding", flat_frac);
+        av_dict_set(&frame->metadata, "lavfi.pelorus.scene_cut",
+                    scene_cut ? "1" : "0", 0);
     }
     secs[2].id = PEL_SEC_COMPLEXITY;
     secs[2].data = &cx;

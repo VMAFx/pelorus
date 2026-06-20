@@ -75,6 +75,31 @@ frame. Inspect it from a downstream consumer via
 logs nothing on success; errors surface as a non-zero ffmpeg exit with a
 `[pelorus_analyze_vulkan]` message.
 
+## Frame metadata
+
+The interop blob is not muxed into the output file, so the same per-frame scalars
+are *also* emitted as FFmpeg frame metadata ([ADR-0136](../adr/0136-analyze-frame-metadata.md),
+the `vf_scdet` idiom) — the host-readable extraction path for per-shot CRF
+steering, the autotune loop, and shell debugging:
+
+| key | meaning |
+|---|---|
+| `lavfi.pelorus.complexity` | EMA-smoothed per-frame complexity `[0,1]` |
+| `lavfi.pelorus.texture` | normalized texture/edge energy `[0,1]` |
+| `lavfi.pelorus.motion` | motion component `[0,1]` (0 with no upstream `pelorus_mc`) |
+| `lavfi.pelorus.variance` | mean per-tile luma variance |
+| `lavfi.pelorus.edge` | mean per-tile edge density `[0,1]` |
+| `lavfi.pelorus.banding` | flat-area fraction / banding risk `[0,1]` |
+| `lavfi.pelorus.scene_cut` | `1` on a Pelorus scene cut, else `0` |
+
+Read them with `ffprobe -show_frames -show_entries frame_tags` or, in a filter
+graph, `metadata=mode=print`:
+
+```bash
+ffprobe -f lavfi -i "movie=in.mkv,format=yuv420p,hwupload,pelorus_analyze_vulkan,hwdownload" \
+        -show_entries frame_tags=lavfi.pelorus.complexity,lavfi.pelorus.scene_cut -of csv
+```
+
 ## Interactions & limitations
 
 - **Requires a Vulkan hwframes context** (`AV_PIX_FMT_VULKAN`). It reads luma
