@@ -1,0 +1,16 @@
+feat(scenecut): add vf_pelorus_scenecut — scene-cut to forced IDR
+
+A vendor-neutral encoder-steering consumer: vf_pelorus_mc already measures scene
+cuts (it emits has_scene_cut in PEL_SEC_MOTION). This filter reads that flag from
+the Pelorus side data and, on a cut frame, sets frame->pict_type = AV_PICTURE_TYPE_I
+(+ the key flag) so the downstream encoder opens a fresh GOP exactly at the cut —
+instead of predicting across an unrelated picture and re-sending it at the next
+periodic IDR. Metadata-only (no pixels, no GPU work); codec-agnostic
+(x264/x265/NVENC/QSV/SVT honour pict_type==I as a forced keyframe). Run it after
+hwdownload, just before the encoder; the motion side data rides the frame via
+av_frame_copy_props.
+
+Not a Vulkan filter: no shader, no _deps. Links libpelorus to parse the interop
+blob (require_pkg_config). Single AVOption: force_idr (default on).
+
+ADR: docs/adr/0126-scenecut-idr.md

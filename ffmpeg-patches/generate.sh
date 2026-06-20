@@ -367,6 +367,44 @@ git -C "$WORKTREE" \
     -c user.name=Lusoris -c user.email=lusoris@pm.me \
     commit -q -F "$HERE/.commit-msg-aa.txt"
 
+# vf_pelorus_scenecut (scene-cut -> forced IDR) is a metadata-only consumer of
+# PEL_SEC_MOTION — NOT a Vulkan filter (no shader, no _deps), but it LINKS
+# libpelorus to parse the blob, so it carries the require_pkg_config hunk and a
+# plain (no vulkan.o) OBJS line. Lands as patch 0016.
+cp "$FILES_DIR/vf_pelorus_scenecut.c" "$WORKTREE/libavfilter/"
+python3 - "$WORKTREE" <<'PY'
+import sys, pathlib
+root = pathlib.Path(sys.argv[1])
+def ins_before(path, anchor, line):
+    p = root / path; t = p.read_text()
+    assert anchor in t, f"anchor missing in {path}: {anchor!r}"
+    assert line.strip() not in t, f"already present in {path}: {line!r}"
+    p.write_text(t.replace(anchor, line + anchor, 1))
+def ins_after(path, anchor, line):
+    p = root / path; t = p.read_text()
+    assert anchor in t, f"anchor missing in {path}: {anchor!r}"
+    assert line.strip() not in t, f"already present in {path}: {line!r}"
+    p.write_text(t.replace(anchor, anchor + line, 1))
+REQ = ('enabled %s_filter && require_pkg_config libpelorus '
+       '"libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack '
+       '&& add_extralibs $libpelorus_extralibs\n')
+# allfilters.c: pelorus_scenecut sorts after pelorus_mc -> insert before perms.
+ins_before("libavfilter/allfilters.c",
+           "extern const FFFilter ff_vf_perms;\n",
+           "extern const FFFilter ff_vf_pelorus_scenecut;\n")
+# Makefile: metadata-only -> plain .o (no vulkan.o), after mc.
+ins_after("libavfilter/Makefile",
+          "OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER)      += vf_pelorus_mc_vulkan.o vulkan.o vulkan_filter.o\n",
+          "OBJS-$(CONFIG_PELORUS_SCENECUT_FILTER)       += vf_pelorus_scenecut.o\n")
+# configure: NO _deps (not a Vulkan filter); just the require_pkg_config link.
+ins_after("configure", REQ % "pelorus_mc_vulkan", REQ % "pelorus_scenecut")
+print("registration applied: scenecut")
+PY
+git -C "$WORKTREE" add -A
+git -C "$WORKTREE" \
+    -c user.name=Lusoris -c user.email=lusoris@pm.me \
+    commit -q -F "$HERE/.commit-msg-scenecut.txt"
+
 # Clean stale patches, regenerate the whole range.
 rm -f "$HERE"/0*.patch
 git -C "$WORKTREE" format-patch --zero-commit --start-number=1 \
@@ -388,6 +426,7 @@ mv "$HERE"/0012-*.patch "$HERE/0012-libaom-pelorus-roi.patch" 2>/dev/null || tru
 mv "$HERE"/0013-*.patch "$HERE/0013-svtav1-pelorus-roi.patch" 2>/dev/null || true
 mv "$HERE"/0014-*.patch "$HERE/0014-add-vf_pelorus_dehalo_vulkan.patch" 2>/dev/null || true
 mv "$HERE"/0015-*.patch "$HERE/0015-add-vf_pelorus_aa_vulkan.patch" 2>/dev/null || true
+mv "$HERE"/0016-*.patch "$HERE/0016-add-vf_pelorus_scenecut.patch" 2>/dev/null || true
 
 git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE"
 echo "patch(es) regenerated in $HERE:"
