@@ -663,3 +663,33 @@ patches (ADR-0108 deliverable #6).
 - **Re-test after rebase**: replay the full stack, build with `--enable-nvenc`,
   then run `pelorus_mc_vulkan=meta=1` on a sub-pel-panned still — the measured
   `global_motion_x` must be fractional (integer-pel mc would round to 0/1).
+
+## v0.1.0 — ADR-0131 MC→denoise warp (regenerates 0003, 0007)
+
+- **Patches**: `0003` (denoise filter — the `mc=1` warp consumer), `0007` (mc —
+  emits the new confidence section alongside the MV grid). No registration-hunk
+  or numbering change.
+- **ABI**: `PELORUS_ABI_MINOR` → **2**, new section bit `PEL_SEC_MOTION_CONF`
+  (`1u<<6`) + `PelorusMotionConfSection` (16 bytes, `_Static_assert`).
+  `PelorusMotionSection` is unchanged (32 bytes). `interop.c`'s
+  `section_bit_valid()` switch gained the new case; the conformance fixture
+  (`interop_test.c`) round-trips it. **Append-only** — an older consumer still
+  parses every section it knows (R4). The vmafx-vendored `interop.c`/`interop.h`
+  mirror is a follow-up (single-writer: Pelorus writes, vmafx reads; vmafx does
+  not consume confidence, so the drift is forward-compatible).
+- **Consumes from FFmpeg**: denoise's `mc` path adds two SSBO descriptor
+  bindings (mv_grid=6, conf_grid=7; output_images moved to 8) and uses
+  `ff_vk_get_pooled_buffer` + `ff_vk_exec_add_dep_buf` (the buffers must outlive
+  the async `meta=0` submit) — re-verify these symbols survive an upstream bump.
+- **Lockstep**: `pelorus_denoise.comp` mirrors the warp (algorithmic; the
+  single-plane `.comp` bakes quarter-pel × chroma scale into `mv_scale`/`cell_*`
+  where the filter applies `chroma_shift` in-shader). AGENTS rule 4.
+- **GLSL string limit**: the denoise inline GLSL was split into
+  `denoise_helpers_glsl[]` + `denoise_glsl[]` so neither concatenated string
+  literal exceeds the C99 4095-char limit (`-Woverlength-strings`); keep new
+  helpers in the first array.
+- **Re-test after rebase**: replay the stack, then A/B
+  `pelorus_mc_vulkan=meta=1,pelorus_denoise_vulkan=mc={0,1}` on a noisy
+  high-motion clip vs a clean reference — `mc=1` must run (no validation error)
+  and beat `mc=0` on the moving content; `meson test --suite=fast` must stay
+  11/11 (the new conformance case).

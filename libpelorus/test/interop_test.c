@@ -322,6 +322,78 @@ static void test_qp_report_roundtrip(void)
     pel_blob_free(blob);
 }
 
+/* PEL_SEC_MOTION_CONF (g): pack the per-block MV confidence section, parse it
+ * back, verify the offset/size/metric fields round-trip; a consumer that knows
+ * only the offset/size (not conf_metric) still parses (R4); and a section we did
+ * not write is absent (R3). */
+static void test_motion_conf_roundtrip(void)
+{
+    PelorusSideData meta;
+    PelorusMotionConfSection conf;
+    PelorusPackSection sec;
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    const void *p = NULL;
+    size_t got = 0;
+
+    fill_meta(&meta);
+    memset(&conf, 0, sizeof(conf));
+    conf.conf_field_offset = 0;    /* producer patches once it appends the map */
+    conf.conf_field_size = 16 * 9; /* matches fill_meta grid (uint8 per cell)  */
+    conf.conf_metric = PEL_MOTION_CONF_SAD;
+
+    sec.id = PEL_SEC_MOTION_CONF;
+    sec.data = &conf;
+    sec.size = (uint32_t)sizeof(conf);
+    CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
+    CHECK(blob != NULL);
+    CHECK(pel_blob_is_present(blob, len) == 1);
+
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_MOTION_CONF, sizeof(PelorusMotionConfSection),
+                                &p, &got) == PEL_OK);
+    CHECK(got == sizeof(PelorusMotionConfSection));
+    {
+        const PelorusMotionConfSection *r = p;
+        CHECK(r->conf_field_size == 16 * 9);
+        CHECK(r->conf_metric == PEL_MOTION_CONF_SAD);
+    }
+
+    /* R4: a consumer that knows only conf_field_offset+conf_field_size (8 bytes,
+     * the meaning that predates conf_metric) still parses. */
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_MOTION_CONF, 8, &p, &got) == PEL_OK);
+    CHECK(got == 8);
+
+    /* R3: the plain motion section we did NOT write is absent. */
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_MOTION, sizeof(PelorusMotionSection), &p,
+                                &got) == PEL_ERR_ABSENT);
+
+    pel_blob_free(blob);
+
+    /* Production usage: vf_pelorus_mc writes MOTION and MOTION_CONF together —
+     * both must round-trip from one blob regardless of dir[] ordering. */
+    {
+        PelorusMotionSection mo;
+        PelorusPackSection both[2];
+        uint8_t *b2 = NULL;
+        size_t l2 = 0;
+
+        memset(&mo, 0, sizeof(mo));
+        both[0].id = PEL_SEC_MOTION;
+        both[0].data = &mo;
+        both[0].size = (uint32_t)sizeof(mo);
+        both[1].id = PEL_SEC_MOTION_CONF;
+        both[1].data = &conf;
+        both[1].size = (uint32_t)sizeof(conf);
+        CHECK(pel_blob_pack(&meta, both, 2, &b2, &l2) == PEL_OK);
+        CHECK(pel_blob_find_section(b2, l2, PEL_SEC_MOTION, sizeof(PelorusMotionSection), &p,
+                                    &got) == PEL_OK);
+        CHECK(pel_blob_find_section(b2, l2, PEL_SEC_MOTION_CONF, sizeof(PelorusMotionConfSection),
+                                    &p, &got) == PEL_OK);
+        CHECK(got == sizeof(PelorusMotionConfSection));
+        pel_blob_free(b2);
+    }
+}
+
 /* The reader stub: fold a per-block QP grid onto the cell grid. With a block
  * grid that is an integer multiple of the cell grid, each cell averages a clean
  * block tile, so a uniform block QP folds to the same per-cell QP. */
@@ -478,6 +550,7 @@ int main(void)
     test_header_only();
     test_truncation();
     test_qp_report_roundtrip();
+    test_motion_conf_roundtrip();
     test_qp_report_fold();
     test_x265_csv_reader();
     test_deband_params();

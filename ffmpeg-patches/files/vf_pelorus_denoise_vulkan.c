@@ -99,7 +99,14 @@ typedef struct PelorusDenoiseVulkanContext {
         int32_t flags;        /* enum pel_denoise_flags                  @80 */
         uint32_t frame_idx;   /*                                         @84 */
         int32_t want_meta;    /* 1 => accumulate residual into the SSBO  @88 */
-        int32_t _pad;         /* pad to a 16-byte multiple (96 bytes)    @92 */
+        int32_t grid_cols;    /* MV/conf grid cols (0 => no MC this frame)@92 */
+        int32_t grid_rows;    /*                                         @96 */
+        int32_t cell_w;       /* ceil(lumaW / grid_cols)                 @100*/
+        int32_t cell_h;       /* ceil(lumaH / grid_rows)                 @104*/
+        int32_t chroma_shift_w; /* log2_chroma_w (MV luma->plane scale)  @108*/
+        int32_t chroma_shift_h; /*                                       @112*/
+        float mv_scale;       /* stored MV -> luma px (0.25 = quarter-pel)@116*/
+        int32_t _pad[2];      /* pad to a 16-byte multiple (128 bytes)   @120*/
     } opts;
 
     /* AVOption-backed scalar mirrors (broadcast to all planes at init) */
@@ -112,7 +119,13 @@ typedef struct PelorusDenoiseVulkanContext {
     int protect_detail;
     int planes; /* plane bitmask to process (const-folded into shader)        */
     int meta;   /* attach Pelorus interop side data                          */
+    int mc;     /* motion-compensated temporal taps (consume pelorus_mc)     */
     int64_t frame_idx;
+
+    /* Per-frame MV (quarter-pel int16 (dx,dy)) + confidence (uint8) grids,
+     * parsed from PEL_SEC_MOTION / PEL_SEC_MOTION_CONF and uploaded as SSBOs. */
+    AVBufferPool *mv_buf_pool;
+    AVBufferPool *conf_buf_pool;
 
     /* Causal previous-frame ring (clones — refcount bumps, no pixel copy). */
     AVFrame *ring[PEL_DENOISE_MAX_PREV];
@@ -125,8 +138,9 @@ typedef struct PelorusDenoiseVulkanContext {
  * imageLoad returns [0,1] directly (no /65535). The current frame's plane is
  * cur_images[idx]; previous frames are prev0_images[idx]..prev3_images[idx],
  * indexed by the temporal walk via pel_prev(). */
-static const char denoise_glsl[] =
+static const char denoise_helpers_glsl[] =
     "const int FLAG_TEMPORAL = 1;\n"
+    "const int FLAG_MOTION_COMP = 2;\n"
     "const int FLAG_PROTECT_DETAIL = 4;\n"
     "const float EPS = 1e-6;\n"
     "float pel_cur(int idx, ivec2 p, ivec2 sz) {\n"
@@ -139,6 +153,40 @@ static const char denoise_glsl[] =
     "    if (t == 3) return imageLoad(prev2_images[idx], c).x;\n"
     "    return imageLoad(prev3_images[idx], c).x;\n"
     "}\n"
+    /* --- motion-compensated previous-frame fetch (ADR-0113) --- */
+    "int pel_se16(uint v) { return int(v << 16) >> 16; }\n" /* sign-extend low 16 */
+    "ivec2 pel_cell(ivec2 lpos) {\n"
+    "    return clamp(lpos / ivec2(cell_w, cell_h), ivec2(0),\n"
+    "                 ivec2(grid_cols - 1, grid_rows - 1));\n"
+    "}\n"
+    "vec2 pel_mc_mv(ivec2 lpos) {\n" /* nearest-cell quarter-pel MV, luma px */
+    "    ivec2 cell = pel_cell(lpos);\n"
+    "    uint packed = mv_packed[cell.y * grid_cols + cell.x];\n"
+    "    return vec2(pel_se16(packed & 0xFFFFu), pel_se16(packed >> 16)) * mv_scale;\n"
+    "}\n"
+    "float pel_mc_conf(ivec2 lpos) {\n" /* nearest-cell confidence [0,1] */
+    "    ivec2 cell = pel_cell(lpos);\n"
+    "    return float(conf_packed[cell.y * grid_cols + cell.x] & 0xFFu) / 255.0;\n"
+    "}\n"
+    "float pel_prev_mc(int t, int idx, ivec2 pos, ivec2 sz) {\n"
+    "    int cw = (idx > 0) ? chroma_shift_w : 0;\n"
+    "    int ch = (idx > 0) ? chroma_shift_h : 0;\n"
+    "    ivec2 lpos = pos << ivec2(cw, ch);\n"
+    "    vec2 mvl = pel_mc_mv(lpos);\n"               /* MV in luma pixels */
+    "    vec2 mvp = vec2(mvl.x / float(1 << cw), mvl.y / float(1 << ch));\n"
+    "    vec2 sp = vec2(pos) + mvp;\n"                /* sub-pel sample point */
+    "    ivec2 ip = ivec2(floor(sp));\n"
+    "    vec2 f = sp - vec2(ip);\n"
+    "    float p00 = pel_prev(t, idx, ip + ivec2(0, 0), sz);\n"
+    "    float p10 = pel_prev(t, idx, ip + ivec2(1, 0), sz);\n"
+    "    float p01 = pel_prev(t, idx, ip + ivec2(0, 1), sz);\n"
+    "    float p11 = pel_prev(t, idx, ip + ivec2(1, 1), sz);\n"
+    "    return mix(mix(p00, p10, f.x), mix(p01, p11, f.x), f.y);\n"
+    "}\n";
+
+/* The denoise() kernel itself — a second array so neither concatenated string
+ * literal exceeds the C99 4095-char limit (emitted right after the helpers). */
+static const char denoise_glsl[] =
     "float denoise(const ivec2 pos, const int idx,\n"
     "              float sigmaS, float sigmaT, float strength_p) {\n"
     "    ivec2 sz = imageSize(output_images[idx]);\n"
@@ -174,7 +222,19 @@ static const char denoise_glsl[] =
     "        float ht2 = sigmaT * sigmaT + EPS;\n"
     "        float decay = 1.0;\n"
     "        for (int t = 1; t <= actual_prev; t++) {\n"
-    "            float p = pel_prev(t, idx, pos, sz);\n"
+    "            float p;\n"
+    "            if ((flags & FLAG_MOTION_COMP) != 0 && grid_cols != 0) {\n"
+    /* blend same-coord <-> motion-warped by per-block confidence; low conf
+     * (noise-matched MV) falls back toward the same-coord sample, and the
+     * temporal_cut gate below still rejects bad/occluded taps either way. */
+    "                int cw = (idx > 0) ? chroma_shift_w : 0;\n"
+    "                int chh = (idx > 0) ? chroma_shift_h : 0;\n"
+    "                float conf = pel_mc_conf(pos << ivec2(cw, chh));\n"
+    "                p = mix(pel_prev(t, idx, pos, sz),\n"
+    "                        pel_prev_mc(t, idx, pos, sz), conf);\n"
+    "            } else {\n"
+    "                p = pel_prev(t, idx, pos, sz);\n"
+    "            }\n"
     "            float delta = abs(C - p);\n"
     "            if (delta > temporal_cut) break;\n"
     "            decay *= temporal_decay;\n"
@@ -241,7 +301,21 @@ static av_cold int init_filter(AVFilterContext *ctx)
     s->opts.flags = PEL_DENOISE_FLAG_TEMPORAL;
     if (s->protect_detail)
         s->opts.flags |= PEL_DENOISE_FLAG_PROTECT_DETAIL;
-    s->opts._pad = 0;
+    if (s->mc)
+        s->opts.flags |= PEL_DENOISE_FLAG_MOTION_COMP;
+    {
+        const AVPixFmtDescriptor *pd = av_pix_fmt_desc_get(vkctx->output_format);
+        s->opts.chroma_shift_w = pd ? pd->log2_chroma_w : 1;
+        s->opts.chroma_shift_h = pd ? pd->log2_chroma_h : 1;
+    }
+    /* MV/conf grid dims are set per-frame in the dispatch; 0 => no MC. */
+    s->opts.grid_cols = 0;
+    s->opts.grid_rows = 0;
+    s->opts.cell_w = 0;
+    s->opts.cell_h = 0;
+    s->opts.mv_scale = 0.25f; /* mc emits quarter-pel (Q2) */
+    s->opts._pad[0] = 0;
+    s->opts._pad[1] = 0;
 
     spv = ff_vk_spirv_init();
     if (!spv) {
@@ -275,6 +349,13 @@ static av_cold int init_filter(AVFilterContext *ctx)
     GLSLC(1,     int   flags;                                                 );
     GLSLC(1,     uint  frame_idx;                                             );
     GLSLC(1,     int   want_meta;                                             );
+    GLSLC(1,     int   grid_cols;                                             );
+    GLSLC(1,     int   grid_rows;                                             );
+    GLSLC(1,     int   cell_w;                                                );
+    GLSLC(1,     int   cell_h;                                                );
+    GLSLC(1,     int   chroma_shift_w;                                        );
+    GLSLC(1,     int   chroma_shift_h;                                        );
+    GLSLC(1,     float mv_scale;                                              );
     GLSLC(0, };                                                               );
     GLSLC(0,                                                                  );
     ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts),
@@ -347,6 +428,22 @@ static av_cold int init_filter(AVFilterContext *ctx)
                                "uint cnt_y[16]; uint cnt_c[16];",
             },
             {
+                /* Per-cell quarter-pel MV grid: (uint16 dx)|(uint16 dy<<16). */
+                .name = "mv_grid",
+                .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .mem_layout = "std430",
+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+                .buf_content = "uint mv_packed[];",
+            },
+            {
+                /* Per-cell motion confidence (0..255), one uint per cell. */
+                .name = "conf_grid",
+                .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .mem_layout = "std430",
+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+                .buf_content = "uint conf_packed[];",
+            },
+            {
                 .name = "output_images",
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                 .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format,
@@ -357,9 +454,10 @@ static av_cold int init_filter(AVFilterContext *ctx)
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
             },
         };
-        RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 7, 0, 0));
+        RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 9, 0, 0));
     }
 
+    GLSLD(denoise_helpers_glsl);
     GLSLD(denoise_glsl);
     GLSLC(0, void main()                                                      );
     GLSLC(0, {                                                                );
@@ -526,6 +624,8 @@ static int denoise_dispatch(PelorusDenoiseVulkanContext *s, AVFrame *out,
     int nb_img_bar = 0;
     AVBufferRef *buf = NULL;
     FFVkBuffer *buf_vk = NULL;
+    AVBufferRef *mvbuf = NULL, *confbuf = NULL;
+    FFVkBuffer *mvbuf_vk = NULL, *confbuf_vk = NULL;
     int want_meta = s->meta;
 
     *acc_out = NULL;
@@ -548,6 +648,80 @@ static int denoise_dispatch(PelorusDenoiseVulkanContext *s, AVFrame *out,
                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
         buf_vk = (FFVkBuffer *)buf->data;
+    }
+
+    /* --- motion-compensated taps: parse the MV + confidence grids from cur's
+     * Pelorus side data and stage them into host-visible SSBOs. Something must
+     * be bound at 6/7 every dispatch (Vulkan forbids an unbound used
+     * descriptor); grid_cols == 0 makes the shader take the same-coord path. */
+    s->opts.grid_cols = 0;
+    {
+        AVFrameSideData *sd = s->mc
+            ? av_frame_get_side_data(cur, AV_FRAME_DATA_SEI_UNREGISTERED)
+            : NULL;
+        const void *mp = NULL, *cp = NULL;
+        size_t msz = 0, csz = 0;
+        const uint8_t *mv_field = NULL, *conf_field = NULL;
+        int gc = 0, gr = 0, cells = 0, ncells, j;
+
+        if (sd &&
+            pel_blob_find_section(sd->data, sd->size, PEL_SEC_MOTION,
+                                  sizeof(PelorusMotionSection), &mp, &msz) == PEL_OK &&
+            pel_blob_find_section(sd->data, sd->size, PEL_SEC_MOTION_CONF,
+                                  sizeof(PelorusMotionConfSection), &cp, &csz) == PEL_OK) {
+            const PelorusMotionSection *mo = mp;
+            const PelorusMotionConfSection *mcs = cp;
+            const PelorusSideData *bh =
+                (const PelorusSideData *)(sd->data + PELORUS_SIDEDATA_UUID_LEN);
+            gc = bh->grid_cols;
+            gr = bh->grid_rows;
+            cells = gc * gr;
+            /* Validate against the untrusted side-data length before deref. */
+            if (gc > 0 && gr > 0 &&
+                mo->mv_field_size == (uint32_t)cells * 4 &&
+                mcs->conf_field_size == (uint32_t)cells &&
+                (size_t)PELORUS_SIDEDATA_UUID_LEN + mo->mv_field_offset +
+                        mo->mv_field_size <= sd->size &&
+                (size_t)PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset +
+                        mcs->conf_field_size <= sd->size) {
+                mv_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mo->mv_field_offset;
+                conf_field =
+                    sd->data + PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset;
+            }
+        }
+
+        ncells = mv_field ? cells : 1;
+        RET(ff_vk_get_pooled_buffer(vkctx, &s->mv_buf_pool, &mvbuf,
+                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
+                                    (size_t)ncells * sizeof(uint32_t),
+                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
+        RET(ff_vk_get_pooled_buffer(vkctx, &s->conf_buf_pool, &confbuf,
+                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
+                                    (size_t)ncells * sizeof(uint32_t),
+                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
+        mvbuf_vk = (FFVkBuffer *)mvbuf->data;
+        confbuf_vk = (FFVkBuffer *)confbuf->data;
+
+        if (mv_field) {
+            uint32_t *md = (uint32_t *)mvbuf_vk->mapped_mem;
+            uint32_t *cd = (uint32_t *)confbuf_vk->mapped_mem;
+            for (j = 0; j < cells; j++) {
+                int16_t dx, dy;
+                memcpy(&dx, mv_field + (size_t)j * 4 + 0, sizeof(int16_t));
+                memcpy(&dy, mv_field + (size_t)j * 4 + 2, sizeof(int16_t));
+                md[j] = (uint32_t)(uint16_t)dx | ((uint32_t)(uint16_t)dy << 16);
+                cd[j] = conf_field[j];
+            }
+            s->opts.grid_cols = gc;
+            s->opts.grid_rows = gr;
+            s->opts.cell_w = (out->width + gc - 1) / gc;
+            s->opts.cell_h = (out->height + gr - 1) / gr;
+        } else {
+            ((uint32_t *)mvbuf_vk->mapped_mem)[0] = 0;
+            ((uint32_t *)confbuf_vk->mapped_mem)[0] = 0;
+        }
     }
 
     exec = ff_vk_exec_get(vkctx, &s->e);
@@ -573,14 +747,26 @@ static int denoise_dispatch(PelorusDenoiseVulkanContext *s, AVFrame *out,
                                     FF_VK_REP_FLOAT));
     }
 
-    /* Bind: cur=0, prev0..prev3 = 1..4, stat_buffer=5, output=6 (LAST). */
+    /* Bind: cur=0, prev0..prev3 = 1..4, stat_buffer=5, mv_grid=6, conf_grid=7,
+     * output=8 (LAST). The MV/conf buffers are handed to the exec as deps so
+     * they outlive an async (meta=0) submit. */
     ff_vk_shader_update_img_array(vkctx, exec, &s->shd, cur, cur_views, 0, 0,
                                   VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
     for (i = 0; i < PEL_DENOISE_MAX_PREV; i++)
         ff_vk_shader_update_img_array(vkctx, exec, &s->shd, bound_prev[i],
                                       prev_views[i], 0, 1 + i,
                                       VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
-    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, out, out_views, 0, 6,
+    RET(ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 6, 0,
+                                        mvbuf_vk, 0, mvbuf_vk->size,
+                                        VK_FORMAT_UNDEFINED));
+    RET(ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 7, 0,
+                                        confbuf_vk, 0, confbuf_vk->size,
+                                        VK_FORMAT_UNDEFINED));
+    RET(ff_vk_exec_add_dep_buf(vkctx, exec, &mvbuf, 1, 0));
+    mvbuf = NULL;
+    RET(ff_vk_exec_add_dep_buf(vkctx, exec, &confbuf, 1, 0));
+    confbuf = NULL;
+    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, out, out_views, 0, 8,
                                   VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
 
     /* Image barriers: output writable, all inputs readable. */
@@ -696,6 +882,8 @@ fail:
     if (exec)
         ff_vk_exec_discard_deps(vkctx, exec);
     av_buffer_unref(&buf);
+    av_buffer_unref(&mvbuf);
+    av_buffer_unref(&confbuf);
     return err;
 }
 
@@ -785,6 +973,8 @@ static void denoise_vulkan_uninit(AVFilterContext *avctx)
     ff_vk_exec_pool_free(vkctx, &s->e);
     ff_vk_shader_free(vkctx, &s->shd);
     av_buffer_pool_uninit(&s->stat_buf_pool);
+    av_buffer_pool_uninit(&s->mv_buf_pool);
+    av_buffer_pool_uninit(&s->conf_buf_pool);
     ff_vk_uninit(&s->vkctx);
     s->initialized = 0;
 }
@@ -817,6 +1007,9 @@ static const AVOption pelorus_denoise_vulkan_options[] = {
     { "planes", "planes to process (bitmask)", OFFSET(planes),
       AV_OPT_TYPE_INT, { .i64 = 0xF }, 0, 0xF, FLAGS },
     { "meta", "attach Pelorus interop side data", OFFSET(meta),
+      AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
+    { "mc", "motion-compensated temporal taps (consume an upstream pelorus_mc "
+            "PEL_SEC_MOTION field; requires mc before denoise)", OFFSET(mc),
       AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
     { NULL }
 };

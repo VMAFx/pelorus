@@ -35,6 +35,10 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 /* image 0 = current frame; 1..PEL_DENOISE_MAX_PREV = previous frames. */
 layout(binding = 0, r16ui) uniform readonly  uimage2D srcImg[5];
 layout(binding = 1, r16ui) uniform writeonly uimage2D dstImg;
+/* Motion-compensated taps (ADR-0113): per-cell quarter-pel MV + confidence,
+ * uploaded by the host from PEL_SEC_MOTION / PEL_SEC_MOTION_CONF. */
+layout(binding = 2, std430) readonly buffer MvGrid { uint mv_packed[]; };
+layout(binding = 3, std430) readonly buffer ConfGrid { uint conf_packed[]; };
 
 layout(push_constant, std430) uniform Params {
     int   width;        //  0  plane width
@@ -50,10 +54,19 @@ layout(push_constant, std430) uniform Params {
     int   patchR;       // 32  spatial window radius (0 = temporal-only)
     float tdecay;       // 36  per-frame temporal trust falloff
     float tcut;         // 40  per-pixel scene-cut/fast-motion clamp (normalized)
-    int   flags;        // 44  bit0=temporal bit2=protectDetail
+    int   flags;        // 44  bit0=temporal bit1=motionComp bit2=protectDetail
+    int   grid_cols;    // 48  MV/conf grid cols (0 => no MC this dispatch)
+    int   grid_rows;    // 52
+    int   cell_w;       // 56  cell size in THIS plane's pixels
+    int   cell_h;       // 60
+    float mv_scale;     // 64  stored MV -> THIS plane's px (the host bakes
+                        //     quarter-pel * per-plane chroma subsampling here,
+                        //     so this single-plane .comp needs no chroma branch —
+                        //     the filter applies chroma_shift in-shader instead)
 } pc;
 
 const int FLAG_TEMPORAL = 1;
+const int FLAG_MOTION_COMP = 2;
 const int FLAG_PROTECT_DETAIL = 4;
 const float EPS = 1e-6;
 
@@ -61,6 +74,35 @@ float fetchN(int img, int px, int py) {
     px = clamp(px, 0, pc.width  - 1);
     py = clamp(py, 0, pc.height - 1);
     return float(imageLoad(srcImg[img], ivec2(px, py)).r) / 65535.0;
+}
+
+/* --- motion-compensated previous-frame fetch (ADR-0113), kept in lockstep with
+ * the in-tree filter's inline GLSL. This single-plane .comp reads the MV in
+ * THIS plane's pixels (the host bakes quarter-pel * chroma subsampling into
+ * pc.mv_scale and pc.cell_w/h), so there is no in-shader chroma branch here. */
+int pel_se16(uint v) { return int(v << 16) >> 16; } // sign-extend low 16 bits
+ivec2 pel_cell(ivec2 p) {
+    return clamp(p / ivec2(pc.cell_w, pc.cell_h), ivec2(0),
+                 ivec2(pc.grid_cols - 1, pc.grid_rows - 1));
+}
+vec2 pel_mc_mv(ivec2 p) {                        // MV in THIS plane's pixels
+    ivec2 cell = pel_cell(p);
+    uint packed = mv_packed[cell.y * pc.grid_cols + cell.x];
+    return vec2(pel_se16(packed & 0xFFFFu), pel_se16(packed >> 16)) * pc.mv_scale;
+}
+float pel_mc_conf(ivec2 p) {                     // confidence in [0,1]
+    ivec2 cell = pel_cell(p);
+    return float(conf_packed[cell.y * pc.grid_cols + cell.x] & 0xFFu) / 255.0;
+}
+float pel_prev_mc(int t, ivec2 pos) {
+    vec2 sp = vec2(pos) + pel_mc_mv(pos);        // sub-pel sample point
+    ivec2 ip = ivec2(floor(sp));
+    vec2 f = sp - vec2(ip);
+    float p00 = fetchN(t, ip.x,     ip.y);
+    float p10 = fetchN(t, ip.x + 1, ip.y);
+    float p01 = fetchN(t, ip.x,     ip.y + 1);
+    float p11 = fetchN(t, ip.x + 1, ip.y + 1);
+    return mix(mix(p00, p10, f.x), mix(p01, p11, f.x), f.y);
 }
 
 void main() {
@@ -105,7 +147,16 @@ void main() {
         float ht2 = pc.sigmaT * pc.sigmaT + EPS;
         float decay = 1.0;
         for (int t = 1; t <= pc.actualPrev; t++) {
-            float p = fetchN(t, x, y);
+            float p;
+            if ((pc.flags & FLAG_MOTION_COMP) != 0 && pc.grid_cols != 0) {
+                // blend same-coord <-> motion-warped by per-block confidence;
+                // low conf (noise-matched MV) falls back toward same-coord, and
+                // the tcut gate below still rejects bad/occluded taps either way.
+                float conf = pel_mc_conf(ivec2(x, y));
+                p = mix(fetchN(t, x, y), pel_prev_mc(t, ivec2(x, y)), conf);
+            } else {
+                p = fetchN(t, x, y);
+            }
             float delta = abs(C - p);
             if (delta > pc.tcut)
                 break;                     // anti-ghost: stop at motion / scene-cut
