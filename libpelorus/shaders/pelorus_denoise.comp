@@ -105,13 +105,43 @@ float pel_prev_mc(int t, ivec2 pos) {
     return mix(mix(p00, p10, f.x), mix(p01, p11, f.x), f.y);
 }
 
+/* Shared-memory tiling of the current-frame spatial window. The NLM range term
+ * re-reads an overlapping (2*patchR+3)^2 window ~9x per pixel (fetch-bound, not
+ * ALU-bound), so the workgroup loads it once into s_tile and every spatial read
+ * hits shared memory. PEL_HALO = max patchR (3) + the 1-px patch ring. This
+ * reference models — and CI compile-checks — the in-tree filter's opt-in tile=1
+ * path (ADR-0134, a large win on bandwidth-limited GPUs, ~neutral on cache-rich
+ * ones); with the default tile=0 the filter reads the image directly. Both are
+ * bit-identical. In lockstep with the filter's tile_helpers_glsl (AGENTS rule 4). */
+#define PEL_HALO 4
+#define PEL_TILE 24  // 16 (workgroup dim) + 2 * PEL_HALO
+shared float s_tile[PEL_TILE * PEL_TILE];
+void pel_load_tile() {
+    ivec2 wgsz = ivec2(gl_WorkGroupSize.xy);
+    ivec2 base = ivec2(gl_WorkGroupID.xy) * wgsz - PEL_HALO;
+    uint n = uint(PEL_TILE * PEL_TILE);
+    uint stride = gl_WorkGroupSize.x * gl_WorkGroupSize.y;
+    barrier();
+    for (uint k = gl_LocalInvocationIndex; k < n; k += stride) {
+        ivec2 t = ivec2(int(k) - (int(k) / PEL_TILE) * PEL_TILE, int(k) / PEL_TILE);
+        s_tile[k] = fetchN(0, base.x + t.x, base.y + t.y);
+    }
+    barrier();
+}
+float tcur(ivec2 off) {
+    ivec2 lc = ivec2(gl_LocalInvocationID.xy) + PEL_HALO + off;
+    return s_tile[lc.y * PEL_TILE + lc.x];
+}
+
 void main() {
     ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
     int x = gid.x, y = gid.y;
+    /* uniform: every invocation loads + barriers before the bounds-cull return */
+    pel_load_tile();
     if (x >= pc.width || y >= pc.height)
         return;
 
-    float C = fetchN(0, x, y);
+    float C = tcur(ivec2(0, 0));
 
     // --- spatial NLM-lite joint bilateral over the current frame ---
     float numS = C, denS = 1.0;            // centre self-weight
@@ -126,8 +156,8 @@ void main() {
                 float ssd = 0.0;
                 for (int ky = -1; ky <= 1; ky++) {
                     for (int kx = -1; kx <= 1; kx++) {
-                        float a = fetchN(0, x + kx, y + ky);
-                        float b = fetchN(0, x + dx + kx, y + dy + ky);
+                        float a = tcur(ivec2(kx, ky));
+                        float b = tcur(ivec2(dx + kx, dy + ky));
                         ssd += (a - b) * (a - b);
                     }
                 }
@@ -135,7 +165,7 @@ void main() {
                 float wr = exp(-ssd / hs2);
                 float wd = exp(-float(dx * dx + dy * dy) / (2.0 * sd2));
                 float w = wr * wd;
-                numS += w * fetchN(0, x + dx, y + dy);
+                numS += w * tcur(ivec2(dx, dy));
                 denS += w;
             }
         }
@@ -179,12 +209,12 @@ void main() {
         float mean = 0.0;
         for (int dy = -1; dy <= 1; dy++)
             for (int dx = -1; dx <= 1; dx++)
-                mean += fetchN(0, x + dx, y + dy);
+                mean += tcur(ivec2(dx, dy));
         mean /= 9.0;
         float var = 0.0;
         for (int dy = -1; dy <= 1; dy++) {
             for (int dx = -1; dx <= 1; dx++) {
-                float d = fetchN(0, x + dx, y + dy) - mean;
+                float d = tcur(ivec2(dx, dy)) - mean;
                 var += d * d;
             }
         }

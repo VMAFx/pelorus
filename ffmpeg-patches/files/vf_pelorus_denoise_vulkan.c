@@ -120,6 +120,7 @@ typedef struct PelorusDenoiseVulkanContext {
     int planes; /* plane bitmask to process (const-folded into shader)        */
     int meta;   /* attach Pelorus interop side data                          */
     int mc;     /* motion-compensated temporal taps (consume pelorus_mc)     */
+    int tile;   /* shared-memory tile the spatial window (ADR-0134, opt-in)   */
     int64_t frame_idx;
 
     /* Per-frame MV (quarter-pel int16 (dx,dy)) + confidence (uint8) grids,
@@ -184,13 +185,41 @@ static const char denoise_helpers_glsl[] =
     "    return mix(mix(p00, p10, f.x), mix(p01, p11, f.x), f.y);\n"
     "}\n";
 
+/* Shared-memory tiling of the current-frame spatial window (the NLM range term
+ * re-reads an overlapping (2*patchR+3)^2 window ~9x per pixel — fetch-bound, not
+ * ALU-bound). Each workgroup cooperatively loads its window (the 16x16 tile plus
+ * a PEL_HALO ring, clamped) into s_tile once per plane, then every spatial read
+ * hits shared memory instead of the image. PEL_HALO = max patchR (3) + the 1-px
+ * patch ring. pel_load_tile() runs in uniform control flow (outside the
+ * IS_WITHIN guard) so its barriers are workgroup-uniform; the leading barrier
+ * protects the prior plane's readers before this plane overwrites s_tile. Kept
+ * in lockstep with the standalone reference shader (AGENTS rule 4). */
+static const char tile_helpers_glsl[] =
+    "void pel_load_tile(int idx, ivec2 sz) {\n"
+    "    ivec2 wgsz = ivec2(gl_WorkGroupSize.xy);\n"
+    "    ivec2 base = ivec2(gl_WorkGroupID.xy) * wgsz - PEL_HALO;\n"
+    "    uint n = uint(PEL_TILE * PEL_TILE);\n"
+    "    uint stride = gl_WorkGroupSize.x * gl_WorkGroupSize.y;\n"
+    "    barrier();\n"
+    "    for (uint k = gl_LocalInvocationIndex; k < n; k += stride) {\n"
+    "        ivec2 t = ivec2(int(k) - (int(k) / PEL_TILE) * PEL_TILE,\n"
+    "                        int(k) / PEL_TILE);\n"
+    "        s_tile[k] = pel_cur(idx, base + t, sz);\n"
+    "    }\n"
+    "    barrier();\n"
+    "}\n"
+    "float tcur(ivec2 off) {\n"
+    "    ivec2 lc = ivec2(gl_LocalInvocationID.xy) + PEL_HALO + off;\n"
+    "    return s_tile[lc.y * PEL_TILE + lc.x];\n"
+    "}\n";
+
 /* The denoise() kernel itself — a second array so neither concatenated string
  * literal exceeds the C99 4095-char limit (emitted right after the helpers). */
 static const char denoise_glsl[] =
     "float denoise(const ivec2 pos, const int idx,\n"
     "              float sigmaS, float sigmaT, float strength_p) {\n"
     "    ivec2 sz = imageSize(output_images[idx]);\n"
-    "    float C = pel_cur(idx, pos, sz);\n"
+    "    float C = PEL_SPATIAL(ivec2(0, 0));\n"
     "    /* --- spatial NLM-lite joint bilateral over the current frame --- */\n"
     "    float numS = C; float denS = 1.0;\n"
     "    if (patch_radius > 0) {\n"
@@ -202,8 +231,8 @@ static const char denoise_glsl[] =
     "                float ssd = 0.0;\n"
     "                for (int ky = -1; ky <= 1; ky++) {\n"
     "                    for (int kx = -1; kx <= 1; kx++) {\n"
-    "                        float a = pel_cur(idx, pos + ivec2(kx, ky), sz);\n"
-    "                        float b = pel_cur(idx, pos + ivec2(dx + kx, dy + ky), sz);\n"
+    "                        float a = PEL_SPATIAL(ivec2(kx, ky));\n"
+    "                        float b = PEL_SPATIAL(ivec2(dx + kx, dy + ky));\n"
     "                        ssd += (a - b) * (a - b);\n"
     "                    }\n"
     "                }\n"
@@ -211,7 +240,7 @@ static const char denoise_glsl[] =
     "                float wr = exp(-ssd / hs2);\n"
     "                float wd = exp(-float(dx * dx + dy * dy) / (2.0 * sd2));\n"
     "                float w = wr * wd;\n"
-    "                numS += w * pel_cur(idx, pos + ivec2(dx, dy), sz);\n"
+    "                numS += w * PEL_SPATIAL(ivec2(dx, dy));\n"
     "                denS += w;\n"
     "            }\n"
     "        }\n"
@@ -252,12 +281,12 @@ static const char denoise_glsl[] =
     "        float mean = 0.0;\n"
     "        for (int dy = -1; dy <= 1; dy++)\n"
     "            for (int dx = -1; dx <= 1; dx++)\n"
-    "                mean += pel_cur(idx, pos + ivec2(dx, dy), sz);\n"
+    "                mean += PEL_SPATIAL(ivec2(dx, dy));\n"
     "        mean /= 9.0;\n"
     "        float varr = 0.0;\n"
     "        for (int dy = -1; dy <= 1; dy++) {\n"
     "            for (int dx = -1; dx <= 1; dx++) {\n"
-    "                float d = pel_cur(idx, pos + ivec2(dx, dy), sz) - mean;\n"
+    "                float d = PEL_SPATIAL(ivec2(dx, dy)) - mean;\n"
     "                varr += d * d;\n"
     "            }\n"
     "        }\n"
@@ -458,6 +487,20 @@ static av_cold int init_filter(AVFilterContext *ctx)
     }
 
     GLSLD(denoise_helpers_glsl);
+    /* tile=1 caches the current-frame spatial window in shared memory (a large
+     * win on bandwidth-limited GPUs, ~neutral on cache-rich ones — see
+     * ADR-0134); default tile=0 reads the image directly (bit-identical, the
+     * flagship-first default). PEL_SPATIAL(o) is the spatial fetch either way;
+     * GLSLD keeps the comma in pel_cur(idx, ...) out of the GLSLC C() macro. */
+    if (s->tile) {
+        GLSLC(0, #define PEL_HALO 4 /* max patchR (3) + 1-px patch ring */    );
+        GLSLC(0, #define PEL_TILE 24 /* 16 (workgroup dim) + 2 * PEL_HALO */   );
+        GLSLC(0, shared float s_tile[PEL_TILE * PEL_TILE];                     );
+        GLSLD(tile_helpers_glsl);
+        GLSLD("#define PEL_SPATIAL(o) tcur(o)");
+    } else {
+        GLSLD("#define PEL_SPATIAL(o) pel_cur(idx, pos + (o), sz)");
+    }
     GLSLD(denoise_glsl);
     GLSLC(0, void main()                                                      );
     GLSLC(0, {                                                                );
@@ -473,6 +516,10 @@ static av_cold int init_filter(AVFilterContext *ctx)
     for (i = 0; i < planes; i++) {
         GLSLC(0,                                                              );
         GLSLF(1, size = imageSize(output_images[%i]);                       ,i);
+        /* Cooperative tile load runs in uniform control flow (all invocations,
+         * before the per-thread IS_WITHIN guard) so its barriers are valid. */
+        if (s->tile && (s->planes & (1 << i)))
+            GLSLF(1, pel_load_tile(%i, size);                               ,i);
         GLSLC(1, if (IS_WITHIN(pos, size)) {                                  );
         if (s->planes & (1 << i)) {
             GLSLF(2, float inv = imageLoad(cur_images[%i], pos).x;          ,i);
@@ -1010,6 +1057,10 @@ static const AVOption pelorus_denoise_vulkan_options[] = {
       AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
     { "mc", "motion-compensated temporal taps (consume an upstream pelorus_mc "
             "PEL_SEC_MOTION field; requires mc before denoise)", OFFSET(mc),
+      AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
+    { "tile", "cache the spatial search window in shared memory (large win on "
+              "bandwidth-limited GPUs, ~neutral on cache-rich ones; output is "
+              "bit-identical)", OFFSET(tile),
       AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
     { NULL }
 };
