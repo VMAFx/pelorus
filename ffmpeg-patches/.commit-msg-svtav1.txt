@@ -1,0 +1,43 @@
+feat(svtav1): honor AV_FRAME_DATA_REGIONS_OF_INTEREST via the ROI segment map
+
+The flagship modern AV1 software encoder (libsvtav1 / av1_svt) had zero Pelorus
+steering: stock libsvtav1.c consumes no ROI side data at all. This adds a
+`pelorus_roi` AVOption (default off) that rasterizes each AVRegionOfInterest's
+qoffset into SVT-AV1's native per-superblock ROI segment map, mirroring the
+merged NVENC qpDeltaMap / QSV mfxExtMBQP patches (ADR-0114 Tier 1) but adapted to
+SVT-AV1's different ABI shape.
+
+SVT-AV1 differs from the per-block delta map NVENC/QSV use: it consumes a dense
+per-64x64-superblock *segment* map (SvtAv1RoiMapEvt.b64_seg_map) plus up to 8
+segment qindex deltas (seg_qp[], MAX_SEGMENTS). So the consumer quantises each
+SB's qoffset-derived delta into <= 8 buckets, builds a seg_qp[] table of the
+distinct deltas and a b64_seg_map of segment ids, and attaches it per frame via
+an EbPrivDataNode of node_type ROI_MAP_EVENT. enable_roi_map is flipped on before
+svt_av1_enc_set_parameter at init. Segment 0 is the zero-delta background, so SBs
+no region covers keep the encoder's default rate-control decision.
+
+Sign / scale: seg_qp is a qindex *delta* added to the frame base qindex (verified
+against SVT-AV1 4.1.0 Source/Lib/Encoder/Codec/EbSegmentation.c
+roi_map_setup_segmentation -> feature_data[SEG_LVL_ALT_Q]); negative => lower
+qindex => more bits, matching AVRegionOfInterest.qoffset's negative=better-quality
+convention. qoffset in [-1,1] maps onto the AV1 qindex span (255). The library
+clamps the effective base+delta qindex to a valid non-zero range, and the App
+parser bounds seg_qp to [-255,255].
+
+Lifetime: svt_av1_enc_send_picture() shallow-copies the EbPrivDataNode but stores
+the bare SvtAv1RoiMapEvt* into enc_ctx->roi_map_evt and dereferences it later on
+async pipeline threads (resource_coordination_process.c update_frame_event). A
+single reused buffer would race the lookahead, so each ROI-bearing frame owns its
+event + seg_map; the fleet is held on a ctx singly-linked list and freed in
+eb_enc_close().
+
+Portable by construction (ships to all users): the whole path is compile-guarded
+by SVT_AV1_CHECK_VERSION(1, 6, 0) (the release that introduced the ROI-map ABI),
+so older SVT-AV1 headers degrade to a one-shot init warning + pass-through; zero
+behaviour change when the option is off (default). enable_roi_map is RC-mode
+agnostic in SVT-AV1, but as with NVENC/QSV the encoder's own variance AQ can
+override the segment map, so constant-quality (-crf / -qp) is recommended.
+
+Lets Pelorus's measured banding-ROI (vf_pelorus_analyze roi=1, ADR-0114 Tier 0)
+steer SVT-AV1 bit allocation through the same standard ROI side data the merged
+analyze filter already emits -- no new producer. ADR-0121.

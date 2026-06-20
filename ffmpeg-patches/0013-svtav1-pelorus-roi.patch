@@ -1,0 +1,349 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lusoris <lusoris@pm.me>
+Date: Sat, 20 Jun 2026 08:38:15 +0200
+Subject: [PATCH 13/13] feat(svtav1): honor AV_FRAME_DATA_REGIONS_OF_INTEREST
+ via the ROI segment map
+
+The flagship modern AV1 software encoder (libsvtav1 / av1_svt) had zero Pelorus
+steering: stock libsvtav1.c consumes no ROI side data at all. This adds a
+`pelorus_roi` AVOption (default off) that rasterizes each AVRegionOfInterest's
+qoffset into SVT-AV1's native per-superblock ROI segment map, mirroring the
+merged NVENC qpDeltaMap / QSV mfxExtMBQP patches (ADR-0114 Tier 1) but adapted to
+SVT-AV1's different ABI shape.
+
+SVT-AV1 differs from the per-block delta map NVENC/QSV use: it consumes a dense
+per-64x64-superblock *segment* map (SvtAv1RoiMapEvt.b64_seg_map) plus up to 8
+segment qindex deltas (seg_qp[], MAX_SEGMENTS). So the consumer quantises each
+SB's qoffset-derived delta into <= 8 buckets, builds a seg_qp[] table of the
+distinct deltas and a b64_seg_map of segment ids, and attaches it per frame via
+an EbPrivDataNode of node_type ROI_MAP_EVENT. enable_roi_map is flipped on before
+svt_av1_enc_set_parameter at init. Segment 0 is the zero-delta background, so SBs
+no region covers keep the encoder's default rate-control decision.
+
+Sign / scale: seg_qp is a qindex *delta* added to the frame base qindex (verified
+against SVT-AV1 4.1.0 Source/Lib/Encoder/Codec/EbSegmentation.c
+roi_map_setup_segmentation -> feature_data[SEG_LVL_ALT_Q]); negative => lower
+qindex => more bits, matching AVRegionOfInterest.qoffset's negative=better-quality
+convention. qoffset in [-1,1] maps onto the AV1 qindex span (255). The library
+clamps the effective base+delta qindex to a valid non-zero range, and the App
+parser bounds seg_qp to [-255,255].
+
+Lifetime: svt_av1_enc_send_picture() shallow-copies the EbPrivDataNode but stores
+the bare SvtAv1RoiMapEvt* into enc_ctx->roi_map_evt and dereferences it later on
+async pipeline threads (resource_coordination_process.c update_frame_event). A
+single reused buffer would race the lookahead, so each ROI-bearing frame owns its
+event + seg_map; the fleet is held on a ctx singly-linked list and freed in
+eb_enc_close().
+
+Portable by construction (ships to all users): the whole path is compile-guarded
+by SVT_AV1_CHECK_VERSION(1, 6, 0) (the release that introduced the ROI-map ABI),
+so older SVT-AV1 headers degrade to a one-shot init warning + pass-through; zero
+behaviour change when the option is off (default). enable_roi_map is RC-mode
+agnostic in SVT-AV1, but as with NVENC/QSV the encoder's own variance AQ can
+override the segment map, so constant-quality (-crf / -qp) is recommended.
+
+Lets Pelorus's measured banding-ROI (vf_pelorus_analyze roi=1, ADR-0114 Tier 0)
+steer SVT-AV1 bit allocation through the same standard ROI side data the merged
+analyze filter already emits -- no new producer. ADR-0121.
+---
+ libavcodec/libsvtav1.c | 247 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 247 insertions(+)
+
+diff --git a/libavcodec/libsvtav1.c b/libavcodec/libsvtav1.c
+index fec2ed596e..8ca641e341 100644
+--- a/libavcodec/libsvtav1.c
++++ b/libavcodec/libsvtav1.c
+@@ -74,6 +74,34 @@ typedef struct SvtContext {
+     int enc_mode;
+     int crf;
+     int qp;
++
++    /* Pelorus: per-region QP steering from AV_FRAME_DATA_REGIONS_OF_INTEREST
++     * (the side data vf_pelorus_analyze roi=1 emits). Gated by the
++     * "pelorus_roi" AVOption (default off) and the SVT-AV1 1.6.0+ ROI-map ABI
++     * (enable_roi_map + the ROI_MAP_EVENT priv-data type). When enabled we flip
++     * enable_roi_map before set_parameter, then per frame rasterize the ROI
++     * rectangles into SVT-AV1's per-64x64-superblock segment map: each frame
++     * gets a freshly-allocated SvtAv1RoiMapEvt whose b64_seg_map indexes up to
++     * MAX_SEGMENTS distinct seg_qp[] delta-qindex values. Negative seg_qp means
++     * lower qindex / more bits, matching AVRegionOfInterest.qoffset's negative=
++     * better-quality convention.
++     *
++     * Lifetime: svt_av1_enc_send_picture() shallow-copies the EbPrivDataNode but
++     * keeps node->data (the SvtAv1RoiMapEvt*) live and dereferences it later on
++     * async pipeline threads (resource_coordination_process.c stores the bare
++     * pointer into enc_ctx->roi_map_evt). A single reused buffer would race the
++     * lookahead, so each ROI-bearing frame owns its event + seg_map; the whole
++     * fleet is held in the roi_evts array and freed in eb_enc_close(). NOTE:
++     * SvtAv1RoiMapEvt.next is the *library's* own event-chain field, so we must
++     * never thread our free-list through it (the library would follow it into a
++     * stale prior-frame event); we keep a separate owning array. */
++    int pelorus_roi;
++#if SVT_AV1_CHECK_VERSION(1, 6, 0)
++    SvtAv1RoiMapEvt **roi_evts;    ///< per-frame ROI events, owned until close
++    int              roi_nevts;    ///< number of entries in roi_evts
++    unsigned int     roi_b64_cols; ///< superblocks across = ceil(width  / 64)
++    unsigned int     roi_b64_rows; ///< superblocks down   = ceil(height / 64)
++#endif
+ } SvtContext;
+ 
+ static const struct {
+@@ -487,6 +515,23 @@ static av_cold int eb_enc_init(AVCodecContext *avctx)
+         return ret;
+     }
+ 
++    if (svt_enc->pelorus_roi) {
++#if SVT_AV1_CHECK_VERSION(1, 6, 0)
++        svt_enc->roi_b64_cols = ((unsigned)avctx->width  + 63u) / 64u;
++        svt_enc->roi_b64_rows = ((unsigned)avctx->height + 63u) / 64u;
++        svt_enc->enc_params.enable_roi_map = true;
++        av_log(avctx, AV_LOG_VERBOSE,
++               "Pelorus ROI map enabled: %ux%u superblocks (64 px/SB).\n",
++               svt_enc->roi_b64_cols, svt_enc->roi_b64_rows);
++#else
++        av_log(avctx, AV_LOG_WARNING,
++               "pelorus_roi requested but the SVT-AV1 ROI-map ABI is "
++               "unavailable (SVT-AV1 1.6.0 or greater required at compile "
++               "time); ignoring.\n");
++        svt_enc->pelorus_roi = 0;
++#endif
++    }
++
+     svt_ret = svt_av1_enc_set_parameter(svt_enc->svt_handle, &svt_enc->enc_params);
+     if (svt_ret != EB_ErrorNone) {
+         return svt_print_error(avctx, svt_ret, "Error setting encoder parameters");
+@@ -533,6 +578,170 @@ static av_cold int eb_enc_init(AVCodecContext *avctx)
+     return alloc_buffer(&svt_enc->enc_params, svt_enc);
+ }
+ 
++#if SVT_AV1_CHECK_VERSION(1, 6, 0)
++/* Pelorus: maximum AV1 segments (MAX_SEGMENTS = 8); seg_qp[] holds this many
++ * delta-qindex values. */
++#define PELORUS_SVTAV1_MAX_SEGMENTS 8
++/* Pelorus: SVT-AV1's ROI segment map is per-64x64 superblock. */
++#define PELORUS_SVTAV1_SB_SIZE      64
++
++/* Pelorus: rasterize AV_FRAME_DATA_REGIONS_OF_INTEREST into one SvtAv1RoiMapEvt
++ * for this frame and push it onto svt_enc->roi_evts (freed in eb_enc_close()).
++ * Mirrors the NVENC/QSV ROI patches' rectangle iteration: regions are walked in
++ * reverse so the first region in the list wins on overlap; each
++ * AVRegionOfInterest.qoffset (an AVRational in [-1, +1], negative asks for lower
++ * qindex / more bits) is scaled by the AV1 qindex span (255) and clamped.
++ *
++ * SVT-AV1 differs from the per-block delta map NVENC/QSV use: it consumes a
++ * dense per-superblock *segment* map (b64_seg_map) plus up to 8 segment qindex
++ * deltas (seg_qp[]). We therefore quantise the per-SB delta into <= 8 buckets,
++ * emit a seg_qp[] table of the distinct bucket deltas and a b64_seg_map of
++ * segment ids. Segment 0 is reserved for the zero delta (background), so an SB
++ * no region covers keeps the encoder's default rate-control decision.
++ *
++ * On success attaches the event to *out_evt for the caller to wire into the
++ * EbPrivDataNode. A frame with no ROI side data leaves *out_evt NULL, so the
++ * encoder sees the unchanged frame qindex. */
++static int svtav1_build_roi_evt(AVCodecContext *avctx, const AVFrame *frame,
++                                SvtAv1RoiMapEvt **out_evt)
++{
++    SvtContext *svt_enc = avctx->priv_data;
++    AVFrameSideData *sd;
++    const AVRegionOfInterest *roi;
++    SvtAv1RoiMapEvt *evt;
++    uint8_t *seg_map;
++    int16_t seg_qp[PELORUS_SVTAV1_MAX_SEGMENTS] = { 0 };
++    unsigned cols = svt_enc->roi_b64_cols;
++    unsigned rows = svt_enc->roi_b64_rows;
++    size_t map_size = (size_t)cols * rows;
++    uint32_t roi_size;
++    int nb_rois, n_seg = 1; /* seg 0 == background (zero delta) */
++    const AVPixFmtDescriptor *desc;
++    int bit_depth, qp_range;
++    const int blk = PELORUS_SVTAV1_SB_SIZE;
++
++    *out_evt = NULL;
++    if (!svt_enc->pelorus_roi || !frame || cols == 0 || rows == 0)
++        return 0;
++
++    sd = av_frame_get_side_data(frame, AV_FRAME_DATA_REGIONS_OF_INTEREST);
++    if (!sd)
++        return 0;
++
++    roi = (const AVRegionOfInterest *)sd->data;
++    roi_size = roi->self_size;
++    if (!roi_size || sd->size % roi_size != 0) {
++        av_log(avctx, AV_LOG_ERROR, "Invalid AVRegionOfInterest.self_size.\n");
++        return AVERROR(EINVAL);
++    }
++    nb_rois = sd->size / roi_size;
++
++    desc = av_pix_fmt_desc_get(avctx->pix_fmt);
++    bit_depth = desc ? desc->comp[0].depth : 8;
++    /* AV1 qindex is a 0..255 scale regardless of bit depth; the qoffset maps
++     * onto a fraction of that full span. (We do not use the 51+6*(bd-8) H.26x
++     * range here because SVT-AV1's seg_qp is a qindex delta, not a QP delta.) */
++    (void)bit_depth;
++    qp_range = 255;
++
++    evt = av_mallocz(sizeof(*evt));
++    if (!evt)
++        return AVERROR(ENOMEM);
++    seg_map = av_calloc(map_size, sizeof(*seg_map));
++    if (!seg_map) {
++        av_free(evt);
++        return AVERROR(ENOMEM);
++    }
++
++    /* Reverse iteration: the first region in the list takes precedence on
++     * overlap, so writing it last lets it overwrite later regions. */
++    for (int i = nb_rois - 1; i >= 0; i--) {
++        int startx, endx, starty, endy, seg_id;
++        float qoffset;
++        int16_t delta;
++
++        roi = (const AVRegionOfInterest *)(sd->data + (size_t)roi_size * i);
++        if (roi->qoffset.den == 0) {
++            av_log(avctx, AV_LOG_ERROR,
++                   "AVRegionOfInterest.qoffset.den must not be zero.\n");
++            av_free(seg_map);
++            av_free(evt);
++            return AVERROR(EINVAL);
++        }
++
++        starty = av_clip(roi->top    / blk,             0, (int)rows);
++        endy   = av_clip((roi->bottom + blk - 1) / blk, 0, (int)rows);
++        startx = av_clip(roi->left   / blk,             0, (int)cols);
++        endx   = av_clip((roi->right  + blk - 1) / blk, 0, (int)cols);
++
++        qoffset = roi->qoffset.num * 1.0f / roi->qoffset.den;
++        delta = (int16_t)av_clip(lrintf(av_clipf(qoffset * qp_range,
++                                                 -qp_range, qp_range)),
++                                 -qp_range, qp_range);
++        if (delta == 0)
++            continue; /* zero delta is segment 0 already */
++
++        /* Find or allocate a segment id for this delta. */
++        seg_id = -1;
++        for (int s = 1; s < n_seg; s++) {
++            if (seg_qp[s] == delta) { seg_id = s; break; }
++        }
++        if (seg_id < 0) {
++            if (n_seg >= PELORUS_SVTAV1_MAX_SEGMENTS) {
++                /* Segment budget exhausted: snap to the nearest existing
++                 * non-background segment so the region still gets biased. */
++                int best = 1, best_d = INT_MAX;
++                for (int s = 1; s < n_seg; s++) {
++                    int d = FFABS((int)seg_qp[s] - (int)delta);
++                    if (d < best_d) { best_d = d; best = s; }
++                }
++                seg_id = best;
++            } else {
++                seg_id = n_seg;
++                seg_qp[n_seg++] = delta;
++            }
++        }
++
++        for (int y = starty; y < endy; y++)
++            for (int x = startx; x < endx; x++)
++                seg_map[(size_t)y * cols + x] = (uint8_t)seg_id;
++    }
++
++    if (n_seg <= 1) {
++        /* Every region resolved to delta 0 — a no-op all-background map; skip
++         * the event rather than allocate + enqueue + hand the encoder nothing. */
++        av_free(seg_map);
++        av_free(evt);
++        return 0;
++    }
++
++    evt->start_picture_number = frame->pts >= 0 ? (uint64_t)frame->pts : 0;
++    evt->b64_seg_map          = seg_map;
++    evt->max_seg_id           = (int8_t)(n_seg - 1);
++    for (int s = 0; s < n_seg; s++)
++        evt->seg_qp[s] = seg_qp[s];
++    /* SvtAv1RoiMapEvt.next is the library's own event-chain field: leave it NULL
++     * or SVT-AV1 walks it into a previous frame's event. Own the event for the
++     * whole session via a separate array (the encoder keeps the pointer live
++     * across the async pipeline). */
++    evt->next = NULL;
++    {
++        SvtAv1RoiMapEvt **tmp = av_realloc_array(svt_enc->roi_evts,
++                                                 (size_t)svt_enc->roi_nevts + 1,
++                                                 sizeof(*tmp));
++        if (!tmp) {
++            av_free(seg_map);
++            av_free(evt);
++            return AVERROR(ENOMEM);
++        }
++        svt_enc->roi_evts = tmp;
++        svt_enc->roi_evts[svt_enc->roi_nevts++] = evt;
++    }
++    *out_evt = evt;
++    return 0;
++}
++#endif /* SVT_AV1_CHECK_VERSION(1, 6, 0) */
++
+ static int eb_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+ {
+     SvtContext           *svt_enc = avctx->priv_data;
+@@ -595,8 +804,34 @@ static int eb_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+         return AVERROR_INVALIDDATA;
+     }
+ 
++#if SVT_AV1_CHECK_VERSION(1, 6, 0)
++    /* Pelorus ROI -> SVT-AV1 per-superblock segment map. The event lives on
++     * svt_enc->roi_evts (owned until eb_enc_close()); the EbPrivDataNode below
++     * is shallow-copied by the library so a stack-local node is safe, but
++     * node->data must stay valid, which the ownership transfer guarantees. */
++    EbPrivDataNode roi_node;
++    SvtAv1RoiMapEvt *roi_evt = NULL;
++    if (svt_enc->pelorus_roi) {
++        int rret = svtav1_build_roi_evt(avctx, frame, &roi_evt);
++        if (rret < 0)
++            return rret;
++        if (roi_evt) {
++            memset(&roi_node, 0, sizeof(roi_node));
++            roi_node.node_type = ROI_MAP_EVENT;
++            roi_node.data      = roi_evt;
++            roi_node.size      = (uint32_t)sizeof(SvtAv1RoiMapEvt *);
++            roi_node.next      = NULL;
++            headerPtr->p_app_private = &roi_node;
++        }
++    }
++#endif
+ 
+     svt_ret = svt_av1_enc_send_picture(svt_enc->svt_handle, headerPtr);
++
++#if SVT_AV1_CHECK_VERSION(1, 6, 0)
++    if (roi_evt)
++        headerPtr->p_app_private = NULL;
++#endif
+     if (svt_ret != EB_ErrorNone)
+         return svt_print_error(avctx, svt_ret, "Error sending a frame to encoder");
+ 
+@@ -766,6 +1001,16 @@ static av_cold int eb_enc_close(AVCodecContext *avctx)
+     ff_dovi_ctx_unref(&svt_enc->dovi);
+     av_freep(&svt_enc->stats_buf);
+ 
++#if SVT_AV1_CHECK_VERSION(1, 6, 0)
++    /* Free the per-frame ROI events + their segment maps. */
++    for (int i = 0; i < svt_enc->roi_nevts; i++) {
++        av_free(svt_enc->roi_evts[i]->b64_seg_map);
++        av_free(svt_enc->roi_evts[i]);
++    }
++    av_freep(&svt_enc->roi_evts);
++    svt_enc->roi_nevts = 0;
++#endif
++
+     return 0;
+ }
+ 
+@@ -810,6 +1055,8 @@ static const AVOption options[] = {
+     { "qp", "Initial Quantizer level value", OFFSET(qp),
+       AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 63, VE },
+     { "svtav1-params", "Set the SVT-AV1 configuration using a :-separated list of key=value parameters", OFFSET(svtav1_opts), AV_OPT_TYPE_DICT, { 0 }, 0, 0, VE },
++    { "pelorus_roi",  "Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the SVT-AV1 ROI segment map (requires SVT-AV1 >= 1.6.0)",
++                                                            OFFSET(pelorus_roi),  AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, VE },
+ 
+     { "dolbyvision", "Enable Dolby Vision RPU coding", OFFSET(dovi.enable), AV_OPT_TYPE_BOOL, {.i64 = FF_DOVI_AUTOMATIC }, -1, 1, VE, .unit = "dovi" },
+     {   "auto", NULL, 0, AV_OPT_TYPE_CONST, {.i64 = FF_DOVI_AUTOMATIC}, .flags = VE, .unit = "dovi" },
+-- 
+2.54.0
+

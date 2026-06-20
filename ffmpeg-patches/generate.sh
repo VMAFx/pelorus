@@ -285,6 +285,19 @@ git -C "$WORKTREE" \
     -c user.name=Lusoris -c user.email=lusoris@pm.me \
     commit -q -F "$HERE/.commit-msg-libaom.txt"
 
+# Pelorus libavcodec edit (NOT a filter): make libsvtav1 (av1_svt) honor ROI side
+# data via SVT-AV1's native per-superblock ROI segment map (SvtAv1RoiMapEvt /
+# enable_roi_map / the ROI_MAP_EVENT priv-data node). Same hand-maintained-diff
+# model as the NVENC/QSV ROI patches above; applied as its own commit (-> patch
+# 0013 below). Must land after 0002 (the vf_pelorus_analyze producer); it touches
+# libsvtav1.c only, so it has no dependency on the other encoder patches. The
+# whole path is compile-guarded by SVT_AV1_CHECK_VERSION(1, 6, 0). ADR-0121.
+git -C "$WORKTREE" apply "$FILES_DIR/svtav1-pelorus-roi.patch"
+git -C "$WORKTREE" add -A
+git -C "$WORKTREE" \
+    -c user.name=Lusoris -c user.email=lusoris@pm.me \
+    commit -q -F "$HERE/.commit-msg-svtav1.txt"
+
 # Clean stale patches, regenerate the whole range.
 rm -f "$HERE"/0*.patch
 git -C "$WORKTREE" format-patch --zero-commit --start-number=1 \
@@ -303,6 +316,7 @@ mv "$HERE"/0009-*.patch "$HERE/0009-vulkan-pelorus-qpmap.patch" 2>/dev/null || t
 mv "$HERE"/0010-*.patch "$HERE/0010-add-pelorus_fgs_bsf.patch" 2>/dev/null || true
 mv "$HERE"/0011-*.patch "$HERE/0011-nvenc-pelorus-film-grain.patch" 2>/dev/null || true
 mv "$HERE"/0012-*.patch "$HERE/0012-libaom-pelorus-roi.patch" 2>/dev/null || true
+mv "$HERE"/0013-*.patch "$HERE/0013-svtav1-pelorus-roi.patch" 2>/dev/null || true
 
 git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE"
 echo "patch(es) regenerated in $HERE:"
