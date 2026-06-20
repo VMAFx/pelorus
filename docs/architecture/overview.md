@@ -61,6 +61,11 @@ HEVC/VVC (H.274 / SEI FGC).
 | grain | `pelorus_grain_estimate_vulkan` | estimate film-grain params → PEL_SEC_FILMGRAIN + native AV1 side data; HEVC via `pelorus_fgs` BSF (ADR-0117); `av1_nvenc` via `-pelorus_film_grain` (ADR-0118); static H.274 model, per-frame/H.264/VVC legs deferred | estimator working; HEVC BSF working (static); av1_nvenc HW grain wired |
 | mc | `pelorus_mc_vulkan` | block-matching motion estimator → per-block MV-hint side data (`PEL_SEC_MOTION`); encode-speed; NVENC ME-hint consumer shipped (`-pelorus_me_hints`, patch 0008); measured on 4090: no speed gain (~2–3% slowdown at p7 — see bench-results.md v0.9) | **working** |
 
+The **anime tune** composes these stages into one recommended GPU pre-encode
+chain — analyze-ROI + dehalo + aa + deband at 10-bit, then encoder ROI steering —
+each leg targeting a distinct anime artefact (starved flats, ringing, jaggies,
+banding). See [docs/usage/anime.md](../usage/anime.md) ([ADR-0125](../adr/0125-anime-tune.md)).
+
 See [docs/backends/vulkan.md](../backends/vulkan.md) for the compute-filter
 authoring model and [docs/usage/ffmpeg.md](../usage/ffmpeg.md) for the end-to-end
 command form.
