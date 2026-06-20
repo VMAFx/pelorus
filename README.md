@@ -80,6 +80,12 @@ green · the deband shader compiles.**
 | `pelorus_mc_vulkan` | Block-matching motion estimator → per-block MV-hint side data for the encoder (speed, not quality) | **Working** |
 | `pelorus_fgs` (BSF) | Inserts the H.274 FGC SEI into HEVC so a decoder re-synthesizes grain — the HEVC leg of the FGS round-trip (AV1 round-trips via native side data) | **Working (static model)** |
 
+**Anime tune.** For animation, compose the filters into one recommended GPU
+pre-encode chain — `analyze roi=1` (steer bits to the flats) + `dehalo` (rings) +
+`aa` (jaggies) + `deband` (banding) at 10-bit, then `-pelorus_roi 1` on the
+encoder. A documented, retunable composition, not a new meta-filter. See
+[docs/usage/anime.md](docs/usage/anime.md) ([ADR-0125](docs/adr/0125-anime-tune.md)).
+
 ## Landed so far
 
 - [x] Step 1 — Core: `libpelorus` interop ABI + deband param contract + tests.
