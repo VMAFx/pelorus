@@ -23,6 +23,13 @@ These populate `PEL_SEC_VARIANCE` (`global_variance`, `edge_density`,
 UUID-keyed Pelorus side-data blob (producer `PLRA`). Per-cell maps are a future
 append-only addition; v0.1 emits frame-level scalars.
 
+It also emits `PEL_SEC_COMPLEXITY` (ADR-0132): a per-frame complexity scalar in
+`[0,1]` (a normalized texture/edge energy, folding in `motion_component` when an
+upstream `pelorus_mc` attached `PEL_SEC_MOTION`), EMA-smoothed across frames and
+reset on a scene cut. It is the input to per-shot CRF steering; the autotune loop
+learns the complexity→qoffset mapping. Validated to track content (flat ≈ 0 <
+textured < high-motion).
+
 ## Options
 
 | Option | Type | Default | Meaning |

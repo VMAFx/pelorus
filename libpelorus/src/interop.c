@@ -49,6 +49,7 @@ static int section_bit_valid(uint32_t id)
     case PEL_SEC_MOTION:
     case PEL_SEC_QPREPORT:
     case PEL_SEC_MOTION_CONF:
+    case PEL_SEC_COMPLEXITY:
         return 1;
     default:
         return 0;

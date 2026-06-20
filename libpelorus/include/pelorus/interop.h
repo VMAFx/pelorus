@@ -78,9 +78,10 @@ extern "C" {
  * MINOR history (R6 — bumps on every additive change):
  *   1.0  initial sections (a..e: banding/variance/denoise/filmgrain/motion).
  *   1.1  + PEL_SEC_QPREPORT (f): encoder-honored QP / bit readback (ADR-0119).
- *   1.2  + PEL_SEC_MOTION_CONF (g): per-block MV confidence map (ADR-0131). */
+ *   1.2  + PEL_SEC_MOTION_CONF (g): per-block MV confidence map (ADR-0131).
+ *   1.3  + PEL_SEC_COMPLEXITY (h): per-frame complexity scalar (ADR-0132). */
 #define PELORUS_ABI_MAJOR 1u
-#define PELORUS_ABI_MINOR 2u
+#define PELORUS_ABI_MINOR 3u
 
 /* The 16-byte UUID prefixing the AV_FRAME_DATA_SEI_UNREGISTERED payload (the
  * leading uuid_iso_iec_11578 mandated by the user-data-unregistered SEI
@@ -95,14 +96,15 @@ extern const uint8_t pelorus_sidedata_uuid[PELORUS_SIDEDATA_UUID_LEN];
 /* ---- Section catalogue (R1/R2: append-only; bits are NEVER reused) ------ */
 
 enum pel_section {
-    PEL_SEC_BANDING = 1u << 0,    /* (a) banding / flatness map summary       */
-    PEL_SEC_VARIANCE = 1u << 1,   /* (b) local variance / edge summary        */
-    PEL_SEC_DENOISE = 1u << 2,    /* (c) denoise residual statistics          */
-    PEL_SEC_FILMGRAIN = 1u << 3,  /* (d) film-grain params (AV1-shaped)       */
-    PEL_SEC_MOTION = 1u << 4,     /* (e) optical-flow MV hint summary         */
-    PEL_SEC_QPREPORT = 1u << 5,   /* (f) encoder-honored QP / bit readback    */
-    PEL_SEC_MOTION_CONF = 1u << 6 /* (g) per-block MV confidence map (ADR-0113)*/
-    /* bits 7..31 reserved — a retired bit is NEVER reused (R2). */
+    PEL_SEC_BANDING = 1u << 0,     /* (a) banding / flatness map summary       */
+    PEL_SEC_VARIANCE = 1u << 1,    /* (b) local variance / edge summary        */
+    PEL_SEC_DENOISE = 1u << 2,     /* (c) denoise residual statistics          */
+    PEL_SEC_FILMGRAIN = 1u << 3,   /* (d) film-grain params (AV1-shaped)       */
+    PEL_SEC_MOTION = 1u << 4,      /* (e) optical-flow MV hint summary         */
+    PEL_SEC_QPREPORT = 1u << 5,    /* (f) encoder-honored QP / bit readback    */
+    PEL_SEC_MOTION_CONF = 1u << 6, /* (g) per-block MV confidence map (ADR-0113)*/
+    PEL_SEC_COMPLEXITY = 1u << 7   /* (h) per-frame complexity scalar (ADR-0132) */
+    /* bits 8..31 reserved — a retired bit is NEVER reused (R2). */
 };
 
 /* ---- Plane layout / producer identity ----------------------------------- */
@@ -281,6 +283,21 @@ typedef struct PelorusMotionConfSection {
     /* --- APPEND-ONLY below this line --- */
 } PelorusMotionConfSection;
 
+/* (h) Per-frame complexity scalar — written by vf_pelorus_analyze. An aggregate
+ * of the per-tile texture/edge/banding it already measures (plus the motion
+ * component when PEL_SEC_MOTION is present upstream), EMA-smoothed within a shot
+ * and reset on a scene cut. The per-shot CRF steering (ADR-0132) maps this to a
+ * per-frame qoffset; the autotune loop learns the mapping. `complexity` and its
+ * components are in [0,1]. */
+typedef struct PelorusComplexitySection {
+    float complexity;       /* aggregate frame complexity [0,1]                 */
+    float texture_energy;   /* variance/edge component [0,1]                    */
+    float motion_component; /* from PEL_SEC_MOTION if present, else 0           */
+    uint8_t has_scene_cut;  /* mirrored from motion (drives the consumer's EMA) */
+    uint8_t _pad[3];        /* reserved, zero                                  */
+    /* --- APPEND-ONLY below this line --- */
+} PelorusComplexitySection;
+
 /* (f) Encoder-honored QP / bit readback — written by a Pelorus-side closed-loop
  * encoder-stat reader AFTER the encoder ran (ADR-0114 step 6 / ADR-0119). The
  * single-writer invariant is unchanged: Pelorus writes this section (a future
@@ -332,6 +349,7 @@ _Static_assert(sizeof(PelorusDenoiseSection) == 28, "denoise section ABI");
 _Static_assert(sizeof(PelorusFilmGrainSection) == 216, "filmgrain section ABI");
 _Static_assert(sizeof(PelorusMotionSection) == 32, "motion section ABI");
 _Static_assert(sizeof(PelorusMotionConfSection) == 16, "motion-conf section ABI");
+_Static_assert(sizeof(PelorusComplexitySection) == 16, "complexity section ABI");
 _Static_assert(sizeof(PelorusQpReportSection) == 64, "qp-report section ABI");
 #endif
 
