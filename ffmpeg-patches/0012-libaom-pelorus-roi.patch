@@ -1,0 +1,344 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lusoris <lusoris@pm.me>
+Date: Fri, 19 Jun 2026 20:31:37 +0200
+Subject: [PATCH 12/12] feat(libaom): honor AV_FRAME_DATA_REGIONS_OF_INTEREST
+ via AOME_SET_ROI_MAP
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Stock libaomenc.c has no region-of-interest handling at all. This adds a
+`pelorus_roi` AVOption (default off) that consumes each frame's
+AV_FRAME_DATA_REGIONS_OF_INTEREST side data and drives libaom's only ROI hook,
+the segment-based AOME_SET_ROI_MAP (aom_roi_map_t), mirroring the merged
+NVENC/QSV ROI patches (ADR-0114 Tier 1) but adapted to AV1's segmentation model.
+
+Segmented vs dense map: libaom does not expose a dense per-block delta-QP map
+like NVENC qpDeltaMap or QSV mfxExtMBQP. Its aom_roi_map_t is a *segment* model
+— one uint8 segment id (0..7) per 4x4-luma mode-info cell, plus a delta_q[8]
+table giving each segment its qindex bias (Final_q_idx = clip(0, 255,
+base_q_idx + delta)). So an AV1 frame supports at most AOM_MAX_SEGMENTS (8)
+*distinct* QP levels, though the 4x4 spatial grid is far finer than NVENC's
+per-CTB/per-SB grid. The bridge quantizes each frame's region qoffsets into
+<= 8 segment deltas (segment 0 = background, delta 0), paints the cell grid by
+nearest segment, and pushes the map per frame before aom_codec_encode. This
+granularity tradeoff is documented in docs/backends/libaom-roi.md.
+
+qoffset->delta convention: each AVRegionOfInterest.qoffset (AVRational in
+[-1,+1], negative = more bits / lower q) is scaled by the 0..255 qindex span and
+clamped; region precedence + self_size stride mirror libx264's setup_roi (first
+region wins on overlap). Reuses the same standard ROI side data the merged
+vf_pelorus_analyze (roi=1, ADR-0114 Tier 0) already emits — no new producer.
+
+Portable + graceful degrade (ships to all users, not the dev box):
+- the ROI segment map is allocated once at the encoder's mode-info grid
+  (frame size aligned to 8 luma px, /4); libaom deep-copies it per control call.
+- a frame with no ROI side data, or whose regions all resolve to delta 0,
+  pushes nothing, so encoder behaviour is unchanged.
+- AOME_SET_ROI_MAP control failure is non-fatal: one warning, then the frame
+  encodes with no ROI bias. Zero behaviour change when the option is off
+  (default).
+
+Verified on hardware (honest negative): full Pelorus stack + this patch built
+into ffmpeg n8.1.1 (--enable-gpl --enable-libaom --enable-vulkan
+--enable-libshaderc), ran vf_pelorus_analyze roi=1 -> libaom-av1 -pelorus_roi 1
+on a banding clip. No crash; valid 48-frame output; the bridge builds a sane
+120x68 4x4-cell grid and quantises 32 regions into 6 AV1 segments. CAMBI (vmaf)
+is identical baseline vs +ROI (0.93193 both): stock libaom 3.14.1's
+AOME_SET_ROI_MAP returns AOM_CODEC_INVALID_PARAM (res=8) in FFmpeg's encoder
+configuration — the control is wired only for the RTC delta-q path upstream — so
+the map is ignored and the bridge degrades gracefully (one warning, no bias).
+This is an upstream limitation, not a patch defect; the leg becomes effective
+for free once libaom enables the control on the path FFmpeg uses. Full detail in
+docs/backends/libaom-roi.md and ADR-0120. No fabricated gain.
+---
+ libavcodec/libaomenc.c | 238 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 238 insertions(+)
+
+diff --git a/libavcodec/libaomenc.c b/libavcodec/libaomenc.c
+index 20e97e5d43..f086da633b 100644
+--- a/libavcodec/libaomenc.c
++++ b/libavcodec/libaomenc.c
+@@ -139,6 +139,36 @@ typedef struct AOMEncoderContext {
+     int enable_dist_wtd_comp;
+     int enable_dual_filter;
+     AVDictionary *aom_params;
++
++    /* Pelorus: per-region QP steering from AV_FRAME_DATA_REGIONS_OF_INTEREST,
++     * gated by the "pelorus_roi" AVOption (default off). libaom's only
++     * region-of-interest hook is AOME_SET_ROI_MAP (aom_roi_map_t): a *segmented*
++     * model -- one uint8 segment id in [0, 7] per 4x4-luma "mode-info" cell, plus
++     * a delta_q[8] table giving each segment its qindex bias. So unlike the
++     * NVENC/QSV dense int8-per-block maps, an AV1 frame supports at most
++     * AOM_MAX_SEGMENTS (8) *distinct* QP levels, though the grid itself is finer
++     * (4x4 vs 16/32/64). We quantize each frame's ROI qoffsets into <= 8 segment
++     * deltas (qindex scale, 0..255), paint the cell grid by nearest segment, and
++     * push it per-frame via aom_codec_control(AOME_SET_ROI_MAP). roi_seg_map is
++     * allocated once at the encoder grid size and reused; libaom deep-copies it
++     * on every control call. A frame with no ROI side data pushes nothing, so the
++     * encoder behaviour is unchanged.
++     *
++     * UPSTREAM LIMITATION (verified on libaom 3.14.1): AOME_SET_ROI_MAP is only
++     * wired for the RTC delta-q path; in FFmpeg's encoder configuration the
++     * control returns AOM_CODEC_INVALID_PARAM and the segment map is ignored
++     * (AOMedia's av1_cx_iface ctrl_set_roi_map is a "re-implement and test for
++     * AV1" stub for the non-RTC paths). The bridge therefore degrades gracefully
++     * -- it warns once and encodes with no ROI bias -- and becomes effective for
++     * free once a libaom release enables the control on the path FFmpeg uses.
++     * This is the SW-AV1 ROI leg of ADR-0114 Tier 1, kept in lockstep with the
++     * NVENC/QSV producers so no work is lost when upstream lands the feature. */
++    int            pelorus_roi;
++    uint8_t       *roi_seg_map;
++    unsigned int   roi_mi_rows;
++    unsigned int   roi_mi_cols;
++    int            roi_warned_coarse; ///< rate-limit the segment-saturation notice
++    int            roi_warned_fail;   ///< rate-limit the AOME_SET_ROI_MAP failure warning
+ } AOMContext;
+ 
+ #define OFFSET(x) offsetof(AOMContext, x)
+@@ -463,6 +493,9 @@ static av_cold int aom_free(AVCodecContext *avctx)
+     free_frame_list(ctx->coded_frame_list);
+     av_bsf_free(&ctx->bsf);
+     ff_dovi_ctx_unref(&ctx->dovi);
++    av_freep(&ctx->roi_seg_map);
++    ctx->roi_mi_rows = 0;
++    ctx->roi_mi_cols = 0;
+     return 0;
+ }
+ 
+@@ -963,6 +996,31 @@ static av_cold int aom_init(AVCodecContext *avctx,
+         codecctl_int(avctx, AV1E_SET_FRAME_PARALLEL_DECODING, ctx->frame_parallel);
+     set_color_range(avctx);
+ 
++    if (ctx->pelorus_roi) {
++        /* libaom's av1_set_roi_map expects the ROI segment map at the encoder's
++         * mode-info grid: the frame size aligned up to 8 luma px, divided by the
++         * 4-px mode-info cell. Mirror that so (rows, cols) match what the library
++         * validates. Allocated once; the per-frame painter reuses this buffer. */
++        ctx->roi_mi_cols = ((unsigned)((avctx->width  + 7) & ~7)) >> 2;
++        ctx->roi_mi_rows = ((unsigned)((avctx->height + 7) & ~7)) >> 2;
++        if (ctx->roi_mi_rows == 0 || ctx->roi_mi_cols == 0) {
++            av_log(avctx, AV_LOG_WARNING,
++                   "pelorus_roi: degenerate ROI grid (%ux%u); disabling.\n",
++                   ctx->roi_mi_cols, ctx->roi_mi_rows);
++            ctx->pelorus_roi = 0;
++        } else {
++            ctx->roi_seg_map = av_calloc((size_t)ctx->roi_mi_rows *
++                                             ctx->roi_mi_cols,
++                                         sizeof(*ctx->roi_seg_map));
++            if (!ctx->roi_seg_map)
++                return AVERROR(ENOMEM);
++            av_log(avctx, AV_LOG_VERBOSE,
++                   "Pelorus ROI: AOME_SET_ROI_MAP enabled, %ux%u 4x4-cell grid, "
++                   "<= %d segments/frame.\n", ctx->roi_mi_cols,
++                   ctx->roi_mi_rows, AOM_MAX_SEGMENTS);
++        }
++    }
++
+     codecctl_int(avctx, AV1E_SET_SUPERBLOCK_SIZE, ctx->superblock_size);
+     if (ctx->uniform_tiles) {
+         codecctl_int(avctx, AV1E_SET_TILE_COLUMNS, ctx->tile_cols_log2);
+@@ -1256,6 +1314,179 @@ static enum AVPixelFormat aomfmt_to_pixfmt(struct aom_image *img)
+     return AV_PIX_FMT_NONE;
+ }
+ 
++/* Pelorus libaom-av1 ROI bridge. Consume AV_FRAME_DATA_REGIONS_OF_INTEREST and
++ * drive libaom's segment-based AOME_SET_ROI_MAP. Mirrors libavcodec/libx264.c
++ * setup_roi() for the qoffset->delta convention and the vmafx qpfile->ROI bridge
++ * for the aom segment quantisation, but the input is the per-frame ROI side data
++ * the Pelorus analyze filter emits (ADR-0114 Tier 0). Bounded loops per NASA
++ * Power of 10.
++ *
++ * Granularity note: AV1 segmentation gives one delta_q (qindex bias) per segment
++ * and at most AOM_MAX_SEGMENTS (8) segments per frame, so the QP *resolution* is
++ * coarse -- we cluster the distinct region qoffsets into <= 8 buckets and snap
++ * each 4x4 cell to its nearest bucket. The spatial grid (4x4 luma cells) is far
++ * finer than the NVENC per-CTB / per-SB delta map. */
++
++#define PELORUS_AOM_MAX_SEGMENTS  AOM_MAX_SEGMENTS  /* 8, see aomcx.h */
++#define PELORUS_AOM_MI_SIZE       4                 /* 4 luma px / mode-info cell */
++
++/* AV1 codes quantisation on the 0..255 qindex scale (a segment delta is applied
++ * as Final_q_idx = clip(0, 255, base_q_idx + delta)), so scale the AVRational
++ * qoffset (a fraction in [-1, +1] of "the QP range", negative => more bits /
++ * lower q) by the qindex span and clamp to the full range as a hard backstop.
++ * The analyze filter's own roi_strength caps |qoffset|, so in practice the
++ * deltas stay well inside this range. */
++#define PELORUS_AOM_QINDEX_RANGE  255
++
++static int pelorus_aom_qoffset_to_delta(AVRational qoffset)
++{
++    float f;
++    if (qoffset.den == 0)
++        return 0;
++    f = qoffset.num * 1.0f / qoffset.den;
++    return (int)lrintf(av_clipf(f * PELORUS_AOM_QINDEX_RANGE,
++                                -PELORUS_AOM_QINDEX_RANGE,
++                                +PELORUS_AOM_QINDEX_RANGE));
++}
++
++/* Collect up to PELORUS_AOM_MAX_SEGMENTS distinct delta-q values across the
++ * frame's regions (segment 0 is the implicit "rest of frame", delta 0). Returns
++ * the number of segments and fills seg_q[]; slot 0 is always 0 so any cell
++ * outside every region keeps the base qindex. */
++static unsigned pelorus_aom_collect_segments(const AVRegionOfInterest *roi_base,
++                                             uint32_t roi_size, int nb_rois,
++                                             int seg_q[PELORUS_AOM_MAX_SEGMENTS])
++{
++    unsigned n = 1;   /* seg 0 = background, delta 0 */
++    seg_q[0] = 0;
++    for (int i = 0; i < nb_rois && n < PELORUS_AOM_MAX_SEGMENTS; i++) {
++        const AVRegionOfInterest *r =
++            (const AVRegionOfInterest *)((const uint8_t *)roi_base + roi_size * i);
++        int delta = pelorus_aom_qoffset_to_delta(r->qoffset);
++        int seen = 0;
++        for (unsigned k = 0; k < n; k++)
++            if (seg_q[k] == delta) { seen = 1; break; }
++        if (!seen)
++            seg_q[n++] = delta;
++    }
++    return n;
++}
++
++/* Pick the segment id for a delta value: exact match if present, else nearest. */
++static uint8_t pelorus_aom_seg_for_delta(int delta, const int *seg_q, unsigned n)
++{
++    int best_dist = INT_MAX, best_idx = 0;
++    for (unsigned k = 0; k < n; k++) {
++        int d = delta - seg_q[k];
++        if (d < 0) d = -d;
++        if (d < best_dist) { best_dist = d; best_idx = (int)k; }
++    }
++    return (uint8_t)best_idx;
++}
++
++/* Paint the 4x4-cell segment map from the ROI rectangles. Regions are iterated
++ * in reverse so the *first* region in the list wins on overlap (matching
++ * vf_addroi / the x264 path). Cells touched by no region keep segment 0. */
++static void pelorus_aom_paint(const AVRegionOfInterest *roi_base,
++                              uint32_t roi_size, int nb_rois,
++                              uint8_t *seg_map,
++                              unsigned mi_rows, unsigned mi_cols,
++                              const int *seg_q, unsigned n_seg)
++{
++    memset(seg_map, 0, (size_t)mi_rows * mi_cols);
++    for (int i = nb_rois - 1; i >= 0; i--) {
++        const AVRegionOfInterest *r =
++            (const AVRegionOfInterest *)((const uint8_t *)roi_base + roi_size * i);
++        int delta = pelorus_aom_qoffset_to_delta(r->qoffset);
++        uint8_t seg = pelorus_aom_seg_for_delta(delta, seg_q, n_seg);
++        unsigned y0 = av_clip(r->top  / PELORUS_AOM_MI_SIZE, 0, mi_rows);
++        unsigned y1 = av_clip((r->bottom + PELORUS_AOM_MI_SIZE - 1) /
++                              PELORUS_AOM_MI_SIZE, 0, mi_rows);
++        unsigned x0 = av_clip(r->left / PELORUS_AOM_MI_SIZE, 0, mi_cols);
++        unsigned x1 = av_clip((r->right + PELORUS_AOM_MI_SIZE - 1) /
++                              PELORUS_AOM_MI_SIZE, 0, mi_cols);
++        for (unsigned y = y0; y < y1; y++)
++            for (unsigned x = x0; x < x1; x++)
++                seg_map[y * mi_cols + x] = seg;
++    }
++}
++
++static int pelorus_aom_apply_roi(AVCodecContext *avctx, const AVFrame *frame)
++{
++    AOMContext *ctx = avctx->priv_data;
++    AVFrameSideData *sd;
++    const AVRegionOfInterest *roi_base;
++    aom_roi_map_t roi;
++    int seg_q[PELORUS_AOM_MAX_SEGMENTS] = { 0 };
++    unsigned n_seg, i;
++    uint32_t roi_size;
++    int nb_rois, res;
++
++    if (!ctx->pelorus_roi || !ctx->roi_seg_map ||
++        ctx->roi_mi_rows == 0 || ctx->roi_mi_cols == 0 || !frame)
++        return 0;
++
++    sd = av_frame_get_side_data(frame, AV_FRAME_DATA_REGIONS_OF_INTEREST);
++    if (!sd)
++        return 0;   /* no ROI this frame -> base qindex everywhere */
++
++    roi_base = (const AVRegionOfInterest *)sd->data;
++    roi_size = roi_base->self_size;
++    if (!roi_size || sd->size % roi_size) {
++        av_log(avctx, AV_LOG_ERROR, "Invalid AVRegionOfInterest.self_size.\n");
++        return AVERROR(EINVAL);
++    }
++    {
++        /* sd->size / roi_size is size_t; guard the narrowing to int nb_rois. */
++        size_t nb = sd->size / roi_size;
++        if (nb == 0 || nb > INT_MAX)
++            return 0;
++        nb_rois = (int)nb;
++    }
++
++    n_seg = pelorus_aom_collect_segments(roi_base, roi_size, nb_rois, seg_q);
++    if (n_seg <= 1)
++        return 0;   /* every region resolved to delta 0 -> nothing to bias */
++
++    /* Saturation, not region count: distinct deltas beyond AOM_MAX_SEGMENTS are
++     * quantised away. Fires only when the segment table is actually full. */
++    if (n_seg == PELORUS_AOM_MAX_SEGMENTS && !ctx->roi_warned_coarse) {
++        ctx->roi_warned_coarse = 1;
++        av_log(avctx, AV_LOG_VERBOSE,
++               "Pelorus ROI: %d regions saturated all %u AV1 segments "
++               "(AOM_MAX_SEGMENTS=%d); QP resolution is coarse.\n",
++               nb_rois, n_seg, PELORUS_AOM_MAX_SEGMENTS);
++    }
++
++    pelorus_aom_paint(roi_base, roi_size, nb_rois, ctx->roi_seg_map,
++                      ctx->roi_mi_rows, ctx->roi_mi_cols, seg_q, n_seg);
++
++    memset(&roi, 0, sizeof(roi));
++    roi.enabled = 1;
++    roi.roi_map = ctx->roi_seg_map;
++    roi.rows    = ctx->roi_mi_rows;
++    roi.cols    = ctx->roi_mi_cols;
++    for (i = 0; i < PELORUS_AOM_MAX_SEGMENTS; i++) {
++        roi.delta_q[i]   = (i < n_seg) ? seg_q[i] : 0;
++        roi.delta_lf[i]  = 0;
++        roi.skip[i]      = 0;
++        roi.ref_frame[i] = -1;
++    }
++    roi.delta_qp_enabled = 1;
++
++    res = aom_codec_control(&ctx->encoder, AOME_SET_ROI_MAP, &roi);
++    if (res != AOM_CODEC_OK) {
++        if (!ctx->roi_warned_fail) {
++            ctx->roi_warned_fail = 1;
++            av_log(avctx, AV_LOG_WARNING,
++                   "Pelorus ROI: AOME_SET_ROI_MAP failed (res=%d); continuing "
++                   "without ROI bias.\n", res);
++        }
++        return 0;   /* non-fatal: skip ROI for this frame */
++    }
++    return 0;
++}
++
+ static int aom_encode(AVCodecContext *avctx, AVPacket *pkt,
+                       const AVFrame *frame, int *got_packet)
+ {
+@@ -1324,6 +1555,12 @@ static int aom_encode(AVCodecContext *avctx, AVPacket *pkt,
+         res = add_hdr_plus(avctx, rawimg, frame);
+         if (res < 0)
+             return res;
++
++        /* Pelorus: push the per-frame ROI segment map before the encode call so
++         * libaom applies the per-segment qindex deltas to this frame. */
++        res = pelorus_aom_apply_roi(avctx, frame);
++        if (res < 0)
++            return res;
+     }
+ 
+     res = aom_codec_encode(&ctx->encoder, rawimg, timestamp, duration, flags);
+@@ -1551,6 +1788,7 @@ static const AVOption options[] = {
+     { "enable-masked-comp",           "Enable masked compound",                            OFFSET(enable_masked_comp),           AV_OPT_TYPE_BOOL, {.i64 = -1}, -1, 1, VE},
+     { "enable-interintra-comp",       "Enable interintra compound",                        OFFSET(enable_interintra_comp),       AV_OPT_TYPE_BOOL, {.i64 = -1}, -1, 1, VE},
+     { "enable-smooth-interintra",     "Enable smooth interintra mode",                     OFFSET(enable_smooth_interintra),     AV_OPT_TYPE_BOOL, {.i64 = -1}, -1, 1, VE},
++    { "pelorus_roi",                  "Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via libaom AOME_SET_ROI_MAP (<= 8 segments/frame)", OFFSET(pelorus_roi), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, VE},
+ #if AOM_ENCODER_ABI_VERSION >= 23
+     { "aom-params",                   "Set libaom options using a :-separated list of key=value pairs", OFFSET(aom_params), AV_OPT_TYPE_DICT, { 0 }, 0, 0, VE },
+ #endif
+-- 
+2.54.0
+

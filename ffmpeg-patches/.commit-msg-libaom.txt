@@ -1,0 +1,46 @@
+feat(libaom): honor AV_FRAME_DATA_REGIONS_OF_INTEREST via AOME_SET_ROI_MAP
+
+Stock libaomenc.c has no region-of-interest handling at all. This adds a
+`pelorus_roi` AVOption (default off) that consumes each frame's
+AV_FRAME_DATA_REGIONS_OF_INTEREST side data and drives libaom's only ROI hook,
+the segment-based AOME_SET_ROI_MAP (aom_roi_map_t), mirroring the merged
+NVENC/QSV ROI patches (ADR-0114 Tier 1) but adapted to AV1's segmentation model.
+
+Segmented vs dense map: libaom does not expose a dense per-block delta-QP map
+like NVENC qpDeltaMap or QSV mfxExtMBQP. Its aom_roi_map_t is a *segment* model
+— one uint8 segment id (0..7) per 4x4-luma mode-info cell, plus a delta_q[8]
+table giving each segment its qindex bias (Final_q_idx = clip(0, 255,
+base_q_idx + delta)). So an AV1 frame supports at most AOM_MAX_SEGMENTS (8)
+*distinct* QP levels, though the 4x4 spatial grid is far finer than NVENC's
+per-CTB/per-SB grid. The bridge quantizes each frame's region qoffsets into
+<= 8 segment deltas (segment 0 = background, delta 0), paints the cell grid by
+nearest segment, and pushes the map per frame before aom_codec_encode. This
+granularity tradeoff is documented in docs/backends/libaom-roi.md.
+
+qoffset->delta convention: each AVRegionOfInterest.qoffset (AVRational in
+[-1,+1], negative = more bits / lower q) is scaled by the 0..255 qindex span and
+clamped; region precedence + self_size stride mirror libx264's setup_roi (first
+region wins on overlap). Reuses the same standard ROI side data the merged
+vf_pelorus_analyze (roi=1, ADR-0114 Tier 0) already emits — no new producer.
+
+Portable + graceful degrade (ships to all users, not the dev box):
+- the ROI segment map is allocated once at the encoder's mode-info grid
+  (frame size aligned to 8 luma px, /4); libaom deep-copies it per control call.
+- a frame with no ROI side data, or whose regions all resolve to delta 0,
+  pushes nothing, so encoder behaviour is unchanged.
+- AOME_SET_ROI_MAP control failure is non-fatal: one warning, then the frame
+  encodes with no ROI bias. Zero behaviour change when the option is off
+  (default).
+
+Verified on hardware (honest negative): full Pelorus stack + this patch built
+into ffmpeg n8.1.1 (--enable-gpl --enable-libaom --enable-vulkan
+--enable-libshaderc), ran vf_pelorus_analyze roi=1 -> libaom-av1 -pelorus_roi 1
+on a banding clip. No crash; valid 48-frame output; the bridge builds a sane
+120x68 4x4-cell grid and quantises 32 regions into 6 AV1 segments. CAMBI (vmaf)
+is identical baseline vs +ROI (0.93193 both): stock libaom 3.14.1's
+AOME_SET_ROI_MAP returns AOM_CODEC_INVALID_PARAM (res=8) in FFmpeg's encoder
+configuration — the control is wired only for the RTC delta-q path upstream — so
+the map is ignored and the bridge degrades gracefully (one warning, no bias).
+This is an upstream limitation, not a patch defect; the leg becomes effective
+for free once libaom enables the control on the path FFmpeg uses. Full detail in
+docs/backends/libaom-roi.md and ADR-0120. No fabricated gain.

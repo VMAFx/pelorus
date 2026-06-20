@@ -69,6 +69,14 @@ ffmpeg-patches/
    An upstream qsvenc reflow can fuzz the `extco3`/`encode_frame`/`QSV_COMMON_OPTS`
    anchors; regenerate via `generate.sh`, never hand-edit `0005-*.patch`. See
    [docs/rebase-notes.md](../docs/rebase-notes.md).
+6. **Software AV1 encoder ROI patches (0012 libaom) are libavcodec edits** — same
+   hand-diff model as 0004/0005. libaom maps the ROI side data onto
+   `AOME_SET_ROI_MAP`'s ≤8-segment delta-q map (segment 0 = background); on libaom
+   ≤3.14.x `AOME_SET_ROI_MAP` returns `AOM_CODEC_INVALID_PARAM` on the non-RTC
+   path, so failure is the *expected* runtime path — keep the one-shot
+   `roi_warned_fail` diagnostic and the non-fatal fallback (the separate
+   `roi_warned_coarse` flag must never gate it). Init anchor is `set_color_range`;
+   no new link lib. Regenerate via `generate.sh`; never hand-edit `0012-*.patch`.
 
 ## Don't
 
