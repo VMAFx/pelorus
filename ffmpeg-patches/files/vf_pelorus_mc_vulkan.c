@@ -226,8 +226,12 @@ static av_cold int init_filter(AVFilterContext *ctx)
 
     /* Descriptor set 0: current luma image, reference luma image, the three
      * output SSBOs (mv_x, mv_y, sad), and the read-only previous-frame MV SSBO.
-     * Each image binding is a per-plane array; we only ever read plane 0 (luma),
-     * so .elems = 1. Float representation, storage image, GENERAL layout. */
+     * The image bindings are per-plane arrays sized .elems = planes. The shader
+     * only ever reads plane 0 (luma), but ff_vk_shader_update_img_array() writes
+     * one descriptor per plane (dstArrayElement 0..nb_planes-1), so the array
+     * must hold every plane or the chroma writes land out of bounds. Float
+     * representation, storage image, GENERAL layout. */
+    const int planes = av_pix_fmt_count_planes(vkctx->input_format);
     {
         FFVulkanDescriptorSetBinding desc[] = {
             {
@@ -237,7 +241,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
                                                    FF_VK_REP_FLOAT),
                 .mem_quali = "readonly",
                 .dimensions = 2,
-                .elems = 1,
+                .elems = planes,
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
             },
             {
@@ -247,7 +251,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
                                                    FF_VK_REP_FLOAT),
                 .mem_quali = "readonly",
                 .dimensions = 2,
-                .elems = 1,
+                .elems = planes,
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
             },
             {

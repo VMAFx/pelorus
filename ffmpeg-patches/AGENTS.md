@@ -77,6 +77,21 @@ ffmpeg-patches/
    `roi_warned_fail` diagnostic and the non-fatal fallback (the separate
    `roi_warned_coarse` flag must never gate it). Init anchor is `set_color_range`;
    no new link lib. Regenerate via `generate.sh`; never hand-edit `0012-*.patch`.
+7. **Two runtime-only emit hazards no static gate catches** (ADR-0129). (a) The
+   per-plane chroma passthrough must be a **single balanced `GLSLF`** —
+   `GLSLF(1, imageStore(output_images[%i], pos, imageLoad(input_images[%i], pos)); ,i, i);`
+   with both `imageStore(`/`imageLoad(` parens closed *inside* the macro call.
+   Splitting it across two `GLSLF` calls (leaving `imageStore(` unclosed in the
+   first) makes the preprocessor swallow the next line and emit the raw
+   `do { av_bprintf(...); } while (0)` macro body into the shader → shaderc fails
+   the SPIR-V compile at first frame (`unexpected COMMA`, `-22`). (b) Any image
+   descriptor binding filled by `ff_vk_shader_update_img_array` must size
+   `.elems = av_pix_fmt_count_planes(...)` — the helper writes one descriptor per
+   plane regardless of how many the shader indexes, so `.elems = 1` overruns the
+   array on multi-plane input. Both compile as `.o`, are invisible to
+   `glslangValidator` (the chroma loop / descriptors are C-emitted, not in the
+   `.comp`), and the patch CI never instantiates a Vulkan device — only on-device
+   execution (both plane-mask regimes) catches them.
 
 ## Don't
 

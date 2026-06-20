@@ -220,8 +220,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
         if (s->planes & (1 << i)) {
             GLSLF(1, dehalo(pos, %i);                                       ,i);
         } else {
-            GLSLF(1, imageStore(output_images[%i], pos,                      ,i);
-            GLSLF(2,             imageLoad(input_images[%i], pos));          ,i);
+            GLSLF(1, imageStore(output_images[%i], pos, imageLoad(input_images[%i], pos)); ,i, i);
         }
     }
     GLSLC(0, }                                                                );
