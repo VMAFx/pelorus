@@ -484,6 +484,40 @@ incumbent `roi=1` banding mode already captures the banding win *without* the
 texture-starving cost. A structure-tensor + CSF masking discriminator (new GPU
 output) is the only path that could revive it — a documented follow-up, not taken.
 
+## v0.13 — per-shot CRF steering (ADR-0132): honest negative on the CRF axis
+
+Tested the per-shot complexity-budget lever as a **simple, hand-tuned** mapping:
+pass 1 extracts per-frame complexity via the `lavfi.pelorus.*` metadata (ADR-0136)
+and aggregates per shot; pass 2 biases x265 rate-control per shot via `--zones`
+(more bits to complex shots, fewer to simple). Real ffmpeg + libx265, a 3-shot
+BBB clip (per-shot complexity 0.065 / 0.052 / 0.032 — a real ~2× spread), RD curve
+(CRF 26/30/34/38), BD-rate vs flat CRF.
+
+First attempt used `zones=...,crf=` — **invalid**: x265 zones support only `q=`
+(force QP) and `b=` (bitrate factor), not `crf=`, so it mis-parsed into a broken
+half-bitrate encode. Corrected to `b=` factors (complex shot `b=1.16`, simple
+`b=0.82`):
+
+| metric | BD-rate | verdict |
+|---|---|---|
+| VMAF | **+8.81 %** | loss |
+| SSIMULACRA2 | **+7.35 %** | loss |
+
+Per-shot redistribution **loses** — it spent ~5 % more bits *and* scored slightly
+lower at every CRF. Root cause (predicted from first principles): **CRF is already
+a constant-quality target**, so x265 allocates more bits to complex shots on its
+own; pushing *beyond* constant-quality toward complex shots moves bits off the
+quality/bitrate convex hull. The per-shot win in the literature is for
+**budget/VBR** allocation or **per-shot resolution**, not pure CRF.
+
+This is the 4th measured negative in the "compete with the encoder's mature
+rate-control" space (after fp16, subgroup, and the perceptual-AQ map, v0.11/v0.12)
+— Pelorus's edge is **preprocessing the source**, not out-guessing CRF/2-pass/
+mbtree. ADR-0132 stays *Proposed*; the lever now depends on the autotune
+(ADR-0106) finding a mapping that beats flat CRF, against a low CRF-axis ceiling.
+The durable result is the ADR-0136 metadata extraction path (shipped), which
+makes this — and any future per-shot/autotune work — measurable from the shell.
+
 ## Open / next
 
 1. **SVT-AV1 ROI on real content**: the v0.10 synthetic gain is modest; re-run
