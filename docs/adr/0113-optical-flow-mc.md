@@ -1,10 +1,14 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0113: vf_pelorus_mc — GPU motion estimation feeding MC-temporal denoise (and, gated, NVENC ME hints)
 
-- **Status**: Proposed
-- **Date**: 2026-06-14
+- **Status**: Accepted
+- **Date**: 2026-06-14 (accepted 2026-06-20)
 - **Deciders**: Lusoris
 - **Tags**: motion, vulkan, denoise, interop, nvenc, roadmap
+
+> **Realized by** ADR-0130 (the sub-pel quarter-pel MV field) and ADR-0131 (the
+> MC→denoise warp + per-block confidence gating, validated on the GPU). The
+> `vf_pelorus_mc` estimator itself shipped under ADR-0115.
 
 ## Context
 

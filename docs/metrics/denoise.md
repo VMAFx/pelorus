@@ -11,8 +11,10 @@ clean-referenced proof.
 ## Algorithm
 
 `PEL_DENOISER_BILATERAL_TEMPORAL` — a single Vulkan compute pass over a **causal**
-window (the current frame + *N* previous frames held in VRAM), with **no motion
-compensation** (same-coordinate temporal taps):
+window (the current frame + *N* previous frames held in VRAM). Temporal taps are
+same-coordinate by default; the optional `mc=1` mode (ADR-0131) instead warps
+each tap by an upstream `pelorus_mc` motion vector, gated by per-block
+confidence, to follow motion instead of ghosting it:
 
 - **Spatial** (current frame): an NLM-lite joint bilateral whose *range* weight is
   a 3×3-patch SSD. A real edge has high patch SSD across it, so the weight
@@ -47,6 +49,7 @@ options follow the `{Y, Cb, Cr}` split.
 | `protect` | on | bool | damp strength on textured regions |
 | `planes` | 0xF | bitmask | planes to process |
 | `meta` | off | bool | attach the `PEL_SEC_DENOISE` interop section (adds one GPU→host readback) |
+| `mc` | off | bool | motion-compensated temporal taps: warp the temporal fetch by an upstream `pelorus_mc` quarter-pel MV field, gated by per-block confidence + `tcut` ([ADR-0131](../adr/0131-mc-denoise-warp.md)). Requires `pelorus_mc_vulkan=meta=1` **before** denoise; with no upstream MV field denoise falls back to same-coordinate taps |
 
 Defaults are the conservative pre-encode preset — a safe floor the vmafx
 `vmaf-tune` autotune ([ADR-0106](../adr/0106-autotune-control-plane.md)) sweeps

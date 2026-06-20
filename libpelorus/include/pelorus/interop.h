@@ -77,9 +77,10 @@ extern "C" {
  *
  * MINOR history (R6 — bumps on every additive change):
  *   1.0  initial sections (a..e: banding/variance/denoise/filmgrain/motion).
- *   1.1  + PEL_SEC_QPREPORT (f): encoder-honored QP / bit readback (ADR-0119). */
+ *   1.1  + PEL_SEC_QPREPORT (f): encoder-honored QP / bit readback (ADR-0119).
+ *   1.2  + PEL_SEC_MOTION_CONF (g): per-block MV confidence map (ADR-0131). */
 #define PELORUS_ABI_MAJOR 1u
-#define PELORUS_ABI_MINOR 1u
+#define PELORUS_ABI_MINOR 2u
 
 /* The 16-byte UUID prefixing the AV_FRAME_DATA_SEI_UNREGISTERED payload (the
  * leading uuid_iso_iec_11578 mandated by the user-data-unregistered SEI
@@ -94,13 +95,14 @@ extern const uint8_t pelorus_sidedata_uuid[PELORUS_SIDEDATA_UUID_LEN];
 /* ---- Section catalogue (R1/R2: append-only; bits are NEVER reused) ------ */
 
 enum pel_section {
-    PEL_SEC_BANDING = 1u << 0,   /* (a) banding / flatness map summary       */
-    PEL_SEC_VARIANCE = 1u << 1,  /* (b) local variance / edge summary        */
-    PEL_SEC_DENOISE = 1u << 2,   /* (c) denoise residual statistics          */
-    PEL_SEC_FILMGRAIN = 1u << 3, /* (d) film-grain params (AV1-shaped)       */
-    PEL_SEC_MOTION = 1u << 4,    /* (e) optical-flow MV hint summary         */
-    PEL_SEC_QPREPORT = 1u << 5   /* (f) encoder-honored QP / bit readback    */
-    /* bits 6..31 reserved — a retired bit is NEVER reused (R2). */
+    PEL_SEC_BANDING = 1u << 0,    /* (a) banding / flatness map summary       */
+    PEL_SEC_VARIANCE = 1u << 1,   /* (b) local variance / edge summary        */
+    PEL_SEC_DENOISE = 1u << 2,    /* (c) denoise residual statistics          */
+    PEL_SEC_FILMGRAIN = 1u << 3,  /* (d) film-grain params (AV1-shaped)       */
+    PEL_SEC_MOTION = 1u << 4,     /* (e) optical-flow MV hint summary         */
+    PEL_SEC_QPREPORT = 1u << 5,   /* (f) encoder-honored QP / bit readback    */
+    PEL_SEC_MOTION_CONF = 1u << 6 /* (g) per-block MV confidence map (ADR-0113)*/
+    /* bits 7..31 reserved — a retired bit is NEVER reused (R2). */
 };
 
 /* ---- Plane layout / producer identity ----------------------------------- */
@@ -260,6 +262,25 @@ typedef struct PelorusMotionSection {
     /* --- APPEND-ONLY below this line --- */
 } PelorusMotionSection;
 
+/* How the per-block motion confidence (PEL_SEC_MOTION_CONF) is derived. */
+enum pel_motion_conf_metric {
+    PEL_MOTION_CONF_SAD = 0, /* 255*(1 - clamp(winning per-pixel SAD / scale)) */
+};
+
+/* (g) Per-block motion-vector confidence map — written by vf_pelorus_mc
+ * alongside PEL_SEC_MOTION. One uint8 per cell on the shared grid_cols*grid_rows
+ * grid (0 = untrustworthy / noise-matched, 255 = sharp low-residual match); a
+ * motion-compensated consumer (the ADR-0113 denoise warp) gates its warped fetch
+ * by it. The grid is appended after the packed blob; conf_field_offset is
+ * blob-relative, mirroring PelorusMotionSection.mv_field_offset. */
+typedef struct PelorusMotionConfSection {
+    uint32_t conf_field_offset; /* blob-relative; uint8 confidence per cell   */
+    uint32_t conf_field_size;   /* grid_cols*grid_rows*sizeof(uint8)          */
+    uint8_t conf_metric;        /* enum pel_motion_conf_metric                */
+    uint8_t _pad[7];            /* reserved, zero                             */
+    /* --- APPEND-ONLY below this line --- */
+} PelorusMotionConfSection;
+
 /* (f) Encoder-honored QP / bit readback — written by a Pelorus-side closed-loop
  * encoder-stat reader AFTER the encoder ran (ADR-0114 step 6 / ADR-0119). The
  * single-writer invariant is unchanged: Pelorus writes this section (a future
@@ -310,6 +331,7 @@ _Static_assert(sizeof(PelorusVarianceSection) == 28, "variance section ABI");
 _Static_assert(sizeof(PelorusDenoiseSection) == 28, "denoise section ABI");
 _Static_assert(sizeof(PelorusFilmGrainSection) == 216, "filmgrain section ABI");
 _Static_assert(sizeof(PelorusMotionSection) == 32, "motion section ABI");
+_Static_assert(sizeof(PelorusMotionConfSection) == 16, "motion-conf section ABI");
 _Static_assert(sizeof(PelorusQpReportSection) == 64, "qp-report section ABI");
 #endif
 

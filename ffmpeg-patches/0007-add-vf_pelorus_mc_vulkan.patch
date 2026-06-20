@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sat, 20 Jun 2026 14:17:22 +0200
+Date: Sat, 20 Jun 2026 14:58:06 +0200
 Subject: [PATCH 07/18] feat(mc): add vf_pelorus_mc_vulkan (block-matching
  motion estimator)
 MIME-Version: 1.0
@@ -47,8 +47,8 @@ ADR: docs/adr/0116-pelorus-mc.md
  configure                          |   2 +
  libavfilter/Makefile               |   1 +
  libavfilter/allfilters.c           |   1 +
- libavfilter/vf_pelorus_mc_vulkan.c | 922 +++++++++++++++++++++++++++++
- 4 files changed, 926 insertions(+)
+ libavfilter/vf_pelorus_mc_vulkan.c | 967 +++++++++++++++++++++++++++++
+ 4 files changed, 971 insertions(+)
  create mode 100644 libavfilter/vf_pelorus_mc_vulkan.c
 
 diff --git a/configure b/configure
@@ -97,10 +97,10 @@ index 5a5f777074..45949d7b8e 100644
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_mc_vulkan.c b/libavfilter/vf_pelorus_mc_vulkan.c
 new file mode 100644
-index 0000000000..fe29457b7c
+index 0000000000..3baab39680
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_mc_vulkan.c
-@@ -0,0 +1,922 @@
+@@ -0,0 +1,967 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -499,9 +499,11 @@ index 0000000000..fe29457b7c
 +    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
 +    PelorusSideData meta;
 +    PelorusMotionSection mo;
-+    PelorusPackSection sec;
++    PelorusMotionConfSection mo_conf;
++    PelorusPackSection secs[2];
 +    uint8_t *blob = NULL;
 +    uint8_t *grid_dst;
++    uint8_t *conf_grid = NULL;
 +    size_t len = 0;
 +    AVBufferRef *buf;
 +    double sum_x = 0.0, sum_y = 0.0, sum_mag = 0.0;
@@ -595,58 +597,101 @@ index 0000000000..fe29457b7c
 +
 +    av_free(mags);
 +
-+    sec.id = PEL_SEC_MOTION;
-+    sec.data = &mo;
-+    sec.size = (uint32_t)sizeof(mo);
-+
-+    if (pel_blob_pack(&meta, &sec, 1, &blob, &len) != PEL_OK || !blob)
++    /* Per-block confidence from the winning SAD: a sharp, low-residual match is
++     * trustworthy (255), a high residual means the block matched noise or is
++     * occluded (0). conf = 255*(1 - clamp(per-pixel SAD / CONF_SCALE)). The
++     * MC->denoise warp (ADR-0113) gates its warped temporal fetch by this. */
++    conf_grid = av_malloc((size_t)FFMAX(nblocks, 1));
++    if (!conf_grid)
 +        return AVERROR(ENOMEM);
-+
-+    /* The MV grid (int16 (dx,dy) per block) is appended after the packed blob
-+     * (the analyze map-payload convention). Grow the buffer, fill the grid, and
-+     * patch the section's mv_field_offset/size to point at it. The section
-+     * struct lives at dir[0].offset; mv_field_offset is blob-relative. */
 +    {
-+        size_t grid_bytes = (size_t)nblocks * 2 * sizeof(int16_t);
++        const double CONF_SCALE = 0.10; /* per-pixel mean-abs-diff at conf = 0 */
++        for (i = 0; i < nblocks; i++) {
++            double per_pixel = s->bsize > 0
++                                   ? (sad[i] / PEL_MC_SAD_SCALE)
++                                         / ((double)s->bsize * s->bsize)
++                                   : 1.0;
++            double c = 1.0 - per_pixel / CONF_SCALE;
++            conf_grid[i] = (uint8_t)(av_clipd(c, 0.0, 1.0) * 255.0 + 0.5);
++        }
++    }
++
++    memset(&mo_conf, 0, sizeof(mo_conf));
++    mo_conf.conf_metric = PEL_MOTION_CONF_SAD;
++
++    secs[0].id = PEL_SEC_MOTION;
++    secs[0].data = &mo;
++    secs[0].size = (uint32_t)sizeof(mo);
++    secs[1].id = PEL_SEC_MOTION_CONF;
++    secs[1].data = &mo_conf;
++    secs[1].size = (uint32_t)sizeof(mo_conf);
++
++    if (pel_blob_pack(&meta, secs, 2, &blob, &len) != PEL_OK || !blob) {
++        av_free(conf_grid);
++        return AVERROR(ENOMEM);
++    }
++
++    /* Append the MV grid (int16 (dx,dy)/cell, quarter-pel) and the confidence
++     * grid (uint8/cell) after the packed blob, patching each section's
++     * *_field_offset/size to its blob-relative location (the analyze map-payload
++     * convention). Sections are located by dir entry id, not position. */
++    {
++        size_t mv_bytes = (size_t)nblocks * 2 * sizeof(int16_t);
++        size_t conf_bytes = (size_t)nblocks;
 +        size_t uuid = PELORUS_SIDEDATA_UUID_LEN;
-+        uint8_t *grown = av_realloc(blob, len + grid_bytes);
++        uint8_t *grown = av_realloc(blob, len + mv_bytes + conf_bytes);
 +        PelorusSideData *hdr;
 +        PelorusSectionDir *dir;
-+        PelorusMotionSection *mo_in_blob;
-+        uint32_t blob_rel_off;
++        PelorusMotionSection *mo_in_blob = NULL;
++        PelorusMotionConfSection *conf_in_blob = NULL;
++        uint32_t mv_off, conf_off;
++        int k;
 +
 +        if (!grown) {
++            av_free(conf_grid);
 +            pel_blob_free(blob);
 +            return AVERROR(ENOMEM);
 +        }
 +        blob = grown;
 +
-+        /* The flat blob image starts after the 16-byte UUID prefix. */
 +        hdr = (PelorusSideData *)(blob + uuid);
 +        dir = (PelorusSectionDir *)(blob + uuid + hdr->header_size);
-+        /* Single section: dir[0] is PEL_SEC_MOTION. */
-+        mo_in_blob = (PelorusMotionSection *)(blob + uuid + dir[0].offset);
++        for (k = 0; k < hdr->section_count; k++) {
++            if (dir[k].section_id == PEL_SEC_MOTION)
++                mo_in_blob = (PelorusMotionSection *)(blob + uuid + dir[k].offset);
++            else if (dir[k].section_id == PEL_SEC_MOTION_CONF)
++                conf_in_blob =
++                    (PelorusMotionConfSection *)(blob + uuid + dir[k].offset);
++        }
++        if (!mo_in_blob || !conf_in_blob) {
++            av_free(conf_grid);
++            pel_blob_free(blob);
++            return AVERROR(EINVAL);
++        }
 +
-+        /* Grid goes at the current end of the blob image (total_size), i.e.
-+         * right after the section payload. blob-relative offset excludes UUID. */
-+        blob_rel_off = hdr->total_size;
-+        grid_dst = blob + uuid + blob_rel_off;
++        /* MV grid at the current blob end (blob-relative offset excludes UUID). */
++        mv_off = hdr->total_size;
++        grid_dst = blob + uuid + mv_off;
 +        for (i = 0; i < nblocks; i++) {
 +            int16_t dx = (int16_t)av_clip_int16(mvx[i]);
 +            int16_t dy = (int16_t)av_clip_int16(mvy[i]);
 +            memcpy(grid_dst + (size_t)i * 4 + 0, &dx, sizeof(int16_t));
 +            memcpy(grid_dst + (size_t)i * 4 + 2, &dy, sizeof(int16_t));
 +        }
-+        mo_in_blob->mv_field_offset = blob_rel_off;
-+        mo_in_blob->mv_field_size = (uint32_t)grid_bytes;
++        mo_in_blob->mv_field_offset = mv_off;
++        mo_in_blob->mv_field_size = (uint32_t)mv_bytes;
++        hdr->total_size += (uint32_t)mv_bytes;
 +
-+        /* Update the framing sizes so a consumer reads the grid as part of the
-+         * blob (total_size and the dir entry's size stay self-describing — the
-+         * grid is map payload referenced by offset, not part of the section
-+         * struct, exactly like analyze's per-cell maps). */
-+        hdr->total_size += (uint32_t)grid_bytes;
-+        len += grid_bytes;
++        /* Confidence grid right after the MV grid. */
++        conf_off = hdr->total_size;
++        memcpy(blob + uuid + conf_off, conf_grid, conf_bytes);
++        conf_in_blob->conf_field_offset = conf_off;
++        conf_in_blob->conf_field_size = (uint32_t)conf_bytes;
++        hdr->total_size += (uint32_t)conf_bytes;
++
++        len += mv_bytes + conf_bytes;
 +    }
++    av_free(conf_grid);
 +
 +    buf = av_buffer_create(blob, len, pel_sd_free, NULL, 0);
 +    if (!buf) {
