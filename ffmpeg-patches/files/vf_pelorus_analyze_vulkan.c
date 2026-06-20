@@ -149,8 +149,9 @@ static av_cold int init_filter(AVFilterContext *ctx)
                 .mem_layout = "std430",
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
                 /* One runtime-sized array (GLSL allows only one, and last);
-                 * struct-of-arrays by field: tile[k*ntiles + idx], k in 0..3
-                 * for var/edge/grad/valid. Host reads the four contiguous spans. */
+                 * struct-of-arrays by field: tile[k*ntiles + idx], k in 0..4
+                 * for var/edge/grad/valid/mean. Host reads the five contiguous
+                 * spans (mean feeds the coarse inter-tile banding scale). */
                 .buf_content = "uint tile[];",
             },
         };
@@ -219,9 +220,14 @@ static av_cold int init_filter(AVFilterContext *ctx)
     GLSLC(3,             tile[N + idx]      = uint(edge * GS);              );
     GLSLC(3,             tile[2u * N + idx] = uint(grad * GS);              );
     GLSLC(3,             tile[3u * N + idx] = 1u;                           );
+    /* 5th span: the tile-mean luma, for the host coarse (inter-tile) banding
+     * scale (ADR-0132/CAMBI alignment) — a shallow gradient spanning many tiles
+     * is invisible to per-tile variance but shows as a smooth tile-mean ramp. */
+    GLSLC(3,             tile[4u * N + idx] = uint(mean * GS);              );
     GLSLC(2,         } else {                                                 );
     GLSLC(3,             tile[idx] = 0u; tile[N + idx] = 0u;                 );
     GLSLC(3,             tile[2u * N + idx] = 0u; tile[3u * N + idx] = 0u;   );
+    GLSLC(3,             tile[4u * N + idx] = 0u;                           );
     GLSLC(2,         }                                                        );
     GLSLC(1,     }                                                            );
     GLSLC(0, }                                                                );
@@ -254,7 +260,10 @@ typedef struct PelorusTileView {
     const uint32_t *t_edge;
     const uint32_t *t_grad;
     const uint32_t *t_valid;
+    const uint32_t *t_mean; /* tile-mean luma * GS — coarse inter-tile scale */
     int ntiles;
+    int grid_cols; /* for the host coarse (inter-tile) banding neighbourhood */
+    int grid_rows;
 } PelorusTileView;
 
 /* Per-tile banding-prone score in [0,1]. A tile bands (and is starved by
@@ -285,6 +294,37 @@ static float tile_band_score(const PelorusAnalyzeVulkanContext *s,
     if (grad < (float)s->grad_lo * 0.25f)
         score *= av_clipf(grad / ((float)s->grad_lo * 0.25f), 0.0f, 1.0f);
     return av_clipf(score, 0.0f, 1.0f);
+}
+
+/* Coarse (inter-tile) banding score — the CAMBI multi-scale alignment (ADR-0132).
+ * A tile whose OWN variance is below the per-tile floor can still sit on a smooth
+ * low-amplitude luma ramp spanning many tiles (sky / shadow gradients), which
+ * bands visibly but is invisible to a single 32×32-tile detector. Detect it from
+ * the tile-MEAN field: a flat tile carrying a small but non-zero inter-tile mean
+ * gradient (≈1..12 code-values per tile) is banding-prone; a larger step is a
+ * real edge, not banding. The score is contrast-weighted by the step amplitude. */
+static float tile_coarse_band_score(const PelorusAnalyzeVulkanContext *s,
+                                    const PelorusTileView *tv, int tx, int ty)
+{
+    int gc = tv->grid_cols, gr = tv->grid_rows;
+    int idx = ty * gc + tx;
+    float m, ml, mr, mu, md, gx, gy, g;
+    const float lo = 1.0f / 255.0f;  /* >= ~1 code/tile: a real step           */
+    const float hi = 12.0f / 255.0f; /* > ~12 codes/tile: an edge, not banding */
+
+    if (!tv->t_valid[idx] || (float)(tv->t_var[idx] / PEL_GS) >= (float)s->flat_thr)
+        return 0.0f; /* textured tiles mask banding; the encoder over-bits them */
+    m = (float)(tv->t_mean[idx] / PEL_GS);
+    ml = tx > 0 ? (float)(tv->t_mean[idx - 1] / PEL_GS) : m;
+    mr = tx < gc - 1 ? (float)(tv->t_mean[idx + 1] / PEL_GS) : m;
+    mu = ty > 0 ? (float)(tv->t_mean[idx - gc] / PEL_GS) : m;
+    md = ty < gr - 1 ? (float)(tv->t_mean[idx + gc] / PEL_GS) : m;
+    gx = (mr - ml) * 0.5f;
+    gy = (md - mu) * 0.5f;
+    g = sqrtf(gx * gx + gy * gy); /* inter-tile mean gradient (normalized luma) */
+    if (g < lo || g > hi)
+        return 0.0f;
+    return av_clipf((g - lo) / (hi - lo), 0.0f, 1.0f);
 }
 
 /* Map a per-tile banding score to an AVRational qoffset (negative => more bits /
@@ -369,7 +409,13 @@ static int attach_roi(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
     for (i = 0; i < tv->ntiles; i++) {
         float var = tv->t_valid[i] ? (float)(tv->t_var[i] / PEL_GS) : 0.0f;
         float grad = tv->t_valid[i] ? (float)(tv->t_grad[i] / PEL_GS) : 0.0f;
-        score[i] = tv->t_valid[i] ? tile_band_score(s, var, grad) : 0.0f;
+        float fine = tv->t_valid[i] ? tile_band_score(s, var, grad) : 0.0f;
+        /* CAMBI multi-scale: a tile flagged by EITHER the fine (per-tile) or the
+         * coarse (inter-tile mean ramp) scale is banding-prone. The coarse scale
+         * catches shallow gradients whose per-tile variance is below the floor. */
+        float coarse = tile_coarse_band_score(s, tv, i % tv->grid_cols,
+                                              i / tv->grid_cols);
+        score[i] = FFMAX(fine, coarse);
     }
 
     ndet = coalesce_roi(s, score, detected, PEL_MAX_ROI);
@@ -583,8 +629,8 @@ static int analyze_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     s->grid_rows = (in->height + PEL_TILE - 1) / PEL_TILE;
     ntiles = s->grid_cols * s->grid_rows;
 
-    /* Four uint arrays (t_var/t_edge/t_grad/t_valid), each ntiles long. */
-    buf_bytes = (size_t)ntiles * 4 * sizeof(uint32_t);
+    /* Five uint arrays (t_var/t_edge/t_grad/t_valid/t_mean), each ntiles long. */
+    buf_bytes = (size_t)ntiles * 5 * sizeof(uint32_t);
 
     pc.grid_cols = s->grid_cols;
     pc.ntiles = ntiles;
@@ -603,7 +649,10 @@ static int analyze_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     tv.t_edge = base + ntiles;
     tv.t_grad = base + 2 * ntiles;
     tv.t_valid = base + 3 * ntiles;
+    tv.t_mean = base + 4 * ntiles;
     tv.ntiles = ntiles;
+    tv.grid_cols = s->grid_cols;
+    tv.grid_rows = s->grid_rows;
 
     exec = ff_vk_exec_get(vkctx, &s->e);
     ff_vk_exec_start(vkctx, exec);

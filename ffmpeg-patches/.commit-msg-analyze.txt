@@ -10,11 +10,22 @@ unchanged; only side data is added. Readback follows the vf_scdet_vulkan
 pattern (host-visible pooled buffer, CmdFillBuffer zero, dispatch, host
 barrier, submit+wait, read mapped_mem).
 
+With roi=1 it also auto-detects banding-prone tiles and attaches
+AV_FRAME_DATA_REGIONS_OF_INTEREST (a negative qoffset) so a downstream encoder
+spends bits where contouring would show. Detection is two-scale (ADR-0133):
+a fine per-tile variance scale plus a coarse inter-tile mean-luma-gradient
+scale that catches shallow ramps (sky/shadow) spanning many tiles which are
+invisible to any single tile's variance. It additionally emits a per-frame
+complexity scalar (PEL_SEC_COMPLEXITY, ADR-0132) for per-shot CRF steering.
+
 Codec-agnostic: the statistics describe the source, independent of the chosen
 encoder (HEVC, AV1, ...).
 
-AVOptions: flat (per-tile variance threshold for the banding-prone count).
+AVOptions: flat (per-tile banding-prone variance threshold), roi (emit ROI side
+data), roi_strength (max |qoffset| fraction), grad_lo/grad_hi (banding-slope
+gradient window).
 
 Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
 
-ADR: docs/adr/0109-analyze-filter.md
+ADR: docs/adr/0109-analyze-filter.md, docs/adr/0132-per-shot-crf-steering.md,
+docs/adr/0133-analyze-coarse-banding-cambi.md

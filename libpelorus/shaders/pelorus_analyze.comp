@@ -11,7 +11,15 @@
  * sliced SSBO (slices cut atomic contention, summed on the host).
  *
  * The in-tree FFmpeg filter emits an equivalent reduction inline via GLSLC
- * against normalized float images; keep the two in lockstep (AGENTS.md rule 4).
+ * against normalized float images; the shared algorithm — and what rule 4
+ * (AGENTS.md) keeps in lockstep — is the per-tile reduction math: tile mean,
+ * variance, mean edge density and the low-amplitude (flat-but-not-constant)
+ * gradient. The inline filter additionally reads the reduction back as a
+ * per-tile struct-of-arrays (var/edge/grad/valid/mean) to drive ROI steering,
+ * a per-frame complexity scalar, and a coarse inter-tile banding scale (a
+ * shallow luma ramp spanning many tiles — CAMBI alignment, ADR-0133); this
+ * frame-scalar reference intentionally models only the reduction, not that
+ * per-tile readback. Keep the reduction math in lockstep.
  */
 #version 450
 
