@@ -9,7 +9,8 @@ reference_shaders = ['pelorus_deband', 'pelorus_analyze', 'pelorus_denoise',
                      'pelorus_grain_estimate', 'pelorus_mc', 'pelorus_qpmap',
                      'pelorus_dehalo',
                      'pelorus_aa',
-                     'pelorus_deblock']
+                     'pelorus_deblock',
+                     'pelorus_borderfix']
 
 if glslang.found()
   foreach shader : reference_shaders

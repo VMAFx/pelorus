@@ -55,6 +55,7 @@ HEVC/VVC (H.274 / SEI FGC).
 
 | Stage | Filter | Effect | Status |
 |---|---|---|---|
+| borderfix | `pelorus_borderfix_vulkan` | dirty-line / border repair — clamp the dirty edge band onto the clean interior rect (the zero-copy equivalent of `fillborders=smear`); all planes, band widths in each plane's own pixels; runs **first**, before any other stage | **built** (deterministic smear — no quality A/B needed; BD-rate note on a dirty-border corpus is a nice-to-have follow-up) |
 | analyze | `pelorus_analyze_vulkan` | measure banding/variance/edge stats → side data | **working** |
 | deband | `pelorus_deband_vulkan` | flatten contours + dither | **working** |
 | deblock | `pelorus_deblock_vulkan` | re-encode deblock/dering — gated `[1 2 1]` low-pass across the prior codec's DCT block grid; smooths blocking so the new encoder does not code it as false residual (luma-only); runs early, before deband | **built** (on-content tuning + SSIMULACRA2/BD-rate proof on a re-transcode corpus pending) |

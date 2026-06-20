@@ -40,3 +40,4 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0125](0125-anime-tune.md) | Anime tune pipeline — compose analyze-ROI + dehalo + aa + deband for anime pre-encode | Accepted |
 | [0126](0126-scenecut-idr.md) | vf_pelorus_scenecut — scene-cut → forced IDR; vendor-neutral metadata consumer of PEL_SEC_MOTION.has_scene_cut (no patch, no GPU work) | Accepted |
 | [0127](0127-deblock.md) | vf_pelorus_deblock_vulkan — single-pass GPU re-encode deblock/dering; gated [1 2 1] low-pass across the prior codec's DCT block grid (luma-only, pure transform) | Accepted |
+| [0128](0128-borderfix.md) | vf_pelorus_borderfix_vulkan — single-pass GPU dirty-line / border repair; clamp the dirty edge band onto the clean interior rect (the zero-copy equivalent of fillborders=smear, all planes, pure transform) | Accepted |
