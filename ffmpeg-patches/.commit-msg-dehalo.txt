@@ -1,0 +1,19 @@
+feat(dehalo): add vf_pelorus_dehalo_vulkan (anime dehalo + dering, Vulkan)
+
+A single-pass GPU port of HAvsFunc DeHalo_alpha + FineDehalo: remove the
+bright/dark ringing ("halos") that upstream compression and sharpening leave in
+the flat band next to hard line-art. Strong-blur target + DeHalo_alpha
+lowsens/highsens sensitivity mask + remove-only asymmetric darkstr/brightstr
+pull, gated to the halo ring by a Sobel edge mask (FineDehalo) so line-art and
+open gradients are protected. Luma only; chroma passes through. Zero-copy in
+VRAM (FF_VK_REP_FLOAT UNORM, bit-depth-agnostic).
+
+Pure pixel transform — does NOT link libpelorus (no interop emit), so the
+registration is deps-only (no require_pkg_config). Foundation of the anime
+`tune` pipeline. The standalone reference shader
+libpelorus/shaders/pelorus_dehalo.comp and the inline GLSL are kept in lockstep.
+
+AVOptions: blur (radius), darkstr/brightstr, lowsens/highsens, edge (line
+threshold), ring (halo-band width), planes.
+
+ADR: docs/adr/0123-anime-dehalo.md

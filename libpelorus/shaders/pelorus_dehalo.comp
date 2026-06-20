@@ -1,0 +1,150 @@
+/*
+ * pelorus_dehalo.comp — anime/2D dehalo + dering compute shader (reference).
+ *
+ * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ *
+ * A single-pass GPU port of HAvsFunc DeHalo_alpha + FineDehalo (the de-facto
+ * VapourSynth anime halo remover). Halos are the bright/dark ringing that
+ * upstream compression and sharpening leave in the flat band *next to* hard
+ * line-art; they cost the encoder bits and read as artefacts. The algorithm:
+ *
+ *   halos = a strong blur of luma (the "what the flat should look like").
+ *   are   = local contrast of the original  (3x3 max-min).
+ *   ugly  = local contrast of the blur       (3x3-cross max-min of the blur).
+ *   so    = sensitivity mask: high where the original has contrast the blur
+ *           does NOT (i.e. a thin halo, not real structure) — shaped by
+ *           lowsens (floor) / highsens (gain).
+ *   lets  = mix(original, halos, so); remove-only, asymmetric darkstr/brightstr
+ *           so we only pull a halo toward the flat, never invent detail.
+ *
+ * FineDehalo then gates the whole thing to the halo RING via a Sobel edge mask:
+ * the dehalo is applied in a dilated band around lines but NOT on the lines
+ * themselves and NOT in the open flats — protecting line-art and gradients.
+ *
+ * Reference form: one dispatch on the luma plane against r16ui storage images
+ * (chroma passes through). The in-tree FFmpeg filter
+ * (ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c) emits an equivalent shader
+ * inline via FFmpeg's GLSLC macros over FF_VK_REP_FLOAT image arrays; keep the
+ * two algorithms in lockstep when editing (AGENTS hard rule 4).
+ */
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0, r16ui) uniform readonly  uimage2D srcImg;
+layout(binding = 1, r16ui) uniform writeonly uimage2D dstImg;
+
+layout(push_constant, std430) uniform Params {
+    int   width;      //  0  plane width
+    int   height;     //  4  plane height
+    int   blur_r;     //  8  halo-blur radius in pixels (1..MAX_R)
+
+    float darkstr;    // 12  pull strength for dark halos   [0,1]
+    float brightstr;  // 16  pull strength for bright halos [0,1]
+    float lowsens;    // 20  sensitivity floor   (normalized, ~0.0625)
+    float highsens;   // 24  sensitivity gain    (normalized, ~0.5)
+    float edge_thr;   // 28  Sobel magnitude above which a pixel is line-art
+    float ring;       // 32  edge-mask dilation (ring half-width, pixels)
+} pc;
+
+const int MAX_R = 8; /* provably-bounded blur radius (loop unroll cap) */
+
+float load_norm(int x, int y) {
+    x = clamp(x, 0, pc.width  - 1);
+    y = clamp(y, 0, pc.height - 1);
+    return float(imageLoad(srcImg, ivec2(x, y)).r) / 65535.0;
+}
+
+/* Box-mean over a (2r+1)^2 window — the "halos" blur. */
+float box_blur(int cx, int cy, int r) {
+    float acc = 0.0;
+    float n   = 0.0;
+    for (int dy = -MAX_R; dy <= MAX_R; dy++) {
+        if (dy < -r || dy > r) continue;
+        for (int dx = -MAX_R; dx <= MAX_R; dx++) {
+            if (dx < -r || dx > r) continue;
+            acc += load_norm(cx + dx, cy + dy);
+            n   += 1.0;
+        }
+    }
+    return acc / max(n, 1.0);
+}
+
+void main() {
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    int x = gid.x, y = gid.y;
+    if (x >= pc.width || y >= pc.height)
+        return;
+
+    int r = clamp(pc.blur_r, 1, MAX_R);
+    float c = load_norm(x, y);
+
+    /* 1. halos = strong blur; also the blur at the 4-neighbours for `ugly`. */
+    float h  = box_blur(x,     y,     r);
+    float hl = box_blur(x - 1, y,     r);
+    float hr = box_blur(x + 1, y,     r);
+    float hu = box_blur(x,     y - 1, r);
+    float hd = box_blur(x,     y + 1, r);
+
+    /* 2. are = 3x3 contrast of the original; ugly = 3x3-cross contrast of blur. */
+    float oMax = c, oMin = c;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            float v = load_norm(x + dx, y + dy);
+            oMax = max(oMax, v);
+            oMin = min(oMin, v);
+        }
+    }
+    float are  = oMax - oMin;
+    float ugly = max(max(max(h, hl), max(hr, hu)), hd)
+               - min(min(min(h, hl), min(hr, hu)), hd);
+
+    /* 3. sensitivity: detail the blur removed, relative to the local contrast,
+     *    floored by lowsens and gained by highsens (DeHalo_alpha shaping). */
+    const float EPS = 0.0039; /* ~1/255 */
+    float frac = (are - ugly) / (are + EPS);
+    float so   = clamp((frac - pc.lowsens) * (1.0 + pc.highsens), 0.0, 1.0);
+
+    /* 4. remove-only, asymmetric pull toward the blurred flat. */
+    float lets = mix(c, h, so);
+    float out_v;
+    if (lets < c)               /* bright halo: pull down */
+        out_v = c - (c - lets) * pc.brightstr;
+    else                        /* dark halo: pull up */
+        out_v = c - (c - lets) * pc.darkstr;
+
+    /* 5. FineDehalo gate: Sobel edge mask -> a ring around lines, not the lines
+     *    and not the flats. Protects line-art + open gradients. */
+    float gx = 0.0, gy = 0.0;
+    const float kx[9] = float[9](-1.0, 0.0, 1.0, -2.0, 0.0, 2.0, -1.0, 0.0, 1.0);
+    const float ky[9] = float[9](-1.0, -2.0, -1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0);
+    int k = 0;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            float v = load_norm(x + dx, y + dy);
+            gx += v * kx[k];
+            gy += v * ky[k];
+            k++;
+        }
+    }
+    float edge = sqrt(gx * gx + gy * gy);
+    bool on_line = edge > pc.edge_thr;
+
+    /* Ring = there is a line within `ring` pixels, but THIS pixel is not the
+     * line. Scan the cross neighbourhood for a strong edge. */
+    int rr = clamp(int(pc.ring + 0.5), 1, MAX_R);
+    bool near_line = false;
+    for (int d = 1; d <= MAX_R; d++) {
+        if (d > rr) break;
+        float em = max(max(load_norm(x + d, y), load_norm(x - d, y)),
+                       max(load_norm(x, y + d), load_norm(x, y - d)));
+        /* cheap proxy: a strong local step in the cross => a line is near */
+        if (abs(em - c) > pc.edge_thr) { near_line = true; }
+    }
+    float ring_mask = (near_line && !on_line) ? 1.0 : 0.0;
+
+    float result = mix(c, out_v, ring_mask);
+
+    int outv = clamp(int(round(result * 65535.0)), 0, 65535);
+    imageStore(dstImg, ivec2(x, y), uvec4(uint(outv), 0u, 0u, 0u));
+}

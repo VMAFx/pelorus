@@ -6,7 +6,8 @@
 glslang = find_program('glslangValidator', required: false)
 
 reference_shaders = ['pelorus_deband', 'pelorus_analyze', 'pelorus_denoise',
-                     'pelorus_grain_estimate', 'pelorus_mc', 'pelorus_qpmap']
+                     'pelorus_grain_estimate', 'pelorus_mc', 'pelorus_qpmap',
+                     'pelorus_dehalo']
 
 if glslang.found()
   foreach shader : reference_shaders

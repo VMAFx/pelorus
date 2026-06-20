@@ -24,3 +24,4 @@
 0011-nvenc-pelorus-film-grain.patch
 0012-libaom-pelorus-roi.patch
 0013-svtav1-pelorus-roi.patch
+0014-add-vf_pelorus_dehalo_vulkan.patch
