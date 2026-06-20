@@ -34,3 +34,4 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0119](0119-qp-feedback.md) | Closed-loop QP feedback — read the encoder's honored QP/bits back into the interop ABI (PEL_SEC_QPREPORT, ABI 1.1) | Accepted |
 | [0120](0120-libaom-steering.md) | libaom ROI steering — honor AV_FRAME_DATA_REGIONS_OF_INTEREST via AOME_SET_ROI_MAP | Accepted |
 | [0121](0121-svtav1-steering.md) | SVT-AV1 ROI steering — honor AV_FRAME_DATA_REGIONS_OF_INTEREST via the SVT-AV1 segment map | Accepted |
+| [0122](0122-qp-feedback-csv-reader.md) | Runnable QP-feedback reader — fold x265 `--csv` per-frame stats into PEL_SEC_QPREPORT (SDK-free closed loop) | Accepted |

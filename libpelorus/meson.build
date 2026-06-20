@@ -6,6 +6,7 @@ libpelorus_inc = include_directories('include')
 
 libpelorus_sources = files(
   'src/interop.c',
+  'src/qp_report_csv.c',
   'src/deband_params.c',
   'src/denoise_params.c',
   'src/version.c',
