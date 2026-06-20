@@ -43,6 +43,8 @@
  * normalized-float image array; keep the two in lockstep (AGENTS hard rule 4).
  */
 #version 450
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
 
 /* Workgroup is BLOCK_DIM x BLOCK_DIM; one workgroup reduces one block. The host
  * dispatches grid_cols x grid_rows workgroups. BLOCK_DIM is the max supported
@@ -90,7 +92,8 @@ layout(push_constant, std430) uniform Params {
 const float SAD_SCALE = 256.0;   /* SAD is summed in normalized [0,1] luma */
 
 /* SAD reduction scratch: one slot per invocation, tree-reduced by thread 0. */
-shared float s_sad[BLOCK_DIM * BLOCK_DIM];
+shared float s_part[128];  /* per-subgroup SAD partials (wg / min-subgroup) */
+shared float s_sad0;       /* block-SAD reduction result                   */
 /* The block's running best (written by thread 0, read by all each step). */
 shared int   s_best_x;
 shared int   s_best_y;
@@ -121,15 +124,22 @@ float block_sad(int blk_x, int blk_y, int mvx, int mvy, uint lidx,
         float r = fetchRef(cx + mvx, cy + mvy);
         d = abs(c - r);
     }
-    s_sad[lidx] = d;
+    /* Two-level reduction: sum within each subgroup, then lane 0 combines the
+     * per-subgroup partials. Replaces the BLOCK_DIM*BLOCK_DIM barrier tree —
+     * block_sad runs once per search candidate (mc is the throughput
+     * bottleneck). Kept in lockstep with the in-tree filter's inline GLSL. */
+    float sg = subgroupAdd(d);
+    if (subgroupElect())
+        s_part[gl_SubgroupID] = sg;
     barrier();
-    /* power-of-two tree reduction over BLOCK_DIM*BLOCK_DIM lanes */
-    for (uint stride = (BLOCK_DIM * BLOCK_DIM) / 2u; stride > 0u; stride >>= 1u) {
-        if (lidx < stride)
-            s_sad[lidx] += s_sad[lidx + stride];
-        barrier();
+    if (lidx == 0u) {
+        float t = 0.0;
+        for (uint i = 0u; i < gl_NumSubgroups; i++)
+            t += s_part[i];
+        s_sad0 = t;
     }
-    return s_sad[0];
+    barrier();
+    return s_sad0;
 }
 
 /* Evaluate a candidate MV (clamped to the search window and frame); if it beats
