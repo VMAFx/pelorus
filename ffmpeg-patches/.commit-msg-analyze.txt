@@ -16,7 +16,9 @@ spends bits where contouring would show. Detection is two-scale (ADR-0133):
 a fine per-tile variance scale plus a coarse inter-tile mean-luma-gradient
 scale that catches shallow ramps (sky/shadow) spanning many tiles which are
 invisible to any single tile's variance. It additionally emits a per-frame
-complexity scalar (PEL_SEC_COMPLEXITY, ADR-0132) for per-shot CRF steering.
+complexity scalar (PEL_SEC_COMPLEXITY, ADR-0132) for per-shot CRF steering, and
+mirrors the per-frame scalars as lavfi.pelorus.* frame metadata (ADR-0136,
+ffprobe/metadata=print-readable) since the interop blob is not muxed to file.
 
 Codec-agnostic: the statistics describe the source, independent of the chosen
 encoder (HEVC, AV1, ...).
