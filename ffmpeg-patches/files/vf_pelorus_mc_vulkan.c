@@ -87,7 +87,8 @@
  * ref_image[0]. */
 static const char mc_glsl[] =
     "const float SAD_SCALE = 256.0;\n"
-    "shared float s_sad[" PEL_MC_SAD_LANES_STR "];\n" /* PEL_MC_BLOCK_DIM^2 */
+    "shared float s_part[128];\n" /* per-subgroup SAD partials (wg / min-subgroup)*/
+    "shared float s_sad0;\n"      /* block-SAD reduction result                  */
     "shared int   s_best_x;\n"
     "shared int   s_best_y;\n"
     "shared float s_best_cost;\n"
@@ -111,14 +112,20 @@ static const char mc_glsl[] =
     "        float r = fetchRef(cx + mvx, cy + mvy);\n"
     "        d = abs(c - r);\n"
     "    }\n"
-    "    s_sad[lidx] = d;\n"
+    /* Two-level reduction: sum within each subgroup (one op, no shared traffic),
+     * then lane 0 combines the per-subgroup partials. Replaces the 10-step
+     * shared-memory barrier tree — mc is the throughput bottleneck and block_sad
+     * runs once per search candidate. */
+    "    float sg = subgroupAdd(d);\n"
+    "    if (subgroupElect()) s_part[gl_SubgroupID] = sg;\n"
     "    barrier();\n"
-    "    for (uint stride = (" PEL_MC_SAD_LANES_STR ") / 2u; stride > 0u; stride >>= 1u) {\n"
-    "        if (lidx < stride)\n"
-    "            s_sad[lidx] += s_sad[lidx + stride];\n"
-    "        barrier();\n"
+    "    if (lidx == 0u) {\n"
+    "        float t = 0.0;\n"
+    "        for (uint i = 0u; i < gl_NumSubgroups; i++) t += s_part[i];\n"
+    "        s_sad0 = t;\n"
     "    }\n"
-    "    return s_sad[0];\n"
+    "    barrier();\n"
+    "    return s_sad0;\n"
     "}\n"
     "void eval_candidate(int blk_x, int blk_y, int cand_x, int cand_y, uint lidx,\n"
     "                    int lx, int ly) {\n"
@@ -208,7 +215,9 @@ static av_cold int init_filter(AVFilterContext *ctx)
 
     RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
     RET(ff_vk_shader_init(vkctx, shd, "pelorus_mc",
-                          VK_SHADER_STAGE_COMPUTE_BIT, NULL, 0,
+                          VK_SHADER_STAGE_COMPUTE_BIT,
+                          (const char *[]){ "GL_KHR_shader_subgroup_basic",
+                                            "GL_KHR_shader_subgroup_arithmetic" }, 2,
                           PEL_MC_BLOCK_DIM, PEL_MC_BLOCK_DIM, 1, 0));
 
     GLSLC(0, layout(push_constant, std430) uniform pushConstants {            );

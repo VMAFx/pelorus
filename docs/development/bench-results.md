@@ -491,3 +491,47 @@ on a controlled synthetic 2.5 px/frame scroll (#25: +0.0042 Y-SSIM). The gain is
 modest because mc's MVs are estimated on *noisy* pixels; the largest headroom is
 the documented half-pel/confidence-tuning and a SSIMULACRA2-based RD methodology.
 Graphs regenerate via `scripts/bench/plot_rd.py` (committed).
+
+## v0.4 — GPU throughput profiling + mc subgroup reduction
+
+Measure-first before optimizing. Per-filter wall time on the RTX 4090 (1280×720,
+64 frames, `ffmpeg -benchmark` rtime, warm; includes the hwupload/download floor
+of ~0.055 s):
+
+![Per-filter throughput](images/mc-subgroup-profile.png)
+
+| filter | wall (s) | filter | wall (s) |
+|---|---:|---|---:|
+| deband | 0.195 | analyze | 0.215 |
+| denoise | 0.237 | grain_estimate | 0.145 |
+| dehalo | 0.197 | **mc** | **0.765** |
+| aa | 0.197 | passthrough (up/down) | 0.055 |
+
+**`vf_pelorus_mc` is the bottleneck — ~4× every other filter**, because its
+block-matching search evaluates many candidate MVs per block and each candidate
+SADs the full 32×32 block. The other filters are single-pass and already cheap.
+
+OPPORTUNITIES.md proposed subgroup reductions + fp16 as a "free throughput" quick
+win. **Measured, the picture is narrower than that headline:**
+
+- **mc SAD reduction → subgroup**: replacing the 32×32 shared-memory barrier-tree
+  in `block_sad` with a two-level subgroup reduction (`subgroupAdd` per subgroup,
+  then lane 0 combines partials) is **~5% faster** (0.765 → 0.727 s warm),
+  output bit-near-identical (tree-vs-subgroup SSIM **0.9998** — the FP-reorder
+  does not move the search argmin). Shipped (this PR).
+- **Why only 5%, not more**: the reduction is a *small fraction* of `block_sad` —
+  the cost is the per-candidate **memory fetches** (each lane does two displaced
+  `imageLoad`s), not the sum. The real mc headroom is **shared-memory reference
+  caching** (the diamond search reuses overlapping reference pixels across
+  candidates) — a larger algorithmic change, tracked as a follow-up.
+- **analyze / grain_estimate were not optimized**: they are already ~0.15–0.22 s
+  (mostly the up/download floor), so a subgroup rewrite of their reductions would
+  not move the end-to-end number — cargo-cult complexity for no measured gain.
+- **fp16 inner loops deferred**: the storage images are 8-bit UNORM, so fp16
+  *compute* does not reduce the fetch-bound cost that dominates mc/denoise; it
+  only risks precision. Not pursued without a fetch-bound-removing change first.
+
+Honest verdict: the subgroup reduction is a small, real, validated win on the
+slowest filter; the broader "free throughput" framing overstated it — the
+bottleneck is memory traffic, and the high-value perf work is reference caching,
+not reductions. `scripts/bench/plot_rd.py` regenerates the graph.
