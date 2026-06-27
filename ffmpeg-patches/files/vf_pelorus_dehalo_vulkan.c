@@ -63,18 +63,60 @@ typedef struct PelorusDehaloVulkanContext {
     } opts;
 
     int planes; /* plane bitmask to process (luma-only by default)           */
+    int tile;   /* shared-memory tile the box-blur window (ADR-0139, opt-in)  */
 } PelorusDehaloVulkanContext;
+
+/* Shared-memory tiling of the box-blur window (ADR-0139, opt-in tile=1). Every
+ * luma fetch in dehalo() — the box_blur (2r+1)^2 window read 5x per pixel at the
+ * centre + 4 cross offsets, the Sobel/contrast 3x3, the ring scan — goes through
+ * pel_luma against the SAME input plane, re-reading a heavily overlapping window
+ * (~1.5k loads/px at blur=8). That is fetch-bound, not ALU-bound (the box mean is
+ * adds + one divide), so on a bandwidth-limited GPU the workgroup cooperatively
+ * loads its output region + a PEL_HALO ring into shared memory once per plane and
+ * every read hits shared instead of the image. PEL_HALO = MAX_R (8, the max box
+ * reach) + 1 (the box-blur cross offset extends the union by one px) = 9, so the
+ * tile covers the union of all five box_blur windows AND the ring scan. The tile
+ * mirrors pel_luma's edge clamp exactly, so tile=1 is bit-identical to tile=0.
+ * pel_load_tile() runs in uniform control flow (outside the IS_WITHIN guard) so
+ * its barriers are workgroup-uniform; the leading barrier protects the prior
+ * plane's readers before this plane overwrites s_tile. Kept in lockstep with the
+ * standalone reference shader (AGENTS rule 4). */
+static const char tile_helpers_glsl[] =
+    "void pel_load_tile(int idx, ivec2 sz) {\n"
+    "    ivec2 wgsz = ivec2(gl_WorkGroupSize.xy);\n"
+    "    ivec2 base = ivec2(gl_WorkGroupID.xy) * wgsz - PEL_HALO;\n"
+    "    uint n = uint(PEL_TILE * PEL_TILE);\n"
+    "    uint stride = gl_WorkGroupSize.x * gl_WorkGroupSize.y;\n"
+    "    barrier();\n"
+    "    for (uint k = gl_LocalInvocationIndex; k < n; k += stride) {\n"
+    "        ivec2 t = ivec2(int(k) - (int(k) / PEL_TILE) * PEL_TILE,\n"
+    "                        int(k) / PEL_TILE);\n"
+    "        ivec2 p = base + t;\n"
+    "        s_tile[k] = imageLoad(input_images[idx],\n"
+    "                              clamp(p, ivec2(0), sz - ivec2(1))).x;\n"
+    "    }\n"
+    "    barrier();\n"
+    "}\n"
+    /* Tiled pel_luma: map the absolute coordinate p into s_tile via the workgroup
+     * base. Coordinates inside the loaded window (every dehalo() read at tile=1)
+     * hit shared; the clamp mirrors the image-edge clamp so the result matches the
+     * direct path exactly. wgsz/base recomputed (cheap) to stay a drop-in for the
+     * direct pel_luma signature. */
+    "float pel_luma(int idx, ivec2 p, ivec2 sz) {\n"
+    "    ivec2 base = ivec2(gl_WorkGroupID.xy) * ivec2(gl_WorkGroupSize.xy) - PEL_HALO;\n"
+    "    ivec2 lc = clamp(p, ivec2(0), sz - ivec2(1)) - base;\n"
+    "    return s_tile[lc.y * PEL_TILE + lc.x];\n"
+    "}\n";
 
 /* Pure GLSL helpers + the dehalo() function, spliced verbatim (avoids the
  * comma-in-C()-macro hazard). Kept in lockstep with the standalone reference
  * shader libpelorus/shaders/pelorus_dehalo.comp — the only intended difference
  * is the working domain: the .comp reads r16ui and normalizes by 65535, this
- * inline form reads FF_VK_REP_FLOAT (UNORM) storage images already in [0,1]. */
+ * inline form reads FF_VK_REP_FLOAT (UNORM) storage images already in [0,1].
+ * pel_luma is emitted separately (direct or tiled) by init_filter so box_blur /
+ * dehalo stay textually identical across the tile=0/1 paths. */
 static const char dehalo_glsl[] =
     "const int MAX_R = 8;\n"
-    "float pel_luma(int idx, ivec2 p, ivec2 sz) {\n"
-    "    return imageLoad(input_images[idx], clamp(p, ivec2(0), sz - ivec2(1))).x;\n"
-    "}\n"
     "float box_blur(int idx, ivec2 c, int r, ivec2 sz) {\n"
     "    float acc = 0.0; float n = 0.0;\n"
     "    for (int dy = -MAX_R; dy <= MAX_R; dy++) {\n"
@@ -208,6 +250,25 @@ static av_cold int init_filter(AVFilterContext *ctx)
         RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0, 0));
     }
 
+    /* pel_luma reads the input plane. tile=1 caches the box-blur window in
+     * shared memory (a large win on bandwidth-limited GPUs, ~neutral on
+     * cache-rich ones — see ADR-0139); default tile=0 reads the image directly
+     * (bit-identical, the flagship-first default). The tiled and direct
+     * definitions share the pel_luma signature so box_blur/dehalo are textually
+     * identical either way; GLSLD keeps the comma in pel_luma(idx, ...) out of
+     * the GLSLC C() macro. PEL_HALO = MAX_R (8) + 1 (box-blur cross offset);
+     * PEL_TILE = 32 (workgroup dim) + 2 * PEL_HALO. */
+    if (s->tile) {
+        GLSLC(0, #define PEL_HALO 9 /* MAX_R (8) + 1-px box-blur cross offset */ );
+        GLSLC(0, #define PEL_TILE 50 /* 32 (workgroup dim) + 2 * PEL_HALO */    );
+        GLSLC(0, shared float s_tile[PEL_TILE * PEL_TILE];                      );
+        GLSLD(tile_helpers_glsl);
+    } else {
+        GLSLD("float pel_luma(int idx, ivec2 p, ivec2 sz) {\n"
+              "    return imageLoad(input_images[idx],\n"
+              "                     clamp(p, ivec2(0), sz - ivec2(1))).x;\n"
+              "}\n");
+    }
     GLSLD(dehalo_glsl);
     GLSLC(0, void main()                                                      );
     GLSLC(0, {                                                                );
@@ -216,12 +277,17 @@ static av_cold int init_filter(AVFilterContext *ctx)
     for (i = 0; i < planes; i++) {
         GLSLC(0,                                                              );
         GLSLF(1, size = imageSize(output_images[%i]);                       ,i);
-        GLSLC(1, if (!IS_WITHIN(pos, size)) return;                           );
+        /* Cooperative tile load runs in uniform control flow (all invocations,
+         * before the per-thread IS_WITHIN guard) so its barriers are valid. */
+        if (s->tile && (s->planes & (1 << i)))
+            GLSLF(1, pel_load_tile(%i, size);                               ,i);
+        GLSLC(1, if (IS_WITHIN(pos, size)) {                                  );
         if (s->planes & (1 << i)) {
-            GLSLF(1, dehalo(pos, %i);                                       ,i);
+            GLSLF(2, dehalo(pos, %i);                                       ,i);
         } else {
-            GLSLF(1, imageStore(output_images[%i], pos, imageLoad(input_images[%i], pos)); ,i, i);
+            GLSLF(2, imageStore(output_images[%i], pos, imageLoad(input_images[%i], pos)); ,i, i);
         }
+        GLSLC(1, }                                                            );
     }
     GLSLC(0, }                                                                );
 
@@ -303,6 +369,8 @@ static const AVOption pelorus_dehalo_vulkan_options[] = {
       AV_OPT_TYPE_FLOAT, { .dbl = 2.0 }, 1.0, 8.0, FLAGS },
     { "planes", "planes to process (bitmask; default luma only)", OFFSET(planes),
       AV_OPT_TYPE_INT, { .i64 = 0x1 }, 0, 0xF, FLAGS },
+    { "tile", "shared-memory tile the box-blur window (faster on bandwidth-limited GPUs; bit-identical)",
+      OFFSET(tile), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
     { NULL }
 };
 
