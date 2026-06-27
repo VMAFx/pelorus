@@ -51,6 +51,7 @@
 #include "filters.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <pelorus/interop.h>
@@ -339,9 +340,24 @@ static AVRational score_to_qoffset(const PelorusAnalyzeVulkanContext *s,
     return av_make_q(milli, 1000);
 }
 
+/* qsort comparator: order coalesced runs by descending banding strength. A
+ * stronger banding tile gets a more-negative qoffset.num (down to -1000), so the
+ * strongest run is the most negative one — sort ascending by qoffset.num. */
+static int roi_strength_cmp(const void *pa, const void *pb)
+{
+    const AVRegionOfInterest *a = pa;
+    const AVRegionOfInterest *b = pb;
+    if (a->qoffset.num < b->qoffset.num)
+        return -1; /* a is stronger banding -> earlier */
+    if (a->qoffset.num > b->qoffset.num)
+        return 1;
+    return 0;
+}
+
 /* Greedy row-run coalescing: scan tiles row-major, merge horizontally adjacent
- * banding tiles of the same qoffset bucket into one rectangle, cap at
- * PEL_MAX_ROI rectangles (drop the lowest-score remainder once full). Per-tile
+ * banding tiles of the same qoffset bucket into one rectangle. ALL runs are
+ * collected first, then ranked by banding strength (|qoffset|) and the top
+ * `max` are kept (drop the lowest-score remainder once full). Per-tile
  * rectangles fall out naturally when neighbours differ. Writes into out[] and
  * returns the rectangle count. */
 static int coalesce_roi(const PelorusAnalyzeVulkanContext *s,
@@ -350,10 +366,53 @@ static int coalesce_roi(const PelorusAnalyzeVulkanContext *s,
     int cols = s->grid_cols, rows = s->grid_rows;
     int n = 0;
     int ty, tx;
+    AVRegionOfInterest *runs;
+    /* Worst case: every tile is a singleton run (no horizontal merge). */
+    size_t cap = (size_t)cols * (size_t)rows;
 
-    for (ty = 0; ty < rows && n < max; ty++) {
+    if (max <= 0)
+        return 0;
+
+    runs = av_calloc(cap > 0 ? cap : 1, sizeof(*runs));
+    if (!runs) {
+        /* Fallback: positional emission (the prior behaviour) so a transient
+         * alloc failure still yields a usable, bounded ROI set rather than none. */
+        for (ty = 0; ty < rows && n < max; ty++) {
+            tx = 0;
+            while (tx < cols && n < max) {
+                float sc = score[ty * cols + tx];
+                int q0, run, x;
+                if (sc <= 0.0f) {
+                    tx++;
+                    continue;
+                }
+                q0 = score_to_qoffset(s, sc).num;
+                run = 1;
+                for (x = tx + 1; x < cols; x++) {
+                    float scn = score[ty * cols + x];
+                    if (scn <= 0.0f || score_to_qoffset(s, scn).num != q0)
+                        break;
+                    run++;
+                }
+                out[n] = (AVRegionOfInterest) {
+                    .self_size = sizeof(AVRegionOfInterest),
+                    .top    = ty * PEL_TILE,
+                    .bottom = FFMIN((ty + 1) * PEL_TILE, s->vkctx.output_height),
+                    .left   = tx * PEL_TILE,
+                    .right  = FFMIN((tx + run) * PEL_TILE, s->vkctx.output_width),
+                    .qoffset = av_make_q(q0, 1000),
+                };
+                n++;
+                tx += run;
+            }
+        }
+        return n;
+    }
+
+    /* Collect every coalesced run (uncapped). */
+    for (ty = 0; ty < rows; ty++) {
         tx = 0;
-        while (tx < cols && n < max) {
+        while (tx < cols) {
             float sc = score[ty * cols + tx];
             int q0, run, x;
             if (sc <= 0.0f) {
@@ -369,7 +428,7 @@ static int coalesce_roi(const PelorusAnalyzeVulkanContext *s,
                     break;
                 run++;
             }
-            out[n] = (AVRegionOfInterest) {
+            runs[n] = (AVRegionOfInterest) {
                 .self_size = sizeof(AVRegionOfInterest),
                 .top    = ty * PEL_TILE,
                 .bottom = FFMIN((ty + 1) * PEL_TILE, s->vkctx.output_height),
@@ -381,6 +440,14 @@ static int coalesce_roi(const PelorusAnalyzeVulkanContext *s,
             tx += run;
         }
     }
+
+    /* Rank by banding strength and keep the strongest `max`. */
+    if (n > 1)
+        qsort(runs, (size_t)n, sizeof(*runs), roi_strength_cmp);
+    if (n > max)
+        n = max;
+    memcpy(out, runs, (size_t)n * sizeof(*out));
+    av_free(runs);
     return n;
 }
 

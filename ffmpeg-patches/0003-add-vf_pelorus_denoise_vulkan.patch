@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sat, 27 Jun 2026 16:03:53 +0200
+Date: Sat, 27 Jun 2026 16:51:25 +0200
 Subject: [PATCH 03/18] feat(denoise): add vf_pelorus_denoise_vulkan (temporal
  denoise)
 MIME-Version: 1.0
@@ -40,8 +40,8 @@ ADR: docs/adr/0112-temporal-denoise.md
  configure                               |    2 +
  libavfilter/Makefile                    |    1 +
  libavfilter/allfilters.c                |    1 +
- libavfilter/vf_pelorus_denoise_vulkan.c | 1237 +++++++++++++++++++++++
- 4 files changed, 1241 insertions(+)
+ libavfilter/vf_pelorus_denoise_vulkan.c | 1258 +++++++++++++++++++++++
+ 4 files changed, 1262 insertions(+)
  create mode 100644 libavfilter/vf_pelorus_denoise_vulkan.c
 
 diff --git a/configure b/configure
@@ -90,10 +90,10 @@ index 41761c6146..8f49f54808 100644
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_denoise_vulkan.c b/libavfilter/vf_pelorus_denoise_vulkan.c
 new file mode 100644
-index 0000000000..4a0bf8e5f5
+index 0000000000..0294cc6275
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_denoise_vulkan.c
-@@ -0,0 +1,1237 @@
+@@ -0,0 +1,1258 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -165,6 +165,13 @@ index 0000000000..4a0bf8e5f5
 +#include <pelorus/interop.h>
 +
 +#define PEL_SLICES 16
++
++/* Upper bound on the MV/conf grid cell count accepted from untrusted side data.
++ * grid_cols/grid_rows are each uint16 on the wire (up to 65535), so the raw
++ * product can reach ~4.29e9 — past INT_MAX and a multi-GB allocation. Cap it to a
++ * value that still covers any realistic frame grid (8K at a small block edge)
++ * while rejecting absurd dimensions before the cell count is used for sizing. */
++#define PEL_DENOISE_MAX_CELLS (8192u * 8192u)
 +
 +/* Host-readback accumulator for the meta=1 residual free-ride. Sliced to spread
 + * atomic contention, exactly as vf_pelorus_analyze does; summed host-side. */
@@ -802,7 +809,7 @@ index 0000000000..4a0bf8e5f5
 +    int i;
 +    FFVulkanContext *vkctx = &s->vkctx;
 +    FFVulkanFunctions *vk = &vkctx->vkfn;
-+    FFVkExecContext *exec;
++    FFVkExecContext *exec = NULL;
 +    AVFrame *bound_prev[PEL_DENOISE_MAX_PREV];
 +    AVFrame *bound_next;
 +    VkImageView cur_views[AV_NUM_DATA_POINTERS];
@@ -833,16 +840,21 @@ index 0000000000..4a0bf8e5f5
 +    s->opts.actual_next = (next != NULL) ? 1 : 0;
 +    s->opts.want_meta = want_meta;
 +
-+    if (want_meta) {
-+        RET(ff_vk_get_pooled_buffer(vkctx, &s->stat_buf_pool, &buf,
-+                                    VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-+                                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-+                                    NULL, sizeof(PelorusDenoiseBuf),
-+                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
-+                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-+                                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
-+        buf_vk = (FFVkBuffer *)buf->data;
-+    }
++    /* The shader statically references the binding-5 stat SSBO regardless of
++     * want_meta (the meta accumulators are gated by a runtime push-const branch,
++     * not removed from the SPIR-V), so a valid buffer MUST be bound at 5 on every
++     * dispatch — Vulkan forbids a used-but-unbound descriptor. Allocate it
++     * unconditionally; the zero-fill + host readback below stay gated on
++     * want_meta (when meta=0 the SSBO is never written, so its contents are
++     * don't-care — it only has to be a live, bound descriptor). */
++    RET(ff_vk_get_pooled_buffer(vkctx, &s->stat_buf_pool, &buf,
++                                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
++                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
++                                NULL, sizeof(PelorusDenoiseBuf),
++                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
++                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
++    buf_vk = (FFVkBuffer *)buf->data;
 +
 +    /* --- motion-compensated taps: parse the MV + confidence grids from cur's
 +     * Pelorus side data and stage them into host-visible SSBOs. Something must
@@ -856,7 +868,9 @@ index 0000000000..4a0bf8e5f5
 +        const void *mp = NULL, *cp = NULL;
 +        size_t msz = 0, csz = 0;
 +        const uint8_t *mv_field = NULL, *conf_field = NULL;
-+        int gc = 0, gr = 0, cells = 0, ncells, j;
++        int gc = 0, gr = 0;
++        uint64_t cells = 0, ncells;
++        uint64_t j;
 +
 +        if (sd &&
 +            pel_blob_find_section(sd->data, sd->size, PEL_SEC_MOTION,
@@ -869,11 +883,13 @@ index 0000000000..4a0bf8e5f5
 +                (const PelorusSideData *)(sd->data + PELORUS_SIDEDATA_UUID_LEN);
 +            gc = bh->grid_cols;
 +            gr = bh->grid_rows;
-+            cells = gc * gr;
++            /* grid dims are untrusted uint16; the product can exceed INT_MAX, so
++             * compute in 64-bit and bound it before any sizing/loop use. */
++            cells = (uint64_t)gc * (uint64_t)gr;
 +            /* Validate against the untrusted side-data length before deref. */
-+            if (gc > 0 && gr > 0 &&
-+                mo->mv_field_size == (uint32_t)cells * 4 &&
-+                mcs->conf_field_size == (uint32_t)cells &&
++            if (gc > 0 && gr > 0 && cells <= PEL_DENOISE_MAX_CELLS &&
++                mo->mv_field_size == cells * 4 &&
++                mcs->conf_field_size == cells &&
 +                (size_t)PELORUS_SIDEDATA_UUID_LEN + mo->mv_field_offset +
 +                        mo->mv_field_size <= sd->size &&
 +                (size_t)PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset +
@@ -958,6 +974,11 @@ index 0000000000..4a0bf8e5f5
 +        ff_vk_shader_update_img_array(vkctx, exec, &s->shd, bound_prev[i],
 +                                      prev_views[i], 0, 1 + i,
 +                                      VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
++    /* Bind the stat SSBO at 5 on EVERY dispatch (the shader statically uses it);
++     * the zero-fill + readback stay gated on want_meta below. */
++    RET(ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 5, 0,
++                                        buf_vk, 0, buf_vk->size,
++                                        VK_FORMAT_UNDEFINED));
 +    RET(ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 6, 0,
 +                                        mvbuf_vk, 0, mvbuf_vk->size,
 +                                        VK_FORMAT_UNDEFINED));
@@ -1037,10 +1058,6 @@ index 0000000000..4a0bf8e5f5
 +            },
 +            .bufferMemoryBarrierCount = 1,
 +        });
-+
-+        RET(ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 5, 0,
-+                                            buf_vk, 0, buf_vk->size,
-+                                            VK_FORMAT_UNDEFINED));
 +    } else {
 +        vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
 +            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
@@ -1086,7 +1103,11 @@ index 0000000000..4a0bf8e5f5
 +        return 0;
 +    }
 +
-+    /* meta=0: no readback, no sync point — just submit and return. */
++    /* meta=0: no readback, no sync point — just submit and return. The stat
++     * buffer bound at 5 is never read back, but it must outlive the async submit
++     * (same treatment as the mv/conf buffers above). */
++    RET(ff_vk_exec_add_dep_buf(vkctx, exec, &buf, 1, 0));
++    buf = NULL;
 +    RET(ff_vk_exec_submit(vkctx, exec));
 +    return 0;
 +

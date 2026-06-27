@@ -246,6 +246,68 @@ static void test_truncation(void)
     pel_blob_free(blob);
 }
 
+/* Defensive parser (R5): a crafted/corrupt blob whose section payload offset is
+ * NOT 8-byte aligned must be rejected, not cast to a struct at an unaligned
+ * address (the packer always 8-aligns, so this only arises from foreign/corrupt
+ * framing). The current suite never patches dir[i].offset, so exercise it here. */
+static void test_misaligned_offset(void)
+{
+    PelorusSideData meta;
+    PelorusFilmGrainSection grain; /* has a u64 at offset 0 -> alignment matters */
+    PelorusPackSection sec;
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    const void *p = NULL;
+    size_t got = 0;
+    PelorusSideData *hdr;
+    PelorusSectionDir *dir;
+
+    fill_meta(&meta);
+    memset(&grain, 0, sizeof(grain));
+    grain.seed = 0xDEADBEEFCAFEULL;
+    sec.id = PEL_SEC_FILMGRAIN;
+    sec.data = &grain;
+    sec.size = (uint32_t)sizeof(grain);
+    CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
+
+    /* Well-formed first: the 8-aligned offset parses. */
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_FILMGRAIN, sizeof(PelorusFilmGrainSection), &p,
+                                &got) == PEL_OK);
+
+    /* Now hand-patch dir[0].offset to a misaligned value (+4). The section then
+     * still fits the buffer but its start is no longer 8-aligned. */
+    hdr = (PelorusSideData *)(void *)(blob + PELORUS_SIDEDATA_UUID_LEN);
+    dir = (PelorusSectionDir *)(void *)(blob + PELORUS_SIDEDATA_UUID_LEN + hdr->header_size);
+    dir[0].offset += 4u;
+
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_FILMGRAIN, sizeof(PelorusFilmGrainSection), &p,
+                                &got) == PEL_ERR_ABI);
+    pel_blob_free(blob);
+}
+
+/* Defensive packer (R5 overflow guard): a section whose declared size, once
+ * 8-aligned and summed, would overflow the uint32 total_size wire field must be
+ * rejected before allocating (otherwise the alloc undersizes and the copy
+ * overflows the heap). The size check runs before any deref of sec.data, so a
+ * tiny dummy data pointer with a huge declared size is safe to pass here. */
+static void test_pack_size_overflow(void)
+{
+    PelorusSideData meta;
+    PelorusPackSection sec;
+    uint8_t dummy = 0;
+    uint8_t *blob = NULL;
+    size_t len = 0;
+
+    fill_meta(&meta);
+    /* size near UINT32_MAX: 8-aligning it wraps a 32-bit accumulator to ~0 but the
+     * 64-bit guard catches need > UINT32_MAX and rejects. data is never read. */
+    sec.id = PEL_SEC_BANDING;
+    sec.data = &dummy;
+    sec.size = 0xFFFFFFF9u;
+    CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_ERR_RANGE);
+    CHECK(blob == NULL);
+}
+
 /* PEL_SEC_QPREPORT (f): pack the encoder-honored QP readback with a per-cell
  * QP map appended after the blob, parse it back, verify scalars + the map. */
 static void test_qp_report_roundtrip(void)
@@ -591,6 +653,8 @@ int main(void)
     test_foreign_buffer();
     test_header_only();
     test_truncation();
+    test_misaligned_offset();
+    test_pack_size_overflow();
     test_qp_report_roundtrip();
     test_motion_conf_roundtrip();
     test_complexity_roundtrip();
