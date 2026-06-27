@@ -541,6 +541,62 @@ preserved across the 1-frame delay + EOF flush; an independent review confirmed 
 Shipped **opt-in (default 0)** given the niche benefit + the latency/binding cost —
 animation pipelines (`tune=anime`) enable it. See ADR-0137.
 
+## v0.15 — deband radius premise-check (multi-scale deband): the spatial pass is radius-limited on wide bands
+
+The first **positive** premise-check in this series after the v0.11-v0.13
+encoder-RC negatives, and the metric tooling that unblocks it. The candidate:
+**multi-scale deband** — the current filter samples one random-distance ring of
+4 taps at `dist = r·range` capped at `range ≤ 31`, so a band wider than a single
+≤31-px reach is never spanned. Premise: if CAMBI keeps falling as `range` grows
+and is still falling at the cap, a single fixed radius leaves wide-band banding
+on the table.
+
+**Metric unblock.** The standalone `vmaf --feature cambi` appeared to "hang", which
+had blocked every quality-gain check this session. Root cause was mundane, not a
+cambi failure: (a) it is a GPU-accelerated fork whose dispatcher first-match-wins
+race grabs CUDA/Vulkan — forcing `--backend cpu` makes it deterministic and fast;
+(b) it writes the JSON **before** a teardown sleep (the same behavior the harness's
+`--vmaf-timeout` already exploits, v0.14 Open/next §3), so `timeout N … -o out.json
+--json` + read-the-partial returns the scores in well under a second of compute.
+(A `pkill -9` prelude was separately swallowed by the unsafe-bash hook — dropped.)
+
+**Result.** Synthetic wide low-amplitude luma gradient (16→24 over 854 px ⇒ ~107-px
+bands, wider than the 2·31 = 62-px max reach), 480p, **dither off** (`grainy=0
+dither=none`) to isolate the *spatial* averaging from the grain:
+
+| `range` | CAMBI | vs baseline |
+|---:|---:|---:|
+| baseline (no deband) | 7.837 | — |
+| 8 | 6.207 | −20.8 % |
+| 15 (default) | 5.145 | −34.3 % |
+| 24 | 4.532 | −42.2 % |
+| 31 (max) | 4.302 | −45.1 % |
+
+CAMBI falls **monotonically** and is **still descending at the `range=31` cap**
+(24→31 still buys −5 %): the spatial pass leaves CAMBI ≈ 4.3 of real residual on
+bands wider than it can reach, and the default `range=15` under-debands them
+(5.14 vs the 4.30 achievable at 31). **Premise supported.**
+
+**Why this matters through the encoder (ties to v0.1.0).** With the shipping
+default *dither on*, CAMBI floors to ≈ 3e-6 at **every** radius — the bluenoise
+grain breaks the banding contour the metric keys on. But v0.1.0 already established
+that an **8-bit encoder quantizes that dither away and re-bands**, so the dither's
+banding removal does not survive to the decoded output. What *does* survive is the
+**spatial averaging** (it changes the actual luma plateaus, not added noise) — and
+this premise-check shows that durable pass is radius-limited. So multi-scale spatial
+deband (a coarse, downsampled pass to span wide bands cheaply, blended under the
+existing detail mask) is the durable lever where neither a single ≤31 radius nor
+the encoder-fragile dither reaches.
+
+**Status: validated-positive, build pending.** The build is **not** shipped here:
+proving it does not over-smooth needs detail-bearing content (wide bands *and*
+texture/edges), scored **post-encode** (or dither-off) CAMBI for the gain plus an
+SSIM/SSIMULACRA2 detail-preservation check — the synthetic-gradient premise-check
+cannot show the over-smoothing failure mode. That validation corpus is the tracked
+blocker (OPPORTUNITIES.md). This entry converts the gains-hunt's #1 quality
+candidate from "corpus-blocked, unknown" to "premise-supported, ready to build
+behind a detail-preservation gate."
+
 ## Open / next
 
 1. **SVT-AV1 ROI on real content**: the v0.10 synthetic gain is modest; re-run
