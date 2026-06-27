@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0137: Forward-lookahead (bidirectional) temporal denoise — cadence-aware
 
-- **Status**: Proposed (premise validated; build pending)
+- **Status**: Accepted (built + validated; opt-in `lookahead=1`, default 0)
 - **Date**: 2026-06-20
 - **Deciders**: Lusoris
 
@@ -57,10 +57,37 @@ since the cadence case is static-held, no motion):
    previous one processed with the new frame as its forward tap; flush the last
    held frame at EOF. (The filter is currently causal — "no 1-frame latency, no
    EOF flush" — so this is the load-bearing change.) `lookahead` AVOption,
-   default 1, range 0..MAX (0 = today's causal behaviour, bit-identical).
+   **default 0** (causal, no latency — see Built result), range 0..1 for v1
+   (0 = today's causal behaviour, bit-identical; 1 = one forward tap).
 2. **Shader**: one `next0_images[]` binding (mirror `prev0_images`); a forward
    same-coord temporal tap in the temporal loop, `tcut`-gated like the prev taps.
 3. **Lockstep** `pelorus_denoise.comp` (AGENTS rule 4).
+
+## Built result (2026-06-20)
+
+Implemented (a 6th `next0_images` storage-image binding, an `activate()`
+1-frame-delay + EOF-flush lifecycle, a `tcut`-gated forward tap, push-const
+`actual_next`, `.comp` lockstep) and validated against the cadence oracle on the
+2s-cadence noisy clip (24 frames, `sigmat=0.08 strength=0.9 prev=4 blend=0.85`):
+
+| | PSNR vs clean | frames |
+|---|---|---|
+| lookahead=0 (causal) | 35.60 dB | 24 |
+| lookahead=1 (forward) | **35.98 dB (+0.37 dB)** | 24 |
+
+The gain is **real but modest** (≈+0.37 dB average, concentrated on the leading
+frame of each held run), well short of the +1.5 dB upper-bound estimate — the
+spatial NLM term already partly covers the leading frames, so the forward tap
+only recovers the remainder. `lookahead=0` is bit-identical to the causal filter;
+frame count is preserved across the delay/flush. An independent review confirmed
+the `activate()` frame-ownership, descriptor wiring (binding 9), push-constant
+std430 layout, and shader/filter lockstep are correct.
+
+**Decision: ship `lookahead=1` opt-in, default 0.** The benefit is niche
+(animation cadence) and modest, while the forward tap adds a 6th image binding +
+a frame of latency for every denoise; defaulting off keeps the common
+(live-action) path untouched and matches the `tile` opt-in pattern. Cadence /
+animation pipelines (`tune=anime`) enable it explicitly.
 
 ## Validation plan
 

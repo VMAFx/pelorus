@@ -518,6 +518,29 @@ mbtree. ADR-0132 stays *Proposed*; the lever now depends on the autotune
 The durable result is the ADR-0136 metadata extraction path (shipped), which
 makes this — and any future per-shot/autotune work — measurable from the shell.
 
+## v0.14 — forward-lookahead (cadence-aware) temporal denoise (ADR-0137): a small, real preprocessing win
+
+The first positive direction after the v0.11-v0.13 encoder-RC negatives — and it's
+PREPROCESSING (Pelorus's lane), validated in premise before the build. The causal
+temporal denoise only helps the trailing frame of each held animation drawing
+(2s/3s cadence); the leading frame sees a different drawing (tcut-breaks) and is
+under-denoised. A forward lookahead (one tcut-gated tap on the NEXT frame) closes
+it. Cadence oracle (2s-cadence noisy clip, 24f, `sigmat=0.08 strength=0.9 prev=4
+blend=0.85`), PSNR vs clean:
+
+| | PSNR vs clean | frames |
+|---|---|---|
+| lookahead=0 (causal) | 35.60 dB | 24 |
+| lookahead=1 (forward) | **35.98 dB (+0.37 dB)** | 24 |
+
+Real but **modest** (~+0.37 dB average, concentrated on the leading frames) — well
+short of the +1.5 dB upper-bound premise estimate, because the spatial NLM already
+partly covers the leading frames. `lookahead=0` is bit-identical; frame count is
+preserved across the 1-frame delay + EOF flush; an independent review confirmed the
+`activate()` lifecycle, descriptor wiring, push-constant layout and shader lockstep.
+Shipped **opt-in (default 0)** given the niche benefit + the latency/binding cost —
+animation pipelines (`tune=anime`) enable it. See ADR-0137.
+
 ## Open / next
 
 1. **SVT-AV1 ROI on real content**: the v0.10 synthetic gain is modest; re-run
