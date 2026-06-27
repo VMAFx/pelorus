@@ -650,6 +650,53 @@ before it shipped. The only thing that could revive it is a measured post-encode
 BD-rate win on real 10-bit banding-prone content (the corpus gap) — which the
 mechanism above predicts against.
 
+## v0.17 — the metric was wrong + the tuned-settings lever: GPU→CPU gap is small and closeable (SSIMULACRA2)
+
+The session's payoff, and a methodology correction. Pelorus's goal is **smaller +
+higher-quality GPU (hardware) encodes approaching CPU (software) at GPU speed.**
+Measuring that with VMAF/VMAF-NEG hid most of the signal.
+
+**1. SSIMULACRA2 is the primary metric; VMAF-NEG was the wrong tool.** VMAF
+saturates at 100 on clean content and VMAF-**NEG** zeroes the enhancement credit
+(it was the anti-gaming guard for the *filter* lane — a sharpening filter could
+inflate VMAF, so NEG clamped it). But it also blinds the metric to genuine AQ /
+bit-allocation gains. On the *same* encodes where VMAF-NEG said "no gain," SS2
+(no saturation, robust to sharpening-gaming) shows large differences. The set is
+now **SS2 primary + regular VMAF secondary** (VMAF-up / SS2-down = a gaming flag);
+NEG retired. Multi-metric is fine — the result is what counts.
+
+**2. The NVENC *default* is garbage; tuned settings are the biggest, free lever.**
+`hevc_nvenc -preset p5` with no AQ scored SS2 **15.9** on noisy content vs the
+tuned config's **22.8** (+6.8). The tuned baseline:
+`-preset p7 -tune hq -spatial-aq 1 -temporal-aq 1 -aq-strength 8 -rc-lookahead 32
+-multipass fullres -b_ref_mode middle`. Clean iso-bitrate (SS2): tuned beats
+default by ~**+5 to +10 SS2** — *invisible* to VMAF (±0.5; it's detail-weighted
+and can't see the flat-region AQ win). Pushing harder (AQ15 / lookahead 53) does
+**not** help — the settings lever is tapped at the config above.
+
+**3. The real GPU→CPU gap is small and closeable.** Clean content, CQ-locked,
+SS2 vs bitrate:
+
+| codec | GPU (tuned nvenc) vs CPU (sw) | iso-bitrate gap |
+|---|---|---|
+| HEVC | tuned `hevc_nvenc` vs `x265 -preset slow` | CPU ahead **~1.8–2.5 SS2** |
+| AV1 | tuned `av1_nvenc` vs `SVT-AV1 -preset 4` | CPU ahead **~2.5 SS2** |
+
+The earlier "huge gap" was an artifact of the garbage default + noisy content +
+VBR overshoot (the multipass NVENC config overshoots `-b:v` by ~50%, so CQ-locked
+ladders are required for honest iso-bitrate). With tuned settings the gap is ~2
+SS2 — and that residual is exactly what the **Pelorus Vulkan filters** (denoise on
+grain, per-content reductive) close on top, at GPU speed (NVENC p7+multipass is
+still far faster than x265-slow, so the GPU speed advantage holds).
+
+**4. The program (`tune=auto`, ADR-0142).** Tuned settings = the universal
+baseline every content template starts from; Pelorus Vulkan filters = the
+per-content layer that closes the residual and goes further on impaired content
+(denoise reclaims grain bitrate; the reductive law from v0.2/v0.3). Caveats to
+carry: CQ-lock for iso-bitrate, hardware AV1 (`av1_nvenc`) is much weaker than
+hardware HEVC so its residual gap is larger, and keep the GPU pipeline faster
+than CPU (the whole point).
+
 ## Open / next
 
 1. **SVT-AV1 ROI on real content**: the v0.10 synthetic gain is modest; re-run
