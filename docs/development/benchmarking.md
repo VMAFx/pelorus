@@ -16,12 +16,20 @@ encoder, same preset, same CQ**:
   pipeline: `ffmpeg -i src -init_hw_device vulkan -vf
   "format,hwupload,pelorus_deband_vulkan=…,hwdownload,format" -c:v hevc_nvenc -cq N`.
 
-For each CQ in a ladder we record (bitrate, VMAF) → two RD curves → **BD-rate**
-(`scripts/bench/bd_rate.py`, Bjøntegaard): negative % = Pelorus needs fewer bits
-for equal VMAF = a win. For deband we also record **CAMBI** (the
-Contrast-Aware Multiscale Banding Index, vmafx `--feature cambi`): lower = less
-banding. Optionally a CPU encode (x265 / SVT-AV1) is included as the
-gold-standard reference, to show how much of the GPU↔CPU gap Pelorus closes.
+For each CQ in a **CQ-locked** ladder (never `-b:v` VBR — the tuned-NVENC
+multipass config overshoots a VBR target by ~50%, breaking iso-bitrate) we record
+(bitrate, **SSIMULACRA2**) → two RD curves → **BD-rate** (`scripts/bench/bd_rate.py`,
+Bjøntegaard): negative % = fewer bits for equal quality = a win.
+
+**SSIMULACRA2 is the primary metric** (vmafx `--feature ssimulacra2`): it does not
+saturate on clean content and is robust to sharpening-gaming, so it both *credits*
+genuine AQ / bit-allocation gains *and* *catches* artifact-adding tricks. Regular
+**VMAF** (v1.0.16, `-m path=…vmaf_v1.0.16_3d0h.json`) is a secondary cross-check —
+a VMAF-up / SS2-down split is the gaming flag. **VMAF-NEG is retired** (it zeroes
+the enhancement credit, blinding the metric to real AQ gains; see bench-results
+v0.17). For deband also record **CAMBI** (lower = less banding). A CPU encode
+(`x265 -preset slow` / `SVT-AV1 -preset 4`) is the gold-standard reference for the
+GPU↔CPU gap — Pelorus' job is to close it **while staying faster than CPU**.
 
 ## Pinned corpus
 
