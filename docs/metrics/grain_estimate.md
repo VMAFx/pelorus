@@ -135,3 +135,24 @@ SEI bitstream filter ([ADR-0117](../adr/0117-grain-fgs-bsf.md), static model),
 and `av1_nvenc` via `-pelorus_film_grain` into NVENC's hardware AV1 film-grain
 synthesis ([ADR-0118](../adr/0118-nvenc-av1-filmgrain.md)). The H.264 and VVC
 legs and a per-frame H.274 model remain deferred.
+
+## Frame metadata (the `tune=auto` grain discriminator)
+
+Alongside the side-data, the filter emits two per-frame scalars as `lavfi.pelorus.*`
+frame metadata (the [ADR-0136](../adr/0136-analyze-frame-metadata.md) `av_dict_set`
+pattern — no interop ABI or shader change), so the content-adaptive router
+([ADR-0142](../adr/0142-tune-auto-content-router.md)) can read the grain estimate
+without parsing the `PEL_SEC_FILMGRAIN` blob:
+
+| key | meaning |
+|---|---|
+| `lavfi.pelorus.grain_sigma` | peak per-band RMS residual (grain stddev) over the populated intensity bands, normalized `[0,1]`. Measured **only** on edge-gated locally-flat pixels, so real structure is excluded by construction — what survives is grain. The router's grain discriminator (≈ `<0.004` clean · `0.012–0.05` moderate · `>0.05` heavy). |
+| `lavfi.pelorus.grain_flat` | fraction of the frame the estimate was measured over (flat pixels / total). The estimate's confidence — heavy-edge frames give a small flat fraction and an unreliable sigma. |
+
+Read them with `metadata=print` or `ffprobe -show_frames`:
+
+```bash
+ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
+  -vf "hwupload,pelorus_grain_estimate_vulkan,hwdownload,format=yuv420p,metadata=print:key=lavfi.pelorus.grain_sigma" \
+  -f null -
+```

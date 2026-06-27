@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Fri, 19 Jun 2026 19:50:06 +0200
-Subject: [PATCH 06/11] feat(grain): add vf_pelorus_grain_estimate_vulkan (FGS
+Date: Sat, 27 Jun 2026 21:26:02 +0200
+Subject: [PATCH 06/18] feat(grain): add vf_pelorus_grain_estimate_vulkan (FGS
  param estimator)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -43,8 +43,8 @@ ADR: docs/adr/0115-grain-estimate.md
  configure                                     |   2 +
  libavfilter/Makefile                          |   1 +
  libavfilter/allfilters.c                      |   1 +
- .../vf_pelorus_grain_estimate_vulkan.c        | 654 ++++++++++++++++++
- 4 files changed, 658 insertions(+)
+ .../vf_pelorus_grain_estimate_vulkan.c        | 682 ++++++++++++++++++
+ 4 files changed, 686 insertions(+)
  create mode 100644 libavfilter/vf_pelorus_grain_estimate_vulkan.c
 
 diff --git a/configure b/configure
@@ -93,10 +93,10 @@ index 8f49f54808..5a5f777074 100644
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_grain_estimate_vulkan.c b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
 new file mode 100644
-index 0000000000..3d80ab0f44
+index 0000000000..68891c58ab
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
-@@ -0,0 +1,654 @@
+@@ -0,0 +1,682 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -355,6 +355,16 @@ index 0000000000..3d80ab0f44
 +    float lag1;          /* lag-1 autocorrelation coefficient, [-1,1]           */
 +    uint64_t flat_total; /* total flat pixels measured                          */
 +} PelorusGrainStats;
++
++/* Emit a scalar as lavfi.pelorus.* frame metadata (ADR-0136 pattern), so the
++ * tune=auto content router can read the grain estimate without parsing the
++ * PEL_SEC_FILMGRAIN side-data blob. */
++static void pel_set_meta_f(AVFrame *frame, const char *key, float v)
++{
++    char buf[32];
++    snprintf(buf, sizeof(buf), "%.6f", v);
++    av_dict_set(&frame->metadata, key, buf, 0);
++}
 +
 +static void reduce_stats(const PelorusGrainBuf *acc, PelorusGrainStats *st)
 +{
@@ -662,6 +672,24 @@ index 0000000000..3d80ab0f44
 +    ff_vk_exec_wait(vkctx, exec);
 +
 +    reduce_stats(acc, &st);
++
++    /* Grain discriminator as frame metadata for the tune=auto router: peak grain
++     * sigma over populated bands (the residual is measured ONLY on edge-gated
++     * locally-flat pixels, so structure is excluded by construction and what
++     * survives is grain stddev), plus the flat fraction it was measured over
++     * (the estimate's confidence). No interop ABI / shader change; the
++     * PEL_SEC_FILMGRAIN side-data path is untouched. */
++    {
++        float gs = 0.0f;
++        int b;
++        for (b = 0; b < PEL_GRAIN_BANDS; b++)
++            if (st.band_cnt[b] > 0 && st.band_rms[b] > gs)
++                gs = st.band_rms[b];
++        pel_set_meta_f(in, "lavfi.pelorus.grain_sigma", gs);
++        pel_set_meta_f(in, "lavfi.pelorus.grain_flat",
++                       (float)((double)st.flat_total /
++                               ((double)in->width * (double)in->height)));
++    }
 +
 +    memset(&g, 0, sizeof(g));
 +    map_aom(s, &st, &g);

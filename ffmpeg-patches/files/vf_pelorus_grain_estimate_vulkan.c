@@ -257,6 +257,16 @@ typedef struct PelorusGrainStats {
     uint64_t flat_total; /* total flat pixels measured                          */
 } PelorusGrainStats;
 
+/* Emit a scalar as lavfi.pelorus.* frame metadata (ADR-0136 pattern), so the
+ * tune=auto content router can read the grain estimate without parsing the
+ * PEL_SEC_FILMGRAIN side-data blob. */
+static void pel_set_meta_f(AVFrame *frame, const char *key, float v)
+{
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%.6f", v);
+    av_dict_set(&frame->metadata, key, buf, 0);
+}
+
 static void reduce_stats(const PelorusGrainBuf *acc, PelorusGrainStats *st)
 {
     double corr_sum = 0.0, var_sum = 0.0;
@@ -563,6 +573,24 @@ static int grain_estimate_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     ff_vk_exec_wait(vkctx, exec);
 
     reduce_stats(acc, &st);
+
+    /* Grain discriminator as frame metadata for the tune=auto router: peak grain
+     * sigma over populated bands (the residual is measured ONLY on edge-gated
+     * locally-flat pixels, so structure is excluded by construction and what
+     * survives is grain stddev), plus the flat fraction it was measured over
+     * (the estimate's confidence). No interop ABI / shader change; the
+     * PEL_SEC_FILMGRAIN side-data path is untouched. */
+    {
+        float gs = 0.0f;
+        int b;
+        for (b = 0; b < PEL_GRAIN_BANDS; b++)
+            if (st.band_cnt[b] > 0 && st.band_rms[b] > gs)
+                gs = st.band_rms[b];
+        pel_set_meta_f(in, "lavfi.pelorus.grain_sigma", gs);
+        pel_set_meta_f(in, "lavfi.pelorus.grain_flat",
+                       (float)((double)st.flat_total /
+                               ((double)in->width * (double)in->height)));
+    }
 
     memset(&g, 0, sizeof(g));
     map_aom(s, &st, &g);
