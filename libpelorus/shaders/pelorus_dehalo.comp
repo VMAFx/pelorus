@@ -49,10 +49,44 @@ layout(push_constant, std430) uniform Params {
 
 const int MAX_R = 8; /* provably-bounded blur radius (loop unroll cap) */
 
+/* Shared-memory tiling of the box-blur window (ADR-0139). Every luma read in
+ * main() — the box_blur (2r+1)^2 window read 5x per pixel (centre + 4 cross
+ * offsets), the Sobel/contrast 3x3, the ring scan — goes through load_norm
+ * against the SAME source plane, re-reading a heavily overlapping window
+ * (~1.5k loads/px at blur=8). That is fetch-bound, not ALU-bound (the box mean
+ * is adds + one divide), so the workgroup cooperatively loads its output region
+ * + a PEL_HALO ring into shared memory once and every read hits shared. PEL_HALO
+ * = MAX_R (8, max box reach) + 1 (the box-blur cross offset extends the union by
+ * one px) = 9, covering the union of all five box_blur windows AND the ring scan.
+ * The tile mirrors the image-edge clamp exactly, so it is bit-identical to a
+ * direct read. This reference models — and CI compile-checks — the in-tree
+ * filter's opt-in tile=1 path (ADR-0139, a large win on bandwidth-limited GPUs,
+ * ~neutral on cache-rich ones); with the default tile=0 the filter reads the
+ * image directly. In lockstep with the filter's tile_helpers_glsl (AGENTS rule 4). */
+#define PEL_HALO 9
+#define PEL_TILE 34  // 16 (workgroup dim) + 2 * PEL_HALO
+shared float s_tile[PEL_TILE * PEL_TILE];
+void pel_load_tile() {
+    ivec2 wgsz = ivec2(gl_WorkGroupSize.xy);
+    ivec2 base = ivec2(gl_WorkGroupID.xy) * wgsz - PEL_HALO;
+    uint n = uint(PEL_TILE * PEL_TILE);
+    uint stride = gl_WorkGroupSize.x * gl_WorkGroupSize.y;
+    barrier();
+    for (uint k = gl_LocalInvocationIndex; k < n; k += stride) {
+        ivec2 t = ivec2(int(k) - (int(k) / PEL_TILE) * PEL_TILE, int(k) / PEL_TILE);
+        ivec2 p = clamp(base + t, ivec2(0), ivec2(pc.width - 1, pc.height - 1));
+        s_tile[k] = float(imageLoad(srcImg, p).r) / 65535.0;
+    }
+    barrier();
+}
+
+/* Tiled luma fetch: map the absolute coordinate into s_tile via the workgroup
+ * base. Coordinates inside the loaded window (every read in main()) hit shared;
+ * the clamp mirrors the image-edge clamp so the result matches a direct read. */
 float load_norm(int x, int y) {
-    x = clamp(x, 0, pc.width  - 1);
-    y = clamp(y, 0, pc.height - 1);
-    return float(imageLoad(srcImg, ivec2(x, y)).r) / 65535.0;
+    ivec2 base = ivec2(gl_WorkGroupID.xy) * ivec2(gl_WorkGroupSize.xy) - PEL_HALO;
+    ivec2 lc = clamp(ivec2(x, y), ivec2(0), ivec2(pc.width - 1, pc.height - 1)) - base;
+    return s_tile[lc.y * PEL_TILE + lc.x];
 }
 
 /* Box-mean over a (2r+1)^2 window — the "halos" blur. */
@@ -73,6 +107,8 @@ float box_blur(int cx, int cy, int r) {
 void main() {
     ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
     int x = gid.x, y = gid.y;
+    /* uniform: every invocation loads + barriers before the bounds-cull return */
+    pel_load_tile();
     if (x >= pc.width || y >= pc.height)
         return;
 

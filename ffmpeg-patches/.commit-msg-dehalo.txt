@@ -14,6 +14,8 @@ registration is deps-only (no require_pkg_config). Foundation of the anime
 libpelorus/shaders/pelorus_dehalo.comp and the inline GLSL are kept in lockstep.
 
 AVOptions: blur (radius), darkstr/brightstr, lowsens/highsens, edge (line
-threshold), ring (halo-band width), planes.
+threshold), ring (halo-band width), planes, tile (opt-in shared-memory tiling of
+the box-blur window, ADR-0139; bit-identical, a throughput win on bandwidth-
+limited GPUs).
 
 ADR: docs/adr/0123-anime-dehalo.md

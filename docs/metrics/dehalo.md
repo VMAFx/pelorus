@@ -46,6 +46,7 @@ All thresholds are normalized in `[0,1]`, independent of bit depth.
 | `edge` | 0.08 | 0–1 | Sobel magnitude above which a pixel is line-art (drives the ring gate) |
 | `ring` | 2.0 | 1–8 | edge-mask dilation — the halo-band half-width in pixels |
 | `planes` | 0x1 | 0x0–0xF | planes to process (bitmask; default `0x1` = luma only) |
+| `tile` | 0 | 0–1 | cache the box-blur window in shared memory ([ADR-0139](../adr/0139-dehalo-shared-mem-tile.md)). Output is **bit-identical**; box_blur re-reads an overlapping 17×17 window ~5× per pixel, so `tile=1` is a throughput win on bandwidth-limited GPUs (**−38%, 1.6×** on an Arc A380), ~neutral on cache-rich GPUs (a 4090's L2 already caches it). Default off — enable on weak / integrated / mobile GPUs (and `tune=anime`) |
 
 `darkstr`/`brightstr` are the main intensity knobs; `edge` and `ring` shape
 *where* the pull is allowed (raise `edge` to gate to only the hardest lines;
