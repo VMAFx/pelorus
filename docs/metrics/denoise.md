@@ -51,6 +51,7 @@ options follow the `{Y, Cb, Cr}` split.
 | `meta` | off | bool | attach the `PEL_SEC_DENOISE` interop section (adds one GPU→host readback) |
 | `mc` | off | bool | motion-compensated temporal taps: warp the temporal fetch by an upstream `pelorus_mc` quarter-pel MV field, gated by per-block confidence + `tcut` ([ADR-0131](../adr/0131-mc-denoise-warp.md)). Requires `pelorus_mc_vulkan=meta=1` **before** denoise; with no upstream MV field denoise falls back to same-coordinate taps |
 | `tile` | off | bool | cache the current-frame spatial search window in shared memory before the NLM scan ([ADR-0134](../adr/0134-denoise-shared-mem-tile.md)). Output is **bit-identical**; a large throughput win on bandwidth-limited GPUs (~2.9× on an Arc A380), ~neutral on cache-rich GPUs (a 4090's L2 already absorbs the redundant fetches). Default off (flagship-first) — enable on weak / integrated / mobile GPUs |
+| `lookahead` | 0 | 0–1 | forward-lookahead temporal depth ([ADR-0137](../adr/0137-denoise-forward-lookahead-cadence.md)). `1` delays output by one frame so the temporal walk also samples the **next** frame (same-coordinate, `tcut`-gated), recovering the leading frame of a held animation drawing (2s/3s cadence). `0` (default) is causal, bit-identical, no latency. Opt-in for cadence / animation content (+0.37 dB on a 2s-cadence clip); neutral on motion (the forward tap `tcut`-breaks) |
 
 Defaults are the conservative pre-encode preset — a safe floor the vmafx
 `vmaf-tune` autotune ([ADR-0106](../adr/0106-autotune-control-plane.md)) sweeps

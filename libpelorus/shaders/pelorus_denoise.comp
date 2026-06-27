@@ -20,7 +20,10 @@
  *
  * Temporal term: the same-coordinate sample of each previous frame, gated by a
  * per-pixel similarity threshold (a delta above tcut breaks the walk so motion /
- * scene-cuts cannot ghost) and decayed by tdecay per frame.
+ * scene-cuts cannot ghost) and decayed by tdecay per frame. With forward
+ * lookahead (ADR-0137, pc.actualNext > 0) the walk is bidirectional: one
+ * same-coordinate sample of the NEXT frame is added, tcut-gated like the prev
+ * taps, recovering the leading frame of a held animation drawing.
  *
  * This standalone form runs one dispatch per plane against r16ui storage images
  * (16-bit internal domain, normalized to [0,1] inside). The in-tree FFmpeg
@@ -39,6 +42,10 @@ layout(binding = 1, r16ui) uniform writeonly uimage2D dstImg;
  * uploaded by the host from PEL_SEC_MOTION / PEL_SEC_MOTION_CONF. */
 layout(binding = 2, std430) readonly buffer MvGrid { uint mv_packed[]; };
 layout(binding = 3, std430) readonly buffer ConfGrid { uint conf_packed[]; };
+/* Forward-lookahead tap (ADR-0137): the NEXT frame. Same-coordinate, tcut-gated
+ * like the prev taps; gated by pc.actualNext (0 => causal, the tap never fires).
+ * Models the in-tree filter's next0_images binding (kept in lockstep). */
+layout(binding = 4, r16ui) uniform readonly uimage2D nextImg;
 
 layout(push_constant, std430) uniform Params {
     int   width;        //  0  plane width
@@ -63,6 +70,7 @@ layout(push_constant, std430) uniform Params {
                         //     quarter-pel * per-plane chroma subsampling here,
                         //     so this single-plane .comp needs no chroma branch —
                         //     the filter applies chroma_shift in-shader instead)
+    int   actualNext;   // 68  forward-lookahead taps this dispatch (0 or 1)
 } pc;
 
 const int FLAG_TEMPORAL = 1;
@@ -74,6 +82,13 @@ float fetchN(int img, int px, int py) {
     px = clamp(px, 0, pc.width  - 1);
     py = clamp(py, 0, pc.height - 1);
     return float(imageLoad(srcImg[img], ivec2(px, py)).r) / 65535.0;
+}
+
+/* Forward-lookahead fetch (ADR-0137): same-coordinate read of the NEXT frame. */
+float fetchNext(int px, int py) {
+    px = clamp(px, 0, pc.width  - 1);
+    py = clamp(py, 0, pc.height - 1);
+    return float(imageLoad(nextImg, ivec2(px, py)).r) / 65535.0;
 }
 
 /* --- motion-compensated previous-frame fetch (ADR-0113), kept in lockstep with
@@ -194,6 +209,18 @@ void main() {
             float w = exp(-(delta * delta) / ht2) * decay;
             numT += w * p;
             denT += w;
+        }
+        // --- forward-lookahead tap (ADR-0137): one same-coord NEXT-frame sample,
+        // tcut-gated like the prev taps. Recovers the leading frame of a held
+        // animation drawing (the trailing frame already gets the causal prev). ---
+        if (pc.actualNext > 0) {
+            float p = fetchNext(x, y);
+            float delta = abs(C - p);
+            if (delta <= pc.tcut) {
+                float w = exp(-(delta * delta) / ht2) * pc.tdecay;
+                numT += w * p;
+                denT += w;
+            }
         }
     }
 
