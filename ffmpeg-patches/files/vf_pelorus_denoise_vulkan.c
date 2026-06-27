@@ -551,7 +551,15 @@ static av_cold int init_filter(AVFilterContext *ctx)
     GLSLD(denoise_glsl);
     GLSLC(0, void main()                                                      );
     GLSLC(0, {                                                                );
-    GLSLC(1,     const float GS = 1000000.0;                                  );
+    /* Fixed-point scale for the uint32 residual accumulators. Kept at 1e3 (not
+     * 1e6) so the per-slice sum cannot overflow uint32: a slice covers ~W*H/16
+     * pixels (2.07M at 8K) and the worst-case sum is 2.07M*1.0*1e3 = 2.07e9 <
+     * UINT32_MAX. GS=1e6 silently wrapped at >=8K (and at 4K for residuals
+     * >=0.008). residual_energy (the mean) stays accurate; sq_sum/sigma_est are
+     * a COARSE estimate at 1e3 (a precise sigma would need a 64-bit atomic
+     * accumulator — a documented follow-up). meta=1 telemetry only; no pixel
+     * effect. Mirror the divisor in attach_interop(). */
+    GLSLC(1,     const float GS = 1000.0;                                     );
     GLSLC(1,     ivec2 size;                                                  );
     GLSLC(1,     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);           );
     /* slice = wg_index & 15 — equivalent to % 16u (PEL_SLICES is a power of
@@ -646,15 +654,15 @@ static int attach_interop(PelorusDenoiseVulkanContext *s, AVFrame *out,
     }
 
     if (cnt_y > 0) {
-        res_y = (float)(abs_y / 1e6 / (double)cnt_y);
-        msq = (float)(sq_y / 1e6 / (double)cnt_y);
+        res_y = (float)(abs_y / 1e3 / (double)cnt_y);
+        msq = (float)(sq_y / 1e3 / (double)cnt_y);
         sigma_est = sqrtf(msq);
         /* denoised-vs-input PSNR on a [0,1] domain: peak^2 / mean-square = 1/msq */
         psnr = msq > 0.0f ? (float)(10.0 * log10(1.0 / (double)msq)) : 0.0f;
     }
     if (cnt_c > 0) {
-        res_u = (float)(abs_u / 1e6 / (double)cnt_c);
-        res_v = (float)(abs_v / 1e6 / (double)cnt_c);
+        res_u = (float)(abs_u / 1e3 / (double)cnt_c);
+        res_v = (float)(abs_v / 1e3 / (double)cnt_c);
     }
 
     memset(&meta, 0, sizeof(meta));
