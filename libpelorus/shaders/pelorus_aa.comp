@@ -65,14 +65,49 @@ float sobel_mag(int x, int y) {
     return sqrt(gx * gx + gy * gy);
 }
 
-/* Blurred, clamped edge-strength map (the warp field) at (x,y). */
-float emask(int x, int y, int r, float thr) {
+/* Shared-memory hoist of the edge-strength map (models the in-tree filter's opt-in
+ * fast=1 path; ADR-0134 idiom but caching the sobel_mag RESULT, not the raw pixel).
+ * aa is ALU-bound (premise-checked): at blur=8 the 4 central-difference emask()
+ * calls each reduce a 17x17 window of sobel_mag(), so the SAME sobel_mag(cell) is
+ * recomputed ~4x per pixel and again across every neighbour (~1156 sobel evals/px).
+ * The workgroup computes sobel_mag once per cell (its 16x16 output region + a
+ * PEL_HALO ring) into s_sobel, then emask() reduces from the cache. PEL_HALO = MAX_R
+ * (emask reach 8) + 1 (central-diff offset). The cooperative compute runs in uniform
+ * control flow (before the bounds cull) so its barriers are workgroup-uniform.
+ * Bit-identical to the recompute path: the cached value is the exact output of the
+ * same sobel_mag(). In lockstep with the filter's aa_fast_helpers_glsl (rule 4). */
+#define PEL_HALO (MAX_R + 1)        // emask reach (8) + central-difference offset
+#define PEL_TILE (16 + 2 * PEL_HALO) // 16 = workgroup dim
+shared float s_sobel[PEL_TILE * PEL_TILE];
+void pel_load_sobel() {
+    ivec2 wgsz = ivec2(gl_WorkGroupSize.xy);
+    ivec2 base = ivec2(gl_WorkGroupID.xy) * wgsz - PEL_HALO;
+    uint n = uint(PEL_TILE * PEL_TILE);
+    uint stride = gl_WorkGroupSize.x * gl_WorkGroupSize.y;
+    barrier();
+    for (uint k = gl_LocalInvocationIndex; k < n; k += stride) {
+        ivec2 t = ivec2(int(k) - (int(k) / PEL_TILE) * PEL_TILE, int(k) / PEL_TILE);
+        s_sobel[k] = sobel_mag(base.x + t.x, base.y + t.y);
+    }
+    barrier();
+}
+/* sobel-mag at the current pixel + off, from the cache (valid for |off| <= PEL_HALO).
+ * `off` is relative to gl_GlobalInvocationID.xy (the per-thread output pixel). */
+float ssobel(ivec2 off) {
+    ivec2 lc = ivec2(gl_LocalInvocationID.xy) + PEL_HALO + off;
+    return s_sobel[lc.y * PEL_TILE + lc.x];
+}
+
+/* Blurred, clamped edge-strength map (the warp field), the gradient sampled at
+ * off0 = (+/-1, 0) / (0, +/-1) from the current pixel. Reduces from the s_sobel
+ * cache instead of recomputing sobel_mag (the hoist); bit-identical. */
+float emask(ivec2 off0, int r, float thr) {
     float acc = 0.0, n = 0.0;
     for (int dy = -MAX_R; dy <= MAX_R; dy++) {
         if (dy < -r || dy > r) continue;
         for (int dx = -MAX_R; dx <= MAX_R; dx++) {
             if (dx < -r || dx > r) continue;
-            acc += min(sobel_mag(x + dx, y + dy), thr);
+            acc += min(ssobel(off0 + ivec2(dx, dy)), thr);
             n   += 1.0;
         }
     }
@@ -93,6 +128,9 @@ float bilinear(float fx, float fy) {
 void main() {
     ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
     int x = gid.x, y = gid.y;
+    /* uniform: every invocation computes the sobel cache + barriers before the
+     * per-thread bounds cull (so the barriers stay workgroup-uniform). */
+    pel_load_sobel();
     if (x >= pc.width || y >= pc.height)
         return;
 
@@ -100,8 +138,8 @@ void main() {
     float thr = max(pc.thresh, 0.0001);
 
     /* 1. warp field gradient (central differences of the blurred edge map). */
-    float gx = (emask(x + 1, y, r, thr) - emask(x - 1, y, r, thr)) * 0.5;
-    float gy = (emask(x, y + 1, r, thr) - emask(x, y - 1, r, thr)) * 0.5;
+    float gx = (emask(ivec2(1, 0), r, thr) - emask(ivec2(-1, 0), r, thr)) * 0.5;
+    float gy = (emask(ivec2(0, 1), r, thr) - emask(ivec2(0, -1), r, thr)) * 0.5;
 
     /* 2. displace toward the stronger edge and sample (the warp = the AA). */
     float fx = float(x) + pc.depth * gx;

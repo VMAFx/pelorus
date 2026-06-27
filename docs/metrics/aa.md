@@ -46,6 +46,7 @@ ranges below are the filter's actual `AVOption` table
 | `darkstr` | float | 0.0 | 0–1 | line-darkening strength; `0` = off (pure warp-AA) |
 | `edge` | float | 0.08 | 0–1 | Sobel magnitude above which a pixel counts as a line (gates line-darkening) |
 | `planes` | int bitmask | 0x1 | 0–0xF | planes to process; default `0x1` = luma only |
+| `fast` | bool | 0 | 0–1 | hoist the redundant sobel-mag into shared memory ([ADR-0140](../adr/0140-aa-sobel-mag-hoist.md)). aa is ALU-bound — `sobel_mag` is recomputed ~1156×/px across the overlapping edge-map windows; `fast=1` computes each cell's sobel once per workgroup and reduces from the cache. **Bit-identical**; a large speedup on **every** GPU (**12.6× on Arc A380, 2.6× on the 4090** at `darkstr=0`). Opt-in; default off |
 
 `depth` is the main knob: raise it for stronger de-aliasing/thinning, lower it if
 lines start to over-thin or wobble. `blur` widens the edge map (a larger,
