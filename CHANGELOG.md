@@ -66,6 +66,7 @@ All notable changes to Pelorus are documented here. The format is
 ### Changed
 
 - **`vf_pelorus_analyze_vulkan`** auto-ROI (`roi=1`) banding detection is now **two-scale** (ADR-0133, CAMBI alignment): alongside the existing per-tile variance scale, a coarse inter-tile mean-luma-gradient scale flags shallow ramps (sky/shadow) that band across many tiles but fall below any single tile's variance floor. A 0x10→0x30 ramp (CAMBI 0.625) that previously flagged 0 tiles now flags 27, and an A/B encode confirmed lower output CAMBI with no regression on textured content. Filter-internal; no interop ABI change. Docs: `docs/metrics/analyze.md`.
+- **Evaluated + rejected: wide-band reach for deband** (multi-radius / extended `range`). Designed by a 5-agent judge panel and built behind an opt-in `reach` AVOption, then measured: the pre-encode CAMBI gain (bench v0.15) is real but **does not survive the encoder** — wider range is monotonically *worse* post-`hevc_nvenc` at every quality (cq10/18/28), because the encoder re-bands the over-smoothed gentle ramp into wider bands. Code reverted; `range` stays capped at 31. Completes v0.15's deferred durability gate with a negative. ADR-0141, bench v0.16.
 
 ### Fixed
 
