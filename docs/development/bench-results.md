@@ -597,6 +597,59 @@ blocker (OPPORTUNITIES.md). This entry converts the gains-hunt's #1 quality
 candidate from "corpus-blocked, unknown" to "premise-supported, ready to build
 behind a detail-preservation gate."
 
+> **Correction (see v0.16, ADR-0141).** The deferred durability gate was run and
+> **rejected** the build: this pre-encode "headroom" is **pre-encode-only** — it
+> does not survive the encoder and in fact inverts post-encode. Read v0.15 as a
+> correct *pre-encode* measurement whose durability implication did **not** hold.
+
+## v0.16 — deband wide-band reach (ADR-0141): the v0.15 pre-encode gain does NOT survive the encoder (honest negative)
+
+This completes the durability gate v0.15 explicitly deferred — and it is a
+**negative**, sharpening the v0.1.0 lesson. The wide-band reach (multi-radius /
+extended `range`) was designed by a 5-agent judge panel, built behind an opt-in
+`reach` AVOption (default 0, byte-identical), and measured against a raised-`range`
+control. All CAMBI via the v0.15-unblocked tooling (`vmaf --backend cpu --feature
+cambi`, read the pre-teardown JSON).
+
+**Pre-encode, the gain is real (as v0.15 said).** Pure larger range (dither off,
+~107 px bands) drops CAMBI monotonically — 4.30 / 4.01 / 3.80 / 3.62 / 3.55 at
+range 31/48/62/96/127 — while detail-clip (mandelbrot) SSIM stays **flat at
+~0.998** across the whole sweep. So larger range is detail-safe and strictly
+dominates the built dilated-multi-ring (which was erratic: CAMBI 4.30/4.30/4.39/
+3.70 at reach 0/1/2/3 — the straddling *mean* dilutes the spanning far-taps).
+`reach=0` is **byte-identical** to master.
+
+**Post-encode, it inverts — at every bitrate.** Debanding the coarse-banded
+source (CAMBI 7.84) then `hevc_nvenc -profile main10 -pix_fmt p010`, decode,
+re-score (10-bit, dither off):
+
+| `range` | pre-encode | post cq28 | post cq18 | post cq10 |
+|---:|---:|---:|---:|---:|
+| baseline | 7.84 | 5.64 | 6.57 | — |
+| 31 | 2.30 | **5.00** | **5.08** | **4.98** |
+| 62 | — | 5.20 | — | — |
+| 127 | 0.75 | 5.37 | 5.49 | 5.47 |
+
+Wider range is far better *pre*-encode (range=127 → 0.75) but **monotonically
+worse** *post*-encode (5.00 → 5.20 → 5.37), holding even near-lossless (cq10: 5.47
+vs 4.98). Deband at the existing range *does* help durably (baseline 5.64 →
+range=31 5.00); reaching past it is a pure loss.
+
+**Why.** The encoder's quantization is the dominant banding source. A narrow
+deband preserves the staircase shape the encoder re-quantizes into similar narrow
+steps; a wide deband flattens it into a gentle ramp that the encoder quantizes
+**coarsely**, producing *wider* bands. Smoother pre-encode input → wider
+post-encode bands. You cannot pre-smooth your way out of the encoder's re-banding;
+over-reaching makes the durable result worse.
+
+**Verdict.** Rejected (ADR-0141). `range` stays capped at 31; no `reach` option;
+code reverted. The durable deband levers remain 10-bit output + the existing
+dither/range — not wider spatial reach. The design-panel → build →
+adversarial-durability pipeline did its job: it caught a pre-encode false win
+before it shipped. The only thing that could revive it is a measured post-encode
+BD-rate win on real 10-bit banding-prone content (the corpus gap) — which the
+mechanism above predicts against.
+
 ## Open / next
 
 1. **SVT-AV1 ROI on real content**: the v0.10 synthetic gain is modest; re-run
