@@ -58,13 +58,17 @@ typedef struct PelorusAaVulkanContext {
     } opts;
 
     int planes; /* plane bitmask to process (luma-only by default)           */
+    int fast;   /* hoist sobel_mag into shared mem (opt-in; default 0)        */
 } PelorusAaVulkanContext;
 
 /* Pure GLSL helpers + the aa() function, spliced verbatim. Kept in lockstep with
  * the reference shader libpelorus/shaders/pelorus_aa.comp — the only intended
  * difference is the working domain: the .comp reads r16ui and normalizes by
  * 65535, this inline form reads FF_VK_REP_FLOAT (UNORM) images already in [0,1]. */
-static const char aa_glsl[] =
+/* Part 1: pel_luma + sobel_mag. Emitted first so the fast-mode cache loader (which
+ * calls sobel_mag) and emask (which the fast path routes to the cache) can both see
+ * them — GLSL needs a definition before use. */
+static const char aa_glsl_pre[] =
     "const int MAX_R = 8;\n"
     "float pel_luma(int idx, ivec2 p, ivec2 sz) {\n"
     "    return imageLoad(input_images[idx], clamp(p, ivec2(0), sz - ivec2(1))).x;\n"
@@ -81,14 +85,25 @@ static const char aa_glsl[] =
     "        }\n"
     "    }\n"
     "    return sqrt(gx * gx + gy * gy);\n"
-    "}\n"
-    "float emask(int idx, ivec2 p, ivec2 sz, int r, float thr) {\n"
+    "}\n";
+
+/* Part 2: emask + bilinear + aa. Emitted after the fast helpers so emask's PEL_SOBEL
+ * can resolve to ssobel() in fast mode. */
+static const char aa_glsl_post[] =
+    /* emask reduces a (2r+1)^2 window of sobel_mag(). PEL_SOBEL(off) is the magnitude
+     * at pos + off: fast=0 recomputes it (the 9-tap sobel), fast=1 reads the
+     * per-workgroup cache s_sobel (computed once per cell — the hoist). Both yield
+     * the bit-identical value (same float ops, same order); only the redundant
+     * recompute is removed. `pos` is the shader-global current pixel (in scope at the
+     * emask call site). The cache is valid only for |off| <= PEL_HALO. */
+    "float emask(int idx, ivec2 base, ivec2 off0, ivec2 sz, int r, float thr) {\n"
     "    float acc = 0.0; float n = 0.0;\n"
     "    for (int dy = -MAX_R; dy <= MAX_R; dy++) {\n"
     "        if (dy < -r || dy > r) continue;\n"
     "        for (int dx = -MAX_R; dx <= MAX_R; dx++) {\n"
     "            if (dx < -r || dx > r) continue;\n"
-    "            acc += min(sobel_mag(idx, p + ivec2(dx, dy), sz), thr); n += 1.0;\n"
+    "            ivec2 off = off0 + ivec2(dx, dy);\n"
+    "            acc += min(PEL_SOBEL(idx, base, off, sz), thr); n += 1.0;\n"
     "        }\n"
     "    }\n"
     "    return acc / max(n, 1.0);\n"
@@ -106,10 +121,10 @@ static const char aa_glsl[] =
     "    ivec2 sz = imageSize(output_images[idx]);\n"
     "    int r = clamp(blur, 0, MAX_R);\n"
     "    float thr = max(thresh, 0.0001);\n"
-    "    float gx = (emask(idx, pos + ivec2(1, 0), sz, r, thr)\n"
-    "              - emask(idx, pos + ivec2(-1, 0), sz, r, thr)) * 0.5;\n"
-    "    float gy = (emask(idx, pos + ivec2(0, 1), sz, r, thr)\n"
-    "              - emask(idx, pos + ivec2(0,-1), sz, r, thr)) * 0.5;\n"
+    "    float gx = (emask(idx, pos, ivec2(1, 0), sz, r, thr)\n"
+    "              - emask(idx, pos, ivec2(-1, 0), sz, r, thr)) * 0.5;\n"
+    "    float gy = (emask(idx, pos, ivec2(0, 1), sz, r, thr)\n"
+    "              - emask(idx, pos, ivec2(0,-1), sz, r, thr)) * 0.5;\n"
     "    float fx = float(pos.x) + depth * gx;\n"
     "    float fy = float(pos.y) + depth * gy;\n"
     "    float warp = bilinear(idx, fx, fy, sz);\n"
@@ -124,6 +139,39 @@ static const char aa_glsl[] =
     "        }\n"
     "    }\n"
     "    imageStore(output_images[idx], pos, vec4(clamp(warp, 0.0, 1.0)));\n"
+    "}\n";
+
+/* Shared-memory hoist of the edge-strength map (fast=1, opt-in; ADR-0140, the ADR-0134 idiom but
+ * caching the sobel_mag RESULT, not the raw pixel). The premise-check proved aa is
+ * ALU-bound: at blur=8 the 4 central-difference emask() calls each reduce a 17x17
+ * window of sobel_mag(), so the SAME sobel_mag(cell) is recomputed ~4x within a
+ * pixel and again across every neighbour — ~1156 sobel evaluations/px. Here each
+ * workgroup computes sobel_mag once per cell (its 32x32 output region + a PEL_HALO
+ * ring) into s_sobel, then emask() reduces from the cache: ~1 sobel/cell amortized.
+ * PEL_HALO = MAX_R (emask reach 8) + 1 (the central-difference offset). The
+ * cooperative compute runs in uniform control flow (outside the IS_WITHIN guard) so
+ * its barriers are workgroup-uniform. Bit-identical to fast=0 by construction: the
+ * cached value is the exact output of the same sobel_mag() (same float ops, same
+ * order). Kept in lockstep with libpelorus/shaders/pelorus_aa.comp (AGENTS rule 4). */
+static const char aa_fast_helpers_glsl[] =
+    "void pel_load_sobel(int idx, ivec2 sz) {\n"
+    "    ivec2 wgsz = ivec2(gl_WorkGroupSize.xy);\n"
+    "    ivec2 base = ivec2(gl_WorkGroupID.xy) * wgsz - PEL_HALO;\n"
+    "    uint n = uint(PEL_TILE * PEL_TILE);\n"
+    "    uint stride = gl_WorkGroupSize.x * gl_WorkGroupSize.y;\n"
+    "    barrier();\n"
+    "    for (uint k = gl_LocalInvocationIndex; k < n; k += stride) {\n"
+    "        ivec2 t = ivec2(int(k) - (int(k) / PEL_TILE) * PEL_TILE,\n"
+    "                        int(k) / PEL_TILE);\n"
+    "        s_sobel[k] = sobel_mag(idx, base + t, sz);\n"
+    "    }\n"
+    "    barrier();\n"
+    "}\n"
+    /* sobel-mag at the current pixel + off, from the cache. off is relative to the
+     * shader-global `pos`; valid for |off| <= PEL_HALO (the emask reach). */
+    "float ssobel(ivec2 off) {\n"
+    "    ivec2 lc = ivec2(gl_LocalInvocationID.xy) + PEL_HALO + off;\n"
+    "    return s_sobel[lc.y * PEL_TILE + lc.x];\n"
     "}\n";
 
 static av_cold int init_filter(AVFilterContext *ctx)
@@ -193,7 +241,32 @@ static av_cold int init_filter(AVFilterContext *ctx)
         RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0, 0));
     }
 
-    GLSLD(aa_glsl);
+    /* PEL_SOBEL(idx, base, off, sz) is the edge magnitude at base + off. fast=0
+     * recomputes the 9-tap sobel (the original, default path); fast=1 reads the
+     * per-workgroup cache populated once per cell (the ALU hoist). The cached value
+     * is the bit-identical output of the same sobel_mag() — only the redundant
+     * recompute is removed. GLSLD keeps the comma in the macro body out of the C()
+     * macro. PEL_HALO = MAX_R (emask reach 8) + 1 (central-diff offset). PEL_TILE =
+     * 32 (workgroup dim) + 2*PEL_HALO = 50 => s_sobel[2500] floats = 10000 bytes
+     * (< 49152, the Arc A380 shared-mem limit; the smallest of the three dev GPUs). */
+    /* Emission order matters (GLSL needs a definition before use):
+     *   pre (pel_luma, sobel_mag) -> [fast: s_sobel decl + cache helpers] ->
+     *   PEL_SOBEL macro -> post (emask, bilinear, aa).
+     * fast=1 routes PEL_SOBEL to the cache; fast=0 recomputes (default, unchanged). */
+    GLSLD(aa_glsl_pre);
+    if (s->fast) {
+        GLSLC(0, #define PEL_HALO (MAX_R + 1) /* emask reach + central-diff offset */ );
+        GLSLC(0, #define PEL_TILE (32 + 2 * PEL_HALO) /* 32 = workgroup dim */    );
+        GLSLC(0, shared float s_sobel[PEL_TILE * PEL_TILE];                    );
+        GLSLD(aa_fast_helpers_glsl);
+        /* fast=1: PEL_SOBEL drops `base` because ssobel() encodes the current pixel
+         * via gl_LocalInvocationID — valid ONLY when emask is called with base == pos
+         * (every call site in aa() satisfies this). fast=0 uses the absolute coord. */
+        GLSLD("#define PEL_SOBEL(idx, base, off, sz) ssobel(off)");
+    } else {
+        GLSLD("#define PEL_SOBEL(idx, base, off, sz) sobel_mag(idx, (base) + (off), sz)");
+    }
+    GLSLD(aa_glsl_post);
     GLSLC(0, void main()                                                      );
     GLSLC(0, {                                                                );
     GLSLC(1,     ivec2 size;                                                  );
@@ -201,11 +274,28 @@ static av_cold int init_filter(AVFilterContext *ctx)
     for (i = 0; i < planes; i++) {
         GLSLC(0,                                                              );
         GLSLF(1, size = imageSize(output_images[%i]);                       ,i);
-        GLSLC(1, if (!IS_WITHIN(pos, size)) return;                           );
-        if (s->planes & (1 << i)) {
-            GLSLF(1, aa(pos, %i);                                           ,i);
+        if (s->fast) {
+            /* fast=1: NO early return — the cooperative cache load below must run in
+             * uniform control flow (all invocations reach its barriers). Every plane
+             * is therefore IS_WITHIN-guarded rather than early-returned, so the
+             * barriers stay workgroup-uniform regardless of plane order. */
+            if (s->planes & (1 << i)) {
+                GLSLF(1, pel_load_sobel(%i, size);                          ,i);
+                GLSLC(1, if (IS_WITHIN(pos, size)) {                          );
+                GLSLF(2, aa(pos, %i);                                      ,i);
+                GLSLC(1, }                                                    );
+            } else {
+                GLSLC(1, if (IS_WITHIN(pos, size)) {                          );
+                GLSLF(2, imageStore(output_images[%i], pos, imageLoad(input_images[%i], pos)); ,i, i);
+                GLSLC(1, }                                                    );
+            }
         } else {
-            GLSLF(1, imageStore(output_images[%i], pos, imageLoad(input_images[%i], pos)); ,i, i);
+            GLSLC(1, if (!IS_WITHIN(pos, size)) return;                       );
+            if (s->planes & (1 << i)) {
+                GLSLF(1, aa(pos, %i);                                       ,i);
+            } else {
+                GLSLF(1, imageStore(output_images[%i], pos, imageLoad(input_images[%i], pos)); ,i, i);
+            }
         }
     }
     GLSLC(0, }                                                                );
@@ -284,6 +374,9 @@ static const AVOption pelorus_aa_vulkan_options[] = {
       AV_OPT_TYPE_FLOAT, { .dbl = 0.08 }, 0.0, 1.0, FLAGS },
     { "planes", "planes to process (bitmask; default luma only)", OFFSET(planes),
       AV_OPT_TYPE_INT, { .i64 = 0x1 }, 0, 0xF, FLAGS },
+    { "fast", "hoist the redundant sobel-mag into shared memory — bit-identical, "
+              "a large ALU-bound speedup (ADR-0140); opt-in, default off", OFFSET(fast),
+      AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
     { NULL }
 };
 
