@@ -60,6 +60,7 @@
 #include "filters.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <pelorus/interop.h>
@@ -87,8 +88,11 @@
  * ref_image[0]. */
 static const char mc_glsl[] =
     "const float SAD_SCALE = 256.0;\n"
-    "shared float s_part[128];\n" /* per-subgroup SAD partials (wg / min-subgroup)*/
-    "shared float s_sad0;\n"      /* block-SAD reduction result                  */
+    /* One slot per invocation (worst case subgroupSize==1 => BLOCK_DIM*BLOCK_DIM
+     * subgroups). gl_SubgroupID indexes this, so a smaller size OOB-writes. Sized
+     * from the lane-count macro so a BLOCK_DIM change propagates. */
+    "shared float s_part[" PEL_MC_SAD_LANES_STR "];\n"
+    "shared float s_sad0;\n" /* block-SAD reduction result                  */
     "shared int   s_best_x;\n"
     "shared int   s_best_y;\n"
     "shared float s_best_cost;\n"
@@ -545,7 +549,12 @@ static int attach_motion(PelorusMcVulkanContext *s, AVFrame *frame,
         size_t mv_bytes = (size_t)nblocks * 2 * sizeof(int16_t);
         size_t conf_bytes = (size_t)nblocks;
         size_t uuid = PELORUS_SIDEDATA_UUID_LEN;
-        uint8_t *grown = av_realloc(blob, len + mv_bytes + conf_bytes);
+        /* The blob is libc-calloc'd by pel_blob_pack and freed by
+         * pel_blob_free()->free(); grow it with libc realloc so all three stay on
+         * one allocator (av_realloc may route to _aligned_realloc on aligned-CRT
+         * builds, mismatching the libc free). On NULL the original blob is
+         * untouched, so the error path's pel_blob_free(blob) still frees it. */
+        uint8_t *grown = realloc(blob, len + mv_bytes + conf_bytes);
         PelorusSideData *hdr;
         PelorusSectionDir *dir;
         PelorusMotionSection *mo_in_blob = NULL;

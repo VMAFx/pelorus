@@ -138,13 +138,20 @@ pel_result pel_blob_pack(const PelorusSideData *meta, const PelorusPackSection *
     *out_blob = NULL;
     *out_len = 0;
 
-    /* total bytes of all (aligned) section payloads */
+    /* total bytes of all (aligned) section payloads. Accumulate in 64-bit so the
+     * per-section 8-byte alignment and the aggregate sum cannot wrap the uint32
+     * wire field (PEL_ALIGN8 is 32-bit; a near-UINT32_MAX section would wrap to a
+     * tiny payload -> undersized alloc + heap overflow on the memcpy below). */
     {
-        uint32_t payload = 0;
+        uint64_t need = cursor;
         for (i = 0; i < nb; i++) {
-            payload += PEL_ALIGN8(sections[i].size);
+            uint64_t aligned = ((uint64_t)sections[i].size + 7u) & ~(uint64_t)7u;
+            need += aligned;
         }
-        total_size = cursor + payload;
+        if (need > UINT32_MAX) { /* total_size is a uint32_t wire field */
+            return PEL_ERR_RANGE;
+        }
+        total_size = (uint32_t)need;
     }
 
     blob_len = (size_t)PELORUS_SIDEDATA_UUID_LEN + (size_t)total_size;
@@ -255,6 +262,13 @@ pel_result pel_blob_find_section(const uint8_t *blob, size_t len, enum pel_secti
         }
         off = dir[i].offset;
         sz = dir[i].size;
+        /* R5: the packer 8-aligns every section payload so a consumer can cast the
+         * returned pointer to the section struct (which may hold a u64) without an
+         * unaligned access. A misaligned offset is corrupt framing, not a short
+         * buffer — reject it before handing out a castable pointer. */
+        if ((off & 7u) != 0u) {
+            return PEL_ERR_ABI;
+        }
         if (off > image_len || sz > image_len - off) {
             return PEL_ERR_TRUNCATED;
         }

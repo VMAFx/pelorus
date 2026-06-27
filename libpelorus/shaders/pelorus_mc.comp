@@ -91,8 +91,10 @@ layout(push_constant, std430) uniform Params {
 
 const float SAD_SCALE = 256.0;   /* SAD is summed in normalized [0,1] luma */
 
-/* SAD reduction scratch: one slot per invocation, tree-reduced by thread 0. */
-shared float s_part[128];  /* per-subgroup SAD partials (wg / min-subgroup) */
+/* SAD reduction scratch: one slot per invocation, tree-reduced by thread 0.
+ * Sized to the worst case (subgroupSize==1 => BLOCK_DIM*BLOCK_DIM subgroups);
+ * gl_SubgroupID indexes this array, so a smaller size would OOB-write. */
+shared float s_part[BLOCK_DIM * BLOCK_DIM];  /* per-subgroup SAD partials */
 shared float s_sad0;       /* block-SAD reduction result                   */
 /* The block's running best (written by thread 0, read by all each step). */
 shared int   s_best_x;
