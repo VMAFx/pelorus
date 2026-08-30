@@ -26,9 +26,9 @@
  *
  * This standalone form runs against an r16ui storage image (16-bit internal
  * domain, normalized to [0,1] inside; the implied max is 65535). The in-tree
- * FFmpeg filter emits the equivalent reduction inline via GLSLC against a
- * normalized-float image array (imageLoad already returns [0,1]); the algorithm
- * is identical.
+ * shipped shader (ffmpeg-patches/files/vulkan/pelorus_grain_estimate.comp.glsl)
+ * runs the equivalent reduction against a normalized-float image array
+ * (imageLoad already returns [0,1]); the algorithm is identical.
  */
 #version 450
 
