@@ -1,6 +1,15 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # Benchmark results
 
+> **`bbb` baseline boundary — 2026-08-30.** Every `bbb` figure below this line was
+> measured against the ORIGINAL pinned clip, whose upstream URL has since gone dead. The
+> corpus was re-pinned to a different Big Buck Bunny encode/segment at the same
+> resolution, pixel format and frame count (see `scripts/bench/corpus.lock`). The
+> workload shape is unchanged, so the harness is directly re-runnable — but the pixels
+> are not the same, so **absolute `bbb` numbers do not carry across this boundary**.
+> Re-measure the arm you care about before comparing. `synth-banding` results are
+> unaffected (lavfi-generated, not downloaded).
+
 Measured on real hardware via the pinned harness (`scripts/bench/`). Honest
 numbers — including where Pelorus does **not** win. Methodology:
 [benchmarking.md](benchmarking.md).

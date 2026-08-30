@@ -122,6 +122,27 @@ failure — which is precisely how ADR-0129 escaped every static gate.
     alone, 07454 looks Pelorus-specific; against `scdet_vulkan`, the true analogue, it
     plainly is not.
 
+### Encoder translation units — compile-verified (2026-08-30)
+
+All eleven Pelorus-patched libavcodec TUs build clean with the vendor SDKs enabled
+(oneVPL 2.17, libaom 3.15.0, SVT-AV1 4.1.0): `qsvenc`, `qsvenc_h264`, `qsvenc_hevc`,
+`libaomenc`, `libsvtav1`, `nvenc`, `nvenc_h264`, `nvenc_hevc`, `nvenc_av1`,
+`vulkan_encode`, `bsf/pelorus_fgs` — zero errors, zero warnings. The binary links and
+the AVOptions register on exactly the intended encoders, checked per encoder:
+
+| encoder | Pelorus options |
+|---|---|
+| `h264_nvenc`, `hevc_nvenc` | `pelorus_roi`, `pelorus_me_hints` |
+| `av1_nvenc` | `pelorus_roi`, `pelorus_film_grain` |
+| `h264_qsv`, `hevc_qsv` | `pelorus_roi` |
+| `libaom-av1`, `libsvtav1` | `pelorus_roi` |
+| `h264_vulkan`, `hevc_vulkan`, `av1_vulkan` | `pelorus_roi` |
+
+The asymmetry is correct by design — `pelorus_me_hints` is H.264/HEVC-only (AV1 uses a
+different per-superblock hint struct) and `pelorus_film_grain` is AV1-only — and each
+appears on exactly those encoders. Unpatched encoders (`libx264`, `libvpx-vp9`) carry
+none, confirming nothing leaked into a shared option table.
+
 ## References
 
 - FFmpeg n9.0.1 (`bf1b838f2a`), `libavutil/vulkan.h`, `libavfilter/vulkan/Makefile`,
