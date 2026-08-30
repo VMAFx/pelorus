@@ -1,27 +1,40 @@
 diff --git a/configure b/configure
-index 374bd5c151..a347d6cdd5 100755
+index 374bd5c151..67403f0dca 100755
 --- a/configure
 +++ b/configure
-@@ -3565,7 +3565,7 @@ qsvenc_select="qsv"
- qsvvpp_select="qsv"
+@@ -2822,6 +2822,7 @@ CONFIG_EXTRA="
+     msmpeg4dec
+     msmpeg4enc
+     mss34dsp
++    pelorus_qpmap_gpu
+     pixblockdsp
+     qpeldsp
+     qsv
+@@ -3566,6 +3567,11 @@ qsvvpp_select="qsv"
  vaapi_encode_deps="vaapi"
  vulkan_1_4_deps="vulkan"
--vulkan_encode_deps="vulkan"
-+vulkan_encode_deps="vulkan spirv_compiler"
+ vulkan_encode_deps="vulkan"
++# Pelorus: the optional on-GPU QP-map rasterizer inside vulkan_encode.c. It is
++# a build-time-compiled shader, so it needs a SPIR-V compiler - but the encoders
++# themselves must NOT be gated on one: without it vulkan_encode.c simply takes
++# its host-raster path (ADR-0114 Tier 2).
++pelorus_qpmap_gpu_if="vulkan_encode spirv_compiler"
  v4l2_m2m_deps="linux_videodev2_h sem_timedwait"
  
  bilateral_cuda_filter_deps="ffnvcodec"
 diff --git a/libavcodec/vulkan/Makefile b/libavcodec/vulkan/Makefile
-index 3c47cbd58b..d2e7ce42d3 100644
+index 3c47cbd58b..921ec878a7 100644
 --- a/libavcodec/vulkan/Makefile
 +++ b/libavcodec/vulkan/Makefile
-@@ -4,6 +4,10 @@ clean::
+@@ -4,6 +4,12 @@ clean::
  OBJS-$(CONFIG_APV_VULKAN_HWACCEL) += vulkan/apv_decode.comp.spv.o \
                                       vulkan/apv_idct.comp.spv.o
  
 +# Pelorus: the QP-map rasterizer used by the "pelorus_roi" path in
-+# vulkan_encode.c (ADR-0114 Tier 2). Built for every Vulkan video encoder.
-+OBJS-$(CONFIG_VULKAN_ENCODE) += vulkan/pelorus_qpmap.comp.spv.o
++# vulkan_encode.c (ADR-0114 Tier 2). CONFIG_PELORUS_QPMAP_GPU is
++# vulkan_encode AND a working SPIR-V compiler; without one the encoders still
++# build and vulkan_encode.c uses its host raster instead.
++OBJS-$(CONFIG_PELORUS_QPMAP_GPU) += vulkan/pelorus_qpmap.comp.spv.o
 +
  OBJS-$(CONFIG_FFV1_VULKAN_ENCODER) += vulkan/ffv1_enc_setup.comp.spv.o \
                                        vulkan/ffv1_enc_reset.comp.spv.o \
@@ -158,10 +171,10 @@ index 0000000000..97e545732f
 +    }
 +}
 diff --git a/libavcodec/vulkan_encode.c b/libavcodec/vulkan_encode.c
-index 39c43300c4..0bf4884581 100644
+index 39c43300c4..4482139a54 100644
 --- a/libavcodec/vulkan_encode.c
 +++ b/libavcodec/vulkan_encode.c
-@@ -28,6 +28,826 @@ const AVCodecHWConfigInternal *const ff_vulkan_encode_hw_configs[] = {
+@@ -28,6 +28,844 @@ const AVCodecHWConfigInternal *const ff_vulkan_encode_hw_configs[] = {
      NULL,
  };
  
@@ -209,12 +222,20 @@ index 39c43300c4..0bf4884581 100644
 + * is compiled to SPIR-V at build time (glslc -> bin2c -> .spv.o), then linked
 + * in here. FFmpeg 9 removed the runtime GLSL builder (GLSLC/GLSLF/GLSLD and
 + * ff_vk_shader_init), which also retires the old inline-vs-reference lockstep
-+ * duplication: the .comp.glsl is now the single source of truth. */
++ * duplication: the .comp.glsl is now the single source of truth.
++ *
++ * Compiling GLSL at build time needs a SPIR-V compiler, which is optional, so
++ * the whole on-GPU raster is gated on CONFIG_PELORUS_QPMAP_GPU (= vulkan_encode
++ * AND spirv_compiler). Without it vulkan/pelorus_qpmap.comp.spv.o is not built
++ * and these symbols do not exist; the host raster below covers the same
++ * functionality, so the encoder itself is never gated on a shader compiler. */
++#if CONFIG_PELORUS_QPMAP_GPU
 +extern const unsigned char ff_pelorus_qpmap_comp_spv_data[];
 +extern const unsigned int  ff_pelorus_qpmap_comp_spv_len;
 +
 +static int pelorus_qpmap_init_gpu(AVCodecContext *avctx,
 +                                 FFVulkanEncodeContext *ctx);
++#endif
 +
 +/* libx264 ROI convention (also used by the NVENC/QSV Pelorus patches): the QP
 + * range is 51 + 6*(bit_depth-8); qoffset in [-1,+1], negative => lower QP. */
@@ -359,8 +380,14 @@ index 39c43300c4..0bf4884581 100644
 +     * the encode queue family ALSO supports compute, so the dispatch records on
 +     * the encode command buffer with no cross-queue ownership transfer. The
 +     * actual shader build is deferred to pelorus_qpmap_init_gpu() because it
-+     * registers against enc_pool, which is not created until after this probe. */
++     * registers against enc_pool, which is not created until after this probe.
++     * Without CONFIG_PELORUS_QPMAP_GPU the rasterizer was not compiled in at
++     * all, so the host raster is the only path. */
++#if CONFIG_PELORUS_QPMAP_GPU
 +    ctx->qpmap_gpu = !!(ctx->qf_enc->flags & VK_QUEUE_COMPUTE_BIT);
++#else
++    ctx->qpmap_gpu = 0;
++#endif
 +
 +out:
 +    av_free(props);
@@ -490,6 +517,7 @@ index 39c43300c4..0bf4884581 100644
 +    return err;
 +}
 +
++#if CONFIG_PELORUS_QPMAP_GPU
 +/* Create a tiny 1x1 STORAGE image (+ view) in `fmt`, used only to satisfy the
 + * inactive storage-image binding of the rasterizer shader (the active map is
 + * either R8_SINT or R8_UNORM; the other binding still needs a format-matching
@@ -558,6 +586,7 @@ index 39c43300c4..0bf4884581 100644
 +        return AVERROR_EXTERNAL;
 +    return 0;
 +}
++#endif /* CONFIG_PELORUS_QPMAP_GPU */
 +
 +/* Coalesce this frame's AV_FRAME_DATA_REGIONS_OF_INTEREST into the compact,
 + * texel-block-aligned rectangle list both raster paths consume. Mirrors the
@@ -625,6 +654,7 @@ index 39c43300c4..0bf4884581 100644
 +    return n > 0;
 +}
 +
++#if CONFIG_PELORUS_QPMAP_GPU
 +/* Build (lazily) the quant-map rasterizer compute shader. The GLSL lives in
 + * libavcodec/vulkan/pelorus_qpmap.comp.glsl and is compiled to SPIR-V at build
 + * time: one invocation per map texel reverse-scans the ROI rect SSBO and
@@ -839,6 +869,7 @@ index 39c43300c4..0bf4884581 100644
 +
 +    return 0;
 +}
++#endif /* CONFIG_PELORUS_QPMAP_GPU */
 +
 +/* Host-raster fallback (no compute on the encode queue, or shader build failed):
 + * paint the ROI rect list into the per-texel scratch, then upload it into the
@@ -988,7 +1019,7 @@ index 39c43300c4..0bf4884581 100644
  av_cold void ff_vulkan_encode_uninit(FFVulkanEncodeContext *ctx)
  {
      FFVulkanContext *s = &ctx->s;
-@@ -36,6 +856,10 @@ av_cold void ff_vulkan_encode_uninit(FFVulkanEncodeContext *ctx)
+@@ -36,6 +874,10 @@ av_cold void ff_vulkan_encode_uninit(FFVulkanEncodeContext *ctx)
      /* Wait on and free execution pool */
      ff_vk_exec_pool_free(s, &ctx->enc_pool);
  
@@ -999,7 +1030,7 @@ index 39c43300c4..0bf4884581 100644
      /* Destroy the session params */
      if (ctx->session_params)
          vk->DestroyVideoSessionParametersKHR(s->hwctx->act_dev,
-@@ -173,6 +997,9 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
+@@ -173,6 +1015,9 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
  
      VkVideoReferenceSlotInfoKHR ref_slot[37];
      VkVideoEncodeInfoKHR encode_info;
@@ -1009,7 +1040,7 @@ index 39c43300c4..0bf4884581 100644
  
      /* Create packet data buffer */
      max_pkt_size = FFALIGN(3 * ctx->base.surface_width * ctx->base.surface_height + (1 << 16),
-@@ -415,6 +1242,59 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
+@@ -415,6 +1260,61 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
      /* Start, use parameters */
      vk->CmdBeginVideoCodingKHR(cmd_buf, &encode_start);
  
@@ -1038,10 +1069,12 @@ index 39c43300c4..0bf4884581 100644
 +        if (pelorus_qpmap_build_rects(avctx, ctx, src, qpmap_rects,
 +                                      PELORUS_QPMAP_MAX_RECTS, &qpmap_nb_rects) &&
 +            pelorus_qpmap_ensure_image(avctx, ctx, qpmap_slot) == 0) {
++#if CONFIG_PELORUS_QPMAP_GPU
 +            if (ctx->qpmap_gpu)
 +                err = pelorus_qpmap_dispatch(avctx, ctx, exec, qpmap_slot,
 +                                             qpmap_rects, qpmap_nb_rects);
 +            else
++#endif
 +                err = pelorus_qpmap_upload(avctx, ctx, exec, qpmap_slot,
 +                                           ctx->qpmap_emphasis,
 +                                           qpmap_rects, qpmap_nb_rects);
@@ -1069,7 +1102,7 @@ index 39c43300c4..0bf4884581 100644
      /* Send control data */
      if (!ctx->session_reset) {
          vk->CmdControlVideoCodingKHR(cmd_buf, &encode_ctrl);
-@@ -885,6 +1765,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -885,6 +1785,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      if (err < 0)
          return err;
  
@@ -1082,21 +1115,23 @@ index 39c43300c4..0bf4884581 100644
      /* Create command and query pool */
      query_create = (VkQueryPoolVideoEncodeFeedbackCreateInfoKHR) {
          .sType = VK_STRUCTURE_TYPE_QUERY_POOL_VIDEO_ENCODE_FEEDBACK_CREATE_INFO_KHR,
-@@ -897,6 +1783,13 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -897,6 +1803,15 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      if (err < 0)
          return err;
  
 +#ifdef VK_KHR_video_encode_quantization_map
++#if CONFIG_PELORUS_QPMAP_GPU
 +    /* Now that enc_pool exists, build the on-GPU rasterizer (or fall back to the
 +     * host raster). Never fails the encoder. */
 +    if (ctx->qpmap_enabled && ctx->qpmap_gpu)
 +        pelorus_qpmap_init_gpu(avctx, ctx);
 +#endif
++#endif
 +
      if (ctx->opts.quality > ctx->enc_caps.maxQualityLevels) {
          av_log(avctx, AV_LOG_ERROR, "Invalid quality level %i: allowed range is "
                                      "0 to %i\n",
-@@ -1038,6 +1931,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -1038,6 +1953,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      /* Create session */
      session_create.pVideoProfile = &ctx->profile;
      session_create.flags = 0x0;
@@ -1109,7 +1144,7 @@ index 39c43300c4..0bf4884581 100644
      session_create.queueFamilyIndex = ctx->qf_enc->idx;
      session_create.maxCodedExtent = ctx->caps.maxCodedExtent;
      session_create.maxDpbSlots = ctx->caps.maxDpbSlots;
-@@ -1082,6 +1981,17 @@ int ff_vulkan_encode_create_session_params(AVCodecContext *avctx, FFVulkanEncode
+@@ -1082,6 +2003,17 @@ int ff_vulkan_encode_create_session_params(AVCodecContext *avctx, FFVulkanEncode
          .pNext = codec_params_pnext,
          .qualityLevel = ctx->opts.quality,
      };
