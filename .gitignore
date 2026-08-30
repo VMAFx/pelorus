@@ -41,3 +41,5 @@ __pycache__/
 builddir/
 build-run/
 build-san/
+.bench-out/
+x265_2pass.log*
