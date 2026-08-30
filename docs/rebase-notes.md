@@ -5,6 +5,62 @@ Re-apply / re-test work created for the FFmpeg patch stack after an upstream
 FFmpeg bump or a `libpelorus` ABI change. One entry per change that affects the
 patches (ADR-0108 deliverable #6).
 
+## v0.2.0 — FFmpeg base bump n8.1.1 → n9.0.1 (whole stack)
+
+The largest rebase so far: FFmpeg 9 removed the API the entire filter set was
+built on. Full detail and the measured evidence are in
+[ADR-0143](adr/0143-ffmpeg-9-migration.md).
+
+- **Base tag**: `n8.1.1` → `n9.0.1` (released 2026-08-12).
+- **Touches**: every `vf_pelorus_*_vulkan.c`, every encoder hand-diff in
+  `ffmpeg-patches/files/`, `generate.sh`, and a NEW per-filter shader at
+  `ffmpeg-patches/files/vulkan/pelorus_<name>.comp.glsl` installed to
+  `libavfilter/vulkan/` and registered in that directory's `Makefile`.
+
+**What upstream changed (all measured against a real n9.0.1 checkout):**
+
+1. `libavutil/vulkan.h` deleted the runtime GLSL builder: `GLSLC`/`GLSLA`/`GLSLF`/
+   `GLSLD`, `FFVulkanShader.src`, `ff_vk_shader_init()`, `ff_vk_shader_print()`.
+   Shaders are now compiled to SPIR-V at build time and linked in as
+   `ff_pelorus_<name>_comp_spv_data[]` / `_len`.
+2. `configure`: `spirv_library` → `spirv_compiler`, and it is satisfied by
+   `check_glslc` (a working `glslc`), NOT by `--enable-libshaderc`.
+3. `ff_vk_shader_add_descriptor_set()` returns `void` and lost its trailing
+   `print_to_shader_only` argument — so no `RET()` wrapper.
+4. `ff_vk_filter_process_simple()` / `_2pass()` / `_Nin()` gained a `uint32_t wgc_z`
+   before `push_src`; pass `1` for 2D image filters.
+5. `ff_vk_shader_load()` takes `(uint32_t []){ x, y, z }`, not `int []`.
+6. NVENC raised its minimum SDK to 11.1, deleting the SDK 8.1/9.0/9.1/10 feature
+   macros — including `NVENC_HAVE_QP_MAP_MODE`, whose only consumer was patch 0004.
+   **This one fails silently**: every `#ifdef` would simply evaluate false and the
+   ROI feature would compile out. The gate was removed after confirming
+   `qpMapMode`/`qpDeltaMap` are unconditional members in every SDK ≥ 11.1.
+7. Deprecated NVENC presets and rate-control modes were removed, shrinking the
+   per-codec AVOption tables (`nvenc_h264.c` −63, `nvenc_hevc.c` −55) and moving
+   every hook point up. The three option tables were **not** hoisted into a shared
+   one — they still exist per codec, so the hunks needed re-anchoring, not relocating.
+
+**Re-test after rebase** (all four steps passed for this bump):
+
+```bash
+FFMPEG_REPO=/path/to/ffmpeg BASE_TAG=n9.0.1 ffmpeg-patches/generate.sh
+# then, on a pristine n9.0.1 worktree:
+for p in ffmpeg-patches/0*.patch; do git am --3way "$p"; done   # 18/18
+./configure --enable-vulkan ...                                  # libpelorus found
+make libavfilter/vf_pelorus_*.o libavfilter/vulkan/pelorus_*.comp.spv.o
+nm -u <filter>.o | grep spv   # must match nm --defined-only <shader>.comp.spv.o
+```
+
+Verified for this bump: 18/18 patches apply to pristine n9.0.1, configure
+succeeds, 10 filter objects and 9 shader objects compile with zero errors, and
+all 9 shader symbols resolve. **Not yet verified: on-device execution** — the
+ADR-0129 lesson (build-green ≠ runs-green) still applies and the per-filter GPU
+smoke on both plane-mask regimes remains the release gate.
+
+**Note on the sibling repo**: `VMAFx/vmafx` migrated its own stack the same week
+(`7f6e6356b`) and reported no API change. That does not generalise — its patches
+are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
+
 ## v0.1.0 — initial stack (base n8.1.1)
 
 - **Patch**: `ffmpeg-patches/0001-add-vf_pelorus_deband_vulkan.patch`.

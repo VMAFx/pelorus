@@ -1,0 +1,12 @@
+# The generated FFmpeg patches are byte-exact artifacts: `git am` parses them and
+# a CRLF/LF rewrite silently corrupts context lines and breaks the apply. Force
+# LF and never let a filter or an autocrlf setting touch them.
+*.patch    text eol=lf
+*.diff     text eol=lf
+
+# Shader sources are compiled by glslc during the FFmpeg build; keep them LF too.
+*.comp     text eol=lf
+*.glsl     text eol=lf
+
+# Shell scripts must stay LF or they will not execute.
+*.sh       text eol=lf
