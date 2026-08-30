@@ -36,6 +36,35 @@ def synth_source(args):
          "-frames:v", str(args.frames), "-f", "rawvideo", src])
     return src
 
+def add_grain(args, src):
+    """Overlay deterministic film-grain-like noise on a REAL source.
+
+    This is the grain axis. It exists because neither of the alternatives works:
+    `--synth noise` builds its noise on a flat grey plate, which is the degenerate
+    case (nothing to preserve, and the grain estimator starves on it because no 3x3
+    neighbourhood stays under edge_thr); and no *public* pinned clip actually carries
+    grain -- measured, the Chimera BarScene webm is a VP9 distribution copy whose
+    encode removed it (grain_sigma 0.0124, vs 0.0047-0.0101 for real Blu-ray scans and
+    0.0131 for clean animation), and the ungraded y4m is 29.6 GB.
+
+    Injecting into real content instead gives a monotonic, seeded, sweepable axis --
+    verified 0 -> 20 produces grain_sigma 0.0132 -> 0.0214 with grain_flat 0.331 ->
+    0.005. `all_seed` is set explicitly so a run is reproducible (ffmpeg's default
+    happens to be fixed, but relying on that is not a contract).
+
+    Returns the grained YUV. The caller keeps the ORIGINAL as the VMAF reference, so a
+    denoise/deband arm is scored against the clean ground truth rather than against the
+    impairment it is supposed to remove -- the `--clean-reference` rationale.
+    """
+    out = os.path.join(args.out, f"src_grain{args.grain}.yuv")
+    run([args.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "rawvideo", "-pix_fmt", args.pixfmt,
+         "-s", f"{args.width}x{args.height}", "-r", str(args.fps), "-i", src,
+         "-vf", f"noise=alls={args.grain}:allf=t+u:all_seed={args.grain_seed},format={args.pixfmt}",
+         "-frames:v", str(args.frames), "-f", "rawvideo", out])
+    return out
+
+
 def prefilter_once(args, src):
     """Run the Vulkan pre-filter ONCE -> debanded raw YUV. Decouples the (single,
     reliable) GPU compute pass from the encode ladder so the quality proof never
@@ -106,6 +135,13 @@ def main():
     ap.add_argument("--filter", required=True); ap.add_argument("--device", default="vk:0")
     ap.add_argument("--cq", type=int, nargs="+", required=True); ap.add_argument("--out", required=True)
     ap.add_argument("--cambi", action="store_true", help="also measure CAMBI banding (slow)")
+    ap.add_argument("--grain", type=int, default=0, metavar="N",
+                    help="impair the source with seeded grain of strength N (ffmpeg noise "
+                         "alls=N) and score BOTH arms against the clean original. This is "
+                         "the grain axis: it puts grain on REAL content, unlike --synth "
+                         "noise which noises a flat grey plate. Implies --clean-reference.")
+    ap.add_argument("--grain-seed", dest="grain_seed", type=int, default=12345,
+                    help="noise seed, so a grain run is reproducible")
     ap.add_argument("--clean-reference", dest="clean_reference", default=None,
                     help="score VMAF against THIS clean YUV instead of the encoder input. Use when "
                          "--src is a noisy/impaired source and the denoise/deband filter restores the "
@@ -125,7 +161,17 @@ def main():
     # The VMAF reference is decoupled from the encoder input: when --clean-reference is
     # given, BOTH arms are scored against the clean ground truth while the (noisy) src
     # stays the baseline encoder input / the filter's input. Default: ref == src (no change).
-    ref = args.clean_reference or src
+    # --grain: the ORIGINAL is the clean ground truth and the grained copy is what the
+    # encoder (and the filter) sees. Scoring against the grained source would penalise a
+    # denoiser for removing the very impairment under test -- the deband 'wash' bug.
+    if args.grain > 0:
+        clean = src
+        src = add_grain(args, clean)
+        ref = args.clean_reference or clean
+        print(f"  grain axis: alls={args.grain} seed={args.grain_seed}; "
+              f"scoring both arms against the clean original")
+    else:
+        ref = args.clean_reference or src
     if args.pelorus_src_file:
         args.pelorus_src = args.pelorus_src_file
     elif args.prefilter_once:
