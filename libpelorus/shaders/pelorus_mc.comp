@@ -40,7 +40,10 @@
  *
  * The in-tree FFmpeg filter (ffmpeg-patches/files/vf_pelorus_mc_vulkan.c) emits
  * the byte-identical algorithm inline via FFmpeg's GLSLC macros over a
- * normalized-float image array; keep the two in lockstep (AGENTS hard rule 4).
+ * normalized-float image array; this reference is NOT a second implementation to hand-synchronise. Since
+ * FFmpeg 9 (ADR-0143) the shipped shader is
+ * ffmpeg-patches/files/vulkan/pelorus_mc.comp.glsl, compiled to SPIR-V at build
+ * time; the old inline-GLSL lockstep (AGENTS hard rule 4) is retired.
  */
 #version 450
 #extension GL_KHR_shader_subgroup_basic : require
@@ -226,7 +229,7 @@ void main() {
      * The four extra block_sad() calls are cooperative (whole workgroup, barrier
      * internally); the leading barrier publishes s_best_* to all lanes and a
      * barrier after each SAD prevents a WAR race on s_sad[]. Kept in lockstep
-     * with the in-tree filter's inline GLSL (AGENTS hard rule 4). */
+     * with the shipped .comp.glsl (ADR-0143). */
     barrier();
     int   bxi = s_best_x;
     int   byi = s_best_y;

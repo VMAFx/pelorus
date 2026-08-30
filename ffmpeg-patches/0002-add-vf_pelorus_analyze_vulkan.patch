@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:17:43 +0200
+Date: Sun, 30 Aug 2026 18:21:17 +0200
 Subject: [PATCH 02/18] feat(analyze): add vf_pelorus_analyze_vulkan (measured
  banding/variance maps)
 MIME-Version: 1.0
@@ -936,14 +936,14 @@ index 0000000000..aae3834256
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
 diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
-index add42e6726..dbecef96b6 100644
+index e62ab231cb..578953efb4 100644
 --- a/libavfilter/vulkan/Makefile
 +++ b/libavfilter/vulkan/Makefile
 @@ -22,3 +22,4 @@ OBJS-$(CONFIG_NLMEANS_VULKAN_FILTER) += vulkan/nlmeans_horizontal.comp.spv.o \
                                          vulkan/nlmeans_weights.comp.spv.o \
                                          vulkan/nlmeans_denoise.comp.spv.o
- OBJS-$(PELORUS_DEBAND_VULKAN_FILTER) += vulkan/pelorus_deband.comp.spv.o
-+OBJS-$(PELORUS_ANALYZE_VULKAN_FILTER) += vulkan/pelorus_analyze.comp.spv.o
+ OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER) += vulkan/pelorus_deband.comp.spv.o
++OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vulkan/pelorus_analyze.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_analyze.comp.glsl b/libavfilter/vulkan/pelorus_analyze.comp.glsl
 new file mode 100644
 index 0000000000..60850828a7

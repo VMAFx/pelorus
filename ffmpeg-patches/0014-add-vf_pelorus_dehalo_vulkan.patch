@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:17:43 +0200
+Date: Sun, 30 Aug 2026 18:21:18 +0200
 Subject: [PATCH 14/18] feat(dehalo): add vf_pelorus_dehalo_vulkan (anime
  dehalo + dering, Vulkan)
 MIME-Version: 1.0
@@ -326,14 +326,14 @@ index 0000000000..a05c7bf86b
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
 diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
-index 0a712ab192..c9801ac3d8 100644
+index 113d7aa7cf..77187fe29c 100644
 --- a/libavfilter/vulkan/Makefile
 +++ b/libavfilter/vulkan/Makefile
-@@ -26,3 +26,4 @@ OBJS-$(PELORUS_ANALYZE_VULKAN_FILTER) += vulkan/pelorus_analyze.comp.spv.o
- OBJS-$(PELORUS_DENOISE_VULKAN_FILTER) += vulkan/pelorus_denoise.comp.spv.o
- OBJS-$(PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vulkan/pelorus_grain_estimate.comp.spv.o
- OBJS-$(PELORUS_MC_VULKAN_FILTER) += vulkan/pelorus_mc.comp.spv.o
-+OBJS-$(PELORUS_DEHALO_VULKAN_FILTER) += vulkan/pelorus_dehalo.comp.spv.o
+@@ -26,3 +26,4 @@ OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vulkan/pelorus_analyze.comp.spv.
+ OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vulkan/pelorus_denoise.comp.spv.o
+ OBJS-$(CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vulkan/pelorus_grain_estimate.comp.spv.o
+ OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER) += vulkan/pelorus_mc.comp.spv.o
++OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER) += vulkan/pelorus_dehalo.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_dehalo.comp.glsl b/libavfilter/vulkan/pelorus_dehalo.comp.glsl
 new file mode 100644
 index 0000000000..d27dbbe27f

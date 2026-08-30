@@ -13,8 +13,10 @@
  * This standalone form runs one dispatch per plane against r16ui storage images
  * (16-bit internal working domain). The in-tree FFmpeg filter
  * (ffmpeg-patches/files/vf_pelorus_deband_vulkan.c) emits an equivalent shader
- * inline via FFmpeg's GLSLC macros against its multi-plane image arrays; keep
- * the two algorithms in lockstep when editing.
+ * inline via FFmpeg's GLSLC macros against its multi-plane image arrays; this reference is NOT a second implementation to hand-synchronise. Since
+ * FFmpeg 9 (ADR-0143) the shipped shader is
+ * ffmpeg-patches/files/vulkan/pelorus_deband.comp.glsl, compiled to SPIR-V at build
+ * time; the old inline-GLSL lockstep (AGENTS hard rule 4) is retired.
  */
 #version 450
 

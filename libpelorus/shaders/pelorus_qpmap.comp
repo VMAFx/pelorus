@@ -30,7 +30,10 @@
  *
  * The in-tree FFmpeg consumer (ffmpeg-patches/files/vulkan-pelorus-qpmap.patch,
  * libavcodec/vulkan_encode.c) emits the byte-identical algorithm inline via
- * FFmpeg's GLSLC macros; keep the two in lockstep (AGENTS hard rule 4).
+ * FFmpeg's GLSLC macros; this reference is NOT a second implementation to hand-synchronise. Since
+ * FFmpeg 9 (ADR-0143) the shipped shader is
+ * ffmpeg-patches/files/vulkan/pelorus_qpmap.comp.glsl, compiled to SPIR-V at build
+ * time; the old inline-GLSL lockstep (AGENTS hard rule 4) is retired.
  */
 #version 450
 

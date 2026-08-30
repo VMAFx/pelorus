@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:17:43 +0200
+Date: Sun, 30 Aug 2026 18:21:18 +0200
 Subject: [PATCH 03/18] feat(denoise): add vf_pelorus_denoise_vulkan (temporal
  denoise)
 MIME-Version: 1.0
@@ -1095,14 +1095,14 @@ index 0000000000..5aaa3cb2e5
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
 diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
-index dbecef96b6..d77edad3d4 100644
+index 578953efb4..a4a7ea0ea9 100644
 --- a/libavfilter/vulkan/Makefile
 +++ b/libavfilter/vulkan/Makefile
 @@ -23,3 +23,4 @@ OBJS-$(CONFIG_NLMEANS_VULKAN_FILTER) += vulkan/nlmeans_horizontal.comp.spv.o \
                                          vulkan/nlmeans_denoise.comp.spv.o
- OBJS-$(PELORUS_DEBAND_VULKAN_FILTER) += vulkan/pelorus_deband.comp.spv.o
- OBJS-$(PELORUS_ANALYZE_VULKAN_FILTER) += vulkan/pelorus_analyze.comp.spv.o
-+OBJS-$(PELORUS_DENOISE_VULKAN_FILTER) += vulkan/pelorus_denoise.comp.spv.o
+ OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER) += vulkan/pelorus_deband.comp.spv.o
+ OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vulkan/pelorus_analyze.comp.spv.o
++OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vulkan/pelorus_denoise.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_denoise.comp.glsl b/libavfilter/vulkan/pelorus_denoise.comp.glsl
 new file mode 100644
 index 0000000000..e9929c2317

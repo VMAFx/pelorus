@@ -17,8 +17,10 @@
  *
  * Reference form runs per plane against r16ui storage images. The in-tree FFmpeg
  * filter (ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c) emits an
- * equivalent shader inline via GLSLC over FF_VK_REP_FLOAT image arrays — keep
- * the two in lockstep (AGENTS hard rule 4).
+ * equivalent shader inline via GLSLC over FF_VK_REP_FLOAT image arrays — this reference is NOT a second implementation to hand-synchronise. Since
+ * FFmpeg 9 (ADR-0143) the shipped shader is
+ * ffmpeg-patches/files/vulkan/pelorus_borderfix.comp.glsl, compiled to SPIR-V at build
+ * time; the old inline-GLSL lockstep (AGENTS hard rule 4) is retired.
  */
 #version 450
 

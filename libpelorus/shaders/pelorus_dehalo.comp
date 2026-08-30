@@ -25,7 +25,10 @@
  * (chroma passes through). The in-tree FFmpeg filter
  * (ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c) emits an equivalent shader
  * inline via FFmpeg's GLSLC macros over FF_VK_REP_FLOAT image arrays; keep the
- * two algorithms in lockstep when editing (AGENTS hard rule 4).
+ * two algorithms in lockstep when editing this reference is NOT a second implementation to hand-synchronise. Since
+ * FFmpeg 9 (ADR-0143) the shipped shader is
+ * ffmpeg-patches/files/vulkan/pelorus_dehalo.comp.glsl, compiled to SPIR-V at build
+ * time; the old inline-GLSL lockstep (AGENTS hard rule 4) is retired.
  */
 #version 450
 

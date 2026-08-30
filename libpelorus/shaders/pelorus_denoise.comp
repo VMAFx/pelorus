@@ -27,9 +27,11 @@
  *
  * This standalone form runs one dispatch per plane against r16ui storage images
  * (16-bit internal domain, normalized to [0,1] inside). The in-tree FFmpeg
- * filter (ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c) emits an equivalent
- * shader inline via FFmpeg's GLSLC macros over normalized-float image arrays;
- * keep the two algorithms in lockstep when editing (AGENTS hard rule 4).
+ * filter ships its own shader at ffmpeg-patches/files/vulkan/pelorus_denoise.comp.glsl,
+ * compiled to SPIR-V at build time (ADR-0143). That file -- not this one -- is what
+ * FFmpeg executes. This reference is a standalone r16ui variant kept for the fast
+ * gate and for reading the algorithm without FFmpeg's plumbing; it is NOT a second
+ * implementation to hand-synchronise (the old AGENTS hard rule 4 lockstep is retired).
  */
 #version 450
 
@@ -44,7 +46,7 @@ layout(binding = 2, std430) readonly buffer MvGrid { uint mv_packed[]; };
 layout(binding = 3, std430) readonly buffer ConfGrid { uint conf_packed[]; };
 /* Forward-lookahead tap (ADR-0137): the NEXT frame. Same-coordinate, tcut-gated
  * like the prev taps; gated by pc.actualNext (0 => causal, the tap never fires).
- * Models the in-tree filter's next0_images binding (kept in lockstep). */
+ * Mirrors the in-tree filter's next0_images binding. */
 layout(binding = 4, r16ui) uniform readonly uimage2D nextImg;
 
 layout(push_constant, std430) uniform Params {

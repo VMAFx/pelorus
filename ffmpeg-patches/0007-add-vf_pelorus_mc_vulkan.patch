@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:17:43 +0200
+Date: Sun, 30 Aug 2026 18:21:18 +0200
 Subject: [PATCH 07/18] feat(mc): add vf_pelorus_mc_vulkan (block-matching
  motion estimator)
 MIME-Version: 1.0
@@ -934,14 +934,14 @@ index 0000000000..8396fcc246
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
 diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
-index e51ed0b24f..0a712ab192 100644
+index 622fac0790..113d7aa7cf 100644
 --- a/libavfilter/vulkan/Makefile
 +++ b/libavfilter/vulkan/Makefile
-@@ -25,3 +25,4 @@ OBJS-$(PELORUS_DEBAND_VULKAN_FILTER) += vulkan/pelorus_deband.comp.spv.o
- OBJS-$(PELORUS_ANALYZE_VULKAN_FILTER) += vulkan/pelorus_analyze.comp.spv.o
- OBJS-$(PELORUS_DENOISE_VULKAN_FILTER) += vulkan/pelorus_denoise.comp.spv.o
- OBJS-$(PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vulkan/pelorus_grain_estimate.comp.spv.o
-+OBJS-$(PELORUS_MC_VULKAN_FILTER) += vulkan/pelorus_mc.comp.spv.o
+@@ -25,3 +25,4 @@ OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER) += vulkan/pelorus_deband.comp.spv.o
+ OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vulkan/pelorus_analyze.comp.spv.o
+ OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vulkan/pelorus_denoise.comp.spv.o
+ OBJS-$(CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vulkan/pelorus_grain_estimate.comp.spv.o
++OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER) += vulkan/pelorus_mc.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_mc.comp.glsl b/libavfilter/vulkan/pelorus_mc.comp.glsl
 new file mode 100644
 index 0000000000..8760e93734

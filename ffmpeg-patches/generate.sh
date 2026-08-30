@@ -32,8 +32,14 @@ git -C "$FFMPEG_REPO" worktree add --detach "$WORKTREE" "$BASE_TAG"
 # generate.sh must not duplicate the OBJS line.
 install_vk_shader() {
     local name="$1"                     # e.g. deband
-    local cfg                           # e.g. PELORUS_DEBAND_VULKAN_FILTER
-    cfg="PELORUS_$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')_VULKAN_FILTER"
+    local cfg                           # e.g. CONFIG_PELORUS_DEBAND_VULKAN_FILTER
+    # The CONFIG_ prefix is load-bearing: OBJS-$(PELORUS_..._FILTER) is an
+    # UNDEFINED make variable that expands to empty, so the shader object is
+    # silently never built and the filter fails at LINK with an undefined
+    # ff_pelorus_<name>_comp_spv_data. Naming the .spv.o directly on a make
+    # command line still builds it via the pattern rule, which is exactly how
+    # this hid from a targeted build -- verify by LINKING, not by building objects.
+    cfg="CONFIG_PELORUS_$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')_VULKAN_FILTER"
     cp "$FILES_DIR/vulkan/pelorus_${name}.comp.glsl" "$WORKTREE/libavfilter/vulkan/"
     python3 - "$WORKTREE" "$name" "$cfg" <<'PYSHADER'
 import sys, pathlib

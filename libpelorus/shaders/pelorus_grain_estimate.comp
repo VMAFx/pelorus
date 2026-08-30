@@ -9,7 +9,10 @@
  * Pass-through: the frame is unchanged; only an estimate is reduced into an
  * SSBO and read back (ADR-0115). Kept in lockstep with the in-tree filter's
  * inline GLSL, ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c
- * (AGENTS.md hard rule 4).
+ * this reference is NOT a second implementation to hand-synchronise. Since
+ * FFmpeg 9 (ADR-0143) the shipped shader is
+ * ffmpeg-patches/files/vulkan/pelorus_grain_estimate.comp.glsl, compiled to SPIR-V at build
+ * time; the old inline-GLSL lockstep (AGENTS hard rule 4) is retired.
  *
  * Method (per intensity band, the AV1/H.274 scaling function is intensity-
  * dependent by design):

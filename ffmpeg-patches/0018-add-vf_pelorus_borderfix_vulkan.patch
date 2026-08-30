@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:17:43 +0200
+Date: Sun, 30 Aug 2026 18:21:18 +0200
 Subject: [PATCH 18/18] feat(borderfix): add vf_pelorus_borderfix_vulkan
  (dirty-line/border repair, Vulkan)
 MIME-Version: 1.0
@@ -302,14 +302,14 @@ index 0000000000..b3d7e930f9
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
 diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
-index 0cc3ceea2f..85cf35caa0 100644
+index 8e75e87685..f324fac9bf 100644
 --- a/libavfilter/vulkan/Makefile
 +++ b/libavfilter/vulkan/Makefile
-@@ -29,3 +29,4 @@ OBJS-$(PELORUS_MC_VULKAN_FILTER) += vulkan/pelorus_mc.comp.spv.o
- OBJS-$(PELORUS_DEHALO_VULKAN_FILTER) += vulkan/pelorus_dehalo.comp.spv.o
- OBJS-$(PELORUS_AA_VULKAN_FILTER) += vulkan/pelorus_aa.comp.spv.o
- OBJS-$(PELORUS_DEBLOCK_VULKAN_FILTER) += vulkan/pelorus_deblock.comp.spv.o
-+OBJS-$(PELORUS_BORDERFIX_VULKAN_FILTER) += vulkan/pelorus_borderfix.comp.spv.o
+@@ -29,3 +29,4 @@ OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER) += vulkan/pelorus_mc.comp.spv.o
+ OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER) += vulkan/pelorus_dehalo.comp.spv.o
+ OBJS-$(CONFIG_PELORUS_AA_VULKAN_FILTER) += vulkan/pelorus_aa.comp.spv.o
+ OBJS-$(CONFIG_PELORUS_DEBLOCK_VULKAN_FILTER) += vulkan/pelorus_deblock.comp.spv.o
++OBJS-$(CONFIG_PELORUS_BORDERFIX_VULKAN_FILTER) += vulkan/pelorus_borderfix.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_borderfix.comp.glsl b/libavfilter/vulkan/pelorus_borderfix.comp.glsl
 new file mode 100644
 index 0000000000..e803f40047

@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:17:43 +0200
+Date: Sun, 30 Aug 2026 18:21:18 +0200
 Subject: [PATCH 09/18] feat(vulkan): cross-vendor "via Vulkan" QP-map steering
  (ADR-0114 Tier 2)
 MIME-Version: 1.0
