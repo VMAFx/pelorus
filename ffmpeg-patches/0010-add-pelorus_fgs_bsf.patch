@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:05:05 +0200
+Date: Sun, 30 Aug 2026 18:17:43 +0200
 Subject: [PATCH 10/18] feat(fgs): add pelorus_fgs bitstream filter (H.274 /
  HEVC FGC SEI)
 MIME-Version: 1.0
@@ -43,12 +43,12 @@ ADR: docs/adr/0117-grain-fgs-bsf.md
  configure                      |   1 +
  libavcodec/bitstream_filters.c |   1 +
  libavcodec/bsf/Makefile        |   1 +
- libavcodec/bsf/pelorus_fgs.c   | 320 +++++++++++++++++++++++++++++++++
- 4 files changed, 323 insertions(+)
+ libavcodec/bsf/pelorus_fgs.c   | 322 +++++++++++++++++++++++++++++++++
+ 4 files changed, 325 insertions(+)
  create mode 100644 libavcodec/bsf/pelorus_fgs.c
 
 diff --git a/configure b/configure
-index 71922a7b08..a013ab95cb 100755
+index 953ff3af16..62a66792dc 100755
 --- a/configure
 +++ b/configure
 @@ -3766,6 +3766,7 @@ hevc_metadata_bsf_select="cbs_h265"
@@ -85,10 +85,10 @@ index 981bb8276b..8f8afddb98 100644
  OBJS-$(CONFIG_REMOVE_EXTRADATA_BSF)       += bsf/remove_extradata.o
 diff --git a/libavcodec/bsf/pelorus_fgs.c b/libavcodec/bsf/pelorus_fgs.c
 new file mode 100644
-index 0000000000..9925cd0755
+index 0000000000..2408bf6a54
 --- /dev/null
 +++ b/libavcodec/bsf/pelorus_fgs.c
-@@ -0,0 +1,320 @@
+@@ -0,0 +1,322 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -145,15 +145,17 @@ index 0000000000..9925cd0755
 +#include "libavutil/common.h"
 +#include "libavutil/opt.h"
 +
-+#include "bsf.h"
-+#include "bsf_internal.h"
-+#include "cbs.h"
-+#include "cbs_bsf.h"
-+#include "cbs_h265.h"
-+#include "cbs_sei.h"
-+#include "sei.h"
++/* FFmpeg 9 requires fully-qualified includes from libavcodec/bsf/: the
++ * relative form ("bsf.h") no longer resolves from that subdirectory. */
++#include "libavcodec/bsf.h"
++#include "libavcodec/bsf_internal.h"
++#include "libavcodec/cbs.h"
++#include "libavcodec/cbs_bsf.h"
++#include "libavcodec/cbs_h265.h"
++#include "libavcodec/cbs_sei.h"
++#include "libavcodec/sei.h"
 +
-+#include "hevc/hevc.h"
++#include "libavcodec/hevc/hevc.h"
 +
 +/* Comp-model component bitmask for the `components` option. */
 +#define PEL_FGS_COMP_Y  (1 << 0)

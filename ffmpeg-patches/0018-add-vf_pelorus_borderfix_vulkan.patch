@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:05:05 +0200
+Date: Sun, 30 Aug 2026 18:17:43 +0200
 Subject: [PATCH 18/18] feat(borderfix): add vf_pelorus_borderfix_vulkan
  (dirty-line/border repair, Vulkan)
 MIME-Version: 1.0
@@ -33,7 +33,7 @@ ADR: docs/adr/0128-borderfix.md
  create mode 100644 libavfilter/vulkan/pelorus_borderfix.comp.glsl
 
 diff --git a/configure b/configure
-index ce335940fa..fc4653a269 100755
+index abfd317229..72a1ae9c87 100755
 --- a/configure
 +++ b/configure
 @@ -4239,6 +4239,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"

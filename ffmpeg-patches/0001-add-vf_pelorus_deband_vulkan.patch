@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:05:04 +0200
+Date: Sun, 30 Aug 2026 18:17:43 +0200
 Subject: [PATCH 01/18] feat(deband): add vf_pelorus_deband_vulkan (smart
  deband, Vulkan)
 
@@ -33,7 +33,7 @@ Research: docs/research/0101-smart-deband.md
  create mode 100644 libavfilter/vulkan/pelorus_deband.comp.glsl
 
 diff --git a/configure b/configure
-index 374bd5c151..7346c8013c 100755
+index 374bd5c151..95a4d4a1bf 100755
 --- a/configure
 +++ b/configure
 @@ -4236,6 +4236,7 @@ overlay_qsv_filter_deps="libmfx"
@@ -48,7 +48,7 @@ index 374bd5c151..7346c8013c 100755
  enabled libvidstab        && require_pkg_config libvidstab "vidstab >= 0.98" vid.stab/libvidstab.h vsMotionDetectInit
  enabled libvmaf           && require_pkg_config libvmaf "libvmaf >= 2.0.0" libvmaf.h vmaf_init
  enabled libvmaf           && check_pkg_config libvmaf_cuda "libvmaf >= 2.0.0" libvmaf_cuda.h vmaf_cuda_state_init
-+enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
++enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
  enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&

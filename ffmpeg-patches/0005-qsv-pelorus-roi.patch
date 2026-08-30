@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:05:05 +0200
+Date: Sun, 30 Aug 2026 18:17:43 +0200
 Subject: [PATCH 05/18] feat(qsv): honor AV_FRAME_DATA_REGIONS_OF_INTEREST via
  the per-block QP map
 MIME-Version: 1.0

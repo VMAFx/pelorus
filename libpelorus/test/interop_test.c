@@ -688,8 +688,8 @@ static void test_misaligned_blob_base(void)
 
         p = NULL;
         got = 0;
-        CHECK(pel_blob_find_section(skewed, len, PEL_SEC_FILMGRAIN,
-                                    sizeof(PelorusFilmGrainSection), &p, &got) == PEL_OK);
+        CHECK(pel_blob_find_section(skewed, len, PEL_SEC_FILMGRAIN, sizeof(PelorusFilmGrainSection),
+                                    &p, &got) == PEL_OK);
         CHECK(p != NULL && got == sizeof(PelorusFilmGrainSection));
         if (p != NULL && got == sizeof(got_grain)) {
             memcpy(&got_grain, p, sizeof(got_grain));

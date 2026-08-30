@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:05:05 +0200
+Date: Sun, 30 Aug 2026 18:17:43 +0200
 Subject: [PATCH 07/18] feat(mc): add vf_pelorus_mc_vulkan (block-matching
  motion estimator)
 MIME-Version: 1.0
@@ -55,7 +55,7 @@ ADR: docs/adr/0116-pelorus-mc.md
  create mode 100644 libavfilter/vulkan/pelorus_mc.comp.glsl
 
 diff --git a/configure b/configure
-index e39bfe677c..71922a7b08 100755
+index c9c23dbe98..ad55df52f7 100755
 --- a/configure
 +++ b/configure
 @@ -4240,6 +4240,7 @@ pelorus_analyze_vulkan_filter_deps="vulkan spirv_compiler"
@@ -67,10 +67,10 @@ index e39bfe677c..71922a7b08 100755
  pad_opencl_filter_deps="opencl"
  pan_filter_deps="swresample"
 @@ -7465,6 +7466,7 @@ enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpeloru
- enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
- enabled pelorus_denoise_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
- enabled pelorus_grain_estimate_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
-+enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+ enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+ enabled pelorus_denoise_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+ enabled pelorus_grain_estimate_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
++enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
  enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&

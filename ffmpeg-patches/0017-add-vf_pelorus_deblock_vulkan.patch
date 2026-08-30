@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:05:05 +0200
+Date: Sun, 30 Aug 2026 18:17:43 +0200
 Subject: [PATCH 17/18] feat(deblock): add vf_pelorus_deblock_vulkan (re-encode
  deblock/dering, Vulkan)
 MIME-Version: 1.0
@@ -35,7 +35,7 @@ ADR: docs/adr/0127-deblock.md
  create mode 100644 libavfilter/vulkan/pelorus_deblock.comp.glsl
 
 diff --git a/configure b/configure
-index 05e46b5899..ce335940fa 100755
+index b2818392a1..abfd317229 100755
 --- a/configure
 +++ b/configure
 @@ -4240,6 +4240,7 @@ overlay_vulkan_filter_deps="vulkan spirv_compiler"
