@@ -645,6 +645,91 @@ static void test_deband_params(void)
     CHECK(what != NULL && strcmp(what, "range") == 0);
 }
 
+/* Issue #44: the parser must not assume the caller's blob base is 8-byte
+ * aligned. Before the memcpy-based parse this produced 26 -fsanitize=alignment
+ * diagnostics and is genuine UB on strict-alignment targets. The section
+ * pointer handed back is still only castable when the BASE was aligned, so the
+ * check here reads the payload through memcpy, exactly as a careful consumer
+ * (and vmafx's perceptual_weight.c) does. */
+static void test_misaligned_blob_base(void)
+{
+    PelorusSideData meta;
+    PelorusFilmGrainSection grain; /* u64 at offset 0 -> alignment matters */
+    PelorusFilmGrainSection got_grain;
+    PelorusPackSection sec;
+    uint8_t *blob = NULL;
+    uint8_t *raw = NULL;
+    uint8_t *skewed = NULL;
+    size_t len = 0;
+    const void *p = NULL;
+    size_t got = 0;
+    size_t skew;
+
+    fill_meta(&meta);
+    memset(&grain, 0, sizeof(grain));
+    grain.seed = 0xDEADBEEFCAFEULL;
+    sec.id = PEL_SEC_FILMGRAIN;
+    sec.data = &grain;
+    sec.size = (uint32_t)sizeof(grain);
+    CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
+
+    /* Re-home the blob at every misalignment in one 8-byte period. */
+    raw = (uint8_t *)malloc(len + 8u);
+    CHECK(raw != NULL);
+    if (raw == NULL) {
+        pel_blob_free(blob);
+        return;
+    }
+    for (skew = 1u; skew < 8u; skew++) {
+        skewed = raw + skew;
+        memcpy(skewed, blob, len);
+
+        CHECK(pel_blob_is_present(skewed, len) == 1);
+
+        p = NULL;
+        got = 0;
+        CHECK(pel_blob_find_section(skewed, len, PEL_SEC_FILMGRAIN,
+                                    sizeof(PelorusFilmGrainSection), &p, &got) == PEL_OK);
+        CHECK(p != NULL && got == sizeof(PelorusFilmGrainSection));
+        if (p != NULL && got == sizeof(got_grain)) {
+            memcpy(&got_grain, p, sizeof(got_grain));
+            CHECK(got_grain.seed == 0xDEADBEEFCAFEULL);
+        }
+    }
+
+    free(raw);
+    pel_blob_free(blob);
+}
+
+/* A header_size that is not a multiple of 8 would put dir[] on a misaligned
+ * start. That is corrupt framing from an untrusted producer, not a short
+ * buffer, so it must be rejected rather than walked. */
+static void test_unaligned_header_size(void)
+{
+    PelorusSideData meta;
+    PelorusFilmGrainSection grain;
+    PelorusPackSection sec;
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    const void *p = NULL;
+    size_t got = 0;
+    PelorusSideData *hdr;
+
+    fill_meta(&meta);
+    memset(&grain, 0, sizeof(grain));
+    sec.id = PEL_SEC_FILMGRAIN;
+    sec.data = &grain;
+    sec.size = (uint32_t)sizeof(grain);
+    CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
+
+    hdr = (PelorusSideData *)(void *)(blob + PELORUS_SIDEDATA_UUID_LEN);
+    hdr->header_size = (uint16_t)(hdr->header_size + 4u);
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_FILMGRAIN, sizeof(PelorusFilmGrainSection), &p,
+                                &got) == PEL_ERR_ABI);
+
+    pel_blob_free(blob);
+}
+
 int main(void)
 {
     test_roundtrip();
@@ -654,6 +739,8 @@ int main(void)
     test_header_only();
     test_truncation();
     test_misaligned_offset();
+    test_misaligned_blob_base();
+    test_unaligned_header_size();
     test_pack_size_overflow();
     test_qp_report_roundtrip();
     test_motion_conf_roundtrip();

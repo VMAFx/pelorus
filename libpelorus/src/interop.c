@@ -24,7 +24,16 @@
  *   [section payloads, each 8-byte aligned]
  * All offsets in dir[] are relative to magic[0] (the header start). Section
  * payload starts are padded up to 8 bytes so a consumer can cast the returned
- * pointer to the section struct without an unaligned access (R5).
+ * pointer to the section struct without an unaligned access (R5) -- note that
+ * this guarantee is RELATIVE TO THE BLOB BASE: it holds for the caller only if
+ * the caller's blob base is itself 8-byte aligned. A caller that cannot promise
+ * that must memcpy the section bytes into a local, as vmafx's perceptual_weight.c
+ * already does.
+ *
+ * The PARSER itself makes no such assumption. It reads the header and every
+ * directory entry via memcpy into properly-aligned locals rather than casting
+ * `base + offset`, so passing a misaligned blob is well-defined rather than UB
+ * on strict-alignment targets and under -fsanitize=alignment (issue #44).
  */
 
 #include "pelorus/interop.h"
@@ -190,7 +199,7 @@ void pel_blob_free(uint8_t *blob)
 
 int pel_blob_is_present(const uint8_t *blob, size_t len)
 {
-    const PelorusSideData *hdr;
+    PelorusSideData hdr;
 
     if (blob == NULL || len < (size_t)PELORUS_SIDEDATA_UUID_LEN + sizeof(PelorusSideData)) {
         return 0;
@@ -198,18 +207,18 @@ int pel_blob_is_present(const uint8_t *blob, size_t len)
     if (memcmp(blob, pelorus_sidedata_uuid, PELORUS_SIDEDATA_UUID_LEN) != 0) {
         return 0;
     }
-    hdr = (const PelorusSideData *)(const void *)(blob + PELORUS_SIDEDATA_UUID_LEN);
-    if (memcmp(hdr->magic, PELORUS_MAGIC_STR, PELORUS_MAGIC_LEN) != 0) {
+    /* memcpy, not a cast: the blob base is caller-supplied and may be misaligned. */
+    memcpy(&hdr, blob + PELORUS_SIDEDATA_UUID_LEN, sizeof(hdr));
+    if (memcmp(hdr.magic, PELORUS_MAGIC_STR, PELORUS_MAGIC_LEN) != 0) {
         return 0;
     }
-    return hdr->abi_major == (uint16_t)PELORUS_ABI_MAJOR;
+    return hdr.abi_major == (uint16_t)PELORUS_ABI_MAJOR;
 }
 
 pel_result pel_blob_find_section(const uint8_t *blob, size_t len, enum pel_section sec,
                                  size_t consumer_known_size, const void **out_ptr, size_t *out_size)
 {
-    const PelorusSideData *hdr;
-    const PelorusSectionDir *dir;
+    PelorusSideData hdr;
     const uint8_t *image;
     size_t image_len;
     uint16_t i;
@@ -232,36 +241,44 @@ pel_result pel_blob_find_section(const uint8_t *blob, size_t len, enum pel_secti
 
     image = blob + PELORUS_SIDEDATA_UUID_LEN;
     image_len = len - (size_t)PELORUS_SIDEDATA_UUID_LEN;
-    hdr = (const PelorusSideData *)(const void *)image;
+    /* memcpy, not a cast: the blob base is caller-supplied and may be misaligned. */
+    memcpy(&hdr, image, sizeof(hdr));
 
-    if (memcmp(hdr->magic, PELORUS_MAGIC_STR, PELORUS_MAGIC_LEN) != 0) {
+    if (memcmp(hdr.magic, PELORUS_MAGIC_STR, PELORUS_MAGIC_LEN) != 0) {
         return PEL_ERR_ABSENT;
     }
-    if (hdr->abi_major != (uint16_t)PELORUS_ABI_MAJOR) {
+    if (hdr.abi_major != (uint16_t)PELORUS_ABI_MAJOR) {
         return PEL_ERR_ABI; /* consumer cannot trust the layout (R6) */
     }
     /* Framing sanity: declared size must fit, dir[] must fit. */
-    if (hdr->total_size > image_len || hdr->header_size < sizeof(*hdr)) {
+    if (hdr.total_size > image_len || hdr.header_size < sizeof(hdr)) {
         return PEL_ERR_TRUNCATED;
     }
-    if ((size_t)hdr->header_size + (size_t)hdr->section_count * sizeof(PelorusSectionDir) >
+    /* The packer always 8-aligns the directory. A header_size that is not a
+     * multiple of 8 is corrupt framing from an untrusted producer; reject it
+     * rather than walking a misaligned dir[]. */
+    if ((hdr.header_size & 7u) != 0u) {
+        return PEL_ERR_ABI;
+    }
+    if ((size_t)hdr.header_size + (size_t)hdr.section_count * sizeof(PelorusSectionDir) >
         image_len) {
         return PEL_ERR_TRUNCATED;
     }
-    if ((hdr->section_mask & (uint32_t)sec) == 0) {
+    if ((hdr.section_mask & (uint32_t)sec) == 0) {
         return PEL_ERR_ABSENT;
     }
 
-    dir = (const PelorusSectionDir *)(const void *)(image + hdr->header_size);
-    for (i = 0; i < hdr->section_count; i++) {
+    for (i = 0; i < hdr.section_count; i++) {
+        PelorusSectionDir ent;
         size_t off;
         size_t sz;
 
-        if (dir[i].section_id != (uint32_t)sec) {
+        memcpy(&ent, image + (size_t)hdr.header_size + (size_t)i * sizeof(ent), sizeof(ent));
+        if (ent.section_id != (uint32_t)sec) {
             continue;
         }
-        off = dir[i].offset;
-        sz = dir[i].size;
+        off = ent.offset;
+        sz = ent.size;
         /* R5: the packer 8-aligns every section payload so a consumer can cast the
          * returned pointer to the section struct (which may hold a u64) without an
          * unaligned access. A misaligned offset is corrupt framing, not a short
