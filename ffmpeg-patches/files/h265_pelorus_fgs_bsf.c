@@ -54,15 +54,17 @@
 #include "libavutil/common.h"
 #include "libavutil/opt.h"
 
-#include "bsf.h"
-#include "bsf_internal.h"
-#include "cbs.h"
-#include "cbs_bsf.h"
-#include "cbs_h265.h"
-#include "cbs_sei.h"
-#include "sei.h"
+/* FFmpeg 9 requires fully-qualified includes from libavcodec/bsf/: the
+ * relative form ("bsf.h") no longer resolves from that subdirectory. */
+#include "libavcodec/bsf.h"
+#include "libavcodec/bsf_internal.h"
+#include "libavcodec/cbs.h"
+#include "libavcodec/cbs_bsf.h"
+#include "libavcodec/cbs_h265.h"
+#include "libavcodec/cbs_sei.h"
+#include "libavcodec/sei.h"
 
-#include "hevc/hevc.h"
+#include "libavcodec/hevc/hevc.h"
 
 /* Comp-model component bitmask for the `components` option. */
 #define PEL_FGS_COMP_Y  (1 << 0)

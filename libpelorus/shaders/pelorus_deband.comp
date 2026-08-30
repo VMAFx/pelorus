@@ -11,10 +11,11 @@
  * parameter contract and docs/research/0101-smart-deband.md for the rationale.
  *
  * This standalone form runs one dispatch per plane against r16ui storage images
- * (16-bit internal working domain). The in-tree FFmpeg filter
- * (ffmpeg-patches/files/vf_pelorus_deband_vulkan.c) emits an equivalent shader
- * inline via FFmpeg's GLSLC macros against its multi-plane image arrays; keep
- * the two algorithms in lockstep when editing.
+ * (16-bit internal working domain). The shader FFmpeg actually executes is
+ * ffmpeg-patches/files/vulkan/pelorus_deband.comp.glsl, compiled to SPIR-V at build
+ * time (ADR-0143). This file is a standalone reference in the 16-bit domain, kept
+ * for the fast gate and for reading the algorithm without FFmpeg's plumbing -- it is
+ * NOT a second implementation to hand-synchronise.
  */
 #version 450
 

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Fri, 19 Jun 2026 19:50:06 +0200
-Subject: [PATCH 05/11] feat(qsv): honor AV_FRAME_DATA_REGIONS_OF_INTEREST via
+Date: Thu, 1 Jan 2026 00:00:00 +0000
+Subject: [PATCH 05/18] feat(qsv): honor AV_FRAME_DATA_REGIONS_OF_INTEREST via
  the per-block QP map
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -47,10 +47,10 @@ and on-Arc BD-rate proof are a follow-up (no fabricated numbers).
  4 files changed, 194 insertions(+), 1 deletion(-)
 
 diff --git a/libavcodec/qsvenc.c b/libavcodec/qsvenc.c
-index fc1b8795d8..ee3742f95f 100644
+index c79db089a0d249b78e762298da0caa6301247b34..f113c68327c25899ba1daf91e7a83713d5ff55f5 100644
 --- a/libavcodec/qsvenc.c
 +++ b/libavcodec/qsvenc.c
-@@ -1113,6 +1113,35 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
+@@ -1117,6 +1117,35 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
          q->extco3.Header.BufferId      = MFX_EXTBUFF_CODING_OPTION3;
          q->extco3.Header.BufferSz      = sizeof(q->extco3);
  
@@ -86,7 +86,7 @@ index fc1b8795d8..ee3742f95f 100644
          if (avctx->codec_id == AV_CODEC_ID_HEVC ||
              avctx->codec_id == AV_CODEC_ID_H264) {
              switch (q->p_strategy) {
-@@ -2129,6 +2158,131 @@ static void print_interlace_msg(AVCodecContext *avctx, QSVEncContext *q)
+@@ -2133,6 +2162,131 @@ static void print_interlace_msg(AVCodecContext *avctx, QSVEncContext *q)
      }
  }
  
@@ -218,7 +218,7 @@ index fc1b8795d8..ee3742f95f 100644
  static int set_roi_encode_ctrl(AVCodecContext *avctx, const AVFrame *frame,
                                 mfxEncodeCtrl *enc_ctrl)
  {
-@@ -2517,7 +2671,20 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
+@@ -2521,7 +2675,20 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
          q->set_encode_ctrl_cb(avctx, frame, enc_ctrl);
      }
  
@@ -240,7 +240,7 @@ index fc1b8795d8..ee3742f95f 100644
           avctx->codec_id == AV_CODEC_ID_H265) &&
           enc_ctrl && QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 8)) {
          ret = set_roi_encode_ctrl(avctx, frame, enc_ctrl);
-@@ -2752,6 +2919,10 @@ int ff_qsv_enc_close(AVCodecContext *avctx, QSVEncContext *q)
+@@ -2756,6 +2923,10 @@ int ff_qsv_enc_close(AVCodecContext *avctx, QSVEncContext *q)
      av_freep(&q->extparam_str);
      av_freep(&q->extparam);
  
@@ -252,7 +252,7 @@ index fc1b8795d8..ee3742f95f 100644
  }
  
 diff --git a/libavcodec/qsvenc.h b/libavcodec/qsvenc.h
-index 4bc77f2f7c..b0c4ee4283 100644
+index 4bc77f2f7c9db6ac56cfaf4d994e4891f4364069..b0c4ee4283e1ef017fbca50860284972c263999c 100644
 --- a/libavcodec/qsvenc.h
 +++ b/libavcodec/qsvenc.h
 @@ -39,6 +39,13 @@
@@ -288,7 +288,7 @@ index 4bc77f2f7c..b0c4ee4283 100644
  
      int co2_idx;
 diff --git a/libavcodec/qsvenc_h264.c b/libavcodec/qsvenc_h264.c
-index 7d39338d6a..a1af783dc1 100644
+index 7d39338d6ae4820258394832d2fdc191f4504dd7..a1af783dc1a3645a01ef06a4d9270641ec501eea 100644
 --- a/libavcodec/qsvenc_h264.c
 +++ b/libavcodec/qsvenc_h264.c
 @@ -101,6 +101,8 @@ static av_cold int qsv_enc_close(AVCodecContext *avctx)
@@ -301,7 +301,7 @@ index 7d39338d6a..a1af783dc1 100644
      QSV_OPTION_MAX_FRAME_SIZE
      QSV_OPTION_MAX_SLICE_SIZE
 diff --git a/libavcodec/qsvenc_hevc.c b/libavcodec/qsvenc_hevc.c
-index ae3981fb72..32855b7001 100644
+index ae3981fb721899dd3f6fd802920d9beafcb48a91..32855b7001f8871053deb00a813385a30cfb785f 100644
 --- a/libavcodec/qsvenc_hevc.c
 +++ b/libavcodec/qsvenc_hevc.c
 @@ -305,6 +305,8 @@ static av_cold int qsv_enc_close(AVCodecContext *avctx)
@@ -314,5 +314,5 @@ index ae3981fb72..32855b7001 100644
      QSV_OPTION_MAX_FRAME_SIZE
      QSV_OPTION_MAX_SLICE_SIZE
 -- 
-2.54.0
+2.55.0
 

@@ -35,7 +35,6 @@
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
-#include "libavutil/vulkan_spirv.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -78,95 +77,12 @@ typedef struct PelorusDebandVulkanContext {
     int64_t frame_idx;
 } PelorusDebandVulkanContext;
 
-/* Pure GLSL helpers + the deband() function, spliced verbatim (avoids the
- * comma-in-C()-macro hazard). Kept in lockstep with the standalone reference
- * shader libpelorus/shaders/pelorus_deband.comp. */
-static const char deband_glsl[] =
-    "float frand(vec2 p) {\n"
-    "    return fract(sin(p.x * 12.9898 + p.y * 78.233) * 43758.545);\n"
-    "}\n"
-    "float hash3(ivec2 p, uint s) {\n"
-    "    uint h = uint(p.x) * 73856093u ^ uint(p.y) * 19349663u ^ s * 83492791u;\n"
-    "    h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;\n"
-    "    return float(h & 0x00FFFFFFu) / float(0x01000000u);\n"
-    "}\n"
-    "float urand(ivec2 p, uint s, int salt) {\n"
-    "    return hash3(p + ivec2(salt * 101, salt * 131), s + uint(salt) * 2654435761u);\n"
-    "}\n"
-    "float tpdf(ivec2 p, uint s, int salt) {\n"
-    "    return urand(p, s, salt) + urand(p, s, salt + 57) - 1.0;\n"
-    "}\n"
-    "float bayer8(ivec2 p) {\n"
-    "    int x = p.x & 7; int y = p.y & 7; int v = 0;\n"
-    "    for (int b = 0; b < 3; b++) {\n"
-    "        v = (v << 2) | (((x >> (2 - b)) & 1) << 1)\n"
-    "                     | (((x >> (2 - b)) & 1) ^ ((y >> (2 - b)) & 1));\n"
-    "    }\n"
-    "    return float(v) / 64.0;\n"
-    "}\n"
-    "vec4 pel_fetch(int idx, ivec2 p, ivec2 sz) {\n"
-    "    return imageLoad(input_images[idx], clamp(p, ivec2(0), sz - ivec2(1)));\n"
-    "}\n"
-    "void deband(const ivec2 pos, const int idx, float thr_p, float grain_p) {\n"
-    "    const float TWO_PI = 6.28318530718;\n"
-    "    const float GOLDEN = 2.39996322973;\n"
-    "    ivec2 sz = imageSize(output_images[idx]);\n"
-    "    vec4 S = imageLoad(input_images[idx], pos);\n"
-    "    bool dynG = (flags & 1) != 0;\n"
-    "    bool protectD = (flags & 2) != 0;\n"
-    "    float r = dynG ? hash3(pos, frame_seed) : frand(vec2(pos));\n"
-    "    float dir = r * TWO_PI;\n"
-    "    if (sample_mode == 4) dir += float(frame_seed) * GOLDEN;\n"
-    "    float dist = r * float(range);\n"
-    "    ivec2 off = ivec2(round(cos(dir) * dist), round(sin(dir) * dist));\n"
-    "    vec4 r0; vec4 r1; vec4 r2; vec4 r3; vec4 avg; int N;\n"
-    "    if (sample_mode == 1) {\n"
-    "        r0 = pel_fetch(idx, pos + ivec2(0, off.y), sz);\n"
-    "        r1 = pel_fetch(idx, pos - ivec2(0, off.y), sz);\n"
-    "        avg = (r0 + r1) * 0.5; N = 2;\n"
-    "    } else if (sample_mode == 3) {\n"
-    "        r0 = pel_fetch(idx, pos + ivec2(off.x, 0), sz);\n"
-    "        r1 = pel_fetch(idx, pos - ivec2(off.x, 0), sz);\n"
-    "        avg = (r0 + r1) * 0.5; N = 2;\n"
-    "    } else {\n"
-    "        r0 = pel_fetch(idx, pos + ivec2( off.x,  off.y), sz);\n"
-    "        r1 = pel_fetch(idx, pos + ivec2( off.x, -off.y), sz);\n"
-    "        r2 = pel_fetch(idx, pos + ivec2(-off.x, -off.y), sz);\n"
-    "        r3 = pel_fetch(idx, pos + ivec2(-off.x,  off.y), sz);\n"
-    "        avg = (r0 + r1 + r2 + r3) * 0.25; N = 4;\n"
-    "    }\n"
-    "    vec4 thr = vec4(thr_p);\n"
-    "    vec4 d = abs(S - avg);\n"
-    "    vec4 maxd = (N == 4) ? max(max(abs(S - r0), abs(S - r1)),\n"
-    "                                max(abs(S - r2), abs(S - r3)))\n"
-    "                         : max(abs(S - r0), abs(S - r1));\n"
-    "    vec4 w;\n"
-    "    if (blur_mode == 0 && softness > 0.0) {\n"
-    "        w = smoothstep(vec4(0.0), vec4(1.0),\n"
-    "                       clamp(1.0 - d / max(thr, vec4(1e-6)), 0.0, 1.0));\n"
-    "    } else if (blur_mode == 0) {\n"
-    "        w = vec4(lessThan(d, thr));\n"
-    "    } else {\n"
-    "        w = vec4(lessThan(maxd, thr));\n"
-    "    }\n"
-    "    if (protectD) {\n"
-    "        float cnt = float(N + 1);\n"
-    "        vec4 mean = (S + r0 + r1 + ((N == 4) ? (r2 + r3) : vec4(0.0))) / cnt;\n"
-    "        vec4 acc = (S - mean) * (S - mean)\n"
-    "                 + (r0 - mean) * (r0 - mean) + (r1 - mean) * (r1 - mean);\n"
-    "        if (N == 4) acc += (r2 - mean) * (r2 - mean) + (r3 - mean) * (r3 - mean);\n"
-    "        vec4 activity = sqrt(acc / cnt);\n"
-    "        vec4 protect = smoothstep(vec4(detail_thr), vec4(detail_thr * 2.0), activity);\n"
-    "        w *= (vec4(1.0) - protect);\n"
-    "    }\n"
-    "    vec4 base = mix(S, avg, w);\n"
-    "    if (dither_mode != 0 && grain_p > 0.0) {\n"
-    "        float n = (dither_mode == 1) ? (bayer8(pos) - 0.5) * 2.0\n"
-    "                                     : tpdf(pos, dynG ? frame_seed : 0u, idx);\n"
-    "        base += vec4(n * grain_p) * mix(vec4(0.25), vec4(1.0), w);\n"
-    "    }\n"
-    "    imageStore(output_images[idx], pos, clamp(base, vec4(0.0), vec4(1.0)));\n"
-    "}\n";
+/* The deband algorithm now lives in vulkan/pelorus_deband.comp.glsl, compiled
+ * to SPIR-V at build time and linked in here. FFmpeg 9 removed the runtime
+ * GLSL builder (GLSLC/GLSLF/GLSLD + ff_vk_shader_init), which also retires the
+ * old inline-vs-reference lockstep duplication. */
+extern const unsigned char ff_pelorus_deband_comp_spv_data[];
+extern const unsigned int  ff_pelorus_deband_comp_spv_len;
 
 static av_cold int init_filter(AVFilterContext *ctx)
 {
@@ -174,11 +90,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
     int i;
     PelorusDebandVulkanContext *s = ctx->priv;
     FFVulkanContext *vkctx = &s->vkctx;
-    FFVulkanShader *shd = &s->shd; /* GLSL macros require a var named `shd` */
-    FFVkSPIRVCompiler *spv;
-    uint8_t *spv_data = NULL;
-    size_t spv_len = 0;
-    void *spv_opaque = NULL;
+    FFVulkanShader *shd = &s->shd;
     const int planes = av_pix_fmt_count_planes(vkctx->output_format);
 
     /* Broadcast luma/chroma scalars into the per-plane vec4s. */
@@ -194,12 +106,6 @@ static av_cold int init_filter(AVFilterContext *ctx)
     if (s->protect_detail)
         s->opts.flags |= PEL_DEBAND_FLAG_PROTECT_DETAIL;
 
-    spv = ff_vk_spirv_init();
-    if (!spv) {
-        av_log(ctx, AV_LOG_ERROR, "Unable to initialize SPIR-V compiler!\n");
-        return AVERROR_EXTERNAL;
-    }
-
     s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
     if (!s->qf) {
         av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
@@ -208,22 +114,16 @@ static av_cold int init_filter(AVFilterContext *ctx)
     }
 
     RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
-    RET(ff_vk_shader_init(vkctx, shd, "pelorus_deband",
-                          VK_SHADER_STAGE_COMPUTE_BIT, NULL, 0, 32, 32, 1, 0));
+    /* Plane count and the plane bitmask were const-folded into the generated
+     * GLSL before FFmpeg 9 unrolled the per-plane loop in C. With precompiled
+     * SPIR-V they become specialization constants instead. */
+    SPEC_LIST_CREATE(sl, 2, 2 * sizeof(uint32_t))
+    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
+    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
 
-    GLSLC(0, layout(push_constant, std430) uniform pushConstants {            );
-    GLSLC(1,     vec4  thr;                                                   );
-    GLSLC(1,     vec4  grain;                                                 );
-    GLSLC(1,     int   range;                                                 );
-    GLSLC(1,     int   sample_mode;                                           );
-    GLSLC(1,     int   blur_mode;                                             );
-    GLSLC(1,     int   dither_mode;                                           );
-    GLSLC(1,     float softness;                                              );
-    GLSLC(1,     float detail_thr;                                            );
-    GLSLC(1,     int   flags;                                                 );
-    GLSLC(1,     uint  frame_seed;                                            );
-    GLSLC(0, };                                                               );
-    GLSLC(0,                                                                  );
+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
+                      (uint32_t []) { 32, 32, 1 }, 0);
+
     ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts),
                                 VK_SHADER_STAGE_COMPUTE_BIT);
 
@@ -250,38 +150,17 @@ static av_cold int init_filter(AVFilterContext *ctx)
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
             },
         };
-        RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0, 0));
+        ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
     }
 
-    GLSLD(deband_glsl);
-    GLSLC(0, void main()                                                      );
-    GLSLC(0, {                                                                );
-    GLSLC(1,     ivec2 size;                                                  );
-    GLSLC(1,     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);           );
-    for (i = 0; i < planes; i++) {
-        GLSLC(0,                                                              );
-        GLSLF(1, size = imageSize(output_images[%i]);                       ,i);
-        GLSLC(1, if (!IS_WITHIN(pos, size)) return;                           );
-        if (s->planes & (1 << i)) {
-            GLSLF(1, deband(pos, %i, thr[%i], grain[%i]);                ,i,i,i);
-        } else {
-            GLSLF(1, imageStore(output_images[%i], pos, imageLoad(input_images[%i], pos)); ,i, i);
-        }
-    }
-    GLSLC(0, }                                                                );
-
-    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
-                            &spv_opaque));
-    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
+    RET(ff_vk_shader_link(vkctx, shd,
+                          ff_pelorus_deband_comp_spv_data,
+                          ff_pelorus_deband_comp_spv_len, "main"));
     RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 
     s->initialized = 1;
 
 fail:
-    if (spv_opaque)
-        spv->free_shader(spv, &spv_opaque);
-    if (spv)
-        spv->uninit(&spv);
     return err;
 }
 
@@ -357,7 +236,7 @@ static int pelorus_deband_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     s->opts.frame_seed = (uint32_t)(s->frame_idx++);
 
     RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in,
-                                    VK_NULL_HANDLE, &s->opts, sizeof(s->opts)));
+                                    VK_NULL_HANDLE, 1, &s->opts, sizeof(s->opts)));
 
     err = av_frame_copy_props(out, in);
     if (err < 0)

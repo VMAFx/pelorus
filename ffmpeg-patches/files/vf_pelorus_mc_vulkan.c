@@ -44,8 +44,10 @@
  * motion-compensated denoise consumer, which the winning-SAD per-block
  * confidence (a follow-up) gates so noise-matched vectors are not trusted.
  *
- * The algorithm is kept in lockstep with the standalone reference shader
- * libpelorus/shaders/pelorus_mc.comp (AGENTS hard rule 4).
+ * The search itself lives in vulkan/pelorus_mc.comp.glsl, compiled to SPIR-V at
+ * build time and linked in here. FFmpeg 9 removed the runtime GLSL builder
+ * (GLSLC/GLSLD + ff_vk_shader_init), which also retires the old
+ * inline-vs-reference lockstep duplication.
  */
 
 #include "libavutil/buffer.h"
@@ -54,7 +56,6 @@
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
-#include "libavutil/vulkan_spirv.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -67,85 +68,24 @@
 
 /* Workgroup edge: the max supported block size. The active block edge (bsize
  * AVOption, <= PEL_MC_BLOCK_DIM) gates which lanes contribute, so one pipeline
- * serves every bsize. Kept byte-identical to BLOCK_DIM in pelorus_mc.comp. */
+ * serves every bsize. Passed to the shader as specialization constant 0
+ * (`block_dim`), which sizes its shared SAD-partial array. */
 #define PEL_MC_BLOCK_DIM 32
 
-/* SAD-reduction lane count, derived from the block dim so a PEL_MC_BLOCK_DIM
- * change propagates into the inline GLSL (lockstep with pelorus_mc.comp's
- * BLOCK_DIM*BLOCK_DIM shared-array + tree-reduction expressions, rather than a
- * silently-diverging hardcoded 1024/512). */
-#define PEL_MC_SAD_LANES_STR AV_STRINGIFY(PEL_MC_BLOCK_DIM * PEL_MC_BLOCK_DIM)
-
 /* SAD fixed-point scale shared by shader writes and host reads (the SAD is
- * summed over a block in normalized [0,1] luma). Mirrors SAD_SCALE in the .comp. */
+ * summed over a block in normalized [0,1] luma). Mirrors SAD_SCALE in
+ * vulkan/pelorus_mc.comp.glsl. */
 #define PEL_MC_SAD_SCALE 256.0
 
-/* Pure GLSL helpers + block_sad/eval_candidate, spliced verbatim (avoids the
- * comma-in-C()-macro hazard). Kept in LOCKSTEP with the standalone reference
- * shader libpelorus/shaders/pelorus_mc.comp. Normalized-float domain: imageLoad
- * over the FF_VK_REP_FLOAT image array returns [0,1] directly (no /65535). The
- * current frame's luma is cur_image[0], the reference (previous) frame's luma is
- * ref_image[0]. */
-static const char mc_glsl[] =
-    "const float SAD_SCALE = 256.0;\n"
-    /* One slot per invocation (worst case subgroupSize==1 => BLOCK_DIM*BLOCK_DIM
-     * subgroups). gl_SubgroupID indexes this, so a smaller size OOB-writes. Sized
-     * from the lane-count macro so a BLOCK_DIM change propagates. */
-    "shared float s_part[" PEL_MC_SAD_LANES_STR "];\n"
-    "shared float s_sad0;\n" /* block-SAD reduction result                  */
-    "shared int   s_best_x;\n"
-    "shared int   s_best_y;\n"
-    "shared float s_best_cost;\n"
-    "float fetchCur(int px, int py) {\n"
-    "    px = clamp(px, 0, width  - 1);\n"
-    "    py = clamp(py, 0, height - 1);\n"
-    "    return imageLoad(cur_image[0], ivec2(px, py)).x;\n"
-    "}\n"
-    "float fetchRef(int px, int py) {\n"
-    "    px = clamp(px, 0, width  - 1);\n"
-    "    py = clamp(py, 0, height - 1);\n"
-    "    return imageLoad(ref_image[0], ivec2(px, py)).x;\n"
-    "}\n"
-    "float block_sad(int blk_x, int blk_y, int mvx, int mvy, uint lidx,\n"
-    "                int lx, int ly) {\n"
-    "    float d = 0.0;\n"
-    "    if (lx < bsize && ly < bsize) {\n"
-    "        int cx = blk_x + lx;\n"
-    "        int cy = blk_y + ly;\n"
-    "        float c = fetchCur(cx, cy);\n"
-    "        float r = fetchRef(cx + mvx, cy + mvy);\n"
-    "        d = abs(c - r);\n"
-    "    }\n"
-    /* Two-level reduction: sum within each subgroup (one op, no shared traffic),
-     * then lane 0 combines the per-subgroup partials. Replaces the 10-step
-     * shared-memory barrier tree — mc is the throughput bottleneck and block_sad
-     * runs once per search candidate. */
-    "    float sg = subgroupAdd(d);\n"
-    "    if (subgroupElect()) s_part[gl_SubgroupID] = sg;\n"
-    "    barrier();\n"
-    "    if (lidx == 0u) {\n"
-    "        float t = 0.0;\n"
-    "        for (uint i = 0u; i < gl_NumSubgroups; i++) t += s_part[i];\n"
-    "        s_sad0 = t;\n"
-    "    }\n"
-    "    barrier();\n"
-    "    return s_sad0;\n"
-    "}\n"
-    "void eval_candidate(int blk_x, int blk_y, int cand_x, int cand_y, uint lidx,\n"
-    "                    int lx, int ly) {\n"
-    "    cand_x = clamp(cand_x, -search, search);\n"
-    "    cand_y = clamp(cand_y, -search, search);\n"
-    "    float cost = block_sad(blk_x, blk_y, cand_x, cand_y, lidx, lx, ly);\n"
-    "    if (lidx == 0u && cost < s_best_cost) {\n"
-    "        s_best_cost = cost;\n"
-    "        s_best_x = cand_x;\n"
-    "        s_best_y = cand_y;\n"
-    "    }\n"
-    "    barrier();\n"
-    "}\n";
+/* The search lives in vulkan/pelorus_mc.comp.glsl and is compiled to SPIR-V at
+ * build time; bin2c names the blob after the shader's path basename. The block
+ * dim is handed to it as specialization constant 0 (it sizes the shared
+ * SAD-partial array), so PEL_MC_BLOCK_DIM stays the single definition. */
+extern const unsigned char ff_pelorus_mc_comp_spv_data[];
+extern const unsigned int  ff_pelorus_mc_comp_spv_len;
 
-/* Per-frame push constants. Mirrors the GLSL std430 block below + Params in the
- * .comp, byte-for-byte. */
+/* Per-frame push constants. Mirrors the std430 push-constant block in
+ * vulkan/pelorus_mc.comp.glsl, byte-for-byte. */
 typedef struct PelorusMcPush {
     int32_t width;     /*  0 */
     int32_t height;    /*  4 */
@@ -198,17 +138,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
     int err = 0;
     PelorusMcVulkanContext *s = ctx->priv;
     FFVulkanContext *vkctx = &s->vkctx;
-    FFVulkanShader *shd = &s->shd; /* GLSL macros require a var named `shd` */
-    FFVkSPIRVCompiler *spv;
-    uint8_t *spv_data = NULL;
-    size_t spv_len = 0;
-    void *spv_opaque = NULL;
-
-    spv = ff_vk_spirv_init();
-    if (!spv) {
-        av_log(ctx, AV_LOG_ERROR, "Unable to initialize SPIR-V compiler!\n");
-        return AVERROR_EXTERNAL;
-    }
+    FFVulkanShader *shd = &s->shd;
 
     s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
     if (!s->qf) {
@@ -218,25 +148,18 @@ static av_cold int init_filter(AVFilterContext *ctx)
     }
 
     RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
-    RET(ff_vk_shader_init(vkctx, shd, "pelorus_mc",
-                          VK_SHADER_STAGE_COMPUTE_BIT,
-                          (const char *[]){ "GL_KHR_shader_subgroup_basic",
-                                            "GL_KHR_shader_subgroup_arithmetic" }, 2,
-                          PEL_MC_BLOCK_DIM, PEL_MC_BLOCK_DIM, 1, 0));
+    /* PEL_MC_BLOCK_DIM was const-folded into the generated GLSL before FFmpeg 9
+     * (workgroup size + the shared SAD-partial array bound). With precompiled
+     * SPIR-V the workgroup size rides the reserved 253/254/255 IDs and the array
+     * bound becomes specialization constant 0. The subgroup extensions the SAD
+     * reduction needs (GL_KHR_shader_subgroup_basic / _arithmetic) are declared
+     * by the shader source itself now, not passed in here. */
+    SPEC_LIST_CREATE(sl, 1, sizeof(uint32_t))
+    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)PEL_MC_BLOCK_DIM);
 
-    GLSLC(0, layout(push_constant, std430) uniform pushConstants {            );
-    GLSLC(1,     int   width;                                                 );
-    GLSLC(1,     int   height;                                                );
-    GLSLC(1,     int   grid_cols;                                             );
-    GLSLC(1,     int   grid_rows;                                             );
-    GLSLC(1,     int   bsize;                                                 );
-    GLSLC(1,     int   search;                                                );
-    GLSLC(1,     int   gpred_x;                                               );
-    GLSLC(1,     int   gpred_y;                                               );
-    GLSLC(1,     int   has_prev;                                              );
-    GLSLC(1,     int   _pad0;                                                 );
-    GLSLC(0, };                                                               );
-    GLSLC(0,                                                                  );
+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
+                      (uint32_t []) { PEL_MC_BLOCK_DIM, PEL_MC_BLOCK_DIM, 1 }, 0);
+
     ff_vk_shader_add_push_const(shd, 0, sizeof(PelorusMcPush),
                                 VK_SHADER_STAGE_COMPUTE_BIT);
 
@@ -300,96 +223,17 @@ static av_cold int init_filter(AVFilterContext *ctx)
                 .buf_content = "int prev_mv[];",
             },
         };
-        RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc, 6, 0, 0));
+        ff_vk_shader_add_descriptor_set(vkctx, shd, desc, 6, 0);
     }
 
-    GLSLD(mc_glsl);
-    GLSLC(0, void main()                                                      );
-    GLSLC(0, {                                                                );
-    GLSLC(1,     int bx = int(gl_WorkGroupID.x);                              );
-    GLSLC(1,     int by = int(gl_WorkGroupID.y);                              );
-    GLSLC(1,     if (bx >= grid_cols || by >= grid_rows)                      );
-    GLSLC(2,         return;                                                  );
-    GLSLC(1,     int bidx  = by * grid_cols + bx;                             );
-    GLSLC(1,     int blk_x = bx * bsize;                                      );
-    GLSLC(1,     int blk_y = by * bsize;                                      );
-    GLSLC(1,     uint lidx = gl_LocalInvocationIndex;                         );
-    GLSLC(1,     int  lx   = int(gl_LocalInvocationID.x);                     );
-    GLSLC(1,     int  ly   = int(gl_LocalInvocationID.y);                     );
-    /* Frame 0 / no reference: emit a zero MV, no search. has_prev is a push
-     * constant, so the whole workgroup takes this branch uniformly and returns
-     * together — the lane-0-only writes before the barrier-free return are safe
-     * ONLY because the exit is uniform (do not gate on a non-uniform cond). */
-    GLSLC(1,     if (has_prev == 0) {                                         );
-    GLSLC(2,         if (lidx == 0u) {                                        );
-    GLSLC(3,             mv_x[bidx]    = 0;                                    );
-    GLSLC(3,             mv_y[bidx]    = 0;                                    );
-    GLSLC(3,             sad_out[bidx] = 0u;                                  );
-    GLSLC(2,         }                                                        );
-    GLSLC(2,         return;                                                  );
-    GLSLC(1,     }                                                            );
-    GLSLC(1,     if (lidx == 0u) {                                            );
-    GLSLC(2,         s_best_cost = 1e30;                                      );
-    GLSLC(2,         s_best_x = 0;                                            );
-    GLSLC(2,         s_best_y = 0;                                            );
-    GLSLC(1,     }                                                            );
-    GLSLC(1,     barrier();                                                   );
-    GLSLC(1,     eval_candidate(blk_x, blk_y, 0, 0, lidx, lx, ly);            );
-    GLSLC(1,     eval_candidate(blk_x, blk_y, gpred_x, gpred_y, lidx, lx, ly););
-    GLSLC(1,     eval_candidate(blk_x, blk_y, prev_mv[2 * bidx], prev_mv[2 * bidx + 1], lidx, lx, ly); );
-    GLSLC(1,     int step = max(search / 2, 1);                               );
-    GLSLC(1,     int guard = 0;                                               );
-    GLSLC(1,     while (step > 0 && guard < 64) {                             );
-    GLSLC(2,         int cx = s_best_x;                                       );
-    GLSLC(2,         int cy = s_best_y;                                       );
-    GLSLC(2,         eval_candidate(blk_x, blk_y, cx - step, cy,        lidx, lx, ly); );
-    GLSLC(2,         eval_candidate(blk_x, blk_y, cx + step, cy,        lidx, lx, ly); );
-    GLSLC(2,         eval_candidate(blk_x, blk_y, cx,        cy - step, lidx, lx, ly); );
-    GLSLC(2,         eval_candidate(blk_x, blk_y, cx,        cy + step, lidx, lx, ly); );
-    GLSLC(2,         if (s_best_x == cx && s_best_y == cy)                    );
-    GLSLC(3,             step = step >> 1;                                    );
-    GLSLC(2,         guard++;                                                 );
-    GLSLC(1,     }                                                            );
-    /* Sub-pel refinement: fit a parabola to the SAD surface across the integer
-     * minimum and its 4 axis-neighbours; the vertex gives a [-0.5,0.5] offset
-     * per axis. Emit the MV in QUARTER-PEL fixed-point (stored = round(pel*4)).
-     * The four extra block_sad() calls are cooperative (whole workgroup, barrier
-     * internally); the leading barrier publishes the search's s_best_* to all
-     * lanes, and a barrier after each SAD prevents a WAR race on s_sad[]. */
-    GLSLC(1,     barrier();                                                   );
-    GLSLC(1,     int   bxi = s_best_x;                                        );
-    GLSLC(1,     int   byi = s_best_y;                                        );
-    GLSLC(1,     float sc  = s_best_cost;                                     );
-    GLSLC(1,     float sl  = block_sad(blk_x, blk_y, bxi - 1, byi,     lidx, lx, ly); );
-    GLSLC(1,     barrier();                                                   );
-    GLSLC(1,     float sr  = block_sad(blk_x, blk_y, bxi + 1, byi,     lidx, lx, ly); );
-    GLSLC(1,     barrier();                                                   );
-    GLSLC(1,     float st  = block_sad(blk_x, blk_y, bxi,     byi - 1, lidx, lx, ly); );
-    GLSLC(1,     barrier();                                                   );
-    GLSLC(1,     float sb  = block_sad(blk_x, blk_y, bxi,     byi + 1, lidx, lx, ly); );
-    GLSLC(1,     if (lidx == 0u) {                                            );
-    GLSLC(2,         float dx2 = sl - 2.0 * sc + sr;                          );
-    GLSLC(2,         float dy2 = st - 2.0 * sc + sb;                          );
-    GLSLC(2,         float sx  = (dx2 > 1e-6) ? clamp(0.5 * (sl - sr) / dx2, -0.5, 0.5) : 0.0; );
-    GLSLC(2,         float sy  = (dy2 > 1e-6) ? clamp(0.5 * (st - sb) / dy2, -0.5, 0.5) : 0.0; );
-    GLSLC(2,         mv_x[bidx]    = int(round((float(bxi) + sx) * 4.0));     );
-    GLSLC(2,         mv_y[bidx]    = int(round((float(byi) + sy) * 4.0));     );
-    GLSLC(2,         sad_out[bidx] = uint(clamp(sc, 0.0, 1e6) * SAD_SCALE);   );
-    GLSLC(1,     }                                                            );
-    GLSLC(0, }                                                                );
-
-    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
-                            &spv_opaque));
-    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
+    RET(ff_vk_shader_link(vkctx, shd,
+                          ff_pelorus_mc_comp_spv_data,
+                          ff_pelorus_mc_comp_spv_len, "main"));
     RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 
     s->initialized = 1;
 
 fail:
-    if (spv_opaque)
-        spv->free_shader(spv, &spv_opaque);
-    if (spv)
-        spv->uninit(&spv);
     return err;
 }
 

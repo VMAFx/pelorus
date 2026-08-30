@@ -38,3 +38,8 @@ __pycache__/
 /.cache/
 /.vscode/
 /compile_commands.json
+builddir/
+build-run/
+build-san/
+.bench-out/
+x265_2pass.log*

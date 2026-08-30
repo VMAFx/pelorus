@@ -1,3 +1,12 @@
+# !! UPSTREAM URL IS DEAD (verified 2026-08-30) !!
+# download.blender.org returns nginx 404 for BigBuckBunny_640x360.m4v, for both HEAD
+# and ranged GET, and the file is absent from every mirror checked. The harness is
+# therefore NOT reproducible on a machine without a warm .bench-corpus/ cache.
+#
+# Deliberately NOT re-pinned to a different clip: the sha256 below is what every
+# number in docs/development/bench-results.md was measured against, so swapping the
+# source would silently invalidate the whole history rather than fix anything.
+# Re-pinning is a decision that resets the baseline and must be taken explicitly.
 # Pinned benchmark corpus — repeatable proof inputs. One clip per line:
 #   name | url | sha256 | ffmpeg-input-seek-args | scale | pixfmt | frames | fps
 # fetch-corpus.sh downloads (cached), verifies the sha256, and extracts the

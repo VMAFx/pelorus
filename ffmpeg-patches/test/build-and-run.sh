@@ -9,16 +9,16 @@
 # loader + headers, and a SPIR-V compiler (libshaderc or libglslang).
 #
 # Env:
-#   FFMPEG_REPO  path to a FFmpeg git checkout      (default /home/kilian/dev/ffmpeg-8)
-#   BASE_TAG     base tag to apply onto             (default n8.1.1)
+#   FFMPEG_REPO  path to a FFmpeg git checkout      (default /home/kilian/dev/ffmpeg-9)
+#   BASE_TAG     base tag to apply onto             (default n9.0.1)
 #   WORKTREE     scratch worktree path              (default /tmp/pelorus-ffmpeg-test)
 #   JOBS         make -j value                      (default nproc)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PATCHDIR="$(dirname "$HERE")"
-FFMPEG_REPO="${FFMPEG_REPO:-/home/kilian/dev/ffmpeg-8}"
-BASE_TAG="${BASE_TAG:-n8.1.1}"
+FFMPEG_REPO="${FFMPEG_REPO:-/home/kilian/dev/ffmpeg-9}"
+BASE_TAG="${BASE_TAG:-n9.0.1}"
 WORKTREE="${WORKTREE:-/tmp/pelorus-ffmpeg-test}"
 JOBS="${JOBS:-$(nproc)}"
 

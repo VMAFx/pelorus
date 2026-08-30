@@ -1,7 +1,9 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0114: Encoder-steering strategy — feed Pelorus GPU maps to every encoder we can
 
-- **Status**: Proposed
+- **Status**: Accepted (2026-08-30) — implemented across all five encoder legs and
+  shipped in the patch stack: NVENC ROI (0004), QSV ROI (0005), Vulkan QP-map
+  Tier 2 (0009), NVENC ME hints (0008), libaom ROI (0012), SVT-AV1 ROI (0013)
 - **Date**: 2026-06-14
 - **Deciders**: Lusoris
 - **Tags**: encoder, roi, qp-map, nvenc, qsv, amf, vulkan-video, roadmap, strategy

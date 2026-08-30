@@ -27,13 +27,13 @@
  * trip it would cost. Bit-depth-agnostic (FF_VK_REP_FLOAT UNORM); processes all
  * planes by default (the dirty band is in luma and chroma alike).
  *
- * Kept in lockstep with libpelorus/shaders/pelorus_borderfix.comp (AGENTS r4).
+ * The algorithm lives in vulkan/pelorus_borderfix.comp.glsl, compiled to
+ * SPIR-V at build time and linked in here.
  * The band widths are interpreted in each plane's own pixels.
  */
 
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
-#include "libavutil/vulkan_spirv.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -49,7 +49,7 @@ typedef struct PelorusBorderfixVulkanContext {
     AVVulkanDeviceQueueFamily *qf;
     FFVulkanShader shd;
 
-    /* push constants — mirror the GLSL std430 block below, byte-for-byte */
+    /* push constants — mirror the std430 block in the .comp.glsl, byte-for-byte */
     struct {
         int32_t left;
         int32_t right;
@@ -60,37 +60,20 @@ typedef struct PelorusBorderfixVulkanContext {
     int planes; /* plane bitmask to process (all planes by default)          */
 } PelorusBorderfixVulkanContext;
 
-/* Pure GLSL borderfix(), spliced verbatim. Kept in lockstep with the reference
- * shader libpelorus/shaders/pelorus_borderfix.comp — the only intended
- * difference is the working domain: the .comp reads r16ui, this inline form
- * reads FF_VK_REP_FLOAT (UNORM) images. */
-static const char borderfix_glsl[] =
-    "void borderfix(ivec2 pos, int idx) {\n"
-    "    ivec2 sz = imageSize(output_images[idx]);\n"
-    "    int cx = clamp(pos.x, min(left, sz.x - 1), max(sz.x - 1 - right, 0));\n"
-    "    int cy = clamp(pos.y, min(top, sz.y - 1), max(sz.y - 1 - bottom, 0));\n"
-    "    imageStore(output_images[idx], pos,\n"
-    "               imageLoad(input_images[idx], ivec2(cx, cy)));\n"
-    "}\n";
+/* The borderfix algorithm now lives in vulkan/pelorus_borderfix.comp.glsl,
+ * compiled to SPIR-V at build time and linked in here. FFmpeg 9 removed the
+ * runtime GLSL builder (GLSLC/GLSLF/GLSLD + ff_vk_shader_init), which also
+ * retires the old inline-vs-reference lockstep duplication. */
+extern const unsigned char ff_pelorus_borderfix_comp_spv_data[];
+extern const unsigned int  ff_pelorus_borderfix_comp_spv_len;
 
 static av_cold int init_filter(AVFilterContext *ctx)
 {
     int err = 0;
-    int i;
     PelorusBorderfixVulkanContext *s = ctx->priv;
     FFVulkanContext *vkctx = &s->vkctx;
-    FFVulkanShader *shd = &s->shd; /* GLSL macros require a var named `shd` */
-    FFVkSPIRVCompiler *spv;
-    uint8_t *spv_data = NULL;
-    size_t spv_len = 0;
-    void *spv_opaque = NULL;
+    FFVulkanShader *shd = &s->shd;
     const int planes = av_pix_fmt_count_planes(vkctx->output_format);
-
-    spv = ff_vk_spirv_init();
-    if (!spv) {
-        av_log(ctx, AV_LOG_ERROR, "Unable to initialize SPIR-V compiler!\n");
-        return AVERROR_EXTERNAL;
-    }
 
     s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
     if (!s->qf) {
@@ -100,16 +83,16 @@ static av_cold int init_filter(AVFilterContext *ctx)
     }
 
     RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
-    RET(ff_vk_shader_init(vkctx, shd, "pelorus_borderfix",
-                          VK_SHADER_STAGE_COMPUTE_BIT, NULL, 0, 32, 32, 1, 0));
+    /* Plane count and the plane bitmask were const-folded into the generated
+     * GLSL before FFmpeg 9 unrolled the per-plane loop in C. With precompiled
+     * SPIR-V they become specialization constants instead. */
+    SPEC_LIST_CREATE(sl, 2, 2 * sizeof(uint32_t))
+    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
+    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
 
-    GLSLC(0, layout(push_constant, std430) uniform pushConstants {            );
-    GLSLC(1,     int left;                                                    );
-    GLSLC(1,     int right;                                                   );
-    GLSLC(1,     int top;                                                     );
-    GLSLC(1,     int bottom;                                                  );
-    GLSLC(0, };                                                               );
-    GLSLC(0,                                                                  );
+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
+                      (uint32_t []) { 32, 32, 1 }, 0);
+
     ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts),
                                 VK_SHADER_STAGE_COMPUTE_BIT);
 
@@ -136,38 +119,17 @@ static av_cold int init_filter(AVFilterContext *ctx)
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
             },
         };
-        RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0, 0));
+        ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
     }
 
-    GLSLD(borderfix_glsl);
-    GLSLC(0, void main()                                                      );
-    GLSLC(0, {                                                                );
-    GLSLC(1,     ivec2 size;                                                  );
-    GLSLC(1,     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);           );
-    for (i = 0; i < planes; i++) {
-        GLSLC(0,                                                              );
-        GLSLF(1, size = imageSize(output_images[%i]);                       ,i);
-        GLSLC(1, if (!IS_WITHIN(pos, size)) return;                           );
-        if (s->planes & (1 << i)) {
-            GLSLF(1, borderfix(pos, %i);                                    ,i);
-        } else {
-            GLSLF(1, imageStore(output_images[%i], pos, imageLoad(input_images[%i], pos)); ,i, i);
-        }
-    }
-    GLSLC(0, }                                                                );
-
-    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
-                            &spv_opaque));
-    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
+    RET(ff_vk_shader_link(vkctx, shd,
+                          ff_pelorus_borderfix_comp_spv_data,
+                          ff_pelorus_borderfix_comp_spv_len, "main"));
     RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 
     s->initialized = 1;
 
 fail:
-    if (spv_opaque)
-        spv->free_shader(spv, &spv_opaque);
-    if (spv)
-        spv->uninit(&spv);
     return err;
 }
 
@@ -189,7 +151,7 @@ static int pelorus_borderfix_vulkan_filter_frame(AVFilterLink *link, AVFrame *in
         RET(init_filter(ctx));
 
     RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in,
-                                    VK_NULL_HANDLE, &s->opts, sizeof(s->opts)));
+                                    VK_NULL_HANDLE, 1, &s->opts, sizeof(s->opts)));
 
     err = av_frame_copy_props(out, in);
     if (err < 0)

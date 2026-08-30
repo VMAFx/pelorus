@@ -99,11 +99,17 @@ patches consume — the **regenerated patch**. See [CONTRIBUTING.md](CONTRIBUTIN
 
 ## Project state
 
-- v0.1.0 scaffold. Landed: `libpelorus` interop ABI + smart-deband flagship
-  (`vf_pelorus_deband_vulkan`, working) + the patch stack against n8.1.1.
-  Stubs/roadmap: temporal denoise, FGS estimation + BSF, optical-flow MV hints,
-  `vf_pelorus_analyze` (measured banding/variance maps).
-- Plan + status: `.workingdir/PLAN.md` and `.workingdir/STATE.md` (local).
+- Tagged `v0.1.0`, but master is far ahead of that tag: **11 filters + 1 BSF**
+  ship as an 18-patch stack. Working: deband, analyze, denoise, grain_estimate,
+  mc, dehalo, aa, deblock, borderfix, scenecut, and the `pelorus_fgs` BSF, plus
+  the NVENC / QSV / Vulkan / libaom / SVT-AV1 encoder-steering patches and the
+  QP-feedback path. Interop ABI is at **1.3**. Nothing in the module list is a
+  stub any more — treat the README "Modules" table as the current inventory.
+- **Base tag is FFmpeg `n9.0.1`** (migrated from n8.1.1; FFmpeg 9 deleted the
+  runtime inline-GLSL shader API, so filters now ship precompiled SPIR-V — see
+  `.workingdir/FFMPEG9-MIGRATION-BRIEF.md`).
+- Plan + status: `.workingdir/PLAN.md` and `.workingdir/STATE.md` (local), plus
+  `.workingdir/AUDIT-2026-08-30.md` for the open maintenance backlog.
 
 ## Every commit: keep docs + state in sync
 

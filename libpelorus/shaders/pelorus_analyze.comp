@@ -10,9 +10,9 @@
  * memory, then one thread atomic-accumulates fixed-point contributions into a
  * sliced SSBO (slices cut atomic contention, summed on the host).
  *
- * The in-tree FFmpeg filter emits an equivalent reduction inline via GLSLC
- * against normalized float images; the shared algorithm — and what rule 4
- * (AGENTS.md) keeps in lockstep — is the per-tile reduction math: tile mean,
+ * The shipped shader (ffmpeg-patches/files/vulkan/pelorus_analyze.comp.glsl,
+ * compiled to SPIR-V at build time, ADR-0143) runs the same reduction against
+ * normalized float images. The algorithm both express is the per-tile math: tile mean,
  * variance, mean edge density and the low-amplitude (flat-but-not-constant)
  * gradient. The inline filter additionally reads the reduction back as a
  * per-tile struct-of-arrays (var/edge/grad/valid/mean) to drive ROI steering,

@@ -12,24 +12,65 @@
 # 0002 analyze on top) is the artifact; files/ is the source of truth.
 #
 # Usage:
-#   FFMPEG_REPO=/path/to/ffmpeg BASE_TAG=n8.1.1 ./generate.sh
+#   FFMPEG_REPO=/path/to/ffmpeg BASE_TAG=n9.0.1 ./generate.sh
 #
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-FFMPEG_REPO="${FFMPEG_REPO:-/home/kilian/dev/ffmpeg-8}"
-BASE_TAG="${BASE_TAG:-n8.1.1}"
+FFMPEG_REPO="${FFMPEG_REPO:-/home/kilian/dev/ffmpeg-9}"
+BASE_TAG="${BASE_TAG:-n9.0.1}"
 WORKTREE="${WORKTREE:-/tmp/pelorus-ffmpeg-gen}"
 FILES_DIR="$HERE/files"
 
+# Deterministic output. `git format-patch` stamps each patch with the commit
+# Date:, so without a fixed date two runs of this script produce 18 patches that
+# differ only in a timestamp -- which makes "do the committed artifacts still
+# match generate.sh?" unanswerable, and silently hides real drift in the noise.
+# The commits are synthetic anyway (format-patch runs with --zero-commit), so a
+# fixed date costs nothing and makes regeneration byte-reproducible.
+export GIT_AUTHOR_DATE="2026-01-01T00:00:00+00:00"
+export GIT_COMMITTER_DATE="2026-01-01T00:00:00+00:00"
+
 git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE" 2>/dev/null || true
 git -C "$FFMPEG_REPO" worktree add --detach "$WORKTREE" "$BASE_TAG"
+
+# FFmpeg 9 moved Vulkan filters from runtime-built inline GLSL to shaders compiled
+# to SPIR-V at build time (ADR-0143). Each filter therefore ships a .comp.glsl that
+# must land in libavfilter/vulkan/ and be registered in that directory's Makefile,
+# which links it in as ff_pelorus_<name>_comp_spv_data[]. Idempotent: re-running
+# generate.sh must not duplicate the OBJS line.
+install_vk_shader() {
+    local name="$1"                     # e.g. deband
+    local cfg                           # e.g. CONFIG_PELORUS_DEBAND_VULKAN_FILTER
+    # The CONFIG_ prefix is load-bearing: OBJS-$(PELORUS_..._FILTER) is an
+    # UNDEFINED make variable that expands to empty, so the shader object is
+    # silently never built and the filter fails at LINK with an undefined
+    # ff_pelorus_<name>_comp_spv_data. Naming the .spv.o directly on a make
+    # command line still builds it via the pattern rule, which is exactly how
+    # this hid from a targeted build -- verify by LINKING, not by building objects.
+    cfg="CONFIG_PELORUS_$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')_VULKAN_FILTER"
+    cp "$FILES_DIR/vulkan/pelorus_${name}.comp.glsl" "$WORKTREE/libavfilter/vulkan/"
+    python3 - "$WORKTREE" "$name" "$cfg" <<'PYSHADER'
+import sys, pathlib
+root, name, cfg = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+mk = root / "libavfilter/vulkan/Makefile"
+line = f"OBJS-$({cfg}) += vulkan/pelorus_{name}.comp.spv.o\n"
+t = mk.read_text()
+if line in t:
+    raise SystemExit(0)
+if not t.endswith("\n"):
+    t += "\n"
+mk.write_text(t + line)
+print(f"shader registered: pelorus_{name}.comp.glsl -> {cfg}")
+PYSHADER
+}
 
 # One commit per filter, in stack order, so format-patch yields 0001, 0002, ...
 # Each filter's source is dropped in *inside* its own iteration so the commit's
 # `git add -A` captures only that filter's file (not later filters' sources).
 for filter in deband analyze denoise; do
     cp "$FILES_DIR/vf_pelorus_${filter}_vulkan.c" "$WORKTREE/libavfilter/"
+    install_vk_shader "$filter"
     python3 - "$WORKTREE" "$filter" <<'PY'
 import sys, pathlib
 root, which = pathlib.Path(sys.argv[1]), sys.argv[2]
@@ -47,7 +88,7 @@ def ins_after(path, anchor, line):
     p.write_text(t.replace(anchor, anchor + line, 1))
 
 # libpelorus wiring mirrors vmafx's vf_vmaf_pre: the filter depends only on
-# FFmpeg-KNOWN components (vulkan spirv_library) — `libpelorus` is NOT a known
+# FFmpeg-KNOWN components (vulkan spirv_compiler) — `libpelorus` is NOT a known
 # config name, so it must NOT appear in _deps (an unknown dep silently disables
 # the filter). The extra lib is gated by `enabled <filter> && require_pkg_config
 # libpelorus ...`, which adds its cflags/libs and hard-errors if it is missing.
@@ -57,7 +98,7 @@ LVMAF_CUDA = ('enabled libvmaf           && check_pkg_config libvmaf_cuda '
 # add_extralibs to actually link -lpelorus (otherwise ffmpeg fails at LINK time
 # with undefined references, which a compile-only check never catches).
 REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack '
+       '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack '
        '&& add_extralibs $libpelorus_extralibs\n')
 
 if which == 'deband':
@@ -68,8 +109,8 @@ if which == 'deband':
                "OBJS-$(CONFIG_PERMS_FILTER)                  += f_perms.o\n",
                "OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER)  += vf_pelorus_deband_vulkan.o vulkan.o vulkan_filter.o\n")
     ins_after("configure",
-              'overlay_vulkan_filter_deps="vulkan spirv_library"\n',
-              'pelorus_deband_vulkan_filter_deps="vulkan spirv_library"\n')
+              'overlay_vulkan_filter_deps="vulkan spirv_compiler"\n',
+              'pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"\n')
     ins_after("configure", LVMAF_CUDA, REQ % "pelorus_deband_vulkan")
 elif which == 'analyze':
     # analyze sorts before deband alphabetically; insert ahead of it.
@@ -80,8 +121,8 @@ elif which == 'analyze':
                "OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER)  += vf_pelorus_deband_vulkan.o vulkan.o vulkan_filter.o\n",
                "OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vf_pelorus_analyze_vulkan.o vulkan.o vulkan_filter.o\n")
     ins_before("configure",
-               'pelorus_deband_vulkan_filter_deps="vulkan spirv_library"\n',
-               'pelorus_analyze_vulkan_filter_deps="vulkan spirv_library"\n')
+               'pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"\n',
+               'pelorus_analyze_vulkan_filter_deps="vulkan spirv_compiler"\n')
     ins_after("configure", REQ % "pelorus_deband_vulkan", REQ % "pelorus_analyze_vulkan")
 elif which == 'denoise':
     # denoise sorts after deband alphabetically (deban < denoi); insert after it.
@@ -92,8 +133,8 @@ elif which == 'denoise':
               "OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER)  += vf_pelorus_deband_vulkan.o vulkan.o vulkan_filter.o\n",
               "OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vf_pelorus_denoise_vulkan.o vulkan.o vulkan_filter.o\n")
     ins_after("configure",
-              'pelorus_deband_vulkan_filter_deps="vulkan spirv_library"\n',
-              'pelorus_denoise_vulkan_filter_deps="vulkan spirv_library"\n')
+              'pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"\n',
+              'pelorus_denoise_vulkan_filter_deps="vulkan spirv_compiler"\n')
     ins_after("configure", REQ % "pelorus_analyze_vulkan", REQ % "pelorus_denoise_vulkan")
 else:
     sys.exit("unknown filter: " + which)
@@ -129,6 +170,7 @@ git -C "$WORKTREE" \
 # renumber of a shipped artifact). Same per-filter registration model as the
 # deband/analyze/denoise loop above.
 cp "$FILES_DIR/vf_pelorus_grain_estimate_vulkan.c" "$WORKTREE/libavfilter/"
+install_vk_shader "grain_estimate"
 python3 - "$WORKTREE" <<'PY'
 import sys, pathlib
 root = pathlib.Path(sys.argv[1])
@@ -143,7 +185,7 @@ def ins_after(path, anchor, line):
     assert line.strip() not in t, f"already present in {path}: {line!r}"
     p.write_text(t.replace(anchor, anchor + line, 1))
 REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack '
+       '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack '
        '&& add_extralibs $libpelorus_extralibs\n')
 ins_before("libavfilter/allfilters.c",
            "extern const FFFilter ff_vf_perms;\n",
@@ -152,8 +194,8 @@ ins_after("libavfilter/Makefile",
           "OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vf_pelorus_denoise_vulkan.o vulkan.o vulkan_filter.o\n",
           "OBJS-$(CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vf_pelorus_grain_estimate_vulkan.o vulkan.o vulkan_filter.o\n")
 ins_after("configure",
-          'pelorus_denoise_vulkan_filter_deps="vulkan spirv_library"\n',
-          'pelorus_grain_estimate_vulkan_filter_deps="vulkan spirv_library"\n')
+          'pelorus_denoise_vulkan_filter_deps="vulkan spirv_compiler"\n',
+          'pelorus_grain_estimate_vulkan_filter_deps="vulkan spirv_compiler"\n')
 ins_after("configure", REQ % "pelorus_denoise_vulkan", REQ % "pelorus_grain_estimate_vulkan")
 print("registration applied: grain_estimate")
 PY
@@ -165,6 +207,7 @@ git -C "$WORKTREE" \
 # vf_pelorus_mc_vulkan (motion estimator) is committed last so it lands as patch
 # 0007. Same per-filter registration model as the loop above.
 cp "$FILES_DIR/vf_pelorus_mc_vulkan.c" "$WORKTREE/libavfilter/"
+install_vk_shader "mc"
 python3 - "$WORKTREE" <<'PY'
 import sys, pathlib
 root = pathlib.Path(sys.argv[1])
@@ -179,7 +222,7 @@ def ins_after(path, anchor, line):
     assert line.strip() not in t, f"already present in {path}: {line!r}"
     p.write_text(t.replace(anchor, anchor + line, 1))
 REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack '
+       '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack '
        '&& add_extralibs $libpelorus_extralibs\n')
 ins_before("libavfilter/allfilters.c",
            "extern const FFFilter ff_vf_perms;\n",
@@ -188,8 +231,8 @@ ins_after("libavfilter/Makefile",
           "OBJS-$(CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vf_pelorus_grain_estimate_vulkan.o vulkan.o vulkan_filter.o\n",
           "OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER)      += vf_pelorus_mc_vulkan.o vulkan.o vulkan_filter.o\n")
 ins_after("configure",
-          'pelorus_grain_estimate_vulkan_filter_deps="vulkan spirv_library"\n',
-          'pelorus_mc_vulkan_filter_deps="vulkan spirv_library"\n')
+          'pelorus_grain_estimate_vulkan_filter_deps="vulkan spirv_compiler"\n',
+          'pelorus_mc_vulkan_filter_deps="vulkan spirv_compiler"\n')
 ins_after("configure", REQ % "pelorus_grain_estimate_vulkan", REQ % "pelorus_mc_vulkan")
 print("registration applied: mc")
 PY
@@ -303,6 +346,7 @@ git -C "$WORKTREE" \
 # require_pkg_config hunk entirely — just the deps line. Committed last so it
 # lands as patch 0014. Same per-filter registration model as the deband loop.
 cp "$FILES_DIR/vf_pelorus_dehalo_vulkan.c" "$WORKTREE/libavfilter/"
+install_vk_shader "dehalo"
 python3 - "$WORKTREE" <<'PY'
 import sys, pathlib
 root = pathlib.Path(sys.argv[1])
@@ -326,8 +370,8 @@ ins_after("libavfilter/Makefile",
           "OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER)  += vf_pelorus_dehalo_vulkan.o vulkan.o vulkan_filter.o\n")
 # configure: deps ONLY — dehalo does not link libpelorus (no require_pkg_config).
 ins_after("configure",
-          'pelorus_deband_vulkan_filter_deps="vulkan spirv_library"\n',
-          'pelorus_dehalo_vulkan_filter_deps="vulkan spirv_library"\n')
+          'pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"\n',
+          'pelorus_dehalo_vulkan_filter_deps="vulkan spirv_compiler"\n')
 print("registration applied: dehalo")
 PY
 git -C "$WORKTREE" add -A
@@ -340,6 +384,7 @@ git -C "$WORKTREE" \
 # require_pkg_config). "aa" sorts first among the pelorus filters (aa < analyze),
 # so it inserts ahead of analyze. Committed last -> patch 0015.
 cp "$FILES_DIR/vf_pelorus_aa_vulkan.c" "$WORKTREE/libavfilter/"
+install_vk_shader "aa"
 python3 - "$WORKTREE" <<'PY'
 import sys, pathlib
 root = pathlib.Path(sys.argv[1])
@@ -358,8 +403,8 @@ ins_before("libavfilter/Makefile",
            "OBJS-$(CONFIG_PELORUS_AA_VULKAN_FILTER)      += vf_pelorus_aa_vulkan.o vulkan.o vulkan_filter.o\n")
 # configure: deps ONLY (aa does not link libpelorus); insert before analyze.
 ins_before("configure",
-           'pelorus_analyze_vulkan_filter_deps="vulkan spirv_library"\n',
-           'pelorus_aa_vulkan_filter_deps="vulkan spirv_library"\n')
+           'pelorus_analyze_vulkan_filter_deps="vulkan spirv_compiler"\n',
+           'pelorus_aa_vulkan_filter_deps="vulkan spirv_compiler"\n')
 print("registration applied: aa")
 PY
 git -C "$WORKTREE" add -A
@@ -386,7 +431,7 @@ def ins_after(path, anchor, line):
     assert line.strip() not in t, f"already present in {path}: {line!r}"
     p.write_text(t.replace(anchor, anchor + line, 1))
 REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack '
+       '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack '
        '&& add_extralibs $libpelorus_extralibs\n')
 # allfilters.c: pelorus_scenecut sorts after pelorus_mc -> insert before perms.
 ins_before("libavfilter/allfilters.c",
@@ -409,6 +454,7 @@ git -C "$WORKTREE" \
 # that does NOT link libpelorus (deps-only registration). "deblock" sorts after
 # deband, before dehalo. Committed last -> patch 0017.
 cp "$FILES_DIR/vf_pelorus_deblock_vulkan.c" "$WORKTREE/libavfilter/"
+install_vk_shader "deblock"
 python3 - "$WORKTREE" <<'PY'
 import sys, pathlib
 root = pathlib.Path(sys.argv[1])
@@ -432,8 +478,8 @@ ins_after("libavfilter/Makefile",
           "OBJS-$(CONFIG_PELORUS_DEBLOCK_VULKAN_FILTER) += vf_pelorus_deblock_vulkan.o vulkan.o vulkan_filter.o\n")
 # configure: deps ONLY (no libpelorus); insert after deband.
 ins_after("configure",
-          'pelorus_deband_vulkan_filter_deps="vulkan spirv_library"\n',
-          'pelorus_deblock_vulkan_filter_deps="vulkan spirv_library"\n')
+          'pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"\n',
+          'pelorus_deblock_vulkan_filter_deps="vulkan spirv_compiler"\n')
 print("registration applied: deblock")
 PY
 git -C "$WORKTREE" add -A
@@ -445,6 +491,7 @@ git -C "$WORKTREE" \
 # that does NOT link libpelorus (deps-only registration). "borderfix" sorts after
 # analyze, before deband. Committed last -> patch 0018.
 cp "$FILES_DIR/vf_pelorus_borderfix_vulkan.c" "$WORKTREE/libavfilter/"
+install_vk_shader "borderfix"
 python3 - "$WORKTREE" <<'PY'
 import sys, pathlib
 root = pathlib.Path(sys.argv[1])
@@ -463,8 +510,8 @@ ins_before("libavfilter/Makefile",
            "OBJS-$(CONFIG_PELORUS_BORDERFIX_VULKAN_FILTER) += vf_pelorus_borderfix_vulkan.o vulkan.o vulkan_filter.o\n")
 # configure: deps ONLY (no libpelorus); insert before deband.
 ins_before("configure",
-           'pelorus_deband_vulkan_filter_deps="vulkan spirv_library"\n',
-           'pelorus_borderfix_vulkan_filter_deps="vulkan spirv_library"\n')
+           'pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"\n',
+           'pelorus_borderfix_vulkan_filter_deps="vulkan spirv_compiler"\n')
 print("registration applied: borderfix")
 PY
 git -C "$WORKTREE" add -A
@@ -474,7 +521,14 @@ git -C "$WORKTREE" \
 
 # Clean stale patches, regenerate the whole range.
 rm -f "$HERE"/0*.patch
-git -C "$WORKTREE" format-patch --zero-commit --start-number=1 \
+# --full-index is load-bearing for reproducibility, not cosmetic. Git abbreviates
+# the blob hashes in `index` lines based on how many objects the repo holds, so a
+# full FFmpeg clone emits 10 hex chars and a --depth 1 clone emits 7 -- the same
+# sources produce different patch bytes depending on clone depth, which would make
+# the CI reproducibility gate fail on a shallow checkout. Emitting the full 40-char
+# hashes removes the dependence entirely, and gives `git am --3way` the unambiguous
+# blob ids it wants anyway.
+git -C "$WORKTREE" format-patch --zero-commit --full-index --start-number=1 \
     -o "$HERE" "$BASE_TAG..HEAD"
 
 # Normalize auto-generated filenames to the series.txt names.

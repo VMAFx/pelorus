@@ -29,7 +29,7 @@ One Vulkan compute dispatch, bit-depth-agnostic (`FF_VK_REP_FLOAT` UNORM):
    are protected by construction.
 
 The standalone reference shader is `libpelorus/shaders/pelorus_dehalo.comp`; the
-filter's inline GLSL implements the same algorithm (kept in lockstep, AGENTS hard
+filter's shipped `.comp.glsl` shader implements the same algorithm (kept in lockstep, AGENTS hard
 rule 4).
 
 ## Options

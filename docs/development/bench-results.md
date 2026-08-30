@@ -697,24 +697,12 @@ carry: CQ-lock for iso-bitrate, hardware AV1 (`av1_nvenc`) is much weaker than
 hardware HEVC so its residual gap is larger, and keep the GPU pipeline faster
 than CPU (the whole point).
 
-## Open / next
+> **Numbering note.** These last two reports were appended after the fact and were
+> mislabelled `v0.3`/`v0.4`, colliding with the real v0.3 and v0.4 above. They are
+> renumbered here to the next free labels. The numbers are report-insertion order,
+> not chronology: this work landed with ADR-0131 (PR #25/#26) and ADR-0133 (PR #27).
 
-1. **SVT-AV1 ROI on real content**: the v0.10 synthetic gain is modest; re-run
-   the A/B on a real banding-prone clip (night sky / slow gradient pan) at iso-
-   bitrate to get a representative CAMBI/BD-rate delta.
-2. **Per-vendor iso-bitrate BD-rate** for the cross-vendor ROI (v0.6 is a
-   same-QP mechanism demo); and the analyze→VAAPI dual-device auto pipeline
-   (ROI side data surviving `hwupload` to a second GPU).
-2. Re-prove 10-bit deband with a single consistent `yuv420p10le` pipeline
-   (correctness confirmation; deband's gain is banding, scored by CAMBI).
-3. Harness fixes shipped: `--clean-reference` (decouple scoring ref from encoder
-   input) and `--vmaf-timeout` (vmaf hangs at 0% CPU *after* writing its JSON;
-   the harness bounds it and reads the already-flushed result).
-4. **Measure QSV ROI on Intel HW** (`hevc_qsv -global_quality <q>` CQP, A/B
-   `-pelorus_roi 0` vs `1`): the patch (0005) is code-complete and
-   syntax/regeneration-verified, but no Intel-hardware BD-rate run exists yet.
-
-## v0.3 — MC→denoise motion-compensated warp (ADR-0131), real high-motion
+## v0.18 — MC→denoise motion-compensated warp (ADR-0131), real high-motion
 
 The denoise warp (ADR-0131) consumes `vf_pelorus_mc`'s quarter-pel MV field to
 warp its temporal taps instead of averaging the same-coordinate sample. The win
@@ -773,7 +761,7 @@ modest because mc's MVs are estimated on *noisy* pixels; the largest headroom is
 the documented half-pel/confidence-tuning and a SSIMULACRA2-based RD methodology.
 Graphs regenerate via `scripts/bench/plot_rd.py` (committed).
 
-## v0.4 — GPU throughput profiling + mc subgroup reduction
+## v0.19 — GPU throughput profiling + mc subgroup reduction
 
 Measure-first before optimizing. Per-filter wall time on the RTX 4090 (1280×720,
 64 frames, `ffmpeg -benchmark` rtime, warm; includes the hwupload/download floor
@@ -816,3 +804,21 @@ Honest verdict: the subgroup reduction is a small, real, validated win on the
 slowest filter; the broader "free throughput" framing overstated it — the
 bottleneck is memory traffic, and the high-value perf work is reference caching,
 not reductions. `scripts/bench/plot_rd.py` regenerates the graph.
+
+
+## Open / next
+
+1. **SVT-AV1 ROI on real content**: the v0.10 synthetic gain is modest; re-run
+   the A/B on a real banding-prone clip (night sky / slow gradient pan) at iso-
+   bitrate to get a representative CAMBI/BD-rate delta.
+2. **Per-vendor iso-bitrate BD-rate** for the cross-vendor ROI (v0.6 is a
+   same-QP mechanism demo); and the analyze→VAAPI dual-device auto pipeline
+   (ROI side data surviving `hwupload` to a second GPU).
+2. Re-prove 10-bit deband with a single consistent `yuv420p10le` pipeline
+   (correctness confirmation; deband's gain is banding, scored by CAMBI).
+3. Harness fixes shipped: `--clean-reference` (decouple scoring ref from encoder
+   input) and `--vmaf-timeout` (vmaf hangs at 0% CPU *after* writing its JSON;
+   the harness bounds it and reads the already-flushed result).
+4. **Measure QSV ROI on Intel HW** (`hevc_qsv -global_quality <q>` CQP, A/B
+   `-pelorus_roi 0` vs `1`): the patch (0005) is code-complete and
+   syntax/regeneration-verified, but no Intel-hardware BD-rate run exists yet.

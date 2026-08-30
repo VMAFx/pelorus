@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sat, 20 Jun 2026 09:52:31 +0200
-Subject: [PATCH 16/16] =?UTF-8?q?feat(scenecut):=20add=20vf=5Fpelorus=5Fsc?=
+Date: Thu, 1 Jan 2026 00:00:00 +0000
+Subject: [PATCH 16/18] =?UTF-8?q?feat(scenecut):=20add=20vf=5Fpelorus=5Fsc?=
  =?UTF-8?q?enecut=20=E2=80=94=20scene-cut=20to=20forced=20IDR?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -30,19 +30,19 @@ ADR: docs/adr/0126-scenecut-idr.md
  create mode 100644 libavfilter/vf_pelorus_scenecut.c
 
 diff --git a/configure b/configure
-index 182d78ae49..7cc497088c 100755
+index 31a1c70813cc6c40c1f96a5c35b0c67c0e0c8db8..1cc93c4d33fb624e88db02116bfd4b2f75b11c23 100755
 --- a/configure
 +++ b/configure
-@@ -7403,6 +7403,7 @@ enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelor
- enabled pelorus_denoise_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
- enabled pelorus_grain_estimate_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
- enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
-+enabled pelorus_scenecut_filter && require_pkg_config libpelorus "libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+@@ -7476,6 +7476,7 @@ enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelor
+ enabled pelorus_denoise_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+ enabled pelorus_grain_estimate_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+ enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
++enabled pelorus_scenecut_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
  enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index f8b77ee764..7316d99f5a 100644
+index 337a6adf27348fd8b742d9ab2f1dec0be1b51cd1..b7e22da8206561608e5e83822b3de7d93e3105a5 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
 @@ -440,6 +440,7 @@ OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER)  += vf_pelorus_dehalo_vulkan.o vulka
@@ -54,7 +54,7 @@ index f8b77ee764..7316d99f5a 100644
  OBJS-$(CONFIG_PERSPECTIVE_FILTER)            += vf_perspective.o
  OBJS-$(CONFIG_PHASE_FILTER)                  += vf_phase.o
 diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
-index e5a7e32cbb..8bced2d076 100644
+index 0ee727c8c38cefe87c4d23504c0e43ddd6f82554..d6632cc826123b6f1b3bbc93db698e8023ca8591 100644
 --- a/libavfilter/allfilters.c
 +++ b/libavfilter/allfilters.c
 @@ -412,6 +412,7 @@ extern const FFFilter ff_vf_pelorus_dehalo_vulkan;
@@ -67,7 +67,7 @@ index e5a7e32cbb..8bced2d076 100644
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_scenecut.c b/libavfilter/vf_pelorus_scenecut.c
 new file mode 100644
-index 0000000000..d80e73780b
+index 0000000000000000000000000000000000000000..d80e73780b10195695b297d6bc6fe7a52e357855
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_scenecut.c
 @@ -0,0 +1,111 @@
@@ -183,5 +183,5 @@ index 0000000000..d80e73780b
 +    FILTER_OUTPUTS(pelorus_scenecut_outputs),
 +};
 -- 
-2.54.0
+2.55.0
 

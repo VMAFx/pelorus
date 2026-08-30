@@ -2,7 +2,7 @@
 # Pelorus FFmpeg patch stack
 
 Native `vf_pelorus_*` Vulkan compute filters, shipped as a stack of patches
-against **FFmpeg n8.1.1** — the same delivery model as the vmafx sibling's
+against **FFmpeg n9.0.1** — the same delivery model as the vmafx sibling's
 `ffmpeg-patches/`. The filters link **libpelorus** (the shared interop ABI +
 filter contracts) so a single filtergraph can carry the Pelorus side-data blob
 straight through to a hardware encoder, and a downstream vmafx `vf_libvmaf*` can
@@ -20,8 +20,11 @@ read it. See [docs/adr/0104-ffmpeg-patch-stack.md](../docs/adr/0104-ffmpeg-patch
 
 ## Prerequisites
 
-- A Vulkan SDK / loader + headers and a SPIR-V compiler (libshaderc or
-  libglslang) — FFmpeg's `spirv_library`.
+- A Vulkan SDK / loader + headers, and a **build-time** SPIR-V compiler: `glslc`
+  (or `glslang`/`glslangValidator`) on PATH. FFmpeg 9 probes it with
+  `check_glslc` and enables the `spirv_compiler` feature. This replaced FFmpeg
+  8's `spirv_library` (libshaderc/libglslang linked in to compile GLSL at
+  *runtime*), which FFmpeg 9 removed — see ADR-0143.
 - **libpelorus installed and visible to pkg-config**
   (`pkg-config --exists libpelorus`). Build it from the repo root:
   `meson setup build && ninja -C build && ninja -C build install`.
@@ -29,8 +32,8 @@ read it. See [docs/adr/0104-ffmpeg-patch-stack.md](../docs/adr/0104-ffmpeg-patch
 ## Apply
 
 ```bash
-cd /path/to/ffmpeg            # a pristine n8.1.1 checkout
-git reset --hard n8.1.1
+cd /path/to/ffmpeg            # a pristine n9.0.1 checkout
+git reset --hard n9.0.1
 for p in /path/to/Pelorus/ffmpeg-patches/0*.patch; do
     git am --3way "$p" || break
 done
@@ -39,15 +42,27 @@ done
 `git am --3way` (not per-patch `git apply --check`) is the correct gate: the
 stack is cumulative and later patches' context can depend on earlier ones.
 
+**Building an object is not a gate.** Naming a `.spv.o` on the make command line
+builds it through the pattern rule whether or not the Makefile's `OBJS` ever
+references it, so a mis-registered shader passes a targeted build and then fails
+at link with an undefined `ff_pelorus_<name>_comp_spv_data`. Always finish with
+`make ffmpeg` and check the filters register in the linked binary:
+
+```bash
+./ffmpeg -hide_banner -filters | grep pelorus     # expect 10
+./ffmpeg -hide_banner -bsfs    | grep pelorus     # expect pelorus_fgs
+```
+
 ## Configure + build
 
 ```bash
-./configure --enable-vulkan --enable-libshaderc           # filters auto-enable
+./configure --enable-vulkan                               # filters auto-enable
 make -j libavfilter/vf_pelorus_deband_vulkan.o            # single-TU check
-make -j                                                    # full build
+make -j ffmpeg                                             # the REAL gate: links
+
 ```
 
-Each filter is gated `*_filter_deps="vulkan spirv_library libpelorus"`, and a
+Each filter is gated `*_filter_deps="vulkan spirv_compiler"`, and a
 soft `check_pkg_config libpelorus ...` probe sets the `libpelorus` config item
 (the idiomatic FFmpeg pattern, cf. `libvmaf_cuda`). So the filters auto-enable
 iff Vulkan, a SPIR-V compiler, **and** libpelorus are all present, and quietly
@@ -59,7 +74,7 @@ Install libpelorus where pkg-config can see it (`--prefix=/usr`, or set
 ## Regenerate
 
 ```bash
-FFMPEG_REPO=/path/to/ffmpeg BASE_TAG=n8.1.1 ./generate.sh
+FFMPEG_REPO=/path/to/ffmpeg BASE_TAG=n9.0.1 ./generate.sh
 ```
 
 Edit the sources under `files/`, rerun `generate.sh`, and commit both the

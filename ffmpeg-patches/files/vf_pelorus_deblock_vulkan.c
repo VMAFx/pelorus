@@ -26,12 +26,12 @@
  * step is real structure (preserve it). Luma only; chroma passes through. Runs in
  * VRAM (FF_VK_REP_FLOAT UNORM, bit-depth-agnostic).
  *
- * Kept in lockstep with libpelorus/shaders/pelorus_deblock.comp (AGENTS rule 4).
+ * The algorithm lives in vulkan/pelorus_deblock.comp.glsl, compiled to SPIR-V at
+ * build time and linked in here.
  */
 
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
-#include "libavutil/vulkan_spirv.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -47,7 +47,7 @@ typedef struct PelorusDeblockVulkanContext {
     AVVulkanDeviceQueueFamily *qf;
     FFVulkanShader shd;
 
-    /* push constants — mirror the GLSL std430 block below, byte-for-byte */
+    /* push constants — mirror the std430 block in the .comp.glsl, byte-for-byte */
     struct {
         int32_t bsize;  /* prior codec block size (DCT grid, usually 8)     */
         int32_t edge;   /* half-width of the deblocked band (px)            */
@@ -58,58 +58,20 @@ typedef struct PelorusDeblockVulkanContext {
     int planes; /* plane bitmask to process (luma-only by default)          */
 } PelorusDeblockVulkanContext;
 
-/* Pure GLSL helpers + deblock(), spliced verbatim. Kept in lockstep with the
- * reference shader libpelorus/shaders/pelorus_deblock.comp — the only intended
- * difference is the working domain: the .comp reads r16ui and normalizes by
- * 65535, this inline form reads FF_VK_REP_FLOAT (UNORM) images already in [0,1]. */
-static const char deblock_glsl[] =
-    "float pel_luma(int idx, ivec2 p, ivec2 sz) {\n"
-    "    return imageLoad(input_images[idx], clamp(p, ivec2(0), sz - ivec2(1))).x;\n"
-    "}\n"
-    "void deblock(ivec2 pos, int idx) {\n"
-    "    ivec2 sz = imageSize(output_images[idx]);\n"
-    "    int bs = max(bsize, 2);\n"
-    "    float c = pel_luma(idx, pos, sz);\n"
-    "    float result = c;\n"
-    "    int dx = min(pos.x % bs, bs - (pos.x % bs));\n"
-    "    int dy = min(pos.y % bs, bs - (pos.y % bs));\n"
-    "    if (dx <= edge) {\n"
-    "        float l = pel_luma(idx, pos + ivec2(-1, 0), sz);\n"
-    "        float r = pel_luma(idx, pos + ivec2( 1, 0), sz);\n"
-    "        if (abs(l - r) < thr) {\n"
-    "            float lp = (l + 2.0 * result + r) * 0.25;\n"
-    "            result = mix(result, lp, str);\n"
-    "        }\n"
-    "    }\n"
-    "    if (dy <= edge) {\n"
-    "        float u = pel_luma(idx, pos + ivec2(0, -1), sz);\n"
-    "        float d = pel_luma(idx, pos + ivec2(0,  1), sz);\n"
-    "        if (abs(u - d) < thr) {\n"
-    "            float lp = (u + 2.0 * result + d) * 0.25;\n"
-    "            result = mix(result, lp, str);\n"
-    "        }\n"
-    "    }\n"
-    "    imageStore(output_images[idx], pos, vec4(clamp(result, 0.0, 1.0)));\n"
-    "}\n";
+/* The deblock algorithm now lives in vulkan/pelorus_deblock.comp.glsl, compiled
+ * to SPIR-V at build time and linked in here. FFmpeg 9 removed the runtime GLSL
+ * builder (GLSLC/GLSLF/GLSLD + ff_vk_shader_init), which also retires the old
+ * inline-vs-reference lockstep duplication. */
+extern const unsigned char ff_pelorus_deblock_comp_spv_data[];
+extern const unsigned int  ff_pelorus_deblock_comp_spv_len;
 
 static av_cold int init_filter(AVFilterContext *ctx)
 {
     int err = 0;
-    int i;
     PelorusDeblockVulkanContext *s = ctx->priv;
     FFVulkanContext *vkctx = &s->vkctx;
-    FFVulkanShader *shd = &s->shd; /* GLSL macros require a var named `shd` */
-    FFVkSPIRVCompiler *spv;
-    uint8_t *spv_data = NULL;
-    size_t spv_len = 0;
-    void *spv_opaque = NULL;
+    FFVulkanShader *shd = &s->shd;
     const int planes = av_pix_fmt_count_planes(vkctx->output_format);
-
-    spv = ff_vk_spirv_init();
-    if (!spv) {
-        av_log(ctx, AV_LOG_ERROR, "Unable to initialize SPIR-V compiler!\n");
-        return AVERROR_EXTERNAL;
-    }
 
     s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
     if (!s->qf) {
@@ -119,16 +81,16 @@ static av_cold int init_filter(AVFilterContext *ctx)
     }
 
     RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
-    RET(ff_vk_shader_init(vkctx, shd, "pelorus_deblock",
-                          VK_SHADER_STAGE_COMPUTE_BIT, NULL, 0, 32, 32, 1, 0));
+    /* Plane count and the plane bitmask were const-folded into the generated
+     * GLSL before FFmpeg 9 unrolled the per-plane loop in C. With precompiled
+     * SPIR-V they become specialization constants instead. */
+    SPEC_LIST_CREATE(sl, 2, 2 * sizeof(uint32_t))
+    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
+    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
 
-    GLSLC(0, layout(push_constant, std430) uniform pushConstants {            );
-    GLSLC(1,     int   bsize;                                                 );
-    GLSLC(1,     int   edge;                                                  );
-    GLSLC(1,     float thr;                                                   );
-    GLSLC(1,     float str;                                                   );
-    GLSLC(0, };                                                               );
-    GLSLC(0,                                                                  );
+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
+                      (uint32_t []) { 32, 32, 1 }, 0);
+
     ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts),
                                 VK_SHADER_STAGE_COMPUTE_BIT);
 
@@ -155,38 +117,17 @@ static av_cold int init_filter(AVFilterContext *ctx)
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
             },
         };
-        RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0, 0));
+        ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
     }
 
-    GLSLD(deblock_glsl);
-    GLSLC(0, void main()                                                      );
-    GLSLC(0, {                                                                );
-    GLSLC(1,     ivec2 size;                                                  );
-    GLSLC(1,     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);           );
-    for (i = 0; i < planes; i++) {
-        GLSLC(0,                                                              );
-        GLSLF(1, size = imageSize(output_images[%i]);                       ,i);
-        GLSLC(1, if (!IS_WITHIN(pos, size)) return;                           );
-        if (s->planes & (1 << i)) {
-            GLSLF(1, deblock(pos, %i);                                      ,i);
-        } else {
-            GLSLF(1, imageStore(output_images[%i], pos, imageLoad(input_images[%i], pos)); ,i, i);
-        }
-    }
-    GLSLC(0, }                                                                );
-
-    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
-                            &spv_opaque));
-    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
+    RET(ff_vk_shader_link(vkctx, shd,
+                          ff_pelorus_deblock_comp_spv_data,
+                          ff_pelorus_deblock_comp_spv_len, "main"));
     RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 
     s->initialized = 1;
 
 fail:
-    if (spv_opaque)
-        spv->free_shader(spv, &spv_opaque);
-    if (spv)
-        spv->uninit(&spv);
     return err;
 }
 
@@ -208,7 +149,7 @@ static int pelorus_deblock_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
         RET(init_filter(ctx));
 
     RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in,
-                                    VK_NULL_HANDLE, &s->opts, sizeof(s->opts)));
+                                    VK_NULL_HANDLE, 1, &s->opts, sizeof(s->opts)));
 
     err = av_frame_copy_props(out, in);
     if (err < 0)

@@ -15,10 +15,11 @@
  *   cx = clamp(x, left, width-1-right);  cy = clamp(y, top, height-1-bottom);
  *   out = src(cx, cy);   // a pixel in the band samples the clean edge.
  *
- * Reference form runs per plane against r16ui storage images. The in-tree FFmpeg
- * filter (ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c) emits an
- * equivalent shader inline via GLSLC over FF_VK_REP_FLOAT image arrays — keep
- * the two in lockstep (AGENTS hard rule 4).
+ * Reference form runs per plane against r16ui storage images. The shader FFmpeg
+ * actually executes is ffmpeg-patches/files/vulkan/pelorus_borderfix.comp.glsl,
+ * compiled to SPIR-V at build time over FF_VK_REP_FLOAT image arrays (ADR-0143).
+ * This file is a standalone reference kept for the fast gate -- NOT a second
+ * implementation to hand-synchronise.
  */
 #version 450
 

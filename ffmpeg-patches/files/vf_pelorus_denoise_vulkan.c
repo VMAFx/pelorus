@@ -47,8 +47,9 @@
  * (AV_FRAME_DATA_SEI_UNREGISTERED, UUID-keyed) so a downstream vmafx vf_libvmaf*
  * can react. See <pelorus/interop.h> and docs/metrics/denoise.md.
  *
- * The algorithm is kept in lockstep with the standalone reference shader
- * libpelorus/shaders/pelorus_denoise.comp (AGENTS hard rule 4).
+ * The algorithm lives in vulkan/pelorus_denoise.comp.glsl, compiled to SPIR-V
+ * at build time and linked in — a single source of truth (FFmpeg 9 removed the
+ * runtime inline-GLSL builder, retiring the old lockstep duplication).
  */
 
 #include "libavutil/buffer.h"
@@ -56,7 +57,6 @@
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
-#include "libavutil/vulkan_spirv.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -97,7 +97,7 @@ typedef struct PelorusDenoiseVulkanContext {
     FFVulkanShader shd;
     AVBufferPool *stat_buf_pool;
 
-    /* push constants — mirror the GLSL std430 block below, byte-for-byte */
+    /* push constants — mirror the std430 block in the .comp.glsl, byte-for-byte */
     struct {
         float sigma_s[4];     /* vec4 : per-plane spatial range sigma    @0  */
         float sigma_t[4];     /* vec4 : per-plane temporal gate sigma    @16 */
@@ -154,181 +154,14 @@ typedef struct PelorusDenoiseVulkanContext {
     int ring_count; /* valid entries in ring[] (0..n_prev)                    */
 } PelorusDenoiseVulkanContext;
 
-/* Pure GLSL helpers + the denoise() function, spliced verbatim (avoids the
- * comma-in-C()-macro hazard). Kept in lockstep with the standalone reference
- * shader libpelorus/shaders/pelorus_denoise.comp. Normalized-float domain:
- * imageLoad returns [0,1] directly (no /65535). The current frame's plane is
- * cur_images[idx]; previous frames are prev0_images[idx]..prev3_images[idx],
- * indexed by the temporal walk via pel_prev(). */
-static const char denoise_helpers_glsl[] =
-    "const int FLAG_TEMPORAL = 1;\n"
-    "const int FLAG_MOTION_COMP = 2;\n"
-    "const int FLAG_PROTECT_DETAIL = 4;\n"
-    "const float EPS = 1e-6;\n"
-    "float pel_cur(int idx, ivec2 p, ivec2 sz) {\n"
-    "    return imageLoad(cur_images[idx], clamp(p, ivec2(0), sz - ivec2(1))).x;\n"
-    "}\n"
-    "float pel_prev(int t, int idx, ivec2 p, ivec2 sz) {\n"
-    "    ivec2 c = clamp(p, ivec2(0), sz - ivec2(1));\n"
-    "    if (t == 1) return imageLoad(prev0_images[idx], c).x;\n"
-    "    if (t == 2) return imageLoad(prev1_images[idx], c).x;\n"
-    "    if (t == 3) return imageLoad(prev2_images[idx], c).x;\n"
-    "    return imageLoad(prev3_images[idx], c).x;\n"
-    "}\n"
-    /* --- motion-compensated previous-frame fetch (ADR-0113) --- */
-    "int pel_se16(uint v) { return int(v << 16) >> 16; }\n" /* sign-extend low 16 */
-    "ivec2 pel_cell(ivec2 lpos) {\n"
-    "    return clamp(lpos / ivec2(cell_w, cell_h), ivec2(0),\n"
-    "                 ivec2(grid_cols - 1, grid_rows - 1));\n"
-    "}\n"
-    "vec2 pel_mc_mv(ivec2 lpos) {\n" /* nearest-cell quarter-pel MV, luma px */
-    "    ivec2 cell = pel_cell(lpos);\n"
-    "    uint packed = mv_packed[cell.y * grid_cols + cell.x];\n"
-    "    return vec2(pel_se16(packed & 0xFFFFu), pel_se16(packed >> 16)) * mv_scale;\n"
-    "}\n"
-    "float pel_mc_conf(ivec2 lpos) {\n" /* nearest-cell confidence [0,1] */
-    "    ivec2 cell = pel_cell(lpos);\n"
-    "    return float(conf_packed[cell.y * grid_cols + cell.x] & 0xFFu) / 255.0;\n"
-    "}\n"
-    "float pel_prev_mc(int t, int idx, ivec2 pos, ivec2 sz) {\n"
-    "    int cw = (idx > 0) ? chroma_shift_w : 0;\n"
-    "    int ch = (idx > 0) ? chroma_shift_h : 0;\n"
-    "    ivec2 lpos = pos << ivec2(cw, ch);\n"
-    "    vec2 mvl = pel_mc_mv(lpos);\n"               /* MV in luma pixels */
-    "    vec2 mvp = vec2(mvl.x / float(1 << cw), mvl.y / float(1 << ch));\n"
-    "    vec2 sp = vec2(pos) + mvp;\n"                /* sub-pel sample point */
-    "    ivec2 ip = ivec2(floor(sp));\n"
-    "    vec2 f = sp - vec2(ip);\n"
-    "    float p00 = pel_prev(t, idx, ip + ivec2(0, 0), sz);\n"
-    "    float p10 = pel_prev(t, idx, ip + ivec2(1, 0), sz);\n"
-    "    float p01 = pel_prev(t, idx, ip + ivec2(0, 1), sz);\n"
-    "    float p11 = pel_prev(t, idx, ip + ivec2(1, 1), sz);\n"
-    "    return mix(mix(p00, p10, f.x), mix(p01, p11, f.x), f.y);\n"
-    "}\n";
-
-/* Shared-memory tiling of the current-frame spatial window (the NLM range term
- * re-reads an overlapping (2*patchR+3)^2 window ~9x per pixel — fetch-bound, not
- * ALU-bound). Each workgroup cooperatively loads its window (the 16x16 tile plus
- * a PEL_HALO ring, clamped) into s_tile once per plane, then every spatial read
- * hits shared memory instead of the image. PEL_HALO = max patchR (3) + the 1-px
- * patch ring. pel_load_tile() runs in uniform control flow (outside the
- * IS_WITHIN guard) so its barriers are workgroup-uniform; the leading barrier
- * protects the prior plane's readers before this plane overwrites s_tile. Kept
- * in lockstep with the standalone reference shader (AGENTS rule 4). */
-static const char tile_helpers_glsl[] =
-    "void pel_load_tile(int idx, ivec2 sz) {\n"
-    "    ivec2 wgsz = ivec2(gl_WorkGroupSize.xy);\n"
-    "    ivec2 base = ivec2(gl_WorkGroupID.xy) * wgsz - PEL_HALO;\n"
-    "    uint n = uint(PEL_TILE * PEL_TILE);\n"
-    "    uint stride = gl_WorkGroupSize.x * gl_WorkGroupSize.y;\n"
-    "    barrier();\n"
-    "    for (uint k = gl_LocalInvocationIndex; k < n; k += stride) {\n"
-    "        ivec2 t = ivec2(int(k) - (int(k) / PEL_TILE) * PEL_TILE,\n"
-    "                        int(k) / PEL_TILE);\n"
-    "        s_tile[k] = pel_cur(idx, base + t, sz);\n"
-    "    }\n"
-    "    barrier();\n"
-    "}\n"
-    "float tcur(ivec2 off) {\n"
-    "    ivec2 lc = ivec2(gl_LocalInvocationID.xy) + PEL_HALO + off;\n"
-    "    return s_tile[lc.y * PEL_TILE + lc.x];\n"
-    "}\n";
-
-/* The denoise() kernel itself — a second array so neither concatenated string
- * literal exceeds the C99 4095-char limit (emitted right after the helpers). */
-static const char denoise_glsl[] =
-    "float denoise(const ivec2 pos, const int idx,\n"
-    "              float sigmaS, float sigmaT, float strength_p) {\n"
-    "    ivec2 sz = imageSize(output_images[idx]);\n"
-    "    float C = PEL_SPATIAL(ivec2(0, 0));\n"
-    "    /* --- spatial NLM-lite joint bilateral over the current frame --- */\n"
-    "    float numS = C; float denS = 1.0;\n"
-    "    if (patch_radius > 0) {\n"
-    "        float hs2 = sigmaS * sigmaS + EPS;\n"
-    "        float sd2 = float(patch_radius * patch_radius) + EPS;\n"
-    "        for (int dy = -patch_radius; dy <= patch_radius; dy++) {\n"
-    "            for (int dx = -patch_radius; dx <= patch_radius; dx++) {\n"
-    "                if (dx == 0 && dy == 0) continue;\n"
-    "                float ssd = 0.0;\n"
-    "                for (int ky = -1; ky <= 1; ky++) {\n"
-    "                    for (int kx = -1; kx <= 1; kx++) {\n"
-    "                        float a = PEL_SPATIAL(ivec2(kx, ky));\n"
-    "                        float b = PEL_SPATIAL(ivec2(dx + kx, dy + ky));\n"
-    "                        ssd += (a - b) * (a - b);\n"
-    "                    }\n"
-    "                }\n"
-    "                ssd /= 9.0;\n"
-    "                float wr = exp(-ssd / hs2);\n"
-    "                float wd = exp(-float(dx * dx + dy * dy) / (2.0 * sd2));\n"
-    "                float w = wr * wd;\n"
-    "                numS += w * PEL_SPATIAL(ivec2(dx, dy));\n"
-    "                denS += w;\n"
-    "            }\n"
-    "        }\n"
-    "    }\n"
-    "    /* --- temporal gated averaging over previous frames (same coord) --- */\n"
-    "    float numT = C; float denT = 1.0;\n"
-    "    if ((flags & FLAG_TEMPORAL) != 0) {\n"
-    "        float ht2 = sigmaT * sigmaT + EPS;\n"
-    "        float decay = 1.0;\n"
-    "        for (int t = 1; t <= actual_prev; t++) {\n"
-    "            float p;\n"
-    "            if ((flags & FLAG_MOTION_COMP) != 0 && grid_cols != 0) {\n"
-    /* blend same-coord <-> motion-warped by per-block confidence; low conf
-     * (noise-matched MV) falls back toward the same-coord sample, and the
-     * temporal_cut gate below still rejects bad/occluded taps either way. */
-    "                int cw = (idx > 0) ? chroma_shift_w : 0;\n"
-    "                int chh = (idx > 0) ? chroma_shift_h : 0;\n"
-    "                float conf = pel_mc_conf(pos << ivec2(cw, chh));\n"
-    "                p = mix(pel_prev(t, idx, pos, sz),\n"
-    "                        pel_prev_mc(t, idx, pos, sz), conf);\n"
-    "            } else {\n"
-    "                p = pel_prev(t, idx, pos, sz);\n"
-    "            }\n"
-    "            float delta = abs(C - p);\n"
-    "            if (delta > temporal_cut) break;\n"
-    "            decay *= temporal_decay;\n"
-    "            float w = exp(-(delta * delta) / ht2) * decay;\n"
-    "            numT += w * p;\n"
-    "            denT += w;\n"
-    "        }\n"
-    /* --- forward-lookahead tap (ADR-0137): one same-coord NEXT-frame sample,
-     * tcut-gated like the prev taps. Recovers the leading frame of a held
-     * animation drawing (the trailing frame already gets the causal prev). --- */
-    "        if (actual_next > 0) {\n"
-    "            float p = imageLoad(next0_images[idx], clamp(pos, ivec2(0), sz - ivec2(1))).x;\n"
-    "            float delta = abs(C - p);\n"
-    "            if (delta <= temporal_cut) {\n"
-    "                float w = exp(-(delta * delta) / ht2) * temporal_decay;\n"
-    "                numT += w * p; denT += w;\n"
-    "            }\n"
-    "        }\n"
-    "    }\n"
-    "    /* --- combine, then dry/wet --- */\n"
-    "    float num = (1.0 - blend) * numS + blend * numT;\n"
-    "    float den = (1.0 - blend) * denS + blend * denT;\n"
-    "    float filtered = num / max(den, EPS);\n"
-    "    float strength = strength_p;\n"
-    "    if ((flags & FLAG_PROTECT_DETAIL) != 0 && patch_radius > 0) {\n"
-    "        float mean = 0.0;\n"
-    "        for (int dy = -1; dy <= 1; dy++)\n"
-    "            for (int dx = -1; dx <= 1; dx++)\n"
-    "                mean += PEL_SPATIAL(ivec2(dx, dy));\n"
-    "        mean /= 9.0;\n"
-    "        float varr = 0.0;\n"
-    "        for (int dy = -1; dy <= 1; dy++) {\n"
-    "            for (int dx = -1; dx <= 1; dx++) {\n"
-    "                float d = PEL_SPATIAL(ivec2(dx, dy)) - mean;\n"
-    "                varr += d * d;\n"
-    "            }\n"
-    "        }\n"
-    "        float activity = sqrt(varr / 9.0);\n"
-    "        float protect = smoothstep(sigmaS, sigmaS * 3.0 + EPS, activity);\n"
-    "        strength *= (1.0 - protect);\n"
-    "    }\n"
-    "    float outv = mix(C, filtered, clamp(strength, 0.0, 1.0));\n"
-    "    return clamp(outv, 0.0, 1.0);\n"
-    "}\n";
+/* The denoise algorithm now lives in vulkan/pelorus_denoise.comp.glsl, compiled
+ * to SPIR-V at build time and linked in here. FFmpeg 9 removed the runtime GLSL
+ * builder (GLSLC/GLSLF/GLSLD + ff_vk_shader_init), which also retires the old
+ * inline-vs-reference lockstep duplication. What the C generator used to
+ * const-fold (plane count, the `planes` bitmask, the ADR-0134 `tile` switch)
+ * is now passed as specialization constants instead. */
+extern const unsigned char ff_pelorus_denoise_comp_spv_data[];
+extern const unsigned int  ff_pelorus_denoise_comp_spv_len;
 
 static av_cold int init_filter(AVFilterContext *ctx)
 {
@@ -336,11 +169,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
     int i;
     PelorusDenoiseVulkanContext *s = ctx->priv;
     FFVulkanContext *vkctx = &s->vkctx;
-    FFVulkanShader *shd = &s->shd; /* GLSL macros require a var named `shd` */
-    FFVkSPIRVCompiler *spv;
-    uint8_t *spv_data = NULL;
-    size_t spv_len = 0;
-    void *spv_opaque = NULL;
+    FFVulkanShader *shd = &s->shd;
     const int planes = av_pix_fmt_count_planes(vkctx->output_format);
 
     /* Broadcast luma/chroma scalars into the per-plane vec4s ({Y,Cb,Cr,A}). */
@@ -378,12 +207,6 @@ static av_cold int init_filter(AVFilterContext *ctx)
     s->opts.actual_next = 0;  /* set per-dispatch; 0 => forward tap never fires */
     s->opts._pad[0] = 0;
 
-    spv = ff_vk_spirv_init();
-    if (!spv) {
-        av_log(ctx, AV_LOG_ERROR, "Unable to initialize SPIR-V compiler!\n");
-        return AVERROR_EXTERNAL;
-    }
-
     s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
     if (!s->qf) {
         av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
@@ -392,34 +215,19 @@ static av_cold int init_filter(AVFilterContext *ctx)
     }
 
     RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
-    RET(ff_vk_shader_init(vkctx, shd, "pelorus_denoise",
-                          VK_SHADER_STAGE_COMPUTE_BIT, NULL, 0, 16, 16, 1, 0));
+    /* The plane count, the `planes` bitmask and the ADR-0134 `tile` switch were
+     * const-folded into the generated GLSL before FFmpeg 9 (the per-plane main()
+     * was unrolled in C). With precompiled SPIR-V they become specialization
+     * constants, resolved at pipeline creation — the same const-folding, one step
+     * later. The push-constant block itself now lives in the .comp.glsl. */
+    SPEC_LIST_CREATE(sl, 3, 3 * sizeof(uint32_t))
+    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
+    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
+    SPEC_LIST_ADD(sl, 2, 32, (uint32_t)(s->tile ? 1 : 0));
 
-    GLSLC(0, layout(push_constant, std430) uniform pushConstants {            );
-    GLSLC(1,     vec4  sigma_s;                                               );
-    GLSLC(1,     vec4  sigma_t;                                               );
-    GLSLC(1,     vec4  strength;                                              );
-    GLSLC(1,     float blend;                                                 );
-    GLSLC(1,     float temporal_decay;                                        );
-    GLSLC(1,     float temporal_cut;                                          );
-    GLSLC(1,     int   patch_radius;                                          );
-    GLSLC(1,     int   n_prev;                                                );
-    GLSLC(1,     int   actual_prev;                                           );
-    GLSLC(1,     int   nb_planes;                                             );
-    GLSLC(1,     int   planes_mask;                                           );
-    GLSLC(1,     int   flags;                                                 );
-    GLSLC(1,     uint  frame_idx;                                             );
-    GLSLC(1,     int   want_meta;                                             );
-    GLSLC(1,     int   grid_cols;                                             );
-    GLSLC(1,     int   grid_rows;                                             );
-    GLSLC(1,     int   cell_w;                                                );
-    GLSLC(1,     int   cell_h;                                                );
-    GLSLC(1,     int   chroma_shift_w;                                        );
-    GLSLC(1,     int   chroma_shift_h;                                        );
-    GLSLC(1,     float mv_scale;                                              );
-    GLSLC(1,     int   actual_next;                                           );
-    GLSLC(0, };                                                               );
-    GLSLC(0,                                                                  );
+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
+                      (uint32_t []) { 16, 16, 1 }, 0);
+
     ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts),
                                 VK_SHADER_STAGE_COMPUTE_BIT);
 
@@ -530,94 +338,17 @@ static av_cold int init_filter(AVFilterContext *ctx)
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
             },
         };
-        RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 10, 0, 0));
+        ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 10, 0);
     }
 
-    GLSLD(denoise_helpers_glsl);
-    /* tile=1 caches the current-frame spatial window in shared memory (a large
-     * win on bandwidth-limited GPUs, ~neutral on cache-rich ones — see
-     * ADR-0134); default tile=0 reads the image directly (bit-identical, the
-     * flagship-first default). PEL_SPATIAL(o) is the spatial fetch either way;
-     * GLSLD keeps the comma in pel_cur(idx, ...) out of the GLSLC C() macro. */
-    if (s->tile) {
-        GLSLC(0, #define PEL_HALO 4 /* max patchR (3) + 1-px patch ring */    );
-        GLSLC(0, #define PEL_TILE 24 /* 16 (workgroup dim) + 2 * PEL_HALO */   );
-        GLSLC(0, shared float s_tile[PEL_TILE * PEL_TILE];                     );
-        GLSLD(tile_helpers_glsl);
-        GLSLD("#define PEL_SPATIAL(o) tcur(o)");
-    } else {
-        GLSLD("#define PEL_SPATIAL(o) pel_cur(idx, pos + (o), sz)");
-    }
-    GLSLD(denoise_glsl);
-    GLSLC(0, void main()                                                      );
-    GLSLC(0, {                                                                );
-    /* Fixed-point scale for the uint32 residual accumulators. Kept at 1e3 (not
-     * 1e6) so the per-slice sum cannot overflow uint32: a slice covers ~W*H/16
-     * pixels (2.07M at 8K) and the worst-case sum is 2.07M*1.0*1e3 = 2.07e9 <
-     * UINT32_MAX. GS=1e6 silently wrapped at >=8K (and at 4K for residuals
-     * >=0.008). residual_energy (the mean) stays accurate; sq_sum/sigma_est are
-     * a COARSE estimate at 1e3 (a precise sigma would need a 64-bit atomic
-     * accumulator — a documented follow-up). meta=1 telemetry only; no pixel
-     * effect. Mirror the divisor in attach_interop(). */
-    GLSLC(1,     const float GS = 1000.0;                                     );
-    GLSLC(1,     ivec2 size;                                                  );
-    GLSLC(1,     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);           );
-    /* slice = wg_index & 15 — equivalent to % 16u (PEL_SLICES is a power of
-     * two) and avoids a bare `%` in the av_bprintf format string. Kept on ONE
-     * paren-balanced line: an unbalanced `(` in a GLSLC/GLSLF argument makes the
-     * C preprocessor swallow the following macro call into this one's string. */
-    GLSLC(1,     uint wg = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x; );
-    GLSLC(1,     uint slice = wg & 15u;                                       );
-    for (i = 0; i < planes; i++) {
-        GLSLC(0,                                                              );
-        GLSLF(1, size = imageSize(output_images[%i]);                       ,i);
-        /* Cooperative tile load runs in uniform control flow (all invocations,
-         * before the per-thread IS_WITHIN guard) so its barriers are valid. */
-        if (s->tile && (s->planes & (1 << i)))
-            GLSLF(1, pel_load_tile(%i, size);                               ,i);
-        GLSLC(1, if (IS_WITHIN(pos, size)) {                                  );
-        if (s->planes & (1 << i)) {
-            GLSLF(2, float inv = imageLoad(cur_images[%i], pos).x;          ,i);
-            GLSLF(2, float ov = denoise(pos, %i, sigma_s[%i], sigma_t[%i], strength[%i]); ,i, i, i, i);
-            GLSLF(2, imageStore(output_images[%i], pos, vec4(ov, 0.0, 0.0, 1.0));,i);
-            if (i == 0) {
-                /* meta=1 residual free-ride: luma plane drives the sigma /
-                 * PSNR estimate; chroma planes feed the U/V residual energy. */
-                GLSLC(2, if (want_meta != 0) {                                );
-                GLSLC(3,     float r = abs(inv - ov);                         );
-                GLSLC(3,     atomicAdd(abs_sum_y[slice], uint(r * GS));       );
-                GLSLC(3,     atomicAdd(sq_sum_y[slice],  uint(r * r * GS));   );
-                GLSLC(3,     atomicAdd(cnt_y[slice],     1u);                 );
-                GLSLC(2, }                                                    );
-            } else if (i == 1) {
-                GLSLC(2, if (want_meta != 0) {                                );
-                GLSLC(3,     atomicAdd(abs_sum_u[slice], uint(abs(inv - ov) * GS)););
-                GLSLC(3,     atomicAdd(cnt_c[slice],     1u);                 );
-                GLSLC(2, }                                                    );
-            } else if (i == 2) {
-                GLSLC(2, if (want_meta != 0) {                                );
-                GLSLC(3,     atomicAdd(abs_sum_v[slice], uint(abs(inv - ov) * GS)););
-                GLSLC(2, }                                                    );
-            }
-        } else {
-            GLSLF(2, imageStore(output_images[%i], pos, imageLoad(cur_images[%i], pos)); ,i, i);
-        }
-        GLSLC(1, }                                                            );
-    }
-    GLSLC(0, }                                                                );
-
-    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
-                            &spv_opaque));
-    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
+    RET(ff_vk_shader_link(vkctx, shd,
+                          ff_pelorus_denoise_comp_spv_data,
+                          ff_pelorus_denoise_comp_spv_len, "main"));
     RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 
     s->initialized = 1;
 
 fail:
-    if (spv_opaque)
-        spv->free_shader(spv, &spv_opaque);
-    if (spv)
-        spv->uninit(&spv);
     return err;
 }
 

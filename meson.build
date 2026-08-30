@@ -3,7 +3,7 @@
 project(
   'pelorus',
   'c',
-  version: '0.1.0',
+  version: '0.2.0',
   license: 'BSD-2-Clause-Patent',
   default_options: [
     'c_std=c11',
@@ -14,7 +14,19 @@ project(
   meson_version: '>=0.60.0',
 )
 
+fs = import('fs')
 cc = meson.get_compiler('c')
+
+# The version lives in two places: this project() call and pelorus.h's
+# PELORUS_VERSION_* macros (the ABI-visible copy a consumer compiles against).
+# Nothing used to assert they agreed, so they could silently diverge. Parse the
+# header and fail configuration if they do.
+_pelorus_h = fs.read('libpelorus/include/pelorus/pelorus.h')
+_ver_str = _pelorus_h.split('#define PELORUS_VERSION_STR "')[1].split('"')[0]
+if _ver_str != meson.project_version()
+  error('version skew: meson.build says @0@ but pelorus.h PELORUS_VERSION_STR says @1@'
+        .format(meson.project_version(), _ver_str))
+endif
 
 # Power-of-10 / CERT-leaning baseline: keep the warning surface wide. Project
 # code is warning-clean to -Wall -Wextra; add a few high-signal extras.

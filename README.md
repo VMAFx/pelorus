@@ -33,7 +33,7 @@ shared side-data ABI and vmafx's VMAF-in-the-loop autotune — see
 # build + install the shared core (the FFmpeg filters link it)
 meson setup build && ninja -C build && ninja -C build install
 
-# apply the FFmpeg patch stack onto a pristine n8.1.1 checkout
+# apply the FFmpeg patch stack onto a pristine n9.0.1 checkout
 cd ffmpeg-patches && ./generate.sh && ./test/build-and-run.sh
 
 # zero-copy: decode -> smart deband (VRAM) -> hardware encode
@@ -75,12 +75,15 @@ green · the deband shader compiles.**
 |---|---|---|
 | `pelorus_deband_vulkan` | Smart deband (f3kdb): flatten banding + TPDF/blue-noise dither, detail-protected, zero-copy | **Working** |
 | `pelorus_dehalo_vulkan` | Anime/2D dehalo + dering: single-pass GPU port of DeHalo_alpha + FineDehalo, removes the ring next to line-art (luma-only); foundation of `tune=anime` | **Built (tuning pending)** |
-| `pelorus_denoise_vulkan` | Edge-preserving spatio-temporal denoise (the biggest BD-rate lever) | Roadmap |
+| `pelorus_denoise_vulkan` | Edge-preserving spatio-temporal denoise (the biggest BD-rate lever): NLM-lite joint bilateral + gated temporal averaging over a causal window, with optional motion-compensated warp | **Working** |
 | `pelorus_analyze_vulkan` | Measured banding/variance/edge stats → interop side data (GPU reduction + readback) | **Working** |
 | `pelorus_grain_estimate_vulkan` | Film-grain param estimation (GPU per-band HF-residual) → PEL_SEC_FILMGRAIN + native AV1 side data | **Estimator built** |
 | `pelorus_mc_vulkan` | Block-matching motion estimator → per-block MV-hint side data for the encoder (speed, not quality) | **Working** |
 | `pelorus_fgs` (BSF) | Inserts the H.274 FGC SEI into HEVC so a decoder re-synthesizes grain — the HEVC leg of the FGS round-trip (AV1 round-trips via native side data) | **Working (static model)** |
 | `pelorus_scenecut` | Scene-cut → forced IDR: metadata-only consumer (NOT a Vulkan filter) that reads `mc`'s `PEL_SEC_MOTION.has_scene_cut` and sets `pict_type=I` so the encoder opens a fresh GOP at the cut — vendor-neutral, no per-encoder patch | **Built (BD-rate A/B pending)** |
+| `pelorus_aa_vulkan` | Anime warp anti-aliasing (awarpsharp2) + optional line-darkening (FastLineDarken): de-jaggies line-art via blurred-edge-map gradient warp, luma-only, no side data; 2nd stage of the anime `tune` chain | **Built (defaults unproven)** |
+| `pelorus_deblock_vulkan` | Re-encode deblock/dering: gated `[1 2 1]` low-pass across the prior codec's DCT block grid, smooths blocking so the new encoder skips it as false residual (luma-only); runs early, before deband | **Built (tuning pending)** |
+| `pelorus_borderfix_vulkan` | Dirty-line / border repair: clamp the dirty edge band onto the clean interior rect (the zero-copy GPU equivalent of `fillborders=smear`); all planes, per-plane-pixel widths; runs first, before any other stage | **Built (deterministic)** |
 
 **Anime tune.** For animation, compose the filters into one recommended GPU
 pre-encode chain — `analyze roi=1` (steer bits to the flats) + `dehalo` (rings) +
@@ -92,7 +95,7 @@ encoder. A documented, retunable composition, not a new meta-filter. See
 
 - [x] Step 1 — Core: `libpelorus` interop ABI + deband param contract + tests.
 - [x] Step 2 — Flagship: `vf_pelorus_deband_vulkan` smart deband (Vulkan), inline
-      GLSL, side-data emission, patch stack against n8.1.1.
+      GLSL, side-data emission, patch stack against n9.0.1.
 - [x] Step 3 — `vf_pelorus_analyze_vulkan`: measured banding/variance/edge stats
       (GPU reduction + readback) → interop side data.
 - [x] Step 4 — Temporal denoise (`vf_pelorus_denoise_vulkan`).
@@ -108,7 +111,7 @@ encoder. A documented, retunable composition, not a new meta-filter. See
       patch 0011); AV1 software encoders round-trip via native side data. Static
       AVOption-driven HEVC model; per-frame + H.264/VVC legs are follow-ups
       (ADR-0117 / ADR-0118).
-- [x] Step 8 — Anime dehalo: `vf_pelorus_dehalo_vulkan` (patch 0012), a
+- [x] Step 8 — Anime dehalo: `vf_pelorus_dehalo_vulkan` (patch 0014), a
       single-pass zero-copy GPU port of HAvsFunc `DeHalo_alpha` + `FineDehalo`.
       Removes the bright/dark ring next to line-art (luma-only; pure transform, no
       interop). Foundation of the planned `tune=anime` pipeline. Compile-verified
@@ -144,6 +147,19 @@ encoder. A documented, retunable composition, not a new meta-filter. See
   requested-vs-honored `honored_fraction` — the loop is now demonstrable
   end-to-end on the HEVC software encoder (the `tools/pelorus_qp_report`
   demonstrator; measured, not synthetic). The QSV per-block path stays HW-blocked.
+- [x] Step 10 — Anime `tune` chain: `vf_pelorus_aa_vulkan` (patch 0015) — warp
+      anti-aliasing (awarpsharp2) plus optional line-darkening (FastLineDarken).
+      De-jaggies line-art by warping along the gradient of a blurred edge map,
+      luma-only and side-data-free; the 2nd stage of the anime chain after dehalo.
+- [x] Step 11 — Re-encode deblock: `vf_pelorus_deblock_vulkan` (patch 0017), a
+      single-pass zero-copy GPU deblock/dering. At the prior codec's DCT block
+      grid it applies a gated `[1 2 1]` low-pass, smoothing blocking so the new
+      encoder does not spend bits coding it as false residual (luma-only). Runs
+      early in the chain, before deband.
+- [x] Step 12 — Border repair: `vf_pelorus_borderfix_vulkan` (patch 0018), a
+      dirty-line / border repair pass that clamps the dirty edge band onto the
+      clean interior rect — the zero-copy GPU equivalent of `fillborders=smear`.
+      All planes, per-plane-pixel widths; runs first, before any other stage.
 
 ## Tooling
 
@@ -170,10 +186,3 @@ FFmpeg when applied.
 
 If Pelorus is useful to you: [GitHub Sponsors](https://github.com/sponsors/lusoris)
 · [Ko-fi](https://ko-fi.com/lusoris).
-| `pelorus_aa_vulkan` | Anime warp anti-aliasing (awarpsharp2) + optional line-darkening (FastLineDarken): de-jaggies line-art via blurred-edge-map gradient warp, luma-only, no side data; 2nd stage of the anime `tune` chain | **Built (defaults unproven)** |
-- [x] Step 8 — Anime `tune` chain: `vf_pelorus_aa_vulkan` (patch 0012) — warp
-| `pelorus_deblock_vulkan` | Re-encode deblock/dering: gated `[1 2 1]` low-pass across the prior codec's DCT block grid, smooths blocking so the new encoder skips it as false residual (luma-only); runs early, before deband | **Built (tuning pending)** |
-- [x] Step 9 — Re-encode deblock: `vf_pelorus_deblock_vulkan` (patch 0016), a
-      single-pass zero-copy GPU deblock/dering. At the prior codec's DCT block
-| `pelorus_borderfix_vulkan` | Dirty-line / border repair: clamp the dirty edge band onto the clean interior rect (the zero-copy GPU equivalent of `fillborders=smear`); all planes, per-plane-pixel widths; runs first, before any other stage | **Built (deterministic)** |
-- [x] Step 9 — Border repair: `vf_pelorus_borderfix_vulkan` (patch 0016), a

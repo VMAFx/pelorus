@@ -7,9 +7,10 @@
  * encoder / bitstream filter can RE-SYNTHESIZE the grain (AV1 AOM film_grain
  * OBU / H.274 FGC SEI) instead of spending bitrate coding it as residual.
  * Pass-through: the frame is unchanged; only an estimate is reduced into an
- * SSBO and read back (ADR-0115). Kept in lockstep with the in-tree filter's
- * inline GLSL, ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c
- * (AGENTS.md hard rule 4).
+ * SSBO and read back (ADR-0115). The shader FFmpeg actually executes is
+ * ffmpeg-patches/files/vulkan/pelorus_grain_estimate.comp.glsl, compiled to
+ * SPIR-V at build time (ADR-0143). This file is a standalone reference kept for
+ * the fast gate -- NOT a second implementation to hand-synchronise.
  *
  * Method (per intensity band, the AV1/H.274 scaling function is intensity-
  * dependent by design):
@@ -25,9 +26,9 @@
  *
  * This standalone form runs against an r16ui storage image (16-bit internal
  * domain, normalized to [0,1] inside; the implied max is 65535). The in-tree
- * FFmpeg filter emits the equivalent reduction inline via GLSLC against a
- * normalized-float image array (imageLoad already returns [0,1]); the algorithm
- * is identical.
+ * shipped shader (ffmpeg-patches/files/vulkan/pelorus_grain_estimate.comp.glsl)
+ * runs the equivalent reduction against a normalized-float image array
+ * (imageLoad already returns [0,1]); the algorithm is identical.
  */
 #version 450
 

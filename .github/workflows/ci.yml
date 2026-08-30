@@ -16,8 +16,11 @@ jobs:
   core:
     name: libpelorus (build · test · format · tidy)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install toolchain
         run: |
           sudo apt-get update
@@ -36,9 +39,15 @@ jobs:
 
   ffmpeg-stack:
     name: ffmpeg patch stack (apply · configure · compile filters)
-    runs-on: ubuntu-latest
+    # Pinned, NOT ubuntu-latest: the LunarG apt list below is release-specific
+    # ('noble' = 24.04). When ubuntu-latest moves on, an unpinned runner silently
+    # gets no Vulkan SDK, spirv_compiler goes OFF and every filter is disabled.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install build toolchain
         run: |
           sudo apt-get update
@@ -48,14 +57,15 @@ jobs:
         run: |
           # Ubuntu's libvulkan-dev headers are older than FFmpeg n8.1 requires
           # ("vulkan requested but not found"); the LunarG SDK ships current
-          # Vulkan-Headers + glslang + shaderc (spirv_library) together.
+          # Vulkan-Headers + glslang + glslc together (glslc is what FFmpeg 9's
+          # check_glslc probes to enable spirv_compiler).
           wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc \
             | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc >/dev/null
           sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list \
             https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
           sudo apt-get update
           # The vulkan-sdk metapackage bundles current Vulkan-Headers (Ubuntu's
-          # are < FFmpeg's min) AND shaderc/glslang (spirv_library). Install it
+          # are < FFmpeg's min) AND glslc/glslang (spirv_compiler). Install it
           # ALONE — adding Ubuntu's libshaderc-dev in the same transaction
           # collides with LunarG's shaderc deb (dpkg unpack conflict).
           sudo apt-get install -y vulkan-sdk
@@ -67,8 +77,24 @@ jobs:
           sudo ninja -C build install
           sudo ldconfig
           pkg-config --exists libpelorus && echo "libpelorus $(pkg-config --modversion libpelorus) OK"
-      - name: Checkout FFmpeg n8.1.1
-        run: git clone --branch n8.1.1 --depth 1 https://github.com/FFmpeg/FFmpeg.git ffmpeg
+      - name: Checkout FFmpeg n9.0.1
+        run: git clone --branch n9.0.1 --depth 1 https://github.com/FFmpeg/FFmpeg.git ffmpeg
+      - name: Patches match a fresh generate.sh run (no hand-edited artifacts)
+        run: |
+          # generate.sh is byte-reproducible (it pins GIT_AUTHOR/COMMITTER_DATE), so
+          # regenerating must produce no diff. This is what catches a hand-edited
+          # *.patch -- the thing ffmpeg-patches/README forbids and nothing checked.
+          git -C ffmpeg fetch --depth 1 origin +refs/tags/n9.0.1:refs/tags/n9.0.1 2>/dev/null || true
+          FFMPEG_REPO="$GITHUB_WORKSPACE/ffmpeg" BASE_TAG=n9.0.1 \
+            WORKTREE="$RUNNER_TEMP/pelorus-gen" ffmpeg-patches/generate.sh
+          if ! git diff --quiet -- ffmpeg-patches/; then
+            echo "::error::ffmpeg-patches/ differs from a fresh generate.sh run — a patch was hand-edited, or files/ changed without regenerating."
+            git diff --stat -- ffmpeg-patches/
+            git diff -- ffmpeg-patches/ | head -200
+            exit 1
+          fi
+          echo "committed patches are byte-identical to a fresh regeneration"
+
       - name: Apply Pelorus patch stack (git am --3way)
         working-directory: ffmpeg
         run: |
@@ -82,18 +108,21 @@ jobs:
         working-directory: ffmpeg
         run: |
           pkg-config --exists libpelorus && echo "libpelorus $(pkg-config --modversion libpelorus) OK"
-          # --enable-libshaderc turns on spirv_library (the runtime GLSL->SPIR-V
-          # compiler); it defaults OFF, and without it every vulkan-compute
-          # filter (incl. pelorus) is disabled. The filters then auto-enable.
+          # FFmpeg 9 replaced the runtime GLSL->SPIR-V compiler (spirv_library,
+          # via libshaderc) with build-time compilation: `spirv_compiler` is
+          # enabled by configure's check_glslc, i.e. simply by a working `glslc`
+          # on PATH (the LunarG vulkan-sdk package above provides it). So
+          # --enable-libshaderc is neither needed nor meaningful any more.
           # NOTE: do NOT --disable-programs — the next step links the `ffmpeg`
           # binary to exercise the libpelorus link (the real gate); disabling
           # programs removes that target ("No rule to make target 'ffmpeg'").
-          ./configure --enable-vulkan --enable-libshaderc --disable-doc \
+          command -v glslc >/dev/null || { echo "glslc missing: spirv_compiler will be OFF and every vulkan filter disabled"; exit 1; }
+          ./configure --enable-vulkan --disable-doc \
             || { echo '::group::config.log tail'; tail -80 ffbuild/config.log; echo '::endgroup::'; exit 1; }
       - name: Show Vulkan / SPIR-V / libpelorus detection
         working-directory: ffmpeg
         run: |
-          grep -E 'CONFIG_(VULKAN|LIBSHADERC|LIBGLSLANG|SPIRV_COMPILER|SPIRV_LIBRARY|PELORUS)' config.h config_components.h || true
+          grep -E 'CONFIG_(VULKAN|SPIRV_COMPILER|PELORUS)' config.h config_components.h || true
           echo "::group::config.log — libpelorus + pelorus filter resolution"
           grep -iE 'libpelorus|pelorus_(deband|analyze)_vulkan_filter' ffbuild/config.log | tail -60 || true
           echo "::endgroup::"
@@ -102,7 +131,7 @@ jobs:
         run: |
           grep -q 'CONFIG_PELORUS_DEBAND_VULKAN_FILTER 1' config_components.h \
             && grep -q 'CONFIG_PELORUS_ANALYZE_VULKAN_FILTER 1' config_components.h \
-            || { echo "Pelorus filters were DISABLED at configure (likely spirv_library not detected)."; \
+            || { echo "Pelorus filters were DISABLED at configure (likely spirv_compiler/glslc not detected)."; \
                  grep -iE 'spirv|shaderc|glslang|vulkan' ffbuild/config.log | tail -40; exit 1; }
       - name: Build + LINK ffmpeg (catches link errors the .o-only build misses)
         working-directory: ffmpeg
@@ -117,11 +146,43 @@ jobs:
           ./ffmpeg -hide_banner -filters 2>/dev/null | grep pelorus_deband_vulkan
           ./ffmpeg -hide_banner -filters 2>/dev/null | grep pelorus_analyze_vulkan
 
+
+  sanitizers:
+    name: libpelorus (ASan + UBSan — the interop conformance fixture)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends meson ninja-build clang pkg-config
+      - name: Build + run the fixture under ASan/UBSan
+        env:
+          CC: clang
+        run: |
+          # Use meson's own -Db_sanitize rather than raw CFLAGS/LDFLAGS: passing
+          # -fsanitize only via CFLAGS compiles instrumented objects but never
+          # adds the runtime to the shared-library link, which fails with
+          # "undefined reference to __asan_report_store8".
+          # -fno-sanitize-recover=alignment makes misaligned access FATAL rather
+          # than a logged warning. Issue #44 (a misaligned blob base cast
+          # straight into a struct) was invisible to every other gate and is why
+          # this job exists; without no-recover it would print and still pass.
+          meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false \
+            -Dc_args=-fno-sanitize-recover=alignment
+          meson test -C build-san --suite=fast --print-errorlogs
+
   docs:
     name: docs + changelog hygiene
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Changelog fragments render cleanly
         run: bash scripts/release/concat-changelog-fragments.sh --check
       - name: Every ADR has an index row

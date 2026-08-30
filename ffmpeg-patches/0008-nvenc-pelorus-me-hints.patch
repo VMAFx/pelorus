@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sat, 20 Jun 2026 14:17:22 +0200
+Date: Thu, 1 Jan 2026 00:00:00 +0000
 Subject: [PATCH 08/18] feat(nvenc): feed the Pelorus MV field to NVENC
  external ME hints
 MIME-Version: 1.0
@@ -38,21 +38,78 @@ that frame, so NVENC runs its own search and behaviour is unchanged.
 
 ADR: docs/adr/0116-pelorus-mc.md (consumer section), docs/adr/0114-encoder-steering.md (Tier 3)
 ---
- libavcodec/nvenc.c      | 268 ++++++++++++++++++++++++++++++++++++++++
+ libavcodec/nvenc.c      | 252 ++++++++++++++++++++++++++++++++++++++++
  libavcodec/nvenc.h      |  17 +++
  libavcodec/nvenc_h264.c |   2 +
  libavcodec/nvenc_hevc.c |   2 +
- 4 files changed, 289 insertions(+)
+ 4 files changed, 273 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index 863423b1a9..0d83e53662 100644
+index e8063a70b88d9961de99df04a03f08b65422c1f3..60c71a5ea83332f7d06ceb610dae017931523782 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
-@@ -1108,6 +1108,131 @@ static int pelorus_roi_block_size(enum AVCodecID codec_id)
- }
- #endif
+@@ -1106,6 +1106,49 @@ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
+                ctx->qp_delta_map_w, ctx->qp_delta_map_h, blk);
+     }
  
-+#ifdef NVENC_HAVE_EXTERNAL_ME_HINTS
++    if (ctx->pelorus_me_hints) {
++        /* H.264/HEVC only: NVENC's AV1 external-hint path uses the materially
++         * different NVENC_EXTERNAL_ME_SB_HINT struct (per-SB, S12.2 fixed
++         * point) which the producer's integer-pel block grid does not map onto
++         * cleanly. Degrade gracefully rather than feed the wrong struct. */
++        if (avctx->codec->id != AV_CODEC_ID_H264 &&
++            avctx->codec->id != AV_CODEC_ID_HEVC) {
++            av_log(avctx, AV_LOG_WARNING,
++                   "pelorus_me_hints supports H.264/HEVC only; ignoring for "
++                   "this codec.\n");
++            ctx->pelorus_me_hints = 0;
++        } else if (nvenc_check_cap(avctx, NV_ENC_CAPS_SUPPORT_MEONLY_MODE) <= 0) {
++            /* MEONLY support is the closest runtime proxy NVENC exposes for
++             * external-ME capability; if absent, pass through. */
++            av_log(avctx, AV_LOG_WARNING,
++                   "pelorus_me_hints requested but the device reports no "
++                   "external-ME support; ignoring.\n");
++            ctx->pelorus_me_hints = 0;
++        } else {
++            /* NVENC's external ME hints are one entry per 16x16 block in raster
++             * order for both H.264 (macroblock) and HEVC. Size the scratch once
++             * from the coded dimensions; the per-frame translator reuses it. */
++            ctx->me_hints_w     = (avctx->width  + 15) / 16;
++            ctx->me_hints_h     = (avctx->height + 15) / 16;
++            ctx->me_hints_count = ctx->me_hints_w * ctx->me_hints_h;
++
++            ctx->me_hints = av_calloc(ctx->me_hints_count,
++                                      sizeof(*ctx->me_hints));
++            if (!ctx->me_hints)
++                return AVERROR(ENOMEM);
++
++            /* One L0 candidate per 16x16 block; no L1 (the producer is a single
++             * forward/previous-frame estimator). */
++            ctx->init_encode_params.enableExternalMEHints = 1;
++            ctx->init_encode_params.maxMEHintCountsPerBlock[0].numCandsPerBlk16x16 = 1;
++            ctx->init_encode_params.maxMEHintCountsPerBlock[1].numCandsPerBlk16x16 = 0;
++            av_log(avctx, AV_LOG_VERBOSE,
++                   "Pelorus external ME hints enabled: %dx%d 16x16 blocks, "
++                   "1 L0 candidate/block.\n",
++                   ctx->me_hints_w, ctx->me_hints_h);
++        }
++    }
++
+     if (ctx->rc_lookahead > 0) {
+         int lkd_bound = FFMIN(ctx->nb_surfaces, ctx->async_depth) -
+                         ctx->encode_config.frameIntervalP - 4;
+@@ -2104,6 +2147,7 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
+ 
+     av_freep(&ctx->sei_data);
+     av_freep(&ctx->qp_delta_map);
++    av_freep(&ctx->me_hints);
+ 
+     if (ctx->nvencoder) {
+         p_nvenc->nvEncDestroyEncoder(ctx->nvencoder);
+@@ -3084,6 +3128,210 @@ static int nvenc_setup_roi(AVCodecContext *avctx, const AVFrame *frame,
+     return 0;
+ }
+ 
 +/* Pelorus external ME hints -------------------------------------------------
 + *
 + * A vf_pelorus_mc_vulkan stage emits a per-block integer-pel motion-vector
@@ -175,84 +232,7 @@ index 863423b1a9..0d83e53662 100644
 +    const uint8_t *p = field + (size_t)idx * sizeof(int16_t);
 +    return (int16_t)(uint16_t)(p[0] | (p[1] << 8));
 +}
-+#endif
 +
- static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
- {
-     NvencContext *ctx = avctx->priv_data;
-@@ -1246,6 +1371,57 @@ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
- #endif
-     }
- 
-+    if (ctx->pelorus_me_hints) {
-+#ifdef NVENC_HAVE_EXTERNAL_ME_HINTS
-+        /* H.264/HEVC only: NVENC's AV1 external-hint path uses the materially
-+         * different NVENC_EXTERNAL_ME_SB_HINT struct (per-SB, S12.2 fixed
-+         * point) which the producer's integer-pel block grid does not map onto
-+         * cleanly. Degrade gracefully rather than feed the wrong struct. */
-+        if (avctx->codec->id != AV_CODEC_ID_H264 &&
-+            avctx->codec->id != AV_CODEC_ID_HEVC) {
-+            av_log(avctx, AV_LOG_WARNING,
-+                   "pelorus_me_hints supports H.264/HEVC only; ignoring for "
-+                   "this codec.\n");
-+            ctx->pelorus_me_hints = 0;
-+        } else if (nvenc_check_cap(avctx, NV_ENC_CAPS_SUPPORT_MEONLY_MODE) <= 0) {
-+            /* MEONLY support is the closest runtime proxy NVENC exposes for
-+             * external-ME capability; if absent, pass through. */
-+            av_log(avctx, AV_LOG_WARNING,
-+                   "pelorus_me_hints requested but the device reports no "
-+                   "external-ME support; ignoring.\n");
-+            ctx->pelorus_me_hints = 0;
-+        } else {
-+            /* NVENC's external ME hints are one entry per 16x16 block in raster
-+             * order for both H.264 (macroblock) and HEVC. Size the scratch once
-+             * from the coded dimensions; the per-frame translator reuses it. */
-+            ctx->me_hints_w     = (avctx->width  + 15) / 16;
-+            ctx->me_hints_h     = (avctx->height + 15) / 16;
-+            ctx->me_hints_count = ctx->me_hints_w * ctx->me_hints_h;
-+
-+            ctx->me_hints = av_calloc(ctx->me_hints_count,
-+                                      sizeof(*ctx->me_hints));
-+            if (!ctx->me_hints)
-+                return AVERROR(ENOMEM);
-+
-+            /* One L0 candidate per 16x16 block; no L1 (the producer is a single
-+             * forward/previous-frame estimator). */
-+            ctx->init_encode_params.enableExternalMEHints = 1;
-+            ctx->init_encode_params.maxMEHintCountsPerBlock[0].numCandsPerBlk16x16 = 1;
-+            ctx->init_encode_params.maxMEHintCountsPerBlock[1].numCandsPerBlk16x16 = 0;
-+            av_log(avctx, AV_LOG_VERBOSE,
-+                   "Pelorus external ME hints enabled: %dx%d 16x16 blocks, "
-+                   "1 L0 candidate/block.\n",
-+                   ctx->me_hints_w, ctx->me_hints_h);
-+        }
-+#else
-+        av_log(avctx, AV_LOG_WARNING,
-+               "pelorus_me_hints requested but NVENC external ME hints are "
-+               "unavailable (SDK 8.1 or greater required at compile time); "
-+               "ignoring.\n");
-+        ctx->pelorus_me_hints = 0;
-+#endif
-+    }
-+
-     if (ctx->rc_lookahead > 0) {
-         int lkd_bound = FFMIN(ctx->nb_surfaces, ctx->async_depth) -
-                         ctx->encode_config.frameIntervalP - 4;
-@@ -2276,6 +2452,9 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
- #ifdef NVENC_HAVE_QP_MAP_MODE
-     av_freep(&ctx->qp_delta_map);
- #endif
-+#ifdef NVENC_HAVE_EXTERNAL_ME_HINTS
-+    av_freep(&ctx->me_hints);
-+#endif
- 
-     if (ctx->nvencoder) {
-         p_nvenc->nvEncDestroyEncoder(ctx->nvencoder);
-@@ -3250,6 +3429,89 @@ static int nvenc_setup_roi(AVCodecContext *avctx, const AVFrame *frame,
- }
- #endif
- 
-+#ifdef NVENC_HAVE_EXTERNAL_ME_HINTS
 +/* Pelorus: translate the PEL_SEC_MOTION MV field on this frame into NVENC's
 + * external ME hint buffer (one L0 candidate per 16x16 block, raster order) and
 + * point pic_params at it. The producer's grid is at its own block size (bsize,
@@ -333,40 +313,29 @@ index 863423b1a9..0d83e53662 100644
 +    pic_params->meExternalHints = ctx->me_hints;
 +    return 0;
 +}
-+#endif
 +
  static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
  {
      NVENCSTATUS nv_status;
-@@ -3391,6 +3653,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3223,6 +3471,10 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+         if (res < 0)
              return res;
- #endif
  
-+#ifdef NVENC_HAVE_EXTERNAL_ME_HINTS
 +        res = nvenc_setup_me_hints(avctx, frame, &pic_params);
 +        if (res < 0)
 +            return res;
-+#endif
 +
          nvenc_codec_specific_pic_params(avctx, frame, &pic_params, ctx->sei_data, sei_count);
      } else {
          pic_params.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
 diff --git a/libavcodec/nvenc.h b/libavcodec/nvenc.h
-index 160dab315c..c4915a2177 100644
+index 66cd7b158243520d5228c958b3fc13c0dd6e6431..be52d320e0b7d7c9140bd108864d4b1cdfe0f41e 100644
 --- a/libavcodec/nvenc.h
 +++ b/libavcodec/nvenc.h
-@@ -49,6 +49,7 @@ typedef void ID3D11Device;
- #if NVENCAPI_CHECK_VERSION(8, 1)
- #define NVENC_HAVE_BFRAME_REF_MODE
- #define NVENC_HAVE_QP_MAP_MODE
-+#define NVENC_HAVE_EXTERNAL_ME_HINTS
- #endif
- 
- // SDK 9.0 compile time feature checks
-@@ -335,6 +336,22 @@ typedef struct NvencContext
+@@ -290,6 +290,23 @@ typedef struct NvencContext
+     int     qp_delta_map_w;  ///< blocks across = ceil(width  / block size)
      int     qp_delta_map_h;  ///< blocks down  = ceil(height / block size)
      int     roi_warned;      ///< rate-limit incompatibility warnings to once
- #endif
 +
 +    /* Pelorus: external motion-vector hints fed to NVENC's hardware motion
 +     * search from the PEL_SEC_MOTION interop section a vf_pelorus_mc_vulkan
@@ -374,23 +343,24 @@ index 160dab315c..c4915a2177 100644
 +     * "pelorus_me_hints" AVOption (default off). The value is ENCODE SPEED, not
 +     * quality: the ASIC seeds its search from our MVs and can skip/shorten its
 +     * own. H.264/HEVC only (NVENC's AV1 path uses a different SB-hint struct);
-+     * one L0 candidate per 16x16 block. */
++     * one L0 candidate per 16x16 block. NVENC's external ME hints have existed
++     * since SDK 8.1; FFmpeg n9 requires SDK 11.1 or newer, so no compile-time
++     * feature gate is needed (the n8-era "SDK 8.1 compile time feature checks"
++     * block this used to hang off was dropped upstream in n9). */
 +    int pelorus_me_hints;
-+#ifdef NVENC_HAVE_EXTERNAL_ME_HINTS
 +    NVENC_EXTERNAL_ME_HINT *me_hints;   ///< per-16x16-block L0 hint scratch (raster)
 +    int     me_hints_count;  ///< entries = me_hints_w * me_hints_h
 +    int     me_hints_w;      ///< 16x16 blocks across = ceil(width  / 16)
 +    int     me_hints_h;      ///< 16x16 blocks down  = ceil(height / 16)
 +    int     me_hints_warned; ///< rate-limit incompatibility/absence warnings to once
-+#endif
  } NvencContext;
  
  int ff_nvenc_encode_init(AVCodecContext *avctx);
 diff --git a/libavcodec/nvenc_h264.c b/libavcodec/nvenc_h264.c
-index 8efb7beb4a..424954760b 100644
+index 42b8d6c4106693ef6fde6e6b0cea14872857a35a..deac6fb8b71a756c8ae156716ac4424ac4af5474 100644
 --- a/libavcodec/nvenc_h264.c
 +++ b/libavcodec/nvenc_h264.c
-@@ -149,6 +149,8 @@ static const AVOption options[] = {
+@@ -105,6 +105,8 @@ static const AVOption options[] = {
                                                              OFFSET(forced_idr),   AV_OPT_TYPE_BOOL,  { .i64 = 0 }, -1, 1, VE },
      { "pelorus_roi",  "Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the NVENC delta-QP map",
                                                              OFFSET(pelorus_roi),  AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0,  1, VE },
@@ -400,10 +370,10 @@ index 8efb7beb4a..424954760b 100644
                                                              OFFSET(b_adapt),      AV_OPT_TYPE_BOOL,  { .i64 = 1 }, 0,  1, VE },
      { "spatial-aq",   "set to 1 to enable Spatial AQ",      OFFSET(aq),           AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0,  1, VE },
 diff --git a/libavcodec/nvenc_hevc.c b/libavcodec/nvenc_hevc.c
-index d2e9e4312a..4451630acb 100644
+index 04ea2a306470143a443fd5d9ca9a51709c0cea1a..4d3054fee1fe2969e03bb4242a2f20864c3106c5 100644
 --- a/libavcodec/nvenc_hevc.c
 +++ b/libavcodec/nvenc_hevc.c
-@@ -138,6 +138,8 @@ static const AVOption options[] = {
+@@ -100,6 +100,8 @@ static const AVOption options[] = {
                                                              OFFSET(forced_idr),   AV_OPT_TYPE_BOOL,  { .i64 = 0 }, -1, 1, VE },
      { "pelorus_roi",  "Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the NVENC delta-QP map",
                                                              OFFSET(pelorus_roi),  AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, VE },
@@ -411,7 +381,7 @@ index d2e9e4312a..4451630acb 100644
 +                                                            OFFSET(pelorus_me_hints), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VE },
      { "b_adapt",      "When lookahead is enabled, set this to 0 to disable adaptive B-frame decision",
                                                              OFFSET(b_adapt),      AV_OPT_TYPE_BOOL,  { .i64 = 1 }, 0, 1, VE },
-     { "spatial_aq",   "set to 1 to enable Spatial AQ",      OFFSET(aq),           AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, VE },
+     { "spatial-aq",   "set to 1 to enable Spatial AQ",      OFFSET(aq),           AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, VE },
 -- 
-2.54.0
+2.55.0
 

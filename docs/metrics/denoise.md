@@ -27,7 +27,9 @@ confidence, to follow motion instead of ghosting it:
   `out = mix(in, num/den, strength)`.
 
 The standalone reference shader is `libpelorus/shaders/pelorus_denoise.comp`; the
-filter's inline GLSL implements the byte-identical algorithm (kept in lockstep).
+filter ships the same algorithm as a build-time-compiled SPIR-V shader
+(`ffmpeg-patches/files/vulkan/pelorus_*.comp.glsl`); the reference `.comp` is not a
+second implementation to hand-synchronise (ADR-0143).
 
 ## Options
 

@@ -37,10 +37,18 @@ against VMAF using vmafx's autotune loop. See
 3. **No global mutable state / no static-init side effects.** Lifecycle is
    explicit. Banned C functions: `gets`, `strcpy`, `strcat`, `sprintf`,
    `strtok`, `atoi`, `atof`, `rand`, `system` (see docs/principles.md §1.2).
-4. **Keep each filter's two shader implementations in lockstep.** The standalone
-   reference shaders (`libpelorus/shaders/pelorus_<name>.comp`) and the FFmpeg
-   filters' inline GLSL (`ffmpeg-patches/files/vf_pelorus_<name>_vulkan.c`)
-   implement the same algorithm (deband, analyze, …); edit both together.
+4. **One shader source per filter — never re-introduce inline GLSL.** Since the
+   FFmpeg 9 migration (ADR-0143) each filter's shader lives once, at
+   `ffmpeg-patches/files/vulkan/pelorus_<name>.comp.glsl`, and is compiled to
+   SPIR-V at build time. FFmpeg 9 deleted the runtime GLSL builder
+   (`GLSLC`/`GLSLF`/`GLSLD`, `ff_vk_shader_init`), so building shader text from C
+   is no longer possible — and the old hand-mirrored duplication is what produced
+   the ADR-0129 defect. `libpelorus/shaders/*.comp` remain standalone references
+   compiled by the fast gate; they are NOT a second implementation to sync.
+   Values the C side used to const-fold into generated GLSL are specialization
+   constants (`constant_id` 0..N; **253/254/255 are reserved** for workgroup size),
+   and the `.glsl` binding order must match the C descriptor array exactly — a
+   mismatch is silent corruption, not a build error.
 5. **Patch-stack sync.** A change to any `libpelorus` surface the FFmpeg patches
    consume updates `ffmpeg-patches/files/` + the regenerated patch in the same
    PR. Verify with a full series replay (`ffmpeg-patches/test/build-and-run.sh`),
@@ -69,8 +77,9 @@ Pelorus/
 │   ├── shaders/                      #   standalone reference .comp shaders
 │   └── test/                         #   interop ABI conformance fixture
 │
-├── ffmpeg-patches/                   # vf_pelorus_* filters, stacked vs n8.1.1
+├── ffmpeg-patches/                   # vf_pelorus_* filters, stacked vs n9.0.1
 │   ├── files/                        #   canonical filter sources (edit here)
+│   │   └── vulkan/                   #     per-filter .comp.glsl -> build-time SPIR-V
 │   ├── 0001-*.patch  series.txt      #   generated artifacts + apply order
 │   ├── generate.sh                   #   regenerate patches from files/
 │   └── test/build-and-run.sh         #   apply + build + smoke-test gate
@@ -108,7 +117,7 @@ rebase-sensitive invariants.
 
 | Component | Version |
 |---|---|
-| FFmpeg base for the patch stack | `n8.1.1` |
+| FFmpeg base for the patch stack | `n9.0.1` |
 | FFmpeg Vulkan filter model | `libavfilter/vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c` |
 | AV1 film-grain struct mirrored by interop §(d) | `libavutil/film_grain_params.h` |
 | vmafx control plane (autotune) | `libvmaf_tune` filter, `vmafx-server` `/v1/score`, `vmaf-mcp` |

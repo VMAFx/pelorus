@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sat, 20 Jun 2026 13:17:42 +0200
+Date: Thu, 1 Jan 2026 00:00:00 +0000
 Subject: [PATCH 18/18] feat(borderfix): add vf_pelorus_borderfix_vulkan
  (dirty-line/border repair, Vulkan)
 MIME-Version: 1.0
@@ -22,27 +22,30 @@ are kept in lockstep. AVOptions: left/right/top/bottom (band widths), planes.
 
 ADR: docs/adr/0128-borderfix.md
 ---
- configure                                 |   1 +
- libavfilter/Makefile                      |   1 +
- libavfilter/allfilters.c                  |   1 +
- libavfilter/vf_pelorus_borderfix_vulkan.c | 265 ++++++++++++++++++++++
- 4 files changed, 268 insertions(+)
+ configure                                     |   1 +
+ libavfilter/Makefile                          |   1 +
+ libavfilter/allfilters.c                      |   1 +
+ libavfilter/vf_pelorus_borderfix_vulkan.c     | 227 ++++++++++++++++++
+ libavfilter/vulkan/Makefile                   |   1 +
+ .../vulkan/pelorus_borderfix.comp.glsl        |  83 +++++++
+ 6 files changed, 314 insertions(+)
  create mode 100644 libavfilter/vf_pelorus_borderfix_vulkan.c
+ create mode 100644 libavfilter/vulkan/pelorus_borderfix.comp.glsl
 
 diff --git a/configure b/configure
-index 22d641c2d1..e8eaddabfc 100755
+index 43f5528055cdd845ce51092cc5cded3360343ad4..793efd9f201a9ef0c85cebded3d5ae07f59e2c2a 100755
 --- a/configure
 +++ b/configure
-@@ -4180,6 +4180,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
- overlay_vulkan_filter_deps="vulkan spirv_library"
- pelorus_aa_vulkan_filter_deps="vulkan spirv_library"
- pelorus_analyze_vulkan_filter_deps="vulkan spirv_library"
-+pelorus_borderfix_vulkan_filter_deps="vulkan spirv_library"
- pelorus_deband_vulkan_filter_deps="vulkan spirv_library"
- pelorus_deblock_vulkan_filter_deps="vulkan spirv_library"
- pelorus_dehalo_vulkan_filter_deps="vulkan spirv_library"
+@@ -4245,6 +4245,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
+ overlay_vulkan_filter_deps="vulkan spirv_compiler"
+ pelorus_aa_vulkan_filter_deps="vulkan spirv_compiler"
+ pelorus_analyze_vulkan_filter_deps="vulkan spirv_compiler"
++pelorus_borderfix_vulkan_filter_deps="vulkan spirv_compiler"
+ pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"
+ pelorus_deblock_vulkan_filter_deps="vulkan spirv_compiler"
+ pelorus_dehalo_vulkan_filter_deps="vulkan spirv_compiler"
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index d91ce8bfdc..95ebd773ec 100644
+index 7431a8cbbcbae200cfc742480020ca36944ddf32..40e41f3d7b7e3eca2a5c2cc5850ecc5baaefb878 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
 @@ -435,6 +435,7 @@ OBJS-$(CONFIG_PALETTEGEN_FILTER)             += vf_palettegen.o palette.o
@@ -54,7 +57,7 @@ index d91ce8bfdc..95ebd773ec 100644
  OBJS-$(CONFIG_PELORUS_DEBLOCK_VULKAN_FILTER) += vf_pelorus_deblock_vulkan.o vulkan.o vulkan_filter.o
  OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER)  += vf_pelorus_dehalo_vulkan.o vulkan.o vulkan_filter.o
 diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
-index d4dd7c7237..45e6fc2b8a 100644
+index 9985efd56d8026261a43cba1283408ac3409ba25..570b308238750a84ce432a4e3484241dcf725841 100644
 --- a/libavfilter/allfilters.c
 +++ b/libavfilter/allfilters.c
 @@ -407,6 +407,7 @@ extern const FFFilter ff_vf_palettegen;
@@ -67,10 +70,10 @@ index d4dd7c7237..45e6fc2b8a 100644
  extern const FFFilter ff_vf_pelorus_dehalo_vulkan;
 diff --git a/libavfilter/vf_pelorus_borderfix_vulkan.c b/libavfilter/vf_pelorus_borderfix_vulkan.c
 new file mode 100644
-index 0000000000..5243b3f29c
+index 0000000000000000000000000000000000000000..b3d7e930f9e0975e4436a9299462c980413f605e
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_borderfix_vulkan.c
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,227 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -100,13 +103,13 @@ index 0000000000..5243b3f29c
 + * trip it would cost. Bit-depth-agnostic (FF_VK_REP_FLOAT UNORM); processes all
 + * planes by default (the dirty band is in luma and chroma alike).
 + *
-+ * Kept in lockstep with libpelorus/shaders/pelorus_borderfix.comp (AGENTS r4).
++ * The algorithm lives in vulkan/pelorus_borderfix.comp.glsl, compiled to
++ * SPIR-V at build time and linked in here.
 + * The band widths are interpreted in each plane's own pixels.
 + */
 +
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
-+#include "libavutil/vulkan_spirv.h"
 +#include "vulkan_filter.h"
 +
 +#include "filters.h"
@@ -122,7 +125,7 @@ index 0000000000..5243b3f29c
 +    AVVulkanDeviceQueueFamily *qf;
 +    FFVulkanShader shd;
 +
-+    /* push constants — mirror the GLSL std430 block below, byte-for-byte */
++    /* push constants — mirror the std430 block in the .comp.glsl, byte-for-byte */
 +    struct {
 +        int32_t left;
 +        int32_t right;
@@ -133,37 +136,20 @@ index 0000000000..5243b3f29c
 +    int planes; /* plane bitmask to process (all planes by default)          */
 +} PelorusBorderfixVulkanContext;
 +
-+/* Pure GLSL borderfix(), spliced verbatim. Kept in lockstep with the reference
-+ * shader libpelorus/shaders/pelorus_borderfix.comp — the only intended
-+ * difference is the working domain: the .comp reads r16ui, this inline form
-+ * reads FF_VK_REP_FLOAT (UNORM) images. */
-+static const char borderfix_glsl[] =
-+    "void borderfix(ivec2 pos, int idx) {\n"
-+    "    ivec2 sz = imageSize(output_images[idx]);\n"
-+    "    int cx = clamp(pos.x, min(left, sz.x - 1), max(sz.x - 1 - right, 0));\n"
-+    "    int cy = clamp(pos.y, min(top, sz.y - 1), max(sz.y - 1 - bottom, 0));\n"
-+    "    imageStore(output_images[idx], pos,\n"
-+    "               imageLoad(input_images[idx], ivec2(cx, cy)));\n"
-+    "}\n";
++/* The borderfix algorithm now lives in vulkan/pelorus_borderfix.comp.glsl,
++ * compiled to SPIR-V at build time and linked in here. FFmpeg 9 removed the
++ * runtime GLSL builder (GLSLC/GLSLF/GLSLD + ff_vk_shader_init), which also
++ * retires the old inline-vs-reference lockstep duplication. */
++extern const unsigned char ff_pelorus_borderfix_comp_spv_data[];
++extern const unsigned int  ff_pelorus_borderfix_comp_spv_len;
 +
 +static av_cold int init_filter(AVFilterContext *ctx)
 +{
 +    int err = 0;
-+    int i;
 +    PelorusBorderfixVulkanContext *s = ctx->priv;
 +    FFVulkanContext *vkctx = &s->vkctx;
-+    FFVulkanShader *shd = &s->shd; /* GLSL macros require a var named `shd` */
-+    FFVkSPIRVCompiler *spv;
-+    uint8_t *spv_data = NULL;
-+    size_t spv_len = 0;
-+    void *spv_opaque = NULL;
++    FFVulkanShader *shd = &s->shd;
 +    const int planes = av_pix_fmt_count_planes(vkctx->output_format);
-+
-+    spv = ff_vk_spirv_init();
-+    if (!spv) {
-+        av_log(ctx, AV_LOG_ERROR, "Unable to initialize SPIR-V compiler!\n");
-+        return AVERROR_EXTERNAL;
-+    }
 +
 +    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
 +    if (!s->qf) {
@@ -173,16 +159,16 @@ index 0000000000..5243b3f29c
 +    }
 +
 +    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
-+    RET(ff_vk_shader_init(vkctx, shd, "pelorus_borderfix",
-+                          VK_SHADER_STAGE_COMPUTE_BIT, NULL, 0, 32, 32, 1, 0));
++    /* Plane count and the plane bitmask were const-folded into the generated
++     * GLSL before FFmpeg 9 unrolled the per-plane loop in C. With precompiled
++     * SPIR-V they become specialization constants instead. */
++    SPEC_LIST_CREATE(sl, 2, 2 * sizeof(uint32_t))
++    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
++    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
 +
-+    GLSLC(0, layout(push_constant, std430) uniform pushConstants {            );
-+    GLSLC(1,     int left;                                                    );
-+    GLSLC(1,     int right;                                                   );
-+    GLSLC(1,     int top;                                                     );
-+    GLSLC(1,     int bottom;                                                  );
-+    GLSLC(0, };                                                               );
-+    GLSLC(0,                                                                  );
++    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
++                      (uint32_t []) { 32, 32, 1 }, 0);
++
 +    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts),
 +                                VK_SHADER_STAGE_COMPUTE_BIT);
 +
@@ -209,38 +195,17 @@ index 0000000000..5243b3f29c
 +                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
 +            },
 +        };
-+        RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0, 0));
++        ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
 +    }
 +
-+    GLSLD(borderfix_glsl);
-+    GLSLC(0, void main()                                                      );
-+    GLSLC(0, {                                                                );
-+    GLSLC(1,     ivec2 size;                                                  );
-+    GLSLC(1,     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);           );
-+    for (i = 0; i < planes; i++) {
-+        GLSLC(0,                                                              );
-+        GLSLF(1, size = imageSize(output_images[%i]);                       ,i);
-+        GLSLC(1, if (!IS_WITHIN(pos, size)) return;                           );
-+        if (s->planes & (1 << i)) {
-+            GLSLF(1, borderfix(pos, %i);                                    ,i);
-+        } else {
-+            GLSLF(1, imageStore(output_images[%i], pos, imageLoad(input_images[%i], pos)); ,i, i);
-+        }
-+    }
-+    GLSLC(0, }                                                                );
-+
-+    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
-+                            &spv_opaque));
-+    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
++    RET(ff_vk_shader_link(vkctx, shd,
++                          ff_pelorus_borderfix_comp_spv_data,
++                          ff_pelorus_borderfix_comp_spv_len, "main"));
 +    RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 +
 +    s->initialized = 1;
 +
 +fail:
-+    if (spv_opaque)
-+        spv->free_shader(spv, &spv_opaque);
-+    if (spv)
-+        spv->uninit(&spv);
 +    return err;
 +}
 +
@@ -262,7 +227,7 @@ index 0000000000..5243b3f29c
 +        RET(init_filter(ctx));
 +
 +    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in,
-+                                    VK_NULL_HANDLE, &s->opts, sizeof(s->opts)));
++                                    VK_NULL_HANDLE, 1, &s->opts, sizeof(s->opts)));
 +
 +    err = av_frame_copy_props(out, in);
 +    if (err < 0)
@@ -336,6 +301,104 @@ index 0000000000..5243b3f29c
 +    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_VULKAN),
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
+diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
+index 8e75e876856feb0a34b5188010c0f01a1a2644d8..f324fac9bff249e5da86cddf2426ab08b8b8368d 100644
+--- a/libavfilter/vulkan/Makefile
++++ b/libavfilter/vulkan/Makefile
+@@ -29,3 +29,4 @@ OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER) += vulkan/pelorus_mc.comp.spv.o
+ OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER) += vulkan/pelorus_dehalo.comp.spv.o
+ OBJS-$(CONFIG_PELORUS_AA_VULKAN_FILTER) += vulkan/pelorus_aa.comp.spv.o
+ OBJS-$(CONFIG_PELORUS_DEBLOCK_VULKAN_FILTER) += vulkan/pelorus_deblock.comp.spv.o
++OBJS-$(CONFIG_PELORUS_BORDERFIX_VULKAN_FILTER) += vulkan/pelorus_borderfix.comp.spv.o
+diff --git a/libavfilter/vulkan/pelorus_borderfix.comp.glsl b/libavfilter/vulkan/pelorus_borderfix.comp.glsl
+new file mode 100644
+index 0000000000000000000000000000000000000000..e803f4004726f7387a245bf6b58d0bcd44937b50
+--- /dev/null
++++ b/libavfilter/vulkan/pelorus_borderfix.comp.glsl
+@@ -0,0 +1,83 @@
++/*
++ * Copyright 2026 Lusoris
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or modify it under
++ * the terms of the GNU Lesser General Public License as published by the
++ * Free Software Foundation; either version 2.1 of the License, or (at
++ * your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
++ * License for more details.
++ */
++
++/*
++ * Pelorus dirty-line / border repair (fillborders=smear) compute shader.
++ *
++ * Single source of truth for the borderfix algorithm. Before FFmpeg 9 this
++ * text lived twice: as an inline-GLSL string built at runtime inside
++ * vf_pelorus_borderfix_vulkan.c, and as a standalone reference .comp. FFmpeg 9
++ * removed the runtime GLSL builder (GLSLC/GLSLF/GLSLD and ff_vk_shader_init),
++ * so the shader is now compiled to SPIR-V at build time and linked in — which
++ * retires that duplication and the whole class of lockstep-drift defects.
++ *
++ * The clean interior is [left, width-1-right] x [top, height-1-bottom]; a
++ * pixel inside a dirty band clamps onto the nearest clean edge (smear). The
++ * clamp lower bound is capped so a degenerate band wider than the frame still
++ * yields a valid coordinate. Band widths are in each plane's own pixels.
++ */
++
++#pragma shader_stage(compute)
++
++#extension GL_EXT_shader_image_load_formatted : require
++#extension GL_EXT_nonuniform_qualifier : require
++
++/* Workgroup-size IDs 253/254/255 are reserved by ff_vk_shader_load(). */
++layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
++
++/* Const-folded by the C side via SPEC_LIST_ADD(). `planes` is the plane count;
++ * `plane_mask` is the AVOption `planes` bitmask selecting which get repaired
++ * (the rest are copied through). Both were C-unrolled loop bounds before. */
++layout (constant_id = 0) const uint planes     = 0;
++layout (constant_id = 1) const uint plane_mask = 0xf;
++
++layout (push_constant, std430) uniform pushConstants {
++    int left;
++    int right;
++    int top;
++    int bottom;
++};
++
++layout (set = 0, binding = 0) uniform readonly  image2D input_images[];
++layout (set = 0, binding = 1) uniform writeonly image2D output_images[];
++
++void borderfix(ivec2 pos, int idx) {
++    ivec2 sz = imageSize(output_images[idx]);
++    int cx = clamp(pos.x, min(left, sz.x - 1), max(sz.x - 1 - right, 0));
++    int cy = clamp(pos.y, min(top, sz.y - 1), max(sz.y - 1 - bottom, 0));
++    imageStore(output_images[idx], pos,
++               imageLoad(input_images[idx], ivec2(cx, cy)));
++}
++
++void main()
++{
++    const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
++
++    /* Preserves the pre-FFmpeg-9 unrolled semantics exactly: the C generator
++     * emitted `if (!IS_WITHIN(pos, size)) return;` per plane, so the first
++     * plane that does not contain `pos` ends the invocation. Subsampled chroma
++     * is therefore skipped for positions only valid in luma, by design. */
++    for (uint i = 0; i < planes; i++) {
++        const ivec2 size = imageSize(output_images[i]);
++        if (!all(lessThan(pos, size)))
++            return;
++
++        if ((plane_mask & (1u << i)) != 0u)
++            borderfix(pos, int(i));
++        else
++            imageStore(output_images[i], pos, imageLoad(input_images[i], pos));
++    }
++}
 -- 
-2.54.0
+2.55.0
 

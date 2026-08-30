@@ -5,6 +5,78 @@ Re-apply / re-test work created for the FFmpeg patch stack after an upstream
 FFmpeg bump or a `libpelorus` ABI change. One entry per change that affects the
 patches (ADR-0108 deliverable #6).
 
+## v0.2.0 — FFmpeg base bump n8.1.1 → n9.0.1 (whole stack)
+
+The largest rebase so far: FFmpeg 9 removed the API the entire filter set was
+built on. Full detail and the measured evidence are in
+[ADR-0143](adr/0143-ffmpeg-9-migration.md).
+
+- **Base tag**: `n8.1.1` → `n9.0.1` (released 2026-08-12).
+- **Touches**: every `vf_pelorus_*_vulkan.c`, every encoder hand-diff in
+  `ffmpeg-patches/files/`, `generate.sh`, and a NEW per-filter shader at
+  `ffmpeg-patches/files/vulkan/pelorus_<name>.comp.glsl` installed to
+  `libavfilter/vulkan/` and registered in that directory's `Makefile`.
+
+**What upstream changed (all measured against a real n9.0.1 checkout):**
+
+1. `libavutil/vulkan.h` deleted the runtime GLSL builder: `GLSLC`/`GLSLA`/`GLSLF`/
+   `GLSLD`, `FFVulkanShader.src`, `ff_vk_shader_init()`, `ff_vk_shader_print()`.
+   Shaders are now compiled to SPIR-V at build time and linked in as
+   `ff_pelorus_<name>_comp_spv_data[]` / `_len`.
+2. `configure`: `spirv_library` → `spirv_compiler`, and it is satisfied by
+   `check_glslc` (a working `glslc`), NOT by `--enable-libshaderc`.
+3. `ff_vk_shader_add_descriptor_set()` returns `void` and lost its trailing
+   `print_to_shader_only` argument — so no `RET()` wrapper.
+4. `ff_vk_filter_process_simple()` / `_2pass()` / `_Nin()` gained a `uint32_t wgc_z`
+   before `push_src`; pass `1` for 2D image filters.
+5. `ff_vk_shader_load()` takes `(uint32_t []){ x, y, z }`, not `int []`.
+6. NVENC raised its minimum SDK to 11.1, deleting the SDK 8.1/9.0/9.1/10 feature
+   macros — including `NVENC_HAVE_QP_MAP_MODE`, whose only consumer was patch 0004.
+   **This one fails silently**: every `#ifdef` would simply evaluate false and the
+   ROI feature would compile out. The gate was removed after confirming
+   `qpMapMode`/`qpDeltaMap` are unconditional members in every SDK ≥ 11.1.
+7. Deprecated NVENC presets and rate-control modes were removed, shrinking the
+   per-codec AVOption tables (`nvenc_h264.c` −63, `nvenc_hevc.c` −55) and moving
+   every hook point up. The three option tables were **not** hoisted into a shared
+   one — they still exist per codec, so the hunks needed re-anchoring, not relocating.
+
+**Re-test after rebase** (all four steps passed for this bump):
+
+```bash
+FFMPEG_REPO=/path/to/ffmpeg BASE_TAG=n9.0.1 ffmpeg-patches/generate.sh
+# then, on a pristine n9.0.1 worktree:
+for p in ffmpeg-patches/0*.patch; do git am --3way "$p"; done   # 18/18
+./configure --enable-vulkan ...                                  # libpelorus found
+make libavfilter/vf_pelorus_*.o libavfilter/vulkan/pelorus_*.comp.spv.o
+nm -u <filter>.o | grep spv   # must match nm --defined-only <shader>.comp.spv.o
+```
+
+Verified for this bump: 18/18 patches apply to pristine n9.0.1, configure
+succeeds, a full `make ffmpeg` **links**, and the binary registers 10 pelorus
+filters plus the `pelorus_fgs` BSF. All 9 shader objects are pulled in by the
+Makefile's own `OBJS` (not by naming them on a make command line — see the note
+above about why that distinction matters).
+
+**On-device, all passing**: 9/9 filters execute on each of NVIDIA RTX 4090,
+Intel Arc A380 and AMD RADV; `planes=1` yields bit-exact chroma (`u:inf v:inf`)
+on all six luma-only filters; the three analyzers are byte-identical
+pass-throughs; `meta=1` exercises libpelorus at runtime; and a five-filter chain
+runs on real 2160p content. **Validation layers: run and clean** — all four VUID
+types the Pelorus filters emit are also emitted by stock upstream filters doing the
+same work (three by a bare `hwupload,hwdownload` chain with no filter; 07454 by
+upstream `vf_scdet_vulkan`, the SSBO-readback analogue). No Pelorus-specific
+validation error.
+
+**Note on the sibling repo**: `VMAFx/vmafx` migrated its own stack the same week
+(`7f6e6356b`) and reported no API change. That does not generalise — its patches
+are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
+
+> **Release labelling.** The `v0.1.0` tag shipped **only patches 0001 and 0002**
+> (verified with `git ls-tree v0.1.0 ffmpeg-patches/`). Every later section below is
+> therefore labelled `v0.2.0`. Patches **0003** (denoise) and **0004** (nvenc ROI) have
+> no section of their own — they were landed before this file's per-patch convention
+> settled, and the gap is recorded here rather than back-filled from memory.
+
 ## v0.1.0 — initial stack (base n8.1.1)
 
 - **Patch**: `ffmpeg-patches/0001-add-vf_pelorus_deband_vulkan.patch`.
@@ -48,7 +120,7 @@ patches (ADR-0108 deliverable #6).
   [docs/api/control-plane.md](api/control-plane.md). `sample`, `blur`, `planes`,
   and `meta` are out-of-contract and free to evolve.
 
-## v0.1.0 — patch 0005 (qsv ROI; cumulative on 0001–0004)
+## v0.2.0 — patch 0005 (qsv ROI; cumulative on 0001–0004)
 
 - **Patch**: `ffmpeg-patches/0005-qsv-pelorus-roi.patch`
   (source-of-truth `ffmpeg-patches/files/qsv-pelorus-roi.patch`).
@@ -78,7 +150,7 @@ patches (ADR-0108 deliverable #6).
   `EnableMBQP` only under CQP rate control (probe + one-shot warn + pass-through);
   `QSV_HAVE_MBQP` compile guard (oneVPL/MSDK ≥ 1.13); default OFF.
 
-## v0.1.0 — patch 0006 (grain_estimate; cumulative on 0001–0005)
+## v0.2.0 — patch 0006 (grain_estimate; cumulative on 0001–0005)
 
 - **Patch**: `ffmpeg-patches/0006-add-vf_pelorus_grain_estimate_vulkan.patch`.
   Committed by `generate.sh` *after* the nvenc (0004) and qsv (0005) encoder
@@ -106,7 +178,7 @@ patches (ADR-0108 deliverable #6).
   filter's inline GLSL implement the same per-band HF-residual estimator; edit
   both together (AGENTS hard rule 4).
 
-## v0.1.0 — patch 0007 (mc; cumulative on 0001–0006)
+## v0.2.0 — patch 0007 (mc; cumulative on 0001–0006)
 
 - **Patch**: `ffmpeg-patches/0007-add-vf_pelorus_mc_vulkan.patch`.
 - **Numbering**: `vf_pelorus_mc_vulkan` is committed **last** in `generate.sh`
@@ -142,7 +214,7 @@ patches (ADR-0108 deliverable #6).
 - **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay
   0001–0007, build, smoke `-h filter=pelorus_mc_vulkan`).
 
-## v0.1.0 — patch 0008 (nvenc ME hints; cumulative on 0001–0007)
+## v0.2.0 — patch 0008 (nvenc ME hints; cumulative on 0001–0007)
 
 - **Patch**: `ffmpeg-patches/0008-nvenc-pelorus-me-hints.patch` (hand-maintained
   libavcodec diff in `files/nvenc-pelorus-me-hints.patch`, applied by
@@ -189,7 +261,7 @@ patches (ADR-0108 deliverable #6).
   (`./configure --enable-nonfree --enable-nvenc … && make libavcodec/nvenc.o
   libavcodec/nvenc_h264.o libavcodec/nvenc_hevc.o`).
 
-## v0.1.0 — patch 0009 (vulkan QP-map; cumulative on 0001–0008)
+## v0.2.0 — patch 0009 (vulkan QP-map; cumulative on 0001–0008)
 
 - **Patch**: `ffmpeg-patches/0009-vulkan-pelorus-qpmap.patch`
   (source-of-truth `ffmpeg-patches/files/vulkan-pelorus-qpmap.patch`). A
@@ -245,7 +317,7 @@ patches (ADR-0108 deliverable #6).
   reference shader (`glslangValidator`) and the inline GLSL. On-HW A/B blocked on
   a driver advertising the extension + encode-feedback flags (see ADR-0114 Tier 2).
 
-## v0.1.0 — patch 0010 (pelorus_fgs BSF; cumulative on 0001–0009)
+## v0.2.0 — patch 0010 (pelorus_fgs BSF; cumulative on 0001–0009)
 
 - **Patch**: `ffmpeg-patches/0010-add-pelorus_fgs_bsf.patch`. A **bitstream
   filter**, not an AVFilter: drops `libavcodec/bsf/pelorus_fgs.c` (canonical source
@@ -263,7 +335,7 @@ patches (ADR-0108 deliverable #6).
   `trace_headers`. AV1 round-trips via native side data (no BSF); H.264/VVC legs
   are follow-ups.
 
-## v0.1.0 — patch 0011 (nvenc AV1 film grain; cumulative on 0001–0010)
+## v0.2.0 — patch 0011 (nvenc AV1 film grain; cumulative on 0001–0010)
 
 - **Patch**: `ffmpeg-patches/0011-nvenc-pelorus-film-grain.patch` (hand-maintained
   libavcodec diff in `files/nvenc-pelorus-film-grain.patch`, applied by
@@ -319,7 +391,7 @@ patches (ADR-0108 deliverable #6).
   `hevc_nvenc`/`h264_nvenc`. On-HW grain-match / BD-rate is a follow-up
   (ADR-0118 / ADR-0111); needs an SDK-12.0+ driver.
 
-## v0.1.0 — patch 0012 (libaom-av1 ROI; cumulative on 0001–0011)
+## v0.2.0 — patch 0012 (libaom-av1 ROI; cumulative on 0001–0011)
 
 - **Patch**: `ffmpeg-patches/0012-libaom-pelorus-roi.patch` (hand-maintained
   libavcodec diff in `files/libaom-pelorus-roi.patch`, applied by `generate.sh`
@@ -368,7 +440,7 @@ patches (ADR-0108 deliverable #6).
   `-h encoder=libaom-av1` shows `-pelorus_roi`. On-HW: `analyze roi=1 →
   libaom-av1 -pelorus_roi 1` on a banding clip must not crash and must produce
   valid output (the quality gain awaits the upstream fix above).
-## v0.1.0 — patch 0013 (svtav1 ROI; cumulative on 0001–0011)
+## v0.2.0 — patch 0013 (svtav1 ROI; cumulative on 0001–0011)
 
 - **Patch**: `ffmpeg-patches/0013-svtav1-pelorus-roi.patch` (hand-maintained
   unified diff `ffmpeg-patches/files/svtav1-pelorus-roi.patch`, applied as its own
@@ -417,7 +489,7 @@ patches (ADR-0108 deliverable #6).
   smoke `ffmpeg -h encoder=libsvtav1 | grep pelorus_roi`; ideally re-run the
   on-HW A/B (`analyze roi=1 → libsvtav1 -pelorus_roi 1`, CAMBI) from
 
-## v0.1.0 — patch 0014 (dehalo; cumulative on 0001–0011)
+## v0.2.0 — patch 0014 (dehalo; cumulative on 0001–0011)
 
 - **Patch**: `ffmpeg-patches/0014-add-vf_pelorus_dehalo_vulkan.patch`
   (canonical source `files/vf_pelorus_dehalo_vulkan.c`). A `vf_` filter drop-in,
@@ -448,7 +520,7 @@ patches (ADR-0108 deliverable #6).
   remove-only asymmetric `darkstr`/`brightstr` pull → dilated Sobel ring gate).
   Edit both together (AGENTS hard rule 4).
 - **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay
-## v0.1.0 — patch 0015 (aa; cumulative on 0001–0011)
+## v0.2.0 — patch 0015 (aa; cumulative on 0001–0011)
 
 - **Patch**: `ffmpeg-patches/0015-add-vf_pelorus_aa_vulkan.patch`. A pure-transform
   AVFilter (anime warp-AA + line-darkening); committed by `generate.sh` after the
@@ -479,7 +551,7 @@ patches (ADR-0108 deliverable #6).
   bound must track the `.comp`. Edit both together (AGENTS hard rule 4).
 - **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay
 
-## v0.1.0 — patch 0016 (scenecut; cumulative on 0001–0015)
+## v0.2.0 — patch 0016 (scenecut; cumulative on 0001–0015)
 
 - **Patch**: `ffmpeg-patches/0016-add-vf_pelorus_scenecut.patch` (canonical source
   `files/vf_pelorus_scenecut.c`). A `vf_` filter drop-in (same per-filter
@@ -534,7 +606,7 @@ patches (ADR-0108 deliverable #6).
   check: a multi-shot clip through `pelorus_mc_vulkan=meta=1,hwdownload,format=
   yuv420p,pelorus_scenecut` must force `pict_type=I` on the cut frames (inspect
   with `ffprobe -show_frames` / `-skip_frame nokey`).
-## v0.1.0 — patch 0017 (deblock; cumulative on 0001–0011)
+## v0.2.0 — patch 0017 (deblock; cumulative on 0001–0011)
 
 - **Patch**: `ffmpeg-patches/0017-add-vf_pelorus_deblock_vulkan.patch`
   (canonical source `files/vf_pelorus_deblock_vulkan.c`). A `vf_` filter drop-in,
@@ -571,7 +643,7 @@ patches (ADR-0108 deliverable #6).
   working domain (`.comp` reads `r16ui`/÷65535, inline reads `FF_VK_REP_FLOAT`
   UNORM already in `[0,1]`). Edit both together (AGENTS hard rule 4).
 - **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay the
-## v0.1.0 — patch 0018 (borderfix; cumulative on 0001–0011)
+## v0.2.0 — patch 0018 (borderfix; cumulative on 0001–0011)
 
 - **Patch**: `ffmpeg-patches/0018-add-vf_pelorus_borderfix_vulkan.patch`
   (canonical source `files/vf_pelorus_borderfix_vulkan.c`). A `vf_` filter
@@ -612,7 +684,7 @@ patches (ADR-0108 deliverable #6).
 - **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay the
   full stack, build, smoke `-h filter=pelorus_borderfix_vulkan`).
 
-## v0.1.0 — ADR-0129 fix (regenerates 0001, 0007, 0014, 0015, 0017, 0018)
+## v0.2.0 — ADR-0129 fix (regenerates 0001, 0007, 0014, 0015, 0017, 0018)
 
 - **Patches**: `0001` (deband), `0007` (mc), `0014` (dehalo), `0015` (aa),
   `0017` (deblock), `0018` (borderfix) — regenerated from `files/`, **no**
@@ -640,7 +712,7 @@ patches (ADR-0108 deliverable #6).
   is bit-exact against a no-op `hwupload,hwdownload` round-trip (`U`/`V` infinite
   PSNR).
 
-## v0.1.0 — ADR-0130 mc sub-pel (regenerates 0007, 0008, 0011)
+## v0.2.0 — ADR-0130 mc sub-pel (regenerates 0007, 0008, 0011)
 
 - **Patches**: `0007` (mc filter), `0008` (nvenc ME-hints hand-diff), `0011`
   (nvenc film-grain hand-diff — **cascade only**: its `@@` hunk offsets shift by
@@ -664,7 +736,7 @@ patches (ADR-0108 deliverable #6).
   then run `pelorus_mc_vulkan=meta=1` on a sub-pel-panned still — the measured
   `global_motion_x` must be fractional (integer-pel mc would round to 0/1).
 
-## v0.1.0 — ADR-0131 MC→denoise warp (regenerates 0003, 0007)
+## v0.2.0 — ADR-0131 MC→denoise warp (regenerates 0003, 0007)
 
 - **Patches**: `0003` (denoise filter — the `mc=1` warp consumer), `0007` (mc —
   emits the new confidence section alongside the MV grid). No registration-hunk

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Fri, 19 Jun 2026 20:31:37 +0200
-Subject: [PATCH 12/12] feat(libaom): honor AV_FRAME_DATA_REGIONS_OF_INTEREST
+Date: Thu, 1 Jan 2026 00:00:00 +0000
+Subject: [PATCH 12/18] feat(libaom): honor AV_FRAME_DATA_REGIONS_OF_INTEREST
  via AOME_SET_ROI_MAP
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -56,7 +56,7 @@ docs/backends/libaom-roi.md and ADR-0120. No fabricated gain.
  1 file changed, 238 insertions(+)
 
 diff --git a/libavcodec/libaomenc.c b/libavcodec/libaomenc.c
-index 20e97e5d43..f086da633b 100644
+index 7cabea30034bc9f232d496d8cdf5bd0ad28adf75..724306e9659d9f6b589d23184f0d55b8574e2b9c 100644
 --- a/libavcodec/libaomenc.c
 +++ b/libavcodec/libaomenc.c
 @@ -139,6 +139,36 @@ typedef struct AOMEncoderContext {
@@ -96,7 +96,7 @@ index 20e97e5d43..f086da633b 100644
  } AOMContext;
  
  #define OFFSET(x) offsetof(AOMContext, x)
-@@ -463,6 +493,9 @@ static av_cold int aom_free(AVCodecContext *avctx)
+@@ -508,6 +538,9 @@ static av_cold int aom_free(AVCodecContext *avctx)
      free_frame_list(ctx->coded_frame_list);
      av_bsf_free(&ctx->bsf);
      ff_dovi_ctx_unref(&ctx->dovi);
@@ -106,7 +106,7 @@ index 20e97e5d43..f086da633b 100644
      return 0;
  }
  
-@@ -963,6 +996,31 @@ static av_cold int aom_init(AVCodecContext *avctx,
+@@ -1008,6 +1041,31 @@ static av_cold int aom_init(AVCodecContext *avctx,
          codecctl_int(avctx, AV1E_SET_FRAME_PARALLEL_DECODING, ctx->frame_parallel);
      set_color_range(avctx);
  
@@ -138,7 +138,7 @@ index 20e97e5d43..f086da633b 100644
      codecctl_int(avctx, AV1E_SET_SUPERBLOCK_SIZE, ctx->superblock_size);
      if (ctx->uniform_tiles) {
          codecctl_int(avctx, AV1E_SET_TILE_COLUMNS, ctx->tile_cols_log2);
-@@ -1256,6 +1314,179 @@ static enum AVPixelFormat aomfmt_to_pixfmt(struct aom_image *img)
+@@ -1301,6 +1359,179 @@ static enum AVPixelFormat aomfmt_to_pixfmt(struct aom_image *img)
      return AV_PIX_FMT_NONE;
  }
  
@@ -318,8 +318,8 @@ index 20e97e5d43..f086da633b 100644
  static int aom_encode(AVCodecContext *avctx, AVPacket *pkt,
                        const AVFrame *frame, int *got_packet)
  {
-@@ -1324,6 +1555,12 @@ static int aom_encode(AVCodecContext *avctx, AVPacket *pkt,
-         res = add_hdr_plus(avctx, rawimg, frame);
+@@ -1373,6 +1604,12 @@ static int aom_encode(AVCodecContext *avctx, AVPacket *pkt,
+         res = add_hdr_smpte2094_app5(avctx, rawimg, frame);
          if (res < 0)
              return res;
 +
@@ -331,7 +331,7 @@ index 20e97e5d43..f086da633b 100644
      }
  
      res = aom_codec_encode(&ctx->encoder, rawimg, timestamp, duration, flags);
-@@ -1551,6 +1788,7 @@ static const AVOption options[] = {
+@@ -1600,6 +1837,7 @@ static const AVOption options[] = {
      { "enable-masked-comp",           "Enable masked compound",                            OFFSET(enable_masked_comp),           AV_OPT_TYPE_BOOL, {.i64 = -1}, -1, 1, VE},
      { "enable-interintra-comp",       "Enable interintra compound",                        OFFSET(enable_interintra_comp),       AV_OPT_TYPE_BOOL, {.i64 = -1}, -1, 1, VE},
      { "enable-smooth-interintra",     "Enable smooth interintra mode",                     OFFSET(enable_smooth_interintra),     AV_OPT_TYPE_BOOL, {.i64 = -1}, -1, 1, VE},
@@ -340,5 +340,5 @@ index 20e97e5d43..f086da633b 100644
      { "aom-params",                   "Set libaom options using a :-separated list of key=value pairs", OFFSET(aom_params), AV_OPT_TYPE_DICT, { 0 }, 0, 0, VE },
  #endif
 -- 
-2.54.0
+2.55.0
 

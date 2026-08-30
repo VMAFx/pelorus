@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Fri, 19 Jun 2026 19:50:06 +0200
-Subject: [PATCH 10/11] feat(fgs): add pelorus_fgs bitstream filter (H.274 /
+Date: Thu, 1 Jan 2026 00:00:00 +0000
+Subject: [PATCH 10/18] feat(fgs): add pelorus_fgs bitstream filter (H.274 /
  HEVC FGC SEI)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -43,15 +43,15 @@ ADR: docs/adr/0117-grain-fgs-bsf.md
  configure                      |   1 +
  libavcodec/bitstream_filters.c |   1 +
  libavcodec/bsf/Makefile        |   1 +
- libavcodec/bsf/pelorus_fgs.c   | 320 +++++++++++++++++++++++++++++++++
- 4 files changed, 323 insertions(+)
+ libavcodec/bsf/pelorus_fgs.c   | 322 +++++++++++++++++++++++++++++++++
+ 4 files changed, 325 insertions(+)
  create mode 100644 libavcodec/bsf/pelorus_fgs.c
 
 diff --git a/configure b/configure
-index 07301fd756..649bd1a4c6 100755
+index 216f12e37b3d0b1dc56693872573bcecee629410..2e8e0c3ac56df6177b027ab8197f1301b6497cff 100755
 --- a/configure
 +++ b/configure
-@@ -3709,6 +3709,7 @@ hevc_metadata_bsf_select="cbs_h265"
+@@ -3772,6 +3772,7 @@ hevc_metadata_bsf_select="cbs_h265"
  lcevc_metadata_bsf_select="cbs_lcevc"
  mjpeg2jpeg_bsf_select="jpegtables"
  mpeg2_metadata_bsf_select="cbs_mpeg2"
@@ -60,10 +60,10 @@ index 07301fd756..649bd1a4c6 100755
  trace_headers_bsf_select="cbs cbs_vp8"
  vp9_metadata_bsf_select="cbs_vp9"
 diff --git a/libavcodec/bitstream_filters.c b/libavcodec/bitstream_filters.c
-index 150cca8939..45704353bd 100644
+index 9c9443e5b15444641d688c884d3fd996dc328f87..ce9976edd7d86eab0cd68da8ba937e48b6280ef4 100644
 --- a/libavcodec/bitstream_filters.c
 +++ b/libavcodec/bitstream_filters.c
-@@ -59,6 +59,7 @@ extern const FFBitStreamFilter ff_noise_bsf;
+@@ -60,6 +60,7 @@ extern const FFBitStreamFilter ff_noise_bsf;
  extern const FFBitStreamFilter ff_null_bsf;
  extern const FFBitStreamFilter ff_opus_metadata_bsf;
  extern const FFBitStreamFilter ff_pcm_rechunk_bsf;
@@ -72,10 +72,10 @@ index 150cca8939..45704353bd 100644
  extern const FFBitStreamFilter ff_prores_metadata_bsf;
  extern const FFBitStreamFilter ff_remove_extradata_bsf;
 diff --git a/libavcodec/bsf/Makefile b/libavcodec/bsf/Makefile
-index eb090090ef..6195cd407b 100644
+index 981bb8276bfa0855be085e0c8d64a1528795b623..8f8afddb98af584d8af7f02795eb650537fed66d 100644
 --- a/libavcodec/bsf/Makefile
 +++ b/libavcodec/bsf/Makefile
-@@ -36,6 +36,7 @@ OBJS-$(CONFIG_NOISE_BSF)                  += bsf/noise.o
+@@ -37,6 +37,7 @@ OBJS-$(CONFIG_NOISE_BSF)                  += bsf/noise.o
  OBJS-$(CONFIG_NULL_BSF)                   += bsf/null.o
  OBJS-$(CONFIG_OPUS_METADATA_BSF)          += bsf/opus_metadata.o
  OBJS-$(CONFIG_PCM_RECHUNK_BSF)            += bsf/pcm_rechunk.o
@@ -85,10 +85,10 @@ index eb090090ef..6195cd407b 100644
  OBJS-$(CONFIG_REMOVE_EXTRADATA_BSF)       += bsf/remove_extradata.o
 diff --git a/libavcodec/bsf/pelorus_fgs.c b/libavcodec/bsf/pelorus_fgs.c
 new file mode 100644
-index 0000000000..9925cd0755
+index 0000000000000000000000000000000000000000..2408bf6a5489bb4a14616005ad8e3ecda8f51f00
 --- /dev/null
 +++ b/libavcodec/bsf/pelorus_fgs.c
-@@ -0,0 +1,320 @@
+@@ -0,0 +1,322 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -145,15 +145,17 @@ index 0000000000..9925cd0755
 +#include "libavutil/common.h"
 +#include "libavutil/opt.h"
 +
-+#include "bsf.h"
-+#include "bsf_internal.h"
-+#include "cbs.h"
-+#include "cbs_bsf.h"
-+#include "cbs_h265.h"
-+#include "cbs_sei.h"
-+#include "sei.h"
++/* FFmpeg 9 requires fully-qualified includes from libavcodec/bsf/: the
++ * relative form ("bsf.h") no longer resolves from that subdirectory. */
++#include "libavcodec/bsf.h"
++#include "libavcodec/bsf_internal.h"
++#include "libavcodec/cbs.h"
++#include "libavcodec/cbs_bsf.h"
++#include "libavcodec/cbs_h265.h"
++#include "libavcodec/cbs_sei.h"
++#include "libavcodec/sei.h"
 +
-+#include "hevc/hevc.h"
++#include "libavcodec/hevc/hevc.h"
 +
 +/* Comp-model component bitmask for the `components` option. */
 +#define PEL_FGS_COMP_Y  (1 << 0)
@@ -410,5 +412,5 @@ index 0000000000..9925cd0755
 +    .filter         = &ff_cbs_bsf_generic_filter,
 +};
 -- 
-2.54.0
+2.55.0
 

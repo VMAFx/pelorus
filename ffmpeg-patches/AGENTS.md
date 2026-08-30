@@ -2,7 +2,7 @@
 # Agent guide — ffmpeg-patches/
 
 The `vf_pelorus_*` Vulkan filters, shipped as a patch stack against FFmpeg
-n8.1.1. Parent: [../AGENTS.md](../AGENTS.md). Governing ADR:
+n9.0.1. Parent: [../AGENTS.md](../AGENTS.md). Governing ADR:
 [0104](../docs/adr/0104-ffmpeg-patch-stack.md).
 
 ## Scope

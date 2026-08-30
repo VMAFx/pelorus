@@ -45,7 +45,6 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/rational.h"
-#include "libavutil/vulkan_spirv.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -103,23 +102,20 @@ typedef struct PelorusAnalyzeVulkanContext {
     int complexity_seen;
 } PelorusAnalyzeVulkanContext;
 
+/* The reduction now lives in vulkan/pelorus_analyze.comp.glsl, compiled to
+ * SPIR-V at build time and linked in here. FFmpeg 9 removed the runtime GLSL
+ * builder (GLSLC/GLSLF/GLSLD + ff_vk_shader_init), which also retires the old
+ * inline-vs-reference lockstep duplication. */
+extern const unsigned char ff_pelorus_analyze_comp_spv_data[];
+extern const unsigned int  ff_pelorus_analyze_comp_spv_len;
+
 static av_cold int init_filter(AVFilterContext *ctx)
 {
-    int err;
-    uint8_t *spv_data = NULL;
-    size_t spv_len = 0;
-    void *spv_opaque = NULL;
+    int err = 0;
     PelorusAnalyzeVulkanContext *s = ctx->priv;
     FFVulkanContext *vkctx = &s->vkctx;
     FFVulkanShader *shd = &s->shd;
-    FFVkSPIRVCompiler *spv;
     const int planes = av_pix_fmt_count_planes(vkctx->input_format);
-
-    spv = ff_vk_spirv_init();
-    if (!spv) {
-        av_log(ctx, AV_LOG_ERROR, "Unable to initialize SPIR-V compiler!\n");
-        return AVERROR_EXTERNAL;
-    }
 
     s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
     if (!s->qf) {
@@ -129,9 +125,11 @@ static av_cold int init_filter(AVFilterContext *ctx)
     }
 
     RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
-    RET(ff_vk_shader_init(vkctx, shd, "pelorus_analyze",
-                          VK_SHADER_STAGE_COMPUTE_BIT, NULL, 0, PEL_TILE,
-                          PEL_TILE, 1, 0));
+    /* The reduction reads only the luma plane and is otherwise fully static,
+     * so no specialization constants are needed (unlike deband, which had a
+     * C-unrolled per-plane loop). `spec` is NULL. */
+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, NULL,
+                      (uint32_t []) { PEL_TILE, PEL_TILE, 1 }, 0);
 
     {
         FFVulkanDescriptorSetBinding desc[] = {
@@ -157,95 +155,21 @@ static av_cold int init_filter(AVFilterContext *ctx)
                 .buf_content = "uint tile[];",
             },
         };
-        RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc, 2, 0, 0));
+        ff_vk_shader_add_descriptor_set(vkctx, shd, desc, 2, 0);
     }
 
-    GLSLC(0, layout(push_constant, std430) uniform pushConstants {            );
-    GLSLC(1,     int grid_cols;                                               );
-    GLSLC(1,     int ntiles;                                                  );
-    GLSLC(1,     float grad_lo;                                               );
-    GLSLC(0, };                                                               );
-    GLSLC(0,                                                                  );
+    /* Mirrors the pushConstants block in vulkan/pelorus_analyze.comp.glsl. */
     ff_vk_shader_add_push_const(shd, 0, 2 * sizeof(int) + sizeof(float),
                                 VK_SHADER_STAGE_COMPUTE_BIT);
 
-    GLSLC(0, shared uint s_sum;                                               );
-    GLSLC(0, shared uint s_sumsq;                                             );
-    GLSLC(0, shared uint s_edge;                                              );
-    GLSLC(0, shared uint s_grad;                                              );
-    GLSLC(0, shared uint s_cnt;                                               );
-    GLSLC(0,                                                                  );
-    GLSLC(0, void main()                                                      );
-    GLSLC(0, {                                                                );
-    GLSLC(1,     const float TS = 65535.0;                                    );
-    GLSLC(1,     const float GS = 1000000.0;                                  );
-    GLSLC(1,     if (gl_LocalInvocationIndex == 0u) {                         );
-    GLSLC(2,         s_sum = 0u; s_sumsq = 0u; s_edge = 0u;                   );
-    GLSLC(2,         s_grad = 0u; s_cnt = 0u;                                 );
-    GLSLC(1,     }                                                            );
-    GLSLC(1,     barrier();                                                   );
-    GLSLC(1,     ivec2 size = imageSize(input_images[0]);                     );
-    GLSLC(1,     ivec2 pos = ivec2(gl_GlobalInvocationID.xy);                 );
-    GLSLC(1,     if (IS_WITHIN(pos, size)) {                                  );
-    GLSLC(2,         float l = imageLoad(input_images[0], pos).x;             );
-    GLSLC(2,         ivec2 rp = clamp(pos + ivec2(1, 0), ivec2(0), size - 1); );
-    GLSLC(2,         ivec2 dp = clamp(pos + ivec2(0, 1), ivec2(0), size - 1); );
-    GLSLC(2,         float gx = abs(imageLoad(input_images[0], rp).x - l);    );
-    GLSLC(2,         float gy = abs(imageLoad(input_images[0], dp).x - l);    );
-    GLSLC(2,         float g = gx + gy;                                       );
-    GLSLC(2,         float edge = clamp(g, 0.0, 1.0);                         );
-    /* A "real but low-amplitude" step (>= grad_lo) is the banding signature; a
-     * dead-flat constant tile (g < grad_lo) and a textured tile (large g) both
-     * contribute 0 to the gradient accumulator. The window [grad_lo, 8*grad_lo]
-     * isolates the slope that bands. */
-    GLSLC(2,         float band_g = (g >= grad_lo && g < grad_lo * 8.0)       );
-    GLSLC(3,                        ? g : 0.0;                                );
-    GLSLC(2,         atomicAdd(s_sum,   uint(l * TS));                        );
-    GLSLC(2,         atomicAdd(s_sumsq, uint(l * l * TS));                    );
-    GLSLC(2,         atomicAdd(s_edge,  uint(edge * TS));                     );
-    GLSLC(2,         atomicAdd(s_grad,  uint(band_g * TS));                   );
-    GLSLC(2,         atomicAdd(s_cnt,   1u);                                  );
-    GLSLC(1,     }                                                            );
-    GLSLC(1,     barrier();                                                   );
-    GLSLC(1,     if (gl_LocalInvocationIndex == 0u) {                         );
-    GLSLC(2,         uint idx = gl_WorkGroupID.y * uint(grid_cols)            );
-    GLSLC(2,                    + gl_WorkGroupID.x;                           );
-    GLSLC(2,         uint N = uint(ntiles);                                   );
-    GLSLC(2,         if (s_cnt > 0u) {                                        );
-    GLSLC(3,             float n = float(s_cnt);                              );
-    GLSLC(3,             float mean = (float(s_sum) / TS) / n;                );
-    GLSLC(3,             float msq  = (float(s_sumsq) / TS) / n;             );
-    GLSLC(3,             float var  = max(msq - mean * mean, 0.0);           );
-    GLSLC(3,             float edge = (float(s_edge) / TS) / n;              );
-    GLSLC(3,             float grad = (float(s_grad) / TS) / n;             );
-    GLSLC(3,             tile[idx]          = uint(var  * GS);              );
-    GLSLC(3,             tile[N + idx]      = uint(edge * GS);              );
-    GLSLC(3,             tile[2u * N + idx] = uint(grad * GS);              );
-    GLSLC(3,             tile[3u * N + idx] = 1u;                           );
-    /* 5th span: the tile-mean luma, for the host coarse (inter-tile) banding
-     * scale (ADR-0132/CAMBI alignment) — a shallow gradient spanning many tiles
-     * is invisible to per-tile variance but shows as a smooth tile-mean ramp. */
-    GLSLC(3,             tile[4u * N + idx] = uint(mean * GS);              );
-    GLSLC(2,         } else {                                                 );
-    GLSLC(3,             tile[idx] = 0u; tile[N + idx] = 0u;                 );
-    GLSLC(3,             tile[2u * N + idx] = 0u; tile[3u * N + idx] = 0u;   );
-    GLSLC(3,             tile[4u * N + idx] = 0u;                           );
-    GLSLC(2,         }                                                        );
-    GLSLC(1,     }                                                            );
-    GLSLC(0, }                                                                );
-
-    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
-                            &spv_opaque));
-    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
+    RET(ff_vk_shader_link(vkctx, shd,
+                          ff_pelorus_analyze_comp_spv_data,
+                          ff_pelorus_analyze_comp_spv_len, "main"));
     RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 
     s->initialized = 1;
 
 fail:
-    if (spv_opaque)
-        spv->free_shader(spv, &spv_opaque);
-    if (spv)
-        spv->uninit(&spv);
     return err;
 }
 
