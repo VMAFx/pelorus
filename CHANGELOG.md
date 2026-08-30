@@ -67,6 +67,15 @@ All notable changes to Pelorus are documented here. The format is
   variance-AQ, and does not beat it. Recorded as a negative result rather than shipped;
   the same conclusion generalises in ADR-0142 (source-side rate control loses structurally
   to the encoder's RC) and is why ADR-0132's per-shot CRF steering was also rejected.
+- **Benchmark corpus `bbb` re-pinned — this resets its baseline.** The pinned
+  `download.blender.org` clip now 404s upstream and no mirror serves the same bytes, so
+  `scripts/bench/fetch-corpus.sh` could not materialise it on a machine without a warm
+  cache. Re-pinned to a Big Buck Bunny encode that is still served, keeping the same
+  workload shape (640x360, yuv420p, 48 frames — an identical 16,588,800-byte decoded
+  `.yuv`), so the harness runs exactly the same amount of work. The pixels differ, so
+  **absolute `bbb` numbers recorded before 2026-08-30 are not comparable with ones
+  recorded after**; `docs/development/bench-results.md` marks the boundary.
+  `synth-banding` is lavfi-generated and unaffected.
 - **FFmpeg base tag moves n8.1.1 → n9.0.1**, and every Vulkan shader moves from a
   runtime-constructed GLSL string to **precompiled SPIR-V**. FFmpeg 9 deleted the inline-GLSL
   builder outright (`GLSLC`/`GLSLA`/`GLSLF`/`GLSLD`, `FFVulkanShader.src`, `ff_vk_shader_init`,
