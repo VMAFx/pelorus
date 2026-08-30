@@ -46,3 +46,15 @@ subdir('libpelorus')
 if get_option('tools')
   subdir('tools')
 endif
+
+# Since ADR-0143 each filter's GLSL binding declarations and its C
+# FFVulkanDescriptorSetBinding array are two hand-maintained lists that must agree.
+# Nothing in the compiler or the FFmpeg build checks that -- a swapped pair silently
+# reads the wrong resource, which is corruption rather than a build failure. This is
+# that check, and it is cheap enough to live in the fast gate.
+python_prog = find_program('python3', required: true)
+test('shader-binding-order',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'check-shader-bindings.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
