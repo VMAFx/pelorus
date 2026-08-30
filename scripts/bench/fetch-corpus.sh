@@ -23,7 +23,11 @@ want=("$@")
 want_clip() { [ ${#want[@]} -eq 0 ] && return 0; for w in "${want[@]}"; do [ "$w" = "$1" ] && return 0; done; return 1; }
 
 while IFS='|' read -r name url sha seek scale pixfmt frames fps; do
-    name="$(echo "$name" | xargs)"; case "$name" in ''|\#*) continue;; esac
+    # Skip blanks/comments BEFORE xargs: xargs treats quotes as syntax and dies on
+    # an apostrophe in a comment ("unmatched single quote"), which made a prose
+    # comment in corpus.lock able to break the whole fetch.
+    case "$(printf '%s' "$name" | tr -d '[:space:]')" in ''|\#*) continue;; esac
+    name="$(echo "$name" | xargs)"
     want_clip "$name" || continue
     url="$(echo "$url" | xargs)"; sha="$(echo "$sha" | xargs)"; seek="$(echo "$seek" | xargs)"
     scale="$(echo "$scale" | xargs)"; pixfmt="$(echo "$pixfmt" | xargs)"
