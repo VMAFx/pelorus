@@ -1,5 +1,5 @@
 diff --git a/libavcodec/vulkan_encode.c b/libavcodec/vulkan_encode.c
-index a440646..480e5e7 100644
+index 39c4330..fb5fb61 100644
 --- a/libavcodec/vulkan_encode.c
 +++ b/libavcodec/vulkan_encode.c
 @@ -22,12 +22,889 @@
@@ -973,7 +973,7 @@ index a440646..480e5e7 100644
      /* Send control data */
      if (!ctx->session_reset) {
          vk->CmdControlVideoCodingKHR(cmd_buf, &encode_ctrl);
-@@ -875,6 +1812,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -885,6 +1822,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      if (err < 0)
          return err;
  
@@ -986,7 +986,7 @@ index a440646..480e5e7 100644
      /* Create command and query pool */
      query_create = (VkQueryPoolVideoEncodeFeedbackCreateInfoKHR) {
          .sType = VK_STRUCTURE_TYPE_QUERY_POOL_VIDEO_ENCODE_FEEDBACK_CREATE_INFO_KHR,
-@@ -888,6 +1831,13 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -897,6 +1840,13 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      if (err < 0)
          return err;
  
@@ -1000,7 +1000,7 @@ index a440646..480e5e7 100644
      if (ctx->opts.quality > ctx->enc_caps.maxQualityLevels) {
          av_log(avctx, AV_LOG_ERROR, "Invalid quality level %i: allowed range is "
                                      "0 to %i\n",
-@@ -1029,6 +1979,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -1038,6 +1988,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      /* Create session */
      session_create.pVideoProfile = &ctx->profile;
      session_create.flags = 0x0;
@@ -1013,7 +1013,7 @@ index a440646..480e5e7 100644
      session_create.queueFamilyIndex = ctx->qf_enc->idx;
      session_create.maxCodedExtent = ctx->caps.maxCodedExtent;
      session_create.maxDpbSlots = ctx->caps.maxDpbSlots;
-@@ -1073,6 +2029,17 @@ int ff_vulkan_encode_create_session_params(AVCodecContext *avctx, FFVulkanEncode
+@@ -1082,6 +2038,17 @@ int ff_vulkan_encode_create_session_params(AVCodecContext *avctx, FFVulkanEncode
          .pNext = codec_params_pnext,
          .qualityLevel = ctx->opts.quality,
      };
@@ -1032,7 +1032,7 @@ index a440646..480e5e7 100644
          .sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_PARAMETERS_CREATE_INFO_KHR,
          .pNext = &q_info,
 diff --git a/libavcodec/vulkan_encode.h b/libavcodec/vulkan_encode.h
-index cf5f255..2688419 100644
+index 23c3589..6fdbaf6 100644
 --- a/libavcodec/vulkan_encode.h
 +++ b/libavcodec/vulkan_encode.h
 @@ -155,6 +155,16 @@ typedef struct FFVkEncodeCommonOptions {
@@ -1121,7 +1121,7 @@ index cf5f255..2688419 100644
 @@ -204,6 +266,7 @@ typedef struct FFVulkanEncodeContext {
  #define VULKAN_ENCODE_COMMON_OPTIONS \
      { "qp", "Use an explicit constant quantizer for the whole stream", OFFSET(common.opts.qp), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 255, FLAGS }, \
-     { "quality", "Set encode quality (trades off against speed, higher is faster)", OFFSET(common.opts.quality), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, FLAGS }, \
+     { "quality", "Set encode quality (trades off against speed, higher is slower)", OFFSET(common.opts.quality), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, FLAGS }, \
 +    { "pelorus_roi", "Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the Vulkan-video quantization map (driver-probed; default off)", OFFSET(common.opts.pelorus_roi), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS }, \
      { "rc_mode", "Select rate control type", OFFSET(common.opts.rc_mode), AV_OPT_TYPE_INT, { .i64 = FF_VK_RC_MODE_AUTO }, 0, FF_VK_RC_MODE_AUTO, FLAGS, "rc_mode" }, \
          { "auto",    "Choose mode automatically based on parameters", 0, AV_OPT_TYPE_CONST, { .i64 = FF_VK_RC_MODE_AUTO }, INT_MIN, INT_MAX, FLAGS, "rc_mode" }, \

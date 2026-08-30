@@ -43,8 +43,8 @@
  * downstream FFmpeg AV1 encoder honours it with no Pelorus-specific BSF. The
  * OBU/SEI bitstream writer is a documented follow-up (ADR-0115).
  *
- * The algorithm is kept in lockstep with the standalone reference shader
- * libpelorus/shaders/pelorus_grain_estimate.comp (AGENTS hard rule 4).
+ * The algorithm lives in vulkan/pelorus_grain_estimate.comp.glsl, compiled to
+ * SPIR-V at build time (FFmpeg 9 removed the runtime inline-GLSL builder).
  */
 
 #include "libavutil/buffer.h"
@@ -54,7 +54,6 @@
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
-#include "libavutil/vulkan_spirv.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -64,8 +63,8 @@
 
 #include <pelorus/interop.h>
 
-/* Intensity bands and atomic-contention slices. MUST match the .comp and the
- * inline GLSL std430 SSBO layout below, byte-for-byte. */
+/* Intensity bands and atomic-contention slices. MUST match the std430 SSBO
+ * layout in pelorus_grain_estimate.comp.glsl, byte-for-byte. */
 #define PEL_GRAIN_BANDS 8
 #define PEL_GRAIN_SLICES 16
 
@@ -75,7 +74,7 @@
  * for real grain), resid^2 <= 0.0064, so the worst-case per-pixel contribution
  * times the largest per-slice flat-pixel count (~2M at 8K) stays under 2^32, and
  * a small real-grain residual still scales to >= 1 (no truncation-to-zero).
- * MUST match the .comp / inline GLSL. */
+ * MUST match pelorus_grain_estimate.comp.glsl. */
 #define PEL_GRAIN_SUMSQ_GS 300000.0
 #define PEL_GRAIN_CORR_GS 2000.0
 /* Lag-1 product bias (the product is in [-1,1]); host subtracts cnt*BIAS. */
@@ -106,23 +105,20 @@ typedef struct PelorusGrainEstimateVulkanContext {
     int attach_native; /* also attach native AV_FRAME_DATA_FILM_GRAIN_PARAMS    */
 } PelorusGrainEstimateVulkanContext;
 
+/* The estimator now lives in vulkan/pelorus_grain_estimate.comp.glsl, compiled
+ * to SPIR-V at build time and linked in here. FFmpeg 9 removed the runtime
+ * GLSL builder (GLSLC/GLSLF/GLSLD + ff_vk_shader_init), which also retires the
+ * old inline-vs-reference lockstep duplication. */
+extern const unsigned char ff_pelorus_grain_estimate_comp_spv_data[];
+extern const unsigned int  ff_pelorus_grain_estimate_comp_spv_len;
+
 static av_cold int init_filter(AVFilterContext *ctx)
 {
-    int err;
-    uint8_t *spv_data = NULL;
-    size_t spv_len = 0;
-    void *spv_opaque = NULL;
+    int err = 0;
     PelorusGrainEstimateVulkanContext *s = ctx->priv;
     FFVulkanContext *vkctx = &s->vkctx;
     FFVulkanShader *shd = &s->shd;
-    FFVkSPIRVCompiler *spv;
     const int planes = av_pix_fmt_count_planes(vkctx->input_format);
-
-    spv = ff_vk_spirv_init();
-    if (!spv) {
-        av_log(ctx, AV_LOG_ERROR, "Unable to initialize SPIR-V compiler!\n");
-        return AVERROR_EXTERNAL;
-    }
 
     s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
     if (!s->qf) {
@@ -132,8 +128,15 @@ static av_cold int init_filter(AVFilterContext *ctx)
     }
 
     RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
-    RET(ff_vk_shader_init(vkctx, shd, "pelorus_grain_estimate",
-                          VK_SHADER_STAGE_COMPUTE_BIT, NULL, 0, 16, 16, 1, 0));
+
+    /* The estimator reads only the luma plane and needs no C-generated GLSL, so
+     * no specialization constants are required (spec == NULL). */
+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, NULL,
+                      (uint32_t []) { 16, 16, 1 }, 0);
+
+    /* Mirrors the GLSL std430 push-constant block, byte-for-byte. */
+    ff_vk_shader_add_push_const(shd, 0, 2 * sizeof(int) + sizeof(float),
+                                VK_SHADER_STAGE_COMPUTE_BIT);
 
     {
         FFVulkanDescriptorSetBinding desc[] = {
@@ -152,94 +155,22 @@ static av_cold int init_filter(AVFilterContext *ctx)
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .mem_layout = "std430",
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-                /* Mirrors PelorusGrainBuf / the .comp GrainBuf, byte-for-byte. */
+                /* Mirrors PelorusGrainBuf / the .comp.glsl GrainBuf block. */
                 .buf_content = "uint sumsq[128]; uint cnt[128]; "
                                "uint corr[16]; uint corr_cnt[16];",
             },
         };
-        RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc, 2, 0, 0));
+        ff_vk_shader_add_descriptor_set(vkctx, shd, desc, 2, 0);
     }
 
-    GLSLC(0, layout(push_constant, std430) uniform pushConstants {            );
-    GLSLC(1,     int width;                                                   );
-    GLSLC(1,     int height;                                                  );
-    GLSLC(1,     float edge_thr;                                              );
-    GLSLC(0, };                                                               );
-    GLSLC(0,                                                                  );
-    ff_vk_shader_add_push_const(shd, 0, 2 * sizeof(int) + sizeof(float),
-                                VK_SHADER_STAGE_COMPUTE_BIT);
-
-    /* The luma plane is processed against the normalized-float image array (no
-     * /maxv: imageLoad already returns [0,1]). Kept in lockstep with
-     * pelorus_grain_estimate.comp (which works in the 16-bit uint domain). */
-    GLSLC(0, void main()                                                      );
-    GLSLC(0, {                                                                );
-    GLSLC(1,     const float SUMSQ_GS = 300000.0;                             );
-    GLSLC(1,     const float CORR_GS = 2000.0;                                );
-    GLSLC(1,     const float CORR_BIAS = 1.0;                                 );
-    GLSLC(1,     const float RES_CLAMP = 0.08;                                );
-    GLSLC(1,     const int BANDS = 8;                                         );
-    GLSLC(1,     const uint SLICES = 16u;                                     );
-    GLSLC(1,     ivec2 size = ivec2(width, height);                           );
-    GLSLC(1,     int x = int(gl_GlobalInvocationID.x);                        );
-    GLSLC(1,     int y = int(gl_GlobalInvocationID.y);                        );
-    GLSLC(1,     if (x >= size.x || y >= size.y)                              );
-    GLSLC(2,         return;                                                  );
-    GLSLC(1,     float c = imageLoad(input_images[0], ivec2(x, y)).x;         );
-    GLSLC(1,     float mean = 0.0; float lo = 1.0; float hi = 0.0;            );
-    GLSLC(1,     for (int dy = -1; dy <= 1; dy++) {                           );
-    GLSLC(2,         for (int dx = -1; dx <= 1; dx++) {                       );
-    GLSLF(3,             ivec2 p = clamp(ivec2(x + dx, y + dy), ivec2(0), size - ivec2(1)); %s ,"");
-    GLSLC(3,             float v = imageLoad(input_images[0], p).x;           );
-    GLSLC(3,             mean += v; lo = min(lo, v); hi = max(hi, v);         );
-    GLSLC(2,         }                                                        );
-    GLSLC(1,     }                                                            );
-    GLSLC(1,     mean /= 9.0;                                                 );
-    GLSLC(1,     if ((hi - lo) > edge_thr)                                    );
-    GLSLC(2,         return;                                                  );
-    GLSLC(1,     float resid = clamp(c - mean, -RES_CLAMP, RES_CLAMP);        );
-    GLSLC(1,     int band = clamp(int(mean * float(BANDS)), 0, BANDS - 1);    );
-    /* GLSLC appends its argument as the av_bprintf *format* string, so the GLSL
-     * modulo operator must be escaped '%%' (emits a single '%'); a bare '% S'
-     * is read as the %S wide-string conversion and segfaults. The .comp uses a
-     * literal '%' because glslang compiles it directly (no format pass). */
-    GLSLC(1,     uint slice = (uint(y) * uint(size.x) + uint(x)) %% SLICES;   );
-    GLSLC(1,     uint bidx = uint(band) * SLICES + slice;                     );
-    GLSLC(1,     atomicAdd(sumsq[bidx], uint(resid * resid * SUMSQ_GS));      );
-    GLSLC(1,     atomicAdd(cnt[bidx], 1u);                                    );
-    /* lag-1 spatial correlation (AR proxy): only when the right neighbour is
-     * also flat, so the product reflects grain, not an edge transition. */
-    GLSLC(1,     ivec2 rp = clamp(ivec2(x + 1, y), ivec2(0), size - ivec2(1)););
-    GLSLC(1,     float cr = imageLoad(input_images[0], rp).x;                 );
-    GLSLC(1,     float meanR = 0.0; float loR = 1.0; float hiR = 0.0;         );
-    GLSLC(1,     for (int dy = -1; dy <= 1; dy++) {                           );
-    GLSLC(2,         for (int dx = -1; dx <= 1; dx++) {                       );
-    GLSLF(3,             ivec2 p = clamp(ivec2(x + 1 + dx, y + dy), ivec2(0), size - ivec2(1)); %s ,"");
-    GLSLC(3,             float v = imageLoad(input_images[0], p).x;           );
-    GLSLC(3,             meanR += v; loR = min(loR, v); hiR = max(hiR, v);    );
-    GLSLC(2,         }                                                        );
-    GLSLC(1,     }                                                            );
-    GLSLC(1,     meanR /= 9.0;                                                );
-    GLSLC(1,     if ((hiR - loR) <= edge_thr) {                               );
-    GLSLC(2,         float residR = clamp(cr - meanR, -RES_CLAMP, RES_CLAMP); );
-    GLSLC(2,         float prod = resid * residR;                             );
-    GLSLC(2,         atomicAdd(corr[slice], uint((prod + CORR_BIAS) * CORR_GS)); );
-    GLSLC(2,         atomicAdd(corr_cnt[slice], 1u);                          );
-    GLSLC(1,     }                                                            );
-    GLSLC(0, }                                                                );
-
-    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
-                            &spv_opaque));
-    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
+    RET(ff_vk_shader_link(vkctx, shd,
+                          ff_pelorus_grain_estimate_comp_spv_data,
+                          ff_pelorus_grain_estimate_comp_spv_len, "main"));
     RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 
     s->initialized = 1;
 
 fail:
-    if (spv_opaque)
-        spv->free_shader(spv, &spv_opaque);
-    if (spv)
-        spv->uninit(&spv);
     return err;
 }
 
