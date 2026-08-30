@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sat, 20 Jun 2026 08:38:15 +0200
-Subject: [PATCH 13/13] feat(svtav1): honor AV_FRAME_DATA_REGIONS_OF_INTEREST
+Date: Sun, 30 Aug 2026 18:05:05 +0200
+Subject: [PATCH 13/18] feat(svtav1): honor AV_FRAME_DATA_REGIONS_OF_INTEREST
  via the ROI segment map
 
 The flagship modern AV1 software encoder (libsvtav1 / av1_svt) had zero Pelorus
@@ -50,10 +50,10 @@ analyze filter already emits -- no new producer. ADR-0121.
  1 file changed, 247 insertions(+)
 
 diff --git a/libavcodec/libsvtav1.c b/libavcodec/libsvtav1.c
-index fec2ed596e..8ca641e341 100644
+index 0bcc176243..2a02ce1578 100644
 --- a/libavcodec/libsvtav1.c
 +++ b/libavcodec/libsvtav1.c
-@@ -74,6 +74,34 @@ typedef struct SvtContext {
+@@ -75,6 +75,34 @@ typedef struct SvtContext {
      int enc_mode;
      int crf;
      int qp;
@@ -88,7 +88,7 @@ index fec2ed596e..8ca641e341 100644
  } SvtContext;
  
  static const struct {
-@@ -487,6 +515,23 @@ static av_cold int eb_enc_init(AVCodecContext *avctx)
+@@ -505,6 +533,23 @@ static av_cold int eb_enc_init(AVCodecContext *avctx)
          return ret;
      }
  
@@ -112,7 +112,7 @@ index fec2ed596e..8ca641e341 100644
      svt_ret = svt_av1_enc_set_parameter(svt_enc->svt_handle, &svt_enc->enc_params);
      if (svt_ret != EB_ErrorNone) {
          return svt_print_error(avctx, svt_ret, "Error setting encoder parameters");
-@@ -533,6 +578,170 @@ static av_cold int eb_enc_init(AVCodecContext *avctx)
+@@ -551,6 +596,170 @@ static av_cold int eb_enc_init(AVCodecContext *avctx)
      return alloc_buffer(&svt_enc->enc_params, svt_enc);
  }
  
@@ -283,7 +283,7 @@ index fec2ed596e..8ca641e341 100644
  static int eb_send_frame(AVCodecContext *avctx, const AVFrame *frame)
  {
      SvtContext           *svt_enc = avctx->priv_data;
-@@ -595,8 +804,34 @@ static int eb_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+@@ -613,8 +822,34 @@ static int eb_send_frame(AVCodecContext *avctx, const AVFrame *frame)
          return AVERROR_INVALIDDATA;
      }
  
@@ -318,7 +318,7 @@ index fec2ed596e..8ca641e341 100644
      if (svt_ret != EB_ErrorNone)
          return svt_print_error(avctx, svt_ret, "Error sending a frame to encoder");
  
-@@ -766,6 +1001,16 @@ static av_cold int eb_enc_close(AVCodecContext *avctx)
+@@ -784,6 +1019,16 @@ static av_cold int eb_enc_close(AVCodecContext *avctx)
      ff_dovi_ctx_unref(&svt_enc->dovi);
      av_freep(&svt_enc->stats_buf);
  
@@ -335,7 +335,7 @@ index fec2ed596e..8ca641e341 100644
      return 0;
  }
  
-@@ -810,6 +1055,8 @@ static const AVOption options[] = {
+@@ -828,6 +1073,8 @@ static const AVOption options[] = {
      { "qp", "Initial Quantizer level value", OFFSET(qp),
        AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 63, VE },
      { "svtav1-params", "Set the SVT-AV1 configuration using a :-separated list of key=value parameters", OFFSET(svtav1_opts), AV_OPT_TYPE_DICT, { 0 }, 0, 0, VE },
@@ -345,5 +345,5 @@ index fec2ed596e..8ca641e341 100644
      { "dolbyvision", "Enable Dolby Vision RPU coding", OFFSET(dovi.enable), AV_OPT_TYPE_BOOL, {.i64 = FF_DOVI_AUTOMATIC }, -1, 1, VE, .unit = "dovi" },
      {   "auto", NULL, 0, AV_OPT_TYPE_CONST, {.i64 = FF_DOVI_AUTOMATIC}, .flags = VE, .unit = "dovi" },
 -- 
-2.54.0
+2.55.0
 

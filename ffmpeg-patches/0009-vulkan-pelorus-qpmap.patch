@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Mon, 15 Jun 2026 15:26:58 +0200
-Subject: [PATCH 09/11] feat(vulkan): cross-vendor "via Vulkan" QP-map steering
+Date: Sun, 30 Aug 2026 18:05:05 +0200
+Subject: [PATCH 09/18] feat(vulkan): cross-vendor "via Vulkan" QP-map steering
  (ADR-0114 Tier 2)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -58,7 +58,7 @@ not a patch defect. No BD-rate gain is claimed; on-HW A/B is the follow-up.
  2 files changed, 1030 insertions(+)
 
 diff --git a/libavcodec/vulkan_encode.c b/libavcodec/vulkan_encode.c
-index b6f0b26f6b..310b78e767 100644
+index 39c43300c4..fb5fb6147a 100644
 --- a/libavcodec/vulkan_encode.c
 +++ b/libavcodec/vulkan_encode.c
 @@ -22,12 +22,889 @@
@@ -1091,7 +1091,7 @@ index b6f0b26f6b..310b78e767 100644
          .sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_PARAMETERS_CREATE_INFO_KHR,
          .pNext = &q_info,
 diff --git a/libavcodec/vulkan_encode.h b/libavcodec/vulkan_encode.h
-index cf5f255628..268841968b 100644
+index 23c35898c1..6fdbaf6018 100644
 --- a/libavcodec/vulkan_encode.h
 +++ b/libavcodec/vulkan_encode.h
 @@ -155,6 +155,16 @@ typedef struct FFVkEncodeCommonOptions {
@@ -1180,11 +1180,11 @@ index cf5f255628..268841968b 100644
 @@ -204,6 +266,7 @@ typedef struct FFVulkanEncodeContext {
  #define VULKAN_ENCODE_COMMON_OPTIONS \
      { "qp", "Use an explicit constant quantizer for the whole stream", OFFSET(common.opts.qp), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 255, FLAGS }, \
-     { "quality", "Set encode quality (trades off against speed, higher is faster)", OFFSET(common.opts.quality), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, FLAGS }, \
+     { "quality", "Set encode quality (trades off against speed, higher is slower)", OFFSET(common.opts.quality), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, FLAGS }, \
 +    { "pelorus_roi", "Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the Vulkan-video quantization map (driver-probed; default off)", OFFSET(common.opts.pelorus_roi), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS }, \
      { "rc_mode", "Select rate control type", OFFSET(common.opts.rc_mode), AV_OPT_TYPE_INT, { .i64 = FF_VK_RC_MODE_AUTO }, 0, FF_VK_RC_MODE_AUTO, FLAGS, "rc_mode" }, \
          { "auto",    "Choose mode automatically based on parameters", 0, AV_OPT_TYPE_CONST, { .i64 = FF_VK_RC_MODE_AUTO }, INT_MIN, INT_MAX, FLAGS, "rc_mode" }, \
          { "driver",  "Driver-specific rate control", 0, AV_OPT_TYPE_CONST, { .i64 = VK_VIDEO_ENCODE_RATE_CONTROL_MODE_DEFAULT_KHR      }, INT_MIN, INT_MAX, FLAGS, "rc_mode" }, \
 -- 
-2.54.0
+2.55.0
 

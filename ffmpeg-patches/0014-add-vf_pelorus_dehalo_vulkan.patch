@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sat, 27 Jun 2026 17:34:10 +0200
+Date: Sun, 30 Aug 2026 18:05:05 +0200
 Subject: [PATCH 14/18] feat(dehalo): add vf_pelorus_dehalo_vulkan (anime
  dehalo + dering, Vulkan)
 MIME-Version: 1.0
@@ -27,27 +27,30 @@ limited GPUs).
 
 ADR: docs/adr/0123-anime-dehalo.md
 ---
- configure                              |   1 +
- libavfilter/Makefile                   |   1 +
- libavfilter/allfilters.c               |   1 +
- libavfilter/vf_pelorus_dehalo_vulkan.c | 408 +++++++++++++++++++++++++
- 4 files changed, 411 insertions(+)
+ configure                                   |   1 +
+ libavfilter/Makefile                        |   1 +
+ libavfilter/allfilters.c                    |   1 +
+ libavfilter/vf_pelorus_dehalo_vulkan.c      | 246 ++++++++++++++++++++
+ libavfilter/vulkan/Makefile                 |   1 +
+ libavfilter/vulkan/pelorus_dehalo.comp.glsl | 216 +++++++++++++++++
+ 6 files changed, 466 insertions(+)
  create mode 100644 libavfilter/vf_pelorus_dehalo_vulkan.c
+ create mode 100644 libavfilter/vulkan/pelorus_dehalo.comp.glsl
 
 diff --git a/configure b/configure
-index 649bd1a4c6..35bb5f8fb4 100755
+index a013ab95cb..bf7fb730d4 100755
 --- a/configure
 +++ b/configure
-@@ -4180,6 +4180,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
- overlay_vulkan_filter_deps="vulkan spirv_library"
- pelorus_analyze_vulkan_filter_deps="vulkan spirv_library"
- pelorus_deband_vulkan_filter_deps="vulkan spirv_library"
-+pelorus_dehalo_vulkan_filter_deps="vulkan spirv_library"
- pelorus_denoise_vulkan_filter_deps="vulkan spirv_library"
- pelorus_grain_estimate_vulkan_filter_deps="vulkan spirv_library"
- pelorus_mc_vulkan_filter_deps="vulkan spirv_library"
+@@ -4239,6 +4239,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
+ overlay_vulkan_filter_deps="vulkan spirv_compiler"
+ pelorus_analyze_vulkan_filter_deps="vulkan spirv_compiler"
+ pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"
++pelorus_dehalo_vulkan_filter_deps="vulkan spirv_compiler"
+ pelorus_denoise_vulkan_filter_deps="vulkan spirv_compiler"
+ pelorus_grain_estimate_vulkan_filter_deps="vulkan spirv_compiler"
+ pelorus_mc_vulkan_filter_deps="vulkan spirv_compiler"
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index 61cdb6305a..83ff1c10ac 100644
+index 86ce2b4f01..c1ea6957e7 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
 @@ -435,6 +435,7 @@ OBJS-$(CONFIG_PALETTEGEN_FILTER)             += vf_palettegen.o palette.o
@@ -59,7 +62,7 @@ index 61cdb6305a..83ff1c10ac 100644
  OBJS-$(CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vf_pelorus_grain_estimate_vulkan.o vulkan.o vulkan_filter.o
  OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER)      += vf_pelorus_mc_vulkan.o vulkan.o vulkan_filter.o
 diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
-index 45949d7b8e..b4e14df89a 100644
+index 8ecaf738be..2ac2a6540f 100644
 --- a/libavfilter/allfilters.c
 +++ b/libavfilter/allfilters.c
 @@ -407,6 +407,7 @@ extern const FFFilter ff_vf_palettegen;
@@ -72,10 +75,10 @@ index 45949d7b8e..b4e14df89a 100644
  extern const FFFilter ff_vf_pelorus_mc_vulkan;
 diff --git a/libavfilter/vf_pelorus_dehalo_vulkan.c b/libavfilter/vf_pelorus_dehalo_vulkan.c
 new file mode 100644
-index 0000000000..2e82c67ee1
+index 0000000000..a05c7bf86b
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_dehalo_vulkan.c
-@@ -0,0 +1,408 @@
+@@ -0,0 +1,246 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -107,13 +110,11 @@ index 0000000000..2e82c67ee1
 + * gradients are protected. Luma only; chroma passes through. Runs entirely in
 + * VRAM so the frame never leaves the GPU on its way to a hardware encoder.
 + *
-+ * Foundation of the anime `tune` pipeline (ADR-0123). Kept in lockstep with the
-+ * reference shader libpelorus/shaders/pelorus_dehalo.comp (AGENTS hard rule 4).
++ * Foundation of the anime `tune` pipeline (ADR-0123).
 + */
 +
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
-+#include "libavutil/vulkan_spirv.h"
 +#include "vulkan_filter.h"
 +
 +#include "filters.h"
@@ -144,139 +145,21 @@ index 0000000000..2e82c67ee1
 +    int tile;   /* shared-memory tile the box-blur window (ADR-0139, opt-in)  */
 +} PelorusDehaloVulkanContext;
 +
-+/* Shared-memory tiling of the box-blur window (ADR-0139, opt-in tile=1). Every
-+ * luma fetch in dehalo() — the box_blur (2r+1)^2 window read 5x per pixel at the
-+ * centre + 4 cross offsets, the Sobel/contrast 3x3, the ring scan — goes through
-+ * pel_luma against the SAME input plane, re-reading a heavily overlapping window
-+ * (~1.5k loads/px at blur=8). That is fetch-bound, not ALU-bound (the box mean is
-+ * adds + one divide), so on a bandwidth-limited GPU the workgroup cooperatively
-+ * loads its output region + a PEL_HALO ring into shared memory once per plane and
-+ * every read hits shared instead of the image. PEL_HALO = MAX_R (8, the max box
-+ * reach) + 1 (the box-blur cross offset extends the union by one px) = 9, so the
-+ * tile covers the union of all five box_blur windows AND the ring scan. The tile
-+ * mirrors pel_luma's edge clamp exactly, so tile=1 is bit-identical to tile=0.
-+ * pel_load_tile() runs in uniform control flow (outside the IS_WITHIN guard) so
-+ * its barriers are workgroup-uniform; the leading barrier protects the prior
-+ * plane's readers before this plane overwrites s_tile. Kept in lockstep with the
-+ * standalone reference shader (AGENTS rule 4). */
-+static const char tile_helpers_glsl[] =
-+    "void pel_load_tile(int idx, ivec2 sz) {\n"
-+    "    ivec2 wgsz = ivec2(gl_WorkGroupSize.xy);\n"
-+    "    ivec2 base = ivec2(gl_WorkGroupID.xy) * wgsz - PEL_HALO;\n"
-+    "    uint n = uint(PEL_TILE * PEL_TILE);\n"
-+    "    uint stride = gl_WorkGroupSize.x * gl_WorkGroupSize.y;\n"
-+    "    barrier();\n"
-+    "    for (uint k = gl_LocalInvocationIndex; k < n; k += stride) {\n"
-+    "        ivec2 t = ivec2(int(k) - (int(k) / PEL_TILE) * PEL_TILE,\n"
-+    "                        int(k) / PEL_TILE);\n"
-+    "        ivec2 p = base + t;\n"
-+    "        s_tile[k] = imageLoad(input_images[idx],\n"
-+    "                              clamp(p, ivec2(0), sz - ivec2(1))).x;\n"
-+    "    }\n"
-+    "    barrier();\n"
-+    "}\n"
-+    /* Tiled pel_luma: map the absolute coordinate p into s_tile via the workgroup
-+     * base. Coordinates inside the loaded window (every dehalo() read at tile=1)
-+     * hit shared; the clamp mirrors the image-edge clamp so the result matches the
-+     * direct path exactly. wgsz/base recomputed (cheap) to stay a drop-in for the
-+     * direct pel_luma signature. */
-+    "float pel_luma(int idx, ivec2 p, ivec2 sz) {\n"
-+    "    ivec2 base = ivec2(gl_WorkGroupID.xy) * ivec2(gl_WorkGroupSize.xy) - PEL_HALO;\n"
-+    "    ivec2 lc = clamp(p, ivec2(0), sz - ivec2(1)) - base;\n"
-+    "    return s_tile[lc.y * PEL_TILE + lc.x];\n"
-+    "}\n";
-+
-+/* Pure GLSL helpers + the dehalo() function, spliced verbatim (avoids the
-+ * comma-in-C()-macro hazard). Kept in lockstep with the standalone reference
-+ * shader libpelorus/shaders/pelorus_dehalo.comp — the only intended difference
-+ * is the working domain: the .comp reads r16ui and normalizes by 65535, this
-+ * inline form reads FF_VK_REP_FLOAT (UNORM) storage images already in [0,1].
-+ * pel_luma is emitted separately (direct or tiled) by init_filter so box_blur /
-+ * dehalo stay textually identical across the tile=0/1 paths. */
-+static const char dehalo_glsl[] =
-+    "const int MAX_R = 8;\n"
-+    "float box_blur(int idx, ivec2 c, int r, ivec2 sz) {\n"
-+    "    float acc = 0.0; float n = 0.0;\n"
-+    "    for (int dy = -MAX_R; dy <= MAX_R; dy++) {\n"
-+    "        if (dy < -r || dy > r) continue;\n"
-+    "        for (int dx = -MAX_R; dx <= MAX_R; dx++) {\n"
-+    "            if (dx < -r || dx > r) continue;\n"
-+    "            acc += pel_luma(idx, c + ivec2(dx, dy), sz); n += 1.0;\n"
-+    "        }\n"
-+    "    }\n"
-+    "    return acc / max(n, 1.0);\n"
-+    "}\n"
-+    "void dehalo(ivec2 pos, int idx) {\n"
-+    "    ivec2 sz = imageSize(output_images[idx]);\n"
-+    "    int r = clamp(blur_r, 1, MAX_R);\n"
-+    "    float c = pel_luma(idx, pos, sz);\n"
-+    "    float h  = box_blur(idx, pos,                r, sz);\n"
-+    "    float hl = box_blur(idx, pos + ivec2(-1, 0), r, sz);\n"
-+    "    float hr = box_blur(idx, pos + ivec2( 1, 0), r, sz);\n"
-+    "    float hu = box_blur(idx, pos + ivec2( 0,-1), r, sz);\n"
-+    "    float hd = box_blur(idx, pos + ivec2( 0, 1), r, sz);\n"
-+    "    float oMax = c; float oMin = c;\n"
-+    "    for (int dy = -1; dy <= 1; dy++) {\n"
-+    "        for (int dx = -1; dx <= 1; dx++) {\n"
-+    "            float v = pel_luma(idx, pos + ivec2(dx, dy), sz);\n"
-+    "            oMax = max(oMax, v); oMin = min(oMin, v);\n"
-+    "        }\n"
-+    "    }\n"
-+    "    float are  = oMax - oMin;\n"
-+    "    float ugly = max(max(max(h, hl), max(hr, hu)), hd)\n"
-+    "               - min(min(min(h, hl), min(hr, hu)), hd);\n"
-+    "    const float EPS = 0.0039;\n"
-+    "    float frac = (are - ugly) / (are + EPS);\n"
-+    "    float so   = clamp((frac - lowsens) * (1.0 + highsens), 0.0, 1.0);\n"
-+    "    float lets = mix(c, h, so);\n"
-+    "    float out_v;\n"
-+    "    if (lets < c) out_v = c - (c - lets) * brightstr;\n"
-+    "    else          out_v = c - (c - lets) * darkstr;\n"
-+    "    float gx = 0.0; float gy = 0.0;\n"
-+    "    float kx[9] = float[9](-1.0, 0.0, 1.0, -2.0, 0.0, 2.0, -1.0, 0.0, 1.0);\n"
-+    "    float ky[9] = float[9](-1.0,-2.0,-1.0,  0.0, 0.0, 0.0,  1.0, 2.0, 1.0);\n"
-+    "    int k = 0;\n"
-+    "    for (int dy = -1; dy <= 1; dy++) {\n"
-+    "        for (int dx = -1; dx <= 1; dx++) {\n"
-+    "            float v = pel_luma(idx, pos + ivec2(dx, dy), sz);\n"
-+    "            gx += v * kx[k]; gy += v * ky[k]; k++;\n"
-+    "        }\n"
-+    "    }\n"
-+    "    float edge = sqrt(gx * gx + gy * gy);\n"
-+    "    bool on_line = edge > edge_thr;\n"
-+    "    int rr = clamp(int(ring + 0.5), 1, MAX_R);\n"
-+    "    bool near_line = false;\n"
-+    "    for (int d = 1; d <= MAX_R; d++) {\n"
-+    "        if (d > rr) break;\n"
-+    "        float em = max(max(pel_luma(idx, pos + ivec2(d, 0), sz),\n"
-+    "                           pel_luma(idx, pos + ivec2(-d, 0), sz)),\n"
-+    "                       max(pel_luma(idx, pos + ivec2(0, d), sz),\n"
-+    "                           pel_luma(idx, pos + ivec2(0,-d), sz)));\n"
-+    "        if (abs(em - c) > edge_thr) near_line = true;\n"
-+    "    }\n"
-+    "    float ring_mask = (near_line && !on_line) ? 1.0 : 0.0;\n"
-+    "    float result = mix(c, out_v, ring_mask);\n"
-+    "    imageStore(output_images[idx], pos, vec4(clamp(result, 0.0, 1.0)));\n"
-+    "}\n";
++/* The dehalo algorithm — including the ADR-0139 shared-memory box-blur tiling
++ * path — now lives in vulkan/pelorus_dehalo.comp.glsl, compiled to SPIR-V at
++ * build time and linked in here. FFmpeg 9 removed the runtime GLSL builder
++ * (GLSLC/GLSLF/GLSLD + ff_vk_shader_init), which also retires the old
++ * inline-vs-reference lockstep duplication. */
++extern const unsigned char ff_pelorus_dehalo_comp_spv_data[];
++extern const unsigned int  ff_pelorus_dehalo_comp_spv_len;
 +
 +static av_cold int init_filter(AVFilterContext *ctx)
 +{
 +    int err = 0;
-+    int i;
 +    PelorusDehaloVulkanContext *s = ctx->priv;
 +    FFVulkanContext *vkctx = &s->vkctx;
-+    FFVulkanShader *shd = &s->shd; /* GLSL macros require a var named `shd` */
-+    FFVkSPIRVCompiler *spv;
-+    uint8_t *spv_data = NULL;
-+    size_t spv_len = 0;
-+    void *spv_opaque = NULL;
++    FFVulkanShader *shd = &s->shd;
 +    const int planes = av_pix_fmt_count_planes(vkctx->output_format);
-+
-+    spv = ff_vk_spirv_init();
-+    if (!spv) {
-+        av_log(ctx, AV_LOG_ERROR, "Unable to initialize SPIR-V compiler!\n");
-+        return AVERROR_EXTERNAL;
-+    }
 +
 +    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
 +    if (!s->qf) {
@@ -286,19 +169,22 @@ index 0000000000..2e82c67ee1
 +    }
 +
 +    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
-+    RET(ff_vk_shader_init(vkctx, shd, "pelorus_dehalo",
-+                          VK_SHADER_STAGE_COMPUTE_BIT, NULL, 0, 32, 32, 1, 0));
 +
-+    GLSLC(0, layout(push_constant, std430) uniform pushConstants {            );
-+    GLSLC(1,     int   blur_r;                                                );
-+    GLSLC(1,     float darkstr;                                               );
-+    GLSLC(1,     float brightstr;                                             );
-+    GLSLC(1,     float lowsens;                                               );
-+    GLSLC(1,     float highsens;                                              );
-+    GLSLC(1,     float edge_thr;                                              );
-+    GLSLC(1,     float ring;                                                  );
-+    GLSLC(0, };                                                               );
-+    GLSLC(0,                                                                  );
++    /* The plane count, the plane bitmask and the tile switch were const-folded
++     * into the generated GLSL before FFmpeg 9 (the C side unrolled the
++     * per-plane loop and emitted either the direct or the tiled pel_luma).
++     * With precompiled SPIR-V they become specialization constants, so the
++     * driver still folds them at pipeline-creation time — including the shared
++     * tile array, which is sized from `tile` and therefore costs nothing at
++     * the default tile=0. */
++    SPEC_LIST_CREATE(sl, 3, 3 * sizeof(uint32_t))
++    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
++    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
++    SPEC_LIST_ADD(sl, 2, 32, (uint32_t)s->tile);
++
++    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
++                      (uint32_t []) { 32, 32, 1 }, 0);
++
 +    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts),
 +                                VK_SHADER_STAGE_COMPUTE_BIT);
 +
@@ -325,62 +211,17 @@ index 0000000000..2e82c67ee1
 +                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
 +            },
 +        };
-+        RET(ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0, 0));
++        ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
 +    }
 +
-+    /* pel_luma reads the input plane. tile=1 caches the box-blur window in
-+     * shared memory (a large win on bandwidth-limited GPUs, ~neutral on
-+     * cache-rich ones — see ADR-0139); default tile=0 reads the image directly
-+     * (bit-identical, the flagship-first default). The tiled and direct
-+     * definitions share the pel_luma signature so box_blur/dehalo are textually
-+     * identical either way; GLSLD keeps the comma in pel_luma(idx, ...) out of
-+     * the GLSLC C() macro. PEL_HALO = MAX_R (8) + 1 (box-blur cross offset);
-+     * PEL_TILE = 32 (workgroup dim) + 2 * PEL_HALO. */
-+    if (s->tile) {
-+        GLSLC(0, #define PEL_HALO 9 /* MAX_R (8) + 1-px box-blur cross offset */ );
-+        GLSLC(0, #define PEL_TILE 50 /* 32 (workgroup dim) + 2 * PEL_HALO */    );
-+        GLSLC(0, shared float s_tile[PEL_TILE * PEL_TILE];                      );
-+        GLSLD(tile_helpers_glsl);
-+    } else {
-+        GLSLD("float pel_luma(int idx, ivec2 p, ivec2 sz) {\n"
-+              "    return imageLoad(input_images[idx],\n"
-+              "                     clamp(p, ivec2(0), sz - ivec2(1))).x;\n"
-+              "}\n");
-+    }
-+    GLSLD(dehalo_glsl);
-+    GLSLC(0, void main()                                                      );
-+    GLSLC(0, {                                                                );
-+    GLSLC(1,     ivec2 size;                                                  );
-+    GLSLC(1,     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);           );
-+    for (i = 0; i < planes; i++) {
-+        GLSLC(0,                                                              );
-+        GLSLF(1, size = imageSize(output_images[%i]);                       ,i);
-+        /* Cooperative tile load runs in uniform control flow (all invocations,
-+         * before the per-thread IS_WITHIN guard) so its barriers are valid. */
-+        if (s->tile && (s->planes & (1 << i)))
-+            GLSLF(1, pel_load_tile(%i, size);                               ,i);
-+        GLSLC(1, if (IS_WITHIN(pos, size)) {                                  );
-+        if (s->planes & (1 << i)) {
-+            GLSLF(2, dehalo(pos, %i);                                       ,i);
-+        } else {
-+            GLSLF(2, imageStore(output_images[%i], pos, imageLoad(input_images[%i], pos)); ,i, i);
-+        }
-+        GLSLC(1, }                                                            );
-+    }
-+    GLSLC(0, }                                                                );
-+
-+    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
-+                            &spv_opaque));
-+    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
++    RET(ff_vk_shader_link(vkctx, shd,
++                          ff_pelorus_dehalo_comp_spv_data,
++                          ff_pelorus_dehalo_comp_spv_len, "main"));
 +    RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 +
 +    s->initialized = 1;
 +
 +fail:
-+    if (spv_opaque)
-+        spv->free_shader(spv, &spv_opaque);
-+    if (spv)
-+        spv->uninit(&spv);
 +    return err;
 +}
 +
@@ -402,7 +243,7 @@ index 0000000000..2e82c67ee1
 +        RET(init_filter(ctx));
 +
 +    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in,
-+                                    VK_NULL_HANDLE, &s->opts, sizeof(s->opts)));
++                                    VK_NULL_HANDLE, 1, &s->opts, sizeof(s->opts)));
 +
 +    err = av_frame_copy_props(out, in);
 +    if (err < 0)
@@ -484,6 +325,237 @@ index 0000000000..2e82c67ee1
 +    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_VULKAN),
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
+diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
+index 0a712ab192..c9801ac3d8 100644
+--- a/libavfilter/vulkan/Makefile
++++ b/libavfilter/vulkan/Makefile
+@@ -26,3 +26,4 @@ OBJS-$(PELORUS_ANALYZE_VULKAN_FILTER) += vulkan/pelorus_analyze.comp.spv.o
+ OBJS-$(PELORUS_DENOISE_VULKAN_FILTER) += vulkan/pelorus_denoise.comp.spv.o
+ OBJS-$(PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vulkan/pelorus_grain_estimate.comp.spv.o
+ OBJS-$(PELORUS_MC_VULKAN_FILTER) += vulkan/pelorus_mc.comp.spv.o
++OBJS-$(PELORUS_DEHALO_VULKAN_FILTER) += vulkan/pelorus_dehalo.comp.spv.o
+diff --git a/libavfilter/vulkan/pelorus_dehalo.comp.glsl b/libavfilter/vulkan/pelorus_dehalo.comp.glsl
+new file mode 100644
+index 0000000000..d27dbbe27f
+--- /dev/null
++++ b/libavfilter/vulkan/pelorus_dehalo.comp.glsl
+@@ -0,0 +1,216 @@
++/*
++ * Copyright 2026 Lusoris
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or modify it under
++ * the terms of the GNU Lesser General Public License as published by the
++ * Free Software Foundation; either version 2.1 of the License, or (at
++ * your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
++ * License for more details.
++ */
++
++/*
++ * Pelorus anime/2D dehalo + dering compute shader (HAvsFunc DeHalo_alpha +
++ * FineDehalo, single pass).
++ *
++ * Single source of truth for the dehalo algorithm. Before FFmpeg 9 this text
++ * lived twice: as inline-GLSL strings assembled at runtime inside
++ * vf_pelorus_dehalo_vulkan.c, and as a standalone reference .comp. FFmpeg 9
++ * removed the runtime GLSL builder (GLSLC/GLSLF/GLSLD and ff_vk_shader_init),
++ * so the shader is now compiled to SPIR-V at build time and linked in — which
++ * retires that duplication and the whole class of lockstep-drift defects.
++ *
++ * The three things the C side used to const-fold into the generated source —
++ * the plane count, the `planes` bitmask, and the ADR-0139 shared-memory tiling
++ * switch — are specialization constants now, so the driver still folds them at
++ * pipeline-creation time and the tile=0 path keeps costing nothing.
++ */
++
++#pragma shader_stage(compute)
++
++#extension GL_EXT_shader_image_load_formatted : require
++#extension GL_EXT_nonuniform_qualifier : require
++
++/* Workgroup-size IDs 253/254/255 are reserved by ff_vk_shader_load(). */
++layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
++
++/* Const-folded by the C side via SPEC_LIST_ADD(). `planes` is the plane count;
++ * `plane_mask` is the AVOption `planes` bitmask selecting which get dehaloed
++ * (the rest are copied through); `tile` is the AVOption `tile` (ADR-0139). All
++ * three were C-side generator inputs before. */
++layout (constant_id = 0) const uint planes     = 0;
++layout (constant_id = 1) const uint plane_mask = 0x1;
++layout (constant_id = 2) const uint tile       = 0;
++
++layout (push_constant, std430) uniform pushConstants {
++    int   blur_r;
++    float darkstr;
++    float brightstr;
++    float lowsens;
++    float highsens;
++    float edge_thr;
++    float ring;
++};
++
++layout (set = 0, binding = 0) uniform readonly  image2D input_images[];
++layout (set = 0, binding = 1) uniform writeonly image2D output_images[];
++
++const int MAX_R = 8;
++
++/* PEL_HALO = MAX_R (8, the max box reach) + 1 (the box-blur cross offset
++ * extends the union by one px); PEL_TILE = 32 (workgroup dim) + 2 * PEL_HALO. */
++#define PEL_HALO 9
++#define PEL_TILE 50
++
++/* Sized by a specialization constant so tile=0 pipelines allocate no shared
++ * memory at all (the pre-FFmpeg-9 generator simply did not emit the array). */
++shared float s_tile[(tile != 0u) ? (PEL_TILE * PEL_TILE) : 1];
++
++/* Shared-memory tiling of the box-blur window (ADR-0139, opt-in tile=1). Every
++ * luma fetch in dehalo() — the box_blur (2r+1)^2 window read 5x per pixel at the
++ * centre + 4 cross offsets, the Sobel/contrast 3x3, the ring scan — goes through
++ * pel_luma against the SAME input plane, re-reading a heavily overlapping window
++ * (~1.5k loads/px at blur=8). That is fetch-bound, not ALU-bound (the box mean is
++ * adds + one divide), so on a bandwidth-limited GPU the workgroup cooperatively
++ * loads its output region + a PEL_HALO ring into shared memory once per plane and
++ * every read hits shared instead of the image. The tile mirrors pel_luma's edge
++ * clamp exactly, so tile=1 is bit-identical to tile=0. pel_load_tile() is called
++ * from uniform control flow (the plane loop bound and the tile/plane_mask tests
++ * are all specialization constants) so its barriers are workgroup-uniform; the
++ * leading barrier protects the prior plane's readers before this plane
++ * overwrites s_tile. */
++void pel_load_tile(int idx, ivec2 sz)
++{
++    ivec2 wgsz = ivec2(gl_WorkGroupSize.xy);
++    ivec2 base = ivec2(gl_WorkGroupID.xy) * wgsz - PEL_HALO;
++    uint n = uint(PEL_TILE * PEL_TILE);
++    uint stride = gl_WorkGroupSize.x * gl_WorkGroupSize.y;
++    barrier();
++    for (uint k = gl_LocalInvocationIndex; k < n; k += stride) {
++        ivec2 t = ivec2(int(k) - (int(k) / PEL_TILE) * PEL_TILE,
++                        int(k) / PEL_TILE);
++        ivec2 p = base + t;
++        s_tile[k] = imageLoad(input_images[idx],
++                              clamp(p, ivec2(0), sz - ivec2(1))).x;
++    }
++    barrier();
++}
++
++/* At tile=1, map the absolute coordinate p into s_tile via the workgroup base.
++ * Coordinates inside the loaded window (every dehalo() read at tile=1) hit
++ * shared; the clamp mirrors the image-edge clamp so the result matches the
++ * direct path exactly. At tile=0 this reads the image directly — `tile` is a
++ * specialization constant, so only one of the two branches survives. */
++float pel_luma(int idx, ivec2 p, ivec2 sz)
++{
++    ivec2 cp = clamp(p, ivec2(0), sz - ivec2(1));
++    if (tile != 0u) {
++        ivec2 base = ivec2(gl_WorkGroupID.xy) * ivec2(gl_WorkGroupSize.xy) - PEL_HALO;
++        ivec2 lc = cp - base;
++        return s_tile[lc.y * PEL_TILE + lc.x];
++    }
++    return imageLoad(input_images[idx], cp).x;
++}
++
++float box_blur(int idx, ivec2 c, int r, ivec2 sz)
++{
++    float acc = 0.0; float n = 0.0;
++    for (int dy = -MAX_R; dy <= MAX_R; dy++) {
++        if (dy < -r || dy > r) continue;
++        for (int dx = -MAX_R; dx <= MAX_R; dx++) {
++            if (dx < -r || dx > r) continue;
++            acc += pel_luma(idx, c + ivec2(dx, dy), sz); n += 1.0;
++        }
++    }
++    return acc / max(n, 1.0);
++}
++
++void dehalo(ivec2 pos, int idx)
++{
++    ivec2 sz = imageSize(output_images[idx]);
++    int r = clamp(blur_r, 1, MAX_R);
++    float c = pel_luma(idx, pos, sz);
++    float h  = box_blur(idx, pos,                r, sz);
++    float hl = box_blur(idx, pos + ivec2(-1, 0), r, sz);
++    float hr = box_blur(idx, pos + ivec2( 1, 0), r, sz);
++    float hu = box_blur(idx, pos + ivec2( 0,-1), r, sz);
++    float hd = box_blur(idx, pos + ivec2( 0, 1), r, sz);
++    float oMax = c; float oMin = c;
++    for (int dy = -1; dy <= 1; dy++) {
++        for (int dx = -1; dx <= 1; dx++) {
++            float v = pel_luma(idx, pos + ivec2(dx, dy), sz);
++            oMax = max(oMax, v); oMin = min(oMin, v);
++        }
++    }
++    float are  = oMax - oMin;
++    float ugly = max(max(max(h, hl), max(hr, hu)), hd)
++               - min(min(min(h, hl), min(hr, hu)), hd);
++    const float EPS = 0.0039;
++    float frac = (are - ugly) / (are + EPS);
++    float so   = clamp((frac - lowsens) * (1.0 + highsens), 0.0, 1.0);
++    float lets = mix(c, h, so);
++    float out_v;
++    if (lets < c) out_v = c - (c - lets) * brightstr;
++    else          out_v = c - (c - lets) * darkstr;
++    float gx = 0.0; float gy = 0.0;
++    float kx[9] = float[9](-1.0, 0.0, 1.0, -2.0, 0.0, 2.0, -1.0, 0.0, 1.0);
++    float ky[9] = float[9](-1.0,-2.0,-1.0,  0.0, 0.0, 0.0,  1.0, 2.0, 1.0);
++    int k = 0;
++    for (int dy = -1; dy <= 1; dy++) {
++        for (int dx = -1; dx <= 1; dx++) {
++            float v = pel_luma(idx, pos + ivec2(dx, dy), sz);
++            gx += v * kx[k]; gy += v * ky[k]; k++;
++        }
++    }
++    float edge = sqrt(gx * gx + gy * gy);
++    bool on_line = edge > edge_thr;
++    int rr = clamp(int(ring + 0.5), 1, MAX_R);
++    bool near_line = false;
++    for (int d = 1; d <= MAX_R; d++) {
++        if (d > rr) break;
++        float em = max(max(pel_luma(idx, pos + ivec2(d, 0), sz),
++                           pel_luma(idx, pos + ivec2(-d, 0), sz)),
++                       max(pel_luma(idx, pos + ivec2(0, d), sz),
++                           pel_luma(idx, pos + ivec2(0,-d), sz)));
++        if (abs(em - c) > edge_thr) near_line = true;
++    }
++    float ring_mask = (near_line && !on_line) ? 1.0 : 0.0;
++    float result = mix(c, out_v, ring_mask);
++    imageStore(output_images[idx], pos, vec4(clamp(result, 0.0, 1.0)));
++}
++
++void main()
++{
++    ivec2 size;
++    const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
++
++    /* Preserves the pre-FFmpeg-9 unrolled semantics exactly: the C generator
++     * emitted, per plane, `size = imageSize(...)`, then the cooperative tile
++     * load in uniform control flow, then `if (IS_WITHIN(pos, size)) { ... }`.
++     * The guard was a positive block, NOT an early return — an invocation
++     * outside a subsampled chroma plane still falls through to the next
++     * plane. */
++    for (uint i = 0; i < planes; i++) {
++        const bool sel = (plane_mask & (1u << i)) != 0u;
++
++        size = imageSize(output_images[i]);
++
++        /* Cooperative tile load runs in uniform control flow (all invocations,
++         * before the per-thread IS_WITHIN guard) so its barriers are valid. */
++        if (tile != 0u && sel)
++            pel_load_tile(int(i), size);
++
++        if (all(lessThan(pos, size))) {
++            if (sel)
++                dehalo(pos, int(i));
++            else
++                imageStore(output_images[i], pos,
++                           imageLoad(input_images[i], pos));
++        }
++    }
++}
 -- 
-2.54.0
+2.55.0
 

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Fri, 19 Jun 2026 19:50:06 +0200
-Subject: [PATCH 10/11] feat(fgs): add pelorus_fgs bitstream filter (H.274 /
+Date: Sun, 30 Aug 2026 18:05:05 +0200
+Subject: [PATCH 10/18] feat(fgs): add pelorus_fgs bitstream filter (H.274 /
  HEVC FGC SEI)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -48,10 +48,10 @@ ADR: docs/adr/0117-grain-fgs-bsf.md
  create mode 100644 libavcodec/bsf/pelorus_fgs.c
 
 diff --git a/configure b/configure
-index 07301fd756..649bd1a4c6 100755
+index 71922a7b08..a013ab95cb 100755
 --- a/configure
 +++ b/configure
-@@ -3709,6 +3709,7 @@ hevc_metadata_bsf_select="cbs_h265"
+@@ -3766,6 +3766,7 @@ hevc_metadata_bsf_select="cbs_h265"
  lcevc_metadata_bsf_select="cbs_lcevc"
  mjpeg2jpeg_bsf_select="jpegtables"
  mpeg2_metadata_bsf_select="cbs_mpeg2"
@@ -60,10 +60,10 @@ index 07301fd756..649bd1a4c6 100755
  trace_headers_bsf_select="cbs cbs_vp8"
  vp9_metadata_bsf_select="cbs_vp9"
 diff --git a/libavcodec/bitstream_filters.c b/libavcodec/bitstream_filters.c
-index 150cca8939..45704353bd 100644
+index 9c9443e5b1..ce9976edd7 100644
 --- a/libavcodec/bitstream_filters.c
 +++ b/libavcodec/bitstream_filters.c
-@@ -59,6 +59,7 @@ extern const FFBitStreamFilter ff_noise_bsf;
+@@ -60,6 +60,7 @@ extern const FFBitStreamFilter ff_noise_bsf;
  extern const FFBitStreamFilter ff_null_bsf;
  extern const FFBitStreamFilter ff_opus_metadata_bsf;
  extern const FFBitStreamFilter ff_pcm_rechunk_bsf;
@@ -72,10 +72,10 @@ index 150cca8939..45704353bd 100644
  extern const FFBitStreamFilter ff_prores_metadata_bsf;
  extern const FFBitStreamFilter ff_remove_extradata_bsf;
 diff --git a/libavcodec/bsf/Makefile b/libavcodec/bsf/Makefile
-index eb090090ef..6195cd407b 100644
+index 981bb8276b..8f8afddb98 100644
 --- a/libavcodec/bsf/Makefile
 +++ b/libavcodec/bsf/Makefile
-@@ -36,6 +36,7 @@ OBJS-$(CONFIG_NOISE_BSF)                  += bsf/noise.o
+@@ -37,6 +37,7 @@ OBJS-$(CONFIG_NOISE_BSF)                  += bsf/noise.o
  OBJS-$(CONFIG_NULL_BSF)                   += bsf/null.o
  OBJS-$(CONFIG_OPUS_METADATA_BSF)          += bsf/opus_metadata.o
  OBJS-$(CONFIG_PCM_RECHUNK_BSF)            += bsf/pcm_rechunk.o
@@ -410,5 +410,5 @@ index 0000000000..9925cd0755
 +    .filter         = &ff_cbs_bsf_generic_filter,
 +};
 -- 
-2.54.0
+2.55.0
 
