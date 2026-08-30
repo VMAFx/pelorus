@@ -28,12 +28,12 @@
  * advertised dQP window) — so this shader is a pure rasterizer with no codec
  * policy baked in.
  *
- * The in-tree FFmpeg consumer (ffmpeg-patches/files/vulkan-pelorus-qpmap.patch,
- * libavcodec/vulkan_encode.c) emits the byte-identical algorithm inline via
- * FFmpeg's GLSLC macros; this reference is NOT a second implementation to hand-synchronise. Since
- * FFmpeg 9 (ADR-0143) the shipped shader is
- * ffmpeg-patches/files/vulkan/pelorus_qpmap.comp.glsl, compiled to SPIR-V at build
- * time; the old inline-GLSL lockstep (AGENTS hard rule 4) is retired.
+ * The shader FFmpeg actually executes is
+ * ffmpeg-patches/files/vulkan/pelorus_qpmap.comp.glsl (carried by
+ * ffmpeg-patches/files/vulkan-pelorus-qpmap.patch into libavcodec/vulkan/),
+ * compiled to SPIR-V at build time and consumed by libavcodec/vulkan_encode.c
+ * (ADR-0143). This file is a standalone reference kept for the fast gate -- it
+ * is NOT a second implementation to hand-synchronise.
  */
 #version 450
 

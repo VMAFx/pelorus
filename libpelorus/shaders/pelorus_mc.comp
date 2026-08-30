@@ -38,12 +38,11 @@
  * motion (ADR-0113 found in-denoise raw-pixel MC NOISE-LIMITED), which is fine
  * for a search seed but is why this does NOT feed the denoiser. See ADR-0115.
  *
- * The in-tree FFmpeg filter (ffmpeg-patches/files/vf_pelorus_mc_vulkan.c) emits
- * the byte-identical algorithm inline via FFmpeg's GLSLC macros over a
- * normalized-float image array; this reference is NOT a second implementation to hand-synchronise. Since
- * FFmpeg 9 (ADR-0143) the shipped shader is
+ * The shader FFmpeg actually executes is
  * ffmpeg-patches/files/vulkan/pelorus_mc.comp.glsl, compiled to SPIR-V at build
- * time; the old inline-GLSL lockstep (AGENTS hard rule 4) is retired.
+ * time (ADR-0143). This file is a standalone reference in the 16-bit domain, kept
+ * for the fast gate and for reading the algorithm without FFmpeg's plumbing -- it is
+ * NOT a second implementation to hand-synchronise.
  */
 #version 450
 #extension GL_KHR_shader_subgroup_basic : require

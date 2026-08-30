@@ -22,13 +22,11 @@
  * themselves and NOT in the open flats — protecting line-art and gradients.
  *
  * Reference form: one dispatch on the luma plane against r16ui storage images
- * (chroma passes through). The in-tree FFmpeg filter
- * (ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c) emits an equivalent shader
- * inline via FFmpeg's GLSLC macros over FF_VK_REP_FLOAT image arrays; keep the
- * two algorithms in lockstep when editing this reference is NOT a second implementation to hand-synchronise. Since
- * FFmpeg 9 (ADR-0143) the shipped shader is
+ * (chroma passes through). The shader FFmpeg actually executes is
  * ffmpeg-patches/files/vulkan/pelorus_dehalo.comp.glsl, compiled to SPIR-V at build
- * time; the old inline-GLSL lockstep (AGENTS hard rule 4) is retired.
+ * time (ADR-0143). This file is a standalone reference in the 16-bit domain, kept
+ * for the fast gate and for reading the algorithm without FFmpeg's plumbing -- it is
+ * NOT a second implementation to hand-synchronise.
  */
 #version 450
 

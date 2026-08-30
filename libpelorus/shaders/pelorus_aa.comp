@@ -18,13 +18,11 @@
  *   line-darken: where warp is on the dark side near an edge, deepen by darkstr.
  *
  * Luma only; chroma passes through. Reference form runs on the luma plane
- * against r16ui storage images; the in-tree FFmpeg filter
- * (ffmpeg-patches/files/vf_pelorus_aa_vulkan.c) emits an equivalent shader
- * inline via FFmpeg's GLSLC macros over FF_VK_REP_FLOAT image arrays — keep the
- * two in lockstep this reference is NOT a second implementation to hand-synchronise. Since
- * FFmpeg 9 (ADR-0143) the shipped shader is
+ * against r16ui storage images. The shader FFmpeg actually executes is
  * ffmpeg-patches/files/vulkan/pelorus_aa.comp.glsl, compiled to SPIR-V at build
- * time; the old inline-GLSL lockstep (AGENTS hard rule 4) is retired.
+ * time over FF_VK_REP_FLOAT image arrays (ADR-0143). This file is a standalone
+ * reference kept for the fast gate and for reading the algorithm without
+ * FFmpeg's plumbing -- it is NOT a second implementation to hand-synchronise.
  */
 #version 450
 
