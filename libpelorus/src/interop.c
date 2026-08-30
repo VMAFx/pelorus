@@ -119,8 +119,7 @@ pel_result pel_blob_pack(const PelorusSideData *meta, const PelorusPackSection *
     uint32_t total_size;
     size_t blob_len;
     uint8_t *blob;
-    PelorusSideData *hdr;
-    PelorusSectionDir *dir;
+    PelorusSideData hdr;
     int i;
 
     if (meta == NULL || out_blob == NULL || out_len == NULL) {
@@ -172,17 +171,23 @@ pel_result pel_blob_pack(const PelorusSideData *meta, const PelorusPackSection *
     /* UUID prefix. */
     memcpy(blob, pelorus_sidedata_uuid, PELORUS_SIDEDATA_UUID_LEN);
 
-    /* Header. */
-    hdr = (PelorusSideData *)(void *)(blob + PELORUS_SIDEDATA_UUID_LEN);
-    write_pack_header(hdr, meta, total_size, section_mask, nb);
+    /* Header. Built in an aligned local and memcpy'd out, so the pack path casts
+     * nothing either -- `blob` is calloc'd and therefore suitably aligned, but
+     * keeping both directions cast-free is what lets bugprone-casting-through-void
+     * stay ENABLED as a real guard against reintroducing issue #44. */
+    write_pack_header(&hdr, meta, total_size, section_mask, nb);
+    memcpy(blob + PELORUS_SIDEDATA_UUID_LEN, &hdr, sizeof(hdr));
 
     /* Directory + payloads. */
-    dir = (PelorusSectionDir *)(void *)(blob + PELORUS_SIDEDATA_UUID_LEN + header_size);
     for (i = 0; i < nb; i++) {
-        dir[i].section_id = (uint32_t)sections[i].id;
-        dir[i].offset = cursor; /* relative to magic[0] */
-        dir[i].size = sections[i].size;
-        dir[i].struct_minor = (uint32_t)PELORUS_ABI_MINOR;
+        PelorusSectionDir ent;
+
+        ent.section_id = (uint32_t)sections[i].id;
+        ent.offset = cursor; /* relative to magic[0] */
+        ent.size = sections[i].size;
+        ent.struct_minor = (uint32_t)PELORUS_ABI_MINOR;
+        memcpy(blob + PELORUS_SIDEDATA_UUID_LEN + (size_t)header_size + (size_t)i * sizeof(ent),
+               &ent, sizeof(ent));
         memcpy(blob + PELORUS_SIDEDATA_UUID_LEN + cursor, sections[i].data, sections[i].size);
         cursor += PEL_ALIGN8(sections[i].size);
     }

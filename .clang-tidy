@@ -21,7 +21,11 @@ Checks: >
   -misc-include-cleaner,
   -misc-no-recursion,
   -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
-  -bugprone-casting-through-void,
+  # ENABLED deliberately: this is the check that locates the cast-a-byte-pointer-
+  # to-a-struct pattern behind issue #44 (UB on a misaligned blob base). Both the
+  # parse AND pack paths are now memcpy-based so it fires on nothing, which is
+  # exactly what makes it a usable guard against reintroducing the bug.
+  bugprone-casting-through-void,
 
 WarningsAsErrors: >
   bugprone-integer-division,
