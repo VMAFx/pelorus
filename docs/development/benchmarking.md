@@ -1,6 +1,20 @@
 <!-- markdownlint-disable MD013 -->
 # Benchmarking — proving the BD-rate win
 
+### What each corpus entry is for
+
+| entry | source | what it exercises |
+|---|---|---|
+| `bbb` | Big Buck Bunny (360p) | clean animation — the low-impairment end. Reductive filters are expected to show ~0 here (ADR-0142) |
+| `netflix-bar` | Netflix Chimera *BarScene* via Xiph.Org | real camera content: **2.4x the texture, 3.1x the variance and 1.7x the banding** of `bbb` at the same workload |
+| `synth-banding` | lavfi gradient | deband torture — a smooth dark gradient with nothing else in it |
+
+`netflix-bar` is **not** a grain source, despite being real camera footage: the pinned
+`.webm` is a VP9 distribution copy and the encode removed most of the grain (measured
+`grain_sigma` 0.0124 vs `bbb`'s 0.0131 — marginally *lower*). The ungraded `.y4m` retains
+grain but is 29.6 GB. For a grain axis use `run-bench.py --synth noise`, or inject seeded
+noise into a real clip; both give a clean monotonic grain response.
+
 > **The pinned corpus URL is dead (verified 2026-08-30).** `download.blender.org`
 > now 404s for `BigBuckBunny_640x360.m4v`, so `fetch-corpus.sh` cannot materialise
 > the clip on a cold machine and the harness is only runnable with a warm

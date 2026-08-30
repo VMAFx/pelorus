@@ -156,3 +156,38 @@ ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
   -vf "hwupload,pelorus_grain_estimate_vulkan,hwdownload,format=yuv420p,metadata=print:key=lavfi.pelorus.grain_sigma" \
   -f null -
 ```
+
+## Reading `grain_sigma` — always pair it with `grain_flat`
+
+The estimator accumulates only over **flat** neighbourhoods: a pixel whose 3x3 range
+exceeds `edge_thr` is skipped entirely, so the sigma reflects grain rather than edge
+energy. `grain_flat` is the fraction of pixels that qualified — i.e. the **coverage**, and
+therefore the confidence, of the sigma estimate.
+
+That makes the two values only meaningful together:
+
+| `grain_sigma` | `grain_flat` | meaning |
+|---|---|---|
+| ~0 | ~1 | genuinely clean — lots of flat area, no grain found in it |
+| moderate | 0.1–0.9 | normal case; sigma is well-supported |
+| ~0 or erratic | ~0 | **starved, not clean** — almost nothing qualified as flat |
+
+A consumer must not read `grain_sigma` alone. Measured on real content (BBB 640x360) with
+seeded noise injected, the response is correctly monotonic in both:
+
+| injected noise | `grain_sigma` | `grain_flat` |
+|---|---|---|
+| 0 | 0.0132 | 0.331 |
+| 4 | 0.0140 | 0.294 |
+| 8 | 0.0158 | 0.166 |
+| 12 | 0.0172 | 0.055 |
+| 20 | 0.0214 | 0.005 |
+
+But on a *pathologically flat* source — a uniform colour or a smooth gradient, uniformly
+noised — essentially no neighbourhood stays under `edge_thr`, `grain_flat` collapses to
+~0, and the sigma becomes 0 or an unstable estimate drawn from a handful of pixels.
+
+**This matters for the `tune=auto` router (ADR-0142)**, which uses `grain_sigma` as its
+grain-detection input: keyed on sigma alone, a starved estimate reads as "clean" and would
+route heavy-grain content *away* from the denoise leg — the exact case where the largest
+measured BD-rate win lives. Gate on `grain_flat` before trusting a low sigma.
