@@ -1,7 +1,12 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0132: Per-shot complexity-budget CRF steering (design)
 
-- **Status**: Proposed
+- **Status**: Rejected (2026-08-30) — layer 1 (the complexity-scalar producer) shipped
+  as `PEL_SEC_COMPLEXITY` in interop ABI 1.3 and is retained; layers 2-3 (applying it
+  as CRF/qindex steering) were built and measured, and lose. Per-shot CRF is an honest
+  negative on the CRF axis (bench v0.13, PR #34), and ADR-0142 generalises the result:
+  source-side rate-control loses structurally to the encoder's own RC. The producer
+  stays because `tune=auto` consumes the same signal for content routing
 - **Date**: 2026-06-20
 - **Deciders**: Lusoris
 
