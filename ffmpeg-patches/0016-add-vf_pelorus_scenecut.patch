@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:21:18 +0200
+Date: Sun, 30 Aug 2026 18:33:03 +0200
 Subject: [PATCH 16/18] =?UTF-8?q?feat(scenecut):=20add=20vf=5Fpelorus=5Fsc?=
  =?UTF-8?q?enecut=20=E2=80=94=20scene-cut=20to=20forced=20IDR?=
 MIME-Version: 1.0
@@ -30,10 +30,10 @@ ADR: docs/adr/0126-scenecut-idr.md
  create mode 100644 libavfilter/vf_pelorus_scenecut.c
 
 diff --git a/configure b/configure
-index 9d75e5666c..b2818392a1 100755
+index 31a1c70813..1cc93c4d33 100755
 --- a/configure
 +++ b/configure
-@@ -7470,6 +7470,7 @@ enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelor
+@@ -7476,6 +7476,7 @@ enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelor
  enabled pelorus_denoise_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
  enabled pelorus_grain_estimate_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
  enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs

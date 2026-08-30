@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:21:18 +0200
+Date: Sun, 30 Aug 2026 18:33:03 +0200
 Subject: [PATCH 15/18] feat(aa): add vf_pelorus_aa_vulkan (anime warp-AA +
  line-darkening, Vulkan)
 MIME-Version: 1.0
@@ -39,10 +39,10 @@ ADR: docs/adr/0124-anime-aa.md
  create mode 100644 libavfilter/vulkan/pelorus_aa.comp.glsl
 
 diff --git a/configure b/configure
-index b8c212d931..9d75e5666c 100755
+index c68249b1a0..31a1c70813 100755
 --- a/configure
 +++ b/configure
-@@ -4237,6 +4237,7 @@ overlay_qsv_filter_deps="libmfx"
+@@ -4243,6 +4243,7 @@ overlay_qsv_filter_deps="libmfx"
  overlay_qsv_filter_select="qsvvpp"
  overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
  overlay_vulkan_filter_deps="vulkan spirv_compiler"

@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:21:18 +0200
+Date: Sun, 30 Aug 2026 18:33:03 +0200
 Subject: [PATCH 10/18] feat(fgs): add pelorus_fgs bitstream filter (H.274 /
  HEVC FGC SEI)
 MIME-Version: 1.0
@@ -48,10 +48,10 @@ ADR: docs/adr/0117-grain-fgs-bsf.md
  create mode 100644 libavcodec/bsf/pelorus_fgs.c
 
 diff --git a/configure b/configure
-index 953ff3af16..62a66792dc 100755
+index 216f12e37b..2e8e0c3ac5 100755
 --- a/configure
 +++ b/configure
-@@ -3766,6 +3766,7 @@ hevc_metadata_bsf_select="cbs_h265"
+@@ -3772,6 +3772,7 @@ hevc_metadata_bsf_select="cbs_h265"
  lcevc_metadata_bsf_select="cbs_lcevc"
  mjpeg2jpeg_bsf_select="jpegtables"
  mpeg2_metadata_bsf_select="cbs_mpeg2"

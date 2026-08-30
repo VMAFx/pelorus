@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:21:18 +0200
+Date: Sun, 30 Aug 2026 18:33:03 +0200
 Subject: [PATCH 08/18] feat(nvenc): feed the Pelorus MV field to NVENC
  external ME hints
 MIME-Version: 1.0

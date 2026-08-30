@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
-Date: Sun, 30 Aug 2026 18:21:18 +0200
+Date: Sun, 30 Aug 2026 18:33:03 +0200
 Subject: [PATCH 14/18] feat(dehalo): add vf_pelorus_dehalo_vulkan (anime
  dehalo + dering, Vulkan)
 MIME-Version: 1.0
@@ -38,10 +38,10 @@ ADR: docs/adr/0123-anime-dehalo.md
  create mode 100644 libavfilter/vulkan/pelorus_dehalo.comp.glsl
 
 diff --git a/configure b/configure
-index 62a66792dc..b8c212d931 100755
+index 2e8e0c3ac5..c68249b1a0 100755
 --- a/configure
 +++ b/configure
-@@ -4239,6 +4239,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
+@@ -4245,6 +4245,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
  overlay_vulkan_filter_deps="vulkan spirv_compiler"
  pelorus_analyze_vulkan_filter_deps="vulkan spirv_compiler"
  pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"
