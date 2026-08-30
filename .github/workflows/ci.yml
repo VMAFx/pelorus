@@ -79,6 +79,22 @@ jobs:
           pkg-config --exists libpelorus && echo "libpelorus $(pkg-config --modversion libpelorus) OK"
       - name: Checkout FFmpeg n9.0.1
         run: git clone --branch n9.0.1 --depth 1 https://github.com/FFmpeg/FFmpeg.git ffmpeg
+      - name: Patches match a fresh generate.sh run (no hand-edited artifacts)
+        run: |
+          # generate.sh is byte-reproducible (it pins GIT_AUTHOR/COMMITTER_DATE), so
+          # regenerating must produce no diff. This is what catches a hand-edited
+          # *.patch -- the thing ffmpeg-patches/README forbids and nothing checked.
+          git -C ffmpeg fetch --depth 1 origin +refs/tags/n9.0.1:refs/tags/n9.0.1 2>/dev/null || true
+          FFMPEG_REPO="$GITHUB_WORKSPACE/ffmpeg" BASE_TAG=n9.0.1 \
+            WORKTREE="$RUNNER_TEMP/pelorus-gen" ffmpeg-patches/generate.sh
+          if ! git diff --quiet -- ffmpeg-patches/; then
+            echo "::error::ffmpeg-patches/ differs from a fresh generate.sh run — a patch was hand-edited, or files/ changed without regenerating."
+            git diff --stat -- ffmpeg-patches/
+            git diff -- ffmpeg-patches/ | head -200
+            exit 1
+          fi
+          echo "committed patches are byte-identical to a fresh regeneration"
+
       - name: Apply Pelorus patch stack (git am --3way)
         working-directory: ffmpeg
         run: |

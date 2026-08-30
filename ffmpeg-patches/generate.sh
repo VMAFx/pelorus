@@ -22,6 +22,15 @@ BASE_TAG="${BASE_TAG:-n9.0.1}"
 WORKTREE="${WORKTREE:-/tmp/pelorus-ffmpeg-gen}"
 FILES_DIR="$HERE/files"
 
+# Deterministic output. `git format-patch` stamps each patch with the commit
+# Date:, so without a fixed date two runs of this script produce 18 patches that
+# differ only in a timestamp -- which makes "do the committed artifacts still
+# match generate.sh?" unanswerable, and silently hides real drift in the noise.
+# The commits are synthetic anyway (format-patch runs with --zero-commit), so a
+# fixed date costs nothing and makes regeneration byte-reproducible.
+export GIT_AUTHOR_DATE="2026-01-01T00:00:00+00:00"
+export GIT_COMMITTER_DATE="2026-01-01T00:00:00+00:00"
+
 git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE" 2>/dev/null || true
 git -C "$FFMPEG_REPO" worktree add --detach "$WORKTREE" "$BASE_TAG"
 
