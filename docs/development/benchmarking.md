@@ -25,6 +25,11 @@ Verified monotonic and reproducible on `netflix-bar`:
 
 Same seed, same bytes.
 
+**What `N` is worth physically** — and where to stop — is profiled against 86 real titles
+in [grain-ladder.md](grain-ladder.md). The short version: use `netflix-bar` as the grain
+base and stay at or below `--grain 16`; `bbb` starts at only 33% flat coverage and its
+axis goes non-monotonic past 16.
+
 **Why not just use a grainy clip?** Because there isn't one to pin. Measured at the
 640x360/48-frame corpus workload:
 
