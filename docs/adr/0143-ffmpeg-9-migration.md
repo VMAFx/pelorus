@@ -101,10 +101,26 @@ failure — which is precisely how ADR-0129 escaped every static gate.
     `lavfi.pelorus.*` frame metadata.
   - A five-filter chain (borderfix → deblock → dehalo → aa → deband) runs on real
     2160p Big Buck Bunny content.
-  - **Still not covered**: the Vulkan validation layers are not installed on this box
-    (`vulkan-validation-layers` is packaged but needs a privileged install). The
-    ADR-0129 `mc` descriptor bug was the kind only a strict driver or the layers
-    reject, so a validation-enabled run remains a worthwhile follow-up.
+  - **Vulkan validation layers: run, and clean.** All nine filters were executed under
+    `VK_LAYER_KHRONOS_validation`. Four VUID types appear, and **every one of them also
+    appears in stock upstream filters doing the same kind of work**, so none is a Pelorus
+    defect:
+    - `vkCmdCopyBufferToImage-srcBuffer-00174`, `vkCmdCopyImageToBuffer-dstBuffer-00191`
+      and `VkDescriptorSetLayoutBinding-descriptorType-00282` are emitted by a bare
+      `hwupload,hwdownload` chain with **no filter at all** — they live in FFmpeg's
+      `hwcontext_vulkan` upload/download path.
+    - `VkImageMemoryBarrier2-srcAccessMask-03909` is emitted by upstream
+      `gblur_vulkan` / `nlmeans_vulkan`.
+    - `VkImageMemoryBarrier2-srcAccessMask-07454` is emitted by `analyze`,
+      `grain_estimate` and `mc` — the three SSBO-readback analyzers — and **also by
+      upstream `vf_scdet_vulkan`, 16 times**, which is the same kind of filter using the
+      identical `ff_vk_frame_barrier(ALL_COMMANDS → COMPUTE_SHADER, SHADER_READ)` call.
+      The barrier ends up recorded where `ALL_COMMANDS` expands to transfer-only stages.
+      It is an upstream idiom problem, not something this migration introduced (the
+      barrier and queue code is byte-identical to pre-migration master).
+    Comparing against the right control mattered here: measured against `gblur_vulkan`
+    alone, 07454 looks Pelorus-specific; against `scdet_vulkan`, the true analogue, it
+    plainly is not.
 
 ## References
 

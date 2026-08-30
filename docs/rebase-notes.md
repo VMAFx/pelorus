@@ -61,8 +61,11 @@ above about why that distinction matters).
 Intel Arc A380 and AMD RADV; `planes=1` yields bit-exact chroma (`u:inf v:inf`)
 on all six luma-only filters; the three analyzers are byte-identical
 pass-throughs; `meta=1` exercises libpelorus at runtime; and a five-filter chain
-runs on real 2160p content. Not covered: a validation-layer run (the layers are
-not installed here).
+runs on real 2160p content. **Validation layers: run and clean** — all four VUID
+types the Pelorus filters emit are also emitted by stock upstream filters doing the
+same work (three by a bare `hwupload,hwdownload` chain with no filter; 07454 by
+upstream `vf_scdet_vulkan`, the SSBO-readback analogue). No Pelorus-specific
+validation error.
 
 **Note on the sibling repo**: `VMAFx/vmafx` migrated its own stack the same week
 (`7f6e6356b`) and reported no API change. That does not generalise — its patches
