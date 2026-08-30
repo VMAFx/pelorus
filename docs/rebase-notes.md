@@ -52,10 +52,17 @@ nm -u <filter>.o | grep spv   # must match nm --defined-only <shader>.comp.spv.o
 ```
 
 Verified for this bump: 18/18 patches apply to pristine n9.0.1, configure
-succeeds, 10 filter objects and 9 shader objects compile with zero errors, and
-all 9 shader symbols resolve. **Not yet verified: on-device execution** — the
-ADR-0129 lesson (build-green ≠ runs-green) still applies and the per-filter GPU
-smoke on both plane-mask regimes remains the release gate.
+succeeds, a full `make ffmpeg` **links**, and the binary registers 10 pelorus
+filters plus the `pelorus_fgs` BSF. All 9 shader objects are pulled in by the
+Makefile's own `OBJS` (not by naming them on a make command line — see the note
+above about why that distinction matters).
+
+**On-device, all passing**: 9/9 filters execute on each of NVIDIA RTX 4090,
+Intel Arc A380 and AMD RADV; `planes=1` yields bit-exact chroma (`u:inf v:inf`)
+on all six luma-only filters; the three analyzers are byte-identical
+pass-throughs; `meta=1` exercises libpelorus at runtime; and a five-filter chain
+runs on real 2160p content. Not covered: a validation-layer run (the layers are
+not installed here).
 
 **Note on the sibling repo**: `VMAFx/vmafx` migrated its own stack the same week
 (`7f6e6356b`) and reported no API change. That does not generalise — its patches

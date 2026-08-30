@@ -87,9 +87,24 @@ failure — which is precisely how ADR-0129 escaped every static gate.
   a mismatch silently reads the wrong image rather than failing to build. This replaces
   one silent-failure mode (lockstep drift) with a narrower one, and is the reason every
   migrated filter was reviewed specifically for binding order and push-constant offsets.
-- **On-device execution is still required before release.** ADR-0129's lesson stands:
-  build-green is not runs-green. The migration is compile- and link-verified; the
-  per-filter GPU smoke on both plane-mask regimes remains the release gate.
+- **On-device execution has now been run, and passes.** ADR-0129's lesson (build-green
+  is not runs-green) was the reason to gate on it, so this migration was verified on
+  real hardware rather than declared done at compile time:
+  - All 9 Vulkan filters execute on **three vendors** — NVIDIA RTX 4090, Intel Arc A380
+    and AMD RADV (`vk:0/1/2`), 9/9 on each. The migration is not NVIDIA-specific.
+  - The `planes=1` (luma-only) regime — the exact path the ADR-0129 defect lived in —
+    gives **`u:inf v:inf`** against the unfiltered source for deband, denoise, dehalo,
+    aa, deblock and borderfix: chroma is bit-exact, not merely non-crashing.
+  - The three pass-through analyzers (analyze, grain_estimate, mc) report
+    `y:inf u:inf v:inf`, i.e. they genuinely do not touch the frame.
+  - `meta=1` round-trips through `libpelorus` at runtime, and `analyze` emits its
+    `lavfi.pelorus.*` frame metadata.
+  - A five-filter chain (borderfix → deblock → dehalo → aa → deband) runs on real
+    2160p Big Buck Bunny content.
+  - **Still not covered**: the Vulkan validation layers are not installed on this box
+    (`vulkan-validation-layers` is packaged but needs a privileged install). The
+    ADR-0129 `mc` descriptor bug was the kind only a strict driver or the layers
+    reject, so a validation-enabled run remains a worthwhile follow-up.
 
 ## References
 
