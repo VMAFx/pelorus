@@ -83,7 +83,7 @@ LVMAF_CUDA = ('enabled libvmaf           && check_pkg_config libvmaf_cuda '
 # add_extralibs to actually link -lpelorus (otherwise ffmpeg fails at LINK time
 # with undefined references, which a compile-only check never catches).
 REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack '
+       '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack '
        '&& add_extralibs $libpelorus_extralibs\n')
 
 if which == 'deband':
@@ -170,7 +170,7 @@ def ins_after(path, anchor, line):
     assert line.strip() not in t, f"already present in {path}: {line!r}"
     p.write_text(t.replace(anchor, anchor + line, 1))
 REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack '
+       '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack '
        '&& add_extralibs $libpelorus_extralibs\n')
 ins_before("libavfilter/allfilters.c",
            "extern const FFFilter ff_vf_perms;\n",
@@ -207,7 +207,7 @@ def ins_after(path, anchor, line):
     assert line.strip() not in t, f"already present in {path}: {line!r}"
     p.write_text(t.replace(anchor, anchor + line, 1))
 REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack '
+       '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack '
        '&& add_extralibs $libpelorus_extralibs\n')
 ins_before("libavfilter/allfilters.c",
            "extern const FFFilter ff_vf_perms;\n",
@@ -416,7 +416,7 @@ def ins_after(path, anchor, line):
     assert line.strip() not in t, f"already present in {path}: {line!r}"
     p.write_text(t.replace(anchor, anchor + line, 1))
 REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.1.0" pelorus/interop.h pel_blob_pack '
+       '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack '
        '&& add_extralibs $libpelorus_extralibs\n')
 # allfilters.c: pelorus_scenecut sorts after pelorus_mc -> insert before perms.
 ins_before("libavfilter/allfilters.c",

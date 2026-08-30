@@ -12,14 +12,6 @@ All notable changes to Pelorus are documented here. The format is
 
 ### Added
 
-- **`libpelorus`** (`libpelorus/`): the shared core library — the Pelorus⇄vmafx side-data interop ABI (`pelorus/interop.h`, `pelorus/interop.c`) and the smart-deband parameter contract (`pelorus/deband.h`). The `PelorusSideData` blob is a versioned, UUID-keyed, append-only AVFrame side-data format both `vf_pelorus_*` and vmafx's `vf_libvmaf*` read/write. Ships a shared conformance fixture (`libpelorus/test/interop_test.c`). ADR-0103, ADR-0105.
-- **Docs**: `docs/api/interop-abi.md` (the ABI + C API), `docs/architecture/overview.md` (the two interop seams).
-- **`vf_pelorus_deband_vulkan`** (`ffmpeg-patches/files/vf_pelorus_deband_vulkan.c`): the flagship Vulkan compute smart-deband filter — f3kdb-style flat-test + TPDF/blue-noise grain + a local-variance detail-protection mask, zero-copy in VRAM as a pre-encode pass. AVOptions: `range`, `thry/thrc`, `grainy/grainc`, `softness`, `detail`, `sample`, `blur`, `dither`, `dynamic`, `protect`, `planes`, `meta`. With `meta=1` it attaches a Pelorus interop blob. Shipped as `ffmpeg-patches/0001-add-vf_pelorus_deband_vulkan.patch` against n8.1.1. ADR-0102, ADR-0104.
-- **Reference shader** (`libpelorus/shaders/pelorus_deband.comp`): standalone f3kdb deband, CI-compiled to SPIR-V.
-- **Docs**: `docs/metrics/deband.md` (filter + options + VMAF tuning), `docs/backends/vulkan.md`, `docs/usage/ffmpeg.md`, `docs/research/0101-smart-deband.md`.
-- **`vf_pelorus_analyze_vulkan`** (`ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c`): a pass-through Vulkan compute analyzer that reduces each frame's luma to per-frame banding / variance / edge statistics on the GPU (per-tile shared-memory reduction → sliced SSBO), reads them back (vf_scdet_vulkan pattern), and attaches the *measured* `PEL_SEC_VARIANCE` + `PEL_SEC_BANDING` interop sections — the data the deband filter only approximates. Codec-agnostic. AVOption: `flat`. Shipped as `ffmpeg-patches/0002-add-vf_pelorus_analyze_vulkan.patch` (cumulative on 0001, applies via `git am --3way`). ADR-0109.
-- **Reference shader** (`libpelorus/shaders/pelorus_analyze.comp`): standalone reduction, CI-compiled to SPIR-V.
-- **Docs**: `docs/metrics/analyze.md`.
 - **Control-plane contract** (`docs/api/control-plane.md`): froze the
   autotune-relevant `vf_pelorus_deband_vulkan` AVOptions (`range`, `thry`,
   `thrc`, `grainy`, `grainc`, `softness`, `detail`, `dither`, `dynamic`,
@@ -69,6 +61,19 @@ All notable changes to Pelorus are documented here. The format is
 - **`vf_pelorus_analyze_vulkan`** auto-ROI (`roi=1`) banding detection is now **two-scale** (ADR-0133, CAMBI alignment): alongside the existing per-tile variance scale, a coarse inter-tile mean-luma-gradient scale flags shallow ramps (sky/shadow) that band across many tiles but fall below any single tile's variance floor. A 0x10→0x30 ramp (CAMBI 0.625) that previously flagged 0 tiles now flags 27, and an A/B encode confirmed lower output CAMBI with no regression on textured content. Filter-internal; no interop ABI change. Docs: `docs/metrics/analyze.md`.
 - **Evaluated + rejected: wide-band reach for deband** (multi-radius / extended `range`). Designed by a 5-agent judge panel and built behind an opt-in `reach` AVOption, then measured: the pre-encode CAMBI gain (bench v0.15) is real but **does not survive the encoder** — wider range is monotonically *worse* post-`hevc_nvenc` at every quality (cq10/18/28), because the encoder re-bands the over-smoothed gentle ramp into wider bands. Code reverted; `range` stays capped at 31. Completes v0.15's deferred durability gate with a negative. ADR-0141, bench v0.16.
 - **Benchmark methodology: SSIMULACRA2 is now the primary metric** (bench-results v0.17). VMAF-NEG is retired — it zeroes the enhancement credit (it was the anti-gaming guard for the filter lane) and so *hid* the biggest measured lever. On the same encodes where VMAF-NEG showed "no gain," SS2 reveals that **tuned NVENC settings** (`-preset p7 -tune hq -spatial-aq 1 -temporal-aq 1 -aq-strength 8 -rc-lookahead 32 -multipass fullres -b_ref_mode middle`) beat the conservative FFmpeg defaults by ~**+5 to +10 SS2** at iso-bitrate — a large, universal, free gain (the default is genuinely bad). With tuned settings the GPU→CPU gap shrinks to **~2 SS2** (tuned `hevc_nvenc` vs `x265 -preset slow`; `av1_nvenc` vs `SVT-AV1` similar), which the Pelorus Vulkan filters close on top at GPU speed. Methodology now: CQ-locked ladders (VBR overshoots), SS2 primary + VMAF secondary (the VMAF-up/SS2-down split is the gaming flag), CPU encode as the gold-standard gap reference. Feeds the `tune=auto` design (ADR-0142). Docs: `docs/development/bench-results.md`, `benchmarking.md`.
+- **FFmpeg base tag moves n8.1.1 → n9.0.1**, and every Vulkan shader moves from a
+  runtime-constructed GLSL string to **precompiled SPIR-V**. FFmpeg 9 deleted the inline-GLSL
+  builder outright (`GLSLC`/`GLSLA`/`GLSLF`/`GLSLD`, `FFVulkanShader.src`, `ff_vk_shader_init`,
+  `ff_vk_shader_print`), replacing it with `ff_vk_shader_load` + `ff_vk_shader_link` over a
+  shader compiled at build time from `libavfilter/vulkan/pelorus_<name>.comp.glsl`. Also
+  handled: `spirv_library` → `spirv_compiler` in `configure`, `ff_vk_shader_add_descriptor_set`
+  becoming `void` and losing its `print_to_shader_only` argument, a new `uint32_t wgc_z`
+  parameter on `ff_vk_filter_process_simple`/`_2pass`/`_Nin`, and NVENC's minimum SDK moving to
+  11.1 (which deleted `NVENC_HAVE_QP_MAP_MODE`). Plane counts and plane bitmasks that the C
+  code used to const-fold into generated GLSL are now specialization constants. **This retires
+  AGENTS.md hard rule 4**: the `.comp` reference shader and the filter's inline copy are no
+  longer two hand-synchronised sources, so the lockstep-drift defect class behind ADR-0129 is
+  designed out rather than policed. ADR-0143.
 
 ### Fixed
 
@@ -84,4 +89,22 @@ All notable changes to Pelorus are documented here. The format is
 
 <!-- END UNRELEASED -->
 
-[Unreleased]: https://github.com/VMAFx/pelorus/commits/master
+## [0.1.0] - 2026-06-14
+
+Initial tagged release: the `libpelorus` interop ABI plus the smart-deband
+flagship and the measured `analyze` pass, CI-verified end to end.
+
+### Added
+
+- **`libpelorus`** (`libpelorus/`): the shared core library — the Pelorus⇄vmafx side-data interop ABI (`pelorus/interop.h`, `pelorus/interop.c`) and the smart-deband parameter contract (`pelorus/deband.h`). The `PelorusSideData` blob is a versioned, UUID-keyed, append-only AVFrame side-data format both `vf_pelorus_*` and vmafx's `vf_libvmaf*` read/write. Ships a shared conformance fixture (`libpelorus/test/interop_test.c`). ADR-0103, ADR-0105.
+- **Docs**: `docs/api/interop-abi.md` (the ABI + C API), `docs/architecture/overview.md` (the two interop seams).
+- **`vf_pelorus_deband_vulkan`** (`ffmpeg-patches/files/vf_pelorus_deband_vulkan.c`): the flagship Vulkan compute smart-deband filter — f3kdb-style flat-test + TPDF/blue-noise grain + a local-variance detail-protection mask, zero-copy in VRAM as a pre-encode pass. AVOptions: `range`, `thry/thrc`, `grainy/grainc`, `softness`, `detail`, `sample`, `blur`, `dither`, `dynamic`, `protect`, `planes`, `meta`. With `meta=1` it attaches a Pelorus interop blob. Shipped as `ffmpeg-patches/0001-add-vf_pelorus_deband_vulkan.patch` against n8.1.1. ADR-0102, ADR-0104.
+- **Reference shader** (`libpelorus/shaders/pelorus_deband.comp`): standalone f3kdb deband, CI-compiled to SPIR-V.
+- **Docs**: `docs/metrics/deband.md` (filter + options + VMAF tuning), `docs/backends/vulkan.md`, `docs/usage/ffmpeg.md`, `docs/research/0101-smart-deband.md`.
+- **`vf_pelorus_analyze_vulkan`** (`ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c`): a pass-through Vulkan compute analyzer that reduces each frame's luma to per-frame banding / variance / edge statistics on the GPU (per-tile shared-memory reduction → sliced SSBO), reads them back (vf_scdet_vulkan pattern), and attaches the *measured* `PEL_SEC_VARIANCE` + `PEL_SEC_BANDING` interop sections — the data the deband filter only approximates. Codec-agnostic. AVOption: `flat`. Shipped as `ffmpeg-patches/0002-add-vf_pelorus_analyze_vulkan.patch` (cumulative on 0001, applies via `git am --3way`). ADR-0109.
+- **Reference shader** (`libpelorus/shaders/pelorus_analyze.comp`): standalone reduction, CI-compiled to SPIR-V.
+- **Docs**: `docs/metrics/analyze.md`.
+
+
+[Unreleased]: https://github.com/VMAFx/pelorus/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/VMAFx/pelorus/releases/tag/v0.1.0
