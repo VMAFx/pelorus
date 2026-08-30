@@ -2,7 +2,7 @@
 # Pelorus FFmpeg patch stack
 
 Native `vf_pelorus_*` Vulkan compute filters, shipped as a stack of patches
-against **FFmpeg n8.1.1** — the same delivery model as the vmafx sibling's
+against **FFmpeg n9.0.1** — the same delivery model as the vmafx sibling's
 `ffmpeg-patches/`. The filters link **libpelorus** (the shared interop ABI +
 filter contracts) so a single filtergraph can carry the Pelorus side-data blob
 straight through to a hardware encoder, and a downstream vmafx `vf_libvmaf*` can
@@ -29,8 +29,8 @@ read it. See [docs/adr/0104-ffmpeg-patch-stack.md](../docs/adr/0104-ffmpeg-patch
 ## Apply
 
 ```bash
-cd /path/to/ffmpeg            # a pristine n8.1.1 checkout
-git reset --hard n8.1.1
+cd /path/to/ffmpeg            # a pristine n9.0.1 checkout
+git reset --hard n9.0.1
 for p in /path/to/Pelorus/ffmpeg-patches/0*.patch; do
     git am --3way "$p" || break
 done
@@ -59,7 +59,7 @@ Install libpelorus where pkg-config can see it (`--prefix=/usr`, or set
 ## Regenerate
 
 ```bash
-FFMPEG_REPO=/path/to/ffmpeg BASE_TAG=n8.1.1 ./generate.sh
+FFMPEG_REPO=/path/to/ffmpeg BASE_TAG=n9.0.1 ./generate.sh
 ```
 
 Edit the sources under `files/`, rerun `generate.sh`, and commit both the

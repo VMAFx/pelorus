@@ -12,13 +12,13 @@
 # 0002 analyze on top) is the artifact; files/ is the source of truth.
 #
 # Usage:
-#   FFMPEG_REPO=/path/to/ffmpeg BASE_TAG=n8.1.1 ./generate.sh
+#   FFMPEG_REPO=/path/to/ffmpeg BASE_TAG=n9.0.1 ./generate.sh
 #
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-FFMPEG_REPO="${FFMPEG_REPO:-/home/kilian/dev/ffmpeg-8}"
-BASE_TAG="${BASE_TAG:-n8.1.1}"
+FFMPEG_REPO="${FFMPEG_REPO:-/home/kilian/dev/ffmpeg-9}"
+BASE_TAG="${BASE_TAG:-n9.0.1}"
 WORKTREE="${WORKTREE:-/tmp/pelorus-ffmpeg-gen}"
 FILES_DIR="$HERE/files"
 
