@@ -55,6 +55,17 @@ All notable changes to Pelorus are documented here. The format is
 - **`vf_pelorus_dehalo_vulkan`** gains an opt-in `tile` option (default 0) — shared-memory tiling of the box-blur window ([ADR-0139](docs/adr/0139-dehalo-shared-mem-tile.md)). `box_blur` re-reads an overlapping 17×17 window ~5× per pixel (fetch-bound; an ALU-strip cut Arc rtime −70%), so `tile=1` cooperatively loads the window into shared memory once per plane. **Bit-identical** (SSIM 1.000000); validated **−38% (1.6×) on an Arc A380**, ~neutral on the cache-rich 4090 → default off, opt-in for weak/integrated/mobile GPUs + `tune=anime`. The ADR-0134 denoise-tiling idiom applied to its fetch-bound twin (the `aa` sobel kernel was ALU-bound and refuted). Docs: `docs/metrics/dehalo.md`.
 - **`vf_pelorus_aa_vulkan`** gains an opt-in `fast` option (default 0) — hoists the redundant sobel-mag into shared memory ([ADR-0140](docs/adr/0140-aa-sobel-mag-hoist.md)). aa is ALU-bound (a premise-check found stripping the sobel collapsed rtime −86%, so tiling was refuted), and `sobel_mag` is recomputed ~1156×/px across the overlapping `emask` windows; `fast=1` computes each cell's sobel **once** per workgroup into shared memory and `emask` reduces from the cache. **Bit-identical** (SSIM 1.000000, `cmp` 0 bytes both GPUs); validated **12.6× (−92%) on Arc A380, 2.6× (−62%) on the RTX 4090** — being an ALU win it helps every GPU (unlike fetch-tiling). Docs: `docs/metrics/aa.md`.
 - **`vf_pelorus_grain_estimate_vulkan`** now emits `lavfi.pelorus.grain_sigma` and `lavfi.pelorus.grain_flat` as per-frame metadata (the [ADR-0136](docs/adr/0136-analyze-frame-metadata.md) `av_dict_set` pattern — no interop ABI or shader change, the value was already computed). `grain_sigma` is the peak per-band RMS residual measured over edge-gated locally-flat pixels (structure excluded → what survives is grain stddev); `grain_flat` is the flat fraction it was measured over (confidence). This is the first detection enabler for the `tune=auto` content-adaptive router ([ADR-0142](docs/adr/0142-tune-auto-content-router.md)) — it unblocks routing grainy content (the proven −34% denoise lever) without parsing the `PEL_SEC_FILMGRAIN` side-data blob. Verified discriminating: heavy-grain 0.019 vs clean-ish Bluray 0.012. Docs: `docs/metrics/grain_estimate.md`.
+- **`run-bench.py --grain N`** — a controlled grain axis. Overlays seeded noise on a
+  **real** source and scores both arms against the clean original (implying
+  `--clean-reference`), so a denoise/deband arm is not penalised for removing the
+  impairment under test. Verified monotonic and reproducible: grain 0→20 moves
+  `grain_sigma` 0.0124→0.0182 with `grain_flat` 0.600→0.171, and the same seed yields
+  byte-identical output. This exists because there is no grainy clip to pin — measured,
+  real Blu-ray scans come in at `grain_sigma` 0.0047–0.0101 (lower than clean animation's
+  0.0131), the public 4K sets are distribution re-encodes with the grain compressed out,
+  and any downscale to the corpus resolution attenuates what survives. The pre-existing
+  `--synth noise` is not a substitute: it noises a flat grey plate, which starves the
+  grain estimator. ADR-0142 is the consumer.
 - **Benchmark corpus gains `netflix-bar`** — Netflix's Chimera *BarScene*, donated to the
   Xiph.Org derf collection. Real camera content with measurably more of what Pelorus
   targets than the clean-animation `bbb` pin: **2.4x the texture, 3.1x the variance and

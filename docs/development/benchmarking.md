@@ -1,6 +1,53 @@
 <!-- markdownlint-disable MD013 -->
 # Benchmarking — proving the BD-rate win
 
+### The grain axis (`--grain N`)
+
+Reductive pre-encode filtering is the project's central claim, and ADR-0142's measured law
+says its gain scales with how much removable impairment exists. Testing that needs a
+*controlled* grain axis. `run-bench.py --grain N` provides one: it overlays seeded noise on
+a **real** source and scores both arms against the clean original, so a denoiser is not
+penalised for removing the impairment under test.
+
+```bash
+run-bench.py --src .bench-corpus/netflix-bar.yuv --grain 12 ... # implies --clean-reference
+```
+
+Verified monotonic and reproducible on `netflix-bar`:
+
+| `--grain` | `grain_sigma` | `grain_flat` |
+|---|---|---|
+| 0 | 0.0124 | 0.600 |
+| 4 | 0.0125 | 0.593 |
+| 8 | 0.0138 | 0.572 |
+| 12 | 0.0151 | 0.535 |
+| 20 | 0.0182 | 0.171 |
+
+Same seed, same bytes.
+
+**Why not just use a grainy clip?** Because there isn't one to pin. Measured at the
+640x360/48-frame corpus workload:
+
+| source | `grain_sigma` | `grain_flat` |
+|---|---|---|
+| real Blu-ray scan, 1994 remux | 0.0047–0.0101 | 0.96–0.98 |
+| real Blu-ray scan, 2000 | 0.0079 | 0.94 |
+| real film scan, 1971 | 0.0079 | 0.73 |
+| `netflix-bar` (Chimera, VP9 webm) | 0.0124 | 0.60 |
+| `bbb` (clean animation) | 0.0131 | 0.33 |
+
+Real film scans measure **lower** grain than the public clips, not higher — modern Blu-ray
+masters are frequently denoised, and any downscale to 640x360 attenuates what remains
+(grain is a per-pixel high-frequency signal; averaging 3–6 pixels into one removes it).
+The public 4K sets are all distribution re-encodes with the grain compressed out. So the
+honest grain axis is injection, not selection.
+
+**Why not `--synth noise`?** It noises a flat grey plate. That is the degenerate case: no
+content to preserve, and the grain estimator starves on it (no 3x3 neighbourhood stays
+under `edge_thr`, so `grain_flat` collapses to ~0 and the sigma reading becomes
+meaningless). `--grain` keeps the estimate in the supported regime — see
+[grain_estimate.md](../metrics/grain_estimate.md).
+
 ### What each corpus entry is for
 
 | entry | source | what it exercises |
