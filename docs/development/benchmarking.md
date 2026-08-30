@@ -1,6 +1,15 @@
 <!-- markdownlint-disable MD013 -->
 # Benchmarking — proving the BD-rate win
 
+> **The pinned corpus URL is dead (verified 2026-08-30).** `download.blender.org`
+> now 404s for `BigBuckBunny_640x360.m4v`, so `fetch-corpus.sh` cannot materialise
+> the clip on a cold machine and the harness is only runnable with a warm
+> `.bench-corpus/` cache. It has deliberately **not** been re-pinned to a different
+> clip: the `sha256` in `corpus.lock` is what every number in
+> [bench-results.md](bench-results.md) was measured against, so switching sources
+> would invalidate the entire comparison history rather than repair it. Re-pinning
+> resets the baseline and is an explicit decision, not a maintenance fix.
+
 Pelorus's whole premise is a **claim** until measured: that pre-filtering in
 VRAM makes a *hardware* encode better. The bench proves (or disproves) it
 honestly, and is **pinned + repeatable**.

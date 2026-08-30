@@ -76,6 +76,13 @@ pixel copy) as the reference. Frame 0 has no reference and emits a zero field.
 
 ## Interop (`meta=1`)
 
+With `mc=1` on the downstream denoise consumer it additionally emits
+**`PEL_SEC_MOTION_CONF`** (interop ABI minor 2, ADR-0131): a per-block match
+confidence field that gates the motion-compensated warp, so a block whose match is
+weak falls back to same-coordinate temporal averaging instead of dragging a bad
+vector into the result. Append-only, so an older consumer that does not know the
+section simply ignores it.
+
 Emits the pre-reserved 32-byte `PEL_SEC_MOTION` section (append-only ABI, **no
 version bump** — the section was reserved at ABI 1.0) plus the dense MV grid
 appended after it (the `vf_pelorus_analyze` map-payload convention):
