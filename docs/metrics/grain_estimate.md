@@ -40,7 +40,7 @@ takes AV1-legal defaults for the shifts, and seeds `ar_coeffs_y[0]` from the
 lag-1 coefficient.
 
 The standalone reference shader is
-`libpelorus/shaders/pelorus_grain_estimate.comp`; the filter's inline GLSL
+`libpelorus/shaders/pelorus_grain_estimate.comp`; the filter's shipped `.comp.glsl` shader
 implements the same algorithm (kept in lockstep, AGENTS hard rule 4).
 
 ## Options

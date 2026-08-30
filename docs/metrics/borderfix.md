@@ -38,7 +38,7 @@ estimation. With all widths at their default of `0` the filter is byte-identical
 pass-through. A plane not selected in `planes` is copied through unchanged.
 
 The standalone reference shader is `libpelorus/shaders/pelorus_borderfix.comp`;
-the filter's inline GLSL implements the same clamp-and-smear (kept in lockstep,
+the filter's shipped `.comp.glsl` shader implements the same clamp-and-smear (kept in lockstep,
 AGENTS hard rule 4). The only intended difference is the working domain: the
 `.comp` reads `r16ui` and normalises by 65535, the inline form reads
 `FF_VK_REP_FLOAT` (UNORM) already in `[0,1]`.
