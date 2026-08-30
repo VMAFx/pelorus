@@ -15,12 +15,11 @@
  *   for each pixel within `edge` px of a block boundary:
  *     if |across-boundary step| < thr:  blend toward the [1 2 1] mean by `str`.
  *
- * Reference form runs on the luma plane against r16ui storage images. The in-tree
- * FFmpeg filter (ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c) emits an
- * equivalent shader inline via GLSLC over FF_VK_REP_FLOAT image arrays — this reference is NOT a second implementation to hand-synchronise. Since
- * FFmpeg 9 (ADR-0143) the shipped shader is
- * ffmpeg-patches/files/vulkan/pelorus_deblock.comp.glsl, compiled to SPIR-V at build
- * time; the old inline-GLSL lockstep (AGENTS hard rule 4) is retired.
+ * Reference form runs on the luma plane against r16ui storage images. The shader
+ * FFmpeg actually executes is ffmpeg-patches/files/vulkan/pelorus_deblock.comp.glsl,
+ * compiled to SPIR-V at build time over FF_VK_REP_FLOAT image arrays (ADR-0143).
+ * This file is a standalone reference kept for the fast gate -- NOT a second
+ * implementation to hand-synchronise.
  */
 #version 450
 

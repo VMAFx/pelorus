@@ -31,7 +31,7 @@
  * compiled to SPIR-V at build time (ADR-0143). That file -- not this one -- is what
  * FFmpeg executes. This reference is a standalone r16ui variant kept for the fast
  * gate and for reading the algorithm without FFmpeg's plumbing; it is NOT a second
- * implementation to hand-synchronise (the old AGENTS hard rule 4 lockstep is retired).
+ * implementation to hand-synchronise.
  */
 #version 450
 
