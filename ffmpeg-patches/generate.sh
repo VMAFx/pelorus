@@ -521,7 +521,14 @@ git -C "$WORKTREE" \
 
 # Clean stale patches, regenerate the whole range.
 rm -f "$HERE"/0*.patch
-git -C "$WORKTREE" format-patch --zero-commit --start-number=1 \
+# --full-index is load-bearing for reproducibility, not cosmetic. Git abbreviates
+# the blob hashes in `index` lines based on how many objects the repo holds, so a
+# full FFmpeg clone emits 10 hex chars and a --depth 1 clone emits 7 -- the same
+# sources produce different patch bytes depending on clone depth, which would make
+# the CI reproducibility gate fail on a shallow checkout. Emitting the full 40-char
+# hashes removes the dependence entirely, and gives `git am --3way` the unambiguous
+# blob ids it wants anyway.
+git -C "$WORKTREE" format-patch --zero-commit --full-index --start-number=1 \
     -o "$HERE" "$BASE_TAG..HEAD"
 
 # Normalize auto-generated filenames to the series.txt names.

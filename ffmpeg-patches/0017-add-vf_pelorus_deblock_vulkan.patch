@@ -35,7 +35,7 @@ ADR: docs/adr/0127-deblock.md
  create mode 100644 libavfilter/vulkan/pelorus_deblock.comp.glsl
 
 diff --git a/configure b/configure
-index 1cc93c4d33..43f5528055 100755
+index 1cc93c4d33fb624e88db02116bfd4b2f75b11c23..43f5528055cdd845ce51092cc5cded3360343ad4 100755
 --- a/configure
 +++ b/configure
 @@ -4246,6 +4246,7 @@ overlay_vulkan_filter_deps="vulkan spirv_compiler"
@@ -47,7 +47,7 @@ index 1cc93c4d33..43f5528055 100755
  pelorus_denoise_vulkan_filter_deps="vulkan spirv_compiler"
  pelorus_grain_estimate_vulkan_filter_deps="vulkan spirv_compiler"
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index b7e22da820..7431a8cbbc 100644
+index b7e22da8206561608e5e83822b3de7d93e3105a5..7431a8cbbcbae200cfc742480020ca36944ddf32 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
 @@ -436,6 +436,7 @@ OBJS-$(CONFIG_PALETTEUSE_FILTER)             += vf_paletteuse.o framesync.o pale
@@ -59,7 +59,7 @@ index b7e22da820..7431a8cbbc 100644
  OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vf_pelorus_denoise_vulkan.o vulkan.o vulkan_filter.o
  OBJS-$(CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vf_pelorus_grain_estimate_vulkan.o vulkan.o vulkan_filter.o
 diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
-index d6632cc826..9985efd56d 100644
+index d6632cc826123b6f1b3bbc93db698e8023ca8591..9985efd56d8026261a43cba1283408ac3409ba25 100644
 --- a/libavfilter/allfilters.c
 +++ b/libavfilter/allfilters.c
 @@ -408,6 +408,7 @@ extern const FFFilter ff_vf_paletteuse;
@@ -72,7 +72,7 @@ index d6632cc826..9985efd56d 100644
  extern const FFFilter ff_vf_pelorus_grain_estimate_vulkan;
 diff --git a/libavfilter/vf_pelorus_deblock_vulkan.c b/libavfilter/vf_pelorus_deblock_vulkan.c
 new file mode 100644
-index 0000000000..098310d6e2
+index 0000000000000000000000000000000000000000..098310d6e2a0b3f62340a61238192b62ca0dc28b
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_deblock_vulkan.c
 @@ -0,0 +1,225 @@
@@ -302,7 +302,7 @@ index 0000000000..098310d6e2
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
 diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
-index d3ff362cfa..8e75e87685 100644
+index d3ff362cfa612b53ee51d812a1df844c6e2d3dc1..8e75e876856feb0a34b5188010c0f01a1a2644d8 100644
 --- a/libavfilter/vulkan/Makefile
 +++ b/libavfilter/vulkan/Makefile
 @@ -28,3 +28,4 @@ OBJS-$(CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vulkan/pelorus_grain_esti
@@ -312,7 +312,7 @@ index d3ff362cfa..8e75e87685 100644
 +OBJS-$(CONFIG_PELORUS_DEBLOCK_VULKAN_FILTER) += vulkan/pelorus_deblock.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_deblock.comp.glsl b/libavfilter/vulkan/pelorus_deblock.comp.glsl
 new file mode 100644
-index 0000000000..a710088968
+index 0000000000000000000000000000000000000000..a71008896868830fe2ba3733bbe36c8bb9bcae9c
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_deblock.comp.glsl
 @@ -0,0 +1,109 @@

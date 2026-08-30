@@ -50,7 +50,7 @@ docs/adr/0133-analyze-coarse-banding-cambi.md
  create mode 100644 libavfilter/vulkan/pelorus_analyze.comp.glsl
 
 diff --git a/configure b/configure
-index 95a4d4a1bf..bcfdfa46f9 100755
+index 95a4d4a1bf54c49ea7fcbe1decdf5b73a42b1e61..bcfdfa46f9b459823ca295e2363f0694751c68ef 100755
 --- a/configure
 +++ b/configure
 @@ -4236,6 +4236,7 @@ overlay_qsv_filter_deps="libmfx"
@@ -70,7 +70,7 @@ index 95a4d4a1bf..bcfdfa46f9 100755
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index e7c6774d07..1a54fe6161 100644
+index e7c6774d0707f6080d7660eb3f724b914afc99bd..1a54fe61619c92b033d5fe55cd8639df933ceda7 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
 @@ -433,6 +433,7 @@ OBJS-$(CONFIG_PAD_CUDA_FILTER)               += vf_pad_cuda.o vf_pad_cuda.ptx.o
@@ -82,7 +82,7 @@ index e7c6774d07..1a54fe6161 100644
  OBJS-$(CONFIG_PERMS_FILTER)                  += f_perms.o
  OBJS-$(CONFIG_PERSPECTIVE_FILTER)            += vf_perspective.o
 diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
-index 78a01c74a3..c781df8365 100644
+index 78a01c74a326700f3c6c4799906c5ae17b613830..c781df8365397465a0f8cb2c25ac450585938b01 100644
 --- a/libavfilter/allfilters.c
 +++ b/libavfilter/allfilters.c
 @@ -405,6 +405,7 @@ extern const FFFilter ff_vf_pad_cuda;
@@ -95,7 +95,7 @@ index 78a01c74a3..c781df8365 100644
  extern const FFFilter ff_vf_perspective;
 diff --git a/libavfilter/vf_pelorus_analyze_vulkan.c b/libavfilter/vf_pelorus_analyze_vulkan.c
 new file mode 100644
-index 0000000000..aae3834256
+index 0000000000000000000000000000000000000000..aae3834256cbcef48bd85e4f139c53a631d8c21f
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_analyze_vulkan.c
 @@ -0,0 +1,836 @@
@@ -936,7 +936,7 @@ index 0000000000..aae3834256
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
 diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
-index e62ab231cb..578953efb4 100644
+index e62ab231cb50888e10c829ad66e15e4cb8d66670..578953efb422d850e60c82c891364c763a2141aa 100644
 --- a/libavfilter/vulkan/Makefile
 +++ b/libavfilter/vulkan/Makefile
 @@ -22,3 +22,4 @@ OBJS-$(CONFIG_NLMEANS_VULKAN_FILTER) += vulkan/nlmeans_horizontal.comp.spv.o \
@@ -946,7 +946,7 @@ index e62ab231cb..578953efb4 100644
 +OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vulkan/pelorus_analyze.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_analyze.comp.glsl b/libavfilter/vulkan/pelorus_analyze.comp.glsl
 new file mode 100644
-index 0000000000..60850828a7
+index 0000000000000000000000000000000000000000..60850828a71f0fb49b6c92c53c1bf36ebde4c3a5
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_analyze.comp.glsl
 @@ -0,0 +1,123 @@

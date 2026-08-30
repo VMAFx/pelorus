@@ -55,7 +55,7 @@ ADR: docs/adr/0118-nvenc-av1-filmgrain.md, docs/adr/0115-grain-estimate.md (prod
  3 files changed, 308 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index 60c71a5ea8..f8de7d7333 100644
+index 60c71a5ea83332f7d06ceb610dae017931523782..f8de7d7333a959af7e9dc5abfa3ffdd0ef20fa9d 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
 @@ -1675,6 +1675,31 @@ static av_cold int nvenc_setup_av1_config(AVCodecContext *avctx)
@@ -366,7 +366,7 @@ index 60c71a5ea8..f8de7d7333 100644
          if (res < 0)
              return res;
 diff --git a/libavcodec/nvenc.h b/libavcodec/nvenc.h
-index be52d320e0..98f1fefb5d 100644
+index be52d320e0b7d7c9140bd108864d4b1cdfe0f41e..98f1fefb5dfe0bd6b6de34b3e9a0911c4f457342 100644
 --- a/libavcodec/nvenc.h
 +++ b/libavcodec/nvenc.h
 @@ -45,6 +45,9 @@ typedef void ID3D11Device;
@@ -404,7 +404,7 @@ index be52d320e0..98f1fefb5d 100644
  
      uint32_t frame_idx_counter;
 diff --git a/libavcodec/nvenc_av1.c b/libavcodec/nvenc_av1.c
-index 7e853963fa..84db412078 100644
+index 7e853963fa14d5e393c52b1a2e75aeb27d87ee72..84db412078044651962266c7527ef31e23f42169 100644
 --- a/libavcodec/nvenc_av1.c
 +++ b/libavcodec/nvenc_av1.c
 @@ -132,6 +132,8 @@ static const AVOption options[] = {

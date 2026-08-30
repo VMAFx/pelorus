@@ -48,7 +48,7 @@ ADR: docs/adr/0117-grain-fgs-bsf.md
  create mode 100644 libavcodec/bsf/pelorus_fgs.c
 
 diff --git a/configure b/configure
-index 216f12e37b..2e8e0c3ac5 100755
+index 216f12e37b3d0b1dc56693872573bcecee629410..2e8e0c3ac56df6177b027ab8197f1301b6497cff 100755
 --- a/configure
 +++ b/configure
 @@ -3772,6 +3772,7 @@ hevc_metadata_bsf_select="cbs_h265"
@@ -60,7 +60,7 @@ index 216f12e37b..2e8e0c3ac5 100755
  trace_headers_bsf_select="cbs cbs_vp8"
  vp9_metadata_bsf_select="cbs_vp9"
 diff --git a/libavcodec/bitstream_filters.c b/libavcodec/bitstream_filters.c
-index 9c9443e5b1..ce9976edd7 100644
+index 9c9443e5b15444641d688c884d3fd996dc328f87..ce9976edd7d86eab0cd68da8ba937e48b6280ef4 100644
 --- a/libavcodec/bitstream_filters.c
 +++ b/libavcodec/bitstream_filters.c
 @@ -60,6 +60,7 @@ extern const FFBitStreamFilter ff_noise_bsf;
@@ -72,7 +72,7 @@ index 9c9443e5b1..ce9976edd7 100644
  extern const FFBitStreamFilter ff_prores_metadata_bsf;
  extern const FFBitStreamFilter ff_remove_extradata_bsf;
 diff --git a/libavcodec/bsf/Makefile b/libavcodec/bsf/Makefile
-index 981bb8276b..8f8afddb98 100644
+index 981bb8276bfa0855be085e0c8d64a1528795b623..8f8afddb98af584d8af7f02795eb650537fed66d 100644
 --- a/libavcodec/bsf/Makefile
 +++ b/libavcodec/bsf/Makefile
 @@ -37,6 +37,7 @@ OBJS-$(CONFIG_NOISE_BSF)                  += bsf/noise.o
@@ -85,7 +85,7 @@ index 981bb8276b..8f8afddb98 100644
  OBJS-$(CONFIG_REMOVE_EXTRADATA_BSF)       += bsf/remove_extradata.o
 diff --git a/libavcodec/bsf/pelorus_fgs.c b/libavcodec/bsf/pelorus_fgs.c
 new file mode 100644
-index 0000000000..2408bf6a54
+index 0000000000000000000000000000000000000000..2408bf6a5489bb4a14616005ad8e3ecda8f51f00
 --- /dev/null
 +++ b/libavcodec/bsf/pelorus_fgs.c
 @@ -0,0 +1,322 @@

@@ -50,7 +50,7 @@ analyze filter already emits -- no new producer. ADR-0121.
  1 file changed, 247 insertions(+)
 
 diff --git a/libavcodec/libsvtav1.c b/libavcodec/libsvtav1.c
-index 0bcc176243..2a02ce1578 100644
+index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..2a02ce15786c452a0eb0f7fc42abe2e14e0c2e21 100644
 --- a/libavcodec/libsvtav1.c
 +++ b/libavcodec/libsvtav1.c
 @@ -75,6 +75,34 @@ typedef struct SvtContext {

@@ -45,7 +45,7 @@ ADR: docs/adr/0116-pelorus-mc.md (consumer section), docs/adr/0114-encoder-steer
  4 files changed, 273 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index e8063a70b8..60c71a5ea8 100644
+index e8063a70b88d9961de99df04a03f08b65422c1f3..60c71a5ea83332f7d06ceb610dae017931523782 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
 @@ -1106,6 +1106,49 @@ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
@@ -329,7 +329,7 @@ index e8063a70b8..60c71a5ea8 100644
      } else {
          pic_params.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
 diff --git a/libavcodec/nvenc.h b/libavcodec/nvenc.h
-index 66cd7b1582..be52d320e0 100644
+index 66cd7b158243520d5228c958b3fc13c0dd6e6431..be52d320e0b7d7c9140bd108864d4b1cdfe0f41e 100644
 --- a/libavcodec/nvenc.h
 +++ b/libavcodec/nvenc.h
 @@ -290,6 +290,23 @@ typedef struct NvencContext
@@ -357,7 +357,7 @@ index 66cd7b1582..be52d320e0 100644
  
  int ff_nvenc_encode_init(AVCodecContext *avctx);
 diff --git a/libavcodec/nvenc_h264.c b/libavcodec/nvenc_h264.c
-index 42b8d6c410..deac6fb8b7 100644
+index 42b8d6c4106693ef6fde6e6b0cea14872857a35a..deac6fb8b71a756c8ae156716ac4424ac4af5474 100644
 --- a/libavcodec/nvenc_h264.c
 +++ b/libavcodec/nvenc_h264.c
 @@ -105,6 +105,8 @@ static const AVOption options[] = {
@@ -370,7 +370,7 @@ index 42b8d6c410..deac6fb8b7 100644
                                                              OFFSET(b_adapt),      AV_OPT_TYPE_BOOL,  { .i64 = 1 }, 0,  1, VE },
      { "spatial-aq",   "set to 1 to enable Spatial AQ",      OFFSET(aq),           AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0,  1, VE },
 diff --git a/libavcodec/nvenc_hevc.c b/libavcodec/nvenc_hevc.c
-index 04ea2a3064..4d3054fee1 100644
+index 04ea2a306470143a443fd5d9ca9a51709c0cea1a..4d3054fee1fe2969e03bb4242a2f20864c3106c5 100644
 --- a/libavcodec/nvenc_hevc.c
 +++ b/libavcodec/nvenc_hevc.c
 @@ -100,6 +100,8 @@ static const AVOption options[] = {

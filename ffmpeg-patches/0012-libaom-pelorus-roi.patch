@@ -56,7 +56,7 @@ docs/backends/libaom-roi.md and ADR-0120. No fabricated gain.
  1 file changed, 238 insertions(+)
 
 diff --git a/libavcodec/libaomenc.c b/libavcodec/libaomenc.c
-index 7cabea3003..724306e965 100644
+index 7cabea30034bc9f232d496d8cdf5bd0ad28adf75..724306e9659d9f6b589d23184f0d55b8574e2b9c 100644
 --- a/libavcodec/libaomenc.c
 +++ b/libavcodec/libaomenc.c
 @@ -139,6 +139,36 @@ typedef struct AOMEncoderContext {

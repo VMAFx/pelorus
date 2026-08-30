@@ -48,7 +48,7 @@ ADR: docs/adr/0112-temporal-denoise.md
  create mode 100644 libavfilter/vulkan/pelorus_denoise.comp.glsl
 
 diff --git a/configure b/configure
-index bcfdfa46f9..63623072ca 100755
+index bcfdfa46f9b459823ca295e2363f0694751c68ef..63623072ca0979bbe02abc337f2e2be89c46b31c 100755
 --- a/configure
 +++ b/configure
 @@ -4238,6 +4238,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
@@ -68,7 +68,7 @@ index bcfdfa46f9..63623072ca 100755
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index 1a54fe6161..982a06df77 100644
+index 1a54fe61619c92b033d5fe55cd8639df933ceda7..982a06df777ee583f9d829023bb7bbe7d0148a40 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
 @@ -435,6 +435,7 @@ OBJS-$(CONFIG_PALETTEGEN_FILTER)             += vf_palettegen.o palette.o
@@ -80,7 +80,7 @@ index 1a54fe6161..982a06df77 100644
  OBJS-$(CONFIG_PERSPECTIVE_FILTER)            += vf_perspective.o
  OBJS-$(CONFIG_PHASE_FILTER)                  += vf_phase.o
 diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
-index c781df8365..a21da38481 100644
+index c781df8365397465a0f8cb2c25ac450585938b01..a21da384818d0b64f4b5af635ae53e9a5e9f5ec4 100644
 --- a/libavfilter/allfilters.c
 +++ b/libavfilter/allfilters.c
 @@ -407,6 +407,7 @@ extern const FFFilter ff_vf_palettegen;
@@ -93,7 +93,7 @@ index c781df8365..a21da38481 100644
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_denoise_vulkan.c b/libavfilter/vf_pelorus_denoise_vulkan.c
 new file mode 100644
-index 0000000000..5aaa3cb2e5
+index 0000000000000000000000000000000000000000..5aaa3cb2e5ec671c72123d5e292fcd4c7ba93d70
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_denoise_vulkan.c
 @@ -0,0 +1,997 @@
@@ -1095,7 +1095,7 @@ index 0000000000..5aaa3cb2e5
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
 diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
-index 578953efb4..a4a7ea0ea9 100644
+index 578953efb422d850e60c82c891364c763a2141aa..a4a7ea0ea998fa805376991447a54769fbdfa6ed 100644
 --- a/libavfilter/vulkan/Makefile
 +++ b/libavfilter/vulkan/Makefile
 @@ -23,3 +23,4 @@ OBJS-$(CONFIG_NLMEANS_VULKAN_FILTER) += vulkan/nlmeans_horizontal.comp.spv.o \
@@ -1105,7 +1105,7 @@ index 578953efb4..a4a7ea0ea9 100644
 +OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vulkan/pelorus_denoise.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_denoise.comp.glsl b/libavfilter/vulkan/pelorus_denoise.comp.glsl
 new file mode 100644
-index 0000000000..e9929c2317
+index 0000000000000000000000000000000000000000..e9929c231765e4862e5ba530bd0101b7ca69c9bb
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_denoise.comp.glsl
 @@ -0,0 +1,358 @@

@@ -35,7 +35,7 @@ Requires the ffnvcodec headers' qpDeltaMap support (guarded; no-ops without it).
  5 files changed, 156 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index 9203fb65c0..e8063a70b8 100644
+index 9203fb65c05f8261de396ca02ebca411329e4dce..e8063a70b88d9961de99df04a03f08b65422c1f3 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
 @@ -993,6 +993,25 @@ static av_cold int nvenc_recalc_surfaces(AVCodecContext *avctx)
@@ -209,7 +209,7 @@ index 9203fb65c0..e8063a70b8 100644
      } else {
          pic_params.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
 diff --git a/libavcodec/nvenc.h b/libavcodec/nvenc.h
-index ad6ddaa434..66cd7b1582 100644
+index ad6ddaa4347a03e8b319ac57c6ce4a55b06224ee..66cd7b158243520d5228c958b3fc13c0dd6e6431 100644
 --- a/libavcodec/nvenc.h
 +++ b/libavcodec/nvenc.h
 @@ -275,6 +275,21 @@ typedef struct NvencContext
@@ -235,7 +235,7 @@ index ad6ddaa434..66cd7b1582 100644
  
  int ff_nvenc_encode_init(AVCodecContext *avctx);
 diff --git a/libavcodec/nvenc_av1.c b/libavcodec/nvenc_av1.c
-index b687260ef7..7e853963fa 100644
+index b687260ef7663130d4fdf5a77a9dbbba79bf44ad..7e853963fa14d5e393c52b1a2e75aeb27d87ee72 100644
 --- a/libavcodec/nvenc_av1.c
 +++ b/libavcodec/nvenc_av1.c
 @@ -126,6 +126,8 @@ static const AVOption options[] = {
@@ -248,7 +248,7 @@ index b687260ef7..7e853963fa 100644
                                                              OFFSET(b_adapt),      AV_OPT_TYPE_BOOL,  { .i64 = 1 }, 0,  1, VE },
      { "spatial-aq",   "set to 1 to enable Spatial AQ",      OFFSET(aq),           AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, VE },
 diff --git a/libavcodec/nvenc_h264.c b/libavcodec/nvenc_h264.c
-index 103c9a95fd..42b8d6c410 100644
+index 103c9a95fdac79a57eab02b93a862e9a912f832a..42b8d6c4106693ef6fde6e6b0cea14872857a35a 100644
 --- a/libavcodec/nvenc_h264.c
 +++ b/libavcodec/nvenc_h264.c
 @@ -103,6 +103,8 @@ static const AVOption options[] = {
@@ -261,7 +261,7 @@ index 103c9a95fd..42b8d6c410 100644
                                                              OFFSET(b_adapt),      AV_OPT_TYPE_BOOL,  { .i64 = 1 }, 0,  1, VE },
      { "spatial-aq",   "set to 1 to enable Spatial AQ",      OFFSET(aq),           AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0,  1, VE },
 diff --git a/libavcodec/nvenc_hevc.c b/libavcodec/nvenc_hevc.c
-index 94ba34c48b..04ea2a3064 100644
+index 94ba34c48b43289184974979219412876cf9b53e..04ea2a306470143a443fd5d9ca9a51709c0cea1a 100644
 --- a/libavcodec/nvenc_hevc.c
 +++ b/libavcodec/nvenc_hevc.c
 @@ -98,6 +98,8 @@ static const AVOption options[] = {

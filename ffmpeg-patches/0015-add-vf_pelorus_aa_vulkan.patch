@@ -39,7 +39,7 @@ ADR: docs/adr/0124-anime-aa.md
  create mode 100644 libavfilter/vulkan/pelorus_aa.comp.glsl
 
 diff --git a/configure b/configure
-index c68249b1a0..31a1c70813 100755
+index c68249b1a029bb1b1b4c9daf017402e0020bbe9f..31a1c70813cc6c40c1f96a5c35b0c67c0e0c8db8 100755
 --- a/configure
 +++ b/configure
 @@ -4243,6 +4243,7 @@ overlay_qsv_filter_deps="libmfx"
@@ -51,7 +51,7 @@ index c68249b1a0..31a1c70813 100755
  pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"
  pelorus_dehalo_vulkan_filter_deps="vulkan spirv_compiler"
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index c1ea6957e7..337a6adf27 100644
+index c1ea6957e721ccbae1e361c2008b6327c4fec9d2..337a6adf27348fd8b742d9ab2f1dec0be1b51cd1 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
 @@ -433,6 +433,7 @@ OBJS-$(CONFIG_PAD_CUDA_FILTER)               += vf_pad_cuda.o vf_pad_cuda.ptx.o
@@ -63,7 +63,7 @@ index c1ea6957e7..337a6adf27 100644
  OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER)  += vf_pelorus_deband_vulkan.o vulkan.o vulkan_filter.o
  OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER)  += vf_pelorus_dehalo_vulkan.o vulkan.o vulkan_filter.o
 diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
-index 2ac2a6540f..0ee727c8c3 100644
+index 2ac2a6540fb0f9b500bfbd6137278ca1ddc56b4a..0ee727c8c38cefe87c4d23504c0e43ddd6f82554 100644
 --- a/libavfilter/allfilters.c
 +++ b/libavfilter/allfilters.c
 @@ -405,6 +405,7 @@ extern const FFFilter ff_vf_pad_cuda;
@@ -76,7 +76,7 @@ index 2ac2a6540f..0ee727c8c3 100644
  extern const FFFilter ff_vf_pelorus_dehalo_vulkan;
 diff --git a/libavfilter/vf_pelorus_aa_vulkan.c b/libavfilter/vf_pelorus_aa_vulkan.c
 new file mode 100644
-index 0000000000..6ca371fd69
+index 0000000000000000000000000000000000000000..6ca371fd697f763d0f3aa062639b8183076b4c5c
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_aa_vulkan.c
 @@ -0,0 +1,239 @@
@@ -320,7 +320,7 @@ index 0000000000..6ca371fd69
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
 diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
-index 77187fe29c..d3ff362cfa 100644
+index 77187fe29c5fe23f84b61b45cf3a28257140bbc3..d3ff362cfa612b53ee51d812a1df844c6e2d3dc1 100644
 --- a/libavfilter/vulkan/Makefile
 +++ b/libavfilter/vulkan/Makefile
 @@ -27,3 +27,4 @@ OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vulkan/pelorus_denoise.comp.spv.
@@ -330,7 +330,7 @@ index 77187fe29c..d3ff362cfa 100644
 +OBJS-$(CONFIG_PELORUS_AA_VULKAN_FILTER) += vulkan/pelorus_aa.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_aa.comp.glsl b/libavfilter/vulkan/pelorus_aa.comp.glsl
 new file mode 100644
-index 0000000000..117af2dd90
+index 0000000000000000000000000000000000000000..117af2dd90d7ed344f8536645d82c4db6775e8f8
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_aa.comp.glsl
 @@ -0,0 +1,231 @@

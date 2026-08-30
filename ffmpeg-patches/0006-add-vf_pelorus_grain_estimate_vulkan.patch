@@ -51,7 +51,7 @@ ADR: docs/adr/0115-grain-estimate.md
  create mode 100644 libavfilter/vulkan/pelorus_grain_estimate.comp.glsl
 
 diff --git a/configure b/configure
-index 63623072ca..c9c23dbe98 100755
+index 63623072ca0979bbe02abc337f2e2be89c46b31c..c9c23dbe9827e9439d0788ba90ed42be0e0dc69f 100755
 --- a/configure
 +++ b/configure
 @@ -4239,6 +4239,7 @@ overlay_vulkan_filter_deps="vulkan spirv_compiler"
@@ -71,7 +71,7 @@ index 63623072ca..c9c23dbe98 100755
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index 982a06df77..c5be27fb13 100644
+index 982a06df777ee583f9d829023bb7bbe7d0148a40..c5be27fb139ce1fd80d251eb04854d00892413db 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
 @@ -436,6 +436,7 @@ OBJS-$(CONFIG_PALETTEUSE_FILTER)             += vf_paletteuse.o framesync.o pale
@@ -83,7 +83,7 @@ index 982a06df77..c5be27fb13 100644
  OBJS-$(CONFIG_PERSPECTIVE_FILTER)            += vf_perspective.o
  OBJS-$(CONFIG_PHASE_FILTER)                  += vf_phase.o
 diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
-index a21da38481..b6aee7e0bd 100644
+index a21da384818d0b64f4b5af635ae53e9a5e9f5ec4..b6aee7e0bdb6c35c4e3c720b063be56cd22d8934 100644
 --- a/libavfilter/allfilters.c
 +++ b/libavfilter/allfilters.c
 @@ -408,6 +408,7 @@ extern const FFFilter ff_vf_paletteuse;
@@ -96,7 +96,7 @@ index a21da38481..b6aee7e0bd 100644
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_grain_estimate_vulkan.c b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
 new file mode 100644
-index 0000000000..405eeae47b
+index 0000000000000000000000000000000000000000..405eeae47baaaef28e4a5335b385ed5d00aa891d
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
 @@ -0,0 +1,613 @@
@@ -714,7 +714,7 @@ index 0000000000..405eeae47b
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
 diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
-index a4a7ea0ea9..622fac0790 100644
+index a4a7ea0ea998fa805376991447a54769fbdfa6ed..622fac07908a104a536fac3409af2d6c66111c59 100644
 --- a/libavfilter/vulkan/Makefile
 +++ b/libavfilter/vulkan/Makefile
 @@ -24,3 +24,4 @@ OBJS-$(CONFIG_NLMEANS_VULKAN_FILTER) += vulkan/nlmeans_horizontal.comp.spv.o \
@@ -724,7 +724,7 @@ index a4a7ea0ea9..622fac0790 100644
 +OBJS-$(CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vulkan/pelorus_grain_estimate.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_grain_estimate.comp.glsl b/libavfilter/vulkan/pelorus_grain_estimate.comp.glsl
 new file mode 100644
-index 0000000000..7a45fe0813
+index 0000000000000000000000000000000000000000..7a45fe0813db82e675701b8ee283221729bb3131
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_grain_estimate.comp.glsl
 @@ -0,0 +1,120 @@

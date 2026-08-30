@@ -62,7 +62,7 @@ not a patch defect. No BD-rate gain is claimed; on-HW A/B is the follow-up.
  create mode 100644 libavcodec/vulkan/pelorus_qpmap.comp.glsl
 
 diff --git a/configure b/configure
-index ad55df52f7..216f12e37b 100755
+index ad55df52f7626c32310010c32c4379717ae711fe..216f12e37b3d0b1dc56693872573bcecee629410 100755
 --- a/configure
 +++ b/configure
 @@ -2822,6 +2822,7 @@ CONFIG_EXTRA="
@@ -86,7 +86,7 @@ index ad55df52f7..216f12e37b 100755
  
  bilateral_cuda_filter_deps="ffnvcodec"
 diff --git a/libavcodec/vulkan/Makefile b/libavcodec/vulkan/Makefile
-index 3c47cbd58b..921ec878a7 100644
+index 3c47cbd58b0965ce08922f387b006e4480c33be9..921ec878a7b3c8fe1492c3d6742d433342a70c6f 100644
 --- a/libavcodec/vulkan/Makefile
 +++ b/libavcodec/vulkan/Makefile
 @@ -4,6 +4,12 @@ clean::
@@ -104,7 +104,7 @@ index 3c47cbd58b..921ec878a7 100644
                                        vulkan/ffv1_enc_reset_golomb.comp.spv.o \
 diff --git a/libavcodec/vulkan/pelorus_qpmap.comp.glsl b/libavcodec/vulkan/pelorus_qpmap.comp.glsl
 new file mode 100644
-index 0000000000..97e545732f
+index 0000000000000000000000000000000000000000..97e545732f2ab340de649f46904e3bf7f4292c82
 --- /dev/null
 +++ b/libavcodec/vulkan/pelorus_qpmap.comp.glsl
 @@ -0,0 +1,125 @@
@@ -234,7 +234,7 @@ index 0000000000..97e545732f
 +    }
 +}
 diff --git a/libavcodec/vulkan_encode.c b/libavcodec/vulkan_encode.c
-index 39c43300c4..4482139a54 100644
+index 39c43300c40ee6ce8fdad669028dda9c315a00a4..4482139a5468ed88e19f2edfaae59aa7f65ea04e 100644
 --- a/libavcodec/vulkan_encode.c
 +++ b/libavcodec/vulkan_encode.c
 @@ -28,6 +28,844 @@ const AVCodecHWConfigInternal *const ff_vulkan_encode_hw_configs[] = {
@@ -1226,7 +1226,7 @@ index 39c43300c4..4482139a54 100644
          .sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_PARAMETERS_CREATE_INFO_KHR,
          .pNext = &q_info,
 diff --git a/libavcodec/vulkan_encode.h b/libavcodec/vulkan_encode.h
-index 23c35898c1..6fdbaf6018 100644
+index 23c35898c150abaffdc9e2cf920d9dd6a2114c33..6fdbaf601882a1621da54dfa36d2b80c66e29a7d 100644
 --- a/libavcodec/vulkan_encode.h
 +++ b/libavcodec/vulkan_encode.h
 @@ -155,6 +155,16 @@ typedef struct FFVkEncodeCommonOptions {

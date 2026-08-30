@@ -47,7 +47,7 @@ and on-Arc BD-rate proof are a follow-up (no fabricated numbers).
  4 files changed, 194 insertions(+), 1 deletion(-)
 
 diff --git a/libavcodec/qsvenc.c b/libavcodec/qsvenc.c
-index c79db089a0..f113c68327 100644
+index c79db089a0d249b78e762298da0caa6301247b34..f113c68327c25899ba1daf91e7a83713d5ff55f5 100644
 --- a/libavcodec/qsvenc.c
 +++ b/libavcodec/qsvenc.c
 @@ -1117,6 +1117,35 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
@@ -252,7 +252,7 @@ index c79db089a0..f113c68327 100644
  }
  
 diff --git a/libavcodec/qsvenc.h b/libavcodec/qsvenc.h
-index 4bc77f2f7c..b0c4ee4283 100644
+index 4bc77f2f7c9db6ac56cfaf4d994e4891f4364069..b0c4ee4283e1ef017fbca50860284972c263999c 100644
 --- a/libavcodec/qsvenc.h
 +++ b/libavcodec/qsvenc.h
 @@ -39,6 +39,13 @@
@@ -288,7 +288,7 @@ index 4bc77f2f7c..b0c4ee4283 100644
  
      int co2_idx;
 diff --git a/libavcodec/qsvenc_h264.c b/libavcodec/qsvenc_h264.c
-index 7d39338d6a..a1af783dc1 100644
+index 7d39338d6ae4820258394832d2fdc191f4504dd7..a1af783dc1a3645a01ef06a4d9270641ec501eea 100644
 --- a/libavcodec/qsvenc_h264.c
 +++ b/libavcodec/qsvenc_h264.c
 @@ -101,6 +101,8 @@ static av_cold int qsv_enc_close(AVCodecContext *avctx)
@@ -301,7 +301,7 @@ index 7d39338d6a..a1af783dc1 100644
      QSV_OPTION_MAX_FRAME_SIZE
      QSV_OPTION_MAX_SLICE_SIZE
 diff --git a/libavcodec/qsvenc_hevc.c b/libavcodec/qsvenc_hevc.c
-index ae3981fb72..32855b7001 100644
+index ae3981fb721899dd3f6fd802920d9beafcb48a91..32855b7001f8871053deb00a813385a30cfb785f 100644
 --- a/libavcodec/qsvenc_hevc.c
 +++ b/libavcodec/qsvenc_hevc.c
 @@ -305,6 +305,8 @@ static av_cold int qsv_enc_close(AVCodecContext *avctx)
