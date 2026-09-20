@@ -62,12 +62,17 @@ ffmpeg-patches/
    commits by `generate.sh` (no registration hunks). The QSV patch (0005) is
    compile-gated by `QSV_HAVE_MBQP` (oneVPL/MSDK API ≥ 1.13) and its dense
    `mfxExtMBQP` path is **mutually exclusive** with the stock `mfxExtEncoderROI`
-   rectangle path (`set_roi_encode_ctrl` is guarded by `!q->pelorus_roi`) — never
-   let both attach to one `mfxEncodeCtrl`. The 16×16 MBQP block size is the
-   SDK-documented alignment for AVC *and* HEVC; do not substitute a GPU-specific
-   coding-tree size. `EnableMBQP` is honored under CQP only — keep the init probe.
+   rectangle path — never let both attach to one `mfxEncodeCtrl`. Dense MBQP is
+   progressive HEVC+CQP-only; H.264, non-CQP HEVC, interlaced frames, and
+   MBQP-absent builds use the stock rectangle path. `EnableMBQP` is an init
+   request, not a runtime capability probe. Each dense-path frame owns one
+   contiguous header+map allocation through its `QSVFrame::enc_ctrl` until the
+   surface unlocks; never share mutable map scratch across async frames. Size the
+   16×16 raster from aligned `mfxFrameInfo.Width/Height`, clip regions to visible
+   frame dimensions, preserve zero padding, and keep all size/narrowing checks.
    An upstream qsvenc reflow can fuzz the `extco3`/`encode_frame`/`QSV_COMMON_OPTS`
    anchors; regenerate via `generate.sh`, never hand-edit `0005-*.patch`. See
+   [ADR-0146](../docs/adr/0146-qsv-roi-frame-ownership.md) and
    [docs/rebase-notes.md](../docs/rebase-notes.md).
 6. **Software AV1 encoder ROI patches (0012 libaom) are libavcodec edits** — same
    hand-diff model as 0004/0005. libaom maps the ROI side data onto

@@ -126,9 +126,9 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   (source-of-truth `ffmpeg-patches/files/qsv-pelorus-roi.patch`).
 - **Touches** (libavcodec edit, *not* a filter — hand-maintained unified diff in
   `files/`, applied as its own commit by `generate.sh`):
-  `libavcodec/qsvenc.h` (`pelorus_roi` + `qp_delta_map*` ctx fields,
-  `QSV_HAVE_MBQP` guard), `libavcodec/qsvenc.c` (`EnableMBQP` init probe,
-  `qsvenc_setup_roi()` rasterizer, scratch free in close),
+  `libavcodec/qsvenc.h` (`pelorus_roi`, diagnostics, and the overridable
+  `QSV_HAVE_MBQP` guard), `libavcodec/qsvenc.c` (documented init preconditions,
+  `qsvenc_setup_roi()` rasterizer, and per-frame control ownership),
   `libavcodec/qsvenc_h264.c` + `qsvenc_hevc.c` (the `pelorus_roi` AVOption).
 - **Consumes from FFmpeg/oneVPL**: `AV_FRAME_DATA_REGIONS_OF_INTEREST`
   (`AVRegionOfInterest`, `self_size`/`qoffset`), the `mfxEncodeCtrl` ext-buffer
@@ -144,11 +144,23 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   with `generate.sh` against the new base rather than hand-resolving.
 - **Re-test after rebase**: full series replay via
   `ffmpeg-patches/test/build-and-run.sh`; smoke `ffmpeg -h encoder=hevc_qsv |
-  grep pelorus_roi` once built against a QSV-enabled toolchain.
-- **Capability/portability invariants (keep on regeneration)**: 16×16 MBQP block
-  alignment for both AVC and HEVC (SDK-documented; not a GPU coding-tree size);
-  `EnableMBQP` only under CQP rate control (probe + one-shot warn + pass-through);
-  `QSV_HAVE_MBQP` compile guard (oneVPL/MSDK ≥ 1.13); default OFF.
+  grep pelorus_roi` once built against a QSV-enabled toolchain. Run the focused
+  deterministic gate exactly as
+  `FFMPEG_REPO=/path/to/ffmpeg BASE_TAG=n9.0.1 bash ffmpeg-patches/test/qsv-roi-regression.sh`;
+  it compiles the MBQP-present and forced-absent branches and exercises the
+  rasterizer under ASan/UBSan.
+- **Ownership invariant (ADR-0146)**: the `mfxExtMBQP` header and its `DeltaQP`
+  array are one contiguous allocation per ROI-bearing `QSVFrame`. Ownership is
+  transferred through that frame's `mfxEncodeCtrl` and ends only when
+  `clear_unused_frames()` observes the surface unlocked and calls
+  `free_encoder_ctrl()`. Never restore context-wide mutable map scratch.
+- **Layout/portability invariants (keep on regeneration)**: dense MBQP is only
+  progressive HEVC+CQP; H.264, non-CQP HEVC, interlaced input, and
+  `QSV_HAVE_MBQP=0` fall back to stock `mfxExtEncoderROI`. The grid is 16×16 and
+  sized from aligned `mfxFrameInfo.Width/Height`; rectangles clip to visible
+  frame dimensions and padding cells remain zero. Keep checked `size_t`
+  multiplication/addition and `UINT32_MAX` narrowing guards. `EnableMBQP` is an
+  init request, not a runtime capability probe. Default remains OFF.
 
 ## v0.2.0 — patch 0006 (grain_estimate; cumulative on 0001–0005)
 

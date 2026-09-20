@@ -341,10 +341,13 @@ patch and ran `hevc_qsv -q:v 30 -low_power 1 -pelorus_roi 1` on the Arc A380
    write hit `0x100000000` → SIGSEGV. Fixed by passing `q` as a parameter (as every
    other qsvenc helper does). The patch's `priv_data` assumption was the only bug;
    the rasterizer was already bounds-correct.
-2. **The map is provably correct.** With the fix in, a gdb dump at the
-   `mfxExtMBQP` attach shows the delta map is exactly right: `−8` across the
-   top-half (banding) blocks, `0` in the bottom; `NumQPAlloc=1200`, `Pitch=40`,
-   `BlockSize=16`, `Mode=MFX_MBQP_MODE_QP_DELTA`.
+2. **The sampled raster values were correct, but that was not a lifetime
+   proof.** A gdb dump at one `mfxExtMBQP` attach showed `−8` across the top-half
+   blocks and `0` below (`NumQPAlloc=1200`, `Pitch=40`, `BlockSize=16`,
+   `Mode=MFX_MBQP_MODE_QP_DELTA`). ADR-0146 later found that the allocation was
+   context-wide mutable scratch, so a later asynchronous submission could
+   repaint an earlier frame's still-live map. Patch 0005 now owns a separate
+   header+map allocation on each `QSVFrame` control until its surface unlocks.
 3. **Driver wall (gain unvalidated).** Despite a correct map, the encode is
    anomalous — banding *worse* (CAMBI ↑) and bitrate *explodes* (+45–108% at the
    same `-q:v`). A correct-but-wrong map would shift bits, not double bitrate and
@@ -354,10 +357,11 @@ patch and ran `hevc_qsv -q:v 30 -low_power 1 -pelorus_roi 1` on the Arc A380
    known hardware/driver bug, fixed only in the Arc B-series (Battlemage).** The
    A380 exposes *only* the low-power entrypoint (`EncSliceLP`), so every encode on
    it runs the bugged path — these results are **invalid by construction**, not
-   inconclusive. **Conclusion: the `0005` patch is correct (crash-free, map
-   verified `−8`/`0`); the QSV steering *gain* cannot be validated on Arc A** — it
-   needs an **Arc B (Battlemage)** or other full-`EncSlice` Intel target. No QSV
-   gain is claimed.
+   inconclusive. **Conclusion:** the old run showed the expected values for one
+   sampled frame but did not validate async ownership. The ADR-0146 correction
+   is sanitizer- and compile-verified; its on-hardware async execution still
+   needs a new run on an **Arc B (Battlemage)** or another full-`EncSlice` Intel
+   target. No QSV gain is claimed.
 
 ## v0.9 — NVENC external ME hints: functional, but **no speed gain** (honest negative)
 

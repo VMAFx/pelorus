@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0146: QSV dense ROI maps are per-frame and limited to progressive HEVC CQP
 
-- **Status**: Proposed
+- **Status**: Accepted (2026-09-20)
 - **Date**: 2026-09-20
 - **Deciders**: Lusoris
 - **Tags**: ffmpeg, qsv, roi, lifetime, onevpl, safety

@@ -1,0 +1,1 @@
+- Fixed QSV dense ROI maps to remain frame-owned through asynchronous encode, bounded the path to progressive HEVC+CQP, preserved stock ROI fallback elsewhere, and added checked aligned-layout regression coverage ([ADR-0146](docs/adr/0146-qsv-roi-frame-ownership.md)).

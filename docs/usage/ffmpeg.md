@@ -76,15 +76,16 @@ the `vmaf-mcp` `vmaf_score_encoded` tool. See
 `vf_pelorus_analyze roi=1` emits `AV_FRAME_DATA_REGIONS_OF_INTEREST` (a per-cell
 banding/quality `qoffset` map). Vanilla NVENC ignores ROI side data and vanilla
 QSV honors only coarse rectangle regions; the Pelorus patch stack adds a
-`-pelorus_roi 1` AVOption to both that consumes the **same** side data into the
-encoder's dense per-block delta-QP map (NVENC `qpDeltaMap`, QSV `mfxExtMBQP`):
+`-pelorus_roi 1` AVOption to both. NVENC consumes the **same** side data into
+`qpDeltaMap`; progressive HEVC QSV under CQP can consume it through a dense
+`mfxExtMBQP` delta map:
 
 ```bash
 # HEVC, NVENC, constant-QP (the clean mode for QP-map steering):
 ffmpeg ... -vf "hwupload,pelorus_analyze_vulkan=roi=1,hwdownload,format=p010le" \
        -c:v hevc_nvenc -rc constqp -qp 30 -pelorus_roi 1 out.mkv
 
-# HEVC, Intel QSV, CQP (global_quality); -pelorus_roi requires CQP rate control:
+# HEVC, Intel QSV, progressive CQP (global_quality):
 ffmpeg ... -vf "...,pelorus_analyze_vulkan=roi=1,..." \
        -c:v hevc_qsv -global_quality 30 -pelorus_roi 1 out.mkv
 ```
@@ -96,12 +97,20 @@ behaviour change). Use **constant-QP** and the encoder's own spatial/temporal AQ
 OFF: the encoder AQ overrides the delta-QP map, and VBR rate-control
 redistribution erodes the perceptual win.
 
-Capability degradation is graceful: on QSV under a non-CQP rate-control method
-the option emits a one-shot warning and passes through unchanged; if FFmpeg was
-built against a oneVPL/MediaSDK older than API 1.13 (no `mfxExtMBQP`) it likewise
-warns once at init and no-ops. For QSV the dense per-block map fully supersedes
-FFmpeg's coarse `mfxExtEncoderROI` rectangle path when the option is on (the two
-are mutually exclusive). See [ADR-0114](../adr/0114-encoder-steering.md).
+QSV selects the dense path only for progressive HEVC+CQP when the build headers
+expose `mfxExtMBQP` (oneVPL/MediaSDK API 1.13 or newer). H.264, non-CQP HEVC,
+interlaced HEVC, and builds without that header surface retain FFmpeg's stock
+per-region `mfxExtEncoderROI` steering; the option reports the fallback instead
+of disabling ROI. On a dense-path frame the map and header are owned by that
+frame until its asynchronous QSV surface unlocks. The map grid uses oneVPL's
+aligned storage dimensions while ROI coordinates are clipped to the visible
+frame, leaving storage-padding cells at zero.
+
+`EnableMBQP=ON` is an initialization request, not a runtime capability probe.
+The patch never attaches `mfxExtMBQP` and `mfxExtEncoderROI` to the same frame.
+See [QSV ROI steering](../backends/qsv-roi.md),
+[ADR-0114](../adr/0114-encoder-steering.md), and its QSV contract correction
+[ADR-0146](../adr/0146-qsv-roi-frame-ownership.md).
 
 ### SVT-AV1 software (ADR-0121)
 
