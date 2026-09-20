@@ -5,6 +5,32 @@ Re-apply / re-test work created for the FFmpeg patch stack after an upstream
 FFmpeg bump or a `libpelorus` ABI change. One entry per change that affects the
 patches (ADR-0108 deliverable #6).
 
+## Unreleased — FFmpeg base bump n9.0.1 → n9.0.2
+
+- **Immutable base**: `build-config.env` binds tag `n9.0.2` to peeled commit
+  `946fcce07b6dcd0331c8cc609192aeff5e1924f8`. Every generator, replay, and
+  focused regression consumes that file; `BASE_TAG` and workstation-specific
+  checkout defaults are unsupported.
+- **Regeneration**:
+  `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh`. Run it
+  twice and compare all 18 numbered patches byte-for-byte.
+- **Replay**:
+  `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh`.
+  The gate must privately build libpelorus, apply `series.txt`, link FFmpeg,
+  and register 10 filters plus `pelorus_fgs`.
+- **Focused QSV gate**:
+  `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/qsv-roi-regression.sh`.
+- **Shader model**: canonical shipped sources are
+  `ffmpeg-patches/files/vulkan/*.comp.glsl`, compiled to SPIR-V by FFmpeg 9.
+  `libpelorus/shaders/*.comp` are standalone fast-gate references, not a
+  lockstep delivery surface.
+- **Compatibility floor**: interop-consuming filters require
+  `libpelorus >= 0.2.0`; the Pelorus source release remains `0.2.2`.
+
+The older sections below preserve the release and benchmark environment in
+which each change landed. Their unqualified gate names are historical
+shorthand; use the pinned commands above for all current rebases.
+
 ## Unreleased — ADR-0147 Vulkan sample domain and component preservation
 
 - **Patches**: 0001 (deband + shared private header), 0002 (analyze), 0003
@@ -118,13 +144,15 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
 - **Patch**: `ffmpeg-patches/0001-add-vf_pelorus_deband_vulkan.patch`.
 - **Touches**: `libavfilter/vf_pelorus_deband_vulkan.c` (new),
   `libavfilter/allfilters.c` (extern), `libavfilter/Makefile` (OBJS),
-  `configure` (`pelorus_deband_vulkan_filter_deps="vulkan spirv_library
-  libpelorus"` + a soft `check_pkg_config libpelorus`).
+  `configure` (`pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"` +
+  guarded `require_pkg_config libpelorus >= 0.2.0` and `add_extralibs`).
 - **Consumes from libpelorus**: `pelorus/interop.h` (`pel_blob_pack`,
   `pel_blob_free`, `PelorusSideData`, `PelorusBandingSection`, `PEL_FOURCC`),
   `pelorus/deband.h` (`PEL_DEBAND_FLAG_*`). A change to any of these requires
   regenerating this patch in the same PR.
-- **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (full series
+- **Re-test after rebase**:
+  `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh`
+  (full series
   replay onto a pristine base, build, smoke `-h filter=pelorus_deband_vulkan`).
 - **Known reflow risk**: `configure`'s `*_filter_deps` block and the
   `check_pkg_config` block, and `allfilters.c`'s alphabetical extern list, are
@@ -146,7 +174,9 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   `ff_vk_shader_update_img_array`/`_desc_buffer`/`_push_const`,
   `ff_vk_frame_barrier`, `FFVkBuffer.mapped_mem`). A change to that surface on
   an upstream bump can break the readback path — re-test by replaying the stack.
-- **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay
+- **Re-test after rebase**:
+  `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh`
+  (replay
   0001+0002, build, smoke `-h filter=pelorus_analyze_vulkan`).
 - **Frozen control-plane AVOptions (ADR-0110)**: the deband `AVOption` names and
   ranges `range`, `thry`, `thrc`, `grainy`, `grainc`, `softness`, `detail`,
@@ -222,11 +252,13 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   API `libavutil/film_grain_params.h` (`av_film_grain_params_create_side_data`,
   `AVFilmGrainAOMParams`, `AV_FILM_GRAIN_PARAMS_AV1`). A change to either on an
   upstream bump can break the estimate emit — re-test by replaying the stack.
-- **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay
+- **Re-test after rebase**:
+  `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh`
+  (replay
   0001–0006, build, smoke `-h filter=pelorus_grain_estimate_vulkan`).
-- **Shader lockstep**: `libpelorus/shaders/pelorus_grain_estimate.comp` and the
-  filter's inline GLSL implement the same per-band HF-residual estimator; edit
-  both together (AGENTS hard rule 4).
+- **Shader source**: edit the canonical shipped
+  `ffmpeg-patches/files/vulkan/pelorus_grain_estimate.comp.glsl`; the
+  `libpelorus/shaders` file is a standalone reference, not a lockstep artifact.
 
 ## v0.2.0 — patch 0007 (mc; cumulative on 0001–0006)
 
@@ -241,7 +273,7 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   files as the other filters — `allfilters.c` (extern, inserted *before*
   `ff_vf_perms`: `pelorus_mc` sorts after `pelorus_denoise`, before `perms`),
   `libavfilter/Makefile` (OBJS, after the denoise line), `configure`
-  (`pelorus_mc_vulkan_filter_deps="vulkan spirv_library"` + the
+  (`pelorus_mc_vulkan_filter_deps="vulkan spirv_compiler"` + the
   `require_pkg_config libpelorus … add_extralibs` line, after the denoise entry).
   **Cumulative**: applies only on top of 0001–0006.
 - **Consumes from libpelorus**: `pelorus/interop.h` (`pel_blob_pack`,
@@ -258,10 +290,13 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   `ff_vk_frame_barrier`, `FFVkBuffer.mapped_mem`, `av_frame_clone` for the
   1-frame causal reference). A change to that surface on an upstream bump can
   break the dispatch/readback — re-test by replaying the stack.
-- **Shader lockstep**: `libpelorus/shaders/pelorus_mc.comp` and the filter's inline
-  GLSL implement the same block-match ME; the filter's `PEL_MC_BLOCK_DIM`/
-  `PEL_MC_SAD_SCALE` and `s_sad[1024]` size must track the `.comp` (AGENTS rule 4).
-- **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay
+- **Shader source**: edit the canonical shipped
+  `ffmpeg-patches/files/vulkan/pelorus_mc.comp.glsl`; the
+  `libpelorus/shaders` file is a standalone reference. Keep the host-side
+  specialization and descriptor contract consistent with the shipped shader.
+- **Re-test after rebase**:
+  `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh`
+  (replay
   0001–0007, build, smoke `-h filter=pelorus_mc_vulkan`).
 
 ## v0.2.0 — patch 0008 (nvenc ME hints; cumulative on 0001–0007)
@@ -331,8 +366,9 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   `vulkan_encode_{h264,h265,av1}.c` tables are **not** touched — they inherit the
   option from the shared macro (the rebase-fragile spot to watch).
 - **On-GPU raster (the Tier-2 follow-up, now landed)**: the map texel image is
-  filled by a compute dispatch — `pelorus_qpmap_build_shader` builds the inline
-  GLSL via the SPIR-V compiler and registers it against `enc_pool`;
+  filled by a compute dispatch — the canonical
+  `libavcodec/vulkan/pelorus_qpmap.comp.glsl` is compiled to SPIR-V at build
+  time, loaded by `pelorus_qpmap_build_shader`, and registered against `enc_pool`;
   `pelorus_qpmap_dispatch` uploads the coalesced ROI rect list to a pooled SSBO
   and `imageStore`s the map (GENERAL layout) before the GENERAL→
   VIDEO_ENCODE_QUANTIZATION_MAP barrier. It records on the **encode** command
@@ -350,21 +386,19 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   `ff_vk_shader_init`/`_add_descriptor_set`/`_add_push_const`/`_link`/
   `_register_exec`/`_free`, `ff_vk_exec_bind_shader`,
   `ff_vk_shader_update_img`/`_desc_buffer`/`_push_const`, `ff_vk_get_pooled_buffer`,
-  `ff_vk_exec_add_dep_buf`, the GLSLC macros). A change to that shader surface on
+  `ff_vk_exec_add_dep_buf`, and the build-time SPIR-V loader). A change to that shader surface on
   an upstream bump can break the dispatch — re-test by rebuilding the TU. Entire
   path `#ifdef VK_KHR_video_encode_quantization_map`; gated `-std=c17` clean.
-- **Shader lockstep**: `libpelorus/shaders/pelorus_qpmap.comp` and the patch's
-  inline GLSL implement the same per-texel reverse-scan rasterizer; edit both
-  together (AGENTS hard rule 4). The reference `.comp` declares explicit `r8i`/`r8`
-  formats; the inline copy uses FFmpeg's descriptor machinery (format-less
-  writeonly storage images + an anonymous push block), as the other Pelorus
-  shaders do — the `main()` body is what must match byte-for-byte.
+- **Shader source**: edit the canonical shipped
+  `ffmpeg-patches/files/vulkan/pelorus_qpmap.comp.glsl`; the
+  `libpelorus/shaders` file is a standalone reference, not a lockstep artifact.
+  Keep its descriptor bindings and push-constant layout aligned with the C host.
 - **Invariant**: one map image **per exec-pool slot**, round-robined per bound
   frame (a single shared image races at `async_depth>1`); keep this on regeneration.
 - **Re-test after rebase**: replay 0001–0009; rebuild the `vulkan_encode`,
   `vulkan_encode_h264`, `vulkan_encode_h265`, `vulkan_encode_av1` TUs (the
   on-GPU raster is a real compile, not just `-fsyntax-only`); compile the
-  reference shader (`glslangValidator`) and the inline GLSL. On-HW A/B blocked on
+  canonical shader and standalone reference (`glslangValidator`). On-HW A/B blocked on
   a driver advertising the extension + encode-feedback flags (see ADR-0114 Tier 2).
 
 ## v0.2.0 — patch 0010 (pelorus_fgs BSF; cumulative on 0001–0009)
@@ -490,7 +524,8 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   `-h encoder=libaom-av1` shows `-pelorus_roi`. On-HW: `analyze roi=1 →
   libaom-av1 -pelorus_roi 1` on a banding clip must not crash and must produce
   valid output (the quality gain awaits the upstream fix above).
-## v0.2.0 — patch 0013 (svtav1 ROI; cumulative on 0001–0011)
+
+## v0.2.0 — patch 0013 (svtav1 ROI; cumulative on 0001–0012)
 
 - **Patch**: `ffmpeg-patches/0013-svtav1-pelorus-roi.patch` (hand-maintained
   unified diff `ffmpeg-patches/files/svtav1-pelorus-roi.patch`, applied as its own
@@ -501,14 +536,14 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   `svt_av1_enc_set_parameter`); the `svtav1_build_roi_evt()` rasterizer + the
   `EbPrivDataNode`/`ROI_MAP_EVENT` attach in `eb_send_frame` (around
   `svt_av1_enc_send_picture`); the event free-list teardown in `eb_enc_close`.
-- **Numbering**: committed **last** in `generate.sh` so it lands as **0012**; it
+- **Numbering**: committed after 0012 in `generate.sh` so it lands as **0013**; it
   touches only `libsvtav1.c`, so it has no dependency on the other encoder
   patches, but it relies on **0002** (`vf_pelorus_analyze`) to *produce* the ROI
   side data it consumes — keep it after 0002 in the series.
 - **Consumes from SVT-AV1** (`<EbSvtAv1Enc.h>` / `<EbSvtAv1.h>`):
   `EbSvtAv1EncConfiguration::enable_roi_map`, `SvtAv1RoiMapEvt`
   (`b64_seg_map`/`seg_qp[8]`/`max_seg_id`/`start_picture_number`), `EbPrivDataNode`
-  + `ROI_MAP_EVENT` + `EbBufferHeaderType::p_app_private`, and
+  `ROI_MAP_EVENT` and `EbBufferHeaderType::p_app_private`, and
   `SVT_AV1_CHECK_VERSION`. A struct/field rename or a change to the `seg_qp` delta
   semantics on an SVT-AV1 major bump would silently mis-bias — re-verify against
   `Source/Lib/Encoder/Codec/EbSegmentation.c` (`SEG_LVL_ALT_Q` add) and
@@ -539,12 +574,12 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   smoke `ffmpeg -h encoder=libsvtav1 | grep pelorus_roi`; ideally re-run the
   on-HW A/B (`analyze roi=1 → libsvtav1 -pelorus_roi 1`, CAMBI) from
 
-## v0.2.0 — patch 0014 (dehalo; cumulative on 0001–0011)
+## v0.2.0 — patch 0014 (dehalo; cumulative on 0001–0013)
 
 - **Patch**: `ffmpeg-patches/0014-add-vf_pelorus_dehalo_vulkan.patch`
   (canonical source `files/vf_pelorus_dehalo_vulkan.c`). A `vf_` filter drop-in,
   same per-filter registration model as the deband/analyze/denoise loop —
-  **not** a libavcodec edit. **Cumulative on 0001–0011.**
+  **not** a libavcodec edit. **Cumulative on 0001–0013.**
 - **Touches**: `libavfilter/vf_pelorus_dehalo_vulkan.c` (new) + the three
   registration files. `libavfilter/allfilters.c` (the `extern const FFFilter
   ff_vf_pelorus_dehalo_vulkan` line, inserted **before** the `denoise` entry —
@@ -552,54 +587,59 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   the deband-added line above it); `libavfilter/Makefile` (the
   `OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER) += vf_pelorus_dehalo_vulkan.o
   vulkan.o vulkan_filter.o` line, inserted **after** the deband OBJS line);
-  `configure` (`pelorus_dehalo_vulkan_filter_deps="vulkan spirv_library"` —
+  `configure` (`pelorus_dehalo_vulkan_filter_deps="vulkan spirv_compiler"` —
   **deps only**).
 - **Consumes from libpelorus**: **none.** Dehalo is a **pure pixel transform** —
   it does not link libpelorus, emits no interop side data, and so carries **NO
   `require_pkg_config libpelorus … && add_extralibs` hunk** (unlike the
   deband/analyze/denoise/grain filters). The `configure` registration is
   deps-only. Nothing in the interop ABI can break this filter on a rebase.
-- **Consumes from FFmpeg**: the standard `vf_*_vulkan` compute-filter surface
-  (`FFVulkanContext`, lazy SPIR-V init, `FF_VK_REP_FLOAT`, `GLSLC`/`GLSLF`/`GLSLD`
-  inline GLSL, `ff_vk_filter_config_input`/`_output`, the push-const machinery) —
+- **Consumes from FFmpeg**: the standard FFmpeg 9 Vulkan compute-filter surface
+  (`FFVulkanContext`, lazy precompiled-SPIR-V load, `FF_VK_REP_FLOAT`, explicit
+  descriptors, `ff_vk_filter_config_input`/`_output`, push constants) —
   the same surface the other `vf_pelorus_*_vulkan` filters use. A change to that
   surface on an upstream bump can break the dispatch; re-test by replaying.
-- **Shader lockstep**: `libpelorus/shaders/pelorus_dehalo.comp` and the patch's
-  inline GLSL implement the same single-pass `DeHalo_alpha` + `FineDehalo`
-  algorithm (box-blur target → `lowsens`/`highsens` sensitivity mask →
+- **Shader source**: the canonical shipped
+  `ffmpeg-patches/files/vulkan/pelorus_dehalo.comp.glsl` implements the
+  single-pass `DeHalo_alpha` + `FineDehalo` algorithm (box-blur target →
+  `lowsens`/`highsens` sensitivity mask →
   remove-only asymmetric `darkstr`/`brightstr` pull → dilated Sobel ring gate).
-  Edit both together (AGENTS hard rule 4).
-- **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay
-## v0.2.0 — patch 0015 (aa; cumulative on 0001–0011)
+  The `libpelorus/shaders` file is a standalone reference.
+- **Re-test after rebase**:
+  `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh`
+  (replay the full stack, link, and smoke
+  `-h filter=pelorus_dehalo_vulkan`).
+
+## v0.2.0 — patch 0015 (aa; cumulative on 0001–0014)
 
 - **Patch**: `ffmpeg-patches/0015-add-vf_pelorus_aa_vulkan.patch`. A pure-transform
   AVFilter (anime warp-AA + line-darkening); committed by `generate.sh` after the
-  prior filter/encoder patches so it lands as 0012 and does **not** renumber a
-  shipped artifact. **Cumulative**: applies only on top of 0001–0011.
+  prior filter/encoder patches so it lands as 0015 and does **not** renumber a
+  shipped artifact. **Cumulative**: applies only on top of 0001–0014.
 - **Touches**: `libavfilter/vf_pelorus_aa_vulkan.c` (new) + the same registration
   files as the other filters (extern/OBJS/deps), inserted **before** the analyze
   entries — `aa` sorts first among the `pelorus_*` filters (`aa` < `analyze` <
   `deband` < `denoise` < `grain_estimate` < `mc`), so its `allfilters.c` extern,
   `Makefile` OBJS, and `configure` `*_filter_deps` hunks insert ahead of the
-  analyze lines and 0012's context references the analyze added lines.
+  analyze lines and 0015's context references the analyze-added lines.
 - **No consumed surfaces — no libpelorus link**: aa is a pure pixel transform. It
   emits no side data, reads no `PelorusSideData`, and does **not** link
   `libpelorus`. Registration is **deps-only**: `configure` carries
-  `pelorus_aa_vulkan_filter_deps="vulkan spirv_library"` and there is **NO**
+  `pelorus_aa_vulkan_filter_deps="vulkan spirv_compiler"` and there is **NO**
   `require_pkg_config libpelorus … && add_extralibs` line for this filter (unlike
   the deband/analyze/denoise/mc producers). It consumes only the stock Vulkan
-  compute-filter surface (`ff_vk_spirv_init`, `ff_vk_shader_init`/
-  `_add_descriptor_set`/`_add_push_const`/`_link`/`_register_exec`,
-  `ff_vk_filter_process_simple`, `ff_vk_filter_config_input`/`_output`, the GLSLC/
-  GLSLF/GLSLD macros) — the same `vf_gblur_vulkan`-style idiom. A change to that
+  FFmpeg 9 compute-filter surface (precompiled-SPIR-V load, descriptors,
+  push constants, `ff_vk_filter_process_simple`, and
+  `ff_vk_filter_config_input`/`_output`) — the same `vf_gblur_vulkan`-style
+  idiom. A change to that
   surface on an upstream bump can break the build — re-test by replaying the stack.
-- **Shader lockstep**: `libpelorus/shaders/pelorus_aa.comp` and the filter's inline
-  GLSL implement the same warp-AA (blurred-Sobel edge map → gradient warp →
-  bilinear resample) + optional Sobel-gated line-darkening; the only intended
-  difference is the working domain (`.comp` reads `r16ui`/÷65535, inline reads
-  `FF_VK_REP_FLOAT` UNORM already in `[0,1]`). The inline `MAX_R = 8` warp-radius
-  bound must track the `.comp`. Edit both together (AGENTS hard rule 4).
-- **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay
+- **Shader source**: edit the canonical shipped
+  `ffmpeg-patches/files/vulkan/pelorus_aa.comp.glsl`; its `MAX_R = 8` bound and
+  push-constant contract must match the host. The `libpelorus/shaders` file is a
+  standalone reference.
+- **Re-test after rebase**:
+  `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh`
+  (replay the full stack, link, and smoke `-h filter=pelorus_aa_vulkan`).
 
 ## v0.2.0 — patch 0016 (scenecut; cumulative on 0001–0015)
 
@@ -642,28 +682,31 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   - `configure`: **`require_pkg_config libpelorus "<ver>" pelorus/interop.h &&
     add_extralibs $(…)`** for `pelorus_scenecut` (it links libpelorus to parse
     the side data), but **NO `pelorus_scenecut_filter_deps="vulkan
-    spirv_library"`** and **NO `_deps` entry at all** — it is *not* a Vulkan
-    filter, so it must not carry the `vulkan spirv_library` deps the
+    spirv_compiler"`** and **NO `_deps` entry at all** — it is *not* a Vulkan
+    filter, so it must not carry the `vulkan spirv_compiler` deps the
     `*_vulkan` filters need (an unknown/over-broad dep would gate the filter off
     on a box without Vulkan, which this consumer does not require). This is the
     inverse of the dehalo/aa pure-transform pattern (those are `_deps`-only with
     **no** libpelorus link; scenecut is **libpelorus-link-only with no `_deps`**).
-- **No shader lockstep**: there is no `.comp` for this filter — it touches no
-  pixels and runs no GPU code, so AGENTS hard rule 4 does not apply.
-- **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay
+- **No shader**: there is no `.comp.glsl` for this filter — it touches no
+  pixels and runs no GPU code.
+- **Re-test after rebase**:
+  `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh`
+  (replay
   0001–0016 via `git am --3way`, build, smoke `ffmpeg -h
   filter=pelorus_scenecut` and confirm the `force_idr` AVOption). Functional
   check: a multi-shot clip through `pelorus_mc_vulkan=meta=1,hwdownload,format=
   yuv420p,pelorus_scenecut` must force `pict_type=I` on the cut frames (inspect
   with `ffprobe -show_frames` / `-skip_frame nokey`).
-## v0.2.0 — patch 0017 (deblock; cumulative on 0001–0011)
+
+## v0.2.0 — patch 0017 (deblock; cumulative on 0001–0016)
 
 - **Patch**: `ffmpeg-patches/0017-add-vf_pelorus_deblock_vulkan.patch`
   (canonical source `files/vf_pelorus_deblock_vulkan.c`). A `vf_` filter drop-in,
   same per-filter registration model as the deband/analyze/denoise/dehalo/aa
   loop — **not** a libavcodec edit. Committed by `generate.sh` after the prior
-  filter/encoder patches so it lands as 0016 and does **not** renumber a shipped
-  artifact. **Cumulative on 0001–0011.**
+  filter/encoder patches so it lands as 0017 and does **not** renumber a shipped
+  artifact. **Cumulative on 0001–0016.**
 - **Touches**: `libavfilter/vf_pelorus_deblock_vulkan.c` (new) + the three
   registration files. `libavfilter/allfilters.c` (the `extern const FFFilter
   ff_vf_pelorus_deblock_vulkan` line, inserted **before** the `dehalo` entry —
@@ -671,7 +714,7 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   reference the deband-added line above it); `libavfilter/Makefile` (the
   `OBJS-$(CONFIG_PELORUS_DEBLOCK_VULKAN_FILTER) += vf_pelorus_deblock_vulkan.o
   vulkan.o vulkan_filter.o` line, inserted **after** the deband OBJS line);
-  `configure` (`pelorus_deblock_vulkan_filter_deps="vulkan spirv_library"` —
+  `configure` (`pelorus_deblock_vulkan_filter_deps="vulkan spirv_compiler"` —
   **deps only**).
 - **No consumed surfaces — no libpelorus link**: deblock is a **pure pixel
   transform**. It emits no side data, reads no `PelorusSideData`, and does
@@ -679,28 +722,32 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   && add_extralibs` hunk** (unlike the deband/analyze/denoise/grain producers) —
   the `configure` registration is **deps-only**. Nothing in the interop ABI can
   break this filter on a rebase.
-- **Consumes from FFmpeg**: the standard `vf_*_vulkan` compute-filter surface
-  (`FFVulkanContext`, lazy SPIR-V init, `FF_VK_REP_FLOAT`, `GLSLC`/`GLSLF`/`GLSLD`
-  inline GLSL, `ff_vk_filter_config_input`/`_output`,
+- **Consumes from FFmpeg**: the standard FFmpeg 9 Vulkan compute-filter surface
+  (`FFVulkanContext`, lazy precompiled-SPIR-V load, `FF_VK_REP_FLOAT`, explicit
+  descriptors, `ff_vk_filter_config_input`/`_output`,
   `ff_vk_filter_process_simple`, the push-const machinery) — the same surface the
   other `vf_pelorus_*_vulkan` filters use. A change to that surface on an upstream
   bump can break the dispatch; re-test by replaying.
-- **Shader lockstep**: `libpelorus/shaders/pelorus_deblock.comp` and the patch's
-  inline GLSL implement the same single-pass conditional `[1 2 1]` deblock — at
+- **Shader source**: the canonical shipped
+  `ffmpeg-patches/files/vulkan/pelorus_deblock.comp.glsl` implements the
+  single-pass conditional `[1 2 1]` deblock — at
   the prior codec's block grid (`bsize`), within `edge` of a boundary, a
   cross-boundary `[1 2 1]` low-pass gated by the boundary step (`< thr` smooth,
-  `>= thr` preserve) and blended by `str`. The only intended difference is the
-  working domain (`.comp` reads `r16ui`/÷65535, inline reads `FF_VK_REP_FLOAT`
-  UNORM already in `[0,1]`). Edit both together (AGENTS hard rule 4).
-- **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay the
-## v0.2.0 — patch 0018 (borderfix; cumulative on 0001–0011)
+  `>= thr` preserve) and blended by `str`. The `libpelorus/shaders` file is a
+  standalone reference.
+- **Re-test after rebase**:
+  `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh`
+  (replay the full stack, link, and smoke
+  `-h filter=pelorus_deblock_vulkan`).
+
+## v0.2.0 — patch 0018 (borderfix; cumulative on 0001–0017)
 
 - **Patch**: `ffmpeg-patches/0018-add-vf_pelorus_borderfix_vulkan.patch`
   (canonical source `files/vf_pelorus_borderfix_vulkan.c`). A `vf_` filter
   drop-in, same per-filter registration model as the deband/analyze/denoise/
   dehalo/aa loop — **not** a libavcodec edit. Committed by `generate.sh` after the
-  prior filter/encoder patches so it lands as 0016 and does **not** renumber a
-  shipped artifact. **Cumulative on 0001–0011.**
+  prior filter/encoder patches so it lands as 0018 and does **not** renumber a
+  shipped artifact. **Cumulative on 0001–0017.**
 - **Touches**: `libavfilter/vf_pelorus_borderfix_vulkan.c` (new) + the three
   registration files. `libavfilter/allfilters.c` (the `extern const FFFilter
   ff_vf_pelorus_borderfix_vulkan` line, inserted **before** the `deband` entry —
@@ -709,7 +756,7 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   above it); `libavfilter/Makefile` (the
   `OBJS-$(CONFIG_PELORUS_BORDERFIX_VULKAN_FILTER) += vf_pelorus_borderfix_vulkan.o
   vulkan.o vulkan_filter.o` line, inserted **before** the deband OBJS line);
-  `configure` (`pelorus_borderfix_vulkan_filter_deps="vulkan spirv_library"` —
+  `configure` (`pelorus_borderfix_vulkan_filter_deps="vulkan spirv_compiler"` —
   **deps only**).
 - **No consumed surfaces — no libpelorus link**: borderfix is a **pure pixel
   transform**. It emits no side data, reads no `PelorusSideData`, and does **not**
@@ -717,21 +764,22 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   add_extralibs` hunk** (unlike the deband/analyze/denoise/grain producers) — the
   `configure` registration is **deps-only**. Nothing in the interop ABI can break
   this filter on a rebase.
-- **Consumes from FFmpeg**: the standard `vf_*_vulkan` compute-filter surface
-  (`FFVulkanContext`, lazy SPIR-V init, `FF_VK_REP_FLOAT`, `GLSLC`/`GLSLF`/`GLSLD`
-  inline GLSL, `ff_vk_filter_config_input`/`_output`,
+- **Consumes from FFmpeg**: the standard FFmpeg 9 Vulkan compute-filter surface
+  (`FFVulkanContext`, lazy precompiled-SPIR-V load, `FF_VK_REP_FLOAT`, explicit
+  descriptors, `ff_vk_filter_config_input`/`_output`,
   `ff_vk_filter_process_simple`, the push-const machinery) — the same surface the
   other `vf_pelorus_*_vulkan` filters use. A change to that surface on an upstream
   bump can break the dispatch; re-test by replaying.
-- **Shader lockstep**: `libpelorus/shaders/pelorus_borderfix.comp` and the patch's
-  inline GLSL implement the same single-pass clamp-and-smear — each pixel's read
+- **Shader source**: the canonical shipped
+  `ffmpeg-patches/files/vulkan/pelorus_borderfix.comp.glsl` implements the
+  single-pass clamp-and-smear — each pixel's read
   coordinate is clamped onto the clean interior rect `[left, w−1−right] ×
   [top, h−1−bottom]` and the input sample read there is stored, smearing the
   nearest clean edge outward over the dirty band (all planes; band widths in each
-  plane's own pixels). The only intended difference is the working domain (`.comp`
-  reads `r16ui`/÷65535, inline reads `FF_VK_REP_FLOAT` UNORM already in `[0,1]`).
-  Edit both together (AGENTS hard rule 4).
-- **Re-test after rebase**: `ffmpeg-patches/test/build-and-run.sh` (replay the
+  plane's own pixels). The `libpelorus/shaders` file is a standalone reference.
+- **Re-test after rebase**:
+  `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh`
+  (replay the
   full stack, build, smoke `-h filter=pelorus_borderfix_vulkan`).
 
 ## v0.2.0 — ADR-0129 fix (regenerates 0001, 0007, 0014, 0015, 0017, 0018)
@@ -803,13 +851,14 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   bindings (mv_grid=6, conf_grid=7; output_images moved to 8) and uses
   `ff_vk_get_pooled_buffer` + `ff_vk_exec_add_dep_buf` (the buffers must outlive
   the async `meta=0` submit) — re-verify these symbols survive an upstream bump.
-- **Lockstep**: `pelorus_denoise.comp` mirrors the warp (algorithmic; the
-  single-plane `.comp` bakes quarter-pel × chroma scale into `mv_scale`/`cell_*`
-  where the filter applies `chroma_shift` in-shader). AGENTS rule 4.
-- **GLSL string limit**: the denoise inline GLSL was split into
-  `denoise_helpers_glsl[]` + `denoise_glsl[]` so neither concatenated string
-  literal exceeds the C99 4095-char limit (`-Woverlength-strings`); keep new
-  helpers in the first array.
+- **Current shader source**: the shipped warp lives in canonical
+  `ffmpeg-patches/files/vulkan/pelorus_denoise.comp.glsl`; the single-plane
+  `libpelorus/shaders` file is a standalone reference. Keep the C descriptor,
+  specialization, and push-constant contract aligned with the canonical shader.
+- **Historical delivery note**: this feature originally split runtime GLSL
+  across `denoise_helpers_glsl[]` and `denoise_glsl[]` to stay below C99's
+  4095-character string-literal limit. ADR-0143 removed that runtime-string
+  surface when FFmpeg 9 adopted build-time SPIR-V.
 - **Re-test after rebase**: replay the stack, then A/B
   `pelorus_mc_vulkan=meta=1,pelorus_denoise_vulkan=mc={0,1}` on a noisy
   high-motion clip vs a clean reference — `mc=1` must run (no validation error)

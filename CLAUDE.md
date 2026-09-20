@@ -19,8 +19,8 @@ is what makes Pelorus⇄vmafx bidirectional.
 meson setup build && ninja -C build      # libpelorus + interop test + shader
 meson test -C build --suite=fast         # the pre-push gate
 ninja -C build install                   # install so the FFmpeg patches see it
-cd ffmpeg-patches && ./generate.sh        # regenerate the patch stack
-ffmpeg-patches/test/build-and-run.sh      # apply + build + smoke the filter
+FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh
+FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh
 ```
 
 ## Where the code is
@@ -29,15 +29,16 @@ ffmpeg-patches/test/build-and-run.sh      # apply + build + smoke the filter
   contract; append-only).
 - `libpelorus/src/interop.c` — pack/parse; **vendored verbatim by vmafx too**.
 - `libpelorus/shaders/pelorus_deband.comp` — standalone reference shader.
-- `ffmpeg-patches/files/vf_pelorus_deband_vulkan.c` — the in-tree filter (inline
-  GLSL). Keep its algorithm in lockstep with the `.comp`.
+- `ffmpeg-patches/files/vf_pelorus_deband_vulkan.c` — the in-tree filter host
+  code; its one shipped shader source is
+  `ffmpeg-patches/files/vulkan/pelorus_deband.comp.glsl`.
 
 ## Skills available
 
 In `.claude/skills/` (invoke via `/<name>`):
 
 | Skill | When |
-|---|---|
+| --- | --- |
 | `build` | configure + build + fast test (the local gate) |
 | `format-all` / `lint-all` | clang-format / clang-tidy + shader compile |
 | `add-vulkan-filter` | scaffold a new `vf_pelorus_*` filter end-to-end |
@@ -62,7 +63,8 @@ In `.claude/hooks/` (wired in `.claude/settings.json`):
 - **PreToolUse(Bash)** `block-unsafe-bash` — blocks `rm -rf /`, force-push to
   master, hard-reset onto origin/master, `git clean -xf`, fork bombs.
 - **PostToolUse(Edit|Write)** `auto-format-on-edit` (clang-format C/H),
-  `shader-lockstep-warn` (.comp ⇄ filter inline GLSL), `docs-drift-warn`
+  `shader-lockstep-warn` (guards the canonical FFmpeg 9 `.comp.glsl` model),
+  `docs-drift-warn`
   (ABI/surface/build-flag → docs/ADR/changelog/patch reminders).
 - **SessionStart** `session-start` — branch + PLAN/STATE orientation, build staleness.
 - **Stop** `stop` — reminds to run the local gate when sources are unverified.
@@ -78,8 +80,9 @@ In `.claude/hooks/` (wired in `.claude/settings.json`):
 
 ## Don't
 
-- Don't edit the two deband implementations independently — the `.comp` and the
-  filter's inline GLSL must stay in lockstep (AGENTS.md hard rule 4).
+- Don't reintroduce runtime or inline GLSL. FFmpeg 9 compiles the canonical
+  `ffmpeg-patches/files/vulkan/*.comp.glsl` sources to SPIR-V at build time;
+  `libpelorus/shaders/*.comp` are standalone fast-gate references.
 - Don't reorder/resize/remove a field in any `PelorusSideData` struct — it is a
   frozen wire ABI (interop.h R1/R2). Append only; new meaning = new section bit.
 - Don't hand-edit a generated `*.patch` — edit `ffmpeg-patches/files/` and rerun
@@ -99,15 +102,16 @@ patches consume — the **regenerated patch**. See [CONTRIBUTING.md](CONTRIBUTIN
 
 ## Project state
 
-- Tagged `v0.1.0`, but master is far ahead of that tag: **11 filters + 1 BSF**
+- Tagged `v0.2.2`: **10 filters + 1 BSF**
   ship as an 18-patch stack. Working: deband, analyze, denoise, grain_estimate,
   mc, dehalo, aa, deblock, borderfix, scenecut, and the `pelorus_fgs` BSF, plus
   the NVENC / QSV / Vulkan / libaom / SVT-AV1 encoder-steering patches and the
   QP-feedback path. Interop ABI is at **1.3**. Nothing in the module list is a
   stub any more — treat the README "Modules" table as the current inventory.
-- **Base tag is FFmpeg `n9.0.1`** (migrated from n8.1.1; FFmpeg 9 deleted the
-  runtime inline-GLSL shader API, so filters now ship precompiled SPIR-V — see
-  `.workingdir/FFMPEG9-MIGRATION-BRIEF.md`).
+- **Base tag is FFmpeg `n9.0.2`**, pinned to peeled commit
+  `946fcce07b6dcd0331c8cc609192aeff5e1924f8` (FFmpeg 9 deleted the
+  runtime inline-GLSL shader API, so filters now ship build-time SPIR-V — see
+  [ADR-0143](docs/adr/0143-ffmpeg-9-migration.md)).
 - Plan + status: `.workingdir/PLAN.md` and `.workingdir/STATE.md` (local), plus
   `.workingdir/AUDIT-2026-08-30.md` for the open maintenance backlog.
 

@@ -2,7 +2,8 @@
 # Pelorus FFmpeg patch stack
 
 Native `vf_pelorus_*` Vulkan compute filters, shipped as a stack of patches
-against **FFmpeg n9.0.1** — the same delivery model as the vmafx sibling's
+against **FFmpeg n9.0.2**, pinned to peeled commit
+`946fcce07b6dcd0331c8cc609192aeff5e1924f8` — the same delivery model as the vmafx sibling's
 `ffmpeg-patches/`. The filters link **libpelorus** (the shared interop ABI +
 filter contracts) so a single filtergraph can carry the Pelorus side-data blob
 straight through to a hardware encoder, and a downstream vmafx `vf_libvmaf*` can
@@ -11,7 +12,7 @@ read it. See [docs/adr/0104-ffmpeg-patch-stack.md](../docs/adr/0104-ffmpeg-patch
 ## Layout
 
 | Path | Role |
-|---|---|
+| --- | --- |
 | `files/` | Canonical filter sources — the source of truth a maintainer edits. |
 | `0001-*.patch` … | Generated artifacts (`git format-patch`), the applied form. |
 | `series.txt` | Ordered apply list (cumulative stack). |
@@ -29,18 +30,18 @@ read it. See [docs/adr/0104-ffmpeg-patch-stack.md](../docs/adr/0104-ffmpeg-patch
   (`pkg-config --exists libpelorus`). Build it from the repo root:
   `meson setup build && ninja -C build && ninja -C build install`.
 
-## Apply
+## Replay and build
 
 ```bash
-cd /path/to/ffmpeg            # a pristine n9.0.1 checkout
-git reset --hard n9.0.1
-for p in /path/to/Pelorus/ffmpeg-patches/0*.patch; do
-    git am --3way "$p" || break
-done
+FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh
 ```
 
-`git am --3way` (not per-patch `git apply --check`) is the correct gate: the
-stack is cumulative and later patches' context can depend on earlier ones.
+The gate verifies the qualified `n9.0.2` tag against root `build-config.env`,
+checks out the immutable commit in a run-owned worktree, builds and installs
+this Pelorus tree into a private prefix, applies `series.txt` with
+`git am --3way`, links FFmpeg, and smoke-tests registration. Per-patch
+`git apply --check` is not a substitute: the stack is cumulative and later
+patches' context can depend on earlier ones.
 
 **Building an object is not a gate.** Naming a `.spv.o` on the make command line
 builds it through the pattern rule whether or not the Makefile's `OBJS` ever
@@ -62,23 +63,24 @@ make -j ffmpeg                                             # the REAL gate: link
 
 ```
 
-Each filter is gated `*_filter_deps="vulkan spirv_compiler"`, and a
-soft `check_pkg_config libpelorus ...` probe sets the `libpelorus` config item
-(the idiomatic FFmpeg pattern, cf. `libvmaf_cuda`). So the filters auto-enable
-iff Vulkan, a SPIR-V compiler, **and** libpelorus are all present, and quietly
-disable otherwise. Force the issue with `--enable-filter=pelorus_deband_vulkan`
-(errors if a dep is missing) or `--disable-filter=pelorus_deband_vulkan`.
-Install libpelorus where pkg-config can see it (`--prefix=/usr`, or set
-`PKG_CONFIG_PATH`) before configuring FFmpeg.
+Each compute filter is gated `*_filter_deps="vulkan spirv_compiler"`.
+Interop-consuming filters then use a guarded `require_pkg_config` probe for
+`libpelorus >= 0.2.0` plus `add_extralibs`; pure transforms do not link it.
+Force a filter with `--enable-filter=pelorus_deband_vulkan` to make a missing
+dependency a configure error, or disable it explicitly. Install libpelorus
+where pkg-config can see it (`--prefix=/usr`, or set `PKG_CONFIG_PATH`) before
+configuring FFmpeg outside the replay gate.
 
 ## Regenerate
 
 ```bash
-FFMPEG_REPO=/path/to/ffmpeg BASE_TAG=n9.0.1 ./generate.sh
+FFMPEG_REPO=/absolute/path/to/ffmpeg ./generate.sh
 ```
 
-Edit the sources under `files/`, rerun `generate.sh`, and commit both the
-sources and the regenerated `*.patch` in the same change.
+`generate.sh` reads and verifies the tag plus commit in root
+`build-config.env`; `BASE_TAG` is not an input. Edit the sources under `files/`,
+rerun it twice to prove byte-stability, and commit both sources and regenerated
+`*.patch` artifacts in the same change.
 
 ## Use
 

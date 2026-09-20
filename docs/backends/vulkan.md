@@ -89,6 +89,6 @@ and exist to compile-check/read the algorithm, not as a second shipped shader.
 
 ```bash
 ninja -C build install                       # install libpelorus (pkg-config)
-cd ffmpeg-patches && ./generate.sh            # regenerate the patch stack
-./test/build-and-run.sh                       # apply onto the pinned FFmpeg base, build, smoke
+FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh
+FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh
 ```

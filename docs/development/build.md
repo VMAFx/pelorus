@@ -15,7 +15,7 @@ ninja -C build install                # install lib + headers + pkg-config
 Options (`meson_options.txt`):
 
 | Option | Default | Effect |
-|---|---|---|
+| --- | --- | --- |
 | `tests` | true | build + register the libpelorus test suite |
 | `shaders` | true | compile the standalone reference `.comp` shaders to SPIR-V (needs glslang) |
 | `tools` | true | build the libpelorus CLI demonstrators (`pelorus_qp_report`; not installed) |
@@ -27,13 +27,14 @@ SPIR-V compiler.
 
 ```bash
 cd ffmpeg-patches
-FFMPEG_REPO=/path/to/ffmpeg BASE_TAG=n8.1.1 ./generate.sh   # regenerate patches
-./test/build-and-run.sh                                     # apply + build + smoke
+FFMPEG_REPO=/absolute/path/to/ffmpeg ./generate.sh           # regenerate patches
+FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh # apply + build + smoke
 ```
 
-`generate.sh` works in an **isolated git worktree** at the base tag, so it never
-touches your main FFmpeg checkout. The committed `*.patch` files are the
-artifact; edit the sources under `files/` and regenerate.
+Both scripts read the exact tag and peeled commit from root `build-config.env`,
+verify that the qualified tag resolves to that commit, and work in an isolated
+run-owned Git worktree. The committed `*.patch` files are the artifact; edit
+the sources under `files/` and regenerate.
 
 ## Local gate (run before pushing)
 

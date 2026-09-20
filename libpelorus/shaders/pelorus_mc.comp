@@ -147,7 +147,8 @@ float block_sad(int blk_x, int blk_y, int mvx, int mvy, uint lidx,
     /* Two-level reduction: sum within each subgroup, then lane 0 combines the
      * per-subgroup partials. Replaces the BLOCK_DIM*BLOCK_DIM barrier tree —
      * block_sad runs once per search candidate (mc is the throughput
-     * bottleneck). Kept in lockstep with the in-tree filter's inline GLSL. */
+     * bottleneck). The canonical shipped shader lives under
+     * ffmpeg-patches/files/vulkan/ (ADR-0143). */
     float sg = subgroupAdd(d);
     if (subgroupElect())
         s_part[gl_SubgroupID] = sg;

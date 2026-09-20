@@ -7,8 +7,8 @@ tools: Read, Grep, Glob, Bash
 
 <!-- markdownlint-disable MD013 MD041 -->
 
-You review the `ffmpeg-patches/` stack (ADR-0104) against FFmpeg n8.1.1
-conventions and the project's rebase rules.
+You review the `ffmpeg-patches/` stack (ADR-0104) against the exact FFmpeg tag
+and peeled commit in root `build-config.env` and the project's rebase rules.
 
 ## Check
 
@@ -21,15 +21,21 @@ conventions and the project's rebase rules.
    patch — confirm it's not regressed.
 3. **Registration** — three files: `allfilters.c` (`extern const FFFilter
    ff_vf_*`, alphabetical), `Makefile` (`OBJS-$(CONFIG_*_FILTER) += … vulkan.o
-   vulkan_filter.o`), `configure` (`*_filter_deps="vulkan spirv_library
-   libpelorus"` + a soft `check_pkg_config libpelorus …`, cf. `libvmaf_cuda`).
-4. **Filter idiom** — modeled on `vf_gblur_vulkan.c` / `vf_scdet_vulkan.c`:
+   vulkan_filter.o`), `configure` (`*_filter_deps="vulkan spirv_compiler"`).
+   Interop consumers separately use guarded `require_pkg_config libpelorus >=
+   0.2.0` plus `add_extralibs`; pure transforms do not link libpelorus.
+4. **Filter idiom** — modeled on FFmpeg 9's `vf_gblur_vulkan.c` /
+   `vf_nlmeans_vulkan.c` and, for readback, `vf_scdet_vulkan.c`:
    `FFVulkanContext` first, lazy init, `FILTER_SINGLE_PIXFMT(AV_PIX_FMT_VULKAN)`,
-   `AVFILTER_FLAG_HWDEVICE`, LGPL-2.1 header. Side-data freed with `pel_blob_free`
-   via `av_buffer_create` (NOT `av_free`).
+   `AVFILTER_FLAG_HWDEVICE`, explicit descriptors, build-time SPIR-V, LGPL-2.1
+   header. The one shipped shader source is
+   `files/vulkan/pelorus_<name>.comp.glsl`; side-data is freed with
+   `pel_blob_free` via `av_buffer_create` (NOT `av_free`).
 5. **Cumulative apply** — replay the WHOLE `series.txt` via `git am --3way` onto
-   pristine n8.1.1 (NOT per-patch `git apply --check`). Confirm all filters
-   register and (deps permitting) the objects compile.
+   the pinned commit using
+   `FFMPEG_REPO=/absolute/path ffmpeg-patches/test/build-and-run.sh` (NOT
+   per-patch `git apply --check`). Confirm the final binary links and all
+   filters plus `pelorus_fgs` register.
 6. **Deliverables** — `series.txt` updated, `docs/rebase-notes.md` entry added,
    `docs/metrics/<name>.md` present, changelog fragment present (AGENTS rule 5).
 

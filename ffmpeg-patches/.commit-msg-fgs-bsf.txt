@@ -22,7 +22,8 @@ onto these options (mapping recipe in docs/usage/grain-fgs-bsf.md).
 Honest scope: this is the STATIC-model leg. A BSF works on AVPackets and no
 stock encoder forwards the estimator's per-frame grain side data onto the
 coded packet, so per-frame estimate -> SEI plumbing through an arbitrary HEVC
-encoder is not expressible in n8.1.1. Opt-in and no-op by construction: the
+encoder is not expressible in the pinned stock FFmpeg baseline. Opt-in and
+no-op by construction: the
 filter passes the stream through unchanged unless the components mask selects
 at least one colour component; skip_existing avoids double-stamping. No
 device/box assumptions; does not link libpelorus (consumes the model via

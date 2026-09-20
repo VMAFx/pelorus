@@ -10,7 +10,8 @@ trip it would cost. Bit-depth-agnostic (FF_VK_REP_FLOAT UNORM); all planes by
 default. Band widths are per-plane pixels.
 
 Pure pixel transform — does NOT link libpelorus (deps-only registration). The
-reference shader libpelorus/shaders/pelorus_borderfix.comp and the inline GLSL
-are kept in lockstep. AVOptions: left/right/top/bottom (band widths), planes.
+canonical libavfilter/vulkan/pelorus_borderfix.comp.glsl is compiled to SPIR-V
+at FFmpeg build time; Pelorus also compile-checks a standalone reference
+shader. AVOptions: left/right/top/bottom (band widths), planes.
 
 ADR: docs/adr/0128-borderfix.md

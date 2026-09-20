@@ -13,6 +13,7 @@
 # "How to use this file"; the vmafx convention + the user's global rule both
 # keep these local rather than committed).
 /.workingdir/
+/.workingdir2/
 /.scratch/
 
 # Claude Code: agent scratch worktrees + local-only settings overrides.

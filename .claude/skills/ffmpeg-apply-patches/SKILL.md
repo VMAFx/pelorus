@@ -1,35 +1,35 @@
 ---
 name: ffmpeg-apply-patches
-description: Use when verifying or building the FFmpeg integration — apply the patch stack onto a pristine n8.1.1 via git am --3way, configure, and compile the vf_pelorus_* filter objects. The patch-stack gate.
+description: Use when verifying FFmpeg integration, cumulative patch replay, final linking, or filter and BSF registration.
 ---
 
-# /ffmpeg-apply-patches
+# Verify the FFmpeg patch stack
 
-The end-to-end gate for the FFmpeg side. Needs libpelorus installed (pkg-config)
-plus a Vulkan loader + SPIR-V compiler (libshaderc/libglslang).
-
-## Full gate (apply + build + smoke)
+Run the supported gate from the repository root:
 
 ```sh
-ffmpeg-patches/test/build-and-run.sh
+FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh
 ```
 
-This worktrees a pristine n8.1.1, `git am --3way`s every patch in `series.txt`,
-configures `--enable-vulkan`, builds the filter objects, and smoke-tests
-`-h filter=pelorus_*`.
+Root `build-config.env` owns the qualified tag and peeled commit;
+`FFMPEG_REPO` is required and `BASE_TAG` is unsupported. The gate creates a
+hook-neutral run-owned worktree, privately builds/tests/installs this libpelorus
+tree, applies `series.txt` with `git am --3way`, configures FFmpeg, links the
+final binary, and verifies all Pelorus filters plus `pelorus_fgs` register.
 
-## Quick apply-only check (no build deps)
+For QSV ROI changes, also run:
 
 ```sh
-git -C /home/kilian/dev/ffmpeg-8 worktree add --detach /tmp/ff n8.1.1
-while read -r p; do case "$p" in ''|\#*) continue;; esac
-  git -C /tmp/ff am --3way "$PWD/ffmpeg-patches/$p"; done < ffmpeg-patches/series.txt
-git -C /home/kilian/dev/ffmpeg-8 worktree remove --force /tmp/ff
+FFMPEG_REPO=/absolute/path/to/ffmpeg \
+  ffmpeg-patches/test/qsv-roi-regression.sh
 ```
 
-## Rules
+## Completion boundary
 
-- Verify with a **full series replay** (`git am --3way` of the whole stack), NOT
-  per-patch `git apply --check` — patches are cumulative (ADR-0104).
-- If a patch fails to apply after an upstream bump, regenerate with
-  `/ffmpeg-build-patches` against the new base tag rather than hand-resolving.
+- Per-patch `git apply --check`, object-only compilation, and filter help from an
+  unlinked tree do not replace the full gate.
+- A successful replay proves apply/build/link/registration, not Vulkan runtime
+  correctness. Run the relevant on-device format and plane-mask matrix and
+  report unavailable hardware rows as unexecuted.
+- Do not hand-apply into a fixed `/tmp` path or a caller-owned worktree; the
+  supported scripts own setup and cleanup.

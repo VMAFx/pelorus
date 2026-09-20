@@ -29,7 +29,8 @@ measures those parameters. Getting them into the bitstream then differs by codec
 A BSF operates on `AVPacket`s, and no stock encoder forwards the estimator's
 **per-frame** grain frame side data onto the coded packet, so per-frame
 estimate→SEI plumbing through an arbitrary HEVC encoder is not expressible in
-n8.1.1. `pelorus_fgs` therefore inserts a **static** FGC model the user supplies
+the pinned stock FFmpeg baseline. `pelorus_fgs` therefore inserts a **static**
+FGC model the user supplies
 via AVOptions — the canonical FFmpeg metadata-BSF contract (`hevc_metadata`,
 `h264_metadata`, `av1_metadata` all set static parameters this way). It is
 opt-in and a no-op by construction: it passes the stream through unchanged unless
@@ -44,7 +45,7 @@ channel that does not exist in stock FFmpeg.
 ## Options
 
 | Option | Default | Range | Meaning |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `model_id` | 1 | 0–1 | H.274 `film_grain_model_id`: 0 = frequency filtering, 1 = auto-regression |
 | `blending_mode` | 0 | 0–1 | H.274 `blending_mode_id`: 0 = additive, 1 = multiplicative |
 | `log2_scale` | 8 | 0–15 | H.274 `log2_scale_factor` |

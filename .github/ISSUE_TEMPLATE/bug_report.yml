@@ -28,6 +28,6 @@ body:
     id: env
     attributes:
       label: Environment
-      description: OS, GPU + driver, Vulkan/SPIR-V toolchain, FFmpeg base (n8.1.1?), libpelorus + ABI version, `vulkaninfo` summary.
+      description: OS, GPU + driver, Vulkan/SPIR-V toolchain, FFmpeg tag + commit from `build-config.env`, libpelorus + ABI version, `vulkaninfo` summary.
     validations:
       required: true

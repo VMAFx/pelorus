@@ -97,10 +97,10 @@ float fetchNext(int px, int py) {
     return float(imageLoad(nextImg, ivec2(px, py)).r) / 65535.0;
 }
 
-/* --- motion-compensated previous-frame fetch (ADR-0113), kept in lockstep with
- * the in-tree filter's inline GLSL. This single-plane .comp reads the MV in
- * THIS plane's pixels (the host bakes quarter-pel * chroma subsampling into
- * pc.mv_scale and pc.cell_w/h), so there is no in-shader chroma branch here. */
+/* --- motion-compensated previous-frame fetch (ADR-0113). This standalone
+ * reference reads the MV in THIS plane's pixels (the host bakes quarter-pel *
+ * chroma subsampling into pc.mv_scale and pc.cell_w/h), so there is no
+ * in-shader chroma branch here. */
 int pel_se16(uint v) { return int(v << 16) >> 16; } // sign-extend low 16 bits
 ivec2 pel_cell(ivec2 p) {
     return clamp(p / ivec2(pc.cell_w, pc.cell_h), ivec2(0),
@@ -130,10 +130,11 @@ float pel_prev_mc(int t, ivec2 pos) {
  * re-reads an overlapping (2*patchR+3)^2 window ~9x per pixel (fetch-bound, not
  * ALU-bound), so the workgroup loads it once into s_tile and every spatial read
  * hits shared memory. PEL_HALO = max patchR (3) + the 1-px patch ring. This
- * reference models — and CI compile-checks — the in-tree filter's opt-in tile=1
+ * reference models — and CI compile-checks — the shipped filter's opt-in tile=1
  * path (ADR-0134, a large win on bandwidth-limited GPUs, ~neutral on cache-rich
  * ones); with the default tile=0 the filter reads the image directly. Both are
- * bit-identical. In lockstep with the filter's tile_helpers_glsl (AGENTS rule 4). */
+ * bit-identical. The canonical shipped shader lives under
+ * ffmpeg-patches/files/vulkan/ (ADR-0143). */
 #define PEL_HALO 4
 #define PEL_TILE 24  // 16 (workgroup dim) + 2 * PEL_HALO
 shared float s_tile[PEL_TILE * PEL_TILE];

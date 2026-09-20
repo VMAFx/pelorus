@@ -206,9 +206,9 @@ index 39c43300c4..4482139a54 100644
 + * vulkan_encode already requires at init) the encoder either degrades here or
 + * never reaches this code; that is a driver limitation, not a patch defect.
 + *
-+ * ON-GPU RASTER: the map texel image is filled by a compute dispatch
-+ * (pelorus_qpmap.comp / the inline GLSL below — kept byte-for-byte in lockstep,
-+ * AGENTS hard rule 4) that reads the coalesced ROI rectangle list from a small
++ * ON-GPU RASTER: the map texel image is filled by the canonical build-time
++ * SPIR-V compute shader (pelorus_qpmap.comp.glsl), which reads the coalesced
++ * ROI rectangle list from a small
 + * SSBO and imageStores the per-texel delta/emphasis, eliminating the host
 + * per-texel raster + staging upload the v0.1.0 host path used. It is preferred
 + * only when the encode queue family also advertises VK_QUEUE_COMPUTE_BIT (so the

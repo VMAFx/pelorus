@@ -36,7 +36,8 @@
  * h264_metadata, av1_metadata all set static parameters this way). A BSF
  * operates on AVPackets, and no stock encoder forwards the estimator's per-frame
  * film-grain frame side data onto the coded packet, so per-frame estimate ->
- * SEI plumbing through an arbitrary HEVC encoder is not expressible in n8.1.1;
+ * SEI plumbing through an arbitrary HEVC encoder is not expressible in the
+ * pinned stock FFmpeg baseline;
  * the static-model path is the honest, fully general one. The producer's
  * PEL_SEC_FILMGRAIN H.274 scalars (h274_model_id / h274_blending_mode /
  * h274_log2_scale) and per-band RMS scaling map directly onto the options here;

@@ -170,9 +170,9 @@ advertise the matching delta/emphasis capability flag, and a usable map format +
 texel size must be returned for the profile. Any miss degrades to a one-shot
 warning + pass-through; a frame with no ROI binds no map (zero behaviour change).
 
-The map texel image is filled **on the GPU**: a `pelorus_qpmap` compute shader
-(`libpelorus/shaders/pelorus_qpmap.comp`, mirrored inline in the patch) reads the
-coalesced ROI rectangle list from a small SSBO and `imageStore`s the per-texel
+The map texel image is filled **on the GPU**: the canonical build-time
+`libavcodec/vulkan/pelorus_qpmap.comp.glsl` compute shader reads the coalesced
+ROI rectangle list from a small SSBO and `imageStore`s the per-texel
 delta/emphasis directly, eliminating the host per-texel raster + staging upload.
 This on-GPU path is preferred whenever the encode queue family also advertises
 `VK_QUEUE_COMPUTE_BIT` (so the dispatch records on the encode command buffer with

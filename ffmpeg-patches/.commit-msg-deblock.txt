@@ -9,8 +9,8 @@ step is real structure (preserve it). Luma only; chroma passes through.
 Zero-copy in VRAM (FF_VK_REP_FLOAT UNORM, bit-depth-agnostic).
 
 Pure pixel transform — does NOT link libpelorus (deps-only registration). The
-reference shader libpelorus/shaders/pelorus_deblock.comp and the inline GLSL are
-kept in lockstep.
+canonical libavfilter/vulkan/pelorus_deblock.comp.glsl is compiled to SPIR-V at
+FFmpeg build time; Pelorus also compile-checks a standalone reference shader.
 
 AVOptions: bsize (DCT grid, default 8), edge (band half-width), thr (artefact
 step threshold), str (strength), planes.

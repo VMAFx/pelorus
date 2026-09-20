@@ -33,8 +33,10 @@ shared side-data ABI and vmafx's VMAF-in-the-loop autotune — see
 # build + install the shared core (the FFmpeg filters link it)
 meson setup build && ninja -C build && ninja -C build install
 
-# apply the FFmpeg patch stack onto a pristine n9.0.1 checkout
-cd ffmpeg-patches && ./generate.sh && ./test/build-and-run.sh
+# regenerate and replay the stack at the pinned n9.0.2 commit
+cd ffmpeg-patches
+FFMPEG_REPO=/absolute/path/to/ffmpeg ./generate.sh
+FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh
 
 # zero-copy: decode -> smart deband (VRAM) -> hardware encode
 ffmpeg -init_hw_device vulkan -hwaccel vulkan -hwaccel_output_format vulkan \
@@ -94,8 +96,9 @@ encoder. A documented, retunable composition, not a new meta-filter. See
 ## Landed so far
 
 - [x] Step 1 — Core: `libpelorus` interop ABI + deband param contract + tests.
-- [x] Step 2 — Flagship: `vf_pelorus_deband_vulkan` smart deband (Vulkan), inline
-      GLSL, side-data emission, patch stack against n9.0.1.
+- [x] Step 2 — Flagship: `vf_pelorus_deband_vulkan` smart deband (Vulkan),
+      build-time SPIR-V from its canonical `.comp.glsl`, side-data emission,
+      patch stack against n9.0.2.
 - [x] Step 3 — `vf_pelorus_analyze_vulkan`: measured banding/variance/edge stats
       (GPU reduction + readback) → interop side data.
 - [x] Step 4 — Temporal denoise (`vf_pelorus_denoise_vulkan`).
@@ -170,13 +173,13 @@ encoder. A documented, retunable composition, not a new meta-filter. See
 meson setup build && ninja -C build      # build (libpelorus + tests + shaders)
 meson test -C build --suite=fast         # pre-push gate
 ninja -C build install                   # install libpelorus (for the patches)
-cd ffmpeg-patches && ./generate.sh        # regenerate the FFmpeg patch stack
+FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh
 clang-format --dry-run -Werror libpelorus/**/*.{c,h}   # format check
 ```
 
 ## Status
 
-Pre-alpha (`v0.1.0`). Public API and the interop ABI may evolve before
+Pre-1.0 (`v0.2.2`). Public API and the interop ABI may evolve before
 `v1.0.0`; the ABI is append-only from here.
 
 ## License

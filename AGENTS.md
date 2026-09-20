@@ -77,7 +77,7 @@ Pelorus/
 │   ├── shaders/                      #   standalone reference .comp shaders
 │   └── test/                         #   interop ABI conformance fixture
 │
-├── ffmpeg-patches/                   # vf_pelorus_* filters, stacked vs n9.0.1
+├── ffmpeg-patches/                   # vf_pelorus_* filters, stacked vs n9.0.2
 │   ├── files/                        #   canonical filter sources (edit here)
 │   │   └── vulkan/                   #     per-filter .comp.glsl -> build-time SPIR-V
 │   ├── 0001-*.patch  series.txt      #   generated artifacts + apply order
@@ -104,20 +104,20 @@ rebase-sensitive invariants.
 ## Common tasks
 
 | Task | Command |
-|---|---|
+| --- | --- |
 | Configure + build | `meson setup build && ninja -C build` |
 | Fast test gate | `meson test -C build --suite=fast` |
 | Install (for the FFmpeg patches) | `ninja -C build install` |
-| Regenerate FFmpeg patches | `cd ffmpeg-patches && ./generate.sh` |
-| Apply + build + smoke FFmpeg | `ffmpeg-patches/test/build-and-run.sh` |
+| Regenerate FFmpeg patches | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh` |
+| Apply + build + smoke FFmpeg | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh` |
 | Lint | `clang-format --dry-run -Werror` + `clang-tidy` on touched files |
 | Reserve an ADR number | `scripts/adr/next-free.sh --claim <slug>` |
 
 ## Pinned upstream references
 
 | Component | Version |
-|---|---|
-| FFmpeg base for the patch stack | `n9.0.1` |
+| --- | --- |
+| FFmpeg base for the patch stack | `n9.0.2` (`946fcce07b6dcd0331c8cc609192aeff5e1924f8`) |
 | FFmpeg Vulkan filter model | `libavfilter/vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c` |
 | AV1 film-grain struct mirrored by interop §(d) | `libavutil/film_grain_params.h` |
 | vmafx control plane (autotune) | `libvmaf_tune` filter, `vmafx-server` `/v1/score`, `vmaf-mcp` |

@@ -1,4 +1,4 @@
-<!-- markdownlint-disable MD041 -->
+<!-- markdownlint-disable MD013 MD041 -->
 ## What & why
 
 <!-- One paragraph: what changed and the motivation. Link the ADR. -->
@@ -24,6 +24,6 @@
 - [ ] **Rebase note** `docs/rebase-notes.md` if the FFmpeg patch stack is affected (or "no rebase impact: REASON")
 - [ ] **Patch-stack sync**: a libpelorus surface the patches consume changed ⇒ regenerated patch is included (`/ffmpeg-build-patches`)
 - [ ] **Interop ABI** (if touched) is **append-only**, `PELORUS_ABI_MINOR` bumped, conformance fixture extended (`/bump-abi`)
-- [ ] **Shader lockstep**: `.comp` and the filter's inline GLSL edited together
+- [ ] **Shader source**: canonical `ffmpeg-patches/files/vulkan/*.comp.glsl` updated; no inline/runtime GLSL added; standalone reference impact reviewed
 - [ ] Touched files **lint-clean** (clang-format + clang-tidy); any `// NOLINT` cited
 - [ ] Conventional Commit subject; not committing to `master` directly
