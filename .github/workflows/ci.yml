@@ -42,7 +42,7 @@ jobs:
     # Pinned, NOT ubuntu-latest: the LunarG apt list below is release-specific
     # ('noble' = 24.04). When ubuntu-latest moves on, an unpinned runner silently
     # gets no Vulkan SDK, spirv_compiler goes OFF and every filter is disabled.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
