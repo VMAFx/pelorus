@@ -1,0 +1,73 @@
+<!-- markdownlint-disable MD013 MD060 -->
+# ADR-0145: Adopt Praetor as a governance ratchet
+
+- **Status**: Proposed
+- **Date**: 2026-09-20
+- **Deciders**: lusoris
+- **Tags**: governance, agents, ci, hooks, documentation, standards
+
+## Context
+
+Pelorus and its VMAFx sibling share code, reviewers, release discipline, and a
+public interop ABI, but only VMAFx currently carries Praetor's declared policy,
+debt baseline, canonical agent contexts, and standards CI. Copying VMAFx's
+generated files is unsafe: VMAFx has a Go/pre-commit build system, while Pelorus
+uses Meson, C, GLSL, and an FFmpeg patch replay. Praetor also generates branch
+and agent artifacts for `main`; Pelorus deliberately uses `master`.
+
+Praetor commit `846da5908d15b3cf5581ca6b0205cc644b249599`, the revision
+currently enforced by VMAFx, measures 60 existing Pelorus findings: 30 HISS-01,
+one HISS-02, and 29 HISS-04. Its generated Makefile contains failing placeholder
+build targets, generated Lefthook commands assume Go, and `adopt` installs hooks
+into the shared Git directory even when invoked from a disposable worktree.
+Those outputs need project-specific reconciliation before they can be treated as
+an operational gate.
+
+## Decision
+
+We will adopt Praetor as scaffolding plus a ratcheting baseline, pinned to
+`846da5908d15b3cf5581ca6b0205cc644b249599`, without refactoring product code to
+clear legacy findings in the adoption change. Pelorus will use the
+`native-gpu-systems` profile with `security:high`, `api:public-contract`,
+`docs:seo-portal`, and `agent:sandboxed`. `AGENTS.md` and `.agents/agents/*.md`
+become canonical sources for generated vendor contexts and reviewer personas.
+`make verify-all` and Lefthook will invoke Pelorus's existing Meson, C, shader,
+documentation, and governance gates. CI will verify compiled contexts and the
+baseline on every pull request and push to `master`.
+
+The manifest will explicitly decline `branch-ruleset` until Praetor can target a
+repository's real default branch, `dev-container` until Pelorus has a tested
+Vulkan-capable container, and `git-hooks` because its generated commands assume
+Go and its adoption step mutates shared Git state. No implementation command may
+run `sync --remote`. Generated Paperclip and checkpoint artifacts will target
+`master`. Pelorus will own an adapted `lefthook.yml`; installation remains an
+explicit `make hooks-install` action, so adoption and CI cannot mutate the
+repository's shared `.git/hooks` directory.
+
+## Alternatives considered
+
+| Option | Pros | Cons | Why not chosen |
+|---|---|---|---|
+| Copy VMAFx's adoption verbatim | Small design effort; identical visible layout | Imports Go commands, VMAFx paths, `main`, an unrelated 1,411-finding baseline, and VMAFx personas | It would claim enforcement that Pelorus cannot execute |
+| Run `praetorctl adopt --force` and commit every generated file unchanged | Maximum generated coverage | Failing Makefile, Go-only hooks, wrong branch targets, untested container, shared-hook side effect | Generated output is a starting point, not proof of a valid repository contract |
+| Adopt declarations and CI only | Smallest change | Agent contexts, personas, hooks, and local verification continue to drift | HISS-16 and cross-tool consistency are primary adoption goals |
+| Clear all 60 findings during adoption | Starts with a zero-debt baseline | Mixes governance scaffolding with broad product-code refactoring | A baseline ratchet prevents regression without destabilizing filter work |
+
+## Consequences
+
+- **Positive**: policy inputs and engine revision become reproducible; legacy
+  debt may shrink but cannot grow; six agent contexts and reviewer personas gain
+  canonical sources; one native `verify-all` command works locally and in CI.
+- **Negative**: generated contexts and persona projections add repository
+  surface area; Praetor upgrades require a deliberate baseline comparison;
+  contributors need Go 1.27 to install the pinned engine locally.
+- **Neutral / follow-ups**: enable a generated branch ruleset only after Praetor
+  supports `master`; design and test a Vulkan devcontainer separately; consider
+  touched-file enforcement after legacy debt is low enough for routine changes.
+
+## References
+
+- VMAFx ADR-1249, `origin/master` at `371ff5891ad43b6d8072d9fac132349ee3ddaaa9`.
+- Praetor commit `846da5908d15b3cf5581ca6b0205cc644b249599`.
+- [ADR-0108](0108-deep-dive-deliverables-rule.md) — adoption deliverables.
+- Source: `req`, 2026-09-20: "we need to onboard praetor as vmafx did (mostly) already" and approval to proceed with the staged implementation.
