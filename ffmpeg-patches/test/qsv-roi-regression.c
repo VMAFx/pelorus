@@ -87,6 +87,8 @@ int main(void)
     mfxExtBuffer *params_bad_den[QSV_MAX_ENC_EXTPARAM] = {0};
     mfxExtBuffer *params_bad_dims[QSV_MAX_ENC_EXTPARAM] = {0};
     mfxExtBuffer *params_interlaced[QSV_MAX_ENC_EXTPARAM] = {0};
+    mfxExtCodingOption3 external_extco3 = {0};
+    mfxExtBuffer *video_params[] = {(mfxExtBuffer *)&external_extco3};
     AVFrame *frame_a = NULL, *frame_b = NULL, *frame_overlap = NULL;
     AVFrame *frame_extended = NULL, *frame_bad_size = NULL;
     AVFrame *frame_bad_entry = NULL;
@@ -119,7 +121,10 @@ int main(void)
     q.param.mfx.RateControlMethod = MFX_RATECONTROL_CQP;
     q.ver.Major = 1;
     q.ver.Minor = 28;
-    q.pelorus_roi_mbqp_enabled = 1;
+    external_extco3.Header.BufferId = MFX_EXTBUFF_CODING_OPTION3;
+    external_extco3.Header.BufferSz = sizeof(external_extco3);
+    q.param.ExtParam = video_params;
+    q.param.NumExtParam = FF_ARRAY_ELEMS(video_params);
 
     CHECK(qsvenc_pelorus_roi_mbqp_preconditions(&avctx, &q));
     q.ver.Minor = 27;
@@ -141,9 +146,27 @@ int main(void)
     set_roi(frame_rois(frame_a), 0, 0, 33, 33, (AVRational){-1, 10});
     set_roi(frame_rois(frame_b), 0, 0, 33, 33, (AVRational){1, 10});
 
-    q.pelorus_roi_mbqp_enabled = 0;
+    /* AVQSVContext buffers replace internal buffers with the same BufferId.
+     * An external CodingOption3 therefore controls the final attached value. */
+    external_extco3.EnableMBQP = MFX_CODINGOPTION_UNKNOWN;
+    qsvenc_pelorus_roi_update_mbqp_enabled(&q);
+    q.param.ExtParam = NULL;
+    q.param.NumExtParam = 0;
     CHECK(!qsvenc_pelorus_roi_frame_uses_mbqp(&avctx, &q, frame_a));
-    q.pelorus_roi_mbqp_enabled = 1;
+    CHECK(qsvenc_setup_roi(&avctx, &q, frame_a, &ctrl_a) == 0);
+    CHECK(ctrl_a.NumExtParam == 0);
+    CHECK(set_roi_encode_ctrl(&avctx, frame_a, &ctrl_a) == 0);
+    CHECK(ctrl_a.NumExtParam == 1);
+    CHECK(ctrl_a.ExtParam[0]->BufferId == MFX_EXTBUFF_ENCODER_ROI);
+    free_encoder_ctrl(&ctrl_a);
+
+    q.param.ExtParam = video_params;
+    q.param.NumExtParam = FF_ARRAY_ELEMS(video_params);
+    external_extco3.EnableMBQP = MFX_CODINGOPTION_ON;
+    qsvenc_pelorus_roi_update_mbqp_enabled(&q);
+    q.param.ExtParam = NULL;
+    q.param.NumExtParam = 0;
+    CHECK(qsvenc_pelorus_roi_frame_uses_mbqp(&avctx, &q, frame_a));
     q.ver.Minor = 27;
     CHECK(!qsvenc_pelorus_roi_frame_uses_mbqp(&avctx, &q, frame_a));
     CHECK(qsvenc_setup_roi(&avctx, &q, frame_a, &ctrl_a) == 0);

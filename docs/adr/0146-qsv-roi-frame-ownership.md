@@ -11,11 +11,12 @@
 Patch 0005 translates `AV_FRAME_DATA_REGIONS_OF_INTEREST` into a dense
 `mfxExtMBQP` delta-QP map.  The shipped implementation stores that map once in
 `QSVEncContext` and points every frame's `mfxExtMBQP` at the same allocation.
-This is unsafe with FFmpeg's normal `async_depth > 1`: n9.0.1 keeps each
-submitted frame's `mfxEncodeCtrl` alive on its `QSVFrame` until the associated
-surface unlocks, while the context-wide map can be cleared and repainted for a
-later frame immediately after `MFXVideoENCODE_EncodeFrameAsync()` returns.
-Frame N can therefore be encoded using frame N+1's ROI map.
+This is unsafe with FFmpeg's normal `async_depth > 1`: the defect was first
+reproduced on n9.0.1, whose QSV lifecycle keeps each submitted frame's
+`mfxEncodeCtrl` alive on its `QSVFrame` until the associated surface unlocks,
+while the context-wide map can be cleared and repainted for a later frame
+immediately after `MFXVideoENCODE_EncodeFrameAsync()` returns. Frame N can
+therefore be encoded using frame N+1's ROI map.
 
 The existing portability contract also overstates what oneVPL exposes.  The
 installed oneVPL 2.17 API documents `mfxExtMBQP` as a per-frame
@@ -37,16 +38,20 @@ must be checked before allocation or narrowing.
 `pelorus_roi=1` will mean "prefer the dense Pelorus QSV map when its documented
 contract is satisfied", not "disable all ROI steering otherwise".
 
-The dense path will be used only when all five conditions hold: the build
+The dense path will be used only when all six conditions hold: the build
 headers expose the MBQP API, the QSV runtime reports API 1.28 or newer, the
-codec is HEVC, rate control is CQP, and the session is progressive. FFmpeg
-n9.0.1 does not attach `mfxExtCodingOption3` to older HEVC runtimes, so a
-dedicated state bit must record that the `EnableMBQP` request was actually
-attached before any frame may select dense MBQP. AVC, older runtimes, non-CQP
-HEVC, interlaced HEVC, and MBQP-absent builds will retain the option but fall
-back to FFmpeg's stock per-region `mfxExtEncoderROI` path with diagnostics that
-describe the fallback accurately. No documentation or log will call the
-`EnableMBQP` request a runtime capability probe.
+codec is HEVC, rate control is CQP, the session is progressive, and the final
+attached CodingOption3 buffer has `EnableMBQP=ON`. FFmpeg n9.0.2 does not attach
+`mfxExtCodingOption3` to older HEVC runtimes, while an `AVQSVContext`
+CodingOption3 buffer can replace Pelorus's internal buffer during initialization.
+AVC, older runtimes, non-CQP HEVC, interlaced HEVC, MBQP-absent builds, and a
+final replacement without `EnableMBQP=ON` retain the stock per-region
+`mfxExtEncoderROI` path. No documentation or log will call the `EnableMBQP`
+request a runtime capability probe.
+
+The final-list result is cached immediately after successful encoder init and
+reset. Frame submission must not rescan `q->param.ExtParam` because FFmpeg's
+parameter-retrieval helper later uses a transient stack-local query list.
 
 Each ROI-bearing dense-path frame will own one zeroed allocation containing the
 `mfxExtMBQP` header followed immediately by that frame's signed-byte delta map.
@@ -66,7 +71,7 @@ reject overflow before allocating or writing.
 
 | Option | Pros | Cons | Why not chosen |
 |---|---|---|---|
-| Per-frame contiguous header + map allocation | Matches `mfxEncodeCtrl` ownership; existing cleanup frees everything; no shared mutation | One allocation per ROI-bearing frame | **Chosen**: the lifetime follows the exact n9.0.1 surface lifecycle with the smallest change |
+| Per-frame contiguous header + map allocation | Matches `mfxEncodeCtrl` ownership; existing cleanup frees everything; no shared mutation | One allocation per ROI-bearing frame | **Chosen**: the lifetime follows the exact n9.0.2 surface lifecycle with the smallest change |
 | Keep one context-wide scratch map | Lowest allocation churn | Data race in the logical async pipeline; older frames observe later maps | Rejected: this is the defect |
 | Pool `async_depth` maps in the encoder context | Amortizes allocations | Must map submissions to surface unlocks and handle dynamic queue depth/reset/error paths | Rejected: duplicates lifecycle state FFmpeg already owns on `QSVFrame` |
 | Allocate the MBQP header and map separately | Simple map sizing | `free_encoder_ctrl()` frees only the ext-buffer pointer, so the map needs a new destructor/owner and is easy to leak | Rejected: weaker ownership than one contiguous block |
@@ -82,7 +87,8 @@ reject overflow before allocating or writing.
   HEVC+CQP, and allocates one map per ROI-bearing in-flight frame.
 - **Neutral / follow-ups**: deterministic coverage will exercise two live maps,
   padded raster layout, ROI precedence, invalid dimensions/sizes, and both
-  compile-time MBQP branches against FFmpeg n9.0.1 and current oneVPL headers.
+  compile-time MBQP branches against the configured FFmpeg n9.0.2 commit and
+  current oneVPL headers.
   Hardware async execution remains a separately reported validation step; no
   hardware result will be inferred from compile or harness evidence.
 
@@ -90,7 +96,8 @@ reject overflow before allocating or writing.
 
 - [ADR-0104](0104-ffmpeg-patch-stack.md) — cumulative FFmpeg patch-stack delivery model.
 - [ADR-0114](0114-encoder-steering.md) — QSV dense-map steering decision this ADR narrows and repairs.
-- FFmpeg n9.0.1 (`bf1b838f2ab88b4f8fd83443325c782ea0e0f7fa`), `libavcodec/qsvenc.c`: `QSVFrame::enc_ctrl`, `clear_unused_frames()`, `free_encoder_ctrl()`, and `MFXVideoENCODE_EncodeFrameAsync()`.
+- FFmpeg n9.0.2 (`946fcce07b6dcd0331c8cc609192aeff5e1924f8`), `libavcodec/qsvenc.c`: current configured pin used for the focused and cumulative gates.
+- FFmpeg n9.0.1 (`bf1b838f2ab88b4f8fd83443325c782ea0e0f7fa`): original defect-reproduction baseline with the same `QSVFrame::enc_ctrl`, `clear_unused_frames()`, `free_encoder_ctrl()`, and `MFXVideoENCODE_EncodeFrameAsync()` lifetime.
 - Intel oneVPL 2.17, `mfxstructures.h`: `mfxExtCodingOption3::EnableMBQP`, `mfxExtMBQP`, `Pitch`, `BlockSize`, `NumQPAlloc`, and `DeltaQP`.
 - Intel oneVPL Encode Structures documentation: `mfxEncodeCtrl` and `mfxExtMBQP`.
 - Source: `req` — "per-frame mfxExtMBQP/DeltaQP ownership safe for async depth >1; HEVC+CQP uses dense delta map; AVC and non-CQP HEVC correctly fall back to stock mfxExtEncoderROI ... checked width/height/cell-count/byte-size arithmetic ... define and validate interlaced/layout behavior".

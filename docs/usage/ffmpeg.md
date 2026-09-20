@@ -108,9 +108,9 @@ storage dimensions while ROI coordinates are clipped to the visible frame,
 leaving storage-padding cells at zero.
 
 `EnableMBQP=ON` is an initialization request, not a runtime capability probe.
-Dense selection also requires the patch's state bit proving that FFmpeg attached
-that request. The patch never attaches `mfxExtMBQP` and `mfxExtEncoderROI` to
-the same frame.
+Dense selection caches the final attached CodingOption3 value after init/reset
+and requires that field to remain ON after any `AVQSVContext` replacement. The
+patch never attaches `mfxExtMBQP` and `mfxExtEncoderROI` to the same frame.
 See [QSV ROI steering](../backends/qsv-roi.md),
 [ADR-0114](../adr/0114-encoder-steering.md), and its QSV contract correction
 [ADR-0146](../adr/0146-qsv-roi-frame-ownership.md).

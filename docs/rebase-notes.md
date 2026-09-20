@@ -212,19 +212,25 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   `ffmpeg-patches/test/build-and-run.sh`; smoke `ffmpeg -h encoder=hevc_qsv |
   grep pelorus_roi` once built against a QSV-enabled toolchain. Run the focused
   deterministic gate exactly as
-  `FFMPEG_REPO=/path/to/ffmpeg BASE_TAG=n9.0.1 bash ffmpeg-patches/test/qsv-roi-regression.sh`;
-  it compiles the MBQP-present and forced-absent branches and exercises the
-  rasterizer under ASan/UBSan.
+  `FFMPEG_REPO=/path/to/ffmpeg bash ffmpeg-patches/test/qsv-roi-regression.sh`;
+  it consumes the root immutable FFmpeg pin, compiles the MBQP-present and
+  forced-absent branches, and exercises the rasterizer under ASan/UBSan. The
+  original n9.0.1 acceptance remains historical evidence; the current focused
+  and cumulative gates pass against n9.0.2.
 - **Ownership invariant (ADR-0146)**: the `mfxExtMBQP` header and its `DeltaQP`
   array are one contiguous allocation per ROI-bearing `QSVFrame`. Ownership is
   transferred through that frame's `mfxEncodeCtrl` and ends only when
   `clear_unused_frames()` observes the surface unlocked and calls
   `free_encoder_ctrl()`. Never restore context-wide mutable map scratch.
 - **Layout/portability invariants (keep on regeneration)**: dense MBQP is only
-  progressive HEVC+CQP on runtime API 1.28 or newer, and only after a dedicated
-  state bit records that FFmpeg attached the `EnableMBQP` init request. H.264,
-  runtime API 1.27 or older, non-CQP HEVC, interlaced input, and
-  `QSV_HAVE_MBQP=0` fall back to stock `mfxExtEncoderROI`. The grid is 16×16 and
+  progressive HEVC+CQP on runtime API 1.28 or newer, and only when the final
+  attached CodingOption3 buffer has `EnableMBQP=ON`. An `AVQSVContext` buffer
+  with the same BufferId replaces the internal one and therefore controls this
+  check. Cache the result after successful init/reset; do not scan
+  `q->param.ExtParam` from frame submission because parameter retrieval leaves
+  it pointing at a transient query list. H.264, runtime API 1.27 or older,
+  non-CQP HEVC, interlaced input, and `QSV_HAVE_MBQP=0` fall back to stock
+  `mfxExtEncoderROI`. The grid is 16×16 and
   sized from aligned `mfxFrameInfo.Width/Height`; rectangles clip to visible
   frame dimensions and padding cells remain zero. Keep checked `size_t`
   multiplication/addition and `UINT32_MAX` narrowing guards. `EnableMBQP` is an

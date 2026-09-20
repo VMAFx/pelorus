@@ -76,9 +76,12 @@ ffmpeg-patches/
 6. NVENC and QSV ROI patches (0004/0005) are hand-maintained libavcodec diffs.
    QSV dense `mfxExtMBQP` and stock rectangle `mfxExtEncoderROI` are mutually
    exclusive. Dense MBQP is eligible only for progressive HEVC CQP on runtime
-   API 1.28 or newer and when the final attached `mfxExtCodingOption3` buffer,
-   after external-buffer merging, has `EnableMBQP` enabled. Every other case
-   retains stock ROI. Each dense-path frame owns one contiguous header+map
+   API 1.28 or newer and when state cached after successful init/reset says the
+   final attached `mfxExtCodingOption3` buffer, after external-buffer merging,
+   has `EnableMBQP` enabled. An `AVQSVContext` same-BufferId replacement owns
+   that final value. Never rescan `q->param.ExtParam` per frame: parameter
+   retrieval uses a transient query list. Every other case retains stock ROI.
+   Each dense-path frame owns one contiguous header+map
    allocation through `QSVFrame::enc_ctrl` until its surface unlocks; never
    share mutable map scratch across asynchronous frames. Size the 16x16 raster
    from aligned `mfxFrameInfo.Width/Height`, clip regions to the visible frame,
@@ -88,6 +91,8 @@ ffmpeg-patches/
 7. Other hand-maintained encoder/bitstream diffs (NVENC ME hints, qpmap, H.274
    FGS, NVENC film grain, libaom ROI, SVT-AV1 ROI) must be compiled in their
    feature-enabled configuration. A default FFmpeg build may omit those TUs.
+   Preserve libaom's one-shot diagnostic and non-fatal fallback while its
+   non-RTC `AOME_SET_ROI_MAP` path rejects the map.
 8. `vf_pelorus_scenecut` is metadata-only: no Vulkan dependency or shader, but
    it links libpelorus. `dehalo`, `aa`, `deblock`, and `borderfix` are pure
    transforms: Vulkan/SPIR-V dependencies, no libpelorus link, no interop side

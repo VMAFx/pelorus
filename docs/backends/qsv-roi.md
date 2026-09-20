@@ -10,27 +10,31 @@ where the documented oneVPL contract is complete.
 
 | Input/build condition | Path used |
 |---|---|
-| Progressive HEVC, CQP, runtime API 1.28 or newer, MBQP headers available | Dense per-frame `mfxExtMBQP` with `MFX_MBQP_MODE_QP_DELTA` |
+| Progressive HEVC, CQP, runtime API 1.28 or newer, MBQP headers available, final CodingOption3 has `EnableMBQP=ON` | Dense per-frame `mfxExtMBQP` with `MFX_MBQP_MODE_QP_DELTA` |
 | H.264 | Stock `mfxExtEncoderROI` rectangles |
 | HEVC on runtime API 1.27 or older | Stock `mfxExtEncoderROI` rectangles |
 | HEVC with non-CQP rate control | Stock `mfxExtEncoderROI` rectangles |
 | Interlaced HEVC session or frame | Stock `mfxExtEncoderROI` rectangles |
 | Build headers older than API 1.13 | Stock `mfxExtEncoderROI` rectangles |
+| Final CodingOption3 missing or `EnableMBQP` is not ON | Stock `mfxExtEncoderROI` rectangles |
 | Frame has no ROI side data | No ROI ext-buffer is attached for that frame |
 
 The dense and rectangle ext-buffers are mutually exclusive on a frame.
 `mfxExtCodingOption3::EnableMBQP=ON` is a request made during initialization.
-FFmpeg n9.0.1 attaches that coding-option buffer to HEVC only on runtime API
-1.28 or newer; Pelorus records that the request was attached before permitting
-a dense frame. oneVPL does not define a per-frame `mfxExtMBQP` query mode that
-would make this a runtime capability probe. An actual hardware encode is
-therefore required to establish that a particular implementation honors it.
+FFmpeg n9.0.2 attaches that coding-option buffer to HEVC only on runtime API
+1.28 or newer. After successful init or reset, Pelorus caches whether the final
+attached CodingOption3 has `EnableMBQP=ON`; an `AVQSVContext` replacement with
+the field unset therefore uses stock rectangles. Frame submission consumes the
+cached result because FFmpeg's later parameter-retrieval query uses a transient
+ext-buffer list. oneVPL does not define a per-frame `mfxExtMBQP` query mode that
+would make this a runtime capability probe. An actual hardware encode is still
+required to establish that a particular implementation honors the request.
 
 ## Lifetime and layout
 
 Each dense-path frame owns one zeroed allocation containing the `mfxExtMBQP`
 header followed immediately by its signed-byte `DeltaQP` array. The allocation
-is attached to that frame's `mfxEncodeCtrl`. FFmpeg n9.0.1 keeps the control
+is attached to that frame's `mfxEncodeCtrl`. FFmpeg n9.0.2 keeps the control
 object on `QSVFrame` and frees its ext-buffers only after the corresponding QSV
 surface unlocks, so asynchronously queued frames never share mutable map data.
 
@@ -60,22 +64,24 @@ explaining why. The option does not turn unsupported dense cases into a no-op.
 
 ## Deterministic validation
 
-The hardware-independent regression applies patches 0001-0004 plus the
-source-of-truth QSV diff to a pristine FFmpeg n9.0.1 tree, runs the dense-map
-test under ASan/UBSan, and compiles the QSV translation units with MBQP both
-present and forced absent:
+The hardware-independent regression reads the immutable FFmpeg n9.0.2 tag and
+commit from root `build-config.env`, requires an explicit local checkout, and
+verifies that its namespaced tag peels to the configured commit. It applies
+patches 0001-0004 plus the source-of-truth QSV diff in a hook-neutralized,
+run-scoped worktree, runs the dense-map test under ASan/UBSan, and compiles the
+QSV translation units with MBQP both present and forced absent:
 
 ```bash
-FFMPEG_REPO=/path/to/ffmpeg \
-BASE_TAG=n9.0.1 \
-bash ffmpeg-patches/test/qsv-roi-regression.sh
+FFMPEG_REPO=/path/to/ffmpeg bash ffmpeg-patches/test/qsv-roi-regression.sh
 ```
 
 It verifies two simultaneously live frame maps, runtime 1.27 stock fallback
-versus 1.28 dense selection, attached-request state, aligned storage padding,
-overlap precedence, malformed side data, invalid dimensions, interlaced
-selection, and both compile-time branches. It does not replace an asynchronous
-on-hardware encode test.
+versus 1.28 dense selection, final CodingOption3 replacement with
+`EnableMBQP` unset versus enabled, aligned storage padding, overlap precedence,
+malformed side data, invalid dimensions, interlaced selection, and both
+compile-time branches. It does not replace an asynchronous on-hardware encode
+test. The harness was also exercised with hostile checkout/applypatch hooks;
+the hooks did not run and the owned worktree and scratch directory were removed.
 
 See [ADR-0146](../adr/0146-qsv-roi-frame-ownership.md) and the focused
 [research digest](../research/0146-qsv-roi-frame-ownership.md).
