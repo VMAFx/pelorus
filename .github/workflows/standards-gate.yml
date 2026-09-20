@@ -1,0 +1,51 @@
+name: Standards
+
+# Praetor/HISS governance gate (ADR-0145). No path filter: baseline and context
+# integrity cover every pull request.
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+concurrency:
+  group: standards-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  standards:
+    name: Standards & Invariant Verification Gate
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27'
+          cache: false
+
+      - name: Install pinned Praetor engine
+        env:
+          PRAETOR_REF: 846da5908d15b3cf5581ca6b0205cc644b249599
+        run: |
+          go install "github.com/cordanaLLM/praetor/cmd/standardsctl@${PRAETOR_REF}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Report governance engine version
+        run: standardsctl version
+
+      - name: Verify canonical agent contexts
+        run: standardsctl compile-context --verify
+
+      # Baseline-only ratchet: legacy findings may shrink but never grow.
+      # Touched-file zero-debt mode remains deferred by ADR-0145.
+      - name: Audit HISS invariants against baseline
+        run: standardsctl audit
