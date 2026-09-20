@@ -17,9 +17,12 @@ the band widths are interpreted in each plane's own pixels.**
 
 ## Algorithm
 
-One Vulkan compute dispatch, bit-depth-agnostic (`FF_VK_REP_FLOAT` UNORM). Given
-the per-edge dirty-band widths `left`, `right`, `top`, `bottom` and a plane of
-size `w × h`, the **clean interior rectangle** is
+One Vulkan compute dispatch over FFmpeg's storage-image representation.
+Borderfix copies the complete source texel without arithmetic, so it is
+bit-depth/storage-domain agnostic and does not need the `sample_scale` / `code_max`
+conversion required by arithmetic filters. Given the per-edge dirty-band widths
+`left`, `right`, `top`, `bottom` and a plane of size `w × h`, the **clean
+interior rectangle** is
 `[left, w − 1 − right] × [top, h − 1 − bottom]`. For each output pixel at
 `(x, y)`:
 
@@ -37,11 +40,11 @@ The smear is **exact and deterministic** — no threshold, no blend, no
 estimation. With all widths at their default of `0` the filter is byte-identical
 pass-through. A plane not selected in `planes` is copied through unchanged.
 
-The standalone reference shader is `libpelorus/shaders/pelorus_borderfix.comp`;
-the filter's shipped `.comp.glsl` shader implements the same clamp-and-smear (kept in lockstep,
-AGENTS hard rule 4). The only intended difference is the working domain: the
-`.comp` reads `r16ui` and normalises by 65535, the inline form reads
-`FF_VK_REP_FLOAT` (UNORM) already in `[0,1]`.
+The only shipped shader source is
+`ffmpeg-patches/files/vulkan/pelorus_borderfix.comp.glsl`, compiled to SPIR-V by
+the FFmpeg build. `libpelorus/shaders/pelorus_borderfix.comp` is a standalone,
+compile-checked reference for reading the algorithm, not a second implementation
+to keep in lockstep. There is no inline GLSL form.
 
 ## Options
 

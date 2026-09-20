@@ -8,8 +8,9 @@ sharpening leave in the flat field next to hard line-art — anime's signature
 artefact, which also costs the encoder bits coding the per-edge overshoot every
 frame. See [ADR-0123](../adr/0123-anime-dehalo.md) for the design.
 
-It is the first stage of the planned `tune=anime` pipeline. **Luma only; chroma
-passes through.**
+It is the first stage of the planned `tune=anime` pipeline. It processes luma by
+default; chroma passes through under that default, but is supported when selected
+with `planes`. A selected semi-planar chroma plane processes both U and V.
 
 ## Algorithm
 
@@ -81,9 +82,9 @@ hwupload → pelorus_dehalo → pelorus_deband → (hwdownload) → encoder
 
 ## Interactions and limits (honest scope)
 
-- **Luma only** — chroma passes through unchanged (`planes` defaults to `0x1`).
-  Anime halos are a luma-edge phenomenon; chroma dehalo is a deferred follow-up
-  (ADR-0123).
+- **Luma by default** — `planes=0x1` targets the dominant anime luma-edge
+  artefact. Chroma processing is available by selecting its physical plane; on
+  NV12/P010/P012 that selection processes both U and V.
 - **Runs before deband** in the anime chain (see above), so deband's flat-test
   is not fooled by the residual ring.
 - **Honest caveat — defaults are not yet content-tuned.** The algorithm port is

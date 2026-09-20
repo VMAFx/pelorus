@@ -34,22 +34,26 @@ ffmpeg -init_hw_device vulkan -hwaccel vulkan -hwaccel_output_format vulkan \
 When the decoder, filter, and encoder all speak Vulkan/VRAM, no frame touches
 system RAM.
 
-## Chaining stages (as more filters land)
+## Chaining stages
 
 ```bash
 -vf "pelorus_analyze_vulkan,
      pelorus_grain_estimate_vulkan=strength=2.0,
-     pelorus_mc_vulkan=bsize=16:search=24,
-     pelorus_denoise_vulkan=sigma=2.0,
+     pelorus_mc_vulkan=bsize=16:search=24:meta=1,
+     pelorus_denoise_vulkan=sigma=0.03:mc=1,
      pelorus_deband_vulkan=range=15"
 ```
 
 `pelorus_grain_estimate_vulkan` reads the **source** grain, so it runs before
-denoise removes it; the encoder re-synthesizes the grain from the emitted params.
-`pelorus_mc_vulkan` is a pass-through producer: it emits a per-block motion-vector
-field (`PEL_SEC_MOTION`) as an encoder ME hint (encode-speed, not quality; the
-NVENC `NV_ENC_EXTERNAL_ME_HINT` consumer is a gated follow-up — ADR-0116/0114).
-AVOptions: `bsize` (block edge, default 16), `search` (radius, default 24), `meta`.
+denoise removes it. AV1 consumers can re-synthesize grain from the emitted native
+frame params; the HEVC `pelorus_fgs` BSF instead requires a static model supplied
+manually through its AVOptions and does not read those frame params inline.
+`pelorus_mc_vulkan` is a pass-through producer: with `meta=1` it emits per-block
+motion and confidence fields. `pelorus_denoise_vulkan=mc=1` consumes them for a
+confidence-gated temporal warp, while the optional NVENC
+`NV_ENC_EXTERNAL_ME_HINT` consumer uses the motion field as an encode-search
+hint. AVOptions: `bsize` (block edge, default 16), `search` (radius, default 24),
+`meta`.
 
 Each stage runs in VRAM; the Pelorus side-data blob accumulates sections and
 rides every frame to the encoder.
@@ -82,12 +86,14 @@ consume it through a dense `mfxExtMBQP` delta map:
 
 ```bash
 # HEVC, NVENC, constant-QP (the clean mode for QP-map steering):
-ffmpeg ... -vf "hwupload,pelorus_analyze_vulkan=roi=1,hwdownload,format=p010le" \
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
+       -vf "format=p010le,hwupload,pelorus_analyze_vulkan=roi=1,hwdownload,format=p010le" \
        -c:v hevc_nvenc -rc constqp -qp 30 -pelorus_roi 1 out.mkv
 
-# HEVC, Intel QSV, progressive CQP (global_quality):
-ffmpeg ... -vf "...,pelorus_analyze_vulkan=roi=1,..." \
-       -c:v hevc_qsv -global_quality 30 -pelorus_roi 1 out.mkv
+# HEVC, Intel QSV, progressive CQP (-q:v also sets AV_CODEC_FLAG_QSCALE):
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
+       -vf "format=p010le,hwupload,pelorus_analyze_vulkan=roi=1,hwdownload,format=p010le" \
+       -c:v hevc_qsv -q:v 30 -pelorus_roi 1 out.mkv
 ```
 
 The option is registered on `hevc_qsv`, `h264_qsv`, `hevc_nvenc`, `h264_nvenc`,
@@ -96,6 +102,10 @@ mapping differs — see below). It defaults OFF (zero
 behaviour change). Use **constant-QP** and the encoder's own spatial/temporal AQ
 OFF: the encoder AQ overrides the delta-QP map, and VBR rate-control
 redistribution erodes the perceptual win.
+
+For QSV, use `-q:v N` (or otherwise set `AV_CODEC_FLAG_QSCALE`) to select CQP.
+`-global_quality N` alone selects ICQ in FFmpeg n9.0.2 and therefore cannot use
+the dense MBQP path. The patch does not add `-pelorus_roi` to `av1_qsv`.
 
 QSV selects the dense path only for progressive HEVC+CQP when the runtime API is
 1.28 or newer and the build headers expose `mfxExtMBQP` (oneVPL/MediaSDK API
@@ -156,9 +166,9 @@ encoders `h264_vulkan`, `hevc_vulkan` and `av1_vulkan` (one shared edit in
 every GPU vendor's Vulkan encoder, with no host roundtrip:
 
 ```bash
-# HEVC, native Vulkan-Video encoder, constant-QP (zero-copy end to end):
-ffmpeg -init_hw_device vulkan ... \
-       -vf "hwupload,pelorus_analyze_vulkan=roi=1" \
+# HEVC, native Vulkan-Video encoder, constant-QP (GPU-resident after upload):
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
+       -vf "format=p010le,hwupload,pelorus_analyze_vulkan=roi=1" \
        -c:v hevc_vulkan -rc_mode cqp -qp 30 -pelorus_roi 1 out.mkv
 ```
 

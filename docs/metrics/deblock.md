@@ -9,8 +9,9 @@ as false residual. See [ADR-0127](../adr/0127-deblock.md) for the design.
 The largest real-world pre-encode corpus is re-transcode of already-compressed
 sources. Those carry a block-grid step at the boundaries of the prior codec's
 transform; the new encoder spends real bits coding that step as residual in
-every frame. This stage removes it before the encoder sees the pixels. **Luma
-only; chroma passes through.**
+every frame. This stage removes it before the encoder sees the pixels. It
+processes luma by default; selected chroma planes are also supported, including
+both U and V in a selected semi-planar plane.
 
 ## Algorithm
 
@@ -82,9 +83,9 @@ hwupload → pelorus_deblock → pelorus_deband → (hwdownload) → encoder
 
 ## Interactions and limits (honest scope)
 
-- **Luma only** — chroma passes through unchanged (`planes` defaults to `0x1`).
-  Blocking is dominated by the luma transform grid; chroma deblock is a deferred
-  follow-up (ADR-0127).
+- **Luma by default** — `planes=0x1` targets the dominant luma transform grid.
+  Select a chroma plane when the source also needs chroma deblocking; on
+  NV12/P010/P012 that selection processes both U and V.
 - **Runs before deband** (see above), so the block step does not fool deband's
   flat-test.
 - **Complements, does not duplicate, deband** — deblock targets the block-grid

@@ -14,9 +14,11 @@ All notable changes to Pelorus are documented here. The format is
 
 - Updated the supported FFmpeg patch baseline to immutable n9.0.2, moved CI to
   Ubuntu 26.04's native Vulkan toolchain, and made generation, replay, QSV, and
-  release jobs consume the shared pin deterministically; the replay now compiles
-  every available encoder consumer and proves static `libavfilter` pkg-config
-  linkage from an external program ([ADR-0144](docs/adr/0144-ffmpeg-pin-and-ci-runner-policy.md)).
+  release jobs consume the shared pin deterministically. A manual release
+  dispatch now runs a non-publishing rehearsal while only a `v*` tag push can
+  publish; replay compiles every available encoder consumer and proves static
+  `libavfilter` pkg-config linkage from an external program
+  ([ADR-0144](docs/adr/0144-ffmpeg-pin-and-ci-runner-policy.md)).
 
 ### Fixed
 
@@ -26,7 +28,8 @@ All notable changes to Pelorus are documented here. The format is
   10/12-bit, P010/P012, and 8-bit inputs use the same numeric contract; also
   preserve both semi-planar chroma components and unowned packed lanes during
   scalar transforms, quantize shifted-format writes so P010/P012 padding bits
-  remain zero, and bound grain-estimator reductions through DCI 8K (ADR-0147).
+  remain zero, and bound grain-estimator reductions through DCI 8K
+  ([ADR-0147](docs/adr/0147-vulkan-sample-domain-and-components.md)).
 
 <!-- END UNRELEASED -->
 

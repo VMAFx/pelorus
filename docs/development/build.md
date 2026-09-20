@@ -49,3 +49,14 @@ clang-tidy -p build libpelorus/src/*.c        # touched files clean
 SemVer tags `v<major>.<minor>.<patch>`. The interop ABI is append-only from
 v0.1.0 (`PELORUS_ABI_MINOR` bumps on additions). The shared conformance fixture
 must pass in both Pelorus and vmafx before a release that touches the ABI.
+
+The `Release` workflow has two intentionally different entry points:
+
+- A manual `workflow_dispatch` is a **non-publishing rehearsal**. It runs the
+  build/fast-test gate, checks the rendered changelog, extracts release notes,
+  and constructs the FFmpeg patch-stack archive in the runner, but it cannot run
+  `gh release create` and retains no published release artifact.
+- Pushing a `v*` tag runs the same gate and packaging, then publishes the GitHub
+  release and attaches `pelorus-ffmpeg-patches-<tag>.tar.gz`. Review the tag and
+  rendered `[Unreleased]` notes before pushing: a manual dispatch is not a
+  substitute for the tag event and never publishes on its own.

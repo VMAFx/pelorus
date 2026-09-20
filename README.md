@@ -76,15 +76,15 @@ green · the deband shader compiles.**
 | Filter | Purpose | Status |
 |---|---|---|
 | `pelorus_deband_vulkan` | Smart deband (f3kdb): flatten banding + TPDF/blue-noise dither, detail-protected, zero-copy | **Working** |
-| `pelorus_dehalo_vulkan` | Anime/2D dehalo + dering: single-pass GPU port of DeHalo_alpha + FineDehalo, removes the ring next to line-art (luma-only); foundation of `tune=anime` | **Built (tuning pending)** |
+| `pelorus_dehalo_vulkan` | Anime/2D dehalo + dering: single-pass GPU port of DeHalo_alpha + FineDehalo, removes the ring next to line-art (luma by default; optional selected chroma); foundation of `tune=anime` | **Built (tuning pending)** |
 | `pelorus_denoise_vulkan` | Edge-preserving spatio-temporal denoise (the biggest BD-rate lever): NLM-lite joint bilateral + gated temporal averaging over a causal window, with optional motion-compensated warp | **Working** |
 | `pelorus_analyze_vulkan` | Measured banding/variance/edge stats → interop side data (GPU reduction + readback) | **Working** |
 | `pelorus_grain_estimate_vulkan` | Film-grain param estimation (GPU per-band HF-residual) → PEL_SEC_FILMGRAIN + native AV1 side data | **Estimator built** |
-| `pelorus_mc_vulkan` | Block-matching motion estimator → per-block MV-hint side data for the encoder (speed, not quality) | **Working** |
-| `pelorus_fgs` (BSF) | Inserts the H.274 FGC SEI into HEVC so a decoder re-synthesizes grain — the HEVC leg of the FGS round-trip (AV1 round-trips via native side data) | **Working (static model)** |
+| `pelorus_mc_vulkan` | Block-matching motion estimator → per-block motion + confidence side data for denoise warping and encoder hints | **Working** |
+| `pelorus_fgs` (BSF) | Inserts a static, AVOption-supplied H.274 FGC SEI into HEVC so a decoder re-synthesizes grain; it does not read estimator frame side data inline | **Working (static model)** |
 | `pelorus_scenecut` | Scene-cut → forced IDR: metadata-only consumer (NOT a Vulkan filter) that reads `mc`'s `PEL_SEC_MOTION.has_scene_cut` and sets `pict_type=I` so the encoder opens a fresh GOP at the cut — vendor-neutral, no per-encoder patch | **Built (BD-rate A/B pending)** |
-| `pelorus_aa_vulkan` | Anime warp anti-aliasing (awarpsharp2) + optional line-darkening (FastLineDarken): de-jaggies line-art via blurred-edge-map gradient warp, luma-only, no side data; 2nd stage of the anime `tune` chain | **Built (defaults unproven)** |
-| `pelorus_deblock_vulkan` | Re-encode deblock/dering: gated `[1 2 1]` low-pass across the prior codec's DCT block grid, smooths blocking so the new encoder skips it as false residual (luma-only); runs early, before deband | **Built (tuning pending)** |
+| `pelorus_aa_vulkan` | Anime warp anti-aliasing (awarpsharp2) + optional line-darkening (FastLineDarken): de-jaggies line-art via blurred-edge-map gradient warp, luma by default with optional selected chroma, no side data; 2nd stage of the anime `tune` chain | **Built (defaults unproven)** |
+| `pelorus_deblock_vulkan` | Re-encode deblock/dering: gated `[1 2 1]` low-pass across the prior codec's DCT block grid, smooths blocking so the new encoder skips it as false residual (luma by default; optional selected chroma); runs early, before deband | **Built (tuning pending)** |
 | `pelorus_borderfix_vulkan` | Dirty-line / border repair: clamp the dirty edge band onto the clean interior rect (the zero-copy GPU equivalent of `fillborders=smear`); all planes, per-plane-pixel widths; runs first, before any other stage | **Built (deterministic)** |
 
 **Anime tune.** For animation, compose the filters into one recommended GPU
@@ -105,19 +105,23 @@ encoder. A documented, retunable composition, not a new meta-filter. See
 - [x] Step 5 — FGS param estimation (`vf_pelorus_grain_estimate_vulkan`): GPU
       per-band HF-residual estimate → PEL_SEC_FILMGRAIN + native AV1 side data.
 - [x] Step 6 — Motion-vector hints: `vf_pelorus_mc_vulkan` producer (0007 →
-      `PEL_SEC_MOTION`) + the **NVENC ME-hint consumer** (`-pelorus_me_hints`,
-      patch 0008): the MV field seeds NVENC's external motion search (encode
-      SPEED; on-HW A/B pending). ADR-0116 / 0114 Tier 3.
+      `PEL_SEC_MOTION` + `PEL_SEC_MOTION_CONF`) + the confidence-gated denoise
+      `mc=1` warp consumer and the **NVENC ME-hint consumer**
+      (`-pelorus_me_hints`, patch 0008). The latter seeds NVENC's external motion
+      search (encode speed only; measured 4090 case showed no gain). ADR-0116 /
+      ADR-0131 / ADR-0114 Tier 3.
 - [x] Step 7 — FGS round-trip: `pelorus_fgs` BSF (patch 0010) inserts the H.274
-      FGC SEI into HEVC; `av1_nvenc` carries the estimate into NVENC's hardware
-      AV1 film-grain (`NV_ENC_FILM_GRAIN_PARAMS_AV1`, `-pelorus_film_grain`,
-      patch 0011); AV1 software encoders round-trip via native side data. Static
-      AVOption-driven HEVC model; per-frame + H.264/VVC legs are follow-ups
+      FGC SEI into HEVC from static AVOptions (manual estimator-to-BSF mapping;
+      no inline frame-side-data bridge); `av1_nvenc` carries the estimate into
+      NVENC's hardware AV1 film-grain (`NV_ENC_FILM_GRAIN_PARAMS_AV1`,
+      `-pelorus_film_grain`, patch 0011); AV1 software encoders round-trip via
+      native side data. Per-frame HEVC + H.264/VVC legs are follow-ups
       (ADR-0117 / ADR-0118).
 - [x] Step 8 — Anime dehalo: `vf_pelorus_dehalo_vulkan` (patch 0014), a
       single-pass zero-copy GPU port of HAvsFunc `DeHalo_alpha` + `FineDehalo`.
-      Removes the bright/dark ring next to line-art (luma-only; pure transform, no
-      interop). Foundation of the planned `tune=anime` pipeline. Compile-verified
+      Removes the bright/dark ring next to line-art (luma by default, with
+      optional selected chroma; pure transform, no interop). Foundation of the
+      planned `tune=anime` pipeline. Compile-verified
       and glslang-clean; on-content tuning + the SSIMULACRA2 / edge-region
       VMAF-NEG / CAMBI proof are follow-ups (ADR-0123 / ADR-0111).
 - [x] Step 9 — Scene-cut → forced IDR: `vf_pelorus_scenecut` (patch 0016), a
@@ -141,7 +145,7 @@ encoder. A documented, retunable composition, not a new meta-filter. See
   feedback-flag gap). The same map also steers **SVT-AV1** (`libsvtav1`) via its
   per-superblock ROI segment map (`SvtAv1RoiMapEvt`, ADR-0121, proven on hardware:
   CAMBI −1.5% at CRF 35, an honest modest gain on a mild synthetic source).
-  Patches 0004 / 0005 / 0009 / 0012.
+  Patches 0004 / 0005 / 0009 / 0012 (libaom) / 0013 (SVT-AV1).
 - Closed-loop QP feedback (ADR-0114 step 6 / ADR-0119): new append-only interop
   section `PEL_SEC_QPREPORT` (ABI 1.1) carries the encoder's *honored* per-block
   QP/bit decisions back into the side-data blob, plus a vendor-neutral reader stub
@@ -156,12 +160,13 @@ encoder. A documented, retunable composition, not a new meta-filter. See
 - [x] Step 10 — Anime `tune` chain: `vf_pelorus_aa_vulkan` (patch 0015) — warp
       anti-aliasing (awarpsharp2) plus optional line-darkening (FastLineDarken).
       De-jaggies line-art by warping along the gradient of a blurred edge map,
-      luma-only and side-data-free; the 2nd stage of the anime chain after dehalo.
+      luma by default with optional selected chroma, and side-data-free; the 2nd
+      stage of the anime chain after dehalo.
 - [x] Step 11 — Re-encode deblock: `vf_pelorus_deblock_vulkan` (patch 0017), a
       single-pass zero-copy GPU deblock/dering. At the prior codec's DCT block
       grid it applies a gated `[1 2 1]` low-pass, smoothing blocking so the new
-      encoder does not spend bits coding it as false residual (luma-only). Runs
-      early in the chain, before deband.
+      encoder does not spend bits coding it as false residual (luma by default;
+      optional selected chroma). Runs early in the chain, before deband.
 - [x] Step 12 — Border repair: `vf_pelorus_borderfix_vulkan` (patch 0018), a
       dirty-line / border repair pass that clamps the dirty edge band onto the
       clean interior rect — the zero-copy GPU equivalent of `fillborders=smear`.

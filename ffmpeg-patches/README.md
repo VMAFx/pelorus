@@ -4,10 +4,11 @@
 Native `vf_pelorus_*` Vulkan compute filters, shipped as a stack of patches
 against **FFmpeg n9.0.2**, pinned to peeled commit
 `946fcce07b6dcd0331c8cc609192aeff5e1924f8` — the same delivery model as the vmafx sibling's
-`ffmpeg-patches/`. The filters link **libpelorus** (the shared interop ABI +
-filter contracts) so a single filtergraph can carry the Pelorus side-data blob
-straight through to a hardware encoder, and a downstream vmafx `vf_libvmaf*` can
-read it. See [docs/adr/0104-ffmpeg-patch-stack.md](../docs/adr/0104-ffmpeg-patch-stack.md).
+`ffmpeg-patches/`. Interop-producing/consuming filters link **libpelorus** (the
+shared interop ABI + filter contracts), while pure pixel transforms do not. A
+single filtergraph can carry the Pelorus side-data blob straight through to a
+hardware encoder, and a downstream vmafx `vf_libvmaf*` can read it. See
+[docs/adr/0104-ffmpeg-patch-stack.md](../docs/adr/0104-ffmpeg-patch-stack.md).
 
 ## Layout
 
@@ -66,8 +67,12 @@ make -j ffmpeg                                             # the REAL gate: link
 ```
 
 Each compute filter is gated `*_filter_deps="vulkan spirv_compiler"`.
-Interop-consuming filters then use a guarded `require_pkg_config` probe for
-`libpelorus >= 0.2.0` plus `add_extralibs`; pure transforms do not link it.
+Interop-dependent filters then use a guarded `require_pkg_config` probe for
+`libpelorus >= 0.2.0` and a per-filter
+`*_filter_extralibs="libpelorus_extralibs"` assignment. That assignment closes
+both the FFmpeg binary link and generated `libavfilter.pc` for static external
+consumers; libpelorus is never added to global executable extralibs. Pure
+transforms carry neither the probe nor the per-filter link assignment.
 Force a filter with `--enable-filter=pelorus_deband_vulkan` to make a missing
 dependency a configure error, or disable it explicitly. Install libpelorus
 where pkg-config can see it (`--prefix=/usr`, or set `PKG_CONFIG_PATH`) before

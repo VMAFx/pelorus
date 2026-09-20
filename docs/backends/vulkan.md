@@ -58,11 +58,16 @@ Pelorus filters use FFmpeg's libavfilter Vulkan infrastructure
   integer image by its Vulkan storage container. It does not expand an
   LSB-aligned 10/12-bit code in `R16_UNORM` to the logical `[0,1]` sample range.
   Arithmetic filters obtain `sample_scale` from `AVPixFmtDescriptor`, multiply
-  every load before doing math, and divide transform results at the store
-  boundary. P010/P012 also require the descriptor `shift`; their scale is
-  slightly above 1 rather than exactly 1. Raw whole-texel copies such as
-  borderfix are exempt. `scripts/check-vulkan-storage-domain.py` enforces this
-  family contract ([ADR-0147](../adr/0147-vulkan-sample-domain-and-components.md)).
+  every load before doing math, then clamp and round transform results to the
+  logical `code_max` before inverse scaling at the store boundary:
+  `round(clamp(value, 0, 1) * code_max) / code_max / sample_scale`. `code_max`
+  is a specialization constant, keeping denoise's push block within Vulkan's
+  guaranteed 128-byte minimum. P010/P012 also require the descriptor `shift`;
+  quantizing before inverse scaling maps the logical code back into the shifted
+  storage lane and keeps its low padding bits zero. Raw whole-texel copies such
+  as borderfix are exempt. `scripts/check-vulkan-storage-domain.py` enforces
+  this family contract
+  ([ADR-0147](../adr/0147-vulkan-sample-domain-and-components.md)).
 - **Plane masks select physical planes.** A selected NV12/P010/P012 chroma
   plane contains both U and V, so scalar kernels must process both components
   under a specialization-time loop. On packed views they process only their
@@ -80,8 +85,9 @@ Pelorus filters use FFmpeg's libavfilter Vulkan infrastructure
 ## Numerical note
 
 Thresholds and strengths are expressed in the logical `[0,1]` sample domain.
-The shipped shader establishes that domain explicitly with `sample_scale`; a
-storage-image load is not assumed to be there already. Standalone
+The shipped shader establishes that domain explicitly with `sample_scale`, and
+known integer layouts use `code_max` quantization before storage-domain
+writeback; a storage-image load is not assumed to be logical already. Standalone
 `libpelorus/shaders/*.comp` files use their documented integer reference domain
 and exist to compile-check/read the algorithm, not as a second shipped shader.
 

@@ -61,7 +61,10 @@ requires headroom for the dither to survive:
 - The bench is **pinned + repeatable** (`corpus.lock` sha-pinned BBB + a
   deterministic synthetic clip).
 - A real **link bug** was found by running it: `require_pkg_config` added cflags
-  but not `-lpelorus`; fixed with `add_extralibs`, and CI now links the binary.
+  but not `-lpelorus`; fixed with per-filter
+  `*_filter_extralibs="libpelorus_extralibs"` assignments, with the static
+  dependency closure exported through `libavfilter.pc`, and CI now links the
+  binary.
 
 ## 10-bit deband: historical conclusion superseded
 
@@ -836,6 +839,7 @@ not reductions. `scripts/bench/plot_rd.py` regenerates the graph.
 3. Harness fixes shipped: `--clean-reference` (decouple scoring ref from encoder
    input) and `--vmaf-timeout` (vmaf hangs at 0% CPU *after* writing its JSON;
    the harness bounds it and reads the already-flushed result).
-4. **Measure QSV ROI on Intel HW** (`hevc_qsv -global_quality <q>` CQP, A/B
+4. **Measure QSV ROI on Intel HW** (`hevc_qsv -q:v <q>` CQP, where `-q:v` sets
+   FFmpeg's QScale flag; A/B
    `-pelorus_roi 0` vs `1`): the patch (0005) is code-complete and
    syntax/regeneration-verified, but no Intel-hardware BD-rate run exists yet.

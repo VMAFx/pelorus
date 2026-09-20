@@ -28,10 +28,13 @@ ffmpeg -init_hw_device vulkan -i in.mkv -vf "
 " -c:v hevc_nvenc -pelorus_roi 1 -preset p5 -rc constqp -qp 22 out.mkv
 ```
 
-Codec-agnostic: swap `hevc_nvenc` for `av1_nvenc`, `hevc_qsv` / `av1_qsv`, or the
-native `hevc_vulkan` (the `-pelorus_roi 1` AVOption is registered on all of them;
-see [ffmpeg.md](ffmpeg.md)). `hwupload`/`hwdownload` belong only at the edges —
-every Pelorus stage runs in VRAM.
+The pixel-processing chain is codec-agnostic: swap `hevc_nvenc` for
+`av1_nvenc`, `hevc_qsv` / `av1_qsv`, or native `hevc_vulkan`. Encoder ROI
+support is narrower: `-pelorus_roi 1` exists on NVENC, `h264_qsv`/`hevc_qsv`,
+the native Vulkan-Video encoders, and the documented software bridges, but not
+on `av1_qsv`. Drop the option when using that encoder. See
+[ffmpeg.md](ffmpeg.md). `hwupload`/`hwdownload` belong only at the edges — every
+Pelorus stage runs in VRAM.
 
 ## Stage by stage
 
@@ -41,7 +44,7 @@ every Pelorus stage runs in VRAM.
 | 2 | `pelorus_dehalo_vulkan` | **ringing / "halos"** around the line-art | `blur` (de-ring radius), `darkstr` / `brightstr` (dark/bright halo strength) |
 | 3 | `pelorus_aa_vulkan` | **jaggies / aliasing** on lines (warp AA + line-darkening) | `depth` (warp strength), `blur`, `darkstr` (line darkening) |
 | 4 | `pelorus_deband_vulkan` | **banding** on the flats (smart f3kdb + dither) | `range`, `thry`, `dither=bluenoise`, `dynamic=1`, `protect=1` |
-| — | `-pelorus_roi 1` (encoder) | the encoder **honors** the stage-1 ROI map (dense per-block delta-QP) | requires constant-QP, AQ off |
+| — | `-pelorus_roi 1` (supported encoder) | the encoder **honors** the stage-1 ROI map; representation is encoder-specific (dense NVENC map, eligible HEVC QSV MBQP, stock QSV rectangles otherwise, or segmented/native maps) | prefer constant-QP, AQ off; see encoder-specific scope |
 
 Per-filter docs: [analyze](../metrics/analyze.md) · [dehalo](../metrics/dehalo.md)
 · [aa](../metrics/aa.md) · [deband](../metrics/deband.md). Encoder ROI steering:
@@ -78,8 +81,11 @@ reaches the decoded output — the documented v0.1 "8-bit wash" lesson
 `-pelorus_roi 1` makes the encoder honor the stage-1 ROI map, but only under the
 right rate control:
 
-- **Use constant-QP** (`-rc constqp -qp N` on NVENC; `-global_quality N` on QSV).
+- **Use constant-QP** (`-rc constqp -qp N` on NVENC; `-q:v N` on QSV).
   In VBR/CBR the rate-control redistribution erodes the perceptual win.
+- **QSV dense maps are HEVC-only.** `-q:v N` sets the QScale flag needed for
+  CQP; `-global_quality N` alone selects ICQ and falls back to stock rectangles.
+  `av1_qsv` has no `-pelorus_roi` option.
 - **Turn the encoder's own spatial/temporal AQ off.** The encoder's variance-AQ
   *overrides* the delta-QP map (a one-shot warning fires otherwise).
 

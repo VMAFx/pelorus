@@ -4,7 +4,9 @@
 Pelorus patch 0005 adds `-pelorus_roi` to FFmpeg's `h264_qsv` and `hevc_qsv`
 encoders. It consumes standard `AV_FRAME_DATA_REGIONS_OF_INTEREST` side data.
 The option defaults to `0`; enabling it prefers a dense QSV delta-QP map only
-where the documented oneVPL contract is complete.
+for eligible HEVC sessions where the documented oneVPL contract is complete.
+It is not registered on `av1_qsv`; H.264 and HEVC are the only QSV encoders in
+this patch.
 
 ## Selection contract
 
@@ -53,10 +55,15 @@ Use runtime API 1.28 or newer with progressive HEVC+CQP when dense steering is
 wanted:
 
 ```bash
-ffmpeg -i input.mkv \
-  -vf "...,pelorus_analyze_vulkan=roi=1,..." \
-  -c:v hevc_qsv -global_quality 30 -pelorus_roi 1 output.mkv
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
+  -i input.mkv \
+  -vf "format=p010le,hwupload,pelorus_analyze_vulkan=roi=1,hwdownload,format=p010le" \
+  -c:v hevc_qsv -q:v 30 -pelorus_roi 1 output.mkv
 ```
+
+`-q:v 30` sets FFmpeg's QScale flag as well as the quality value, so
+`select_rc_mode()` actually selects QSV CQP. `-global_quality 30` by itself
+selects ICQ and therefore takes the stock rectangle fallback, not dense MBQP.
 
 H.264, an older runtime, or another HEVC rate-control mode is valid, but
 `-pelorus_roi 1` then selects the stock rectangle path and emits a diagnostic

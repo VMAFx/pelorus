@@ -12,8 +12,10 @@ the integer storage layout. Decision:
 
 ## What it does
 
-Anti-aliasing is **luma only**; chroma planes pass through unchanged. Per luma
-pixel, in one pass:
+Anti-aliasing processes **luma by default** (`planes=0x1`). Chroma passes
+through under that default, but selecting a chroma plane applies the same
+operation; selecting the semi-planar NV12/P010/P012 chroma plane processes both
+U and V. Per selected component, in one pass:
 
 1. **Blurred edge-strength map.** A Sobel magnitude per pixel is clamped to a
    ceiling (`thresh`) and averaged over a `(2·blur+1)²` box to produce a smooth

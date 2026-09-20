@@ -8,6 +8,11 @@ before encode. It is the HEVC/H.274 leg of the film-grain round-trip that
 `vf_pelorus_grain_estimate_vulkan` ([ADR-0115](../adr/0115-grain-estimate.md))
 started; the design is [ADR-0117](../adr/0117-grain-fgs-bsf.md).
 
+**No inline side-data bridge exists.** The BSF never reads
+`PEL_SEC_FILMGRAIN` or `AV_FRAME_DATA_FILM_GRAIN_PARAMS`; it always writes the
+static values supplied through its own AVOptions. Putting the estimator and BSF
+in one transcode command does not connect them automatically.
+
 ## Why a BSF (and why HEVC specifically)
 
 Grain is temporally incoherent, so a block encoder cannot inter-predict it and
@@ -36,9 +41,10 @@ via AVOptions — the canonical FFmpeg metadata-BSF contract (`hevc_metadata`,
 opt-in and a no-op by construction: it passes the stream through unchanged unless
 at least one colour component is selected.
 
-The estimator's parameters map directly onto the options (see the recipe below),
-so the intended workflow is: run the estimator once, read its H.274 scalars and
-per-band scaling, and pass the corresponding option values to `pelorus_fgs`.
+The estimator's parameters map onto the options (see the recipe below), so the
+intended workflow is: run the estimator once, read its H.274 scalars and
+per-band scaling with suitable analysis tooling, manually derive the static
+values, and pass them to `pelorus_fgs`.
 Per-frame, time-varying grain models are a follow-up that would need a side-data
 channel that does not exist in stock FFmpeg.
 
@@ -63,7 +69,7 @@ bands onto multiple FGC intensity intervals is a follow-up (ADR-0117).
 
 ## Mapping the estimator's output to the options
 
-`vf_pelorus_grain_estimate_vulkan` (model=h274) emits, in the
+`vf_pelorus_grain_estimate_vulkan` (`model=h274`) emits, in the
 `PEL_SEC_FILMGRAIN` interop section:
 
 - `h274_model_id` → `model_id`
@@ -81,8 +87,9 @@ to one luma scale:
 - `scale_c` is the chroma counterpart; leave at the default unless you select
   `cb`/`cr` (the estimator derives chroma from luma by default).
 
-These are guidance values, not a measured BD-rate-optimal mapping; tune against
-the vmafx encoded-VMAF oracle ([ADR-0106](../adr/0106-autotune-control-plane.md)).
+This is an offline/manual mapping recipe, not code the BSF performs. These are
+guidance values, not a measured BD-rate-optimal mapping; tune against the vmafx
+encoded-VMAF oracle ([ADR-0106](../adr/0106-autotune-control-plane.md)).
 
 ## Usage
 
@@ -103,7 +110,9 @@ ffmpeg -i out.hevc -c:v copy -bsf:v trace_headers -f null - 2>&1 | grep -A12 "Fi
 ```
 
 The BSF also runs inline during a transcode (`-bsf:v pelorus_fgs=...` on the
-HEVC output), and over a remuxed `.mp4`/`.mkv` HEVC track.
+HEVC output), and over a remuxed `.mp4`/`.mkv` HEVC track. "Inline" describes
+packet placement only: its model still comes exclusively from those static
+AVOptions, not from the filtergraph's frame side data.
 
 ## Verification (this PR)
 
