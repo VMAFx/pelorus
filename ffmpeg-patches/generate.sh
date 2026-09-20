@@ -23,18 +23,18 @@ source "$ROOT/build-config.env"
 : "${FFMPEG_REPO:?FFMPEG_REPO must name a local FFmpeg checkout}"
 FILES_DIR="$HERE/files"
 RUN_ROOT=""
-WORKTREE_CREATED=0
+OWNED_WORKTREE=""
 
 cleanup() {
     local status=$?
     local cleanup_failed=0
     trap - EXIT
 
-    if (( WORKTREE_CREATED )); then
-        git -C "$WORKTREE" am --abort >/dev/null 2>&1 || true
-        if ! git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE" \
+    if [[ -n "$OWNED_WORKTREE" ]]; then
+        git -C "$OWNED_WORKTREE" am --abort >/dev/null 2>&1 || true
+        if ! git -C "$FFMPEG_REPO" worktree remove "$OWNED_WORKTREE" \
             >/dev/null 2>&1; then
-            echo "WARNING: could not remove owned worktree: $WORKTREE" >&2
+            echo "WARNING: could not remove owned worktree: $OWNED_WORKTREE" >&2
             cleanup_failed=1
         fi
     fi
@@ -50,11 +50,6 @@ cleanup() {
     exit "$status"
 }
 
-trap cleanup EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
 if [[ ${WORKTREE+x} ]]; then
     if [[ -z "$WORKTREE" ]]; then
         echo "ERROR: WORKTREE must not be empty when supplied" >&2
@@ -66,6 +61,14 @@ if [[ ${WORKTREE+x} ]]; then
     fi
 else
     RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/pelorus-ffmpeg-gen.XXXXXX")"
+fi
+
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [[ -n "$RUN_ROOT" ]]; then
     WORKTREE="$RUN_ROOT/ffmpeg"
 fi
 
@@ -74,7 +77,7 @@ if ! git -C "$FFMPEG_REPO" rev-parse --git-dir >/dev/null 2>&1; then
     exit 1
 fi
 if ! TAG_COMMIT="$(git -C "$FFMPEG_REPO" rev-parse --verify \
-    "${FFMPEG_TAG}^{commit}" 2>/dev/null)"; then
+    "refs/tags/${FFMPEG_TAG}^{commit}" 2>/dev/null)"; then
     echo "ERROR: configured FFmpeg tag is unavailable locally: $FFMPEG_TAG" >&2
     exit 1
 fi
@@ -93,7 +96,7 @@ export GIT_AUTHOR_DATE="2026-01-01T00:00:00+00:00"
 export GIT_COMMITTER_DATE="2026-01-01T00:00:00+00:00"
 
 git -C "$FFMPEG_REPO" worktree add --detach "$WORKTREE" "$FFMPEG_COMMIT"
-WORKTREE_CREATED=1
+OWNED_WORKTREE="$WORKTREE"
 
 # FFmpeg 9 moved Vulkan filters from runtime-built inline GLSL to shaders compiled
 # to SPIR-V at build time (ADR-0143). Each filter therefore ships a .comp.glsl that
