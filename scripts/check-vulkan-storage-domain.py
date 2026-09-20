@@ -53,7 +53,10 @@ def is_raw_copy(statement: str) -> bool:
 def is_preserving_read_modify_write(statement: str, full_text: str) -> bool:
     """Recognize a raw texel loaded solely to preserve untouched components."""
 
-    match = re.search(r"vec4\s+([A-Za-z_]\w*)\s*=\s*imageLoad\s*\(", statement)
+    match = re.search(
+        r"vec4\s+([A-Za-z_]\w*)\s*=\s*(?:[^;?]+\?\s*)?imageLoad\s*\(",
+        statement,
+    )
     if not match:
         return False
     name = re.escape(match.group(1))

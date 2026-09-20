@@ -29,8 +29,9 @@
  * so the shader is now compiled to SPIR-V at build time and linked in — which
  * retires that duplication and the whole class of lockstep-drift defects.
  *
- * Works in FF_VK_REP_FLOAT (UNORM) space, i.e. samples are already in [0,1];
- * the old standalone .comp normalized r16ui by 65535 instead.
+ * Storage-image loads are converted from FF_VK_REP_FLOAT's container UNORM
+ * units into the logical sample domain before the edge gate or filter runs.
+ * Results are converted back only at the imageStore boundary.
  */
 
 #pragma shader_stage(compute)
@@ -46,45 +47,57 @@ layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
  * (the rest are copied through). Both were C-unrolled loop bounds before. */
 layout (constant_id = 0) const uint planes     = 0;
 layout (constant_id = 1) const uint plane_mask = 0x1;
+layout (constant_id = 2) const uint semi_planar = 0;
 
 layout (push_constant, std430) uniform pushConstants {
     int   bsize;
     int   edge;
     float thr;
     float str;
+    float sample_scale;
 };
 
 layout (set = 0, binding = 0) uniform readonly  image2D input_images[];
 layout (set = 0, binding = 1) uniform writeonly image2D output_images[];
 
-float pel_luma(int idx, ivec2 p, ivec2 sz) {
-    return imageLoad(input_images[idx], clamp(p, ivec2(0), sz - ivec2(1))).x;
+float pel_to_sample(float value) {
+    return value * sample_scale;
+}
+float pel_to_storage(float value) {
+    return value / sample_scale;
+}
+uint pel_component_count(uint plane) {
+    return (semi_planar != 0u && plane == 1u) ? 2u : 1u;
+}
+float pel_component(int idx, int comp, ivec2 p, ivec2 sz) {
+    return pel_to_sample(
+        imageLoad(input_images[idx], clamp(p, ivec2(0), sz - ivec2(1)))[comp]);
 }
 
-void deblock(ivec2 pos, int idx) {
+float deblock(ivec2 pos, int idx, int comp) {
     ivec2 sz = imageSize(output_images[idx]);
     int bs = max(bsize, 2);
-    float c = pel_luma(idx, pos, sz);
+    float c = pel_component(idx, comp, pos, sz);
     float result = c;
     int dx = min(pos.x % bs, bs - (pos.x % bs));
     int dy = min(pos.y % bs, bs - (pos.y % bs));
     if (dx <= edge) {
-        float l = pel_luma(idx, pos + ivec2(-1, 0), sz);
-        float r = pel_luma(idx, pos + ivec2( 1, 0), sz);
+        float l = pel_component(idx, comp, pos + ivec2(-1, 0), sz);
+        float r = pel_component(idx, comp, pos + ivec2( 1, 0), sz);
         if (abs(l - r) < thr) {
             float lp = (l + 2.0 * result + r) * 0.25;
             result = mix(result, lp, str);
         }
     }
     if (dy <= edge) {
-        float u = pel_luma(idx, pos + ivec2(0, -1), sz);
-        float d = pel_luma(idx, pos + ivec2(0,  1), sz);
+        float u = pel_component(idx, comp, pos + ivec2(0, -1), sz);
+        float d = pel_component(idx, comp, pos + ivec2(0,  1), sz);
         if (abs(u - d) < thr) {
             float lp = (u + 2.0 * result + d) * 0.25;
             result = mix(result, lp, str);
         }
     }
-    imageStore(output_images[idx], pos, vec4(clamp(result, 0.0, 1.0)));
+    return clamp(result, 0.0, 1.0);
 }
 
 void main()
@@ -101,9 +114,16 @@ void main()
         if (!all(lessThan(pos, size)))
             return;
 
-        if ((plane_mask & (1u << i)) != 0u)
-            deblock(pos, int(i));
-        else
+        if ((plane_mask & (1u << i)) != 0u) {
+            vec4 texel = imageLoad(input_images[i], pos);
+            const uint ncomp = pel_component_count(i);
+            for (uint c = 0u; c < ncomp; c++) {
+                const int comp = int(c);
+                texel[comp] = pel_to_storage(deblock(pos, int(i), comp));
+            }
+            imageStore(output_images[i], pos, texel);
+        } else {
             imageStore(output_images[i], pos, imageLoad(input_images[i], pos));
+        }
     }
 }

@@ -46,6 +46,7 @@ layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
 layout (constant_id = 0) const uint planes     = 0;
 layout (constant_id = 1) const uint plane_mask = 0x1;
 layout (constant_id = 2) const uint tile       = 0;
+layout (constant_id = 3) const uint semi_planar = 0;
 
 layout (push_constant, std430) uniform pushConstants {
     int   blur_r;
@@ -55,6 +56,7 @@ layout (push_constant, std430) uniform pushConstants {
     float highsens;
     float edge_thr;
     float ring;
+    float sample_scale;
 };
 
 layout (set = 0, binding = 0) uniform readonly  image2D input_images[];
@@ -71,6 +73,21 @@ const int MAX_R = 8;
  * memory at all (the pre-FFmpeg-9 generator simply did not emit the array). */
 shared float s_tile[(tile != 0u) ? (PEL_TILE * PEL_TILE) : 1];
 
+float pel_to_sample(float value)
+{
+    return value * sample_scale;
+}
+
+float pel_to_storage(float value)
+{
+    return value / sample_scale;
+}
+
+uint pel_component_count(uint plane)
+{
+    return (semi_planar != 0u && plane == 1u) ? 2u : 1u;
+}
+
 /* Shared-memory tiling of the box-blur window (ADR-0139, opt-in tile=1). Every
  * luma fetch in dehalo() — the box_blur (2r+1)^2 window read 5x per pixel at the
  * centre + 4 cross offsets, the Sobel/contrast 3x3, the ring scan — goes through
@@ -84,7 +101,7 @@ shared float s_tile[(tile != 0u) ? (PEL_TILE * PEL_TILE) : 1];
  * are all specialization constants) so its barriers are workgroup-uniform; the
  * leading barrier protects the prior plane's readers before this plane
  * overwrites s_tile. */
-void pel_load_tile(int idx, ivec2 sz)
+void pel_load_tile(int idx, int comp, ivec2 sz)
 {
     ivec2 wgsz = ivec2(gl_WorkGroupSize.xy);
     ivec2 base = ivec2(gl_WorkGroupID.xy) * wgsz - PEL_HALO;
@@ -95,8 +112,9 @@ void pel_load_tile(int idx, ivec2 sz)
         ivec2 t = ivec2(int(k) - (int(k) / PEL_TILE) * PEL_TILE,
                         int(k) / PEL_TILE);
         ivec2 p = base + t;
-        s_tile[k] = imageLoad(input_images[idx],
-                              clamp(p, ivec2(0), sz - ivec2(1))).x;
+        s_tile[k] = pel_to_sample(
+            imageLoad(input_images[idx],
+                      clamp(p, ivec2(0), sz - ivec2(1)))[comp]);
     }
     barrier();
 }
@@ -106,7 +124,7 @@ void pel_load_tile(int idx, ivec2 sz)
  * shared; the clamp mirrors the image-edge clamp so the result matches the
  * direct path exactly. At tile=0 this reads the image directly — `tile` is a
  * specialization constant, so only one of the two branches survives. */
-float pel_luma(int idx, ivec2 p, ivec2 sz)
+float pel_luma(int idx, int comp, ivec2 p, ivec2 sz)
 {
     ivec2 cp = clamp(p, ivec2(0), sz - ivec2(1));
     if (tile != 0u) {
@@ -114,36 +132,36 @@ float pel_luma(int idx, ivec2 p, ivec2 sz)
         ivec2 lc = cp - base;
         return s_tile[lc.y * PEL_TILE + lc.x];
     }
-    return imageLoad(input_images[idx], cp).x;
+    return pel_to_sample(imageLoad(input_images[idx], cp)[comp]);
 }
 
-float box_blur(int idx, ivec2 c, int r, ivec2 sz)
+float box_blur(int idx, int comp, ivec2 c, int r, ivec2 sz)
 {
     float acc = 0.0; float n = 0.0;
     for (int dy = -MAX_R; dy <= MAX_R; dy++) {
         if (dy < -r || dy > r) continue;
         for (int dx = -MAX_R; dx <= MAX_R; dx++) {
             if (dx < -r || dx > r) continue;
-            acc += pel_luma(idx, c + ivec2(dx, dy), sz); n += 1.0;
+            acc += pel_luma(idx, comp, c + ivec2(dx, dy), sz); n += 1.0;
         }
     }
     return acc / max(n, 1.0);
 }
 
-void dehalo(ivec2 pos, int idx)
+float dehalo(ivec2 pos, int idx, int comp)
 {
     ivec2 sz = imageSize(output_images[idx]);
     int r = clamp(blur_r, 1, MAX_R);
-    float c = pel_luma(idx, pos, sz);
-    float h  = box_blur(idx, pos,                r, sz);
-    float hl = box_blur(idx, pos + ivec2(-1, 0), r, sz);
-    float hr = box_blur(idx, pos + ivec2( 1, 0), r, sz);
-    float hu = box_blur(idx, pos + ivec2( 0,-1), r, sz);
-    float hd = box_blur(idx, pos + ivec2( 0, 1), r, sz);
+    float c = pel_luma(idx, comp, pos, sz);
+    float h  = box_blur(idx, comp, pos,                r, sz);
+    float hl = box_blur(idx, comp, pos + ivec2(-1, 0), r, sz);
+    float hr = box_blur(idx, comp, pos + ivec2( 1, 0), r, sz);
+    float hu = box_blur(idx, comp, pos + ivec2( 0,-1), r, sz);
+    float hd = box_blur(idx, comp, pos + ivec2( 0, 1), r, sz);
     float oMax = c; float oMin = c;
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
-            float v = pel_luma(idx, pos + ivec2(dx, dy), sz);
+            float v = pel_luma(idx, comp, pos + ivec2(dx, dy), sz);
             oMax = max(oMax, v); oMin = min(oMin, v);
         }
     }
@@ -163,7 +181,7 @@ void dehalo(ivec2 pos, int idx)
     int k = 0;
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
-            float v = pel_luma(idx, pos + ivec2(dx, dy), sz);
+            float v = pel_luma(idx, comp, pos + ivec2(dx, dy), sz);
             gx += v * kx[k]; gy += v * ky[k]; k++;
         }
     }
@@ -173,15 +191,14 @@ void dehalo(ivec2 pos, int idx)
     bool near_line = false;
     for (int d = 1; d <= MAX_R; d++) {
         if (d > rr) break;
-        float em = max(max(pel_luma(idx, pos + ivec2(d, 0), sz),
-                           pel_luma(idx, pos + ivec2(-d, 0), sz)),
-                       max(pel_luma(idx, pos + ivec2(0, d), sz),
-                           pel_luma(idx, pos + ivec2(0,-d), sz)));
+        float em = max(max(pel_luma(idx, comp, pos + ivec2(d, 0), sz),
+                           pel_luma(idx, comp, pos + ivec2(-d, 0), sz)),
+                       max(pel_luma(idx, comp, pos + ivec2(0, d), sz),
+                           pel_luma(idx, comp, pos + ivec2(0,-d), sz)));
         if (abs(em - c) > edge_thr) near_line = true;
     }
     float ring_mask = (near_line && !on_line) ? 1.0 : 0.0;
-    float result = mix(c, out_v, ring_mask);
-    imageStore(output_images[idx], pos, vec4(clamp(result, 0.0, 1.0)));
+    return clamp(mix(c, out_v, ring_mask), 0.0, 1.0);
 }
 
 void main()
@@ -199,16 +216,25 @@ void main()
         const bool sel = (plane_mask & (1u << i)) != 0u;
 
         size = imageSize(output_images[i]);
+        const bool inb = all(lessThan(pos, size));
 
-        /* Cooperative tile load runs in uniform control flow (all invocations,
-         * before the per-thread IS_WITHIN guard) so its barriers are valid. */
-        if (tile != 0u && sel)
-            pel_load_tile(int(i), size);
-
-        if (all(lessThan(pos, size))) {
-            if (sel)
-                dehalo(pos, int(i));
-            else
+        if (sel) {
+            const uint ncomp = pel_component_count(i);
+            vec4 texel = inb ? imageLoad(input_images[i], pos) : vec4(0.0);
+            for (uint c = 0u; c < ncomp; c++) {
+                const int comp = int(c);
+                /* Cooperative tile load runs in uniform control flow (all
+                 * invocations, before the per-thread bounds guard) so its
+                 * barriers remain valid for each specialized component. */
+                if (tile != 0u)
+                    pel_load_tile(int(i), comp, size);
+                if (inb)
+                    texel[comp] = pel_to_storage(dehalo(pos, int(i), comp));
+            }
+            if (inb)
+                imageStore(output_images[i], pos, texel);
+        } else {
+            if (inb)
                 imageStore(output_images[i], pos,
                            imageLoad(input_images[i], pos));
         }

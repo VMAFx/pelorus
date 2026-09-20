@@ -92,7 +92,7 @@ Apply scale before any arithmetic in analyze and grain-estimate. Move MC scale
 into the shader before SAD/candidate selection and remove host readback
 rescaling. Recheck push-constant byte sizes and offsets.
 
-- [ ] **Step 3: Fix pixel transforms**
+- [x] **Step 3: Fix pixel transforms**
 
 Convert deband, denoise, aa, dehalo, and deblock loads into the sample domain;
 clamp there and inverse-scale at stores. Keep unselected planes raw and
@@ -104,18 +104,18 @@ borderfix untouched.
 - Modify: `vf_pelorus_{aa,dehalo,deblock,denoise}_vulkan.c`
 - Modify: matching canonical shaders under `ffmpeg-patches/files/vulkan/`
 
-- [ ] **Step 1: Detect semi-planar U/V layout once**
+- [x] **Step 1: Detect semi-planar U/V layout once**
 
 Derive the flag from `comp[1].plane == comp[2].plane`, pass it as a
 specialization constant, and keep constant IDs below the reserved 253–255.
 
-- [ ] **Step 2: Process both chroma components safely**
+- [x] **Step 2: Process both chroma components safely**
 
 Parameterize scalar loads by component. All barrier-containing loops must have
 uniform, specialization-time bounds. Use the physical-plane lane of the
 per-plane parameter vectors for both U and V.
 
-- [ ] **Step 3: Preserve unrelated components**
+- [x] **Step 3: Preserve unrelated components**
 
 Use read-modify-write for scalar stores. Do not claim RGB filtering semantics;
 prove that G/B/A survive when only the scalar component is defined.

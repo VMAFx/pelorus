@@ -33,6 +33,7 @@
 
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
+#include "pelorus_vulkan_sample.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -51,11 +52,12 @@ typedef struct PelorusAaVulkanContext {
     /* push constants — mirror the std430 block in
      * vulkan/pelorus_aa.comp.glsl, byte-for-byte */
     struct {
-        int32_t blur;     /* edge-map blur radius (0..MAX_R)                 */
-        float depth;      /* warp displacement scale (pixels per gradient)   */
-        float thresh;     /* edge-map clamp ceiling (normalized)             */
-        float darkstr;    /* line-darkening strength [0,1] (0 = off)         */
-        float edge_thr;   /* Sobel magnitude that counts as a line           */
+        int32_t blur;       /* edge-map blur radius (0..MAX_R)                 */
+        float depth;        /* warp displacement scale (pixels per gradient)   */
+        float thresh;       /* edge-map clamp ceiling (normalized)             */
+        float darkstr;      /* line-darkening strength [0,1] (0 = off)         */
+        float edge_thr;     /* Sobel magnitude that counts as a line           */
+        float sample_scale; /* storage UNORM -> logical sample domain        */
     } opts;
 
     int planes; /* plane bitmask to process (luma-only by default)           */
@@ -69,7 +71,7 @@ typedef struct PelorusAaVulkanContext {
  * bitmask and the `fast` shared-memory hoist — all previously C-side codegen
  * decisions — are now specialization constants. */
 extern const unsigned char ff_pelorus_aa_comp_spv_data[];
-extern const unsigned int  ff_pelorus_aa_comp_spv_len;
+extern const unsigned int ff_pelorus_aa_comp_spv_len;
 
 static av_cold int init_filter(AVFilterContext *ctx)
 {
@@ -78,6 +80,10 @@ static av_cold int init_filter(AVFilterContext *ctx)
     FFVulkanContext *vkctx = &s->vkctx;
     FFVulkanShader *shd = &s->shd;
     const int planes = av_pix_fmt_count_planes(vkctx->output_format);
+    const AVPixFmtDescriptor *pd = av_pix_fmt_desc_get(vkctx->output_format);
+    const int semi_planar = pd && pd->nb_components >= 3 && pd->comp[1].plane == pd->comp[2].plane;
+
+    s->opts.sample_scale = pel_vk_sample_scale(vkctx->input_format);
 
     s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
     if (!s->qf) {
@@ -92,24 +98,22 @@ static av_cold int init_filter(AVFilterContext *ctx)
      * const-folded into the generated GLSL before FFmpeg 9 unrolled the
      * per-plane loop in C. With precompiled SPIR-V they become specialization
      * constants, folded at pipeline-compile time to the same single variant. */
-    SPEC_LIST_CREATE(sl, 3, 3 * sizeof(uint32_t))
+    SPEC_LIST_CREATE(sl, 4, 4 * sizeof(uint32_t))
     SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
     SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
     SPEC_LIST_ADD(sl, 2, 32, (uint32_t)(s->fast != 0));
+    SPEC_LIST_ADD(sl, 3, 32, (uint32_t)semi_planar);
 
-    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
-                      (uint32_t []) { 32, 32, 1 }, 0);
+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 
-    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts),
-                                VK_SHADER_STAGE_COMPUTE_BIT);
+    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts), VK_SHADER_STAGE_COMPUTE_BIT);
 
     {
         FFVulkanDescriptorSetBinding desc_set[] = {
             {
                 .name = "input_images",
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
-                                                   FF_VK_REP_FLOAT),
+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
                 .mem_quali = "readonly",
                 .dimensions = 2,
                 .elems = planes,
@@ -118,8 +122,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
             {
                 .name = "output_images",
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format,
-                                                   FF_VK_REP_FLOAT),
+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format, FF_VK_REP_FLOAT),
                 .mem_quali = "writeonly",
                 .dimensions = 2,
                 .elems = planes,
@@ -129,9 +132,8 @@ static av_cold int init_filter(AVFilterContext *ctx)
         ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
     }
 
-    RET(ff_vk_shader_link(vkctx, shd,
-                          ff_pelorus_aa_comp_spv_data,
-                          ff_pelorus_aa_comp_spv_len, "main"));
+    RET(ff_vk_shader_link(vkctx, shd, ff_pelorus_aa_comp_spv_data, ff_pelorus_aa_comp_spv_len,
+                          "main"));
     RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 
     s->initialized = 1;
@@ -157,8 +159,8 @@ static int pelorus_aa_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     if (!s->initialized)
         RET(init_filter(ctx));
 
-    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in,
-                                    VK_NULL_HANDLE, 1, &s->opts, sizeof(s->opts)));
+    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in, VK_NULL_HANDLE, 1, &s->opts,
+                                    sizeof(s->opts)));
 
     err = av_frame_copy_props(out, in);
     if (err < 0)
@@ -187,23 +189,64 @@ static void pelorus_aa_vulkan_uninit(AVFilterContext *avctx)
 #define OFFSET(x) offsetof(PelorusAaVulkanContext, x)
 #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 static const AVOption pelorus_aa_vulkan_options[] = {
-    { "blur", "edge-map blur radius in pixels", OFFSET(opts.blur),
-      AV_OPT_TYPE_INT, { .i64 = 2 }, 0, 8, FLAGS },
-    { "depth", "warp displacement scale (pixels per unit gradient)", OFFSET(opts.depth),
-      AV_OPT_TYPE_FLOAT, { .dbl = 8.0 }, 0.0, 64.0, FLAGS },
-    { "thresh", "edge-map clamp ceiling (normalized)", OFFSET(opts.thresh),
-      AV_OPT_TYPE_FLOAT, { .dbl = 0.5 }, 0.0, 1.0, FLAGS },
-    { "darkstr", "line-darkening strength (0 = off)", OFFSET(opts.darkstr),
-      AV_OPT_TYPE_FLOAT, { .dbl = 0.0 }, 0.0, 1.0, FLAGS },
-    { "edge", "Sobel magnitude that counts as a line (for darkening)", OFFSET(opts.edge_thr),
-      AV_OPT_TYPE_FLOAT, { .dbl = 0.08 }, 0.0, 1.0, FLAGS },
-    { "planes", "planes to process (bitmask; default luma only)", OFFSET(planes),
-      AV_OPT_TYPE_INT, { .i64 = 0x1 }, 0, 0xF, FLAGS },
-    { "fast", "hoist the redundant sobel-mag into shared memory — bit-identical, "
-              "a large ALU-bound speedup (ADR-0140); opt-in, default off", OFFSET(fast),
-      AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
-    { NULL }
-};
+    {"blur",
+     "edge-map blur radius in pixels",
+     OFFSET(opts.blur),
+     AV_OPT_TYPE_INT,
+     {.i64 = 2},
+     0,
+     8,
+     FLAGS},
+    {"depth",
+     "warp displacement scale (pixels per unit gradient)",
+     OFFSET(opts.depth),
+     AV_OPT_TYPE_FLOAT,
+     {.dbl = 8.0},
+     0.0,
+     64.0,
+     FLAGS},
+    {"thresh",
+     "edge-map clamp ceiling (normalized)",
+     OFFSET(opts.thresh),
+     AV_OPT_TYPE_FLOAT,
+     {.dbl = 0.5},
+     0.0,
+     1.0,
+     FLAGS},
+    {"darkstr",
+     "line-darkening strength (0 = off)",
+     OFFSET(opts.darkstr),
+     AV_OPT_TYPE_FLOAT,
+     {.dbl = 0.0},
+     0.0,
+     1.0,
+     FLAGS},
+    {"edge",
+     "Sobel magnitude that counts as a line (for darkening)",
+     OFFSET(opts.edge_thr),
+     AV_OPT_TYPE_FLOAT,
+     {.dbl = 0.08},
+     0.0,
+     1.0,
+     FLAGS},
+    {"planes",
+     "planes to process (bitmask; default luma only)",
+     OFFSET(planes),
+     AV_OPT_TYPE_INT,
+     {.i64 = 0x1},
+     0,
+     0xF,
+     FLAGS},
+    {"fast",
+     "hoist the redundant sobel-mag into shared memory — bit-identical, "
+     "a large ALU-bound speedup (ADR-0140); opt-in, default off",
+     OFFSET(fast),
+     AV_OPT_TYPE_BOOL,
+     {.i64 = 0},
+     0,
+     1,
+     FLAGS},
+    {NULL}};
 
 AVFILTER_DEFINE_CLASS(pelorus_aa_vulkan);
 

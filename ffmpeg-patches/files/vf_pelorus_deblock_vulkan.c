@@ -32,6 +32,7 @@
 
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
+#include "pelorus_vulkan_sample.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -49,13 +50,15 @@ typedef struct PelorusDeblockVulkanContext {
 
     /* push constants — mirror the std430 block in the .comp.glsl, byte-for-byte */
     struct {
-        int32_t bsize;  /* prior codec block size (DCT grid, usually 8)     */
-        int32_t edge;   /* half-width of the deblocked band (px)            */
-        float thr;      /* cross-boundary step below which it is artefact   */
-        float str;      /* deblock strength [0,1]                           */
+        int32_t bsize;      /* prior codec block size (DCT grid, usually 8)     */
+        int32_t edge;       /* half-width of the deblocked band (px)            */
+        float thr;          /* threshold in the logical sample domain           */
+        float str;          /* deblock strength [0,1]                           */
+        float sample_scale; /* storage UNORM -> logical sample domain        */
     } opts;
 
-    int planes; /* plane bitmask to process (luma-only by default)          */
+    float opt_thr; /* AVOption `thr`: fraction of the *data* range          */
+    int planes;    /* plane bitmask to process (luma-only by default)          */
 } PelorusDeblockVulkanContext;
 
 /* The deblock algorithm now lives in vulkan/pelorus_deblock.comp.glsl, compiled
@@ -63,8 +66,17 @@ typedef struct PelorusDeblockVulkanContext {
  * builder (GLSLC/GLSLF/GLSLD + ff_vk_shader_init), which also retires the old
  * inline-vs-reference lockstep duplication. */
 extern const unsigned char ff_pelorus_deblock_comp_spv_data[];
-extern const unsigned int  ff_pelorus_deblock_comp_spv_len;
+extern const unsigned int ff_pelorus_deblock_comp_spv_len;
 
+/* FF_VK_REP_FLOAT normalizes against the storage container, not the bit depth.
+ * FFmpeg's Vulkan hwcontext puts an LSB-packed sub-16-bit sample into a 16-bit
+ * UNORM container without shifting, so before the shared conversion helper the
+ * shader sees raw/65535 and a sample only spans [0, (2^depth - 1)/65535] — 1/64
+ * of full scale at 10 bit, 1/16 at 12 bit. The shader now converts every
+ * arithmetic load into the logical sample domain, where `thr` retains its
+ * documented meaning, then converts results back only at the store boundary.
+ * The same descriptor-derived path handles shifted P010/P012 accurately; they
+ * are slightly above 1.0 because their maxima do not fill the UNORM container. */
 static av_cold int init_filter(AVFilterContext *ctx)
 {
     int err = 0;
@@ -72,6 +84,11 @@ static av_cold int init_filter(AVFilterContext *ctx)
     FFVulkanContext *vkctx = &s->vkctx;
     FFVulkanShader *shd = &s->shd;
     const int planes = av_pix_fmt_count_planes(vkctx->output_format);
+    const AVPixFmtDescriptor *pd = av_pix_fmt_desc_get(vkctx->output_format);
+    const int semi_planar = pd && pd->nb_components >= 3 && pd->comp[1].plane == pd->comp[2].plane;
+
+    s->opts.thr = s->opt_thr;
+    s->opts.sample_scale = pel_vk_sample_scale(vkctx->input_format);
 
     s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
     if (!s->qf) {
@@ -84,23 +101,21 @@ static av_cold int init_filter(AVFilterContext *ctx)
     /* Plane count and the plane bitmask were const-folded into the generated
      * GLSL before FFmpeg 9 unrolled the per-plane loop in C. With precompiled
      * SPIR-V they become specialization constants instead. */
-    SPEC_LIST_CREATE(sl, 2, 2 * sizeof(uint32_t))
+    SPEC_LIST_CREATE(sl, 3, 3 * sizeof(uint32_t))
     SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
     SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
+    SPEC_LIST_ADD(sl, 2, 32, (uint32_t)semi_planar);
 
-    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
-                      (uint32_t []) { 32, 32, 1 }, 0);
+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 
-    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts),
-                                VK_SHADER_STAGE_COMPUTE_BIT);
+    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts), VK_SHADER_STAGE_COMPUTE_BIT);
 
     {
         FFVulkanDescriptorSetBinding desc_set[] = {
             {
                 .name = "input_images",
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
-                                                   FF_VK_REP_FLOAT),
+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
                 .mem_quali = "readonly",
                 .dimensions = 2,
                 .elems = planes,
@@ -109,8 +124,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
             {
                 .name = "output_images",
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format,
-                                                   FF_VK_REP_FLOAT),
+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format, FF_VK_REP_FLOAT),
                 .mem_quali = "writeonly",
                 .dimensions = 2,
                 .elems = planes,
@@ -120,8 +134,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
         ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
     }
 
-    RET(ff_vk_shader_link(vkctx, shd,
-                          ff_pelorus_deblock_comp_spv_data,
+    RET(ff_vk_shader_link(vkctx, shd, ff_pelorus_deblock_comp_spv_data,
                           ff_pelorus_deblock_comp_spv_len, "main"));
     RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 
@@ -148,8 +161,8 @@ static int pelorus_deblock_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     if (!s->initialized)
         RET(init_filter(ctx));
 
-    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in,
-                                    VK_NULL_HANDLE, 1, &s->opts, sizeof(s->opts)));
+    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in, VK_NULL_HANDLE, 1, &s->opts,
+                                    sizeof(s->opts)));
 
     err = av_frame_copy_props(out, in);
     if (err < 0)
@@ -178,18 +191,47 @@ static void pelorus_deblock_vulkan_uninit(AVFilterContext *avctx)
 #define OFFSET(x) offsetof(PelorusDeblockVulkanContext, x)
 #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 static const AVOption pelorus_deblock_vulkan_options[] = {
-    { "bsize", "prior codec block size (DCT grid)", OFFSET(opts.bsize),
-      AV_OPT_TYPE_INT, { .i64 = 8 }, 2, 64, FLAGS },
-    { "edge", "half-width of the deblocked band around a boundary (px)", OFFSET(opts.edge),
-      AV_OPT_TYPE_INT, { .i64 = 1 }, 0, 8, FLAGS },
-    { "thr", "cross-boundary step below which it is an artefact (normalized)", OFFSET(opts.thr),
-      AV_OPT_TYPE_FLOAT, { .dbl = 0.06 }, 0.0, 1.0, FLAGS },
-    { "str", "deblock strength (blend toward the low-pass)", OFFSET(opts.str),
-      AV_OPT_TYPE_FLOAT, { .dbl = 0.6 }, 0.0, 1.0, FLAGS },
-    { "planes", "planes to process (bitmask; default luma only)", OFFSET(planes),
-      AV_OPT_TYPE_INT, { .i64 = 0x1 }, 0, 0xF, FLAGS },
-    { NULL }
-};
+    {"bsize",
+     "prior codec block size (DCT grid)",
+     OFFSET(opts.bsize),
+     AV_OPT_TYPE_INT,
+     {.i64 = 8},
+     2,
+     64,
+     FLAGS},
+    {"edge",
+     "half-width of the deblocked band around a boundary (px)",
+     OFFSET(opts.edge),
+     AV_OPT_TYPE_INT,
+     {.i64 = 1},
+     0,
+     8,
+     FLAGS},
+    {"thr",
+     "cross-boundary step below which it is an artefact (normalized)",
+     OFFSET(opt_thr),
+     AV_OPT_TYPE_FLOAT,
+     {.dbl = 0.06},
+     0.0,
+     1.0,
+     FLAGS},
+    {"str",
+     "deblock strength (blend toward the low-pass)",
+     OFFSET(opts.str),
+     AV_OPT_TYPE_FLOAT,
+     {.dbl = 0.6},
+     0.0,
+     1.0,
+     FLAGS},
+    {"planes",
+     "planes to process (bitmask; default luma only)",
+     OFFSET(planes),
+     AV_OPT_TYPE_INT,
+     {.i64 = 0x1},
+     0,
+     0xF,
+     FLAGS},
+    {NULL}};
 
 AVFILTER_DEFINE_CLASS(pelorus_deblock_vulkan);
 

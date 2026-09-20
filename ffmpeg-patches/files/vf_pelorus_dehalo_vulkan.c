@@ -34,6 +34,7 @@
 
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
+#include "pelorus_vulkan_sample.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -58,6 +59,7 @@ typedef struct PelorusDehaloVulkanContext {
         float highsens;     /* sensitivity gain  (normalized)                */
         float edge_thr;     /* Sobel magnitude above which a pixel is a line */
         float ring;         /* edge-mask dilation (ring half-width, pixels)  */
+        float sample_scale; /* storage UNORM -> logical sample domain        */
     } opts;
 
     int planes; /* plane bitmask to process (luma-only by default)           */
@@ -70,7 +72,7 @@ typedef struct PelorusDehaloVulkanContext {
  * (GLSLC/GLSLF/GLSLD + ff_vk_shader_init), which also retires the old
  * inline-vs-reference lockstep duplication. */
 extern const unsigned char ff_pelorus_dehalo_comp_spv_data[];
-extern const unsigned int  ff_pelorus_dehalo_comp_spv_len;
+extern const unsigned int ff_pelorus_dehalo_comp_spv_len;
 
 static av_cold int init_filter(AVFilterContext *ctx)
 {
@@ -79,6 +81,10 @@ static av_cold int init_filter(AVFilterContext *ctx)
     FFVulkanContext *vkctx = &s->vkctx;
     FFVulkanShader *shd = &s->shd;
     const int planes = av_pix_fmt_count_planes(vkctx->output_format);
+    const AVPixFmtDescriptor *pd = av_pix_fmt_desc_get(vkctx->output_format);
+    const int semi_planar = pd && pd->nb_components >= 3 && pd->comp[1].plane == pd->comp[2].plane;
+
+    s->opts.sample_scale = pel_vk_sample_scale(vkctx->input_format);
 
     s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
     if (!s->qf) {
@@ -96,24 +102,22 @@ static av_cold int init_filter(AVFilterContext *ctx)
      * driver still folds them at pipeline-creation time — including the shared
      * tile array, which is sized from `tile` and therefore costs nothing at
      * the default tile=0. */
-    SPEC_LIST_CREATE(sl, 3, 3 * sizeof(uint32_t))
+    SPEC_LIST_CREATE(sl, 4, 4 * sizeof(uint32_t))
     SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
     SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
     SPEC_LIST_ADD(sl, 2, 32, (uint32_t)s->tile);
+    SPEC_LIST_ADD(sl, 3, 32, (uint32_t)semi_planar);
 
-    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
-                      (uint32_t []) { 32, 32, 1 }, 0);
+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 
-    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts),
-                                VK_SHADER_STAGE_COMPUTE_BIT);
+    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts), VK_SHADER_STAGE_COMPUTE_BIT);
 
     {
         FFVulkanDescriptorSetBinding desc_set[] = {
             {
                 .name = "input_images",
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
-                                                   FF_VK_REP_FLOAT),
+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
                 .mem_quali = "readonly",
                 .dimensions = 2,
                 .elems = planes,
@@ -122,8 +126,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
             {
                 .name = "output_images",
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format,
-                                                   FF_VK_REP_FLOAT),
+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format, FF_VK_REP_FLOAT),
                 .mem_quali = "writeonly",
                 .dimensions = 2,
                 .elems = planes,
@@ -133,8 +136,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
         ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
     }
 
-    RET(ff_vk_shader_link(vkctx, shd,
-                          ff_pelorus_dehalo_comp_spv_data,
+    RET(ff_vk_shader_link(vkctx, shd, ff_pelorus_dehalo_comp_spv_data,
                           ff_pelorus_dehalo_comp_spv_len, "main"));
     RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 
@@ -161,8 +163,8 @@ static int pelorus_dehalo_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     if (!s->initialized)
         RET(init_filter(ctx));
 
-    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in,
-                                    VK_NULL_HANDLE, 1, &s->opts, sizeof(s->opts)));
+    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in, VK_NULL_HANDLE, 1, &s->opts,
+                                    sizeof(s->opts)));
 
     err = av_frame_copy_props(out, in);
     if (err < 0)
@@ -191,26 +193,79 @@ static void pelorus_dehalo_vulkan_uninit(AVFilterContext *avctx)
 #define OFFSET(x) offsetof(PelorusDehaloVulkanContext, x)
 #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 static const AVOption pelorus_dehalo_vulkan_options[] = {
-    { "blur", "halo-blur radius in pixels", OFFSET(opts.blur_r),
-      AV_OPT_TYPE_INT, { .i64 = 2 }, 1, 8, FLAGS },
-    { "darkstr", "pull strength for dark halos", OFFSET(opts.darkstr),
-      AV_OPT_TYPE_FLOAT, { .dbl = 1.0 }, 0.0, 1.0, FLAGS },
-    { "brightstr", "pull strength for bright halos", OFFSET(opts.brightstr),
-      AV_OPT_TYPE_FLOAT, { .dbl = 1.0 }, 0.0, 1.0, FLAGS },
-    { "lowsens", "sensitivity floor (normalized)", OFFSET(opts.lowsens),
-      AV_OPT_TYPE_FLOAT, { .dbl = 0.0625 }, 0.0, 1.0, FLAGS },
-    { "highsens", "sensitivity gain (normalized)", OFFSET(opts.highsens),
-      AV_OPT_TYPE_FLOAT, { .dbl = 0.5 }, 0.0, 4.0, FLAGS },
-    { "edge", "Sobel magnitude above which a pixel is line-art", OFFSET(opts.edge_thr),
-      AV_OPT_TYPE_FLOAT, { .dbl = 0.08 }, 0.0, 1.0, FLAGS },
-    { "ring", "edge-mask dilation (ring half-width, pixels)", OFFSET(opts.ring),
-      AV_OPT_TYPE_FLOAT, { .dbl = 2.0 }, 1.0, 8.0, FLAGS },
-    { "planes", "planes to process (bitmask; default luma only)", OFFSET(planes),
-      AV_OPT_TYPE_INT, { .i64 = 0x1 }, 0, 0xF, FLAGS },
-    { "tile", "shared-memory tile the box-blur window (faster on bandwidth-limited GPUs; bit-identical)",
-      OFFSET(tile), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
-    { NULL }
-};
+    {"blur",
+     "halo-blur radius in pixels",
+     OFFSET(opts.blur_r),
+     AV_OPT_TYPE_INT,
+     {.i64 = 2},
+     1,
+     8,
+     FLAGS},
+    {"darkstr",
+     "pull strength for dark halos",
+     OFFSET(opts.darkstr),
+     AV_OPT_TYPE_FLOAT,
+     {.dbl = 1.0},
+     0.0,
+     1.0,
+     FLAGS},
+    {"brightstr",
+     "pull strength for bright halos",
+     OFFSET(opts.brightstr),
+     AV_OPT_TYPE_FLOAT,
+     {.dbl = 1.0},
+     0.0,
+     1.0,
+     FLAGS},
+    {"lowsens",
+     "sensitivity floor (normalized)",
+     OFFSET(opts.lowsens),
+     AV_OPT_TYPE_FLOAT,
+     {.dbl = 0.0625},
+     0.0,
+     1.0,
+     FLAGS},
+    {"highsens",
+     "sensitivity gain (normalized)",
+     OFFSET(opts.highsens),
+     AV_OPT_TYPE_FLOAT,
+     {.dbl = 0.5},
+     0.0,
+     4.0,
+     FLAGS},
+    {"edge",
+     "Sobel magnitude above which a pixel is line-art",
+     OFFSET(opts.edge_thr),
+     AV_OPT_TYPE_FLOAT,
+     {.dbl = 0.08},
+     0.0,
+     1.0,
+     FLAGS},
+    {"ring",
+     "edge-mask dilation (ring half-width, pixels)",
+     OFFSET(opts.ring),
+     AV_OPT_TYPE_FLOAT,
+     {.dbl = 2.0},
+     1.0,
+     8.0,
+     FLAGS},
+    {"planes",
+     "planes to process (bitmask; default luma only)",
+     OFFSET(planes),
+     AV_OPT_TYPE_INT,
+     {.i64 = 0x1},
+     0,
+     0xF,
+     FLAGS},
+    {"tile",
+     "shared-memory tile the box-blur window (faster on bandwidth-limited GPUs; bit-identical)",
+     OFFSET(tile),
+     AV_OPT_TYPE_BOOL,
+     {.i64 = 0},
+     0,
+     1,
+     FLAGS},
+    {NULL}};
 
 AVFILTER_DEFINE_CLASS(pelorus_dehalo_vulkan);
 
