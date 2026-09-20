@@ -39,16 +39,16 @@ Requires libpelorus >= 0.2.0 (pkg-config) when the filter is enabled.
 ADR: docs/adr/0109-analyze-filter.md, docs/adr/0132-per-shot-crf-steering.md,
 docs/adr/0133-analyze-coarse-banding-cambi.md
 ---
- configure                                    |   2 +
+ configure                                    |   3 +
  libavfilter/Makefile                         |   1 +
  libavfilter/allfilters.c                     |   1 +
  libavfilter/vf_pelorus_analyze_vulkan.c      | 853 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |   1 +
  libavfilter/vulkan/pelorus_analyze.comp.glsl | 132 +++
- 6 files changed, 990 insertions(+)
+ 6 files changed, 991 insertions(+)
 
 diff --git a/configure b/configure
-index 95a4d4a1bf54c49ea7fcbe1decdf5b73a42b1e61..bcfdfa46f9b459823ca295e2363f0694751c68ef 100755
+index 00b13ed09edcf3fb2b44ff9d0bfbb4420f45c68e..aec9b3ae17deb53929fc15870fdaeb58db717c8f 100755
 --- a/configure
 +++ b/configure
 @@ -4236,6 +4236,7 @@ overlay_qsv_filter_deps="libmfx"
@@ -59,11 +59,12 @@ index 95a4d4a1bf54c49ea7fcbe1decdf5b73a42b1e61..bcfdfa46f9b459823ca295e2363f0694
  pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"
  owdenoise_filter_deps="gpl"
  pad_opencl_filter_deps="opencl"
-@@ -7459,6 +7460,7 @@ enabled libvidstab        && require_pkg_config libvidstab "vidstab >= 0.98" vid
- enabled libvmaf           && require_pkg_config libvmaf "libvmaf >= 2.0.0" libvmaf.h vmaf_init
+@@ -7460,6 +7461,8 @@ enabled libvmaf           && require_pkg_config libvmaf "libvmaf >= 2.0.0" libvm
  enabled libvmaf           && check_pkg_config libvmaf_cuda "libvmaf >= 2.0.0" libvmaf_cuda.h vmaf_cuda_state_init
- enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
-+enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+ pelorus_deband_vulkan_filter_extralibs="libpelorus_extralibs"
+ enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
++pelorus_analyze_vulkan_filter_extralibs="libpelorus_extralibs"
++enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
  enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&

@@ -71,6 +71,7 @@ typedef struct ScaleCase {
     const char *name;
     AVPixFmtDescriptor desc;
     float expected;
+    uint32_t expected_code_max;
 } ScaleCase;
 
 #define DESC(_components, _flags, _step, _shift, _depth)                    \
@@ -83,25 +84,25 @@ typedef struct ScaleCase {
 int main(void)
 {
     static const ScaleCase cases[] = {
-        {"planar-8",  DESC(3, AV_PIX_FMT_FLAG_PLANAR, 1, 0, 8),  1.0f},
+        {"planar-8",  DESC(3, AV_PIX_FMT_FLAG_PLANAR, 1, 0, 8),  1.0f, 255.0f},
         {"planar-10", DESC(3, AV_PIX_FMT_FLAG_PLANAR, 2, 0, 10),
-         65535.0f / 1023.0f},
+         65535.0f / 1023.0f, 1023.0f},
         {"planar-12", DESC(3, AV_PIX_FMT_FLAG_PLANAR, 2, 0, 12),
-         65535.0f / 4095.0f},
-        {"planar-16", DESC(3, AV_PIX_FMT_FLAG_PLANAR, 2, 0, 16), 1.0f},
+         65535.0f / 4095.0f, 4095.0f},
+        {"planar-16", DESC(3, AV_PIX_FMT_FLAG_PLANAR, 2, 0, 16), 1.0f, 65535.0f},
         {"p010", DESC(3, AV_PIX_FMT_FLAG_PLANAR, 2, 6, 10),
-         65535.0f / 65472.0f},
+         65535.0f / 65472.0f, 1023.0f},
         {"p012", DESC(3, AV_PIX_FMT_FLAG_PLANAR, 2, 4, 12),
-         65535.0f / 65520.0f},
-        {"p016", DESC(3, AV_PIX_FMT_FLAG_PLANAR, 2, 0, 16), 1.0f},
-        {"gray-10", DESC(1, 0, 2, 0, 10), 65535.0f / 1023.0f},
-        {"packed-rgba", DESC(4, AV_PIX_FMT_FLAG_RGB, 4, 0, 8), 1.0f},
+         65535.0f / 65520.0f, 4095.0f},
+        {"p016", DESC(3, AV_PIX_FMT_FLAG_PLANAR, 2, 0, 16), 1.0f, 65535.0f},
+        {"gray-10", DESC(1, 0, 2, 0, 10), 65535.0f / 1023.0f, 1023.0f},
+        {"packed-rgba", DESC(4, AV_PIX_FMT_FLAG_RGB, 4, 0, 8), 1.0f, 0.0f},
         {"float-planar", DESC(3, AV_PIX_FMT_FLAG_PLANAR | AV_PIX_FMT_FLAG_FLOAT,
-                               4, 0, 32), 1.0f},
-        {"bad-step", DESC(3, AV_PIX_FMT_FLAG_PLANAR, 3, 0, 10), 1.0f},
-        {"bad-depth-zero", DESC(3, AV_PIX_FMT_FLAG_PLANAR, 2, 0, 0), 1.0f},
-        {"bad-depth-wide", DESC(3, AV_PIX_FMT_FLAG_PLANAR, 2, 0, 17), 1.0f},
-        {"bad-shift", DESC(3, AV_PIX_FMT_FLAG_PLANAR, 2, 7, 10), 1.0f},
+                               4, 0, 32), 1.0f, 0.0f},
+        {"bad-step", DESC(3, AV_PIX_FMT_FLAG_PLANAR, 3, 0, 10), 1.0f, 0.0f},
+        {"bad-depth-zero", DESC(3, AV_PIX_FMT_FLAG_PLANAR, 2, 0, 0), 1.0f, 0.0f},
+        {"bad-depth-wide", DESC(3, AV_PIX_FMT_FLAG_PLANAR, 2, 0, 17), 1.0f, 0.0f},
+        {"bad-shift", DESC(3, AV_PIX_FMT_FLAG_PLANAR, 2, 7, 10), 1.0f, 0.0f},
     };
     size_t i;
 
@@ -109,13 +110,23 @@ int main(void)
         fputs("NULL descriptor did not fall back to 1.0\n", stderr);
         return 1;
     }
+    if (pel_vk_sample_code_max_from_desc(NULL) != 0u) {
+        fputs("NULL descriptor did not disable explicit quantization\n", stderr);
+        return 1;
+    }
 
     for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         const float actual = pel_vk_sample_scale_from_desc(&cases[i].desc);
         const float error = fabsf(actual - cases[i].expected);
+        const uint32_t code_max = pel_vk_sample_code_max_from_desc(&cases[i].desc);
         if (error > 0.00001f * fmaxf(1.0f, fabsf(cases[i].expected))) {
             fprintf(stderr, "%s: got %.9g, expected %.9g\n",
                     cases[i].name, actual, cases[i].expected);
+            return 1;
+        }
+        if (code_max != cases[i].expected_code_max) {
+            fprintf(stderr, "%s code max: got %u, expected %u\n",
+                    cases[i].name, code_max, cases[i].expected_code_max);
             return 1;
         }
     }

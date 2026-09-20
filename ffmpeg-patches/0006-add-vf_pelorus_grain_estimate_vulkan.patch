@@ -41,16 +41,16 @@ Requires libpelorus >= 0.2.0 (pkg-config) when the filter is enabled.
 
 ADR: docs/adr/0115-grain-estimate.md
 ---
- configure                                           |   2 +
+ configure                                           |   3 +
  libavfilter/Makefile                                |   1 +
  libavfilter/allfilters.c                            |   1 +
- libavfilter/vf_pelorus_grain_estimate_vulkan.c      | 644 ++++++++++++++++++++
+ libavfilter/vf_pelorus_grain_estimate_vulkan.c      | 645 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                         |   1 +
  libavfilter/vulkan/pelorus_grain_estimate.comp.glsl | 127 ++++
- 6 files changed, 776 insertions(+)
+ 6 files changed, 778 insertions(+)
 
 diff --git a/configure b/configure
-index 63623072ca0979bbe02abc337f2e2be89c46b31c..c9c23dbe9827e9439d0788ba90ed42be0e0dc69f 100755
+index c18161349c774eea0347f47effa8aa611e6b8771..0571e96aa7a4f64c2eb951c9c842462225deb3ac 100755
 --- a/configure
 +++ b/configure
 @@ -4239,6 +4239,7 @@ overlay_vulkan_filter_deps="vulkan spirv_compiler"
@@ -61,11 +61,12 @@ index 63623072ca0979bbe02abc337f2e2be89c46b31c..c9c23dbe9827e9439d0788ba90ed42be
  owdenoise_filter_deps="gpl"
  pad_opencl_filter_deps="opencl"
  pan_filter_deps="swresample"
-@@ -7463,6 +7464,7 @@ enabled libvmaf           && check_pkg_config libvmaf_cuda "libvmaf >= 2.0.0" li
- enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
- enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
- enabled pelorus_denoise_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
-+enabled pelorus_grain_estimate_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+@@ -7466,6 +7467,8 @@ pelorus_analyze_vulkan_filter_extralibs="libpelorus_extralibs"
+ enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
+ pelorus_denoise_vulkan_filter_extralibs="libpelorus_extralibs"
+ enabled pelorus_denoise_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
++pelorus_grain_estimate_vulkan_filter_extralibs="libpelorus_extralibs"
++enabled pelorus_grain_estimate_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
  enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
@@ -95,10 +96,10 @@ index a21da384818d0b64f4b5af635ae53e9a5e9f5ec4..b6aee7e0bdb6c35c4e3c720b063be56c
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_grain_estimate_vulkan.c b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..33da4a6a66cfd42137660af0e27f267bcdf203a5
+index 0000000000000000000000000000000000000000..187e0acc97c3f543aaaeea0f80eaecdc1237f0a8
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
-@@ -0,0 +1,644 @@
+@@ -0,0 +1,645 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -168,14 +169,15 @@ index 0000000000000000000000000000000000000000..33da4a6a66cfd42137660af0e27f267b
 +/* Intensity bands and atomic-contention slices. MUST match the std430 SSBO
 + * layout in pelorus_grain_estimate.comp.glsl, byte-for-byte. */
 +#define PEL_GRAIN_BANDS 8
-+#define PEL_GRAIN_SLICES 16
++#define PEL_GRAIN_SLICES 32
 +
 +/* Fixed-point scales shared by shader writes and host reads. Two distinct
 + * scales plus a residual clamp keep both uint32 accumulators overflow-safe up
 + * to 8K while preserving precision: with resid clamped to [-0.08,0.08] (lossless
 + * for real grain), resid^2 <= 0.0064, so the worst-case per-pixel contribution
-+ * times the largest per-slice flat-pixel count (~2M at 8K) stays under 2^32, and
-+ * a small real-grain residual still scales to >= 1 (no truncation-to-zero).
++ * times the largest per-slice flat-pixel count (~1.11M at DCI 8K) stays under
++ * 2^32, and a small real-grain residual still scales to >= 1 (no
++ * truncation-to-zero).
 + * MUST match pelorus_grain_estimate.comp.glsl. */
 +#define PEL_GRAIN_SUMSQ_GS 300000.0
 +#define PEL_GRAIN_CORR_GS 2000.0
@@ -754,7 +756,7 @@ index a4a7ea0ea998fa805376991447a54769fbdfa6ed..622fac07908a104a536fac3409af2d6c
 +OBJS-$(CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vulkan/pelorus_grain_estimate.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_grain_estimate.comp.glsl b/libavfilter/vulkan/pelorus_grain_estimate.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..68b5103826637e3c66da6f917819cbc988b12374
+index 0000000000000000000000000000000000000000..995b300eaf10308e8adf98b8054dbeb5c37d7517
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_grain_estimate.comp.glsl
 @@ -0,0 +1,127 @@
@@ -823,10 +825,10 @@ index 0000000000000000000000000000000000000000..68b5103826637e3c66da6f917819cbc9
 +
 +/* Mirrors PelorusGrainBuf in the filter, byte-for-byte (std430). */
 +layout (set = 0, binding = 1, std430) buffer grain_buffer {
-+    uint sumsq[128];    /* Σ resid^2 * SUMSQ_GS,   [BANDS * SLICES] */
-+    uint cnt[128];      /* flat-pixel count,       [BANDS * SLICES] */
-+    uint corr[16];      /* Σ (resid*resid_right + CORR_BIAS) * CORR_GS */
-+    uint corr_cnt[16];  /* lag-1 sample count                       */
++    uint sumsq[256];    /* Σ resid^2 * SUMSQ_GS,   [BANDS * SLICES] */
++    uint cnt[256];      /* flat-pixel count,       [BANDS * SLICES] */
++    uint corr[32];      /* Σ (resid*resid_right + CORR_BIAS) * CORR_GS */
++    uint corr_cnt[32];  /* lag-1 sample count                       */
 +};
 +
 +float pel_to_sample(float value)
@@ -841,7 +843,7 @@ index 0000000000000000000000000000000000000000..68b5103826637e3c66da6f917819cbc9
 +    const float CORR_BIAS = 1.0;
 +    const float RES_CLAMP = 0.08;
 +    const int BANDS = 8;
-+    const uint SLICES = 16u;
++    const uint SLICES = 32u;
 +    ivec2 size = ivec2(width, height);
 +    int x = int(gl_GlobalInvocationID.x);
 +    int y = int(gl_GlobalInvocationID.y);

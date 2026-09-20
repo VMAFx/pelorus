@@ -245,6 +245,14 @@ def luma(fmt, depth, shift):
         words.frombytes(raw[: count * 2])
         if sys.byteorder != "little":
             words.byteswap()
+        if shift:
+            padding_mask = (1 << shift) - 1
+            bad_padding = sum(bool(value & padding_mask) for value in words)
+            if bad_padding:
+                raise SystemExit(
+                    f"transform {fmt}: {bad_padding}/{len(words)} luma samples "
+                    "have non-zero low padding bits"
+                )
         values = ((v >> shift) for v in words)
     scale = (1 << depth) - 1
     return [v / scale for v in values]

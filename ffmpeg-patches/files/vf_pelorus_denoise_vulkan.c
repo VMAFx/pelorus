@@ -155,6 +155,9 @@ typedef struct PelorusDenoiseVulkanContext {
     int ring_count; /* valid entries in ring[] (0..n_prev)                    */
 } PelorusDenoiseVulkanContext;
 
+static_assert(sizeof(((PelorusDenoiseVulkanContext *)0)->opts) <= 128,
+              "denoise push constants exceed Vulkan's guaranteed minimum");
+
 /* The denoise algorithm now lives in vulkan/pelorus_denoise.comp.glsl, compiled
  * to SPIR-V at build time and linked in here. FFmpeg 9 removed the runtime GLSL
  * builder (GLSLC/GLSLF/GLSLD + ff_vk_shader_init), which also retires the old
@@ -172,6 +175,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
     FFVulkanContext *vkctx = &s->vkctx;
     FFVulkanShader *shd = &s->shd;
     const int planes = av_pix_fmt_count_planes(vkctx->output_format);
+    const uint32_t sample_code_max = pel_vk_sample_code_max(vkctx->output_format);
     int semi_planar = 0;
 
     /* Broadcast luma/chroma scalars into the per-plane vec4s ({Y,Cb,Cr,A}). */
@@ -229,11 +233,12 @@ static av_cold int init_filter(AVFilterContext *ctx)
      * constants, resolved at pipeline creation — the same const-folding, one step
      * later. `semi_planar` joins them so the shader knows plane 1 carries two
      * components. The push-constant block itself now lives in the .comp.glsl. */
-    SPEC_LIST_CREATE(sl, 4, 4 * sizeof(uint32_t))
+    SPEC_LIST_CREATE(sl, 5, 5 * sizeof(uint32_t))
     SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
     SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
     SPEC_LIST_ADD(sl, 2, 32, (uint32_t)(s->tile ? 1 : 0));
     SPEC_LIST_ADD(sl, 3, 32, (uint32_t)semi_planar);
+    SPEC_LIST_ADD(sl, 4, 32, sample_code_max);
 
     ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){16, 16, 1}, 0);
 

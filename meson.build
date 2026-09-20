@@ -80,3 +80,11 @@ test('vulkan-sample-scale',
      args: [meson.project_source_root() / 'scripts' / 'test-vulkan-sample-scale.py'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+
+# ADR-0115: the grain estimator reduces fixed-point samples with uint32 atomics.
+# Prove the maximum per-slice sum remains representable at DCI 8K.
+test('grain-accumulator-bounds',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-grain-accumulator-bounds.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')

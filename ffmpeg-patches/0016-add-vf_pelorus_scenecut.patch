@@ -18,25 +18,27 @@ hwdownload, just before the encoder; the motion side data rides the frame via
 av_frame_copy_props.
 
 Not a Vulkan filter: no shader, no _deps. Links libpelorus to parse the interop
-blob (require_pkg_config). Single AVOption: force_idr (default on).
+blob (guarded require_pkg_config + per-filter extralibs). Single AVOption:
+force_idr (default on).
 
 ADR: docs/adr/0126-scenecut-idr.md
 ---
- configure                         |   1 +
+ configure                         |   2 +
  libavfilter/Makefile              |   1 +
  libavfilter/allfilters.c          |   1 +
  libavfilter/vf_pelorus_scenecut.c | 111 ++++++++++++++++++++
- 4 files changed, 114 insertions(+)
+ 4 files changed, 115 insertions(+)
 
 diff --git a/configure b/configure
-index 31a1c70813cc6c40c1f96a5c35b0c67c0e0c8db8..1cc93c4d33fb624e88db02116bfd4b2f75b11c23 100755
+index 021915e788bf3f971443131919f665036148b3b6..5f48b12e31eb76d3cae37489068aa5eac5f0dccb 100755
 --- a/configure
 +++ b/configure
-@@ -7476,6 +7476,7 @@ enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelor
- enabled pelorus_denoise_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
- enabled pelorus_grain_estimate_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
- enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
-+enabled pelorus_scenecut_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+@@ -7481,6 +7481,8 @@ pelorus_grain_estimate_vulkan_filter_extralibs="libpelorus_extralibs"
+ enabled pelorus_grain_estimate_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
+ pelorus_mc_vulkan_filter_extralibs="libpelorus_extralibs"
+ enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
++pelorus_scenecut_filter_extralibs="libpelorus_extralibs"
++enabled pelorus_scenecut_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
  enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&

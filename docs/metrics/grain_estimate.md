@@ -33,8 +33,9 @@ function** models. A single Vulkan compute pass measures it, per intensity band:
    (`Σ resid·resid_right` over flat pixels) gives a coarse autocorrelation
    coefficient → a conservative AR seed.
 
-The reduction is sliced (16 slices) to cut atomic contention and summed on the
-host. The host maps the per-band RMS to the AV1 AOM piecewise scaling function
+The reduction is sliced (32 slices) to cut atomic contention and keep each
+uint32 fixed-point accumulator bounded through DCI 8K, then summed on the host.
+The host maps the per-band RMS to the AV1 AOM piecewise scaling function
 `y_points[value, scaling]` (band centre → `value`, RMS·`strength` → `scaling`),
 takes AV1-legal defaults for the shifts, and seeds `ar_coeffs_y[0]` from the
 lag-1 coefficient.

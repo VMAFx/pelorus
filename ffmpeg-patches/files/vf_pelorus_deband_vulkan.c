@@ -94,6 +94,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
     FFVulkanContext *vkctx = &s->vkctx;
     FFVulkanShader *shd = &s->shd;
     const int planes = av_pix_fmt_count_planes(vkctx->output_format);
+    const uint32_t sample_code_max = pel_vk_sample_code_max(vkctx->output_format);
 
     /* Broadcast luma/chroma scalars into the per-plane vec4s. */
     s->opts.thr[0] = (float)s->opt_thr_y;
@@ -120,9 +121,10 @@ static av_cold int init_filter(AVFilterContext *ctx)
     /* Plane count and the plane bitmask were const-folded into the generated
      * GLSL before FFmpeg 9 unrolled the per-plane loop in C. With precompiled
      * SPIR-V they become specialization constants instead. */
-    SPEC_LIST_CREATE(sl, 2, 2 * sizeof(uint32_t))
+    SPEC_LIST_CREATE(sl, 3, 3 * sizeof(uint32_t))
     SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
     SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
+    SPEC_LIST_ADD(sl, 2, 32, sample_code_max);
 
     ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 

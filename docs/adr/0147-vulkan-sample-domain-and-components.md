@@ -36,22 +36,28 @@ deblock turned an RGBA texel `fd 00 00 ff` into `fd fd fd fd`.
 Pelorus will treat storage normalization and algorithm normalization as
 different domains.
 
-1. A shared private FFmpeg helper will derive one `sample_scale` from the
-   `AVPixFmtDescriptor` for supported planar, semi-planar, and single-component
-   integer UNORM formats:
+1. A shared private FFmpeg helper will derive `sample_scale` and the logical
+   integer `code_max` from the `AVPixFmtDescriptor` for supported planar,
+   semi-planar, and single-component integer UNORM formats:
 
    ```text
    sample_scale = storage_max / (((1 << depth) - 1) << shift)
    ```
 
    where `storage_max` is 255 for an 8-bit component container and 65535 for a
-   16-bit component container. Invalid, packed, float, or otherwise unsupported
-   descriptor shapes conservatively return 1.0 rather than guessing.
+   16-bit component container, and `code_max = (1 << depth) - 1`. Invalid,
+   packed, float, or otherwise unsupported descriptor shapes conservatively
+   return scale 1.0 with explicit quantization disabled rather than guessing.
 2. Every arithmetic shader converts loads to the true sample domain before any
    threshold, difference, interpolation, accumulation, or fixed-point
-   quantization. Pixel-transform shaders clamp in that domain and divide by
-   `sample_scale` only when writing back to the storage image. Read-only filters
-   do not perform the inverse conversion.
+   quantization. Pixel-transform shaders clamp and round to `code_max` in that
+   domain before dividing by `sample_scale` at the storage boundary. The
+   explicit logical-code rounding is equivalent to native UNORM writeback for
+   unshifted formats and keeps P010/P012 low padding bits zero. Read-only
+   filters do not perform the inverse conversion.
+   `code_max` is a specialization constant because denoise already uses the
+   Vulkan baseline guarantee of 128 push-constant bytes; a compile-time guard
+   prevents that block from growing past the portable limit.
 3. `mc` applies the scale before SAD quantization. Host-side rescaling of
    `sad_out` is forbidden because it cannot recover discarded precision.
 4. The `planes` bitmask continues to address FFmpeg physical planes. An
@@ -68,7 +74,8 @@ different domains.
 6. Format-equivalence and component-survival tests are release evidence, not
    optional diagnostics. The matrix covers 8/10/12-bit planar inputs,
    NV12/P010/P012 with distinct U and V, scalar packed-RGBA preservation,
-   direct and tiled denoise, temporal/lookahead paths, and mc/analyze telemetry.
+   direct and tiled denoise, temporal/lookahead paths, analyzer telemetry, and
+   the MC-to-denoise runtime path.
 
 This is an internal FFmpeg-filter correction. It does not change the public
 libpelorus ABI, AVOption names/ranges, or the Pelorus release version.
@@ -92,8 +99,9 @@ libpelorus ABI, AVOption names/ranges, or the Pelorus release version.
   scalar YUV operator no longer broadcasts its first component into RGBA.
 - **Positive**: one helper and one regression checker make the format boundary
   reviewable across the filter family.
-- **Negative**: arithmetic shaders gain one push-constant scalar, and scalar
-  chroma transforms may run twice on a selected semi-planar plane.
+- **Negative**: arithmetic shaders gain a scale push constant, transforms gain
+  a code-max specialization constant, and scalar chroma transforms may run
+  twice on a selected semi-planar plane.
 - **Negative**: exact GPU output still requires on-device tests; SPIR-V compile
   and C translation-unit builds cannot prove numeric or component behavior.
 - **Neutral**: historical measurements made on planar 10/12-bit Vulkan inputs

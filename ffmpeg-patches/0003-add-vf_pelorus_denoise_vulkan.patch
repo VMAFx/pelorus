@@ -37,16 +37,16 @@ Requires libpelorus >= 0.2.0 (pkg-config) when the filter is enabled.
 
 ADR: docs/adr/0112-temporal-denoise.md
 ---
- configure                                    |    2 +
+ configure                                    |    3 +
  libavfilter/Makefile                         |    1 +
  libavfilter/allfilters.c                     |    1 +
- libavfilter/vf_pelorus_denoise_vulkan.c      | 1073 ++++++++++++++++++++
+ libavfilter/vf_pelorus_denoise_vulkan.c      | 1078 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |    1 +
- libavfilter/vulkan/pelorus_denoise.comp.glsl |  403 ++++++++
- 6 files changed, 1481 insertions(+)
+ libavfilter/vulkan/pelorus_denoise.comp.glsl |  407 ++++++++
+ 6 files changed, 1491 insertions(+)
 
 diff --git a/configure b/configure
-index bcfdfa46f9b459823ca295e2363f0694751c68ef..63623072ca0979bbe02abc337f2e2be89c46b31c 100755
+index aec9b3ae17deb53929fc15870fdaeb58db717c8f..c18161349c774eea0347f47effa8aa611e6b8771 100755
 --- a/configure
 +++ b/configure
 @@ -4238,6 +4238,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
@@ -57,11 +57,12 @@ index bcfdfa46f9b459823ca295e2363f0694751c68ef..63623072ca0979bbe02abc337f2e2be8
  owdenoise_filter_deps="gpl"
  pad_opencl_filter_deps="opencl"
  pan_filter_deps="swresample"
-@@ -7461,6 +7462,7 @@ enabled libvmaf           && require_pkg_config libvmaf "libvmaf >= 2.0.0" libvm
- enabled libvmaf           && check_pkg_config libvmaf_cuda "libvmaf >= 2.0.0" libvmaf_cuda.h vmaf_cuda_state_init
- enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
- enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
-+enabled pelorus_denoise_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+@@ -7463,6 +7464,8 @@ pelorus_deband_vulkan_filter_extralibs="libpelorus_extralibs"
+ enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
+ pelorus_analyze_vulkan_filter_extralibs="libpelorus_extralibs"
+ enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
++pelorus_denoise_vulkan_filter_extralibs="libpelorus_extralibs"
++enabled pelorus_denoise_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
  enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
@@ -91,10 +92,10 @@ index c781df8365397465a0f8cb2c25ac450585938b01..a21da384818d0b64f4b5af635ae53e9a
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_denoise_vulkan.c b/libavfilter/vf_pelorus_denoise_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..31693a2d942e456b7165587b7c8f61b8a53ef2fa
+index 0000000000000000000000000000000000000000..a9b5b9dba3511c64740fde46b32a70118bedeca5
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_denoise_vulkan.c
-@@ -0,0 +1,1073 @@
+@@ -0,0 +1,1078 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -252,6 +253,9 @@ index 0000000000000000000000000000000000000000..31693a2d942e456b7165587b7c8f61b8
 +    int ring_count; /* valid entries in ring[] (0..n_prev)                    */
 +} PelorusDenoiseVulkanContext;
 +
++static_assert(sizeof(((PelorusDenoiseVulkanContext *)0)->opts) <= 128,
++              "denoise push constants exceed Vulkan's guaranteed minimum");
++
 +/* The denoise algorithm now lives in vulkan/pelorus_denoise.comp.glsl, compiled
 + * to SPIR-V at build time and linked in here. FFmpeg 9 removed the runtime GLSL
 + * builder (GLSLC/GLSLF/GLSLD + ff_vk_shader_init), which also retires the old
@@ -269,6 +273,7 @@ index 0000000000000000000000000000000000000000..31693a2d942e456b7165587b7c8f61b8
 +    FFVulkanContext *vkctx = &s->vkctx;
 +    FFVulkanShader *shd = &s->shd;
 +    const int planes = av_pix_fmt_count_planes(vkctx->output_format);
++    const uint32_t sample_code_max = pel_vk_sample_code_max(vkctx->output_format);
 +    int semi_planar = 0;
 +
 +    /* Broadcast luma/chroma scalars into the per-plane vec4s ({Y,Cb,Cr,A}). */
@@ -326,11 +331,12 @@ index 0000000000000000000000000000000000000000..31693a2d942e456b7165587b7c8f61b8
 +     * constants, resolved at pipeline creation — the same const-folding, one step
 +     * later. `semi_planar` joins them so the shader knows plane 1 carries two
 +     * components. The push-constant block itself now lives in the .comp.glsl. */
-+    SPEC_LIST_CREATE(sl, 4, 4 * sizeof(uint32_t))
++    SPEC_LIST_CREATE(sl, 5, 5 * sizeof(uint32_t))
 +    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
 +    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
 +    SPEC_LIST_ADD(sl, 2, 32, (uint32_t)(s->tile ? 1 : 0));
 +    SPEC_LIST_ADD(sl, 3, 32, (uint32_t)semi_planar);
++    SPEC_LIST_ADD(sl, 4, 32, sample_code_max);
 +
 +    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){16, 16, 1}, 0);
 +
@@ -1179,10 +1185,10 @@ index 578953efb422d850e60c82c891364c763a2141aa..a4a7ea0ea998fa805376991447a54769
 +OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vulkan/pelorus_denoise.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_denoise.comp.glsl b/libavfilter/vulkan/pelorus_denoise.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..589a1a5321fe2b26f55358f46ebf33042daee020
+index 0000000000000000000000000000000000000000..eb77813e14e1dac882dc9516a835a73f727fb4e8
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_denoise.comp.glsl
-@@ -0,0 +1,403 @@
+@@ -0,0 +1,407 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -1238,6 +1244,7 @@ index 0000000000000000000000000000000000000000..589a1a5321fe2b26f55358f46ebf3304
 +layout (constant_id = 1) const uint plane_mask  = 0xf;
 +layout (constant_id = 2) const uint use_tile    = 0;
 +layout (constant_id = 3) const uint semi_planar = 0;
++layout (constant_id = 4) const uint sample_code_max = 0;
 +
 +/* PEL_HALO = max patch_radius (3) + the 1-px patch ring.
 + * PEL_TILE = 16 (the workgroup dim, see ff_vk_shader_load) + 2 * PEL_HALO. */
@@ -1313,7 +1320,10 @@ index 0000000000000000000000000000000000000000..589a1a5321fe2b26f55358f46ebf3304
 +    return value * sample_scale;
 +}
 +float pel_to_storage(float value) {
-+    return value / sample_scale;
++    if (sample_code_max == 0u)
++        return value / sample_scale;
++    const float code_max = float(sample_code_max);
++    return round(clamp(value, 0.0, 1.0) * code_max) / code_max / sample_scale;
 +}
 +uint pel_component_count(uint plane) {
 +    return (semi_planar != 0u && plane == 1u) ? 2u : 1u;

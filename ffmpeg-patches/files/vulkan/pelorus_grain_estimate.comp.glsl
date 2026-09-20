@@ -63,10 +63,10 @@ layout (set = 0, binding = 0) uniform readonly image2D input_images[];
 
 /* Mirrors PelorusGrainBuf in the filter, byte-for-byte (std430). */
 layout (set = 0, binding = 1, std430) buffer grain_buffer {
-    uint sumsq[128];    /* Σ resid^2 * SUMSQ_GS,   [BANDS * SLICES] */
-    uint cnt[128];      /* flat-pixel count,       [BANDS * SLICES] */
-    uint corr[16];      /* Σ (resid*resid_right + CORR_BIAS) * CORR_GS */
-    uint corr_cnt[16];  /* lag-1 sample count                       */
+    uint sumsq[256];    /* Σ resid^2 * SUMSQ_GS,   [BANDS * SLICES] */
+    uint cnt[256];      /* flat-pixel count,       [BANDS * SLICES] */
+    uint corr[32];      /* Σ (resid*resid_right + CORR_BIAS) * CORR_GS */
+    uint corr_cnt[32];  /* lag-1 sample count                       */
 };
 
 float pel_to_sample(float value)
@@ -81,7 +81,7 @@ void main()
     const float CORR_BIAS = 1.0;
     const float RES_CLAMP = 0.08;
     const int BANDS = 8;
-    const uint SLICES = 16u;
+    const uint SLICES = 32u;
     ivec2 size = ivec2(width, height);
     int x = int(gl_GlobalInvocationID.x);
     int y = int(gl_GlobalInvocationID.y);

@@ -107,11 +107,18 @@ selection in the shader.
 | analyze | yes | no | luma only; scale before statistics |
 | grain_estimate | yes | no | luma only; scale before residual/statistics |
 | mc | yes | no | luma only; scale before SAD fixed point |
-| deband | yes | yes | vector kernel; scale load and inverse-scale store |
+| deband | yes | yes | vector kernel; scale load and quantized inverse-scale store |
 | denoise | yes | yes | process U and V on selected semi-planar chroma |
 | aa / dehalo / deblock | yes | yes | scalar kernel; semi-planar U/V loop, preserve other packed components |
 | borderfix | no (coordinate selection only) | yes | raw whole-texel copy; no scale |
 | qpmap | no picture sample input | map only | outside the contract |
+
+For writes, dividing a logical sample directly by `sample_scale` is
+insufficient for shifted formats: UNORM conversion rounds in the 16-bit
+container and can set P010/P012 low padding bits. Transforms therefore round in
+logical `code_max` space first, then inverse-scale. The runtime matrix inspects
+the raw 16-bit words before right-shifting so this contract cannot be hidden by
+the comparison itself.
 
 Static compilation proves the C/GLSL layouts. The final evidence must also run
 the matrix on a Vulkan device because neither glslang nor translation-unit

@@ -40,8 +40,9 @@ shorthand; use the pinned commands above for all current rebases.
 - **Storage/sample boundary**: `FF_VK_REP_FLOAT` normalizes integer images by
   their Vulkan storage container. The new `pelorus_vulkan_sample.h` derives
   `sample_scale = storage_max / (((1 << depth) - 1) << shift)` from the software
-  format descriptor. Shaders multiply every arithmetic load into logical
-  `[0,1]`; transforms divide only the owned result at the store boundary.
+  format descriptor and derives `code_max = (1 << depth) - 1`. Shaders multiply
+  every arithmetic load into logical `[0,1]`; transforms round to `code_max`
+  before inverse scaling at the store boundary so P010/P012 padding stays zero.
   Preserve this helper and its patch-0001 installation when registration hunks
   move on an upstream rebase.
 - **Component boundary**: `planes` selects physical planes. NV12/P010/P012

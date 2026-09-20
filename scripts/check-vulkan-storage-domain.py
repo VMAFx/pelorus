@@ -2,11 +2,12 @@
 """Enforce the Vulkan storage-domain and component-preservation contract.
 
 FFmpeg exposes integer Vulkan frames through UNORM storage-image views.  For
-LSB-aligned 10/12-bit formats that is the storage container's domain, not the
-format's logical [0, 1] sample domain.  Arithmetic filters must therefore use
-one descriptor-derived scale at the shader boundary.  Scalar transforms must
-also preserve components they do not process and process both U and V when a
-selected physical plane is semi-planar.
+sub-16-bit formats that is the storage container's domain, not the format's
+logical [0, 1] sample domain.  Arithmetic filters must therefore use a
+descriptor-derived scale at the shader boundary, and transforms must quantize
+in logical code space before writing shifted P010/P012 storage.  Scalar
+transforms must also preserve components they do not process and process both U
+and V when a selected physical plane is semi-planar.
 
 This intentionally checks the whole arithmetic-filter family.  A local fix in
 one filter is not sufficient because all filters share the same representation
@@ -89,6 +90,12 @@ def check() -> list[str]:
         require(
             header,
             source,
+            r"\bpel_vk_sample_code_max\s*\(",
+            "must define pel_vk_sample_code_max() for shifted writeback",
+        )
+        require(
+            header,
+            source,
             r"av_pix_fmt_desc_get\s*\(",
             "scale must be derived from AVPixFmtDescriptor",
         )
@@ -157,15 +164,42 @@ def check() -> list[str]:
             )
 
     for name in TRANSFORMS:
+        c_path = FILES / f"vf_pelorus_{name}_vulkan.c"
         shader_path = SHADERS / f"pelorus_{name}.comp.glsl"
-        if not shader_path.is_file():
+        if not c_path.is_file() or not shader_path.is_file():
             continue
+        c_text = strip_comments(c_path.read_text())
         shader_text = strip_comments(shader_path.read_text())
+        require(
+            c_path,
+            c_text,
+            r"\bpel_vk_sample_code_max\s*\(\s*vkctx->output_format\s*\)",
+            "must derive writeback code_max from the output pixel descriptor",
+        )
+        require(
+            shader_path,
+            shader_text,
+            r"constant_id\s*=\s*\d+\)\s*const\s+uint\s+sample_code_max",
+            "a specialization constant must expose the logical code maximum",
+        )
+        require(
+            c_path,
+            c_text,
+            r"SPEC_LIST_ADD\s*\([^;]*sample_code_max",
+            "must specialize the shader with the descriptor-derived code maximum",
+        )
         require(
             shader_path,
             shader_text,
             r"\bpel_to_storage\s*\(",
             "pixel transforms must convert results back to storage units",
+        )
+        require(
+            shader_path,
+            shader_text,
+            r"\bfloat\s+code_max\s*=\s*float\s*\(\s*sample_code_max\s*\)"
+            r"[^}]*\bround\s*\([^;]*code_max[^;]*\)",
+            "writeback must quantize in logical code space before inverse scaling",
         )
         if re.search(
             r"imageStore\s*\([^;]*,\s*vec4\s*\(\s*[A-Za-z_]\w*\s*\)\s*\)",
@@ -176,6 +210,15 @@ def check() -> list[str]:
                 f"{shader_path.relative_to(ROOT)}: scalar-splat imageStore "
                 "destroys unrelated components"
             )
+
+    denoise_c = FILES / "vf_pelorus_denoise_vulkan.c"
+    if denoise_c.is_file():
+        require(
+            denoise_c,
+            strip_comments(denoise_c.read_text()),
+            r"static_assert\s*\(\s*sizeof\s*\([^;]*opts[^;]*\)\s*<=\s*128",
+            "must retain the Vulkan baseline push-constant size guard",
+        )
 
     for name in COMPONENT_FILTERS:
         c_path = FILES / f"vf_pelorus_{name}_vulkan.c"

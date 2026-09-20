@@ -20,6 +20,17 @@ CONSUMERS = (
     ROOT / "ffmpeg-patches" / "test" / "build-and-run.sh",
 )
 QSV_REPLAY = ROOT / "ffmpeg-patches" / "test" / "qsv-roi-regression.sh"
+STATIC_AVFILTER_CONSUMER = (
+    ROOT / "ffmpeg-patches" / "test" / "static-libavfilter-consumer.c"
+)
+LIBPELORUS_FILTERS = (
+    "pelorus_analyze_vulkan",
+    "pelorus_deband_vulkan",
+    "pelorus_denoise_vulkan",
+    "pelorus_grain_estimate_vulkan",
+    "pelorus_mc_vulkan",
+    "pelorus_scenecut",
+)
 WORKFLOWS = (
     ROOT / ".github" / "workflows" / "ci.yml",
     ROOT / ".github" / "workflows" / "release.yml",
@@ -500,7 +511,104 @@ def consumer_validator_regressions() -> list[str]:
         for error in validate_replay_text(hookful_am)
     ):
         failures.append("consumer regression: hookful git am was accepted")
+
+    missing_optional_sdk = replay.replace(
+        "configure_extra+=(--enable-libsvtav1)",
+        "configure_extra+=(--encoder-sdk-removed)",
+        1,
+    )
+    if missing_optional_sdk == replay:
+        failures.append(
+            "consumer regression: optional SDK mutation did not change fixture"
+        )
+    elif not any(
+        "must compile SVT-AV1 consumers when available" in error
+        for error in validate_replay_text(missing_optional_sdk)
+    ):
+        failures.append("consumer regression: missing optional SDK gate was accepted")
+
+    missing_filter_closure = source.replace(
+        '_filter_extralibs="libpelorus_extralibs"',
+        '_filter_extralibs="static-closure-removed"',
+    )
+    if missing_filter_closure == source:
+        failures.append(
+            "consumer regression: filter closure mutation did not change fixture"
+        )
+    elif not any(
+        "must assign libpelorus_extralibs to consuming filters" in error
+        for error in validate_generator_text(missing_filter_closure)
+    ):
+        failures.append("consumer regression: missing filter closure was accepted")
+
+    missing_pkg_probe = source.replace(
+        "&& require_pkg_config libpelorus", "&& static-probe-removed"
+    )
+    if missing_pkg_probe == source:
+        failures.append(
+            "consumer regression: guarded pkg-config mutation changed nothing"
+        )
+    elif not any(
+        "must retain the guarded libpelorus pkg-config probe" in error
+        for error in validate_generator_text(missing_pkg_probe)
+    ):
+        failures.append("consumer regression: missing libpelorus probe was accepted")
+
+    global_extralibs = source + "\nadd_extralibs $libpelorus_extralibs\n"
+    if not any(
+        "must not add libpelorus to global executable extralibs" in error
+        for error in validate_generator_text(global_extralibs)
+    ):
+        failures.append("consumer regression: global libpelorus link was accepted")
+
+    unknown_filter_dep = source.replace(
+        'pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"',
+        'pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler libpelorus"',
+        1,
+    )
+    if unknown_filter_dep == source:
+        failures.append(
+            "consumer regression: unknown filter dep mutation changed nothing"
+        )
+    elif not any(
+        "must not put libpelorus in filter dependencies" in error
+        for error in validate_generator_text(unknown_filter_dep)
+    ):
+        failures.append("consumer regression: unknown libpelorus dep was accepted")
+
+    missing_static_query = replay.replace(
+        "pkg-config --static --libs libavfilter",
+        "pkg-config --libs libavfilter",
+        1,
+    )
+    if missing_static_query == replay:
+        failures.append(
+            "consumer regression: static pkg-config mutation did not change fixture"
+        )
+    elif not any(
+        "must query libavfilter's static link closure" in error
+        for error in validate_replay_text(missing_static_query)
+    ):
+        failures.append(
+            "consumer regression: non-static libavfilter query was accepted"
+        )
     return failures
+
+
+def static_consumer_validator_regressions() -> list[str]:
+    """Prove the external smoke keeps a real Pelorus filter lookup."""
+    source = STATIC_AVFILTER_CONSUMER.read_text(encoding="utf-8")
+    mutated = source.replace(
+        'avfilter_get_by_name("pelorus_scenecut")', "avfilter_version()", 1
+    )
+    if mutated == source:
+        return ["static consumer regression: lookup mutation changed nothing"]
+    if not any(
+        "must resolve a Pelorus filter through libavfilter" in error
+        for error in validate_static_consumer_text(mutated)
+    ):
+        return ["static consumer regression: missing filter lookup was accepted"]
+    return []
 
 
 def qsv_validator_regressions() -> list[str]:
@@ -1458,6 +1566,33 @@ def validate_generator_text(generator: str) -> list[str]:
             "ffmpeg-patches/generate.sh: synthetic commits must disable signing "
             "and hooks"
         )
+    if "add_extralibs $libpelorus_extralibs" in generator:
+        errors.append(
+            "ffmpeg-patches/generate.sh: must not add libpelorus to global "
+            "executable extralibs"
+        )
+    if re.search(r"_filter_deps=[^\n]*\blibpelorus\b", generator):
+        errors.append(
+            "ffmpeg-patches/generate.sh: must not put libpelorus in filter "
+            "dependencies"
+        )
+    if '_filter_extralibs="libpelorus_extralibs"' not in generator:
+        errors.append(
+            "ffmpeg-patches/generate.sh: must assign libpelorus_extralibs to "
+            "consuming filters"
+        )
+    guarded_probe = "f'enabled {name}_filter && require_pkg_config libpelorus '"
+    if guarded_probe not in generator:
+        errors.append(
+            "ffmpeg-patches/generate.sh: must retain the guarded libpelorus "
+            "pkg-config probe"
+        )
+    for filter_name in LIBPELORUS_FILTERS:
+        if f'libpelorus_link("{filter_name}")' not in generator:
+            errors.append(
+                "ffmpeg-patches/generate.sh: missing static link closure for "
+                f"{filter_name}_filter"
+            )
     return errors
 
 
@@ -1472,8 +1607,24 @@ def validate_replay_text(replay: str) -> list[str]:
         "meson test": "must test the current libpelorus worktree",
         "meson install": "must install the current libpelorus worktree",
         "--enable-vulkan": "must enable Vulkan",
+        "--enable-libaom": "must compile libaom consumers when available",
+        "--enable-libsvtav1": "must compile SVT-AV1 consumers when available",
         "--disable-doc": "must disable FFmpeg documentation",
         "pelorus_fgs": "must verify the Pelorus FGS bitstream filter",
+        "libaom-av1": "must verify the libaom Pelorus option",
+        "libsvtav1": "must verify the SVT-AV1 Pelorus option",
+        "h264_qsv": "must verify the QSV Pelorus option",
+        "av1_nvenc": "must verify the NVENC Pelorus options",
+        "h264_vulkan": "must verify the Vulkan encoder Pelorus option",
+        "pelorus_me_hints": "must verify NVENC motion-hint registration",
+        "pelorus_film_grain": "must verify NVENC film-grain registration",
+        "static-libavfilter-consumer.c": (
+            "must compile the external static libavfilter consumer"
+        ),
+        "pkg-config --static --libs libavfilter": (
+            "must query libavfilter's static link closure"
+        ),
+        "-lpelorus": "must assert libavfilter's static closure contains -lpelorus",
     }
     for token, message in replay_required.items():
         if token not in replay:
@@ -1512,7 +1663,31 @@ def validate_replay_text(replay: str) -> list[str]:
         errors.append(
             "ffmpeg-patches/test/build-and-run.sh: configure must run in a " "subshell"
         )
+    for module in ("vpl", "aom", "SvtAv1Enc", "ffnvcodec"):
+        if f"pkg-config --exists {module}" not in replay:
+            errors.append(
+                "ffmpeg-patches/test/build-and-run.sh: missing optional SDK probe "
+                f"{module}"
+            )
 
+    return errors
+
+
+def validate_static_consumer_text(source: str) -> list[str]:
+    """Validate the minimal out-of-tree libavfilter link fixture."""
+    errors: list[str] = []
+    required = {
+        "#include <libavfilter/avfilter.h>": "must include libavfilter's public API",
+        "int main(void)": "must provide a standalone entry point",
+        'avfilter_get_by_name("pelorus_scenecut")': (
+            "must resolve a Pelorus filter through libavfilter"
+        ),
+    }
+    for token, message in required.items():
+        if token not in source:
+            errors.append(
+                f"ffmpeg-patches/test/static-libavfilter-consumer.c: {message}"
+            )
     return errors
 
 
@@ -1680,6 +1855,10 @@ def validate_workflow_text(relative: str, text: str) -> list[str]:
         ffmpeg = jobs.get("ffmpeg-stack", "")
         for token in (
             "libvulkan-dev",
+            "libvpl-dev",
+            "libaom-dev",
+            "libsvtav1enc-dev",
+            "libffmpeg-nvenc-dev",
             "refs/tags/${FFMPEG_TAG}^{commit}",
             '"$FFMPEG_COMMIT"',
             "ffmpeg-patches/generate.sh",
@@ -1758,6 +1937,10 @@ def workflow_validator_regressions() -> list[str]:
             source.replace("glslc", "shader-compiler-removed", 1),
             "must install native package glslc",
         ),
+        "missing optional encoder SDK": (
+            source.replace("libsvtav1enc-dev", "encoder-sdk-removed", 1),
+            "FFmpeg job is missing libsvtav1enc-dev",
+        ),
     }
     relative = ci_path.relative_to(ROOT).as_posix()
     for name, (mutated, expected) in cases.items():
@@ -1784,6 +1967,14 @@ def validate_consumers() -> list[str]:
         errors.append("ffmpeg-patches/test/qsv-roi-regression.sh: missing")
     else:
         errors.extend(validate_qsv_replay_text(QSV_REPLAY.read_text(encoding="utf-8")))
+    if not STATIC_AVFILTER_CONSUMER.is_file():
+        errors.append("ffmpeg-patches/test/static-libavfilter-consumer.c: missing")
+    else:
+        errors.extend(
+            validate_static_consumer_text(
+                STATIC_AVFILTER_CONSUMER.read_text(encoding="utf-8")
+            )
+        )
     errors.extend(validate_workflows())
     return errors
 
@@ -1802,6 +1993,7 @@ def main() -> int:
     if "--self-test" in sys.argv[1:]:
         errors.extend(validator_regressions())
         errors.extend(consumer_validator_regressions())
+        errors.extend(static_consumer_validator_regressions())
         errors.extend(qsv_validator_regressions())
         errors.extend(surface_validator_regressions())
         errors.extend(fixture_subprocess_regression())

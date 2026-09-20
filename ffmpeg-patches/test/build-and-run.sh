@@ -7,8 +7,8 @@
 #
 # Requires: an explicit local FFmpeg checkout, a Vulkan loader + headers, and a
 # `glslc` SPIR-V compiler. libpelorus is built, tested, and installed privately
-# here; oneVPL is enabled when its pkg-config package is available so the
-# cumulative link also covers QSV.
+# here. Optional encoder SDKs are enabled when their pkg-config packages are
+# available so the cumulative link covers QSV, libaom, SVT-AV1, and NVENC.
 #
 # Env:
 #   FFMPEG_REPO  path to a FFmpeg git checkout      (required)
@@ -27,6 +27,7 @@ JOBS="${JOBS:-$(nproc)}"
 RUN_ROOT=""
 PELORUS_BUILD=""
 PRIVATE_PREFIX=""
+FFMPEG_PREFIX=""
 LOG_DIR=""
 OWNED_WORKTREE=""
 CALLER_WORKTREE=0
@@ -68,7 +69,8 @@ cleanup() {
         fi
     fi
 
-    for owned_dir in "$PELORUS_BUILD" "$PRIVATE_PREFIX" "$LOG_DIR"; do
+    for owned_dir in \
+        "$PELORUS_BUILD" "$PRIVATE_PREFIX" "$FFMPEG_PREFIX" "$LOG_DIR"; do
         if [[ -n "$RUN_ROOT" && "$owned_dir" == "$RUN_ROOT/"* ]]; then
             if ! rm -rf -- "$owned_dir"; then
                 echo "WARNING: could not remove owned path: $owned_dir" >&2
@@ -129,6 +131,7 @@ fi
 RUN_ROOT="$CANONICAL_RUN_ROOT"
 PELORUS_BUILD="$RUN_ROOT/pelorus-build"
 PRIVATE_PREFIX="$RUN_ROOT/prefix"
+FFMPEG_PREFIX="$RUN_ROOT/ffmpeg-prefix"
 LOG_DIR="$RUN_ROOT/logs"
 mkdir "$LOG_DIR"
 if (( ! CALLER_WORKTREE )); then
@@ -212,8 +215,48 @@ configure_ffmpeg() (
         echo "enabling oneVPL $(pkg-config --modversion vpl)"
         configure_extra+=(--enable-libvpl)
     fi
-    exec ./configure --enable-vulkan "${configure_extra[@]}" --disable-doc
+    if pkg-config --exists aom; then
+        echo "enabling libaom $(pkg-config --modversion aom)"
+        configure_extra+=(--enable-libaom)
+    fi
+    if pkg-config --exists SvtAv1Enc; then
+        echo "enabling SVT-AV1 $(pkg-config --modversion SvtAv1Enc)"
+        configure_extra+=(--enable-libsvtav1)
+    fi
+    exec ./configure \
+        --prefix="$FFMPEG_PREFIX" \
+        --libdir="$FFMPEG_PREFIX/lib" \
+        --enable-vulkan "${configure_extra[@]}" --disable-doc
 )
+
+verify_static_avfilter_consumer() {
+    local consumer="$FFMPEG_PREFIX/static-libavfilter-consumer"
+    local pkg_config_path="$FFMPEG_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+    local static_cflags_output
+    local static_libs_output
+    local -a static_cflags
+    local -a static_libs
+
+    static_cflags_output="$(
+        PKG_CONFIG_PATH="$pkg_config_path" pkg-config --cflags libavfilter
+    )"
+    static_libs_output="$(
+        PKG_CONFIG_PATH="$pkg_config_path" \
+            pkg-config --static --libs libavfilter
+    )"
+    if [[ " $static_libs_output " != *" -lpelorus "* ]]; then
+        echo "ERROR: pkg-config --static libavfilter omitted -lpelorus" >&2
+        echo "static libs: $static_libs_output" >&2
+        return 1
+    fi
+
+    read -r -a static_cflags <<< "$static_cflags_output"
+    read -r -a static_libs <<< "$static_libs_output"
+    "${CC:-cc}" "${static_cflags[@]}" \
+        "$HERE/static-libavfilter-consumer.c" \
+        -o "$consumer" "${static_libs[@]}"
+    "$consumer"
+}
 
 run_logged "apply 18-patch FFmpeg stack" "$LOG_DIR/ffmpeg-apply.log" \
     apply_stack
@@ -221,6 +264,10 @@ run_logged "configure FFmpeg" "$LOG_DIR/ffmpeg-configure.log" \
     configure_ffmpeg
 run_logged "link ffmpeg" "$LOG_DIR/ffmpeg-build.log" \
     make -C "$WORKTREE" -j"$JOBS" ffmpeg
+run_logged "install static FFmpeg libraries" "$LOG_DIR/ffmpeg-install.log" \
+    make -C "$WORKTREE" -j"$JOBS" install
+run_logged "link and run external static libavfilter consumer" \
+    "$LOG_DIR/ffmpeg-static-consumer.log" verify_static_avfilter_consumer
 
 FILTERS=(
     pelorus_aa_vulkan
@@ -263,4 +310,46 @@ if ! awk '$1 == "pelorus_fgs" { found = 1 } END { exit !found }' \
     exit 1
 fi
 echo "registered bitstream filter: pelorus_fgs"
+
+verify_encoder_options() {
+    local encoder="$1"
+    local option
+    local help_log="$LOG_DIR/ffmpeg-encoder-${encoder}.log"
+    shift
+
+    if ! "$WORKTREE/ffmpeg" -hide_banner -h "encoder=$encoder" \
+        >"$help_log" 2>&1; then
+        echo "ERROR: could not inspect encoder: $encoder" >&2
+        tail -80 "$help_log" >&2 || true
+        return 1
+    fi
+    for option in "$@"; do
+        if ! grep -Eq "(^|[[:space:]])-${option}([[:space:]]|$)" "$help_log"; then
+            echo "ERROR: encoder $encoder is missing option: $option" >&2
+            tail -80 "$help_log" >&2 || true
+            return 1
+        fi
+        echo "registered encoder option: ${encoder} -${option}"
+    done
+}
+
+if pkg-config --exists vpl; then
+    verify_encoder_options h264_qsv pelorus_roi
+    verify_encoder_options hevc_qsv pelorus_roi
+fi
+if pkg-config --exists aom; then
+    verify_encoder_options libaom-av1 pelorus_roi
+fi
+if pkg-config --exists SvtAv1Enc; then
+    verify_encoder_options libsvtav1 pelorus_roi
+fi
+if pkg-config --exists ffnvcodec; then
+    verify_encoder_options h264_nvenc pelorus_roi pelorus_me_hints
+    verify_encoder_options hevc_nvenc pelorus_roi pelorus_me_hints
+    verify_encoder_options av1_nvenc pelorus_roi pelorus_film_grain
+fi
+verify_encoder_options h264_vulkan pelorus_roi
+verify_encoder_options hevc_vulkan pelorus_roi
+verify_encoder_options av1_vulkan pelorus_roi
+
 echo "OK: 18 patches applied and ffmpeg linked against private libpelorus"

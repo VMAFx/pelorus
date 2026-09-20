@@ -53,6 +53,7 @@ layout (constant_id = 0) const uint planes      = 0;
 layout (constant_id = 1) const uint plane_mask  = 0xf;
 layout (constant_id = 2) const uint use_tile    = 0;
 layout (constant_id = 3) const uint semi_planar = 0;
+layout (constant_id = 4) const uint sample_code_max = 0;
 
 /* PEL_HALO = max patch_radius (3) + the 1-px patch ring.
  * PEL_TILE = 16 (the workgroup dim, see ff_vk_shader_load) + 2 * PEL_HALO. */
@@ -128,7 +129,10 @@ float pel_to_sample(float value) {
     return value * sample_scale;
 }
 float pel_to_storage(float value) {
-    return value / sample_scale;
+    if (sample_code_max == 0u)
+        return value / sample_scale;
+    const float code_max = float(sample_code_max);
+    return round(clamp(value, 0.0, 1.0) * code_max) / code_max / sample_scale;
 }
 uint pel_component_count(uint plane) {
     return (semi_planar != 0u && plane == 1u) ? 2u : 1u;

@@ -22,17 +22,17 @@ Requires libpelorus >= 0.2.0 (pkg-config) when the filter is enabled.
 ADR: docs/adr/0104-ffmpeg-patch-stack.md
 Research: docs/research/0101-smart-deband.md
 ---
- configure                                   |   2 +
+ configure                                   |   3 +
  libavfilter/Makefile                        |   1 +
  libavfilter/allfilters.c                    |   1 +
- libavfilter/pelorus_vulkan_sample.h         |  73 ++++
- libavfilter/vf_pelorus_deband_vulkan.c      | 461 ++++++++++++++++++++
+ libavfilter/pelorus_vulkan_sample.h         | 100 +++++
+ libavfilter/vf_pelorus_deband_vulkan.c      | 463 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
- libavfilter/vulkan/pelorus_deband.comp.glsl | 172 ++++++++
- 7 files changed, 711 insertions(+)
+ libavfilter/vulkan/pelorus_deband.comp.glsl | 177 ++++++++
+ 7 files changed, 746 insertions(+)
 
 diff --git a/configure b/configure
-index 374bd5c1512943439480825f32e448e7871eb61c..95a4d4a1bf54c49ea7fcbe1decdf5b73a42b1e61 100755
+index 374bd5c1512943439480825f32e448e7871eb61c..00b13ed09edcf3fb2b44ff9d0bfbb4420f45c68e 100755
 --- a/configure
 +++ b/configure
 @@ -4236,6 +4236,7 @@ overlay_qsv_filter_deps="libmfx"
@@ -43,11 +43,12 @@ index 374bd5c1512943439480825f32e448e7871eb61c..95a4d4a1bf54c49ea7fcbe1decdf5b73
  owdenoise_filter_deps="gpl"
  pad_opencl_filter_deps="opencl"
  pan_filter_deps="swresample"
-@@ -7457,6 +7458,7 @@ enabled libv4l2           && require_pkg_config libv4l2 libv4l2 libv4l2.h v4l2_i
+@@ -7457,6 +7458,8 @@ enabled libv4l2           && require_pkg_config libv4l2 libv4l2 libv4l2.h v4l2_i
  enabled libvidstab        && require_pkg_config libvidstab "vidstab >= 0.98" vid.stab/libvidstab.h vsMotionDetectInit
  enabled libvmaf           && require_pkg_config libvmaf "libvmaf >= 2.0.0" libvmaf.h vmaf_init
  enabled libvmaf           && check_pkg_config libvmaf_cuda "libvmaf >= 2.0.0" libvmaf_cuda.h vmaf_cuda_state_init
-+enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
++pelorus_deband_vulkan_filter_extralibs="libpelorus_extralibs"
++enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
  enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
@@ -77,10 +78,10 @@ index 402b843649b4f5369cf80714eef53755fad9ac9a..78a01c74a326700f3c6c4799906c5ae1
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/pelorus_vulkan_sample.h b/libavfilter/pelorus_vulkan_sample.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..56a43512302b76b3d8c346ec0d83fb5a605933fc
+index 0000000000000000000000000000000000000000..c8a8912daf5325e0d8792ae201f4bbfedbc11a2e
 --- /dev/null
 +++ b/libavfilter/pelorus_vulkan_sample.h
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,100 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -100,7 +101,14 @@ index 0000000000000000000000000000000000000000..56a43512302b76b3d8c346ec0d83fb5a
 +#ifndef AVFILTER_PELORUS_VULKAN_SAMPLE_H
 +#define AVFILTER_PELORUS_VULKAN_SAMPLE_H
 +
++#include <stdint.h>
++
 +#include "libavutil/pixdesc.h"
++
++typedef struct PelVkSampleDomain {
++    float scale;
++    uint32_t code_max;
++} PelVkSampleDomain;
 +
 +/* FF_VK_REP_FLOAT storage images normalize integer samples against their
 + * Vulkan view's storage container.  That differs from the logical sample
@@ -114,10 +122,12 @@ index 0000000000000000000000000000000000000000..56a43512302b76b3d8c346ec0d83fb5a
 + * both chroma components, so the first component describes every lane.  Packed,
 + * float, bitstream, palette, hardware, Bayer, malformed, or wider layouts fall
 + * back to 1.0 rather than inventing a representation rule. */
-+static inline float pel_vk_sample_scale_from_desc(const AVPixFmtDescriptor *desc)
++static inline PelVkSampleDomain pel_vk_sample_domain_from_desc(const AVPixFmtDescriptor *desc)
 +{
 +    const AVComponentDescriptor *comp;
++    PelVkSampleDomain domain = {1.0f, 0u};
 +    unsigned int container_bits;
++    unsigned int code_max;
 +    unsigned int storage_max;
 +    unsigned int sample_max;
 +
@@ -125,7 +135,7 @@ index 0000000000000000000000000000000000000000..56a43512302b76b3d8c346ec0d83fb5a
 +        (desc->flags & (AV_PIX_FMT_FLAG_FLOAT | AV_PIX_FMT_FLAG_BITSTREAM | AV_PIX_FMT_FLAG_PAL |
 +                        AV_PIX_FMT_FLAG_HWACCEL | AV_PIX_FMT_FLAG_BAYER)) ||
 +        (!(desc->flags & AV_PIX_FMT_FLAG_PLANAR) && desc->nb_components != 1))
-+        return 1.0f;
++        return domain;
 +
 +    comp = &desc->comp[0];
 +    if (comp->step == 1)
@@ -133,19 +143,32 @@ index 0000000000000000000000000000000000000000..56a43512302b76b3d8c346ec0d83fb5a
 +    else if (comp->step == 2)
 +        container_bits = 16;
 +    else
-+        return 1.0f;
++        return domain;
 +
 +    if (comp->depth < 1 || comp->shift < 0 || (unsigned int)comp->depth > container_bits ||
 +        (unsigned int)comp->shift >= container_bits ||
 +        (unsigned int)comp->depth + (unsigned int)comp->shift > container_bits)
-+        return 1.0f;
++        return domain;
 +
 +    storage_max = (1u << container_bits) - 1u;
-+    sample_max = ((1u << (unsigned int)comp->depth) - 1u) << (unsigned int)comp->shift;
++    code_max = (1u << (unsigned int)comp->depth) - 1u;
++    sample_max = code_max << (unsigned int)comp->shift;
 +    if (sample_max == 0u)
-+        return 1.0f;
++        return domain;
 +
-+    return (float)storage_max / (float)sample_max;
++    domain.scale = (float)storage_max / (float)sample_max;
++    domain.code_max = code_max;
++    return domain;
++}
++
++static inline float pel_vk_sample_scale_from_desc(const AVPixFmtDescriptor *desc)
++{
++    return pel_vk_sample_domain_from_desc(desc).scale;
++}
++
++static inline uint32_t pel_vk_sample_code_max_from_desc(const AVPixFmtDescriptor *desc)
++{
++    return pel_vk_sample_domain_from_desc(desc).code_max;
 +}
 +
 +static inline float pel_vk_sample_scale(enum AVPixelFormat format)
@@ -153,13 +176,18 @@ index 0000000000000000000000000000000000000000..56a43512302b76b3d8c346ec0d83fb5a
 +    return pel_vk_sample_scale_from_desc(av_pix_fmt_desc_get(format));
 +}
 +
++static inline uint32_t pel_vk_sample_code_max(enum AVPixelFormat format)
++{
++    return pel_vk_sample_code_max_from_desc(av_pix_fmt_desc_get(format));
++}
++
 +#endif /* AVFILTER_PELORUS_VULKAN_SAMPLE_H */
 diff --git a/libavfilter/vf_pelorus_deband_vulkan.c b/libavfilter/vf_pelorus_deband_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..b4c272b45762b88f5ed4fb77646ba74e800c2a2e
+index 0000000000000000000000000000000000000000..be0e4abcee70fe2d6ede9d74b01508ff3fbead7d
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_deband_vulkan.c
-@@ -0,0 +1,461 @@
+@@ -0,0 +1,463 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -256,6 +284,7 @@ index 0000000000000000000000000000000000000000..b4c272b45762b88f5ed4fb77646ba74e
 +    FFVulkanContext *vkctx = &s->vkctx;
 +    FFVulkanShader *shd = &s->shd;
 +    const int planes = av_pix_fmt_count_planes(vkctx->output_format);
++    const uint32_t sample_code_max = pel_vk_sample_code_max(vkctx->output_format);
 +
 +    /* Broadcast luma/chroma scalars into the per-plane vec4s. */
 +    s->opts.thr[0] = (float)s->opt_thr_y;
@@ -282,9 +311,10 @@ index 0000000000000000000000000000000000000000..b4c272b45762b88f5ed4fb77646ba74e
 +    /* Plane count and the plane bitmask were const-folded into the generated
 +     * GLSL before FFmpeg 9 unrolled the per-plane loop in C. With precompiled
 +     * SPIR-V they become specialization constants instead. */
-+    SPEC_LIST_CREATE(sl, 2, 2 * sizeof(uint32_t))
++    SPEC_LIST_CREATE(sl, 3, 3 * sizeof(uint32_t))
 +    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
 +    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
++    SPEC_LIST_ADD(sl, 2, 32, sample_code_max);
 +
 +    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 +
@@ -632,10 +662,10 @@ index 8a0912b4dfc4969cb7b4eb06c7565e93ba6b8cf7..e62ab231cb50888e10c829ad66e15e4c
 +OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER) += vulkan/pelorus_deband.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_deband.comp.glsl b/libavfilter/vulkan/pelorus_deband.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..ad1f7820ba254bdeea8445e7904a297bb283a1c2
+index 0000000000000000000000000000000000000000..6f1bbd8b7f07f25b4caa0601bd683b48ab5be89f
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_deband.comp.glsl
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,177 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -676,6 +706,7 @@ index 0000000000000000000000000000000000000000..ad1f7820ba254bdeea8445e7904a297b
 + * (the rest are copied through). Both were C-unrolled loop bounds before. */
 +layout (constant_id = 0) const uint planes     = 0;
 +layout (constant_id = 1) const uint plane_mask = 0xf;
++layout (constant_id = 2) const uint sample_code_max = 0;
 +
 +layout (push_constant, std430) uniform pushConstants {
 +    vec4  thr;
@@ -698,7 +729,11 @@ index 0000000000000000000000000000000000000000..ad1f7820ba254bdeea8445e7904a297b
 +    return value * sample_scale;
 +}
 +vec4 pel_to_storage(vec4 value) {
-+    return value / sample_scale;
++    if (sample_code_max == 0u)
++        return value / sample_scale;
++    const float code_max = float(sample_code_max);
++    return round(clamp(value, vec4(0.0), vec4(1.0)) * code_max) /
++           code_max / sample_scale;
 +}
 +
 +float frand(vec2 p) {

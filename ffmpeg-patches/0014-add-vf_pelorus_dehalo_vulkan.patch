@@ -31,13 +31,13 @@ ADR: docs/adr/0123-anime-dehalo.md
  configure                                   |   1 +
  libavfilter/Makefile                        |   1 +
  libavfilter/allfilters.c                    |   1 +
- libavfilter/vf_pelorus_dehalo_vulkan.c      | 301 ++++++++++++++++++++
+ libavfilter/vf_pelorus_dehalo_vulkan.c      | 303 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
- libavfilter/vulkan/pelorus_dehalo.comp.glsl | 242 ++++++++++++++++
- 6 files changed, 547 insertions(+)
+ libavfilter/vulkan/pelorus_dehalo.comp.glsl | 246 ++++++++++++++++
+ 6 files changed, 553 insertions(+)
 
 diff --git a/configure b/configure
-index 2e8e0c3ac56df6177b027ab8197f1301b6497cff..c68249b1a029bb1b1b4c9daf017402e0020bbe9f 100755
+index 3283718ba10ab831a499f230e165d15201c9a29c..f052412ba00f78d88734beaa51c4a4e82a5ebea6 100755
 --- a/configure
 +++ b/configure
 @@ -4245,6 +4245,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
@@ -74,10 +74,10 @@ index 8ecaf738be23d70633dc7e84a35a37729ffe9de4..2ac2a6540fb0f9b500bfbd6137278ca1
  extern const FFFilter ff_vf_pelorus_mc_vulkan;
 diff --git a/libavfilter/vf_pelorus_dehalo_vulkan.c b/libavfilter/vf_pelorus_dehalo_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..733a28c6dcabde40a4bc846018d4d9bd053591b6
+index 0000000000000000000000000000000000000000..6f1aa37968a05d576abb94992394ca42e03895a8
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_dehalo_vulkan.c
-@@ -0,0 +1,301 @@
+@@ -0,0 +1,303 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -163,6 +163,7 @@ index 0000000000000000000000000000000000000000..733a28c6dcabde40a4bc846018d4d9bd
 +    const int planes = av_pix_fmt_count_planes(vkctx->output_format);
 +    const AVPixFmtDescriptor *pd = av_pix_fmt_desc_get(vkctx->output_format);
 +    const int semi_planar = pd && pd->nb_components >= 3 && pd->comp[1].plane == pd->comp[2].plane;
++    const uint32_t sample_code_max = pel_vk_sample_code_max(vkctx->output_format);
 +
 +    s->opts.sample_scale = pel_vk_sample_scale(vkctx->input_format);
 +
@@ -182,11 +183,12 @@ index 0000000000000000000000000000000000000000..733a28c6dcabde40a4bc846018d4d9bd
 +     * driver still folds them at pipeline-creation time — including the shared
 +     * tile array, which is sized from `tile` and therefore costs nothing at
 +     * the default tile=0. */
-+    SPEC_LIST_CREATE(sl, 4, 4 * sizeof(uint32_t))
++    SPEC_LIST_CREATE(sl, 5, 5 * sizeof(uint32_t))
 +    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
 +    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
 +    SPEC_LIST_ADD(sl, 2, 32, (uint32_t)s->tile);
 +    SPEC_LIST_ADD(sl, 3, 32, (uint32_t)semi_planar);
++    SPEC_LIST_ADD(sl, 4, 32, sample_code_max);
 +
 +    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 +
@@ -390,10 +392,10 @@ index 113d7aa7cf599983aaa7a391919d014b18b245fd..77187fe29c5fe23f84b61b45cf3a2825
 +OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER) += vulkan/pelorus_dehalo.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_dehalo.comp.glsl b/libavfilter/vulkan/pelorus_dehalo.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..623b718f64e3df9975189d26eeb163d4ddd6de1a
+index 0000000000000000000000000000000000000000..1554fb0b8a83bc35666a5d9d459084978c05dcbf
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_dehalo.comp.glsl
-@@ -0,0 +1,242 @@
+@@ -0,0 +1,246 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -443,6 +445,7 @@ index 0000000000000000000000000000000000000000..623b718f64e3df9975189d26eeb163d4
 +layout (constant_id = 1) const uint plane_mask = 0x1;
 +layout (constant_id = 2) const uint tile       = 0;
 +layout (constant_id = 3) const uint semi_planar = 0;
++layout (constant_id = 4) const uint sample_code_max = 0;
 +
 +layout (push_constant, std430) uniform pushConstants {
 +    int   blur_r;
@@ -476,7 +479,10 @@ index 0000000000000000000000000000000000000000..623b718f64e3df9975189d26eeb163d4
 +
 +float pel_to_storage(float value)
 +{
-+    return value / sample_scale;
++    if (sample_code_max == 0u)
++        return value / sample_scale;
++    const float code_max = float(sample_code_max);
++    return round(clamp(value, 0.0, 1.0) * code_max) / code_max / sample_scale;
 +}
 +
 +uint pel_component_count(uint plane)

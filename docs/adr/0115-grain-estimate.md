@@ -61,8 +61,9 @@ directly, per intensity band:
    synthesized grain's spectrum. v0.x emits a conservative low-lag AR
    approximation from this scalar; the full per-lag AR fit is a follow-up.
 
-The GPU reduction is sliced (`PEL_GRAIN_SLICES`, 16) to cut atomic contention,
-exactly as analyze/denoise do, and summed on the host.
+The GPU reduction is sliced (`PEL_GRAIN_SLICES`, 32) to cut atomic contention
+and keep the fixed-point uint32 accumulators bounded through DCI 8K, exactly as
+analyze/denoise do. The host sums the slices.
 
 ### Host mapping → FGS parameters
 

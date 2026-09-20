@@ -74,13 +74,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential meson ninja-build pkg-config nasm yasm git ca-certificates \
-            libvulkan-dev glslc glslang-tools libvpl-dev
+            libvulkan-dev glslc glslang-tools libvpl-dev libaom-dev \
+            libsvtav1enc-dev libffmpeg-nvenc-dev
       - name: Runner and toolchain receipt
         run: |
           echo "ImageOS=${ImageOS:-unset}"
           echo "ImageVersion=${ImageVersion:-unset}"
           cat /etc/os-release
-          pkg-config --modversion vulkan
+          for module in vulkan vpl aom SvtAv1Enc ffnvcodec; do
+            printf '%s=' "$module"
+            pkg-config --modversion "$module"
+          done
           glslc --version
           glslangValidator --version
       - name: Fetch and verify pinned FFmpeg source

@@ -45,16 +45,16 @@ Requires libpelorus >= 0.2.0 (pkg-config) when the filter is enabled.
 
 ADR: docs/adr/0116-pelorus-mc.md
 ---
- configure                               |   2 +
+ configure                               |   3 +
  libavfilter/Makefile                    |   1 +
  libavfilter/allfilters.c                |   1 +
  libavfilter/vf_pelorus_mc_vulkan.c      | 826 ++++++++++++++++++++
  libavfilter/vulkan/Makefile             |   1 +
  libavfilter/vulkan/pelorus_mc.comp.glsl | 229 ++++++
- 6 files changed, 1060 insertions(+)
+ 6 files changed, 1061 insertions(+)
 
 diff --git a/configure b/configure
-index c9c23dbe9827e9439d0788ba90ed42be0e0dc69f..ad55df52f7626c32310010c32c4379717ae711fe 100755
+index 0571e96aa7a4f64c2eb951c9c842462225deb3ac..839033a423604cbfaf45a7fffd984bc587d44839 100755
 --- a/configure
 +++ b/configure
 @@ -4240,6 +4240,7 @@ pelorus_analyze_vulkan_filter_deps="vulkan spirv_compiler"
@@ -65,11 +65,12 @@ index c9c23dbe9827e9439d0788ba90ed42be0e0dc69f..ad55df52f7626c32310010c32c437971
  owdenoise_filter_deps="gpl"
  pad_opencl_filter_deps="opencl"
  pan_filter_deps="swresample"
-@@ -7465,6 +7466,7 @@ enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpeloru
- enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
- enabled pelorus_denoise_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
- enabled pelorus_grain_estimate_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
-+enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs $libpelorus_extralibs
+@@ -7469,6 +7470,8 @@ pelorus_denoise_vulkan_filter_extralibs="libpelorus_extralibs"
+ enabled pelorus_denoise_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
+ pelorus_grain_estimate_vulkan_filter_extralibs="libpelorus_extralibs"
+ enabled pelorus_grain_estimate_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
++pelorus_mc_vulkan_filter_extralibs="libpelorus_extralibs"
++enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
  enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&

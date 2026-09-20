@@ -39,7 +39,9 @@ FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh
 The gate verifies the qualified `n9.0.2` tag against root `build-config.env`,
 checks out the immutable commit in a run-owned worktree, builds and installs
 this Pelorus tree into a private prefix, applies `series.txt` with
-`git am --3way`, links FFmpeg, and smoke-tests registration. Per-patch
+`git am --3way`, links FFmpeg, and smoke-tests filter, BSF, and encoder-option
+registration. When their pkg-config modules are present, the gate enables and
+compiles the oneVPL, libaom, SVT-AV1, and NVENC consumers as well. Per-patch
 `git apply --check` is not a substitute: the stack is cumulative and later
 patches' context can depend on earlier ones.
 

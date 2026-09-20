@@ -83,6 +83,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
     const int planes = av_pix_fmt_count_planes(vkctx->output_format);
     const AVPixFmtDescriptor *pd = av_pix_fmt_desc_get(vkctx->output_format);
     const int semi_planar = pd && pd->nb_components >= 3 && pd->comp[1].plane == pd->comp[2].plane;
+    const uint32_t sample_code_max = pel_vk_sample_code_max(vkctx->output_format);
 
     s->opts.sample_scale = pel_vk_sample_scale(vkctx->input_format);
 
@@ -102,11 +103,12 @@ static av_cold int init_filter(AVFilterContext *ctx)
      * driver still folds them at pipeline-creation time — including the shared
      * tile array, which is sized from `tile` and therefore costs nothing at
      * the default tile=0. */
-    SPEC_LIST_CREATE(sl, 4, 4 * sizeof(uint32_t))
+    SPEC_LIST_CREATE(sl, 5, 5 * sizeof(uint32_t))
     SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
     SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
     SPEC_LIST_ADD(sl, 2, 32, (uint32_t)s->tile);
     SPEC_LIST_ADD(sl, 3, 32, (uint32_t)semi_planar);
+    SPEC_LIST_ADD(sl, 4, 32, sample_code_max);
 
     ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 

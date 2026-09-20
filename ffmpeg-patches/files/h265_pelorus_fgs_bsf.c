@@ -68,7 +68,7 @@
 #include "libavcodec/hevc/hevc.h"
 
 /* Comp-model component bitmask for the `components` option. */
-#define PEL_FGS_COMP_Y  (1 << 0)
+#define PEL_FGS_COMP_Y (1 << 0)
 #define PEL_FGS_COMP_CB (1 << 1)
 #define PEL_FGS_COMP_CR (1 << 2)
 
@@ -76,20 +76,20 @@ typedef struct PelorusFGSContext {
     CBSBSFContext common;
 
     /* H.274 FGC model parameters (the static model inserted into every AU). */
-    int model_id;        /* 0 = frequency filtering, 1 = auto-regression       */
-    int blending_mode;   /* 0 = additive, 1 = multiplicative                   */
-    int log2_scale;      /* H.274 log2_scale_factor, [0,15]                    */
-    int components;      /* bitmask: which colour components carry a model     */
-    int persistence;     /* film_grain_characteristics_persistence_flag        */
+    int model_id;      /* 0 = frequency filtering, 1 = auto-regression       */
+    int blending_mode; /* 0 = additive, 1 = multiplicative                   */
+    int log2_scale;    /* H.274 log2_scale_factor, [0,15]                    */
+    int components;    /* bitmask: which colour components carry a model     */
+    int persistence;   /* film_grain_characteristics_persistence_flag        */
 
     /* The luma scaling model. A single intensity interval [low,high] with a
      * scale value derived from the estimator's per-band RMS residual. v0.x
      * emits one interval covering the full luma range; a follow-up maps the
      * estimator's 8 bands onto multiple intervals. */
-    int intensity_low;   /* intensity_interval_lower_bound[0][0], [0,255]      */
-    int intensity_high;  /* intensity_interval_upper_bound[0][0], [0,255]      */
-    int scale_y;         /* comp_model_value[0][0][0] (grain scale), [0,255]   */
-    int scale_c;         /* chroma scale value when CB/CR selected             */
+    int intensity_low;  /* intensity_interval_lower_bound[0][0], [0,255]      */
+    int intensity_high; /* intensity_interval_upper_bound[0][0], [0,255]      */
+    int scale_y;        /* comp_model_value[0][0][0] (grain scale), [0,255]   */
+    int scale_c;        /* chroma scale value when CB/CR selected             */
 
     /* When set, do not insert a fresh SEI if the AU already carries an FGC SEI
      * (avoid double-stamping a stream a previous stage already marked). */
@@ -146,9 +146,9 @@ static void pel_fgs_fill(PelorusFGSContext *ctx)
     fgc->log2_scale_factor = ctx->log2_scale;
 
     for (c = 0; c < 3; c++) {
-        int present = (c == 0) ? !!(ctx->components & PEL_FGS_COMP_Y)
-                    : (c == 1) ? !!(ctx->components & PEL_FGS_COMP_CB)
-                               : !!(ctx->components & PEL_FGS_COMP_CR);
+        int present = (c == 0) ? !!(ctx->components & PEL_FGS_COMP_Y) :
+                      (c == 1) ? !!(ctx->components & PEL_FGS_COMP_CB) :
+                                 !!(ctx->components & PEL_FGS_COMP_CR);
         if (!present)
             continue;
 
@@ -159,8 +159,7 @@ static void pel_fgs_fill(PelorusFGSContext *ctx)
         fgc->num_model_values_minus1[c] = 0;
         fgc->intensity_interval_lower_bound[c][0] = (uint8_t)ctx->intensity_low;
         fgc->intensity_interval_upper_bound[c][0] = (uint8_t)ctx->intensity_high;
-        fgc->comp_model_value[c][0][0] =
-            (int16_t)((c == 0) ? ctx->scale_y : ctx->scale_c);
+        fgc->comp_model_value[c][0][0] = (int16_t)((c == 0) ? ctx->scale_y : ctx->scale_c);
     }
 
     fgc->film_grain_characteristics_persistence_flag = ctx->persistence;
@@ -171,8 +170,7 @@ static void pel_fgs_fill(PelorusFGSContext *ctx)
  * (which carry no SPS). Mirrors the H.265 VUI inference defaults: an absent
  * colour description infers primaries/transfer/matrix = 2 (unspecified), and an
  * absent video-signal-type infers full_range = 0. */
-static void pel_fgs_cache_colour_desc(PelorusFGSContext *ctx,
-                                      const CodedBitstreamFragment *au)
+static void pel_fgs_cache_colour_desc(PelorusFGSContext *ctx, const CodedBitstreamFragment *au)
 {
     int i;
     for (i = 0; i < au->nb_units; i++) {
@@ -181,24 +179,19 @@ static void pel_fgs_cache_colour_desc(PelorusFGSContext *ctx,
             ctx->cd_bit_depth_luma_minus8 = sps->bit_depth_luma_minus8;
             ctx->cd_bit_depth_chroma_minus8 = sps->bit_depth_chroma_minus8;
             ctx->cd_full_range_flag =
-                sps->vui.video_signal_type_present_flag
-                    ? sps->vui.video_full_range_flag : 0;
+                sps->vui.video_signal_type_present_flag ? sps->vui.video_full_range_flag : 0;
             ctx->cd_colour_primaries =
-                sps->vui.colour_description_present_flag
-                    ? sps->vui.colour_primaries : 2;
+                sps->vui.colour_description_present_flag ? sps->vui.colour_primaries : 2;
             ctx->cd_transfer_characteristics =
-                sps->vui.colour_description_present_flag
-                    ? sps->vui.transfer_characteristics : 2;
+                sps->vui.colour_description_present_flag ? sps->vui.transfer_characteristics : 2;
             ctx->cd_matrix_coeffs =
-                sps->vui.colour_description_present_flag
-                    ? sps->vui.matrix_coefficients : 2;
+                sps->vui.colour_description_present_flag ? sps->vui.matrix_coefficients : 2;
             ctx->have_colour_desc = 1;
         }
     }
 }
 
-static int pel_fgs_update_fragment(AVBSFContext *bsf, AVPacket *pkt,
-                                   CodedBitstreamFragment *au)
+static int pel_fgs_update_fragment(AVBSFContext *bsf, AVPacket *pkt, CodedBitstreamFragment *au)
 {
     PelorusFGSContext *ctx = bsf->priv_data;
     SEIRawMessage *existing = NULL;
@@ -238,8 +231,7 @@ static int pel_fgs_update_fragment(AVBSFContext *bsf, AVPacket *pkt,
     }
 
     if (ctx->skip_existing) {
-        err = ff_cbs_sei_find_message(ctx->common.output, au,
-                                      SEI_TYPE_FILM_GRAIN_CHARACTERISTICS,
+        err = ff_cbs_sei_find_message(ctx->common.output, au, SEI_TYPE_FILM_GRAIN_CHARACTERISTICS,
                                       &existing);
         if (err == 0 && existing)
             return 0; /* already marked; leave the stream untouched */
@@ -248,11 +240,9 @@ static int pel_fgs_update_fragment(AVBSFContext *bsf, AVPacket *pkt,
     pel_fgs_fill(ctx);
 
     err = ff_cbs_sei_add_message(ctx->common.output, au, 1 /* prefix */,
-                                 SEI_TYPE_FILM_GRAIN_CHARACTERISTICS,
-                                 &ctx->fgc, NULL);
+                                 SEI_TYPE_FILM_GRAIN_CHARACTERISTICS, &ctx->fgc, NULL);
     if (err < 0) {
-        av_log(bsf, AV_LOG_ERROR,
-               "pelorus_fgs: failed to add Film Grain Characteristics SEI.\n");
+        av_log(bsf, AV_LOG_ERROR, "pelorus_fgs: failed to add Film Grain Characteristics SEI.\n");
         return err;
     }
 
@@ -260,9 +250,9 @@ static int pel_fgs_update_fragment(AVBSFContext *bsf, AVPacket *pkt,
 }
 
 static const CBSBSFType pel_fgs_type = {
-    .codec_id        = AV_CODEC_ID_HEVC,
-    .fragment_name   = "access unit",
-    .unit_name       = "NAL unit",
+    .codec_id = AV_CODEC_ID_HEVC,
+    .fragment_name = "access unit",
+    .unit_name = "NAL unit",
     .update_fragment = &pel_fgs_update_fragment,
 };
 
@@ -274,50 +264,126 @@ static int pel_fgs_init(AVBSFContext *bsf)
 #define OFFSET(x) offsetof(PelorusFGSContext, x)
 #define FLAGS (AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_BSF_PARAM)
 static const AVOption pel_fgs_options[] = {
-    { "model_id", "H.274 film_grain_model_id (0=frequency filtering, 1=auto-regression)",
-      OFFSET(model_id), AV_OPT_TYPE_INT, { .i64 = 1 }, 0, 1, FLAGS },
-    { "blending_mode", "H.274 blending_mode_id (0=additive, 1=multiplicative)",
-      OFFSET(blending_mode), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, FLAGS },
-    { "log2_scale", "H.274 log2_scale_factor",
-      OFFSET(log2_scale), AV_OPT_TYPE_INT, { .i64 = 8 }, 0, 15, FLAGS },
-    { "components", "colour components that carry a grain model (bitmask: 1=Y, 2=Cb, 4=Cr)",
-      OFFSET(components), AV_OPT_TYPE_FLAGS, { .i64 = PEL_FGS_COMP_Y }, 0, 7,
-      FLAGS, .unit = "components" },
-        { "y",  "luma",      0, AV_OPT_TYPE_CONST, { .i64 = PEL_FGS_COMP_Y },  0, 0, FLAGS, .unit = "components" },
-        { "cb", "chroma Cb", 0, AV_OPT_TYPE_CONST, { .i64 = PEL_FGS_COMP_CB }, 0, 0, FLAGS, .unit = "components" },
-        { "cr", "chroma Cr", 0, AV_OPT_TYPE_CONST, { .i64 = PEL_FGS_COMP_CR }, 0, 0, FLAGS, .unit = "components" },
-    { "intensity_low", "lower bound of the luma intensity interval the model covers",
-      OFFSET(intensity_low), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 255, FLAGS },
-    { "intensity_high", "upper bound of the luma intensity interval the model covers",
-      OFFSET(intensity_high), AV_OPT_TYPE_INT, { .i64 = 255 }, 0, 255, FLAGS },
-    { "scale_y", "luma grain scale (comp_model_value[Y][0][0]); maps the estimator's per-band RMS",
-      OFFSET(scale_y), AV_OPT_TYPE_INT, { .i64 = 16 }, 0, 255, FLAGS },
-    { "scale_c", "chroma grain scale (comp_model_value[Cb/Cr][0][0]) when cb/cr selected",
-      OFFSET(scale_c), AV_OPT_TYPE_INT, { .i64 = 8 }, 0, 255, FLAGS },
-    { "persistence", "film_grain_characteristics_persistence_flag (apply until cancelled)",
-      OFFSET(persistence), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
-    { "skip_existing", "do not insert if the access unit already carries an FGC SEI",
-      OFFSET(skip_existing), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
-    { NULL }
-};
+    {"model_id",
+     "H.274 film_grain_model_id (0=frequency filtering, 1=auto-regression)",
+     OFFSET(model_id),
+     AV_OPT_TYPE_INT,
+     {.i64 = 1},
+     0,
+     1,
+     FLAGS},
+    {"blending_mode",
+     "H.274 blending_mode_id (0=additive, 1=multiplicative)",
+     OFFSET(blending_mode),
+     AV_OPT_TYPE_INT,
+     {.i64 = 0},
+     0,
+     1,
+     FLAGS},
+    {"log2_scale",
+     "H.274 log2_scale_factor",
+     OFFSET(log2_scale),
+     AV_OPT_TYPE_INT,
+     {.i64 = 8},
+     0,
+     15,
+     FLAGS},
+    {"components",
+     "colour components that carry a grain model (bitmask: 1=Y, 2=Cb, 4=Cr)",
+     OFFSET(components),
+     AV_OPT_TYPE_FLAGS,
+     {.i64 = PEL_FGS_COMP_Y},
+     0,
+     7,
+     FLAGS,
+     .unit = "components"},
+    {"y", "luma", 0, AV_OPT_TYPE_CONST, {.i64 = PEL_FGS_COMP_Y}, 0, 0, FLAGS, .unit = "components"},
+    {"cb",
+     "chroma Cb",
+     0,
+     AV_OPT_TYPE_CONST,
+     {.i64 = PEL_FGS_COMP_CB},
+     0,
+     0,
+     FLAGS,
+     .unit = "components"},
+    {"cr",
+     "chroma Cr",
+     0,
+     AV_OPT_TYPE_CONST,
+     {.i64 = PEL_FGS_COMP_CR},
+     0,
+     0,
+     FLAGS,
+     .unit = "components"},
+    {"intensity_low",
+     "lower bound of the luma intensity interval the model covers",
+     OFFSET(intensity_low),
+     AV_OPT_TYPE_INT,
+     {.i64 = 0},
+     0,
+     255,
+     FLAGS},
+    {"intensity_high",
+     "upper bound of the luma intensity interval the model covers",
+     OFFSET(intensity_high),
+     AV_OPT_TYPE_INT,
+     {.i64 = 255},
+     0,
+     255,
+     FLAGS},
+    {"scale_y",
+     "luma grain scale (comp_model_value[Y][0][0]); maps the estimator's per-band RMS",
+     OFFSET(scale_y),
+     AV_OPT_TYPE_INT,
+     {.i64 = 16},
+     0,
+     255,
+     FLAGS},
+    {"scale_c",
+     "chroma grain scale (comp_model_value[Cb/Cr][0][0]) when cb/cr selected",
+     OFFSET(scale_c),
+     AV_OPT_TYPE_INT,
+     {.i64 = 8},
+     0,
+     255,
+     FLAGS},
+    {"persistence",
+     "film_grain_characteristics_persistence_flag (apply until cancelled)",
+     OFFSET(persistence),
+     AV_OPT_TYPE_BOOL,
+     {.i64 = 1},
+     0,
+     1,
+     FLAGS},
+    {"skip_existing",
+     "do not insert if the access unit already carries an FGC SEI",
+     OFFSET(skip_existing),
+     AV_OPT_TYPE_BOOL,
+     {.i64 = 1},
+     0,
+     1,
+     FLAGS},
+    {NULL}};
 
 static const AVClass pel_fgs_class = {
     .class_name = "pelorus_fgs_bsf",
-    .item_name  = av_default_item_name,
-    .option     = pel_fgs_options,
-    .version    = LIBAVUTIL_VERSION_INT,
+    .item_name = av_default_item_name,
+    .option = pel_fgs_options,
+    .version = LIBAVUTIL_VERSION_INT,
 };
 
 static const enum AVCodecID pel_fgs_codec_ids[] = {
-    AV_CODEC_ID_HEVC, AV_CODEC_ID_NONE,
+    AV_CODEC_ID_HEVC,
+    AV_CODEC_ID_NONE,
 };
 
 const FFBitStreamFilter ff_pelorus_fgs_bsf = {
-    .p.name         = "pelorus_fgs",
-    .p.codec_ids    = pel_fgs_codec_ids,
-    .p.priv_class   = &pel_fgs_class,
+    .p.name = "pelorus_fgs",
+    .p.codec_ids = pel_fgs_codec_ids,
+    .p.priv_class = &pel_fgs_class,
     .priv_data_size = sizeof(PelorusFGSContext),
-    .init           = &pel_fgs_init,
-    .close          = &ff_cbs_bsf_generic_close,
-    .filter         = &ff_cbs_bsf_generic_filter,
+    .init = &pel_fgs_init,
+    .close = &ff_cbs_bsf_generic_close,
+    .filter = &ff_cbs_bsf_generic_filter,
 };

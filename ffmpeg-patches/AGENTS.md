@@ -46,8 +46,11 @@ ffmpeg-patches/
   (ADR-0143).
 - Compute filters use `*_filter_deps="vulkan spirv_compiler"`. `libpelorus` is
   not an FFmpeg config component and must not appear in `_deps`; filters that
-  consume it use a separate guarded `require_pkg_config ... && add_extralibs`
-  line. Pure transforms do not link it.
+  consume it use a guarded `require_pkg_config` probe plus a symbolic
+  `*_filter_extralibs="libpelorus_extralibs"` assignment. Never add libpelorus
+  to global executable extralibs: the per-filter assignment is what also closes
+  `avfilter_extralibs` and generated `libavfilter.pc` for static consumers. Pure
+  transforms do not link it.
 - Descriptor binding order and push-constant layout are hand-maintained across
   C and GLSL. Specialization IDs 253/254/255 are reserved for workgroup size.
 
@@ -62,7 +65,10 @@ ffmpeg-patches/
    against the Vulkan storage container; LSB-aligned planar 10/12-bit formats
    need `sample_scale`, while P010/P012 require their descriptor shift. Multiply
    loads before math and divide transform results at the store boundary.
-   Whole-texel copies such as borderfix are exempt (ADR-0147).
+   Quantized P010/P012 writeback derives `code_max` from the descriptor shift as
+   a specialization constant, not a push field; denoise keeps its push block at
+   or below Vulkan's 128-byte guaranteed minimum. Whole-texel copies such as
+   borderfix are exempt (ADR-0147).
 3. The `planes` AVOption selects physical planes. A selected semi-planar chroma
    plane contains both U and V and both components must be processed. Scalar
    kernels use read-modify-write so packed or otherwise unowned components are
@@ -106,8 +112,11 @@ Before calling a patch-stack change complete:
 2. compile all canonical GLSL and run the Pelorus fast suite;
 3. regenerate twice and compare bytes;
 4. replay all 18 patches at the pinned FFmpeg commit;
-5. build/link/smoke the relevant feature-enabled FFmpeg configuration; and
-6. run the affected Vulkan formats and plane masks on hardware. If no device is
+5. build/link/smoke the relevant feature-enabled FFmpeg configuration;
+6. install the static FFmpeg libraries and compile/run the external
+   `pkg-config --static libavfilter` consumer, asserting its link flags include
+   `-lpelorus`; and
+7. run the affected Vulkan formats and plane masks on hardware. If no device is
    available, record that row as unexecuted rather than treating compile success
    as runtime evidence.
 

@@ -31,13 +31,13 @@ ADR: docs/adr/0124-anime-aa.md
  configure                               |   1 +
  libavfilter/Makefile                    |   1 +
  libavfilter/allfilters.c                |   1 +
- libavfilter/vf_pelorus_aa_vulkan.c      | 284 ++++++++++++++++++++
+ libavfilter/vf_pelorus_aa_vulkan.c      | 286 ++++++++++++++++++++
  libavfilter/vulkan/Makefile             |   1 +
- libavfilter/vulkan/pelorus_aa.comp.glsl | 260 ++++++++++++++++++
- 6 files changed, 548 insertions(+)
+ libavfilter/vulkan/pelorus_aa.comp.glsl | 265 ++++++++++++++++++
+ 6 files changed, 555 insertions(+)
 
 diff --git a/configure b/configure
-index c68249b1a029bb1b1b4c9daf017402e0020bbe9f..31a1c70813cc6c40c1f96a5c35b0c67c0e0c8db8 100755
+index f052412ba00f78d88734beaa51c4a4e82a5ebea6..021915e788bf3f971443131919f665036148b3b6 100755
 --- a/configure
 +++ b/configure
 @@ -4243,6 +4243,7 @@ overlay_qsv_filter_deps="libmfx"
@@ -74,10 +74,10 @@ index 2ac2a6540fb0f9b500bfbd6137278ca1ddc56b4a..0ee727c8c38cefe87c4d23504c0e43dd
  extern const FFFilter ff_vf_pelorus_dehalo_vulkan;
 diff --git a/libavfilter/vf_pelorus_aa_vulkan.c b/libavfilter/vf_pelorus_aa_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..f354ccdd6b3591b22768dd012eb2535a59c0dfaf
+index 0000000000000000000000000000000000000000..bda8e239fc0e9512e2929fe32957a1f16db3d27b
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_aa_vulkan.c
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,286 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -164,6 +164,7 @@ index 0000000000000000000000000000000000000000..f354ccdd6b3591b22768dd012eb2535a
 +    const int planes = av_pix_fmt_count_planes(vkctx->output_format);
 +    const AVPixFmtDescriptor *pd = av_pix_fmt_desc_get(vkctx->output_format);
 +    const int semi_planar = pd && pd->nb_components >= 3 && pd->comp[1].plane == pd->comp[2].plane;
++    const uint32_t sample_code_max = pel_vk_sample_code_max(vkctx->output_format);
 +
 +    s->opts.sample_scale = pel_vk_sample_scale(vkctx->input_format);
 +
@@ -180,11 +181,12 @@ index 0000000000000000000000000000000000000000..f354ccdd6b3591b22768dd012eb2535a
 +     * const-folded into the generated GLSL before FFmpeg 9 unrolled the
 +     * per-plane loop in C. With precompiled SPIR-V they become specialization
 +     * constants, folded at pipeline-compile time to the same single variant. */
-+    SPEC_LIST_CREATE(sl, 4, 4 * sizeof(uint32_t))
++    SPEC_LIST_CREATE(sl, 5, 5 * sizeof(uint32_t))
 +    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
 +    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
 +    SPEC_LIST_ADD(sl, 2, 32, (uint32_t)(s->fast != 0));
 +    SPEC_LIST_ADD(sl, 3, 32, (uint32_t)semi_planar);
++    SPEC_LIST_ADD(sl, 4, 32, sample_code_max);
 +
 +    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 +
@@ -373,10 +375,10 @@ index 77187fe29c5fe23f84b61b45cf3a28257140bbc3..d3ff362cfa612b53ee51d812a1df844c
 +OBJS-$(CONFIG_PELORUS_AA_VULKAN_FILTER) += vulkan/pelorus_aa.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_aa.comp.glsl b/libavfilter/vulkan/pelorus_aa.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..0a97987acabf0cbaff842ebe4e3e8b0db959181a
+index 0000000000000000000000000000000000000000..ab1838ed6bc634be4834fc2169c25f35e2fe1b08
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_aa.comp.glsl
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,265 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -408,8 +410,9 @@ index 0000000000000000000000000000000000000000..0a97987acabf0cbaff842ebe4e3e8b0d
 + *   warp  = bilinear(luma, pos + disp)      // pull samples onto the line
 + *   line-darken: where warp is on the dark side near an edge, deepen by darkstr.
 + *
-+ * Works in FF_VK_REP_FLOAT (UNORM) space, so samples are already in [0,1] and
-+ * the shader is bit-depth agnostic.
++ * FF_VK_REP_FLOAT normalizes against the storage container. Descriptor-derived
++ * scale and code-max values map that representation to logical samples and
++ * preserve the zero low padding bits required by shifted P010/P012 writeback.
 + */
 +
 +#pragma shader_stage(compute)
@@ -428,6 +431,7 @@ index 0000000000000000000000000000000000000000..0a97987acabf0cbaff842ebe4e3e8b0d
 +layout (constant_id = 1) const uint plane_mask = 0x1;
 +layout (constant_id = 2) const uint fast       = 0;
 +layout (constant_id = 3) const uint semi_planar = 0;
++layout (constant_id = 4) const uint sample_code_max = 0;
 +
 +layout (push_constant, std430) uniform pushConstants {
 +    int   blur;
@@ -455,7 +459,10 @@ index 0000000000000000000000000000000000000000..0a97987acabf0cbaff842ebe4e3e8b0d
 +    return value * sample_scale;
 +}
 +float pel_to_storage(float value) {
-+    return value / sample_scale;
++    if (sample_code_max == 0u)
++        return value / sample_scale;
++    const float code_max = float(sample_code_max);
++    return round(clamp(value, 0.0, 1.0) * code_max) / code_max / sample_scale;
 +}
 +uint pel_component_count(uint plane) {
 +    return (semi_planar != 0u && plane == 1u) ? 2u : 1u;

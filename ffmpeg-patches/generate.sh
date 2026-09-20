@@ -204,19 +204,17 @@ def ins_after(path, anchor, line):
     assert line.strip() not in t, f"already present in {path}: {line!r}"
     p.write_text(t.replace(anchor, anchor + line, 1))
 
-# libpelorus wiring mirrors vmafx's vf_vmaf_pre: the filter depends only on
-# FFmpeg-KNOWN components (vulkan spirv_compiler) — `libpelorus` is NOT a known
-# config name, so it must NOT appear in _deps (an unknown dep silently disables
-# the filter). The extra lib is gated by `enabled <filter> && require_pkg_config
-# libpelorus ...`, which adds its cflags/libs and hard-errors if it is missing.
+# libpelorus is not an FFmpeg config component and therefore must not appear in
+# _deps. The guarded probe hard-errors if it is missing, while the symbolic
+# per-filter extralibs entry closes both executable links and libavfilter.pc's
+# static link metadata.
 LVMAF_CUDA = ('enabled libvmaf           && check_pkg_config libvmaf_cuda '
               '"libvmaf >= 2.0.0" libvmaf_cuda.h vmaf_cuda_state_init\n')
-# require_pkg_config adds the header cflags but NOT the link libs, so append
-# add_extralibs to actually link -lpelorus (otherwise ffmpeg fails at LINK time
-# with undefined references, which a compile-only check never catches).
-REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack '
-       '&& add_extralibs $libpelorus_extralibs\n')
+
+def libpelorus_link(name):
+    return (f'{name}_filter_extralibs="libpelorus_extralibs"\n'
+            f'enabled {name}_filter && require_pkg_config libpelorus '
+            '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack\n')
 
 if which == 'deband':
     ins_before("libavfilter/allfilters.c",
@@ -228,7 +226,8 @@ if which == 'deband':
     ins_after("configure",
               'overlay_vulkan_filter_deps="vulkan spirv_compiler"\n',
               'pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"\n')
-    ins_after("configure", LVMAF_CUDA, REQ % "pelorus_deband_vulkan")
+    ins_after("configure", LVMAF_CUDA,
+              libpelorus_link("pelorus_deband_vulkan"))
 elif which == 'analyze':
     # analyze sorts before deband alphabetically; insert ahead of it.
     ins_before("libavfilter/allfilters.c",
@@ -240,7 +239,8 @@ elif which == 'analyze':
     ins_before("configure",
                'pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"\n',
                'pelorus_analyze_vulkan_filter_deps="vulkan spirv_compiler"\n')
-    ins_after("configure", REQ % "pelorus_deband_vulkan", REQ % "pelorus_analyze_vulkan")
+    ins_after("configure", libpelorus_link("pelorus_deband_vulkan"),
+              libpelorus_link("pelorus_analyze_vulkan"))
 elif which == 'denoise':
     # denoise sorts after deband alphabetically (deban < denoi); insert after it.
     ins_before("libavfilter/allfilters.c",
@@ -252,7 +252,8 @@ elif which == 'denoise':
     ins_after("configure",
               'pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"\n',
               'pelorus_denoise_vulkan_filter_deps="vulkan spirv_compiler"\n')
-    ins_after("configure", REQ % "pelorus_analyze_vulkan", REQ % "pelorus_denoise_vulkan")
+    ins_after("configure", libpelorus_link("pelorus_analyze_vulkan"),
+              libpelorus_link("pelorus_denoise_vulkan"))
 else:
     sys.exit("unknown filter: " + which)
 print(f"registration applied: {which}")
@@ -295,9 +296,10 @@ def ins_after(path, anchor, line):
     assert anchor in t, f"anchor missing in {path}: {anchor!r}"
     assert line.strip() not in t, f"already present in {path}: {line!r}"
     p.write_text(t.replace(anchor, anchor + line, 1))
-REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack '
-       '&& add_extralibs $libpelorus_extralibs\n')
+def libpelorus_link(name):
+    return (f'{name}_filter_extralibs="libpelorus_extralibs"\n'
+            f'enabled {name}_filter && require_pkg_config libpelorus '
+            '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack\n')
 ins_before("libavfilter/allfilters.c",
            "extern const FFFilter ff_vf_perms;\n",
            "extern const FFFilter ff_vf_pelorus_grain_estimate_vulkan;\n")
@@ -307,7 +309,8 @@ ins_after("libavfilter/Makefile",
 ins_after("configure",
           'pelorus_denoise_vulkan_filter_deps="vulkan spirv_compiler"\n',
           'pelorus_grain_estimate_vulkan_filter_deps="vulkan spirv_compiler"\n')
-ins_after("configure", REQ % "pelorus_denoise_vulkan", REQ % "pelorus_grain_estimate_vulkan")
+ins_after("configure", libpelorus_link("pelorus_denoise_vulkan"),
+          libpelorus_link("pelorus_grain_estimate_vulkan"))
 print("registration applied: grain_estimate")
 PY
 git -C "$WORKTREE" add -A
@@ -330,9 +333,10 @@ def ins_after(path, anchor, line):
     assert anchor in t, f"anchor missing in {path}: {anchor!r}"
     assert line.strip() not in t, f"already present in {path}: {line!r}"
     p.write_text(t.replace(anchor, anchor + line, 1))
-REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack '
-       '&& add_extralibs $libpelorus_extralibs\n')
+def libpelorus_link(name):
+    return (f'{name}_filter_extralibs="libpelorus_extralibs"\n'
+            f'enabled {name}_filter && require_pkg_config libpelorus '
+            '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack\n')
 ins_before("libavfilter/allfilters.c",
            "extern const FFFilter ff_vf_perms;\n",
            "extern const FFFilter ff_vf_pelorus_mc_vulkan;\n")
@@ -342,7 +346,8 @@ ins_after("libavfilter/Makefile",
 ins_after("configure",
           'pelorus_grain_estimate_vulkan_filter_deps="vulkan spirv_compiler"\n',
           'pelorus_mc_vulkan_filter_deps="vulkan spirv_compiler"\n')
-ins_after("configure", REQ % "pelorus_grain_estimate_vulkan", REQ % "pelorus_mc_vulkan")
+ins_after("configure", libpelorus_link("pelorus_grain_estimate_vulkan"),
+          libpelorus_link("pelorus_mc_vulkan"))
 print("registration applied: mc")
 PY
 git -C "$WORKTREE" add -A
@@ -521,9 +526,10 @@ def ins_after(path, anchor, line):
     assert anchor in t, f"anchor missing in {path}: {anchor!r}"
     assert line.strip() not in t, f"already present in {path}: {line!r}"
     p.write_text(t.replace(anchor, anchor + line, 1))
-REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack '
-       '&& add_extralibs $libpelorus_extralibs\n')
+def libpelorus_link(name):
+    return (f'{name}_filter_extralibs="libpelorus_extralibs"\n'
+            f'enabled {name}_filter && require_pkg_config libpelorus '
+            '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack\n')
 # allfilters.c: pelorus_scenecut sorts after pelorus_mc -> insert before perms.
 ins_before("libavfilter/allfilters.c",
            "extern const FFFilter ff_vf_perms;\n",
@@ -532,8 +538,10 @@ ins_before("libavfilter/allfilters.c",
 ins_after("libavfilter/Makefile",
           "OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER)      += vf_pelorus_mc_vulkan.o vulkan.o vulkan_filter.o\n",
           "OBJS-$(CONFIG_PELORUS_SCENECUT_FILTER)       += vf_pelorus_scenecut.o\n")
-# configure: NO _deps (not a Vulkan filter); just the require_pkg_config link.
-ins_after("configure", REQ % "pelorus_mc_vulkan", REQ % "pelorus_scenecut")
+# configure: no _deps (not a Vulkan filter); use the guarded pkg-config probe and
+# per-filter extralibs entry for libpelorus.
+ins_after("configure", libpelorus_link("pelorus_mc_vulkan"),
+          libpelorus_link("pelorus_scenecut"))
 print("registration applied: scenecut")
 PY
 git -C "$WORKTREE" add -A

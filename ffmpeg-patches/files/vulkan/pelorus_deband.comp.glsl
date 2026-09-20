@@ -38,6 +38,7 @@ layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
  * (the rest are copied through). Both were C-unrolled loop bounds before. */
 layout (constant_id = 0) const uint planes     = 0;
 layout (constant_id = 1) const uint plane_mask = 0xf;
+layout (constant_id = 2) const uint sample_code_max = 0;
 
 layout (push_constant, std430) uniform pushConstants {
     vec4  thr;
@@ -60,7 +61,11 @@ vec4 pel_to_sample(vec4 value) {
     return value * sample_scale;
 }
 vec4 pel_to_storage(vec4 value) {
-    return value / sample_scale;
+    if (sample_code_max == 0u)
+        return value / sample_scale;
+    const float code_max = float(sample_code_max);
+    return round(clamp(value, vec4(0.0), vec4(1.0)) * code_max) /
+           code_max / sample_scale;
 }
 
 float frand(vec2 p) {

@@ -47,6 +47,7 @@ layout (constant_id = 0) const uint planes     = 0;
 layout (constant_id = 1) const uint plane_mask = 0x1;
 layout (constant_id = 2) const uint tile       = 0;
 layout (constant_id = 3) const uint semi_planar = 0;
+layout (constant_id = 4) const uint sample_code_max = 0;
 
 layout (push_constant, std430) uniform pushConstants {
     int   blur_r;
@@ -80,7 +81,10 @@ float pel_to_sample(float value)
 
 float pel_to_storage(float value)
 {
-    return value / sample_scale;
+    if (sample_code_max == 0u)
+        return value / sample_scale;
+    const float code_max = float(sample_code_max);
+    return round(clamp(value, 0.0, 1.0) * code_max) / code_max / sample_scale;
 }
 
 uint pel_component_count(uint plane)

@@ -27,13 +27,13 @@ ADR: docs/adr/0127-deblock.md
  configure                                    |   1 +
  libavfilter/Makefile                         |   1 +
  libavfilter/allfilters.c                     |   1 +
- libavfilter/vf_pelorus_deblock_vulkan.c      | 268 ++++++++++++++++++++
+ libavfilter/vf_pelorus_deblock_vulkan.c      | 270 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |   1 +
- libavfilter/vulkan/pelorus_deblock.comp.glsl | 129 ++++++++++
- 6 files changed, 401 insertions(+)
+ libavfilter/vulkan/pelorus_deblock.comp.glsl | 133 ++++++++++
+ 6 files changed, 407 insertions(+)
 
 diff --git a/configure b/configure
-index 1cc93c4d33fb624e88db02116bfd4b2f75b11c23..43f5528055cdd845ce51092cc5cded3360343ad4 100755
+index 5f48b12e31eb76d3cae37489068aa5eac5f0dccb..b890fae94423562137ed098673ca7a24cee3bacc 100755
 --- a/configure
 +++ b/configure
 @@ -4246,6 +4246,7 @@ overlay_vulkan_filter_deps="vulkan spirv_compiler"
@@ -70,10 +70,10 @@ index d6632cc826123b6f1b3bbc93db698e8023ca8591..9985efd56d8026261a43cba1283408ac
  extern const FFFilter ff_vf_pelorus_grain_estimate_vulkan;
 diff --git a/libavfilter/vf_pelorus_deblock_vulkan.c b/libavfilter/vf_pelorus_deblock_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..5d6b2f6fbea95e3062f6149c14237bdbc7e04d4e
+index 0000000000000000000000000000000000000000..87a78075caafd80904e3f7f3425c27f644494114
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_deblock_vulkan.c
-@@ -0,0 +1,268 @@
+@@ -0,0 +1,270 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -163,6 +163,7 @@ index 0000000000000000000000000000000000000000..5d6b2f6fbea95e3062f6149c14237bdb
 +    const int planes = av_pix_fmt_count_planes(vkctx->output_format);
 +    const AVPixFmtDescriptor *pd = av_pix_fmt_desc_get(vkctx->output_format);
 +    const int semi_planar = pd && pd->nb_components >= 3 && pd->comp[1].plane == pd->comp[2].plane;
++    const uint32_t sample_code_max = pel_vk_sample_code_max(vkctx->output_format);
 +
 +    s->opts.thr = s->opt_thr;
 +    s->opts.sample_scale = pel_vk_sample_scale(vkctx->input_format);
@@ -178,10 +179,11 @@ index 0000000000000000000000000000000000000000..5d6b2f6fbea95e3062f6149c14237bdb
 +    /* Plane count and the plane bitmask were const-folded into the generated
 +     * GLSL before FFmpeg 9 unrolled the per-plane loop in C. With precompiled
 +     * SPIR-V they become specialization constants instead. */
-+    SPEC_LIST_CREATE(sl, 3, 3 * sizeof(uint32_t))
++    SPEC_LIST_CREATE(sl, 4, 4 * sizeof(uint32_t))
 +    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
 +    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
 +    SPEC_LIST_ADD(sl, 2, 32, (uint32_t)semi_planar);
++    SPEC_LIST_ADD(sl, 3, 32, sample_code_max);
 +
 +    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 +
@@ -353,10 +355,10 @@ index d3ff362cfa612b53ee51d812a1df844c6e2d3dc1..8e75e876856feb0a34b5188010c0f01a
 +OBJS-$(CONFIG_PELORUS_DEBLOCK_VULKAN_FILTER) += vulkan/pelorus_deblock.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_deblock.comp.glsl b/libavfilter/vulkan/pelorus_deblock.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..15d18ed2854c680f219747c75522b5c1ddeb7898
+index 0000000000000000000000000000000000000000..8816dbefbbac0c45c1d304372b0be9138f7ba3e2
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_deblock.comp.glsl
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,133 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -407,6 +409,7 @@ index 0000000000000000000000000000000000000000..15d18ed2854c680f219747c75522b5c1
 +layout (constant_id = 0) const uint planes     = 0;
 +layout (constant_id = 1) const uint plane_mask = 0x1;
 +layout (constant_id = 2) const uint semi_planar = 0;
++layout (constant_id = 3) const uint sample_code_max = 0;
 +
 +layout (push_constant, std430) uniform pushConstants {
 +    int   bsize;
@@ -423,7 +426,10 @@ index 0000000000000000000000000000000000000000..15d18ed2854c680f219747c75522b5c1
 +    return value * sample_scale;
 +}
 +float pel_to_storage(float value) {
-+    return value / sample_scale;
++    if (sample_code_max == 0u)
++        return value / sample_scale;
++    const float code_max = float(sample_code_max);
++    return round(clamp(value, 0.0, 1.0) * code_max) / code_max / sample_scale;
 +}
 +uint pel_component_count(uint plane) {
 +    return (semi_planar != 0u && plane == 1u) ? 2u : 1u;

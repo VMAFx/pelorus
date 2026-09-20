@@ -61,7 +61,7 @@ not a patch defect. No BD-rate gain is claimed; on-HW A/B is the follow-up.
  5 files changed, 1132 insertions(+)
 
 diff --git a/configure b/configure
-index ad55df52f7626c32310010c32c4379717ae711fe..216f12e37b3d0b1dc56693872573bcecee629410 100755
+index 839033a423604cbfaf45a7fffd984bc587d44839..966285c2eb68a38202adeb5d2795e685031ab67e 100755
 --- a/configure
 +++ b/configure
 @@ -2822,6 +2822,7 @@ CONFIG_EXTRA="

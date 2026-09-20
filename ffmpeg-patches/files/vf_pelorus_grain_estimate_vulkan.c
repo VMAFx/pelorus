@@ -67,14 +67,15 @@
 /* Intensity bands and atomic-contention slices. MUST match the std430 SSBO
  * layout in pelorus_grain_estimate.comp.glsl, byte-for-byte. */
 #define PEL_GRAIN_BANDS 8
-#define PEL_GRAIN_SLICES 16
+#define PEL_GRAIN_SLICES 32
 
 /* Fixed-point scales shared by shader writes and host reads. Two distinct
  * scales plus a residual clamp keep both uint32 accumulators overflow-safe up
  * to 8K while preserving precision: with resid clamped to [-0.08,0.08] (lossless
  * for real grain), resid^2 <= 0.0064, so the worst-case per-pixel contribution
- * times the largest per-slice flat-pixel count (~2M at 8K) stays under 2^32, and
- * a small real-grain residual still scales to >= 1 (no truncation-to-zero).
+ * times the largest per-slice flat-pixel count (~1.11M at DCI 8K) stays under
+ * 2^32, and a small real-grain residual still scales to >= 1 (no
+ * truncation-to-zero).
  * MUST match pelorus_grain_estimate.comp.glsl. */
 #define PEL_GRAIN_SUMSQ_GS 300000.0
 #define PEL_GRAIN_CORR_GS 2000.0

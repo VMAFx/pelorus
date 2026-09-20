@@ -84,8 +84,8 @@ Sources: <https://docs.renovatebot.com/modules/manager/regex/> and
 
 | Claim | Required evidence |
 |---|---|
-| n9.0.2 patch compatibility | deterministic 18-patch generation and full replay at the pinned commit |
-| correct libpelorus linkage | private install prefix reported by `pkg-config`; linked `ffmpeg`; all Pelorus filters and BSF register |
+| n9.0.2 patch compatibility | deterministic 18-patch generation and full replay at the pinned commit, compiling available oneVPL, libaom, SVT-AV1, and NVENC consumers and checking their Pelorus AVOptions |
+| correct libpelorus linkage | private install prefix reported by `pkg-config`; linked `ffmpeg`; all Pelorus filters and BSF register; installed static `libavfilter.pc` exposes `-lpelorus` and links/runs an external consumer |
 | workflow structure | build-config checker plus actionlint v1.7.12 |
 | sanitizer preservation | fast suite under ASan+UBSan with fatal alignment failures |
 | Ubuntu 26.04 operational acceptance | all PR jobs and the manual non-publishing release gate green on GitHub-hosted `ubuntu-26.04`, with image/package versions retained |
