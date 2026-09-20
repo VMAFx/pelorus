@@ -267,15 +267,15 @@ survey's ROI caveat): decisive on banding-prone-gradient-over-detail, marginal o
 extremely smooth gradients or bitrates too low to deband even with steering.
 
 **QSV** — code-complete, **on-hardware BD-rate proof pending** (no numbers
-claimed). Stock `hevc_qsv`/`h264_qsv` map ROI side data only onto coarse
-`mfxExtEncoderROI` rectangles; `ffmpeg-patches/files/qsv-pelorus-roi.patch`
-(`-pelorus_roi 1`) instead rasterizes the same side data into the dense
-`mfxExtMBQP` per-block delta map (`MFX_MBQP_MODE_QP_DELTA`, 16×16 blocks,
-`EnableMBQP` on at init), the QSV analogue of the NVENC `qpDeltaMap` path above.
-Same expected envelope and caveats as NVENC: honored under **CQP only** (the
-patch probes `RateControlMethod == MFX_RATECONTROL_CQP` and warns-once / passes
-through otherwise), perceptual win on banding-prone content, ~0 on clean/busy.
-Measure on Intel HW (Arc / iGPU) per ADR-0111 before quoting a magnitude.
+claimed). Stock `hevc_qsv`/`h264_qsv` map ROI side data onto coarse
+`mfxExtEncoderROI` rectangles. With `-pelorus_roi 1`, patch 0005 selects dense
+`mfxExtMBQP` (`MFX_MBQP_MODE_QP_DELTA`, 16×16 blocks) only for progressive
+HEVC+CQP on runtime API 1.28 or newer, after confirming that the `EnableMBQP`
+init request was attached. H.264, older runtimes, non-CQP HEVC, interlaced
+input, and MBQP-absent builds retain the stock rectangle path; they do not pass
+through or lose ROI steering. See [ADR-0146](../adr/0146-qsv-roi-frame-ownership.md)
+for the corrected selection and lifetime contract. Measure on Intel HW (Arc /
+iGPU) per ADR-0111 before quoting a magnitude.
 
 ## v0.6 — cross-vendor ROI portability (NVENC + AMD + Intel, dev-box validation)
 

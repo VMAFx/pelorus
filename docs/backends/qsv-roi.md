@@ -10,18 +10,21 @@ where the documented oneVPL contract is complete.
 
 | Input/build condition | Path used |
 |---|---|
-| Progressive HEVC, CQP, MBQP headers available | Dense per-frame `mfxExtMBQP` with `MFX_MBQP_MODE_QP_DELTA` |
+| Progressive HEVC, CQP, runtime API 1.28 or newer, MBQP headers available | Dense per-frame `mfxExtMBQP` with `MFX_MBQP_MODE_QP_DELTA` |
 | H.264 | Stock `mfxExtEncoderROI` rectangles |
+| HEVC on runtime API 1.27 or older | Stock `mfxExtEncoderROI` rectangles |
 | HEVC with non-CQP rate control | Stock `mfxExtEncoderROI` rectangles |
 | Interlaced HEVC session or frame | Stock `mfxExtEncoderROI` rectangles |
 | Build headers older than API 1.13 | Stock `mfxExtEncoderROI` rectangles |
 | Frame has no ROI side data | No ROI ext-buffer is attached for that frame |
 
 The dense and rectangle ext-buffers are mutually exclusive on a frame.
-`mfxExtCodingOption3::EnableMBQP=ON` is a request made during initialization;
-oneVPL does not define a per-frame `mfxExtMBQP` query mode that would make this a
-runtime capability probe. An actual hardware encode is therefore required to
-establish that a particular implementation honors the request.
+`mfxExtCodingOption3::EnableMBQP=ON` is a request made during initialization.
+FFmpeg n9.0.1 attaches that coding-option buffer to HEVC only on runtime API
+1.28 or newer; Pelorus records that the request was attached before permitting
+a dense frame. oneVPL does not define a per-frame `mfxExtMBQP` query mode that
+would make this a runtime capability probe. An actual hardware encode is
+therefore required to establish that a particular implementation honors it.
 
 ## Lifetime and layout
 
@@ -42,7 +45,8 @@ regions overlap.
 
 ## Usage
 
-Use progressive HEVC with CQP when dense steering is wanted:
+Use runtime API 1.28 or newer with progressive HEVC+CQP when dense steering is
+wanted:
 
 ```bash
 ffmpeg -i input.mkv \
@@ -50,9 +54,9 @@ ffmpeg -i input.mkv \
   -c:v hevc_qsv -global_quality 30 -pelorus_roi 1 output.mkv
 ```
 
-H.264 or another HEVC rate-control mode is valid, but `-pelorus_roi 1` then
-selects the stock rectangle path and emits a diagnostic explaining why. The
-option does not turn unsupported dense cases into a no-op.
+H.264, an older runtime, or another HEVC rate-control mode is valid, but
+`-pelorus_roi 1` then selects the stock rectangle path and emits a diagnostic
+explaining why. The option does not turn unsupported dense cases into a no-op.
 
 ## Deterministic validation
 
@@ -67,7 +71,8 @@ BASE_TAG=n9.0.1 \
 bash ffmpeg-patches/test/qsv-roi-regression.sh
 ```
 
-It verifies two simultaneously live frame maps, aligned storage padding,
+It verifies two simultaneously live frame maps, runtime 1.27 stock fallback
+versus 1.28 dense selection, attached-request state, aligned storage padding,
 overlap precedence, malformed side data, invalid dimensions, interlaced
 selection, and both compile-time branches. It does not replace an asynchronous
 on-hardware encode test.

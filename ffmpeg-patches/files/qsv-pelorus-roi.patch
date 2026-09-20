@@ -2,7 +2,7 @@ diff --git a/libavcodec/qsvenc.c b/libavcodec/qsvenc.c
 index c79db08..cb7247f 100644
 --- a/libavcodec/qsvenc.c
 +++ b/libavcodec/qsvenc.c
-@@ -771,6 +771,25 @@ static int init_video_param_jpeg(AVCodecContext *avctx, QSVEncContext *q)
+@@ -771,6 +771,26 @@ static int init_video_param_jpeg(AVCodecContext *avctx, QSVEncContext *q)
      return 0;
  }
 -
@@ -12,6 +12,7 @@ index c79db08..cb7247f 100644
 +                                                  const QSVEncContext *q)
 +{
 +    return avctx->codec_id == AV_CODEC_ID_HEVC &&
++           QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 28) &&
 +           q->param.mfx.RateControlMethod == MFX_RATECONTROL_CQP &&
 +           q->param.mfx.FrameInfo.PicStruct == MFX_PICSTRUCT_PROGRESSIVE;
 +}
@@ -20,7 +21,7 @@ index c79db08..cb7247f 100644
 +                                               const QSVEncContext *q,
 +                                               const AVFrame *frame)
 +{
-+    return q->pelorus_roi && frame &&
++    return q->pelorus_roi && q->pelorus_roi_mbqp_enabled && frame &&
 +           !(frame->flags & AV_FRAME_FLAG_INTERLACED) &&
 +           qsvenc_pelorus_roi_mbqp_preconditions(avctx, q);
 +}
@@ -29,54 +30,63 @@ index c79db08..cb7247f 100644
  static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
  {
      enum AVPixelFormat sw_format = avctx->pix_fmt == AV_PIX_FMT_QSV ?
-@@ -1117,6 +1136,46 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
-         q->extco3.Header.BufferId      = MFX_EXTBUFF_CODING_OPTION3;
-         q->extco3.Header.BufferSz      = sizeof(q->extco3);
+@@ -956,9 +976,37 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
+     case MFX_RATECONTROL_ICQ:
+         q->param.mfx.ICQQuality  = av_clip(avctx->global_quality, 1, 51);
+         break;
+     }
  
 +#if QSV_HAVE_MBQP
-+        /* Pelorus: per-block QP steering requires EnableMBQP at init, and the
-+         * SDK only honors it under CQP rate control (mfxExtCodingOption3 doc).
-+         * Check the preconditions here and degrade gracefully: clearing
-+         * pelorus_roi re-enables the upstream per-region mfxExtEncoderROI path
-+         * in encode_frame(), so ROI steering keeps working either way. The
-+         * documented DeltaQP layout does not define interlaced field ordering,
-+         * therefore the dense path is progressive HEVC+CQP only. This is a
-+         * contract gate, not a runtime capability probe. */
-+        if (q->pelorus_roi &&
-+            !qsvenc_pelorus_roi_mbqp_preconditions(avctx, q)) {
-+            const char *reason = avctx->codec_id != AV_CODEC_ID_HEVC ?
-+                                 "requires HEVC" :
-+                                 q->param.mfx.RateControlMethod != MFX_RATECONTROL_CQP ?
-+                                 "requires CQP rate control" :
-+                                 "requires progressive video";
++    q->pelorus_roi_mbqp_enabled = 0;
++    if (q->pelorus_roi &&
++        !qsvenc_pelorus_roi_mbqp_preconditions(avctx, q)) {
++        const char *reason = avctx->codec_id != AV_CODEC_ID_HEVC ?
++                             "requires HEVC" :
++                             !QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 28) ?
++                             "requires QSV runtime API 1.28 or newer" :
++                             q->param.mfx.RateControlMethod != MFX_RATECONTROL_CQP ?
++                             "requires CQP rate control" :
++                             "requires progressive video";
 +
-+            av_log(avctx, AV_LOG_WARNING,
-+                   "pelorus_roi dense delta-QP maps %s; falling back to the "
-+                   "per-region mfxExtEncoderROI path.\n", reason);
-+            q->pelorus_roi = 0;
-+        }
++        av_log(avctx, AV_LOG_WARNING,
++               "pelorus_roi dense delta-QP maps %s; falling back to the "
++               "per-region mfxExtEncoderROI path.\n", reason);
++        q->pelorus_roi = 0;
++    }
++#else
++    if (q->pelorus_roi) {
++        av_log(avctx, AV_LOG_WARNING,
++               "pelorus_roi requested but mfxExtMBQP is unavailable "
++               "(oneVPL/MediaSDK API 1.13 or greater required at compile "
++               "time); falling back to the per-region mfxExtEncoderROI "
++               "path.\n");
++        q->pelorus_roi = 0;
++    }
++#endif
 +
+     // The HEVC encoder plugin currently fails with some old libmfx version if coding options
+     // are provided. Can't find the extract libmfx version which fixed it, just enable it from
+     // V1.28 in order to keep compatibility security.
+     if (((avctx->codec_id != AV_CODEC_ID_HEVC) || QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 28))
+@@ -1117,6 +1165,16 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
+         q->extco3.Header.BufferId      = MFX_EXTBUFF_CODING_OPTION3;
+         q->extco3.Header.BufferSz      = sizeof(q->extco3);
+-
++
++#if QSV_HAVE_MBQP
 +        if (q->pelorus_roi) {
 +            q->extco3.EnableMBQP = MFX_CODINGOPTION_ON;
++            q->pelorus_roi_mbqp_enabled = 1;
 +            av_log(avctx, AV_LOG_VERBOSE,
 +                   "Pelorus ROI: requesting per-frame HEVC delta-QP maps "
 +                   "(mfxExtMBQP).\n");
-+        }
-+#else
-+        if (q->pelorus_roi) {
-+            av_log(avctx, AV_LOG_WARNING,
-+                   "pelorus_roi requested but mfxExtMBQP is unavailable "
-+                   "(oneVPL/MediaSDK API 1.13 or greater required at compile "
-+                   "time); falling back to the per-region mfxExtEncoderROI "
-+                   "path.\n");
-+            q->pelorus_roi = 0;
 +        }
 +#endif
 +
          if (avctx->codec_id == AV_CODEC_ID_HEVC ||
              avctx->codec_id == AV_CODEC_ID_H264) {
              switch (q->p_strategy) {
-@@ -2133,6 +2192,162 @@ static void print_interlace_msg(AVCodecContext *avctx, QSVEncContext *q)
+@@ -2133,6 +2191,163 @@ static void print_interlace_msg(AVCodecContext *avctx, QSVEncContext *q)
      }
  }
  
@@ -97,7 +107,8 @@ index c79db08..cb7247f 100644
 + * qp_range convention matches libx264 (51 + 6*(bit_depth-8)); MBQP DeltaQP
 + * entries are signed bytes applied on top of the rate-control QP.
 + *
-+ * Progressive HEVC+CQP only -- see the precondition gate in init_video_param().
++ * Progressive HEVC+CQP on runtime API 1.28 or newer only -- see the
++ * precondition gate in init_video_param().
 + *
 + * The header and its DeltaQP array are one per-frame allocation, the array
 + * living immediately behind the mfxExtMBQP header, so free_encoder_ctrl()
@@ -301,19 +312,20 @@ index 4bc77f2..5d54e12 100644
  #if defined(_WIN32) || defined(__CYGWIN__)
  #define QSV_HAVE_AVBR   1
  #define QSV_HAVE_VCM    1
-@@ -265,6 +274,17 @@ typedef struct QSVEncContext {
+@@ -265,6 +274,18 @@ typedef struct QSVEncContext {
      char *load_plugins;
      SetEncodeCtrlCB *set_encode_ctrl_cb;
      int forced_idr;
 +
 +    /* Pelorus: per-block QP steering from AV_FRAME_DATA_REGIONS_OF_INTEREST,
 +     * gated by the "pelorus_roi" AVOption (default off). When enabled at init
-+     * (HEVC under CQP rate control only) we turn on
++     * (progressive HEVC under CQP on runtime API 1.28 or newer) we turn on
 +     * mfxExtCodingOption3::EnableMBQP and rasterize each frame's ROI side data
 +     * into a per-frame mfxExtMBQP that carries its own delta-QP map (one signed
 +     * byte per 16x16 block, raster order). The map must not be shared between
 +     * frames: EncodeFrameAsync keeps it live until the frame completes. */
 +    int pelorus_roi;
++    int pelorus_roi_mbqp_enabled; ///< EnableMBQP request attached at init
 +    int roi_warned;            ///< rate-limit ext-buffer-slot warnings to once
 +    int roi_interlaced_warned; ///< rate-limit per-frame fallback warnings to once
      int low_delay_brc;
@@ -340,7 +352,7 @@ index ae3981f..1fef77d 100644
  #define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
  static const AVOption options[] = {
      QSV_COMMON_OPTS
-+    { "pelorus_roi",  "Honor AV_FRAME_DATA_REGIONS_OF_INTEREST via dense QSV delta-QP maps for progressive CQP, otherwise the stock per-region ROI path",
++    { "pelorus_roi",  "Honor AV_FRAME_DATA_REGIONS_OF_INTEREST via dense QSV delta-QP maps for progressive CQP on runtime API 1.28+, otherwise the stock per-region ROI path",
 +                                                            OFFSET(qsv.pelorus_roi), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VE },
      QSV_OPTION_RDO
      QSV_OPTION_MAX_FRAME_SIZE

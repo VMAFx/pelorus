@@ -129,7 +129,8 @@ encoder. A documented, retunable composition, not a new meta-filter. See
       follow-up — no number claimed (ADR-0126 / ADR-0111).
 - Encoder steering (ADR-0114, opt-in `-pelorus_roi 1`): the `analyze roi=1`
   banding map drives dense per-block delta-QP on **NVENC** (`qpDeltaMap`, proven
-  −41% banding), **QSV** (frame-owned `mfxExtMBQP` for progressive HEVC+CQP;
+  −41% banding), **QSV** (frame-owned `mfxExtMBQP` for progressive HEVC+CQP on
+  runtime API 1.28 or newer;
   sanitizer/compile-complete, on-Intel-HW proof pending;
   [ADR-0146](docs/adr/0146-qsv-roi-frame-ownership.md)),
   and the native **Vulkan-Video** encoders via `VK_KHR_video_encode_quantization_map`

@@ -12,7 +12,7 @@ All notable changes to Pelorus are documented here. The format is
 
 ### Fixed
 
-- Fixed QSV dense ROI maps to remain frame-owned through asynchronous encode, bounded the path to progressive HEVC+CQP, preserved stock ROI fallback elsewhere, and added checked aligned-layout regression coverage ([ADR-0146](docs/adr/0146-qsv-roi-frame-ownership.md)).
+- Fixed QSV dense ROI maps to remain frame-owned through asynchronous encode, bounded the path to progressive HEVC+CQP on runtime API 1.28 or newer, preserved stock ROI fallback elsewhere, and added checked aligned-layout regression coverage ([ADR-0146](docs/adr/0146-qsv-roi-frame-ownership.md)).
 
 <!-- END UNRELEASED -->
 

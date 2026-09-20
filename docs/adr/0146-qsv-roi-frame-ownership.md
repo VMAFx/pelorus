@@ -1,5 +1,5 @@
 <!-- markdownlint-disable MD013 MD060 -->
-# ADR-0146: QSV dense ROI maps are per-frame and limited to progressive HEVC CQP
+# ADR-0146: QSV dense ROI maps are per-frame and contract-gated
 
 - **Status**: Accepted (2026-09-20)
 - **Date**: 2026-09-20
@@ -37,13 +37,16 @@ must be checked before allocation or narrowing.
 `pelorus_roi=1` will mean "prefer the dense Pelorus QSV map when its documented
 contract is satisfied", not "disable all ROI steering otherwise".
 
-The dense path will be used only when all four conditions hold: the build
-headers expose the MBQP API, the codec is HEVC, rate control is CQP, and the
-session is progressive.  AVC, non-CQP HEVC, interlaced HEVC, and MBQP-absent
-builds will retain the option but fall back to FFmpeg's stock per-region
-`mfxExtEncoderROI` path with diagnostics that describe the fallback accurately.
-No documentation or log will call the `EnableMBQP` request a runtime capability
-probe.
+The dense path will be used only when all five conditions hold: the build
+headers expose the MBQP API, the QSV runtime reports API 1.28 or newer, the
+codec is HEVC, rate control is CQP, and the session is progressive. FFmpeg
+n9.0.1 does not attach `mfxExtCodingOption3` to older HEVC runtimes, so a
+dedicated state bit must record that the `EnableMBQP` request was actually
+attached before any frame may select dense MBQP. AVC, older runtimes, non-CQP
+HEVC, interlaced HEVC, and MBQP-absent builds will retain the option but fall
+back to FFmpeg's stock per-region `mfxExtEncoderROI` path with diagnostics that
+describe the fallback accurately. No documentation or log will call the
+`EnableMBQP` request a runtime capability probe.
 
 Each ROI-bearing dense-path frame will own one zeroed allocation containing the
 `mfxExtMBQP` header followed immediately by that frame's signed-byte delta map.
@@ -75,8 +78,8 @@ reject overflow before allocating or writing.
 - **Positive**: async depth no longer changes a submitted frame's ROI map;
   unsupported dense cases keep stock ROI steering instead of silently losing
   it; allocation/layout arithmetic is explicit and checked.
-- **Negative**: dense QSV ROI is progressive HEVC+CQP-only and allocates one map
-  per ROI-bearing in-flight frame.
+- **Negative**: dense QSV ROI requires runtime API 1.28 or newer plus progressive
+  HEVC+CQP, and allocates one map per ROI-bearing in-flight frame.
 - **Neutral / follow-ups**: deterministic coverage will exercise two live maps,
   padded raster layout, ROI precedence, invalid dimensions/sizes, and both
   compile-time MBQP branches against FFmpeg n9.0.1 and current oneVPL headers.

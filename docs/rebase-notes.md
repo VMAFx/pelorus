@@ -155,7 +155,9 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   `clear_unused_frames()` observes the surface unlocked and calls
   `free_encoder_ctrl()`. Never restore context-wide mutable map scratch.
 - **Layout/portability invariants (keep on regeneration)**: dense MBQP is only
-  progressive HEVC+CQP; H.264, non-CQP HEVC, interlaced input, and
+  progressive HEVC+CQP on runtime API 1.28 or newer, and only after a dedicated
+  state bit records that FFmpeg attached the `EnableMBQP` init request. H.264,
+  runtime API 1.27 or older, non-CQP HEVC, interlaced input, and
   `QSV_HAVE_MBQP=0` fall back to stock `mfxExtEncoderROI`. The grid is 16×16 and
   sized from aligned `mfxFrameInfo.Width/Height`; rectangles clip to visible
   frame dimensions and padding cells remain zero. Keep checked `size_t`

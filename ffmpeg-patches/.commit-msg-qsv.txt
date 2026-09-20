@@ -1,8 +1,9 @@
 fix(qsv): make dense ROI maps frame-owned and contract-bounded
 
 Stock qsvenc maps AV_FRAME_DATA_REGIONS_OF_INTEREST onto
-mfxExtEncoderROI rectangles. Pelorus's progressive HEVC+CQP path instead
-rasterizes the same side data into a dense mfxExtMBQP DeltaQP array.
+mfxExtEncoderROI rectangles. Pelorus's progressive HEVC+CQP path on QSV
+runtime API 1.28 or newer instead rasterizes the same side data into a dense
+mfxExtMBQP DeltaQP array.
 
 The previous patch kept that array as mutable QSVEncContext scratch while each
 per-frame mfxExtMBQP header pointed at it. EncodeFrameAsync can retain several
@@ -14,11 +15,12 @@ immediately by its DeltaQP array. Attach the header to that frame's existing
 mfxEncodeCtrl so free_encoder_ctrl releases the entire allocation after the
 surface unlocks. Frames no longer share mutable map storage.
 
-Bound the dense contract to progressive HEVC+CQP. H.264, non-CQP HEVC,
-interlaced input, and builds without the API-1.13 MBQP headers fall back to
-stock mfxExtEncoderROI with accurate diagnostics. EnableMBQP is an init request,
-not a runtime capability probe, and the dense and rectangle buffers are never
-attached together.
+Bound the dense contract to progressive HEVC+CQP on runtime API 1.28 or newer,
+where FFmpeg attaches mfxExtCodingOption3. H.264, non-CQP HEVC, interlaced
+input, older runtimes, and builds without the API-1.13 MBQP headers fall back to
+stock mfxExtEncoderROI with accurate diagnostics. A dedicated state bit records
+that the EnableMBQP init request was attached; the dense and rectangle buffers
+are never attached together.
 
 Build the 16x16 raster from aligned mfxFrameInfo storage dimensions, clip ROI
 coordinates to the visible frame, leave padding cells zero, validate every ROI

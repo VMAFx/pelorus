@@ -73,13 +73,17 @@ correct surface-lifetime boundary; no new pool or destructor is needed.
 Dense selection requires all of these conditions:
 
 1. the build exposes MBQP API 1.13 or newer;
-2. the codec is HEVC;
-3. rate control is CQP; and
-4. the session and current frame are progressive.
+2. the runtime reports API 1.28 or newer, so FFmpeg attaches its HEVC
+   `mfxExtCodingOption3` buffer;
+3. the codec is HEVC;
+4. rate control is CQP;
+5. the session and current frame are progressive; and
+6. the encoder-context state records that `EnableMBQP` was attached at init.
 
-H.264, non-CQP HEVC, interlaced input, and MBQP-absent builds preserve standard
-ROI steering by selecting FFmpeg's existing `mfxExtEncoderROI` rectangle path.
-The dense and rectangle buffers are mutually exclusive on each frame.
+H.264, runtime API 1.27 or older, non-CQP HEVC, interlaced input, and
+MBQP-absent builds preserve standard ROI steering by selecting FFmpeg's existing
+`mfxExtEncoderROI` rectangle path. The dense and rectangle buffers are mutually
+exclusive on each frame.
 
 ## Layout and arithmetic
 
@@ -106,12 +110,14 @@ changed.
 
 The committed regression then passed under Clang ASan+UBSan. It keeps two
 frame-control allocations live simultaneously and verifies that writing the
-second map does not change the first. It also covers the 3x4 padded raster,
-zero padding, first-region overlap precedence, malformed ROI payloads, invalid
-dimensions, and interlaced dense-path rejection. A second configuration forces
-`QSV_HAVE_MBQP=0` and compiles `qsvenc.c`, `qsvenc_h264.c`, and `qsvenc_hevc.c`;
-this checks source-level exclusion with current headers, not binary
-compatibility against every historic SDK.
+second map does not change the first. It also covers runtime API 1.27 choosing
+stock `mfxExtEncoderROI` while 1.28 may choose dense MBQP only after the init
+request state is set, the 3x4 padded raster, zero padding, first-region overlap
+precedence, malformed ROI payloads, invalid dimensions, and interlaced
+dense-path rejection. A second configuration forces `QSV_HAVE_MBQP=0` and
+compiles `qsvenc.c`, `qsvenc_h264.c`, and `qsvenc_hevc.c`; this checks
+source-level exclusion with current headers, not binary compatibility against
+every historic SDK.
 
 Run the focused gate with:
 

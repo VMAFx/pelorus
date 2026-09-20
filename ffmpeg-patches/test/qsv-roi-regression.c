@@ -117,8 +117,14 @@ int main(void)
     q.param.mfx.FrameInfo.Height = 64;
     q.param.mfx.FrameInfo.PicStruct = MFX_PICSTRUCT_PROGRESSIVE;
     q.param.mfx.RateControlMethod = MFX_RATECONTROL_CQP;
+    q.ver.Major = 1;
+    q.ver.Minor = 28;
+    q.pelorus_roi_mbqp_enabled = 1;
 
     CHECK(qsvenc_pelorus_roi_mbqp_preconditions(&avctx, &q));
+    q.ver.Minor = 27;
+    CHECK(!qsvenc_pelorus_roi_mbqp_preconditions(&avctx, &q));
+    q.ver.Minor = 28;
     avctx.codec_id = AV_CODEC_ID_H264;
     CHECK(!qsvenc_pelorus_roi_mbqp_preconditions(&avctx, &q));
     avctx.codec_id = AV_CODEC_ID_HEVC;
@@ -135,6 +141,18 @@ int main(void)
     set_roi(frame_rois(frame_a), 0, 0, 33, 33, (AVRational){-1, 10});
     set_roi(frame_rois(frame_b), 0, 0, 33, 33, (AVRational){1, 10});
 
+    q.pelorus_roi_mbqp_enabled = 0;
+    CHECK(!qsvenc_pelorus_roi_frame_uses_mbqp(&avctx, &q, frame_a));
+    q.pelorus_roi_mbqp_enabled = 1;
+    q.ver.Minor = 27;
+    CHECK(!qsvenc_pelorus_roi_frame_uses_mbqp(&avctx, &q, frame_a));
+    CHECK(qsvenc_setup_roi(&avctx, &q, frame_a, &ctrl_a) == 0);
+    CHECK(ctrl_a.NumExtParam == 0);
+    CHECK(set_roi_encode_ctrl(&avctx, frame_a, &ctrl_a) == 0);
+    CHECK(ctrl_a.NumExtParam == 1);
+    CHECK(ctrl_a.ExtParam[0]->BufferId == MFX_EXTBUFF_ENCODER_ROI);
+    free_encoder_ctrl(&ctrl_a);
+    q.ver.Minor = 28;
     CHECK(qsvenc_pelorus_roi_frame_uses_mbqp(&avctx, &q, frame_a));
     CHECK(qsvenc_setup_roi(&avctx, &q, frame_a, &ctrl_a) == 0);
     CHECK(ctrl_a.NumExtParam == 1);

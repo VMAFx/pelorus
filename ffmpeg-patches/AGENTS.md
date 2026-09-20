@@ -63,9 +63,11 @@ ffmpeg-patches/
    compile-gated by `QSV_HAVE_MBQP` (oneVPL/MSDK API ≥ 1.13) and its dense
    `mfxExtMBQP` path is **mutually exclusive** with the stock `mfxExtEncoderROI`
    rectangle path — never let both attach to one `mfxEncodeCtrl`. Dense MBQP is
-   progressive HEVC+CQP-only; H.264, non-CQP HEVC, interlaced frames, and
-   MBQP-absent builds use the stock rectangle path. `EnableMBQP` is an init
-   request, not a runtime capability probe. Each dense-path frame owns one
+   progressive HEVC+CQP-only on runtime API 1.28 or newer, and frame selection
+   must require the state bit proving the `EnableMBQP` init request was attached.
+   H.264, runtime API 1.27 or older, non-CQP HEVC, interlaced frames, and
+   MBQP-absent builds use the stock rectangle path. The request is not a runtime
+   capability probe. Each dense-path frame owns one
    contiguous header+map allocation through its `QSVFrame::enc_ctrl` until the
    surface unlocks; never share mutable map scratch across async frames. Size the
    16×16 raster from aligned `mfxFrameInfo.Width/Height`, clip regions to visible
