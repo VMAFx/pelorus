@@ -58,3 +58,10 @@ test('shader-binding-order',
      args: [meson.project_source_root() / 'scripts' / 'check-shader-bindings.py'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+
+test('build-config-sync',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'check-build-config.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')

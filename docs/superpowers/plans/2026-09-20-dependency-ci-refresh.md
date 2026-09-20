@@ -73,7 +73,7 @@ git commit -m "docs(adr): pin the FFmpeg and CI baseline"
 - Modify: `meson.build`
 - Modify: `renovate.json`
 
-- [ ] **Step 1: Register a failing fast test**
+- [x] **Step 1: Register a failing fast test**
 
 Register `build-config-sync` beside the binding-order test using the existing
 `python_prog` and source-root idiom. Initially test only the configuration
@@ -92,7 +92,7 @@ FFMPEG_COMMIT=946fcce07b6dcd0331c8cc609192aeff5e1924f8
 Validate the tag shape (`nMAJOR.MINOR.PATCH`) and a lowercase 40-hex commit,
 but do not duplicate today's tag or commit inside the checker.
 
-- [ ] **Step 2: Confirm RED, then add the contract**
+- [x] **Step 2: Confirm RED, then add the contract**
 
 ```bash
 meson setup --reconfigure build
@@ -117,7 +117,7 @@ npx --yes --package renovate@44.103.6 -- \
   renovate-config-validator --strict
 ```
 
-- [ ] **Step 3: Confirm GREEN and commit**
+- [x] **Step 3: Confirm GREEN and commit**
 
 ```bash
 meson test -C build build-config-sync --print-errorlogs
