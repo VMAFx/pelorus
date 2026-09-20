@@ -935,6 +935,14 @@ def validate_workflow_text(relative: str, text: str) -> list[str]:
             errors.append(
                 f"{relative}: publish step must be tag-push-only for manual safety"
             )
+        for token in (
+            "GITHUB_REF_NAME//\\//-",
+            "ARTIFACT_LABEL",
+        ):
+            if token not in publish:
+                errors.append(
+                    f"{relative}: manual package naming is missing {token}"
+                )
 
     for token in (
         "ImageOS",
