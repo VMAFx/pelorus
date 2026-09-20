@@ -1,130 +1,181 @@
-<!-- markdownlint-disable MD013 -->
-# Agent guide — Pelorus
+<!-- markdownlint-disable MD013 MD025 -->
+# Pelorus Agent Operating Harness
 
-> Cross-tool context for Claude Code, Cursor, Aider, Codex, Continue, and other
-> coding assistants. **Read this before suggesting changes.** Then read the
-> per-subdirectory `AGENTS.md` for the area you're touching. Claude Code users:
-> [CLAUDE.md](CLAUDE.md) extends this file.
+Before delivery:
 
-## What this repo is
+```bash
+make verify-native
+standardsctl compile-context --verify
+standardsctl audit
+```
 
-`Pelorus` is a GPU **pre-encode** pipeline: Vulkan compute filters + FFmpeg
-filters that fix the psychovisual flaws of a hardware video encoder *before* it
-sees the pixels, entirely in VRAM (zero-copy). The goal is to close the BD-rate
-gap between fixed-function GPU encoders (NVENC/AMF/QSV) and slow CPU encoders
-(x265/SVT-AV1) — debanding, temporal denoise, film-grain synthesis, and
-optical-flow motion hints. These are **codec-agnostic**: deband/denoise/motion
-help HEVC (`hevc_nvenc`/`hevc_qsv`/`hevc_vaapi`/`hevc_amf`, rivaling x265) and
-AV1 equally; only film-grain is codec-specific (AV1 = AOM, HEVC/VVC = H.274).
+`make verify-all` combines those commands. Pinned Praetor currently fails only
+after successful policy, baseline, context, and persona checks because audit
+ignores Pelorus's explicit `branch-ruleset` decline (Praetor issue 408). Never
+claim full-gate success or add a false ruleset artifact to bypass that defect.
 
-Pelorus is the sibling of **vmafx** (the VMAF fork), hosted under the same
-`vmafx` GitHub org. vmafx dropped its own Vulkan backend (its ADR-0726), so
-Pelorus is the Vulkan home; vmafx stays the **quality oracle**. The two are
-bidirectionally wired: Pelorus filters write a shared side-data blob that vmafx
-reads for perceptually-weighted scoring, and Pelorus tunes its filter strength
-against VMAF using vmafx's autotune loop. See
-[docs/architecture/overview.md](docs/architecture/overview.md) and
-[docs/principles.md](docs/principles.md).
+## Core Directives & Invariants (Modernized NASA JPL Power-of-10)
+
+| Invariant | Scope | NASA Rule | Enforcement Mechanism | Failure Action |
+| :--- | :--- | :--- | :--- | :--- |
+| **HISS-01** | Control flow | Rule 1 | No recursion. Allow one-level `goto fail` cleanup only; reject other new `goto`. | Audit ratchet + C review |
+| **HISS-02** | Loops | Rule 2 | Every loop has scalar upper bound; validate external counts before iteration. | Audit ratchet + C review |
+| **HISS-03** | Memory | Rule 3 | No dynamic allocation after init in hot per-frame paths. | C review + tests |
+| **HISS-04** | Complexity | Rule 4 | New/touched functions: $\le 60$ LOC effective Praetor cap, Cyclomatic $\le 10$, Statements $\le 50$. | Audit ratchet + clang-tidy |
+| **HISS-07** | Error handling | Rule 7 | Public errors use `pel_result`; every non-void result checked or explicitly discarded. | clang-tidy + C review |
+| **HISS-08** | Determinism | Rule 8 | No dynamic execution; reject banned libc from project contract. | C review + build |
+| **HISS-09** | Reference safety | Rule 9 | Bound offset arithmetic before pointer formation; avoid pointer chasing. | CERT C review + tests |
+| **HISS-10** | Warning hygiene | Rule 10 | Compiler, formatter, and configured clang-tidy gate exit clean. | Native gate |
+| **HISS-15** | 3D testing | Rule 5 | Public interfaces cover positive, negative, and boundary cases. | Test + PR review |
+| **HISS-16** | Context integrity | Fleet | `AGENTS.md` plus `.agents/agents/*.md` are canonical; vendor Markdown is generated. | Context verify |
+
+## Operational Rules
+
+1. **Act on verified state.** Read source and executable help before edits. Never
+   guess flags, signatures, or repository configuration.
+
+2. **Lead with output.** Direct answers, diffs, commands. No filler or request
+   restatement.
+
+3. **Context transpiler first.** Never edit `CLAUDE.md`,
+   `.cursor/rules/*.mdc`, `.windsurfrules`,
+   `.github/copilot-instructions.md`, `.gemini/GEMINI.md`, or
+   `.codex/rules.md` manually. Update `AGENTS.md`, then:
+
+   ```bash
+   praetorctl compile-context
+   ```
+
+   Canonical agent text must pass `praetorctl caveman check`.
+
+4. **Preserve useful evidence.** Keep long logs under ignored
+   `.workingdir2/evidence/`; report root causes with file and line pointers.
+
+5. **No evasion.** Never use `--no-verify`, disable Lefthook, or modify shared
+   `.git/hooks` to bypass a gate. Hook installation is explicit.
+
+6. **Stop repeated failure loops.** Same diff and error category three times:
+   re-evaluate root cause before another edit.
+
+## Text Register
+
+<!-- praetor:register:start -->
+Register follows the audience, then the task label of your brief (`register:` in `.standards.yaml`; labels are the router's `target_tasks`).
+
+| Register | Where | Form |
+| :--- | :--- | :--- |
+| social | forge: issues, PR bodies, review comments, commit bodies | `social-text` skill: BLUF, full sentences, scannable, enough and no more; PR template, receipt fence, conventional commit subject and changelog fragment unchanged |
+| docs | docs/, README, ADR bodies | complete without bloat: newcomer path first, expert reference after; every claim points at a file, command or test; no restated code |
+| internal | briefs, agent-to-agent traffic, research fan-outs, workflow returns | `caveman` skill: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict |
+
+- Task rows: social = commit_message_synthesis, waiver_signoff; docs = architecture_synthesis, function_docstrings; every other label and any brief without one = internal.
+- Evidence above 58 lines or 1500 tokens leaves the message as a file under `.workingdir/evidence/`; return `evidence: <path> sha256:<12 hex> lines:<n>` and fetch it only when a decision needs it.
+- An internal return carries verdict, changed paths, commands run, evidence pointers and open questions, nothing else.
+<!-- praetor:register:end -->
+
+## Primary Verification Commands
+
+```bash
+# Fast local test suite
+make verify-native
+
+# Recompile and verify cross-agent context outputs
+praetorctl compile-context --verify
+
+# Audit repository against declared HISS standards
+praetorctl audit
+
+# Run all formatting, linting, and security gates
+make verify-all
+```
+
+<!-- praetor:harness:end -->
+
+---
+
+# Pelorus project contract
+
+Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human rationale: `docs/`. Claude/Cursor/Copilot/Windsurf/Codex/Gemini files: generated projections; never hand-edit.
+
+## Mission
+
+- GPU pre-encode pipeline: Vulkan compute + FFmpeg filters; zero-copy VRAM path.
+- Goal: reduce fixed-function encoder BD-rate gap through deband, denoise, grain synthesis, motion hints.
+- Codec scope: deband, denoise, motion codec-agnostic; film grain uses AV1 AOM or HEVC/VVC H.274.
+- Sibling `VMAFx/vmafx`: quality oracle + autotune control plane.
+- Shared contract: `PelorusSideData`; Pelorus writers, vmafx readers.
+- Current project release: `v0.2.2`; public ABI remains pre-1.0 and append-only.
+- Architecture: `docs/architecture/overview.md`; rules: `docs/principles.md`.
 
 ## Hard rules
 
-1. **Never break the `libpelorus` public ABI without a `Migration:` footer.**
-   The `PelorusSideData` interop blob is append-only (interop.h R1/R2): add a
-   field or section bit and bump `PELORUS_ABI_MINOR` — never reorder, resize, or
-   remove. A breaking change is forbidden; mint a new section bit instead.
-2. **All errors flow through `pel_result`.** No bare `return -1;` across a
-   `libpelorus` API boundary. Every non-void return is checked or `(void)`-cast.
-3. **No global mutable state / no static-init side effects.** Lifecycle is
-   explicit. Banned C functions: `gets`, `strcpy`, `strcat`, `sprintf`,
-   `strtok`, `atoi`, `atof`, `rand`, `system` (see docs/principles.md §1.2).
-4. **One shader source per filter — never re-introduce inline GLSL.** Since the
-   FFmpeg 9 migration (ADR-0143) each filter's shader lives once, at
-   `ffmpeg-patches/files/vulkan/pelorus_<name>.comp.glsl`, and is compiled to
-   SPIR-V at build time. FFmpeg 9 deleted the runtime GLSL builder
-   (`GLSLC`/`GLSLF`/`GLSLD`, `ff_vk_shader_init`), so building shader text from C
-   is no longer possible — and the old hand-mirrored duplication is what produced
-   the ADR-0129 defect. `libpelorus/shaders/*.comp` remain standalone references
-   compiled by the fast gate; they are NOT a second implementation to sync.
-   Values the C side used to const-fold into generated GLSL are specialization
-   constants (`constant_id` 0..N; **253/254/255 are reserved** for workgroup size),
-   and the `.glsl` binding order must match the C descriptor array exactly — a
-   mismatch is silent corruption, not a build error.
-5. **Patch-stack sync.** A change to any `libpelorus` surface the FFmpeg patches
-   consume updates `ffmpeg-patches/files/` + the regenerated patch in the same
-   PR. Verify with a full series replay (`ffmpeg-patches/test/build-and-run.sh`),
-   not per-patch `git apply --check`.
-6. **Every PR leaves touched files lint-clean** to `-Wall -Wextra -Werror` +
-   clang-tidy. A `// NOLINT` carries an inline citation.
-7. **Every merged commit: 0 warnings · clang-tidy clean · `meson test
-   --suite=fast` green · the deband shader compiles (glslang).**
+1. `PelorusSideData` ABI append-only. Add fields at section tail or mint section bit. Bump `PELORUS_ABI_MINOR`. Never reorder, resize, remove, repurpose. Public ABI changes require `Migration:` commit footer.
+2. Public non-void APIs return `pel_result`. Check each non-void call or cast `(void)`. No bare `return -1` across API boundary.
+3. No mutable global state or static-init side effects. Banned: `gets`, `strcpy`, `strcat`, `sprintf`, `strtok`, `atoi`, `atof`, `rand`, `system`.
+4. FFmpeg filter shader source lives once: `ffmpeg-patches/files/vulkan/pelorus_<name>.comp.glsl`; FFmpeg 9 compiles SPIR-V at build time. Never add runtime or inline GLSL. `libpelorus/shaders/*.comp`: standalone fast-gate references, not shipped mirrors. Spec IDs `253`, `254`, `255`: reserved workgroup sizes. Descriptor order and push layout must match C exactly.
+5. Patch consumers changed -> update `ffmpeg-patches/files/` plus regenerated stack in same PR. Verify full `series.txt` replay; per-patch apply check insufficient.
+6. Touched files: `-Wall -Wextra -Werror`, clang-format, clang-tidy clean. Each `// NOLINT`: inline citation.
+7. Every commit: zero warnings; fast suite green; deband shader compiled by glslang.
 
-See [docs/principles.md](docs/principles.md) for the full Power-of-10,
-SEI-CERT-C, style, and Vulkan-usage contract, and [CONTRIBUTING.md](CONTRIBUTING.md)
-for the per-PR deliverables (ADRs, per-surface docs, changelog fragments).
+## Ownership map
 
-## Repository layout
-
-```text
-Pelorus/
-├── meson.build  meson_options.txt   # build root (libpelorus + tests + shaders)
-│
-├── libpelorus/                       # the shared core (vendored by vmafx too)
-│   ├── include/pelorus/
-│   │   ├── pelorus.h                 #   umbrella: version, pel_result
-│   │   ├── interop.h                 #   the Pelorus<->vmafx side-data ABI
-│   │   └── deband.h                  #   smart-deband parameter contract
-│   ├── src/                          #   interop.c (pack/parse), deband_params.c
-│   ├── shaders/                      #   standalone reference .comp shaders
-│   └── test/                         #   interop ABI conformance fixture
-│
-├── ffmpeg-patches/                   # vf_pelorus_* filters, stacked vs n9.0.2
-│   ├── files/                        #   canonical filter sources (edit here)
-│   │   └── vulkan/                   #     per-filter .comp.glsl -> build-time SPIR-V
-│   ├── 0001-*.patch  series.txt      #   generated artifacts + apply order
-│   ├── generate.sh                   #   regenerate patches from files/
-│   └── test/build-and-run.sh         #   apply + build + smoke-test gate
-│
-├── docs/
-│   ├── principles.md                 #   the coding + Vulkan-usage contract
-│   ├── adr/                          #   Architecture Decision Records (Nygard)
-│   ├── architecture/ api/ metrics/   #   per-surface docs (C4, interop, filters)
-│   ├── usage/ backends/ development/  #   pipeline, Vulkan path, build/release
-│   └── research/                     #   deep-dive digests
-│
-├── tools/                            # libpelorus CLI demonstrators (not installed)
-│   └── pelorus_qp_report.c           #   x265 --csv -> PEL_SEC_QPREPORT (ADR-0122)
-│
-├── changelog.d/                      # Keep-a-Changelog fragments (rendered)
-└── AGENTS.md  CLAUDE.md  CONTRIBUTING.md  README.md
-```
-
-Per-subdirectory `AGENTS.md` files give unit-level conventions + the
-rebase-sensitive invariants.
-
-## Common tasks
-
-| Task | Command |
+| Path | Contract |
 | --- | --- |
-| Configure + build | `meson setup build && ninja -C build` |
-| Fast test gate | `meson test -C build --suite=fast` |
-| Install (for the FFmpeg patches) | `ninja -C build install` |
-| Regenerate FFmpeg patches | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh` |
-| Apply + build + smoke FFmpeg | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh` |
-| Lint | `clang-format --dry-run -Werror` + `clang-tidy` on touched files |
-| Reserve an ADR number | `scripts/adr/next-free.sh --claim <slug>` |
+| `libpelorus/include/pelorus/` | public API, version, append-only interop ABI |
+| `libpelorus/src/` | core pack/parse + parameter logic |
+| `libpelorus/test/` | ABI and API conformance |
+| `libpelorus/shaders/` | standalone reference shaders |
+| `ffmpeg-patches/files/` | canonical FFmpeg host/filter sources |
+| `ffmpeg-patches/files/vulkan/` | canonical shipped shader sources |
+| `ffmpeg-patches/0001-*.patch` | generated artifacts; never hand-edit |
+| `docs/adr/` | decisions; reserve via `scripts/adr/next-free.sh --claim <slug>` |
+| `docs/{architecture,api,metrics,usage,backends,development}/` | human-readable surface docs |
+| `docs/research/` | measured deep-dive evidence |
+| `changelog.d/` | Keep-a-Changelog fragments |
+| `.agents/agents/` | canonical reviewer personas |
+| `.claude/agents/`, `.codex/agents/`, `.github/agents/`, `.gemini/agents/` | generated persona projections |
 
-## Pinned upstream references
+## Commands
 
-| Component | Version |
+| Goal | Command |
 | --- | --- |
-| FFmpeg base for the patch stack | `n9.0.2` (`946fcce07b6dcd0331c8cc609192aeff5e1924f8`) |
-| FFmpeg Vulkan filter model | `libavfilter/vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c` |
-| AV1 film-grain struct mirrored by interop §(d) | `libavutil/film_grain_params.h` |
-| vmafx control plane (autotune) | `libvmaf_tune` filter, `vmafx-server` `/v1/score`, `vmaf-mcp` |
+| configure | `meson setup build` |
+| build | `ninja -C build` |
+| fast tests | `meson test -C build --suite=fast --print-errorlogs` |
+| native gate | `make verify-native` |
+| governance + native gate | `PRAETORCTL=standardsctl make verify-all` |
+| install | `ninja -C build install` |
+| regenerate patches | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh` |
+| replay stack | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh` |
+| compile contexts | `standardsctl compile-context` |
+| verify contexts | `standardsctl compile-context --verify` |
+| audit baseline | `standardsctl audit` |
+| explicit hook install | `make hooks-install` |
 
-## When in doubt
+## Reviewer routing
 
-Read [docs/principles.md](docs/principles.md), then the per-subdirectory
-`AGENTS.md` for the area you're touching. Decisions live in
-[docs/adr/](docs/adr/); the project plan + current status live in
-`.workingdir/PLAN.md` + `.workingdir/STATE.md` (local, gitignored).
+| Change | Required persona |
+| --- | --- |
+| `libpelorus/src/`, public headers | `c-reviewer` |
+| `interop.h`, `interop.c` | `interop-abi-reviewer` |
+| Vulkan shader or host code | `vulkan-shader-reviewer` |
+| `ffmpeg-patches/` | `ffmpeg-patch-reviewer` |
+| user-visible surface | `doc-reviewer` |
+| final PR contract | `pr-body-checker` |
+
+## Pinned upstreams
+
+| Component | Pin |
+| --- | --- |
+| FFmpeg patch base | `n9.0.2` / `946fcce07b6dcd0331c8cc609192aeff5e1924f8` from `build-config.env` |
+| FFmpeg Vulkan models | `vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c`, `vf_scdet_vulkan.c` |
+| AV1 grain ABI mirror | `libavutil/film_grain_params.h` |
+| vmafx control plane | `libvmaf_tune`, `/v1/score`, `vmaf-mcp` |
+
+## Delivery
+
+- Non-trivial PR: ADR, per-surface docs, changelog fragment, research digest, runnable verification.
+- FFmpeg-impacting PR: rebase note + regenerated stack.
+- New module: scoped `AGENTS.md`.
+- Decision/status truth: `docs/adr/`, `.workingdir/PLAN.md`, `.workingdir/STATE.md`.
+- Uncertainty: verify `docs/principles.md`, scoped `AGENTS.md`, current source, current executable help.
