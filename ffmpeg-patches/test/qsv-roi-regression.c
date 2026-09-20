@@ -1,3 +1,5 @@
+/* Copyright 2026 Lusoris. BSD-2-Clause-Patent. */
+
 /*
  * Direct regression coverage for the Pelorus QSV ROI patch.
  *

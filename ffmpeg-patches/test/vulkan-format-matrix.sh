@@ -371,6 +371,8 @@ echo 'PASS: direct/tiled denoise equivalence'
 
 pel_emit_raw 'denoise-lookahead' yuv420p "$PEL_NOISY_SOURCE" \
     "${PEL_DENOISE_BASE}:lookahead=1" 4
+pel_emit_raw 'denoise-mc-fallback' yuv420p "$PEL_NOISY_SOURCE" \
+    'pelorus_denoise_vulkan=prev=2:mc=1:strength=0.7' 4
 pel_emit_raw 'denoise-mc' yuv420p "$PEL_NOISY_SOURCE" \
     'pelorus_mc_vulkan=meta=1,pelorus_denoise_vulkan=prev=2:mc=1:strength=0.7' 4
 
@@ -380,10 +382,18 @@ import sys
 
 root = pathlib.Path(sys.argv[1])
 expected = 96 * 64 * 3 // 2 * 4
-for name in ("denoise-lookahead.raw", "denoise-mc.raw"):
+for name in (
+    "denoise-lookahead.raw",
+    "denoise-mc-fallback.raw",
+    "denoise-mc.raw",
+):
     size = (root / name).stat().st_size
     if size != expected:
         raise SystemExit(f"{name}: expected {expected} bytes, got {size}")
+if (root / "denoise-mc-fallback.raw").read_bytes() == (
+    root / "denoise-mc.raw"
+).read_bytes():
+    raise SystemExit("MC side data did not change denoise output")
 print("PASS: lookahead and MC runtime paths")
 PY_CADENCE
 
