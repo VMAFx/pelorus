@@ -74,3 +74,9 @@ test('vulkan-storage-domain',
      args: [meson.project_source_root() / 'scripts' / 'check-vulkan-storage-domain.py'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+
+test('vulkan-sample-scale',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-vulkan-sample-scale.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')

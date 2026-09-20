@@ -80,7 +80,7 @@ for scalar transforms. Confirm RED against the carried partial WIP.
 - Modify: `ffmpeg-patches/generate.sh`
 - Modify: arithmetic filter C sources and canonical `.comp.glsl` shaders
 
-- [ ] **Step 1: Implement and table-check the scale helper**
+- [x] **Step 1: Implement and table-check the scale helper**
 
 Cover 8-bit, planar 10/12/16-bit, P010/P012/P016, invalid descriptors, and a
 packed-format fallback. Use checked integer shifts and return 1.0 for shapes
