@@ -59,7 +59,8 @@ cleanup() {
     trap - EXIT
 
     if [[ -n "$OWNED_WORKTREE" ]]; then
-        git -C "$OWNED_WORKTREE" am --abort >/dev/null 2>&1 || true
+        git -C "$OWNED_WORKTREE" -c core.hooksPath=/dev/null \
+            am --abort >/dev/null 2>&1 || true
         if ! git -C "$FFMPEG_REPO" worktree remove --force "$OWNED_WORKTREE" \
             >/dev/null 2>&1; then
             echo "WARNING: could not remove owned worktree: $OWNED_WORKTREE" >&2
@@ -185,14 +186,21 @@ if (( ${#PATCHES[@]} != 18 )); then
     exit 1
 fi
 
-git -C "$FFMPEG_REPO" worktree add --detach "$WORKTREE" "$FFMPEG_COMMIT"
+# Register first, then record ownership before the fallible checkout. This keeps
+# cleanup safe if checkout filters fail and prevents caller hooks from changing
+# the replay input.
+git -C "$FFMPEG_REPO" -c core.hooksPath=/dev/null \
+    worktree add --no-checkout --detach "$WORKTREE" "$FFMPEG_COMMIT"
 OWNED_WORKTREE="$WORKTREE"
+git -C "$WORKTREE" -c core.hooksPath=/dev/null \
+    checkout --force --detach "$FFMPEG_COMMIT"
 
 apply_stack() {
     local patch
     for patch in "${PATCHES[@]}"; do
         echo "am: $patch"
-        git -C "$WORKTREE" am --3way "$PATCHDIR/$patch"
+        git -C "$WORKTREE" -c core.hooksPath=/dev/null \
+            am --3way "$PATCHDIR/$patch"
     done
 }
 

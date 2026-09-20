@@ -52,7 +52,8 @@ cleanup() {
     trap - EXIT
 
     if [[ -n "$OWNED_WORKTREE" ]]; then
-        git -C "$OWNED_WORKTREE" am --abort >/dev/null 2>&1 || true
+        git -C "$OWNED_WORKTREE" -c core.hooksPath=/dev/null \
+            am --abort >/dev/null 2>&1 || true
         if ! git -C "$FFMPEG_REPO" worktree remove --force "$OWNED_WORKTREE" \
             >/dev/null 2>&1; then
             echo "WARNING: could not remove owned worktree: $OWNED_WORKTREE" >&2
@@ -135,8 +136,14 @@ commit_patch() {
         commit --no-gpg-sign --no-verify -q -F "$message_file"
 }
 
-git -C "$FFMPEG_REPO" worktree add --detach "$WORKTREE" "$FFMPEG_COMMIT"
+# Register first, then record ownership before the fallible checkout. This keeps
+# cleanup safe if checkout filters fail and prevents caller hooks from modifying
+# the synthetic patch inputs.
+git -C "$FFMPEG_REPO" -c core.hooksPath=/dev/null \
+    worktree add --no-checkout --detach "$WORKTREE" "$FFMPEG_COMMIT"
 OWNED_WORKTREE="$WORKTREE"
+git -C "$WORKTREE" -c core.hooksPath=/dev/null \
+    checkout --force --detach "$FFMPEG_COMMIT"
 
 # FFmpeg 9 moved Vulkan filters from runtime-built inline GLSL to shaders compiled
 # to SPIR-V at build time (ADR-0143). Each filter therefore ships a .comp.glsl that
@@ -610,6 +617,7 @@ git -C "$WORKTREE" \
     format-patch \
     --zero-commit --full-index --binary --default-prefix \
     --find-renames=50% --diff-algorithm=myers --indent-heuristic \
+    --unified=3 --inter-hunk-context=0 \
     --stat --stat-width=80 --stat-name-width=60 --stat-graph-width=20 \
     --no-ext-diff --no-textconv --no-signature --no-thread \
     --no-cover-letter --numbered --suffix=.patch --subject-prefix=PATCH \
