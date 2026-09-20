@@ -12,15 +12,76 @@
 # 0002 analyze on top) is the artifact; files/ is the source of truth.
 #
 # Usage:
-#   FFMPEG_REPO=/path/to/ffmpeg BASE_TAG=n9.0.1 ./generate.sh
+#   FFMPEG_REPO=/path/to/ffmpeg ./generate.sh
 #
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-FFMPEG_REPO="${FFMPEG_REPO:-/home/kilian/dev/ffmpeg-9}"
-BASE_TAG="${BASE_TAG:-n9.0.1}"
-WORKTREE="${WORKTREE:-/tmp/pelorus-ffmpeg-gen}"
+ROOT="$(cd "$HERE/.." && pwd)"
+# shellcheck source=build-config.env
+source "$ROOT/build-config.env"
+: "${FFMPEG_REPO:?FFMPEG_REPO must name a local FFmpeg checkout}"
 FILES_DIR="$HERE/files"
+RUN_ROOT=""
+WORKTREE_CREATED=0
+
+cleanup() {
+    local status=$?
+    local cleanup_failed=0
+    trap - EXIT
+
+    if (( WORKTREE_CREATED )); then
+        git -C "$WORKTREE" am --abort >/dev/null 2>&1 || true
+        if ! git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE" \
+            >/dev/null 2>&1; then
+            echo "WARNING: could not remove owned worktree: $WORKTREE" >&2
+            cleanup_failed=1
+        fi
+    fi
+    if [[ -n "$RUN_ROOT" ]] && ! rmdir "$RUN_ROOT" 2>/dev/null; then
+        echo "WARNING: owned scratch directory is not empty: $RUN_ROOT" >&2
+        cleanup_failed=1
+    fi
+
+    if (( status == 0 && cleanup_failed )); then
+        status=1
+    fi
+
+    exit "$status"
+}
+
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [[ ${WORKTREE+x} ]]; then
+    if [[ -z "$WORKTREE" ]]; then
+        echo "ERROR: WORKTREE must not be empty when supplied" >&2
+        exit 1
+    fi
+    if [[ -e "$WORKTREE" || -L "$WORKTREE" ]]; then
+        echo "ERROR: refusing existing WORKTREE: $WORKTREE" >&2
+        exit 1
+    fi
+else
+    RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/pelorus-ffmpeg-gen.XXXXXX")"
+    WORKTREE="$RUN_ROOT/ffmpeg"
+fi
+
+if ! git -C "$FFMPEG_REPO" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "ERROR: FFMPEG_REPO is not a git checkout: $FFMPEG_REPO" >&2
+    exit 1
+fi
+if ! TAG_COMMIT="$(git -C "$FFMPEG_REPO" rev-parse --verify \
+    "${FFMPEG_TAG}^{commit}" 2>/dev/null)"; then
+    echo "ERROR: configured FFmpeg tag is unavailable locally: $FFMPEG_TAG" >&2
+    exit 1
+fi
+if [[ "$TAG_COMMIT" != "$FFMPEG_COMMIT" ]]; then
+    echo "ERROR: $FFMPEG_TAG peels to $TAG_COMMIT, expected $FFMPEG_COMMIT" >&2
+    exit 1
+fi
 
 # Deterministic output. `git format-patch` stamps each patch with the commit
 # Date:, so without a fixed date two runs of this script produce 18 patches that
@@ -31,8 +92,8 @@ FILES_DIR="$HERE/files"
 export GIT_AUTHOR_DATE="2026-01-01T00:00:00+00:00"
 export GIT_COMMITTER_DATE="2026-01-01T00:00:00+00:00"
 
-git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE" 2>/dev/null || true
-git -C "$FFMPEG_REPO" worktree add --detach "$WORKTREE" "$BASE_TAG"
+git -C "$FFMPEG_REPO" worktree add --detach "$WORKTREE" "$FFMPEG_COMMIT"
+WORKTREE_CREATED=1
 
 # FFmpeg 9 moved Vulkan filters from runtime-built inline GLSL to shaders compiled
 # to SPIR-V at build time (ADR-0143). Each filter therefore ships a .comp.glsl that
@@ -529,7 +590,7 @@ rm -f "$HERE"/0*.patch
 # hashes removes the dependence entirely, and gives `git am --3way` the unambiguous
 # blob ids it wants anyway.
 git -C "$WORKTREE" format-patch --zero-commit --full-index --start-number=1 \
-    -o "$HERE" "$BASE_TAG..HEAD"
+    -o "$HERE" "${FFMPEG_COMMIT}..HEAD"
 
 # Normalize auto-generated filenames to the series.txt names.
 mv "$HERE"/0001-*.patch "$HERE/0001-add-vf_pelorus_deband_vulkan.patch" 2>/dev/null || true
@@ -551,6 +612,5 @@ mv "$HERE"/0016-*.patch "$HERE/0016-add-vf_pelorus_scenecut.patch" 2>/dev/null |
 mv "$HERE"/0017-*.patch "$HERE/0017-add-vf_pelorus_deblock_vulkan.patch" 2>/dev/null || true
 mv "$HERE"/0018-*.patch "$HERE/0018-add-vf_pelorus_borderfix_vulkan.patch" 2>/dev/null || true
 
-git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE"
 echo "patch(es) regenerated in $HERE:"
 ls "$HERE"/0*.patch
