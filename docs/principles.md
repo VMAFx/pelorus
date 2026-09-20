@@ -16,7 +16,7 @@ NASA/JPL's *The Power of 10: Rules for Developing Safety-Critical Code*
 | 1 | Simple control flow; no `goto` (except a single-level cleanup `goto fail`), no recursion | The `goto fail` cleanup idiom is allowed (FFmpeg/CERT-style single-exit); no other `goto`. |
 | 2 | Bounded loops — a statically provable upper bound | Every loop over sections/planes/cells has a fixed bound; reject `section_count` etc. against caps before looping. |
 | 3 | No dynamic allocation after init | libpelorus allocates once per blob in `pel_blob_pack`; hot per-frame paths reuse buffers. |
-| 4 | A function fits a printed page (~75 lines) | `.clang-tidy` `readability-function-size`. |
+| 4 | A function fits a printed page | New or touched code stays at or below Praetor's effective 60-LOC cap; its baseline ratchets legacy debt. `.clang-tidy` also reports the legacy 75-line threshold. |
 | 5 | Assertion density — validate arguments at boundaries | Every public function null-checks and range-checks its inputs, returns `pel_result`. |
 | 6 | Smallest scope for data | File-static where possible; no globals beyond `const` tables. |
 | 7 | Check every return value; check every parameter | Non-void returns checked or `(void)`-cast. **Hard gate.** |

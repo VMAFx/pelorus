@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD001 MD010 MD013 MD032 -->
 # Pelorus Praetor Onboarding Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -67,7 +68,7 @@ All later `adopt` writes occur in `$stage/repo`, whose `.git/hooks` is isolated.
 - Create: `.config/archetypes/facets/api-public.yaml`
 - Create: `.config/archetypes/facets/docs-seoportal.yaml`
 - Create: `.config/archetypes/facets/agent-sandboxed.yaml`
-- Create: generated editor, label, Paperclip, checkpoint, and hook-support artifacts accepted by the manifest
+- Create: generated editor, label, and Paperclip artifacts accepted by the manifest
 
 - [ ] **Step 1: Seed explicit adoption declines before generation**
 
@@ -107,7 +108,7 @@ adoption:
   --dry-run
 ```
 
-Expected: 60 findings: HISS-01=30, HISS-02=1, HISS-04=29;
+Final-tree result: 77 findings: HISS-01=31, HISS-02=1, HISS-04=45;
 `branch-ruleset`, `dev-container`, and `git-hooks` are reported as explicitly
 declined.
 
@@ -115,7 +116,7 @@ declined.
 
 Run the same command without `--dry-run`. Assert that `.standards.lock`
 contains digest entries for one profile and four facets,
-`.standards-baseline.json` contains 60 findings,
+`.standards-baseline.json` contains 77 findings,
 `.github/rulesets/main.json` does not exist, `.devcontainer` does not exist,
 and neither `lefthook.yml` nor a Praetor fallback hook was generated.
 
@@ -257,17 +258,22 @@ Use `compile-context --verify` and `audit` in serial pre-commit commands. Use `m
 - [ ] **Step 4: Verify native and governance gates**
 
 ```bash
-PRAETORCTL=/home/kilian/.cache/praetor-bin/standardsctl-846da590 make verify-all
+PRAETORCTL=/home/kilian/.cache/praetor-bin/standardsctl-846da590 make verify-native
+/home/kilian/.cache/praetor-bin/standardsctl-846da590 compile-context --verify
+/home/kilian/.cache/praetor-bin/standardsctl-846da590 audit
 ```
 
-Expected: context verification, baseline audit, build, 22-or-more fast tests, formatting, clang-tidy, and changelog hygiene all PASS.
+Expected: context verification, build, 22-or-more fast tests, formatting,
+configured clang-tidy policy, and changelog hygiene PASS. The audit validates
+the manifest, lock, 77-finding baseline, contexts, and personas, then fails on
+the explicitly declined branch-ruleset artifact; Praetor issue 408 owns that
+engine defect. Do not bypass it in Pelorus.
 
 ### Task 5: Add standards CI and correct generated branch assumptions
 
 **Files:**
 - Create: `.github/workflows/standards-gate.yml`
 - Modify: `.paperclip/harness.json`
-- Modify: `.config/agent/checkpoint.json`
 - Modify: generated editor/task artifacts containing `main`
 
 - [ ] **Step 1: Add the pinned baseline-only workflow**
@@ -284,7 +290,7 @@ Run `standardsctl version`, `standardsctl compile-context --verify`, and baselin
 
 - [ ] **Step 2: Replace generated `main` behavior with `master`**
 
-Set Paperclip rebase/push/base fields and checkpoint base to `master`; set repository identity to `VMAFx/pelorus`. Search all newly generated tracked artifacts:
+Set Paperclip rebase/push/base fields to `master`; set repository identity to `VMAFx/pelorus`. No checkpoint bundle is retained while `git-hooks` is declined. Search all newly generated tracked artifacts:
 
 ```bash
 rg -n 'refs/(for|heads)/main|origin/main|"base": "main"|pelorus-praetor-' \
@@ -300,7 +306,7 @@ Require no workflow, Make target, or hook to invoke `standardsctl sync --remote`
 ### Task 6: Document measured adoption and render the changelog
 
 **Files:**
-- Create: `docs/research/2065-praetor-adoption-measurements.md`
+- Create: `docs/research/0145-praetor-adoption-measurements.md`
 - Modify: `README.md`
 - Modify: `CONTRIBUTING.md`
 - Create: `changelog.d/added/0145-praetor-governance.md`
@@ -308,7 +314,7 @@ Require no workflow, Make target, or hook to invoke `standardsctl sync --remote`
 
 - [ ] **Step 1: Record reproducible measurements**
 
-Document the exact engine commit, profile/facets, 60-finding breakdown, generated/declined surfaces, canonical-context and persona migration, the shared-hook side effect discovered in disposable testing, commands used, and limits. State that no product source was refactored and no remote ruleset was applied.
+Document the exact engine commit, profile/facets, 77-finding breakdown, generated/declined surfaces, canonical-context and persona migration, hook-isolation checks, commands used, upstream issue 408, and limits. State that no product source was refactored and no remote ruleset was applied.
 
 - [ ] **Step 2: Document contributor entry points**
 
@@ -342,11 +348,16 @@ Cherry-pick the standalone commits into `chore/praetor-onboarding-20260920`. Re-
 PRAETORCTL=/home/kilian/.cache/praetor-bin/standardsctl-846da590 make verify-all
 /home/kilian/.cache/praetor-bin/standardsctl-846da590 compile-context --verify
 /home/kilian/.cache/praetor-bin/standardsctl-846da590 audit
-git diff --check chore/dependency-ci-20260920..HEAD
+git diff --check 6ccc73001dee07071b5dc8cda9ee2fcb9bfb4ac2..HEAD
 git status --short
 ```
 
-Expected: all PASS; worktree clean; baseline remains exactly 60 or decreases only for intentional documentation/harness movement; no product C, headers, shaders, or FFmpeg patch source changed.
+Expected: native verification and context verification PASS; the audit reaches
+the known Praetor issue 408 failure after all preceding checks. The worktree is
+clean; the baseline remains exactly 77 or decreases only for intentional
+documentation/harness movement; no product C, headers, shaders, or FFmpeg patch
+source changed. Full acceptance waits for the upstream fix rather than a local
+bypass.
 
 - [ ] **Step 4: Verify shared hook state one final time**
 

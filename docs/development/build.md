@@ -36,13 +36,85 @@ verify that the qualified tag resolves to that commit, and work in an isolated
 run-owned Git worktree. The committed `*.patch` files are the artifact; edit
 the sources under `files/` and regenerate.
 
-## Local gate (run before pushing)
+## Repository verification entry points
 
 ```bash
-meson test -C build --suite=fast
-clang-format --dry-run -Werror libpelorus/**/*.{c,h}
-clang-tidy -p build libpelorus/src/*.c        # touched files clean
+make verify-native
 ```
+
+`make verify-native` is the primary product gate. It configures and builds with
+Meson/Ninja, runs the fast suite, checks C formatting and clang-tidy, and checks
+that `CHANGELOG.md` matches `changelog.d/`. Override `BUILD_DIR` to use another
+Meson tree, for example `BUILD_DIR=build-asan make verify-native`.
+
+The governance targets use the first `standardsctl` or `praetorctl` on `PATH`.
+Pin another executable explicitly with `PRAETORCTL=/absolute/path/to/standardsctl`.
+
+| Target | Composition and purpose |
+| --- | --- |
+| `make compile-context` | Regenerate cross-tool context and persona projections from their canonical sources |
+| `make compile-context-verify` | Fail if a generated projection has drifted |
+| `make audit` | Verify the pinned manifest/lock and enforce the 77-finding HISS baseline ratchet |
+| `make verify-all` | Run context verification, then the audit, then `verify-native` |
+| `make hooks-install` | Install the tracked Lefthook commands into the shared Git hooks directory; see the warning below |
+
+The baseline accepts 77 existing findings (HISS-01=31, HISS-02=1, HISS-04=45)
+in the scanner's supported-file scope. It is a non-regression ceiling, not a
+claim of zero debt or whole-tree source coverage. Existing findings may shrink;
+new findings must not make the measured total exceed the committed baseline.
+
+The `Standards` GitHub Actions workflow runs on every pull request and push to
+`master`. It installs Praetor at the commit in
+[ADR-0145](../adr/0145-praetor-governance-adoption.md), verifies generated
+contexts, and runs the baseline audit. The pinned auditor currently passes the
+manifest, lock, baseline, contexts, and personas, then incorrectly requires a
+ruleset that the manifest explicitly declines. Therefore the Standards job,
+`make audit`, and `make verify-all` are expected to stop at
+[Praetor issue 408](https://github.com/CordanaLLM/praetor/issues/408). Run
+`make verify-native` separately for product acceptance; do not add a fake
+ruleset, weaken the manifest, or run remote sync as a workaround.
+
+Triage failures by boundary:
+
+- A `verify-native` failure belongs to Pelorus and must be fixed here.
+- Context drift means a canonical source changed without regeneration. Edit
+  `AGENTS.md` or `.agents/agents/*.md`, then run `make compile-context`; never
+  patch a generated projection directly.
+- An audit failure before the final missing-ruleset diagnostic is a new local
+  governance regression. The final missing-ruleset diagnostic alone is the
+  known upstream issue 408 blocker.
+
+Canonical context sources are `AGENTS.md` and `.agents/agents/*.md`. Generated
+files that `compile-context` owns include root `CLAUDE.md`,
+`.cursor/rules/hiss-invariants.mdc`, `.github/copilot-instructions.md`,
+`.windsurfrules`, `.gemini/GEMINI.md`, `.codex/rules.md`,
+and the Markdown persona projections under `.claude/`, `.codex/`, `.github/`,
+and `.gemini/`. Direct edits to those projections are overwritten or rejected
+by verification.
+
+`.paperclip/harness.json` and `.paperclip/rules.md` are a separate generated
+pair from `standardsctl paperclip harness`; `compile-context` does not own them.
+Regenerating that pair requires an explicit consumer review because the pinned
+generator does not yet honor every Pelorus branch, language, and policy choice
+(Praetor issues 321 and 68).
+
+### Lefthook warning while issue 408 is open
+
+Do **not** run `make hooks-install` for normal development while issue 408 is
+open. The tracked `lefthook.yml` binds pre-commit to `make audit` and pre-push to
+`make verify-all`; both reach the known auditor defect and therefore block every
+commit or push even when Pelorus itself is clean. The target exists for explicit
+hook-integration testing and for use after the upstream fix is pinned.
+
+If it was installed, remove the managed hooks with Lefthook's verified removal
+command:
+
+```bash
+lefthook uninstall
+```
+
+Linked worktrees share the repository's Git hooks directory, so uninstalling is
+repository-wide. The tracked `lefthook.yml` remains in the checkout.
 
 ## Release
 
