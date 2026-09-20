@@ -15,174 +15,159 @@ concurrency:
 jobs:
   core:
     name: libpelorus (build · test · format · tidy)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Load build configuration
+        run: |
+          while IFS= read -r entry; do
+            case "$entry" in
+              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
+                printf '%s\n' "$entry" >> "$GITHUB_ENV"
+                ;;
+            esac
+          done < build-config.env
       - name: Install toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            meson ninja-build glslang-tools clang clang-format clang-tidy pkg-config
+            meson ninja-build glslc glslang-tools clang clang-format clang-tidy \
+            pkg-config
+      - name: Runner and toolchain receipt
+        run: |
+          echo "ImageOS=${ImageOS:-unset}"
+          echo "ImageVersion=${ImageVersion:-unset}"
+          cat /etc/os-release
+          glslc --version
+          glslangValidator --version
       - name: Configure + build
         run: meson setup build && ninja -C build
       - name: Test (fast suite — interop ABI + shader compile)
         run: meson test -C build --suite=fast --print-errorlogs
       - name: clang-format (touched-tree clean)
-        run: |
-          fmt=$(find libpelorus -name '*.c' -o -name '*.h')
-          clang-format --dry-run --Werror $fmt
+        run: find libpelorus \( -name '*.c' -o -name '*.h' \) -exec clang-format --dry-run --Werror {} +
       - name: clang-tidy
         run: clang-tidy -p build libpelorus/src/*.c
 
   ffmpeg-stack:
-    name: ffmpeg patch stack (apply · configure · compile filters)
-    # Pinned, NOT ubuntu-latest: the LunarG apt list below is release-specific
-    # ('noble' = 24.04). When ubuntu-latest moves on, an unpinned runner silently
-    # gets no Vulkan SDK, spirv_compiler goes OFF and every filter is disabled.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    name: ffmpeg patch stack (regenerate · replay · link · smoke)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install build toolchain
+      - name: Load build configuration
+        run: |
+          while IFS= read -r entry; do
+            case "$entry" in
+              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
+                printf '%s\n' "$entry" >> "$GITHUB_ENV"
+                ;;
+            esac
+          done < build-config.env
+      - name: Install native build and Vulkan toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            meson ninja-build pkg-config nasm yasm git wget ca-certificates gnupg
-      - name: Install Vulkan SDK (LunarG — current headers + glslang + shaderc)
+            build-essential meson ninja-build pkg-config nasm yasm git ca-certificates \
+            libvulkan-dev glslc glslang-tools libvpl-dev
+      - name: Runner and toolchain receipt
         run: |
-          # Ubuntu's libvulkan-dev headers are older than FFmpeg n8.1 requires
-          # ("vulkan requested but not found"); the LunarG SDK ships current
-          # Vulkan-Headers + glslang + glslc together (glslc is what FFmpeg 9's
-          # check_glslc probes to enable spirv_compiler).
-          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc \
-            | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc >/dev/null
-          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list \
-            https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
-          sudo apt-get update
-          # The vulkan-sdk metapackage bundles current Vulkan-Headers (Ubuntu's
-          # are < FFmpeg's min) AND glslc/glslang (spirv_compiler). Install it
-          # ALONE — adding Ubuntu's libshaderc-dev in the same transaction
-          # collides with LunarG's shaderc deb (dpkg unpack conflict).
-          sudo apt-get install -y vulkan-sdk
-          echo "vulkan: $(pkg-config --modversion vulkan 2>/dev/null || echo '?'); shaderc: $(pkg-config --modversion shaderc 2>/dev/null || echo '?')"
-      - name: Build + install libpelorus (to /usr so pkg-config finds it)
+          echo "ImageOS=${ImageOS:-unset}"
+          echo "ImageVersion=${ImageVersion:-unset}"
+          cat /etc/os-release
+          pkg-config --modversion vulkan
+          glslc --version
+          glslangValidator --version
+      - name: Fetch and verify pinned FFmpeg source
         run: |
-          meson setup build --prefix=/usr
-          ninja -C build
-          sudo ninja -C build install
-          sudo ldconfig
-          pkg-config --exists libpelorus && echo "libpelorus $(pkg-config --modversion libpelorus) OK"
-      - name: Checkout FFmpeg n9.0.1
-        run: git clone --branch n9.0.1 --depth 1 https://github.com/FFmpeg/FFmpeg.git ffmpeg
-      - name: Patches match a fresh generate.sh run (no hand-edited artifacts)
+          git init ffmpeg
+          git -C ffmpeg remote add origin "$FFMPEG_REMOTE"
+          git -C ffmpeg fetch --depth=1 origin \
+            "refs/tags/${FFMPEG_TAG}:refs/tags/${FFMPEG_TAG}"
+          actual=$(git -C ffmpeg rev-parse --verify \
+            "refs/tags/${FFMPEG_TAG}^{commit}")
+          test "$actual" = "$FFMPEG_COMMIT" || {
+            echo "::error::${FFMPEG_TAG} peels to ${actual}, expected ${FFMPEG_COMMIT}"
+            exit 1
+          }
+      - name: Patches match deterministic regeneration
         run: |
-          # generate.sh is byte-reproducible (it pins GIT_AUTHOR/COMMITTER_DATE), so
-          # regenerating must produce no diff. This is what catches a hand-edited
-          # *.patch -- the thing ffmpeg-patches/README forbids and nothing checked.
-          git -C ffmpeg fetch --depth 1 origin +refs/tags/n9.0.1:refs/tags/n9.0.1 2>/dev/null || true
-          FFMPEG_REPO="$GITHUB_WORKSPACE/ffmpeg" BASE_TAG=n9.0.1 \
-            WORKTREE="$RUNNER_TEMP/pelorus-gen" ffmpeg-patches/generate.sh
+          FFMPEG_REPO="$GITHUB_WORKSPACE/ffmpeg" \
+            WORKTREE="$RUNNER_TEMP/pelorus-gen-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            ffmpeg-patches/generate.sh
           if ! git diff --quiet -- ffmpeg-patches/; then
-            echo "::error::ffmpeg-patches/ differs from a fresh generate.sh run — a patch was hand-edited, or files/ changed without regenerating."
+            echo "::error::generated FFmpeg patches differ from canonical files"
             git diff --stat -- ffmpeg-patches/
             git diff -- ffmpeg-patches/ | head -200
             exit 1
           fi
-          echo "committed patches are byte-identical to a fresh regeneration"
-
-      - name: Apply Pelorus patch stack (git am --3way)
-        working-directory: ffmpeg
+          echo "committed patches are byte-identical to fresh regeneration"
+      - name: Replay all patches, link FFmpeg, and verify registrations
         run: |
-          git config user.name CI && git config user.email ci@vmafx.invalid
-          while read -r p; do
-            case "$p" in ''|\#*) continue;; esac
-            echo "applying $p"
-            git am --3way "$GITHUB_WORKSPACE/ffmpeg-patches/$p"
-          done < "$GITHUB_WORKSPACE/ffmpeg-patches/series.txt"
-      - name: Configure (Vulkan + libpelorus)
-        working-directory: ffmpeg
-        run: |
-          pkg-config --exists libpelorus && echo "libpelorus $(pkg-config --modversion libpelorus) OK"
-          # FFmpeg 9 replaced the runtime GLSL->SPIR-V compiler (spirv_library,
-          # via libshaderc) with build-time compilation: `spirv_compiler` is
-          # enabled by configure's check_glslc, i.e. simply by a working `glslc`
-          # on PATH (the LunarG vulkan-sdk package above provides it). So
-          # --enable-libshaderc is neither needed nor meaningful any more.
-          # NOTE: do NOT --disable-programs — the next step links the `ffmpeg`
-          # binary to exercise the libpelorus link (the real gate); disabling
-          # programs removes that target ("No rule to make target 'ffmpeg'").
-          command -v glslc >/dev/null || { echo "glslc missing: spirv_compiler will be OFF and every vulkan filter disabled"; exit 1; }
-          ./configure --enable-vulkan --disable-doc \
-            || { echo '::group::config.log tail'; tail -80 ffbuild/config.log; echo '::endgroup::'; exit 1; }
-      - name: Show Vulkan / SPIR-V / libpelorus detection
-        working-directory: ffmpeg
-        run: |
-          grep -E 'CONFIG_(VULKAN|SPIRV_COMPILER|PELORUS)' config.h config_components.h || true
-          echo "::group::config.log — libpelorus + pelorus filter resolution"
-          grep -iE 'libpelorus|pelorus_(deband|analyze)_vulkan_filter' ffbuild/config.log | tail -60 || true
-          echo "::endgroup::"
-      - name: Confirm filters enabled
-        working-directory: ffmpeg
-        run: |
-          grep -q 'CONFIG_PELORUS_DEBAND_VULKAN_FILTER 1' config_components.h \
-            && grep -q 'CONFIG_PELORUS_ANALYZE_VULKAN_FILTER 1' config_components.h \
-            || { echo "Pelorus filters were DISABLED at configure (likely spirv_compiler/glslc not detected)."; \
-                 grep -iE 'spirv|shaderc|glslang|vulkan' ffbuild/config.log | tail -40; exit 1; }
-      - name: Build + LINK ffmpeg (catches link errors the .o-only build misses)
-        working-directory: ffmpeg
-        run: |
-          # Linking the binary is the real gate: require_pkg_config adds cflags
-          # but the filter also needs -lpelorus on the link (add_extralibs), which
-          # a compile-only `make …o` would never exercise.
-          make -j"$(nproc)" ffmpeg
-      - name: Smoke — filters registered in the linked binary
-        working-directory: ffmpeg
-        run: |
-          ./ffmpeg -hide_banner -filters 2>/dev/null | grep pelorus_deband_vulkan
-          ./ffmpeg -hide_banner -filters 2>/dev/null | grep pelorus_analyze_vulkan
-
+          FFMPEG_REPO="$GITHUB_WORKSPACE/ffmpeg" \
+            ffmpeg-patches/test/build-and-run.sh
 
   sanitizers:
     name: libpelorus (ASan + UBSan — the interop conformance fixture)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Load build configuration
+        run: |
+          while IFS= read -r entry; do
+            case "$entry" in
+              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
+                printf '%s\n' "$entry" >> "$GITHUB_ENV"
+                ;;
+            esac
+          done < build-config.env
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends meson ninja-build clang pkg-config
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build clang pkg-config glslc glslang-tools
+      - name: Runner and toolchain receipt
+        run: |
+          echo "ImageOS=${ImageOS:-unset}"
+          echo "ImageVersion=${ImageVersion:-unset}"
+          cat /etc/os-release
+          glslc --version
+          glslangValidator --version
       - name: Build + run the fixture under ASan/UBSan
         env:
           CC: clang
         run: |
-          # Use meson's own -Db_sanitize rather than raw CFLAGS/LDFLAGS: passing
-          # -fsanitize only via CFLAGS compiles instrumented objects but never
-          # adds the runtime to the shared-library link, which fails with
-          # "undefined reference to __asan_report_store8".
-          # -fno-sanitize-recover=alignment makes misaligned access FATAL rather
-          # than a logged warning. Issue #44 (a misaligned blob base cast
-          # straight into a struct) was invisible to every other gate and is why
-          # this job exists; without no-recover it would print and still pass.
+          # Meson's sanitizer option adds the runtime to every shared-library
+          # link. Make alignment UB fatal: issue #44 otherwise logged and passed.
           meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false \
             -Dc_args=-fno-sanitize-recover=alignment
           meson test -C build-san --suite=fast --print-errorlogs
 
   docs:
-    name: docs + changelog hygiene
-    runs-on: ubuntu-latest
+    name: docs + changelog + workflow hygiene
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Load build configuration
+        run: |
+          while IFS= read -r entry; do
+            case "$entry" in
+              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
+                printf '%s\n' "$entry" >> "$GITHUB_ENV"
+                ;;
+            esac
+          done < build-config.env
       - name: Changelog fragments render cleanly
         run: bash scripts/release/concat-changelog-fragments.sh --check
       - name: Every ADR has an index row
@@ -190,7 +175,17 @@ jobs:
           missing=0
           for adr in docs/adr/[0-9]*.md; do
             n=$(basename "$adr" .md); n=${n%%-*}
-            [ "$n" = "0000" ] && continue   # 0000 is the template, not indexed
-            grep -q "\[$n\](" docs/adr/README.md || { echo "ADR $n missing from index"; missing=1; }
+            [ "$n" = "0000" ] && continue
+            grep -q "\[$n\](" docs/adr/README.md || {
+              echo "ADR $n missing from index"
+              missing=1
+            }
           done
           exit $missing
+      - name: Set up Go 1.26 for actionlint
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - name: Validate workflow syntax
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12

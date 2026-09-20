@@ -181,11 +181,12 @@ git commit -m "build(ffmpeg): make stack replay pinned and isolated"
 ### Task 4: Move GitHub Actions to Ubuntu 26.04 and native Vulkan packages
 
 **Files:**
+- Create: `.github/actionlint.yaml`
 - Modify: `.github/workflows/ci.yml`
 - Modify: `.github/workflows/release.yml`
 - Modify: `scripts/check-build-config.py`
 
-- [ ] **Step 1: Extend runner/toolchain checks, then confirm RED**
+- [x] **Step 1: Extend runner/toolchain checks, then confirm RED**
 
 Parse every job in both workflow files and require `runs-on: ubuntu-26.04`.
 Reject `ubuntu-latest`, `packages.lunarg.com`, `vulkan-sdk`, copied FFmpeg
@@ -193,7 +194,7 @@ release literals, and workstation paths. Require each build/test lane to
 install both `glslc` and `glslang-tools`, and require the FFmpeg lane to install
 `libvulkan-dev`.
 
-- [ ] **Step 2: Replace LunarG with Resolute packages**
+- [x] **Step 2: Replace LunarG with Resolute packages**
 
 Pin all jobs to `ubuntu-26.04`. Install native `libvulkan-dev`, `glslc`, and
 `glslang-tools` where appropriate. Add a `Load build configuration` step after
@@ -205,14 +206,14 @@ Each workflow must print `ImageOS`, `ImageVersion`, `/etc/os-release`, and the
 installed Vulkan/shader compiler versions so the hosted acceptance run is an
 auditable receipt.
 
-- [ ] **Step 3: Make release gating testable without publishing**
+- [x] **Step 3: Make release gating testable without publishing**
 
 Add `workflow_dispatch` to the release workflow. Run build/test/package gates
 for both tag pushes and manual dispatches, but guard the GitHub release publish
 step so it executes only for a `push` of a `v*` tag. Manual validation must not
 create a release.
 
-- [ ] **Step 4: Add workflow syntax validation**
+- [x] **Step 4: Add workflow syntax validation**
 
 Run `actionlint` v1.7.12 via an explicitly configured Go 1.26 toolchain in the
 docs job (pin `actions/setup-go` by commit). Also run it locally:
@@ -221,13 +222,19 @@ docs job (pin `actions/setup-go` by commit). Also run it locally:
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 ```
 
-- [ ] **Step 5: Confirm GREEN and commit**
+GitHub added the public-preview `ubuntu-26.04` label after actionlint v1.7.12's
+embedded runner catalog. Keep an exact `.github/actionlint.yaml` exception for
+that one supported label until the pinned actionlint release recognizes it;
+do not disable runner-label checks generally.
+
+- [x] **Step 5: Confirm GREEN and commit**
 
 ```bash
 python3 scripts/check-build-config.py
 meson test -C build --suite=fast --print-errorlogs
-git add .github/workflows/ci.yml .github/workflows/release.yml \
-  scripts/check-build-config.py
+git add .github/actionlint.yaml .github/workflows/ci.yml \
+  .github/workflows/release.yml scripts/check-build-config.py \
+  docs/superpowers/plans/2026-09-20-dependency-ci-refresh.md
 git commit -m "ci: move the gate to Ubuntu 26.04"
 ```
 

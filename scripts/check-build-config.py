@@ -19,6 +19,11 @@ CONSUMERS = (
     ROOT / "ffmpeg-patches" / "generate.sh",
     ROOT / "ffmpeg-patches" / "test" / "build-and-run.sh",
 )
+WORKFLOWS = (
+    ROOT / ".github" / "workflows" / "ci.yml",
+    ROOT / ".github" / "workflows" / "release.yml",
+)
+SETUP_GO_COMMIT = "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
 RELEASE_TAG = re.compile(r"(?<![A-Za-z0-9_])n\d+\.\d+\.\d+(?![A-Za-z0-9_])")
 FORMAT_PATCH_CONFIG = (
     "format.mboxrd=false",
@@ -804,6 +809,187 @@ def validate_replay_text(replay: str) -> list[str]:
     return errors
 
 
+def workflow_job_blocks(text: str) -> dict[str, str]:
+    """Extract top-level workflow job blocks without executing YAML."""
+    lines = text.splitlines(keepends=True)
+    try:
+        jobs_line = next(
+            index for index, line in enumerate(lines) if line.rstrip() == "jobs:"
+        )
+    except StopIteration:
+        return {}
+
+    starts: list[tuple[str, int]] = []
+    for index in range(jobs_line + 1, len(lines)):
+        line = lines[index]
+        if line.strip() and not line.startswith((" ", "\t")):
+            break
+        match = re.fullmatch(r"  ([A-Za-z0-9_-]+):\s*(?:#.*)?\n?", line)
+        if match:
+            starts.append((match.group(1), index))
+
+    blocks: dict[str, str] = {}
+    for position, (name, start) in enumerate(starts):
+        end = starts[position + 1][1] if position + 1 < len(starts) else len(lines)
+        blocks[name] = "".join(lines[start:end])
+    return blocks
+
+
+def validate_workflow_text(relative: str, text: str) -> list[str]:
+    """Validate the pinned runner, toolchain, and shared FFmpeg workflow contract."""
+    errors: list[str] = []
+    jobs = workflow_job_blocks(text)
+    if not jobs:
+        return [f"{relative}: no jobs found"]
+
+    forbidden = (
+        "ubuntu-latest",
+        "packages.lunarg.com",
+        "vulkan-sdk",
+        "/home/kilian/",
+    )
+    for token in forbidden:
+        if token in text:
+            errors.append(f"{relative}: forbidden workflow token {token}")
+    if RELEASE_TAG.search(text):
+        errors.append(f"{relative}: contains a copied FFmpeg release tag")
+
+    load_tokens = (
+        "name: Load build configuration",
+        "build-config.env",
+        "FFMPEG_REMOTE",
+        "FFMPEG_TAG",
+        "FFMPEG_COMMIT",
+        "GITHUB_ENV",
+    )
+    for name, block in jobs.items():
+        runners = re.findall(r"^\s+runs-on:\s*([^\s#]+)", block, re.MULTILINE)
+        if runners != ["ubuntu-26.04"]:
+            errors.append(
+                f"{relative}: job {name} must run exactly on ubuntu-26.04"
+            )
+        checkout = block.find("uses: actions/checkout@")
+        load = block.find("name: Load build configuration")
+        if checkout < 0 or load < checkout:
+            errors.append(
+                f"{relative}: job {name} must load build-config.env after checkout"
+            )
+        for token in load_tokens:
+            if token not in block:
+                errors.append(
+                    f"{relative}: job {name} build-config step is missing {token}"
+                )
+
+    build_jobs = {
+        "ci.yml": ("core", "ffmpeg-stack", "sanitizers"),
+        "release.yml": ("release",),
+    }.get(Path(relative).name, ())
+    for name in build_jobs:
+        block = jobs.get(name)
+        if block is None:
+            errors.append(f"{relative}: missing build/test job {name}")
+            continue
+        install_start = block.find("sudo apt-get install")
+        install_end = block.find("\n      - name:", install_start)
+        install = (
+            block[install_start:]
+            if install_end < 0
+            else block[install_start:install_end]
+        )
+        for package in ("glslc", "glslang-tools"):
+            if not re.search(
+                rf"(?<![A-Za-z0-9_-]){re.escape(package)}(?![A-Za-z0-9_-])",
+                install,
+            ):
+                errors.append(
+                    f"{relative}: job {name} must install native package {package}"
+                )
+    if Path(relative).name == "ci.yml":
+        ffmpeg = jobs.get("ffmpeg-stack", "")
+        for token in (
+            "libvulkan-dev",
+            'refs/tags/${FFMPEG_TAG}^{commit}',
+            '"$FFMPEG_COMMIT"',
+            "ffmpeg-patches/generate.sh",
+            "ffmpeg-patches/test/build-and-run.sh",
+        ):
+            if token not in ffmpeg:
+                errors.append(f"{relative}: FFmpeg job is missing {token}")
+        docs = jobs.get("docs", "")
+        for token in (
+            f"actions/setup-go@{SETUP_GO_COMMIT}",
+            "go-version: '1.26.x'",
+            "github.com/rhysd/actionlint/cmd/actionlint@v1.7.12",
+        ):
+            if token not in docs:
+                errors.append(f"{relative}: docs job is missing {token}")
+    elif Path(relative).name == "release.yml":
+        if "workflow_dispatch:" not in text:
+            errors.append(f"{relative}: release gate needs workflow_dispatch")
+        publish = jobs.get("release", "")
+        guard = (
+            "if: github.event_name == 'push' && "
+            "startsWith(github.ref, 'refs/tags/v')"
+        )
+        if guard not in publish:
+            errors.append(
+                f"{relative}: publish step must be tag-push-only for manual safety"
+            )
+
+    for token in (
+        "ImageOS",
+        "ImageVersion",
+        "/etc/os-release",
+        "glslc --version",
+        "glslangValidator --version",
+    ):
+        if token not in text:
+            errors.append(f"{relative}: environment receipt is missing {token}")
+    return errors
+
+
+def validate_workflows() -> list[str]:
+    """Validate all hosted workflow consumers of the build contract."""
+    errors: list[str] = []
+    for path in WORKFLOWS:
+        relative = path.relative_to(ROOT).as_posix()
+        if not path.is_file():
+            errors.append(f"{relative}: missing")
+            continue
+        errors.extend(validate_workflow_text(relative, path.read_text(encoding="utf-8")))
+    return errors
+
+
+def workflow_validator_regressions() -> list[str]:
+    """Prove runner and native-toolchain regressions are rejected."""
+    failures: list[str] = []
+    ci_path = WORKFLOWS[0]
+    source = ci_path.read_text(encoding="utf-8")
+    cases = {
+        "floating runner": (
+            source.replace("ubuntu-26.04", "ubuntu-latest", 1),
+            "forbidden workflow token ubuntu-latest",
+        ),
+        "retired LunarG source": (
+            source + "\n# https://packages.lunarg.com/retired\n",
+            "forbidden workflow token packages.lunarg.com",
+        ),
+        "missing native glslc": (
+            source.replace("glslc", "shader-compiler-removed", 1),
+            "must install native package glslc",
+        ),
+    }
+    relative = ci_path.relative_to(ROOT).as_posix()
+    for name, (mutated, expected) in cases.items():
+        if mutated == source:
+            failures.append(f"workflow regression: {name} mutation changed nothing")
+            continue
+        errors = validate_workflow_text(relative, mutated)
+        if not any(expected in error for error in errors):
+            failures.append(f"workflow regression: {name} was accepted")
+    return failures
+
+
 def validate_consumers() -> list[str]:
     """Validate all operational consumers of the FFmpeg contract."""
     errors: list[str] = []
@@ -814,6 +1000,7 @@ def validate_consumers() -> list[str]:
     errors.extend(validate_generator_text(generator))
     replay = CONSUMERS[1].read_text(encoding="utf-8")
     errors.extend(validate_replay_text(replay))
+    errors.extend(validate_workflows())
     return errors
 
 
@@ -832,6 +1019,7 @@ def main() -> int:
         errors.extend(git_tag_ref_regression())
         errors.extend(git_dirty_worktree_cleanup_regression())
         errors.extend(git_format_config_regression())
+        errors.extend(workflow_validator_regressions())
 
     if errors:
         print("\n".join(errors), file=sys.stderr)
