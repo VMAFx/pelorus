@@ -52,7 +52,7 @@ This is an upstream limitation, not a patch defect; the leg becomes effective
 for free once libaom enables the control on the path FFmpeg uses. Full detail in
 docs/backends/libaom-roi.md and ADR-0120. No fabricated gain.
 ---
- libavcodec/libaomenc.c | 238 +++++++++++++++++++++++++++++++++++++++++
+ libavcodec/libaomenc.c | 238 ++++++++++++++++++++
  1 file changed, 238 insertions(+)
 
 diff --git a/libavcodec/libaomenc.c b/libavcodec/libaomenc.c
@@ -339,6 +339,3 @@ index 7cabea30034bc9f232d496d8cdf5bd0ad28adf75..724306e9659d9f6b589d23184f0d55b8
  #if AOM_ENCODER_ABI_VERSION >= 23
      { "aom-params",                   "Set libaom options using a :-separated list of key=value pairs", OFFSET(aom_params), AV_OPT_TYPE_DICT, { 0 }, 0, 0, VE },
  #endif
--- 
-2.55.0
-

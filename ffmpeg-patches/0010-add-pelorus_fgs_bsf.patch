@@ -29,7 +29,8 @@ onto these options (mapping recipe in docs/usage/grain-fgs-bsf.md).
 Honest scope: this is the STATIC-model leg. A BSF works on AVPackets and no
 stock encoder forwards the estimator's per-frame grain side data onto the
 coded packet, so per-frame estimate -> SEI plumbing through an arbitrary HEVC
-encoder is not expressible in n8.1.1. Opt-in and no-op by construction: the
+encoder is not expressible in the pinned stock FFmpeg baseline. Opt-in and
+no-op by construction: the
 filter passes the stream through unchanged unless the components mask selects
 at least one colour component; skip_existing avoids double-stamping. No
 device/box assumptions; does not link libpelorus (consumes the model via
@@ -43,9 +44,8 @@ ADR: docs/adr/0117-grain-fgs-bsf.md
  configure                      |   1 +
  libavcodec/bitstream_filters.c |   1 +
  libavcodec/bsf/Makefile        |   1 +
- libavcodec/bsf/pelorus_fgs.c   | 322 +++++++++++++++++++++++++++++++++
- 4 files changed, 325 insertions(+)
- create mode 100644 libavcodec/bsf/pelorus_fgs.c
+ libavcodec/bsf/pelorus_fgs.c   | 323 ++++++++++++++++++++
+ 4 files changed, 326 insertions(+)
 
 diff --git a/configure b/configure
 index 216f12e37b3d0b1dc56693872573bcecee629410..2e8e0c3ac56df6177b027ab8197f1301b6497cff 100755
@@ -85,10 +85,10 @@ index 981bb8276bfa0855be085e0c8d64a1528795b623..8f8afddb98af584d8af7f02795eb6505
  OBJS-$(CONFIG_REMOVE_EXTRADATA_BSF)       += bsf/remove_extradata.o
 diff --git a/libavcodec/bsf/pelorus_fgs.c b/libavcodec/bsf/pelorus_fgs.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..2408bf6a5489bb4a14616005ad8e3ecda8f51f00
+index 0000000000000000000000000000000000000000..2ee975929436c39a4574f7fb94b12362439f3c5d
 --- /dev/null
 +++ b/libavcodec/bsf/pelorus_fgs.c
-@@ -0,0 +1,322 @@
+@@ -0,0 +1,323 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -127,7 +127,8 @@ index 0000000000000000000000000000000000000000..2408bf6a5489bb4a14616005ad8e3ecd
 + * h264_metadata, av1_metadata all set static parameters this way). A BSF
 + * operates on AVPackets, and no stock encoder forwards the estimator's per-frame
 + * film-grain frame side data onto the coded packet, so per-frame estimate ->
-+ * SEI plumbing through an arbitrary HEVC encoder is not expressible in n8.1.1;
++ * SEI plumbing through an arbitrary HEVC encoder is not expressible in the
++ * pinned stock FFmpeg baseline;
 + * the static-model path is the honest, fully general one. The producer's
 + * PEL_SEC_FILMGRAIN H.274 scalars (h274_model_id / h274_blending_mode /
 + * h274_log2_scale) and per-band RMS scaling map directly onto the options here;
@@ -411,6 +412,3 @@ index 0000000000000000000000000000000000000000..2408bf6a5489bb4a14616005ad8e3ecd
 +    .close          = &ff_cbs_bsf_generic_close,
 +    .filter         = &ff_cbs_bsf_generic_filter,
 +};
--- 
-2.55.0
-

@@ -40,8 +40,8 @@ inferred from compile/harness evidence.
 
 ADR: 0146
 ---
- libavcodec/qsvenc.c      | 279 ++++++++++++++++++++++++++++++++++++++-
- libavcodec/qsvenc.h      |  21 +++
+ libavcodec/qsvenc.c      | 279 +++++++++++++++++++-
+ libavcodec/qsvenc.h      |  21 ++
  libavcodec/qsvenc_h264.c |   2 +
  libavcodec/qsvenc_hevc.c |   2 +
  4 files changed, 302 insertions(+), 2 deletions(-)
@@ -457,6 +457,3 @@ index ae3981fb721899dd3f6fd802920d9beafcb48a91..7e8c75dd8f46591ee6905a00c83c0043
      QSV_OPTION_RDO
      QSV_OPTION_MAX_FRAME_SIZE
      QSV_OPTION_MAX_SLICE_SIZE
--- 
-2.55.0
-

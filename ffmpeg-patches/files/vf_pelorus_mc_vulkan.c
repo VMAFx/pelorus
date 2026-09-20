@@ -246,6 +246,7 @@ static void pel_sd_free(void *opaque, uint8_t *data)
 static int attach_motion(PelorusMcVulkanContext *s, AVFrame *frame, const int32_t *mvx,
                          const int32_t *mvy, const uint32_t *sad, int nblocks)
 {
+    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
     PelorusSideData meta;
     PelorusMotionSection mo;
     PelorusMotionConfSection mo_conf;

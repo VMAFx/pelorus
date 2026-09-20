@@ -17,7 +17,7 @@ dither (none/bayer8/bluenoise), dynamic, protect, planes, meta.
 When meta=1 the filter links libpelorus and attaches a Pelorus interop blob
 (AV_FRAME_DATA_SEI_UNREGISTERED, UUID-keyed) so a downstream vmafx
 vf_libvmaf* can perceptually weight its score and avoid double-counting.
-Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
+Requires libpelorus >= 0.2.0 (pkg-config) when the filter is enabled.
 
 ADR: docs/adr/0104-ffmpeg-patch-stack.md
 Research: docs/research/0101-smart-deband.md
@@ -25,12 +25,11 @@ Research: docs/research/0101-smart-deband.md
  configure                                   |   2 +
  libavfilter/Makefile                        |   1 +
  libavfilter/allfilters.c                    |   1 +
- libavfilter/vf_pelorus_deband_vulkan.c      | 345 ++++++++++++++++++++
+ libavfilter/pelorus_vulkan_sample.h         |  73 ++++
+ libavfilter/vf_pelorus_deband_vulkan.c      | 461 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
- libavfilter/vulkan/pelorus_deband.comp.glsl | 162 +++++++++
- 6 files changed, 512 insertions(+)
- create mode 100644 libavfilter/vf_pelorus_deband_vulkan.c
- create mode 100644 libavfilter/vulkan/pelorus_deband.comp.glsl
+ libavfilter/vulkan/pelorus_deband.comp.glsl | 172 ++++++++
+ 7 files changed, 711 insertions(+)
 
 diff --git a/configure b/configure
 index 374bd5c1512943439480825f32e448e7871eb61c..95a4d4a1bf54c49ea7fcbe1decdf5b73a42b1e61 100755
@@ -76,12 +75,91 @@ index 402b843649b4f5369cf80714eef53755fad9ac9a..78a01c74a326700f3c6c4799906c5ae1
  extern const FFFilter ff_vf_perms;
  extern const FFFilter ff_vf_perspective;
  extern const FFFilter ff_vf_phase;
+diff --git a/libavfilter/pelorus_vulkan_sample.h b/libavfilter/pelorus_vulkan_sample.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..56a43512302b76b3d8c346ec0d83fb5a605933fc
+--- /dev/null
++++ b/libavfilter/pelorus_vulkan_sample.h
+@@ -0,0 +1,73 @@
++/*
++ * Copyright 2026 Lusoris
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or modify it under
++ * the terms of the GNU Lesser General Public License as published by the
++ * Free Software Foundation; either version 2.1 of the License, or (at
++ * your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
++ * License for more details.
++ */
++
++#ifndef AVFILTER_PELORUS_VULKAN_SAMPLE_H
++#define AVFILTER_PELORUS_VULKAN_SAMPLE_H
++
++#include "libavutil/pixdesc.h"
++
++/* FF_VK_REP_FLOAT storage images normalize integer samples against their
++ * Vulkan view's storage container.  That differs from the logical sample
++ * range for LSB-aligned sub-16-bit formats.  Return the multiplier that maps a
++ * storage-image load into the format's logical [0, 1] sample domain.
++ *
++ * This helper deliberately accepts only the layouts the filter family can
++ * prove from AVPixFmtDescriptor alone: planar or single-component integer
++ * formats whose first component occupies an 8- or 16-bit storage lane.  The
++ * Vulkan views for supported semi-planar formats have the same depth/shift in
++ * both chroma components, so the first component describes every lane.  Packed,
++ * float, bitstream, palette, hardware, Bayer, malformed, or wider layouts fall
++ * back to 1.0 rather than inventing a representation rule. */
++static inline float pel_vk_sample_scale_from_desc(const AVPixFmtDescriptor *desc)
++{
++    const AVComponentDescriptor *comp;
++    unsigned int container_bits;
++    unsigned int storage_max;
++    unsigned int sample_max;
++
++    if (!desc || desc->nb_components < 1 ||
++        (desc->flags & (AV_PIX_FMT_FLAG_FLOAT | AV_PIX_FMT_FLAG_BITSTREAM | AV_PIX_FMT_FLAG_PAL |
++                        AV_PIX_FMT_FLAG_HWACCEL | AV_PIX_FMT_FLAG_BAYER)) ||
++        (!(desc->flags & AV_PIX_FMT_FLAG_PLANAR) && desc->nb_components != 1))
++        return 1.0f;
++
++    comp = &desc->comp[0];
++    if (comp->step == 1)
++        container_bits = 8;
++    else if (comp->step == 2)
++        container_bits = 16;
++    else
++        return 1.0f;
++
++    if (comp->depth < 1 || comp->shift < 0 || (unsigned int)comp->depth > container_bits ||
++        (unsigned int)comp->shift >= container_bits ||
++        (unsigned int)comp->depth + (unsigned int)comp->shift > container_bits)
++        return 1.0f;
++
++    storage_max = (1u << container_bits) - 1u;
++    sample_max = ((1u << (unsigned int)comp->depth) - 1u) << (unsigned int)comp->shift;
++    if (sample_max == 0u)
++        return 1.0f;
++
++    return (float)storage_max / (float)sample_max;
++}
++
++static inline float pel_vk_sample_scale(enum AVPixelFormat format)
++{
++    return pel_vk_sample_scale_from_desc(av_pix_fmt_desc_get(format));
++}
++
++#endif /* AVFILTER_PELORUS_VULKAN_SAMPLE_H */
 diff --git a/libavfilter/vf_pelorus_deband_vulkan.c b/libavfilter/vf_pelorus_deband_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..8f133f6c039816f99d39145262e34ed7ad144177
+index 0000000000000000000000000000000000000000..b4c272b45762b88f5ed4fb77646ba74e800c2a2e
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_deband_vulkan.c
-@@ -0,0 +1,345 @@
+@@ -0,0 +1,461 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -119,6 +197,7 @@ index 0000000000000000000000000000000000000000..8f133f6c039816f99d39145262e34ed7
 +#include "libavutil/mem.h"
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
++#include "pelorus_vulkan_sample.h"
 +#include "vulkan_filter.h"
 +
 +#include "filters.h"
@@ -139,25 +218,26 @@ index 0000000000000000000000000000000000000000..8f133f6c039816f99d39145262e34ed7
 +
 +    /* push constants — mirror the GLSL std430 block below, byte-for-byte */
 +    struct {
-+        float thr[4];      /* vec4  : per-plane normalized threshold        */
-+        float grain[4];    /* vec4  : per-plane normalized grain amplitude  */
-+        int32_t range;     /* sampling radius                               */
++        float thr[4];   /* vec4  : per-plane normalized threshold        */
++        float grain[4]; /* vec4  : per-plane normalized grain amplitude  */
++        int32_t range;  /* sampling radius                               */
 +        int32_t sample_mode;
 +        int32_t blur_mode;
 +        int32_t dither_mode;
 +        float softness;
 +        float detail_thr;
-+        int32_t flags;     /* enum pel_deband_flags                         */
++        int32_t flags; /* enum pel_deband_flags                         */
 +        uint32_t frame_seed;
++        float sample_scale; /* storage UNORM -> logical sample domain        */
 +    } opts;
 +
 +    /* AVOption-backed scalar mirrors (broadcast to all planes at init) */
 +    double opt_thr_y, opt_thr_c;
 +    double opt_grain_y, opt_grain_c;
-+    int planes;     /* plane bitmask to process (const-folded into shader)   */
++    int planes; /* plane bitmask to process (const-folded into shader)   */
 +    int dynamic_grain;
 +    int protect_detail;
-+    int meta;       /* attach Pelorus interop side data                     */
++    int meta; /* attach Pelorus interop side data                     */
 +    int64_t frame_idx;
 +} PelorusDebandVulkanContext;
 +
@@ -166,7 +246,7 @@ index 0000000000000000000000000000000000000000..8f133f6c039816f99d39145262e34ed7
 + * GLSL builder (GLSLC/GLSLF/GLSLD + ff_vk_shader_init), which also retires the
 + * old inline-vs-reference lockstep duplication. */
 +extern const unsigned char ff_pelorus_deband_comp_spv_data[];
-+extern const unsigned int  ff_pelorus_deband_comp_spv_len;
++extern const unsigned int ff_pelorus_deband_comp_spv_len;
 +
 +static av_cold int init_filter(AVFilterContext *ctx)
 +{
@@ -189,6 +269,7 @@ index 0000000000000000000000000000000000000000..8f133f6c039816f99d39145262e34ed7
 +        s->opts.flags |= PEL_DEBAND_FLAG_DYNAMIC_GRAIN;
 +    if (s->protect_detail)
 +        s->opts.flags |= PEL_DEBAND_FLAG_PROTECT_DETAIL;
++    s->opts.sample_scale = pel_vk_sample_scale(vkctx->input_format);
 +
 +    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
 +    if (!s->qf) {
@@ -205,19 +286,16 @@ index 0000000000000000000000000000000000000000..8f133f6c039816f99d39145262e34ed7
 +    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
 +    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
 +
-+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
-+                      (uint32_t []) { 32, 32, 1 }, 0);
++    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 +
-+    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts),
-+                                VK_SHADER_STAGE_COMPUTE_BIT);
++    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts), VK_SHADER_STAGE_COMPUTE_BIT);
 +
 +    {
 +        FFVulkanDescriptorSetBinding desc_set[] = {
 +            {
 +                .name = "input_images",
 +                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
-+                                                   FF_VK_REP_FLOAT),
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
 +                .mem_quali = "readonly",
 +                .dimensions = 2,
 +                .elems = planes,
@@ -226,8 +304,7 @@ index 0000000000000000000000000000000000000000..8f133f6c039816f99d39145262e34ed7
 +            {
 +                .name = "output_images",
 +                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format,
-+                                                   FF_VK_REP_FLOAT),
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format, FF_VK_REP_FLOAT),
 +                .mem_quali = "writeonly",
 +                .dimensions = 2,
 +                .elems = planes,
@@ -237,8 +314,7 @@ index 0000000000000000000000000000000000000000..8f133f6c039816f99d39145262e34ed7
 +        ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
 +    }
 +
-+    RET(ff_vk_shader_link(vkctx, shd,
-+                          ff_pelorus_deband_comp_spv_data,
++    RET(ff_vk_shader_link(vkctx, shd, ff_pelorus_deband_comp_spv_data,
 +                          ff_pelorus_deband_comp_spv_len, "main"));
 +    RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 +
@@ -319,8 +395,8 @@ index 0000000000000000000000000000000000000000..8f133f6c039816f99d39145262e34ed7
 +
 +    s->opts.frame_seed = (uint32_t)(s->frame_idx++);
 +
-+    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in,
-+                                    VK_NULL_HANDLE, 1, &s->opts, sizeof(s->opts)));
++    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in, VK_NULL_HANDLE, 1, &s->opts,
++                                    sizeof(s->opts)));
 +
 +    err = av_frame_copy_props(out, in);
 +    if (err < 0)
@@ -355,45 +431,163 @@ index 0000000000000000000000000000000000000000..8f133f6c039816f99d39145262e34ed7
 +#define OFFSET(x) offsetof(PelorusDebandVulkanContext, x)
 +#define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 +static const AVOption pelorus_deband_vulkan_options[] = {
-+    { "range", "reference-sampling radius in pixels", OFFSET(opts.range),
-+      AV_OPT_TYPE_INT, { .i64 = 15 }, 1, 31, FLAGS },
-+    { "thry", "luma threshold (normalized)", OFFSET(opt_thr_y),
-+      AV_OPT_TYPE_DOUBLE, { .dbl = 0.012 }, 0.0, 0.25, FLAGS },
-+    { "thrc", "chroma threshold (normalized)", OFFSET(opt_thr_c),
-+      AV_OPT_TYPE_DOUBLE, { .dbl = 0.012 }, 0.0, 0.25, FLAGS },
-+    { "grainy", "luma grain amplitude (normalized)", OFFSET(opt_grain_y),
-+      AV_OPT_TYPE_DOUBLE, { .dbl = 0.006 }, 0.0, 0.4, FLAGS },
-+    { "grainc", "chroma grain amplitude (normalized)", OFFSET(opt_grain_c),
-+      AV_OPT_TYPE_DOUBLE, { .dbl = 0.0 }, 0.0, 0.4, FLAGS },
-+    { "softness", "soft-blend transition width (0=hard switch)",
-+      OFFSET(opts.softness), AV_OPT_TYPE_FLOAT, { .dbl = 0.5 }, 0.0, 1.0, FLAGS },
-+    { "detail", "detail-mask activity threshold (normalized)",
-+      OFFSET(opts.detail_thr), AV_OPT_TYPE_FLOAT, { .dbl = 0.06 }, 0.0, 0.25, FLAGS },
-+    { "sample", "reference-tap topology", OFFSET(opts.sample_mode),
-+      AV_OPT_TYPE_INT, { .i64 = 2 }, 1, 4, FLAGS, .unit = "sample" },
-+        { "column", "2 vertical taps", 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, 0, 0, FLAGS, .unit = "sample" },
-+        { "square", "4 rotated taps", 0, AV_OPT_TYPE_CONST, { .i64 = 2 }, 0, 0, FLAGS, .unit = "sample" },
-+        { "row", "2 horizontal taps", 0, AV_OPT_TYPE_CONST, { .i64 = 3 }, 0, 0, FLAGS, .unit = "sample" },
-+        { "square_rot", "4 taps + per-frame rotation", 0, AV_OPT_TYPE_CONST, { .i64 = 4 }, 0, 0, FLAGS, .unit = "sample" },
-+    { "blur", "flat-test mode", OFFSET(opts.blur_mode),
-+      AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, FLAGS, .unit = "blur" },
-+        { "average", "|center-avg| < thr", 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, 0, 0, FLAGS, .unit = "blur" },
-+        { "allrefs", "every tap within thr", 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, 0, 0, FLAGS, .unit = "blur" },
-+    { "dither", "grain / dither mode", OFFSET(opts.dither_mode),
-+      AV_OPT_TYPE_INT, { .i64 = 2 }, 0, 2, FLAGS, .unit = "dither" },
-+        { "none", "no grain", 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, 0, 0, FLAGS, .unit = "dither" },
-+        { "bayer8", "ordered 8x8 Bayer", 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, 0, 0, FLAGS, .unit = "dither" },
-+        { "bluenoise", "hashed TPDF", 0, AV_OPT_TYPE_CONST, { .i64 = 2 }, 0, 0, FLAGS, .unit = "dither" },
-+    { "dynamic", "re-seed grain each frame", OFFSET(dynamic_grain),
-+      AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
-+    { "protect", "gate debanding off textured regions", OFFSET(protect_detail),
-+      AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
-+    { "planes", "planes to process (bitmask)", OFFSET(planes),
-+      AV_OPT_TYPE_INT, { .i64 = 0xF }, 0, 0xF, FLAGS },
-+    { "meta", "attach Pelorus interop side data", OFFSET(meta),
-+      AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
-+    { NULL }
-+};
++    {"range",
++     "reference-sampling radius in pixels",
++     OFFSET(opts.range),
++     AV_OPT_TYPE_INT,
++     {.i64 = 15},
++     1,
++     31,
++     FLAGS},
++    {"thry",
++     "luma threshold (normalized)",
++     OFFSET(opt_thr_y),
++     AV_OPT_TYPE_DOUBLE,
++     {.dbl = 0.012},
++     0.0,
++     0.25,
++     FLAGS},
++    {"thrc",
++     "chroma threshold (normalized)",
++     OFFSET(opt_thr_c),
++     AV_OPT_TYPE_DOUBLE,
++     {.dbl = 0.012},
++     0.0,
++     0.25,
++     FLAGS},
++    {"grainy",
++     "luma grain amplitude (normalized)",
++     OFFSET(opt_grain_y),
++     AV_OPT_TYPE_DOUBLE,
++     {.dbl = 0.006},
++     0.0,
++     0.4,
++     FLAGS},
++    {"grainc",
++     "chroma grain amplitude (normalized)",
++     OFFSET(opt_grain_c),
++     AV_OPT_TYPE_DOUBLE,
++     {.dbl = 0.0},
++     0.0,
++     0.4,
++     FLAGS},
++    {"softness",
++     "soft-blend transition width (0=hard switch)",
++     OFFSET(opts.softness),
++     AV_OPT_TYPE_FLOAT,
++     {.dbl = 0.5},
++     0.0,
++     1.0,
++     FLAGS},
++    {"detail",
++     "detail-mask activity threshold (normalized)",
++     OFFSET(opts.detail_thr),
++     AV_OPT_TYPE_FLOAT,
++     {.dbl = 0.06},
++     0.0,
++     0.25,
++     FLAGS},
++    {"sample",
++     "reference-tap topology",
++     OFFSET(opts.sample_mode),
++     AV_OPT_TYPE_INT,
++     {.i64 = 2},
++     1,
++     4,
++     FLAGS,
++     .unit = "sample"},
++    {"column", "2 vertical taps", 0, AV_OPT_TYPE_CONST, {.i64 = 1}, 0, 0, FLAGS, .unit = "sample"},
++    {"square", "4 rotated taps", 0, AV_OPT_TYPE_CONST, {.i64 = 2}, 0, 0, FLAGS, .unit = "sample"},
++    {"row", "2 horizontal taps", 0, AV_OPT_TYPE_CONST, {.i64 = 3}, 0, 0, FLAGS, .unit = "sample"},
++    {"square_rot",
++     "4 taps + per-frame rotation",
++     0,
++     AV_OPT_TYPE_CONST,
++     {.i64 = 4},
++     0,
++     0,
++     FLAGS,
++     .unit = "sample"},
++    {"blur",
++     "flat-test mode",
++     OFFSET(opts.blur_mode),
++     AV_OPT_TYPE_INT,
++     {.i64 = 0},
++     0,
++     1,
++     FLAGS,
++     .unit = "blur"},
++    {"average",
++     "|center-avg| < thr",
++     0,
++     AV_OPT_TYPE_CONST,
++     {.i64 = 0},
++     0,
++     0,
++     FLAGS,
++     .unit = "blur"},
++    {"allrefs",
++     "every tap within thr",
++     0,
++     AV_OPT_TYPE_CONST,
++     {.i64 = 1},
++     0,
++     0,
++     FLAGS,
++     .unit = "blur"},
++    {"dither",
++     "grain / dither mode",
++     OFFSET(opts.dither_mode),
++     AV_OPT_TYPE_INT,
++     {.i64 = 2},
++     0,
++     2,
++     FLAGS,
++     .unit = "dither"},
++    {"none", "no grain", 0, AV_OPT_TYPE_CONST, {.i64 = 0}, 0, 0, FLAGS, .unit = "dither"},
++    {"bayer8",
++     "ordered 8x8 Bayer",
++     0,
++     AV_OPT_TYPE_CONST,
++     {.i64 = 1},
++     0,
++     0,
++     FLAGS,
++     .unit = "dither"},
++    {"bluenoise", "hashed TPDF", 0, AV_OPT_TYPE_CONST, {.i64 = 2}, 0, 0, FLAGS, .unit = "dither"},
++    {"dynamic",
++     "re-seed grain each frame",
++     OFFSET(dynamic_grain),
++     AV_OPT_TYPE_BOOL,
++     {.i64 = 1},
++     0,
++     1,
++     FLAGS},
++    {"protect",
++     "gate debanding off textured regions",
++     OFFSET(protect_detail),
++     AV_OPT_TYPE_BOOL,
++     {.i64 = 1},
++     0,
++     1,
++     FLAGS},
++    {"planes",
++     "planes to process (bitmask)",
++     OFFSET(planes),
++     AV_OPT_TYPE_INT,
++     {.i64 = 0xF},
++     0,
++     0xF,
++     FLAGS},
++    {"meta",
++     "attach Pelorus interop side data",
++     OFFSET(meta),
++     AV_OPT_TYPE_BOOL,
++     {.i64 = 0},
++     0,
++     1,
++     FLAGS},
++    {NULL}};
 +
 +AVFILTER_DEFINE_CLASS(pelorus_deband_vulkan);
 +
@@ -438,10 +632,10 @@ index 8a0912b4dfc4969cb7b4eb06c7565e93ba6b8cf7..e62ab231cb50888e10c829ad66e15e4c
 +OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER) += vulkan/pelorus_deband.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_deband.comp.glsl b/libavfilter/vulkan/pelorus_deband.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..b2e6d868f7e50ddc5a78ecb78bce41ff35d857bd
+index 0000000000000000000000000000000000000000..ad1f7820ba254bdeea8445e7904a297bb283a1c2
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_deband.comp.glsl
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,172 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -494,10 +688,18 @@ index 0000000000000000000000000000000000000000..b2e6d868f7e50ddc5a78ecb78bce41ff
 +    float detail_thr;
 +    int   flags;
 +    uint  frame_seed;
++    float sample_scale;
 +};
 +
 +layout (set = 0, binding = 0) uniform readonly  image2D input_images[];
 +layout (set = 0, binding = 1) uniform writeonly image2D output_images[];
++
++vec4 pel_to_sample(vec4 value) {
++    return value * sample_scale;
++}
++vec4 pel_to_storage(vec4 value) {
++    return value / sample_scale;
++}
 +
 +float frand(vec2 p) {
 +    return fract(sin(p.x * 12.9898 + p.y * 78.233) * 43758.545);
@@ -522,13 +724,14 @@ index 0000000000000000000000000000000000000000..b2e6d868f7e50ddc5a78ecb78bce41ff
 +    return float(v) / 64.0;
 +}
 +vec4 pel_fetch(int idx, ivec2 p, ivec2 sz) {
-+    return imageLoad(input_images[idx], clamp(p, ivec2(0), sz - ivec2(1)));
++    return pel_to_sample(imageLoad(input_images[idx],
++                                   clamp(p, ivec2(0), sz - ivec2(1))));
 +}
 +void deband(const ivec2 pos, const int idx, float thr_p, float grain_p) {
 +    const float TWO_PI = 6.28318530718;
 +    const float GOLDEN = 2.39996322973;
 +    ivec2 sz = imageSize(output_images[idx]);
-+    vec4 S = imageLoad(input_images[idx], pos);
++    vec4 S = pel_to_sample(imageLoad(input_images[idx], pos));
 +    bool dynG = (flags & 1) != 0;
 +    bool protectD = (flags & 2) != 0;
 +    float r = dynG ? hash3(pos, frame_seed) : frand(vec2(pos));
@@ -582,7 +785,8 @@ index 0000000000000000000000000000000000000000..b2e6d868f7e50ddc5a78ecb78bce41ff
 +                                     : tpdf(pos, dynG ? frame_seed : 0u, idx);
 +        base += vec4(n * grain_p) * mix(vec4(0.25), vec4(1.0), w);
 +    }
-+    imageStore(output_images[idx], pos, clamp(base, vec4(0.0), vec4(1.0)));
++    imageStore(output_images[idx], pos,
++               pel_to_storage(clamp(base, vec4(0.0), vec4(1.0))));
 +}
 +
 +void main()
@@ -604,6 +808,3 @@ index 0000000000000000000000000000000000000000..b2e6d868f7e50ddc5a78ecb78bce41ff
 +            imageStore(output_images[i], pos, imageLoad(input_images[i], pos));
 +    }
 +}
--- 
-2.55.0
-

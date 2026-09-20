@@ -49,8 +49,8 @@ unchanged.
 
 ADR: docs/adr/0118-nvenc-av1-filmgrain.md, docs/adr/0115-grain-estimate.md (producer), docs/adr/0114-encoder-steering.md
 ---
- libavcodec/nvenc.c     | 286 +++++++++++++++++++++++++++++++++++++++++
- libavcodec/nvenc.h     |  20 +++
+ libavcodec/nvenc.c     | 286 ++++++++++++++++++++
+ libavcodec/nvenc.h     |  20 ++
  libavcodec/nvenc_av1.c |   2 +
  3 files changed, 308 insertions(+)
 
@@ -416,6 +416,3 @@ index 7e853963fa14d5e393c52b1a2e75aeb27d87ee72..84db412078044651962266c7527ef31e
      { "zerolatency",  "Set 1 to indicate zero latency operation (no reordering delay)",
                                                              OFFSET(zerolatency),  AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, VE },
      { "nonref_p",     "Set this to 1 to enable automatic insertion of non-reference P-frames",
--- 
-2.55.0
-

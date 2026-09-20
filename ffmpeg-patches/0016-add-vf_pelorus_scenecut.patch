@@ -25,9 +25,8 @@ ADR: docs/adr/0126-scenecut-idr.md
  configure                         |   1 +
  libavfilter/Makefile              |   1 +
  libavfilter/allfilters.c          |   1 +
- libavfilter/vf_pelorus_scenecut.c | 111 ++++++++++++++++++++++++++++++
+ libavfilter/vf_pelorus_scenecut.c | 111 ++++++++++++++++++++
  4 files changed, 114 insertions(+)
- create mode 100644 libavfilter/vf_pelorus_scenecut.c
 
 diff --git a/configure b/configure
 index 31a1c70813cc6c40c1f96a5c35b0c67c0e0c8db8..1cc93c4d33fb624e88db02116bfd4b2f75b11c23 100755
@@ -182,6 +181,3 @@ index 0000000000000000000000000000000000000000..d80e73780b10195695b297d6bc6fe7a5
 +    FILTER_INPUTS(pelorus_scenecut_inputs),
 +    FILTER_OUTPUTS(pelorus_scenecut_outputs),
 +};
--- 
-2.55.0
-

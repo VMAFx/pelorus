@@ -46,7 +46,7 @@ Lets Pelorus's measured banding-ROI (vf_pelorus_analyze roi=1, ADR-0114 Tier 0)
 steer SVT-AV1 bit allocation through the same standard ROI side data the merged
 analyze filter already emits -- no new producer. ADR-0121.
 ---
- libavcodec/libsvtav1.c | 247 +++++++++++++++++++++++++++++++++++++++++
+ libavcodec/libsvtav1.c | 247 ++++++++++++++++++++
  1 file changed, 247 insertions(+)
 
 diff --git a/libavcodec/libsvtav1.c b/libavcodec/libsvtav1.c
@@ -344,6 +344,3 @@ index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..2a02ce15786c452a0eb0f7fc42abe2e1
  
      { "dolbyvision", "Enable Dolby Vision RPU coding", OFFSET(dovi.enable), AV_OPT_TYPE_BOOL, {.i64 = FF_DOVI_AUTOMATIC }, -1, 1, VE, .unit = "dovi" },
      {   "auto", NULL, 0, AV_OPT_TYPE_CONST, {.i64 = FF_DOVI_AUTOMATIC}, .flags = VE, .unit = "dovi" },
--- 
-2.55.0
-
