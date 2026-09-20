@@ -6,7 +6,9 @@
 # Copyright 2026 Lusoris. BSD-2-Clause-Patent.
 #
 # Requires: an explicit local FFmpeg checkout, a Vulkan loader + headers, and a
-# SPIR-V compiler. libpelorus is built, tested, and installed privately here.
+# `glslc` SPIR-V compiler. libpelorus is built, tested, and installed privately
+# here; oneVPL is enabled when its pkg-config package is available so the
+# cumulative link also covers QSV.
 #
 # Env:
 #   FFMPEG_REPO  path to a FFmpeg git checkout      (required)
@@ -195,8 +197,14 @@ apply_stack() {
 }
 
 configure_ffmpeg() (
+    local configure_extra=()
+
     cd -- "$WORKTREE"
-    exec ./configure --enable-vulkan --disable-doc
+    if pkg-config --exists vpl; then
+        echo "enabling oneVPL $(pkg-config --modversion vpl)"
+        configure_extra+=(--enable-libvpl)
+    fi
+    exec ./configure --enable-vulkan "${configure_extra[@]}" --disable-doc
 )
 
 run_logged "apply 18-patch FFmpeg stack" "$LOG_DIR/ffmpeg-apply.log" \

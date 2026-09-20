@@ -121,8 +121,10 @@ BASE_TAG=n9.0.1 \
 bash ffmpeg-patches/test/qsv-roi-regression.sh
 ```
 
-The cumulative patch-stack replay and full FFmpeg link are separate gates from
-this focused harness. No Intel hardware is required for the direct test, so it
-proves ownership, layout, validation, and compilation but does not prove driver
+The cumulative gate separately replayed all 18 patches on pristine n9.0.1 and
+linked the complete FFmpeg binary with oneVPL 2.17 enabled; both QSV encoder
+translation units compiled and both encoder help surfaces registered
+`pelorus_roi`. No Intel hardware is required for these tests, so they prove
+ownership, layout, validation, compilation, and linkage but do not prove driver
 acceptance, asynchronous device execution, bitrate, or quality. Those claims
 require a new on-hardware run of the corrected patch.
