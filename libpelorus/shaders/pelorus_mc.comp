@@ -72,7 +72,7 @@ layout(binding = 3, std430) buffer MvBufY {
     int  mv_y[];        /* [nblocks]                                          */
 };
 layout(binding = 4, std430) buffer SadBuf {
-    uint sad_out[];     /* [nblocks] winning SAD * SAD_SCALE                  */
+    uint sad_out[];     /* [nblocks] winning SAD * SAD_SCALE, full-scale luma */
 };
 layout(binding = 5, std430) readonly buffer PrevMvBuf {
     int  prev_mv[];     /* [2*nblocks] interleaved (dx,dy) from last frame    */
@@ -93,6 +93,22 @@ layout(push_constant, std430) uniform Params {
 
 const float SAD_SCALE = 256.0;   /* SAD is summed in normalized [0,1] luma */
 
+/* Sample normalisation. curImg/refImg are r16ui, i.e. a 16-bit CONTAINER. A
+ * >8-bit source uploaded LSB-packed (10/12-bit in the low bits, no shift) only
+ * occupies SAMPLE_BITS of that container, so normalising by the CONTAINER
+ * maximum (65535) rather than the SAMPLE maximum shrinks every SAD -- and with
+ * it the host's scene-cut decision and the whole per-block confidence grid -- by
+ * 2^(16-SAMPLE_BITS): 64x at 10 bit, 16x at 12 bit. Normalise by the sample
+ * maximum instead, so sad_out is bit-depth INDEPENDENT. Set SAMPLE_BITS to the
+ * depth actually packed into the plane (16 = the container is full; MSB-aligned
+ * uploads such as P010 also leave it at 16).
+ * The shipped filter cannot use a compile-time constant -- one SPIR-V blob serves
+ * every input format -- so a descriptor-derived `sample_scale` push constant
+ * converts both image loads before block search, candidate selection, SAD
+ * quantization, scene-cut classification, and confidence calculation. */
+#define SAMPLE_BITS 16
+const float SAMPLE_MAX = float((1u << SAMPLE_BITS) - 1u);
+
 /* SAD reduction scratch: one slot per invocation, tree-reduced by thread 0.
  * Sized to the worst case (subgroupSize==1 => BLOCK_DIM*BLOCK_DIM subgroups);
  * gl_SubgroupID indexes this array, so a smaller size would OOB-write. */
@@ -106,12 +122,12 @@ shared float s_best_cost;
 float fetchCur(int px, int py) {
     px = clamp(px, 0, pc.width  - 1);
     py = clamp(py, 0, pc.height - 1);
-    return float(imageLoad(curImg, ivec2(px, py)).r) / 65535.0;
+    return float(imageLoad(curImg, ivec2(px, py)).r) / SAMPLE_MAX;
 }
 float fetchRef(int px, int py) {
     px = clamp(px, 0, pc.width  - 1);
     py = clamp(py, 0, pc.height - 1);
-    return float(imageLoad(refImg, ivec2(px, py)).r) / 65535.0;
+    return float(imageLoad(refImg, ivec2(px, py)).r) / SAMPLE_MAX;
 }
 
 /* Cooperative SAD of the current block vs the reference block displaced by

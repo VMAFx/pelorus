@@ -26,8 +26,12 @@
  * taps, recovering the leading frame of a held animation drawing.
  *
  * This standalone form runs one dispatch per plane against r16ui storage images
- * (16-bit internal domain, normalized to [0,1] inside). The in-tree FFmpeg
- * filter ships its own shader at ffmpeg-patches/files/vulkan/pelorus_denoise.comp.glsl,
+ * (16-bit internal domain, normalized to [0,1] inside). It never synthesises the
+ * stored texel — it loads, overwrites the computed component and stores the whole
+ * vector — which is the contract the in-tree filter needs to keep the second
+ * component of a semi-planar chroma plane (V on NV12/P010/NV16/NV24/P016) alive.
+ * The in-tree FFmpeg filter ships its own shader at
+ * ffmpeg-patches/files/vulkan/pelorus_denoise.comp.glsl,
  * compiled to SPIR-V at build time (ADR-0143). That file -- not this one -- is what
  * FFmpeg executes. This reference is a standalone r16ui variant kept for the fast
  * gate and for reading the algorithm without FFmpeg's plumbing; it is NOT a second
@@ -254,5 +258,20 @@ void main() {
 
     float outv = mix(C, filtered, clamp(strength, 0.0, 1.0));
     int o = clamp(int(round(outv * 65535.0)), 0, 65535);
-    imageStore(dstImg, ivec2(x, y), uvec4(uint(o), 0u, 0u, 0u));
+    /* Never synthesise the stored texel: load it, overwrite ONLY the component
+     * this dispatch computed, store the whole vector. Here the images are
+     * single-component r16ui so only .x carries picture data — but the pattern
+     * is the contract, and the in-tree filter (which binds the real hwframe
+     * plane images) depends on it: on a SEMI-PLANAR format (NV12/P010/NV16/
+     * NV24/P016) the chroma plane is a TWO-component image with U in .x and V
+     * in .y, so a synthesised uvec4(v, 0, 0, 0) writes a constant 0 into V and
+     * annihilates the whole Cr channel. The filter additionally loops over both
+     * components of such a plane in one dispatch, both times with the CHROMA
+     * sigma/strength (the per-plane lanes at index 1 — those vec4 lanes are
+     * indexed by PLANE, not by component). This standalone reference is
+     * dispatched per plane against single-component images, so pc.plane alone
+     * selects its parameters. */
+    uvec4 texel = imageLoad(srcImg[0], ivec2(x, y));
+    texel.x = uint(o);
+    imageStore(dstImg, ivec2(x, y), texel);
 }

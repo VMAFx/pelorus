@@ -162,5 +162,14 @@ void main() {
     }
 
     int outv = clamp(int(round(clamp(warp, 0.0, 1.0) * 65535.0)), 0, 65535);
-    imageStore(dstImg, ivec2(x, y), uvec4(uint(outv), 0u, 0u, 0u));
+    /* Read-modify-write the full texel: warp-AA is a LUMA-only operator (every
+     * read goes through load_norm(), i.e. component 0), so only component 0 may
+     * be replaced. Synthesising the other components as a constant destroys them
+     * on any view with more than one component -- the r16ui reference view has
+     * one, but the shader FFmpeg executes runs over NV12/P010/RGBA views where
+     * that annihilates V (or G/B/A). Same shape as the in-tree
+     * ffmpeg-patches/files/vulkan/pelorus_aa.comp.glsl store, in uint domain. */
+    uvec4 px = imageLoad(srcImg, ivec2(x, y));
+    px.r = uint(outv);
+    imageStore(dstImg, ivec2(x, y), px);
 }

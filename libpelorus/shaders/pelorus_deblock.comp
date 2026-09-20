@@ -15,6 +15,15 @@
  *   for each pixel within `edge` px of a block boundary:
  *     if |across-boundary step| < thr:  blend toward the [1 2 1] mean by `str`.
  *
+ * `thr` is a fraction of the *data* range, so it must not be normalized against
+ * the storage container when the container is wider than the data: an r16ui image
+ * holding LSB-packed 10-bit samples only spans [0, 1023], and dividing by 65535
+ * would make the gate 64x too permissive — it then always passes and the filter
+ * degenerates into an unconditional low-pass over the block grid. `depth` below
+ * carries the sample bit depth so the normalization matches the data. The shipped
+ * FFmpeg shader instead receives a descriptor-derived `sample_scale`, converts
+ * every load before arithmetic, and leaves `thr` in the same logical domain.
+ *
  * Reference form runs on the luma plane against r16ui storage images. The shader
  * FFmpeg actually executes is ffmpeg-patches/files/vulkan/pelorus_deblock.comp.glsl,
  * compiled to SPIR-V at build time over FF_VK_REP_FLOAT image arrays (ADR-0143).
@@ -33,13 +42,21 @@ layout(push_constant, std430) uniform Params {
     int   edge;    //  4  half-width of the deblocked band around a boundary (px)
     float thr;     //  8  cross-boundary step below which it is an artefact (norm)
     float str;     // 12  deblock strength in [0,1] (blend toward the low-pass)
+    int   depth;   // 16  sample bit depth in the r16ui container (0 => 16)
 } pc;
+
+/* Largest value a sample can take, i.e. what "1.0" means. Full-scale 16-bit
+ * (and an unset `depth`) keeps the historical 65535. */
+float sample_max() {
+    return (pc.depth <= 0 || pc.depth >= 16) ? 65535.0
+                                             : float((1 << pc.depth) - 1);
+}
 
 float load_norm(int x, int y) {
     ivec2 sz = imageSize(srcImg);
     x = clamp(x, 0, sz.x - 1);
     y = clamp(y, 0, sz.y - 1);
-    return float(imageLoad(srcImg, ivec2(x, y)).r) / 65535.0;
+    return float(imageLoad(srcImg, ivec2(x, y)).r) / sample_max();
 }
 
 void main() {
@@ -77,6 +94,14 @@ void main() {
         }
     }
 
-    int outv = clamp(int(round(clamp(result, 0.0, 1.0) * 65535.0)), 0, 65535);
-    imageStore(dstImg, ivec2(x, y), uvec4(uint(outv), 0u, 0u, 0u));
+    float smax = sample_max();
+    int outv = clamp(int(round(clamp(result, 0.0, 1.0) * smax)), 0, int(smax));
+
+    /* Replace only the component that was filtered. r16ui has a single
+     * component, but synthesising the stored texel is what destroys the other
+     * components on any wider image (the in-tree shader's NV12/P010 chroma and
+     * packed-RGBA case), so the reference documents the safe form. */
+    uvec4 orig = imageLoad(srcImg, ivec2(x, y));
+    orig.r = uint(outv);
+    imageStore(dstImg, ivec2(x, y), orig);
 }
