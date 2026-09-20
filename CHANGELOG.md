@@ -13,6 +13,11 @@ All notable changes to Pelorus are documented here. The format is
 ### Fixed
 
 - Fixed QSV dense ROI maps to remain frame-owned through asynchronous encode, bounded the path to progressive HEVC+CQP on runtime API 1.28 or newer, preserved stock ROI fallback elsewhere, and added checked aligned-layout regression coverage ([ADR-0146](docs/adr/0146-qsv-roi-frame-ownership.md)).
+- Corrected all arithmetic Vulkan filters to convert storage-image values into
+  the logical sample domain before applying normalized thresholds, so planar
+  10/12-bit, P010/P012, and 8-bit inputs use the same numeric contract; also
+  preserve both semi-planar chroma components and unowned packed lanes during
+  scalar transforms (ADR-0147).
 
 <!-- END UNRELEASED -->
 

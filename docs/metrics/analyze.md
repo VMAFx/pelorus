@@ -17,6 +17,11 @@ into a 16-slice SSBO, summed on the host) to per-frame:
 - **flat-area fraction** — share of low-variance (banding-prone) tiles,
 - **banding risk** — coarse proxy = flat-area fraction (v0.1).
 
+Loads are converted from the Vulkan storage domain to the logical `[0,1]`
+sample domain before statistics are accumulated. This is what makes the values
+comparable across 8-bit, planar 10/12-bit, and shifted P010/P012 inputs; UNORM
+storage normalization alone is not sufficient for every layout.
+
 These populate `PEL_SEC_VARIANCE` (`global_variance`, `edge_density`,
 `texture_energy`) and `PEL_SEC_BANDING` (`flat_area_fraction`,
 `global_banding_risk`, `contour_strength_mean`), attached to the frame as the

@@ -5,6 +5,42 @@ Re-apply / re-test work created for the FFmpeg patch stack after an upstream
 FFmpeg bump or a `libpelorus` ABI change. One entry per change that affects the
 patches (ADR-0108 deliverable #6).
 
+## Unreleased — ADR-0147 Vulkan sample domain and component preservation
+
+- **Patches**: 0001 (deband + shared private header), 0002 (analyze), 0003
+  (denoise), 0006 (grain estimate), 0007 (mc), 0014 (dehalo), 0015 (aa), and
+  0017 (deblock). Borderfix remains a raw whole-texel copy and needs no numeric
+  conversion.
+- **Storage/sample boundary**: `FF_VK_REP_FLOAT` normalizes integer images by
+  their Vulkan storage container. The new `pelorus_vulkan_sample.h` derives
+  `sample_scale = storage_max / (((1 << depth) - 1) << shift)` from the software
+  format descriptor. Shaders multiply every arithmetic load into logical
+  `[0,1]`; transforms divide only the owned result at the store boundary.
+  Preserve this helper and its patch-0001 installation when registration hunks
+  move on an upstream rebase.
+- **Component boundary**: `planes` selects physical planes. NV12/P010/P012
+  plane 1 contains U and V; aa, dehalo, deblock, and denoise specialize a
+  two-component loop for it. Stores start from the input texel and replace only
+  owned components, preserving V and packed-view lanes. Do not replace these
+  with scalar `vec4(value)` stores.
+- **Shipped source**: edit the canonical
+  `ffmpeg-patches/files/vulkan/*.comp.glsl` files. The
+  `libpelorus/shaders/*.comp` files are compile-checked standalone references,
+  not runtime shader copies and not a lockstep delivery surface (ADR-0143).
+- **Static gates**: run `scripts/test-vulkan-sample-scale.py`,
+  `scripts/check-vulkan-storage-domain.py`, compile every shipped shader, and
+  run the Pelorus fast suite before regenerating. Then prove a second generation
+  is byte-identical and replay all 18 patches at the pinned FFmpeg commit.
+- **On-device gate**: run `ffmpeg-patches/test/vulkan-format-matrix.sh` with
+  validation enabled. It must cover normalized analyzer equivalence on 8/10/12
+  bit layouts, transform equivalence, NV12/P010/P012 U+V survival, packed-lane
+  preservation, direct/tiled paths, lookahead/MC, and selected/pass-through
+  plane masks. A missing device is an unexecuted row, not passing evidence.
+
+See [ADR-0147](adr/0147-vulkan-sample-domain-and-components.md) and the
+[research digest](research/0147-vulkan-storage-domain.md) for the reproduced
+pre-fix failures and derivation.
+
 ## v0.2.0 — FFmpeg base bump n8.1.1 → n9.0.1 (whole stack)
 
 The largest rebase so far: FFmpeg 9 removed the API the entire filter set was

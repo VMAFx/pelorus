@@ -24,7 +24,8 @@
  * block grid, a weak [1 2 1] low-pass *across* each boundary, gated by the
  * cross-boundary step: a small step is a block-edge artefact (smooth it), a large
  * step is real structure (preserve it). Luma only; chroma passes through. Runs in
- * VRAM (FF_VK_REP_FLOAT UNORM, bit-depth-agnostic).
+ * VRAM. Arithmetic runs in the logical sample domain after descriptor-derived
+ * conversion from the FF_VK_REP_FLOAT storage view (ADR-0147).
  *
  * The algorithm lives in vulkan/pelorus_deblock.comp.glsl, compiled to SPIR-V at
  * build time and linked in here.

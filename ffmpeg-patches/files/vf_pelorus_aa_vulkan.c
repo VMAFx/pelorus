@@ -25,8 +25,10 @@
  * onto the line (anti-aliasing + thinning) without the ringing a sharpen adds.
  * Line-darkening then deepens the dark side of edges so lines stay crisp.
  *
- * Luma only; chroma passes through. Zero-copy in VRAM (FF_VK_REP_FLOAT UNORM,
- * bit-depth-agnostic). Part of the anime `tune` pipeline (ADR-0124). The
+ * Luma only by default; unselected planes pass through. Zero-copy in VRAM.
+ * Arithmetic runs in the logical sample domain after descriptor-derived
+ * conversion from the FF_VK_REP_FLOAT storage view (ADR-0147). Part of the
+ * anime `tune` pipeline (ADR-0124). The
  * algorithm lives in vulkan/pelorus_aa.comp.glsl, compiled to SPIR-V at build
  * time and linked in here.
  */

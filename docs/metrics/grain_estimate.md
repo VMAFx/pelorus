@@ -39,9 +39,11 @@ host. The host maps the per-band RMS to the AV1 AOM piecewise scaling function
 takes AV1-legal defaults for the shifts, and seeds `ar_coeffs_y[0]` from the
 lag-1 coefficient.
 
-The standalone reference shader is
-`libpelorus/shaders/pelorus_grain_estimate.comp`; the filter's shipped `.comp.glsl` shader
-implements the same algorithm (kept in lockstep, AGENTS hard rule 4).
+The shipped shader is
+`ffmpeg-patches/files/vulkan/pelorus_grain_estimate.comp.glsl`; the similarly
+named `libpelorus/shaders/*.comp` file is a compile-checked standalone
+reference, not a second shipped implementation. Loads are converted to the
+logical sample domain before the estimator runs.
 
 ## Options
 

@@ -63,19 +63,20 @@ requires headroom for the dither to survive:
 - A real **link bug** was found by running it: `require_pkg_config` added cflags
   but not `-lpelorus`; fixed with `add_extralibs`, and CI now links the binary.
 
-## 10-bit deband: **not a bug** (correcting an earlier note)
+## 10-bit deband: historical conclusion superseded
 
-An ad-hoc 10-bit run once produced a Pelorus arm at ~4000 kbps / VMAF 77 and was
-briefly recorded here as a filter bug. **It is not.** Source audit (and the
-design workflow) confirm the filter is bit-depth-agnostic by construction:
-`vf_pelorus_deband_vulkan` binds `FF_VK_REP_FLOAT`, which maps to **UNORM**
-storage images at every depth, so all shader math runs in normalized `[0,1]` and
-the dither/grain amplitude is a normalized fraction the hardware de-normalizes
-into the 10-bit code range correctly. The GLSL contains no `1023`/`65535`/shift
-and no 8-bit assumption.
+An ad-hoc 10-bit run once produced a Pelorus arm at ~4000 kbps / VMAF 77. The
+pixfmt mismatch described below did invalidate that run, but the later claim
+that `FF_VK_REP_FLOAT` made every depth correct by construction was also false.
+UNORM normalizes against the Vulkan storage container. LSB-aligned planar
+10/12-bit samples in `R16_UNORM` therefore need an explicit storage-to-sample
+scale before normalized thresholds or grain amplitudes are meaningful. That
+defect and the related component-preservation defects are fixed by
+[ADR-0147](../adr/0147-vulkan-sample-domain-and-components.md); its format
+matrix, not this historical run, is the current correctness evidence.
 
-The bogus numbers came from a **pixfmt mismatch in the throwaway script**, not
-the filter: `yuv420p10le` (planar, value LSB-justified) and `p010le`
+The especially bad numbers came from a **pixfmt mismatch in the throwaway
+script**: `yuv420p10le` (planar, value LSB-justified) and `p010le`
 (semi-planar, value MSB-justified, `<<6`) are **not** byte-compatible. Writing
 the prefiltered raw in one layout and reading it as the other corrupts both
 magnitude (a 64× shift) and chroma-plane positions → the encoder saw heavy noise

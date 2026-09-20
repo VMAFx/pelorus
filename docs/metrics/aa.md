@@ -5,8 +5,9 @@ A single-pass Vulkan compute filter that removes the stair-stepped aliasing
 ("jaggies") anime line-art accumulates through repeated scale/encode, and
 optionally darkens real lines so they stay crisp. A zero-copy GPU port of
 **awarpsharp2** (warp-based AA) + **FastLineDarken** (line-darkening). It
-operates on `AV_PIX_FMT_VULKAN` frames and never leaves VRAM
-(`FF_VK_REP_FLOAT` UNORM, bit-depth-agnostic). Decision:
+operates on `AV_PIX_FMT_VULKAN` frames and never leaves VRAM. Descriptor-derived
+storage-to-sample conversion makes its normalized arithmetic independent of
+the integer storage layout. Decision:
 [ADR-0124](../adr/0124-anime-aa.md).
 
 ## What it does
@@ -28,9 +29,11 @@ pixel, in one pass:
    the edge. With `darkstr = 0` (default) this branch is skipped and the filter
    is pure warp-AA.
 
-Output is clamped to `[0,1]` in the Vulkan float image domain. The standalone
-reference shader is `libpelorus/shaders/pelorus_aa.comp`; the filter's inline
-GLSL implements the same algorithm (kept in lockstep, AGENTS hard rule 4).
+Output is clamped to logical `[0,1]` and converted back to the storage-image
+domain at the write boundary. The shipped shader is
+`ffmpeg-patches/files/vulkan/pelorus_aa.comp.glsl`; the similarly named
+`libpelorus/shaders/*.comp` file is a compile-checked standalone reference, not
+a second shipped implementation.
 
 ## Options
 
@@ -45,7 +48,7 @@ ranges below are the filter's actual `AVOption` table
 | `thresh` | float | 0.5 | 0–1 | edge-map clamp ceiling (normalized) — caps any single edge's contribution to the blur |
 | `darkstr` | float | 0.0 | 0–1 | line-darkening strength; `0` = off (pure warp-AA) |
 | `edge` | float | 0.08 | 0–1 | Sobel magnitude above which a pixel counts as a line (gates line-darkening) |
-| `planes` | int bitmask | 0x1 | 0–0xF | planes to process; default `0x1` = luma only |
+| `planes` | int bitmask | 0x1 | 0–0xF | physical planes to process; default `0x1` = luma. Selecting a semi-planar chroma plane processes both U and V components |
 | `fast` | bool | 0 | 0–1 | hoist the redundant sobel-mag into shared memory ([ADR-0140](../adr/0140-aa-sobel-mag-hoist.md)). aa is ALU-bound — `sobel_mag` is recomputed ~1156×/px across the overlapping edge-map windows; `fast=1` computes each cell's sobel once per workgroup and reduces from the cache. **Bit-identical**; a large speedup on **every** GPU (**12.6× on Arc A380, 2.6× on the 4090** at `darkstr=0`). Opt-in; default off |
 
 `depth` is the main knob: raise it for stronger de-aliasing/thinning, lower it if
@@ -83,8 +86,8 @@ hwupload → pelorus_dehalo_vulkan → pelorus_aa_vulkan → (deband/denoise) �
 
 ## Honest scope (tuning caveat)
 
-The algorithm port is **compile-verified and glslang-clean**, kept in lockstep
-with the reference shader. **No quality number is claimed.** The default option
+The algorithm port is **compile-verified and glslang-clean**. **No quality
+number is claimed.** The default option
 values are carried over from the awarpsharp2 / FastLineDarken conventions and
 have **not** been perceptually tuned on real anime content on the GPU. The
 on-content tuning of the defaults and the proof against clean anime ground

@@ -13,8 +13,10 @@ For each pixel it samples reference taps within `range` pixels at a
 pseudo-random angle, decides whether the neighborhood is "flat" (per-plane
 threshold), and if so blends toward the tap average — gated by a
 local-variance detail mask so real texture/edges are left alone — then adds
-zero-mean TPDF/blue-noise grain. Output is clamped to `[0,1]` in the Vulkan
-float image domain.
+zero-mean TPDF/blue-noise grain. Output is clamped to the logical `[0,1]` sample
+domain and converted back to the storage-image domain. The descriptor-derived
+conversion is required because an `R16_UNORM` storage view does not by itself
+normalize LSB-aligned planar 10/12-bit samples.
 
 ## Options
 
@@ -32,7 +34,7 @@ float image domain.
 | `dither` | none/bayer8/bluenoise | bluenoise | grain pattern |
 | `dynamic` | bool | 1 | re-seed grain each frame |
 | `protect` | bool | 1 | gate debanding off textured regions |
-| `planes` | int bitmask | 0xF | planes to process |
+| `planes` | int bitmask | 0xF | physical planes to process; a selected semi-planar chroma plane contains both U and V |
 | `meta` | bool | 0 | attach the Pelorus interop side-data blob |
 
 ## Example

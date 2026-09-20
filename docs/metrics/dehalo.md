@@ -13,7 +13,8 @@ passes through.**
 
 ## Algorithm
 
-One Vulkan compute dispatch, bit-depth-agnostic (`FF_VK_REP_FLOAT` UNORM):
+One Vulkan compute dispatch. Samples are converted from the Vulkan storage
+domain to logical `[0,1]` before arithmetic:
 
 1. **Halo-free target** — a strong box blur of luma (`blur` radius). The blurred
    field is what the line-adjacent band should look like with the ring gone.
@@ -28,9 +29,10 @@ One Vulkan compute dispatch, bit-depth-agnostic (`FF_VK_REP_FLOAT` UNORM):
    open gradients (far from any edge) are excluded — the drawing and smooth skies
    are protected by construction.
 
-The standalone reference shader is `libpelorus/shaders/pelorus_dehalo.comp`; the
-filter's shipped `.comp.glsl` shader implements the same algorithm (kept in lockstep, AGENTS hard
-rule 4).
+The shipped shader is
+`ffmpeg-patches/files/vulkan/pelorus_dehalo.comp.glsl`; the similarly named
+`libpelorus/shaders/*.comp` file is a compile-checked standalone reference, not
+a second shipped implementation.
 
 ## Options
 
@@ -45,7 +47,7 @@ All thresholds are normalized in `[0,1]`, independent of bit depth.
 | `highsens` | 0.5 | 0–4 | sensitivity gain on the removed-contrast mask |
 | `edge` | 0.08 | 0–1 | Sobel magnitude above which a pixel is line-art (drives the ring gate) |
 | `ring` | 2.0 | 1–8 | edge-mask dilation — the halo-band half-width in pixels |
-| `planes` | 0x1 | 0x0–0xF | planes to process (bitmask; default `0x1` = luma only) |
+| `planes` | 0x1 | 0x0–0xF | physical planes to process (default `0x1` = luma); selecting a semi-planar chroma plane processes both U and V components |
 | `tile` | 0 | 0–1 | cache the box-blur window in shared memory ([ADR-0139](../adr/0139-dehalo-shared-mem-tile.md)). Output is **bit-identical**; box_blur re-reads an overlapping 17×17 window ~5× per pixel, so `tile=1` is a throughput win on bandwidth-limited GPUs (**−38%, 1.6×** on an Arc A380), ~neutral on cache-rich GPUs (a 4090's L2 already caches it). Default off — enable on weak / integrated / mobile GPUs (and `tune=anime`) |
 
 `darkstr`/`brightstr` are the main intensity knobs; `edge` and `ring` shape

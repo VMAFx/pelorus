@@ -14,7 +14,8 @@ only; chroma passes through.**
 
 ## Algorithm
 
-One Vulkan compute dispatch, bit-depth-agnostic (`FF_VK_REP_FLOAT` UNORM). At
+One Vulkan compute dispatch. Descriptor-derived conversion puts samples in the
+logical `[0,1]` domain before thresholding. At
 the prior codec's block grid (`bsize`), for each pixel within `edge` of a block
 boundary, apply a weak `[1 2 1]` low-pass **across** the boundary, **gated by the
 cross-boundary step**:
@@ -30,11 +31,10 @@ cross-boundary step**:
    horizontal and vertical passes are independent, so a grid corner is smoothed
    on both axes.
 
-The standalone reference shader is `libpelorus/shaders/pelorus_deblock.comp`; the
-filter's shipped `.comp.glsl` shader implements the same algorithm (kept in lockstep, AGENTS hard
-rule 4). The only intended difference is the working domain: the `.comp` reads
-`r16ui` and normalises by 65535, the inline form reads `FF_VK_REP_FLOAT` (UNORM)
-already in `[0,1]`.
+The shipped shader is
+`ffmpeg-patches/files/vulkan/pelorus_deblock.comp.glsl`; the similarly named
+`libpelorus/shaders/*.comp` file is a compile-checked standalone reference, not
+a second shipped implementation.
 
 ## Options
 
@@ -46,7 +46,7 @@ Thresholds are normalized in `[0,1]`, independent of bit depth.
 | `edge` | 1 | 0–8 | half-width of the deblocked band around a boundary (px) |
 | `thr` | 0.06 | 0–1 | cross-boundary step below which it is an artefact (smooth); above it, real structure (preserve) |
 | `str` | 0.6 | 0–1 | deblock strength — blend toward the low-pass (0 = off, 1 = full) |
-| `planes` | 0x1 | 0x0–0xF | planes to process (bitmask; default `0x1` = luma only) |
+| `planes` | 0x1 | 0x0–0xF | physical planes to process (default `0x1` = luma); selecting a semi-planar chroma plane processes both U and V components |
 
 `bsize` matches the prior codec's transform grid (8 for legacy H.264/MPEG-style
 8×8 DCT — the default). `thr` is the key knob: raise it to deblock more

@@ -131,7 +131,7 @@ prove that G/B/A survive when only the scalar component is defined.
 - Modify: `ffmpeg-patches/AGENTS.md`
 - Create: `changelog.d/fixed/0147-vulkan-storage-domain.md`
 
-- [ ] **Step 1: Automate the GPU matrix**
+- [x] **Step 1: Automate the GPU matrix**
 
 Test normalized analyzer equivalence, 8/10/12 transform equivalence,
 NV12/P010/P012 U/V survival, packed RGBA preservation, direct/tiled denoise,
@@ -139,7 +139,7 @@ lookahead/MC paths, selected and unselected planes, and validation layers when
 available. A missing Vulkan device may skip in generic CI but must not be
 reported as executed evidence.
 
-- [ ] **Step 2: Correct documentation**
+- [x] **Step 2: Correct documentation**
 
 Replace the false “UNORM is inherently bit-depth agnostic” claim with the two
 domain model, document physical-plane semantics, and preserve historical

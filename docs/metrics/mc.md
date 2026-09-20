@@ -46,9 +46,11 @@ The MV `(dx, dy)` is **quarter-pel** in luma units (Q2 fixed-point, stored
 The integer block-match minimum is sub-pel refined by a parabolic fit of the SAD
 surface across the minimum and its four axis-neighbours (ADR-0130). The
 `PelorusMotionSection` summary scalars (`global_motion_*`, `motion_magnitude_*`)
-remain in whole luma pixels. The standalone reference shader is
-`libpelorus/shaders/pelorus_mc.comp`; the filter's shipped `.comp.glsl` shader implements the
-byte-identical algorithm (kept in lockstep, AGENTS hard rule 4).
+remain in whole luma pixels. The shipped shader is
+`ffmpeg-patches/files/vulkan/pelorus_mc.comp.glsl`; the similarly named
+`libpelorus/shaders/*.comp` file is a compile-checked standalone reference, not
+a second shipped implementation. Luma loads are converted to the logical
+sample domain before SAD evaluation.
 
 ## Options
 
