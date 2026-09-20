@@ -22,7 +22,7 @@ U and V. Per selected component, in one pass:
    edge-strength field.
 2. **Warp.** The central-difference gradient of that field points toward the
    nearest line. The sampling position is displaced by `depth ×` that gradient
-   and the source luma is **bilinearly resampled** at the displaced position —
+   and the selected source component is **bilinearly resampled** at the displaced position —
    pulling stair-stepped samples onto the line (anti-aliasing + slight thinning)
    with no high-pass ringing.
 3. **Optional line-darkening.** When `darkstr > 0`, a pixel whose Sobel

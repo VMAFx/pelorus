@@ -17,8 +17,9 @@ with `planes`. A selected semi-planar chroma plane processes both U and V.
 One Vulkan compute dispatch. Samples are converted from the Vulkan storage
 domain to logical `[0,1]` before arithmetic:
 
-1. **Halo-free target** — a strong box blur of luma (`blur` radius). The blurred
-   field is what the line-adjacent band should look like with the ring gone.
+1. **Halo-free target** — a strong box blur of the selected component (`blur`
+   radius). The blurred field is what the line-adjacent band should look like
+   with the ring gone.
 2. **Sensitivity mask `so`** — from the local contrast the blur removed; the
    `DeHalo_alpha` `lowsens` floor and `highsens` gain shape how much of the
    removed difference is treated as halo to pull versus protected detail.

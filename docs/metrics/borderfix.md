@@ -52,7 +52,7 @@ Band widths are integers in **each plane's own pixels** (not luma pixels).
 
 | Option | Default | Range | Meaning |
 |---|---|---|---|
-| `left` | 0 | 0–4096 | dirty band width on the left edge (this plane's px) |
+| `left` | 0 | 0–4096 | dirty band width on the left edge (each selected plane's px) |
 | `right` | 0 | 0–4096 | dirty band width on the right edge |
 | `top` | 0 | 0–4096 | dirty band height on the top edge |
 | `bottom` | 0 | 0–4096 | dirty band height on the bottom edge |
@@ -60,10 +60,12 @@ Band widths are integers in **each plane's own pixels** (not luma pixels).
 
 The widths are the **only** knob — set each to the measured thickness of the
 source's dirty band on that edge. Default `0` is a no-op: nothing happens until
-you tell the filter how wide the garbage is. Because the widths are per-plane
-pixels, on 4:2:0 chroma the band is **half the luma band** — a 4-luma-pixel dirty
-edge is 2 chroma pixels, so the same option value cleans the right fraction of
-each plane automatically (see "Pipeline placement").
+you tell the filter how wide the garbage is. The same numeric width is passed
+unchanged to every selected physical plane and is measured in that plane's own
+pixels. It is **not** rescaled for chroma subsampling: on 4:2:0,
+`left=4:planes=0xF` removes four luma pixels and four chroma pixels (eight
+luma-equivalent pixels). Use separate luma and chroma passes when their measured
+plane-local widths differ.
 
 ## Output
 
@@ -74,14 +76,14 @@ it does not link libpelorus and emits no interop section.
 
 ```bash
 ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
-  -vf "hwupload,pelorus_borderfix_vulkan=left=4:right=4,hwdownload,format=yuv420p" \
+  -vf "hwupload,pelorus_borderfix_vulkan=left=4:right=4:planes=0x1,pelorus_borderfix_vulkan=left=2:right=2:planes=0xE,hwdownload,format=yuv420p" \
   -c:v hevc_nvenc -preset p5 -cq 28 out.mkv
 ```
 
-Here a 4-pixel dirty band on the left and right luma edges is smeared away. On
-the 4:2:0 chroma planes the same `left=4`/`right=4` covers a 2-chroma-pixel band
-(the widths are per-plane pixels), which is the correct chroma fraction of a
-4-luma-pixel edge.
+Here the first pass removes a 4-pixel dirty band from luma. The second selects
+all non-luma physical planes and removes the corresponding 2-pixel band from
+4:2:0 chroma. A single all-plane pass is sufficient when every selected plane
+really has the same plane-local band width.
 
 ## Pipeline placement
 
@@ -98,7 +100,8 @@ hwupload → pelorus_borderfix → pelorus_analyze → pelorus_deband → … �
 
 - **All planes by default** (`planes` = `0xF`) — the dirty band is in chroma as
   well as luma, so cleaning only luma would leave a coloured fringe. The widths
-  are per-plane pixels, so chroma is cleaned at the right scale automatically.
+  are plane-local but are not subsampling-aware; split luma and chroma into
+  separate `planes` passes when their measured widths differ.
 - **Runs first** (see above), so the dirty band never pollutes a downstream
   measurement or gets dragged inward by a later spatial filter.
 - **Deterministic, no tuning needed for correctness.** The smear is exact — there
