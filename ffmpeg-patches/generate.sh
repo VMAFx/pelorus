@@ -173,6 +173,12 @@ PYSHADER
 # Each filter's source is dropped in *inside* its own iteration so the commit's
 # `git add -A` captures only that filter's file (not later filters' sources).
 for filter in deband analyze denoise; do
+    # The arithmetic-filter family shares one descriptor-derived conversion
+    # boundary. Introduce it with patch 0001 so every later filter can include
+    # the same private libavfilter header.
+    if [[ "$filter" == "deband" ]]; then
+        cp "$FILES_DIR/pelorus_vulkan_sample.h" "$WORKTREE/libavfilter/"
+    fi
     cp "$FILES_DIR/vf_pelorus_${filter}_vulkan.c" "$WORKTREE/libavfilter/"
     install_vk_shader "$filter"
     python3 - "$WORKTREE" "$filter" <<'PY'

@@ -62,7 +62,7 @@ layout (push_constant, std430) uniform pushConstants {
     int   gpred_x;
     int   gpred_y;
     int   has_prev;
-    int   _pad0;
+    float sample_scale;
 };
 
 /* Binding order MUST match the C descriptor array in init_filter(). The image
@@ -98,16 +98,21 @@ shared int   s_best_x;
 shared int   s_best_y;
 shared float s_best_cost;
 
+float pel_to_sample(float value)
+{
+    return value * sample_scale;
+}
+
 float fetchCur(int px, int py) {
     px = clamp(px, 0, width  - 1);
     py = clamp(py, 0, height - 1);
-    return imageLoad(cur_image[0], ivec2(px, py)).x;
+    return pel_to_sample(imageLoad(cur_image[0], ivec2(px, py)).x);
 }
 
 float fetchRef(int px, int py) {
     px = clamp(px, 0, width  - 1);
     py = clamp(py, 0, height - 1);
-    return imageLoad(ref_image[0], ivec2(px, py)).x;
+    return pel_to_sample(imageLoad(ref_image[0], ivec2(px, py)).x);
 }
 
 float block_sad(int blk_x, int blk_y, int mvx, int mvy, uint lidx,

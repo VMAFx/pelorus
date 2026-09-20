@@ -41,11 +41,15 @@
  * side loads { PEL_TILE, PEL_TILE, 1 }. One workgroup == one tile. */
 layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
 
-/* Mirrors the C `pc` struct byte-for-byte (2 * int + float = 12 bytes). */
+/* Mirrors the C `pc` struct byte-for-byte (2 * int + 2 * float = 16 bytes). */
 layout (push_constant, std430) uniform pushConstants {
     int grid_cols;
     int ntiles;
     float grad_lo;
+    /* Host-derived conversion from FF_VK_REP_FLOAT storage units to the
+     * logical sample domain. P010/P012 are slightly above 1.0 because their
+     * shifted integer maxima do not reach the full 16-bit UNORM container. */
+    float sample_scale;
 };
 
 /* Binding order MUST match the C FFVulkanDescriptorSetBinding array. */
@@ -59,6 +63,11 @@ shared uint s_sumsq;
 shared uint s_edge;
 shared uint s_grad;
 shared uint s_cnt;
+
+float pel_to_sample(float value)
+{
+    return value * sample_scale;
+}
 
 void main()
 {
@@ -74,11 +83,11 @@ void main()
     /* Was IS_WITHIN(pos, size) — the n8 GLSL prelude is gone in FFmpeg 9.
      * NOT an early return: every invocation must reach the barrier below. */
     if (all(lessThan(pos, size))) {
-        float l = imageLoad(input_images[0], pos).x;
+        float l = pel_to_sample(imageLoad(input_images[0], pos).x);
         ivec2 rp = clamp(pos + ivec2(1, 0), ivec2(0), size - 1);
         ivec2 dp = clamp(pos + ivec2(0, 1), ivec2(0), size - 1);
-        float gx = abs(imageLoad(input_images[0], rp).x - l);
-        float gy = abs(imageLoad(input_images[0], dp).x - l);
+        float gx = abs(pel_to_sample(imageLoad(input_images[0], rp).x) - l);
+        float gy = abs(pel_to_sample(imageLoad(input_images[0], dp).x) - l);
         float g = gx + gy;
         float edge = clamp(g, 0.0, 1.0);
         /* A "real but low-amplitude" step (>= grad_lo) is the banding

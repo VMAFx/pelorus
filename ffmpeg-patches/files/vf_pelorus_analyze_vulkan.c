@@ -45,6 +45,7 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/rational.h"
+#include "pelorus_vulkan_sample.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -107,7 +108,7 @@ typedef struct PelorusAnalyzeVulkanContext {
  * builder (GLSLC/GLSLF/GLSLD + ff_vk_shader_init), which also retires the old
  * inline-vs-reference lockstep duplication. */
 extern const unsigned char ff_pelorus_analyze_comp_spv_data[];
-extern const unsigned int  ff_pelorus_analyze_comp_spv_len;
+extern const unsigned int ff_pelorus_analyze_comp_spv_len;
 
 static av_cold int init_filter(AVFilterContext *ctx)
 {
@@ -128,16 +129,15 @@ static av_cold int init_filter(AVFilterContext *ctx)
     /* The reduction reads only the luma plane and is otherwise fully static,
      * so no specialization constants are needed (unlike deband, which had a
      * C-unrolled per-plane loop). `spec` is NULL. */
-    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, NULL,
-                      (uint32_t []) { PEL_TILE, PEL_TILE, 1 }, 0);
+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, NULL, (uint32_t[]){PEL_TILE, PEL_TILE, 1},
+                      0);
 
     {
         FFVulkanDescriptorSetBinding desc[] = {
             {
                 .name = "input_images",
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
-                                                   FF_VK_REP_FLOAT),
+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
                 .mem_quali = "readonly",
                 .dimensions = 2,
                 .elems = planes,
@@ -159,11 +159,10 @@ static av_cold int init_filter(AVFilterContext *ctx)
     }
 
     /* Mirrors the pushConstants block in vulkan/pelorus_analyze.comp.glsl. */
-    ff_vk_shader_add_push_const(shd, 0, 2 * sizeof(int) + sizeof(float),
+    ff_vk_shader_add_push_const(shd, 0, 2 * sizeof(int) + 2 * sizeof(float),
                                 VK_SHADER_STAGE_COMPUTE_BIT);
 
-    RET(ff_vk_shader_link(vkctx, shd,
-                          ff_pelorus_analyze_comp_spv_data,
+    RET(ff_vk_shader_link(vkctx, shd, ff_pelorus_analyze_comp_spv_data,
                           ff_pelorus_analyze_comp_spv_len, "main"));
     RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 
@@ -195,8 +194,7 @@ typedef struct PelorusTileView {
 /* Per-tile banding-prone score in [0,1]. A tile bands (and is starved by
  * variance-AQ) when it is FLAT (low variance) AND carries a real but
  * low-amplitude gradient (flat-but-not-constant). Textured tiles -> ~0. */
-static float tile_band_score(const PelorusAnalyzeVulkanContext *s,
-                             float var, float grad)
+static float tile_band_score(const PelorusAnalyzeVulkanContext *s, float var, float grad)
 {
     /* Smooth-ramp banding detector by VARIANCE band. A tile bands precisely
      * when it is NOT constant (var above a small floor — a dead-flat colour
@@ -229,8 +227,8 @@ static float tile_band_score(const PelorusAnalyzeVulkanContext *s,
  * the tile-MEAN field: a flat tile carrying a small but non-zero inter-tile mean
  * gradient (≈1..12 code-values per tile) is banding-prone; a larger step is a
  * real edge, not banding. The score is contrast-weighted by the step amplitude. */
-static float tile_coarse_band_score(const PelorusAnalyzeVulkanContext *s,
-                                    const PelorusTileView *tv, int tx, int ty)
+static float tile_coarse_band_score(const PelorusAnalyzeVulkanContext *s, const PelorusTileView *tv,
+                                    int tx, int ty)
 {
     int gc = tv->grid_cols, gr = tv->grid_rows;
     int idx = ty * gc + tx;
@@ -256,8 +254,7 @@ static float tile_coarse_band_score(const PelorusAnalyzeVulkanContext *s,
 /* Map a per-tile banding score to an AVRational qoffset (negative => more bits /
  * lower QP). Magnitude = score * roi_strength, clamped to [-roi_strength, 0].
  * Encoded as num/1000 so libx265's qoffset.num/qoffset.den read is exact. */
-static AVRational score_to_qoffset(const PelorusAnalyzeVulkanContext *s,
-                                  float score)
+static AVRational score_to_qoffset(const PelorusAnalyzeVulkanContext *s, float score)
 {
     int milli = (int)lrintf(-score * (float)s->roi_strength * 1000.0f);
     milli = av_clip(milli, -1000, 0);
@@ -284,8 +281,8 @@ static int roi_strength_cmp(const void *pa, const void *pb)
  * `max` are kept (drop the lowest-score remainder once full). Per-tile
  * rectangles fall out naturally when neighbours differ. Writes into out[] and
  * returns the rectangle count. */
-static int coalesce_roi(const PelorusAnalyzeVulkanContext *s,
-                        const float *score, AVRegionOfInterest *out, int max)
+static int coalesce_roi(const PelorusAnalyzeVulkanContext *s, const float *score,
+                        AVRegionOfInterest *out, int max)
 {
     int cols = s->grid_cols, rows = s->grid_rows;
     int n = 0;
@@ -318,12 +315,12 @@ static int coalesce_roi(const PelorusAnalyzeVulkanContext *s,
                         break;
                     run++;
                 }
-                out[n] = (AVRegionOfInterest) {
+                out[n] = (AVRegionOfInterest){
                     .self_size = sizeof(AVRegionOfInterest),
-                    .top    = ty * PEL_TILE,
+                    .top = ty * PEL_TILE,
                     .bottom = FFMIN((ty + 1) * PEL_TILE, s->vkctx.output_height),
-                    .left   = tx * PEL_TILE,
-                    .right  = FFMIN((tx + run) * PEL_TILE, s->vkctx.output_width),
+                    .left = tx * PEL_TILE,
+                    .right = FFMIN((tx + run) * PEL_TILE, s->vkctx.output_width),
                     .qoffset = av_make_q(q0, 1000),
                 };
                 n++;
@@ -352,12 +349,12 @@ static int coalesce_roi(const PelorusAnalyzeVulkanContext *s,
                     break;
                 run++;
             }
-            runs[n] = (AVRegionOfInterest) {
+            runs[n] = (AVRegionOfInterest){
                 .self_size = sizeof(AVRegionOfInterest),
-                .top    = ty * PEL_TILE,
+                .top = ty * PEL_TILE,
                 .bottom = FFMIN((ty + 1) * PEL_TILE, s->vkctx.output_height),
-                .left   = tx * PEL_TILE,
-                .right  = FFMIN((tx + run) * PEL_TILE, s->vkctx.output_width),
+                .left = tx * PEL_TILE,
+                .right = FFMIN((tx + run) * PEL_TILE, s->vkctx.output_width),
                 .qoffset = av_make_q(q0, 1000),
             };
             n++;
@@ -379,8 +376,7 @@ static int coalesce_roi(const PelorusAnalyzeVulkanContext *s,
  * AV_FRAME_DATA_REGIONS_OF_INTEREST side data (ADR-0114 Tier 0). Mirrors
  * vf_addroi's attach mechanics: one buffer, nb_regions*sizeof(AVRegionOfInterest),
  * each region's self_size set. Appends to any pre-existing ROI side data. */
-static int attach_roi(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
-                     const PelorusTileView *tv)
+static int attach_roi(PelorusAnalyzeVulkanContext *s, AVFrame *frame, const PelorusTileView *tv)
 {
     AVRegionOfInterest *detected;
     AVRegionOfInterest *roi;
@@ -405,8 +401,7 @@ static int attach_roi(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
         /* CAMBI multi-scale: a tile flagged by EITHER the fine (per-tile) or the
          * coarse (inter-tile mean ramp) scale is banding-prone. The coarse scale
          * catches shallow gradients whose per-tile variance is below the floor. */
-        float coarse = tile_coarse_band_score(s, tv, i % tv->grid_cols,
-                                              i / tv->grid_cols);
+        float coarse = tile_coarse_band_score(s, tv, i % tv->grid_cols, i / tv->grid_cols);
         score[i] = FFMAX(fine, coarse);
     }
 
@@ -443,10 +438,12 @@ static int attach_roi(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
     for (i = 0; i < nb_old; i++) {
         const AVRegionOfInterest *o =
             (const AVRegionOfInterest *)(sd_old->data + (size_t)old_size * i);
-        roi[i] = (AVRegionOfInterest) {
+        roi[i] = (AVRegionOfInterest){
             .self_size = sizeof(AVRegionOfInterest),
-            .top = o->top, .bottom = o->bottom,
-            .left = o->left, .right = o->right,
+            .top = o->top,
+            .bottom = o->bottom,
+            .left = o->left,
+            .right = o->right,
             .qoffset = o->qoffset,
         };
     }
@@ -457,8 +454,7 @@ static int attach_roi(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
     if (sd_old)
         av_frame_remove_side_data(frame, AV_FRAME_DATA_REGIONS_OF_INTEREST);
 
-    sd_new = av_frame_new_side_data_from_buf(
-        frame, AV_FRAME_DATA_REGIONS_OF_INTEREST, roi_ref);
+    sd_new = av_frame_new_side_data_from_buf(frame, AV_FRAME_DATA_REGIONS_OF_INTEREST, roi_ref);
     if (!sd_new) {
         av_buffer_unref(&roi_ref);
         return AVERROR(ENOMEM);
@@ -480,8 +476,7 @@ static void pel_set_meta_f(AVFrame *frame, const char *key, float v)
     av_dict_set(&frame->metadata, key, buf, 0);
 }
 
-static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
-                        const PelorusTileView *tv)
+static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame, const PelorusTileView *tv)
 {
     const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
     PelorusSideData meta;
@@ -516,10 +511,9 @@ static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
     memset(&meta, 0, sizeof(meta));
     meta.frame_pts = (uint64_t)frame->pts;
     meta.bit_depth = d ? (uint8_t)d->comp[0].depth : 0;
-    meta.plane_layout = (d && d->log2_chroma_w == 0 && d->log2_chroma_h == 0)
-                            ? PEL_LAYOUT_444
-                            : ((d && d->log2_chroma_h == 0) ? PEL_LAYOUT_422
-                                                            : PEL_LAYOUT_420);
+    meta.plane_layout = (d && d->log2_chroma_w == 0 && d->log2_chroma_h == 0) ?
+                            PEL_LAYOUT_444 :
+                            ((d && d->log2_chroma_h == 0) ? PEL_LAYOUT_422 : PEL_LAYOUT_420);
     meta.grid_cols = (uint16_t)s->grid_cols;
     meta.grid_rows = (uint16_t)s->grid_rows;
     meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'A');
@@ -546,19 +540,16 @@ static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
      * pelorus_mc attached PEL_SEC_MOTION, EMA-smoothed and reset on a scene
      * cut. The per-shot CRF steering maps this to a qoffset (autotune-learned). */
     {
-        float texture = av_clipf(0.5f * FFMIN(gvar / 0.05f, 1.0f) + 0.5f * gedge,
-                                 0.0f, 1.0f);
+        float texture = av_clipf(0.5f * FFMIN(gvar / 0.05f, 1.0f) + 0.5f * gedge, 0.0f, 1.0f);
         float motion = 0.0f;
         int scene_cut = 0;
-        AVFrameSideData *sd =
-            av_frame_get_side_data(frame, AV_FRAME_DATA_SEI_UNREGISTERED);
+        AVFrameSideData *sd = av_frame_get_side_data(frame, AV_FRAME_DATA_SEI_UNREGISTERED);
         const void *mp = NULL;
         size_t msz = 0;
         float craw, cema;
 
         if (sd && pel_blob_find_section(sd->data, sd->size, PEL_SEC_MOTION,
-                                        sizeof(PelorusMotionSection), &mp, &msz)
-                      == PEL_OK) {
+                                        sizeof(PelorusMotionSection), &mp, &msz) == PEL_OK) {
             const PelorusMotionSection *mo = mp;
             motion = av_clipf(mo->motion_magnitude_mean / 8.0f, 0.0f, 1.0f);
             scene_cut = mo->has_scene_cut ? 1 : 0;
@@ -585,8 +576,7 @@ static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
         pel_set_meta_f(frame, "lavfi.pelorus.variance", gvar);
         pel_set_meta_f(frame, "lavfi.pelorus.edge", gedge);
         pel_set_meta_f(frame, "lavfi.pelorus.banding", flat_frac);
-        av_dict_set(&frame->metadata, "lavfi.pelorus.scene_cut",
-                    scene_cut ? "1" : "0", 0);
+        av_dict_set(&frame->metadata, "lavfi.pelorus.scene_cut", scene_cut ? "1" : "0", 0);
     }
     secs[2].id = PEL_SEC_COMPLEXITY;
     secs[2].data = &cx;
@@ -600,8 +590,7 @@ static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame,
         pel_blob_free(blob);
         return AVERROR(ENOMEM);
     }
-    if (!av_frame_new_side_data_from_buf(frame, AV_FRAME_DATA_SEI_UNREGISTERED,
-                                         buf)) {
+    if (!av_frame_new_side_data_from_buf(frame, AV_FRAME_DATA_SEI_UNREGISTERED, buf)) {
         av_buffer_unref(&buf);
         return AVERROR(ENOMEM);
     }
@@ -632,6 +621,7 @@ static int analyze_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
         int32_t grid_cols;
         int32_t ntiles;
         float grad_lo;
+        float sample_scale;
     } pc;
 
     if (!s->initialized)
@@ -648,14 +638,13 @@ static int analyze_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     pc.grid_cols = s->grid_cols;
     pc.ntiles = ntiles;
     pc.grad_lo = (float)s->grad_lo;
+    pc.sample_scale = pel_vk_sample_scale(vkctx->input_format);
 
-    RET(ff_vk_get_pooled_buffer(vkctx, &s->stat_buf_pool, &buf,
-                                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                NULL, buf_bytes,
-                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
-                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
+    RET(ff_vk_get_pooled_buffer(
+        vkctx, &s->stat_buf_pool, &buf,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL, buf_bytes,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
     buf_vk = (FFVkBuffer *)buf->data;
     base = (const uint32_t *)buf_vk->mapped_mem;
     tv.t_var = base;
@@ -673,81 +662,81 @@ static int analyze_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     RET(ff_vk_exec_add_dep_frame(vkctx, exec, in, VK_PIPELINE_STAGE_2_NONE,
                                  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
     RET(ff_vk_create_imageviews(vkctx, exec, views, in, FF_VK_REP_FLOAT));
-    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, in, views, 0, 0,
-                                  VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
-    ff_vk_frame_barrier(vkctx, exec, in, img_bar, &nb_img_bar,
-                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
-                        VK_QUEUE_FAMILY_IGNORED);
+    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, in, views, 0, 0, VK_IMAGE_LAYOUT_GENERAL,
+                                  VK_NULL_HANDLE);
+    ff_vk_frame_barrier(vkctx, exec, in, img_bar, &nb_img_bar, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+                        VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED);
 
     /* zero the accumulators */
-    vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
-        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2) {
-            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-            .srcStageMask = VK_PIPELINE_STAGE_2_NONE,
-            .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-            .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .buffer = buf_vk->buf,
-            .size = buf_vk->size,
-            .offset = 0,
-        },
-        .bufferMemoryBarrierCount = 1,
-    });
+    vk->CmdPipelineBarrier2(exec->buf,
+                            &(VkDependencyInfo){
+                                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                .pBufferMemoryBarriers =
+                                    &(VkBufferMemoryBarrier2){
+                                        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                        .srcStageMask = VK_PIPELINE_STAGE_2_NONE,
+                                        .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                        .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                        .buffer = buf_vk->buf,
+                                        .size = buf_vk->size,
+                                        .offset = 0,
+                                    },
+                                .bufferMemoryBarrierCount = 1,
+                            });
     vk->CmdFillBuffer(exec->buf, buf_vk->buf, 0, buf_vk->size, 0x0);
-    vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
-        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .pImageMemoryBarriers = img_bar,
-        .imageMemoryBarrierCount = nb_img_bar,
-        .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2) {
-            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-            .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-            .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-            .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
-                             VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .buffer = buf_vk->buf,
-            .size = buf_vk->size,
-            .offset = 0,
-        },
-        .bufferMemoryBarrierCount = 1,
-    });
+    vk->CmdPipelineBarrier2(exec->buf,
+                            &(VkDependencyInfo){
+                                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                .pImageMemoryBarriers = img_bar,
+                                .imageMemoryBarrierCount = nb_img_bar,
+                                .pBufferMemoryBarriers =
+                                    &(VkBufferMemoryBarrier2){
+                                        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                        .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                        .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                                        .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+                                                         VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                        .buffer = buf_vk->buf,
+                                        .size = buf_vk->size,
+                                        .offset = 0,
+                                    },
+                                .bufferMemoryBarrierCount = 1,
+                            });
 
-    RET(ff_vk_shader_update_desc_buffer(&s->vkctx, exec, &s->shd, 0, 1, 0,
-                                        buf_vk, 0, buf_vk->size,
+    RET(ff_vk_shader_update_desc_buffer(&s->vkctx, exec, &s->shd, 0, 1, 0, buf_vk, 0, buf_vk->size,
                                         VK_FORMAT_UNDEFINED));
     ff_vk_exec_bind_shader(vkctx, exec, &s->shd);
-    ff_vk_shader_update_push_const(vkctx, exec, &s->shd,
-                                   VK_SHADER_STAGE_COMPUTE_BIT, 0,
-                                   sizeof(pc), &pc);
+    ff_vk_shader_update_push_const(vkctx, exec, &s->shd, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc),
+                                   &pc);
 
-    vk->CmdDispatch(exec->buf,
-                    FFALIGN(in->width, s->shd.lg_size[0]) / s->shd.lg_size[0],
-                    FFALIGN(in->height, s->shd.lg_size[1]) / s->shd.lg_size[1],
-                    s->shd.lg_size[2]);
+    vk->CmdDispatch(exec->buf, FFALIGN(in->width, s->shd.lg_size[0]) / s->shd.lg_size[0],
+                    FFALIGN(in->height, s->shd.lg_size[1]) / s->shd.lg_size[1], s->shd.lg_size[2]);
 
-    vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
-        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2) {
-            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-            .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-            .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
-            .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
-                             VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-            .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .buffer = buf_vk->buf,
-            .size = buf_vk->size,
-            .offset = 0,
-        },
-        .bufferMemoryBarrierCount = 1,
-    });
+    vk->CmdPipelineBarrier2(exec->buf,
+                            &(VkDependencyInfo){
+                                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                .pBufferMemoryBarriers =
+                                    &(VkBufferMemoryBarrier2){
+                                        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                        .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                        .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
+                                        .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+                                                         VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                                        .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+                                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                        .buffer = buf_vk->buf,
+                                        .size = buf_vk->size,
+                                        .offset = 0,
+                                    },
+                                .bufferMemoryBarrierCount = 1,
+                            });
 
     RET(ff_vk_exec_submit(vkctx, exec));
     ff_vk_exec_wait(vkctx, exec);
@@ -788,19 +777,47 @@ static void analyze_vulkan_uninit(AVFilterContext *avctx)
 #define OFFSET(x) offsetof(PelorusAnalyzeVulkanContext, x)
 #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 static const AVOption pelorus_analyze_vulkan_options[] = {
-    { "flat", "per-tile variance below which a tile is banding-prone",
-      OFFSET(flat_thr), AV_OPT_TYPE_DOUBLE, { .dbl = 0.0015 }, 0.0, 0.25, FLAGS },
-    { "roi", "auto-detect banding-prone tiles and emit ROI side data",
-      OFFSET(roi), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
-    { "roi_strength", "max |qoffset| for a fully banding tile (frac of QP range)",
-      OFFSET(roi_strength), AV_OPT_TYPE_DOUBLE, { .dbl = 0.333 }, 0.0, 1.0,
-      FLAGS },
-    { "grad_lo", "min per-tile gradient counted as a real (banding) slope",
-      OFFSET(grad_lo), AV_OPT_TYPE_DOUBLE, { .dbl = 0.002 }, 0.0, 0.5, FLAGS },
-    { "grad_hi", "tile gradient at which banding risk peaks before texturing",
-      OFFSET(grad_hi), AV_OPT_TYPE_DOUBLE, { .dbl = 0.01 }, 0.0, 0.5, FLAGS },
-    { NULL }
-};
+    {"flat",
+     "per-tile variance below which a tile is banding-prone",
+     OFFSET(flat_thr),
+     AV_OPT_TYPE_DOUBLE,
+     {.dbl = 0.0015},
+     0.0,
+     0.25,
+     FLAGS},
+    {"roi",
+     "auto-detect banding-prone tiles and emit ROI side data",
+     OFFSET(roi),
+     AV_OPT_TYPE_BOOL,
+     {.i64 = 0},
+     0,
+     1,
+     FLAGS},
+    {"roi_strength",
+     "max |qoffset| for a fully banding tile (frac of QP range)",
+     OFFSET(roi_strength),
+     AV_OPT_TYPE_DOUBLE,
+     {.dbl = 0.333},
+     0.0,
+     1.0,
+     FLAGS},
+    {"grad_lo",
+     "min per-tile gradient counted as a real (banding) slope",
+     OFFSET(grad_lo),
+     AV_OPT_TYPE_DOUBLE,
+     {.dbl = 0.002},
+     0.0,
+     0.5,
+     FLAGS},
+    {"grad_hi",
+     "tile gradient at which banding risk peaks before texturing",
+     OFFSET(grad_hi),
+     AV_OPT_TYPE_DOUBLE,
+     {.dbl = 0.01},
+     0.0,
+     0.5,
+     FLAGS},
+    {NULL}};
 
 AVFILTER_DEFINE_CLASS(pelorus_analyze_vulkan);
 

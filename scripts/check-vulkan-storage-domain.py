@@ -90,6 +90,15 @@ def check() -> list[str]:
             "scale must be derived from AVPixFmtDescriptor",
         )
 
+    generator = ROOT / "ffmpeg-patches" / "generate.sh"
+    generator_text = strip_comments(generator.read_text())
+    require(
+        generator,
+        generator_text,
+        r'cp\s+"\$FILES_DIR/pelorus_vulkan_sample\.h"\s+' r'"\$WORKTREE/libavfilter/"',
+        "must install the shared private header into the generated FFmpeg tree",
+    )
+
     for name in ARITHMETIC:
         c_path = FILES / f"vf_pelorus_{name}_vulkan.c"
         shader_path = SHADERS / f"pelorus_{name}.comp.glsl"

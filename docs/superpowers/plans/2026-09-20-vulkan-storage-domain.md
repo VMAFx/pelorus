@@ -86,7 +86,7 @@ Cover 8-bit, planar 10/12/16-bit, P010/P012/P016, invalid descriptors, and a
 packed-format fallback. Use checked integer shifts and return 1.0 for shapes
 the helper cannot prove.
 
-- [ ] **Step 2: Fix read-only filters first**
+- [x] **Step 2: Fix read-only filters first**
 
 Apply scale before any arithmetic in analyze and grain-estimate. Move MC scale
 into the shader before SAD/candidate selection and remove host readback
