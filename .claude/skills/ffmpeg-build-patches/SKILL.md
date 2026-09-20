@@ -32,10 +32,14 @@ use `ffmpeg-apply-patches`; regeneration alone is not verification.
    existing shipped sequence. Do not insert it into an earlier generator loop.
 3. Use `install_vk_shader`; register the C object, shader `.spv.o`, extern, and
    `*_filter_deps="vulkan spirv_compiler"`.
-4. For an interop consumer only, add guarded `require_pkg_config libpelorus
-   "libpelorus >= 0.2.0" ... && add_extralibs`. Pure transforms do not link it.
+4. For any interop producer or consumer using libpelorus, add
+   `enabled pelorus_<name>_vulkan_filter && require_pkg_config libpelorus
+   "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs
+   $libpelorus_extralibs`. Pure transforms do not link it.
 5. Extend the generator's deterministic filename map, `series.txt`, replay
-   patch-count assertion, and filter-registration list together.
+   patch-count assertion, and filter-registration list together. Update or
+   derive every hardcoded patch-count label, success message, comment, and
+   current AGENTS/docs reference; do not leave an “18 patches” cache behind.
 
 `libpelorus/shaders/*.comp` may model the algorithm for the standalone fast
 gate; it is not a second shipped implementation or a lockstep artifact.
@@ -44,5 +48,5 @@ gate; it is not a second shipped implementation or a lockstep artifact.
 
 - source and generated patches are in the same change;
 - two generations are byte-identical;
-- `scripts/check-build-config.py --self-test` passes; and
+- `python3 scripts/check-build-config.py --self-test` passes; and
 - full pinned replay links FFmpeg and verifies filter plus BSF registration.

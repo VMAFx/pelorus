@@ -19,9 +19,30 @@ CONSUMERS = (
     ROOT / "ffmpeg-patches" / "generate.sh",
     ROOT / "ffmpeg-patches" / "test" / "build-and-run.sh",
 )
+QSV_REPLAY = ROOT / "ffmpeg-patches" / "test" / "qsv-roi-regression.sh"
 WORKFLOWS = (
     ROOT / ".github" / "workflows" / "ci.yml",
     ROOT / ".github" / "workflows" / "release.yml",
+)
+PIN_PROJECTIONS = (
+    ROOT / "README.md",
+    ROOT / "AGENTS.md",
+    ROOT / "CLAUDE.md",
+    ROOT / "ffmpeg-patches" / "README.md",
+    ROOT / "ffmpeg-patches" / "series.txt",
+)
+PIN_DIGEST_PROJECTIONS = PIN_PROJECTIONS[1:]
+OPERATIONAL_GUIDANCE = (
+    ROOT / "docs" / "development" / "build.md",
+    ROOT / ".claude" / "skills" / "add-vulkan-filter" / "SKILL.md",
+    ROOT / ".claude" / "skills" / "ffmpeg-apply-patches" / "SKILL.md",
+    ROOT / ".claude" / "skills" / "ffmpeg-build-patches" / "SKILL.md",
+    ROOT / ".claude" / "agents" / "ffmpeg-patch-reviewer.md",
+)
+EXPLICIT_COMMAND_GUIDANCE = OPERATIONAL_GUIDANCE[:1] + OPERATIONAL_GUIDANCE[2:4]
+LIBPELORUS_FLOOR_INPUTS = tuple(
+    ROOT / "ffmpeg-patches" / f".commit-msg-{name}.txt"
+    for name in ("deband", "analyze", "denoise", "grain_estimate", "mc")
 )
 SETUP_GO_COMMIT = "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
 RELEASE_TAG = re.compile(r"(?<![A-Za-z0-9_])n\d+\.\d+\.\d+(?![A-Za-z0-9_])")
@@ -125,6 +146,120 @@ def validate_config(text: str) -> list[str]:
                 "contiguous Renovate block"
             )
 
+    return errors
+
+
+def read_tracked_text(path: Path) -> tuple[str, list[str]]:
+    """Read a required tracked projection with a repository-relative diagnostic."""
+    relative = path.relative_to(ROOT).as_posix()
+    if not path.is_file():
+        return "", [f"{relative}: missing"]
+    try:
+        return path.read_text(encoding="utf-8"), []
+    except OSError as error:
+        return "", [f"{relative}: could not read: {error}"]
+
+
+def validate_pin_projection_text(
+    relative: str,
+    source: str,
+    tag: str,
+    commit: str,
+    require_commit: bool,
+) -> list[str]:
+    """Validate one present-tense projection of the authoritative FFmpeg pin."""
+    errors: list[str] = []
+    if tag not in source:
+        errors.append(f"{relative}: missing configured FFmpeg tag {tag}")
+    copied = sorted(set(RELEASE_TAG.findall(source)) - {tag})
+    if copied:
+        errors.append(
+            f"{relative}: contains stale/currently unsupported FFmpeg tags: "
+            f"{', '.join(copied)}"
+        )
+    if require_commit and commit not in source:
+        errors.append(f"{relative}: missing configured FFmpeg commit {commit}")
+    return errors
+
+
+def validate_guidance_text(
+    relative: str, source: str, require_command: bool
+) -> list[str]:
+    """Reject retired command, shader, and configure models from live guidance."""
+    errors: list[str] = []
+    forbidden = (
+        "/home/kilian/dev/ffmpeg",
+        "BASE_TAG=",
+        "n8.1.1",
+        "n9.0.1",
+        "spirv_library",
+        "filter's inline GLSL",
+        "mirrored inline",
+    )
+    for token in forbidden:
+        if token in source:
+            errors.append(f"{relative}: contains obsolete guidance {token}")
+    if require_command and "FFMPEG_REPO=/absolute/path" not in source:
+        errors.append(f"{relative}: missing explicit FFMPEG_REPO command")
+    return errors
+
+
+def validate_current_surfaces(values: dict[str, str]) -> list[str]:
+    """Keep current documentation and agent guidance projected from authority."""
+    errors: list[str] = []
+    tag = values.get("FFMPEG_TAG", "")
+    commit = values.get("FFMPEG_COMMIT", "")
+
+    for path in PIN_PROJECTIONS:
+        relative = path.relative_to(ROOT).as_posix()
+        source, read_errors = read_tracked_text(path)
+        errors.extend(read_errors)
+        if read_errors:
+            continue
+        errors.extend(
+            validate_pin_projection_text(
+                relative,
+                source,
+                tag,
+                commit,
+                path in PIN_DIGEST_PROJECTIONS,
+            )
+        )
+
+    for path in OPERATIONAL_GUIDANCE:
+        relative = path.relative_to(ROOT).as_posix()
+        source, read_errors = read_tracked_text(path)
+        errors.extend(read_errors)
+        if read_errors:
+            continue
+        errors.extend(
+            validate_guidance_text(relative, source, path in EXPLICIT_COMMAND_GUIDANCE)
+        )
+
+    for path in LIBPELORUS_FLOOR_INPUTS:
+        relative = path.relative_to(ROOT).as_posix()
+        source, read_errors = read_tracked_text(path)
+        errors.extend(read_errors)
+        if read_errors:
+            continue
+        if "Requires libpelorus >= 0.2.0" not in source:
+            errors.append(f"{relative}: libpelorus compatibility floor drifted")
+        if "Requires libpelorus >= 0.1.0" in source:
+            errors.append(f"{relative}: retains obsolete libpelorus floor")
+
+    meson, meson_errors = read_tracked_text(ROOT / "meson.build")
+    errors.extend(meson_errors)
+    version_match = re.search(r"^\s*version:\s*'([^']+)'", meson, re.MULTILINE)
+    if version_match is None:
+        errors.append("meson.build: project version not found")
+    else:
+        release = f"v{version_match.group(1)}"
+        for path in (ROOT / "README.md", ROOT / "CLAUDE.md"):
+            relative = path.relative_to(ROOT).as_posix()
+            source, read_errors = read_tracked_text(path)
+            errors.extend(read_errors)
+            if not read_errors and release not in source:
+                errors.append(f"{relative}: current project release must be {release}")
     return errors
 
 
@@ -282,7 +417,9 @@ def consumer_validator_regressions() -> list[str]:
         1,
     )
     if hookful_worktree == source:
-        failures.append("consumer regression: hookful worktree mutation changed nothing")
+        failures.append(
+            "consumer regression: hookful worktree mutation changed nothing"
+        )
     elif not any(
         "worktree creation must disable Git hooks" in error
         for error in validate_consumer_text(relative, hookful_worktree)
@@ -301,12 +438,13 @@ def consumer_validator_regressions() -> list[str]:
     hookful_checkout = source.replace(
         'git -C "$WORKTREE" -c core.hooksPath=/dev/null \\\n'
         '    checkout --force --detach "$FFMPEG_COMMIT"',
-        'git -C "$WORKTREE" \\\n'
-        '    checkout --force --detach "$FFMPEG_COMMIT"',
+        'git -C "$WORKTREE" \\\n' '    checkout --force --detach "$FFMPEG_COMMIT"',
         1,
     )
     if hookful_checkout == source:
-        failures.append("consumer regression: hookful checkout mutation changed nothing")
+        failures.append(
+            "consumer regression: hookful checkout mutation changed nothing"
+        )
     elif not any(
         "deferred checkout must disable Git hooks" in error
         for error in validate_consumer_text(relative, hookful_checkout)
@@ -351,8 +489,7 @@ def consumer_validator_regressions() -> list[str]:
             "consumer regression: cleanup trap installed after mkdir was accepted"
         )
     hookful_am = replay.replace(
-        'git -C "$WORKTREE" -c core.hooksPath=/dev/null \\\n'
-        '            am --3way',
+        'git -C "$WORKTREE" -c core.hooksPath=/dev/null \\\n' "            am --3way",
         'git -C "$WORKTREE" \\\n            am --3way',
         1,
     )
@@ -364,6 +501,72 @@ def consumer_validator_regressions() -> list[str]:
     ):
         failures.append("consumer regression: hookful git am was accepted")
     return failures
+
+
+def qsv_validator_regressions() -> list[str]:
+    """Prove the focused QSV gate cannot bypass the shared pin or Git policy."""
+    source = QSV_REPLAY.read_text(encoding="utf-8")
+    cases = {
+        "copied tag": (
+            source + "\n# n1.2.3\n",
+            "contains copied FFmpeg tag",
+        ),
+        "missing pin authority": (
+            source.replace('source "$ROOT/build-config.env"', "", 1),
+            "must source root build-config.env",
+        ),
+        "hookful worktree": (
+            source.replace(
+                'git -C "$FFMPEG_REPO" -c core.hooksPath=/dev/null \\\n'
+                "    worktree add --no-checkout --detach",
+                'git -C "$FFMPEG_REPO" \\\n' "    worktree add --no-checkout --detach",
+                1,
+            ),
+            "worktree creation must be pinned and hook-neutral",
+        ),
+        "implicit checkout": (
+            source.replace("--no-checkout ", "", 1),
+            "worktree creation must be pinned and hook-neutral",
+        ),
+    }
+    failures: list[str] = []
+    for name, (mutated, expected) in cases.items():
+        if mutated == source:
+            failures.append(f"QSV regression: {name} mutation changed nothing")
+            continue
+        errors = validate_qsv_replay_text(mutated)
+        if not any(expected in error for error in errors):
+            failures.append(f"QSV regression: {name} was accepted")
+    return failures
+
+
+def surface_validator_regressions() -> list[str]:
+    """Prove current guidance cannot retain a copied pin or retired model."""
+    values, parse_errors = parse_assignments(CONFIG.read_text(encoding="utf-8"))
+    if parse_errors:
+        return ["surface regression: canonical build-config.env did not parse"]
+    tag = values["FFMPEG_TAG"]
+    commit = values["FFMPEG_COMMIT"]
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    stale_tag = readme.replace(tag, "n1.2.3")
+    if not any(
+        "missing configured FFmpeg tag" in error
+        for error in validate_pin_projection_text(
+            "README.md", stale_tag, tag, commit, False
+        )
+    ):
+        return ["surface regression: stale README pin was accepted"]
+
+    skill = OPERATIONAL_GUIDANCE[2].read_text(encoding="utf-8")
+    retired = skill + '\n`*_filter_deps="vulkan spirv_library"`\n'
+    if not any(
+        "contains obsolete guidance spirv_library" in error
+        for error in validate_guidance_text(
+            OPERATIONAL_GUIDANCE[2].relative_to(ROOT).as_posix(), retired, True
+        )
+    ):
+        return ["surface regression: retired shader dependency was accepted"]
+    return []
 
 
 def fixture_subprocess_regression() -> list[str]:
@@ -1134,7 +1337,7 @@ def validate_consumer_text(relative: str, text: str) -> list[str]:
         errors.append(f"{relative}: FFMPEG_REPO must be explicitly required")
     worktree_pattern = re.compile(
         r'git\s+-C\s+"\$FFMPEG_REPO"\s+-c\s+core\.hooksPath=/dev/null\s+'
-        r'worktree\s+add\s+--no-checkout\s+--detach\s+'
+        r"worktree\s+add\s+--no-checkout\s+--detach\s+"
         r'"\$WORKTREE"\s+"\$FFMPEG_COMMIT"'
     )
     worktree_match = worktree_pattern.search(shell_text)
@@ -1147,7 +1350,7 @@ def validate_consumer_text(relative: str, text: str) -> list[str]:
             errors.append(f"{relative}: worktree creation must defer checkout")
         if not re.search(
             r'git\s+-C\s+"\$FFMPEG_REPO"\s+-c\s+'
-            r'core\.hooksPath=/dev/null\s+worktree\s+add',
+            r"core\.hooksPath=/dev/null\s+worktree\s+add",
             shell_text,
         ):
             errors.append(f"{relative}: worktree creation must disable Git hooks")
@@ -1161,17 +1364,14 @@ def validate_consumer_text(relative: str, text: str) -> list[str]:
     worktree_add = -1 if worktree_match is None else worktree_match.end()
     ownership_assignment = shell_text.find('OWNED_WORKTREE="$WORKTREE"')
     checkout_start = -1 if checkout_match is None else checkout_match.start()
-    if (
-        ownership_assignment < worktree_add
-        or checkout_start < ownership_assignment
-    ):
+    if ownership_assignment < worktree_add or checkout_start < ownership_assignment:
         errors.append(
             f"{relative}: worktree ownership must be recorded between registration "
             "and checkout"
         )
     if not re.search(
         r'git\s+-C\s+"\$OWNED_WORKTREE"\s+-c\s+core\.hooksPath=/dev/null\s+'
-        r'am\s+--abort',
+        r"am\s+--abort",
         shell_text,
     ):
         errors.append(f"{relative}: cleanup git am must disable Git hooks")
@@ -1302,8 +1502,7 @@ def validate_replay_text(replay: str) -> list[str]:
                 f"{forbidden}"
             )
     if not re.search(
-        r'git\s+-C\s+"\$WORKTREE"\s+-c\s+core\.hooksPath=/dev/null\s+'
-        r'am\s+--3way',
+        r'git\s+-C\s+"\$WORKTREE"\s+-c\s+core\.hooksPath=/dev/null\s+' r"am\s+--3way",
         shell_replay,
     ):
         errors.append(
@@ -1314,6 +1513,73 @@ def validate_replay_text(replay: str) -> list[str]:
             "ffmpeg-patches/test/build-and-run.sh: configure must run in a " "subshell"
         )
 
+    return errors
+
+
+def validate_qsv_replay_text(replay: str) -> list[str]:
+    """Validate the focused QSV gate's immutable pin and owned-worktree policy."""
+    relative = "ffmpeg-patches/test/qsv-roi-regression.sh"
+    errors: list[str] = []
+    shell_replay = replay.replace("\\\n", " ")
+    required = {
+        'source "$ROOT/build-config.env"': "must source root build-config.env",
+        ': "${FFMPEG_REPO:?': "must explicitly require FFMPEG_REPO",
+        'FFMPEG_REPO="$(canonicalize_existing_dir "$FFMPEG_REPO")"': (
+            "must canonicalize FFMPEG_REPO"
+        ),
+        '"refs/tags/${FFMPEG_TAG}^{commit}"': (
+            "must resolve the fully-qualified FFmpeg tag ref"
+        ),
+        '"$FFMPEG_COMMIT"': "must consume the immutable FFmpeg commit",
+        "mktemp -d": "must create a private run directory",
+        'OWNED_WORKTREE=""': "must initialize worktree ownership",
+        "trap cleanup EXIT": "must install EXIT cleanup",
+        "am --abort": "cleanup must abort an in-progress git am",
+        "clang-asan-ubsan": "must run the sanitizer configuration",
+        "-DQSV_HAVE_MBQP=0": "must compile the MBQP-absent branch",
+    }
+    for token, message in required.items():
+        if token not in replay:
+            errors.append(f"{relative}: {message}")
+
+    worktree = re.search(
+        r'git\s+-C\s+"\$FFMPEG_REPO"\s+-c\s+core\.hooksPath=/dev/null\s+'
+        r"worktree\s+add\s+--no-checkout\s+--detach\s+"
+        r'"\$WORKTREE"\s+"\$FFMPEG_COMMIT"',
+        shell_replay,
+    )
+    checkout = re.search(
+        r'git\s+-C\s+"\$WORKTREE"\s+-c\s+core\.hooksPath=/dev/null\s+'
+        r'checkout\s+--force\s+--detach\s+"\$FFMPEG_COMMIT"',
+        shell_replay,
+    )
+    if worktree is None:
+        errors.append(f"{relative}: worktree creation must be pinned and hook-neutral")
+    if checkout is None:
+        errors.append(f"{relative}: checkout must be pinned and hook-neutral")
+    ownership = shell_replay.find('OWNED_WORKTREE="$WORKTREE"')
+    if (
+        worktree is None
+        or checkout is None
+        or ownership < worktree.end()
+        or checkout.start() < ownership
+    ):
+        errors.append(
+            f"{relative}: ownership must be recorded between registration and checkout"
+        )
+    if 'worktree remove --force "$OWNED_WORKTREE"' not in shell_replay:
+        errors.append(f"{relative}: cleanup must remove only the owned worktree")
+    if not re.search(
+        r'git\s+-C\s+"\$WORKTREE"\s+-c\s+core\.hooksPath=/dev/null\s+' r"am\s+--3way",
+        shell_replay,
+    ):
+        errors.append(f"{relative}: git am must disable applypatch hooks")
+    for token in ("BASE_TAG=", "/home/kilian/", "n8.1.1", "n9.0.1"):
+        if token in replay:
+            errors.append(f"{relative}: contains obsolete pin input {token}")
+    copied_tags = RELEASE_TAG.findall(replay)
+    if copied_tags:
+        errors.append(f"{relative}: contains copied FFmpeg tag {copied_tags[0]}")
     return errors
 
 
@@ -1373,9 +1639,7 @@ def validate_workflow_text(relative: str, text: str) -> list[str]:
     for name, block in jobs.items():
         runners = re.findall(r"^\s+runs-on:\s*([^\s#]+)", block, re.MULTILINE)
         if runners != ["ubuntu-26.04"]:
-            errors.append(
-                f"{relative}: job {name} must run exactly on ubuntu-26.04"
-            )
+            errors.append(f"{relative}: job {name} must run exactly on ubuntu-26.04")
         checkout = block.find("uses: actions/checkout@")
         load = block.find("name: Load build configuration")
         if checkout < 0 or load < checkout:
@@ -1416,7 +1680,7 @@ def validate_workflow_text(relative: str, text: str) -> list[str]:
         ffmpeg = jobs.get("ffmpeg-stack", "")
         for token in (
             "libvulkan-dev",
-            'refs/tags/${FFMPEG_TAG}^{commit}',
+            "refs/tags/${FFMPEG_TAG}^{commit}",
             '"$FFMPEG_COMMIT"',
             "ffmpeg-patches/generate.sh",
             "ffmpeg-patches/test/build-and-run.sh",
@@ -1448,9 +1712,7 @@ def validate_workflow_text(relative: str, text: str) -> list[str]:
             "ARTIFACT_LABEL",
         ):
             if token not in publish:
-                errors.append(
-                    f"{relative}: manual package naming is missing {token}"
-                )
+                errors.append(f"{relative}: manual package naming is missing {token}")
 
     for token in (
         "ImageOS",
@@ -1472,7 +1734,9 @@ def validate_workflows() -> list[str]:
         if not path.is_file():
             errors.append(f"{relative}: missing")
             continue
-        errors.extend(validate_workflow_text(relative, path.read_text(encoding="utf-8")))
+        errors.extend(
+            validate_workflow_text(relative, path.read_text(encoding="utf-8"))
+        )
     return errors
 
 
@@ -1516,6 +1780,10 @@ def validate_consumers() -> list[str]:
     errors.extend(validate_generator_text(generator))
     replay = CONSUMERS[1].read_text(encoding="utf-8")
     errors.extend(validate_replay_text(replay))
+    if not QSV_REPLAY.is_file():
+        errors.append("ffmpeg-patches/test/qsv-roi-regression.sh: missing")
+    else:
+        errors.extend(validate_qsv_replay_text(QSV_REPLAY.read_text(encoding="utf-8")))
     errors.extend(validate_workflows())
     return errors
 
@@ -1525,11 +1793,17 @@ def main() -> int:
         print("build-config.env: missing", file=sys.stderr)
         return 1
 
-    errors = validate_config(CONFIG.read_text(encoding="utf-8"))
+    config_text = CONFIG.read_text(encoding="utf-8")
+    values, parse_errors = parse_assignments(config_text)
+    errors = validate_config(config_text)
     errors.extend(validate_consumers())
+    if not parse_errors:
+        errors.extend(validate_current_surfaces(values))
     if "--self-test" in sys.argv[1:]:
         errors.extend(validator_regressions())
         errors.extend(consumer_validator_regressions())
+        errors.extend(qsv_validator_regressions())
+        errors.extend(surface_validator_regressions())
         errors.extend(fixture_subprocess_regression())
         errors.extend(git_fixture_policy_regression())
         errors.extend(git_tag_ref_regression())
