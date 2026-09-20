@@ -32,7 +32,7 @@ cleanup() {
 
     if [[ -n "$OWNED_WORKTREE" ]]; then
         git -C "$OWNED_WORKTREE" am --abort >/dev/null 2>&1 || true
-        if ! git -C "$FFMPEG_REPO" worktree remove "$OWNED_WORKTREE" \
+        if ! git -C "$FFMPEG_REPO" worktree remove --force "$OWNED_WORKTREE" \
             >/dev/null 2>&1; then
             echo "WARNING: could not remove owned worktree: $OWNED_WORKTREE" >&2
             cleanup_failed=1

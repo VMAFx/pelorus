@@ -139,6 +139,19 @@ def consumer_validator_regressions() -> list[str]:
             "consumer regression: force-removal of caller WORKTREE was accepted"
         )
 
+    owned_force_cleanup = source.replace(
+        'worktree remove "$OWNED_WORKTREE"',
+        'worktree remove --force "$OWNED_WORKTREE"',
+    )
+    if any(
+        "cleanup must remove only an invocation-owned worktree" in error
+        or "must not remove caller-selected WORKTREE" in error
+        for error in validate_consumer_text(relative, owned_force_cleanup)
+    ):
+        failures.append(
+            "consumer regression: forced cleanup of OWNED_WORKTREE was rejected"
+        )
+
     replay_relative = "ffmpeg-patches/test/build-and-run.sh"
     replay = CONSUMERS[1].read_text(encoding="utf-8")
     late_trap = replay.replace("trap cleanup EXIT\n", "", 1).replace(
@@ -211,6 +224,78 @@ def git_tag_ref_regression() -> list[str]:
     return failures
 
 
+def git_dirty_worktree_cleanup_regression() -> list[str]:
+    """Prove owned forced cleanup removes untracked failure residue."""
+    with tempfile.TemporaryDirectory(prefix="pelorus-worktree-cleanup-") as temp_dir:
+        repo = Path(temp_dir) / "repo"
+        worktree = Path(temp_dir) / "owned-worktree"
+        commands = (
+            ("git", "init", "-q", str(repo)),
+            (
+                "git",
+                "-C",
+                str(repo),
+                "-c",
+                "user.name=Pelorus test",
+                "-c",
+                "user.email=test@pelorus.invalid",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "fixture",
+            ),
+            (
+                "git",
+                "-C",
+                str(repo),
+                "worktree",
+                "add",
+                "--detach",
+                str(worktree),
+                "HEAD",
+            ),
+        )
+        for command in commands:
+            subprocess.run(command, check=True, capture_output=True, text=True)
+
+        (worktree / "failure-residue").write_text("untracked\n", encoding="utf-8")
+        non_force = subprocess.run(
+            ("git", "-C", str(repo), "worktree", "remove", str(worktree)),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        still_present = worktree.exists()
+        forced = subprocess.run(
+            (
+                "git",
+                "-C",
+                str(repo),
+                "worktree",
+                "remove",
+                "--force",
+                str(worktree),
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        removed = not worktree.exists()
+        registered = subprocess.run(
+            ("git", "-C", str(repo), "worktree", "list", "--porcelain"),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+
+    failures = []
+    if non_force.returncode == 0 or not still_present:
+        failures.append("worktree cleanup regression: non-force removed dirty fixture")
+    if forced.returncode != 0 or not removed or str(worktree) in registered:
+        failures.append("worktree cleanup regression: owned force cleanup failed")
+    return failures
+
+
 def validate_consumer_text(relative: str, text: str) -> list[str]:
     """Check that an FFmpeg consumer follows the shared, safe pin contract."""
     errors: list[str] = []
@@ -244,14 +329,14 @@ def validate_consumer_text(relative: str, text: str) -> list[str]:
             f"{relative}: worktree ownership must be recorded only after creation"
         )
     owned_guard = text.find('if [[ -n "$OWNED_WORKTREE" ]]; then')
-    owned_removal = text.find('git -C "$FFMPEG_REPO" worktree remove "$OWNED_WORKTREE"')
+    safe_removal = 'worktree remove --force "$OWNED_WORKTREE"'
+    owned_removal = text.find(f'git -C "$FFMPEG_REPO" {safe_removal}')
     if owned_guard < 0 or owned_removal < owned_guard:
         errors.append(
             f"{relative}: cleanup must remove only an invocation-owned worktree"
         )
-    if re.search(r"worktree\s+remove\s+--force\b", text) or re.search(
-        r'worktree\s+remove(?:\s+--force)?\s+"\$WORKTREE"', text
-    ):
+    removal_lines = (line for line in text.splitlines() if "worktree remove" in line)
+    if any(safe_removal not in line for line in removal_lines):
         errors.append(
             f"{relative}: must not remove caller-selected WORKTREE with force or "
             "without ownership"
@@ -360,6 +445,7 @@ def main() -> int:
         errors.extend(validator_regressions())
         errors.extend(consumer_validator_regressions())
         errors.extend(git_tag_ref_regression())
+        errors.extend(git_dirty_worktree_cleanup_regression())
 
     if errors:
         print("\n".join(errors), file=sys.stderr)
