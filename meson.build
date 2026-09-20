@@ -65,3 +65,12 @@ test('build-config-sync',
             '--self-test'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+
+# ADR-0147: FF_VK_REP_FLOAT exposes the storage container's UNORM domain, not
+# necessarily the logical sample domain.  Keep conversion and component
+# preservation consistent across the entire arithmetic-filter family.
+test('vulkan-storage-domain',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'check-vulkan-storage-domain.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')

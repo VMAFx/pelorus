@@ -60,14 +60,14 @@ git commit -m "docs(adr): define the Vulkan sample-domain contract"
 - Create: `scripts/check-vulkan-storage-domain.py`
 - Modify: `meson.build`
 
-- [ ] **Step 1: Enumerate the contract**
+- [x] **Step 1: Enumerate the contract**
 
 The checker must distinguish read-only arithmetic filters, pixel transforms,
 and raw-copy/map exemptions. Require one shared helper include, a host-provided
 `sample_scale`, shader-side conversion before arithmetic, inverse conversion
 for transforms, and no post-readback MC scale.
 
-- [ ] **Step 2: Enforce component rules**
+- [x] **Step 2: Enforce component rules**
 
 Require denoise/aa/dehalo/deblock to expose semi-planar specialization and a
 per-component path, prohibit scalar-splat stores, and require read-modify-write
