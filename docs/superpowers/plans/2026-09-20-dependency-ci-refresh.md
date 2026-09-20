@@ -132,19 +132,19 @@ git commit -m "build: centralize the immutable FFmpeg baseline"
 - Modify: `ffmpeg-patches/generate.sh`
 - Modify: `ffmpeg-patches/test/build-and-run.sh`
 
-- [ ] **Step 1: Extend the checker, then confirm RED**
+- [x] **Step 1: Extend the checker, then confirm RED**
 
 Require both scripts to source `build-config.env`, use `FFMPEG_COMMIT`, and
 contain neither a literal FFmpeg release tag nor `/home/kilian/`. Reject
 force-removal of caller paths. The check is structural: it proves variable
 consumption, not one particular current version.
 
-- [ ] **Step 2: Make worktree creation non-destructive**
+- [x] **Step 2: Make worktree creation non-destructive**
 
 Both scripts must:
 
 1. require an explicit `FFMPEG_REPO`;
-2. verify `FFMPEG_TAG^{commit}` equals `FFMPEG_COMMIT` in that checkout;
+2. verify `refs/tags/${FFMPEG_TAG}^{commit}` equals `FFMPEG_COMMIT` in that checkout;
 3. use `FFMPEG_COMMIT` as the detached base;
 4. create a private directory with `mktemp -d` when `WORKTREE` is unset;
 5. refuse an existing caller-supplied `WORKTREE`;
@@ -152,7 +152,7 @@ Both scripts must:
    it created, and removes only its own empty scratch parent;
 7. never use `git worktree remove --force` to clear an unknown path.
 
-- [ ] **Step 3: Make replay test the current libpelorus tree**
+- [x] **Step 3: Make replay test the current libpelorus tree**
 
 `build-and-run.sh` must configure, build, and install the current Pelorus tree
 into a private temporary prefix. Export that prefix through `PKG_CONFIG_PATH`
@@ -161,7 +161,7 @@ and the platform runtime-library path before configuring FFmpeg. Remove
 configure with `--enable-vulkan --disable-doc`, link `ffmpeg`, and verify all
 ten Pelorus filters plus `pelorus_fgs` are registered.
 
-- [ ] **Step 4: Run focused tests and replay**
+- [x] **Step 4: Run focused tests and replay**
 
 ```bash
 meson test -C build build-config-sync --print-errorlogs

@@ -29,6 +29,27 @@ LOG_DIR=""
 OWNED_WORKTREE=""
 CALLER_WORKTREE=0
 
+canonicalize_existing_dir() {
+    (cd -- "$1" 2>/dev/null && pwd -P)
+}
+
+canonicalize_new_path() {
+    local path="$1"
+    local parent
+    local name
+    local canonical_parent
+
+    parent="$(dirname -- "$path")"
+    name="$(basename -- "$path")"
+    canonical_parent="$(canonicalize_existing_dir "$parent")" || return 1
+    printf '%s/%s\n' "$canonical_parent" "$name"
+}
+
+if ! FFMPEG_REPO="$(canonicalize_existing_dir "$FFMPEG_REPO")"; then
+    echo "ERROR: FFMPEG_REPO is not an accessible directory" >&2
+    exit 1
+fi
+
 cleanup() {
     local status=$?
     local cleanup_failed=0
@@ -86,6 +107,10 @@ if [[ ${WORKTREE+x} ]]; then
         echo "ERROR: refusing existing WORKTREE: $WORKTREE" >&2
         exit 1
     fi
+    if ! WORKTREE="$(canonicalize_new_path "$WORKTREE")"; then
+        echo "ERROR: WORKTREE parent is not an accessible directory" >&2
+        exit 1
+    fi
 fi
 
 RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/pelorus-ffmpeg-replay.XXXXXX")"
@@ -94,6 +119,11 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+if ! CANONICAL_RUN_ROOT="$(canonicalize_existing_dir "$RUN_ROOT")"; then
+    echo "ERROR: could not canonicalize scratch directory: $RUN_ROOT" >&2
+    exit 1
+fi
+RUN_ROOT="$CANONICAL_RUN_ROOT"
 PELORUS_BUILD="$RUN_ROOT/pelorus-build"
 PRIVATE_PREFIX="$RUN_ROOT/prefix"
 LOG_DIR="$RUN_ROOT/logs"
@@ -164,10 +194,10 @@ apply_stack() {
     done
 }
 
-configure_ffmpeg() {
-    cd "$WORKTREE"
-    ./configure --enable-vulkan --disable-doc
-}
+configure_ffmpeg() (
+    cd -- "$WORKTREE"
+    exec ./configure --enable-vulkan --disable-doc
+)
 
 run_logged "apply 18-patch FFmpeg stack" "$LOG_DIR/ffmpeg-apply.log" \
     apply_stack
