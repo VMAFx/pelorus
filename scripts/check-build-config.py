@@ -39,6 +39,8 @@ FORMAT_PATCH_OPTIONS = (
     "--find-renames=50%",
     "--diff-algorithm=myers",
     "--indent-heuristic",
+    "--unified=3",
+    "--inter-hunk-context=0",
     "--stat",
     "--stat-width=80",
     "--stat-name-width=60",
@@ -272,6 +274,45 @@ def consumer_validator_regressions() -> list[str]:
         ):
             failures.append(f"consumer regression: {name} was accepted")
 
+    hookful_worktree = source.replace(
+        'git -C "$FFMPEG_REPO" -c core.hooksPath=/dev/null \\\n'
+        '    worktree add --no-checkout --detach "$WORKTREE" "$FFMPEG_COMMIT"',
+        'git -C "$FFMPEG_REPO" \\\n'
+        '    worktree add --no-checkout --detach "$WORKTREE" "$FFMPEG_COMMIT"',
+        1,
+    )
+    if hookful_worktree == source:
+        failures.append("consumer regression: hookful worktree mutation changed nothing")
+    elif not any(
+        "worktree creation must disable Git hooks" in error
+        for error in validate_consumer_text(relative, hookful_worktree)
+    ):
+        failures.append("consumer regression: hookful worktree creation was accepted")
+
+    eager_checkout = source.replace("--no-checkout ", "", 1)
+    if eager_checkout == source:
+        failures.append("consumer regression: eager checkout mutation changed nothing")
+    elif not any(
+        "worktree creation must defer checkout" in error
+        for error in validate_consumer_text(relative, eager_checkout)
+    ):
+        failures.append("consumer regression: eager worktree checkout was accepted")
+
+    hookful_checkout = source.replace(
+        'git -C "$WORKTREE" -c core.hooksPath=/dev/null \\\n'
+        '    checkout --force --detach "$FFMPEG_COMMIT"',
+        'git -C "$WORKTREE" \\\n'
+        '    checkout --force --detach "$FFMPEG_COMMIT"',
+        1,
+    )
+    if hookful_checkout == source:
+        failures.append("consumer regression: hookful checkout mutation changed nothing")
+    elif not any(
+        "deferred checkout must disable Git hooks" in error
+        for error in validate_consumer_text(relative, hookful_checkout)
+    ):
+        failures.append("consumer regression: hookful deferred checkout was accepted")
+
     non_hermetic_format = source.replace("--no-signature", "", 1)
     if non_hermetic_format == source:
         failures.append("consumer regression: format mutation did not change fixture")
@@ -309,6 +350,19 @@ def consumer_validator_regressions() -> list[str]:
         failures.append(
             "consumer regression: cleanup trap installed after mkdir was accepted"
         )
+    hookful_am = replay.replace(
+        'git -C "$WORKTREE" -c core.hooksPath=/dev/null \\\n'
+        '            am --3way',
+        'git -C "$WORKTREE" \\\n            am --3way',
+        1,
+    )
+    if hookful_am == replay:
+        failures.append("consumer regression: hookful git-am mutation changed nothing")
+    elif not any(
+        "git am must disable Git hooks" in error
+        for error in validate_replay_text(hookful_am)
+    ):
+        failures.append("consumer regression: hookful git am was accepted")
     return failures
 
 
@@ -430,6 +484,8 @@ def git_dirty_worktree_cleanup_regression() -> list[str]:
                 "git",
                 "-C",
                 str(repo),
+                "-c",
+                "core.hooksPath=/dev/null",
                 "worktree",
                 "add",
                 "--detach",
@@ -487,6 +543,411 @@ def git_dirty_worktree_cleanup_regression() -> list[str]:
     return failures
 
 
+def git_worktree_hook_regression() -> list[str]:
+    """Prove checkout hooks cannot mutate or strand invocation worktrees."""
+    with tempfile.TemporaryDirectory(prefix="pelorus-worktree-hooks-") as temp_dir:
+        root = Path(temp_dir)
+        repo = root / "repo"
+        ordinary = root / "ordinary"
+        hardened = root / "hardened"
+        hooks = root / "hooks"
+        hooks.mkdir()
+        hook = hooks / "post-checkout"
+        hook.write_text("#!/bin/sh\nexit 91\n", encoding="utf-8")
+        hook.chmod(0o755)
+
+        errors = run_fixture_commands(
+            "worktree hook fixture setup",
+            (
+                ("git", "init", "-q", str(repo)),
+                fixture_commit(str(repo), "fixture"),
+                (
+                    "git",
+                    "-C",
+                    str(repo),
+                    "config",
+                    "core.hooksPath",
+                    str(hooks),
+                ),
+            ),
+        )
+        if errors:
+            return errors
+
+        ordinary_add = subprocess.run(
+            (
+                "git",
+                "-C",
+                str(repo),
+                "-c",
+                f"core.hooksPath={hooks}",
+                "worktree",
+                "add",
+                "--detach",
+                str(ordinary),
+                "HEAD",
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        ordinary_list = subprocess.run(
+            ("git", "-C", str(repo), "worktree", "list", "--porcelain"),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        ordinary_cleanup = subprocess.run(
+            (
+                "git",
+                "-C",
+                str(repo),
+                "-c",
+                "core.hooksPath=/dev/null",
+                "worktree",
+                "remove",
+                "--force",
+                str(ordinary),
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        hardened_add = subprocess.run(
+            (
+                "git",
+                "-C",
+                str(repo),
+                "-c",
+                "core.hooksPath=/dev/null",
+                "worktree",
+                "add",
+                "--no-checkout",
+                "--detach",
+                str(hardened),
+                "HEAD",
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        hardened_checkout = subprocess.run(
+            (
+                "git",
+                "-C",
+                str(hardened),
+                "-c",
+                "core.hooksPath=/dev/null",
+                "checkout",
+                "--force",
+                "--detach",
+                "HEAD",
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        hardened_cleanup = subprocess.run(
+            (
+                "git",
+                "-C",
+                str(repo),
+                "-c",
+                "core.hooksPath=/dev/null",
+                "worktree",
+                "remove",
+                "--force",
+                str(hardened),
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        final_list = subprocess.run(
+            ("git", "-C", str(repo), "worktree", "list", "--porcelain"),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    failures = []
+    if ordinary_add.returncode == 0 or str(ordinary) not in ordinary_list.stdout:
+        failures.append(
+            "worktree hook regression: hostile post-checkout did not strand the "
+            "ordinary worktree fixture"
+        )
+    if ordinary_cleanup.returncode != 0:
+        failures.append("worktree hook regression: ordinary residue cleanup failed")
+    if hardened_add.returncode != 0 or hardened_checkout.returncode != 0:
+        failures.append("worktree hook regression: hook-neutralized checkout failed")
+    if (
+        hardened_cleanup.returncode != 0
+        or final_list.returncode != 0
+        or str(ordinary) in final_list.stdout
+        or str(hardened) in final_list.stdout
+    ):
+        failures.append("worktree hook regression: invocation worktree leaked")
+    return failures
+
+
+def git_am_hook_regression() -> list[str]:
+    """Prove applypatch hooks cannot block or mutate deterministic replay."""
+    with tempfile.TemporaryDirectory(prefix="pelorus-am-hooks-") as temp_dir:
+        root = Path(temp_dir)
+        repo = root / "repo"
+        ordinary = root / "ordinary"
+        hardened = root / "hardened"
+        hooks = root / "hooks"
+        hooks.mkdir()
+
+        errors = run_fixture_commands(
+            "git am hook fixture setup",
+            (("git", "init", "-q", str(repo)),),
+        )
+        if errors:
+            return errors
+        sample = repo / "sample.txt"
+        sample.write_text("base\n", encoding="utf-8")
+        errors = run_fixture_commands(
+            "git am hook fixture commits",
+            (
+                ("git", "-C", str(repo), "add", "sample.txt"),
+                fixture_commit(str(repo), "base"),
+                ("git", "-C", str(repo), "branch", "base"),
+            ),
+        )
+        if errors:
+            return errors
+        sample.write_text("base\npatched\n", encoding="utf-8")
+        errors = run_fixture_commands(
+            "git am hook fixture patch",
+            (
+                ("git", "-C", str(repo), "add", "sample.txt"),
+                fixture_commit(str(repo), "patch"),
+            ),
+        )
+        if errors:
+            return errors
+        patch_result = subprocess.run(
+            ("git", "-C", str(repo), "format-patch", "-1", "--stdout"),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if patch_result.returncode != 0:
+            return ["git am hook regression: could not create fixture patch"]
+        patch = root / "fixture.patch"
+        patch.write_text(patch_result.stdout, encoding="utf-8")
+
+        errors = run_fixture_commands(
+            "git am hook fixture worktrees",
+            (
+                (
+                    "git",
+                    "-C",
+                    str(repo),
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "worktree",
+                    "add",
+                    "--detach",
+                    str(ordinary),
+                    "base",
+                ),
+                (
+                    "git",
+                    "-C",
+                    str(repo),
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "worktree",
+                    "add",
+                    "--detach",
+                    str(hardened),
+                    "base",
+                ),
+            ),
+        )
+        if errors:
+            return errors
+        for name in ("applypatch-msg", "pre-applypatch", "post-applypatch"):
+            hook = hooks / name
+            hook.write_text("#!/bin/sh\nexit 91\n", encoding="utf-8")
+            hook.chmod(0o755)
+        errors = run_fixture_commands(
+            "git am hook fixture policy",
+            (
+                (
+                    "git",
+                    "-C",
+                    str(repo),
+                    "config",
+                    "core.hooksPath",
+                    str(hooks),
+                ),
+            ),
+        )
+        if errors:
+            return errors
+
+        ordinary_am = subprocess.run(
+            (
+                "git",
+                "-C",
+                str(ordinary),
+                "-c",
+                f"core.hooksPath={hooks}",
+                "am",
+                "--3way",
+                str(patch),
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            (
+                "git",
+                "-C",
+                str(ordinary),
+                "-c",
+                "core.hooksPath=/dev/null",
+                "am",
+                "--abort",
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        hardened_am = subprocess.run(
+            (
+                "git",
+                "-C",
+                str(hardened),
+                "-c",
+                "core.hooksPath=/dev/null",
+                "am",
+                "--3way",
+                str(patch),
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        patched = (hardened / "sample.txt").read_text(encoding="utf-8")
+
+    failures = []
+    if ordinary_am.returncode == 0:
+        failures.append("git am hook regression: hostile applypatch hook did not run")
+    if hardened_am.returncode != 0 or patched != "base\npatched\n":
+        failures.append("git am hook regression: hook-neutralized replay failed")
+    return failures
+
+
+def git_smudge_cleanup_regression() -> list[str]:
+    """Prove a required-filter checkout failure leaves no owned worktree."""
+    with tempfile.TemporaryDirectory(prefix="pelorus-smudge-cleanup-") as temp_dir:
+        root = Path(temp_dir)
+        repo = root / "repo"
+        worktree = root / "owned-worktree"
+        errors = run_fixture_commands(
+            "smudge cleanup fixture setup",
+            (("git", "init", "-q", str(repo)),),
+        )
+        if errors:
+            return errors
+        (repo / ".gitattributes").write_text(
+            "payload.txt filter=pelorus-fail\n", encoding="utf-8"
+        )
+        (repo / "payload.txt").write_text("fixture\n", encoding="utf-8")
+        errors = run_fixture_commands(
+            "smudge cleanup fixture commit",
+            (
+                ("git", "-C", str(repo), "add", ".gitattributes", "payload.txt"),
+                fixture_commit(str(repo), "fixture"),
+                (
+                    "git",
+                    "-C",
+                    str(repo),
+                    "config",
+                    "filter.pelorus-fail.smudge",
+                    "/bin/false",
+                ),
+                (
+                    "git",
+                    "-C",
+                    str(repo),
+                    "config",
+                    "filter.pelorus-fail.required",
+                    "true",
+                ),
+                (
+                    "git",
+                    "-C",
+                    str(repo),
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "worktree",
+                    "add",
+                    "--no-checkout",
+                    "--detach",
+                    str(worktree),
+                    "HEAD",
+                ),
+            ),
+        )
+        if errors:
+            return errors
+        checkout = subprocess.run(
+            (
+                "git",
+                "-C",
+                str(worktree),
+                "-c",
+                "core.hooksPath=/dev/null",
+                "checkout",
+                "--force",
+                "--detach",
+                "HEAD",
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        cleanup = subprocess.run(
+            (
+                "git",
+                "-C",
+                str(repo),
+                "worktree",
+                "remove",
+                "--force",
+                str(worktree),
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        registered = subprocess.run(
+            ("git", "-C", str(repo), "worktree", "list", "--porcelain"),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    failures = []
+    if checkout.returncode == 0:
+        failures.append("smudge cleanup regression: required filter did not fail")
+    if (
+        cleanup.returncode != 0
+        or registered.returncode != 0
+        or worktree.exists()
+        or str(worktree) in registered.stdout
+    ):
+        failures.append("smudge cleanup regression: owned worktree leaked")
+    return failures
+
+
 def git_format_config_regression() -> list[str]:
     """Prove hostile repository format settings cannot change patch bytes."""
     helper = globals().get("run_fixture_commands")
@@ -515,7 +976,8 @@ def git_format_config_regression() -> list[str]:
         if errors:
             return errors
         sample = repo / "sample.txt"
-        sample.write_text("base\n", encoding="utf-8")
+        base_lines = [f"line-{number:02d}\n" for number in range(1, 41)]
+        sample.write_text("".join(base_lines), encoding="utf-8")
         errors = helper(
             "format fixture base",
             (
@@ -526,7 +988,10 @@ def git_format_config_regression() -> list[str]:
         )
         if errors:
             return errors
-        sample.write_text("base\none\n", encoding="utf-8")
+        changed_lines = base_lines.copy()
+        changed_lines[3] = "line-04 changed\n"
+        changed_lines[34] = "line-35 changed\n"
+        sample.write_text("".join(changed_lines), encoding="utf-8")
         errors = helper(
             "format fixture first patch",
             (
@@ -538,7 +1003,7 @@ def git_format_config_regression() -> list[str]:
             return errors
         renamed = repo / "renamed.txt"
         sample.rename(renamed)
-        renamed.write_text("base\none\ntwo\n", encoding="utf-8")
+        renamed.write_text("".join(changed_lines) + "tail\n", encoding="utf-8")
         errors = helper(
             "format fixture second patch",
             (
@@ -603,6 +1068,8 @@ def git_format_config_regression() -> list[str]:
             ("diff.renames", "false"),
             ("diff.algorithm", "patience"),
             ("diff.indentHeuristic", "false"),
+            ("diff.context", "0"),
+            ("diff.interHunkContext", "99"),
             ("diff.orderFile", "/definitely/missing/order-file"),
             ("diff.external", "/bin/false"),
         )
@@ -641,6 +1108,7 @@ def git_format_config_regression() -> list[str]:
 def validate_consumer_text(relative: str, text: str) -> list[str]:
     """Check that an FFmpeg consumer follows the shared, safe pin contract."""
     errors: list[str] = []
+    shell_text = text.replace("\\\n", " ")
     required = {
         'source "$ROOT/build-config.env"': "must source root build-config.env",
         "FFMPEG_COMMIT": "must consume the immutable FFmpeg commit",
@@ -664,18 +1132,49 @@ def validate_consumer_text(relative: str, text: str) -> list[str]:
 
     if not re.search(r':\s*"\$\{FFMPEG_REPO:\?[^}]+\}"', text):
         errors.append(f"{relative}: FFMPEG_REPO must be explicitly required")
-    if not re.search(
-        r'worktree\s+add\s+--detach\s+"\$WORKTREE"\s+"\$FFMPEG_COMMIT"', text
-    ):
-        errors.append(f"{relative}: worktree base must be FFMPEG_COMMIT")
-    worktree_add = text.find(
-        'git -C "$FFMPEG_REPO" worktree add --detach "$WORKTREE" "$FFMPEG_COMMIT"'
+    worktree_pattern = re.compile(
+        r'git\s+-C\s+"\$FFMPEG_REPO"\s+-c\s+core\.hooksPath=/dev/null\s+'
+        r'worktree\s+add\s+--no-checkout\s+--detach\s+'
+        r'"\$WORKTREE"\s+"\$FFMPEG_COMMIT"'
     )
-    ownership_assignment = text.find('OWNED_WORKTREE="$WORKTREE"')
-    if ownership_assignment < 0 or ownership_assignment < worktree_add:
+    worktree_match = worktree_pattern.search(shell_text)
+    if worktree_match is None:
+        if not re.search(
+            r'worktree\s+add\s+.*"\$WORKTREE"\s+"\$FFMPEG_COMMIT"', shell_text
+        ):
+            errors.append(f"{relative}: worktree base must be FFMPEG_COMMIT")
+        if "--no-checkout" not in text:
+            errors.append(f"{relative}: worktree creation must defer checkout")
+        if not re.search(
+            r'git\s+-C\s+"\$FFMPEG_REPO"\s+-c\s+'
+            r'core\.hooksPath=/dev/null\s+worktree\s+add',
+            shell_text,
+        ):
+            errors.append(f"{relative}: worktree creation must disable Git hooks")
+    checkout_pattern = re.compile(
+        r'git\s+-C\s+"\$WORKTREE"\s+-c\s+core\.hooksPath=/dev/null\s+'
+        r'checkout\s+--force\s+--detach\s+"\$FFMPEG_COMMIT"'
+    )
+    checkout_match = checkout_pattern.search(shell_text)
+    if checkout_match is None:
+        errors.append(f"{relative}: deferred checkout must disable Git hooks")
+    worktree_add = -1 if worktree_match is None else worktree_match.end()
+    ownership_assignment = shell_text.find('OWNED_WORKTREE="$WORKTREE"')
+    checkout_start = -1 if checkout_match is None else checkout_match.start()
+    if (
+        ownership_assignment < worktree_add
+        or checkout_start < ownership_assignment
+    ):
         errors.append(
-            f"{relative}: worktree ownership must be recorded only after creation"
+            f"{relative}: worktree ownership must be recorded between registration "
+            "and checkout"
         )
+    if not re.search(
+        r'git\s+-C\s+"\$OWNED_WORKTREE"\s+-c\s+core\.hooksPath=/dev/null\s+'
+        r'am\s+--abort',
+        shell_text,
+    ):
+        errors.append(f"{relative}: cleanup git am must disable Git hooks")
     owned_guard = text.find('if [[ -n "$OWNED_WORKTREE" ]]; then')
     safe_removal = 'worktree remove --force "$OWNED_WORKTREE"'
     owned_removal = text.find(f'git -C "$FFMPEG_REPO" {safe_removal}')
@@ -765,6 +1264,7 @@ def validate_generator_text(generator: str) -> list[str]:
 def validate_replay_text(replay: str) -> list[str]:
     """Validate requirements specific to full stack replay."""
     errors: list[str] = []
+    shell_replay = replay.replace("\\\n", " ")
     replay_required = {
         "--libdir=lib": "must install libpelorus into a private lib directory",
         "PKG_CONFIG_PATH": "must prefer the private libpelorus pkg-config file",
@@ -801,6 +1301,14 @@ def validate_replay_text(replay: str) -> list[str]:
                 "ffmpeg-patches/test/build-and-run.sh: forbidden configure flag "
                 f"{forbidden}"
             )
+    if not re.search(
+        r'git\s+-C\s+"\$WORKTREE"\s+-c\s+core\.hooksPath=/dev/null\s+'
+        r'am\s+--3way',
+        shell_replay,
+    ):
+        errors.append(
+            "ffmpeg-patches/test/build-and-run.sh: git am must disable Git hooks"
+        )
     if "configure_ffmpeg() (" not in replay or "exec ./configure" not in replay:
         errors.append(
             "ffmpeg-patches/test/build-and-run.sh: configure must run in a " "subshell"
@@ -1026,6 +1534,9 @@ def main() -> int:
         errors.extend(git_fixture_policy_regression())
         errors.extend(git_tag_ref_regression())
         errors.extend(git_dirty_worktree_cleanup_regression())
+        errors.extend(git_worktree_hook_regression())
+        errors.extend(git_am_hook_regression())
+        errors.extend(git_smudge_cleanup_regression())
         errors.extend(git_format_config_regression())
         errors.extend(workflow_validator_regressions())
 
