@@ -58,3 +58,4 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0143](0143-ffmpeg-9-migration.md) | FFmpeg 9 migration — precompiled SPIR-V replaces the runtime inline-GLSL shader model | Proposed |
 | [0144](0144-ffmpeg-pin-and-ci-runner-policy.md) | Pin FFmpeg by release and commit; run CI on Ubuntu 26.04 native Vulkan packages | Accepted |
 | [0146](0146-qsv-roi-frame-ownership.md) | QSV dense ROI maps are per-frame and limited to progressive HEVC CQP on runtime API 1.28 or newer; corrects ADR-0114's QSV capability/lifetime detail | Accepted |
+| [0147](0147-vulkan-sample-domain-and-components.md) | Normalize Vulkan arithmetic to the true sample domain and preserve every physical-plane component | Accepted |
