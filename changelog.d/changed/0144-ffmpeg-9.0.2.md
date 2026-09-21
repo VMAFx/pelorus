@@ -3,5 +3,7 @@
   release jobs consume the shared pin deterministically. A manual release
   dispatch now runs a non-publishing rehearsal while only a `v*` tag push can
   publish; replay compiles every available encoder consumer and proves static
-  `libavfilter` pkg-config linkage from an external program
+  `libavfilter` pkg-config linkage from an external program. Patch replay also
+  supplies its own committer identity and disables signing so clean CI runners
+  do not depend on ambient Git configuration
   ([ADR-0144](docs/adr/0144-ffmpeg-pin-and-ci-runner-policy.md)).

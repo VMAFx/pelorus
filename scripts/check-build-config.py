@@ -500,8 +500,9 @@ def consumer_validator_regressions() -> list[str]:
             "consumer regression: cleanup trap installed after mkdir was accepted"
         )
     hookful_am = replay.replace(
-        'git -C "$WORKTREE" -c core.hooksPath=/dev/null \\\n' "            am --3way",
-        'git -C "$WORKTREE" \\\n            am --3way',
+        'git -C "$WORKTREE" -c core.hooksPath=/dev/null \\\n'
+        "            -c user.name=Pelorus-replay \\\n",
+        'git -C "$WORKTREE" \\\n' "            -c user.name=Pelorus-replay \\\n",
         1,
     )
     if hookful_am == replay:
@@ -511,6 +512,21 @@ def consumer_validator_regressions() -> list[str]:
         for error in validate_replay_text(hookful_am)
     ):
         failures.append("consumer regression: hookful git am was accepted")
+
+    missing_am_identity = replay.replace(
+        "            -c user.name=Pelorus-replay \\\n"
+        "            -c user.email=ffmpeg-replay@pelorus.invalid \\\n"
+        "            -c commit.gpgSign=false \\\n",
+        "",
+        1,
+    )
+    if missing_am_identity == replay:
+        failures.append("consumer regression: git-am identity mutation changed nothing")
+    elif not any(
+        "git am must provide a clean-runner committer identity" in error
+        for error in validate_replay_text(missing_am_identity)
+    ):
+        failures.append("consumer regression: identityless git am was accepted")
 
     missing_optional_sdk = replay.replace(
         "configure_extra+=(--enable-libsvtav1)",
@@ -1661,11 +1677,24 @@ def validate_replay_text(replay: str) -> list[str]:
                 f"{forbidden}"
             )
     if not re.search(
-        r'git\s+-C\s+"\$WORKTREE"\s+-c\s+core\.hooksPath=/dev/null\s+' r"am\s+--3way",
+        r'git\s+-C\s+"\$WORKTREE"\s+-c\s+core\.hooksPath=/dev/null'
+        r"[^\n]*\bam\s+--3way",
         shell_replay,
     ):
         errors.append(
             "ffmpeg-patches/test/build-and-run.sh: git am must disable Git hooks"
+        )
+    if not re.search(
+        r'git\s+-C\s+"\$WORKTREE"\s+-c\s+core\.hooksPath=/dev/null\s+'
+        r"-c\s+user\.name=Pelorus-replay\s+"
+        r"-c\s+user\.email=ffmpeg-replay@pelorus\.invalid\s+"
+        r"-c\s+commit\.gpgSign=false\s+am\s+--3way\s+"
+        r"--no-gpg-sign\s+--no-verify",
+        shell_replay,
+    ):
+        errors.append(
+            "ffmpeg-patches/test/build-and-run.sh: git am must provide a "
+            "clean-runner committer identity and disable signing"
         )
     if "configure_ffmpeg() (" not in replay or "exec ./configure" not in replay:
         errors.append(

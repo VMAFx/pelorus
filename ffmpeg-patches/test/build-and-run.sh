@@ -203,7 +203,10 @@ apply_stack() {
     for patch in "${PATCHES[@]}"; do
         echo "am: $patch"
         git -C "$WORKTREE" -c core.hooksPath=/dev/null \
-            am --3way "$PATCHDIR/$patch"
+            -c user.name=Pelorus-replay \
+            -c user.email=ffmpeg-replay@pelorus.invalid \
+            -c commit.gpgSign=false \
+            am --3way --no-gpg-sign --no-verify "$PATCHDIR/$patch"
     done
 }
 
