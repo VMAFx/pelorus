@@ -45,7 +45,7 @@ index fec2ed596e..8ca641e341 100644
 +#if SVT_AV1_CHECK_VERSION(1, 6, 0)
 +        svt_enc->roi_b64_cols = ((unsigned)avctx->width  + 63u) / 64u;
 +        svt_enc->roi_b64_rows = ((unsigned)avctx->height + 63u) / 64u;
-+        svt_enc->enc_params.enable_roi_map = true;
++        svt_enc->enc_params.enable_roi_map = 1;
 +        av_log(avctx, AV_LOG_VERBOSE,
 +               "Pelorus ROI map enabled: %ux%u superblocks (64 px/SB).\n",
 +               svt_enc->roi_b64_cols, svt_enc->roi_b64_rows);

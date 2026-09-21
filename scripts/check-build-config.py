@@ -23,6 +23,7 @@ QSV_REPLAY = ROOT / "ffmpeg-patches" / "test" / "qsv-roi-regression.sh"
 STATIC_AVFILTER_CONSUMER = (
     ROOT / "ffmpeg-patches" / "test" / "static-libavfilter-consumer.c"
 )
+SVTAV1_ROI_PATCH = ROOT / "ffmpeg-patches" / "files" / "svtav1-pelorus-roi.patch"
 LIBPELORUS_FILTERS = (
     "pelorus_analyze_vulkan",
     "pelorus_deband_vulkan",
@@ -624,6 +625,27 @@ def static_consumer_validator_regressions() -> list[str]:
         for error in validate_static_consumer_text(mutated)
     ):
         return ["static consumer regression: missing filter lookup was accepted"]
+    return []
+
+
+def validate_svtav1_roi_patch_text(source: str) -> list[str]:
+    """Keep the SVT-AV1 boolean assignment portable across supported SDKs."""
+    if "enable_roi_map = 1;" not in source or "enable_roi_map = true;" in source:
+        return [
+            "ffmpeg-patches/files/svtav1-pelorus-roi.patch: enable_roi_map must "
+            "use an SDK-neutral integer boolean"
+        ]
+    return []
+
+
+def svtav1_roi_patch_validator_regression() -> list[str]:
+    """Prove the Ubuntu 26.04 SVT-AV1 2.x boolean spelling is required."""
+    source = SVTAV1_ROI_PATCH.read_text(encoding="utf-8")
+    mutated = source.replace("enable_roi_map = 1;", "enable_roi_map = true;", 1)
+    if mutated == source:
+        return ["SVT-AV1 regression: boolean mutation changed nothing"]
+    if not validate_svtav1_roi_patch_text(mutated):
+        return ["SVT-AV1 regression: SDK-dependent true token was accepted"]
     return []
 
 
@@ -2012,6 +2034,12 @@ def validate_consumers() -> list[str]:
                 STATIC_AVFILTER_CONSUMER.read_text(encoding="utf-8")
             )
         )
+    if not SVTAV1_ROI_PATCH.is_file():
+        errors.append("ffmpeg-patches/files/svtav1-pelorus-roi.patch: missing")
+    else:
+        errors.extend(
+            validate_svtav1_roi_patch_text(SVTAV1_ROI_PATCH.read_text(encoding="utf-8"))
+        )
     errors.extend(validate_workflows())
     return errors
 
@@ -2031,6 +2059,7 @@ def main() -> int:
         errors.extend(validator_regressions())
         errors.extend(consumer_validator_regressions())
         errors.extend(static_consumer_validator_regressions())
+        errors.extend(svtav1_roi_patch_validator_regression())
         errors.extend(qsv_validator_regressions())
         errors.extend(surface_validator_regressions())
         errors.extend(fixture_subprocess_regression())
