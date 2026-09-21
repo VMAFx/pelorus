@@ -1,6 +1,8 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # Pelorus
 
+[![HISS Adopted](https://img.shields.io/badge/Standards-HISS%20Adopted%20(78%20baselined)-yellow)](AGENTS.md)
+
 [![CI](https://github.com/vmafx/pelorus/actions/workflows/ci.yml/badge.svg)](https://github.com/vmafx/pelorus/actions)
 [![License: BSD-2-Clause-Patent](https://img.shields.io/badge/License-BSD--2--Clause--Patent-blue.svg)](LICENSE)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/vmafx/pelorus/badge)](https://securityscorecards.dev/viewer/?uri=github.com/vmafx/pelorus)
@@ -202,3 +204,19 @@ FFmpeg when applied.
 
 If Pelorus is useful to you: [GitHub Sponsors](https://github.com/sponsors/lusoris)
 · [Ko-fi](https://ko-fi.com/lusoris).
+
+## Standards & Governance
+
+Pelorus has adopted the pinned Praetor/HISS policy and a 78-finding legacy
+baseline. Canonical agent guidance lives in `AGENTS.md`; generated vendor
+contexts are checked for drift. The native Pelorus gate passes locally. Full
+Praetor audit acceptance remains pending because the pinned auditor requires an
+explicitly declined branch-ruleset artifact; see
+[ADR-0145](docs/adr/0145-praetor-governance-adoption.md).
+
+| Gate | Command | Description |
+| :--- | :--- | :--- |
+| **Native verification** | `make verify-native` | Builds, tests, formats, lints, and checks changelog rendering |
+| **Full verification** | `make verify-all` | Adds context and HISS checks; currently exposes the upstream audit blocker |
+| **HISS audit** | `make audit` | Applies the pinned 78-finding baseline ratchet |
+| **Context sync** | `make compile-context` | Compiles canonical agent guidance to vendor targets |

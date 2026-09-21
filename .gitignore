@@ -37,10 +37,15 @@ __pycache__/
 *~
 .DS_Store
 /.cache/
-/.vscode/
+/.vscode/*
+!/.vscode/extensions.json
+!/.vscode/settings.json
+!/.vscode/tasks.json
 /compile_commands.json
 builddir/
 build-run/
 build-san/
 .bench-out/
 x265_2pass.log*
+/.standards/worktrees/
+/.agents/mcp_config.json

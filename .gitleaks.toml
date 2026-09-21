@@ -1,0 +1,3 @@
+# Preserve Gitleaks's maintained built-in rules; add Pelorus-specific rules here.
+[extend]
+useDefault = true

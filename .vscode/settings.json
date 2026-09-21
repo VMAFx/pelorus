@@ -1,0 +1,21 @@
+{
+  "[c]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+    "editor.formatOnSave": true
+  },
+  "[cpp]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+    "editor.formatOnSave": true
+  },
+  "clangd.arguments": [
+    "--compile-commands-dir=build",
+    "--header-insertion=never"
+  ],
+  "clangd.path": "clangd",
+  "files.watcherExclude": {
+    "**/.standards/worktrees/**": true,
+    "**/.workingdir*/**": true,
+    "**/bin/**": true,
+    "**/dist/**": true
+  }
+}
