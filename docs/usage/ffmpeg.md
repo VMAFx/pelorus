@@ -6,10 +6,12 @@ Pelorus filters are libavfilter Vulkan filters: they consume and produce
 decode to encode — so `hwupload`/`hwdownload` belong only at the pipeline edges,
 never between Pelorus stages.
 
-**Codec-agnostic.** The filters pre-process pixels; the encoder is your choice.
-The examples use `hevc_nvenc`, but swap in any hardware encoder —
-`av1_nvenc`, `hevc_qsv` / `av1_qsv`, `hevc_vaapi` / `av1_vaapi`, `hevc_amf` /
-`av1_amf`. Deband/denoise/motion-hints help HEVC (rivaling x265) and AV1 alike.
+**Codec-agnostic.** The filters pre-process pixels; the encoder is your choice,
+but FFmpeg hardware-frame domains must match. The minimal example downloads to
+software frames before NVENC. The end-to-end zero-copy example instead uses a
+Vulkan Video encoder. NVENC, QSV, VAAPI, and AMF require an explicit transfer
+or mapping boundary from `AV_PIX_FMT_VULKAN`. Deband, denoise, and motion hints
+help HEVC (rivaling x265) and AV1 alike.
 
 ## Minimal: software decode → upload → deband → download → HW encode
 
@@ -25,10 +27,11 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
 ## Full zero-copy: Vulkan decode → deband → Vulkan HW encode
 
 ```bash
-ffmpeg -init_hw_device vulkan -hwaccel vulkan -hwaccel_output_format vulkan \
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
+       -hwaccel vulkan -hwaccel_device vk -hwaccel_output_format vulkan \
        -i input.mkv \
        -vf "pelorus_deband_vulkan=range=15:thry=0.012" \
-       -c:v hevc_nvenc -cq 28 out.mkv      # HEVC; or av1_nvenc for AV1
+       -c:v hevc_vulkan -pix_fmt vulkan -qp 28 out.mkv  # or av1_vulkan for AV1
 ```
 
 When the decoder, filter, and encoder all speak Vulkan/VRAM, no frame touches

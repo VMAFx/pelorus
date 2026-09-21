@@ -42,10 +42,10 @@ docs/adr/0133-analyze-coarse-banding-cambi.md
  configure                                    |   3 +
  libavfilter/Makefile                         |   1 +
  libavfilter/allfilters.c                     |   1 +
- libavfilter/vf_pelorus_analyze_vulkan.c      | 853 ++++++++++++++++++++
+ libavfilter/vf_pelorus_analyze_vulkan.c      | 856 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |   1 +
- libavfilter/vulkan/pelorus_analyze.comp.glsl | 132 +++
- 6 files changed, 991 insertions(+)
+ libavfilter/vulkan/pelorus_analyze.comp.glsl | 136 ++++
+ 6 files changed, 998 insertions(+)
 
 diff --git a/configure b/configure
 index 00b13ed09edcf3fb2b44ff9d0bfbb4420f45c68e..aec9b3ae17deb53929fc15870fdaeb58db717c8f 100755
@@ -94,10 +94,10 @@ index 78a01c74a326700f3c6c4799906c5ae17b613830..c781df8365397465a0f8cb2c25ac4505
  extern const FFFilter ff_vf_perspective;
 diff --git a/libavfilter/vf_pelorus_analyze_vulkan.c b/libavfilter/vf_pelorus_analyze_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..a874b7f90b3d52a19cc67c9beda1a978eae0bc1c
+index 0000000000000000000000000000000000000000..a9e6cf19f5639d9d816e51133637151c936438c2
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_analyze_vulkan.c
-@@ -0,0 +1,853 @@
+@@ -0,0 +1,856 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -226,11 +226,14 @@ index 0000000000000000000000000000000000000000..a874b7f90b3d52a19cc67c9beda1a978
 +    }
 +
 +    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
-+    /* The reduction reads only the luma plane and is otherwise fully static,
-+     * so no specialization constants are needed (unlike deband, which had a
-+     * C-unrolled per-plane loop). `spec` is NULL. */
-+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, NULL, (uint32_t[]){PEL_TILE, PEL_TILE, 1},
-+                      0);
++    /* A literal input_images[0] lets glslc collapse the unsized descriptor
++     * array to a fixed one-element SPIR-V array, diverging from the FFmpeg
++     * descriptor layout below on multi-plane frames. Keep the luma index as a
++     * specialization constant so the runtime descriptor-array contract is
++     * retained. */
++    SPEC_LIST_CREATE(sl, 1, sizeof(uint32_t))
++    SPEC_LIST_ADD(sl, 0, 32, 0u);
++    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){PEL_TILE, PEL_TILE, 1}, 0);
 +
 +    {
 +        FFVulkanDescriptorSetBinding desc[] = {
@@ -962,10 +965,10 @@ index e62ab231cb50888e10c829ad66e15e4cb8d66670..578953efb422d850e60c82c891364c76
 +OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vulkan/pelorus_analyze.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_analyze.comp.glsl b/libavfilter/vulkan/pelorus_analyze.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..d21c87908d7196a4fbb5846d08c423aa485c9c5c
+index 0000000000000000000000000000000000000000..97d9f12fb28d047c6c44bc93008a224843a7869c
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_analyze.comp.glsl
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,136 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -1026,6 +1029,10 @@ index 0000000000000000000000000000000000000000..d21c87908d7196a4fbb5846d08c423aa
 +    uint tile[];
 +};
 +
++/* Preserve input_images as a runtime descriptor array in SPIR-V. A literal
++ * zero index is folded by glslc into a fixed one-element descriptor array. */
++layout (constant_id = 0) const uint luma_plane = 0u;
++
 +shared uint s_sum;
 +shared uint s_sumsq;
 +shared uint s_edge;
@@ -1046,16 +1053,16 @@ index 0000000000000000000000000000000000000000..d21c87908d7196a4fbb5846d08c423aa
 +        s_grad = 0u; s_cnt = 0u;
 +    }
 +    barrier();
-+    ivec2 size = imageSize(input_images[0]);
++    ivec2 size = imageSize(input_images[luma_plane]);
 +    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
 +    /* Was IS_WITHIN(pos, size) — the n8 GLSL prelude is gone in FFmpeg 9.
 +     * NOT an early return: every invocation must reach the barrier below. */
 +    if (all(lessThan(pos, size))) {
-+        float l = pel_to_sample(imageLoad(input_images[0], pos).x);
++        float l = pel_to_sample(imageLoad(input_images[luma_plane], pos).x);
 +        ivec2 rp = clamp(pos + ivec2(1, 0), ivec2(0), size - 1);
 +        ivec2 dp = clamp(pos + ivec2(0, 1), ivec2(0), size - 1);
-+        float gx = abs(pel_to_sample(imageLoad(input_images[0], rp).x) - l);
-+        float gy = abs(pel_to_sample(imageLoad(input_images[0], dp).x) - l);
++        float gx = abs(pel_to_sample(imageLoad(input_images[luma_plane], rp).x) - l);
++        float gy = abs(pel_to_sample(imageLoad(input_images[luma_plane], dp).x) - l);
 +        float g = gx + gy;
 +        float edge = clamp(g, 0.0, 1.0);
 +        /* A "real but low-amplitude" step (>= grad_lo) is the banding

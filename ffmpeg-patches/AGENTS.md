@@ -53,6 +53,14 @@ ffmpeg-patches/
   transforms do not link it.
 - Descriptor binding order and push-constant layout are hand-maintained across
   C and GLSL. Specialization IDs 253/254/255 are reserved for workgroup size.
+- Keep luma-only accesses to unsized per-plane image arrays behind an explicit
+  specialization constant, even when the value is always zero. A literal
+  `[0]` lets `glslc` contract the SPIR-V descriptor to one element while
+  FFmpeg still binds every frame plane. The C specialization list and GLSL
+  `constant_id` are one contract.
+- When current and reference inputs share one `AVVkFrame`, enqueue its
+  dependency, create its views, and transition its image only once; overlapping
+  barriers for the same image in one dependency are invalid on strict drivers.
 
 ## Rebase-sensitive invariants
 

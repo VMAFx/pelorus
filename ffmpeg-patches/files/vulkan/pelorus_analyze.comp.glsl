@@ -58,6 +58,10 @@ layout (set = 0, binding = 1, std430) buffer tile_buffer {
     uint tile[];
 };
 
+/* Preserve input_images as a runtime descriptor array in SPIR-V. A literal
+ * zero index is folded by glslc into a fixed one-element descriptor array. */
+layout (constant_id = 0) const uint luma_plane = 0u;
+
 shared uint s_sum;
 shared uint s_sumsq;
 shared uint s_edge;
@@ -78,16 +82,16 @@ void main()
         s_grad = 0u; s_cnt = 0u;
     }
     barrier();
-    ivec2 size = imageSize(input_images[0]);
+    ivec2 size = imageSize(input_images[luma_plane]);
     ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
     /* Was IS_WITHIN(pos, size) — the n8 GLSL prelude is gone in FFmpeg 9.
      * NOT an early return: every invocation must reach the barrier below. */
     if (all(lessThan(pos, size))) {
-        float l = pel_to_sample(imageLoad(input_images[0], pos).x);
+        float l = pel_to_sample(imageLoad(input_images[luma_plane], pos).x);
         ivec2 rp = clamp(pos + ivec2(1, 0), ivec2(0), size - 1);
         ivec2 dp = clamp(pos + ivec2(0, 1), ivec2(0), size - 1);
-        float gx = abs(pel_to_sample(imageLoad(input_images[0], rp).x) - l);
-        float gy = abs(pel_to_sample(imageLoad(input_images[0], dp).x) - l);
+        float gx = abs(pel_to_sample(imageLoad(input_images[luma_plane], rp).x) - l);
+        float gy = abs(pel_to_sample(imageLoad(input_images[luma_plane], dp).x) - l);
         float g = gx + gy;
         float edge = clamp(g, 0.0, 1.0);
         /* A "real but low-amplitude" step (>= grad_lo) is the banding

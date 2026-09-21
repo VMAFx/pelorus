@@ -38,12 +38,17 @@ cd ffmpeg-patches
 FFMPEG_REPO=/absolute/path/to/ffmpeg ./generate.sh
 FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh
 
-# zero-copy: decode -> smart deband (VRAM) -> hardware encode
-ffmpeg -init_hw_device vulkan -hwaccel vulkan -hwaccel_output_format vulkan \
+# zero-copy: Vulkan decode -> smart deband -> Vulkan Video encode
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
+       -hwaccel vulkan -hwaccel_device vk -hwaccel_output_format vulkan \
        -i input.mkv \
        -vf "pelorus_deband_vulkan=range=15:dither=bluenoise:dynamic=1" \
-       -c:v hevc_nvenc -cq 28 out.mkv      # or: av1_nvenc / hevc_qsv / hevc_vaapi
+       -c:v hevc_vulkan -pix_fmt vulkan -qp 28 out.mkv  # or: av1_vulkan
 ```
+
+NVENC, QSV, VAAPI, and AMF use different FFmpeg hardware-frame domains; add an
+explicit download/upload or mapping boundary for those encoders instead of
+feeding them `AV_PIX_FMT_VULKAN` frames directly.
 
 ## Principles
 

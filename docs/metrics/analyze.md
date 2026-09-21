@@ -68,10 +68,11 @@ on textured tiles (the coarse scale is gated to flats).
 ```bash
 # analyze upstream of deband so the deband side-data carries measured stats,
 # then score against the source with vmafx in one graph
-ffmpeg -init_hw_device vulkan -hwaccel vulkan -hwaccel_output_format vulkan \
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
+       -hwaccel vulkan -hwaccel_device vk -hwaccel_output_format vulkan \
        -i input.mkv \
        -vf "pelorus_analyze_vulkan,pelorus_deband_vulkan=range=15" \
-       -c:v hevc_nvenc -cq 28 out.mkv      # codec-agnostic; or av1_nvenc / hevc_qsv
+       -c:v hevc_vulkan -pix_fmt vulkan -qp 28 out.mkv  # or av1_vulkan
 ```
 
 Output: the input video, unchanged, with a Pelorus side-data blob on every
