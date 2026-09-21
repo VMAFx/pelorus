@@ -16,12 +16,14 @@ uses Meson, C, GLSL, and an FFmpeg patch replay. Praetor also generates branch
 and agent artifacts for `main`; Pelorus deliberately uses `master`.
 
 Praetor commit `846da5908d15b3cf5581ca6b0205cc644b249599`, the revision
-currently enforced by VMAFx, measures 77 existing Pelorus findings: 31 HISS-01,
-one HISS-02, and 45 HISS-04. Its generated Makefile contains failing placeholder
-build targets, generated Lefthook commands assume Go, and `adopt` installs hooks
-into the shared Git directory when hook generation is enabled. Those outputs
-need project-specific reconciliation before they can be treated as an
-operational gate.
+currently enforced by VMAFx, measures 78 existing Pelorus findings on the
+verified integration product tree: 31 HISS-01, one HISS-02, and 46 HISS-04.
+The initial adoption tree measured 77; the stacked base subsequently added one
+finding and shifted line-keyed fingerprints. Its generated Makefile contains
+failing placeholder build targets, generated Lefthook commands assume Go, and
+`adopt` installs hooks into the shared Git directory when hook generation is
+enabled. Those outputs need project-specific reconciliation before they can be
+treated as an operational gate.
 
 ## Decision
 
@@ -52,7 +54,7 @@ shared `.git/hooks` directory.
 | Copy VMAFx's adoption verbatim | Small design effort; identical visible layout | Imports Go commands, VMAFx paths, `main`, an unrelated 1,411-finding baseline, and VMAFx personas | It would claim enforcement that Pelorus cannot execute |
 | Run `praetorctl adopt --force` and commit every generated file unchanged | Maximum generated coverage | Failing Makefile, Go-only hooks, wrong branch targets, untested container, shared-hook side effect | Generated output is a starting point, not proof of a valid repository contract |
 | Adopt declarations and CI only | Smallest change | Agent contexts, personas, hooks, and local verification continue to drift | HISS-16 and cross-tool consistency are primary adoption goals |
-| Clear all 77 findings during adoption | Starts with a zero-debt baseline | Mixes governance scaffolding with broad product-code refactoring | A baseline ratchet prevents regression without destabilizing filter work |
+| Clear all 78 findings during adoption | Starts with a zero-debt baseline | Mixes governance scaffolding with broad product-code refactoring | A baseline ratchet prevents regression without destabilizing filter work |
 
 ## Consequences
 

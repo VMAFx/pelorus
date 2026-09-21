@@ -2,11 +2,12 @@
 # Research digest 0145 — Praetor governance adoption
 
 Evidence for
-[ADR-0145](../adr/0145-praetor-governance-adoption.md). Measurements use the
-integrated Pelorus tree at `6ccc73001dee07071b5dc8cda9ee2fcb9bfb4ac2` and
-Praetor commit `846da5908d15b3cf5581ca6b0205cc644b249599`. Generation ran in
-an isolated clone on 2026-09-20; no adoption command ran against the linked
-working tree or its shared Git hooks.
+[ADR-0145](../adr/0145-praetor-governance-adoption.md). Final measurements use
+the verified integration product tree at
+`3aa2f61bd97b15fb105beb9b25b0ac13c58765f6` and Praetor commit
+`846da5908d15b3cf5581ca6b0205cc644b249599`. Initial generation ran in an
+isolated clone on 2026-09-20; the baseline was remeasured on the exact stacked
+merge on 2026-09-21. No adoption command ran against shared Git hooks.
 
 ## Declared policy
 
@@ -19,21 +20,22 @@ working tree or its shared Git hooks.
 | Default branch | `master` |
 
 The generated lock contains one profile digest and four facet digests. The
-baseline contains 77 legacy findings:
+baseline contains 78 legacy findings:
 
 | Rule | Count |
 |---|---:|
 | HISS-01 | 31 |
 | HISS-02 | 1 |
-| HISS-04 | 45 |
-| **Total** | **77** |
+| HISS-04 | 46 |
+| **Total** | **78** |
 
 Initial dry-run and materializing runs on the pre-review integration tree both
-reported 74. Final integration review changed FFmpeg patch sources and raised
-the measured total to 77, so the pinned baseline tool recorded a one-time
-initial-adoption increase rationale against `6ccc730`. No finding was cleared by
-this onboarding through product C, header, shader, or FFmpeg patch edits. The
-baseline is a non-regression ratchet, not a claim that Pelorus has zero debt.
+reported 74. Review raised the initial baseline to 77 at `6ccc730`. The verified
+integration tip later added one HISS-04 finding and shifted existing source
+locations, so the exact stacked merge was mechanically remeasured at 78. The
+line-key churn is reported on Praetor issue 29; the onboarding itself does not
+edit product C, headers, shaders, or FFmpeg patch sources. The baseline is a
+non-regression ratchet, not a claim that Pelorus has zero debt.
 
 ## Generated and reconciled surface
 
@@ -77,7 +79,7 @@ projections synchronized.
 `make verify-native` exits successfully on the integrated tree:
 
 - Meson configure and Ninja build pass;
-- 26 of 26 fast tests pass;
+- 27 of 27 fast tests pass;
 - clang-format passes;
 - the configured clang-tidy policy exits zero; and
 - changelog rendering is current.
@@ -87,7 +89,7 @@ advisories in `libpelorus/src/interop.c` (`pel_blob_pack` and
 `pel_blob_find_section`). This adoption does not hide or refactor that product
 debt; neither function is touched by the governance change.
 
-The pinned `audit` command passes manifest, lock, catalog, 77-of-77 baseline,
+The pinned `audit` command passes manifest, lock, catalog, 78-of-78 baseline,
 cross-context, Caveman, and persona-projection checks. It then fails because it
 requires `.github/rulesets/main.json` even though the manifest explicitly
 declines `branch-ruleset`. This blocks `make verify-all` and the hosted
@@ -99,6 +101,9 @@ bypass the failure.
 Praetor defects and generator assumptions found during adoption are reported in
 the Praetor tracker:
 
+- [issue 29 comment](https://github.com/cordanaLLM/praetor/issues/29#issuecomment-5754015107):
+  line-number fingerprints turned an advanced-base scan with one net new
+  finding into 23 reported unbaselined findings;
 - [issue 408](https://github.com/CordanaLLM/praetor/issues/408): audit ignores
   the accepted branch-ruleset decline; this is the remaining gate blocker;
 - [issue 407](https://github.com/CordanaLLM/praetor/issues/407): a local clone

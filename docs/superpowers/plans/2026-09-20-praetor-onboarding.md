@@ -9,6 +9,13 @@
 
 **Tech Stack:** Praetor `846da5908d15b3cf5581ca6b0205cc644b249599`, Go 1.27, YAML/JSON, GNU Make, Lefthook, Meson/Ninja, Python 3, GitHub Actions.
 
+**Final acceptance refresh (2026-09-21):** The steps below record the original
+`6ccc730` adoption run and its 77-entry baseline. Before hosted acceptance, the
+integration base advanced to verified tip `3aa2f61`; the exact stacked merge
+remeasured at 78 findings (31 HISS-01, one HISS-02, 46 HISS-04). The resulting
+line-key churn was reported on Praetor issue 29, while issue 408 remains the
+only engine-owned audit blocker after the 78-entry ratchet passes.
+
 ---
 
 ### Task 1: Commit the adoption decision and establish generation safety
@@ -108,14 +115,15 @@ adoption:
   --dry-run
 ```
 
-Final-tree result: 77 findings: HISS-01=31, HISS-02=1, HISS-04=45;
+Initial standalone-tree result: 77 findings: HISS-01=31, HISS-02=1,
+HISS-04=45;
 `branch-ruleset`, `dev-container`, and `git-hooks` are reported as explicitly
 declined.
 
 - [ ] **Step 3: Materialize the adoption surface**
 
 Run the same command without `--dry-run`. Assert that `.standards.lock`
-contains digest entries for one profile and four facets,
+contains digest entries for one profile and four facets, the initial
 `.standards-baseline.json` contains 77 findings,
 `.github/rulesets/main.json` does not exist, `.devcontainer` does not exist,
 and neither `lefthook.yml` nor a Praetor fallback hook was generated.
@@ -265,7 +273,7 @@ PRAETORCTL=/home/kilian/.cache/praetor-bin/standardsctl-846da590 make verify-nat
 
 Expected: context verification, build, 22-or-more fast tests, formatting,
 configured clang-tidy policy, and changelog hygiene PASS. The audit validates
-the manifest, lock, 77-finding baseline, contexts, and personas, then fails on
+the manifest, lock, 78-finding final baseline, contexts, and personas, then fails on
 the explicitly declined branch-ruleset artifact; Praetor issue 408 owns that
 engine defect. Do not bypass it in Pelorus.
 
@@ -314,7 +322,10 @@ Require no workflow, Make target, or hook to invoke `standardsctl sync --remote`
 
 - [ ] **Step 1: Record reproducible measurements**
 
-Document the exact engine commit, profile/facets, 77-finding breakdown, generated/declined surfaces, canonical-context and persona migration, hook-isolation checks, commands used, upstream issue 408, and limits. State that no product source was refactored and no remote ruleset was applied.
+Document the exact engine commit, profile/facets, 78-finding final breakdown,
+generated/declined surfaces, canonical-context and persona migration,
+hook-isolation checks, commands used, upstream issues 29 and 408, and limits.
+State that no product source was refactored and no remote ruleset was applied.
 
 - [ ] **Step 2: Document contributor entry points**
 
@@ -354,7 +365,7 @@ git status --short
 
 Expected: native verification and context verification PASS; the audit reaches
 the known Praetor issue 408 failure after all preceding checks. The worktree is
-clean; the baseline remains exactly 77 or decreases only for intentional
+clean; the final baseline remains exactly 78 or decreases only for intentional
 documentation/harness movement; no product C, headers, shaders, or FFmpeg patch
 source changed. Full acceptance waits for the upstream fix rather than a local
 bypass.

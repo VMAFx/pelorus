@@ -54,11 +54,11 @@ Pin another executable explicitly with `PRAETORCTL=/absolute/path/to/standardsct
 | --- | --- |
 | `make compile-context` | Regenerate cross-tool context and persona projections from their canonical sources |
 | `make compile-context-verify` | Fail if a generated projection has drifted |
-| `make audit` | Verify the pinned manifest/lock and enforce the 77-finding HISS baseline ratchet |
+| `make audit` | Verify the pinned manifest/lock and enforce the 78-finding HISS baseline ratchet |
 | `make verify-all` | Run context verification, then the audit, then `verify-native` |
 | `make hooks-install` | Install the tracked Lefthook commands into the shared Git hooks directory; see the warning below |
 
-The baseline accepts 77 existing findings (HISS-01=31, HISS-02=1, HISS-04=45)
+The baseline accepts 78 existing findings (HISS-01=31, HISS-02=1, HISS-04=46)
 in the scanner's supported-file scope. It is a non-regression ceiling, not a
 claim of zero debt or whole-tree source coverage. Existing findings may shrink;
 new findings must not make the measured total exceed the committed baseline.
