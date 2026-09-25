@@ -37,10 +37,11 @@
  * The reduction is sliced (SLICES) to cut atomic contention; the host sums the
  * slices and fits the AV1 piecewise scaling function + AR seed (ADR-0115).
  *
- * This runs against the normalized-float image array, so imageLoad already
- * returns [0,1] (no /maxv). The fixed-point scales and the residual clamp keep
- * both uint32 accumulators overflow-safe to 8K while preserving precision for
- * real grain; they MUST match the C-side PEL_GRAIN_* defines byte-for-byte.
+ * FF_VK_REP_FLOAT normalizes against the storage container, so every load is
+ * converted to the logical sample domain before the estimator sees it. The
+ * fixed-point scales and residual clamp keep both uint32 accumulators
+ * overflow-safe to 8K while preserving precision for real grain; they MUST
+ * match the C-side PEL_GRAIN_* defines byte-for-byte.
  */
 
 #pragma shader_stage(compute)
@@ -55,17 +56,23 @@ layout (push_constant, std430) uniform pushConstants {
     int   width;
     int   height;
     float edge_thr;
+    float sample_scale;
 };
 
 layout (set = 0, binding = 0) uniform readonly image2D input_images[];
 
 /* Mirrors PelorusGrainBuf in the filter, byte-for-byte (std430). */
 layout (set = 0, binding = 1, std430) buffer grain_buffer {
-    uint sumsq[128];    /* Σ resid^2 * SUMSQ_GS,   [BANDS * SLICES] */
-    uint cnt[128];      /* flat-pixel count,       [BANDS * SLICES] */
-    uint corr[16];      /* Σ (resid*resid_right + CORR_BIAS) * CORR_GS */
-    uint corr_cnt[16];  /* lag-1 sample count                       */
+    uint sumsq[256];    /* Σ resid^2 * SUMSQ_GS,   [BANDS * SLICES] */
+    uint cnt[256];      /* flat-pixel count,       [BANDS * SLICES] */
+    uint corr[32];      /* Σ (resid*resid_right + CORR_BIAS) * CORR_GS */
+    uint corr_cnt[32];  /* lag-1 sample count                       */
 };
+
+float pel_to_sample(float value)
+{
+    return value * sample_scale;
+}
 
 void main()
 {
@@ -74,18 +81,18 @@ void main()
     const float CORR_BIAS = 1.0;
     const float RES_CLAMP = 0.08;
     const int BANDS = 8;
-    const uint SLICES = 16u;
+    const uint SLICES = 32u;
     ivec2 size = ivec2(width, height);
     int x = int(gl_GlobalInvocationID.x);
     int y = int(gl_GlobalInvocationID.y);
     if (x >= size.x || y >= size.y)
         return;
-    float c = imageLoad(input_images[0], ivec2(x, y)).x;
+    float c = pel_to_sample(imageLoad(input_images[0], ivec2(x, y)).x);
     float mean = 0.0; float lo = 1.0; float hi = 0.0;
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             ivec2 p = clamp(ivec2(x + dx, y + dy), ivec2(0), size - ivec2(1));
-            float v = imageLoad(input_images[0], p).x;
+            float v = pel_to_sample(imageLoad(input_images[0], p).x);
             mean += v; lo = min(lo, v); hi = max(hi, v);
         }
     }
@@ -101,12 +108,12 @@ void main()
     /* lag-1 spatial correlation (AR proxy): only when the right neighbour is
      * also flat, so the product reflects grain, not an edge transition. */
     ivec2 rp = clamp(ivec2(x + 1, y), ivec2(0), size - ivec2(1));
-    float cr = imageLoad(input_images[0], rp).x;
+    float cr = pel_to_sample(imageLoad(input_images[0], rp).x);
     float meanR = 0.0; float loR = 1.0; float hiR = 0.0;
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             ivec2 p = clamp(ivec2(x + 1 + dx, y + dy), ivec2(0), size - ivec2(1));
-            float v = imageLoad(input_images[0], p).x;
+            float v = pel_to_sample(imageLoad(input_images[0], p).x);
             meanR += v; loR = min(loR, v); hiR = max(hiR, v);
         }
     }

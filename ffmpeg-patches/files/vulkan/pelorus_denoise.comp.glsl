@@ -26,10 +26,11 @@
  * class of lockstep-drift defects.
  *
  * What the C generator used to const-fold now arrives as specialization
- * constants: the plane count, the `planes` bitmask, and the ADR-0134 opt-in
- * shared-memory tiling switch (`tile`). Specialization happens at pipeline
- * creation, so the per-plane loop and the tile/no-tile branch are folded away
- * exactly as the generated GLSL folded them.
+ * constants: the plane count, the `planes` bitmask, the ADR-0134 opt-in
+ * shared-memory tiling switch (`tile`) and the semi-planar chroma layout flag.
+ * Specialization happens at pipeline creation, so the per-plane loop, the
+ * per-component loop and the tile/no-tile branch are folded away exactly as the
+ * generated GLSL folded them.
  */
 
 #pragma shader_stage(compute)
@@ -44,18 +45,22 @@ layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
  *   planes     — plane count (the old C-unrolled loop bound),
  *   plane_mask — AVOption `planes` bitmask; unselected planes are copied through,
  *   use_tile   — AVOption `tile` (ADR-0134): cache the spatial window in shared
- *                memory instead of re-reading the image. Bit-identical output. */
-layout (constant_id = 0) const uint planes     = 0;
-layout (constant_id = 1) const uint plane_mask = 0xf;
-layout (constant_id = 2) const uint use_tile   = 0;
+ *                memory instead of re-reading the image. Bit-identical output,
+ *   semi_planar— 1 when the sw_format is semi-planar (NV12/P010/NV16/NV24/P016),
+ *                i.e. comp[1].plane == comp[2].plane: plane 1 is a TWO-component
+ *                image holding U in .x and V in .y and both must be filtered. */
+layout (constant_id = 0) const uint planes      = 0;
+layout (constant_id = 1) const uint plane_mask  = 0xf;
+layout (constant_id = 2) const uint use_tile    = 0;
+layout (constant_id = 3) const uint semi_planar = 0;
+layout (constant_id = 4) const uint sample_code_max = 0;
 
 /* PEL_HALO = max patch_radius (3) + the 1-px patch ring.
  * PEL_TILE = 16 (the workgroup dim, see ff_vk_shader_load) + 2 * PEL_HALO. */
 #define PEL_HALO 4
 #define PEL_TILE 24
 
-/* Mirrors the C `opts` struct byte-for-byte (std430, as before). The C struct
- * has a trailing int32_t _pad[1] the block does not need to declare. */
+/* Mirrors the C `opts` struct byte-for-byte (std430, as before). */
 layout (push_constant, std430) uniform pushConstants {
     vec4  sigma_s;
     vec4  sigma_t;
@@ -79,6 +84,7 @@ layout (push_constant, std430) uniform pushConstants {
     int   chroma_shift_h;
     float mv_scale;
     int   actual_next;
+    float sample_scale;
 };
 
 /* Binding order MUST match the C descriptor array exactly (inputs first, output
@@ -119,15 +125,31 @@ const int FLAG_MOTION_COMP = 2;
 const int FLAG_PROTECT_DETAIL = 4;
 const float EPS = 1e-6;
 
-float pel_cur(int idx, ivec2 p, ivec2 sz) {
-    return imageLoad(cur_images[idx], clamp(p, ivec2(0), sz - ivec2(1))).x;
+float pel_to_sample(float value) {
+    return value * sample_scale;
 }
-float pel_prev(int t, int idx, ivec2 p, ivec2 sz) {
+float pel_to_storage(float value) {
+    if (sample_code_max == 0u)
+        return value / sample_scale;
+    const float code_max = float(sample_code_max);
+    return round(clamp(value, 0.0, 1.0) * code_max) / code_max / sample_scale;
+}
+uint pel_component_count(uint plane) {
+    return (semi_planar != 0u && plane == 1u) ? 2u : 1u;
+}
+
+/* `comp` selects the component WITHIN the plane image: always 0 on a planar
+ * plane, 0 (=U) or 1 (=V) on a semi-planar chroma plane. */
+float pel_cur(int idx, int comp, ivec2 p, ivec2 sz) {
+    return pel_to_sample(
+        imageLoad(cur_images[idx], clamp(p, ivec2(0), sz - ivec2(1)))[comp]);
+}
+float pel_prev(int t, int idx, int comp, ivec2 p, ivec2 sz) {
     ivec2 c = clamp(p, ivec2(0), sz - ivec2(1));
-    if (t == 1) return imageLoad(prev0_images[idx], c).x;
-    if (t == 2) return imageLoad(prev1_images[idx], c).x;
-    if (t == 3) return imageLoad(prev2_images[idx], c).x;
-    return imageLoad(prev3_images[idx], c).x;
+    if (t == 1) return pel_to_sample(imageLoad(prev0_images[idx], c)[comp]);
+    if (t == 2) return pel_to_sample(imageLoad(prev1_images[idx], c)[comp]);
+    if (t == 3) return pel_to_sample(imageLoad(prev2_images[idx], c)[comp]);
+    return pel_to_sample(imageLoad(prev3_images[idx], c)[comp]);
 }
 
 /* --- motion-compensated previous-frame fetch (ADR-0113) --- */
@@ -145,7 +167,7 @@ float pel_mc_conf(ivec2 lpos) { /* nearest-cell confidence [0,1] */
     ivec2 cell = pel_cell(lpos);
     return float(conf_packed[cell.y * grid_cols + cell.x] & 0xFFu) / 255.0;
 }
-float pel_prev_mc(int t, int idx, ivec2 pos, ivec2 sz) {
+float pel_prev_mc(int t, int idx, int comp, ivec2 pos, ivec2 sz) {
     int cw = (idx > 0) ? chroma_shift_w : 0;
     int ch = (idx > 0) ? chroma_shift_h : 0;
     ivec2 lpos = pos << ivec2(cw, ch);
@@ -154,10 +176,10 @@ float pel_prev_mc(int t, int idx, ivec2 pos, ivec2 sz) {
     vec2 sp = vec2(pos) + mvp;                 /* sub-pel sample point */
     ivec2 ip = ivec2(floor(sp));
     vec2 f = sp - vec2(ip);
-    float p00 = pel_prev(t, idx, ip + ivec2(0, 0), sz);
-    float p10 = pel_prev(t, idx, ip + ivec2(1, 0), sz);
-    float p01 = pel_prev(t, idx, ip + ivec2(0, 1), sz);
-    float p11 = pel_prev(t, idx, ip + ivec2(1, 1), sz);
+    float p00 = pel_prev(t, idx, comp, ip + ivec2(0, 0), sz);
+    float p10 = pel_prev(t, idx, comp, ip + ivec2(1, 0), sz);
+    float p01 = pel_prev(t, idx, comp, ip + ivec2(0, 1), sz);
+    float p11 = pel_prev(t, idx, comp, ip + ivec2(1, 1), sz);
     return mix(mix(p00, p10, f.x), mix(p01, p11, f.x), f.y);
 }
 
@@ -168,11 +190,14 @@ float pel_prev_mc(int t, int idx, ivec2 pos, ivec2 sz) {
  * hits shared memory instead of the image. pel_load_tile() runs in uniform
  * control flow (outside the bounds guard, under spec-constant-only conditions)
  * so its barriers are workgroup-uniform; the leading barrier protects the prior
- * plane's readers before this plane overwrites s_tile. When use_tile == 0 the
- * whole path is specialized away and s_tile shrinks to a single element. */
+ * plane's readers before this plane overwrites s_tile. On a semi-planar chroma
+ * plane the tile is reloaded once per component (the loop bound is
+ * specialization-constant derived, so it stays workgroup-uniform). When
+ * use_tile == 0 the whole path is specialized away and s_tile shrinks to a
+ * single element. */
 shared float s_tile[(use_tile != 0u) ? (PEL_TILE * PEL_TILE) : 1];
 
-void pel_load_tile(int idx, ivec2 sz) {
+void pel_load_tile(int idx, int comp, ivec2 sz) {
     ivec2 wgsz = ivec2(gl_WorkGroupSize.xy);
     ivec2 base = ivec2(gl_WorkGroupID.xy) * wgsz - PEL_HALO;
     uint n = uint(PEL_TILE * PEL_TILE);
@@ -181,7 +206,7 @@ void pel_load_tile(int idx, ivec2 sz) {
     for (uint k = gl_LocalInvocationIndex; k < n; k += stride) {
         ivec2 t = ivec2(int(k) - (int(k) / PEL_TILE) * PEL_TILE,
                         int(k) / PEL_TILE);
-        s_tile[k] = pel_cur(idx, base + t, sz);
+        s_tile[k] = pel_cur(idx, comp, base + t, sz);
     }
     barrier();
 }
@@ -192,14 +217,14 @@ float tcur(ivec2 off) {
 
 /* The spatial fetch, either way. Was a C-selected #define PEL_SPATIAL(o); the
  * use_tile specialization constant folds this branch at pipeline creation. */
-float pel_spatial(int idx, ivec2 pos, ivec2 sz, ivec2 o) {
+float pel_spatial(int idx, int comp, ivec2 pos, ivec2 sz, ivec2 o) {
     if (use_tile != 0u)
         return tcur(o);
-    return pel_cur(idx, pos + o, sz);
+    return pel_cur(idx, comp, pos + o, sz);
 }
-#define PEL_SPATIAL(o) pel_spatial(idx, pos, sz, o)
+#define PEL_SPATIAL(o) pel_spatial(idx, comp, pos, sz, o)
 
-float denoise(const ivec2 pos, const int idx,
+float denoise(const ivec2 pos, const int idx, const int comp,
               float sigmaS, float sigmaT, float strength_p) {
     ivec2 sz = imageSize(output_images[idx]);
     float C = PEL_SPATIAL(ivec2(0, 0));
@@ -243,10 +268,10 @@ float denoise(const ivec2 pos, const int idx,
                 int cw = (idx > 0) ? chroma_shift_w : 0;
                 int chh = (idx > 0) ? chroma_shift_h : 0;
                 float conf = pel_mc_conf(pos << ivec2(cw, chh));
-                p = mix(pel_prev(t, idx, pos, sz),
-                        pel_prev_mc(t, idx, pos, sz), conf);
+                p = mix(pel_prev(t, idx, comp, pos, sz),
+                        pel_prev_mc(t, idx, comp, pos, sz), conf);
             } else {
-                p = pel_prev(t, idx, pos, sz);
+                p = pel_prev(t, idx, comp, pos, sz);
             }
             float delta = abs(C - p);
             if (delta > temporal_cut) break;
@@ -260,7 +285,9 @@ float denoise(const ivec2 pos, const int idx,
          * a held animation drawing (the trailing frame already gets the causal
          * prev). --- */
         if (actual_next > 0) {
-            float p = imageLoad(next0_images[idx], clamp(pos, ivec2(0), sz - ivec2(1))).x;
+            float p = pel_to_sample(
+                imageLoad(next0_images[idx],
+                          clamp(pos, ivec2(0), sz - ivec2(1)))[comp]);
             float delta = abs(C - p);
             if (delta <= temporal_cut) {
                 float w = exp(-(delta * delta) / ht2) * temporal_decay;
@@ -319,40 +346,62 @@ void main()
     for (uint i = 0; i < planes; i++) {
         const int idx = int(i);
         size = imageSize(output_images[idx]);
+        /* A semi-planar chroma plane (NV12/P010/NV16/NV24/P016) is a TWO-
+         * component image holding U in .x and V in .y — both components are
+         * real picture data and both get denoised. sigma_s/sigma_t/strength are
+         * indexed by PLANE, not by component, so both components use the chroma
+         * lanes at index 1 (index 2 has no plane and must not be used). */
+        const uint ncomp = pel_component_count(i);
+        const bool sel = (plane_mask & (1u << i)) != 0u;
+        const bool inb = all(lessThan(pos, size));
 
-        /* Cooperative tile load runs in uniform control flow (all invocations,
-         * before the per-thread bounds guard) so its barriers are valid. Both
-         * conditions are specialization constants, hence workgroup-uniform. */
-        if (use_tile != 0u && (plane_mask & (1u << i)) != 0u)
-            pel_load_tile(idx, size);
+        /* Never synthesise the stored texel. Load it, overwrite only the
+         * component(s) actually filtered, and store the whole vec4: a
+         * synthesised vec4(ov, 0, 0, 1) writes a constant 0 into the plane's
+         * second component, annihilating V on every semi-planar format. */
+        vec4 outv = inb ? imageLoad(cur_images[idx], pos) : vec4(0.0);
 
-        if (all(lessThan(pos, size))) {
-            if ((plane_mask & (1u << i)) != 0u) {
-                float inv = imageLoad(cur_images[idx], pos).x;
-                float ov = denoise(pos, idx, sigma_s[i], sigma_t[i], strength[i]);
-                imageStore(output_images[idx], pos, vec4(ov, 0.0, 0.0, 1.0));
+        for (uint c = 0u; c < ncomp; c++) {
+            const int comp = int(c);
+
+            /* Cooperative tile load runs in uniform control flow (all
+             * invocations, before the per-thread bounds guard) so its barriers
+             * are valid. use_tile, plane_mask and ncomp are all specialization
+             * constants, hence workgroup-uniform. */
+            if (use_tile != 0u && sel)
+                pel_load_tile(idx, comp, size);
+
+            if (inb && sel) {
+                float inv = pel_to_sample(outv[comp]);
+                float ov = denoise(pos, idx, comp,
+                                   sigma_s[i], sigma_t[i], strength[i]);
+                outv[comp] = pel_to_storage(ov);
                 /* meta=1 residual free-ride: the luma plane drives the sigma /
-                 * PSNR estimate; chroma planes feed the U/V residual energy. */
-                if (i == 0u) {
-                    if (want_meta != 0) {
-                        float r = abs(inv - ov);
+                 * PSNR estimate; chroma planes feed the U/V residual energy.
+                 * On a semi-planar plane the second component IS V, so it folds
+                 * into abs_sum_v; cnt_c stays the per-chroma-PLANE pixel count
+                 * so attach_interop()'s divisor is unchanged. */
+                if (want_meta != 0) {
+                    float r = abs(inv - ov);
+                    if (i == 0u) {
                         atomicAdd(abs_sum_y[slice], uint(r * GS));
                         atomicAdd(sq_sum_y[slice],  uint(r * r * GS));
                         atomicAdd(cnt_y[slice],     1u);
-                    }
-                } else if (i == 1u) {
-                    if (want_meta != 0) {
-                        atomicAdd(abs_sum_u[slice], uint(abs(inv - ov) * GS));
-                        atomicAdd(cnt_c[slice],     1u);
-                    }
-                } else if (i == 2u) {
-                    if (want_meta != 0) {
-                        atomicAdd(abs_sum_v[slice], uint(abs(inv - ov) * GS));
+                    } else if (i == 1u) {
+                        if (c == 0u) {
+                            atomicAdd(abs_sum_u[slice], uint(r * GS));
+                            atomicAdd(cnt_c[slice],     1u);
+                        } else {
+                            atomicAdd(abs_sum_v[slice], uint(r * GS));
+                        }
+                    } else if (i == 2u) {
+                        atomicAdd(abs_sum_v[slice], uint(r * GS));
                     }
                 }
-            } else {
-                imageStore(output_images[idx], pos, imageLoad(cur_images[idx], pos));
             }
         }
+
+        if (inb)
+            imageStore(output_images[idx], pos, outv);
     }
 }

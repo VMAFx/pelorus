@@ -27,8 +27,9 @@
  * This standalone form runs against an r16ui storage image (16-bit internal
  * domain, normalized to [0,1] inside; the implied max is 65535). The in-tree
  * shipped shader (ffmpeg-patches/files/vulkan/pelorus_grain_estimate.comp.glsl)
- * runs the equivalent reduction against a normalized-float image array
- * (imageLoad already returns [0,1]); the algorithm is identical.
+ * runs the algorithm against a normalized-float image array and applies its
+ * descriptor-derived sample scale before arithmetic. This standalone shader
+ * exercises the same estimator shape, not FFmpeg's storage conversion.
  */
 #version 450
 
@@ -37,7 +38,7 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 layout(binding = 0, r16ui) uniform readonly uimage2D srcImg;
 
 #define PEL_GRAIN_BANDS  8
-#define PEL_GRAIN_SLICES 16
+#define PEL_GRAIN_SLICES 32
 
 /* Signed lag-1 products are bias-encoded into uint atomics: each add stores
  * (prod + CORR_BIAS) so the unsigned accumulator never underflows; the host
@@ -49,9 +50,9 @@ layout(binding = 0, r16ui) uniform readonly uimage2D srcImg;
  * squaring — lossless for real grain (sensor/film grain stddev is well under
  * 0.08 of full scale; the clamp only caps edge-leakage outliers the edge gate
  * mostly removes already). With resid^2 <= 0.0064, the worst-case per-pixel
- * contribution times the largest per-slice flat-pixel count (~2M at 8K) stays
- * under 2^32 at SUMSQ_GS=3e5 / CORR_GS=2000, and a small real-grain residual
- * still scales to >= 1 (no truncation-to-zero). */
+ * contribution times the largest per-slice flat-pixel count (~1.11M at DCI 8K)
+ * stays under 2^32 at SUMSQ_GS=3e5 / CORR_GS=2000, and a small real-grain
+ * residual still scales to >= 1 (no truncation-to-zero). */
 layout(binding = 1, std430) buffer GrainBuf {
     uint sumsq[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES]; /* Σ resid^2 * SUMSQ_GS     */
     uint cnt[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES];   /* flat-pixel count per bin */

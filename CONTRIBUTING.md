@@ -38,7 +38,8 @@ These mirror vmafx's rules; reviewers verify them.
    FFmpeg patch stack. See [docs/adr/0108-deep-dive-deliverables-rule.md](docs/adr/0108-deep-dive-deliverables-rule.md).
 4. **Patch-stack sync** — a change to any `libpelorus` surface the FFmpeg
    patches consume updates `ffmpeg-patches/files/` + the regenerated patch in
-   the same PR, verified by a full series replay (`ffmpeg-patches/test/build-and-run.sh`).
+   the same PR, verified by a full series replay
+   (`FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh`).
 
 ## ABI changes
 

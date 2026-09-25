@@ -10,8 +10,9 @@ VRAM (FF_VK_REP_FLOAT UNORM, bit-depth-agnostic).
 
 Pure pixel transform — does NOT link libpelorus (no interop emit), so the
 registration is deps-only (no require_pkg_config). Foundation of the anime
-`tune` pipeline. The standalone reference shader
-libpelorus/shaders/pelorus_dehalo.comp and the inline GLSL are kept in lockstep.
+`tune` pipeline. The canonical libavfilter/vulkan/pelorus_dehalo.comp.glsl is
+compiled to SPIR-V at FFmpeg build time; Pelorus also compile-checks a
+standalone reference shader.
 
 AVOptions: blur (radius), darkstr/brightstr, lowsens/highsens, edge (line
 threshold), ring (halo-band width), planes, tile (opt-in shared-memory tiling of

@@ -7,15 +7,15 @@ relative to the previous frame and attaches it as the pre-reserved
 `PEL_SEC_MOTION` interop section. **The frame passes through unchanged** — this
 is a producer (the analyzer shape), not a transform.
 
-The value is **encode speed, not quality**: the MV field is a *hint* a downstream
-encoder can feed its external motion search (e.g. NVENC's
-`NV_ENC_EXTERNAL_ME_HINT`) so a fixed-function ASIC can skip or shorten its own
-search. It is **not** a flow field for warping, and it does **not** feed the
-denoiser (see the honesty note below). See
+The field has two shipped, opt-in consumers. NVENC can feed it to
+`NV_ENC_EXTERNAL_ME_HINT` as an encode-search hint (a speed path, not a quality
+claim). `pelorus_denoise_vulkan=mc=1` consumes the same quarter-pel field plus
+its confidence map to warp temporal taps, a quality-oriented path. It is not a
+general-purpose optical-flow field. See
 [ADR-0116](../adr/0116-pelorus-mc.md) for the producer decision,
 [ADR-0113](../adr/0113-optical-flow-mc.md) for the motion-estimation strategy,
 and [ADR-0114](../adr/0114-encoder-steering.md) Tier 3 for the gated NVENC
-ME-hint consumer (a documented follow-up).
+ME-hint consumer.
 
 ## Algorithm
 
@@ -46,9 +46,11 @@ The MV `(dx, dy)` is **quarter-pel** in luma units (Q2 fixed-point, stored
 The integer block-match minimum is sub-pel refined by a parabolic fit of the SAD
 surface across the minimum and its four axis-neighbours (ADR-0130). The
 `PelorusMotionSection` summary scalars (`global_motion_*`, `motion_magnitude_*`)
-remain in whole luma pixels. The standalone reference shader is
-`libpelorus/shaders/pelorus_mc.comp`; the filter's shipped `.comp.glsl` shader implements the
-byte-identical algorithm (kept in lockstep, AGENTS hard rule 4).
+remain in whole luma pixels. The shipped shader is
+`ffmpeg-patches/files/vulkan/pelorus_mc.comp.glsl`; the similarly named
+`libpelorus/shaders/*.comp` file is a compile-checked standalone reference, not
+a second shipped implementation. Luma loads are converted to the logical
+sample domain before SAD evaluation.
 
 ## Options
 
@@ -76,10 +78,10 @@ pixel copy) as the reference. Frame 0 has no reference and emits a zero field.
 
 ## Interop (`meta=1`)
 
-With `mc=1` on the downstream denoise consumer it additionally emits
-**`PEL_SEC_MOTION_CONF`** (interop ABI minor 2, ADR-0131): a per-block match
-confidence field that gates the motion-compensated warp, so a block whose match is
-weak falls back to same-coordinate temporal averaging instead of dragging a bad
+With `meta=1` the producer also emits **`PEL_SEC_MOTION_CONF`** (interop ABI
+minor 2, ADR-0131): a per-block match-confidence field. The denoise `mc=1`
+consumer uses it to gate the motion-compensated warp, so a weakly matched block
+falls back to same-coordinate temporal averaging instead of dragging a bad
 vector into the result. Append-only, so an older consumer that does not know the
 section simply ignores it.
 
@@ -98,19 +100,19 @@ appended after it (the `vf_pelorus_analyze` map-payload convention):
 - `mv_field_offset` / `mv_field_size` — the appended `int16 (dx,dy)` grid,
   `grid_cols × grid_rows` cells, row-major.
 
-These are telemetry for vmafx and the input contract for the (deferred) NVENC
-ME-hint consumer.
+These are telemetry for vmafx and the input contract for the shipped denoise
+warp and NVENC ME-hint consumers.
 
 ## Scope and honesty
 
-- **Speed, not quality.** No BD-rate or speed number ships with this filter; the
-  measured win belongs to the consumer PR (the NVENC ME-hint patch, ADR-0114
-  Tier 3). The honest v1 claim is "the MV field is produced and its direction is
-  correct".
-- **Why it does not feed the denoiser.** Block-matching on raw pixels matches
-  grain as readily as motion; ADR-0113 measured in-denoise raw-pixel MC to be
-  noise-limited (−28% vs the no-MC −34%) and reverted it. A search *seed* tolerates
-  that; a denoise *warp* does not.
+- **The NVENC leg is speed-only and optional.** On the measured RTX 4090 case it
+  did not improve speed (roughly 2–3% slower at p7); do not infer a speed win from
+  the existence of the hint consumer.
+- **The denoise leg is confidence-gated.** ADR-0113's earlier un-gated raw-pixel
+  warp was noise-limited (−28% vs the no-MC −34%). The shipped ADR-0131 path adds
+  `PEL_SEC_MOTION_CONF` and `tcut` fallback so weak vectors use same-coordinate
+  temporal averaging. This makes the consumer usable, but does not turn the old
+  stand-in number into a current-filter BD-rate claim.
 - **Magnitude under-reads on flat content.** On partially-flat frames many blocks
   are aperture-ambiguous (a range of displacements gives near-equal SAD) and settle
   at a small wrong MV, diluting the *mean*. Use `motion_magnitude_p95` or weight by
@@ -136,10 +138,12 @@ interior). This is the GPU producer's expected behaviour for an ME *seed*.
 
 ```bash
 ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
-  -vf "hwupload,pelorus_mc_vulkan=bsize=16:search=24,hwdownload,format=yuv420p" \
+  -vf "hwupload,pelorus_mc_vulkan=bsize=16:search=24:meta=1,pelorus_denoise_vulkan=mc=1,hwdownload,format=yuv420p" \
   -c:v hevc_nvenc -preset p5 -cq 28 out.mkv
 ```
 
 The MV field rides the frames as `AV_FRAME_DATA_SEI_UNREGISTERED` (UUID-keyed)
-and round-trips the filtergraph via `av_frame_copy_props`. A consumer (vmafx, or
-the future NVENC ME-hint patch) parses it with `pel_blob_find_section`.
+and round-trips the filtergraph via `av_frame_copy_props`. vmafx, the denoise
+`mc=1` path, and the NVENC ME-hint patch consume the same versioned section;
+the first two can use libpelorus parsing, while the codec-local NVENC bridge
+uses its bounded compatible parser.

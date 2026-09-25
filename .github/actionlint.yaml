@@ -1,0 +1,6 @@
+# actionlint v1.7.12 predates GitHub's public-preview ubuntu-26.04 label.
+# Keep the exception exact so all other runner-label validation remains active.
+paths:
+  .github/workflows/**/*.{yml,yaml}:
+    ignore:
+      - 'label "ubuntu-26\.04" is unknown'

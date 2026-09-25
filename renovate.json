@@ -2,5 +2,30 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update the FFmpeg release tag and peeled commit together",
+      "managerFilePatterns": [
+        "/^build-config\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\nFFMPEG_REMOTE=https://github\\.com/FFmpeg/FFmpeg\\.git\\nFFMPEG_TAG=(?<currentValue>n\\d+\\.\\d+\\.\\d+)\\nFFMPEG_COMMIT=(?<currentDigest>[0-9a-f]{40})"
+      ],
+      "versioningTemplate": "regex:^n(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Keep the FFmpeg release immutable",
+      "matchDatasources": [
+        "github-tags"
+      ],
+      "matchPackageNames": [
+        "FFmpeg/FFmpeg"
+      ],
+      "pinDigests": true
+    }
   ]
 }

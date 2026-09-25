@@ -1,28 +1,44 @@
 name: Release
 
-# Cut a release by pushing a SemVer tag:  git tag v0.1.0 && git push origin v0.1.0
-# Gates on the build + tests, extracts notes from CHANGELOG.md's [Unreleased]
-# block, packages the FFmpeg patch stack, and publishes a GitHub release.
-
+# Tag pushes publish. workflow_dispatch runs the same gates and packaging but
+# deliberately cannot create a GitHub release.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Load build configuration
+        run: |
+          while IFS= read -r entry; do
+            case "$entry" in
+              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
+                printf '%s\n' "$entry" >> "$GITHUB_ENV"
+                ;;
+            esac
+          done < build-config.env
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends meson ninja-build glslang-tools pkg-config
+          sudo apt-get install -y --no-install-recommends \
+            build-essential meson ninja-build glslc glslang-tools pkg-config
+      - name: Runner and toolchain receipt
+        run: |
+          echo "ImageOS=${ImageOS:-unset}"
+          echo "ImageVersion=${ImageVersion:-unset}"
+          cat /etc/os-release
+          glslc --version
+          glslangValidator --version
       - name: Gate — build + fast tests
         run: |
           meson setup build
@@ -34,18 +50,21 @@ jobs:
         run: |
           awk '/<!-- BEGIN UNRELEASED/{f=1;next} /<!-- END UNRELEASED/{f=0} f' \
             CHANGELOG.md | sed '/^## \[Unreleased\]/d' > RELEASE_NOTES.md
-          echo "--- notes ---"; cat RELEASE_NOTES.md
+          echo "--- notes ---"
+          cat RELEASE_NOTES.md
       - name: Package the FFmpeg patch stack
         run: |
-          tag="${GITHUB_REF_NAME}"
-          tar czf "pelorus-ffmpeg-patches-${tag}.tar.gz" \
+          artifact_label="${GITHUB_REF_NAME//\//-}"
+          printf 'ARTIFACT_LABEL=%s\n' "$artifact_label" >> "$GITHUB_ENV"
+          tar czf "pelorus-ffmpeg-patches-${artifact_label}.tar.gz" \
             ffmpeg-patches/series.txt ffmpeg-patches/README.md \
             ffmpeg-patches/0*.patch ffmpeg-patches/files
       - name: Publish GitHub release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             --title "Pelorus ${GITHUB_REF_NAME}" \
             --notes-file RELEASE_NOTES.md \
-            "pelorus-ffmpeg-patches-${GITHUB_REF_NAME}.tar.gz"
+            "pelorus-ffmpeg-patches-${ARTIFACT_LABEL}.tar.gz"

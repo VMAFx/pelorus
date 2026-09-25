@@ -1,4 +1,4 @@
-<!-- markdownlint-disable MD013 -->
+<!-- markdownlint-disable MD013 MD060 -->
 # Architecture Decision Records
 
 Nygard-format ADRs for Pelorus. One file per decision,
@@ -55,3 +55,7 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0140](0140-aa-sobel-mag-hoist.md) | Hoist the redundant aa sobel-mag into shared memory (opt-in `fast`, default off). aa is ALU-bound (premise-check: stripping sobel collapsed rtime −86%; tiling refuted), and `sobel_mag` is recomputed ~1156×/px across overlapping emask windows. fast=1 computes each cell's sobel once into shared mem; emask reduces from the cache. Bit-identical (SSIM 1.0). Validated 12.6× (−92%) on Arc, 2.6× (−62%) on the 4090 — an ALU win, so it helps every GPU. ADR-0134 idiom applied to a computed result | Accepted |
 | [0141](0141-deband-wide-band-reach.md) | Wide-band reach for deband (multi-radius / extended `range`) to span bands wider than `2·range`. Designed (5-agent panel) + built behind opt-in `reach` + measured: the pre-encode CAMBI gain (v0.15) is real (larger range monotonic 4.30→3.55, detail-safe SSIM ~0.998) but **inverts post-encode** — wider range is monotonically *worse* after `hevc_nvenc` at every quality (cq10/18/28), because the encoder re-bands the over-smoothed gentle ramp into wider bands. Completes v0.15's deferred durability gate with a negative. Code reverted | Rejected |
 | [0142](0142-tune-auto-content-router.md) | `tune=auto` content-adaptive pre-encode router (design) — the session's law (reductive wins / additive washes / content-dependent / mostly-tuning) means there's no single best filter but a tuned reductive boost per content class, routed from analyze.* per-shot. Ships the foundational detection enabler: `grain_estimate` now emits `lavfi.pelorus.grain_sigma`/`grain_flat` (ADR-0136 pattern, no ABI/shader change), unblocking the proven grainy route. Routing table + validation priority + the encoder-patch parallel track recorded | Proposed |
+| [0143](0143-ffmpeg-9-migration.md) | FFmpeg 9 migration — precompiled SPIR-V replaces the runtime inline-GLSL shader model | Accepted |
+| [0144](0144-ffmpeg-pin-and-ci-runner-policy.md) | Pin FFmpeg by release and commit; run CI on Ubuntu 26.04 native Vulkan packages | Accepted |
+| [0146](0146-qsv-roi-frame-ownership.md) | QSV dense ROI maps are per-frame and limited to progressive HEVC CQP on runtime API 1.28 or newer; corrects ADR-0114's QSV capability/lifetime detail | Accepted |
+| [0147](0147-vulkan-sample-domain-and-components.md) | Normalize Vulkan arithmetic to the true sample domain and preserve every physical-plane component | Accepted |

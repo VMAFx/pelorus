@@ -13,7 +13,7 @@ dither (none/bayer8/bluenoise), dynamic, protect, planes, meta.
 When meta=1 the filter links libpelorus and attaches a Pelorus interop blob
 (AV_FRAME_DATA_SEI_UNREGISTERED, UUID-keyed) so a downstream vmafx
 vf_libvmaf* can perceptually weight its score and avoid double-counting.
-Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
+Requires libpelorus >= 0.2.0 (pkg-config) when the filter is enabled.
 
 ADR: docs/adr/0104-ffmpeg-patch-stack.md
 Research: docs/research/0101-smart-deband.md

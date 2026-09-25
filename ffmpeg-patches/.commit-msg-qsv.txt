@@ -1,34 +1,37 @@
-feat(qsv): honor AV_FRAME_DATA_REGIONS_OF_INTEREST via the per-block QP map
+fix(qsv): make dense ROI maps frame-owned and contract-bounded
 
-Stock qsvenc.c already maps ROI side data onto mfxExtEncoderROI (rectangle
-regions, capped at QSV_MAX_ROI_NUM and at rectangle granularity). This adds a
-`pelorus_roi` AVOption (default off) that instead rasterizes each
-AVRegionOfInterest's qoffset into Intel QSV's *dense* per-block delta-QP map
-(mfxExtMBQP, Mode = MFX_MBQP_MODE_QP_DELTA, attached per frame via the existing
-mfxEncodeCtrl ext-buffer chain; mfxExtCodingOption3::EnableMBQP turned on at
-init), mirroring the merged NVENC qpDeltaMap patch (ADR-0114 Tier 1).
+Stock qsvenc maps AV_FRAME_DATA_REGIONS_OF_INTEREST onto
+mfxExtEncoderROI rectangles. Pelorus's progressive HEVC+CQP path on QSV
+runtime API 1.28 or newer instead rasterizes the same side data into a dense
+mfxExtMBQP DeltaQP array.
 
-Dense map vs region rectangles: the vf_pelorus_analyze banding map is per-cell;
-coalescing it into <=256 rectangles loses fidelity, whereas mfxExtMBQP carries a
-per-16x16-block delta directly with no rectangle budget — same value path as the
-NVENC delta-QP map it mirrors. qoffset->delta uses the libx264 convention
-(qp_range = 51 + 6*(depth-8)); region precedence + self_size stride mirror
-libx264's setup_roi.
+The previous patch kept that array as mutable QSVEncContext scratch while each
+per-frame mfxExtMBQP header pointed at it. EncodeFrameAsync can retain several
+QSVFrame controls at once, so submitting frame N+1 repainted frame N's map
+before frame N's surface unlocked.
 
-Portable by construction (this ships to all users, not the dev box):
-- block size is the SDK-documented 16x16 MBQP alignment for both AVC and HEVC
-  (mfxExtMBQP), not any one GPU's coding-tree size; HEVC also carries BlockSize.
-- runtime capability probe: EnableMBQP is only honored under CQP rate control
-  (mfxExtCodingOption3 doc), so non-CQP sessions emit one warning and pass
-  through unchanged; the whole path is compile-guarded by QSV_HAVE_MBQP
-  (oneVPL / MediaSDK API >= 1.13) so older SDK headers no-op cleanly.
-- no device-node / driver / entrypoint assumptions; zero behaviour change when
-  the option is off (default).
+Allocate one zeroed block per ROI-bearing frame: the mfxExtMBQP header followed
+immediately by its DeltaQP array. Attach the header to that frame's existing
+mfxEncodeCtrl so free_encoder_ctrl releases the entire allocation after the
+surface unlocks. Frames no longer share mutable map storage.
 
-Lets Pelorus's measured banding-ROI (vf_pelorus_analyze roi=1, ADR-0114 Tier 0)
-steer Intel-hardware bit allocation through the same standard ROI side data the
-merged analyze filter already emits — no new producer.
+Bound the dense contract to progressive HEVC+CQP on runtime API 1.28 or newer,
+where FFmpeg attaches mfxExtCodingOption3. H.264, non-CQP HEVC, interlaced
+input, older runtimes, and builds without the API-1.13 MBQP headers fall back to
+stock mfxExtEncoderROI with accurate diagnostics. Dense selection inspects the
+final attached CodingOption3 after init/reset and caches whether EnableMBQP=ON
+after any AVQSVContext same-BufferId replacement; the dense and rectangle
+buffers are never attached together.
 
-Verified: cc -fsyntax-only of the changed libavcodec TUs against the installed
-oneVPL headers; full-stack regeneration applies cleanly. Full QSV ffmpeg rebuild
-and on-Arc BD-rate proof are a follow-up (no fabricated numbers).
+Build the 16x16 raster from aligned mfxFrameInfo storage dimensions, clip ROI
+coordinates to the visible frame, leave padding cells zero, validate every ROI
+entry, and check cell-count/allocation arithmetic plus oneVPL field narrowings.
+
+Verified against the configured FFmpeg n9.0.2 commit with the direct ASan/UBSan
+regression (two live maps, aligned padding, overlap precedence, malformed input,
+interlaced choice) and QSV TU builds with QSV_HAVE_MBQP both enabled and forced
+disabled. A hostile-hook run left no owned worktree or scratch residue. Hardware
+async execution remains pending; no runtime support or quality result is
+inferred from compile/harness evidence.
+
+ADR: 0146

@@ -26,8 +26,12 @@
  * taps, recovering the leading frame of a held animation drawing.
  *
  * This standalone form runs one dispatch per plane against r16ui storage images
- * (16-bit internal domain, normalized to [0,1] inside). The in-tree FFmpeg
- * filter ships its own shader at ffmpeg-patches/files/vulkan/pelorus_denoise.comp.glsl,
+ * (16-bit internal domain, normalized to [0,1] inside). It never synthesises the
+ * stored texel — it loads, overwrites the computed component and stores the whole
+ * vector — which is the contract the in-tree filter needs to keep the second
+ * component of a semi-planar chroma plane (V on NV12/P010/NV16/NV24/P016) alive.
+ * The in-tree FFmpeg filter ships its own shader at
+ * ffmpeg-patches/files/vulkan/pelorus_denoise.comp.glsl,
  * compiled to SPIR-V at build time (ADR-0143). That file -- not this one -- is what
  * FFmpeg executes. This reference is a standalone r16ui variant kept for the fast
  * gate and for reading the algorithm without FFmpeg's plumbing; it is NOT a second
@@ -93,10 +97,10 @@ float fetchNext(int px, int py) {
     return float(imageLoad(nextImg, ivec2(px, py)).r) / 65535.0;
 }
 
-/* --- motion-compensated previous-frame fetch (ADR-0113), kept in lockstep with
- * the in-tree filter's inline GLSL. This single-plane .comp reads the MV in
- * THIS plane's pixels (the host bakes quarter-pel * chroma subsampling into
- * pc.mv_scale and pc.cell_w/h), so there is no in-shader chroma branch here. */
+/* --- motion-compensated previous-frame fetch (ADR-0113). This standalone
+ * reference reads the MV in THIS plane's pixels (the host bakes quarter-pel *
+ * chroma subsampling into pc.mv_scale and pc.cell_w/h), so there is no
+ * in-shader chroma branch here. */
 int pel_se16(uint v) { return int(v << 16) >> 16; } // sign-extend low 16 bits
 ivec2 pel_cell(ivec2 p) {
     return clamp(p / ivec2(pc.cell_w, pc.cell_h), ivec2(0),
@@ -126,10 +130,11 @@ float pel_prev_mc(int t, ivec2 pos) {
  * re-reads an overlapping (2*patchR+3)^2 window ~9x per pixel (fetch-bound, not
  * ALU-bound), so the workgroup loads it once into s_tile and every spatial read
  * hits shared memory. PEL_HALO = max patchR (3) + the 1-px patch ring. This
- * reference models — and CI compile-checks — the in-tree filter's opt-in tile=1
+ * reference models — and CI compile-checks — the shipped filter's opt-in tile=1
  * path (ADR-0134, a large win on bandwidth-limited GPUs, ~neutral on cache-rich
  * ones); with the default tile=0 the filter reads the image directly. Both are
- * bit-identical. In lockstep with the filter's tile_helpers_glsl (AGENTS rule 4). */
+ * bit-identical. The canonical shipped shader lives under
+ * ffmpeg-patches/files/vulkan/ (ADR-0143). */
 #define PEL_HALO 4
 #define PEL_TILE 24  // 16 (workgroup dim) + 2 * PEL_HALO
 shared float s_tile[PEL_TILE * PEL_TILE];
@@ -254,5 +259,20 @@ void main() {
 
     float outv = mix(C, filtered, clamp(strength, 0.0, 1.0));
     int o = clamp(int(round(outv * 65535.0)), 0, 65535);
-    imageStore(dstImg, ivec2(x, y), uvec4(uint(o), 0u, 0u, 0u));
+    /* Never synthesise the stored texel: load it, overwrite ONLY the component
+     * this dispatch computed, store the whole vector. Here the images are
+     * single-component r16ui so only .x carries picture data — but the pattern
+     * is the contract, and the in-tree filter (which binds the real hwframe
+     * plane images) depends on it: on a SEMI-PLANAR format (NV12/P010/NV16/
+     * NV24/P016) the chroma plane is a TWO-component image with U in .x and V
+     * in .y, so a synthesised uvec4(v, 0, 0, 0) writes a constant 0 into V and
+     * annihilates the whole Cr channel. The filter additionally loops over both
+     * components of such a plane in one dispatch, both times with the CHROMA
+     * sigma/strength (the per-plane lanes at index 1 — those vec4 lanes are
+     * indexed by PLANE, not by component). This standalone reference is
+     * dispatched per plane against single-component images, so pc.plane alone
+     * selects its parameters. */
+    uvec4 texel = imageLoad(srcImg[0], ivec2(x, y));
+    texel.x = uint(o);
+    imageStore(dstImg, ivec2(x, y), texel);
 }

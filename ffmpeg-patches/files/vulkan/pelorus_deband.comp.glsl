@@ -38,6 +38,7 @@ layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
  * (the rest are copied through). Both were C-unrolled loop bounds before. */
 layout (constant_id = 0) const uint planes     = 0;
 layout (constant_id = 1) const uint plane_mask = 0xf;
+layout (constant_id = 2) const uint sample_code_max = 0;
 
 layout (push_constant, std430) uniform pushConstants {
     vec4  thr;
@@ -50,10 +51,22 @@ layout (push_constant, std430) uniform pushConstants {
     float detail_thr;
     int   flags;
     uint  frame_seed;
+    float sample_scale;
 };
 
 layout (set = 0, binding = 0) uniform readonly  image2D input_images[];
 layout (set = 0, binding = 1) uniform writeonly image2D output_images[];
+
+vec4 pel_to_sample(vec4 value) {
+    return value * sample_scale;
+}
+vec4 pel_to_storage(vec4 value) {
+    if (sample_code_max == 0u)
+        return value / sample_scale;
+    const float code_max = float(sample_code_max);
+    return round(clamp(value, vec4(0.0), vec4(1.0)) * code_max) /
+           code_max / sample_scale;
+}
 
 float frand(vec2 p) {
     return fract(sin(p.x * 12.9898 + p.y * 78.233) * 43758.545);
@@ -78,13 +91,14 @@ float bayer8(ivec2 p) {
     return float(v) / 64.0;
 }
 vec4 pel_fetch(int idx, ivec2 p, ivec2 sz) {
-    return imageLoad(input_images[idx], clamp(p, ivec2(0), sz - ivec2(1)));
+    return pel_to_sample(imageLoad(input_images[idx],
+                                   clamp(p, ivec2(0), sz - ivec2(1))));
 }
 void deband(const ivec2 pos, const int idx, float thr_p, float grain_p) {
     const float TWO_PI = 6.28318530718;
     const float GOLDEN = 2.39996322973;
     ivec2 sz = imageSize(output_images[idx]);
-    vec4 S = imageLoad(input_images[idx], pos);
+    vec4 S = pel_to_sample(imageLoad(input_images[idx], pos));
     bool dynG = (flags & 1) != 0;
     bool protectD = (flags & 2) != 0;
     float r = dynG ? hash3(pos, frame_seed) : frand(vec2(pos));
@@ -138,7 +152,8 @@ void deband(const ivec2 pos, const int idx, float thr_p, float grain_p) {
                                      : tpdf(pos, dynG ? frame_seed : 0u, idx);
         base += vec4(n * grain_p) * mix(vec4(0.25), vec4(1.0), w);
     }
-    imageStore(output_images[idx], pos, clamp(base, vec4(0.0), vec4(1.0)));
+    imageStore(output_images[idx], pos,
+               pel_to_storage(clamp(base, vec4(0.0), vec4(1.0))));
 }
 
 void main()

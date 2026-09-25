@@ -26,6 +26,15 @@ confidence, to follow motion instead of ghosting it:
 - **Combine**: `num = (1−blend)·numS + blend·numT`, `den` likewise,
   `out = mix(in, num/den, strength)`.
 
+All arithmetic runs in the logical `[0,1]` sample domain. The shader multiplies
+storage-image loads by descriptor-derived `sample_scale`. At writeback on known
+integer layouts it clamps and quantizes first, then returns to the storage
+domain: `round(clamp(value, 0, 1) * code_max) / code_max / sample_scale`.
+`code_max` is a specialization constant rather than another push field, keeping
+the denoise push block at Vulkan's guaranteed 128-byte minimum. For P010/P012,
+the descriptor shift is included in `sample_scale`, so this order maps the code
+back into the shifted lane and leaves the low padding bits zero.
+
 The standalone reference shader is `libpelorus/shaders/pelorus_denoise.comp`; the
 filter ships the same algorithm as a build-time-compiled SPIR-V shader
 (`ffmpeg-patches/files/vulkan/pelorus_*.comp.glsl`); the reference `.comp` is not a
@@ -49,11 +58,15 @@ options follow the `{Y, Cb, Cr}` split.
 | `patch` | 1 | 0–3 | spatial window radius (0 = temporal-only) |
 | `prev` | 3 | 0–4 | temporal depth (previous frames in VRAM) |
 | `protect` | on | bool | damp strength on textured regions |
-| `planes` | 0xF | bitmask | planes to process |
+| `planes` | 0xF | bitmask | physical planes to process; a selected semi-planar chroma plane contains both U and V |
 | `meta` | off | bool | attach the `PEL_SEC_DENOISE` interop section (adds one GPU→host readback) |
 | `mc` | off | bool | motion-compensated temporal taps: warp the temporal fetch by an upstream `pelorus_mc` quarter-pel MV field, gated by per-block confidence + `tcut` ([ADR-0131](../adr/0131-mc-denoise-warp.md)). Requires `pelorus_mc_vulkan=meta=1` **before** denoise; with no upstream MV field denoise falls back to same-coordinate taps |
 | `tile` | off | bool | cache the current-frame spatial search window in shared memory before the NLM scan ([ADR-0134](../adr/0134-denoise-shared-mem-tile.md)). Output is **bit-identical**; a large throughput win on bandwidth-limited GPUs (~2.9× on an Arc A380), ~neutral on cache-rich GPUs (a 4090's L2 already absorbs the redundant fetches). Default off (flagship-first) — enable on weak / integrated / mobile GPUs |
 | `lookahead` | 0 | 0–1 | forward-lookahead temporal depth ([ADR-0137](../adr/0137-denoise-forward-lookahead-cadence.md)). `1` delays output by one frame so the temporal walk also samples the **next** frame (same-coordinate, `tcut`-gated), recovering the leading frame of a held animation drawing (2s/3s cadence). `0` (default) is causal, bit-identical, no latency. Opt-in for cadence / animation content (+0.37 dB on a 2s-cadence clip); neutral on motion (the forward tap `tcut`-breaks) |
+
+Plane masks address physical storage planes. On NV12/P010/P012, plane 1 holds
+both U and V, so selecting it denoises both components. Packed views are updated
+with read-modify-write so components outside the scalar kernel remain intact.
 
 Defaults are the conservative pre-encode preset — a safe floor the vmafx
 `vmaf-tune` autotune ([ADR-0106](../adr/0106-autotune-control-plane.md)) sweeps
@@ -65,8 +78,11 @@ Denoise runs **before** deband so deband's flat-test sees a clean low-variance
 field (not noise mistaken for texture) and re-injects its dither *after*:
 
 ```
-hwupload → pelorus_analyze → pelorus_denoise → pelorus_deband → (hwdownload) → encoder
+hwupload → pelorus_analyze → [pelorus_mc] → pelorus_denoise → pelorus_deband → (hwdownload) → encoder
 ```
+
+The bracketed producer is required only for `pelorus_denoise_vulkan=mc=1`; use
+`pelorus_mc_vulkan=meta=1` so both motion and confidence sections are present.
 
 ## Interop (`meta=1`)
 
@@ -82,14 +98,16 @@ The gain is concentrated where temporal averaging is valid — static / slow /
 locked-off content with grain. Measured against the clean ground truth with a
 stand-in temporal denoiser (ADR-0111): **−42.94% BD-rate** on high-motion BBB +
 grain, **−88.94%** on a locked-off scene + grain. Fast full-frame motion sees
-little benefit (no motion compensation in this version); the clean-reference
-framing assumes the grain is unwanted (otherwise re-synthesize it via the
-film-grain path). Re-prove with this filter once built.
+little benefit from the same-coordinate baseline. The shipped `mc=1` mode can
+align confident moving blocks, but those historical stand-in figures predate it
+and do not prove its gain. The clean-reference framing assumes the grain is
+unwanted (otherwise re-synthesize it via the film-grain path). Re-prove the
+current filter with both `mc=0` and `mc=1`.
 
 ## Usage
 
 ```bash
 ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
-  -vf "hwupload,pelorus_denoise_vulkan=sigma=0.03:sigmat=0.05:strength=0.30:prev=3:tcut=0.10:blend=0.6,hwdownload,format=yuv420p" \
+  -vf "hwupload,pelorus_mc_vulkan=meta=1,pelorus_denoise_vulkan=sigma=0.03:sigmat=0.05:strength=0.30:prev=3:tcut=0.10:blend=0.6:mc=1,hwdownload,format=yuv420p" \
   -c:v hevc_nvenc -preset p5 -cq 28 out.mkv
 ```

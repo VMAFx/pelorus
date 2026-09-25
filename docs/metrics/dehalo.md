@@ -8,15 +8,18 @@ sharpening leave in the flat field next to hard line-art — anime's signature
 artefact, which also costs the encoder bits coding the per-edge overshoot every
 frame. See [ADR-0123](../adr/0123-anime-dehalo.md) for the design.
 
-It is the first stage of the planned `tune=anime` pipeline. **Luma only; chroma
-passes through.**
+It is the first stage of the planned `tune=anime` pipeline. It processes luma by
+default; chroma passes through under that default, but is supported when selected
+with `planes`. A selected semi-planar chroma plane processes both U and V.
 
 ## Algorithm
 
-One Vulkan compute dispatch, bit-depth-agnostic (`FF_VK_REP_FLOAT` UNORM):
+One Vulkan compute dispatch. Samples are converted from the Vulkan storage
+domain to logical `[0,1]` before arithmetic:
 
-1. **Halo-free target** — a strong box blur of luma (`blur` radius). The blurred
-   field is what the line-adjacent band should look like with the ring gone.
+1. **Halo-free target** — a strong box blur of the selected component (`blur`
+   radius). The blurred field is what the line-adjacent band should look like
+   with the ring gone.
 2. **Sensitivity mask `so`** — from the local contrast the blur removed; the
    `DeHalo_alpha` `lowsens` floor and `highsens` gain shape how much of the
    removed difference is treated as halo to pull versus protected detail.
@@ -28,9 +31,10 @@ One Vulkan compute dispatch, bit-depth-agnostic (`FF_VK_REP_FLOAT` UNORM):
    open gradients (far from any edge) are excluded — the drawing and smooth skies
    are protected by construction.
 
-The standalone reference shader is `libpelorus/shaders/pelorus_dehalo.comp`; the
-filter's shipped `.comp.glsl` shader implements the same algorithm (kept in lockstep, AGENTS hard
-rule 4).
+The shipped shader is
+`ffmpeg-patches/files/vulkan/pelorus_dehalo.comp.glsl`; the similarly named
+`libpelorus/shaders/*.comp` file is a compile-checked standalone reference, not
+a second shipped implementation.
 
 ## Options
 
@@ -45,7 +49,7 @@ All thresholds are normalized in `[0,1]`, independent of bit depth.
 | `highsens` | 0.5 | 0–4 | sensitivity gain on the removed-contrast mask |
 | `edge` | 0.08 | 0–1 | Sobel magnitude above which a pixel is line-art (drives the ring gate) |
 | `ring` | 2.0 | 1–8 | edge-mask dilation — the halo-band half-width in pixels |
-| `planes` | 0x1 | 0x0–0xF | planes to process (bitmask; default `0x1` = luma only) |
+| `planes` | 0x1 | 0x0–0xF | physical planes to process (default `0x1` = luma); selecting a semi-planar chroma plane processes both U and V components |
 | `tile` | 0 | 0–1 | cache the box-blur window in shared memory ([ADR-0139](../adr/0139-dehalo-shared-mem-tile.md)). Output is **bit-identical**; box_blur re-reads an overlapping 17×17 window ~5× per pixel, so `tile=1` is a throughput win on bandwidth-limited GPUs (**−38%, 1.6×** on an Arc A380), ~neutral on cache-rich GPUs (a 4090's L2 already caches it). Default off — enable on weak / integrated / mobile GPUs (and `tune=anime`) |
 
 `darkstr`/`brightstr` are the main intensity knobs; `edge` and `ring` shape
@@ -79,9 +83,9 @@ hwupload → pelorus_dehalo → pelorus_deband → (hwdownload) → encoder
 
 ## Interactions and limits (honest scope)
 
-- **Luma only** — chroma passes through unchanged (`planes` defaults to `0x1`).
-  Anime halos are a luma-edge phenomenon; chroma dehalo is a deferred follow-up
-  (ADR-0123).
+- **Luma by default** — `planes=0x1` targets the dominant anime luma-edge
+  artefact. Chroma processing is available by selecting its physical plane; on
+  NV12/P010/P012 that selection processes both U and V.
 - **Runs before deband** in the anime chain (see above), so deband's flat-test
   is not fooled by the residual ring.
 - **Honest caveat — defaults are not yet content-tuned.** The algorithm port is

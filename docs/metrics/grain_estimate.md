@@ -33,15 +33,18 @@ function** models. A single Vulkan compute pass measures it, per intensity band:
    (`Σ resid·resid_right` over flat pixels) gives a coarse autocorrelation
    coefficient → a conservative AR seed.
 
-The reduction is sliced (16 slices) to cut atomic contention and summed on the
-host. The host maps the per-band RMS to the AV1 AOM piecewise scaling function
+The reduction is sliced (32 slices) to cut atomic contention and keep each
+uint32 fixed-point accumulator bounded through DCI 8K, then summed on the host.
+The host maps the per-band RMS to the AV1 AOM piecewise scaling function
 `y_points[value, scaling]` (band centre → `value`, RMS·`strength` → `scaling`),
 takes AV1-legal defaults for the shifts, and seeds `ar_coeffs_y[0]` from the
 lag-1 coefficient.
 
-The standalone reference shader is
-`libpelorus/shaders/pelorus_grain_estimate.comp`; the filter's shipped `.comp.glsl` shader
-implements the same algorithm (kept in lockstep, AGENTS hard rule 4).
+The shipped shader is
+`ffmpeg-patches/files/vulkan/pelorus_grain_estimate.comp.glsl`; the similarly
+named `libpelorus/shaders/*.comp` file is a compile-checked standalone
+reference, not a second shipped implementation. Loads are converted to the
+logical sample domain before the estimator runs.
 
 ## Options
 
@@ -89,18 +92,18 @@ hwupload → pelorus_grain_estimate → pelorus_denoise → pelorus_deband → (
 
 AV1 (AOM) is the authoritative target for v0.x: FFmpeg has a complete public
 `AVFilmGrainAOMParams` struct and a native side-data channel, so the estimate is
-consumable today with no extra bitstream plumbing. Two more encoder legs now
-ship: HEVC/H.265 round-trips through the `pelorus_fgs` H.274 FGC SEI bitstream
-filter ([ADR-0117](../adr/0117-grain-fgs-bsf.md), see
-[grain-fgs-bsf.md](../usage/grain-fgs-bsf.md)), and `av1_nvenc` consumes the
+consumable today with no extra bitstream plumbing. `av1_nvenc` also consumes the
 estimate via the `-pelorus_film_grain` AVOption that drives NVENC's hardware AV1
-film-grain synthesis ([ADR-0118](../adr/0118-nvenc-av1-filmgrain.md)). **Honest
-caveat: the H.274 model written by `pelorus_fgs` is static** (one frequency-domain
-model for the clip, not per-frame), and the full per-lag AR coefficient fit,
-explicit chroma-grain estimation, the H.274 component-model tables, and the
-per-frame / H.264 / VVC legs remain deferred (ADR-0115). The estimator and the
-parameter contract are complete and codec-neutral. No BD-rate / visual-match
-proof is shipped with this filter; it must be measured under the
+film-grain synthesis ([ADR-0118](../adr/0118-nvenc-av1-filmgrain.md)). HEVC/H.265
+has a different, deliberately manual leg: `pelorus_fgs` writes a static H.274
+FGC SEI model supplied through BSF AVOptions
+([ADR-0117](../adr/0117-grain-fgs-bsf.md), see
+[grain-fgs-bsf.md](../usage/grain-fgs-bsf.md)). It does **not** read the
+estimator's frame `PEL_SEC_FILMGRAIN` side data inline; map an analysis result to
+the BSF options yourself. The full per-lag AR coefficient fit, explicit
+chroma-grain estimation, H.274 component-model tables, and automatic per-frame /
+H.264 / VVC legs remain deferred (ADR-0115). No BD-rate / visual-match proof is
+shipped with this filter; it must be measured under the
 [ADR-0111](../adr/0111-benchmark-methodology.md) methodology in a follow-up.
 
 ## Usage
@@ -120,21 +123,21 @@ For HEVC/H.265 + VVC/H.266, select `model=h274` to populate the H.274 mode
 scalars in `PEL_SEC_FILMGRAIN`:
 
 ```bash
-# HEVC: estimate + denoise, then re-synthesize the grain in the HEVC stream via
-# the pelorus_fgs H.274 FGC SEI bitstream filter (ADR-0117). The H.274 scalars
-# carried in PEL_SEC_FILMGRAIN drive the SEI the BSF writes. The H.274 model is
-# static (one model per clip), not per-frame.
+# HEVC: estimate + denoise, then insert a static H.274 FGC SEI model. The values
+# below must be mapped manually from an analysis result; pelorus_fgs does not
+# read PEL_SEC_FILMGRAIN from frames, even when used inline in this command.
 ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
   -vf "hwupload,pelorus_grain_estimate_vulkan=model=h274:strength=2.0,pelorus_denoise_vulkan=strength=0.4,hwdownload,format=yuv420p" \
-  -c:v hevc_nvenc -preset p5 -cq 28 -bsf:v pelorus_fgs out.mkv
+  -c:v hevc_nvenc -preset p5 -cq 28 \
+  -bsf:v "pelorus_fgs=model_id=1:blending_mode=0:log2_scale=8:scale_y=24" out.mkv
 ```
 
-All three legs now round-trip end-to-end: AV1 software encoders via the native
-`AV_FRAME_DATA_FILM_GRAIN_PARAMS` channel, HEVC via the `pelorus_fgs` H.274 FGC
-SEI bitstream filter ([ADR-0117](../adr/0117-grain-fgs-bsf.md), static model),
-and `av1_nvenc` via `-pelorus_film_grain` into NVENC's hardware AV1 film-grain
-synthesis ([ADR-0118](../adr/0118-nvenc-av1-filmgrain.md)). The H.264 and VVC
-legs and a per-frame H.274 model remain deferred.
+AV1 software encoders can use the native `AV_FRAME_DATA_FILM_GRAIN_PARAMS`
+channel, and `av1_nvenc` uses `-pelorus_film_grain` for the per-frame estimate.
+HEVC uses the separate `pelorus_fgs` H.274 FGC SEI BSF
+([ADR-0117](../adr/0117-grain-fgs-bsf.md)); that leg is static and manually
+configured, not an automatic frame-side-data round trip. The H.264 and VVC legs
+and a per-frame H.274 model remain deferred.
 
 ## Frame metadata (the `tune=auto` grain discriminator)
 

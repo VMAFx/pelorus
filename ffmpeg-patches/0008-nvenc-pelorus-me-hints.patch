@@ -38,8 +38,8 @@ that frame, so NVENC runs its own search and behaviour is unchanged.
 
 ADR: docs/adr/0116-pelorus-mc.md (consumer section), docs/adr/0114-encoder-steering.md (Tier 3)
 ---
- libavcodec/nvenc.c      | 252 ++++++++++++++++++++++++++++++++++++++++
- libavcodec/nvenc.h      |  17 +++
+ libavcodec/nvenc.c      | 252 ++++++++++++++++++++
+ libavcodec/nvenc.h      |  17 ++
  libavcodec/nvenc_h264.c |   2 +
  libavcodec/nvenc_hevc.c |   2 +
  4 files changed, 273 insertions(+)
@@ -382,6 +382,3 @@ index 04ea2a306470143a443fd5d9ca9a51709c0cea1a..4d3054fee1fe2969e03bb4242a2f2086
      { "b_adapt",      "When lookahead is enabled, set this to 0 to disable adaptive B-frame decision",
                                                              OFFSET(b_adapt),      AV_OPT_TYPE_BOOL,  { .i64 = 1 }, 0, 1, VE },
      { "spatial-aq",   "set to 1 to enable Spatial AQ",      OFFSET(aq),           AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, VE },
--- 
-2.55.0
-

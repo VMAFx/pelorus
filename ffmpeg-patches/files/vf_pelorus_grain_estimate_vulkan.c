@@ -54,6 +54,7 @@
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
+#include "pelorus_vulkan_sample.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -66,14 +67,15 @@
 /* Intensity bands and atomic-contention slices. MUST match the std430 SSBO
  * layout in pelorus_grain_estimate.comp.glsl, byte-for-byte. */
 #define PEL_GRAIN_BANDS 8
-#define PEL_GRAIN_SLICES 16
+#define PEL_GRAIN_SLICES 32
 
 /* Fixed-point scales shared by shader writes and host reads. Two distinct
  * scales plus a residual clamp keep both uint32 accumulators overflow-safe up
  * to 8K while preserving precision: with resid clamped to [-0.08,0.08] (lossless
  * for real grain), resid^2 <= 0.0064, so the worst-case per-pixel contribution
- * times the largest per-slice flat-pixel count (~2M at 8K) stays under 2^32, and
- * a small real-grain residual still scales to >= 1 (no truncation-to-zero).
+ * times the largest per-slice flat-pixel count (~1.11M at DCI 8K) stays under
+ * 2^32, and a small real-grain residual still scales to >= 1 (no
+ * truncation-to-zero).
  * MUST match pelorus_grain_estimate.comp.glsl. */
 #define PEL_GRAIN_SUMSQ_GS 300000.0
 #define PEL_GRAIN_CORR_GS 2000.0
@@ -86,8 +88,8 @@
 typedef struct PelorusGrainBuf {
     uint32_t sumsq[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES]; /* Σ resid^2 * GS       */
     uint32_t cnt[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES];   /* flat-pixel count     */
-    uint32_t corr[PEL_GRAIN_SLICES];     /* Σ (resid*resid_right + 1.0) * GS    */
-    uint32_t corr_cnt[PEL_GRAIN_SLICES]; /* lag-1 sample count                  */
+    uint32_t corr[PEL_GRAIN_SLICES];                    /* Σ (resid*resid_right + 1.0) * GS    */
+    uint32_t corr_cnt[PEL_GRAIN_SLICES];                /* lag-1 sample count                  */
 } PelorusGrainBuf;
 
 typedef struct PelorusGrainEstimateVulkanContext {
@@ -99,9 +101,9 @@ typedef struct PelorusGrainEstimateVulkanContext {
     FFVulkanShader shd;
     AVBufferPool *stat_buf_pool;
 
-    double edge_thr;  /* 3x3 range above which a pixel is an edge (skipped)     */
-    double strength;  /* maps per-band RMS residual to the AV1 scaling [0,255]  */
-    int grain_model;  /* enum pel_grain_model: 1=AOM (default), 2=H274          */
+    double edge_thr;   /* 3x3 range above which a pixel is an edge (skipped)     */
+    double strength;   /* maps per-band RMS residual to the AV1 scaling [0,255]  */
+    int grain_model;   /* enum pel_grain_model: 1=AOM (default), 2=H274          */
     int attach_native; /* also attach native AV_FRAME_DATA_FILM_GRAIN_PARAMS    */
 } PelorusGrainEstimateVulkanContext;
 
@@ -110,7 +112,7 @@ typedef struct PelorusGrainEstimateVulkanContext {
  * GLSL builder (GLSLC/GLSLF/GLSLD + ff_vk_shader_init), which also retires the
  * old inline-vs-reference lockstep duplication. */
 extern const unsigned char ff_pelorus_grain_estimate_comp_spv_data[];
-extern const unsigned int  ff_pelorus_grain_estimate_comp_spv_len;
+extern const unsigned int ff_pelorus_grain_estimate_comp_spv_len;
 
 static av_cold int init_filter(AVFilterContext *ctx)
 {
@@ -131,11 +133,10 @@ static av_cold int init_filter(AVFilterContext *ctx)
 
     /* The estimator reads only the luma plane and needs no C-generated GLSL, so
      * no specialization constants are required (spec == NULL). */
-    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, NULL,
-                      (uint32_t []) { 16, 16, 1 }, 0);
+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, NULL, (uint32_t[]){16, 16, 1}, 0);
 
     /* Mirrors the GLSL std430 push-constant block, byte-for-byte. */
-    ff_vk_shader_add_push_const(shd, 0, 2 * sizeof(int) + sizeof(float),
+    ff_vk_shader_add_push_const(shd, 0, 2 * sizeof(int) + 2 * sizeof(float),
                                 VK_SHADER_STAGE_COMPUTE_BIT);
 
     {
@@ -143,8 +144,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
             {
                 .name = "input_images",
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
-                                                   FF_VK_REP_FLOAT),
+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
                 .mem_quali = "readonly",
                 .dimensions = 2,
                 .elems = planes,
@@ -163,8 +163,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
         ff_vk_shader_add_descriptor_set(vkctx, shd, desc, 2, 0);
     }
 
-    RET(ff_vk_shader_link(vkctx, shd,
-                          ff_pelorus_grain_estimate_comp_spv_data,
+    RET(ff_vk_shader_link(vkctx, shd, ff_pelorus_grain_estimate_comp_spv_data,
                           ff_pelorus_grain_estimate_comp_spv_len, "main"));
     RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 
@@ -229,8 +228,7 @@ static void reduce_stats(const PelorusGrainBuf *acc, PelorusGrainStats *st)
     if (corr_n > 0 && var_sum > 0.0) {
         /* mean lag-1 product = (Σ biased / CORR_GS - n*BIAS) / n */
         double mean_prod =
-            (corr_sum / PEL_GRAIN_CORR_GS - (double)corr_n * PEL_GRAIN_CORR_BIAS) /
-            (double)corr_n;
+            (corr_sum / PEL_GRAIN_CORR_GS - (double)corr_n * PEL_GRAIN_CORR_BIAS) / (double)corr_n;
         /* normalize by the overall residual variance -> coefficient in [-1,1] */
         double gvar = var_sum / (double)st->flat_total;
         double coeff = gvar > 0.0 ? mean_prod / gvar : 0.0;
@@ -243,14 +241,14 @@ static void reduce_stats(const PelorusGrainBuf *acc, PelorusGrainStats *st)
  * (value, scaling) point — value = band centre on [0,255], scaling = band RMS
  * scaled by `strength`. Points must be strictly increasing in value (AV1), so
  * we emit one per band centre (already increasing) and skip empty bands. */
-static void map_aom(const PelorusGrainEstimateVulkanContext *s,
-                    const PelorusGrainStats *st, PelorusFilmGrainSection *g)
+static void map_aom(const PelorusGrainEstimateVulkanContext *s, const PelorusGrainStats *st,
+                    PelorusFilmGrainSection *g)
 {
     int b, np = 0;
     int ar_n;
     int8_t ar0;
 
-    g->seed = 0; /* deterministic; a real seed is set by the synth stage */
+    g->seed = 0;           /* deterministic; a real seed is set by the synth stage */
     g->scaling_shift = 8;  /* AV1 [8,11] */
     g->ar_coeff_lag = 1;   /* lag-1 proxy */
     g->ar_coeff_shift = 6; /* AV1 [6,9] -> range [-2,2) */
@@ -261,8 +259,8 @@ static void map_aom(const PelorusGrainEstimateVulkanContext *s,
     g->grain_model = (uint8_t)s->grain_model;
 
     /* H.274 mode scalars (carried for the follow-up SEI BSF). */
-    g->h274_model_id = 1;       /* auto-regression */
-    g->h274_blending_mode = 0;  /* additive */
+    g->h274_model_id = 1;      /* auto-regression */
+    g->h274_blending_mode = 0; /* additive */
     g->h274_log2_scale = 8;
 
     for (b = 0; b < PEL_GRAIN_BANDS && np < 14; b++) {
@@ -272,8 +270,7 @@ static void map_aom(const PelorusGrainEstimateVulkanContext *s,
         /* band centre on [0,255] */
         value = av_clip((b * 255 + 128) / PEL_GRAIN_BANDS, 0, 255);
         /* RMS residual ([0,~0.1] for typical grain) -> [0,255] via strength */
-        scaling = av_clip(
-            (int)lrintf(st->band_rms[b] * (float)s->strength * 255.0f), 0, 255);
+        scaling = av_clip((int)lrintf(st->band_rms[b] * (float)s->strength * 255.0f), 0, 255);
         if (scaling == 0)
             continue; /* no measurable grain in this band */
         g->y_points[np][0] = (uint8_t)value;
@@ -350,10 +347,9 @@ static int attach_interop(PelorusGrainEstimateVulkanContext *s, AVFrame *frame,
     memset(&meta, 0, sizeof(meta));
     meta.frame_pts = (uint64_t)frame->pts;
     meta.bit_depth = d ? (uint8_t)d->comp[0].depth : 0;
-    meta.plane_layout = (d && d->log2_chroma_w == 0 && d->log2_chroma_h == 0)
-                            ? PEL_LAYOUT_444
-                            : ((d && d->log2_chroma_h == 0) ? PEL_LAYOUT_422
-                                                            : PEL_LAYOUT_420);
+    meta.plane_layout = (d && d->log2_chroma_w == 0 && d->log2_chroma_h == 0) ?
+                            PEL_LAYOUT_444 :
+                            ((d && d->log2_chroma_h == 0) ? PEL_LAYOUT_422 : PEL_LAYOUT_420);
     meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'G');
 
     sec.id = PEL_SEC_FILMGRAIN;
@@ -368,8 +364,7 @@ static int attach_interop(PelorusGrainEstimateVulkanContext *s, AVFrame *frame,
         pel_blob_free(blob);
         return AVERROR(ENOMEM);
     }
-    if (!av_frame_new_side_data_from_buf(frame, AV_FRAME_DATA_SEI_UNREGISTERED,
-                                         buf)) {
+    if (!av_frame_new_side_data_from_buf(frame, AV_FRAME_DATA_SEI_UNREGISTERED, buf)) {
         av_buffer_unref(&buf);
         return AVERROR(ENOMEM);
     }
@@ -399,6 +394,7 @@ static int grain_estimate_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
         int32_t width;
         int32_t height;
         float edge_thr;
+        float sample_scale;
     } pc;
 
     if (!s->initialized)
@@ -407,14 +403,14 @@ static int grain_estimate_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     pc.width = in->width;
     pc.height = in->height;
     pc.edge_thr = (float)s->edge_thr;
+    pc.sample_scale = pel_vk_sample_scale(vkctx->input_format);
 
-    RET(ff_vk_get_pooled_buffer(vkctx, &s->stat_buf_pool, &buf,
-                                VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                NULL, sizeof(PelorusGrainBuf),
-                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
-                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
+    RET(ff_vk_get_pooled_buffer(
+        vkctx, &s->stat_buf_pool, &buf,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
+        sizeof(PelorusGrainBuf),
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
     buf_vk = (FFVkBuffer *)buf->data;
     acc = (const PelorusGrainBuf *)buf_vk->mapped_mem;
 
@@ -424,81 +420,81 @@ static int grain_estimate_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     RET(ff_vk_exec_add_dep_frame(vkctx, exec, in, VK_PIPELINE_STAGE_2_NONE,
                                  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
     RET(ff_vk_create_imageviews(vkctx, exec, views, in, FF_VK_REP_FLOAT));
-    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, in, views, 0, 0,
-                                  VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
-    ff_vk_frame_barrier(vkctx, exec, in, img_bar, &nb_img_bar,
-                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
-                        VK_QUEUE_FAMILY_IGNORED);
+    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, in, views, 0, 0, VK_IMAGE_LAYOUT_GENERAL,
+                                  VK_NULL_HANDLE);
+    ff_vk_frame_barrier(vkctx, exec, in, img_bar, &nb_img_bar, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+                        VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED);
 
     /* zero the accumulators */
-    vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
-        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2) {
-            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-            .srcStageMask = VK_PIPELINE_STAGE_2_NONE,
-            .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-            .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .buffer = buf_vk->buf,
-            .size = buf_vk->size,
-            .offset = 0,
-        },
-        .bufferMemoryBarrierCount = 1,
-    });
+    vk->CmdPipelineBarrier2(exec->buf,
+                            &(VkDependencyInfo){
+                                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                .pBufferMemoryBarriers =
+                                    &(VkBufferMemoryBarrier2){
+                                        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                        .srcStageMask = VK_PIPELINE_STAGE_2_NONE,
+                                        .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                        .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                        .buffer = buf_vk->buf,
+                                        .size = buf_vk->size,
+                                        .offset = 0,
+                                    },
+                                .bufferMemoryBarrierCount = 1,
+                            });
     vk->CmdFillBuffer(exec->buf, buf_vk->buf, 0, buf_vk->size, 0x0);
-    vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
-        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .pImageMemoryBarriers = img_bar,
-        .imageMemoryBarrierCount = nb_img_bar,
-        .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2) {
-            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-            .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-            .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-            .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
-                             VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .buffer = buf_vk->buf,
-            .size = buf_vk->size,
-            .offset = 0,
-        },
-        .bufferMemoryBarrierCount = 1,
-    });
+    vk->CmdPipelineBarrier2(exec->buf,
+                            &(VkDependencyInfo){
+                                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                .pImageMemoryBarriers = img_bar,
+                                .imageMemoryBarrierCount = nb_img_bar,
+                                .pBufferMemoryBarriers =
+                                    &(VkBufferMemoryBarrier2){
+                                        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                        .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                        .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                                        .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+                                                         VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                        .buffer = buf_vk->buf,
+                                        .size = buf_vk->size,
+                                        .offset = 0,
+                                    },
+                                .bufferMemoryBarrierCount = 1,
+                            });
 
-    RET(ff_vk_shader_update_desc_buffer(&s->vkctx, exec, &s->shd, 0, 1, 0,
-                                        buf_vk, 0, buf_vk->size,
+    RET(ff_vk_shader_update_desc_buffer(&s->vkctx, exec, &s->shd, 0, 1, 0, buf_vk, 0, buf_vk->size,
                                         VK_FORMAT_UNDEFINED));
     ff_vk_exec_bind_shader(vkctx, exec, &s->shd);
-    ff_vk_shader_update_push_const(vkctx, exec, &s->shd,
-                                   VK_SHADER_STAGE_COMPUTE_BIT, 0,
-                                   sizeof(pc), &pc);
+    ff_vk_shader_update_push_const(vkctx, exec, &s->shd, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc),
+                                   &pc);
 
-    vk->CmdDispatch(exec->buf,
-                    FFALIGN(in->width, s->shd.lg_size[0]) / s->shd.lg_size[0],
-                    FFALIGN(in->height, s->shd.lg_size[1]) / s->shd.lg_size[1],
-                    s->shd.lg_size[2]);
+    vk->CmdDispatch(exec->buf, FFALIGN(in->width, s->shd.lg_size[0]) / s->shd.lg_size[0],
+                    FFALIGN(in->height, s->shd.lg_size[1]) / s->shd.lg_size[1], s->shd.lg_size[2]);
 
-    vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
-        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2) {
-            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-            .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-            .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
-            .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
-                             VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-            .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .buffer = buf_vk->buf,
-            .size = buf_vk->size,
-            .offset = 0,
-        },
-        .bufferMemoryBarrierCount = 1,
-    });
+    vk->CmdPipelineBarrier2(exec->buf,
+                            &(VkDependencyInfo){
+                                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                .pBufferMemoryBarriers =
+                                    &(VkBufferMemoryBarrier2){
+                                        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                        .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                        .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
+                                        .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+                                                         VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                                        .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+                                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                        .buffer = buf_vk->buf,
+                                        .size = buf_vk->size,
+                                        .offset = 0,
+                                    },
+                                .bufferMemoryBarrierCount = 1,
+                            });
 
     RET(ff_vk_exec_submit(vkctx, exec));
     ff_vk_exec_wait(vkctx, exec);
@@ -519,8 +515,7 @@ static int grain_estimate_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
                 gs = st.band_rms[b];
         pel_set_meta_f(in, "lavfi.pelorus.grain_sigma", gs);
         pel_set_meta_f(in, "lavfi.pelorus.grain_flat",
-                       (float)((double)st.flat_total /
-                               ((double)in->width * (double)in->height)));
+                       (float)((double)st.flat_total / ((double)in->width * (double)in->height)));
     }
 
     memset(&g, 0, sizeof(g));
@@ -562,22 +557,59 @@ static void grain_estimate_vulkan_uninit(AVFilterContext *avctx)
 #define OFFSET(x) offsetof(PelorusGrainEstimateVulkanContext, x)
 #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 static const AVOption pelorus_grain_estimate_vulkan_options[] = {
-    { "edge", "3x3 range above which a pixel is an edge (excluded from grain)",
-      OFFSET(edge_thr), AV_OPT_TYPE_DOUBLE, { .dbl = 0.06 }, 0.0, 1.0, FLAGS },
-    { "strength", "scales the measured per-band RMS residual to the AV1 [0,255] "
-      "scaling function (synthesis intensity)",
-      OFFSET(strength), AV_OPT_TYPE_DOUBLE, { .dbl = 2.0 }, 0.0, 64.0, FLAGS },
-    { "model", "FGS model the estimate targets", OFFSET(grain_model),
-      AV_OPT_TYPE_INT, { .i64 = PEL_GRAIN_AOM }, PEL_GRAIN_AOM, PEL_GRAIN_H274,
-      FLAGS, .unit = "model" },
-        { "aom", "AV1 (AOM) film-grain params", 0, AV_OPT_TYPE_CONST,
-          { .i64 = PEL_GRAIN_AOM }, 0, 0, FLAGS, .unit = "model" },
-        { "h274", "HEVC/VVC H.274 FGC SEI scalars", 0, AV_OPT_TYPE_CONST,
-          { .i64 = PEL_GRAIN_H274 }, 0, 0, FLAGS, .unit = "model" },
-    { "native", "also attach native AV_FRAME_DATA_FILM_GRAIN_PARAMS (AV1)",
-      OFFSET(attach_native), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
-    { NULL }
-};
+    {"edge",
+     "3x3 range above which a pixel is an edge (excluded from grain)",
+     OFFSET(edge_thr),
+     AV_OPT_TYPE_DOUBLE,
+     {.dbl = 0.06},
+     0.0,
+     1.0,
+     FLAGS},
+    {"strength",
+     "scales the measured per-band RMS residual to the AV1 [0,255] "
+     "scaling function (synthesis intensity)",
+     OFFSET(strength),
+     AV_OPT_TYPE_DOUBLE,
+     {.dbl = 2.0},
+     0.0,
+     64.0,
+     FLAGS},
+    {"model",
+     "FGS model the estimate targets",
+     OFFSET(grain_model),
+     AV_OPT_TYPE_INT,
+     {.i64 = PEL_GRAIN_AOM},
+     PEL_GRAIN_AOM,
+     PEL_GRAIN_H274,
+     FLAGS,
+     .unit = "model"},
+    {"aom",
+     "AV1 (AOM) film-grain params",
+     0,
+     AV_OPT_TYPE_CONST,
+     {.i64 = PEL_GRAIN_AOM},
+     0,
+     0,
+     FLAGS,
+     .unit = "model"},
+    {"h274",
+     "HEVC/VVC H.274 FGC SEI scalars",
+     0,
+     AV_OPT_TYPE_CONST,
+     {.i64 = PEL_GRAIN_H274},
+     0,
+     0,
+     FLAGS,
+     .unit = "model"},
+    {"native",
+     "also attach native AV_FRAME_DATA_FILM_GRAIN_PARAMS (AV1)",
+     OFFSET(attach_native),
+     AV_OPT_TYPE_BOOL,
+     {.i64 = 1},
+     0,
+     1,
+     FLAGS},
+    {NULL}};
 
 AVFILTER_DEFINE_CLASS(pelorus_grain_estimate_vulkan);
 

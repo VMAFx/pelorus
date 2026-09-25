@@ -11,6 +11,7 @@ hwdownload, just before the encoder; the motion side data rides the frame via
 av_frame_copy_props.
 
 Not a Vulkan filter: no shader, no _deps. Links libpelorus to parse the interop
-blob (require_pkg_config). Single AVOption: force_idr (default on).
+blob (guarded require_pkg_config + per-filter extralibs). Single AVOption:
+force_idr (default on).
 
 ADR: docs/adr/0126-scenecut-idr.md

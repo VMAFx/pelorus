@@ -18,8 +18,8 @@ lines stay crisp. Luma only; chroma passes through. Zero-copy in VRAM
 
 Pure pixel transform — does NOT link libpelorus, so registration is deps-only
 (no require_pkg_config). Second filter of the anime `tune` pipeline. The
-reference shader libpelorus/shaders/pelorus_aa.comp and the inline GLSL are kept
-in lockstep.
+canonical libavfilter/vulkan/pelorus_aa.comp.glsl is compiled to SPIR-V at
+FFmpeg build time; Pelorus also compile-checks a standalone reference shader.
 
 AVOptions: blur (edge-map radius), depth (warp scale), thresh (edge clamp),
 darkstr (line-darkening), edge (line threshold), planes, fast (opt-in shared-
@@ -31,15 +31,13 @@ ADR: docs/adr/0124-anime-aa.md
  configure                               |   1 +
  libavfilter/Makefile                    |   1 +
  libavfilter/allfilters.c                |   1 +
- libavfilter/vf_pelorus_aa_vulkan.c      | 239 ++++++++++++++++++++++++
+ libavfilter/vf_pelorus_aa_vulkan.c      | 286 ++++++++++++++++++++
  libavfilter/vulkan/Makefile             |   1 +
- libavfilter/vulkan/pelorus_aa.comp.glsl | 231 +++++++++++++++++++++++
- 6 files changed, 474 insertions(+)
- create mode 100644 libavfilter/vf_pelorus_aa_vulkan.c
- create mode 100644 libavfilter/vulkan/pelorus_aa.comp.glsl
+ libavfilter/vulkan/pelorus_aa.comp.glsl | 265 ++++++++++++++++++
+ 6 files changed, 555 insertions(+)
 
 diff --git a/configure b/configure
-index c68249b1a029bb1b1b4c9daf017402e0020bbe9f..31a1c70813cc6c40c1f96a5c35b0c67c0e0c8db8 100755
+index f052412ba00f78d88734beaa51c4a4e82a5ebea6..021915e788bf3f971443131919f665036148b3b6 100755
 --- a/configure
 +++ b/configure
 @@ -4243,6 +4243,7 @@ overlay_qsv_filter_deps="libmfx"
@@ -76,10 +74,10 @@ index 2ac2a6540fb0f9b500bfbd6137278ca1ddc56b4a..0ee727c8c38cefe87c4d23504c0e43dd
  extern const FFFilter ff_vf_pelorus_dehalo_vulkan;
 diff --git a/libavfilter/vf_pelorus_aa_vulkan.c b/libavfilter/vf_pelorus_aa_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..6ca371fd697f763d0f3aa062639b8183076b4c5c
+index 0000000000000000000000000000000000000000..bda8e239fc0e9512e2929fe32957a1f16db3d27b
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_aa_vulkan.c
-@@ -0,0 +1,239 @@
+@@ -0,0 +1,286 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -107,14 +105,17 @@ index 0000000000000000000000000000000000000000..6ca371fd697f763d0f3aa062639b8183
 + * onto the line (anti-aliasing + thinning) without the ringing a sharpen adds.
 + * Line-darkening then deepens the dark side of edges so lines stay crisp.
 + *
-+ * Luma only; chroma passes through. Zero-copy in VRAM (FF_VK_REP_FLOAT UNORM,
-+ * bit-depth-agnostic). Part of the anime `tune` pipeline (ADR-0124). The
++ * Luma only by default; unselected planes pass through. Zero-copy in VRAM.
++ * Arithmetic runs in the logical sample domain after descriptor-derived
++ * conversion from the FF_VK_REP_FLOAT storage view (ADR-0147). Part of the
++ * anime `tune` pipeline (ADR-0124). The
 + * algorithm lives in vulkan/pelorus_aa.comp.glsl, compiled to SPIR-V at build
 + * time and linked in here.
 + */
 +
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
++#include "pelorus_vulkan_sample.h"
 +#include "vulkan_filter.h"
 +
 +#include "filters.h"
@@ -133,11 +134,12 @@ index 0000000000000000000000000000000000000000..6ca371fd697f763d0f3aa062639b8183
 +    /* push constants — mirror the std430 block in
 +     * vulkan/pelorus_aa.comp.glsl, byte-for-byte */
 +    struct {
-+        int32_t blur;     /* edge-map blur radius (0..MAX_R)                 */
-+        float depth;      /* warp displacement scale (pixels per gradient)   */
-+        float thresh;     /* edge-map clamp ceiling (normalized)             */
-+        float darkstr;    /* line-darkening strength [0,1] (0 = off)         */
-+        float edge_thr;   /* Sobel magnitude that counts as a line           */
++        int32_t blur;       /* edge-map blur radius (0..MAX_R)                 */
++        float depth;        /* warp displacement scale (pixels per gradient)   */
++        float thresh;       /* edge-map clamp ceiling (normalized)             */
++        float darkstr;      /* line-darkening strength [0,1] (0 = off)         */
++        float edge_thr;     /* Sobel magnitude that counts as a line           */
++        float sample_scale; /* storage UNORM -> logical sample domain        */
 +    } opts;
 +
 +    int planes; /* plane bitmask to process (luma-only by default)           */
@@ -151,7 +153,7 @@ index 0000000000000000000000000000000000000000..6ca371fd697f763d0f3aa062639b8183
 + * bitmask and the `fast` shared-memory hoist — all previously C-side codegen
 + * decisions — are now specialization constants. */
 +extern const unsigned char ff_pelorus_aa_comp_spv_data[];
-+extern const unsigned int  ff_pelorus_aa_comp_spv_len;
++extern const unsigned int ff_pelorus_aa_comp_spv_len;
 +
 +static av_cold int init_filter(AVFilterContext *ctx)
 +{
@@ -160,6 +162,11 @@ index 0000000000000000000000000000000000000000..6ca371fd697f763d0f3aa062639b8183
 +    FFVulkanContext *vkctx = &s->vkctx;
 +    FFVulkanShader *shd = &s->shd;
 +    const int planes = av_pix_fmt_count_planes(vkctx->output_format);
++    const AVPixFmtDescriptor *pd = av_pix_fmt_desc_get(vkctx->output_format);
++    const int semi_planar = pd && pd->nb_components >= 3 && pd->comp[1].plane == pd->comp[2].plane;
++    const uint32_t sample_code_max = pel_vk_sample_code_max(vkctx->output_format);
++
++    s->opts.sample_scale = pel_vk_sample_scale(vkctx->input_format);
 +
 +    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
 +    if (!s->qf) {
@@ -174,24 +181,23 @@ index 0000000000000000000000000000000000000000..6ca371fd697f763d0f3aa062639b8183
 +     * const-folded into the generated GLSL before FFmpeg 9 unrolled the
 +     * per-plane loop in C. With precompiled SPIR-V they become specialization
 +     * constants, folded at pipeline-compile time to the same single variant. */
-+    SPEC_LIST_CREATE(sl, 3, 3 * sizeof(uint32_t))
++    SPEC_LIST_CREATE(sl, 5, 5 * sizeof(uint32_t))
 +    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
 +    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
 +    SPEC_LIST_ADD(sl, 2, 32, (uint32_t)(s->fast != 0));
++    SPEC_LIST_ADD(sl, 3, 32, (uint32_t)semi_planar);
++    SPEC_LIST_ADD(sl, 4, 32, sample_code_max);
 +
-+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
-+                      (uint32_t []) { 32, 32, 1 }, 0);
++    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 +
-+    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts),
-+                                VK_SHADER_STAGE_COMPUTE_BIT);
++    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts), VK_SHADER_STAGE_COMPUTE_BIT);
 +
 +    {
 +        FFVulkanDescriptorSetBinding desc_set[] = {
 +            {
 +                .name = "input_images",
 +                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
-+                                                   FF_VK_REP_FLOAT),
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
 +                .mem_quali = "readonly",
 +                .dimensions = 2,
 +                .elems = planes,
@@ -200,8 +206,7 @@ index 0000000000000000000000000000000000000000..6ca371fd697f763d0f3aa062639b8183
 +            {
 +                .name = "output_images",
 +                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format,
-+                                                   FF_VK_REP_FLOAT),
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format, FF_VK_REP_FLOAT),
 +                .mem_quali = "writeonly",
 +                .dimensions = 2,
 +                .elems = planes,
@@ -211,9 +216,8 @@ index 0000000000000000000000000000000000000000..6ca371fd697f763d0f3aa062639b8183
 +        ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
 +    }
 +
-+    RET(ff_vk_shader_link(vkctx, shd,
-+                          ff_pelorus_aa_comp_spv_data,
-+                          ff_pelorus_aa_comp_spv_len, "main"));
++    RET(ff_vk_shader_link(vkctx, shd, ff_pelorus_aa_comp_spv_data, ff_pelorus_aa_comp_spv_len,
++                          "main"));
 +    RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 +
 +    s->initialized = 1;
@@ -239,8 +243,8 @@ index 0000000000000000000000000000000000000000..6ca371fd697f763d0f3aa062639b8183
 +    if (!s->initialized)
 +        RET(init_filter(ctx));
 +
-+    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in,
-+                                    VK_NULL_HANDLE, 1, &s->opts, sizeof(s->opts)));
++    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in, VK_NULL_HANDLE, 1, &s->opts,
++                                    sizeof(s->opts)));
 +
 +    err = av_frame_copy_props(out, in);
 +    if (err < 0)
@@ -269,23 +273,64 @@ index 0000000000000000000000000000000000000000..6ca371fd697f763d0f3aa062639b8183
 +#define OFFSET(x) offsetof(PelorusAaVulkanContext, x)
 +#define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 +static const AVOption pelorus_aa_vulkan_options[] = {
-+    { "blur", "edge-map blur radius in pixels", OFFSET(opts.blur),
-+      AV_OPT_TYPE_INT, { .i64 = 2 }, 0, 8, FLAGS },
-+    { "depth", "warp displacement scale (pixels per unit gradient)", OFFSET(opts.depth),
-+      AV_OPT_TYPE_FLOAT, { .dbl = 8.0 }, 0.0, 64.0, FLAGS },
-+    { "thresh", "edge-map clamp ceiling (normalized)", OFFSET(opts.thresh),
-+      AV_OPT_TYPE_FLOAT, { .dbl = 0.5 }, 0.0, 1.0, FLAGS },
-+    { "darkstr", "line-darkening strength (0 = off)", OFFSET(opts.darkstr),
-+      AV_OPT_TYPE_FLOAT, { .dbl = 0.0 }, 0.0, 1.0, FLAGS },
-+    { "edge", "Sobel magnitude that counts as a line (for darkening)", OFFSET(opts.edge_thr),
-+      AV_OPT_TYPE_FLOAT, { .dbl = 0.08 }, 0.0, 1.0, FLAGS },
-+    { "planes", "planes to process (bitmask; default luma only)", OFFSET(planes),
-+      AV_OPT_TYPE_INT, { .i64 = 0x1 }, 0, 0xF, FLAGS },
-+    { "fast", "hoist the redundant sobel-mag into shared memory — bit-identical, "
-+              "a large ALU-bound speedup (ADR-0140); opt-in, default off", OFFSET(fast),
-+      AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
-+    { NULL }
-+};
++    {"blur",
++     "edge-map blur radius in pixels",
++     OFFSET(opts.blur),
++     AV_OPT_TYPE_INT,
++     {.i64 = 2},
++     0,
++     8,
++     FLAGS},
++    {"depth",
++     "warp displacement scale (pixels per unit gradient)",
++     OFFSET(opts.depth),
++     AV_OPT_TYPE_FLOAT,
++     {.dbl = 8.0},
++     0.0,
++     64.0,
++     FLAGS},
++    {"thresh",
++     "edge-map clamp ceiling (normalized)",
++     OFFSET(opts.thresh),
++     AV_OPT_TYPE_FLOAT,
++     {.dbl = 0.5},
++     0.0,
++     1.0,
++     FLAGS},
++    {"darkstr",
++     "line-darkening strength (0 = off)",
++     OFFSET(opts.darkstr),
++     AV_OPT_TYPE_FLOAT,
++     {.dbl = 0.0},
++     0.0,
++     1.0,
++     FLAGS},
++    {"edge",
++     "Sobel magnitude that counts as a line (for darkening)",
++     OFFSET(opts.edge_thr),
++     AV_OPT_TYPE_FLOAT,
++     {.dbl = 0.08},
++     0.0,
++     1.0,
++     FLAGS},
++    {"planes",
++     "planes to process (bitmask; default luma only)",
++     OFFSET(planes),
++     AV_OPT_TYPE_INT,
++     {.i64 = 0x1},
++     0,
++     0xF,
++     FLAGS},
++    {"fast",
++     "hoist the redundant sobel-mag into shared memory — bit-identical, "
++     "a large ALU-bound speedup (ADR-0140); opt-in, default off",
++     OFFSET(fast),
++     AV_OPT_TYPE_BOOL,
++     {.i64 = 0},
++     0,
++     1,
++     FLAGS},
++    {NULL}};
 +
 +AVFILTER_DEFINE_CLASS(pelorus_aa_vulkan);
 +
@@ -330,10 +375,10 @@ index 77187fe29c5fe23f84b61b45cf3a28257140bbc3..d3ff362cfa612b53ee51d812a1df844c
 +OBJS-$(CONFIG_PELORUS_AA_VULKAN_FILTER) += vulkan/pelorus_aa.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_aa.comp.glsl b/libavfilter/vulkan/pelorus_aa.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..117af2dd90d7ed344f8536645d82c4db6775e8f8
+index 0000000000000000000000000000000000000000..ab1838ed6bc634be4834fc2169c25f35e2fe1b08
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_aa.comp.glsl
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,265 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -365,8 +410,9 @@ index 0000000000000000000000000000000000000000..117af2dd90d7ed344f8536645d82c4db
 + *   warp  = bilinear(luma, pos + disp)      // pull samples onto the line
 + *   line-darken: where warp is on the dark side near an edge, deepen by darkstr.
 + *
-+ * Works in FF_VK_REP_FLOAT (UNORM) space, so samples are already in [0,1] and
-+ * the shader is bit-depth agnostic.
++ * FF_VK_REP_FLOAT normalizes against the storage container. Descriptor-derived
++ * scale and code-max values map that representation to logical samples and
++ * preserve the zero low padding bits required by shifted P010/P012 writeback.
 + */
 +
 +#pragma shader_stage(compute)
@@ -384,6 +430,8 @@ index 0000000000000000000000000000000000000000..117af2dd90d7ed344f8536645d82c4db
 +layout (constant_id = 0) const uint planes     = 0;
 +layout (constant_id = 1) const uint plane_mask = 0x1;
 +layout (constant_id = 2) const uint fast       = 0;
++layout (constant_id = 3) const uint semi_planar = 0;
++layout (constant_id = 4) const uint sample_code_max = 0;
 +
 +layout (push_constant, std430) uniform pushConstants {
 +    int   blur;
@@ -391,6 +439,7 @@ index 0000000000000000000000000000000000000000..117af2dd90d7ed344f8536645d82c4db
 +    float thresh;
 +    float darkstr;
 +    float edge_thr;
++    float sample_scale;
 +};
 +
 +layout (set = 0, binding = 0) uniform readonly  image2D input_images[];
@@ -406,18 +455,31 @@ index 0000000000000000000000000000000000000000..117af2dd90d7ed344f8536645d82c4db
 +const int PEL_TILE = 32 + 2 * PEL_HALO;
 +shared float s_sobel[fast != 0u ? PEL_TILE * PEL_TILE : 1];
 +
-+float pel_luma(int idx, ivec2 p, ivec2 sz) {
-+    return imageLoad(input_images[idx], clamp(p, ivec2(0), sz - ivec2(1))).x;
++float pel_to_sample(float value) {
++    return value * sample_scale;
++}
++float pel_to_storage(float value) {
++    if (sample_code_max == 0u)
++        return value / sample_scale;
++    const float code_max = float(sample_code_max);
++    return round(clamp(value, 0.0, 1.0) * code_max) / code_max / sample_scale;
++}
++uint pel_component_count(uint plane) {
++    return (semi_planar != 0u && plane == 1u) ? 2u : 1u;
++}
++float pel_luma(int idx, int comp, ivec2 p, ivec2 sz) {
++    return pel_to_sample(
++        imageLoad(input_images[idx], clamp(p, ivec2(0), sz - ivec2(1)))[comp]);
 +}
 +
-+float sobel_mag(int idx, ivec2 p, ivec2 sz) {
++float sobel_mag(int idx, int comp, ivec2 p, ivec2 sz) {
 +    float gx = 0.0; float gy = 0.0;
 +    float kx[9] = float[9](-1.0, 0.0, 1.0, -2.0, 0.0, 2.0, -1.0, 0.0, 1.0);
 +    float ky[9] = float[9](-1.0,-2.0,-1.0,  0.0, 0.0, 0.0,  1.0, 2.0, 1.0);
 +    int k = 0;
 +    for (int dy = -1; dy <= 1; dy++) {
 +        for (int dx = -1; dx <= 1; dx++) {
-+            float v = pel_luma(idx, p + ivec2(dx, dy), sz);
++            float v = pel_luma(idx, comp, p + ivec2(dx, dy), sz);
 +            gx += v * kx[k]; gy += v * ky[k]; k++;
 +        }
 +    }
@@ -436,7 +498,7 @@ index 0000000000000000000000000000000000000000..117af2dd90d7ed344f8536645d82c4db
 + * barriers are workgroup-uniform. Bit-identical to fast=0 by construction: the
 + * cached value is the exact output of the same sobel_mag() — same float ops in
 + * the same order; only the redundant recompute is removed. */
-+void pel_load_sobel(int idx, ivec2 sz) {
++void pel_load_sobel(int idx, int comp, ivec2 sz) {
 +    ivec2 wgsz = ivec2(gl_WorkGroupSize.xy);
 +    ivec2 base = ivec2(gl_WorkGroupID.xy) * wgsz - PEL_HALO;
 +    uint n = uint(PEL_TILE * PEL_TILE);
@@ -445,7 +507,7 @@ index 0000000000000000000000000000000000000000..117af2dd90d7ed344f8536645d82c4db
 +    for (uint k = gl_LocalInvocationIndex; k < n; k += stride) {
 +        ivec2 t = ivec2(int(k) - (int(k) / PEL_TILE) * PEL_TILE,
 +                        int(k) / PEL_TILE);
-+        s_sobel[k] = sobel_mag(idx, base + t, sz);
++        s_sobel[k] = sobel_mag(idx, comp, base + t, sz);
 +    }
 +    barrier();
 +}
@@ -464,58 +526,60 @@ index 0000000000000000000000000000000000000000..117af2dd90d7ed344f8536645d82c4db
 + * fast=1 ignores `base` because ssobel() encodes the current pixel via
 + * gl_LocalInvocationID — valid ONLY when emask is called with base == pos
 + * (every call site in aa() satisfies this). */
-+float pel_sobel(int idx, ivec2 base, ivec2 off, ivec2 sz) {
++float pel_sobel(int idx, int comp, ivec2 base, ivec2 off, ivec2 sz) {
 +    if (fast != 0u)
 +        return ssobel(off);
-+    return sobel_mag(idx, base + off, sz);
++    return sobel_mag(idx, comp, base + off, sz);
 +}
 +
 +/* emask reduces a (2r+1)^2 window of the edge magnitude around base + off0. */
-+float emask(int idx, ivec2 base, ivec2 off0, ivec2 sz, int r, float thr) {
++float emask(int idx, int comp, ivec2 base, ivec2 off0, ivec2 sz, int r,
++            float thr) {
 +    float acc = 0.0; float n = 0.0;
 +    for (int dy = -MAX_R; dy <= MAX_R; dy++) {
 +        if (dy < -r || dy > r) continue;
 +        for (int dx = -MAX_R; dx <= MAX_R; dx++) {
 +            if (dx < -r || dx > r) continue;
 +            ivec2 off = off0 + ivec2(dx, dy);
-+            acc += min(pel_sobel(idx, base, off, sz), thr); n += 1.0;
++            acc += min(pel_sobel(idx, comp, base, off, sz), thr); n += 1.0;
 +        }
 +    }
 +    return acc / max(n, 1.0);
 +}
 +
-+float bilinear(int idx, float fx, float fy, ivec2 sz) {
++float bilinear(int idx, int comp, float fx, float fy, ivec2 sz) {
 +    int x0 = int(floor(fx)); int y0 = int(floor(fy));
 +    float tx = fx - float(x0); float ty = fy - float(y0);
-+    float a = pel_luma(idx, ivec2(x0,     y0),     sz);
-+    float b = pel_luma(idx, ivec2(x0 + 1, y0),     sz);
-+    float c = pel_luma(idx, ivec2(x0,     y0 + 1), sz);
-+    float d = pel_luma(idx, ivec2(x0 + 1, y0 + 1), sz);
++    float a = pel_luma(idx, comp, ivec2(x0,     y0),     sz);
++    float b = pel_luma(idx, comp, ivec2(x0 + 1, y0),     sz);
++    float c = pel_luma(idx, comp, ivec2(x0,     y0 + 1), sz);
++    float d = pel_luma(idx, comp, ivec2(x0 + 1, y0 + 1), sz);
 +    return mix(mix(a, b, tx), mix(c, d, tx), ty);
 +}
 +
-+void aa(ivec2 pos, int idx) {
++float aa(ivec2 pos, int idx, int comp) {
 +    ivec2 sz = imageSize(output_images[idx]);
 +    int r = clamp(blur, 0, MAX_R);
 +    float thr = max(thresh, 0.0001);
-+    float gx = (emask(idx, pos, ivec2(1, 0), sz, r, thr)
-+              - emask(idx, pos, ivec2(-1, 0), sz, r, thr)) * 0.5;
-+    float gy = (emask(idx, pos, ivec2(0, 1), sz, r, thr)
-+              - emask(idx, pos, ivec2(0,-1), sz, r, thr)) * 0.5;
++    float gx = (emask(idx, comp, pos, ivec2(1, 0), sz, r, thr)
++              - emask(idx, comp, pos, ivec2(-1, 0), sz, r, thr)) * 0.5;
++    float gy = (emask(idx, comp, pos, ivec2(0, 1), sz, r, thr)
++              - emask(idx, comp, pos, ivec2(0,-1), sz, r, thr)) * 0.5;
 +    float fx = float(pos.x) + depth * gx;
 +    float fy = float(pos.y) + depth * gy;
-+    float warp = bilinear(idx, fx, fy, sz);
++    float warp = bilinear(idx, comp, fx, fy, sz);
 +    if (darkstr > 0.0) {
-+        float e = sobel_mag(idx, pos, sz);
++        float e = sobel_mag(idx, comp, pos, sz);
 +        if (e > edge_thr) {
 +            float lo = warp;
 +            for (int dy = -1; dy <= 1; dy++)
 +                for (int dx = -1; dx <= 1; dx++)
-+                    lo = min(lo, pel_luma(idx, pos + ivec2(dx, dy), sz));
++                    lo = min(lo, pel_luma(idx, comp,
++                                          pos + ivec2(dx, dy), sz));
 +            warp = mix(warp, lo, darkstr);
 +        }
 +    }
-+    imageStore(output_images[idx], pos, vec4(clamp(warp, 0.0, 1.0)));
++    return clamp(warp, 0.0, 1.0);
 +}
 +
 +void main()
@@ -540,10 +604,18 @@ index 0000000000000000000000000000000000000000..117af2dd90d7ed344f8536645d82c4db
 +        for (uint i = 0; i < planes; i++) {
 +            size = imageSize(output_images[i]);
 +            if ((plane_mask & (1u << i)) != 0u) {
-+                pel_load_sobel(int(i), size);
-+                if (all(lessThan(pos, size))) {
-+                    aa(pos, int(i));
++                const bool inb = all(lessThan(pos, size));
++                const uint ncomp = pel_component_count(i);
++                vec4 texel = inb ? imageLoad(input_images[i], pos) : vec4(0.0);
++                for (uint c = 0u; c < ncomp; c++) {
++                    const int comp = int(c);
++                    pel_load_sobel(int(i), comp, size);
++                    if (inb) {
++                        texel[comp] = pel_to_storage(aa(pos, int(i), comp));
++                    }
 +                }
++                if (inb)
++                    imageStore(output_images[i], pos, texel);
 +            } else {
 +                if (all(lessThan(pos, size))) {
 +                    imageStore(output_images[i], pos,
@@ -557,14 +629,18 @@ index 0000000000000000000000000000000000000000..117af2dd90d7ed344f8536645d82c4db
 +            if (!all(lessThan(pos, size)))
 +                return;
 +
-+            if ((plane_mask & (1u << i)) != 0u)
-+                aa(pos, int(i));
-+            else
++            if ((plane_mask & (1u << i)) != 0u) {
++                vec4 texel = imageLoad(input_images[i], pos);
++                const uint ncomp = pel_component_count(i);
++                for (uint c = 0u; c < ncomp; c++) {
++                    const int comp = int(c);
++                    texel[comp] = pel_to_storage(aa(pos, int(i), comp));
++                }
++                imageStore(output_images[i], pos, texel);
++            } else {
 +                imageStore(output_images[i], pos,
 +                           imageLoad(input_images[i], pos));
++            }
 +        }
 +    }
 +}
--- 
-2.55.0
-

@@ -12,9 +12,9 @@ The exec is the hand-rolled explicit path (modeled on vf_pelorus_analyze):
 with meta=1 it free-rides a residual reduction on the denoise dispatch and
 emits the pre-reserved PEL_SEC_DENOISE interop section (residual energy,
 applied strength, noise-sigma estimate, PSNR-vs-input); with meta=0 the
-SSBO / readback / sync are skipped. The standalone reference shader
-libpelorus/shaders/pelorus_denoise.comp and the inline GLSL are kept in
-lockstep.
+SSBO / readback / sync are skipped. The shipped shader is the canonical
+libavfilter/vulkan/pelorus_denoise.comp.glsl, compiled to SPIR-V at FFmpeg
+build time; Pelorus also compile-checks a standalone reference shader.
 
 Codec-agnostic: the denoise is on the source, independent of the encoder.
 
@@ -26,6 +26,6 @@ forward-lookahead/bidirectional temporal tap for animation cadence, ADR-0137;
 default 0 = causal/bit-identical). Host-side param
 contract in libpelorus/include/pelorus/denoise.h.
 
-Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
+Requires libpelorus >= 0.2.0 (pkg-config) when the filter is enabled.
 
 ADR: docs/adr/0112-temporal-denoise.md

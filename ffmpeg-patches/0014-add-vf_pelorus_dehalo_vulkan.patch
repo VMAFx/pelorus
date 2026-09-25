@@ -17,8 +17,9 @@ VRAM (FF_VK_REP_FLOAT UNORM, bit-depth-agnostic).
 
 Pure pixel transform — does NOT link libpelorus (no interop emit), so the
 registration is deps-only (no require_pkg_config). Foundation of the anime
-`tune` pipeline. The standalone reference shader
-libpelorus/shaders/pelorus_dehalo.comp and the inline GLSL are kept in lockstep.
+`tune` pipeline. The canonical libavfilter/vulkan/pelorus_dehalo.comp.glsl is
+compiled to SPIR-V at FFmpeg build time; Pelorus also compile-checks a
+standalone reference shader.
 
 AVOptions: blur (radius), darkstr/brightstr, lowsens/highsens, edge (line
 threshold), ring (halo-band width), planes, tile (opt-in shared-memory tiling of
@@ -30,15 +31,13 @@ ADR: docs/adr/0123-anime-dehalo.md
  configure                                   |   1 +
  libavfilter/Makefile                        |   1 +
  libavfilter/allfilters.c                    |   1 +
- libavfilter/vf_pelorus_dehalo_vulkan.c      | 246 ++++++++++++++++++++
+ libavfilter/vf_pelorus_dehalo_vulkan.c      | 303 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
- libavfilter/vulkan/pelorus_dehalo.comp.glsl | 216 +++++++++++++++++
- 6 files changed, 466 insertions(+)
- create mode 100644 libavfilter/vf_pelorus_dehalo_vulkan.c
- create mode 100644 libavfilter/vulkan/pelorus_dehalo.comp.glsl
+ libavfilter/vulkan/pelorus_dehalo.comp.glsl | 246 ++++++++++++++++
+ 6 files changed, 553 insertions(+)
 
 diff --git a/configure b/configure
-index 2e8e0c3ac56df6177b027ab8197f1301b6497cff..c68249b1a029bb1b1b4c9daf017402e0020bbe9f 100755
+index 3283718ba10ab831a499f230e165d15201c9a29c..f052412ba00f78d88734beaa51c4a4e82a5ebea6 100755
 --- a/configure
 +++ b/configure
 @@ -4245,6 +4245,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
@@ -75,10 +74,10 @@ index 8ecaf738be23d70633dc7e84a35a37729ffe9de4..2ac2a6540fb0f9b500bfbd6137278ca1
  extern const FFFilter ff_vf_pelorus_mc_vulkan;
 diff --git a/libavfilter/vf_pelorus_dehalo_vulkan.c b/libavfilter/vf_pelorus_dehalo_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..a05c7bf86bf178747200b0aba65796a3b603406d
+index 0000000000000000000000000000000000000000..6f1aa37968a05d576abb94992394ca42e03895a8
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_dehalo_vulkan.c
-@@ -0,0 +1,246 @@
+@@ -0,0 +1,303 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -115,6 +114,7 @@ index 0000000000000000000000000000000000000000..a05c7bf86bf178747200b0aba65796a3
 +
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
++#include "pelorus_vulkan_sample.h"
 +#include "vulkan_filter.h"
 +
 +#include "filters.h"
@@ -139,6 +139,7 @@ index 0000000000000000000000000000000000000000..a05c7bf86bf178747200b0aba65796a3
 +        float highsens;     /* sensitivity gain  (normalized)                */
 +        float edge_thr;     /* Sobel magnitude above which a pixel is a line */
 +        float ring;         /* edge-mask dilation (ring half-width, pixels)  */
++        float sample_scale; /* storage UNORM -> logical sample domain        */
 +    } opts;
 +
 +    int planes; /* plane bitmask to process (luma-only by default)           */
@@ -151,7 +152,7 @@ index 0000000000000000000000000000000000000000..a05c7bf86bf178747200b0aba65796a3
 + * (GLSLC/GLSLF/GLSLD + ff_vk_shader_init), which also retires the old
 + * inline-vs-reference lockstep duplication. */
 +extern const unsigned char ff_pelorus_dehalo_comp_spv_data[];
-+extern const unsigned int  ff_pelorus_dehalo_comp_spv_len;
++extern const unsigned int ff_pelorus_dehalo_comp_spv_len;
 +
 +static av_cold int init_filter(AVFilterContext *ctx)
 +{
@@ -160,6 +161,11 @@ index 0000000000000000000000000000000000000000..a05c7bf86bf178747200b0aba65796a3
 +    FFVulkanContext *vkctx = &s->vkctx;
 +    FFVulkanShader *shd = &s->shd;
 +    const int planes = av_pix_fmt_count_planes(vkctx->output_format);
++    const AVPixFmtDescriptor *pd = av_pix_fmt_desc_get(vkctx->output_format);
++    const int semi_planar = pd && pd->nb_components >= 3 && pd->comp[1].plane == pd->comp[2].plane;
++    const uint32_t sample_code_max = pel_vk_sample_code_max(vkctx->output_format);
++
++    s->opts.sample_scale = pel_vk_sample_scale(vkctx->input_format);
 +
 +    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
 +    if (!s->qf) {
@@ -177,24 +183,23 @@ index 0000000000000000000000000000000000000000..a05c7bf86bf178747200b0aba65796a3
 +     * driver still folds them at pipeline-creation time — including the shared
 +     * tile array, which is sized from `tile` and therefore costs nothing at
 +     * the default tile=0. */
-+    SPEC_LIST_CREATE(sl, 3, 3 * sizeof(uint32_t))
++    SPEC_LIST_CREATE(sl, 5, 5 * sizeof(uint32_t))
 +    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
 +    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
 +    SPEC_LIST_ADD(sl, 2, 32, (uint32_t)s->tile);
++    SPEC_LIST_ADD(sl, 3, 32, (uint32_t)semi_planar);
++    SPEC_LIST_ADD(sl, 4, 32, sample_code_max);
 +
-+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
-+                      (uint32_t []) { 32, 32, 1 }, 0);
++    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 +
-+    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts),
-+                                VK_SHADER_STAGE_COMPUTE_BIT);
++    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts), VK_SHADER_STAGE_COMPUTE_BIT);
 +
 +    {
 +        FFVulkanDescriptorSetBinding desc_set[] = {
 +            {
 +                .name = "input_images",
 +                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format,
-+                                                   FF_VK_REP_FLOAT),
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
 +                .mem_quali = "readonly",
 +                .dimensions = 2,
 +                .elems = planes,
@@ -203,8 +208,7 @@ index 0000000000000000000000000000000000000000..a05c7bf86bf178747200b0aba65796a3
 +            {
 +                .name = "output_images",
 +                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format,
-+                                                   FF_VK_REP_FLOAT),
++                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format, FF_VK_REP_FLOAT),
 +                .mem_quali = "writeonly",
 +                .dimensions = 2,
 +                .elems = planes,
@@ -214,8 +218,7 @@ index 0000000000000000000000000000000000000000..a05c7bf86bf178747200b0aba65796a3
 +        ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
 +    }
 +
-+    RET(ff_vk_shader_link(vkctx, shd,
-+                          ff_pelorus_dehalo_comp_spv_data,
++    RET(ff_vk_shader_link(vkctx, shd, ff_pelorus_dehalo_comp_spv_data,
 +                          ff_pelorus_dehalo_comp_spv_len, "main"));
 +    RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
 +
@@ -242,8 +245,8 @@ index 0000000000000000000000000000000000000000..a05c7bf86bf178747200b0aba65796a3
 +    if (!s->initialized)
 +        RET(init_filter(ctx));
 +
-+    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in,
-+                                    VK_NULL_HANDLE, 1, &s->opts, sizeof(s->opts)));
++    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in, VK_NULL_HANDLE, 1, &s->opts,
++                                    sizeof(s->opts)));
 +
 +    err = av_frame_copy_props(out, in);
 +    if (err < 0)
@@ -272,26 +275,79 @@ index 0000000000000000000000000000000000000000..a05c7bf86bf178747200b0aba65796a3
 +#define OFFSET(x) offsetof(PelorusDehaloVulkanContext, x)
 +#define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 +static const AVOption pelorus_dehalo_vulkan_options[] = {
-+    { "blur", "halo-blur radius in pixels", OFFSET(opts.blur_r),
-+      AV_OPT_TYPE_INT, { .i64 = 2 }, 1, 8, FLAGS },
-+    { "darkstr", "pull strength for dark halos", OFFSET(opts.darkstr),
-+      AV_OPT_TYPE_FLOAT, { .dbl = 1.0 }, 0.0, 1.0, FLAGS },
-+    { "brightstr", "pull strength for bright halos", OFFSET(opts.brightstr),
-+      AV_OPT_TYPE_FLOAT, { .dbl = 1.0 }, 0.0, 1.0, FLAGS },
-+    { "lowsens", "sensitivity floor (normalized)", OFFSET(opts.lowsens),
-+      AV_OPT_TYPE_FLOAT, { .dbl = 0.0625 }, 0.0, 1.0, FLAGS },
-+    { "highsens", "sensitivity gain (normalized)", OFFSET(opts.highsens),
-+      AV_OPT_TYPE_FLOAT, { .dbl = 0.5 }, 0.0, 4.0, FLAGS },
-+    { "edge", "Sobel magnitude above which a pixel is line-art", OFFSET(opts.edge_thr),
-+      AV_OPT_TYPE_FLOAT, { .dbl = 0.08 }, 0.0, 1.0, FLAGS },
-+    { "ring", "edge-mask dilation (ring half-width, pixels)", OFFSET(opts.ring),
-+      AV_OPT_TYPE_FLOAT, { .dbl = 2.0 }, 1.0, 8.0, FLAGS },
-+    { "planes", "planes to process (bitmask; default luma only)", OFFSET(planes),
-+      AV_OPT_TYPE_INT, { .i64 = 0x1 }, 0, 0xF, FLAGS },
-+    { "tile", "shared-memory tile the box-blur window (faster on bandwidth-limited GPUs; bit-identical)",
-+      OFFSET(tile), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
-+    { NULL }
-+};
++    {"blur",
++     "halo-blur radius in pixels",
++     OFFSET(opts.blur_r),
++     AV_OPT_TYPE_INT,
++     {.i64 = 2},
++     1,
++     8,
++     FLAGS},
++    {"darkstr",
++     "pull strength for dark halos",
++     OFFSET(opts.darkstr),
++     AV_OPT_TYPE_FLOAT,
++     {.dbl = 1.0},
++     0.0,
++     1.0,
++     FLAGS},
++    {"brightstr",
++     "pull strength for bright halos",
++     OFFSET(opts.brightstr),
++     AV_OPT_TYPE_FLOAT,
++     {.dbl = 1.0},
++     0.0,
++     1.0,
++     FLAGS},
++    {"lowsens",
++     "sensitivity floor (normalized)",
++     OFFSET(opts.lowsens),
++     AV_OPT_TYPE_FLOAT,
++     {.dbl = 0.0625},
++     0.0,
++     1.0,
++     FLAGS},
++    {"highsens",
++     "sensitivity gain (normalized)",
++     OFFSET(opts.highsens),
++     AV_OPT_TYPE_FLOAT,
++     {.dbl = 0.5},
++     0.0,
++     4.0,
++     FLAGS},
++    {"edge",
++     "Sobel magnitude above which a pixel is line-art",
++     OFFSET(opts.edge_thr),
++     AV_OPT_TYPE_FLOAT,
++     {.dbl = 0.08},
++     0.0,
++     1.0,
++     FLAGS},
++    {"ring",
++     "edge-mask dilation (ring half-width, pixels)",
++     OFFSET(opts.ring),
++     AV_OPT_TYPE_FLOAT,
++     {.dbl = 2.0},
++     1.0,
++     8.0,
++     FLAGS},
++    {"planes",
++     "planes to process (bitmask; default luma only)",
++     OFFSET(planes),
++     AV_OPT_TYPE_INT,
++     {.i64 = 0x1},
++     0,
++     0xF,
++     FLAGS},
++    {"tile",
++     "shared-memory tile the box-blur window (faster on bandwidth-limited GPUs; bit-identical)",
++     OFFSET(tile),
++     AV_OPT_TYPE_BOOL,
++     {.i64 = 0},
++     0,
++     1,
++     FLAGS},
++    {NULL}};
 +
 +AVFILTER_DEFINE_CLASS(pelorus_dehalo_vulkan);
 +
@@ -336,10 +392,10 @@ index 113d7aa7cf599983aaa7a391919d014b18b245fd..77187fe29c5fe23f84b61b45cf3a2825
 +OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER) += vulkan/pelorus_dehalo.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_dehalo.comp.glsl b/libavfilter/vulkan/pelorus_dehalo.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..d27dbbe27f7e1e444000c8b1c5942aa2e77b4b31
+index 0000000000000000000000000000000000000000..1554fb0b8a83bc35666a5d9d459084978c05dcbf
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_dehalo.comp.glsl
-@@ -0,0 +1,216 @@
+@@ -0,0 +1,246 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -388,6 +444,8 @@ index 0000000000000000000000000000000000000000..d27dbbe27f7e1e444000c8b1c5942aa2
 +layout (constant_id = 0) const uint planes     = 0;
 +layout (constant_id = 1) const uint plane_mask = 0x1;
 +layout (constant_id = 2) const uint tile       = 0;
++layout (constant_id = 3) const uint semi_planar = 0;
++layout (constant_id = 4) const uint sample_code_max = 0;
 +
 +layout (push_constant, std430) uniform pushConstants {
 +    int   blur_r;
@@ -397,6 +455,7 @@ index 0000000000000000000000000000000000000000..d27dbbe27f7e1e444000c8b1c5942aa2
 +    float highsens;
 +    float edge_thr;
 +    float ring;
++    float sample_scale;
 +};
 +
 +layout (set = 0, binding = 0) uniform readonly  image2D input_images[];
@@ -413,6 +472,24 @@ index 0000000000000000000000000000000000000000..d27dbbe27f7e1e444000c8b1c5942aa2
 + * memory at all (the pre-FFmpeg-9 generator simply did not emit the array). */
 +shared float s_tile[(tile != 0u) ? (PEL_TILE * PEL_TILE) : 1];
 +
++float pel_to_sample(float value)
++{
++    return value * sample_scale;
++}
++
++float pel_to_storage(float value)
++{
++    if (sample_code_max == 0u)
++        return value / sample_scale;
++    const float code_max = float(sample_code_max);
++    return round(clamp(value, 0.0, 1.0) * code_max) / code_max / sample_scale;
++}
++
++uint pel_component_count(uint plane)
++{
++    return (semi_planar != 0u && plane == 1u) ? 2u : 1u;
++}
++
 +/* Shared-memory tiling of the box-blur window (ADR-0139, opt-in tile=1). Every
 + * luma fetch in dehalo() — the box_blur (2r+1)^2 window read 5x per pixel at the
 + * centre + 4 cross offsets, the Sobel/contrast 3x3, the ring scan — goes through
@@ -426,7 +503,7 @@ index 0000000000000000000000000000000000000000..d27dbbe27f7e1e444000c8b1c5942aa2
 + * are all specialization constants) so its barriers are workgroup-uniform; the
 + * leading barrier protects the prior plane's readers before this plane
 + * overwrites s_tile. */
-+void pel_load_tile(int idx, ivec2 sz)
++void pel_load_tile(int idx, int comp, ivec2 sz)
 +{
 +    ivec2 wgsz = ivec2(gl_WorkGroupSize.xy);
 +    ivec2 base = ivec2(gl_WorkGroupID.xy) * wgsz - PEL_HALO;
@@ -437,8 +514,9 @@ index 0000000000000000000000000000000000000000..d27dbbe27f7e1e444000c8b1c5942aa2
 +        ivec2 t = ivec2(int(k) - (int(k) / PEL_TILE) * PEL_TILE,
 +                        int(k) / PEL_TILE);
 +        ivec2 p = base + t;
-+        s_tile[k] = imageLoad(input_images[idx],
-+                              clamp(p, ivec2(0), sz - ivec2(1))).x;
++        s_tile[k] = pel_to_sample(
++            imageLoad(input_images[idx],
++                      clamp(p, ivec2(0), sz - ivec2(1)))[comp]);
 +    }
 +    barrier();
 +}
@@ -448,7 +526,7 @@ index 0000000000000000000000000000000000000000..d27dbbe27f7e1e444000c8b1c5942aa2
 + * shared; the clamp mirrors the image-edge clamp so the result matches the
 + * direct path exactly. At tile=0 this reads the image directly — `tile` is a
 + * specialization constant, so only one of the two branches survives. */
-+float pel_luma(int idx, ivec2 p, ivec2 sz)
++float pel_luma(int idx, int comp, ivec2 p, ivec2 sz)
 +{
 +    ivec2 cp = clamp(p, ivec2(0), sz - ivec2(1));
 +    if (tile != 0u) {
@@ -456,36 +534,36 @@ index 0000000000000000000000000000000000000000..d27dbbe27f7e1e444000c8b1c5942aa2
 +        ivec2 lc = cp - base;
 +        return s_tile[lc.y * PEL_TILE + lc.x];
 +    }
-+    return imageLoad(input_images[idx], cp).x;
++    return pel_to_sample(imageLoad(input_images[idx], cp)[comp]);
 +}
 +
-+float box_blur(int idx, ivec2 c, int r, ivec2 sz)
++float box_blur(int idx, int comp, ivec2 c, int r, ivec2 sz)
 +{
 +    float acc = 0.0; float n = 0.0;
 +    for (int dy = -MAX_R; dy <= MAX_R; dy++) {
 +        if (dy < -r || dy > r) continue;
 +        for (int dx = -MAX_R; dx <= MAX_R; dx++) {
 +            if (dx < -r || dx > r) continue;
-+            acc += pel_luma(idx, c + ivec2(dx, dy), sz); n += 1.0;
++            acc += pel_luma(idx, comp, c + ivec2(dx, dy), sz); n += 1.0;
 +        }
 +    }
 +    return acc / max(n, 1.0);
 +}
 +
-+void dehalo(ivec2 pos, int idx)
++float dehalo(ivec2 pos, int idx, int comp)
 +{
 +    ivec2 sz = imageSize(output_images[idx]);
 +    int r = clamp(blur_r, 1, MAX_R);
-+    float c = pel_luma(idx, pos, sz);
-+    float h  = box_blur(idx, pos,                r, sz);
-+    float hl = box_blur(idx, pos + ivec2(-1, 0), r, sz);
-+    float hr = box_blur(idx, pos + ivec2( 1, 0), r, sz);
-+    float hu = box_blur(idx, pos + ivec2( 0,-1), r, sz);
-+    float hd = box_blur(idx, pos + ivec2( 0, 1), r, sz);
++    float c = pel_luma(idx, comp, pos, sz);
++    float h  = box_blur(idx, comp, pos,                r, sz);
++    float hl = box_blur(idx, comp, pos + ivec2(-1, 0), r, sz);
++    float hr = box_blur(idx, comp, pos + ivec2( 1, 0), r, sz);
++    float hu = box_blur(idx, comp, pos + ivec2( 0,-1), r, sz);
++    float hd = box_blur(idx, comp, pos + ivec2( 0, 1), r, sz);
 +    float oMax = c; float oMin = c;
 +    for (int dy = -1; dy <= 1; dy++) {
 +        for (int dx = -1; dx <= 1; dx++) {
-+            float v = pel_luma(idx, pos + ivec2(dx, dy), sz);
++            float v = pel_luma(idx, comp, pos + ivec2(dx, dy), sz);
 +            oMax = max(oMax, v); oMin = min(oMin, v);
 +        }
 +    }
@@ -505,7 +583,7 @@ index 0000000000000000000000000000000000000000..d27dbbe27f7e1e444000c8b1c5942aa2
 +    int k = 0;
 +    for (int dy = -1; dy <= 1; dy++) {
 +        for (int dx = -1; dx <= 1; dx++) {
-+            float v = pel_luma(idx, pos + ivec2(dx, dy), sz);
++            float v = pel_luma(idx, comp, pos + ivec2(dx, dy), sz);
 +            gx += v * kx[k]; gy += v * ky[k]; k++;
 +        }
 +    }
@@ -515,15 +593,14 @@ index 0000000000000000000000000000000000000000..d27dbbe27f7e1e444000c8b1c5942aa2
 +    bool near_line = false;
 +    for (int d = 1; d <= MAX_R; d++) {
 +        if (d > rr) break;
-+        float em = max(max(pel_luma(idx, pos + ivec2(d, 0), sz),
-+                           pel_luma(idx, pos + ivec2(-d, 0), sz)),
-+                       max(pel_luma(idx, pos + ivec2(0, d), sz),
-+                           pel_luma(idx, pos + ivec2(0,-d), sz)));
++        float em = max(max(pel_luma(idx, comp, pos + ivec2(d, 0), sz),
++                           pel_luma(idx, comp, pos + ivec2(-d, 0), sz)),
++                       max(pel_luma(idx, comp, pos + ivec2(0, d), sz),
++                           pel_luma(idx, comp, pos + ivec2(0,-d), sz)));
 +        if (abs(em - c) > edge_thr) near_line = true;
 +    }
 +    float ring_mask = (near_line && !on_line) ? 1.0 : 0.0;
-+    float result = mix(c, out_v, ring_mask);
-+    imageStore(output_images[idx], pos, vec4(clamp(result, 0.0, 1.0)));
++    return clamp(mix(c, out_v, ring_mask), 0.0, 1.0);
 +}
 +
 +void main()
@@ -541,21 +618,27 @@ index 0000000000000000000000000000000000000000..d27dbbe27f7e1e444000c8b1c5942aa2
 +        const bool sel = (plane_mask & (1u << i)) != 0u;
 +
 +        size = imageSize(output_images[i]);
++        const bool inb = all(lessThan(pos, size));
 +
-+        /* Cooperative tile load runs in uniform control flow (all invocations,
-+         * before the per-thread IS_WITHIN guard) so its barriers are valid. */
-+        if (tile != 0u && sel)
-+            pel_load_tile(int(i), size);
-+
-+        if (all(lessThan(pos, size))) {
-+            if (sel)
-+                dehalo(pos, int(i));
-+            else
++        if (sel) {
++            const uint ncomp = pel_component_count(i);
++            vec4 texel = inb ? imageLoad(input_images[i], pos) : vec4(0.0);
++            for (uint c = 0u; c < ncomp; c++) {
++                const int comp = int(c);
++                /* Cooperative tile load runs in uniform control flow (all
++                 * invocations, before the per-thread bounds guard) so its
++                 * barriers remain valid for each specialized component. */
++                if (tile != 0u)
++                    pel_load_tile(int(i), comp, size);
++                if (inb)
++                    texel[comp] = pel_to_storage(dehalo(pos, int(i), comp));
++            }
++            if (inb)
++                imageStore(output_images[i], pos, texel);
++        } else {
++            if (inb)
 +                imageStore(output_images[i], pos,
 +                           imageLoad(input_images[i], pos));
 +        }
 +    }
 +}
--- 
-2.55.0
-

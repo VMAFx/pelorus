@@ -61,21 +61,25 @@ requires headroom for the dither to survive:
 - The bench is **pinned + repeatable** (`corpus.lock` sha-pinned BBB + a
   deterministic synthetic clip).
 - A real **link bug** was found by running it: `require_pkg_config` added cflags
-  but not `-lpelorus`; fixed with `add_extralibs`, and CI now links the binary.
+  but not `-lpelorus`; fixed with per-filter
+  `*_filter_extralibs="libpelorus_extralibs"` assignments, with the static
+  dependency closure exported through `libavfilter.pc`, and CI now links the
+  binary.
 
-## 10-bit deband: **not a bug** (correcting an earlier note)
+## 10-bit deband: historical conclusion superseded
 
-An ad-hoc 10-bit run once produced a Pelorus arm at ~4000 kbps / VMAF 77 and was
-briefly recorded here as a filter bug. **It is not.** Source audit (and the
-design workflow) confirm the filter is bit-depth-agnostic by construction:
-`vf_pelorus_deband_vulkan` binds `FF_VK_REP_FLOAT`, which maps to **UNORM**
-storage images at every depth, so all shader math runs in normalized `[0,1]` and
-the dither/grain amplitude is a normalized fraction the hardware de-normalizes
-into the 10-bit code range correctly. The GLSL contains no `1023`/`65535`/shift
-and no 8-bit assumption.
+An ad-hoc 10-bit run once produced a Pelorus arm at ~4000 kbps / VMAF 77. The
+pixfmt mismatch described below did invalidate that run, but the later claim
+that `FF_VK_REP_FLOAT` made every depth correct by construction was also false.
+UNORM normalizes against the Vulkan storage container. LSB-aligned planar
+10/12-bit samples in `R16_UNORM` therefore need an explicit storage-to-sample
+scale before normalized thresholds or grain amplitudes are meaningful. That
+defect and the related component-preservation defects are fixed by
+[ADR-0147](../adr/0147-vulkan-sample-domain-and-components.md); its format
+matrix, not this historical run, is the current correctness evidence.
 
-The bogus numbers came from a **pixfmt mismatch in the throwaway script**, not
-the filter: `yuv420p10le` (planar, value LSB-justified) and `p010le`
+The especially bad numbers came from a **pixfmt mismatch in the throwaway
+script**: `yuv420p10le` (planar, value LSB-justified) and `p010le`
 (semi-planar, value MSB-justified, `<<6`) are **not** byte-compatible. Writing
 the prefiltered raw in one layout and reading it as the other corrupts both
 magnitude (a 64× shift) and chroma-plane positions → the encoder saw heavy noise
@@ -267,15 +271,18 @@ survey's ROI caveat): decisive on banding-prone-gradient-over-detail, marginal o
 extremely smooth gradients or bitrates too low to deband even with steering.
 
 **QSV** — code-complete, **on-hardware BD-rate proof pending** (no numbers
-claimed). Stock `hevc_qsv`/`h264_qsv` map ROI side data only onto coarse
-`mfxExtEncoderROI` rectangles; `ffmpeg-patches/files/qsv-pelorus-roi.patch`
-(`-pelorus_roi 1`) instead rasterizes the same side data into the dense
-`mfxExtMBQP` per-block delta map (`MFX_MBQP_MODE_QP_DELTA`, 16×16 blocks,
-`EnableMBQP` on at init), the QSV analogue of the NVENC `qpDeltaMap` path above.
-Same expected envelope and caveats as NVENC: honored under **CQP only** (the
-patch probes `RateControlMethod == MFX_RATECONTROL_CQP` and warns-once / passes
-through otherwise), perceptual win on banding-prone content, ~0 on clean/busy.
-Measure on Intel HW (Arc / iGPU) per ADR-0111 before quoting a magnitude.
+claimed). Stock `hevc_qsv`/`h264_qsv` map ROI side data onto coarse
+`mfxExtEncoderROI` rectangles. With `-pelorus_roi 1`, patch 0005 selects dense
+`mfxExtMBQP` (`MFX_MBQP_MODE_QP_DELTA`, 16×16 blocks) only for progressive
+HEVC+CQP on runtime API 1.28 or newer, after confirming that the final attached
+CodingOption3 retains `EnableMBQP=ON` at init/reset. H.264, older runtimes,
+non-CQP HEVC, interlaced input, and MBQP-absent builds retain the stock rectangle
+path; they do not pass through or lose ROI steering. The hardware-independent
+sanitizer and cumulative replay gates are current on the pinned FFmpeg n9.0.2
+commit; this is not an Intel-device result. See
+[ADR-0146](../adr/0146-qsv-roi-frame-ownership.md)
+for the corrected selection and lifetime contract. Measure on Intel HW (Arc /
+iGPU) per ADR-0111 before quoting a magnitude.
 
 ## v0.6 — cross-vendor ROI portability (NVENC + AMD + Intel, dev-box validation)
 
@@ -341,10 +348,13 @@ patch and ran `hevc_qsv -q:v 30 -low_power 1 -pelorus_roi 1` on the Arc A380
    write hit `0x100000000` → SIGSEGV. Fixed by passing `q` as a parameter (as every
    other qsvenc helper does). The patch's `priv_data` assumption was the only bug;
    the rasterizer was already bounds-correct.
-2. **The map is provably correct.** With the fix in, a gdb dump at the
-   `mfxExtMBQP` attach shows the delta map is exactly right: `−8` across the
-   top-half (banding) blocks, `0` in the bottom; `NumQPAlloc=1200`, `Pitch=40`,
-   `BlockSize=16`, `Mode=MFX_MBQP_MODE_QP_DELTA`.
+2. **The sampled raster values were correct, but that was not a lifetime
+   proof.** A gdb dump at one `mfxExtMBQP` attach showed `−8` across the top-half
+   blocks and `0` below (`NumQPAlloc=1200`, `Pitch=40`, `BlockSize=16`,
+   `Mode=MFX_MBQP_MODE_QP_DELTA`). ADR-0146 later found that the allocation was
+   context-wide mutable scratch, so a later asynchronous submission could
+   repaint an earlier frame's still-live map. Patch 0005 now owns a separate
+   header+map allocation on each `QSVFrame` control until its surface unlocks.
 3. **Driver wall (gain unvalidated).** Despite a correct map, the encode is
    anomalous — banding *worse* (CAMBI ↑) and bitrate *explodes* (+45–108% at the
    same `-q:v`). A correct-but-wrong map would shift bits, not double bitrate and
@@ -354,10 +364,11 @@ patch and ran `hevc_qsv -q:v 30 -low_power 1 -pelorus_roi 1` on the Arc A380
    known hardware/driver bug, fixed only in the Arc B-series (Battlemage).** The
    A380 exposes *only* the low-power entrypoint (`EncSliceLP`), so every encode on
    it runs the bugged path — these results are **invalid by construction**, not
-   inconclusive. **Conclusion: the `0005` patch is correct (crash-free, map
-   verified `−8`/`0`); the QSV steering *gain* cannot be validated on Arc A** — it
-   needs an **Arc B (Battlemage)** or other full-`EncSlice` Intel target. No QSV
-   gain is claimed.
+   inconclusive. **Conclusion:** the old run showed the expected values for one
+   sampled frame but did not validate async ownership. The ADR-0146 correction
+   is sanitizer- and compile-verified; its on-hardware async execution still
+   needs a new run on an **Arc B (Battlemage)** or another full-`EncSlice` Intel
+   target. No QSV gain is claimed.
 
 ## v0.9 — NVENC external ME hints: functional, but **no speed gain** (honest negative)
 
@@ -828,6 +839,7 @@ not reductions. `scripts/bench/plot_rd.py` regenerates the graph.
 3. Harness fixes shipped: `--clean-reference` (decouple scoring ref from encoder
    input) and `--vmaf-timeout` (vmaf hangs at 0% CPU *after* writing its JSON;
    the harness bounds it and reads the already-flushed result).
-4. **Measure QSV ROI on Intel HW** (`hevc_qsv -global_quality <q>` CQP, A/B
+4. **Measure QSV ROI on Intel HW** (`hevc_qsv -q:v <q>` CQP, where `-q:v` sets
+   FFmpeg's QScale flag; A/B
    `-pelorus_roi 0` vs `1`): the patch (0005) is code-complete and
    syntax/regeneration-verified, but no Intel-hardware BD-rate run exists yet.

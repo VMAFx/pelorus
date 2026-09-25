@@ -23,8 +23,8 @@ Two driver-probed map kinds, picked by the negotiated rate-control mode:
 The ROI side data is coalesced into a compact, texel-block-aligned rectangle
 list (same qoffset->ΔQP convention as the NVENC/QSV patches: qp_range =
 51 + 6*(depth-8), reverse region precedence) and the map texel image is filled
-ON THE GPU: a pelorus_qpmap compute shader (libpelorus/shaders/pelorus_qpmap.comp,
-mirrored inline) reads the rect SSBO and imageStores the per-texel delta /
+ON THE GPU: the canonical build-time pelorus_qpmap.comp.glsl compute shader
+reads the rect SSBO and imageStores the per-texel delta /
 emphasis directly, then a GENERAL -> VIDEO_ENCODE_QUANTIZATION_MAP_KHR barrier
 hands it to the encode. The dispatch records on the encode command buffer, so it
 is used only when the encode queue family also advertises VK_QUEUE_COMPUTE_BIT
@@ -46,8 +46,8 @@ no-op.
 VERIFICATION: compile-verified only. vulkan_encode.c and the three
 vulkan_encode_{h264,h265,av1} TUs build clean (zero warnings) under FFmpeg's
 -std=c17 -Wall warning set against the system Vulkan-video headers, with the
-quantization-map ifdef live; the reference shader and the inline GLSL both
-compile under glslang. Runtime on-HW proof
+quantization-map ifdef live; the canonical build-time GLSL and Pelorus's
+standalone reference shader both compile under glslang. Runtime on-HW proof
 is BLOCKED on this dev box: hevc_vulkan ENCODE fails at init with "Driver does
 not support required encode feedback flags (BUFFER_OFFSET and BYTES_WRITTEN)",
 before this code runs — a driver limitation (ADR-0114 Tier 2 immaturity caveat),
@@ -56,13 +56,12 @@ not a patch defect. No BD-rate gain is claimed; on-HW A/B is the follow-up.
  configure                                 |   6 +
  libavcodec/vulkan/Makefile                |   6 +
  libavcodec/vulkan/pelorus_qpmap.comp.glsl | 125 +++
- libavcodec/vulkan_encode.c                | 932 ++++++++++++++++++++++
+ libavcodec/vulkan_encode.c                | 932 ++++++++++++++++++++
  libavcodec/vulkan_encode.h                |  63 ++
  5 files changed, 1132 insertions(+)
- create mode 100644 libavcodec/vulkan/pelorus_qpmap.comp.glsl
 
 diff --git a/configure b/configure
-index ad55df52f7626c32310010c32c4379717ae711fe..216f12e37b3d0b1dc56693872573bcecee629410 100755
+index 839033a423604cbfaf45a7fffd984bc587d44839..966285c2eb68a38202adeb5d2795e685031ab67e 100755
 --- a/configure
 +++ b/configure
 @@ -2822,6 +2822,7 @@ CONFIG_EXTRA="
@@ -234,7 +233,7 @@ index 0000000000000000000000000000000000000000..97e545732f2ab340de649f46904e3bf7
 +    }
 +}
 diff --git a/libavcodec/vulkan_encode.c b/libavcodec/vulkan_encode.c
-index 39c43300c40ee6ce8fdad669028dda9c315a00a4..4482139a5468ed88e19f2edfaae59aa7f65ea04e 100644
+index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b88b14e2c2 100644
 --- a/libavcodec/vulkan_encode.c
 +++ b/libavcodec/vulkan_encode.c
 @@ -28,6 +28,844 @@ const AVCodecHWConfigInternal *const ff_vulkan_encode_hw_configs[] = {
@@ -269,9 +268,9 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..4482139a5468ed88e19f2edfaae59aa7
 + * vulkan_encode already requires at init) the encoder either degrades here or
 + * never reaches this code; that is a driver limitation, not a patch defect.
 + *
-+ * ON-GPU RASTER: the map texel image is filled by a compute dispatch
-+ * (pelorus_qpmap.comp / the inline GLSL below — kept byte-for-byte in lockstep,
-+ * AGENTS hard rule 4) that reads the coalesced ROI rectangle list from a small
++ * ON-GPU RASTER: the map texel image is filled by the canonical build-time
++ * SPIR-V compute shader (pelorus_qpmap.comp.glsl), which reads the coalesced
++ * ROI rectangle list from a small
 + * SSBO and imageStores the per-texel delta/emphasis, eliminating the host
 + * per-texel raster + staging upload the v0.1.0 host path used. It is preferred
 + * only when the encode queue family also advertises VK_QUEUE_COMPUTE_BIT (so the
@@ -1320,6 +1319,3 @@ index 23c35898c150abaffdc9e2cf920d9dd6a2114c33..6fdbaf601882a1621da54dfa36d2b80c
      { "rc_mode", "Select rate control type", OFFSET(common.opts.rc_mode), AV_OPT_TYPE_INT, { .i64 = FF_VK_RC_MODE_AUTO }, 0, FF_VK_RC_MODE_AUTO, FLAGS, "rc_mode" }, \
          { "auto",    "Choose mode automatically based on parameters", 0, AV_OPT_TYPE_CONST, { .i64 = FF_VK_RC_MODE_AUTO }, INT_MIN, INT_MAX, FLAGS, "rc_mode" }, \
          { "driver",  "Driver-specific rate control", 0, AV_OPT_TYPE_CONST, { .i64 = VK_VIDEO_ENCODE_RATE_CONTROL_MODE_DEFAULT_KHR      }, INT_MIN, INT_MAX, FLAGS, "rc_mode" }, \
--- 
-2.55.0
-

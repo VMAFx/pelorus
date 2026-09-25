@@ -46,3 +46,53 @@ subdir('libpelorus')
 if get_option('tools')
   subdir('tools')
 endif
+
+# Since ADR-0143 each filter's GLSL binding declarations and its C
+# FFVulkanDescriptorSetBinding array are two hand-maintained lists that must agree.
+# Nothing in the compiler or the FFmpeg build checks that -- a swapped pair silently
+# reads the wrong resource, which is corruption rather than a build failure. This is
+# that check, and it is cheap enough to live in the fast gate.
+python_prog = find_program('python3', required: true)
+bash_prog = find_program('bash', required: true)
+test('shader-binding-order',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'check-shader-bindings.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
+test('build-config-sync',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'check-build-config.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
+# ADR-0147: FF_VK_REP_FLOAT exposes the storage container's UNORM domain, not
+# necessarily the logical sample domain.  Keep conversion and component
+# preservation consistent across the entire arithmetic-filter family.
+test('vulkan-storage-domain',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'check-vulkan-storage-domain.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
+test('vulkan-validation-streams',
+     bash_prog,
+     args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' /
+            'vulkan-format-matrix-validation-self-test.sh'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
+test('vulkan-sample-scale',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-vulkan-sample-scale.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
+# ADR-0115: the grain estimator reduces fixed-point samples with uint32 atomics.
+# Prove the maximum per-slice sum remains representable at DCI 8K.
+test('grain-accumulator-bounds',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-grain-accumulator-bounds.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')

@@ -6,10 +6,12 @@ Pelorus filters are libavfilter Vulkan filters: they consume and produce
 decode to encode — so `hwupload`/`hwdownload` belong only at the pipeline edges,
 never between Pelorus stages.
 
-**Codec-agnostic.** The filters pre-process pixels; the encoder is your choice.
-The examples use `hevc_nvenc`, but swap in any hardware encoder —
-`av1_nvenc`, `hevc_qsv` / `av1_qsv`, `hevc_vaapi` / `av1_vaapi`, `hevc_amf` /
-`av1_amf`. Deband/denoise/motion-hints help HEVC (rivaling x265) and AV1 alike.
+**Codec-agnostic.** The filters pre-process pixels; the encoder is your choice,
+but FFmpeg hardware-frame domains must match. The minimal example downloads to
+software frames before NVENC. The end-to-end zero-copy example instead uses a
+Vulkan Video encoder. NVENC, QSV, VAAPI, and AMF require an explicit transfer
+or mapping boundary from `AV_PIX_FMT_VULKAN`. Deband, denoise, and motion hints
+help HEVC (rivaling x265) and AV1 alike.
 
 ## Minimal: software decode → upload → deband → download → HW encode
 
@@ -25,31 +27,36 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
 ## Full zero-copy: Vulkan decode → deband → Vulkan HW encode
 
 ```bash
-ffmpeg -init_hw_device vulkan -hwaccel vulkan -hwaccel_output_format vulkan \
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
+       -hwaccel vulkan -hwaccel_device vk -hwaccel_output_format vulkan \
        -i input.mkv \
        -vf "pelorus_deband_vulkan=range=15:thry=0.012" \
-       -c:v hevc_nvenc -cq 28 out.mkv      # HEVC; or av1_nvenc for AV1
+       -c:v hevc_vulkan -pix_fmt vulkan -qp 28 out.mkv  # or av1_vulkan for AV1
 ```
 
 When the decoder, filter, and encoder all speak Vulkan/VRAM, no frame touches
 system RAM.
 
-## Chaining stages (as more filters land)
+## Chaining stages
 
 ```bash
 -vf "pelorus_analyze_vulkan,
      pelorus_grain_estimate_vulkan=strength=2.0,
-     pelorus_mc_vulkan=bsize=16:search=24,
-     pelorus_denoise_vulkan=sigma=2.0,
+     pelorus_mc_vulkan=bsize=16:search=24:meta=1,
+     pelorus_denoise_vulkan=sigma=0.03:mc=1,
      pelorus_deband_vulkan=range=15"
 ```
 
 `pelorus_grain_estimate_vulkan` reads the **source** grain, so it runs before
-denoise removes it; the encoder re-synthesizes the grain from the emitted params.
-`pelorus_mc_vulkan` is a pass-through producer: it emits a per-block motion-vector
-field (`PEL_SEC_MOTION`) as an encoder ME hint (encode-speed, not quality; the
-NVENC `NV_ENC_EXTERNAL_ME_HINT` consumer is a gated follow-up — ADR-0116/0114).
-AVOptions: `bsize` (block edge, default 16), `search` (radius, default 24), `meta`.
+denoise removes it. AV1 consumers can re-synthesize grain from the emitted native
+frame params; the HEVC `pelorus_fgs` BSF instead requires a static model supplied
+manually through its AVOptions and does not read those frame params inline.
+`pelorus_mc_vulkan` is a pass-through producer: with `meta=1` it emits per-block
+motion and confidence fields. `pelorus_denoise_vulkan=mc=1` consumes them for a
+confidence-gated temporal warp, while the optional NVENC
+`NV_ENC_EXTERNAL_ME_HINT` consumer uses the motion field as an encode-search
+hint. AVOptions: `bsize` (block edge, default 16), `search` (radius, default 24),
+`meta`.
 
 Each stage runs in VRAM; the Pelorus side-data blob accumulates sections and
 rides every frame to the encoder.
@@ -76,17 +83,20 @@ the `vmaf-mcp` `vmaf_score_encoded` tool. See
 `vf_pelorus_analyze roi=1` emits `AV_FRAME_DATA_REGIONS_OF_INTEREST` (a per-cell
 banding/quality `qoffset` map). Vanilla NVENC ignores ROI side data and vanilla
 QSV honors only coarse rectangle regions; the Pelorus patch stack adds a
-`-pelorus_roi 1` AVOption to both that consumes the **same** side data into the
-encoder's dense per-block delta-QP map (NVENC `qpDeltaMap`, QSV `mfxExtMBQP`):
+`-pelorus_roi 1` AVOption to both. NVENC consumes the **same** side data into
+`qpDeltaMap`; progressive HEVC QSV under CQP on runtime API 1.28 or newer can
+consume it through a dense `mfxExtMBQP` delta map:
 
 ```bash
 # HEVC, NVENC, constant-QP (the clean mode for QP-map steering):
-ffmpeg ... -vf "hwupload,pelorus_analyze_vulkan=roi=1,hwdownload,format=p010le" \
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
+       -vf "format=p010le,hwupload,pelorus_analyze_vulkan=roi=1,hwdownload,format=p010le" \
        -c:v hevc_nvenc -rc constqp -qp 30 -pelorus_roi 1 out.mkv
 
-# HEVC, Intel QSV, CQP (global_quality); -pelorus_roi requires CQP rate control:
-ffmpeg ... -vf "...,pelorus_analyze_vulkan=roi=1,..." \
-       -c:v hevc_qsv -global_quality 30 -pelorus_roi 1 out.mkv
+# HEVC, Intel QSV, progressive CQP (-q:v also sets AV_CODEC_FLAG_QSCALE):
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
+       -vf "format=p010le,hwupload,pelorus_analyze_vulkan=roi=1,hwdownload,format=p010le" \
+       -c:v hevc_qsv -q:v 30 -pelorus_roi 1 out.mkv
 ```
 
 The option is registered on `hevc_qsv`, `h264_qsv`, `hevc_nvenc`, `h264_nvenc`,
@@ -96,12 +106,27 @@ behaviour change). Use **constant-QP** and the encoder's own spatial/temporal AQ
 OFF: the encoder AQ overrides the delta-QP map, and VBR rate-control
 redistribution erodes the perceptual win.
 
-Capability degradation is graceful: on QSV under a non-CQP rate-control method
-the option emits a one-shot warning and passes through unchanged; if FFmpeg was
-built against a oneVPL/MediaSDK older than API 1.13 (no `mfxExtMBQP`) it likewise
-warns once at init and no-ops. For QSV the dense per-block map fully supersedes
-FFmpeg's coarse `mfxExtEncoderROI` rectangle path when the option is on (the two
-are mutually exclusive). See [ADR-0114](../adr/0114-encoder-steering.md).
+For QSV, use `-q:v N` (or otherwise set `AV_CODEC_FLAG_QSCALE`) to select CQP.
+`-global_quality N` alone selects ICQ in FFmpeg n9.0.2 and therefore cannot use
+the dense MBQP path. The patch does not add `-pelorus_roi` to `av1_qsv`.
+
+QSV selects the dense path only for progressive HEVC+CQP when the runtime API is
+1.28 or newer and the build headers expose `mfxExtMBQP` (oneVPL/MediaSDK API
+1.13 or newer). H.264, older runtimes, non-CQP HEVC, interlaced HEVC, and builds
+without that header surface retain FFmpeg's stock per-region
+`mfxExtEncoderROI` steering; the option reports the fallback instead of
+disabling ROI. On a dense-path frame the map and header are owned by that frame
+until its asynchronous QSV surface unlocks. The map grid uses oneVPL's aligned
+storage dimensions while ROI coordinates are clipped to the visible frame,
+leaving storage-padding cells at zero.
+
+`EnableMBQP=ON` is an initialization request, not a runtime capability probe.
+Dense selection caches the final attached CodingOption3 value after init/reset
+and requires that field to remain ON after any `AVQSVContext` replacement. The
+patch never attaches `mfxExtMBQP` and `mfxExtEncoderROI` to the same frame.
+See [QSV ROI steering](../backends/qsv-roi.md),
+[ADR-0114](../adr/0114-encoder-steering.md), and its QSV contract correction
+[ADR-0146](../adr/0146-qsv-roi-frame-ownership.md).
 
 ### SVT-AV1 software (ADR-0121)
 
@@ -144,9 +169,9 @@ encoders `h264_vulkan`, `hevc_vulkan` and `av1_vulkan` (one shared edit in
 every GPU vendor's Vulkan encoder, with no host roundtrip:
 
 ```bash
-# HEVC, native Vulkan-Video encoder, constant-QP (zero-copy end to end):
-ffmpeg -init_hw_device vulkan ... \
-       -vf "hwupload,pelorus_analyze_vulkan=roi=1" \
+# HEVC, native Vulkan-Video encoder, constant-QP (GPU-resident after upload):
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
+       -vf "format=p010le,hwupload,pelorus_analyze_vulkan=roi=1" \
        -c:v hevc_vulkan -rc_mode cqp -qp 30 -pelorus_roi 1 out.mkv
 ```
 
@@ -158,9 +183,9 @@ advertise the matching delta/emphasis capability flag, and a usable map format +
 texel size must be returned for the profile. Any miss degrades to a one-shot
 warning + pass-through; a frame with no ROI binds no map (zero behaviour change).
 
-The map texel image is filled **on the GPU**: a `pelorus_qpmap` compute shader
-(`libpelorus/shaders/pelorus_qpmap.comp`, mirrored inline in the patch) reads the
-coalesced ROI rectangle list from a small SSBO and `imageStore`s the per-texel
+The map texel image is filled **on the GPU**: the canonical build-time
+`libavcodec/vulkan/pelorus_qpmap.comp.glsl` compute shader reads the coalesced
+ROI rectangle list from a small SSBO and `imageStore`s the per-texel
 delta/emphasis directly, eliminating the host per-texel raster + staging upload.
 This on-GPU path is preferred whenever the encode queue family also advertises
 `VK_QUEUE_COMPUTE_BIT` (so the dispatch records on the encode command buffer with

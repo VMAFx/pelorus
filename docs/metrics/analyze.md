@@ -17,6 +17,11 @@ into a 16-slice SSBO, summed on the host) to per-frame:
 - **flat-area fraction** — share of low-variance (banding-prone) tiles,
 - **banding risk** — coarse proxy = flat-area fraction (v0.1).
 
+Loads are converted from the Vulkan storage domain to the logical `[0,1]`
+sample domain before statistics are accumulated. This is what makes the values
+comparable across 8-bit, planar 10/12-bit, and shifted P010/P012 inputs; UNORM
+storage normalization alone is not sufficient for every layout.
+
 These populate `PEL_SEC_VARIANCE` (`global_variance`, `edge_density`,
 `texture_energy`) and `PEL_SEC_BANDING` (`flat_area_fraction`,
 `global_banding_risk`, `contour_strength_mean`), attached to the frame as the
@@ -63,10 +68,11 @@ on textured tiles (the coarse scale is gated to flats).
 ```bash
 # analyze upstream of deband so the deband side-data carries measured stats,
 # then score against the source with vmafx in one graph
-ffmpeg -init_hw_device vulkan -hwaccel vulkan -hwaccel_output_format vulkan \
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
+       -hwaccel vulkan -hwaccel_device vk -hwaccel_output_format vulkan \
        -i input.mkv \
        -vf "pelorus_analyze_vulkan,pelorus_deband_vulkan=range=15" \
-       -c:v hevc_nvenc -cq 28 out.mkv      # codec-agnostic; or av1_nvenc / hevc_qsv
+       -c:v hevc_vulkan -pix_fmt vulkan -qp 28 out.mkv  # or av1_vulkan
 ```
 
 Output: the input video, unchanged, with a Pelorus side-data blob on every

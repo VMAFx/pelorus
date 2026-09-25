@@ -11,15 +11,16 @@
  * sliced SSBO (slices cut atomic contention, summed on the host).
  *
  * The shipped shader (ffmpeg-patches/files/vulkan/pelorus_analyze.comp.glsl,
- * compiled to SPIR-V at build time, ADR-0143) runs the same reduction against
- * normalized float images. The algorithm both express is the per-tile math: tile mean,
- * variance, mean edge density and the low-amplitude (flat-but-not-constant)
- * gradient. The inline filter additionally reads the reduction back as a
+ * compiled to SPIR-V at build time, ADR-0143) applies descriptor-derived
+ * sample scaling to FFmpeg's normalized-float storage views. The shared
+ * algorithmic shape is the per-tile math: tile mean, variance, mean edge
+ * density and the low-amplitude (flat-but-not-constant) gradient. The shipped
+ * filter additionally reads the reduction back as a
  * per-tile struct-of-arrays (var/edge/grad/valid/mean) to drive ROI steering,
  * a per-frame complexity scalar, and a coarse inter-tile banding scale (a
  * shallow luma ramp spanning many tiles — CAMBI alignment, ADR-0133); this
  * frame-scalar reference intentionally models only the reduction, not that
- * per-tile readback. Keep the reduction math in lockstep.
+ * per-tile readback; it is not a lockstep runtime copy.
  */
 #version 450
 

@@ -27,8 +27,8 @@ is emitted otherwise).
 
 Requires the ffnvcodec headers' qpDeltaMap support (guarded; no-ops without it).
 ---
- libavcodec/nvenc.c      | 135 ++++++++++++++++++++++++++++++++++++++++
- libavcodec/nvenc.h      |  15 +++++
+ libavcodec/nvenc.c      | 135 ++++++++++++++++++++
+ libavcodec/nvenc.h      |  15 +++
  libavcodec/nvenc_av1.c  |   2 +
  libavcodec/nvenc_h264.c |   2 +
  libavcodec/nvenc_hevc.c |   2 +
@@ -273,6 +273,3 @@ index 94ba34c48b43289184974979219412876cf9b53e..04ea2a306470143a443fd5d9ca9a5170
      { "b_adapt",      "When lookahead is enabled, set this to 0 to disable adaptive B-frame decision",
                                                              OFFSET(b_adapt),      AV_OPT_TYPE_BOOL,  { .i64 = 1 }, 0, 1, VE },
      { "spatial-aq",   "set to 1 to enable Spatial AQ",      OFFSET(aq),           AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, VE },
--- 
-2.55.0
-

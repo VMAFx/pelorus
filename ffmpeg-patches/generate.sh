@@ -12,15 +12,110 @@
 # 0002 analyze on top) is the artifact; files/ is the source of truth.
 #
 # Usage:
-#   FFMPEG_REPO=/path/to/ffmpeg BASE_TAG=n9.0.1 ./generate.sh
+#   FFMPEG_REPO=/path/to/ffmpeg ./generate.sh
 #
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-FFMPEG_REPO="${FFMPEG_REPO:-/home/kilian/dev/ffmpeg-9}"
-BASE_TAG="${BASE_TAG:-n9.0.1}"
-WORKTREE="${WORKTREE:-/tmp/pelorus-ffmpeg-gen}"
+ROOT="$(cd "$HERE/.." && pwd)"
+# shellcheck source=build-config.env
+source "$ROOT/build-config.env"
+: "${FFMPEG_REPO:?FFMPEG_REPO must name a local FFmpeg checkout}"
 FILES_DIR="$HERE/files"
+RUN_ROOT=""
+OWNED_WORKTREE=""
+
+canonicalize_existing_dir() {
+    (cd -- "$1" 2>/dev/null && pwd -P)
+}
+
+canonicalize_new_path() {
+    local path="$1"
+    local parent
+    local name
+    local canonical_parent
+
+    parent="$(dirname -- "$path")"
+    name="$(basename -- "$path")"
+    canonical_parent="$(canonicalize_existing_dir "$parent")" || return 1
+    printf '%s/%s\n' "$canonical_parent" "$name"
+}
+
+if ! FFMPEG_REPO="$(canonicalize_existing_dir "$FFMPEG_REPO")"; then
+    echo "ERROR: FFMPEG_REPO is not an accessible directory" >&2
+    exit 1
+fi
+
+cleanup() {
+    local status=$?
+    local cleanup_failed=0
+    trap - EXIT
+
+    if [[ -n "$OWNED_WORKTREE" ]]; then
+        git -C "$OWNED_WORKTREE" -c core.hooksPath=/dev/null \
+            am --abort >/dev/null 2>&1 || true
+        if ! git -C "$FFMPEG_REPO" worktree remove --force "$OWNED_WORKTREE" \
+            >/dev/null 2>&1; then
+            echo "WARNING: could not remove owned worktree: $OWNED_WORKTREE" >&2
+            cleanup_failed=1
+        fi
+    fi
+    if [[ -n "$RUN_ROOT" ]] && ! rmdir "$RUN_ROOT" 2>/dev/null; then
+        echo "WARNING: owned scratch directory is not empty: $RUN_ROOT" >&2
+        cleanup_failed=1
+    fi
+
+    if (( status == 0 && cleanup_failed )); then
+        status=1
+    fi
+
+    exit "$status"
+}
+
+if [[ ${WORKTREE+x} ]]; then
+    if [[ -z "$WORKTREE" ]]; then
+        echo "ERROR: WORKTREE must not be empty when supplied" >&2
+        exit 1
+    fi
+    if [[ -e "$WORKTREE" || -L "$WORKTREE" ]]; then
+        echo "ERROR: refusing existing WORKTREE: $WORKTREE" >&2
+        exit 1
+    fi
+    if ! WORKTREE="$(canonicalize_new_path "$WORKTREE")"; then
+        echo "ERROR: WORKTREE parent is not an accessible directory" >&2
+        exit 1
+    fi
+else
+    RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/pelorus-ffmpeg-gen.XXXXXX")"
+fi
+
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [[ -n "$RUN_ROOT" ]]; then
+    if ! CANONICAL_RUN_ROOT="$(canonicalize_existing_dir "$RUN_ROOT")"; then
+        echo "ERROR: could not canonicalize scratch directory: $RUN_ROOT" >&2
+        exit 1
+    fi
+    RUN_ROOT="$CANONICAL_RUN_ROOT"
+    WORKTREE="$RUN_ROOT/ffmpeg"
+fi
+
+if ! git -C "$FFMPEG_REPO" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "ERROR: FFMPEG_REPO is not a git checkout: $FFMPEG_REPO" >&2
+    exit 1
+fi
+if ! TAG_COMMIT="$(git -C "$FFMPEG_REPO" rev-parse --verify \
+    "refs/tags/${FFMPEG_TAG}^{commit}" 2>/dev/null)"; then
+    echo "ERROR: configured FFmpeg tag is unavailable locally: $FFMPEG_TAG" >&2
+    exit 1
+fi
+if [[ "$TAG_COMMIT" != "$FFMPEG_COMMIT" ]]; then
+    echo "ERROR: $FFMPEG_TAG peels to $TAG_COMMIT, expected $FFMPEG_COMMIT" >&2
+    exit 1
+fi
 
 # Deterministic output. `git format-patch` stamps each patch with the commit
 # Date:, so without a fixed date two runs of this script produce 18 patches that
@@ -31,8 +126,24 @@ FILES_DIR="$HERE/files"
 export GIT_AUTHOR_DATE="2026-01-01T00:00:00+00:00"
 export GIT_COMMITTER_DATE="2026-01-01T00:00:00+00:00"
 
-git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE" 2>/dev/null || true
-git -C "$FFMPEG_REPO" worktree add --detach "$WORKTREE" "$BASE_TAG"
+commit_patch() {
+    local message_file="$1"
+
+    git -C "$WORKTREE" \
+        -c user.name=Lusoris -c user.email=lusoris@pm.me \
+        -c commit.gpgSign=false -c core.hooksPath=/dev/null \
+        -c diff.orderFile=/dev/null \
+        commit --no-gpg-sign --no-verify -q -F "$message_file"
+}
+
+# Register first, then record ownership before the fallible checkout. This keeps
+# cleanup safe if checkout filters fail and prevents caller hooks from modifying
+# the synthetic patch inputs.
+git -C "$FFMPEG_REPO" -c core.hooksPath=/dev/null \
+    worktree add --no-checkout --detach "$WORKTREE" "$FFMPEG_COMMIT"
+OWNED_WORKTREE="$WORKTREE"
+git -C "$WORKTREE" -c core.hooksPath=/dev/null \
+    checkout --force --detach "$FFMPEG_COMMIT"
 
 # FFmpeg 9 moved Vulkan filters from runtime-built inline GLSL to shaders compiled
 # to SPIR-V at build time (ADR-0143). Each filter therefore ships a .comp.glsl that
@@ -69,6 +180,12 @@ PYSHADER
 # Each filter's source is dropped in *inside* its own iteration so the commit's
 # `git add -A` captures only that filter's file (not later filters' sources).
 for filter in deband analyze denoise; do
+    # The arithmetic-filter family shares one descriptor-derived conversion
+    # boundary. Introduce it with patch 0001 so every later filter can include
+    # the same private libavfilter header.
+    if [[ "$filter" == "deband" ]]; then
+        cp "$FILES_DIR/pelorus_vulkan_sample.h" "$WORKTREE/libavfilter/"
+    fi
     cp "$FILES_DIR/vf_pelorus_${filter}_vulkan.c" "$WORKTREE/libavfilter/"
     install_vk_shader "$filter"
     python3 - "$WORKTREE" "$filter" <<'PY'
@@ -87,19 +204,17 @@ def ins_after(path, anchor, line):
     assert line.strip() not in t, f"already present in {path}: {line!r}"
     p.write_text(t.replace(anchor, anchor + line, 1))
 
-# libpelorus wiring mirrors vmafx's vf_vmaf_pre: the filter depends only on
-# FFmpeg-KNOWN components (vulkan spirv_compiler) — `libpelorus` is NOT a known
-# config name, so it must NOT appear in _deps (an unknown dep silently disables
-# the filter). The extra lib is gated by `enabled <filter> && require_pkg_config
-# libpelorus ...`, which adds its cflags/libs and hard-errors if it is missing.
+# libpelorus is not an FFmpeg config component and therefore must not appear in
+# _deps. The guarded probe hard-errors if it is missing, while the symbolic
+# per-filter extralibs entry closes both executable links and libavfilter.pc's
+# static link metadata.
 LVMAF_CUDA = ('enabled libvmaf           && check_pkg_config libvmaf_cuda '
               '"libvmaf >= 2.0.0" libvmaf_cuda.h vmaf_cuda_state_init\n')
-# require_pkg_config adds the header cflags but NOT the link libs, so append
-# add_extralibs to actually link -lpelorus (otherwise ffmpeg fails at LINK time
-# with undefined references, which a compile-only check never catches).
-REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack '
-       '&& add_extralibs $libpelorus_extralibs\n')
+
+def libpelorus_link(name):
+    return (f'{name}_filter_extralibs="libpelorus_extralibs"\n'
+            f'enabled {name}_filter && require_pkg_config libpelorus '
+            '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack\n')
 
 if which == 'deband':
     ins_before("libavfilter/allfilters.c",
@@ -111,7 +226,8 @@ if which == 'deband':
     ins_after("configure",
               'overlay_vulkan_filter_deps="vulkan spirv_compiler"\n',
               'pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"\n')
-    ins_after("configure", LVMAF_CUDA, REQ % "pelorus_deband_vulkan")
+    ins_after("configure", LVMAF_CUDA,
+              libpelorus_link("pelorus_deband_vulkan"))
 elif which == 'analyze':
     # analyze sorts before deband alphabetically; insert ahead of it.
     ins_before("libavfilter/allfilters.c",
@@ -123,7 +239,8 @@ elif which == 'analyze':
     ins_before("configure",
                'pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"\n',
                'pelorus_analyze_vulkan_filter_deps="vulkan spirv_compiler"\n')
-    ins_after("configure", REQ % "pelorus_deband_vulkan", REQ % "pelorus_analyze_vulkan")
+    ins_after("configure", libpelorus_link("pelorus_deband_vulkan"),
+              libpelorus_link("pelorus_analyze_vulkan"))
 elif which == 'denoise':
     # denoise sorts after deband alphabetically (deban < denoi); insert after it.
     ins_before("libavfilter/allfilters.c",
@@ -135,15 +252,14 @@ elif which == 'denoise':
     ins_after("configure",
               'pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"\n',
               'pelorus_denoise_vulkan_filter_deps="vulkan spirv_compiler"\n')
-    ins_after("configure", REQ % "pelorus_analyze_vulkan", REQ % "pelorus_denoise_vulkan")
+    ins_after("configure", libpelorus_link("pelorus_analyze_vulkan"),
+              libpelorus_link("pelorus_denoise_vulkan"))
 else:
     sys.exit("unknown filter: " + which)
 print(f"registration applied: {which}")
 PY
     git -C "$WORKTREE" add -A
-    git -C "$WORKTREE" \
-        -c user.name=Lusoris -c user.email=lusoris@pm.me \
-        commit -q -F "$HERE/.commit-msg-${filter}.txt"
+    commit_patch "$HERE/.commit-msg-${filter}.txt"
 done
 
 # Pelorus libavcodec edit (NOT a filter): make NVENC honor ROI side data via its
@@ -152,18 +268,14 @@ done
 # unified diff in files/, applied as its own commit (-> patch 0004 below).
 git -C "$WORKTREE" apply "$FILES_DIR/nvenc-pelorus-roi.patch"
 git -C "$WORKTREE" add -A
-git -C "$WORKTREE" \
-    -c user.name=Lusoris -c user.email=lusoris@pm.me \
-    commit -q -F "$HERE/.commit-msg-nvenc.txt"
+commit_patch "$HERE/.commit-msg-nvenc.txt"
 
 # Pelorus libavcodec edit (NOT a filter): make Intel QSV honor ROI side data via
 # its dense per-block delta-QP map (mfxExtMBQP). Same hand-maintained-diff model
 # as the NVENC patch above; applied as its own commit (-> patch 0005 below).
 git -C "$WORKTREE" apply "$FILES_DIR/qsv-pelorus-roi.patch"
 git -C "$WORKTREE" add -A
-git -C "$WORKTREE" \
-    -c user.name=Lusoris -c user.email=lusoris@pm.me \
-    commit -q -F "$HERE/.commit-msg-qsv.txt"
+commit_patch "$HERE/.commit-msg-qsv.txt"
 
 # vf_pelorus_grain_estimate_vulkan (FGS parameter estimator) is committed after
 # the encoder patches so it lands as patch 0006 (nvenc keeps 0004, qsv 0005, no
@@ -184,9 +296,10 @@ def ins_after(path, anchor, line):
     assert anchor in t, f"anchor missing in {path}: {anchor!r}"
     assert line.strip() not in t, f"already present in {path}: {line!r}"
     p.write_text(t.replace(anchor, anchor + line, 1))
-REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack '
-       '&& add_extralibs $libpelorus_extralibs\n')
+def libpelorus_link(name):
+    return (f'{name}_filter_extralibs="libpelorus_extralibs"\n'
+            f'enabled {name}_filter && require_pkg_config libpelorus '
+            '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack\n')
 ins_before("libavfilter/allfilters.c",
            "extern const FFFilter ff_vf_perms;\n",
            "extern const FFFilter ff_vf_pelorus_grain_estimate_vulkan;\n")
@@ -196,13 +309,12 @@ ins_after("libavfilter/Makefile",
 ins_after("configure",
           'pelorus_denoise_vulkan_filter_deps="vulkan spirv_compiler"\n',
           'pelorus_grain_estimate_vulkan_filter_deps="vulkan spirv_compiler"\n')
-ins_after("configure", REQ % "pelorus_denoise_vulkan", REQ % "pelorus_grain_estimate_vulkan")
+ins_after("configure", libpelorus_link("pelorus_denoise_vulkan"),
+          libpelorus_link("pelorus_grain_estimate_vulkan"))
 print("registration applied: grain_estimate")
 PY
 git -C "$WORKTREE" add -A
-git -C "$WORKTREE" \
-    -c user.name=Lusoris -c user.email=lusoris@pm.me \
-    commit -q -F "$HERE/.commit-msg-grain_estimate.txt"
+commit_patch "$HERE/.commit-msg-grain_estimate.txt"
 
 # vf_pelorus_mc_vulkan (motion estimator) is committed last so it lands as patch
 # 0007. Same per-filter registration model as the loop above.
@@ -221,9 +333,10 @@ def ins_after(path, anchor, line):
     assert anchor in t, f"anchor missing in {path}: {anchor!r}"
     assert line.strip() not in t, f"already present in {path}: {line!r}"
     p.write_text(t.replace(anchor, anchor + line, 1))
-REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack '
-       '&& add_extralibs $libpelorus_extralibs\n')
+def libpelorus_link(name):
+    return (f'{name}_filter_extralibs="libpelorus_extralibs"\n'
+            f'enabled {name}_filter && require_pkg_config libpelorus '
+            '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack\n')
 ins_before("libavfilter/allfilters.c",
            "extern const FFFilter ff_vf_perms;\n",
            "extern const FFFilter ff_vf_pelorus_mc_vulkan;\n")
@@ -233,13 +346,12 @@ ins_after("libavfilter/Makefile",
 ins_after("configure",
           'pelorus_grain_estimate_vulkan_filter_deps="vulkan spirv_compiler"\n',
           'pelorus_mc_vulkan_filter_deps="vulkan spirv_compiler"\n')
-ins_after("configure", REQ % "pelorus_grain_estimate_vulkan", REQ % "pelorus_mc_vulkan")
+ins_after("configure", libpelorus_link("pelorus_grain_estimate_vulkan"),
+          libpelorus_link("pelorus_mc_vulkan"))
 print("registration applied: mc")
 PY
 git -C "$WORKTREE" add -A
-git -C "$WORKTREE" \
-    -c user.name=Lusoris -c user.email=lusoris@pm.me \
-    commit -q -F "$HERE/.commit-msg-mc.txt"
+commit_patch "$HERE/.commit-msg-mc.txt"
 
 # Pelorus libavcodec edit (NOT a filter): make NVENC honor the PEL_SEC_MOTION MV
 # field (emitted by 0007's vf_pelorus_mc_vulkan) via its external-ME-hint input,
@@ -249,9 +361,7 @@ git -C "$WORKTREE" \
 # producer) and after 0004 (it shares the NvencContext block 0004 introduced).
 git -C "$WORKTREE" apply "$FILES_DIR/nvenc-pelorus-me-hints.patch"
 git -C "$WORKTREE" add -A
-git -C "$WORKTREE" \
-    -c user.name=Lusoris -c user.email=lusoris@pm.me \
-    commit -q -F "$HERE/.commit-msg-nvenc-me-hints.txt"
+commit_patch "$HERE/.commit-msg-nvenc-me-hints.txt"
 
 # Pelorus libavcodec edit (NOT a filter): make the native Vulkan-video encoders
 # (h264_vulkan/hevc_vulkan/av1_vulkan) honor ROI side data via the cross-vendor
@@ -260,9 +370,7 @@ git -C "$WORKTREE" \
 # applied as its own commit (-> patch 0009 below). ADR-0114 Tier 2.
 git -C "$WORKTREE" apply "$FILES_DIR/vulkan-pelorus-qpmap.patch"
 git -C "$WORKTREE" add -A
-git -C "$WORKTREE" \
-    -c user.name=Lusoris -c user.email=lusoris@pm.me \
-    commit -q -F "$HERE/.commit-msg-vulkan.txt"
+commit_patch "$HERE/.commit-msg-vulkan.txt"
 
 # pelorus_fgs bitstream filter (H.274 / HEVC FGC SEI inserter) lands as patch
 # 0010 — the HEVC leg of the FGS round-trip the grain estimator (0006) started.
@@ -296,9 +404,7 @@ ins_before("configure",
 print("registration applied: pelorus_fgs (bsf)")
 PY
 git -C "$WORKTREE" add -A
-git -C "$WORKTREE" \
-    -c user.name=Lusoris -c user.email=lusoris@pm.me \
-    commit -q -F "$HERE/.commit-msg-fgs-bsf.txt"
+commit_patch "$HERE/.commit-msg-fgs-bsf.txt"
 
 # Pelorus libavcodec edit (NOT a filter): make av1_nvenc carry the Pelorus AV1
 # film-grain estimate into NVENC's hardware AV1 film-grain config so the grain
@@ -310,9 +416,7 @@ git -C "$WORKTREE" \
 # shares the NvencContext block 0004 introduced).
 git -C "$WORKTREE" apply "$FILES_DIR/nvenc-pelorus-film-grain.patch"
 git -C "$WORKTREE" add -A
-git -C "$WORKTREE" \
-    -c user.name=Lusoris -c user.email=lusoris@pm.me \
-    commit -q -F "$HERE/.commit-msg-nvenc-film-grain.txt"
+commit_patch "$HERE/.commit-msg-nvenc-film-grain.txt"
 
 # Pelorus libavcodec edit (NOT a filter): make libaom-av1 honor ROI side data via
 # its segment-based AOME_SET_ROI_MAP (aom_roi_map_t) — the SW-AV1 ROI leg next to
@@ -324,9 +428,7 @@ git -C "$WORKTREE" \
 # last to avoid renumbering any shipped artifact.
 git -C "$WORKTREE" apply "$FILES_DIR/libaom-pelorus-roi.patch"
 git -C "$WORKTREE" add -A
-git -C "$WORKTREE" \
-    -c user.name=Lusoris -c user.email=lusoris@pm.me \
-    commit -q -F "$HERE/.commit-msg-libaom.txt"
+commit_patch "$HERE/.commit-msg-libaom.txt"
 
 # Pelorus libavcodec edit (NOT a filter): make libsvtav1 (av1_svt) honor ROI side
 # data via SVT-AV1's native per-superblock ROI segment map (SvtAv1RoiMapEvt /
@@ -337,9 +439,7 @@ git -C "$WORKTREE" \
 # whole path is compile-guarded by SVT_AV1_CHECK_VERSION(1, 6, 0). ADR-0121.
 git -C "$WORKTREE" apply "$FILES_DIR/svtav1-pelorus-roi.patch"
 git -C "$WORKTREE" add -A
-git -C "$WORKTREE" \
-    -c user.name=Lusoris -c user.email=lusoris@pm.me \
-    commit -q -F "$HERE/.commit-msg-svtav1.txt"
+commit_patch "$HERE/.commit-msg-svtav1.txt"
 
 # vf_pelorus_dehalo_vulkan (anime dehalo + dering) is a PURE pixel transform that
 # does NOT link libpelorus (no interop emit), so its registration omits the
@@ -375,9 +475,7 @@ ins_after("configure",
 print("registration applied: dehalo")
 PY
 git -C "$WORKTREE" add -A
-git -C "$WORKTREE" \
-    -c user.name=Lusoris -c user.email=lusoris@pm.me \
-    commit -q -F "$HERE/.commit-msg-dehalo.txt"
+commit_patch "$HERE/.commit-msg-dehalo.txt"
 
 # vf_pelorus_aa_vulkan (anime warp-AA + line-darkening) is a PURE pixel transform
 # that does NOT link libpelorus (no interop emit) -> registration is deps-only (no
@@ -408,9 +506,7 @@ ins_before("configure",
 print("registration applied: aa")
 PY
 git -C "$WORKTREE" add -A
-git -C "$WORKTREE" \
-    -c user.name=Lusoris -c user.email=lusoris@pm.me \
-    commit -q -F "$HERE/.commit-msg-aa.txt"
+commit_patch "$HERE/.commit-msg-aa.txt"
 
 # vf_pelorus_scenecut (scene-cut -> forced IDR) is a metadata-only consumer of
 # PEL_SEC_MOTION — NOT a Vulkan filter (no shader, no _deps), but it LINKS
@@ -430,9 +526,10 @@ def ins_after(path, anchor, line):
     assert anchor in t, f"anchor missing in {path}: {anchor!r}"
     assert line.strip() not in t, f"already present in {path}: {line!r}"
     p.write_text(t.replace(anchor, anchor + line, 1))
-REQ = ('enabled %s_filter && require_pkg_config libpelorus '
-       '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack '
-       '&& add_extralibs $libpelorus_extralibs\n')
+def libpelorus_link(name):
+    return (f'{name}_filter_extralibs="libpelorus_extralibs"\n'
+            f'enabled {name}_filter && require_pkg_config libpelorus '
+            '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack\n')
 # allfilters.c: pelorus_scenecut sorts after pelorus_mc -> insert before perms.
 ins_before("libavfilter/allfilters.c",
            "extern const FFFilter ff_vf_perms;\n",
@@ -441,14 +538,14 @@ ins_before("libavfilter/allfilters.c",
 ins_after("libavfilter/Makefile",
           "OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER)      += vf_pelorus_mc_vulkan.o vulkan.o vulkan_filter.o\n",
           "OBJS-$(CONFIG_PELORUS_SCENECUT_FILTER)       += vf_pelorus_scenecut.o\n")
-# configure: NO _deps (not a Vulkan filter); just the require_pkg_config link.
-ins_after("configure", REQ % "pelorus_mc_vulkan", REQ % "pelorus_scenecut")
+# configure: no _deps (not a Vulkan filter); use the guarded pkg-config probe and
+# per-filter extralibs entry for libpelorus.
+ins_after("configure", libpelorus_link("pelorus_mc_vulkan"),
+          libpelorus_link("pelorus_scenecut"))
 print("registration applied: scenecut")
 PY
 git -C "$WORKTREE" add -A
-git -C "$WORKTREE" \
-    -c user.name=Lusoris -c user.email=lusoris@pm.me \
-    commit -q -F "$HERE/.commit-msg-scenecut.txt"
+commit_patch "$HERE/.commit-msg-scenecut.txt"
 
 # vf_pelorus_deblock_vulkan (re-encode deblock/dering) is a PURE pixel transform
 # that does NOT link libpelorus (deps-only registration). "deblock" sorts after
@@ -483,9 +580,7 @@ ins_after("configure",
 print("registration applied: deblock")
 PY
 git -C "$WORKTREE" add -A
-git -C "$WORKTREE" \
-    -c user.name=Lusoris -c user.email=lusoris@pm.me \
-    commit -q -F "$HERE/.commit-msg-deblock.txt"
+commit_patch "$HERE/.commit-msg-deblock.txt"
 
 # vf_pelorus_borderfix_vulkan (dirty-line/border repair) is a PURE pixel transform
 # that does NOT link libpelorus (deps-only registration). "borderfix" sorts after
@@ -515,21 +610,28 @@ ins_before("configure",
 print("registration applied: borderfix")
 PY
 git -C "$WORKTREE" add -A
-git -C "$WORKTREE" \
-    -c user.name=Lusoris -c user.email=lusoris@pm.me \
-    commit -q -F "$HERE/.commit-msg-borderfix.txt"
+commit_patch "$HERE/.commit-msg-borderfix.txt"
 
 # Clean stale patches, regenerate the whole range.
 rm -f "$HERE"/0*.patch
-# --full-index is load-bearing for reproducibility, not cosmetic. Git abbreviates
-# the blob hashes in `index` lines based on how many objects the repo holds, so a
-# full FFmpeg clone emits 10 hex chars and a --depth 1 clone emits 7 -- the same
-# sources produce different patch bytes depending on clone depth, which would make
-# the CI reproducibility gate fail on a shallow checkout. Emitting the full 40-char
-# hashes removes the dependence entirely, and gives `git am --3way` the unambiguous
-# blob ids it wants anyway.
-git -C "$WORKTREE" format-patch --zero-commit --full-index --start-number=1 \
-    -o "$HERE" "$BASE_TAG..HEAD"
+# Every byte-affecting format choice is explicit. Besides full blob hashes, this
+# prevents repository/global format.*, diff.*, signature, threading, prefix, and
+# filename policy from changing the shipped artifacts.
+git -C "$WORKTREE" \
+    -c format.mboxrd=false \
+    -c format.pretty=medium \
+    -c format.encodeEmailHeaders=true \
+    -c diff.orderFile=/dev/null \
+    format-patch \
+    --zero-commit --full-index --binary --default-prefix \
+    --find-renames=50% --diff-algorithm=myers --indent-heuristic \
+    --unified=3 --inter-hunk-context=0 \
+    --stat --stat-width=80 --stat-name-width=60 --stat-graph-width=20 \
+    --no-ext-diff --no-textconv --no-signature --no-thread \
+    --no-cover-letter --numbered --suffix=.patch --subject-prefix=PATCH \
+    --no-signoff --no-base --no-attach --no-to --no-cc --no-add-header \
+    --no-from --no-force-in-body-from --no-notes --filename-max-length=64 \
+    --start-number=1 --quiet -o "$HERE" "${FFMPEG_COMMIT}..HEAD"
 
 # Normalize auto-generated filenames to the series.txt names.
 mv "$HERE"/0001-*.patch "$HERE/0001-add-vf_pelorus_deband_vulkan.patch" 2>/dev/null || true
@@ -551,6 +653,5 @@ mv "$HERE"/0016-*.patch "$HERE/0016-add-vf_pelorus_scenecut.patch" 2>/dev/null |
 mv "$HERE"/0017-*.patch "$HERE/0017-add-vf_pelorus_deblock_vulkan.patch" 2>/dev/null || true
 mv "$HERE"/0018-*.patch "$HERE/0018-add-vf_pelorus_borderfix_vulkan.patch" 2>/dev/null || true
 
-git -C "$FFMPEG_REPO" worktree remove --force "$WORKTREE"
 echo "patch(es) regenerated in $HERE:"
 ls "$HERE"/0*.patch

@@ -54,6 +54,24 @@ Pelorus filters use FFmpeg's libavfilter Vulkan infrastructure
 - **Specialization constants** carry anything the C side used to const-fold into
   generated GLSL (plane count, plane bitmask). `constant_id` 0..N — **253/254/255
   are reserved** by `ff_vk_shader_load()` for the workgroup size.
+- **Distinguish storage and sample domains.** `FF_VK_REP_FLOAT` normalizes an
+  integer image by its Vulkan storage container. It does not expand an
+  LSB-aligned 10/12-bit code in `R16_UNORM` to the logical `[0,1]` sample range.
+  Arithmetic filters obtain `sample_scale` from `AVPixFmtDescriptor`, multiply
+  every load before doing math, then clamp and round transform results to the
+  logical `code_max` before inverse scaling at the store boundary:
+  `round(clamp(value, 0, 1) * code_max) / code_max / sample_scale`. `code_max`
+  is a specialization constant, keeping denoise's push block within Vulkan's
+  guaranteed 128-byte minimum. P010/P012 also require the descriptor `shift`;
+  quantizing before inverse scaling maps the logical code back into the shifted
+  storage lane and keeps its low padding bits zero. Raw whole-texel copies such
+  as borderfix are exempt. `scripts/check-vulkan-storage-domain.py` enforces
+  this family contract
+  ([ADR-0147](../adr/0147-vulkan-sample-domain-and-components.md)).
+- **Plane masks select physical planes.** A selected NV12/P010/P012 chroma
+  plane contains both U and V, so scalar kernels must process both components
+  under a specialization-time loop. On packed views they process only their
+  defined component and preserve every other lane with read-modify-write.
 - **Determinism**: per-pixel randomness is a hash of `(coord, frame_seed)`, not
   GPU state.
 - **One shader source.** `ffmpeg-patches/files/vulkan/pelorus_<name>.comp.glsl` is
@@ -66,16 +84,17 @@ Pelorus filters use FFmpeg's libavfilter Vulkan infrastructure
 
 ## Numerical note
 
-The standalone reference shader works in a 16-bit integer domain (`r16ui`); the
-in-tree filter works in FFmpeg's normalized float image domain
-(`FF_VK_REP_FLOAT`), so thresholds/grain are already in `[0,1]` and the explicit
-dither-down stage collapses (the output image format carries the depth). The two
-implement the same algorithm; the only difference is the working domain.
+Thresholds and strengths are expressed in the logical `[0,1]` sample domain.
+The shipped shader establishes that domain explicitly with `sample_scale`, and
+known integer layouts use `code_max` quantization before storage-domain
+writeback; a storage-image load is not assumed to be logical already. Standalone
+`libpelorus/shaders/*.comp` files use their documented integer reference domain
+and exist to compile-check/read the algorithm, not as a second shipped shader.
 
 ## Building the FFmpeg integration
 
 ```bash
 ninja -C build install                       # install libpelorus (pkg-config)
-cd ffmpeg-patches && ./generate.sh            # regenerate the patch stack
-./test/build-and-run.sh                       # apply onto n8.1.1, build, smoke
+FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh
+FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh
 ```

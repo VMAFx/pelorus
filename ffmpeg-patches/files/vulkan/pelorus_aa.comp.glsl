@@ -29,8 +29,9 @@
  *   warp  = bilinear(luma, pos + disp)      // pull samples onto the line
  *   line-darken: where warp is on the dark side near an edge, deepen by darkstr.
  *
- * Works in FF_VK_REP_FLOAT (UNORM) space, so samples are already in [0,1] and
- * the shader is bit-depth agnostic.
+ * FF_VK_REP_FLOAT normalizes against the storage container. Descriptor-derived
+ * scale and code-max values map that representation to logical samples and
+ * preserve the zero low padding bits required by shifted P010/P012 writeback.
  */
 
 #pragma shader_stage(compute)
@@ -48,6 +49,8 @@ layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
 layout (constant_id = 0) const uint planes     = 0;
 layout (constant_id = 1) const uint plane_mask = 0x1;
 layout (constant_id = 2) const uint fast       = 0;
+layout (constant_id = 3) const uint semi_planar = 0;
+layout (constant_id = 4) const uint sample_code_max = 0;
 
 layout (push_constant, std430) uniform pushConstants {
     int   blur;
@@ -55,6 +58,7 @@ layout (push_constant, std430) uniform pushConstants {
     float thresh;
     float darkstr;
     float edge_thr;
+    float sample_scale;
 };
 
 layout (set = 0, binding = 0) uniform readonly  image2D input_images[];
@@ -70,18 +74,31 @@ const int PEL_HALO = MAX_R + 1;
 const int PEL_TILE = 32 + 2 * PEL_HALO;
 shared float s_sobel[fast != 0u ? PEL_TILE * PEL_TILE : 1];
 
-float pel_luma(int idx, ivec2 p, ivec2 sz) {
-    return imageLoad(input_images[idx], clamp(p, ivec2(0), sz - ivec2(1))).x;
+float pel_to_sample(float value) {
+    return value * sample_scale;
+}
+float pel_to_storage(float value) {
+    if (sample_code_max == 0u)
+        return value / sample_scale;
+    const float code_max = float(sample_code_max);
+    return round(clamp(value, 0.0, 1.0) * code_max) / code_max / sample_scale;
+}
+uint pel_component_count(uint plane) {
+    return (semi_planar != 0u && plane == 1u) ? 2u : 1u;
+}
+float pel_luma(int idx, int comp, ivec2 p, ivec2 sz) {
+    return pel_to_sample(
+        imageLoad(input_images[idx], clamp(p, ivec2(0), sz - ivec2(1)))[comp]);
 }
 
-float sobel_mag(int idx, ivec2 p, ivec2 sz) {
+float sobel_mag(int idx, int comp, ivec2 p, ivec2 sz) {
     float gx = 0.0; float gy = 0.0;
     float kx[9] = float[9](-1.0, 0.0, 1.0, -2.0, 0.0, 2.0, -1.0, 0.0, 1.0);
     float ky[9] = float[9](-1.0,-2.0,-1.0,  0.0, 0.0, 0.0,  1.0, 2.0, 1.0);
     int k = 0;
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
-            float v = pel_luma(idx, p + ivec2(dx, dy), sz);
+            float v = pel_luma(idx, comp, p + ivec2(dx, dy), sz);
             gx += v * kx[k]; gy += v * ky[k]; k++;
         }
     }
@@ -100,7 +117,7 @@ float sobel_mag(int idx, ivec2 p, ivec2 sz) {
  * barriers are workgroup-uniform. Bit-identical to fast=0 by construction: the
  * cached value is the exact output of the same sobel_mag() — same float ops in
  * the same order; only the redundant recompute is removed. */
-void pel_load_sobel(int idx, ivec2 sz) {
+void pel_load_sobel(int idx, int comp, ivec2 sz) {
     ivec2 wgsz = ivec2(gl_WorkGroupSize.xy);
     ivec2 base = ivec2(gl_WorkGroupID.xy) * wgsz - PEL_HALO;
     uint n = uint(PEL_TILE * PEL_TILE);
@@ -109,7 +126,7 @@ void pel_load_sobel(int idx, ivec2 sz) {
     for (uint k = gl_LocalInvocationIndex; k < n; k += stride) {
         ivec2 t = ivec2(int(k) - (int(k) / PEL_TILE) * PEL_TILE,
                         int(k) / PEL_TILE);
-        s_sobel[k] = sobel_mag(idx, base + t, sz);
+        s_sobel[k] = sobel_mag(idx, comp, base + t, sz);
     }
     barrier();
 }
@@ -128,58 +145,60 @@ float ssobel(ivec2 off) {
  * fast=1 ignores `base` because ssobel() encodes the current pixel via
  * gl_LocalInvocationID — valid ONLY when emask is called with base == pos
  * (every call site in aa() satisfies this). */
-float pel_sobel(int idx, ivec2 base, ivec2 off, ivec2 sz) {
+float pel_sobel(int idx, int comp, ivec2 base, ivec2 off, ivec2 sz) {
     if (fast != 0u)
         return ssobel(off);
-    return sobel_mag(idx, base + off, sz);
+    return sobel_mag(idx, comp, base + off, sz);
 }
 
 /* emask reduces a (2r+1)^2 window of the edge magnitude around base + off0. */
-float emask(int idx, ivec2 base, ivec2 off0, ivec2 sz, int r, float thr) {
+float emask(int idx, int comp, ivec2 base, ivec2 off0, ivec2 sz, int r,
+            float thr) {
     float acc = 0.0; float n = 0.0;
     for (int dy = -MAX_R; dy <= MAX_R; dy++) {
         if (dy < -r || dy > r) continue;
         for (int dx = -MAX_R; dx <= MAX_R; dx++) {
             if (dx < -r || dx > r) continue;
             ivec2 off = off0 + ivec2(dx, dy);
-            acc += min(pel_sobel(idx, base, off, sz), thr); n += 1.0;
+            acc += min(pel_sobel(idx, comp, base, off, sz), thr); n += 1.0;
         }
     }
     return acc / max(n, 1.0);
 }
 
-float bilinear(int idx, float fx, float fy, ivec2 sz) {
+float bilinear(int idx, int comp, float fx, float fy, ivec2 sz) {
     int x0 = int(floor(fx)); int y0 = int(floor(fy));
     float tx = fx - float(x0); float ty = fy - float(y0);
-    float a = pel_luma(idx, ivec2(x0,     y0),     sz);
-    float b = pel_luma(idx, ivec2(x0 + 1, y0),     sz);
-    float c = pel_luma(idx, ivec2(x0,     y0 + 1), sz);
-    float d = pel_luma(idx, ivec2(x0 + 1, y0 + 1), sz);
+    float a = pel_luma(idx, comp, ivec2(x0,     y0),     sz);
+    float b = pel_luma(idx, comp, ivec2(x0 + 1, y0),     sz);
+    float c = pel_luma(idx, comp, ivec2(x0,     y0 + 1), sz);
+    float d = pel_luma(idx, comp, ivec2(x0 + 1, y0 + 1), sz);
     return mix(mix(a, b, tx), mix(c, d, tx), ty);
 }
 
-void aa(ivec2 pos, int idx) {
+float aa(ivec2 pos, int idx, int comp) {
     ivec2 sz = imageSize(output_images[idx]);
     int r = clamp(blur, 0, MAX_R);
     float thr = max(thresh, 0.0001);
-    float gx = (emask(idx, pos, ivec2(1, 0), sz, r, thr)
-              - emask(idx, pos, ivec2(-1, 0), sz, r, thr)) * 0.5;
-    float gy = (emask(idx, pos, ivec2(0, 1), sz, r, thr)
-              - emask(idx, pos, ivec2(0,-1), sz, r, thr)) * 0.5;
+    float gx = (emask(idx, comp, pos, ivec2(1, 0), sz, r, thr)
+              - emask(idx, comp, pos, ivec2(-1, 0), sz, r, thr)) * 0.5;
+    float gy = (emask(idx, comp, pos, ivec2(0, 1), sz, r, thr)
+              - emask(idx, comp, pos, ivec2(0,-1), sz, r, thr)) * 0.5;
     float fx = float(pos.x) + depth * gx;
     float fy = float(pos.y) + depth * gy;
-    float warp = bilinear(idx, fx, fy, sz);
+    float warp = bilinear(idx, comp, fx, fy, sz);
     if (darkstr > 0.0) {
-        float e = sobel_mag(idx, pos, sz);
+        float e = sobel_mag(idx, comp, pos, sz);
         if (e > edge_thr) {
             float lo = warp;
             for (int dy = -1; dy <= 1; dy++)
                 for (int dx = -1; dx <= 1; dx++)
-                    lo = min(lo, pel_luma(idx, pos + ivec2(dx, dy), sz));
+                    lo = min(lo, pel_luma(idx, comp,
+                                          pos + ivec2(dx, dy), sz));
             warp = mix(warp, lo, darkstr);
         }
     }
-    imageStore(output_images[idx], pos, vec4(clamp(warp, 0.0, 1.0)));
+    return clamp(warp, 0.0, 1.0);
 }
 
 void main()
@@ -204,10 +223,18 @@ void main()
         for (uint i = 0; i < planes; i++) {
             size = imageSize(output_images[i]);
             if ((plane_mask & (1u << i)) != 0u) {
-                pel_load_sobel(int(i), size);
-                if (all(lessThan(pos, size))) {
-                    aa(pos, int(i));
+                const bool inb = all(lessThan(pos, size));
+                const uint ncomp = pel_component_count(i);
+                vec4 texel = inb ? imageLoad(input_images[i], pos) : vec4(0.0);
+                for (uint c = 0u; c < ncomp; c++) {
+                    const int comp = int(c);
+                    pel_load_sobel(int(i), comp, size);
+                    if (inb) {
+                        texel[comp] = pel_to_storage(aa(pos, int(i), comp));
+                    }
                 }
+                if (inb)
+                    imageStore(output_images[i], pos, texel);
             } else {
                 if (all(lessThan(pos, size))) {
                     imageStore(output_images[i], pos,
@@ -221,11 +248,18 @@ void main()
             if (!all(lessThan(pos, size)))
                 return;
 
-            if ((plane_mask & (1u << i)) != 0u)
-                aa(pos, int(i));
-            else
+            if ((plane_mask & (1u << i)) != 0u) {
+                vec4 texel = imageLoad(input_images[i], pos);
+                const uint ncomp = pel_component_count(i);
+                for (uint c = 0u; c < ncomp; c++) {
+                    const int comp = int(c);
+                    texel[comp] = pel_to_storage(aa(pos, int(i), comp));
+                }
+                imageStore(output_images[i], pos, texel);
+            } else {
                 imageStore(output_images[i], pos,
                            imageLoad(input_images[i], pos));
+            }
         }
     }
 }

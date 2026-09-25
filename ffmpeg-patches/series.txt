@@ -1,11 +1,13 @@
-# Ordered list of Pelorus patches against FFmpeg n8.1.1.
+# Ordered list of Pelorus patches against FFmpeg n9.0.2 at
+# 946fcce07b6dcd0331c8cc609192aeff5e1924f8.
 # Applied in order by ffmpeg-patches/test/build-and-run.sh, and regenerated
-# from files/ by ffmpeg-patches/generate.sh. Apply with `git am --3way` onto a
-# pristine n8.1.1 checkout (see README.md). The stack is cumulative; verify
+# from files/ by ffmpeg-patches/generate.sh. Apply with `git am --3way` onto
+# the pinned checkout (see README.md). The stack is cumulative; verify
 # with a full series replay, never per-patch `git apply --check`.
 #
-# Each fork-local patch links libpelorus (>= 0.1.0, pkg-config) and is gated by
-# `vulkan spirv_library` so it only builds where the Vulkan compute path exists.
+# Interop-consuming patches require libpelorus >= 0.2.0 through a separate
+# pkg-config probe. Compute filters are gated by `vulkan spirv_compiler` so they
+# build only where FFmpeg 9's build-time SPIR-V path exists.
 #
 # Roadmap (not yet generated; sources land under files/ first):
 #   00NN-*-fgs-bsf (H.264 / VVC legs)           extend 0010 beyond HEVC/H.274

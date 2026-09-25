@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0143: FFmpeg 9 migration — precompiled SPIR-V replaces the runtime inline-GLSL shader model
 
-- **Status**: Proposed (2026-08-30) — base tag moves n8.1.1 → n9.0.1; all 11 Vulkan shaders move from runtime-built GLSL strings to build-time SPIR-V
+- **Status**: Accepted (implemented 2026-08-30) — base tag moved n8.1.1 → n9.0.1; all Vulkan shaders moved from runtime-built GLSL strings to build-time SPIR-V
 - **Date**: 2026-08-30
 - **Deciders**: Lusoris
 
@@ -131,7 +131,7 @@ All eleven Pelorus-patched libavcodec TUs build clean with the vendor SDKs enabl
 the AVOptions register on exactly the intended encoders, checked per encoder:
 
 | encoder | Pelorus options |
-|---|---|
+| --- | --- |
 | `h264_nvenc`, `hevc_nvenc` | `pelorus_roi`, `pelorus_me_hints` |
 | `av1_nvenc` | `pelorus_roi`, `pelorus_film_grain` |
 | `h264_qsv`, `hevc_qsv` | `pelorus_roi` |

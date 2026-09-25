@@ -16,8 +16,8 @@ Two driver-probed map kinds, picked by the negotiated rate-control mode:
 The ROI side data is coalesced into a compact, texel-block-aligned rectangle
 list (same qoffset->ΔQP convention as the NVENC/QSV patches: qp_range =
 51 + 6*(depth-8), reverse region precedence) and the map texel image is filled
-ON THE GPU: a pelorus_qpmap compute shader (libpelorus/shaders/pelorus_qpmap.comp,
-mirrored inline) reads the rect SSBO and imageStores the per-texel delta /
+ON THE GPU: the canonical build-time pelorus_qpmap.comp.glsl compute shader
+reads the rect SSBO and imageStores the per-texel delta /
 emphasis directly, then a GENERAL -> VIDEO_ENCODE_QUANTIZATION_MAP_KHR barrier
 hands it to the encode. The dispatch records on the encode command buffer, so it
 is used only when the encode queue family also advertises VK_QUEUE_COMPUTE_BIT
@@ -39,8 +39,8 @@ no-op.
 VERIFICATION: compile-verified only. vulkan_encode.c and the three
 vulkan_encode_{h264,h265,av1} TUs build clean (zero warnings) under FFmpeg's
 -std=c17 -Wall warning set against the system Vulkan-video headers, with the
-quantization-map ifdef live; the reference shader and the inline GLSL both
-compile under glslang. Runtime on-HW proof
+quantization-map ifdef live; the canonical build-time GLSL and Pelorus's
+standalone reference shader both compile under glslang. Runtime on-HW proof
 is BLOCKED on this dev box: hevc_vulkan ENCODE fails at init with "Driver does
 not support required encode feedback flags (BUFFER_OFFSET and BYTES_WRITTEN)",
 before this code runs — a driver limitation (ADR-0114 Tier 2 immaturity caveat),

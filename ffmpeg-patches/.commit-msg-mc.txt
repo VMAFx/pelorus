@@ -30,9 +30,10 @@ Codec-agnostic producer: the MV field is on the source, encoder-independent.
 AVOptions: bsize (block edge, default 16), search (radius, default 24),
 meta (attach PEL_SEC_MOTION, default on). No interop ABI bump — PEL_SEC_MOTION
 (bit 1<<4, 32-byte PelorusMotionSection) was reserved at ABI 1.0. The
-standalone reference shader libpelorus/shaders/pelorus_mc.comp and the inline
-GLSL are kept in lockstep.
+shipped shader is the canonical libavfilter/vulkan/pelorus_mc.comp.glsl,
+compiled to SPIR-V at FFmpeg build time; Pelorus also compile-checks a
+standalone reference shader.
 
-Requires libpelorus >= 0.1.0 (pkg-config) when the filter is enabled.
+Requires libpelorus >= 0.2.0 (pkg-config) when the filter is enabled.
 
 ADR: docs/adr/0116-pelorus-mc.md

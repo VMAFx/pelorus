@@ -1,36 +1,52 @@
 ---
 name: ffmpeg-build-patches
-description: Use when regenerating the FFmpeg patch stack after editing a filter source under ffmpeg-patches/files/ — runs generate.sh to rebuild the 000N-*.patch artifacts in an isolated worktree.
+description: Use when regenerating the FFmpeg patch stack after changing canonical inputs under ffmpeg-patches/files or commit-message templates.
 ---
 
-# /ffmpeg-build-patches
+# Regenerate the FFmpeg patch stack
 
-`ffmpeg-patches/files/*.c` is the source of truth; the `000N-*.patch` files are
-generated. After editing a filter source (or adding a new one), regenerate:
+`files/`, `.commit-msg-*.txt`, and `generate.sh` are source; numbered patches
+are deterministic artifacts. Root `build-config.env` owns the exact FFmpeg tag
+and commit.
+
+## Regenerate
+
+From the repository root:
 
 ```sh
-cd ffmpeg-patches
-FFMPEG_REPO=/home/kilian/dev/ffmpeg-8 BASE_TAG=n8.1.1 ./generate.sh
+FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh
 ```
 
-`generate.sh` checks out a pristine base in an **isolated git worktree** (never
-touches your main FFmpeg checkout), drops in each filter's source *inside its own
-iteration*, wires the registration hunks (configure / Makefile / allfilters.c),
-commits one-per-filter, and `git format-patch`es the whole cumulative range.
+`FFMPEG_REPO` is required. `BASE_TAG` is not an input. The generator verifies
+the qualified tag against the pinned commit, uses a run-owned hook-neutral
+worktree, and preserves the caller checkout.
 
-## Adding a new filter to the stack
+Run the command twice and prove every numbered patch is byte-identical. Then
+use `ffmpeg-apply-patches`; regeneration alone is not verification.
 
-1. Add `ffmpeg-patches/files/vf_pelorus_<name>_vulkan.c`.
-2. Add `ffmpeg-patches/.commit-msg-<name>.txt` (Conventional Commit + `ADR:` trailer).
-3. Add the `<name>` registration block to the python step in `generate.sh`
-   (extern in allfilters.c, OBJS in Makefile, `_filter_deps="vulkan spirv_library
-   libpelorus"` + a soft `check_pkg_config libpelorus` in configure) and append
-   `<name>` to the `for filter in …` loop.
-4. Add the patch filename to `series.txt`.
-5. Run `generate.sh`, then verify with `/ffmpeg-apply-patches`.
+## Add a filter without renumbering shipped patches
 
-## Rules
+1. Add host C under `ffmpeg-patches/files/` and the one shipped shader source at
+   `ffmpeg-patches/files/vulkan/pelorus_<name>.comp.glsl`.
+2. Add `.commit-msg-<name>.txt` and an explicit synthetic commit block after the
+   existing shipped sequence. Do not insert it into an earlier generator loop.
+3. Use `install_vk_shader`; register the C object, shader `.spv.o`, extern, and
+   `*_filter_deps="vulkan spirv_compiler"`.
+4. For any interop producer or consumer using libpelorus, add
+   `enabled pelorus_<name>_vulkan_filter && require_pkg_config libpelorus
+   "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs
+   $libpelorus_extralibs`. Pure transforms do not link it.
+5. Extend the generator's deterministic filename map, `series.txt`, replay
+   patch-count assertion, and filter-registration list together. Update or
+   derive every hardcoded patch-count label, success message, comment, and
+   current AGENTS/docs reference; do not leave an “18 patches” cache behind.
 
-- Commit the edited source **and** the regenerated patch in the same PR
-  (AGENTS.md hard rule 5); add a `docs/rebase-notes.md` entry.
-- The stack is cumulative — later patches' context depends on earlier ones.
+`libpelorus/shaders/*.comp` may model the algorithm for the standalone fast
+gate; it is not a second shipped implementation or a lockstep artifact.
+
+## Completion
+
+- source and generated patches are in the same change;
+- two generations are byte-identical;
+- `python3 scripts/check-build-config.py --self-test` passes; and
+- full pinned replay links FFmpeg and verifies filter plus BSF registration.
