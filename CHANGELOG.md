@@ -38,6 +38,15 @@ All notable changes to Pelorus are documented here. The format is
   remain zero, and bound grain-estimator reductions through DCI 8K
   ([ADR-0147](docs/adr/0147-vulkan-sample-domain-and-components.md)).
 
+### Security
+
+- Hardened the shared x265 CSV conformance fixture so a permissive process
+  umask cannot create group- or world-accessible test data, and pre-existing
+  paths cannot be overwritten through the fixed fixture name.
+- Made FFmpeg patch replay independent of caller Git identity and configuration
+  by pinning an ephemeral committer and neutralizing signing, hooks, and diff
+  ordering for every `git am` (ADR-0144).
+
 <!-- END UNRELEASED -->
 
 ## [0.2.2] - 2026-08-30

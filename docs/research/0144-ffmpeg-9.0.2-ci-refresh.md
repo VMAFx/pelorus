@@ -91,3 +91,15 @@ Sources: <https://docs.renovatebot.com/modules/manager/regex/> and
 | Ubuntu 26.04 operational acceptance | all PR jobs and the manual non-publishing release gate green on GitHub-hosted `ubuntu-26.04`, with image/package versions retained |
 
 No local result substitutes for the last row.
+
+## Hermetic replay identity
+
+Hosted run `36084499071` exposed a difference hidden by developer machines:
+the hook-neutral replay regression could apply its patch only when Git found a
+global committer identity. With `GIT_CONFIG_GLOBAL=/dev/null` and
+`GIT_CONFIG_NOSYSTEM=1`, the same self-test failed before the replay commit.
+The full and focused QSV replay commands now supply an ephemeral committer
+identity and neutralize signing, hooks, and diff ordering on each `git am`.
+The regression itself uses the config-free environment plus hostile repository
+signing, hook, and diff-order settings, so deleting any replay override fails
+closed locally as well as on GitHub.

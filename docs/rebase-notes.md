@@ -21,7 +21,9 @@ patches (ADR-0108 deliverable #6).
   libaom, SVT-AV1, and NVENC consumer so its Pelorus AVOptions are present. It
   must also install the static FFmpeg libraries and compile/run an external
   `pkg-config --static libavfilter` consumer, asserting that the link flags close
-  over `-lpelorus`.
+  over `-lpelorus`. Every `git am` supplies the ephemeral `Pelorus-Replay`
+  committer identity and neutralizes signing, hooks, and diff ordering; preserve
+  those overrides when changing the replay loop.
 - **Focused QSV gate**:
   `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/qsv-roi-regression.sh`.
 - **Shader model**: canonical shipped sources are

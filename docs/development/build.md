@@ -34,7 +34,10 @@ FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh # apply + build + s
 Both scripts read the exact tag and peeled commit from root `build-config.env`,
 verify that the qualified tag resolves to that commit, and work in an isolated
 run-owned Git worktree. The committed `*.patch` files are the artifact; edit
-the sources under `files/` and regenerate.
+the sources under `files/` and regenerate. Patch replay supplies its own
+ephemeral committer identity and neutralizes caller signing, hooks, and diff
+ordering, so the same command works on a clean CI runner and a configured
+developer workstation.
 
 ## Repository verification entry points
 
