@@ -29,7 +29,6 @@
 #include "pelorus/interop.h"
 #include "pelorus/pelorus.h"
 
-#include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
@@ -102,8 +101,6 @@ static int write_private_fixture(const char *path, const char *contents)
 
 static int prepare_private_fixture(const char *path, const char *contents)
 {
-    int remove_errno;
-    int remove_rc;
     int write_rc;
 #ifndef _WIN32
     struct stat file_stat;
@@ -111,14 +108,6 @@ static int prepare_private_fixture(const char *path, const char *contents)
     mode_t old_umask;
 #endif
 
-    remove_rc = remove(path);
-    if (remove_rc != 0) {
-        remove_errno = errno;
-        CHECK(remove_errno == ENOENT);
-        if (remove_errno != ENOENT) {
-            return -1;
-        }
-    }
 #ifndef _WIN32
     old_umask = umask(0);
 #endif
@@ -132,7 +121,7 @@ static int prepare_private_fixture(const char *path, const char *contents)
     }
 
     /* Exclusive creation rejects stale files and link-substitution attempts. */
-    CHECK(write_private_fixture(path, contents) != 0);
+    CHECK(write_private_fixture(path, "must-not-overwrite\n") != 0);
 #ifndef _WIN32
     stat_rc = stat(path, &file_stat);
     CHECK(stat_rc == 0);
