@@ -33,6 +33,11 @@ All notable changes to Pelorus are documented here. The format is
   uses an SDK-neutral boolean assignment, preserving compilation with Ubuntu
   26.04's SVT-AV1 2.3 headers as well as newer SDKs
   ([ADR-0144](docs/adr/0144-ffmpeg-pin-and-ci-runner-policy.md)).
+- Lowered the HISS debt baseline from 76 to 62 findings. Splitting the
+  conformance fixture and the build-config checker retired 14 HISS-04 findings
+  (functions over 60 lines); the ratchet now forbids their return
+  ([ADR-0145](docs/adr/0145-praetor-governance-adoption.md),
+  [ADR-0148](docs/adr/0148-owner-only-exclusive-test-fixtures.md)).
 - Moved the docs job's actionlint toolchain to Go 1.27 (`1.27.x`, via the
   pinned `actions/setup-go`). The build-config checker now reads the expected
   version from one `ACTIONLINT_GO_VERSION` literal and requires exactly one

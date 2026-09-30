@@ -94,7 +94,11 @@ which Meson's default `c_winlibs` provides; MSVC also gets
 - **Neutral / follow-ups**: VMAFx re-pins `PELORUS_VENDOR_SHA` to the merged
   commit and re-vendors with `scripts/sync-pelorus-interop.sh --update`. The
   rendered fixture was checked byte-identical and passing (see the research
-  digest). Hosted Windows CI for Pelorus is ADR-0149's scope.
+  digest). Hosted Windows CI for Pelorus is proposed separately, in pull
+  request #63 (ADR-0149).
+- **Ratchet**: splitting the fixture and build-config checker functions left
+  none of them over the 60-line HISS-04 limit, so the ADR-0145 baseline
+  drops from 76 to 62 findings (14 HISS-04 retired).
 
 ## References
 
