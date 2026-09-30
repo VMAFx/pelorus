@@ -22,8 +22,10 @@ patches (ADR-0108 deliverable #6).
   must also install the static FFmpeg libraries and compile/run an external
   `pkg-config --static libavfilter` consumer, asserting that the link flags close
   over `-lpelorus`. Every `git am` supplies the ephemeral `Pelorus-Replay`
-  committer identity and neutralizes signing, hooks, and diff ordering; preserve
-  those overrides when changing the replay loop.
+  committer identity, neutralizes signing, hooks, and diff ordering through `-c`
+  settings, and passes `--no-gpg-sign --no-verify`; preserve those overrides
+  when changing either replay loop (`scripts/check-build-config.py` matches one
+  shared command pattern for both).
 - **Focused QSV gate**:
   `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/qsv-roi-regression.sh`.
 - **Shader model**: canonical shipped sources are

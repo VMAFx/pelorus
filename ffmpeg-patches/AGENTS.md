@@ -112,7 +112,8 @@ ffmpeg-patches/
    transforms: Vulkan/SPIR-V dependencies, no libpelorus link, no interop side
    data.
 9. Every ephemeral `git am` replay supplies the `Pelorus-Replay` committer
-   identity and neutralizes signing, hooks, and diff ordering. Do not rely on a
+   identity, neutralizes signing, hooks, and diff ordering, and passes
+   `--no-gpg-sign --no-verify`. Do not rely on a
    workstation's global Git configuration; the hosted runner intentionally has
    no identity.
 

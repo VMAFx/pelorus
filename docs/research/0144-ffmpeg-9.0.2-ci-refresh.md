@@ -103,3 +103,10 @@ identity and neutralize signing, hooks, and diff ordering on each `git am`.
 The regression itself uses the config-free environment plus hostile repository
 signing, hook, and diff-order settings, so deleting any replay override fails
 closed locally as well as on GitHub.
+
+Master `f03badd` (#57) fixed the same hosted failure independently, for
+`build-and-run.sh` only: it pinned a `Pelorus-replay` identity and added
+`--no-gpg-sign --no-verify`. When #58 merged that master, both replay consumers
+kept this branch's `GIT_AM_CONFIG` settings and also took #57's two flags.
+`check-build-config.py` now requires one shared command pattern, and its
+self-test mutates the identity and each flag away.
