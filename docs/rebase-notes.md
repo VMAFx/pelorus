@@ -16,6 +16,12 @@ names the patches it regenerates.
   output link's `hw_frames_ctx` with the input link's. Keep that override
   when an upstream rebase changes `ff_vk_filter_init_context()`'s reuse rules;
   stock `blackdetect_vulkan`/`scdet_vulkan` still mislabel frames.
+- **Contraction contract** (0003 denoise, 0014 dehalo, 0015 aa): values a
+  shared-memory variant caches, and the denoise patch-SSD accumulation, are
+  `precise` (SPIR-V NoContraction) in both variants. Without it a driver may
+  fuse the non-power-of-two `sample_scale` product into an FMA on one path
+  only, breaking the ADR-0134/0139/0140 bit-identity at 10/12-bit. Preserve the
+  qualifiers when shader code moves.
 
 ## Unreleased — FFmpeg base bump n9.0.1 → n9.0.2
 

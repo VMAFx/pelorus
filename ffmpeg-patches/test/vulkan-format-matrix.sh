@@ -426,6 +426,22 @@ if (root / "denoise-mc-fallback.raw").read_bytes() == (
 print("PASS: lookahead and MC runtime paths")
 PY_CADENCE
 
+# Direct/tiled equivalence must also hold where sample_scale is not a power of
+# two. Without NoContraction on the storage->sample product and the patch SSD,
+# a 10-bit Arc B580 run drifted by one code value between the two paths.
+PEL_WIDE_NOISY='testsrc2=size=320x192:rate=6:duration=1,noise=alls=14:allf=t+u:all_seed=11'
+PEL_DENOISE_WIDE='pelorus_denoise_vulkan=planes=15:prev=2:patch=3:sigma=0.1:strength=0.9'
+for PEL_FORMAT in yuv420p10le p010le; do
+    pel_emit_raw "denoise-direct-${PEL_FORMAT}" "$PEL_FORMAT" "$PEL_WIDE_NOISY" \
+        "${PEL_DENOISE_WIDE}:tile=0" 6
+    pel_emit_raw "denoise-tiled-${PEL_FORMAT}" "$PEL_FORMAT" "$PEL_WIDE_NOISY" \
+        "${PEL_DENOISE_WIDE}:tile=1" 6
+    cmp -s "$PEL_OUTPUT_ROOT/denoise-direct-${PEL_FORMAT}.raw" \
+        "$PEL_OUTPUT_ROOT/denoise-tiled-${PEL_FORMAT}.raw" || \
+        pel_fail "direct/tiled denoise mismatch at ${PEL_FORMAT}"
+done
+echo 'PASS: direct/tiled denoise equivalence at 10-bit'
+
 # Pass-through analyzers forward their input frames, so their output link must
 # carry the input frames context even when FFmpeg cannot reuse it; linear
 # tiling makes ff_vk_filter_config_output() build a fresh one. hwdownload

@@ -74,8 +74,13 @@ const int PEL_HALO = MAX_R + 1;
 const int PEL_TILE = 32 + 2 * PEL_HALO;
 shared float s_sobel[fast != 0u ? PEL_TILE * PEL_TILE : 1];
 
+/* `precise` (SPIR-V NoContraction) keeps this product individually rounded, so
+ * sobel_mag() sees the same operands whether it runs inline (fast=0) or fills
+ * the shared-memory cache (fast=1). At 10/12-bit sample_scale is not an exact
+ * power of two and a fused multiply-add would round differently per call site. */
 float pel_to_sample(float value) {
-    return value * sample_scale;
+    precise float s = value * sample_scale;
+    return s;
 }
 float pel_to_storage(float value) {
     if (sample_code_max == 0u)
@@ -102,7 +107,12 @@ float sobel_mag(int idx, int comp, ivec2 p, ivec2 sz) {
             gx += v * kx[k]; gy += v * ky[k]; k++;
         }
     }
-    return sqrt(gx * gx + gy * gy);
+    /* The kernel weights are 0/±1/±2, so every v * k product above is exact and
+     * contraction cannot change gx/gy. The squared magnitude is where a fused
+     * multiply-add could round differently between the inline (fast=0) and
+     * cached (fast=1) call sites; `precise` pins that rounding. */
+    precise float m2 = gx * gx + gy * gy;
+    return sqrt(m2);
 }
 
 /* Shared-memory hoist of the edge-strength map (fast=1, opt-in; ADR-0140, the

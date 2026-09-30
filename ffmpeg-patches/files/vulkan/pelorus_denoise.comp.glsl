@@ -125,8 +125,13 @@ const int FLAG_MOTION_COMP = 2;
 const int FLAG_PROTECT_DETAIL = 4;
 const float EPS = 1e-6;
 
+/* `precise` (SPIR-V NoContraction) keeps this product individually rounded.
+ * tile=1 caches it in shared memory, so the direct path must not fuse it into a
+ * later FMA either; otherwise the two paths drift by 1 code value at 10/12-bit,
+ * where sample_scale is not an exact power of two (ADR-0134 bit-identity). */
 float pel_to_sample(float value) {
-    return value * sample_scale;
+    precise float s = value * sample_scale;
+    return s;
 }
 float pel_to_storage(float value) {
     if (sample_code_max == 0u)
@@ -236,7 +241,12 @@ float denoise(const ivec2 pos, const int idx, const int comp,
         for (int dy = -patch_radius; dy <= patch_radius; dy++) {
             for (int dx = -patch_radius; dx <= patch_radius; dx++) {
                 if (dx == 0 && dy == 0) continue;
-                float ssd = 0.0;
+                /* `precise` pins the patch-SSD accumulation order and forbids
+                 * fusing it into FMAs: tile=1 reads the window from shared
+                 * memory, tile=0 from the image, and the two inlined loops must
+                 * round identically for the ADR-0134 bit-identity to hold at
+                 * 10/12-bit (observed 1-code drift on Arc B580 without it). */
+                precise float ssd = 0.0;
                 for (int ky = -1; ky <= 1; ky++) {
                     for (int kx = -1; kx <= 1; kx++) {
                         float a = PEL_SPATIAL(ivec2(kx, ky));

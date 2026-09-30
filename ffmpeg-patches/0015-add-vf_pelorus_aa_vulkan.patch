@@ -33,8 +33,8 @@ ADR: docs/adr/0124-anime-aa.md
  libavfilter/allfilters.c                |   1 +
  libavfilter/vf_pelorus_aa_vulkan.c      | 286 ++++++++++++++++++++
  libavfilter/vulkan/Makefile             |   1 +
- libavfilter/vulkan/pelorus_aa.comp.glsl | 265 ++++++++++++++++++
- 6 files changed, 555 insertions(+)
+ libavfilter/vulkan/pelorus_aa.comp.glsl | 275 +++++++++++++++++++
+ 6 files changed, 565 insertions(+)
 
 diff --git a/configure b/configure
 index f052412ba00f78d88734beaa51c4a4e82a5ebea6..021915e788bf3f971443131919f665036148b3b6 100755
@@ -375,10 +375,10 @@ index 77187fe29c5fe23f84b61b45cf3a28257140bbc3..d3ff362cfa612b53ee51d812a1df844c
 +OBJS-$(CONFIG_PELORUS_AA_VULKAN_FILTER) += vulkan/pelorus_aa.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_aa.comp.glsl b/libavfilter/vulkan/pelorus_aa.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab1838ed6bc634be4834fc2169c25f35e2fe1b08
+index 0000000000000000000000000000000000000000..0b103c7d933c46ecaa9db2d219b7b6938f25e7a5
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_aa.comp.glsl
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,275 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -455,8 +455,13 @@ index 0000000000000000000000000000000000000000..ab1838ed6bc634be4834fc2169c25f35
 +const int PEL_TILE = 32 + 2 * PEL_HALO;
 +shared float s_sobel[fast != 0u ? PEL_TILE * PEL_TILE : 1];
 +
++/* `precise` (SPIR-V NoContraction) keeps this product individually rounded, so
++ * sobel_mag() sees the same operands whether it runs inline (fast=0) or fills
++ * the shared-memory cache (fast=1). At 10/12-bit sample_scale is not an exact
++ * power of two and a fused multiply-add would round differently per call site. */
 +float pel_to_sample(float value) {
-+    return value * sample_scale;
++    precise float s = value * sample_scale;
++    return s;
 +}
 +float pel_to_storage(float value) {
 +    if (sample_code_max == 0u)
@@ -483,7 +488,12 @@ index 0000000000000000000000000000000000000000..ab1838ed6bc634be4834fc2169c25f35
 +            gx += v * kx[k]; gy += v * ky[k]; k++;
 +        }
 +    }
-+    return sqrt(gx * gx + gy * gy);
++    /* The kernel weights are 0/±1/±2, so every v * k product above is exact and
++     * contraction cannot change gx/gy. The squared magnitude is where a fused
++     * multiply-add could round differently between the inline (fast=0) and
++     * cached (fast=1) call sites; `precise` pins that rounding. */
++    precise float m2 = gx * gx + gy * gy;
++    return sqrt(m2);
 +}
 +
 +/* Shared-memory hoist of the edge-strength map (fast=1, opt-in; ADR-0140, the

@@ -66,6 +66,10 @@ ffmpeg-patches/
   `ff_vk_filter_config_output()`. That helper builds a fresh context whenever
   it cannot reuse the input one, and `hwdownload` or an encoder then rejects
   the mislabeled frames (ADR-0150).
+- A value that a shared-memory variant (`tile`, `fast`) caches, and any
+  accumulation fed by it, must be computed with `precise` so both variants
+  round identically; a driver may otherwise contract the non-power-of-two
+  `sample_scale` product into an FMA on one path only (ADR-0150).
 
 ## Rebase-sensitive invariants
 

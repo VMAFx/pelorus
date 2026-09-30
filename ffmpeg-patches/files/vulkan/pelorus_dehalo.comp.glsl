@@ -74,9 +74,14 @@ const int MAX_R = 8;
  * memory at all (the pre-FFmpeg-9 generator simply did not emit the array). */
 shared float s_tile[(tile != 0u) ? (PEL_TILE * PEL_TILE) : 1];
 
+/* `precise` (SPIR-V NoContraction) keeps this product individually rounded.
+ * tile=1 caches it in shared memory, so the direct path must not fuse it into a
+ * later FMA either; otherwise the two paths drift by 1 code value at 10/12-bit,
+ * where sample_scale is not an exact power of two (ADR-0139 bit-identity). */
 float pel_to_sample(float value)
 {
-    return value * sample_scale;
+    precise float s = value * sample_scale;
+    return s;
 }
 
 float pel_to_storage(float value)

@@ -33,8 +33,8 @@ ADR: docs/adr/0123-anime-dehalo.md
  libavfilter/allfilters.c                    |   1 +
  libavfilter/vf_pelorus_dehalo_vulkan.c      | 303 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
- libavfilter/vulkan/pelorus_dehalo.comp.glsl | 246 ++++++++++++++++
- 6 files changed, 553 insertions(+)
+ libavfilter/vulkan/pelorus_dehalo.comp.glsl | 251 ++++++++++++++++
+ 6 files changed, 558 insertions(+)
 
 diff --git a/configure b/configure
 index 3283718ba10ab831a499f230e165d15201c9a29c..f052412ba00f78d88734beaa51c4a4e82a5ebea6 100755
@@ -392,10 +392,10 @@ index 113d7aa7cf599983aaa7a391919d014b18b245fd..77187fe29c5fe23f84b61b45cf3a2825
 +OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER) += vulkan/pelorus_dehalo.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_dehalo.comp.glsl b/libavfilter/vulkan/pelorus_dehalo.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..1554fb0b8a83bc35666a5d9d459084978c05dcbf
+index 0000000000000000000000000000000000000000..3e5c13e042dab3956e4d3e7abc8cadf1c14ce50f
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_dehalo.comp.glsl
-@@ -0,0 +1,246 @@
+@@ -0,0 +1,251 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -472,9 +472,14 @@ index 0000000000000000000000000000000000000000..1554fb0b8a83bc35666a5d9d45908497
 + * memory at all (the pre-FFmpeg-9 generator simply did not emit the array). */
 +shared float s_tile[(tile != 0u) ? (PEL_TILE * PEL_TILE) : 1];
 +
++/* `precise` (SPIR-V NoContraction) keeps this product individually rounded.
++ * tile=1 caches it in shared memory, so the direct path must not fuse it into a
++ * later FMA either; otherwise the two paths drift by 1 code value at 10/12-bit,
++ * where sample_scale is not an exact power of two (ADR-0139 bit-identity). */
 +float pel_to_sample(float value)
 +{
-+    return value * sample_scale;
++    precise float s = value * sample_scale;
++    return s;
 +}
 +
 +float pel_to_storage(float value)
