@@ -86,13 +86,22 @@ pel_check_validation()
     for log in "$@"; do
         while IFS= read -r vuid; do
             [[ -n "$vuid" ]] || continue
+            # Every entry is emitted by stock FFmpeg with no Pelorus filter in
+            # the graph. The last two come from Intel's Windows drivers
+            # (ADR-0150): FFmpeg reuses a VkFormatProperties3 chain the driver
+            # zeroed for an unsupported format (pNext-pNext), and its host-copy
+            # transfer path transitions out of TRANSFER_DST_OPTIMAL although
+            # pCopySrcLayouts lists only GENERAL (09230). Pelorus calls neither
+            # vkGetPhysicalDeviceFormatProperties2 nor vkTransitionImageLayout.
             case "$vuid" in
                 *vkCmdCopyBufferToImage-srcBuffer-00174 | \
                     *vkCmdCopyImageToBuffer-dstBuffer-00191 | \
                     *VkCopyImageToMemoryInfo-srcImageLayout-09064 | \
                     *VkDescriptorSetLayoutBinding-descriptorType-00282 | \
                     *VkImageMemoryBarrier2-srcAccessMask-03909 | \
-                    *VkImageMemoryBarrier2-srcAccessMask-07454)
+                    *VkImageMemoryBarrier2-srcAccessMask-07454 | \
+                    *VkFormatProperties2-pNext-pNext | \
+                    *VkHostImageLayoutTransitionInfo-oldLayout-09230)
                     echo "$vuid" >>"$PEL_OUTPUT_ROOT/validation-known-upstream.txt"
                     ;;
                 *)

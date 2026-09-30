@@ -18,3 +18,11 @@
   (`VUID-VkPipelineLayoutCreateInfo-descriptorType-03020`). Its six read-only
   frames are now sampled images read with `texelFetch()`; the fast gate checks
   a 16-descriptor storage-image budget for every filter ([ADR-0150](docs/adr/0150-intel-arc-b580-uhd770-validation.md)).
+- The Vulkan format matrix now runs on Intel's Windows drivers: it treats
+  `VUID-VkFormatProperties2-pNext-pNext` and
+  `VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230` as known-upstream.
+  Both are raised inside entry points only stock FFmpeg calls, and a bare
+  `hwupload,hwdownload` emits them. On those drivers, run it with
+  `VULKAN_DEVICE="0,disable_multiplane=1"` (Arc B580) or
+  `"1,linear_images=1,disable_multiplane=1"` (UHD 770), because the default
+  multi-plane host copy corrupts frames in the driver ([ADR-0150](docs/adr/0150-intel-arc-b580-uhd770-validation.md)).

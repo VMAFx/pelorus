@@ -29,6 +29,12 @@ names the patches it regenerates.
   storage-image bindings × 4 planes exceed 16, and
   `scripts/check-vulkan-storage-domain.py` treats `texelFetch()` as a load that
   must cross `pel_to_sample()`.
+- **On-device gate on Windows Intel**: pass `VULKAN_DEVICE="0,disable_multiplane=1"`
+  (Arc B580) or `"1,linear_images=1,disable_multiplane=1"` (UHD 770). With
+  default device options the drivers' multi-plane `VK_EXT_host_image_copy`
+  corrupts every YUV upload/download before any filter runs. The matrix
+  allowlists the two stock VUIDs the Windows drivers provoke; attribute any
+  new VUID by entry point before adding it.
 
 ## Unreleased — FFmpeg base bump n9.0.1 → n9.0.2
 
