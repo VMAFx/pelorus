@@ -105,6 +105,13 @@ x265 --input clip.y4m --y4m --qp 32 --aq-mode 0 --psnr \
 pelorus_qp_report x265.csv --requested-qp 32
 ```
 
+The CSV path is UTF-8 on every platform
+([ADR-0149](../adr/0149-windows-utf8-paths.md)). On Windows the reader opens it
+through UTF-16 `_wfopen`, and the demonstrator re-reads its own arguments from
+the UTF-16 command line, so a non-ASCII path such as
+`pelorus_qp_report "D:\encodes\café_文件\x265.csv"` works regardless of the ANSI
+code page. Ill-formed UTF-8 returns `PEL_ERR_INVALID`.
+
 A 17-frame `testsrc2` run produced `avg_qp ≈ 32.21`, `total_bits = 104744`,
 `psnr_y/u/v ≈ 38.6/37.6/37.0 dB`, `honored_fraction = 0.1765` (measured — a flat
 request scores low because x265 spread the QP by slice type).

@@ -20,6 +20,10 @@ tools/
   the AGENTS.md §3 no-stdio rule applies to `libpelorus/src`, not here).
 - Every libpelorus call is `pel_result`-checked; exit non-zero on error with
   `pel_result_str`.
+- A path handed to libpelorus is UTF-8 (ADR-0149). On Windows `main()` gets its
+  `argv` in the ANSI code page, so a tool rebuilds it from
+  `CommandLineToArgvW(GetCommandLineW())` as UTF-8 (see `utf8_argv()` in
+  `pelorus_qp_report.c`; links `shell32` on Windows).
 - A new tool adds one `executable(... install: false)` entry to `meson.build`
   and a one-line row in the scope table above.
 

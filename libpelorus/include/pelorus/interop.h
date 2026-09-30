@@ -510,14 +510,22 @@ _Static_assert(sizeof(PelorusX265Frame) == 32, "PelorusX265Frame helper layout")
  * with build flags. Rows are returned in the file's row order (x265 writes one
  * row per encoded frame in encode order).
  *
- *   path       the CSV file written by x265.
+ *   path       the CSV file written by x265, as a NUL-terminated UTF-8 string on
+ *              every platform (ADR-0149). POSIX passes the bytes to fopen
+ *              unchanged; Windows converts them to UTF-16 and uses _wfopen, so
+ *              the process ANSI code page never applies. No \\?\ prefix is
+ *              added: pass one yourself for a Windows path over MAX_PATH.
  *   out_frames caller buffer of >= cap PelorusX265Frame; receives the rows.
  *   cap        capacity of out_frames in entries.
  *   out_count  receives the number of frame rows parsed (<= cap).
  *
- * Returns PEL_OK, PEL_ERR_INVALID (NULL args), PEL_ERR_ABSENT (file missing /
- * no header / no recognizable QP+Bits columns), or PEL_ERR_RANGE (more rows in
- * the file than cap — out_count is set to cap and the tail is dropped).
+ * Returns PEL_OK, PEL_ERR_INVALID (NULL args, cap == 0, or — Windows only — a
+ * path that is not well-formed UTF-8), PEL_ERR_ABSENT (the file cannot be
+ * opened — missing, unreadable, or on Windows longer than 32767 UTF-16 code
+ * units — / no header / no recognizable QP+Bits columns), PEL_ERR_NOMEM
+ * (Windows only: the temporary UTF-16 path copy could not be allocated),
+ * PEL_ERR_TRUNCATED (read error mid-file), or PEL_ERR_RANGE (more rows in the
+ * file than cap — out_count is set to cap and the tail is dropped).
  */
 pel_result pel_x265_csv_parse(const char *path, PelorusX265Frame *out_frames, size_t cap,
                               size_t *out_count);

@@ -75,7 +75,7 @@ Pelorus/
 │   │   └── deband.h                  #   smart-deband parameter contract
 │   ├── src/                          #   interop.c (pack/parse), deband_params.c
 │   ├── shaders/                      #   standalone reference .comp shaders
-│   └── test/                         #   interop ABI conformance fixture
+│   └── test/                         #   interop ABI conformance fixture + UTF-8 path test
 │
 ├── ffmpeg-patches/                   # vf_pelorus_* filters, stacked vs n9.0.2
 │   ├── files/                        #   canonical filter sources (edit here)
