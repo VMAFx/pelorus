@@ -108,8 +108,9 @@ The results fall into three groups. Evidence is in
 - On the UHD 770 in the linear single-plane mode, aa `fast=1` still differs
   from `fast=0` by at most 1 code value on a few top-row samples in planar
   formats. It is deterministic, is not caused by float contraction, and does
-  not occur in multi-plane modes or on the B580. It is open; aa's bit-identity
-  claim carries that caveat.
+  not occur in multi-plane modes or on the B580. The UHD 770's `fast=0` output
+  is the outlier: its `fast=1` output matches the B580 byte for byte. It is
+  open; aa's bit-identity claim carries that caveat.
 - Linux ANV/RADV/NVIDIA are expected to be unaffected by the fixes' behaviour
   beyond the rounding note above. The rows still need re-running there.
 - This host cannot exercise NVENC or Vulkan video encode. The Windows Intel

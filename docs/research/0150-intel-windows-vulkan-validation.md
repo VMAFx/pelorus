@@ -167,9 +167,24 @@ which is what the algorithm intends.
 `linear_images=1,disable_multiplane=1` mode, aa `fast=1` still differs from
 `fast=0` by at most 1 code value, on a few top-row samples, in planar formats
 only. It is deterministic and absent in both multi-plane modes and on the B580.
-At the one sample examined, the fast result matched the B580. Making every
-arithmetic step on the path `precise` did not change it, so the cause is not
-float contraction. The documented bit-identity of aa `fast=1` is therefore not
+Making every arithmetic step on the path `precise` did not change it, so the
+cause is not float contraction.
+
+A follow-up run located the outlier. The input was 12 noisy 640x360 yuv420p
+frames with `planes=15`. Across all frames and planes:
+
+- the UHD 770's `fast=1` output is byte-identical to the B580's `fast=0` and
+  `fast=1` output, in both the B580's exact mode and the same linear mode;
+- the UHD 770's `fast=0` output differs from all of them in exactly 2 samples,
+  both in row 0 (luma x=297 in frame 0, U x=308 in frame 3), each one code
+  lower.
+
+So the default path on the UHD 770 is the outlier; the shared-memory variant
+agrees with the other GPU. Pelorus runs the same operations in the same order
+on both paths. Vulkan does not require `sqrt()` or division to be correctly
+rounded, so the driver may lower the same expression differently at the inline
+and cached call sites. That is the likely mechanism, but it was not isolated in
+the driver. The documented bit-identity of aa `fast=1` is therefore not
 established on this device and mode.
 
 ### Denoise exceeded the UHD 770 storage-image limit
@@ -263,7 +278,8 @@ The scratch scripts for every step are kept with the stream's evidence:
 - `vk-hostcopy-repro.c`;
 - `vpl-mbqp-query.c`;
 - the sweep driver;
-- the stress and steering scripts.
+- the stress and steering scripts;
+- the aa residual locator, which compares both variants on both GPUs.
 
 The repository gate is the format matrix. Run it on Windows Intel with:
 
