@@ -235,6 +235,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | AV1 grain ABI mirror | `libavutil/film_grain_params.h` |
 | vmafx control plane | `libvmaf_tune`, `/v1/score`, `vmaf-mcp` |
 | Praetor engine | `25451d888c8710822dd578907625dc69a0975142` from `.github/workflows/standards-gate.yml` |
+| Go for actionlint (`ci.yml` docs job) | `1.27.x`; change with `ACTIONLINT_GO_VERSION` in `scripts/check-build-config.py`; checker's Renovate manager keeps setup-go's `go` identity ([ADR-0151](docs/adr/0151-renovate-mirrors-checker-toolchain-pins.md)) |
 
 ## Delivery
 
