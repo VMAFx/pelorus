@@ -39,7 +39,7 @@ Pelorus stage runs in VRAM.
 ## Stage by stage
 
 | # | Stage | Anime artefact it fixes | Key params |
-|--:|---|---|---|
+| --: | --- | --- | --- |
 | 1 | `pelorus_analyze_vulkan=roi=1` | the encoder **starves the flats** — auto-detects banding-prone flat tiles and emits `AV_FRAME_DATA_REGIONS_OF_INTEREST` so the encoder spends bits there | `roi=1`, `roi_strength`, `flat`, `grad_lo` |
 | 2 | `pelorus_dehalo_vulkan` | **ringing / "halos"** around the line-art | `blur` (de-ring radius), `darkstr` / `brightstr` (dark/bright halo strength) |
 | 3 | `pelorus_aa_vulkan` | **jaggies / aliasing** on lines (warp AA + line-darkening) | `depth` (warp strength), `blur`, `darkstr` (line darkening) |

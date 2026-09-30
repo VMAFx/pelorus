@@ -26,7 +26,7 @@ Lusoris` BSD+Patent header block.
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | BSD-2-Clause-Patent for libpelorus | Matches vmafx; co-vendorable interop TU; patent grant | — | **Chosen** |
 | MIT | Simple, permissive | No explicit patent grant; a license seam with vmafx's BSD+Patent when vendoring the shared TU | Rejected |
 | LGPL for everything | One license | Over-restrictive for a library meant to be linked by closed pipelines; mismatched with vmafx | Rejected |

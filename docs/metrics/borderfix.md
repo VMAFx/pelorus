@@ -51,7 +51,7 @@ to keep in lockstep. There is no inline GLSL form.
 Band widths are integers in **each plane's own pixels** (not luma pixels).
 
 | Option | Default | Range | Meaning |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `left` | 0 | 0–4096 | dirty band width on the left edge (each selected plane's px) |
 | `right` | 0 | 0–4096 | dirty band width on the right edge |
 | `top` | 0 | 0–4096 | dirty band height on the top edge |
@@ -92,7 +92,7 @@ should be cleaned before anything measures, flattens, or steers on the frame, so
 the garbage never pollutes a downstream statistic (analyze's variance/banding
 map, deband's flat-test) or gets smeared by a later spatial pass.
 
-```
+```text
 hwupload → pelorus_borderfix → pelorus_analyze → pelorus_deband → … → (hwdownload) → encoder
 ```
 

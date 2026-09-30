@@ -36,7 +36,7 @@ Skipped deliverables are surfaced in the PR description with a one-line reason.
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Six deliverables, opt-out-with-reason | Keeps why/rebase/changelog in sync; matches vmafx | Process overhead on small PRs | **Chosen** (opt-outs keep it light) |
 | Only require an ADR | Lighter | Changelog + rebase notes drift; research lost | Rejected |
 | Nothing beyond code review | Lightest | State and rationale rot across sessions | Rejected |

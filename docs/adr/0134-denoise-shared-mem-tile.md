@@ -68,7 +68,7 @@ Measured on the 3-GPU dev box (8× chained denoise, patch=3, 1080p, warm; output
 SSIM vs the direct path = 1.000000 at patchR 1/2/3 and 8/10-bit):
 
 | GPU | direct (tile=0) | tiled (tile=1) | Δ |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Intel Arc A380 | 11.48 s | 3.94 s | **+65.7 % (2.9×)** |
 | AMD RADV (iGPU) | 7.91 s | 7.94 s | −0.3 % (noise) |
 | NVIDIA RTX 4090 | 1.19 s | 1.20 s | −1 to −4 % |

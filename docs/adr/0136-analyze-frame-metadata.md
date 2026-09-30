@@ -25,7 +25,7 @@ Emit the per-frame scalars **also** as FFmpeg frame metadata via
 idiom — under the `lavfi.pelorus.*` namespace:
 
 | key | meaning |
-|---|---|
+| --- | --- |
 | `lavfi.pelorus.complexity` | EMA-smoothed per-frame complexity [0,1] (ADR-0132) |
 | `lavfi.pelorus.texture` | normalized texture/edge energy [0,1] |
 | `lavfi.pelorus.motion` | motion component [0,1] (0 with no upstream `pelorus_mc`) |

@@ -12,8 +12,8 @@ A premise-check (the negative-space twin of this decision) established that
 arithmetic while keeping every `imageLoad` collapsed the Arc rtime ~7× (−86%), so
 shared-memory *tiling* (which caches fetches, ADR-0134) was refuted for aa and not
 built. The cost is the sobel: `emask()` is invoked ~4× per pixel (the gx/gy
-central differences), and each reduces a 17×17 window of `sobel_mag()` (a `sqrt`
-+ ~18 FMA each) — ~1156 `sobel_mag` calls/px. The same `sobel_mag(cell)` is
+central differences), and each reduces a 17×17 window of `sobel_mag()` (a `sqrt` +
+~18 FMA each) — ~1156 `sobel_mag` calls/px. The same `sobel_mag(cell)` is
 recomputed across the four overlapping `emask` windows AND across neighbouring
 pixels' overlapping windows: a massive redundant ALU bill.
 
@@ -43,7 +43,7 @@ frame, on both Arc A380 and RTX 4090. 8×-chained aa, blur=8, 1080p, warm,
 filter-only rtime (interleaved A/B ×3):
 
 | GPU | fast=0 | fast=1 | speedup |
-|---|---:|---:|---|
+| --- | ---: | ---: | --- |
 | Intel Arc A380 | 69.64 s | 5.52 s | **12.6× (−92.1 %)** |
 | NVIDIA RTX 4090 | 3.10 s | 1.18 s | **2.6× (−62.0 %)** |
 

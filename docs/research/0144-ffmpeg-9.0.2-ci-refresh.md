@@ -32,7 +32,7 @@ That makes the Noble apt feed a historical input, not a sustainable CI source.
 Ubuntu Resolute publishes the required build-time packages directly:
 
 | Package | Resolute evidence | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `libvulkan-dev` | Vulkan loader/header development package (1.4.341 at review time) | FFmpeg Vulkan detection and compilation |
 | `glslc` | shaderc command-line compiler (2026.1 at review time) | FFmpeg 9 build-time GLSL to SPIR-V rule |
 | `glslang-tools` | Khronos GLSL/SPIR-V tools (16.2 at review time) | Pelorus reference-shader fast tests |
@@ -83,7 +83,7 @@ Sources: <https://docs.renovatebot.com/modules/manager/regex/> and
 ## Acceptance matrix
 
 | Claim | Required evidence |
-|---|---|
+| --- | --- |
 | n9.0.2 patch compatibility | deterministic 18-patch generation and full replay at the pinned commit, compiling available oneVPL, libaom, SVT-AV1, and NVENC consumers and checking their Pelorus AVOptions |
 | correct libpelorus linkage | private install prefix reported by `pkg-config`; linked `ffmpeg`; all Pelorus filters and BSF register; installed static `libavfilter.pc` exposes `-lpelorus` and links/runs an external consumer |
 | workflow structure | build-config checker plus actionlint v1.7.12 |

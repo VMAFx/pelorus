@@ -64,7 +64,7 @@ debanded then encoded `hevc_nvenc -profile main10 -pix_fmt p010`, decoded, and
 re-scored (10-bit, dither off):
 
 | `range` | pre-encode | post cq28 | post cq18 | post cq10 |
-|---:|---:|---:|---:|---:|
+| ---: | ---: | ---: | ---: | ---: |
 | baseline (no deband) | 7.84 | 5.64 | 6.57 | — |
 | 31 | 2.30 | **5.00** | **5.08** | **4.98** |
 | 62 | — | 5.20 | — | — |

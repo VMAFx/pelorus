@@ -46,7 +46,7 @@ All thresholds are normalized in `[0,1]`, independent of bit depth. Per-plane
 options follow the `{Y, Cb, Cr}` split.
 
 | Option | Default | Range | Meaning |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `sigma` | 0.03 | 0–0.5 | luma spatial range sigma (edge sensitivity) |
 | `sigmac` | 0.04 | 0–0.5 | chroma spatial range sigma |
 | `sigmat` | 0.05 | 0–0.5 | temporal gate bandwidth |
@@ -77,7 +77,7 @@ Defaults are the conservative pre-encode preset — a safe floor the vmafx
 Denoise runs **before** deband so deband's flat-test sees a clean low-variance
 field (not noise mistaken for texture) and re-injects its dither *after*:
 
-```
+```text
 hwupload → pelorus_analyze → [pelorus_mc] → pelorus_denoise → pelorus_deband → (hwdownload) → encoder
 ```
 

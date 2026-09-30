@@ -29,7 +29,7 @@ optical-flow hints follow as later patches.
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Temporal denoise first | Biggest BD-rate gain | Needs 3–5 frame VRAM history + temporal state — more moving parts before the architecture is proven | Deferred to a later step ([ADR roadmap](0104-ffmpeg-patch-stack.md)) |
 | FGS param estimation first | Most novel "game-changer" | Hardest: denoise + param estimation + a bitstream filter (AV1 OBU / HEVC-VVC H.274 SEI); cross-cuts encoder + muxer | Too much surface for a first proof |
 | Smart deband first | Self-contained, VMAF-measurable, exercises the full stack | Subjective gain can confuse a naive VMAF (mitigated, see research) | **Chosen** |

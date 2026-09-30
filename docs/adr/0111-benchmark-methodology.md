@@ -44,7 +44,7 @@ negative = fewer bits at equal quality = a win.
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Score vs the clean ground truth (this) | Measures fidelity to the intended signal; reveals the real gain | Needs a known-clean reference (a clean source + injected impairment, or graded master) | **Chosen** |
 | Score vs the impaired encoder input | No separate reference needed | Penalises the filter for removing the impairment; makes every restorative filter look like a loss | Rejected — it is the bug that masked the gain |
 | No-reference metric (BRISQUE/NIQE) | No reference at all | Not bitrate-anchored; can't produce a BD-rate; noisy on synthetic content | Rejected for the headline metric |

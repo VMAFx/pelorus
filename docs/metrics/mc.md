@@ -55,7 +55,7 @@ sample domain before SAD evaluation.
 ## Options
 
 | Option | Default | Range | Meaning |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `bsize` | 16 | 8–32 | motion-estimation block edge in luma pixels |
 | `search` | 24 | 1–256 | max search radius per axis in luma pixels |
 | `meta` | on | bool | attach the `PEL_SEC_MOTION` interop section (the MV field + scalars) |
@@ -69,7 +69,7 @@ is a product for any Vulkan GPU, not tuned to one device.
 The estimator reads the source luma; place it after `hwupload` and before any
 pixel-modifying stage so its MVs describe the frames the encoder will see:
 
-```
+```text
 hwupload → pelorus_analyze → pelorus_mc → pelorus_denoise → pelorus_deband → (hwdownload) → encoder
 ```
 
@@ -125,7 +125,7 @@ Direction verified on synthetic pans of a static textured still
 device:
 
 | Fixture | Expected | Observed `global_motion` (steady state) |
-|---|---|---|
+| --- | --- | --- |
 | crop pans right 10 px/frame (content moves left) | `dx > 0` | `(+7, +2)` |
 | crop pans left 10 px/frame | `dx < 0` | `(−7, +1)` |
 | static (no pan) | `(0, 0)` | `(0, 0)` exactly |
