@@ -83,9 +83,10 @@ which Meson's default `c_winlibs` provides; MSVC also gets
 ## Consequences
 
 - **Positive**: fixture creation cannot widen access under any umask or any
-  inherited Windows ACL, and cannot write through an existing path or link. Nine
-  mutants of the primitives (four POSIX, five Windows) each fail the suite. The
-  VMAFx mirror carries the same guarantees on re-vendor.
+  inherited Windows ACL, and cannot write through an existing path or link.
+  Weakening any primitive fails the suite: nine mutant runs (four on Linux,
+  five on Windows) were all killed. The VMAFx mirror carries the same
+  guarantees on re-vendor.
 - **Negative**: the Windows fixture code uses advapi32 security APIs, and the
   link cases need Developer Mode or the symlink privilege to run, and skip
   otherwise. An aborted run leaves a file that fails the next run until someone
