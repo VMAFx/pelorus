@@ -22,6 +22,13 @@ names the patches it regenerates.
   fuse the non-power-of-two `sample_scale` product into an FMA on one path
   only, breaking the ADR-0134/0139/0140 bit-identity at 10/12-bit. Preserve the
   qualifiers when shader code moves.
+- **Descriptor budget** (0003 denoise): the current, four previous, and next
+  frames are `VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE` bindings (`texture2D` +
+  `texelFetch`, `GL_EXT_samplerless_texture_functions`); only the output is a
+  storage image. `scripts/check-shader-bindings.py` fails any filter whose
+  storage-image bindings × 4 planes exceed 16, and
+  `scripts/check-vulkan-storage-domain.py` treats `texelFetch()` as a load that
+  must cross `pel_to_sample()`.
 
 ## Unreleased — FFmpeg base bump n9.0.1 → n9.0.2
 

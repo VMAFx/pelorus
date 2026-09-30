@@ -248,52 +248,46 @@ static av_cold int init_filter(AVFilterContext *ctx)
      * bwdif binding-order contract): binding 0 = current frame, 1..MAX_PREV =
      * previous frames, then the residual SSBO, then the MV/conf SSBOs, then the
      * output image, then the forward-lookahead next0 image (ADR-0137). Each image
-     * binding is a per-plane array (.elems = planes), float representation,
-     * storage image (sampler = VK_NULL_HANDLE, GENERAL layout, imageLoad). Final
+     * binding is a per-plane array (.elems = planes) of float-representation
+     * views in GENERAL layout (sampler = VK_NULL_HANDLE). The six read-only
+     * frames are SAMPLED images (texelFetch); only the output is a STORAGE image.
+     * Seven storage arrays would need 21 storage descriptors for a 3-plane
+     * format, above maxPerStageDescriptorStorageImages = 16 on e.g. the Intel
+     * UHD 770 (VUID-VkPipelineLayoutCreateInfo-descriptorType-03020). Final
      * binding map: cur=0, prev0-3=1-4, stat=5, mv=6, conf=7, output=8, next0=9. */
     {
         FFVulkanDescriptorSetBinding desc_set[] = {
             {
                 .name = "cur_images",
-                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-                .mem_quali = "readonly",
+                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
                 .dimensions = 2,
                 .elems = planes,
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
             },
             {
                 .name = "prev0_images",
-                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-                .mem_quali = "readonly",
+                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
                 .dimensions = 2,
                 .elems = planes,
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
             },
             {
                 .name = "prev1_images",
-                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-                .mem_quali = "readonly",
+                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
                 .dimensions = 2,
                 .elems = planes,
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
             },
             {
                 .name = "prev2_images",
-                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-                .mem_quali = "readonly",
+                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
                 .dimensions = 2,
                 .elems = planes,
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
             },
             {
                 .name = "prev3_images",
-                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-                .mem_quali = "readonly",
+                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
                 .dimensions = 2,
                 .elems = planes,
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
@@ -336,9 +330,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
                 /* Forward-lookahead tap (ADR-0137): the NEXT frame, mirrors
                  * prev0_images exactly. Read same-coordinate, tcut-gated. */
                 .name = "next0_images",
-                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-                .mem_quali = "readonly",
+                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
                 .dimensions = 2,
                 .elems = planes,
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,

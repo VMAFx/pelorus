@@ -40,10 +40,10 @@ ADR: docs/adr/0112-temporal-denoise.md
  configure                                    |    3 +
  libavfilter/Makefile                         |    1 +
  libavfilter/allfilters.c                     |    1 +
- libavfilter/vf_pelorus_denoise_vulkan.c      | 1078 ++++++++++++++++++++
+ libavfilter/vf_pelorus_denoise_vulkan.c      | 1070 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |    1 +
- libavfilter/vulkan/pelorus_denoise.comp.glsl |  417 ++++++++
- 6 files changed, 1501 insertions(+)
+ libavfilter/vulkan/pelorus_denoise.comp.glsl |  426 ++++++++
+ 6 files changed, 1502 insertions(+)
 
 diff --git a/configure b/configure
 index aec9b3ae17deb53929fc15870fdaeb58db717c8f..c18161349c774eea0347f47effa8aa611e6b8771 100755
@@ -92,10 +92,10 @@ index c781df8365397465a0f8cb2c25ac450585938b01..a21da384818d0b64f4b5af635ae53e9a
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_denoise_vulkan.c b/libavfilter/vf_pelorus_denoise_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..a9b5b9dba3511c64740fde46b32a70118bedeca5
+index 0000000000000000000000000000000000000000..4814733bf9acbe4afeba3d1e110132fac1458d77
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_denoise_vulkan.c
-@@ -0,0 +1,1078 @@
+@@ -0,0 +1,1070 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -346,52 +346,46 @@ index 0000000000000000000000000000000000000000..a9b5b9dba3511c64740fde46b32a7011
 +     * bwdif binding-order contract): binding 0 = current frame, 1..MAX_PREV =
 +     * previous frames, then the residual SSBO, then the MV/conf SSBOs, then the
 +     * output image, then the forward-lookahead next0 image (ADR-0137). Each image
-+     * binding is a per-plane array (.elems = planes), float representation,
-+     * storage image (sampler = VK_NULL_HANDLE, GENERAL layout, imageLoad). Final
++     * binding is a per-plane array (.elems = planes) of float-representation
++     * views in GENERAL layout (sampler = VK_NULL_HANDLE). The six read-only
++     * frames are SAMPLED images (texelFetch); only the output is a STORAGE image.
++     * Seven storage arrays would need 21 storage descriptors for a 3-plane
++     * format, above maxPerStageDescriptorStorageImages = 16 on e.g. the Intel
++     * UHD 770 (VUID-VkPipelineLayoutCreateInfo-descriptorType-03020). Final
 +     * binding map: cur=0, prev0-3=1-4, stat=5, mv=6, conf=7, output=8, next0=9. */
 +    {
 +        FFVulkanDescriptorSetBinding desc_set[] = {
 +            {
 +                .name = "cur_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "readonly",
++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
 +                .dimensions = 2,
 +                .elems = planes,
 +                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
 +            },
 +            {
 +                .name = "prev0_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "readonly",
++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
 +                .dimensions = 2,
 +                .elems = planes,
 +                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
 +            },
 +            {
 +                .name = "prev1_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "readonly",
++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
 +                .dimensions = 2,
 +                .elems = planes,
 +                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
 +            },
 +            {
 +                .name = "prev2_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "readonly",
++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
 +                .dimensions = 2,
 +                .elems = planes,
 +                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
 +            },
 +            {
 +                .name = "prev3_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "readonly",
++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
 +                .dimensions = 2,
 +                .elems = planes,
 +                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
@@ -434,9 +428,7 @@ index 0000000000000000000000000000000000000000..a9b5b9dba3511c64740fde46b32a7011
 +                /* Forward-lookahead tap (ADR-0137): the NEXT frame, mirrors
 +                 * prev0_images exactly. Read same-coordinate, tcut-gated. */
 +                .name = "next0_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "readonly",
++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
 +                .dimensions = 2,
 +                .elems = planes,
 +                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
@@ -1185,10 +1177,10 @@ index 578953efb422d850e60c82c891364c763a2141aa..a4a7ea0ea998fa805376991447a54769
 +OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vulkan/pelorus_denoise.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_denoise.comp.glsl b/libavfilter/vulkan/pelorus_denoise.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..7eddcdd3931c04e787747bab0839e6c47973c733
+index 0000000000000000000000000000000000000000..9574649a98b88ef557e6794c6f2efde0dcb34443
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_denoise.comp.glsl
-@@ -0,0 +1,417 @@
+@@ -0,0 +1,426 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -1228,6 +1220,7 @@ index 0000000000000000000000000000000000000000..7eddcdd3931c04e787747bab0839e6c4
 +
 +#extension GL_EXT_shader_image_load_formatted : require
 +#extension GL_EXT_nonuniform_qualifier : require
++#extension GL_EXT_samplerless_texture_functions : require
 +
 +/* Workgroup-size IDs 253/254/255 are reserved by ff_vk_shader_load(). */
 +layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
@@ -1280,12 +1273,20 @@ index 0000000000000000000000000000000000000000..7eddcdd3931c04e787747bab0839e6c4
 +
 +/* Binding order MUST match the C descriptor array exactly (inputs first, output
 + * then the forward tap last — the Nin / bwdif binding-order contract):
-+ * cur=0, prev0-3=1-4, stat=5, mv=6, conf=7, output=8, next0=9. */
-+layout (set = 0, binding = 0) uniform readonly  image2D cur_images[];
-+layout (set = 0, binding = 1) uniform readonly  image2D prev0_images[];
-+layout (set = 0, binding = 2) uniform readonly  image2D prev1_images[];
-+layout (set = 0, binding = 3) uniform readonly  image2D prev2_images[];
-+layout (set = 0, binding = 4) uniform readonly  image2D prev3_images[];
++ * cur=0, prev0-3=1-4, stat=5, mv=6, conf=7, output=8, next0=9.
++ *
++ * The six read-only frames are SAMPLED images read with texelFetch(), not
++ * storage images: seven per-plane storage arrays need 21 storage descriptors
++ * for a 3-plane format, above the 16 that e.g. the Intel UHD 770 exposes as
++ * maxPerStageDescriptorStorageImages (VUID-VkPipelineLayoutCreateInfo-
++ * descriptorType-03020). texelFetch() on the same UNORM view returns the same
++ * normalized value as imageLoad(), so the storage-domain contract is unchanged;
++ * only output_images stays a storage image. */
++layout (set = 0, binding = 0) uniform texture2D cur_images[];
++layout (set = 0, binding = 1) uniform texture2D prev0_images[];
++layout (set = 0, binding = 2) uniform texture2D prev1_images[];
++layout (set = 0, binding = 3) uniform texture2D prev2_images[];
++layout (set = 0, binding = 4) uniform texture2D prev3_images[];
 +
 +layout (set = 0, binding = 5, std430) buffer stat_buffer {
 +    uint abs_sum_y[16];
@@ -1309,7 +1310,7 @@ index 0000000000000000000000000000000000000000..7eddcdd3931c04e787747bab0839e6c4
 +layout (set = 0, binding = 8) uniform writeonly image2D output_images[];
 +
 +/* Forward-lookahead tap (ADR-0137): the NEXT frame, mirrors prev0_images. */
-+layout (set = 0, binding = 9) uniform readonly  image2D next0_images[];
++layout (set = 0, binding = 9) uniform texture2D next0_images[];
 +
 +const int FLAG_TEMPORAL = 1;
 +const int FLAG_MOTION_COMP = 2;
@@ -1338,14 +1339,14 @@ index 0000000000000000000000000000000000000000..7eddcdd3931c04e787747bab0839e6c4
 + * plane, 0 (=U) or 1 (=V) on a semi-planar chroma plane. */
 +float pel_cur(int idx, int comp, ivec2 p, ivec2 sz) {
 +    return pel_to_sample(
-+        imageLoad(cur_images[idx], clamp(p, ivec2(0), sz - ivec2(1)))[comp]);
++        texelFetch(cur_images[idx], clamp(p, ivec2(0), sz - ivec2(1)), 0)[comp]);
 +}
 +float pel_prev(int t, int idx, int comp, ivec2 p, ivec2 sz) {
 +    ivec2 c = clamp(p, ivec2(0), sz - ivec2(1));
-+    if (t == 1) return pel_to_sample(imageLoad(prev0_images[idx], c)[comp]);
-+    if (t == 2) return pel_to_sample(imageLoad(prev1_images[idx], c)[comp]);
-+    if (t == 3) return pel_to_sample(imageLoad(prev2_images[idx], c)[comp]);
-+    return pel_to_sample(imageLoad(prev3_images[idx], c)[comp]);
++    if (t == 1) return pel_to_sample(texelFetch(prev0_images[idx], c, 0)[comp]);
++    if (t == 2) return pel_to_sample(texelFetch(prev1_images[idx], c, 0)[comp]);
++    if (t == 3) return pel_to_sample(texelFetch(prev2_images[idx], c, 0)[comp]);
++    return pel_to_sample(texelFetch(prev3_images[idx], c, 0)[comp]);
 +}
 +
 +/* --- motion-compensated previous-frame fetch (ADR-0113) --- */
@@ -1487,8 +1488,8 @@ index 0000000000000000000000000000000000000000..7eddcdd3931c04e787747bab0839e6c4
 +         * prev). --- */
 +        if (actual_next > 0) {
 +            float p = pel_to_sample(
-+                imageLoad(next0_images[idx],
-+                          clamp(pos, ivec2(0), sz - ivec2(1)))[comp]);
++                texelFetch(next0_images[idx],
++                           clamp(pos, ivec2(0), sz - ivec2(1)), 0)[comp]);
 +            float delta = abs(C - p);
 +            if (delta <= temporal_cut) {
 +                float w = exp(-(delta * delta) / ht2) * temporal_decay;
@@ -1560,7 +1561,7 @@ index 0000000000000000000000000000000000000000..7eddcdd3931c04e787747bab0839e6c4
 +         * component(s) actually filtered, and store the whole vec4: a
 +         * synthesised vec4(ov, 0, 0, 1) writes a constant 0 into the plane's
 +         * second component, annihilating V on every semi-planar format. */
-+        vec4 outv = inb ? imageLoad(cur_images[idx], pos) : vec4(0.0);
++        vec4 outv = inb ? texelFetch(cur_images[idx], pos, 0) : vec4(0.0);
 +
 +        for (uint c = 0u; c < ncomp; c++) {
 +            const int comp = int(c);

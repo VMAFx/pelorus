@@ -37,6 +37,7 @@
 
 #extension GL_EXT_shader_image_load_formatted : require
 #extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_samplerless_texture_functions : require
 
 /* Workgroup-size IDs 253/254/255 are reserved by ff_vk_shader_load(). */
 layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
@@ -89,12 +90,20 @@ layout (push_constant, std430) uniform pushConstants {
 
 /* Binding order MUST match the C descriptor array exactly (inputs first, output
  * then the forward tap last — the Nin / bwdif binding-order contract):
- * cur=0, prev0-3=1-4, stat=5, mv=6, conf=7, output=8, next0=9. */
-layout (set = 0, binding = 0) uniform readonly  image2D cur_images[];
-layout (set = 0, binding = 1) uniform readonly  image2D prev0_images[];
-layout (set = 0, binding = 2) uniform readonly  image2D prev1_images[];
-layout (set = 0, binding = 3) uniform readonly  image2D prev2_images[];
-layout (set = 0, binding = 4) uniform readonly  image2D prev3_images[];
+ * cur=0, prev0-3=1-4, stat=5, mv=6, conf=7, output=8, next0=9.
+ *
+ * The six read-only frames are SAMPLED images read with texelFetch(), not
+ * storage images: seven per-plane storage arrays need 21 storage descriptors
+ * for a 3-plane format, above the 16 that e.g. the Intel UHD 770 exposes as
+ * maxPerStageDescriptorStorageImages (VUID-VkPipelineLayoutCreateInfo-
+ * descriptorType-03020). texelFetch() on the same UNORM view returns the same
+ * normalized value as imageLoad(), so the storage-domain contract is unchanged;
+ * only output_images stays a storage image. */
+layout (set = 0, binding = 0) uniform texture2D cur_images[];
+layout (set = 0, binding = 1) uniform texture2D prev0_images[];
+layout (set = 0, binding = 2) uniform texture2D prev1_images[];
+layout (set = 0, binding = 3) uniform texture2D prev2_images[];
+layout (set = 0, binding = 4) uniform texture2D prev3_images[];
 
 layout (set = 0, binding = 5, std430) buffer stat_buffer {
     uint abs_sum_y[16];
@@ -118,7 +127,7 @@ layout (set = 0, binding = 7, std430) buffer conf_grid {
 layout (set = 0, binding = 8) uniform writeonly image2D output_images[];
 
 /* Forward-lookahead tap (ADR-0137): the NEXT frame, mirrors prev0_images. */
-layout (set = 0, binding = 9) uniform readonly  image2D next0_images[];
+layout (set = 0, binding = 9) uniform texture2D next0_images[];
 
 const int FLAG_TEMPORAL = 1;
 const int FLAG_MOTION_COMP = 2;
@@ -147,14 +156,14 @@ uint pel_component_count(uint plane) {
  * plane, 0 (=U) or 1 (=V) on a semi-planar chroma plane. */
 float pel_cur(int idx, int comp, ivec2 p, ivec2 sz) {
     return pel_to_sample(
-        imageLoad(cur_images[idx], clamp(p, ivec2(0), sz - ivec2(1)))[comp]);
+        texelFetch(cur_images[idx], clamp(p, ivec2(0), sz - ivec2(1)), 0)[comp]);
 }
 float pel_prev(int t, int idx, int comp, ivec2 p, ivec2 sz) {
     ivec2 c = clamp(p, ivec2(0), sz - ivec2(1));
-    if (t == 1) return pel_to_sample(imageLoad(prev0_images[idx], c)[comp]);
-    if (t == 2) return pel_to_sample(imageLoad(prev1_images[idx], c)[comp]);
-    if (t == 3) return pel_to_sample(imageLoad(prev2_images[idx], c)[comp]);
-    return pel_to_sample(imageLoad(prev3_images[idx], c)[comp]);
+    if (t == 1) return pel_to_sample(texelFetch(prev0_images[idx], c, 0)[comp]);
+    if (t == 2) return pel_to_sample(texelFetch(prev1_images[idx], c, 0)[comp]);
+    if (t == 3) return pel_to_sample(texelFetch(prev2_images[idx], c, 0)[comp]);
+    return pel_to_sample(texelFetch(prev3_images[idx], c, 0)[comp]);
 }
 
 /* --- motion-compensated previous-frame fetch (ADR-0113) --- */
@@ -296,8 +305,8 @@ float denoise(const ivec2 pos, const int idx, const int comp,
          * prev). --- */
         if (actual_next > 0) {
             float p = pel_to_sample(
-                imageLoad(next0_images[idx],
-                          clamp(pos, ivec2(0), sz - ivec2(1)))[comp]);
+                texelFetch(next0_images[idx],
+                           clamp(pos, ivec2(0), sz - ivec2(1)), 0)[comp]);
             float delta = abs(C - p);
             if (delta <= temporal_cut) {
                 float w = exp(-(delta * delta) / ht2) * temporal_decay;
@@ -369,7 +378,7 @@ void main()
          * component(s) actually filtered, and store the whole vec4: a
          * synthesised vec4(ov, 0, 0, 1) writes a constant 0 into the plane's
          * second component, annihilating V on every semi-planar format. */
-        vec4 outv = inb ? imageLoad(cur_images[idx], pos) : vec4(0.0);
+        vec4 outv = inb ? texelFetch(cur_images[idx], pos, 0) : vec4(0.0);
 
         for (uint c = 0u; c < ncomp; c++) {
             const int comp = int(c);

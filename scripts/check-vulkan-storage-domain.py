@@ -44,23 +44,33 @@ def strip_comments(text: str) -> str:
     return re.sub(r"//[^\n]*", "", text)
 
 
-def image_load_statements(text: str) -> list[str]:
-    """Return semicolon-delimited source fragments containing imageLoad()."""
+LOAD_CALLS = ("imageLoad(", "texelFetch(")
 
-    return [part for part in text.split(";") if "imageLoad(" in part]
+
+def image_load_statements(text: str) -> list[str]:
+    """Return semicolon-delimited source fragments that load a texel.
+
+    Storage images are read with imageLoad(); sampled images (denoise's
+    read-only inputs) with texelFetch(). Both return the same UNORM-normalized
+    storage value, so both must cross the pel_to_sample() boundary.
+    """
+
+    return [
+        part for part in text.split(";") if any(call in part for call in LOAD_CALLS)
+    ]
 
 
 def is_raw_copy(statement: str) -> bool:
     """Recognize a direct storage-domain pass-through copy."""
 
-    return "imageStore(" in statement and "imageLoad(" in statement
+    return "imageStore(" in statement and any(call in statement for call in LOAD_CALLS)
 
 
 def is_preserving_read_modify_write(statement: str, full_text: str) -> bool:
     """Recognize a raw texel loaded solely to preserve untouched components."""
 
     match = re.search(
-        r"vec4\s+([A-Za-z_]\w*)\s*=\s*(?:[^;?]+\?\s*)?imageLoad\s*\(",
+        r"vec4\s+([A-Za-z_]\w*)\s*=\s*(?:[^;?]+\?\s*)?(?:imageLoad|texelFetch)\s*\(",
         statement,
     )
     if not match:
@@ -164,7 +174,7 @@ def check() -> list[str]:
             ):
                 continue
             errors.append(
-                f"{shader_path.relative_to(ROOT)}: imageLoad reaches arithmetic "
+                f"{shader_path.relative_to(ROOT)}: a texel load reaches arithmetic "
                 "without pel_to_sample()"
             )
 

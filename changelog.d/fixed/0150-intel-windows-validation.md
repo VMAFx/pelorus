@@ -12,3 +12,9 @@
   code value in rare 10/12-bit samples; 8-bit output is unchanged. A 10-bit
   direct/tiled denoise row joined the format matrix. An aa `fast=1` residual on
   the UHD 770 (linear single-plane input) remains open ([ADR-0150](docs/adr/0150-intel-arc-b580-uhd770-validation.md)).
+- Fixed `pelorus_denoise_vulkan` exceeding
+  `maxPerStageDescriptorStorageImages` (16 on the Intel UHD 770) with 21
+  storage-image descriptors for 3-plane formats
+  (`VUID-VkPipelineLayoutCreateInfo-descriptorType-03020`). Its six read-only
+  frames are now sampled images read with `texelFetch()`; the fast gate checks
+  a 16-descriptor storage-image budget for every filter ([ADR-0150](docs/adr/0150-intel-arc-b580-uhd770-validation.md)).

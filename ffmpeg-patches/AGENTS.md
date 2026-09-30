@@ -70,6 +70,10 @@ ffmpeg-patches/
   accumulation fed by it, must be computed with `precise` so both variants
   round identically; a driver may otherwise contract the non-power-of-two
   `sample_scale` product into an FMA on one path only (ADR-0150).
+- Read-only frame inputs use `SAMPLED_IMAGE` descriptors (`texture2D` plus
+  `texelFetch()`); keep storage-image bindings × 4 planes at or below 16, the
+  Intel UHD 770's `maxPerStageDescriptorStorageImages`.
+  `scripts/check-shader-bindings.py` enforces the budget (ADR-0150).
 
 ## Rebase-sensitive invariants
 
