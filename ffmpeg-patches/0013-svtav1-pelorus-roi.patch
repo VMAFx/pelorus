@@ -50,7 +50,7 @@ analyze filter already emits -- no new producer. ADR-0121.
  1 file changed, 247 insertions(+)
 
 diff --git a/libavcodec/libsvtav1.c b/libavcodec/libsvtav1.c
-index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..2a02ce15786c452a0eb0f7fc42abe2e14e0c2e21 100644
+index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..9d15c73989021addf2a29b84914fa814643740a5 100644
 --- a/libavcodec/libsvtav1.c
 +++ b/libavcodec/libsvtav1.c
 @@ -75,6 +75,34 @@ typedef struct SvtContext {
@@ -96,7 +96,7 @@ index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..2a02ce15786c452a0eb0f7fc42abe2e1
 +#if SVT_AV1_CHECK_VERSION(1, 6, 0)
 +        svt_enc->roi_b64_cols = ((unsigned)avctx->width  + 63u) / 64u;
 +        svt_enc->roi_b64_rows = ((unsigned)avctx->height + 63u) / 64u;
-+        svt_enc->enc_params.enable_roi_map = true;
++        svt_enc->enc_params.enable_roi_map = 1;
 +        av_log(avctx, AV_LOG_VERBOSE,
 +               "Pelorus ROI map enabled: %ux%u superblocks (64 px/SB).\n",
 +               svt_enc->roi_b64_cols, svt_enc->roi_b64_rows);

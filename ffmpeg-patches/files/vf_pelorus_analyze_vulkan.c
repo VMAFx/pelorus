@@ -126,11 +126,14 @@ static av_cold int init_filter(AVFilterContext *ctx)
     }
 
     RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
-    /* The reduction reads only the luma plane and is otherwise fully static,
-     * so no specialization constants are needed (unlike deband, which had a
-     * C-unrolled per-plane loop). `spec` is NULL. */
-    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, NULL, (uint32_t[]){PEL_TILE, PEL_TILE, 1},
-                      0);
+    /* A literal input_images[0] lets glslc collapse the unsized descriptor
+     * array to a fixed one-element SPIR-V array, diverging from the FFmpeg
+     * descriptor layout below on multi-plane frames. Keep the luma index as a
+     * specialization constant so the runtime descriptor-array contract is
+     * retained. */
+    SPEC_LIST_CREATE(sl, 1, sizeof(uint32_t))
+    SPEC_LIST_ADD(sl, 0, 32, 0u);
+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){PEL_TILE, PEL_TILE, 1}, 0);
 
     {
         FFVulkanDescriptorSetBinding desc[] = {

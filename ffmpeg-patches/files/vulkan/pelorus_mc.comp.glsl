@@ -51,6 +51,8 @@ layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
  * edge is the `bsize` push constant (<= block_dim), which gates which lanes
  * contribute, so one pipeline serves every bsize. */
 layout (constant_id = 0) const uint block_dim = 32;
+/* Keep the luma-only bindings as runtime descriptor arrays in SPIR-V. */
+layout (constant_id = 1) const uint luma_plane = 0u;
 
 layout (push_constant, std430) uniform pushConstants {
     int   width;
@@ -106,13 +108,13 @@ float pel_to_sample(float value)
 float fetchCur(int px, int py) {
     px = clamp(px, 0, width  - 1);
     py = clamp(py, 0, height - 1);
-    return pel_to_sample(imageLoad(cur_image[0], ivec2(px, py)).x);
+    return pel_to_sample(imageLoad(cur_image[luma_plane], ivec2(px, py)).x);
 }
 
 float fetchRef(int px, int py) {
     px = clamp(px, 0, width  - 1);
     py = clamp(py, 0, height - 1);
-    return pel_to_sample(imageLoad(ref_image[0], ivec2(px, py)).x);
+    return pel_to_sample(imageLoad(ref_image[luma_plane], ivec2(px, py)).x);
 }
 
 float block_sad(int blk_x, int blk_y, int mvx, int mvy, uint lidx,

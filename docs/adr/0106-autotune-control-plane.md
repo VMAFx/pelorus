@@ -31,7 +31,7 @@ vmafx's; Pelorus is the tunable + the weighting source.
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Reuse vmafx libvmaf_tune / server / MCP | No new orchestrator; battle-tested optimizer; in-graph one-pass option | Couples to vmafx's interfaces | **Chosen** |
 | Build a Pelorus-native VMAF tuner | Self-contained | Reinvents vmafx; duplicate scoring + optimizer | Rejected |
 | No autotune (manual presets only) | Simplest | Leaves the content-dependent optimum on the table | Rejected as the design target (presets still ship as defaults) |

@@ -56,7 +56,7 @@ on textured tiles (the coarse scale is gated to flats).
 ## Options
 
 | Option | Type | Default | Meaning |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `flat` | float 0–0.25 | 0.0015 | per-tile variance below which a tile is counted as banding-prone |
 | `roi` | bool | 0 | auto-detect banding-prone tiles and attach `AV_FRAME_DATA_REGIONS_OF_INTEREST` so a downstream encoder spends bits there |
 | `roi_strength` | float 0–1 | 0.333 | max \|qoffset\| (fraction of the QP range) applied to a fully banding tile |
@@ -68,10 +68,11 @@ on textured tiles (the coarse scale is gated to flats).
 ```bash
 # analyze upstream of deband so the deband side-data carries measured stats,
 # then score against the source with vmafx in one graph
-ffmpeg -init_hw_device vulkan -hwaccel vulkan -hwaccel_output_format vulkan \
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
+       -hwaccel vulkan -hwaccel_device vk -hwaccel_output_format vulkan \
        -i input.mkv \
        -vf "pelorus_analyze_vulkan,pelorus_deband_vulkan=range=15" \
-       -c:v hevc_nvenc -cq 28 out.mkv      # codec-agnostic; or av1_nvenc / hevc_qsv
+       -c:v hevc_vulkan -pix_fmt vulkan -qp 28 out.mkv  # or av1_vulkan
 ```
 
 Output: the input video, unchanged, with a Pelorus side-data blob on every
@@ -88,7 +89,7 @@ the `vf_scdet` idiom) — the host-readable extraction path for per-shot CRF
 steering, the autotune loop, and shell debugging:
 
 | key | meaning |
-|---|---|
+| --- | --- |
 | `lavfi.pelorus.complexity` | EMA-smoothed per-frame complexity `[0,1]` |
 | `lavfi.pelorus.texture` | normalized texture/edge energy `[0,1]` |
 | `lavfi.pelorus.motion` | motion component `[0,1]` (0 with no upstream `pelorus_mc`) |

@@ -52,30 +52,77 @@ Meson tree, for example `BUILD_DIR=build-asan make verify-native`.
 
 The governance targets use the first `standardsctl` or `praetorctl` on `PATH`.
 Pin another executable explicitly with `PRAETORCTL=/absolute/path/to/standardsctl`.
+The documentation targets need Node.js 22 or newer; the gate installs its own
+locked `markdownlint-cli2` 0.23.2 dependency tree into a temporary directory.
 
 | Target | Composition and purpose |
 | --- | --- |
 | `make compile-context` | Regenerate cross-tool context and persona projections from their canonical sources |
 | `make compile-context-verify` | Fail if a generated projection has drifted |
-| `make audit` | Verify the pinned manifest/lock and enforce the 78-finding HISS baseline ratchet |
-| `make verify-all` | Run context verification, then the audit, then `verify-native` |
-| `make hooks-install` | Install the tracked Lefthook commands into the shared Git hooks directory; see the warning below |
+| `make audit` | Verify the pinned manifest/lock and enforce the 75-finding HISS baseline ratchet |
+| `make docs-lint` | Lint public Markdown with the locked Praetor configuration and reject links into private scratch directories |
+| `make docs-figures` | Check figure specs and sources; skips with a reason while `docs/figures/` has none |
+| `make verify-all` | Run context verification, the audit, `verify-native`, then `docs-lint` and `docs-figures` |
+| `make hooks-install` | Install the tracked Lefthook commands into the shared Git hooks directory; see the note below |
 
-The baseline accepts 78 existing findings (HISS-01=31, HISS-02=1, HISS-04=46)
-in the scanner's supported-file scope. It is a non-regression ceiling, not a
-claim of zero debt or whole-tree source coverage. Existing findings may shrink;
-new findings must not make the measured total exceed the committed baseline.
+The baseline accepts 75 existing findings in the scanner's supported-file scope
+(C, headers, and Python): HISS-01=31 (`goto` cleanup jumps), HISS-02=1,
+HISS-04=41 (functions over 60 lines), and HISS-07=2 (`sys.exit` outside a
+`__main__` entry point). It is a non-regression ceiling, not a claim of zero
+debt or whole-tree source coverage. Fingerprints are keyed by file and line
+([Praetor issue 29](https://github.com/cordanaLLM/praetor/issues/29)), so
+moving a legacy function can surface it as new.
 
-The `Standards` GitHub Actions workflow runs on every pull request and push to
-`master`. It installs Praetor at the commit in
-[ADR-0145](../adr/0145-praetor-governance-adoption.md), verifies generated
-contexts, and runs the baseline audit. The pinned auditor currently passes the
-manifest, lock, baseline, contexts, and personas, then incorrectly requires a
-ruleset that the manifest explicitly declines. Therefore the Standards job,
-`make audit`, and `make verify-all` are expected to stop at
-[Praetor issue 408](https://github.com/CordanaLLM/praetor/issues/408). Run
-`make verify-native` separately for product acceptance; do not add a fake
-ruleset, weaken the manifest, or run remote sync as a workaround.
+The local target and the hosted job apply that ceiling differently:
+
+| Where | Command | Fails when |
+| --- | --- | --- |
+| `make audit` | `standardsctl audit` | a finding's fingerprint is not in the baseline; the total exceeds the baseline; any finding, baselined or not, sits in a file with uncommitted changes (Praetor's touched-file rule) |
+| Hosted, step 1 | `standardsctl audit --base <target> --touched-debt-delta-reason <reason>` | the committed baseline records more findings than the baseline on the target (growth guard); a file the branch touches has more findings of some rule than the committed baseline records; a finding in an untouched file is not in the baseline; the total exceeds the baseline |
+| Hosted, step 2 | `standardsctl baseline --verify` | a current finding is not recorded at its current line; the total exceeds the baseline |
+
+The target is `origin/<base branch>` for a pull request and the replaced
+commit for a push to `master`. Without the debt-delta reason, `--base` would
+revoke every baselined finding in a touched file; that zero-debt mode stays
+deferred by ADR-0145. Step 1 accepts a touched file whose findings only moved
+lines, so step 2 makes the branch re-record the baseline for them. A stale
+fingerprint on `master` would otherwise fail the next pull request that does
+not touch that file.
+
+Existing findings may shrink. A deliberate increase recorded with
+`standardsctl baseline --record --allow-increase --reason=<why>` passes the
+growth guard with a `[WARN]` line that prints the reason, so the increase stays
+visible in the job log and in the baseline diff. Any change to the baseline
+total also changes the managed README block, which the audit compares with the
+baseline; refresh it with the adoption command in the ADR. To run the hosted
+steps locally:
+
+```bash
+CI=true standardsctl audit --base origin/master \
+  --touched-debt-delta-reason "local run of the hosted ratchet"
+standardsctl baseline --verify
+```
+
+Two hosted workflows run on every pull request. `Standards` installs Praetor at
+the commit in [ADR-0145](../adr/0145-praetor-governance-adoption.md), prints
+the module version Go recorded for it, verifies generated contexts, and runs
+the two ratchet steps above. `Standards` is not yet a required status check on
+`master`; branch protection requires the `core`, `ffmpeg-stack`, and `docs`
+jobs. `Praetor Documentation Governance` is Praetor's locked
+workflow for the `docs:seo-portal` facet: it runs the same Markdown and figure
+checks as `make docs-lint docs-figures`. `praetorctl audit` compares that
+workflow, `tools/markdownlint/`, `tools/figures/`, the documentation block in
+the `Makefile`, and the managed block at the end of `.gitattributes` byte for
+byte with the pinned engine's assets. Refresh them only with the adoption
+command in the ADR, never by hand.
+
+Outside CI the audit ends with one known failure: `Pre-commit hook
+.git/hooks/pre-commit is missing or inactive`. The manifest declines
+`git-hooks`, but the auditor ignores that decline
+([Praetor issue 175](https://github.com/cordanaLLM/praetor/issues/175)).
+Hosted runners set `CI=true`, and the auditor then skips only that check. Do
+not create a placeholder hook file, weaken the manifest, or run remote sync to
+get past it.
 
 Triage failures by boundary:
 
@@ -83,9 +130,11 @@ Triage failures by boundary:
 - Context drift means a canonical source changed without regeneration. Edit
   `AGENTS.md` or `.agents/agents/*.md`, then run `make compile-context`; never
   patch a generated projection directly.
-- An audit failure before the final missing-ruleset diagnostic is a new local
-  governance regression. The final missing-ruleset diagnostic alone is the
-  known upstream issue 408 blocker.
+- A `docs-lint` diagnostic names a file, line, and markdownlint rule. Fix the
+  Markdown; the rule set is locked by the engine.
+- Any audit failure before the final pre-commit-hook diagnostic is a local
+  governance regression. The hook diagnostic alone, outside CI, is the known
+  upstream issue 175.
 
 Canonical context sources are `AGENTS.md` and `.agents/agents/*.md`. Generated
 files that `compile-context` owns include root `CLAUDE.md`,
@@ -93,31 +142,68 @@ files that `compile-context` owns include root `CLAUDE.md`,
 `.windsurfrules`, `.gemini/GEMINI.md`, `.codex/rules.md`,
 and the Markdown persona projections under `.claude/`, `.codex/`, `.github/`,
 and `.gemini/`. Direct edits to those projections are overwritten or rejected
-by verification.
+by verification. The text register block between the
+`<!-- praetor:register:start -->` markers in `AGENTS.md` is rendered from the
+manifest by `compile-context`; do not edit it by hand.
 
 `.paperclip/harness.json` and `.paperclip/rules.md` are a separate generated
 pair from `standardsctl paperclip harness`; `compile-context` does not own them.
 Regenerating that pair requires an explicit consumer review because the pinned
 generator does not yet honor every Pelorus branch, language, and policy choice
-(Praetor issues 321 and 68).
+(Praetor issue 321). The audit lints the harness's operating-contract and
+invariant strings in the internal (Caveman) register. `register.sources` in
+`.standards.yaml` records how many strings it read and their digest, so an
+edited string also needs new pins. `adopt` refuses to re-bind that drift, even
+with `--force`. Stage the edit, run
+`standardsctl caveman check --configured-sources --root=.`, and copy the
+`actual` digest (and count, if it changed) that it reports into
+`register.sources`.
 
-### Lefthook warning while issue 408 is open
+### Declared policy that no gate runs
 
-Do **not** run `make hooks-install` for normal development while issue 408 is
-open. The tracked `lefthook.yml` binds pre-commit to `make audit` and pre-push to
-`make verify-all`; both reach the known auditor defect and therefore block every
-commit or push even when Pelorus itself is clean. The target exists for explicit
-hook-integration testing and for use after the upstream fix is pinned.
+The profile and facets in `.standards.yaml` declare more controls than Pelorus
+executes. The audit verifies the lock, the baseline, generated surfaces, and the
+documentation gate. It does not check the controls below, and no workflow
+implements them; they are declared only
+([ADR-0145](../adr/0145-praetor-governance-adoption.md)).
 
-If it was installed, remove the managed hooks with Lefthook's verified removal
-command:
+| Declared by | Control | Current state |
+| --- | --- | --- |
+| `native-gpu-systems`, `security:high` | SLSA level 3 provenance, keyless cosign signatures, SBOM | Not produced; the release workflow publishes the patch archive without them |
+| `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, two approving reviews, stale-review dismissal | Not enforced; `master` protection requires linear history and three CI checks, no signatures and no reviews |
+| `native-gpu-systems` | `semgrep`, `cppcheck`, `clippy` | Not run; Pelorus has no Rust for `clippy` |
+| `security:high` | `gitleaks`, `trivy` | Not run; `.gitleaks.toml` only configures a manual `gitleaks` run |
+| `api:public-contract` | `buf`, `spectral`, OpenAPI drift, `Migration:` footer check | Not run; Pelorus has no protobuf or OpenAPI surface. The append-only C ABI is guarded by the interop conformance fixture and review |
+| `docs:seo-portal` | Schema.org JSON-LD, sitemap, `robots.txt`, Core Web Vitals | Not applicable; Pelorus builds no documentation site. The facet's locked Markdown and figure gate does run |
+| `native-gpu-systems` | No per-frame dynamic allocation | HISS-03, by C review only |
+
+The declared linters that do run are `clang-tidy` (the `core` job and
+`make verify-native`) and `markdownlint` (the documentation gate). HISS-04
+complexity is split the same way. For C the audit ratchets only the 60-line
+function cap. Its cyclomatic, cognitive, and statement measurement covers Go
+sources only, so the effective limits of 10, 12, and 40 are not machine-checked
+here. The `.clang-tidy` function-size thresholds (75 lines, 120 statements, 20
+branches) are advisory and cover `libpelorus` only. Those limits are reviewer
+checks.
+
+### Git and agent hooks stay opt-in
+
+The manifest declines `git-hooks` and `agent-hooks`. Adoption therefore neither
+installs Lefthook into `.git/hooks` nor registers `praetorctl hook <client>
+pre-tool` in `.claude/settings.json`, `.codex/hooks.json`, or
+`.gemini/settings.json`. That registration would run an engine binary that a
+contributor may not have installed on every agent tool call.
+
+`make hooks-install` remains available for explicit hook-integration testing.
+The tracked `lefthook.yml` binds pre-commit to `make compile-context-verify` and
+`make audit`, and pre-push to `make verify-all`, so an installed hook also needs
+Go, the pinned engine, and Node.js. Linked worktrees share the repository's Git
+hooks directory, so installing or removing hooks is repository-wide. Remove them
+with Lefthook's verified removal command:
 
 ```bash
 lefthook uninstall
 ```
-
-Linked worktrees share the repository's Git hooks directory, so uninstalling is
-repository-wide. The tracked `lefthook.yml` remains in the checkout.
 
 ## Release
 

@@ -208,7 +208,7 @@ apply_stack() {
             -c commit.gpgSign=false \
             -c core.hooksPath=/dev/null \
             -c diff.orderFile=/dev/null \
-            am --3way "$PATCHDIR/$patch"
+            am --3way --no-gpg-sign --no-verify "$PATCHDIR/$patch"
     done
 }
 

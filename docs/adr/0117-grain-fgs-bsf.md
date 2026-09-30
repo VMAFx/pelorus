@@ -89,7 +89,7 @@ BSF surfaces instead of the libavfilter ones.
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | CBS generic BSF + `ff_cbs_sei_add_message` (this) | Reuses the tested H.265 SEI writer; mirrors `hevc_metadata`; no hand-coded bit-packing | Static model only (AVOption-driven) | **Chosen** — correct layer, minimal new code, fully general |
 | Hand-code the FGC SEI NAL bytes | No CBS dependency | Re-implements SEI RBSP + emulation-prevention + the H.274 syntax; high correctness risk; duplicates CBS | Rejected — CBS already does this correctly |
 | Patch an HEVC encoder to read `AV_FRAME_DATA_FILM_GRAIN_PARAMS` | Per-frame model possible | Couples to one encoder; libx265/nvenc/qsv each differ; no generic path | Rejected — a BSF is codec-stream-level and encoder-agnostic |

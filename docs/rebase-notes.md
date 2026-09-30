@@ -60,15 +60,22 @@ shorthand; use the pinned commands above for all current rebases.
   `ffmpeg-patches/files/vulkan/*.comp.glsl` files. The
   `libpelorus/shaders/*.comp` files are compile-checked standalone references,
   not runtime shader copies and not a lockstep delivery surface (ADR-0143).
+- **Descriptor-array boundary**: analyze and MC read luma through a
+  specialization-constant index, not a literal `[0]`. Preserve the matching C
+  specialization entries when rebasing: otherwise `glslc` contracts the
+  unsized image declarations to fixed one-element SPIR-V arrays while FFmpeg
+  binds every plane. MC must also deduplicate dependency, view, and barrier
+  setup when its first dispatch uses the current `AVVkFrame` as the reference.
 - **Static gates**: run `scripts/test-vulkan-sample-scale.py`,
   `scripts/check-vulkan-storage-domain.py`, compile every shipped shader, and
   run the Pelorus fast suite before regenerating. Then prove a second generation
   is byte-identical and replay all 18 patches at the pinned FFmpeg commit.
 - **On-device gate**: run `ffmpeg-patches/test/vulkan-format-matrix.sh` with
-  validation enabled. It must cover normalized analyzer equivalence on 8/10/12
-  bit layouts, transform equivalence, NV12/P010/P012 U+V survival, packed-lane
-  preservation, direct/tiled paths, lookahead/MC, and selected/pass-through
-  plane masks. A missing device is an unexecuted row, not passing evidence.
+  validation enabled. The gate inspects stdout and stderr and must cover
+  normalized analyzer equivalence on 8/10/12 bit layouts, transform
+  equivalence, NV12/P010/P012 U+V survival, packed-lane preservation,
+  direct/tiled paths, lookahead/MC, and selected/pass-through plane masks. A
+  missing device is an unexecuted row, not passing evidence.
 
 See [ADR-0147](adr/0147-vulkan-sample-domain-and-components.md) and the
 [research digest](research/0147-vulkan-storage-domain.md) for the reproduced
@@ -585,7 +592,10 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   reuse races the lookahead.
 - **Capability/portability invariants**: `SVT_AV1_CHECK_VERSION(1, 6, 0)` compile
   guard (older SVT-AV1 → one-shot init warning + pass-through); ≤ 8 segments
-  (`MAX_SEGMENTS`); 64×64 superblock grid; default OFF.
+  (`MAX_SEGMENTS`); 64×64 superblock grid; default OFF. Assign the enabled value
+  as integer `1`: SVT-AV1 2.x exposes `enable_roi_map` as `Bool` without
+  exporting the C `true` macro, while newer SDKs expose it as `bool`; both accept
+  the integer boolean without a transitive-header dependency.
 - **Re-test after rebase**: full series replay via `git am --3way`; rebuild against
   an SVT-AV1-enabled toolchain (`./configure --enable-libsvtav1 … && make`) and
   smoke `ffmpeg -h encoder=libsvtav1 | grep pelorus_roi`; ideally re-run the

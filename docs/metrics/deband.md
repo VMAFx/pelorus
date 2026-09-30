@@ -21,7 +21,7 @@ normalize LSB-aligned planar 10/12-bit samples.
 ## Options
 
 | Option | Type | Default | Meaning |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `range` | int 1–31 | 15 | reference-sampling radius in pixels |
 | `thry` | float 0–0.25 | 0.012 | luma threshold (normalized to full range) |
 | `thrc` | float 0–0.25 | 0.012 | chroma threshold |
@@ -40,10 +40,11 @@ normalize LSB-aligned planar 10/12-bit samples.
 ## Example
 
 ```bash
-ffmpeg -init_hw_device vulkan -hwaccel vulkan -hwaccel_output_format vulkan \
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
+       -hwaccel vulkan -hwaccel_device vk -hwaccel_output_format vulkan \
        -i input.mkv \
        -vf "pelorus_deband_vulkan=range=15:thry=0.012:dither=bluenoise:dynamic=1:protect=1" \
-       -c:v hevc_nvenc -cq 28 out.mkv      # codec-agnostic; or av1_nvenc / hevc_qsv / hevc_vaapi
+       -c:v hevc_vulkan -pix_fmt vulkan -qp 28 out.mkv  # or av1_vulkan
 ```
 
 The filter is pure pre-processing — it improves HEVC (rivaling x265) and AV1

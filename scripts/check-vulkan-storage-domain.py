@@ -9,6 +9,11 @@ in logical code space before writing shifted P010/P012 storage.  Scalar
 transforms must also preserve components they do not process and process both U
 and V when a selected physical plane is semi-planar.
 
+Luma-only filters must index FFmpeg's per-plane descriptor arrays through a
+specialization constant.  A literal ``[0]`` lets glslc contract an unsized
+descriptor array to a fixed one-element SPIR-V array even though the C layout
+and push-descriptor updates retain every plane.
+
 This intentionally checks the whole arithmetic-filter family.  A local fix in
 one filter is not sufficient because all filters share the same representation
 boundary.  Borderfix (raw texel copy) and qpmap (integer map output) are named
@@ -272,6 +277,41 @@ def check() -> list[str]:
                 "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c: sample scaling "
                 "must happen before shader SAD/candidate selection, not after readback"
             )
+
+    for name, constant_id, bindings in (
+        ("analyze", 0, ("input_images",)),
+        ("mc", 1, ("cur_image", "ref_image")),
+    ):
+        c_path = FILES / f"vf_pelorus_{name}_vulkan.c"
+        shader_path = SHADERS / f"pelorus_{name}.comp.glsl"
+        if not c_path.is_file() or not shader_path.is_file():
+            continue
+        c_text = strip_comments(c_path.read_text())
+        shader_text = strip_comments(shader_path.read_text())
+        require(
+            shader_path,
+            shader_text,
+            rf"constant_id\s*=\s*{constant_id}\)\s*const\s+uint\s+luma_plane",
+            "must preserve luma image bindings as runtime descriptor arrays",
+        )
+        require(
+            c_path,
+            c_text,
+            rf"SPEC_LIST_ADD\s*\(\s*sl\s*,\s*{constant_id}\s*,\s*32\s*,\s*0u\s*\)",
+            "must specialize the luma descriptor-array index to zero",
+        )
+        for binding in bindings:
+            require(
+                shader_path,
+                shader_text,
+                rf"\b{binding}\s*\[\s*luma_plane\s*\]",
+                f"must index {binding} through luma_plane",
+            )
+            if re.search(rf"\b{binding}\s*\[\s*0u?\s*\]", shader_text):
+                errors.append(
+                    f"{shader_path.relative_to(ROOT)}: literal {binding}[0] "
+                    "contracts the per-plane descriptor array"
+                )
 
     for name in RAW_EXEMPTIONS:
         for path in (

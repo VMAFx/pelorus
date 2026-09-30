@@ -96,7 +96,7 @@ while IFS= read -r patch || [[ -n "$patch" ]]; do
         -c commit.gpgSign=false \
         -c core.hooksPath=/dev/null \
         -c diff.orderFile=/dev/null \
-        am --3way "$PATCHDIR/$patch"
+        am --3way --no-gpg-sign --no-verify "$PATCHDIR/$patch"
 done < "$PATCHDIR/series.txt"
 git -C "$WORKTREE" -c core.hooksPath=/dev/null \
     apply "$PATCHDIR/files/qsv-pelorus-roi.patch"

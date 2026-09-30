@@ -12,7 +12,7 @@ NASA/JPL's *The Power of 10: Rules for Developing Safety-Critical Code*
 (Gerard J. Holzmann), applied to C as written.
 
 | # | Rule | Pelorus application |
-|---|---|---|
+| --- | --- | --- |
 | 1 | Simple control flow; no `goto` (except a single-level cleanup `goto fail`), no recursion | The `goto fail` cleanup idiom is allowed (FFmpeg/CERT-style single-exit); no other `goto`. |
 | 2 | Bounded loops — a statically provable upper bound | Every loop over sections/planes/cells has a fixed bound; reject `section_count` etc. against caps before looping. |
 | 3 | No dynamic allocation after init | libpelorus allocates once per blob in `pel_blob_pack`; hot per-frame paths reuse buffers. |

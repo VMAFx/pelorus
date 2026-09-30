@@ -38,7 +38,7 @@ and applies the matching **reductive** boost with params **scaled to the measure
 impairment**. The routing table (designed by an 8-class boost panel, grounded in the law):
 
 | content class | detect (analyze.*) | boost | key params (scale with) | expected |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | **grainy/noisy** | `grain_sigma` over flat bands (NEW metadata) | denoise (temporal-dominant) + grain_estimate→FGS resynth | `strength,blend,sigmat ∝ grain_sigma` | **−34%** proven |
 | **anime/2D** | high `edge` AND high `banding`/flat co-occurrence | dehalo + aa + deband, co-gated by one edge mask | per the anime tune | ~3–8% SSIMu |
 | **textured live-action** | high `variance`/`edge`, low `motion` | denoise spatial-dominant (strip micro-noise only) | `blend 0.3–0.4` | medium |

@@ -26,9 +26,10 @@ reviewed canonical sources at the immutable n9.0.2 commit in ADR-0144.
 
 ---
 
-### Task 1: Land the decision and reproduction before code
+## Task 1: Land the decision and reproduction before code
 
 **Files:**
+
 - Create: `docs/adr/0147-vulkan-sample-domain-and-components.md`
 - Create: `docs/research/0147-vulkan-storage-domain.md`
 - Create: `docs/superpowers/plans/2026-09-20-vulkan-storage-domain.md`
@@ -54,9 +55,10 @@ git add docs/adr/0147-vulkan-sample-domain-and-components.md \
 git commit -m "docs(adr): define the Vulkan sample-domain contract"
 ```
 
-### Task 2: Add failing family-level contract checks
+## Task 2: Add failing family-level contract checks
 
 **Files:**
+
 - Create: `scripts/check-vulkan-storage-domain.py`
 - Modify: `meson.build`
 
@@ -73,9 +75,10 @@ Require denoise/aa/dehalo/deblock to expose semi-planar specialization and a
 per-component path, prohibit scalar-splat stores, and require read-modify-write
 for scalar transforms. Confirm RED against the carried partial WIP.
 
-### Task 3: Implement one descriptor-derived sample-domain boundary
+## Task 3: Implement one descriptor-derived sample-domain boundary
 
 **Files:**
+
 - Create: `ffmpeg-patches/files/pelorus_vulkan_sample.h`
 - Modify: `ffmpeg-patches/generate.sh`
 - Modify: arithmetic filter C sources and canonical `.comp.glsl` shaders
@@ -98,9 +101,10 @@ Convert deband, denoise, aa, dehalo, and deblock loads into the sample domain;
 clamp there and inverse-scale at stores. Keep unselected planes raw and
 borderfix untouched.
 
-### Task 4: Complete the component contract
+## Task 4: Complete the component contract
 
 **Files:**
+
 - Modify: `vf_pelorus_{aa,dehalo,deblock,denoise}_vulkan.c`
 - Modify: matching canonical shaders under `ffmpeg-patches/files/vulkan/`
 
@@ -120,9 +124,10 @@ per-plane parameter vectors for both U and V.
 Use read-modify-write for scalar stores. Do not claim RGB filtering semantics;
 prove that G/B/A survive when only the scalar component is defined.
 
-### Task 5: Add executable format evidence and user-facing corrections
+## Task 5: Add executable format evidence and user-facing corrections
 
 **Files:**
+
 - Create: `ffmpeg-patches/test/vulkan-format-matrix.sh`
 - Modify: `docs/backends/vulkan.md`
 - Modify: relevant `docs/metrics/*.md`
@@ -145,9 +150,10 @@ Replace the false “UNORM is inherently bit-depth agnostic” claim with the tw
 domain model, document physical-plane semantics, and preserve historical
 benchmark context while marking invalid planar-10/12 conclusions.
 
-### Task 6: Regenerate and verify the patch stack
+## Task 6: Regenerate and verify the patch stack
 
 **Files:**
+
 - Modify: generated filter patches affected by canonical sources
 - Modify: matching `.commit-msg-*.txt` where the numeric contract is described
 

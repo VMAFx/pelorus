@@ -31,7 +31,7 @@ These are the options `vmaf-tune` may set and sweep. Name, FFmpeg `AVOption`
 type, valid range (`min`–`max`), default, and one-line semantics:
 
 | AVOption | Type | Min | Max | Default | Semantics |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | `range` | int | 1 | 31 | 15 | reference-sampling radius in pixels |
 | `thry` | double | 0.0 | 0.25 | 0.012 | luma flat-test threshold (normalized to full range) |
 | `thrc` | double | 0.0 | 0.25 | 0.012 | chroma flat-test threshold (normalized) |
@@ -67,7 +67,7 @@ reporting switches, not perceptual-strength knobs, and may change without a
 two-repo coordination:
 
 | AVOption | Why excluded |
-|---|---|
+| --- | --- |
 | `sample` (tap topology) | algorithm-shape choice, not a strength dimension; defaults are tuned |
 | `blur` (flat-test mode) | algorithm-shape choice |
 | `planes` (plane bitmask) | pipeline configuration, not perceptual strength |
