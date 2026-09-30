@@ -16,7 +16,6 @@ facets:
   - agent:sandboxed
 adoption:
   decline:
-    - agent-hooks
     - branch-ruleset
     - dev-container
     - git-hooks

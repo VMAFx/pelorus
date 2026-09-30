@@ -1,15 +1,16 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0145: Adopt Praetor as a governance ratchet
 
-- **Status**: Proposed
-- **Date**: 2026-09-20 (revised 2026-09-30 for the engine re-pin)
+- **Status**: Accepted
+- **Date**: 2026-09-20 (revised 2026-09-30 for the engine re-pin and the
+  agent-hook adoption; accepted 2026-09-30)
 - **Deciders**: lusoris
 - **Tags**: governance, agents, ci, hooks, documentation, standards
 
-This ADR stays Proposed while PR 56 is open. Its body was revised in place for
-the engine re-pin and the review fixes, which the index allows only before
-acceptance. It becomes Accepted when the maintainer merges the pull request,
-which includes accepting the new `agent-hooks` decline.
+The maintainer accepted this ADR on 2026-09-30 together with pull request 56,
+and chose to adopt Praetor's agent hooks instead of declining them. Its body
+was revised in place before acceptance for the engine re-pin, the review
+fixes, and that choice. From here on it changes only by a superseding ADR.
 
 ## Context
 
@@ -52,7 +53,8 @@ adopters. The changes that reach Pelorus are:
   `master` (Praetor pull request 547);
 - adoption registers a `praetorctl hook <client> pre-tool` interceptor in the
   Claude, Codex, and Gemini settings unless `agent-hooks` is declined
-  (Praetor pull request 495);
+  (Praetor pull request 495). The engine judges each agent shell command in
+  process and denies, with exit 2, commands that skip or remove Git hooks;
 - the pinned catalog changed values: `gocyclo` left `agent:sandboxed` and
   `oapi-codegen` left `api:public-contract`, both Go tools that Pelorus never
   ran. The other catalog files changed layout only.
@@ -85,6 +87,13 @@ gains a finding. `baseline --verify` then requires every current finding at its
 current line, so a stale fingerprint cannot reach `master`. Touched-file
 zero-debt mode stays deferred.
 
+The baseline records 76 findings: 31 HISS-01, one HISS-02, 42 HISS-04, and two
+HISS-07. The re-pin measured 75. Merging `master` at `eb3b045` (pull request
+59) added one HISS-04 finding, `renovate_validator_regressions` in
+`scripts/check-build-config.py` (100 lines), because `master` has no Standards
+gate yet. It is recorded with `baseline --record --allow-increase --reason`,
+the engine's documented exception, rather than refactored in this change.
+
 The upgrade follows the engine's documented path. `adopt --force
 --lock-source-root=<praetor checkout at the pin>` runs in a throwaway copy of the
 repository, so no command touches the shared `.git` directory; its output is
@@ -114,15 +123,30 @@ state, repository layout, and per-commit sync rules) moves into the Pelorus
 section of `AGENTS.md`, so every vendor context receives it.
 
 The manifest declares `repository.default_branch: master`. It keeps declining
-`branch-ruleset`, `dev-container`, and `git-hooks`, and now declines
-`agent-hooks`. The engine can now render a `master` ruleset, but the rendered
-ruleset requires signed commits and a policy that the live repository does
-not enforce. Committing it would claim protection that `sync --remote` has not
-applied, so enabling it stays a separate, forge-mutating decision. The
-devcontainer still needs a tested Vulkan-capable image. Git hook installation
-mutates the Git directory that every linked worktree shares. Agent-hook
-registration would run `praetorctl` on every agent tool call, on machines that
-may not have it on `PATH`. No command runs `sync --remote`.
+`branch-ruleset`, `dev-container`, and `git-hooks`. The engine can now render a
+`master` ruleset, but the rendered ruleset requires signed commits and a
+policy that the live repository does not enforce. Committing it would claim
+protection that `sync --remote` has not applied, so enabling it stays a
+separate, forge-mutating decision. The devcontainer still needs a tested
+Vulkan-capable image. Git hook installation mutates the Git directory that
+every linked worktree shares. No command runs `sync --remote`.
+
+Pelorus adopts `agent-hooks`. The engine's `agent-hooks` step registers
+`praetorctl hook <client> pre-tool` in `.claude/settings.json` and
+`.codex/hooks.json` (matcher `Bash`, 15 s) and creates `.gemini/settings.json`
+(`BeforeTool`, `^run_shell_command$`, 15000 ms). The Claude and Codex rows join
+the existing `Bash` group, after Pelorus's own `block-unsafe-bash.sh`; every
+other Pelorus hook and permission stays as it was. Only the added row is
+committed, not the engine's re-indentation of the file; a later `adopt` run
+reports the row as already registered and leaves the files byte for byte.
+The hooks call the engine as `praetorctl` from `PATH`. The pinned
+`go install` builds `standardsctl`, so contributors who run an agent client
+here install a copy named `praetorctl`. Without it the shell exits 127 (bash)
+or 1 (`cmd`, PowerShell); Claude Code and Gemini CLI report that as a
+non-blocking error and run the command without the Praetor policy, and
+Pelorus's own `block-unsafe-bash` hook still runs. Codex documents only exit
+0 and 2, so its handling of a missing engine is unverified. The measured
+behaviour on Linux and Windows is in the research digest.
 
 ## Alternatives considered
 
@@ -130,19 +154,22 @@ may not have it on `PATH`. No command runs `sync --remote`.
 | --- | --- | --- | --- |
 | Stay on `846da590` | No new surface; no documentation churn | Audit fails on every run (issue 408); scanner misparses stay in the baseline; drifts further from VMAFx and upstream | Keeps a gate that can never pass |
 | Copy VMAFx's adoption verbatim | Small design effort; identical visible layout | Imports Go commands, VMAFx paths, an unrelated 1,411-finding baseline, and VMAFx personas | It would claim enforcement that Pelorus cannot execute |
-| Commit `adopt --force` output unchanged | Maximum generated coverage; no reconciliation | Replaces the Pelorus harness with a generic one, adds Go editor settings, registers agent hooks that call an engine contributors may lack | Generated output is a starting point, not proof of a valid repository contract |
+| Commit `adopt --force` output unchanged | Maximum generated coverage; no reconciliation | Replaces the Pelorus harness with a generic one, adds Go editor settings, re-indents the agent hook files | Generated output is a starting point, not proof of a valid repository contract |
+| Keep declining `agent-hooks` | No engine call on agent tool calls; no `praetorctl` prerequisite | Agents can pass `--no-verify`, disable Lefthook, or edit `.git/hooks` with nothing but review to stop them; diverges from the engine's default adoption | The maintainer chose enforcement; a missing engine degrades to a reported, non-blocking error in Claude Code and Gemini CLI |
 | Exclude legacy docs through `documentation.style_exclude` | No churn in 50 Markdown files | Removes most of the public documentation from the gate that the declared facet requires | A bypass of declared policy; the violations are mechanical to fix |
 | Accept `branch-ruleset` now that `master` is supported | Audit compares a real ruleset | Commits a signed-commit ruleset that the forge does not apply; misstates the live protection | Needs its own decision and a `sync --remote` run by the maintainer |
-| Clear all 75 findings during adoption | Starts with a zero-debt baseline | Mixes governance scaffolding with broad product-code refactoring | A baseline ratchet prevents regression without destabilizing filter work |
+| Clear all 76 findings during adoption | Starts with a zero-debt baseline | Mixes governance scaffolding with broad product-code refactoring | A baseline ratchet prevents regression without destabilizing filter work |
 
 ## Consequences
 
 - **Positive**: policy inputs and engine revision are reproducible; the hosted
   Standards job can pass; legacy debt may shrink, and the hosted job fails a
   baseline that grows against its target unless the increase carries a
-  recorded reason; the baseline no longer carries scanner misparses; six agent contexts and eight
-  reviewer personas have canonical sources; public Markdown is linted by a
-  locked rule set; `make verify-native` stays the Pelorus-native product gate.
+  recorded reason; the baseline no longer carries scanner misparses; six agent
+  contexts and eight reviewer personas have canonical sources; public Markdown
+  is linted by a locked rule set; agent shell commands that skip or remove Git
+  hooks are denied before they run; `make verify-native` stays the
+  Pelorus-native product gate.
 - **Negative**: the engine's managed assets add about 8,400 vendored lines
   under `tools/` that only `adopt` may refresh; `make verify-all` now needs
   Node.js 22+ as well as Go 1.27; the Markdown conformance pass edits 50
@@ -157,7 +184,11 @@ may not have it on `PATH`. No command runs `sync --remote`.
   `docs:seo-portal` site checks (JSON-LD, sitemap, `robots.txt`, Core Web
   Vitals). The audit does not check them, so they are declared only. For C,
   HISS-04 enforces only the 60-line cap; the engine measures cyclomatic,
-  cognitive, and statement complexity for Go alone.
+  cognitive, and statement complexity for Go alone. Agent users need
+  `praetorctl` on `PATH` in addition to `standardsctl`; until they install it,
+  every agent shell call shows a non-blocking hook error and runs without the
+  Praetor policy. The policy also denies `lefthook uninstall` to agents, so
+  removing installed Git hooks is a step a person runs.
 - **Neutral / follow-ups**: re-run the upgrade path on the next pin and compare
   the baseline per rule; decide on a branch ruleset together with
   `sync --remote`; design and test a Vulkan devcontainer separately; consider
@@ -196,4 +227,6 @@ may not have it on `PATH`. No command runs `sync --remote`.
   [380](https://github.com/cordanaLLM/praetor/issues/380), and
   [410](https://github.com/cordanaLLM/praetor/issues/410).
 - [ADR-0108](0108-deep-dive-deliverables-rule.md) — adoption deliverables.
-- Source: `req`, 2026-09-20: "we need to onboard praetor as vmafx did (mostly) already" and approval to proceed with the staged implementation; 2026-09-30: Praetor "moved", re-pin to `25451d88`.
+- Praetor `docs/guides/agent-hooks.md` at the pin — registration table,
+  verdicts, and the built-in command policy.
+- Source: `req`, 2026-09-20: "we need to onboard praetor as vmafx did (mostly) already" and approval to proceed with the staged implementation; 2026-09-30: Praetor "moved", re-pin to `25451d88`; 2026-09-30: maintainer decision to adopt the agent hooks (remove `agent-hooks` from `adoption.decline`) and accept this ADR.

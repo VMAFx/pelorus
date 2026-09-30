@@ -206,7 +206,7 @@ If Pelorus is useful to you: [GitHub Sponsors](https://github.com/sponsors/lusor
 ## Standards & Governance
 
 Pelorus adopts the Praetor/HISS policy at engine commit `25451d88` with a
-75-finding legacy baseline (31 HISS-01, one HISS-02, 41 HISS-04, two HISS-07).
+76-finding legacy baseline (31 HISS-01, one HISS-02, 42 HISS-04, two HISS-07).
 Canonical agent guidance lives in `AGENTS.md`; generated vendor contexts are
 checked for drift, and a locked Markdown gate lints the public documentation.
 The hosted Standards and Documentation Governance workflows run both on every
@@ -215,13 +215,16 @@ branch unless the increase carries a recorded reason. A local `make audit`
 stops at its final check until Praetor honours the declined `git-hooks` step;
 see [ADR-0145](docs/adr/0145-praetor-governance-adoption.md). The pinned
 install provides a binary named `standardsctl`; Praetor's generated text,
-including the block below, calls the same program `praetorctl`.
+including the block below, calls the same program `praetorctl`. Claude Code,
+Codex, and Gemini CLI sessions run Praetor's pre-tool command hook, so agent
+users also need a copy named `praetorctl` on `PATH`
+([CONTRIBUTING.md](CONTRIBUTING.md#governance-and-agent-contexts)).
 
 | Gate | Command | Description |
 | :--- | :--- | :--- |
 | **Native verification** | `make verify-native` | Builds, tests, formats, lints, and checks changelog rendering |
 | **Full verification** | `make verify-all` | Adds context, HISS, and documentation checks |
-| **HISS audit** | `make audit` | Applies the pinned 75-finding baseline ratchet |
+| **HISS audit** | `make audit` | Applies the pinned 76-finding baseline ratchet |
 | **Documentation** | `make docs-lint docs-figures` | Runs the locked Markdown and figure checks (Node.js 22 or newer) |
 | **Context sync** | `make compile-context` | Compiles canonical agent guidance to vendor targets |
 
@@ -245,9 +248,9 @@ generated agent context against `AGENTS.md`.
 private scratch-link policy.
 
 **Debt Baseline**: `.standards-baseline.json` anchors the debt ratchet at
-75 recorded infractions; audit forbids growth.
+76 recorded infractions; audit forbids growth.
 
-[praetor-hiss-badge]: https://img.shields.io/badge/Standards-HISS%20Adopted%20(75%20baselined)-yellow
+[praetor-hiss-badge]: https://img.shields.io/badge/Standards-HISS%20Adopted%20(76%20baselined)-yellow
 [praetor-hiss-agents]: https://github.com/VMAFx/pelorus/blob/HEAD/AGENTS.md
 [praetor-docs-badge]: https://github.com/VMAFx/pelorus/actions/workflows/praetor-docs.yml/badge.svg
 [praetor-docs-runs]: https://github.com/VMAFx/pelorus/actions/workflows/praetor-docs.yml
