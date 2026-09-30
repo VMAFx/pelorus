@@ -44,6 +44,31 @@ clang-format --dry-run -Werror libpelorus/**/*.{c,h}
 clang-tidy -p build libpelorus/src/*.c        # touched files clean
 ```
 
+## Dependency updates (Renovate)
+
+`renovate.json` drives two kinds of machine updates, and the build-config
+checker (`meson test -C build --suite=fast`, test `build-config-sync`) fails if
+either would leave a copied value behind:
+
+- **FFmpeg pin** — one regex manager updates `FFMPEG_TAG` and `FFMPEG_COMMIT`
+  in `build-config.env` together
+  ([ADR-0144](../adr/0144-ffmpeg-pin-and-ci-runner-policy.md)).
+- **actionlint Go toolchain** — the docs job's `actions/setup-go` step
+  (`go-version: '<major>.<minor>.x'`) is bumped by Renovate's built-in
+  github-actions handling as dependency `go` (datasource `github-releases`,
+  package `actions/go-versions`, `npm` versioning). The checker's own expectation,
+  `ACTIONLINT_GO_VERSION` in `scripts/check-build-config.py`, is covered by a
+  second regex manager with exactly those templates, so both edits share one
+  `renovate/go-<major>.x` branch and PR. The checker verifies that manager's
+  templates and that its `matchStrings` entry captures the literal exactly
+  once; a Renovate config that would split or drop the bump fails the fast
+  suite. The step name carries no version for the same reason.
+
+When bumping by hand, change the `go-version` in `.github/workflows/ci.yml` and
+`ACTIONLINT_GO_VERSION` together, then run
+`python3 scripts/check-build-config.py --self-test` and
+`go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12`.
+
 ## Release
 
 SemVer tags `v<major>.<minor>.<patch>`. The interop ABI is append-only from

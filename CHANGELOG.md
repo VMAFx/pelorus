@@ -23,6 +23,15 @@ All notable changes to Pelorus are documented here. The format is
   uses an SDK-neutral boolean assignment, preserving compilation with Ubuntu
   26.04's SVT-AV1 2.3 headers as well as newer SDKs
   ([ADR-0144](docs/adr/0144-ffmpeg-pin-and-ci-runner-policy.md)).
+- Moved the docs job's actionlint toolchain to Go 1.27 (`1.27.x`, via the
+  pinned `actions/setup-go`). The build-config checker now reads the expected
+  version from one `ACTIONLINT_GO_VERSION` literal, requires exactly one
+  `go-version` in the docs job, and validates that `renovate.json` carries a
+  regex manager that bumps that literal as the same `go` dependency
+  (`github-releases` of `actions/go-versions`, `npm` versioning) that Renovate's
+  `actions/setup-go` handling proposes, so future Go bumps land in one green
+  `renovate/go-<major>.x` PR instead of failing `build-config-sync`
+  ([ADR-0144](docs/adr/0144-ffmpeg-pin-and-ci-runner-policy.md)).
 
 ### Fixed
 

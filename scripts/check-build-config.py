@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import fnmatch
+import json
 import os
 import re
 import shlex
@@ -57,6 +59,24 @@ LIBPELORUS_FLOOR_INPUTS = tuple(
     for name in ("deband", "analyze", "denoise", "grain_estimate", "mc")
 )
 SETUP_GO_COMMIT = "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
+# The Go toolchain that runs actionlint in ci.yml's docs job. Renovate's
+# github-actions manager bumps the setup-go go-version input; the regex
+# customManager in renovate.json (validated below) rewrites this literal with
+# the same package identity, so both land in one renovate/go-<major>.x branch.
+ACTIONLINT_GO_VERSION = "1.27.x"
+ACTIONLINT_GO_STEP = "- name: Set up Go for actionlint"
+RENOVATE_CONFIG = ROOT / "renovate.json"
+CHECKER_RELATIVE = "scripts/check-build-config.py"
+# Mirrors Renovate's known-action config for actions/setup-go (datasource,
+# package, versioning, extractVersion), so the regex manager's dependency is
+# the same `go` update the github-actions manager proposes.
+GO_RENOVATE_TEMPLATES = {
+    "depNameTemplate": "go",
+    "packageNameTemplate": "actions/go-versions",
+    "datasourceTemplate": "github-releases",
+    "versioningTemplate": "npm",
+    "extractVersionTemplate": r"^(?<version>\d+\.\d+\.\d+)(-\d+)?$",
+}
 RELEASE_TAG = re.compile(r"(?<![A-Za-z0-9_])n\d+\.\d+\.\d+(?![A-Za-z0-9_])")
 FORMAT_PATCH_CONFIG = (
     "format.mboxrd=false",
@@ -1927,12 +1947,19 @@ def validate_workflow_text(relative: str, text: str) -> list[str]:
                 errors.append(f"{relative}: FFmpeg job is missing {token}")
         docs = jobs.get("docs", "")
         for token in (
+            ACTIONLINT_GO_STEP,
             f"actions/setup-go@{SETUP_GO_COMMIT}",
-            "go-version: '1.26.x'",
+            f"go-version: '{ACTIONLINT_GO_VERSION}'",
             "github.com/rhysd/actionlint/cmd/actionlint@v1.7.12",
         ):
             if token not in docs:
                 errors.append(f"{relative}: docs job is missing {token}")
+        go_versions = re.findall(r"go-version:\s*(\S+)", docs)
+        if go_versions != [f"'{ACTIONLINT_GO_VERSION}'"]:
+            errors.append(
+                f"{relative}: docs job must set exactly one go-version, "
+                f"'{ACTIONLINT_GO_VERSION}' (found {go_versions})"
+            )
     elif Path(relative).name == "release.yml":
         if "workflow_dispatch:" not in text:
             errors.append(f"{relative}: release gate needs workflow_dispatch")
@@ -2000,6 +2027,26 @@ def workflow_validator_regressions() -> list[str]:
             source.replace("libsvtav1enc-dev", "encoder-sdk-removed", 1),
             "FFmpeg job is missing libsvtav1enc-dev",
         ),
+        "stale actionlint Go toolchain": (
+            source.replace(
+                f"go-version: '{ACTIONLINT_GO_VERSION}'", "go-version: '1.0.x'", 1
+            ),
+            f"docs job is missing go-version: '{ACTIONLINT_GO_VERSION}'",
+        ),
+        "second Go toolchain in docs job": (
+            source.replace(
+                f"go-version: '{ACTIONLINT_GO_VERSION}'",
+                f"go-version: '{ACTIONLINT_GO_VERSION}'\n          go-version: '1.0.x'",
+                1,
+            ),
+            "docs job must set exactly one go-version",
+        ),
+        "versioned Go step name": (
+            source.replace(
+                ACTIONLINT_GO_STEP, "- name: Set up Go 1.0 for actionlint", 1
+            ),
+            f"docs job is missing {ACTIONLINT_GO_STEP}",
+        ),
     }
     relative = ci_path.relative_to(ROOT).as_posix()
     for name, (mutated, expected) in cases.items():
@@ -2009,6 +2056,155 @@ def workflow_validator_regressions() -> list[str]:
         errors = validate_workflow_text(relative, mutated)
         if not any(expected in error for error in errors):
             failures.append(f"workflow regression: {name} was accepted")
+    return failures
+
+
+def renovate_file_pattern_matches(pattern: object, relative: str) -> bool:
+    """Apply one Renovate managerFilePatterns entry (/regex/ or glob)."""
+    if not isinstance(pattern, str):
+        return False
+    if len(pattern) > 2 and pattern.startswith("/") and pattern.endswith("/"):
+        return re.search(pattern[1:-1], relative) is not None
+    return fnmatch.fnmatchcase(relative, pattern)
+
+
+def python_regex(renovate_regex: str) -> str:
+    """Translate JS/RE2 named groups `(?<name>` to Python's `(?P<name>`."""
+    return re.sub(r"\(\?<(?=[A-Za-z_])", "(?P<", renovate_regex)
+
+
+def validate_renovate_text(text: str, checker_source: str) -> list[str]:
+    """Require one regex manager that bumps ACTIONLINT_GO_VERSION as `go`."""
+    try:
+        config = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return [f"renovate.json: invalid JSON: {exc}"]
+    managers = config.get("customManagers") if isinstance(config, dict) else None
+    covering = [
+        manager
+        for manager in (managers if isinstance(managers, list) else [])
+        if isinstance(manager, dict)
+        and manager.get("customType") == "regex"
+        and isinstance(manager.get("managerFilePatterns"), list)
+        and any(
+            renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
+            for pattern in manager["managerFilePatterns"]
+        )
+    ]
+    if len(covering) != 1:
+        return [
+            f"renovate.json: expected exactly one regex customManager for "
+            f"{CHECKER_RELATIVE} (found {len(covering)})"
+        ]
+    manager = covering[0]
+    errors = [
+        f"renovate.json: {CHECKER_RELATIVE} manager needs {key} {value!r}"
+        for key, value in GO_RENOVATE_TEMPLATES.items()
+        if manager.get(key) != value
+    ]
+    literal = f'ACTIONLINT_GO_VERSION = "{ACTIONLINT_GO_VERSION}"'
+    match_strings = manager.get("matchStrings")
+    if not isinstance(match_strings, list) or len(match_strings) != 1:
+        errors.append(
+            f"renovate.json: {CHECKER_RELATIVE} manager needs one matchString"
+        )
+        return errors
+    try:
+        matches = list(re.finditer(python_regex(str(match_strings[0])), checker_source))
+    except re.error as exc:
+        return errors + [f"renovate.json: {CHECKER_RELATIVE} matchString: {exc}"]
+    if (
+        len(matches) != 1
+        or matches[0].group(0) != literal
+        or matches[0].groupdict().get("currentValue") != ACTIONLINT_GO_VERSION
+    ):
+        errors.append(
+            f"renovate.json: {CHECKER_RELATIVE} matchString must capture exactly "
+            f"{literal} as currentValue (found {len(matches)} matches)"
+        )
+    return errors
+
+
+def validate_renovate() -> list[str]:
+    """Validate the checked-in Renovate config against this checker."""
+    if not RENOVATE_CONFIG.is_file():
+        return ["renovate.json: missing"]
+    checker = Path(__file__).resolve()
+    return validate_renovate_text(
+        RENOVATE_CONFIG.read_text(encoding="utf-8"),
+        checker.read_text(encoding="utf-8"),
+    )
+
+
+def renovate_validator_regressions() -> list[str]:
+    """Prove a Renovate config that would split or drop the Go bump fails."""
+    failures: list[str] = []
+    source = RENOVATE_CONFIG.read_text(encoding="utf-8")
+    checker = Path(__file__).resolve().read_text(encoding="utf-8")
+    config = json.loads(source)
+
+    def without_checker_manager(value: dict) -> dict:
+        value["customManagers"] = [
+            manager
+            for manager in value["customManagers"]
+            if not any(
+                renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
+                for pattern in manager.get("managerFilePatterns", [])
+            )
+        ]
+        return value
+
+    def mutate_checker_manager(key: str, replacement: object):
+        def mutate(value: dict) -> dict:
+            for manager in value["customManagers"]:
+                if any(
+                    renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
+                    for pattern in manager.get("managerFilePatterns", [])
+                ):
+                    manager[key] = replacement
+            return value
+
+        return mutate
+
+    cases = {
+        "missing Go manager": (
+            without_checker_manager,
+            "expected exactly one regex customManager",
+        ),
+        "golang-version datasource": (
+            mutate_checker_manager("datasourceTemplate", "golang-version"),
+            "needs datasourceTemplate 'github-releases'",
+        ),
+        "different depName": (
+            mutate_checker_manager("depNameTemplate", "golang"),
+            "needs depNameTemplate 'go'",
+        ),
+        "semver versioning": (
+            mutate_checker_manager("versioningTemplate", "semver"),
+            "needs versioningTemplate 'npm'",
+        ),
+        "matchString misses literal": (
+            mutate_checker_manager(
+                "matchStrings", ['GO_VERSION = "(?<currentValue>\\d+\\.\\d+)"']
+            ),
+            "matchString must capture exactly",
+        ),
+    }
+    for name, (mutate, expected) in cases.items():
+        mutated = json.dumps(mutate(json.loads(json.dumps(config))))
+        if json.loads(mutated) == config:
+            failures.append(f"renovate regression: {name} mutation changed nothing")
+            continue
+        errors = validate_renovate_text(mutated, checker)
+        if not any(expected in error for error in errors):
+            failures.append(f"renovate regression: {name} was accepted")
+    stale = checker.replace(
+        f'ACTIONLINT_GO_VERSION = "{ACTIONLINT_GO_VERSION}"',
+        'ACTIONLINT_GO_VERSION = "go1.0"',
+        1,
+    )
+    if stale == checker or not validate_renovate_text(source, stale):
+        failures.append("renovate regression: unmatched checker literal was accepted")
     return failures
 
 
@@ -2053,6 +2249,7 @@ def main() -> int:
     values, parse_errors = parse_assignments(config_text)
     errors = validate_config(config_text)
     errors.extend(validate_consumers())
+    errors.extend(validate_renovate())
     if not parse_errors:
         errors.extend(validate_current_surfaces(values))
     if "--self-test" in sys.argv[1:]:
@@ -2071,6 +2268,7 @@ def main() -> int:
         errors.extend(git_smudge_cleanup_regression())
         errors.extend(git_format_config_regression())
         errors.extend(workflow_validator_regressions())
+        errors.extend(renovate_validator_regressions())
 
     if errors:
         print("\n".join(errors), file=sys.stderr)
