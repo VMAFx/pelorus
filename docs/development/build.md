@@ -36,6 +36,28 @@ verify that the qualified tag resolves to that commit, and work in an isolated
 run-owned Git worktree. The committed `*.patch` files are the artifact; edit
 the sources under `files/` and regenerate.
 
+### Native Windows (MSYS2 UCRT64)
+
+`build-and-run.sh` also runs from an MSYS2 UCRT64 shell. The packages it needs
+are the `mingw-w64-ucrt-x86_64-` builds of `gcc`, `meson`, `ninja`, `pkgconf`,
+`nasm`, `python`, `glslang`, `shaderc` (for `glslc`), `vulkan-headers` and
+`vulkan-loader`. Optional encoder consumers are enabled when their packages
+are installed: `libvpl` for QSV, `aom`, `svt-av1` and `ffnvcodec-headers`.
+Three things differ from Linux, and the script handles each of them:
+
+- FFmpeg's program target is `ffmpeg$(EXESUF)`, which is `ffmpeg.exe`. A
+  plain `make ffmpeg` has no rule on Windows.
+- libpelorus installs `bin/libpelorus-0.dll`. The script puts the private
+  prefix's `bin/` on `PATH`, because `LD_LIBRARY_PATH` does nothing on
+  Windows and both `ffmpeg.exe` and the static consumer import the DLL.
+- Native tools report MSYS paths in Windows form: `/tmp/x` becomes
+  `C:/msys64/tmp/x`. The script therefore compares the pkg-config prefix
+  against `cygpath -m` of the private prefix.
+
+To run an installed Windows build later, put the install prefix's `bin/` and
+`/ucrt64/bin` on `PATH`. Windows first searches the directory that holds the
+`.exe`, so an `ffmpeg.exe` installed next to `libpelorus-0.dll` also finds it.
+
 ## Local gate (run before pushing)
 
 ```bash

@@ -32,6 +32,22 @@ LOG_DIR=""
 OWNED_WORKTREE=""
 CALLER_WORKTREE=0
 
+# Native Windows (MSYS2 / Cygwin shells): FFmpeg's program targets carry EXESUF
+# (ffmpeg.exe), DLLs resolve through PATH instead of LD_LIBRARY_PATH, and
+# native tools such as meson and pkg-config report paths in Windows form.
+IS_WINDOWS=0
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=1 ;;
+esac
+
+native_path() {
+    if (( IS_WINDOWS )); then
+        cygpath -m "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
 canonicalize_existing_dir() {
     (cd -- "$1" 2>/dev/null && pwd -P)
 }
@@ -167,7 +183,13 @@ run_logged "install libpelorus" "$LOG_DIR/pelorus-install.log" \
 # first for pkg-config and the only non-system runtime library path.
 export PKG_CONFIG_PATH="$PRIVATE_PREFIX/lib/pkgconfig"
 export LD_LIBRARY_PATH="$PRIVATE_PREFIX/lib"
-if [[ "$(pkg-config --variable=prefix libpelorus)" != "$PRIVATE_PREFIX" ]]; then
+if (( IS_WINDOWS )); then
+    # libpelorus-0.dll is installed to bin/; ffmpeg.exe and the static
+    # consumer below both import it.
+    export PATH="$PRIVATE_PREFIX/bin:$PATH"
+fi
+if [[ "$(pkg-config --variable=prefix libpelorus)" != \
+    "$(native_path "$PRIVATE_PREFIX")" ]]; then
     echo "ERROR: pkg-config did not resolve private libpelorus" >&2
     exit 1
 fi
@@ -265,8 +287,12 @@ run_logged "apply 18-patch FFmpeg stack" "$LOG_DIR/ffmpeg-apply.log" \
     apply_stack
 run_logged "configure FFmpeg" "$LOG_DIR/ffmpeg-configure.log" \
     configure_ffmpeg
+# The program target is ffmpeg$(EXESUF): plain "ffmpeg" has no make rule on
+# Windows, where EXESUF is .exe.
+EXESUF="$(sed -n 's/^EXESUF=//p' "$WORKTREE/ffbuild/config.mak")"
+FFMPEG_BIN="$WORKTREE/ffmpeg$EXESUF"
 run_logged "link ffmpeg" "$LOG_DIR/ffmpeg-build.log" \
-    make -C "$WORKTREE" -j"$JOBS" ffmpeg
+    make -C "$WORKTREE" -j"$JOBS" "ffmpeg$EXESUF"
 run_logged "install static FFmpeg libraries" "$LOG_DIR/ffmpeg-install.log" \
     make -C "$WORKTREE" -j"$JOBS" install
 run_logged "link and run external static libavfilter consumer" \
@@ -286,7 +312,7 @@ FILTERS=(
 )
 
 echo "== verify Pelorus registrations =="
-if ! "$WORKTREE/ffmpeg" -hide_banner -filters \
+if ! "$FFMPEG_BIN" -hide_banner -filters \
     >"$LOG_DIR/ffmpeg-filters.log" 2>&1; then
     tail -80 "$LOG_DIR/ffmpeg-filters.log" >&2 || true
     exit 1
@@ -301,7 +327,7 @@ for filter in "${FILTERS[@]}"; do
     echo "registered filter: $filter"
 done
 
-if ! "$WORKTREE/ffmpeg" -hide_banner -bsfs \
+if ! "$FFMPEG_BIN" -hide_banner -bsfs \
     >"$LOG_DIR/ffmpeg-bsfs.log" 2>&1; then
     tail -80 "$LOG_DIR/ffmpeg-bsfs.log" >&2 || true
     exit 1
@@ -320,7 +346,7 @@ verify_encoder_options() {
     local help_log="$LOG_DIR/ffmpeg-encoder-${encoder}.log"
     shift
 
-    if ! "$WORKTREE/ffmpeg" -hide_banner -h "encoder=$encoder" \
+    if ! "$FFMPEG_BIN" -hide_banner -h "encoder=$encoder" \
         >"$help_log" 2>&1; then
         echo "ERROR: could not inspect encoder: $encoder" >&2
         tail -80 "$help_log" >&2 || true
