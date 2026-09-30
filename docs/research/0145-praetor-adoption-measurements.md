@@ -5,8 +5,10 @@ Evidence for
 [ADR-0145](../adr/0145-praetor-governance-adoption.md). The current
 measurements use Praetor commit `25451d888c8710822dd578907625dc69a0975142` on
 the merged tree: `origin/master` `f03badd` (the squashed n9.0.2 integration
-stack) plus this branch. They were taken on 2026-09-30. The first adoption at
-`846da5908d15b3cf5581ca6b0205cc644b249599` is kept below as history.
+stack) plus this branch. They were taken on 2026-09-30. The merge of
+`origin/master` `eb3b045`, the agent-hook adoption, and the last verification
+below ran later that day on the tree with `eb3b045` merged. The first adoption
+at `846da5908d15b3cf5581ca6b0205cc644b249599` is kept below as history.
 
 ## Declared policy
 
@@ -14,7 +16,7 @@ stack) plus this branch. They were taken on 2026-09-30. The first adoption at
 | --- | --- |
 | Profile | `native-gpu-systems` |
 | Facets | `security:high`, `api:public-contract`, `docs:seo-portal`, `agent:sandboxed` |
-| Declined surfaces | `agent-hooks`, `branch-ruleset`, `dev-container`, `git-hooks` |
+| Declined surfaces | `branch-ruleset`, `dev-container`, `git-hooks` (`agent-hooks` was declined at the re-pin and adopted afterwards; see [Agent-hook adoption](#agent-hook-adoption-2026-09-30)) |
 | Repository identity | `VMAFx/pelorus` |
 | Default branch | `master`, declared as `repository.default_branch` |
 | Engine | `25451d888c8710822dd578907625dc69a0975142`, Go module version `v0.0.0-20260929221210-25451d888c87` |
@@ -58,7 +60,7 @@ branch after this review:
 | regenerated `AGENTS.md` harness | Rejected: generic text that marks every invariant unenforced, including the audit-ratcheted ones, and drops Pelorus rules; `compile-context` renders only the register block. The engine is right about HISS-04 complexity, so the Pelorus harness now marks cyclomatic, cognitive, and statement limits as review-only |
 | `.config/labels.yaml` differs from the scaffold (-1/+49 lines) | Kept by `adopt`; replaced with the engine's 14-label taxonomy in the review fixes. The audit checks only that the file exists |
 | `.zed/settings.json`, `.vscode/settings.json` merges | Rejected: add Go language and unrelated editor settings (Praetor issue 202) |
-| `praetorctl hook <client> pre-tool` in Claude, Codex, Gemini settings | Declined (`agent-hooks`): runs an engine binary on every agent tool call |
+| `praetorctl hook <client> pre-tool` in Claude, Codex, Gemini settings | Declined at this step (`agent-hooks`); adopted later by maintainer decision, see [Agent-hook adoption](#agent-hook-adoption-2026-09-30) |
 
 The Paperclip harness failed the new internal-register lint on three strings
 (copula `is` twice, modal `must` once). They now use the engine's own current
@@ -218,6 +220,91 @@ The other review fixes:
   to `documentation.style_exclude`; inline suppressions, mostly MD013 line
   length, predate this change in many documents.
 
+### Merge of master eb3b045 (2026-09-30)
+
+Pull request 59 (Go 1.27.x for actionlint, squashed as `eb3b045`) extended
+`scripts/check-build-config.py` by 378 lines. After it was merged into this
+branch, the hosted ratchet failed: 76 findings against the recorded 75. The
+scanner reported one new finding, `renovate_validator_regressions` (HISS-04,
+100 lines), and ten findings of that file at new lines (all HISS-04:
+`consumer_validator_regressions`, `git_dirty_worktree_cleanup_regression`,
+`git_worktree_hook_regression`, `git_am_hook_regression`,
+`git_smudge_cleanup_regression`, `git_format_config_regression`,
+`validate_consumer_text`, `validate_replay_text`, `validate_qsv_replay_text`,
+and `validate_workflow_text`, which grew from 119 to 126 lines).
+
+`master` carries no Standards gate yet, so nothing stopped the new function
+there. The branch records the increase with the engine's documented exception
+in a throwaway copy, then refreshes the README managed block with a plain
+`adopt`:
+
+```bash
+standardsctl baseline --record --allow-increase \
+  --reason "Merge of origin/master eb3b045 (PR 59): renovate_validator_regressions ..."
+standardsctl adopt --lock-source-root=/s/praetor
+```
+
+The baseline now holds 76 findings (31 HISS-01, one HISS-02, 42 HISS-04, two
+HISS-07) and stores the reason as `increase_rationale`. The README block and
+badge moved from 75 to 76. With that, `CI=true standardsctl audit --base
+origin/master --touched-debt-delta-reason ...` and `baseline --verify` both
+passed; `origin/master` has no baseline, so the growth guard had nothing to
+compare.
+
+### Agent-hook adoption (2026-09-30)
+
+The re-pin kept `agent-hooks` declined. On 2026-09-30 the maintainer chose to
+adopt it instead. After `origin/master` `eb3b045` was merged into the branch,
+`agent-hooks` left `adoption.decline` and a plain `adopt` (no `--force`) ran in
+a throwaway copy inside `pelorus-ci:26.04`:
+
+```bash
+cp -a /w /tmp/t && cd /tmp/t && git add -A
+/s/bin/standardsctl adopt --lock-source-root=/s/praetor   # praetor checkout at 25451d88
+```
+
+It exited 0, created one file, and changed two; every other managed file was
+reported as already in sync:
+
+| Output | Decision |
+| --- | --- |
+| `.claude/settings.json`: `praetorctl hook claude pre-tool`, timeout 15, added to the existing `Bash` group after `block-unsafe-bash.sh` | Row accepted. The engine also re-indented the file and dropped the blank separator lines in `permissions.allow`; that part was not taken |
+| `.codex/hooks.json`: `praetorctl hook codex pre-tool`, timeout 15, added to the existing `Bash` group | Accepted as generated (the file was already in the engine's layout) |
+| `.gemini/settings.json` (new): `BeforeTool`, matcher `^run_shell_command$`, `praetorctl hook gemini pre-tool`, timeout 15000 | Accepted as generated |
+
+The engine copied the two changed files to
+`.workingdir/adopt-backups/<UTC stamp>/` in the throwaway copy; `/.workingdir/`
+is ignored. A second `adopt` on the tree with the hand-merged Claude row
+reported `Pre-tool interceptor already registered` for Claude and Codex and
+changed no tracked file, so the row survives later adoption runs without the
+re-indentation. The merge matched the engine's matcher rules: `Bash` selects
+the same tool as the registration's `^Bash$` for Claude Code and Codex.
+
+The hook was exercised with the exact command strings from the three files,
+the pinned engine installed as `praetorctl`, and hand-written payloads (allow:
+`ls`; deny: `git commit --no-verify -m x`):
+
+| Host and shell | Allow | Deny | Engine missing from `PATH` |
+| --- | --- | --- | --- |
+| Linux container, `sh -c`, Claude, Codex, and Gemini rows | exit 0, no output | exit 2, `[BLOCKED BY HISS] verification evasion prohibited; ...` | exit 127, `praetorctl: not found` |
+| Windows 11, Git Bash 5.3 `bash -c`, Claude row, payload `cwd` `C:\tmp\pel\s56` | exit 0, no output | exit 2, same message | exit 127 |
+| Windows 11, PowerShell 7.6 direct call | exit 0 | exit 2 | not measured |
+| Windows 11, `cmd /c` | exit 0 | exit 2 | exit 1 |
+| Windows 11, `powershell.exe -Command "<row>; exit $LASTEXITCODE"` | exit 0 | exit 2 | not measured |
+| Windows 11, `pwsh -Command "<row>"` (no exit propagation) | exit 0 | exit 1 | exit 1 |
+| Windows 11, Gemini row in Gemini CLI's PowerShell form (`<row>; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`) | exit 0 | exit 2 | not measured |
+
+A payload with a `cwd` outside any repository skipped with exit 0 and
+`praetor hook: no repository, skipped`. One call took under 0.1 s on the
+Windows host, far inside the 15 s budget. The last-but-one row is PowerShell's
+own rule: `-Command` reports 1 when its last native command fails, whatever
+its exit code. Claude Code's default Windows hook shell is Git Bash (its hooks
+reference lists `"bash"` as the default and PowerShell only as the fallback
+when Git Bash is missing); that fallback was not measured here. Gemini CLI
+propagates the exit code itself (`packages/core/src/hooks/hookRunner.ts`).
+Codex documents only exit 0 and 2, so how it treats 127 or 1 is unverified,
+as Praetor's own guide notes.
+
 ### Verification (2026-09-30)
 
 These commands ran in the `pelorus-ci:26.04` container (Ubuntu 26.04.1, GCC 15.2,
@@ -259,6 +346,18 @@ and `generate.sh` still reproduced the committed patches byte for byte. The
 hosted ratchet row above is from that head; the earlier heads ran the plain
 `CI=true standardsctl audit`. The documentation gate passed again in
 `node:24`.
+
+The agent-hook head `43dd07b` (with `eb3b045` merged) repeated every row in
+the same container, with the sanitizer runtime installed first. The results
+matched except for the counts: the fast suite and the ASan/UBSan suite passed
+27 of 27, `make verify-native` and every `check-build-config.py` mode exited
+0, and the hosted ratchet pair passed with 76 of 76 and 180 touched files
+clean. The local `audit` again failed only on the pre-commit hook check. The
+pinned n9.0.2 tag still peels to `946fcce0`, and `generate.sh` reproduced the
+committed patches byte for byte. The stack replay was not repeated: no patch,
+`libpelorus`, or build input changed. A plain `adopt` on that head changed no
+file and reported all three pre-tool rows as already registered. The
+documentation gate passed in `node:24`.
 
 ## First adoption at 846da590 (2026-09-20/21, history)
 

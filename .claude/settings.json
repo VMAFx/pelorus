@@ -65,7 +65,8 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": ".claude/hooks/block-unsafe-bash.sh" }
+          { "type": "command", "command": ".claude/hooks/block-unsafe-bash.sh" },
+          { "type": "command", "command": "praetorctl hook claude pre-tool", "timeout": 15 }
         ]
       }
     ],

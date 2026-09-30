@@ -21,12 +21,16 @@ make docs-lint docs-figures
 
 `make verify-all` runs all four. Docs gate needs Node 22+. Local `audit` fails
 on its last check while `git-hooks` stays declined: no `.git/hooks/pre-commit`
-(Praetor issue 175). CI skips that check. Never install hooks or fake a hook
-file to pass it; report local exit 1 with that cause.
+(Praetor issue 175). CI skips that check. Make stops at `audit`, before native
+and docs gates: run `make -k verify-all` so later gates still run. Never install
+hooks or fake a hook file to pass it; report local exit 1 with that cause.
 
 Engine binary: pinned `go install .../cmd/standardsctl@<pin>` installs
 `standardsctl`. `praetorctl`: same engine under its newer name; generated text
-uses it. Makefile takes either.
+uses it. Makefile takes either. Agent hooks call `praetorctl` by name: copy or
+rename pinned `standardsctl` to `praetorctl` on `PATH`. Missing binary: hook
+exits 127 (bash) or 1 (cmd, PowerShell); clients report non-blocking error and
+shell call runs without Praetor policy.
 
 ## Core Directives & Invariants (Modernized NASA JPL Power-of-10)
 
@@ -63,7 +67,7 @@ uses it. Makefile takes either.
    Canonical agent text must pass `standardsctl caveman check`.
 
 4. **Preserve useful evidence.** Keep long logs under ignored
-   `.workingdir2/evidence/`; report root causes with file and line pointers.
+   `.workingdir/evidence/`; report root causes with file and line pointers.
 
 5. **No evasion.** Never use `--no-verify`, disable Lefthook, or modify shared
    `.git/hooks` to bypass a gate. Hook installation is explicit.
@@ -166,12 +170,12 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 | `tools/pelorus_qp_report.c` | libpelorus CLI demonstrator; not installed |
 | `tools/markdownlint/`, `tools/figures/` | Praetor-managed docs gate; refresh via `adopt` only |
 | `scripts/` | ADR claim, bench, release, build-config + shader checks |
-| `Makefile`, `lefthook.yml` | native + governance entry points; hooks opt-in |
+| `Makefile`, `lefthook.yml` | native + governance entry points; Git hooks opt-in |
 | `.standards.yaml`, `.standards.lock`, `.standards-baseline.json`, `.config/` | Praetor policy, lock, catalog, labels, HISS baseline |
 | `.paperclip/` | Paperclip harness pair; string edit: re-pin `register.sources` from `standardsctl caveman check --configured-sources --root=.` |
 | `.agents/agents/` | canonical reviewer personas |
 | `.claude/agents/`, `.codex/agents/`, `.github/agents/`, `.gemini/agents/` | generated persona projections |
-| `.claude/skills/`, `.claude/hooks/`, `.codex/hooks/` | agent skills + hooks; see below |
+| `.claude/skills/`, `.claude/hooks/`, `.codex/hooks/`, `.gemini/settings.json` | agent skills + hooks; see below |
 | `.vscode/`, `.zed/`, `.idea/`, `.helix/`, `.fleet/`, `.nvim.lua`, `lua/`, `.dir-locals.el`, `standards.sublime-project` | reconciled editor settings |
 | `.github/workflows/` | `ci.yml` product jobs, `standards-gate.yml`, locked `praetor-docs.yml`, `release.yml` |
 
@@ -192,11 +196,12 @@ New top-level package: add row here. New module: scoped `AGENTS.md`.
 
 `.claude/skills/superpowers/`: vendored obra/superpowers process skills (verification-before-completion, systematic-debugging, test-driven-development, code review, git worktrees); template for new skills. Topic links: `docs/references.md`.
 
-Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex/hooks/` via `.codex/hooks.json`.
+Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex/hooks/` via `.codex/hooks.json`. Praetor pre-tool row (adopted `agent-hooks`, ADR-0145) in those two files plus `.gemini/settings.json`; `adopt` owns it, merge keeps Pelorus rows.
 
 | Event | Hook | Effect |
 | --- | --- | --- |
 | PreToolUse Bash | `block-unsafe-bash` | blocks `rm -rf /`, force-push to `master`, hard reset onto `origin/master`, `git clean -xf`, fork bombs |
+| PreToolUse Bash (Claude, Codex); BeforeTool `^run_shell_command$` (Gemini) | `praetorctl hook <client> pre-tool` | Praetor command policy, exit 2 = deny: hook-skip flags (`--no-verify`, commit `-n`), Lefthook disable, `core.hooksPath` writes, `.git/hooks` edits, `lefthook uninstall`; skips outside governed checkout; 15 s budget |
 | PostToolUse Edit/Write | `auto-format-on-edit` | clang-format on C/H |
 | PostToolUse Edit/Write | `shader-lockstep-warn` | guards single `.comp.glsl` source model |
 | PostToolUse Edit/Write | `docs-drift-warn` | ABI, surface, build-flag change: docs, ADR, changelog, patch reminder |
@@ -241,6 +246,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | AV1 grain ABI mirror | `libavutil/film_grain_params.h` |
 | vmafx control plane | `libvmaf_tune`, `/v1/score`, `vmaf-mcp` |
 | Praetor engine | `25451d888c8710822dd578907625dc69a0975142` from `.github/workflows/standards-gate.yml` |
+| Go for actionlint (`ci.yml` docs job) | `1.27.x`; change with `ACTIONLINT_GO_VERSION` in `scripts/check-build-config.py`; checker's Renovate manager keeps setup-go's `go` identity ([ADR-0151](docs/adr/0151-renovate-mirrors-checker-toolchain-pins.md)) |
 
 ## Delivery
 

@@ -7,6 +7,11 @@
           {
             "type": "command",
             "command": "\"$(git rev-parse --show-toplevel)/.codex/hooks/block-unsafe-bash.sh\""
+          },
+          {
+            "type": "command",
+            "command": "praetorctl hook codex pre-tool",
+            "timeout": 15
           }
         ]
       }

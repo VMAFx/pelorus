@@ -13,9 +13,10 @@ and follows the same engineering contract. Read [AGENTS.md](AGENTS.md) and
   refactor, docs, test, build, ci, chore, revert`. `!` / `BREAKING CHANGE:`
   for breaks. Branches: `type/<slug>`.
 - **Local gate before pushing.** Run `make verify-native`. If the pinned
-  Praetor engine is installed, also run `make verify-all`. Outside CI it stops
-  only at the final `.git/hooks/pre-commit` check
-  ([Praetor issue 175](https://github.com/cordanaLLM/praetor/issues/175));
+  Praetor engine is installed, also run `make -k verify-all`. Outside CI the
+  audit fails only its final `.git/hooks/pre-commit` check
+  ([Praetor issue 175](https://github.com/cordanaLLM/praetor/issues/175)), and
+  `-k` lets the native and documentation gates run after it;
   see [Governance and agent contexts](#governance-and-agent-contexts) below.
 - **Lint-clean touched files.** Every file your PR touches leaves the tree
   warning-clean to `-Wall -Wextra -Werror` and clang-tidy. A `// NOLINT` needs
@@ -70,6 +71,22 @@ installs a binary named `standardsctl`. Praetor's own text, including the
 generated README block, calls the same program `praetorctl`; the `Makefile`
 uses whichever of the two it finds first on `PATH`.
 
+The agent hooks call it by the name `praetorctl` only. If you run Claude Code,
+Codex, or Gemini CLI in this repository, put a copy under that name next to
+the installed binary:
+
+```bash
+cp "$(go env GOPATH)/bin/standardsctl" "$(go env GOPATH)/bin/praetorctl"   # Windows: standardsctl.exe to praetorctl.exe
+```
+
+`.claude/settings.json`, `.codex/hooks.json`, and `.gemini/settings.json` run
+`praetorctl hook <client> pre-tool` before every agent shell command. It blocks
+commands that would skip or remove Git hooks (such as `--no-verify`) and
+allows the rest. Without `praetorctl` on `PATH` the hook fails with a
+command-not-found error that Claude Code and Gemini CLI report without blocking,
+so agent commands then run without that policy. The development guide has the
+rule list, a smoke test, and the Windows notes.
+
 ```bash
 make compile-context          # regenerate vendor projections
 make compile-context-verify   # reject projection drift
@@ -78,11 +95,13 @@ make docs-lint docs-figures   # locked Markdown and figure checks
 make verify-all               # context + audit + native Pelorus gate + docs gate
 ```
 
-Outside CI, `make audit` (and therefore `make verify-all`) stops at its final
-check because no `.git/hooks/pre-commit` exists while the manifest declines
-`git-hooks`; the auditor ignores that decline
+Outside CI, `make audit` fails its final check because no
+`.git/hooks/pre-commit` exists while the manifest declines `git-hooks`; the
+auditor ignores that decline
 ([Praetor issue 175](https://github.com/cordanaLLM/praetor/issues/175)). Every
-earlier check must pass. The hosted Standards job sets `CI=true`, which makes
+earlier check must pass. `make verify-all` runs the audit before
+`verify-native` and the documentation gate, so plain `make` stops there; use
+`make -k verify-all` to run the remaining gates anyway. The hosted Standards job sets `CI=true`, which makes
 the auditor skip only that hook check. Do not create a placeholder hook file,
 weaken the manifest, or run remote sync to get past it.
 
@@ -94,8 +113,9 @@ development guide.
 
 `make hooks-install` stays opt-in: it installs the tracked Lefthook commands
 into the Git hooks directory that every linked worktree shares. Adoption and CI
-do not install hooks, register agent hooks, apply repository rulesets, or run
-remote Praetor sync. See the development guide for the full operational notes.
+do not install Git hooks, apply repository rulesets, or run remote Praetor
+sync. Adoption does register the agent pre-tool hook above in the tracked
+client settings. See the development guide for the full operational notes.
 
 ## ABI changes
 

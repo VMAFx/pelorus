@@ -59,15 +59,15 @@ locked `markdownlint-cli2` 0.23.2 dependency tree into a temporary directory.
 | --- | --- |
 | `make compile-context` | Regenerate cross-tool context and persona projections from their canonical sources |
 | `make compile-context-verify` | Fail if a generated projection has drifted |
-| `make audit` | Verify the pinned manifest/lock and enforce the 75-finding HISS baseline ratchet |
+| `make audit` | Verify the pinned manifest/lock and enforce the 76-finding HISS baseline ratchet |
 | `make docs-lint` | Lint public Markdown with the locked Praetor configuration and reject links into private scratch directories |
 | `make docs-figures` | Check figure specs and sources; skips with a reason while `docs/figures/` has none |
-| `make verify-all` | Run context verification, the audit, `verify-native`, then `docs-lint` and `docs-figures` |
+| `make verify-all` | Run context verification, the audit, `verify-native`, then `docs-lint` and `docs-figures`; outside CI use `make -k verify-all`, because the audit's known local failure (below) otherwise stops Make before `verify-native` |
 | `make hooks-install` | Install the tracked Lefthook commands into the shared Git hooks directory; see the note below |
 
-The baseline accepts 75 existing findings in the scanner's supported-file scope
+The baseline accepts 76 existing findings in the scanner's supported-file scope
 (C, headers, and Python): HISS-01=31 (`goto` cleanup jumps), HISS-02=1,
-HISS-04=41 (functions over 60 lines), and HISS-07=2 (`sys.exit` outside a
+HISS-04=42 (functions over 60 lines), and HISS-07=2 (`sys.exit` outside a
 `__main__` entry point). It is a non-regression ceiling, not a claim of zero
 debt or whole-tree source coverage. Fingerprints are keyed by file and line
 ([Praetor issue 29](https://github.com/cordanaLLM/praetor/issues/29)), so
@@ -186,24 +186,111 @@ here. The `.clang-tidy` function-size thresholds (75 lines, 120 statements, 20
 branches) are advisory and cover `libpelorus` only. Those limits are reviewer
 checks.
 
-### Git and agent hooks stay opt-in
+### Agent hooks are registered; Git hooks stay opt-in
 
-The manifest declines `git-hooks` and `agent-hooks`. Adoption therefore neither
-installs Lefthook into `.git/hooks` nor registers `praetorctl hook <client>
-pre-tool` in `.claude/settings.json`, `.codex/hooks.json`, or
-`.gemini/settings.json`. That registration would run an engine binary that a
-contributor may not have installed on every agent tool call.
+The manifest no longer declines `agent-hooks`
+([ADR-0145](../adr/0145-praetor-governance-adoption.md)). Adoption registers
+the engine's pre-tool interceptor in each agent client's tracked hook file,
+beside Pelorus's own hooks:
 
-`make hooks-install` remains available for explicit hook-integration testing.
-The tracked `lefthook.yml` binds pre-commit to `make compile-context-verify` and
-`make audit`, and pre-push to `make verify-all`, so an installed hook also needs
-Go, the pinned engine, and Node.js. Linked worktrees share the repository's Git
-hooks directory, so installing or removing hooks is repository-wide. Remove them
-with Lefthook's verified removal command:
+| File | Client event and matcher | Command | Timeout |
+| --- | --- | --- | --- |
+| `.claude/settings.json` | `PreToolUse`, `Bash` (the group that also runs `block-unsafe-bash.sh`) | `praetorctl hook claude pre-tool` | 15 s |
+| `.codex/hooks.json` | `PreToolUse`, `Bash` (same group as the Codex `block-unsafe-bash.sh`) | `praetorctl hook codex pre-tool` | 15 s |
+| `.gemini/settings.json` | `BeforeTool`, `^run_shell_command$` | `praetorctl hook gemini pre-tool` | 15000 ms |
+
+The hook reads the client's JSON payload on stdin, finds the repository from
+the payload's `cwd` (or its own working directory), and judges only the shell
+command. It denies with exit 2 and a `[BLOCKED BY HISS] ...` line on stderr
+when the command skips Git hooks (`--no-verify` and its abbreviations, `-n` on
+`git commit` or `git am`), disables Lefthook, sets `core.hooksPath`, writes
+into `.git/hooks`, or runs `lefthook uninstall`. Any other command passes with
+exit 0 and no output. Outside a checkout that holds `.standards.yaml` it skips
+with exit 0 and a reason on stderr. Praetor's `docs/guides/agent-hooks.md` at
+the pinned commit lists every rule. The hook judges agent tool calls only;
+commands you type in your own terminal never pass through it.
+
+Everyone who runs Claude Code, Codex, or Gemini CLI in this repository needs
+an executable named `praetorctl` on `PATH`. The pinned `go install` builds
+`standardsctl`, so copy it under the name the hooks call, then check it with a
+sample payload from the repository root:
+
+```bash
+go install github.com/cordanaLLM/praetor/cmd/standardsctl@25451d888c8710822dd578907625dc69a0975142
+cp "$(go env GOPATH)/bin/standardsctl" "$(go env GOPATH)/bin/praetorctl"   # Windows: standardsctl.exe to praetorctl.exe
+printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"hook_event_name":"PreToolUse"}' \
+  | praetorctl hook claude pre-tool; echo "exit=$?"                          # expect exit=0, no output
+```
+
+When `praetorctl` is missing, the shell answers 127 (bash) or 1 (`cmd` and
+PowerShell). Claude Code and Gemini CLI treat every exit other than 2 as a
+non-blocking error: they show it and run the command without the Praetor
+policy. Codex documents only exit 0 and exit 2, so its handling of 127 is
+unverified. Pelorus's own `block-unsafe-bash` hook runs either way. Install the
+engine before starting an agent session rather than relying on that fallback.
+
+On Windows, Claude Code runs hook commands through Git Bash, which the
+`.claude/hooks/*.sh` scripts need anyway; Gemini CLI runs them through
+PowerShell and appends `exit $LASTEXITCODE` itself. The exit codes above hold
+under Git Bash, `cmd /c`, a direct PowerShell call, and Gemini's PowerShell
+form ([research digest 0145](../research/0145-praetor-adoption-measurements.md)).
+A wrapper that ends with the hook as the last statement of
+`powershell -Command` without `exit $LASTEXITCODE` would turn a deny (2) into
+1, which the clients do not block on.
+
+Adoption owns the three registrations. It adds a missing row and leaves a file
+that already has one byte for byte as it is, so re-running the adoption command
+in the ADR is how to restore a row. Keep Pelorus's own hook entries where they
+are; the merge preserves them.
+
+The manifest still declines `git-hooks`, so adoption never installs Lefthook
+into `.git/hooks`. `make hooks-install` remains available for explicit
+hook-integration testing. The tracked `lefthook.yml` binds pre-commit to
+`make compile-context-verify` and `make audit`, and pre-push to
+`make verify-all`, so an installed hook also needs Go, the pinned engine, and
+Node.js. Linked worktrees share the repository's Git hooks directory, so
+installing or removing hooks is repository-wide. Remove them with Lefthook's
+verified removal command, typed in your own terminal (the agent hook denies it
+to agents):
 
 ```bash
 lefthook uninstall
 ```
+
+## Dependency updates (Renovate)
+
+`renovate.json` drives two kinds of machine updates, and the build-config
+checker (`meson test -C build --suite=fast`, test `build-config-sync`) fails if
+either would leave a copied value behind:
+
+- **FFmpeg pin** — one regex manager updates `FFMPEG_TAG` and `FFMPEG_COMMIT`
+  in `build-config.env` together
+  ([ADR-0144](../adr/0144-ffmpeg-pin-and-ci-runner-policy.md)).
+- **actionlint Go toolchain** — the docs job's `actions/setup-go` step
+  (`go-version: '<major>.<minor>.x'`) is bumped by Renovate's built-in
+  github-actions handling as dependency `go` (datasource `github-releases`,
+  package `actions/go-versions`, `npm` versioning). The checker's own expectation,
+  `ACTIONLINT_GO_VERSION` in `scripts/check-build-config.py`, is covered by a
+  second regex manager with exactly those templates, so both edits share one
+  `renovate/go-<major>.x` branch and PR. The checker verifies that manager's
+  templates and that its `matchStrings` entry captures the literal exactly
+  once; a Renovate config that would split or drop the bump fails the fast
+  suite. The step name carries no version for the same reason
+  ([ADR-0151](../adr/0151-renovate-mirrors-checker-toolchain-pins.md)).
+
+The checker decides which managers cover a file the way Renovate does, through
+`managerFilePatterns` (see
+[research digest 0151](../research/0151-renovate-setup-go-mirroring.md)). An
+entry is either a `/regex/` or `/regex/i`, optionally negated with `!`, or a
+minimatch glob with `dot` and `nocase`. Globs may use `*`, `?`, whole-segment
+`**`, `{a,b}` and a leading `!`. The checker reports any other glob syntax as an
+error rather than guess at it: character classes, extglobs, escapes, ranges,
+and braces that span `/`. Use a `/regex/` entry for anything more specific.
+
+When bumping by hand, change the `go-version` in `.github/workflows/ci.yml` and
+`ACTIONLINT_GO_VERSION` together, then run
+`python3 scripts/check-build-config.py --self-test` and
+`go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12`.
 
 ## Release
 

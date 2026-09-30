@@ -14,6 +14,21 @@
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\nFFMPEG_REMOTE=https://github\\.com/FFmpeg/FFmpeg\\.git\\nFFMPEG_TAG=(?<currentValue>n\\d+\\.\\d+\\.\\d+)\\nFFMPEG_COMMIT=(?<currentDigest>[0-9a-f]{40})"
       ],
       "versioningTemplate": "regex:^n(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Bump the build-config checker's actionlint Go toolchain in the same renovate/go-<major>.x branch as ci.yml's setup-go go-version (mirrors Renovate's actions/setup-go known-action config)",
+      "managerFilePatterns": [
+        "/^scripts/check-build-config\\.py$/"
+      ],
+      "matchStrings": [
+        "ACTIONLINT_GO_VERSION = \"(?<currentValue>\\d+\\.\\d+\\.x)\""
+      ],
+      "depNameTemplate": "go",
+      "packageNameTemplate": "actions/go-versions",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "npm",
+      "extractVersionTemplate": "^(?<version>\\d+\\.\\d+\\.\\d+)(-\\d+)?$"
     }
   ],
   "packageRules": [
