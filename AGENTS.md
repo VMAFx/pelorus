@@ -121,6 +121,7 @@ rebase-sensitive invariants.
 | FFmpeg Vulkan filter model | `libavfilter/vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c` |
 | AV1 film-grain struct mirrored by interop §(d) | `libavutil/film_grain_params.h` |
 | vmafx control plane (autotune) | `libvmaf_tune` filter, `vmafx-server` `/v1/score`, `vmaf-mcp` |
+| Go for actionlint (`ci.yml` docs job) | `1.27.x`. Change it together with `ACTIONLINT_GO_VERSION` in `scripts/check-build-config.py`. The checker's Renovate manager has to keep setup-go's `go` identity ([ADR-0151](docs/adr/0151-renovate-mirrors-checker-toolchain-pins.md)) |
 
 ## When in doubt
 
