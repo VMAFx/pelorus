@@ -4,3 +4,6 @@ paths:
   .github/workflows/**/*.{yml,yaml}:
     ignore:
       - 'label "ubuntu-26\.04" is unknown'
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
