@@ -49,10 +49,14 @@ Windows-specific behavior of the suite:
 
 - **`path-utf8`** asserts the Windows half of the UTF-8 path contract. It
   creates a directory + file named with Latin-1, CJK, and an astral emoji
-  through `_wfopen`, then reads them back through `pel_x265_csv_parse`'s UTF-8
-  path. It checks that ill-formed UTF-8 returns `PEL_ERR_INVALID` and that a
-  `\\?\` path past `MAX_PATH` opens. On POSIX the same test asserts the literal
-  `fopen` pass-through instead.
+  through `_wmkdir` and an exclusive `_wopen`, then reads them back through
+  `pel_x265_csv_parse`'s UTF-8 path. It checks that ill-formed UTF-8 returns
+  `PEL_ERR_INVALID` with `errno == EILSEQ`, that an over-long path returns
+  `PEL_ERR_ABSENT` with `errno == ENAMETOOLONG`, and that a `\\?\` path past
+  `MAX_PATH` opens. On POSIX the same test asserts the literal `fopen`
+  pass-through instead. The test avoids the C11 `"wx"` open mode, which the
+  legacy `msvcrt.dll` runtime rejects, so it also passes with a non-UCRT
+  MinGW-w64 GCC; UCRT64 remains the toolchain CI tests.
 - **Shader compile checks** discard their SPIR-V to `NUL`, not `/dev/null`: a
   MinGW `glslangValidator` would otherwise write a real `\dev\null` file.
 - **`build-config-sync`** runs `scripts/check-build-config.py` without

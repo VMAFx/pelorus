@@ -23,7 +23,7 @@
  * directory + file name round trip through the library, a missing file, and the
  * degenerate empty / over-long / NULL paths.
  *
- * Windows: the non-ASCII fixture is created with _wfopen from an independent
+ * Windows: the non-ASCII fixture is created with _wopen from an independent
  * UTF-16 spelling, so the round trip proves the library's UTF-8 -> UTF-16 open
  * without reusing it; ill-formed UTF-8 must be PEL_ERR_INVALID even when its
  * ANSI-code-page reading names an existing file; a \\?\ path past MAX_PATH opens.
@@ -37,6 +37,7 @@
 #include "pelorus/interop.h"
 #include "pelorus/pelorus.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,7 +47,10 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <direct.h>
+#include <fcntl.h>
+#include <io.h>
 #include <process.h>
+#include <sys/stat.h>
 #include <wchar.h>
 #include <windows.h>
 #else
@@ -84,7 +88,8 @@ static const char k_csv[] = "Encode Order, Type, POC, QP, Bits, Y PSNR, U PSNR, 
 
 #ifdef _WIN32
 typedef wchar_t pchar;
-#define P(s) L##s
+#define SEP_P L'/'
+#define PLAIN_P L"plain.csv"
 #define DIR_P L"d\u00edr_\u76ee\u5f55_\U0001F600"
 #define FILE_P L"qp_\u00e9_\u6587\u4ef6_\U0001F600.csv"
 static size_t plen(const pchar *s)
@@ -103,17 +108,33 @@ static int remove_file(const pchar *p)
 {
     return _wremove(p);
 }
+/* Exclusive create, never reusing a file. Through _wopen + _O_EXCL rather than
+ * the C11 "wx" fopen mode, which the legacy msvcrt.dll runtime (non-UCRT
+ * mingw-w64 toolchains) rejects with EINVAL. */
 static FILE *create_file(const pchar *p)
 {
-    return _wfopen(p, L"wx"); /* C11 exclusive create: never reuses a file */
+    const int fd = _wopen(p, _O_WRONLY | _O_CREAT | _O_EXCL | _O_TEXT, _S_IREAD | _S_IWRITE);
+    FILE *fp;
+
+    if (fd < 0) {
+        return NULL;
+    }
+    fp = _fdopen(fd, "w");
+    if (fp == NULL) {
+        (void)_close(fd);
+    }
+    return fp;
 }
 static long process_id(void)
 {
     return (long)_getpid();
 }
+/* The documented errno of the Windows length checks (docs/api/interop-abi.md). */
+#define ERRNO_TOO_LONG ENAMETOOLONG
 #else
 typedef char pchar;
-#define P(s) s
+#define SEP_P '/'
+#define PLAIN_P "plain.csv"
 #define DIR_P DIR_U8
 #define FILE_P FILE_U8
 static size_t plen(const pchar *s)
@@ -140,6 +161,8 @@ static long process_id(void)
 {
     return (long)getpid();
 }
+/* POSIX: errno is whatever fopen set, which the contract does not pin. */
+#define ERRNO_TOO_LONG 0
 #endif
 
 /* dst = a + sep + b in platform characters; -1 (dst untouched) if too long.
@@ -206,18 +229,25 @@ static int parse_fixture(const char *what, const char *path, PelorusX265Frame *f
     return 1;
 }
 
-/* The library must return want (and leave no rows) for path. */
-static void expect_rc(const char *what, const char *path, pel_result want)
+/* The library must return want and set out_count to 0 for path. A non-zero
+ * want_errno must also match errno: the Windows path checks document theirs
+ * (docs/api/interop-abi.md); a failed open's errno is the C library's (pass 0). */
+static void expect_rc(const char *what, const char *path, pel_result want, int want_errno)
 {
     PelorusX265Frame frames[FRAMES_CAP];
     size_t count = 99;
-    const pel_result rc = pel_x265_csv_parse(path, frames, FRAMES_CAP, &count);
+    pel_result rc;
+    int got_errno;
 
+    errno = 0;
+    rc = pel_x265_csv_parse(path, frames, FRAMES_CAP, &count);
+    got_errno = errno;
     CHECK(rc == want);
     CHECK(count == 0u);
-    if (rc != want) {
-        (void)fprintf(stderr, "  %s: got '%s', want '%s'\n", what, pel_result_str(rc),
-                      pel_result_str(want));
+    CHECK(want_errno == 0 || got_errno == want_errno);
+    if (rc != want || (want_errno != 0 && got_errno != want_errno)) {
+        (void)fprintf(stderr, "  %s: got '%s' errno %d, want '%s' errno %d\n", what,
+                      pel_result_str(rc), got_errno, pel_result_str(want), want_errno);
         return;
     }
     (void)printf("ok: %s -> %s\n", what, pel_result_str(rc));
@@ -252,9 +282,9 @@ typedef struct fixture_paths {
 /* Short-circuits: a later join never reads a buffer an earlier one left unset. */
 static int build_paths(fixture_paths *fx, const char *base_u8, const pchar *base_p)
 {
-    if (join_p(fx->plain_p, PATH_CAP, base_p, P('/'), P("plain.csv")) != 0 ||
-        join_p(fx->dir_p, PATH_CAP, base_p, P('/'), DIR_P) != 0 ||
-        join_p(fx->file_p, PATH_CAP, fx->dir_p, P('/'), FILE_P) != 0 ||
+    if (join_p(fx->plain_p, PATH_CAP, base_p, SEP_P, PLAIN_P) != 0 ||
+        join_p(fx->dir_p, PATH_CAP, base_p, SEP_P, DIR_P) != 0 ||
+        join_p(fx->file_p, PATH_CAP, fx->dir_p, SEP_P, FILE_P) != 0 ||
         join_u8(fx->plain_u8, PATH_CAP, base_u8, "plain.csv") != 0 ||
         join_u8(fx->dir_u8, PATH_CAP, base_u8, DIR_U8) != 0 ||
         join_u8(fx->file_u8, PATH_CAP, fx->dir_u8, FILE_U8) != 0 ||
@@ -306,8 +336,8 @@ static void test_round_trips(const char *base_u8, const pchar *base_p)
     if (have_ascii && have_utf8) {
         CHECK(same_rows(ascii_rows, utf8_rows, FIXTURE_ROWS));
     }
-    expect_rc("missing non-ASCII file", fx.miss_u8, PEL_ERR_ABSENT);
-    expect_rc("missing ASCII file", "pelorus_path_utf8_no_such_file.csv", PEL_ERR_ABSENT);
+    expect_rc("missing non-ASCII file", fx.miss_u8, PEL_ERR_ABSENT, 0);
+    expect_rc("missing ASCII file", "pelorus_path_utf8_no_such_file.csv", PEL_ERR_ABSENT, 0);
     report_narrow_open(fx.file_u8);
 
     CHECK(remove_file(fx.file_p) == 0);
@@ -322,20 +352,22 @@ static void test_degenerate_paths(void)
     const size_t long_units = 40000u; /* > 32767 UTF-16 units, < the byte bound */
     char *long_path = malloc(huge + 1u);
     PelorusX265Frame frames[FRAMES_CAP];
-    size_t count = 0;
+    size_t count = 99;
 
-    expect_rc("empty path", "", PEL_ERR_ABSENT);
+    expect_rc("empty path", "", PEL_ERR_ABSENT, 0);
+    /* Argument validation fails before out_count is written (documented). */
     CHECK(pel_x265_csv_parse(NULL, frames, FRAMES_CAP, &count) == PEL_ERR_INVALID);
+    CHECK(count == 99u);
     CHECK(long_path != NULL);
     if (long_path == NULL) {
         return;
     }
     (void)memset(long_path, 'a', long_units);
     long_path[long_units] = '\0';
-    expect_rc("40000-byte path", long_path, PEL_ERR_ABSENT);
+    expect_rc("40000-byte path", long_path, PEL_ERR_ABSENT, ERRNO_TOO_LONG);
     (void)memset(long_path, 0xff, huge); /* ill-formed AND over-long: length wins */
     long_path[huge] = '\0';
-    expect_rc("100000-byte ill-formed path", long_path, PEL_ERR_ABSENT);
+    expect_rc("100000-byte ill-formed path", long_path, PEL_ERR_ABSENT, ERRNO_TOO_LONG);
     free(long_path);
 }
 
@@ -361,12 +393,12 @@ static void test_ill_formed_utf8(const char *base_u8, const pchar *base_p)
 
     for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
         CHECK(join_u8(path_u8, PATH_CAP, base_u8, bad[i].name) == 0);
-        expect_rc(bad[i].why, path_u8, PEL_ERR_INVALID);
+        expect_rc(bad[i].why, path_u8, PEL_ERR_INVALID, EILSEQ);
     }
     CHECK(join_p(alias_p, PATH_CAP, base_p, L'/', L"alias_\u00ff.csv") == 0);
     CHECK(join_u8(path_u8, PATH_CAP, base_u8, "alias_\xff.csv") == 0);
     CHECK(write_fixture(alias_p) == 0);
-    expect_rc("ill-formed name whose ANSI reading exists", path_u8, PEL_ERR_INVALID);
+    expect_rc("ill-formed name whose ANSI reading exists", path_u8, PEL_ERR_INVALID, EILSEQ);
     CHECK(remove_file(alias_p) == 0);
 }
 
@@ -427,7 +459,7 @@ static void test_raw_byte_name(const char *base_u8)
     PelorusX265Frame frames[FRAMES_CAP];
 
     CHECK(join_u8(path, PATH_CAP, base_u8, "raw_\xff\xfe.csv") == 0);
-    expect_rc("missing non-UTF-8 byte name", path, PEL_ERR_ABSENT);
+    expect_rc("missing non-UTF-8 byte name", path, PEL_ERR_ABSENT, 0);
     if (write_fixture(path) != 0) {
         (void)printf("skip: this filesystem rejects non-UTF-8 byte names\n");
         return;
@@ -437,13 +469,14 @@ static void test_raw_byte_name(const char *base_u8)
 }
 #endif
 
-/* Private, exclusively created per-process directory in the working directory. */
-static int make_base(char *base_u8, pchar *base_p, size_t cap)
+/* Private, exclusively created per-process directory in the working directory.
+ * cap_u8 counts bytes, cap_p platform characters; the name must fit both. */
+static int make_base(char *base_u8, size_t cap_u8, pchar *base_p, size_t cap_p)
 {
-    const int n = snprintf(base_u8, cap, "pelorus_path_utf8_%ld", process_id());
+    const int n = snprintf(base_u8, cap_u8, "pelorus_path_utf8_%ld", process_id());
     size_t i;
 
-    if (n < 0 || (size_t)n >= cap) {
+    if (n < 0 || (size_t)n >= cap_u8 || (size_t)n >= cap_p) {
         return -1;
     }
     for (i = 0; i <= (size_t)n; i++) {
@@ -457,7 +490,7 @@ int main(void)
     char base_u8[64] = {0};
     pchar base_p[64] = {0};
 
-    if (make_base(base_u8, base_p, sizeof(base_u8)) != 0) {
+    if (make_base(base_u8, sizeof(base_u8), base_p, sizeof(base_p) / sizeof(base_p[0])) != 0) {
         (void)fprintf(stderr, "FAIL: cannot create the private fixture directory\n");
         return EXIT_FAILURE;
     }

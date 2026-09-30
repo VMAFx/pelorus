@@ -13,7 +13,7 @@ test('interop-abi', interop_test, suite: 'fast')
 
 # ADR-0149: every libpelorus path argument is UTF-8. Built and run on every
 # platform: on Windows it asserts the non-ASCII _wfopen round trip, ill-formed
-# UTF-8 -> PEL_ERR_INVALID and a \?\ path past MAX_PATH; on POSIX the literal
+# UTF-8 -> PEL_ERR_INVALID and a \\?\ path past MAX_PATH; on POSIX the literal
 # fopen pass-through (a non-UTF-8 byte name still opens). Kept apart from the
 # vmafx-shared conformance fixture above: vmafx mirrors interop_test.c only.
 path_utf8_test = executable(
