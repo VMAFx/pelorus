@@ -20,6 +20,8 @@ jobs:
     name: Standards & Invariant Verification Gate
     runs-on: ubuntu-26.04
     timeout-minutes: 15
+    env:
+      PRAETOR_REF: 25451d888c8710822dd578907625dc69a0975142
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -33,14 +35,16 @@ jobs:
           cache: false
 
       - name: Install pinned Praetor engine
-        env:
-          PRAETOR_REF: 846da5908d15b3cf5581ca6b0205cc644b249599
         run: |
           go install "github.com/cordanaLLM/praetor/cmd/standardsctl@${PRAETOR_REF}"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
+      # `standardsctl version` cannot name a module-mode build (Praetor #642);
+      # the module pseudo-version in Go's build info names the pinned commit.
       - name: Report governance engine version
-        run: standardsctl version
+        run: |
+          standardsctl version
+          go version -m "$(command -v standardsctl)" | grep -F "${PRAETOR_REF:0:12}"
 
       - name: Verify canonical agent contexts
         run: standardsctl compile-context --verify

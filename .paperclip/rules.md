@@ -3,10 +3,10 @@
 
 ## Operating Contract
 
-- Branch push is NOT shipping: open PR required; work ships only after merge.
+- Branch push != shipping. Open PR required. Work ships after merge.
 - Rebase onto master immediately: run git fetch origin && git rebase origin/master before proposing.
-- Rule 0 Terminal Disposition: every run must end with structured disposition (in_review or blocked).
-- Timeout Resilience: timeout is not failure; re-check open PRs before retrying to prevent duplicate PRs.
+- Rule 0 Terminal Disposition: every run ends with structured disposition: in_review or blocked.
+- Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.
 - Text register internal: `caveman` skill: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict.
 
 ## GitHub Push Protocol

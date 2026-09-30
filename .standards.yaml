@@ -2,6 +2,7 @@ version: 1
 repository:
   owner: VMAFx
   name: pelorus
+  default_branch: master
   visibility: public
   description: ""
   homepage: ""
@@ -15,6 +16,23 @@ facets:
   - agent:sandboxed
 adoption:
   decline:
+    - agent-hooks
     - branch-ruleset
     - dev-container
     - git-hooks
+register:
+  sources:
+    expected: 12
+    sha256:
+      sha256:0154a24538a6b7ba20cf164215c61830f3f5a34cde7b6471d6d27364d9bdabad
+    inputs:
+      - path: .paperclip/harness.json
+        surface: prompts
+        kind: message
+        format: json
+        selector: operating_contract.*
+      - path: .paperclip/harness.json
+        surface: prompts
+        kind: message
+        format: json
+        selector: invariants.*

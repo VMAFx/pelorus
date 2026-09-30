@@ -16,12 +16,13 @@ Before delivery:
 make verify-native
 standardsctl compile-context --verify
 standardsctl audit
+make docs-lint docs-figures
 ```
 
-`make verify-all` combines those commands. Pinned Praetor currently fails only
-after successful policy, baseline, context, and persona checks because audit
-ignores Pelorus's explicit `branch-ruleset` decline (Praetor issue 408). Never
-claim full-gate success or add a false ruleset artifact to bypass that defect.
+`make verify-all` runs all four. Docs gate needs Node 22+. Local `audit` fails
+on its last check while `git-hooks` stays declined: no `.git/hooks/pre-commit`
+(Praetor issue 175). CI skips that check. Never install hooks or fake a hook
+file to pass it; report local exit 1 with that cause.
 
 ## Core Directives & Invariants (Modernized NASA JPL Power-of-10)
 
@@ -77,7 +78,7 @@ Register follows the audience, then the task label of your brief (`register:` in
 | docs | docs/, README, ADR bodies | complete without bloat: newcomer path first, expert reference after; every claim points at a file, command or test; no restated code |
 | internal | briefs, agent-to-agent traffic, research fan-outs, workflow returns | `caveman` skill: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict |
 
-- Task rows: social = commit_message_synthesis, waiver_signoff; docs = architecture_synthesis, function_docstrings; every other label and any brief without one = internal.
+- Task rows: social = commit_message_synthesis, waiver_signoff; docs = architecture_synthesis, function_docstrings; every other label and any unlabeled text = internal. Subagent launch brief: `caveman` brief shape with `task:` = routing label.
 - Evidence above 58 lines or 1500 tokens leaves the message as a file under `.workingdir/evidence/`; return `evidence: <path> sha256:<12 hex> lines:<n>` and fetch it only when a decision needs it.
 - An internal return carries verdict, changed paths, commands run, evidence pointers and open questions, nothing else.
 <!-- praetor:register:end -->
@@ -159,6 +160,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 | compile contexts | `standardsctl compile-context` |
 | verify contexts | `standardsctl compile-context --verify` |
 | audit baseline | `standardsctl audit` |
+| docs gate (Node 22+) | `make docs-lint docs-figures` |
 | explicit hook install | `make hooks-install` |
 
 ## Reviewer routing
@@ -180,6 +182,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 | FFmpeg Vulkan models | `vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c`, `vf_scdet_vulkan.c` |
 | AV1 grain ABI mirror | `libavutil/film_grain_params.h` |
 | vmafx control plane | `libvmaf_tune`, `/v1/score`, `vmaf-mcp` |
+| Praetor engine | `25451d888c8710822dd578907625dc69a0975142` from `.github/workflows/standards-gate.yml` |
 
 ## Delivery
 
