@@ -287,7 +287,7 @@ static void row_to_frame(char **fields, size_t nf, const csv_cols *c, PelorusX26
 #define PEL_WPATH_UNITS_MAX 32768
 /* One UTF-16 code unit never needs more than 3 UTF-8 bytes (an astral scalar is
  * 4 bytes for 2 units), so a longer byte string cannot name a Windows file. */
-#define PEL_UTF8_PATH_BYTES_MAX (3u * (PEL_WPATH_UNITS_MAX - 1u))
+#define PEL_UTF8_PATH_BYTES_MAX ((size_t)3u * ((size_t)PEL_WPATH_UNITS_MAX - 1u))
 /* Longest CRT mode string accepted, terminator included ("r, ccs=UTF-16LE"). */
 #define PEL_WMODE_MAX 16u
 

@@ -219,13 +219,16 @@ static void free_argv(char **argv, int argc)
     for (i = 0; i < argc; i++) {
         free(argv[i]);
     }
-    free(argv);
+    free((void *)argv);
 }
 
 /* Windows hands main() its arguments in the ANSI code page, but libpelorus
  * paths are UTF-8 (ADR-0149): rebuild argv as UTF-8 from the UTF-16 command
  * line, so a non-ASCII CSV path reaches pel_x265_csv_parse intact. Returns NULL
- * on failure (including an argument with an unpaired surrogate). */
+ * on failure (including an argument with an unpaired surrogate).
+ * CommandLineToArgvW splits like the CRT except for "" inside a quoted argument
+ * and for argv[0]; no Windows path can contain '"', and argv[0] only names the
+ * program in the usage line. */
 static char **utf8_argv(int *argc)
 {
     int wargc = 0;
@@ -234,7 +237,7 @@ static char **utf8_argv(int *argc)
     int i;
 
     if (wargv != NULL && wargc > 0) {
-        argv = calloc((size_t)wargc + 1u, sizeof(*argv));
+        argv = (char **)calloc((size_t)wargc + 1u, sizeof(*argv));
     }
     for (i = 0; argv != NULL && i < wargc; i++) {
         const int n =
