@@ -120,7 +120,12 @@ The CSV path is UTF-8 on every platform
 through UTF-16 `_wfopen`, and the demonstrator re-reads its own arguments from
 the UTF-16 command line, so a non-ASCII path such as
 `pelorus_qp_report "D:\encodes\café_文件\x265.csv"` works regardless of the ANSI
-code page. Ill-formed UTF-8 returns `PEL_ERR_INVALID`.
+code page. Ill-formed UTF-8 returns `PEL_ERR_INVALID`. An argument that is not
+valid UTF-16 (an unpaired surrogate) has no UTF-8 form: the tool then prints
+`pelorus_qp_report: cannot read the command line as UTF-8` on stderr and exits
+non-zero before parsing anything. The tool's diagnostics echo the path as UTF-8
+bytes, so on a console whose code page is not 65001 (`chcp 65001`) a non-ASCII
+path looks garbled in an error line; the parse itself is unaffected.
 
 A 17-frame `testsrc2` run produced `avg_qp ≈ 32.21`, `total_bits = 104744`,
 `psnr_y/u/v ≈ 38.6/37.6/37.0 dB`, `honored_fraction = 0.1765` (measured — a flat

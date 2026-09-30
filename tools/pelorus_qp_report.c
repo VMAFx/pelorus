@@ -219,7 +219,7 @@ static void free_argv(char **argv, int argc)
     for (i = 0; i < argc; i++) {
         free(argv[i]);
     }
-    free((void *)argv);
+    free((void *)argv); /* explicit: bugprone-multi-level-implicit-pointer-conversion */
 }
 
 /* Windows hands main() its arguments in the ANSI code page, but libpelorus
