@@ -48,10 +48,10 @@ ADR: docs/adr/0116-pelorus-mc.md
  configure                               |   3 +
  libavfilter/Makefile                    |   1 +
  libavfilter/allfilters.c                |   1 +
- libavfilter/vf_pelorus_mc_vulkan.c      | 826 ++++++++++++++++++++
+ libavfilter/vf_pelorus_mc_vulkan.c      | 837 ++++++++++++++++++++
  libavfilter/vulkan/Makefile             |   1 +
- libavfilter/vulkan/pelorus_mc.comp.glsl | 229 ++++++
- 6 files changed, 1061 insertions(+)
+ libavfilter/vulkan/pelorus_mc.comp.glsl | 231 ++++++
+ 6 files changed, 1074 insertions(+)
 
 diff --git a/configure b/configure
 index 0571e96aa7a4f64c2eb951c9c842462225deb3ac..839033a423604cbfaf45a7fffd984bc587d44839 100755
@@ -100,10 +100,10 @@ index b6aee7e0bdb6c35c4e3c720b063be56cd22d8934..8ecaf738be23d70633dc7e84a35a3772
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_mc_vulkan.c b/libavfilter/vf_pelorus_mc_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..5442222608daec7b30f4a82545371bcc4e4c6dff
+index 0000000000000000000000000000000000000000..202f80dcb49f64f0b2a335792084e42cc7a1caaf
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_mc_vulkan.c
-@@ -0,0 +1,826 @@
+@@ -0,0 +1,837 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -258,11 +258,15 @@ index 0000000000000000000000000000000000000000..5442222608daec7b30f4a82545371bcc
 +    /* PEL_MC_BLOCK_DIM was const-folded into the generated GLSL before FFmpeg 9
 +     * (workgroup size + the shared SAD-partial array bound). With precompiled
 +     * SPIR-V the workgroup size rides the reserved 253/254/255 IDs and the array
-+     * bound becomes specialization constant 0. The subgroup extensions the SAD
-+     * reduction needs (GL_KHR_shader_subgroup_basic / _arithmetic) are declared
-+     * by the shader source itself now, not passed in here. */
-+    SPEC_LIST_CREATE(sl, 1, sizeof(uint32_t))
++     * bound becomes specialization constant 0. Constant 1 keeps the luma-only
++     * image accesses as runtime descriptor arrays in SPIR-V; literal index 0
++     * would collapse each array to one element while FFmpeg binds all planes.
++     * The subgroup extensions the SAD reduction needs
++     * (GL_KHR_shader_subgroup_basic / _arithmetic) are declared by the shader
++     * source itself now, not passed in here. */
++    SPEC_LIST_CREATE(sl, 2, 2 * sizeof(uint32_t))
 +    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)PEL_MC_BLOCK_DIM);
++    SPEC_LIST_ADD(sl, 1, 32, 0u);
 +
 +    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
 +                      (uint32_t[]){PEL_MC_BLOCK_DIM, PEL_MC_BLOCK_DIM, 1}, 0);
@@ -579,6 +583,10 @@ index 0000000000000000000000000000000000000000..5442222608daec7b30f4a82545371bcc
 +    AVBufferRef *mvx = NULL, *mvy = NULL, *sad = NULL;
 +    FFVkBuffer *mvx_vk, *mvy_vk, *sad_vk, *prev_vk;
 +    size_t idx_bytes = (size_t)nblocks * sizeof(int32_t);
++    /* ff_vk_exec_add_dep_frame() keys frame identity by data[0]. The first
++     * frame intentionally uses cur as its harmless ref stand-in, so enqueue,
++     * view, and transition that image only once. */
++    const int shared_image = cur->data[0] == ref->data[0];
 +
 +    *mvx_ref = *mvy_ref = *sad_ref = NULL;
 +
@@ -608,23 +616,26 @@ index 0000000000000000000000000000000000000000..5442222608daec7b30f4a82545371bcc
 +    RET(ff_vk_exec_add_dep_frame(vkctx, exec, cur, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
 +                                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
 +    RET(ff_vk_create_imageviews(vkctx, exec, cur_views, cur, FF_VK_REP_FLOAT));
-+    RET(ff_vk_exec_add_dep_frame(vkctx, exec, ref, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-+                                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
-+    RET(ff_vk_create_imageviews(vkctx, exec, ref_views, ref, FF_VK_REP_FLOAT));
++    if (!shared_image) {
++        RET(ff_vk_exec_add_dep_frame(vkctx, exec, ref, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                                     VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
++        RET(ff_vk_create_imageviews(vkctx, exec, ref_views, ref, FF_VK_REP_FLOAT));
++    }
 +
 +    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, cur, cur_views, 0, 0,
 +                                  VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
-+    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, ref, ref_views, 0, 1,
-+                                  VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
++    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, ref, shared_image ? cur_views : ref_views,
++                                  0, 1, VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
 +
 +    ff_vk_frame_barrier(vkctx, exec, cur, img_bar, &nb_img_bar,
 +                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
 +                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
 +                        VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED);
-+    ff_vk_frame_barrier(vkctx, exec, ref, img_bar, &nb_img_bar,
-+                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-+                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
-+                        VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED);
++    if (!shared_image)
++        ff_vk_frame_barrier(vkctx, exec, ref, img_bar, &nb_img_bar,
++                            VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
++                            VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED);
 +
 +    /* Flush the image barriers + make prev_mv (filled by the CPU on the previous
 +     * frame) visible to the shader read. The cur-frame output SSBOs are freshly
@@ -941,10 +952,10 @@ index 622fac07908a104a536fac3409af2d6c66111c59..113d7aa7cf599983aaa7a391919d014b
 +OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER) += vulkan/pelorus_mc.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_mc.comp.glsl b/libavfilter/vulkan/pelorus_mc.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..65035efc23f66eab75a03fa7af0481d9fbf0857a
+index 0000000000000000000000000000000000000000..6bf4047b1d16c96c25824488fa0e9e910164f15d
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_mc.comp.glsl
-@@ -0,0 +1,229 @@
+@@ -0,0 +1,231 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -998,6 +1009,8 @@ index 0000000000000000000000000000000000000000..65035efc23f66eab75a03fa7af0481d9
 + * edge is the `bsize` push constant (<= block_dim), which gates which lanes
 + * contribute, so one pipeline serves every bsize. */
 +layout (constant_id = 0) const uint block_dim = 32;
++/* Keep the luma-only bindings as runtime descriptor arrays in SPIR-V. */
++layout (constant_id = 1) const uint luma_plane = 0u;
 +
 +layout (push_constant, std430) uniform pushConstants {
 +    int   width;
@@ -1053,13 +1066,13 @@ index 0000000000000000000000000000000000000000..65035efc23f66eab75a03fa7af0481d9
 +float fetchCur(int px, int py) {
 +    px = clamp(px, 0, width  - 1);
 +    py = clamp(py, 0, height - 1);
-+    return pel_to_sample(imageLoad(cur_image[0], ivec2(px, py)).x);
++    return pel_to_sample(imageLoad(cur_image[luma_plane], ivec2(px, py)).x);
 +}
 +
 +float fetchRef(int px, int py) {
 +    px = clamp(px, 0, width  - 1);
 +    py = clamp(py, 0, height - 1);
-+    return pel_to_sample(imageLoad(ref_image[0], ivec2(px, py)).x);
++    return pel_to_sample(imageLoad(ref_image[luma_plane], ivec2(px, py)).x);
 +}
 +
 +float block_sad(int blk_x, int blk_y, int mvx, int mvy, uint lidx,

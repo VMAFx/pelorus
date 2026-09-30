@@ -79,26 +79,29 @@ fi
 
 pel_check_validation()
 {
-    local log="$1"
+    local log
     local vuid
 
     ((PEL_VALIDATION_ENABLED)) || return 0
-    while IFS= read -r vuid; do
-        [[ -n "$vuid" ]] || continue
-        case "$vuid" in
-            *vkCmdCopyBufferToImage-srcBuffer-00174 | \
-                *vkCmdCopyImageToBuffer-dstBuffer-00191 | \
-                *VkDescriptorSetLayoutBinding-descriptorType-00282 | \
-                *VkImageMemoryBarrier2-srcAccessMask-03909 | \
-                *VkImageMemoryBarrier2-srcAccessMask-07454)
-                echo "$vuid" >>"$PEL_OUTPUT_ROOT/validation-known-upstream.txt"
-                ;;
-            *)
-                echo "Unexpected validation diagnostic in $log: $vuid" >&2
-                return 1
-                ;;
-        esac
-    done < <(grep -Eo 'VUID-[[:alnum:]_.-]+' "$log" | sort -u || true)
+    for log in "$@"; do
+        while IFS= read -r vuid; do
+            [[ -n "$vuid" ]] || continue
+            case "$vuid" in
+                *vkCmdCopyBufferToImage-srcBuffer-00174 | \
+                    *vkCmdCopyImageToBuffer-dstBuffer-00191 | \
+                    *VkCopyImageToMemoryInfo-srcImageLayout-09064 | \
+                    *VkDescriptorSetLayoutBinding-descriptorType-00282 | \
+                    *VkImageMemoryBarrier2-srcAccessMask-03909 | \
+                    *VkImageMemoryBarrier2-srcAccessMask-07454)
+                    echo "$vuid" >>"$PEL_OUTPUT_ROOT/validation-known-upstream.txt"
+                    ;;
+                *)
+                    echo "Unexpected validation diagnostic in $log: $vuid" >&2
+                    return 1
+                    ;;
+            esac
+        done < <(grep -Eo 'VUID-[[:alnum:]_.-]+' "$log" | sort -u || true)
+    done
 }
 
 pel_run()
@@ -113,7 +116,8 @@ pel_run()
         sed -n '1,220p' "$stderr" >&2
         pel_fail "$label"
     fi
-    pel_check_validation "$stderr" || pel_fail "$label emitted a new Vulkan VUID"
+    pel_check_validation "$stdout" "$stderr" || \
+        pel_fail "$label emitted a new Vulkan VUID"
     echo "PASS: $label"
 }
 
@@ -162,7 +166,8 @@ if ! env "${PEL_VALIDATION_ENV[@]}" "$PEL_FFMPEG_BIN" \
     echo "SKIP: no usable Vulkan device; no matrix row executed" >&2
     exit 77
 fi
-pel_check_validation "$PEL_OUTPUT_ROOT/device-probe.stderr" || \
+pel_check_validation "$PEL_OUTPUT_ROOT/device-probe.stdout" \
+    "$PEL_OUTPUT_ROOT/device-probe.stderr" || \
     pel_fail "device probe emitted a new Vulkan VUID"
 
 {

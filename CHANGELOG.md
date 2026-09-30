@@ -24,7 +24,11 @@ All notable changes to Pelorus are documented here. The format is
   release jobs consume the shared pin deterministically. A manual release
   dispatch now runs a non-publishing rehearsal while only a `v*` tag push can
   publish; replay compiles every available encoder consumer and proves static
-  `libavfilter` pkg-config linkage from an external program
+  `libavfilter` pkg-config linkage from an external program. Patch replay also
+  supplies its own committer identity and disables signing so clean CI runners
+  do not depend on ambient Git configuration. The SVT-AV1 ROI consumer now
+  uses an SDK-neutral boolean assignment, preserving compilation with Ubuntu
+  26.04's SVT-AV1 2.3 headers as well as newer SDKs
   ([ADR-0144](docs/adr/0144-ffmpeg-pin-and-ci-runner-policy.md)).
 
 ### Fixed
@@ -36,6 +40,12 @@ All notable changes to Pelorus are documented here. The format is
   preserve both semi-planar chroma components and unowned packed lanes during
   scalar transforms, quantize shifted-format writes so P010/P012 padding bits
   remain zero, and bound grain-estimator reductions through DCI 8K
+  ([ADR-0147](docs/adr/0147-vulkan-sample-domain-and-components.md)).
+- Fixed the shipped analyzer and motion-compensation shaders to preserve their
+  runtime-sized per-plane descriptor arrays through optimization, and avoid a
+  duplicate dependency and image-layout transition when MC shares the current
+  and reference frame on its first dispatch. Vulkan validation now checks both
+  output streams, with a hermetic regression test for unexpected VUIDs
   ([ADR-0147](docs/adr/0147-vulkan-sample-domain-and-components.md)).
 
 <!-- END UNRELEASED -->

@@ -3,8 +3,10 @@
 
 Evidence for
 [ADR-0147](../adr/0147-vulkan-sample-domain-and-components.md), collected on
-2026-09-20 against FFmpeg n9.0.2 and the pre-fix Pelorus patch stack. The
-commands ran on an NVIDIA RTX 4090; source-level findings are vendor-neutral.
+2026-09-20 and 2026-09-21 against FFmpeg n9.0.2 and the pre-fix and corrected
+Pelorus patch stacks. Initial representation measurements ran on an NVIDIA RTX
+4090; the final validation sweep covered that device, Intel Arc A380, and AMD
+RADV. Source-level findings are vendor-neutral.
 
 ## Representation boundary
 
@@ -123,3 +125,46 @@ the comparison itself.
 Static compilation proves the C/GLSL layouts. The final evidence must also run
 the matrix on a Vulkan device because neither glslang nor translation-unit
 builds exercise image representation or stored components.
+
+## Validation-stream audit
+
+A 2026-09-21 audit found that the Khronos validation callback writes diagnostics
+to stdout on this host, while the hardware matrix inspected only each command's
+stderr. The retained NVIDIA row therefore contained the existing allowlisted
+VUIDs in its `.stdout` files, and the retained Intel row contained three
+non-allowlisted diagnostics that the gate had missed:
+
+- `VUID-vkCmdDispatch-imageLayout-00344`;
+- `VUID-VkCopyImageToMemoryInfo-srcImageLayout-09064`; and
+- `VUID-vkCmdDraw-None-09600`.
+
+After making the gate inspect both streams, the complete NVIDIA RTX 4090 and AMD
+RADV rows passed again with validation enabled. Minimal Intel Arc A380 runs
+without `hwdownload` then isolated `00344` to analyze and both `00344` and
+`09600` to MC, independent of the known host-copy path.
+
+The analyze and MC shaders indexed their unsized per-plane image arrays with a
+literal zero. `glslc -O` consequently emitted fixed one-element SPIR-V arrays,
+while the C descriptor layouts and push-descriptor updates retained every frame
+plane. Making the luma index an explicit specialization constant preserves
+`OpTypeRuntimeArray` for analyze's input and both MC image bindings. The fast
+storage-domain checker couples those shader constants to their C specialization
+entries and rejects a literal `[0]`; a deliberate analyzer regression failed the
+checker before the restored source passed it.
+
+MC had a second, independent first-frame defect. With no previous frame,
+`mc_dispatch()` received the current `AVVkFrame` as both current and reference.
+It added that same `data[0]` dependency twice and put two overlapping transitions
+for the same image in one barrier command. Reusing the current views for the
+stand-in reference and emitting one dependency and transition removed `09600`;
+a deduplication-only Arc probe still reported `00344` once for each fixed-array
+image binding, proving the causes separately. With both fixes, one-frame analyze,
+one-frame MC, and two-frame MC no-download probes emit no VUID.
+
+Unmodified FFmpeg `gblur_vulkan`, `avgblur_vulkan`, `scale_vulkan`, and
+`blackdetect_vulkan` pipelines reproduce `09064` on the same Intel device. The
+earlier red row was retained without adding an entry while attribution remained
+unresolved. After the stock-filter proof, the matrix records that exact
+host-copy diagnostic as known upstream; it does not allowlist `00344` or
+`09600`. The final validation-enabled Arc matrix passes every row, records only
+`09064`, and contains neither Pelorus VUID.

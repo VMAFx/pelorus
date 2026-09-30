@@ -152,11 +152,15 @@ static av_cold int init_filter(AVFilterContext *ctx)
     /* PEL_MC_BLOCK_DIM was const-folded into the generated GLSL before FFmpeg 9
      * (workgroup size + the shared SAD-partial array bound). With precompiled
      * SPIR-V the workgroup size rides the reserved 253/254/255 IDs and the array
-     * bound becomes specialization constant 0. The subgroup extensions the SAD
-     * reduction needs (GL_KHR_shader_subgroup_basic / _arithmetic) are declared
-     * by the shader source itself now, not passed in here. */
-    SPEC_LIST_CREATE(sl, 1, sizeof(uint32_t))
+     * bound becomes specialization constant 0. Constant 1 keeps the luma-only
+     * image accesses as runtime descriptor arrays in SPIR-V; literal index 0
+     * would collapse each array to one element while FFmpeg binds all planes.
+     * The subgroup extensions the SAD reduction needs
+     * (GL_KHR_shader_subgroup_basic / _arithmetic) are declared by the shader
+     * source itself now, not passed in here. */
+    SPEC_LIST_CREATE(sl, 2, 2 * sizeof(uint32_t))
     SPEC_LIST_ADD(sl, 0, 32, (uint32_t)PEL_MC_BLOCK_DIM);
+    SPEC_LIST_ADD(sl, 1, 32, 0u);
 
     ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
                       (uint32_t[]){PEL_MC_BLOCK_DIM, PEL_MC_BLOCK_DIM, 1}, 0);
@@ -473,6 +477,10 @@ static int mc_dispatch(PelorusMcVulkanContext *s, AVFrame *cur, AVFrame *ref, Pe
     AVBufferRef *mvx = NULL, *mvy = NULL, *sad = NULL;
     FFVkBuffer *mvx_vk, *mvy_vk, *sad_vk, *prev_vk;
     size_t idx_bytes = (size_t)nblocks * sizeof(int32_t);
+    /* ff_vk_exec_add_dep_frame() keys frame identity by data[0]. The first
+     * frame intentionally uses cur as its harmless ref stand-in, so enqueue,
+     * view, and transition that image only once. */
+    const int shared_image = cur->data[0] == ref->data[0];
 
     *mvx_ref = *mvy_ref = *sad_ref = NULL;
 
@@ -502,23 +510,26 @@ static int mc_dispatch(PelorusMcVulkanContext *s, AVFrame *cur, AVFrame *ref, Pe
     RET(ff_vk_exec_add_dep_frame(vkctx, exec, cur, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                                  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
     RET(ff_vk_create_imageviews(vkctx, exec, cur_views, cur, FF_VK_REP_FLOAT));
-    RET(ff_vk_exec_add_dep_frame(vkctx, exec, ref, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
-    RET(ff_vk_create_imageviews(vkctx, exec, ref_views, ref, FF_VK_REP_FLOAT));
+    if (!shared_image) {
+        RET(ff_vk_exec_add_dep_frame(vkctx, exec, ref, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                                     VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
+        RET(ff_vk_create_imageviews(vkctx, exec, ref_views, ref, FF_VK_REP_FLOAT));
+    }
 
     ff_vk_shader_update_img_array(vkctx, exec, &s->shd, cur, cur_views, 0, 0,
                                   VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
-    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, ref, ref_views, 0, 1,
-                                  VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
+    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, ref, shared_image ? cur_views : ref_views,
+                                  0, 1, VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
 
     ff_vk_frame_barrier(vkctx, exec, cur, img_bar, &nb_img_bar,
                         VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
                         VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED);
-    ff_vk_frame_barrier(vkctx, exec, ref, img_bar, &nb_img_bar,
-                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
-                        VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED);
+    if (!shared_image)
+        ff_vk_frame_barrier(vkctx, exec, ref, img_bar, &nb_img_bar,
+                            VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+                            VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED);
 
     /* Flush the image barriers + make prev_mv (filled by the CPU on the previous
      * frame) visible to the shader read. The cur-frame output SSBOs are freshly

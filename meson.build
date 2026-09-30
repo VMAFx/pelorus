@@ -53,6 +53,7 @@ endif
 # reads the wrong resource, which is corruption rather than a build failure. This is
 # that check, and it is cheap enough to live in the fast gate.
 python_prog = find_program('python3', required: true)
+bash_prog = find_program('bash', required: true)
 test('shader-binding-order',
      python_prog,
      args: [meson.project_source_root() / 'scripts' / 'check-shader-bindings.py'],
@@ -72,6 +73,13 @@ test('build-config-sync',
 test('vulkan-storage-domain',
      python_prog,
      args: [meson.project_source_root() / 'scripts' / 'check-vulkan-storage-domain.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
+test('vulkan-validation-streams',
+     bash_prog,
+     args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' /
+            'vulkan-format-matrix-validation-self-test.sh'],
      workdir: meson.project_source_root(),
      suite: 'fast')
 

@@ -23,6 +23,7 @@ QSV_REPLAY = ROOT / "ffmpeg-patches" / "test" / "qsv-roi-regression.sh"
 STATIC_AVFILTER_CONSUMER = (
     ROOT / "ffmpeg-patches" / "test" / "static-libavfilter-consumer.c"
 )
+SVTAV1_ROI_PATCH = ROOT / "ffmpeg-patches" / "files" / "svtav1-pelorus-roi.patch"
 LIBPELORUS_FILTERS = (
     "pelorus_analyze_vulkan",
     "pelorus_deband_vulkan",
@@ -500,8 +501,9 @@ def consumer_validator_regressions() -> list[str]:
             "consumer regression: cleanup trap installed after mkdir was accepted"
         )
     hookful_am = replay.replace(
-        'git -C "$WORKTREE" -c core.hooksPath=/dev/null \\\n' "            am --3way",
-        'git -C "$WORKTREE" \\\n            am --3way',
+        'git -C "$WORKTREE" -c core.hooksPath=/dev/null \\\n'
+        "            -c user.name=Pelorus-replay \\\n",
+        'git -C "$WORKTREE" \\\n' "            -c user.name=Pelorus-replay \\\n",
         1,
     )
     if hookful_am == replay:
@@ -511,6 +513,21 @@ def consumer_validator_regressions() -> list[str]:
         for error in validate_replay_text(hookful_am)
     ):
         failures.append("consumer regression: hookful git am was accepted")
+
+    missing_am_identity = replay.replace(
+        "            -c user.name=Pelorus-replay \\\n"
+        "            -c user.email=ffmpeg-replay@pelorus.invalid \\\n"
+        "            -c commit.gpgSign=false \\\n",
+        "",
+        1,
+    )
+    if missing_am_identity == replay:
+        failures.append("consumer regression: git-am identity mutation changed nothing")
+    elif not any(
+        "git am must provide a clean-runner committer identity" in error
+        for error in validate_replay_text(missing_am_identity)
+    ):
+        failures.append("consumer regression: identityless git am was accepted")
 
     missing_optional_sdk = replay.replace(
         "configure_extra+=(--enable-libsvtav1)",
@@ -608,6 +625,27 @@ def static_consumer_validator_regressions() -> list[str]:
         for error in validate_static_consumer_text(mutated)
     ):
         return ["static consumer regression: missing filter lookup was accepted"]
+    return []
+
+
+def validate_svtav1_roi_patch_text(source: str) -> list[str]:
+    """Keep the SVT-AV1 boolean assignment portable across supported SDKs."""
+    if "enable_roi_map = 1;" not in source or "enable_roi_map = true;" in source:
+        return [
+            "ffmpeg-patches/files/svtav1-pelorus-roi.patch: enable_roi_map must "
+            "use an SDK-neutral integer boolean"
+        ]
+    return []
+
+
+def svtav1_roi_patch_validator_regression() -> list[str]:
+    """Prove the Ubuntu 26.04 SVT-AV1 2.x boolean spelling is required."""
+    source = SVTAV1_ROI_PATCH.read_text(encoding="utf-8")
+    mutated = source.replace("enable_roi_map = 1;", "enable_roi_map = true;", 1)
+    if mutated == source:
+        return ["SVT-AV1 regression: boolean mutation changed nothing"]
+    if not validate_svtav1_roi_patch_text(mutated):
+        return ["SVT-AV1 regression: SDK-dependent true token was accepted"]
     return []
 
 
@@ -1108,6 +1146,10 @@ def git_am_hook_regression() -> list[str]:
                 str(ordinary),
                 "-c",
                 f"core.hooksPath={hooks}",
+                "-c",
+                "user.name=Pelorus test",
+                "-c",
+                "user.email=test@pelorus.invalid",
                 "am",
                 "--3way",
                 str(patch),
@@ -1137,6 +1179,10 @@ def git_am_hook_regression() -> list[str]:
                 str(hardened),
                 "-c",
                 "core.hooksPath=/dev/null",
+                "-c",
+                "user.name=Pelorus test",
+                "-c",
+                "user.email=test@pelorus.invalid",
                 "am",
                 "--3way",
                 str(patch),
@@ -1653,11 +1699,24 @@ def validate_replay_text(replay: str) -> list[str]:
                 f"{forbidden}"
             )
     if not re.search(
-        r'git\s+-C\s+"\$WORKTREE"\s+-c\s+core\.hooksPath=/dev/null\s+' r"am\s+--3way",
+        r'git\s+-C\s+"\$WORKTREE"\s+-c\s+core\.hooksPath=/dev/null'
+        r"[^\n]*\bam\s+--3way",
         shell_replay,
     ):
         errors.append(
             "ffmpeg-patches/test/build-and-run.sh: git am must disable Git hooks"
+        )
+    if not re.search(
+        r'git\s+-C\s+"\$WORKTREE"\s+-c\s+core\.hooksPath=/dev/null\s+'
+        r"-c\s+user\.name=Pelorus-replay\s+"
+        r"-c\s+user\.email=ffmpeg-replay@pelorus\.invalid\s+"
+        r"-c\s+commit\.gpgSign=false\s+am\s+--3way\s+"
+        r"--no-gpg-sign\s+--no-verify",
+        shell_replay,
+    ):
+        errors.append(
+            "ffmpeg-patches/test/build-and-run.sh: git am must provide a "
+            "clean-runner committer identity and disable signing"
         )
     if "configure_ffmpeg() (" not in replay or "exec ./configure" not in replay:
         errors.append(
@@ -1975,6 +2034,12 @@ def validate_consumers() -> list[str]:
                 STATIC_AVFILTER_CONSUMER.read_text(encoding="utf-8")
             )
         )
+    if not SVTAV1_ROI_PATCH.is_file():
+        errors.append("ffmpeg-patches/files/svtav1-pelorus-roi.patch: missing")
+    else:
+        errors.extend(
+            validate_svtav1_roi_patch_text(SVTAV1_ROI_PATCH.read_text(encoding="utf-8"))
+        )
     errors.extend(validate_workflows())
     return errors
 
@@ -1994,6 +2059,7 @@ def main() -> int:
         errors.extend(validator_regressions())
         errors.extend(consumer_validator_regressions())
         errors.extend(static_consumer_validator_regressions())
+        errors.extend(svtav1_roi_patch_validator_regression())
         errors.extend(qsv_validator_regressions())
         errors.extend(surface_validator_regressions())
         errors.extend(fixture_subprocess_regression())
