@@ -50,7 +50,7 @@ for the checker to read that value from its source instead of copying it.
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Mirroring regex manager, validated by the checker | One green Renovate PR per bump; a config drift fails the fast suite, not the next bump | A second place names the dependency; the checker has to model Renovate's file matching and the setup-go identity | **Chosen** |
 | Checker reads `go-version` from `ci.yml` instead of copying it | No second update site, no Renovate change | The checker would accept any value, including a hand edit Renovate would never propose; the pin loses its independent check | Weakens the drift check the checker exists for |
 | `packageRules` grouping only | Config-only | Grouping merges updates Renovate already found. The checker literal is not a dependency until a manager extracts it | Does not solve the failure |
