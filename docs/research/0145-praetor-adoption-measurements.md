@@ -1,4 +1,4 @@
-<!-- markdownlint-disable MD013 MD060 -->
+<!-- markdownlint-disable MD013 -->
 # Research digest 0145 — Praetor governance adoption
 
 Evidence for
@@ -11,7 +11,7 @@ stack) plus this branch. They were taken on 2026-09-30. The first adoption at
 ## Declared policy
 
 | Input | Value |
-|---|---|
+| --- | --- |
 | Profile | `native-gpu-systems` |
 | Facets | `security:high`, `api:public-contract`, `docs:seo-portal`, `agent:sandboxed` |
 | Declined surfaces | `agent-hooks`, `branch-ruleset`, `dev-container`, `git-hooks` |
@@ -48,14 +48,15 @@ steps or consumer-owned files that it kept. Its diff was applied to the
 branch after this review:
 
 | Output | Decision |
-|---|---|
+| --- | --- |
 | `.standards.lock`, `.config/archetypes/` | Accepted: re-pinned catalog |
 | `.standards-baseline.json` | Accepted after the per-rule comparison below |
 | `tools/markdownlint/`, `tools/figures/`, `.github/workflows/praetor-docs.yml`, `Makefile` and `.gitattributes` blocks | Accepted: the audit requires them byte for byte under `docs:seo-portal` |
 | `register.sources` in `.standards.yaml` | Accepted: the audit lints the 12 Paperclip strings it names |
 | managed `.gitignore` block, README governance block | Accepted |
 | `renovate.json` rule, actionlint runner label | Accepted |
-| regenerated `AGENTS.md` harness | Rejected: generic text that marks every invariant unenforced and drops Pelorus rules; `compile-context` renders only the register block |
+| regenerated `AGENTS.md` harness | Rejected: generic text that marks every invariant unenforced, including the audit-ratcheted ones, and drops Pelorus rules; `compile-context` renders only the register block. The engine is right about HISS-04 complexity, so the Pelorus harness now marks cyclomatic, cognitive, and statement limits as review-only |
+| `.config/labels.yaml` differs from the scaffold (-1/+49 lines) | Kept by `adopt`; replaced with the engine's 14-label taxonomy in the review fixes. The audit checks only that the file exists |
 | `.zed/settings.json`, `.vscode/settings.json` merges | Rejected: add Go language and unrelated editor settings (Praetor issue 202) |
 | `praetorctl hook <client> pre-tool` in Claude, Codex, Gemini settings | Declined (`agent-hooks`): runs an engine binary on every agent tool call |
 
@@ -66,7 +67,7 @@ wording, adapted to `master`.
 ### Baseline, per rule
 
 | Rule | 846da590 | 25451d88 | Change |
-|---|---:|---:|---|
+| --- | ---: | ---: | --- |
 | HISS-01 | 31 | 31 | Identical fingerprints (`goto` cleanup jumps) |
 | HISS-02 | 1 | 1 | Identical |
 | HISS-04 | 46 | 41 | Five scanner misparses gone; nine entries renamed |
@@ -95,10 +96,10 @@ change does not touch.
 
 The total fell, so recording needed no `--allow-increase` exception. Under the
 old baseline, the new engine reported exactly the two HISS-07 entries as new
-unbaselined findings, with zero in touched files. With the new baseline,
-`CI=true standardsctl audit --base origin/master` passes: 75 of 75, 177
-touched files clean, and no committed baseline on `master` for the growth
-guard to compare. Fingerprints are still keyed by line
+unbaselined findings, with zero in touched files. With the new baseline, the
+hosted job's two ratchet steps pass (see the review fixes below): 75 of 75,
+and no committed baseline on `master` for the growth guard to compare.
+Fingerprints are still keyed by line
 ([Praetor issue 29](https://github.com/cordanaLLM/praetor/issues/29)).
 
 ### Documentation gate
@@ -107,7 +108,7 @@ On the merged tree, the locked gate styled 100 public Markdown files and
 reported 507 diagnostics in 50 of them:
 
 | Rule | Count | Fix |
-|---|---:|---|
+| --- | ---: | --- |
 | MD060 table column style | 475 | Spaced delimiter rows (`\| --- \|`), autofix plus one manual table |
 | MD032 blanks around lists | 12 | Autofix; three were `+` continuation lines parsed as lists, rewrapped by hand |
 | MD040 fence language | 8 | `text` on diagrams and filter chains |
@@ -146,6 +147,77 @@ stamp and `version` prints `25451d888c87`; a `go install` build prints
 - The HISS-04 name misparse (`Function '{'`) reported during stacked review is
   fixed at the new pin; no issue was needed.
 
+### Review fixes (2026-09-30)
+
+Review of `7b5cdca` found that the hosted job ran `standardsctl audit`
+without `--base`. The engine then skips its HISS-13 growth guard
+(`auditBaselineGrowth` in `cmd/standardsctl/audit_ratchet.go` returns at once
+without a base ref) and compares the scan only with the pull request's own
+baseline. The job now runs two steps:
+
+1. `standardsctl audit --base <target> --touched-debt-delta-reason <reason>`,
+   where the target is `origin/<base branch>` for a pull request and the
+   replaced commit for a push;
+2. `standardsctl baseline --verify`.
+
+`--base` alone would revoke every baselined finding in a touched file, which
+is the deferred zero-debt mode. With the debt-delta reason, a touched file
+fails only when one of its rules gains a finding (per-file, per-rule counts in
+`internal/baseline/baseline.go`). That mode also accepts findings that only
+moved lines, so step 2 keeps the old requirement that the baseline records
+every finding at its current line.
+
+A probe ran each mode against synthetic commits in a throwaway copy of the
+branch (`pelorus-ci:26.04`, the pinned engine, `CI=true`; the target is the
+branch head with the review fixes):
+
+| Commit against the target | Old job: `audit` | Step 1 | Step 2 | Zero-debt: `audit --base` |
+| --- | --- | --- | --- | --- |
+| No change | pass | pass (75 -> 75) | pass | pass |
+| Comment line inserted above the three baselined HISS-04 findings in `libpelorus/src/interop.c`; baseline not re-recorded | fail: 3 new | pass | fail: 3 new | fail: 3 in touched file |
+| Same insertion; baseline re-recorded (75) | pass | pass | pass | fail: 3 in touched file |
+| New `goto` in that file; baseline unchanged | fail: 1 new | fail: 4 in touched file | fail: 1 new | fail |
+| New `goto`; baseline grown to 76 by hand; README block counts edited to match | **pass** | fail: HISS-13, 75 -> 76 | pass | fail |
+| New `goto`; baseline grown with `--allow-increase --reason`; README block counts edited | pass | pass, with a `[WARN]` that prints the reason | pass | fail |
+
+The fifth row is the gap the review reported: the old job accepts a grown
+baseline. Without the README edit, every mode fails a grown baseline, because
+the audit compares the managed README block with the baseline count. The
+sixth row is the engine's designed exception for a deliberate, reasoned
+increase.
+
+The other review fixes:
+
+- `AGENTS.md` regained the Claude Code guide content that `CLAUDE.md` carried
+  on `master` before it became a projection: the `gh repo set-default` rule,
+  project state, a layout-and-ownership map of every top-level entry, the
+  skills and hooks inventory, the dependency, logging, and no-new-top-level-doc
+  rules, and the per-commit sync rules. It compiles to 247-253 lines per
+  projection (budget 300) and passes the context lint at 953 prose words and
+  0.2 articles per 100.
+- The HISS-04 row and the Paperclip invariant now state the effective policy
+  (60 LOC ratcheted; cyclomatic 10, cognitive 12, statements 40 by review).
+  The engine measures complexity only for Go (`internal/hiss/go_ast.go` is the
+  only caller of `recordMeasurement`), and the pinned catalog sets cognitive
+  12 and statements 40 (`.config/archetypes/native-gpu-systems.yaml`).
+- The Paperclip string edit changed the `register.sources` digest. `adopt`
+  refused to re-bind it ("adoption never re-binds a contract to drift it did
+  not cause, --force included"), so the new digest came from
+  `standardsctl caveman check --configured-sources --root=.` on the staged
+  tree, as that error instructs. The count stays 12.
+- The `vulkan-shader-reviewer` and `ffmpeg-patch-reviewer` personas regained
+  the checks the caveman rewrite had dropped: push-constant ordering, reserved
+  words, `CmdFillBuffer` zeroing, `uint32` accumulator overflow, the
+  `vf_scdet_vulkan.c` cross-check, the `Use when` trigger, `git am --3way`
+  replay, `av_free`, `FILTER_SINGLE_PIXFMT`, `AVFILTER_FLAG_HWDEVICE`, and the
+  Makefile object wiring. The Codex `.toml` roles match.
+- `.config/labels.yaml` now carries the engine's 14-label taxonomy.
+- The two new 0145 documents no longer suppress MD060. The onboarding plan
+  keeps inline MD001, MD010, and MD032 suppressions: its `Makefile` snippets
+  need hard tabs, and it is a historical record. "No file is excluded" refers
+  to `documentation.style_exclude`; inline suppressions, mostly MD013 line
+  length, predate this change in many documents.
+
 ### Verification (2026-09-30)
 
 These commands ran in the `pelorus-ci:26.04` container (Ubuntu 26.04.1, GCC 15.2,
@@ -153,7 +225,7 @@ clang 21.1.8, Meson 1.10.1, Go 1.27.1, actionlint 1.7.12) on a clone of the
 committed branch head. The CI jobs' commands are mirrored.
 
 | Check | Result |
-|---|---|
+| --- | --- |
 | `meson setup build && ninja -C build`; fast suite | 27 of 27 pass |
 | clang-format over `libpelorus`; `clang-tidy -p build libpelorus/src/*.c` | exit 0 (pre-existing advisories only) |
 | ASan/UBSan fast suite (`sanitizers` job commands) | 27 of 27 pass, after installing the missing runtime (below) |

@@ -210,9 +210,12 @@ Pelorus adopts the Praetor/HISS policy at engine commit `25451d88` with a
 Canonical agent guidance lives in `AGENTS.md`; generated vendor contexts are
 checked for drift, and a locked Markdown gate lints the public documentation.
 The hosted Standards and Documentation Governance workflows run both on every
-pull request. A local `make audit` stops at its final check until Praetor
-honours the declined `git-hooks` step; see
-[ADR-0145](docs/adr/0145-praetor-governance-adoption.md).
+pull request; Standards also fails a baseline that grows against the target
+branch unless the increase carries a recorded reason. A local `make audit`
+stops at its final check until Praetor honours the declined `git-hooks` step;
+see [ADR-0145](docs/adr/0145-praetor-governance-adoption.md). The pinned
+install provides a binary named `standardsctl`; Praetor's generated text,
+including the block below, calls the same program `praetorctl`.
 
 | Gate | Command | Description |
 | :--- | :--- | :--- |

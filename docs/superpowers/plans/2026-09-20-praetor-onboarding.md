@@ -9,6 +9,8 @@
 
 **Tech Stack:** Praetor `846da5908d15b3cf5581ca6b0205cc644b249599`, Go 1.27, YAML/JSON, GNU Make, Lefthook, Meson/Ninja, Python 3, GitHub Actions.
 
+**Placeholders:** `$PRAETOR_BIN` is a `standardsctl` binary built at `846da590`; `$PRAETOR_SRC` is a Praetor checkout at the same commit.
+
 **Final acceptance refresh (2026-09-21):** The steps below record the original
 `6ccc730` adoption run and its 77-entry baseline. Before hosted acceptance, the
 integration base advanced to verified tip `3aa2f61`; the exact stacked merge
@@ -114,11 +116,11 @@ adoption:
 - [ ] **Step 2: Run the pinned dry-run and verify its measured debt**
 
 ```bash
-/home/kilian/.cache/praetor-bin/standardsctl-846da590 adopt \
+"$PRAETOR_BIN" adopt \
   --path "$stage/repo" \
   --profile native-gpu-systems \
   --facets security:high,api:public-contract,docs:seo-portal,agent:sandboxed \
-  --lock-source-root /home/kilian/.cache/praetor-846da590 \
+  --lock-source-root "$PRAETOR_SRC" \
   --dry-run
 ```
 
@@ -162,8 +164,8 @@ Expected: no diff. Do not copy or install the standalone clone's generated `.git
 - [ ] **Step 1: Demonstrate that unmodified generated context fails**
 
 ```bash
-/home/kilian/.cache/praetor-bin/standardsctl-846da590 caveman check AGENTS.md
-/home/kilian/.cache/praetor-bin/standardsctl-846da590 compile-context --verify
+"$PRAETOR_BIN" caveman check AGENTS.md
+"$PRAETOR_BIN" compile-context --verify
 ```
 
 Expected: FAIL on `AGENTS.md` article density, proving that generated preamble plus the prose guide is not an acceptable canonical source.
@@ -189,7 +191,7 @@ Retain generated `repo-auditor.md` and `repo-gatekeeper.md`. Correct the FFmpeg 
 
 - [ ] **Step 4: Preserve native Codex roles and make hooks relocatable**
 
-Keep the six `.codex/agents/*.toml` role definitions beside Praetor's Markdown projections. In `.codex/hooks.json`, replace every absolute `/home/kilian/dev/Pelorus` command with the documented git-root form:
+Keep the six `.codex/agents/*.toml` role definitions beside Praetor's Markdown projections. In `.codex/hooks.json`, replace every command that hard-codes an absolute checkout path with the documented git-root form:
 
 ```json
 "command": "\"$(git rev-parse --show-toplevel)/.codex/hooks/block-unsafe-bash.sh\""
@@ -200,9 +202,9 @@ Apply the same pattern to all hook commands, retain executable scripts, and do n
 - [ ] **Step 5: Compile and verify every projection**
 
 ```bash
-/home/kilian/.cache/praetor-bin/standardsctl-846da590 caveman check AGENTS.md
-/home/kilian/.cache/praetor-bin/standardsctl-846da590 compile-context
-/home/kilian/.cache/praetor-bin/standardsctl-846da590 compile-context --verify
+"$PRAETOR_BIN" caveman check AGENTS.md
+"$PRAETOR_BIN" compile-context
+"$PRAETOR_BIN" compile-context --verify
 ```
 
 Expected: all PASS; no hand-edited Markdown projection differs from its canonical source.
@@ -273,9 +275,9 @@ Use `compile-context --verify` and `audit` in serial pre-commit commands. Use `m
 - [ ] **Step 4: Verify native and governance gates**
 
 ```bash
-PRAETORCTL=/home/kilian/.cache/praetor-bin/standardsctl-846da590 make verify-native
-/home/kilian/.cache/praetor-bin/standardsctl-846da590 compile-context --verify
-/home/kilian/.cache/praetor-bin/standardsctl-846da590 audit
+PRAETORCTL="$PRAETOR_BIN" make verify-native
+"$PRAETOR_BIN" compile-context --verify
+"$PRAETOR_BIN" audit
 ```
 
 Expected: context verification, build, 22-or-more fast tests, formatting,
@@ -363,9 +365,9 @@ Cherry-pick the standalone commits into `chore/praetor-onboarding-20260920`. Re-
 - [ ] **Step 3: Run full final verification**
 
 ```bash
-PRAETORCTL=/home/kilian/.cache/praetor-bin/standardsctl-846da590 make verify-all
-/home/kilian/.cache/praetor-bin/standardsctl-846da590 compile-context --verify
-/home/kilian/.cache/praetor-bin/standardsctl-846da590 audit
+PRAETORCTL="$PRAETOR_BIN" make verify-all
+"$PRAETOR_BIN" compile-context --verify
+"$PRAETOR_BIN" audit
 git diff --check 6ccc73001dee07071b5dc8cda9ee2fcb9bfb4ac2..HEAD
 git status --short
 ```

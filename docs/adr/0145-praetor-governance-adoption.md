@@ -1,10 +1,15 @@
-<!-- markdownlint-disable MD013 MD060 -->
+<!-- markdownlint-disable MD013 -->
 # ADR-0145: Adopt Praetor as a governance ratchet
 
 - **Status**: Proposed
 - **Date**: 2026-09-20 (revised 2026-09-30 for the engine re-pin)
 - **Deciders**: lusoris
 - **Tags**: governance, agents, ci, hooks, documentation, standards
+
+This ADR stays Proposed while PR 56 is open. Its body was revised in place for
+the engine re-pin and the review fixes, which the index allows only before
+acceptance. It becomes Accepted when the maintainer merges the pull request,
+which includes accepting the new `agent-hooks` decline.
 
 ## Context
 
@@ -68,6 +73,18 @@ stay the canonical sources for generated vendor contexts and reviewer personas.
 documentation, and governance gates. CI verifies compiled contexts, the
 baseline, and the documentation gate on every pull request.
 
+The hosted audit compares each change with its target. It runs
+`standardsctl audit --base <target> --touched-debt-delta-reason <reason>`,
+then `standardsctl baseline --verify`. `--base` turns on the engine's HISS-13
+growth guard: the committed baseline may not record more findings than the
+target's, unless the increase was recorded with
+`baseline --record --allow-increase --reason`, which the job prints as a
+warning. The debt-delta reason keeps the touched-file rule from revoking a
+file's baselined findings; a touched file fails only when one of its rules
+gains a finding. `baseline --verify` then requires every current finding at its
+current line, so a stale fingerprint cannot reach `master`. Touched-file
+zero-debt mode stays deferred.
+
 The upgrade follows the engine's documented path. `adopt --force
 --lock-source-root=<praetor checkout at the pin>` runs in a throwaway copy of the
 repository, so no command touches the shared `.git` directory; its output is
@@ -86,7 +103,15 @@ then reconciled:
 - reword three Paperclip contract strings to the engine's own current wording
   so they pass the internal-register lint;
 - make the legacy Markdown conform to the locked rule set (mostly table
-  delimiter spacing), without excluding any file from the gate.
+  delimiter spacing), without excluding any file from the gate;
+- accept the engine's canonical `.config/labels.yaml` taxonomy (14 labels).
+  The audit only checks that the file exists, and nothing syncs it to the
+  forge until `sync --remote` runs.
+
+`CLAUDE.md` becomes a projection of `AGENTS.md`. Its former hand-written
+Claude Code guide (the forge default, skills and hooks inventory, project
+state, repository layout, and per-commit sync rules) moves into the Pelorus
+section of `AGENTS.md`, so every vendor context receives it.
 
 The manifest declares `repository.default_branch: master`. It keeps declining
 `branch-ruleset`, `dev-container`, and `git-hooks`, and now declines
@@ -102,7 +127,7 @@ may not have it on `PATH`. No command runs `sync --remote`.
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Stay on `846da590` | No new surface; no documentation churn | Audit fails on every run (issue 408); scanner misparses stay in the baseline; drifts further from VMAFx and upstream | Keeps a gate that can never pass |
 | Copy VMAFx's adoption verbatim | Small design effort; identical visible layout | Imports Go commands, VMAFx paths, an unrelated 1,411-finding baseline, and VMAFx personas | It would claim enforcement that Pelorus cannot execute |
 | Commit `adopt --force` output unchanged | Maximum generated coverage; no reconciliation | Replaces the Pelorus harness with a generic one, adds Go editor settings, registers agent hooks that call an engine contributors may lack | Generated output is a starting point, not proof of a valid repository contract |
@@ -113,8 +138,9 @@ may not have it on `PATH`. No command runs `sync --remote`.
 ## Consequences
 
 - **Positive**: policy inputs and engine revision are reproducible; the hosted
-  Standards job can pass; legacy debt may shrink but cannot grow, and the
-  baseline no longer carries scanner misparses; six agent contexts and eight
+  Standards job can pass; legacy debt may shrink, and the hosted job fails a
+  baseline that grows against its target unless the increase carries a
+  recorded reason; the baseline no longer carries scanner misparses; six agent contexts and eight
   reviewer personas have canonical sources; public Markdown is linted by a
   locked rule set; `make verify-native` stays the Pelorus-native product gate.
 - **Negative**: the engine's managed assets add about 8,400 vendored lines
@@ -123,12 +149,21 @@ may not have it on `PATH`. No command runs `sync --remote`.
   existing documents (formatting only). Local `make audit` and
   `make verify-all` exit 1 on the missing pre-commit hook until Praetor issue
   175 is fixed; CI skips that check. `standardsctl version` cannot prove the pin
-  (Praetor issue 642); CI prints Go's module version instead.
+  (Praetor issue 642); CI prints Go's module version instead. The declared
+  profile and facets carry controls that nothing in the repository executes:
+  SLSA 3 provenance, cosign signatures, and an SBOM; signed commits, two
+  approving reviews, and stale-review dismissal; the `semgrep`, `cppcheck`,
+  `clippy`, `gitleaks`, `trivy`, `buf`, and `spectral` linters; and the
+  `docs:seo-portal` site checks (JSON-LD, sitemap, `robots.txt`, Core Web
+  Vitals). The audit does not check them, so they are declared only. For C,
+  HISS-04 enforces only the 60-line cap; the engine measures cyclomatic,
+  cognitive, and statement complexity for Go alone.
 - **Neutral / follow-ups**: re-run the upgrade path on the next pin and compare
   the baseline per rule; decide on a branch ruleset together with
   `sync --remote`; design and test a Vulkan devcontainer separately; consider
-  touched-file enforcement over a pull request's range once legacy debt is low
-  enough for routine changes.
+  touched-file zero-debt mode once legacy debt is low enough for routine
+  changes; make `Standards` a required status check (a forge setting outside
+  this change); implement or drop each declared-only control listed above.
 
 ## References
 

@@ -66,20 +66,46 @@ The baseline accepts 75 existing findings in the scanner's supported-file scope
 (C, headers, and Python): HISS-01=31 (`goto` cleanup jumps), HISS-02=1,
 HISS-04=41 (functions over 60 lines), and HISS-07=2 (`sys.exit` outside a
 `__main__` entry point). It is a non-regression ceiling, not a claim of zero
-debt or whole-tree source coverage. Existing findings may shrink; a finding
-whose fingerprint is not in the baseline fails the audit, as does a total above
-75. Praetor's touched-file rule also fails any finding in a file with
-uncommitted changes. The hosted job audits a clean checkout without `--base`,
-so it applies only the fingerprint and count checks; touched-file enforcement
-over a pull request's range stays deferred by ADR-0145. Fingerprints are keyed
-by file and line
+debt or whole-tree source coverage. Fingerprints are keyed by file and line
 ([Praetor issue 29](https://github.com/cordanaLLM/praetor/issues/29)), so
 moving a legacy function can surface it as new.
+
+The local target and the hosted job apply that ceiling differently:
+
+| Where | Command | Fails when |
+| --- | --- | --- |
+| `make audit` | `standardsctl audit` | a finding's fingerprint is not in the baseline; the total exceeds the baseline; any finding, baselined or not, sits in a file with uncommitted changes (Praetor's touched-file rule) |
+| Hosted, step 1 | `standardsctl audit --base <target> --touched-debt-delta-reason <reason>` | the committed baseline records more findings than the baseline on the target (growth guard); a file the branch touches has more findings of some rule than the committed baseline records; a finding in an untouched file is not in the baseline; the total exceeds the baseline |
+| Hosted, step 2 | `standardsctl baseline --verify` | a current finding is not recorded at its current line; the total exceeds the baseline |
+
+The target is `origin/<base branch>` for a pull request and the replaced
+commit for a push to `master`. Without the debt-delta reason, `--base` would
+revoke every baselined finding in a touched file; that zero-debt mode stays
+deferred by ADR-0145. Step 1 accepts a touched file whose findings only moved
+lines, so step 2 makes the branch re-record the baseline for them. A stale
+fingerprint on `master` would otherwise fail the next pull request that does
+not touch that file.
+
+Existing findings may shrink. A deliberate increase recorded with
+`standardsctl baseline --record --allow-increase --reason=<why>` passes the
+growth guard with a `[WARN]` line that prints the reason, so the increase stays
+visible in the job log and in the baseline diff. Any change to the baseline
+total also changes the managed README block, which the audit compares with the
+baseline; refresh it with the adoption command in the ADR. To run the hosted
+steps locally:
+
+```bash
+CI=true standardsctl audit --base origin/master \
+  --touched-debt-delta-reason "local run of the hosted ratchet"
+standardsctl baseline --verify
+```
 
 Two hosted workflows run on every pull request. `Standards` installs Praetor at
 the commit in [ADR-0145](../adr/0145-praetor-governance-adoption.md), prints
 the module version Go recorded for it, verifies generated contexts, and runs
-the baseline audit. `Praetor Documentation Governance` is Praetor's locked
+the two ratchet steps above. `Standards` is not yet a required status check on
+`master`; branch protection requires the `core`, `ffmpeg-stack`, and `docs`
+jobs. `Praetor Documentation Governance` is Praetor's locked
 workflow for the `docs:seo-portal` facet: it runs the same Markdown and figure
 checks as `make docs-lint docs-figures`. `praetorctl audit` compares that
 workflow, `tools/markdownlint/`, `tools/figures/`, the documentation block in
@@ -124,7 +150,38 @@ generator does not yet honor every Pelorus branch, language, and policy choice
 (Praetor issue 321). The audit lints the harness's operating-contract and
 invariant strings in the internal (Caveman) register. `register.sources` in
 `.standards.yaml` records how many strings it read and their digest, so an
-edited string needs a matching manifest refresh through `adopt`.
+edited string also needs new pins. `adopt` refuses to re-bind that drift, even
+with `--force`. Stage the edit, run
+`standardsctl caveman check --configured-sources --root=.`, and copy the
+`actual` digest (and count, if it changed) that it reports into
+`register.sources`.
+
+### Declared policy that no gate runs
+
+The profile and facets in `.standards.yaml` declare more controls than Pelorus
+executes. The audit verifies the lock, the baseline, generated surfaces, and the
+documentation gate. It does not check the controls below, and no workflow
+implements them; they are declared only
+([ADR-0145](../adr/0145-praetor-governance-adoption.md)).
+
+| Declared by | Control | Current state |
+| --- | --- | --- |
+| `native-gpu-systems`, `security:high` | SLSA level 3 provenance, keyless cosign signatures, SBOM | Not produced; the release workflow publishes the patch archive without them |
+| `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, two approving reviews, stale-review dismissal | Not enforced; `master` protection requires linear history and three CI checks, no signatures and no reviews |
+| `native-gpu-systems` | `semgrep`, `cppcheck`, `clippy` | Not run; Pelorus has no Rust for `clippy` |
+| `security:high` | `gitleaks`, `trivy` | Not run; `.gitleaks.toml` only configures a manual `gitleaks` run |
+| `api:public-contract` | `buf`, `spectral`, OpenAPI drift, `Migration:` footer check | Not run; Pelorus has no protobuf or OpenAPI surface. The append-only C ABI is guarded by the interop conformance fixture and review |
+| `docs:seo-portal` | Schema.org JSON-LD, sitemap, `robots.txt`, Core Web Vitals | Not applicable; Pelorus builds no documentation site. The facet's locked Markdown and figure gate does run |
+| `native-gpu-systems` | No per-frame dynamic allocation | HISS-03, by C review only |
+
+The declared linters that do run are `clang-tidy` (the `core` job and
+`make verify-native`) and `markdownlint` (the documentation gate). HISS-04
+complexity is split the same way. For C the audit ratchets only the 60-line
+function cap. Its cyclomatic, cognitive, and statement measurement covers Go
+sources only, so the effective limits of 10, 12, and 40 are not machine-checked
+here. The `.clang-tidy` function-size thresholds (75 lines, 120 statements, 20
+branches) are advisory and cover `libpelorus` only. Those limits are reviewer
+checks.
 
 ### Git and agent hooks stay opt-in
 

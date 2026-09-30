@@ -13,9 +13,10 @@ and follows the same engineering contract. Read [AGENTS.md](AGENTS.md) and
   refactor, docs, test, build, ci, chore, revert`. `!` / `BREAKING CHANGE:`
   for breaks. Branches: `type/<slug>`.
 - **Local gate before pushing.** Run `make verify-native`. If the pinned
-  Praetor engine is installed, also run `make verify-all`; the full gate
-  currently reports the accepted `branch-ruleset` decline as an upstream audit
-  failure tracked by [ADR-0145](docs/adr/0145-praetor-governance-adoption.md).
+  Praetor engine is installed, also run `make verify-all`. Outside CI it stops
+  only at the final `.git/hooks/pre-commit` check
+  ([Praetor issue 175](https://github.com/cordanaLLM/praetor/issues/175));
+  see [Governance and agent contexts](#governance-and-agent-contexts) below.
 - **Lint-clean touched files.** Every file your PR touches leaves the tree
   warning-clean to `-Wall -Wextra -Werror` and clang-tidy. A `// NOLINT` needs
   an inline citation (ADR / research digest / load-bearing invariant).
@@ -64,7 +65,10 @@ go version -m "$(command -v standardsctl)" | grep -F 25451d888c87
 `standardsctl version` prints `unknown (untagged build, no VCS stamp)` for a
 `go install` build even at the right commit
 ([Praetor issue 642](https://github.com/cordanaLLM/praetor/issues/642)); the
-module pseudo-version that `go version -m` prints names the commit.
+module pseudo-version that `go version -m` prints names the commit. The pin
+installs a binary named `standardsctl`. Praetor's own text, including the
+generated README block, calls the same program `praetorctl`; the `Makefile`
+uses whichever of the two it finds first on `PATH`.
 
 ```bash
 make compile-context          # regenerate vendor projections
@@ -81,6 +85,12 @@ check because no `.git/hooks/pre-commit` exists while the manifest declines
 earlier check must pass. The hosted Standards job sets `CI=true`, which makes
 the auditor skip only that hook check. Do not create a placeholder hook file,
 weaken the manifest, or run remote sync to get past it.
+
+The hosted job also compares your branch with its target. The recorded
+baseline total may not grow unless the increase carries a recorded reason, and
+the baseline must record every current finding at its current line. The exact
+commands, their local equivalents, and what each one allows are in the
+development guide.
 
 `make hooks-install` stays opt-in: it installs the tracked Lefthook commands
 into the Git hooks directory that every linked worktree shares. Adoption and CI
