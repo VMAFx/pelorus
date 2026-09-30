@@ -1,8 +1,6 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # Pelorus
 
-[![HISS Adopted](https://img.shields.io/badge/Standards-HISS%20Adopted%20(78%20baselined)-yellow)](AGENTS.md)
-
 [![CI](https://github.com/vmafx/pelorus/actions/workflows/ci.yml/badge.svg)](https://github.com/vmafx/pelorus/actions)
 [![License: BSD-2-Clause-Patent](https://img.shields.io/badge/License-BSD--2--Clause--Patent-blue.svg)](LICENSE)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/vmafx/pelorus/badge)](https://securityscorecards.dev/viewer/?uri=github.com/vmafx/pelorus)
@@ -207,16 +205,47 @@ If Pelorus is useful to you: [GitHub Sponsors](https://github.com/sponsors/lusor
 
 ## Standards & Governance
 
-Pelorus has adopted the pinned Praetor/HISS policy and a 78-finding legacy
-baseline. Canonical agent guidance lives in `AGENTS.md`; generated vendor
-contexts are checked for drift. The native Pelorus gate passes locally. Full
-Praetor audit acceptance remains pending because the pinned auditor requires an
-explicitly declined branch-ruleset artifact; see
+Pelorus adopts the Praetor/HISS policy at engine commit `25451d88` with a
+75-finding legacy baseline (31 HISS-01, one HISS-02, 41 HISS-04, two HISS-07).
+Canonical agent guidance lives in `AGENTS.md`; generated vendor contexts are
+checked for drift, and a locked Markdown gate lints the public documentation.
+The hosted Standards and Documentation Governance workflows run both on every
+pull request. A local `make audit` stops at its final check until Praetor
+honours the declined `git-hooks` step; see
 [ADR-0145](docs/adr/0145-praetor-governance-adoption.md).
 
 | Gate | Command | Description |
 | :--- | :--- | :--- |
 | **Native verification** | `make verify-native` | Builds, tests, formats, lints, and checks changelog rendering |
-| **Full verification** | `make verify-all` | Adds context and HISS checks; currently exposes the upstream audit blocker |
-| **HISS audit** | `make audit` | Applies the pinned 78-finding baseline ratchet |
+| **Full verification** | `make verify-all` | Adds context, HISS, and documentation checks |
+| **HISS audit** | `make audit` | Applies the pinned 75-finding baseline ratchet |
+| **Documentation** | `make docs-lint docs-figures` | Runs the locked Markdown and figure checks (Node.js 22 or newer) |
 | **Context sync** | `make compile-context` | Compiles canonical agent guidance to vendor targets |
+
+<!-- praetor:readme-governance:start -->
+[![HISS Adopted][praetor-hiss-badge]][praetor-hiss-agents]
+[![Documentation Governance][praetor-docs-badge]][praetor-docs-runs]
+
+Praetor manages this repository's declared governance policy. This managed
+block records adoption state; it is not a verification certificate.
+
+**Verification**: `make verify-all` runs the repository's configured
+verification cascade.
+
+**HISS Audit**: `praetorctl audit` enforces policy, generated-surface
+integrity, and the debt ratchet.
+
+**Context Sync**: `praetorctl compile-context --verify` verifies every
+generated agent context against `AGENTS.md`.
+
+**Documentation**: `make docs-lint` enforces locked Markdown style and the
+private scratch-link policy.
+
+**Debt Baseline**: `.standards-baseline.json` anchors the debt ratchet at
+75 recorded infractions; audit forbids growth.
+
+[praetor-hiss-badge]: https://img.shields.io/badge/Standards-HISS%20Adopted%20(75%20baselined)-yellow
+[praetor-hiss-agents]: https://github.com/VMAFx/pelorus/blob/HEAD/AGENTS.md
+[praetor-docs-badge]: https://github.com/VMAFx/pelorus/actions/workflows/praetor-docs.yml/badge.svg
+[praetor-docs-runs]: https://github.com/VMAFx/pelorus/actions/workflows/praetor-docs.yml
+<!-- praetor:readme-governance:end -->
