@@ -2657,7 +2657,7 @@ def validate_renovate() -> list[str]:
 
 
 def renovate_validator_regressions() -> list[str]:
-    """Prove a Renovate config that would split or drop the Go bump fails."""
+    """Prove that removing or breaking the mirroring Go manager fails (ADR-0152)."""
     failures: list[str] = []
     source = RENOVATE_CONFIG.read_text(encoding="utf-8")
     checker = Path(__file__).resolve().read_text(encoding="utf-8")

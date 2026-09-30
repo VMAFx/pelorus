@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0151: CI toolchain pins that the build-config checker copies get a checker-validated Renovate regex manager
 
-- **Status**: Accepted
+- **Status**: Accepted; enforcement claim narrowed by [ADR-0152](0152-renovate-guard-enforcement-scope.md)
 - **Date**: 2026-09-30
 - **Deciders**: Lusoris
 - **Tags**: ci, build, supply-chain, renovate
