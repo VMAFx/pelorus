@@ -165,7 +165,15 @@ committed branch head. The CI jobs' commands are mirrored.
 | `CI=true standardsctl audit`; `--base origin/master`; `baseline --verify` | exit 0 |
 | docs gate (`node:24` container) | exit 0 |
 | pinned n9.0.2 fetch; `generate.sh` | peels to `946fcce0`; patches byte-identical |
-| `ffmpeg-patches/test/build-and-run.sh` | see the pull request body for the final result |
+| `ffmpeg-patches/test/build-and-run.sh` (`JOBS=8`) | exit 0: 18 patches applied, FFmpeg and a static external `libavfilter` consumer linked against a private libpelorus, and every Pelorus filter, BSF, and encoder option registered |
+
+The first local stack replay was killed when the WSL VM under Docker
+restarted for reasons outside this work; the repeated run above completed. On
+the pushed head `a96feaf`, all seven hosted checks passed: `core`,
+`sanitizers`, `ffmpeg-stack`, `docs`, `Standards`, and `Documentation
+Governance` for both the push and pull-request events. The hosted Standards
+job printed the module version `v0.0.0-20260929221210-25451d888c87` and
+audited 75 of 75 findings.
 
 The container image lacks the clang sanitizer runtime, so the ASan/UBSan
 setup first failed with `Linker clang does not support sanitizer arguments`.
