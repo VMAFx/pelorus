@@ -117,31 +117,42 @@ static fixture_status fixture_write_new(const char *path, const char *contents, 
     return FIXTURE_CREATED;
 }
 
+typedef union {
+    SECURITY_DESCRIPTOR absolute; /* alignment for the self-relative copy */
+    unsigned char bytes[1024];
+} fixture_security_buf;
+
+/* 1 when path is a regular file (not a link) with a present, non-NULL DACL,
+ * read into buf; *control receives the descriptor's control flags. */
+static int fixture_read_dacl(const char *path, fixture_security_buf *buf,
+                             SECURITY_DESCRIPTOR_CONTROL *control, PACL *dacl)
+{
+    const DWORD attributes = GetFileAttributesA(path);
+    DWORD need = 0;
+    DWORD revision = 0;
+    BOOL present = FALSE;
+    BOOL defaulted = FALSE;
+
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+        !GetFileSecurityA(path, DACL_SECURITY_INFORMATION, buf, (DWORD)sizeof(*buf), &need) ||
+        !GetSecurityDescriptorControl(buf, control, &revision) ||
+        !GetSecurityDescriptorDacl(buf, &present, dacl, &defaulted)) {
+        return 0;
+    }
+    return present && *dacl != NULL;
+}
+
 /* A regular file (not a link) whose DACL is protected and holds exactly one
  * allow ACE, for OWNER RIGHTS: no inherited, group, or world entry. */
 static int fixture_is_owner_only(const char *path)
 {
-    union {
-        SECURITY_DESCRIPTOR absolute; /* alignment for the self-relative copy */
-        unsigned char bytes[1024];
-    } buf;
-    const DWORD attributes = GetFileAttributesA(path);
-    DWORD need = 0;
+    fixture_security_buf buf;
     SECURITY_DESCRIPTOR_CONTROL control = 0;
-    DWORD revision = 0;
-    BOOL present = FALSE;
-    BOOL defaulted = FALSE;
     PACL dacl = NULL;
     void *ace = NULL;
 
-    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
-        !GetFileSecurityA(path, DACL_SECURITY_INFORMATION, &buf, (DWORD)sizeof(buf), &need) ||
-        !GetSecurityDescriptorControl(&buf, &control, &revision) ||
-        !GetSecurityDescriptorDacl(&buf, &present, &dacl, &defaulted)) {
-        return 0;
-    }
-    if ((control & SE_DACL_PROTECTED) == 0 || !present || dacl == NULL || dacl->AceCount != 1 ||
-        !GetAce(dacl, 0, &ace)) {
+    if (!fixture_read_dacl(path, &buf, &control, &dacl) || (control & SE_DACL_PROTECTED) == 0 ||
+        dacl->AceCount != 1 || !GetAce(dacl, 0, &ace)) {
         return 0;
     }
     return ((const ACE_HEADER *)ace)->AceType == ACCESS_ALLOWED_ACE_TYPE &&
