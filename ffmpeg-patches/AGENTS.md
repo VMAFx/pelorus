@@ -61,6 +61,11 @@ ffmpeg-patches/
 - When current and reference inputs share one `AVVkFrame`, enqueue its
   dependency, create its views, and transition its image only once; overlapping
   barriers for the same image in one dependency are invalid on strict drivers.
+- A pass-through filter (one that forwards its input `AVFrame`) must set its
+  output link's `hw_frames_ctx` to the input link's after
+  `ff_vk_filter_config_output()`. That helper builds a fresh context whenever
+  it cannot reuse the input one, and `hwdownload` or an encoder then rejects
+  the mislabeled frames (ADR-0150).
 
 ## Rebase-sensitive invariants
 

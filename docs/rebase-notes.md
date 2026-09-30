@@ -5,6 +5,18 @@ Re-apply / re-test work created for the FFmpeg patch stack after an upstream
 FFmpeg bump or a `libpelorus` ABI change. One entry per change that affects the
 patches (ADR-0108 deliverable #6).
 
+## Unreleased — ADR-0150 Intel Windows validation fixes
+
+Found on Arc B580 / UHD 770 under Windows (research digest 0150). Each item
+names the patches it regenerates.
+
+- **Pass-through frames context** (0002 analyze, 0006 grain estimate, 0007 mc):
+  these filters forward their input `AVFrame`, so their output pad's
+  `config_props` calls `ff_vk_filter_config_output()` and then replaces the
+  output link's `hw_frames_ctx` with the input link's. Keep that override
+  when an upstream rebase changes `ff_vk_filter_init_context()`'s reuse rules;
+  stock `blackdetect_vulkan`/`scdet_vulkan` still mislabel frames.
+
 ## Unreleased — FFmpeg base bump n9.0.1 → n9.0.2
 
 - **Immutable base**: `build-config.env` binds tag `n9.0.2` to peeled commit

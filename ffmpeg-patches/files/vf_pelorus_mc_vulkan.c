@@ -756,6 +756,24 @@ fail:
     return err;
 }
 
+/* Pass-through: filter_frame() forwards the input AVFrame, so the output link
+ * must advertise the frames context those frames belong to. The stock
+ * ff_vk_filter_config_output() builds a fresh context whenever it cannot reuse
+ * the input one (linear tiling, missing usage bits), which would mislabel every
+ * forwarded frame and make hwdownload or an encoder reject it. */
+static int mc_vulkan_config_output(AVFilterLink *outlink)
+{
+    FilterLink *il = ff_filter_link(outlink->src->inputs[0]);
+    FilterLink *ol = ff_filter_link(outlink);
+    int err = ff_vk_filter_config_output(outlink);
+
+    if (err < 0)
+        return err;
+    av_buffer_unref(&ol->hw_frames_ctx);
+    ol->hw_frames_ctx = av_buffer_ref(il->hw_frames_ctx);
+    return ol->hw_frames_ctx ? 0 : AVERROR(ENOMEM);
+}
+
 static void mc_vulkan_uninit(AVFilterContext *avctx)
 {
     PelorusMcVulkanContext *s = avctx->priv;
@@ -818,7 +836,7 @@ static const AVFilterPad pelorus_mc_vulkan_outputs[] = {
     {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
-        .config_props = &ff_vk_filter_config_output,
+        .config_props = &mc_vulkan_config_output,
     },
 };
 

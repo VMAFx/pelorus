@@ -44,10 +44,10 @@ ADR: docs/adr/0115-grain-estimate.md
  configure                                           |   3 +
  libavfilter/Makefile                                |   1 +
  libavfilter/allfilters.c                            |   1 +
- libavfilter/vf_pelorus_grain_estimate_vulkan.c      | 645 ++++++++++++++++++++
+ libavfilter/vf_pelorus_grain_estimate_vulkan.c      | 663 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                         |   1 +
  libavfilter/vulkan/pelorus_grain_estimate.comp.glsl | 127 ++++
- 6 files changed, 778 insertions(+)
+ 6 files changed, 796 insertions(+)
 
 diff --git a/configure b/configure
 index c18161349c774eea0347f47effa8aa611e6b8771..0571e96aa7a4f64c2eb951c9c842462225deb3ac 100755
@@ -96,10 +96,10 @@ index a21da384818d0b64f4b5af635ae53e9a5e9f5ec4..b6aee7e0bdb6c35c4e3c720b063be56c
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_grain_estimate_vulkan.c b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..187e0acc97c3f543aaaeea0f80eaecdc1237f0a8
+index 0000000000000000000000000000000000000000..6b796ad4cb66c3fabe490f7a9ffa3409dd603028
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
-@@ -0,0 +1,645 @@
+@@ -0,0 +1,663 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -644,6 +644,24 @@ index 0000000000000000000000000000000000000000..187e0acc97c3f543aaaeea0f80eaecdc
 +    return err;
 +}
 +
++/* Pass-through: filter_frame() forwards the input AVFrame, so the output link
++ * must advertise the frames context those frames belong to. The stock
++ * ff_vk_filter_config_output() builds a fresh context whenever it cannot reuse
++ * the input one (linear tiling, missing usage bits), which would mislabel every
++ * forwarded frame and make hwdownload or an encoder reject it. */
++static int grain_estimate_vulkan_config_output(AVFilterLink *outlink)
++{
++    FilterLink *il = ff_filter_link(outlink->src->inputs[0]);
++    FilterLink *ol = ff_filter_link(outlink);
++    int err = ff_vk_filter_config_output(outlink);
++
++    if (err < 0)
++        return err;
++    av_buffer_unref(&ol->hw_frames_ctx);
++    ol->hw_frames_ctx = av_buffer_ref(il->hw_frames_ctx);
++    return ol->hw_frames_ctx ? 0 : AVERROR(ENOMEM);
++}
++
 +static void grain_estimate_vulkan_uninit(AVFilterContext *avctx)
 +{
 +    PelorusGrainEstimateVulkanContext *s = avctx->priv;
@@ -728,7 +746,7 @@ index 0000000000000000000000000000000000000000..187e0acc97c3f543aaaeea0f80eaecdc
 +    {
 +        .name = "default",
 +        .type = AVMEDIA_TYPE_VIDEO,
-+        .config_props = &ff_vk_filter_config_output,
++        .config_props = &grain_estimate_vulkan_config_output,
 +    },
 +};
 +

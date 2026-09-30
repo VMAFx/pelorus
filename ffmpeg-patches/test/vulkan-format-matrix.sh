@@ -121,6 +121,30 @@ pel_run()
     echo "PASS: $label"
 }
 
+# Same device with linear_images=1. FFmpeg then cannot reuse the upload frames
+# context inside a Vulkan filter, which exercises the pass-through contract.
+PEL_LINEAR_COMMON=(
+    -hide_banner
+    -loglevel warning
+    -y
+    -init_hw_device "vulkan=pelorus_lin:${PEL_VULKAN_DEVICE},linear_images=1"
+    -filter_hw_device pelorus_lin
+    -threads 1
+)
+
+pel_run_linear()
+{
+    local label="$1"
+    shift
+    local stdout="$PEL_OUTPUT_ROOT/${label}.stdout"
+    local stderr="$PEL_OUTPUT_ROOT/${label}.stderr"
+
+    env "${PEL_VALIDATION_ENV[@]}" "$PEL_FFMPEG_BIN" \
+        "${PEL_LINEAR_COMMON[@]}" "$@" >"$stdout" 2>"$stderr" || return 1
+    pel_check_validation "$stdout" "$stderr" || \
+        pel_fail "$label emitted a new Vulkan VUID"
+}
+
 pel_emit_raw()
 {
     local label="$1"
@@ -151,7 +175,7 @@ if ! "$PEL_FFMPEG_BIN" -hide_banner -filters \
 fi
 for PEL_FILTER in pelorus_analyze_vulkan pelorus_deblock_vulkan \
     pelorus_denoise_vulkan pelorus_aa_vulkan pelorus_dehalo_vulkan \
-    pelorus_mc_vulkan; do
+    pelorus_mc_vulkan pelorus_grain_estimate_vulkan; do
     grep "[[:space:]]${PEL_FILTER}[[:space:]]" "$PEL_OUTPUT_ROOT/filters.txt" \
         >/dev/null || \
         pel_fail "patched filter is missing: $PEL_FILTER"
@@ -401,6 +425,34 @@ if (root / "denoise-mc-fallback.raw").read_bytes() == (
     raise SystemExit("MC side data did not change denoise output")
 print("PASS: lookahead and MC runtime paths")
 PY_CADENCE
+
+# Pass-through analyzers forward their input frames, so their output link must
+# carry the input frames context even when FFmpeg cannot reuse it; linear
+# tiling makes ff_vk_filter_config_output() build a fresh one. hwdownload
+# rejects a frame whose context differs from its link's. Devices without linear
+# storage-image support skip this row; a skip is not passing evidence.
+PEL_LINEAR_SOURCE='testsrc2=size=96x64:rate=2:duration=1'
+if pel_run_linear 'linear-base' -f lavfi -i "$PEL_LINEAR_SOURCE" -frames:v 2 \
+    -vf 'format=yuv420p,hwupload,hwdownload,format=yuv420p' \
+    -fps_mode passthrough -f rawvideo "$PEL_OUTPUT_ROOT/linear-base.raw"; then
+    for PEL_FILTER in pelorus_analyze_vulkan pelorus_grain_estimate_vulkan \
+        pelorus_mc_vulkan; do
+        if ! pel_run_linear "linear-${PEL_FILTER}" \
+            -f lavfi -i "$PEL_LINEAR_SOURCE" -frames:v 2 \
+            -vf "format=yuv420p,hwupload,${PEL_FILTER},hwdownload,format=yuv420p" \
+            -fps_mode passthrough -f rawvideo \
+            "$PEL_OUTPUT_ROOT/linear-${PEL_FILTER}.raw"; then
+            sed -n '1,120p' "$PEL_OUTPUT_ROOT/linear-${PEL_FILTER}.stderr" >&2
+            pel_fail "linear-${PEL_FILTER}"
+        fi
+        cmp -s "$PEL_OUTPUT_ROOT/linear-base.raw" \
+            "$PEL_OUTPUT_ROOT/linear-${PEL_FILTER}.raw" || \
+            pel_fail "${PEL_FILTER} changed pixels on a linear input context"
+    done
+    echo 'PASS: pass-through analyzers keep the input frames context'
+else
+    echo 'SKIP: linear Vulkan frames unavailable; pass-through context row not executed' >&2
+fi
 
 if [[ -f "$PEL_OUTPUT_ROOT/validation-known-upstream.txt" ]]; then
     sort -u "$PEL_OUTPUT_ROOT/validation-known-upstream.txt" \

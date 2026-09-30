@@ -26,7 +26,7 @@ set -euo pipefail
 if [[ " $* " == *' -filters '* ]]; then
     for filter in pelorus_analyze_vulkan pelorus_deblock_vulkan \
         pelorus_denoise_vulkan pelorus_aa_vulkan pelorus_dehalo_vulkan \
-        pelorus_mc_vulkan; do
+        pelorus_mc_vulkan pelorus_grain_estimate_vulkan; do
         printf ' ... %-30s V->V fake\n' "$filter"
     done
     exit 0

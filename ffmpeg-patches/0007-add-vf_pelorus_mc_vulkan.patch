@@ -48,10 +48,10 @@ ADR: docs/adr/0116-pelorus-mc.md
  configure                               |   3 +
  libavfilter/Makefile                    |   1 +
  libavfilter/allfilters.c                |   1 +
- libavfilter/vf_pelorus_mc_vulkan.c      | 837 ++++++++++++++++++++
+ libavfilter/vf_pelorus_mc_vulkan.c      | 855 ++++++++++++++++++++
  libavfilter/vulkan/Makefile             |   1 +
  libavfilter/vulkan/pelorus_mc.comp.glsl | 231 ++++++
- 6 files changed, 1074 insertions(+)
+ 6 files changed, 1092 insertions(+)
 
 diff --git a/configure b/configure
 index 0571e96aa7a4f64c2eb951c9c842462225deb3ac..839033a423604cbfaf45a7fffd984bc587d44839 100755
@@ -100,10 +100,10 @@ index b6aee7e0bdb6c35c4e3c720b063be56cd22d8934..8ecaf738be23d70633dc7e84a35a3772
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_mc_vulkan.c b/libavfilter/vf_pelorus_mc_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..202f80dcb49f64f0b2a335792084e42cc7a1caaf
+index 0000000000000000000000000000000000000000..bc6b6a07f312fdc9c393e9cc5d42a09b4de12bb4
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_mc_vulkan.c
-@@ -0,0 +1,837 @@
+@@ -0,0 +1,855 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -862,6 +862,24 @@ index 0000000000000000000000000000000000000000..202f80dcb49f64f0b2a335792084e42c
 +    return err;
 +}
 +
++/* Pass-through: filter_frame() forwards the input AVFrame, so the output link
++ * must advertise the frames context those frames belong to. The stock
++ * ff_vk_filter_config_output() builds a fresh context whenever it cannot reuse
++ * the input one (linear tiling, missing usage bits), which would mislabel every
++ * forwarded frame and make hwdownload or an encoder reject it. */
++static int mc_vulkan_config_output(AVFilterLink *outlink)
++{
++    FilterLink *il = ff_filter_link(outlink->src->inputs[0]);
++    FilterLink *ol = ff_filter_link(outlink);
++    int err = ff_vk_filter_config_output(outlink);
++
++    if (err < 0)
++        return err;
++    av_buffer_unref(&ol->hw_frames_ctx);
++    ol->hw_frames_ctx = av_buffer_ref(il->hw_frames_ctx);
++    return ol->hw_frames_ctx ? 0 : AVERROR(ENOMEM);
++}
++
 +static void mc_vulkan_uninit(AVFilterContext *avctx)
 +{
 +    PelorusMcVulkanContext *s = avctx->priv;
@@ -924,7 +942,7 @@ index 0000000000000000000000000000000000000000..202f80dcb49f64f0b2a335792084e42c
 +    {
 +        .name = "default",
 +        .type = AVMEDIA_TYPE_VIDEO,
-+        .config_props = &ff_vk_filter_config_output,
++        .config_props = &mc_vulkan_config_output,
 +    },
 +};
 +
