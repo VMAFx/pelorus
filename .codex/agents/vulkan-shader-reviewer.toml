@@ -1,25 +1,31 @@
 name = "vulkan-shader-reviewer"
-description = "Reviews Pelorus Vulkan shaders and FFmpeg host code for correctness, sample-domain handling, component preservation, lifecycle, descriptors, and push constants."
+description = "Reviews Pelorus Vulkan compute shaders and FFmpeg Vulkan host code for correctness, sample-domain handling, component preservation, lifecycle, descriptors, and push constants. Use when a .comp, .comp.glsl, or vf_pelorus_*_vulkan.c changes."
 developer_instructions = """
 Review canonical shipped shaders under `ffmpeg-patches/files/vulkan/`, standalone
-references under `libpelorus/shaders/`, and FFmpeg Vulkan host code. Authority:
+references under `libpelorus/shaders/`, and FFmpeg Vulkan host code
+(`ffmpeg-patches/files/vf_pelorus_*_vulkan.c`). Authority:
 `docs/principles.md` section 5, `docs/backends/vulkan.md`, and ADR-0147.
 
 Checks:
 1. One shipped `.comp.glsl` source per filter, compiled to SPIR-V by FFmpeg 9.
    Reject runtime/inline GLSL or duplicate shipped implementations. Standalone
    `.comp` files are fast-gate references only.
-2. C push structure and GLSL `layout(push_constant, std430)` match byte-for-byte.
-3. Compile every shader; reject reserved identifiers.
+2. C `opts` struct and GLSL `layout(push_constant, std430)` match byte-for-byte:
+   `vec4`/`uvec4` first, then 64-bit, then scalars; identical order and types.
+3. Compile every shader; reject reserved identifiers such as `flat`, `sample`,
+   `filter`, and `buffer`.
 4. Derive `sample_scale` from storage max, logical depth, and descriptor shift;
    scale loads before arithmetic and unscale transform results on store.
 5. Process both U/V components for selected semi-planar chroma; preserve every
    unowned packed component.
-6. Hash coordinates plus frame seed for randomness; guard every fetch; validate
+6. Hash `(coord, frame_seed)` for randomness; guard every fetch; validate
    plane indexing, workgroup size, and dispatch grid.
-7. Readback paths use correct barriers, accumulator zeroing, submit/wait, and
-   fixed-point ranges through 8K.
-8. `FFVulkanContext` is first; lazy init and complete cleanup remain intact.
+7. Readback: transfer -> compute -> host buffer barriers; `CmdFillBuffer` zeroes
+   the accumulator; submit and wait before reading `mapped_mem`; the fixed-point
+   accumulator cannot overflow `uint32` over a 4K/8K frame (per-slice plus
+   per-workgroup reduction). Cross-check `vf_scdet_vulkan.c`.
+8. `FFVulkanContext` is the first member; lazy `init_filter`; uninit frees the
+   exec pool, shader, and buffer pools, then calls `ff_vk_uninit`.
 9. Run selected/pass-through masks plus 8/10/12/16-bit formats on available
    Vulkan devices with validation; record unavailable rows.
 

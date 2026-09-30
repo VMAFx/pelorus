@@ -18,6 +18,10 @@ on its last check while `git-hooks` stays declined: no `.git/hooks/pre-commit`
 (Praetor issue 175). CI skips that check. Never install hooks or fake a hook
 file to pass it; report local exit 1 with that cause.
 
+Engine binary: pinned `go install .../cmd/standardsctl@<pin>` installs
+`standardsctl`. `praetorctl`: same engine under its newer name; generated text
+uses it. Makefile takes either.
+
 ## Core Directives & Invariants (Modernized NASA JPL Power-of-10)
 
 | Invariant | Scope | NASA Rule | Enforcement Mechanism | Failure Action |
@@ -25,7 +29,7 @@ file to pass it; report local exit 1 with that cause.
 | **HISS-01** | Control flow | Rule 1 | No recursion. Allow one-level `goto fail` cleanup only; reject other new `goto`. | Audit ratchet + C review |
 | **HISS-02** | Loops | Rule 2 | Every loop has scalar upper bound; validate external counts before iteration. | Audit ratchet + C review |
 | **HISS-03** | Memory | Rule 3 | No dynamic allocation after init in hot per-frame paths. | C review + tests |
-| **HISS-04** | Complexity | Rule 4 | New/touched functions: $\le 60$ LOC effective Praetor cap, Cyclomatic $\le 10$, Statements $\le 50$. | Audit ratchet + clang-tidy |
+| **HISS-04** | Complexity | Rule 4 | New/touched functions: $\le 60$ LOC. Effective policy also sets cyclomatic $\le 10$, cognitive $\le 12$, statements $\le 40$. | LOC: audit ratchet. Other limits: C review only (audit measures Go only; clang-tidy size check advisory). |
 | **HISS-07** | Error handling | Rule 7 | Public errors use `pel_result`; every non-void result checked or explicitly discarded. | clang-tidy + C review |
 | **HISS-08** | Determinism | Rule 8 | No dynamic execution; reject banned libc from project contract. | C review + build |
 | **HISS-09** | Reference safety | Rule 9 | Bound offset arithmetic before pointer formation; avoid pointer chasing. | CERT C review + tests |
@@ -47,10 +51,10 @@ file to pass it; report local exit 1 with that cause.
    `.codex/rules.md` manually. Update `AGENTS.md`, then:
 
    ```bash
-   praetorctl compile-context
+   standardsctl compile-context
    ```
 
-   Canonical agent text must pass `praetorctl caveman check`.
+   Canonical agent text must pass `standardsctl caveman check`.
 
 4. **Preserve useful evidence.** Keep long logs under ignored
    `.workingdir2/evidence/`; report root causes with file and line pointers.
@@ -84,10 +88,14 @@ Register follows the audience, then the task label of your brief (`register:` in
 make verify-native
 
 # Recompile and verify cross-agent context outputs
-praetorctl compile-context --verify
+standardsctl compile-context --verify
 
 # Audit repository against declared HISS standards
-praetorctl audit
+standardsctl audit
+
+# Hosted ratchet: growth guard + debt delta, then fingerprint-exact baseline
+CI=true standardsctl audit --base origin/master --touched-debt-delta-reason "<why>"
+standardsctl baseline --verify
 
 # Run all formatting, linting, and security gates
 make verify-all
@@ -108,23 +116,35 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 - Codec scope: deband, denoise, motion codec-agnostic; film grain uses AV1 AOM or HEVC/VVC H.274.
 - Sibling `VMAFx/vmafx`: quality oracle + autotune control plane.
 - Shared contract: `PelorusSideData`; Pelorus writers, vmafx readers.
-- Current project release: `v0.2.2`; public ABI remains pre-1.0 and append-only.
+- Release `v0.2.2`: library version 0.x. Interop ABI 1.3 (`PELORUS_ABI_MAJOR` 1, `PELORUS_ABI_MINOR` 3), append-only.
 - Architecture: `docs/architecture/overview.md`; rules: `docs/principles.md`.
+
+## Project state
+
+- Inventory: 10 filters (deband, analyze, denoise, grain_estimate, mc, dehalo, aa, deblock, borderfix, scenecut) plus `pelorus_fgs` BSF; 18-patch stack.
+- Encoder steering: NVENC, QSV, Vulkan, libaom, SVT-AV1 patches; QP-feedback path. README "Modules" table: current inventory, no stubs.
+- FFmpeg 9 base: build-time SPIR-V, no runtime GLSL API (ADR-0143).
+- Forge: `VMAFx/pelorus`. Run `gh repo set-default vmafx/pelorus` before any `gh` command.
+- Plan/status: `.workingdir/PLAN.md`, `.workingdir/STATE.md`, backlog `.workingdir/AUDIT-2026-08-30.md` (local, git-ignored).
 
 ## Hard rules
 
-1. `PelorusSideData` ABI append-only. Add fields at section tail or mint section bit. Bump `PELORUS_ABI_MINOR`. Never reorder, resize, remove, repurpose. Public ABI changes require `Migration:` commit footer.
+1. `PelorusSideData` ABI append-only. Add fields at section tail or mint section bit. Bump `PELORUS_ABI_MINOR`. Never reorder, resize, remove, repurpose. Public ABI changes require `Migration:` commit footer with before/after C snippets.
 2. Public non-void APIs return `pel_result`. Check each non-void call or cast `(void)`. No bare `return -1` across API boundary.
 3. No mutable global state or static-init side effects. Banned: `gets`, `strcpy`, `strcat`, `sprintf`, `strtok`, `atoi`, `atof`, `rand`, `system`.
 4. FFmpeg filter shader source lives once: `ffmpeg-patches/files/vulkan/pelorus_<name>.comp.glsl`; FFmpeg 9 compiles SPIR-V at build time. Never add runtime or inline GLSL. `libpelorus/shaders/*.comp`: standalone fast-gate references, not shipped mirrors. Spec IDs `253`, `254`, `255`: reserved workgroup sizes. Descriptor order and push layout must match C exactly.
 5. Patch consumers changed -> update `ffmpeg-patches/files/` plus regenerated stack in same PR. Verify full `series.txt` replay; per-patch apply check insufficient.
 6. Touched files: `-Wall -Wextra -Werror`, clang-format, clang-tidy clean. Each `// NOLINT`: inline citation.
 7. Every commit: zero warnings; fast suite green; deband shader compiled by glslang.
+8. Embeddable library code: no `printf` or `fprintf(stderr, ...)`. Return `pel_result`; host logs.
+9. New dependency: ADR names considered alternative plus reason this one wins.
+10. No new top-level Markdown docs unless task needs one; extend `docs/` topic tree.
 
-## Ownership map
+## Layout and ownership
 
 | Path | Contract |
 | --- | --- |
+| `meson.build`, `meson_options.txt` | build root: libpelorus, tests, shaders |
 | `libpelorus/include/pelorus/` | public API, version, append-only interop ABI |
 | `libpelorus/src/` | core pack/parse + parameter logic |
 | `libpelorus/test/` | ABI and API conformance |
@@ -132,12 +152,50 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 | `ffmpeg-patches/files/` | canonical FFmpeg host/filter sources |
 | `ffmpeg-patches/files/vulkan/` | canonical shipped shader sources |
 | `ffmpeg-patches/0001-*.patch` | generated artifacts; never hand-edit |
+| `ffmpeg-patches/{generate.sh,series.txt,test/}` | regeneration, apply order, replay + smoke gate |
 | `docs/adr/` | decisions; reserve via `scripts/adr/next-free.sh --claim <slug>` |
 | `docs/{architecture,api,metrics,usage,backends,development}/` | human-readable surface docs |
 | `docs/research/` | measured deep-dive evidence |
 | `changelog.d/` | Keep-a-Changelog fragments |
+| `tools/pelorus_qp_report.c` | libpelorus CLI demonstrator; not installed |
+| `tools/markdownlint/`, `tools/figures/` | Praetor-managed docs gate; refresh via `adopt` only |
+| `scripts/` | ADR claim, bench, release, build-config + shader checks |
+| `Makefile`, `lefthook.yml` | native + governance entry points; hooks opt-in |
+| `.standards.yaml`, `.standards.lock`, `.standards-baseline.json`, `.config/` | Praetor policy, lock, catalog, labels, HISS baseline |
+| `.paperclip/` | Paperclip harness pair; string edit: re-pin `register.sources` from `standardsctl caveman check --configured-sources --root=.` |
 | `.agents/agents/` | canonical reviewer personas |
 | `.claude/agents/`, `.codex/agents/`, `.github/agents/`, `.gemini/agents/` | generated persona projections |
+| `.claude/skills/`, `.claude/hooks/`, `.codex/hooks/` | agent skills + hooks; see below |
+| `.vscode/`, `.zed/`, `.idea/`, `.helix/`, `.fleet/`, `.nvim.lua`, `lua/`, `.dir-locals.el`, `standards.sublime-project` | reconciled editor settings |
+| `.github/workflows/` | `ci.yml` product jobs, `standards-gate.yml`, locked `praetor-docs.yml`, `release.yml` |
+
+New top-level package: add row here. New module: scoped `AGENTS.md`.
+
+## Skills and hooks
+
+| Skill (`.claude/skills/`) | Use |
+| --- | --- |
+| `build` | configure, build, fast suite; local gate |
+| `format-all`, `lint-all` | clang-format; clang-tidy + shader compile |
+| `add-vulkan-filter` | scaffold new `vf_pelorus_*` filter end-to-end |
+| `ffmpeg-build-patches`, `ffmpeg-apply-patches` | regenerate stack; apply + build + smoke |
+| `new-adr` | reserve + create ADR before implementing commit |
+| `bump-abi` | append-only interop ABI extension |
+| `render-changelog` | render `CHANGELOG.md` from `changelog.d/` |
+| `cut-release` | version bump + tag; release workflow |
+
+`.claude/skills/superpowers/`: vendored obra/superpowers process skills (verification-before-completion, systematic-debugging, test-driven-development, code review, git worktrees); template for new skills. Topic links: `docs/references.md`.
+
+Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex/hooks/` via `.codex/hooks.json`.
+
+| Event | Hook | Effect |
+| --- | --- | --- |
+| PreToolUse Bash | `block-unsafe-bash` | blocks `rm -rf /`, force-push to `master`, hard reset onto `origin/master`, `git clean -xf`, fork bombs |
+| PostToolUse Edit/Write | `auto-format-on-edit` | clang-format on C/H |
+| PostToolUse Edit/Write | `shader-lockstep-warn` | guards single `.comp.glsl` source model |
+| PostToolUse Edit/Write | `docs-drift-warn` | ABI, surface, build-flag change: docs, ADR, changelog, patch reminder |
+| SessionStart | `session-start` | branch + PLAN/STATE orientation; build staleness |
+| Stop | `stop` | local-gate reminder while sources unverified |
 
 ## Commands
 
@@ -183,5 +241,6 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 - Non-trivial PR: ADR, per-surface docs, changelog fragment, research digest, runnable verification.
 - FFmpeg-impacting PR: rebase note + regenerated stack.
 - New module: scoped `AGENTS.md`.
+- Every commit: `.workingdir/STATE.md` session-log entry; README "Landed so far" row when build-order step lands; layout row for new top-level package.
 - Decision/status truth: `docs/adr/`, `.workingdir/PLAN.md`, `.workingdir/STATE.md`.
 - Uncertainty: verify `docs/principles.md`, scoped `AGENTS.md`, current source, current executable help.
