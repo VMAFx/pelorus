@@ -11,9 +11,8 @@
 
 # Local planning / session state (NOT tracked — see .workingdir/STATE.md
 # "How to use this file"; the vmafx convention + the user's global rule both
-# keep these local rather than committed).
-/.workingdir/
-/.workingdir2/
+# keep these local rather than committed). /.workingdir/ and /.workingdir2/
+# are ignored by the Praetor-managed block at the end of this file.
 /.scratch/
 
 # Claude Code: agent scratch worktrees + local-only settings overrides.
@@ -37,10 +36,20 @@ __pycache__/
 *~
 .DS_Store
 /.cache/
-/.vscode/
+/.vscode/*
+!/.vscode/extensions.json
+!/.vscode/settings.json
+!/.vscode/tasks.json
 /compile_commands.json
 builddir/
 build-run/
 build-san/
 .bench-out/
 x265_2pass.log*
+
+# BEGIN praetor private artifacts (praetorctl adopt)
+/.workingdir/
+/.workingdir2/
+/.standards/worktrees/
+/.agents/mcp_config.json
+# END praetor private artifacts

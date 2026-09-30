@@ -43,7 +43,7 @@ the manual release gate pass on GitHub's Ubuntu 26.04 image.
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Pin n9.0.2 by tag only | Small, readable change | A moved tag changes the tested source; Renovate can leave copied consumers stale | Does not provide reproducible upstream identity |
 | Keep Ubuntu 24.04 and use its native packages | GA runner with Actions SLA | Retains the older toolchain and does not exercise the current target environment | Useful fallback, but not the requested forward baseline |
 | Keep LunarG's apt repository | Minimal workflow diff | Repository updates ended after May 2025; adds a retired third-party package source | Not a durable CI dependency |

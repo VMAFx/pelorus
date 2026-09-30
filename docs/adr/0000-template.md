@@ -24,7 +24,7 @@ State the decision in active voice: "We will use X." One paragraph max.
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Option A | … | … | … |
 | Option B | … | … | … |
 

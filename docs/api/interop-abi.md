@@ -194,6 +194,35 @@ On POSIX, every `fopen` failure is `PEL_ERR_ABSENT` with `errno` as `fopen` set
 it, exactly as before ADR-0149. `errno` is diagnostic only: the `pel_result` is
 the contract.
 
+## Conformance fixture files (ADR-0148)
+
+The shared fixture (`libpelorus/test/interop_test.c`, which VMAFx vendors as
+`core/test/test_pelorus_interop.c`) writes a few small files into the test's
+working directory: `pelorus_x265_csv_test.csv` for the x265 CSV reader, and
+`pelorus_fixture_*.tmp` for its own file-safety regression. Every one is
+created exclusively and owner-only, and removed before the test returns.
+
+| Property | POSIX | Windows |
+|---|---|---|
+| Creation | `open(O_CREAT\|O_EXCL\|O_NOFOLLOW\|O_CLOEXEC, 0600)` | `CreateFileA(CREATE_NEW, FILE_FLAG_OPEN_REPARSE_POINT)` |
+| Access from the first open | mode `0600`; asserted under `umask(0)` | protected DACL `D:P(A;;FA;;;OW)`, owner only; nothing inherited |
+| Existing file, link, or dangling link at the name | refused (`EEXIST`); target untouched | refused (`ERROR_FILE_EXISTS`); target untouched |
+| Link cases in the regression | always run | need Developer Mode or `SeCreateSymbolicLinkPrivilege`; skipped with a note otherwise |
+
+If a killed run leaves one of these files behind, the next run fails with
+`exclusive create refused (stale file from an aborted run?)`. The test never
+deletes a file it did not create, so remove the named file by hand.
+
+Build requirements for a consumer compiling the fixture: on glibc the body
+needs POSIX.1-2008 declarations. The Pelorus target passes
+`-D_POSIX_C_SOURCE=200809L`; VMAFx's `_GNU_SOURCE` also works. On Windows it
+links `advapi32`, which Meson's default `c_winlibs` provides; MSVC also gets it
+through `#pragma comment(lib, "advapi32.lib")`. After a Pelorus change to the
+fixture, VMAFx re-pins `PELORUS_VENDOR_SHA` and re-vendors with
+`scripts/sync-pelorus-interop.sh --update`. The rendered mirror is byte-identical
+to the Pelorus body except for the include rewrite; see
+[research digest 0148](../research/0148-owner-only-exclusive-test-fixtures.md).
+
 ## Stability rules (normative — see interop.h)
 
 - **R1 Append-only**: new fields at the end of a section; new sections take a new

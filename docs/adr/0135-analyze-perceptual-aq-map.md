@@ -49,7 +49,7 @@ lower = better); PSNR as a guard.
 **Mixed synthetic composite (gradient + texture), `reclaim_gain` sweep:**
 
 | `reclaim_gain` | SSIMULACRA2 BD-rate | PSNR BD-rate | CAMBI (per-point) |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 0.7 | **+13.05 %** (loss) | +7.21 % (loss) | −14 % … −25 % (win) |
 | 1.0 (bit-neutral) | **+19.89 %** (loss) | +13.53 % (loss) | larger win |
 

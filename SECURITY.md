@@ -12,7 +12,7 @@ Please report privately — do **not** open a public issue for a security bug.
 
 - Preferred: GitHub **Security Advisories** ("Report a vulnerability" on the
   repo's Security tab).
-- Or email **lusoris@pm.me** with `[pelorus-security]` in the subject.
+- Or email **<lusoris@pm.me>** with `[pelorus-security]` in the subject.
 
 Include a reproducer (filtergraph / input characteristics) and the affected
 component (a `vf_pelorus_*` filter, `libpelorus`, or the FFmpeg patch stack).

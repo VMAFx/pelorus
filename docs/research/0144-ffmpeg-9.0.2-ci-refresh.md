@@ -32,7 +32,7 @@ That makes the Noble apt feed a historical input, not a sustainable CI source.
 Ubuntu Resolute publishes the required build-time packages directly:
 
 | Package | Resolute evidence | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `libvulkan-dev` | Vulkan loader/header development package (1.4.341 at review time) | FFmpeg Vulkan detection and compilation |
 | `glslc` | shaderc command-line compiler (2026.1 at review time) | FFmpeg 9 build-time GLSL to SPIR-V rule |
 | `glslang-tools` | Khronos GLSL/SPIR-V tools (16.2 at review time) | Pelorus reference-shader fast tests |
@@ -83,7 +83,7 @@ Sources: <https://docs.renovatebot.com/modules/manager/regex/> and
 ## Acceptance matrix
 
 | Claim | Required evidence |
-|---|---|
+| --- | --- |
 | n9.0.2 patch compatibility | deterministic 18-patch generation and full replay at the pinned commit, compiling available oneVPL, libaom, SVT-AV1, and NVENC consumers and checking their Pelorus AVOptions |
 | correct libpelorus linkage | private install prefix reported by `pkg-config`; linked `ffmpeg`; all Pelorus filters and BSF register; installed static `libavfilter.pc` exposes `-lpelorus` and links/runs an external consumer |
 | workflow structure | build-config checker plus actionlint v1.7.12 |
@@ -91,3 +91,22 @@ Sources: <https://docs.renovatebot.com/modules/manager/regex/> and
 | Ubuntu 26.04 operational acceptance | all PR jobs and the manual non-publishing release gate green on GitHub-hosted `ubuntu-26.04`, with image/package versions retained |
 
 No local result substitutes for the last row.
+
+## Hermetic replay identity
+
+Hosted run `36084499071` exposed a difference hidden by developer machines:
+the hook-neutral replay regression could apply its patch only when Git found a
+global committer identity. With `GIT_CONFIG_GLOBAL=/dev/null` and
+`GIT_CONFIG_NOSYSTEM=1`, the same self-test failed before the replay commit.
+The full and focused QSV replay commands now supply an ephemeral committer
+identity and neutralize signing, hooks, and diff ordering on each `git am`.
+The regression itself uses the config-free environment plus hostile repository
+signing, hook, and diff-order settings, so deleting any replay override fails
+closed locally as well as on GitHub.
+
+Master `f03badd` (#57) fixed the same hosted failure independently, for
+`build-and-run.sh` only: it pinned a `Pelorus-replay` identity and added
+`--no-gpg-sign --no-verify`. When #58 merged that master, both replay consumers
+kept this branch's `GIT_AM_CONFIG` settings and also took #57's two flags.
+`check-build-config.py` now requires one shared command pattern, and its
+self-test mutates the identity and each flag away.

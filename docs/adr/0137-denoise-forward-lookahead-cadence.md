@@ -31,7 +31,7 @@ current causal filter (`sigmat=0.08 strength=0.9 prev=4 blend=0.85`), PSNR vs th
 clean held cadence:
 
 | | PSNR vs clean |
-|---|---|
+| --- | --- |
 | noisy (baseline) | 32.89 dB |
 | causal denoise | 34.42 dB (**+1.53 dB**) |
 
@@ -71,7 +71,7 @@ Implemented (a 6th `next0_images` storage-image binding, an `activate()`
 2s-cadence noisy clip (24 frames, `sigmat=0.08 strength=0.9 prev=4 blend=0.85`):
 
 | | PSNR vs clean | frames |
-|---|---|---|
+| --- | --- | --- |
 | lookahead=0 (causal) | 35.60 dB | 24 |
 | lookahead=1 (forward) | **35.98 dB (+0.37 dB)** | 24 |
 

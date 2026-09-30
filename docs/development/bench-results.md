@@ -825,7 +825,6 @@ slowest filter; the broader "free throughput" framing overstated it — the
 bottleneck is memory traffic, and the high-value perf work is reference caching,
 not reductions. `scripts/bench/plot_rd.py` regenerates the graph.
 
-
 ## Open / next
 
 1. **SVT-AV1 ROI on real content**: the v0.10 synthetic gain is modest; re-run
@@ -834,12 +833,12 @@ not reductions. `scripts/bench/plot_rd.py` regenerates the graph.
 2. **Per-vendor iso-bitrate BD-rate** for the cross-vendor ROI (v0.6 is a
    same-QP mechanism demo); and the analyze→VAAPI dual-device auto pipeline
    (ROI side data surviving `hwupload` to a second GPU).
-2. Re-prove 10-bit deband with a single consistent `yuv420p10le` pipeline
+3. Re-prove 10-bit deband with a single consistent `yuv420p10le` pipeline
    (correctness confirmation; deband's gain is banding, scored by CAMBI).
-3. Harness fixes shipped: `--clean-reference` (decouple scoring ref from encoder
+4. Harness fixes shipped: `--clean-reference` (decouple scoring ref from encoder
    input) and `--vmaf-timeout` (vmaf hangs at 0% CPU *after* writing its JSON;
    the harness bounds it and reads the already-flushed result).
-4. **Measure QSV ROI on Intel HW** (`hevc_qsv -q:v <q>` CQP, where `-q:v` sets
+5. **Measure QSV ROI on Intel HW** (`hevc_qsv -q:v <q>` CQP, where `-q:v` sets
    FFmpeg's QScale flag; A/B
    `-pelorus_roi 0` vs `1`): the patch (0005) is code-complete and
    syntax/regeneration-verified, but no Intel-hardware BD-rate run exists yet.

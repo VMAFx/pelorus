@@ -24,7 +24,7 @@ Internal refactors, no-user-delta bug fixes, and test-only changes are excluded.
 Per-surface minimum bars:
 
 | Surface | Bar |
-|---|---|
+| --- | --- |
 | FFmpeg filter / AVOption | what it does · every option + default · a runnable `ffmpeg -vf` example · how output surfaces · interactions / limitations |
 | Public C API | what it does · inputs/outputs incl. ownership + lifetime · thread-safety · ABI tag (stable/experimental) · runnable C snippet · error semantics (`pel_result`) |
 | Interop section | what it carries · who writes / who reads · field semantics · versioning (which `PELORUS_ABI_MINOR`) |
@@ -37,7 +37,7 @@ C API → `docs/api/`, Vulkan path → `docs/backends/`, build/release →
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Docs-in-same-PR, per-surface bar | Docs never lag code; consistent with vmafx | Slightly heavier PRs | **Chosen** |
 | Docs "eventually" / separate PR | Lighter PRs | Docs rot; the surface ships undocumented | Rejected |
 | Rely on code comments / ADRs | No extra files | They explain *decisions*, not *usage* | Rejected |

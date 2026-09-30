@@ -75,7 +75,7 @@ The AOM set maps field-for-field onto the NVENC struct, shifted to NVENC's
 "minus N" / "plus 128" bitfield conventions and clamped to the field widths:
 
 | AOM (`AVFilmGrainAOMParams`) | NVENC (`NV_ENC_FILM_GRAIN_PARAMS_AV1`) |
-|---|---|
+| --- | --- |
 | `num_y_points`, `y_points[i][{0,1}]` | `numYPoints`, `pointYValue[i]` / `pointYScaling[i]` |
 | `num_uv_points[{0,1}]`, `uv_points` | `numCbPoints`/`numCrPoints`, `pointCb/CrValue`/`Scaling` |
 | `chroma_scaling_from_luma` | `chromaScalingFromLuma` |
@@ -103,7 +103,7 @@ AV1 film-grain legs and the on-hardware BD-rate proof are documented follow-ups.
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Config-enable + per-frame `filmGrainParamsUpdate` (this) | Time-varying, matches the per-frame estimator; uses NVENC's documented update path; graceful no-op | Slightly more plumbing than a static set | **Chosen** — correct fit for a per-frame estimate, minimal new code |
 | Static one-shot film grain at init only | Simplest | Cannot track a time-varying estimate; init runs before any frame is seen, so the first frame's params are unavailable anyway | Rejected — the update path is the natural fit and barely more code |
 | Patch only the AV1 OBU emission by hand | No SDK dependency | Re-implements the AV1 film_grain OBU + bit-packing NVENC already does in hardware | Rejected — NVENC synthesizes it; we only feed params |

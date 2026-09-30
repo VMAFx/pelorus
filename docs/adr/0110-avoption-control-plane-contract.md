@@ -42,7 +42,7 @@ consistent with ADR-0106's "control plane is separately versioned" note.
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Freeze the AVOption names + ranges as a documented contract (this ADR) | Single source of truth; a break is a visible, reviewable two-repo event; zero new code | Adds a doc to keep in lockstep with the AVOption table | **Chosen** |
 | No formal contract — let vmafx track the filter source | Nothing to maintain | Silent drift: a rename/range change in Pelorus desyncs autotune with no signal; couples vmafx to Pelorus's source layout | Rejected — exactly the failure ADR-0106 needs to prevent |
 | A separate machine-readable config schema file (e.g. JSON/YAML the filter and autotune both load) | Machine-checkable; one artifact both sides parse | New parser + loader on both sides; a second source of truth to keep in sync with the `AVOption` table FFmpeg already owns; over-engineered for ten scalar knobs | Rejected for v0.1 — revisit if the knob count or repo count grows |

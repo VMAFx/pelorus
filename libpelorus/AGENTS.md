@@ -50,7 +50,16 @@ libpelorus/
    are stable once vmafx vendors `interop.c` — changing any of them requires a
    coordinated two-repo PR. The ABI 1.1 conformance case in `test/interop_test.c`
    is load-bearing; do not weaken it. (ADR-0119)
-6. **Library path arguments are UTF-8 on every platform; no narrow `fopen` of a
+6. **Fixture files are exclusive and owner-only (ADR-0148).** Every file the
+   conformance fixture writes goes through `write_private_fixture()`: POSIX
+   `O_CREAT|O_EXCL|O_NOFOLLOW` with mode `0600`; Windows `CREATE_NEW` +
+   `FILE_FLAG_OPEN_REPARSE_POINT` with the protected owner-only DACL
+   `D:P(A;;FA;;;OW)`. Never create a fixture with `fopen(..., "w")`,
+   `_sopen_s`, or a create-then-`chmod`. Never delete a path the fixture did
+   not create. Keep the `umask(0)` and link regressions; the fixture is
+   vendored byte for byte by VMAFx, so keep its body free of feature macros
+   (the build supplies `_POSIX_C_SOURCE`).
+7. **Library path arguments are UTF-8 on every platform; no narrow `fopen` of a
    caller path on Windows.** Every file open of a caller-supplied path goes
    through `open_utf8()` in `qp_report_csv.c`: POSIX is a literal `fopen`
    (byte-for-byte unchanged), Windows is a strict `MultiByteToWideChar(CP_UTF8,
