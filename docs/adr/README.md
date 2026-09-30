@@ -60,3 +60,4 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0145](0145-praetor-governance-adoption.md) | Adopt Praetor as a governance ratchet | Proposed |
 | [0146](0146-qsv-roi-frame-ownership.md) | QSV dense ROI maps are per-frame and limited to progressive HEVC CQP on runtime API 1.28 or newer; corrects ADR-0114's QSV capability/lifetime detail | Accepted |
 | [0147](0147-vulkan-sample-domain-and-components.md) | Normalize Vulkan arithmetic to the true sample domain and preserve every physical-plane component | Accepted |
+| [0148](0148-owner-only-exclusive-test-fixtures.md) | Conformance-fixture files are created exclusively and owner-only (POSIX `0600` under any umask, Windows protected OWNER RIGHTS DACL) and never follow an existing path or link; regression covers mode/DACL, existing file, live and dangling links | Accepted |
