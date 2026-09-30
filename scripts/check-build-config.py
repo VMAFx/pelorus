@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import fnmatch
 import json
 import os
 import re
@@ -2059,13 +2058,158 @@ def workflow_validator_regressions() -> list[str]:
     return failures
 
 
+class RenovatePatternError(ValueError):
+    """A managerFilePatterns entry this checker cannot evaluate like Renovate."""
+
+
+def renovate_glob_segment_regex(segment: str, glob: str) -> str:
+    """Translate one path segment of a Renovate glob (see below)."""
+    out: list[str] = []
+    braces: list[bool] = []  # per open `{`: seen a top-level `,` yet
+    index = 0
+    while index < len(segment):
+        char = segment[index]
+        pair = segment[index : index + 2]
+        if char in "[]\\" or (char in "@!+*?" and pair[1:] == "("):
+            raise RenovatePatternError(
+                f"managerFilePatterns {glob!r}: glob syntax {pair!r} is not "
+                "evaluated by this checker; use a /regex/ entry"
+            )
+        if char == "*":
+            while segment[index + 1 : index + 2] == "*":
+                index += 1
+            out.append("[^/]*")
+        elif char == "?":
+            out.append("[^/]")
+        elif char == "{":
+            braces.append(False)
+            out.append("(?:")
+        elif char == "," and braces:
+            braces[-1] = True
+            out.append("|")
+        elif char == "}" and braces:
+            if not braces.pop():
+                raise RenovatePatternError(
+                    f"managerFilePatterns {glob!r}: only {{a,b}} brace "
+                    "alternation is evaluated by this checker"
+                )
+            out.append(")")
+        else:
+            out.append(re.escape(char))
+        index += 1
+    if braces:
+        raise RenovatePatternError(
+            f"managerFilePatterns {glob!r}: brace group spans a `/` or is unclosed"
+        )
+    return "".join(out)
+
+
+def renovate_glob_regex(glob: str) -> str:
+    """Translate the minimatch subset this checker models into a regex.
+
+    Renovate matches non-regex managerFilePatterns with minimatch
+    (`dot: true, nocase: true`): `*` and `?` stay inside one path segment, a
+    whole `**` segment spans any number of segments, and `{a,b}` alternates.
+    Anything else (classes, extglobs, escapes, ranges) raises instead of
+    being approximated.
+    """
+    segments = glob.split("/")
+    parts: list[str] = []
+    for index, segment in enumerate(segments):
+        last = index == len(segments) - 1
+        if segment == "**":
+            parts.append(".*" if last else "(?:[^/]*/)*")
+            continue
+        if segment in (".", ".."):
+            raise RenovatePatternError(
+                f"managerFilePatterns {glob!r}: relative segments are not "
+                "evaluated by this checker"
+            )
+        parts.append(renovate_glob_segment_regex(segment, glob) + ("" if last else "/"))
+    return "".join(parts)
+
+
 def renovate_file_pattern_matches(pattern: object, relative: str) -> bool:
-    """Apply one Renovate managerFilePatterns entry (/regex/ or glob)."""
+    """Apply one managerFilePatterns entry like Renovate's matchRegexOrGlob.
+
+    Mirrors lib/util/string-match.ts: `*` matches every file; `/re/` and
+    `/re/i`, optionally `!`-negated, are regexes; anything else is a minimatch
+    glob (`dot`, `nocase`, leading `!` negates, leading `#` never matches).
+    Raises RenovatePatternError rather than guess at an entry it cannot model.
+    """
     if not isinstance(pattern, str):
         return False
-    if len(pattern) > 2 and pattern.startswith("/") and pattern.endswith("/"):
-        return re.search(pattern[1:-1], relative) is not None
-    return fnmatch.fnmatchcase(relative, pattern)
+    if pattern == "*":
+        return True
+    if re.match(r"!?/", pattern) and re.search(r"/i?$", pattern):
+        body = re.sub(r"/i?$", "", re.sub(r"^!?/", "", pattern, count=1), count=1)
+        flags = re.IGNORECASE if pattern.endswith("i") else 0
+        try:
+            compiled = re.compile(python_regex(body), flags)
+        except re.error as exc:
+            raise RenovatePatternError(
+                f"managerFilePatterns {pattern!r}: regex not evaluable here: {exc}"
+            ) from exc
+        return (compiled.search(relative) is not None) != pattern.startswith("!")
+    if pattern.startswith("#"):
+        return False
+    glob = pattern.lstrip("!")
+    negated = (len(pattern) - len(glob)) % 2 == 1
+    matched = re.fullmatch(renovate_glob_regex(glob), relative, re.IGNORECASE)
+    return (matched is not None) != negated
+
+
+def renovate_pattern_regressions() -> list[str]:
+    """Pin renovate_file_pattern_matches to Renovate's matching semantics."""
+    failures: list[str] = []
+    cases = {
+        "/^scripts/check-build-config\\.py$/": True,
+        "/CHECK-BUILD-CONFIG\\.PY$/i": True,
+        "/CHECK-BUILD-CONFIG\\.PY$/": False,
+        "!/^renovate\\.json$/": True,
+        "!/check-build-config/": False,
+        "/(?<name>check)-build/": True,
+        "*": True,
+        "scripts/*.py": True,
+        "*.py": False,
+        "**/*.py": True,
+        "scripts/**": True,
+        "**/scripts/**/check-build-config.py": True,
+        "SCRIPTS/{check-build-config,other}.PY": True,
+        "scripts/{other,x}.py": False,
+        "scripts/check-build-config.p?": True,
+        "!scripts/**": False,
+        "!!scripts/*.py": True,
+        "#scripts/*.py": False,
+    }
+    for pattern, expected in cases.items():
+        try:
+            actual = renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
+        except RenovatePatternError as exc:
+            failures.append(f"renovate pattern regression: {pattern!r} raised {exc}")
+            continue
+        if actual != expected:
+            failures.append(
+                f"renovate pattern regression: {pattern!r} gave {actual}, "
+                f"Renovate gives {expected}"
+            )
+    for pattern in (
+        "/(?<name/",
+        "scripts/[a-c]*.py",
+        "scripts/@(check)*.py",
+        "scripts/{1..3}.py",
+        "scripts\\/check-build-config.py",
+        "{scripts/x,y}.py",
+        "./scripts/*.py",
+    ):
+        try:
+            renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
+        except RenovatePatternError:
+            continue
+        failures.append(
+            f"renovate pattern regression: unmodelled {pattern!r} was evaluated"
+        )
+    return failures
 
 
 def python_regex(renovate_regex: str) -> str:
@@ -2080,17 +2224,20 @@ def validate_renovate_text(text: str, checker_source: str) -> list[str]:
     except json.JSONDecodeError as exc:
         return [f"renovate.json: invalid JSON: {exc}"]
     managers = config.get("customManagers") if isinstance(config, dict) else None
-    covering = [
-        manager
-        for manager in (managers if isinstance(managers, list) else [])
-        if isinstance(manager, dict)
-        and manager.get("customType") == "regex"
-        and isinstance(manager.get("managerFilePatterns"), list)
-        and any(
-            renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
-            for pattern in manager["managerFilePatterns"]
-        )
-    ]
+    try:
+        covering = [
+            manager
+            for manager in (managers if isinstance(managers, list) else [])
+            if isinstance(manager, dict)
+            and manager.get("customType") == "regex"
+            and isinstance(manager.get("managerFilePatterns"), list)
+            and any(
+                renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
+                for pattern in manager["managerFilePatterns"]
+            )
+        ]
+    except RenovatePatternError as exc:
+        return [f"renovate.json: {exc}"]
     if len(covering) != 1:
         return [
             f"renovate.json: expected exactly one regex customManager for "
@@ -2166,7 +2313,33 @@ def renovate_validator_regressions() -> list[str]:
 
         return mutate
 
+    def with_extra_manager(patterns: list[str]):
+        def mutate(value: dict) -> dict:
+            value["customManagers"].append(
+                {
+                    "customType": "regex",
+                    "managerFilePatterns": patterns,
+                    "matchStrings": ['GO = "(?<currentValue>[^"]+)"'],
+                    "datasourceTemplate": "github-releases",
+                }
+            )
+            return value
+
+        return mutate
+
     cases = {
+        "second manager via /regex/i": (
+            with_extra_manager(["/SCRIPTS/CHECK-BUILD-CONFIG\\.PY$/i"]),
+            "expected exactly one regex customManager",
+        ),
+        "second manager via glob": (
+            with_extra_manager(["**/*.py"]),
+            "expected exactly one regex customManager",
+        ),
+        "unevaluable file pattern": (
+            with_extra_manager(["scripts/[a-z]*.py"]),
+            "is not evaluated by this checker",
+        ),
         "missing Go manager": (
             without_checker_manager,
             "expected exactly one regex customManager",
@@ -2191,7 +2364,11 @@ def renovate_validator_regressions() -> list[str]:
         ),
     }
     for name, (mutate, expected) in cases.items():
-        mutated = json.dumps(mutate(json.loads(json.dumps(config))))
+        try:
+            mutated = json.dumps(mutate(json.loads(json.dumps(config))))
+        except RenovatePatternError as exc:
+            failures.append(f"renovate regression: {name} not run: {exc}")
+            continue
         if json.loads(mutated) == config:
             failures.append(f"renovate regression: {name} mutation changed nothing")
             continue
@@ -2268,6 +2445,7 @@ def main() -> int:
         errors.extend(git_smudge_cleanup_regression())
         errors.extend(git_format_config_regression())
         errors.extend(workflow_validator_regressions())
+        errors.extend(renovate_pattern_regressions())
         errors.extend(renovate_validator_regressions())
 
     if errors:

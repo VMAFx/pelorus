@@ -62,7 +62,17 @@ either would leave a copied value behind:
   `renovate/go-<major>.x` branch and PR. The checker verifies that manager's
   templates and that its `matchStrings` entry captures the literal exactly
   once; a Renovate config that would split or drop the bump fails the fast
-  suite. The step name carries no version for the same reason.
+  suite. The step name carries no version for the same reason
+  ([ADR-0151](../adr/0151-renovate-mirrors-checker-toolchain-pins.md)).
+
+The checker decides which managers cover a file the way Renovate does, through
+`managerFilePatterns` (see
+[research digest 0151](../research/0151-renovate-setup-go-mirroring.md)). An
+entry is either a `/regex/` or `/regex/i`, optionally negated with `!`, or a
+minimatch glob with `dot` and `nocase`. Globs may use `*`, `?`, whole-segment
+`**`, `{a,b}` and a leading `!`. The checker reports any other glob syntax as an
+error rather than guess at it: character classes, extglobs, escapes, ranges,
+and braces that span `/`. Use a `/regex/` entry for anything more specific.
 
 When bumping by hand, change the `go-version` in `.github/workflows/ci.yml` and
 `ACTIONLINT_GO_VERSION` together, then run
