@@ -30,7 +30,7 @@ replay (`ffmpeg-patches/test/build-and-run.sh`), never per-patch
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | libpelorus core + FFmpeg patch stack | Reusable ABI both repos link; true zero-copy in libavfilter; matches vmafx tooling | Two build artifacts; patch-rebase maintenance | **Chosen** |
 | FFmpeg patch stack only (no shared lib) | Simpler | Interop reduced to copy-pasted structs; no linkable contract → drift | Rejected — the shared ABI is the point |
 | Out-of-tree shared lib + thin generic FFmpeg filter loading shaders at runtime | Decoupled from FFmpeg internals | Least zero-copy-native; diverges from vmafx; runtime shader loading | Rejected |

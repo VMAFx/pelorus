@@ -14,7 +14,7 @@ HEVC/VVC (H.274 / SEI FGC).
 
 ## Context (C4 level 1)
 
-```
+```text
             ┌────────────────────────────────────────────────────────┐
    source → │  FFmpeg filtergraph (frames in AV_PIX_FMT_VULKAN, VRAM)  │ → HW encoder → mux
             │   vf_pelorus_analyze → _deband → _denoise → _grain → _mc  │   (NVENC/AMF/QSV)
@@ -54,7 +54,7 @@ HEVC/VVC (H.274 / SEI FGC).
 ## Pipeline stages (roadmap)
 
 | Stage | Filter | Effect | Status |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | borderfix | `pelorus_borderfix_vulkan` | dirty-line / border repair — clamp the dirty edge band onto the clean interior rect (the zero-copy equivalent of `fillborders=smear`); all planes, band widths in each plane's own pixels; runs **first**, before any other stage | **built** (deterministic smear — no quality A/B needed; BD-rate note on a dirty-border corpus is a nice-to-have follow-up) |
 | analyze | `pelorus_analyze_vulkan` | measure banding/variance/edge stats → side data | **working** |
 | deband | `pelorus_deband_vulkan` | flatten contours + dither | **working** |

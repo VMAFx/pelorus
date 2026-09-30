@@ -21,7 +21,7 @@ normalize LSB-aligned planar 10/12-bit samples.
 ## Options
 
 | Option | Type | Default | Meaning |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `range` | int 1–31 | 15 | reference-sampling radius in pixels |
 | `thry` | float 0–0.25 | 0.012 | luma threshold (normalized to full range) |
 | `thrc` | float 0–0.25 | 0.012 | chroma threshold |

@@ -179,8 +179,8 @@ the ROI hook only.
   ROI: consume AV_FRAME_DATA_REGIONS_OF_INTEREST → SVT-AV1's per-SB qindex/delta-q
   map. Film grain: consume the grain estimate → SVT-AV1's film-grain synthesis;
   wire it if tractable, if not document why."
-- [ADR-0114](0114-encoder-steering.md) — encoder-steering strategy (the producer
-  + the NVENC/QSV/Vulkan consumers this mirrors).
+- [ADR-0114](0114-encoder-steering.md) — encoder-steering strategy (the producer +
+  the NVENC/QSV/Vulkan consumers this mirrors).
 - [ADR-0109](0109-deband-control-plane.md) / `vf_pelorus_analyze` — the ROI
   producer.
 - SVT-AV1 4.1.0 `Source/Lib/Encoder/Codec/EbSegmentation.c`

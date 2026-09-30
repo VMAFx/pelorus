@@ -19,7 +19,7 @@ normalized by 65535. FFmpeg maps `AV_PIX_FMT_YUV420P10` and
 The pixel descriptors establish the data layout:
 
 | Format | depth | shift | Meaning of a full-scale code in R16_UNORM |
-|---|---:|---:|---:|
+| --- | ---: | ---: | ---: |
 | yuv420p10le | 10 | 0 | `1023 / 65535` |
 | yuv420p12le | 12 | 0 | `4095 / 65535` |
 | p010le | 10 | 6 | `(1023 << 6) / 65535` |
@@ -45,7 +45,7 @@ format=FORMAT,metadata=print:file=-' -frames:v 1 -f null -
 First reported frame:
 
 | Format | variance | edge | complexity |
-|---|---:|---:|---:|
+| --- | ---: | ---: | ---: |
 | yuv420p | 0.036938 | 0.072623 | 0.283980 |
 | yuv420p10le | 0.000002 | 0.001131 | 0.000410 |
 | yuv420p12le | 0.000137 | 0.004525 | 0.002539 |
@@ -64,7 +64,7 @@ read only component 0 of plane 1 and stored a constructed vector. With
 `planes=3`, V was erased in every tested semi-planar layout:
 
 | Format | Input U/V | Output U/V |
-|---|---:|---:|
+| --- | ---: | ---: |
 | NV12 | 90 / 240 | 90 / 0 |
 | P010 | 360 / 960 | 360 / 0 |
 | P012 | 1440 / 3840 | 1440 / 0 |
@@ -105,7 +105,7 @@ selection in the shader.
 ## Scope matrix
 
 | Filter | Reads samples arithmetically | Writes samples | Component action |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | analyze | yes | no | luma only; scale before statistics |
 | grain_estimate | yes | no | luma only; scale before residual/statistics |
 | mc | yes | no | luma only; scale before SAD fixed point |

@@ -41,7 +41,7 @@ a second shipped implementation.
 All thresholds are normalized in `[0,1]`, independent of bit depth.
 
 | Option | Default | Range | Meaning |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `blur` | 2 | 1–8 | halo-blur radius in pixels (the halo-free target) |
 | `darkstr` | 1.0 | 0–1 | pull strength for **dark** halos |
 | `brightstr` | 1.0 | 0–1 | pull strength for **bright** halos |
@@ -77,7 +77,7 @@ Dehalo runs on the **source** ring before any flattening stage, so it runs
 *before* deband: it removes the line-adjacent overshoot first, then deband sees a
 clean flat field and re-injects its dither.
 
-```
+```text
 hwupload → pelorus_dehalo → pelorus_deband → (hwdownload) → encoder
 ```
 

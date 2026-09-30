@@ -42,7 +42,7 @@ a second shipped implementation.
 Thresholds are normalized in `[0,1]`, independent of bit depth.
 
 | Option | Default | Range | Meaning |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `bsize` | 8 | 2–64 | prior codec block size (DCT grid) — the boundary spacing |
 | `edge` | 1 | 0–8 | half-width of the deblocked band around a boundary (px) |
 | `thr` | 0.06 | 0–1 | cross-boundary step below which it is an artefact (smooth); above it, real structure (preserve) |
@@ -77,7 +77,7 @@ deband**. It cleans the prior codec's hard block edges first; deband then sees a
 clean flat field and re-injects its dither without the residual block step
 fooling its flat-test.
 
-```
+```text
 hwupload → pelorus_deblock → pelorus_deband → (hwdownload) → encoder
 ```
 

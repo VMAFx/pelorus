@@ -27,9 +27,10 @@ top.
 
 ---
 
-### Task 1: Land the decision and research record before implementation
+## Task 1: Land the decision and research record before implementation
 
 **Files:**
+
 - Create: `docs/adr/0144-ffmpeg-pin-and-ci-runner-policy.md`
 - Create: `docs/research/0144-ffmpeg-9.0.2-ci-refresh.md`
 - Modify: `docs/adr/README.md`
@@ -65,9 +66,10 @@ git add docs/adr/0144-ffmpeg-pin-and-ci-runner-policy.md \
 git commit -m "docs(adr): pin the FFmpeg and CI baseline"
 ```
 
-### Task 2: Establish a tested, immutable dependency contract
+## Task 2: Establish a tested, immutable dependency contract
 
 **Files:**
+
 - Create: `build-config.env`
 - Create: `scripts/check-build-config.py`
 - Modify: `meson.build`
@@ -125,9 +127,10 @@ git add build-config.env scripts/check-build-config.py meson.build renovate.json
 git commit -m "build: centralize the immutable FFmpeg baseline"
 ```
 
-### Task 3: Make generation and replay safe consumers of the contract
+## Task 3: Make generation and replay safe consumers of the contract
 
 **Files:**
+
 - Modify: `scripts/check-build-config.py`
 - Modify: `ffmpeg-patches/generate.sh`
 - Modify: `ffmpeg-patches/test/build-and-run.sh`
@@ -178,9 +181,10 @@ git add scripts/check-build-config.py ffmpeg-patches/generate.sh \
 git commit -m "build(ffmpeg): make stack replay pinned and isolated"
 ```
 
-### Task 4: Move GitHub Actions to Ubuntu 26.04 and native Vulkan packages
+## Task 4: Move GitHub Actions to Ubuntu 26.04 and native Vulkan packages
 
 **Files:**
+
 - Create: `.github/actionlint.yaml`
 - Modify: `.github/workflows/ci.yml`
 - Modify: `.github/workflows/release.yml`
@@ -242,13 +246,14 @@ Local green proves workflow structure and commands. Hosted acceptance remains
 pending until every PR-triggered job and the manual release gate pass on a
 GitHub-hosted runner; record `ImageVersion` and package versions from that run.
 
-### Task 5: Integrate canonical fixes, regenerate, and synchronize surfaces
+## Task 5: Integrate canonical fixes, regenerate, and synchronize surfaces
 
 **Prerequisite:** The active canonical filter/shader fixes have passed their
 own review and gates and exist as a commit. Rebase this branch onto that commit
 before this task.
 
 **Files:**
+
 - Modify: generated `ffmpeg-patches/0001-*.patch` through `0018-*.patch` as produced
 - Modify: `ffmpeg-patches/series.txt`
 - Modify: `ffmpeg-patches/.commit-msg-*.txt` where claims are stale
@@ -297,7 +302,7 @@ git add .gitignore AGENTS.md CLAUDE.md CONTRIBUTING.md README.md CHANGELOG.md \
 git commit -m "docs(ffmpeg): declare n9.0.2 as the supported baseline"
 ```
 
-### Task 6: Review and run clean final gates
+## Task 6: Review and run clean final gates
 
 - [ ] **Step 1: Reproduce all local lanes from clean directories**
 

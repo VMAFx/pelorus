@@ -103,7 +103,7 @@ deferred.
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Per-band HF-residual variance + edge gate (this) | Direct physical measurement; single inline pass; intensity-dependent → maps straight to the AV1 scaling function | Box low-pass is coarse; AR is a proxy | **Chosen** — best accuracy/risk for a first kernel; fills the reserved slot |
 | Global single-σ noise estimate (one scalar) | Trivial | Throws away the intensity dependence the scaling function needs; bad on dark grain | Rejected — loses the whole point of the FGS scaling curve |
 | Full per-lag AR (Yule-Walker) fit on GPU | Matches the AV1 AR model exactly | Multi-pass autocorrelation matrix solve; high correctness risk first time | Deferred — emit a lag-1 proxy now, fit later |

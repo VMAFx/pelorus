@@ -51,7 +51,7 @@ logical sample domain before the estimator runs.
 All thresholds are normalized in `[0,1]`, independent of bit depth.
 
 | Option | Default | Range | Meaning |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `edge` | 0.06 | 0–1 | 3×3 neighbourhood range above which a pixel is an edge and is excluded from the grain estimate |
 | `strength` | 2.0 | 0–64 | scales the measured per-band RMS residual to the AV1 `[0,255]` scaling-function value (synthesis intensity) |
 | `model` | `aom` | `aom`/`h274` | FGS model the estimate targets (`aom` = AV1; `h274` = HEVC/VVC SEI scalars) |
@@ -84,7 +84,7 @@ Grain estimation reads the **source** grain, so it runs *before* denoise (which
 removes it). The downstream encoder synthesizes the grain back from the emitted
 params:
 
-```
+```text
 hwupload → pelorus_grain_estimate → pelorus_denoise → pelorus_deband → (hwdownload) → encoder (synthesizes grain)
 ```
 
@@ -148,7 +148,7 @@ pattern — no interop ABI or shader change), so the content-adaptive router
 without parsing the `PEL_SEC_FILMGRAIN` blob:
 
 | key | meaning |
-|---|---|
+| --- | --- |
 | `lavfi.pelorus.grain_sigma` | peak per-band RMS residual (grain stddev) over the populated intensity bands, normalized `[0,1]`. Measured **only** on edge-gated locally-flat pixels, so real structure is excluded by construction — what survives is grain. The router's grain discriminator (≈ `<0.004` clean · `0.012–0.05` moderate · `>0.05` heavy). |
 | `lavfi.pelorus.grain_flat` | fraction of the frame the estimate was measured over (flat pixels / total). The estimate's confidence — heavy-edge frames give a small flat fraction and an unreliable sigma. |
 
@@ -170,7 +170,7 @@ therefore the confidence, of the sigma estimate.
 That makes the two values only meaningful together:
 
 | `grain_sigma` | `grain_flat` | meaning |
-|---|---|---|
+| --- | --- | --- |
 | ~0 | ~1 | genuinely clean — lots of flat area, no grain found in it |
 | moderate | 0.1–0.9 | normal case; sigma is well-supported |
 | ~0 or erratic | ~0 | **starved, not clean** — almost nothing qualified as flat |
@@ -179,7 +179,7 @@ A consumer must not read `grain_sigma` alone. Measured on real content (BBB 640x
 seeded noise injected, the response is correctly monotonic in both:
 
 | injected noise | `grain_sigma` | `grain_flat` |
-|---|---|---|
+| --- | --- | --- |
 | 0 | 0.0132 | 0.331 |
 | 4 | 0.0140 | 0.294 |
 | 8 | 0.0158 | 0.166 |

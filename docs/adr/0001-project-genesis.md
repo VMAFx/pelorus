@@ -44,7 +44,7 @@ techniques designed as stubs.
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Add the filters inside the vmafx repo | One repo, shared CI | vmafx is a *measurement* tool; mixing a pre-encode pipeline muddies its scope, and vmafx deliberately removed Vulkan (ADR-0726) | Keep concerns separate; interop via a shared ABI instead |
 | Standalone repo, no vmafx relationship | Maximum independence | Loses the quality-oracle loop that makes the gains measurable and tunable | Bidirectional interop is a core requirement |
 | Out-of-tree libplacebo-style shader lib + thin generic FFmpeg wrapper | Decoupled from FFmpeg internals | Least zero-copy-native; diverges from vmafx's proven patch-stack model | Chose libpelorus + patch stack ([ADR-0104](0104-ffmpeg-patch-stack.md)) |

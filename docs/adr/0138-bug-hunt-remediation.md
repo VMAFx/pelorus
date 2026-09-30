@@ -24,7 +24,7 @@ the C-only patch CI cannot).
 ### The defects + fixes
 
 | # | Sev | Defect | Fix |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | must-fix | `denoise` declares `stat_buffer` at binding 5; the SPIR-V statically references it but it is bound only inside `if(want_meta)` — so on the **default `meta=0`** path a used storage descriptor is left **unbound** (validation error / UB / device-lost on intolerant drivers). No `PARTIALLY_BOUND` escape exists in the FFmpeg helper. | Always allocate the (small) stat buffer and bind binding 5 every dispatch (mirroring the mv/conf 6/7 treatment) + add it as an exec dep on the async path; zero-fill + readback stay gated on `want_meta`. |
 | 2 | must-fix | `denoise_dispatch` reads an uninitialized `FFVkExecContext *exec` on an early-`RET` fail path (the `if(exec)` cleanup guard sees garbage). | `FFVkExecContext *exec = NULL;`. |
 | 3 | should-fix | `mc` block-SAD reduction OOB-writes `s_part[128]` on GPUs with `subgroupSize < 8` (8×8 subgroups would need up to 1024 slots). | Size `s_part` to the worst case `BLOCK_DIM*BLOCK_DIM` (=1024) in both the inline GLSL and the `.comp` (lockstep). |

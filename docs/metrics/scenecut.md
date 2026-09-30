@@ -33,7 +33,7 @@ gated on Vulkan.
 ## Options
 
 | Option | Type | Default | Range | Meaning |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `force_idr` | bool | 1 (on) | 0–1 | set `pict_type = I` on a Pelorus scene-cut frame; `0` = transparent pass-through |
 
 Defaults match the filter's actual `AVOption` table
