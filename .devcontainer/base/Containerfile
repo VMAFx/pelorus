@@ -15,21 +15,36 @@ ARG ACTIONLINT_VERSION=1.7.12
 ARG ACTIONLINT_SHA256=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
 ARG LEFTHOOK_VERSION=2.1.14
 ARG LEFTHOOK_SHA256=2be3187101b3a2edd5edf8b546aa2e3820531c517b4cd0216601a9c06f07c42d
+ARG NODE_VERSION=24.21.0
+ARG NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
 
 # core + sanitizers jobs: Meson, Ninja, clang 21 (format, tidy), SPIR-V compilers.
 # ffmpeg-stack job: native build, Vulkan and encoder headers, assemblers.
-# docs job and gates: Python, black, shellcheck, Node.js 22 with npm.
+# docs job and gates: Python, black, shellcheck.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        build-essential ca-certificates curl git make pkg-config \
+        build-essential ca-certificates curl git make pkg-config xz-utils \
         meson ninja-build clang clang-format clang-tidy glslc glslang-tools \
         nasm yasm libvulkan-dev libvpl-dev libaom-dev libsvtav1enc-dev \
         libffmpeg-nvenc-dev \
-        python3 black shellcheck nodejs npm \
+        python3 black shellcheck \
     && rm -rf /var/lib/apt/lists/*
+
+# The documentation gate runs TypeScript figure sources through Node's type
+# stripping, which Ubuntu's nodejs 22 build lacks (process.features.typescript
+# is false). Install the official Node.js 24 build, the major the locked
+# praetor-docs.yml workflow sets up, after checking its SHASUMS256.txt entry.
+RUN curl -fsSLo /tmp/node.tar.xz \
+        "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+    && echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner \
+        --exclude=CHANGELOG.md --exclude=LICENSE --exclude=README.md \
+    && rm -f /tmp/node.tar.xz \
+    && node --version \
+    && node -p 'process.features.typescript' | grep -qx strip
 
 # actionlint and Lefthook have no Ubuntu package; install the pinned release
 # binaries after checking the checksums their release pages publish.
