@@ -29,17 +29,23 @@
 #include "pelorus/interop.h"
 #include "pelorus/pelorus.h"
 
-#include <fcntl.h>
-#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #ifdef _WIN32
-#include <io.h>
-#include <share.h>
-#include <sys/stat.h>
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+/* windows.h first: sddl.h relies on its types. */
+#include <sddl.h>
+#ifdef _MSC_VER
+/* The fixture's Win32 security calls live in advapi32. */
+#pragma comment(lib, "advapi32.lib")
+#endif
 #else
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -50,87 +56,289 @@ static int g_fail;
 #define CHECK(cond)                                                                                \
     do {                                                                                           \
         if (!(cond)) {                                                                             \
-            fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                        \
+            (void)fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                  \
             g_fail++;                                                                              \
         }                                                                                          \
     } while (0)
 
-static int write_private_fixture(const char *path, const char *contents)
+/*
+ * Fixture files (Pelorus issues #60 and #62, Pelorus ADR-0148). The fixture
+ * writes files into the working directory, so it must never widen access or
+ * write through a path it did not create:
+ *   - creation is exclusive: an existing file, link, or dangling link at the
+ *     path is refused, never followed, truncated, or replaced;
+ *   - the file is owner-only from the first open: POSIX mode 0600 (the umask
+ *     can only remove bits), Windows a protected DACL granting only the owner;
+ *   - a file this code created is removed again on every failure path, and a
+ *     path it refused is never touched.
+ */
+#define FIXTURE_MAX_BYTES 4096u
+
+typedef enum {
+    FIXTURE_CREATED,  /* created and fully written */
+    FIXTURE_REFUSED,  /* nothing created: the path exists or creation failed */
+    FIXTURE_ABANDONED /* created, then a write or close failed */
+} fixture_status;
+
+#ifdef _WIN32
+/* Protected DACL, one ACE: full access for the file's owner (OWNER RIGHTS).
+ * Nothing is inherited from the directory, the 0600 analogue. */
+#define FIXTURE_OWNER_ONLY_SDDL "D:P(A;;FA;;;OW)"
+
+static fixture_status fixture_write_new(const char *path, const char *contents, size_t len)
 {
-    const size_t contents_len = strlen(contents);
-    int fd;
+    SECURITY_ATTRIBUTES sa;
+    PSECURITY_DESCRIPTOR sd = NULL;
+    HANDLE file;
+    DWORD written = 0;
+    BOOL wrote;
+    BOOL closed;
 
-#ifdef _WIN32
-    int written;
-
-    if (contents_len > UINT_MAX) {
-        return -1;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorA(FIXTURE_OWNER_ONLY_SDDL,
+                                                              SDDL_REVISION_1, &sd, NULL)) {
+        return FIXTURE_REFUSED;
     }
-    if (_sopen_s(&fd, path, _O_WRONLY | _O_CREAT | _O_EXCL | _O_TEXT | _O_NOINHERIT, _SH_DENYRW,
-                 _S_IREAD | _S_IWRITE) != 0) {
-        return -1;
+    sa.nLength = (DWORD)sizeof(sa);
+    sa.lpSecurityDescriptor = sd;
+    sa.bInheritHandle = FALSE;
+    /* CREATE_NEW alone follows a dangling link and creates its target;
+     * FILE_FLAG_OPEN_REPARSE_POINT makes any existing link name fail. */
+    file = CreateFileA(path, GENERIC_WRITE, 0, &sa, CREATE_NEW,
+                       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    (void)LocalFree(sd);
+    if (file == INVALID_HANDLE_VALUE) {
+        return FIXTURE_REFUSED;
     }
-    written = _write(fd, contents, (unsigned int)contents_len);
-#else
-    ssize_t written;
-
-    fd = open(path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
-    if (fd < 0) {
-        return -1;
+    wrote = WriteFile(file, contents, (DWORD)len, &written, NULL);
+    closed = CloseHandle(file);
+    if (!wrote || !closed || written != (DWORD)len) {
+        return FIXTURE_ABANDONED;
     }
-    written = write(fd, contents, contents_len);
-#endif
-    if (written < 0 || (size_t)written != contents_len) {
-#ifdef _WIN32
-        if (_close(fd) != 0) {
-            return -1;
-        }
-#else
-        if (close(fd) != 0) {
-            return -1;
-        }
-#endif
-        return -1;
-    }
-#ifdef _WIN32
-    return _close(fd);
-#else
-    return close(fd);
-#endif
+    return FIXTURE_CREATED;
 }
 
-static int prepare_private_fixture(const char *path, const char *contents)
+/* A regular file (not a link) whose DACL is protected and holds exactly one
+ * allow ACE, for OWNER RIGHTS: no inherited, group, or world entry. */
+static int fixture_is_owner_only(const char *path)
 {
-    int write_rc;
-#ifndef _WIN32
-    struct stat file_stat;
-    int stat_rc;
-    mode_t old_umask;
+    union {
+        SECURITY_DESCRIPTOR absolute; /* alignment for the self-relative copy */
+        unsigned char bytes[1024];
+    } buf;
+    const DWORD attributes = GetFileAttributesA(path);
+    DWORD need = 0;
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    BOOL present = FALSE;
+    BOOL defaulted = FALSE;
+    PACL dacl = NULL;
+    void *ace = NULL;
+
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+        !GetFileSecurityA(path, DACL_SECURITY_INFORMATION, &buf, (DWORD)sizeof(buf), &need) ||
+        !GetSecurityDescriptorControl(&buf, &control, &revision) ||
+        !GetSecurityDescriptorDacl(&buf, &present, &dacl, &defaulted)) {
+        return 0;
+    }
+    if ((control & SE_DACL_PROTECTED) == 0 || !present || dacl == NULL || dacl->AceCount != 1 ||
+        !GetAce(dacl, 0, &ace)) {
+        return 0;
+    }
+    return ((const ACE_HEADER *)ace)->AceType == ACCESS_ALLOWED_ACE_TYPE &&
+           IsWellKnownSid(&((ACCESS_ALLOWED_ACE *)ace)->SidStart, WinCreatorOwnerRightsSid);
+}
+
+/* 0 created, 1 this account may not create links (skip), -1 error. Windows
+ * needs Developer Mode or SeCreateSymbolicLinkPrivilege for file links. */
+static int fixture_symlink(const char *target, const char *link_path)
+{
+    DWORD error;
+
+    if (CreateSymbolicLinkA(link_path, target, SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+        return 0;
+    }
+    error = GetLastError();
+    return (error == ERROR_PRIVILEGE_NOT_HELD || error == ERROR_INVALID_PARAMETER) ? 1 : -1;
+}
+#else
+static fixture_status fixture_write_new(const char *path, const char *contents, size_t len)
+{
+    /* O_EXCL fails on any existing name, links included (POSIX open());
+     * O_NOFOLLOW states the same intent for the final component. */
+    const int fd =
+        open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR);
+    ssize_t written;
+    int closed;
+
+    if (fd < 0) {
+        return FIXTURE_REFUSED;
+    }
+    written = write(fd, contents, len);
+    closed = close(fd);
+    if (written < 0 || (size_t)written != len || closed != 0) {
+        return FIXTURE_ABANDONED;
+    }
+    return FIXTURE_CREATED;
+}
+
+/* A regular file (not a link) with exactly mode 0600. */
+static int fixture_is_owner_only(const char *path)
+{
+    struct stat st;
+
+    if (lstat(path, &st) != 0) {
+        return 0;
+    }
+    return S_ISREG(st.st_mode) &&
+           (st.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO)) == (S_IRUSR | S_IWUSR);
+}
+
+/* 0 created, -1 error: every supported POSIX host can create links. */
+static int fixture_symlink(const char *target, const char *link_path)
+{
+    return symlink(target, link_path) == 0 ? 0 : -1;
+}
 #endif
 
+/* Create path exclusively and write contents. 0 on success. */
+static int write_private_fixture(const char *path, const char *contents)
+{
+    const size_t len = strlen(contents);
+    fixture_status status;
+
+    if (len > FIXTURE_MAX_BYTES) {
+        return -1;
+    }
+    status = fixture_write_new(path, contents, len);
+    if (status == FIXTURE_ABANDONED) {
+        CHECK(remove(path) == 0); /* ours: never leave a partial fixture behind */
+    }
+    return status == FIXTURE_CREATED ? 0 : -1;
+}
+
+/* Create a fixture under the most permissive umask, so only the requested
+ * mode can keep it private, then prove it is owner-only. 0 on success; on
+ * failure nothing this call created remains. */
+static int create_checked_fixture(const char *path, const char *contents)
+{
+    int rc;
 #ifndef _WIN32
-    old_umask = umask(0);
+    const mode_t old_umask = umask(0);
 #endif
-    write_rc = write_private_fixture(path, contents);
+
+    rc = write_private_fixture(path, contents);
 #ifndef _WIN32
     (void)umask(old_umask);
 #endif
-    CHECK(write_rc == 0);
-    if (write_rc != 0) {
+    if (rc != 0) {
+        (void)fprintf(stderr,
+                      "fixture %s: exclusive create refused (stale file from an aborted run?)\n",
+                      path);
         return -1;
     }
-
-    /* Exclusive creation rejects stale files and link-substitution attempts. */
-    CHECK(write_private_fixture(path, "must-not-overwrite\n") != 0);
-#ifndef _WIN32
-    stat_rc = stat(path, &file_stat);
-    CHECK(stat_rc == 0);
-    if (stat_rc != 0) {
+    if (!fixture_is_owner_only(path)) {
+        (void)fprintf(stderr, "fixture %s: group/world access or not a regular file\n", path);
+        CHECK(remove(path) == 0);
         return -1;
     }
-    CHECK((file_stat.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO)) == (S_IRUSR | S_IWUSR));
-#endif
     return 0;
+}
+
+/* The whole file equals expected: nothing truncated, appended, or replaced. */
+static int fixture_equals(const char *path, const char *expected)
+{
+    char buf[64];
+    size_t n;
+    int closed;
+    FILE *fp = fopen(path, "rb");
+
+    if (fp == NULL) {
+        return 0;
+    }
+    n = fread(buf, 1, sizeof(buf), fp);
+    closed = fclose(fp);
+    return closed == 0 && n == strlen(expected) && memcmp(buf, expected, n) == 0;
+}
+
+/* 1 when the path exists (checked by opening it, so a link is followed). */
+static int fixture_path_exists(const char *path)
+{
+    FILE *fp = fopen(path, "rb");
+
+    if (fp == NULL) {
+        return 0;
+    }
+    CHECK(fclose(fp) == 0);
+    return 1;
+}
+
+/* A link to an existing file is refused; the target keeps its bytes. Returns
+ * 1 when this account cannot create links (Windows without the right). */
+static int check_fixture_refuses_live_link(const char *target, const char *original)
+{
+    const char *live = "pelorus_fixture_link.tmp";
+    const int link_rc = fixture_symlink(target, live);
+
+    if (link_rc == 1) {
+        (void)fprintf(stderr, "note: no symlink privilege; fixture link cases skipped\n");
+        return 1;
+    }
+    CHECK(link_rc == 0);
+    if (link_rc != 0) {
+        return 0;
+    }
+    CHECK(write_private_fixture(live, "clobbered\n") != 0);
+    CHECK(fixture_equals(target, original));
+    CHECK(remove(live) == 0);
+    return 0;
+}
+
+/* A dangling link is refused, and nothing is created at its target. */
+static void check_fixture_refuses_dangling_link(void)
+{
+    const char *dangling = "pelorus_fixture_dangling.tmp";
+    const char *absent = "pelorus_fixture_absent.tmp";
+    const int stale = fixture_path_exists(absent);
+    int link_rc;
+    int created;
+
+    CHECK(!stale); /* else the link would not dangle; never touch that file */
+    if (stale) {
+        return;
+    }
+    link_rc = fixture_symlink(absent, dangling);
+    CHECK(link_rc == 0);
+    if (link_rc != 0) {
+        return;
+    }
+    CHECK(write_private_fixture(dangling, "clobbered\n") != 0);
+    created = fixture_path_exists(absent);
+    CHECK(!created); /* nothing may be created through the link */
+    if (created) {
+        CHECK(remove(absent) == 0);
+    }
+    CHECK(remove(dangling) == 0);
+}
+
+/* Pelorus issues #60 and #62: fixture creation never grants group/world
+ * access and never follows, truncates, or replaces an existing path. */
+static void test_fixture_file_safety(void)
+{
+    const char *plant = "pelorus_fixture_plant.tmp";
+    const char *original = "planted\n";
+    int rc;
+
+    rc = create_checked_fixture(plant, original);
+    CHECK(rc == 0);
+    if (rc != 0) {
+        return;
+    }
+    CHECK(write_private_fixture(plant, "clobbered\n") != 0);
+    CHECK(fixture_equals(plant, original));
+    if (check_fixture_refuses_live_link(plant, original) == 0) {
+        check_fixture_refuses_dangling_link();
+    }
+    CHECK(remove(plant) == 0);
 }
 
 static void fill_meta(PelorusSideData *m)
@@ -687,15 +895,15 @@ static void test_x265_csv_reader(void)
                              "Total frames, 3, , 30.00, , , , \n";
     PelorusX265Frame frames[8];
     size_t count = 0;
-    PelorusQpReportSection qp;
     const char *path = "pelorus_x265_csv_test.csv";
     int fixture_rc;
 
-    fixture_rc = prepare_private_fixture(path, csv);
+    fixture_rc = create_checked_fixture(path, csv);
     CHECK(fixture_rc == 0);
     if (fixture_rc != 0) {
         return;
     }
+    /* Once created, every later step falls through to the remove() below. */
 
     /* Parse: 3 coded frames, the "Total frames" aggregate row dropped. */
     CHECK(pel_x265_csv_parse(path, frames, 8, &count) == PEL_OK);
@@ -713,6 +921,17 @@ static void test_x265_csv_reader(void)
     CHECK(pel_x265_csv_parse(path, frames, 2, &count) == PEL_ERR_RANGE);
     CHECK(count == 2);
 
+    CHECK(remove(path) == 0);
+}
+
+/* The x265 CSV reader's error paths need no fixture file. */
+static void test_x265_csv_reader_guards(void)
+{
+    PelorusX265Frame frames[8];
+    size_t count = 0;
+    PelorusQpReportSection qp;
+
+    memset(frames, 0, sizeof(frames));
     /* A missing file is ABSENT, not a crash. */
     CHECK(pel_x265_csv_parse("pelorus_no_such_file.csv", frames, 8, &count) == PEL_ERR_ABSENT);
 
@@ -720,8 +939,6 @@ static void test_x265_csv_reader(void)
     CHECK(pel_x265_csv_parse(NULL, frames, 8, &count) == PEL_ERR_INVALID);
     CHECK(pel_qp_report_from_x265_frames(NULL, 1, NULL, &qp) == PEL_ERR_INVALID);
     CHECK(pel_qp_report_from_x265_frames(frames, 0, NULL, &qp) == PEL_ERR_INVALID);
-
-    CHECK(remove(path) == 0);
 }
 
 /* The deband param contract: defaults validate, out-of-range is rejected. */
@@ -839,14 +1056,16 @@ int main(void)
     test_motion_conf_roundtrip();
     test_complexity_roundtrip();
     test_qp_report_fold();
+    test_fixture_file_safety();
     test_x265_csv_reader();
+    test_x265_csv_reader_guards();
     test_deband_params();
 
     if (g_fail != 0) {
-        fprintf(stderr, "%d check(s) failed\n", g_fail);
+        (void)fprintf(stderr, "%d check(s) failed\n", g_fail);
         return EXIT_FAILURE;
     }
-    printf("interop: all checks passed (libpelorus %s, ABI %u.%u)\n", pelorus_version_string(),
-           PELORUS_ABI_MAJOR, PELORUS_ABI_MINOR);
+    (void)printf("interop: all checks passed (libpelorus %s, ABI %u.%u)\n",
+                 pelorus_version_string(), PELORUS_ABI_MAJOR, PELORUS_ABI_MINOR);
     return EXIT_SUCCESS;
 }
