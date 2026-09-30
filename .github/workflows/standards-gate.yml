@@ -31,7 +31,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27'
+          go-version: '1.27.1'
           cache: false
 
       - name: Install pinned Praetor engine
@@ -49,7 +49,27 @@ jobs:
       - name: Verify canonical agent contexts
         run: standardsctl compile-context --verify
 
-      # Baseline-only ratchet: legacy findings may shrink but never grow.
-      # Touched-file zero-debt mode remains deferred by ADR-0145.
+      # HISS-13 ratchet (ADR-0145), in two steps. `--base` turns on the engine's
+      # growth guard: the committed baseline may not record more findings than
+      # the one on the target (pull request) or the replaced commit (push),
+      # unless the increase was recorded with `baseline --record
+      # --allow-increase --reason`, which the audit prints as a WARN. `--base`
+      # alone would also revoke every baselined finding in a touched file
+      # (zero-debt mode, still deferred); the debt-delta reason instead fails a
+      # touched file only when one of its rules gains a finding.
       - name: Audit HISS invariants against baseline
-        run: standardsctl audit
+        env:
+          AUDIT_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+          DEBT_DELTA_REASON: >-
+            ADR-0145 baseline ratchet; touched files keep baselined debt
+            but may not add findings; zero-debt mode deferred
+        run: >-
+          standardsctl audit --base "$AUDIT_BASE"
+          --touched-debt-delta-reason "$DEBT_DELTA_REASON"
+
+      # Debt-delta mode accepts a touched file whose findings moved lines. This
+      # step still requires the committed baseline to record every current
+      # finding at its current line, so stale fingerprints cannot reach master
+      # and fail a later pull request that does not touch that file.
+      - name: Verify baseline records every current finding
+        run: standardsctl baseline --verify
