@@ -90,8 +90,13 @@ while IFS= read -r patch || [[ -n "$patch" ]]; do
         ""|\#*) continue ;;
         0005-qsv-pelorus-roi.patch) break ;;
     esac
-    git -C "$WORKTREE" -c core.hooksPath=/dev/null \
-        am --3way "$PATCHDIR/$patch"
+    git -C "$WORKTREE" \
+        -c user.name=Pelorus-Replay \
+        -c user.email=replay@pelorus.invalid \
+        -c commit.gpgSign=false \
+        -c core.hooksPath=/dev/null \
+        -c diff.orderFile=/dev/null \
+        am --3way --no-gpg-sign --no-verify "$PATCHDIR/$patch"
 done < "$PATCHDIR/series.txt"
 git -C "$WORKTREE" -c core.hooksPath=/dev/null \
     apply "$PATCHDIR/files/qsv-pelorus-roi.patch"

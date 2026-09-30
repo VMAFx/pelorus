@@ -202,10 +202,12 @@ apply_stack() {
     local patch
     for patch in "${PATCHES[@]}"; do
         echo "am: $patch"
-        git -C "$WORKTREE" -c core.hooksPath=/dev/null \
-            -c user.name=Pelorus-replay \
-            -c user.email=ffmpeg-replay@pelorus.invalid \
+        git -C "$WORKTREE" \
+            -c user.name=Pelorus-Replay \
+            -c user.email=replay@pelorus.invalid \
             -c commit.gpgSign=false \
+            -c core.hooksPath=/dev/null \
+            -c diff.orderFile=/dev/null \
             am --3way --no-gpg-sign --no-verify "$PATCHDIR/$patch"
     done
 }

@@ -33,6 +33,11 @@ All notable changes to Pelorus are documented here. The format is
   uses an SDK-neutral boolean assignment, preserving compilation with Ubuntu
   26.04's SVT-AV1 2.3 headers as well as newer SDKs
   ([ADR-0144](docs/adr/0144-ffmpeg-pin-and-ci-runner-policy.md)).
+- Lowered the HISS debt baseline from 76 to 62 findings. Splitting the
+  conformance fixture and the build-config checker retired 14 HISS-04 findings
+  (functions over 60 lines); the ratchet now forbids their return
+  ([ADR-0145](docs/adr/0145-praetor-governance-adoption.md),
+  [ADR-0148](docs/adr/0148-owner-only-exclusive-test-fixtures.md)).
 - Moved the docs job's actionlint toolchain to Go 1.27 (`1.27.x`, via the
   pinned `actions/setup-go`). The build-config checker now reads the expected
   version from one `ACTIONLINT_GO_VERSION` literal and requires exactly one
@@ -62,6 +67,18 @@ All notable changes to Pelorus are documented here. The format is
   and reference frame on its first dispatch. Vulkan validation now checks both
   output streams, with a hermetic regression test for unexpected VUIDs
   ([ADR-0147](docs/adr/0147-vulkan-sample-domain-and-components.md)).
+
+### Security
+
+- Hardened the shared conformance fixture's file creation (issues #60, #62;
+  ADR-0148). Fixture files are now created exclusively and owner-only from the
+  first open: mode `0600` on POSIX under any umask, and a protected owner-only
+  DACL on Windows instead of the directory's inherited ACL. An existing file,
+  symlink, or dangling symlink at a fixture path is refused and left untouched
+  instead of being truncated or followed. A regression covers each property.
+- Made FFmpeg patch replay independent of caller Git identity and configuration
+  by pinning an ephemeral committer and neutralizing signing, hooks, and diff
+  ordering for every `git am` (ADR-0144).
 
 <!-- END UNRELEASED -->
 

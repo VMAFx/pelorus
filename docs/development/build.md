@@ -34,7 +34,10 @@ FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh # apply + build + s
 Both scripts read the exact tag and peeled commit from root `build-config.env`,
 verify that the qualified tag resolves to that commit, and work in an isolated
 run-owned Git worktree. The committed `*.patch` files are the artifact; edit
-the sources under `files/` and regenerate.
+the sources under `files/` and regenerate. Patch replay supplies its own
+ephemeral committer identity and neutralizes caller signing, hooks, and diff
+ordering, so the same command works on a clean CI runner and a configured
+developer workstation.
 
 ## Repository verification entry points
 
@@ -56,15 +59,15 @@ locked `markdownlint-cli2` 0.23.2 dependency tree into a temporary directory.
 | --- | --- |
 | `make compile-context` | Regenerate cross-tool context and persona projections from their canonical sources |
 | `make compile-context-verify` | Fail if a generated projection has drifted |
-| `make audit` | Verify the pinned manifest/lock and enforce the 76-finding HISS baseline ratchet |
+| `make audit` | Verify the pinned manifest/lock and enforce the 62-finding HISS baseline ratchet |
 | `make docs-lint` | Lint public Markdown with the locked Praetor configuration and reject links into private scratch directories |
 | `make docs-figures` | Check figure specs and sources; skips with a reason while `docs/figures/` has none |
 | `make verify-all` | Run context verification, the audit, `verify-native`, then `docs-lint` and `docs-figures`; outside CI use `make -k verify-all`, because the audit's known local failure (below) otherwise stops Make before `verify-native` |
 | `make hooks-install` | Install the tracked Lefthook commands into the shared Git hooks directory; see the note below |
 
-The baseline accepts 76 existing findings in the scanner's supported-file scope
+The baseline accepts 62 existing findings in the scanner's supported-file scope
 (C, headers, and Python): HISS-01=31 (`goto` cleanup jumps), HISS-02=1,
-HISS-04=42 (functions over 60 lines), and HISS-07=2 (`sys.exit` outside a
+HISS-04=28 (functions over 60 lines), and HISS-07=2 (`sys.exit` outside a
 `__main__` entry point). It is a non-regression ceiling, not a claim of zero
 debt or whole-tree source coverage. Fingerprints are keyed by file and line
 ([Praetor issue 29](https://github.com/cordanaLLM/praetor/issues/29)), so

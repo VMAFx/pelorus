@@ -1,10 +1,9 @@
 {
   "version": 1,
-  "generated_at": "2026-09-30T12:34:01Z",
+  "generated_at": "2026-09-30T13:06:13Z",
   "repository": "VMAFx/pelorus",
-  "commit_sha": "f308ae15534ceedb862668f51dfd8d78ceb34c5a",
-  "total_infractions": 76,
-  "increase_rationale": "Merge of origin/master eb3b045 (PR 59): renovate_validator_regressions in scripts/check-build-config.py (100 LOC) is HISS-04 debt that master added without a Standards gate; ten other findings in that file only moved lines",
+  "commit_sha": "989d14005a8f530b75a405d7ea4c3a19c45e2b24",
+  "total_infractions": 62,
   "infractions": [
     {
       "rule_id": "HISS-01",
@@ -423,38 +422,6 @@
       "fingerprint": "libpelorus/src/qp_report_csv.c:273:HISS-04"
     },
     {
-      "rule_id": "HISS-04",
-      "file_path": "libpelorus/test/interop_test.c",
-      "line_number": 59,
-      "symbol": "test_roundtrip",
-      "message": "Function 'test_roundtrip' (79 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "libpelorus/test/interop_test.c:59:HISS-04"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "libpelorus/test/interop_test.c",
-      "line_number": 314,
-      "symbol": "test_qp_report_roundtrip",
-      "message": "Function 'test_qp_report_roundtrip' (72 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "libpelorus/test/interop_test.c:314:HISS-04"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "libpelorus/test/interop_test.c",
-      "line_number": 392,
-      "symbol": "test_motion_conf_roundtrip",
-      "message": "Function 'test_motion_conf_roundtrip' (66 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "libpelorus/test/interop_test.c:392:HISS-04"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "libpelorus/test/interop_test.c",
-      "line_number": 554,
-      "symbol": "test_x265_csv_reader",
-      "message": "Function 'test_x265_csv_reader' (79 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "libpelorus/test/interop_test.c:554:HISS-04"
-    },
-    {
       "rule_id": "HISS-07",
       "file_path": "scripts/bench/bd_rate.py",
       "line_number": 22,
@@ -472,90 +439,10 @@
     {
       "rule_id": "HISS-04",
       "file_path": "scripts/check-build-config.py",
-      "line_number": 374,
-      "symbol": "consumer_validator_regressions",
-      "message": "Function 'consumer_validator_regressions' (258 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "scripts/check-build-config.py:374:HISS-04"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "scripts/check-build-config.py",
-      "line_number": 843,
-      "symbol": "git_dirty_worktree_cleanup_regression",
-      "message": "Function 'git_dirty_worktree_cleanup_regression' (69 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "scripts/check-build-config.py:843:HISS-04"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "scripts/check-build-config.py",
-      "line_number": 914,
-      "symbol": "git_worktree_hook_regression",
-      "message": "Function 'git_worktree_hook_regression' (145 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "scripts/check-build-config.py:914:HISS-04"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "scripts/check-build-config.py",
-      "line_number": 1061,
-      "symbol": "git_am_hook_regression",
-      "message": "Function 'git_am_hook_regression' (160 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "scripts/check-build-config.py:1061:HISS-04"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "scripts/check-build-config.py",
-      "line_number": 1223,
-      "symbol": "git_smudge_cleanup_regression",
-      "message": "Function 'git_smudge_cleanup_regression' (102 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "scripts/check-build-config.py:1223:HISS-04"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "scripts/check-build-config.py",
-      "line_number": 1327,
-      "symbol": "git_format_config_regression",
-      "message": "Function 'git_format_config_regression' (155 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "scripts/check-build-config.py:1327:HISS-04"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "scripts/check-build-config.py",
-      "line_number": 1484,
-      "symbol": "validate_consumer_text",
-      "message": "Function 'validate_consumer_text' (109 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "scripts/check-build-config.py:1484:HISS-04"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "scripts/check-build-config.py",
-      "line_number": 1664,
-      "symbol": "validate_replay_text",
-      "message": "Function 'validate_replay_text' (88 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "scripts/check-build-config.py:1664:HISS-04"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "scripts/check-build-config.py",
-      "line_number": 1772,
-      "symbol": "validate_qsv_replay_text",
-      "message": "Function 'validate_qsv_replay_text' (65 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "scripts/check-build-config.py:1772:HISS-04"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "scripts/check-build-config.py",
-      "line_number": 1865,
-      "symbol": "validate_workflow_text",
-      "message": "Function 'validate_workflow_text' (126 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "scripts/check-build-config.py:1865:HISS-04"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "scripts/check-build-config.py",
-      "line_number": 2286,
+      "line_number": 2507,
       "symbol": "renovate_validator_regressions",
       "message": "Function 'renovate_validator_regressions' (100 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "scripts/check-build-config.py:2286:HISS-04"
+      "fingerprint": "scripts/check-build-config.py:2507:HISS-04"
     },
     {
       "rule_id": "HISS-07",
