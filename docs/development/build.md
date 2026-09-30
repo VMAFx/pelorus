@@ -326,8 +326,13 @@ either would leave a copied value behind:
   second regex manager with exactly those templates, so both edits share one
   `renovate/go-<major>.x` branch and PR. The checker verifies that manager's
   templates and that its `matchStrings` entry captures the literal exactly
-  once; a Renovate config that would split or drop the bump fails the fast
-  suite. The step name carries no version for the same reason
+  once. Removing or breaking that manager fails the fast suite. The checker
+  does not evaluate other `renovate.json` settings (`ignorePaths`,
+  `enabledManagers`, `packageRules`, `extends` presets); if one of them splits
+  or drops the bump, the Renovate PR that edits only one site fails
+  `build-config-sync`, and that red PR is the detection point
+  ([ADR-0152](../adr/0152-renovate-guard-enforcement-scope.md)). The step name
+  carries no version for the same reason
   ([ADR-0151](../adr/0151-renovate-mirrors-checker-toolchain-pins.md)).
 
 The Windows job's `msys2/setup-msys2` action is bumped by Renovate's
