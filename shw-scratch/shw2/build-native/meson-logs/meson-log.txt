@@ -1,0 +1,209 @@
+Build started at 2026-09-30T13:34:31.311730
+Main binary: C:/msys64/ucrt64/bin/python.exe
+Build Options: 
+Python system: Windows
+The Meson build system
+Version: 1.12.1
+Source dir: C:/tmp/pel/shw
+Build dir: C:/tmp/pel/shw-scratch/shw2/build-native
+Build type: native build
+Project name: pelorus
+Project version: 0.2.2
+-----------
+Detecting compiler via: `icl ""` -> [WinError 2] Das System kann die angegebene Datei nicht finden
+-----------
+Detecting compiler via: `cl /?` -> [WinError 2] Das System kann die angegebene Datei nicht finden
+-----------
+Detecting compiler via: `cc --version` -> 0
+stdout:
+cc (Rev4, Built by MSYS2 project) 16.2.0
+Copyright (C) 2026 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+-----------
+Running command: -cpp -x c -E -dM -
+-----
+-----------
+Detecting linker via: `cc -Wl,--version` -> 0
+stdout:
+GNU ld (GNU Binutils) 2.47.20260726
+Copyright (C) 2026 Free Software Foundation, Inc.
+This program is free software; you may redistribute it under the terms of
+the GNU General Public License version 3 or (at your option) a later version.
+This program has absolutely no warranty.
+-----------
+stderr:
+collect2 version 16.2.0
+C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe -plugin C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/liblto_plugin.dll -plugin-opt=C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/lto-wrapper.exe -plugin-opt=-fresolution=C:\msys64\tmp\ccvnL7tE.res -plugin-opt=-pass-through=-lmingw32 -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_eh -plugin-opt=-pass-through=-lmingwex -plugin-opt=-pass-through=-lmsvcrt -plugin-opt=-pass-through=-lkernel32 -plugin-opt=-pass-through=-lpthread -plugin-opt=-pass-through=-ladvapi32 -plugin-opt=-pass-through=-lshell32 -plugin-opt=-pass-through=-luser32 -plugin-opt=-pass-through=-lkernel32 -plugin-opt=-pass-through=-lmingw32 -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_eh -plugin-opt=-pass-through=-lmingwex -plugin-opt=-pass-through=-lmsvcrt -plugin-opt=-pass-through=-lkernel32 --sysroot=C:/msys64/ucrt64/bin/../../ucrt64 -m i386pep -Bdynamic C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../lib/crt2.o C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/crtbegin.o -LC:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0 -LC:/msys64/ucrt64/bin/../lib/gcc -LC:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../x86_64-w64-mingw32/lib/../lib -LC:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../lib -LC:/msys64/ucrt64/bin/../../ucrt64/lib/../lib -LC:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../x86_64-w64-mingw32/lib -LC:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../.. -LC:/msys64/ucrt64/bin/../../ucrt64/lib --version -lmingw32 -lgcc -lgcc_eh -lmingwex -lmsvcrt -lkernel32 -lpthread -ladvapi32 -lshell32 -luser32 -lkernel32 -lmingw32 -lgcc -lgcc_eh -lmingwex -lmsvcrt -lkernel32 C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../lib/default-manifest.o C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/crtend.o
+-----------
+Sanity check compiler command line: cc -o sanity_check_for_c.exe sanity_check_for_c.c -D_FILE_OFFSET_BITS=64
+Sanity check compile stdout:
+
+-----
+Sanity check compile stderr:
+
+-----
+Sanity check built target output for host machine c compiler
+ -- Running test binary command:  C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/sanity_check_for_c.exe
+-----------
+Sanity check: `C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/sanity_check_for_c.exe` -> 0
+ -- stdout:
+ 
+ -- stderr:
+ 
+ -- returncode: 0
+C compiler for the host machine: cc (gcc 16.2.0 "cc (Rev4, Built by MSYS2 project) 16.2.0")
+C linker for the host machine: cc ld.bfd 2.47.20260726
+-----------
+Detecting archiver via: `gcc-ar --version` -> 0
+stdout:
+GNU ar (GNU Binutils) 2.47.20260726
+Copyright (C) 2026 Free Software Foundation, Inc.
+This program is free software; you may redistribute it under the terms of
+the GNU General Public License version 3 or (at your option) any later version.
+This program has absolutely no warranty.
+-----------
+-----------
+Detecting compiler via: `icl ""` -> [WinError 2] Das System kann die angegebene Datei nicht finden
+-----------
+Detecting compiler via: `cl /?` -> [WinError 2] Das System kann die angegebene Datei nicht finden
+-----------
+Detecting compiler via: `cc --version` -> 0
+stdout:
+cc (Rev4, Built by MSYS2 project) 16.2.0
+Copyright (C) 2026 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+-----------
+Running command: -cpp -x c -E -dM -
+-----
+-----------
+Detecting linker via: `cc -Wl,--version` -> 0
+stdout:
+GNU ld (GNU Binutils) 2.47.20260726
+Copyright (C) 2026 Free Software Foundation, Inc.
+This program is free software; you may redistribute it under the terms of
+the GNU General Public License version 3 or (at your option) a later version.
+This program has absolutely no warranty.
+-----------
+stderr:
+collect2 version 16.2.0
+C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe -plugin C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/liblto_plugin.dll -plugin-opt=C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/lto-wrapper.exe -plugin-opt=-fresolution=C:\msys64\tmp\cczVj1uZ.res -plugin-opt=-pass-through=-lmingw32 -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_eh -plugin-opt=-pass-through=-lmingwex -plugin-opt=-pass-through=-lmsvcrt -plugin-opt=-pass-through=-lkernel32 -plugin-opt=-pass-through=-lpthread -plugin-opt=-pass-through=-ladvapi32 -plugin-opt=-pass-through=-lshell32 -plugin-opt=-pass-through=-luser32 -plugin-opt=-pass-through=-lkernel32 -plugin-opt=-pass-through=-lmingw32 -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_eh -plugin-opt=-pass-through=-lmingwex -plugin-opt=-pass-through=-lmsvcrt -plugin-opt=-pass-through=-lkernel32 --sysroot=C:/msys64/ucrt64/bin/../../ucrt64 -m i386pep -Bdynamic C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../lib/crt2.o C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/crtbegin.o -LC:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0 -LC:/msys64/ucrt64/bin/../lib/gcc -LC:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../x86_64-w64-mingw32/lib/../lib -LC:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../lib -LC:/msys64/ucrt64/bin/../../ucrt64/lib/../lib -LC:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../x86_64-w64-mingw32/lib -LC:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../.. -LC:/msys64/ucrt64/bin/../../ucrt64/lib --version -lmingw32 -lgcc -lgcc_eh -lmingwex -lmsvcrt -lkernel32 -lpthread -ladvapi32 -lshell32 -luser32 -lkernel32 -lmingw32 -lgcc -lgcc_eh -lmingwex -lmsvcrt -lkernel32 C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../lib/default-manifest.o C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/crtend.o
+-----------
+Sanity check compiler command line: cc -o sanity_check_for_c.exe sanity_check_for_c.c -D_FILE_OFFSET_BITS=64
+Sanity check compile stdout:
+
+-----
+Sanity check compile stderr:
+
+-----
+Sanity check built target output for build machine c compiler
+ -- Running test binary command:  C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/sanity_check_for_c.exe
+-----------
+Sanity check: `C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/sanity_check_for_c.exe` -> 0
+ -- stdout:
+ 
+ -- stderr:
+ 
+ -- returncode: 0
+C compiler for the build machine: cc (gcc 16.2.0 "cc (Rev4, Built by MSYS2 project) 16.2.0")
+C linker for the build machine: cc ld.bfd 2.47.20260726
+Build machine cpu family: x86_64
+Build machine cpu: x86_64
+Host machine cpu family: x86_64
+Host machine cpu: x86_64
+Target machine cpu family: x86_64
+Target machine cpu: x86_64
+Running compile:
+Working directory:  C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmpl5mb9wl7
+Code:
+extern int i;
+int i;
+
+-----------
+Command line: `cc C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmpl5mb9wl7/testfile.c -o C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmpl5mb9wl7/output.obj -c -D_FILE_OFFSET_BITS=64 -O0 -U_FORTIFY_SOURCE -Wshadow` -> 0
+Compiler for C supports arguments -Wshadow: YES 
+Running compile:
+Working directory:  C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmpjxtdcs3b
+Code:
+extern int i;
+int i;
+
+-----------
+Command line: `cc C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmpjxtdcs3b/testfile.c -o C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmpjxtdcs3b/output.obj -c -D_FILE_OFFSET_BITS=64 -O0 -U_FORTIFY_SOURCE -Wpointer-arith` -> 0
+Compiler for C supports arguments -Wpointer-arith: YES 
+Running compile:
+Working directory:  C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmpcegahm3z
+Code:
+extern int i;
+int i;
+
+-----------
+Command line: `cc C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmpcegahm3z/testfile.c -o C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmpcegahm3z/output.obj -c -D_FILE_OFFSET_BITS=64 -O0 -U_FORTIFY_SOURCE -Wstrict-prototypes` -> 0
+Compiler for C supports arguments -Wstrict-prototypes: YES 
+Running compile:
+Working directory:  C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmpsus761fr
+Code:
+extern int i;
+int i;
+
+-----------
+Command line: `cc C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmpsus761fr/testfile.c -o C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmpsus761fr/output.obj -c -D_FILE_OFFSET_BITS=64 -O0 -U_FORTIFY_SOURCE -Wmissing-prototypes` -> 0
+Compiler for C supports arguments -Wmissing-prototypes: YES 
+Running compile:
+Working directory:  C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmpp3rbj56i
+Code:
+extern int i;
+int i;
+
+-----------
+Command line: `cc C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmpp3rbj56i/testfile.c -o C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmpp3rbj56i/output.obj -c -D_FILE_OFFSET_BITS=64 -O0 -U_FORTIFY_SOURCE -Wvla` -> 0
+Compiler for C supports arguments -Wvla: YES 
+Pkg-config binary missing from cross or native file, or env var undefined.
+Trying a default Pkg-config fallback at pkg-config
+Found pkg-config: YES (C:\msys64\ucrt64\bin/pkg-config.exe) 3.0.7
+Adding test "interop-abi"
+Program glslangValidator found: YES (C:\msys64\ucrt64\bin/glslangValidator.exe)
+Program glslc found: YES (C:\msys64\ucrt64\bin/glslc.exe)
+Adding test "shader-pelorus_deband-compile"
+Adding test "shader-pelorus_analyze-compile"
+Adding test "shader-pelorus_denoise-compile"
+Adding test "shader-pelorus_grain_estimate-compile"
+Adding test "shader-pelorus_mc-compile"
+Adding test "shader-pelorus_qpmap-compile"
+Adding test "shader-pelorus_dehalo-compile"
+Adding test "shader-pelorus_aa-compile"
+Adding test "shader-pelorus_deblock-compile"
+Adding test "shader-pelorus_borderfix-compile"
+Adding test "shipped-shader-pelorus_deband-compile"
+Adding test "shipped-shader-pelorus_analyze-compile"
+Adding test "shipped-shader-pelorus_denoise-compile"
+Adding test "shipped-shader-pelorus_grain_estimate-compile"
+Adding test "shipped-shader-pelorus_mc-compile"
+Adding test "shipped-shader-pelorus_dehalo-compile"
+Adding test "shipped-shader-pelorus_aa-compile"
+Adding test "shipped-shader-pelorus_deblock-compile"
+Adding test "shipped-shader-pelorus_borderfix-compile"
+Adding test "shipped-shader-pelorus_qpmap-compile"
+Program python3 found: YES (C:\msys64\ucrt64\bin/python3.exe)
+Program bash found: YES (C:\msys64\usr\bin/bash.exe)
+Adding test "shader-binding-order"
+Adding test "build-config-sync"
+Adding test "vulkan-storage-domain"
+Adding test "vulkan-validation-streams"
+Adding test "vulkan-sample-scale"
+Adding test "grain-accumulator-bounds"
+Build targets in project: 13
+
+Found ninja-1.13.2 at C:\msys64\ucrt64\bin/ninja.exe
+Running compile:
+Working directory:  C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmp7du_iy4x
+Code:
+
+-----------
+Command line: `cc C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmp7du_iy4x/testfile.c -o C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/tmp7du_iy4x/output.obj -c -D_FILE_OFFSET_BITS=64 -O0 -U_FORTIFY_SOURCE --print-search-dirs` -> 0
+stdout:
+install: C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/
+programs: =C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/;C:/msys64/ucrt64/bin/../lib/gcc/;C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../x86_64-w64-mingw32/bin/x86_64-w64-mingw32/16.2.0/;C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../x86_64-w64-mingw32/bin/
+libraries: =C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/;C:/msys64/ucrt64/bin/../lib/gcc/;C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../x86_64-w64-mingw32/lib/x86_64-w64-mingw32/16.2.0/;C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../x86_64-w64-mingw32/lib/../lib/;C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../x86_64-w64-mingw32/16.2.0/;C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../lib/;C:/msys64/ucrt64/bin/../../ucrt64/lib/x86_64-w64-mingw32/16.2.0/;C:/msys64/ucrt64/bin/../../ucrt64/lib/../lib/;C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../x86_64-w64-mingw32/lib/;C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../;C:/msys64/ucrt64/bin/../../ucrt64/lib/
+-----------

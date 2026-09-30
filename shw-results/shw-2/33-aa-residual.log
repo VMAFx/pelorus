@@ -1,0 +1,9 @@
+differences uhd-f0 vs uhd-f1 (frame plane x y | values per run):
+  f0 Y x=297 y=0 (x%32=9) | uhd-f0=216 uhd-f1=217 b580-f0=217 b580-f1=217 b580lin-f0=217 b580lin-f1=217
+  f3 U x=308 y=0 (x%32=20) | uhd-f0=162 uhd-f1=163 b580-f0=163 b580-f1=163 b580lin-f0=163 b580lin-f1=163
+uhd-f0 vs b580-f0: 2 differing samples; rows [0]
+uhd-f1 vs b580-f1: 0 differing samples
+uhd-f0 vs b580lin-f0: 2 differing samples; rows [0]
+uhd-f1 vs b580lin-f1: 0 differing samples
+b580-f0 vs b580-f1: 0 differing samples
+b580lin-f0 vs b580lin-f1: 0 differing samples

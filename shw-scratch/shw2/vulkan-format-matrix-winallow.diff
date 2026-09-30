@@ -1,0 +1,13 @@
+--- /c/tmp/pel/shw/ffmpeg-patches/test/vulkan-format-matrix.sh	2026-09-30 10:51:03.888807400 +0200
++++ vulkan-format-matrix-winallow.sh	2026-09-30 11:51:27.787513100 +0200
+@@ -92,7 +92,9 @@
+                     *VkCopyImageToMemoryInfo-srcImageLayout-09064 | \
+                     *VkDescriptorSetLayoutBinding-descriptorType-00282 | \
+                     *VkImageMemoryBarrier2-srcAccessMask-03909 | \
+-                    *VkImageMemoryBarrier2-srcAccessMask-07454)
++                    *VkImageMemoryBarrier2-srcAccessMask-07454 | \
++                    *VkFormatProperties2-pNext-pNext | \
++                    *VkHostImageLayoutTransitionInfo-oldLayout-09230)
+                     echo "$vuid" >>"$PEL_OUTPUT_ROOT/validation-known-upstream.txt"
+                     ;;
+                 *)

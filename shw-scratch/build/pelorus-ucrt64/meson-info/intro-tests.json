@@ -1,0 +1,603 @@
+[
+  {
+    "cmd": [
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/libpelorus/test/pelorus_interop_test.exe"
+    ],
+    "env": {},
+    "name": "interop-abi",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [
+      "468dc0e@@pelorus_interop_test@exe"
+    ],
+    "extra_paths": [
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/libpelorus",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/libpelorus/test"
+    ]
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+      "-V",
+      "--target-env",
+      "vulkan1.2",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_deband.comp",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shader-pelorus_deband-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+      "-V",
+      "--target-env",
+      "vulkan1.2",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_analyze.comp",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shader-pelorus_analyze-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+      "-V",
+      "--target-env",
+      "vulkan1.2",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_denoise.comp",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shader-pelorus_denoise-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+      "-V",
+      "--target-env",
+      "vulkan1.2",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_grain_estimate.comp",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shader-pelorus_grain_estimate-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+      "-V",
+      "--target-env",
+      "vulkan1.2",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_mc.comp",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shader-pelorus_mc-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+      "-V",
+      "--target-env",
+      "vulkan1.2",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_qpmap.comp",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shader-pelorus_qpmap-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+      "-V",
+      "--target-env",
+      "vulkan1.2",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_dehalo.comp",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shader-pelorus_dehalo-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+      "-V",
+      "--target-env",
+      "vulkan1.2",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_aa.comp",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shader-pelorus_aa-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+      "-V",
+      "--target-env",
+      "vulkan1.2",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_deblock.comp",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shader-pelorus_deblock-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+      "-V",
+      "--target-env",
+      "vulkan1.2",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_borderfix.comp",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shader-pelorus_borderfix-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslc.exe",
+      "--target-env=vulkan1.4",
+      "--target-spv=spv1.6",
+      "-std=460",
+      "-O",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_deband.comp.glsl",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shipped-shader-pelorus_deband-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslc.exe",
+      "--target-env=vulkan1.4",
+      "--target-spv=spv1.6",
+      "-std=460",
+      "-O",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_analyze.comp.glsl",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shipped-shader-pelorus_analyze-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslc.exe",
+      "--target-env=vulkan1.4",
+      "--target-spv=spv1.6",
+      "-std=460",
+      "-O",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_denoise.comp.glsl",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shipped-shader-pelorus_denoise-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslc.exe",
+      "--target-env=vulkan1.4",
+      "--target-spv=spv1.6",
+      "-std=460",
+      "-O",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_grain_estimate.comp.glsl",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shipped-shader-pelorus_grain_estimate-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslc.exe",
+      "--target-env=vulkan1.4",
+      "--target-spv=spv1.6",
+      "-std=460",
+      "-O",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_mc.comp.glsl",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shipped-shader-pelorus_mc-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslc.exe",
+      "--target-env=vulkan1.4",
+      "--target-spv=spv1.6",
+      "-std=460",
+      "-O",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_dehalo.comp.glsl",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shipped-shader-pelorus_dehalo-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslc.exe",
+      "--target-env=vulkan1.4",
+      "--target-spv=spv1.6",
+      "-std=460",
+      "-O",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_aa.comp.glsl",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shipped-shader-pelorus_aa-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslc.exe",
+      "--target-env=vulkan1.4",
+      "--target-spv=spv1.6",
+      "-std=460",
+      "-O",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_deblock.comp.glsl",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shipped-shader-pelorus_deblock-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslc.exe",
+      "--target-env=vulkan1.4",
+      "--target-spv=spv1.6",
+      "-std=460",
+      "-O",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_borderfix.comp.glsl",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shipped-shader-pelorus_borderfix-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/glslc.exe",
+      "--target-env=vulkan1.4",
+      "--target-spv=spv1.6",
+      "-std=460",
+      "-O",
+      "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_qpmap.comp.glsl",
+      "-o",
+      "/dev/null"
+    ],
+    "env": {},
+    "name": "shipped-shader-pelorus_qpmap-compile",
+    "workdir": null,
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/python3.exe",
+      "C:/tmp/pel/shw/scripts/check-shader-bindings.py"
+    ],
+    "env": {},
+    "name": "shader-binding-order",
+    "workdir": "C:/tmp/pel/shw",
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/python3.exe",
+      "C:/tmp/pel/shw/scripts/check-build-config.py",
+      "--self-test"
+    ],
+    "env": {},
+    "name": "build-config-sync",
+    "workdir": "C:/tmp/pel/shw",
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/python3.exe",
+      "C:/tmp/pel/shw/scripts/check-vulkan-storage-domain.py"
+    ],
+    "env": {},
+    "name": "vulkan-storage-domain",
+    "workdir": "C:/tmp/pel/shw",
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\usr\\bin/bash.exe",
+      "C:/tmp/pel/shw/ffmpeg-patches/test/vulkan-format-matrix-validation-self-test.sh"
+    ],
+    "env": {},
+    "name": "vulkan-validation-streams",
+    "workdir": "C:/tmp/pel/shw",
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/python3.exe",
+      "C:/tmp/pel/shw/scripts/test-vulkan-sample-scale.py"
+    ],
+    "env": {},
+    "name": "vulkan-sample-scale",
+    "workdir": "C:/tmp/pel/shw",
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  },
+  {
+    "cmd": [
+      "C:\\msys64\\ucrt64\\bin/python3.exe",
+      "C:/tmp/pel/shw/scripts/test-grain-accumulator-bounds.py"
+    ],
+    "env": {},
+    "name": "grain-accumulator-bounds",
+    "workdir": "C:/tmp/pel/shw",
+    "timeout": 30,
+    "suite": [
+      "pelorus:fast"
+    ],
+    "is_parallel": true,
+    "priority": 0,
+    "protocol": "exitcode",
+    "depends": [],
+    "extra_paths": []
+  }
+]

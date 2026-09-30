@@ -1,0 +1,11 @@
+Filter pelorus_scenecut
+  Pelorus scene-cut -> forced IDR (reads PEL_SEC_MOTION)
+    Inputs:
+       #0: default (video)
+    Outputs:
+       #0: default (video)
+pelorus_scenecut AVOptions:
+   force_idr         <boolean>    ..FV....... force a keyframe (pict_type=I) on Pelorus scene-cut frames (default true)
+
+
+Exiting with exit code 0

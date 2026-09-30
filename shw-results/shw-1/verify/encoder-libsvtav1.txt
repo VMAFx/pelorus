@@ -1,0 +1,15 @@
+Encoder libsvtav1 [SVT-AV1(Scalable Video Technology for AV1) encoder]:
+    General capabilities: delay threads 
+    Threading capabilities: other
+    Supported pixel formats: yuv420p yuv420p10le
+libsvtav1 AVOptions:
+  -preset            <int>        E..V....... Encoding preset (from -2 to 13) (default -2)
+  -crf               <int>        E..V....... Constant Rate Factor value (from 0 to 63) (default 0)
+  -qp                <int>        E..V....... Initial Quantizer level value (from 0 to 63) (default 0)
+  -svtav1-params     <dictionary> E..V....... Set the SVT-AV1 configuration using a :-separated list of key=value parameters
+  -pelorus_roi       <boolean>    E..V....... Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the SVT-AV1 ROI segment map (requires SVT-AV1 >= 1.6.0) (default false)
+  -dolbyvision       <boolean>    E..V....... Enable Dolby Vision RPU coding (default auto)
+     auto                         E..V.......
+
+
+Exiting with exit code 0

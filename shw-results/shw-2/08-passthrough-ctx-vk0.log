@@ -1,0 +1,36 @@
+FAIL linear-vk0-blackdetect_vulkan: [hwdownload @ 000002479c52fc40] Input frame is not the in the configured hwframe context.
+        [Parsed_blackdetect_vulkan_2 @ 00000247973e9d80] Cannot reuse context, creating a new one
+OK   vkdec-hevc-vk0-blackdetect_vulkan
+        [Parsed_blackdetect_vulkan_0 @ 00000226c91b9e00] Reusing existing frames context
+OK   vkdec-h264-vk0-blackdetect_vulkan
+        [Parsed_blackdetect_vulkan_0 @ 00000111c2c694c0] Reusing existing frames context
+FAIL linear-vk0-scdet_vulkan: [hwdownload @ 0000028b47384800] Input frame is not the in the configured hwframe context.
+        [Parsed_scdet_vulkan_2 @ 0000028b423ad200] Cannot reuse context, creating a new one
+OK   vkdec-hevc-vk0-scdet_vulkan
+        [Parsed_scdet_vulkan_0 @ 00000182524d84c0] Reusing existing frames context
+OK   vkdec-h264-vk0-scdet_vulkan
+        [Parsed_scdet_vulkan_0 @ 0000021c6d730180] Reusing existing frames context
+FAIL linear-vk0-pelorus_analyze_vulkan: [hwdownload @ 000001e99c2f9980] Input frame is not the in the configured hwframe context.
+        [Parsed_pelorus_analyze_vulkan_2 @ 000001e9973eb740] Cannot reuse context, creating a new one
+OK   vkdec-hevc-vk0-pelorus_analyze_vulkan
+        [Parsed_pelorus_analyze_vulkan_0 @ 000001e2e5aa2140] Reusing existing frames context
+OK   vkdec-h264-vk0-pelorus_analyze_vulkan
+        [Parsed_pelorus_analyze_vulkan_0 @ 000001eac0218700] Reusing existing frames context
+FAIL linear-vk0-pelorus_grain_estimate_vulkan: [hwdownload @ 000002619b095f00] Input frame is not the in the configured hwframe context.
+        [Parsed_pelorus_grain_estimate_vulkan_2 @ 00000261961a4780] Cannot reuse context, creating a new one
+OK   vkdec-hevc-vk0-pelorus_grain_estimate_vulkan
+        [Parsed_pelorus_grain_estimate_vulkan_0 @ 0000022c5db73200] Reusing existing frames context
+OK   vkdec-h264-vk0-pelorus_grain_estimate_vulkan
+        [Parsed_pelorus_grain_estimate_vulkan_0 @ 000001d1bd957540] Reusing existing frames context
+FAIL linear-vk0-pelorus_mc_vulkan: [hwdownload @ 0000022685751e00] Input frame is not the in the configured hwframe context.
+        [Parsed_pelorus_mc_vulkan_2 @ 0000022687ce4680] Cannot reuse context, creating a new one
+OK   vkdec-hevc-vk0-pelorus_mc_vulkan
+        [Parsed_pelorus_mc_vulkan_0 @ 00000179c2720fc0] Reusing existing frames context
+OK   vkdec-h264-vk0-pelorus_mc_vulkan
+        [Parsed_pelorus_mc_vulkan_0 @ 000001d846cec3c0] Reusing existing frames context
+OK   linear-vk0-pelorus_deband_vulkan
+        [Parsed_pelorus_deband_vulkan_2 @ 00000289e03404c0] Cannot reuse context, creating a new one
+OK   vkdec-hevc-vk0-pelorus_deband_vulkan
+        [Parsed_pelorus_deband_vulkan_0 @ 000001a8006594c0] Reusing existing frames context
+OK   vkdec-h264-vk0-pelorus_deband_vulkan
+        [Parsed_pelorus_deband_vulkan_0 @ 0000022a19401840] Reusing existing frames context

@@ -1,0 +1,2 @@
+VUID-VkFormatProperties2-pNext-pNext
+VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230

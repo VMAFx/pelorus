@@ -1,0 +1,16 @@
+device 0: Intel(R) Arc(TM) B580 Graphics driver 0x196349 api 1.4.356
+fmt    9: after call f2.sType=1000059002 f2.pNext==&f3:1 f3.sType=1000360000 (expect 1000360000) f3.pNext=0000000000000000 optimal=0x40018001dd83 ok
+fmt   70: after call f2.sType=1000059002 f2.pNext==&f3:1 f3.sType=1000360000 (expect 1000360000) f3.pNext=0000000000000000 optimal=0x40038001dd83 ok
+fmt 1000156003: after call f2.sType=1000059002 f2.pNext==&f3:1 f3.sType=1000360000 (expect 1000360000) f3.pNext=0000000000000000 optimal=0x400006cfd001 ok
+fmt 1000156013: after call f2.sType=1000059002 f2.pNext==&f3:1 f3.sType=1000360000 (expect 1000360000) f3.pNext=0000000000000000 optimal=0x400006cfd001 ok
+fmt 1000156002: after call f2.sType=1000059002 f2.pNext==&f3:1 f3.sType=1000360000 (expect 1000360000) f3.pNext=0000000000000000 optimal=0x400006cfd001 ok
+fmt   37: after call f2.sType=1000059002 f2.pNext==&f3:1 f3.sType=1000360000 (expect 1000360000) f3.pNext=0000000000000000 optimal=0x40018001dd83 ok
+rc=0
+device 1: Intel(R) UHD Graphics 770 driver 0x195bb4 api 1.4.323
+fmt    9: after call f2.sType=1000059002 f2.pNext==&f3:1 f3.sType=1000360000 (expect 1000360000) f3.pNext=0000000000000000 optimal=0x40018001dd83 ok
+fmt   70: after call f2.sType=1000059002 f2.pNext==&f3:1 f3.sType=1000360000 (expect 1000360000) f3.pNext=0000000000000000 optimal=0x40038001dd83 ok
+fmt 1000156003: after call f2.sType=1000059002 f2.pNext==&f3:1 f3.sType=1000360000 (expect 1000360000) f3.pNext=0000000000000000 optimal=0x400006cfd001 ok
+fmt 1000156013: after call f2.sType=1000059002 f2.pNext==&f3:1 f3.sType=1000360000 (expect 1000360000) f3.pNext=0000000000000000 optimal=0x400006cfd001 ok
+fmt 1000156002: after call f2.sType=1000059002 f2.pNext==&f3:1 f3.sType=1000360000 (expect 1000360000) f3.pNext=0000000000000000 optimal=0x400006cfd001 ok
+fmt   37: after call f2.sType=1000059002 f2.pNext==&f3:1 f3.sType=1000360000 (expect 1000360000) f3.pNext=0000000000000000 optimal=0x40018001dd83 ok
+rc=0

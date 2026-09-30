@@ -1,0 +1,15 @@
+Filter pelorus_analyze_vulkan
+  Pelorus frame analyzer (Vulkan)
+    Inputs:
+       #0: default (video)
+    Outputs:
+       #0: default (video)
+pelorus_analyze_vulkan AVOptions:
+   flat              <double>     ..FV....... per-tile variance below which a tile is banding-prone (from 0 to 0.25) (default 0.0015)
+   roi               <boolean>    ..FV....... auto-detect banding-prone tiles and emit ROI side data (default false)
+   roi_strength      <double>     ..FV....... max |qoffset| for a fully banding tile (frac of QP range) (from 0 to 1) (default 0.333)
+   grad_lo           <double>     ..FV....... min per-tile gradient counted as a real (banding) slope (from 0 to 0.5) (default 0.002)
+   grad_hi           <double>     ..FV....... tile gradient at which banding risk peaks before texturing (from 0 to 0.5) (default 0.01)
+
+
+Exiting with exit code 0

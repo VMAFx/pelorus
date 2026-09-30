@@ -1,0 +1,39 @@
+######## impl 0 LowPower=on
+== avc-on-none                  rc=0 bytes=1708254    LowPower=0x10 EnableMBQP=0x20 done: 60 outputs, first warning 0 
+    f0[I top=30.00 bot=30.00] f1[P top=30.00 bot=30.00] f2[P top=30.00 bot=30.00] f3[P top=30.00 bot=30.00] | frames=60 with any MB off the expected top=30|30/bot=30|30 pattern: 0
+   SUMMARY frames=60 off_pattern_MBs=0 unexplained_MBs=0 frames_with_unexplained=0
+== avc-on-mbqp-delta            rc=0 bytes=62201912   LowPower=0x10 EnableMBQP=0x10 done: 60 outputs, first warning 0 
+    f0[I top=12.00 bot=0.00] f1[P top=0.00 bot=12.00] f2[P top=12.00 bot=0.00] f3[P top=0.00 bot=12.00] | frames=60 with any MB off the expected top=42|30/bot=30|42 pattern: 60
+   [h264 @ 0000021084423480] Stream #0: not enough frames to estimate rate; consider increasing probesize
+SUMMARY frames=60 off_pattern_MBs=482400 unexplained_MBs=90 frames_with_unexplained=60
+== avc-on-mbqp-delta-i          rc=2 bytes=           FATAL Init: -15 
+== avc-on-mbqp-value            rc=0 bytes=1093219    LowPower=0x10 EnableMBQP=0x10 done: 60 outputs, first warning 0 
+    f0[I top=42.00 bot=30.00] f1[P top=30.00 bot=41.66] f2[P top=41.98 bot=30.00] f3[P top=30.00 bot=41.94] | frames=60 with any MB off the expected top=42|30/bot=30|42 pattern: 59
+   SUMMARY frames=60 off_pattern_MBs=5784 unexplained_MBs=29 frames_with_unexplained=29
+== avc-on-mbqp-value-i          rc=2 bytes=           FATAL Init: -15 
+== avc-on-rect                  rc=0 bytes=1094674    LowPower=0x10 EnableMBQP=0x20 EncodeFrameAsync warning 5 at frame 1 done: 60 outputs, first warning 5 
+    f0[I top=42.00 bot=30.00] f1[P top=30.00 bot=42.00] f2[P top=41.98 bot=30.04] f3[P top=30.00 bot=42.00] | frames=60 with any MB off the expected top=42|30/bot=30|42 pattern: 29
+   SUMMARY frames=60 off_pattern_MBs=617 unexplained_MBs=29 frames_with_unexplained=29
+== hevc-on-none                 rc=0 bytes=1616356    LowPower=0x10 EnableMBQP=0x20 done: 60 outputs, first warning 0 
+== hevc-on-mbqp-delta           rc=0 bytes=1616356    LowPower=0x10 EnableMBQP=0x20 done: 60 outputs, first warning 0 
+== hevc-on-mbqp-delta-i         rc=0 bytes=1616356    LowPower=0x10 EnableMBQP=0x20 done: 60 outputs, first warning 0 
+== hevc-on-mbqp-value-i         rc=0 bytes=1616356    LowPower=0x10 EnableMBQP=0x20 done: 60 outputs, first warning 0 
+== hevc-on-rect                 rc=0 bytes=1081594    LowPower=0x10 EnableMBQP=0x20 done: 60 outputs, first warning 0 
+== avc-on-stats                 rc=2 bytes=0          LowPower=0x10 EnableMBQP=0x20 FATAL EncodeFrameAsync: -3 
+== hevc-on-stats                rc=2 bytes=0          LowPower=0x10 EnableMBQP=0x20 FATAL SyncOperation: -3 
+== avc-on-units-finfo           rc=0 bytes=1708254    LowPower=0x10 EnableMBQP=0x20 done: 60 outputs, first warning 0 
+    f0[I top=30.00 bot=30.00] f1[P top=30.00 bot=30.00] f2[P top=30.00 bot=30.00] f3[P top=30.00 bot=30.00] | frames=60 with any MB off the expected top=-|-/bot=-|- pattern: 60
+   SUMMARY frames=60 off_pattern_MBs=482400 unexplained_MBs=60 frames_with_unexplained=60
+md5 (identical = the map/ROI had no effect):
+   3586b9d3f0d7b421c3b984a6fef64cee *hevc-on-mbqp-delta.h265
+   3586b9d3f0d7b421c3b984a6fef64cee *hevc-on-mbqp-delta-i.h265
+   3586b9d3f0d7b421c3b984a6fef64cee *hevc-on-mbqp-value-i.h265
+   3586b9d3f0d7b421c3b984a6fef64cee *hevc-on-none.h265
+   46b4a765e04eae50392f490144a9e578 *avc-on-mbqp-delta.h264
+   5d6b77891bf37c7f12d1a34155e69862 *hevc-on-rect.h265
+   c478c7ef8ee4e19c76483b8745231533 *avc-on-rect.h264
+   cc342275be2351398d4842231c9466e2 *avc-on-mbqp-value.h264
+   cff6fe12132cd0db8903400be5ec5b21 *avc-on-none.h264
+   cff6fe12132cd0db8903400be5ec5b21 *avc-on-units-finfo.h264
+   d41d8cd98f00b204e9800998ecf8427e *avc-on-stats.h264
+   d41d8cd98f00b204e9800998ecf8427e *hevc-on-stats.h265

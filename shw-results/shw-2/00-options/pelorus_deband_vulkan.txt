@@ -1,0 +1,33 @@
+Filter pelorus_deband_vulkan
+  Pelorus smart deband (Vulkan)
+    Inputs:
+       #0: default (video)
+    Outputs:
+       #0: default (video)
+pelorus_deband_vulkan AVOptions:
+   range             <int>        ..FV....... reference-sampling radius in pixels (from 1 to 31) (default 15)
+   thry              <double>     ..FV....... luma threshold (normalized) (from 0 to 0.25) (default 0.012)
+   thrc              <double>     ..FV....... chroma threshold (normalized) (from 0 to 0.25) (default 0.012)
+   grainy            <double>     ..FV....... luma grain amplitude (normalized) (from 0 to 0.4) (default 0.006)
+   grainc            <double>     ..FV....... chroma grain amplitude (normalized) (from 0 to 0.4) (default 0)
+   softness          <float>      ..FV....... soft-blend transition width (0=hard switch) (from 0 to 1) (default 0.5)
+   detail            <float>      ..FV....... detail-mask activity threshold (normalized) (from 0 to 0.25) (default 0.06)
+   sample            <int>        ..FV....... reference-tap topology (from 1 to 4) (default square)
+     column          1            ..FV....... 2 vertical taps
+     square          2            ..FV....... 4 rotated taps
+     row             3            ..FV....... 2 horizontal taps
+     square_rot      4            ..FV....... 4 taps + per-frame rotation
+   blur              <int>        ..FV....... flat-test mode (from 0 to 1) (default average)
+     average         0            ..FV....... |center-avg| < thr
+     allrefs         1            ..FV....... every tap within thr
+   dither            <int>        ..FV....... grain / dither mode (from 0 to 2) (default bluenoise)
+     none            0            ..FV....... no grain
+     bayer8          1            ..FV....... ordered 8x8 Bayer
+     bluenoise       2            ..FV....... hashed TPDF
+   dynamic           <boolean>    ..FV....... re-seed grain each frame (default true)
+   protect           <boolean>    ..FV....... gate debanding off textured regions (default true)
+   planes            <int>        ..FV....... planes to process (bitmask) (from 0 to 15) (default 15)
+   meta              <boolean>    ..FV....... attach Pelorus interop side data (default false)
+
+
+Exiting with exit code 0

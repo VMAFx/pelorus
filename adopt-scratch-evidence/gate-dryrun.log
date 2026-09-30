@@ -1,0 +1,22 @@
+=== Praetor Anti-Direct-Merge Gating Pipeline ===
+Target Repository: . (dry-run: true)
+Run Deadline: 8m0s (3m0s race stage bound + 5m0s for the other stages)
+
+Pipeline Result: ADMITTED (total: 235ms)
+Scanned: VMAFx/pelorus @ 174938ea68551162e9355fce84f7471fa28fa11a (worktree clean: false)
+Worktree: 15 changed path(s) differ from HEAD:  M .standards.yaml, D  lefthook.yml, ?? .config/agent/checkpoint.json, ?? .config/agent/hooks/block_evasion.py, ?? .config/lefthook/scripts/checkpoint.py, and 10 more
+          (gate run without --dry-run refuses this tree)
+  1. [N/A]  Prefetch & Lockfiles      (0s)
+     Reason: lockfiles verified; no go.mod: module prefetch skipped
+  2. [PASS] HISS Invariant Scan       (98ms)
+     Reason: 62 infractions within the 62 baselined limit (function length limit 60)
+  3. [N/A]  Security & SCA Scan       (0s)
+     Reason: no go.mod: Go security scanners skipped
+  4. [PASS] Flavor Conformance        (32ms)
+  5. [SKIP] Race-Detector Tests       (0s)
+     Reason: dry run: race-detector tests skipped
+  6. [SKIP] Ed25519 Exit-0 Receipt    (0s)
+     Reason: dry run: no Exit-0 receipt minted
+[REPORT] HISS-04 complexity measured, not enforced: 0 measurements over limit in 0 functions (cyclomatic 0, cognitive 0, statements 0)
+
+Dry run: no Exit-0 receipt was minted (prefetch, security scanners, and tests did not run).

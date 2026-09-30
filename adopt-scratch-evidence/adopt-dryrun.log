@@ -1,0 +1,190 @@
+=== Praetor Universal Repository Adoption ===
+[DRY-RUN SIMULATION: No filesystem mutations performed]
+Target State:       brownfield
+Archetype:          native-gpu-systems
+Facets:             [security:high api:public-contract docs:seo-portal agent:sandboxed]
+
+--- Legacy Technical Debt Scanned (dry-run; not written) (62 infractions) ---
+  • HISS-01 : 31 infractions
+  • HISS-02 : 1 infractions
+  • HISS-04 : 28 infractions
+  • HISS-07 : 2 infractions
+
+Files Planned for Creation (12):
+  + [PLAN]  .devcontainer/devcontainer.json      : Prepared DevContainer for archetype 'native-gpu-systems'; bootstrap source-bundle, execution unverified
+  + [PLAN]  .devcontainer/praetor-source.000.b64 : Prepared exact DevContainer bootstrap companion
+  + [PLAN]  .devcontainer/praetor-source.001.b64 : Prepared exact DevContainer bootstrap companion
+  + [PLAN]  .devcontainer/praetor-source.002.b64 : Prepared exact DevContainer bootstrap companion
+  + [PLAN]  .devcontainer/praetor-source.003.b64 : Prepared exact DevContainer bootstrap companion
+  + [PLAN]  .devcontainer/praetor-source.004.b64 : Prepared exact DevContainer bootstrap companion
+  + [PLAN]  .devcontainer/Dockerfile.praetor     : Prepared exact DevContainer bootstrap companion
+  + [PLAN]  .github/rulesets/main.json           : Scaffolded declarative branch protection ruleset (7 required status checks derived from workflows)
+  + [PLAN]  .config/lefthook/scripts/checkpoint.py : Installed shared checkpoint evaluator from verified source bundle
+  + [PLAN]  .config/lefthook/scripts/common.py   : Installed shared checkpoint evaluator from verified source bundle
+  + [PLAN]  .config/agent/checkpoint.json        : Created local-only checkpoint policy for adopted repository
+  + [PLAN]  .config/agent/hooks/block_evasion.py : Scaffolded standalone agent PreToolUse anti-evasion interceptor; the agent-hooks step registers the engine call
+
+Files Planned for Reconciliation (69):
+  ~ [PLAN]  .standards.yaml                      : Existing standards manifest verified present
+  ~ [PLAN]  .gitignore                           : Private artifact ignore tail block already effective
+  ~ [PLAN]  .standards.lock                      : Verified existing version pins and content digests
+  ~ [PLAN]  .config/archetypes                   : Resolved prospective pinned policy without materializing files
+  ~ [PLAN]  .standards-baseline.json             : Rescanned; baseline unchanged at 62 legacy debt infractions
+  ~ [PLAN]  AGENTS.md                            : Existing Praetor Agent Operating Harness preserved; command synchronization not verified
+  ~ [PLAN]  CLAUDE.md                            : Synchronized vendor context target (253 LOC)
+  ~ [PLAN]  .cursor/rules/hiss-invariants.mdc    : Synchronized vendor context target (259 LOC)
+  ~ [PLAN]  .github/copilot-instructions.md      : Synchronized vendor context target (253 LOC)
+  ~ [PLAN]  .windsurfrules                       : Synchronized vendor context target (253 LOC)
+  ~ [PLAN]  .gemini/GEMINI.md                    : Synchronized vendor context target (253 LOC)
+  ~ [PLAN]  .codex/rules.md                      : Synchronized vendor context target (253 LOC)
+  ~ [PLAN]  tools/markdownlint/package.json      : Existing Markdown governance asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/markdownlint/package-lock.json : Existing Markdown governance asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/markdownlint/markdownlint-cli2.yaml : Existing Markdown governance asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/markdownlint/verify.mjs        : Existing Markdown governance asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/markdownlint/no-private-scratch-links.mjs : Existing Markdown governance asset preserved; audit verifies canonical text
+  ~ [PLAN]  .github/workflows/praetor-docs.yml   : Existing documentation governance workflow preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/core.mjs               : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/checks.mjs             : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/build.mjs              : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/types.ts               : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/third_party/interfig/vendor.json : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/third_party/interfig/VENDOR.md : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/third_party/interfig/upstream/LICENSE : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/third_party/interfig/upstream/src/svg.ts : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/third_party/interfig/upstream/src/geometry.ts : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/third_party/interfig/upstream/src/model.ts : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/dist/loader.js         : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/dist/player.js         : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/dist/THIRD-PARTY-LICENSES.txt : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/figures.css            : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/mkdocs_hook.py         : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/astro.mjs              : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/serve.mjs              : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  tools/figures/README.md              : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [PLAN]  .gitattributes                       : Managed attribute block already at the tail
+  ~ [PLAN]  Makefile                             : Documentation gate already attached to verify-all
+  ~ [PLAN]  .editorconfig                        : Existing developer-owned universal file preserved, not verified
+  ~ [PLAN]  .vscode/settings.json                : Existing IDE configuration kept unchanged, not verified: it lacks the managed vscode values "/antigravity.searchMaxWorkspaceFileCount", "/standards.sentinel.headroomMB", "/files.watcherExclude/**~1.workingdir~1**", "/files.watcherExclude/**~1.workingdir2~1**". Re-run adopt with --force to merge them; every other key is kept
+  ~ [PLAN]  .vscode/extensions.json              : Existing vscode IDE configuration holds every managed value
+  ~ [PLAN]  .vscode/tasks.json                   : Existing vscode IDE configuration holds every managed value
+  ~ [PLAN]  .idea/inspectionProfiles/standards.xml : Existing IDE configuration kept unchanged, not verified: it differs from the jetbrains template (regenerating would change -0/+5 lines) and adoption does not overwrite it. Delete it and re-run adopt to regenerate it
+  ~ [PLAN]  .idea/workspace.xml                  : Existing developer-owned jetbrains file preserved, not verified
+  ~ [PLAN]  lua/standards.lua                    : Existing IDE configuration kept unchanged, not verified: it differs from the neovim template (regenerating would change -9/+4 lines, removed "-- Pelorus governance commands. No repository-local standards LSP is shipped.", "vim.api.nvim_create_user_command(\"StandardsAudit\", function()", "  vim.cmd(\"!make audit\")" and 6 more) and adoption does not overwrite it. Delete it and re-run adopt to regenerate it
+  ~ [PLAN]  .nvim.lua                            : Existing neovim IDE configuration holds every managed value
+  ~ [PLAN]  .zed/settings.json                   : Existing IDE configuration kept unchanged, not verified: it lacks the managed zed values "/languages/Go". Re-run adopt with --force to merge them; every other key is kept
+  ~ [PLAN]  .zed/tasks.json                      : Existing zed IDE configuration holds every managed value
+  ~ [PLAN]  .helix/config.toml                   : Existing helix IDE configuration holds every managed value
+  ~ [PLAN]  .helix/languages.toml                : Existing IDE configuration kept unchanged, not verified: it differs from the helix template (regenerating would change -0/+10 lines) and adoption does not overwrite it. Delete it and re-run adopt to regenerate it
+  ~ [PLAN]  .dir-locals.el                       : Existing developer-owned emacs file preserved, not verified
+  ~ [PLAN]  .fleet/settings.json                 : Existing fleet IDE configuration holds every managed value
+  ~ [PLAN]  .fleet/run.json                      : Existing fleet IDE configuration holds every managed value
+  ~ [PLAN]  standards.sublime-project            : Existing sublime IDE configuration holds every managed value
+  ~ [PLAN]  .clang-tidy                          : Existing developer-owned visualstudio file preserved, not verified
+  ~ [PLAN]  .prettierignore                      : No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
+  ~ [PLAN]  renovate.json                        : Renovate already leaves the Praetor-managed files alone
+  ~ [PLAN]  .github/actionlint.yaml              : actionlint already accepts the runner labels of the Praetor-managed workflows
+  ~ [PLAN]  CONTRIBUTING.md                      : Existing file differs from the scaffold adoption writes (-118/+38 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ~ [PLAN]  .github/PULL_REQUEST_TEMPLATE.md     : Existing file differs from the scaffold adoption writes (-25/+10 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ~ [PLAN]  SECURITY.md                          : Existing file differs from the scaffold adoption writes (-25/+7 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ~ [PLAN]  docs/adr/README.md                   : Architectural Decision Records directory verified present
+  ~ [PLAN]  .config/labels.yaml                  : Existing repository label taxonomy preserved (repository configuration; --force does not replace it)
+  ~ [PLAN]  .paperclip/harness.json              : Existing operator-owned Paperclip harness kept as written: it is neither the current contract nor unmodified earlier Praetor output, so --force keeps it too; delete it and re-run adopt to regenerate it
+  ~ [PLAN]  .agents/agents/repo-auditor.md       : Existing file differs from the scaffold adoption writes (-11/+6 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ~ [PLAN]  .agents/agents/repo-gatekeeper.md    : Existing file differs from the scaffold adoption writes (-10/+12 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ~ [PLAN]  .claude/settings.json                : Pre-tool interceptor already registered: praetorctl hook claude pre-tool
+  ~ [PLAN]  .gemini/settings.json                : Pre-tool interceptor already registered: praetorctl hook gemini pre-tool
+  ~ [PLAN]  .codex/hooks.json                    : Pre-tool interceptor already registered: praetorctl hook codex pre-tool
+
+--- Preview: .github/rulesets/main.json (create) ---
+  7 required status checks derived from the workflows on disk and those this adoption writes or removes before the ruleset step
+{
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": [
+        "refs/heads/master",
+        "refs/heads/lts-*"
+      ]
+    }
+  },
+  "enforcement": "active",
+  "name": "praetor-main-protection",
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "required_linear_history"
+    },
+    {
+      "type": "required_signatures"
+    },
+    {
+      "parameters": {
+        "dismiss_stale_reviews_on_push": true,
+        "require_code_owner_review": true,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 2,
+        "required_review_thread_resolution": true
+      },
+      "type": "pull_request"
+    },
+    {
+      "parameters": {
+        "required_status_checks": [
+          {
+            "context": "libpelorus (build · test · format · tidy)"
+          },
+          {
+            "context": "docs + changelog + workflow hygiene"
+          },
+          {
+            "context": "ffmpeg patch stack (regenerate · replay · link · smoke)"
+          },
+          {
+            "context": "libpelorus (ASan + UBSan — the interop conformance fixture)"
+          },
+          {
+            "context": "libpelorus (Windows · MSYS2 UCRT64 · fast suite)"
+          },
+          {
+            "context": "Documentation Governance"
+          },
+          {
+            "context": "Standards \u0026 Invariant Verification Gate"
+          }
+        ],
+        "strict_required_status_checks_policy": true
+      },
+      "type": "required_status_checks"
+    }
+  ],
+  "target": "branch"
+}
+
+Warnings (13):
+  ! Project verification preserved-unverified: Select and exercise the project's configured native test/build commands for meson.build; a governance profile cannot select them. A required build or test command is absent; define and exercise the project's verify-all contract. Existing custom verify-all is preserved; execute and review it before claiming project verification.
+  ! Existing AGENTS.md was preserved; review its commands against the verification plan or use --force to refresh a recognized harness boundary.
+  ! .vscode/settings.json: kept unchanged, not verified: it lacks the managed vscode values "/antigravity.searchMaxWorkspaceFileCount", "/standards.sentinel.headroomMB", "/files.watcherExclude/**~1.workingdir~1**", "/files.watcherExclude/**~1.workingdir2~1**". Re-run adopt with --force to merge them; every other key is kept
+  ! .idea/inspectionProfiles/standards.xml: kept unchanged, not verified: it differs from the jetbrains template (regenerating would change -0/+5 lines) and adoption does not overwrite it. Delete it and re-run adopt to regenerate it
+  ! lua/standards.lua: kept unchanged, not verified: it differs from the neovim template (regenerating would change -9/+4 lines, removed "-- Pelorus governance commands. No repository-local standards LSP is shipped.", "vim.api.nvim_create_user_command(\"StandardsAudit\", function()", "  vim.cmd(\"!make audit\")" and 6 more) and adoption does not overwrite it. Delete it and re-run adopt to regenerate it
+  ! .zed/settings.json: kept unchanged, not verified: it lacks the managed zed values "/languages/Go". Re-run adopt with --force to merge them; every other key is kept
+  ! .helix/languages.toml: kept unchanged, not verified: it differs from the helix template (regenerating would change -0/+10 lines) and adoption does not overwrite it. Delete it and re-run adopt to regenerate it
+  ! CONTRIBUTING.md: existing file differs from the scaffold adoption writes (-118/+38 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ! .github/PULL_REQUEST_TEMPLATE.md: existing file differs from the scaffold adoption writes (-25/+10 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ! SECURITY.md: existing file differs from the scaffold adoption writes (-25/+7 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ! .agents/agents/repo-auditor.md: existing file differs from the scaffold adoption writes (-11/+6 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ! .agents/agents/repo-gatekeeper.md: existing file differs from the scaffold adoption writes (-10/+12 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ! lefthook.yml: existing lefthook.yml differs from the scaffold adoption writes and is no earlier Praetor rendering; kept, --force included, and not activated. It lacks 5 generated jobs (post-commit/commands/dedupe-cadence, post-commit/commands/state-sync, pre-push/commands/audit, pre-push/commands/flavor-audit, pre-push/commands/gate) and adds 1 (pre-push/commands/verify-all). Merge the generated jobs by hand, or remove lefthook.yml and re-run adopt to regenerate it, then run 'lefthook install'
+
+--- Governance Pillars Planned (dry-run; not written) ---
+  ⚠ Universal Harness : Canonical AGENTS.md, caveman-linted by compile-context --verify and audit [warned: 1 warning(s)]
+  ⚠ AI Context Sync   : 6 targets (Claude Code, Cursor, Copilot, Windsurf, Codex, Gemini) [warned: 1 warning(s)]
+  ⚠ IDE Ecosystem     : VS Code, JetBrains (CLion/GoLand/PyCharm), Neovim [warned: 5 warning(s)]
+  ○ DevContainer      : Containerized deterministic dev environment (.devcontainer) [planned]
+  ○ Verification Gate : Makefile 'verify-all' standard entrypoint [planned]
+
+Simulated adoption plan completed. Run without -dry-run to apply.

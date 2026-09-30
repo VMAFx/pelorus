@@ -1,0 +1,14 @@
+# List of files installed by Meson
+# Does not contain files installed by custom scripts.
+C:/tmp/pel/prefix/bin/libpelorus-0.dll
+C:/tmp/pel/prefix/lib/libpelorus.dll.a
+C:/tmp/pel/prefix/include/pelorus/pelorus.h
+C:/tmp/pel/prefix/include/pelorus/interop.h
+C:/tmp/pel/prefix/include/pelorus/deband.h
+C:/tmp/pel/prefix/include/pelorus/denoise.h
+C:/tmp/pel/prefix/lib/pkgconfig/libpelorus.pc
+C:/tmp/pel/prefix/lib/pkgconfig
+C:/tmp/pel/prefix/include/pelorus
+C:/tmp/pel/prefix/include
+C:/tmp/pel/prefix/lib
+C:/tmp/pel/prefix/bin

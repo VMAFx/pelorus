@@ -1,0 +1,26 @@
+impl[0] mfx-gen API 2.17 DeviceID=e20b/0
+session API 2.17
+  HEVC LowPower=unset 640x360 CQP: Query status=5, EnableMBQP after Query=UNKNOWN(0)
+      Init status=0, EnableMBQP in final param=UNKNOWN(0)
+  HEVC LowPower=ON 640x360 CQP: Query status=5, EnableMBQP after Query=UNKNOWN(0)
+      Init status=0, EnableMBQP in final param=UNKNOWN(0)
+  HEVC LowPower=OFF 640x360 CQP: Query status=5, EnableMBQP after Query=UNKNOWN(0)
+      Init status=0, EnableMBQP in final param=UNKNOWN(0)
+  HEVC LowPower=unset 1920x1080 CQP: Query status=5, EnableMBQP after Query=UNKNOWN(0)
+      Init status=0, EnableMBQP in final param=UNKNOWN(0)
+  AVC LowPower=unset 640x360 CQP: Query status=0, EnableMBQP after Query=ON
+      Init status=0, EnableMBQP in final param=ON
+rc=0
+impl[1] mfx-gen API 2.15 DeviceID=4680/1
+session API 2.15
+  HEVC LowPower=unset 640x360 CQP: Query status=5, EnableMBQP after Query=UNKNOWN(0)
+      Init status=0, EnableMBQP in final param=UNKNOWN(0)
+  HEVC LowPower=ON 640x360 CQP: Query status=5, EnableMBQP after Query=UNKNOWN(0)
+      Init status=0, EnableMBQP in final param=UNKNOWN(0)
+  HEVC LowPower=OFF 640x360 CQP: Query status=5, EnableMBQP after Query=UNKNOWN(0)
+      Init status=0, EnableMBQP in final param=UNKNOWN(0)
+  HEVC LowPower=unset 1920x1080 CQP: Query status=5, EnableMBQP after Query=UNKNOWN(0)
+      Init status=0, EnableMBQP in final param=UNKNOWN(0)
+  AVC LowPower=unset 640x360 CQP: Query status=0, EnableMBQP after Query=ON
+      Init status=0, EnableMBQP in final param=ON
+rc=0

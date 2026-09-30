@@ -1,0 +1,33 @@
+== matrix(winallow) VULKAN_DEVICE=0,disable_multiplane=1 vvl=msys (2026-09-30T11:56:32+02:00)
+matrix rc=0
+PASS: NV12/P010/P012 U/V survival
+PASS: packed RGBA lane preservation
+PASS: selected and pass-through plane masks
+PASS: direct/tiled denoise equivalence
+PASS: lookahead and MC runtime paths
+PASS: ADR-0147 Vulkan format matrix
+Evidence: /c/tmp/pel/shw-results/shw-2/07-matrix-winallow-msys/vk0_disable_multiplane_1
+-- every diagnostic id across all .stdout/.stderr (count):
+    580 VUID-VkFormatProperties2-pNext-pNext
+    204 VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230
+-- validation-known-upstream.txt:
+VUID-VkFormatProperties2-pNext-pNext
+VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230
+== matrix(winallow) VULKAN_DEVICE=1,linear_images=1,disable_multiplane=1 vvl=msys (2026-09-30T11:56:46+02:00)
+matrix rc=1
+[hwdownload @ 00000135c0144b40] Input frame is not the in the configured hwframe context.
+[vf#0:0 @ 00000135bff7a280] Error while filtering: Invalid argument
+[vf#0:0 @ 00000135bff7a280] Task finished with error code: -22 (Invalid argument)
+[vf#0:0 @ 00000135bff7a280] Terminating thread with return code -22 (Invalid argument)
+[vost#0:0/wrapped_avframe @ 00000135bff24480] [enc:wrapped_avframe @ 00000135bdcd3700] Could not open encoder before EOF
+[vost#0:0/wrapped_avframe @ 00000135bff24480] Task finished with error code: -22 (Invalid argument)
+[vost#0:0/wrapped_avframe @ 00000135bff24480] Terminating thread with return code -22 (Invalid argument)
+[out#0/null @ 00000135bff39640] Nothing was written into output file, because at least one of its streams received no packets.
+FAIL: analyze-yuv420p
+Evidence: /c/tmp/pel/shw-results/shw-2/07-matrix-winallow-msys/vk1_linear_images_1_disable_multiplane_1
+-- every diagnostic id across all .stdout/.stderr (count):
+     40 VUID-VkFormatProperties2-pNext-pNext
+     12 VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230
+-- validation-known-upstream.txt:
+VUID-VkFormatProperties2-pNext-pNext
+VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230

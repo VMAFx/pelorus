@@ -1,0 +1,15 @@
+Filter pelorus_deblock_vulkan
+  Pelorus re-encode deblock/dering (Vulkan)
+    Inputs:
+       #0: default (video)
+    Outputs:
+       #0: default (video)
+pelorus_deblock_vulkan AVOptions:
+   bsize             <int>        ..FV....... prior codec block size (DCT grid) (from 2 to 64) (default 8)
+   edge              <int>        ..FV....... half-width of the deblocked band around a boundary (px) (from 0 to 8) (default 1)
+   thr               <float>      ..FV....... cross-boundary step below which it is an artefact (normalized) (from 0 to 1) (default 0.06)
+   str               <float>      ..FV....... deblock strength (blend toward the low-pass) (from 0 to 1) (default 0.6)
+   planes            <int>        ..FV....... planes to process (bitmask; default luma only) (from 0 to 15) (default 1)
+
+
+Exiting with exit code 0

@@ -1,0 +1,13 @@
+Validation Error: [ SYNC-HAZARD-WRITE-AFTER-WRITE ] | MessageID = 0x5c0ec5d6
+vkCmdFillBuffer(): WRITE_AFTER_WRITE hazard detected. vkCmdFillBuffer writes to dstBuffer VkBuffer 0x10000000001, which was previously written by another vkCmdFillBuffer command. 
+No sufficient synchronization is present to ensure that a write (VK_ACCESS_2_TRANSFER_WRITE_BIT) at VK_PIPELINE_STAGE_2_CLEAR_BIT does not conflict with a prior write of the same type at the same stage.
+Buffer access region: {
+  offset = 0
+  size = 4096
+}
+
+Objects: 2
+    [0] VkCommandBuffer 0x24527ed84b8
+    [1] VkBuffer 0x10000000001
+
+recorded two unsynchronized fills on device 1

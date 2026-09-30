@@ -1,0 +1,19 @@
+PASS vk0 pelorus_deband_vulkan frame=   10
+PASS vk0 pelorus_analyze_vulkan frame=   10
+PASS vk0 pelorus_denoise_vulkan frame=   10
+PASS vk0 pelorus_grain_estimate_vulkan frame=   10
+PASS vk0 pelorus_mc_vulkan frame=   10
+PASS vk0 pelorus_dehalo_vulkan frame=   10
+PASS vk0 pelorus_aa_vulkan frame=   10
+PASS vk0 pelorus_deblock_vulkan frame=   10
+PASS vk0 pelorus_borderfix_vulkan frame=   10
+PASS vk1 pelorus_deband_vulkan frame=   10
+PASS vk1 pelorus_analyze_vulkan frame=   10
+PASS vk1 pelorus_denoise_vulkan frame=   10
+PASS vk1 pelorus_grain_estimate_vulkan frame=   10
+PASS vk1 pelorus_mc_vulkan frame=   10
+PASS vk1 pelorus_dehalo_vulkan frame=   10
+PASS vk1 pelorus_aa_vulkan frame=   10
+PASS vk1 pelorus_deblock_vulkan frame=   10
+PASS vk1 pelorus_borderfix_vulkan frame=   10
+PASS cpu pelorus_scenecut

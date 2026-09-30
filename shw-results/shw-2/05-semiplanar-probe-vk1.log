@@ -1,0 +1,124 @@
+# A) analyze on 8-bit semi-planar nv12 vs yuv420p (and multiplane on/off)
+devopts='' yuv420p: lavfi.pelorus.variance=0.051847 lavfi.pelorus.edge=0.068983 
+devopts='' nv12: lavfi.pelorus.variance=0.041644 lavfi.pelorus.edge=0.118623 
+devopts='' yuv420p10le: lavfi.pelorus.variance=0.051548 lavfi.pelorus.edge=0.068783 
+devopts='' p010le: lavfi.pelorus.variance=0.041405 lavfi.pelorus.edge=0.118291 
+devopts='' p012le: lavfi.pelorus.variance=0.041344 lavfi.pelorus.edge=0.118210 
+devopts=',disable_multiplane=1' yuv420p: 
+devopts=',disable_multiplane=1' nv12: 
+devopts=',disable_multiplane=1' yuv420p10le: 
+devopts=',disable_multiplane=1' p010le: 
+devopts=',disable_multiplane=1' p012le: 
+# B) GPU hflip_vulkan vs CPU hflip (a symmetric upload/download error cannot hide here)
+devopts='' yuv420p: hflip gpu-vs-cpu=DIFF  upload/download round-trip=DIFF
+devopts='' nv12: hflip gpu-vs-cpu=DIFF  upload/download round-trip=DIFF
+devopts='' yuv420p10le: hflip gpu-vs-cpu=DIFF  upload/download round-trip=DIFF
+devopts='' p010le: hflip gpu-vs-cpu=DIFF  upload/download round-trip=DIFF
+devopts='' p012le: hflip gpu-vs-cpu=DIFF  upload/download round-trip=DIFF
+[Vulkan @ 0000022cccfbba40] Failed to allocate memory: VK_ERROR_OUT_OF_HOST_MEMORY
+[AVHWFramesContext @ 0000022cd20d7a00] vulkan_pool_alloc failed with error -12
+[hwupload @ 0000022cd1e92f40] Failed to allocate frame to upload to.
+[vf#0:0 @ 0000022cd20d8840] Error while filtering: Cannot allocate memory
+[vf#0:0 @ 0000022cd20d8840] Task finished with error code: -12 (Cannot allocate memory)
+[vf#0:0 @ 0000022cd20d8840] Terminating thread with return code -12 (Cannot allocate memory)
+[vost#0:0/rawvideo @ 0000022cd20b9440] [enc:rawvideo @ 0000022cd20d7ac0] Could not open encoder before EOF
+[vost#0:0/rawvideo @ 0000022cd20b9440] Task finished with error code: -22 (Invalid argument)
+[vost#0:0/rawvideo @ 0000022cd20b9440] Terminating thread with return code -22 (Invalid argument)
+[out#0/rawvideo @ 0000022cd1eac1c0] Nothing was written into output file, because at least one of its streams received no packets.
+[Vulkan @ 0000015116670b00] Failed to allocate memory: VK_ERROR_OUT_OF_HOST_MEMORY
+[AVHWFramesContext @ 000001511b8dab80] vulkan_pool_alloc failed with error -12
+[hwupload @ 0000015118e51180] Failed to allocate frame to upload to.
+[vf#0:0 @ 000001511b821e80] Error while filtering: Cannot allocate memory
+[vf#0:0 @ 000001511b821e80] Task finished with error code: -12 (Cannot allocate memory)
+[vf#0:0 @ 000001511b821e80] Terminating thread with return code -12 (Cannot allocate memory)
+[vost#0:0/rawvideo @ 000001511b7fc080] [enc:rawvideo @ 00000151188e2fc0] Could not open encoder before EOF
+[vost#0:0/rawvideo @ 000001511b7fc080] Task finished with error code: -22 (Invalid argument)
+[vost#0:0/rawvideo @ 000001511b7fc080] Terminating thread with return code -22 (Invalid argument)
+[out#0/rawvideo @ 000001511b814780] Nothing was written into output file, because at least one of its streams received no packets.
+devopts=',disable_multiplane=1' yuv420p: hflip gpu-vs-cpu=DIFF  upload/download round-trip=DIFF
+[Vulkan @ 00000255c945cf40] Failed to allocate memory: VK_ERROR_OUT_OF_HOST_MEMORY
+[AVHWFramesContext @ 00000255ce4f4c40] vulkan_pool_alloc failed with error -12
+[hwupload @ 00000255cbaac680] Failed to allocate frame to upload to.
+[vf#0:0 @ 00000255ce45f300] Error while filtering: Cannot allocate memory
+[vf#0:0 @ 00000255ce45f300] Task finished with error code: -12 (Cannot allocate memory)
+[vf#0:0 @ 00000255ce45f300] Terminating thread with return code -12 (Cannot allocate memory)
+[vost#0:0/rawvideo @ 00000255ce42d8c0] [enc:rawvideo @ 00000255cb4d8240] Could not open encoder before EOF
+[vost#0:0/rawvideo @ 00000255ce42d8c0] Task finished with error code: -22 (Invalid argument)
+[vost#0:0/rawvideo @ 00000255ce42d8c0] Terminating thread with return code -22 (Invalid argument)
+[out#0/rawvideo @ 00000255ce241a00] Nothing was written into output file, because at least one of its streams received no packets.
+[Vulkan @ 0000020e6d30d340] Failed to allocate memory: VK_ERROR_OUT_OF_HOST_MEMORY
+[AVHWFramesContext @ 0000020e723655c0] vulkan_pool_alloc failed with error -12
+[hwupload @ 0000020e6f9b7600] Failed to allocate frame to upload to.
+[vf#0:0 @ 0000020e7235f340] Error while filtering: Cannot allocate memory
+[vf#0:0 @ 0000020e7235f340] Task finished with error code: -12 (Cannot allocate memory)
+[vf#0:0 @ 0000020e7235f340] Terminating thread with return code -12 (Cannot allocate memory)
+[vost#0:0/rawvideo @ 0000020e72315840] [enc:rawvideo @ 0000020e6d3264c0] Could not open encoder before EOF
+[vost#0:0/rawvideo @ 0000020e72315840] Task finished with error code: -22 (Invalid argument)
+[vost#0:0/rawvideo @ 0000020e72315840] Terminating thread with return code -22 (Invalid argument)
+[out#0/rawvideo @ 0000020e72227280] Nothing was written into output file, because at least one of its streams received no packets.
+devopts=',disable_multiplane=1' nv12: hflip gpu-vs-cpu=DIFF  upload/download round-trip=DIFF
+[Vulkan @ 00000167ad406500] Failed to allocate memory: VK_ERROR_OUT_OF_HOST_MEMORY
+[AVHWFramesContext @ 00000167b25e0440] vulkan_pool_alloc failed with error -12
+[hwupload @ 00000167afb0c580] Failed to allocate frame to upload to.
+[vf#0:0 @ 00000167b2549f00] Error while filtering: Cannot allocate memory
+[vf#0:0 @ 00000167b2549f00] Task finished with error code: -12 (Cannot allocate memory)
+[vf#0:0 @ 00000167b2549f00] Terminating thread with return code -12 (Cannot allocate memory)
+[vost#0:0/rawvideo @ 00000167b2518b80] [enc:rawvideo @ 00000167af581700] Could not open encoder before EOF
+[vost#0:0/rawvideo @ 00000167b2518b80] Task finished with error code: -22 (Invalid argument)
+[vost#0:0/rawvideo @ 00000167b2518b80] Terminating thread with return code -22 (Invalid argument)
+[out#0/rawvideo @ 00000167b2317e40] Nothing was written into output file, because at least one of its streams received no packets.
+[Vulkan @ 000001ea5a89d640] Failed to allocate memory: VK_ERROR_OUT_OF_HOST_MEMORY
+[AVHWFramesContext @ 000001ea5f8ece40] vulkan_pool_alloc failed with error -12
+[hwupload @ 000001ea5ce4d500] Failed to allocate frame to upload to.
+[vf#0:0 @ 000001ea5f85ac00] Error while filtering: Cannot allocate memory
+[vf#0:0 @ 000001ea5f85ac00] Task finished with error code: -12 (Cannot allocate memory)
+[vf#0:0 @ 000001ea5f85ac00] Terminating thread with return code -12 (Cannot allocate memory)
+[vost#0:0/rawvideo @ 000001ea5f82b8c0] [enc:rawvideo @ 000001ea5a94dac0] Could not open encoder before EOF
+[vost#0:0/rawvideo @ 000001ea5f82b8c0] Task finished with error code: -22 (Invalid argument)
+[vost#0:0/rawvideo @ 000001ea5f82b8c0] Terminating thread with return code -22 (Invalid argument)
+[out#0/rawvideo @ 000001ea5f720380] Nothing was written into output file, because at least one of its streams received no packets.
+devopts=',disable_multiplane=1' yuv420p10le: hflip gpu-vs-cpu=DIFF  upload/download round-trip=DIFF
+[Vulkan @ 000001cfd9ddea80] Failed to allocate memory: VK_ERROR_OUT_OF_HOST_MEMORY
+[AVHWFramesContext @ 000001cfdf017cc0] vulkan_pool_alloc failed with error -12
+[hwupload @ 000001cfdc503a40] Failed to allocate frame to upload to.
+[vf#0:0 @ 000001cfdef5d240] Error while filtering: Cannot allocate memory
+[vf#0:0 @ 000001cfdef5d240] Task finished with error code: -12 (Cannot allocate memory)
+[vf#0:0 @ 000001cfdef5d240] Terminating thread with return code -12 (Cannot allocate memory)
+[vost#0:0/rawvideo @ 000001cfdef2a5c0] [enc:rawvideo @ 000001cfdc07b5c0] Could not open encoder before EOF
+[vost#0:0/rawvideo @ 000001cfdef2a5c0] Task finished with error code: -22 (Invalid argument)
+[vost#0:0/rawvideo @ 000001cfdef2a5c0] Terminating thread with return code -22 (Invalid argument)
+[out#0/rawvideo @ 000001cfdef530c0] Nothing was written into output file, because at least one of its streams received no packets.
+[Vulkan @ 000002177b9ae480] Failed to allocate memory: VK_ERROR_OUT_OF_HOST_MEMORY
+[AVHWFramesContext @ 00000217031451c0] vulkan_pool_alloc failed with error -12
+[hwupload @ 0000021700636840] Failed to allocate frame to upload to.
+[vf#0:0 @ 000002170308c6c0] Error while filtering: Cannot allocate memory
+[vf#0:0 @ 000002170308c6c0] Task finished with error code: -12 (Cannot allocate memory)
+[vf#0:0 @ 000002170308c6c0] Terminating thread with return code -12 (Cannot allocate memory)
+[vost#0:0/rawvideo @ 000002170306b700] [enc:rawvideo @ 00000217000fe040] Could not open encoder before EOF
+[vost#0:0/rawvideo @ 000002170306b700] Task finished with error code: -22 (Invalid argument)
+[vost#0:0/rawvideo @ 000002170306b700] Terminating thread with return code -22 (Invalid argument)
+[out#0/rawvideo @ 0000021702e4ffc0] Nothing was written into output file, because at least one of its streams received no packets.
+devopts=',disable_multiplane=1' p010le: hflip gpu-vs-cpu=DIFF  upload/download round-trip=DIFF
+[Vulkan @ 00000296a7fcc740] Failed to allocate memory: VK_ERROR_OUT_OF_HOST_MEMORY
+[AVHWFramesContext @ 00000296ad030780] vulkan_pool_alloc failed with error -12
+[hwupload @ 00000296aa671840] Failed to allocate frame to upload to.
+[vf#0:0 @ 00000296ad02e500] Error while filtering: Cannot allocate memory
+[vf#0:0 @ 00000296ad02e500] Task finished with error code: -12 (Cannot allocate memory)
+[vf#0:0 @ 00000296ad02e500] Terminating thread with return code -12 (Cannot allocate memory)
+[vost#0:0/rawvideo @ 00000296acff9140] [enc:rawvideo @ 00000296a806d200] Could not open encoder before EOF
+[vost#0:0/rawvideo @ 00000296acff9140] Task finished with error code: -22 (Invalid argument)
+[vost#0:0/rawvideo @ 00000296acff9140] Terminating thread with return code -22 (Invalid argument)
+[out#0/rawvideo @ 00000296acde2380] Nothing was written into output file, because at least one of its streams received no packets.
+[Vulkan @ 0000016d90a4b740] Failed to allocate memory: VK_ERROR_OUT_OF_HOST_MEMORY
+[AVHWFramesContext @ 0000016d95abf100] vulkan_pool_alloc failed with error -12
+[hwupload @ 0000016d93075900] Failed to allocate frame to upload to.
+[vf#0:0 @ 0000016d95abc7c0] Error while filtering: Cannot allocate memory
+[vf#0:0 @ 0000016d95abc7c0] Task finished with error code: -12 (Cannot allocate memory)
+[vf#0:0 @ 0000016d95abc7c0] Terminating thread with return code -12 (Cannot allocate memory)
+[vost#0:0/rawvideo @ 0000016d95a8b900] [enc:rawvideo @ 0000016d90a91c00] Could not open encoder before EOF
+[vost#0:0/rawvideo @ 0000016d95a8b900] Task finished with error code: -22 (Invalid argument)
+[vost#0:0/rawvideo @ 0000016d95a8b900] Terminating thread with return code -22 (Invalid argument)
+[out#0/rawvideo @ 0000016d9586f900] Nothing was written into output file, because at least one of its streams received no packets.
+devopts=',disable_multiplane=1' p012le: hflip gpu-vs-cpu=DIFF  upload/download round-trip=DIFF
+# C) verbose frame-context layout for p010le
+[Vulkan @ 000002ce429b2780] Using device extension VK_EXT_host_image_copy

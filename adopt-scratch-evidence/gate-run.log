@@ -1,0 +1,19 @@
+=== Praetor Anti-Direct-Merge Gating Pipeline ===
+Target Repository: . (dry-run: false)
+Run Deadline: 8m0s (3m0s race stage bound + 5m0s for the other stages)
+
+Pipeline Result: REJECTED (total: 328ms)
+Scanned: VMAFx/pelorus @ aa70d1a28c9c18c422c1645a158e0e81149bcbd6 (worktree clean: true)
+  1. [N/A]  Prefetch & Lockfiles      (1ms)
+     Reason: lockfiles verified; no go.mod: module prefetch skipped
+  2. [PASS] HISS Invariant Scan       (89ms)
+     Reason: 62 infractions within the 62 baselined limit (function length limit 60)
+  3. [N/A]  Security & SCA Scan       (0s)
+     Reason: no go.mod: Go security scanners skipped
+  4. [PASS] Flavor Conformance        (34ms)
+  5. [N/A]  Race-Detector Tests       (0s)
+     Reason: no go.mod: Go race-detector tests skipped
+  6. [FAIL] Ed25519 Exit-0 Receipt    (89ms)
+     Reason: no verification stage ran for any language: Prefetch & Lockfiles, Security & SCA Scan and Race-Detector Tests each ran nothing, so no Exit-0 receipt is signed; the gate runs the toolchains of Go (go.mod) and Cargo (Cargo.lock); unsupported languages at the repository root: meson (meson.build)
+[REPORT] HISS-04 complexity measured, not enforced: 0 measurements over limit in 0 functions (cyclomatic 0, cognitive 0, statements 0)
+Error: repository rejected by gating pipeline

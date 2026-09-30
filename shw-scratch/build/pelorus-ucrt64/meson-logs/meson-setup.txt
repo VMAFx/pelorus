@@ -1,0 +1,30 @@
+The Meson build system
+Version: 1.12.1
+Source dir: C:/tmp/pel/shw
+Build dir: C:/tmp/pel/shw-scratch/build/pelorus-ucrt64
+Build type: native build
+Project name: pelorus
+Project version: 0.2.2
+C compiler for the host machine: cc (gcc 16.2.0 "cc (Rev4, Built by MSYS2 project) 16.2.0")
+C linker for the host machine: cc ld.bfd 2.47.20260726
+Host machine cpu family: x86_64
+Host machine cpu: x86_64
+Compiler for C supports arguments -Wshadow: YES 
+Compiler for C supports arguments -Wpointer-arith: YES 
+Compiler for C supports arguments -Wstrict-prototypes: YES 
+Compiler for C supports arguments -Wmissing-prototypes: YES 
+Compiler for C supports arguments -Wvla: YES 
+Found pkg-config: YES (C:\msys64\ucrt64\bin/pkg-config.exe) 3.0.7
+Program glslangValidator found: YES (C:\msys64\ucrt64\bin/glslangValidator.exe)
+Program glslc found: YES (C:\msys64\ucrt64\bin/glslc.exe)
+Program python3 found: YES (C:\msys64\ucrt64\bin/python3.exe)
+Program bash found: YES (C:\msys64\usr\bin/bash.exe)
+Build targets in project: 13
+
+pelorus 0.2.2
+
+  User defined options
+    libdir: lib
+    prefix: C:/tmp/pel/prefix
+
+Found ninja-1.13.2 at C:\msys64\ucrt64\bin/ninja.exe

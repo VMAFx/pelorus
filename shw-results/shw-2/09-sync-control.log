@@ -1,0 +1,16 @@
+rc=0 vk0_disable_multiplane_1-hwupload+hwdownload: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x6; 
+rc=0 vk0_disable_multiplane_1-hwupload+hflip_vulkan+hwdownload: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x20; 
+rc=0 vk0_disable_multiplane_1-hwupload+gblur_vulkan+hwdownload: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x20; 
+rc=0 vk0_disable_multiplane_1-hwupload+avgblur_vulkan+hwdownload: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x20; 
+rc=0 vk1_linear_images_1_disable_multiplane_1-hwupload+hwdownload: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x6; 
+rc=0 vk1_linear_images_1_disable_multiplane_1-hwupload+hflip_vulkan+hwdownload: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x20; 
+rc=0 vk1_linear_images_1_disable_multiplane_1-hwupload+gblur_vulkan+hwdownload: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x20; 
+rc=0 vk1_linear_images_1_disable_multiplane_1-hwupload+avgblur_vulkan+hwdownload: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x20; 
+rc=0 vk0-hwupload+hwdownload: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; 
+rc=0 vk0-hwupload+hflip_vulkan+hwdownload: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x8; 
+rc=0 vk0-hwupload+gblur_vulkan+hwdownload: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x8; 
+rc=0 vk0-hwupload+avgblur_vulkan+hwdownload: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x8; 
+rc=0 vk1-hwupload+hwdownload: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; 
+rc=0 vk1-hwupload+hflip_vulkan+hwdownload: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x8; 
+rc=0 vk1-hwupload+gblur_vulkan+hwdownload: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x8; 
+rc=0 vk1-hwupload+avgblur_vulkan+hwdownload: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x8; 

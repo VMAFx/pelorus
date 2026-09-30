@@ -1,0 +1,4 @@
+Query status 0; EnableMBQP after Query 0x10; EncodedUnitsInfo 0x0
+Init status 0
+GetVideoParam 0: API 2.17 LowPower 0x10 TU 4 GopRefDist 1 QPI/P/B 30/30/30 AsyncDepth 8 BufferSizeInKB 3264 EnableMBQP 0x10 EncodedUnitsInfo 0x20 surfaces 8
+done: 300 outputs, first warning 0, reuse=lock, early slot reuses (previous frame not yet synced) 290

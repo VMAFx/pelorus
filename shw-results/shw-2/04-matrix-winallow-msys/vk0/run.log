@@ -1,0 +1,7 @@
+PASS: analyze-yuv420p
+PASS: analyze-yuv420p10le
+PASS: analyze-p010le
+PASS: analyze-yuv420p12le
+PASS: analyze-p012le
+analyzer domain mismatch p010le variance: 0.041405 vs 0.051847 (tolerance 0.00259235)
+Evidence: /c/tmp/pel/shw-results/shw-2/04-matrix-winallow-msys/vk0

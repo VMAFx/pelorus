@@ -1,0 +1,6 @@
+version: 0.11.0
+shellcheck clean
+bash -n ok
+ docs/development/build.md            | 22 ++++++++++++++++++++++
+ ffmpeg-patches/test/build-and-run.sh | 36 +++++++++++++++++++++++++++++++-----
+ 2 files changed, 53 insertions(+), 5 deletions(-)

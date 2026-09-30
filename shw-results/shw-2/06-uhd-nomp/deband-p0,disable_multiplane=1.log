@@ -1,0 +1,78 @@
+[Vulkan @ 00000216a90cca40] Supported layers:
+[Vulkan @ 00000216a90cca40] 	VK_LAYER_VALVE_steam_overlay
+[Vulkan @ 00000216a90cca40] 	VK_LAYER_VALVE_steam_fossilize
+[Vulkan @ 00000216a90cca40] 	VK_LAYER_LUNARG_api_dump
+[Vulkan @ 00000216a90cca40] 	VK_LAYER_LUNARG_gfxreconstruct
+[Vulkan @ 00000216a90cca40] 	VK_LAYER_KHRONOS_synchronization2
+[Vulkan @ 00000216a90cca40] 	VK_LAYER_KHRONOS_validation
+[Vulkan @ 00000216a90cca40] 	VK_LAYER_LUNARG_monitor
+[Vulkan @ 00000216a90cca40] 	VK_LAYER_LUNARG_screenshot
+[Vulkan @ 00000216a90cca40] 	VK_LAYER_KHRONOS_profiles
+[Vulkan @ 00000216a90cca40] 	VK_LAYER_KHRONOS_shader_object
+[Vulkan @ 00000216a90cca40] 	VK_LAYER_LUNARG_crash_diagnostic
+[Vulkan @ 00000216a90cca40] GPU listing:
+[Vulkan @ 00000216a90cca40]     0: Intel(R) Arc(TM) B580 Graphics (discrete) (0xe20b)
+[Vulkan @ 00000216a90cca40]     1: Intel(R) UHD Graphics 770 (integrated) (0x4680)
+[Vulkan @ 00000216a90cca40] Device 1 selected: Intel(R) UHD Graphics 770 (integrated) (0x4680)
+[Vulkan @ 00000216a90cca40] Using device extension VK_KHR_push_descriptor
+[Vulkan @ 00000216a90cca40] Using device extension VK_EXT_shader_atomic_float
+[Vulkan @ 00000216a90cca40] Using device extension VK_KHR_shader_subgroup_rotate
+[Vulkan @ 00000216a90cca40] Using device extension VK_EXT_host_image_copy
+[Vulkan @ 00000216a90cca40] Using device extension VK_KHR_workgroup_memory_explicit_layout
+[Vulkan @ 00000216a90cca40] Using device extension VK_KHR_shader_expect_assume
+[Vulkan @ 00000216a90cca40] Using device extension VK_EXT_external_memory_host
+[Vulkan @ 00000216a90cca40] Using device extension VK_KHR_external_memory_win32
+[Vulkan @ 00000216a90cca40] Using device extension VK_KHR_external_semaphore_win32
+[Vulkan @ 00000216a90cca40] Using device extension VK_KHR_video_queue
+[Vulkan @ 00000216a90cca40] Using device extension VK_KHR_video_decode_queue
+[Vulkan @ 00000216a90cca40] Using device extension VK_KHR_video_decode_h264
+[Vulkan @ 00000216a90cca40] Using device extension VK_KHR_video_decode_h265
+[Vulkan @ 00000216a90cca40] Using device extension VK_KHR_video_decode_av1
+[Vulkan @ 00000216a90cca40] Queue families:
+[Vulkan @ 00000216a90cca40]     0: graphics compute transfer sparse (queues: 1)
+[Vulkan @ 00000216a90cca40]     1: decode (queues: 2)
+[Vulkan @ 00000216a90cca40] Using device: Intel(R) UHD Graphics 770
+[Vulkan @ 00000216a90cca40] Alignments:
+[Vulkan @ 00000216a90cca40]     optimalBufferCopyRowPitchAlignment: 64
+[Vulkan @ 00000216a90cca40]     minMemoryMapAlignment:              64
+[Vulkan @ 00000216a90cca40]     nonCoherentAtomSize:                1
+[Vulkan @ 00000216a90cca40]     minImportedHostPointerAlignment:    4096
+[Parsed_testsrc2_0 @ 00000216ab7acd40] size:96x64 rate:1/1 duration:1.000000 sar:1/1
+Input #0, lavfi, from 'testsrc2=size=96x64:rate=1:duration=1':
+  Duration: N/A, start: 0.000000, bitrate: N/A
+  Stream #0:0: Video: wrapped_avframe, 1 reference frame, yuv420p, 96x64 [SAR 1:1 DAR 3:2], 1 fps, 1 tbr, 1 tbn
+[out#0/rawvideo @ 00000216ae0e9640] No explicit maps, mapping streams automatically...
+[vost#0:0/rawvideo @ 00000216ae179f00] Created video stream from input stream 0:0
+Stream mapping:
+  Stream #0:0 -> #0:0 (wrapped_avframe (native) -> rawvideo (native))
+[vost#0:0/rawvideo @ 00000216ae179f00] Starting thread...
+[vf#0:0 @ 00000216ae1aab00] Starting thread...
+[vist#0:0/wrapped_avframe @ 00000216ae1a9e00] [dec:wrapped_avframe @ 00000216ae1af280] Starting thread...
+[in#0/lavfi @ 00000216ae06f9c0] Starting thread...
+[in#0/lavfi @ 00000216ae06f9c0] EOF while reading input
+[in#0/lavfi @ 00000216ae06f9c0] Terminating thread with return code 0 (success)
+[vist#0:0/wrapped_avframe @ 00000216ae1a9e00] [dec:wrapped_avframe @ 00000216ae1af280] Decoder thread received EOF packet
+[vist#0:0/wrapped_avframe @ 00000216ae1a9e00] [dec:wrapped_avframe @ 00000216ae1af280] Decoder returned EOF, finishing
+[vist#0:0/wrapped_avframe @ 00000216ae1a9e00] [dec:wrapped_avframe @ 00000216ae1af280] Terminating thread with return code 0 (success)
+[graph -1 input from stream 0:0 @ 00000216ab7aab40] w:96 h:64 pixfmt:yuv420p tb:1/1 fr:1/1 sar:1/1 csp:unknown range:unknown alpha:unspecified
+[Parsed_pelorus_deband_vulkan_2 @ 00000216ab7ab540] Reusing existing frames context
+[graph -1 input from stream 0:0 @ 00000216ab7aab40] video frame properties congruent with link at pts_time: 0
+[Vulkan @ 00000216a90cca40] Failed to allocate memory: VK_ERROR_OUT_OF_HOST_MEMORY
+[AVHWFramesContext @ 00000216ae23e100] vulkan_pool_alloc failed with error -12
+[hwupload @ 00000216ab6f7700] Failed to allocate frame to upload to.
+[vf#0:0 @ 00000216ae1aab00] Error while filtering: Cannot allocate memory
+[vf#0:0 @ 00000216ae1aab00] Task finished with error code: -12 (Cannot allocate memory)
+[vf#0:0 @ 00000216ae1aab00] Terminating thread with return code -12 (Cannot allocate memory)
+[vost#0:0/rawvideo @ 00000216ae179f00] [enc:rawvideo @ 00000216ab20a2c0] Encoder thread received EOF
+[vost#0:0/rawvideo @ 00000216ae179f00] [enc:rawvideo @ 00000216ab20a2c0] Could not open encoder before EOF
+[vost#0:0/rawvideo @ 00000216ae179f00] Task finished with error code: -22 (Invalid argument)
+[vost#0:0/rawvideo @ 00000216ae179f00] Terminating thread with return code -22 (Invalid argument)
+[out#0/rawvideo @ 00000216ae0e9640] Nothing was written into output file, because at least one of its streams received no packets.
+frame=    0 fps=0.0 q=0.0 Lsize=       0KiB time=N/A bitrate=N/A speed=N/A elapsed=0:00:00.00    
+[AVIOContext @ 00000216ae1f08c0] Statistics: 0 bytes written, 0 seeks, 0 writeouts
+[in#0/lavfi @ 00000216ae06f9c0] Input file #0 (testsrc2=size=96x64:rate=1:duration=1):
+[in#0/lavfi @ 00000216ae06f9c0]   Input stream #0:0 (video): 1 packets read (424 bytes); 1 frames decoded; 0 decode errors; 
+[in#0/lavfi @ 00000216ae06f9c0]   Total: 1 packets (424 bytes) demuxed
+Conversion failed!
+
+Exiting with exit code -12

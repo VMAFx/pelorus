@@ -1,0 +1,16 @@
+Filter pelorus_grain_estimate_vulkan
+  Pelorus film-grain estimator (Vulkan)
+    Inputs:
+       #0: default (video)
+    Outputs:
+       #0: default (video)
+pelorus_grain_estimate_vulkan AVOptions:
+   edge              <double>     ..FV....... 3x3 range above which a pixel is an edge (excluded from grain) (from 0 to 1) (default 0.06)
+   strength          <double>     ..FV....... scales the measured per-band RMS residual to the AV1 [0,255] scaling function (synthesis intensity) (from 0 to 64) (default 2)
+   model             <int>        ..FV....... FGS model the estimate targets (from 1 to 2) (default aom)
+     aom             1            ..FV....... AV1 (AOM) film-grain params
+     h274            2            ..FV....... HEVC/VVC H.274 FGC SEI scalars
+   native            <boolean>    ..FV....... also attach native AV_FRAME_DATA_FILM_GRAIN_PARAMS (AV1) (default true)
+
+
+Exiting with exit code 0

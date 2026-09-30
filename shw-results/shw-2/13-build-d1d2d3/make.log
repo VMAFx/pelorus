@@ -1,0 +1,32 @@
+make: Verzeichnis „/c/tmp/pel/ffmpeg“ wird betreten
+CC	libavdevice/version.o
+[1mCC	libavfilter/version.o
+
+WARNING: libavdevice/alldevices.c libavfilter/allfilters.c libavformat/allformats.c libavcodec/allcodecs.c libavcodec/bitstream_filters.c libavcodec/hwaccels.h libavcodec/parsers.c libavformat/protocols.c newer than config_components.h, rerun configure
+
+CC	libavfilter/vf_pelorus_denoise_vulkan.o
+(B[mGLSLC	libavfilter/vulkan/pelorus_aa.comp.spv
+GLSLC	libavfilter/vulkan/pelorus_denoise.comp.spv
+CC	libavformat/version.o
+CC	libavcodec/version.o
+CC	libswresample/version.o
+CC	libswscale/version.o
+CC	libavutil/version.o
+CC	fftools/cmdutils.o
+CC	fftools/opt_common.o
+GZIP	libavfilter/vulkan/pelorus_aa.comp.spv.gz
+GZIP	libavfilter/vulkan/pelorus_denoise.comp.spv.gz
+AR	libavdevice/libavdevice.a
+AR	libavformat/libavformat.a
+AR	libavcodec/libavcodec.a
+AR	libswresample/libswresample.a
+AR	libswscale/libswscale.a
+AR	libavutil/libavutil.a
+BIN2C	libavfilter/vulkan/pelorus_aa.comp.spv.c
+BIN2C	libavfilter/vulkan/pelorus_denoise.comp.spv.c
+CC	libavfilter/vulkan/pelorus_aa.comp.spv.o
+CC	libavfilter/vulkan/pelorus_denoise.comp.spv.o
+AR	libavfilter/libavfilter.a
+LDXX	ffmpeg_g.exe
+STRIP	ffmpeg.exe
+make: Verzeichnis „/c/tmp/pel/ffmpeg“ wird verlassen

@@ -1,0 +1,84 @@
+[Vulkan @ 000002270047d440] Supported layers:
+[Vulkan @ 000002270047d440] 	VK_LAYER_VALVE_steam_overlay
+[Vulkan @ 000002270047d440] 	VK_LAYER_VALVE_steam_fossilize
+[Vulkan @ 000002270047d440] 	VK_LAYER_LUNARG_api_dump
+[Vulkan @ 000002270047d440] 	VK_LAYER_LUNARG_gfxreconstruct
+[Vulkan @ 000002270047d440] 	VK_LAYER_KHRONOS_synchronization2
+[Vulkan @ 000002270047d440] 	VK_LAYER_KHRONOS_validation
+[Vulkan @ 000002270047d440] 	VK_LAYER_LUNARG_monitor
+[Vulkan @ 000002270047d440] 	VK_LAYER_LUNARG_screenshot
+[Vulkan @ 000002270047d440] 	VK_LAYER_KHRONOS_profiles
+[Vulkan @ 000002270047d440] 	VK_LAYER_KHRONOS_shader_object
+[Vulkan @ 000002270047d440] 	VK_LAYER_LUNARG_crash_diagnostic
+[Vulkan @ 000002270047d440] GPU listing:
+[Vulkan @ 000002270047d440]     0: Intel(R) Arc(TM) B580 Graphics (discrete) (0xe20b)
+[Vulkan @ 000002270047d440]     1: Intel(R) UHD Graphics 770 (integrated) (0x4680)
+[Vulkan @ 000002270047d440] Device 1 selected: Intel(R) UHD Graphics 770 (integrated) (0x4680)
+[Vulkan @ 000002270047d440] Using device extension VK_KHR_push_descriptor
+[Vulkan @ 000002270047d440] Using device extension VK_EXT_shader_atomic_float
+[Vulkan @ 000002270047d440] Using device extension VK_KHR_shader_subgroup_rotate
+[Vulkan @ 000002270047d440] Using device extension VK_EXT_host_image_copy
+[Vulkan @ 000002270047d440] Using device extension VK_KHR_workgroup_memory_explicit_layout
+[Vulkan @ 000002270047d440] Using device extension VK_KHR_shader_expect_assume
+[Vulkan @ 000002270047d440] Using device extension VK_EXT_external_memory_host
+[Vulkan @ 000002270047d440] Using device extension VK_KHR_external_memory_win32
+[Vulkan @ 000002270047d440] Using device extension VK_KHR_external_semaphore_win32
+[Vulkan @ 000002270047d440] Using device extension VK_KHR_video_queue
+[Vulkan @ 000002270047d440] Using device extension VK_KHR_video_decode_queue
+[Vulkan @ 000002270047d440] Using device extension VK_KHR_video_decode_h264
+[Vulkan @ 000002270047d440] Using device extension VK_KHR_video_decode_h265
+[Vulkan @ 000002270047d440] Using device extension VK_KHR_video_decode_av1
+[Vulkan @ 000002270047d440] Queue families:
+[Vulkan @ 000002270047d440]     0: graphics compute transfer sparse (queues: 1)
+[Vulkan @ 000002270047d440]     1: decode (queues: 2)
+[Vulkan @ 000002270047d440] Using device: Intel(R) UHD Graphics 770
+[Vulkan @ 000002270047d440] Alignments:
+[Vulkan @ 000002270047d440]     optimalBufferCopyRowPitchAlignment: 64
+[Vulkan @ 000002270047d440]     minMemoryMapAlignment:              64
+[Vulkan @ 000002270047d440]     nonCoherentAtomSize:                1
+[Vulkan @ 000002270047d440]     minImportedHostPointerAlignment:    4096
+[Parsed_testsrc2_0 @ 0000022702ac6280] size:96x64 rate:1/1 duration:1.000000 sar:1/1
+Input #0, lavfi, from 'testsrc2=size=96x64:rate=1:duration=1':
+  Duration: N/A, start: 0.000000, bitrate: N/A
+  Stream #0:0: Video: wrapped_avframe, 1 reference frame, yuv420p, 96x64 [SAR 1:1 DAR 3:2], 1 fps, 1 tbr, 1 tbn
+[out#0/rawvideo @ 0000022702059d00] No explicit maps, mapping streams automatically...
+[vost#0:0/rawvideo @ 000002270547c800] Created video stream from input stream 0:0
+Stream mapping:
+  Stream #0:0 -> #0:0 (wrapped_avframe (native) -> rawvideo (native))
+[vost#0:0/rawvideo @ 000002270547c800] Starting thread...
+[vf#0:0 @ 00000227054b1740] Starting thread...
+[vist#0:0/wrapped_avframe @ 00000227054ace00] [dec:wrapped_avframe @ 00000227054b5cc0] Starting thread...
+[in#0/lavfi @ 00000227029f9bc0] Starting thread...
+[in#0/lavfi @ 00000227029f9bc0] EOF while reading input
+[in#0/lavfi @ 00000227029f9bc0] Terminating thread with return code 0 (success)
+[vist#0:0/wrapped_avframe @ 00000227054ace00] [dec:wrapped_avframe @ 00000227054b5cc0] Decoder thread received EOF packet
+[vist#0:0/wrapped_avframe @ 00000227054ace00] [dec:wrapped_avframe @ 00000227054b5cc0] Decoder returned EOF, finishing
+[vist#0:0/wrapped_avframe @ 00000227054ace00] [dec:wrapped_avframe @ 00000227054b5cc0] Terminating thread with return code 0 (success)
+[graph -1 input from stream 0:0 @ 0000022702ac6180] w:96 h:64 pixfmt:yuv420p tb:1/1 fr:1/1 sar:1/1 csp:unknown range:unknown alpha:unspecified
+[Parsed_pelorus_deband_vulkan_2 @ 0000022702ac5980] Reusing existing frames context
+[graph -1 input from stream 0:0 @ 0000022702ac6180] video frame properties congruent with link at pts_time: 0
+[pelorus_deband_vulkan @ 00000227077a5e40] Shader linked, size: 7290 compressed, 20564 SPIR-V, 20564 binary
+Output #0, rawvideo, to 'C:/tmp/pel/shw-results/shw-2/06-uhd-nomp/deband-p0.raw':
+  Metadata:
+    encoder         : Lavf63.1.102
+  Stream #0:0: Video: rawvideo, 1 reference frame (I420 / 0x30323449), yuv420p(progressive), 96x64 [SAR 1:1 DAR 3:2], q=2-31, 73 kb/s, 1 fps, 1 tbn
+    Metadata:
+      encoder         : Lavc63.1.102 rawvideo
+[out#0/rawvideo @ 0000022702059d00] Starting thread...
+[vf#0:0 @ 00000227054b1740] All consumers returned EOF
+[vost#0:0/rawvideo @ 000002270547c800] [enc:rawvideo @ 00000227020997c0] Encoder thread received EOF
+[vost#0:0/rawvideo @ 000002270547c800] Terminating thread with return code 0 (success)
+[out#0/rawvideo @ 0000022702059d00] All streams finished
+[out#0/rawvideo @ 0000022702059d00] Terminating thread with return code 0 (success)
+[vf#0:0 @ 00000227054b1740] Terminating thread with return code 0 (success)
+[AVIOContext @ 000002270544f680] Statistics: 9216 bytes written, 0 seeks, 1 writeouts
+[out#0/rawvideo @ 0000022702059d00] Output file #0 (C:/tmp/pel/shw-results/shw-2/06-uhd-nomp/deband-p0.raw):
+[out#0/rawvideo @ 0000022702059d00]   Output stream #0:0 (video): 1 frames encoded; 1 packets muxed (9216 bytes); 
+[out#0/rawvideo @ 0000022702059d00]   Total: 1 packets (9216 bytes) muxed
+[out#0/rawvideo @ 0000022702059d00] video:9KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.000000%
+frame=    1 fps=0.0 q=-0.0 Lsize=       9KiB time=00:00:01.00 bitrate=  73.7kbits/s speed=6.35x elapsed=0:00:00.15    
+[in#0/lavfi @ 00000227029f9bc0] Input file #0 (testsrc2=size=96x64:rate=1:duration=1):
+[in#0/lavfi @ 00000227029f9bc0]   Input stream #0:0 (video): 1 packets read (424 bytes); 1 frames decoded; 0 decode errors; 
+[in#0/lavfi @ 00000227029f9bc0]   Total: 1 packets (424 bytes) demuxed
+
+Exiting with exit code 0

@@ -1,0 +1,18 @@
+docs(adr): ADR-0150 validate on Intel Arc B580 / UHD 770 under Windows
+
+Record the decisions from the shw-2 correctness stage on the office host
+(Arc B580, driver 101.9033; UHD 770, driver 101.7092; Khronos validation
+1.4.357 and 1.4.341.1 with core, synchronization and GPU-assisted checks):
+
+- validate in the device mode whose stock hwupload/hwdownload round trip is
+  exact (the Intel Windows drivers corrupt multi-plane host-image-copy);
+- fix three Pelorus defects the Linux devices did not expose (pass-through
+  frames-context mislabel, tile/fast bit-identity at 10/12-bit, denoise
+  storage-image descriptor budget) and guard each;
+- allowlist exactly the two stock-FFmpeg VUIDs, attributed by entry point;
+- correct scenecut / grain_estimate / pelorus_fgs / QSV-ROI documentation.
+
+The research digest carries the reproducers, per-GPU tables and the open
+aa fast=1 residual on the UHD 770.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

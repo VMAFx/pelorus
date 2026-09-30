@@ -1,0 +1,9 @@
+ninja: Entering directory `C:/tmp/pel/shw-scratch/build/pelorus-ucrt64'
+ninja: no work to do.
+Installing libpelorus/libpelorus-0.dll to C:/tmp/pel/prefix/bin
+Installing libpelorus/libpelorus.dll.a to C:/tmp/pel/prefix/lib
+Installing C:/tmp/pel/shw/libpelorus/include/pelorus/pelorus.h to C:/tmp/pel/prefix/include/pelorus
+Installing C:/tmp/pel/shw/libpelorus/include/pelorus/interop.h to C:/tmp/pel/prefix/include/pelorus
+Installing C:/tmp/pel/shw/libpelorus/include/pelorus/deband.h to C:/tmp/pel/prefix/include/pelorus
+Installing C:/tmp/pel/shw/libpelorus/include/pelorus/denoise.h to C:/tmp/pel/prefix/include/pelorus
+Installing C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/meson-private/libpelorus.pc to C:/tmp/pel/prefix/lib/pkgconfig

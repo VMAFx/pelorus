@@ -1,0 +1,1 @@
+static libs: -LC:/tmp/pel/prefix/lib -lavfilter -lstdc++ -lvmaf -lpelorus -lswscale -lavformat -lbz2 -lsecur32 -lncrypt -lcrypt32 -lws2_32 -lavcodec -liconv -llzma -ldav1d -laom -lSvtAv1Enc -lx264 -lx265 -lmfuuid -lstrmiids -lswresample -lavutil -lm -lz -lvpl -lole32 -lgdi32 -luuid -luser32 -lbcrypt -latomic

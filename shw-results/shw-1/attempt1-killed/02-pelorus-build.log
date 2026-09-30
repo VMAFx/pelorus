@@ -1,0 +1,34 @@
+ninja: Entering directory `C:/tmp/pel/shw-scratch/build/pelorus-ucrt64'
+[1/21] Compiling C object libpelorus/libpelorus-0.dll.p/src_version.c.obj
+[2/21] Generating libpelorus/shaders/pelorus_analyze.spv with a custom command
+../../../shw/libpelorus/shaders/pelorus_analyze.comp
+[3/21] Generating libpelorus/shaders/pelorus_denoise.spv with a custom command
+../../../shw/libpelorus/shaders/pelorus_denoise.comp
+[4/21] Generating libpelorus/shaders/pelorus_qpmap.spv with a custom command
+../../../shw/libpelorus/shaders/pelorus_qpmap.comp
+[5/21] Generating libpelorus/shaders/pelorus_deband.spv with a custom command
+../../../shw/libpelorus/shaders/pelorus_deband.comp
+[6/21] Generating libpelorus/shaders/pelorus_mc.spv with a custom command
+../../../shw/libpelorus/shaders/pelorus_mc.comp
+[7/21] Generating libpelorus/shaders/pelorus_grain_estimate.spv with a custom command
+../../../shw/libpelorus/shaders/pelorus_grain_estimate.comp
+[8/21] Generating libpelorus/shaders/pelorus_dehalo.spv with a custom command
+../../../shw/libpelorus/shaders/pelorus_dehalo.comp
+[9/21] Compiling C object libpelorus/libpelorus-0.dll.p/src_deband_params.c.obj
+[10/21] Generating libpelorus/shaders/pelorus_aa.spv with a custom command
+../../../shw/libpelorus/shaders/pelorus_aa.comp
+[11/21] Generating libpelorus/shaders/pelorus_deblock.spv with a custom command
+../../../shw/libpelorus/shaders/pelorus_deblock.comp
+[12/21] Compiling C object libpelorus/libpelorus-0.dll.p/src_denoise_params.c.obj
+[13/21] Generating libpelorus/shaders/pelorus_borderfix.spv with a custom command
+../../../shw/libpelorus/shaders/pelorus_borderfix.comp
+[14/21] Compiling C object libpelorus/libpelorus-0.dll.p/src_interop.c.obj
+[15/21] Compiling C object tools/pelorus_qp_report.exe.p/pelorus_qp_report.c.obj
+[16/21] Compiling C object libpelorus/libpelorus-0.dll.p/src_qp_report_csv.c.obj
+[17/21] Compiling C object libpelorus/test/pelorus_interop_test.exe.p/interop_test.c.obj
+[18/21] Linking target libpelorus/libpelorus-0.dll
+[19/21] Generating symbol file libpelorus/libpelorus-0.dll.p/libpelorus-0.dll.symbols
+[20/21] Linking target tools/pelorus_qp_report.exe
+[21/21] Linking target libpelorus/test/pelorus_interop_test.exe
+INFO: autodetecting backend as ninja
+INFO: calculating backend command to run: C:\msys64\ucrt64\bin/ninja.exe -C C:/tmp/pel/shw-scratch/build/pelorus-ucrt64 -j 20

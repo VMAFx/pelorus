@@ -1,0 +1,19 @@
+FFMPEG_REMOTE=https://github.com/FFmpeg/FFmpeg.git FFMPEG_TAG=n9.0.2 FFMPEG_COMMIT=946fcce07b6dcd0331c8cc609192aeff5e1924f8
+Hinweis: Using 'master' as the name for the initial branch. This default branch name
+Hinweis: will change to "main" in Git 3.0. To configure the initial branch name
+Hinweis: to use in all of your new repositories, which will suppress this warning,
+Hinweis: call:
+Hinweis:
+Hinweis: 	git config --global init.defaultBranch <name>
+Hinweis:
+Hinweis: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+Hinweis: 'development'. The just-created branch can be renamed via this command:
+Hinweis:
+Hinweis: 	git branch -m <name>
+Hinweis:
+Hinweis: Disable this message with "git config set advice.defaultBranchName false"
+Leeres Git-Repository in /c/tmp/pel/ffmpeg/.git/ initialisiert
+Von https://github.com/FFmpeg/FFmpeg
+ * [neues Tag]       n9.0.2     -> n9.0.2
+OK: n9.0.2 peels to 946fcce07b6dcd0331c8cc609192aeff5e1924f8 (== FFMPEG_COMMIT)
+tag

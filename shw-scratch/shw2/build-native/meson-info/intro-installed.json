@@ -1,0 +1,9 @@
+{
+  "C:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/libpelorus-0.dll": "C:/msys64/ucrt64/bin/libpelorus-0.dll",
+  "C:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/libpelorus.dll.a": "C:/msys64/ucrt64/lib/libpelorus.dll.a",
+  "C:/tmp/pel/shw-scratch/shw2/build-native/meson-private/libpelorus.pc": "C:/msys64/ucrt64/lib/pkgconfig/libpelorus.pc",
+  "C:/tmp/pel/shw/libpelorus/include/pelorus/pelorus.h": "C:/msys64/ucrt64/include/pelorus/pelorus.h",
+  "C:/tmp/pel/shw/libpelorus/include/pelorus/interop.h": "C:/msys64/ucrt64/include/pelorus/interop.h",
+  "C:/tmp/pel/shw/libpelorus/include/pelorus/deband.h": "C:/msys64/ucrt64/include/pelorus/deband.h",
+  "C:/tmp/pel/shw/libpelorus/include/pelorus/denoise.h": "C:/msys64/ucrt64/include/pelorus/denoise.h"
+}

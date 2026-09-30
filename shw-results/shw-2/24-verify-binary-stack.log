@@ -1,0 +1,4 @@
+clone HEAD 190b9d2 replays to tree faa52cd775159ca9c6f8234761db82f3b91cb09e
+build branch shw/pelorus-regen-d1d2d3 tree        faa52cd775159ca9c6f8234761db82f3b91cb09e
+build tree checkout HEAD                          shw/pelorus-regen-d1d2d3 94ece8d; uncommitted tracked changes: 0
+IDENTICAL: installed ffmpeg.exe was built from the committed patch stack

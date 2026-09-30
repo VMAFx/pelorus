@@ -1,0 +1,27 @@
+fix(ffmpeg): keep tile/fast shared-memory variants bit-identical at 10/12-bit
+
+denoise tile=1, dehalo tile=1 and aa fast=1 cache values in shared memory
+that the direct path computes inline, and ADR-0134/0139/0140 promise
+bit-identical output. At 10/12-bit sample_scale is not a power of two, so
+a driver that fuses the storage->sample product into a later FMA on one
+path only rounds the two paths differently. On Intel Arc B580 / UHD 770
+(Windows) that drifted denoise tile=1 by one code value at 10-bit (up to
+111 samples in 12 frames of 640x360) and aa fast=1 on the UHD 770.
+
+pel_to_sample() is now `precise` (SPIR-V NoContraction) in the three
+shaders, as are denoise's patch-SSD accumulator and aa's squared Sobel
+magnitude. After the change a 640x360 / 12-frame / six-format stress test
+is 36/36 identical on the B580; on the UHD 770 denoise and dehalo are
+identical and an aa fast=1 residual (<= 1 code, top-row samples, linear
+single-plane input only) stays open in ADR-0150.
+
+Default-path output can move by one code value in rare 10/12-bit samples
+(8-bit output unchanged); a threshold-gated dehalo row (edge=0) changed
+more locally because equal samples now give an exact zero difference.
+
+The format matrix gains a 320x192 direct/tiled denoise row at yuv420p10le
+and p010le; it fails on the B580 with the two denoise qualifiers reverted.
+
+Regenerated: 0003, 0014, 0015.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

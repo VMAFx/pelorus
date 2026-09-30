@@ -1,0 +1,7 @@
+Reconciling configuration for VMAFx/pelorus...
+  [OK] Labels verified (.config/labels.yaml: schema and 14 unique labels)
+  [OK] Lockfile .standards.lock verified
+  [OK] Context harness and six compiled projections AGENTS.md verified
+  [OK] Branch protection ruleset verified (.github/rulesets/main.json: matches declared policy for default branch master)
+  [INFO] Remote forge untouched (pass --remote to reconcile branch protection, labels and repository metadata on GitHub)
+Local sync checks finished: labels and ruleset verified; 0 companion checks missing.

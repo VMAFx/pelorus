@@ -1,0 +1,12 @@
+impl[0]: ImplName="mfx-gen" Impl=HW ApiVersion=2.17 VendorID=0x8086 VendorImplID=0x0000 License="Intel End User License Agreement for Developer Tools (Version October 2021)" Keywords=""
+  Dev.DeviceID="e20b/0" MediaAdapterType=1 NumSubDevices=0 AccelModes: D3D11
+  Enc codecs: AV1 (maxLevel 53) VP9 (maxLevel 0) AVC (maxLevel 52) HEVC(maxLevel 318) JPEG(maxLevel 0) AV1 (maxLevel 53)
+  path=C:\WINDOWS\System32\DriverStore\FileRepository\iigd_dch_d.inf_amd64_1859111ddb8781ef\libmfx64-gen.dll
+  ext: VendorID=0x8086 DeviceID=0xe20b PCI=0000:03:00.0 DRMRender=0 LUIDValid=1 LUIDDeviceNodeMask=1 DeviceName="mfx-gen"
+  LUID=000000000000d63b
+impl[1]: ImplName="mfx-gen" Impl=HW ApiVersion=2.15 VendorID=0x8086 VendorImplID=0x0001 License="Intel End User License Agreement for Developer Tools (Version October 2021)" Keywords=""
+  Dev.DeviceID="4680/1" MediaAdapterType=0 NumSubDevices=0 AccelModes: D3D11
+  Enc codecs: VP9 (maxLevel 0) AVC (maxLevel 52) MPG2(maxLevel 4) HEVC(maxLevel 318) JPEG(maxLevel 0)
+  path=C:\WINDOWS\System32\DriverStore\FileRepository\iigd_dch.inf_amd64_8e2429f185e36439\libmfx64-gen.dll
+  ext: VendorID=0x8086 DeviceID=0x4680 PCI=0000:00:02.0 DRMRender=0 LUIDValid=1 LUIDDeviceNodeMask=1 DeviceName="mfx-gen"
+  LUID=000000000000e7b5

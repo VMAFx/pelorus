@@ -1,0 +1,11 @@
+190b9d2 docs: correct encoder-steering, grain and FGS claims from Intel hardware runs
+regeneration 1: committed patches byte-identical
+regeneration 2: committed patches byte-identical
+== libpelorus job
+Ok:                27  
+Fail:              0   
+clang-format-ok
+clang-tidy-ok
+== docs job
+CHANGELOG.md is up to date with changelog.d/.
+adr-index missing=0

@@ -1,0 +1,27 @@
+docs: correct encoder-steering, grain and FGS claims from Intel hardware runs
+
+Real encodes on Intel Arc B580 and UHD 770 (Windows, ADR-0150) contradicted
+several documented behaviours; the code matches its ADRs, the prose did not.
+
+- metrics/scenecut: with the ffmpeg CLI the forced I-frame only survives
+  with -force_key_frames source (fftools rewrites frame->pict_type before
+  every encode); measured keyframes 0 vs 0,10 on hevc_qsv for a hard cut.
+- metrics/grain_estimate: libaom-av1 and libsvtav1 ignore
+  AV_FRAME_DATA_FILM_GRAIN_PARAMS (film_grain_params_present = 0); only the
+  patched av1_nvenc -pelorus_film_grain consumes native=1. The AV1 usage
+  example now uses av1_nvenc.
+- usage/grain-fgs-bsf: components=0 is NAL-identical, not byte-identical
+  (CBS reassembly rewrote QSV's 4-byte start codes); FFmpeg's HEVC decoder
+  synthesizes only film_grain_model_id=0 and ignores the default model 1.
+- backends/qsv-roi: mfx-gen 2.17/2.15 clear EnableMBQP for HEVC CQP in
+  MFXVideoENCODE_Query (kept for AVC), so hevc_qsv -pelorus_roi 1 falls
+  back to stock rectangles without a diagnostic; stock-rectangle effect by
+  device and rate control recorded.
+- backends/vulkan: Windows Intel device modes, the two stock VUIDs, the
+  16-storage-image budget and the missing Vulkan encode queue.
+- metrics/aa: the fast=1 bit-identity claim carries the open UHD 770
+  exception.
+
+CHANGELOG.md re-rendered from changelog.d (render --check passes).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

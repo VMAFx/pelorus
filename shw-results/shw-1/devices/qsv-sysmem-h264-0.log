@@ -1,0 +1,84 @@
+[QSV @ 000001bcb98ef6c0] Defaulting child_device_type to AV_HWDEVICE_TYPE_D3D11VA for oneVPL.Please explicitly set child device type via "-init_hw_device" option if needed.
+[D3D11VA @ 000001bcb98ee9c0] Selecting d3d11va adapter 0
+[D3D11VA @ 000001bcb98ee9c0] Using device 8086:e20b (Intel(R) Arc(TM) B580 Graphics).
+[QSV @ 000001bcb98ef6c0] Use Intel(R) oneVPL to create MFX session, API version is 2.17, the required implementation version is 1.3
+[QSV @ 000001bcb98ef6c0] Initialize MFX session: implementation version is 2.17
+[Parsed_testsrc2_0 @ 000001bcc0c94b00] size:1280x720 rate:24/1 duration:1.000000 sar:1/1
+Input #0, lavfi, from 'testsrc2=size=1280x720:rate=24:duration=1':
+  Duration: N/A, start: 0.000000, bitrate: N/A
+  Stream #0:0: Video: wrapped_avframe, 1 reference frame, yuv420p, 1280x720 [SAR 1:1 DAR 16:9], 24 fps, 24 tbr, 24 tbn
+[out#0/null @ 000001bcc192d240] No explicit maps, mapping streams automatically...
+[vost#0:0/h264_qsv @ 000001bcc0e66140] Created video stream from input stream 0:0
+Stream mapping:
+  Stream #0:0 -> #0:0 (wrapped_avframe (native) -> h264 (h264_qsv))
+[vost#0:0/h264_qsv @ 000001bcc0e66140] Starting thread...
+[vf#0:0 @ 000001bcc18302c0] Starting thread...
+[vist#0:0/wrapped_avframe @ 000001bcc173f7c0] [dec:wrapped_avframe @ 000001bcc0799480] Starting thread...
+[in#0/lavfi @ 000001bcc159df40] Starting thread...
+[graph -1 input from stream 0:0 @ 000001bcc0c95c00] w:1280 h:720 pixfmt:yuv420p tb:1/24 fr:24/1 sar:1/1 csp:unknown range:unknown alpha:unspecified
+[auto_scale_0 @ 000001bcc0c96e00] w:iw h:ih flags:'' interl:0
+[format @ 000001bcc0c94000] auto-inserting filter 'auto_scale_0' between the filter 'Parsed_null_0' and the filter 'format'
+[auto_scale_0 @ 000001bcc0c96e00] w:1280 h:720 fmt:yuv420p csp:unknown range:unknown sar:1/1 -> w:1280 h:720 fmt:nv12 csp:unknown range:tv sar:1/1 flags:0x00000004
+[auto_scale_0 @ 000001bcc0c96e00] [framesync @ 000001bcc0c9bf50] Selected 1/24 time base
+[auto_scale_0 @ 000001bcc0c96e00] [framesync @ 000001bcc0c9bf50] Sync level 1
+[graph -1 input from stream 0:0 @ 000001bcc0c95c00] video frame properties congruent with link at pts_time: 0
+[vost#0:0/h264_qsv @ 000001bcc0e66140] [enc:h264_qsv @ 000001bcc05749c0] Using device qs (type qsv) with h264_qsv encoder.
+[h264_qsv @ 000001bcc0a2b940] Encoder: input is system memory surface
+[h264_qsv @ 000001bcc0a2b940] Use Intel(R) oneVPL to create MFX session with the specified MFX loader
+[h264_qsv @ 000001bcc0a2b940] Using the intelligent constant quality (ICQ) ratecontrol method
+[h264_qsv @ 000001bcc0a2b940] profile: avc high; level: 31
+[h264_qsv @ 000001bcc0a2b940] GopPicSize: 256; GopRefDist: 4; GopOptFlag: closed; IdrInterval: 0
+[h264_qsv @ 000001bcc0a2b940] TargetUsage: 4; RateControlMethod: ICQ
+[h264_qsv @ 000001bcc0a2b940] ICQQuality: 25
+[h264_qsv @ 000001bcc0a2b940] NumSlice: 1; NumRefFrame: 3
+[h264_qsv @ 000001bcc0a2b940] RateDistortionOpt: OFF
+[h264_qsv @ 000001bcc0a2b940] RecoveryPointSEI: OFF
+[h264_qsv @ 000001bcc0a2b940] VDENC: ON
+[h264_qsv @ 000001bcc0a2b940] Entropy coding: CABAC; MaxDecFrameBuffering: 3
+[h264_qsv @ 000001bcc0a2b940] NalHrdConformance: OFF; SingleSeiNalUnit: ON; VuiVclHrdParameters: OFF VuiNalHrdParameters: OFF
+[h264_qsv @ 000001bcc0a2b940] FrameRateExtD: 1; FrameRateExtN: 24 
+[h264_qsv @ 000001bcc0a2b940] IntRefType: 0; IntRefCycleSize: 0; IntRefQPDelta: 0
+[h264_qsv @ 000001bcc0a2b940] MaxFrameSize: 345600; MaxSliceSize: 0
+[h264_qsv @ 000001bcc0a2b940] BitrateLimit: OFF; MBBRC: ON; ExtBRC: OFF
+[h264_qsv @ 000001bcc0a2b940] Trellis: auto
+[h264_qsv @ 000001bcc0a2b940] RepeatPPS: OFF; NumMbPerSlice: 0; LookAheadDS: 2x
+[h264_qsv @ 000001bcc0a2b940] AdaptiveI: OFF; AdaptiveB: OFF; BRefType:pyramid
+[h264_qsv @ 000001bcc0a2b940] MinQPI: 0; MaxQPI: 0; MinQPP: 0; MaxQPP: 0; MinQPB: 0; MaxQPB: 0
+[h264_qsv @ 000001bcc0a2b940] DisableDeblockingIdc: 0 
+[h264_qsv @ 000001bcc0a2b940] SkipFrame: no_skip
+[h264_qsv @ 000001bcc0a2b940] PRefType: default
+[h264_qsv @ 000001bcc0a2b940] TransformSkip: unknown 
+[h264_qsv @ 000001bcc0a2b940] IntRefCycleDist: 0
+[h264_qsv @ 000001bcc0a2b940] LowDelayBRC: OFF
+[h264_qsv @ 000001bcc0a2b940] MaxFrameSizeI: 0; MaxFrameSizeP: 0
+[h264_qsv @ 000001bcc0a2b940] ScenarioInfo: 0
+Output #0, null, to 'pipe:':
+  Metadata:
+    encoder         : Lavf63.1.102
+  Stream #0:0: Video: h264, 1 reference frame, nv12(tv, progressive), 1280x720 [SAR 1:1 DAR 16:9], q=2-31, 24 fps, 24 tbn
+    Metadata:
+      encoder         : Lavc63.1.102 h264_qsv
+    Side data:
+      CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[out#0/null @ 000001bcc192d240] Starting thread...
+[vf#0:0 @ 000001bcc18302c0] All consumers returned EOF
+[vf#0:0 @ 000001bcc18302c0] Terminating thread with return code 0 (success)
+[vist#0:0/wrapped_avframe @ 000001bcc173f7c0] [dec:wrapped_avframe @ 000001bcc0799480] Decoder returned EOF, finishing
+[vist#0:0/wrapped_avframe @ 000001bcc173f7c0] [dec:wrapped_avframe @ 000001bcc0799480] Terminating thread with return code 0 (success)
+[vist#0:0/wrapped_avframe @ 000001bcc173f7c0] All consumers of this stream are done
+[in#0/lavfi @ 000001bcc159df40] All consumers are done
+[in#0/lavfi @ 000001bcc159df40] Terminating thread with return code 0 (success)
+[vost#0:0/h264_qsv @ 000001bcc0e66140] [enc:h264_qsv @ 000001bcc05749c0] Encoder thread received EOF
+[vost#0:0/h264_qsv @ 000001bcc0e66140] Terminating thread with return code 0 (success)
+[out#0/null @ 000001bcc192d240] All streams finished
+[out#0/null @ 000001bcc192d240] Terminating thread with return code 0 (success)
+[out#0/null @ 000001bcc192d240] Output file #0 (pipe:):
+[out#0/null @ 000001bcc192d240]   Output stream #0:0 (video): 10 frames encoded; 10 packets muxed (160985 bytes); 
+[out#0/null @ 000001bcc192d240]   Total: 10 packets (160985 bytes) muxed
+[out#0/null @ 000001bcc192d240] video:157KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=   10 fps=0.0 q=26.0 Lsize=N/A time=00:00:00.29 bitrate=N/A speed=1.91x elapsed=0:00:00.15    
+[in#0/lavfi @ 000001bcc159df40] Input file #0 (testsrc2=size=1280x720:rate=24:duration=1):
+[in#0/lavfi @ 000001bcc159df40]   Input stream #0:0 (video): 23 packets read (9752 bytes); 14 frames decoded; 0 decode errors; 
+[in#0/lavfi @ 000001bcc159df40]   Total: 23 packets (9752 bytes) demuxed
+
+Exiting with exit code 0

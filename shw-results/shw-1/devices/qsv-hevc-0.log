@@ -1,0 +1,45 @@
+[QSV @ 00000234cdd6c3c0] Defaulting child_device_type to AV_HWDEVICE_TYPE_D3D11VA for oneVPL.Please explicitly set child device type via "-init_hw_device" option if needed.
+[D3D11VA @ 00000234cdd6bc40] Selecting d3d11va adapter 0
+[D3D11VA @ 00000234cdd6bc40] Using device 8086:e20b (Intel(R) Arc(TM) B580 Graphics).
+[QSV @ 00000234cdd6c3c0] Use Intel(R) oneVPL to create MFX session, API version is 2.17, the required implementation version is 1.3
+[QSV @ 00000234cdd6c3c0] Initialize MFX session: implementation version is 2.17
+[Parsed_testsrc2_0 @ 00000234d55af780] size:1280x720 rate:24/1 duration:1.000000 sar:1/1
+Input #0, lavfi, from 'testsrc2=size=1280x720:rate=24:duration=1':
+  Duration: N/A, start: 0.000000, bitrate: N/A
+  Stream #0:0: Video: wrapped_avframe, 1 reference frame, yuv420p, 1280x720 [SAR 1:1 DAR 16:9], 24 fps, 24 tbr, 24 tbn
+[out#0/null @ 00000234d562d180] No explicit maps, mapping streams automatically...
+[vost#0:0/hevc_qsv @ 00000234d4f33e80] Created video stream from input stream 0:0
+Stream mapping:
+  Stream #0:0 -> #0:0 (wrapped_avframe (native) -> hevc (hevc_qsv))
+[vost#0:0/hevc_qsv @ 00000234d4f33e80] Starting thread...
+[vf#0:0 @ 00000234d4f72900] Starting thread...
+[vist#0:0/wrapped_avframe @ 00000234d5ce3940] [dec:wrapped_avframe @ 00000234d4bb2c00] Starting thread...
+[in#0/lavfi @ 00000234d5d74340] Starting thread...
+[graph -1 input from stream 0:0 @ 00000234d55aec80] w:1280 h:720 pixfmt:yuv420p tb:1/24 fr:24/1 sar:1/1 csp:unknown range:unknown alpha:unspecified
+[auto_scale_0 @ 00000234d55ae680] w:iw h:ih flags:'' interl:0
+[Parsed_format_0 @ 00000234d55ad080] auto-inserting filter 'auto_scale_0' between the filter 'graph -1 input from stream 0:0' and the filter 'Parsed_format_0'
+[auto_scale_0 @ 00000234d55ae680] w:1280 h:720 fmt:yuv420p csp:unknown range:unknown sar:1/1 -> w:1280 h:720 fmt:nv12 csp:unknown range:tv sar:1/1 flags:0x00000004
+[auto_scale_0 @ 00000234d55ae680] [framesync @ 00000234d5b51ad0] Selected 1/24 time base
+[auto_scale_0 @ 00000234d55ae680] [framesync @ 00000234d5b51ad0] Sync level 1
+[AVHWFramesContext @ 00000234d632de40] Could not create the texture (80070057)
+[AVHWFramesContext @ 00000234d632d240] Error initializing a child frames context
+[AVHWFramesContext @ 00000234d632d240] Error creating an internal frame pool
+[Parsed_hwupload_1 @ 00000234d55af180] Failed to configure output pad on Parsed_hwupload_1
+[vf#0:0 @ 00000234d4f72900] Error reinitializing filters!
+[vf#0:0 @ 00000234d4f72900] Task finished with error code: -1313558101 (Unknown error occurred)
+[vf#0:0 @ 00000234d4f72900] Terminating thread with return code -1313558101 (Unknown error occurred)
+[vost#0:0/hevc_qsv @ 00000234d4f33e80] [enc:hevc_qsv @ 00000234d4a34440] Encoder thread received EOF
+[vost#0:0/hevc_qsv @ 00000234d4f33e80] [enc:hevc_qsv @ 00000234d4a34440] Could not open encoder before EOF
+[vost#0:0/hevc_qsv @ 00000234d4f33e80] Task finished with error code: -22 (Invalid argument)
+[vost#0:0/hevc_qsv @ 00000234d4f33e80] Terminating thread with return code -22 (Invalid argument)
+[vist#0:0/wrapped_avframe @ 00000234d5ce3940] [dec:wrapped_avframe @ 00000234d4bb2c00] Decoder returned EOF, finishing
+[vist#0:0/wrapped_avframe @ 00000234d5ce3940] [dec:wrapped_avframe @ 00000234d4bb2c00] Terminating thread with return code 0 (success)
+[in#0/lavfi @ 00000234d5d74340] Terminating thread with return code 0 (success)
+[out#0/null @ 00000234d562d180] Nothing was written into output file, because at least one of its streams received no packets.
+frame=    0 fps=0.0 q=0.0 Lsize=       0KiB time=N/A bitrate=N/A speed=N/A elapsed=0:00:00.00    
+[in#0/lavfi @ 00000234d5d74340] Input file #0 (testsrc2=size=1280x720:rate=24:duration=1):
+[in#0/lavfi @ 00000234d5d74340]   Input stream #0:0 (video): 3 packets read (1272 bytes); 2 frames decoded; 0 decode errors; 
+[in#0/lavfi @ 00000234d5d74340]   Total: 3 packets (1272 bytes) demuxed
+Conversion failed!
+
+Exiting with exit code -1313558101

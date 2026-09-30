@@ -1,0 +1,42 @@
+MSYSTEM=UCRT64 HOME=/home/ms PWD=/c/tmp/pel/shw
+MINGW64_NT-10.0-26300 kcromm 3.6.10-3ea87a50.x86_64 2026-09-28 15:20 UTC x86_64 Msys
+gcc                /ucrt64/bin/gcc
+cc                 /ucrt64/bin/cc
+meson              /ucrt64/bin/meson
+ninja              /ucrt64/bin/ninja
+pkg-config         /ucrt64/bin/pkg-config
+pkgconf            /ucrt64/bin/pkgconf
+nasm               /ucrt64/bin/nasm
+glslc              /ucrt64/bin/glslc
+glslangValidator   /ucrt64/bin/glslangValidator
+glslang            /ucrt64/bin/glslang
+python3            /ucrt64/bin/python3
+python             /ucrt64/bin/python
+git                /usr/bin/git
+make               /usr/bin/make
+bash               /usr/bin/bash
+gcc.exe (Rev4, Built by MSYS2 project) 16.2.0
+1.12.1
+1.13.2
+NASM version 3.02 compiled on Jul  4 2026
+2026.3
+3~1.4.357.0
+16.3.0
+Glslang Version: 11:16.3.0
+ESSL Version: OpenGL ES GLSL 3.20 glslang Khronos. 16.3.0
+Python 3.14.7
+git version 2.56.0
+GNU Make 4.4.1
+(no global autocrlf/eol in msys git)
+(no system autocrlf/eol in msys git)
+vulkan     1.4.357
+vpl        2.17
+aom        3.15.1
+SvtAv1Enc  4.2.0
+ffnvcodec  13.0.19.0
+x264       0.165.3222M
+x265       4.3
+dav1d      1.5.4
+libvmaf    3.2.0
+PKG_CONFIG_PATH=/ucrt64/lib/pkgconfig:/ucrt64/share/pkgconfig
+24

@@ -1,0 +1,13 @@
+== validation self-test (2026-09-30T11:48:24+02:00)
+Vulkan validation stream self-test: PASS
+self-test rc=0
+== matrix vk0 vvl=msys (2026-09-30T11:48:27+02:00)
+matrix vk0 rc=1
+Unexpected validation diagnostic in /c/tmp/pel/shw-results/shw-2/02-matrix-unchanged-msys/vk0/device-probe.stdout: VUID-VkFormatProperties2-pNext-pNext
+FAIL: device probe emitted a new Vulkan VUID
+Evidence: /c/tmp/pel/shw-results/shw-2/02-matrix-unchanged-msys/vk0
+== matrix vk1 vvl=msys (2026-09-30T11:48:28+02:00)
+matrix vk1 rc=1
+Unexpected validation diagnostic in /c/tmp/pel/shw-results/shw-2/02-matrix-unchanged-msys/vk1/device-probe.stdout: VUID-VkFormatProperties2-pNext-pNext
+FAIL: device probe emitted a new Vulkan VUID
+Evidence: /c/tmp/pel/shw-results/shw-2/02-matrix-unchanged-msys/vk1

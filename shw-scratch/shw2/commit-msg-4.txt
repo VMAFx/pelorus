@@ -1,0 +1,29 @@
+test(ffmpeg-patches): run the Vulkan format matrix on Intel Windows drivers
+
+With validation enabled the unchanged matrix stops at its device probe on
+Intel's Windows drivers (Arc B580 101.9033, UHD 770 101.7092): a bare
+hwupload,hwdownload already emits two VUIDs from stock FFmpeg.
+
+- VUID-VkFormatProperties2-pNext-pNext: vkfmt_from_pixfmt2() reuses one
+  VkFormatProperties2 -> VkFormatProperties3 chain for a second query, and
+  the driver zeroes the whole VkFormatProperties3 (header included) for
+  unsupported formats (72/224 formats on the B580, 46 on the UHD 770,
+  measured without the layer).
+- VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230: vulkan_transfer_host()
+  host-transitions out of TRANSFER_DST_OPTIMAL while pCopySrcLayouts lists
+  only GENERAL.
+
+Both are raised inside vkGetPhysicalDeviceFormatProperties2 and
+vkTransitionImageLayoutEXT, which Pelorus never calls, so they join the
+known-upstream list by entry point. No other Windows diagnostic is
+allowlisted.
+
+On these drivers the default multi-plane VK_EXT_host_image_copy corrupts
+every YUV upload/download (a standalone reproducer with zero validation
+diagnostics shows it), so the gate must run with
+VULKAN_DEVICE="0,disable_multiplane=1" (B580) or
+"1,linear_images=1,disable_multiplane=1" (UHD 770); the rebase notes say so.
+With that, every matrix row passes on both GPUs under both the MSYS2
+1.4.357 and LunarG 1.4.341.1 validation layers.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

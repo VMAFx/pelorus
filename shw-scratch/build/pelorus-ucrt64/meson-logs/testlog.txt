@@ -1,0 +1,273 @@
+Log of Meson test suite run on 2026-09-30T11:11:22.670398
+
+Inherited environment: !EXITCODE=00000000 ACLOCAL_PATH=C:\msys64\ucrt64\share\aclocal;C:\msys64\usr\share\aclocal ADSK_3DSMAX_X64_2027=C:\Program Files\Autodesk\3ds Max 2027\ ADVISOR_2025_DIR=C:\Program Files (x86)\Intel\oneAPI\advisor\2025.1 AIT_CONFIGURATOR_PATH=C:\Program Files (x86)\Autodesk\AIT\Configurator\AIT.ModelChecker.Configurator.exe AI_AGENT=claude-code_2-1-285_agent ALLUSERSPROFILE=C:\ProgramData APPDATA=C:\Users\ms\AppData\Roaming ARGOCD_API_TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhcmdvY2QiLCJzdWIiOiJhZG1pbjphcGlLZXkiLCJuYmYiOjE3NzYxNTg4MTgsImlhdCI6MTc3NjE1ODgxOCwianRpIjoiNDFiMWZlZjUtNTdmMy00Y2IzLTgwMDUtZmExZmVjZjhkYWQwIn0.bVG44rgTSasmuCaz9X91U6A0E8t2MOChMv7lygUKnO4 CHROME_CRASHPAD_PIPE_NAME=\\.\pipe\crashpad_7508_GHOEBTWEHAHBCDCP CLAUDECODE=1 CLAUDE_AGENT_SDK_VERSION=0.3.285 CLAUDE_CODE_CHILD_SESSION=1 CLAUDE_CODE_EMIT_STARTUP_TIMING=1 CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=true CLAUDE_CODE_ENABLE_TASKS=0 CLAUDE_CODE_ENTRYPOINT=claude-vscode CLAUDE_CODE_MESSAGING_SOCKET=\\.\pipe\LOCAL\cc-msg-2daa02dd504841257e8213f332a1f151 CLAUDE_CODE_MESSAGING_TOKEN=15307b9064d5cbdf74553f5936db16c9 CLAUDE_CODE_SESSION_ATTENDED=1 CLAUDE_CODE_SESSION_ID=272dcb67-5913-41ab-b8b0-7cc0a2cc1f4b CLAUDE_PID=10868 COMMONPROGRAMFILES=C:\Program Files\Common Files COMPUTERNAME=KCROMM COMSPEC=C:\WINDOWS\system32\cmd.exe CONFIG_SITE=C:/msys64/etc/config.site COREPACK_ENABLE_AUTO_PIN=0 CPLUS_INCLUDE_PATH=C:\Users\ms\scoop\apps\gcc\current\include C_INCLUDE_PATH=C:\Users\ms\scoop\apps\gcc\current\include CHOCOLATEYINSTALL=C:\ProgramData\chocolatey CHOCOLATEYLASTPATHUPDATE=134341072475274547 COMMONPROGRAMFILES(X86)=C:\Program Files (x86)\Common Files COMMONPROGRAMW6432=C:\Program Files\Common Files DESKTOP_CONNECTOR_DIR=C:\Program Files\Autodesk\Desktop Connector\ DRIVERDATA=C:\Windows\System32\Drivers\DriverData EFC_12856_1262719628=1 EFC_12856_1592913036=1 EFC_12856_2283032206=1 EFC_12856_2775293581=1 EFC_12856_3789132940=1 EFC_12856_4126798990=1 ELECTRON_RUN_AS_NODE=1 FNM_DIR=C:\Users\ms\scoop\apps\fnm\current GCM_INTERACTIVE=never GIT_ASKPASS= GIT_EDITOR=true GIT_LFS_PATH=C:\Program Files\Git LFS GIT_TERMINAL_PROMPT=0 GOPATH=C:\Users\ms\go HOME=C:\msys64\home\ms HOMEDRIVE=C: HOMEPATH=\Users\ms HOSTNAME=kcromm INFOPATH=C:\msys64\ucrt64\local\info;C:\msys64\ucrt64\share\info;C:\msys64\usr\local\info;C:\msys64\usr\share\info;C:\msys64\usr\info;C:\msys64\share\info LANG=de_DE.UTF-8 LEVEL_ZERO_V1_SDK_PATH=C:\Program Files\LevelZeroSDK\1.24.0\ LOCALAPPDATA=C:\Users\ms\AppData\Local LOGONSERVER=\\KCROMM MANPATH=C:\msys64\ucrt64\local\man;C:\msys64\ucrt64\share\man;C:\msys64\usr\local\man;C:\msys64\usr\share\man;C:\msys64\usr\man;C:\msys64\share\man MCP_CONNECTION_NONBLOCKING=true MINGW_CHOST=x86_64-w64-mingw32 MINGW_PACKAGE_PREFIX=mingw-w64-ucrt-x86_64 MINGW_PREFIX=C:/msys64/ucrt64 MSYSTEM=UCRT64 MSYSTEM_CARCH=x86_64 MSYSTEM_CHOST=x86_64-w64-mingw32 MSYSTEM_PREFIX=C:/msys64/ucrt64 NO_COLOR=1 NUMBER_OF_PROCESSORS=24 NODEFAULTCURRENTDIRECTORYINEXEPATH=1 OLDPWD=C:/Users/ms/dev/VMAFx/pelorus OPENMODELICAHOME=C:\Program Files\OpenModelica1.25.7-64bit\ ORIGINAL_PATH=C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\ ORIGINAL_TEMP=C:/Users/ms/AppData/Local/Temp ORIGINAL_TMP=C:/Users/ms/AppData/Local/Temp OS=Windows_NT ONEDRIVE=C:\Users\ms\OneDrive ONEDRIVECONSUMER=C:\Users\ms\OneDrive PATH=C:\msys64\ucrt64\bin;C:\msys64\usr\local\bin;C:\msys64\usr\bin;C:\msys64\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\msys64\usr\bin\site_perl;C:\msys64\usr\bin\vendor_perl;C:\msys64\usr\bin\core_perl PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.CPL PKG_CONFIG_PATH=C:\msys64\ucrt64\lib\pkgconfig;C:\msys64\ucrt64\share\pkgconfig PKG_CONFIG_SYSTEM_INCLUDE_PATH=C:/msys64/ucrt64/include PKG_CONFIG_SYSTEM_LIBRARY_PATH=C:/msys64/ucrt64/lib POWERSHELL_DISTRIBUTION_CHANNEL=MSI:Windows 10 Pro POWERSHELL_TELEMETRY_OPTOUT=1 PRINTER=KONICA MINOLTA Universal PCL v3.9.10 PROCESSOR_ARCHITECTURE=AMD64 PROCESSOR_IDENTIFIER=Intel64 Family 6 Model 151 Stepping 2, GenuineIntel PROCESSOR_LEVEL=6 PROCESSOR_REVISION=9702 PROGRAMFILES=C:\Program Files PROMPT=$P$G PSEXECUTIONPOLICYPREFERENCE=Bypass PSMODULEPATH=C:\Users\ms\Documents\PowerShell\Modules;C:\Program Files\PowerShell\Modules;c:\program files\powershell\7\Modules;C:\Program Files\WindowsPowerShell\Modules;C:\WINDOWS\system32\WindowsPowerShell\v1.0\Modules PUBLIC=C:\Users\Public PWD=C:/tmp/pel/shw PYTHONIOENCODING=utf-8:surrogateescape PYTHONUTF8=1 PROGRAMDATA=C:\ProgramData PROGRAMFILES(X86)=C:\Program Files (x86) PROGRAMW6432=C:\Program Files REVIT_AUTODESK_BASE_ROOT=A:\_Autodesk-Base SESSIONNAME=Console SHELL=C:\msys64\usr\bin\bash.exe SHLVL=2 SYSTEMDRIVE=C: SYSTEMROOT=C:\WINDOWS TEMP=C:\msys64\tmp TERM=xterm-256color TMP=C:\msys64\tmp UGII_3DCONNEXION_DIR32=C:\Program Files\3Dconnexion\3DxWare\3DxNX\ugii_dir32\ UGII_3DCONNEXION_DIR=C:\Program Files\3Dconnexion\3DxWare\3DxNX\ugii_dir\ USER=ms USERDOMAIN=KCROMM USERDOMAIN_ROAMINGPROFILE=KCROMM USERNAME=ms USERPROFILE=C:\Users\ms UV_CACHE_DIR=C:\Users\ms\scoop\persist\uv\cache UV_PYTHON_BIN_DIR=C:\Users\ms\scoop\persist\uv\python\shims UV_PYTHON_INSTALL_DIR=C:\Users\ms\scoop\persist\uv\python\versions UV_TOOL_BIN_DIR=C:\Users\ms\scoop\persist\uv\tools\shims UV_TOOL_DIR=C:\Users\ms\scoop\persist\uv\tools\versions VK_SDK_PATH=C:\VulkanSDK\1.4.341.1 VSCODE_CODE_CACHE_PATH=C:\Users\ms\AppData\Roaming\Antigravity IDE\CachedData\ecfbad74d93962fc8ca485d93ab9b4f3d4cb6cf8 VSCODE_CRASH_REPORTER_PROCESS_TYPE=extensionHost VSCODE_CWD=C:\Users\ms\AppData\Local\Programs\Antigravity IDE VSCODE_ESM_ENTRYPOINT=vs/workbench/api/node/extensionHostProcess VSCODE_HANDLES_UNCAUGHT_ERRORS=true VSCODE_IPC_HOOK=\\.\pipe\4d0e69f0-1.107.0-main-sock VSCODE_L10N_BUNDLE_LOCATION= VSCODE_NLS_CONFIG={"userLocale":"en-us","osLocale":"de-de","resolvedLanguage":"en","defaultMessagesFile":"C:\\Users\\ms\\AppData\\Local\\Programs\\Antigravity IDE\\resources\\app\\out\\nls.messages.json","locale":"en-us","availableLanguages":{}} VSCODE_PID=7508 VTUNE_PROFILER_2025_DIR=C:\Program Files (x86)\Intel\oneAPI\vtune\2025.3 VULKAN_SDK=C:\VulkanSDK\1.4.341.1 WINDIR=C:\WINDOWS XDG_DATA_DIRS=C:\msys64\ucrt64\share\;C:\msys64\usr\local\share\;C:\msys64\usr\share\ ZES_ENABLE_SYSMAN=1 _=C:/msys64/ucrt64/bin/meson 
+
+==================================== 1/27 ====================================
+test:         fast - pelorus:interop-abi
+start time:   09:11:22
+duration:     0.06s
+result:       exit status 0
+command:      UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 MALLOC_PERTURB_=103 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 PATH=C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/libpelorus;C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/libpelorus/test;C:\msys64\ucrt64\bin;C:\msys64\usr\local\bin;C:\msys64\usr\bin;C:\msys64\usr\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\msys64\usr\bin\site_perl;C:\msys64\usr\bin\vendor_perl;C:\msys64\usr\bin\core_perl C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/libpelorus/test/pelorus_interop_test.exe
+----------------------------------- stdout -----------------------------------
+interop: all checks passed (libpelorus 0.2.2, ABI 1.3)
+==============================================================================
+
+==================================== 2/27 ====================================
+test:         fast - pelorus:shader-pelorus_deband-compile
+start time:   09:11:22
+duration:     0.15s
+result:       exit status 0
+command:      MALLOC_PERTURB_=174 UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/glslangValidator.exe -V --target-env vulkan1.2 C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_deband.comp -o /dev/null
+----------------------------------- stdout -----------------------------------
+C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_deband.comp
+==============================================================================
+
+==================================== 3/27 ====================================
+test:         fast - pelorus:shader-pelorus_grain_estimate-compile
+start time:   09:11:22
+duration:     0.14s
+result:       exit status 0
+command:      UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MALLOC_PERTURB_=20 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/glslangValidator.exe -V --target-env vulkan1.2 C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_grain_estimate.comp -o /dev/null
+----------------------------------- stdout -----------------------------------
+C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_grain_estimate.comp
+==============================================================================
+
+==================================== 4/27 ====================================
+test:         fast - pelorus:shader-pelorus_mc-compile
+start time:   09:11:22
+duration:     0.14s
+result:       exit status 0
+command:      UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MALLOC_PERTURB_=176 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/glslangValidator.exe -V --target-env vulkan1.2 C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_mc.comp -o /dev/null
+----------------------------------- stdout -----------------------------------
+C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_mc.comp
+==============================================================================
+
+==================================== 5/27 ====================================
+test:         fast - pelorus:shader-pelorus_analyze-compile
+start time:   09:11:22
+duration:     0.47s
+result:       exit status 0
+command:      MALLOC_PERTURB_=8 UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/glslangValidator.exe -V --target-env vulkan1.2 C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_analyze.comp -o /dev/null
+----------------------------------- stdout -----------------------------------
+C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_analyze.comp
+==============================================================================
+
+==================================== 6/27 ====================================
+test:         fast - pelorus:shader-pelorus_qpmap-compile
+start time:   09:11:22
+duration:     0.46s
+result:       exit status 0
+command:      MALLOC_PERTURB_=27 UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/glslangValidator.exe -V --target-env vulkan1.2 C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_qpmap.comp -o /dev/null
+----------------------------------- stdout -----------------------------------
+C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_qpmap.comp
+==============================================================================
+
+==================================== 7/27 ====================================
+test:         fast - pelorus:shader-pelorus_denoise-compile
+start time:   09:11:22
+duration:     0.47s
+result:       exit status 0
+command:      MALLOC_PERTURB_=219 UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/glslangValidator.exe -V --target-env vulkan1.2 C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_denoise.comp -o /dev/null
+----------------------------------- stdout -----------------------------------
+C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_denoise.comp
+==============================================================================
+
+==================================== 8/27 ====================================
+test:         fast - pelorus:shader-pelorus_dehalo-compile
+start time:   09:11:22
+duration:     0.46s
+result:       exit status 0
+command:      UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MALLOC_PERTURB_=72 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/glslangValidator.exe -V --target-env vulkan1.2 C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_dehalo.comp -o /dev/null
+----------------------------------- stdout -----------------------------------
+C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_dehalo.comp
+==============================================================================
+
+==================================== 9/27 ====================================
+test:         fast - pelorus:shader-pelorus_aa-compile
+start time:   09:11:22
+duration:     0.45s
+result:       exit status 0
+command:      MALLOC_PERTURB_=3 UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/glslangValidator.exe -V --target-env vulkan1.2 C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_aa.comp -o /dev/null
+----------------------------------- stdout -----------------------------------
+C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_aa.comp
+==============================================================================
+
+=================================== 10/27 ====================================
+test:         fast - pelorus:shader-pelorus_deblock-compile
+start time:   09:11:22
+duration:     0.34s
+result:       exit status 0
+command:      UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MALLOC_PERTURB_=193 C:\msys64\ucrt64\bin/glslangValidator.exe -V --target-env vulkan1.2 C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_deblock.comp -o /dev/null
+----------------------------------- stdout -----------------------------------
+C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_deblock.comp
+==============================================================================
+
+=================================== 11/27 ====================================
+test:         fast - pelorus:shader-pelorus_borderfix-compile
+start time:   09:11:22
+duration:     0.35s
+result:       exit status 0
+command:      MALLOC_PERTURB_=86 UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/glslangValidator.exe -V --target-env vulkan1.2 C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_borderfix.comp -o /dev/null
+----------------------------------- stdout -----------------------------------
+C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/pelorus_borderfix.comp
+==============================================================================
+
+=================================== 12/27 ====================================
+test:         fast - pelorus:shipped-shader-pelorus_analyze-compile
+start time:   09:11:23
+duration:     0.17s
+result:       exit status 0
+command:      UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MALLOC_PERTURB_=153 C:\msys64\ucrt64\bin/glslc.exe --target-env=vulkan1.4 --target-spv=spv1.6 -std=460 -O C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_analyze.comp.glsl -o /dev/null
+==============================================================================
+
+=================================== 13/27 ====================================
+test:         fast - pelorus:shipped-shader-pelorus_grain_estimate-compile
+start time:   09:11:23
+duration:     0.17s
+result:       exit status 0
+command:      MALLOC_PERTURB_=251 UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/glslc.exe --target-env=vulkan1.4 --target-spv=spv1.6 -std=460 -O C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_grain_estimate.comp.glsl -o /dev/null
+==============================================================================
+
+=================================== 14/27 ====================================
+test:         fast - pelorus:shipped-shader-pelorus_deband-compile
+start time:   09:11:22
+duration:     0.50s
+result:       exit status 0
+command:      MALLOC_PERTURB_=134 UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/glslc.exe --target-env=vulkan1.4 --target-spv=spv1.6 -std=460 -O C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_deband.comp.glsl -o /dev/null
+==============================================================================
+
+=================================== 15/27 ====================================
+test:         fast - pelorus:shipped-shader-pelorus_deblock-compile
+start time:   09:11:23
+duration:     0.19s
+result:       exit status 0
+command:      MALLOC_PERTURB_=29 MESON_TEST_ITERATION=1 UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/glslc.exe --target-env=vulkan1.4 --target-spv=spv1.6 -std=460 -O C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_deblock.comp.glsl -o /dev/null
+==============================================================================
+
+=================================== 16/27 ====================================
+test:         fast - pelorus:shipped-shader-pelorus_denoise-compile
+start time:   09:11:23
+duration:     0.22s
+result:       exit status 0
+command:      UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MALLOC_PERTURB_=30 C:\msys64\ucrt64\bin/glslc.exe --target-env=vulkan1.4 --target-spv=spv1.6 -std=460 -O C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_denoise.comp.glsl -o /dev/null
+==============================================================================
+
+=================================== 17/27 ====================================
+test:         fast - pelorus:shipped-shader-pelorus_dehalo-compile
+start time:   09:11:23
+duration:     0.21s
+result:       exit status 0
+command:      MALLOC_PERTURB_=233 UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/glslc.exe --target-env=vulkan1.4 --target-spv=spv1.6 -std=460 -O C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_dehalo.comp.glsl -o /dev/null
+==============================================================================
+
+=================================== 18/27 ====================================
+test:         fast - pelorus:shipped-shader-pelorus_mc-compile
+start time:   09:11:23
+duration:     0.22s
+result:       exit status 0
+command:      UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 MALLOC_PERTURB_=137 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/glslc.exe --target-env=vulkan1.4 --target-spv=spv1.6 -std=460 -O C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_mc.comp.glsl -o /dev/null
+==============================================================================
+
+=================================== 19/27 ====================================
+test:         fast - pelorus:shipped-shader-pelorus_aa-compile
+start time:   09:11:23
+duration:     0.25s
+result:       exit status 0
+command:      UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MALLOC_PERTURB_=146 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/glslc.exe --target-env=vulkan1.4 --target-spv=spv1.6 -std=460 -O C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_aa.comp.glsl -o /dev/null
+==============================================================================
+
+=================================== 20/27 ====================================
+test:         fast - pelorus:shipped-shader-pelorus_borderfix-compile
+start time:   09:11:23
+duration:     0.16s
+result:       exit status 0
+command:      UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MALLOC_PERTURB_=235 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/glslc.exe --target-env=vulkan1.4 --target-spv=spv1.6 -std=460 -O C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_borderfix.comp.glsl -o /dev/null
+==============================================================================
+
+=================================== 21/27 ====================================
+test:         fast - pelorus:shipped-shader-pelorus_qpmap-compile
+start time:   09:11:23
+duration:     0.16s
+result:       exit status 0
+command:      UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MALLOC_PERTURB_=61 C:\msys64\ucrt64\bin/glslc.exe --target-env=vulkan1.4 --target-spv=spv1.6 -std=460 -O C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/../../../shw/libpelorus/shaders/../../ffmpeg-patches/files/vulkan/pelorus_qpmap.comp.glsl -o /dev/null
+==============================================================================
+
+=================================== 22/27 ====================================
+test:         fast - pelorus:grain-accumulator-bounds
+start time:   09:11:23
+duration:     0.13s
+result:       exit status 0
+command:      UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 MALLOC_PERTURB_=209 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/python3.exe C:/tmp/pel/shw/scripts/test-grain-accumulator-bounds.py
+----------------------------------- stdout -----------------------------------
+grain accumulator DCI 8K bounds: 32 slices, sumsq=2124472320, corr=2227322880, count=1105920
+==============================================================================
+
+=================================== 23/27 ====================================
+test:         fast - pelorus:shader-binding-order
+start time:   09:11:23
+duration:     0.26s
+result:       exit status 0
+command:      UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MALLOC_PERTURB_=53 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/python3.exe C:/tmp/pel/shw/scripts/check-shader-bindings.py
+----------------------------------- stdout -----------------------------------
+  ok       deband           2 bindings: input_images, output_images
+  ok       analyze          2 bindings: input_images, tile_buffer
+  ok       denoise          10 bindings: cur_images, prev0_images, prev1_images, prev2_images, prev3_images, stat_buffer, mv_grid, conf_grid, output_images, next0_images
+  ok       grain_estimate   2 bindings: input_images, grain_buffer
+  ok       mc               6 bindings: cur_image, ref_image, mv_x_buf, mv_y_buf, sad_buf, prev_mv_buf
+  ok       dehalo           2 bindings: input_images, output_images
+  ok       aa               2 bindings: input_images, output_images
+  ok       deblock          2 bindings: input_images, output_images
+  ok       borderfix        2 bindings: input_images, output_images
+
+all 9 filters: GLSL binding order matches the C descriptor array
+==============================================================================
+
+=================================== 24/27 ====================================
+test:         fast - pelorus:vulkan-storage-domain
+start time:   09:11:23
+duration:     0.23s
+result:       exit status 0
+command:      UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 MALLOC_PERTURB_=154 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/python3.exe C:/tmp/pel/shw/scripts/check-vulkan-storage-domain.py
+----------------------------------- stdout -----------------------------------
+Vulkan storage-domain contract: 8 arithmetic filters, 4 scalar component filters, and 2 raw exemptions checked
+==============================================================================
+
+=================================== 25/27 ====================================
+test:         fast - pelorus:vulkan-sample-scale
+start time:   09:11:23
+duration:     0.60s
+result:       exit status 0
+command:      UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MALLOC_PERTURB_=254 C:\msys64\ucrt64\bin/python3.exe C:/tmp/pel/shw/scripts/test-vulkan-sample-scale.py
+----------------------------------- stdout -----------------------------------
+sample-scale descriptor table: 15 cases passed
+==============================================================================
+
+=================================== 26/27 ====================================
+test:         fast - pelorus:vulkan-validation-streams
+start time:   09:11:23
+duration:     2.93s
+result:       exit status 0
+command:      UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 MALLOC_PERTURB_=162 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\usr\bin/bash.exe C:/tmp/pel/shw/ffmpeg-patches/test/vulkan-format-matrix-validation-self-test.sh
+----------------------------------- stdout -----------------------------------
+Vulkan validation stream self-test: PASS
+==============================================================================
+
+=================================== 27/27 ====================================
+test:         fast - pelorus:build-config-sync
+start time:   09:11:23
+duration:     5.51s
+result:       exit status 1
+command:      MALLOC_PERTURB_=187 UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/python3.exe C:/tmp/pel/shw/scripts/check-build-config.py --self-test
+----------------------------------- stderr -----------------------------------
+fixture regression: hostile Git policy blocked synthetic commit
+git tag regression: ambiguous branch fixture did not resolve
+git am hook regression: hook-neutralized replay failed
+==============================================================================
+
+
+Summary of Failures:
+
+27/27 fast - pelorus:build-config-sync                             FAIL            5.51s   exit status 1
+
+Ok:                26  
+Fail:              1   

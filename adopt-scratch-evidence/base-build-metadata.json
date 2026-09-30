@@ -1,0 +1,63 @@
+{
+  "buildx.build.provenance": {
+    "builder": {
+      "id": ""
+    },
+    "buildType": "https://mobyproject.org/buildkit@v1",
+    "materials": [
+      {
+        "uri": "pkg:docker/mcr.microsoft.com/devcontainers/base@ubuntu26.04?digest=sha256:edfb983aab9c579a385dc23c57d7d3703f5ec920124d99c16204a2cac465aab4\u0026platform=linux%2Famd64",
+        "digest": {
+          "sha256": "edfb983aab9c579a385dc23c57d7d3703f5ec920124d99c16204a2cac465aab4"
+        }
+      }
+    ],
+    "invocation": {
+      "configSource": {
+        "entryPoint": "Containerfile"
+      },
+      "parameters": {
+        "frontend": "dockerfile.v0",
+        "locals": [
+          {
+            "name": "context"
+          },
+          {
+            "name": "dockerfile"
+          }
+        ],
+        "root": {
+          "configSource": {
+            "path": "Containerfile"
+          },
+          "request": {
+            "args": {
+              "vcs:localdir:context": ".devcontainer\\base",
+              "vcs:localdir:dockerfile": ".devcontainer\\base",
+              "vcs:revision": "d722241062ec1ee0d7b8c8d5a0cd332790f58db3",
+              "vcs:source": "https://github.com/VMAFx/pelorus"
+            }
+          }
+        },
+        "compatibilityVersion": 30
+      },
+      "environment": {
+        "dockerfileVersion": "1.26.0",
+        "platform": "linux/amd64"
+      }
+    }
+  },
+  "buildx.build.ref": "pelorus-limited/pelorus-limited0/1wlvokw1kjshqanj4gnd3j1aa",
+  "containerimage.config.digest": "sha256:bcff3ce616d9da8a55720d6d256fd0c29e256c425d4ebb0bf60b6547456e26ae",
+  "containerimage.descriptor": {
+    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+    "digest": "sha256:23ac69281ea469dfede2842fff58e5180cad9e39e730171a76078d8e03939883",
+    "size": 2962,
+    "platform": {
+      "architecture": "amd64",
+      "os": "linux"
+    }
+  },
+  "containerimage.digest": "sha256:23ac69281ea469dfede2842fff58e5180cad9e39e730171a76078d8e03939883",
+  "image.name": "127.0.0.1:5000/vmafx/pelorus-dev:adopt-verify"
+}

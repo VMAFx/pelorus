@@ -1,0 +1,57 @@
+FFmpeg n9.0.2 = 946fcce07b6dcd0331c8cc609192aeff5e1924f8
+Preparing worktree (detached HEAD 946fcce)
+HEAD is now at 946fcce Update for 9.0.2
+shader registered: pelorus_deband.comp.glsl -> CONFIG_PELORUS_DEBAND_VULKAN_FILTER
+registration applied: deband
+shader registered: pelorus_analyze.comp.glsl -> CONFIG_PELORUS_ANALYZE_VULKAN_FILTER
+registration applied: analyze
+shader registered: pelorus_denoise.comp.glsl -> CONFIG_PELORUS_DENOISE_VULKAN_FILTER
+registration applied: denoise
+shader registered: pelorus_grain_estimate.comp.glsl -> CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER
+registration applied: grain_estimate
+shader registered: pelorus_mc.comp.glsl -> CONFIG_PELORUS_MC_VULKAN_FILTER
+registration applied: mc
+registration applied: pelorus_fgs (bsf)
+shader registered: pelorus_dehalo.comp.glsl -> CONFIG_PELORUS_DEHALO_VULKAN_FILTER
+registration applied: dehalo
+shader registered: pelorus_aa.comp.glsl -> CONFIG_PELORUS_AA_VULKAN_FILTER
+registration applied: aa
+registration applied: scenecut
+shader registered: pelorus_deblock.comp.glsl -> CONFIG_PELORUS_DEBLOCK_VULKAN_FILTER
+registration applied: deblock
+shader registered: pelorus_borderfix.comp.glsl -> CONFIG_PELORUS_BORDERFIX_VULKAN_FILTER
+registration applied: borderfix
+patch(es) regenerated in /w/ffmpeg-patches:
+/w/ffmpeg-patches/0001-add-vf_pelorus_deband_vulkan.patch
+/w/ffmpeg-patches/0002-add-vf_pelorus_analyze_vulkan.patch
+/w/ffmpeg-patches/0003-add-vf_pelorus_denoise_vulkan.patch
+/w/ffmpeg-patches/0004-nvenc-pelorus-roi.patch
+/w/ffmpeg-patches/0005-qsv-pelorus-roi.patch
+/w/ffmpeg-patches/0006-add-vf_pelorus_grain_estimate_vulkan.patch
+/w/ffmpeg-patches/0007-add-vf_pelorus_mc_vulkan.patch
+/w/ffmpeg-patches/0008-nvenc-pelorus-me-hints.patch
+/w/ffmpeg-patches/0009-vulkan-pelorus-qpmap.patch
+/w/ffmpeg-patches/0010-add-pelorus_fgs_bsf.patch
+/w/ffmpeg-patches/0011-nvenc-pelorus-film-grain.patch
+/w/ffmpeg-patches/0012-libaom-pelorus-roi.patch
+/w/ffmpeg-patches/0013-svtav1-pelorus-roi.patch
+/w/ffmpeg-patches/0014-add-vf_pelorus_dehalo_vulkan.patch
+/w/ffmpeg-patches/0015-add-vf_pelorus_aa_vulkan.patch
+/w/ffmpeg-patches/0016-add-vf_pelorus_scenecut.patch
+/w/ffmpeg-patches/0017-add-vf_pelorus_deblock_vulkan.patch
+/w/ffmpeg-patches/0018-add-vf_pelorus_borderfix_vulkan.patch
+generated FFmpeg patches differ from committed:
+ .../0002-add-vf_pelorus_analyze_vulkan.patch       | 30 +++++--
+ .../0003-add-vf_pelorus_denoise_vulkan.patch       | 99 ++++++++++++----------
+ ...0006-add-vf_pelorus_grain_estimate_vulkan.patch | 28 ++++--
+ ffmpeg-patches/0007-add-vf_pelorus_mc_vulkan.patch | 28 ++++--
+ .../0014-add-vf_pelorus_dehalo_vulkan.patch        | 15 ++--
+ ffmpeg-patches/0015-add-vf_pelorus_aa_vulkan.patch | 22 +++--
+ ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c   | 20 ++++-
+ ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c   | 32 +++----
+ .../files/vf_pelorus_grain_estimate_vulkan.c       | 20 ++++-
+ ffmpeg-patches/files/vf_pelorus_mc_vulkan.c        | 20 ++++-
+ ffmpeg-patches/files/vulkan/pelorus_aa.comp.glsl   | 14 ++-
+ .../files/vulkan/pelorus_dehalo.comp.glsl          |  7 +-
+ .../files/vulkan/pelorus_denoise.comp.glsl         | 53 ++++++++----
+ 13 files changed, 274 insertions(+), 114 deletions(-)

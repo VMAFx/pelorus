@@ -1,0 +1,11 @@
+== check-build-config
+exit=0
+== check-build-config --self-test
+exit=0
+== adr index
+exit=0
+== actionlint
+exit=0
+== changelog
+CHANGELOG.md is up to date with changelog.d/.
+exit=0

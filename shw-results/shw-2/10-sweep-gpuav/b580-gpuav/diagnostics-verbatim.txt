@@ -1,0 +1,28 @@
+=== VALIDATION-SETTINGS  (total 198 messages in 198 runs; KNOWN-STOCK)
+Validation Warning: [ VALIDATION-SETTINGS ] | MessageID = 0x…
+vkCreateInstance(): Both GPU Assisted Validation and Normal Core Check Validation are enabled, this is not recommend as it  will be very slow. Once all errors in Core Check are solved, please disable, then only use GPU-AV for best performance.
+
+=== VUID-VkFormatProperties2-pNext-pNext  (total 1980 messages in 198 runs; KNOWN-STOCK)
+Validation Error: [ VUID-VkFormatProperties2-pNext-pNext ] | MessageID = 0x…
+vkGetPhysicalDeviceFormatProperties2(): pFormatProperties->pNext chain includes a structure with unexpected VkStructureType VK_STRUCTURE_TYPE_APPLICATION_INFO.
+pNext -> [VkApplicationInfo]
+This error is based on the Valid Usage documentation for version 357 of the Vulkan header.  It is possible that you are using a struct from a private extension or an extension that was added to a later version of the Vulkan header, in which case the use of pFormatProperties->pNext is undefined and may not work correctly with validation enabled.
+The Vulkan spec states: Each pNext member of any structure (including this one) in the pNext chain must be either NULL or a pointer to a valid instance of VkDrmFormatModifierPropertiesList2EXT, VkDrmFormatModifierPropertiesListEXT, VkFormatProperties3, VkFormatProperties4KHR, VkSubpassResolvePerformanceQueryEXT, VkTensorExplicitTilingFormatPropertiesARM, or VkTensorFormatPropertiesARM (https://docs.vulkan.org/spec/latest/chapters/formats.html#VUID-VkFormatProperties2-pNext-pNext)
+Objects: 1
+    [0] VkPhysicalDevice 0x…
+
+=== VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230  (total 1660 messages in 198 runs; KNOWN-STOCK)
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 ] | MessageID = 0x…
+vkTransitionImageLayoutEXT(): pTransitions[0].oldLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopySrcLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: If oldLayout is not VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT, or VK_IMAGE_LAYOUT_PREINITIALIZED, it must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopySrcLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230)
+Objects: 1
+    [0] VkImage 0x…
+
+=== WARNING-Setting-Limit-Adjusted  (total 198 messages in 198 runs; KNOWN-STOCK)
+Validation Warning: [ WARNING-Setting-Limit-Adjusted ] | MessageID = 0x…
+vkCreateDevice(): Warning that validation is adjusting settings:
+	Ray Tracing validation option was enabled, but neither the rayTracingPipeline nor the rayQuery feature are supported. [Disabling gpuav_validate_trace_ray]
+	Mesh Shading validation option was enabled, but the meshShader feature is not supported. [Disabling gpuav_mesh_shading]
+

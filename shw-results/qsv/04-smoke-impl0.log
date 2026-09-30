@@ -1,0 +1,114 @@
+== avc-none rc=0 size=1708254
+   Query status 0; EnableMBQP after Query 0x0; EncodedUnitsInfo 0x10
+   Init status 0
+   GetVideoParam 0: API 2.17 LowPower 0x10 TU 4 GopRefDist 1 QPI/P/B 30/30/30 AsyncDepth 4 BufferSizeInKB 3264 EnableMBQP 0x20 EncodedUnitsInfo 0x10 surfaces 4
+   done: 60 outputs, first warning 0
+   qpdump (frame,type,base,top_mean,top_min,top_max,bot_mean,bot_min,bot_max) first 6:
+     0,I,26,30.000,30,30,30.000,30,30,8160
+     1,P,26,30.000,30,30,30.000,30,30,8160
+     2,P,26,30.000,30,30,30.000,30,30,8160
+     3,P,26,30.000,30,30,30.000,30,30,8160
+     4,P,26,30.000,30,30,30.000,30,30,8160
+     5,P,26,30.000,30,30,30.000,30,30,8160
+   probe csv first 4:
+     frame,out_idx,frame_type,bytes,stats_qp,stats_qp_top,stats_qp_bot,blk_stats,n_intra,n_inter,n_skip,finfo_qp,units
+     0,0,193,42038,-1.000,-1.000,-1.000,0,-1,-1,-1,30,5
+     1,1,66,28435,-1.000,-1.000,-1.000,0,-1,-1,-1,30,4
+     2,2,66,28490,-1.000,-1.000,-1.000,0,-1,-1,-1,30,4
+     3,3,66,27692,-1.000,-1.000,-1.000,0,-1,-1,-1,30,4
+== avc-mbqp rc=0 size=62201912
+   Query status 0; EnableMBQP after Query 0x10; EncodedUnitsInfo 0x0
+   Init status 0
+   GetVideoParam 0: API 2.17 LowPower 0x10 TU 4 GopRefDist 1 QPI/P/B 30/30/30 AsyncDepth 4 BufferSizeInKB 3264 EnableMBQP 0x10 EncodedUnitsInfo 0x20 surfaces 4
+   done: 60 outputs, first warning 0
+   qpdump (frame,type,base,top_mean,top_min,top_max,bot_mean,bot_min,bot_max) first 6:
+     0,I,26,12.000,12,12,0.000,0,0,8160
+     1,P,26,0.000,0,0,12.000,12,12,8160
+     2,P,26,12.000,12,12,0.000,0,0,8160
+     3,P,26,0.000,0,0,12.000,12,12,8160
+     4,P,26,12.000,12,12,0.000,0,0,8160
+     5,P,26,0.000,0,0,12.000,12,12,8160
+   probe csv first 4:
+     frame,out_idx,frame_type,bytes,stats_qp,stats_qp_top,stats_qp_bot,blk_stats,n_intra,n_inter,n_skip,finfo_qp,units
+     0,0,193,1079307,-1.000,-1.000,-1.000,0,-1,-1,-1,5,-1
+     1,1,66,1029985,-1.000,-1.000,-1.000,0,-1,-1,-1,6,-1
+     2,2,66,1043313,-1.000,-1.000,-1.000,0,-1,-1,-1,5,-1
+     3,3,66,1027418,-1.000,-1.000,-1.000,0,-1,-1,-1,6,-1
+== avc-rect rc=0 size=1094674
+   Query status 0; EnableMBQP after Query 0x0; EncodedUnitsInfo 0x0
+   Init status 0
+   GetVideoParam 0: API 2.17 LowPower 0x10 TU 4 GopRefDist 1 QPI/P/B 30/30/30 AsyncDepth 4 BufferSizeInKB 3264 EnableMBQP 0x20 EncodedUnitsInfo 0x20 surfaces 4
+   EncodeFrameAsync warning 5 at frame 1
+   done: 60 outputs, first warning 5
+   qpdump (frame,type,base,top_mean,top_min,top_max,bot_mean,bot_min,bot_max) first 6:
+     0,I,26,42.000,42,42,30.000,30,30,8160
+     1,P,26,30.000,30,30,42.000,42,42,8160
+     2,P,26,41.985,30,42,30.038,30,42,8160
+     3,P,26,30.000,30,30,42.000,42,42,8160
+     4,P,26,41.985,30,42,30.056,30,42,8160
+     5,P,26,30.000,30,30,42.000,42,42,8160
+   probe csv first 4:
+     frame,out_idx,frame_type,bytes,stats_qp,stats_qp_top,stats_qp_bot,blk_stats,n_intra,n_inter,n_skip,finfo_qp,units
+     0,0,193,38210,-1.000,-1.000,-1.000,0,-1,-1,-1,36,-1
+     1,1,66,16374,-1.000,-1.000,-1.000,0,-1,-1,-1,36,-1
+     2,2,66,27877,-1.000,-1.000,-1.000,0,-1,-1,-1,36,-1
+     3,3,66,8984,-1.000,-1.000,-1.000,0,-1,-1,-1,36,-1
+== avc-stats rc=2 size=0
+   Query status 0; EnableMBQP after Query 0x10; EncodedUnitsInfo 0x0
+   Init status 0
+   GetVideoParam 0: API 2.17 LowPower 0x10 TU 4 GopRefDist 1 QPI/P/B 30/30/30 AsyncDepth 4 BufferSizeInKB 3264 EnableMBQP 0x10 EncodedUnitsInfo 0x20 surfaces 4
+   EncodeFrameAsync warning 5 at frame 1
+   FATAL EncodeFrameAsync: -3
+   qpdump (frame,type,base,top_mean,top_min,top_max,bot_mean,bot_min,bot_max) first 6:
+   probe csv first 4:
+     frame,out_idx,frame_type,bytes,stats_qp,stats_qp_top,stats_qp_bot,blk_stats,n_intra,n_inter,n_skip,finfo_qp,units
+== hevc-none rc=0 size=1616356
+   Query status 0; EnableMBQP after Query 0x0; EncodedUnitsInfo 0x10
+   Init status 0
+   GetVideoParam 0: API 2.17 LowPower 0x10 TU 4 GopRefDist 1 QPI/P/B 30/30/30 AsyncDepth 4 BufferSizeInKB 3110 EnableMBQP 0x20 EncodedUnitsInfo 0x10 surfaces 5
+   done: 60 outputs, first warning 0
+   probe csv first 4:
+     frame,out_idx,frame_type,bytes,stats_qp,stats_qp_top,stats_qp_bot,blk_stats,n_intra,n_inter,n_skip,finfo_qp,units
+     0,0,193,42792,-1.000,-1.000,-1.000,0,-1,-1,-1,-1,0
+     1,1,66,25458,-1.000,-1.000,-1.000,0,-1,-1,-1,-1,0
+     2,2,66,29560,-1.000,-1.000,-1.000,0,-1,-1,-1,-1,0
+     3,3,66,23594,-1.000,-1.000,-1.000,0,-1,-1,-1,-1,0
+== hevc-mbqp rc=0 size=1616356
+   Query status 5; EnableMBQP after Query 0x0; EncodedUnitsInfo 0x0
+   Init status 0
+   GetVideoParam 0: API 2.17 LowPower 0x10 TU 4 GopRefDist 1 QPI/P/B 30/30/30 AsyncDepth 4 BufferSizeInKB 3110 EnableMBQP 0x20 EncodedUnitsInfo 0x20 surfaces 5
+   done: 60 outputs, first warning 0
+   probe csv first 4:
+     frame,out_idx,frame_type,bytes,stats_qp,stats_qp_top,stats_qp_bot,blk_stats,n_intra,n_inter,n_skip,finfo_qp,units
+     0,0,193,42792,-1.000,-1.000,-1.000,0,-1,-1,-1,-1,-1
+     1,1,66,25458,-1.000,-1.000,-1.000,0,-1,-1,-1,-1,-1
+     2,2,66,29560,-1.000,-1.000,-1.000,0,-1,-1,-1,-1,-1
+     3,3,66,23594,-1.000,-1.000,-1.000,0,-1,-1,-1,-1,-1
+== hevc-mbqp-noq rc=0 size=1616356
+   Init status 5
+   GetVideoParam 0: API 2.17 LowPower 0x10 TU 4 GopRefDist 1 QPI/P/B 30/30/30 AsyncDepth 4 BufferSizeInKB 3110 EnableMBQP 0x20 EncodedUnitsInfo 0x20 surfaces 5
+   done: 60 outputs, first warning 0
+   probe csv first 4:
+     frame,out_idx,frame_type,bytes,stats_qp,stats_qp_top,stats_qp_bot,blk_stats,n_intra,n_inter,n_skip,finfo_qp,units
+     0,0,193,42792,-1.000,-1.000,-1.000,0,-1,-1,-1,-1,-1
+     1,1,66,25458,-1.000,-1.000,-1.000,0,-1,-1,-1,-1,-1
+     2,2,66,29560,-1.000,-1.000,-1.000,0,-1,-1,-1,-1,-1
+     3,3,66,23594,-1.000,-1.000,-1.000,0,-1,-1,-1,-1,-1
+== hevc-rect rc=0 size=1081594
+   Query status 0; EnableMBQP after Query 0x0; EncodedUnitsInfo 0x0
+   Init status 0
+   GetVideoParam 0: API 2.17 LowPower 0x10 TU 4 GopRefDist 1 QPI/P/B 30/30/30 AsyncDepth 4 BufferSizeInKB 3110 EnableMBQP 0x20 EncodedUnitsInfo 0x20 surfaces 5
+   done: 60 outputs, first warning 0
+   probe csv first 4:
+     frame,out_idx,frame_type,bytes,stats_qp,stats_qp_top,stats_qp_bot,blk_stats,n_intra,n_inter,n_skip,finfo_qp,units
+     0,0,193,38543,-1.000,-1.000,-1.000,0,-1,-1,-1,-1,-1
+     1,1,66,10669,-1.000,-1.000,-1.000,0,-1,-1,-1,-1,-1
+     2,2,66,29523,-1.000,-1.000,-1.000,0,-1,-1,-1,-1,-1
+     3,3,66,7295,-1.000,-1.000,-1.000,0,-1,-1,-1,-1,-1
+== hevc-stats rc=2 size=0
+   Query status 0; EnableMBQP after Query 0x0; EncodedUnitsInfo 0x0
+   Init status 0
+   GetVideoParam 0: API 2.17 LowPower 0x10 TU 4 GopRefDist 1 QPI/P/B 30/30/30 AsyncDepth 4 BufferSizeInKB 3110 EnableMBQP 0x20 EncodedUnitsInfo 0x20 surfaces 5
+   FATAL SyncOperation: -3
+   probe csv first 4:
+     frame,out_idx,frame_type,bytes,stats_qp,stats_qp_top,stats_qp_bot,blk_stats,n_intra,n_inter,n_skip,finfo_qp,units

@@ -1,0 +1,87 @@
+[QSV @ 00000241828be900] Defaulting child_device_type to AV_HWDEVICE_TYPE_D3D11VA for oneVPL.Please explicitly set child device type via "-init_hw_device" option if needed.
+[D3D11VA @ 00000241828bd040] Selecting d3d11va adapter 1
+[D3D11VA @ 00000241828bd040] Using device 8086:4680 (Intel(R) UHD Graphics 770).
+[QSV @ 00000241828be900] Use Intel(R) oneVPL to create MFX session, API version is 2.17, the required implementation version is 1.3
+[QSV @ 00000241828be900] Initialize MFX session: implementation version is 2.15
+[Parsed_testsrc2_0 @ 0000024196030600] size:1280x720 rate:24/1 duration:1.000000 sar:1/1
+Input #0, lavfi, from 'testsrc2=size=1280x720:rate=24:duration=1':
+  Duration: N/A, start: 0.000000, bitrate: N/A
+  Stream #0:0: Video: wrapped_avframe, 1 reference frame, yuv420p, 1280x720 [SAR 1:1 DAR 16:9], 24 fps, 24 tbr, 24 tbn
+[out#0/null @ 0000024184b08040] No explicit maps, mapping streams automatically...
+[vost#0:0/hevc_qsv @ 000002419353ac80] Created video stream from input stream 0:0
+Stream mapping:
+  Stream #0:0 -> #0:0 (wrapped_avframe (native) -> hevc (hevc_qsv))
+[vost#0:0/hevc_qsv @ 000002419353ac80] Starting thread...
+[vf#0:0 @ 000002419602b8c0] Starting thread...
+[vist#0:0/wrapped_avframe @ 000002418e45c4c0] [dec:wrapped_avframe @ 0000024193057500] Starting thread...
+[in#0/lavfi @ 0000024195fdc600] Starting thread...
+[graph -1 input from stream 0:0 @ 000002419602fc00] w:1280 h:720 pixfmt:yuv420p tb:1/24 fr:24/1 sar:1/1 csp:unknown range:unknown alpha:unspecified
+[auto_scale_0 @ 0000024196032200] w:iw h:ih flags:'' interl:0
+[Parsed_format_0 @ 0000024196031800] auto-inserting filter 'auto_scale_0' between the filter 'graph -1 input from stream 0:0' and the filter 'Parsed_format_0'
+[auto_scale_0 @ 0000024196032200] w:1280 h:720 fmt:yuv420p csp:unknown range:unknown sar:1/1 -> w:1280 h:720 fmt:nv12 csp:unknown range:tv sar:1/1 flags:0x00000004
+[auto_scale_0 @ 0000024196032200] [framesync @ 000002419602c650] Selected 1/24 time base
+[auto_scale_0 @ 0000024196032200] [framesync @ 000002419602c650] Sync level 1
+[graph -1 input from stream 0:0 @ 000002419602fc00] video frame properties congruent with link at pts_time: 0
+[AVHWFramesContext @ 000002418e665b00] Use Intel(R) oneVPL to create MFX session, API version is 2.17, the required implementation version is 2.15
+[AVHWFramesContext @ 000002418e665b00] Initialize MFX session: implementation version is 2.15
+[vost#0:0/hevc_qsv @ 000002419353ac80] [enc:hevc_qsv @ 000002418e45ce40] Using input frames context (format qsv) with hevc_qsv encoder.
+[hevc_qsv @ 000002419602b500] Encoder: input is video memory surface
+[hevc_qsv @ 000002419602b500] Use Intel(R) oneVPL to create MFX session with the specified MFX loader
+[hevc_qsv @ 000002419602b500] Using the intelligent constant quality (ICQ) ratecontrol method
+[hevc_qsv @ 000002419602b500] profile: hevc main; level: 40
+[hevc_qsv @ 000002419602b500] GopPicSize: 248; GopRefDist: 4; GopOptFlag:; IdrInterval: 1
+[hevc_qsv @ 000002419602b500] TargetUsage: 4; RateControlMethod: ICQ
+[hevc_qsv @ 000002419602b500] ICQQuality: 25
+[hevc_qsv @ 000002419602b500] NumSlice: 1; NumRefFrame: 3
+[hevc_qsv @ 000002419602b500] RateDistortionOpt: unknown
+[hevc_qsv @ 000002419602b500] RecoveryPointSEI: unknown
+[hevc_qsv @ 000002419602b500] VDENC: OFF
+[hevc_qsv @ 000002419602b500] NalHrdConformance: OFF; VuiNalHrdParameters: OFF
+[hevc_qsv @ 000002419602b500] FrameRateExtD: 1; FrameRateExtN: 24 
+[hevc_qsv @ 000002419602b500] IntRefType: 0; IntRefCycleSize: 0; IntRefQPDelta: 0
+[hevc_qsv @ 000002419602b500] MaxFrameSize: 0; MaxSliceSize: 0
+[hevc_qsv @ 000002419602b500] BitrateLimit: unknown; MBBRC: unknown; ExtBRC: OFF
+[hevc_qsv @ 000002419602b500] Trellis: auto
+[hevc_qsv @ 000002419602b500] RepeatPPS: OFF; NumMbPerSlice: 0; LookAheadDS: unknown
+[hevc_qsv @ 000002419602b500] AdaptiveI: unknown; AdaptiveB: unknown; BRefType:pyramid
+[hevc_qsv @ 000002419602b500] MinQPI: 1; MaxQPI: 51; MinQPP: 1; MaxQPP: 51; MinQPB: 1; MaxQPB: 51
+[hevc_qsv @ 000002419602b500] DisableDeblockingIdc: 0 
+[hevc_qsv @ 000002419602b500] SkipFrame: no_skip
+[hevc_qsv @ 000002419602b500] PRefType: default
+[hevc_qsv @ 000002419602b500] GPB: ON
+[hevc_qsv @ 000002419602b500] TransformSkip: ON 
+[hevc_qsv @ 000002419602b500] IntRefCycleDist: 0
+[hevc_qsv @ 000002419602b500] LowDelayBRC: OFF
+[hevc_qsv @ 000002419602b500] MaxFrameSizeI: 0; MaxFrameSizeP: 0
+[hevc_qsv @ 000002419602b500] ScenarioInfo: 0
+[hevc_qsv @ 000002419602b500] NumTileColumns: 1; NumTileRows: 1
+Output #0, null, to 'pipe:':
+  Metadata:
+    encoder         : Lavf63.1.102
+  Stream #0:0: Video: hevc, 1 reference frame, nv12(tv, progressive), 1280x720 [SAR 1:1 DAR 16:9], q=2-31, 24 fps, 24 tbn
+    Metadata:
+      encoder         : Lavc63.1.102 hevc_qsv
+    Side data:
+      CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[out#0/null @ 0000024184b08040] Starting thread...
+[vost#0:0/hevc_qsv @ 000002419353ac80] [enc:hevc_qsv @ 000002418e45ce40] Encoder thread received EOF
+[vf#0:0 @ 000002419602b8c0] All consumers returned EOF
+[vf#0:0 @ 000002419602b8c0] Terminating thread with return code 0 (success)
+[vist#0:0/wrapped_avframe @ 000002418e45c4c0] [dec:wrapped_avframe @ 0000024193057500] Decoder returned EOF, finishing
+[vist#0:0/wrapped_avframe @ 000002418e45c4c0] [dec:wrapped_avframe @ 0000024193057500] Terminating thread with return code 0 (success)
+[vist#0:0/wrapped_avframe @ 000002418e45c4c0] All consumers of this stream are done
+[in#0/lavfi @ 0000024195fdc600] All consumers are done
+[in#0/lavfi @ 0000024195fdc600] Terminating thread with return code 0 (success)
+[vost#0:0/hevc_qsv @ 000002419353ac80] Terminating thread with return code 0 (success)
+[out#0/null @ 0000024184b08040] All streams finished
+[out#0/null @ 0000024184b08040] Terminating thread with return code 0 (success)
+[out#0/null @ 0000024184b08040] Output file #0 (pipe:):
+[out#0/null @ 0000024184b08040]   Output stream #0:0 (video): 10 frames encoded; 10 packets muxed (186221 bytes); 
+[out#0/null @ 0000024184b08040]   Total: 10 packets (186221 bytes) muxed
+[out#0/null @ 0000024184b08040] video:182KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=   10 fps=0.0 q=-0.0 Lsize=N/A time=00:00:00.29 bitrate=N/A speed=0.736x elapsed=0:00:00.39    
+[in#0/lavfi @ 0000024195fdc600] Input file #0 (testsrc2=size=1280x720:rate=24:duration=1):
+[in#0/lavfi @ 0000024195fdc600]   Input stream #0:0 (video): 23 packets read (9752 bytes); 14 frames decoded; 0 decode errors; 
+[in#0/lavfi @ 0000024195fdc600]   Total: 23 packets (9752 bytes) demuxed
+
+Exiting with exit code 0

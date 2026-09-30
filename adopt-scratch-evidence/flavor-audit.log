@@ -1,0 +1,10 @@
+=== Flavor Audit: . (Flavor: native-gpu-systems) ===
+  Score:       100.0%
+  Passed:      true
+  Templates:   3/3 present
+  Settings:    2/2 valid
+  Toolchains:  2/4 available (advisory, not scored)
+
+Missing Toolchains (advisory):
+  - clang-tidy : C/C++ AST analyzer (Install: sudo apt-get install clang-tidy)
+  - clang-format : C/C++ formatter (Install: sudo apt-get install clang-format)

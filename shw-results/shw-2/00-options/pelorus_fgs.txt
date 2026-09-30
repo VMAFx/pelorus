@@ -1,0 +1,19 @@
+Bit stream filter pelorus_fgs
+    Supported codecs: hevc
+pelorus_fgs_bsf AVOptions:
+  -model_id          <int>        ...V....B.. H.274 film_grain_model_id (0=frequency filtering, 1=auto-regression) (from 0 to 1) (default 1)
+  -blending_mode     <int>        ...V....B.. H.274 blending_mode_id (0=additive, 1=multiplicative) (from 0 to 1) (default 0)
+  -log2_scale        <int>        ...V....B.. H.274 log2_scale_factor (from 0 to 15) (default 8)
+  -components        <flags>      ...V....B.. colour components that carry a grain model (bitmask: 1=Y, 2=Cb, 4=Cr) (default y)
+     y                            ...V....B.. luma
+     cb                           ...V....B.. chroma Cb
+     cr                           ...V....B.. chroma Cr
+  -intensity_low     <int>        ...V....B.. lower bound of the luma intensity interval the model covers (from 0 to 255) (default 0)
+  -intensity_high    <int>        ...V....B.. upper bound of the luma intensity interval the model covers (from 0 to 255) (default 255)
+  -scale_y           <int>        ...V....B.. luma grain scale (comp_model_value[Y][0][0]); maps the estimator's per-band RMS (from 0 to 255) (default 16)
+  -scale_c           <int>        ...V....B.. chroma grain scale (comp_model_value[Cb/Cr][0][0]) when cb/cr selected (from 0 to 255) (default 8)
+  -persistence       <boolean>    ...V....B.. film_grain_characteristics_persistence_flag (apply until cancelled) (default true)
+  -skip_existing     <boolean>    ...V....B.. do not insert if the access unit already carries an FGC SEI (default true)
+
+
+Exiting with exit code 0

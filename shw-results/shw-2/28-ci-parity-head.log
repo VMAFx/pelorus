@@ -1,0 +1,74 @@
+HEAD 190b9d2 docs: correct encoder-steering, grain and FGS claims from Intel hardware runs
+== ffmpeg-stack: Fetch and verify pinned FFmpeg source
+OK n9.0.2 -> 946fcce07b6dcd0331c8cc609192aeff5e1924f8
+== ffmpeg-stack: Patches match deterministic regeneration
+committed patches are byte-identical to fresh regeneration
+== ffmpeg-stack: Replay all patches, link FFmpeg, and verify registrations
+build-and-run.sh rc=0 after 121s
+== private libpelorus prefix: /tmp/pelorus-ffmpeg-replay.tdqN2m/prefix ==
+== configure libpelorus ==
+== build libpelorus ==
+== test libpelorus ==
+== install libpelorus ==
+libpelorus version: 0.2.2
+Preparing worktree (detached HEAD 946fcce)
+HEAD is now at 946fcce Update for 9.0.2
+== apply 18-patch FFmpeg stack ==
+== configure FFmpeg ==
+== link ffmpeg ==
+== install static FFmpeg libraries ==
+== link and run external static libavfilter consumer ==
+== verify Pelorus registrations ==
+registered filter: pelorus_aa_vulkan
+registered filter: pelorus_analyze_vulkan
+registered filter: pelorus_borderfix_vulkan
+registered filter: pelorus_deband_vulkan
+registered filter: pelorus_deblock_vulkan
+registered filter: pelorus_dehalo_vulkan
+registered filter: pelorus_denoise_vulkan
+registered filter: pelorus_grain_estimate_vulkan
+registered filter: pelorus_mc_vulkan
+registered filter: pelorus_scenecut
+registered bitstream filter: pelorus_fgs
+registered encoder option: h264_qsv -pelorus_roi
+registered encoder option: hevc_qsv -pelorus_roi
+registered encoder option: libaom-av1 -pelorus_roi
+registered encoder option: libsvtav1 -pelorus_roi
+registered encoder option: h264_nvenc -pelorus_roi
+registered encoder option: h264_nvenc -pelorus_me_hints
+registered encoder option: hevc_nvenc -pelorus_roi
+registered encoder option: hevc_nvenc -pelorus_me_hints
+registered encoder option: av1_nvenc -pelorus_roi
+registered encoder option: av1_nvenc -pelorus_film_grain
+registered encoder option: h264_vulkan -pelorus_roi
+registered encoder option: hevc_vulkan -pelorus_roi
+registered encoder option: av1_vulkan -pelorus_roi
+OK: 18 patches applied and ffmpeg linked against private libpelorus
+warnings in Pelorus-touched units:
+== sanitizers job
+Compiler for C supports arguments -Wvla: YES 
+Found pkg-config: YES (/usr/bin/pkg-config) 2.5.1
+Program glslangValidator found: YES (/usr/bin/glslangValidator)
+Program glslc found: YES (/usr/bin/glslc)
+Program python3 found: YES (/usr/bin/python3)
+Program bash found: YES (/usr/bin/bash)
+Build targets in project: 13
+
+pelorus 0.2.2
+
+  User defined options
+    b_lundef  : false
+    b_sanitize: address,undefined
+    c_args    : -fno-sanitize-recover=alignment
+
+Found ninja-1.13.2 at /usr/bin/ninja
+
+ERROR: Linker clang does not support sanitizer arguments ['-fsanitize=address,undefined']
+
+A full log can be found at /tmp/head/build-san/meson-logs/meson-log.txt
+== informational: black --check (not a CI job)
+HEAD   scripts/check-shader-bindings.py           would reformat
+f03badd scripts/check-shader-bindings.py          would reformat
+HEAD   scripts/check-vulkan-storage-domain.py     clean
+f03badd scripts/check-vulkan-storage-domain.py    clean
+ci-parity rc_all=1

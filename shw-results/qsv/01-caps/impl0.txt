@@ -1,0 +1,303 @@
+== 1. implementations
+impl[0] mfx-gen API 2.17 Accel=0x300 VendorID=0x8086 DeviceID=e20b/0 path=C:\WINDOWS\System32\DriverStore\FileRepository\iigd_dch_d.inf_amd64_1859111ddb8781ef\libmfx64-gen.dll
+  enc codec AV1  maxlevel 53 bidir 1 profiles: 1[mem1,mem5]
+  enc codec VP9  maxlevel 0 bidir 0 profiles: 1[mem1,mem5] 2[mem1,mem5] 3[mem1,mem5] 4[mem1,mem5]
+  enc codec AVC  maxlevel 52 bidir 1 profiles: 66[mem1,mem5] 578[mem1,mem5] 77[mem1,mem5] 100[mem1,mem5] 12388[mem1,mem5] 4196[mem1,mem5]
+  enc codec HEVC maxlevel 318 bidir 1 profiles: 1[mem1,mem5] 2[mem1,mem5] 3[mem1,mem5] 4[mem1,mem5] 9[mem1,mem5]
+  enc codec JPEG maxlevel 0 bidir 0 profiles: 1[mem1,mem5]
+  enc codec AV1  maxlevel 53 bidir 1 profiles: 1[mem1,mem5]
+impl[1] mfx-gen API 2.15 Accel=0x300 VendorID=0x8086 DeviceID=4680/1 path=C:\WINDOWS\System32\DriverStore\FileRepository\iigd_dch.inf_amd64_8e2429f185e36439\libmfx64-gen.dll
+session impl[0] API 2.17 MFXQueryIMPL=0x302
+
+== 6. entry points (Query + Init + GetVideoParam, 1280x720 CQP sysmem)
+HEVC LowPower request UNSET: Query 0 (LowPower out ON) Init 0 GetVideoParam 0 -> LowPower ON TU 4
+HEVC LowPower request ON   : Query 0 (LowPower out ON) Init 0 GetVideoParam 0 -> LowPower ON TU 4
+HEVC LowPower request OFF  : Query 5 (LowPower out ON) Init 5 GetVideoParam 0 -> LowPower ON TU 4
+AVC  LowPower request UNSET: Query 0 (LowPower out UNSET) Init 0 GetVideoParam 0 -> LowPower ON TU 4
+AVC  LowPower request ON   : Query 0 (LowPower out ON) Init 0 GetVideoParam 0 -> LowPower ON TU 4
+AVC  LowPower request OFF  : Query 0 (LowPower out ON) Init 0 GetVideoParam 0 -> LowPower ON TU 4
+AV1  LowPower request UNSET: Query 0 (LowPower out UNSET) Init 0 GetVideoParam 0 -> LowPower ON TU 4
+AV1  LowPower request ON   : Query 0 (LowPower out ON) Init 0 GetVideoParam 0 -> LowPower ON TU 4
+AV1  LowPower request OFF  : Query 0 (LowPower out ON) Init 0 GetVideoParam 0 -> LowPower ON TU 4
+
+== 2. MBQP sweep: Query(in==out) with CO3.EnableMBQP=ON, CQP 28/30/32, 1920x1080
+codec lp    io    tu rd bd ext  | status mbqp_after lp_after
+HEVC  UNSET sys    1  1  8 co3  |      5 UNSET      ON
+HEVC  UNSET sys    1  1  8 full |      5 UNSET      ON
+HEVC  UNSET sys    1  1 10 co3  |      5 UNSET      ON
+HEVC  UNSET sys    1  1 10 full |      5 UNSET      ON
+HEVC  UNSET sys    1  4  8 co3  |      5 UNSET      ON
+HEVC  UNSET sys    1  4  8 full |      5 UNSET      ON
+HEVC  UNSET sys    1  4 10 co3  |      5 UNSET      ON
+HEVC  UNSET sys    1  4 10 full |      5 UNSET      ON
+HEVC  UNSET sys    4  1  8 co3  |      5 UNSET      ON
+HEVC  UNSET sys    4  1  8 full |      5 UNSET      ON
+HEVC  UNSET sys    4  1 10 co3  |      5 UNSET      ON
+HEVC  UNSET sys    4  1 10 full |      5 UNSET      ON
+HEVC  UNSET sys    4  4  8 co3  |      5 UNSET      ON
+HEVC  UNSET sys    4  4  8 full |      5 UNSET      ON
+HEVC  UNSET sys    4  4 10 co3  |      5 UNSET      ON
+HEVC  UNSET sys    4  4 10 full |      5 UNSET      ON
+HEVC  UNSET sys    7  1  8 co3  |      5 UNSET      ON
+HEVC  UNSET sys    7  1  8 full |      5 UNSET      ON
+HEVC  UNSET sys    7  1 10 co3  |      5 UNSET      ON
+HEVC  UNSET sys    7  1 10 full |      5 UNSET      ON
+HEVC  UNSET sys    7  4  8 co3  |      5 UNSET      ON
+HEVC  UNSET sys    7  4  8 full |      5 UNSET      ON
+HEVC  UNSET sys    7  4 10 co3  |      5 UNSET      ON
+HEVC  UNSET sys    7  4 10 full |      5 UNSET      ON
+HEVC  UNSET video  1  1  8 co3  |      5 UNSET      ON
+HEVC  UNSET video  1  1  8 full |      5 UNSET      ON
+HEVC  UNSET video  1  1 10 co3  |      5 UNSET      ON
+HEVC  UNSET video  1  1 10 full |      5 UNSET      ON
+HEVC  UNSET video  1  4  8 co3  |      5 UNSET      ON
+HEVC  UNSET video  1  4  8 full |      5 UNSET      ON
+HEVC  UNSET video  1  4 10 co3  |      5 UNSET      ON
+HEVC  UNSET video  1  4 10 full |      5 UNSET      ON
+HEVC  UNSET video  4  1  8 co3  |      5 UNSET      ON
+HEVC  UNSET video  4  1  8 full |      5 UNSET      ON
+HEVC  UNSET video  4  1 10 co3  |      5 UNSET      ON
+HEVC  UNSET video  4  1 10 full |      5 UNSET      ON
+HEVC  UNSET video  4  4  8 co3  |      5 UNSET      ON
+HEVC  UNSET video  4  4  8 full |      5 UNSET      ON
+HEVC  UNSET video  4  4 10 co3  |      5 UNSET      ON
+HEVC  UNSET video  4  4 10 full |      5 UNSET      ON
+HEVC  UNSET video  7  1  8 co3  |      5 UNSET      ON
+HEVC  UNSET video  7  1  8 full |      5 UNSET      ON
+HEVC  UNSET video  7  1 10 co3  |      5 UNSET      ON
+HEVC  UNSET video  7  1 10 full |      5 UNSET      ON
+HEVC  UNSET video  7  4  8 co3  |      5 UNSET      ON
+HEVC  UNSET video  7  4  8 full |      5 UNSET      ON
+HEVC  UNSET video  7  4 10 co3  |      5 UNSET      ON
+HEVC  UNSET video  7  4 10 full |      5 UNSET      ON
+HEVC  ON    sys    1  1  8 co3  |      5 UNSET      ON
+HEVC  ON    sys    1  1  8 full |      5 UNSET      ON
+HEVC  ON    sys    1  1 10 co3  |      5 UNSET      ON
+HEVC  ON    sys    1  1 10 full |      5 UNSET      ON
+HEVC  ON    sys    1  4  8 co3  |      5 UNSET      ON
+HEVC  ON    sys    1  4  8 full |      5 UNSET      ON
+HEVC  ON    sys    1  4 10 co3  |      5 UNSET      ON
+HEVC  ON    sys    1  4 10 full |      5 UNSET      ON
+HEVC  ON    sys    4  1  8 co3  |      5 UNSET      ON
+HEVC  ON    sys    4  1  8 full |      5 UNSET      ON
+HEVC  ON    sys    4  1 10 co3  |      5 UNSET      ON
+HEVC  ON    sys    4  1 10 full |      5 UNSET      ON
+HEVC  ON    sys    4  4  8 co3  |      5 UNSET      ON
+HEVC  ON    sys    4  4  8 full |      5 UNSET      ON
+HEVC  ON    sys    4  4 10 co3  |      5 UNSET      ON
+HEVC  ON    sys    4  4 10 full |      5 UNSET      ON
+HEVC  ON    sys    7  1  8 co3  |      5 UNSET      ON
+HEVC  ON    sys    7  1  8 full |      5 UNSET      ON
+HEVC  ON    sys    7  1 10 co3  |      5 UNSET      ON
+HEVC  ON    sys    7  1 10 full |      5 UNSET      ON
+HEVC  ON    sys    7  4  8 co3  |      5 UNSET      ON
+HEVC  ON    sys    7  4  8 full |      5 UNSET      ON
+HEVC  ON    sys    7  4 10 co3  |      5 UNSET      ON
+HEVC  ON    sys    7  4 10 full |      5 UNSET      ON
+HEVC  ON    video  1  1  8 co3  |      5 UNSET      ON
+HEVC  ON    video  1  1  8 full |      5 UNSET      ON
+HEVC  ON    video  1  1 10 co3  |      5 UNSET      ON
+HEVC  ON    video  1  1 10 full |      5 UNSET      ON
+HEVC  ON    video  1  4  8 co3  |      5 UNSET      ON
+HEVC  ON    video  1  4  8 full |      5 UNSET      ON
+HEVC  ON    video  1  4 10 co3  |      5 UNSET      ON
+HEVC  ON    video  1  4 10 full |      5 UNSET      ON
+HEVC  ON    video  4  1  8 co3  |      5 UNSET      ON
+HEVC  ON    video  4  1  8 full |      5 UNSET      ON
+HEVC  ON    video  4  1 10 co3  |      5 UNSET      ON
+HEVC  ON    video  4  1 10 full |      5 UNSET      ON
+HEVC  ON    video  4  4  8 co3  |      5 UNSET      ON
+HEVC  ON    video  4  4  8 full |      5 UNSET      ON
+HEVC  ON    video  4  4 10 co3  |      5 UNSET      ON
+HEVC  ON    video  4  4 10 full |      5 UNSET      ON
+HEVC  ON    video  7  1  8 co3  |      5 UNSET      ON
+HEVC  ON    video  7  1  8 full |      5 UNSET      ON
+HEVC  ON    video  7  1 10 co3  |      5 UNSET      ON
+HEVC  ON    video  7  1 10 full |      5 UNSET      ON
+HEVC  ON    video  7  4  8 co3  |      5 UNSET      ON
+HEVC  ON    video  7  4  8 full |      5 UNSET      ON
+HEVC  ON    video  7  4 10 co3  |      5 UNSET      ON
+HEVC  ON    video  7  4 10 full |      5 UNSET      ON
+HEVC  OFF   sys    1  1  8 co3  |      5 UNSET      ON
+HEVC  OFF   sys    1  1  8 full |      5 UNSET      ON
+HEVC  OFF   sys    1  1 10 co3  |      5 UNSET      ON
+HEVC  OFF   sys    1  1 10 full |      5 UNSET      ON
+HEVC  OFF   sys    1  4  8 co3  |      5 UNSET      ON
+HEVC  OFF   sys    1  4  8 full |      5 UNSET      ON
+HEVC  OFF   sys    1  4 10 co3  |      5 UNSET      ON
+HEVC  OFF   sys    1  4 10 full |      5 UNSET      ON
+HEVC  OFF   sys    4  1  8 co3  |      5 UNSET      ON
+HEVC  OFF   sys    4  1  8 full |      5 UNSET      ON
+HEVC  OFF   sys    4  1 10 co3  |      5 UNSET      ON
+HEVC  OFF   sys    4  1 10 full |      5 UNSET      ON
+HEVC  OFF   sys    4  4  8 co3  |      5 UNSET      ON
+HEVC  OFF   sys    4  4  8 full |      5 UNSET      ON
+HEVC  OFF   sys    4  4 10 co3  |      5 UNSET      ON
+HEVC  OFF   sys    4  4 10 full |      5 UNSET      ON
+HEVC  OFF   sys    7  1  8 co3  |      5 UNSET      ON
+HEVC  OFF   sys    7  1  8 full |      5 UNSET      ON
+HEVC  OFF   sys    7  1 10 co3  |      5 UNSET      ON
+HEVC  OFF   sys    7  1 10 full |      5 UNSET      ON
+HEVC  OFF   sys    7  4  8 co3  |      5 UNSET      ON
+HEVC  OFF   sys    7  4  8 full |      5 UNSET      ON
+HEVC  OFF   sys    7  4 10 co3  |      5 UNSET      ON
+HEVC  OFF   sys    7  4 10 full |      5 UNSET      ON
+HEVC  OFF   video  1  1  8 co3  |      5 UNSET      ON
+HEVC  OFF   video  1  1  8 full |      5 UNSET      ON
+HEVC  OFF   video  1  1 10 co3  |      5 UNSET      ON
+HEVC  OFF   video  1  1 10 full |      5 UNSET      ON
+HEVC  OFF   video  1  4  8 co3  |      5 UNSET      ON
+HEVC  OFF   video  1  4  8 full |      5 UNSET      ON
+HEVC  OFF   video  1  4 10 co3  |      5 UNSET      ON
+HEVC  OFF   video  1  4 10 full |      5 UNSET      ON
+HEVC  OFF   video  4  1  8 co3  |      5 UNSET      ON
+HEVC  OFF   video  4  1  8 full |      5 UNSET      ON
+HEVC  OFF   video  4  1 10 co3  |      5 UNSET      ON
+HEVC  OFF   video  4  1 10 full |      5 UNSET      ON
+HEVC  OFF   video  4  4  8 co3  |      5 UNSET      ON
+HEVC  OFF   video  4  4  8 full |      5 UNSET      ON
+HEVC  OFF   video  4  4 10 co3  |      5 UNSET      ON
+HEVC  OFF   video  4  4 10 full |      5 UNSET      ON
+HEVC  OFF   video  7  1  8 co3  |      5 UNSET      ON
+HEVC  OFF   video  7  1  8 full |      5 UNSET      ON
+HEVC  OFF   video  7  1 10 co3  |      5 UNSET      ON
+HEVC  OFF   video  7  1 10 full |      5 UNSET      ON
+HEVC  OFF   video  7  4  8 co3  |      5 UNSET      ON
+HEVC  OFF   video  7  4  8 full |      5 UNSET      ON
+HEVC  OFF   video  7  4 10 co3  |      5 UNSET      ON
+HEVC  OFF   video  7  4 10 full |      5 UNSET      ON
+SUMMARY HEVC: EnableMBQP=ON survived Query in 0 of 144 configurations
+AVC   UNSET sys    1  1  8 co3  |      0 ON         UNSET
+AVC   UNSET sys    1  1  8 full |      0 ON         UNSET
+AVC   UNSET sys    1  4  8 co3  |      0 ON         UNSET
+AVC   UNSET sys    1  4  8 full |      0 ON         UNSET
+AVC   UNSET sys    4  1  8 co3  |      0 ON         UNSET
+AVC   UNSET sys    4  1  8 full |      0 ON         UNSET
+AVC   UNSET sys    4  4  8 co3  |      0 ON         UNSET
+AVC   UNSET sys    4  4  8 full |      0 ON         UNSET
+AVC   UNSET sys    7  1  8 co3  |      0 ON         UNSET
+AVC   UNSET sys    7  1  8 full |      0 ON         UNSET
+AVC   UNSET sys    7  4  8 co3  |      0 ON         UNSET
+AVC   UNSET sys    7  4  8 full |      0 ON         UNSET
+AVC   UNSET video  1  1  8 co3  |      0 ON         UNSET
+AVC   UNSET video  1  1  8 full |      0 ON         UNSET
+AVC   UNSET video  1  4  8 co3  |      0 ON         UNSET
+AVC   UNSET video  1  4  8 full |      0 ON         UNSET
+AVC   UNSET video  4  1  8 co3  |      0 ON         UNSET
+AVC   UNSET video  4  1  8 full |      0 ON         UNSET
+AVC   UNSET video  4  4  8 co3  |      0 ON         UNSET
+AVC   UNSET video  4  4  8 full |      0 ON         UNSET
+AVC   UNSET video  7  1  8 co3  |      0 ON         UNSET
+AVC   UNSET video  7  1  8 full |      0 ON         UNSET
+AVC   UNSET video  7  4  8 co3  |      0 ON         UNSET
+AVC   UNSET video  7  4  8 full |      0 ON         UNSET
+AVC   ON    sys    1  1  8 co3  |      0 ON         ON
+AVC   ON    sys    1  1  8 full |      0 ON         ON
+AVC   ON    sys    1  4  8 co3  |      0 ON         ON
+AVC   ON    sys    1  4  8 full |      0 ON         ON
+AVC   ON    sys    4  1  8 co3  |      0 ON         ON
+AVC   ON    sys    4  1  8 full |      0 ON         ON
+AVC   ON    sys    4  4  8 co3  |      0 ON         ON
+AVC   ON    sys    4  4  8 full |      0 ON         ON
+AVC   ON    sys    7  1  8 co3  |      0 ON         ON
+AVC   ON    sys    7  1  8 full |      0 ON         ON
+AVC   ON    sys    7  4  8 co3  |      0 ON         ON
+AVC   ON    sys    7  4  8 full |      0 ON         ON
+AVC   ON    video  1  1  8 co3  |      0 ON         ON
+AVC   ON    video  1  1  8 full |      0 ON         ON
+AVC   ON    video  1  4  8 co3  |      0 ON         ON
+AVC   ON    video  1  4  8 full |      0 ON         ON
+AVC   ON    video  4  1  8 co3  |      0 ON         ON
+AVC   ON    video  4  1  8 full |      0 ON         ON
+AVC   ON    video  4  4  8 co3  |      0 ON         ON
+AVC   ON    video  4  4  8 full |      0 ON         ON
+AVC   ON    video  7  1  8 co3  |      0 ON         ON
+AVC   ON    video  7  1  8 full |      0 ON         ON
+AVC   ON    video  7  4  8 co3  |      0 ON         ON
+AVC   ON    video  7  4  8 full |      0 ON         ON
+AVC   OFF   sys    1  1  8 co3  |      0 ON         ON
+AVC   OFF   sys    1  1  8 full |      0 ON         ON
+AVC   OFF   sys    1  4  8 co3  |      0 ON         ON
+AVC   OFF   sys    1  4  8 full |      0 ON         ON
+AVC   OFF   sys    4  1  8 co3  |      0 ON         ON
+AVC   OFF   sys    4  1  8 full |      0 ON         ON
+AVC   OFF   sys    4  4  8 co3  |      0 ON         ON
+AVC   OFF   sys    4  4  8 full |      0 ON         ON
+AVC   OFF   sys    7  1  8 co3  |      0 ON         ON
+AVC   OFF   sys    7  1  8 full |      0 ON         ON
+AVC   OFF   sys    7  4  8 co3  |      0 ON         ON
+AVC   OFF   sys    7  4  8 full |      0 ON         ON
+AVC   OFF   video  1  1  8 co3  |      0 ON         ON
+AVC   OFF   video  1  1  8 full |      0 ON         ON
+AVC   OFF   video  1  4  8 co3  |      0 ON         ON
+AVC   OFF   video  1  4  8 full |      0 ON         ON
+AVC   OFF   video  4  1  8 co3  |      0 ON         ON
+AVC   OFF   video  4  1  8 full |      0 ON         ON
+AVC   OFF   video  4  4  8 co3  |      0 ON         ON
+AVC   OFF   video  4  4  8 full |      0 ON         ON
+AVC   OFF   video  7  1  8 co3  |      0 ON         ON
+AVC   OFF   video  7  1  8 full |      0 ON         ON
+AVC   OFF   video  7  4  8 co3  |      0 ON         ON
+AVC   OFF   video  7  4  8 full |      0 ON         ON
+SUMMARY AVC: EnableMBQP=ON survived Query in 72 of 72 configurations
+HEVC 320x240 CQP default-LP: status 5 EnableMBQP UNSET
+HEVC 640x360 CQP default-LP: status 5 EnableMBQP UNSET
+HEVC 1280x720 CQP default-LP: status 5 EnableMBQP UNSET
+HEVC 3840x2160 CQP default-LP: status 5 EnableMBQP UNSET
+HEVC VBR: status 5 EnableMBQP UNSET
+HEVC CBR: status 5 EnableMBQP UNSET
+HEVC ICQ: status 5 EnableMBQP UNSET
+AVC VBR: status 0 EnableMBQP ON
+AVC CBR: status 5 EnableMBQP ON
+AVC ICQ: status 5 EnableMBQP OFF
+
+== 3. Query mode 1 (in=NULL): nonzero = runtime reports the field configurable
+HEVC mode-1 Query status 0: LowPower=257 RateControlMethod=257 CO3.EnableMBQP=257 CO3.EncodedUnitsInfo=257 CO3.EnableQPOffset=257 CO3.MBDisableSkipMap=0 CO2.MBBRC=257 CO2.ExtBRC=257 ROI.NumROI=257 ROI.ROIMode=257
+AVC mode-1 Query status 0: LowPower=0 RateControlMethod=1 CO3.EnableMBQP=0 CO3.EncodedUnitsInfo=0 CO3.EnableQPOffset=0 CO3.MBDisableSkipMap=0 CO2.MBBRC=0 CO2.ExtBRC=0 ROI.NumROI=1 ROI.ROIMode=1
+AV1 mode-1 Query status 0: LowPower=257 RateControlMethod=257 CO3.EnableMBQP=0 CO3.EncodedUnitsInfo=0 CO3.EnableQPOffset=257 CO3.MBDisableSkipMap=0 CO2.MBBRC=257 CO2.ExtBRC=257 ROI.NumROI=0 ROI.ROIMode=0
+
+== 4. ROI: Query mode 2 with NumROI=256 (runtime writes back its max), 1280x720
+HEVC lp=UNSET CQP ROIMode=QP_DELTA: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+HEVC lp=UNSET CQP ROIMode=PRIORITY: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+HEVC lp=UNSET VBR ROIMode=QP_DELTA: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+HEVC lp=UNSET VBR ROIMode=PRIORITY: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+HEVC lp=UNSET ICQ ROIMode=QP_DELTA: Query status  -3 -> NumROI   0 ROIMode 1 (LowPower ON)
+HEVC lp=UNSET ICQ ROIMode=PRIORITY: Query status  -3 -> NumROI   0 ROIMode 0 (LowPower ON)
+HEVC lp=ON    CQP ROIMode=QP_DELTA: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+HEVC lp=ON    CQP ROIMode=PRIORITY: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+HEVC lp=ON    VBR ROIMode=QP_DELTA: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+HEVC lp=ON    VBR ROIMode=PRIORITY: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+HEVC lp=ON    ICQ ROIMode=QP_DELTA: Query status  -3 -> NumROI   0 ROIMode 1 (LowPower ON)
+HEVC lp=ON    ICQ ROIMode=PRIORITY: Query status  -3 -> NumROI   0 ROIMode 0 (LowPower ON)
+HEVC lp=OFF   CQP ROIMode=QP_DELTA: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+HEVC lp=OFF   CQP ROIMode=PRIORITY: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+HEVC lp=OFF   VBR ROIMode=QP_DELTA: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+HEVC lp=OFF   VBR ROIMode=PRIORITY: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+HEVC lp=OFF   ICQ ROIMode=QP_DELTA: Query status  -3 -> NumROI   0 ROIMode 1 (LowPower ON)
+HEVC lp=OFF   ICQ ROIMode=PRIORITY: Query status  -3 -> NumROI   0 ROIMode 0 (LowPower ON)
+AVC  lp=UNSET CQP ROIMode=QP_DELTA: Query status   5 -> NumROI  16 ROIMode 1 (LowPower UNSET)
+AVC  lp=UNSET CQP ROIMode=PRIORITY: Query status   5 -> NumROI  16 ROIMode 0 (LowPower UNSET)
+AVC  lp=UNSET VBR ROIMode=QP_DELTA: Query status   5 -> NumROI  16 ROIMode 1 (LowPower UNSET)
+AVC  lp=UNSET VBR ROIMode=PRIORITY: Query status   5 -> NumROI  16 ROIMode 0 (LowPower UNSET)
+AVC  lp=UNSET ICQ ROIMode=QP_DELTA: Query status   5 -> NumROI  16 ROIMode 1 (LowPower UNSET)
+AVC  lp=UNSET ICQ ROIMode=PRIORITY: Query status   5 -> NumROI  16 ROIMode 0 (LowPower UNSET)
+AVC  lp=ON    CQP ROIMode=QP_DELTA: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+AVC  lp=ON    CQP ROIMode=PRIORITY: Query status   5 -> NumROI  16 ROIMode 0 (LowPower ON)
+AVC  lp=ON    VBR ROIMode=QP_DELTA: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+AVC  lp=ON    VBR ROIMode=PRIORITY: Query status   5 -> NumROI  16 ROIMode 0 (LowPower ON)
+AVC  lp=ON    ICQ ROIMode=QP_DELTA: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+AVC  lp=ON    ICQ ROIMode=PRIORITY: Query status   5 -> NumROI  16 ROIMode 0 (LowPower ON)
+AVC  lp=OFF   CQP ROIMode=QP_DELTA: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+AVC  lp=OFF   CQP ROIMode=PRIORITY: Query status   5 -> NumROI  16 ROIMode 0 (LowPower ON)
+AVC  lp=OFF   VBR ROIMode=QP_DELTA: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+AVC  lp=OFF   VBR ROIMode=PRIORITY: Query status   5 -> NumROI  16 ROIMode 0 (LowPower ON)
+AVC  lp=OFF   ICQ ROIMode=QP_DELTA: Query status   5 -> NumROI  16 ROIMode 1 (LowPower ON)
+AVC  lp=OFF   ICQ ROIMode=PRIORITY: Query status   5 -> NumROI  16 ROIMode 0 (LowPower ON)
+
+== 5. encode-statistics flags
+HEVC lp=UNSET CQP: CO3.EncodedUnitsInfo=ON -> status 0, after ON
+HEVC lp=ON    CQP: CO3.EncodedUnitsInfo=ON -> status 0, after ON
+HEVC lp=OFF   CQP: CO3.EncodedUnitsInfo=ON -> status 5, after ON
+AVC  lp=UNSET CQP: CO3.EncodedUnitsInfo=ON -> status 0, after ON
+AVC  lp=ON    CQP: CO3.EncodedUnitsInfo=ON -> status 0, after ON
+AVC  lp=OFF   CQP: CO3.EncodedUnitsInfo=ON -> status 0, after ON

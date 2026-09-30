@@ -1,0 +1,8 @@
+Hardware acceleration methods:
+cuda
+dxva2
+qsv
+d3d11va
+vulkan
+d3d12va
+

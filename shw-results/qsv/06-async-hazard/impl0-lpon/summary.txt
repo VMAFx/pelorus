@@ -1,0 +1,41 @@
+######## impl 0 LowPower=on, 300 frames 1080p, CQP 30, delta +12 alternating; async {1 4}; GopRefDist {1 4}
+== AVC GopRefDist=1 (exact per-MB QP; 'mismatched' = frame with > 2 MB rows off the expected pattern)
+avc-mbqp-lock-a1-rd1       mismatched= 33/300 early_reuse=8    | mismatched=33 at_risk(early_reuse)=8 mismatched_and_at_risk=2 mismatched_not_at_risk=31 e.g. not-at-risk [37, 39, 49, 51, 53, 55, 56, 57]
+avc-mbqp-lock-a4-rd1       mismatched= 29/300 early_reuse=282  | mismatched=29 at_risk(early_reuse)=282 mismatched_and_at_risk=25 mismatched_not_at_risk=4 e.g. not-at-risk [169, 281, 295, 297]
+avc-mbqp-sync-a1-rd1       mismatched= 29/300 early_reuse=0    | mismatched=29 at_risk(early_reuse)=0 mismatched_and_at_risk=0 mismatched_not_at_risk=29 e.g. not-at-risk [37, 39, 49, 51, 53, 55, 56, 57]
+avc-mbqp-sync-a4-rd1       mismatched= 29/300 early_reuse=0    | mismatched=29 at_risk(early_reuse)=0 mismatched_and_at_risk=0 mismatched_not_at_risk=29 e.g. not-at-risk [37, 39, 49, 51, 53, 55, 56, 57]
+avc-shared-lock-a1-rd1     mismatched=294/300 early_reuse=4    | mismatched=294 at_risk(early_reuse)=4 mismatched_and_at_risk=1 mismatched_not_at_risk=293 e.g. not-at-risk [0, 1, 2, 3, 4, 5, 6, 7]
+avc-shared-lock-a4-rd1     mismatched= 78/300 early_reuse=276  | mismatched=78 at_risk(early_reuse)=276 mismatched_and_at_risk=73 mismatched_not_at_risk=5 e.g. not-at-risk [0, 233, 296, 297, 298]
+avc-rect-lock-a1-rd1       mismatched=  0/300 early_reuse=11   | mismatched=0 at_risk(early_reuse)=11 mismatched_and_at_risk=0 mismatched_not_at_risk=0
+avc-rect-lock-a4-rd1       mismatched=  0/300 early_reuse=275  | mismatched=0 at_risk(early_reuse)=275 mismatched_and_at_risk=0 mismatched_not_at_risk=0
+avc-rect-sync-a1-rd1       mismatched=  0/300 early_reuse=0    | mismatched=0 at_risk(early_reuse)=0 mismatched_and_at_risk=0 mismatched_not_at_risk=0
+avc-rect-sync-a4-rd1       mismatched=  0/300 early_reuse=0    | mismatched=0 at_risk(early_reuse)=0 mismatched_and_at_risk=0 mismatched_not_at_risk=0
+avc-sharedrect-lock-a1-rd1 mismatched= 91/300 early_reuse=4    | mismatched=91 at_risk(early_reuse)=4 mismatched_and_at_risk=0 mismatched_not_at_risk=91 e.g. not-at-risk [0, 7, 16, 17, 18, 21, 29, 32]
+avc-sharedrect-lock-a4-rd1 mismatched=208/300 early_reuse=286  | mismatched=208 at_risk(early_reuse)=286 mismatched_and_at_risk=203 mismatched_not_at_risk=5 e.g. not-at-risk [110, 176, 264, 296, 298]
+== HEVC GopRefDist=1 (half-PSNR drop vs the no-ROI encode; the ROI half must drop more)
+hevc-rect-lock-a1-rd1      bytes=5370187  early_reuse=0    SUMMARY frames=600 swapped=150 weak(<0.5dB)=150 min_margin=-0.310 median_margin=0.570
+hevc-rect-lock-a4-rd1      bytes=5370187  early_reuse=4    SUMMARY frames=600 swapped=150 weak(<0.5dB)=150 min_margin=-0.310 median_margin=0.570
+hevc-rect-sync-a1-rd1      bytes=5370187  early_reuse=0    SUMMARY frames=600 swapped=150 weak(<0.5dB)=150 min_margin=-0.310 median_margin=0.570
+hevc-rect-sync-a4-rd1      bytes=5370187  early_reuse=0    SUMMARY frames=600 swapped=150 weak(<0.5dB)=150 min_margin=-0.310 median_margin=0.570
+hevc-sharedrect-lock-a1-rd1 bytes=5113176  early_reuse=0    SUMMARY frames=600 swapped=359 weak(<0.5dB)=158 min_margin=-7.160 median_margin=-0.150
+hevc-sharedrect-lock-a4-rd1 bytes=4923712  early_reuse=0    SUMMARY frames=600 swapped=314 weak(<0.5dB)=157 min_margin=-7.140 median_margin=-0.140
+== AVC GopRefDist=4 (exact per-MB QP; 'mismatched' = frame with > 2 MB rows off the expected pattern)
+avc-mbqp-lock-a1-rd4       mismatched=101/300 early_reuse=2    | mismatched=101 at_risk(early_reuse)=2 mismatched_and_at_risk=1 mismatched_not_at_risk=100 e.g. not-at-risk [7, 9, 11, 13, 15, 25, 29, 31]
+avc-mbqp-lock-a4-rd4       mismatched=139/300 early_reuse=289  | mismatched=139 at_risk(early_reuse)=289 mismatched_and_at_risk=133 mismatched_not_at_risk=6 e.g. not-at-risk [7, 11, 291, 293, 295, 297]
+avc-mbqp-sync-a1-rd4       mismatched=101/300 early_reuse=0    | mismatched=101 at_risk(early_reuse)=0 mismatched_and_at_risk=0 mismatched_not_at_risk=101 e.g. not-at-risk [7, 9, 11, 13, 15, 25, 29, 31]
+avc-mbqp-sync-a4-rd4       mismatched=101/300 early_reuse=0    | mismatched=101 at_risk(early_reuse)=0 mismatched_and_at_risk=0 mismatched_not_at_risk=101 e.g. not-at-risk [7, 9, 11, 13, 15, 25, 29, 31]
+avc-shared-lock-a1-rd4     mismatched=185/300 early_reuse=2    | mismatched=185 at_risk(early_reuse)=2 mismatched_and_at_risk=1 mismatched_not_at_risk=184 e.g. not-at-risk [3, 4, 7, 8, 9, 11, 12, 13]
+avc-shared-lock-a4-rd4     mismatched=115/300 early_reuse=287  | mismatched=115 at_risk(early_reuse)=287 mismatched_and_at_risk=107 mismatched_not_at_risk=8 e.g. not-at-risk [2, 291, 293, 294, 295, 296, 297, 298]
+avc-rect-lock-a1-rd4       mismatched= 74/300 early_reuse=1    | mismatched=74 at_risk(early_reuse)=1 mismatched_and_at_risk=0 mismatched_not_at_risk=74 e.g. not-at-risk [7, 13, 31, 33, 34, 35, 37, 38]
+avc-rect-lock-a4-rd4       mismatched= 74/300 early_reuse=290  | mismatched=74 at_risk(early_reuse)=290 mismatched_and_at_risk=72 mismatched_not_at_risk=2 e.g. not-at-risk [294, 298]
+avc-rect-sync-a1-rd4       mismatched= 74/300 early_reuse=0    | mismatched=74 at_risk(early_reuse)=0 mismatched_and_at_risk=0 mismatched_not_at_risk=74 e.g. not-at-risk [7, 13, 31, 33, 34, 35, 37, 38]
+avc-rect-sync-a4-rd4       mismatched= 74/300 early_reuse=0    | mismatched=74 at_risk(early_reuse)=0 mismatched_and_at_risk=0 mismatched_not_at_risk=74 e.g. not-at-risk [7, 13, 31, 33, 34, 35, 37, 38]
+avc-sharedrect-lock-a1-rd4 mismatched=180/300 early_reuse=3    | mismatched=180 at_risk(early_reuse)=3 mismatched_and_at_risk=2 mismatched_not_at_risk=178 e.g. not-at-risk [1, 5, 6, 7, 9, 10, 12, 13]
+avc-sharedrect-lock-a4-rd4 mismatched=182/300 early_reuse=287  | mismatched=182 at_risk(early_reuse)=287 mismatched_and_at_risk=174 mismatched_not_at_risk=8 e.g. not-at-risk [2, 6, 7, 11, 291, 294, 296, 298]
+== HEVC GopRefDist=4 (half-PSNR drop vs the no-ROI encode; the ROI half must drop more)
+hevc-rect-lock-a1-rd4      bytes=4903432  early_reuse=0    SUMMARY frames=600 swapped=150 weak(<0.5dB)=150 min_margin=-0.320 median_margin=0.610
+hevc-rect-lock-a4-rd4      bytes=4903432  early_reuse=10   SUMMARY frames=600 swapped=150 weak(<0.5dB)=150 min_margin=-0.320 median_margin=0.610
+hevc-rect-sync-a1-rd4      bytes=4903432  early_reuse=0    SUMMARY frames=600 swapped=150 weak(<0.5dB)=150 min_margin=-0.320 median_margin=0.610
+hevc-rect-sync-a4-rd4      bytes=4903432  early_reuse=0    SUMMARY frames=600 swapped=150 weak(<0.5dB)=150 min_margin=-0.320 median_margin=0.610
+hevc-sharedrect-lock-a1-rd4 bytes=4008526  early_reuse=0    SUMMARY frames=600 swapped=289 weak(<0.5dB)=167 min_margin=-7.030 median_margin=0.130
+hevc-sharedrect-lock-a4-rd4 bytes=4361272  early_reuse=0    SUMMARY frames=600 swapped=298 weak(<0.5dB)=162 min_margin=-7.040 median_margin=0.110

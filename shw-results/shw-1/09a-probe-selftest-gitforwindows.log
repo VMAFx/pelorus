@@ -1,0 +1,7 @@
+-- MSYS git: /usr/bin/git
+fixture regression: hostile Git policy blocked synthetic commit
+git tag regression: ambiguous branch fixture did not resolve
+git am hook regression: hook-neutralized replay failed
+rc=1
+-- Git for Windows: /c/Program Files/Git/cmd/git git version 2.55.0.windows.5
+rc=0

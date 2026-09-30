@@ -1,0 +1,17 @@
+RUN_ROOT-like dir (MSYS form): /tmp/pel-probe.5qzvyC   native: C:/msys64/tmp/pel-probe.5qzvyC
+1. pkg-config prefix: 'C:/msys64/tmp/pel-probe.5qzvyC/prefix' vs PRIVATE_PREFIX '/tmp/pel-probe.5qzvyC/prefix'
+2. vpl: 2.17
+2. aom: 3.15.1
+2. SvtAv1Enc: 4.2.0
+2. ffnvcodec: 13.0.19.0
+2. vulkan: 1.4.357
+3. imports 	DLL Name: libaom.dll
+3. imports 	DLL Name: libSvtAv1Enc-4.dll
+3. imports 	DLL Name: libvmaf.dll
+3. imports 	DLL Name: libvpl-2.dll
+3. imports 	DLL Name: libx265-217.dll
+3. imports 	DLL Name: libpelorus-0.dll
+3. ffmpeg.exe without prefix/bin on PATH: rc=0 (127/0xC0000135 = DLL not found)
+4. make -n ffmpeg rc=0
+4. make -n ffmpeg.exe rc=0
+5. gcc -I<msys /tmp path>: rc=0

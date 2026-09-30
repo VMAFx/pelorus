@@ -1,0 +1,51 @@
+Compiling agent context from canonical AGENTS.md...
+  [COMPILED] CLAUDE.md                           (253 lines, budget <= 300)
+  [COMPILED] .cursor/rules/hiss-invariants.mdc   (259 lines, budget <= 300)
+  [COMPILED] .github/copilot-instructions.md     (253 lines, budget <= 300)
+  [COMPILED] .windsurfrules                      (253 lines, budget <= 300)
+  [COMPILED] .gemini/GEMINI.md                   (253 lines, budget <= 300)
+  [COMPILED] .codex/rules.md                     (253 lines, budget <= 300)
+  [COMPILED] 32 autonomous agent vendor projections.
+  AGENTS.md: caveman lint passed: 1056 prose words, 0.2 articles per 100 (limit 2.0), 13 register block lines left to the renderer.
+  8 personas and 0 skills passed the caveman lint (<= 600 prose words each).
+Cross-agent context transpilation completed successfully.
+/usr/local/bin/standardsctl compile-context --verify
+Verifying agent context synchronization against AGENTS.md...
+  AGENTS.md: caveman lint passed: 1056 prose words, 0.2 articles per 100 (limit 2.0), 13 register block lines left to the renderer.
+  8 personas and 0 skills passed the caveman lint (<= 600 prose words each).
+All agent context targets are 100% in sync with canonical AGENTS.md (32 persona projections verified).
+/usr/local/bin/standardsctl audit
+[PASS] Manifest verified: VMAFx/pelorus (Version 1)
+       Profiles: [native-gpu-systems] | Facets: [security:high api:public-contract docs:seo-portal agent:sandboxed]
+=== VMAFx/pelorus Governance Audit ===
+[PASS] Effective complexity policy sha256:1ec2234a93f49a71f37d1c4b165d8f0c5838b0d87a0a4a07c164f318c9fb3e90; max_func_loc=60; contributors=builtin:defaults-v1,builtin:audit-compat-v1; sources=9
+  source=builtin:defaults-v1 sha256:c27acccad0425bc0f97a575adc99801fa23135187ef04127e819ede897290130
+  source=lock sha256:a0c6b13c52f9404ed4754c0368f56fb5f21685e2eb867427f0665a6ebda82d5b
+  source=profile:native-gpu-systems sha256:9daa1ec1dc2da097e8a11553cc58448102091d018f034e30de891e40277d4e54
+  source=facet:security:high sha256:9bd59f0725d472b1516ba74556feada0e3868f4642bc08dd2d67a2cc26e87778
+  source=facet:api:public-contract sha256:5ddb1a0912620e0cd8c6cf6185fd5d4cdf01fe042d10caa043356560fe10824b
+  source=facet:docs:seo-portal sha256:145722c161ed8e436369d573c2b736fe7f579b8a1e33a85119e3b10268563428
+  source=facet:agent:sandboxed sha256:bc87486dea71e54d20549d6054dcf290d3d700e37b304cbdb6d6c1a2def895f2
+  source=repository sha256:e1af3d95dd9be5bd4803948ed04fd8fcae6977752642a82228b1331aaff370e1
+  source=builtin:audit-compat-v1 sha256:d3c15797f03f9605eb869ca2fdab9f7e3147c26a051f813df12b982640fd758a
+[PASS] Repository identity verified (VMAFx/pelorus, zero legacy references).
+[PASS] SemVer lockfile .standards.lock verified.
+[PASS] Lockfile digests verified (1 profiles, 4 facets).
+[INFO] HISS file scope: 38 files read by supported scanners; 313 files outside supported extensions; 5 ignored directories, 0 symlinks and 0 oversized inputs skipped. Native application tests are separate.
+[REPORT] HISS-04 complexity measured, not enforced: 0 measurements over limit in 0 functions (cyclomatic 0, cognitive 0, statements 0)
+[PASS] HISS invariant scan verified: 62 active violations within 62 baselined limit (0 touched files clean) (skipped: 5 ignored directories, 0 symlinks, 0 oversize files, 0 non-regular files).
+[PASS] README governance block verified against the recorded baseline.
+[PASS] Locked documentation gate verified (23 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).
+[PASS] Cross-agent context targets verified in sync: CLAUDE.md, .cursor/rules/hiss-invariants.mdc, .github/copilot-instructions.md, .windsurfrules, .gemini/GEMINI.md, .codex/rules.md.
+[PASS] Agent context caveman lint passed: 1056 prose words, 0.2 articles per 100 (limit 2.0), 13 register block lines left to the renderer.
+[PASS] DevContainer configuration verified in sync with declared standards.
+[PASS] Agent persona projections verified (32 copies identical to .agents/agents).
+[PASS] Caveman lint verified (8 personas, 0 skills, <= 600 prose words each).
+[PASS] Branch protection & merge ruleset .github/rulesets/main.json verified.
+[PASS] Repository label taxonomy .config/labels.yaml verified.
+[PASS] Paperclip agent runtime harness verified (VMAFx/pelorus, 5 rules).
+[PASS] Caveman non-Markdown source coverage verified (12 values, sha256:9a342c0b70e1a3293a6a6ac58629348e8d406f0a7c287e92298f108b09573cbf).
+[PASS] External runner matrix & ARC platform routing policies verified.
+[PASS] Agent definitions verified (8 agents registered).
+Error: [FAIL] Pre-commit hook .git/hooks/pre-commit is missing or inactive; run 'lefthook install' or 'praetorctl adopt' to activate
+make: *** [Makefile:43: audit] Error 1

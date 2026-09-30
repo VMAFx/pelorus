@@ -1,0 +1,156 @@
+=== Praetor Universal Repository Adoption ===
+Target State:       brownfield
+Archetype:          native-gpu-systems
+Facets:             [security:high api:public-contract docs:seo-portal agent:sandboxed]
+
+--- Legacy Technical Debt Baselined (62 infractions) ---
+  • HISS-01 : 31 infractions
+  • HISS-02 : 1 infractions
+  • HISS-04 : 28 infractions
+  • HISS-07 : 2 infractions
+  (Infractions recorded into .standards-baseline.json to prevent CI breaks while ratcheting)
+
+Files Created (12):
+  + [NEW]  .devcontainer/devcontainer.json      : Prepared DevContainer for archetype 'native-gpu-systems'; bootstrap source-bundle, execution unverified
+  + [NEW]  .devcontainer/praetor-source.000.b64 : Prepared exact DevContainer bootstrap companion
+  + [NEW]  .devcontainer/praetor-source.001.b64 : Prepared exact DevContainer bootstrap companion
+  + [NEW]  .devcontainer/praetor-source.002.b64 : Prepared exact DevContainer bootstrap companion
+  + [NEW]  .devcontainer/praetor-source.003.b64 : Prepared exact DevContainer bootstrap companion
+  + [NEW]  .devcontainer/praetor-source.004.b64 : Prepared exact DevContainer bootstrap companion
+  + [NEW]  .devcontainer/Dockerfile.praetor     : Prepared exact DevContainer bootstrap companion
+  + [NEW]  .github/rulesets/main.json           : Scaffolded declarative branch protection ruleset (7 required status checks derived from workflows)
+  + [NEW]  .config/lefthook/scripts/checkpoint.py : Installed shared checkpoint evaluator from verified source bundle
+  + [NEW]  .config/lefthook/scripts/common.py   : Installed shared checkpoint evaluator from verified source bundle
+  + [NEW]  .config/agent/checkpoint.json        : Created local-only checkpoint policy for adopted repository
+  + [NEW]  .config/agent/hooks/block_evasion.py : Scaffolded standalone agent PreToolUse anti-evasion interceptor; the agent-hooks step registers the engine call
+
+Files Reconciled (105):
+  ~ [SYNC] .standards.yaml                      : Existing standards manifest verified present
+  ~ [SYNC] .gitignore                           : Private artifact ignore tail block already effective
+  ~ [SYNC] .standards.lock                      : Verified existing version pins and content digests
+  ~ [SYNC] .config/archetypes/native-gpu-systems.yaml : Verified unchanged repository-local pinned policy
+  ~ [SYNC] .config/archetypes/facets/security-high.yaml : Verified unchanged repository-local pinned policy
+  ~ [SYNC] .config/archetypes/facets/api-public.yaml : Verified unchanged repository-local pinned policy
+  ~ [SYNC] .config/archetypes/facets/docs-seoportal.yaml : Verified unchanged repository-local pinned policy
+  ~ [SYNC] .config/archetypes/facets/agent-sandboxed.yaml : Verified unchanged repository-local pinned policy
+  ~ [SYNC] .standards-baseline.json             : Rescanned; baseline unchanged at 62 legacy debt infractions
+  ~ [SYNC] AGENTS.md                            : Existing Praetor Agent Operating Harness preserved; command synchronization not verified
+  ~ [SYNC] CLAUDE.md                            : Synchronized vendor context target (253 LOC)
+  ~ [SYNC] .cursor/rules/hiss-invariants.mdc    : Synchronized vendor context target (259 LOC)
+  ~ [SYNC] .github/copilot-instructions.md      : Synchronized vendor context target (253 LOC)
+  ~ [SYNC] .windsurfrules                       : Synchronized vendor context target (253 LOC)
+  ~ [SYNC] .gemini/GEMINI.md                    : Synchronized vendor context target (253 LOC)
+  ~ [SYNC] .codex/rules.md                      : Synchronized vendor context target (253 LOC)
+  ~ [SYNC] tools/markdownlint/package.json      : Existing Markdown governance asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/markdownlint/package-lock.json : Existing Markdown governance asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/markdownlint/markdownlint-cli2.yaml : Existing Markdown governance asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/markdownlint/verify.mjs        : Existing Markdown governance asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/markdownlint/no-private-scratch-links.mjs : Existing Markdown governance asset preserved; audit verifies canonical text
+  ~ [SYNC] .github/workflows/praetor-docs.yml   : Existing documentation governance workflow preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/core.mjs               : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/checks.mjs             : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/build.mjs              : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/types.ts               : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/third_party/interfig/vendor.json : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/third_party/interfig/VENDOR.md : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/third_party/interfig/upstream/LICENSE : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/third_party/interfig/upstream/src/svg.ts : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/third_party/interfig/upstream/src/geometry.ts : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/third_party/interfig/upstream/src/model.ts : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/dist/loader.js         : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/dist/player.js         : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/dist/THIRD-PARTY-LICENSES.txt : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/figures.css            : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/mkdocs_hook.py         : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/astro.mjs              : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/serve.mjs              : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] tools/figures/README.md              : Existing figure engine asset preserved; audit verifies canonical text
+  ~ [SYNC] .gitattributes                       : Managed attribute block already at the tail
+  ~ [SYNC] Makefile                             : Documentation gate already attached to verify-all
+  ~ [SYNC] .editorconfig                        : Existing developer-owned universal file preserved, not verified
+  ~ [SYNC] .vscode/settings.json                : Existing IDE configuration kept unchanged, not verified: it lacks the managed vscode values "/antigravity.searchMaxWorkspaceFileCount", "/standards.sentinel.headroomMB", "/files.watcherExclude/**~1.workingdir~1**", "/files.watcherExclude/**~1.workingdir2~1**". Re-run adopt with --force to merge them; every other key is kept
+  ~ [SYNC] .vscode/extensions.json              : Existing vscode IDE configuration holds every managed value
+  ~ [SYNC] .vscode/tasks.json                   : Existing vscode IDE configuration holds every managed value
+  ~ [SYNC] .idea/inspectionProfiles/standards.xml : Existing IDE configuration kept unchanged, not verified: it differs from the jetbrains template (regenerating would change -0/+5 lines) and adoption does not overwrite it. Delete it and re-run adopt to regenerate it
+  ~ [SYNC] .idea/workspace.xml                  : Existing developer-owned jetbrains file preserved, not verified
+  ~ [SYNC] lua/standards.lua                    : Existing IDE configuration kept unchanged, not verified: it differs from the neovim template (regenerating would change -9/+4 lines, removed "-- Pelorus governance commands. No repository-local standards LSP is shipped.", "vim.api.nvim_create_user_command(\"StandardsAudit\", function()", "  vim.cmd(\"!make audit\")" and 6 more) and adoption does not overwrite it. Delete it and re-run adopt to regenerate it
+  ~ [SYNC] .nvim.lua                            : Existing neovim IDE configuration holds every managed value
+  ~ [SYNC] .zed/settings.json                   : Existing IDE configuration kept unchanged, not verified: it lacks the managed zed values "/languages/Go". Re-run adopt with --force to merge them; every other key is kept
+  ~ [SYNC] .zed/tasks.json                      : Existing zed IDE configuration holds every managed value
+  ~ [SYNC] .helix/config.toml                   : Existing helix IDE configuration holds every managed value
+  ~ [SYNC] .helix/languages.toml                : Existing IDE configuration kept unchanged, not verified: it differs from the helix template (regenerating would change -0/+10 lines) and adoption does not overwrite it. Delete it and re-run adopt to regenerate it
+  ~ [SYNC] .dir-locals.el                       : Existing developer-owned emacs file preserved, not verified
+  ~ [SYNC] .fleet/settings.json                 : Existing fleet IDE configuration holds every managed value
+  ~ [SYNC] .fleet/run.json                      : Existing fleet IDE configuration holds every managed value
+  ~ [SYNC] standards.sublime-project            : Existing sublime IDE configuration holds every managed value
+  ~ [SYNC] .clang-tidy                          : Existing developer-owned visualstudio file preserved, not verified
+  ~ [SYNC] .prettierignore                      : No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
+  ~ [SYNC] renovate.json                        : Renovate already leaves the Praetor-managed files alone
+  ~ [SYNC] .github/actionlint.yaml              : actionlint already accepts the runner labels of the Praetor-managed workflows
+  ~ [SYNC] CONTRIBUTING.md                      : Existing file differs from the scaffold adoption writes (-118/+38 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ~ [SYNC] .github/PULL_REQUEST_TEMPLATE.md     : Existing file differs from the scaffold adoption writes (-25/+10 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ~ [SYNC] SECURITY.md                          : Existing file differs from the scaffold adoption writes (-25/+7 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ~ [SYNC] docs/adr/README.md                   : Architectural Decision Records directory verified present
+  ~ [SYNC] .config/labels.yaml                  : Existing repository label taxonomy preserved (repository configuration; --force does not replace it)
+  ~ [SYNC] .paperclip/harness.json              : Existing operator-owned Paperclip harness kept as written: it is neither the current contract nor unmodified earlier Praetor output, so --force keeps it too; delete it and re-run adopt to regenerate it
+  ~ [SYNC] .agents/agents/repo-auditor.md       : Existing file differs from the scaffold adoption writes (-11/+6 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ~ [SYNC] .agents/agents/repo-gatekeeper.md    : Existing file differs from the scaffold adoption writes (-10/+12 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ~ [SYNC] .claude/agents/c-reviewer.md         : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .github/agents/c-reviewer.md         : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .gemini/agents/c-reviewer.md         : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .codex/agents/c-reviewer.md          : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .claude/agents/doc-reviewer.md       : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .github/agents/doc-reviewer.md       : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .gemini/agents/doc-reviewer.md       : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .codex/agents/doc-reviewer.md        : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .claude/agents/ffmpeg-patch-reviewer.md : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .github/agents/ffmpeg-patch-reviewer.md : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .gemini/agents/ffmpeg-patch-reviewer.md : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .codex/agents/ffmpeg-patch-reviewer.md : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .claude/agents/interop-abi-reviewer.md : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .github/agents/interop-abi-reviewer.md : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .gemini/agents/interop-abi-reviewer.md : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .codex/agents/interop-abi-reviewer.md : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .claude/agents/pr-body-checker.md    : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .github/agents/pr-body-checker.md    : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .gemini/agents/pr-body-checker.md    : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .codex/agents/pr-body-checker.md     : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .claude/agents/repo-auditor.md       : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .github/agents/repo-auditor.md       : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .gemini/agents/repo-auditor.md       : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .codex/agents/repo-auditor.md        : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .claude/agents/repo-gatekeeper.md    : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .github/agents/repo-gatekeeper.md    : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .gemini/agents/repo-gatekeeper.md    : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .codex/agents/repo-gatekeeper.md     : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .claude/agents/vulkan-shader-reviewer.md : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .github/agents/vulkan-shader-reviewer.md : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .gemini/agents/vulkan-shader-reviewer.md : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .codex/agents/vulkan-shader-reviewer.md : Synchronized vendor copy of the canonical agent definition
+  ~ [SYNC] .claude/settings.json                : Pre-tool interceptor already registered: praetorctl hook claude pre-tool
+  ~ [SYNC] .gemini/settings.json                : Pre-tool interceptor already registered: praetorctl hook gemini pre-tool
+  ~ [SYNC] .codex/hooks.json                    : Pre-tool interceptor already registered: praetorctl hook codex pre-tool
+
+Warnings (13):
+  ! Project verification preserved-unverified: Select and exercise the project's configured native test/build commands for meson.build; a governance profile cannot select them. A required build or test command is absent; define and exercise the project's verify-all contract. Existing custom verify-all is preserved; execute and review it before claiming project verification.
+  ! Existing AGENTS.md was preserved; review its commands against the verification plan or use --force to refresh a recognized harness boundary.
+  ! .vscode/settings.json: kept unchanged, not verified: it lacks the managed vscode values "/antigravity.searchMaxWorkspaceFileCount", "/standards.sentinel.headroomMB", "/files.watcherExclude/**~1.workingdir~1**", "/files.watcherExclude/**~1.workingdir2~1**". Re-run adopt with --force to merge them; every other key is kept
+  ! .idea/inspectionProfiles/standards.xml: kept unchanged, not verified: it differs from the jetbrains template (regenerating would change -0/+5 lines) and adoption does not overwrite it. Delete it and re-run adopt to regenerate it
+  ! lua/standards.lua: kept unchanged, not verified: it differs from the neovim template (regenerating would change -9/+4 lines, removed "-- Pelorus governance commands. No repository-local standards LSP is shipped.", "vim.api.nvim_create_user_command(\"StandardsAudit\", function()", "  vim.cmd(\"!make audit\")" and 6 more) and adoption does not overwrite it. Delete it and re-run adopt to regenerate it
+  ! .zed/settings.json: kept unchanged, not verified: it lacks the managed zed values "/languages/Go". Re-run adopt with --force to merge them; every other key is kept
+  ! .helix/languages.toml: kept unchanged, not verified: it differs from the helix template (regenerating would change -0/+10 lines) and adoption does not overwrite it. Delete it and re-run adopt to regenerate it
+  ! CONTRIBUTING.md: existing file differs from the scaffold adoption writes (-118/+38 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ! .github/PULL_REQUEST_TEMPLATE.md: existing file differs from the scaffold adoption writes (-25/+10 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ! SECURITY.md: existing file differs from the scaffold adoption writes (-25/+7 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ! .agents/agents/repo-auditor.md: existing file differs from the scaffold adoption writes (-11/+6 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ! .agents/agents/repo-gatekeeper.md: existing file differs from the scaffold adoption writes (-10/+12 lines); not audit-verified; kept, --force included (delete it and re-run adopt to regenerate it)
+  ! lefthook.yml: existing lefthook.yml differs from the scaffold adoption writes and is no earlier Praetor rendering; kept, --force included, and not activated. It lacks 5 generated jobs (post-commit/commands/dedupe-cadence, post-commit/commands/state-sync, pre-push/commands/audit, pre-push/commands/flavor-audit, pre-push/commands/gate) and adds 1 (pre-push/commands/verify-all). Merge the generated jobs by hand, or remove lefthook.yml and re-run adopt to regenerate it, then run 'lefthook install'
+
+--- Governance Pillars Synchronized ---
+  ⚠ Universal Harness : Canonical AGENTS.md, caveman-linted by compile-context --verify and audit [warned: 1 warning(s)]
+  ⚠ AI Context Sync   : 6 targets (Claude Code, Cursor, Copilot, Windsurf, Codex, Gemini) [warned: 1 warning(s)]
+  ⚠ IDE Ecosystem     : VS Code, JetBrains (CLion/GoLand/PyCharm), Neovim [warned: 5 warning(s)]
+  ✓ DevContainer      : Containerized deterministic dev environment (.devcontainer)
+  ✓ Verification Gate : Makefile 'verify-all' standard entrypoint
+
+Repository successfully adopted into cordanaLLM/praetor governance!

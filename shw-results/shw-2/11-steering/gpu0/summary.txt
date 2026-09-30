@@ -1,0 +1,41 @@
+ROI rectangles on frame 0: 64 (48 entirely in the left ramp half); qoffsets: 1x-281/1000 1x-282/1000 1x-321/1000 48x-323/1000 1x-324/1000 12x-333/1000 
+Vulkan diagnostics during analyze: VUID-VkFormatProperties2-pNext-pNext x20; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x4; 
+== QSV HEVC CQP (dense MBQP path expected on runtime >= 1.28)
+OK   hevc-noroi [deterministic] size=26863 md5=b5da520ac860 left=55.633301 right=36.411305 warn=[] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+OK   hevc-roi-stock [deterministic] size=27777 md5=517fddeea41f left=57.081634 right=36.432727 warn=[] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+OK   hevc-roi-pelorus [deterministic] size=27777 md5=517fddeea41f left=57.081634 right=36.432727 warn=[] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+== QSV HEVC ICQ (-global_quality): documented fallback to stock rectangles
+OK   hevc-icq-noroi [deterministic] size=35197 md5=ae6db7009541 left=53.378772 right=39.633779 warn=[] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+OK   hevc-icq-roi-stock [deterministic] size=35197 md5=ae6db7009541 left=53.378772 right=39.633779 warn=[] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+OK   hevc-icq-roi-pelorus [deterministic] size=35197 md5=ae6db7009541 left=53.378772 right=39.633779 warn=[pelorus_roi dense delta-QP maps requires CQP rate control; falling back to the per-region mfxExtEncoderROI path.|] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+== QSV H.264 (stock rectangle path by contract)
+OK   h264-noroi [deterministic] size=32936 md5=8aef72c01d5f left=54.074422 right=37.776242 warn=[] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+OK   h264-roi-stock [deterministic] size=33408 md5=b0c9186120a1 left=54.279157 right=37.779563 warn=[] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+OK   h264-roi-pelorus [deterministic] size=33408 md5=b0c9186120a1 left=54.279157 right=37.779563 warn=[pelorus_roi dense delta-QP maps requires HEVC; falling back to the per-region mfxExtEncoderROI path.|] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+== QSV AV1: no pelorus_roi by contract
+OK   av1qsv-noroi [deterministic] size=34825 md5=834c9f29fa69 left=51.544571 right=39.554505 warn=[] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+OK   av1qsv-roi [deterministic] size=34825 md5=834c9f29fa69 left=51.544571 right=39.554505 warn=[] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+OK   av1qsv-roi-pelorus [deterministic] size=34825 md5=834c9f29fa69 left=51.544571 right=39.554505 warn=[Codec AVOption pelorus_roi (Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via libaom AOME_SET_ROI_MAP (<= 8 segments/frame)) has not been used for any stream. The most likely reason is either wrong type (e.g. a video option with no video streams) or that it is a private option of some decoder which was not actually used for any stream.|] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+== libsvtav1 / libaom-av1 ROI (CPU encoders fed by the Vulkan analyze)
+OK   svt-noroi [deterministic] size=45697 md5=d5ecb0f547bc left=64.727361 right=37.918689 warn=[] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+OK   svt-roi-off [deterministic] size=45697 md5=d5ecb0f547bc left=64.727361 right=37.918689 warn=[] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+OK   svt-roi-pelorus [deterministic] size=54660 md5=c65b1337af28 left=64.727361 right=38.127372 warn=[] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+OK   aom-noroi [deterministic] size=21350 md5=947cc67f570a left=57.448462 right=41.199709 warn=[] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+OK   aom-roi-off [deterministic] size=21350 md5=947cc67f570a left=57.448462 right=41.199709 warn=[] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+OK   aom-roi-pelorus [deterministic] size=21350 md5=947cc67f570a left=57.448462 right=41.199709 warn=[Pelorus ROI: AOME_SET_ROI_MAP failed (res=8); continuing without ROI bias.|] vkdiag=[VUID-VkFormatProperties2-pNext-pNext x10; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x2; ]
+== scenecut: mc(meta=1) -> hwdownload -> pelorus_scenecut -> hevc_qsv; long-GOP decoded source, hard cut at frame 10
+source keyframes: 0(I) 
+rc=0 scenecut-force_idr1: pict_type leaving pelorus_scenecut=IPPPPPPPPPIPPPPPPPPP ; encoded keyframes at: 0(I) 
+rc=0 scenecut-force_idr0: pict_type leaving pelorus_scenecut=IPPPPPPPPPPPPPPPPPPP ; encoded keyframes at: 0(I) 
+rc=0 scenecut-force_idr1-fkfsource: pict_type leaving pelorus_scenecut=IPPPPPPPPPIPPPPPPPPP ; encoded keyframes at: 0(I) 10(I) 
+rc=0 scenecut-force_idr0-fkfsource: pict_type leaving pelorus_scenecut=IPPPPPPPPPPPPPPPPPPP ; encoded keyframes at: 0(I) 
+== grain_estimate(native=1) -> AV1 encoders: is film grain signalled?
+rc=0 grain-libsvtav1: frames reaching the encoder with AV_FRAME_DATA_FILM_GRAIN_PARAMS=6; bitstream film_grain_params_present=0 
+rc=0 grain-libaom-av1: frames reaching the encoder with AV_FRAME_DATA_FILM_GRAIN_PARAMS=6; bitstream film_grain_params_present=0 
+== pelorus_fgs BSF on a hevc_qsv bitstream
+FGC SEI count: in=0 out=10 twice(skip_existing=1)=10 chroma=10 model0=10 (10 access units)
+components=0 byte-identical to a plain -c copy remux: NO; plain remux identical to encoder output: yes
+fields out: film_grain_model_id=1 blending_mode_id=0 log2_scale_factor=6 comp_model_present_flag[0]=1 intensity_interval_lower_bound[0][0]=16 intensity_interval_upper_bound[0][0]=235 comp_model_value[0][0][0]=40 film_grain_characteristics_persistence_flag=1 
+fields chroma: comp_model_present_flag[0]=1 comp_model_present_flag[1]=1 comp_model_present_flag[2]=1 comp_model_value[0][0][0]=16 comp_model_value[1][0][0]=20 comp_model_value[2][0][0]=20 film_grain_characteristics_persistence_flag=0 
+decode fgs-out: no-SEI=612fc3364a82 with-SEI=612fc3364a82 with-SEI+export_side_data=612fc3364a82 -> no synthesis by the FFmpeg decoder decoder-warnings=[      2 Unsupported film grain parameters. Ignoring film grain. ]
+decode fgs-model0: no-SEI=612fc3364a82 with-SEI=0f2d66f55bb5 with-SEI+export_side_data=612fc3364a82 -> decoder synthesized H.274 grain from the inserted SEI decoder-warnings=[]

@@ -1,0 +1,46 @@
+ffmpeg version n9.0.2-18-g1f537d7 Copyright (c) 2000-2026 the FFmpeg developers
+built with gcc 16.2.0 (Rev4, Built by MSYS2 project)
+configuration: --prefix='C:/tmp/pel/prefix' --libdir='C:/tmp/pel/prefix/lib' --enable-vulkan --enable-libvpl --enable-libaom --enable-libsvtav1 --enable-gpl --enable-libx264 --enable-libx265 --enable-libdav1d --enable-libvmaf --enable-ffnvcodec --enable-nvenc --enable-d3d11va --enable-dxva2 --disable-doc
+== static libavfilter consumer ==
+pkg-config --static libavfilter carries -lpelorus
+static consumer linked and found pelorus_scenecut
+== filters ==
+registered filter: pelorus_aa_vulkan
+registered filter: pelorus_analyze_vulkan
+registered filter: pelorus_borderfix_vulkan
+registered filter: pelorus_deband_vulkan
+registered filter: pelorus_deblock_vulkan
+registered filter: pelorus_dehalo_vulkan
+registered filter: pelorus_denoise_vulkan
+registered filter: pelorus_grain_estimate_vulkan
+registered filter: pelorus_mc_vulkan
+registered filter: pelorus_scenecut
+10
+== bsfs ==
+registered bitstream filter: pelorus_fgs
+== encoder options ==
+registered encoder option: h264_qsv -pelorus_roi
+registered encoder option: hevc_qsv -pelorus_roi
+registered encoder option: libaom-av1 -pelorus_roi
+registered encoder option: libsvtav1 -pelorus_roi
+registered encoder option: h264_nvenc -pelorus_roi
+registered encoder option: h264_nvenc -pelorus_me_hints
+registered encoder option: hevc_nvenc -pelorus_roi
+registered encoder option: hevc_nvenc -pelorus_me_hints
+registered encoder option: av1_nvenc -pelorus_roi
+registered encoder option: av1_nvenc -pelorus_film_grain
+registered encoder option: h264_vulkan -pelorus_roi
+registered encoder option: hevc_vulkan -pelorus_roi
+registered encoder option: av1_vulkan -pelorus_roi
+av1_qsv pelorus options: 0 (expected 0: not in the stack)
+  [h264_qsv]   -pelorus_roi       <boolean>    E..V....... Honor AV_FRAME_DATA_REGIONS_OF_INTEREST (H.264 uses the stock per-region QSV ROI path) (default false)
+  [hevc_qsv]   -pelorus_roi       <boolean>    E..V....... Honor AV_FRAME_DATA_REGIONS_OF_INTEREST via dense QSV delta-QP maps for progressive CQP on runtime API 1.28+, otherwise the stock per-region ROI path (default false)
+  [libaom-av1]   -pelorus_roi       <boolean>    E..V....... Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via libaom AOME_SET_ROI_MAP (<= 8 segments/frame) (default false)
+  [libsvtav1]   -pelorus_roi       <boolean>    E..V....... Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the SVT-AV1 ROI segment map (requires SVT-AV1 >= 1.6.0) (default false)
+  [hevc_vulkan]   -pelorus_roi       <boolean>    E..V....... Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the Vulkan-video quantization map (driver-probed; default off) (default false)
+  [av1_vulkan]   -pelorus_roi       <boolean>    E..V....... Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the Vulkan-video quantization map (driver-probed; default off) (default false)
+  [h264_nvenc]   -pelorus_roi       <boolean>    E..V....... Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the NVENC delta-QP map (default false)
+  [h264_nvenc]   -pelorus_me_hints  <boolean>    E..V....... Feed the Pelorus PEL_SEC_MOTION MV field to NVENC external ME hints (encode speed, H.264/HEVC) (default false)
+  [av1_nvenc]   -pelorus_roi       <boolean>    E..V....... Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the NVENC delta-QP map (default false)
+  [av1_nvenc]   -pelorus_film_grain <boolean>    E..V....... Carry the Pelorus AV1 film-grain estimate into NVENC hardware film-grain synthesis (default false)
+RESULT: fail=0

@@ -1,0 +1,28 @@
+Bereite Arbeitsverzeichnis vor (losgelöster HEAD 946fcce)
+replayed 18 patches -> shw/pelorus-regen-d1d2d3 = 94ece8dfc9e2af93a5b18951b9c3bb4d3a0a66ec
+files changed vs current build tree HEAD 56e5a92:
+ libavfilter/vf_pelorus_denoise_vulkan.c      | 32 ++++++++-----------
+ libavfilter/vulkan/pelorus_aa.comp.glsl      |  4 +--
+ libavfilter/vulkan/pelorus_denoise.comp.glsl | 46 ++++++++++++++++++----------
+ 3 files changed, 44 insertions(+), 38 deletions(-)
+built+installed in 54s; recompiled objects:
+AR	libavcodec/libavcodec.a
+AR	libavdevice/libavdevice.a
+AR	libavfilter/libavfilter.a
+AR	libavformat/libavformat.a
+AR	libavutil/libavutil.a
+CC	fftools/cmdutils.o
+CC	fftools/opt_common.o
+CC	libavcodec/version.o
+CC	libavdevice/version.o
+CC	libavfilter/vf_pelorus_denoise_vulkan.o
+CC	libavfilter/vulkan/pelorus_aa.comp.spv.o
+CC	libavfilter/vulkan/pelorus_denoise.comp.spv.o
+CC	libavformat/version.o
+CC	libavutil/version.o
+CC	libswresample/version.o
+CC	libswscale/version.o
+GLSLC	libavfilter/vulkan/pelorus_denoise.comp.spv
+GZIP	libavfilter/vulkan/pelorus_aa.comp.spv.gz
+GZIP	libavfilter/vulkan/pelorus_denoise.comp.spv.gz
+warnings in rebuilt units: 0

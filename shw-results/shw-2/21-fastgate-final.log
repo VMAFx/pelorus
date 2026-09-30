@@ -1,0 +1,67 @@
+== meson setup + ninja
+== meson test --suite=fast
+ 8/27 fast - pelorus:shader-pelorus_mc-compile                     OK              0.12s
+ 9/27 fast - pelorus:shader-pelorus_dehalo-compile                 OK              0.12s
+10/27 fast - pelorus:shipped-shader-pelorus_analyze-compile        OK              0.12s
+11/27 fast - pelorus:shader-pelorus_deblock-compile                OK              0.13s
+12/27 fast - pelorus:shipped-shader-pelorus_deband-compile         OK              0.12s
+13/27 fast - pelorus:shader-pelorus_grain_estimate-compile         OK              0.14s
+14/27 fast - pelorus:shader-binding-order                          OK              0.05s
+15/27 fast - pelorus:vulkan-storage-domain                         OK              0.07s
+16/27 fast - pelorus:grain-accumulator-bounds                      OK              0.02s
+17/27 fast - pelorus:shipped-shader-pelorus_grain_estimate-compile OK              0.13s
+18/27 fast - pelorus:shipped-shader-pelorus_qpmap-compile          OK              0.12s
+19/27 fast - pelorus:vulkan-sample-scale                           OK              0.10s
+20/27 fast - pelorus:shipped-shader-pelorus_mc-compile             OK              0.18s
+21/27 fast - pelorus:shipped-shader-pelorus_deblock-compile        OK              0.16s
+22/27 fast - pelorus:shipped-shader-pelorus_dehalo-compile         OK              0.18s
+23/27 fast - pelorus:shipped-shader-pelorus_borderfix-compile      OK              0.16s
+24/27 fast - pelorus:shipped-shader-pelorus_denoise-compile        OK              0.20s
+25/27 fast - pelorus:shipped-shader-pelorus_aa-compile             OK              0.19s
+26/27 fast - pelorus:vulkan-validation-streams                     OK              0.25s
+27/27 fast - pelorus:build-config-sync                             OK              0.31s
+
+Ok:                27  
+Fail:              0   
+
+Full log written to /tmp/repo/build/meson-logs/testlog.txt
+== clang-format (libpelorus, as CI)
+clang-format-ok
+== shellcheck touched shell
+shellcheck-ok
+== black --check touched python
+Oh no! 💥 💔 💥
+1 file would be reformatted.
+Oh no! 💥 💔 💥
+1 file would be reformatted.
+== glslc compile of every canonical shader (FFmpeg-tree shaders need FFmpeg includes? try standalone)
+Unable to parse built-ins
+ERROR: 0:350: 'double' : not supported with this profile: none
+ERROR: 0:350: '' : compilation terminated 
+Unable to parse built-ins
+ERROR: 0:350: 'double' : not supported with this profile: none
+ERROR: 0:350: '' : compilation terminated 
+Unable to parse built-ins
+ERROR: 0:350: 'double' : not supported with this profile: none
+ERROR: 0:350: '' : compilation terminated 
+Unable to parse built-ins
+ERROR: 0:350: 'double' : not supported with this profile: none
+ERROR: 0:350: '' : compilation terminated 
+Unable to parse built-ins
+ERROR: 0:350: 'double' : not supported with this profile: none
+ERROR: 0:350: '' : compilation terminated 
+Unable to parse built-ins
+ERROR: 0:350: 'double' : not supported with this profile: none
+ERROR: 0:350: '' : compilation terminated 
+Unable to parse built-ins
+ERROR: 0:350: 'double' : not supported with this profile: none
+ERROR: 0:350: '' : compilation terminated 
+Unable to parse built-ins
+ERROR: 0:350: 'double' : not supported with this profile: none
+ERROR: 0:350: '' : compilation terminated 
+Unable to parse built-ins
+ERROR: 0:350: 'double' : not supported with this profile: none
+ERROR: 0:350: '' : compilation terminated 
+Unable to parse built-ins
+ERROR: 0:350: 'double' : not supported with this profile: none
+ERROR: 0:350: '' : compilation terminated 

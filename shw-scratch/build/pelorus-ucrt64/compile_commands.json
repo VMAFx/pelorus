@@ -1,0 +1,44 @@
+[
+  {
+    "directory": "C:\\tmp\\pel\\shw-scratch\\build\\pelorus-ucrt64",
+    "command": "\"cc\" \"-Ilibpelorus/libpelorus-0.dll.p\" \"-Ilibpelorus\" \"-I../../../shw/libpelorus\" \"-I../../../shw/libpelorus/include\" \"-fvisibility=default\" \"-fdiagnostics-color=always\" \"-D_FILE_OFFSET_BITS=64\" \"-Wall\" \"-Winvalid-pch\" \"-Wextra\" \"-Wpedantic\" \"-Werror\" \"-std=c11\" \"-O0\" \"-g\" \"-Wshadow\" \"-Wpointer-arith\" \"-Wstrict-prototypes\" \"-Wmissing-prototypes\" \"-Wvla\" -MD -MQ libpelorus/libpelorus-0.dll.p/src_interop.c.obj -MF \"libpelorus/libpelorus-0.dll.p/src_interop.c.obj.d\" -o libpelorus/libpelorus-0.dll.p/src_interop.c.obj \"-c\" ../../../shw/libpelorus/src/interop.c",
+    "file": "../../../shw/libpelorus/src/interop.c",
+    "output": "libpelorus/libpelorus-0.dll.p/src_interop.c.obj"
+  },
+  {
+    "directory": "C:\\tmp\\pel\\shw-scratch\\build\\pelorus-ucrt64",
+    "command": "\"cc\" \"-Ilibpelorus/libpelorus-0.dll.p\" \"-Ilibpelorus\" \"-I../../../shw/libpelorus\" \"-I../../../shw/libpelorus/include\" \"-fvisibility=default\" \"-fdiagnostics-color=always\" \"-D_FILE_OFFSET_BITS=64\" \"-Wall\" \"-Winvalid-pch\" \"-Wextra\" \"-Wpedantic\" \"-Werror\" \"-std=c11\" \"-O0\" \"-g\" \"-Wshadow\" \"-Wpointer-arith\" \"-Wstrict-prototypes\" \"-Wmissing-prototypes\" \"-Wvla\" -MD -MQ libpelorus/libpelorus-0.dll.p/src_qp_report_csv.c.obj -MF \"libpelorus/libpelorus-0.dll.p/src_qp_report_csv.c.obj.d\" -o libpelorus/libpelorus-0.dll.p/src_qp_report_csv.c.obj \"-c\" ../../../shw/libpelorus/src/qp_report_csv.c",
+    "file": "../../../shw/libpelorus/src/qp_report_csv.c",
+    "output": "libpelorus/libpelorus-0.dll.p/src_qp_report_csv.c.obj"
+  },
+  {
+    "directory": "C:\\tmp\\pel\\shw-scratch\\build\\pelorus-ucrt64",
+    "command": "\"cc\" \"-Ilibpelorus/libpelorus-0.dll.p\" \"-Ilibpelorus\" \"-I../../../shw/libpelorus\" \"-I../../../shw/libpelorus/include\" \"-fvisibility=default\" \"-fdiagnostics-color=always\" \"-D_FILE_OFFSET_BITS=64\" \"-Wall\" \"-Winvalid-pch\" \"-Wextra\" \"-Wpedantic\" \"-Werror\" \"-std=c11\" \"-O0\" \"-g\" \"-Wshadow\" \"-Wpointer-arith\" \"-Wstrict-prototypes\" \"-Wmissing-prototypes\" \"-Wvla\" -MD -MQ libpelorus/libpelorus-0.dll.p/src_deband_params.c.obj -MF \"libpelorus/libpelorus-0.dll.p/src_deband_params.c.obj.d\" -o libpelorus/libpelorus-0.dll.p/src_deband_params.c.obj \"-c\" ../../../shw/libpelorus/src/deband_params.c",
+    "file": "../../../shw/libpelorus/src/deband_params.c",
+    "output": "libpelorus/libpelorus-0.dll.p/src_deband_params.c.obj"
+  },
+  {
+    "directory": "C:\\tmp\\pel\\shw-scratch\\build\\pelorus-ucrt64",
+    "command": "\"cc\" \"-Ilibpelorus/libpelorus-0.dll.p\" \"-Ilibpelorus\" \"-I../../../shw/libpelorus\" \"-I../../../shw/libpelorus/include\" \"-fvisibility=default\" \"-fdiagnostics-color=always\" \"-D_FILE_OFFSET_BITS=64\" \"-Wall\" \"-Winvalid-pch\" \"-Wextra\" \"-Wpedantic\" \"-Werror\" \"-std=c11\" \"-O0\" \"-g\" \"-Wshadow\" \"-Wpointer-arith\" \"-Wstrict-prototypes\" \"-Wmissing-prototypes\" \"-Wvla\" -MD -MQ libpelorus/libpelorus-0.dll.p/src_denoise_params.c.obj -MF \"libpelorus/libpelorus-0.dll.p/src_denoise_params.c.obj.d\" -o libpelorus/libpelorus-0.dll.p/src_denoise_params.c.obj \"-c\" ../../../shw/libpelorus/src/denoise_params.c",
+    "file": "../../../shw/libpelorus/src/denoise_params.c",
+    "output": "libpelorus/libpelorus-0.dll.p/src_denoise_params.c.obj"
+  },
+  {
+    "directory": "C:\\tmp\\pel\\shw-scratch\\build\\pelorus-ucrt64",
+    "command": "\"cc\" \"-Ilibpelorus/libpelorus-0.dll.p\" \"-Ilibpelorus\" \"-I../../../shw/libpelorus\" \"-I../../../shw/libpelorus/include\" \"-fvisibility=default\" \"-fdiagnostics-color=always\" \"-D_FILE_OFFSET_BITS=64\" \"-Wall\" \"-Winvalid-pch\" \"-Wextra\" \"-Wpedantic\" \"-Werror\" \"-std=c11\" \"-O0\" \"-g\" \"-Wshadow\" \"-Wpointer-arith\" \"-Wstrict-prototypes\" \"-Wmissing-prototypes\" \"-Wvla\" -MD -MQ libpelorus/libpelorus-0.dll.p/src_version.c.obj -MF \"libpelorus/libpelorus-0.dll.p/src_version.c.obj.d\" -o libpelorus/libpelorus-0.dll.p/src_version.c.obj \"-c\" ../../../shw/libpelorus/src/version.c",
+    "file": "../../../shw/libpelorus/src/version.c",
+    "output": "libpelorus/libpelorus-0.dll.p/src_version.c.obj"
+  },
+  {
+    "directory": "C:\\tmp\\pel\\shw-scratch\\build\\pelorus-ucrt64",
+    "command": "\"cc\" \"-Ilibpelorus/test/pelorus_interop_test.exe.p\" \"-Ilibpelorus/test\" \"-I../../../shw/libpelorus/test\" \"-I../../../shw/libpelorus/include\" \"-fdiagnostics-color=always\" \"-D_FILE_OFFSET_BITS=64\" \"-Wall\" \"-Winvalid-pch\" \"-Wextra\" \"-Wpedantic\" \"-Werror\" \"-std=c11\" \"-O0\" \"-g\" \"-Wshadow\" \"-Wpointer-arith\" \"-Wstrict-prototypes\" \"-Wmissing-prototypes\" \"-Wvla\" -MD -MQ libpelorus/test/pelorus_interop_test.exe.p/interop_test.c.obj -MF \"libpelorus/test/pelorus_interop_test.exe.p/interop_test.c.obj.d\" -o libpelorus/test/pelorus_interop_test.exe.p/interop_test.c.obj \"-c\" ../../../shw/libpelorus/test/interop_test.c",
+    "file": "../../../shw/libpelorus/test/interop_test.c",
+    "output": "libpelorus/test/pelorus_interop_test.exe.p/interop_test.c.obj"
+  },
+  {
+    "directory": "C:\\tmp\\pel\\shw-scratch\\build\\pelorus-ucrt64",
+    "command": "\"cc\" \"-Itools/pelorus_qp_report.exe.p\" \"-Itools\" \"-I../../../shw/tools\" \"-I../../../shw/libpelorus/include\" \"-fdiagnostics-color=always\" \"-D_FILE_OFFSET_BITS=64\" \"-Wall\" \"-Winvalid-pch\" \"-Wextra\" \"-Wpedantic\" \"-Werror\" \"-std=c11\" \"-O0\" \"-g\" \"-Wshadow\" \"-Wpointer-arith\" \"-Wstrict-prototypes\" \"-Wmissing-prototypes\" \"-Wvla\" -MD -MQ tools/pelorus_qp_report.exe.p/pelorus_qp_report.c.obj -MF \"tools/pelorus_qp_report.exe.p/pelorus_qp_report.c.obj.d\" -o tools/pelorus_qp_report.exe.p/pelorus_qp_report.c.obj \"-c\" ../../../shw/tools/pelorus_qp_report.c",
+    "file": "../../../shw/tools/pelorus_qp_report.c",
+    "output": "tools/pelorus_qp_report.exe.p/pelorus_qp_report.c.obj"
+  }
+]

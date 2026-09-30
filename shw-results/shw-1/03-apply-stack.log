@@ -1,0 +1,58 @@
+OK: n9.0.2 peels to 946fcce07b6dcd0331c8cc609192aeff5e1924f8
+Zu neuem Branch 'shw/pelorus-n9.0.2' gewechselt
+am: 0001-add-vf_pelorus_deband_vulkan.patch
+Wende an: feat(deband): add vf_pelorus_deband_vulkan (smart deband, Vulkan)
+am: 0002-add-vf_pelorus_analyze_vulkan.patch
+Wende an: feat(analyze): add vf_pelorus_analyze_vulkan (measured banding/variance maps)
+am: 0003-add-vf_pelorus_denoise_vulkan.patch
+Wende an: feat(denoise): add vf_pelorus_denoise_vulkan (temporal denoise)
+am: 0004-nvenc-pelorus-roi.patch
+Wende an: feat(nvenc): honor AV_FRAME_DATA_REGIONS_OF_INTEREST via the delta-QP map
+am: 0005-qsv-pelorus-roi.patch
+Wende an: fix(qsv): make dense ROI maps frame-owned and contract-bounded
+am: 0006-add-vf_pelorus_grain_estimate_vulkan.patch
+Wende an: feat(grain): add vf_pelorus_grain_estimate_vulkan (FGS param estimator)
+am: 0007-add-vf_pelorus_mc_vulkan.patch
+Wende an: feat(mc): add vf_pelorus_mc_vulkan (block-matching motion estimator)
+am: 0008-nvenc-pelorus-me-hints.patch
+Wende an: feat(nvenc): feed the Pelorus MV field to NVENC external ME hints
+am: 0009-vulkan-pelorus-qpmap.patch
+Wende an: feat(vulkan): cross-vendor "via Vulkan" QP-map steering (ADR-0114 Tier 2)
+am: 0010-add-pelorus_fgs_bsf.patch
+Wende an: feat(fgs): add pelorus_fgs bitstream filter (H.274 / HEVC FGC SEI)
+am: 0011-nvenc-pelorus-film-grain.patch
+Wende an: feat(nvenc): carry the Pelorus AV1 film-grain estimate into av1_nvenc
+am: 0012-libaom-pelorus-roi.patch
+Wende an: feat(libaom): honor AV_FRAME_DATA_REGIONS_OF_INTEREST via AOME_SET_ROI_MAP
+am: 0013-svtav1-pelorus-roi.patch
+Wende an: feat(svtav1): honor AV_FRAME_DATA_REGIONS_OF_INTEREST via the ROI segment map
+am: 0014-add-vf_pelorus_dehalo_vulkan.patch
+Wende an: feat(dehalo): add vf_pelorus_dehalo_vulkan (anime dehalo + dering, Vulkan)
+am: 0015-add-vf_pelorus_aa_vulkan.patch
+Wende an: feat(aa): add vf_pelorus_aa_vulkan (anime warp-AA + line-darkening, Vulkan)
+am: 0016-add-vf_pelorus_scenecut.patch
+Wende an: feat(scenecut): add vf_pelorus_scenecut — scene-cut to forced IDR
+am: 0017-add-vf_pelorus_deblock_vulkan.patch
+Wende an: feat(deblock): add vf_pelorus_deblock_vulkan (re-encode deblock/dering, Vulkan)
+am: 0018-add-vf_pelorus_borderfix_vulkan.patch
+Wende an: feat(borderfix): add vf_pelorus_borderfix_vulkan (dirty-line/border repair, Vulkan)
+1f537d7 feat(borderfix): add vf_pelorus_borderfix_vulkan (dirty-line/border repair, Vulkan)
+e0a3718 feat(deblock): add vf_pelorus_deblock_vulkan (re-encode deblock/dering, Vulkan)
+040e83b feat(scenecut): add vf_pelorus_scenecut — scene-cut to forced IDR
+4dcb2c6 feat(aa): add vf_pelorus_aa_vulkan (anime warp-AA + line-darkening, Vulkan)
+ac98a19 feat(dehalo): add vf_pelorus_dehalo_vulkan (anime dehalo + dering, Vulkan)
+4bf21d5 feat(svtav1): honor AV_FRAME_DATA_REGIONS_OF_INTEREST via the ROI segment map
+29b469b feat(libaom): honor AV_FRAME_DATA_REGIONS_OF_INTEREST via AOME_SET_ROI_MAP
+8fc9bc9 feat(nvenc): carry the Pelorus AV1 film-grain estimate into av1_nvenc
+f6a8055 feat(fgs): add pelorus_fgs bitstream filter (H.274 / HEVC FGC SEI)
+20289d2 feat(vulkan): cross-vendor "via Vulkan" QP-map steering (ADR-0114 Tier 2)
+bdd767b feat(nvenc): feed the Pelorus MV field to NVENC external ME hints
+6c43716 feat(mc): add vf_pelorus_mc_vulkan (block-matching motion estimator)
+efb3660 feat(grain): add vf_pelorus_grain_estimate_vulkan (FGS param estimator)
+eca42e5 fix(qsv): make dense ROI maps frame-owned and contract-bounded
+65c4045 feat(nvenc): honor AV_FRAME_DATA_REGIONS_OF_INTEREST via the delta-QP map
+9d4f711 feat(denoise): add vf_pelorus_denoise_vulkan (temporal denoise)
+a872ede feat(analyze): add vf_pelorus_analyze_vulkan (measured banding/variance maps)
+c7b48cc feat(deband): add vf_pelorus_deband_vulkan (smart deband, Vulkan)
+applied 18 patches; HEAD=1f537d773ae462979e0193e6fb912ccf105ea5f5
+no CR bytes in applied diff

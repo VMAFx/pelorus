@@ -1,0 +1,23 @@
+fix(ffmpeg): pass-through Vulkan analyzers keep the input frames context
+
+pelorus_analyze_vulkan, pelorus_grain_estimate_vulkan and pelorus_mc_vulkan
+forward their input AVFrame, but their output pads used
+ff_vk_filter_config_output() unchanged. That helper builds a fresh frames
+context whenever it cannot reuse the input one (linear tiling, missing usage
+bits), so the forwarded frames carried a context their link did not
+advertise and hwdownload rejected every one ("Input frame is not the in the
+configured hwframe context"). Each filter now replaces its output link's
+hw_frames_ctx with the input link's after the stock setup.
+
+Reproduced on Intel Arc B580 and UHD 770 (Windows) with linear_images=1:
+every analyze / grain_estimate / mc row failed before and passes after;
+Vulkan-decoded input (reusable context) was unaffected either way. Stock
+blackdetect_vulkan and scdet_vulkan still show the same upstream defect.
+
+The format matrix gains a linear-input pass-through row (skipped, not
+passed, where linear frames are unavailable) and now requires
+pelorus_grain_estimate_vulkan to be registered.
+
+Regenerated: 0002, 0006, 0007.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

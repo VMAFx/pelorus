@@ -1,0 +1,86 @@
+[Vulkan @ 00000180b057cc00] Supported layers:
+[Vulkan @ 00000180b057cc00] 	VK_LAYER_VALVE_steam_overlay
+[Vulkan @ 00000180b057cc00] 	VK_LAYER_VALVE_steam_fossilize
+[Vulkan @ 00000180b057cc00] 	VK_LAYER_LUNARG_api_dump
+[Vulkan @ 00000180b057cc00] 	VK_LAYER_LUNARG_gfxreconstruct
+[Vulkan @ 00000180b057cc00] 	VK_LAYER_KHRONOS_synchronization2
+[Vulkan @ 00000180b057cc00] 	VK_LAYER_KHRONOS_validation
+[Vulkan @ 00000180b057cc00] 	VK_LAYER_LUNARG_monitor
+[Vulkan @ 00000180b057cc00] 	VK_LAYER_LUNARG_screenshot
+[Vulkan @ 00000180b057cc00] 	VK_LAYER_KHRONOS_profiles
+[Vulkan @ 00000180b057cc00] 	VK_LAYER_KHRONOS_shader_object
+[Vulkan @ 00000180b057cc00] 	VK_LAYER_LUNARG_crash_diagnostic
+[Vulkan @ 00000180b057cc00] GPU listing:
+[Vulkan @ 00000180b057cc00]     0: Intel(R) Arc(TM) B580 Graphics (discrete) (0xe20b)
+[Vulkan @ 00000180b057cc00]     1: Intel(R) UHD Graphics 770 (integrated) (0x4680)
+[Vulkan @ 00000180b057cc00] Device 1 selected: Intel(R) UHD Graphics 770 (integrated) (0x4680)
+[Vulkan @ 00000180b057cc00] Using device extension VK_KHR_push_descriptor
+[Vulkan @ 00000180b057cc00] Using device extension VK_EXT_shader_atomic_float
+[Vulkan @ 00000180b057cc00] Using device extension VK_KHR_shader_subgroup_rotate
+[Vulkan @ 00000180b057cc00] Using device extension VK_EXT_host_image_copy
+[Vulkan @ 00000180b057cc00] Using device extension VK_KHR_workgroup_memory_explicit_layout
+[Vulkan @ 00000180b057cc00] Using device extension VK_KHR_shader_expect_assume
+[Vulkan @ 00000180b057cc00] Using device extension VK_EXT_external_memory_host
+[Vulkan @ 00000180b057cc00] Using device extension VK_KHR_external_memory_win32
+[Vulkan @ 00000180b057cc00] Using device extension VK_KHR_external_semaphore_win32
+[Vulkan @ 00000180b057cc00] Using device extension VK_KHR_video_queue
+[Vulkan @ 00000180b057cc00] Using device extension VK_KHR_video_decode_queue
+[Vulkan @ 00000180b057cc00] Using device extension VK_KHR_video_decode_h264
+[Vulkan @ 00000180b057cc00] Using device extension VK_KHR_video_decode_h265
+[Vulkan @ 00000180b057cc00] Using device extension VK_KHR_video_decode_av1
+[Vulkan @ 00000180b057cc00] Queue families:
+[Vulkan @ 00000180b057cc00]     0: graphics compute transfer sparse (queues: 1)
+[Vulkan @ 00000180b057cc00]     1: decode (queues: 2)
+[Vulkan @ 00000180b057cc00] Using device: Intel(R) UHD Graphics 770
+[Vulkan @ 00000180b057cc00] Alignments:
+[Vulkan @ 00000180b057cc00]     optimalBufferCopyRowPitchAlignment: 64
+[Vulkan @ 00000180b057cc00]     minMemoryMapAlignment:              64
+[Vulkan @ 00000180b057cc00]     nonCoherentAtomSize:                1
+[Vulkan @ 00000180b057cc00]     minImportedHostPointerAlignment:    4096
+[Parsed_testsrc2_0 @ 00000180b2b15180] size:1280x720 rate:24/1 duration:1.000000 sar:1/1
+Input #0, lavfi, from 'testsrc2=size=1280x720:rate=24:duration=1':
+  Duration: N/A, start: 0.000000, bitrate: N/A
+  Stream #0:0: Video: wrapped_avframe, 1 reference frame, yuv420p, 1280x720 [SAR 1:1 DAR 16:9], 24 fps, 24 tbr, 24 tbn
+[out#0/null @ 00000180b54ebac0] No explicit maps, mapping streams automatically...
+[vost#0:0/wrapped_avframe @ 00000180b55349c0] Created video stream from input stream 0:0
+Stream mapping:
+  Stream #0:0 -> #0:0 (wrapped_avframe (native) -> wrapped_avframe (native))
+[vost#0:0/wrapped_avframe @ 00000180b55349c0] Starting thread...
+[vf#0:0 @ 00000180b5704e80] Starting thread...
+[vist#0:0/wrapped_avframe @ 00000180b2b50300] [dec:wrapped_avframe @ 00000180b5703540] Starting thread...
+[in#0/lavfi @ 00000180b5460dc0] Starting thread...
+[graph -1 input from stream 0:0 @ 00000180b2b14e80] w:1280 h:720 pixfmt:yuv420p tb:1/24 fr:24/1 sar:1/1 csp:unknown range:unknown alpha:unspecified
+[auto_scale_0 @ 00000180b2b18680] w:iw h:ih flags:'' interl:0
+[Parsed_format_0 @ 00000180b2b17f80] auto-inserting filter 'auto_scale_0' between the filter 'graph -1 input from stream 0:0' and the filter 'Parsed_format_0'
+[auto_scale_0 @ 00000180b2b18680] w:1280 h:720 fmt:yuv420p csp:unknown range:unknown sar:1/1 -> w:1280 h:720 fmt:nv12 csp:unknown range:unknown sar:1/1 flags:0x00000004
+[auto_scale_0 @ 00000180b2b18680] [framesync @ 00000180b570c7d0] Selected 1/24 time base
+[auto_scale_0 @ 00000180b2b18680] [framesync @ 00000180b570c7d0] Sync level 1
+[Parsed_pelorus_aa_vulkan_2 @ 00000180b2b15280] Reusing existing frames context
+[graph -1 input from stream 0:0 @ 00000180b2b14e80] video frame properties congruent with link at pts_time: 0
+[pelorus_aa_vulkan @ 00000180b7b20580] Shader linked, size: 15954 compressed, 50904 SPIR-V, 50904 binary
+Output #0, null, to 'pipe:':
+  Metadata:
+    encoder         : Lavf63.1.102
+  Stream #0:0: Video: wrapped_avframe, 1 reference frame, nv12(progressive), 1280x720 [SAR 1:1 DAR 16:9], q=2-31, 200 kb/s, 24 fps, 24 tbn
+    Metadata:
+      encoder         : Lavc63.1.102 wrapped_avframe
+[out#0/null @ 00000180b54ebac0] Starting thread...
+frame=    3 fps=3.0 q=-0.0 size=N/A time=00:00:00.12 bitrate=N/A speed=0.123x elapsed=0:00:01.01    frame=    9 fps=5.9 q=-0.0 size=N/A time=00:00:00.37 bitrate=N/A speed=0.247x elapsed=0:00:01.51    [vost#0:0/wrapped_avframe @ 00000180b55349c0] [enc:wrapped_avframe @ 00000180b5702e40] Encoder thread received EOF
+[vost#0:0/wrapped_avframe @ 00000180b55349c0] Terminating thread with return code 0 (success)
+[out#0/null @ 00000180b54ebac0] All streams finished
+[out#0/null @ 00000180b54ebac0] Terminating thread with return code 0 (success)
+[in#0/lavfi @ 00000180b5460dc0] Terminating thread with return code 0 (success)
+[vf#0:0 @ 00000180b5704e80] All consumers returned EOF
+[vf#0:0 @ 00000180b5704e80] Terminating thread with return code 0 (success)
+[vist#0:0/wrapped_avframe @ 00000180b2b50300] [dec:wrapped_avframe @ 00000180b5703540] Decoder returned EOF, finishing
+[vist#0:0/wrapped_avframe @ 00000180b2b50300] [dec:wrapped_avframe @ 00000180b5703540] Terminating thread with return code 0 (success)
+[out#0/null @ 00000180b54ebac0] Output file #0 (pipe:):
+[out#0/null @ 00000180b54ebac0]   Output stream #0:0 (video): 10 frames encoded; 10 packets muxed (4240 bytes); 
+[out#0/null @ 00000180b54ebac0]   Total: 10 packets (4240 bytes) muxed
+[out#0/null @ 00000180b54ebac0] video:4KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=   10 fps=6.2 q=-0.0 Lsize=N/A time=00:00:00.41 bitrate=N/A speed=0.259x elapsed=0:00:01.61    
+[in#0/lavfi @ 00000180b5460dc0] Input file #0 (testsrc2=size=1280x720:rate=24:duration=1):
+[in#0/lavfi @ 00000180b5460dc0]   Input stream #0:0 (video): 23 packets read (9752 bytes); 14 frames decoded; 0 decode errors; 
+[in#0/lavfi @ 00000180b5460dc0]   Total: 23 packets (9752 bytes) demuxed
+
+Exiting with exit code 0

@@ -1,0 +1,10 @@
+{
+  "version": "0.2.2",
+  "descriptive_name": "pelorus",
+  "license": [
+    "BSD-2-Clause-Patent"
+  ],
+  "license_files": [],
+  "subproject_dir": "subprojects",
+  "subprojects": []
+}

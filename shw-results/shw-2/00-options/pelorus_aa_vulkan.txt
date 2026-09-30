@@ -1,0 +1,17 @@
+Filter pelorus_aa_vulkan
+  Pelorus anime warp-AA + line-darkening (Vulkan)
+    Inputs:
+       #0: default (video)
+    Outputs:
+       #0: default (video)
+pelorus_aa_vulkan AVOptions:
+   blur              <int>        ..FV....... edge-map blur radius in pixels (from 0 to 8) (default 2)
+   depth             <float>      ..FV....... warp displacement scale (pixels per unit gradient) (from 0 to 64) (default 8)
+   thresh            <float>      ..FV....... edge-map clamp ceiling (normalized) (from 0 to 1) (default 0.5)
+   darkstr           <float>      ..FV....... line-darkening strength (0 = off) (from 0 to 1) (default 0)
+   edge              <float>      ..FV....... Sobel magnitude that counts as a line (for darkening) (from 0 to 1) (default 0.08)
+   planes            <int>        ..FV....... planes to process (bitmask; default luma only) (from 0 to 15) (default 1)
+   fast              <boolean>    ..FV....... hoist the redundant sobel-mag into shared memory — bit-identical, a large ALU-bound speedup (ADR-0140); opt-in, default off (default false)
+
+
+Exiting with exit code 0

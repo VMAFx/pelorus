@@ -1,0 +1,9 @@
+[
+  "C:/tmp/pel/shw/meson.build",
+  "C:/tmp/pel/shw/meson_options.txt",
+  "C:/tmp/pel/shw/libpelorus/include/pelorus/pelorus.h",
+  "C:/tmp/pel/shw/libpelorus/meson.build",
+  "C:/tmp/pel/shw/libpelorus/test/meson.build",
+  "C:/tmp/pel/shw/libpelorus/shaders/meson.build",
+  "C:/tmp/pel/shw/tools/meson.build"
+]

@@ -1,0 +1,579 @@
+[
+  {
+    "name": "pelorus",
+    "id": "a1e9169@@pelorus@sha",
+    "type": "shared library",
+    "defined_in": "C:/tmp/pel/shw/libpelorus/meson.build",
+    "filename": [
+      "C:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/libpelorus-0.dll"
+    ],
+    "build_by_default": true,
+    "target_sources": [
+      {
+        "language": "c",
+        "machine": "host",
+        "compiler": [
+          "cc"
+        ],
+        "parameters": [
+          "-IC:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/libpelorus-0.dll.p",
+          "-IC:/tmp/pel/shw-scratch/shw2/build-native/libpelorus",
+          "-IC:/tmp/pel/shw/libpelorus",
+          "-IC:/tmp/pel/shw/libpelorus/include",
+          "-fvisibility=default",
+          "-fdiagnostics-color=always",
+          "-D_FILE_OFFSET_BITS=64",
+          "-Wall",
+          "-Winvalid-pch",
+          "-Wextra",
+          "-Wpedantic",
+          "-Werror",
+          "-std=c11",
+          "-O0",
+          "-g",
+          "-Wshadow",
+          "-Wpointer-arith",
+          "-Wstrict-prototypes",
+          "-Wmissing-prototypes",
+          "-Wvla"
+        ],
+        "sources": [
+          "C:/tmp/pel/shw/libpelorus/src/interop.c",
+          "C:/tmp/pel/shw/libpelorus/src/qp_report_csv.c",
+          "C:/tmp/pel/shw/libpelorus/src/deband_params.c",
+          "C:/tmp/pel/shw/libpelorus/src/denoise_params.c",
+          "C:/tmp/pel/shw/libpelorus/src/version.c"
+        ],
+        "generated_sources": [],
+        "unity_sources": []
+      },
+      {
+        "linker": [
+          "cc"
+        ],
+        "parameters": [
+          "-Wl,--fatal-warnings",
+          "-Wl,--allow-shlib-undefined",
+          "-shared",
+          "-Wl,--start-group",
+          "-Wl,--start-group",
+          "-Wl,--out-implib=libpelorus/libpelorus.dll.a",
+          "-Wl,--subsystem,console",
+          "-lkernel32",
+          "-luser32",
+          "-lgdi32",
+          "-lwinspool",
+          "-lshell32",
+          "-lole32",
+          "-loleaut32",
+          "-luuid",
+          "-lcomdlg32",
+          "-ladvapi32",
+          "-Wl,--end-group",
+          "-Wl,--end-group"
+        ]
+      }
+    ],
+    "extra_files": [],
+    "subproject": null,
+    "dependencies": [],
+    "depends": [],
+    "win_subsystem": "console",
+    "installed": true,
+    "install_filename": [
+      "C:/msys64/ucrt64/bin/libpelorus-0.dll"
+    ]
+  },
+  {
+    "name": "pelorus_interop_test",
+    "id": "468dc0e@@pelorus_interop_test@exe",
+    "type": "executable",
+    "defined_in": "C:/tmp/pel/shw/libpelorus/test/meson.build",
+    "filename": [
+      "C:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/test/pelorus_interop_test.exe"
+    ],
+    "build_by_default": true,
+    "target_sources": [
+      {
+        "language": "c",
+        "machine": "host",
+        "compiler": [
+          "cc"
+        ],
+        "parameters": [
+          "-IC:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/test/pelorus_interop_test.exe.p",
+          "-IC:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/test",
+          "-IC:/tmp/pel/shw/libpelorus/test",
+          "-IC:/tmp/pel/shw/libpelorus/include",
+          "-fdiagnostics-color=always",
+          "-D_FILE_OFFSET_BITS=64",
+          "-Wall",
+          "-Winvalid-pch",
+          "-Wextra",
+          "-Wpedantic",
+          "-Werror",
+          "-std=c11",
+          "-O0",
+          "-g",
+          "-Wshadow",
+          "-Wpointer-arith",
+          "-Wstrict-prototypes",
+          "-Wmissing-prototypes",
+          "-Wvla"
+        ],
+        "sources": [
+          "C:/tmp/pel/shw/libpelorus/test/interop_test.c"
+        ],
+        "generated_sources": [],
+        "unity_sources": []
+      },
+      {
+        "linker": [
+          "cc"
+        ],
+        "parameters": [
+          "-Wl,--fatal-warnings",
+          "-Wl,--allow-shlib-undefined",
+          "-Wl,--start-group",
+          "-Wl,--start-group",
+          "libpelorus/libpelorus.dll.a",
+          "-Wl,--subsystem,console",
+          "-lkernel32",
+          "-luser32",
+          "-lgdi32",
+          "-lwinspool",
+          "-lshell32",
+          "-lole32",
+          "-loleaut32",
+          "-luuid",
+          "-lcomdlg32",
+          "-ladvapi32",
+          "-Wl,--end-group",
+          "-Wl,--end-group"
+        ]
+      }
+    ],
+    "extra_files": [],
+    "subproject": null,
+    "dependencies": [],
+    "depends": [],
+    "win_subsystem": "console",
+    "installed": false
+  },
+  {
+    "name": "pelorus_deband.spv",
+    "id": "48cc62e@@pelorus_deband.spv@cus",
+    "type": "custom",
+    "defined_in": "C:/tmp/pel/shw/libpelorus/shaders/meson.build",
+    "filename": [
+      "C:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/shaders/pelorus_deband.spv"
+    ],
+    "build_by_default": true,
+    "target_sources": [
+      {
+        "language": "unknown",
+        "compiler": [
+          "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+          "-V",
+          "--target-env",
+          "vulkan1.2",
+          "@INPUT@",
+          "-o",
+          "@OUTPUT@"
+        ],
+        "parameters": [],
+        "sources": [
+          "C:/tmp/pel/shw/libpelorus/shaders/pelorus_deband.comp"
+        ],
+        "generated_sources": []
+      }
+    ],
+    "extra_files": [],
+    "subproject": null,
+    "dependencies": [],
+    "depends": [],
+    "installed": false
+  },
+  {
+    "name": "pelorus_analyze.spv",
+    "id": "48cc62e@@pelorus_analyze.spv@cus",
+    "type": "custom",
+    "defined_in": "C:/tmp/pel/shw/libpelorus/shaders/meson.build",
+    "filename": [
+      "C:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/shaders/pelorus_analyze.spv"
+    ],
+    "build_by_default": true,
+    "target_sources": [
+      {
+        "language": "unknown",
+        "compiler": [
+          "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+          "-V",
+          "--target-env",
+          "vulkan1.2",
+          "@INPUT@",
+          "-o",
+          "@OUTPUT@"
+        ],
+        "parameters": [],
+        "sources": [
+          "C:/tmp/pel/shw/libpelorus/shaders/pelorus_analyze.comp"
+        ],
+        "generated_sources": []
+      }
+    ],
+    "extra_files": [],
+    "subproject": null,
+    "dependencies": [],
+    "depends": [],
+    "installed": false
+  },
+  {
+    "name": "pelorus_denoise.spv",
+    "id": "48cc62e@@pelorus_denoise.spv@cus",
+    "type": "custom",
+    "defined_in": "C:/tmp/pel/shw/libpelorus/shaders/meson.build",
+    "filename": [
+      "C:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/shaders/pelorus_denoise.spv"
+    ],
+    "build_by_default": true,
+    "target_sources": [
+      {
+        "language": "unknown",
+        "compiler": [
+          "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+          "-V",
+          "--target-env",
+          "vulkan1.2",
+          "@INPUT@",
+          "-o",
+          "@OUTPUT@"
+        ],
+        "parameters": [],
+        "sources": [
+          "C:/tmp/pel/shw/libpelorus/shaders/pelorus_denoise.comp"
+        ],
+        "generated_sources": []
+      }
+    ],
+    "extra_files": [],
+    "subproject": null,
+    "dependencies": [],
+    "depends": [],
+    "installed": false
+  },
+  {
+    "name": "pelorus_grain_estimate.spv",
+    "id": "48cc62e@@pelorus_grain_estimate.spv@cus",
+    "type": "custom",
+    "defined_in": "C:/tmp/pel/shw/libpelorus/shaders/meson.build",
+    "filename": [
+      "C:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/shaders/pelorus_grain_estimate.spv"
+    ],
+    "build_by_default": true,
+    "target_sources": [
+      {
+        "language": "unknown",
+        "compiler": [
+          "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+          "-V",
+          "--target-env",
+          "vulkan1.2",
+          "@INPUT@",
+          "-o",
+          "@OUTPUT@"
+        ],
+        "parameters": [],
+        "sources": [
+          "C:/tmp/pel/shw/libpelorus/shaders/pelorus_grain_estimate.comp"
+        ],
+        "generated_sources": []
+      }
+    ],
+    "extra_files": [],
+    "subproject": null,
+    "dependencies": [],
+    "depends": [],
+    "installed": false
+  },
+  {
+    "name": "pelorus_mc.spv",
+    "id": "48cc62e@@pelorus_mc.spv@cus",
+    "type": "custom",
+    "defined_in": "C:/tmp/pel/shw/libpelorus/shaders/meson.build",
+    "filename": [
+      "C:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/shaders/pelorus_mc.spv"
+    ],
+    "build_by_default": true,
+    "target_sources": [
+      {
+        "language": "unknown",
+        "compiler": [
+          "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+          "-V",
+          "--target-env",
+          "vulkan1.2",
+          "@INPUT@",
+          "-o",
+          "@OUTPUT@"
+        ],
+        "parameters": [],
+        "sources": [
+          "C:/tmp/pel/shw/libpelorus/shaders/pelorus_mc.comp"
+        ],
+        "generated_sources": []
+      }
+    ],
+    "extra_files": [],
+    "subproject": null,
+    "dependencies": [],
+    "depends": [],
+    "installed": false
+  },
+  {
+    "name": "pelorus_qpmap.spv",
+    "id": "48cc62e@@pelorus_qpmap.spv@cus",
+    "type": "custom",
+    "defined_in": "C:/tmp/pel/shw/libpelorus/shaders/meson.build",
+    "filename": [
+      "C:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/shaders/pelorus_qpmap.spv"
+    ],
+    "build_by_default": true,
+    "target_sources": [
+      {
+        "language": "unknown",
+        "compiler": [
+          "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+          "-V",
+          "--target-env",
+          "vulkan1.2",
+          "@INPUT@",
+          "-o",
+          "@OUTPUT@"
+        ],
+        "parameters": [],
+        "sources": [
+          "C:/tmp/pel/shw/libpelorus/shaders/pelorus_qpmap.comp"
+        ],
+        "generated_sources": []
+      }
+    ],
+    "extra_files": [],
+    "subproject": null,
+    "dependencies": [],
+    "depends": [],
+    "installed": false
+  },
+  {
+    "name": "pelorus_dehalo.spv",
+    "id": "48cc62e@@pelorus_dehalo.spv@cus",
+    "type": "custom",
+    "defined_in": "C:/tmp/pel/shw/libpelorus/shaders/meson.build",
+    "filename": [
+      "C:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/shaders/pelorus_dehalo.spv"
+    ],
+    "build_by_default": true,
+    "target_sources": [
+      {
+        "language": "unknown",
+        "compiler": [
+          "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+          "-V",
+          "--target-env",
+          "vulkan1.2",
+          "@INPUT@",
+          "-o",
+          "@OUTPUT@"
+        ],
+        "parameters": [],
+        "sources": [
+          "C:/tmp/pel/shw/libpelorus/shaders/pelorus_dehalo.comp"
+        ],
+        "generated_sources": []
+      }
+    ],
+    "extra_files": [],
+    "subproject": null,
+    "dependencies": [],
+    "depends": [],
+    "installed": false
+  },
+  {
+    "name": "pelorus_aa.spv",
+    "id": "48cc62e@@pelorus_aa.spv@cus",
+    "type": "custom",
+    "defined_in": "C:/tmp/pel/shw/libpelorus/shaders/meson.build",
+    "filename": [
+      "C:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/shaders/pelorus_aa.spv"
+    ],
+    "build_by_default": true,
+    "target_sources": [
+      {
+        "language": "unknown",
+        "compiler": [
+          "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+          "-V",
+          "--target-env",
+          "vulkan1.2",
+          "@INPUT@",
+          "-o",
+          "@OUTPUT@"
+        ],
+        "parameters": [],
+        "sources": [
+          "C:/tmp/pel/shw/libpelorus/shaders/pelorus_aa.comp"
+        ],
+        "generated_sources": []
+      }
+    ],
+    "extra_files": [],
+    "subproject": null,
+    "dependencies": [],
+    "depends": [],
+    "installed": false
+  },
+  {
+    "name": "pelorus_deblock.spv",
+    "id": "48cc62e@@pelorus_deblock.spv@cus",
+    "type": "custom",
+    "defined_in": "C:/tmp/pel/shw/libpelorus/shaders/meson.build",
+    "filename": [
+      "C:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/shaders/pelorus_deblock.spv"
+    ],
+    "build_by_default": true,
+    "target_sources": [
+      {
+        "language": "unknown",
+        "compiler": [
+          "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+          "-V",
+          "--target-env",
+          "vulkan1.2",
+          "@INPUT@",
+          "-o",
+          "@OUTPUT@"
+        ],
+        "parameters": [],
+        "sources": [
+          "C:/tmp/pel/shw/libpelorus/shaders/pelorus_deblock.comp"
+        ],
+        "generated_sources": []
+      }
+    ],
+    "extra_files": [],
+    "subproject": null,
+    "dependencies": [],
+    "depends": [],
+    "installed": false
+  },
+  {
+    "name": "pelorus_borderfix.spv",
+    "id": "48cc62e@@pelorus_borderfix.spv@cus",
+    "type": "custom",
+    "defined_in": "C:/tmp/pel/shw/libpelorus/shaders/meson.build",
+    "filename": [
+      "C:/tmp/pel/shw-scratch/shw2/build-native/libpelorus/shaders/pelorus_borderfix.spv"
+    ],
+    "build_by_default": true,
+    "target_sources": [
+      {
+        "language": "unknown",
+        "compiler": [
+          "C:\\msys64\\ucrt64\\bin/glslangValidator.exe",
+          "-V",
+          "--target-env",
+          "vulkan1.2",
+          "@INPUT@",
+          "-o",
+          "@OUTPUT@"
+        ],
+        "parameters": [],
+        "sources": [
+          "C:/tmp/pel/shw/libpelorus/shaders/pelorus_borderfix.comp"
+        ],
+        "generated_sources": []
+      }
+    ],
+    "extra_files": [],
+    "subproject": null,
+    "dependencies": [],
+    "depends": [],
+    "installed": false
+  },
+  {
+    "name": "pelorus_qp_report",
+    "id": "f9d35d4@@pelorus_qp_report@exe",
+    "type": "executable",
+    "defined_in": "C:/tmp/pel/shw/tools/meson.build",
+    "filename": [
+      "C:/tmp/pel/shw-scratch/shw2/build-native/tools/pelorus_qp_report.exe"
+    ],
+    "build_by_default": true,
+    "target_sources": [
+      {
+        "language": "c",
+        "machine": "host",
+        "compiler": [
+          "cc"
+        ],
+        "parameters": [
+          "-IC:/tmp/pel/shw-scratch/shw2/build-native/tools/pelorus_qp_report.exe.p",
+          "-IC:/tmp/pel/shw-scratch/shw2/build-native/tools",
+          "-IC:/tmp/pel/shw/tools",
+          "-IC:/tmp/pel/shw/libpelorus/include",
+          "-fdiagnostics-color=always",
+          "-D_FILE_OFFSET_BITS=64",
+          "-Wall",
+          "-Winvalid-pch",
+          "-Wextra",
+          "-Wpedantic",
+          "-Werror",
+          "-std=c11",
+          "-O0",
+          "-g",
+          "-Wshadow",
+          "-Wpointer-arith",
+          "-Wstrict-prototypes",
+          "-Wmissing-prototypes",
+          "-Wvla"
+        ],
+        "sources": [
+          "C:/tmp/pel/shw/tools/pelorus_qp_report.c"
+        ],
+        "generated_sources": [],
+        "unity_sources": []
+      },
+      {
+        "linker": [
+          "cc"
+        ],
+        "parameters": [
+          "-Wl,--fatal-warnings",
+          "-Wl,--allow-shlib-undefined",
+          "-Wl,--start-group",
+          "-Wl,--start-group",
+          "libpelorus/libpelorus.dll.a",
+          "-Wl,--subsystem,console",
+          "-lkernel32",
+          "-luser32",
+          "-lgdi32",
+          "-lwinspool",
+          "-lshell32",
+          "-lole32",
+          "-loleaut32",
+          "-luuid",
+          "-lcomdlg32",
+          "-ladvapi32",
+          "-Wl,--end-group",
+          "-Wl,--end-group"
+        ]
+      }
+    ],
+    "extra_files": [],
+    "subproject": null,
+    "dependencies": [],
+    "depends": [],
+    "win_subsystem": "console",
+    "installed": false
+  }
+]

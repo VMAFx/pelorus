@@ -1,0 +1,113 @@
+[Vulkan @ 000001bfeb7fd7c0] Supported layers:
+[Vulkan @ 000001bfeb7fd7c0] 	VK_LAYER_VALVE_steam_overlay
+[Vulkan @ 000001bfeb7fd7c0] 	VK_LAYER_VALVE_steam_fossilize
+[Vulkan @ 000001bfeb7fd7c0] 	VK_LAYER_LUNARG_api_dump
+[Vulkan @ 000001bfeb7fd7c0] 	VK_LAYER_LUNARG_gfxreconstruct
+[Vulkan @ 000001bfeb7fd7c0] 	VK_LAYER_KHRONOS_synchronization2
+[Vulkan @ 000001bfeb7fd7c0] 	VK_LAYER_KHRONOS_validation
+[Vulkan @ 000001bfeb7fd7c0] 	VK_LAYER_LUNARG_monitor
+[Vulkan @ 000001bfeb7fd7c0] 	VK_LAYER_LUNARG_screenshot
+[Vulkan @ 000001bfeb7fd7c0] 	VK_LAYER_KHRONOS_profiles
+[Vulkan @ 000001bfeb7fd7c0] 	VK_LAYER_KHRONOS_shader_object
+[Vulkan @ 000001bfeb7fd7c0] 	VK_LAYER_LUNARG_crash_diagnostic
+[Vulkan @ 000001bfeb7fd7c0] GPU listing:
+[Vulkan @ 000001bfeb7fd7c0]     0: Intel(R) Arc(TM) B580 Graphics (discrete) (0xe20b)
+[Vulkan @ 000001bfeb7fd7c0]     1: Intel(R) UHD Graphics 770 (integrated) (0x4680)
+[Vulkan @ 000001bfeb7fd7c0] Device 0 selected: Intel(R) Arc(TM) B580 Graphics (discrete) (0xe20b)
+[Vulkan @ 000001bfeb7fd7c0] Using device extension VK_KHR_push_descriptor
+[Vulkan @ 000001bfeb7fd7c0] Using device extension VK_EXT_shader_atomic_float
+[Vulkan @ 000001bfeb7fd7c0] Using device extension VK_KHR_cooperative_matrix
+[Vulkan @ 000001bfeb7fd7c0] Using device extension VK_KHR_shader_subgroup_rotate
+[Vulkan @ 000001bfeb7fd7c0] Using device extension VK_EXT_host_image_copy
+[Vulkan @ 000001bfeb7fd7c0] Using device extension VK_KHR_workgroup_memory_explicit_layout
+[Vulkan @ 000001bfeb7fd7c0] Using device extension VK_EXT_shader_replicated_composites
+[Vulkan @ 000001bfeb7fd7c0] Using device extension VK_KHR_shader_expect_assume
+[Vulkan @ 000001bfeb7fd7c0] Using device extension VK_EXT_external_memory_host
+[Vulkan @ 000001bfeb7fd7c0] Using device extension VK_KHR_external_memory_win32
+[Vulkan @ 000001bfeb7fd7c0] Using device extension VK_KHR_external_semaphore_win32
+[Vulkan @ 000001bfeb7fd7c0] Using device extension VK_KHR_video_queue
+[Vulkan @ 000001bfeb7fd7c0] Using device extension VK_KHR_video_decode_queue
+[Vulkan @ 000001bfeb7fd7c0] Using device extension VK_KHR_video_decode_h264
+[Vulkan @ 000001bfeb7fd7c0] Using device extension VK_KHR_video_decode_h265
+[Vulkan @ 000001bfeb7fd7c0] Using device extension VK_KHR_video_decode_av1
+[Vulkan @ 000001bfeb7fd7c0] Queue families:
+[Vulkan @ 000001bfeb7fd7c0]     0: graphics compute transfer sparse (queues: 1)
+[Vulkan @ 000001bfeb7fd7c0]     1: compute sparse (queues: 4)
+[Vulkan @ 000001bfeb7fd7c0]     2: transfer sparse (queues: 2)
+[Vulkan @ 000001bfeb7fd7c0]     3: decode (queues: 2)
+[Vulkan @ 000001bfeb7fd7c0] Using device: Intel(R) Arc(TM) B580 Graphics
+[Vulkan @ 000001bfeb7fd7c0] Alignments:
+[Vulkan @ 000001bfeb7fd7c0]     optimalBufferCopyRowPitchAlignment: 64
+[Vulkan @ 000001bfeb7fd7c0]     minMemoryMapAlignment:              64
+[Vulkan @ 000001bfeb7fd7c0]     nonCoherentAtomSize:                1
+[Vulkan @ 000001bfeb7fd7c0]     minImportedHostPointerAlignment:    4096
+[h264 @ 000001bff20b7940] Reinit context to 320x240, pix_fmt: yuv420p
+[vist#0:0/h264 @ 000001bff1783700] Selecting decoder 'h264' because of requested hwaccel method vulkan
+Input #0, matroska,webm, from 'C:/tmp/pel/shw-results/shw-2/08-passthrough-ctx-postfix/src-h264.mkv':
+  Metadata:
+    ENCODER         : Lavf63.1.102
+  Duration: 00:00:01.00, start: 0.000000, bitrate: 325 kb/s
+  Stream #0:0: Video: h264 (High), 1 reference frame, yuv420p(tv, progressive, left), 320x240 [SAR 1:1 DAR 4:3], 24 fps, 24 tbr, 1k tbn
+    Metadata:
+      ENCODER         : Lavc63.1.102 libx264
+      DURATION        : 00:00:01.000000000
+[out#0/null @ 000001bff1d2ad80] No explicit maps, mapping streams automatically...
+[vost#0:0/wrapped_avframe @ 000001bff1ec03c0] Created video stream from input stream 0:0
+Stream mapping:
+  Stream #0:0 -> #0:0 (h264 (native) -> wrapped_avframe (native))
+[vost#0:0/wrapped_avframe @ 000001bff1ec03c0] Starting thread...
+[vf#0:0 @ 000001bff1f9b440] Starting thread...
+[vist#0:0/h264 @ 000001bff1783700] [dec:h264 @ 000001bff1f8d880] Starting thread...
+[in#0/matroska,webm @ 000001bff1ef1b40] Starting thread...
+[h264 @ 000001bff1f9bcc0] Decoder capabilities for h264 profile "High":
+[h264 @ 000001bff1f9bcc0]     Maximum level: 62 (stream 13)
+[h264 @ 000001bff1f9bcc0]     Width: from 8 to 4096
+[h264 @ 000001bff1f9bcc0]     Height: from 8 to 4096
+[h264 @ 000001bff1f9bcc0]     Width alignment: 8
+[h264 @ 000001bff1f9bcc0]     Height alignment: 16
+[h264 @ 000001bff1f9bcc0]     Bitstream offset alignment: 4096
+[h264 @ 000001bff1f9bcc0]     Bitstream size alignment: 4096
+[h264 @ 000001bff1f9bcc0]     Maximum references: 16
+[h264 @ 000001bff1f9bcc0]     Maximum active references: 16
+[h264 @ 000001bff1f9bcc0]     Codec header name: 'VK_STD_vulkan_video_codec_h264_decode' (driver), 'VK_STD_vulkan_video_codec_h264_decode' (compiled)
+[h264 @ 000001bff1f9bcc0]     Codec header version: 1.0.0 (driver), 1.0.0 (compiled)
+[h264 @ 000001bff1f9bcc0]     Decode modes: reuse_dst_dpb
+[h264 @ 000001bff1f9bcc0]     Capability flags: separate_references
+[h264 @ 000001bff1f9bcc0] Chosen frame pixfmt: nv12 (Vulkan ID: 1000156003)
+[h264 @ 000001bff1f9bcc0] Vulkan decoder initialization successful
+[h264 @ 000001bff1f9bcc0] Reinit context to 320x240, pix_fmt: vulkan
+[graph -1 input from stream 0:0 @ 000001bfed5e5140] w:320 h:240 pixfmt:vulkan tb:1/1000 fr:24/1 sar:1/1 csp:unknown range:tv alpha:unspecified
+[Parsed_pelorus_deband_vulkan_0 @ 000001bfed5e5f40] Reusing existing frames context
+[graph -1 input from stream 0:0 @ 000001bfed5e5140] video frame properties congruent with link at pts_time: 0
+[pelorus_deband_vulkan @ 000001bff4dec140] Shader linked, size: 7290 compressed, 20564 SPIR-V, 20564 binary
+Output #0, null, to 'pipe:':
+  Metadata:
+    encoder         : Lavf63.1.102
+  Stream #0:0: Video: wrapped_avframe, 1 reference frame, nv12(tv, progressive, left), 320x240 [SAR 1:1 DAR 4:3], q=2-31, 200 kb/s, 24 fps, 24 tbn
+    Metadata:
+      encoder         : Lavc63.1.102 wrapped_avframe
+      DURATION        : 00:00:01.000000000
+[out#0/null @ 000001bff1d2ad80] Starting thread...
+[in#0/matroska,webm @ 000001bff1ef1b40] EOF while reading input
+[in#0/matroska,webm @ 000001bff1ef1b40] Terminating thread with return code 0 (success)
+[vist#0:0/h264 @ 000001bff1783700] [dec:h264 @ 000001bff1f8d880] Decoder thread received EOF packet
+[vist#0:0/h264 @ 000001bff1783700] [dec:h264 @ 000001bff1f8d880] Decoder returned EOF, finishing
+[vf#0:0 @ 000001bff1f9b440] Filtergraph returned EOF, finishing
+[vf#0:0 @ 000001bff1f9b440] All consumers returned EOF
+[vost#0:0/wrapped_avframe @ 000001bff1ec03c0] [enc:wrapped_avframe @ 000001bff1f96f80] Encoder thread received EOF
+[vost#0:0/wrapped_avframe @ 000001bff1ec03c0] Terminating thread with return code 0 (success)
+[out#0/null @ 000001bff1d2ad80] All streams finished
+[out#0/null @ 000001bff1d2ad80] Terminating thread with return code 0 (success)
+[vist#0:0/h264 @ 000001bff1783700] [dec:h264 @ 000001bff1f8d880] Terminating thread with return code 0 (success)
+[vf#0:0 @ 000001bff1f9b440] Terminating thread with return code 0 (success)
+[out#0/null @ 000001bff1d2ad80] Output file #0 (pipe:):
+[out#0/null @ 000001bff1d2ad80]   Output stream #0:0 (video): 24 frames encoded; 24 packets muxed (10176 bytes); 
+[out#0/null @ 000001bff1d2ad80]   Total: 24 packets (10176 bytes) muxed
+[out#0/null @ 000001bff1d2ad80] video:10KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=   24 fps=0.0 q=-0.0 Lsize=N/A time=00:00:01.00 bitrate=N/A speed=  10x elapsed=0:00:00.10    
+[in#0/matroska,webm @ 000001bff1ef1b40] Input file #0 (C:/tmp/pel/shw-results/shw-2/08-passthrough-ctx-postfix/src-h264.mkv):
+[in#0/matroska,webm @ 000001bff1ef1b40]   Input stream #0:0 (video): 24 packets read (39877 bytes); 24 frames decoded; 0 decode errors; 
+[in#0/matroska,webm @ 000001bff1ef1b40]   Total: 24 packets (39877 bytes) demuxed
+[AVIOContext @ 000001bfed5e8e00] Statistics: 40709 bytes read, 0 seeks
+
+Exiting with exit code 0

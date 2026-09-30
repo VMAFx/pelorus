@@ -1,0 +1,50 @@
+[QSV @ 0000020f7f96bd00] Defaulting child_device_type to AV_HWDEVICE_TYPE_D3D11VA for oneVPL.Please explicitly set child device type via "-init_hw_device" option if needed.
+[D3D11VA @ 0000020f7f96bac0] Selecting d3d11va adapter 1
+[D3D11VA @ 0000020f7f96bac0] Using device 8086:4680 (Intel(R) UHD Graphics 770).
+[QSV @ 0000020f7f96bd00] Use Intel(R) oneVPL to create MFX session, API version is 2.17, the required implementation version is 1.3
+[QSV @ 0000020f7f96bd00] Initialize MFX session: implementation version is 2.15
+[Parsed_testsrc2_0 @ 0000020f0b6adb40] size:1280x720 rate:24/1 duration:1.000000 sar:1/1
+Input #0, lavfi, from 'testsrc2=size=1280x720:rate=24:duration=1':
+  Duration: N/A, start: 0.000000, bitrate: N/A
+  Stream #0:0: Video: wrapped_avframe, 1 reference frame, yuv420p, 1280x720 [SAR 1:1 DAR 16:9], 24 fps, 24 tbr, 24 tbn
+[out#0/null @ 0000020f01da96c0] No explicit maps, mapping streams automatically...
+[vost#0:0/av1_qsv @ 0000020f102e6380] Created video stream from input stream 0:0
+Stream mapping:
+  Stream #0:0 -> #0:0 (wrapped_avframe (native) -> av1 (av1_qsv))
+[vost#0:0/av1_qsv @ 0000020f102e6380] Starting thread...
+[vf#0:0 @ 0000020f10955cc0] Starting thread...
+[vist#0:0/wrapped_avframe @ 0000020f0b751100] [dec:wrapped_avframe @ 0000020f0b87b880] Starting thread...
+[in#0/lavfi @ 0000020f130780c0] Starting thread...
+[graph -1 input from stream 0:0 @ 0000020f0b6aba40] w:1280 h:720 pixfmt:yuv420p tb:1/24 fr:24/1 sar:1/1 csp:unknown range:unknown alpha:unspecified
+[auto_scale_0 @ 0000020f0b6ae240] w:iw h:ih flags:'' interl:0
+[format @ 0000020f0b6adc40] auto-inserting filter 'auto_scale_0' between the filter 'Parsed_null_0' and the filter 'format'
+[auto_scale_0 @ 0000020f0b6ae240] w:1280 h:720 fmt:yuv420p csp:unknown range:unknown sar:1/1 -> w:1280 h:720 fmt:nv12 csp:unknown range:tv sar:1/1 flags:0x00000004
+[auto_scale_0 @ 0000020f0b6ae240] [framesync @ 0000020f7f96ea50] Selected 1/24 time base
+[auto_scale_0 @ 0000020f0b6ae240] [framesync @ 0000020f7f96ea50] Sync level 1
+[graph -1 input from stream 0:0 @ 0000020f0b6aba40] video frame properties congruent with link at pts_time: 0
+[vost#0:0/av1_qsv @ 0000020f102e6380] [enc:av1_qsv @ 0000020f0b5f4400] Using device qs (type qsv) with av1_qsv encoder.
+[av1_qsv @ 0000020f0b96c580] Encoder: input is system memory surface
+[av1_qsv @ 0000020f0b96c580] Use Intel(R) oneVPL to create MFX session with the specified MFX loader
+[av1_qsv @ 0000020f0b96c580] Using the intelligent constant quality (ICQ) ratecontrol method
+[av1_qsv @ 0000020f0b96c580] Current codec type is unsupported
+[av1_qsv @ 0000020f0b96c580] Selected ratecontrol mode is unsupported
+[av1_qsv @ 0000020f0b96c580] some encoding parameters are not supported by the QSV runtime. Please double check the input parameters.
+[vost#0:0/av1_qsv @ 0000020f102e6380] [enc:av1_qsv @ 0000020f0b5f4400] Error while opening encoder - maybe incorrect parameters such as bit_rate, rate, width or height.
+[vf#0:0 @ 0000020f10955cc0] Error sending frames to consumers: Function not implemented
+[vf#0:0 @ 0000020f10955cc0] Task finished with error code: -40 (Function not implemented)
+[vf#0:0 @ 0000020f10955cc0] Terminating thread with return code -40 (Function not implemented)
+[vist#0:0/wrapped_avframe @ 0000020f0b751100] [dec:wrapped_avframe @ 0000020f0b87b880] Decoder returned EOF, finishing
+[vost#0:0/av1_qsv @ 0000020f102e6380] [enc:av1_qsv @ 0000020f0b5f4400] Encoder thread received EOF
+[vost#0:0/av1_qsv @ 0000020f102e6380] [enc:av1_qsv @ 0000020f0b5f4400] Could not open encoder before EOF
+[vist#0:0/wrapped_avframe @ 0000020f0b751100] [dec:wrapped_avframe @ 0000020f0b87b880] Terminating thread with return code 0 (success)
+[vost#0:0/av1_qsv @ 0000020f102e6380] Task finished with error code: -22 (Invalid argument)
+[vost#0:0/av1_qsv @ 0000020f102e6380] Terminating thread with return code -22 (Invalid argument)
+[in#0/lavfi @ 0000020f130780c0] Terminating thread with return code 0 (success)
+[out#0/null @ 0000020f01da96c0] Nothing was written into output file, because at least one of its streams received no packets.
+frame=    0 fps=0.0 q=0.0 Lsize=       0KiB time=N/A bitrate=N/A speed=N/A elapsed=0:00:00.02    
+[in#0/lavfi @ 0000020f130780c0] Input file #0 (testsrc2=size=1280x720:rate=24:duration=1):
+[in#0/lavfi @ 0000020f130780c0]   Input stream #0:0 (video): 3 packets read (1272 bytes); 2 frames decoded; 0 decode errors; 
+[in#0/lavfi @ 0000020f130780c0]   Total: 3 packets (1272 bytes) demuxed
+Conversion failed!
+
+Exiting with exit code -40

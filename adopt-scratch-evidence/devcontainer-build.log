@@ -1,0 +1,2250 @@
+[2026-09-30T15:11:40.026Z] @devcontainers/cli 0.89.0. Node.js v24.21.0. win32 10.0.26300 x64.
+[2026-09-30T15:11:40.570Z] Resolving Feature dependencies for 'ghcr.io/devcontainers/features/common-utils:2'...
+[2026-09-30T15:11:41.152Z] Resolving Feature dependencies for 'ghcr.io/devcontainers/features/nix:1'...
+[2026-09-30T15:11:41.560Z] Resolving Feature dependencies for 'ghcr.io/devcontainers/features/rust:1'...
+[2026-09-30T15:11:42.278Z] Files to omit: ''
+[2026-09-30T15:11:42.622Z] Files to omit: ''
+[2026-09-30T15:11:42.942Z] Files to omit: ''
+[2026-09-30T15:11:42.954Z] Start: Run: docker buildx build --load --build-arg BUILDKIT_INLINE_CACHE=1 -f C:\Users\ms\AppData\Local\Temp\devcontainercli\container-features\0.89.0-1790781100568\Dockerfile-with-features -t pelorus-devcontainer:adopt-verify --target dev_containers_target_stage --build-context dev_containers_feature_content_source=C:\Users\ms\AppData\Local\Temp\devcontainercli\container-features\0.89.0-1790781100568 --build-arg _DEV_CONTAINERS_BASE_IMAGE=dev_container_auto_added_stage_label --build-arg _DEV_CONTAINERS_IMAGE_USER=vscode --build-arg _DEV_CONTAINERS_FEATURE_CONTENT_SOURCE=dev_container_feature_content_temp c:\tmp\pel\adopt\.devcontainer
+[2026-09-30T15:11:43.376Z] #0 building with "pelorus-limited" instance using docker-container driver
+
+#1 [internal] load build definition from Dockerfile-with-features
+
+[2026-09-30T15:11:43.376Z] #1 transferring dockerfile: 7.28kB 0.0s done
+#1 DONE 0.0s
+
+#2 [context dev_containers_feature_content_source] load .dockerignore
+#2 transferring dev_containers_feature_content_source: 2B done
+#2 DONE 0.1s
+
+#3 [internal] load metadata for docker.io/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414
+
+[2026-09-30T15:11:43.491Z] #3 DONE 0.1s
+
+
+[2026-09-30T15:11:43.491Z] #4 [internal] load metadata for ghcr.io/vmafx/pelorus-dev@sha256:23ac69281ea469dfede2842fff58e5180cad9e39e730171a76078d8e03939883
+#4 DONE 0.1s
+
+#5 [internal] load .dockerignore
+#5 transferring context: 2B done
+#5 DONE 0.0s
+
+[2026-09-30T15:11:43.698Z] 
+
+[2026-09-30T15:11:43.699Z] #6 [context dev_containers_feature_content_source] load from client
+#6 DONE 0.0s
+
+#7 [context dev_containers_feature_content_source] load from client
+#7 DONE 0.0s
+
+#8 [context dev_containers_feature_content_source] load from client
+#8 DONE 0.0s
+
+#9 [internal] load build context
+#9 DONE 0.0s
+
+#10 [praetor_build  1/11] FROM docker.io/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414
+#10 resolve docker.io/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414
+
+[2026-09-30T15:11:43.818Z] #10 resolve docker.io/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 0.2s done
+#10 DONE 0.2s
+
+#11 [context dev_containers_feature_content_source] load from client
+
+[2026-09-30T15:11:43.818Z] #11 transferring dev_containers_feature_content_source: 22.93kB 0.0s done
+#11 DONE 0.3s
+
+#12 [dev_container_auto_added_stage_label 1/4] FROM ghcr.io/vmafx/pelorus-dev@sha256:23ac69281ea469dfede2842fff58e5180cad9e39e730171a76078d8e03939883
+#12 resolve ghcr.io/vmafx/pelorus-dev@sha256:23ac69281ea469dfede2842fff58e5180cad9e39e730171a76078d8e03939883 0.2s done
+
+[2026-09-30T15:11:44.090Z] #12 ...
+
+#9 [internal] load build context
+#9 transferring context: 216B done
+#9 DONE 0.3s
+
+[2026-09-30T15:11:44.236Z] 
+#6 [context dev_containers_feature_content_source] load from client
+
+[2026-09-30T15:11:44.236Z] #6 transferring dev_containers_feature_content_source: 103B 0.0s done
+
+[2026-09-30T15:11:44.369Z] #6 DONE 0.4s
+
+
+[2026-09-30T15:11:44.370Z] #7 [context dev_containers_feature_content_source] load from client
+#7 transferring dev_containers_feature_content_source: 30.12kB 0.0s done
+#7 DONE 0.5s
+
+#8 [context dev_containers_feature_content_source] load from client
+
+[2026-09-30T15:11:44.524Z] #8 transferring dev_containers_feature_content_source: 44.87kB 0.0s done
+#8 DONE 0.5s
+
+
+[2026-09-30T15:11:44.524Z] #12 [dev_container_auto_added_stage_label 1/4] FROM ghcr.io/vmafx/pelorus-dev@sha256:23ac69281ea469dfede2842fff58e5180cad9e39e730171a76078d8e03939883
+
+[2026-09-30T15:11:44.661Z] #12 DONE 1.2s
+
+#13 [praetor_build  4/11] COPY [praetor-source.001.b64, /tmp/praetor-source/001.b64]
+#13 CACHED
+
+
+[2026-09-30T15:11:44.661Z] #14 [praetor_build  8/11] RUN cat /tmp/praetor-source/*.b64 | base64 -d > /tmp/praetor-source.tar.gz
+#14 CACHED
+
+#15 [praetor_build  3/11] COPY [praetor-source.000.b64, /tmp/praetor-source/000.b64]
+#15 CACHED
+
+#16 [praetor_build  5/11] COPY [praetor-source.002.b64, /tmp/praetor-source/002.b64]
+#16 CACHED
+
+#17 [praetor_build  6/11] COPY [praetor-source.003.b64, /tmp/praetor-source/003.b64]
+#17 CACHED
+
+#18 [praetor_build  9/11] RUN echo 'c2051bbda5614763e81710bc2f3051ccbefb6ee62ed66d1cfe859a84b1697549  /tmp/praetor-source.tar.gz' | sha256sum -c - && tar -xzf /tmp/praetor-source.tar.gz -C /praetor-source
+#18 CACHED
+
+#19 [praetor_build  2/11] WORKDIR /praetor-source
+#19 CACHED
+
+#20 [praetor_build  7/11] COPY [praetor-source.004.b64, /tmp/praetor-source/004.b64]
+#20 CACHED
+
+#21 [praetor_build 10/11] RUN sha256sum go.mod go.sum > /tmp/praetor-modules.sha256 && /usr/local/go/bin/go mod download && /usr/local/go/bin/go mod verify && sha256sum -c /tmp/praetor-modules.sha256
+#21 CACHED
+
+#22 [praetor_build 11/11] RUN /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -o /out/praetorctl ./cmd/standardsctl
+#22 CACHED
+
+[2026-09-30T15:11:44.811Z] 
+
+[2026-09-30T15:11:44.811Z] #23 [dev_container_auto_added_stage_label 2/4] COPY --from=praetor_build --chmod=0444 /praetor-source/LICENSE /usr/local/share/praetor/LICENSE
+
+[2026-09-30T15:11:44.924Z] #23 DONE 0.3s
+
+[2026-09-30T15:11:45.088Z] 
+#24 [dev_container_auto_added_stage_label 3/4] COPY --from=praetor_build --chmod=0555 /out/praetorctl /usr/local/bin/praetorctl
+
+[2026-09-30T15:11:45.184Z] #24 DONE 0.3s
+
+[2026-09-30T15:11:45.347Z] 
+#25 [dev_container_auto_added_stage_label 4/4] COPY --from=praetor_build --chmod=0555 /out/praetorctl /usr/local/bin/standardsctl
+
+[2026-09-30T15:11:45.455Z] #25 DONE 0.3s
+
+[2026-09-30T15:11:45.619Z] 
+#26 [dev_containers_feature_content_normalize 1/2] COPY --from=dev_containers_feature_content_source devcontainer-features.builtin.env /tmp/build-features/
+
+[2026-09-30T15:11:45.752Z] #26 DONE 0.3s
+
+
+[2026-09-30T15:11:45.753Z] #27 [dev_containers_target_stage 1/6] RUN mkdir -p /tmp/dev-container-features
+
+[2026-09-30T15:11:45.989Z] #27 DONE 0.4s
+
+[2026-09-30T15:11:45.989Z] 
+#28 [dev_containers_feature_content_normalize 2/2] RUN chmod -R 0755 /tmp/build-features/
+
+[2026-09-30T15:11:46.052Z] #28 DONE 0.3s
+
+[2026-09-30T15:11:46.214Z] 
+#29 [dev_containers_target_stage 2/6] COPY --from=dev_containers_feature_content_normalize /tmp/build-features/ /tmp/dev-container-features
+
+[2026-09-30T15:11:46.302Z] #29 DONE 0.3s
+
+[2026-09-30T15:11:46.465Z] 
+#30 [dev_containers_target_stage 3/6] RUN echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'vscode' || grep -E '^vscode|^[^:]*:[^:]*:vscode:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'vscode' || grep -E '^vscode|^[^:]*:[^:]*:vscode:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
+
+[2026-09-30T15:11:46.589Z] #30 DONE 0.3s
+
+[2026-09-30T15:11:46.753Z] 
+#31 [dev_containers_target_stage 4/6] RUN --mount=type=bind,from=dev_containers_feature_content_source,source=common-utils_0,target=/tmp/build-features-src/common-utils_0     cp -ar /tmp/build-features-src/common-utils_0 /tmp/dev-container-features  && chmod -R 0755 /tmp/dev-container-features/common-utils_0  && cd /tmp/dev-container-features/common-utils_0  && chmod +x ./devcontainer-features-install.sh  && ./devcontainer-features-install.sh  && rm -rf /tmp/dev-container-features/common-utils_0
+
+[2026-09-30T15:11:46.802Z] #31 0.210 ===========================================================================
+#31 0.210 Feature       : Common Utilities
+#31 0.210 Description   : Installs a set of common command line utilities, Oh My Zsh!, and sets up a non-root user.
+#31 0.210 Id            : ghcr.io/devcontainers/features/common-utils
+#31 0.210 Version       : 2.7.0
+#31 0.210 Documentation : https://github.com/devcontainers/features/tree/main/src/common-utils
+#31 0.210 Options       :
+#31 0.210     INSTALLZSH="true"
+#31 0.210     CONFIGUREZSHASDEFAULTSHELL="false"
+#31 0.210     INSTALLOHMYZSH="true"
+[2026-09-30T15:11:46.802Z] 
+#31 0.210     INSTALLOHMYZSHCONFIG="true"
+#31 0.210     OHMYZSHTHEME="devcontainers"
+#31 0.210     UPGRADEPACKAGES="true"
+#31 0.210     USERNAME="automatic"
+#31 0.210     USERUID="automatic"
+#31 0.210     USERGID="automatic"
+#31 0.210     ADDGROUPS=""
+#31 0.210     SUDOERS="true"
+#31 0.210     NONFREEPACKAGES="false"
+#31 0.210     INSTALLSSL="true"
+#31 0.210 ===========================================================================
+
+[2026-09-30T15:11:46.964Z] #31 0.220 Marker file found:
+#31 0.222     LOCALE_ALREADY_SET=true
+#31 0.222     EXISTING_NON_ROOT_USER=vscode
+#31 0.222     RC_SNIPPET_ALREADY_ADDED=true
+#31 0.222     ZSH_ALREADY_INSTALLED=true
+
+[2026-09-30T15:11:47.027Z] #31 0.446 Packages to verify are installed:  libgcc1 liblttng-ust[0-9] libssl3
+
+[2026-09-30T15:11:47.134Z] #31 0.560 Get:1 http://security.ubuntu.com/ubuntu resolute-security InRelease [137 kB]
+
+[2026-09-30T15:11:47.243Z] #31 0.573 Get:2 http://archive.ubuntu.com/ubuntu resolute InRelease [136 kB]
+#31 0.674 Get:3 http://archive.ubuntu.com/ubuntu resolute-updates InRelease [137 kB]
+
+[2026-09-30T15:11:47.366Z] #31 0.721 Get:4 http://archive.ubuntu.com/ubuntu resolute-backports InRelease [137 kB]
+#31 0.724 Get:5 http://security.ubuntu.com/ubuntu resolute-security/universe amd64 Packages [232 kB]
+#31 0.757 Get:6 http://archive.ubuntu.com/ubuntu resolute/restricted amd64 Packages [189 kB]
+#31 0.778 Get:7 http://archive.ubuntu.com/ubuntu resolute/multiverse amd64 Packages [352 kB]
+#31 0.803 Get:8 http://archive.ubuntu.com/ubuntu resolute/main amd64 Packages [1874 kB]
+
+[2026-09-30T15:11:47.498Z] #31 0.818 Get:9 http://security.ubuntu.com/ubuntu resolute-security/multiverse amd64 Packages [13.6 kB]
+#31 0.820 Get:10 http://security.ubuntu.com/ubuntu resolute-security/restricted amd64 Packages [547 kB]
+#31 0.942 Get:11 http://security.ubuntu.com/ubuntu resolute-security/main amd64 Packages [667 kB]
+
+[2026-09-30T15:11:47.665Z] #31 0.959 Get:12 http://archive.ubuntu.com/ubuntu resolute/universe amd64 Packages [20.1 MB]
+
+[2026-09-30T15:11:48.984Z] #31 2.500 Get:13 http://archive.ubuntu.com/ubuntu resolute-updates/universe amd64 Packages [392 kB]
+
+[2026-09-30T15:11:49.111Z] #31 2.529 Get:14 http://archive.ubuntu.com/ubuntu resolute-updates/restricted amd64 Packages [563 kB]
+#31 2.572 Get:15 http://archive.ubuntu.com/ubuntu resolute-updates/multiverse amd64 Packages [14.9 kB]
+
+[2026-09-30T15:11:49.111Z] #31 2.573 Get:16 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 Packages [841 kB]
+#31 2.633 Get:17 http://archive.ubuntu.com/ubuntu resolute-backports/universe amd64 Packages [3306 B]
+
+[2026-09-30T15:11:49.510Z] #31 3.051 Fetched 26.4 MB in 3s (10.2 MB/s)
+#31 3.051 Reading package lists...
+[2026-09-30T15:11:50.536Z] 
+
+[2026-09-30T15:11:50.701Z] #31 4.143 Reading package lists...
+[2026-09-30T15:11:51.125Z] 
+
+[2026-09-30T15:11:51.286Z] #31 3.290 Building dependency tree...
+[2026-09-30T15:11:51.297Z] 
+#31 3.459 Reading state information...
+
+[2026-09-30T15:11:51.413Z] #31 3.541 libgcc-s1 is already the newest version (16-20260322-1ubuntu1).
+#31 3.541 liblttng-ust1t64 is already the newest version (2.14.0-1.1).
+#31 3.541 Solving dependencies...
+
+[2026-09-30T15:11:51.537Z] #31 3.711 The following additional packages will be installed:
+
+[2026-09-30T15:11:51.782Z] #31 3.711   libssl-dev openssl openssl-provider-legacy
+#31 3.734 The following packages will be upgraded:
+#31 3.734   libssl-dev libssl3t64 openssl openssl-provider-legacy
+#31 3.810 4 upgraded, 0 newly installed, 0 to remove and 9 not upgraded.
+#31 3.810 Need to get 6583 kB of archives.
+#31 3.810 After this operation, 4096 B of additional disk space will be used.
+[2026-09-30T15:11:51.782Z] 
+#31 3.810 Get:1 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 libssl-dev amd64 3.5.5-1ubuntu3.6 [2936 kB]
+
+[2026-09-30T15:11:51.930Z] #31 4.123 Get:2 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 openssl-provider-legacy amd64 3.5.5-1ubuntu3.6 [39.7 kB]
+
+[2026-09-30T15:11:52.070Z] #31 4.127 Get:3 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 libssl3t64 amd64 3.5.5-1ubuntu3.6 [2365 kB]
+#31 4.269 Get:4 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 openssl amd64 3.5.5-1ubuntu3.6 [1243 kB]
+
+[2026-09-30T15:11:52.869Z] #31 5.107 Fetched 6583 kB in 1s (10.6 MB/s)
+
+[2026-09-30T15:11:52.994Z] #31 5.150 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 29352 files and directories currently installed.)
+#31 5.161 Preparing to unpack .../libssl-dev_3.5.5-1ubuntu3.6_amd64.deb ...
+#31 5.237 Unpacking libssl-dev:amd64 (3.5.5-1ubuntu3.6) over (3.5.5-1ubuntu3.5) ...
+
+[2026-09-30T15:11:55.415Z] #31 7.775 Preparing to unpack .../openssl-provider-legacy_3.5.5-1ubuntu3.6_amd64.deb ...
+
+[2026-09-30T15:11:55.638Z] #31 7.851 Unpacking openssl-provider-legacy (3.5.5-1ubuntu3.6) over (3.5.5-1ubuntu3.5) ...
+
+[2026-09-30T15:11:55.657Z] #31 8.028 Setting up openssl-provider-legacy (3.5.5-1ubuntu3.6) ...
+
+[2026-09-30T15:11:55.841Z] #31 8.221 (Reading database ... 
+[2026-09-30T15:11:55.940Z] (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 29352 files and directories currently installed.)
+#31 8.230 Preparing to unpack .../libssl3t64_3.5.5-1ubuntu3.6_amd64.deb ...
+#31 8.325 Unpacking libssl3t64:amd64 (3.5.5-1ubuntu3.6) over (3.5.5-1ubuntu3.5) ...
+
+[2026-09-30T15:11:56.223Z] #31 8.622 Setting up libssl3t64:amd64 (3.5.5-1ubuntu3.6) ...
+
+[2026-09-30T15:11:56.409Z] #31 8.816 (Reading database ... 
+[2026-09-30T15:11:56.645Z] (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 29352 files and directories currently installed.)
+#31 8.824 Preparing to unpack .../openssl_3.5.5-1ubuntu3.6_amd64.deb ...
+#31 8.906 Unpacking openssl (3.5.5-1ubuntu3.6) over (3.5.5-1ubuntu3.5) ...
+
+[2026-09-30T15:11:56.781Z] #31 9.206 Setting up libssl-dev:amd64 (3.5.5-1ubuntu3.6) ...
+
+[2026-09-30T15:11:56.943Z] #31 9.277 Setting up openssl (3.5.5-1ubuntu3.6) ...
+#31 9.376 Processing triggers for man-db (2.13.1-1build1) ...
+
+[2026-09-30T15:11:57.486Z] #31 9.946 Processing triggers for libc-bin (2.43-2ubuntu2.4) ...
+[2026-09-30T15:11:57.486Z] 
+
+[2026-09-30T15:11:57.605Z] #31 10.07 Reading package lists...
+[2026-09-30T15:11:58.194Z] 
+
+[2026-09-30T15:11:58.356Z] #31 10.70 Building dependency tree...
+[2026-09-30T15:11:58.364Z] 
+#31 10.87 Reading state information...
+[2026-09-30T15:11:58.466Z] 
+#31 10.92 Calculating upgrade...
+
+[2026-09-30T15:11:58.583Z] #31 11.10 The following packages will be upgraded:
+
+[2026-09-30T15:11:58.756Z] #31 11.10   bubblewrap libevent-2.1-7t64 libexpat1 libexpat1-dev libsqlite3-0 libxml2-16
+#31 11.10   linux-libc-dev rust-coreutils sudo
+#31 11.17 9 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+#31 11.17 Need to get 8889 kB of archives.
+#31 11.17 After this operation, 778 kB of additional disk space will be used.
+#31 11.17 Get:1 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 libexpat1-dev amd64 2.7.4-1ubuntu0.2 [149 kB]
+#31 11.28 Get:2 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 libexpat1 amd64 2.7.4-1ubuntu0.2 [98.8 kB]
+
+[2026-09-30T15:11:58.862Z] #31 11.29 Get:3 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 sudo amd64 1.9.17p2-1ubuntu3.1 [955 kB]
+#31 11.39 Get:4 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 rust-coreutils amd64 0.10.0-1ubuntu2~26.04.1 [4515 kB]
+
+[2026-09-30T15:11:59.153Z] #31 11.69 Get:5 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 libsqlite3-0 amd64 3.46.1-9ubuntu0.3 [720 kB]
+
+[2026-09-30T15:11:59.257Z] #31 11.75 Get:6 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 libxml2-16 amd64 2.15.2+dfsg-0.1ubuntu0.2 [606 kB]
+#31 11.80 Get:7 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 bubblewrap amd64 0.11.1-1ubuntu0.3 [51.0 kB]
+
+[2026-09-30T15:11:59.421Z] #31 11.81 Get:8 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 libevent-2.1-7t64 amd64 2.1.12-stable-10ubuntu0.2 [145 kB]
+#31 11.82 Get:9 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 linux-libc-dev amd64 7.0.0-34.34 [1649 kB]
+
+[2026-09-30T15:12:00.059Z] #31 12.64 Fetched 8889 kB in 1s (10.6 MB/s)
+
+[2026-09-30T15:12:00.178Z] #31 12.68 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 29352 files and directories currently installed.)
+#31 12.69 Preparing to unpack .../libexpat1-dev_2.7.4-1ubuntu0.2_amd64.deb ...
+#31 12.77 Unpacking libexpat1-dev:amd64 (2.7.4-1ubuntu0.2) over (2.7.4-1) ...
+
+[2026-09-30T15:12:00.524Z] #31 13.13 Preparing to unpack .../libexpat1_2.7.4-1ubuntu0.2_amd64.deb ...
+
+[2026-09-30T15:12:00.629Z] #31 13.24 Unpacking libexpat1:amd64 (2.7.4-1ubuntu0.2) over (2.7.4-1) ...
+
+[2026-09-30T15:12:00.906Z] #31 13.53 Preparing to unpack .../sudo_1.9.17p2-1ubuntu3.1_amd64.deb ...
+
+[2026-09-30T15:12:01.120Z] #31 13.60 Unpacking sudo (1.9.17p2-1ubuntu3.1) over (1.9.17p2-1ubuntu3) ...
+
+[2026-09-30T15:12:01.417Z] #31 14.07 Preparing to unpack .../rust-coreutils_0.10.0-1ubuntu2~26.04.1_amd64.deb ...
+
+[2026-09-30T15:12:01.648Z] #31 14.15 Unpacking rust-coreutils (0.10.0-1ubuntu2~26.04.1) over (0.8.0-0ubuntu3) ...
+
+[2026-09-30T15:12:28.098Z] #31 40.66 Setting up rust-coreutils (0.10.0-1ubuntu2~26.04.1) ...
+
+[2026-09-30T15:12:28.284Z] #31 40.85 (Reading database ... 
+[2026-09-30T15:12:28.513Z] (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 29417 files and directories currently installed.)
+#31 40.87 Preparing to unpack .../libsqlite3-0_3.46.1-9ubuntu0.3_amd64.deb ...
+#31 40.94 Unpacking libsqlite3-0:amd64 (3.46.1-9ubuntu0.3) over (3.46.1-9ubuntu0.2) ...
+
+[2026-09-30T15:12:28.580Z] #31 41.16 Preparing to unpack .../libxml2-16_2.15.2+dfsg-0.1ubuntu0.2_amd64.deb ...
+
+[2026-09-30T15:12:28.799Z] #31 41.24 Unpacking libxml2-16:amd64 (2.15.2+dfsg-0.1ubuntu0.2) over (2.15.2+dfsg-0.1ubuntu0.1) ...
+
+[2026-09-30T15:12:28.842Z] #31 41.44 Preparing to unpack .../bubblewrap_0.11.1-1ubuntu0.3_amd64.deb ...
+
+[2026-09-30T15:12:29.050Z] #31 41.50 Unpacking bubblewrap (0.11.1-1ubuntu0.3) over (0.11.1-1ubuntu0.1) ...
+
+[2026-09-30T15:12:29.141Z] #31 41.76 Preparing to unpack .../libevent-2.1-7t64_2.1.12-stable-10ubuntu0.2_amd64.deb ...
+
+[2026-09-30T15:12:29.371Z] #31 41.84 Unpacking libevent-2.1-7t64:amd64 (2.1.12-stable-10ubuntu0.2) over (2.1.12-stable-10ubuntu0.1) ...
+
+[2026-09-30T15:12:29.438Z] #31 42.07 Preparing to unpack .../linux-libc-dev_7.0.0-34.34_amd64.deb ...
+
+[2026-09-30T15:12:29.656Z] #31 42.14 Unpacking linux-libc-dev:amd64 (7.0.0-34.34) over (7.0.0-31.31) ...
+
+[2026-09-30T15:12:44.474Z] #31 57.94 Setting up libexpat1:amd64 (2.7.4-1ubuntu0.2) ...
+
+[2026-09-30T15:12:44.600Z] #31 58.01 Setting up bubblewrap (0.11.1-1ubuntu0.3) ...
+#31 58.07 Setting up libxml2-16:amd64 (2.15.2+dfsg-0.1ubuntu0.2) ...
+
+[2026-09-30T15:12:44.735Z] #31 58.14 Setting up libsqlite3-0:amd64 (3.46.1-9ubuntu0.3) ...
+#31 58.22 Setting up linux-libc-dev:amd64 (7.0.0-34.34) ...
+
+[2026-09-30T15:12:44.863Z] #31 58.28 Setting up libevent-2.1-7t64:amd64 (2.1.12-stable-10ubuntu0.2) ...
+#31 58.35 Setting up libexpat1-dev:amd64 (2.7.4-1ubuntu0.2) ...
+
+[2026-09-30T15:12:45.050Z] #31 58.42 Setting up sudo (1.9.17p2-1ubuntu3.1) ...
+#31 58.54 update-alternatives: warning: forcing reinstallation of alternative /usr/bin/sudo.ws because link group sudo is broken
+
+[2026-09-30T15:12:45.238Z] #31 58.54 update-alternatives: warning: skip creation of /usr/share/man/man8/sudo.8.gz because associated file /usr/share/man/man8/sudo.ws.8.gz (of link group sudo) does not exist
+#31 58.54 update-alternatives: warning: skip creation of /usr/share/man/man8/sudoedit.8.gz because associated file /usr/share/man/man8/sudo.ws.8.gz (of link group sudo) does not exist
+#31 58.54 update-alternatives: warning: skip creation of /usr/share/man/man5/sudoers.5.gz because associated file /usr/share/man/man5/sudoers.ws.5.gz (of link group sudo) does not exist
+#31 58.54 update-alternatives: warning: skip creation of /usr/share/man/man8/visudo.8.gz because associated file /usr/share/man/man8/visudo.ws.8.gz (of link group sudo) does not exist
+#31 58.58 Processing triggers for man-db (2.13.1-1build1) ...
+
+[2026-09-30T15:12:45.325Z] #31 58.83 Processing triggers for libc-bin (2.43-2ubuntu2.4) ...
+
+[2026-09-30T15:12:45.458Z] #31 58.97 Reading package lists...
+[2026-09-30T15:12:46.038Z] 
+
+[2026-09-30T15:12:46.195Z] #31 59.59 Building dependency tree...
+#31 59.75 Reading state information...
+[2026-09-30T15:12:46.392Z] 
+#31 59.78 Solving dependencies...
+#31 59.95 0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+
+[2026-09-30T15:13:00.643Z] #31 73.40 Done!
+
+[2026-09-30T15:13:00.863Z] #31 DONE 73.5s
+
+
+[2026-09-30T15:13:00.863Z] #32 [dev_containers_target_stage 5/6] RUN --mount=type=bind,from=dev_containers_feature_content_source,source=nix_1,target=/tmp/build-features-src/nix_1     cp -ar /tmp/build-features-src/nix_1 /tmp/dev-container-features  && chmod -R 0755 /tmp/dev-container-features/nix_1  && cd /tmp/dev-container-features/nix_1  && chmod +x ./devcontainer-features-install.sh  && ./devcontainer-features-install.sh  && rm -rf /tmp/dev-container-features/nix_1
+
+[2026-09-30T15:13:00.939Z] #32 0.237 ===========================================================================
+#32 0.237 Feature       : Nix Package Manager
+#32 0.237 Description   : Installs the Nix package manager and optionally a set of packages.
+#32 0.237 Id            : ghcr.io/devcontainers/features/nix
+#32 0.237 Version       : 1.4.0
+#32 0.237 Documentation : https://github.com/devcontainers/features/tree/main/src/nix
+#32 0.237 Options       :
+#32 0.237     VERSION="latest"
+#32 0.237     MULTIUSER="true"
+
+[2026-09-30T15:13:00.939Z] #32 0.237     PACKAGES=""
+#32 0.237     USEATTRIBUTEPATH="false"
+#32 0.237     FLAKEURI=""
+#32 0.237     EXTRANIXCONFIG=""
+#32 0.237 ===========================================================================
+
+[2026-09-30T15:13:01.068Z] #32 0.373 Get:1 http://security.ubuntu.com/ubuntu resolute-security InRelease [137 kB]
+
+[2026-09-30T15:13:01.187Z] #32 0.411 Get:2 http://archive.ubuntu.com/ubuntu resolute InRelease [136 kB]
+#32 0.499 Get:3 http://security.ubuntu.com/ubuntu resolute-security/universe amd64 Packages [232 kB]
+
+[2026-09-30T15:13:01.294Z] #32 0.571 Get:4 http://archive.ubuntu.com/ubuntu resolute-updates InRelease [137 kB]
+#32 0.612 Get:5 http://security.ubuntu.com/ubuntu resolute-security/restricted amd64 Packages [547 kB]
+
+[2026-09-30T15:13:01.416Z] #32 0.650 Get:6 http://archive.ubuntu.com/ubuntu resolute-backports InRelease [137 kB]
+#32 0.740 Get:7 http://archive.ubuntu.com/ubuntu resolute/main amd64 Packages [1874 kB]
+
+[2026-09-30T15:13:01.516Z] #32 0.845 Get:8 http://security.ubuntu.com/ubuntu resolute-security/main amd64 Packages [667 kB]
+
+[2026-09-30T15:13:01.801Z] #32 1.145 Get:9 http://security.ubuntu.com/ubuntu resolute-security/multiverse amd64 Packages [13.6 kB]
+
+[2026-09-30T15:13:02.249Z] #32 1.618 Get:10 http://archive.ubuntu.com/ubuntu resolute/multiverse amd64 Packages [352 kB]
+
+[2026-09-30T15:13:02.358Z] #32 1.733 Get:11 http://archive.ubuntu.com/ubuntu resolute/universe amd64 Packages [20.1 MB]
+
+[2026-09-30T15:13:09.344Z] #32 9.091 Get:12 http://archive.ubuntu.com/ubuntu resolute/restricted amd64 Packages [189 kB]
+
+[2026-09-30T15:13:09.555Z] #32 9.154 Get:13 http://archive.ubuntu.com/ubuntu resolute-updates/multiverse amd64 Packages [14.9 kB]
+
+[2026-09-30T15:13:09.556Z] #32 9.155 Get:14 http://archive.ubuntu.com/ubuntu resolute-updates/restricted amd64 Packages [563 kB]
+
+[2026-09-30T15:13:09.602Z] #32 9.362 Get:15 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 Packages [841 kB]
+
+[2026-09-30T15:13:09.745Z] #32 9.512 Get:16 http://archive.ubuntu.com/ubuntu resolute-updates/universe amd64 Packages [392 kB]
+
+[2026-09-30T15:13:09.865Z] #32 9.545 Get:17 http://archive.ubuntu.com/ubuntu resolute-backports/universe amd64 Packages [3306 B]
+#32 9.638 Fetched 26.4 MB in 9s (2816 kB/s)
+#32 9.638 Reading package lists...
+[2026-09-30T15:13:10.454Z] 
+
+[2026-09-30T15:13:10.975Z] #32 10.80 Adjusted VERSION=2.35.2
+
+[2026-09-30T15:13:11.076Z] #32 10.81 (*) Downloading Nix installer...
+#32 10.90 (*) Performing multi-user install...
+#32 10.91 downloading Nix 2.35.2 binary tarball for x86_64-linux from 'https://releases.nixos.org/nix/nix-2.35.2/nix-2.35.2-x86_64-linux.tar.xz' to '/tmp/nix-binary-tarball-unpack.OrKY9JhuBx'...
+
+[2026-09-30T15:13:11.228Z] #32 10.91   % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+#32 10.91                                  Dload  Upload  Total   Spent   Left   Speed
+
+[2026-09-30T15:13:11.228Z] #32 10.91   0      0   0      0   0      0      0      0                              0
+[2026-09-30T15:13:12.079Z]   9 25.87M   9  2.45M   0      0  2.45M      0   00:10   00:01   00:09  2.45M
+[2026-09-30T15:13:13.092Z]  21 25.87M  21  5.65M   0      0  2.80M      0   00:09   00:02   00:07  2.80M
+[2026-09-30T15:13:14.101Z]  28 25.87M  28  7.42M   0      0  2.45M      0   00:10   00:03   00:07  2.45M
+[2026-09-30T15:13:15.100Z]  37 25.87M  37  9.63M   0      0  2.39M      0   00:10   00:04   00:06  2.39M
+[2026-09-30T15:13:16.100Z]  55 25.87M  55 14.43M   0      0  2.87M      0   00:09   00:05   00:04  2.87M
+[2026-09-30T15:13:17.100Z]  86 25.87M  86 22.29M   0      0  3.70M      0   00:06   00:06          3.95M
+[2026-09-30T15:13:17.474Z] 100 25.87M 100 25.87M   0      0  4.04M      0   00:06   00:06          3.95M100 25.87M 100 25.87M   0      0  4.04M      0   00:06   00:06          3.95M100 25.87M 100 25.87M   0      0  4.04M      0   00:06   00:06          3.95M
+
+[2026-09-30T15:13:18.475Z] #32 17.24 Note: a multi-user installation is possible. See https://nix.dev/manual/nix/stable/installation/installing-binary.html#multi-user-installation
+
+[2026-09-30T15:13:18.592Z] #32 17.24 Switching to the Multi-user Installer
+#32 17.26 Welcome to the Multi-User Nix Installation
+#32 17.26 
+#32 17.26 This installation tool will set up your computer with the Nix package
+#32 17.26 manager. This will happen in a few stages:
+#32 17.26 
+[2026-09-30T15:13:18.592Z] 
+#32 17.26 1. Make sure your computer doesn't already have Nix. If it does, I
+#32 17.26    will show you instructions on how to clean up your old install.
+#32 17.26 
+#32 17.26 2. Show you what I am going to install and where. Then I will ask
+#32 17.26    if you are ready to continue.
+#32 17.26 
+#32 17.26 3. Create the system users (uids [30001..30032]) and groups (gid 30000)
+#32 17.26    that the Nix daemon uses to run builds. To create system users
+#32 17.26    in a different range, exit and run this tool again with
+#32 17.26    NIX_FIRST_BUILD_UID set.
+#32 17.26 
+#32 17.26 4. Perform the basic installation of the Nix files daemon.
+#32 17.26 
+#32 17.26 5. Configure your shell to import special Nix Profile files, so you
+#32 17.26    can use Nix.
+#32 17.26 
+#32 17.26 6. Start the Nix daemon.
+#32 17.26 
+#32 17.26 Would you like to see a more detailed list of what I will do?
+#32 17.26 No TTY, assuming you would say yes :)
+#32 17.26 
+#32 17.26 I will:
+#32 17.26 
+#32 17.26  - make sure your computer doesn't already have Nix files
+#32 17.26    (if it does, I will tell you how to clean them up.)
+#32 17.26  - create local users (see the list above for the users I'll make)
+#32 17.26  - create a local group (nixbld)
+#32 17.26  - install Nix in /nix
+#32 17.26  - create a configuration file in /etc/nix
+#32 17.26  - set up the "default profile" by creating some Nix-related files in
+#32 17.26    /root
+#32 17.26  - back up /etc/bash.bashrc to /etc/bash.bashrc.backup-before-nix
+#32 17.26  - update /etc/bash.bashrc to include some Nix configuration
+#32 17.26  - back up /etc/zsh/zshrc to /etc/zsh/zshrc.backup-before-nix
+#32 17.26  - update /etc/zsh/zshrc to include some Nix configuration
+#32 17.27  - load and start a service (at /etc/systemd/system/nix-daemon.service
+#32 17.27    and /etc/systemd/system/nix-daemon.socket) for nix-daemon
+#32 17.27 
+#32 17.27 Ready to continue?
+#32 17.27 No TTY, assuming you would say yes :)
+#32 17.27 
+#32 17.27 ~~> Checking for artifacts of previous installs
+#32 17.27 Before I try to install, I'll check for signs Nix already is or has
+#32 17.27 been installed on this system.
+#32 17.27 
+#32 17.27 ---- warning! ------------------------------------------------------------------
+#32 17.27 We did not detect systemd on your system. With a multi-user install
+#32 17.27 without systemd you will have to manually configure your init system to
+#32 17.27 launch the Nix daemon after installation.
+#32 17.27 
+#32 17.27 Do you want to proceed with a multi-user installation?
+#32 17.27 No TTY, assuming you would say yes :)
+#32 17.28 
+#32 17.28 ---- Nix config report ---------------------------------------------------------
+#32 17.28         Temp Dir:	/tmp/tmp.JQxPdc6rrK
+#32 17.28         Nix Root:	/nix
+#32 17.28      Build Users:	32
+#32 17.28   Build Group ID:	30000
+#32 17.28 Build Group Name:	nixbld
+#32 17.28 
+#32 17.28 build users:
+#32 17.28     Username:	UID
+#32 17.28      nixbld1:	30001
+#32 17.28      nixbld2:	30002
+#32 17.28      nixbld3:	30003
+#32 17.28      nixbld4:	30004
+#32 17.28      nixbld5:	30005
+#32 17.29      nixbld6:	30006
+#32 17.29      nixbld7:	30007
+#32 17.29      nixbld8:	30008
+#32 17.29      nixbld9:	30009
+#32 17.29      nixbld10:	30010
+#32 17.29      nixbld11:	30011
+#32 17.29      nixbld12:	30012
+#32 17.29      nixbld13:	30013
+#32 17.29      nixbld14:	30014
+#32 17.29      nixbld15:	30015
+#32 17.30      nixbld16:	30016
+#32 17.30      nixbld17:	30017
+#32 17.30      nixbld18:	30018
+#32 17.30      nixbld19:	30019
+#32 17.30      nixbld20:	30020
+#32 17.30      nixbld21:	30021
+#32 17.30      nixbld22:	30022
+#32 17.30      nixbld23:	30023
+#32 17.30      nixbld24:	30024
+#32 17.30      nixbld25:	30025
+#32 17.30      nixbld26:	30026
+#32 17.30      nixbld27:	30027
+#32 17.31      nixbld28:	30028
+#32 17.31      nixbld29:	30029
+#32 17.31      nixbld30:	30030
+[2026-09-30T15:13:18.592Z] 
+#32 17.31      nixbld31:	30031
+#32 17.31      nixbld32:	30032
+#32 17.31 
+#32 17.31 Ready to continue?
+#32 17.31 No TTY, assuming you would say yes :)
+#32 17.31 
+#32 17.31 ~~> Setting up the build group nixbld
+#32 17.31 
+#32 17.31 ---- sudo execution ------------------------------------------------------------
+#32 17.31 I am executing:
+#32 17.31 
+#32 17.31     $ sudo groupadd -g 30000 --system nixbld
+#32 17.31 
+#32 17.31 Create the Nix build group, nixbld
+#32 17.31 
+#32 17.37             Created:	Yes
+
+[2026-09-30T15:13:18.694Z] #32 17.37 
+#32 17.37 ~~> Setting up the build user nixbld1
+#32 17.37 
+#32 17.37 ---- sudo execution ------------------------------------------------------------
+#32 17.37 I am executing:
+#32 17.37 
+#32 17.37     $ sudo useradd --home-dir /var/empty --comment Nix build user 1 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30001 --password ! nixbld1
+#32 17.37 
+#32 17.37 Creating the Nix build user, nixbld1
+#32 17.37 
+
+[2026-09-30T15:13:18.694Z] #32 17.42 useradd warning: nixbld1's uid 30001 is greater than SYS_UID_MAX 999
+#32 17.47            Created:	Yes
+
+[2026-09-30T15:13:18.795Z] #32 17.47             Hidden:	Yes
+#32 17.48     Home Directory:	/var/empty
+#32 17.48               Note:	Nix build user 1
+#32 17.48    Logins Disabled:	Yes
+#32 17.49   Member of nixbld:	Yes
+#32 17.49     PrimaryGroupID:	30000
+#32 17.49 
+#32 17.49 ~~> Setting up the build user nixbld2
+#32 17.49 
+#32 17.49 ---- sudo execution ------------------------------------------------------------
+#32 17.49 I am executing:
+[2026-09-30T15:13:18.795Z] 
+#32 17.49 
+#32 17.49     $ sudo useradd --home-dir /var/empty --comment Nix build user 2 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30002 --password ! nixbld2
+#32 17.49 
+#32 17.49 Creating the Nix build user, nixbld2
+#32 17.49 
+#32 17.52 useradd warning: nixbld2's uid 30002 is greater than SYS_UID_MAX 999
+#32 17.57            Created:	Yes
+#32 17.57             Hidden:	Yes
+#32 17.57     Home Directory:	/var/empty
+#32 17.58               Note:	Nix build user 2
+#32 17.58    Logins Disabled:	Yes
+
+[2026-09-30T15:13:18.924Z] #32 17.58   Member of nixbld:	Yes
+#32 17.58     PrimaryGroupID:	30000
+#32 17.59 
+#32 17.59 ~~> Setting up the build user nixbld3
+#32 17.59 
+#32 17.59 ---- sudo execution ------------------------------------------------------------
+#32 17.59 I am executing:
+#32 17.59 
+#32 17.59     $ sudo useradd --home-dir /var/empty --comment Nix build user 3 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30003 --password ! nixbld3
+#32 17.59 
+#32 17.59 Creating the Nix build user, nixbld3
+#32 17.59 
+#32 17.62 useradd warning: nixbld3's uid 30003 is greater than SYS_UID_MAX 999
+#32 17.66            Created:	Yes
+#32 17.67             Hidden:	Yes
+#32 17.67     Home Directory:	/var/empty
+#32 17.67               Note:	Nix build user 3
+#32 17.67    Logins Disabled:	Yes
+#32 17.68   Member of nixbld:	Yes
+#32 17.68     PrimaryGroupID:	30000
+#32 17.68 
+#32 17.68 ~~> Setting up the build user nixbld4
+#32 17.68 
+#32 17.68 ---- sudo execution ------------------------------------------------------------
+#32 17.68 I am executing:
+[2026-09-30T15:13:18.924Z] 
+#32 17.68 
+#32 17.68     $ sudo useradd --home-dir /var/empty --comment Nix build user 4 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30004 --password ! nixbld4
+#32 17.68 
+#32 17.68 Creating the Nix build user, nixbld4
+#32 17.68 
+#32 17.71 useradd warning: nixbld4's uid 30004 is greater than SYS_UID_MAX 999
+
+[2026-09-30T15:13:19.082Z] #32 17.77            Created:	Yes
+#32 17.77             Hidden:	Yes
+#32 17.77     Home Directory:	/var/empty
+#32 17.77               Note:	Nix build user 4
+#32 17.77    Logins Disabled:	Yes
+#32 17.78   Member of nixbld:	Yes
+#32 17.78     PrimaryGroupID:	30000
+#32 17.78 
+#32 17.78 ~~> Setting up the build user nixbld5
+#32 17.78 
+
+[2026-09-30T15:13:19.082Z] #32 17.78 ---- sudo execution ------------------------------------------------------------
+#32 17.78 I am executing:
+#32 17.78 
+#32 17.78     $ sudo useradd --home-dir /var/empty --comment Nix build user 5 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30005 --password ! nixbld5
+#32 17.78 
+#32 17.78 Creating the Nix build user, nixbld5
+#32 17.78 
+#32 17.82 useradd warning: nixbld5's uid 30005 is greater than SYS_UID_MAX 999
+#32 17.88            Created:	Yes
+
+[2026-09-30T15:13:19.183Z] #32 17.88             Hidden:	Yes
+#32 17.88     Home Directory:	/var/empty
+#32 17.89               Note:	Nix build user 5
+#32 17.89    Logins Disabled:	Yes
+#32 17.89   Member of nixbld:	Yes
+#32 17.90     PrimaryGroupID:	30000
+[2026-09-30T15:13:19.184Z] 
+#32 17.90 
+#32 17.90 ~~> Setting up the build user nixbld6
+#32 17.90 
+#32 17.90 ---- sudo execution ------------------------------------------------------------
+#32 17.90 I am executing:
+#32 17.90 
+#32 17.90     $ sudo useradd --home-dir /var/empty --comment Nix build user 6 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30006 --password ! nixbld6
+#32 17.90 
+#32 17.90 Creating the Nix build user, nixbld6
+#32 17.90 
+#32 17.94 useradd warning: nixbld6's uid 30006 is greater than SYS_UID_MAX 999
+#32 17.99            Created:	Yes
+
+[2026-09-30T15:13:19.284Z] #32 17.99             Hidden:	Yes
+#32 17.99     Home Directory:	/var/empty
+#32 17.99               Note:	Nix build user 6
+#32 18.00    Logins Disabled:	Yes
+#32 18.00   Member of nixbld:	Yes
+#32 18.00     PrimaryGroupID:	30000
+#32 18.00 
+#32 18.00 ~~> Setting up the build user nixbld7
+#32 18.00 
+
+[2026-09-30T15:13:19.285Z] #32 18.00 ---- sudo execution ------------------------------------------------------------
+#32 18.00 I am executing:
+#32 18.00 
+#32 18.00     $ sudo useradd --home-dir /var/empty --comment Nix build user 7 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30007 --password ! nixbld7
+#32 18.00 
+#32 18.00 Creating the Nix build user, nixbld7
+#32 18.00 
+#32 18.03 useradd warning: nixbld7's uid 30007 is greater than SYS_UID_MAX 999
+#32 18.08            Created:	Yes
+#32 18.08             Hidden:	Yes
+#32 18.09     Home Directory:	/var/empty
+#32 18.09               Note:	Nix build user 7
+#32 18.09    Logins Disabled:	Yes
+#32 18.09   Member of nixbld:	Yes
+
+[2026-09-30T15:13:19.385Z] #32 18.10     PrimaryGroupID:	30000
+#32 18.10 
+#32 18.10 ~~> Setting up the build user nixbld8
+#32 18.10 
+#32 18.10 ---- sudo execution ------------------------------------------------------------
+#32 18.10 I am executing:
+#32 18.10 
+#32 18.10     $ sudo useradd --home-dir /var/empty --comment Nix build user 8 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30008 --password ! nixbld8
+#32 18.10 
+[2026-09-30T15:13:19.385Z] 
+#32 18.10 Creating the Nix build user, nixbld8
+#32 18.10 
+#32 18.14 useradd warning: nixbld8's uid 30008 is greater than SYS_UID_MAX 999
+#32 18.19            Created:	Yes
+#32 18.19             Hidden:	Yes
+#32 18.19     Home Directory:	/var/empty
+#32 18.19               Note:	Nix build user 8
+#32 18.20    Logins Disabled:	Yes
+#32 18.20   Member of nixbld:	Yes
+
+[2026-09-30T15:13:19.486Z] #32 18.20     PrimaryGroupID:	30000
+#32 18.20 
+#32 18.20 ~~> Setting up the build user nixbld9
+#32 18.20 
+#32 18.21 ---- sudo execution ------------------------------------------------------------
+#32 18.21 I am executing:
+#32 18.21 
+
+[2026-09-30T15:13:19.486Z] #32 18.21     $ sudo useradd --home-dir /var/empty --comment Nix build user 9 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30009 --password ! nixbld9
+#32 18.21 
+#32 18.21 Creating the Nix build user, nixbld9
+#32 18.21 
+#32 18.24 useradd warning: nixbld9's uid 30009 is greater than SYS_UID_MAX 999
+#32 18.29            Created:	Yes
+#32 18.29             Hidden:	Yes
+#32 18.29     Home Directory:	/var/empty
+#32 18.30               Note:	Nix build user 9
+#32 18.30    Logins Disabled:	Yes
+#32 18.30   Member of nixbld:	Yes
+#32 18.30     PrimaryGroupID:	30000
+
+[2026-09-30T15:13:19.587Z] #32 18.30 
+#32 18.30 ~~> Setting up the build user nixbld10
+#32 18.30 
+#32 18.31 ---- sudo execution ------------------------------------------------------------
+#32 18.31 I am executing:
+#32 18.31 
+#32 18.31     $ sudo useradd --home-dir /var/empty --comment Nix build user 10 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30010 --password ! nixbld10
+[2026-09-30T15:13:19.587Z] 
+#32 18.31 
+#32 18.31 Creating the Nix build user, nixbld10
+#32 18.31 
+#32 18.34 useradd warning: nixbld10's uid 30010 is greater than SYS_UID_MAX 999
+#32 18.40            Created:	Yes
+#32 18.40             Hidden:	Yes
+#32 18.40     Home Directory:	/var/empty
+#32 18.41               Note:	Nix build user 10
+#32 18.41    Logins Disabled:	Yes
+#32 18.41   Member of nixbld:	Yes
+
+[2026-09-30T15:13:19.714Z] #32 18.41     PrimaryGroupID:	30000
+#32 18.41 
+#32 18.41 ~~> Setting up the build user nixbld11
+#32 18.41 
+#32 18.42 ---- sudo execution ------------------------------------------------------------
+#32 18.42 I am executing:
+#32 18.42 
+#32 18.42     $ sudo useradd --home-dir /var/empty --comment Nix build user 11 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30011 --password ! nixbld11
+#32 18.42 
+#32 18.42 Creating the Nix build user, nixbld11
+#32 18.42 
+#32 18.45 useradd warning: nixbld11's uid 30011 is greater than SYS_UID_MAX 999
+#32 18.50            Created:	Yes
+#32 18.50             Hidden:	Yes
+
+[2026-09-30T15:13:19.714Z] #32 18.50     Home Directory:	/var/empty
+#32 18.50               Note:	Nix build user 11
+#32 18.50    Logins Disabled:	Yes
+#32 18.50   Member of nixbld:	Yes
+#32 18.51     PrimaryGroupID:	30000
+#32 18.51 
+#32 18.51 ~~> Setting up the build user nixbld12
+#32 18.51 
+#32 18.51 ---- sudo execution ------------------------------------------------------------
+#32 18.51 I am executing:
+#32 18.51 
+#32 18.51     $ sudo useradd --home-dir /var/empty --comment Nix build user 12 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30012 --password ! nixbld12
+#32 18.51 
+#32 18.51 Creating the Nix build user, nixbld12
+#32 18.51 
+#32 18.54 useradd warning: nixbld12's uid 30012 is greater than SYS_UID_MAX 999
+
+[2026-09-30T15:13:19.861Z] #32 18.59            Created:	Yes
+#32 18.60             Hidden:	Yes
+[2026-09-30T15:13:19.861Z] 
+#32 18.60     Home Directory:	/var/empty
+#32 18.60               Note:	Nix build user 12
+#32 18.60    Logins Disabled:	Yes
+#32 18.61   Member of nixbld:	Yes
+#32 18.61     PrimaryGroupID:	30000
+#32 18.61 
+#32 18.61 ~~> Setting up the build user nixbld13
+#32 18.61 
+#32 18.61 ---- sudo execution ------------------------------------------------------------
+#32 18.61 I am executing:
+#32 18.61 
+#32 18.61     $ sudo useradd --home-dir /var/empty --comment Nix build user 13 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30013 --password ! nixbld13
+#32 18.61 
+#32 18.61 Creating the Nix build user, nixbld13
+#32 18.61 
+#32 18.64 useradd warning: nixbld13's uid 30013 is greater than SYS_UID_MAX 999
+#32 18.70            Created:	Yes
+
+[2026-09-30T15:13:19.962Z] #32 18.70             Hidden:	Yes
+#32 18.70     Home Directory:	/var/empty
+#32 18.70               Note:	Nix build user 13
+#32 18.71    Logins Disabled:	Yes
+#32 18.71   Member of nixbld:	Yes
+#32 18.71     PrimaryGroupID:	30000
+#32 18.71 
+#32 18.71 ~~> Setting up the build user nixbld14
+#32 18.71 
+#32 18.71 ---- sudo execution ------------------------------------------------------------
+#32 18.71 I am executing:
+#32 18.71 
+#32 18.71     $ sudo useradd --home-dir /var/empty --comment Nix build user 14 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30014 --password ! nixbld14
+#32 18.71 
+#32 18.71 Creating the Nix build user, nixbld14
+#32 18.71 
+#32 18.74 useradd warning: nixbld14's uid 30014 is greater than SYS_UID_MAX 999
+#32 18.80            Created:	Yes
+#32 18.80             Hidden:	Yes
+#32 18.80     Home Directory:	/var/empty
+
+[2026-09-30T15:13:19.963Z] #32 18.80               Note:	Nix build user 14
+#32 18.80    Logins Disabled:	Yes
+
+[2026-09-30T15:13:20.063Z] #32 18.81   Member of nixbld:	Yes
+#32 18.81     PrimaryGroupID:	30000
+#32 18.81 
+#32 18.81 ~~> Setting up the build user nixbld15
+#32 18.81 
+#32 18.81 ---- sudo execution ------------------------------------------------------------
+#32 18.81 I am executing:
+#32 18.81 
+#32 18.81     $ sudo useradd --home-dir /var/empty --comment Nix build user 15 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30015 --password ! nixbld15
+#32 18.81 
+#32 18.81 Creating the Nix build user, nixbld15
+[2026-09-30T15:13:20.063Z] 
+#32 18.81 
+#32 18.84 useradd warning: nixbld15's uid 30015 is greater than SYS_UID_MAX 999
+#32 18.89            Created:	Yes
+#32 18.89             Hidden:	Yes
+#32 18.89     Home Directory:	/var/empty
+#32 18.90               Note:	Nix build user 15
+#32 18.90    Logins Disabled:	Yes
+#32 18.90   Member of nixbld:	Yes
+#32 18.90     PrimaryGroupID:	30000
+#32 18.91 
+#32 18.91 ~~> Setting up the build user nixbld16
+#32 18.91 
+#32 18.91 ---- sudo execution ------------------------------------------------------------
+#32 18.91 I am executing:
+#32 18.91 
+#32 18.91     $ sudo useradd --home-dir /var/empty --comment Nix build user 16 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30016 --password ! nixbld16
+#32 18.91 
+#32 18.91 Creating the Nix build user, nixbld16
+#32 18.91 
+
+[2026-09-30T15:13:20.178Z] #32 18.94 useradd warning: nixbld16's uid 30016 is greater than SYS_UID_MAX 999
+[2026-09-30T15:13:20.178Z] 
+#32 18.98            Created:	Yes
+#32 18.98             Hidden:	Yes
+#32 18.99     Home Directory:	/var/empty
+#32 18.99               Note:	Nix build user 16
+#32 18.99    Logins Disabled:	Yes
+#32 18.99   Member of nixbld:	Yes
+#32 19.00     PrimaryGroupID:	30000
+#32 19.00 
+#32 19.00 ~~> Setting up the build user nixbld17
+#32 19.00 
+#32 19.00 ---- sudo execution ------------------------------------------------------------
+#32 19.00 I am executing:
+#32 19.00 
+#32 19.00     $ sudo useradd --home-dir /var/empty --comment Nix build user 17 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30017 --password ! nixbld17
+#32 19.00 
+#32 19.00 Creating the Nix build user, nixbld17
+#32 19.00 
+#32 19.03 useradd warning: nixbld17's uid 30017 is greater than SYS_UID_MAX 999
+
+[2026-09-30T15:13:20.316Z] #32 19.08            Created:	Yes
+#32 19.08             Hidden:	Yes
+#32 19.08     Home Directory:	/var/empty
+#32 19.08               Note:	Nix build user 17
+#32 19.09    Logins Disabled:	Yes
+
+[2026-09-30T15:13:20.316Z] #32 19.09   Member of nixbld:	Yes
+#32 19.09     PrimaryGroupID:	30000
+#32 19.09 
+#32 19.09 ~~> Setting up the build user nixbld18
+#32 19.09 
+#32 19.10 ---- sudo execution ------------------------------------------------------------
+#32 19.10 I am executing:
+#32 19.10 
+#32 19.10     $ sudo useradd --home-dir /var/empty --comment Nix build user 18 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30018 --password ! nixbld18
+#32 19.10 
+#32 19.10 Creating the Nix build user, nixbld18
+#32 19.10 
+#32 19.13 useradd warning: nixbld18's uid 30018 is greater than SYS_UID_MAX 999
+#32 19.17            Created:	Yes
+
+[2026-09-30T15:13:20.416Z] #32 19.17             Hidden:	Yes
+#32 19.18     Home Directory:	/var/empty
+#32 19.18               Note:	Nix build user 18
+#32 19.18    Logins Disabled:	Yes
+#32 19.18   Member of nixbld:	Yes
+
+[2026-09-30T15:13:20.416Z] #32 19.19     PrimaryGroupID:	30000
+#32 19.19 
+#32 19.19 ~~> Setting up the build user nixbld19
+#32 19.19 
+#32 19.19 ---- sudo execution ------------------------------------------------------------
+#32 19.19 I am executing:
+#32 19.19 
+#32 19.19     $ sudo useradd --home-dir /var/empty --comment Nix build user 19 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30019 --password ! nixbld19
+#32 19.19 
+#32 19.19 Creating the Nix build user, nixbld19
+#32 19.19 
+#32 19.22 useradd warning: nixbld19's uid 30019 is greater than SYS_UID_MAX 999
+#32 19.28            Created:	Yes
+#32 19.28             Hidden:	Yes
+#32 19.28     Home Directory:	/var/empty
+
+[2026-09-30T15:13:20.518Z] #32 19.28               Note:	Nix build user 19
+#32 19.28    Logins Disabled:	Yes
+[2026-09-30T15:13:20.518Z] 
+#32 19.29   Member of nixbld:	Yes
+#32 19.29     PrimaryGroupID:	30000
+#32 19.29 
+#32 19.29 ~~> Setting up the build user nixbld20
+#32 19.29 
+#32 19.29 ---- sudo execution ------------------------------------------------------------
+#32 19.29 I am executing:
+#32 19.29 
+#32 19.29     $ sudo useradd --home-dir /var/empty --comment Nix build user 20 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30020 --password ! nixbld20
+#32 19.29 
+#32 19.29 Creating the Nix build user, nixbld20
+#32 19.29 
+#32 19.33 useradd warning: nixbld20's uid 30020 is greater than SYS_UID_MAX 999
+#32 19.38            Created:	Yes
+#32 19.38             Hidden:	Yes
+#32 19.38     Home Directory:	/var/empty
+#32 19.39               Note:	Nix build user 20
+
+[2026-09-30T15:13:20.617Z] #32 19.39    Logins Disabled:	Yes
+#32 19.39   Member of nixbld:	Yes
+#32 19.39     PrimaryGroupID:	30000
+#32 19.39 
+#32 19.39 ~~> Setting up the build user nixbld21
+#32 19.39 
+#32 19.40 ---- sudo execution ------------------------------------------------------------
+[2026-09-30T15:13:20.618Z] 
+#32 19.40 I am executing:
+#32 19.40 
+#32 19.40     $ sudo useradd --home-dir /var/empty --comment Nix build user 21 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30021 --password ! nixbld21
+#32 19.40 
+#32 19.40 Creating the Nix build user, nixbld21
+#32 19.40 
+#32 19.43 useradd warning: nixbld21's uid 30021 is greater than SYS_UID_MAX 999
+#32 19.48            Created:	Yes
+#32 19.48             Hidden:	Yes
+#32 19.48     Home Directory:	/var/empty
+#32 19.48               Note:	Nix build user 21
+#32 19.48    Logins Disabled:	Yes
+#32 19.49   Member of nixbld:	Yes
+#32 19.49     PrimaryGroupID:	30000
+
+[2026-09-30T15:13:20.719Z] #32 19.49 
+#32 19.49 ~~> Setting up the build user nixbld22
+#32 19.49 
+#32 19.49 ---- sudo execution ------------------------------------------------------------
+#32 19.49 I am executing:
+#32 19.49 
+#32 19.49     $ sudo useradd --home-dir /var/empty --comment Nix build user 22 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30022 --password ! nixbld22
+#32 19.49 
+
+[2026-09-30T15:13:20.719Z] #32 19.49 Creating the Nix build user, nixbld22
+#32 19.49 
+#32 19.52 useradd warning: nixbld22's uid 30022 is greater than SYS_UID_MAX 999
+#32 19.58            Created:	Yes
+#32 19.58             Hidden:	Yes
+#32 19.58     Home Directory:	/var/empty
+#32 19.58               Note:	Nix build user 22
+#32 19.59    Logins Disabled:	Yes
+#32 19.59   Member of nixbld:	Yes
+#32 19.59     PrimaryGroupID:	30000
+#32 19.59 
+#32 19.59 ~~> Setting up the build user nixbld23
+#32 19.59 
+#32 19.60 ---- sudo execution ------------------------------------------------------------
+#32 19.60 I am executing:
+#32 19.60 
+
+[2026-09-30T15:13:20.821Z] #32 19.60     $ sudo useradd --home-dir /var/empty --comment Nix build user 23 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30023 --password ! nixbld23
+#32 19.60 
+#32 19.60 Creating the Nix build user, nixbld23
+#32 19.60 
+#32 19.63 useradd warning: nixbld23's uid 30023 is greater than SYS_UID_MAX 999
+#32 19.69            Created:	Yes
+#32 19.69             Hidden:	Yes
+#32 19.69     Home Directory:	/var/empty
+#32 19.69               Note:	Nix build user 23
+#32 19.69    Logins Disabled:	Yes
+
+[2026-09-30T15:13:20.821Z] #32 19.70   Member of nixbld:	Yes
+#32 19.70     PrimaryGroupID:	30000
+#32 19.70 
+#32 19.70 ~~> Setting up the build user nixbld24
+#32 19.70 
+#32 19.70 ---- sudo execution ------------------------------------------------------------
+#32 19.70 I am executing:
+#32 19.70 
+#32 19.70     $ sudo useradd --home-dir /var/empty --comment Nix build user 24 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30024 --password ! nixbld24
+#32 19.70 
+
+[2026-09-30T15:13:20.952Z] #32 19.70 Creating the Nix build user, nixbld24
+#32 19.70 
+#32 19.73 useradd warning: nixbld24's uid 30024 is greater than SYS_UID_MAX 999
+#32 19.79            Created:	Yes
+#32 19.79             Hidden:	Yes
+#32 19.79     Home Directory:	/var/empty
+#32 19.79               Note:	Nix build user 24
+#32 19.80    Logins Disabled:	Yes
+#32 19.80   Member of nixbld:	Yes
+#32 19.80     PrimaryGroupID:	30000
+#32 19.80 
+#32 19.80 ~~> Setting up the build user nixbld25
+#32 19.80 
+#32 19.81 ---- sudo execution ------------------------------------------------------------
+#32 19.81 I am executing:
+#32 19.81 
+
+[2026-09-30T15:13:20.952Z] #32 19.81     $ sudo useradd --home-dir /var/empty --comment Nix build user 25 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30025 --password ! nixbld25
+#32 19.81 
+#32 19.81 Creating the Nix build user, nixbld25
+#32 19.81 
+#32 19.84 useradd warning: nixbld25's uid 30025 is greater than SYS_UID_MAX 999
+
+[2026-09-30T15:13:21.054Z] #32 19.89            Created:	Yes
+#32 19.89             Hidden:	Yes
+#32 19.90     Home Directory:	/var/empty
+#32 19.90               Note:	Nix build user 25
+#32 19.90    Logins Disabled:	Yes
+#32 19.90   Member of nixbld:	Yes
+#32 19.90     PrimaryGroupID:	30000
+#32 19.91 
+#32 19.91 ~~> Setting up the build user nixbld26
+#32 19.91 
+#32 19.91 ---- sudo execution ------------------------------------------------------------
+#32 19.91 I am executing:
+
+[2026-09-30T15:13:21.054Z] #32 19.91 
+#32 19.91     $ sudo useradd --home-dir /var/empty --comment Nix build user 26 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30026 --password ! nixbld26
+#32 19.91 
+#32 19.91 Creating the Nix build user, nixbld26
+#32 19.91 
+#32 19.95 useradd warning: nixbld26's uid 30026 is greater than SYS_UID_MAX 999
+
+[2026-09-30T15:13:21.211Z] #32 20.00            Created:	Yes
+#32 20.00             Hidden:	Yes
+#32 20.00     Home Directory:	/var/empty
+#32 20.01               Note:	Nix build user 26
+#32 20.01    Logins Disabled:	Yes
+#32 20.01   Member of nixbld:	Yes
+#32 20.01     PrimaryGroupID:	30000
+#32 20.01 
+#32 20.01 ~~> Setting up the build user nixbld27
+#32 20.01 
+
+[2026-09-30T15:13:21.211Z] #32 20.02 ---- sudo execution ------------------------------------------------------------
+#32 20.02 I am executing:
+#32 20.02 
+#32 20.02     $ sudo useradd --home-dir /var/empty --comment Nix build user 27 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30027 --password ! nixbld27
+#32 20.02 
+#32 20.02 Creating the Nix build user, nixbld27
+#32 20.02 
+#32 20.11 useradd warning: nixbld27's uid 30027 is greater than SYS_UID_MAX 999
+
+[2026-09-30T15:13:21.336Z] #32 20.24            Created:	Yes
+
+[2026-09-30T15:13:21.439Z] #32 20.24             Hidden:	Yes
+#32 20.25     Home Directory:	/var/empty
+#32 20.25               Note:	Nix build user 27
+#32 20.25    Logins Disabled:	Yes
+#32 20.26   Member of nixbld:	Yes
+#32 20.26     PrimaryGroupID:	30000
+#32 20.26 
+#32 20.26 ~~> Setting up the build user nixbld28
+#32 20.26 
+#32 20.26 ---- sudo execution ------------------------------------------------------------
+#32 20.26 I am executing:
+#32 20.26 
+#32 20.26     $ sudo useradd --home-dir /var/empty --comment Nix build user 28 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30028 --password ! nixbld28
+#32 20.26 
+
+[2026-09-30T15:13:21.439Z] #32 20.26 Creating the Nix build user, nixbld28
+#32 20.26 
+#32 20.30 useradd warning: nixbld28's uid 30028 is greater than SYS_UID_MAX 999
+#32 20.35            Created:	Yes
+
+[2026-09-30T15:13:21.543Z] #32 20.35             Hidden:	Yes
+#32 20.35     Home Directory:	/var/empty
+#32 20.36               Note:	Nix build user 28
+#32 20.36    Logins Disabled:	Yes
+#32 20.36   Member of nixbld:	Yes
+#32 20.36     PrimaryGroupID:	30000
+#32 20.36 
+#32 20.36 ~~> Setting up the build user nixbld29
+#32 20.36 
+#32 20.37 ---- sudo execution ------------------------------------------------------------
+#32 20.37 I am executing:
+
+[2026-09-30T15:13:21.543Z] #32 20.37 
+#32 20.37     $ sudo useradd --home-dir /var/empty --comment Nix build user 29 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30029 --password ! nixbld29
+#32 20.37 
+#32 20.37 Creating the Nix build user, nixbld29
+#32 20.37 
+#32 20.40 useradd warning: nixbld29's uid 30029 is greater than SYS_UID_MAX 999
+#32 20.46            Created:	Yes
+
+[2026-09-30T15:13:21.646Z] #32 20.46             Hidden:	Yes
+#32 20.46     Home Directory:	/var/empty
+#32 20.46               Note:	Nix build user 29
+#32 20.47    Logins Disabled:	Yes
+#32 20.47   Member of nixbld:	Yes
+#32 20.47     PrimaryGroupID:	30000
+#32 20.47 
+#32 20.47 ~~> Setting up the build user nixbld30
+#32 20.47 
+#32 20.48 ---- sudo execution ------------------------------------------------------------
+#32 20.48 I am executing:
+#32 20.48 
+[2026-09-30T15:13:21.646Z] 
+#32 20.48     $ sudo useradd --home-dir /var/empty --comment Nix build user 30 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30030 --password ! nixbld30
+#32 20.48 
+#32 20.48 Creating the Nix build user, nixbld30
+#32 20.48 
+#32 20.51 useradd warning: nixbld30's uid 30030 is greater than SYS_UID_MAX 999
+#32 20.57            Created:	Yes
+
+[2026-09-30T15:13:21.752Z] #32 20.57             Hidden:	Yes
+#32 20.57     Home Directory:	/var/empty
+#32 20.57               Note:	Nix build user 30
+#32 20.58    Logins Disabled:	Yes
+#32 20.58   Member of nixbld:	Yes
+#32 20.58     PrimaryGroupID:	30000
+#32 20.58 
+#32 20.58 ~~> Setting up the build user nixbld31
+#32 20.58 
+#32 20.59 ---- sudo execution ------------------------------------------------------------
+#32 20.59 I am executing:
+#32 20.59 
+#32 20.59     $ sudo useradd --home-dir /var/empty --comment Nix build user 31 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30031 --password ! nixbld31
+#32 20.59 
+#32 20.59 Creating the Nix build user, nixbld31
+#32 20.59 
+#32 20.62 useradd warning: nixbld31's uid 30031 is greater than SYS_UID_MAX 999
+#32 20.68            Created:	Yes
+
+[2026-09-30T15:13:21.854Z] #32 20.68             Hidden:	Yes
+#32 20.68     Home Directory:	/var/empty
+#32 20.68               Note:	Nix build user 31
+#32 20.69    Logins Disabled:	Yes
+#32 20.69   Member of nixbld:	Yes
+
+[2026-09-30T15:13:21.854Z] #32 20.69     PrimaryGroupID:	30000
+#32 20.69 
+#32 20.69 ~~> Setting up the build user nixbld32
+#32 20.69 
+#32 20.70 ---- sudo execution ------------------------------------------------------------
+#32 20.70 I am executing:
+#32 20.70 
+#32 20.70     $ sudo useradd --home-dir /var/empty --comment Nix build user 32 --gid 30000 --groups nixbld --no-user-group --system --shell /sbin/nologin --uid 30032 --password ! nixbld32
+#32 20.70 
+#32 20.70 Creating the Nix build user, nixbld32
+#32 20.70 
+#32 20.73 useradd warning: nixbld32's uid 30032 is greater than SYS_UID_MAX 999
+#32 20.78            Created:	Yes
+#32 20.78             Hidden:	Yes
+#32 20.79     Home Directory:	/var/empty
+
+[2026-09-30T15:13:22.008Z] #32 20.79               Note:	Nix build user 32
+#32 20.79    Logins Disabled:	Yes
+#32 20.79   Member of nixbld:	Yes
+#32 20.80     PrimaryGroupID:	30000
+#32 20.80 
+#32 20.80 ~~> Setting up the basic directory structure
+#32 20.80 
+#32 20.80 ---- sudo execution ------------------------------------------------------------
+#32 20.80 I am executing:
+#32 20.80 
+[2026-09-30T15:13:22.008Z] 
+#32 20.80     $ sudo install -dv -m 0755 /nix /nix/var /nix/var/log /nix/var/log/nix /nix/var/log/nix/drvs /nix/var/nix /nix/var/nix/db /nix/var/nix/gcroots /nix/var/nix/profiles /nix/var/nix/temproots /nix/var/nix/userpool /nix/var/nix/daemon-socket /nix/var/nix/gcroots/per-user /nix/var/nix/profiles/per-user
+#32 20.80 
+#32 20.80 to make the basic directory structure of Nix (part 1)
+#32 20.80 
+#32 20.80 creating directory '/nix'
+#32 20.80 creating directory '/nix/var'
+#32 20.80 creating directory '/nix/var/log'
+#32 20.80 creating directory '/nix/var/log/nix'
+#32 20.80 creating directory '/nix/var/log/nix/drvs'
+#32 20.80 creating directory '/nix/var/nix'
+#32 20.80 creating directory '/nix/var/nix/db'
+#32 20.80 creating directory '/nix/var/nix/gcroots'
+#32 20.80 creating directory '/nix/var/nix/profiles'
+#32 20.80 creating directory '/nix/var/nix/temproots'
+#32 20.80 creating directory '/nix/var/nix/userpool'
+#32 20.80 creating directory '/nix/var/nix/daemon-socket'
+#32 20.80 creating directory '/nix/var/nix/gcroots/per-user'
+#32 20.80 creating directory '/nix/var/nix/profiles/per-user'
+#32 20.81 
+#32 20.81 ---- sudo execution ------------------------------------------------------------
+#32 20.81 I am executing:
+#32 20.81 
+#32 20.81     $ sudo install -dv -g nixbld -m 1775 /nix/store
+#32 20.81 
+#32 20.81 to make the basic directory structure of Nix (part 2)
+#32 20.81 
+#32 20.81 creating directory '/nix/store'
+#32 20.81 
+#32 20.81 ---- sudo execution ------------------------------------------------------------
+#32 20.81 I am executing:
+#32 20.81 
+#32 20.81     $ sudo install -dv -m 0555 /etc/nix
+#32 20.81 
+#32 20.81 to place the default nix daemon configuration (part 1)
+#32 20.81 
+#32 20.82 creating directory '/etc/nix'
+#32 20.82 
+#32 20.82 ---- sudo execution ------------------------------------------------------------
+#32 20.82 I am executing:
+#32 20.82 
+#32 20.82     $ sudo install -m 0644 /tmp/tmp.JQxPdc6rrK/.nix-channels /root/.nix-channels
+#32 20.82 
+#32 20.82 to set up the default system channel (part 1)
+#32 20.82 
+#32 20.82 
+#32 20.82 ~~> Installing Nix
+#32 20.82 
+#32 20.83 ---- sudo execution ------------------------------------------------------------
+#32 20.83 I am executing:
+#32 20.83 
+#32 20.83     $ sudo cp -RP --preserve=ownership,timestamps ./store/009gwlbgzg0ybil10v0q56gpgyvsi3wr-libpsl-0.21.5 ./store/08nfpyc4qhzdkc37nznvfpbybihyr063-attr-2.5.2 ./store/12cm2m4pdfanj5li94hwxpdfzrfdfngj-sqlite-3.51.2 ./store/2jracld554p4sbgz6kiv3hbjmcnla7am-lowdown-3.0.1-lib ./store/2qkvl63rdry04ivf3sky9a11mhslxnyv-aws-c-auth-0.9.1 ./store/2xswm2pbi4k5qhr1nbm3g73sskl9wnrw-libgit2-1.9.4-lib ./store/3vdi224qcvjx81l643zchd9mvcl8miyd-aws-c-mqtt-0.13.3 ./store/55b7xlh5df20di6q2vi8xh1k8wzvxhn3-aws-c-sdkutils-0.2.4 ./store/5ji5924yd02lmva6bmp7k65gfs2696z7-curl-8.20.0 ./store/644xx605fcrcv8nwxljbbfvjihnp2d6r-aws-checksums-0.2.7 ./store/7nww4d4yl7jzf66qllvyn61xb21vp7ry-gcc-15.2.0-libgcc ./store/8gyg3xn9i8xdz42yhbl0d3vmmz8phcs0-bzip2-1.0.8 ./store/8i4il2ilblcd62nfh2i21w784d32p0cn-nix-manual-2.35.2-man ./store/8kvxvr3pmsypxiypq4g8zy13glnfr7nx-glibc-2.42-67 ./store/9frcxhf8mmkxydqayfrgpfwy6fjv9yv7-nix-fetchers-2.35.2 ./store/aasbksznz37vw5pb26wq86209q5cmza8-xgcc-15.2.0-libgcc ./store/arn0lmmdr33kqiizfy87dijngc8d2wnr-s2n-tls-1.7.2 ./store/bbk5ss80g5rgnwgn9b8br4l29km8plh9-xz-5.8.3 ./store/bs6w35m2a5hfkpi8lzbvw6zkl35pdx78-libsodium-1.0.22-unstable-2026-04-09 ./store/c985nba7m9vjl11i39wwhdpxnkxhlz1f-keyutils-1.6.3-lib ./store/cfnwlci0zx0bwd26y4bs74vraprak75g-onetbb-2022.3.0 ./store/cr7ska3czhwhrflvrycf1gism0c09cjc-nix-flake-2.35.2 ./store/d9c9w2y52gffj7zz1b76j0f8fbp5ww4d-libssh2-1.11.1 ./store/dbz6pb9g67kpgpl95k8d85kzpxm1c32p-zlib-1.3.2 ./store/dms8jh40xwj0c0hwzan3fq22vjqy7pf3-nix-cmd-2.35.2 ./store/ds6s2a0iyim3rc9gfhrs0xf1q8x0ymxv-hwloc-2.13.0-lib ./store/f5g7iv09b3z04wxmlq2ybnhbx3a7nvim-libblake3-1.8.5 ./store/fr3qqvg4iylba6hpf53pr9k27ddv2826-libarchive-3.8.7-lib ./store/fsvb5zrsm1n7m5wshm570imspffi7i8f-zstd-1.5.7 ./store/gwh5pxnk9c2kh8h61cny2104a8js9lbs-aws-c-common-0.12.4 ./store/h2r942fq52gjipnc0qaqcvpdmld5qp6z-boehm-gc-8.2.12 ./store/h4ardg95sqm0rhm66hhnswszlmcbfng9-aws-c-compression-0.3.1 ./store/hm2ixz0mgyx22sxzihs8ix1rsj2g36y6-libxml2-2.15.3 ./store/hngmi01i8wgi25a0byrxcn4ysz5j79mw-gcc-15.2.0-lib ./store/hyf7m87blkdjwp1bf45waxjhhk4zx812-libcpuid-0.8.1 ./store/ipz4lbivx3q7gr79130d6g5ix35vibnw-libunistring-1.4.2 ./store/irfrbndi76zhkvqsfhmsn4a99iafck29-nix-2.35.2 ./store/j3sa6pskpfznyrgssf2xidwv6s135yra-llhttp-9.4.1 ./store/j92gvvi4ixkm332fk97mvnq7mary758f-ngtcp2-1.22.1 ./store/k6p4kfg37jksiaqkapx0vllh92z7r7id-brotli-1.2.0-lib ./store/kd83ihdc98dv3fs0mb4bbnasxhdkiird-aws-c-http-0.10.4 ./store/kj73fnsp8vd3pr54j1i2acw94nzi63vw-krb5-1.22.2-lib ./store/l0vl4dali2mvbpi30a8da1f71jl85myg-openssl-3.6.2 ./store/lx7v75sj354ffqsl3vrlhswyf2ph2wdk-boost-1.89.0 ./store/m6z7fg5d9r1zc2k2qmlg8r6y9zqarjs7-nix-util-2.35.2 ./store/mrds6svi9pkbrsxrq3nbsi09zbyshhgb-libseccomp-2.6.0-lib ./store/nhdzdp2xxbpa6r9wpi5zbmvwlvqlq2dc-aws-crt-cpp-0.34.3 ./store/qjxwvydl5f07l8zgg6p2pyypll8ybc9n-publicsuffix-list-0-unstable-2026-05-13 ./store/ql42q1jvff4a97fv669lfnvcq6arz0pa-nghttp3-1.15.0 ./store/qv8wizskbvabi6bivkbx63nl35qkzpfp-aws-c-s3-0.8.7 ./store/r9qyhp006vcn1bm26vj6nja9pd1k2sln-nix-expr-2.35.2 ./store/skvb5hzhqvqrizrvw21aiy4prjivraxp-mimalloc-3.3.2 ./store/w73y27sld7x920ffnipw3a8xd1agchdl-nghttp2-1.69.0-lib ./store/wq1yn66dx8xxdvyagzync0vgp782ysq0-nix-store-2.35.2 ./store/x0zgiss9hdzcsll3cswgfa937aqs12rq-acl-2.3.2 ./store/x2zjc47pkhcwxr4iyv5xj3hdqfzfnyd9-pcre2-10.46 ./store/xmmxg0vbkvampcsz2rp792nj0s65iv5r-aws-c-cal-0.9.2 ./store/yvj64swn2m15kka56is116532l2alvq5-aws-c-event-stream-0.7.0 ./store/yysvxw5iwwijaci7ggrnms4mavwcjnpk-busybox-1.37.0 ./store/zdl7dn1gmi1cxdw5a8hw6xsf4cz0rjmg-nss-cacert-3.123 ./store/zlvydh6q1rv1jza79b21yhi07ic0dkkg-libidn2-2.3.8 ./store/zsgbv06jjlhn9r2xqg0caj3rdbxvxx3g-editline-1.17.1-unstable-2025-05-24 ./store/zvnw1680fwl1k6cl7xzhhrgsy3sq4181-aws-c-io-0.22.0 ./store/zwl041qja0k631fbyxwzbc2why38622a-nix-main-2.35.2 /nix/store/
+#32 20.83 
+#32 20.83 to copy the basic Nix files to the new store at /nix/store
+#32 20.83 
+#32 20.95 
+#32 20.95 ---- sudo execution ------------------------------------------------------------
+#32 20.95 I am executing:
+#32 20.95 
+#32 20.95     $ sudo chmod -R ugo-w /nix/store/
+#32 20.95 
+#32 20.95 to make the new store non-writable at /nix/store
+#32 20.95 
+
+[2026-09-30T15:13:22.114Z] #32 20.96       Alright! We have our first nix at /nix/store/irfrbndi76zhkvqsfhmsn4a99iafck29-nix-2.35.2
+#32 20.97 
+#32 20.97 ---- sudo execution ------------------------------------------------------------
+#32 20.97 I am executing:
+#32 20.97 
+#32 20.97     $ sudo HOME=/root /nix/store/irfrbndi76zhkvqsfhmsn4a99iafck29-nix-2.35.2/bin/nix-store --load-db
+#32 20.97 
+#32 20.97 to load data for the first time in to the Nix Database
+#32 20.97 
+#32 21.03       Just finished getting the nix database ready.
+#32 21.03 
+#32 21.03 ~~> Setting up shell profiles: /etc/bashrc /etc/profile.d/nix.sh /etc/zshrc /etc/bash.bashrc /etc/zsh/zshrc
+#32 21.03 
+#32 21.04 ---- sudo execution ------------------------------------------------------------
+#32 21.04 I am executing:
+#32 21.04 
+#32 21.04     $ sudo touch /etc/bashrc
+#32 21.04 
+#32 21.04 to create a stub /etc/bashrc which will be updated
+
+[2026-09-30T15:13:22.114Z] #32 21.04 
+#32 21.04 
+#32 21.04 ---- sudo execution ------------------------------------------------------------
+#32 21.04 I am executing:
+#32 21.04 
+#32 21.04     $ sudo tee /etc/bashrc
+#32 21.04 
+#32 21.04 extend your /etc/bashrc with nix-daemon settings
+#32 21.04 
+#32 21.04 
+#32 21.04 # Nix
+#32 21.04 if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
+#32 21.04   . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
+#32 21.04 fi
+#32 21.04 # End Nix
+#32 21.04 
+#32 21.05 
+#32 21.05 ---- sudo execution ------------------------------------------------------------
+#32 21.05 I am executing:
+#32 21.05 
+#32 21.05     $ sudo touch /etc/profile.d/nix.sh
+#32 21.05 
+#32 21.05 to create a stub /etc/profile.d/nix.sh which will be updated
+#32 21.05 
+#32 21.06 
+#32 21.06 ---- sudo execution ------------------------------------------------------------
+#32 21.06 I am executing:
+#32 21.06 
+#32 21.06     $ sudo tee /etc/profile.d/nix.sh
+#32 21.06 
+#32 21.06 extend your /etc/profile.d/nix.sh with nix-daemon settings
+#32 21.06 
+
+[2026-09-30T15:13:22.221Z] #32 21.06 
+#32 21.06 # Nix
+#32 21.06 if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
+#32 21.06   . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
+#32 21.06 fi
+#32 21.06 # End Nix
+#32 21.06 
+#32 21.06 
+#32 21.06 ---- sudo execution ------------------------------------------------------------
+#32 21.06 I am executing:
+#32 21.06 
+#32 21.06     $ sudo touch /etc/zshrc
+#32 21.06 
+#32 21.06 to create a stub /etc/zshrc which will be updated
+#32 21.06 
+#32 21.07 
+#32 21.07 ---- sudo execution ------------------------------------------------------------
+#32 21.07 I am executing:
+#32 21.07 
+#32 21.07     $ sudo tee /etc/zshrc
+#32 21.07 
+#32 21.07 extend your /etc/zshrc with nix-daemon settings
+#32 21.07 
+[2026-09-30T15:13:22.221Z] 
+#32 21.07 
+#32 21.07 # Nix
+#32 21.07 if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
+#32 21.07   . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
+#32 21.07 fi
+#32 21.07 # End Nix
+#32 21.07 
+#32 21.08 
+#32 21.08 ---- sudo execution ------------------------------------------------------------
+#32 21.08 I am executing:
+#32 21.08 
+#32 21.08     $ sudo cp /etc/bash.bashrc /etc/bash.bashrc.backup-before-nix
+#32 21.08 
+#32 21.08 to back up your current /etc/bash.bashrc to /etc/bash.bashrc.backup-before-nix
+#32 21.08 
+#32 21.08 
+#32 21.08 ---- sudo execution ------------------------------------------------------------
+#32 21.08 I am executing:
+#32 21.08 
+#32 21.08     $ sudo tee /etc/bash.bashrc
+#32 21.08 
+#32 21.08 extend your /etc/bash.bashrc with nix-daemon settings
+#32 21.08 
+#32 21.09 
+#32 21.09 # Nix
+#32 21.09 if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
+#32 21.09   . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
+#32 21.09 fi
+#32 21.09 # End Nix
+#32 21.09 
+#32 21.09 # System-wide .bashrc file for interactive bash(1) shells.
+#32 21.09 
+#32 21.09 # To enable the settings / commands in this file for login shells as well,
+#32 21.09 # this file has to be sourced in /etc/profile.
+#32 21.09 
+#32 21.09 # If not running interactively, don't do anything
+#32 21.09 [ -z "${PS1-}" ] && return
+#32 21.09 
+#32 21.09 # check the window size after each command and, if necessary,
+#32 21.09 # update the values of LINES and COLUMNS.
+#32 21.09 shopt -s checkwinsize
+#32 21.09 
+#32 21.09 # set variable identifying the chroot you work in (used in the prompt below)
+#32 21.09 if [ -z "${debian_chroot:-}" ] && [ -r /etc/debian_chroot ]; then
+#32 21.09     debian_chroot=$(< /etc/debian_chroot)
+#32 21.09 fi
+#32 21.09 
+#32 21.09 # set a fancy prompt (non-color, overwrite the one in /etc/profile)
+#32 21.09 # but only if not SUDOing and have SUDO_PS1 set; then assume smart user.
+#32 21.09 if ! [ -n "${SUDO_USER-}" -a -n "${SUDO_PS1-}" ]; then
+#32 21.09   PS1='${debian_chroot:+($debian_chroot)}\u@\h:\w\$ '
+#32 21.09 fi
+#32 21.09 
+#32 21.09 case "$TERM" in
+#32 21.09 xterm*|vte*|gnome*)
+#32 21.09     for _hook in /etc/profile.d/vte*.sh; do : ; done
+#32 21.09     if [ -r $_hook ]; then
+#32 21.09         . $_hook
+#32 21.09     fi
+#32 21.09     unset _hook
+#32 21.09     ;;
+#32 21.09 xterm*|rxvt*)
+#32 21.09     # Commented out, don't overwrite xterm -T "title" -n "icontitle" by default.
+#32 21.09     # If this is an xterm set the title to user@host:dir
+#32 21.09     #PROMPT_COMMAND='echo -ne "\033]0;${USER}@${HOSTNAME}: ${PWD}\007"'
+#32 21.09     ;;
+#32 21.09 *)
+#32 21.09     ;;
+#32 21.09 esac
+[2026-09-30T15:13:22.221Z] 
+#32 21.09 
+#32 21.09 # enable bash completion in interactive shells
+#32 21.09 #if ! shopt -oq posix; then
+#32 21.09 #  if [ -f /usr/share/bash-completion/bash_completion ]; then
+#32 21.09 #    . /usr/share/bash-completion/bash_completion
+#32 21.09 #  elif [ -f /etc/bash_completion ]; then
+#32 21.09 #    . /etc/bash_completion
+#32 21.09 #  fi
+#32 21.09 #fi
+#32 21.09 
+#32 21.09 # if the command-not-found package is installed, use it
+#32 21.09 if [ -x /usr/lib/command-not-found ] || [ -x /usr/share/command-not-found/command-not-found ]; then
+#32 21.09 	function command_not_found_handle {
+#32 21.09 	        # check because c-n-f could've been removed in the meantime
+#32 21.09                 if [ -x /usr/lib/command-not-found ]; then
+#32 21.09 		   /usr/lib/command-not-found -- "$1"
+#32 21.09                    return $?
+#32 21.09                 elif [ -x /usr/share/command-not-found/command-not-found ]; then
+#32 21.09 		   /usr/share/command-not-found/command-not-found -- "$1"
+#32 21.09                    return $?
+#32 21.09 		else
+[2026-09-30T15:13:22.221Z] 
+#32 21.09 		   printf "%s: command not found\n" "$1" >&2
+#32 21.09 		   return 127
+#32 21.09 		fi
+#32 21.09 	}
+#32 21.09 fi
+#32 21.09 
+#32 21.09 # Source profile.d even though "it's meant to be for login shells
+#32 21.09 # only". This is commented out by default, for not cluttering the
+#32 21.09 # shell with things a user might not expect.  Please see above
+#32 21.09 # for the explict hooks for bash-completion and command-not-found.
+#32 21.09 
+#32 21.09 #if [ -d /etc/profile.d ]; then
+#32 21.09 #  for _i in /etc/profile.d/*.sh; do
+#32 21.09 #    if [ -r $_i ]; then
+#32 21.09 #      . $_i
+#32 21.09 #    fi
+#32 21.09 #  done
+[2026-09-30T15:13:22.221Z] 
+#32 21.09 #  unset _i
+
+[2026-09-30T15:13:22.221Z] #32 21.09 #fi
+#32 21.09 if [ -z "${USER}" ]; then export USER=$(whoami); fi
+#32 21.09 if [[ "${PATH}" != *"$HOME/.local/bin"* ]]; then export PATH="${PATH}:$HOME/.local/bin"; fi
+#32 21.09 
+#32 21.09 # Display optional first run image specific notice if configured and terminal is interactive
+#32 21.09 if [ -t 1 ] && [[ "${TERM_PROGRAM}" = "vscode" || "${TERM_PROGRAM}" = "codespaces" ]] && [ ! -f "$HOME/.config/vscode-dev-containers/first-run-notice-already-displayed" ]; then
+#32 21.09     if [ -f "/usr/local/etc/vscode-dev-containers/first-run-notice.txt" ]; then
+#32 21.09         cat "/usr/local/etc/vscode-dev-containers/first-run-notice.txt"
+#32 21.09     elif [ -f "/workspaces/.codespaces/shared/first-run-notice.txt" ]; then
+#32 21.09         cat "/workspaces/.codespaces/shared/first-run-notice.txt"
+#32 21.09     fi
+#32 21.09     mkdir -p "$HOME/.config/vscode-dev-containers"
+
+[2026-09-30T15:13:22.221Z] #32 21.09     # Mark first run notice as displayed after 10s to avoid problems with fast terminal refreshes hiding it
+#32 21.09     ((sleep 10s; touch "$HOME/.config/vscode-dev-containers/first-run-notice-already-displayed") &)
+#32 21.09 fi
+#32 21.09 
+#32 21.09 # Set the default git editor if not already set
+#32 21.09 if [ -z "$(git config --get core.editor)" ] && [ -z "${GIT_EDITOR}" ]; then
+#32 21.09     if  [ "${TERM_PROGRAM}" = "vscode" ]; then
+#32 21.09         if [[ -n $(command -v code-insiders) &&  -z $(command -v code) ]]; then
+#32 21.09             export GIT_EDITOR="code-insiders --wait"
+#32 21.09         else
+#32 21.09             export GIT_EDITOR="code --wait"
+#32 21.09         fi
+#32 21.09     fi
+#32 21.09 fi
+#32 21.09 
+#32 21.09 ---- sudo execution ------------------------------------------------------------
+#32 21.09 I am executing:
+#32 21.09 
+#32 21.09     $ sudo cp /etc/zsh/zshrc /etc/zsh/zshrc.backup-before-nix
+#32 21.09 
+#32 21.09 to back up your current /etc/zsh/zshrc to /etc/zsh/zshrc.backup-before-nix
+#32 21.09 
+#32 21.09 
+#32 21.09 ---- sudo execution ------------------------------------------------------------
+#32 21.09 I am executing:
+#32 21.09 
+#32 21.09     $ sudo tee /etc/zsh/zshrc
+#32 21.09 
+#32 21.09 extend your /etc/zsh/zshrc with nix-daemon settings
+#32 21.09 
+#32 21.10 
+#32 21.10 # Nix
+#32 21.10 if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
+#32 21.10   . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
+
+[2026-09-30T15:13:22.221Z] #32 21.10 fi
+#32 21.10 # End Nix
+#32 21.10 
+#32 21.10 # /etc/zsh/zshrc: system-wide .zshrc file for zsh(1).
+#32 21.10 #
+#32 21.10 # This file is sourced only for interactive shells. It
+#32 21.10 # should contain commands to set up aliases, functions,
+#32 21.10 # options, key bindings, etc.
+#32 21.10 #
+#32 21.10 # Global Order: zshenv, zprofile, zshrc, zlogin
+#32 21.10 
+#32 21.10 READNULLCMD=${PAGER:-/usr/bin/pager}
+#32 21.10 
+#32 21.10 # An array to note missing features to ease diagnosis in case of problems.
+#32 21.10 typeset -ga debian_missing_features
+#32 21.10 
+#32 21.10 if [[ -z "${DEBIAN_PREVENT_KEYBOARD_CHANGES-}" ]] &&
+#32 21.10    [[ "$TERM" != 'emacs' ]]
+#32 21.10 then
+#32 21.10 
+#32 21.10     typeset -A key
+#32 21.10     key=(
+#32 21.10         BackSpace  "${terminfo[kbs]}"
+#32 21.10         Home       "${terminfo[khome]}"
+#32 21.10         End        "${terminfo[kend]}"
+#32 21.10         Insert     "${terminfo[kich1]}"
+#32 21.10         Delete     "${terminfo[kdch1]}"
+#32 21.10         Up         "${terminfo[kcuu1]}"
+#32 21.10         Down       "${terminfo[kcud1]}"
+#32 21.10         Left       "${terminfo[kcub1]}"
+
+[2026-09-30T15:13:22.221Z] #32 21.10         Right      "${terminfo[kcuf1]}"
+#32 21.10         PageUp     "${terminfo[kpp]}"
+#32 21.10         PageDown   "${terminfo[knp]}"
+#32 21.10     )
+#32 21.10 
+#32 21.10     function bind2maps () {
+#32 21.10         local i sequence widget
+#32 21.10         local -a maps
+#32 21.10 
+#32 21.10         while [[ "$1" != "--" ]]; do
+#32 21.10             maps+=( "$1" )
+[2026-09-30T15:13:22.221Z] 
+#32 21.10             shift
+#32 21.10         done
+#32 21.10         shift
+#32 21.10 
+#32 21.10         sequence="${key[$1]}"
+#32 21.10         widget="$2"
+#32 21.10 
+#32 21.10         [[ -z "$sequence" ]] && return 1
+#32 21.10 
+#32 21.10         for i in "${maps[@]}"; do
+#32 21.10             bindkey -M "$i" "$sequence" "$widget"
+#32 21.10         done
+#32 21.10     }
+#32 21.10 
+#32 21.10     bind2maps emacs             -- BackSpace   backward-delete-char
+#32 21.10     bind2maps       viins       -- BackSpace   vi-backward-delete-char
+#32 21.10     bind2maps             vicmd -- BackSpace   vi-backward-char
+
+[2026-09-30T15:13:22.222Z] #32 21.10     bind2maps emacs             -- Home        beginning-of-line
+#32 21.10     bind2maps       viins vicmd -- Home        vi-beginning-of-line
+#32 21.10     bind2maps emacs             -- End         end-of-line
+#32 21.10     bind2maps       viins vicmd -- End         vi-end-of-line
+#32 21.10     bind2maps emacs viins       -- Insert      overwrite-mode
+#32 21.10     bind2maps             vicmd -- Insert      vi-insert
+#32 21.10     bind2maps emacs             -- Delete      delete-char
+#32 21.10     bind2maps       viins vicmd -- Delete      vi-delete-char
+#32 21.10     bind2maps emacs viins vicmd -- Up          up-line-or-history
+#32 21.10     bind2maps emacs viins vicmd -- Down        down-line-or-history
+#32 21.10     bind2maps emacs             -- Left        backward-char
+#32 21.10     bind2maps       viins vicmd -- Left        vi-backward-char
+#32 21.10     bind2maps emacs             -- Right       forward-char
+#32 21.10     bind2maps       viins vicmd -- Right       vi-forward-char
+#32 21.10 
+#32 21.10     # Make sure the terminal is in application mode, when zle is
+#32 21.10     # active. Only then are the values from $terminfo valid.
+#32 21.10     if (( ${+terminfo[smkx]} )) && (( ${+terminfo[rmkx]} )); then
+#32 21.10         function zle-line-init () {
+[2026-09-30T15:13:22.222Z] 
+#32 21.10             emulate -L zsh
+#32 21.10             printf '%s' ${terminfo[smkx]}
+#32 21.10         }
+#32 21.10         function zle-line-finish () {
+#32 21.10             emulate -L zsh
+
+[2026-09-30T15:13:22.222Z] #32 21.10             printf '%s' ${terminfo[rmkx]}
+#32 21.10         }
+#32 21.10         zle -N zle-line-init
+#32 21.10         zle -N zle-line-finish
+#32 21.10     else
+#32 21.10         for i in {s,r}mkx; do
+[2026-09-30T15:13:22.222Z] 
+#32 21.10             (( ${+terminfo[$i]} )) || debian_missing_features+=($i)
+#32 21.10         done
+#32 21.10         unset i
+#32 21.10     fi
+#32 21.10 
+#32 21.10     unfunction bind2maps
+#32 21.10 
+#32 21.10 fi # [[ -z "$DEBIAN_PREVENT_KEYBOARD_CHANGES" ]] && [[ "$TERM" != 'emacs' ]]
+#32 21.10 
+#32 21.10 zstyle ':completion:*:sudo:*' command-path /usr/local/sbin \
+#32 21.10                                            /usr/local/bin  \
+#32 21.10                                            /usr/sbin       \
+
+[2026-09-30T15:13:22.222Z] #32 21.10                                            /usr/bin        \
+#32 21.10                                            /sbin           \
+#32 21.10                                            /bin            \
+#32 21.10                                            /usr/X11R6/bin
+#32 21.10 
+#32 21.10 (( ${+aliases[run-help]} )) && unalias run-help
+#32 21.10 autoload -Uz run-help
+#32 21.10 
+#32 21.10 # If you don't want compinit called here, place the line
+#32 21.10 # skip_global_compinit=1
+[2026-09-30T15:13:22.222Z] 
+#32 21.10 # in your $ZDOTDIR/.zshenv
+#32 21.10 if (( ${${(@f)"$(</etc/os-release)"}[(I)ID*=*ubuntu]} )) &&
+#32 21.10    [[ -z "$skip_global_compinit" ]]; then
+#32 21.10   autoload -U compinit
+#32 21.10   compinit
+#32 21.10 fi
+#32 21.10 if [ -z "${USER}" ]; then export USER=$(whoami); fi
+#32 21.10 if [[ "${PATH}" != *"$HOME/.local/bin"* ]]; then export PATH="${PATH}:$HOME/.local/bin"; fi
+#32 21.10 
+#32 21.10 # Display optional first run image specific notice if configured and terminal is interactive
+#32 21.10 if [ -t 1 ] && [[ "${TERM_PROGRAM}" = "vscode" || "${TERM_PROGRAM}" = "codespaces" ]] && [ ! -f "$HOME/.config/vscode-dev-containers/first-run-notice-already-displayed" ]; then
+[2026-09-30T15:13:22.222Z] 
+#32 21.10     if [ -f "/usr/local/etc/vscode-dev-containers/first-run-notice.txt" ]; then
+#32 21.10         cat "/usr/local/etc/vscode-dev-containers/first-run-notice.txt"
+#32 21.10     elif [ -f "/workspaces/.codespaces/shared/first-run-notice.txt" ]; then
+#32 21.10         cat "/workspaces/.codespaces/shared/first-run-notice.txt"
+#32 21.10     fi
+#32 21.10     mkdir -p "$HOME/.config/vscode-dev-containers"
+#32 21.10     # Mark first run notice as displayed after 10s to avoid problems with fast terminal refreshes hiding it
+#32 21.10     ((sleep 10s; touch "$HOME/.config/vscode-dev-containers/first-run-notice-already-displayed") &)
+#32 21.10 fi
+#32 21.10 
+#32 21.10 # Set the default git editor if not already set
+#32 21.10 if [ -z "$(git config --get core.editor)" ] && [ -z "${GIT_EDITOR}" ]; then
+#32 21.10     if  [ "${TERM_PROGRAM}" = "vscode" ]; then
+#32 21.10         if [[ -n $(command -v code-insiders) &&  -z $(command -v code) ]]; then
+#32 21.10             export GIT_EDITOR="code-insiders --wait"
+#32 21.10         else
+#32 21.10             export GIT_EDITOR="code --wait"
+#32 21.10         fi
+#32 21.10     fi
+[2026-09-30T15:13:22.222Z] 
+#32 21.10 fi
+#32 21.10 
+#32 21.10 ~~> Setting up shell profiles for Fish with conf.d/nix.fish inside /etc/fish /usr/local/etc/fish /opt/homebrew/etc/fish /opt/local/etc/fish
+#32 21.10 
+#32 21.10 ~~> Setting up the default profile
+#32 21.10 
+#32 21.11 ---- sudo execution ------------------------------------------------------------
+#32 21.11 I am executing:
+#32 21.11 
+#32 21.11     $ sudo HOME=/root /nix/store/irfrbndi76zhkvqsfhmsn4a99iafck29-nix-2.35.2/bin/nix-env -i /nix/store/irfrbndi76zhkvqsfhmsn4a99iafck29-nix-2.35.2
+#32 21.11 
+#32 21.11 to install a bootstrapping Nix in to the default profile
+#32 21.11 
+#32 21.13 installing 'nix-2.35.2'
+#32 21.14 building '/nix/store/3v9waf1zcy52sd2xf30ndbwssp7d4sza-user-environment.drv'...
+#32 21.15 
+#32 21.15 ---- sudo execution ------------------------------------------------------------
+#32 21.15 I am executing:
+#32 21.15 
+#32 21.15     $ sudo HOME=/root /nix/store/irfrbndi76zhkvqsfhmsn4a99iafck29-nix-2.35.2/bin/nix-env -i /nix/store/8i4il2ilblcd62nfh2i21w784d32p0cn-nix-manual-2.35.2-man
+#32 21.15 
+#32 21.15 to install Nix man pages in to the default profile
+#32 21.15 
+#32 21.17 installing 'nix-manual-2.35.2-man'
+
+[2026-09-30T15:13:22.418Z] #32 21.18 building '/nix/store/87kv2ra7c0a549l86df0y18w8w3ir6qk-user-environment.drv'...
+#32 21.19 
+#32 21.19 ---- sudo execution ------------------------------------------------------------
+#32 21.19 I am executing:
+#32 21.19 
+
+[2026-09-30T15:13:22.418Z] #32 21.19     $ sudo HOME=/root /nix/store/irfrbndi76zhkvqsfhmsn4a99iafck29-nix-2.35.2/bin/nix-env -i /nix/store/zdl7dn1gmi1cxdw5a8hw6xsf4cz0rjmg-nss-cacert-3.123
+#32 21.19 
+#32 21.19 to install a bootstrapping SSL certificate just for Nix in to the default profile
+#32 21.19 
+#32 21.21 installing 'nss-cacert-3.123'
+#32 21.21 building '/nix/store/aq6vipp55pqkyy4i7v7sxjrfdibk3a8s-user-environment.drv'...
+#32 21.22 
+#32 21.22 ---- sudo execution ------------------------------------------------------------
+#32 21.22 I am executing:
+#32 21.22 
+#32 21.22     $ sudo HOME=/root NIX_SSL_CERT_FILE=/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt /nix/store/irfrbndi76zhkvqsfhmsn4a99iafck29-nix-2.35.2/bin/nix-channel --update nixpkgs
+#32 21.22 
+#32 21.22 to update the default channel in the default profile
+#32 21.22 
+
+[2026-09-30T15:13:39.096Z] #32 39.00 unpacking 1 channels...
+
+[2026-09-30T15:13:48.997Z] #32 47.87 
+#32 47.87 ---- sudo execution ------------------------------------------------------------
+#32 47.87 I am executing:
+#32 47.87 
+#32 47.87     $ sudo install -m 0644 /tmp/tmp.JQxPdc6rrK/nix.conf /etc/nix/nix.conf
+#32 47.87 
+#32 47.87 to place the default nix daemon configuration (part 2)
+
+[2026-09-30T15:13:48.997Z] #32 47.87 
+
+[2026-09-30T15:13:49.105Z] #32 47.88 Alright! We're done!
+#32 47.88 Try it! Open a new terminal, and type:
+#32 47.89   $ sudo nix-daemon
+#32 47.89   $ nix-shell -p nix-info --run "nix-info -m"
+#32 47.89 
+#32 47.89 Thank you for using this installer. If you have any feedback or need
+#32 47.89 help, don't hesitate:
+#32 47.89 
+#32 47.89 You can open an issue at
+#32 47.89 https://github.com/NixOS/nix/issues/new?labels=installer&template=installer.md
+#32 47.89 
+#32 47.89 Or get in touch with the community: https://nixos.org/community
+#32 47.89 
+#32 47.89 ---- Reminders -----------------------------------------------------------------
+#32 47.89 [ 1 ]
+#32 47.89 Nix won't work in active shell sessions until you restart them.
+#32 47.89 
+#32 47.89 [ 2 ]
+
+[2026-09-30T15:13:49.105Z] #32 47.89 I don't support your init system yet; you may want to add nix-daemon manually.
+#32 47.89 
+#32 47.93 (*) Setting up entrypoint...
+#32 47.94 (*) Executing post-installation steps...
+#32 47.96 removing old generations of profile /nix/var/nix/profiles/per-user/root/profile
+#32 47.96 removing profile version 1
+#32 47.96 removing profile version 2
+#32 47.96 removing old generations of profile /nix/var/nix/profiles/per-user/root/channels
+#32 47.96 removing old generations of profile /nix/var/nix/profiles/per-user/root/profile
+#32 47.96 removing old generations of profile /nix/var/nix/profiles/per-user/root/channels
+#32 47.97 finding garbage collector roots...
+#32 47.97 removing stale link from "/nix/var/nix/gcroots/auto/v73nmmh5d8van4ja5c8jn0gjlwhxbz3a" to "/nix/var/nix/profiles/per-user/root/profile-2-link"
+#32 47.97 removing stale link from "/nix/var/nix/gcroots/auto/lzjbmb2ry0z7lma2fvpqprb12921pnb5" to "/nix/var/nix/profiles/per-user/root/profile-1-link"
+#32 47.97 removing stale temporary roots file "/nix/var/nix/temproots/1183"
+#32 47.97 removing stale temporary roots file "/nix/var/nix/temproots/1237"
+#32 47.97 removing stale temporary roots file "/nix/var/nix/temproots/1202"
+#32 47.97 deleting garbage...
+#32 47.98 deleting '/nix/store/5sfnm22jqwhm57z7jhh1k3f1h7476dqn-user-environment'
+#32 47.98 deleting '/nix/store/3v9waf1zcy52sd2xf30ndbwssp7d4sza-user-environment.drv'
+#32 47.98 deleting '/nix/store/dk7wl2g17r0kclcza99zjk0jdbjkl0ga-env-manifest.nix'
+#32 47.98 deleting '/nix/store/h908dkivfymss6anjbqi1j76im51wylv-nixpkgs-unstable'
+#32 47.98 deleting '/nix/store/yyjjd0sz066pxyzlx7j2ky05kb9mgvir-user-environment'
+#32 47.98 deleting '/nix/store/87kv2ra7c0a549l86df0y18w8w3ir6qk-user-environment.drv'
+#32 47.98 deleting '/nix/store/2kpdqp2pfq3j2l5wh3vxspd4dsfnld1p-env-manifest.nix'
+#32 47.98 deleting unused links...
+#32 47.98 note: hard linking is currently saving -4.0 KiB
+#32 47.99 7 store paths deleted, 4.8 KiB freed
+
+[2026-09-30T15:13:50.740Z] #32 49.71 336.4 KiB freed by hard-linking 307 files
+
+[2026-09-30T15:13:50.892Z] #32 49.71 Done!
+
+[2026-09-30T15:13:50.944Z] #32 DONE 49.9s
+
+[2026-09-30T15:13:51.103Z] 
+#33 [dev_containers_target_stage 6/6] RUN --mount=type=bind,from=dev_containers_feature_content_source,source=rust_2,target=/tmp/build-features-src/rust_2     cp -ar /tmp/build-features-src/rust_2 /tmp/dev-container-features  && chmod -R 0755 /tmp/dev-container-features/rust_2  && cd /tmp/dev-container-features/rust_2  && chmod +x ./devcontainer-features-install.sh  && ./devcontainer-features-install.sh  && rm -rf /tmp/dev-container-features/rust_2
+
+[2026-09-30T15:13:51.701Z] #33 0.786 ===========================================================================
+#33 0.786 Feature       : Rust
+#33 0.786 Description   : Installs Rust, common Rust utilities, and their required dependencies
+#33 0.786 Id            : ghcr.io/devcontainers/features/rust
+#33 0.786 Version       : 1.6.0
+#33 0.786 Documentation : https://github.com/devcontainers/features/tree/main/src/rust
+#33 0.786 Options       :
+#33 0.786     VERSION="latest"
+[2026-09-30T15:13:51.701Z] 
+#33 0.786     PROFILE="minimal"
+#33 0.786     TARGETS=""
+#33 0.786     COMPONENTS="rust-analyzer,rust-src,rustfmt,clippy"
+#33 0.786 ===========================================================================
+
+[2026-09-30T15:13:51.823Z] #33 0.791 Detected package manager: apt
+#33 0.806 Installing required dependencies...
+#33 0.914 Running apt-get update...
+
+[2026-09-30T15:13:52.012Z] #33 0.999 Get:1 http://security.ubuntu.com/ubuntu resolute-security InRelease [137 kB]
+#33 1.113 Get:2 http://security.ubuntu.com/ubuntu resolute-security/universe amd64 Packages [232 kB]
+
+[2026-09-30T15:13:52.121Z] #33 1.179 Get:3 http://security.ubuntu.com/ubuntu resolute-security/restricted amd64 Packages [547 kB]
+#33 1.227 Get:4 http://security.ubuntu.com/ubuntu resolute-security/main amd64 Packages [667 kB]
+
+[2026-09-30T15:13:52.310Z] #33 1.274 Get:5 http://security.ubuntu.com/ubuntu resolute-security/multiverse amd64 Packages [13.6 kB]
+[2026-09-30T15:13:52.311Z] 
+#33 1.426 Get:6 http://archive.ubuntu.com/ubuntu resolute InRelease [136 kB]
+
+[2026-09-30T15:13:52.797Z] #33 1.938 Get:7 http://archive.ubuntu.com/ubuntu resolute-updates InRelease [137 kB]
+
+[2026-09-30T15:13:53.016Z] #33 2.167 Get:8 http://archive.ubuntu.com/ubuntu resolute-backports InRelease [137 kB]
+
+[2026-09-30T15:13:53.166Z] #33 2.324 Get:9 http://archive.ubuntu.com/ubuntu resolute/multiverse amd64 Packages [352 kB]
+
+[2026-09-30T15:13:53.301Z] #33 2.466 Get:10 http://archive.ubuntu.com/ubuntu resolute/main amd64 Packages [1874 kB]
+[2026-09-30T15:13:53.301Z] 
+
+[2026-09-30T15:13:53.598Z] #33 2.779 Get:11 http://archive.ubuntu.com/ubuntu resolute/universe amd64 Packages [20.1 MB]
+
+[2026-09-30T15:13:55.708Z] #33 4.995 Get:12 http://archive.ubuntu.com/ubuntu resolute/restricted amd64 Packages [189 kB]
+
+[2026-09-30T15:13:55.841Z] #33 5.008 Get:13 http://archive.ubuntu.com/ubuntu resolute-updates/universe amd64 Packages [392 kB]
+#33 5.036 Get:14 http://archive.ubuntu.com/ubuntu resolute-updates/restricted amd64 Packages [563 kB]
+#33 5.068 Get:15 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 Packages [841 kB]
+#33 5.135 Get:16 http://archive.ubuntu.com/ubuntu resolute-updates/multiverse amd64 Packages [14.9 kB]
+
+[2026-09-30T15:13:55.992Z] #33 5.137 Get:17 http://archive.ubuntu.com/ubuntu resolute-backports/universe amd64 Packages [3306 B]
+
+[2026-09-30T15:13:56.261Z] #33 5.576 Fetched 26.4 MB in 5s (5680 kB/s)
+#33 5.576 Reading package lists...
+[2026-09-30T15:13:56.946Z] 
+
+[2026-09-30T15:13:57.114Z] #33 6.314 Reading package lists...
+[2026-09-30T15:13:57.611Z] 
+
+[2026-09-30T15:13:57.753Z] #33 7.005 Building dependency tree...
+#33 7.142 Reading state information...
+
+[2026-09-30T15:13:57.882Z] #33 7.278 libpython3-stdlib is already the newest version (3.14.3-0ubuntu2).
+#33 7.278 libpython3-stdlib set to manually installed.
+#33 7.278 libpython3.14-stdlib is already the newest version (3.14.4-1ubuntu0.2).
+#33 7.278 libpython3.14-stdlib set to manually installed.
+#33 7.278 libpython3.14-minimal is already the newest version (3.14.4-1ubuntu0.2).
+#33 7.278 libpython3.14-minimal set to manually installed.
+#33 7.278 Solving dependencies...
+[2026-09-30T15:13:58.018Z] 
+#33 7.421 The following additional packages will be installed:
+#33 7.421   fontconfig-config fonts-dejavu-core fonts-dejavu-mono libfontconfig1
+
+[2026-09-30T15:13:58.227Z] #33 7.422   libfreetype6 libipt2 liblldb-21 libncurses6 libpng16-16t64 libtcl8.6
+#33 7.422   libtk8.6 libx11-6 libx11-data libxau6 libxcb1 libxdmcp6 libxext6 libxft2
+#33 7.422   libxrender1 libxss1 lldb-21 python3-lldb-21 x11-common
+#33 7.424 Suggested packages:
+#33 7.424   python3-gdbm python3-tk tcl8.6 tk8.6
+#33 7.424 Recommended packages:
+[2026-09-30T15:13:58.227Z] 
+#33 7.424   libgpm2
+#33 7.507 The following NEW packages will be installed:
+#33 7.507   fontconfig-config fonts-dejavu-core fonts-dejavu-mono libfontconfig1
+#33 7.507   libfreetype6 libipt2 liblldb-21 libncurses6 libpng16-16t64
+#33 7.507   libpython3-all-dbg libpython3-all-dev libpython3-dbg libpython3-dev
+#33 7.509   libpython3.14 libpython3.14-dbg libpython3.14-dev libpython3.14-testsuite
+#33 7.509   libtcl8.6 libtk8.6 libx11-6 libx11-data libxau6 libxcb1 libxdmcp6 libxext6
+#33 7.510   libxft2 libxrender1 libxss1 lldb lldb-21 python3-lldb-21 x11-common
+#33 7.641 0 upgraded, 32 newly installed, 0 to remove and 0 not upgraded.
+#33 7.641 Need to get 54.3 MB of archives.
+#33 7.641 After this operation, 244 MB of additional disk space will be used.
+#33 7.641 Get:1 http://archive.ubuntu.com/ubuntu resolute/main amd64 libncurses6 amd64 6.6+20251231-1 [114 kB]
+
+[2026-09-30T15:13:58.382Z] #33 7.803 Get:2 http://archive.ubuntu.com/ubuntu resolute/main amd64 libpng16-16t64 amd64 1.6.57-1 [194 kB]
+
+[2026-09-30T15:13:58.529Z] #33 7.860 Get:3 http://archive.ubuntu.com/ubuntu resolute/main amd64 libxau6 amd64 1:1.0.11-1build2 [7502 B]
+#33 7.862 Get:4 http://archive.ubuntu.com/ubuntu resolute/main amd64 libxdmcp6 amd64 1:1.1.5-2 [10.8 kB]
+#33 7.865 Get:5 http://archive.ubuntu.com/ubuntu resolute/main amd64 libxcb1 amd64 1.17.0-2ubuntu1 [49.0 kB]
+#33 7.875 Get:6 http://archive.ubuntu.com/ubuntu resolute/main amd64 libx11-data all 2:1.8.13-1 [114 kB]
+#33 7.892 Get:7 http://archive.ubuntu.com/ubuntu resolute/main amd64 libx11-6 amd64 2:1.8.13-1 [657 kB]
+#33 7.957 Get:8 http://archive.ubuntu.com/ubuntu resolute/main amd64 libxext6 amd64 2:1.3.4-1build3 [30.8 kB]
+
+[2026-09-30T15:13:58.629Z] #33 7.960 Get:9 http://archive.ubuntu.com/ubuntu resolute/main amd64 fonts-dejavu-mono all 2.37-8build1 [502 kB]
+#33 7.995 Get:10 http://archive.ubuntu.com/ubuntu resolute/main amd64 fonts-dejavu-core all 2.37-8build1 [834 kB]
+#33 8.060 Get:11 http://archive.ubuntu.com/ubuntu resolute/main amd64 fontconfig-config amd64 2.17.1-3ubuntu1 [38.5 kB]
+#33 8.063 Get:12 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 libfreetype6 amd64 2.14.2+dfsg-1ubuntu0.1 [409 kB]
+
+[2026-09-30T15:13:58.800Z] #33 8.080 Get:13 http://archive.ubuntu.com/ubuntu resolute/main amd64 libfontconfig1 amd64 2.17.1-3ubuntu1 [144 kB]
+[2026-09-30T15:13:58.800Z] 
+#33 8.084 Get:14 http://archive.ubuntu.com/ubuntu resolute/main amd64 libipt2 amd64 2.1.2-3 [49.2 kB]
+
+[2026-09-30T15:13:58.819Z] #33 8.262 Get:15 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 libpython3.14 amd64 3.14.4-1ubuntu0.2 [2579 kB]
+
+[2026-09-30T15:13:59.010Z] #33 8.463 Get:16 http://archive.ubuntu.com/ubuntu resolute/universe amd64 liblldb-21 amd64 1:21.1.8-6ubuntu1 [4752 kB]
+
+[2026-09-30T15:13:59.444Z] #33 8.918 Get:17 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 libpython3.14-dev amd64 3.14.4-1ubuntu0.2 [5986 kB]
+
+[2026-09-30T15:13:59.958Z] #33 9.458 Get:18 http://archive.ubuntu.com/ubuntu resolute/main amd64 libpython3-dev amd64 3.14.3-0ubuntu2 [8736 B]
+
+[2026-09-30T15:14:00.120Z] #33 9.458 Get:19 http://archive.ubuntu.com/ubuntu resolute/main amd64 libpython3-all-dev amd64 3.14.3-0ubuntu2 [912 B]
+#33 9.458 Get:20 http://archive.ubuntu.com/ubuntu resolute/main amd64 libtcl8.6 amd64 8.6.17+dfsg-1build1 [1003 kB]
+#33 9.554 Get:21 http://archive.ubuntu.com/ubuntu resolute/main amd64 libxrender1 amd64 1:0.9.12-1build1 [19.2 kB]
+#33 9.555 Get:22 http://archive.ubuntu.com/ubuntu resolute/main amd64 libxft2 amd64 2.3.6-1build2 [45.1 kB]
+[2026-09-30T15:14:00.120Z] 
+#33 9.560 Get:23 http://archive.ubuntu.com/ubuntu resolute/main amd64 x11-common all 1:7.7+26ubuntu1 [22.5 kB]
+#33 9.562 Get:24 http://archive.ubuntu.com/ubuntu resolute/main amd64 libxss1 amd64 1:1.2.3-1build4 [7084 B]
+#33 9.562 Get:25 http://archive.ubuntu.com/ubuntu resolute/main amd64 libtk8.6 amd64 8.6.17-1build1 [793 kB]
+#33 9.628 Get:26 http://archive.ubuntu.com/ubuntu resolute-updates/main amd64 libpython3.14-dbg amd64 3.14.4-1ubuntu0.2 [29.3 MB]
+
+[2026-09-30T15:14:02.691Z] #33 12.33 Get:27 http://archive.ubuntu.com/ubuntu resolute-updates/universe amd64 libpython3.14-testsuite all 3.14.4-1ubuntu0.2 [5421 kB]
+
+[2026-09-30T15:14:04.311Z] #33 14.03 Get:28 http://archive.ubuntu.com/ubuntu resolute/universe amd64 python3-lldb-21 amd64 1:21.1.8-6ubuntu1 [139 kB]
+
+[2026-09-30T15:14:04.554Z] #33 14.13 Get:29 http://archive.ubuntu.com/ubuntu resolute/universe amd64 lldb-21 amd64 1:21.1.8-6ubuntu1 [1146 kB]
+[2026-09-30T15:14:04.554Z] 
+
+[2026-09-30T15:14:04.682Z] #33 14.42 Get:30 http://archive.ubuntu.com/ubuntu resolute/universe amd64 lldb amd64 1:21.1.6-71 [3738 B]
+
+[2026-09-30T15:14:04.833Z] #33 14.42 Get:31 http://archive.ubuntu.com/ubuntu resolute/main amd64 libpython3-dbg amd64 3.14.3-0ubuntu2 [8730 B]
+#33 14.42 Get:32 http://archive.ubuntu.com/ubuntu resolute/main amd64 libpython3-all-dbg amd64 3.14.3-0ubuntu2 [910 B]
+
+[2026-09-30T15:14:06.067Z] #33 15.89 Fetched 54.3 MB in 7s (7880 kB/s)
+
+[2026-09-30T15:14:06.167Z] #33 16.00 Selecting previously unselected package libncurses6:amd64.
+#33 16.00 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%
+[2026-09-30T15:14:06.395Z] (Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 29417 files and directories currently installed.)
+#33 16.01 Preparing to unpack .../00-libncurses6_6.6+20251231-1_amd64.deb ...
+#33 16.08 Unpacking libncurses6:amd64 (6.6+20251231-1) ...
+
+[2026-09-30T15:14:06.478Z] #33 16.33 Selecting previously unselected package libpng16-16t64:amd64.
+
+[2026-09-30T15:14:06.673Z] #33 16.33 Preparing to unpack .../01-libpng16-16t64_1.6.57-1_amd64.deb ...
+
+[2026-09-30T15:14:06.674Z] #33 16.38 Unpacking libpng16-16t64:amd64 (1.6.57-1) ...
+
+[2026-09-30T15:14:06.715Z] #33 16.59 Selecting previously unselected package libxau6:amd64.
+
+[2026-09-30T15:14:06.890Z] #33 16.59 Preparing to unpack .../02-libxau6_1%3a1.0.11-1build2_amd64.deb ...
+#33 16.61 Unpacking libxau6:amd64 (1:1.0.11-1build2) ...
+
+[2026-09-30T15:14:06.913Z] #33 16.79 Selecting previously unselected package libxdmcp6:amd64.
+
+[2026-09-30T15:14:07.089Z] #33 16.80 Preparing to unpack .../03-libxdmcp6_1%3a1.1.5-2_amd64.deb ...
+#33 16.83 Unpacking libxdmcp6:amd64 (1:1.1.5-2) ...
+
+[2026-09-30T15:14:07.111Z] #33 17.01 Selecting previously unselected package libxcb1:amd64.
+
+[2026-09-30T15:14:07.293Z] #33 17.01 Preparing to unpack .../04-libxcb1_1.17.0-2ubuntu1_amd64.deb ...
+#33 17.04 Unpacking libxcb1:amd64 (1.17.0-2ubuntu1) ...
+
+[2026-09-30T15:14:07.354Z] #33 17.27 Selecting previously unselected package libx11-data.
+
+[2026-09-30T15:14:07.555Z] #33 17.27 Preparing to unpack .../05-libx11-data_2%3a1.8.13-1_all.deb ...
+#33 17.32 Unpacking libx11-data (2:1.8.13-1) ...
+
+[2026-09-30T15:14:07.687Z] #33 17.63 Selecting previously unselected package libx11-6:amd64.
+
+[2026-09-30T15:14:07.854Z] #33 17.63 Preparing to unpack .../06-libx11-6_2%3a1.8.13-1_amd64.deb ...
+#33 17.64 Unpacking libx11-6:amd64 (2:1.8.13-1) ...
+
+[2026-09-30T15:14:07.874Z] #33 17.83 Selecting previously unselected package libxext6:amd64.
+
+[2026-09-30T15:14:08.051Z] #33 17.83 Preparing to unpack .../07-libxext6_2%3a1.3.4-1build3_amd64.deb ...
+#33 17.85 Unpacking libxext6:amd64 (2:1.3.4-1build3) ...
+
+[2026-09-30T15:14:08.147Z] #33 18.12 Selecting previously unselected package fonts-dejavu-mono.
+
+[2026-09-30T15:14:08.344Z] #33 18.12 Preparing to unpack .../08-fonts-dejavu-mono_2.37-8build1_all.deb ...
+#33 18.17 Unpacking fonts-dejavu-mono (2.37-8build1) ...
+
+[2026-09-30T15:14:08.461Z] #33 18.45 Selecting previously unselected package fonts-dejavu-core.
+
+[2026-09-30T15:14:08.654Z] #33 18.45 Preparing to unpack .../09-fonts-dejavu-core_2.37-8build1_all.deb ...
+#33 18.50 Unpacking fonts-dejavu-core (2.37-8build1) ...
+
+[2026-09-30T15:14:08.701Z] #33 18.71 Selecting previously unselected package fontconfig-config.
+
+[2026-09-30T15:14:08.852Z] #33 18.71 Preparing to unpack .../10-fontconfig-config_2.17.1-3ubuntu1_amd64.deb ...
+[2026-09-30T15:14:08.852Z] 
+
+[2026-09-30T15:14:08.900Z] #33 18.92 Unpacking fontconfig-config (2.17.1-3ubuntu1) ...
+
+[2026-09-30T15:14:09.140Z] #33 19.18 Selecting previously unselected package libfreetype6:amd64.
+
+[2026-09-30T15:14:09.319Z] #33 19.18 Preparing to unpack .../11-libfreetype6_2.14.2+dfsg-1ubuntu0.1_amd64.deb ...
+#33 19.21 Unpacking libfreetype6:amd64 (2.14.2+dfsg-1ubuntu0.1) ...
+
+[2026-09-30T15:14:09.328Z] #33 19.38 Selecting previously unselected package libfontconfig1:amd64.
+
+[2026-09-30T15:14:09.496Z] #33 19.38 Preparing to unpack .../12-libfontconfig1_2.17.1-3ubuntu1_amd64.deb ...
+#33 19.40 Unpacking libfontconfig1:amd64 (2.17.1-3ubuntu1) ...
+
+[2026-09-30T15:14:09.533Z] #33 19.60 Selecting previously unselected package libipt2.
+
+[2026-09-30T15:14:09.728Z] #33 19.60 Preparing to unpack .../13-libipt2_2.1.2-3_amd64.deb ...
+#33 19.65 Unpacking libipt2 (2.1.2-3) ...
+
+[2026-09-30T15:14:09.812Z] #33 19.90 Selecting previously unselected package libpython3.14:amd64.
+
+[2026-09-30T15:14:10.007Z] #33 19.90 Preparing to unpack .../14-libpython3.14_3.14.4-1ubuntu0.2_amd64.deb ...
+#33 19.94 Unpacking libpython3.14:amd64 (3.14.4-1ubuntu0.2) ...
+
+[2026-09-30T15:14:10.101Z] #33 20.20 Selecting previously unselected package liblldb-21.
+
+[2026-09-30T15:14:10.276Z] #33 20.21 Preparing to unpack .../15-liblldb-21_1%3a21.1.8-6ubuntu1_amd64.deb ...
+#33 20.23 Unpacking liblldb-21 (1:21.1.8-6ubuntu1) ...
+
+[2026-09-30T15:14:10.383Z] #33 20.51 Selecting previously unselected package libpython3.14-dev:amd64.
+
+[2026-09-30T15:14:10.564Z] #33 20.51 Preparing to unpack .../16-libpython3.14-dev_3.14.4-1ubuntu0.2_amd64.deb ...
+#33 20.54 Unpacking libpython3.14-dev:amd64 (3.14.4-1ubuntu0.2) ...
+
+[2026-09-30T15:14:10.650Z] #33 20.79 Selecting previously unselected package libpython3-dev:amd64.
+
+[2026-09-30T15:14:10.827Z] #33 20.79 Preparing to unpack .../17-libpython3-dev_3.14.3-0ubuntu2_amd64.deb ...
+#33 20.82 Unpacking libpython3-dev:amd64 (3.14.3-0ubuntu2) ...
+
+[2026-09-30T15:14:11.085Z] #33 21.26 Selecting previously unselected package libpython3-all-dev:amd64.
+
+[2026-09-30T15:14:11.290Z] #33 21.26 Preparing to unpack .../18-libpython3-all-dev_3.14.3-0ubuntu2_amd64.deb ...
+#33 21.32 Unpacking libpython3-all-dev:amd64 (3.14.3-0ubuntu2) ...
+
+[2026-09-30T15:14:11.430Z] #33 21.62 Selecting previously unselected package libtcl8.6:amd64.
+
+[2026-09-30T15:14:11.630Z] #33 21.63 Preparing to unpack .../19-libtcl8.6_8.6.17+dfsg-1build1_amd64.deb ...
+#33 21.68 Unpacking libtcl8.6:amd64 (8.6.17+dfsg-1build1) ...
+
+[2026-09-30T15:14:11.632Z] #33 21.84 Selecting previously unselected package libxrender1:amd64.
+
+[2026-09-30T15:14:11.805Z] #33 21.84 Preparing to unpack .../20-libxrender1_1%3a0.9.12-1build1_amd64.deb ...
+
+[2026-09-30T15:14:11.805Z] #33 21.87 Unpacking libxrender1:amd64 (1:0.9.12-1build1) ...
+
+[2026-09-30T15:14:11.811Z] #33 22.03 Selecting previously unselected package libxft2:amd64.
+
+[2026-09-30T15:14:11.991Z] #33 22.03 Preparing to unpack .../21-libxft2_2.3.6-1build2_amd64.deb ...
+#33 22.06 Unpacking libxft2:amd64 (2.3.6-1build2) ...
+
+[2026-09-30T15:14:12.164Z] #33 22.41 Selecting previously unselected package x11-common.
+[2026-09-30T15:14:12.164Z] 
+
+[2026-09-30T15:14:12.348Z] #33 22.41 Preparing to unpack .../22-x11-common_1%3a7.7+26ubuntu1_all.deb ...
+#33 22.45 Unpacking x11-common (1:7.7+26ubuntu1) ...
+
+[2026-09-30T15:14:12.388Z] #33 22.65 Selecting previously unselected package libxss1:amd64.
+
+[2026-09-30T15:14:12.574Z] #33 22.65 Preparing to unpack .../23-libxss1_1%3a1.2.3-1build4_amd64.deb ...
+#33 22.69 Unpacking libxss1:amd64 (1:1.2.3-1build4) ...
+
+[2026-09-30T15:14:12.654Z] #33 22.93 Selecting previously unselected package libtk8.6:amd64.
+
+[2026-09-30T15:14:12.841Z] #33 22.93 Preparing to unpack .../24-libtk8.6_8.6.17-1build1_amd64.deb ...
+#33 22.97 Unpacking libtk8.6:amd64 (8.6.17-1build1) ...
+
+[2026-09-30T15:14:13.000Z] #33 23.29 Selecting previously unselected package libpython3.14-dbg:amd64.
+
+[2026-09-30T15:14:13.175Z] #33 23.30 Preparing to unpack .../25-libpython3.14-dbg_3.14.4-1ubuntu0.2_amd64.deb ...
+#33 23.32 Unpacking libpython3.14-dbg:amd64 (3.14.4-1ubuntu0.2) ...
+
+[2026-09-30T15:14:13.788Z] #33 22.55 Selecting previously unselected package libpython3.14-testsuite.
+
+[2026-09-30T15:14:13.987Z] #33 22.55 Preparing to unpack .../26-libpython3.14-testsuite_3.14.4-1ubuntu0.2_all.deb ...
+
+[2026-09-30T15:14:13.988Z] #33 22.60 Unpacking libpython3.14-testsuite (3.14.4-1ubuntu0.2) ...
+
+[2026-09-30T15:14:14.145Z] #33 22.93 Selecting previously unselected package python3-lldb-21.
+[2026-09-30T15:14:14.146Z] 
+
+[2026-09-30T15:14:14.325Z] #33 22.93 Preparing to unpack .../27-python3-lldb-21_1%3a21.1.8-6ubuntu1_amd64.deb ...
+[2026-09-30T15:14:14.325Z] 
+#33 22.96 Unpacking python3-lldb-21 (1:21.1.8-6ubuntu1) ...
+
+[2026-09-30T15:14:14.374Z] #33 23.17 Selecting previously unselected package lldb-21.
+
+[2026-09-30T15:14:14.547Z] #33 23.17 Preparing to unpack .../28-lldb-21_1%3a21.1.8-6ubuntu1_amd64.deb ...
+#33 23.19 Unpacking lldb-21 (1:21.1.8-6ubuntu1) ...
+
+[2026-09-30T15:14:15.016Z] #33 23.84 Selecting previously unselected package lldb:amd64.
+
+[2026-09-30T15:14:15.185Z] #33 23.84 Preparing to unpack .../29-lldb_1%3a21.1.6-71_amd64.deb ...
+
+[2026-09-30T15:14:15.185Z] #33 23.87 Unpacking lldb:amd64 (1:21.1.6-71) ...
+#33 24.02 Selecting previously unselected package libpython3-dbg:amd64.
+
+[2026-09-30T15:14:15.308Z] #33 24.02 Preparing to unpack .../30-libpython3-dbg_3.14.3-0ubuntu2_amd64.deb ...
+#33 24.05 Unpacking libpython3-dbg:amd64 (3.14.3-0ubuntu2) ...
+#33 24.15 Selecting previously unselected package libpython3-all-dbg:amd64.
+
+[2026-09-30T15:14:15.484Z] #33 24.15 Preparing to unpack .../31-libpython3-all-dbg_3.14.3-0ubuntu2_amd64.deb ...
+#33 24.17 Unpacking libpython3-all-dbg:amd64 (3.14.3-0ubuntu2) ...
+
+[2026-09-30T15:14:15.514Z] #33 24.36 Setting up libpython3.14-testsuite (3.14.4-1ubuntu0.2) ...
+
+[2026-09-30T15:14:19.030Z] #33 28.05 Setting up libxau6:amd64 (1:1.0.11-1build2) ...
+
+[2026-09-30T15:14:19.149Z] #33 28.18 Setting up libxdmcp6:amd64 (1:1.1.5-2) ...
+
+[2026-09-30T15:14:19.441Z] #33 28.49 Setting up libxcb1:amd64 (1.17.0-2ubuntu1) ...
+
+[2026-09-30T15:14:19.667Z] #33 28.72 Setting up x11-common (1:7.7+26ubuntu1) ...
+
+[2026-09-30T15:14:20.413Z] #33 29.50 invoke-rc.d: could not determine current runlevel
+
+[2026-09-30T15:14:20.573Z] #33 29.51 invoke-rc.d: policy-rc.d denied execution of start.
+
+[2026-09-30T15:14:20.574Z] #33 29.58 Setting up libx11-data (2:1.8.13-1) ...
+#33 29.67 Setting up libncurses6:amd64 (6.6+20251231-1) ...
+
+[2026-09-30T15:14:20.717Z] #33 29.82 Setting up fonts-dejavu-mono (2.37-8build1) ...
+
+[2026-09-30T15:14:20.933Z] #33 30.05 Setting up libpng16-16t64:amd64 (1.6.57-1) ...
+
+[2026-09-30T15:14:21.039Z] #33 30.16 Setting up libtcl8.6:amd64 (8.6.17+dfsg-1build1) ...
+
+[2026-09-30T15:14:21.140Z] #33 30.27 Setting up libipt2 (2.1.2-3) ...
+
+[2026-09-30T15:14:21.368Z] #33 30.35 Setting up fonts-dejavu-core (2.37-8build1) ...
+
+[2026-09-30T15:14:21.520Z] #33 30.67 Setting up libpython3.14:amd64 (3.14.4-1ubuntu0.2) ...
+
+[2026-09-30T15:14:21.631Z] #33 30.78 Setting up libx11-6:amd64 (2:1.8.13-1) ...
+
+[2026-09-30T15:14:21.771Z] #33 30.93 Setting up libpython3.14-dev:amd64 (3.14.4-1ubuntu0.2) ...
+
+[2026-09-30T15:14:21.947Z] #33 31.03 Setting up libpython3-dev:amd64 (3.14.3-0ubuntu2) ...
+#33 31.12 Setting up libxrender1:amd64 (1:0.9.12-1build1) ...
+
+[2026-09-30T15:14:22.159Z] #33 31.18 Setting up fontconfig-config (2.17.1-3ubuntu1) ...
+
+[2026-09-30T15:14:22.300Z] #33 31.49 Setting up libxext6:amd64 (2:1.3.4-1build3) ...
+
+[2026-09-30T15:14:22.489Z] #33 31.59 Setting up libfreetype6:amd64 (2.14.2+dfsg-1ubuntu0.1) ...
+#33 31.69 Setting up libpython3-all-dev:amd64 (3.14.3-0ubuntu2) ...
+
+[2026-09-30T15:14:22.627Z] #33 31.76 Setting up liblldb-21 (1:21.1.8-6ubuntu1) ...
+#33 31.83 Setting up libxss1:amd64 (1:1.2.3-1build4) ...
+
+[2026-09-30T15:14:22.755Z] #33 31.91 Setting up libfontconfig1:amd64 (2.17.1-3ubuntu1) ...
+#33 31.97 Setting up libxft2:amd64 (2.3.6-1build2) ...
+
+[2026-09-30T15:14:22.964Z] #33 32.03 Setting up python3-lldb-21 (1:21.1.8-6ubuntu1) ...
+
+[2026-09-30T15:14:23.051Z] #33 32.28 Setting up libtk8.6:amd64 (8.6.17-1build1) ...
+
+[2026-09-30T15:14:23.181Z] #33 32.34 Setting up libpython3.14-dbg:amd64 (3.14.4-1ubuntu0.2) ...
+#33 32.42 Setting up lldb-21 (1:21.1.8-6ubuntu1) ...
+
+[2026-09-30T15:14:23.335Z] #33 32.52 Setting up lldb:amd64 (1:21.1.6-71) ...
+#33 32.58 Setting up libpython3-dbg:amd64 (3.14.3-0ubuntu2) ...
+
+[2026-09-30T15:14:23.471Z] #33 32.65 Setting up libpython3-all-dbg:amd64 (3.14.3-0ubuntu2) ...
+#33 32.72 Processing triggers for libc-bin (2.43-2ubuntu2.4) ...
+
+[2026-09-30T15:14:23.689Z] #33 32.80 Processing triggers for man-db (2.13.1-1build1) ...
+
+[2026-09-30T15:14:24.317Z] #33 33.62 Installing Rust...
+
+[2026-09-30T15:14:28.645Z] #33 38.18 ./rustup-init: OK
+
+[2026-09-30T15:14:28.837Z] #33 38.23 info: profile set to minimal
+[2026-09-30T15:14:28.837Z] 
+#33 38.23 info: default host tuple is x86_64-unknown-linux-gnu
+#33 38.23 info: syncing channel updates for stable-x86_64-unknown-linux-gnu
+
+[2026-09-30T15:14:28.983Z] #33 38.54 info: latest update on 2026-09-03 for version 1.98.1 (48a229cea 2026-09-01)
+#33 38.54 info: downloading 3 components
+
+[2026-09-30T15:14:58.142Z] #33 67.72 info: default toolchain set to stable-x86_64-unknown-linux-gnu
+
+[2026-09-30T15:14:58.272Z] #33 67.72 
+#33 67.72   stable-x86_64-unknown-linux-gnu installed - rustc 1.98.1 (48a229cea 2026-09-01)
+#33 67.72 
+[2026-09-30T15:14:58.272Z] 
+#33 67.72 
+#33 67.72 Rust is installed now. Great!
+#33 67.72 
+#33 67.72 To get started you need Cargo's bin directory (/usr/local/cargo/bin) in your 
+#33 67.72 PATH
+#33 67.72 environment variable. This has not been done automatically.
+#33 67.72 
+#33 67.72 To configure your current shell, you need to source
+#33 67.72 the corresponding env file under /usr/local/cargo.
+#33 67.72 
+#33 67.72 Consider running the right command for your shell (note the leading DOT):
+#33 67.72 . "/usr/local/cargo/env" # For sh/ash/dash/pdksh/bash/zsh
+#33 67.72 cargo:rerun-if-env-changed=CC_x86_64-unknown-linux-gnu
+#33 67.72 CC_x86_64-unknown-linux-gnu = None
+#33 67.72 cargo:rerun-if-env-changed=CC_x86_64_unknown_linux_gnu
+#33 67.72 CC_x86_64_unknown_linux_gnu = None
+#33 67.72 cargo:rerun-if-env-changed=HOST_CC
+#33 67.72 HOST_CC = None
+#33 67.72 cargo:rerun-if-env-changed=CC
+#33 67.72 CC = None
+#33 67.73 cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
+#33 67.78 cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+#33 67.78 CRATE_CC_NO_DEFAULTS = None
+#33 67.78 cargo:rerun-if-env-changed=CFLAGS
+#33 67.78 CFLAGS = None
+#33 67.78 cargo:rerun-if-env-changed=HOST_CFLAGS
+#33 67.78 HOST_CFLAGS = None
+#33 67.78 cargo:rerun-if-env-changed=CFLAGS_x86_64_unknown_linux_gnu
+#33 67.78 CFLAGS_x86_64_unknown_linux_gnu = None
+#33 67.78 cargo:rerun-if-env-changed=CFLAGS_x86_64-unknown-linux-gnu
+#33 67.78 CFLAGS_x86_64-unknown-linux-gnu = None
+#33 67.80 Installing Rust components...
+#33 67.80 Installing Rust component: rust-analyzer
+#33 67.85 info: downloading component rust-analyzer
+
+[2026-09-30T15:15:01.755Z] #33 71.52 Installing Rust component: rust-src
+
+[2026-09-30T15:15:01.947Z] #33 71.56 info: downloading component rust-src
+
+[2026-09-30T15:15:04.069Z] #33 73.95 Installing Rust component: rustfmt
+
+[2026-09-30T15:15:04.264Z] #33 74.00 info: downloading component rustfmt
+
+[2026-09-30T15:15:04.751Z] #33 74.67 Installing Rust component: clippy
+
+[2026-09-30T15:15:04.944Z] #33 74.72 info: downloading component clippy
+
+[2026-09-30T15:15:06.253Z] #33 76.25 Updating shell configuration files...
+
+[2026-09-30T15:15:06.476Z] #33 76.33 Done!
+
+[2026-09-30T15:15:06.501Z] #33 DONE 76.5s
+
+[2026-09-30T15:15:06.672Z] 
+#34 exporting to oci image format
+#34 exporting layers
+
+[2026-09-30T15:15:39.253Z] #34 exporting layers 31.5s done
+#34 preparing layers for inline cache
+
+[2026-09-30T15:15:39.407Z] #34 preparing layers for inline cache 0.1s done
+#34 exporting manifest sha256:b95318468004868f96b2829c5103b402fa38dedc1db7d1c5fbd29579003e94ff 0.1s done
+#34 exporting config sha256:99bc64dd7c769e3558da98b658f0cb0c9a0bb60588dbf76c04e46ec22090d83e
+
+[2026-09-30T15:15:39.619Z] #34 exporting config sha256:99bc64dd7c769e3558da98b658f0cb0c9a0bb60588dbf76c04e46ec22090d83e 0.1s done
+#34 sending tarball
+
+[2026-09-30T15:17:04.887Z] #34 ...
+
+#35 importing to docker
+
+[2026-09-30T15:17:05.068Z] #35 DONE 0.0s
+
+#34 exporting to oci image format
+#34 sending tarball 86.5s done
+#34 DONE 118.2s
+
+[2026-09-30T15:17:05.147Z] 
+View build details: docker-desktop://dashboard/build/pelorus-limited/pelorus-limited0/m3i4b1pduhcuem6ahywykwb0d
+
+{"outcome":"success","imageName":["pelorus-devcontainer:adopt-verify"],"ociAuthDiagnostics":{"authLookupWouldBeBlocked":false,"registryRedirectWouldPreventCredentialForwarding":false,"authServerRedirect":false}}

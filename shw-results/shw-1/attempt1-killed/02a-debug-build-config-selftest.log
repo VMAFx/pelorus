@@ -1,0 +1,65 @@
+python: C:/msys64/ucrt64/bin/python3.exe 3.14.7 (main, Aug  8 2026, 21:15:19)  [MINGW GCC UCRT 16.2.0 64 bit (AMD64)]
+git on PATH: C:\msys64\usr\bin/git.EXE
+tempdir: C:/msys64/tmp/pel-dbg-5zyo5_zo
+$ git init -q C:/msys64/tmp/pel-dbg-5zyo5_zo
+  rc=0
+  out=''
+  err=''
+$ git -C C:/msys64/tmp/pel-dbg-5zyo5_zo add a.txt
+  rc=0
+  out=''
+  err=''
+$ git -C C:/msys64/tmp/pel-dbg-5zyo5_zo -c user.name=t -c user.email=t@t.invalid -c core.hooksPath=/dev/null commit --no-verify -qm fixture
+  rc=0
+  out=''
+  err=''
+$ git -C C:/msys64/tmp/pel-dbg-5zyo5_zo branch n1.2.3
+  rc=0
+  out=''
+  err=''
+$ git -C C:/msys64/tmp/pel-dbg-5zyo5_zo rev-parse --verify n1.2.3^{commit}
+  rc=128
+  out=''
+  err='Schwerwiegend: Benötigte einen einzelnen Commit'
+$ git -C C:/msys64/tmp/pel-dbg-5zyo5_zo rev-parse --verify n1.2.3^{tree}
+  rc=128
+  out=''
+  err='Schwerwiegend: Benötigte einen einzelnen Commit'
+$ git -C C:/msys64/tmp/pel-dbg-5zyo5_zo rev-parse --verify n1.2.3
+  rc=0
+  out='ad792f698952537846657dd46f6acc93e9b7b7ca'
+  err=''
+$ git -C C:/msys64/tmp/pel-dbg-5zyo5_zo rev-parse --verify refs/tags/n1.2.3^{commit}
+  rc=128
+  out=''
+  err='Schwerwiegend: Benötigte einen einzelnen Commit'
+$ C:/msys64/usr/bin/echo.exe n1.2.3^{commit} a{b,c}d {x}
+  rc=0
+  out='n1.2.3^commit abd acd x'
+  err=''
+$ git -C C:/msys64/tmp/pel-dbg-5zyo5_zo add a.txt
+  rc=0
+  out=''
+  err=''
+$ git -C C:/msys64/tmp/pel-dbg-5zyo5_zo -c user.name=t -c user.email=t@t.invalid -c core.hooksPath=/dev/null commit --no-verify -qm patch
+  rc=0
+  out=''
+  err=''
+$ git -C C:/msys64/tmp/pel-dbg-5zyo5_zo format-patch -1 --stdout
+  rc=0
+  out='From 15c0dd3696e3bec3b144f24521c352c17c8709c1 Mon Sep 17 00:00:00 2001\nFrom: t <t@t.invalid>\nDate: Wed, 30 Sep 2026 11:04:35 +0200\nSubject: [PATCH] patch\n\n---\n a.txt | 1 +\n 1 file changed, 1 insertion(+)\n\ndiff --git a/a.txt b/a.txt\nindex db127bf..0aa0f34 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1,2 @@\n x\n+y\n-- \n2.56.0'
+  err=''
+patch CRLF count: 19 LF count: 19
+$ git -C C:/msys64/tmp/pel-dbg-5zyo5_zo -c core.hooksPath=/dev/null worktree add --detach C:/msys64/tmp/pel-dbg-5zyo5_zo-wt HEAD~1
+  rc=0
+  out='HEAD ist jetzt bei ad792f6 fixture'
+  err='Bereite Arbeitsverzeichnis vor (losgelöster HEAD ad792f6)'
+$ git -C C:/msys64/tmp/pel-dbg-5zyo5_zo-wt -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@t.invalid am --3way C:/msys64/tmp/pel-dbg-5zyo5_zo.patch
+  rc=128
+  out='Wende an: patch\nVerwende Informationen aus der Staging-Area, um ein Basisverzeichnis nachzustellen...\nAnwendung des Patches fehlgeschlagen bei 0001 patch'
+  err='Fehler: Anwendung des Patches fehlgeschlagen: a.txt:1\nFehler: a.txt: Patch konnte nicht angewendet werden\nFehler: Haben Sie den Patch per Hand editiert?\nEr kann nicht auf die Blobs in seiner \'index\' Zeile angewendet werden.\nHinweis: Benutzen Sie \'git am --show-current-patch=diff\', um den\nHinweis: fehlgeschlagenen Patch zu sehen\nHinweis: Wenn Sie dieses Problem behoben haben, führen Sie "git am --continue" aus.\nHinweis: Falls Sie diesen Patch auslassen möchten, führen Sie stattdessen "git am --skip" aus.\nHinweis: Um den ursprünglichen Branch wiederherzustellen und die Anwendung der Patches abzubrechen, führen Sie "git am --abort" aus.\nHinweis: Disable this message with "git config set advice.mergeConflict false"'
+patched content: b'x\r\n'
+$ git -C C:/msys64/tmp/pel-dbg-5zyo5_zo worktree remove --force C:/msys64/tmp/pel-dbg-5zyo5_zo-wt
+  rc=0
+  out=''
+  err=''

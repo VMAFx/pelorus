@@ -1,0 +1,6 @@
+== planes_15 vs planes_15_fast_1
+frame0 Y: differing=1/230400 max=1 psnr=101.76 rows=0..0(1)
+frame3 U: differing=1/57600 max=1 psnr=95.74 rows=0..0(1)
+== planes_1 vs planes_1_fast_1
+frame0 Y: differing=1/230400 max=1 psnr=101.76 rows=0..0(1)
+== planes_4 vs planes_4_fast_1

@@ -1,0 +1,20 @@
+== matrix(winallow) vk0 vvl=msys (2026-09-30T11:51:37+02:00)
+matrix vk0 rc=1
+PASS: analyze-yuv420p
+PASS: analyze-yuv420p10le
+PASS: analyze-p010le
+PASS: analyze-yuv420p12le
+PASS: analyze-p012le
+-- every diagnostic id per stream (count):
+    120 VUID-VkFormatProperties2-pNext-pNext
+     12 VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230
+== matrix(winallow) vk1 vvl=msys (2026-09-30T11:51:41+02:00)
+matrix vk1 rc=1
+PASS: analyze-yuv420p
+PASS: analyze-yuv420p10le
+PASS: analyze-p010le
+PASS: analyze-yuv420p12le
+PASS: analyze-p012le
+-- every diagnostic id per stream (count):
+    120 VUID-VkFormatProperties2-pNext-pNext
+     12 VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230

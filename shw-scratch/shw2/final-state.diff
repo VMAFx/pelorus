@@ -1,0 +1,1131 @@
+diff --git a/ffmpeg-patches/0002-add-vf_pelorus_analyze_vulkan.patch b/ffmpeg-patches/0002-add-vf_pelorus_analyze_vulkan.patch
+index cd2d2e2..aff6a7c 100644
+--- a/ffmpeg-patches/0002-add-vf_pelorus_analyze_vulkan.patch
++++ b/ffmpeg-patches/0002-add-vf_pelorus_analyze_vulkan.patch
+@@ -42,10 +42,10 @@ docs/adr/0133-analyze-coarse-banding-cambi.md
+  configure                                    |   3 +
+  libavfilter/Makefile                         |   1 +
+  libavfilter/allfilters.c                     |   1 +
+- libavfilter/vf_pelorus_analyze_vulkan.c      | 856 ++++++++++++++++++++
++ libavfilter/vf_pelorus_analyze_vulkan.c      | 874 ++++++++++++++++++++
+  libavfilter/vulkan/Makefile                  |   1 +
+- libavfilter/vulkan/pelorus_analyze.comp.glsl | 136 ++++
+- 6 files changed, 998 insertions(+)
++ libavfilter/vulkan/pelorus_analyze.comp.glsl | 136 +++
++ 6 files changed, 1016 insertions(+)
+ 
+ diff --git a/configure b/configure
+ index 00b13ed09edcf3fb2b44ff9d0bfbb4420f45c68e..aec9b3ae17deb53929fc15870fdaeb58db717c8f 100755
+@@ -94,10 +94,10 @@ index 78a01c74a326700f3c6c4799906c5ae17b613830..c781df8365397465a0f8cb2c25ac4505
+  extern const FFFilter ff_vf_perspective;
+ diff --git a/libavfilter/vf_pelorus_analyze_vulkan.c b/libavfilter/vf_pelorus_analyze_vulkan.c
+ new file mode 100644
+-index 0000000000000000000000000000000000000000..a9e6cf19f5639d9d816e51133637151c936438c2
++index 0000000000000000000000000000000000000000..f1e7f2e00942c2dc7cc3cc2e5494074fc6edd81a
+ --- /dev/null
+ +++ b/libavfilter/vf_pelorus_analyze_vulkan.c
+-@@ -0,0 +1,856 @@
++@@ -0,0 +1,874 @@
+ +/*
+ + * Copyright 2026 Lusoris
+ + *
+@@ -865,6 +865,24 @@ index 0000000000000000000000000000000000000000..a9e6cf19f5639d9d816e51133637151c
+ +    return err;
+ +}
+ +
+++/* Pass-through: filter_frame() forwards the input AVFrame, so the output link
+++ * must advertise the frames context those frames belong to. The stock
+++ * ff_vk_filter_config_output() builds a fresh context whenever it cannot reuse
+++ * the input one (linear tiling, missing usage bits), which would mislabel every
+++ * forwarded frame and make hwdownload or an encoder reject it. */
+++static int analyze_vulkan_config_output(AVFilterLink *outlink)
+++{
+++    FilterLink *il = ff_filter_link(outlink->src->inputs[0]);
+++    FilterLink *ol = ff_filter_link(outlink);
+++    int err = ff_vk_filter_config_output(outlink);
+++
+++    if (err < 0)
+++        return err;
+++    av_buffer_unref(&ol->hw_frames_ctx);
+++    ol->hw_frames_ctx = av_buffer_ref(il->hw_frames_ctx);
+++    return ol->hw_frames_ctx ? 0 : AVERROR(ENOMEM);
+++}
+++
+ +static void analyze_vulkan_uninit(AVFilterContext *avctx)
+ +{
+ +    PelorusAnalyzeVulkanContext *s = avctx->priv;
+@@ -937,7 +955,7 @@ index 0000000000000000000000000000000000000000..a9e6cf19f5639d9d816e51133637151c
+ +    {
+ +        .name = "default",
+ +        .type = AVMEDIA_TYPE_VIDEO,
+-+        .config_props = &ff_vk_filter_config_output,
+++        .config_props = &analyze_vulkan_config_output,
+ +    },
+ +};
+ +
+diff --git a/ffmpeg-patches/0003-add-vf_pelorus_denoise_vulkan.patch b/ffmpeg-patches/0003-add-vf_pelorus_denoise_vulkan.patch
+index 16b59b4..857f37d 100644
+--- a/ffmpeg-patches/0003-add-vf_pelorus_denoise_vulkan.patch
++++ b/ffmpeg-patches/0003-add-vf_pelorus_denoise_vulkan.patch
+@@ -40,10 +40,10 @@ ADR: docs/adr/0112-temporal-denoise.md
+  configure                                    |    3 +
+  libavfilter/Makefile                         |    1 +
+  libavfilter/allfilters.c                     |    1 +
+- libavfilter/vf_pelorus_denoise_vulkan.c      | 1078 ++++++++++++++++++++
++ libavfilter/vf_pelorus_denoise_vulkan.c      | 1070 ++++++++++++++++++++
+  libavfilter/vulkan/Makefile                  |    1 +
+- libavfilter/vulkan/pelorus_denoise.comp.glsl |  407 ++++++++
+- 6 files changed, 1491 insertions(+)
++ libavfilter/vulkan/pelorus_denoise.comp.glsl |  426 ++++++++
++ 6 files changed, 1502 insertions(+)
+ 
+ diff --git a/configure b/configure
+ index aec9b3ae17deb53929fc15870fdaeb58db717c8f..c18161349c774eea0347f47effa8aa611e6b8771 100755
+@@ -92,10 +92,10 @@ index c781df8365397465a0f8cb2c25ac450585938b01..a21da384818d0b64f4b5af635ae53e9a
+  extern const FFFilter ff_vf_phase;
+ diff --git a/libavfilter/vf_pelorus_denoise_vulkan.c b/libavfilter/vf_pelorus_denoise_vulkan.c
+ new file mode 100644
+-index 0000000000000000000000000000000000000000..a9b5b9dba3511c64740fde46b32a70118bedeca5
++index 0000000000000000000000000000000000000000..4814733bf9acbe4afeba3d1e110132fac1458d77
+ --- /dev/null
+ +++ b/libavfilter/vf_pelorus_denoise_vulkan.c
+-@@ -0,0 +1,1078 @@
++@@ -0,0 +1,1070 @@
+ +/*
+ + * Copyright 2026 Lusoris
+ + *
+@@ -346,52 +346,46 @@ index 0000000000000000000000000000000000000000..a9b5b9dba3511c64740fde46b32a7011
+ +     * bwdif binding-order contract): binding 0 = current frame, 1..MAX_PREV =
+ +     * previous frames, then the residual SSBO, then the MV/conf SSBOs, then the
+ +     * output image, then the forward-lookahead next0 image (ADR-0137). Each image
+-+     * binding is a per-plane array (.elems = planes), float representation,
+-+     * storage image (sampler = VK_NULL_HANDLE, GENERAL layout, imageLoad). Final
+++     * binding is a per-plane array (.elems = planes) of float-representation
+++     * views in GENERAL layout (sampler = VK_NULL_HANDLE). The six read-only
+++     * frames are SAMPLED images (texelFetch); only the output is a STORAGE image.
+++     * Seven storage arrays would need 21 storage descriptors for a 3-plane
+++     * format, above maxPerStageDescriptorStorageImages = 16 on e.g. the Intel
+++     * UHD 770 (VUID-VkPipelineLayoutCreateInfo-descriptorType-03020). Final
+ +     * binding map: cur=0, prev0-3=1-4, stat=5, mv=6, conf=7, output=8, next0=9. */
+ +    {
+ +        FFVulkanDescriptorSetBinding desc_set[] = {
+ +            {
+ +                .name = "cur_images",
+-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
+-+                .mem_quali = "readonly",
+++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+ +                .dimensions = 2,
+ +                .elems = planes,
+ +                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+ +            },
+ +            {
+ +                .name = "prev0_images",
+-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
+-+                .mem_quali = "readonly",
+++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+ +                .dimensions = 2,
+ +                .elems = planes,
+ +                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+ +            },
+ +            {
+ +                .name = "prev1_images",
+-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
+-+                .mem_quali = "readonly",
+++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+ +                .dimensions = 2,
+ +                .elems = planes,
+ +                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+ +            },
+ +            {
+ +                .name = "prev2_images",
+-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
+-+                .mem_quali = "readonly",
+++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+ +                .dimensions = 2,
+ +                .elems = planes,
+ +                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+ +            },
+ +            {
+ +                .name = "prev3_images",
+-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
+-+                .mem_quali = "readonly",
+++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+ +                .dimensions = 2,
+ +                .elems = planes,
+ +                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+@@ -434,9 +428,7 @@ index 0000000000000000000000000000000000000000..a9b5b9dba3511c64740fde46b32a7011
+ +                /* Forward-lookahead tap (ADR-0137): the NEXT frame, mirrors
+ +                 * prev0_images exactly. Read same-coordinate, tcut-gated. */
+ +                .name = "next0_images",
+-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
+-+                .mem_quali = "readonly",
+++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+ +                .dimensions = 2,
+ +                .elems = planes,
+ +                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+@@ -1185,10 +1177,10 @@ index 578953efb422d850e60c82c891364c763a2141aa..a4a7ea0ea998fa805376991447a54769
+ +OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vulkan/pelorus_denoise.comp.spv.o
+ diff --git a/libavfilter/vulkan/pelorus_denoise.comp.glsl b/libavfilter/vulkan/pelorus_denoise.comp.glsl
+ new file mode 100644
+-index 0000000000000000000000000000000000000000..eb77813e14e1dac882dc9516a835a73f727fb4e8
++index 0000000000000000000000000000000000000000..9574649a98b88ef557e6794c6f2efde0dcb34443
+ --- /dev/null
+ +++ b/libavfilter/vulkan/pelorus_denoise.comp.glsl
+-@@ -0,0 +1,407 @@
++@@ -0,0 +1,426 @@
+ +/*
+ + * Copyright 2026 Lusoris
+ + *
+@@ -1228,6 +1220,7 @@ index 0000000000000000000000000000000000000000..eb77813e14e1dac882dc9516a835a73f
+ +
+ +#extension GL_EXT_shader_image_load_formatted : require
+ +#extension GL_EXT_nonuniform_qualifier : require
+++#extension GL_EXT_samplerless_texture_functions : require
+ +
+ +/* Workgroup-size IDs 253/254/255 are reserved by ff_vk_shader_load(). */
+ +layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
+@@ -1280,12 +1273,20 @@ index 0000000000000000000000000000000000000000..eb77813e14e1dac882dc9516a835a73f
+ +
+ +/* Binding order MUST match the C descriptor array exactly (inputs first, output
+ + * then the forward tap last — the Nin / bwdif binding-order contract):
+-+ * cur=0, prev0-3=1-4, stat=5, mv=6, conf=7, output=8, next0=9. */
+-+layout (set = 0, binding = 0) uniform readonly  image2D cur_images[];
+-+layout (set = 0, binding = 1) uniform readonly  image2D prev0_images[];
+-+layout (set = 0, binding = 2) uniform readonly  image2D prev1_images[];
+-+layout (set = 0, binding = 3) uniform readonly  image2D prev2_images[];
+-+layout (set = 0, binding = 4) uniform readonly  image2D prev3_images[];
+++ * cur=0, prev0-3=1-4, stat=5, mv=6, conf=7, output=8, next0=9.
+++ *
+++ * The six read-only frames are SAMPLED images read with texelFetch(), not
+++ * storage images: seven per-plane storage arrays need 21 storage descriptors
+++ * for a 3-plane format, above the 16 that e.g. the Intel UHD 770 exposes as
+++ * maxPerStageDescriptorStorageImages (VUID-VkPipelineLayoutCreateInfo-
+++ * descriptorType-03020). texelFetch() on the same UNORM view returns the same
+++ * normalized value as imageLoad(), so the storage-domain contract is unchanged;
+++ * only output_images stays a storage image. */
+++layout (set = 0, binding = 0) uniform texture2D cur_images[];
+++layout (set = 0, binding = 1) uniform texture2D prev0_images[];
+++layout (set = 0, binding = 2) uniform texture2D prev1_images[];
+++layout (set = 0, binding = 3) uniform texture2D prev2_images[];
+++layout (set = 0, binding = 4) uniform texture2D prev3_images[];
+ +
+ +layout (set = 0, binding = 5, std430) buffer stat_buffer {
+ +    uint abs_sum_y[16];
+@@ -1309,15 +1310,20 @@ index 0000000000000000000000000000000000000000..eb77813e14e1dac882dc9516a835a73f
+ +layout (set = 0, binding = 8) uniform writeonly image2D output_images[];
+ +
+ +/* Forward-lookahead tap (ADR-0137): the NEXT frame, mirrors prev0_images. */
+-+layout (set = 0, binding = 9) uniform readonly  image2D next0_images[];
+++layout (set = 0, binding = 9) uniform texture2D next0_images[];
+ +
+ +const int FLAG_TEMPORAL = 1;
+ +const int FLAG_MOTION_COMP = 2;
+ +const int FLAG_PROTECT_DETAIL = 4;
+ +const float EPS = 1e-6;
+ +
+++/* `precise` (SPIR-V NoContraction) keeps this product individually rounded.
+++ * tile=1 caches it in shared memory, so the direct path must not fuse it into a
+++ * later FMA either; otherwise the two paths drift by 1 code value at 10/12-bit,
+++ * where sample_scale is not an exact power of two (ADR-0134 bit-identity). */
+ +float pel_to_sample(float value) {
+-+    return value * sample_scale;
+++    precise float s = value * sample_scale;
+++    return s;
+ +}
+ +float pel_to_storage(float value) {
+ +    if (sample_code_max == 0u)
+@@ -1333,14 +1339,14 @@ index 0000000000000000000000000000000000000000..eb77813e14e1dac882dc9516a835a73f
+ + * plane, 0 (=U) or 1 (=V) on a semi-planar chroma plane. */
+ +float pel_cur(int idx, int comp, ivec2 p, ivec2 sz) {
+ +    return pel_to_sample(
+-+        imageLoad(cur_images[idx], clamp(p, ivec2(0), sz - ivec2(1)))[comp]);
+++        texelFetch(cur_images[idx], clamp(p, ivec2(0), sz - ivec2(1)), 0)[comp]);
+ +}
+ +float pel_prev(int t, int idx, int comp, ivec2 p, ivec2 sz) {
+ +    ivec2 c = clamp(p, ivec2(0), sz - ivec2(1));
+-+    if (t == 1) return pel_to_sample(imageLoad(prev0_images[idx], c)[comp]);
+-+    if (t == 2) return pel_to_sample(imageLoad(prev1_images[idx], c)[comp]);
+-+    if (t == 3) return pel_to_sample(imageLoad(prev2_images[idx], c)[comp]);
+-+    return pel_to_sample(imageLoad(prev3_images[idx], c)[comp]);
+++    if (t == 1) return pel_to_sample(texelFetch(prev0_images[idx], c, 0)[comp]);
+++    if (t == 2) return pel_to_sample(texelFetch(prev1_images[idx], c, 0)[comp]);
+++    if (t == 3) return pel_to_sample(texelFetch(prev2_images[idx], c, 0)[comp]);
+++    return pel_to_sample(texelFetch(prev3_images[idx], c, 0)[comp]);
+ +}
+ +
+ +/* --- motion-compensated previous-frame fetch (ADR-0113) --- */
+@@ -1427,7 +1433,12 @@ index 0000000000000000000000000000000000000000..eb77813e14e1dac882dc9516a835a73f
+ +        for (int dy = -patch_radius; dy <= patch_radius; dy++) {
+ +            for (int dx = -patch_radius; dx <= patch_radius; dx++) {
+ +                if (dx == 0 && dy == 0) continue;
+-+                float ssd = 0.0;
+++                /* `precise` pins the patch-SSD accumulation order and forbids
+++                 * fusing it into FMAs: tile=1 reads the window from shared
+++                 * memory, tile=0 from the image, and the two inlined loops must
+++                 * round identically for the ADR-0134 bit-identity to hold at
+++                 * 10/12-bit (observed 1-code drift on Arc B580 without it). */
+++                precise float ssd = 0.0;
+ +                for (int ky = -1; ky <= 1; ky++) {
+ +                    for (int kx = -1; kx <= 1; kx++) {
+ +                        float a = PEL_SPATIAL(ivec2(kx, ky));
+@@ -1477,8 +1488,8 @@ index 0000000000000000000000000000000000000000..eb77813e14e1dac882dc9516a835a73f
+ +         * prev). --- */
+ +        if (actual_next > 0) {
+ +            float p = pel_to_sample(
+-+                imageLoad(next0_images[idx],
+-+                          clamp(pos, ivec2(0), sz - ivec2(1)))[comp]);
+++                texelFetch(next0_images[idx],
+++                           clamp(pos, ivec2(0), sz - ivec2(1)), 0)[comp]);
+ +            float delta = abs(C - p);
+ +            if (delta <= temporal_cut) {
+ +                float w = exp(-(delta * delta) / ht2) * temporal_decay;
+@@ -1550,7 +1561,7 @@ index 0000000000000000000000000000000000000000..eb77813e14e1dac882dc9516a835a73f
+ +         * component(s) actually filtered, and store the whole vec4: a
+ +         * synthesised vec4(ov, 0, 0, 1) writes a constant 0 into the plane's
+ +         * second component, annihilating V on every semi-planar format. */
+-+        vec4 outv = inb ? imageLoad(cur_images[idx], pos) : vec4(0.0);
+++        vec4 outv = inb ? texelFetch(cur_images[idx], pos, 0) : vec4(0.0);
+ +
+ +        for (uint c = 0u; c < ncomp; c++) {
+ +            const int comp = int(c);
+diff --git a/ffmpeg-patches/0006-add-vf_pelorus_grain_estimate_vulkan.patch b/ffmpeg-patches/0006-add-vf_pelorus_grain_estimate_vulkan.patch
+index 5ffeea9..bd8d1a5 100644
+--- a/ffmpeg-patches/0006-add-vf_pelorus_grain_estimate_vulkan.patch
++++ b/ffmpeg-patches/0006-add-vf_pelorus_grain_estimate_vulkan.patch
+@@ -44,10 +44,10 @@ ADR: docs/adr/0115-grain-estimate.md
+  configure                                           |   3 +
+  libavfilter/Makefile                                |   1 +
+  libavfilter/allfilters.c                            |   1 +
+- libavfilter/vf_pelorus_grain_estimate_vulkan.c      | 645 ++++++++++++++++++++
++ libavfilter/vf_pelorus_grain_estimate_vulkan.c      | 663 ++++++++++++++++++++
+  libavfilter/vulkan/Makefile                         |   1 +
+  libavfilter/vulkan/pelorus_grain_estimate.comp.glsl | 127 ++++
+- 6 files changed, 778 insertions(+)
++ 6 files changed, 796 insertions(+)
+ 
+ diff --git a/configure b/configure
+ index c18161349c774eea0347f47effa8aa611e6b8771..0571e96aa7a4f64c2eb951c9c842462225deb3ac 100755
+@@ -96,10 +96,10 @@ index a21da384818d0b64f4b5af635ae53e9a5e9f5ec4..b6aee7e0bdb6c35c4e3c720b063be56c
+  extern const FFFilter ff_vf_phase;
+ diff --git a/libavfilter/vf_pelorus_grain_estimate_vulkan.c b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
+ new file mode 100644
+-index 0000000000000000000000000000000000000000..187e0acc97c3f543aaaeea0f80eaecdc1237f0a8
++index 0000000000000000000000000000000000000000..6b796ad4cb66c3fabe490f7a9ffa3409dd603028
+ --- /dev/null
+ +++ b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
+-@@ -0,0 +1,645 @@
++@@ -0,0 +1,663 @@
+ +/*
+ + * Copyright 2026 Lusoris
+ + *
+@@ -644,6 +644,24 @@ index 0000000000000000000000000000000000000000..187e0acc97c3f543aaaeea0f80eaecdc
+ +    return err;
+ +}
+ +
+++/* Pass-through: filter_frame() forwards the input AVFrame, so the output link
+++ * must advertise the frames context those frames belong to. The stock
+++ * ff_vk_filter_config_output() builds a fresh context whenever it cannot reuse
+++ * the input one (linear tiling, missing usage bits), which would mislabel every
+++ * forwarded frame and make hwdownload or an encoder reject it. */
+++static int grain_estimate_vulkan_config_output(AVFilterLink *outlink)
+++{
+++    FilterLink *il = ff_filter_link(outlink->src->inputs[0]);
+++    FilterLink *ol = ff_filter_link(outlink);
+++    int err = ff_vk_filter_config_output(outlink);
+++
+++    if (err < 0)
+++        return err;
+++    av_buffer_unref(&ol->hw_frames_ctx);
+++    ol->hw_frames_ctx = av_buffer_ref(il->hw_frames_ctx);
+++    return ol->hw_frames_ctx ? 0 : AVERROR(ENOMEM);
+++}
+++
+ +static void grain_estimate_vulkan_uninit(AVFilterContext *avctx)
+ +{
+ +    PelorusGrainEstimateVulkanContext *s = avctx->priv;
+@@ -728,7 +746,7 @@ index 0000000000000000000000000000000000000000..187e0acc97c3f543aaaeea0f80eaecdc
+ +    {
+ +        .name = "default",
+ +        .type = AVMEDIA_TYPE_VIDEO,
+-+        .config_props = &ff_vk_filter_config_output,
+++        .config_props = &grain_estimate_vulkan_config_output,
+ +    },
+ +};
+ +
+diff --git a/ffmpeg-patches/0007-add-vf_pelorus_mc_vulkan.patch b/ffmpeg-patches/0007-add-vf_pelorus_mc_vulkan.patch
+index e8aecd2..332549f 100644
+--- a/ffmpeg-patches/0007-add-vf_pelorus_mc_vulkan.patch
++++ b/ffmpeg-patches/0007-add-vf_pelorus_mc_vulkan.patch
+@@ -48,10 +48,10 @@ ADR: docs/adr/0116-pelorus-mc.md
+  configure                               |   3 +
+  libavfilter/Makefile                    |   1 +
+  libavfilter/allfilters.c                |   1 +
+- libavfilter/vf_pelorus_mc_vulkan.c      | 837 ++++++++++++++++++++
++ libavfilter/vf_pelorus_mc_vulkan.c      | 855 ++++++++++++++++++++
+  libavfilter/vulkan/Makefile             |   1 +
+  libavfilter/vulkan/pelorus_mc.comp.glsl | 231 ++++++
+- 6 files changed, 1074 insertions(+)
++ 6 files changed, 1092 insertions(+)
+ 
+ diff --git a/configure b/configure
+ index 0571e96aa7a4f64c2eb951c9c842462225deb3ac..839033a423604cbfaf45a7fffd984bc587d44839 100755
+@@ -100,10 +100,10 @@ index b6aee7e0bdb6c35c4e3c720b063be56cd22d8934..8ecaf738be23d70633dc7e84a35a3772
+  extern const FFFilter ff_vf_phase;
+ diff --git a/libavfilter/vf_pelorus_mc_vulkan.c b/libavfilter/vf_pelorus_mc_vulkan.c
+ new file mode 100644
+-index 0000000000000000000000000000000000000000..202f80dcb49f64f0b2a335792084e42cc7a1caaf
++index 0000000000000000000000000000000000000000..bc6b6a07f312fdc9c393e9cc5d42a09b4de12bb4
+ --- /dev/null
+ +++ b/libavfilter/vf_pelorus_mc_vulkan.c
+-@@ -0,0 +1,837 @@
++@@ -0,0 +1,855 @@
+ +/*
+ + * Copyright 2026 Lusoris
+ + *
+@@ -862,6 +862,24 @@ index 0000000000000000000000000000000000000000..202f80dcb49f64f0b2a335792084e42c
+ +    return err;
+ +}
+ +
+++/* Pass-through: filter_frame() forwards the input AVFrame, so the output link
+++ * must advertise the frames context those frames belong to. The stock
+++ * ff_vk_filter_config_output() builds a fresh context whenever it cannot reuse
+++ * the input one (linear tiling, missing usage bits), which would mislabel every
+++ * forwarded frame and make hwdownload or an encoder reject it. */
+++static int mc_vulkan_config_output(AVFilterLink *outlink)
+++{
+++    FilterLink *il = ff_filter_link(outlink->src->inputs[0]);
+++    FilterLink *ol = ff_filter_link(outlink);
+++    int err = ff_vk_filter_config_output(outlink);
+++
+++    if (err < 0)
+++        return err;
+++    av_buffer_unref(&ol->hw_frames_ctx);
+++    ol->hw_frames_ctx = av_buffer_ref(il->hw_frames_ctx);
+++    return ol->hw_frames_ctx ? 0 : AVERROR(ENOMEM);
+++}
+++
+ +static void mc_vulkan_uninit(AVFilterContext *avctx)
+ +{
+ +    PelorusMcVulkanContext *s = avctx->priv;
+@@ -924,7 +942,7 @@ index 0000000000000000000000000000000000000000..202f80dcb49f64f0b2a335792084e42c
+ +    {
+ +        .name = "default",
+ +        .type = AVMEDIA_TYPE_VIDEO,
+-+        .config_props = &ff_vk_filter_config_output,
+++        .config_props = &mc_vulkan_config_output,
+ +    },
+ +};
+ +
+diff --git a/ffmpeg-patches/0014-add-vf_pelorus_dehalo_vulkan.patch b/ffmpeg-patches/0014-add-vf_pelorus_dehalo_vulkan.patch
+index a8ec0c8..3412c4f 100644
+--- a/ffmpeg-patches/0014-add-vf_pelorus_dehalo_vulkan.patch
++++ b/ffmpeg-patches/0014-add-vf_pelorus_dehalo_vulkan.patch
+@@ -33,8 +33,8 @@ ADR: docs/adr/0123-anime-dehalo.md
+  libavfilter/allfilters.c                    |   1 +
+  libavfilter/vf_pelorus_dehalo_vulkan.c      | 303 ++++++++++++++++++++
+  libavfilter/vulkan/Makefile                 |   1 +
+- libavfilter/vulkan/pelorus_dehalo.comp.glsl | 246 ++++++++++++++++
+- 6 files changed, 553 insertions(+)
++ libavfilter/vulkan/pelorus_dehalo.comp.glsl | 251 ++++++++++++++++
++ 6 files changed, 558 insertions(+)
+ 
+ diff --git a/configure b/configure
+ index 3283718ba10ab831a499f230e165d15201c9a29c..f052412ba00f78d88734beaa51c4a4e82a5ebea6 100755
+@@ -392,10 +392,10 @@ index 113d7aa7cf599983aaa7a391919d014b18b245fd..77187fe29c5fe23f84b61b45cf3a2825
+ +OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER) += vulkan/pelorus_dehalo.comp.spv.o
+ diff --git a/libavfilter/vulkan/pelorus_dehalo.comp.glsl b/libavfilter/vulkan/pelorus_dehalo.comp.glsl
+ new file mode 100644
+-index 0000000000000000000000000000000000000000..1554fb0b8a83bc35666a5d9d459084978c05dcbf
++index 0000000000000000000000000000000000000000..3e5c13e042dab3956e4d3e7abc8cadf1c14ce50f
+ --- /dev/null
+ +++ b/libavfilter/vulkan/pelorus_dehalo.comp.glsl
+-@@ -0,0 +1,246 @@
++@@ -0,0 +1,251 @@
+ +/*
+ + * Copyright 2026 Lusoris
+ + *
+@@ -472,9 +472,14 @@ index 0000000000000000000000000000000000000000..1554fb0b8a83bc35666a5d9d45908497
+ + * memory at all (the pre-FFmpeg-9 generator simply did not emit the array). */
+ +shared float s_tile[(tile != 0u) ? (PEL_TILE * PEL_TILE) : 1];
+ +
+++/* `precise` (SPIR-V NoContraction) keeps this product individually rounded.
+++ * tile=1 caches it in shared memory, so the direct path must not fuse it into a
+++ * later FMA either; otherwise the two paths drift by 1 code value at 10/12-bit,
+++ * where sample_scale is not an exact power of two (ADR-0139 bit-identity). */
+ +float pel_to_sample(float value)
+ +{
+-+    return value * sample_scale;
+++    precise float s = value * sample_scale;
+++    return s;
+ +}
+ +
+ +float pel_to_storage(float value)
+diff --git a/ffmpeg-patches/0015-add-vf_pelorus_aa_vulkan.patch b/ffmpeg-patches/0015-add-vf_pelorus_aa_vulkan.patch
+index a19313f..a0fc488 100644
+--- a/ffmpeg-patches/0015-add-vf_pelorus_aa_vulkan.patch
++++ b/ffmpeg-patches/0015-add-vf_pelorus_aa_vulkan.patch
+@@ -33,8 +33,8 @@ ADR: docs/adr/0124-anime-aa.md
+  libavfilter/allfilters.c                |   1 +
+  libavfilter/vf_pelorus_aa_vulkan.c      | 286 ++++++++++++++++++++
+  libavfilter/vulkan/Makefile             |   1 +
+- libavfilter/vulkan/pelorus_aa.comp.glsl | 265 ++++++++++++++++++
+- 6 files changed, 555 insertions(+)
++ libavfilter/vulkan/pelorus_aa.comp.glsl | 275 +++++++++++++++++++
++ 6 files changed, 565 insertions(+)
+ 
+ diff --git a/configure b/configure
+ index f052412ba00f78d88734beaa51c4a4e82a5ebea6..021915e788bf3f971443131919f665036148b3b6 100755
+@@ -375,10 +375,10 @@ index 77187fe29c5fe23f84b61b45cf3a28257140bbc3..d3ff362cfa612b53ee51d812a1df844c
+ +OBJS-$(CONFIG_PELORUS_AA_VULKAN_FILTER) += vulkan/pelorus_aa.comp.spv.o
+ diff --git a/libavfilter/vulkan/pelorus_aa.comp.glsl b/libavfilter/vulkan/pelorus_aa.comp.glsl
+ new file mode 100644
+-index 0000000000000000000000000000000000000000..ab1838ed6bc634be4834fc2169c25f35e2fe1b08
++index 0000000000000000000000000000000000000000..0b103c7d933c46ecaa9db2d219b7b6938f25e7a5
+ --- /dev/null
+ +++ b/libavfilter/vulkan/pelorus_aa.comp.glsl
+-@@ -0,0 +1,265 @@
++@@ -0,0 +1,275 @@
+ +/*
+ + * Copyright 2026 Lusoris
+ + *
+@@ -455,8 +455,13 @@ index 0000000000000000000000000000000000000000..ab1838ed6bc634be4834fc2169c25f35
+ +const int PEL_TILE = 32 + 2 * PEL_HALO;
+ +shared float s_sobel[fast != 0u ? PEL_TILE * PEL_TILE : 1];
+ +
+++/* `precise` (SPIR-V NoContraction) keeps this product individually rounded, so
+++ * sobel_mag() sees the same operands whether it runs inline (fast=0) or fills
+++ * the shared-memory cache (fast=1). At 10/12-bit sample_scale is not an exact
+++ * power of two and a fused multiply-add would round differently per call site. */
+ +float pel_to_sample(float value) {
+-+    return value * sample_scale;
+++    precise float s = value * sample_scale;
+++    return s;
+ +}
+ +float pel_to_storage(float value) {
+ +    if (sample_code_max == 0u)
+@@ -483,7 +488,12 @@ index 0000000000000000000000000000000000000000..ab1838ed6bc634be4834fc2169c25f35
+ +            gx += v * kx[k]; gy += v * ky[k]; k++;
+ +        }
+ +    }
+-+    return sqrt(gx * gx + gy * gy);
+++    /* The kernel weights are 0/±1/±2, so every v * k product above is exact and
+++     * contraction cannot change gx/gy. The squared magnitude is where a fused
+++     * multiply-add could round differently between the inline (fast=0) and
+++     * cached (fast=1) call sites; `precise` pins that rounding. */
+++    precise float m2 = gx * gx + gy * gy;
+++    return sqrt(m2);
+ +}
+ +
+ +/* Shared-memory hoist of the edge-strength map (fast=1, opt-in; ADR-0140, the
+diff --git a/ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c b/ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c
+index a9e6cf1..f1e7f2e 100644
+--- a/ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c
++++ b/ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c
+@@ -765,6 +765,24 @@ fail:
+     return err;
+ }
+ 
++/* Pass-through: filter_frame() forwards the input AVFrame, so the output link
++ * must advertise the frames context those frames belong to. The stock
++ * ff_vk_filter_config_output() builds a fresh context whenever it cannot reuse
++ * the input one (linear tiling, missing usage bits), which would mislabel every
++ * forwarded frame and make hwdownload or an encoder reject it. */
++static int analyze_vulkan_config_output(AVFilterLink *outlink)
++{
++    FilterLink *il = ff_filter_link(outlink->src->inputs[0]);
++    FilterLink *ol = ff_filter_link(outlink);
++    int err = ff_vk_filter_config_output(outlink);
++
++    if (err < 0)
++        return err;
++    av_buffer_unref(&ol->hw_frames_ctx);
++    ol->hw_frames_ctx = av_buffer_ref(il->hw_frames_ctx);
++    return ol->hw_frames_ctx ? 0 : AVERROR(ENOMEM);
++}
++
+ static void analyze_vulkan_uninit(AVFilterContext *avctx)
+ {
+     PelorusAnalyzeVulkanContext *s = avctx->priv;
+@@ -837,7 +855,7 @@ static const AVFilterPad pelorus_analyze_vulkan_outputs[] = {
+     {
+         .name = "default",
+         .type = AVMEDIA_TYPE_VIDEO,
+-        .config_props = &ff_vk_filter_config_output,
++        .config_props = &analyze_vulkan_config_output,
+     },
+ };
+ 
+diff --git a/ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c b/ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c
+index a9b5b9d..4814733 100644
+--- a/ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c
++++ b/ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c
+@@ -248,52 +248,46 @@ static av_cold int init_filter(AVFilterContext *ctx)
+      * bwdif binding-order contract): binding 0 = current frame, 1..MAX_PREV =
+      * previous frames, then the residual SSBO, then the MV/conf SSBOs, then the
+      * output image, then the forward-lookahead next0 image (ADR-0137). Each image
+-     * binding is a per-plane array (.elems = planes), float representation,
+-     * storage image (sampler = VK_NULL_HANDLE, GENERAL layout, imageLoad). Final
++     * binding is a per-plane array (.elems = planes) of float-representation
++     * views in GENERAL layout (sampler = VK_NULL_HANDLE). The six read-only
++     * frames are SAMPLED images (texelFetch); only the output is a STORAGE image.
++     * Seven storage arrays would need 21 storage descriptors for a 3-plane
++     * format, above maxPerStageDescriptorStorageImages = 16 on e.g. the Intel
++     * UHD 770 (VUID-VkPipelineLayoutCreateInfo-descriptorType-03020). Final
+      * binding map: cur=0, prev0-3=1-4, stat=5, mv=6, conf=7, output=8, next0=9. */
+     {
+         FFVulkanDescriptorSetBinding desc_set[] = {
+             {
+                 .name = "cur_images",
+-                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
+-                .mem_quali = "readonly",
++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                 .dimensions = 2,
+                 .elems = planes,
+                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+             },
+             {
+                 .name = "prev0_images",
+-                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
+-                .mem_quali = "readonly",
++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                 .dimensions = 2,
+                 .elems = planes,
+                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+             },
+             {
+                 .name = "prev1_images",
+-                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
+-                .mem_quali = "readonly",
++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                 .dimensions = 2,
+                 .elems = planes,
+                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+             },
+             {
+                 .name = "prev2_images",
+-                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
+-                .mem_quali = "readonly",
++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                 .dimensions = 2,
+                 .elems = planes,
+                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+             },
+             {
+                 .name = "prev3_images",
+-                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
+-                .mem_quali = "readonly",
++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                 .dimensions = 2,
+                 .elems = planes,
+                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+@@ -336,9 +330,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
+                 /* Forward-lookahead tap (ADR-0137): the NEXT frame, mirrors
+                  * prev0_images exactly. Read same-coordinate, tcut-gated. */
+                 .name = "next0_images",
+-                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
+-                .mem_quali = "readonly",
++                .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                 .dimensions = 2,
+                 .elems = planes,
+                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+diff --git a/ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c b/ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c
+index 187e0ac..6b796ad 100644
+--- a/ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c
++++ b/ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c
+@@ -542,6 +542,24 @@ fail:
+     return err;
+ }
+ 
++/* Pass-through: filter_frame() forwards the input AVFrame, so the output link
++ * must advertise the frames context those frames belong to. The stock
++ * ff_vk_filter_config_output() builds a fresh context whenever it cannot reuse
++ * the input one (linear tiling, missing usage bits), which would mislabel every
++ * forwarded frame and make hwdownload or an encoder reject it. */
++static int grain_estimate_vulkan_config_output(AVFilterLink *outlink)
++{
++    FilterLink *il = ff_filter_link(outlink->src->inputs[0]);
++    FilterLink *ol = ff_filter_link(outlink);
++    int err = ff_vk_filter_config_output(outlink);
++
++    if (err < 0)
++        return err;
++    av_buffer_unref(&ol->hw_frames_ctx);
++    ol->hw_frames_ctx = av_buffer_ref(il->hw_frames_ctx);
++    return ol->hw_frames_ctx ? 0 : AVERROR(ENOMEM);
++}
++
+ static void grain_estimate_vulkan_uninit(AVFilterContext *avctx)
+ {
+     PelorusGrainEstimateVulkanContext *s = avctx->priv;
+@@ -626,7 +644,7 @@ static const AVFilterPad pelorus_grain_estimate_vulkan_outputs[] = {
+     {
+         .name = "default",
+         .type = AVMEDIA_TYPE_VIDEO,
+-        .config_props = &ff_vk_filter_config_output,
++        .config_props = &grain_estimate_vulkan_config_output,
+     },
+ };
+ 
+diff --git a/ffmpeg-patches/files/vf_pelorus_mc_vulkan.c b/ffmpeg-patches/files/vf_pelorus_mc_vulkan.c
+index 202f80d..bc6b6a0 100644
+--- a/ffmpeg-patches/files/vf_pelorus_mc_vulkan.c
++++ b/ffmpeg-patches/files/vf_pelorus_mc_vulkan.c
+@@ -756,6 +756,24 @@ fail:
+     return err;
+ }
+ 
++/* Pass-through: filter_frame() forwards the input AVFrame, so the output link
++ * must advertise the frames context those frames belong to. The stock
++ * ff_vk_filter_config_output() builds a fresh context whenever it cannot reuse
++ * the input one (linear tiling, missing usage bits), which would mislabel every
++ * forwarded frame and make hwdownload or an encoder reject it. */
++static int mc_vulkan_config_output(AVFilterLink *outlink)
++{
++    FilterLink *il = ff_filter_link(outlink->src->inputs[0]);
++    FilterLink *ol = ff_filter_link(outlink);
++    int err = ff_vk_filter_config_output(outlink);
++
++    if (err < 0)
++        return err;
++    av_buffer_unref(&ol->hw_frames_ctx);
++    ol->hw_frames_ctx = av_buffer_ref(il->hw_frames_ctx);
++    return ol->hw_frames_ctx ? 0 : AVERROR(ENOMEM);
++}
++
+ static void mc_vulkan_uninit(AVFilterContext *avctx)
+ {
+     PelorusMcVulkanContext *s = avctx->priv;
+@@ -818,7 +836,7 @@ static const AVFilterPad pelorus_mc_vulkan_outputs[] = {
+     {
+         .name = "default",
+         .type = AVMEDIA_TYPE_VIDEO,
+-        .config_props = &ff_vk_filter_config_output,
++        .config_props = &mc_vulkan_config_output,
+     },
+ };
+ 
+diff --git a/ffmpeg-patches/files/vulkan/pelorus_aa.comp.glsl b/ffmpeg-patches/files/vulkan/pelorus_aa.comp.glsl
+index ab1838e..0b103c7 100644
+--- a/ffmpeg-patches/files/vulkan/pelorus_aa.comp.glsl
++++ b/ffmpeg-patches/files/vulkan/pelorus_aa.comp.glsl
+@@ -74,8 +74,13 @@ const int PEL_HALO = MAX_R + 1;
+ const int PEL_TILE = 32 + 2 * PEL_HALO;
+ shared float s_sobel[fast != 0u ? PEL_TILE * PEL_TILE : 1];
+ 
++/* `precise` (SPIR-V NoContraction) keeps this product individually rounded, so
++ * sobel_mag() sees the same operands whether it runs inline (fast=0) or fills
++ * the shared-memory cache (fast=1). At 10/12-bit sample_scale is not an exact
++ * power of two and a fused multiply-add would round differently per call site. */
+ float pel_to_sample(float value) {
+-    return value * sample_scale;
++    precise float s = value * sample_scale;
++    return s;
+ }
+ float pel_to_storage(float value) {
+     if (sample_code_max == 0u)
+@@ -102,7 +107,12 @@ float sobel_mag(int idx, int comp, ivec2 p, ivec2 sz) {
+             gx += v * kx[k]; gy += v * ky[k]; k++;
+         }
+     }
+-    return sqrt(gx * gx + gy * gy);
++    /* The kernel weights are 0/±1/±2, so every v * k product above is exact and
++     * contraction cannot change gx/gy. The squared magnitude is where a fused
++     * multiply-add could round differently between the inline (fast=0) and
++     * cached (fast=1) call sites; `precise` pins that rounding. */
++    precise float m2 = gx * gx + gy * gy;
++    return sqrt(m2);
+ }
+ 
+ /* Shared-memory hoist of the edge-strength map (fast=1, opt-in; ADR-0140, the
+diff --git a/ffmpeg-patches/files/vulkan/pelorus_dehalo.comp.glsl b/ffmpeg-patches/files/vulkan/pelorus_dehalo.comp.glsl
+index 1554fb0..3e5c13e 100644
+--- a/ffmpeg-patches/files/vulkan/pelorus_dehalo.comp.glsl
++++ b/ffmpeg-patches/files/vulkan/pelorus_dehalo.comp.glsl
+@@ -74,9 +74,14 @@ const int MAX_R = 8;
+  * memory at all (the pre-FFmpeg-9 generator simply did not emit the array). */
+ shared float s_tile[(tile != 0u) ? (PEL_TILE * PEL_TILE) : 1];
+ 
++/* `precise` (SPIR-V NoContraction) keeps this product individually rounded.
++ * tile=1 caches it in shared memory, so the direct path must not fuse it into a
++ * later FMA either; otherwise the two paths drift by 1 code value at 10/12-bit,
++ * where sample_scale is not an exact power of two (ADR-0139 bit-identity). */
+ float pel_to_sample(float value)
+ {
+-    return value * sample_scale;
++    precise float s = value * sample_scale;
++    return s;
+ }
+ 
+ float pel_to_storage(float value)
+diff --git a/ffmpeg-patches/files/vulkan/pelorus_denoise.comp.glsl b/ffmpeg-patches/files/vulkan/pelorus_denoise.comp.glsl
+index eb77813..9574649 100644
+--- a/ffmpeg-patches/files/vulkan/pelorus_denoise.comp.glsl
++++ b/ffmpeg-patches/files/vulkan/pelorus_denoise.comp.glsl
+@@ -37,6 +37,7 @@
+ 
+ #extension GL_EXT_shader_image_load_formatted : require
+ #extension GL_EXT_nonuniform_qualifier : require
++#extension GL_EXT_samplerless_texture_functions : require
+ 
+ /* Workgroup-size IDs 253/254/255 are reserved by ff_vk_shader_load(). */
+ layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
+@@ -89,12 +90,20 @@ layout (push_constant, std430) uniform pushConstants {
+ 
+ /* Binding order MUST match the C descriptor array exactly (inputs first, output
+  * then the forward tap last — the Nin / bwdif binding-order contract):
+- * cur=0, prev0-3=1-4, stat=5, mv=6, conf=7, output=8, next0=9. */
+-layout (set = 0, binding = 0) uniform readonly  image2D cur_images[];
+-layout (set = 0, binding = 1) uniform readonly  image2D prev0_images[];
+-layout (set = 0, binding = 2) uniform readonly  image2D prev1_images[];
+-layout (set = 0, binding = 3) uniform readonly  image2D prev2_images[];
+-layout (set = 0, binding = 4) uniform readonly  image2D prev3_images[];
++ * cur=0, prev0-3=1-4, stat=5, mv=6, conf=7, output=8, next0=9.
++ *
++ * The six read-only frames are SAMPLED images read with texelFetch(), not
++ * storage images: seven per-plane storage arrays need 21 storage descriptors
++ * for a 3-plane format, above the 16 that e.g. the Intel UHD 770 exposes as
++ * maxPerStageDescriptorStorageImages (VUID-VkPipelineLayoutCreateInfo-
++ * descriptorType-03020). texelFetch() on the same UNORM view returns the same
++ * normalized value as imageLoad(), so the storage-domain contract is unchanged;
++ * only output_images stays a storage image. */
++layout (set = 0, binding = 0) uniform texture2D cur_images[];
++layout (set = 0, binding = 1) uniform texture2D prev0_images[];
++layout (set = 0, binding = 2) uniform texture2D prev1_images[];
++layout (set = 0, binding = 3) uniform texture2D prev2_images[];
++layout (set = 0, binding = 4) uniform texture2D prev3_images[];
+ 
+ layout (set = 0, binding = 5, std430) buffer stat_buffer {
+     uint abs_sum_y[16];
+@@ -118,15 +127,20 @@ layout (set = 0, binding = 7, std430) buffer conf_grid {
+ layout (set = 0, binding = 8) uniform writeonly image2D output_images[];
+ 
+ /* Forward-lookahead tap (ADR-0137): the NEXT frame, mirrors prev0_images. */
+-layout (set = 0, binding = 9) uniform readonly  image2D next0_images[];
++layout (set = 0, binding = 9) uniform texture2D next0_images[];
+ 
+ const int FLAG_TEMPORAL = 1;
+ const int FLAG_MOTION_COMP = 2;
+ const int FLAG_PROTECT_DETAIL = 4;
+ const float EPS = 1e-6;
+ 
++/* `precise` (SPIR-V NoContraction) keeps this product individually rounded.
++ * tile=1 caches it in shared memory, so the direct path must not fuse it into a
++ * later FMA either; otherwise the two paths drift by 1 code value at 10/12-bit,
++ * where sample_scale is not an exact power of two (ADR-0134 bit-identity). */
+ float pel_to_sample(float value) {
+-    return value * sample_scale;
++    precise float s = value * sample_scale;
++    return s;
+ }
+ float pel_to_storage(float value) {
+     if (sample_code_max == 0u)
+@@ -142,14 +156,14 @@ uint pel_component_count(uint plane) {
+  * plane, 0 (=U) or 1 (=V) on a semi-planar chroma plane. */
+ float pel_cur(int idx, int comp, ivec2 p, ivec2 sz) {
+     return pel_to_sample(
+-        imageLoad(cur_images[idx], clamp(p, ivec2(0), sz - ivec2(1)))[comp]);
++        texelFetch(cur_images[idx], clamp(p, ivec2(0), sz - ivec2(1)), 0)[comp]);
+ }
+ float pel_prev(int t, int idx, int comp, ivec2 p, ivec2 sz) {
+     ivec2 c = clamp(p, ivec2(0), sz - ivec2(1));
+-    if (t == 1) return pel_to_sample(imageLoad(prev0_images[idx], c)[comp]);
+-    if (t == 2) return pel_to_sample(imageLoad(prev1_images[idx], c)[comp]);
+-    if (t == 3) return pel_to_sample(imageLoad(prev2_images[idx], c)[comp]);
+-    return pel_to_sample(imageLoad(prev3_images[idx], c)[comp]);
++    if (t == 1) return pel_to_sample(texelFetch(prev0_images[idx], c, 0)[comp]);
++    if (t == 2) return pel_to_sample(texelFetch(prev1_images[idx], c, 0)[comp]);
++    if (t == 3) return pel_to_sample(texelFetch(prev2_images[idx], c, 0)[comp]);
++    return pel_to_sample(texelFetch(prev3_images[idx], c, 0)[comp]);
+ }
+ 
+ /* --- motion-compensated previous-frame fetch (ADR-0113) --- */
+@@ -236,7 +250,12 @@ float denoise(const ivec2 pos, const int idx, const int comp,
+         for (int dy = -patch_radius; dy <= patch_radius; dy++) {
+             for (int dx = -patch_radius; dx <= patch_radius; dx++) {
+                 if (dx == 0 && dy == 0) continue;
+-                float ssd = 0.0;
++                /* `precise` pins the patch-SSD accumulation order and forbids
++                 * fusing it into FMAs: tile=1 reads the window from shared
++                 * memory, tile=0 from the image, and the two inlined loops must
++                 * round identically for the ADR-0134 bit-identity to hold at
++                 * 10/12-bit (observed 1-code drift on Arc B580 without it). */
++                precise float ssd = 0.0;
+                 for (int ky = -1; ky <= 1; ky++) {
+                     for (int kx = -1; kx <= 1; kx++) {
+                         float a = PEL_SPATIAL(ivec2(kx, ky));
+@@ -286,8 +305,8 @@ float denoise(const ivec2 pos, const int idx, const int comp,
+          * prev). --- */
+         if (actual_next > 0) {
+             float p = pel_to_sample(
+-                imageLoad(next0_images[idx],
+-                          clamp(pos, ivec2(0), sz - ivec2(1)))[comp]);
++                texelFetch(next0_images[idx],
++                           clamp(pos, ivec2(0), sz - ivec2(1)), 0)[comp]);
+             float delta = abs(C - p);
+             if (delta <= temporal_cut) {
+                 float w = exp(-(delta * delta) / ht2) * temporal_decay;
+@@ -359,7 +378,7 @@ void main()
+          * component(s) actually filtered, and store the whole vec4: a
+          * synthesised vec4(ov, 0, 0, 1) writes a constant 0 into the plane's
+          * second component, annihilating V on every semi-planar format. */
+-        vec4 outv = inb ? imageLoad(cur_images[idx], pos) : vec4(0.0);
++        vec4 outv = inb ? texelFetch(cur_images[idx], pos, 0) : vec4(0.0);
+ 
+         for (uint c = 0u; c < ncomp; c++) {
+             const int comp = int(c);
+diff --git a/ffmpeg-patches/test/vulkan-format-matrix-validation-self-test.sh b/ffmpeg-patches/test/vulkan-format-matrix-validation-self-test.sh
+index 42b847e..8dbfd1c 100755
+--- a/ffmpeg-patches/test/vulkan-format-matrix-validation-self-test.sh
++++ b/ffmpeg-patches/test/vulkan-format-matrix-validation-self-test.sh
+@@ -26,7 +26,7 @@ set -euo pipefail
+ if [[ " $* " == *' -filters '* ]]; then
+     for filter in pelorus_analyze_vulkan pelorus_deblock_vulkan \
+         pelorus_denoise_vulkan pelorus_aa_vulkan pelorus_dehalo_vulkan \
+-        pelorus_mc_vulkan; do
++        pelorus_mc_vulkan pelorus_grain_estimate_vulkan; do
+         printf ' ... %-30s V->V fake\n' "$filter"
+     done
+     exit 0
+diff --git a/ffmpeg-patches/test/vulkan-format-matrix.sh b/ffmpeg-patches/test/vulkan-format-matrix.sh
+index b8cf317..0f3a557 100755
+--- a/ffmpeg-patches/test/vulkan-format-matrix.sh
++++ b/ffmpeg-patches/test/vulkan-format-matrix.sh
+@@ -86,13 +86,22 @@ pel_check_validation()
+     for log in "$@"; do
+         while IFS= read -r vuid; do
+             [[ -n "$vuid" ]] || continue
++            # Every entry is emitted by stock FFmpeg with no Pelorus filter in
++            # the graph. The last two come from Intel's Windows drivers
++            # (ADR-0150): FFmpeg reuses a VkFormatProperties3 chain the driver
++            # zeroed for an unsupported format (pNext-pNext), and host-copy
++            # download transitions from TRANSFER_DST_OPTIMAL although
++            # pCopySrcLayouts lists only GENERAL (09230). Pelorus calls neither
++            # vkGetPhysicalDeviceFormatProperties2 nor vkTransitionImageLayout.
+             case "$vuid" in
+                 *vkCmdCopyBufferToImage-srcBuffer-00174 | \
+                     *vkCmdCopyImageToBuffer-dstBuffer-00191 | \
+                     *VkCopyImageToMemoryInfo-srcImageLayout-09064 | \
+                     *VkDescriptorSetLayoutBinding-descriptorType-00282 | \
+                     *VkImageMemoryBarrier2-srcAccessMask-03909 | \
+-                    *VkImageMemoryBarrier2-srcAccessMask-07454)
++                    *VkImageMemoryBarrier2-srcAccessMask-07454 | \
++                    *VkFormatProperties2-pNext-pNext | \
++                    *VkHostImageLayoutTransitionInfo-oldLayout-09230)
+                     echo "$vuid" >>"$PEL_OUTPUT_ROOT/validation-known-upstream.txt"
+                     ;;
+                 *)
+@@ -121,6 +130,30 @@ pel_run()
+     echo "PASS: $label"
+ }
+ 
++# Same device with linear_images=1. FFmpeg then cannot reuse the upload frames
++# context inside a Vulkan filter, which exercises the pass-through contract.
++PEL_LINEAR_COMMON=(
++    -hide_banner
++    -loglevel warning
++    -y
++    -init_hw_device "vulkan=pelorus_lin:${PEL_VULKAN_DEVICE},linear_images=1"
++    -filter_hw_device pelorus_lin
++    -threads 1
++)
++
++pel_run_linear()
++{
++    local label="$1"
++    shift
++    local stdout="$PEL_OUTPUT_ROOT/${label}.stdout"
++    local stderr="$PEL_OUTPUT_ROOT/${label}.stderr"
++
++    env "${PEL_VALIDATION_ENV[@]}" "$PEL_FFMPEG_BIN" \
++        "${PEL_LINEAR_COMMON[@]}" "$@" >"$stdout" 2>"$stderr" || return 1
++    pel_check_validation "$stdout" "$stderr" || \
++        pel_fail "$label emitted a new Vulkan VUID"
++}
++
+ pel_emit_raw()
+ {
+     local label="$1"
+@@ -151,7 +184,7 @@ if ! "$PEL_FFMPEG_BIN" -hide_banner -filters \
+ fi
+ for PEL_FILTER in pelorus_analyze_vulkan pelorus_deblock_vulkan \
+     pelorus_denoise_vulkan pelorus_aa_vulkan pelorus_dehalo_vulkan \
+-    pelorus_mc_vulkan; do
++    pelorus_mc_vulkan pelorus_grain_estimate_vulkan; do
+     grep "[[:space:]]${PEL_FILTER}[[:space:]]" "$PEL_OUTPUT_ROOT/filters.txt" \
+         >/dev/null || \
+         pel_fail "patched filter is missing: $PEL_FILTER"
+@@ -402,6 +435,50 @@ if (root / "denoise-mc-fallback.raw").read_bytes() == (
+ print("PASS: lookahead and MC runtime paths")
+ PY_CADENCE
+ 
++# Direct/tiled equivalence must also hold where sample_scale is not a power of
++# two. Without NoContraction on the storage->sample product and the patch SSD,
++# a 10-bit Arc B580 run drifted by one code value between the two paths.
++PEL_WIDE_NOISY='testsrc2=size=320x192:rate=6:duration=1,noise=alls=14:allf=t+u:all_seed=11'
++PEL_DENOISE_WIDE='pelorus_denoise_vulkan=planes=15:prev=2:patch=3:sigma=0.1:strength=0.9'
++for PEL_FORMAT in yuv420p10le p010le; do
++    pel_emit_raw "denoise-direct-${PEL_FORMAT}" "$PEL_FORMAT" "$PEL_WIDE_NOISY" \
++        "${PEL_DENOISE_WIDE}:tile=0" 6
++    pel_emit_raw "denoise-tiled-${PEL_FORMAT}" "$PEL_FORMAT" "$PEL_WIDE_NOISY" \
++        "${PEL_DENOISE_WIDE}:tile=1" 6
++    cmp -s "$PEL_OUTPUT_ROOT/denoise-direct-${PEL_FORMAT}.raw" \
++        "$PEL_OUTPUT_ROOT/denoise-tiled-${PEL_FORMAT}.raw" || \
++        pel_fail "direct/tiled denoise mismatch at ${PEL_FORMAT}"
++done
++echo 'PASS: direct/tiled denoise equivalence at 10-bit'
++
++# Pass-through analyzers forward their input frames, so their output link must
++# carry the input frames context even when FFmpeg cannot reuse it; linear
++# tiling makes ff_vk_filter_config_output() build a fresh one. hwdownload
++# rejects a frame whose context differs from its link's. Devices without linear
++# storage-image support skip this row; a skip is not passing evidence.
++PEL_LINEAR_SOURCE='testsrc2=size=96x64:rate=2:duration=1'
++if pel_run_linear 'linear-base' -f lavfi -i "$PEL_LINEAR_SOURCE" -frames:v 2 \
++    -vf 'format=yuv420p,hwupload,hwdownload,format=yuv420p' \
++    -fps_mode passthrough -f rawvideo "$PEL_OUTPUT_ROOT/linear-base.raw"; then
++    for PEL_FILTER in pelorus_analyze_vulkan pelorus_grain_estimate_vulkan \
++        pelorus_mc_vulkan; do
++        if ! pel_run_linear "linear-${PEL_FILTER}" \
++            -f lavfi -i "$PEL_LINEAR_SOURCE" -frames:v 2 \
++            -vf "format=yuv420p,hwupload,${PEL_FILTER},hwdownload,format=yuv420p" \
++            -fps_mode passthrough -f rawvideo \
++            "$PEL_OUTPUT_ROOT/linear-${PEL_FILTER}.raw"; then
++            sed -n '1,120p' "$PEL_OUTPUT_ROOT/linear-${PEL_FILTER}.stderr" >&2
++            pel_fail "linear-${PEL_FILTER}"
++        fi
++        cmp -s "$PEL_OUTPUT_ROOT/linear-base.raw" \
++            "$PEL_OUTPUT_ROOT/linear-${PEL_FILTER}.raw" || \
++            pel_fail "${PEL_FILTER} changed pixels on a linear input context"
++    done
++    echo 'PASS: pass-through analyzers keep the input frames context'
++else
++    echo 'SKIP: linear Vulkan frames unavailable; pass-through context row not executed' >&2
++fi
++
+ if [[ -f "$PEL_OUTPUT_ROOT/validation-known-upstream.txt" ]]; then
+     sort -u "$PEL_OUTPUT_ROOT/validation-known-upstream.txt" \
+         -o "$PEL_OUTPUT_ROOT/validation-known-upstream.txt"
+diff --git a/scripts/check-shader-bindings.py b/scripts/check-shader-bindings.py
+index bea75f1..3e4b550 100755
+--- a/scripts/check-shader-bindings.py
++++ b/scripts/check-shader-bindings.py
+@@ -37,13 +37,46 @@ def glsl_bindings(text):
+         r"\s*[^;{]*?([A-Za-z0-9_]+)\s*(?:\[\s*\]\s*;|\{|;)", text)
+     return [d[2] for d in sorted(decls, key=lambda d: (int(d[0]), int(d[1])))]
+ 
++# Per-stage storage-image budget. Every image binding is a per-plane array
++# (.elems = planes), so a filter spends (storage-image bindings) x planes
++# descriptors. Intel's UHD 770 (Windows 101.7092) reports
++# maxPerStageDescriptorStorageImages = 16; a layout above it is invalid usage
++# (VUID-VkPipelineLayoutCreateInfo-descriptorType-03020) even where it happens to
++# run. Budget for the worst case, a 4-plane format (e.g. yuva420p).
++STORAGE_IMAGE_LIMIT = 16
++MAX_PLANES = 4
++
++
++def storage_image_bindings(text):
++    """Number of STORAGE_IMAGE entries in FFVulkanDescriptorSetBinding arrays."""
++    count = 0
++    for m in re.finditer(r"FFVulkanDescriptorSetBinding\s+\w+\s*\[\s*\]\s*=\s*\{", text):
++        i = m.end() - 1
++        depth, j = 0, i
++        while j < len(text):
++            if text[j] == "{": depth += 1
++            elif text[j] == "}":
++                depth -= 1
++                if depth == 0: break
++            j += 1
++        count += len(re.findall(r"\.type\s*=\s*VK_DESCRIPTOR_TYPE_STORAGE_IMAGE\b", text[i:j]))
++    return count
++
++
+ bad = 0
++over_budget = 0
+ for n in FILTERS:
+     c = FILES / f"vf_pelorus_{n}_vulkan.c"
+     g = FILES / "vulkan" / f"pelorus_{n}.comp.glsl"
+     if not c.exists() or not g.exists():
+         print(f"  MISSING  {n}"); bad += 1; continue
+     cn, gn = c_bindings(c.read_text()), glsl_bindings(g.read_text())
++    storage = storage_image_bindings(c.read_text())
++    if storage * MAX_PLANES > STORAGE_IMAGE_LIMIT:
++        over_budget += 1
++        print(f"  BUDGET   {n}: {storage} per-plane STORAGE_IMAGE bindings x {MAX_PLANES} planes "
++              f"= {storage * MAX_PLANES} > {STORAGE_IMAGE_LIMIT} (maxPerStageDescriptorStorageImages); "
++              "read-only inputs belong in SAMPLED_IMAGE bindings")
+     if cn == gn:
+         print(f"  ok       {n:<16} {len(cn)} bindings: {', '.join(cn)}")
+     else:
+@@ -54,5 +87,10 @@ for n in FILTERS:
+ 
+ if bad:
+     print(f"\n{bad} filter(s) disagree — a swapped binding silently reads the wrong resource.")
++if over_budget:
++    print(f"\n{over_budget} filter(s) exceed the {STORAGE_IMAGE_LIMIT}-descriptor per-stage "
++          "storage-image budget.")
++if bad or over_budget:
+     sys.exit(1)
+-print(f"\nall {len(FILTERS)} filters: GLSL binding order matches the C descriptor array")
++print(f"\nall {len(FILTERS)} filters: GLSL binding order matches the C descriptor array; "
++      f"storage images <= {STORAGE_IMAGE_LIMIT} per stage at {MAX_PLANES} planes")
+diff --git a/scripts/check-vulkan-storage-domain.py b/scripts/check-vulkan-storage-domain.py
+index 6012ca2..6735950 100644
+--- a/scripts/check-vulkan-storage-domain.py
++++ b/scripts/check-vulkan-storage-domain.py
+@@ -44,23 +44,31 @@ def strip_comments(text: str) -> str:
+     return re.sub(r"//[^\n]*", "", text)
+ 
+ 
++LOAD_CALLS = ("imageLoad(", "texelFetch(")
++
++
+ def image_load_statements(text: str) -> list[str]:
+-    """Return semicolon-delimited source fragments containing imageLoad()."""
++    """Return semicolon-delimited source fragments that load a texel.
++
++    Storage images are read with imageLoad(); sampled images (denoise's
++    read-only inputs) with texelFetch(). Both return the same UNORM-normalized
++    storage value, so both must cross the pel_to_sample() boundary.
++    """
+ 
+-    return [part for part in text.split(";") if "imageLoad(" in part]
++    return [part for part in text.split(";") if any(call in part for call in LOAD_CALLS)]
+ 
+ 
+ def is_raw_copy(statement: str) -> bool:
+     """Recognize a direct storage-domain pass-through copy."""
+ 
+-    return "imageStore(" in statement and "imageLoad(" in statement
++    return "imageStore(" in statement and any(call in statement for call in LOAD_CALLS)
+ 
+ 
+ def is_preserving_read_modify_write(statement: str, full_text: str) -> bool:
+     """Recognize a raw texel loaded solely to preserve untouched components."""
+ 
+     match = re.search(
+-        r"vec4\s+([A-Za-z_]\w*)\s*=\s*(?:[^;?]+\?\s*)?imageLoad\s*\(",
++        r"vec4\s+([A-Za-z_]\w*)\s*=\s*(?:[^;?]+\?\s*)?(?:imageLoad|texelFetch)\s*\(",
+         statement,
+     )
+     if not match:
+@@ -164,7 +172,7 @@ def check() -> list[str]:
+             ):
+                 continue
+             errors.append(
+-                f"{shader_path.relative_to(ROOT)}: imageLoad reaches arithmetic "
++                f"{shader_path.relative_to(ROOT)}: a texel load reaches arithmetic "
+                 "without pel_to_sample()"
+             )
+ 

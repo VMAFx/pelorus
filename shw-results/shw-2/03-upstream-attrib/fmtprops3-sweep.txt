@@ -1,0 +1,24 @@
+--- no layer vk0
+fmt 1000330001: CLOBBERED f2.pNext==&f3:1 f3.sType=0 f3.pNext=0000000000000000
+fmt 1000330002: CLOBBERED f2.pNext==&f3:1 f3.sType=0 f3.pNext=0000000000000000
+fmt 1000340001: CLOBBERED f2.pNext==&f3:1 f3.sType=0 f3.pNext=0000000000000000
+224 queries, 72 clobbered the chained VkFormatProperties3 header
+--- with layer vk0
+fmt 1: CLOBBERED f2.pNext==&f3:1 f3.sType=0 f3.pNext=0000000000000000
+fmt 15: CLOBBERED f2.pNext==&f3:1 f3.sType=0 f3.pNext=0000000000000000
+fmt 22: CLOBBERED f2.pNext==&f3:1 f3.sType=0 f3.pNext=0000000000000000
+fmt 30: CLOBBERED f2.pNext==&f3:1 f3.sType=0 f3.pNext=0000000000000000
+fmt 31: CLOBBERED f2.pNext==&f3:1 f3.sType=0 f3.pNext=0000000000000000
+0
+--- no layer vk1
+fmt 1000330001: CLOBBERED f2.pNext==&f3:1 f3.sType=0 f3.pNext=0000000000000000
+fmt 1000330002: CLOBBERED f2.pNext==&f3:1 f3.sType=0 f3.pNext=0000000000000000
+fmt 1000340001: CLOBBERED f2.pNext==&f3:1 f3.sType=0 f3.pNext=0000000000000000
+224 queries, 46 clobbered the chained VkFormatProperties3 header
+--- with layer vk1
+fmt 1: CLOBBERED f2.pNext==&f3:1 f3.sType=0 f3.pNext=0000000000000000
+fmt 15: CLOBBERED f2.pNext==&f3:1 f3.sType=0 f3.pNext=0000000000000000
+fmt 22: CLOBBERED f2.pNext==&f3:1 f3.sType=0 f3.pNext=0000000000000000
+fmt 30: CLOBBERED f2.pNext==&f3:1 f3.sType=0 f3.pNext=0000000000000000
+fmt 31: CLOBBERED f2.pNext==&f3:1 f3.sType=0 f3.pNext=0000000000000000
+0

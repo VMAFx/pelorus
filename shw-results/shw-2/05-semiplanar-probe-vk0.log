@@ -1,0 +1,24 @@
+# A) analyze on 8-bit semi-planar nv12 vs yuv420p (and multiplane on/off)
+devopts='' yuv420p: lavfi.pelorus.variance=0.051847 lavfi.pelorus.edge=0.068983 
+devopts='' nv12: lavfi.pelorus.variance=0.041644 lavfi.pelorus.edge=0.118623 
+devopts='' yuv420p10le: lavfi.pelorus.variance=0.051548 lavfi.pelorus.edge=0.068783 
+devopts='' p010le: lavfi.pelorus.variance=0.041405 lavfi.pelorus.edge=0.118291 
+devopts='' p012le: lavfi.pelorus.variance=0.041344 lavfi.pelorus.edge=0.118210 
+devopts=',disable_multiplane=1' yuv420p: lavfi.pelorus.variance=0.040381 lavfi.pelorus.edge=0.060847 
+devopts=',disable_multiplane=1' nv12: lavfi.pelorus.variance=0.040381 lavfi.pelorus.edge=0.060847 
+devopts=',disable_multiplane=1' yuv420p10le: lavfi.pelorus.variance=0.040148 lavfi.pelorus.edge=0.060669 
+devopts=',disable_multiplane=1' p010le: lavfi.pelorus.variance=0.040148 lavfi.pelorus.edge=0.060669 
+devopts=',disable_multiplane=1' p012le: lavfi.pelorus.variance=0.040090 lavfi.pelorus.edge=0.060625 
+# B) GPU hflip_vulkan vs CPU hflip (a symmetric upload/download error cannot hide here)
+devopts='' yuv420p: hflip gpu-vs-cpu=DIFF  upload/download round-trip=DIFF
+devopts='' nv12: hflip gpu-vs-cpu=DIFF  upload/download round-trip=DIFF
+devopts='' yuv420p10le: hflip gpu-vs-cpu=DIFF  upload/download round-trip=DIFF
+devopts='' p010le: hflip gpu-vs-cpu=DIFF  upload/download round-trip=DIFF
+devopts='' p012le: hflip gpu-vs-cpu=DIFF  upload/download round-trip=DIFF
+devopts=',disable_multiplane=1' yuv420p: hflip gpu-vs-cpu=DIFF  upload/download round-trip=same
+devopts=',disable_multiplane=1' nv12: hflip gpu-vs-cpu=DIFF  upload/download round-trip=same
+devopts=',disable_multiplane=1' yuv420p10le: hflip gpu-vs-cpu=DIFF  upload/download round-trip=same
+devopts=',disable_multiplane=1' p010le: hflip gpu-vs-cpu=DIFF  upload/download round-trip=same
+devopts=',disable_multiplane=1' p012le: hflip gpu-vs-cpu=DIFF  upload/download round-trip=same
+# C) verbose frame-context layout for p010le
+[Vulkan @ 0000029f6fb2e680] Using device extension VK_EXT_host_image_copy

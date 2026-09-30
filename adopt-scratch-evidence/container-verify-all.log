@@ -1,0 +1,173 @@
+Compiling agent context from canonical AGENTS.md...
+  [COMPILED] CLAUDE.md                           (253 lines, budget <= 300)
+  [COMPILED] .cursor/rules/hiss-invariants.mdc   (259 lines, budget <= 300)
+  [COMPILED] .github/copilot-instructions.md     (253 lines, budget <= 300)
+  [COMPILED] .windsurfrules                      (253 lines, budget <= 300)
+  [COMPILED] .gemini/GEMINI.md                   (253 lines, budget <= 300)
+  [COMPILED] .codex/rules.md                     (253 lines, budget <= 300)
+  [COMPILED] 32 autonomous agent vendor projections.
+  AGENTS.md: caveman lint passed: 1056 prose words, 0.2 articles per 100 (limit 2.0), 13 register block lines left to the renderer.
+  8 personas and 0 skills passed the caveman lint (<= 600 prose words each).
+Cross-agent context transpilation completed successfully.
+/usr/local/bin/standardsctl compile-context --verify
+Verifying agent context synchronization against AGENTS.md...
+  AGENTS.md: caveman lint passed: 1056 prose words, 0.2 articles per 100 (limit 2.0), 13 register block lines left to the renderer.
+  8 personas and 0 skills passed the caveman lint (<= 600 prose words each).
+All agent context targets are 100% in sync with canonical AGENTS.md (32 persona projections verified).
+/usr/local/bin/standardsctl audit
+[PASS] Manifest verified: VMAFx/pelorus (Version 1)
+       Profiles: [native-gpu-systems] | Facets: [security:high api:public-contract docs:seo-portal agent:sandboxed]
+=== VMAFx/pelorus Governance Audit ===
+[PASS] Effective complexity policy sha256:1ec2234a93f49a71f37d1c4b165d8f0c5838b0d87a0a4a07c164f318c9fb3e90; max_func_loc=60; contributors=builtin:defaults-v1,builtin:audit-compat-v1; sources=9
+  source=builtin:defaults-v1 sha256:c27acccad0425bc0f97a575adc99801fa23135187ef04127e819ede897290130
+  source=lock sha256:a0c6b13c52f9404ed4754c0368f56fb5f21685e2eb867427f0665a6ebda82d5b
+  source=profile:native-gpu-systems sha256:9daa1ec1dc2da097e8a11553cc58448102091d018f034e30de891e40277d4e54
+  source=facet:security:high sha256:9bd59f0725d472b1516ba74556feada0e3868f4642bc08dd2d67a2cc26e87778
+  source=facet:api:public-contract sha256:5ddb1a0912620e0cd8c6cf6185fd5d4cdf01fe042d10caa043356560fe10824b
+  source=facet:docs:seo-portal sha256:145722c161ed8e436369d573c2b736fe7f579b8a1e33a85119e3b10268563428
+  source=facet:agent:sandboxed sha256:bc87486dea71e54d20549d6054dcf290d3d700e37b304cbdb6d6c1a2def895f2
+  source=repository sha256:e1af3d95dd9be5bd4803948ed04fd8fcae6977752642a82228b1331aaff370e1
+  source=builtin:audit-compat-v1 sha256:d3c15797f03f9605eb869ca2fdab9f7e3147c26a051f813df12b982640fd758a
+[PASS] Repository identity verified (VMAFx/pelorus, zero legacy references).
+[PASS] SemVer lockfile .standards.lock verified.
+[PASS] Lockfile digests verified (1 profiles, 4 facets).
+[INFO] HISS file scope: 38 files read by supported scanners; 313 files outside supported extensions; 6 ignored directories, 0 symlinks and 0 oversized inputs skipped. Native application tests are separate.
+[REPORT] HISS-04 complexity measured, not enforced: 0 measurements over limit in 0 functions (cyclomatic 0, cognitive 0, statements 0)
+[PASS] HISS invariant scan verified: 62 active violations within 62 baselined limit (0 touched files clean) (skipped: 6 ignored directories, 0 symlinks, 0 oversize files, 0 non-regular files).
+[PASS] README governance block verified against the recorded baseline.
+[PASS] Locked documentation gate verified (23 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).
+[PASS] Cross-agent context targets verified in sync: CLAUDE.md, .cursor/rules/hiss-invariants.mdc, .github/copilot-instructions.md, .windsurfrules, .gemini/GEMINI.md, .codex/rules.md.
+[PASS] Agent context caveman lint passed: 1056 prose words, 0.2 articles per 100 (limit 2.0), 13 register block lines left to the renderer.
+[PASS] DevContainer configuration verified in sync with declared standards.
+[PASS] Agent persona projections verified (32 copies identical to .agents/agents).
+[PASS] Caveman lint verified (8 personas, 0 skills, <= 600 prose words each).
+[PASS] Branch protection & merge ruleset .github/rulesets/main.json verified.
+[PASS] Repository label taxonomy .config/labels.yaml verified.
+[PASS] Paperclip agent runtime harness verified (VMAFx/pelorus, 5 rules).
+[PASS] Caveman non-Markdown source coverage verified (12 values, sha256:9a342c0b70e1a3293a6a6ac58629348e8d406f0a7c287e92298f108b09573cbf).
+[PASS] External runner matrix & ARC platform routing policies verified.
+[PASS] Agent definitions verified (8 agents registered).
+[PASS] Local Git hooks (.git/hooks/pre-commit via lefthook) verified active.
+
+Audit Summary: configured governance gates passed for VMAFx/pelorus; source analysis is limited to the reported HISS file scope.
+Cleaning... 0 files.
+The Meson build system
+Version: 1.10.1
+Source dir: /home/vscode/work/pelorus
+Build dir: /home/vscode/work/pelorus/build
+Build type: native build
+Project name: pelorus
+Project version: 0.2.2
+C compiler for the host machine: cc (gcc 15.2.0 "cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0")
+C linker for the host machine: cc ld.bfd 2.46
+Host machine cpu family: x86_64
+Host machine cpu: x86_64
+Compiler for C supports arguments -Wshadow: YES (cached)
+Compiler for C supports arguments -Wpointer-arith: YES (cached)
+Compiler for C supports arguments -Wstrict-prototypes: YES (cached)
+Compiler for C supports arguments -Wmissing-prototypes: YES (cached)
+Compiler for C supports arguments -Wvla: YES (cached)
+Found pkg-config: YES (/usr/bin/pkg-config) 2.5.1
+Program glslangValidator found: YES (/usr/bin/glslangValidator)
+Program glslc found: YES (/usr/bin/glslc)
+Program python3 found: YES (/usr/bin/python3)
+Program bash found: YES (/usr/bin/bash)
+Build targets in project: 14
+
+Found ninja-1.13.2 at /usr/bin/ninja
+ninja -C "build"
+ninja: Entering directory `build'
+ninja: no work to do.
+meson test -C "build" --suite=fast --print-errorlogs
+ninja: Entering directory `/home/vscode/work/pelorus/build'
+ninja: no work to do.
+ 1/28 fast - pelorus:interop-abi                                   OK              0.01s
+ 2/28 fast - pelorus:path-utf8                                     OK              0.01s
+ 3/28 fast - pelorus:shader-pelorus_analyze-compile                OK              0.08s
+ 4/28 fast - pelorus:shader-pelorus_deband-compile                 OK              0.09s
+ 5/28 fast - pelorus:shader-pelorus_grain_estimate-compile         OK              0.08s
+ 6/28 fast - pelorus:shader-pelorus_denoise-compile                OK              0.09s
+ 7/28 fast - pelorus:shader-pelorus_qpmap-compile                  OK              0.08s
+ 8/28 fast - pelorus:shader-pelorus_mc-compile                     OK              0.09s
+ 9/28 fast - pelorus:shader-pelorus_dehalo-compile                 OK              0.08s
+10/28 fast - pelorus:shader-pelorus_aa-compile                     OK              0.08s
+11/28 fast - pelorus:shader-pelorus_deblock-compile                OK              0.08s
+12/28 fast - pelorus:shader-pelorus_borderfix-compile              OK              0.08s
+13/28 fast - pelorus:shipped-shader-pelorus_analyze-compile        OK              0.08s
+14/28 fast - pelorus:shipped-shader-pelorus_deband-compile         OK              0.09s
+15/28 fast - pelorus:shipped-shader-pelorus_grain_estimate-compile OK              0.09s
+16/28 fast - pelorus:shipped-shader-pelorus_denoise-compile        OK              0.11s
+17/28 fast - pelorus:shipped-shader-pelorus_mc-compile             OK              0.10s
+18/28 fast - pelorus:shipped-shader-pelorus_dehalo-compile         OK              0.10s
+19/28 fast - pelorus:shipped-shader-pelorus_deblock-compile        OK              0.09s
+20/28 fast - pelorus:shipped-shader-pelorus_borderfix-compile      OK              0.08s
+21/28 fast - pelorus:shipped-shader-pelorus_qpmap-compile          OK              0.08s
+22/28 fast - pelorus:shipped-shader-pelorus_aa-compile             OK              0.11s
+23/28 fast - pelorus:shader-binding-order                          OK              0.02s
+24/28 fast - pelorus:vulkan-storage-domain                         OK              0.03s
+25/28 fast - pelorus:grain-accumulator-bounds                      OK              0.02s
+26/28 fast - pelorus:vulkan-sample-scale                           OK              0.07s
+27/28 fast - pelorus:vulkan-validation-streams                     OK              0.16s
+28/28 fast - pelorus:build-config-sync                             OK              0.31s
+
+Ok:                28  
+Fail:              0   
+
+Full log written to /home/vscode/work/pelorus/build/meson-logs/testlog.txt
+clang-format --dry-run --Werror $(find libpelorus tools -type f \( -name '*.c' -o -name '*.h' \))
+clang-tidy -p "build" libpelorus/src/*.c
+[1/5] Processing file /home/vscode/work/pelorus/libpelorus/src/deband_params.c.
+842 warnings generated.
+[2/5] Processing file /home/vscode/work/pelorus/libpelorus/src/denoise_params.c.
+1684 warnings generated.
+[3/5] Processing file /home/vscode/work/pelorus/libpelorus/src/interop.c.
+3125 warnings generated.
+[4/5] Processing file /home/vscode/work/pelorus/libpelorus/src/qp_report_csv.c.
+7473 warnings generated.
+[5/5] Processing file /home/vscode/work/pelorus/libpelorus/src/version.c.
+8299 warnings generated.
+../libpelorus/src/interop.c:112:12: warning: function 'pel_blob_pack' exceeds recommended size/complexity thresholds [readability-function-size]
+  112 | pel_result pel_blob_pack(const PelorusSideData *meta, const PelorusPackSection *sections, int nb,
+      |            ^
+../libpelorus/src/interop.c:112:12: note: 84 lines including whitespace and comments (threshold 75)
+../libpelorus/src/interop.c:223:12: warning: function 'pel_blob_find_section' exceeds recommended size/complexity thresholds [readability-function-size]
+  223 | pel_result pel_blob_find_section(const uint8_t *blob, size_t len, enum pel_section sec,
+      |            ^
+../libpelorus/src/interop.c:223:12: note: 77 lines including whitespace and comments (threshold 75)
+../libpelorus/src/interop.c:366:69: warning: narrowing conversion from 'int' to signed type 'int8_t' (aka 'signed char') is implementation-defined [bugprone-narrowing-conversions]
+  366 |             qp_cell_out[(uint32_t)cy * grid_cols + cx] = (n > 0U) ? (int8_t)(sum / (int64_t)n) : 0;
+      |                                                                     ^
+../libpelorus/src/qp_report_csv.c:68:37: warning: narrowing conversion from 'int' to signed type 'char' is implementation-defined [bugprone-narrowing-conversions]
+   68 |     return (c >= 'a' && c <= 'z') ? (char)(c - ('a' - 'A')) : c;
+      |                                     ^
+../libpelorus/src/qp_report_csv.c:68:63: warning: narrowing conversion from 'int' to signed type 'char' is implementation-defined [bugprone-narrowing-conversions]
+   68 |     return (c >= 'a' && c <= 'z') ? (char)(c - ('a' - 'A')) : c;
+      |                                                               ^
+Suppressed 8293 warnings (8293 in non-user code).
+Use -header-filter=.* to display errors from all non-system headers. Use -system-headers to display errors from system headers as well.
+../libpelorus/src/qp_report_csv.c:281:39: warning: narrowing conversion from 'int' to signed type 'char' is implementation-defined [bugprone-narrowing-conversions]
+  281 |     fr->slice_type = (t[0] != '\0') ? ascii_upper(t[0]) : '?';
+      |                                       ^
+bash scripts/release/concat-changelog-fragments.sh --check
+CHANGELOG.md is up to date with changelog.d/.
+markdown-governance: styled 110 public Markdown files; checked 205 tracked/non-ignored Markdown files for private links
+node:internal/modules/esm/get_format:219
+  throw new ERR_UNKNOWN_FILE_EXTENSION(ext, filepath);
+        ^
+
+TypeError [ERR_UNKNOWN_FILE_EXTENSION]: Unknown file extension ".ts" for /home/vscode/work/pelorus/tools/figures/third_party/interfig/upstream/src/svg.ts
+    at Object.getFileProtocolModuleFormat [as file:] (node:internal/modules/esm/get_format:219:9)
+    at defaultGetFormat (node:internal/modules/esm/get_format:245:36)
+    at defaultLoad (node:internal/modules/esm/load:98:16)
+    at ModuleLoader.load (node:internal/modules/esm/loader:815:12)
+    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:594:31)
+    at #createModuleJob (node:internal/modules/esm/loader:624:36)
+    at #getJobFromResolveResult (node:internal/modules/esm/loader:343:34)
+    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:311:41) {
+  code: 'ERR_UNKNOWN_FILE_EXTENSION'
+}
+
+Node.js v22.22.1
+make: *** [Makefile:56: docs-figures] Error 1
+make: Target 'verify-all' not remade because of errors.
+verify-all exit=2

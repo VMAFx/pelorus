@@ -1,0 +1,33 @@
+fix(ffmpeg-patches): let build-and-run.sh run under MSYS2 UCRT64
+
+The replay gate had never been run on Windows. Under MSYS2 UCRT64 it
+breaks in three places after the libpelorus stage:
+
+- `make ffmpeg` has no rule. FFmpeg's program target is
+  ffmpeg$(EXESUF), which is ffmpeg.exe on mingw. The script now reads
+  EXESUF from ffbuild/config.mak and runs the binary under that name.
+- The in-tree ffmpeg.exe and the static libavfilter consumer both import
+  libpelorus-0.dll. LD_LIBRARY_PATH cannot supply it, so they exited 127
+  (DLL not found). The private prefix's bin/ now goes on PATH.
+- meson and pkg-config are native programs, so the private prefix comes
+  back in Windows form (C:/msys64/tmp/...). The string compare against
+  the MSYS path always failed; it now compares against `cygpath -m`.
+
+Linux behaviour is unchanged: EXESUF is empty and IS_WINDOWS stays 0.
+docs/development/build.md gains a native Windows subsection.
+
+Verified on Windows 11 with MSYS2 UCRT64 and gcc 16.2:
+- Each break was reproduced on its own: no make rule for `ffmpeg`,
+  exit 127 without prefix/bin on PATH, and the prefix compare mismatch.
+- The patched script ran natively through the libpelorus build, fast
+  suite and install, the pkg-config prefix check, the 18-patch replay
+  and FFmpeg configure.
+- That run stopped at `make` on an unrelated, non-deterministic gcc
+  internal compiler error (segfault in vc1_block.c). The same file had
+  compiled cleanly in the same session, and the host has had repeated
+  bugchecks, so this looks like host instability.
+- The EXESUF target and the PATH lookup were checked only against a
+  manual build of the same tree. No complete gate run has finished yet.
+- shellcheck 0.11.0 is clean in pelorus-ci:26.04.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

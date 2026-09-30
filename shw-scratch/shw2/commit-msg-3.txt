@@ -1,0 +1,28 @@
+fix(ffmpeg): read denoise inputs through sampled images
+
+pelorus_denoise_vulkan bound seven per-plane STORAGE_IMAGE arrays (current,
+four previous, output, next): 21 descriptors for a 3-plane format, above
+the maxPerStageDescriptorStorageImages of 16 the Intel UHD 770 exposes. The
+Khronos layer reports VUID-VkPipelineLayoutCreateInfo-descriptorType-03020
+on every 3-plane denoise run there (52 of 482 sweep rows); the driver ran
+it anyway, but the layout is invalid usage.
+
+The six read-only frames are now SAMPLED_IMAGE bindings declared as
+texture2D and read with texelFetch() (GL_EXT_samplerless_texture_functions).
+The same float-representation UNORM views, GENERAL layout and read barriers
+are used, so the storage->sample contract is unchanged; only the output
+stays a storage image. Binding numbers and order are unchanged.
+
+Guards:
+- scripts/check-shader-bindings.py fails any filter whose storage-image
+  bindings x 4 planes exceed 16 (the pre-fix denoise reports 28);
+- scripts/check-vulkan-storage-domain.py treats texelFetch() as a load that
+  must cross pel_to_sample() (a deliberate regression is caught).
+
+Verified with Khronos validation (core + sync, and a GPU-AV subset) on Arc
+B580 and UHD 770: no 03020, format matrix and 482-run option sweep clean,
+unselected planes still bit-exact.
+
+Regenerated: 0003.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

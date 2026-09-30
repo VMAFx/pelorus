@@ -1,0 +1,11 @@
+== link ffmpeg.exe (2026-09-30T11:17:08+02:00) ==
+== install (2026-09-30T11:21:39+02:00) ==
+== done in 361s (2026-09-30T11:23:09+02:00) ==
+88
+insgesamt 64792
+drwxr-xr-x 1 ms ms        0 30. Sep 11:23 .
+drwxr-xr-x 1 ms ms        0 30. Sep 11:22 ..
+-rwxr-xr-x 1 ms ms 33238528 30. Sep 11:23 ffmpeg.exe
+-rwxr-xr-x 1 ms ms 33036800 30. Sep 11:23 ffprobe.exe
+-rwxr-xr-x 1 ms ms    69437 30. Sep 11:11 libpelorus-0.dll
+rc=0

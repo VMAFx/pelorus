@@ -1,0 +1,2152 @@
+[
+ {
+  "filter": "(baseline)",
+  "row": "hwupload,hwdownload",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "roundtrip_exact_vs_cpu": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 3
+  },
+  "ok": true
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "(defaults)",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "luma_changed": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.38,
+   "planes": {
+    "Y": {
+     "diff": 8390,
+     "max": 2,
+     "psnr": 57.28
+    },
+    "U": {
+     "diff": 1030,
+     "max": 1,
+     "psnr": 60.84
+    },
+    "V": {
+     "diff": 1003,
+     "max": 1,
+     "psnr": 60.95
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "range=1:thry=0.25:thrc=0.25",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.33,
+   "planes": {
+    "Y": {
+     "diff": 48254,
+     "max": 18,
+     "psnr": 36.21
+    },
+    "U": {
+     "diff": 7372,
+     "max": 17,
+     "psnr": 34.98
+    },
+    "V": {
+     "diff": 7000,
+     "max": 17,
+     "psnr": 35.45
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "range=31",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.33,
+   "planes": {
+    "Y": {
+     "diff": 4933,
+     "max": 2,
+     "psnr": 59.37
+    },
+    "U": {
+     "diff": 721,
+     "max": 1,
+     "psnr": 62.38
+    },
+    "V": {
+     "diff": 574,
+     "max": 1,
+     "psnr": 63.37
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "grainy=0.4:grainc=0.4",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "luma_changed": true,
+   "chroma_changed": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.31,
+   "planes": {
+    "Y": {
+     "diff": 74157,
+     "max": 101,
+     "psnr": 23.27
+    },
+    "U": {
+     "diff": 18536,
+     "max": 97,
+     "psnr": 24.53
+    },
+    "V": {
+     "diff": 18542,
+     "max": 98,
+     "psnr": 24.98
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "softness=0",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.32,
+   "planes": {
+    "Y": {
+     "diff": 13890,
+     "max": 4,
+     "psnr": 49.63
+    },
+    "U": {
+     "diff": 1934,
+     "max": 3,
+     "psnr": 52.12
+    },
+    "V": {
+     "diff": 1725,
+     "max": 3,
+     "psnr": 52.61
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "detail=0:protect=0",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.3,
+   "planes": {
+    "Y": {
+     "diff": 8588,
+     "max": 2,
+     "psnr": 57.17
+    },
+    "U": {
+     "diff": 1316,
+     "max": 1,
+     "psnr": 59.77
+    },
+    "V": {
+     "diff": 1111,
+     "max": 1,
+     "psnr": 60.51
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "detail=0.25",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.29,
+   "planes": {
+    "Y": {
+     "diff": 8588,
+     "max": 2,
+     "psnr": 57.17
+    },
+    "U": {
+     "diff": 1315,
+     "max": 1,
+     "psnr": 59.77
+    },
+    "V": {
+     "diff": 1101,
+     "max": 1,
+     "psnr": 60.55
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "sample=column",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.31,
+   "planes": {
+    "Y": {
+     "diff": 13205,
+     "max": 2,
+     "psnr": 55.41
+    },
+    "U": {
+     "diff": 1713,
+     "max": 1,
+     "psnr": 58.63
+    },
+    "V": {
+     "diff": 1677,
+     "max": 1,
+     "psnr": 58.72
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "sample=row",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.29,
+   "planes": {
+    "Y": {
+     "diff": 11380,
+     "max": 2,
+     "psnr": 55.97
+    },
+    "U": {
+     "diff": 1341,
+     "max": 1,
+     "psnr": 59.69
+    },
+    "V": {
+     "diff": 1249,
+     "max": 1,
+     "psnr": 60.0
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "sample=square_rot",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.29,
+   "planes": {
+    "Y": {
+     "diff": 8504,
+     "max": 2,
+     "psnr": 57.2
+    },
+    "U": {
+     "diff": 1023,
+     "max": 1,
+     "psnr": 60.87
+    },
+    "V": {
+     "diff": 982,
+     "max": 1,
+     "psnr": 61.04
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "blur=allrefs",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.29,
+   "planes": {
+    "Y": {
+     "diff": 2985,
+     "max": 4,
+     "psnr": 59.64
+    },
+    "U": {
+     "diff": 188,
+     "max": 3,
+     "psnr": 64.1
+    },
+    "V": {
+     "diff": 177,
+     "max": 3,
+     "psnr": 64.34
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "dither=none:grainy=0:grainc=0",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.3,
+   "planes": {
+    "Y": {
+     "diff": 7116,
+     "max": 1,
+     "psnr": 58.46
+    },
+    "U": {
+     "diff": 1030,
+     "max": 1,
+     "psnr": 60.84
+    },
+    "V": {
+     "diff": 1003,
+     "max": 1,
+     "psnr": 60.95
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "dither=bayer8",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.3,
+   "planes": {
+    "Y": {
+     "diff": 8905,
+     "max": 2,
+     "psnr": 56.04
+    },
+    "U": {
+     "diff": 1030,
+     "max": 1,
+     "psnr": 60.84
+    },
+    "V": {
+     "diff": 1003,
+     "max": 1,
+     "psnr": 60.95
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "dynamic=0",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.28,
+   "planes": {
+    "Y": {
+     "diff": 7947,
+     "max": 2,
+     "psnr": 57.45
+    },
+    "U": {
+     "diff": 1105,
+     "max": 1,
+     "psnr": 60.53
+    },
+    "V": {
+     "diff": 1030,
+     "max": 1,
+     "psnr": 60.84
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "meta=1",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "sidedata:User Data Unregistered SEI": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.29,
+   "planes": {
+    "Y": {
+     "diff": 8390,
+     "max": 2,
+     "psnr": 57.28
+    },
+    "U": {
+     "diff": 1030,
+     "max": 1,
+     "psnr": 60.84
+    },
+    "V": {
+     "diff": 1003,
+     "max": 1,
+     "psnr": 60.95
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "planes=1",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "chroma_exact(psnr u/v inf)": true,
+   "luma_changed": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.36,
+   "planes": {
+    "Y": {
+     "diff": 8390,
+     "max": 2,
+     "psnr": 57.28
+    },
+    "U": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "V": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "planes=2:grainc=0.2",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "luma_exact": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.34,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "U": {
+     "diff": 17872,
+     "max": 49,
+     "psnr": 30.37
+    },
+    "V": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "planes=0",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.31,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "U": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "V": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_analyze_vulkan",
+  "row": "(defaults)",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true,
+   "sidedata:User Data Unregistered SEI": true,
+   "meta:lavfi.pelorus.complexity=": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 3
+  },
+  "info": {
+   "sec": 0.22,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "U": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "V": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ",metadata=mode=print:file=-"
+ },
+ {
+  "filter": "pelorus_analyze_vulkan",
+  "row": "roi=1",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 3
+  },
+  "info": {
+   "sec": 0.29,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "U": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "V": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_analyze_vulkan",
+  "row": "roi=1:roi_strength=1:flat=0.25:grad_lo=0:grad_hi=0.5",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true,
+   "sidedata:Regions Of Interest": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 3
+  },
+  "info": {
+   "sec": 0.23,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "U": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "V": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_analyze_vulkan",
+  "row": "flat=0:roi=1",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 3
+  },
+  "info": {
+   "sec": 0.29,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "U": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "V": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_analyze_vulkan",
+  "row": "grad_lo=0.5:grad_hi=0",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 3
+  },
+  "info": {
+   "sec": 0.29,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "U": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "V": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_grain_estimate_vulkan",
+  "row": "(defaults)",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true,
+   "sidedata:Film grain parameters": true,
+   "sidedata:User Data Unregistered SEI": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 3
+  },
+  "info": {
+   "sec": 0.22,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "U": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "V": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_grain_estimate_vulkan",
+  "row": "model=h274",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 3
+  },
+  "info": {
+   "sec": 0.29,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "U": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "V": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_grain_estimate_vulkan",
+  "row": "native=0",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true,
+   "nosidedata:Film grain parameters": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 3
+  },
+  "info": {
+   "sec": 0.23,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "U": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "V": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_grain_estimate_vulkan",
+  "row": "edge=0:strength=64",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 3
+  },
+  "info": {
+   "sec": 0.3,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "U": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "V": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_grain_estimate_vulkan",
+  "row": "edge=1:strength=0",
+  "fmt": "yuv420p",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 3
+  },
+  "info": {
+   "sec": 0.32,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "U": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "V": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "(baseline)",
+  "row": "hwupload,hwdownload",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "roundtrip_exact_vs_cpu": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 2
+  },
+  "ok": true
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "(defaults)",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "luma_changed": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.47,
+   "planes": {
+    "Y": {
+     "diff": 41067,
+     "max": 8,
+     "psnr": 56.87
+    },
+    "UV": {
+     "diff": 3544,
+     "max": 3,
+     "psnr": 63.05
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "range=1:thry=0.25:thrc=0.25",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.3,
+   "planes": {
+    "Y": {
+     "diff": 68232,
+     "max": 71,
+     "psnr": 36.25
+    },
+    "UV": {
+     "diff": 15259,
+     "max": 66,
+     "psnr": 35.19
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "range=31",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.28,
+   "planes": {
+    "Y": {
+     "diff": 38399,
+     "max": 8,
+     "psnr": 58.47
+    },
+    "UV": {
+     "diff": 2210,
+     "max": 3,
+     "psnr": 65.11
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "grainy=0.4:grainc=0.4",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "luma_changed": true,
+   "chroma_changed": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.29,
+   "planes": {
+    "Y": {
+     "diff": 76148,
+     "max": 407,
+     "psnr": 23.27
+    },
+    "UV": {
+     "diff": 38060,
+     "max": 397,
+     "psnr": 24.72
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "softness=0",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.28,
+   "planes": {
+    "Y": {
+     "diff": 43052,
+     "max": 18,
+     "psnr": 49.6
+    },
+    "UV": {
+     "diff": 4233,
+     "max": 12,
+     "psnr": 52.58
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "detail=0:protect=0",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.28,
+   "planes": {
+    "Y": {
+     "diff": 41181,
+     "max": 8,
+     "psnr": 56.79
+    },
+    "UV": {
+     "diff": 4034,
+     "max": 3,
+     "psnr": 62.3
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "detail=0.25",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.29,
+   "planes": {
+    "Y": {
+     "diff": 41181,
+     "max": 8,
+     "psnr": 56.79
+    },
+    "UV": {
+     "diff": 4034,
+     "max": 3,
+     "psnr": 62.32
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "sample=column",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.32,
+   "planes": {
+    "Y": {
+     "diff": 44696,
+     "max": 8,
+     "psnr": 55.33
+    },
+    "UV": {
+     "diff": 5738,
+     "max": 3,
+     "psnr": 61.14
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "sample=row",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.29,
+   "planes": {
+    "Y": {
+     "diff": 43823,
+     "max": 8,
+     "psnr": 55.94
+    },
+    "UV": {
+     "diff": 4409,
+     "max": 3,
+     "psnr": 62.26
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "sample=square_rot",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.28,
+   "planes": {
+    "Y": {
+     "diff": 41146,
+     "max": 8,
+     "psnr": 56.83
+    },
+    "UV": {
+     "diff": 3467,
+     "max": 3,
+     "psnr": 63.17
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "blur=allrefs",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.29,
+   "planes": {
+    "Y": {
+     "diff": 36319,
+     "max": 17,
+     "psnr": 58.19
+    },
+    "UV": {
+     "diff": 455,
+     "max": 12,
+     "psnr": 64.6
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "dither=none:grainy=0:grainc=0",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.3,
+   "planes": {
+    "Y": {
+     "diff": 11866,
+     "max": 3,
+     "psnr": 60.67
+    },
+    "UV": {
+     "diff": 3544,
+     "max": 3,
+     "psnr": 63.05
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "dither=bayer8",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.27,
+   "planes": {
+    "Y": {
+     "diff": 54700,
+     "max": 8,
+     "psnr": 55.45
+    },
+    "UV": {
+     "diff": 3544,
+     "max": 3,
+     "psnr": 63.05
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "dynamic=0",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.29,
+   "planes": {
+    "Y": {
+     "diff": 41431,
+     "max": 8,
+     "psnr": 57.21
+    },
+    "UV": {
+     "diff": 3664,
+     "max": 3,
+     "psnr": 62.89
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "meta=1",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "padding_bits_zero": true,
+   "sidedata:User Data Unregistered SEI": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.28,
+   "planes": {
+    "Y": {
+     "diff": 41067,
+     "max": 8,
+     "psnr": 56.87
+    },
+    "UV": {
+     "diff": 3544,
+     "max": 3,
+     "psnr": 63.05
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "planes=1",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "chroma_exact(psnr u/v inf)": true,
+   "luma_changed": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.33,
+   "planes": {
+    "Y": {
+     "diff": 41067,
+     "max": 8,
+     "psnr": 56.87
+    },
+    "UV": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "planes=2:grainc=0.2",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "luma_exact": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.34,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "UV": {
+     "diff": 37708,
+     "max": 199,
+     "psnr": 30.5
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_deband_vulkan",
+  "row": "planes=0",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 10
+  },
+  "info": {
+   "sec": 0.31,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "UV": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_analyze_vulkan",
+  "row": "(defaults)",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true,
+   "padding_bits_zero": true,
+   "sidedata:User Data Unregistered SEI": true,
+   "meta:lavfi.pelorus.complexity=": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 2
+  },
+  "info": {
+   "sec": 0.33,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "UV": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ",metadata=mode=print:file=-"
+ },
+ {
+  "filter": "pelorus_analyze_vulkan",
+  "row": "roi=1",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 2
+  },
+  "info": {
+   "sec": 0.59,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "UV": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_analyze_vulkan",
+  "row": "roi=1:roi_strength=1:flat=0.25:grad_lo=0:grad_hi=0.5",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true,
+   "padding_bits_zero": true,
+   "sidedata:Regions Of Interest": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 2
+  },
+  "info": {
+   "sec": 0.45,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "UV": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_analyze_vulkan",
+  "row": "flat=0:roi=1",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 2
+  },
+  "info": {
+   "sec": 0.42,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "UV": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_analyze_vulkan",
+  "row": "grad_lo=0.5:grad_hi=0",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 2
+  },
+  "info": {
+   "sec": 0.3,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "UV": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_grain_estimate_vulkan",
+  "row": "(defaults)",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true,
+   "padding_bits_zero": true,
+   "sidedata:Film grain parameters": true,
+   "sidedata:User Data Unregistered SEI": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 2
+  },
+  "info": {
+   "sec": 0.3,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "UV": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_grain_estimate_vulkan",
+  "row": "model=h274",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 2
+  },
+  "info": {
+   "sec": 0.28,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "UV": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_grain_estimate_vulkan",
+  "row": "native=0",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true,
+   "padding_bits_zero": true,
+   "nosidedata:Film grain parameters": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 2
+  },
+  "info": {
+   "sec": 0.31,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "UV": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_grain_estimate_vulkan",
+  "row": "edge=0:strength=64",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 2
+  },
+  "info": {
+   "sec": 0.28,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "UV": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ },
+ {
+  "filter": "pelorus_grain_estimate_vulkan",
+  "row": "edge=1:strength=0",
+  "fmt": "p010le",
+  "size": "160x96",
+  "rc": 0,
+  "checks": {
+   "exit0": true,
+   "no_new_diag": true,
+   "frames": true,
+   "identity": true,
+   "padding_bits_zero": true
+  },
+  "diags": {
+   "VUID-VkFormatProperties2-pNext-pNext": 10,
+   "VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230": 2
+  },
+  "info": {
+   "sec": 0.29,
+   "planes": {
+    "Y": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    },
+    "UV": {
+     "diff": 0,
+     "max": 0,
+     "psnr": "inf"
+    }
+   }
+  },
+  "ok": true,
+  "pre": "",
+  "post": ""
+ }
+]

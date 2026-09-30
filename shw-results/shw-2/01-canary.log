@@ -1,0 +1,54 @@
+== canary vk0 vvl=none rc=0 stdout-VUIDs:  stderr-VUIDs: 
+canary device 0: Intel(R) Arc(TM) B580 Graphics driver 0x196349
+vkCreateBuffer(size=0,usage=0) -> 0
+== canary vk0 vvl=msys rc=0 stdout-VUIDs: VUID-VkBufferCreateInfo-None-09500 VUID-VkBufferCreateInfo-size-00912  stderr-VUIDs: 
+canary device 0: Intel(R) Arc(TM) B580 Graphics driver 0x196349
+vkCreateBuffer(size=0,usage=0) -> 0
+== canary vk0 vvl=sdk rc=0 stdout-VUIDs: VUID-VkBufferCreateInfo-None-09500 VUID-VkBufferCreateInfo-size-00912  stderr-VUIDs: 
+canary device 0: Intel(R) Arc(TM) B580 Graphics driver 0x196349
+vkCreateBuffer(size=0,usage=0) -> 0
+== canary vk1 vvl=none rc=0 stdout-VUIDs:  stderr-VUIDs: 
+canary device 1: Intel(R) UHD Graphics 770 driver 0x195bb4
+vkCreateBuffer(size=0,usage=0) -> 0
+== canary vk1 vvl=msys rc=0 stdout-VUIDs: VUID-VkBufferCreateInfo-None-09500 VUID-VkBufferCreateInfo-size-00912  stderr-VUIDs: 
+canary device 1: Intel(R) UHD Graphics 770 driver 0x195bb4
+vkCreateBuffer(size=0,usage=0) -> 0
+== canary vk1 vvl=sdk rc=0 stdout-VUIDs: VUID-VkBufferCreateInfo-None-09500 VUID-VkBufferCreateInfo-size-00912  stderr-VUIDs: 
+canary device 1: Intel(R) UHD Graphics 770 driver 0x195bb4
+vkCreateBuffer(size=0,usage=0) -> 0
+== ffmpeg loader trace vk0 vvl=msys rc=0
+      1 [Vulkan Loader] DEBUG | LAYER:  Loading layer library C:\msys64\ucrt64\bin\.\VkLayer_khronos_validation.dll
+      1 [Vulkan Loader] DEBUG | LAYER:  Unloading layer library C:\msys64\ucrt64\bin\VkLayer_khronos_validation.dll
+      1 [Vulkan Loader] INFO | LAYER:   Insert instance layer "VK_LAYER_KHRONOS_validation" (C:\msys64\ucrt64\bin\VkLayer_khronos_validation.dll)
+      1 [Vulkan Loader] INFO | LAYER:   Inserted device layer "VK_LAYER_KHRONOS_validation" (C:\msys64\ucrt64\bin\VkLayer_khronos_validation.dll)
+      2 [Vulkan Loader] LAYER:                     Library:  C:\msys64\ucrt64\bin\VkLayer_khronos_validation.dll
+      2 [Vulkan Loader] LAYER:                     Manifest: C:\msys64\ucrt64\bin\VkLayer_khronos_validation.json
+      3 [Vulkan Loader] LAYER:                C:\msys64\ucrt64\bin\VkLayer_khronos_validation.json
+== ffmpeg best-practices control vk0 vvl=msys rc=0 stdout-lines=105 ids: BestPractices-Error-Result VUID-VkFormatProperties2-pNext-pNext VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 
+== ffmpeg loader trace vk0 vvl=sdk rc=0
+      1 [Vulkan Loader] DEBUG | LAYER:  Loading layer library C:\VulkanSDK\1.4.341.1\Bin\.\VkLayer_khronos_validation.dll
+      1 [Vulkan Loader] DEBUG | LAYER:  Unloading layer library C:\VulkanSDK\1.4.341.1\Bin\VkLayer_khronos_validation.dll
+      1 [Vulkan Loader] INFO | LAYER:   Insert instance layer "VK_LAYER_KHRONOS_validation" (C:\VulkanSDK\1.4.341.1\Bin\VkLayer_khronos_validation.dll)
+      1 [Vulkan Loader] INFO | LAYER:   Inserted device layer "VK_LAYER_KHRONOS_validation" (C:\VulkanSDK\1.4.341.1\Bin\VkLayer_khronos_validation.dll)
+      2 [Vulkan Loader] LAYER:                     Library:  C:\VulkanSDK\1.4.341.1\Bin\VkLayer_khronos_validation.dll
+      2 [Vulkan Loader] LAYER:                     Manifest: C:\VulkanSDK\1.4.341.1\Bin\VkLayer_khronos_validation.json
+      3 [Vulkan Loader] LAYER:                C:\VulkanSDK\1.4.341.1\Bin\VkLayer_khronos_validation.json
+== ffmpeg best-practices control vk0 vvl=sdk rc=0 stdout-lines=105 ids: BestPractices-Error-Result VUID-VkFormatProperties2-pNext-pNext VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 
+== ffmpeg loader trace vk1 vvl=msys rc=0
+      1 [Vulkan Loader] DEBUG | LAYER:  Loading layer library C:\msys64\ucrt64\bin\.\VkLayer_khronos_validation.dll
+      1 [Vulkan Loader] DEBUG | LAYER:  Unloading layer library C:\msys64\ucrt64\bin\VkLayer_khronos_validation.dll
+      1 [Vulkan Loader] INFO | LAYER:   Insert instance layer "VK_LAYER_KHRONOS_validation" (C:\msys64\ucrt64\bin\VkLayer_khronos_validation.dll)
+      1 [Vulkan Loader] INFO | LAYER:   Inserted device layer "VK_LAYER_KHRONOS_validation" (C:\msys64\ucrt64\bin\VkLayer_khronos_validation.dll)
+      2 [Vulkan Loader] LAYER:                     Library:  C:\msys64\ucrt64\bin\VkLayer_khronos_validation.dll
+      2 [Vulkan Loader] LAYER:                     Manifest: C:\msys64\ucrt64\bin\VkLayer_khronos_validation.json
+      3 [Vulkan Loader] LAYER:                C:\msys64\ucrt64\bin\VkLayer_khronos_validation.json
+== ffmpeg best-practices control vk1 vvl=msys rc=0 stdout-lines=105 ids: BestPractices-Error-Result VUID-VkFormatProperties2-pNext-pNext VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 
+== ffmpeg loader trace vk1 vvl=sdk rc=0
+      1 [Vulkan Loader] DEBUG | LAYER:  Loading layer library C:\VulkanSDK\1.4.341.1\Bin\.\VkLayer_khronos_validation.dll
+      1 [Vulkan Loader] DEBUG | LAYER:  Unloading layer library C:\VulkanSDK\1.4.341.1\Bin\VkLayer_khronos_validation.dll
+      1 [Vulkan Loader] INFO | LAYER:   Insert instance layer "VK_LAYER_KHRONOS_validation" (C:\VulkanSDK\1.4.341.1\Bin\VkLayer_khronos_validation.dll)
+      1 [Vulkan Loader] INFO | LAYER:   Inserted device layer "VK_LAYER_KHRONOS_validation" (C:\VulkanSDK\1.4.341.1\Bin\VkLayer_khronos_validation.dll)
+      2 [Vulkan Loader] LAYER:                     Library:  C:\VulkanSDK\1.4.341.1\Bin\VkLayer_khronos_validation.dll
+      2 [Vulkan Loader] LAYER:                     Manifest: C:\VulkanSDK\1.4.341.1\Bin\VkLayer_khronos_validation.json
+      3 [Vulkan Loader] LAYER:                C:\VulkanSDK\1.4.341.1\Bin\VkLayer_khronos_validation.json
+== ffmpeg best-practices control vk1 vvl=sdk rc=0 stdout-lines=105 ids: BestPractices-Error-Result VUID-VkFormatProperties2-pNext-pNext VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 

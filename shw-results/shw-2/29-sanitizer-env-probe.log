@@ -1,0 +1,9 @@
+Ubuntu clang version 21.1.8 (6ubuntu1)
+asan runtimes:
+(end)
+/usr/bin/x86_64-linux-gnu-ld.bfd: cannot find /usr/lib/llvm-21/lib/clang/21/lib/x86_64-pc-linux-gnu/libclang_rt.asan_static.a: No such file or directory
+/usr/bin/x86_64-linux-gnu-ld.bfd: cannot find /usr/lib/llvm-21/lib/clang/21/lib/x86_64-pc-linux-gnu/libclang_rt.asan.a: No such file or directory
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+direct clang -fsanitize link rc=1
+f03badd: meson setup rc=1 :: ERROR: Linker clang does not support sanitizer arguments ['-fsanitize=address,undefined']
+HEAD: meson setup rc=1 :: ERROR: Linker clang does not support sanitizer arguments ['-fsanitize=address,undefined']

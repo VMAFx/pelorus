@@ -1,0 +1,18 @@
+PASS pipe-deband-hevc_qsv-gpu0 frame=   24
+    [Vulkan ] Device 0 selected: Intel(R) Arc(TM) B580 Graphics (discrete) (0xe20b)
+    [D3D11VA ] Using device 8086:e20b (Intel(R) Arc(TM) B580 Graphics).
+    [QSV ] Use Intel(R) oneVPL to create MFX session, API version is 2.17, the required implementation version is 1.3
+    [QSV ] Initialize MFX session: implementation version is 2.17
+    [vost#0:0/hevc_qsv ] [enc:hevc_qsv @ 00000247489dc080] Using device qs (type qsv) with hevc_qsv encoder.
+PASS pipe-deband-av1_qsv-gpu0 frame=   24
+    [Vulkan ] Device 0 selected: Intel(R) Arc(TM) B580 Graphics (discrete) (0xe20b)
+    [D3D11VA ] Using device 8086:e20b (Intel(R) Arc(TM) B580 Graphics).
+    [QSV ] Use Intel(R) oneVPL to create MFX session, API version is 2.17, the required implementation version is 1.3
+    [QSV ] Initialize MFX session: implementation version is 2.17
+    [vost#0:0/av1_qsv ] [enc:av1_qsv @ 000001c0f0380f80] Using device qs (type qsv) with av1_qsv encoder.
+PASS pipe-deband-hevc_qsv-gpu1 frame=   24
+    [Vulkan ] Device 1 selected: Intel(R) UHD Graphics 770 (integrated) (0x4680)
+    [D3D11VA ] Using device 8086:4680 (Intel(R) UHD Graphics 770).
+    [QSV ] Use Intel(R) oneVPL to create MFX session, API version is 2.17, the required implementation version is 1.3
+    [QSV ] Initialize MFX session: implementation version is 2.15
+    [vost#0:0/hevc_qsv ] [enc:hevc_qsv @ 000002317c3c3fc0] Using device qs (type qsv) with hevc_qsv encoder.

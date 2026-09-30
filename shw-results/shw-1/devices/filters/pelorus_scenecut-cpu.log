@@ -1,0 +1,41 @@
+[Parsed_testsrc2_0 @ 000002d195c2a480] size:1280x720 rate:24/1 duration:1.000000 sar:1/1
+Input #0, lavfi, from 'testsrc2=size=1280x720:rate=24:duration=1':
+  Duration: N/A, start: 0.000000, bitrate: N/A
+  Stream #0:0: Video: wrapped_avframe, 1 reference frame, yuv420p, 1280x720 [SAR 1:1 DAR 16:9], 24 fps, 24 tbr, 24 tbn
+[out#0/null @ 000002d195c5c980] No explicit maps, mapping streams automatically...
+[vost#0:0/wrapped_avframe @ 000002d197916100] Created video stream from input stream 0:0
+Stream mapping:
+  Stream #0:0 -> #0:0 (wrapped_avframe (native) -> wrapped_avframe (native))
+[vost#0:0/wrapped_avframe @ 000002d197916100] Starting thread...
+[vf#0:0 @ 000002d1979168c0] Starting thread...
+[vist#0:0/wrapped_avframe @ 000002d195cf0e40] [dec:wrapped_avframe @ 000002d195cf0040] Starting thread...
+[in#0/lavfi @ 000002d195c2ed80] Starting thread...
+[graph -1 input from stream 0:0 @ 000002d195c2b780] w:1280 h:720 pixfmt:yuv420p tb:1/24 fr:24/1 sar:1/1 csp:unknown range:unknown alpha:unspecified
+[graph -1 input from stream 0:0 @ 000002d195c2b780] video frame properties congruent with link at pts_time: 0
+Output #0, null, to 'pipe:':
+  Metadata:
+    encoder         : Lavf63.1.102
+  Stream #0:0: Video: wrapped_avframe, 1 reference frame, yuv420p(progressive), 1280x720 [SAR 1:1 DAR 16:9], q=2-31, 200 kb/s, 24 fps, 24 tbn
+    Metadata:
+      encoder         : Lavc63.1.102 wrapped_avframe
+[out#0/null @ 000002d195c5c980] Starting thread...
+[vost#0:0/wrapped_avframe @ 000002d197916100] [enc:wrapped_avframe @ 000002d197916380] Encoder thread received EOF
+[vost#0:0/wrapped_avframe @ 000002d197916100] Terminating thread with return code 0 (success)
+[out#0/null @ 000002d195c5c980] All streams finished
+[out#0/null @ 000002d195c5c980] Terminating thread with return code 0 (success)
+[in#0/lavfi @ 000002d195c2ed80] Terminating thread with return code 0 (success)
+[vist#0:0/wrapped_avframe @ 000002d195cf0e40] [dec:wrapped_avframe @ 000002d195cf0040] Decoder thread received EOF packet
+[vist#0:0/wrapped_avframe @ 000002d195cf0e40] [dec:wrapped_avframe @ 000002d195cf0040] Decoder returned EOF, finishing
+[vist#0:0/wrapped_avframe @ 000002d195cf0e40] [dec:wrapped_avframe @ 000002d195cf0040] Terminating thread with return code 0 (success)
+[vf#0:0 @ 000002d1979168c0] All consumers returned EOF
+[vf#0:0 @ 000002d1979168c0] Terminating thread with return code 0 (success)
+[out#0/null @ 000002d195c5c980] Output file #0 (pipe:):
+[out#0/null @ 000002d195c5c980]   Output stream #0:0 (video): 10 frames encoded; 10 packets muxed (4240 bytes); 
+[out#0/null @ 000002d195c5c980]   Total: 10 packets (4240 bytes) muxed
+[out#0/null @ 000002d195c5c980] video:4KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=   10 fps=0.0 q=-0.0 Lsize=N/A time=00:00:00.41 bitrate=N/A speed=31.2x elapsed=0:00:00.01    
+[in#0/lavfi @ 000002d195c2ed80] Input file #0 (testsrc2=size=1280x720:rate=24:duration=1):
+[in#0/lavfi @ 000002d195c2ed80]   Input stream #0:0 (video): 11 packets read (4664 bytes); 10 frames decoded; 0 decode errors; 
+[in#0/lavfi @ 000002d195c2ed80]   Total: 11 packets (4664 bytes) demuxed
+
+Exiting with exit code 0

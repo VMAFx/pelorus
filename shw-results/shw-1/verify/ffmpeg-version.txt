@@ -1,0 +1,12 @@
+ffmpeg version n9.0.2-18-g1f537d7 Copyright (c) 2000-2026 the FFmpeg developers
+built with gcc 16.2.0 (Rev4, Built by MSYS2 project)
+configuration: --prefix='C:/tmp/pel/prefix' --libdir='C:/tmp/pel/prefix/lib' --enable-vulkan --enable-libvpl --enable-libaom --enable-libsvtav1 --enable-gpl --enable-libx264 --enable-libx265 --enable-libdav1d --enable-libvmaf --enable-ffnvcodec --enable-nvenc --enable-d3d11va --enable-dxva2 --disable-doc
+libavutil      61.  1.102 / 61.  1.102
+libavcodec     63.  1.102 / 63.  1.102
+libavformat    63.  1.102 / 63.  1.102
+libavdevice    63.  1.102 / 63.  1.102
+libavfilter    12.  1.102 / 12.  1.102
+libswscale     10.  1.102 / 10.  1.102
+libswresample   7.  1.102 /  7.  1.102
+
+Exiting with exit code 0

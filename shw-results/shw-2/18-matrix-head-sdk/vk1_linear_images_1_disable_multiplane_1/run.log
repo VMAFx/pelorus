@@ -1,0 +1,43 @@
+PASS: analyze-yuv420p
+PASS: analyze-yuv420p10le
+PASS: analyze-p010le
+PASS: analyze-yuv420p12le
+PASS: analyze-p012le
+PASS: analyzer logical-domain equivalence
+PASS: transform-yuv420p
+PASS: transform-yuv420p10le
+PASS: transform-p010le
+PASS: transform-yuv420p12le
+PASS: transform-p012le
+PASS: transform logical-domain equivalence
+PASS: uv-base-nv12
+PASS: uv-denoise-nv12
+PASS: uv-base-p010le
+PASS: uv-denoise-p010le
+PASS: uv-base-p012le
+PASS: uv-denoise-p012le
+PASS: NV12/P010/P012 U/V survival
+PASS: rgba-base
+PASS: rgba-aa
+PASS: rgba-dehalo
+PASS: rgba-deblock
+PASS: rgba-denoise
+PASS: packed RGBA lane preservation
+PASS: planes-base
+PASS: planes-aa
+PASS: selected and pass-through plane masks
+PASS: denoise-direct
+PASS: denoise-tiled
+PASS: direct/tiled denoise equivalence
+PASS: denoise-lookahead
+PASS: denoise-mc-fallback
+PASS: denoise-mc
+PASS: lookahead and MC runtime paths
+PASS: denoise-direct-yuv420p10le
+PASS: denoise-tiled-yuv420p10le
+PASS: denoise-direct-p010le
+PASS: denoise-tiled-p010le
+PASS: direct/tiled denoise equivalence at 10-bit
+PASS: pass-through analyzers keep the input frames context
+PASS: ADR-0147 Vulkan format matrix
+Evidence: /c/tmp/pel/shw-results/shw-2/18-matrix-head-sdk/vk1_linear_images_1_disable_multiplane_1

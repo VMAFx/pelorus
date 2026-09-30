@@ -1,0 +1,119 @@
+[Vulkan @ 000001c0ee15c440] Supported layers:
+[Vulkan @ 000001c0ee15c440] 	VK_LAYER_VALVE_steam_overlay
+[Vulkan @ 000001c0ee15c440] 	VK_LAYER_VALVE_steam_fossilize
+[Vulkan @ 000001c0ee15c440] 	VK_LAYER_LUNARG_api_dump
+[Vulkan @ 000001c0ee15c440] 	VK_LAYER_LUNARG_gfxreconstruct
+[Vulkan @ 000001c0ee15c440] 	VK_LAYER_KHRONOS_synchronization2
+[Vulkan @ 000001c0ee15c440] 	VK_LAYER_KHRONOS_validation
+[Vulkan @ 000001c0ee15c440] 	VK_LAYER_LUNARG_monitor
+[Vulkan @ 000001c0ee15c440] 	VK_LAYER_LUNARG_screenshot
+[Vulkan @ 000001c0ee15c440] 	VK_LAYER_KHRONOS_profiles
+[Vulkan @ 000001c0ee15c440] 	VK_LAYER_KHRONOS_shader_object
+[Vulkan @ 000001c0ee15c440] 	VK_LAYER_LUNARG_crash_diagnostic
+[Vulkan @ 000001c0ee15c440] GPU listing:
+[Vulkan @ 000001c0ee15c440]     0: Intel(R) Arc(TM) B580 Graphics (discrete) (0xe20b)
+[Vulkan @ 000001c0ee15c440]     1: Intel(R) UHD Graphics 770 (integrated) (0x4680)
+[Vulkan @ 000001c0ee15c440] Device 0 selected: Intel(R) Arc(TM) B580 Graphics (discrete) (0xe20b)
+[Vulkan @ 000001c0ee15c440] Using device extension VK_KHR_push_descriptor
+[Vulkan @ 000001c0ee15c440] Using device extension VK_EXT_shader_atomic_float
+[Vulkan @ 000001c0ee15c440] Using device extension VK_KHR_cooperative_matrix
+[Vulkan @ 000001c0ee15c440] Using device extension VK_KHR_shader_subgroup_rotate
+[Vulkan @ 000001c0ee15c440] Using device extension VK_EXT_host_image_copy
+[Vulkan @ 000001c0ee15c440] Using device extension VK_KHR_workgroup_memory_explicit_layout
+[Vulkan @ 000001c0ee15c440] Using device extension VK_EXT_shader_replicated_composites
+[Vulkan @ 000001c0ee15c440] Using device extension VK_KHR_shader_expect_assume
+[Vulkan @ 000001c0ee15c440] Using device extension VK_EXT_external_memory_host
+[Vulkan @ 000001c0ee15c440] Using device extension VK_KHR_external_memory_win32
+[Vulkan @ 000001c0ee15c440] Using device extension VK_KHR_external_semaphore_win32
+[Vulkan @ 000001c0ee15c440] Using device extension VK_KHR_video_queue
+[Vulkan @ 000001c0ee15c440] Using device extension VK_KHR_video_decode_queue
+[Vulkan @ 000001c0ee15c440] Using device extension VK_KHR_video_decode_h264
+[Vulkan @ 000001c0ee15c440] Using device extension VK_KHR_video_decode_h265
+[Vulkan @ 000001c0ee15c440] Using device extension VK_KHR_video_decode_av1
+[Vulkan @ 000001c0ee15c440] Queue families:
+[Vulkan @ 000001c0ee15c440]     0: graphics compute transfer sparse (queues: 1)
+[Vulkan @ 000001c0ee15c440]     1: compute sparse (queues: 4)
+[Vulkan @ 000001c0ee15c440]     2: transfer sparse (queues: 2)
+[Vulkan @ 000001c0ee15c440]     3: decode (queues: 2)
+[Vulkan @ 000001c0ee15c440] Using device: Intel(R) Arc(TM) B580 Graphics
+[Vulkan @ 000001c0ee15c440] Alignments:
+[Vulkan @ 000001c0ee15c440]     optimalBufferCopyRowPitchAlignment: 64
+[Vulkan @ 000001c0ee15c440]     minMemoryMapAlignment:              64
+[Vulkan @ 000001c0ee15c440]     nonCoherentAtomSize:                1
+[Vulkan @ 000001c0ee15c440]     minImportedHostPointerAlignment:    4096
+[QSV @ 000001c0f327be00] Defaulting child_device_type to AV_HWDEVICE_TYPE_D3D11VA for oneVPL.Please explicitly set child device type via "-init_hw_device" option if needed.
+[D3D11VA @ 000001c0f327be80] Selecting d3d11va adapter 0
+[D3D11VA @ 000001c0f327be80] Using device 8086:e20b (Intel(R) Arc(TM) B580 Graphics).
+[QSV @ 000001c0f327be00] Use Intel(R) oneVPL to create MFX session, API version is 2.17, the required implementation version is 1.3
+[QSV @ 000001c0f327be00] Initialize MFX session: implementation version is 2.17
+[Parsed_testsrc2_0 @ 000001c0f6c45800] size:1920x1080 rate:24/1 duration:1.000000 sar:1/1
+Input #0, lavfi, from 'testsrc2=size=1920x1080:rate=24:duration=1':
+  Duration: N/A, start: 0.000000, bitrate: N/A
+  Stream #0:0: Video: wrapped_avframe, 1 reference frame, yuv420p, 1920x1080 [SAR 1:1 DAR 16:9], 24 fps, 24 tbr, 24 tbn
+[out#0/null @ 000001c0f5bead40] No explicit maps, mapping streams automatically...
+[vost#0:0/av1_qsv @ 000001c0f6c43a40] Created video stream from input stream 0:0
+Stream mapping:
+  Stream #0:0 -> #0:0 (wrapped_avframe (native) -> av1 (av1_qsv))
+[vost#0:0/av1_qsv @ 000001c0f6c43a40] Starting thread...
+[vf#0:0 @ 000001c0f6874040] Starting thread...
+[vist#0:0/wrapped_avframe @ 000001c0f6641480] [dec:wrapped_avframe @ 000001c0f5d38680] Starting thread...
+[in#0/lavfi @ 000001c0fa219c80] Starting thread...
+[graph -1 input from stream 0:0 @ 000001c0f6c45a00] w:1920 h:1080 pixfmt:yuv420p tb:1/24 fr:24/1 sar:1/1 csp:unknown range:unknown alpha:unspecified
+[auto_scale_0 @ 000001c0f6c46f00] w:iw h:ih flags:'' interl:0
+[Parsed_format_0 @ 000001c0f6c47f00] auto-inserting filter 'auto_scale_0' between the filter 'graph -1 input from stream 0:0' and the filter 'Parsed_format_0'
+[auto_scale_0 @ 000001c0f6c46f00] w:1920 h:1080 fmt:yuv420p csp:unknown range:unknown sar:1/1 -> w:1920 h:1080 fmt:nv12 csp:unknown range:tv sar:1/1 flags:0x00000004
+[auto_scale_0 @ 000001c0f6c46f00] [framesync @ 000001c0f744de90] Selected 1/24 time base
+[auto_scale_0 @ 000001c0f6c46f00] [framesync @ 000001c0f744de90] Sync level 1
+[Parsed_pelorus_deband_vulkan_2 @ 000001c0f6c46100] Reusing existing frames context
+[graph -1 input from stream 0:0 @ 000001c0f6c45a00] video frame properties congruent with link at pts_time: 0
+[pelorus_deband_vulkan @ 000001c0f6c39e80] Shader linked, size: 7290 compressed, 20564 SPIR-V, 20564 binary
+[vost#0:0/av1_qsv @ 000001c0f6c43a40] [enc:av1_qsv @ 000001c0f0380f80] Using device qs (type qsv) with av1_qsv encoder.
+[av1_qsv @ 000001c0f6adca80] Encoder: input is system memory surface
+[av1_qsv @ 000001c0f6adca80] Use Intel(R) oneVPL to create MFX session with the specified MFX loader
+[av1_qsv @ 000001c0f6adca80] Using the intelligent constant quality (ICQ) ratecontrol method
+[av1_qsv @ 000001c0f6adca80] profile: av1 main; level: 40
+[av1_qsv @ 000001c0f6adca80] GopPicSize: 248; GopRefDist: 8; GopOptFlag:; IdrInterval: 0
+[av1_qsv @ 000001c0f6adca80] TargetUsage: 4; RateControlMethod: ICQ
+[av1_qsv @ 000001c0f6adca80] ICQQuality: 25
+[av1_qsv @ 000001c0f6adca80] NumRefFrame: 4
+[av1_qsv @ 000001c0f6adca80] IntRefType: 0; IntRefCycleSize: 0; IntRefQPDelta: 0; IntRefCycleDist: 0
+[av1_qsv @ 000001c0f6adca80] MaxFrameSize: 0;
+[av1_qsv @ 000001c0f6adca80] BitrateLimit: unknown; MBBRC: OFF; ExtBRC: unknown
+[av1_qsv @ 000001c0f6adca80] VDENC: ON
+[av1_qsv @ 000001c0f6adca80] BRefType: pyramid
+[av1_qsv @ 000001c0f6adca80] PRefType: default
+[av1_qsv @ 000001c0f6adca80] MinQPI: 1; MaxQPI: 255; MinQPP: 1; MaxQPP: 255; MinQPB: 1; MaxQPB: 255
+[av1_qsv @ 000001c0f6adca80] FrameRateExtD: 1; FrameRateExtN: 24 
+[av1_qsv @ 000001c0f6adca80] NumTileRows: 1; NumTileColumns: 1; NumTileGroups: 1
+[av1_qsv @ 000001c0f6adca80] WriteIVFHeaders: OFF 
+[av1_qsv @ 000001c0f6adca80] LowDelayBRC: OFF
+[av1_qsv @ 000001c0f6adca80] MaxFrameSize: 0;
+Output #0, null, to 'pipe:':
+  Metadata:
+    encoder         : Lavf63.1.102
+  Stream #0:0: Video: av1, 1 reference frame, nv12(tv, progressive), 1920x1080 [SAR 1:1 DAR 16:9], q=2-31, 24 fps, 24 tbn
+    Metadata:
+      encoder         : Lavc63.1.102 av1_qsv
+[out#0/null @ 000001c0f5bead40] Starting thread...
+[in#0/lavfi @ 000001c0fa219c80] EOF while reading input
+[in#0/lavfi @ 000001c0fa219c80] Terminating thread with return code 0 (success)
+frame=    6 fps=0.0 q=-0.0 size=N/A time=00:00:00.20 bitrate=N/A speed=0.411x elapsed=0:00:00.50    [vist#0:0/wrapped_avframe @ 000001c0f6641480] [dec:wrapped_avframe @ 000001c0f5d38680] Decoder thread received EOF packet
+[vist#0:0/wrapped_avframe @ 000001c0f6641480] [dec:wrapped_avframe @ 000001c0f5d38680] Decoder returned EOF, finishing
+[vist#0:0/wrapped_avframe @ 000001c0f6641480] [dec:wrapped_avframe @ 000001c0f5d38680] Terminating thread with return code 0 (success)
+[auto_scale_0 @ 000001c0f6c46f00] [framesync @ 000001c0f744de90] Sync level 0
+[vf#0:0 @ 000001c0f6874040] All consumers returned EOF
+[vost#0:0/av1_qsv @ 000001c0f6c43a40] [enc:av1_qsv @ 000001c0f0380f80] Encoder thread received EOF
+[vf#0:0 @ 000001c0f6874040] Terminating thread with return code 0 (success)
+[vost#0:0/av1_qsv @ 000001c0f6c43a40] Terminating thread with return code 0 (success)
+[out#0/null @ 000001c0f5bead40] All streams finished
+[out#0/null @ 000001c0f5bead40] Terminating thread with return code 0 (success)
+[out#0/null @ 000001c0f5bead40] Output file #0 (pipe:):
+[out#0/null @ 000001c0f5bead40]   Output stream #0:0 (video): 24 frames encoded; 24 packets muxed (550715 bytes); 
+[out#0/null @ 000001c0f5bead40]   Total: 24 packets (550715 bytes) muxed
+[out#0/null @ 000001c0f5bead40] video:538KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=   24 fps=0.0 q=-0.0 Lsize=N/A time=00:00:00.95 bitrate=N/A speed= 1.4x elapsed=0:00:00.68    
+[in#0/lavfi @ 000001c0fa219c80] Input file #0 (testsrc2=size=1920x1080:rate=24:duration=1):
+[in#0/lavfi @ 000001c0fa219c80]   Input stream #0:0 (video): 24 packets read (10176 bytes); 24 frames decoded; 0 decode errors; 
+[in#0/lavfi @ 000001c0fa219c80]   Total: 24 packets (10176 bytes) demuxed
+
+Exiting with exit code 0

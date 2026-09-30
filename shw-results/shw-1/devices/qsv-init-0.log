@@ -1,0 +1,46 @@
+[QSV @ 000001e46d4fdd40] Defaulting child_device_type to AV_HWDEVICE_TYPE_D3D11VA for oneVPL.Please explicitly set child device type via "-init_hw_device" option if needed.
+[D3D11VA @ 000001e46d4fdcc0] Selecting d3d11va adapter 0
+[D3D11VA @ 000001e46d4fdcc0] Using device 8086:e20b (Intel(R) Arc(TM) B580 Graphics).
+[QSV @ 000001e46d4fdd40] Use Intel(R) oneVPL to create MFX session, API version is 2.17, the required implementation version is 1.3
+[QSV @ 000001e46d4fdd40] Initialize MFX session: implementation version is 2.17
+[Parsed_testsrc2_0 @ 000001e475866600] size:1280x720 rate:24/1 duration:1.000000 sar:1/1
+Input #0, lavfi, from 'testsrc2=size=1280x720:rate=24:duration=1':
+  Duration: N/A, start: 0.000000, bitrate: N/A
+  Stream #0:0: Video: wrapped_avframe, 1 reference frame, yuv420p, 1280x720 [SAR 1:1 DAR 16:9], 24 fps, 24 tbr, 24 tbn
+[out#0/null @ 000001e47541f380] No explicit maps, mapping streams automatically...
+[vost#0:0/wrapped_avframe @ 000001e474950a00] Created video stream from input stream 0:0
+Stream mapping:
+  Stream #0:0 -> #0:0 (wrapped_avframe (native) -> wrapped_avframe (native))
+[vost#0:0/wrapped_avframe @ 000001e474950a00] Starting thread...
+[vf#0:0 @ 000001e475389080] Starting thread...
+[vist#0:0/wrapped_avframe @ 000001e474527a40] [dec:wrapped_avframe @ 000001e474462080] Starting thread...
+[in#0/lavfi @ 000001e475c56e80] Starting thread...
+[graph -1 input from stream 0:0 @ 000001e475867500] w:1280 h:720 pixfmt:yuv420p tb:1/24 fr:24/1 sar:1/1 csp:unknown range:unknown alpha:unspecified
+[graph -1 input from stream 0:0 @ 000001e475867500] video frame properties congruent with link at pts_time: 0
+Output #0, null, to 'pipe:':
+  Metadata:
+    encoder         : Lavf63.1.102
+  Stream #0:0: Video: wrapped_avframe, 1 reference frame, yuv420p(progressive), 1280x720 [SAR 1:1 DAR 16:9], q=2-31, 200 kb/s, 24 fps, 24 tbn
+    Metadata:
+      encoder         : Lavc63.1.102 wrapped_avframe
+[out#0/null @ 000001e47541f380] Starting thread...
+[vost#0:0/wrapped_avframe @ 000001e474950a00] [enc:wrapped_avframe @ 000001e4720789c0] Encoder thread received EOF
+[vost#0:0/wrapped_avframe @ 000001e474950a00] Terminating thread with return code 0 (success)
+[vf#0:0 @ 000001e475389080] All consumers returned EOF
+[out#0/null @ 000001e47541f380] All streams finished
+[out#0/null @ 000001e47541f380] Terminating thread with return code 0 (success)
+[in#0/lavfi @ 000001e475c56e80] Terminating thread with return code 0 (success)
+[vist#0:0/wrapped_avframe @ 000001e474527a40] [dec:wrapped_avframe @ 000001e474462080] Decoder thread received EOF packet
+[vist#0:0/wrapped_avframe @ 000001e474527a40] [dec:wrapped_avframe @ 000001e474462080] Decoder returned EOF, finishing
+[vist#0:0/wrapped_avframe @ 000001e474527a40] [dec:wrapped_avframe @ 000001e474462080] Terminating thread with return code 0 (success)
+[vf#0:0 @ 000001e475389080] Terminating thread with return code 0 (success)
+[out#0/null @ 000001e47541f380] Output file #0 (pipe:):
+[out#0/null @ 000001e47541f380]   Output stream #0:0 (video): 1 frames encoded; 1 packets muxed (424 bytes); 
+[out#0/null @ 000001e47541f380]   Total: 1 packets (424 bytes) muxed
+[out#0/null @ 000001e47541f380] video:0KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=    1 fps=0.0 q=-0.0 Lsize=N/A time=00:00:00.04 bitrate=N/A speed=10.8x elapsed=0:00:00.00    
+[in#0/lavfi @ 000001e475c56e80] Input file #0 (testsrc2=size=1280x720:rate=24:duration=1):
+[in#0/lavfi @ 000001e475c56e80]   Input stream #0:0 (video): 3 packets read (1272 bytes); 2 frames decoded; 0 decode errors; 
+[in#0/lavfi @ 000001e475c56e80]   Total: 3 packets (1272 bytes) demuxed
+
+Exiting with exit code 0

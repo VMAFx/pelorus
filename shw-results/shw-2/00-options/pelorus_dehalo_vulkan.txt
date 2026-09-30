@@ -1,0 +1,19 @@
+Filter pelorus_dehalo_vulkan
+  Pelorus anime dehalo + dering (Vulkan)
+    Inputs:
+       #0: default (video)
+    Outputs:
+       #0: default (video)
+pelorus_dehalo_vulkan AVOptions:
+   blur              <int>        ..FV....... halo-blur radius in pixels (from 1 to 8) (default 2)
+   darkstr           <float>      ..FV....... pull strength for dark halos (from 0 to 1) (default 1)
+   brightstr         <float>      ..FV....... pull strength for bright halos (from 0 to 1) (default 1)
+   lowsens           <float>      ..FV....... sensitivity floor (normalized) (from 0 to 1) (default 0.0625)
+   highsens          <float>      ..FV....... sensitivity gain (normalized) (from 0 to 4) (default 0.5)
+   edge              <float>      ..FV....... Sobel magnitude above which a pixel is line-art (from 0 to 1) (default 0.08)
+   ring              <float>      ..FV....... edge-mask dilation (ring half-width, pixels) (from 1 to 8) (default 2)
+   planes            <int>        ..FV....... planes to process (bitmask; default luma only) (from 0 to 15) (default 1)
+   tile              <boolean>    ..FV....... shared-memory tile the box-blur window (faster on bandwidth-limited GPUs; bit-identical) (default false)
+
+
+Exiting with exit code 0

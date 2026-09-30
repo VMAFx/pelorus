@@ -1,0 +1,221 @@
+device 0: Intel(R) Arc(TM) B580 Graphics driver 0x196349
+pCopySrcLayouts: GENERAL
+pCopyDstLayouts: GENERAL
+identicalMemoryTypeRequirements=0
+  R8_UNORM (1 plane)               optimal clean-seq : exact (0/6144 bytes differ, mem size 8192)
+  (TRANSFER_DST_OPTIMAL not in pCopyDstLayouts; FFmpeg would fall back)
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-newLayout-09057 ] | MessageID = 0xa662049a
+vkTransitionImageLayoutEXT(): pTransitions[0].newLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopyDstLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: newLayout must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopyDstLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-newLayout-09057)
+Objects: 1
+    [0] VkImage 0x30000000003
+
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 ] | MessageID = 0x785ff3d0
+vkTransitionImageLayoutEXT(): pTransitions[0].oldLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopySrcLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: If oldLayout is not VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT, or VK_IMAGE_LAYOUT_PREINITIALIZED, it must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopySrcLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230)
+Objects: 1
+    [0] VkImage 0x30000000003
+
+  R8_UNORM (1 plane)               optimal ffmpeg-seq: exact (0/6144 bytes differ, mem size 8192)
+  R8_UNORM (1 plane)               linear  clean-seq : exact (0/6144 bytes differ, mem size 8192)
+  (TRANSFER_DST_OPTIMAL not in pCopyDstLayouts; FFmpeg would fall back)
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-newLayout-09057 ] | MessageID = 0xa662049a
+vkTransitionImageLayoutEXT(): pTransitions[0].newLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopyDstLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: newLayout must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopyDstLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-newLayout-09057)
+Objects: 1
+    [0] VkImage 0x70000000007
+
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 ] | MessageID = 0x785ff3d0
+vkTransitionImageLayoutEXT(): pTransitions[0].oldLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopySrcLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: If oldLayout is not VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT, or VK_IMAGE_LAYOUT_PREINITIALIZED, it must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopySrcLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230)
+Objects: 1
+    [0] VkImage 0x70000000007
+
+  R8_UNORM (1 plane)               linear  ffmpeg-seq: exact (0/6144 bytes differ, mem size 8192)
+  R8G8B8A8_UNORM (1 plane)         optimal clean-seq : exact (0/24576 bytes differ, mem size 24576)
+  (TRANSFER_DST_OPTIMAL not in pCopyDstLayouts; FFmpeg would fall back)
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-newLayout-09057 ] | MessageID = 0xa662049a
+vkTransitionImageLayoutEXT(): pTransitions[0].newLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopyDstLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: newLayout must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopyDstLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-newLayout-09057)
+Objects: 1
+    [0] VkImage 0xb000000000b
+
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 ] | MessageID = 0x785ff3d0
+vkTransitionImageLayoutEXT(): pTransitions[0].oldLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopySrcLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: If oldLayout is not VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT, or VK_IMAGE_LAYOUT_PREINITIALIZED, it must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopySrcLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230)
+Objects: 1
+    [0] VkImage 0xb000000000b
+
+  R8G8B8A8_UNORM (1 plane)         optimal ffmpeg-seq: exact (0/24576 bytes differ, mem size 24576)
+  R8G8B8A8_UNORM (1 plane)         linear  clean-seq : exact (0/24576 bytes differ, mem size 24576)
+  (TRANSFER_DST_OPTIMAL not in pCopyDstLayouts; FFmpeg would fall back)
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-newLayout-09057 ] | MessageID = 0xa662049a
+vkTransitionImageLayoutEXT(): pTransitions[0].newLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopyDstLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: newLayout must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopyDstLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-newLayout-09057)
+Objects: 1
+    [0] VkImage 0xf000000000f
+
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 ] | MessageID = 0x785ff3d0
+vkTransitionImageLayoutEXT(): pTransitions[0].oldLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopySrcLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: If oldLayout is not VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT, or VK_IMAGE_LAYOUT_PREINITIALIZED, it must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopySrcLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230)
+Objects: 1
+    [0] VkImage 0xf000000000f
+
+  R8G8B8A8_UNORM (1 plane)         linear  ffmpeg-seq: exact (0/24576 bytes differ, mem size 24576)
+    plane 0: 1536/6144 bytes differ
+    plane 1: 1536/1536 bytes differ
+  G8_B8_R8_3PLANE_420 (yuv420p)    optimal clean-seq : MISMATCH (3072/9216 bytes differ, mem size 24576)
+  (TRANSFER_DST_OPTIMAL not in pCopyDstLayouts; FFmpeg would fall back)
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-newLayout-09057 ] | MessageID = 0xa662049a
+vkTransitionImageLayoutEXT(): pTransitions[0].newLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopyDstLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: newLayout must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopyDstLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-newLayout-09057)
+Objects: 1
+    [0] VkImage 0x130000000013
+
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 ] | MessageID = 0x785ff3d0
+vkTransitionImageLayoutEXT(): pTransitions[0].oldLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopySrcLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: If oldLayout is not VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT, or VK_IMAGE_LAYOUT_PREINITIALIZED, it must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopySrcLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230)
+Objects: 1
+    [0] VkImage 0x130000000013
+
+    plane 0: 1536/6144 bytes differ
+    plane 1: 1536/1536 bytes differ
+  G8_B8_R8_3PLANE_420 (yuv420p)    optimal ffmpeg-seq: MISMATCH (3072/9216 bytes differ, mem size 24576)
+    plane 0: 1536/6144 bytes differ
+    plane 1: 1536/1536 bytes differ
+  G8_B8_R8_3PLANE_420 (yuv420p)    linear  clean-seq : MISMATCH (3072/9216 bytes differ, mem size 24576)
+  (TRANSFER_DST_OPTIMAL not in pCopyDstLayouts; FFmpeg would fall back)
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-newLayout-09057 ] | MessageID = 0xa662049a
+vkTransitionImageLayoutEXT(): pTransitions[0].newLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopyDstLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: newLayout must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopyDstLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-newLayout-09057)
+Objects: 1
+    [0] VkImage 0x170000000017
+
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 ] | MessageID = 0x785ff3d0
+vkTransitionImageLayoutEXT(): pTransitions[0].oldLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopySrcLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: If oldLayout is not VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT, or VK_IMAGE_LAYOUT_PREINITIALIZED, it must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopySrcLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230)
+Objects: 1
+    [0] VkImage 0x170000000017
+
+    plane 0: 1536/6144 bytes differ
+    plane 1: 1536/1536 bytes differ
+  G8_B8_R8_3PLANE_420 (yuv420p)    linear  ffmpeg-seq: MISMATCH (3072/9216 bytes differ, mem size 24576)
+    plane 0: 1536/6144 bytes differ
+    plane 1: 2041/3072 bytes differ
+  G8_B8R8_2PLANE_420 (nv12)        optimal clean-seq : MISMATCH (3577/9216 bytes differ, mem size 16384)
+  (TRANSFER_DST_OPTIMAL not in pCopyDstLayouts; FFmpeg would fall back)
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-newLayout-09057 ] | MessageID = 0xa662049a
+vkTransitionImageLayoutEXT(): pTransitions[0].newLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopyDstLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: newLayout must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopyDstLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-newLayout-09057)
+Objects: 1
+    [0] VkImage 0x1b000000001b
+
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 ] | MessageID = 0x785ff3d0
+vkTransitionImageLayoutEXT(): pTransitions[0].oldLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopySrcLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: If oldLayout is not VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT, or VK_IMAGE_LAYOUT_PREINITIALIZED, it must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopySrcLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230)
+Objects: 1
+    [0] VkImage 0x1b000000001b
+
+    plane 0: 1536/6144 bytes differ
+    plane 1: 2041/3072 bytes differ
+  G8_B8R8_2PLANE_420 (nv12)        optimal ffmpeg-seq: MISMATCH (3577/9216 bytes differ, mem size 16384)
+    plane 0: 1536/6144 bytes differ
+    plane 1: 2041/3072 bytes differ
+  G8_B8R8_2PLANE_420 (nv12)        linear  clean-seq : MISMATCH (3577/9216 bytes differ, mem size 16384)
+  (TRANSFER_DST_OPTIMAL not in pCopyDstLayouts; FFmpeg would fall back)
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-newLayout-09057 ] | MessageID = 0xa662049a
+vkTransitionImageLayoutEXT(): pTransitions[0].newLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopyDstLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: newLayout must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopyDstLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-newLayout-09057)
+Objects: 1
+    [0] VkImage 0x1f000000001f
+
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 ] | MessageID = 0x785ff3d0
+vkTransitionImageLayoutEXT(): pTransitions[0].oldLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopySrcLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: If oldLayout is not VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT, or VK_IMAGE_LAYOUT_PREINITIALIZED, it must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopySrcLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230)
+Objects: 1
+    [0] VkImage 0x1f000000001f
+
+    plane 0: 1536/6144 bytes differ
+    plane 1: 2041/3072 bytes differ
+  G8_B8R8_2PLANE_420 (nv12)        linear  ffmpeg-seq: MISMATCH (3577/9216 bytes differ, mem size 16384)
+    plane 0: 3072/12288 bytes differ
+    plane 1: 4081/6144 bytes differ
+  G16_B16R16_2PLANE_420 (p016)     optimal clean-seq : MISMATCH (7153/18432 bytes differ, mem size 28672)
+  (TRANSFER_DST_OPTIMAL not in pCopyDstLayouts; FFmpeg would fall back)
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-newLayout-09057 ] | MessageID = 0xa662049a
+vkTransitionImageLayoutEXT(): pTransitions[0].newLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopyDstLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: newLayout must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopyDstLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-newLayout-09057)
+Objects: 1
+    [0] VkImage 0x230000000023
+
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 ] | MessageID = 0x785ff3d0
+vkTransitionImageLayoutEXT(): pTransitions[0].oldLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopySrcLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: If oldLayout is not VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT, or VK_IMAGE_LAYOUT_PREINITIALIZED, it must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopySrcLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230)
+Objects: 1
+    [0] VkImage 0x230000000023
+
+    plane 0: 3072/12288 bytes differ
+    plane 1: 4081/6144 bytes differ
+  G16_B16R16_2PLANE_420 (p016)     optimal ffmpeg-seq: MISMATCH (7153/18432 bytes differ, mem size 28672)
+    plane 0: 3072/12288 bytes differ
+    plane 1: 4081/6144 bytes differ
+  G16_B16R16_2PLANE_420 (p016)     linear  clean-seq : MISMATCH (7153/18432 bytes differ, mem size 28672)
+  (TRANSFER_DST_OPTIMAL not in pCopyDstLayouts; FFmpeg would fall back)
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-newLayout-09057 ] | MessageID = 0xa662049a
+(Warning - This VUID has now been reported 10 times, which is the duplicate_message_limit value, this will be the last time reporting it).
+vkTransitionImageLayoutEXT(): pTransitions[0].newLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopyDstLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: newLayout must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopyDstLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-newLayout-09057)
+Objects: 1
+    [0] VkImage 0x270000000027
+
+Validation Error: [ VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 ] | MessageID = 0x785ff3d0
+(Warning - This VUID has now been reported 10 times, which is the duplicate_message_limit value, this will be the last time reporting it).
+vkTransitionImageLayoutEXT(): pTransitions[0].oldLayout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL which is not one of the layouts returned in VkPhysicalDeviceHostImageCopyPropertiesEXT::pCopySrcLayouts[1]
+List of supported layouts:
+VK_IMAGE_LAYOUT_GENERAL
+The Vulkan spec states: If oldLayout is not VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT, or VK_IMAGE_LAYOUT_PREINITIALIZED, it must be one of the layouts in VkPhysicalDeviceHostImageCopyProperties::pCopySrcLayouts (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230)
+Objects: 1
+    [0] VkImage 0x270000000027
+
+    plane 0: 3072/12288 bytes differ
+    plane 1: 4081/6144 bytes differ
+  G16_B16R16_2PLANE_420 (p016)     linear  ffmpeg-seq: MISMATCH (7153/18432 bytes differ, mem size 28672)
+12 failing case(s)

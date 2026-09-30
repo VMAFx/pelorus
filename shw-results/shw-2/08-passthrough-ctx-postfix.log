@@ -1,0 +1,36 @@
+vk0 FAIL linear-vk0-blackdetect_vulkan: [hwdownload @ 0000021b2497da40] Input frame is not the in the configured hwframe context.
+vk0 OK   vkdec-hevc-vk0-blackdetect_vulkan
+vk0 OK   vkdec-h264-vk0-blackdetect_vulkan
+vk0 FAIL linear-vk0-scdet_vulkan: [hwdownload @ 000001723d580700] Input frame is not the in the configured hwframe context.
+vk0 OK   vkdec-hevc-vk0-scdet_vulkan
+vk0 OK   vkdec-h264-vk0-scdet_vulkan
+vk0 OK   linear-vk0-pelorus_analyze_vulkan
+vk0 OK   vkdec-hevc-vk0-pelorus_analyze_vulkan
+vk0 OK   vkdec-h264-vk0-pelorus_analyze_vulkan
+vk0 OK   linear-vk0-pelorus_grain_estimate_vulkan
+vk0 OK   vkdec-hevc-vk0-pelorus_grain_estimate_vulkan
+vk0 OK   vkdec-h264-vk0-pelorus_grain_estimate_vulkan
+vk0 OK   linear-vk0-pelorus_mc_vulkan
+vk0 OK   vkdec-hevc-vk0-pelorus_mc_vulkan
+vk0 OK   vkdec-h264-vk0-pelorus_mc_vulkan
+vk0 OK   linear-vk0-pelorus_deband_vulkan
+vk0 OK   vkdec-hevc-vk0-pelorus_deband_vulkan
+vk0 OK   vkdec-h264-vk0-pelorus_deband_vulkan
+vk1 FAIL linear-vk1-blackdetect_vulkan: [hwdownload @ 000001e1c184e580] Input frame is not the in the configured hwframe context.
+vk1 OK   vkdec-hevc-vk1-blackdetect_vulkan
+vk1 OK   vkdec-h264-vk1-blackdetect_vulkan
+vk1 FAIL linear-vk1-scdet_vulkan: [hwdownload @ 00000244db867d80] Input frame is not the in the configured hwframe context.
+vk1 OK   vkdec-hevc-vk1-scdet_vulkan
+vk1 OK   vkdec-h264-vk1-scdet_vulkan
+vk1 OK   linear-vk1-pelorus_analyze_vulkan
+vk1 OK   vkdec-hevc-vk1-pelorus_analyze_vulkan
+vk1 OK   vkdec-h264-vk1-pelorus_analyze_vulkan
+vk1 OK   linear-vk1-pelorus_grain_estimate_vulkan
+vk1 OK   vkdec-hevc-vk1-pelorus_grain_estimate_vulkan
+vk1 OK   vkdec-h264-vk1-pelorus_grain_estimate_vulkan
+vk1 OK   linear-vk1-pelorus_mc_vulkan
+vk1 OK   vkdec-hevc-vk1-pelorus_mc_vulkan
+vk1 OK   vkdec-h264-vk1-pelorus_mc_vulkan
+vk1 OK   linear-vk1-pelorus_deband_vulkan
+vk1 OK   vkdec-hevc-vk1-pelorus_deband_vulkan
+vk1 OK   vkdec-h264-vk1-pelorus_deband_vulkan

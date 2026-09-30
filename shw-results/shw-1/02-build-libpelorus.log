@@ -1,0 +1,88 @@
+== configure libpelorus ==
+== build libpelorus ==
+== test libpelorus ==
+ERROR: test libpelorus failed; tail of /c/tmp/pel/shw-results/shw-1/02-pelorus-test.log:
+ 5/27 fast - pelorus:shader-pelorus_analyze-compile                OK              0.47s
+ 6/27 fast - pelorus:shader-pelorus_qpmap-compile                  OK              0.46s
+ 7/27 fast - pelorus:shader-pelorus_denoise-compile                OK              0.47s
+ 8/27 fast - pelorus:shader-pelorus_dehalo-compile                 OK              0.46s
+ 9/27 fast - pelorus:shader-pelorus_aa-compile                     OK              0.45s
+10/27 fast - pelorus:shader-pelorus_deblock-compile                OK              0.34s
+11/27 fast - pelorus:shader-pelorus_borderfix-compile              OK              0.35s
+12/27 fast - pelorus:shipped-shader-pelorus_analyze-compile        OK              0.17s
+13/27 fast - pelorus:shipped-shader-pelorus_grain_estimate-compile OK              0.17s
+14/27 fast - pelorus:shipped-shader-pelorus_deband-compile         OK              0.50s
+15/27 fast - pelorus:shipped-shader-pelorus_deblock-compile        OK              0.19s
+16/27 fast - pelorus:shipped-shader-pelorus_denoise-compile        OK              0.22s
+17/27 fast - pelorus:shipped-shader-pelorus_dehalo-compile         OK              0.21s
+18/27 fast - pelorus:shipped-shader-pelorus_mc-compile             OK              0.22s
+19/27 fast - pelorus:shipped-shader-pelorus_aa-compile             OK              0.25s
+20/27 fast - pelorus:shipped-shader-pelorus_borderfix-compile      OK              0.16s
+21/27 fast - pelorus:shipped-shader-pelorus_qpmap-compile          OK              0.16s
+22/27 fast - pelorus:grain-accumulator-bounds                      OK              0.13s
+23/27 fast - pelorus:shader-binding-order                          OK              0.26s
+24/27 fast - pelorus:vulkan-storage-domain                         OK              0.23s
+25/27 fast - pelorus:vulkan-sample-scale                           OK              0.60s
+26/27 fast - pelorus:vulkan-validation-streams                     OK              2.93s
+27/27 fast - pelorus:build-config-sync                             FAIL            5.51s   exit status 1
+>>> MALLOC_PERTURB_=187 UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 C:\msys64\ucrt64\bin/python3.exe C:/tmp/pel/shw/scripts/check-build-config.py --self-test
+――――――――――――――――――――――――――――――――――――― ✀  ―――――――――――――――――――――――――――――――――――――
+stderr:
+fixture regression: hostile Git policy blocked synthetic commit
+git tag regression: ambiguous branch fixture did not resolve
+git am hook regression: hook-neutralized replay failed
+――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+
+
+Summary of Failures:
+
+27/27 fast - pelorus:build-config-sync                             FAIL            5.51s   exit status 1
+
+Ok:                26  
+Fail:              1   
+
+Full log written to C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/meson-logs/testlog.txt
+fast suite: FAIL (recorded; see /c/tmp/pel/shw-results/shw-1/02-pelorus-test.log)
+== install libpelorus ==
+pkg-config prefix: C:/tmp/pel/prefix
+libpelorus version: 0.2.2
+cflags: -IC:/tmp/pel/prefix/include
+libs:   -LC:/tmp/pel/prefix/lib -lpelorus
+static: -LC:/tmp/pel/prefix/lib -lpelorus
+ 1/27 fast - pelorus:interop-abi                                   OK              0.06s
+ 2/27 fast - pelorus:shader-pelorus_deband-compile                 OK              0.15s
+ 3/27 fast - pelorus:shader-pelorus_grain_estimate-compile         OK              0.14s
+ 4/27 fast - pelorus:shader-pelorus_mc-compile                     OK              0.14s
+ 5/27 fast - pelorus:shader-pelorus_analyze-compile                OK              0.47s
+ 6/27 fast - pelorus:shader-pelorus_qpmap-compile                  OK              0.46s
+ 7/27 fast - pelorus:shader-pelorus_denoise-compile                OK              0.47s
+ 8/27 fast - pelorus:shader-pelorus_dehalo-compile                 OK              0.46s
+ 9/27 fast - pelorus:shader-pelorus_aa-compile                     OK              0.45s
+10/27 fast - pelorus:shader-pelorus_deblock-compile                OK              0.34s
+11/27 fast - pelorus:shader-pelorus_borderfix-compile              OK              0.35s
+12/27 fast - pelorus:shipped-shader-pelorus_analyze-compile        OK              0.17s
+13/27 fast - pelorus:shipped-shader-pelorus_grain_estimate-compile OK              0.17s
+14/27 fast - pelorus:shipped-shader-pelorus_deband-compile         OK              0.50s
+15/27 fast - pelorus:shipped-shader-pelorus_deblock-compile        OK              0.19s
+16/27 fast - pelorus:shipped-shader-pelorus_denoise-compile        OK              0.22s
+17/27 fast - pelorus:shipped-shader-pelorus_dehalo-compile         OK              0.21s
+18/27 fast - pelorus:shipped-shader-pelorus_mc-compile             OK              0.22s
+19/27 fast - pelorus:shipped-shader-pelorus_aa-compile             OK              0.25s
+20/27 fast - pelorus:shipped-shader-pelorus_borderfix-compile      OK              0.16s
+21/27 fast - pelorus:shipped-shader-pelorus_qpmap-compile          OK              0.16s
+22/27 fast - pelorus:grain-accumulator-bounds                      OK              0.13s
+23/27 fast - pelorus:shader-binding-order                          OK              0.26s
+24/27 fast - pelorus:vulkan-storage-domain                         OK              0.23s
+25/27 fast - pelorus:vulkan-sample-scale                           OK              0.60s
+26/27 fast - pelorus:vulkan-validation-streams                     OK              2.93s
+27/27 fast - pelorus:build-config-sync                             FAIL            5.51s   exit status 1
+27/27 fast - pelorus:build-config-sync                             FAIL            5.51s   exit status 1
+Ok:                26  
+Fail:              1   
+/c/tmp/pel/prefix/bin/libpelorus-0.dll
+/c/tmp/pel/prefix/include/pelorus/deband.h
+/c/tmp/pel/prefix/include/pelorus/denoise.h
+/c/tmp/pel/prefix/include/pelorus/interop.h
+/c/tmp/pel/prefix/include/pelorus/pelorus.h
+/c/tmp/pel/prefix/lib/libpelorus.dll.a
+/c/tmp/pel/prefix/lib/pkgconfig/libpelorus.pc

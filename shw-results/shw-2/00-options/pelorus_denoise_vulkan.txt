@@ -1,0 +1,26 @@
+Filter pelorus_denoise_vulkan
+  Pelorus temporal denoise (Vulkan)
+    Inputs:
+       #0: default (video)
+    Outputs:
+       #0: default (video)
+pelorus_denoise_vulkan AVOptions:
+   sigma             <double>     ..FV....... luma spatial range sigma (edge sensitivity, normalized) (from 0 to 0.5) (default 0.03)
+   sigmac            <double>     ..FV....... chroma spatial range sigma (normalized) (from 0 to 0.5) (default 0.04)
+   sigmat            <double>     ..FV....... temporal gate bandwidth (normalized) (from 0 to 0.5) (default 0.05)
+   strength          <double>     ..FV....... luma dry/wet mix (0..1) (from 0 to 1) (default 0.3)
+   strengthc         <double>     ..FV....... chroma dry/wet mix (0..1) (from 0 to 1) (default 0.2)
+   blend             <double>     ..FV....... spatial<->temporal blend (0=spatial, 1=temporal) (from 0 to 1) (default 0.6)
+   tdecay            <double>     ..FV....... per-frame temporal trust falloff (from 0 to 1) (default 0.8)
+   tcut              <double>     ..FV....... per-pixel scene-cut/fast-motion clamp (normalized) (from 0 to 0.5) (default 0.1)
+   patch             <int>        ..FV....... spatial window radius (0 = temporal-only) (from 0 to 3) (default 1)
+   prev              <int>        ..FV....... causal temporal depth (previous frames held in VRAM) (from 0 to 4) (default 3)
+   protect           <boolean>    ..FV....... damp strength on textured / edge regions (default true)
+   planes            <int>        ..FV....... planes to process (bitmask) (from 0 to 15) (default 15)
+   meta              <boolean>    ..FV....... attach Pelorus interop side data (default false)
+   mc                <boolean>    ..FV....... motion-compensated temporal taps (consume an upstream pelorus_mc PEL_SEC_MOTION field; requires mc before denoise) (default false)
+   tile              <boolean>    ..FV....... cache the spatial search window in shared memory (large win on bandwidth-limited GPUs, ~neutral on cache-rich ones; output is bit-identical) (default false)
+   lookahead         <int>        ..FV....... forward-lookahead temporal depth (0 = causal, the default, bit-identical; 1 = bidirectional: delay output 1 frame so the temporal walk also samples the NEXT frame, tcut-gated — recovers the leading frame of a held animation drawing, ADR-0137; opt-in for cadence/animation content) (from 0 to 1) (default 0)
+
+
+Exiting with exit code 0

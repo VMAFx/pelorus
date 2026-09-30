@@ -1,0 +1,25 @@
+shw-1 device-index map (office box, 2026-09-30; evidence in this directory)
+
+GPU            PCI           DXGI idx  LUID              Vulkan idx  Vulkan driver        VPL impl (runtime API)
+Arc B580       0000:03:00.0  0         0x...d63b         0           101.9033 (API 1.4.356)  impl[0] mfx-gen, API 2.17, iigd_dch_d.inf
+UHD 770        0000:00:02.0  1         0x...e7b5         1           101.7092 (API 1.4.323)  impl[1] mfx-gen, API 2.15, iigd_dch.inf
+(MS Basic Render Driver = DXGI 2, not usable)
+
+Selectors (FFmpeg n9.0.2 + Pelorus, C:/tmp/pel/prefix/bin/ffmpeg.exe):
+  Vulkan B580 : -init_hw_device vulkan=vk:0
+  Vulkan UHD  : -init_hw_device vulkan=vk:1
+  QSV B580    : -init_hw_device qsv=qs:hw_any,child_device=0   (D3D11 child, adapter 0)
+  QSV UHD 770 : -init_hw_device qsv=qs:hw_any,child_device=1
+
+Works:  all 9 pelorus_*_vulkan filters + hflip_vulkan on vk:0 and vk:1 (720p NV12, 10 frames)
+        hevc_qsv / h264_qsv on both; av1_qsv on B580 only (UHD 770 has no AV1 encode)
+        Vulkan pelorus_deband -> hwdownload -> hevc_qsv/av1_qsv (sysmem hand-off) on each GPU
+        hwupload to QSV with the DYNAMIC pool (plain "hwupload")
+Fails:  hwupload=extra_hw_frames=N to QSV (fixed D3D11 texture-array pool):
+          "Could not create the texture (80070057)" on both GPUs
+        hevc_vulkan / av1_vulkan: "Device does not support the VK_KHR_video_encode_queue
+          extension" on both GPUs (Intel Windows drivers expose decode queues only)
+        No Vulkan<->D3D11/QSV frame mapping on Windows in FFmpeg n9.0.2 (hwcontext_vulkan
+          maps only from DRM/VAAPI and to CUDA), so Vulkan->QSV is a copy, not zero-copy.
+
+Runtime PATH (PowerShell): C:\tmp\pel\prefix\bin;C:\msys64\ucrt64\bin;...

@@ -1,0 +1,3 @@
+Unexpected validation diagnostic in /c/tmp/pel/shw-results/shw-2/02-matrix-unchanged-msys/vk0/device-probe.stdout: VUID-VkFormatProperties2-pNext-pNext
+FAIL: device probe emitted a new Vulkan VUID
+Evidence: /c/tmp/pel/shw-results/shw-2/02-matrix-unchanged-msys/vk0

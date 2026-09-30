@@ -1,0 +1,71 @@
+== validation self-test
+Vulkan validation stream self-test: PASS
+self-test rc=0
+== vvl=msys VULKAN_DEVICE=0,disable_multiplane=1 rc=0
+PASS: analyzer logical-domain equivalence
+PASS: transform-yuv420p
+PASS: transform-yuv420p10le
+PASS: transform-p010le
+PASS: transform-yuv420p12le
+PASS: transform-p012le
+PASS: transform logical-domain equivalence
+PASS: NV12/P010/P012 U/V survival
+PASS: packed RGBA lane preservation
+PASS: selected and pass-through plane masks
+PASS: direct/tiled denoise equivalence
+PASS: lookahead and MC runtime paths
+PASS: direct/tiled denoise equivalence at 10-bit
+PASS: pass-through analyzers keep the input frames context
+PASS: ADR-0147 Vulkan format matrix
+   diagnostics (id x count over all rows): VUID-VkFormatProperties2-pNext-pNext x370; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x157; 
+== vvl=msys VULKAN_DEVICE=1,linear_images=1,disable_multiplane=1 rc=0
+PASS: analyzer logical-domain equivalence
+PASS: transform-yuv420p
+PASS: transform-yuv420p10le
+PASS: transform-p010le
+PASS: transform-yuv420p12le
+PASS: transform-p012le
+PASS: transform logical-domain equivalence
+PASS: NV12/P010/P012 U/V survival
+PASS: packed RGBA lane preservation
+PASS: selected and pass-through plane masks
+PASS: direct/tiled denoise equivalence
+PASS: lookahead and MC runtime paths
+PASS: direct/tiled denoise equivalence at 10-bit
+PASS: pass-through analyzers keep the input frames context
+PASS: ADR-0147 Vulkan format matrix
+   diagnostics (id x count over all rows): VUID-VkFormatProperties2-pNext-pNext x370; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x157; 
+== vvl=sdk VULKAN_DEVICE=0,disable_multiplane=1 rc=0
+PASS: analyzer logical-domain equivalence
+PASS: transform-yuv420p
+PASS: transform-yuv420p10le
+PASS: transform-p010le
+PASS: transform-yuv420p12le
+PASS: transform-p012le
+PASS: transform logical-domain equivalence
+PASS: NV12/P010/P012 U/V survival
+PASS: packed RGBA lane preservation
+PASS: selected and pass-through plane masks
+PASS: direct/tiled denoise equivalence
+PASS: lookahead and MC runtime paths
+PASS: direct/tiled denoise equivalence at 10-bit
+PASS: pass-through analyzers keep the input frames context
+PASS: ADR-0147 Vulkan format matrix
+   diagnostics (id x count over all rows): VUID-VkFormatProperties2-pNext-pNext x370; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x157; 
+== vvl=sdk VULKAN_DEVICE=1,linear_images=1,disable_multiplane=1 rc=0
+PASS: analyzer logical-domain equivalence
+PASS: transform-yuv420p
+PASS: transform-yuv420p10le
+PASS: transform-p010le
+PASS: transform-yuv420p12le
+PASS: transform-p012le
+PASS: transform logical-domain equivalence
+PASS: NV12/P010/P012 U/V survival
+PASS: packed RGBA lane preservation
+PASS: selected and pass-through plane masks
+PASS: direct/tiled denoise equivalence
+PASS: lookahead and MC runtime paths
+PASS: direct/tiled denoise equivalence at 10-bit
+PASS: pass-through analyzers keep the input frames context
+PASS: ADR-0147 Vulkan format matrix
+   diagnostics (id x count over all rows): VUID-VkFormatProperties2-pNext-pNext x370; VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230 x157; 

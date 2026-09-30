@@ -1,0 +1,47 @@
+{
+  "targets": {
+    "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/libpelorus/libpelorus-0.dll": {
+      "destination": "{libdir_shared}/libpelorus-0.dll",
+      "tag": "runtime",
+      "subproject": null,
+      "install_rpath": null,
+      "build_rpaths": []
+    },
+    "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/libpelorus/libpelorus.dll.a": {
+      "destination": "{libdir_shared}/libpelorus.dll.a",
+      "tag": "devel",
+      "subproject": null,
+      "install_rpath": null,
+      "build_rpaths": []
+    }
+  },
+  "data": {
+    "C:/tmp/pel/shw-scratch/build/pelorus-ucrt64/meson-private/libpelorus.pc": {
+      "destination": "{libdir}/pkgconfig/libpelorus.pc",
+      "tag": "devel",
+      "subproject": null
+    }
+  },
+  "headers": {
+    "C:/tmp/pel/shw/libpelorus/include/pelorus/pelorus.h": {
+      "destination": "{includedir}/pelorus/pelorus.h",
+      "tag": "devel",
+      "subproject": null
+    },
+    "C:/tmp/pel/shw/libpelorus/include/pelorus/interop.h": {
+      "destination": "{includedir}/pelorus/interop.h",
+      "tag": "devel",
+      "subproject": null
+    },
+    "C:/tmp/pel/shw/libpelorus/include/pelorus/deband.h": {
+      "destination": "{includedir}/pelorus/deband.h",
+      "tag": "devel",
+      "subproject": null
+    },
+    "C:/tmp/pel/shw/libpelorus/include/pelorus/denoise.h": {
+      "destination": "{includedir}/pelorus/denoise.h",
+      "tag": "devel",
+      "subproject": null
+    }
+  }
+}

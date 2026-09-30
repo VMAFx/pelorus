@@ -1,0 +1,61 @@
+diff --git a/scripts/check-build-config.py b/scripts/check-build-config.py
+index 2e34e31..ad77584 100644
+--- a/scripts/check-build-config.py
++++ b/scripts/check-build-config.py
+@@ -763,6 +763,20 @@ def git_fixture_policy_regression() -> list[str]:
+     return []
+ 
+ 
++def literal_argv_env() -> dict[str, str]:
++    """Return a child environment that keeps revision syntax arguments literal.
++
++    An MSYS2 or Cygwin ``git`` started from a native Windows process
++    glob-expands its command line, brace groups included, so ``n1.2.3^{commit}``
++    arrives as ``n1.2.3^commit``. ``noglob`` disables that runtime expansion;
++    every other platform and git build ignores these variables.
++    """
++    env = dict(os.environ)
++    for key in ("MSYS", "CYGWIN"):
++        env[key] = f"{env.get(key, '')} noglob".strip()
++    return env
++
++
+ def git_tag_ref_regression() -> list[str]:
+     """Prove a branch cannot stand in for the configured release tag ref."""
+     with tempfile.TemporaryDirectory(prefix="pelorus-tag-ref-") as temp_dir:
+@@ -797,6 +811,7 @@ def git_tag_ref_regression() -> list[str]:
+                 check=False,
+                 capture_output=True,
+                 text=True,
++                env=literal_argv_env(),
+             )
+             qualified = subprocess.run(
+                 (
+@@ -810,6 +825,7 @@ def git_tag_ref_regression() -> list[str]:
+                 check=False,
+                 capture_output=True,
+                 text=True,
++                env=literal_argv_env(),
+             )
+         except (OSError, subprocess.SubprocessError) as error:
+             return [f"git tag fixture probe failed: {error}"]
+@@ -1056,7 +1072,9 @@ def git_am_hook_regression() -> list[str]:
+         if errors:
+             return errors
+         sample = repo / "sample.txt"
+-        sample.write_text("base\n", encoding="utf-8")
++        # Pin LF: Windows text mode would commit CRLF, and a CRLF blob does not
++        # round-trip through git am's default CR stripping.
++        sample.write_text("base\n", encoding="utf-8", newline="\n")
+         errors = run_fixture_commands(
+             "git am hook fixture commits",
+             (
+@@ -1067,7 +1085,7 @@ def git_am_hook_regression() -> list[str]:
+         )
+         if errors:
+             return errors
+-        sample.write_text("base\npatched\n", encoding="utf-8")
++        sample.write_text("base\npatched\n", encoding="utf-8", newline="\n")
+         errors = run_fixture_commands(
+             "git am hook fixture patch",
+             (

@@ -1,0 +1,94 @@
+git: /c/Program Files/Git/cmd/git (git version 2.55.0.windows.5)
+== private libpelorus prefix: /tmp/pelorus-ffmpeg-replay.MwqzZE/prefix ==
+== configure libpelorus ==
+== build libpelorus ==
+== test libpelorus ==
+== install libpelorus ==
+libpelorus version: 0.2.2
+Preparing worktree (detached HEAD 946fcce)
+HEAD is now at 946fcce Update for 9.0.2
+== apply 18-patch FFmpeg stack ==
+== configure FFmpeg ==
+== link ffmpeg ==
+ERROR: link ffmpeg failed; tail of /tmp/pelorus-ffmpeg-replay.MwqzZE/logs/ffmpeg-build.log:
+libavcodec/svq1enc.c:266:48: warning: array subscript 68719476722 is outside array bounds of 'const uint8_t[96]' {aka 'const unsigned char[96]'} [-Warray-bounds=]
+  266 |                  multistage_vlc[1 + best_count][1],
+      |                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+libavcodec/svq1.h:59:22: note: at offset [68719476722, 137438953442] into object 'ff_svq1_intra_multistage_vlc' of size 96
+   59 | extern const uint8_t ff_svq1_intra_multistage_vlc[6][8][2];
+      |                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+libavcodec/svq1.h:60:22: note: at offset [68719476722, 137438953442] into object 'ff_svq1_inter_multistage_vlc' of size 96
+   60 | extern const uint8_t ff_svq1_inter_multistage_vlc[6][8][2];
+      |                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+libavcodec/svq1enc.c:265:9: warning: array subscript 4294967295 is above array bounds of 'PutBitContext[6]' [-Warray-bounds=]
+  265 |         put_bits(&s->reorder_pb[level],
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  266 |                  multistage_vlc[1 + best_count][1],
+      |                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  267 |                  multistage_vlc[1 + best_count][0]);
+      |                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+libavcodec/svq1enc.c:73:19: note: while referencing 'reorder_pb'
+   73 |     PutBitContext reorder_pb[6];
+      |                   ^~~~~~~~~~
+CC	libavcodec/texturedspenc.o
+CC	libavcodec/threadprogress.o
+CC	libavcodec/tiertexseqv.o
+CC	libavcodec/tiff.o
+CC	libavcodec/tiff_common.o
+CC	libavcodec/tiffenc.o
+CC	libavcodec/tmv.o
+CC	libavcodec/to_upper4.o
+CC	libavcodec/tpeldsp.o
+CC	libavcodec/truemotion1.o
+CC	libavcodec/truemotion2.o
+CC	libavcodec/truemotion2rt.o
+CC	libavcodec/truespeech.o
+CC	libavcodec/tscc.o
+CC	libavcodec/tscc2.o
+CC	libavcodec/tta.o
+CC	libavcodec/ttadata.o
+CC	libavcodec/ttadsp.o
+CC	libavcodec/ttaenc.o
+CC	libavcodec/ttaencdsp.o
+CC	libavcodec/ttmlenc.o
+CC	libavcodec/twinvq.o
+CC	libavcodec/twinvqdec.o
+CC	libavcodec/txd.o
+CC	libavcodec/ulti.o
+CC	libavcodec/utils.o
+CC	libavcodec/utvideodec.o
+CC	libavcodec/utvideodsp.o
+CC	libavcodec/utvideoenc.o
+CC	libavcodec/v210dec.o
+CC	libavcodec/v210enc.o
+CC	libavcodec/v210x.o
+CC	libavcodec/vb.o
+CC	libavcodec/vble.o
+CC	libavcodec/vbndec.o
+CC	libavcodec/vbnenc.o
+CC	libavcodec/vc1.o
+CC	libavcodec/vc1_block.o
+CC	libavcodec/vc1_loopfilter.o
+CC	libavcodec/vc1_mc.o
+CC	libavcodec/vc1_parser.o
+CC	libavcodec/vc1_pred.o
+CC	libavcodec/vc1data.o
+CC	libavcodec/vc1dec.o
+CC	libavcodec/vc1dsp.o
+CC	libavcodec/vc2enc.o
+CC	libavcodec/vc2enc_dwt.o
+CC	libavcodec/vcr1.o
+CC	libavcodec/version.o
+during GIMPLE pass: dom
+libavcodec/vc1_block.c: In function 'vc1_decode_b_mb_intfi.isra':
+libavcodec/vc1_block.c:1983:12: internal compiler error: Segmentation fault
+ 1983 | static int vc1_decode_b_mb_intfi(VC1Context *v)
+      |            ^~~~~~~~~~~~~~~~~~~~~
+C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/cc1.exe -quiet -I . -I ./ -I ./compat/stdbit -I C:/msys64/ucrt64/bin/../include -I C:/msys64/ucrt64/bin/../include -I C:/msys64/ucrt64/bin/../include -I C:/msys64/ucrt64/bin/../include -I C:/msys64/ucrt64/bin/../include/vpl -I C:/msys64/ucrt64/bin/../include/svt-av1 -I C:/msys64/tmp/pelorus-ffmpeg-replay.MwqzZE/prefix/include -I C:/msys64/tmp/pelorus-ffmpeg-replay.MwqzZE/prefix/include -I C:/msys64/tmp/pelorus-ffmpeg-replay.MwqzZE/prefix/include -I C:/msys64/tmp/pelorus-ffmpeg-replay.MwqzZE/prefix/include -I C:/msys64/tmp/pelorus-ffmpeg-replay.MwqzZE/prefix/include -I C:/msys64/tmp/pelorus-ffmpeg-replay.MwqzZE/prefix/include -I C:/msys64/ucrt64/bin/../include -I C:/msys64/ucrt64/bin/../include -iprefix C:/msys64/ucrt64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/ -isysroot C:/msys64/ucrt64/bin/../../ucrt64 -MMD libavcodec/vc1_block.d -MF libavcodec/vc1_block.d -MT libavcodec/vc1_block.o -D_REENTRANT -D _ISOC11_SOURCE -D _FILE_OFFSET_BITS=64 -D _LARGEFILE_SOURCE -D WIN32_LEAN_AND_MEAN -D _POSIX_C_SOURCE=200112 -D _XOPEN_SOURCE=600 -D PIC -D MFX_DEPRECATED_OFF -D ZLIB_CONST -D HAVE_AV_CONFIG_H -U __STRICT_ANSI__ -D EB_DLL -D RTC_BUILD=0 libavcodec/vc1_block.c -quiet -dumpdir libavcodec/ -dumpbase vc1_block.c -dumpbase-ext .c -mtune=generic -march=nocona -g -O3 -Wall -Wdisabled-optimization -Wpointer-arith -Wredundant-decls -Wwrite-strings -Wtype-limits -Wundef -Wempty-body -Wstack-usage=122880 -Wimplicit-fallthrough=5 -Wmissing-prototypes -Wstrict-prototypes -Wunterminated-string-initialization -Wno-parentheses -Wno-switch -Wno-format-zero-length -Wno-pointer-sign -Wunused-const-variable=0 -Wno-bool-operation -Wno-char-subscripts -Werror=implicit-function-declaration -Werror=missing-prototypes -Werror=format-security -Werror=return-type -Werror=vla -Wformat=1 -Wno-maybe-uninitialized -std=c17 -fdiagnostics-color=auto -fomit-frame-pointer -fno-math-errno -fno-signed-zeros -o C:\msys64\tmp\cc6DI1Yf.s
+Please submit a full bug report, with preprocessed source (by using -freport-bug).
+See <https://github.com/msys2/MINGW-packages/issues> for instructions.
+make: *** [ffbuild/common.mak:83: libavcodec/vc1_block.o] Fehler 1
+make: *** Es wird auf noch nicht beendete Prozesse gewartet …
+CC	libavcodec/videodsp.o
+make: Verzeichnis „/tmp/pelorus-ffmpeg-replay.MwqzZE/ffmpeg“ wird verlassen
+rc=1

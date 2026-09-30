@@ -1,0 +1,13 @@
+docs(research): locate the aa fast=1 residual on the UHD 770 default path
+
+A whole-output comparison (12 noisy 640x360 yuv420p frames, planes=15)
+shows the UHD 770's aa fast=1 output is byte-identical to the Arc B580's
+fast=0 and fast=1 output, in both B580 device modes. The UHD 770's fast=0
+output is the outlier: 2 samples, both in row 0, one code value lower.
+
+Record that in research digest 0150 and ADR-0150. The residual stays open:
+Vulkan does not require sqrt() or division to be correctly rounded, so the
+driver may lower the same expression differently at the two call sites,
+but that was not isolated.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

@@ -1,0 +1,13 @@
+Filter pelorus_mc_vulkan
+  Pelorus motion estimator (Vulkan)
+    Inputs:
+       #0: default (video)
+    Outputs:
+       #0: default (video)
+pelorus_mc_vulkan AVOptions:
+   bsize             <int>        ..FV....... motion-estimation block edge in luma pixels (from 8 to 32) (default 16)
+   search            <int>        ..FV....... max search radius per axis in luma pixels (from 1 to 256) (default 24)
+   meta              <boolean>    ..FV....... attach the PEL_SEC_MOTION interop section (the MV field) (default true)
+
+
+Exiting with exit code 0

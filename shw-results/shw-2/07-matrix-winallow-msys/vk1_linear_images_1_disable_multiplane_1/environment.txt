@@ -1,0 +1,4 @@
+FFmpeg: /c/tmp/pel/prefix/bin/ffmpeg.exe
+Device: 1,linear_images=1,disable_multiplane=1
+Validation: 1
+ffmpeg version n9.0.2-18-g1f537d7 Copyright (c) 2000-2026 the FFmpeg developers

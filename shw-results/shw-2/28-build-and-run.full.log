@@ -1,0 +1,39 @@
+== private libpelorus prefix: /tmp/pelorus-ffmpeg-replay.tdqN2m/prefix ==
+== configure libpelorus ==
+== build libpelorus ==
+== test libpelorus ==
+== install libpelorus ==
+libpelorus version: 0.2.2
+Preparing worktree (detached HEAD 946fcce)
+HEAD is now at 946fcce Update for 9.0.2
+== apply 18-patch FFmpeg stack ==
+== configure FFmpeg ==
+== link ffmpeg ==
+== install static FFmpeg libraries ==
+== link and run external static libavfilter consumer ==
+== verify Pelorus registrations ==
+registered filter: pelorus_aa_vulkan
+registered filter: pelorus_analyze_vulkan
+registered filter: pelorus_borderfix_vulkan
+registered filter: pelorus_deband_vulkan
+registered filter: pelorus_deblock_vulkan
+registered filter: pelorus_dehalo_vulkan
+registered filter: pelorus_denoise_vulkan
+registered filter: pelorus_grain_estimate_vulkan
+registered filter: pelorus_mc_vulkan
+registered filter: pelorus_scenecut
+registered bitstream filter: pelorus_fgs
+registered encoder option: h264_qsv -pelorus_roi
+registered encoder option: hevc_qsv -pelorus_roi
+registered encoder option: libaom-av1 -pelorus_roi
+registered encoder option: libsvtav1 -pelorus_roi
+registered encoder option: h264_nvenc -pelorus_roi
+registered encoder option: h264_nvenc -pelorus_me_hints
+registered encoder option: hevc_nvenc -pelorus_roi
+registered encoder option: hevc_nvenc -pelorus_me_hints
+registered encoder option: av1_nvenc -pelorus_roi
+registered encoder option: av1_nvenc -pelorus_film_grain
+registered encoder option: h264_vulkan -pelorus_roi
+registered encoder option: hevc_vulkan -pelorus_roi
+registered encoder option: av1_vulkan -pelorus_roi
+OK: 18 patches applied and ffmpeg linked against private libpelorus

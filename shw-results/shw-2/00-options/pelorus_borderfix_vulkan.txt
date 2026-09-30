@@ -1,0 +1,15 @@
+Filter pelorus_borderfix_vulkan
+  Pelorus dirty-line / border repair (Vulkan)
+    Inputs:
+       #0: default (video)
+    Outputs:
+       #0: default (video)
+pelorus_borderfix_vulkan AVOptions:
+   left              <int>        ..FV....... dirty band width on the left edge (this plane's px) (from 0 to 4096) (default 0)
+   right             <int>        ..FV....... dirty band width on the right edge (from 0 to 4096) (default 0)
+   top               <int>        ..FV....... dirty band height on the top edge (from 0 to 4096) (default 0)
+   bottom            <int>        ..FV....... dirty band height on the bottom edge (from 0 to 4096) (default 0)
+   planes            <int>        ..FV....... planes to process (bitmask; default all) (from 0 to 15) (default 15)
+
+
+Exiting with exit code 0
