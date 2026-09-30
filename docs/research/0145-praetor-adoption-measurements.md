@@ -234,7 +234,7 @@ committed branch head. The CI jobs' commands are mirrored.
 | `check-build-config.py`, `--self-test`, and `--self-test` with `GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null` | exit 0 |
 | `standardsctl compile-context --verify` | exit 0: six contexts, 32 persona copies |
 | `standardsctl audit` (local) | exit 1 on the pre-commit hook check only (issue 175) |
-| `CI=true standardsctl audit`; `--base origin/master`; `baseline --verify` | exit 0 |
+| Hosted ratchet: `CI=true standardsctl audit --base origin/master --touched-debt-delta-reason …`, then `baseline --verify` | exit 0: 75 of 75, 177 touched files clean, no baseline on `master` for the growth guard |
 | docs gate (`node:24` container) | exit 0 |
 | pinned n9.0.2 fetch; `generate.sh` | peels to `946fcce0`; patches byte-identical |
 | `ffmpeg-patches/test/build-and-run.sh` (`JOBS=8`) | exit 0: 18 patches applied, FFmpeg and a static external `libavfilter` consumer linked against a private libpelorus, and every Pelorus filter, BSF, and encoder option registered |
@@ -251,6 +251,14 @@ The container image lacks the clang sanitizer runtime, so the ASan/UBSan
 setup first failed with `Linker clang does not support sanitizer arguments`.
 After `apt-get install libclang-rt-21-dev` in a throwaway container, the
 `sanitizers` job's exact commands passed 27 of 27 fast tests.
+
+The review-fix head `f5d0bb1` repeated every row above in the same container,
+with the sanitizer runtime installed first, and got the same results. The
+stack replay was not repeated: no patch, `libpelorus`, or build input changed,
+and `generate.sh` still reproduced the committed patches byte for byte. The
+hosted ratchet row above is from that head; the earlier heads ran the plain
+`CI=true standardsctl audit`. The documentation gate passed again in
+`node:24`.
 
 ## First adoption at 846da590 (2026-09-20/21, history)
 
