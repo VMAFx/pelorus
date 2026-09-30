@@ -59,3 +59,4 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0144](0144-ffmpeg-pin-and-ci-runner-policy.md) | Pin FFmpeg by release and commit; run CI on Ubuntu 26.04 native Vulkan packages | Accepted |
 | [0146](0146-qsv-roi-frame-ownership.md) | QSV dense ROI maps are per-frame and limited to progressive HEVC CQP on runtime API 1.28 or newer; corrects ADR-0114's QSV capability/lifetime detail | Accepted |
 | [0147](0147-vulkan-sample-domain-and-components.md) | Normalize Vulkan arithmetic to the true sample domain and preserve every physical-plane component | Accepted |
+| [0149](0149-windows-utf8-paths.md) | libpelorus path arguments are UTF-8 on every platform (Windows: strict UTF-8 → UTF-16 + `_wfopen`; POSIX: literal `fopen`); a pinned `windows-2025` MSYS2 UCRT64 job runs the fast suite, amending ADR-0144 for that one job | Accepted |
