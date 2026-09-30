@@ -59,11 +59,40 @@ either would leave a copied value behind:
   package `actions/go-versions`, `npm` versioning). The checker's own expectation,
   `ACTIONLINT_GO_VERSION` in `scripts/check-build-config.py`, is covered by a
   second regex manager with exactly those templates, so both edits share one
-  `renovate/go-<major>.x` branch and PR. The checker verifies that manager's
-  templates and that its `matchStrings` entry captures the literal exactly
-  once; a Renovate config that would split or drop the bump fails the fast
-  suite. The step name carries no version for the same reason
+  `renovate/go-<major>.x` branch and PR. The step name carries no version, so
+  there is no third copy to update
   ([ADR-0151](../adr/0151-renovate-mirrors-checker-toolchain-pins.md)).
+
+What the checker enforces on `renovate.json` for the Go bump:
+
+- **The manager itself.** Exactly one regex manager covers the checker. Its
+  templates are exactly the setup-go ones, its `matchStrings` entry captures
+  the literal exactly once, and it sets nothing else. `currentValueTemplate`,
+  `autoReplaceStringTemplate`, `matchStringsStrategy` and the other manager
+  options would change how the checker site alone is read or rewritten.
+- **Repo-level settings that reach one site only.** Renovate applies these
+  before or after the managers, per file or per dependency occurrence:
+  - `includePaths` that leave out `.github/workflows/ci.yml` or the checker;
+  - `ignorePaths` that drop either file (by substring or by case-sensitive
+    minimatch);
+  - `enabledManagers` without both `github-actions` and `custom.regex`;
+  - a top-level `github-actions` or `regex` block that sets anything other
+    than `description` or `enabled: true` (a `github-actions` block may also
+    add `managerFilePatterns`, which Renovate merges with the defaults);
+  - a `packageRules` entry that can apply to `go` and tells the two
+    occurrences apart. That is `matchManagers`, `matchFileNames`,
+    `matchDepTypes` or `matchCategories` giving different answers for the two
+    occurrences, or a matcher the checker does not know to be site-neutral,
+    such as `matchRegistryUrls` or `matchJsonata`. The setup-go input has
+    depType `uses-with` and category `ci`; the regex occurrence has no depType
+    and category `custom`. To keep such a rule, rule out `go` with
+    `matchDepNames`, `matchPackageNames` or `matchDatasources`, for example
+    `"matchDepNames": ["!go"]`.
+
+The checker does not expand presets named in `extends`, and it cannot see a
+Renovate-side change to setup-go's known-action config. Either one would show
+up as a red `build-config-sync` on the next Go bump, not in the fast suite
+before it.
 
 The checker decides which managers cover a file the way Renovate does, through
 `managerFilePatterns` (see
@@ -73,6 +102,10 @@ minimatch glob with `dot` and `nocase`. Globs may use `*`, `?`, whole-segment
 `**`, `{a,b}` and a leading `!`. The checker reports any other glob syntax as an
 error rather than guess at it: character classes, extglobs, escapes, ranges,
 and braces that span `/`. Use a `/regex/` entry for anything more specific.
+The `packageRules` name matchers use the same rules. `includePaths` and
+`ignorePaths` entries are plain minimatch globs without `nocase` and without
+the `/regex/` form, and an `ignorePaths` entry also drops every path that
+contains it as a substring.
 
 When bumping by hand, change the `go-version` in `.github/workflows/ci.yml` and
 `ACTIONLINT_GO_VERSION` together, then run

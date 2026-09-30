@@ -66,6 +66,7 @@ ACTIONLINT_GO_VERSION = "1.27.x"
 ACTIONLINT_GO_STEP = "- name: Set up Go for actionlint"
 RENOVATE_CONFIG = ROOT / "renovate.json"
 CHECKER_RELATIVE = "scripts/check-build-config.py"
+GO_WORKFLOW_RELATIVE = ".github/workflows/ci.yml"
 # Mirrors Renovate's known-action config for actions/setup-go (datasource,
 # package, versioning, extractVersion), so the regex manager's dependency is
 # the same `go` update the github-actions manager proposes.
@@ -75,6 +76,60 @@ GO_RENOVATE_TEMPLATES = {
     "datasourceTemplate": "github-releases",
     "versioningTemplate": "npm",
     "extractVersionTemplate": r"^(?<version>\d+\.\d+\.\d+)(-\d+)?$",
+}
+# Everything else a regex manager can set (currentValueTemplate,
+# autoReplaceStringTemplate, matchStringsStrategy, depTypeTemplate, ...)
+# changes how the checker site alone is extracted or rewritten.
+GO_MANAGER_KEYS = frozenset(
+    {"customType", "description", "managerFilePatterns", "matchStrings"}
+    | set(GO_RENOVATE_TEMPLATES)
+)
+# The two occurrences of the `go` dependency, as Renovate's packageRules
+# matchers see them: (manager, packageFile) for the setup-go input and for
+# the checker literal.
+GO_SITES = (
+    ("github-actions", GO_WORKFLOW_RELATIVE),
+    ("custom.regex", CHECKER_RELATIVE),
+)
+# packageRules identity matchers and the value both occurrences present.
+GO_IDENTITY_MATCHERS = {
+    "matchDepNames": "go",
+    "matchPackageNames": "actions/go-versions",
+    "matchDatasources": "github-releases",
+}
+# Site matchers and what each occurrence feeds them (ci.yml, checker): the
+# known-action input is depType `uses-with`, a regex manager sets none unless
+# depTypeTemplate (refused above), and the categories are the managers' own.
+# A rule using one of these is site-neutral only if both answers agree.
+GO_SITE_MATCHER_INPUTS = {
+    "matchManagers": ("github-actions", "custom.regex"),
+    "matchFileNames": (GO_WORKFLOW_RELATIVE, CHECKER_RELATIVE),
+    "matchDepTypes": ("uses-with", None),
+    "matchCategories": ("ci", "custom"),
+}
+# Matchers whose input is identical at both occurrences (same dependency,
+# value, repository and branch). Any other match*/exclude* key
+# (matchRegistryUrls, matchJsonata, legacy patterns, ...) counts as able to
+# tell the two occurrences apart.
+GO_SITE_NEUTRAL_MATCHERS = frozenset(
+    set(GO_IDENTITY_MATCHERS)
+    | {
+        "matchBaseBranches",
+        "matchConfidence",
+        "matchCurrentAge",
+        "matchCurrentValue",
+        "matchCurrentVersion",
+        "matchNewValue",
+        "matchRepositories",
+        "matchSourceUrls",
+        "matchUpdateTypes",
+    }
+)
+# Top-level manager blocks Renovate merges into one manager only
+# (getManagerConfig), and the keys that cannot drop or reshape its update.
+GO_MANAGER_BLOCK_KEYS = {
+    "github-actions": frozenset({"description", "managerFilePatterns"}),
+    "regex": frozenset({"description"}),
 }
 RELEASE_TAG = re.compile(r"(?<![A-Za-z0-9_])n\d+\.\d+\.\d+(?![A-Za-z0-9_])")
 FORMAT_PATCH_CONFIG = (
@@ -2059,10 +2114,12 @@ def workflow_validator_regressions() -> list[str]:
 
 
 class RenovatePatternError(ValueError):
-    """A managerFilePatterns entry this checker cannot evaluate like Renovate."""
+    """A Renovate pattern this checker cannot evaluate the way Renovate does."""
 
 
-def renovate_glob_segment_regex(segment: str, glob: str) -> str:
+def renovate_glob_segment_regex(
+    segment: str, glob: str, field: str = "managerFilePatterns"
+) -> str:
     """Translate one path segment of a Renovate glob (see below)."""
     out: list[str] = []
     braces: list[bool] = []  # per open `{`: seen a top-level `,` yet
@@ -2072,7 +2129,7 @@ def renovate_glob_segment_regex(segment: str, glob: str) -> str:
         pair = segment[index : index + 2]
         if char in "[]\\" or (char in "@!+*?" and pair[1:] == "("):
             raise RenovatePatternError(
-                f"managerFilePatterns {glob!r}: glob syntax {pair!r} is not "
+                f"{field} {glob!r}: glob syntax {pair!r} is not "
                 "evaluated by this checker; use a /regex/ entry"
             )
         if char == "*":
@@ -2090,7 +2147,7 @@ def renovate_glob_segment_regex(segment: str, glob: str) -> str:
         elif char == "}" and braces:
             if not braces.pop():
                 raise RenovatePatternError(
-                    f"managerFilePatterns {glob!r}: only {{a,b}} brace "
+                    f"{field} {glob!r}: only {{a,b}} brace "
                     "alternation is evaluated by this checker"
                 )
             out.append(")")
@@ -2099,12 +2156,12 @@ def renovate_glob_segment_regex(segment: str, glob: str) -> str:
         index += 1
     if braces:
         raise RenovatePatternError(
-            f"managerFilePatterns {glob!r}: brace group spans a `/` or is unclosed"
+            f"{field} {glob!r}: brace group spans a `/` or is unclosed"
         )
     return "".join(out)
 
 
-def renovate_glob_regex(glob: str) -> str:
+def renovate_glob_regex(glob: str, field: str = "managerFilePatterns") -> str:
     """Translate the minimatch subset this checker models into a regex.
 
     Renovate matches non-regex managerFilePatterns with minimatch
@@ -2122,19 +2179,40 @@ def renovate_glob_regex(glob: str) -> str:
             continue
         if segment in (".", ".."):
             raise RenovatePatternError(
-                f"managerFilePatterns {glob!r}: relative segments are not "
+                f"{field} {glob!r}: relative segments are not "
                 "evaluated by this checker"
             )
-        parts.append(renovate_glob_segment_regex(segment, glob) + ("" if last else "/"))
+        parts.append(
+            renovate_glob_segment_regex(segment, glob, field) + ("" if last else "/")
+        )
     return "".join(parts)
 
 
-def renovate_file_pattern_matches(pattern: object, relative: str) -> bool:
-    """Apply one managerFilePatterns entry like Renovate's matchRegexOrGlob.
+def renovate_minimatch(
+    pattern: str, relative: str, *, nocase: bool, field: str = "managerFilePatterns"
+) -> bool:
+    """minimatch(pattern, {dot: true, nocase}) over the modelled subset.
 
-    Mirrors lib/util/string-match.ts: `*` matches every file; `/re/` and
+    A leading `#` never matches and each leading `!` flips the result.
+    """
+    if pattern.startswith("#"):
+        return False
+    glob = pattern.lstrip("!")
+    negated = (len(pattern) - len(glob)) % 2 == 1
+    flags = re.IGNORECASE if nocase else 0
+    matched = re.fullmatch(renovate_glob_regex(glob, field), relative, flags)
+    return (matched is not None) != negated
+
+
+def renovate_file_pattern_matches(
+    pattern: object, relative: str, field: str = "managerFilePatterns"
+) -> bool:
+    """Apply one pattern like Renovate's matchRegexOrGlob.
+
+    Mirrors lib/util/string-match.ts: `*` matches everything; `/re/` and
     `/re/i`, optionally `!`-negated, are regexes; anything else is a minimatch
     glob (`dot`, `nocase`, leading `!` negates, leading `#` never matches).
+    managerFilePatterns and the packageRules name matchers all use it.
     Raises RenovatePatternError rather than guess at an entry it cannot model.
     """
     if not isinstance(pattern, str):
@@ -2148,15 +2226,27 @@ def renovate_file_pattern_matches(pattern: object, relative: str) -> bool:
             compiled = re.compile(python_regex(body), flags)
         except re.error as exc:
             raise RenovatePatternError(
-                f"managerFilePatterns {pattern!r}: regex not evaluable here: {exc}"
+                f"{field} {pattern!r}: regex not evaluable here: {exc}"
             ) from exc
         return (compiled.search(relative) is not None) != pattern.startswith("!")
-    if pattern.startswith("#"):
+    return renovate_minimatch(pattern, relative, nocase=True, field=field)
+
+
+def renovate_list_matches(value: str, patterns: list, field: str) -> bool:
+    """Renovate's matchRegexOrGlobList (lib/util/string-match.ts).
+
+    An empty list matches nothing. Some positive entry must match, and every
+    `!` entry must hold (itself a negated pattern).
+    """
+    if not patterns:
         return False
-    glob = pattern.lstrip("!")
-    negated = (len(pattern) - len(glob)) % 2 == 1
-    matched = re.fullmatch(renovate_glob_regex(glob), relative, re.IGNORECASE)
-    return (matched is not None) != negated
+    negative = [p for p in patterns if isinstance(p, str) and p.startswith("!")]
+    positive = [p for p in patterns if not (isinstance(p, str) and p.startswith("!"))]
+    if positive and not any(
+        renovate_file_pattern_matches(p, value, field) for p in positive
+    ):
+        return False
+    return all(renovate_file_pattern_matches(p, value, field) for p in negative)
 
 
 def renovate_pattern_regressions() -> list[str]:
@@ -2209,6 +2299,28 @@ def renovate_pattern_regressions() -> list[str]:
         failures.append(
             f"renovate pattern regression: unmodelled {pattern!r} was evaluated"
         )
+    # matchRegexOrGlobList: some positive entry must match, every `!` must hold.
+    list_cases = (
+        ("go", ["go"], True),
+        ("go", [], False),
+        ("go", ["!go"], False),
+        ("go", ["!golang"], True),
+        ("go", ["golang", "!go"], False),
+        ("go", ["/^GO$/i"], True),
+        ("actions/go-versions", ["actions/*"], True),
+        ("actions/go-versions", ["actions/*", "!actions/go-*"], False),
+        ("custom.regex", ["custom.*"], True),
+    )
+    for value, patterns, expected in list_cases:
+        actual = renovate_list_matches(value, patterns, "matchDepNames")
+        if actual != expected:
+            failures.append(
+                f"renovate pattern regression: {value!r} against {patterns!r} "
+                f"gave {actual}, Renovate gives {expected}"
+            )
+    # includePaths/ignorePaths use minimatch without nocase.
+    if renovate_minimatch("SCRIPTS/*.py", CHECKER_RELATIVE, nocase=False):
+        failures.append("renovate pattern regression: path glob ignored case")
     return failures
 
 
@@ -2218,11 +2330,143 @@ def python_regex(renovate_regex: str) -> str:
 
 
 def validate_renovate_text(text: str, checker_source: str) -> list[str]:
-    """Require one regex manager that bumps ACTIONLINT_GO_VERSION as `go`."""
+    """Require the Go regex manager, and no setting that splits the Go sites."""
     try:
         config = json.loads(text)
     except json.JSONDecodeError as exc:
         return [f"renovate.json: invalid JSON: {exc}"]
+    errors = validate_go_manager(config, checker_source)
+    if isinstance(config, dict):
+        errors.extend(validate_go_site_parity(config))
+    return errors
+
+
+def string_list(value: object) -> list | None:
+    """A Renovate list option (a lone string counts as one entry)."""
+    if isinstance(value, str):
+        return [value]
+    return value if isinstance(value, list) else None
+
+
+def go_rule_can_match(rule: dict) -> bool:
+    """False when an identity matcher rules out the `go` dependency."""
+    for key, value in GO_IDENTITY_MATCHERS.items():
+        patterns = string_list(rule.get(key))
+        if patterns is not None and not renovate_list_matches(value, patterns, key):
+            return False
+    return True
+
+
+def go_rule_site_matchers(rule: dict) -> list[str]:
+    """The matchers in `rule` that can tell the two Go occurrences apart."""
+    split: list[str] = []
+    for key in sorted(rule):
+        if not key.startswith(("match", "exclude")) or key in GO_SITE_NEUTRAL_MATCHERS:
+            continue
+        patterns = string_list(rule[key])
+        if key in GO_SITE_MATCHER_INPUTS and patterns is not None:
+            outcomes = {
+                value is not None and renovate_list_matches(value, patterns, key)
+                for value in GO_SITE_MATCHER_INPUTS[key]
+            }
+            if len(outcomes) == 1:
+                continue
+        split.append(key)
+    return split
+
+
+def validate_go_site_parity(config: dict) -> list[str]:
+    """Reject repo-level settings that treat the two Go sites differently.
+
+    Renovate filters files through includePaths and ignorePaths before any
+    managerFilePatterns (workers/repository/extract/file-match.ts), runs only
+    enabledManagers, merges a top-level manager block into that manager alone
+    (getManagerConfig), and applies packageRules per dependency occurrence.
+    Each can bump ci.yml's setup-go `go` without the checker literal, or the
+    reverse. Presets named in `extends` are not expanded.
+    """
+    errors: list[str] = []
+    sites = [path for _, path in GO_SITES]
+    try:
+        include = string_list(config.get("includePaths", []))
+        if include is None:
+            errors.append("renovate.json: includePaths is not a list")
+        elif include:
+            for path in sites:
+                if not any(
+                    isinstance(p, str)
+                    and (
+                        p == path
+                        or renovate_minimatch(
+                            p, path, nocase=False, field="includePaths"
+                        )
+                    )
+                    for p in include
+                ):
+                    errors.append(f"renovate.json: includePaths leaves out {path}")
+        ignore = string_list(config.get("ignorePaths", []))
+        if ignore is None:
+            errors.append("renovate.json: ignorePaths is not a list")
+        else:
+            for p in ignore:
+                for path in sites:
+                    if isinstance(p, str) and (
+                        p in path
+                        or renovate_minimatch(
+                            p, path, nocase=False, field="ignorePaths"
+                        )
+                    ):
+                        errors.append(
+                            f"renovate.json: ignorePaths entry {p!r} drops {path}"
+                        )
+        enabled = string_list(config.get("enabledManagers", []))
+        if enabled is None:
+            errors.append("renovate.json: enabledManagers is not a list")
+        elif enabled:
+            for manager, _ in GO_SITES:
+                bare = manager.removeprefix("custom.")
+                if bare not in enabled and f"custom.{bare}" not in enabled:
+                    errors.append(
+                        f"renovate.json: enabledManagers leaves out {manager}"
+                    )
+        for block_key, allowed in GO_MANAGER_BLOCK_KEYS.items():
+            block = config.get(block_key)
+            if block is None:
+                continue
+            if not isinstance(block, dict):
+                errors.append(
+                    f"renovate.json: top-level {block_key!r} is not an object"
+                )
+                continue
+            extra = sorted(
+                key
+                for key in block
+                if key not in allowed and not (key == "enabled" and block[key] is True)
+            )
+            if extra:
+                errors.append(
+                    f"renovate.json: top-level {block_key!r} block sets "
+                    f"{', '.join(extra)}, which reaches one Go site only"
+                )
+        rules = config.get("packageRules", [])
+        for index, rule in enumerate(rules if isinstance(rules, list) else []):
+            if not isinstance(rule, dict):
+                continue
+            split = go_rule_site_matchers(rule)
+            if split and go_rule_can_match(rule):
+                errors.append(
+                    f"renovate.json: packageRules[{index}] can apply to `go` and "
+                    f"matches on {', '.join(split)}, so ci.yml and "
+                    f"{CHECKER_RELATIVE} could get different updates; rule out go "
+                    "with matchDepNames/matchPackageNames/matchDatasources"
+                )
+    except RenovatePatternError as exc:
+        errors.append(f"renovate.json: {exc}")
+    return errors
+
+
+def validate_go_manager(config: object, checker_source: str) -> list[str]:
+    """Require one regex manager that bumps ACTIONLINT_GO_VERSION as `go`."""
     managers = config.get("customManagers") if isinstance(config, dict) else None
     try:
         covering = [
@@ -2249,6 +2493,11 @@ def validate_renovate_text(text: str, checker_source: str) -> list[str]:
         for key, value in GO_RENOVATE_TEMPLATES.items()
         if manager.get(key) != value
     ]
+    errors.extend(
+        f"renovate.json: {CHECKER_RELATIVE} manager sets {key}, which changes "
+        "the checker site only"
+        for key in sorted(set(manager) - GO_MANAGER_KEYS)
+    )
     literal = f'ACTIONLINT_GO_VERSION = "{ACTIONLINT_GO_VERSION}"'
     match_strings = manager.get("matchStrings")
     if not isinstance(match_strings, list) or len(match_strings) != 1:
@@ -2284,7 +2533,8 @@ def validate_renovate() -> list[str]:
 
 
 def renovate_validator_regressions() -> list[str]:
-    """Prove a Renovate config that would split or drop the Go bump fails."""
+    """Prove the renovate.json edits this checker models that split the Go
+    bump fail, and that site-neutral edits still pass."""
     failures: list[str] = []
     source = RENOVATE_CONFIG.read_text(encoding="utf-8")
     checker = Path(__file__).resolve().read_text(encoding="utf-8")
@@ -2327,6 +2577,21 @@ def renovate_validator_regressions() -> list[str]:
 
         return mutate
 
+    def with_top(key: str, replacement: object):
+        def mutate(value: dict) -> dict:
+            value[key] = replacement
+            return value
+
+        return mutate
+
+    def with_rule(rule: dict):
+        def mutate(value: dict) -> dict:
+            value.setdefault("packageRules", []).append(rule)
+            return value
+
+        return mutate
+
+    rule_index = f"packageRules[{len(config.get('packageRules', []))}]"
     cases = {
         "second manager via /regex/i": (
             with_extra_manager(["/SCRIPTS/CHECK-BUILD-CONFIG\\.PY$/i"]),
@@ -2362,7 +2627,150 @@ def renovate_validator_regressions() -> list[str]:
             ),
             "matchString must capture exactly",
         ),
+        "currentValueTemplate on the Go manager": (
+            mutate_checker_manager("currentValueTemplate", "1.0.x"),
+            "manager sets currentValueTemplate",
+        ),
+        "autoReplaceStringTemplate on the Go manager": (
+            mutate_checker_manager(
+                "autoReplaceStringTemplate", 'GO = "{{{newValue}}}"'
+            ),
+            "manager sets autoReplaceStringTemplate",
+        ),
+        "matchStringsStrategy on the Go manager": (
+            mutate_checker_manager("matchStringsStrategy", "combination"),
+            "manager sets matchStringsStrategy",
+        ),
+        "ignorePaths glob drops the checker": (
+            with_top("ignorePaths", ["scripts/**"]),
+            f"ignorePaths entry 'scripts/**' drops {CHECKER_RELATIVE}",
+        ),
+        "ignorePaths substring drops ci.yml": (
+            with_top("ignorePaths", [".github/workflows"]),
+            f"drops {GO_WORKFLOW_RELATIVE}",
+        ),
+        "negated ignorePaths drops both": (
+            with_top("ignorePaths", ["!build-config.env"]),
+            f"drops {GO_WORKFLOW_RELATIVE}",
+        ),
+        "unevaluable ignorePaths": (
+            with_top("ignorePaths", ["scripts/[a-z]*.py"]),
+            "ignorePaths 'scripts/[a-z]*.py': glob syntax",
+        ),
+        "includePaths leaves out the checker": (
+            with_top("includePaths", [".github/**", "build-config.env"]),
+            f"includePaths leaves out {CHECKER_RELATIVE}",
+        ),
+        "includePaths is case-sensitive": (
+            with_top("includePaths", [".github/**", "SCRIPTS/*.py"]),
+            f"includePaths leaves out {CHECKER_RELATIVE}",
+        ),
+        "enabledManagers without the regex manager": (
+            with_top("enabledManagers", ["github-actions"]),
+            "enabledManagers leaves out custom.regex",
+        ),
+        "enabledManagers without github-actions": (
+            with_top("enabledManagers", ["custom.regex"]),
+            "enabledManagers leaves out github-actions",
+        ),
+        "github-actions manager block disabled": (
+            with_top("github-actions", {"enabled": False}),
+            "top-level 'github-actions' block sets enabled",
+        ),
+        "regex manager block adds files": (
+            with_top("regex", {"managerFilePatterns": ["/\\.py$/"]}),
+            "top-level 'regex' block sets managerFilePatterns",
+        ),
+        "rule disables go in the regex manager only": (
+            with_rule(
+                {
+                    "matchManagers": ["custom.regex"],
+                    "matchDepNames": ["go"],
+                    "enabled": False,
+                }
+            ),
+            f"{rule_index} can apply to `go` and matches on matchManagers",
+        ),
+        "rule groups every github-actions dependency": (
+            with_rule({"matchManagers": ["github-actions"], "groupName": "actions"}),
+            f"{rule_index} can apply to `go`",
+        ),
+        "rule groups actions/* packages by workflow file": (
+            with_rule(
+                {
+                    "matchFileNames": [".github/workflows/*.yml"],
+                    "matchPackageNames": ["actions/*"],
+                    "groupName": "ci",
+                }
+            ),
+            f"{rule_index} can apply to `go` and matches on matchFileNames",
+        ),
+        "rule keyed on the setup-go input depType": (
+            with_rule({"matchDepTypes": ["uses-with"], "automerge": True}),
+            f"{rule_index} can apply to `go` and matches on matchDepTypes",
+        ),
+        "rule keyed on the ci category": (
+            with_rule({"matchCategories": ["ci"], "groupName": "ci"}),
+            f"{rule_index} can apply to `go` and matches on matchCategories",
+        ),
+        "rule keyed on jsonata": (
+            with_rule(
+                {"matchJsonata": ["manager = 'github-actions'"], "enabled": False}
+            ),
+            f"{rule_index} can apply to `go` and matches on matchJsonata",
+        ),
     }
+    # Edits that treat both occurrences alike, or cannot reach `go` at all.
+    accepted = {
+        "preset-style ignorePaths": with_top(
+            "ignorePaths", ["**/node_modules/**", "**/vendor/**", "**/test/**"]
+        ),
+        "includePaths naming both sites": with_top(
+            "includePaths",
+            [".github/workflows/*.yml", CHECKER_RELATIVE, "build-config.env"],
+        ),
+        "enabledManagers with custom.regex": with_top(
+            "enabledManagers", ["github-actions", "custom.regex"]
+        ),
+        "enabledManagers with legacy regex": with_top(
+            "enabledManagers", ["github-actions", "regex"]
+        ),
+        "github-actions block adding files": with_top(
+            "github-actions", {"managerFilePatterns": ["/^ci/.+\\.ya?ml$/"]}
+        ),
+        "github-actions rule that excludes go": with_rule(
+            {
+                "matchManagers": ["github-actions"],
+                "matchDepNames": ["!go"],
+                "groupName": "actions",
+            }
+        ),
+        "github-actions rule on another datasource": with_rule(
+            {"matchManagers": ["github-actions"], "matchDatasources": ["github-tags"]}
+        ),
+        "go-wide group": with_rule({"matchDepNames": ["go"], "groupName": "go"}),
+        "rule matching both managers": with_rule(
+            {
+                "matchManagers": ["github-actions", "custom.regex"],
+                "matchDepNames": ["go"],
+                "automerge": False,
+            }
+        ),
+        "rule on a third file": with_rule(
+            {"matchFileNames": ["build-config.env"], "automerge": False}
+        ),
+        "action digest pinning by depType": with_rule(
+            {"matchDepTypes": ["action"], "pinDigests": True}
+        ),
+    }
+    for name, mutate in accepted.items():
+        mutated_config = mutate(json.loads(json.dumps(config)))
+        if mutated_config == config:
+            failures.append(f"renovate regression: {name} mutation changed nothing")
+            continue
+        errors = validate_renovate_text(json.dumps(mutated_config), checker)
+        if errors:
+            failures.append(f"renovate regression: {name} was rejected: {errors}")
     for name, (mutate, expected) in cases.items():
         try:
             mutated = json.dumps(mutate(json.loads(json.dumps(config))))

@@ -38,11 +38,20 @@ The checker also validates that manager:
 
 - exactly one regex manager covers the checker, with `managerFilePatterns`
   evaluated the way Renovate evaluates them;
-- the templates are exactly the ones above;
+- the templates are exactly the ones above, and the manager sets no other
+  option;
 - its `matchStrings` entry captures the literal exactly once.
 
-Its `--self-test` confirms that a config that would split or drop the update is
-rejected.
+It also rejects the `renovate.json` settings that can reach one site without
+the other: `includePaths`/`ignorePaths` that drop either file, an
+`enabledManagers` list without both managers, a top-level `github-actions` or
+`regex` block that changes that manager's behavior, and a `packageRules` entry
+that can apply to `go` and tells the two occurrences apart (by manager, file,
+depType, category, or a matcher the checker cannot show to be site-neutral). Its
+`--self-test` confirms that each such edit is rejected and that site-neutral
+edits pass. Presets named in `extends` are not expanded. A preset, or a
+Renovate-side change, that splits the update shows up as a red
+`build-config-sync` on the next Go bump.
 
 A future pin copied into the checker follows the same rule. The alternative is
 for the checker to read that value from its source instead of copying it.
@@ -51,7 +60,7 @@ for the checker to read that value from its source instead of copying it.
 
 | Option | Pros | Cons | Why not chosen |
 |---|---|---|---|
-| Mirroring regex manager, validated by the checker | One green Renovate PR per bump; a config drift fails the fast suite, not the next bump | A second place names the dependency; the checker has to model Renovate's file matching and the setup-go identity | **Chosen** |
+| Mirroring regex manager, validated by the checker | One green Renovate PR per bump; a `renovate.json` edit that would split it fails the fast suite, not the next bump | A second place names the dependency; the checker has to model Renovate's file matching, `packageRules` matching and the setup-go identity; presets are not expanded | **Chosen** |
 | Checker reads `go-version` from `ci.yml` instead of copying it | No second update site, no Renovate change | The checker would accept any value, including a hand edit Renovate would never propose; the pin loses its independent check | Weakens the drift check the checker exists for |
 | `packageRules` grouping only | Config-only | Grouping merges updates Renovate already found. The checker literal is not a dependency until a manager extracts it | Does not solve the failure |
 | `postUpgradeTasks` rewriting the checker | Exact edit | Needs a self-hosted Renovate with `allowedCommands`; the hosted app does not run it | Not available to this repo |
@@ -60,8 +69,9 @@ for the checker to read that value from its source instead of copying it.
 ## Consequences
 
 - **Positive**: an automatic Go bump changes `ci.yml` and the checker together
-  and should pass `build-config-sync`. A Renovate config that would split the
-  update fails locally in `meson test --suite=fast`.
+  and should pass `build-config-sync`. A `renovate.json` edit that would split
+  the update, through the manager or through the repo-level settings above,
+  fails locally in `meson test --suite=fast`.
 - **Positive**: the checker's `managerFilePatterns` evaluation now follows
   Renovate's `matchRegexOrGlob`: `/re/` and `/re/i` with optional `!`, the `*`
   catch-all, and minimatch globs with `dot` and `nocase`. Glob syntax outside
@@ -85,3 +95,7 @@ for the checker to read that value from its source instead of copying it.
 - PR #59 (`chore(deps): update dependency go to 1.27.x`).
 - Source: the red `build-config-sync` on PR #59 and a review finding that
   ADR-0144 did not cover this rule. No direct user quote.
+- Follow-up to PR #59: a post-merge review showed that `ignorePaths`,
+  `enabledManagers`, `packageRules` and extra manager options could still split
+  the bump while the checker passed. The repo-level checks above and this
+  section's wording come from that follow-up.
