@@ -16,6 +16,13 @@ remeasured at 78 findings (31 HISS-01, one HISS-02, 46 HISS-04). The resulting
 line-key churn was reported on Praetor issue 29, while issue 408 remains the
 only engine-owned audit blocker after the 78-entry ratchet passes.
 
+**Engine re-pin (2026-09-30):** This plan is the historical record of the
+first adoption; its commands name the original pin `846da590`. The engine is
+now pinned at `25451d888c8710822dd578907625dc69a0975142`, which fixes issue 408.
+The re-pin procedure, its 75-entry baseline, and the remaining local-only
+blocker (issue 175) are recorded in
+[research digest 0145](../../research/0145-praetor-adoption-measurements.md).
+
 ---
 
 ### Task 1: Commit the adoption decision and establish generation safety

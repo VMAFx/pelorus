@@ -52,32 +52,40 @@ consumer reconciliation. The complete ownership map, target composition,
 baseline semantics, and failure triage are in
 [docs/development/build.md](docs/development/build.md#repository-verification-entry-points).
 
-A clean clone needs Go 1.27 and the exact Praetor engine pin used by CI:
+A clean clone needs Go 1.27, Node.js 22 or newer for the documentation gate,
+and the exact Praetor engine pin used by CI:
 
 ```bash
-go install github.com/cordanaLLM/praetor/cmd/standardsctl@846da5908d15b3cf5581ca6b0205cc644b249599
+go install github.com/cordanaLLM/praetor/cmd/standardsctl@25451d888c8710822dd578907625dc69a0975142
 export PATH="$(go env GOPATH)/bin:$PATH"
-standardsctl version
+go version -m "$(command -v standardsctl)" | grep -F 25451d888c87
 ```
+
+`standardsctl version` prints `unknown (untagged build, no VCS stamp)` for a
+`go install` build even at the right commit
+([Praetor issue 642](https://github.com/cordanaLLM/praetor/issues/642)); the
+module pseudo-version that `go version -m` prints names the commit.
 
 ```bash
 make compile-context          # regenerate vendor projections
 make compile-context-verify   # reject projection drift
 make audit                    # apply the pinned HISS baseline ratchet
-make verify-all               # context + audit + native Pelorus gate
+make docs-lint docs-figures   # locked Markdown and figure checks
+make verify-all               # context + audit + native Pelorus gate + docs gate
 ```
 
-Until [Praetor issue 408](https://github.com/CordanaLLM/praetor/issues/408) is
-fixed, `make audit` and `make verify-all` are expected to stop on the explicitly
-declined branch-ruleset artifact after the preceding checks pass. Do not add a
-local bypass.
+Outside CI, `make audit` (and therefore `make verify-all`) stops at its final
+check because no `.git/hooks/pre-commit` exists while the manifest declines
+`git-hooks`; the auditor ignores that decline
+([Praetor issue 175](https://github.com/cordanaLLM/praetor/issues/175)). Every
+earlier check must pass. The hosted Standards job sets `CI=true`, which makes
+the auditor skip only that hook check. Do not create a placeholder hook file,
+weaken the manifest, or run remote sync to get past it.
 
-Do **not** run `make hooks-install` for normal work while issue 408 is open: its
-pre-commit and pre-push gates reach the known audit failure and block every
-commit/push. If already installed, run `lefthook uninstall`; linked worktrees
-share that hooks directory. Adoption and CI do not install hooks, apply
-repository rulesets, or run remote Praetor sync. See the development guide for
-the full operational warning.
+`make hooks-install` stays opt-in: it installs the tracked Lefthook commands
+into the Git hooks directory that every linked worktree shares. Adoption and CI
+do not install hooks, register agent hooks, apply repository rulesets, or run
+remote Praetor sync. See the development guide for the full operational notes.
 
 ## ABI changes
 

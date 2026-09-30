@@ -2,7 +2,7 @@
 # ADR-0145: Adopt Praetor as a governance ratchet
 
 - **Status**: Proposed
-- **Date**: 2026-09-20
+- **Date**: 2026-09-20 (revised 2026-09-30 for the engine re-pin)
 - **Deciders**: lusoris
 - **Tags**: governance, agents, ci, hooks, documentation, standards
 
@@ -12,88 +12,153 @@ Pelorus and its VMAFx sibling share code, reviewers, release discipline, and a
 public interop ABI, but only VMAFx currently carries Praetor's declared policy,
 debt baseline, canonical agent contexts, and standards CI. Copying VMAFx's
 generated files is unsafe: VMAFx has a Go/pre-commit build system, while Pelorus
-uses Meson, C, GLSL, and an FFmpeg patch replay. Praetor also generates branch
-and agent artifacts for `main`; Pelorus deliberately uses `master`.
+uses Meson, C, GLSL, and an FFmpeg patch replay.
 
-Praetor commit `846da5908d15b3cf5581ca6b0205cc644b249599`, the revision
-currently enforced by VMAFx, measures 78 existing Pelorus findings on the
-verified integration product tree: 31 HISS-01, one HISS-02, and 46 HISS-04.
-The initial adoption tree measured 77; the stacked base subsequently added one
-finding and shifted line-keyed fingerprints. Its generated Makefile contains
-failing placeholder build targets, generated Lefthook commands assume Go, and
-`adopt` installs hooks into the shared Git directory when hook generation is
-enabled. Those outputs need project-specific reconciliation before they can be
-treated as an operational gate.
+The first adoption pinned Praetor `846da5908d15b3cf5581ca6b0205cc644b249599`,
+the revision VMAFx enforced at the time. It measured 78 findings (31 HISS-01,
+one HISS-02, 46 HISS-04). Its audit then failed on every run because it
+required the branch-ruleset artifact that the manifest explicitly declines
+(Praetor issue 408). Several HISS-04 findings were misparses: an `AVOption`
+table reported as a function named `FLAGS`, and an `extern "C"` block reported
+as a 492-line function.
+
+By 2026-09-30 Praetor main had moved 162 commits to
+`25451d888c8710822dd578907625dc69a0975142`, several of them breaking for
+adopters. The changes that reach Pelorus are:
+
+- the audit honours an accepted `branch-ruleset` decline (issue 408, closed by
+  Praetor pull request 424);
+- native function blocks are classified structurally and HISS-04 length is
+  measured from the opening brace, which removes the five misparses above and
+  names nine functions the old scanner reported as `{` (Praetor pull requests
+  422 and 423);
+- the scanner now reports HISS-07 for `sys.exit` outside a Python `__main__`
+  entry point;
+- the `docs:seo-portal` facet now brings a locked documentation gate: vendored
+  `tools/markdownlint/` and `tools/figures/` assets, a
+  `praetor-docs.yml` workflow, a `Makefile` block, and a managed
+  `.gitattributes` block, compared byte for byte by the audit (Praetor pull
+  request 418);
+- the default text-register block that `compile-context` renders into
+  `AGENTS.md` changed, and the audit now lints non-Markdown agent-facing
+  strings (the Paperclip harness) in the internal register through
+  `register.sources` (Praetor pull requests 420 and 487);
+- the manifest can declare `repository.default_branch`, so rulesets target
+  `master` (Praetor pull request 547);
+- adoption registers a `praetorctl hook <client> pre-tool` interceptor in the
+  Claude, Codex, and Gemini settings unless `agent-hooks` is declined
+  (Praetor pull request 495);
+- the pinned catalog changed values: `gocyclo` left `agent:sandboxed` and
+  `oapi-codegen` left `api:public-contract`, both Go tools that Pelorus never
+  ran. The other catalog files changed layout only.
+
+The new engine still fails a local audit on the declined `git-hooks` step: it
+requires `.git/hooks/pre-commit` unless `CI` is set (Praetor issue 175). Its
+`version` command cannot identify a `go install` build (Praetor issue 642).
 
 ## Decision
 
-We will adopt Praetor as scaffolding plus a ratcheting baseline, pinned to
-`846da5908d15b3cf5581ca6b0205cc644b249599`, without refactoring product code to
-clear legacy findings in the adoption change. Pelorus will use the
+We will pin Praetor `25451d888c8710822dd578907625dc69a0975142` and keep using
+it as scaffolding plus a ratcheting baseline, without refactoring product code
+to clear legacy findings in the adoption change. Pelorus keeps the
 `native-gpu-systems` profile with `security:high`, `api:public-contract`,
 `docs:seo-portal`, and `agent:sandboxed`. `AGENTS.md` and `.agents/agents/*.md`
-become canonical sources for generated vendor contexts and reviewer personas.
-`make verify-all` and Lefthook will invoke Pelorus's existing Meson, C, shader,
-documentation, and governance gates. CI will verify compiled contexts and the
-baseline on every pull request and push to `master`.
+stay the canonical sources for generated vendor contexts and reviewer personas.
+`make verify-all` and Lefthook invoke Pelorus's Meson, C, shader,
+documentation, and governance gates. CI verifies compiled contexts, the
+baseline, and the documentation gate on every pull request.
 
-The manifest will explicitly decline `branch-ruleset` until Praetor can target a
-repository's real default branch, `dev-container` until Pelorus has a tested
-Vulkan-capable container, and `git-hooks` because its generated commands assume
-Go and hook installation mutates shared Git state. No implementation command may
-run `sync --remote`. Generated Paperclip artifacts will target `master`; no
-checkpoint bundle is accepted while `git-hooks` remains declined. Pelorus will
-own an adapted `lefthook.yml`; installation remains an explicit
-`make hooks-install` action, so adoption and CI cannot mutate the repository's
-shared `.git/hooks` directory.
+The upgrade follows the engine's documented path. `adopt --force
+--lock-source-root=<praetor checkout at the pin>` runs in a throwaway copy of the
+repository, so no command touches the shared `.git` directory; its output is
+then reconciled:
+
+- accept the re-pinned `.standards.lock` and catalog, the rescanned baseline,
+  the documentation gate assets and blocks, the `register.sources` coverage,
+  the managed `.gitignore` and README blocks, and the Renovate and actionlint
+  entries for engine-managed files;
+- keep the Pelorus `AGENTS.md` harness instead of the regenerated generic one,
+  which states that every invariant is unenforced and drops Pelorus-specific
+  rules such as one-level `goto fail` cleanup; `compile-context` only adds the
+  register block;
+- keep the reconciled editor settings instead of merges that add Go language
+  settings to a C/GLSL repository (Praetor issue 202);
+- reword three Paperclip contract strings to the engine's own current wording
+  so they pass the internal-register lint;
+- make the legacy Markdown conform to the locked rule set (mostly table
+  delimiter spacing), without excluding any file from the gate.
+
+The manifest declares `repository.default_branch: master`. It keeps declining
+`branch-ruleset`, `dev-container`, and `git-hooks`, and now declines
+`agent-hooks`. The engine can now render a `master` ruleset, but the rendered
+ruleset requires signed commits and a policy that the live repository does
+not enforce. Committing it would claim protection that `sync --remote` has not
+applied, so enabling it stays a separate, forge-mutating decision. The
+devcontainer still needs a tested Vulkan-capable image. Git hook installation
+mutates the Git directory that every linked worktree shares. Agent-hook
+registration would run `praetorctl` on every agent tool call, on machines that
+may not have it on `PATH`. No command runs `sync --remote`.
 
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
 |---|---|---|---|
-| Copy VMAFx's adoption verbatim | Small design effort; identical visible layout | Imports Go commands, VMAFx paths, `main`, an unrelated 1,411-finding baseline, and VMAFx personas | It would claim enforcement that Pelorus cannot execute |
-| Run `praetorctl adopt --force` and commit every generated file unchanged | Maximum generated coverage | Failing Makefile, Go-only hooks, wrong branch targets, untested container, shared-hook side effect | Generated output is a starting point, not proof of a valid repository contract |
-| Adopt declarations and CI only | Smallest change | Agent contexts, personas, hooks, and local verification continue to drift | HISS-16 and cross-tool consistency are primary adoption goals |
-| Clear all 78 findings during adoption | Starts with a zero-debt baseline | Mixes governance scaffolding with broad product-code refactoring | A baseline ratchet prevents regression without destabilizing filter work |
+| Stay on `846da590` | No new surface; no documentation churn | Audit fails on every run (issue 408); scanner misparses stay in the baseline; drifts further from VMAFx and upstream | Keeps a gate that can never pass |
+| Copy VMAFx's adoption verbatim | Small design effort; identical visible layout | Imports Go commands, VMAFx paths, an unrelated 1,411-finding baseline, and VMAFx personas | It would claim enforcement that Pelorus cannot execute |
+| Commit `adopt --force` output unchanged | Maximum generated coverage; no reconciliation | Replaces the Pelorus harness with a generic one, adds Go editor settings, registers agent hooks that call an engine contributors may lack | Generated output is a starting point, not proof of a valid repository contract |
+| Exclude legacy docs through `documentation.style_exclude` | No churn in 50 Markdown files | Removes most of the public documentation from the gate that the declared facet requires | A bypass of declared policy; the violations are mechanical to fix |
+| Accept `branch-ruleset` now that `master` is supported | Audit compares a real ruleset | Commits a signed-commit ruleset that the forge does not apply; misstates the live protection | Needs its own decision and a `sync --remote` run by the maintainer |
+| Clear all 75 findings during adoption | Starts with a zero-debt baseline | Mixes governance scaffolding with broad product-code refactoring | A baseline ratchet prevents regression without destabilizing filter work |
 
 ## Consequences
 
-- **Positive**: policy inputs and engine revision become reproducible; legacy
-  debt may shrink but cannot grow; six agent contexts and reviewer personas gain
-  canonical sources; `make verify-native` provides one Pelorus-native gate.
-- **Negative**: generated contexts and persona projections add repository
-  surface area; Praetor upgrades require a deliberate baseline comparison;
-  contributors need Go 1.27 to install the pinned engine locally. The pinned
-  auditor currently fails after all other checks because it requires the
-  explicitly declined branch-ruleset artifact; `make verify-all` and hosted
-  standards CI remain blocked by Praetor issue 408.
-- **Neutral / follow-ups**: accept the unified gate only after Praetor issue 408
-  is resolved; enable a generated branch ruleset only after Praetor supports
-  `master`; design and test a Vulkan devcontainer separately; consider
-  touched-file enforcement after legacy debt is low enough for routine changes.
+- **Positive**: policy inputs and engine revision are reproducible; the hosted
+  Standards job can pass; legacy debt may shrink but cannot grow, and the
+  baseline no longer carries scanner misparses; six agent contexts and eight
+  reviewer personas have canonical sources; public Markdown is linted by a
+  locked rule set; `make verify-native` stays the Pelorus-native product gate.
+- **Negative**: the engine's managed assets add about 8,400 vendored lines
+  under `tools/` that only `adopt` may refresh; `make verify-all` now needs
+  Node.js 22+ as well as Go 1.27; the Markdown conformance pass edits 50
+  existing documents (formatting only). Local `make audit` and
+  `make verify-all` exit 1 on the missing pre-commit hook until Praetor issue
+  175 is fixed; CI skips that check. `standardsctl version` cannot prove the pin
+  (Praetor issue 642); CI prints Go's module version instead.
+- **Neutral / follow-ups**: re-run the upgrade path on the next pin and compare
+  the baseline per rule; decide on a branch ruleset together with
+  `sync --remote`; design and test a Vulkan devcontainer separately; consider
+  touched-file enforcement over a pull request's range once legacy debt is low
+  enough for routine changes.
 
 ## References
 
 - VMAFx ADR-1249, `origin/master` at `371ff5891ad43b6d8072d9fac132349ee3ddaaa9`.
-- Praetor commit `846da5908d15b3cf5581ca6b0205cc644b249599`.
-- [Praetor issue 408](https://github.com/CordanaLLM/praetor/issues/408) — audit
-  ignores an accepted `branch-ruleset` decline.
-- [Praetor issue 407](https://github.com/CordanaLLM/praetor/issues/407) — local
+- Praetor commit `25451d888c8710822dd578907625dc69a0975142` (current pin) and
+  `846da5908d15b3cf5581ca6b0205cc644b249599` (first adoption).
+- [Research digest 0145](../research/0145-praetor-adoption-measurements.md) —
+  measurements and per-rule baseline comparison.
+- [Praetor issue 408](https://github.com/cordanaLLM/praetor/issues/408) — audit
+  ignored an accepted `branch-ruleset` decline; closed, fixed at the new pin.
+- [Praetor issue 175](https://github.com/cordanaLLM/praetor/issues/175) — audit
+  ignores an accepted `git-hooks` decline outside CI.
+- [Praetor issue 642](https://github.com/cordanaLLM/praetor/issues/642) —
+  `version` cannot identify a `go install` build.
+- [Praetor issue 29](https://github.com/cordanaLLM/praetor/issues/29) —
+  baseline fingerprints are keyed by line number.
+- [Praetor issue 71](https://github.com/cordanaLLM/praetor/issues/71) — remote
+  governance assumes `main`.
+- [Praetor issue 407](https://github.com/cordanaLLM/praetor/issues/407) — local
   clone identity can render as `.`.
-- [Praetor issue 365](https://github.com/CordanaLLM/praetor/issues/365) —
-  generated editor configuration assumes repository paths and a locally built
-  language server.
-- [Praetor issue 202](https://github.com/CordanaLLM/praetor/issues/202) — editor
+- [Praetor issue 202](https://github.com/cordanaLLM/praetor/issues/202) — editor
   and linter generation is not consumer-selectable or language-aware.
-- [Praetor issue 321](https://github.com/CordanaLLM/praetor/issues/321) —
+- [Praetor issue 321](https://github.com/cordanaLLM/praetor/issues/321) —
   Paperclip output ignores effective consumer policy.
-- [Praetor issue 68](https://github.com/CordanaLLM/praetor/issues/68) — generated
-  harness policy is not language- or profile-specific.
-- [Praetor issue 235](https://github.com/CordanaLLM/praetor/issues/235) — context
+- [Praetor issue 235](https://github.com/cordanaLLM/praetor/issues/235) — context
   compilation references skills not shipped to consumers.
-- [Praetor issue 410](https://github.com/CordanaLLM/praetor/issues/410) — native
-  adoption creates an empty Gitleaks ruleset that disables default detection.
-- [Praetor issue 380](https://github.com/CordanaLLM/praetor/issues/380) —
-  generated personas can fail Praetor's own Caveman check.
+- Closed at or before the new pin: issues
+  [68](https://github.com/cordanaLLM/praetor/issues/68),
+  [365](https://github.com/cordanaLLM/praetor/issues/365),
+  [380](https://github.com/cordanaLLM/praetor/issues/380), and
+  [410](https://github.com/cordanaLLM/praetor/issues/410).
 - [ADR-0108](0108-deep-dive-deliverables-rule.md) — adoption deliverables.
-- Source: `req`, 2026-09-20: "we need to onboard praetor as vmafx did (mostly) already" and approval to proceed with the staged implementation.
+- Source: `req`, 2026-09-20: "we need to onboard praetor as vmafx did (mostly) already" and approval to proceed with the staged implementation; 2026-09-30: Praetor "moved", re-pin to `25451d88`.
