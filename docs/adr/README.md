@@ -59,3 +59,4 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0144](0144-ffmpeg-pin-and-ci-runner-policy.md) | Pin FFmpeg by release and commit; run CI on Ubuntu 26.04 native Vulkan packages | Accepted |
 | [0146](0146-qsv-roi-frame-ownership.md) | QSV dense ROI maps are per-frame and limited to progressive HEVC CQP on runtime API 1.28 or newer; corrects ADR-0114's QSV capability/lifetime detail | Accepted |
 | [0147](0147-vulkan-sample-domain-and-components.md) | Normalize Vulkan arithmetic to the true sample domain and preserve every physical-plane component | Accepted |
+| [0151](0151-renovate-mirrors-checker-toolchain-pins.md) | CI toolchain pins that the build-config checker copies get a checker-validated Renovate regex manager (Go for actionlint: same `go`/`actions/go-versions` identity as setup-go, one `renovate/go-<major>.x` PR) | Accepted |
