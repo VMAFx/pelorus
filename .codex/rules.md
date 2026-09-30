@@ -151,7 +151,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 | `meson.build`, `meson_options.txt` | build root: libpelorus, tests, shaders |
 | `libpelorus/include/pelorus/` | public API, version, append-only interop ABI |
 | `libpelorus/src/` | core pack/parse + parameter logic |
-| `libpelorus/test/` | ABI and API conformance |
+| `libpelorus/test/` | ABI and API conformance; UTF-8 path test |
 | `libpelorus/shaders/` | standalone reference shaders |
 | `ffmpeg-patches/files/` | canonical FFmpeg host/filter sources |
 | `ffmpeg-patches/files/vulkan/` | canonical shipped shader sources |

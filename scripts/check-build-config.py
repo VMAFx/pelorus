@@ -37,6 +37,24 @@ WORKFLOWS = (
     ROOT / ".github" / "workflows" / "ci.yml",
     ROOT / ".github" / "workflows" / "release.yml",
 )
+# ADR-0149: the native Windows fast-suite leg of ci.yml. setup-msys2 is pinned by
+# full commit digest with the release comment Renovate maintains. Per ADR-0151
+# the checker reads that pin from ci.yml instead of copying it: it validates the
+# shape, so a Renovate digest bump changes ci.yml alone and stays green.
+WINDOWS_JOB = "windows"
+WINDOWS_RUNNER = "windows-2025"
+SETUP_MSYS2_PIN = re.compile(
+    r"^[ ]+(?:- )?uses: msys2/setup-msys2@[0-9a-f]{40} # v\d+\.\d+\.\d+$", re.MULTILINE
+)
+WINDOWS_PACKAGES = tuple(
+    f"mingw-w64-ucrt-x86_64-{name}"
+    for name in ("gcc", "meson", "ninja", "python", "glslang", "shaderc")
+)
+WINDOWS_COMMANDS = (
+    "meson setup build && ninja -C build",
+    "meson test -C build --suite=fast --print-errorlogs",
+    "meson test -C build path-utf8 --verbose",
+)
 PIN_PROJECTIONS = (
     ROOT / "README.md",
     ROOT / "AGENTS.md",
@@ -2061,12 +2079,62 @@ def workflow_job_blocks(text: str) -> dict[str, str]:
     return blocks
 
 
+def msys2_install_list(block: str) -> list[str]:
+    """Return the package names of the setup-msys2 folded `install: >-` list."""
+    match = re.search(
+        r"^(?P<indent>[ ]+)install:\s*>-[ ]*\n(?P<body>(?:(?P=indent)[ ]+\S.*\n?)+)",
+        block,
+        re.MULTILINE,
+    )
+    return match.group("body").split() if match else []
+
+
+def validate_windows_job(relative: str, block: str | None) -> list[str]:
+    """Validate the native Windows fast-suite leg as strictly as the Linux jobs."""
+    if block is None:
+        return [f"{relative}: missing Windows job {WINDOWS_JOB}"]
+    prefix = f"{relative}: Windows job"
+    errors: list[str] = []
+    autocrlf = block.find("git config --global core.autocrlf false")
+    checkout = block.find("uses: actions/checkout@")
+    if autocrlf < 0 or autocrlf > checkout:
+        errors.append(f"{prefix} must disable core.autocrlf before checkout")
+    pin = SETUP_MSYS2_PIN.search(block)
+    if block.count("msys2/setup-msys2@") != 1 or pin is None:
+        errors.append(
+            f"{prefix} must pin msys2/setup-msys2 once by full commit digest "
+            "with its `# vX.Y.Z` release comment"
+        )
+    elif pin.start() > block.find("name: Load build configuration"):
+        errors.append(f"{prefix} must install MSYS2 before its first msys2 step")
+    for token in ("shell: msys2 {0}", "msystem: UCRT64", "update: false"):
+        if token not in block:
+            errors.append(f"{prefix} must set {token}")
+    packages = msys2_install_list(block)
+    for package in sorted(set(WINDOWS_PACKAGES) - set(packages)):
+        errors.append(f"{prefix} must install MSYS2 package {package}")
+    for package in sorted(set(packages) - set(WINDOWS_PACKAGES)):
+        errors.append(f"{prefix} installs unexpected MSYS2 package {package}")
+    for token in WINDOWS_COMMANDS + (
+        "ImageOS",
+        "ImageVersion",
+        "pacman -Q " + " ".join(WINDOWS_PACKAGES),
+        "gcc --version",
+        "glslc --version",
+        "glslangValidator --version",
+    ):
+        if token not in block:
+            errors.append(f"{prefix} is missing {token}")
+    return errors
+
+
 def _validate_workflow_structure_and_jobs(
     relative: str, text: str, jobs: dict[str, str]
 ) -> list[str]:
     errors: list[str] = []
     forbidden = (
         "ubuntu-latest",
+        "windows-latest",
         "packages.lunarg.com",
         "vulkan-sdk",
         "/home/kilian/",
@@ -2085,10 +2153,12 @@ def _validate_workflow_structure_and_jobs(
         "FFMPEG_COMMIT",
         "GITHUB_ENV",
     )
+    is_ci = Path(relative).name == "ci.yml"
     for name, block in jobs.items():
+        runner = WINDOWS_RUNNER if is_ci and name == WINDOWS_JOB else "ubuntu-26.04"
         runners = re.findall(r"^\s+runs-on:\s*([^\s#]+)", block, re.MULTILINE)
-        if runners != ["ubuntu-26.04"]:
-            errors.append(f"{relative}: job {name} must run exactly on ubuntu-26.04")
+        if runners != [runner]:
+            errors.append(f"{relative}: job {name} must run exactly on {runner}")
         checkout = block.find("uses: actions/checkout@")
         load = block.find("name: Load build configuration")
         if checkout < 0 or load < checkout:
@@ -2178,6 +2248,7 @@ def _validate_workflow_specialized_jobs(
                 f"{relative}: docs job must set exactly one go-version, "
                 f"'{ACTIONLINT_GO_VERSION}' (found {go_versions})"
             )
+        errors.extend(validate_windows_job(relative, jobs.get(WINDOWS_JOB)))
     elif rel_name == "release.yml":
         if "workflow_dispatch:" not in text:
             errors.append(f"{relative}: release gate needs workflow_dispatch")
@@ -2225,12 +2296,92 @@ def validate_workflows() -> list[str]:
     return errors
 
 
+def replace_in_job(source: str, job: str, old: str, new: str) -> str:
+    """Mutate the first `old` inside one workflow job block only."""
+    block = workflow_job_blocks(source).get(job, "")
+    if old not in block:
+        return source
+    return source.replace(block, block.replace(old, new, 1), 1)
+
+
+def windows_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Mutations of the ADR-0149 Windows job that the validator must reject."""
+    windows = workflow_job_blocks(source).get(WINDOWS_JOB, "")
+
+    def mutate(old: str, new: str) -> str:
+        return replace_in_job(source, WINDOWS_JOB, old, new)
+
+    return {
+        "floating Windows runner": (
+            mutate(WINDOWS_RUNNER, "windows-latest"),
+            "forbidden workflow token windows-latest",
+        ),
+        "Windows job on another image": (
+            mutate(WINDOWS_RUNNER, "windows-2022"),
+            f"job {WINDOWS_JOB} must run exactly on {WINDOWS_RUNNER}",
+        ),
+        "missing Windows job": (
+            source.replace(windows, "", 1) if windows else source,
+            f"missing Windows job {WINDOWS_JOB}",
+        ),
+        "unpinned setup-msys2": (
+            re.sub(r"setup-msys2@[0-9a-f]{40}", "setup-msys2@v2", source, count=1),
+            "must pin msys2/setup-msys2 once",
+        ),
+        "abbreviated setup-msys2 digest": (
+            re.sub(r"(setup-msys2@[0-9a-f]{12})[0-9a-f]{28}", r"\1", source, count=1),
+            "must pin msys2/setup-msys2 once",
+        ),
+        "setup-msys2 without release comment": (
+            re.sub(r"(setup-msys2@[0-9a-f]{40}) # v\S+", r"\1", source, count=1),
+            "must pin msys2/setup-msys2 once",
+        ),
+        "non-UCRT64 environment": (
+            mutate("msystem: UCRT64", "msystem: MINGW64"),
+            "must set msystem: UCRT64",
+        ),
+        "missing MSYS2 package": (
+            mutate("mingw-w64-ucrt-x86_64-glslang", "mingw-w64-x86_64-glslang"),
+            "must install MSYS2 package mingw-w64-ucrt-x86_64-glslang",
+        ),
+        "extra MSYS2 package": (
+            mutate("mingw-w64-ucrt-x86_64-gcc", "mingw-w64-ucrt-x86_64-gcc git"),
+            "installs unexpected MSYS2 package git",
+        ),
+        "CRLF checkout": (
+            mutate("core.autocrlf false", "core.autocrlf true"),
+            "must disable core.autocrlf before checkout",
+        ),
+        "Windows fast suite dropped": (
+            mutate("--suite=fast", "--suite=slow"),
+            "is missing meson test -C build --suite=fast --print-errorlogs",
+        ),
+    }
+
+
+def windows_pin_bump_regression(source: str, relative: str) -> list[str]:
+    """A Renovate-style setup-msys2 bump edits ci.yml alone and must stay valid."""
+    bumped = re.sub(
+        r"setup-msys2@[0-9a-f]{40} # v\S+",
+        "setup-msys2@" + "0123456789abcdef" * 2 + "01234567 # v99.0.0",
+        source,
+        count=1,
+    )
+    if bumped == source:
+        return ["workflow regression: setup-msys2 bump mutation changed nothing"]
+    errors = validate_workflow_text(relative, bumped)
+    if validate_workflow_text(relative, source) != errors:
+        return [f"workflow regression: setup-msys2 bump was rejected: {errors}"]
+    return []
+
+
 def workflow_validator_regressions() -> list[str]:
     """Prove runner and native-toolchain regressions are rejected."""
     failures: list[str] = []
     ci_path = WORKFLOWS[0]
     source = ci_path.read_text(encoding="utf-8")
     cases = {
+        **windows_workflow_cases(source),
         "floating runner": (
             source.replace("ubuntu-26.04", "ubuntu-latest", 1),
             "forbidden workflow token ubuntu-latest",
@@ -2269,6 +2420,7 @@ def workflow_validator_regressions() -> list[str]:
         ),
     }
     relative = ci_path.relative_to(ROOT).as_posix()
+    failures.extend(windows_pin_bump_regression(source, relative))
     for name, (mutated, expected) in cases.items():
         if mutated == source:
             failures.append(f"workflow regression: {name} mutation changed nothing")

@@ -60,10 +60,21 @@ test('shader-binding-order',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# The contract validation itself is platform-neutral text checking and runs
+# everywhere. Its --self-test half drives throwaway Git repositories through the
+# Linux FFmpeg-replay fixtures, which are not portable to a native Windows
+# Python: MSYS2 Git brace-expands a `ref^{commit}` argument received from a
+# non-MSYS parent, and Python text-mode writes give the `git am` fixture CRLF
+# line endings that the replay strips, so its patch no longer applies. The
+# Linux jobs run the full self-test on every PR, so the Windows leg skips only
+# that half (ADR-0149).
+build_config_args = [meson.project_source_root() / 'scripts' / 'check-build-config.py']
+if build_machine.system() != 'windows'
+  build_config_args += ['--self-test']
+endif
 test('build-config-sync',
      python_prog,
-     args: [meson.project_source_root() / 'scripts' / 'check-build-config.py',
-            '--self-test'],
+     args: build_config_args,
      workdir: meson.project_source_root(),
      suite: 'fast')
 

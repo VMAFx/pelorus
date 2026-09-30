@@ -76,13 +76,23 @@ SDK-free (pure stdio CSV parsing — no libx265 link), so vmafx still vendors
 ```c
 PelorusX265Frame frames[4096];
 size_t n = 0;
-pel_x265_csv_parse("x265.csv", frames, 4096, &n);   /* locates cols by header name */
+/* The path is UTF-8 on every platform (ADR-0149), e.g. "caf\xC3\xA9/x265.csv". */
+pel_result r = pel_x265_csv_parse("x265.csv", frames, 4096, &n); /* cols by header name */
+if (r != PEL_OK && r != PEL_ERR_RANGE) {
+    /* ABSENT: unopenable, or not an x265 CSV; INVALID: bad args, or (Windows) an
+       ill-formed UTF-8 path; NOMEM (Windows); TRUNCATED: read error. No report. */
+    return r;
+}
+/* PEL_ERR_RANGE: the file had more than 4096 rows; the first n == 4096 are usable. */
 
 float requested_qp[4096];                            /* the QP a pass requested per frame */
 /* ... fill requested_qp[0..n) ... */
 
 PelorusQpReportSection qp;
-pel_qp_report_from_x265_frames(frames, n, requested_qp, &qp);
+r = pel_qp_report_from_x265_frames(frames, n, requested_qp, &qp);
+if (r != PEL_OK) {
+    return r; /* PEL_ERR_INVALID: n == 0 (a header but no coded-frame rows) */
+}
 /* qp.avg_qp = bit-weighted honored QP; qp.total_bits = sum; qp.psnr_* bit-weighted;
    qp.honored_fraction = sign-agreement of requested vs honored per-frame delta-QP;
    qp.qp_valid = 0 (x265 CSV is frame-granular — no per-CTU QP, so no per-cell map). */
@@ -104,6 +114,18 @@ x265 --input clip.y4m --y4m --qp 32 --aq-mode 0 --psnr \
      --csv x265.csv --csv-log-level 2 --output /dev/null
 pelorus_qp_report x265.csv --requested-qp 32
 ```
+
+The CSV path is UTF-8 on every platform
+([ADR-0149](../adr/0149-windows-utf8-paths.md)). On Windows the reader opens it
+through UTF-16 `_wfopen`, and the demonstrator re-reads its own arguments from
+the UTF-16 command line, so a non-ASCII path such as
+`pelorus_qp_report "D:\encodes\café_文件\x265.csv"` works regardless of the ANSI
+code page. Ill-formed UTF-8 returns `PEL_ERR_INVALID`. An argument that is not
+valid UTF-16 (an unpaired surrogate) has no UTF-8 form: the tool then prints
+`pelorus_qp_report: cannot read the command line as UTF-8` on stderr and exits
+non-zero before parsing anything. The tool's diagnostics echo the path as UTF-8
+bytes, so on a console whose code page is not 65001 (`chcp 65001`) a non-ASCII
+path looks garbled in an error line; the parse itself is unaffected.
 
 A 17-frame `testsrc2` run produced `avg_qp ≈ 32.21`, `total_bits = 104744`,
 `psnr_y/u/v ≈ 38.6/37.6/37.0 dB`, `honored_fraction = 0.1765` (measured — a flat

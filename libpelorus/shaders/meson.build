@@ -11,6 +11,12 @@
 glslang = find_program('glslangValidator', required: get_option('shaders'))
 glslc = find_program('glslc', required: false)
 
+# The compile-check tests discard their SPIR-V. '/dev/null' is not a device on
+# native Windows: a MinGW glslangValidator resolves it to \dev\null on the
+# current drive and writes a real file there, or fails where that directory is
+# absent (a clean CI runner). NUL is the Windows null device (ADR-0149).
+spirv_discard = build_machine.system() == 'windows' ? 'NUL' : '/dev/null'
+
 reference_shaders = ['pelorus_deband', 'pelorus_analyze', 'pelorus_denoise',
                      'pelorus_grain_estimate', 'pelorus_mc', 'pelorus_qpmap',
                      'pelorus_dehalo',
@@ -28,7 +34,7 @@ foreach shader : reference_shaders
   )
   test('shader-' + shader + '-compile', glslang,
        args: ['-V', '--target-env', 'vulkan1.2',
-              files(shader + '.comp'), '-o', '/dev/null'],
+              files(shader + '.comp'), '-o', spirv_discard],
        suite: 'fast')
 endforeach
 
@@ -46,7 +52,7 @@ if glslc.found()
     src = files('../../ffmpeg-patches/files/vulkan/' + shader + '.comp.glsl')
     test('shipped-shader-' + shader + '-compile', glslc,
          args: ['--target-env=vulkan1.4', '--target-spv=spv1.6', '-std=460', '-O',
-                src, '-o', '/dev/null'],
+                src, '-o', spirv_discard],
          suite: 'fast')
   endforeach
 else
