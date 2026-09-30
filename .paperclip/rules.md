@@ -19,7 +19,7 @@ git push --set-upstream origin HEAD
 
 - HISS-01: Acyclic control flow; no recursion; legacy goto growth forbidden
 - HISS-02: Scalar upper bounds on all loops; context timeout on all I/O
-- HISS-04: McCabe Cyclomatic <= 10, Cognitive <= 15, Func LOC <= 60
+- HISS-04: Func LOC <= 60 audit-ratcheted; Cyclomatic <= 10, Cognitive <= 12, Statements <= 40 by review only
 - HISS-07: Public C errors use `pel_result`; every non-void result checked or explicitly discarded
 - HISS-10: Zero-warning tolerance across compiler, linters, and formatters
 - HISS-15: 3D testing mandatory (Positive, Negative, Boundary >= 2 checks/dim)
