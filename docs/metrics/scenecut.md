@@ -58,10 +58,23 @@ no Vulkan device of its own):
 ffmpeg -init_hw_device vulkan -hwaccel vulkan -hwaccel_output_format vulkan \
        -i input.mkv \
        -vf "pelorus_mc_vulkan=meta=1,hwdownload,format=yuv420p,pelorus_scenecut" \
+       -force_key_frames source \
        -c:v hevc_nvenc -cq 28 out.mkv      # or x264 / x265 / hevc_qsv / libsvtav1
 ```
 
 The encoder opens a fresh GOP on every frame the cut detector flagged.
+
+**`-force_key_frames source` is required with the `ffmpeg` command line.**
+Before every encode `fftools` rewrites `frame->pict_type` from its own
+forced-keyframe logic, so the `I` that `pelorus_scenecut` sets is discarded
+unless that logic keys on the frame. `-force_key_frames source` forces a
+keyframe on every frame whose `AV_FRAME_FLAG_KEY` is set. That covers the cuts
+this filter marks and also the keyframes the decoder reported in the source.
+Applications that drive libavcodec directly receive the `pict_type` unchanged.
+Measured on `hevc_qsv` (Arc B580 and UHD 770) with a long-GOP source and a hard
+cut at frame 10: the cut frame is flagged in every run, but the encoded
+keyframes are `0` alone without the option and `0, 10` with it
+([ADR-0150](../adr/0150-intel-arc-b580-uhd770-validation.md)).
 
 ## Interactions and limits (honest scope)
 
@@ -75,7 +88,8 @@ The encoder opens a fresh GOP on every frame the cut detector flagged.
 - **Codec-agnostic, no patch.** `pict_type == I` is the standard keyframe-request
   path; x264/x265/NVENC/QSV/SVT-AV1 all honour it. No per-encoder fork patch is
   shipped or needed (unlike the ROI/delta-QP tiers — see
-  [ADR-0114](../adr/0114-encoder-steering.md)).
+  [ADR-0114](../adr/0114-encoder-steering.md)). The `ffmpeg` command line needs
+  `-force_key_frames source` to pass the request through (see Usage).
 - **Detector fidelity inherits from `mc`.** The cut flag is the mean-residual-SAD
   heuristic in `vf_pelorus_mc` ([docs/metrics/mc.md](mc.md)); false positives /
   negatives there propagate here as spurious / missed IDRs. Tuning that threshold

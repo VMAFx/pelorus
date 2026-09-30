@@ -38,8 +38,11 @@ the pinned stock FFmpeg baseline. `pelorus_fgs` therefore inserts a **static**
 FGC model the user supplies
 via AVOptions — the canonical FFmpeg metadata-BSF contract (`hevc_metadata`,
 `h264_metadata`, `av1_metadata` all set static parameters this way). It is
-opt-in and a no-op by construction: it passes the stream through unchanged unless
-at least one colour component is selected.
+opt-in and inserts nothing unless at least one colour component is selected.
+With `components=0` every NAL unit passes through unchanged. The packet is still
+reassembled by FFmpeg's coded-bitstream (CBS) framework, which can rewrite
+Annex B start codes (for example 4-byte to 3-byte before an SEI NAL). The output
+is therefore NAL-identical but not always byte-identical to the input.
 
 The estimator's parameters map onto the options (see the recipe below), so the
 intended workflow is: run the estimator once, read its H.274 scalars and
@@ -121,6 +124,21 @@ FGC SEI, and `trace_headers` parsed it back on every access unit with the exact
 configured values (`model_id`, `blending_mode`, `log2_scale`, intensity interval,
 `comp_model_value`, persistence). `components=0` produced a byte-identical
 pass-through; `skip_existing=1` did not double-stamp an already-marked stream.
+
+Re-run on `hevc_qsv` output from an Intel Arc B580 and a UHD 770
+([ADR-0150](../adr/0150-intel-arc-b580-uhd770-validation.md)):
+
+- One FGC SEI per access unit with the configured fields.
+- Chroma models with `components=y+cb+cr`.
+- No second SEI with `skip_existing=1`.
+- `components=0` kept every NAL unit, but was 2 bytes shorter than a plain
+  `-c copy` remux: CBS rewrote the 4-byte start codes that QSV emits before its
+  SEI NAL units.
+- FFmpeg's own HEVC decoder synthesizes grain only for `film_grain_model_id=0`
+  (frequency filtering). A `model_id=1` (auto-regression) SEI, the BSF default,
+  is ignored with `Unsupported film grain parameters. Ignoring film grain.`,
+  while `model_id=0` visibly changes the decoded frames. Other decoders may
+  support model 1. Check the target decoder before relying on it.
 No BD-rate / visual-match proof is shipped here — that must be measured under the
 [ADR-0111](../adr/0111-benchmark-methodology.md) methodology as a follow-up.
 

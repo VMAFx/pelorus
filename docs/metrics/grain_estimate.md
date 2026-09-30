@@ -55,7 +55,7 @@ All thresholds are normalized in `[0,1]`, independent of bit depth.
 | `edge` | 0.06 | 0–1 | 3×3 neighbourhood range above which a pixel is an edge and is excluded from the grain estimate |
 | `strength` | 2.0 | 0–64 | scales the measured per-band RMS residual to the AV1 `[0,255]` scaling-function value (synthesis intensity) |
 | `model` | `aom` | `aom`/`h274` | FGS model the estimate targets (`aom` = AV1; `h274` = HEVC/VVC SEI scalars) |
-| `native` | on | bool | also attach a native `AV_FRAME_DATA_FILM_GRAIN_PARAMS` (AV1) so a downstream FFmpeg AV1 encoder honours it with no Pelorus BSF |
+| `native` | on | bool | also attach a native `AV_FRAME_DATA_FILM_GRAIN_PARAMS` (AV1) for a consumer that reads it; in FFmpeg n9.0.2 that is `av1_nvenc -pelorus_film_grain` (libaom-av1 and libsvtav1 ignore it) |
 
 `strength` is the main knob: raise it if the synthesized grain looks too subtle,
 lower it if too heavy. The vmafx `vmaf-tune` autotune
@@ -73,10 +73,13 @@ Two side-data channels are attached to each frame:
   [ADR-0103](../adr/0103-interop-sidedata-abi.md). For vmafx and downstream
   Pelorus tooling.
 - **`AV_FRAME_DATA_FILM_GRAIN_PARAMS`** (`AV_FILM_GRAIN_PARAMS_AV1`, when
-  `native=1`) — the AV1 AOM params on the standard FFmpeg channel, so an AV1
-  encoder / muxer that already reads it acts with no extra plumbing (the same
-  "emit a standard side-data channel the encoder already reads" strategy the
-  analyze filter uses for ROI, [ADR-0114](../adr/0114-encoder-steering.md)).
+  `native=1`) — the AV1 AOM params on the standard FFmpeg channel (the same
+  "emit a standard side-data channel" strategy the analyze filter uses for ROI,
+  [ADR-0114](../adr/0114-encoder-steering.md)). In FFmpeg n9.0.2 the only
+  encoder that reads it is the Pelorus-patched `av1_nvenc` with
+  `-pelorus_film_grain`. The stock `libaom-av1` and `libsvtav1` wrappers ignore
+  it: on real encodes both wrote `film_grain_params_present = 0`
+  ([ADR-0150](../adr/0150-intel-arc-b580-uhd770-validation.md)).
 
 ## Pipeline placement
 
@@ -109,11 +112,13 @@ shipped with this filter; it must be measured under the
 ## Usage
 
 ```bash
-# AV1: estimate grain on the source, denoise it, let the AV1 encoder
-# re-synthesize it from the attached AV_FRAME_DATA_FILM_GRAIN_PARAMS.
+# AV1: estimate grain on the source, denoise it, and let av1_nvenc re-synthesize
+# it from the attached AV_FRAME_DATA_FILM_GRAIN_PARAMS (-pelorus_film_grain).
+# libaom-av1 / libsvtav1 ignore that side data and would encode the grainless
+# picture with no film-grain parameters.
 ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
   -vf "hwupload,pelorus_grain_estimate_vulkan=strength=2.0,pelorus_denoise_vulkan=strength=0.4,hwdownload,format=yuv420p" \
-  -c:v libaom-av1 -crf 30 out.mkv
+  -c:v av1_nvenc -pelorus_film_grain 1 out.mkv
 
 # Inspect the estimate (model only; no encode):
 ffprobe -f lavfi -i "...,pelorus_grain_estimate_vulkan" -show_frames | grep -i film_grain
@@ -132,8 +137,10 @@ ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
   -bsf:v "pelorus_fgs=model_id=1:blending_mode=0:log2_scale=8:scale_y=24" out.mkv
 ```
 
-AV1 software encoders can use the native `AV_FRAME_DATA_FILM_GRAIN_PARAMS`
-channel, and `av1_nvenc` uses `-pelorus_film_grain` for the per-frame estimate.
+`av1_nvenc` uses `-pelorus_film_grain` for the per-frame estimate. The stock
+AV1 software wrappers (`libaom-av1`, `libsvtav1`) do not read
+`AV_FRAME_DATA_FILM_GRAIN_PARAMS` in FFmpeg n9.0.2, so they have no automatic
+grain leg.
 HEVC uses the separate `pelorus_fgs` H.274 FGC SEI BSF
 ([ADR-0117](../adr/0117-grain-fgs-bsf.md)); that leg is static and manually
 configured, not an automatic frame-side-data round trip. The H.264 and VVC legs

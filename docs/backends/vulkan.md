@@ -91,6 +91,32 @@ writeback; a storage-image load is not assumed to be logical already. Standalone
 `libpelorus/shaders/*.comp` files use their documented integer reference domain
 and exist to compile-check/read the algorithm, not as a second shipped shader.
 
+## Intel GPUs on Windows
+
+Validated on an Arc B580 (driver 101.9033) and a UHD 770 (driver 101.7092);
+evidence is in [ADR-0150](../adr/0150-intel-arc-b580-uhd770-validation.md).
+
+- **Pick a device mode that keeps frames intact.** These drivers corrupt
+  multi-planar `VK_EXT_host_image_copy` transfers, and FFmpeg n9.0.2 uses host
+  copy for `hwupload`/`hwdownload` on both GPUs. With default device options
+  every YUV frame is wrong before a filter sees it. Use
+  `-init_hw_device vulkan=vk:0,disable_multiplane=1` on the B580 and
+  `vulkan=vk:1,linear_images=1,disable_multiplane=1` on the UHD 770. On the UHD
+  770, `disable_multiplane=1` alone fails `hwupload` with
+  `VK_ERROR_OUT_OF_HOST_MEMORY`.
+- **Two validation errors are expected and come from stock FFmpeg:**
+  `VUID-VkFormatProperties2-pNext-pNext` and
+  `VUID-VkHostImageLayoutTransitionInfo-oldLayout-09230`. A bare
+  `hwupload,hwdownload` emits both. The format matrix treats them as known
+  upstream.
+- **The UHD 770 allows 16 storage images per shader stage.** A filter's
+  storage-image bindings times 4 planes must stay within that. Read-only frame
+  inputs therefore use sampled images, and the fast gate checks the budget.
+- **No Vulkan video encode.** Neither driver exposes
+  `VK_KHR_video_encode_queue`, so `hevc_vulkan` and `av1_vulkan` are
+  unavailable. Encode through QSV after `hwdownload`: n9.0.2 has no
+  Vulkan-to-D3D11 mapping on Windows, so that hop is a copy.
+
 ## Building the FFmpeg integration
 
 ```bash

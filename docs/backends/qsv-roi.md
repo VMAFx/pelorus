@@ -69,6 +69,27 @@ H.264, an older runtime, or another HEVC rate-control mode is valid, but
 `-pelorus_roi 1` then selects the stock rectangle path and emits a diagnostic
 explaining why. The option does not turn unsupported dense cases into a no-op.
 
+## On-hardware results: Intel Windows runtimes
+
+The asynchronous hardware encode that the regression below cannot replace was
+run on an Arc B580 (oneVPL mfx-gen, API 2.17) and a UHD 770 (mfx-gen, API
+2.15) under Windows ([ADR-0150](../adr/0150-intel-arc-b580-uhd770-validation.md)).
+
+- **The dense path is not reachable on these runtimes.** For HEVC CQP,
+  `MFXVideoENCODE_Query` returns `MFX_WRN_INCOMPATIBLE_VIDEO_PARAM` and clears
+  `EnableMBQP` from `ON` to `0`, whether `LowPower` is unset, on, or off. It
+  keeps `EnableMBQP=ON` for AVC. FFmpeg ignores that warning, so the final
+  CodingOption3 row of the selection table applies: `hevc_qsv -pelorus_roi 1`
+  uses the stock rectangles **without a diagnostic**. Its output is
+  byte-identical to `-pelorus_roi 0`.
+- **The stock rectangles depend on device and rate control.** On the B580 with
+  HEVC CQP they raised the flagged half by 1.45 dB for 3.4% more bits. On the
+  UHD 770 the HEVC CQP bitstream was identical to one encoded without ROI side
+  data. Under ICQ (`-global_quality`) ROI had no effect on either GPU.
+- **The fallback diagnostics are emitted as documented** for ICQ ("requires CQP
+  rate control") and for H.264 ("requires HEVC"). `av1_qsv` does not register
+  the option, and its output ignores ROI side data.
+
 ## Deterministic validation
 
 The hardware-independent regression reads the immutable FFmpeg n9.0.2 tag and
