@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "generated_at": "2026-09-30T13:06:13Z",
+  "generated_at": "2026-09-30T14:00:33Z",
   "repository": "VMAFx/pelorus",
-  "commit_sha": "989d14005a8f530b75a405d7ea4c3a19c45e2b24",
+  "commit_sha": "ce26733fdbb82efc166b45ac27842b2ae17d3664",
   "total_infractions": 62,
   "infractions": [
     {
@@ -409,17 +409,17 @@
     {
       "rule_id": "HISS-02",
       "file_path": "libpelorus/src/qp_report_csv.c",
-      "line_number": 110,
+      "line_number": 123,
       "message": "Legacy unbounded loop in native code",
-      "fingerprint": "libpelorus/src/qp_report_csv.c:110:HISS-02"
+      "fingerprint": "libpelorus/src/qp_report_csv.c:123:HISS-02"
     },
     {
       "rule_id": "HISS-04",
       "file_path": "libpelorus/src/qp_report_csv.c",
-      "line_number": 273,
+      "line_number": 410,
       "symbol": "pel_x265_csv_parse",
       "message": "Function 'pel_x265_csv_parse' (64 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "libpelorus/src/qp_report_csv.c:273:HISS-04"
+      "fingerprint": "libpelorus/src/qp_report_csv.c:410:HISS-04"
     },
     {
       "rule_id": "HISS-07",
@@ -439,10 +439,10 @@
     {
       "rule_id": "HISS-04",
       "file_path": "scripts/check-build-config.py",
-      "line_number": 2507,
+      "line_number": 2659,
       "symbol": "renovate_validator_regressions",
       "message": "Function 'renovate_validator_regressions' (100 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "scripts/check-build-config.py:2507:HISS-04"
+      "fingerprint": "scripts/check-build-config.py:2659:HISS-04"
     },
     {
       "rule_id": "HISS-07",
