@@ -147,10 +147,12 @@ every path. `pel_qp_report_from_x265_frames` allocates nothing.
 `frames`.
 
 **Thread-safety**: neither function holds global or static state, so concurrent
-calls are safe as long as buffers do not alias. `pel_x265_csv_parse` performs its
-own `fopen`/`fgets`/`fclose` on a private `FILE *`, so two concurrent calls on the
-same *path* are safe (independent streams); the caller must not share one open
-`FILE *` across them (the function never accepts one).
+calls are safe as long as buffers do not alias. `pel_x265_csv_parse` opens,
+reads and closes a private `FILE *` of its own (`fopen` on POSIX, `_wfopen` on
+Windows), so two concurrent calls on the same *path* are safe (independent
+streams); the caller must not share one open `FILE *` across them (the function
+never accepts one). The Windows UTF-16 path copy is allocated and freed within
+the one call and is never shared between calls.
 
 Return codes (`pel_result`): `pel_x265_csv_parse` returns `PEL_OK`,
 `PEL_ERR_INVALID` (NULL args / `cap == 0`; on Windows also a path that is not
@@ -158,9 +160,24 @@ well-formed UTF-8), `PEL_ERR_ABSENT` (the file cannot be opened, or no header
 with recognizable `QP` + `Bits` columns), `PEL_ERR_NOMEM` (Windows only: the
 UTF-16 path copy could not be allocated), `PEL_ERR_TRUNCATED` (a read error
 mid-file), or `PEL_ERR_RANGE` (more frame rows than `cap` — `out_count` is
-clamped to `cap`, the parsed rows are still usable). On failure `out_count` is 0
-(unless the pointer itself was NULL). `pel_qp_report_from_x265_frames` returns
-`PEL_OK` or `PEL_ERR_INVALID` (NULL `frames`/`out_section`, or `nb == 0`).
+clamped to `cap`, the parsed rows are still usable).
+`pel_qp_report_from_x265_frames` returns `PEL_OK` or `PEL_ERR_INVALID` (NULL
+`frames`/`out_section`, or `nb == 0`).
+
+What `pel_x265_csv_parse` leaves in `*out_count` depends on where it stopped:
+
+| Result | `*out_count` |
+| --- | --- |
+| `PEL_ERR_INVALID` from argument validation (NULL `path`/`out_frames`/`out_count`, `cap == 0`) | not written (the caller's value is kept) |
+| `PEL_ERR_INVALID` (ill-formed UTF-8), `PEL_ERR_ABSENT`, `PEL_ERR_NOMEM` | 0 |
+| `PEL_ERR_TRUNCATED` | the rows parsed before the read error (they are in `out_frames`) |
+| `PEL_ERR_RANGE` | `cap` |
+| `PEL_OK` | the rows parsed |
+
+Treat any result other than `PEL_OK` and `PEL_ERR_RANGE` as a failed read.
+ADR-0149 added two results a caller may not have branched on before, both on
+Windows only: `PEL_ERR_INVALID` for an ill-formed UTF-8 path and
+`PEL_ERR_NOMEM`.
 
 On Windows the path checks run in a fixed order, so the result depends only on
 the bytes, never on the code page or locale:

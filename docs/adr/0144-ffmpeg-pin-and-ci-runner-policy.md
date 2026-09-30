@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0144: Pin FFmpeg by release and commit; run CI on Ubuntu 26.04 native Vulkan packages
 
-- **Status**: Accepted
+- **Status**: Accepted; amended by [ADR-0149](0149-windows-utf8-paths.md) (one native Windows CI job on `windows-2025`)
 - **Date**: 2026-09-20
 - **Deciders**: Lusoris
 - **Tags**: ffmpeg, build, ci, supply-chain, vulkan
