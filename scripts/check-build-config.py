@@ -36,6 +36,21 @@ WORKFLOWS = (
     ROOT / ".github" / "workflows" / "ci.yml",
     ROOT / ".github" / "workflows" / "release.yml",
 )
+# ADR-0149: the native Windows fast-suite leg of ci.yml. The action is pinned by
+# commit like every other action; a digest bump updates this constant too.
+WINDOWS_JOB = "windows"
+WINDOWS_RUNNER = "windows-2025"
+SETUP_MSYS2_COMMIT = "ec48f7c5447b3140e2b088413ae3a55687bccb6e"
+SETUP_MSYS2_VERSION = "v2.33.0"
+WINDOWS_PACKAGES = tuple(
+    f"mingw-w64-ucrt-x86_64-{name}"
+    for name in ("gcc", "meson", "ninja", "python", "glslang", "shaderc")
+)
+WINDOWS_COMMANDS = (
+    "meson setup build && ninja -C build",
+    "meson test -C build --suite=fast --print-errorlogs",
+    "meson test -C build path-utf8 --verbose",
+)
 PIN_PROJECTIONS = (
     ROOT / "README.md",
     ROOT / "AGENTS.md",
@@ -1843,25 +1858,55 @@ def workflow_job_blocks(text: str) -> dict[str, str]:
     return blocks
 
 
-def validate_workflow_text(relative: str, text: str) -> list[str]:
-    """Validate the pinned runner, toolchain, and shared FFmpeg workflow contract."""
-    errors: list[str] = []
-    jobs = workflow_job_blocks(text)
-    if not jobs:
-        return [f"{relative}: no jobs found"]
-
-    forbidden = (
-        "ubuntu-latest",
-        "packages.lunarg.com",
-        "vulkan-sdk",
-        "/home/kilian/",
+def msys2_install_list(block: str) -> list[str]:
+    """Return the package names of the setup-msys2 folded `install: >-` list."""
+    match = re.search(
+        r"^(?P<indent>[ ]+)install:\s*>-[ ]*\n(?P<body>(?:(?P=indent)[ ]+\S.*\n?)+)",
+        block,
+        re.MULTILINE,
     )
-    for token in forbidden:
-        if token in text:
-            errors.append(f"{relative}: forbidden workflow token {token}")
-    if RELEASE_TAG.search(text):
-        errors.append(f"{relative}: contains a copied FFmpeg release tag")
+    return match.group("body").split() if match else []
 
+
+def validate_windows_job(relative: str, block: str | None) -> list[str]:
+    """Validate the native Windows fast-suite leg as strictly as the Linux jobs."""
+    if block is None:
+        return [f"{relative}: missing Windows job {WINDOWS_JOB}"]
+    prefix = f"{relative}: Windows job"
+    errors: list[str] = []
+    autocrlf = block.find("git config --global core.autocrlf false")
+    checkout = block.find("uses: actions/checkout@")
+    if autocrlf < 0 or autocrlf > checkout:
+        errors.append(f"{prefix} must disable core.autocrlf before checkout")
+    pin = f"uses: msys2/setup-msys2@{SETUP_MSYS2_COMMIT} # {SETUP_MSYS2_VERSION}"
+    setup = block.find(pin)
+    if block.count("msys2/setup-msys2@") != 1 or setup < 0:
+        errors.append(f"{prefix} must pin msys2/setup-msys2 once as `{pin}`")
+    elif setup > block.find("name: Load build configuration"):
+        errors.append(f"{prefix} must install MSYS2 before its first msys2 step")
+    for token in ("shell: msys2 {0}", "msystem: UCRT64", "update: false"):
+        if token not in block:
+            errors.append(f"{prefix} must set {token}")
+    packages = msys2_install_list(block)
+    for package in sorted(set(WINDOWS_PACKAGES) - set(packages)):
+        errors.append(f"{prefix} must install MSYS2 package {package}")
+    for package in sorted(set(packages) - set(WINDOWS_PACKAGES)):
+        errors.append(f"{prefix} installs unexpected MSYS2 package {package}")
+    for token in WINDOWS_COMMANDS + (
+        "ImageOS",
+        "ImageVersion",
+        "gcc --version",
+        "glslc --version",
+        "glslangValidator --version",
+    ):
+        if token not in block:
+            errors.append(f"{prefix} is missing {token}")
+    return errors
+
+
+def validate_job_runners(relative: str, jobs: dict[str, str]) -> list[str]:
+    """Every job runs on its pinned image and loads build-config.env after checkout."""
+    errors: list[str] = []
     load_tokens = (
         "name: Load build configuration",
         "build-config.env",
@@ -1870,10 +1915,12 @@ def validate_workflow_text(relative: str, text: str) -> list[str]:
         "FFMPEG_COMMIT",
         "GITHUB_ENV",
     )
+    is_ci = Path(relative).name == "ci.yml"
     for name, block in jobs.items():
+        runner = WINDOWS_RUNNER if is_ci and name == WINDOWS_JOB else "ubuntu-26.04"
         runners = re.findall(r"^\s+runs-on:\s*([^\s#]+)", block, re.MULTILINE)
-        if runners != ["ubuntu-26.04"]:
-            errors.append(f"{relative}: job {name} must run exactly on ubuntu-26.04")
+        if runners != [runner]:
+            errors.append(f"{relative}: job {name} must run exactly on {runner}")
         checkout = block.find("uses: actions/checkout@")
         load = block.find("name: Load build configuration")
         if checkout < 0 or load < checkout:
@@ -1885,7 +1932,12 @@ def validate_workflow_text(relative: str, text: str) -> list[str]:
                 errors.append(
                     f"{relative}: job {name} build-config step is missing {token}"
                 )
+    return errors
 
+
+def validate_apt_shader_tools(relative: str, jobs: dict[str, str]) -> list[str]:
+    """Linux build/test jobs install the distribution glslc and glslang packages."""
+    errors: list[str] = []
     build_jobs = {
         "ci.yml": ("core", "ffmpeg-stack", "sanitizers"),
         "release.yml": ("release",),
@@ -1910,47 +1962,85 @@ def validate_workflow_text(relative: str, text: str) -> list[str]:
                 errors.append(
                     f"{relative}: job {name} must install native package {package}"
                 )
-    if Path(relative).name == "ci.yml":
-        ffmpeg = jobs.get("ffmpeg-stack", "")
-        for token in (
-            "libvulkan-dev",
-            "libvpl-dev",
-            "libaom-dev",
-            "libsvtav1enc-dev",
-            "libffmpeg-nvenc-dev",
-            "refs/tags/${FFMPEG_TAG}^{commit}",
-            '"$FFMPEG_COMMIT"',
-            "ffmpeg-patches/generate.sh",
-            "ffmpeg-patches/test/build-and-run.sh",
-        ):
-            if token not in ffmpeg:
-                errors.append(f"{relative}: FFmpeg job is missing {token}")
-        docs = jobs.get("docs", "")
-        for token in (
-            f"actions/setup-go@{SETUP_GO_COMMIT}",
-            "go-version: '1.26.x'",
-            "github.com/rhysd/actionlint/cmd/actionlint@v1.7.12",
-        ):
-            if token not in docs:
-                errors.append(f"{relative}: docs job is missing {token}")
-    elif Path(relative).name == "release.yml":
-        if "workflow_dispatch:" not in text:
-            errors.append(f"{relative}: release gate needs workflow_dispatch")
-        publish = jobs.get("release", "")
-        guard = (
-            "if: github.event_name == 'push' && "
-            "startsWith(github.ref, 'refs/tags/v')"
+    return errors
+
+
+def validate_ci_jobs(relative: str, jobs: dict[str, str]) -> list[str]:
+    """ci.yml: the FFmpeg-stack, docs-hygiene and Windows job contracts."""
+    errors: list[str] = []
+    ffmpeg = jobs.get("ffmpeg-stack", "")
+    for token in (
+        "libvulkan-dev",
+        "libvpl-dev",
+        "libaom-dev",
+        "libsvtav1enc-dev",
+        "libffmpeg-nvenc-dev",
+        "refs/tags/${FFMPEG_TAG}^{commit}",
+        '"$FFMPEG_COMMIT"',
+        "ffmpeg-patches/generate.sh",
+        "ffmpeg-patches/test/build-and-run.sh",
+    ):
+        if token not in ffmpeg:
+            errors.append(f"{relative}: FFmpeg job is missing {token}")
+    docs = jobs.get("docs", "")
+    for token in (
+        f"actions/setup-go@{SETUP_GO_COMMIT}",
+        "go-version: '1.26.x'",
+        "github.com/rhysd/actionlint/cmd/actionlint@v1.7.12",
+    ):
+        if token not in docs:
+            errors.append(f"{relative}: docs job is missing {token}")
+    errors.extend(validate_windows_job(relative, jobs.get(WINDOWS_JOB)))
+    return errors
+
+
+def validate_release_jobs(relative: str, text: str, jobs: dict[str, str]) -> list[str]:
+    """release.yml: manual dispatch never publishes; artifacts are ref-named."""
+    errors: list[str] = []
+    if "workflow_dispatch:" not in text:
+        errors.append(f"{relative}: release gate needs workflow_dispatch")
+    publish = jobs.get("release", "")
+    tag_push = "startsWith(github.ref, 'refs/tags/v')"
+    guard = f"if: github.event_name == 'push' && {tag_push}"
+    if guard not in publish:
+        errors.append(
+            f"{relative}: publish step must be tag-push-only for manual safety"
         )
-        if guard not in publish:
-            errors.append(
-                f"{relative}: publish step must be tag-push-only for manual safety"
-            )
-        for token in (
-            "GITHUB_REF_NAME//\\//-",
-            "ARTIFACT_LABEL",
-        ):
-            if token not in publish:
-                errors.append(f"{relative}: manual package naming is missing {token}")
+    for token in (
+        "GITHUB_REF_NAME//\\//-",
+        "ARTIFACT_LABEL",
+    ):
+        if token not in publish:
+            errors.append(f"{relative}: manual package naming is missing {token}")
+    return errors
+
+
+def validate_workflow_text(relative: str, text: str) -> list[str]:
+    """Validate the pinned runner, toolchain, and shared FFmpeg workflow contract."""
+    errors: list[str] = []
+    jobs = workflow_job_blocks(text)
+    if not jobs:
+        return [f"{relative}: no jobs found"]
+
+    forbidden = (
+        "ubuntu-latest",
+        "windows-latest",
+        "packages.lunarg.com",
+        "vulkan-sdk",
+        "/home/kilian/",
+    )
+    for token in forbidden:
+        if token in text:
+            errors.append(f"{relative}: forbidden workflow token {token}")
+    if RELEASE_TAG.search(text):
+        errors.append(f"{relative}: contains a copied FFmpeg release tag")
+
+    errors.extend(validate_job_runners(relative, jobs))
+    errors.extend(validate_apt_shader_tools(relative, jobs))
+    if Path(relative).name == "ci.yml":
+        errors.extend(validate_ci_jobs(relative, jobs))
+    elif Path(relative).name == "release.yml":
+        errors.extend(validate_release_jobs(relative, text, jobs))
 
     for token in (
         "ImageOS",
@@ -1978,12 +2068,68 @@ def validate_workflows() -> list[str]:
     return errors
 
 
+def replace_in_job(source: str, job: str, old: str, new: str) -> str:
+    """Mutate the first `old` inside one workflow job block only."""
+    block = workflow_job_blocks(source).get(job, "")
+    if old not in block:
+        return source
+    return source.replace(block, block.replace(old, new, 1), 1)
+
+
+def windows_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Mutations of the ADR-0149 Windows job that the validator must reject."""
+    windows = workflow_job_blocks(source).get(WINDOWS_JOB, "")
+
+    def mutate(old: str, new: str) -> str:
+        return replace_in_job(source, WINDOWS_JOB, old, new)
+
+    return {
+        "floating Windows runner": (
+            mutate(WINDOWS_RUNNER, "windows-latest"),
+            "forbidden workflow token windows-latest",
+        ),
+        "Windows job on another image": (
+            mutate(WINDOWS_RUNNER, "windows-2022"),
+            f"job {WINDOWS_JOB} must run exactly on {WINDOWS_RUNNER}",
+        ),
+        "missing Windows job": (
+            source.replace(windows, "", 1) if windows else source,
+            f"missing Windows job {WINDOWS_JOB}",
+        ),
+        "unpinned setup-msys2": (
+            mutate(f"setup-msys2@{SETUP_MSYS2_COMMIT}", "setup-msys2@v2"),
+            "must pin msys2/setup-msys2 once",
+        ),
+        "non-UCRT64 environment": (
+            mutate("msystem: UCRT64", "msystem: MINGW64"),
+            "must set msystem: UCRT64",
+        ),
+        "missing MSYS2 package": (
+            mutate("mingw-w64-ucrt-x86_64-glslang", "mingw-w64-x86_64-glslang"),
+            "must install MSYS2 package mingw-w64-ucrt-x86_64-glslang",
+        ),
+        "extra MSYS2 package": (
+            mutate("mingw-w64-ucrt-x86_64-gcc", "mingw-w64-ucrt-x86_64-gcc git"),
+            "installs unexpected MSYS2 package git",
+        ),
+        "CRLF checkout": (
+            mutate("core.autocrlf false", "core.autocrlf true"),
+            "must disable core.autocrlf before checkout",
+        ),
+        "Windows fast suite dropped": (
+            mutate("--suite=fast", "--suite=slow"),
+            "is missing meson test -C build --suite=fast --print-errorlogs",
+        ),
+    }
+
+
 def workflow_validator_regressions() -> list[str]:
     """Prove runner and native-toolchain regressions are rejected."""
     failures: list[str] = []
     ci_path = WORKFLOWS[0]
     source = ci_path.read_text(encoding="utf-8")
     cases = {
+        **windows_workflow_cases(source),
         "floating runner": (
             source.replace("ubuntu-26.04", "ubuntu-latest", 1),
             "forbidden workflow token ubuntu-latest",
