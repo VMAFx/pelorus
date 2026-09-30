@@ -11,6 +11,10 @@
 # Shell scripts must stay LF or they will not execute.
 *.sh       text eol=lf
 
+# praetorctl audit checks the dev container bundle's companions against recorded
+# hashes as raw bytes; a CRLF checkout fails it (Praetor issue 313).
+.devcontainer/** text eol=lf
+
 # BEGIN praetor managed attributes (praetorctl adopt)
 # praetorctl audit hashes these files; keep their checkout bytes the same on every platform.
 tools/figures/** text eol=lf

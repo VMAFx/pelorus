@@ -1,14 +1,71 @@
-# Pelorus governance hooks. Installation is explicit: make hooks-install.
+# Lefthook Configuration (HISS Governance)
+# Rendered by praetorctl adopt at the pinned engine, then merged by hand as
+# Praetor docs/guides/git-hooks.md allows (ADR-0153). One change: the pre-push
+# `gate` job is replaced by the Pelorus native and documentation gates, because
+# `praetorctl gate run` mints no receipt without a go.mod or Cargo.lock and so
+# rejects every push from this Meson repository (Praetor issue 648). Every
+# other job is the rendering. Governance commands fail closed: a failing or
+# missing praetorctl blocks the commit or push. Install: make hooks-install.
+---
+agent-checkpoint-tool:
+  commands:
+    checkpoint:
+      run: >-
+        python3 -B .config/lefthook/scripts/checkpoint.py --event tool --json
+        --marker
+agent-checkpoint-stop:
+  commands:
+    checkpoint:
+      run: >-
+        python3 -B .config/lefthook/scripts/checkpoint.py --event stop --json
+        --marker
 pre-commit:
-  parallel: false
+  parallel: true
   commands:
     context-check:
-      run: make compile-context-verify
+      run: >-
+        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
+        standardsctl 2>/dev/null); then "$praetor_cli" compile-context --verify;
+        else echo HISS governance hook cannot run because neither praetorctl nor
+        standardsctl is installed >&2; exit 1; fi
     hiss-audit:
-      run: make audit
+      run: >-
+        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
+        standardsctl 2>/dev/null); then "$praetor_cli" audit; else echo HISS
+        governance hook cannot run because neither praetorctl nor standardsctl
+        is installed >&2; exit 1; fi
+
+post-commit:
+  commands:
+    state-sync:
+      run: >-
+        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
+        standardsctl 2>/dev/null); then "$praetor_cli" state sync .; else echo
+        HISS governance hook cannot run because neither praetorctl nor
+        standardsctl is installed >&2; exit 1; fi
+    dedupe-cadence:
+      run: >-
+        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
+        standardsctl 2>/dev/null); then "$praetor_cli" dedupe cadence
+        --threshold=20 --record .; else echo HISS governance hook cannot run
+        because neither praetorctl nor standardsctl is installed >&2; exit 1; fi
 
 pre-push:
   parallel: false
   commands:
-    verify-all:
-      run: make verify-all
+    flavor-audit:
+      run: >-
+        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
+        standardsctl 2>/dev/null); then "$praetor_cli" flavor audit .; else echo
+        HISS governance hook cannot run because neither praetorctl nor
+        standardsctl is installed >&2; exit 1; fi
+    audit:
+      run: >-
+        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
+        standardsctl 2>/dev/null); then "$praetor_cli" audit; else echo HISS
+        governance hook cannot run because neither praetorctl nor standardsctl
+        is installed >&2; exit 1; fi
+    verify-native:
+      run: make verify-native
+    docs-gate:
+      run: make docs-lint docs-figures
