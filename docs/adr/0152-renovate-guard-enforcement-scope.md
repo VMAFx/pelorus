@@ -43,15 +43,18 @@ The checker does not evaluate other `renovate.json` settings (`ignorePaths`,
 `includePaths`, `enabledManagers`, top-level manager blocks, `packageRules`,
 `extends` presets). If one of them splits or drops the update, the Renovate PR
 that touches only one site fails `build-config-sync`. That red PR is the
-accepted detection point. ADR-0151's sentences that claim more are superseded
-by this ADR.
+accepted detection point. This ADR supersedes the ADR-0151 sentences that claim
+more: the Decision paragraph on what `--self-test` confirms, the "a config
+drift fails the fast suite" pro in its Alternatives table, and the first
+Positive consequence ("A Renovate config that would split the update fails
+locally").
 
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
 | --- | --- | --- | --- |
 | Validate the mirroring manager only; a split shows up as a red Renovate PR | Small checker; no copy of Renovate internals to keep current | A bad `renovate.json` edit is caught on the next bump, not when it is made | **Chosen** |
-| Reproduce Renovate's path, manager and `packageRules` matching in the checker (PR #64) | Catches the config drift when it is made | ~500 lines tracking Renovate's source; still cannot expand `extends` presets; the failure it prevents is already loud | Upkeep outweighs a loud, rare failure |
+| Reproduce Renovate's path, manager and `packageRules` matching in the checker (PR #64) | Catches the config drift when it is made | +555 lines tracking Renovate's source; still cannot expand `extends` presets; the failure it prevents is already loud | Upkeep outweighs a loud, rare failure |
 | Reject any `renovate.json` key outside an allow-list | Simple to state | Blocks legitimate Renovate tuning unrelated to Go; brittle | Too coarse |
 | Run Renovate itself in CI in dry-run mode | Uses the real matcher | Lookup needs a GitHub token; slow; network-dependent | Not hermetic enough for the fast suite |
 
