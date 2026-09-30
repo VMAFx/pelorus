@@ -45,6 +45,12 @@ meson test -C build path-utf8 --verbose   # the UTF-8 path contract transcript
 From PowerShell, set `$env:MSYSTEM='UCRT64'` and `$env:CHERE_INVOKING='1'`, then
 run `C:\msys64\usr\bin\bash.exe -lc '<commands>'`.
 
+CI installs with `update: false`: the packages come from the sync database
+bundled in the MSYS2 base archive of the pinned `setup-msys2` release, not
+from a fresh `pacman -Sy`. A local MSYS2 that is kept up to date can therefore
+run newer packages than CI. The job's receipt step prints `pacman -Q` for the
+six packages, so the two can be compared.
+
 Windows-specific behavior of the suite:
 
 - **`path-utf8`** asserts the Windows half of the UTF-8 path contract. It
@@ -110,6 +116,13 @@ either would leave a copied value behind:
   once; a Renovate config that would split or drop the bump fails the fast
   suite. The step name carries no version for the same reason
   ([ADR-0151](../adr/0151-renovate-mirrors-checker-toolchain-pins.md)).
+
+The Windows job's `msys2/setup-msys2` action is bumped by Renovate's
+github-actions manager like every other action (digest plus `# vX.Y.Z`
+comment). The checker holds no copy of that pin. It checks only its shape:
+exactly one `uses: msys2/setup-msys2@<40-hex digest> # vX.Y.Z` line, before
+the first MSYS2 step. So such a bump changes `ci.yml` alone and stays green
+([ADR-0149](../adr/0149-windows-utf8-paths.md)).
 
 The checker decides which managers cover a file the way Renovate does, through
 `managerFilePatterns` (see

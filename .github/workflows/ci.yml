@@ -199,6 +199,7 @@ jobs:
           echo "ImageVersion=${ImageVersion:-unset}"
           echo "MSYSTEM=${MSYSTEM}"
           uname -a
+          pacman -Q mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-meson mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-glslang mingw-w64-ucrt-x86_64-shaderc
           gcc --version
           meson --version
           python3 --version

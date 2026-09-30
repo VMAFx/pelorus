@@ -97,6 +97,17 @@ Python 3.14.7, glslang 16.3.0, shaderc 2026.3) produced:
 - `msys2/setup-msys2` latest release is v2.33.0 (2026-09-27), tag →
   `ec48f7c5447b3140e2b088413ae3a55687bccb6e`. It deprecates MINGW32/MINGW64,
   which UCRT64 avoids.
+- In the bundled `index.js` at that commit, `pacman -Syuu` runs only when
+  `update` is set. The install step is
+  `pacman -S --needed --overwrite * <packages>`, and the base archive it
+  downloads is `msys2-base-x86_64-20260927.sfx.exe`. With `update: false`, the
+  package set is whatever that archive's sync database names, and it changes
+  only with the action pin.
+- Renovate's github-actions manager rewrites a
+  `uses: owner/repo@<digest> # vX.Y.Z` line in the workflow only. A checker
+  that copied the digest would turn every such bump red (the failure ADR-0151
+  describes for Go). The checker therefore validates the pin's shape and holds
+  no copy.
 - `windows-2025` is a pinned image label (also `windows-2025-vs2026`), while
   `windows-latest` floats and is rejected by `check-build-config.py`.
 - Git for Windows on hosted Windows images converts text to CRLF on checkout

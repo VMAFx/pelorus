@@ -74,15 +74,28 @@ policy for this one job:
 - `runs-on: windows-2025` (pinned image, never `windows-latest`).
 - `msys2/setup-msys2` pinned by commit (v2.33.0) with `msystem: UCRT64`,
   `update: false`, and exactly six packages: gcc, meson, ninja, python,
-  glslang, and shaderc.
+  glslang, and shaderc. `update: false` skips `pacman -Syuu`, so the packages
+  come from the sync database inside the MSYS2 base archive that the pinned
+  action release downloads (2026-09-27 for v2.33.0). The package set therefore
+  changes only when the action pin changes. The cost is that a mirror might
+  drop a file that database still names; the job would then fail at install
+  and a newer action pin fixes it. The receipt step prints `pacman -Q` for the
+  six packages.
 - Checkout with `core.autocrlf false`, so the job builds the same bytes the
   Linux jobs build.
 - `meson setup build && ninja -C build`, then
   `meson test -C build --suite=fast --print-errorlogs`, then a verbose replay of
   the `path-utf8` test as a readable transcript.
 
-`scripts/check-build-config.py` validates all of this. Its `--self-test` rejects
-nine mutations of the job.
+`scripts/check-build-config.py` validates all of this. For the `setup-msys2`
+pin it checks the shape, not a copied value: exactly one
+`uses: msys2/setup-msys2@<40-hex digest> # vX.Y.Z` line, placed before the
+first MSYS2 step. That is the "read the value from its source" option of
+[ADR-0151](0151-renovate-mirrors-checker-toolchain-pins.md), so a Renovate
+digest bump edits `ci.yml` alone and `build-config-sync` stays green. Its
+`--self-test` rejects eleven mutations of the job (including a floating tag, an
+abbreviated digest, and a pin without its release comment) and accepts a
+Renovate-style digest bump.
 
 The fast suite becomes portable in two places:
 
@@ -111,19 +124,24 @@ POSIX.
 | Skip the Windows CI job; test only locally | No runner cost | The Windows-gated assertions would never run in CI | Rejected: the user decided to run the Windows-gated test in CI |
 | Windows job on MSVC / `windows-latest` | Native toolchain | No glslang/meson parity; a floating image breaks reproducibility (ADR-0144) | Rejected: MSYS2 UCRT64 matches the supported MinGW toolchain on a pinned image |
 | Port the `--self-test` Git fixtures to Windows now | Full self-test everywhere | PR #58 rewrites exactly those fixtures; porting now guarantees conflicts | Deferred: follow-up after #58 lands |
+| Checker copies the `setup-msys2` digest and version, with an ADR-0151 mirroring regex manager | The checker pins the exact commit independently | A second Renovate manager must reproduce the github-actions manager's identity for a digest-plus-comment pin (datasource, versioning, `currentDigest`), and the checker must validate it; any mismatch splits the bump into two PRs, one of them red | Rejected: the security property is "pinned by full digest with its release comment", which a shape check enforces without a second update site (ADR-0151's read-from-source option) |
 
 ## Consequences
 
 - **Positive**: non-ASCII report paths work on Windows regardless of the code
   page; ill-formed UTF-8 can no longer open an unrelated file; POSIX behavior is
-  byte-for-byte unchanged; the fast suite runs natively on Windows in CI, which
-  also caught and fixed the `/dev/null` shader-discard defect.
+  byte-for-byte unchanged; the fast suite runs natively on Windows in CI. The
+  native Windows run on the office box exposed the `/dev/null` shader-discard
+  defect, which this change fixes, and the CI job now guards it.
 - **Negative**: on Windows, `pel_x265_csv_parse` performs one bounded (≤ 64 KiB)
   allocation and can return `PEL_ERR_NOMEM`. The Windows branch is invisible
   to the Linux clang-tidy and sanitizer jobs; it is covered by the MinGW
   `-Werror` build and the Windows `path-utf8` test only. The Windows job adds
-  hosted-runner time. A `setup-msys2` digest bump from Renovate must also update
-  `SETUP_MSYS2_COMMIT` in `scripts/check-build-config.py`, as with `setup-go`.
+  hosted-runner time. Because the checker validates only the `setup-msys2` pin's
+  shape, it no longer catches a hand edit to a different, well-formed digest;
+  review of the `ci.yml` diff and Renovate's own provenance cover that.
+  `SETUP_GO_COMMIT` is still a copied digest (master's, outside this change) and
+  keeps the manual-bump tripwire until it gets the same treatment.
 - **Neutral / follow-ups**: VMAFx should re-sync its mirrored
   `pelorus_qp_report_csv.c`, `interop.h`, and `pelorus.h`. `path_utf8_test.c` is
   Pelorus-only unless VMAFx adds it to its mirror list. Making the
@@ -135,7 +153,8 @@ POSIX.
 - Issue #61 (this defect and its acceptance evidence); Netflix/vmaf#1568; VMAFx
   `docs/state.md` row `T-UPSTREAM-1568-WINDOWS-NARROW-PATH-API-2026-09-03`.
 - [ADR-0122](0122-qp-feedback-csv-reader.md) (the reader), [ADR-0103](0103-interop-sidedata-abi.md) (ABI rules),
-  [ADR-0144](0144-ffmpeg-pin-and-ci-runner-policy.md) (runner policy this ADR amends for one job).
+  [ADR-0144](0144-ffmpeg-pin-and-ci-runner-policy.md) (runner policy this ADR amends for one job),
+  [ADR-0151](0151-renovate-mirrors-checker-toolchain-pins.md) (copied CI pins: mirror them or read them from source).
 - Microsoft Learn: `MultiByteToWideChar` (`MB_ERR_INVALID_CHARS`,
   `ERROR_NO_UNICODE_TRANSLATION`); `_wfopen`; "Maximum Path Length Limitation";
   "Use UTF-8 code pages in Windows apps" (`activeCodePage`); UCRT `setlocale`

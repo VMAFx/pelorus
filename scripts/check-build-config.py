@@ -37,12 +37,15 @@ WORKFLOWS = (
     ROOT / ".github" / "workflows" / "ci.yml",
     ROOT / ".github" / "workflows" / "release.yml",
 )
-# ADR-0149: the native Windows fast-suite leg of ci.yml. The action is pinned by
-# commit like every other action; a digest bump updates this constant too.
+# ADR-0149: the native Windows fast-suite leg of ci.yml. setup-msys2 is pinned by
+# full commit digest with the release comment Renovate maintains. Per ADR-0151
+# the checker reads that pin from ci.yml instead of copying it: it validates the
+# shape, so a Renovate digest bump changes ci.yml alone and stays green.
 WINDOWS_JOB = "windows"
 WINDOWS_RUNNER = "windows-2025"
-SETUP_MSYS2_COMMIT = "ec48f7c5447b3140e2b088413ae3a55687bccb6e"
-SETUP_MSYS2_VERSION = "v2.33.0"
+SETUP_MSYS2_PIN = re.compile(
+    r"^[ ]+(?:- )?uses: msys2/setup-msys2@[0-9a-f]{40} # v\d+\.\d+\.\d+$", re.MULTILINE
+)
 WINDOWS_PACKAGES = tuple(
     f"mingw-w64-ucrt-x86_64-{name}"
     for name in ("gcc", "meson", "ninja", "python", "glslang", "shaderc")
@@ -1897,11 +1900,13 @@ def validate_windows_job(relative: str, block: str | None) -> list[str]:
     checkout = block.find("uses: actions/checkout@")
     if autocrlf < 0 or autocrlf > checkout:
         errors.append(f"{prefix} must disable core.autocrlf before checkout")
-    pin = f"uses: msys2/setup-msys2@{SETUP_MSYS2_COMMIT} # {SETUP_MSYS2_VERSION}"
-    setup = block.find(pin)
-    if block.count("msys2/setup-msys2@") != 1 or setup < 0:
-        errors.append(f"{prefix} must pin msys2/setup-msys2 once as `{pin}`")
-    elif setup > block.find("name: Load build configuration"):
+    pin = SETUP_MSYS2_PIN.search(block)
+    if block.count("msys2/setup-msys2@") != 1 or pin is None:
+        errors.append(
+            f"{prefix} must pin msys2/setup-msys2 once by full commit digest "
+            "with its `# vX.Y.Z` release comment"
+        )
+    elif pin.start() > block.find("name: Load build configuration"):
         errors.append(f"{prefix} must install MSYS2 before its first msys2 step")
     for token in ("shell: msys2 {0}", "msystem: UCRT64", "update: false"):
         if token not in block:
@@ -1914,6 +1919,7 @@ def validate_windows_job(relative: str, block: str | None) -> list[str]:
     for token in WINDOWS_COMMANDS + (
         "ImageOS",
         "ImageVersion",
+        "pacman -Q " + " ".join(WINDOWS_PACKAGES),
         "gcc --version",
         "glslc --version",
         "glslangValidator --version",
@@ -2123,7 +2129,15 @@ def windows_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
             f"missing Windows job {WINDOWS_JOB}",
         ),
         "unpinned setup-msys2": (
-            mutate(f"setup-msys2@{SETUP_MSYS2_COMMIT}", "setup-msys2@v2"),
+            re.sub(r"setup-msys2@[0-9a-f]{40}", "setup-msys2@v2", source, count=1),
+            "must pin msys2/setup-msys2 once",
+        ),
+        "abbreviated setup-msys2 digest": (
+            re.sub(r"(setup-msys2@[0-9a-f]{12})[0-9a-f]{28}", r"\1", source, count=1),
+            "must pin msys2/setup-msys2 once",
+        ),
+        "setup-msys2 without release comment": (
+            re.sub(r"(setup-msys2@[0-9a-f]{40}) # v\S+", r"\1", source, count=1),
             "must pin msys2/setup-msys2 once",
         ),
         "non-UCRT64 environment": (
@@ -2147,6 +2161,22 @@ def windows_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
             "is missing meson test -C build --suite=fast --print-errorlogs",
         ),
     }
+
+
+def windows_pin_bump_regression(source: str, relative: str) -> list[str]:
+    """A Renovate-style setup-msys2 bump edits ci.yml alone and must stay valid."""
+    bumped = re.sub(
+        r"setup-msys2@[0-9a-f]{40} # v\S+",
+        "setup-msys2@" + "0123456789abcdef" * 2 + "01234567 # v99.0.0",
+        source,
+        count=1,
+    )
+    if bumped == source:
+        return ["workflow regression: setup-msys2 bump mutation changed nothing"]
+    errors = validate_workflow_text(relative, bumped)
+    if validate_workflow_text(relative, source) != errors:
+        return [f"workflow regression: setup-msys2 bump was rejected: {errors}"]
+    return []
 
 
 def workflow_validator_regressions() -> list[str]:
@@ -2194,6 +2224,7 @@ def workflow_validator_regressions() -> list[str]:
         ),
     }
     relative = ci_path.relative_to(ROOT).as_posix()
+    failures.extend(windows_pin_bump_regression(source, relative))
     for name, (mutated, expected) in cases.items():
         if mutated == source:
             failures.append(f"workflow regression: {name} mutation changed nothing")
