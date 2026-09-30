@@ -389,14 +389,22 @@ static void test_ill_formed_utf8(const char *base_u8, const pchar *base_p)
     };
     pchar alias_p[PATH_CAP];
     char path_u8[PATH_CAP];
+    int fits;
     size_t i;
 
     for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
-        CHECK(join_u8(path_u8, PATH_CAP, base_u8, bad[i].name) == 0);
-        expect_rc(bad[i].why, path_u8, PEL_ERR_INVALID, EILSEQ);
+        fits = join_u8(path_u8, PATH_CAP, base_u8, bad[i].name) == 0;
+        CHECK(fits);
+        if (fits) { /* never hand expect_rc a buffer the join left unset */
+            expect_rc(bad[i].why, path_u8, PEL_ERR_INVALID, EILSEQ);
+        }
     }
-    CHECK(join_p(alias_p, PATH_CAP, base_p, L'/', L"alias_\u00ff.csv") == 0);
-    CHECK(join_u8(path_u8, PATH_CAP, base_u8, "alias_\xff.csv") == 0);
+    fits = join_p(alias_p, PATH_CAP, base_p, L'/', L"alias_\u00ff.csv") == 0 &&
+           join_u8(path_u8, PATH_CAP, base_u8, "alias_\xff.csv") == 0;
+    CHECK(fits);
+    if (!fits) {
+        return;
+    }
     CHECK(write_fixture(alias_p) == 0);
     expect_rc("ill-formed name whose ANSI reading exists", path_u8, PEL_ERR_INVALID, EILSEQ);
     CHECK(remove_file(alias_p) == 0);
@@ -457,8 +465,12 @@ static void test_raw_byte_name(const char *base_u8)
 {
     char path[PATH_CAP];
     PelorusX265Frame frames[FRAMES_CAP];
+    const int fits = join_u8(path, PATH_CAP, base_u8, "raw_\xff\xfe.csv") == 0;
 
-    CHECK(join_u8(path, PATH_CAP, base_u8, "raw_\xff\xfe.csv") == 0);
+    CHECK(fits);
+    if (!fits) {
+        return;
+    }
     expect_rc("missing non-UTF-8 byte name", path, PEL_ERR_ABSENT, 0);
     if (write_fixture(path) != 0) {
         (void)printf("skip: this filesystem rejects non-UTF-8 byte names\n");
@@ -469,20 +481,36 @@ static void test_raw_byte_name(const char *base_u8)
 }
 #endif
 
+/* Directory names make_base tries before giving up (PID reuse after a crash). */
+#define BASE_ATTEMPTS 16u
+
 /* Private, exclusively created per-process directory in the working directory.
- * cap_u8 counts bytes, cap_p platform characters; the name must fit both. */
+ * A leftover from a crashed run with the same PID is skipped via a bounded
+ * suffix, never reused. cap_u8 counts bytes, cap_p platform characters; the
+ * name must fit both. */
 static int make_base(char *base_u8, size_t cap_u8, pchar *base_p, size_t cap_p)
 {
-    const int n = snprintf(base_u8, cap_u8, "pelorus_path_utf8_%ld", process_id());
-    size_t i;
+    unsigned attempt;
 
-    if (n < 0 || (size_t)n >= cap_u8 || (size_t)n >= cap_p) {
-        return -1;
+    for (attempt = 0; attempt < BASE_ATTEMPTS; attempt++) {
+        const int n = snprintf(base_u8, cap_u8, "pelorus_path_utf8_%ld_%u", process_id(), attempt);
+        size_t i;
+
+        if (n < 0 || (size_t)n >= cap_u8 || (size_t)n >= cap_p) {
+            return -1;
+        }
+        for (i = 0; i <= (size_t)n; i++) {
+            base_p[i] = (pchar)base_u8[i]; /* ASCII: widening is exact */
+        }
+        errno = 0;
+        if (make_dir(base_p) == 0) {
+            return 0;
+        }
+        if (errno != EEXIST) {
+            return -1;
+        }
     }
-    for (i = 0; i <= (size_t)n; i++) {
-        base_p[i] = (pchar)base_u8[i]; /* ASCII: widening is exact */
-    }
-    return make_dir(base_p);
+    return -1;
 }
 
 int main(void)
