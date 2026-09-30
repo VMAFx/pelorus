@@ -5,8 +5,10 @@ Evidence for
 [ADR-0145](../adr/0145-praetor-governance-adoption.md). The current
 measurements use Praetor commit `25451d888c8710822dd578907625dc69a0975142` on
 the merged tree: `origin/master` `f03badd` (the squashed n9.0.2 integration
-stack) plus this branch. They were taken on 2026-09-30. The first adoption at
-`846da5908d15b3cf5581ca6b0205cc644b249599` is kept below as history.
+stack) plus this branch. They were taken on 2026-09-30. The merge of
+`origin/master` `eb3b045`, the agent-hook adoption, and the last verification
+below ran later that day on the tree with `eb3b045` merged. The first adoption
+at `846da5908d15b3cf5581ca6b0205cc644b249599` is kept below as history.
 
 ## Declared policy
 
@@ -344,6 +346,18 @@ and `generate.sh` still reproduced the committed patches byte for byte. The
 hosted ratchet row above is from that head; the earlier heads ran the plain
 `CI=true standardsctl audit`. The documentation gate passed again in
 `node:24`.
+
+The agent-hook head `43dd07b` (with `eb3b045` merged) repeated every row in
+the same container, with the sanitizer runtime installed first. The results
+matched except for the counts: the fast suite and the ASan/UBSan suite passed
+27 of 27, `make verify-native` and every `check-build-config.py` mode exited
+0, and the hosted ratchet pair passed with 76 of 76 and 180 touched files
+clean. The local `audit` again failed only on the pre-commit hook check. The
+pinned n9.0.2 tag still peels to `946fcce0`, and `generate.sh` reproduced the
+committed patches byte for byte. The stack replay was not repeated: no patch,
+`libpelorus`, or build input changed. A plain `adopt` on that head changed no
+file and reported all three pre-tool rows as already registered. The
+documentation gate passed in `node:24`.
 
 ## First adoption at 846da590 (2026-09-20/21, history)
 
