@@ -216,10 +216,16 @@ warning plus pass-through:
   The map image is created with that entry's tiling.
 - **Delta range.** Each delta-map value is clamped to the driver's per-codec
   range (`minQpDelta`/`maxQpDelta` for H.264/H.265, `minQIndexDelta`/
-  `maxQIndexDelta` for AV1) as well as to the `qoffset` QP span; a value outside
+  `maxQIndexDelta` for AV1) as well as to the `qoffset` span; a value outside
   the driver range would leave the block QP undefined. When the range excludes
   negative values the probe warns that regions asking for a *lower* QP get no
   extra bits.
+
+The `qoffset` span is per codec: `51 + 6 × (bit_depth − 8)` QP steps for H.264
+and H.265, and 255 qindex steps for AV1 (the NVENC, libaom and SVT-AV1 scale; the
+H.26x span would give an AV1 region a fifth of the requested delta). `-v debug`
+prints each applied rectangle (`pelorus_roi: texels (0,0)-(10,12) qoffset 0.200 ->
+delta 51 (span 255, clamp [0, 127])`).
 
 `-v verbose` prints the chosen map (`Pelorus QP-map steering enabled: delta(R8_SINT)
 map, 60x34 texels (32x32 px/texel, linear tiling), dQP [0, 51]`) and `-v debug`
