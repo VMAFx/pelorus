@@ -103,6 +103,13 @@ All notable changes to Pelorus are documented here. The format is
   reference (BUG-025). New fast test `shader-plane-bounds`.
 - Hardened the repository scripts: `scripts/bench/fetch-corpus.sh` now downloads with `--fail`, a bounded deadline and a bounded retry into a temporary file that is checksum-verified before it replaces the cache (BUG-022); `ffmpeg-patches/generate.sh` requires exactly one `format-patch` output per series index instead of swallowing a failed rename (BUG-023); the remaining `|| true` sites in the replay, matrix, changelog and agent-hook scripts use explicit status handling; the FFmpeg replay scripts ignore global and system Git configuration and `GIT_COMMITTER_*`, with a checker that anchors the canonical `git am` command to a non-comment line; and the interop fixture checks owner-only access on the open descriptor, reports distinct failure causes and loops over short writes (Closes #65).
 - The build-config self-test (`scripts/check-build-config.py --self-test`) now drops the repository-locating Git variables (`git rev-parse --local-env-vars`) before its fixtures run. Started from a Git hook, it had inherited `GIT_DIR` and rewritten the invoking repository's `.git/config` (`core.bare`, `core.hooksPath`, `gpg.program`, `user.*`), branch refs and worktree list; `scripts/test-selftest-git-isolation.py` proves an invoking repository stays untouched.
+- Fixed the `deblock` and `aa` Vulkan filters to write every plane on formats
+  whose full-size plane follows a subsampled one (BUG-028). The `deblock`
+  plane loop and the `aa` fast=0 loop ended the invocation at the first plane
+  whose size excluded the position, so on `yuva420p` the alpha plane outside
+  the chroma extent was never written. Each plane is now bounds-checked on its
+  own with `continue`. The `aa` fast=1 path already guarded per plane, so its
+  workgroup barriers stay uniform. Luma and chroma output is unchanged.
 
 ### Security
 

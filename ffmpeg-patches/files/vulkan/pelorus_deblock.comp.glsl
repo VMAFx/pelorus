@@ -108,15 +108,13 @@ void main()
 {
     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
 
-    /* Preserves the pre-FFmpeg-9 unrolled semantics exactly: the C generator
-     * emitted `size = imageSize(output_images[i]); if (!IS_WITHIN(pos, size))
-     * return;` per plane, so the first plane that does not contain `pos` ends
-     * the invocation. Subsampled chroma is therefore skipped for positions only
-     * valid in luma, by design. */
+    /* Each plane is bounds-checked on its own: a plane whose size excludes
+     * `pos` (subsampled chroma) is skipped with `continue`, so a later
+     * full-size plane (yuva420p alpha) is still written. */
     for (uint i = 0; i < planes; i++) {
         const ivec2 size = imageSize(output_images[i]);
         if (!all(lessThan(pos, size)))
-            return;
+            continue;
 
         if ((plane_mask & (1u << i)) != 0u) {
             vec4 texel = imageLoad(input_images[i], pos);
