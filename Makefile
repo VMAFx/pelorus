@@ -39,8 +39,14 @@ compile-context:
 compile-context-verify:
 	$(PRAETORCTL) compile-context --verify
 
+# Same ratchet as the hosted Standards gate (ADR-0145): touched files keep their
+# baselined findings but may not gain one; the baseline may not grow against
+# AUDIT_BASE unless the increase carries a recorded reason.
+AUDIT_BASE ?= origin/master
+AUDIT_DEBT_REASON ?= ADR-0145 baseline ratchet; touched files keep baselined debt but may not add findings; zero-debt mode deferred
+
 audit:
-	$(PRAETORCTL) audit
+	$(PRAETORCTL) audit --base "$(AUDIT_BASE)" --touched-debt-delta-reason "$(AUDIT_DEBT_REASON)"
 
 # Explicit opt-in only. Adoption and CI never install or replace shared hooks.
 hooks-install:
