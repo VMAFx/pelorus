@@ -1,9 +1,9 @@
 {
   "version": 1,
-  "generated_at": "2026-10-03T14:51:31Z",
+  "generated_at": "2026-10-03T20:46:14Z",
   "repository": "VMAFx/pelorus",
-  "commit_sha": "ca74da00d4a8f536e477a8a707f4c42c7a82b0f5",
-  "total_infractions": 61,
+  "commit_sha": "101cbb7f539dbabdcd70833d6515dff43d7f0556",
+  "total_infractions": 56,
   "infractions": [
     {
       "rule_id": "HISS-01",
@@ -41,7 +41,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c",
-      "line_number": 125,
+      "line_number": 126,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:init_filter",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c:HISS-01:fn:init_filter#1"
@@ -49,7 +49,7 @@
     {
       "rule_id": "HISS-04",
       "file_path": "ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c",
-      "line_number": 114,
+      "line_number": 115,
       "symbol": "init_filter",
       "message": "Function 'init_filter' (63 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:init_filter",
@@ -58,7 +58,7 @@
     {
       "rule_id": "HISS-04",
       "file_path": "ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c",
-      "line_number": 289,
+      "line_number": 290,
       "symbol": "coalesce_roi",
       "message": "Function 'coalesce_roi' (88 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:coalesce_roi",
@@ -67,7 +67,7 @@
     {
       "rule_id": "HISS-04",
       "file_path": "ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c",
-      "line_number": 383,
+      "line_number": 384,
       "symbol": "attach_roi",
       "message": "Function 'attach_roi' (84 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:attach_roi",
@@ -76,19 +76,11 @@
     {
       "rule_id": "HISS-04",
       "file_path": "ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c",
-      "line_number": 483,
+      "line_number": 484,
       "symbol": "attach_stats",
-      "message": "Function 'attach_stats' (119 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
+      "message": "Function 'attach_stats' (123 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:attach_stats",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c:HISS-04:fn:attach_stats#1"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c",
-      "line_number": 749,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:analyze_vulkan_filter_frame",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c:HISS-01:fn:analyze_vulkan_filter_frame#1"
     },
     {
       "rule_id": "HISS-01",
@@ -96,12 +88,20 @@
       "line_number": 754,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:analyze_vulkan_filter_frame",
+      "fingerprint": "ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c:HISS-01:fn:analyze_vulkan_filter_frame#1"
+    },
+    {
+      "rule_id": "HISS-01",
+      "file_path": "ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c",
+      "line_number": 759,
+      "message": "Legacy non-DAG control flow jump (goto)",
+      "anchor": "fn:analyze_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c:HISS-01:fn:analyze_vulkan_filter_frame#2"
     },
     {
       "rule_id": "HISS-04",
       "file_path": "ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c",
-      "line_number": 604,
+      "line_number": 609,
       "symbol": "analyze_vulkan_filter_frame",
       "message": "Function 'analyze_vulkan_filter_frame' (163 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:analyze_vulkan_filter_frame",
@@ -217,7 +217,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c",
-      "line_number": 94,
+      "line_number": 96,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:init_filter",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c:HISS-01:fn:init_filter#1"
@@ -225,7 +225,7 @@
     {
       "rule_id": "HISS-04",
       "file_path": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c",
-      "line_number": 78,
+      "line_number": 80,
       "symbol": "init_filter",
       "message": "Function 'init_filter' (72 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:init_filter",
@@ -234,7 +234,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c",
-      "line_number": 162,
+      "line_number": 164,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:pelorus_dehalo_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c:HISS-01:fn:pelorus_dehalo_vulkan_filter_frame#1"
@@ -242,7 +242,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c",
-      "line_number": 173,
+      "line_number": 175,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:pelorus_dehalo_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c:HISS-01:fn:pelorus_dehalo_vulkan_filter_frame#2"
@@ -250,7 +250,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c",
-      "line_number": 226,
+      "line_number": 244,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:init_filter",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c:HISS-01:fn:init_filter#1"
@@ -258,34 +258,34 @@
     {
       "rule_id": "HISS-04",
       "file_path": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c",
-      "line_number": 171,
+      "line_number": 189,
       "symbol": "init_filter",
-      "message": "Function 'init_filter' (188 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
+      "message": "Function 'init_filter' (187 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:init_filter",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c:HISS-04:fn:init_filter#1"
     },
     {
       "rule_id": "HISS-04",
       "file_path": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c",
-      "line_number": 369,
+      "line_number": 400,
       "symbol": "attach_interop",
-      "message": "Function 'attach_interop' (71 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
+      "message": "Function 'attach_interop' (70 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:attach_interop",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c:HISS-04:fn:attach_interop#1"
     },
     {
       "rule_id": "HISS-04",
       "file_path": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c",
-      "line_number": 452,
+      "line_number": 482,
       "symbol": "denoise_dispatch",
-      "message": "Function 'denoise_dispatch' (299 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
+      "message": "Function 'denoise_dispatch' (316 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:denoise_dispatch",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c:HISS-04:fn:denoise_dispatch#1"
     },
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c",
-      "line_number": 774,
+      "line_number": 821,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:denoise_process_one",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c:HISS-01:fn:denoise_process_one#1"
@@ -293,7 +293,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c",
-      "line_number": 790,
+      "line_number": 837,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:denoise_process_one",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c:HISS-01:fn:denoise_process_one#2"
@@ -301,7 +301,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c",
-      "line_number": 795,
+      "line_number": 842,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:denoise_process_one",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c:HISS-01:fn:denoise_process_one#3"
@@ -309,7 +309,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c",
-      "line_number": 804,
+      "line_number": 851,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:denoise_process_one",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c:HISS-01:fn:denoise_process_one#4"
@@ -317,7 +317,7 @@
     {
       "rule_id": "HISS-04",
       "file_path": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c",
-      "line_number": 759,
+      "line_number": 806,
       "symbol": "denoise_process_one",
       "message": "Function 'denoise_process_one' (70 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:denoise_process_one",
@@ -325,41 +325,8 @@
     },
     {
       "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c",
-      "line_number": 129,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:init_filter",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c:HISS-01:fn:init_filter#1"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c",
-      "line_number": 526,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:grain_estimate_vulkan_filter_frame",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c:HISS-01:fn:grain_estimate_vulkan_filter_frame#1"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c",
-      "line_number": 531,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:grain_estimate_vulkan_filter_frame",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c:HISS-01:fn:grain_estimate_vulkan_filter_frame#2"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c",
-      "line_number": 375,
-      "symbol": "grain_estimate_vulkan_filter_frame",
-      "message": "Function 'grain_estimate_vulkan_filter_frame' (169 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "anchor": "fn:grain_estimate_vulkan_filter_frame",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c:HISS-04:fn:grain_estimate_vulkan_filter_frame#1"
-    },
-    {
-      "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c",
-      "line_number": 148,
+      "line_number": 167,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:init_filter",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c:HISS-01:fn:init_filter#1"
@@ -367,25 +334,25 @@
     {
       "rule_id": "HISS-04",
       "file_path": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c",
-      "line_number": 138,
+      "line_number": 157,
       "symbol": "init_filter",
-      "message": "Function 'init_filter' (102 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
+      "message": "Function 'init_filter' (105 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:init_filter",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c:HISS-04:fn:init_filter#1"
     },
     {
       "rule_id": "HISS-04",
       "file_path": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c",
-      "line_number": 252,
+      "line_number": 274,
       "symbol": "attach_motion",
-      "message": "Function 'attach_motion' (208 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
+      "message": "Function 'attach_motion' (185 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:attach_motion",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c:HISS-04:fn:attach_motion#1"
     },
     {
       "rule_id": "HISS-04",
       "file_path": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c",
-      "line_number": 468,
+      "line_number": 467,
       "symbol": "mc_dispatch",
       "message": "Function 'mc_dispatch' (171 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:mc_dispatch",
@@ -394,7 +361,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c",
-      "line_number": 703,
+      "line_number": 735,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:mc_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c:HISS-01:fn:mc_vulkan_filter_frame#1"
@@ -402,7 +369,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c",
-      "line_number": 741,
+      "line_number": 761,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:mc_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c:HISS-01:fn:mc_vulkan_filter_frame#2"
@@ -410,16 +377,16 @@
     {
       "rule_id": "HISS-04",
       "file_path": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c",
-      "line_number": 641,
+      "line_number": 667,
       "symbol": "mc_vulkan_filter_frame",
-      "message": "Function 'mc_vulkan_filter_frame' (117 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
+      "message": "Function 'mc_vulkan_filter_frame' (111 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:mc_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c:HISS-04:fn:mc_vulkan_filter_frame#1"
     },
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/test/qsv-roi-regression.c",
-      "line_number": 25,
+      "line_number": 27,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "text:2f19686cfc27",
       "fingerprint": "ffmpeg-patches/test/qsv-roi-regression.c:HISS-01:text:2f19686cfc27#1"
@@ -427,9 +394,9 @@
     {
       "rule_id": "HISS-04",
       "file_path": "ffmpeg-patches/test/qsv-roi-regression.c",
-      "line_number": 76,
+      "line_number": 94,
       "symbol": "main",
-      "message": "Function 'main' (215 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
+      "message": "Function 'main' (233 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:main",
       "fingerprint": "ffmpeg-patches/test/qsv-roi-regression.c:HISS-04:fn:main#1"
     },
@@ -510,15 +477,6 @@
       "message": "Function 'check' (257 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:check",
       "fingerprint": "scripts/check-vulkan-storage-domain.py:HISS-04:fn:check#1"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "scripts/test-grain-accumulator-bounds.py",
-      "line_number": 29,
-      "symbol": "main",
-      "message": "Function 'main' (101 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "anchor": "fn:main",
-      "fingerprint": "scripts/test-grain-accumulator-bounds.py:HISS-04:fn:main#1"
     }
   ]
 }
