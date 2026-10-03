@@ -3,7 +3,10 @@
 # Exit 2 blocks the call and shows the message to the model. Quiet otherwise.
 set -euo pipefail
 
-cmd="$(python3 -c 'import sys,json; print(json.load(sys.stdin).get("tool_input",{}).get("command",""))' 2>/dev/null || true)"
+# Fail-open by design: an unparsable payload leaves cmd empty and the hook exits 0.
+if ! cmd="$(python3 -c 'import sys,json; print(json.load(sys.stdin).get("tool_input",{}).get("command",""))' 2>/dev/null)"; then
+    cmd=""
+fi
 [ -z "$cmd" ] && exit 0
 
 block() { echo "BLOCKED by .codex/hooks/block-unsafe-bash.sh: $1" >&2; exit 2; }

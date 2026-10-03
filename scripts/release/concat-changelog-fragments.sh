@@ -68,7 +68,10 @@ case "${1:---check}" in
             echo "CHANGELOG.md is up to date with changelog.d/."
         else
             echo "CHANGELOG.md is stale — run: scripts/release/concat-changelog-fragments.sh --write" >&2
-            diff -u "$CHANGELOG" "$tmp" >&2 || true
+            # diff exits 1 here by construction (the files differ); the exit below is the verdict.
+            if ! diff -u "$CHANGELOG" "$tmp" >&2; then
+                echo "(diff shown above)" >&2
+            fi
             exit 1
         fi
         ;;

@@ -7,8 +7,11 @@ root=$(git rev-parse --show-toplevel 2>/dev/null || exit 0)
 cd "$root"
 
 # Any modified tracked sources that the fast gate covers?
-changed=$(git status --porcelain 2>/dev/null \
-    | grep -E '\.(c|h|comp)$|meson\.build$|meson_options\.txt$' || true)
+# No match (grep exit 1) or a failed status both mean "nothing to remind about".
+if ! changed=$(git status --porcelain 2>/dev/null \
+    | grep -E '\.(c|h|comp)$|meson\.build$|meson_options\.txt$'); then
+    changed=""
+fi
 [ -z "$changed" ] && exit 0
 
 echo "  [gate] source changes pending — before pushing, run the local gate:" >&2

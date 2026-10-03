@@ -52,8 +52,11 @@ cleanup() {
     trap - EXIT
 
     if [[ -n "$OWNED_WORKTREE" ]]; then
-        git -C "$OWNED_WORKTREE" -c core.hooksPath=/dev/null \
-            am --abort >/dev/null 2>&1 || true
+        # `am --abort` fails when no am session is in progress; that is the normal case.
+        if [[ -d "$(git -C "$OWNED_WORKTREE" rev-parse --path-format=absolute --git-path rebase-apply 2>/dev/null)" ]]; then
+            git -C "$OWNED_WORKTREE" -c core.hooksPath=/dev/null \
+                am --abort >/dev/null 2>&1 || echo "WARNING: git am --abort failed in $OWNED_WORKTREE" >&2
+        fi
         if ! git -C "$FFMPEG_REPO" worktree remove --force "$OWNED_WORKTREE" \
             >/dev/null 2>&1; then
             echo "WARNING: could not remove owned worktree: $OWNED_WORKTREE" >&2
@@ -634,24 +637,39 @@ git -C "$WORKTREE" \
     --start-number=1 --quiet -o "$HERE" "${FFMPEG_COMMIT}..HEAD"
 
 # Normalize auto-generated filenames to the series.txt names.
-mv "$HERE"/0001-*.patch "$HERE/0001-add-vf_pelorus_deband_vulkan.patch" 2>/dev/null || true
-mv "$HERE"/0002-*.patch "$HERE/0002-add-vf_pelorus_analyze_vulkan.patch" 2>/dev/null || true
-mv "$HERE"/0003-*.patch "$HERE/0003-add-vf_pelorus_denoise_vulkan.patch" 2>/dev/null || true
-mv "$HERE"/0004-*.patch "$HERE/0004-nvenc-pelorus-roi.patch" 2>/dev/null || true
-mv "$HERE"/0005-*.patch "$HERE/0005-qsv-pelorus-roi.patch" 2>/dev/null || true
-mv "$HERE"/0006-*.patch "$HERE/0006-add-vf_pelorus_grain_estimate_vulkan.patch" 2>/dev/null || true
-mv "$HERE"/0007-*.patch "$HERE/0007-add-vf_pelorus_mc_vulkan.patch" 2>/dev/null || true
-mv "$HERE"/0008-*.patch "$HERE/0008-nvenc-pelorus-me-hints.patch" 2>/dev/null || true
-mv "$HERE"/0009-*.patch "$HERE/0009-vulkan-pelorus-qpmap.patch" 2>/dev/null || true
-mv "$HERE"/0010-*.patch "$HERE/0010-add-pelorus_fgs_bsf.patch" 2>/dev/null || true
-mv "$HERE"/0011-*.patch "$HERE/0011-nvenc-pelorus-film-grain.patch" 2>/dev/null || true
-mv "$HERE"/0012-*.patch "$HERE/0012-libaom-pelorus-roi.patch" 2>/dev/null || true
-mv "$HERE"/0013-*.patch "$HERE/0013-svtav1-pelorus-roi.patch" 2>/dev/null || true
-mv "$HERE"/0014-*.patch "$HERE/0014-add-vf_pelorus_dehalo_vulkan.patch" 2>/dev/null || true
-mv "$HERE"/0015-*.patch "$HERE/0015-add-vf_pelorus_aa_vulkan.patch" 2>/dev/null || true
-mv "$HERE"/0016-*.patch "$HERE/0016-add-vf_pelorus_scenecut.patch" 2>/dev/null || true
-mv "$HERE"/0017-*.patch "$HERE/0017-add-vf_pelorus_deblock_vulkan.patch" 2>/dev/null || true
-mv "$HERE"/0018-*.patch "$HERE/0018-add-vf_pelorus_borderfix_vulkan.patch" 2>/dev/null || true
+pelorus_patch_names=(
+    "0001-add-vf_pelorus_deband_vulkan.patch"
+    "0002-add-vf_pelorus_analyze_vulkan.patch"
+    "0003-add-vf_pelorus_denoise_vulkan.patch"
+    "0004-nvenc-pelorus-roi.patch"
+    "0005-qsv-pelorus-roi.patch"
+    "0006-add-vf_pelorus_grain_estimate_vulkan.patch"
+    "0007-add-vf_pelorus_mc_vulkan.patch"
+    "0008-nvenc-pelorus-me-hints.patch"
+    "0009-vulkan-pelorus-qpmap.patch"
+    "0010-add-pelorus_fgs_bsf.patch"
+    "0011-nvenc-pelorus-film-grain.patch"
+    "0012-libaom-pelorus-roi.patch"
+    "0013-svtav1-pelorus-roi.patch"
+    "0014-add-vf_pelorus_dehalo_vulkan.patch"
+    "0015-add-vf_pelorus_aa_vulkan.patch"
+    "0016-add-vf_pelorus_scenecut.patch"
+    "0017-add-vf_pelorus_deblock_vulkan.patch"
+    "0018-add-vf_pelorus_borderfix_vulkan.patch"
+)
+for pelorus_patch_name in "${pelorus_patch_names[@]}"; do
+    pelorus_patch_index="${pelorus_patch_name%%-*}"
+    pelorus_matches=("$HERE/${pelorus_patch_index}"-*.patch)
+    # Exactly one format-patch output per index: an unmatched glob stays literal.
+    if [[ ${#pelorus_matches[@]} -ne 1 || ! -f "${pelorus_matches[0]}" ]]; then
+        echo "ERROR: expected exactly one ${pelorus_patch_index}-*.patch in $HERE," \
+            "found: ${pelorus_matches[*]}" >&2
+        exit 1
+    fi
+    if [[ "${pelorus_matches[0]}" != "$HERE/$pelorus_patch_name" ]]; then
+        mv -- "${pelorus_matches[0]}" "$HERE/$pelorus_patch_name"
+    fi
+done
 
 echo "patch(es) regenerated in $HERE:"
 ls "$HERE"/0*.patch
