@@ -87,6 +87,17 @@ test('vulkan-storage-domain',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# ADR-0166: patch 0009's Vulkan-Video QP map needs the extension AND its feature
+# enabled in hwcontext_vulkan, a driver-range dQP clamp, and the valid-usage
+# repairs found on hardware. None of those fail a compile; --self-test proves
+# the check rejects each defect.
+test('vulkan-qpmap-contract',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'check-vulkan-qpmap-contract.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 test('vulkan-validation-streams',
      bash_prog,
      args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' /

@@ -34,31 +34,53 @@ vkCmdEncodeVideoKHR by chaining VkVideoEncodeQuantizationMapInfoKHR with the
 WITH_*_MAP flag; the session is created with the matching ALLOW_ENCODE_*_MAP_BIT
 and the session parameters carry the probed quantizationMapTexelSize.
 
+Device enablement: stock FFmpeg enables neither the extension nor its
+videoEncodeQuantizationMap feature, and both are required
+(VUID-VkVideoSessionCreateInfoKHR-flags-10264). This patch therefore adds the
+extension to libavutil/hwcontext_vulkan.c's optional device-extension table
+(new FF_VK_EXT_VIDEO_ENCODE_QUANTIZATION_MAP flag + loader mapping) and chains,
+copies and enables the feature struct, so an FFmpeg-created device turns both
+on whenever the driver supports them. The probe requires both.
+
+Valid usage: the map image is created with the advertised tiling of a format
+entry whose usages cover the fill path (NVIDIA advertises R8_SINT in LINEAR
+tiling only); the map copy/dispatch is recorded before vkCmdBeginVideoCodingKHR
+(transfer and compute commands are invalid inside a video coding scope); the
+session parameters are created QUANTIZATION_MAP_COMPATIBLE; and hevc_vulkan sets
+cu_qp_delta_enabled_flag whenever a map is bound, without which a CQP stream is
+undecodable. Delta-map values are clamped to the driver-reported per-codec range
+(min/maxQpDelta, min/maxQIndexDelta), since a value outside it leaves the block
+QP undefined; NVIDIA reports [0, 51] for H.264/H.265, so lower-QP requests clamp
+to 0 there and the probe warns.
+
 Generality (product patch for all vendors, no device assumptions): the whole
-path is runtime-probed — the extension must be enabled, the codec must advertise
-the delta/emphasis capability flag, and a usable map format + texel size must be
-returned by GetPhysicalDeviceVideoFormatPropertiesKHR. Any miss degrades to a
-one-shot warning + pass-through. A frame with no ROI side data binds no map
-(zero behaviour change). The path is also compile-gated by
+path is runtime-probed — the extension and feature must be enabled, the codec
+must advertise the delta/emphasis capability flag, and a usable map format,
+tiling and texel size must be returned by GetPhysicalDeviceVideoFormatPropertiesKHR.
+Any miss degrades to a one-shot warning + pass-through. A frame with no ROI side
+data binds no map (zero behaviour change). The path is also compile-gated by
 VK_KHR_video_encode_quantization_map so older Vulkan headers build to a clean
 no-op.
 
-VERIFICATION: compile-verified only. vulkan_encode.c and the three
-vulkan_encode_{h264,h265,av1} TUs build clean (zero warnings) under FFmpeg's
--std=c17 -Wall warning set against the system Vulkan-video headers, with the
-quantization-map ifdef live; the canonical build-time GLSL and Pelorus's
-standalone reference shader both compile under glslang. Runtime on-HW proof
-is BLOCKED on this dev box: hevc_vulkan ENCODE fails at init with "Driver does
-not support required encode feedback flags (BUFFER_OFFSET and BYTES_WRITTEN)",
-before this code runs — a driver limitation (ADR-0114 Tier 2 immaturity caveat),
-not a patch defect. No BD-rate gain is claimed; on-HW A/B is the follow-up.
+VERIFICATION: vulkan_encode.c, the three vulkan_encode_{h264,h265,av1} TUs and
+hwcontext_vulkan.c build clean under FFmpeg's warning set; the canonical
+build-time GLSL and Pelorus's standalone reference shader compile under glslang.
+On an RTX 4090 (NVIDIA 615.71.09) h264/hevc/av1_vulkan bind the map on every
+ROI frame with no validation-layer error beyond the stock encoder's own; a
++0.3 qoffset region raises the decoded H.264 macroblock QP from 30 to ~45 there
+and the other half stays at 30 (ADR-0166). RADV (Mesa 26.2.4) advertises only an
+R32_SINT map without a fillable usage, so the probe disables steering there.
 ---
- configure                                 |   6 +
- libavcodec/vulkan/Makefile                |   6 +
- libavcodec/vulkan/pelorus_qpmap.comp.glsl | 125 +++
- libavcodec/vulkan_encode.c                | 932 ++++++++++++++++++++
- libavcodec/vulkan_encode.h                |  63 ++
- 5 files changed, 1132 insertions(+)
+ configure                                 |    6 +
+ libavcodec/vulkan/Makefile                |    6 +
+ libavcodec/vulkan/pelorus_qpmap.comp.glsl |  125 +++
+ libavcodec/vulkan_encode.c                | 1107 ++++++++++++++++++++
+ libavcodec/vulkan_encode.h                |   65 ++
+ libavcodec/vulkan_encode_h265.c           |    7 +
+ libavutil/hwcontext_vulkan.c              |   17 +
+ libavutil/vulkan_functions.h              |    1 +
+ libavutil/vulkan_loader.h                 |    3 +
+ 9 files changed, 1337 insertions(+)
 
 diff --git a/configure b/configure
 index 839033a423604cbfaf45a7fffd984bc587d44839..966285c2eb68a38202adeb5d2795e685031ab67e 100755
@@ -233,10 +255,10 @@ index 0000000000000000000000000000000000000000..97e545732f2ab340de649f46904e3bf7
 +    }
 +}
 diff --git a/libavcodec/vulkan_encode.c b/libavcodec/vulkan_encode.c
-index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b88b14e2c2 100644
+index 39c43300c40ee6ce8fdad669028dda9c315a00a4..6393ec20019698e5f049fbea5c0bc1eb38fdb0f6 100644
 --- a/libavcodec/vulkan_encode.c
 +++ b/libavcodec/vulkan_encode.c
-@@ -28,6 +28,844 @@ const AVCodecHWConfigInternal *const ff_vulkan_encode_hw_configs[] = {
+@@ -28,6 +28,1001 @@ const AVCodecHWConfigInternal *const ff_vulkan_encode_hw_configs[] = {
      NULL,
  };
  
@@ -308,6 +330,91 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
 +    return 51 + 6 * (bit_depth - 8);
 +}
 +
++/* Query the delta range the driver supports for quantization DELTA maps of this
++ * profile: VkVideoEncode{H264,H265}QuantizationMapCapabilitiesKHR::min/maxQpDelta
++ * or VkVideoEncodeAV1QuantizationMapCapabilitiesKHR::min/maxQIndexDelta. A map
++ * texel outside that range leaves the block's QP undefined (Vulkan spec, the
++ * H.264/H.265/AV1 encode QP derivation), so the rasterizer clamps to it. The
++ * capabilities are re-queried through a local chain so the codec-owned caps
++ * structs filled by ff_vulkan_encode_init() are left untouched. Returns 0 on
++ * success. */
++static int pelorus_qpmap_query_delta_range(FFVulkanEncodeContext *ctx,
++                                           int *min_delta, int *max_delta)
++{
++    VkResult ret;
++    FFVulkanContext *s = &ctx->s;
++    FFVulkanFunctions *vk = &s->vkfn;
++    const VkVideoCodecOperationFlagBitsKHR op = ctx->profile.videoCodecOperation;
++    union {
++        VkVideoEncodeH264CapabilitiesKHR h264;
++        VkVideoEncodeH265CapabilitiesKHR h265;
++#ifdef VK_KHR_video_encode_av1
++        VkVideoEncodeAV1CapabilitiesKHR  av1;
++#endif
++    } codec_caps;
++    union {
++        VkVideoEncodeH264QuantizationMapCapabilitiesKHR h264;
++        VkVideoEncodeH265QuantizationMapCapabilitiesKHR h265;
++#ifdef VK_KHR_video_encode_av1
++        VkVideoEncodeAV1QuantizationMapCapabilitiesKHR  av1;
++#endif
++    } qmap_caps;
++    VkVideoEncodeQuantizationMapCapabilitiesKHR qmap_common = {
++        .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_QUANTIZATION_MAP_CAPABILITIES_KHR,
++        .pNext = &qmap_caps,
++    };
++    VkVideoEncodeCapabilitiesKHR enc_caps = {
++        .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_CAPABILITIES_KHR,
++        .pNext = &qmap_common,
++    };
++    VkVideoCapabilitiesKHR caps = {
++        .sType = VK_STRUCTURE_TYPE_VIDEO_CAPABILITIES_KHR,
++        .pNext = &enc_caps,
++    };
++
++    memset(&codec_caps, 0, sizeof(codec_caps));
++    memset(&qmap_caps, 0, sizeof(qmap_caps));
++
++    /* The codec-specific caps struct is mandatory in the chain; each codec's
++     * quantization-map caps struct is valid only for that codec's profile. */
++    if (op == VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR) {
++        codec_caps.h264.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_CAPABILITIES_KHR;
++        qmap_caps.h264.sType  = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H264_QUANTIZATION_MAP_CAPABILITIES_KHR;
++        qmap_caps.h264.pNext  = &codec_caps;
++    } else if (op == VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR) {
++        codec_caps.h265.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H265_CAPABILITIES_KHR;
++        qmap_caps.h265.sType  = VK_STRUCTURE_TYPE_VIDEO_ENCODE_H265_QUANTIZATION_MAP_CAPABILITIES_KHR;
++        qmap_caps.h265.pNext  = &codec_caps;
++#ifdef VK_KHR_video_encode_av1
++    } else if (op == VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR) {
++        codec_caps.av1.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_CAPABILITIES_KHR;
++        qmap_caps.av1.sType  = VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_QUANTIZATION_MAP_CAPABILITIES_KHR;
++        qmap_caps.av1.pNext  = &codec_caps;
++#endif
++    } else {
++        return AVERROR(ENOSYS);
++    }
++
++    ret = vk->GetPhysicalDeviceVideoCapabilitiesKHR(s->hwctx->phys_dev,
++                                                    &ctx->profile, &caps);
++    if (ret != VK_SUCCESS)
++        return AVERROR_EXTERNAL;
++
++    if (op == VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR) {
++        *min_delta = qmap_caps.h264.minQpDelta;
++        *max_delta = qmap_caps.h264.maxQpDelta;
++    } else if (op == VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR) {
++        *min_delta = qmap_caps.h265.minQpDelta;
++        *max_delta = qmap_caps.h265.maxQpDelta;
++#ifdef VK_KHR_video_encode_av1
++    } else {
++        *min_delta = qmap_caps.av1.minQIndexDelta;
++        *max_delta = qmap_caps.av1.maxQIndexDelta;
++#endif
++    }
++    return 0;
++}
++
 +/* Probe VK_KHR_video_encode_quantization_map for this profile and pick the map
 + * kind from the negotiated rate-control mode. Fills ctx->qpmap_* and leaves
 + * ctx->qpmap_enabled set on success; on any miss it logs once at VERBOSE and
@@ -322,25 +429,31 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
 +    VkVideoFormatQuantizationMapPropertiesKHR *qprops = NULL;
 +    VkPhysicalDeviceVideoFormatInfoKHR fmt_info;
 +    VkImageUsageFlags map_usage;
-+    int delta_ok, emphasis_ok, want_emphasis;
-+    int have_ext = 0;
++    const VkPhysicalDeviceVideoEncodeQuantizationMapFeaturesKHR *qmap_feats;
++    int delta_ok, emphasis_ok, want_emphasis, want_gpu;
++    int sel = -1, sel_gpu = -1, qp_range;
 +
 +    if (!ctx->opts.pelorus_roi)
 +        return;
 +
-+    /* The device must enable the extension. ff_vk_extensions_to_mask only
-+     * tracks the extensions FFmpeg knows; check the enabled-extension list
-+     * directly so we do not assume FFmpeg gained a flag for this one. */
-+    for (int i = 0; i < s->hwctx->nb_enabled_dev_extensions; i++) {
-+        if (!strcmp(s->hwctx->enabled_dev_extensions[i],
-+                    VK_KHR_VIDEO_ENCODE_QUANTIZATION_MAP_EXTENSION_NAME)) {
-+            have_ext = 1;
-+            break;
-+        }
-+    }
-+    if (!have_ext) {
-+        av_log(avctx, AV_LOG_VERBOSE, "pelorus_roi: device does not enable %s; "
++    /* The device must enable the extension AND its videoEncodeQuantizationMap
++     * feature (VUID-VkVideoSessionCreateInfoKHR-flags-10264). Stock FFmpeg
++     * enables neither; this patch adds both to hwcontext_vulkan's optional
++     * extension/feature tables, so an FFmpeg-created device turns them on
++     * whenever the driver supports them. An application-supplied device must
++     * enable both itself. The user asked for steering, so a miss warns. */
++    if (!(s->extensions & FF_VK_EXT_VIDEO_ENCODE_QUANTIZATION_MAP)) {
++        av_log(avctx, AV_LOG_WARNING, "pelorus_roi: device does not enable %s; "
 +               "QP-map steering disabled (pass-through).\n",
++               VK_KHR_VIDEO_ENCODE_QUANTIZATION_MAP_EXTENSION_NAME);
++        return;
++    }
++    qmap_feats = ff_vk_find_struct(s->hwctx->device_features.pNext,
++                                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_ENCODE_QUANTIZATION_MAP_FEATURES_KHR);
++    if (!qmap_feats || !qmap_feats->videoEncodeQuantizationMap) {
++        av_log(avctx, AV_LOG_WARNING, "pelorus_roi: device enables %s but not "
++               "its videoEncodeQuantizationMap feature; QP-map steering "
++               "disabled (pass-through).\n",
 +               VK_KHR_VIDEO_ENCODE_QUANTIZATION_MAP_EXTENSION_NAME);
 +        return;
 +    }
@@ -363,7 +476,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
 +        ctx->qpmap_format   = VK_FORMAT_R8_SINT;
 +        map_usage = VK_IMAGE_USAGE_VIDEO_ENCODE_QUANTIZATION_DELTA_MAP_BIT_KHR;
 +    } else {
-+        av_log(avctx, AV_LOG_VERBOSE, "pelorus_roi: no quantization-map mode for "
++        av_log(avctx, AV_LOG_WARNING, "pelorus_roi: no quantization-map mode for "
 +               "the negotiated rate control (delta=%d emphasis=%d); disabled.\n",
 +               delta_ok, emphasis_ok);
 +        return;
@@ -382,7 +495,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
 +    ret = vk->GetPhysicalDeviceVideoFormatPropertiesKHR(s->hwctx->phys_dev,
 +                                                        &fmt_info, &nb_props, NULL);
 +    if (ret != VK_SUCCESS || !nb_props) {
-+        av_log(avctx, AV_LOG_VERBOSE, "pelorus_roi: no quantization-map image "
++        av_log(avctx, AV_LOG_WARNING, "pelorus_roi: no quantization-map image "
 +               "format advertised; disabled.\n");
 +        return;
 +    }
@@ -403,53 +516,112 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
 +    if (ret != VK_SUCCESS)
 +        goto out;
 +
-+    for (uint32_t i = 0; i < nb_props; i++) {
-+        if (props[i].format == ctx->qpmap_format &&
-+            qprops[i].quantizationMapTexelSize.width  > 0 &&
-+            qprops[i].quantizationMapTexelSize.height > 0) {
-+            ctx->qpmap_texel_size = qprops[i].quantizationMapTexelSize;
-+            ctx->qpmap_enabled    = 1;
-+            break;
-+        }
-+    }
++    /* The on-GPU raster records a compute dispatch on the encode command
++     * buffer, so it needs an encode queue family with VK_QUEUE_COMPUTE_BIT;
++     * without CONFIG_PELORUS_QPMAP_GPU the rasterizer is not compiled in. */
++#if CONFIG_PELORUS_QPMAP_GPU
++    want_gpu = !!(ctx->qf_enc->flags & VK_QUEUE_COMPUTE_BIT);
++#else
++    want_gpu = 0;
++#endif
 +
-+    if (!ctx->qpmap_enabled) {
-+        av_log(avctx, AV_LOG_VERBOSE, "pelorus_roi: chosen map format %d not in "
-+               "the advertised set; disabled.\n", ctx->qpmap_format);
++    /* Pick an advertised entry of the wanted format whose image usages cover
++     * the fill path: STORAGE for the on-GPU raster, TRANSFER_DST for the host
++     * raster's buffer-to-image copy. The map image is later created with
++     * exactly that entry's tiling (VUID-VkImageCreateInfo-pNext-06811):
++     * drivers differ here, e.g. NVIDIA advertises its R8_SINT delta map in
++     * LINEAR tiling only. */
++    for (uint32_t i = 0; i < nb_props; i++) {
++        if (props[i].format != ctx->qpmap_format ||
++            !qprops[i].quantizationMapTexelSize.width ||
++            !qprops[i].quantizationMapTexelSize.height)
++            continue;
++        if (want_gpu && sel_gpu < 0 &&
++            (props[i].imageUsageFlags & VK_IMAGE_USAGE_STORAGE_BIT))
++            sel_gpu = i;
++        if (sel < 0 && (props[i].imageUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
++            sel = i;
++    }
++    ctx->qpmap_gpu = sel_gpu >= 0;
++    if (ctx->qpmap_gpu)
++        sel = sel_gpu;
++
++    if (sel < 0) {
++        av_log(avctx, AV_LOG_WARNING, "pelorus_roi: no advertised quantization-map "
++               "entry has format %d with a fillable usage (%s); disabled. "
++               "Advertised:\n", ctx->qpmap_format,
++               want_gpu ? "STORAGE or TRANSFER_DST" : "TRANSFER_DST");
++        for (uint32_t i = 0; i < nb_props; i++)
++            av_log(avctx, AV_LOG_WARNING, "    format %d tiling %d usage 0x%x "
++                   "texel %ux%u\n", props[i].format, props[i].imageTiling,
++                   props[i].imageUsageFlags,
++                   qprops[i].quantizationMapTexelSize.width,
++                   qprops[i].quantizationMapTexelSize.height);
 +        goto out;
 +    }
++    ctx->qpmap_texel_size = qprops[sel].quantizationMapTexelSize;
++    ctx->qpmap_tiling     = props[sel].imageTiling;
++    ctx->qpmap_fmt_usage  = props[sel].imageUsageFlags;
 +
 +    ctx->qpmap_w = (avctx->width  + ctx->qpmap_texel_size.width  - 1) /
 +                   ctx->qpmap_texel_size.width;
 +    ctx->qpmap_h = (avctx->height + ctx->qpmap_texel_size.height - 1) /
 +                   ctx->qpmap_texel_size.height;
 +
-+    /* Default dQP clamp to the libx264 QP range; codec files may tighten it to
-+     * the per-codec min/maxQpDelta caps if they set qpmap_qp_delta_{min,max}. */
-+    if (ctx->qpmap_qp_delta_min == 0 && ctx->qpmap_qp_delta_max == 0) {
-+        ctx->qpmap_qp_delta_max = pelorus_qp_range(avctx);
-+        ctx->qpmap_qp_delta_min = -ctx->qpmap_qp_delta_max;
++    /* The qoffset -> dQP scale stays the libx264 QP span (the Tier-1 NVENC/QSV
++     * convention). An emphasis map is normalized against that span. A delta
++     * map is additionally clamped to the driver-reported per-codec delta
++     * range, which can be far narrower (NVIDIA reports [0, 51] for H.264 and
++     * H.265, i.e. no negative dQP), and to the R8_SINT texel range. */
++    qp_range = pelorus_qp_range(avctx);
++    ctx->qpmap_qp_delta_min = -qp_range;
++    ctx->qpmap_qp_delta_max =  qp_range;
++    if (!ctx->qpmap_emphasis) {
++        int cap_min, cap_max;
++
++        if (pelorus_qpmap_query_delta_range(ctx, &cap_min, &cap_max) < 0 ||
++            cap_max <= cap_min) {
++            av_log(avctx, AV_LOG_WARNING, "pelorus_roi: could not query the "
++                   "driver's quantization delta range; disabled.\n");
++            goto out;
++        }
++        ctx->qpmap_qp_delta_min = FFMAX(FFMAX(cap_min, -qp_range), INT8_MIN);
++        ctx->qpmap_qp_delta_max = FFMIN(FFMIN(cap_max,  qp_range), INT8_MAX);
++        /* Texels outside every ROI carry 0 (no change); a range that excludes
++         * 0 cannot express "no change", so steering would distort the whole
++         * frame. */
++        if (ctx->qpmap_qp_delta_min > 0 || ctx->qpmap_qp_delta_max < 0) {
++            av_log(avctx, AV_LOG_WARNING, "pelorus_roi: driver delta range [%d, %d] "
++                   "excludes 0; disabled.\n", cap_min, cap_max);
++            goto out;
++        }
++        if (ctx->qpmap_qp_delta_min == 0)
++            av_log(avctx, AV_LOG_WARNING, "pelorus_roi: driver delta range is "
++                   "[%d, %d]; regions asking for a lower QP (negative qoffset) "
++                   "are clamped to 0 and get no extra bits.\n", cap_min, cap_max);
++        if (ctx->qpmap_qp_delta_max == 0)
++            av_log(avctx, AV_LOG_WARNING, "pelorus_roi: driver delta range is "
++                   "[%d, %d]; regions asking for a higher QP (positive qoffset) "
++                   "are clamped to 0.\n", cap_min, cap_max);
 +    }
++    ctx->qpmap_enabled = 1;
++    /* The ROI side data is now consumed: silence hw_base_encode's
++     * "ROI side data on input frames ignored" warning. */
++    ctx->base.roi_allowed = 1;
 +
 +    av_log(avctx, AV_LOG_VERBOSE, "Pelorus QP-map steering enabled: %s map, "
-+           "%dx%d texels (%dx%d px/texel), dQP [%d, %d].\n",
++           "%dx%d texels (%dx%d px/texel, %s tiling), dQP [%d, %d].\n",
 +           ctx->qpmap_emphasis ? "emphasis(R8_UNORM)" : "delta(R8_SINT)",
 +           ctx->qpmap_w, ctx->qpmap_h,
 +           ctx->qpmap_texel_size.width, ctx->qpmap_texel_size.height,
++           ctx->qpmap_tiling == VK_IMAGE_TILING_LINEAR ? "linear" : "optimal",
 +           ctx->qpmap_qp_delta_min, ctx->qpmap_qp_delta_max);
 +
-+    /* Prefer the on-GPU raster (compute imageStore from the ROI rect SSBO) when
-+     * the encode queue family ALSO supports compute, so the dispatch records on
-+     * the encode command buffer with no cross-queue ownership transfer. The
-+     * actual shader build is deferred to pelorus_qpmap_init_gpu() because it
-+     * registers against enc_pool, which is not created until after this probe.
-+     * Without CONFIG_PELORUS_QPMAP_GPU the rasterizer was not compiled in at
-+     * all, so the host raster is the only path. */
-+#if CONFIG_PELORUS_QPMAP_GPU
-+    ctx->qpmap_gpu = !!(ctx->qf_enc->flags & VK_QUEUE_COMPUTE_BIT);
-+#else
-+    ctx->qpmap_gpu = 0;
-+#endif
++    /* qpmap_gpu (set above) prefers the on-GPU raster: compute imageStore from
++     * the ROI rect SSBO, recorded on the encode command buffer with no
++     * cross-queue ownership transfer. The shader build is deferred to
++     * pelorus_qpmap_init_gpu() because it registers against enc_pool, which is
++     * not created until after this probe. */
 +
 +out:
 +    av_free(props);
@@ -511,7 +683,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
 +        .mipLevels     = 1,
 +        .arrayLayers   = 1,
 +        .samples       = VK_SAMPLE_COUNT_1_BIT,
-+        .tiling        = VK_IMAGE_TILING_OPTIMAL,
++        .tiling        = ctx->qpmap_tiling,
 +        .usage         = usage | fill_usage,
 +        .sharingMode   = VK_SHARING_MODE_EXCLUSIVE,
 +        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
@@ -808,6 +980,13 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
 +    if (pelorus_qpmap_build_shader(avctx, ctx) < 0 ||
 +        pelorus_qpmap_placeholder(avctx, ctx, ph_fmt) < 0) {
 +        ctx->qpmap_gpu = 0;
++        if (!(ctx->qpmap_fmt_usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
++            ctx->qpmap_enabled = 0;
++            av_log(avctx, AV_LOG_WARNING, "pelorus_roi: on-GPU raster setup "
++                   "failed and the map format has no TRANSFER_DST usage for "
++                   "the host raster; disabled.\n");
++            return 0;
++        }
 +        av_log(avctx, AV_LOG_VERBOSE, "pelorus_roi: on-GPU raster setup failed; "
 +               "using the host raster path.\n");
 +    }
@@ -1081,7 +1260,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
  av_cold void ff_vulkan_encode_uninit(FFVulkanEncodeContext *ctx)
  {
      FFVulkanContext *s = &ctx->s;
-@@ -36,6 +874,10 @@ av_cold void ff_vulkan_encode_uninit(FFVulkanEncodeContext *ctx)
+@@ -36,6 +1031,10 @@ av_cold void ff_vulkan_encode_uninit(FFVulkanEncodeContext *ctx)
      /* Wait on and free execution pool */
      ff_vk_exec_pool_free(s, &ctx->enc_pool);
  
@@ -1092,7 +1271,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
      /* Destroy the session params */
      if (ctx->session_params)
          vk->DestroyVideoSessionParametersKHR(s->hwctx->act_dev,
-@@ -173,6 +1015,9 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
+@@ -173,6 +1172,9 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
  
      VkVideoReferenceSlotInfoKHR ref_slot[37];
      VkVideoEncodeInfoKHR encode_info;
@@ -1102,9 +1281,9 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
  
      /* Create packet data buffer */
      max_pkt_size = FFALIGN(3 * ctx->base.surface_width * ctx->base.surface_height + (1 << 16),
-@@ -415,6 +1260,61 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
-     /* Start, use parameters */
-     vk->CmdBeginVideoCodingKHR(cmd_buf, &encode_start);
+@@ -412,6 +1414,69 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
+             .imageMemoryBarrierCount = nb_img_bar,
+         });
  
 +#ifdef VK_KHR_video_encode_quantization_map
 +    /* Pelorus: rasterize this frame's ROI into the quant-map image and chain it
@@ -1112,6 +1291,9 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
 +     * once; the on-GPU path (qpmap_gpu) dispatches a compute shader that writes
 +     * the texel image directly, the host fallback paints + uploads it. A frame
 +     * with no ROI side data binds no map (pass-through, zero behaviour change).
++     * The copy/dispatch is recorded BEFORE vkCmdBeginVideoCodingKHR: transfer
++     * and compute commands are invalid inside a video coding scope
++     * (VUID-vkCmdCopyBufferToImage-videocoding, VUID-vkCmdDispatch-videocoding).
 +     * ADR-0114 Tier 2. */
 +    if (ctx->qpmap_enabled) {
 +        PelorusQpRect qpmap_rects[PELORUS_QPMAP_MAX_RECTS];
@@ -1143,6 +1325,11 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
 +            if (err < 0)
 +                goto fail;
 +
++            av_log(avctx, AV_LOG_DEBUG, "pelorus_roi: frame %" PRId64 ": %s map "
++                   "slot %d, %d region(s).\n", base_pic->display_order,
++                   ctx->qpmap_gpu ? "on-GPU" : "host", qpmap_slot,
++                   qpmap_nb_rects);
++
 +            /* Advance the round-robin only once a frame actually bound a map, so
 +             * the per-slot image lines up with the exec pool's own cycling. */
 +            ctx->qpmap_next = (ctx->qpmap_next + 1) % ctx->qpmap_nb_img;
@@ -1161,10 +1348,10 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
 +    }
 +#endif
 +
-     /* Send control data */
-     if (!ctx->session_reset) {
-         vk->CmdControlVideoCodingKHR(cmd_buf, &encode_ctrl);
-@@ -885,6 +1785,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+     /* Start, use parameters */
+     vk->CmdBeginVideoCodingKHR(cmd_buf, &encode_start);
+ 
+@@ -885,6 +1950,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      if (err < 0)
          return err;
  
@@ -1177,7 +1364,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
      /* Create command and query pool */
      query_create = (VkQueryPoolVideoEncodeFeedbackCreateInfoKHR) {
          .sType = VK_STRUCTURE_TYPE_QUERY_POOL_VIDEO_ENCODE_FEEDBACK_CREATE_INFO_KHR,
-@@ -897,6 +1803,15 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -897,6 +1968,15 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      if (err < 0)
          return err;
  
@@ -1193,7 +1380,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
      if (ctx->opts.quality > ctx->enc_caps.maxQualityLevels) {
          av_log(avctx, AV_LOG_ERROR, "Invalid quality level %i: allowed range is "
                                      "0 to %i\n",
-@@ -1038,6 +1953,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -1038,6 +2118,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      /* Create session */
      session_create.pVideoProfile = &ctx->profile;
      session_create.flags = 0x0;
@@ -1206,12 +1393,20 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
      session_create.queueFamilyIndex = ctx->qf_enc->idx;
      session_create.maxCodedExtent = ctx->caps.maxCodedExtent;
      session_create.maxDpbSlots = ctx->caps.maxDpbSlots;
-@@ -1082,6 +2003,17 @@ int ff_vulkan_encode_create_session_params(AVCodecContext *avctx, FFVulkanEncode
+@@ -1076,18 +2162,39 @@ int ff_vulkan_encode_create_session_params(AVCodecContext *avctx, FFVulkanEncode
+ 
+     VkVideoEncodeQualityLevelInfoKHR q_info;
+     VkVideoSessionParametersCreateInfoKHR session_params_create;
++#ifdef VK_KHR_video_encode_quantization_map
++    VkVideoEncodeQuantizationMapSessionParametersCreateInfoKHR qpmap_sp;
++#endif
+ 
+     q_info = (VkVideoEncodeQualityLevelInfoKHR) {
+         .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_QUALITY_LEVEL_INFO_KHR,
          .pNext = codec_params_pnext,
          .qualityLevel = ctx->opts.quality,
      };
 +#ifdef VK_KHR_video_encode_quantization_map
-+    VkVideoEncodeQuantizationMapSessionParametersCreateInfoKHR qpmap_sp;
 +    if (ctx->qpmap_enabled) {
 +        qpmap_sp = (VkVideoEncodeQuantizationMapSessionParametersCreateInfoKHR) {
 +            .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_QUANTIZATION_MAP_SESSION_PARAMETERS_CREATE_INFO_KHR,
@@ -1224,8 +1419,22 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c667f6db24bf1cbb8b346503c3d446b8
      session_params_create = (VkVideoSessionParametersCreateInfoKHR) {
          .sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_PARAMETERS_CREATE_INFO_KHR,
          .pNext = &q_info,
+         .videoSession = ctx->common.session,
+         .videoSessionParametersTemplate = VK_NULL_HANDLE,
+     };
++#ifdef VK_KHR_video_encode_quantization_map
++    /* Pelorus: an encode that binds a quantization map needs session
++     * parameters created QUANTIZATION_MAP_COMPATIBLE with the map's texel size
++     * (VUID-vkCmdEncodeVideoKHR-pNext-10315); the texel size is chained above. */
++    if (ctx->qpmap_enabled)
++        session_params_create.flags |=
++            VK_VIDEO_SESSION_PARAMETERS_CREATE_QUANTIZATION_MAP_COMPATIBLE_BIT_KHR;
++#endif
+ 
+     /* Create session parameters */
+     ret = vk->CreateVideoSessionParametersKHR(s->hwctx->act_dev, &session_params_create,
 diff --git a/libavcodec/vulkan_encode.h b/libavcodec/vulkan_encode.h
-index 23c35898c150abaffdc9e2cf920d9dd6a2114c33..6fdbaf601882a1621da54dfa36d2b80c66e29a7d 100644
+index 23c35898c150abaffdc9e2cf920d9dd6a2114c33..5d7f77a965509fd8a0df8a53bb6ae5721eef8f32 100644
 --- a/libavcodec/vulkan_encode.h
 +++ b/libavcodec/vulkan_encode.h
 @@ -155,6 +155,16 @@ typedef struct FFVkEncodeCommonOptions {
@@ -1269,7 +1478,7 @@ index 23c35898c150abaffdc9e2cf920d9dd6a2114c33..6fdbaf601882a1621da54dfa36d2b80c
  typedef struct FFVulkanEncodeContext {
      FFVulkanContext s;
      FFVkVideoCommon common;
-@@ -195,6 +222,41 @@ typedef struct FFVulkanEncodeContext {
+@@ -195,6 +222,43 @@ typedef struct FFVulkanEncodeContext {
      AVVulkanDeviceQueueFamily *qf_enc;
      FFVkExecPool enc_pool;
  
@@ -1281,11 +1490,13 @@ index 23c35898c150abaffdc9e2cf920d9dd6a2114c33..6fdbaf601882a1621da54dfa36d2b80c
 +                                  ///< 0 = delta map (CQP, R8_SINT)
 +    int      qpmap_warned;        ///< rate-limit the degrade warning to once
 +    VkFormat qpmap_format;        ///< quant-map image format (R8_SINT/R8_UNORM)
++    VkImageTiling qpmap_tiling;   ///< advertised tiling of the chosen map format
++    VkImageUsageFlags qpmap_fmt_usage; ///< usages advertised for that entry
 +    VkExtent2D qpmap_texel_size;  ///< driver texel block size (e.g. 16x16)
 +    int      qpmap_w;             ///< map width  in texels = ceil(W / texel.w)
 +    int      qpmap_h;             ///< map height in texels = ceil(H / texel.h)
-+    int      qpmap_qp_delta_min;  ///< codec-advertised min delta (clamp floor)
-+    int      qpmap_qp_delta_max;  ///< codec-advertised max delta (clamp ceil)
++    int      qpmap_qp_delta_min;  ///< clamp floor: driver min delta (delta map)
++    int      qpmap_qp_delta_max;  ///< clamp ceil:  driver max delta (delta map)
 +    int      qpmap_gpu;           ///< raster on the GPU (compute) vs host raster
 +    int      qpmap_shader_ready;  ///< qpmap_shd is built and must be freed
 +    FFVulkanShader qpmap_shd;     ///< the pelorus_qpmap rasterizer (compute)
@@ -1311,7 +1522,7 @@ index 23c35898c150abaffdc9e2cf920d9dd6a2114c33..6fdbaf601882a1621da54dfa36d2b80c
      FFHWBaseEncodePicture *slots[32];
  
      AVBufferRef *prev_buf_ref;
-@@ -204,6 +266,7 @@ typedef struct FFVulkanEncodeContext {
+@@ -204,6 +268,7 @@ typedef struct FFVulkanEncodeContext {
  #define VULKAN_ENCODE_COMMON_OPTIONS \
      { "qp", "Use an explicit constant quantizer for the whole stream", OFFSET(common.opts.qp), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 255, FLAGS }, \
      { "quality", "Set encode quality (trades off against speed, higher is slower)", OFFSET(common.opts.quality), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, FLAGS }, \
@@ -1319,3 +1530,96 @@ index 23c35898c150abaffdc9e2cf920d9dd6a2114c33..6fdbaf601882a1621da54dfa36d2b80c
      { "rc_mode", "Select rate control type", OFFSET(common.opts.rc_mode), AV_OPT_TYPE_INT, { .i64 = FF_VK_RC_MODE_AUTO }, 0, FF_VK_RC_MODE_AUTO, FLAGS, "rc_mode" }, \
          { "auto",    "Choose mode automatically based on parameters", 0, AV_OPT_TYPE_CONST, { .i64 = FF_VK_RC_MODE_AUTO }, INT_MIN, INT_MAX, FLAGS, "rc_mode" }, \
          { "driver",  "Driver-specific rate control", 0, AV_OPT_TYPE_CONST, { .i64 = VK_VIDEO_ENCODE_RATE_CONTROL_MODE_DEFAULT_KHR      }, INT_MIN, INT_MAX, FLAGS, "rc_mode" }, \
+diff --git a/libavcodec/vulkan_encode_h265.c b/libavcodec/vulkan_encode_h265.c
+index 1218017555b7d1bf51601f71d1fae6bb70ac8430..98e0d7bc327b4f3decc90ad27cb1800a4cc6bb3f 100644
+--- a/libavcodec/vulkan_encode_h265.c
++++ b/libavcodec/vulkan_encode_h265.c
+@@ -742,6 +742,13 @@ static av_cold int init_sequence_headers(AVCodecContext *avctx)
+     unit_opts->tier = enc->common.opts.tier;
+     unit_opts->fixed_qp_idr = enc->fixed_qp_idr;
+     unit_opts->cu_qp_delta_enabled_flag = enc->common.opts.rc_mode != VK_VIDEO_ENCODE_RATE_CONTROL_MODE_DISABLED_BIT_KHR;
++#ifdef VK_KHR_video_encode_quantization_map
++    /* Pelorus: a quantization map ("pelorus_roi") varies the QP per CU, which
++     * H.265 can only signal with cu_qp_delta_enabled_flag set; under CQP the
++     * stock rule above leaves it off and the map corrupts the stream. */
++    if (ctx->qpmap_enabled)
++        unit_opts->cu_qp_delta_enabled_flag = 1;
++#endif
+ 
+     unit_opts->nb_slices = 1;
+ 
+diff --git a/libavutil/hwcontext_vulkan.c b/libavutil/hwcontext_vulkan.c
+index 90d3d14dbb6ce2fec3fe081e57a884a10f04c0aa..0d49c8ed6c5e91b99b2906eb3bf25effc18c68f4 100644
+--- a/libavutil/hwcontext_vulkan.c
++++ b/libavutil/hwcontext_vulkan.c
+@@ -109,6 +109,11 @@ typedef struct VulkanDeviceFeatures {
+ #ifdef VK_KHR_video_encode_av1
+     VkPhysicalDeviceVideoEncodeAV1FeaturesKHR av1_encode;
+ #endif
++#ifdef VK_KHR_video_encode_quantization_map
++    /* Pelorus: QP-map steering in vulkan_encode.c needs this feature as well
++     * as the extension (VUID-VkVideoSessionCreateInfoKHR-flags-10264). */
++    VkPhysicalDeviceVideoEncodeQuantizationMapFeaturesKHR video_encode_qpmap;
++#endif
+ 
+     VkPhysicalDeviceShaderObjectFeaturesEXT shader_object;
+     VkPhysicalDeviceCooperativeMatrixFeaturesKHR cooperative_matrix;
+@@ -279,6 +284,11 @@ static void device_features_init(AVHWDeviceContext *ctx, VulkanDeviceFeatures *f
+     FF_VK_STRUCT_EXT(s, &feats->device, &feats->av1_encode, FF_VK_EXT_VIDEO_ENCODE_AV1,
+                      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_ENCODE_AV1_FEATURES_KHR);
+ #endif
++#ifdef VK_KHR_video_encode_quantization_map
++    FF_VK_STRUCT_EXT(s, &feats->device, &feats->video_encode_qpmap,
++                     FF_VK_EXT_VIDEO_ENCODE_QUANTIZATION_MAP,
++                     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_ENCODE_QUANTIZATION_MAP_FEATURES_KHR);
++#endif
+ 
+     FF_VK_STRUCT_EXT(s, &feats->device, &feats->shader_object, FF_VK_EXT_SHADER_OBJECT,
+                      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT);
+@@ -382,6 +392,9 @@ static void device_features_copy_needed(VulkanDeviceFeatures *dst, VulkanDeviceF
+ #ifdef VK_KHR_video_encode_av1
+     COPY_VAL(av1_encode.videoEncodeAV1);
+ #endif
++#ifdef VK_KHR_video_encode_quantization_map
++    COPY_VAL(video_encode_qpmap.videoEncodeQuantizationMap);
++#endif
+ 
+     COPY_VAL(shader_object.shaderObject);
+ 
+@@ -755,6 +768,10 @@ static const VulkanOptExtension optional_device_exts[] = {
+ #endif
+ #ifdef VK_KHR_video_encode_av1
+     { VK_KHR_VIDEO_ENCODE_AV1_EXTENSION_NAME,                 FF_VK_EXT_VIDEO_ENCODE_AV1       },
++#endif
++#ifdef VK_KHR_video_encode_quantization_map
++    /* Pelorus: QP-map steering ("pelorus_roi") in vulkan_encode.c. */
++    { VK_KHR_VIDEO_ENCODE_QUANTIZATION_MAP_EXTENSION_NAME,    FF_VK_EXT_VIDEO_ENCODE_QUANTIZATION_MAP },
+ #endif
+     { VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME,                 FF_VK_EXT_VIDEO_DECODE_AV1       },
+ };
+diff --git a/libavutil/vulkan_functions.h b/libavutil/vulkan_functions.h
+index 86dff046b2a17efaa19876d8364d7733af3f6808..04b8aeb97bc613adc732dc7830c6aef3f8fc4ea4 100644
+--- a/libavutil/vulkan_functions.h
++++ b/libavutil/vulkan_functions.h
+@@ -70,6 +70,7 @@ typedef uint64_t FFVulkanExtensions;
+ #define FF_VK_EXT_VIDEO_ENCODE_H264      (1ULL << 51) /* VK_KHR_video_encode_h264 */
+ #define FF_VK_EXT_VIDEO_ENCODE_H265      (1ULL << 52) /* VK_KHR_video_encode_h265 */
+ #define FF_VK_EXT_VIDEO_ENCODE_AV1       (1ULL << 53) /* VK_KHR_video_encode_av1 */
++#define FF_VK_EXT_VIDEO_ENCODE_QUANTIZATION_MAP (1ULL << 54) /* VK_KHR_video_encode_quantization_map */
+ 
+ #define FF_VK_EXT_PORTABILITY_SUBSET     (1ULL << 62)
+ #define FF_VK_EXT_NO_FLAG                (1ULL << 63)
+diff --git a/libavutil/vulkan_loader.h b/libavutil/vulkan_loader.h
+index 7ea359b6cdca6db2e18139c3e13f4efc71360be3..4b6cd3a672bd6a23415399f4111357e306d4a2e2 100644
+--- a/libavutil/vulkan_loader.h
++++ b/libavutil/vulkan_loader.h
+@@ -96,6 +96,9 @@ static inline uint64_t ff_vk_extensions_to_mask(const char * const *extensions,
+ #ifdef VK_KHR_video_encode_av1
+         { VK_KHR_VIDEO_ENCODE_AV1_EXTENSION_NAME,          FF_VK_EXT_VIDEO_ENCODE_AV1       },
+ #endif
++#ifdef VK_KHR_video_encode_quantization_map
++        { VK_KHR_VIDEO_ENCODE_QUANTIZATION_MAP_EXTENSION_NAME, FF_VK_EXT_VIDEO_ENCODE_QUANTIZATION_MAP },
++#endif
+ #ifdef VK_KHR_internally_synchronized_queues
+         { VK_KHR_INTERNALLY_SYNCHRONIZED_QUEUES_EXTENSION_NAME, FF_VK_EXT_INTERNAL_QUEUE_SYNC   },
+ #endif
