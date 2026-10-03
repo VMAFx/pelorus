@@ -35,6 +35,29 @@ patches (ADR-0108 deliverable #6).
 - **Compatibility floor**: interop-consuming filters require
   `libpelorus >= 0.2.0`; the Pelorus source release remains `0.2.2`.
 
+## Unreleased — patch 0010 (pelorus_fgs RDD 5 defaults and init validation)
+
+- **Patch**: `ffmpeg-patches/0010-add-pelorus_fgs_bsf.patch`, regenerated from
+  `files/h265_pelorus_fgs_bsf.c` and `.commit-msg-fgs-bsf.txt`
+  ([ADR-0155](adr/0155-fgs-bsf-rdd5-profile.md)). The registration hunks are
+  unchanged. The BSF now includes `libavutil/pixdesc.h`, reads
+  `AVBSFContext.par_in` (`format`, `bits_per_raw_sample`) at init, and wraps
+  `ff_cbs_bsf_generic_filter()` in its own `.filter` callback.
+- **Rebase-sensitive upstream contracts**: `ff_h274_film_grain_params_supported()`
+  in `libavcodec/h274.h` (model 0 only) and the clamp of the cutoffs to [2, 14]
+  in `libavcodec/h274.c` justify the defaults and the explicit cutoffs. The
+  `ses()` bounds on `comp_model_value` in
+  `libavcodec/cbs_h265_syntax_template.c` are mirrored by
+  `pel_fgs_model_value_max()`. If an FFmpeg bump changes any of these, update the
+  BSF and `scripts/test-fgs-bsf-contract.py` together.
+- **Re-test after rebase**: run the full replay, then a CPU build with
+  `--enable-libx265 --enable-bsf=pelorus_fgs,trace_headers --enable-decoder=hevc`.
+  Check four results: defaults insert a model-0 SEI with three model values
+  (`trace_headers`); FFmpeg decodes it with visible grain (compare against
+  `-export_side_data film_grain`); `model_id=1:scale_y=200` on 8-bit input fails
+  init with a non-zero exit; and `intensity_low=200:intensity_high=10` fails
+  init.
+
 The older sections below preserve the release and benchmark environment in
 which each change landed. Their unqualified gate names are historical
 shorthand; use the pinned commands above for all current rebases.

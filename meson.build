@@ -152,3 +152,14 @@ test('shader-plane-continue',
      args: [meson.project_source_root() / 'scripts' / 'test-shader-plane-continue.py'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+
+
+# ADR-0155: pelorus_fgs defaults stay inside the SMPTE RDD 5 profile FFmpeg's H.274
+# synthesizer implements, emit explicit cutoffs and per-component intervals, and
+# reject options the CBS writer cannot serialize. --self-test plants each defect.
+test('fgs-bsf-contract',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-fgs-bsf-contract.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')

@@ -129,8 +129,15 @@ scalars in `PEL_SEC_FILMGRAIN`:
 ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
   -vf "hwupload,pelorus_grain_estimate_vulkan=model=h274:strength=2.0,pelorus_denoise_vulkan=strength=0.4,hwdownload,format=yuv420p" \
   -c:v hevc_nvenc -preset p5 -cq 28 \
-  -bsf:v "pelorus_fgs=model_id=1:blending_mode=0:log2_scale=8:scale_y=24" out.mkv
+  -bsf:v "pelorus_fgs=scale_y=24" out.mkv
 ```
+
+Do not copy the estimator's `h274_model_id` (1) or `h274_log2_scale` (8) into
+`pelorus_fgs`: FFmpeg's H.274 synthesizer ignores model 1, and a scale factor
+of 8 attenuates the grain below one code value. The BSF defaults (`model_id=0`,
+`log2_scale=2`) are the decodable choice; the `scale_y` recipe is in
+[grain-fgs-bsf.md](../usage/grain-fgs-bsf.md#mapping-the-estimators-output-to-the-options)
+([ADR-0155](../adr/0155-fgs-bsf-rdd5-profile.md)).
 
 AV1 software encoders can use the native `AV_FRAME_DATA_FILM_GRAIN_PARAMS`
 channel, and `av1_nvenc` uses `-pelorus_film_grain` for the per-frame estimate.
