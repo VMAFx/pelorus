@@ -46,8 +46,10 @@ void main() {
      * pixel inside a dirty band clamps onto the nearest clean edge (smear). The
      * clamp lower bound is capped so a degenerate band wider than the frame
      * still yields a valid coordinate. */
-    int cx = clamp(x, min(pc.left, sz.x - 1), max(sz.x - 1 - pc.right, 0));
-    int cy = clamp(y, min(pc.top, sz.y - 1), max(sz.y - 1 - pc.bottom, 0));
+    int hx = max(sz.x - 1 - pc.right, 0);
+    int hy = max(sz.y - 1 - pc.bottom, 0);
+    int cx = clamp(x, min(pc.left, hx), hx);
+    int cy = clamp(y, min(pc.top, hy), hy);
 
     uint v = imageLoad(srcImg, ivec2(cx, cy)).r;
     imageStore(dstImg, ivec2(x, y), uvec4(v, 0u, 0u, 0u));

@@ -890,3 +890,17 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   high-motion clip vs a clean reference — `mc=1` must run (no validation error)
   and beat `mc=0` on the moving content; `meson test --suite=fast` must stay
   11/11 (the new conformance case).
+
+## Shader plane bounds (regenerates 0001, 0018)
+
+- **What changed**: `pelorus_deband.comp.glsl` and `pelorus_borderfix.comp.glsl`
+  now `continue` (not `return`) when `pos` lies outside a plane, so a full-size
+  plane that follows subsampled chroma (`yuva420p` alpha) is still written.
+  `bayer8` in the deband shader is the canonical Bayer matrix, and the borderfix
+  clamp bounds are order-safe. No C, descriptor, push-constant or spec-constant
+  change; no rebase conflict surface beyond the two `.comp.glsl` files.
+- **Re-test after rebase**: `meson test --suite=fast` (`shader-plane-bounds`),
+  then run deband and borderfix on `yuva420p` and confirm the alpha plane is
+  bit-exact versus the input.
+- Other plane-loop shaders (`deblock`, `aa`) keep the early-return pattern and
+  are not covered by this change.

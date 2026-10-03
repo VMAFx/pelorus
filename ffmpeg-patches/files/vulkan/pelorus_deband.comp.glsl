@@ -84,9 +84,10 @@ float tpdf(ivec2 p, uint s, int salt) {
 }
 float bayer8(ivec2 p) {
     int x = p.x & 7; int y = p.y & 7; int v = 0;
+    /* Canonical recursive Bayer: coordinate bits LSB-first, so the finest
+     * level supplies the most significant bits of the threshold. */
     for (int b = 0; b < 3; b++) {
-        v = (v << 2) | (((x >> (2 - b)) & 1) << 1)
-                     | (((x >> (2 - b)) & 1) ^ ((y >> (2 - b)) & 1));
+        v = (v << 2) | ((((x >> b) & 1) ^ ((y >> b) & 1)) << 1) | ((y >> b) & 1);
     }
     return float(v) / 64.0;
 }
@@ -160,14 +161,13 @@ void main()
 {
     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
 
-    /* Preserves the pre-FFmpeg-9 unrolled semantics exactly: the C generator
-     * emitted `if (!IS_WITHIN(pos, size)) return;` per plane, so the first
-     * plane that does not contain `pos` ends the invocation. Subsampled chroma
-     * is therefore skipped for positions only valid in luma, by design. */
+    /* Each plane is bounds-checked on its own: a position outside a subsampled
+     * chroma plane must not end the invocation, because a later full-size plane
+     * (yuva420p alpha) still has to be written or copied (BUG-007/BUG-008). */
     for (uint i = 0; i < planes; i++) {
         const ivec2 size = imageSize(output_images[i]);
         if (!all(lessThan(pos, size)))
-            return;
+            continue;
 
         if ((plane_mask & (1u << i)) != 0u)
             deband(pos, int(i), thr[i], grain[i]);
