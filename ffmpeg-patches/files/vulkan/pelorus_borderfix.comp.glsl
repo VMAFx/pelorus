@@ -56,8 +56,12 @@ layout (set = 0, binding = 1) uniform writeonly image2D output_images[];
 
 void borderfix(ivec2 pos, int idx) {
     ivec2 sz = imageSize(output_images[idx]);
-    int cx = clamp(pos.x, min(left, sz.x - 1), max(sz.x - 1 - right, 0));
-    int cy = clamp(pos.y, min(top, sz.y - 1), max(sz.y - 1 - bottom, 0));
+    /* hi is the last clean index; lo is capped at hi so lo <= hi always holds
+     * (clamp() is undefined for lo > hi, e.g. left + right >= size). */
+    int hx = max(sz.x - 1 - right, 0);
+    int hy = max(sz.y - 1 - bottom, 0);
+    int cx = clamp(pos.x, min(left, hx), hx);
+    int cy = clamp(pos.y, min(top, hy), hy);
     imageStore(output_images[idx], pos,
                imageLoad(input_images[idx], ivec2(cx, cy)));
 }
@@ -66,14 +70,13 @@ void main()
 {
     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
 
-    /* Preserves the pre-FFmpeg-9 unrolled semantics exactly: the C generator
-     * emitted `if (!IS_WITHIN(pos, size)) return;` per plane, so the first
-     * plane that does not contain `pos` ends the invocation. Subsampled chroma
-     * is therefore skipped for positions only valid in luma, by design. */
+    /* Each plane is bounds-checked on its own: a position outside a subsampled
+     * chroma plane must not end the invocation, because a later full-size plane
+     * (yuva420p alpha) still has to be written or copied (BUG-007/BUG-008). */
     for (uint i = 0; i < planes; i++) {
         const ivec2 size = imageSize(output_images[i]);
         if (!all(lessThan(pos, size)))
-            return;
+            continue;
 
         if ((plane_mask & (1u << i)) != 0u)
             borderfix(pos, int(i));
