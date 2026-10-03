@@ -11,7 +11,13 @@ permissions:
   contents: write
 
 jobs:
+  # Full CI (core, FFmpeg patch-stack replay + link, sanitizers, Windows, docs)
+  # must pass on the tagged commit before anything is published.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: ci
     runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
@@ -44,6 +50,16 @@ jobs:
           meson setup build
           ninja -C build
           meson test -C build --suite=fast --print-errorlogs
+      - name: Tag matches the project version
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          project_version="$(meson introspect --projectinfo build \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$tag_version" != "$project_version" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match meson.build version ${project_version}"
+            exit 1
+          fi
       - name: Changelog is rendered
         run: bash scripts/release/concat-changelog-fragments.sh --check
       - name: Extract release notes (the [Unreleased] block)
