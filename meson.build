@@ -135,3 +135,12 @@ if build_machine.system() != 'windows'
        timeout: 600,
        suite: 'fast')
 endif
+
+
+# BUG-007/008/013/025: shader plane loops must `continue` (yuva420p alpha), bayer8 must be
+# the canonical Bayer matrix, and borderfix clamp bounds must be order-safe.
+test('shader-plane-bounds',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-shader-plane-bounds.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
