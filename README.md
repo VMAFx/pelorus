@@ -146,8 +146,9 @@ encoder. A documented, retunable composition, not a new meta-filter. See
   sanitizer/compile-complete, on-Intel-HW proof pending;
   [ADR-0146](docs/adr/0146-qsv-roi-frame-ownership.md)),
   and the native **Vulkan-Video** encoders via `VK_KHR_video_encode_quantization_map`
-  (Tier 2, compile-verified; on-HW proof blocked by the dev box's driver
-  feedback-flag gap). The same map also steers **SVT-AV1** (`libsvtav1`) via its
+  (Tier 2; proven on an RTX 4090 for positive offsets, since that driver accepts
+  no negative delta; RADV disables it with a warning;
+  [ADR-0166](docs/adr/0166-vulkan-qpmap-activation.md)). The same map also steers **SVT-AV1** (`libsvtav1`) via its
   per-superblock ROI segment map (`SvtAv1RoiMapEvt`, ADR-0121, proven on hardware:
   CAMBI −1.5% at CRF 35, an honest modest gain on a mild synthetic source).
   Patches 0004 / 0005 / 0009 / 0012 (libaom) / 0013 (SVT-AV1).
