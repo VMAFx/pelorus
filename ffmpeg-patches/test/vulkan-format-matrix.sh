@@ -433,6 +433,65 @@ if (root / "denoise-mc-fallback.raw").read_bytes() == (
 print("PASS: lookahead and MC runtime paths")
 PY_CADENCE
 
+# ADR-0163: the dehalo gate must reach the halo ring and leave line-art alone.
+# Columns are constant down the frame: a 1-px dark stroke (its symmetric core
+# reads a zero Sobel) and a Lanczos-ringed 3-px dark line whose outer overshoot
+# lobes sit above the 191 fill. The pre-ADR-0163 gate rewrote both line cores
+# (stroke 30 -> 159) and never reached the overshoot. Direct and tiled output
+# must also stay bit-identical (ADR-0139).
+python3 - "$PEL_OUTPUT_ROOT/dehalo-src.yuv" <<'PY_DEHALO_SRC'
+import sys
+
+width, height, fill = 96, 64, 191
+row = [fill] * width
+row[20] = 30
+ringed = [189, 195, 196, 181, 148, 105, 78, 104, 166, 203, 198, 188, 190]
+row[44:44 + len(ringed)] = ringed
+with open(sys.argv[1], "wb") as out:
+    out.write(bytes(row) * height)
+    out.write(bytes([128]) * (width * height // 2))
+PY_DEHALO_SRC
+for PEL_TILE in 0 1; do
+    pel_run "dehalo-ring-tile${PEL_TILE}" \
+        -f rawvideo -pix_fmt yuv420p -s 96x64 \
+        -i "$PEL_OUTPUT_ROOT/dehalo-src.yuv" -frames:v 1 \
+        -vf "format=yuv420p,hwupload,pelorus_dehalo_vulkan=tile=${PEL_TILE},hwdownload,format=yuv420p" \
+        -f rawvideo "$PEL_OUTPUT_ROOT/dehalo-ring-tile${PEL_TILE}.raw"
+done
+cmp -s "$PEL_OUTPUT_ROOT/dehalo-ring-tile0.raw" \
+    "$PEL_OUTPUT_ROOT/dehalo-ring-tile1.raw" || \
+    pel_fail 'direct/tiled dehalo mismatch'
+python3 - "$PEL_OUTPUT_ROOT" <<'PY_DEHALO'
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+width, height, fill = 96, 64, 191
+src = (root / "dehalo-src.yuv").read_bytes()
+out = (root / "dehalo-ring-tile0.raw").read_bytes()
+if len(out) != len(src):
+    raise SystemExit(f"dehalo output size {len(out)} != {len(src)}")
+if out[width * height:] != src[width * height:]:
+    raise SystemExit("dehalo changed the unselected chroma planes")
+line_art = [20] + list(range(47, 53))
+halo = [45, 46, 56]
+flat = list(range(0, 16)) + list(range(62, 96))
+for y in range(4, height - 4):
+    s = src[y * width:(y + 1) * width]
+    o = out[y * width:(y + 1) * width]
+    for x in line_art:
+        if abs(o[x] - s[x]) > 1:
+            raise SystemExit(f"dehalo rewrote line-art at ({x},{y}): {s[x]} -> {o[x]}")
+    for x in flat:
+        if o[x] != s[x]:
+            raise SystemExit(f"dehalo changed a flat pixel at ({x},{y}): {s[x]} -> {o[x]}")
+    before = sum(max(0, s[x] - fill) for x in halo)
+    after = sum(max(0, o[x] - fill) for x in halo)
+    if after * 2 > before:
+        raise SystemExit(f"dehalo left the ring overshoot at row {y}: {before} -> {after}")
+print("PASS: dehalo ring gate removes overshoot and keeps line-art")
+PY_DEHALO
+
 if [[ -f "$PEL_OUTPUT_ROOT/validation-known-upstream.txt" ]]; then
     sort -u "$PEL_OUTPUT_ROOT/validation-known-upstream.txt" \
         -o "$PEL_OUTPUT_ROOT/validation-known-upstream.txt"

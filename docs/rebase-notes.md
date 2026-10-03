@@ -265,6 +265,25 @@ pre-fix failures and derivation.
   `qoffset=-40/255` and `-pelorus_roi 1`. Its size and PSNR must track a plain
   `-qp 120` encode.
 
+## Unreleased — ADR-0163 dehalo ring gate and pull (patch 0014)
+
+- **Patch**: only 0014 (dehalo) changes. The registration hunks and the C
+  descriptor, push-constant, and specialization layout are unchanged. The
+  `edge` AVOption help text now names the edge-step unit.
+- **Shader contract**: `files/vulkan/pelorus_dehalo.comp.glsl` reads up to
+  `MAX_R + 2` px from the pixel (the 5×5 box-mean grid of the 3×3 `Repair`
+  window), so `PEL_HALO` is 10 and `PEL_TILE` is 52 for the 32×32 workgroup.
+  Keep the tile at least that deep: a shallower tile makes `tile=1` read
+  shared memory out of bounds without failing to compile. Keep the `precise`
+  qualifiers on the arithmetic locals; without them `tile=0` and `tile=1`
+  differ by single rounding flips.
+- **Gates**: compile the shipped shader, run the fast suite, prove a second
+  generation byte-identical, and replay all 18 patches. On a device, run
+  `ffmpeg-patches/test/vulkan-format-matrix.sh`: its dehalo rows assert ring
+  overshoot removal, line-art preservation, and direct/tiled identity.
+
+See [ADR-0163](adr/0163-dehalo-gate-and-pull.md).
+
 ## v0.2.0 — FFmpeg base bump n8.1.1 → n9.0.1 (whole stack)
 
 The largest rebase so far: FFmpeg 9 removed the API the entire filter set was
