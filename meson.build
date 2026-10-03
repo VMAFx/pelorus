@@ -115,3 +115,16 @@ test('fetch-corpus-fail-closed',
      args: [meson.project_source_root() / 'scripts' / 'test-fetch-corpus.py'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+
+# The build-config self-test drives throwaway Git repositories. Started from a
+# Git hook it inherits GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE, and its fixtures then
+# rewrote the developer's own .git/config and refs. Prove the self-test leaves an
+# invoking repository untouched.
+if build_machine.system() != 'windows'
+  test('build-config-selftest-isolation',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-selftest-git-isolation.py'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
+endif
