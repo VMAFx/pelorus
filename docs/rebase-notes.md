@@ -145,6 +145,27 @@ shorthand; use the pinned commands above for all current rebases.
   decoded stream must stay intact outside the region of interest. ADR-0166
   records the 2026-10-03 RTX 4090, RADV and ANV results.
 
+## Unreleased — mc predictor units and O(n) p95 (BUG-009, BUG-014)
+
+- **Patch**: 0007 (mc) only. It now also installs the private header
+  `libavfilter/pelorus_mc_stats.h` (canonical source
+  `ffmpeg-patches/files/pelorus_mc_stats.h`, copied by `generate.sh` before the
+  filter). The header is plain C with no libav* include, so Pelorus's fast suite
+  compiles and runs it directly (`mc-stats`,
+  `ffmpeg-patches/test/mc_stats_test.c`). Keep it plain C on a rebase.
+- **Unit boundary**: the shader writes Q2 quarter-pel `mv_x`/`mv_y` but reads
+  `prev_mv` and the `gpred_x`/`gpred_y` push constants as integer pel. The host
+  converts with `pel_mc_build_predictors()` (round half away from zero) when it
+  fills the next frame's `prev_mv` buffer. Do not reintroduce a raw copy of the
+  readback into `prev_mv`. The push-constant layout and descriptor order are
+  unchanged.
+- **Readback**: after the dispatch, `mc_snapshot()` copies the mapped MV/SAD
+  SSBOs into av_fast_malloc'd host scratch once, and all host passes read the
+  scratch. Element-wise reads of the device-local mapped buffers were the
+  dominant per-frame cost.
+- **Consumers**: the `PEL_SEC_MOTION` grid stays Q2 and the summary scalars stay
+  in pixels, so 0008 (NVENC ME hints) and the denoise `mc=1` path are untouched.
+
 ## Unreleased — ADR-0147 Vulkan sample domain and component preservation
 
 - **Patches**: 0001 (deband + shared private header), 0002 (analyze), 0003
