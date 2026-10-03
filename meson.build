@@ -110,11 +110,18 @@ test('grain-accumulator-bounds',
 
 # BUG-022: the corpus fetch must fail closed (HTTP error, corrupt body, stalled
 # server) and never leave a file at the cached-download path.
-test('fetch-corpus-fail-closed',
-     python_prog,
-     args: [meson.project_source_root() / 'scripts' / 'test-fetch-corpus.py'],
-     workdir: meson.project_source_root(),
-     suite: 'fast')
+# The harness passes native-Windows temp paths (CORPUS, CORPUS_LOCK and an
+# extensionless `#!/bin/sh` FFMPEG stub) from Windows Python to MSYS2 bash; on
+# the windows-2025 leg even the positive control fails (CI run 37143360699),
+# before any download logic runs. fetch-corpus.sh is the Linux bench harness
+# and the Linux jobs run this test on every PR (same split as ADR-0149).
+if build_machine.system() != 'windows'
+  test('fetch-corpus-fail-closed',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-fetch-corpus.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
 
 # The build-config self-test drives throwaway Git repositories. Started from a
 # Git hook it inherits GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE, and its fixtures then
