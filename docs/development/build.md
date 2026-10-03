@@ -368,6 +368,18 @@ The `Release` workflow has two intentionally different entry points:
   build/fast-test gate, checks the rendered changelog, extracts release notes,
   and constructs the FFmpeg patch-stack archive in the runner, but it cannot run
   `gh release create` and retains no published release artifact.
+- Both entry points first run the whole `CI` workflow as a reusable call (`ci`
+  job, `uses: ./.github/workflows/ci.yml`: core, FFmpeg patch-stack regenerate,
+  replay, link and smoke, sanitizers, Windows, docs). The `release` job
+  `needs: ci`, so a tagged commit with a broken stack never publishes. The call
+  runs with the caller's `github` context, and `ci.yml` keys its concurrency
+  group on the workflow name so it cannot cancel a push or pull-request run.
+- A tag push also asserts that `${GITHUB_REF_NAME#v}` equals the version meson
+  reports (`meson introspect --projectinfo build`; meson already fails
+  configuration if `pelorus.h` disagrees) and fails with an `::error::` line on
+  a mismatch. A manual dispatch skips only this assertion.
+  `scripts/check-build-config.py` enforces the call, the `needs`, the
+  `workflow_call` trigger and the tag step.
 - Pushing a `v*` tag runs the same gate and packaging, then publishes the GitHub
   release and attaches `pelorus-ffmpeg-patches-<tag>.tar.gz`. Review the tag and
   rendered `[Unreleased]` notes before pushing: a manual dispatch is not a
