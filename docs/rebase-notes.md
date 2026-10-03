@@ -1106,7 +1106,6 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
 - Other plane-loop shaders (`deblock`, `aa`) keep the early-return pattern and
   are not covered by this change.
 
-
 ## Fix wave 2026-10-03 — QSV EnableMBQP warning, SVT-AV1 ROI event reclamation (regenerates 0005, 0013)
 
 - **Patches**: `0005` (qsv ROI) and `0013` (SVT-AV1 ROI); no registration or
