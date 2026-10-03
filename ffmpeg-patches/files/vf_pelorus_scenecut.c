@@ -38,6 +38,8 @@
 #include "filters.h"
 #include "video.h"
 
+#include "pelorus_sidedata.h"
+
 #include <pelorus/interop.h>
 
 typedef struct PelorusScenecutContext {
@@ -51,23 +53,18 @@ static int pelorus_scenecut_filter_frame(AVFilterLink *inlink, AVFrame *frame)
     PelorusScenecutContext *s = ctx->priv;
 
     if (s->force_idr) {
-        const AVFrameSideData *sd =
-            av_frame_get_side_data(frame, AV_FRAME_DATA_SEI_UNREGISTERED);
+        const void *p = NULL;
+        size_t got = 0;
 
-        if (sd && sd->data && pel_blob_is_present(sd->data, sd->size)) {
-            const void *p = NULL;
-            size_t got = 0;
-
-            if (pel_blob_find_section(sd->data, sd->size, PEL_SEC_MOTION,
-                                      sizeof(PelorusMotionSection), &p, &got) == PEL_OK
-                && p != NULL
-                && got >= offsetof(PelorusMotionSection, has_scene_cut)
-                          + sizeof(uint8_t)) {
-                const PelorusMotionSection *mo = p;
-                if (mo->has_scene_cut) {
-                    frame->pict_type = AV_PICTURE_TYPE_I;
-                    frame->flags |= AV_FRAME_FLAG_KEY;
-                }
+        /* Newest Pelorus blob carrying PEL_SEC_MOTION; a shorter (older) producer
+         * section is read field-by-field against `got`. */
+        if (pelorus_sd_find_section(frame, PEL_SEC_MOTION, sizeof(PelorusMotionSection), &p,
+                                    &got) &&
+            PEL_SD_FIELD_OK(got, PelorusMotionSection, has_scene_cut)) {
+            const PelorusMotionSection *mo = p;
+            if (mo->has_scene_cut) {
+                frame->pict_type = AV_PICTURE_TYPE_I;
+                frame->flags |= AV_FRAME_FLAG_KEY;
             }
         }
     }

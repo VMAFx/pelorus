@@ -105,6 +105,17 @@ All notable changes to Pelorus are documented here. The format is
   with an empty file (BUG-002, BUG-024). Existing command lines that set
   `model_id=1` or `log2_scale=8` keep working, but now log why FFmpeg will not
   show their grain ([ADR-0155](docs/adr/0155-fgs-bsf-rdd5-profile.md)).
+- Fixed the FFmpeg-side Pelorus consumers (`pelorus_analyze`, `pelorus_denoise`
+  motion compensation, `pelorus_scenecut`) to scan every appended
+  `AV_FRAME_DATA_SEI_UNREGISTERED` blob newest first instead of only the first
+  entry, so sections from a later producer in a chain are no longer invisible
+  (BUG-005); to check the readable section size before every field read, so a
+  shorter section from an older producer is no longer read past its end
+  (BUG-003, BUG-004); and to map the motion-vector grid onto pixels with the
+  producer's block edge instead of `ceil(size / cells)`, which disagreed with
+  `pelorus_mc` for block sizes such as 31 (BUG-015). A grid that fits no single
+  block size now disables motion compensation for that frame with a one-time
+  warning. See [the interop guide](docs/api/interop-abi.md).
 - Fixed the deband and borderfix Vulkan shaders ending the invocation at the
   first plane that does not contain the position: on a subsampled layout such
   as `yuva420p` the full-size alpha plane (after the half-size chroma planes)

@@ -85,6 +85,30 @@ it to an `AVBufferRef` with a free callback that calls `pel_blob_free` (do **not
 `av_free` it — allocator mismatch). `pel_blob_find_section` returns a pointer
 into the blob (no copy) and the readable byte count `min(producer, consumer)`.
 
+### Chained producers (several blobs on one frame)
+
+`av_frame_new_side_data_from_buf` appends; it never merges or replaces. A frame
+that passed through several Pelorus producers (for example `pelorus_mc`, then
+`pelorus_analyze`, then `pelorus_denoise`) therefore carries one
+`AV_FRAME_DATA_SEI_UNREGISTERED` entry per producer, each with its own header and
+grid. `av_frame_get_side_data` returns only the first one.
+
+Pelorus's FFmpeg consumers (`pelorus_analyze`, `pelorus_denoise` motion
+compensation, `pelorus_scenecut`) use `pelorus_sd_find_section`
+(`ffmpeg-patches/files/pelorus_sidedata.h`): scan all entries **newest first**
+and take the section from the newest valid Pelorus blob that contains it. Read
+the grid (`grid_cols`/`grid_rows`) from that same blob, never from another one.
+Every field read is guarded by the readable size (R4): a section written by an
+older, shorter producer is read only as far as `got` covers
+(`PEL_SD_FIELD_OK(got, Type, field)`).
+
+`pelorus_denoise` maps the motion grid back to pixels with the producer's block
+edge, recovered from the frame size and the grid
+(`pelorus_mc_cell_pitch`: the single `bsize` in 8..32 with
+`ceil(W/b) == grid_cols` and `ceil(H/b) == grid_rows`). `PelorusMotionSection`
+carries no block-size field. If no single block size fits, motion compensation is
+skipped for that frame and a warning is logged once.
+
 ### QP-report reader stub (closed loop)
 
 `pel_qp_report_from_blocks` folds an encoder's per-block actual-QP grid onto the

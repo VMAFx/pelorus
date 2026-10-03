@@ -45,6 +45,7 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/rational.h"
+#include "pelorus_sidedata.h"
 #include "pelorus_vulkan_sample.h"
 #include "vulkan_filter.h"
 
@@ -546,16 +547,20 @@ static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame, const Pe
         float texture = av_clipf(0.5f * FFMIN(gvar / 0.05f, 1.0f) + 0.5f * gedge, 0.0f, 1.0f);
         float motion = 0.0f;
         int scene_cut = 0;
-        AVFrameSideData *sd = av_frame_get_side_data(frame, AV_FRAME_DATA_SEI_UNREGISTERED);
         const void *mp = NULL;
         size_t msz = 0;
         float craw, cema;
 
-        if (sd && pel_blob_find_section(sd->data, sd->size, PEL_SEC_MOTION,
-                                        sizeof(PelorusMotionSection), &mp, &msz) == PEL_OK) {
+        /* Newest Pelorus blob carrying PEL_SEC_MOTION (every producer appends its
+         * own entry); msz is the producer/consumer minimum (R4), so each field is
+         * read only when an older, shorter producer section still covers it. */
+        if (pelorus_sd_find_section(frame, PEL_SEC_MOTION, sizeof(PelorusMotionSection), &mp,
+                                    &msz)) {
             const PelorusMotionSection *mo = mp;
-            motion = av_clipf(mo->motion_magnitude_mean / 8.0f, 0.0f, 1.0f);
-            scene_cut = mo->has_scene_cut ? 1 : 0;
+            if (PEL_SD_FIELD_OK(msz, PelorusMotionSection, motion_magnitude_mean))
+                motion = av_clipf(mo->motion_magnitude_mean / 8.0f, 0.0f, 1.0f);
+            if (PEL_SD_FIELD_OK(msz, PelorusMotionSection, has_scene_cut))
+                scene_cut = mo->has_scene_cut ? 1 : 0;
         }
 
         craw = av_clipf(0.7f * texture + 0.3f * motion, 0.0f, 1.0f);
