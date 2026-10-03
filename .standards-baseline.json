@@ -1,59 +1,10 @@
 {
   "version": 1,
-  "generated_at": "2026-10-03T14:32:38Z",
+  "generated_at": "2026-10-03T14:51:31Z",
   "repository": "VMAFx/pelorus",
-  "commit_sha": "f65b16750f8a0664fd4cc660fcccaafeb8b83957",
-  "total_infractions": 99,
-  "increase_rationale": "ADR-0154: Praetor engine 25451d88 -\u003e 0af07a73. The HISS scanner now reads shell scripts, which surfaces 36 HISS-07 '|| true' sites and one HISS-02 unbounded curl in unchanged scripts; entries are re-keyed by rule, file and function. No product code changed; the script-hardening follow-up burns these down.",
+  "commit_sha": "ca74da00d4a8f536e477a8a707f4c42c7a82b0f5",
+  "total_infractions": 61,
   "infractions": [
-    {
-      "rule_id": "HISS-07",
-      "file_path": ".codex/hooks/auto-format-on-edit.sh",
-      "line_number": 6,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:7cbc70a760e4",
-      "fingerprint": ".codex/hooks/auto-format-on-edit.sh:HISS-07:text:7cbc70a760e4#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": ".codex/hooks/auto-format-on-edit.sh",
-      "line_number": 15,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:3d2ae9ba61b7",
-      "fingerprint": ".codex/hooks/auto-format-on-edit.sh:HISS-07:text:3d2ae9ba61b7#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": ".codex/hooks/block-unsafe-bash.sh",
-      "line_number": 6,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:614183d50691",
-      "fingerprint": ".codex/hooks/block-unsafe-bash.sh:HISS-07:text:614183d50691#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": ".codex/hooks/docs-drift-warn.sh",
-      "line_number": 7,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:7cbc70a760e4",
-      "fingerprint": ".codex/hooks/docs-drift-warn.sh:HISS-07:text:7cbc70a760e4#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": ".codex/hooks/shader-lockstep-warn.sh",
-      "line_number": 13,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:7cbc70a760e4",
-      "fingerprint": ".codex/hooks/shader-lockstep-warn.sh:HISS-07:text:7cbc70a760e4#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": ".codex/hooks/stop.sh",
-      "line_number": 11,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:076c906f693e",
-      "fingerprint": ".codex/hooks/stop.sh:HISS-07:text:076c906f693e#1"
-    },
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_aa_vulkan.c",
@@ -466,222 +417,6 @@
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c:HISS-04:fn:mc_vulkan_filter_frame#1"
     },
     {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 56,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "fn:cleanup",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:fn:cleanup#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 637,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:72361d711d60",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:72361d711d60#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 638,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:7f341ae8ae7d",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:7f341ae8ae7d#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 639,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:de7cebfd3c6d",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:de7cebfd3c6d#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 640,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:f1c5b3511df2",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:f1c5b3511df2#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 641,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:17046de1eb73",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:17046de1eb73#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 642,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:3e0ae2bdab6a",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:3e0ae2bdab6a#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 643,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:9dfa8f748d4a",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:9dfa8f748d4a#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 644,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:bb56560fb5d2",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:bb56560fb5d2#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 645,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:a68c4a10dc49",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:a68c4a10dc49#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 646,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:1a0681d0a2f6",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:1a0681d0a2f6#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 647,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:ef491f193103",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:ef491f193103#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 648,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:e53b62397101",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:e53b62397101#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 649,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:bb92a9c2b73d",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:bb92a9c2b73d#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 650,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:e908806a7a41",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:e908806a7a41#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 651,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:39ea28f1c2c6",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:39ea28f1c2c6#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 652,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:4297c54eed4f",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:4297c54eed4f#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 653,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:a2a150a06b1e",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:a2a150a06b1e#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/generate.sh",
-      "line_number": 654,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:00ba96751389",
-      "fingerprint": "ffmpeg-patches/generate.sh:HISS-07:text:00ba96751389#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/test/build-and-run.sh",
-      "line_number": 64,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "fn:cleanup",
-      "fingerprint": "ffmpeg-patches/test/build-and-run.sh:HISS-07:fn:cleanup#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/test/build-and-run.sh",
-      "line_number": 100,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "fn:run_logged",
-      "fingerprint": "ffmpeg-patches/test/build-and-run.sh:HISS-07:fn:run_logged#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/test/build-and-run.sh",
-      "line_number": 293,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:01ac54368b0a",
-      "fingerprint": "ffmpeg-patches/test/build-and-run.sh:HISS-07:text:01ac54368b0a#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/test/build-and-run.sh",
-      "line_number": 300,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:01ac54368b0a",
-      "fingerprint": "ffmpeg-patches/test/build-and-run.sh:HISS-07:text:01ac54368b0a#2"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/test/build-and-run.sh",
-      "line_number": 308,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:e3f25890f569",
-      "fingerprint": "ffmpeg-patches/test/build-and-run.sh:HISS-07:text:e3f25890f569#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/test/build-and-run.sh",
-      "line_number": 314,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:e3f25890f569",
-      "fingerprint": "ffmpeg-patches/test/build-and-run.sh:HISS-07:text:e3f25890f569#2"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/test/build-and-run.sh",
-      "line_number": 328,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "fn:verify_encoder_options",
-      "fingerprint": "ffmpeg-patches/test/build-and-run.sh:HISS-07:fn:verify_encoder_options#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/test/build-and-run.sh",
-      "line_number": 334,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "fn:verify_encoder_options",
-      "fingerprint": "ffmpeg-patches/test/build-and-run.sh:HISS-07:fn:verify_encoder_options#2"
-    },
-    {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/test/qsv-roi-regression.c",
       "line_number": 25,
@@ -697,22 +432,6 @@
       "message": "Function 'main' (215 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:main",
       "fingerprint": "ffmpeg-patches/test/qsv-roi-regression.c:HISS-04:fn:main#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/test/qsv-roi-regression.sh",
-      "line_number": 35,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "fn:cleanup",
-      "fingerprint": "ffmpeg-patches/test/qsv-roi-regression.sh:HISS-07:fn:cleanup#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "ffmpeg-patches/test/vulkan-format-matrix.sh",
-      "line_number": 103,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "fn:pel_check_validation",
-      "fingerprint": "ffmpeg-patches/test/vulkan-format-matrix.sh:HISS-07:fn:pel_check_validation#1"
     },
     {
       "rule_id": "HISS-04",
@@ -767,14 +486,6 @@
       "fingerprint": "scripts/bench/bd_rate.py:HISS-07:text:a06881221eec#1"
     },
     {
-      "rule_id": "HISS-02",
-      "file_path": "scripts/bench/fetch-corpus.sh",
-      "line_number": 48,
-      "message": "curl without --max-time waits on the network without a deadline",
-      "anchor": "text:4ce290bbb0e3",
-      "fingerprint": "scripts/bench/fetch-corpus.sh:HISS-02:text:4ce290bbb0e3#1"
-    },
-    {
       "rule_id": "HISS-04",
       "file_path": "scripts/bench/run-bench.py",
       "line_number": 127,
@@ -782,15 +493,6 @@
       "message": "Function 'main' (88 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:main",
       "fingerprint": "scripts/bench/run-bench.py:HISS-04:fn:main#1"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "scripts/check-build-config.py",
-      "line_number": 2659,
-      "symbol": "renovate_validator_regressions",
-      "message": "Function 'renovate_validator_regressions' (100 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "anchor": "fn:renovate_validator_regressions",
-      "fingerprint": "scripts/check-build-config.py:HISS-04:fn:renovate_validator_regressions#1"
     },
     {
       "rule_id": "HISS-07",
@@ -808,14 +510,6 @@
       "message": "Function 'check' (257 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:check",
       "fingerprint": "scripts/check-vulkan-storage-domain.py:HISS-04:fn:check#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "scripts/release/concat-changelog-fragments.sh",
-      "line_number": 71,
-      "message": "'|| true' discards the command's failure; handle the exit status or test the condition instead",
-      "anchor": "text:1b040f0572af",
-      "fingerprint": "scripts/release/concat-changelog-fragments.sh:HISS-07:text:1b040f0572af#1"
     },
     {
       "rule_id": "HISS-04",

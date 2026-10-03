@@ -10,13 +10,16 @@
 # Makes the bench reproducible from a pinned source on any machine.
 #
 #   FFMPEG=/path/to/ffmpeg CORPUS=.bench-corpus ./fetch-corpus.sh [name...]
+#   CORPUS_LOCK=<file> and CURL_MAX_TIME=<seconds, default 600> override the pin list and deadline.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 FFMPEG="${FFMPEG:-ffmpeg}"
 CORPUS="${CORPUS:-$ROOT/.bench-corpus}"
-LOCK="$HERE/corpus.lock"
+LOCK="${CORPUS_LOCK:-$HERE/corpus.lock}"
+# Per-attempt transfer deadline in seconds (clips are tens of MB).
+CURL_MAX_TIME="${CURL_MAX_TIME:-600}"
 mkdir -p "$CORPUS"
 
 want=("$@")
@@ -45,7 +48,25 @@ while IFS='|' read -r name url sha seek scale pixfmt frames fps; do
         local_dl="$CORPUS/$(basename "$url")"
         if [ ! -f "$local_dl" ] || [ "$(sha256sum "$local_dl" | cut -d' ' -f1)" != "$sha" ]; then
             echo "  downloading $url"
-            curl -sL -o "$local_dl" "$url"
+            # Download to a temporary name, verify, then publish: a failed or
+            # corrupt transfer must never leave a file where the corpus belongs.
+            # --fail turns an HTTP error into a non-zero exit instead of saving
+            # the error page; --max-time bounds every attempt (HISS-02).
+            tmp_dl="$(mktemp "$local_dl.XXXXXX.part")"
+            if ! curl --fail --show-error --silent --location \
+                --max-time "$CURL_MAX_TIME" --retry 2 --retry-max-time "$CURL_MAX_TIME" \
+                --output "$tmp_dl" -- "$url"; then
+                rm -f -- "$tmp_dl"
+                echo "  DOWNLOAD FAILED: $url" >&2
+                exit 1
+            fi
+            got="$(sha256sum "$tmp_dl" | cut -d' ' -f1)"
+            if [ "$got" != "$sha" ]; then
+                rm -f -- "$tmp_dl"
+                echo "  SHA MISMATCH: got $got want $sha" >&2
+                exit 1
+            fi
+            mv -- "$tmp_dl" "$local_dl"
         fi
         got="$(sha256sum "$local_dl" | cut -d' ' -f1)"
         [ "$got" = "$sha" ] || { echo "  SHA MISMATCH: got $got want $sha" >&2; exit 1; }

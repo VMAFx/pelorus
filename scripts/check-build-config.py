@@ -111,10 +111,19 @@ GIT_AM_CONFIG = (
 GIT_AM_CONFIG_PATTERN = r"\s+".join(
     rf"-c\s+{re.escape(setting)}" for setting in GIT_AM_CONFIG
 )
+# Anchored (re.MULTILINE) to the start of a line whose first token is `git`, so the
+# canonical command inside a comment or after another word does not satisfy it (#65).
 GIT_AM_COMMAND_PATTERN = (
-    r'git\s+-C\s+"\$WORKTREE"\s+'
+    r'(?m)^[ \t]*git\s+-C\s+"\$WORKTREE"\s+'
     + GIT_AM_CONFIG_PATTERN
     + r"\s+am\s+--3way\s+--no-gpg-sign\s+--no-verify\s"
+)
+# Environment the replay scripts export so global/system Git configuration and
+# GIT_COMMITTER_* never reach `git am` or the worktree checkout (#65).
+GIT_HERMETIC_ENV_LINES = (
+    "export GIT_CONFIG_GLOBAL=/dev/null",
+    "export GIT_CONFIG_NOSYSTEM=1",
+    "unset GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE",
 )
 FORMAT_PATCH_OPTIONS = (
     "--zero-commit",
@@ -607,6 +616,69 @@ def _consumer_replay_identity_regressions(replay: str) -> list[str]:
     return failures
 
 
+def hermetic_and_anchor_mutations(source: str) -> dict[str, tuple[str, str]]:
+    """Mutations of a replay script that the hermetic/anchored checks must refuse.
+
+    Maps a case name to (mutated source, expected error fragment).
+    """
+    # Locate the multi-line command in the raw text (continuations intact).
+    am_start = re.search(
+        r'(?m)^[ \t]*git[ \t]+-C[ \t]+"\$WORKTREE"[ \t]*\\\n'
+        r"(?:[ \t]*-c [^\n]*\\\n)+[ \t]*am [^\n]*$",
+        source,
+    )
+    cases: dict[str, tuple[str, str]] = {}
+    if am_start is not None:
+        am_end = am_start.end()
+        command = source[am_start.start() : am_end]
+        # Negative: the canonical command survives only inside a comment.
+        # A single comment line, as a maintainer would paste it, defeats an
+        # unanchored search; the command itself is gone from the script.
+        joined = " ".join(
+            line.strip().removesuffix("\\").strip() for line in command.split("\n")
+        )
+        commented = f"# {joined}\n"
+        cases["am only in a comment"] = (
+            source[: am_start.start()] + commented + source[am_end + 1 :],
+            "git am must neutralize Git configuration",
+        )
+        # Negative: the command follows another word, so it is not a command start.
+        cases["am after another word"] = (
+            source[: am_start.start()] + "echo " + source[am_start.start() :],
+            "git am must neutralize Git configuration",
+        )
+    for line in GIT_HERMETIC_ENV_LINES:
+        cases[f"missing {line.split()[1]}"] = (
+            source.replace(line + "\n", "", 1),
+            "must run git hermetically",
+        )
+        cases[f"commented {line.split()[1]}"] = (
+            source.replace(line + "\n", "# " + line + "\n", 1),
+            "must run git hermetically",
+        )
+    # Boundary: the exports exist but only after the first git am.
+    exports = "".join(line + "\n" for line in GIT_HERMETIC_ENV_LINES)
+    if exports in source:
+        cases["exports after am"] = (
+            source.replace(exports, "", 1) + "\n" + exports,
+            "must precede the first git am",
+        )
+    return cases
+
+
+def _hermetic_regressions(label: str, source: str, validate) -> list[str]:
+    failures: list[str] = []
+    cases = hermetic_and_anchor_mutations(source)
+    if len(cases) < 2 + 2 * len(GIT_HERMETIC_ENV_LINES):
+        failures.append(f"{label} regression: hermetic mutations were not generated")
+    for name, (mutated, expected) in cases.items():
+        if mutated == source:
+            failures.append(f"{label} regression: {name} mutation changed nothing")
+        elif not any(expected in error for error in validate(mutated)):
+            failures.append(f"{label} regression: {name} was accepted")
+    return failures
+
+
 def _consumer_replay_sdk_and_query_regressions(replay: str) -> list[str]:
     failures: list[str] = []
     missing_optional_sdk = replay.replace(
@@ -712,6 +784,7 @@ def consumer_validator_regressions() -> list[str]:
     failures.extend(_consumer_replay_am_and_trap_regressions(replay, replay_relative))
     failures.extend(_consumer_replay_identity_regressions(replay))
     failures.extend(_consumer_replay_sdk_and_query_regressions(replay))
+    failures.extend(_hermetic_regressions("replay", replay, validate_replay_text))
     return failures
 
 
@@ -790,6 +863,7 @@ def qsv_validator_regressions() -> list[str]:
         errors = validate_qsv_replay_text(mutated)
         if not any(expected in error for error in errors):
             failures.append(f"QSV regression: {name} was accepted")
+    failures.extend(_hermetic_regressions("QSV", source, validate_qsv_replay_text))
     return failures
 
 
@@ -1953,12 +2027,30 @@ def _validate_replay_structure(replay: str, shell_replay: str) -> list[str]:
     return errors
 
 
+def validate_hermetic_git_env(relative: str, shell_text: str) -> list[str]:
+    """Require the hermetic Git environment on active lines before the first am."""
+    errors: list[str] = []
+    am_match = re.search(GIT_AM_COMMAND_PATTERN, shell_text)
+    for line in GIT_HERMETIC_ENV_LINES:
+        match = re.search(rf"(?m)^[ \t]*{re.escape(line)}[ \t]*$", shell_text)
+        if match is None:
+            errors.append(
+                f"{relative}: must run git hermetically; missing active line: {line}"
+            )
+        elif am_match is not None and match.start() > am_match.start():
+            errors.append(f"{relative}: `{line}` must precede the first git am")
+    return errors
+
+
 def validate_replay_text(replay: str) -> list[str]:
     """Validate requirements specific to full stack replay."""
     shell_replay = replay.replace("\\\n", " ")
     errors: list[str] = []
     errors.extend(_validate_replay_tokens_and_filters(replay))
     errors.extend(_validate_replay_structure(replay, shell_replay))
+    errors.extend(
+        validate_hermetic_git_env("ffmpeg-patches/test/build-and-run.sh", shell_replay)
+    )
     return errors
 
 
@@ -2044,6 +2136,7 @@ def validate_qsv_replay_text(replay: str) -> list[str]:
         shell_replay,
     ):
         errors.append(f"{relative}: git am must neutralize Git configuration")
+    errors.extend(validate_hermetic_git_env(relative, shell_replay))
     for token in ("BASE_TAG=", "/home/kilian/", "n8.1.1", "n9.0.1"):
         if token in replay:
             errors.append(f"{relative}: contains obsolete pin input {token}")
@@ -2656,51 +2749,47 @@ def validate_renovate() -> list[str]:
     )
 
 
-def renovate_validator_regressions() -> list[str]:
-    """Prove that removing or breaking the mirroring Go manager fails (ADR-0152)."""
-    failures: list[str] = []
-    source = RENOVATE_CONFIG.read_text(encoding="utf-8")
-    checker = Path(__file__).resolve().read_text(encoding="utf-8")
-    config = json.loads(source)
+def without_checker_manager(value: dict) -> dict:
+    value["customManagers"] = [
+        manager
+        for manager in value["customManagers"]
+        if not any(
+            renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
+            for pattern in manager.get("managerFilePatterns", [])
+        )
+    ]
+    return value
 
-    def without_checker_manager(value: dict) -> dict:
-        value["customManagers"] = [
-            manager
-            for manager in value["customManagers"]
-            if not any(
+def mutate_checker_manager(key: str, replacement: object):
+    def mutate(value: dict) -> dict:
+        for manager in value["customManagers"]:
+            if any(
                 renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
                 for pattern in manager.get("managerFilePatterns", [])
-            )
-        ]
+            ):
+                manager[key] = replacement
         return value
 
-    def mutate_checker_manager(key: str, replacement: object):
-        def mutate(value: dict) -> dict:
-            for manager in value["customManagers"]:
-                if any(
-                    renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
-                    for pattern in manager.get("managerFilePatterns", [])
-                ):
-                    manager[key] = replacement
-            return value
+    return mutate
 
-        return mutate
+def with_extra_manager(patterns: list[str]):
+    def mutate(value: dict) -> dict:
+        value["customManagers"].append(
+            {
+                "customType": "regex",
+                "managerFilePatterns": patterns,
+                "matchStrings": ['GO = "(?<currentValue>[^"]+)"'],
+                "datasourceTemplate": "github-releases",
+            }
+        )
+        return value
 
-    def with_extra_manager(patterns: list[str]):
-        def mutate(value: dict) -> dict:
-            value["customManagers"].append(
-                {
-                    "customType": "regex",
-                    "managerFilePatterns": patterns,
-                    "matchStrings": ['GO = "(?<currentValue>[^"]+)"'],
-                    "datasourceTemplate": "github-releases",
-                }
-            )
-            return value
+    return mutate
 
-        return mutate
 
-    cases = {
+def _renovate_mutation_cases() -> dict:
+    """Mutations of the Renovate config that the validator must refuse (ADR-0152)."""
+    return {
         "second manager via /regex/i": (
             with_extra_manager(["/SCRIPTS/CHECK-BUILD-CONFIG\\.PY$/i"]),
             "expected exactly one regex customManager",
@@ -2736,6 +2825,16 @@ def renovate_validator_regressions() -> list[str]:
             "matchString must capture exactly",
         ),
     }
+
+
+def renovate_validator_regressions() -> list[str]:
+    """Prove that removing or breaking the mirroring Go manager fails (ADR-0152)."""
+    failures: list[str] = []
+    source = RENOVATE_CONFIG.read_text(encoding="utf-8")
+    checker = Path(__file__).resolve().read_text(encoding="utf-8")
+    config = json.loads(source)
+
+    cases = _renovate_mutation_cases()
     for name, (mutate, expected) in cases.items():
         try:
             mutated = json.dumps(mutate(json.loads(json.dumps(config))))
