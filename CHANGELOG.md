@@ -91,6 +91,7 @@ All notable changes to Pelorus are documented here. The format is
   and CI gains a pinned `windows-2025` job that runs it
   ([ADR-0149](docs/adr/0149-windows-utf8-paths.md)).
 - Hardened the repository scripts: `scripts/bench/fetch-corpus.sh` now downloads with `--fail`, a bounded deadline and a bounded retry into a temporary file that is checksum-verified before it replaces the cache (BUG-022); `ffmpeg-patches/generate.sh` requires exactly one `format-patch` output per series index instead of swallowing a failed rename (BUG-023); the remaining `|| true` sites in the replay, matrix, changelog and agent-hook scripts use explicit status handling; the FFmpeg replay scripts ignore global and system Git configuration and `GIT_COMMITTER_*`, with a checker that anchors the canonical `git am` command to a non-comment line; and the interop fixture checks owner-only access on the open descriptor, reports distinct failure causes and loops over short writes (Closes #65).
+- The build-config self-test (`scripts/check-build-config.py --self-test`) now drops the repository-locating Git variables (`git rev-parse --local-env-vars`) before its fixtures run. Started from a Git hook, it had inherited `GIT_DIR` and rewritten the invoking repository's `.git/config` (`core.bare`, `core.hooksPath`, `gpg.program`, `user.*`), branch refs and worktree list; `scripts/test-selftest-git-isolation.py` proves an invoking repository stays untouched.
 
 ### Security
 
