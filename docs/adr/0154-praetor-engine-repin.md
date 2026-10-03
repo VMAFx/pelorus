@@ -1,5 +1,5 @@
 <!-- markdownlint-disable MD013 -->
-# ADR-0154: Re-pin the Praetor engine to `bf815ba5`
+# ADR-0154: Re-pin the Praetor engine to `0af07a73`
 
 - **Status**: Accepted
 - **Date**: 2026-10-03
@@ -10,8 +10,8 @@
 
 [ADR-0145](0145-praetor-governance-adoption.md) pinned the Praetor engine at
 `25451d888c8710822dd578907625dc69a0975142` and is Accepted, so a new pin needs
-its own record. By 2026-10-03 upstream `main` had moved 52 commits to
-`bf815ba551fe326447f3161f97ba69ae5b7fe919`. Several of those commits are
+its own record. By 2026-10-03 upstream `main` had moved 53 commits to
+`0af07a733e6534269b435cea185da4d1df7aba0c`. Several of those commits are
 breaking for adopters:
 
 - the HISS scanner reads shell scripts, systemd units, Ansible, and
@@ -32,7 +32,7 @@ so they change only through an engine re-pin.
 
 ## Decision
 
-Pin Praetor `bf815ba551fe326447f3161f97ba69ae5b7fe919` in
+Pin Praetor `0af07a733e6534269b435cea185da4d1df7aba0c` in
 `.github/workflows/standards-gate.yml` and every document that quotes the pin.
 Use ADR-0145's upgrade path: run `adopt --force
 --lock-source-root=<praetor at the pin>` in a throwaway clone, then reconcile
@@ -80,8 +80,8 @@ are. Lifting them is pull request 67's decision, not this one's.
 ## References
 
 - [ADR-0145](0145-praetor-governance-adoption.md) and
-  [research digest 0154](../research/0154-praetor-repin-bf815ba5.md).
-- Praetor `25451d88..bf815ba5`: pull requests 639–758 on
+  [research digest 0154](../research/0154-praetor-repin.md).
+- Praetor `25451d88..0af07a73`: pull requests 639–758 on
   `github.com/cordanaLLM/praetor`.
 - Source: user request 2026-10-03, paraphrased: Praetor upstream moved a lot,
   so the adoption needs updating as well.

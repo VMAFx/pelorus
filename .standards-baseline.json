@@ -4,7 +4,7 @@
   "repository": "VMAFx/pelorus",
   "commit_sha": "f65b16750f8a0664fd4cc660fcccaafeb8b83957",
   "total_infractions": 99,
-  "increase_rationale": "ADR-0154: Praetor engine 25451d88 -\u003e bf815ba5. The HISS scanner now reads shell scripts, which surfaces 36 HISS-07 '|| true' sites and one HISS-02 unbounded curl in unchanged scripts; entries are re-keyed by rule, file and function. No product code changed; the script-hardening follow-up burns these down.",
+  "increase_rationale": "ADR-0154: Praetor engine 25451d88 -\u003e 0af07a73. The HISS scanner now reads shell scripts, which surfaces 36 HISS-07 '|| true' sites and one HISS-02 unbounded curl in unchanged scripts; entries are re-keyed by rule, file and function. No product code changed; the script-hardening follow-up burns these down.",
   "infractions": [
     {
       "rule_id": "HISS-07",

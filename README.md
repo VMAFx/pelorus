@@ -205,7 +205,7 @@ If Pelorus is useful to you: [GitHub Sponsors](https://github.com/sponsors/lusor
 
 ## Standards & Governance
 
-Pelorus adopts the Praetor/HISS policy at engine commit `bf815ba5` with a
+Pelorus adopts the Praetor/HISS policy at engine commit `0af07a73` with a
 99-finding legacy baseline (31 HISS-01, two HISS-02, 28 HISS-04, 38 HISS-07).
 Canonical agent guidance lives in `AGENTS.md`; generated vendor contexts are
 checked for drift, and a locked Markdown gate lints the public documentation.
