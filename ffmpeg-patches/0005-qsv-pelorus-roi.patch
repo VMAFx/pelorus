@@ -40,14 +40,14 @@ inferred from compile/harness evidence.
 
 ADR: 0146
 ---
- libavcodec/qsvenc.c      | 279 +++++++++++++++++++-
- libavcodec/qsvenc.h      |  21 ++
+ libavcodec/qsvenc.c      | 295 +++++++++++++++++++-
+ libavcodec/qsvenc.h      |  22 ++
  libavcodec/qsvenc_h264.c |   2 +
  libavcodec/qsvenc_hevc.c |   2 +
- 4 files changed, 302 insertions(+), 2 deletions(-)
+ 4 files changed, 319 insertions(+), 2 deletions(-)
 
 diff --git a/libavcodec/qsvenc.c b/libavcodec/qsvenc.c
-index c79db089a0d249b78e762298da0caa6301247b34..dba39a90a287553544f9e19ff6310be447f25ed5 100644
+index c79db089a0d249b78e762298da0caa6301247b34..6124fd72a5d8706eb611c67666ef51c3a255c206 100644
 --- a/libavcodec/qsvenc.c
 +++ b/libavcodec/qsvenc.c
 @@ -21,6 +21,7 @@
@@ -58,7 +58,7 @@ index c79db089a0d249b78e762298da0caa6301247b34..dba39a90a287553544f9e19ff6310be4
  #include <string.h>
  #include <sys/types.h>
  #include <mfxvideo.h>
-@@ -771,6 +772,55 @@ static int init_video_param_jpeg(AVCodecContext *avctx, QSVEncContext *q)
+@@ -771,6 +772,71 @@ static int init_video_param_jpeg(AVCodecContext *avctx, QSVEncContext *q)
      return 0;
  }
  
@@ -96,9 +96,25 @@ index c79db089a0d249b78e762298da0caa6301247b34..dba39a90a287553544f9e19ff6310be4
 +    return 0;
 +}
 +
-+static void qsvenc_pelorus_roi_update_mbqp_enabled(QSVEncContext *q)
++/* Refresh the cached EnableMBQP state from the final attached buffer. The
++ * preconditions passed at init (or pelorus_roi would be off), so a clear flag
++ * here means the runtime reset EnableMBQP during MFXVideoENCODE_Init/Reset
++ * (seen on Intel Windows VPL 2.15/2.17) or an AVQSVContext CodingOption3
++ * replaced ours. Every frame then takes the rectangle path; say so once. */
++static void qsvenc_pelorus_roi_update_mbqp_enabled(AVCodecContext *avctx,
++                                                    QSVEncContext *q)
 +{
 +    q->pelorus_roi_mbqp_enabled = qsvenc_pelorus_roi_mbqp_attached(q);
++
++    if (q->pelorus_roi && !q->pelorus_roi_mbqp_enabled &&
++        !q->pelorus_roi_mbqp_warned) {
++        q->pelorus_roi_mbqp_warned = 1;
++        av_log(avctx, AV_LOG_WARNING,
++               "pelorus_roi: EnableMBQP is off after encoder initialization "
++               "(the QSV runtime cleared it, or an external CodingOption3 "
++               "replaced it); dense per-block ROI is unavailable, falling "
++               "back to per-region mfxExtEncoderROI rectangles.\n");
++    }
 +}
 +
 +static int qsvenc_pelorus_roi_frame_uses_mbqp(const AVCodecContext *avctx,
@@ -114,7 +130,7 @@ index c79db089a0d249b78e762298da0caa6301247b34..dba39a90a287553544f9e19ff6310be4
  static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
  {
      enum AVPixelFormat sw_format = avctx->pix_fmt == AV_PIX_FMT_QSV ?
-@@ -958,6 +1008,34 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
+@@ -958,6 +1024,34 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
          break;
      }
  
@@ -149,7 +165,7 @@ index c79db089a0d249b78e762298da0caa6301247b34..dba39a90a287553544f9e19ff6310be4
      // The HEVC encoder plugin currently fails with some old libmfx version if coding options
      // are provided. Can't find the extract libmfx version which fixed it, just enable it from
      // V1.28 in order to keep compatibility security.
-@@ -1117,6 +1195,15 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
+@@ -1117,6 +1211,15 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
          q->extco3.Header.BufferId      = MFX_EXTBUFF_CODING_OPTION3;
          q->extco3.Header.BufferSz      = sizeof(q->extco3);
  
@@ -165,18 +181,18 @@ index c79db089a0d249b78e762298da0caa6301247b34..dba39a90a287553544f9e19ff6310be4
          if (avctx->codec_id == AV_CODEC_ID_HEVC ||
              avctx->codec_id == AV_CODEC_ID_H264) {
              switch (q->p_strategy) {
-@@ -1825,6 +1912,10 @@ int ff_qsv_enc_init(AVCodecContext *avctx, QSVEncContext *q)
+@@ -1825,6 +1928,10 @@ int ff_qsv_enc_init(AVCodecContext *avctx, QSVEncContext *q)
          ff_qsv_print_warning(avctx, ret,
                               "Warning in encoder initialization");
  
 +#if QSV_HAVE_MBQP
-+    qsvenc_pelorus_roi_update_mbqp_enabled(q);
++    qsvenc_pelorus_roi_update_mbqp_enabled(avctx, q);
 +#endif
 +
      switch (avctx->codec_id) {
      case AV_CODEC_ID_MJPEG:
          ret = qsv_retrieve_enc_jpeg_params(avctx, q);
-@@ -2133,6 +2224,163 @@ static void print_interlace_msg(AVCodecContext *avctx, QSVEncContext *q)
+@@ -2133,6 +2240,163 @@ static void print_interlace_msg(AVCodecContext *avctx, QSVEncContext *q)
      }
  }
  
@@ -340,7 +356,7 @@ index c79db089a0d249b78e762298da0caa6301247b34..dba39a90a287553544f9e19ff6310be4
  static int set_roi_encode_ctrl(AVCodecContext *avctx, const AVFrame *frame,
                                 mfxEncodeCtrl *enc_ctrl)
  {
-@@ -2469,7 +2717,7 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
+@@ -2469,7 +2733,7 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
      mfxFrameSurface1 *surf = NULL;
      QSVFrame *qsv_frame = NULL;
      mfxEncodeCtrl* enc_ctrl = NULL;
@@ -349,7 +365,7 @@ index c79db089a0d249b78e762298da0caa6301247b34..dba39a90a287553544f9e19ff6310be4
  
      if (frame) {
          ret = submit_frame(q, frame, &qsv_frame);
-@@ -2521,7 +2769,30 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
+@@ -2521,7 +2785,30 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
          q->set_encode_ctrl_cb(avctx, frame, enc_ctrl);
      }
  
@@ -381,19 +397,19 @@ index c79db089a0d249b78e762298da0caa6301247b34..dba39a90a287553544f9e19ff6310be4
           avctx->codec_id == AV_CODEC_ID_H265) &&
           enc_ctrl && QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 8)) {
          ret = set_roi_encode_ctrl(avctx, frame, enc_ctrl);
-@@ -2636,6 +2907,10 @@ static int update_parameters(AVCodecContext *avctx, QSVEncContext *q,
+@@ -2636,6 +2923,10 @@ static int update_parameters(AVCodecContext *avctx, QSVEncContext *q,
      if (ret < 0)
          return ff_qsv_print_error(avctx, ret, "Error during resetting");
  
 +#if QSV_HAVE_MBQP
-+    qsvenc_pelorus_roi_update_mbqp_enabled(q);
++    qsvenc_pelorus_roi_update_mbqp_enabled(avctx, q);
 +#endif
 +
      return 0;
  }
  
 diff --git a/libavcodec/qsvenc.h b/libavcodec/qsvenc.h
-index 4bc77f2f7c9db6ac56cfaf4d994e4891f4364069..dcfa8b022db06dc55e1379374382823741fe4aa0 100644
+index 4bc77f2f7c9db6ac56cfaf4d994e4891f4364069..6c6162d1f2d18983eb8902e6e2f31218d60da8e7 100644
 --- a/libavcodec/qsvenc.h
 +++ b/libavcodec/qsvenc.h
 @@ -39,6 +39,15 @@
@@ -412,7 +428,7 @@ index 4bc77f2f7c9db6ac56cfaf4d994e4891f4364069..dcfa8b022db06dc55e13793743828237
  #if defined(_WIN32) || defined(__CYGWIN__)
  #define QSV_HAVE_AVBR   1
  #define QSV_HAVE_VCM    1
-@@ -265,6 +274,18 @@ typedef struct QSVEncContext {
+@@ -265,6 +274,19 @@ typedef struct QSVEncContext {
      char *load_plugins;
      SetEncodeCtrlCB *set_encode_ctrl_cb;
      int forced_idr;
@@ -426,6 +442,7 @@ index 4bc77f2f7c9db6ac56cfaf4d994e4891f4364069..dcfa8b022db06dc55e13793743828237
 +     * frames: EncodeFrameAsync keeps it live until the frame completes. */
 +    int pelorus_roi;
 +    int pelorus_roi_mbqp_enabled; ///< final attached EnableMBQP is ON
++    int pelorus_roi_mbqp_warned;  ///< EnableMBQP-cleared fallback warned once
 +    int roi_warned;            ///< rate-limit ext-buffer-slot warnings to once
 +    int roi_interlaced_warned; ///< rate-limit per-frame fallback warnings to once
      int low_delay_brc;

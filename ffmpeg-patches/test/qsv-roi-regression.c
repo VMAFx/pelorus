@@ -8,8 +8,10 @@
  * requiring QSV hardware or an initialized oneVPL session.
  */
 
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #define ff_qsv_enc_init pelorus_test_ff_qsv_enc_init
 #define ff_qsv_encode pelorus_test_ff_qsv_encode
@@ -25,6 +27,22 @@
             goto cleanup;                                                                          \
         }                                                                                          \
     } while (0)
+
+/* Count the one-time "EnableMBQP cleared" fallback warning the patch emits. */
+static int mbqp_cleared_warnings;
+
+static void count_warning_cb(void *avcl, int level, const char *fmt, va_list vl)
+{
+    char line[512];
+
+    (void)avcl;
+    if (level != AV_LOG_WARNING)
+        return;
+    vsnprintf(line, sizeof(line), fmt, vl);
+    if (strstr(line, "EnableMBQP is off after encoder initialization") &&
+        strstr(line, "falling back to per-region mfxExtEncoderROI rectangles"))
+        mbqp_cleared_warnings++;
+}
 
 static AVFrame *make_roi_frame(int width, int height, size_t nb_rois)
 {
@@ -102,6 +120,8 @@ int main(void)
     mfxExtMBQP *mbqp_a, *mbqp_b, *mbqp_overlap;
     int failed = 0;
 
+    av_log_set_callback(count_warning_cb);
+
     ctrl_a.ExtParam = params_a;
     ctrl_b.ExtParam = params_b;
     ctrl_overlap.ExtParam = params_overlap;
@@ -151,7 +171,13 @@ int main(void)
     /* AVQSVContext buffers replace internal buffers with the same BufferId.
      * An external CodingOption3 therefore controls the final attached value. */
     external_extco3.EnableMBQP = MFX_CODINGOPTION_UNKNOWN;
-    qsvenc_pelorus_roi_update_mbqp_enabled(&q);
+    qsvenc_pelorus_roi_update_mbqp_enabled(&avctx, &q);
+    /* The runtime (or an external buffer) left EnableMBQP off although
+     * pelorus_roi is on: the encoder must say so exactly once. */
+    CHECK(!q.pelorus_roi_mbqp_enabled);
+    CHECK(mbqp_cleared_warnings == 1);
+    qsvenc_pelorus_roi_update_mbqp_enabled(&avctx, &q);
+    CHECK(mbqp_cleared_warnings == 1);
     q.param.ExtParam = NULL;
     q.param.NumExtParam = 0;
     CHECK(!qsvenc_pelorus_roi_frame_uses_mbqp(&avctx, &q, frame_a));
@@ -165,7 +191,17 @@ int main(void)
     q.param.ExtParam = video_params;
     q.param.NumExtParam = FF_ARRAY_ELEMS(video_params);
     external_extco3.EnableMBQP = MFX_CODINGOPTION_ON;
-    qsvenc_pelorus_roi_update_mbqp_enabled(&q);
+    qsvenc_pelorus_roi_update_mbqp_enabled(&avctx, &q);
+    CHECK(q.pelorus_roi_mbqp_enabled);
+    CHECK(mbqp_cleared_warnings == 1);
+    {
+        /* No warning when the user never asked for pelorus_roi. */
+        QSVEncContext q_idle = {0};
+
+        qsvenc_pelorus_roi_update_mbqp_enabled(&avctx, &q_idle);
+        CHECK(!q_idle.pelorus_roi_mbqp_enabled);
+        CHECK(mbqp_cleared_warnings == 1);
+    }
     q.param.ExtParam = NULL;
     q.param.NumExtParam = 0;
     CHECK(qsvenc_pelorus_roi_frame_uses_mbqp(&avctx, &q, frame_a));
