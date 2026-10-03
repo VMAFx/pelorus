@@ -39,6 +39,16 @@ The older sections below preserve the release and benchmark environment in
 which each change landed. Their unqualified gate names are historical
 shorthand; use the pinned commands above for all current rebases.
 
+## Unreleased — deblock/aa plane loops continue (BUG-028)
+
+- `pelorus_deblock.comp.glsl` and the fast=0 loop of `pelorus_aa.comp.glsl`
+  skip a plane that excludes `pos` with `continue` instead of `return`, so a
+  later full-size plane (yuva420p alpha) is written. Only patches 0015 (aa) and
+  0017 (deblock) change; the fast=1 aa loop is untouched (it already guards per
+  plane, keeping its barriers workgroup-uniform). Re-apply: regenerate with
+  `generate.sh` and replay the full series. Regression:
+  `scripts/test-shader-plane-continue.py` (fast suite).
+
 ## Unreleased — ADR-0147 Vulkan sample domain and component preservation
 
 - **Patches**: 0001 (deband + shared private header), 0002 (analyze), 0003

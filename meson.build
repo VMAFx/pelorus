@@ -107,3 +107,10 @@ test('grain-accumulator-bounds',
      args: [meson.project_source_root() / 'scripts' / 'test-grain-accumulator-bounds.py'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+
+# BUG-028: deblock/aa plane loops must `continue` (yuva420p alpha stays written).
+test('shader-plane-continue',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-shader-plane-continue.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')

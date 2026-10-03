@@ -375,7 +375,7 @@ index 77187fe29c5fe23f84b61b45cf3a28257140bbc3..d3ff362cfa612b53ee51d812a1df844c
 +OBJS-$(CONFIG_PELORUS_AA_VULKAN_FILTER) += vulkan/pelorus_aa.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_aa.comp.glsl b/libavfilter/vulkan/pelorus_aa.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab1838ed6bc634be4834fc2169c25f35e2fe1b08
+index 0000000000000000000000000000000000000000..1bc5305454b89531b3602638f03d6f29e33fcd28
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_aa.comp.glsl
 @@ -0,0 +1,265 @@
@@ -594,9 +594,9 @@ index 0000000000000000000000000000000000000000..ab1838ed6bc634be4834fc2169c25f35
 +     * bounds-GUARDED rather than early-returned and the barriers stay
 +     * workgroup-uniform regardless of plane order.
 +     *
-+     * fast=0: `if (!IS_WITHIN(pos, size)) return;` per plane, so the first
-+     * plane that does not contain `pos` ends the invocation. Subsampled chroma
-+     * is therefore skipped for positions only valid in luma, by design.
++     * fast=0: each plane is bounds-checked on its own and skipped with
++     * `continue`, so a later full-size plane (yuva420p alpha) is still
++     * written. No barriers on this path, so the skip is safe.
 +     *
 +     * `fast`, `planes` and `plane_mask` are specialization constants, so this
 +     * folds down to the single generated variant, as before. */
@@ -627,7 +627,7 @@ index 0000000000000000000000000000000000000000..ab1838ed6bc634be4834fc2169c25f35
 +        for (uint i = 0; i < planes; i++) {
 +            size = imageSize(output_images[i]);
 +            if (!all(lessThan(pos, size)))
-+                return;
++                continue;
 +
 +            if ((plane_mask & (1u << i)) != 0u) {
 +                vec4 texel = imageLoad(input_images[i], pos);
