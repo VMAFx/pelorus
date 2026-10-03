@@ -32,6 +32,12 @@
  * libavfilter/motion_estimation.c (ff_me_search_epzs / _ds); every predictor is
  * resolved BEFORE the dispatch, so there is no cross-workgroup intra-frame
  * neighbour race.
+ *
+ * MV units: the search runs on the INTEGER luma-pel grid, so its inputs
+ * (gpred_x/gpred_y, prev_mv[], search) are integer pel. Only the outputs
+ * mv_x[]/mv_y[] are Q2 quarter-pel. The host rounds each frame's Q2 output to
+ * integer pel before handing it back as the next frame's predictors
+ * (pelorus_mc_stats.h); never feed Q2 values into the search.
  */
 
 #pragma shader_stage(compute)
@@ -55,16 +61,16 @@ layout (constant_id = 0) const uint block_dim = 32;
 layout (constant_id = 1) const uint luma_plane = 0u;
 
 layout (push_constant, std430) uniform pushConstants {
-    int   width;
-    int   height;
-    int   grid_cols;
-    int   grid_rows;
-    int   bsize;
-    int   search;
-    int   gpred_x;
-    int   gpred_y;
-    int   has_prev;
-    float sample_scale;
+    int   width;        /*  0: luma width, pixels                         */
+    int   height;       /*  4: luma height, pixels                        */
+    int   grid_cols;    /*  8: blocks per row                             */
+    int   grid_rows;    /* 12: blocks per column                          */
+    int   bsize;        /* 16: active block edge, luma pixels             */
+    int   search;       /* 20: search radius per axis, INTEGER luma pel   */
+    int   gpred_x;      /* 24: global-motion predictor, INTEGER luma pel  */
+    int   gpred_y;      /* 28: global-motion predictor, INTEGER luma pel  */
+    int   has_prev;     /* 32: 1 => ref_image + prev_mv are valid         */
+    float sample_scale; /* 36: storage UNORM -> logical sample domain     */
 };
 
 /* Binding order MUST match the C descriptor array in init_filter(). The image
@@ -75,19 +81,19 @@ layout (set = 0, binding = 0) uniform readonly image2D cur_image[];
 layout (set = 0, binding = 1) uniform readonly image2D ref_image[];
 
 layout (set = 0, binding = 2, std430) buffer mv_x_buf {
-    int mv_x[];
+    int mv_x[];     /* [nblocks] output, Q2 quarter-pel luma = round(pel*4) */
 };
 
 layout (set = 0, binding = 3, std430) buffer mv_y_buf {
-    int mv_y[];
+    int mv_y[];     /* [nblocks] output, Q2 quarter-pel luma = round(pel*4) */
 };
 
 layout (set = 0, binding = 4, std430) buffer sad_buf {
-    uint sad_out[];
+    uint sad_out[]; /* [nblocks] winning SAD * SAD_SCALE                    */
 };
 
 layout (set = 0, binding = 5, std430) readonly buffer prev_mv_buf {
-    int prev_mv[];
+    int prev_mv[];  /* [2*nblocks] last frame's (dx,dy), INTEGER luma pel   */
 };
 
 const float SAD_SCALE = 256.0;

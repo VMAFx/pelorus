@@ -127,6 +127,25 @@ All notable changes to Pelorus are documented here. The format is
 - Made the borderfix clamp bounds order-safe when `left + right` (or
   `top + bottom`) reaches the plane size, in the shipped shader and the
   reference (BUG-025). New fast test `shader-plane-bounds`.
+- Fixed `pelorus_mc_vulkan` seeding each frame's search with predictors four
+  times too far from the true motion (BUG-009). Since the quarter-pel output of
+  [ADR-0130](docs/adr/0130-mc-subpel-quarterpel.md), the shader has emitted Q2
+  vectors, but the host passed them back unconverted as the global-motion and
+  collocated-block predictors, which the integer-pel search reads as whole
+  pixels. The host now rounds the Q2 field to integer pel (half away from zero,
+  the same rounding as the NVENC ME-hint consumer) before it seeds the next
+  frame, and every MV field in the filter, both shaders, and
+  `PelorusMotionSection` names its unit. On a 1080p synthetic pan the
+  steady-state field now matches the known shift on 98.6–99.9% of blocks
+  (2–10 px, diagonal, `bsize=8`), up from 6–84%. The `PEL_SEC_MOTION` grid and
+  scalars keep their units, so the NVENC and denoise consumers are unchanged.
+- Fixed the `motion_magnitude_p95` selection in `pelorus_mc_vulkan` scanning
+  O(n²) per frame (BUG-014). It is now an O(n) radix select that the new
+  `mc-stats` fast test proves bit-identical to the old scan. The host also copies
+  the mapped MV and SAD buffers once per frame instead of reading device memory
+  element by element, and keeps its scratch across frames. On an RTX 4090 a
+  1080p `bsize=16` frame drops from 30–42 ms to 3–4.5 ms of wall time, and a
+  2160p `bsize=8` frame from 1.3–1.6 s to 46–56 ms.
 - Hardened the repository scripts: `scripts/bench/fetch-corpus.sh` now downloads with `--fail`, a bounded deadline and a bounded retry into a temporary file that is checksum-verified before it replaces the cache (BUG-022); `ffmpeg-patches/generate.sh` requires exactly one `format-patch` output per series index instead of swallowing a failed rename (BUG-023); the remaining `|| true` sites in the replay, matrix, changelog and agent-hook scripts use explicit status handling; the FFmpeg replay scripts ignore global and system Git configuration and `GIT_COMMITTER_*`, with a checker that anchors the canonical `git am` command to a non-comment line; and the interop fixture checks owner-only access on the open descriptor, reports distinct failure causes and loops over short writes (Closes #65).
 - The build-config self-test (`scripts/check-build-config.py --self-test`) now drops the repository-locating Git variables (`git rev-parse --local-env-vars`) before its fixtures run. Started from a Git hook, it had inherited `GIT_DIR` and rewritten the invoking repository's `.git/config` (`core.bare`, `core.hooksPath`, `gpg.program`, `user.*`), branch refs and worktree list; `scripts/test-selftest-git-isolation.py` proves an invoking repository stays untouched.
 - Fixed `vf_pelorus_grain_estimate_vulkan`'s lag-1 correlation, which was

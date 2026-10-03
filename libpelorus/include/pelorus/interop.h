@@ -251,16 +251,16 @@ typedef struct PelorusFilmGrainSection {
 
 /* (e) Optical-flow motion-vector hint summary — written by vf_pelorus_mc. */
 typedef struct PelorusMotionSection {
-    float global_motion_x; /* mean MV, pixels                           */
-    float global_motion_y;
-    float motion_magnitude_mean;
-    float motion_magnitude_p95; /* 95th pct — scene-cut / pan detector        */
-    float motion_entropy;       /* MV-field complexity                       */
-    uint32_t mv_field_offset;   /* blob-relative; int16 (dx,dy) per cell,
-                                 * QUARTER-PEL (Q2 = round(pel*4)) luma units  */
-    uint32_t mv_field_size;     /* grid_cols*grid_rows*2*sizeof(int16)        */
-    uint8_t has_scene_cut;      /* producer's scene-cut flag                 */
-    uint8_t _pad[3];            /* reserved, zero                            */
+    float global_motion_x;       /* mean MV x, luma pixels (not Q2)           */
+    float global_motion_y;       /* mean MV y, luma pixels (not Q2)           */
+    float motion_magnitude_mean; /* mean |MV|, luma pixels                    */
+    float motion_magnitude_p95;  /* 95th pct |MV|, luma pixels — pan/cut cue  */
+    float motion_entropy;        /* MV-field complexity, unitless             */
+    uint32_t mv_field_offset;    /* blob-relative; int16 (dx,dy) per cell,
+                                  * QUARTER-PEL (Q2 = round(pel*4)) luma units */
+    uint32_t mv_field_size;      /* grid_cols*grid_rows*2*sizeof(int16)        */
+    uint8_t has_scene_cut;       /* producer's scene-cut flag                 */
+    uint8_t _pad[3];             /* reserved, zero                            */
     /* --- APPEND-ONLY below this line --- */
 } PelorusMotionSection;
 

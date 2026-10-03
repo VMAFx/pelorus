@@ -322,7 +322,10 @@ git -C "$WORKTREE" add -A
 commit_patch "$HERE/.commit-msg-grain_estimate.txt"
 
 # vf_pelorus_mc_vulkan (motion estimator) is committed last so it lands as patch
-# 0007. Same per-filter registration model as the loop above.
+# 0007. Same per-filter registration model as the loop above. Its host-side MV
+# arithmetic (Q2 -> integer-pel predictors, O(n) p95) is a private header that
+# Pelorus's fast suite unit-tests directly (ffmpeg-patches/test/mc_stats_test.c).
+cp "$FILES_DIR/pelorus_mc_stats.h" "$WORKTREE/libavfilter/"
 cp "$FILES_DIR/vf_pelorus_mc_vulkan.c" "$WORKTREE/libavfilter/"
 install_vk_shader "mc"
 python3 - "$WORKTREE" <<'PY'
