@@ -41,10 +41,10 @@ via AVOptions — the canonical FFmpeg metadata-BSF contract (`hevc_metadata`,
 opt-in and a no-op by construction: it passes the stream through unchanged unless
 at least one colour component is selected.
 
-The estimator's parameters map onto the options (see the recipe below), so the
-intended workflow is: run the estimator once, read its H.274 scalars and
-per-band scaling with suitable analysis tooling, manually derive the static
-values, and pass them to `pelorus_fgs`.
+The estimator's per-band grain measurement maps onto the options (see the recipe
+below), so the intended workflow is: run the estimator once, read its per-band
+scaling with suitable analysis tooling, manually derive the static values, and
+pass them to `pelorus_fgs`.
 Per-frame, time-varying grain models are a follow-up that would need a side-data
 channel that does not exist in stock FFmpeg.
 
@@ -52,40 +52,96 @@ channel that does not exist in stock FFmpeg.
 
 | Option | Default | Range | Meaning |
 | --- | --- | --- | --- |
-| `model_id` | 1 | 0–1 | H.274 `film_grain_model_id`: 0 = frequency filtering, 1 = auto-regression |
+| `model_id` | 0 | 0–1 | H.274 `film_grain_model_id`: 0 = frequency filtering, 1 = auto-regression (see [Decoder compatibility](#decoder-compatibility)) |
 | `blending_mode` | 0 | 0–1 | H.274 `blending_mode_id`: 0 = additive, 1 = multiplicative |
-| `log2_scale` | 8 | 0–15 | H.274 `log2_scale_factor` |
+| `log2_scale` | 2 | 0–15 | H.274 `log2_scale_factor`; each step up halves the grain amplitude. SMPTE RDD 5 allows 2–7 |
 | `components` | `y` | bitmask | colour components that carry a model: `y` (1), `cb` (2), `cr` (4). `0` ⇒ pass-through |
 | `intensity_low` | 0 | 0–255 | lower bound of the luma intensity interval the model covers |
 | `intensity_high` | 255 | 0–255 | upper bound of the luma intensity interval the model covers |
-| `scale_y` | 16 | 0–255 | luma grain scale (`comp_model_value[Y][0][0]`) |
-| `scale_c` | 8 | 0–255 | chroma grain scale (`comp_model_value[Cb/Cr][0][0]`) when `cb`/`cr` selected |
+| `intensity_low_c` | 0 | 0–255 | lower bound of the Cb/Cr intensity interval (matched against the chroma block average) |
+| `intensity_high_c` | 255 | 0–255 | upper bound of the Cb/Cr intensity interval |
+| `scale_y` | 16 | 0–255 | luma grain sigma (`comp_model_value[Y][0][0]`); `model_id` and the bit depth can lower the limit, see [Validation and failures](#validation-and-failures) |
+| `scale_c` | 8 | 0–255 | chroma grain sigma (`comp_model_value[Cb/Cr][0][0]`) when `cb`/`cr` selected |
+| `cutoff_h` | 8 | 2–14 | model 0 only: horizontal high cutoff frequency (`comp_model_value[c][0][1]`); larger values give finer grain |
+| `cutoff_v` | 8 | 2–14 | model 0 only: vertical high cutoff frequency (`comp_model_value[c][0][2]`) |
 | `persistence` | on | bool | `film_grain_characteristics_persistence_flag` (apply until cancelled) |
 | `skip_existing` | on | bool | do not insert if the access unit already carries an FGC SEI (avoid double-stamping) |
 
-v0.x emits a **single** intensity interval `[intensity_low, intensity_high]` with
-one model value per selected component. Mapping the estimator's eight intensity
+Each selected component gets **one** intensity interval: luma uses
+`[intensity_low, intensity_high]`, and Cb and Cr share
+`[intensity_low_c, intensity_high_c]`. Mapping the estimator's eight intensity
 bands onto multiple FGC intensity intervals is a follow-up (ADR-0117).
+
+With `model_id=0` the SEI carries three model values per component: the sigma
+and both cutoffs (`num_model_values_minus1 = 2`). H.274 would infer an absent
+cutoff as 8, but FFmpeg's synthesizer does not apply that inference. It reads an
+absent cutoff as 0 and clamps it to its coarsest pattern, so the BSF always
+writes the cutoffs. With `model_id=1` the SEI carries the sigma only; H.274
+infers the absent auto-regression correlations as zero, which gives
+uncorrelated grain.
+
+### Decoder compatibility
+
+FFmpeg's H.274 synthesizer (`libavcodec/h274.c`) implements the SMPTE RDD 5-2006
+profile: model 0, additive blending, `log2_scale` 2–7, cutoffs 2–14, and at
+most three model values. The defaults stay inside that profile
+([ADR-0155](../adr/0155-fgs-bsf-rdd5-profile.md)). Values that are valid H.274
+but outside it still produce a valid SEI, and the BSF logs a warning at init:
+
+- `model_id=1`: FFmpeg's HEVC decoder logs `Unsupported film grain parameters.
+  Ignoring film grain.` once and outputs the frames without grain
+  (`ff_h274_film_grain_params_supported()` in `libavcodec/h274.h`).
+- `blending_mode=1`: FFmpeg blends additively regardless.
+- `log2_scale` outside 2–7: at 8 or more, even `scale_y=255` yields less than
+  one code value of grain.
+
+### Validation and failures
+
+The BSF rejects a configuration it cannot write before the first packet:
+
+- An empty intensity interval (`intensity_low > intensity_high`, or the same for
+  the `_c` pair) fails init with `AVERROR(EINVAL)`.
+- `scale_y` and `scale_c` must fit the H.274 `comp_model_value` range at the
+  stream's bit depth: up to 2^bitdepth − 1 for model 0 and up to
+  2^(bitdepth − 1) − 1 for model 1. With 8-bit video and `model_id=1`, the limit
+  is 127. The BSF reads the bit depth from the codec parameters (the encoder's or
+  demuxer's pixel format) or from SPS extradata. If either is available, an
+  out-of-range value fails init and `ffmpeg` exits non-zero with `Error
+  initializing bitstream filter: pelorus_fgs`.
+- If neither source gives the bit depth, the check runs on the first in-band SPS.
+  Each access unit then fails with `AVERROR(EINVAL)`, and the BSF logs once that
+  the output is incomplete. The `ffmpeg` CLI skips failed packets and still exits
+  0 unless `-xerror` is given.
 
 ## Mapping the estimator's output to the options
 
-`vf_pelorus_grain_estimate_vulkan` (`model=h274`) emits, in the
-`PEL_SEC_FILMGRAIN` interop section:
+`vf_pelorus_grain_estimate_vulkan` (`model=h274`) writes three H.274 mode
+scalars into the `PEL_SEC_FILMGRAIN` interop section: `h274_model_id`,
+`h274_blending_mode`, and `h274_log2_scale`. Do not copy `h274_model_id` (1)
+or `h274_log2_scale` (8) into this BSF. The estimator fits no auto-regression
+model, FFmpeg ignores model 1, and a scale factor of 8 attenuates the grain below
+one code value. Keep the defaults `model_id=0` and `log2_scale=2`;
+`h274_blending_mode` (0) matches the default.
 
-- `h274_model_id` → `model_id`
-- `h274_blending_mode` → `blending_mode`
-- `h274_log2_scale` → `log2_scale`
+The section also carries a per-luma-band RMS residual: the normalized grain
+standard deviation at each of eight intensity bands. For the single-interval
+v0.x model, collapse it to one luma value:
 
-and a per-luma-band RMS residual (the grain standard deviation at each of eight
-intensity bands). For the single-interval v0.x model, collapse the per-band RMS
-to one luma scale:
-
-- `scale_y` ≈ `clip(round(mean(band_rms) * strength * 255), 0, 255)`, using the
-  same `strength` you passed to the estimator. Use a band-weighted mean if grain
-  is concentrated in a luma range, and set `intensity_low`/`intensity_high` to
-  that range to restrict where the synthesized grain applies.
-- `scale_c` is the chroma counterpart; leave at the default unless you select
-  `cb`/`cr` (the estimator derives chroma from luma by default).
+1. `sigma` = `mean(band_rms) * strength * 255`: the grain standard deviation in
+   8-bit code values, using the same `strength` you passed to the estimator. For
+   10-bit streams multiply by 4, because model values use the stream's bit depth.
+   Use a band-weighted mean if grain is concentrated in a luma range, and set
+   `intensity_low`/`intensity_high` to that range.
+2. `scale_y` = `round(sigma * 2^log2_scale * 16 / (cutoff + 1))`, with
+   `cutoff` = `cutoff_h` = `cutoff_v`. H.274
+   equations (27) to (31) give model-0 grain a standard deviation of
+   `scale_y * sqrt((cutoff_h + 1) * (cutoff_v + 1)) / 16 / 2^log2_scale`. With
+   the defaults (`log2_scale=2`, both cutoffs 8) that is `scale_y ≈ 7 * sigma`,
+   and the default `scale_y=16` predicts 2.25 code values. FFmpeg's fixed-point
+   grain patterns at cutoff 8 are about 6% weaker than the formula, and the
+   measured result is 1.91 (see [Verification](#verification)).
+3. `scale_c` is the chroma counterpart; leave it at the default unless you
+   select `cb`/`cr` (the estimator derives chroma from luma by default).
 
 This is an offline/manual mapping recipe, not code the BSF performs. These are
 guidance values, not a measured BD-rate-optimal mapping; tune against the vmafx
@@ -100,10 +156,14 @@ ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
   -c:v libx265 -crf 28 grainless.hevc
 
 # 2. Insert the H.274 FGC SEI so a decoder re-synthesizes the grain.
-#    (Map the estimate's H.274 scalars + per-band RMS onto the options.)
+#    (scale_y comes from the estimate's per-band RMS; see the recipe above.)
 ffmpeg -i grainless.hevc -c:v copy \
-  -bsf:v "pelorus_fgs=model_id=1:blending_mode=0:log2_scale=8:scale_y=24:intensity_low=0:intensity_high=255" \
+  -bsf:v "pelorus_fgs=scale_y=24:intensity_low=16:intensity_high=235" \
   -f hevc out.hevc
+
+# FFmpeg applies H.274 grain when decoding; export it instead to decode clean:
+ffmpeg -i out.hevc -f rawvideo with-grain.yuv
+ffmpeg -export_side_data film_grain -i out.hevc -f rawvideo without-grain.yuv
 
 # Inspect the inserted SEI:
 ffmpeg -i out.hevc -c:v copy -bsf:v trace_headers -f null - 2>&1 | grep -A12 "Film Grain Characteristics"
@@ -114,14 +174,33 @@ HEVC output), and over a remuxed `.mp4`/`.mkv` HEVC track. "Inline" describes
 packet placement only: its model still comes exclusively from those static
 AVOptions, not from the filtergraph's frame side data.
 
-## Verification (this PR)
+## Verification
 
-End to end on a `testsrc2` clip encoded with libx265: `pelorus_fgs` inserted the
-FGC SEI, and `trace_headers` parsed it back on every access unit with the exact
-configured values (`model_id`, `blending_mode`, `log2_scale`, intensity interval,
-`comp_model_value`, persistence). `components=0` produced a byte-identical
-pass-through; `skip_existing=1` did not double-stamp an already-marked stream.
-No BD-rate / visual-match proof is shipped here — that must be measured under the
+The fast suite's `fgs-bsf-contract` test (`scripts/test-fgs-bsf-contract.py
+--self-test`) checks the source statically: RDD 5 defaults, a default grain
+sigma of at least one code value, explicit cutoffs, per-component intervals, and
+the init-time and per-access-unit range checks. Its self-test plants each of
+those defects and requires the check to reject it.
+
+Runtime evidence for [ADR-0155](../adr/0155-fgs-bsf-rdd5-profile.md), from a
+CPU-only FFmpeg n9.0.2 build with the patch stack and libx265 (1-second
+320x240 clips; grain sigma is the luma standard deviation between a normal
+decode and a `-export_side_data film_grain` decode):
+
+| Case | Before | After |
+| --- | --- | --- |
+| Defaults on flat grey, decoded by FFmpeg | `Ignoring film grain`; sigma 0.000 | model 0 with three model values; sigma 1.91 |
+| `model_id=0` with the old `log2_scale=8` | sigma 0.50: every sample moves by 0 or −1, no visible grain | same output, plus an init warning that 8 is outside RDD 5 |
+| `model_id=1:scale_y=200`, 8-bit | exit 0, 0-byte output, 25 packets dropped | init error, exit 234 |
+| `intensity_low=200:intensity_high=10` | exit 0; the SEI matches no sample | init error, exit 234 |
+| `model_id=1:scale_y=200`, 10-bit | — | written (limit 511) |
+| Bit depth only in the SPS (BSF API, no pixel format) | — | 25 of 25 packets fail with `EINVAL`; one detailed error |
+
+`trace_headers` parses the inserted SEI back on all 25 access units with the
+configured values. `ffprobe -export_side_data film_grain -show_frames` reports
+H.274 side data on all 25 frames. `components=0` is a byte-identical
+pass-through, and `skip_existing=1` leaves an already-marked stream unchanged.
+No BD-rate / visual-match proof is shipped; that must be measured under the
 [ADR-0111](../adr/0111-benchmark-methodology.md) methodology as a follow-up.
 
 ## Follow-ups

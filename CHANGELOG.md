@@ -90,6 +90,20 @@ All notable changes to Pelorus are documented here. The format is
   runs natively under MSYS2 UCRT64 (with a Windows-safe SPIR-V discard target),
   and CI gains a pinned `windows-2025` job that runs it
   ([ADR-0149](docs/adr/0149-windows-utf8-paths.md)).
+- Fixed `pelorus_fgs` so its default H.274 film-grain SEI is actually
+  synthesized. The old defaults (`model_id=1`, `log2_scale=8`) were ignored by
+  FFmpeg's HEVC decoder and, with model 0, attenuated the grain below one code
+  value; the defaults are now `model_id=0` and `log2_scale=2`. Model 0 now writes
+  explicit cutoff frequencies through the new `cutoff_h`/`cutoff_v` options, and
+  Cb/Cr get their own `intensity_low_c`/`intensity_high_c` interval instead of
+  the luma one (BUG-001, BUG-012). An empty intensity interval, or a
+  `scale_y`/`scale_c` beyond the H.274 range for the model and bit depth (for
+  example 200 with `model_id=1` on 8-bit video), now fails at init with a clear
+  error and a non-zero ffmpeg exit. Previously the first case inserted an SEI
+  that matched no sample, and the second dropped every packet and still exited 0
+  with an empty file (BUG-002, BUG-024). Existing command lines that set
+  `model_id=1` or `log2_scale=8` keep working, but now log why FFmpeg will not
+  show their grain ([ADR-0155](docs/adr/0155-fgs-bsf-rdd5-profile.md)).
 - Fixed the deband and borderfix Vulkan shaders ending the invocation at the
   first plane that does not contain the position: on a subsampled layout such
   as `yuva420p` the full-size alpha plane (after the half-size chroma planes)
