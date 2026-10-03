@@ -55,7 +55,7 @@ ADR: docs/adr/0118-nvenc-av1-filmgrain.md, docs/adr/0115-grain-estimate.md (prod
  3 files changed, 313 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index 8b2cd200acb4cdae40a4fd9402a97b90b6a455d0..dba03eeebc5aa4661d93f5c2f7ffcee14dbe72ae 100644
+index 193dc8b6b3222fbb23339e36064064a26a9c971b..6ab92e570783a2b56f8df56c013f0a26d651fb4d 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
 @@ -1689,6 +1689,31 @@ static av_cold int nvenc_setup_av1_config(AVCodecContext *avctx)
@@ -357,7 +357,7 @@ index 8b2cd200acb4cdae40a4fd9402a97b90b6a455d0..dba03eeebc5aa4661d93f5c2f7ffcee1
  #ifdef NVENC_HAVE_HEVC_AND_AV1_MASTERING_METADATA
  static int nvenc_set_mastering_display_data(AVCodecContext *avctx, const AVFrame *frame, NV_ENC_PIC_PARAMS *pic_params,
                                              MASTERING_DISPLAY_INFO *mastering_disp_info, CONTENT_LIGHT_LEVEL *content_light_level)
-@@ -3477,6 +3762,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3505,6 +3790,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
          }
  #endif
  
@@ -371,7 +371,7 @@ index 8b2cd200acb4cdae40a4fd9402a97b90b6a455d0..dba03eeebc5aa4661d93f5c2f7ffcee1
          if (res < 0)
              return res;
 diff --git a/libavcodec/nvenc.h b/libavcodec/nvenc.h
-index be52d320e0b7d7c9140bd108864d4b1cdfe0f41e..98f1fefb5dfe0bd6b6de34b3e9a0911c4f457342 100644
+index 8a0dbaea8384b05e90965a5e45a0973b04e467f2..499477b2750a72edbd4917741dd0974321822151 100644
 --- a/libavcodec/nvenc.h
 +++ b/libavcodec/nvenc.h
 @@ -45,6 +45,9 @@ typedef void ID3D11Device;

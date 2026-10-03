@@ -112,6 +112,33 @@ shorthand; use the pinned commands above for all current rebases.
   `generate.sh` and replay the full series. Regression:
   `scripts/test-shader-plane-continue.py` (fast suite).
 
+## Unreleased — encoder follow-ups (BUG-030, BUG-031, BUG-032; regenerates 0008, 0009, 0011, 0013)
+
+- **Patches**: `0008` (nvenc ME hints), `0009` (Vulkan QP map) and `0013`
+  (SVT-AV1 ROI) change content. `0011` (nvenc film grain) changes only hunk
+  offsets, because `0008` adds lines to `libavcodec/nvenc.c`.
+- **0008 (BUG-031)**: `nvenc_setup_me_hints()` no longer returns with
+  `meHintCountsPerBlock` zero on a frame without a `PEL_SEC_MOTION` section.
+  It fills the scratch buffer with one zero-MV candidate per 16x16 block
+  (`nvenc_fill_zero_me_hints()`), sets one L0 candidate per block, and warns
+  once through the new `NvencContext.me_hints_absent_warned` field. The
+  `me_hints_warned` comment now names only the AQ/lookahead note. The
+  `NvencContext` fields stay at the tail of the struct; rebase conflicts in that
+  block keep both new fields.
+- **0009 (BUG-032)**: `pelorus_qp_range()` delegates to the new
+  `pelorus_qp_range_for(codec_id, bit_depth)`, which returns 255 for
+  `AV_CODEC_ID_AV1`. The driver delta clamp (ADR-0166) is unchanged. A debug
+  line per applied rectangle logs the resulting delta.
+- **0013 (BUG-030)**: `svtav1_build_roi_evt()` calls the new
+  `svtav1_neutral_roi_evt()` for a frame with no ROI side data or an all-zero
+  map, and `svtav1_push_roi_evt()` carries the queueing that used to be inline.
+  `SvtContext.roi_sticky` records whether the library's sticky event is
+  non-neutral; a neutral event is built only on that transition.
+- **Tests**: `nvenc-me-hints`, `svtav1-roi-sticky` (new C harnesses over the
+  hand diffs) and an extended `vulkan-qpmap-contract` run in the fast suite.
+- **Replay**: the stack applies cumulatively on `n9.0.2`; regenerate twice and
+  compare all 18 patches byte-for-byte.
+
 ## Unreleased — ADR-0166 Vulkan QP-map activation (regenerates 0009)
 
 - **Patch**: 0009 only. The hand-maintained source
