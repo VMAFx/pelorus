@@ -166,6 +166,28 @@ shorthand; use the pinned commands above for all current rebases.
 - **Consumers**: the `PEL_SEC_MOTION` grid stays Q2 and the summary scalars stay
   in pixels, so 0008 (NVENC ME hints) and the denoise `mc=1` path are untouched.
 
+## Unreleased — denoise numerics (BUG-016, BUG-027; regenerates 0003)
+
+- **Patches**: `0003` only (denoise filter + shader). No registration, option,
+  numbering or ABI change; `PEL_SEC_DENOISE` layout is unchanged.
+- **BUG-016**: the `meta=1` residual sums moved from per-pixel uint32 adds at a
+  1e3 scale to per-workgroup partials added into 64-bit slices at scale 2^23.
+  The `stat_buffer` layout and size changed (`sum_lo[64]`, `sum_hi[64]`,
+  `cnt_y[16]`, `cnt_c[16]`); the C `PelorusDenoiseBuf`, `buf_content` string and
+  shader block must stay in lockstep (checked by
+  `scripts/test-denoise-accumulator-bounds.py`).
+- **BUG-027**: tile=0 and tile=1 are separate pipelines, and the RTX 4090 driver
+  lowered them differently (1 code value at 8/10/12-bit). Every output-path value
+  in the shader is now `precise`, loop-invariant divisions are hoisted
+  (`exp(x)` becomes `exp2(x * LOG2E)`), `mix()`/`smoothstep()` are spelled out.
+  Output may differ from the previous release by 1 code value on a few pixels.
+  The standalone reference `libpelorus/shaders/pelorus_denoise.comp` mirrors it.
+- **Re-test after rebase**: replay the stack, then
+  `ffmpeg-patches/test/vulkan-format-matrix.sh` on every available GPU vendor
+  (it now asserts tile=0/tile=1 identity at 8/10/12-bit, semi-planar and `mc=1`).
+  Overlap: PR #68 also edits `pelorus_denoise.comp.glsl` (`precise` in
+  `pel_to_sample`, sampled-image reads); take both, keep `pel_to_sample` as is.
+
 ## Unreleased — ADR-0147 Vulkan sample domain and component preservation
 
 - **Patches**: 0001 (deband + shared private header), 0002 (analyze), 0003
