@@ -40,10 +40,10 @@ ADR: docs/adr/0112-temporal-denoise.md
  configure                                    |    3 +
  libavfilter/Makefile                         |    1 +
  libavfilter/allfilters.c                     |    1 +
- libavfilter/vf_pelorus_denoise_vulkan.c      | 1125 ++++++++++++++++++++
+ libavfilter/vf_pelorus_denoise_vulkan.c      | 1134 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |    1 +
  libavfilter/vulkan/pelorus_denoise.comp.glsl |  499 +++++++++
- 6 files changed, 1630 insertions(+)
+ 6 files changed, 1639 insertions(+)
 
 diff --git a/configure b/configure
 index aec9b3ae17deb53929fc15870fdaeb58db717c8f..c18161349c774eea0347f47effa8aa611e6b8771 100755
@@ -92,10 +92,10 @@ index c781df8365397465a0f8cb2c25ac450585938b01..a21da384818d0b64f4b5af635ae53e9a
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_denoise_vulkan.c b/libavfilter/vf_pelorus_denoise_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..0812b058a31ccf9a17a82730f8ed6f79520d417e
+index 0000000000000000000000000000000000000000..4f7e11c7b23f77e420125376b1234187bd0aa0f3
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_denoise_vulkan.c
-@@ -0,0 +1,1125 @@
+@@ -0,0 +1,1134 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -265,6 +265,7 @@ index 0000000000000000000000000000000000000000..0812b058a31ccf9a17a82730f8ed6f79
 +    AVBufferPool *mv_buf_pool;
 +    AVBufferPool *conf_buf_pool;
 +    int mc_grid_warned; /* the unmappable-grid warning was logged once */
++    int mc_grid_assumed_warned; /* the assumed-default-bsize warning was logged once */
 +
 +    /* Causal previous-frame ring (clones — refcount bumps, no pixel copy). */
 +    AVFrame *ring[PEL_DENOISE_MAX_PREV];
@@ -673,7 +674,15 @@ index 0000000000000000000000000000000000000000..0812b058a31ccf9a17a82730f8ed6f79
 +                (size_t)PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset + mcs->conf_field_size <=
 +                    sd->size) {
 +                /* The cell pitch is the producer's block edge, not ceil(W/gc). */
-+                if (pelorus_mc_cell_pitch(out->width, out->height, gc, gr, &pitch)) {
++                int fit = pelorus_mc_cell_pitch(out->width, out->height, gc, gr, &pitch);
++                if (fit == 2 && !s->mc_grid_assumed_warned) {
++                    s->mc_grid_assumed_warned = 1;
++                    av_log(vkctx, AV_LOG_WARNING,
++                           "motion grid %dx%d fits several block sizes for a %dx%d frame; "
++                           "assuming the mc default bsize=%d\n",
++                           gc, gr, out->width, out->height, PEL_SD_MC_BSIZE_DEFAULT);
++                }
++                if (fit) {
 +                    mv_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mo->mv_field_offset;
 +                    conf_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset;
 +                } else if (!s->mc_grid_warned) {
