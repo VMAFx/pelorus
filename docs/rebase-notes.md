@@ -39,6 +39,39 @@ The older sections below preserve the release and benchmark environment in
 which each change landed. Their unqualified gate names are historical
 shorthand; use the pinned commands above for all current rebases.
 
+## Unreleased — ADR-0166 Vulkan QP-map activation (regenerates 0009)
+
+- **Patch**: 0009 only. The hand-maintained source
+  `ffmpeg-patches/files/vulkan-pelorus-qpmap.patch` now also touches
+  `libavutil/hwcontext_vulkan.c`, `libavutil/vulkan_functions.h`,
+  `libavutil/vulkan_loader.h`, and `libavcodec/vulkan_encode_h265.c`. No later
+  patch touches these files or `vulkan_encode.[ch]`, so their file sections can
+  be rebuilt by diffing a tree with the stack applied against the pinned commit;
+  the `configure`, `libavcodec/vulkan/Makefile` and shader sections stay as they
+  are, because later patches also edit `configure`.
+- **Device enablement**: stock FFmpeg enables neither
+  `VK_KHR_video_encode_quantization_map` nor its `videoEncodeQuantizationMap`
+  feature. 0009 adds `FF_VK_EXT_VIDEO_ENCODE_QUANTIZATION_MAP` (bit 54; re-check
+  that the bit is still free after a bump), the `ff_vk_extensions_to_mask`
+  mapping, the optional device-extension entry, and the `VulkanDeviceFeatures`
+  member with its `FF_VK_STRUCT_EXT` link and `COPY_VAL`. If upstream adds its
+  own flag or feature member for this extension, drop these hunks and point the
+  probe at upstream's names.
+- **Valid-usage invariants**: keep the map fill block **before**
+  `vkCmdBeginVideoCodingKHR` in `vulkan_encode_issue()`; create the map image
+  with the probed `ctx->qpmap_tiling`; keep
+  `VK_VIDEO_SESSION_PARAMETERS_CREATE_QUANTIZATION_MAP_COMPATIBLE_BIT_KHR` on
+  the session parameters; keep the H.265 `cu_qp_delta_enabled_flag` override in
+  `init_sequence_headers()`; keep the delta clamp derived from
+  `pelorus_qpmap_query_delta_range()`.
+- **Static gate**: `scripts/check-vulkan-qpmap-contract.py --self-test` (fast
+  suite) fails when any of the above disappears from the hand-maintained diff.
+- **On-device gate**: encode with `-rc_mode cqp -pelorus_roi 1` and
+  `-init_hw_device vulkan=vk:N,debug=1`, then repeat without `-pelorus_roi`.
+  The QP-map run must not add VUIDs to the stock encoder's own set, and the
+  decoded stream must stay intact outside the region of interest. ADR-0166
+  records the 2026-10-03 RTX 4090, RADV and ANV results.
+
 ## Unreleased — ADR-0147 Vulkan sample domain and component preservation
 
 - **Patches**: 0001 (deband + shared private header), 0002 (analyze), 0003

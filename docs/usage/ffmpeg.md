@@ -177,29 +177,69 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
 
 The map kind is chosen automatically from the negotiated rate-control mode: a
 signed **delta-QP map** (`R8_SINT`) under CQP, or an **emphasis map**
-(`R8_UNORM`) under CBR/VBR. The path is fully **runtime-probed**: the
-`VK_KHR_video_encode_quantization_map` extension must be enabled, the codec must
-advertise the matching delta/emphasis capability flag, and a usable map format +
-texel size must be returned for the profile. Any miss degrades to a one-shot
-warning + pass-through; a frame with no ROI binds no map (zero behaviour change).
+(`R8_UNORM`) under CBR/VBR. Use `-rc_mode cqp` for the delta map; no driver
+tested so far advertises the emphasis map.
 
-The map texel image is filled **on the GPU**: the canonical build-time
-`libavcodec/vulkan/pelorus_qpmap.comp.glsl` compute shader reads the coalesced
-ROI rectangle list from a small SSBO and `imageStore`s the per-texel
-delta/emphasis directly, eliminating the host per-texel raster + staging upload.
-This on-GPU path is preferred whenever the encode queue family also advertises
-`VK_QUEUE_COMPUTE_BIT` (so the dispatch records on the encode command buffer with
-no cross-queue ownership transfer); otherwise it transparently falls back to the
-host raster + `vkCmdCopyBufferToImage` path. Both share the same `qoffset`→ΔQP
-convention and default off.
+The path is fully **runtime-probed** and any miss degrades to a one-shot
+warning plus pass-through:
 
-> **Driver maturity.** This Nov-2024 extension has uneven beta Linux driver
-> coverage. Some drivers (including this project's current dev box) fail
-> `*_vulkan` *encode* at init with "Driver does not support required encode
-> feedback flags (BUFFER_OFFSET and BYTES_WRITTEN)" — a driver gap unrelated to
-> the QP-map path, which simply never runs there. The patch is compile-verified;
-> an on-HW BD-rate A/B is a follow-up once a driver advertising the extension is
-> available. See [ADR-0114](../adr/0114-encoder-steering.md) Tier 2.
+- **Device enablement.** The device must enable both the
+  `VK_KHR_video_encode_quantization_map` extension and its
+  `videoEncodeQuantizationMap` feature. Patch 0009 adds both to FFmpeg's
+  optional Vulkan device extensions and features, so a device created by FFmpeg
+  (`-init_hw_device vulkan=…`, or one derived from another hardware device)
+  enables them automatically whenever the driver supports them; check the
+  `-v verbose` line `Using device extension VK_KHR_video_encode_quantization_map`.
+  An application that passes its own `AVVulkanDeviceContext` must enable both
+  itself. Passing the extension alone through the `device_extensions` option
+  is not enough: without the feature the session is invalid
+  (`VUID-VkVideoSessionCreateInfoKHR-flags-10264`).
+- **Map format.** The codec must advertise the delta or emphasis capability
+  flag, and `vkGetPhysicalDeviceVideoFormatPropertiesKHR` must return an
+  `R8_SINT` (delta) or `R8_UNORM` (emphasis) entry whose usages allow the fill
+  path (`TRANSFER_DST` for the host raster, `STORAGE` for the on-GPU raster).
+  The map image is created with that entry's tiling.
+- **Delta range.** Each delta-map value is clamped to the driver's per-codec
+  range (`minQpDelta`/`maxQpDelta` for H.264/H.265, `minQIndexDelta`/
+  `maxQIndexDelta` for AV1) as well as to the `qoffset` QP span; a value outside
+  the driver range would leave the block QP undefined. When the range excludes
+  negative values the probe warns that regions asking for a *lower* QP get no
+  extra bits.
+
+`-v verbose` prints the chosen map (`Pelorus QP-map steering enabled: delta(R8_SINT)
+map, 60x34 texels (32x32 px/texel, linear tiling), dQP [0, 51]`) and `-v debug`
+prints one `pelorus_roi: frame N: host map slot S, R region(s)` line per frame
+that binds a map. A frame with no ROI side data binds no map (zero behaviour
+change). With a map bound, `hevc_vulkan` signals per-CU QP deltas
+(`cu_qp_delta_enabled_flag`) even under CQP.
+
+The map texel image is filled **on the GPU** when it can be: the canonical
+build-time `libavcodec/vulkan/pelorus_qpmap.comp.glsl` compute shader reads the
+coalesced ROI rectangle list from a small SSBO and `imageStore`s the per-texel
+delta/emphasis directly. That path needs an encode queue family that also
+advertises `VK_QUEUE_COMPUTE_BIT` (the dispatch records on the encode command
+buffer with no cross-queue ownership transfer) and a map format with `STORAGE`
+usage; otherwise the host raster + `vkCmdCopyBufferToImage` path runs. Both
+share the same `qoffset`→ΔQP convention, are recorded before the video coding
+scope begins, and default off.
+
+> **Driver status (measured 2026-10-03, ADR-0166).**
+>
+> | Device / driver | Extension + feature | Delta map advertised | Result |
+> | --- | --- | --- | --- |
+> | RTX 4090, NVIDIA 615.71.09 | yes | `R8_SINT`, LINEAR only, ΔQP [0, 51] (H.264/H.265), ΔqIndex [0, 255] (AV1) | Steering active on all three encoders; only **positive** offsets (raise QP) take effect |
+> | Radeon iGPU, RADV (Mesa 26.2.4) | yes | `R32_SINT`, usage `QUANTIZATION_DELTA_MAP` only | Disabled with a warning: no fill path for that format yet |
+> | Arc A380, ANV (Mesa 26.2.4) | no | — | Disabled with a warning (no extension; video encode itself needs `ANV_DEBUG=video-encode`) |
+>
+> On NVIDIA a `+0.3` `qoffset` over the left half of a 1080p clip at `-qp 30`
+> raised the decoded H.264 macroblock QP there from 30 to about 45, cut the
+> stream by 30 % (HEVC: 50 %) and left the other half's PSNR unchanged. The
+> negative offsets `pelorus_analyze_vulkan roi=1` emits ("spend more bits here")
+> clamp to 0 on this driver, so they bind a neutral map. `av1_vulkan` on this
+> driver already emits streams libdav1d cannot fully decode without
+> `-pelorus_roi`, so its quality was not measured. See
+> [ADR-0114](../adr/0114-encoder-steering.md) Tier 2 and
+> [ADR-0166](../adr/0166-vulkan-qpmap-activation.md).
 
 ## Encoder motion-search seeding (NVENC external ME hints)
 
