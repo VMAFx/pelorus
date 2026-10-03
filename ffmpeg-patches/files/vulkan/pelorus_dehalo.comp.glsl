@@ -65,10 +65,13 @@ layout (set = 0, binding = 1) uniform writeonly image2D output_images[];
 
 const int MAX_R = 8;
 
-/* PEL_HALO = MAX_R (8, the max box reach) + 1 (the box-blur cross offset
- * extends the union by one px); PEL_TILE = 32 (workgroup dim) + 2 * PEL_HALO. */
-#define PEL_HALO 9
-#define PEL_TILE 50
+/* The DeHalo_alpha Repair window needs the box means and the 3x3 contrast on a
+ * 5x5 grid around the pixel (3x3 window x 3x3 / cross neighbourhood), so the
+ * deepest read is MAX_R + 2. The edge-mask scan reaches ring + 1 <= MAX_R + 1.
+ * PEL_HALO = MAX_R + 2 = 10; PEL_TILE = 32 (workgroup dim) + 2 * PEL_HALO. */
+#define PEL_HALO 10
+#define PEL_TILE 52
+#define PEL_GRID 5
 
 /* Sized by a specialization constant so tile=0 pipelines allocate no shared
  * memory at all (the pre-FFmpeg-9 generator simply did not emit the array). */
@@ -93,11 +96,11 @@ uint pel_component_count(uint plane)
 }
 
 /* Shared-memory tiling of the box-blur window (ADR-0139, opt-in tile=1). Every
- * luma fetch in dehalo() — the box_blur (2r+1)^2 window read 5x per pixel at the
- * centre + 4 cross offsets, the Sobel/contrast 3x3, the ring scan — goes through
- * pel_luma against the SAME input plane, re-reading a heavily overlapping window
- * (~1.5k loads/px at blur=8). That is fetch-bound, not ALU-bound (the box mean is
- * adds + one divide), so on a bandwidth-limited GPU the workgroup cooperatively
+ * luma fetch in dehalo() — the box-mean grid, the 5x5 contrast grid, the Sobel
+ * edge-mask scan — goes through pel_luma against the SAME input plane,
+ * re-reading a heavily overlapping window (~850 loads/px at blur=8, ring=8).
+ * That is fetch-bound, not ALU-bound (the box means are adds + one divide), so
+ * on a bandwidth-limited GPU the workgroup cooperatively
  * loads its output region + a PEL_HALO ring into shared memory once per plane and
  * every read hits shared instead of the image. The tile mirrors pel_luma's edge
  * clamp exactly, so tile=1 is bit-identical to tile=0. pel_load_tile() is called
@@ -139,70 +142,136 @@ float pel_luma(int idx, int comp, ivec2 p, ivec2 sz)
     return pel_to_sample(imageLoad(input_images[idx], cp)[comp]);
 }
 
-float box_blur(int idx, int comp, ivec2 c, int r, ivec2 sz)
+/* Box means of the (2r+1)^2 window around every offset of the 5x5 grid centred
+ * on pos, row-major in hg[] (index (dy + 2) * PEL_GRID + (dx + 2)). Each of the
+ * 2r+5 rows of the union window yields its five horizontal window sums with one
+ * sliding sum, and each sum is added to the grid rows whose window covers that
+ * row: (2r+5)(2r+9) reads instead of 25 (2r+1)^2. Every loop bound is a
+ * constant, so the grid stays in registers (no dynamically indexed array). */
+void box_grid(int idx, int comp, ivec2 pos, int r, ivec2 sz, out float hg[PEL_GRID * PEL_GRID])
 {
-    float acc = 0.0; float n = 0.0;
-    for (int dy = -MAX_R; dy <= MAX_R; dy++) {
-        if (dy < -r || dy > r) continue;
+    precise float acc[PEL_GRID * PEL_GRID];
+    for (int g = 0; g < PEL_GRID * PEL_GRID; g++)
+        acc[g] = 0.0;
+    for (int y = -MAX_R - 2; y <= MAX_R + 2; y++) {
+        if (y < -r - 2 || y > r + 2)
+            continue;
+        precise float s = 0.0;
         for (int dx = -MAX_R; dx <= MAX_R; dx++) {
-            if (dx < -r || dx > r) continue;
-            acc += pel_luma(idx, comp, c + ivec2(dx, dy), sz); n += 1.0;
+            if (dx < -r || dx > r)
+                continue;
+            s += pel_luma(idx, comp, pos + ivec2(dx - 2, y), sz);
+        }
+        precise float rs[PEL_GRID];
+        rs[0] = s;
+        for (int i = 1; i < PEL_GRID; i++) {
+            s += pel_luma(idx, comp, pos + ivec2(i - 2 + r, y), sz)
+               - pel_luma(idx, comp, pos + ivec2(i - 3 - r, y), sz);
+            rs[i] = s;
+        }
+        for (int j = 0; j < PEL_GRID; j++) {
+            if (abs(y - (j - 2)) > r)
+                continue;
+            for (int i = 0; i < PEL_GRID; i++)
+                acc[j * PEL_GRID + i] += rs[i];
         }
     }
-    return acc / max(n, 1.0);
+    const float n = float((2 * r + 1) * (2 * r + 1));
+    for (int g = 0; g < PEL_GRID * PEL_GRID; g++)
+        hg[g] = acc[g] / n;
+}
+
+/* Sobel magnitude in step units: an ideal step of height s reads s (the raw
+ * 3x3 Sobel reads 4s), so `edge` compares against a [0,1] sample difference. */
+float edge_step(int idx, int comp, ivec2 p, ivec2 sz)
+{
+    const float kx[9] = float[9](-1.0, 0.0, 1.0, -2.0, 0.0, 2.0, -1.0, 0.0, 1.0);
+    const float ky[9] = float[9](-1.0, -2.0, -1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0);
+    precise float gx = 0.0; precise float gy = 0.0;
+    int k = 0;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            float v = pel_luma(idx, comp, p + ivec2(dx, dy), sz);
+            gx += v * kx[k]; gy += v * ky[k]; k++;
+        }
+    }
+    precise float mag = sqrt(gx * gx + gy * gy);
+    return 0.25 * mag;
 }
 
 float dehalo(ivec2 pos, int idx, int comp)
 {
     ivec2 sz = imageSize(output_images[idx]);
-    int r = clamp(blur_r, 1, MAX_R);
     float c = pel_luma(idx, comp, pos, sz);
-    float h  = box_blur(idx, comp, pos,                r, sz);
-    float hl = box_blur(idx, comp, pos + ivec2(-1, 0), r, sz);
-    float hr = box_blur(idx, comp, pos + ivec2( 1, 0), r, sz);
-    float hu = box_blur(idx, comp, pos + ivec2( 0,-1), r, sz);
-    float hd = box_blur(idx, comp, pos + ivec2( 0, 1), r, sz);
-    float oMax = c; float oMin = c;
-    for (int dy = -1; dy <= 1; dy++) {
-        for (int dx = -1; dx <= 1; dx++) {
-            float v = pel_luma(idx, comp, pos + ivec2(dx, dy), sz);
-            oMax = max(oMax, v); oMin = min(oMin, v);
-        }
-    }
-    float are  = oMax - oMin;
-    float ugly = max(max(max(h, hl), max(hr, hu)), hd)
-               - min(min(min(h, hl), min(hr, hu)), hd);
-    const float EPS = 0.0039;
-    float frac = (are - ugly) / (are + EPS);
-    float so   = clamp((frac - lowsens) * (1.0 + highsens), 0.0, 1.0);
-    float lets = mix(c, h, so);
-    float out_v;
-    if (lets < c) out_v = c - (c - lets) * brightstr;
-    else          out_v = c - (c - lets) * darkstr;
-    float gx = 0.0; float gy = 0.0;
-    float kx[9] = float[9](-1.0, 0.0, 1.0, -2.0, 0.0, 2.0, -1.0, 0.0, 1.0);
-    float ky[9] = float[9](-1.0,-2.0,-1.0,  0.0, 0.0, 0.0,  1.0, 2.0, 1.0);
-    int k = 0;
-    for (int dy = -1; dy <= 1; dy++) {
-        for (int dx = -1; dx <= 1; dx++) {
-            float v = pel_luma(idx, comp, pos + ivec2(dx, dy), sz);
-            gx += v * kx[k]; gy += v * ky[k]; k++;
-        }
-    }
-    float edge = sqrt(gx * gx + gy * gy);
-    bool on_line = edge > edge_thr;
+
+    /* FineDehalo gate. A pixel whose own edge step exceeds `edge` is line-art
+     * and is never touched. The halo band is every other pixel with a line
+     * within `ring` px along the cross; the scan tests the edge mask itself, so
+     * dark and bright halos qualify alike. A pixel with line on both sides of
+     * an axis sits between two close edges (a thin line's core, a gap between
+     * parallel lines): FineDehalo's exclusion zone, also left alone. */
+    if (edge_step(idx, comp, pos, sz) > edge_thr)
+        return clamp(c, 0.0, 1.0);
     int rr = clamp(int(ring + 0.5), 1, MAX_R);
-    bool near_line = false;
+    bool el = false; bool er = false; bool eu = false; bool ed = false;
     for (int d = 1; d <= MAX_R; d++) {
-        if (d > rr) break;
-        float em = max(max(pel_luma(idx, comp, pos + ivec2(d, 0), sz),
-                           pel_luma(idx, comp, pos + ivec2(-d, 0), sz)),
-                       max(pel_luma(idx, comp, pos + ivec2(0, d), sz),
-                           pel_luma(idx, comp, pos + ivec2(0,-d), sz)));
-        if (abs(em - c) > edge_thr) near_line = true;
+        if (d > rr)
+            break;
+        er = er || edge_step(idx, comp, pos + ivec2( d, 0), sz) > edge_thr;
+        el = el || edge_step(idx, comp, pos + ivec2(-d, 0), sz) > edge_thr;
+        ed = ed || edge_step(idx, comp, pos + ivec2(0,  d), sz) > edge_thr;
+        eu = eu || edge_step(idx, comp, pos + ivec2(0, -d), sz) > edge_thr;
     }
-    float ring_mask = (near_line && !on_line) ? 1.0 : 0.0;
-    return clamp(mix(c, out_v, ring_mask), 0.0, 1.0);
+    if (!(el || er || eu || ed) || (el && er) || (eu && ed))
+        return clamp(c, 0.0, 1.0);
+
+    /* DeHalo_alpha, ss <= 1 form. For each pixel of the 3x3 Repair window:
+     * are = 3x3 contrast of the source, ugly = cross contrast of the box mean,
+     * so = lowsens/highsens-shaped (are - ugly) / are, and
+     * lets = MaskedMerge(halos, clp, so): the source where the blur would erase
+     * detail (so high), the halo-free blur where the blur keeps the structure.
+     * remove = Repair(clp, lets, 1) clamps the source into the window's lets
+     * range, so only an excursion beyond the blurred envelope is pulled back
+     * and the result can only reduce the ring. */
+    int r = clamp(blur_r, 1, MAX_R);
+    float hg[PEL_GRID * PEL_GRID];
+    float cg[PEL_GRID * PEL_GRID];
+    box_grid(idx, comp, pos, r, sz, hg);
+    for (int j = 0; j < PEL_GRID; j++)
+        for (int i = 0; i < PEL_GRID; i++)
+            cg[j * PEL_GRID + i] = pel_luma(idx, comp, pos + ivec2(i - 2, j - 2), sz);
+    const float EPS = 0.0039;
+    float lo = 1.0e30; float hi = -1.0e30;
+    for (int dj = -1; dj <= 1; dj++) {
+        for (int di = -1; di <= 1; di++) {
+            const int g = (dj + 2) * PEL_GRID + (di + 2);
+            float oMax = cg[g]; float oMin = cg[g];
+            for (int b = -1; b <= 1; b++) {
+                for (int a = -1; a <= 1; a++) {
+                    float v = cg[g + b * PEL_GRID + a];
+                    oMax = max(oMax, v); oMin = min(oMin, v);
+                }
+            }
+            /* `precise` (NoContraction) on the arithmetic keeps tile=0 and
+             * tile=1 bit-identical: without it the two specializations may
+             * fuse multiply-adds differently and flip a rounding. */
+            precise float are  = oMax - oMin;
+            float hc = hg[g];
+            precise float ugly = max(max(hc, max(hg[g - 1], hg[g + 1])),
+                                     max(hg[g - PEL_GRID], hg[g + PEL_GRID]))
+                               - min(min(hc, min(hg[g - 1], hg[g + 1])),
+                                     min(hg[g - PEL_GRID], hg[g + PEL_GRID]));
+            precise float frac = (are - ugly) / (are + EPS);
+            precise float so   = clamp((frac - lowsens) * (1.0 + highsens), 0.0, 1.0);
+            precise float lets = mix(hc, cg[g], so);
+            lo = min(lo, lets); hi = max(hi, lets);
+        }
+    }
+    float remove = clamp(c, lo, hi);
+    precise float out_v;
+    if (remove < c) out_v = c - (c - remove) * brightstr;
+    else            out_v = c - (c - remove) * darkstr;
+    return clamp(out_v, 0.0, 1.0);
 }
 
 void main()
