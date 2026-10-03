@@ -2934,6 +2934,34 @@ def git_repository_env_regression() -> list[str]:
     return []
 
 
+def isolate_from_invoking_repository() -> list[str]:
+    """Drop the repository-locating Git variables before any fixture runs.
+
+    Git exports GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and related variables to
+    hooks. A self-test started from a hook (the pre-push `make verify-all`)
+    would otherwise run every fixture `git init`, `git config` and `git commit`
+    against the invoking repository instead of its throwaway one, rewriting
+    the developer's .git/config (core.bare, core.hooksPath, user.*, gpg.program)
+    and branch refs. `git rev-parse --local-env-vars` is Git's own list of
+    these variables, the same list its sample hooks unset.
+    """
+    listed = subprocess.run(
+        ("git", "rev-parse", "--local-env-vars"),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    if listed.returncode != 0:
+        return [
+            "self-test isolation: git rev-parse --local-env-vars failed: "
+            + listed.stderr.strip()
+        ]
+    for name in listed.stdout.split():
+        os.environ.pop(name, None)
+    return []
+
+
 def main() -> int:
     scrub_git_repository_env()
     if not CONFIG.is_file():
@@ -2948,6 +2976,7 @@ def main() -> int:
     if not parse_errors:
         errors.extend(validate_current_surfaces(values))
     if "--self-test" in sys.argv[1:]:
+        errors.extend(isolate_from_invoking_repository())
         errors.extend(validator_regressions())
         errors.extend(consumer_validator_regressions())
         errors.extend(static_consumer_validator_regressions())
