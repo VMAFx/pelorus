@@ -224,3 +224,12 @@ test('denoise-accumulator-bounds',
      args: [meson.project_source_root() / 'scripts' / 'test-denoise-accumulator-bounds.py'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+
+# ADR-0163: the dehalo shader must not rewrite line-art. Checks the corrected gate
+# and pull expressions in the shipped shader and the libpelorus reference, then runs
+# a CPU model on a 1-px stroke and a ringed line. The pre-fix shader fails it.
+test('dehalo-line-art',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-dehalo-line-art.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')

@@ -23,13 +23,15 @@
  * flat band next to hard line-art by upstream compression and sharpening; they
  * cost the encoder bits and read as artefacts. We compute a strong blur of luma
  * (the halo-free target), a sensitivity mask from the local contrast the blur
- * removed (DeHalo_alpha lowsens/highsens shaping), pull halos toward the flat
- * remove-only and asymmetrically (darkstr/brightstr), and gate the whole thing
- * to the halo RING via a Sobel edge mask (FineDehalo) so line-art and open
- * gradients are protected. Luma only; chroma passes through. Runs entirely in
- * VRAM so the frame never leaves the GPU on its way to a hardware encoder.
+ * removed (DeHalo_alpha lowsens/highsens shaping), clamp the pixel into the
+ * blurred envelope remove-only and asymmetrically (DeHalo_alpha Repair,
+ * darkstr/brightstr), and gate the whole thing to the halo RING via a Sobel
+ * edge mask (FineDehalo) so line-art and open gradients are protected. Luma
+ * only by default. Runs entirely in VRAM so the frame never leaves the GPU on
+ * its way to a hardware encoder.
  *
- * Foundation of the anime `tune` pipeline (ADR-0123).
+ * Foundation of the anime `tune` pipeline (ADR-0123); gate and pull semantics
+ * per ADR-0163.
  */
 
 #include "libavutil/opt.h"
@@ -57,7 +59,7 @@ typedef struct PelorusDehaloVulkanContext {
         float brightstr;    /* pull strength for bright halos [0,1]          */
         float lowsens;      /* sensitivity floor (normalized)                */
         float highsens;     /* sensitivity gain  (normalized)                */
-        float edge_thr;     /* Sobel magnitude above which a pixel is a line */
+        float edge_thr;     /* edge step (Sobel / 4) above which: line-art   */
         float ring;         /* edge-mask dilation (ring half-width, pixels)  */
         float sample_scale; /* storage UNORM -> logical sample domain        */
     } opts;
@@ -236,7 +238,7 @@ static const AVOption pelorus_dehalo_vulkan_options[] = {
      4.0,
      FLAGS},
     {"edge",
-     "Sobel magnitude above which a pixel is line-art",
+     "edge step (Sobel magnitude / 4) above which a pixel is line-art",
      OFFSET(opts.edge_thr),
      AV_OPT_TYPE_FLOAT,
      {.dbl = 0.08},
