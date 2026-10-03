@@ -34,7 +34,7 @@ index 9203fb65c0..9ed598c4bd 100644
  #ifdef NVENC_HAVE_H264_AND_AV1_TEMPORAL_FILTER
      if (ctx->tf_level >= 0) {
          av1->tfLevel = ctx->tf_level;
-@@ -2881,6 +2906,261 @@ static void reconfig_encoder(AVCodecContext *avctx, const AVFrame *frame)
+@@ -2881,6 +2906,266 @@ static void reconfig_encoder(AVCodecContext *avctx, const AVFrame *frame)
      }
  }
  
@@ -84,8 +84,8 @@ index 9203fb65c0..9ed598c4bd 100644
 + *   arCoeffShiftMinus6        <- ar_coeff_shift - 6   (AV1 [6,9])
 + *   grainScaleShift           <- grain_scale_shift
 + *   arCoeffs{Y,Cb,Cr}Plus128  <- ar_coeffs_{y,uv} + 128
-+ *   cb/crMult, cb/crLumaMult  <- uv_mult / uv_mult_luma
-+ *   cb/crOffset               <- uv_offset (9-bit [-256,255]) */
++ *   cb/crMult, cb/crLumaMult  <- uv_mult / uv_mult_luma + 128 (AV1 raw f(8))
++ *   cb/crOffset               <- uv_offset + 256         (AV1 raw f(9)) */
 +static void pel_fg_from_aom(NV_ENC_FILM_GRAIN_PARAMS_AV1 *dst,
 +                            const AVFilmGrainAOMParams *a, int apply)
 +{
@@ -133,12 +133,17 @@ index 9203fb65c0..9ed598c4bd 100644
 +        dst->arCoeffsCrPlus128[i] = (uint8_t)(a->ar_coeffs_uv[1][i] + 128);
 +    }
 +
-+    dst->cbMult     = av_clip_uint8(a->uv_mult[0]);
-+    dst->cbLumaMult = av_clip_uint8(a->uv_mult_luma[0]);
-+    dst->cbOffset   = (uint16_t)av_clip(a->uv_offset[0], -256, 255);
-+    dst->crMult     = av_clip_uint8(a->uv_mult[1]);
-+    dst->crLumaMult = av_clip_uint8(a->uv_mult_luma[1]);
-+    dst->crOffset   = (uint16_t)av_clip(a->uv_offset[1], -256, 255);
++    /* AV1 film_grain_params() codes cb_mult/cb_luma_mult as f(8) and cb_offset
++     * as f(9); the synthesis process uses cb_mult - 128 and cb_offset - 256.
++     * NVENC takes the raw coded values, while AVFilmGrainAOMParams carries them
++     * unbiased ([-128, 127] and [-256, 255], as FFmpeg's AV1 grain synthesis and
++     * AFGS1 parser use them), so clamp to the signed range and add the bias. */
++    dst->cbMult     = (uint8_t)(av_clip(a->uv_mult[0], -128, 127) + 128);
++    dst->cbLumaMult = (uint8_t)(av_clip(a->uv_mult_luma[0], -128, 127) + 128);
++    dst->cbOffset   = (uint16_t)(av_clip(a->uv_offset[0], -256, 255) + 256);
++    dst->crMult     = (uint8_t)(av_clip(a->uv_mult[1], -128, 127) + 128);
++    dst->crLumaMult = (uint8_t)(av_clip(a->uv_mult_luma[1], -128, 127) + 128);
++    dst->crOffset   = (uint16_t)(av_clip(a->uv_offset[1], -256, 255) + 256);
 +}
 +
 +/* Parse the PEL_SEC_FILMGRAIN section out of a Pelorus interop blob into an
@@ -296,7 +301,7 @@ index 9203fb65c0..9ed598c4bd 100644
  #ifdef NVENC_HAVE_HEVC_AND_AV1_MASTERING_METADATA
  static int nvenc_set_mastering_display_data(AVCodecContext *avctx, const AVFrame *frame, NV_ENC_PIC_PARAMS *pic_params,
                                              MASTERING_DISPLAY_INFO *mastering_disp_info, CONTENT_LIGHT_LEVEL *content_light_level)
-@@ -3084,6 +3364,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3084,6 +3369,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
          }
  #endif
  

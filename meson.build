@@ -163,3 +163,14 @@ test('fgs-bsf-contract',
             '--self-test'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+
+
+# The NVENC hand diffs only compile inside an ffnvcodec-enabled FFmpeg build.
+# Compile their pure value mappings here: AV1 film-grain chroma biases (BUG-019)
+# and the per-codec ROI delta-QP span (BUG-020).
+test('nvenc-pelorus-mapping',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-nvenc-pelorus-mapping.py',
+            '--cc'] + meson.get_compiler('c').cmd_array(),
+     workdir: meson.project_source_root(),
+     suite: 'fast')

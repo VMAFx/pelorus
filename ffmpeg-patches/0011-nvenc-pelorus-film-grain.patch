@@ -49,16 +49,16 @@ unchanged.
 
 ADR: docs/adr/0118-nvenc-av1-filmgrain.md, docs/adr/0115-grain-estimate.md (producer), docs/adr/0114-encoder-steering.md
 ---
- libavcodec/nvenc.c     | 286 ++++++++++++++++++++
+ libavcodec/nvenc.c     | 291 ++++++++++++++++++++
  libavcodec/nvenc.h     |  20 ++
  libavcodec/nvenc_av1.c |   2 +
- 3 files changed, 308 insertions(+)
+ 3 files changed, 313 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index 60c71a5ea83332f7d06ceb610dae017931523782..f8de7d7333a959af7e9dc5abfa3ffdd0ef20fa9d 100644
+index 8b2cd200acb4cdae40a4fd9402a97b90b6a455d0..dba03eeebc5aa4661d93f5c2f7ffcee14dbe72ae 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
-@@ -1675,6 +1675,31 @@ static av_cold int nvenc_setup_av1_config(AVCodecContext *avctx)
+@@ -1689,6 +1689,31 @@ static av_cold int nvenc_setup_av1_config(AVCodecContext *avctx)
      av1->numFwdRefs = avctx->refs;
      av1->numBwdRefs = avctx->refs;
  
@@ -90,7 +90,7 @@ index 60c71a5ea83332f7d06ceb610dae017931523782..f8de7d7333a959af7e9dc5abfa3ffdd0
  #ifdef NVENC_HAVE_H264_AND_AV1_TEMPORAL_FILTER
      if (ctx->tf_level >= 0) {
          av1->tfLevel = ctx->tf_level;
-@@ -2967,6 +2992,261 @@ static void reconfig_encoder(AVCodecContext *avctx, const AVFrame *frame)
+@@ -2981,6 +3006,266 @@ static void reconfig_encoder(AVCodecContext *avctx, const AVFrame *frame)
      }
  }
  
@@ -140,8 +140,8 @@ index 60c71a5ea83332f7d06ceb610dae017931523782..f8de7d7333a959af7e9dc5abfa3ffdd0
 + *   arCoeffShiftMinus6        <- ar_coeff_shift - 6   (AV1 [6,9])
 + *   grainScaleShift           <- grain_scale_shift
 + *   arCoeffs{Y,Cb,Cr}Plus128  <- ar_coeffs_{y,uv} + 128
-+ *   cb/crMult, cb/crLumaMult  <- uv_mult / uv_mult_luma
-+ *   cb/crOffset               <- uv_offset (9-bit [-256,255]) */
++ *   cb/crMult, cb/crLumaMult  <- uv_mult / uv_mult_luma + 128 (AV1 raw f(8))
++ *   cb/crOffset               <- uv_offset + 256         (AV1 raw f(9)) */
 +static void pel_fg_from_aom(NV_ENC_FILM_GRAIN_PARAMS_AV1 *dst,
 +                            const AVFilmGrainAOMParams *a, int apply)
 +{
@@ -189,12 +189,17 @@ index 60c71a5ea83332f7d06ceb610dae017931523782..f8de7d7333a959af7e9dc5abfa3ffdd0
 +        dst->arCoeffsCrPlus128[i] = (uint8_t)(a->ar_coeffs_uv[1][i] + 128);
 +    }
 +
-+    dst->cbMult     = av_clip_uint8(a->uv_mult[0]);
-+    dst->cbLumaMult = av_clip_uint8(a->uv_mult_luma[0]);
-+    dst->cbOffset   = (uint16_t)av_clip(a->uv_offset[0], -256, 255);
-+    dst->crMult     = av_clip_uint8(a->uv_mult[1]);
-+    dst->crLumaMult = av_clip_uint8(a->uv_mult_luma[1]);
-+    dst->crOffset   = (uint16_t)av_clip(a->uv_offset[1], -256, 255);
++    /* AV1 film_grain_params() codes cb_mult/cb_luma_mult as f(8) and cb_offset
++     * as f(9); the synthesis process uses cb_mult - 128 and cb_offset - 256.
++     * NVENC takes the raw coded values, while AVFilmGrainAOMParams carries them
++     * unbiased ([-128, 127] and [-256, 255], as FFmpeg's AV1 grain synthesis and
++     * AFGS1 parser use them), so clamp to the signed range and add the bias. */
++    dst->cbMult     = (uint8_t)(av_clip(a->uv_mult[0], -128, 127) + 128);
++    dst->cbLumaMult = (uint8_t)(av_clip(a->uv_mult_luma[0], -128, 127) + 128);
++    dst->cbOffset   = (uint16_t)(av_clip(a->uv_offset[0], -256, 255) + 256);
++    dst->crMult     = (uint8_t)(av_clip(a->uv_mult[1], -128, 127) + 128);
++    dst->crLumaMult = (uint8_t)(av_clip(a->uv_mult_luma[1], -128, 127) + 128);
++    dst->crOffset   = (uint16_t)(av_clip(a->uv_offset[1], -256, 255) + 256);
 +}
 +
 +/* Parse the PEL_SEC_FILMGRAIN section out of a Pelorus interop blob into an
@@ -352,7 +357,7 @@ index 60c71a5ea83332f7d06ceb610dae017931523782..f8de7d7333a959af7e9dc5abfa3ffdd0
  #ifdef NVENC_HAVE_HEVC_AND_AV1_MASTERING_METADATA
  static int nvenc_set_mastering_display_data(AVCodecContext *avctx, const AVFrame *frame, NV_ENC_PIC_PARAMS *pic_params,
                                              MASTERING_DISPLAY_INFO *mastering_disp_info, CONTENT_LIGHT_LEVEL *content_light_level)
-@@ -3463,6 +3743,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3477,6 +3762,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
          }
  #endif
  

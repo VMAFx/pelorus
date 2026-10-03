@@ -106,6 +106,15 @@ behaviour change). Use **constant-QP** and the encoder's own spatial/temporal AQ
 OFF: the encoder AQ overrides the delta-QP map, and VBR rate-control
 redistribution erodes the perceptual win.
 
+NVENC adds each `qpDeltaMap` entry to the rate-control QP in the codec's own QP
+units, so a region's delta is `qoffset` scaled by a per-codec span:
+`51 + 6 × (bit_depth − 8)` H.264/HEVC QP steps for `h264_nvenc`/`hevc_nvenc`,
+and 255 AV1 qindex steps for `av1_nvenc` (the same scale as its
+`-qp`/`-qmin`/`-qmax`, and the scale the libaom, SVT-AV1, VAAPI and D3D12 AV1 ROI
+paths use). The map holds signed bytes, so an AV1 delta saturates at
+[−128, 127] qindex; the analyze filter's default `roi_strength=0.333` stays inside
+that range.
+
 For QSV, use `-q:v N` (or otherwise set `AV_CODEC_FLAG_QSCALE`) to select CQP.
 `-global_quality N` alone selects ICQ in FFmpeg n9.0.2 and therefore cannot use
 the dense MBQP path. The patch does not add `-pelorus_roi` to `av1_qsv`.
@@ -271,7 +280,10 @@ and points `filmGrainParams` at a persistent `NV_ENC_FILM_GRAIN_PARAMS_AV1`; per
 frame it refills that struct from the estimate (native channel preferred, the
 interop section as a fallback) and raises the AV1 pic-params
 `filmGrainParamsUpdate` flag (a time-varying model). The `AVFilmGrainAOMParams`
-set maps field-for-field onto the NVENC struct.
+set maps field-for-field onto the NVENC struct. NVENC takes the raw AV1 syntax
+values, so the chroma multipliers gain the AV1 `+128` bias and the chroma offsets
+the `+256` bias on the way in (`AVFilmGrainAOMParams` and the
+`PEL_SEC_FILMGRAIN` section carry them unbiased, as dav1d exports them).
 
 The option defaults OFF (zero behaviour change) and is registered on `av1_nvenc`
 only — H.264/HEVC NVENC have no AV1 film grain. It is compile-gated by a new
@@ -279,9 +291,12 @@ only — H.264/HEVC NVENC have no AV1 film grain. It is compile-gated by a new
 the film-grain struct landed); an FFmpeg built against older headers warns once
 at init and passes through. If a frame carries no usable AV1 grain estimate the
 update flag stays clear, so NVENC keeps the previous params (or the zero-init
-no-op). No grain-match or BD-rate number ships yet — the estimate is wired into
-NVENC's AV1 film-grain config and the on-hardware proof is a documented
-follow-up. See [ADR-0118](../adr/0118-nvenc-av1-filmgrain.md),
+no-op). On an RTX 4090 (driver 615.71.09) the encoded stream signals
+`film_grain_params_present=1` with `apply_grain=1` in every frame header, and
+dav1d synthesizes the grain at decode. A libaom film-grain test vector decoded
+through libdav1d keeps every film-grain syntax value except `grain_seed`, which
+NVENC chooses itself. No grain-match or BD-rate number ships yet. See
+[ADR-0118](../adr/0118-nvenc-av1-filmgrain.md),
 [ADR-0115](../adr/0115-grain-estimate.md), and
 [ADR-0114](../adr/0114-encoder-steering.md).
 
