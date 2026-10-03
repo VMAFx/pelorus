@@ -16,6 +16,13 @@
 #   JOBS         parallel build jobs                (default nproc)
 set -euo pipefail
 
+# Hermetic Git: neither global/system configuration (apply.whitespace,
+# core.autocrlf, am.keepcr, ...) nor GIT_COMMITTER_* may reach `git am` or the
+# worktree checkout; identity and policy come from explicit -c options only (#65).
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+unset GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PATCHDIR="$(cd "$HERE/.." && pwd)"
 ROOT="$(cd "$PATCHDIR/.." && pwd)"
@@ -60,8 +67,11 @@ cleanup() {
     trap - EXIT
 
     if [[ -n "$OWNED_WORKTREE" ]]; then
-        git -C "$OWNED_WORKTREE" -c core.hooksPath=/dev/null \
-            am --abort >/dev/null 2>&1 || true
+        # `am --abort` fails when no am session is in progress; that is the normal case.
+        if [[ -d "$(git -C "$OWNED_WORKTREE" rev-parse --path-format=absolute --git-path rebase-apply 2>/dev/null)" ]]; then
+            git -C "$OWNED_WORKTREE" -c core.hooksPath=/dev/null \
+                am --abort >/dev/null 2>&1 || echo "WARNING: git am --abort failed in $OWNED_WORKTREE" >&2
+        fi
         if ! git -C "$FFMPEG_REPO" worktree remove --force "$OWNED_WORKTREE" \
             >/dev/null 2>&1; then
             echo "WARNING: could not remove owned worktree: $OWNED_WORKTREE" >&2
@@ -97,7 +107,9 @@ run_logged() {
     echo "== $label =="
     if ! "$@" >"$log" 2>&1; then
         echo "ERROR: $label failed; tail of $log:" >&2
-        tail -80 "$log" >&2 || true
+        if [[ -f "$log" ]]; then
+            tail -80 "$log" >&2
+        fi
         return 1
     fi
 }
@@ -290,14 +302,18 @@ FILTERS=(
 echo "== verify Pelorus registrations =="
 if ! "$WORKTREE/ffmpeg" -hide_banner -filters \
     >"$LOG_DIR/ffmpeg-filters.log" 2>&1; then
-    tail -80 "$LOG_DIR/ffmpeg-filters.log" >&2 || true
+    if [[ -f "$LOG_DIR/ffmpeg-filters.log" ]]; then
+        tail -80 "$LOG_DIR/ffmpeg-filters.log" >&2
+    fi
     exit 1
 fi
 for filter in "${FILTERS[@]}"; do
     if ! awk -v name="$filter" '$2 == name { found = 1 } END { exit !found }' \
         "$LOG_DIR/ffmpeg-filters.log"; then
         echo "ERROR: filter is not registered: $filter" >&2
-        tail -80 "$LOG_DIR/ffmpeg-filters.log" >&2 || true
+        if [[ -f "$LOG_DIR/ffmpeg-filters.log" ]]; then
+            tail -80 "$LOG_DIR/ffmpeg-filters.log" >&2
+        fi
         exit 1
     fi
     echo "registered filter: $filter"
@@ -305,13 +321,17 @@ done
 
 if ! "$WORKTREE/ffmpeg" -hide_banner -bsfs \
     >"$LOG_DIR/ffmpeg-bsfs.log" 2>&1; then
-    tail -80 "$LOG_DIR/ffmpeg-bsfs.log" >&2 || true
+    if [[ -f "$LOG_DIR/ffmpeg-bsfs.log" ]]; then
+        tail -80 "$LOG_DIR/ffmpeg-bsfs.log" >&2
+    fi
     exit 1
 fi
 if ! awk '$1 == "pelorus_fgs" { found = 1 } END { exit !found }' \
     "$LOG_DIR/ffmpeg-bsfs.log"; then
     echo "ERROR: bitstream filter is not registered: pelorus_fgs" >&2
-    tail -80 "$LOG_DIR/ffmpeg-bsfs.log" >&2 || true
+    if [[ -f "$LOG_DIR/ffmpeg-bsfs.log" ]]; then
+        tail -80 "$LOG_DIR/ffmpeg-bsfs.log" >&2
+    fi
     exit 1
 fi
 echo "registered bitstream filter: pelorus_fgs"
@@ -325,13 +345,17 @@ verify_encoder_options() {
     if ! "$WORKTREE/ffmpeg" -hide_banner -h "encoder=$encoder" \
         >"$help_log" 2>&1; then
         echo "ERROR: could not inspect encoder: $encoder" >&2
-        tail -80 "$help_log" >&2 || true
+        if [[ -f "$help_log" ]]; then
+            tail -80 "$help_log" >&2
+        fi
         return 1
     fi
     for option in "$@"; do
         if ! grep -Eq "(^|[[:space:]])-${option}([[:space:]]|$)" "$help_log"; then
             echo "ERROR: encoder $encoder is missing option: $option" >&2
-            tail -80 "$help_log" >&2 || true
+            if [[ -f "$help_log" ]]; then
+                tail -80 "$help_log" >&2
+            fi
             return 1
         fi
         echo "registered encoder option: ${encoder} -${option}"

@@ -107,3 +107,11 @@ test('grain-accumulator-bounds',
      args: [meson.project_source_root() / 'scripts' / 'test-grain-accumulator-bounds.py'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+
+# BUG-022: the corpus fetch must fail closed (HTTP error, corrupt body, stalled
+# server) and never leave a file at the cached-download path.
+test('fetch-corpus-fail-closed',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-fetch-corpus.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')

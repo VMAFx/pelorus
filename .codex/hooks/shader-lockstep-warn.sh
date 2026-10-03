@@ -10,7 +10,10 @@
 # than a build error, because nothing cross-checks them.
 set -euo pipefail
 
-f="$(python3 -c 'import sys,json; print(json.load(sys.stdin).get("tool_input",{}).get("file_path",""))' 2>/dev/null || true)"
+# Fail-open by design: an unparsable payload leaves f empty and the hook exits 0.
+if ! f="$(python3 -c 'import sys,json; print(json.load(sys.stdin).get("tool_input",{}).get("file_path",""))' 2>/dev/null)"; then
+    f=""
+fi
 [ -z "$f" ] && exit 0
 base="$(basename "$f")"
 

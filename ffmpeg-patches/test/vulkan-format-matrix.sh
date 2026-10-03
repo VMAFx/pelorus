@@ -81,9 +81,18 @@ pel_check_validation()
 {
     local log
     local vuid
+    local vuids
+    local grep_status
 
     ((PEL_VALIDATION_ENABLED)) || return 0
     for log in "$@"; do
+        # grep exits 1 when the log holds no VUID (clean run); any higher status is an error.
+        grep_status=0
+        vuids="$(grep -Eo 'VUID-[[:alnum:]_.-]+' "$log" | sort -u)" || grep_status=$?
+        if ((grep_status > 1)); then
+            echo "ERROR: could not scan validation log: $log" >&2
+            return 1
+        fi
         while IFS= read -r vuid; do
             [[ -n "$vuid" ]] || continue
             case "$vuid" in
@@ -100,7 +109,7 @@ pel_check_validation()
                     return 1
                     ;;
             esac
-        done < <(grep -Eo 'VUID-[[:alnum:]_.-]+' "$log" | sort -u || true)
+        done <<<"$vuids"
     done
 }
 
