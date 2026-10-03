@@ -207,7 +207,7 @@ If Pelorus is useful to you: [GitHub Sponsors](https://github.com/sponsors/lusor
 ## Standards & Governance
 
 Pelorus adopts the Praetor/HISS policy at engine commit `0af07a73` with a
-61-finding legacy baseline (31 HISS-01, one HISS-02, 27 HISS-04, two HISS-07).
+56-finding legacy baseline (28 HISS-01, one HISS-02, 25 HISS-04, two HISS-07).
 Canonical agent guidance lives in `AGENTS.md`; generated vendor contexts are
 checked for drift, and a locked Markdown gate lints the public documentation.
 The hosted Standards and Documentation Governance workflows run both on every
@@ -225,7 +225,7 @@ users also need a copy named `praetorctl` on `PATH`
 | :--- | :--- | :--- |
 | **Native verification** | `make verify-native` | Builds, tests, formats, lints, and checks changelog rendering |
 | **Full verification** | `make verify-all` | Adds context, HISS, and documentation checks |
-| **HISS audit** | `make audit` | Applies the pinned 61-finding baseline ratchet |
+| **HISS audit** | `make audit` | Applies the pinned 56-finding baseline ratchet |
 | **Documentation** | `make docs-lint docs-figures` | Runs the locked Markdown and figure checks (Node.js 22 or newer) |
 | **Context sync** | `make compile-context` | Compiles canonical agent guidance to vendor targets |
 
@@ -249,9 +249,9 @@ generated agent context against `AGENTS.md`.
 private scratch-link policy.
 
 **Debt Baseline**: `.standards-baseline.json` anchors the debt ratchet at
-61 recorded infractions; audit forbids growth.
+56 recorded infractions; audit forbids growth.
 
-[praetor-hiss-badge]: https://img.shields.io/badge/Standards-HISS%20Adopted%20(61%20baselined)-yellow
+[praetor-hiss-badge]: https://img.shields.io/badge/Standards-HISS%20Adopted%20(56%20baselined)-yellow
 [praetor-hiss-agents]: https://github.com/VMAFx/pelorus/blob/HEAD/AGENTS.md
 [praetor-docs-badge]: https://github.com/VMAFx/pelorus/actions/workflows/praetor-docs.yml/badge.svg
 [praetor-docs-runs]: https://github.com/VMAFx/pelorus/actions/workflows/praetor-docs.yml
