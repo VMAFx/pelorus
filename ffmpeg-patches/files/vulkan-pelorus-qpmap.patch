@@ -174,7 +174,7 @@ diff --git a/libavcodec/vulkan_encode.c b/libavcodec/vulkan_encode.c
 index 39c43300c4..6393ec2001 100644
 --- a/libavcodec/vulkan_encode.c
 +++ b/libavcodec/vulkan_encode.c
-@@ -28,6 +28,1001 @@ const AVCodecHWConfigInternal *const ff_vulkan_encode_hw_configs[] = {
+@@ -28,6 +28,1015 @@ const AVCodecHWConfigInternal *const ff_vulkan_encode_hw_configs[] = {
      NULL,
  };
  
@@ -237,13 +237,23 @@ index 39c43300c4..6393ec2001 100644
 +                                 FFVulkanEncodeContext *ctx);
 +#endif
 +
-+/* libx264 ROI convention (also used by the NVENC/QSV Pelorus patches): the QP
-+ * range is 51 + 6*(bit_depth-8); qoffset in [-1,+1], negative => lower QP. */
++/* ROI qoffset -> delta scale, per codec (same convention as the NVENC, QSV,
++ * libaom and SVT-AV1 Pelorus patches): H.264/H.265 span the QP range
++ * 51 + 6*(bit_depth-8); AV1 quantization-map deltas are qindex units (0..255)
++ * at every bit depth. qoffset is in [-1,+1], negative => lower QP / more bits.
++ * Scaling AV1 by the H.26x span would give a fifth of the requested delta. */
++static int pelorus_qp_range_for(enum AVCodecID codec_id, int bit_depth)
++{
++    if (codec_id == AV_CODEC_ID_AV1)
++        return 255;
++    return 51 + 6 * (bit_depth - 8);
++}
++
 +static int pelorus_qp_range(AVCodecContext *avctx)
 +{
 +    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(avctx->sw_pix_fmt);
 +    int bit_depth = desc ? desc->comp[0].depth : 8;
-+    return 51 + 6 * (bit_depth - 8);
++    return pelorus_qp_range_for(avctx->codec_id, bit_depth);
 +}
 +
 +/* Query the delta range the driver supports for quantization DELTA maps of this
@@ -794,6 +804,10 @@ index 39c43300c4..6393ec2001 100644
 +                                        ctx->qpmap_qp_delta_min,
 +                                        ctx->qpmap_qp_delta_max)),
 +                        ctx->qpmap_qp_delta_min, ctx->qpmap_qp_delta_max);
++        av_log(avctx, AV_LOG_DEBUG, "pelorus_roi: texels (%d,%d)-(%d,%d) "
++               "qoffset %.3f -> delta %d (span %d, clamp [%d, %d])\n",
++               startx, starty, endx, endy, qoffset, delta, qp_range,
++               ctx->qpmap_qp_delta_min, ctx->qpmap_qp_delta_max);
 +
 +        out[n++] = (PelorusQpRect) {
 +            .x0 = startx, .y0 = starty, .x1 = endx, .y1 = endy, .delta = delta,
