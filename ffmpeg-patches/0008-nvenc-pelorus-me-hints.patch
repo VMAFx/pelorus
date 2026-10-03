@@ -38,14 +38,14 @@ that frame, so NVENC runs its own search and behaviour is unchanged.
 
 ADR: docs/adr/0116-pelorus-mc.md (consumer section), docs/adr/0114-encoder-steering.md (Tier 3)
 ---
- libavcodec/nvenc.c      | 252 ++++++++++++++++++++
- libavcodec/nvenc.h      |  17 ++
+ libavcodec/nvenc.c      | 280 ++++++++++++++++++++
+ libavcodec/nvenc.h      |  18 ++
  libavcodec/nvenc_h264.c |   2 +
  libavcodec/nvenc_hevc.c |   2 +
- 4 files changed, 273 insertions(+)
+ 4 files changed, 302 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index 0bb1516ed57db83dd5ca3d4198864ee84290196a..8b2cd200acb4cdae40a4fd9402a97b90b6a455d0 100644
+index 0bb1516ed57db83dd5ca3d4198864ee84290196a..193dc8b6b3222fbb23339e36064064a26a9c971b 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
 @@ -1120,6 +1120,49 @@ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
@@ -106,7 +106,7 @@ index 0bb1516ed57db83dd5ca3d4198864ee84290196a..8b2cd200acb4cdae40a4fd9402a97b90
  
      if (ctx->nvencoder) {
          p_nvenc->nvEncDestroyEncoder(ctx->nvencoder);
-@@ -3098,6 +3142,210 @@ static int nvenc_setup_roi(AVCodecContext *avctx, const AVFrame *frame,
+@@ -3098,6 +3142,238 @@ static int nvenc_setup_roi(AVCodecContext *avctx, const AVFrame *frame,
      return 0;
  }
  
@@ -242,9 +242,28 @@ index 0bb1516ed57db83dd5ca3d4198864ee84290196a..8b2cd200acb4cdae40a4fd9402a97b90
 + * the producer uses (cur[pos] ~= ref[pos + mv]); the field is clamped to the
 + * NVENC bitfield ranges (mvx S12 [-2048,2047], mvy S10 [-512,511]).
 + *
-+ * If the frame carries no Pelorus motion section the hint buffer is left unset
-+ * for this frame (meHintCountsPerBlock stays zero), so NVENC runs its own
-+ * search and behaviour is unchanged. Returns 0 or a negative AVERROR. */
++ * A session opened with enableExternalMEHints requires a well-formed hint
++ * buffer on EVERY frame: a frame submitted with zero candidates per block fails
++ * the encode ("invalid param (8): SetupCEAHints failed", verified on an RTX 4090
++ * with driver 615.71.09), and the SDK headers document no "no hint" value other
++ * than a populated buffer. A frame that carries no Pelorus motion section
++ * therefore submits one zero-MV candidate per 16x16 block. That is a valid,
++ * neutral seed (the ASIC searches around the co-located block) and the encode
++ * proceeds; it is logged once. Returns 0 or a negative AVERROR. */
++static void nvenc_fill_zero_me_hints(NvencContext *ctx)
++{
++    for (int i = 0; i < ctx->me_hints_count; i++) {
++        NVENC_EXTERNAL_ME_HINT *h = &ctx->me_hints[i];
++
++        memset(h, 0, sizeof(*h));
++        h->refidx     = 0;
++        h->dir        = 0;   /* L0 */
++        h->partType   = 0;   /* 16x16 */
++        h->lastofPart = 1;
++        h->lastOfMB   = 1;
++    }
++}
++
 +static int nvenc_setup_me_hints(AVCodecContext *avctx, const AVFrame *frame,
 +                                NV_ENC_PIC_PARAMS *pic_params)
 +{
@@ -258,10 +277,19 @@ index 0bb1516ed57db83dd5ca3d4198864ee84290196a..8b2cd200acb4cdae40a4fd9402a97b90
 +        return 0;
 +
 +    sd = av_frame_get_side_data(frame, AV_FRAME_DATA_SEI_UNREGISTERED);
-+    if (!sd)
++    if (!sd || pelorus_find_motion(sd->data, sd->size, &mv_field, &gc, &gr) < 0) {
++        if (!ctx->me_hints_absent_warned) {
++            ctx->me_hints_absent_warned = 1;
++            av_log(avctx, AV_LOG_WARNING,
++                   "pelorus_me_hints: a frame carries no Pelorus motion data; "
++                   "submitting zero-MV hints for such frames (reported once).\n");
++        }
++        nvenc_fill_zero_me_hints(ctx);
++        pic_params->meHintCountsPerBlock[0].numCandsPerBlk16x16 = 1;
++        pic_params->meHintCountsPerBlock[1].numCandsPerBlk16x16 = 0;
++        pic_params->meExternalHints = ctx->me_hints;
 +        return 0;
-+    if (pelorus_find_motion(sd->data, sd->size, &mv_field, &gc, &gr) < 0)
-+        return 0;
++    }
 +
 +    /* Producer block edge in luma px from the grid geometry it self-describes:
 +     * ceil(W/bsize) = gc => bsize ~= ceil(W/gc). Recover per-axis so a non-16
@@ -317,7 +345,7 @@ index 0bb1516ed57db83dd5ca3d4198864ee84290196a..8b2cd200acb4cdae40a4fd9402a97b90
  static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
  {
      NVENCSTATUS nv_status;
-@@ -3237,6 +3485,10 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3237,6 +3513,10 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
          if (res < 0)
              return res;
  
@@ -329,10 +357,10 @@ index 0bb1516ed57db83dd5ca3d4198864ee84290196a..8b2cd200acb4cdae40a4fd9402a97b90
      } else {
          pic_params.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
 diff --git a/libavcodec/nvenc.h b/libavcodec/nvenc.h
-index 66cd7b158243520d5228c958b3fc13c0dd6e6431..be52d320e0b7d7c9140bd108864d4b1cdfe0f41e 100644
+index 66cd7b158243520d5228c958b3fc13c0dd6e6431..8a0dbaea8384b05e90965a5e45a0973b04e467f2 100644
 --- a/libavcodec/nvenc.h
 +++ b/libavcodec/nvenc.h
-@@ -290,6 +290,23 @@ typedef struct NvencContext
+@@ -290,6 +290,24 @@ typedef struct NvencContext
      int     qp_delta_map_w;  ///< blocks across = ceil(width  / block size)
      int     qp_delta_map_h;  ///< blocks down  = ceil(height / block size)
      int     roi_warned;      ///< rate-limit incompatibility warnings to once
@@ -352,7 +380,8 @@ index 66cd7b158243520d5228c958b3fc13c0dd6e6431..be52d320e0b7d7c9140bd108864d4b1c
 +    int     me_hints_count;  ///< entries = me_hints_w * me_hints_h
 +    int     me_hints_w;      ///< 16x16 blocks across = ceil(width  / 16)
 +    int     me_hints_h;      ///< 16x16 blocks down  = ceil(height / 16)
-+    int     me_hints_warned; ///< rate-limit incompatibility/absence warnings to once
++    int     me_hints_warned; ///< rate-limit the AQ/lookahead note to once
++    int     me_hints_absent_warned; ///< rate-limit the "frame had no motion data" warning
  } NvencContext;
  
  int ff_nvenc_encode_init(AVCodecContext *avctx);

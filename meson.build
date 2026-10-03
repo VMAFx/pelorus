@@ -197,6 +197,16 @@ test('nvenc-pelorus-mapping',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# Per-frame external-ME-hint setup of patch 0008 (BUG-031): a frame without
+# Pelorus motion data must still submit one zero-MV candidate per block, or the
+# NVENC session fails the whole encode.
+test('nvenc-me-hints',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py',
+            '--cc'] + meson.get_compiler('c').cmd_array(),
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 # SVT-AV1 keeps the last ROI event as a sticky pointer (BUG-030); the event
 # builder of patch 0013 must replace it with a neutral event when ROI data ends.
 test('svtav1-roi-sticky',
