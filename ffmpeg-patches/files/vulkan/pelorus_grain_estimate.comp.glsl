@@ -32,16 +32,19 @@
  *                  is an edge / texture, not grain)
  *   3. bin:        accumulate resid^2 into one of BANDS luma bins with a
  *                  per-bin pixel count -> per-band grain stddev
- *   4. AR proxy:   accumulate the lag-1 product resid*resid_right (a coarse
- *                  spatial-correlation scalar -> conservative AR seed)
+ *   4. AR proxy:   accumulate the lag-1 product resid*resid_right (a
+ *                  spatial-correlation scalar -> AR seed / H.274 cutoff)
  * The reduction is sliced (SLICES) to cut atomic contention; the host sums the
- * slices and fits the AV1 piecewise scaling function + AR seed (ADR-0115).
+ * slices and fits the AV1 piecewise scaling function + AR seed (ADR-0115) and
+ * the H.274 model-0 parameters (ADR-0161).
  *
  * FF_VK_REP_FLOAT normalizes against the storage container, so every load is
  * converted to the logical sample domain before the estimator sees it. The
- * fixed-point scales and residual clamp keep both uint32 accumulators
- * overflow-safe to 8K while preserving precision for real grain; they MUST
- * match the C-side PEL_GRAIN_* defines byte-for-byte.
+ * fixed-point scales and residual clamp keep every uint32 accumulator
+ * overflow-safe to DCI 8K (scripts/test-grain-accumulator-bounds.py); they
+ * MUST match the C-side PEL_GRAIN_* defines byte-for-byte. Each per-pixel add
+ * is rounded to the nearest fixed-point unit: truncation biases every add by
+ * half a unit, which skews the sums of small residuals (ADR-0161).
  */
 
 #pragma shader_stage(compute)
@@ -77,8 +80,10 @@ float pel_to_sample(float value)
 void main()
 {
     const float SUMSQ_GS = 300000.0;
-    const float CORR_GS = 2000.0;
-    const float CORR_BIAS = 1.0;
+    /* The lag-1 product lies in [-RES_CLAMP^2, RES_CLAMP^2], so a bias of
+     * RES_CLAMP^2 makes it non-negative without wasting accumulator range. */
+    const float CORR_GS = 150000.0;
+    const float CORR_BIAS = 0.0064;
     const float RES_CLAMP = 0.08;
     const int BANDS = 8;
     const uint SLICES = 32u;
@@ -103,7 +108,7 @@ void main()
     int band = clamp(int(mean * float(BANDS)), 0, BANDS - 1);
     uint slice = (uint(y) * uint(size.x) + uint(x)) % SLICES;
     uint bidx = uint(band) * SLICES + slice;
-    atomicAdd(sumsq[bidx], uint(resid * resid * SUMSQ_GS));
+    atomicAdd(sumsq[bidx], uint(resid * resid * SUMSQ_GS + 0.5));
     atomicAdd(cnt[bidx], 1u);
     /* lag-1 spatial correlation (AR proxy): only when the right neighbour is
      * also flat, so the product reflects grain, not an edge transition. */
@@ -121,7 +126,7 @@ void main()
     if ((hiR - loR) <= edge_thr) {
         float residR = clamp(cr - meanR, -RES_CLAMP, RES_CLAMP);
         float prod = resid * residR;
-        atomicAdd(corr[slice], uint((prod + CORR_BIAS) * CORR_GS));
+        atomicAdd(corr[slice], uint(max(prod + CORR_BIAS, 0.0) * CORR_GS + 0.5));
         atomicAdd(corr_cnt[slice], 1u);
     }
 }

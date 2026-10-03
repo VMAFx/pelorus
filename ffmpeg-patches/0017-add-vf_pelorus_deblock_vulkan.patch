@@ -29,8 +29,8 @@ ADR: docs/adr/0127-deblock.md
  libavfilter/allfilters.c                     |   1 +
  libavfilter/vf_pelorus_deblock_vulkan.c      | 270 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |   1 +
- libavfilter/vulkan/pelorus_deblock.comp.glsl | 133 ++++++++++
- 6 files changed, 407 insertions(+)
+ libavfilter/vulkan/pelorus_deblock.comp.glsl | 131 ++++++++++
+ 6 files changed, 405 insertions(+)
 
 diff --git a/configure b/configure
 index 5f48b12e31eb76d3cae37489068aa5eac5f0dccb..b890fae94423562137ed098673ca7a24cee3bacc 100755
@@ -355,10 +355,10 @@ index d3ff362cfa612b53ee51d812a1df844c6e2d3dc1..8e75e876856feb0a34b5188010c0f01a
 +OBJS-$(CONFIG_PELORUS_DEBLOCK_VULKAN_FILTER) += vulkan/pelorus_deblock.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_deblock.comp.glsl b/libavfilter/vulkan/pelorus_deblock.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..8816dbefbbac0c45c1d304372b0be9138f7ba3e2
+index 0000000000000000000000000000000000000000..7a8d63b7db2c25bb74763ffd70ab4512012e280f
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_deblock.comp.glsl
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,131 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -469,15 +469,13 @@ index 0000000000000000000000000000000000000000..8816dbefbbac0c45c1d304372b0be913
 +{
 +    const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
 +
-+    /* Preserves the pre-FFmpeg-9 unrolled semantics exactly: the C generator
-+     * emitted `size = imageSize(output_images[i]); if (!IS_WITHIN(pos, size))
-+     * return;` per plane, so the first plane that does not contain `pos` ends
-+     * the invocation. Subsampled chroma is therefore skipped for positions only
-+     * valid in luma, by design. */
++    /* Each plane is bounds-checked on its own: a plane whose size excludes
++     * `pos` (subsampled chroma) is skipped with `continue`, so a later
++     * full-size plane (yuva420p alpha) is still written. */
 +    for (uint i = 0; i < planes; i++) {
 +        const ivec2 size = imageSize(output_images[i]);
 +        if (!all(lessThan(pos, size)))
-+            return;
++            continue;
 +
 +        if ((plane_mask & (1u << i)) != 0u) {
 +            vec4 texel = imageLoad(input_images[i], pos);

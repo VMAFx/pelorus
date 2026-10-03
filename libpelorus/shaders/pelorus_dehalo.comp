@@ -6,20 +6,25 @@
  * A single-pass GPU port of HAvsFunc DeHalo_alpha + FineDehalo (the de-facto
  * VapourSynth anime halo remover). Halos are the bright/dark ringing that
  * upstream compression and sharpening leave in the flat band *next to* hard
- * line-art; they cost the encoder bits and read as artefacts. The algorithm:
+ * line-art; they cost the encoder bits and read as artefacts. The algorithm
+ * (ADR-0123, gate and pull semantics corrected by ADR-0163):
  *
- *   halos = a strong blur of luma (the "what the flat should look like").
- *   are   = local contrast of the original  (3x3 max-min).
- *   ugly  = local contrast of the blur       (3x3-cross max-min of the blur).
- *   so    = sensitivity mask: high where the original has contrast the blur
- *           does NOT (i.e. a thin halo, not real structure) — shaped by
- *           lowsens (floor) / highsens (gain).
- *   lets  = mix(original, halos, so); remove-only, asymmetric darkstr/brightstr
- *           so we only pull a halo toward the flat, never invent detail.
+ *   halos  = a box blur of luma (the "what the flat should look like").
+ *   are    = local contrast of the original  (3x3 max-min).
+ *   ugly   = local contrast of the blur       (3x3-cross max-min of the blur).
+ *   so     = lowsens/highsens-shaped (are - ugly) / are: high where the blur
+ *            would erase detail the original has.
+ *   lets   = MaskedMerge(halos, clp, so) = mix(halos, original, so).
+ *   remove = Repair(clp, lets, 1): the original clamped into the 3x3 range of
+ *            lets, so only an excursion beyond the blurred envelope moves.
+ *   out    = remove-only, asymmetric darkstr/brightstr pull toward remove.
  *
- * FineDehalo then gates the whole thing to the halo RING via a Sobel edge mask:
- * the dehalo is applied in a dilated band around lines but NOT on the lines
- * themselves and NOT in the open flats — protecting line-art and gradients.
+ * FineDehalo gates the whole thing to the halo RING with a Sobel edge mask in
+ * step units (|G| / 4): a pixel with an edge step above `edge` is line-art and
+ * untouched; a pixel with a line within `ring` px along the cross is in the
+ * ring (either polarity); a pixel with line on both sides of an axis is between
+ * two close edges (a thin line's core) and is excluded like FineDehalo's
+ * exclusion zone. Open flats and gradients have no line nearby and pass through.
  *
  * Reference form: one dispatch on the luma plane against r16ui storage images
  * (chroma passes through). The shader FFmpeg actually executes is
@@ -44,28 +49,25 @@ layout(push_constant, std430) uniform Params {
     float brightstr;  // 16  pull strength for bright halos [0,1]
     float lowsens;    // 20  sensitivity floor   (normalized, ~0.0625)
     float highsens;   // 24  sensitivity gain    (normalized, ~0.5)
-    float edge_thr;   // 28  Sobel magnitude above which a pixel is line-art
+    float edge_thr;   // 28  edge step (Sobel / 4) above which a pixel is line-art
     float ring;       // 32  edge-mask dilation (ring half-width, pixels)
 } pc;
 
 const int MAX_R = 8; /* provably-bounded blur radius (loop unroll cap) */
 
-/* Shared-memory tiling of the box-blur window (ADR-0139). Every luma read in
- * main() — the box_blur (2r+1)^2 window read 5x per pixel (centre + 4 cross
- * offsets), the Sobel/contrast 3x3, the ring scan — goes through load_norm
- * against the SAME source plane, re-reading a heavily overlapping window
- * (~1.5k loads/px at blur=8). That is fetch-bound, not ALU-bound (the box mean
- * is adds + one divide), so the workgroup cooperatively loads its output region
- * + a PEL_HALO ring into shared memory once and every read hits shared. PEL_HALO
- * = MAX_R (8, max box reach) + 1 (the box-blur cross offset extends the union by
- * one px) = 9, covering the union of all five box_blur windows AND the ring scan.
- * The tile mirrors the image-edge clamp exactly, so it is bit-identical to a
- * direct read. This reference models — and CI compile-checks — the in-tree
- * filter's opt-in tile=1 path (ADR-0139, a large win on bandwidth-limited GPUs,
- * ~neutral on cache-rich ones); with the default tile=0 the filter reads the
- * image directly. In lockstep with the filter's tile_helpers_glsl (AGENTS rule 4). */
-#define PEL_HALO 9
-#define PEL_TILE 34  // 16 (workgroup dim) + 2 * PEL_HALO
+/* Shared-memory tiling of the dehalo window (ADR-0139). Every luma read in
+ * main() — the 5x5 grid of box means, the 5x5 contrast grid, the Sobel edge
+ * scan — goes through load_norm against the SAME source plane, re-reading a
+ * heavily overlapping window, so the workgroup cooperatively loads its output
+ * region + a PEL_HALO ring into shared memory once and every read hits shared.
+ * PEL_HALO = MAX_R (8, max box reach) + 2 (the Repair window's 5x5 grid) = 10,
+ * covering the box-mean grid AND the edge scan (ring + 1 <= 9). The tile
+ * mirrors the image-edge clamp exactly, so it is bit-identical to a direct read.
+ * This reference models — and CI compile-checks — the in-tree filter's opt-in
+ * tile=1 path; with the default tile=0 the filter reads the image directly. */
+#define PEL_HALO 10
+#define PEL_TILE 36  // 16 (workgroup dim) + 2 * PEL_HALO
+#define PEL_GRID 5
 shared float s_tile[PEL_TILE * PEL_TILE];
 void pel_load_tile() {
     ivec2 wgsz = ivec2(gl_WorkGroupSize.xy);
@@ -90,19 +92,57 @@ float load_norm(int x, int y) {
     return s_tile[lc.y * PEL_TILE + lc.x];
 }
 
-/* Box-mean over a (2r+1)^2 window — the "halos" blur. */
-float box_blur(int cx, int cy, int r) {
-    float acc = 0.0;
-    float n   = 0.0;
-    for (int dy = -MAX_R; dy <= MAX_R; dy++) {
-        if (dy < -r || dy > r) continue;
+/* Box means of the (2r+1)^2 window around every offset of the 5x5 grid centred
+ * on (cx, cy), row-major in hg[]: one sliding horizontal sum per row of the
+ * (2r+5)-row union window, accumulated into the grid rows that cover it. */
+void box_grid(int cx, int cy, int r, out float hg[PEL_GRID * PEL_GRID]) {
+    precise float acc[PEL_GRID * PEL_GRID];
+    for (int g = 0; g < PEL_GRID * PEL_GRID; g++)
+        acc[g] = 0.0;
+    for (int y = -MAX_R - 2; y <= MAX_R + 2; y++) {
+        if (y < -r - 2 || y > r + 2)
+            continue;
+        precise float s = 0.0;
         for (int dx = -MAX_R; dx <= MAX_R; dx++) {
-            if (dx < -r || dx > r) continue;
-            acc += load_norm(cx + dx, cy + dy);
-            n   += 1.0;
+            if (dx < -r || dx > r)
+                continue;
+            s += load_norm(cx + dx - 2, cy + y);
+        }
+        precise float rs[PEL_GRID];
+        rs[0] = s;
+        for (int i = 1; i < PEL_GRID; i++) {
+            s += load_norm(cx + i - 2 + r, cy + y) - load_norm(cx + i - 3 - r, cy + y);
+            rs[i] = s;
+        }
+        for (int j = 0; j < PEL_GRID; j++) {
+            if (abs(y - (j - 2)) > r)
+                continue;
+            for (int i = 0; i < PEL_GRID; i++)
+                acc[j * PEL_GRID + i] += rs[i];
         }
     }
-    return acc / max(n, 1.0);
+    float n = float((2 * r + 1) * (2 * r + 1));
+    for (int g = 0; g < PEL_GRID * PEL_GRID; g++)
+        hg[g] = acc[g] / n;
+}
+
+/* Sobel magnitude in step units: an ideal step of height s reads s. */
+float edge_step(int x, int y) {
+    const float kx[9] = float[9](-1.0, 0.0, 1.0, -2.0, 0.0, 2.0, -1.0, 0.0, 1.0);
+    const float ky[9] = float[9](-1.0, -2.0, -1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0);
+    precise float gx = 0.0;
+    precise float gy = 0.0;
+    int k = 0;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            float v = load_norm(x + dx, y + dy);
+            gx += v * kx[k];
+            gy += v * ky[k];
+            k++;
+        }
+    }
+    precise float mag = sqrt(gx * gx + gy * gy);
+    return 0.25 * mag;
 }
 
 void main() {
@@ -113,74 +153,74 @@ void main() {
     if (x >= pc.width || y >= pc.height)
         return;
 
-    int r = clamp(pc.blur_r, 1, MAX_R);
     float c = load_norm(x, y);
+    float result = c;
 
-    /* 1. halos = strong blur; also the blur at the 4-neighbours for `ugly`. */
-    float h  = box_blur(x,     y,     r);
-    float hl = box_blur(x - 1, y,     r);
-    float hr = box_blur(x + 1, y,     r);
-    float hu = box_blur(x,     y - 1, r);
-    float hd = box_blur(x,     y + 1, r);
-
-    /* 2. are = 3x3 contrast of the original; ugly = 3x3-cross contrast of blur. */
-    float oMax = c, oMin = c;
-    for (int dy = -1; dy <= 1; dy++) {
-        for (int dx = -1; dx <= 1; dx++) {
-            float v = load_norm(x + dx, y + dy);
-            oMax = max(oMax, v);
-            oMin = min(oMin, v);
+    /* 1. FineDehalo gate: line-art (own edge step above edge_thr) is never
+     *    touched; the ring is a line within `ring` px along the cross, tested on
+     *    the edge mask so both halo polarities qualify; a line on both sides of
+     *    an axis marks a close-edge exclusion zone (a thin line's core). */
+    bool ring_px = false;
+    if (edge_step(x, y) <= pc.edge_thr) {
+        int rr = clamp(int(pc.ring + 0.5), 1, MAX_R);
+        bool el = false, er = false, eu = false, ed = false;
+        for (int d = 1; d <= MAX_R; d++) {
+            if (d > rr)
+                break;
+            er = er || edge_step(x + d, y) > pc.edge_thr;
+            el = el || edge_step(x - d, y) > pc.edge_thr;
+            ed = ed || edge_step(x, y + d) > pc.edge_thr;
+            eu = eu || edge_step(x, y - d) > pc.edge_thr;
         }
+        ring_px = (el || er || eu || ed) && !(el && er) && !(eu && ed);
     }
-    float are  = oMax - oMin;
-    float ugly = max(max(max(h, hl), max(hr, hu)), hd)
-               - min(min(min(h, hl), min(hr, hu)), hd);
 
-    /* 3. sensitivity: detail the blur removed, relative to the local contrast,
-     *    floored by lowsens and gained by highsens (DeHalo_alpha shaping). */
-    const float EPS = 0.0039; /* ~1/255 */
-    float frac = (are - ugly) / (are + EPS);
-    float so   = clamp((frac - pc.lowsens) * (1.0 + pc.highsens), 0.0, 1.0);
-
-    /* 4. remove-only, asymmetric pull toward the blurred flat. */
-    float lets = mix(c, h, so);
-    float out_v;
-    if (lets < c)               /* bright halo: pull down */
-        out_v = c - (c - lets) * pc.brightstr;
-    else                        /* dark halo: pull up */
-        out_v = c - (c - lets) * pc.darkstr;
-
-    /* 5. FineDehalo gate: Sobel edge mask -> a ring around lines, not the lines
-     *    and not the flats. Protects line-art + open gradients. */
-    float gx = 0.0, gy = 0.0;
-    const float kx[9] = float[9](-1.0, 0.0, 1.0, -2.0, 0.0, 2.0, -1.0, 0.0, 1.0);
-    const float ky[9] = float[9](-1.0, -2.0, -1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0);
-    int k = 0;
-    for (int dy = -1; dy <= 1; dy++) {
-        for (int dx = -1; dx <= 1; dx++) {
-            float v = load_norm(x + dx, y + dy);
-            gx += v * kx[k];
-            gy += v * ky[k];
-            k++;
+    if (ring_px) {
+        /* 2. DeHalo_alpha over the 3x3 Repair window: per pixel, so from are /
+         *    ugly, lets = mix(halos, original, so); remove = the original
+         *    clamped into the window's lets range (Repair mode 1). */
+        int r = clamp(pc.blur_r, 1, MAX_R);
+        float hg[PEL_GRID * PEL_GRID];
+        float cg[PEL_GRID * PEL_GRID];
+        box_grid(x, y, r, hg);
+        for (int j = 0; j < PEL_GRID; j++)
+            for (int i = 0; i < PEL_GRID; i++)
+                cg[j * PEL_GRID + i] = load_norm(x + i - 2, y + j - 2);
+        const float EPS = 0.0039; /* ~1/255 */
+        float lo = 1.0e30, hi = -1.0e30;
+        for (int dj = -1; dj <= 1; dj++) {
+            for (int di = -1; di <= 1; di++) {
+                int g = (dj + 2) * PEL_GRID + (di + 2);
+                float oMax = cg[g], oMin = cg[g];
+                for (int b = -1; b <= 1; b++) {
+                    for (int a = -1; a <= 1; a++) {
+                        float v = cg[g + b * PEL_GRID + a];
+                        oMax = max(oMax, v);
+                        oMin = min(oMin, v);
+                    }
+                }
+                precise float are = oMax - oMin;
+                float hc = hg[g];
+                precise float ugly = max(max(hc, max(hg[g - 1], hg[g + 1])),
+                                         max(hg[g - PEL_GRID], hg[g + PEL_GRID]))
+                                   - min(min(hc, min(hg[g - 1], hg[g + 1])),
+                                         min(hg[g - PEL_GRID], hg[g + PEL_GRID]));
+                precise float frac = (are - ugly) / (are + EPS);
+                precise float so = clamp((frac - pc.lowsens) * (1.0 + pc.highsens), 0.0, 1.0);
+                precise float lets = mix(hc, cg[g], so);
+                lo = min(lo, lets);
+                hi = max(hi, lets);
+            }
         }
+        float remove = clamp(c, lo, hi);
+        /* 3. remove-only, asymmetric pull toward the clamped value. */
+        precise float out_v;
+        if (remove < c)             /* bright halo: pull down */
+            out_v = c - (c - remove) * pc.brightstr;
+        else                        /* dark halo: pull up */
+            out_v = c - (c - remove) * pc.darkstr;
+        result = out_v;
     }
-    float edge = sqrt(gx * gx + gy * gy);
-    bool on_line = edge > pc.edge_thr;
-
-    /* Ring = there is a line within `ring` pixels, but THIS pixel is not the
-     * line. Scan the cross neighbourhood for a strong edge. */
-    int rr = clamp(int(pc.ring + 0.5), 1, MAX_R);
-    bool near_line = false;
-    for (int d = 1; d <= MAX_R; d++) {
-        if (d > rr) break;
-        float em = max(max(load_norm(x + d, y), load_norm(x - d, y)),
-                       max(load_norm(x, y + d), load_norm(x, y - d)));
-        /* cheap proxy: a strong local step in the cross => a line is near */
-        if (abs(em - c) > pc.edge_thr) { near_line = true; }
-    }
-    float ring_mask = (near_line && !on_line) ? 1.0 : 0.0;
-
-    float result = mix(c, out_v, ring_mask);
 
     /* Component-preserving store (the uint-domain twin of the in-tree shader's
      * fix): main() only ever computes the FIRST component -- every read goes
@@ -189,7 +229,7 @@ void main() {
      * them; on r16ui here that is inert, but the in-tree filter runs against
      * multi-component plane views (semi-planar chroma, packed formats) where it
      * destroyed V / G,B,A. Load the source texel, replace `.r`, store it whole. */
-    int outv = clamp(int(round(result * 65535.0)), 0, 65535);
+    int outv = clamp(int(round(clamp(result, 0.0, 1.0) * 65535.0)), 0, 65535);
     uvec4 px = imageLoad(srcImg, ivec2(x, y));
     px.r = uint(outv);
     imageStore(dstImg, ivec2(x, y), px);

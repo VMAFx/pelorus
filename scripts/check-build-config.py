@@ -111,10 +111,19 @@ GIT_AM_CONFIG = (
 GIT_AM_CONFIG_PATTERN = r"\s+".join(
     rf"-c\s+{re.escape(setting)}" for setting in GIT_AM_CONFIG
 )
+# Anchored (re.MULTILINE) to the start of a line whose first token is `git`, so the
+# canonical command inside a comment or after another word does not satisfy it (#65).
 GIT_AM_COMMAND_PATTERN = (
-    r'git\s+-C\s+"\$WORKTREE"\s+'
+    r'(?m)^[ \t]*git\s+-C\s+"\$WORKTREE"\s+'
     + GIT_AM_CONFIG_PATTERN
     + r"\s+am\s+--3way\s+--no-gpg-sign\s+--no-verify\s"
+)
+# Environment the replay scripts export so global/system Git configuration and
+# GIT_COMMITTER_* never reach `git am` or the worktree checkout (#65).
+GIT_HERMETIC_ENV_LINES = (
+    "export GIT_CONFIG_GLOBAL=/dev/null",
+    "export GIT_CONFIG_NOSYSTEM=1",
+    "unset GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE",
 )
 FORMAT_PATCH_OPTIONS = (
     "--zero-commit",
@@ -607,6 +616,69 @@ def _consumer_replay_identity_regressions(replay: str) -> list[str]:
     return failures
 
 
+def hermetic_and_anchor_mutations(source: str) -> dict[str, tuple[str, str]]:
+    """Mutations of a replay script that the hermetic/anchored checks must refuse.
+
+    Maps a case name to (mutated source, expected error fragment).
+    """
+    # Locate the multi-line command in the raw text (continuations intact).
+    am_start = re.search(
+        r'(?m)^[ \t]*git[ \t]+-C[ \t]+"\$WORKTREE"[ \t]*\\\n'
+        r"(?:[ \t]*-c [^\n]*\\\n)+[ \t]*am [^\n]*$",
+        source,
+    )
+    cases: dict[str, tuple[str, str]] = {}
+    if am_start is not None:
+        am_end = am_start.end()
+        command = source[am_start.start() : am_end]
+        # Negative: the canonical command survives only inside a comment.
+        # A single comment line, as a maintainer would paste it, defeats an
+        # unanchored search; the command itself is gone from the script.
+        joined = " ".join(
+            line.strip().removesuffix("\\").strip() for line in command.split("\n")
+        )
+        commented = f"# {joined}\n"
+        cases["am only in a comment"] = (
+            source[: am_start.start()] + commented + source[am_end + 1 :],
+            "git am must neutralize Git configuration",
+        )
+        # Negative: the command follows another word, so it is not a command start.
+        cases["am after another word"] = (
+            source[: am_start.start()] + "echo " + source[am_start.start() :],
+            "git am must neutralize Git configuration",
+        )
+    for line in GIT_HERMETIC_ENV_LINES:
+        cases[f"missing {line.split()[1]}"] = (
+            source.replace(line + "\n", "", 1),
+            "must run git hermetically",
+        )
+        cases[f"commented {line.split()[1]}"] = (
+            source.replace(line + "\n", "# " + line + "\n", 1),
+            "must run git hermetically",
+        )
+    # Boundary: the exports exist but only after the first git am.
+    exports = "".join(line + "\n" for line in GIT_HERMETIC_ENV_LINES)
+    if exports in source:
+        cases["exports after am"] = (
+            source.replace(exports, "", 1) + "\n" + exports,
+            "must precede the first git am",
+        )
+    return cases
+
+
+def _hermetic_regressions(label: str, source: str, validate) -> list[str]:
+    failures: list[str] = []
+    cases = hermetic_and_anchor_mutations(source)
+    if len(cases) < 2 + 2 * len(GIT_HERMETIC_ENV_LINES):
+        failures.append(f"{label} regression: hermetic mutations were not generated")
+    for name, (mutated, expected) in cases.items():
+        if mutated == source:
+            failures.append(f"{label} regression: {name} mutation changed nothing")
+        elif not any(expected in error for error in validate(mutated)):
+            failures.append(f"{label} regression: {name} was accepted")
+    return failures
+
+
 def _consumer_replay_sdk_and_query_regressions(replay: str) -> list[str]:
     failures: list[str] = []
     missing_optional_sdk = replay.replace(
@@ -712,6 +784,7 @@ def consumer_validator_regressions() -> list[str]:
     failures.extend(_consumer_replay_am_and_trap_regressions(replay, replay_relative))
     failures.extend(_consumer_replay_identity_regressions(replay))
     failures.extend(_consumer_replay_sdk_and_query_regressions(replay))
+    failures.extend(_hermetic_regressions("replay", replay, validate_replay_text))
     return failures
 
 
@@ -790,6 +863,7 @@ def qsv_validator_regressions() -> list[str]:
         errors = validate_qsv_replay_text(mutated)
         if not any(expected in error for error in errors):
             failures.append(f"QSV regression: {name} was accepted")
+    failures.extend(_hermetic_regressions("QSV", source, validate_qsv_replay_text))
     return failures
 
 
@@ -1953,12 +2027,30 @@ def _validate_replay_structure(replay: str, shell_replay: str) -> list[str]:
     return errors
 
 
+def validate_hermetic_git_env(relative: str, shell_text: str) -> list[str]:
+    """Require the hermetic Git environment on active lines before the first am."""
+    errors: list[str] = []
+    am_match = re.search(GIT_AM_COMMAND_PATTERN, shell_text)
+    for line in GIT_HERMETIC_ENV_LINES:
+        match = re.search(rf"(?m)^[ \t]*{re.escape(line)}[ \t]*$", shell_text)
+        if match is None:
+            errors.append(
+                f"{relative}: must run git hermetically; missing active line: {line}"
+            )
+        elif am_match is not None and match.start() > am_match.start():
+            errors.append(f"{relative}: `{line}` must precede the first git am")
+    return errors
+
+
 def validate_replay_text(replay: str) -> list[str]:
     """Validate requirements specific to full stack replay."""
     shell_replay = replay.replace("\\\n", " ")
     errors: list[str] = []
     errors.extend(_validate_replay_tokens_and_filters(replay))
     errors.extend(_validate_replay_structure(replay, shell_replay))
+    errors.extend(
+        validate_hermetic_git_env("ffmpeg-patches/test/build-and-run.sh", shell_replay)
+    )
     return errors
 
 
@@ -2044,6 +2136,7 @@ def validate_qsv_replay_text(replay: str) -> list[str]:
         shell_replay,
     ):
         errors.append(f"{relative}: git am must neutralize Git configuration")
+    errors.extend(validate_hermetic_git_env(relative, shell_replay))
     for token in ("BASE_TAG=", "/home/kilian/", "n8.1.1", "n9.0.1"):
         if token in replay:
             errors.append(f"{relative}: contains obsolete pin input {token}")
@@ -2128,6 +2221,73 @@ def validate_windows_job(relative: str, block: str | None) -> list[str]:
     return errors
 
 
+CI_CALL_USES = "uses: ./.github/workflows/ci.yml"
+TAG_GUARD = "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+
+
+def is_reusable_ci_call(block: str) -> bool:
+    """True when a job's whole body is the job-level call of ci.yml."""
+    body = [
+        line.strip()
+        for line in block.splitlines()[1:]
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    return body == [CI_CALL_USES]
+
+
+def job_needs(block: str) -> set[str]:
+    """Names in a job's `needs:` (scalar, flow list or block list)."""
+    inline = re.search(
+        r"^    needs:[ ]*(?P<value>[^\s#].*?)\s*(?:#.*)?$", block, re.MULTILINE
+    )
+    if inline:
+        return set(re.findall(r"[A-Za-z0-9_-]+", inline.group("value")))
+    listed = re.search(
+        r"^    needs:[ ]*(?:#.*)?\n(?P<body>(?:      -[ ]+\S.*\n?)+)",
+        block,
+        re.MULTILINE,
+    )
+    if listed:
+        return set(
+            re.findall(
+                r"^      -[ ]+([A-Za-z0-9_-]+)", listed.group("body"), re.MULTILINE
+            )
+        )
+    return set()
+
+
+def _validate_release_gate(relative: str, jobs: dict[str, str]) -> list[str]:
+    """A14/A15: release needs the full CI call and a tag == version assertion."""
+    errors: list[str] = []
+    calls = [name for name, block in jobs.items() if is_reusable_ci_call(block)]
+    if not calls:
+        errors.append(f"{relative}: missing job that calls ./.github/workflows/ci.yml")
+    publish = jobs.get("release", "")
+    if calls and not set(calls) & job_needs(publish):
+        errors.append(
+            f"{relative}: release job must list the ci call "
+            f"({', '.join(calls)}) in needs"
+        )
+    step = publish.find("name: Tag matches the project version")
+    if step < 0:
+        errors.append(f"{relative}: release job is missing the tag==version step")
+    else:
+        end = publish.find("\n      - name:", step)
+        body = publish[step:] if end < 0 else publish[step:end]
+        for token in (
+            TAG_GUARD,
+            "GITHUB_REF_NAME#v",
+            "meson introspect --projectinfo build",
+            "::error::",
+            "exit 1",
+        ):
+            if token not in body:
+                errors.append(f"{relative}: tag==version step is missing {token}")
+        if step > publish.find("name: Publish GitHub release"):
+            errors.append(f"{relative}: tag==version step must precede publishing")
+    return errors
+
+
 def _validate_workflow_structure_and_jobs(
     relative: str, text: str, jobs: dict[str, str]
 ) -> list[str]:
@@ -2155,6 +2315,8 @@ def _validate_workflow_structure_and_jobs(
     )
     is_ci = Path(relative).name == "ci.yml"
     for name, block in jobs.items():
+        if is_reusable_ci_call(block):
+            continue  # a reusable-workflow call has no runner or steps of its own
         runner = WINDOWS_RUNNER if is_ci and name == WINDOWS_JOB else "ubuntu-26.04"
         runners = re.findall(r"^\s+runs-on:\s*([^\s#]+)", block, re.MULTILINE)
         if runners != [runner]:
@@ -2219,6 +2381,8 @@ def _validate_workflow_specialized_jobs(
     errors: list[str] = []
     rel_name = Path(relative).name
     if rel_name == "ci.yml":
+        if not re.search(r"^  workflow_call:", text, re.MULTILINE):
+            errors.append(f"{relative}: ci.yml must declare workflow_call for release")
         ffmpeg = jobs.get("ffmpeg-stack", "")
         for token in (
             "libvulkan-dev",
@@ -2253,6 +2417,7 @@ def _validate_workflow_specialized_jobs(
         if "workflow_dispatch:" not in text:
             errors.append(f"{relative}: release gate needs workflow_dispatch")
         publish = jobs.get("release", "")
+        errors.extend(_validate_release_gate(relative, jobs))
         guard = (
             "if: github.event_name == 'push' && "
             "startsWith(github.ref, 'refs/tags/v')"
@@ -2375,6 +2540,61 @@ def windows_pin_bump_regression(source: str, relative: str) -> list[str]:
     return []
 
 
+def release_gate_regressions(source: str, relative: str) -> list[str]:
+    """Prove the A14/A15 release gate and the ci.yml workflow_call are enforced."""
+    failures: list[str] = []
+    release_path = WORKFLOWS[1]
+    release = release_path.read_text(encoding="utf-8")
+    release_rel = release_path.relative_to(ROOT).as_posix()
+    tag_step = "name: Tag matches the project version"
+    release_cases = {
+        "release without needs: ci": (
+            release.replace("    needs: ci\n", "", 1),
+            "release job must list the ci call",
+        ),
+        "release needs lists only another job": (
+            release.replace("    needs: ci\n", "    needs: [other]\n", 1),
+            "release job must list the ci call",
+        ),
+        "release without ci call job": (
+            release.replace(CI_CALL_USES, "uses: ./.github/workflows/other.yml", 1),
+            "missing job that calls ./.github/workflows/ci.yml",
+        ),
+        "release without tag==version step": (
+            release.replace(tag_step, "name: Something else", 1),
+            "missing the tag==version step",
+        ),
+        "release tag step without error annotation": (
+            release.replace("::error::", "", 1),
+            "tag==version step is missing ::error::",
+        ),
+    }
+    for name, (mutated, expected) in release_cases.items():
+        if mutated == release:
+            failures.append(f"workflow regression: {name} mutation changed nothing")
+        elif not any(
+            expected in e for e in validate_workflow_text(release_rel, mutated)
+        ):
+            failures.append(f"workflow regression: {name} was accepted")
+    # Boundary: needs as flow and block lists with other entries stay accepted.
+    for label, needs in (
+        ("flow", "    needs: [other, ci]\n"),
+        ("block", "    needs:\n      - other\n      - ci\n"),
+    ):
+        boundary = release.replace("    needs: ci\n", needs, 1)
+        if boundary == release or validate_workflow_text(release_rel, boundary):
+            failures.append(f"workflow regression: needs {label} list was rejected")
+    if validate_workflow_text(release_rel, release):
+        failures.append("workflow regression: current release.yml is rejected")
+    no_call = source.replace("  workflow_call:\n", "", 1)
+    if no_call == source or not any(
+        "must declare workflow_call" in e
+        for e in validate_workflow_text(relative, no_call)
+    ):
+        failures.append("workflow regression: ci.yml without workflow_call was accepted")
+    return failures
+
+
 def workflow_validator_regressions() -> list[str]:
     """Prove runner and native-toolchain regressions are rejected."""
     failures: list[str] = []
@@ -2428,6 +2648,8 @@ def workflow_validator_regressions() -> list[str]:
         errors = validate_workflow_text(relative, mutated)
         if not any(expected in error for error in errors):
             failures.append(f"workflow regression: {name} was accepted")
+
+    failures.extend(release_gate_regressions(source, relative))
     return failures
 
 
@@ -2656,51 +2878,47 @@ def validate_renovate() -> list[str]:
     )
 
 
-def renovate_validator_regressions() -> list[str]:
-    """Prove that removing or breaking the mirroring Go manager fails (ADR-0152)."""
-    failures: list[str] = []
-    source = RENOVATE_CONFIG.read_text(encoding="utf-8")
-    checker = Path(__file__).resolve().read_text(encoding="utf-8")
-    config = json.loads(source)
+def without_checker_manager(value: dict) -> dict:
+    value["customManagers"] = [
+        manager
+        for manager in value["customManagers"]
+        if not any(
+            renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
+            for pattern in manager.get("managerFilePatterns", [])
+        )
+    ]
+    return value
 
-    def without_checker_manager(value: dict) -> dict:
-        value["customManagers"] = [
-            manager
-            for manager in value["customManagers"]
-            if not any(
+def mutate_checker_manager(key: str, replacement: object):
+    def mutate(value: dict) -> dict:
+        for manager in value["customManagers"]:
+            if any(
                 renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
                 for pattern in manager.get("managerFilePatterns", [])
-            )
-        ]
+            ):
+                manager[key] = replacement
         return value
 
-    def mutate_checker_manager(key: str, replacement: object):
-        def mutate(value: dict) -> dict:
-            for manager in value["customManagers"]:
-                if any(
-                    renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
-                    for pattern in manager.get("managerFilePatterns", [])
-                ):
-                    manager[key] = replacement
-            return value
+    return mutate
 
-        return mutate
+def with_extra_manager(patterns: list[str]):
+    def mutate(value: dict) -> dict:
+        value["customManagers"].append(
+            {
+                "customType": "regex",
+                "managerFilePatterns": patterns,
+                "matchStrings": ['GO = "(?<currentValue>[^"]+)"'],
+                "datasourceTemplate": "github-releases",
+            }
+        )
+        return value
 
-    def with_extra_manager(patterns: list[str]):
-        def mutate(value: dict) -> dict:
-            value["customManagers"].append(
-                {
-                    "customType": "regex",
-                    "managerFilePatterns": patterns,
-                    "matchStrings": ['GO = "(?<currentValue>[^"]+)"'],
-                    "datasourceTemplate": "github-releases",
-                }
-            )
-            return value
+    return mutate
 
-        return mutate
 
-    cases = {
+def _renovate_mutation_cases() -> dict:
+    """Mutations of the Renovate config that the validator must refuse (ADR-0152)."""
+    return {
         "second manager via /regex/i": (
             with_extra_manager(["/SCRIPTS/CHECK-BUILD-CONFIG\\.PY$/i"]),
             "expected exactly one regex customManager",
@@ -2736,6 +2954,16 @@ def renovate_validator_regressions() -> list[str]:
             "matchString must capture exactly",
         ),
     }
+
+
+def renovate_validator_regressions() -> list[str]:
+    """Prove that removing or breaking the mirroring Go manager fails (ADR-0152)."""
+    failures: list[str] = []
+    source = RENOVATE_CONFIG.read_text(encoding="utf-8")
+    checker = Path(__file__).resolve().read_text(encoding="utf-8")
+    config = json.loads(source)
+
+    cases = _renovate_mutation_cases()
     for name, (mutate, expected) in cases.items():
         try:
             mutated = json.dumps(mutate(json.loads(json.dumps(config))))
@@ -2790,6 +3018,34 @@ def validate_consumers() -> list[str]:
     return errors
 
 
+def isolate_from_invoking_repository() -> list[str]:
+    """Drop the repository-locating Git variables before any fixture runs.
+
+    Git exports GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and related variables to
+    hooks. A self-test started from a hook (the pre-push `make verify-all`)
+    would otherwise run every fixture `git init`, `git config` and `git commit`
+    against the invoking repository instead of its throwaway one, rewriting
+    the developer's .git/config (core.bare, core.hooksPath, user.*, gpg.program)
+    and branch refs. `git rev-parse --local-env-vars` is Git's own list of
+    these variables, the same list its sample hooks unset.
+    """
+    listed = subprocess.run(
+        ("git", "rev-parse", "--local-env-vars"),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    if listed.returncode != 0:
+        return [
+            "self-test isolation: git rev-parse --local-env-vars failed: "
+            + listed.stderr.strip()
+        ]
+    for name in listed.stdout.split():
+        os.environ.pop(name, None)
+    return []
+
+
 def main() -> int:
     if not CONFIG.is_file():
         print("build-config.env: missing", file=sys.stderr)
@@ -2803,6 +3059,7 @@ def main() -> int:
     if not parse_errors:
         errors.extend(validate_current_surfaces(values))
     if "--self-test" in sys.argv[1:]:
+        errors.extend(isolate_from_invoking_repository())
         errors.extend(validator_regressions())
         errors.extend(consumer_validator_regressions())
         errors.extend(static_consumer_validator_regressions())

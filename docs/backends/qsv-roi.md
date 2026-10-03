@@ -32,6 +32,14 @@ ext-buffer list. oneVPL does not define a per-frame `mfxExtMBQP` query mode that
 would make this a runtime capability probe. An actual hardware encode is still
 required to establish that a particular implementation honors the request.
 
+When `pelorus_roi` is on and the cached flag is off after init or reset (for
+example a runtime that clears `EnableMBQP` after init, observed on Intel Windows
+VPL 2.15/2.17, see [ADR-0146](../adr/0146-qsv-roi-frame-ownership.md)),
+the encoder logs one `AV_LOG_WARNING` naming the cause and the rectangle
+fallback. The fallback itself is unchanged; the warning is emitted once per
+encoder, not per frame. Regression coverage is in
+`ffmpeg-patches/test/qsv-roi-regression.c`.
+
 ## Lifetime and layout
 
 Each dense-path frame owns one zeroed allocation containing the `mfxExtMBQP`

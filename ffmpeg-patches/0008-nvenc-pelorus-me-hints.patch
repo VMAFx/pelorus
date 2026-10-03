@@ -45,10 +45,10 @@ ADR: docs/adr/0116-pelorus-mc.md (consumer section), docs/adr/0114-encoder-steer
  4 files changed, 273 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index e8063a70b88d9961de99df04a03f08b65422c1f3..60c71a5ea83332f7d06ceb610dae017931523782 100644
+index 0bb1516ed57db83dd5ca3d4198864ee84290196a..8b2cd200acb4cdae40a4fd9402a97b90b6a455d0 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
-@@ -1106,6 +1106,49 @@ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
+@@ -1120,6 +1120,49 @@ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
                 ctx->qp_delta_map_w, ctx->qp_delta_map_h, blk);
      }
  
@@ -98,7 +98,7 @@ index e8063a70b88d9961de99df04a03f08b65422c1f3..60c71a5ea83332f7d06ceb610dae0179
      if (ctx->rc_lookahead > 0) {
          int lkd_bound = FFMIN(ctx->nb_surfaces, ctx->async_depth) -
                          ctx->encode_config.frameIntervalP - 4;
-@@ -2104,6 +2147,7 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
+@@ -2118,6 +2161,7 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
  
      av_freep(&ctx->sei_data);
      av_freep(&ctx->qp_delta_map);
@@ -106,7 +106,7 @@ index e8063a70b88d9961de99df04a03f08b65422c1f3..60c71a5ea83332f7d06ceb610dae0179
  
      if (ctx->nvencoder) {
          p_nvenc->nvEncDestroyEncoder(ctx->nvencoder);
-@@ -3084,6 +3128,210 @@ static int nvenc_setup_roi(AVCodecContext *avctx, const AVFrame *frame,
+@@ -3098,6 +3142,210 @@ static int nvenc_setup_roi(AVCodecContext *avctx, const AVFrame *frame,
      return 0;
  }
  
@@ -317,7 +317,7 @@ index e8063a70b88d9961de99df04a03f08b65422c1f3..60c71a5ea83332f7d06ceb610dae0179
  static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
  {
      NVENCSTATUS nv_status;
-@@ -3223,6 +3471,10 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3237,6 +3485,10 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
          if (res < 0)
              return res;
  

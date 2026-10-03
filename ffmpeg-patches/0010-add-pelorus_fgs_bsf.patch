@@ -21,10 +21,13 @@ Built on the coded-bitstream (CBS) generic BSF framework (cbs_h265), like
 hevc_metadata: each AU is parsed into a CodedBitstreamFragment, one FGC SEI
 is added via ff_cbs_sei_add_message(), and CBS reassembles the AU. The H.274
 model is supplied via AVOptions (model_id, blending_mode, log2_scale,
-components, intensity_low/high, scale_y, scale_c, persistence) — the canonical
-FFmpeg metadata-BSF contract. The producer's H.274 scalars (h274_model_id /
-h274_blending_mode / h274_log2_scale) and per-band RMS scaling map directly
-onto these options (mapping recipe in docs/usage/grain-fgs-bsf.md).
+components, intensity_low/high, intensity_low_c/high_c, scale_y, scale_c,
+cutoff_h/v, persistence) — the canonical FFmpeg metadata-BSF contract. The
+defaults follow the SMPTE RDD 5 profile that FFmpeg's H.274 synthesizer
+implements (model 0, log2_scale 2, explicit cutoff frequencies), and init
+rejects an empty intensity interval or a grain sigma outside the H.274 range
+for the model and bit depth. The producer's per-band RMS maps onto scale_y
+(recipe in docs/usage/grain-fgs-bsf.md, ADR-0155).
 
 Honest scope: this is the STATIC-model leg. A BSF works on AVPackets and no
 stock encoder forwards the estimator's per-frame grain side data onto the
@@ -39,13 +42,13 @@ AVOptions, not the interop ABI).
 A BSF is not an AVFilter: the source lands in libavcodec/bsf/pelorus_fgs.c
 and registration targets bitstream_filters.c / bsf/Makefile / configure.
 
-ADR: docs/adr/0117-grain-fgs-bsf.md
+ADR: docs/adr/0117-grain-fgs-bsf.md, docs/adr/0155-fgs-bsf-rdd5-profile.md
 ---
  configure                      |   1 +
  libavcodec/bitstream_filters.c |   1 +
  libavcodec/bsf/Makefile        |   1 +
- libavcodec/bsf/pelorus_fgs.c   | 389 ++++++++++++++++++++
- 4 files changed, 392 insertions(+)
+ libavcodec/bsf/pelorus_fgs.c   | 602 ++++++++++++++++++++
+ 4 files changed, 605 insertions(+)
 
 diff --git a/configure b/configure
 index 966285c2eb68a38202adeb5d2795e685031ab67e..3283718ba10ab831a499f230e165d15201c9a29c 100755
@@ -85,10 +88,10 @@ index 981bb8276bfa0855be085e0c8d64a1528795b623..8f8afddb98af584d8af7f02795eb6505
  OBJS-$(CONFIG_REMOVE_EXTRADATA_BSF)       += bsf/remove_extradata.o
 diff --git a/libavcodec/bsf/pelorus_fgs.c b/libavcodec/bsf/pelorus_fgs.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..8cf9fe16c8f1d36f64caf49199aa3efe9e8f515f
+index 0000000000000000000000000000000000000000..eee74549bfec57a090b71ceb56c66f02942ce050
 --- /dev/null
 +++ b/libavcodec/bsf/pelorus_fgs.c
-@@ -0,0 +1,389 @@
+@@ -0,0 +1,602 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -129,10 +132,12 @@ index 0000000000000000000000000000000000000000..8cf9fe16c8f1d36f64caf49199aa3efe
 + * film-grain frame side data onto the coded packet, so per-frame estimate ->
 + * SEI plumbing through an arbitrary HEVC encoder is not expressible in the
 + * pinned stock FFmpeg baseline;
-+ * the static-model path is the honest, fully general one. The producer's
-+ * PEL_SEC_FILMGRAIN H.274 scalars (h274_model_id / h274_blending_mode /
-+ * h274_log2_scale) and per-band RMS scaling map directly onto the options here;
-+ * docs/usage/grain-fgs-bsf.md gives the mapping and a derivation recipe.
++ * the static-model path is the honest, fully general one. The defaults follow
++ * the SMPTE RDD 5 profile that FFmpeg's H.274 synthesizer (libavcodec/h274.c)
++ * implements: model 0 (frequency filtering), additive blending, a
++ * log2_scale_factor in [2,7] and explicit cutoff frequencies (ADR-0155). The
++ * estimator's per-band RMS maps onto scale_y; docs/usage/grain-fgs-bsf.md gives
++ * the derivation recipe.
 + *
 + * Built on the coded-bitstream (CBS) generic BSF framework (cbs_bsf.c), exactly
 + * like hevc_metadata: each access unit is parsed into a CodedBitstreamFragment,
@@ -145,6 +150,7 @@ index 0000000000000000000000000000000000000000..8cf9fe16c8f1d36f64caf49199aa3efe
 +
 +#include "libavutil/common.h"
 +#include "libavutil/opt.h"
++#include "libavutil/pixdesc.h"
 +
 +/* FFmpeg 9 requires fully-qualified includes from libavcodec/bsf/: the
 + * relative form ("bsf.h") no longer resolves from that subdirectory. */
@@ -163,6 +169,15 @@ index 0000000000000000000000000000000000000000..8cf9fe16c8f1d36f64caf49199aa3efe
 +#define PEL_FGS_COMP_CB (1 << 1)
 +#define PEL_FGS_COMP_CR (1 << 2)
 +
++/* H.274 film_grain_model_id values. */
++#define PEL_FGS_MODEL_FREQ 0 /* frequency filtering (SMPTE RDD 5 profile) */
++#define PEL_FGS_MODEL_AR 1   /* auto-regression                           */
++
++/* SMPTE RDD 5-2006 subclause 1.4, the profile libavcodec/h274.c implements:
++ * log2_scale_factor in [2,7]. */
++#define PEL_FGS_RDD5_LOG2_MIN 2
++#define PEL_FGS_RDD5_LOG2_MAX 7
++
 +typedef struct PelorusFGSContext {
 +    CBSBSFContext common;
 +
@@ -173,14 +188,21 @@ index 0000000000000000000000000000000000000000..8cf9fe16c8f1d36f64caf49199aa3efe
 +    int components;    /* bitmask: which colour components carry a model     */
 +    int persistence;   /* film_grain_characteristics_persistence_flag        */
 +
-+    /* The luma scaling model. A single intensity interval [low,high] with a
-+     * scale value derived from the estimator's per-band RMS residual. v0.x
-+     * emits one interval covering the full luma range; a follow-up maps the
++    /* One intensity interval per component: luma uses [intensity_low,
++     * intensity_high]; Cb and Cr use [intensity_low_c, intensity_high_c],
++     * because the chroma interval is matched against the chroma block average,
++     * not luma. v0.x emits one interval per component; a follow-up maps the
 +     * estimator's 8 bands onto multiple intervals. */
-+    int intensity_low;  /* intensity_interval_lower_bound[0][0], [0,255]      */
-+    int intensity_high; /* intensity_interval_upper_bound[0][0], [0,255]      */
-+    int scale_y;        /* comp_model_value[0][0][0] (grain scale), [0,255]   */
-+    int scale_c;        /* chroma scale value when CB/CR selected             */
++    int intensity_low;    /* intensity_interval_lower_bound[0][0], [0,255]   */
++    int intensity_high;   /* intensity_interval_upper_bound[0][0], [0,255]   */
++    int intensity_low_c;  /* intensity_interval_lower_bound[1,2][0], [0,255] */
++    int intensity_high_c; /* intensity_interval_upper_bound[1,2][0], [0,255] */
++    int scale_y;          /* comp_model_value[0][0][0] (grain sigma)         */
++    int scale_c;          /* comp_model_value[1,2][0][0] when Cb/Cr selected */
++    /* Model 0 only: comp_model_value[c][0][1] and [c][0][2], the horizontal and
++     * vertical high cutoff frequencies of the 16x16 DCT band-pass. */
++    int cutoff_h;
++    int cutoff_v;
 +
 +    /* When set, do not insert a fresh SEI if the AU already carries an FGC SEI
 +     * (avoid double-stamping a stream a previous stage already marked). */
@@ -188,6 +210,8 @@ index 0000000000000000000000000000000000000000..8cf9fe16c8f1d36f64caf49199aa3efe
 +
 +    H265RawFilmGrainCharacteristics fgc;
 +    int warned_no_components;
++    int logged_range_error;
++    int logged_drop;
 +
 +    /* Colour description cached from the active SPS. When the FGC SEI omits its
 +     * own colour description (separate_colour_description_present_flag = 0), the
@@ -205,14 +229,44 @@ index 0000000000000000000000000000000000000000..8cf9fe16c8f1d36f64caf49199aa3efe
 +    int warned_no_sps;
 +} PelorusFGSContext;
 +
++static int pel_fgs_component_present(const PelorusFGSContext *ctx, int c)
++{
++    static const int mask[3] = {PEL_FGS_COMP_Y, PEL_FGS_COMP_CB, PEL_FGS_COMP_CR};
++    return !!(ctx->components & mask[c]);
++}
++
++/* Fill one colour component's model. Model 0 carries the sigma plus both high
++ * cutoff frequencies explicitly (num_model_values_minus1 = 2): H.274 infers
++ * absent cutoffs as 8, but libavcodec/h274.c reads them as zero and clamps to
++ * its coarsest pattern, and SMPTE RDD 5 allows at most three values. Model 1
++ * carries the sigma only; H.274 infers the absent auto-regression
++ * correlations as zero (white grain). */
++static void pel_fgs_fill_component(PelorusFGSContext *ctx, int c)
++{
++    H265RawFilmGrainCharacteristics *fgc = &ctx->fgc;
++    const int luma = (c == 0);
++
++    fgc->comp_model_present_flag[c] = 1;
++    fgc->num_intensity_intervals_minus1[c] = 0;
++    fgc->intensity_interval_lower_bound[c][0] =
++        (uint8_t)(luma ? ctx->intensity_low : ctx->intensity_low_c);
++    fgc->intensity_interval_upper_bound[c][0] =
++        (uint8_t)(luma ? ctx->intensity_high : ctx->intensity_high_c);
++    fgc->comp_model_value[c][0][0] = (int16_t)(luma ? ctx->scale_y : ctx->scale_c);
++    if (ctx->model_id == PEL_FGS_MODEL_FREQ) {
++        fgc->num_model_values_minus1[c] = 2;
++        fgc->comp_model_value[c][0][1] = (int16_t)ctx->cutoff_h;
++        fgc->comp_model_value[c][0][2] = (int16_t)ctx->cutoff_v;
++    } else {
++        fgc->num_model_values_minus1[c] = 0;
++    }
++}
++
 +/* Fill the H.274 FGC raw payload from the configured static model. The colour
 + * description is inferred from the active SPS (separate_colour_description = 0),
 + * matching how an encoder-side estimate would be described relative to the
-+ * stream. Per H.265 / H.274: model_id in {0,1}; comp_model_value range depends
-+ * on model_id (signed and centred for AR, unsigned for frequency filtering) —
-+ * the CBS writer enforces the legal range, so we clamp to the [0,255] proxy the
-+ * estimator produces and let the AR-centred range be applied by the user via
-+ * scale_y when model_id == 1. */
++ * stream. The comp_model_value range was validated against the stream's bit
++ * depth before this runs (pel_fgs_check_scales). */
 +static void pel_fgs_fill(PelorusFGSContext *ctx)
 +{
 +    H265RawFilmGrainCharacteristics *fgc = &ctx->fgc;
@@ -237,23 +291,67 @@ index 0000000000000000000000000000000000000000..8cf9fe16c8f1d36f64caf49199aa3efe
 +    fgc->log2_scale_factor = ctx->log2_scale;
 +
 +    for (c = 0; c < 3; c++) {
-+        int present = (c == 0) ? !!(ctx->components & PEL_FGS_COMP_Y) :
-+                      (c == 1) ? !!(ctx->components & PEL_FGS_COMP_CB) :
-+                                 !!(ctx->components & PEL_FGS_COMP_CR);
-+        if (!present)
-+            continue;
-+
-+        fgc->comp_model_present_flag[c] = 1;
-+        /* One intensity interval spanning [low,high]; one model value (the
-+         * grain scale). num_*_minus1 are zero-based counts. */
-+        fgc->num_intensity_intervals_minus1[c] = 0;
-+        fgc->num_model_values_minus1[c] = 0;
-+        fgc->intensity_interval_lower_bound[c][0] = (uint8_t)ctx->intensity_low;
-+        fgc->intensity_interval_upper_bound[c][0] = (uint8_t)ctx->intensity_high;
-+        fgc->comp_model_value[c][0][0] = (int16_t)((c == 0) ? ctx->scale_y : ctx->scale_c);
++        if (pel_fgs_component_present(ctx, c))
++            pel_fgs_fill_component(ctx, c);
 +    }
 +
 +    fgc->film_grain_characteristics_persistence_flag = ctx->persistence;
++}
++
++/* Largest legal comp_model_value for one component: [0, 2^bd - 1] for model 0
++ * and [-2^(bd-1), 2^(bd-1) - 1] for model 1 (Rec. ITU-T H.274 (01/2026),
++ * fg_comp_model_value semantics; the same bounds as the ses() call in
++ * libavcodec/cbs_h265_syntax_template.c). Every option is non-negative, so the
++ * lower bound never binds. */
++static int pel_fgs_model_value_max(int model_id, int bit_depth)
++{
++    if (model_id == PEL_FGS_MODEL_FREQ)
++        return (1 << bit_depth) - 1;
++    return (1 << (bit_depth - 1)) - 1;
++}
++
++/* Reject a sigma the CBS writer would refuse at this bit depth. Without this
++ * check every access unit fails to serialize, so the BSF drops every packet and
++ * the ffmpeg CLI still exits 0 with an empty output. */
++static int pel_fgs_check_scales(AVBSFContext *bsf, int bd_luma, int bd_chroma, const char *source,
++                                int log_level)
++{
++    const PelorusFGSContext *ctx = bsf->priv_data;
++    int c;
++
++    for (c = 0; c < 3; c++) {
++        const int bd = c ? bd_chroma : bd_luma;
++        const int value = c ? ctx->scale_c : ctx->scale_y;
++        const int max = pel_fgs_model_value_max(ctx->model_id, bd);
++
++        if (!pel_fgs_component_present(ctx, c) || value <= max)
++            continue;
++        av_log(bsf, log_level,
++               "pelorus_fgs: %s=%d exceeds the H.274 comp_model_value maximum %d for "
++               "model_id=%d at %d-bit %s (bit depth %s).\n",
++               c ? "scale_c" : "scale_y", value, max, ctx->model_id, bd, c ? "chroma" : "luma",
++               source);
++        return AVERROR(EINVAL);
++    }
++    return 0;
++}
++
++/* Re-validate against the bit depth of the active SPS on every access unit (and
++ * on the extradata during init, which fails init). The detailed error is
++ * logged once; later failures are logged at debug level. */
++static int pel_fgs_check_stream(AVBSFContext *bsf)
++{
++    PelorusFGSContext *ctx = bsf->priv_data;
++    int err;
++
++    if (!ctx->have_colour_desc)
++        return 0;
++    err = pel_fgs_check_scales(bsf, ctx->cd_bit_depth_luma_minus8 + 8,
++                               ctx->cd_bit_depth_chroma_minus8 + 8, "from the active SPS",
++                               ctx->logged_range_error ? AV_LOG_DEBUG : AV_LOG_ERROR);
++    if (err < 0)
++        ctx->logged_range_error = 1;
++    return err;
 +}
 +
 +/* Cache the colour description from any SPS present in this access unit, so the
@@ -299,15 +397,14 @@ index 0000000000000000000000000000000000000000..8cf9fe16c8f1d36f64caf49199aa3efe
 +        return 0;
 +    }
 +
-+    /* Track the active SPS colour description (needed by the FGC SEI's inferred
-+     * colour fields) across both extradata and picture fragments. */
++    /* Track the active SPS colour description (the FGC SEI's inferred colour
++     * fields) across extradata and picture fragments, and refuse a model its
++     * bit depth cannot carry. Extradata (pkt == NULL) carries no picture; only
++     * coded access units get the SEI. */
 +    pel_fgs_cache_colour_desc(ctx, au);
-+
-+    /* Extradata fragment (pkt == NULL) carries no picture; only stamp coded
-+     * access units so the SEI rides each frame's prefix, like the synthesizer
-+     * expects. */
-+    if (!pkt)
-+        return 0;
++    err = pel_fgs_check_stream(bsf);
++    if (err < 0 || !pkt)
++        return err;
 +
 +    /* Cannot write a colour-description-omitting FGC SEI before the first SPS
 +     * is seen; pass the AU through until one establishes the inferred values. */
@@ -347,9 +444,96 @@ index 0000000000000000000000000000000000000000..8cf9fe16c8f1d36f64caf49199aa3efe
 +    .update_fragment = &pel_fgs_update_fragment,
 +};
 +
++/* Warn about valid H.274 parameters outside the SMPTE RDD 5 profile, the only
++ * profile FFmpeg's synthesizer implements (libavcodec/h274.h
++ * ff_h274_film_grain_params_supported, libavcodec/h274.c). */
++static void pel_fgs_warn_profile(AVBSFContext *bsf)
++{
++    const PelorusFGSContext *ctx = bsf->priv_data;
++
++    if (ctx->model_id != PEL_FGS_MODEL_FREQ)
++        av_log(bsf, AV_LOG_WARNING,
++               "pelorus_fgs: model_id=%d is valid H.274 but outside SMPTE RDD 5; FFmpeg's "
++               "H.274 synthesizer implements model 0 only, so its HEVC decoder ignores "
++               "this SEI and outputs no grain.\n",
++               ctx->model_id);
++    if (ctx->blending_mode != 0)
++        av_log(bsf, AV_LOG_WARNING,
++               "pelorus_fgs: blending_mode=%d is outside SMPTE RDD 5 (additive only); "
++               "FFmpeg's synthesizer blends additively regardless.\n",
++               ctx->blending_mode);
++    if (ctx->log2_scale < PEL_FGS_RDD5_LOG2_MIN || ctx->log2_scale > PEL_FGS_RDD5_LOG2_MAX)
++        av_log(bsf, AV_LOG_WARNING,
++               "pelorus_fgs: log2_scale=%d is outside the SMPTE RDD 5 range [%d,%d]; each "
++               "step above it halves the synthesized grain amplitude.\n",
++               ctx->log2_scale, PEL_FGS_RDD5_LOG2_MIN, PEL_FGS_RDD5_LOG2_MAX);
++}
++
++/* Bit depth of the stream as far as the codec parameters know it (an encoder's
++ * pixel format, or a demuxer's probed one). Returns 0 when unknown; the active
++ * SPS is then checked per access unit instead. */
++static int pel_fgs_par_bit_depth(const AVCodecParameters *par, int *bd_luma, int *bd_chroma)
++{
++    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get((enum AVPixelFormat)par->format);
++
++    if (desc && desc->nb_components > 0) {
++        *bd_luma = desc->comp[0].depth;
++        *bd_chroma = desc->nb_components > 2 ? desc->comp[1].depth : desc->comp[0].depth;
++    } else if (par->bits_per_raw_sample > 0) {
++        *bd_luma = par->bits_per_raw_sample;
++        *bd_chroma = par->bits_per_raw_sample;
++    } else {
++        return 0;
++    }
++    return *bd_luma >= 8 && *bd_luma <= 16 && *bd_chroma >= 8 && *bd_chroma <= 16;
++}
++
++/* Reject every option combination that cannot produce a working FGC SEI before
++ * the first packet, so the ffmpeg CLI fails with a non-zero exit instead of
++ * dropping every packet. */
 +static int pel_fgs_init(AVBSFContext *bsf)
 +{
++    const PelorusFGSContext *ctx = bsf->priv_data;
++    int bd_luma = 0, bd_chroma = 0;
++    int err;
++
++    if (ctx->intensity_low > ctx->intensity_high || ctx->intensity_low_c > ctx->intensity_high_c) {
++        av_log(bsf, AV_LOG_ERROR,
++               "pelorus_fgs: empty intensity interval (luma %d..%d, chroma %d..%d): a lower "
++               "bound above its upper bound matches no sample, so no grain is synthesized.\n",
++               ctx->intensity_low, ctx->intensity_high, ctx->intensity_low_c,
++               ctx->intensity_high_c);
++        return AVERROR(EINVAL);
++    }
++
++    if (ctx->components) {
++        pel_fgs_warn_profile(bsf);
++        if (pel_fgs_par_bit_depth(bsf->par_in, &bd_luma, &bd_chroma)) {
++            err = pel_fgs_check_scales(bsf, bd_luma, bd_chroma, "from the codec parameters",
++                                       AV_LOG_ERROR);
++            if (err < 0)
++                return err;
++        }
++    }
++
 +    return ff_cbs_bsf_generic_init(bsf, &pel_fgs_type);
++}
++
++/* The ffmpeg CLI logs a failed packet and keeps going unless -xerror is set, so
++ * say once, loudly, that the output is now missing access units. */
++static int pel_fgs_filter(AVBSFContext *bsf, AVPacket *pkt)
++{
++    PelorusFGSContext *ctx = bsf->priv_data;
++    int err = ff_cbs_bsf_generic_filter(bsf, pkt);
++
++    if (err < 0 && err != AVERROR(EAGAIN) && err != AVERROR_EOF && !ctx->logged_drop) {
++        ctx->logged_drop = 1;
++        av_log(bsf, AV_LOG_ERROR,
++               "pelorus_fgs: dropping access unit (%s); the output is incomplete. The ffmpeg "
++               "CLI skips failed packets unless -xerror is given.\n",
++               av_err2str(err));
++    }
++    return err;
 +}
 +
 +#define OFFSET(x) offsetof(PelorusFGSContext, x)
@@ -359,7 +543,7 @@ index 0000000000000000000000000000000000000000..8cf9fe16c8f1d36f64caf49199aa3efe
 +     "H.274 film_grain_model_id (0=frequency filtering, 1=auto-regression)",
 +     OFFSET(model_id),
 +     AV_OPT_TYPE_INT,
-+     {.i64 = 1},
++     {.i64 = PEL_FGS_MODEL_FREQ},
 +     0,
 +     1,
 +     FLAGS},
@@ -372,10 +556,10 @@ index 0000000000000000000000000000000000000000..8cf9fe16c8f1d36f64caf49199aa3efe
 +     1,
 +     FLAGS},
 +    {"log2_scale",
-+     "H.274 log2_scale_factor",
++     "H.274 log2_scale_factor; each step halves the grain sigma (RDD 5: 2..7)",
 +     OFFSET(log2_scale),
 +     AV_OPT_TYPE_INT,
-+     {.i64 = 8},
++     {.i64 = PEL_FGS_RDD5_LOG2_MIN},
 +     0,
 +     15,
 +     FLAGS},
@@ -423,8 +607,24 @@ index 0000000000000000000000000000000000000000..8cf9fe16c8f1d36f64caf49199aa3efe
 +     0,
 +     255,
 +     FLAGS},
++    {"intensity_low_c",
++     "lower bound of the Cb/Cr intensity interval the chroma model covers",
++     OFFSET(intensity_low_c),
++     AV_OPT_TYPE_INT,
++     {.i64 = 0},
++     0,
++     255,
++     FLAGS},
++    {"intensity_high_c",
++     "upper bound of the Cb/Cr intensity interval the chroma model covers",
++     OFFSET(intensity_high_c),
++     AV_OPT_TYPE_INT,
++     {.i64 = 255},
++     0,
++     255,
++     FLAGS},
 +    {"scale_y",
-+     "luma grain scale (comp_model_value[Y][0][0]); maps the estimator's per-band RMS",
++     "luma grain sigma (comp_model_value[Y][0][0]); 0..127 for model_id=1 at 8-bit",
 +     OFFSET(scale_y),
 +     AV_OPT_TYPE_INT,
 +     {.i64 = 16},
@@ -432,12 +632,28 @@ index 0000000000000000000000000000000000000000..8cf9fe16c8f1d36f64caf49199aa3efe
 +     255,
 +     FLAGS},
 +    {"scale_c",
-+     "chroma grain scale (comp_model_value[Cb/Cr][0][0]) when cb/cr selected",
++     "chroma grain sigma (comp_model_value[Cb/Cr][0][0]) when cb/cr selected",
 +     OFFSET(scale_c),
 +     AV_OPT_TYPE_INT,
 +     {.i64 = 8},
 +     0,
 +     255,
++     FLAGS},
++    {"cutoff_h",
++     "model 0 horizontal high cutoff frequency (comp_model_value[c][0][1])",
++     OFFSET(cutoff_h),
++     AV_OPT_TYPE_INT,
++     {.i64 = 8},
++     2,
++     14,
++     FLAGS},
++    {"cutoff_v",
++     "model 0 vertical high cutoff frequency (comp_model_value[c][0][2])",
++     OFFSET(cutoff_v),
++     AV_OPT_TYPE_INT,
++     {.i64 = 8},
++     2,
++     14,
 +     FLAGS},
 +    {"persistence",
 +     "film_grain_characteristics_persistence_flag (apply until cancelled)",
@@ -476,5 +692,5 @@ index 0000000000000000000000000000000000000000..8cf9fe16c8f1d36f64caf49199aa3efe
 +    .priv_data_size = sizeof(PelorusFGSContext),
 +    .init = &pel_fgs_init,
 +    .close = &ff_cbs_bsf_generic_close,
-+    .filter = &ff_cbs_bsf_generic_filter,
++    .filter = &pel_fgs_filter,
 +};

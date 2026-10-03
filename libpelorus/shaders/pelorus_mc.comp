@@ -25,9 +25,13 @@
  * temporal predictor recovers most of the benefit; the diamond descent does the
  * rest. The MV field this frame becomes next frame's temporal predictor.
  *
- * The MV is integer-pel in LUMA pixels, (dx, dy) = displacement from the current
- * block to its best match in the reference (previous) frame. Per-block records
- * are written to a position-preserving SSBO indexed by (by * grid_cols + bx).
+ * The search runs on the INTEGER luma-pel grid: its inputs (pc.gpred_x/y,
+ * prev_mv[], pc.search) are integer pel. The emitted MV (dx, dy) = displacement
+ * from the current block to its best match in the reference (previous) frame is
+ * QUARTER-PEL (Q2 = round(pel*4)) after the sub-pel refinement below. The host
+ * rounds the Q2 field back to integer pel before it seeds the next frame's
+ * predictors; Q2 values must never reach the search. Per-block records are
+ * written to a position-preserving SSBO indexed by (by * grid_cols + bx).
  * The frame scalars (global motion, magnitude mean/p95, entropy, scene-cut) are
  * derived host-side by reducing over the block grid.
  *
@@ -63,19 +67,20 @@ layout(binding = 1, r16ui) uniform readonly uimage2D refImg;
  * std430 rule; index = by*grid_cols + bx). mv_x/mv_y are QUARTER-PEL luma
  * displacements (Q2 fixed point, stored = round(pel*4)); sad is the winning
  * block SAD (fixed point) for confidence /
- * scene-cut; the host reads all three spans. prev_mv_x/prev_mv_y are LAST
- * frame's field, read-only this dispatch, the temporal predictor source. */
+ * scene-cut; the host reads all three spans. prev_mv is LAST frame's field
+ * rounded by the host to INTEGER luma pel, read-only this dispatch, the
+ * temporal predictor source. */
 layout(binding = 2, std430) buffer MvBuf {
-    int  mv_x[];        /* [nblocks]                                          */
+    int  mv_x[];        /* [nblocks] Q2 quarter-pel luma = round(pel*4)       */
 };
 layout(binding = 3, std430) buffer MvBufY {
-    int  mv_y[];        /* [nblocks]                                          */
+    int  mv_y[];        /* [nblocks] Q2 quarter-pel luma = round(pel*4)       */
 };
 layout(binding = 4, std430) buffer SadBuf {
     uint sad_out[];     /* [nblocks] winning SAD * SAD_SCALE, full-scale luma */
 };
 layout(binding = 5, std430) readonly buffer PrevMvBuf {
-    int  prev_mv[];     /* [2*nblocks] interleaved (dx,dy) from last frame    */
+    int  prev_mv[];     /* [2*nblocks] last frame's (dx,dy), INTEGER luma pel */
 };
 
 layout(push_constant, std430) uniform Params {
@@ -84,9 +89,9 @@ layout(push_constant, std430) uniform Params {
     int   grid_cols;    //  8  blocks per row
     int   grid_rows;    // 12  blocks per column
     int   bsize;        // 16  active block edge (<= BLOCK_DIM)
-    int   search;       // 20  max search radius (pixels, per axis)
-    int   gpred_x;      // 24  global-motion predictor (prev frame), pixels
-    int   gpred_y;      // 28
+    int   search;       // 20  max search radius, INTEGER luma pel per axis
+    int   gpred_x;      // 24  global-motion predictor (prev frame), INTEGER pel
+    int   gpred_y;      // 28  (not Q2: the host rounds the Q2 mean to pel)
     int   has_prev;     // 32  1 => refImg + prev_mv are valid (not frame 0)
     int   _pad0;        // 36
 } pc;

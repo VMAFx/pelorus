@@ -27,21 +27,39 @@ vkCmdEncodeVideoKHR by chaining VkVideoEncodeQuantizationMapInfoKHR with the
 WITH_*_MAP flag; the session is created with the matching ALLOW_ENCODE_*_MAP_BIT
 and the session parameters carry the probed quantizationMapTexelSize.
 
+Device enablement: stock FFmpeg enables neither the extension nor its
+videoEncodeQuantizationMap feature, and both are required
+(VUID-VkVideoSessionCreateInfoKHR-flags-10264). This patch therefore adds the
+extension to libavutil/hwcontext_vulkan.c's optional device-extension table
+(new FF_VK_EXT_VIDEO_ENCODE_QUANTIZATION_MAP flag + loader mapping) and chains,
+copies and enables the feature struct, so an FFmpeg-created device turns both
+on whenever the driver supports them. The probe requires both.
+
+Valid usage: the map image is created with the advertised tiling of a format
+entry whose usages cover the fill path (NVIDIA advertises R8_SINT in LINEAR
+tiling only); the map copy/dispatch is recorded before vkCmdBeginVideoCodingKHR
+(transfer and compute commands are invalid inside a video coding scope); the
+session parameters are created QUANTIZATION_MAP_COMPATIBLE; and hevc_vulkan sets
+cu_qp_delta_enabled_flag whenever a map is bound, without which a CQP stream is
+undecodable. Delta-map values are clamped to the driver-reported per-codec range
+(min/maxQpDelta, min/maxQIndexDelta), since a value outside it leaves the block
+QP undefined; NVIDIA reports [0, 51] for H.264/H.265, so lower-QP requests clamp
+to 0 there and the probe warns.
+
 Generality (product patch for all vendors, no device assumptions): the whole
-path is runtime-probed — the extension must be enabled, the codec must advertise
-the delta/emphasis capability flag, and a usable map format + texel size must be
-returned by GetPhysicalDeviceVideoFormatPropertiesKHR. Any miss degrades to a
-one-shot warning + pass-through. A frame with no ROI side data binds no map
-(zero behaviour change). The path is also compile-gated by
+path is runtime-probed — the extension and feature must be enabled, the codec
+must advertise the delta/emphasis capability flag, and a usable map format,
+tiling and texel size must be returned by GetPhysicalDeviceVideoFormatPropertiesKHR.
+Any miss degrades to a one-shot warning + pass-through. A frame with no ROI side
+data binds no map (zero behaviour change). The path is also compile-gated by
 VK_KHR_video_encode_quantization_map so older Vulkan headers build to a clean
 no-op.
 
-VERIFICATION: compile-verified only. vulkan_encode.c and the three
-vulkan_encode_{h264,h265,av1} TUs build clean (zero warnings) under FFmpeg's
--std=c17 -Wall warning set against the system Vulkan-video headers, with the
-quantization-map ifdef live; the canonical build-time GLSL and Pelorus's
-standalone reference shader both compile under glslang. Runtime on-HW proof
-is BLOCKED on this dev box: hevc_vulkan ENCODE fails at init with "Driver does
-not support required encode feedback flags (BUFFER_OFFSET and BYTES_WRITTEN)",
-before this code runs — a driver limitation (ADR-0114 Tier 2 immaturity caveat),
-not a patch defect. No BD-rate gain is claimed; on-HW A/B is the follow-up.
+VERIFICATION: vulkan_encode.c, the three vulkan_encode_{h264,h265,av1} TUs and
+hwcontext_vulkan.c build clean under FFmpeg's warning set; the canonical
+build-time GLSL and Pelorus's standalone reference shader compile under glslang.
+On an RTX 4090 (NVIDIA 615.71.09) h264/hevc/av1_vulkan bind the map on every
+ROI frame with no validation-layer error beyond the stock encoder's own; a
++0.3 qoffset region raises the decoded H.264 macroblock QP from 30 to ~45 there
+and the other half stays at 30 (ADR-0166). RADV (Mesa 26.2.4) advertises only an
+R32_SINT map without a fillable usage, so the probe disables steering there.

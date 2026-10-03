@@ -14,10 +14,13 @@ Built on the coded-bitstream (CBS) generic BSF framework (cbs_h265), like
 hevc_metadata: each AU is parsed into a CodedBitstreamFragment, one FGC SEI
 is added via ff_cbs_sei_add_message(), and CBS reassembles the AU. The H.274
 model is supplied via AVOptions (model_id, blending_mode, log2_scale,
-components, intensity_low/high, scale_y, scale_c, persistence) — the canonical
-FFmpeg metadata-BSF contract. The producer's H.274 scalars (h274_model_id /
-h274_blending_mode / h274_log2_scale) and per-band RMS scaling map directly
-onto these options (mapping recipe in docs/usage/grain-fgs-bsf.md).
+components, intensity_low/high, intensity_low_c/high_c, scale_y, scale_c,
+cutoff_h/v, persistence) — the canonical FFmpeg metadata-BSF contract. The
+defaults follow the SMPTE RDD 5 profile that FFmpeg's H.274 synthesizer
+implements (model 0, log2_scale 2, explicit cutoff frequencies), and init
+rejects an empty intensity interval or a grain sigma outside the H.274 range
+for the model and bit depth. The producer's per-band RMS maps onto scale_y
+(recipe in docs/usage/grain-fgs-bsf.md, ADR-0155).
 
 Honest scope: this is the STATIC-model leg. A BSF works on AVPackets and no
 stock encoder forwards the estimator's per-frame grain side data onto the
@@ -32,4 +35,4 @@ AVOptions, not the interop ABI).
 A BSF is not an AVFilter: the source lands in libavcodec/bsf/pelorus_fgs.c
 and registration targets bitstream_filters.c / bsf/Makefile / configure.
 
-ADR: docs/adr/0117-grain-fgs-bsf.md
+ADR: docs/adr/0117-grain-fgs-bsf.md, docs/adr/0155-fgs-bsf-rdd5-profile.md

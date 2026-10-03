@@ -6,6 +6,13 @@
 #   JOBS         make -j value                    (default nproc)
 set -euo pipefail
 
+# Hermetic Git: neither global/system configuration (apply.whitespace,
+# core.autocrlf, am.keepcr, ...) nor GIT_COMMITTER_* may reach `git am` or the
+# worktree checkout; identity and policy come from explicit -c options only (#65).
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+unset GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE
+
 HERE="$(cd -- "$(dirname -- "$0")" && pwd -P)"
 PATCHDIR="$(cd -- "$HERE/.." && pwd -P)"
 ROOT="$(cd -- "$PATCHDIR/.." && pwd -P)"
@@ -31,8 +38,11 @@ cleanup() {
     trap - EXIT
 
     if [[ -n "$OWNED_WORKTREE" ]]; then
-        git -C "$OWNED_WORKTREE" -c core.hooksPath=/dev/null \
-            am --abort >/dev/null 2>&1 || true
+        # `am --abort` fails when no am session is in progress; that is the normal case.
+        if [[ -d "$(git -C "$OWNED_WORKTREE" rev-parse --path-format=absolute --git-path rebase-apply 2>/dev/null)" ]]; then
+            git -C "$OWNED_WORKTREE" -c core.hooksPath=/dev/null \
+                am --abort >/dev/null 2>&1 || echo "WARNING: git am --abort failed in $OWNED_WORKTREE" >&2
+        fi
         if ! git -C "$FFMPEG_REPO" -c core.hooksPath=/dev/null \
             worktree remove --force "$OWNED_WORKTREE" >/dev/null 2>&1; then
             echo "WARNING: could not remove owned worktree: $OWNED_WORKTREE" >&2

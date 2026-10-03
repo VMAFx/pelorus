@@ -43,6 +43,11 @@
  * downstream FFmpeg AV1 encoder honours it with no Pelorus-specific BSF. The
  * OBU/SEI bitstream writer is a documented follow-up (ADR-0115).
  *
+ * For H.274 (model=h274) the host also maps the pooled residual RMS and the
+ * lag-1 correlation to SMPTE RDD 5 model-0 parameters (scale, cutoffs) through
+ * a table calibrated against FFmpeg's own synthesizer, and emits them as
+ * lavfi.pelorus.h274_* frame metadata for the pelorus_fgs options (ADR-0161).
+ *
  * The algorithm lives in vulkan/pelorus_grain_estimate.comp.glsl, compiled to
  * SPIR-V at build time (FFmpeg 9 removed the runtime inline-GLSL builder).
  */
@@ -69,26 +74,54 @@
 #define PEL_GRAIN_BANDS 8
 #define PEL_GRAIN_SLICES 32
 
-/* Fixed-point scales shared by shader writes and host reads. Two distinct
- * scales plus a residual clamp keep both uint32 accumulators overflow-safe up
- * to 8K while preserving precision: with resid clamped to [-0.08,0.08] (lossless
- * for real grain), resid^2 <= 0.0064, so the worst-case per-pixel contribution
- * times the largest per-slice flat-pixel count (~1.11M at DCI 8K) stays under
- * 2^32, and a small real-grain residual still scales to >= 1 (no
- * truncation-to-zero).
+/* Fixed-point scales shared by shader writes and host reads. With resid
+ * clamped to [-0.08,0.08] (lossless for real grain), resid^2 <= 0.0064 and the
+ * biased lag-1 product (resid*resid_right + 0.0064) lies in [0, 0.0128], so
+ * each per-pixel add is at most 1921 units. Times the largest per-slice pixel
+ * count (1105920 at DCI 8K) every accumulator stays under 2^32
+ * (scripts/test-grain-accumulator-bounds.py). The shader rounds each add to the
+ * nearest unit, so the sums are unbiased; a unit is 1/150000 of a squared
+ * normalized sample for the lag-1 product, fine enough to resolve the product
+ * of one-code-value grain (ADR-0161).
  * MUST match pelorus_grain_estimate.comp.glsl. */
 #define PEL_GRAIN_SUMSQ_GS 300000.0
-#define PEL_GRAIN_CORR_GS 2000.0
-/* Lag-1 product bias (the product is in [-1,1]); host subtracts cnt*BIAS. */
-#define PEL_GRAIN_CORR_BIAS 1.0
+#define PEL_GRAIN_CORR_GS 150000.0
+/* Lag-1 product bias = RES_CLAMP^2, the most negative product; the host
+ * subtracts cnt*BIAS. */
+#define PEL_GRAIN_CORR_BIAS 0.0064
 /* Residual clamp (lossless for real grain); matches the shader RES_CLAMP. */
 #define PEL_GRAIN_RES_CLAMP 0.08
+
+/* H.274 model 0 as synthesized by FFmpeg's SMPTE RDD 5 implementation
+ * (libavcodec/h274.c). log2_scale_factor 2 lies in the RDD 5 range 2..7 and is
+ * the pelorus_fgs default under its RDD 5 profile (ADR-0155). The scale is in 8-bit code values at every bit depth:
+ * RDD 5 limits it to 8 bits, and HM/VTM shift the grain left by bitdepth-8
+ * before blending (ITU-T H.Sup21 (01/2025) 7.3.1.1, 7.3.2.1). */
+#define PEL_GRAIN_H274_MODEL_ID 0
+#define PEL_GRAIN_H274_LOG2_SCALE 2
+
+/* Calibration of FFmpeg's model-0 grain (cutoff_h == cutoff_v, log2_scale 2)
+ * through this estimator's arithmetic with the edge gate open: rho_r is the
+ * residual lag-1 correlation, gain_r the residual RMS in 8-bit code values per
+ * unit of comp_model_value[0]. Cutoffs 2..5 are omitted: their residual
+ * correlation (0.22..0.49) repeats values that cutoffs 6..8 already take, so the
+ * inversion would be ambiguous. Regenerate with
+ * scripts/gen-h274-grain-calibration.py (ADR-0161). */
+static const struct {
+    uint8_t cutoff;
+    float rho_r;
+    float gain_r;
+} pel_h274_calib[] = {
+    {6, 0.5043f, 0.04239f},  {7, 0.4302f, 0.05699f},  {8, 0.3536f, 0.06905f},
+    {9, 0.2563f, 0.09227f},  {10, 0.1914f, 0.10847f}, {11, 0.1431f, 0.13099f},
+    {12, 0.0728f, 0.14908f}, {13, 0.0513f, 0.16799f}, {14, -0.0115f, 0.18554f},
+};
 
 /* Host-readback accumulator. Matches the GLSL std430 GrainBuf layout exactly. */
 typedef struct PelorusGrainBuf {
     uint32_t sumsq[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES]; /* Σ resid^2 * GS       */
     uint32_t cnt[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES];   /* flat-pixel count     */
-    uint32_t corr[PEL_GRAIN_SLICES];                    /* Σ (resid*resid_right + 1.0) * GS    */
+    uint32_t corr[PEL_GRAIN_SLICES];                    /* Σ (resid*resid_right + BIAS) * GS   */
     uint32_t corr_cnt[PEL_GRAIN_SLICES];                /* lag-1 sample count                  */
 } PelorusGrainBuf;
 
@@ -114,63 +147,73 @@ typedef struct PelorusGrainEstimateVulkanContext {
 extern const unsigned char ff_pelorus_grain_estimate_comp_spv_data[];
 extern const unsigned int ff_pelorus_grain_estimate_comp_spv_len;
 
+/* Declare the shader's descriptors: binding order MUST match the .comp.glsl. */
+static void add_descriptors(FFVulkanContext *vkctx, FFVulkanShader *shd)
+{
+    FFVulkanDescriptorSetBinding desc[] = {
+        {
+            .name = "input_images",
+            .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
+            .mem_quali = "readonly",
+            .dimensions = 2,
+            .elems = av_pix_fmt_count_planes(vkctx->input_format),
+            .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+        {
+            .name = "grain_buffer",
+            .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .mem_layout = "std430",
+            .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+            /* Mirrors PelorusGrainBuf / the .comp.glsl grain_buffer block. */
+            .buf_content = "uint sumsq[256]; uint cnt[256]; "
+                           "uint corr[32]; uint corr_cnt[32];",
+        },
+    };
+    ff_vk_shader_add_descriptor_set(vkctx, shd, desc, 2, 0);
+}
+
 static av_cold int init_filter(AVFilterContext *ctx)
 {
-    int err = 0;
+    int err;
     PelorusGrainEstimateVulkanContext *s = ctx->priv;
     FFVulkanContext *vkctx = &s->vkctx;
     FFVulkanShader *shd = &s->shd;
-    const int planes = av_pix_fmt_count_planes(vkctx->input_format);
 
     s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
     if (!s->qf) {
         av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
-        err = AVERROR(ENOTSUP);
-        goto fail;
+        return AVERROR(ENOTSUP);
     }
 
-    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
+    err = ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL);
+    if (err < 0)
+        return err;
 
     /* The estimator reads only the luma plane and needs no C-generated GLSL, so
      * no specialization constants are required (spec == NULL). */
-    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, NULL, (uint32_t[]){16, 16, 1}, 0);
+    err = ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, NULL, (uint32_t[]){16, 16, 1}, 0);
+    if (err < 0)
+        return err;
 
     /* Mirrors the GLSL std430 push-constant block, byte-for-byte. */
-    ff_vk_shader_add_push_const(shd, 0, 2 * sizeof(int) + 2 * sizeof(float),
-                                VK_SHADER_STAGE_COMPUTE_BIT);
+    err = ff_vk_shader_add_push_const(shd, 0, 2 * sizeof(int) + 2 * sizeof(float),
+                                      VK_SHADER_STAGE_COMPUTE_BIT);
+    if (err < 0)
+        return err;
 
-    {
-        FFVulkanDescriptorSetBinding desc[] = {
-            {
-                .name = "input_images",
-                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-                .mem_quali = "readonly",
-                .dimensions = 2,
-                .elems = planes,
-                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-            },
-            {
-                .name = "grain_buffer",
-                .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .mem_layout = "std430",
-                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-                /* Mirrors PelorusGrainBuf / the .comp.glsl GrainBuf block. */
-                .buf_content = "uint sumsq[128]; uint cnt[128]; "
-                               "uint corr[16]; uint corr_cnt[16];",
-            },
-        };
-        ff_vk_shader_add_descriptor_set(vkctx, shd, desc, 2, 0);
-    }
+    add_descriptors(vkctx, shd);
 
-    RET(ff_vk_shader_link(vkctx, shd, ff_pelorus_grain_estimate_comp_spv_data,
-                          ff_pelorus_grain_estimate_comp_spv_len, "main"));
-    RET(ff_vk_shader_register_exec(vkctx, &s->e, shd));
+    err = ff_vk_shader_link(vkctx, shd, ff_pelorus_grain_estimate_comp_spv_data,
+                            ff_pelorus_grain_estimate_comp_spv_len, "main");
+    if (err < 0)
+        return err;
+    err = ff_vk_shader_register_exec(vkctx, &s->e, shd);
+    if (err < 0)
+        return err;
 
     s->initialized = 1;
-
-fail:
-    return err;
+    return 0;
 }
 
 static void pel_sd_free(void *opaque, uint8_t *data)
@@ -183,9 +226,16 @@ static void pel_sd_free(void *opaque, uint8_t *data)
 typedef struct PelorusGrainStats {
     float band_rms[PEL_GRAIN_BANDS]; /* RMS residual per intensity band, [0,1]  */
     uint64_t band_cnt[PEL_GRAIN_BANDS];
+    float rms_all;       /* RMS residual pooled over all flat pixels, [0,1]     */
     float lag1;          /* lag-1 autocorrelation coefficient, [-1,1]           */
     uint64_t flat_total; /* total flat pixels measured                          */
 } PelorusGrainStats;
+
+/* H.274 model-0 parameters for one full-range luma interval. */
+typedef struct PelorusH274Model {
+    int cutoff; /* comp_model_value[0][0][1] and [2]: cutoff_h == cutoff_v  */
+    int scale;  /* comp_model_value[0][0][0], 8-bit code values, 0..255     */
+} PelorusH274Model;
 
 /* Emit a scalar as lavfi.pelorus.* frame metadata (ADR-0136 pattern), so the
  * tune=auto content router can read the grain estimate without parsing the
@@ -195,6 +245,11 @@ static void pel_set_meta_f(AVFrame *frame, const char *key, float v)
     char buf[32];
     snprintf(buf, sizeof(buf), "%.6f", v);
     av_dict_set(&frame->metadata, key, buf, 0);
+}
+
+static void pel_set_meta_i(AVFrame *frame, const char *key, int v)
+{
+    av_dict_set_int(&frame->metadata, key, v, 0);
 }
 
 static void reduce_stats(const PelorusGrainBuf *acc, PelorusGrainStats *st)
@@ -220,6 +275,9 @@ static void reduce_stats(const PelorusGrainBuf *acc, PelorusGrainStats *st)
             var_sum += meansq * (double)n;
         }
     }
+
+    if (st->flat_total > 0)
+        st->rms_all = (float)sqrt(var_sum / (double)st->flat_total);
 
     for (sl = 0; sl < PEL_GRAIN_SLICES; sl++) {
         corr_sum += acc->corr[sl];
@@ -258,10 +316,12 @@ static void map_aom(const PelorusGrainEstimateVulkanContext *s, const PelorusGra
     g->limit_output_range = 0;
     g->grain_model = (uint8_t)s->grain_model;
 
-    /* H.274 mode scalars (carried for the follow-up SEI BSF). */
-    g->h274_model_id = 1;      /* auto-regression */
+    /* H.274 mode scalars: the SMPTE RDD 5 profile FFmpeg synthesizes (model 0 =
+     * frequency filtering, additive blending, log2_scale_factor 2). The model
+     * values themselves go out as frame metadata (map_h274, ADR-0161). */
+    g->h274_model_id = PEL_GRAIN_H274_MODEL_ID;
     g->h274_blending_mode = 0; /* additive */
-    g->h274_log2_scale = 8;
+    g->h274_log2_scale = PEL_GRAIN_H274_LOG2_SCALE;
 
     for (b = 0; b < PEL_GRAIN_BANDS && np < 14; b++) {
         int value, scaling;
@@ -288,6 +348,28 @@ static void map_aom(const PelorusGrainEstimateVulkanContext *s, const PelorusGra
     ar0 = (int8_t)av_clip((int)lrintf(st->lag1 * 64.0f), -128, 127);
     if (ar_n > 0)
         g->ar_coeffs_y[0] = ar0;
+}
+
+/* Map the measurement to H.274 model 0 (ADR-0161). The cutoff is the one whose
+ * calibrated residual lag-1 correlation is nearest the measured one; the scale
+ * then makes FFmpeg's grain at that cutoff reproduce the measured pooled
+ * residual RMS. The result reproduces white and RDD 5-like grain; grain with
+ * more low-frequency energy than a band-limited pattern of the same residual
+ * correlation comes back with a lower total standard deviation. */
+static void map_h274(const PelorusGrainStats *st, PelorusH274Model *m)
+{
+    size_t i, best = 0;
+    float best_d = fabsf(pel_h274_calib[0].rho_r - st->lag1);
+
+    for (i = 1; i < FF_ARRAY_ELEMS(pel_h274_calib); i++) {
+        float d = fabsf(pel_h274_calib[i].rho_r - st->lag1);
+        if (d < best_d) {
+            best_d = d;
+            best = i;
+        }
+    }
+    m->cutoff = pel_h274_calib[best].cutoff;
+    m->scale = av_clip((int)lrintf(st->rms_all * 255.0f / pel_h274_calib[best].gain_r), 0, 255);
 }
 
 /* Attach a native AV_FRAME_DATA_FILM_GRAIN_PARAMS (AV1) so a downstream FFmpeg
@@ -371,80 +453,13 @@ static int attach_interop(PelorusGrainEstimateVulkanContext *s, AVFrame *frame,
     return 0;
 }
 
-static int grain_estimate_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
+/* Record one buffer barrier on the accumulator SSBO, optionally together with
+ * the input image barriers. */
+static void buffer_barrier(FFVulkanFunctions *vk, FFVkExecContext *exec, const FFVkBuffer *buf_vk,
+                           VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
+                           VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access,
+                           const VkImageMemoryBarrier2 *img_bar, int nb_img_bar)
 {
-    int err;
-    AVFilterContext *ctx = link->dst;
-    PelorusGrainEstimateVulkanContext *s = ctx->priv;
-    AVFilterLink *outlink = ctx->outputs[0];
-
-    VkImageView views[AV_NUM_DATA_POINTERS];
-    VkImageMemoryBarrier2 img_bar[8];
-    int nb_img_bar = 0;
-
-    FFVulkanContext *vkctx = &s->vkctx;
-    FFVulkanFunctions *vk = &vkctx->vkfn;
-    FFVkExecContext *exec = NULL;
-    AVBufferRef *buf = NULL;
-    FFVkBuffer *buf_vk;
-    const PelorusGrainBuf *acc;
-    PelorusGrainStats st;
-    PelorusFilmGrainSection g;
-    struct {
-        int32_t width;
-        int32_t height;
-        float edge_thr;
-        float sample_scale;
-    } pc;
-
-    if (!s->initialized)
-        RET(init_filter(ctx));
-
-    pc.width = in->width;
-    pc.height = in->height;
-    pc.edge_thr = (float)s->edge_thr;
-    pc.sample_scale = pel_vk_sample_scale(vkctx->input_format);
-
-    RET(ff_vk_get_pooled_buffer(
-        vkctx, &s->stat_buf_pool, &buf,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
-        sizeof(PelorusGrainBuf),
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
-    buf_vk = (FFVkBuffer *)buf->data;
-    acc = (const PelorusGrainBuf *)buf_vk->mapped_mem;
-
-    exec = ff_vk_exec_get(vkctx, &s->e);
-    ff_vk_exec_start(vkctx, exec);
-
-    RET(ff_vk_exec_add_dep_frame(vkctx, exec, in, VK_PIPELINE_STAGE_2_NONE,
-                                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
-    RET(ff_vk_create_imageviews(vkctx, exec, views, in, FF_VK_REP_FLOAT));
-    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, in, views, 0, 0, VK_IMAGE_LAYOUT_GENERAL,
-                                  VK_NULL_HANDLE);
-    ff_vk_frame_barrier(vkctx, exec, in, img_bar, &nb_img_bar, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
-                        VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED);
-
-    /* zero the accumulators */
-    vk->CmdPipelineBarrier2(exec->buf,
-                            &(VkDependencyInfo){
-                                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                .pBufferMemoryBarriers =
-                                    &(VkBufferMemoryBarrier2){
-                                        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-                                        .srcStageMask = VK_PIPELINE_STAGE_2_NONE,
-                                        .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                                        .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-                                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                                        .buffer = buf_vk->buf,
-                                        .size = buf_vk->size,
-                                        .offset = 0,
-                                    },
-                                .bufferMemoryBarrierCount = 1,
-                            });
-    vk->CmdFillBuffer(exec->buf, buf_vk->buf, 0, buf_vk->size, 0x0);
     vk->CmdPipelineBarrier2(exec->buf,
                             &(VkDependencyInfo){
                                 .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
@@ -453,11 +468,10 @@ static int grain_estimate_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
                                 .pBufferMemoryBarriers =
                                     &(VkBufferMemoryBarrier2){
                                         .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-                                        .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                                        .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-                                        .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
-                                                         VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                                        .srcStageMask = src_stage,
+                                        .srcAccessMask = src_access,
+                                        .dstStageMask = dst_stage,
+                                        .dstAccessMask = dst_access,
                                         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                                         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                                         .buffer = buf_vk->buf,
@@ -466,9 +480,48 @@ static int grain_estimate_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
                                     },
                                 .bufferMemoryBarrierCount = 1,
                             });
+}
 
-    RET(ff_vk_shader_update_desc_buffer(&s->vkctx, exec, &s->shd, 0, 1, 0, buf_vk, 0, buf_vk->size,
-                                        VK_FORMAT_UNDEFINED));
+/* Record the accumulator clear, the estimator dispatch and the host-read
+ * barrier into an execution context that already holds the input frame. */
+static int record_estimator(PelorusGrainEstimateVulkanContext *s, FFVkExecContext *exec,
+                            AVFrame *in, FFVkBuffer *buf_vk)
+{
+    FFVulkanContext *vkctx = &s->vkctx;
+    FFVulkanFunctions *vk = &vkctx->vkfn;
+    VkImageView views[AV_NUM_DATA_POINTERS];
+    VkImageMemoryBarrier2 img_bar[8];
+    int nb_img_bar = 0;
+    int err;
+    struct {
+        int32_t width;
+        int32_t height;
+        float edge_thr;
+        float sample_scale;
+    } pc = {in->width, in->height, (float)s->edge_thr, pel_vk_sample_scale(vkctx->input_format)};
+
+    err = ff_vk_create_imageviews(vkctx, exec, views, in, FF_VK_REP_FLOAT);
+    if (err < 0)
+        return err;
+    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, in, views, 0, 0, VK_IMAGE_LAYOUT_GENERAL,
+                                  VK_NULL_HANDLE);
+    ff_vk_frame_barrier(vkctx, exec, in, img_bar, &nb_img_bar, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+                        VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED);
+
+    /* zero the accumulators */
+    buffer_barrier(vk, exec, buf_vk, VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                   VK_ACCESS_TRANSFER_WRITE_BIT, NULL, 0);
+    vk->CmdFillBuffer(exec->buf, buf_vk->buf, 0, buf_vk->size, 0x0);
+    buffer_barrier(vk, exec, buf_vk, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                   VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                   img_bar, nb_img_bar);
+
+    err = ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 1, 0, buf_vk, 0, buf_vk->size,
+                                          VK_FORMAT_UNDEFINED);
+    if (err < 0)
+        return err;
     ff_vk_exec_bind_shader(vkctx, exec, &s->shd);
     ff_vk_shader_update_push_const(vkctx, exec, &s->shd, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc),
                                    &pc);
@@ -476,70 +529,116 @@ static int grain_estimate_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     vk->CmdDispatch(exec->buf, FFALIGN(in->width, s->shd.lg_size[0]) / s->shd.lg_size[0],
                     FFALIGN(in->height, s->shd.lg_size[1]) / s->shd.lg_size[1], s->shd.lg_size[2]);
 
-    vk->CmdPipelineBarrier2(exec->buf,
-                            &(VkDependencyInfo){
-                                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                .pBufferMemoryBarriers =
-                                    &(VkBufferMemoryBarrier2){
-                                        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-                                        .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                        .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
-                                        .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
-                                                         VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                                        .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
-                                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                                        .buffer = buf_vk->buf,
-                                        .size = buf_vk->size,
-                                        .offset = 0,
-                                    },
-                                .bufferMemoryBarrierCount = 1,
-                            });
+    buffer_barrier(vk, exec, buf_vk, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                   VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                   VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_HOST_READ_BIT, NULL, 0);
+    return 0;
+}
 
-    RET(ff_vk_exec_submit(vkctx, exec));
+/* Run the estimator on `in` and wait for the accumulators in `buf_vk`. On any
+ * failure before submission the execution's dependencies are discarded; after
+ * a successful submission ff_vk_exec_wait() releases them. */
+static int run_estimator(PelorusGrainEstimateVulkanContext *s, AVFrame *in, FFVkBuffer *buf_vk)
+{
+    FFVulkanContext *vkctx = &s->vkctx;
+    FFVkExecContext *exec = ff_vk_exec_get(vkctx, &s->e);
+    int err;
+
+    ff_vk_exec_start(vkctx, exec);
+    err = ff_vk_exec_add_dep_frame(vkctx, exec, in, VK_PIPELINE_STAGE_2_NONE,
+                                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
+    if (err >= 0)
+        err = record_estimator(s, exec, in, buf_vk);
+    if (err >= 0)
+        err = ff_vk_exec_submit(vkctx, exec);
+    if (err < 0) {
+        ff_vk_exec_discard_deps(vkctx, exec);
+        return err;
+    }
     ff_vk_exec_wait(vkctx, exec);
+    return 0;
+}
+
+/* Emit the grain estimate as frame metadata. grain_sigma is the peak RMS
+ * residual over populated bands (measured only on edge-gated locally-flat
+ * pixels, so structure is excluded and what survives is grain stddev),
+ * grain_flat the fraction it was measured over (the estimate's confidence),
+ * and grain_lag1 the residual lag-1 correlation. With model=h274 the H.274
+ * model-0 values follow, named after the pelorus_fgs options they feed
+ * (model_id, log2_scale, scale_y, cutoff_h, cutoff_v; ADR-0161). */
+static void emit_metadata(const PelorusGrainEstimateVulkanContext *s, AVFrame *in,
+                          const PelorusGrainStats *st)
+{
+    float gs = 0.0f;
+    int b;
+
+    for (b = 0; b < PEL_GRAIN_BANDS; b++)
+        if (st->band_cnt[b] > 0 && st->band_rms[b] > gs)
+            gs = st->band_rms[b];
+    pel_set_meta_f(in, "lavfi.pelorus.grain_sigma", gs);
+    pel_set_meta_f(in, "lavfi.pelorus.grain_flat",
+                   (float)((double)st->flat_total / ((double)in->width * (double)in->height)));
+    pel_set_meta_f(in, "lavfi.pelorus.grain_lag1", st->lag1);
+
+    if (s->grain_model == PEL_GRAIN_H274) {
+        PelorusH274Model hm;
+        map_h274(st, &hm);
+        pel_set_meta_i(in, "lavfi.pelorus.h274_model_id", PEL_GRAIN_H274_MODEL_ID);
+        pel_set_meta_i(in, "lavfi.pelorus.h274_log2_scale", PEL_GRAIN_H274_LOG2_SCALE);
+        pel_set_meta_i(in, "lavfi.pelorus.h274_scale_y", hm.scale);
+        pel_set_meta_i(in, "lavfi.pelorus.h274_cutoff_h", hm.cutoff);
+        pel_set_meta_i(in, "lavfi.pelorus.h274_cutoff_v", hm.cutoff);
+    }
+}
+
+/* Derive the estimate from the read-back accumulators and attach it. */
+static int attach_estimate(PelorusGrainEstimateVulkanContext *s, AVFrame *in,
+                           const PelorusGrainBuf *acc)
+{
+    PelorusGrainStats st;
+    PelorusFilmGrainSection g;
+    int err;
 
     reduce_stats(acc, &st);
-
-    /* Grain discriminator as frame metadata for the tune=auto router: peak grain
-     * sigma over populated bands (the residual is measured ONLY on edge-gated
-     * locally-flat pixels, so structure is excluded by construction and what
-     * survives is grain stddev), plus the flat fraction it was measured over
-     * (the estimate's confidence). No interop ABI / shader change; the
-     * PEL_SEC_FILMGRAIN side-data path is untouched. */
-    {
-        float gs = 0.0f;
-        int b;
-        for (b = 0; b < PEL_GRAIN_BANDS; b++)
-            if (st.band_cnt[b] > 0 && st.band_rms[b] > gs)
-                gs = st.band_rms[b];
-        pel_set_meta_f(in, "lavfi.pelorus.grain_sigma", gs);
-        pel_set_meta_f(in, "lavfi.pelorus.grain_flat",
-                       (float)((double)st.flat_total / ((double)in->width * (double)in->height)));
-    }
+    emit_metadata(s, in, &st);
 
     memset(&g, 0, sizeof(g));
     map_aom(s, &st, &g);
 
     err = attach_interop(s, in, &g);
-    if (err < 0)
-        goto fail;
-
-    if (s->attach_native && g.apply) {
+    if (err >= 0 && s->attach_native && g.apply)
         err = attach_native_aom(s, in, &g);
-        if (err < 0)
-            goto fail;
-    }
-
-    av_buffer_unref(&buf);
-    return ff_filter_frame(outlink, in);
-
-fail:
-    if (exec)
-        ff_vk_exec_discard_deps(&s->vkctx, exec);
-    av_buffer_unref(&buf);
-    av_frame_free(&in);
     return err;
+}
+
+static int grain_estimate_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
+{
+    AVFilterContext *ctx = link->dst;
+    PelorusGrainEstimateVulkanContext *s = ctx->priv;
+    AVBufferRef *buf = NULL;
+    int err = 0;
+
+    if (!s->initialized)
+        err = init_filter(ctx);
+    if (err >= 0)
+        err = ff_vk_get_pooled_buffer(
+            &s->vkctx, &s->stat_buf_pool, &buf,
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
+            sizeof(PelorusGrainBuf),
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (err >= 0) {
+        FFVkBuffer *buf_vk = (FFVkBuffer *)buf->data;
+        err = run_estimator(s, in, buf_vk);
+        if (err >= 0)
+            err = attach_estimate(s, in, (const PelorusGrainBuf *)buf_vk->mapped_mem);
+    }
+    av_buffer_unref(&buf);
+    if (err < 0) {
+        av_frame_free(&in);
+        return err;
+    }
+    return ff_filter_frame(ctx->outputs[0], in);
 }
 
 static void grain_estimate_vulkan_uninit(AVFilterContext *avctx)

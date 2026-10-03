@@ -25,11 +25,12 @@ Research: docs/research/0101-smart-deband.md
  configure                                   |   3 +
  libavfilter/Makefile                        |   1 +
  libavfilter/allfilters.c                    |   1 +
+ libavfilter/pelorus_sidedata.h              | 126 ++++++
  libavfilter/pelorus_vulkan_sample.h         | 100 +++++
  libavfilter/vf_pelorus_deband_vulkan.c      | 463 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
  libavfilter/vulkan/pelorus_deband.comp.glsl | 177 ++++++++
- 7 files changed, 746 insertions(+)
+ 8 files changed, 872 insertions(+)
 
 diff --git a/configure b/configure
 index 374bd5c1512943439480825f32e448e7871eb61c..00b13ed09edcf3fb2b44ff9d0bfbb4420f45c68e 100755
@@ -76,6 +77,138 @@ index 402b843649b4f5369cf80714eef53755fad9ac9a..78a01c74a326700f3c6c4799906c5ae1
  extern const FFFilter ff_vf_perms;
  extern const FFFilter ff_vf_perspective;
  extern const FFFilter ff_vf_phase;
+diff --git a/libavfilter/pelorus_sidedata.h b/libavfilter/pelorus_sidedata.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..5a15ad274fa9af3230cec77a9077fa1be362235b
+--- /dev/null
++++ b/libavfilter/pelorus_sidedata.h
+@@ -0,0 +1,126 @@
++/*
++ * Copyright 2026 Lusoris
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or modify it under
++ * the terms of the GNU Lesser General Public License as published by the
++ * Free Software Foundation; either version 2.1 of the License, or (at
++ * your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
++ * License for more details.
++ */
++
++/*
++ * Shared consumer-side lookup of Pelorus interop sections on an AVFrame.
++ *
++ * Every Pelorus producer APPENDS its own AV_FRAME_DATA_SEI_UNREGISTERED entry
++ * (av_frame_new_side_data_from_buf, n9.0.2 libavutil/side_data.c, never merges
++ * or replaces), so a frame that passed through a chain of producers carries one
++ * blob per producer. A consumer must scan all entries instead of taking the
++ * first one, which av_frame_get_side_data() returns.
++ *
++ * Precedence: entries are scanned newest first (highest index = attached
++ * last); the newest valid Pelorus blob that contains the requested section
++ * wins. A section's grid description (PelorusSideData.grid_cols/rows) belongs
++ * to the blob that carries it, so callers read it from the returned entry.
++ *
++ * Kept as a private static-inline helper rather than a libpelorus API so the
++ * public interop ABI (vendored byte-for-byte by vmafx) does not change.
++ */
++
++#ifndef AVFILTER_PELORUS_SIDEDATA_H
++#define AVFILTER_PELORUS_SIDEDATA_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++#include "libavutil/frame.h"
++
++#include <pelorus/interop.h>
++
++/* True when the readable size `got` (R4: min(producer, consumer-known)) covers
++ * field `f` of section struct `T`. An older, shorter producer section must be
++ * checked per field before any read. */
++#define PEL_SD_FIELD_OK(got, T, f) ((got) >= offsetof(T, f) + sizeof(((const T *)0)->f))
++
++/* Newest Pelorus SEI_UNREGISTERED entry carrying `sec`; NULL if none. On
++ * success *out_ptr / *out_size receive the section pointer and the number of
++ * bytes the consumer may read (see PEL_SD_FIELD_OK). */
++static inline const AVFrameSideData *pelorus_sd_find_section(const AVFrame *frame,
++                                                             enum pel_section sec,
++                                                             size_t consumer_known_size,
++                                                             const void **out_ptr, size_t *out_size)
++{
++    int i;
++
++    if (!frame)
++        return NULL;
++    for (i = frame->nb_side_data - 1; i >= 0; i--) {
++        const AVFrameSideData *sd = frame->side_data[i];
++        const void *p = NULL;
++        size_t got = 0;
++
++        if (!sd || sd->type != AV_FRAME_DATA_SEI_UNREGISTERED || !sd->data)
++            continue;
++        if (pel_blob_find_section(sd->data, sd->size, sec, consumer_known_size, &p, &got) ==
++                PEL_OK &&
++            p != NULL) {
++            *out_ptr = p;
++            *out_size = got;
++            return sd;
++        }
++    }
++    return NULL;
++}
++
++/* Block-edge range of vf_pelorus_mc's `bsize` option (8..PEL_MC_BLOCK_DIM). */
++#define PEL_SD_MC_BSIZE_MIN 8
++#define PEL_SD_MC_BSIZE_MAX 32
++/* vf_pelorus_mc's `bsize` default; assumed only when the grid is ambiguous. */
++#define PEL_SD_MC_BSIZE_DEFAULT 16
++
++/*
++ * Recover the motion-grid cell pitch (the producer's block edge, luma pixels)
++ * from the frame size and the grid the blob describes. The producer lays the
++ * grid out as cols = ceil(W / b), rows = ceil(H / b) (vf_pelorus_mc_vulkan.c),
++ * and PelorusMotionSection carries no block-size field, so the pitch is the
++ * integer b in [MIN, MAX] that reproduces BOTH dimensions exactly. ceil(W /
++ * cols) is NOT equivalent: e.g. W=100, b=32 gives 4 cols but ceil(100/4)=25.
++ *
++ * Returns 1 and sets *pitch when exactly one b fits. When several fit (small
++ * frames: 96x64 with a 6x4 grid fits b = 16..19) and vf_pelorus_mc's default
++ * block edge is one of them, returns 2 and sets *pitch to that default: the
++ * common configuration keeps motion compensation, and the caller must say it
++ * assumed the default. Returns 0 when none fits (grid is not an mc grid of
++ * this frame) or the ambiguity excludes the default; a wrong pick would
++ * misaddress cells, so the caller must not run motion compensation then.
++ */
++static inline int pelorus_mc_cell_pitch(int width, int height, int cols, int rows, int *pitch)
++{
++    int b, found = 0, pick = 0, has_default = 0;
++
++    if (width <= 0 || height <= 0 || cols <= 0 || rows <= 0)
++        return 0;
++    for (b = PEL_SD_MC_BSIZE_MIN; b <= PEL_SD_MC_BSIZE_MAX; b++) {
++        if ((width + b - 1) / b == cols && (height + b - 1) / b == rows) {
++            found++;
++            pick = b;
++            has_default |= b == PEL_SD_MC_BSIZE_DEFAULT;
++        }
++    }
++    if (found == 1) {
++        *pitch = pick;
++        return 1;
++    }
++    if (found > 1 && has_default) {
++        *pitch = PEL_SD_MC_BSIZE_DEFAULT;
++        return 2;
++    }
++    return 0;
++}
++
++#endif /* AVFILTER_PELORUS_SIDEDATA_H */
 diff --git a/libavfilter/pelorus_vulkan_sample.h b/libavfilter/pelorus_vulkan_sample.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..c8a8912daf5325e0d8792ae201f4bbfedbc11a2e
@@ -662,7 +795,7 @@ index 8a0912b4dfc4969cb7b4eb06c7565e93ba6b8cf7..e62ab231cb50888e10c829ad66e15e4c
 +OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER) += vulkan/pelorus_deband.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_deband.comp.glsl b/libavfilter/vulkan/pelorus_deband.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..6f1bbd8b7f07f25b4caa0601bd683b48ab5be89f
+index 0000000000000000000000000000000000000000..8987612f6789242f25fa8ef4773032b68fd629d4
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_deband.comp.glsl
 @@ -0,0 +1,177 @@
@@ -752,9 +885,10 @@ index 0000000000000000000000000000000000000000..6f1bbd8b7f07f25b4caa0601bd683b48
 +}
 +float bayer8(ivec2 p) {
 +    int x = p.x & 7; int y = p.y & 7; int v = 0;
++    /* Canonical recursive Bayer: coordinate bits LSB-first, so the finest
++     * level supplies the most significant bits of the threshold. */
 +    for (int b = 0; b < 3; b++) {
-+        v = (v << 2) | (((x >> (2 - b)) & 1) << 1)
-+                     | (((x >> (2 - b)) & 1) ^ ((y >> (2 - b)) & 1));
++        v = (v << 2) | ((((x >> b) & 1) ^ ((y >> b) & 1)) << 1) | ((y >> b) & 1);
 +    }
 +    return float(v) / 64.0;
 +}
@@ -828,14 +962,13 @@ index 0000000000000000000000000000000000000000..6f1bbd8b7f07f25b4caa0601bd683b48
 +{
 +    const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
 +
-+    /* Preserves the pre-FFmpeg-9 unrolled semantics exactly: the C generator
-+     * emitted `if (!IS_WITHIN(pos, size)) return;` per plane, so the first
-+     * plane that does not contain `pos` ends the invocation. Subsampled chroma
-+     * is therefore skipped for positions only valid in luma, by design. */
++    /* Each plane is bounds-checked on its own: a position outside a subsampled
++     * chroma plane must not end the invocation, because a later full-size plane
++     * (yuva420p alpha) still has to be written or copied (BUG-007/BUG-008). */
 +    for (uint i = 0; i < planes; i++) {
 +        const ivec2 size = imageSize(output_images[i]);
 +        if (!all(lessThan(pos, size)))
-+            return;
++            continue;
 +
 +        if ((plane_mask & (1u << i)) != 0u)
 +            deband(pos, int(i), thr[i], grain[i]);
