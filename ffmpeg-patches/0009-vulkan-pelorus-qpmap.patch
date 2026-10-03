@@ -74,13 +74,13 @@ R32_SINT map without a fillable usage, so the probe disables steering there.
  configure                                 |    6 +
  libavcodec/vulkan/Makefile                |    6 +
  libavcodec/vulkan/pelorus_qpmap.comp.glsl |  125 +++
- libavcodec/vulkan_encode.c                | 1107 ++++++++++++++++++++
+ libavcodec/vulkan_encode.c                | 1121 ++++++++++++++++++++
  libavcodec/vulkan_encode.h                |   65 ++
  libavcodec/vulkan_encode_h265.c           |    7 +
  libavutil/hwcontext_vulkan.c              |   17 +
  libavutil/vulkan_functions.h              |    1 +
  libavutil/vulkan_loader.h                 |    3 +
- 9 files changed, 1337 insertions(+)
+ 9 files changed, 1351 insertions(+)
 
 diff --git a/configure b/configure
 index 839033a423604cbfaf45a7fffd984bc587d44839..966285c2eb68a38202adeb5d2795e685031ab67e 100755
@@ -255,10 +255,10 @@ index 0000000000000000000000000000000000000000..97e545732f2ab340de649f46904e3bf7
 +    }
 +}
 diff --git a/libavcodec/vulkan_encode.c b/libavcodec/vulkan_encode.c
-index 39c43300c40ee6ce8fdad669028dda9c315a00a4..6393ec20019698e5f049fbea5c0bc1eb38fdb0f6 100644
+index 39c43300c40ee6ce8fdad669028dda9c315a00a4..2dad8a241c546c90b482c23466dca66b7d545359 100644
 --- a/libavcodec/vulkan_encode.c
 +++ b/libavcodec/vulkan_encode.c
-@@ -28,6 +28,1001 @@ const AVCodecHWConfigInternal *const ff_vulkan_encode_hw_configs[] = {
+@@ -28,6 +28,1015 @@ const AVCodecHWConfigInternal *const ff_vulkan_encode_hw_configs[] = {
      NULL,
  };
  
@@ -321,13 +321,23 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..6393ec20019698e5f049fbea5c0bc1eb
 +                                 FFVulkanEncodeContext *ctx);
 +#endif
 +
-+/* libx264 ROI convention (also used by the NVENC/QSV Pelorus patches): the QP
-+ * range is 51 + 6*(bit_depth-8); qoffset in [-1,+1], negative => lower QP. */
++/* ROI qoffset -> delta scale, per codec (same convention as the NVENC, QSV,
++ * libaom and SVT-AV1 Pelorus patches): H.264/H.265 span the QP range
++ * 51 + 6*(bit_depth-8); AV1 quantization-map deltas are qindex units (0..255)
++ * at every bit depth. qoffset is in [-1,+1], negative => lower QP / more bits.
++ * Scaling AV1 by the H.26x span would give a fifth of the requested delta. */
++static int pelorus_qp_range_for(enum AVCodecID codec_id, int bit_depth)
++{
++    if (codec_id == AV_CODEC_ID_AV1)
++        return 255;
++    return 51 + 6 * (bit_depth - 8);
++}
++
 +static int pelorus_qp_range(AVCodecContext *avctx)
 +{
 +    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(avctx->sw_pix_fmt);
 +    int bit_depth = desc ? desc->comp[0].depth : 8;
-+    return 51 + 6 * (bit_depth - 8);
++    return pelorus_qp_range_for(avctx->codec_id, bit_depth);
 +}
 +
 +/* Query the delta range the driver supports for quantization DELTA maps of this
@@ -878,6 +888,10 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..6393ec20019698e5f049fbea5c0bc1eb
 +                                        ctx->qpmap_qp_delta_min,
 +                                        ctx->qpmap_qp_delta_max)),
 +                        ctx->qpmap_qp_delta_min, ctx->qpmap_qp_delta_max);
++        av_log(avctx, AV_LOG_DEBUG, "pelorus_roi: texels (%d,%d)-(%d,%d) "
++               "qoffset %.3f -> delta %d (span %d, clamp [%d, %d])\n",
++               startx, starty, endx, endy, qoffset, delta, qp_range,
++               ctx->qpmap_qp_delta_min, ctx->qpmap_qp_delta_max);
 +
 +        out[n++] = (PelorusQpRect) {
 +            .x0 = startx, .y0 = starty, .x1 = endx, .y1 = endy, .delta = delta,
@@ -1260,7 +1274,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..6393ec20019698e5f049fbea5c0bc1eb
  av_cold void ff_vulkan_encode_uninit(FFVulkanEncodeContext *ctx)
  {
      FFVulkanContext *s = &ctx->s;
-@@ -36,6 +1031,10 @@ av_cold void ff_vulkan_encode_uninit(FFVulkanEncodeContext *ctx)
+@@ -36,6 +1045,10 @@ av_cold void ff_vulkan_encode_uninit(FFVulkanEncodeContext *ctx)
      /* Wait on and free execution pool */
      ff_vk_exec_pool_free(s, &ctx->enc_pool);
  
@@ -1271,7 +1285,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..6393ec20019698e5f049fbea5c0bc1eb
      /* Destroy the session params */
      if (ctx->session_params)
          vk->DestroyVideoSessionParametersKHR(s->hwctx->act_dev,
-@@ -173,6 +1172,9 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
+@@ -173,6 +1186,9 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
  
      VkVideoReferenceSlotInfoKHR ref_slot[37];
      VkVideoEncodeInfoKHR encode_info;
@@ -1281,7 +1295,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..6393ec20019698e5f049fbea5c0bc1eb
  
      /* Create packet data buffer */
      max_pkt_size = FFALIGN(3 * ctx->base.surface_width * ctx->base.surface_height + (1 << 16),
-@@ -412,6 +1414,69 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
+@@ -412,6 +1428,69 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
              .imageMemoryBarrierCount = nb_img_bar,
          });
  
@@ -1351,7 +1365,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..6393ec20019698e5f049fbea5c0bc1eb
      /* Start, use parameters */
      vk->CmdBeginVideoCodingKHR(cmd_buf, &encode_start);
  
-@@ -885,6 +1950,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -885,6 +1964,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      if (err < 0)
          return err;
  
@@ -1364,7 +1378,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..6393ec20019698e5f049fbea5c0bc1eb
      /* Create command and query pool */
      query_create = (VkQueryPoolVideoEncodeFeedbackCreateInfoKHR) {
          .sType = VK_STRUCTURE_TYPE_QUERY_POOL_VIDEO_ENCODE_FEEDBACK_CREATE_INFO_KHR,
-@@ -897,6 +1968,15 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -897,6 +1982,15 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      if (err < 0)
          return err;
  
@@ -1380,7 +1394,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..6393ec20019698e5f049fbea5c0bc1eb
      if (ctx->opts.quality > ctx->enc_caps.maxQualityLevels) {
          av_log(avctx, AV_LOG_ERROR, "Invalid quality level %i: allowed range is "
                                      "0 to %i\n",
-@@ -1038,6 +2118,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -1038,6 +2132,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      /* Create session */
      session_create.pVideoProfile = &ctx->profile;
      session_create.flags = 0x0;
@@ -1393,7 +1407,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..6393ec20019698e5f049fbea5c0bc1eb
      session_create.queueFamilyIndex = ctx->qf_enc->idx;
      session_create.maxCodedExtent = ctx->caps.maxCodedExtent;
      session_create.maxDpbSlots = ctx->caps.maxDpbSlots;
-@@ -1076,18 +2162,39 @@ int ff_vulkan_encode_create_session_params(AVCodecContext *avctx, FFVulkanEncode
+@@ -1076,18 +2176,39 @@ int ff_vulkan_encode_create_session_params(AVCodecContext *avctx, FFVulkanEncode
  
      VkVideoEncodeQualityLevelInfoKHR q_info;
      VkVideoSessionParametersCreateInfoKHR session_params_create;

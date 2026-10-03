@@ -15,6 +15,10 @@ visible to a compiler, so this check pins each repair in the canonical diff:
 * BUG-018: delta-map values must be clamped to the driver-reported per-codec
   range (``minQpDelta``/``maxQpDelta``, ``minQIndexDelta``/``maxQIndexDelta``),
   not only to the libx264 QP span.
+* BUG-032: the ROI ``qoffset`` is scaled by the codec's own delta span. H.264
+  and H.265 use the QP range ``51 + 6*(bit_depth-8)``; AV1 quantization-map
+  deltas are qindex units, so AV1 must use 255 (the H.26x span gave a fifth of
+  the requested delta).  The span helper is evaluated here, not only grepped.
 * Valid usage: the session parameters are QUANTIZATION_MAP_COMPATIBLE, the map
   image uses the advertised tiling, the map fill is recorded before
   ``vkCmdBeginVideoCodingKHR``, and H.265 enables ``cu_qp_delta``.
@@ -175,6 +179,39 @@ def check_delta_range(enc: str, probe: str) -> list[str]:
     return errors
 
 
+def qp_range_model(body: str):
+    """Evaluate pelorus_qp_range_for() from its C text: (codec, bit_depth) -> span."""
+
+    av1 = re.search(r"if\s*\(\s*codec_id\s*==\s*AV_CODEC_ID_AV1\s*\)\s*return\s+(\d+)\s*;",
+                    body)
+    base = re.search(r"return\s+(\d+)\s*\+\s*(\d+)\s*\*\s*\(\s*bit_depth\s*-\s*8\s*\)\s*;",
+                     body)
+    if not av1 or not base:
+        return None
+    qindex, lo, step = int(av1.group(1)), int(base.group(1)), int(base.group(2))
+    return lambda codec, depth: qindex if codec == "av1" else lo + step * (depth - 8)
+
+
+def check_qp_range(enc: str) -> list[str]:
+    """BUG-032: AV1 ROI deltas use the qindex span, H.26x the QP span."""
+
+    errors: list[str] = []
+    body = function_body(enc, "pelorus_qp_range_for")
+    model = qp_range_model(body) if body else None
+    if model is None:
+        return [f"{ENC}: no per-codec pelorus_qp_range_for() span helper (BUG-032)"]
+    for codec, depth, want in (("h264", 8, 51), ("hevc", 8, 51), ("hevc", 10, 63),
+                               ("av1", 8, 255), ("av1", 10, 255)):
+        got = model(codec, depth)
+        if got != want:
+            errors.append(f"{ENC}: {codec} {depth}-bit ROI span is {got}, want {want} "
+                          "(BUG-032)")
+    wrapper = function_body(enc, "pelorus_qp_range")
+    if not re.search(r"pelorus_qp_range_for\(\s*avctx->codec_id\s*,", wrapper):
+        errors.append(f"{ENC}: pelorus_qp_range() does not pass avctx->codec_id (BUG-032)")
+    return errors
+
+
 def check_valid_usage(files: dict[str, list[str]], enc: str) -> list[str]:
     """Valid-usage repairs found by running the path under the validation layer."""
 
@@ -222,6 +259,7 @@ def check(patch: str) -> list[str]:
         errors.append(f"{ENC}: probe does not require both the extension and its "
                       "feature (BUG-017)")
     errors += check_delta_range(enc, probe)
+    errors += check_qp_range(enc)
     errors += check_valid_usage(files, enc)
     return errors
 
@@ -239,6 +277,11 @@ MUTATIONS = (
      lambda t: t.replace("qmap_caps.av1.minQIndexDelta", "0")),
     ("clamp only to the libx264 span",
      lambda t: t.replace("FFMAX(FFMAX(cap_min, -qp_range), INT8_MIN)", "-qp_range")),
+    ("scale AV1 by the H.26x QP span",
+     lambda t: t.replace("+        return 255;", "+        return 51 + 6 * (bit_depth - 8);")),
+    ("ignore the codec id in the span",
+     lambda t: t.replace("pelorus_qp_range_for(avctx->codec_id, bit_depth)",
+                         "pelorus_qp_range_for(AV_CODEC_ID_H264, bit_depth)")),
     ("drop QUANTIZATION_MAP_COMPATIBLE",
      lambda t: t.replace("VK_VIDEO_SESSION_PARAMETERS_CREATE_QUANTIZATION_MAP_COMPATIBLE_BIT_KHR",
                          "0")),
@@ -286,7 +329,7 @@ def main(argv: list[str]) -> int:
             return 1
         print(f"Vulkan QP-map contract self-test: {len(MUTATIONS)} mutations rejected")
     print("Vulkan QP-map contract: extension/feature enablement, driver dQP range, "
-          "and valid-usage repairs present")
+          "per-codec ROI span, and valid-usage repairs present")
     return 0
 
 
