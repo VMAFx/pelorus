@@ -2221,6 +2221,73 @@ def validate_windows_job(relative: str, block: str | None) -> list[str]:
     return errors
 
 
+CI_CALL_USES = "uses: ./.github/workflows/ci.yml"
+TAG_GUARD = "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+
+
+def is_reusable_ci_call(block: str) -> bool:
+    """True when a job's whole body is the job-level call of ci.yml."""
+    body = [
+        line.strip()
+        for line in block.splitlines()[1:]
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    return body == [CI_CALL_USES]
+
+
+def job_needs(block: str) -> set[str]:
+    """Names in a job's `needs:` (scalar, flow list or block list)."""
+    inline = re.search(
+        r"^    needs:[ ]*(?P<value>[^\s#].*?)\s*(?:#.*)?$", block, re.MULTILINE
+    )
+    if inline:
+        return set(re.findall(r"[A-Za-z0-9_-]+", inline.group("value")))
+    listed = re.search(
+        r"^    needs:[ ]*(?:#.*)?\n(?P<body>(?:      -[ ]+\S.*\n?)+)",
+        block,
+        re.MULTILINE,
+    )
+    if listed:
+        return set(
+            re.findall(
+                r"^      -[ ]+([A-Za-z0-9_-]+)", listed.group("body"), re.MULTILINE
+            )
+        )
+    return set()
+
+
+def _validate_release_gate(relative: str, jobs: dict[str, str]) -> list[str]:
+    """A14/A15: release needs the full CI call and a tag == version assertion."""
+    errors: list[str] = []
+    calls = [name for name, block in jobs.items() if is_reusable_ci_call(block)]
+    if not calls:
+        errors.append(f"{relative}: missing job that calls ./.github/workflows/ci.yml")
+    publish = jobs.get("release", "")
+    if calls and not set(calls) & job_needs(publish):
+        errors.append(
+            f"{relative}: release job must list the ci call "
+            f"({', '.join(calls)}) in needs"
+        )
+    step = publish.find("name: Tag matches the project version")
+    if step < 0:
+        errors.append(f"{relative}: release job is missing the tag==version step")
+    else:
+        end = publish.find("\n      - name:", step)
+        body = publish[step:] if end < 0 else publish[step:end]
+        for token in (
+            TAG_GUARD,
+            "GITHUB_REF_NAME#v",
+            "meson introspect --projectinfo build",
+            "::error::",
+            "exit 1",
+        ):
+            if token not in body:
+                errors.append(f"{relative}: tag==version step is missing {token}")
+        if step > publish.find("name: Publish GitHub release"):
+            errors.append(f"{relative}: tag==version step must precede publishing")
+    return errors
+
+
 def _validate_workflow_structure_and_jobs(
     relative: str, text: str, jobs: dict[str, str]
 ) -> list[str]:
@@ -2248,6 +2315,8 @@ def _validate_workflow_structure_and_jobs(
     )
     is_ci = Path(relative).name == "ci.yml"
     for name, block in jobs.items():
+        if is_reusable_ci_call(block):
+            continue  # a reusable-workflow call has no runner or steps of its own
         runner = WINDOWS_RUNNER if is_ci and name == WINDOWS_JOB else "ubuntu-26.04"
         runners = re.findall(r"^\s+runs-on:\s*([^\s#]+)", block, re.MULTILINE)
         if runners != [runner]:
@@ -2312,6 +2381,8 @@ def _validate_workflow_specialized_jobs(
     errors: list[str] = []
     rel_name = Path(relative).name
     if rel_name == "ci.yml":
+        if not re.search(r"^  workflow_call:", text, re.MULTILINE):
+            errors.append(f"{relative}: ci.yml must declare workflow_call for release")
         ffmpeg = jobs.get("ffmpeg-stack", "")
         for token in (
             "libvulkan-dev",
@@ -2346,6 +2417,7 @@ def _validate_workflow_specialized_jobs(
         if "workflow_dispatch:" not in text:
             errors.append(f"{relative}: release gate needs workflow_dispatch")
         publish = jobs.get("release", "")
+        errors.extend(_validate_release_gate(relative, jobs))
         guard = (
             "if: github.event_name == 'push' && "
             "startsWith(github.ref, 'refs/tags/v')"
@@ -2468,6 +2540,61 @@ def windows_pin_bump_regression(source: str, relative: str) -> list[str]:
     return []
 
 
+def release_gate_regressions(source: str, relative: str) -> list[str]:
+    """Prove the A14/A15 release gate and the ci.yml workflow_call are enforced."""
+    failures: list[str] = []
+    release_path = WORKFLOWS[1]
+    release = release_path.read_text(encoding="utf-8")
+    release_rel = release_path.relative_to(ROOT).as_posix()
+    tag_step = "name: Tag matches the project version"
+    release_cases = {
+        "release without needs: ci": (
+            release.replace("    needs: ci\n", "", 1),
+            "release job must list the ci call",
+        ),
+        "release needs lists only another job": (
+            release.replace("    needs: ci\n", "    needs: [other]\n", 1),
+            "release job must list the ci call",
+        ),
+        "release without ci call job": (
+            release.replace(CI_CALL_USES, "uses: ./.github/workflows/other.yml", 1),
+            "missing job that calls ./.github/workflows/ci.yml",
+        ),
+        "release without tag==version step": (
+            release.replace(tag_step, "name: Something else", 1),
+            "missing the tag==version step",
+        ),
+        "release tag step without error annotation": (
+            release.replace("::error::", "", 1),
+            "tag==version step is missing ::error::",
+        ),
+    }
+    for name, (mutated, expected) in release_cases.items():
+        if mutated == release:
+            failures.append(f"workflow regression: {name} mutation changed nothing")
+        elif not any(
+            expected in e for e in validate_workflow_text(release_rel, mutated)
+        ):
+            failures.append(f"workflow regression: {name} was accepted")
+    # Boundary: needs as flow and block lists with other entries stay accepted.
+    for label, needs in (
+        ("flow", "    needs: [other, ci]\n"),
+        ("block", "    needs:\n      - other\n      - ci\n"),
+    ):
+        boundary = release.replace("    needs: ci\n", needs, 1)
+        if boundary == release or validate_workflow_text(release_rel, boundary):
+            failures.append(f"workflow regression: needs {label} list was rejected")
+    if validate_workflow_text(release_rel, release):
+        failures.append("workflow regression: current release.yml is rejected")
+    no_call = source.replace("  workflow_call:\n", "", 1)
+    if no_call == source or not any(
+        "must declare workflow_call" in e
+        for e in validate_workflow_text(relative, no_call)
+    ):
+        failures.append("workflow regression: ci.yml without workflow_call was accepted")
+    return failures
+
+
 def workflow_validator_regressions() -> list[str]:
     """Prove runner and native-toolchain regressions are rejected."""
     failures: list[str] = []
@@ -2521,6 +2648,8 @@ def workflow_validator_regressions() -> list[str]:
         errors = validate_workflow_text(relative, mutated)
         if not any(expected in error for error in errors):
             failures.append(f"workflow regression: {name} was accepted")
+
+    failures.extend(release_gate_regressions(source, relative))
     return failures
 
 

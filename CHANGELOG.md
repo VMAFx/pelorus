@@ -62,6 +62,7 @@ All notable changes to Pelorus are documented here. The format is
   documentation gate's npm dependencies now audit clean (previously eight
   advisories, six high)
   ([ADR-0154](docs/adr/0154-praetor-engine-repin.md)).
+- The release workflow now calls the full CI workflow (patch-stack replay and link, sanitizers, Windows, docs) and publishes only after it passes, and a tag push fails unless the tag equals the `meson.build` version; `scripts/check-build-config.py` enforces both (audit A14, A15).
 
 ### Fixed
 
