@@ -96,11 +96,14 @@ layout (set = 0, binding = 2) uniform readonly  image2D prev1_images[];
 layout (set = 0, binding = 3) uniform readonly  image2D prev2_images[];
 layout (set = 0, binding = 4) uniform readonly  image2D prev3_images[];
 
+/* meta=1 residual accumulators, mirrored by PelorusDenoiseBuf in the C filter.
+ * Index [stat * SLICES + slice]; stat 0 = sum |r| luma, 1 = sum |r| U,
+ * 2 = sum |r| V, 3 = sum r^2 luma, each in RES_GS fixed point. sum_lo/sum_hi
+ * are the low and high words of a 64-bit sum: one 32-bit word cannot hold a
+ * fine fixed-point scale at DCI 8K (BUG-016). cnt_* are pixel counts. */
 layout (set = 0, binding = 5, std430) buffer stat_buffer {
-    uint abs_sum_y[16];
-    uint abs_sum_u[16];
-    uint abs_sum_v[16];
-    uint sq_sum_y[16];
+    uint sum_lo[64];
+    uint sum_hi[64];
     uint cnt_y[16];
     uint cnt_c[16];
 };
@@ -124,9 +127,45 @@ const int FLAG_TEMPORAL = 1;
 const int FLAG_MOTION_COMP = 2;
 const int FLAG_PROTECT_DETAIL = 4;
 const float EPS = 1e-6;
+/* exp(x) == exp2(x * LOG2E); folded into the loop-invariant weight factors. */
+const float LOG2E = 1.4426950408889634;
 
+/* meta=1 residual reduction (BUG-016). Each workgroup sums its own residuals
+ * in shared memory, then adds one partial per statistic to its slice of the
+ * 64-bit stat_buffer sums. The old per-pixel uint32 adds at a 1e3 scale
+ * truncated every residual below ~0.03 to zero in the r^2 sum, so
+ * noise_sigma_estimate read 0 on clean content. RES_GS = 2^23 resolves a
+ * one-code 10-bit residual squared as 8 units, while a full 16x16 workgroup at
+ * |r| <= RES_MAX stays below 2^31. scripts/test-denoise-accumulator-bounds.py
+ * checks these constants against the C mirror and the DCI 8K bounds. */
+const uint STATS = 4u;
+const uint SLICES = 16u;
+const float RES_GS = 8388608.0;
+const float RES_MAX = 1.0;
+shared uint s_res[STATS];
+shared uint s_cnt[2];
+
+uint pel_res_fixed(float v) {
+    return uint(clamp(v, 0.0, RES_MAX) * RES_GS + 0.5);
+}
+
+/* 64-bit add from two 32-bit atomics: the add that wraps sum_lo sees it in its
+ * own return value, so the carries are counted exactly once. */
+void pel_acc64(uint k, uint v) {
+    if (v == 0u)
+        return;
+    uint old = atomicAdd(sum_lo[k], v);
+    if (old > 0xFFFFFFFFu - v)
+        atomicAdd(sum_hi[k], 1u);
+}
+
+/* `precise` (SPIR-V NoContraction) keeps this product individually rounded.
+ * tile=1 caches it in shared memory, so the direct path must not fuse it into a
+ * later FMA either; otherwise the two paths drift by 1 code value at 10/12-bit,
+ * where sample_scale is not an exact power of two (ADR-0134 bit-identity). */
 float pel_to_sample(float value) {
-    return value * sample_scale;
+    precise float s = value * sample_scale;
+    return s;
 }
 float pel_to_storage(float value) {
     if (sample_code_max == 0u)
@@ -136,6 +175,15 @@ float pel_to_storage(float value) {
 }
 uint pel_component_count(uint plane) {
     return (semi_planar != 0u && plane == 1u) ? 2u : 1u;
+}
+
+/* Pinned linear interpolation. mix() and smoothstep() are GLSL.std.450
+ * extended instructions that glslang never decorates NoContraction, so a driver
+ * may expand and fuse their internals differently in the tile=0 and tile=1
+ * pipelines; the denoise output path spells them out with `precise` instead. */
+float pel_lerp(float a, float b, float t) {
+    precise float r = a + t * (b - a);
+    return r;
 }
 
 /* `comp` selects the component WITHIN the plane image: always 0 on a planar
@@ -165,22 +213,25 @@ vec2 pel_mc_mv(ivec2 lpos) { /* nearest-cell quarter-pel MV, luma px */
 }
 float pel_mc_conf(ivec2 lpos) { /* nearest-cell confidence [0,1] */
     ivec2 cell = pel_cell(lpos);
-    return float(conf_packed[cell.y * grid_cols + cell.x] & 0xFFu) / 255.0;
+    precise float c = float(conf_packed[cell.y * grid_cols + cell.x] & 0xFFu) *
+                      (1.0 / 255.0);
+    return c;
 }
 float pel_prev_mc(int t, int idx, int comp, ivec2 pos, ivec2 sz) {
     int cw = (idx > 0) ? chroma_shift_w : 0;
     int ch = (idx > 0) ? chroma_shift_h : 0;
     ivec2 lpos = pos << ivec2(cw, ch);
     vec2 mvl = pel_mc_mv(lpos);                /* MV in luma pixels */
-    vec2 mvp = vec2(mvl.x / float(1 << cw), mvl.y / float(1 << ch));
-    vec2 sp = vec2(pos) + mvp;                 /* sub-pel sample point */
+    /* Power-of-two divisors are exact, so the sub-pel point is exact too. */
+    precise vec2 mvp = vec2(mvl.x / float(1 << cw), mvl.y / float(1 << ch));
+    precise vec2 sp = vec2(pos) + mvp;         /* sub-pel sample point */
     ivec2 ip = ivec2(floor(sp));
-    vec2 f = sp - vec2(ip);
+    precise vec2 f = sp - vec2(ip);
     float p00 = pel_prev(t, idx, comp, ip + ivec2(0, 0), sz);
     float p10 = pel_prev(t, idx, comp, ip + ivec2(1, 0), sz);
     float p01 = pel_prev(t, idx, comp, ip + ivec2(0, 1), sz);
     float p11 = pel_prev(t, idx, comp, ip + ivec2(1, 1), sz);
-    return mix(mix(p00, p10, f.x), mix(p01, p11, f.x), f.y);
+    return pel_lerp(pel_lerp(p00, p10, f.x), pel_lerp(p01, p11, f.x), f.y);
 }
 
 /* Shared-memory tiling of the current-frame spatial window (the NLM range term
@@ -224,60 +275,82 @@ float pel_spatial(int idx, int comp, ivec2 pos, ivec2 sz, ivec2 o) {
 }
 #define PEL_SPATIAL(o) pel_spatial(idx, comp, pos, sz, o)
 
+/* ADR-0134 promises tile=0 and tile=1 are bit-identical. The two paths share
+ * this one function and differ only in where PEL_SPATIAL() reads from, but they
+ * are two separately specialized pipelines, and a driver may optimize each one
+ * differently. Two such freedoms broke the identity on NVIDIA (BUG-027):
+ *
+ *  - a division by a loop-invariant divisor (the old `-ssd / hs2` inside the
+ *    window scan) was lowered differently per pipeline, for example a hoisted
+ *    reciprocal in one and a per-iteration divide in the other, and
+ *  - sums and products without `precise` were contracted or reassociated
+ *    differently.
+ *
+ * Hence every floating-point value on the output path is `precise` (SPIR-V
+ * NoContraction: stated order, no implicit FMA fusion); no division sits inside
+ * a loop (the loop-invariant factors kr, kd and kt are formed once, with exp(x)
+ * folded to exp2(x * LOG2E)); explicit fma() marks the intended fused
+ * accumulations; and mix()/smoothstep() are spelled out (see pel_lerp()). */
 float denoise(const ivec2 pos, const int idx, const int comp,
               float sigmaS, float sigmaT, float strength_p) {
     ivec2 sz = imageSize(output_images[idx]);
-    float C = PEL_SPATIAL(ivec2(0, 0));
+    precise float C = PEL_SPATIAL(ivec2(0, 0));
     /* --- spatial NLM-lite joint bilateral over the current frame --- */
-    float numS = C; float denS = 1.0;
+    precise float numS = C;
+    precise float denS = 1.0;
     if (patch_radius > 0) {
-        float hs2 = sigmaS * sigmaS + EPS;
-        float sd2 = float(patch_radius * patch_radius) + EPS;
+        /* wr = exp(-(ssd / 9) / hs2) and wd = exp(-r^2 / (2 * sd2)), with the
+         * loop-invariant divisors folded once into kr and kd. */
+        precise float hs2 = sigmaS * sigmaS + EPS;
+        precise float sd2 = float(patch_radius * patch_radius) + EPS;
+        precise float kr = -LOG2E / (9.0 * hs2);
+        precise float kd = -LOG2E / (2.0 * sd2);
         for (int dy = -patch_radius; dy <= patch_radius; dy++) {
             for (int dx = -patch_radius; dx <= patch_radius; dx++) {
                 if (dx == 0 && dy == 0) continue;
-                float ssd = 0.0;
+                precise float ssd = 0.0;
                 for (int ky = -1; ky <= 1; ky++) {
                     for (int kx = -1; kx <= 1; kx++) {
-                        float a = PEL_SPATIAL(ivec2(kx, ky));
-                        float b = PEL_SPATIAL(ivec2(dx + kx, dy + ky));
-                        ssd += (a - b) * (a - b);
+                        precise float d = PEL_SPATIAL(ivec2(kx, ky)) -
+                                          PEL_SPATIAL(ivec2(dx + kx, dy + ky));
+                        ssd = fma(d, d, ssd);
                     }
                 }
-                ssd /= 9.0;
-                float wr = exp(-ssd / hs2);
-                float wd = exp(-float(dx * dx + dy * dy) / (2.0 * sd2));
-                float w = wr * wd;
-                numS += w * PEL_SPATIAL(ivec2(dx, dy));
+                precise float w = exp2(ssd * kr) *
+                                  exp2(float(dx * dx + dy * dy) * kd);
+                numS = fma(w, PEL_SPATIAL(ivec2(dx, dy)), numS);
                 denS += w;
             }
         }
     }
     /* --- temporal gated averaging over previous frames (same coord) --- */
-    float numT = C; float denT = 1.0;
+    precise float numT = C;
+    precise float denT = 1.0;
     if ((flags & FLAG_TEMPORAL) != 0) {
-        float ht2 = sigmaT * sigmaT + EPS;
-        float decay = 1.0;
+        /* w = exp(-delta^2 / ht2) * decay, the divisor folded once into kt. */
+        precise float kt = -LOG2E / (sigmaT * sigmaT + EPS);
+        precise float decay = 1.0;
+        precise float conf = 0.0;
+        bool mc = (flags & FLAG_MOTION_COMP) != 0 && grid_cols != 0;
+        if (mc) {
+            int cw = (idx > 0) ? chroma_shift_w : 0;
+            int chh = (idx > 0) ? chroma_shift_h : 0;
+            conf = pel_mc_conf(pos << ivec2(cw, chh));
+        }
         for (int t = 1; t <= actual_prev; t++) {
-            float p;
-            if ((flags & FLAG_MOTION_COMP) != 0 && grid_cols != 0) {
+            precise float p = pel_prev(t, idx, comp, pos, sz);
+            if (mc) {
                 /* blend same-coord <-> motion-warped by per-block confidence;
                  * low conf (noise-matched MV) falls back toward the same-coord
                  * sample, and the temporal_cut gate below still rejects
                  * bad/occluded taps either way. */
-                int cw = (idx > 0) ? chroma_shift_w : 0;
-                int chh = (idx > 0) ? chroma_shift_h : 0;
-                float conf = pel_mc_conf(pos << ivec2(cw, chh));
-                p = mix(pel_prev(t, idx, comp, pos, sz),
-                        pel_prev_mc(t, idx, comp, pos, sz), conf);
-            } else {
-                p = pel_prev(t, idx, comp, pos, sz);
+                p = pel_lerp(p, pel_prev_mc(t, idx, comp, pos, sz), conf);
             }
-            float delta = abs(C - p);
+            precise float delta = abs(C - p);
             if (delta > temporal_cut) break;
             decay *= temporal_decay;
-            float w = exp(-(delta * delta) / ht2) * decay;
-            numT += w * p;
+            precise float w = exp2(delta * delta * kt) * decay;
+            numT = fma(w, p, numT);
             denT += w;
         }
         /* --- forward-lookahead tap (ADR-0137): one same-coord NEXT-frame
@@ -285,59 +358,64 @@ float denoise(const ivec2 pos, const int idx, const int comp,
          * a held animation drawing (the trailing frame already gets the causal
          * prev). --- */
         if (actual_next > 0) {
-            float p = pel_to_sample(
+            precise float p = pel_to_sample(
                 imageLoad(next0_images[idx],
                           clamp(pos, ivec2(0), sz - ivec2(1)))[comp]);
-            float delta = abs(C - p);
+            precise float delta = abs(C - p);
             if (delta <= temporal_cut) {
-                float w = exp(-(delta * delta) / ht2) * temporal_decay;
-                numT += w * p; denT += w;
+                precise float w = exp2(delta * delta * kt) * temporal_decay;
+                numT = fma(w, p, numT);
+                denT += w;
             }
         }
     }
     /* --- combine, then dry/wet --- */
-    float num = (1.0 - blend) * numS + blend * numT;
-    float den = (1.0 - blend) * denS + blend * denT;
-    float filtered = num / max(den, EPS);
-    float strength = strength_p;
+    precise float num = (1.0 - blend) * numS + blend * numT;
+    precise float den = (1.0 - blend) * denS + blend * denT;
+    precise float filtered = num / max(den, EPS);
+    precise float strength = strength_p;
     if ((flags & FLAG_PROTECT_DETAIL) != 0 && patch_radius > 0) {
-        float mean = 0.0;
+        precise float mean = 0.0;
         for (int dy = -1; dy <= 1; dy++)
             for (int dx = -1; dx <= 1; dx++)
                 mean += PEL_SPATIAL(ivec2(dx, dy));
-        mean /= 9.0;
-        float varr = 0.0;
+        mean *= (1.0 / 9.0);
+        precise float varr = 0.0;
         for (int dy = -1; dy <= 1; dy++) {
             for (int dx = -1; dx <= 1; dx++) {
-                float d = PEL_SPATIAL(ivec2(dx, dy)) - mean;
-                varr += d * d;
+                precise float d = PEL_SPATIAL(ivec2(dx, dy)) - mean;
+                varr = fma(d, d, varr);
             }
         }
-        float activity = sqrt(varr / 9.0);
-        float protect = smoothstep(sigmaS, sigmaS * 3.0 + EPS, activity);
+        precise float activity = sqrt(varr * (1.0 / 9.0));
+        /* smoothstep(sigmaS, 3 * sigmaS + EPS, activity), spelled out. */
+        precise float e =
+            clamp((activity - sigmaS) / (2.0 * sigmaS + EPS), 0.0, 1.0);
+        precise float protect = e * e * (3.0 - 2.0 * e);
         strength *= (1.0 - protect);
     }
-    float outv = mix(C, filtered, clamp(strength, 0.0, 1.0));
+    precise float outv = pel_lerp(C, filtered, clamp(strength, 0.0, 1.0));
     return clamp(outv, 0.0, 1.0);
 }
 
 void main()
 {
-    /* Fixed-point scale for the uint32 residual accumulators. Kept at 1e3 (not
-     * 1e6) so the per-slice sum cannot overflow uint32: a slice covers ~W*H/16
-     * pixels (2.07M at 8K) and the worst-case sum is 2.07M*1.0*1e3 = 2.07e9 <
-     * UINT32_MAX. GS=1e6 silently wrapped at >=8K (and at 4K for residuals
-     * >=0.008). residual_energy (the mean) stays accurate; sq_sum/sigma_est are
-     * a COARSE estimate at 1e3 (a precise sigma would need a 64-bit atomic
-     * accumulator — a documented follow-up). meta=1 telemetry only; no pixel
-     * effect. Mirror the divisor in attach_interop(). */
-    const float GS = 1000.0;
     ivec2 size;
     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
-    /* slice = wg_index & 15 — equivalent to % 16u (PEL_SLICES is a power of
+    /* slice = wg_index & (SLICES - 1) — equivalent to % SLICES (a power of
      * two). */
     uint wg = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
-    uint slice = wg & 15u;
+    uint slice = wg & (SLICES - 1u);
+
+    /* meta=1: zero this workgroup's partial sums. want_meta is a push
+     * constant, so this branch and its barrier are workgroup-uniform. */
+    if (want_meta != 0) {
+        if (gl_LocalInvocationIndex < STATS)
+            s_res[gl_LocalInvocationIndex] = 0u;
+        if (gl_LocalInvocationIndex < 2u)
+            s_cnt[gl_LocalInvocationIndex] = 0u;
+        barrier();
+    }
 
     /* Preserves the pre-FFmpeg-9 unrolled semantics exactly: the C generator
      * emitted a per-plane `if (IS_WITHIN(pos, size)) { ... }` block — NOT an
@@ -379,23 +457,25 @@ void main()
                 /* meta=1 residual free-ride: the luma plane drives the sigma /
                  * PSNR estimate; chroma planes feed the U/V residual energy.
                  * On a semi-planar plane the second component IS V, so it folds
-                 * into abs_sum_v; cnt_c stays the per-chroma-PLANE pixel count
-                 * so attach_interop()'s divisor is unchanged. */
+                 * into the V sum; cnt_c stays the per-chroma-PLANE pixel count
+                 * so attach_interop()'s divisor is unchanged. Each invocation
+                 * adds at most once per statistic, which the bounds test
+                 * relies on. */
                 if (want_meta != 0) {
-                    float r = abs(inv - ov);
+                    float r = min(abs(inv - ov), RES_MAX);
                     if (i == 0u) {
-                        atomicAdd(abs_sum_y[slice], uint(r * GS));
-                        atomicAdd(sq_sum_y[slice],  uint(r * r * GS));
-                        atomicAdd(cnt_y[slice],     1u);
+                        atomicAdd(s_res[0], pel_res_fixed(r));
+                        atomicAdd(s_res[3], pel_res_fixed(r * r));
+                        atomicAdd(s_cnt[0], 1u);
                     } else if (i == 1u) {
                         if (c == 0u) {
-                            atomicAdd(abs_sum_u[slice], uint(r * GS));
-                            atomicAdd(cnt_c[slice],     1u);
+                            atomicAdd(s_res[1], pel_res_fixed(r));
+                            atomicAdd(s_cnt[1], 1u);
                         } else {
-                            atomicAdd(abs_sum_v[slice], uint(r * GS));
+                            atomicAdd(s_res[2], pel_res_fixed(r));
                         }
                     } else if (i == 2u) {
-                        atomicAdd(abs_sum_v[slice], uint(r * GS));
+                        atomicAdd(s_res[2], pel_res_fixed(r));
                     }
                 }
             }
@@ -403,5 +483,17 @@ void main()
 
         if (inb)
             imageStore(output_images[idx], pos, outv);
+    }
+
+    /* meta=1: one global add per statistic per workgroup (uniform branch). */
+    if (want_meta != 0) {
+        barrier();
+        const uint li = gl_LocalInvocationIndex;
+        if (li < STATS)
+            pel_acc64(li * SLICES + slice, s_res[li]);
+        else if (li == STATS && s_cnt[0] != 0u)
+            atomicAdd(cnt_y[slice], s_cnt[0]);
+        else if (li == STATS + 1u && s_cnt[1] != 0u)
+            atomicAdd(cnt_c[slice], s_cnt[1]);
     }
 }

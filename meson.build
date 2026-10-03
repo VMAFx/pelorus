@@ -214,3 +214,13 @@ if get_option('tests')
   )
   test('mc-stats', mc_stats_test, suite: 'fast')
 endif
+
+
+# BUG-016: the denoise meta=1 residual sums are per-workgroup uint32 partials
+# added into 64-bit slices. Prove the DCI 8K bounds and the fixed-point
+# resolution that keeps noise_sigma_estimate non-zero on clean content.
+test('denoise-accumulator-bounds',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-denoise-accumulator-bounds.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
