@@ -113,9 +113,10 @@ All notable changes to Pelorus are documented here. The format is
   shorter section from an older producer is no longer read past its end
   (BUG-003, BUG-004); and to map the motion-vector grid onto pixels with the
   producer's block edge instead of `ceil(size / cells)`, which disagreed with
-  `pelorus_mc` for block sizes such as 31 (BUG-015). A grid that fits no single
-  block size now disables motion compensation for that frame with a one-time
-  warning. See [the interop guide](docs/api/interop-abi.md).
+  `pelorus_mc` for block sizes such as 31 (BUG-015). On small frames where
+  several block sizes fit the grid, the `pelorus_mc` default (16) is assumed with
+  a one-time warning; a grid that fits nothing, or whose ambiguity excludes the
+  default, disables motion compensation for that frame with a one-time warning. See [the interop guide](docs/api/interop-abi.md).
 - Fixed the deband and borderfix Vulkan shaders ending the invocation at the
   first plane that does not contain the position: on a subsampled layout such
   as `yuva420p` the full-size alpha plane (after the half-size chroma planes)

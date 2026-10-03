@@ -191,8 +191,12 @@ static void test_cell_pitch_table(void)
     CHECK(pelorus_mc_cell_pitch(1920, 1080, 7, 7, &pitch) == 0);
     CHECK(pelorus_mc_cell_pitch(1920, 1080, 0, 68, &pitch) == 0);
     CHECK(pelorus_mc_cell_pitch(0, 1080, 120, 68, &pitch) == 0);
-    /* Ambiguous: 8x8 frame fits every b >= 8 with a 1x1 grid. */
-    CHECK(pelorus_mc_cell_pitch(8, 8, 1, 1, &pitch) == 0);
+    /* Ambiguous with the mc default among the candidates: assume it (2).
+     * 96x64 with a 6x4 grid fits b = 16..19 (the Vulkan format-matrix case). */
+    CHECK(pelorus_mc_cell_pitch(96, 64, 6, 4, &pitch) == 2 && pitch == 16);
+    CHECK(pelorus_mc_cell_pitch(8, 8, 1, 1, &pitch) == 2 && pitch == 16);
+    /* Ambiguous without the default: 200x200 with 7x7 fits b = 29..32. */
+    CHECK(pelorus_mc_cell_pitch(200, 200, 7, 7, &pitch) == 0);
 }
 
 static void test_cell_pitch_sweep(void)
@@ -209,7 +213,13 @@ static void test_cell_pitch_sweep(void)
             for (b = PEL_SD_MC_BSIZE_MIN; b <= PEL_SD_MC_BSIZE_MAX; b++) {
                 int cols = (w + b - 1) / b;
                 int rows = (h + b - 1) / b;
-                if (pelorus_mc_cell_pitch(w, h, cols, rows, &pitch) == 1 && pitch != b)
+                int fit = pelorus_mc_cell_pitch(w, h, cols, rows, &pitch);
+                /* A unique fit is the producer's edge; an assumed default must
+                 * itself reproduce the grid (b and 16 are indistinguishable). */
+                if (fit == 1 && pitch != b)
+                    bad++;
+                if (fit == 2 && (pitch != PEL_SD_MC_BSIZE_DEFAULT ||
+                                 (w + pitch - 1) / pitch != cols || (h + pitch - 1) / pitch != rows))
                     bad++;
             }
         }

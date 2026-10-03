@@ -167,6 +167,7 @@ typedef struct PelorusDenoiseVulkanContext {
     AVBufferPool *mv_buf_pool;
     AVBufferPool *conf_buf_pool;
     int mc_grid_warned; /* the unmappable-grid warning was logged once */
+    int mc_grid_assumed_warned; /* the assumed-default-bsize warning was logged once */
 
     /* Causal previous-frame ring (clones — refcount bumps, no pixel copy). */
     AVFrame *ring[PEL_DENOISE_MAX_PREV];
@@ -575,7 +576,15 @@ static int denoise_dispatch(PelorusDenoiseVulkanContext *s, AVFrame *out, AVFram
                 (size_t)PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset + mcs->conf_field_size <=
                     sd->size) {
                 /* The cell pitch is the producer's block edge, not ceil(W/gc). */
-                if (pelorus_mc_cell_pitch(out->width, out->height, gc, gr, &pitch)) {
+                int fit = pelorus_mc_cell_pitch(out->width, out->height, gc, gr, &pitch);
+                if (fit == 2 && !s->mc_grid_assumed_warned) {
+                    s->mc_grid_assumed_warned = 1;
+                    av_log(vkctx, AV_LOG_WARNING,
+                           "motion grid %dx%d fits several block sizes for a %dx%d frame; "
+                           "assuming the mc default bsize=%d\n",
+                           gc, gr, out->width, out->height, PEL_SD_MC_BSIZE_DEFAULT);
+                }
+                if (fit) {
                     mv_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mo->mv_field_offset;
                     conf_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset;
                 } else if (!s->mc_grid_warned) {
