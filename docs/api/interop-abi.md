@@ -106,8 +106,11 @@ older, shorter producer is read only as far as `got` covers
 edge, recovered from the frame size and the grid
 (`pelorus_mc_cell_pitch`: the single `bsize` in 8..32 with
 `ceil(W/b) == grid_cols` and `ceil(H/b) == grid_rows`). `PelorusMotionSection`
-carries no block-size field. If no single block size fits, motion compensation is
-skipped for that frame and a warning is logged once.
+carries no block-size field. On small frames several block sizes can fit (a
+96x64 frame with a 6x4 grid fits 16 to 19). When the `vf_pelorus_mc` default
+(`bsize=16`) is one of them, it is assumed and a warning saying so is logged
+once. If nothing fits, or the ambiguity excludes the default, motion
+compensation is skipped for that frame and a warning is logged once.
 
 ### QP-report reader stub (closed loop)
 
