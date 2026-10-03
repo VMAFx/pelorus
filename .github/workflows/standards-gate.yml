@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     env:
-      PRAETOR_REF: 25451d888c8710822dd578907625dc69a0975142
+      PRAETOR_REF: 0af07a733e6534269b435cea185da4d1df7aba0c
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,8 +39,9 @@ jobs:
           go install "github.com/cordanaLLM/praetor/cmd/standardsctl@${PRAETOR_REF}"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-      # `standardsctl version` cannot name a module-mode build (Praetor #642);
-      # the module pseudo-version in Go's build info names the pinned commit.
+      # `standardsctl version` names the build commit since Praetor #722; the
+      # module pseudo-version in Go's build info is checked as well, so the
+      # step fails if the installed engine is not the pinned commit.
       - name: Report governance engine version
         run: |
           standardsctl version

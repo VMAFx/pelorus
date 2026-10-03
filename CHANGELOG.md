@@ -56,6 +56,12 @@ All notable changes to Pelorus are documented here. The format is
   split the Go bump are not evaluated; such a split shows up as a red
   `build-config-sync` on the Renovate PR
   ([ADR-0152](docs/adr/0152-renovate-guard-enforcement-scope.md)).
+- Re-pinned the Praetor governance engine from `25451d88` to `0af07a73`. The
+  engine now scans shell scripts, so the HISS baseline records 37 more findings
+  in unchanged scripts (62 → 99) until a follow-up retires them. The locked
+  documentation gate's npm dependencies now audit clean (previously eight
+  advisories, six high)
+  ([ADR-0154](docs/adr/0154-praetor-engine-repin.md)).
 
 ### Fixed
 

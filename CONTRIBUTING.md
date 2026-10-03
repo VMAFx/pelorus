@@ -58,15 +58,13 @@ A clean clone needs Go 1.27, Node.js 22 or newer for the documentation gate,
 and the exact Praetor engine pin used by CI:
 
 ```bash
-go install github.com/cordanaLLM/praetor/cmd/standardsctl@25451d888c8710822dd578907625dc69a0975142
+go install github.com/cordanaLLM/praetor/cmd/standardsctl@0af07a733e6534269b435cea185da4d1df7aba0c
 export PATH="$(go env GOPATH)/bin:$PATH"
-go version -m "$(command -v standardsctl)" | grep -F 25451d888c87
+go version -m "$(command -v standardsctl)" | grep -F 0af07a733e65
 ```
 
-`standardsctl version` prints `unknown (untagged build, no VCS stamp)` for a
-`go install` build even at the right commit
-([Praetor issue 642](https://github.com/cordanaLLM/praetor/issues/642)); the
-module pseudo-version that `go version -m` prints names the commit. The pin
+`standardsctl version` names the build commit, and the module
+pseudo-version that `go version -m` prints names it too; CI checks both. The pin
 installs a binary named `standardsctl`. Praetor's own text, including the
 generated README block, calls the same program `praetorctl`; the `Makefile`
 uses whichever of the two it finds first on `PATH`.
