@@ -11,7 +11,7 @@ index c79db08..cb7247f 100644
  #include <string.h>
  #include <sys/types.h>
  #include <mfxvideo.h>
-@@ -771,6 +772,55 @@ static int init_video_param_jpeg(AVCodecContext *avctx, QSVEncContext *q)
+@@ -771,6 +772,71 @@ static int init_video_param_jpeg(AVCodecContext *avctx, QSVEncContext *q)
      return 0;
  }
 -
@@ -50,9 +50,25 @@ index c79db08..cb7247f 100644
 +    return 0;
 +}
 +
-+static void qsvenc_pelorus_roi_update_mbqp_enabled(QSVEncContext *q)
++/* Refresh the cached EnableMBQP state from the final attached buffer. The
++ * preconditions passed at init (or pelorus_roi would be off), so a clear flag
++ * here means the runtime reset EnableMBQP during MFXVideoENCODE_Init/Reset
++ * (seen on Intel Windows VPL 2.15/2.17) or an AVQSVContext CodingOption3
++ * replaced ours. Every frame then takes the rectangle path; say so once. */
++static void qsvenc_pelorus_roi_update_mbqp_enabled(AVCodecContext *avctx,
++                                                    QSVEncContext *q)
 +{
 +    q->pelorus_roi_mbqp_enabled = qsvenc_pelorus_roi_mbqp_attached(q);
++
++    if (q->pelorus_roi && !q->pelorus_roi_mbqp_enabled &&
++        !q->pelorus_roi_mbqp_warned) {
++        q->pelorus_roi_mbqp_warned = 1;
++        av_log(avctx, AV_LOG_WARNING,
++               "pelorus_roi: EnableMBQP is off after encoder initialization "
++               "(the QSV runtime cleared it, or an external CodingOption3 "
++               "replaced it); dense per-block ROI is unavailable, falling "
++               "back to per-region mfxExtEncoderROI rectangles.\n");
++    }
 +}
 +
 +static int qsvenc_pelorus_roi_frame_uses_mbqp(const AVCodecContext *avctx,
@@ -68,7 +84,7 @@ index c79db08..cb7247f 100644
  static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
  {
      enum AVPixelFormat sw_format = avctx->pix_fmt == AV_PIX_FMT_QSV ?
-@@ -956,9 +1006,37 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
+@@ -956,9 +1022,37 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
      case MFX_RATECONTROL_ICQ:
          q->param.mfx.ICQQuality  = av_clip(avctx->global_quality, 1, 51);
          break;
@@ -106,7 +122,7 @@ index c79db08..cb7247f 100644
      // are provided. Can't find the extract libmfx version which fixed it, just enable it from
      // V1.28 in order to keep compatibility security.
      if (((avctx->codec_id != AV_CODEC_ID_HEVC) || QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 28))
-@@ -1117,6 +1195,15 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
+@@ -1117,6 +1211,15 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
          q->extco3.Header.BufferId      = MFX_EXTBUFF_CODING_OPTION3;
          q->extco3.Header.BufferSz      = sizeof(q->extco3);
 -
@@ -123,7 +139,7 @@ index c79db08..cb7247f 100644
          if (avctx->codec_id == AV_CODEC_ID_HEVC ||
              avctx->codec_id == AV_CODEC_ID_H264) {
              switch (q->p_strategy) {
-@@ -1820,11 +1907,15 @@ int ff_qsv_enc_init(AVCodecContext *avctx, QSVEncContext *q)
+@@ -1820,11 +1923,15 @@ int ff_qsv_enc_init(AVCodecContext *avctx, QSVEncContext *q)
      ret = MFXVideoENCODE_Init(q->session, &q->param);
      if (ret < 0)
          return ff_qsv_print_error(avctx, ret,
@@ -134,13 +150,13 @@ index c79db08..cb7247f 100644
 -
 +
 +#if QSV_HAVE_MBQP
-+    qsvenc_pelorus_roi_update_mbqp_enabled(q);
++    qsvenc_pelorus_roi_update_mbqp_enabled(avctx, q);
 +#endif
 +
      switch (avctx->codec_id) {
      case AV_CODEC_ID_MJPEG:
          ret = qsv_retrieve_enc_jpeg_params(avctx, q);
-@@ -2133,6 +2224,163 @@ static void print_interlace_msg(AVCodecContext *avctx, QSVEncContext *q)
+@@ -2133,6 +2240,163 @@ static void print_interlace_msg(AVCodecContext *avctx, QSVEncContext *q)
      }
  }
  
@@ -304,7 +320,7 @@ index c79db08..cb7247f 100644
  static int set_roi_encode_ctrl(AVCodecContext *avctx, const AVFrame *frame,
                                 mfxEncodeCtrl *enc_ctrl)
  {
-@@ -2469,7 +2717,7 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
+@@ -2469,7 +2733,7 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
      mfxFrameSurface1 *surf = NULL;
      QSVFrame *qsv_frame = NULL;
      mfxEncodeCtrl* enc_ctrl = NULL;
@@ -314,7 +330,7 @@ index c79db08..cb7247f 100644
 +
      if (frame) {
          ret = submit_frame(q, frame, &qsv_frame);
-@@ -2521,7 +2769,30 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
+@@ -2521,7 +2785,30 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
          q->set_encode_ctrl_cb(avctx, frame, enc_ctrl);
      }
  
@@ -346,7 +362,7 @@ index c79db08..cb7247f 100644
           avctx->codec_id == AV_CODEC_ID_H265) &&
           enc_ctrl && QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 8)) {
          ret = set_roi_encode_ctrl(avctx, frame, enc_ctrl);
-@@ -2634,7 +2905,11 @@ static int update_parameters(AVCodecContext *avctx, QSVEncContext *q,
+@@ -2634,7 +2921,11 @@ static int update_parameters(AVCodecContext *avctx, QSVEncContext *q,
      av_log(avctx, AV_LOG_DEBUG, "Parameter change, call msdk reset.\n");
      ret = MFXVideoENCODE_Reset(q->session, &q->param);
      if (ret < 0)
@@ -354,7 +370,7 @@ index c79db08..cb7247f 100644
 -
 +
 +#if QSV_HAVE_MBQP
-+    qsvenc_pelorus_roi_update_mbqp_enabled(q);
++    qsvenc_pelorus_roi_update_mbqp_enabled(avctx, q);
 +#endif
 +
      return 0;
@@ -379,7 +395,7 @@ index 4bc77f2..5d54e12 100644
  #if defined(_WIN32) || defined(__CYGWIN__)
  #define QSV_HAVE_AVBR   1
  #define QSV_HAVE_VCM    1
-@@ -265,6 +274,18 @@ typedef struct QSVEncContext {
+@@ -265,6 +274,19 @@ typedef struct QSVEncContext {
      char *load_plugins;
      SetEncodeCtrlCB *set_encode_ctrl_cb;
      int forced_idr;
@@ -393,6 +409,7 @@ index 4bc77f2..5d54e12 100644
 +     * frames: EncodeFrameAsync keeps it live until the frame completes. */
 +    int pelorus_roi;
 +    int pelorus_roi_mbqp_enabled; ///< final attached EnableMBQP is ON
++    int pelorus_roi_mbqp_warned;  ///< EnableMBQP-cleared fallback warned once
 +    int roi_warned;            ///< rate-limit ext-buffer-slot warnings to once
 +    int roi_interlaced_warned; ///< rate-limit per-frame fallback warnings to once
      int low_delay_brc;

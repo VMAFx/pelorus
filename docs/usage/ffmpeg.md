@@ -159,7 +159,13 @@ quantised into up to 8 AV1 segments (`MAX_SEGMENTS`); each segment carries a
 more bits, matching the `qoffset` sign). Segment 0 is the zero-delta background,
 so superblocks no region covers keep the encoder's default decision. The map is
 attached per frame via SVT-AV1's `ROI_MAP_EVENT` private-data node and
-`enable_roi_map` is turned on at init.
+`enable_roi_map` is turned on at init. SVT-AV1 never copies or frees the event
+(it keeps the bare pointer, and a frame without an ROI node inherits the last
+one), so the encoder owns each event and frees it once a newer event has
+replaced it and the frames before that newer event are encoded (judged from the
+packet count with a 128-frame margin). Memory stays flat over the stream length
+instead of growing per frame; `-v verbose` prints the built and peak-live event
+counts at close.
 
 Use **constant-quality** (`-crf` / `-qp`); SVT-AV1's own variance AQ can override
 the segment map, and VBR rate-control redistribution erodes the win (same caveat

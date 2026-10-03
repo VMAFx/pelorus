@@ -1030,3 +1030,22 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   bit-exact versus the input.
 - Other plane-loop shaders (`deblock`, `aa`) keep the early-return pattern and
   are not covered by this change.
+
+
+## Fix wave 2026-10-03 — QSV EnableMBQP warning, SVT-AV1 ROI event reclamation (regenerates 0005, 0013)
+
+- **Patches**: `0005` (qsv ROI) and `0013` (SVT-AV1 ROI); no registration or
+  numbering change. Sources: `files/qsv-pelorus-roi.patch`,
+  `files/svtav1-pelorus-roi.patch`.
+- **qsv**: `qsvenc_pelorus_roi_update_mbqp_enabled()` now takes `avctx` and
+  logs once when `pelorus_roi` is on but the final attached CodingOption3 has
+  `EnableMBQP` off; `QSVEncContext` gains `pelorus_roi_mbqp_warned`. Re-verify
+  that `ff_qsv_enc_init()` / `update_parameters()` still call it after
+  `MFXVideoENCODE_Init` / `Reset`.
+- **svtav1**: `SvtContext.roi_evts` is now a queue of `{event, input index}`
+  slots, reclaimed from `eb_receive_packet()` and before each append. It relies
+  on SVT-AV1 internals that must be re-read on a bump: `ROI_MAP_EVENT` data is
+  never copied or freed by the library (`enc_handle.c`, `rc_process.c`),
+  `enc_ctx->roi_map_evt` is sticky across frames
+  (`resource_coordination_process.c`), packets leave in decode order and the
+  mini-GOP is at most 64 frames. Checked against SVT-AV1 v2.3.0 and v4.2.0.
