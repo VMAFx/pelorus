@@ -112,10 +112,13 @@ test('vulkan-sample-scale',
      suite: 'fast')
 
 # ADR-0115: the grain estimator reduces fixed-point samples with uint32 atomics.
-# Prove the maximum per-slice sum remains representable at DCI 8K.
+# Prove the maximum per-slice sum remains representable at DCI 8K, and that
+# the rounded fixed-point path matches a float reference on one-code-value grain
+# (ADR-0161). --self-test plants defects and requires each to be rejected.
 test('grain-accumulator-bounds',
      python_prog,
-     args: [meson.project_source_root() / 'scripts' / 'test-grain-accumulator-bounds.py'],
+     args: [meson.project_source_root() / 'scripts' / 'test-grain-accumulator-bounds.py',
+            '--self-test'],
      workdir: meson.project_source_root(),
      suite: 'fast')
 
