@@ -68,7 +68,9 @@
         "tools/figures/mkdocs_hook.py",
         "tools/figures/astro.mjs",
         "tools/figures/serve.mjs",
-        "tools/figures/README.md"
+        "tools/figures/README.md",
+        ".devcontainer/devcontainer.json",
+        ".devcontainer/Dockerfile.praetor"
       ],
       "enabled": false
     }

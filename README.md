@@ -205,8 +205,8 @@ If Pelorus is useful to you: [GitHub Sponsors](https://github.com/sponsors/lusor
 
 ## Standards & Governance
 
-Pelorus adopts the Praetor/HISS policy at engine commit `25451d88` with a
-62-finding legacy baseline (31 HISS-01, one HISS-02, 28 HISS-04, two HISS-07).
+Pelorus adopts the Praetor/HISS policy at engine commit `bf815ba5` with a
+99-finding legacy baseline (31 HISS-01, two HISS-02, 28 HISS-04, 38 HISS-07).
 Canonical agent guidance lives in `AGENTS.md`; generated vendor contexts are
 checked for drift, and a locked Markdown gate lints the public documentation.
 The hosted Standards and Documentation Governance workflows run both on every
@@ -248,9 +248,9 @@ generated agent context against `AGENTS.md`.
 private scratch-link policy.
 
 **Debt Baseline**: `.standards-baseline.json` anchors the debt ratchet at
-62 recorded infractions; audit forbids growth.
+99 recorded infractions; audit forbids growth.
 
-[praetor-hiss-badge]: https://img.shields.io/badge/Standards-HISS%20Adopted%20(62%20baselined)-yellow
+[praetor-hiss-badge]: https://img.shields.io/badge/Standards-HISS%20Adopted%20(99%20baselined)-yellow
 [praetor-hiss-agents]: https://github.com/VMAFx/pelorus/blob/HEAD/AGENTS.md
 [praetor-docs-badge]: https://github.com/VMAFx/pelorus/actions/workflows/praetor-docs.yml/badge.svg
 [praetor-docs-runs]: https://github.com/VMAFx/pelorus/actions/workflows/praetor-docs.yml

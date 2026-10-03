@@ -27,6 +27,9 @@
 /.bench-corpus/
 /bench-out/
 
+# npm install of the locked documentation gate (make docs-lint)
+node_modules/
+
 # Python bytecode cache (bench harness)
 __pycache__/
 *.pyc
