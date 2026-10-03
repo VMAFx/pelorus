@@ -27,18 +27,18 @@ is emitted otherwise).
 
 Requires the ffnvcodec headers' qpDeltaMap support (guarded; no-ops without it).
 ---
- libavcodec/nvenc.c      | 135 ++++++++++++++++++++
- libavcodec/nvenc.h      |  15 +++
+ libavcodec/nvenc.c      | 149 ++++++++++++++++++++
+ libavcodec/nvenc.h      |  15 ++
  libavcodec/nvenc_av1.c  |   2 +
  libavcodec/nvenc_h264.c |   2 +
  libavcodec/nvenc_hevc.c |   2 +
- 5 files changed, 156 insertions(+)
+ 5 files changed, 170 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index 9203fb65c05f8261de396ca02ebca411329e4dce..e8063a70b88d9961de99df04a03f08b65422c1f3 100644
+index 9203fb65c05f8261de396ca02ebca411329e4dce..0bb1516ed57db83dd5ca3d4198864ee84290196a 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
-@@ -993,6 +993,25 @@ static av_cold int nvenc_recalc_surfaces(AVCodecContext *avctx)
+@@ -993,6 +993,39 @@ static av_cold int nvenc_recalc_surfaces(AVCodecContext *avctx)
      return 0;
  }
  
@@ -61,10 +61,24 @@ index 9203fb65c05f8261de396ca02ebca411329e4dce..e8063a70b88d9961de99df04a03f08b6
 +    }
 +}
 +
++/* Pelorus: delta-QP span that an AVRegionOfInterest.qoffset of +/-1 maps to.
++ * NVENC adds each qpDeltaMap entry to the rate-control QP in the codec's own
++ * QP units, the same units as constqp/qmin/qmax: H.264/HEVC QP follows the
++ * libx264 convention 51 + 6*(bit_depth-8), while AV1 uses the 0..255 qindex at
++ * every bit depth (as vaapi_encode_av1.c and d3d12va_encode.c do). The map is
++ * int8, so an AV1 delta beyond [-128, 127] saturates; the analyze filter's
++ * default roi_strength (0.333, about 85 qindex) stays inside that range. */
++static int pelorus_roi_qp_range(enum AVCodecID codec_id, int bit_depth)
++{
++    if (codec_id == AV_CODEC_ID_AV1)
++        return 255;
++    return 51 + 6 * (bit_depth - 8);
++}
++
  static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
  {
      NvencContext *ctx = avctx->priv_data;
-@@ -1065,6 +1084,28 @@ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
+@@ -1065,6 +1098,28 @@ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
          av_log(avctx, AV_LOG_VERBOSE, "Temporal AQ enabled.\n");
      }
  
@@ -93,7 +107,7 @@ index 9203fb65c05f8261de396ca02ebca411329e4dce..e8063a70b88d9961de99df04a03f08b6
      if (ctx->rc_lookahead > 0) {
          int lkd_bound = FFMIN(ctx->nb_surfaces, ctx->async_depth) -
                          ctx->encode_config.frameIntervalP - 4;
-@@ -2062,6 +2103,7 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
+@@ -2062,6 +2117,7 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
      av_frame_free(&ctx->frame);
  
      av_freep(&ctx->sei_data);
@@ -101,7 +115,7 @@ index 9203fb65c05f8261de396ca02ebca411329e4dce..e8063a70b88d9961de99df04a03f08b6
  
      if (ctx->nvencoder) {
          p_nvenc->nvEncDestroyEncoder(ctx->nvencoder);
-@@ -2953,6 +2995,95 @@ static int nvenc_set_mastering_display_data(AVCodecContext *avctx, const AVFrame
+@@ -2953,6 +3009,95 @@ static int nvenc_set_mastering_display_data(AVCodecContext *avctx, const AVFrame
  }
  #endif
  
@@ -110,10 +124,10 @@ index 9203fb65c05f8261de396ca02ebca411329e4dce..e8063a70b88d9961de99df04a03f08b6
 + * in reverse so that the *first* region in the list wins on overlap, each
 + * AVRegionOfInterest.qoffset (an AVRational in [-1, +1], negative asks for
 + * better quality / lower QP) is scaled by the codec QP range and clamped, then
-+ * written to every block the region's pixel rectangle covers. The qp_range
-+ * convention matches libx264 (51 + 6*(bit_depth-8)); NVENC qpDeltaMap entries
-+ * are signed bytes applied on top of the rate-control QP, so the 8-bit range is
-+ * +/-51 for H.264/HEVC, comfortably within int8.
++ * written to every block the region's pixel rectangle covers. NVENC applies the
++ * signed-byte qpDeltaMap entries on top of the rate-control QP in the codec's
++ * own QP units, so the span one qoffset unit maps to is per codec (H.264/HEVC
++ * QP or AV1 qindex; see pelorus_roi_qp_range()).
 + *
 + * On success points pic_params->qpDeltaMap/qpDeltaMapSize at the scratch buffer
 + * (qpDeltaMapSize is an *entry count*, i.e. bytes, not a dimension). If the
@@ -131,7 +145,7 @@ index 9203fb65c05f8261de396ca02ebca411329e4dce..e8063a70b88d9961de99df04a03f08b6
 +    int mby = ctx->qp_delta_map_h;
 +    int blk = pelorus_roi_block_size(avctx->codec->id);
 +    int bit_depth = av_pix_fmt_desc_get(ctx->data_pix_fmt)->comp[0].depth;
-+    int qp_range = 51 + 6 * (bit_depth - 8);
++    int qp_range = pelorus_roi_qp_range(avctx->codec->id, bit_depth);
 +
 +    if (!ctx->pelorus_roi || !ctx->qp_delta_map)
 +        return 0;
@@ -197,7 +211,7 @@ index 9203fb65c05f8261de396ca02ebca411329e4dce..e8063a70b88d9961de99df04a03f08b6
  static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
  {
      NVENCSTATUS nv_status;
-@@ -3088,6 +3219,10 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3088,6 +3233,10 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
          if (res < 0)
              return res;
  

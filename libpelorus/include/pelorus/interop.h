@@ -230,9 +230,9 @@ typedef struct PelorusFilmGrainSection {
     int32_t ar_coeff_lag;             /* AV1: coeff count = 2*lag*(lag+1)      */
     int32_t ar_coeff_shift;           /* AV1 [6,9]                            */
     int32_t grain_scale_shift;        /* AV1                                   */
-    int32_t uv_mult[2];               /* AV1                                   */
-    int32_t uv_mult_luma[2];          /* AV1                                   */
-    int32_t uv_offset[2];             /* AV1 9-bit [-256,255]                  */
+    int32_t uv_mult[2];               /* AV1 [-128,127] (coded value - 128)    */
+    int32_t uv_mult_luma[2];          /* AV1 [-128,127] (coded value - 128)    */
+    int32_t uv_offset[2];             /* AV1 [-256,255] (coded value - 256)    */
     uint8_t apply;                    /* 1 => producer recommends grain synth   */
     uint8_t chroma_scaling_from_luma; /* AV1                                  */
     uint8_t overlap_flag;             /* AV1                                   */
