@@ -46,11 +46,11 @@ Lets Pelorus's measured banding-ROI (vf_pelorus_analyze roi=1, ADR-0114 Tier 0)
 steer SVT-AV1 bit allocation through the same standard ROI side data the merged
 analyze filter already emits -- no new producer. ADR-0121.
 ---
- libavcodec/libsvtav1.c | 324 ++++++++++++++++++++
- 1 file changed, 324 insertions(+)
+ libavcodec/libsvtav1.c | 381 ++++++++++++++++++++
+ 1 file changed, 381 insertions(+)
 
 diff --git a/libavcodec/libsvtav1.c b/libavcodec/libsvtav1.c
-index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..6eaf9a9e38b78b82f359d131dd16758dd88fa968 100644
+index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..9e6e856b839c333984c9941f61641b97af3bef35 100644
 --- a/libavcodec/libsvtav1.c
 +++ b/libavcodec/libsvtav1.c
 @@ -50,6 +50,14 @@ typedef enum eos_status {
@@ -68,7 +68,7 @@ index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..6eaf9a9e38b78b82f359d131dd16758d
  typedef struct SvtContext {
      const AVClass *class;
  
-@@ -75,6 +83,48 @@ typedef struct SvtContext {
+@@ -75,6 +83,56 @@ typedef struct SvtContext {
      int enc_mode;
      int crf;
      int qp;
@@ -102,7 +102,14 @@ index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..6eaf9a9e38b78b82f359d131dd16758d
 +     * has been encoded. Packets leave the library in decode order, one per
 +     * shown frame, and a mini-GOP is at most 64 frames, so after P packets all
 +     * frames with input index < P - 64 are done; we reclaim with a margin of
-+     * twice that. The newest event is never reclaimed before close. */
++     * twice that. The newest event is never reclaimed before close.
++     *
++     * Because the event is sticky, a frame without ROI data (or with a map that
++     * resolves to all-zero deltas) would silently inherit the previous frame's
++     * ROI. SVT-AV1 documents no reset call, so on the first such frame after a
++     * non-neutral event we submit a neutral event (all-zero segment map, zero
++     * delta) that replaces the sticky one; later frames inherit that neutral map
++     * and need no event of their own. */
 +    int pelorus_roi;
 +#if SVT_AV1_CHECK_VERSION(1, 6, 0)
 +    struct PelorusSvtRoiSlot *roi_evts; ///< live ROI events, oldest first
@@ -111,13 +118,14 @@ index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..6eaf9a9e38b78b82f359d131dd16758d
 +    uint64_t         roi_npackets; ///< packets received from the encoder
 +    uint64_t         roi_nbuilt;   ///< ROI events built (stats)
 +    int              roi_peak;     ///< peak live events (stats)
++    int              roi_sticky;   ///< the library's sticky ROI event is non-neutral
 +    unsigned int     roi_b64_cols; ///< superblocks across = ceil(width  / 64)
 +    unsigned int     roi_b64_rows; ///< superblocks down   = ceil(height / 64)
 +#endif
  } SvtContext;
  
  static const struct {
-@@ -505,6 +555,23 @@ static av_cold int eb_enc_init(AVCodecContext *avctx)
+@@ -505,6 +563,23 @@ static av_cold int eb_enc_init(AVCodecContext *avctx)
          return ret;
      }
  
@@ -141,7 +149,7 @@ index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..6eaf9a9e38b78b82f359d131dd16758d
      svt_ret = svt_av1_enc_set_parameter(svt_enc->svt_handle, &svt_enc->enc_params);
      if (svt_ret != EB_ErrorNone) {
          return svt_print_error(avctx, svt_ret, "Error setting encoder parameters");
-@@ -551,6 +618,212 @@ static av_cold int eb_enc_init(AVCodecContext *avctx)
+@@ -551,6 +626,261 @@ static av_cold int eb_enc_init(AVCodecContext *avctx)
      return alloc_buffer(&svt_enc->enc_params, svt_enc);
  }
  
@@ -185,6 +193,66 @@ index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..6eaf9a9e38b78b82f359d131dd16758d
 +    svt_enc->roi_nevts -= dead;
 +}
 +
++/* Pelorus: queue an event on roi_evts (reclaimed by svtav1_reclaim_roi_evts(),
++ * the rest freed in eb_enc_close()) and record whether it is the non-neutral
++ * sticky one. Takes ownership of evt on success only. */
++static int svtav1_push_roi_evt(SvtContext *svt_enc, SvtAv1RoiMapEvt *evt,
++                               int neutral)
++{
++    struct PelorusSvtRoiSlot *tmp;
++
++    svtav1_reclaim_roi_evts(svt_enc);
++    tmp = av_realloc_array(svt_enc->roi_evts,
++                           (size_t)svt_enc->roi_nevts + 1, sizeof(*tmp));
++    if (!tmp)
++        return AVERROR(ENOMEM);
++    svt_enc->roi_evts = tmp;
++    svt_enc->roi_evts[svt_enc->roi_nevts].evt = evt;
++    svt_enc->roi_evts[svt_enc->roi_nevts].seq = svt_enc->roi_nframes;
++    svt_enc->roi_nevts++;
++    svt_enc->roi_nbuilt++;
++    if (svt_enc->roi_nevts > svt_enc->roi_peak)
++        svt_enc->roi_peak = svt_enc->roi_nevts;
++    svt_enc->roi_sticky = !neutral;
++    return 0;
++}
++
++/* Pelorus: a frame without usable ROI data must not inherit the sticky event of
++ * an earlier frame. When the sticky event is non-neutral, build and queue a
++ * neutral one (every superblock in segment 0, zero delta); otherwise nothing
++ * to do (*out_evt stays NULL). */
++static int svtav1_neutral_roi_evt(SvtContext *svt_enc, int64_t pts,
++                                  SvtAv1RoiMapEvt **out_evt)
++{
++    SvtAv1RoiMapEvt *evt;
++    uint8_t *seg_map;
++    int ret;
++
++    *out_evt = NULL;
++    if (!svt_enc->roi_sticky)
++        return 0;
++
++    evt     = av_mallocz(sizeof(*evt));
++    seg_map = av_calloc((size_t)svt_enc->roi_b64_cols * svt_enc->roi_b64_rows,
++                        sizeof(*seg_map));
++    if (!evt || !seg_map) {
++        av_free(seg_map);
++        av_free(evt);
++        return AVERROR(ENOMEM);
++    }
++    evt->start_picture_number = pts >= 0 ? (uint64_t)pts : 0;
++    evt->b64_seg_map          = seg_map;
++    evt->max_seg_id           = 0;
++    evt->next                 = NULL;
++    ret = svtav1_push_roi_evt(svt_enc, evt, 1);
++    if (ret < 0) {
++        svtav1_free_roi_evt(evt);
++        return ret;
++    }
++    *out_evt = evt;
++    return 0;
++}
++
 +/* Pelorus: rasterize AV_FRAME_DATA_REGIONS_OF_INTEREST into one SvtAv1RoiMapEvt
 + * for this frame and push it onto svt_enc->roi_evts (reclaimed by
 + * svtav1_reclaim_roi_evts(), the rest freed in eb_enc_close()).
@@ -201,8 +269,9 @@ index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..6eaf9a9e38b78b82f359d131dd16758d
 + * no region covers keeps the encoder's default rate-control decision.
 + *
 + * On success attaches the event to *out_evt for the caller to wire into the
-+ * EbPrivDataNode. A frame with no ROI side data leaves *out_evt NULL, so the
-+ * encoder sees the unchanged frame qindex. */
++ * EbPrivDataNode. A frame with no usable ROI data gets a neutral event only
++ * when an earlier non-neutral one is still the library's sticky event; else
++ * *out_evt stays NULL and the encoder sees the unchanged frame qindex. */
 +static int svtav1_build_roi_evt(AVCodecContext *avctx, const AVFrame *frame,
 +                                SvtAv1RoiMapEvt **out_evt)
 +{
@@ -217,6 +286,7 @@ index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..6eaf9a9e38b78b82f359d131dd16758d
 +    size_t map_size = (size_t)cols * rows;
 +    uint32_t roi_size;
 +    int nb_rois, n_seg = 1; /* seg 0 == background (zero delta) */
++    int ret;
 +    const AVPixFmtDescriptor *desc;
 +    int bit_depth, qp_range;
 +    const int blk = PELORUS_SVTAV1_SB_SIZE;
@@ -227,7 +297,7 @@ index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..6eaf9a9e38b78b82f359d131dd16758d
 +
 +    sd = av_frame_get_side_data(frame, AV_FRAME_DATA_REGIONS_OF_INTEREST);
 +    if (!sd)
-+        return 0;
++        return svtav1_neutral_roi_evt(svt_enc, frame->pts, out_evt);
 +
 +    roi = (const AVRegionOfInterest *)sd->data;
 +    roi_size = roi->self_size;
@@ -309,11 +379,12 @@ index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..6eaf9a9e38b78b82f359d131dd16758d
 +    }
 +
 +    if (n_seg <= 1) {
-+        /* Every region resolved to delta 0 — a no-op all-background map; skip
-+         * the event rather than allocate + enqueue + hand the encoder nothing. */
++        /* Every region resolved to delta 0: an all-background map. Hand the
++         * encoder a neutral event only if it would otherwise keep an earlier
++         * non-neutral one. */
 +        av_free(seg_map);
 +        av_free(evt);
-+        return 0;
++        return svtav1_neutral_roi_evt(svt_enc, frame->pts, out_evt);
 +    }
 +
 +    evt->start_picture_number = frame->pts >= 0 ? (uint64_t)frame->pts : 0;
@@ -326,25 +397,11 @@ index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..6eaf9a9e38b78b82f359d131dd16758d
 +     * whole session via a separate array (the encoder keeps the pointer live
 +     * across the async pipeline). */
 +    evt->next = NULL;
-+    {
-+        struct PelorusSvtRoiSlot *tmp;
-+
-+        svtav1_reclaim_roi_evts(svt_enc);
-+        tmp = av_realloc_array(svt_enc->roi_evts,
-+                               (size_t)svt_enc->roi_nevts + 1,
-+                               sizeof(*tmp));
-+        if (!tmp) {
-+            av_free(seg_map);
-+            av_free(evt);
-+            return AVERROR(ENOMEM);
-+        }
-+        svt_enc->roi_evts = tmp;
-+        svt_enc->roi_evts[svt_enc->roi_nevts].evt = evt;
-+        svt_enc->roi_evts[svt_enc->roi_nevts].seq = svt_enc->roi_nframes;
-+        svt_enc->roi_nevts++;
-+        svt_enc->roi_nbuilt++;
-+        if (svt_enc->roi_nevts > svt_enc->roi_peak)
-+            svt_enc->roi_peak = svt_enc->roi_nevts;
++    ret = svtav1_push_roi_evt(svt_enc, evt, 0);
++    if (ret < 0) {
++        av_free(seg_map);
++        av_free(evt);
++        return ret;
 +    }
 +    *out_evt = evt;
 +    return 0;
@@ -354,7 +411,7 @@ index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..6eaf9a9e38b78b82f359d131dd16758d
  static int eb_send_frame(AVCodecContext *avctx, const AVFrame *frame)
  {
      SvtContext           *svt_enc = avctx->priv_data;
-@@ -613,11 +886,41 @@ static int eb_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+@@ -613,11 +943,41 @@ static int eb_send_frame(AVCodecContext *avctx, const AVFrame *frame)
          return AVERROR_INVALIDDATA;
      }
  
@@ -396,7 +453,7 @@ index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..6eaf9a9e38b78b82f359d131dd16758d
      return 0;
  }
  
-@@ -730,6 +1033,13 @@ static int eb_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
+@@ -730,6 +1090,13 @@ static int eb_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
      memcpy(pkt->data, headerPtr->p_buffer, headerPtr->n_filled_len);
      memset(pkt->data + headerPtr->n_filled_len, 0, AV_INPUT_BUFFER_PADDING_SIZE);
  
@@ -410,7 +467,7 @@ index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..6eaf9a9e38b78b82f359d131dd16758d
      pkt->size = headerPtr->n_filled_len;
      pkt->pts  = headerPtr->pts;
      pkt->dts  = headerPtr->dts;
-@@ -784,6 +1094,18 @@ static av_cold int eb_enc_close(AVCodecContext *avctx)
+@@ -784,6 +1151,18 @@ static av_cold int eb_enc_close(AVCodecContext *avctx)
      ff_dovi_ctx_unref(&svt_enc->dovi);
      av_freep(&svt_enc->stats_buf);
  
@@ -429,7 +486,7 @@ index 0bcc176243d4a810f8c3b0885928dd3c8a97b0d5..6eaf9a9e38b78b82f359d131dd16758d
      return 0;
  }
  
-@@ -828,6 +1150,8 @@ static const AVOption options[] = {
+@@ -828,6 +1207,8 @@ static const AVOption options[] = {
      { "qp", "Initial Quantizer level value", OFFSET(qp),
        AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 63, VE },
      { "svtav1-params", "Set the SVT-AV1 configuration using a :-separated list of key=value parameters", OFFSET(svtav1_opts), AV_OPT_TYPE_DICT, { 0 }, 0, 0, VE },

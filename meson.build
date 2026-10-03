@@ -197,6 +197,15 @@ test('nvenc-pelorus-mapping',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# SVT-AV1 keeps the last ROI event as a sticky pointer (BUG-030); the event
+# builder of patch 0013 must replace it with a neutral event when ROI data ends.
+test('svtav1-roi-sticky',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-svtav1-roi-sticky.py',
+            '--cc'] + meson.get_compiler('c').cmd_array(),
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 # vf_pelorus_mc_vulkan keeps its host-side MV arithmetic in a plain-C header
 # (ffmpeg-patches/files/pelorus_mc_stats.h): the Q2 -> integer-pel predictor
 # boundary (BUG-009) and the O(n) p95 select, proven bit-identical to the old
