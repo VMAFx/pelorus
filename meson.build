@@ -200,3 +200,17 @@ test('nvenc-pelorus-mapping',
             '--cc'] + meson.get_compiler('c').cmd_array(),
      workdir: meson.project_source_root(),
      suite: 'fast')
+
+# vf_pelorus_mc_vulkan keeps its host-side MV arithmetic in a plain-C header
+# (ffmpeg-patches/files/pelorus_mc_stats.h): the Q2 -> integer-pel predictor
+# boundary (BUG-009) and the O(n) p95 select, proven bit-identical to the old
+# O(n^2) scan (BUG-014). It has no libav* dependency, so it is tested here.
+if get_option('tests')
+  mc_stats_test = executable(
+    'pelorus_mc_stats_test',
+    files('ffmpeg-patches/test/mc_stats_test.c'),
+    include_directories: include_directories('ffmpeg-patches/files'),
+    dependencies: cc.find_library('m', required: false),
+  )
+  test('mc-stats', mc_stats_test, suite: 'fast')
+endif
