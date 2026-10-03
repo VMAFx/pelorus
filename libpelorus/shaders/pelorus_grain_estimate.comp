@@ -42,21 +42,21 @@ layout(binding = 0, r16ui) uniform readonly uimage2D srcImg;
 
 /* Signed lag-1 products are bias-encoded into uint atomics: each add stores
  * (prod + CORR_BIAS) so the unsigned accumulator never underflows; the host
- * subtracts corr_cnt*CORR_BIAS. prod is in [-1,1] -> CORR_BIAS = 1.0.
+ * subtracts corr_cnt*CORR_BIAS. Residuals are clamped to
+ * [-RES_CLAMP, RES_CLAMP] = [-0.08, 0.08], so prod is in
+ * [-RES_CLAMP^2, RES_CLAMP^2] -> CORR_BIAS = RES_CLAMP^2 = 0.0064.
  *
- * Two distinct fixed-point scales keep both uint32 accumulators from
- * overflowing up to 8K resolution while preserving precision for real grain.
- * Residuals are clamped to [-RES_CLAMP, RES_CLAMP] = [-0.08, 0.08] before
- * squaring — lossless for real grain (sensor/film grain stddev is well under
- * 0.08 of full scale; the clamp only caps edge-leakage outliers the edge gate
- * mostly removes already). With resid^2 <= 0.0064, the worst-case per-pixel
- * contribution times the largest per-slice flat-pixel count (~1.11M at DCI 8K)
- * stays under 2^32 at SUMSQ_GS=3e5 / CORR_GS=2000, and a small real-grain
- * residual still scales to >= 1 (no truncation-to-zero). */
+ * The clamp is lossless for real grain (sensor/film grain stddev is well under
+ * 0.08 of full scale; it only caps edge-leakage outliers the edge gate mostly
+ * removes already). Every per-pixel add is then at most 1921 fixed-point units
+ * at SUMSQ_GS=3e5 / CORR_GS=1.5e5, which times the largest per-slice pixel
+ * count (1105920 at DCI 8K) stays under 2^32. Each add is rounded to the
+ * nearest unit; truncation would bias every add by half a unit and swamp the
+ * small lag-1 products of real grain (ADR-0161). */
 layout(binding = 1, std430) buffer GrainBuf {
     uint sumsq[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES]; /* Σ resid^2 * SUMSQ_GS     */
     uint cnt[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES];   /* flat-pixel count per bin */
-    uint corr[PEL_GRAIN_SLICES];      /* Σ (resid*resid_right + 1.0) * CORR_GS  */
+    uint corr[PEL_GRAIN_SLICES];      /* Σ (resid*resid_right + BIAS) * CORR_GS */
     uint corr_cnt[PEL_GRAIN_SLICES];  /* lag-1 sample count                     */
 };
 
@@ -67,8 +67,8 @@ layout(push_constant, std430) uniform Params {
 } pc;
 
 const float SUMSQ_GS = 300000.0; /* resid^2 fixed point (overflow-safe to 8K)  */
-const float CORR_GS = 2000.0;    /* lag-1 product fixed point (overflow-safe)  */
-const float CORR_BIAS = 1.0;     /* lag-1 product bias (prod in [-1,1])        */
+const float CORR_GS = 150000.0;  /* lag-1 product fixed point (overflow-safe)  */
+const float CORR_BIAS = 0.0064;  /* lag-1 product bias = RES_CLAMP^2           */
 const float RES_CLAMP = 0.08;    /* residual clamp (lossless for real grain)   */
 
 float load_norm(int x, int y) {
@@ -110,7 +110,7 @@ void main() {
     uint slice = (uint(y) * uint(pc.width) + uint(x)) % uint(PEL_GRAIN_SLICES);
     uint bidx = uint(band) * uint(PEL_GRAIN_SLICES) + slice;
 
-    atomicAdd(sumsq[bidx], uint(resid * resid * SUMSQ_GS));
+    atomicAdd(sumsq[bidx], uint(resid * resid * SUMSQ_GS + 0.5));
     atomicAdd(cnt[bidx], 1u);
 
     /* lag-1 spatial correlation (AR proxy): only when the right neighbour is
@@ -129,7 +129,7 @@ void main() {
     if ((hiR - loR) <= pc.edge_thr) {
         float residR = clamp(cr - meanR, -RES_CLAMP, RES_CLAMP);
         float prod = resid * residR;
-        atomicAdd(corr[slice], uint((prod + CORR_BIAS) * CORR_GS));
+        atomicAdd(corr[slice], uint(max(prod + CORR_BIAS, 0.0) * CORR_GS + 0.5));
         atomicAdd(corr_cnt[slice], 1u);
     }
 }
