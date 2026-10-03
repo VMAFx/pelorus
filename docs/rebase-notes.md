@@ -85,6 +85,19 @@ patches (ADR-0108 deliverable #6).
   `h274_scale_y` 10, and AV1 `ar_coeffs_y` of about `{ -11 0 0 0 }` in
   `showinfo`.
 
+- **Shared consumer header (BUG-003/004/005/015)**:
+  `ffmpeg-patches/files/pelorus_sidedata.h` is installed into `libavfilter/` by
+  patch 0001 (beside `pelorus_vulkan_sample.h`) and included by
+  `vf_pelorus_analyze_vulkan.c` (0002), `vf_pelorus_denoise_vulkan.c` (0003) and
+  `vf_pelorus_scenecut.c` (0016). It replaces their first-entry
+  `av_frame_get_side_data(..., SEI_UNREGISTERED)` lookup with a newest-first scan
+  of every Pelorus blob, size-checks each motion/confidence field read, and
+  derives the denoise MC cell pitch from the producer block edge. On a rebase,
+  keep the `cp` line in `generate.sh`'s first loop iteration and the three
+  `#include "pelorus_sidedata.h"` lines. The helper is private to the patch
+  stack; libpelorus's public API and ABI are unchanged. Fast-suite regression:
+  `meson test -C build ffmpeg-sidedata-consumers`.
+
 The older sections below preserve the release and benchmark environment in
 which each change landed. Their unqualified gate names are historical
 shorthand; use the pinned commands above for all current rebases.
