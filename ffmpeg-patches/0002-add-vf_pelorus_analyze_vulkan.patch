@@ -42,10 +42,10 @@ docs/adr/0133-analyze-coarse-banding-cambi.md
  configure                                    |   3 +
  libavfilter/Makefile                         |   1 +
  libavfilter/allfilters.c                     |   1 +
- libavfilter/vf_pelorus_analyze_vulkan.c      | 856 ++++++++++++++++++++
+ libavfilter/vf_pelorus_analyze_vulkan.c      | 861 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |   1 +
  libavfilter/vulkan/pelorus_analyze.comp.glsl | 136 ++++
- 6 files changed, 998 insertions(+)
+ 6 files changed, 1003 insertions(+)
 
 diff --git a/configure b/configure
 index 00b13ed09edcf3fb2b44ff9d0bfbb4420f45c68e..aec9b3ae17deb53929fc15870fdaeb58db717c8f 100755
@@ -94,10 +94,10 @@ index 78a01c74a326700f3c6c4799906c5ae17b613830..c781df8365397465a0f8cb2c25ac4505
  extern const FFFilter ff_vf_perspective;
 diff --git a/libavfilter/vf_pelorus_analyze_vulkan.c b/libavfilter/vf_pelorus_analyze_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..a9e6cf19f5639d9d816e51133637151c936438c2
+index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1ce974a995
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_analyze_vulkan.c
-@@ -0,0 +1,856 @@
+@@ -0,0 +1,861 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -145,6 +145,7 @@ index 0000000000000000000000000000000000000000..a9e6cf19f5639d9d816e51133637151c
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
 +#include "libavutil/rational.h"
++#include "pelorus_sidedata.h"
 +#include "pelorus_vulkan_sample.h"
 +#include "vulkan_filter.h"
 +
@@ -646,16 +647,20 @@ index 0000000000000000000000000000000000000000..a9e6cf19f5639d9d816e51133637151c
 +        float texture = av_clipf(0.5f * FFMIN(gvar / 0.05f, 1.0f) + 0.5f * gedge, 0.0f, 1.0f);
 +        float motion = 0.0f;
 +        int scene_cut = 0;
-+        AVFrameSideData *sd = av_frame_get_side_data(frame, AV_FRAME_DATA_SEI_UNREGISTERED);
 +        const void *mp = NULL;
 +        size_t msz = 0;
 +        float craw, cema;
 +
-+        if (sd && pel_blob_find_section(sd->data, sd->size, PEL_SEC_MOTION,
-+                                        sizeof(PelorusMotionSection), &mp, &msz) == PEL_OK) {
++        /* Newest Pelorus blob carrying PEL_SEC_MOTION (every producer appends its
++         * own entry); msz is the producer/consumer minimum (R4), so each field is
++         * read only when an older, shorter producer section still covers it. */
++        if (pelorus_sd_find_section(frame, PEL_SEC_MOTION, sizeof(PelorusMotionSection), &mp,
++                                    &msz)) {
 +            const PelorusMotionSection *mo = mp;
-+            motion = av_clipf(mo->motion_magnitude_mean / 8.0f, 0.0f, 1.0f);
-+            scene_cut = mo->has_scene_cut ? 1 : 0;
++            if (PEL_SD_FIELD_OK(msz, PelorusMotionSection, motion_magnitude_mean))
++                motion = av_clipf(mo->motion_magnitude_mean / 8.0f, 0.0f, 1.0f);
++            if (PEL_SD_FIELD_OK(msz, PelorusMotionSection, has_scene_cut))
++                scene_cut = mo->has_scene_cut ? 1 : 0;
 +        }
 +
 +        craw = av_clipf(0.7f * texture + 0.3f * motion, 0.0f, 1.0f);

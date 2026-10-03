@@ -26,8 +26,8 @@ ADR: docs/adr/0126-scenecut-idr.md
  configure                         |   2 +
  libavfilter/Makefile              |   1 +
  libavfilter/allfilters.c          |   1 +
- libavfilter/vf_pelorus_scenecut.c | 111 ++++++++++++++++++++
- 4 files changed, 115 insertions(+)
+ libavfilter/vf_pelorus_scenecut.c | 108 ++++++++++++++++++++
+ 4 files changed, 112 insertions(+)
 
 diff --git a/configure b/configure
 index 021915e788bf3f971443131919f665036148b3b6..5f48b12e31eb76d3cae37489068aa5eac5f0dccb 100755
@@ -68,10 +68,10 @@ index 0ee727c8c38cefe87c4d23504c0e43ddd6f82554..d6632cc826123b6f1b3bbc93db698e80
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_scenecut.c b/libavfilter/vf_pelorus_scenecut.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..d80e73780b10195695b297d6bc6fe7a52e357855
+index 0000000000000000000000000000000000000000..0433eb18b757986f55b3ec867f6dfc35552df2d9
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_scenecut.c
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,108 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -112,6 +112,8 @@ index 0000000000000000000000000000000000000000..d80e73780b10195695b297d6bc6fe7a5
 +#include "filters.h"
 +#include "video.h"
 +
++#include "pelorus_sidedata.h"
++
 +#include <pelorus/interop.h>
 +
 +typedef struct PelorusScenecutContext {
@@ -125,23 +127,18 @@ index 0000000000000000000000000000000000000000..d80e73780b10195695b297d6bc6fe7a5
 +    PelorusScenecutContext *s = ctx->priv;
 +
 +    if (s->force_idr) {
-+        const AVFrameSideData *sd =
-+            av_frame_get_side_data(frame, AV_FRAME_DATA_SEI_UNREGISTERED);
++        const void *p = NULL;
++        size_t got = 0;
 +
-+        if (sd && sd->data && pel_blob_is_present(sd->data, sd->size)) {
-+            const void *p = NULL;
-+            size_t got = 0;
-+
-+            if (pel_blob_find_section(sd->data, sd->size, PEL_SEC_MOTION,
-+                                      sizeof(PelorusMotionSection), &p, &got) == PEL_OK
-+                && p != NULL
-+                && got >= offsetof(PelorusMotionSection, has_scene_cut)
-+                          + sizeof(uint8_t)) {
-+                const PelorusMotionSection *mo = p;
-+                if (mo->has_scene_cut) {
-+                    frame->pict_type = AV_PICTURE_TYPE_I;
-+                    frame->flags |= AV_FRAME_FLAG_KEY;
-+                }
++        /* Newest Pelorus blob carrying PEL_SEC_MOTION; a shorter (older) producer
++         * section is read field-by-field against `got`. */
++        if (pelorus_sd_find_section(frame, PEL_SEC_MOTION, sizeof(PelorusMotionSection), &p,
++                                    &got) &&
++            PEL_SD_FIELD_OK(got, PelorusMotionSection, has_scene_cut)) {
++            const PelorusMotionSection *mo = p;
++            if (mo->has_scene_cut) {
++                frame->pict_type = AV_PICTURE_TYPE_I;
++                frame->flags |= AV_FRAME_FLAG_KEY;
 +            }
 +        }
 +    }

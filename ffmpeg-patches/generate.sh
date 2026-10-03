@@ -188,6 +188,8 @@ for filter in deband analyze denoise; do
     # the same private libavfilter header.
     if [[ "$filter" == "deband" ]]; then
         cp "$FILES_DIR/pelorus_vulkan_sample.h" "$WORKTREE/libavfilter/"
+        # Shared consumer-side side-data lookup (analyze, denoise, scenecut).
+        cp "$FILES_DIR/pelorus_sidedata.h" "$WORKTREE/libavfilter/"
     fi
     cp "$FILES_DIR/vf_pelorus_${filter}_vulkan.c" "$WORKTREE/libavfilter/"
     install_vk_shader "$filter"

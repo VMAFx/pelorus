@@ -40,10 +40,10 @@ ADR: docs/adr/0112-temporal-denoise.md
  configure                                    |    3 +
  libavfilter/Makefile                         |    1 +
  libavfilter/allfilters.c                     |    1 +
- libavfilter/vf_pelorus_denoise_vulkan.c      | 1078 ++++++++++++++++++++
+ libavfilter/vf_pelorus_denoise_vulkan.c      | 1097 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |    1 +
  libavfilter/vulkan/pelorus_denoise.comp.glsl |  407 ++++++++
- 6 files changed, 1491 insertions(+)
+ 6 files changed, 1510 insertions(+)
 
 diff --git a/configure b/configure
 index aec9b3ae17deb53929fc15870fdaeb58db717c8f..c18161349c774eea0347f47effa8aa611e6b8771 100755
@@ -92,10 +92,10 @@ index c781df8365397465a0f8cb2c25ac450585938b01..a21da384818d0b64f4b5af635ae53e9a
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_denoise_vulkan.c b/libavfilter/vf_pelorus_denoise_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..a9b5b9dba3511c64740fde46b32a70118bedeca5
+index 0000000000000000000000000000000000000000..ed397be2fe696fc81fe41054162ad9798ed04c30
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_denoise_vulkan.c
-@@ -0,0 +1,1078 @@
+@@ -0,0 +1,1097 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -155,6 +155,7 @@ index 0000000000000000000000000000000000000000..a9b5b9dba3511c64740fde46b32a7011
 +#include "libavutil/mem.h"
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
++#include "pelorus_sidedata.h"
 +#include "pelorus_vulkan_sample.h"
 +#include "vulkan_filter.h"
 +
@@ -214,8 +215,8 @@ index 0000000000000000000000000000000000000000..a9b5b9dba3511c64740fde46b32a7011
 +        int32_t want_meta;      /* 1 => accumulate residual into the SSBO  @88 */
 +        int32_t grid_cols;      /* MV/conf grid cols (0 => no MC this frame)@92 */
 +        int32_t grid_rows;      /*                                         @96 */
-+        int32_t cell_w;         /* ceil(lumaW / grid_cols)                 @100*/
-+        int32_t cell_h;         /* ceil(lumaH / grid_rows)                 @104*/
++        int32_t cell_w;         /* producer block edge (luma px)           @100*/
++        int32_t cell_h;         /* producer block edge (luma px)           @104*/
 +        int32_t chroma_shift_w; /* log2_chroma_w (MV luma->plane scale)  @108*/
 +        int32_t chroma_shift_h; /*                                       @112*/
 +        float mv_scale;         /* stored MV -> luma px (0.25 = quarter-pel)@116*/
@@ -247,6 +248,7 @@ index 0000000000000000000000000000000000000000..a9b5b9dba3511c64740fde46b32a7011
 +     * parsed from PEL_SEC_MOTION / PEL_SEC_MOTION_CONF and uploaded as SSBOs. */
 +    AVBufferPool *mv_buf_pool;
 +    AVBufferPool *conf_buf_pool;
++    int mc_grid_warned; /* the unmappable-grid warning was logged once */
 +
 +    /* Causal previous-frame ring (clones — refcount bumps, no pixel copy). */
 +    AVFrame *ring[PEL_DENOISE_MAX_PREV];
@@ -604,20 +606,28 @@ index 0000000000000000000000000000000000000000..a9b5b9dba3511c64740fde46b32a7011
 +     * descriptor); grid_cols == 0 makes the shader take the same-coord path. */
 +    s->opts.grid_cols = 0;
 +    {
-+        AVFrameSideData *sd =
-+            s->mc ? av_frame_get_side_data(cur, AV_FRAME_DATA_SEI_UNREGISTERED) : NULL;
++        const AVFrameSideData *sd = NULL;
 +        const void *mp = NULL, *cp = NULL;
 +        size_t msz = 0, csz = 0;
 +        const uint8_t *mv_field = NULL, *conf_field = NULL;
-+        int gc = 0, gr = 0;
++        int gc = 0, gr = 0, pitch = 0;
 +        uint64_t cells = 0, ncells;
 +        uint64_t j;
 +
++        /* Newest Pelorus blob carrying PEL_SEC_MOTION (every producer appends its
++         * own SEI_UNREGISTERED entry, so av_frame_get_side_data's first entry can
++         * be another producer's). The confidence section and the grid dimensions
++         * must come from that same blob: the grid belongs to its header. */
++        if (s->mc)
++            sd = pelorus_sd_find_section(cur, PEL_SEC_MOTION, sizeof(PelorusMotionSection), &mp,
++                                         &msz);
 +        if (sd &&
-+            pel_blob_find_section(sd->data, sd->size, PEL_SEC_MOTION, sizeof(PelorusMotionSection),
-+                                  &mp, &msz) == PEL_OK &&
 +            pel_blob_find_section(sd->data, sd->size, PEL_SEC_MOTION_CONF,
-+                                  sizeof(PelorusMotionConfSection), &cp, &csz) == PEL_OK) {
++                                  sizeof(PelorusMotionConfSection), &cp, &csz) == PEL_OK &&
++            cp != NULL &&
++            /* A shorter (older) producer section must still cover every field read. */
++            PEL_SD_FIELD_OK(msz, PelorusMotionSection, mv_field_size) &&
++            PEL_SD_FIELD_OK(csz, PelorusMotionConfSection, conf_field_size)) {
 +            const PelorusMotionSection *mo = mp;
 +            const PelorusMotionConfSection *mcs = cp;
 +            const PelorusSideData *bh =
@@ -634,8 +644,17 @@ index 0000000000000000000000000000000000000000..a9b5b9dba3511c64740fde46b32a7011
 +                    sd->size &&
 +                (size_t)PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset + mcs->conf_field_size <=
 +                    sd->size) {
-+                mv_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mo->mv_field_offset;
-+                conf_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset;
++                /* The cell pitch is the producer's block edge, not ceil(W/gc). */
++                if (pelorus_mc_cell_pitch(out->width, out->height, gc, gr, &pitch)) {
++                    mv_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mo->mv_field_offset;
++                    conf_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset;
++                } else if (!s->mc_grid_warned) {
++                    s->mc_grid_warned = 1;
++                    av_log(vkctx, AV_LOG_WARNING,
++                           "motion grid %dx%d does not map to a unique block size for a %dx%d "
++                           "frame; motion compensation disabled for such frames\n",
++                           gc, gr, out->width, out->height);
++                }
 +            }
 +        }
 +
@@ -663,8 +682,8 @@ index 0000000000000000000000000000000000000000..a9b5b9dba3511c64740fde46b32a7011
 +            }
 +            s->opts.grid_cols = gc;
 +            s->opts.grid_rows = gr;
-+            s->opts.cell_w = (out->width + gc - 1) / gc;
-+            s->opts.cell_h = (out->height + gr - 1) / gr;
++            s->opts.cell_w = pitch;
++            s->opts.cell_h = pitch;
 +        } else {
 +            ((uint32_t *)mvbuf_vk->mapped_mem)[0] = 0;
 +            ((uint32_t *)confbuf_vk->mapped_mem)[0] = 0;

@@ -111,6 +111,18 @@ test('vulkan-sample-scale',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# BUG-003/004/005/015: the FFmpeg-side consumers scan every appended
+# SEI_UNREGISTERED blob (newest first), size-check older producers' sections per
+# field, and derive the motion-grid pitch from the producer block edge. The real
+# private header is compiled against a stub libavutil/frame.h (no FFmpeg tree).
+pelorus_sidedata_test = executable(
+  'pelorus_sidedata_test',
+  files('ffmpeg-patches/test/pelorus_sidedata_test.c'),
+  include_directories: include_directories('ffmpeg-patches/files', 'ffmpeg-patches/test/stub'),
+  dependencies: libpelorus_dep,
+)
+test('ffmpeg-sidedata-consumers', pelorus_sidedata_test, suite: 'fast')
+
 # ADR-0115: the grain estimator reduces fixed-point samples with uint32 atomics.
 # Prove the maximum per-slice sum remains representable at DCI 8K, and that
 # the rounded fixed-point path matches a float reference on one-code-value grain
