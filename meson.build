@@ -162,7 +162,6 @@ if build_machine.system() != 'windows'
        suite: 'fast')
 endif
 
-
 # BUG-007/008/013/025: shader plane loops must `continue` (yuva420p alpha), bayer8 must be
 # the canonical Bayer matrix, and borderfix clamp bounds must be order-safe.
 test('shader-plane-bounds',
@@ -171,14 +170,12 @@ test('shader-plane-bounds',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
-
 # BUG-028: deblock/aa plane loops must `continue` (yuva420p alpha stays written).
 test('shader-plane-continue',
      python_prog,
      args: [meson.project_source_root() / 'scripts' / 'test-shader-plane-continue.py'],
      workdir: meson.project_source_root(),
      suite: 'fast')
-
 
 # ADR-0155: pelorus_fgs defaults stay inside the SMPTE RDD 5 profile FFmpeg's H.274
 # synthesizer implements, emit explicit cutoffs and per-component intervals, and
@@ -189,7 +186,6 @@ test('fgs-bsf-contract',
             '--self-test'],
      workdir: meson.project_source_root(),
      suite: 'fast')
-
 
 # The NVENC hand diffs only compile inside an ffnvcodec-enabled FFmpeg build.
 # Compile their pure value mappings here: AV1 film-grain chroma biases (BUG-019)
@@ -214,7 +210,6 @@ if get_option('tests')
   )
   test('mc-stats', mc_stats_test, suite: 'fast')
 endif
-
 
 # BUG-016: the denoise meta=1 residual sums are per-workgroup uint32 partials
 # added into 64-bit slices. Prove the DCI 8K bounds and the fixed-point
