@@ -116,6 +116,39 @@ See [ADR-0147](adr/0147-vulkan-sample-domain-and-components.md) and the
 [research digest](research/0147-vulkan-storage-domain.md) for the reproduced
 pre-fix failures and derivation.
 
+## Unreleased — NVENC AV1 film-grain bias and ROI qindex span (regenerates 0004, 0008, 0011)
+
+- **Patches**: `0004` (nvenc ROI hand diff) and `0011` (nvenc film-grain hand
+  diff) change content. `0008` (nvenc ME hints) changes only its hunk offsets
+  and blob index, because `0004` adds 14 lines to `libavcodec/nvenc.c`.
+- **0011 (BUG-019)**: `NV_ENC_FILM_GRAIN_PARAMS_AV1` mirrors the AV1
+  `film_grain_params()` syntax elements, so `cbMult`/`cbLumaMult`/`crMult`/
+  `crLumaMult` take the raw `+128`-biased value and `cbOffset`/`crOffset` the raw
+  `+256`-biased value. `AVFilmGrainAOMParams` carries them unbiased (FFmpeg's
+  AV1 grain synthesis, the AFGS1 parser, and libdav1d's export all agree), so
+  `pel_fg_from_aom()` clamps to the signed range and adds the bias. FFmpeg's
+  native `av1dec.c` copies the raw coded values instead; a source decoded that
+  way into `-pelorus_film_grain` would be double-biased. Use libdav1d for
+  grain passthrough.
+- **0004 (BUG-020)**: `pelorus_roi_qp_range()` returns `51 + 6*(bit_depth-8)`
+  for H.264/HEVC and 255 for AV1. NVENC adds `qpDeltaMap` entries in the
+  codec's own QP units (AV1 qindex for `av1_nvenc`), and the int8 map
+  saturates larger AV1 deltas.
+- **Regression gate**: the fast-suite test `nvenc-pelorus-mapping`
+  (`scripts/test-nvenc-pelorus-mapping.py`) extracts `pel_fg_from_aom()` and
+  `pelorus_roi_qp_range()` from the hand diffs and runs them in a C harness,
+  using the installed ffnvcodec header when pkg-config finds it. Keep both
+  function names and their `static` top-level form when rebasing, or the
+  extractor fails loudly.
+- **Re-test after rebase**: build with `--enable-nvenc --enable-libdav1d`, then
+  on NVENC hardware (1) decode a libaom `film-grain-test=1` AV1 stream with
+  `-c:v libdav1d -export_side_data film_grain`, encode it with
+  `av1_nvenc -pelorus_film_grain 1`, and compare `trace_headers`
+  `cb_mult`/`cb_luma_mult`/`cb_offset` against the source; and (2) encode
+  `av1_nvenc -rc constqp -qp 160` with a full-frame `addroi` of
+  `qoffset=-40/255` and `-pelorus_roi 1`. Its size and PSNR must track a plain
+  `-qp 120` encode.
+
 ## v0.2.0 — FFmpeg base bump n8.1.1 → n9.0.1 (whole stack)
 
 The largest rebase so far: FFmpeg 9 removed the API the entire filter set was
