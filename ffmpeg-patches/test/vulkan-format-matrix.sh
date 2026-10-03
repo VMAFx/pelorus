@@ -381,6 +381,28 @@ pel_emit_raw 'denoise-tiled' yuv420p "$PEL_NOISY_SOURCE" "${PEL_DENOISE_BASE}:ti
 cmp -s "$PEL_OUTPUT_ROOT/denoise-direct.raw" \
     "$PEL_OUTPUT_ROOT/denoise-tiled.raw" || \
     pel_fail 'direct/tiled denoise mismatch'
+
+# BUG-027: tile=0 and tile=1 are separately specialized pipelines, so a driver
+# may optimize their arithmetic differently. Check bit-identity at 8/10/12-bit,
+# on semi-planar layouts and with motion-compensated taps, using the 320x192
+# configuration that exposed a 1-code drift on NVIDIA.
+PEL_TILE_SOURCE='testsrc2=size=320x192:rate=6:duration=1,noise=alls=14:allf=t+u:all_seed=11'
+PEL_TILE_DENOISE='pelorus_denoise_vulkan=prev=2:patch=3:sigma=0.1:strength=0.9'
+for PEL_TILE_CASE in yuv420p yuv420p10le p010le yuv420p12le p012le \
+    mc-yuv420p mc-p010le; do
+    PEL_TILE_FORMAT="${PEL_TILE_CASE#mc-}"
+    PEL_TILE_FILTER="$PEL_TILE_DENOISE"
+    if [[ "$PEL_TILE_CASE" == mc-* ]]; then
+        PEL_TILE_FILTER="pelorus_mc_vulkan=meta=1,${PEL_TILE_DENOISE}:mc=1:lookahead=1"
+    fi
+    for PEL_TILE in 0 1; do
+        pel_emit_raw "denoise-tile${PEL_TILE}-${PEL_TILE_CASE}" "$PEL_TILE_FORMAT" \
+            "$PEL_TILE_SOURCE" "${PEL_TILE_FILTER}:tile=${PEL_TILE}" 6
+    done
+    cmp -s "$PEL_OUTPUT_ROOT/denoise-tile0-${PEL_TILE_CASE}.raw" \
+        "$PEL_OUTPUT_ROOT/denoise-tile1-${PEL_TILE_CASE}.raw" || \
+        pel_fail "direct/tiled denoise mismatch: ${PEL_TILE_CASE}"
+done
 echo 'PASS: direct/tiled denoise equivalence'
 
 pel_emit_raw 'denoise-lookahead' yuv420p "$PEL_NOISY_SOURCE" \
