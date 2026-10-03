@@ -58,6 +58,33 @@ patches (ADR-0108 deliverable #6).
   init with a non-zero exit; and `intensity_low=200:intensity_high=10` fails
   init.
 
+## Unreleased — patch 0006 (grain estimator rounding and H.274 model 0)
+
+- **Patch**: `ffmpeg-patches/0006-add-vf_pelorus_grain_estimate_vulkan.patch`,
+  regenerated from `files/vf_pelorus_grain_estimate_vulkan.c`,
+  `files/vulkan/pelorus_grain_estimate.comp.glsl` and
+  `.commit-msg-grain_estimate.txt`
+  ([ADR-0161](adr/0161-grain-estimate-rounding-and-h274-mapping.md)). The
+  registration hunks, the descriptor layout and the push constants are
+  unchanged. The shader rounds each accumulator add, and the lag-1 bias and
+  scale changed in both sources (`scripts/test-grain-accumulator-bounds.py`
+  keeps them in step). The host code is split into goto-free helpers
+  (`init_filter`, `record_estimator`, `run_estimator`, `attach_estimate`) to
+  meet the HISS touched-file rule; the recorded command sequence is unchanged.
+  The unused `buf_content` string now states the real SSBO sizes.
+- **Rebase-sensitive upstream contract**: the H.274 calibration table in the
+  filter is derived from `libavcodec/h274.c` (grain tables, `init_slice_c()`,
+  the 8×8 generation and deblocking). If an FFmpeg bump touches that file, run
+  `FFMPEG_REPO=/path/to/ffmpeg scripts/gen-h274-grain-calibration.py --check`
+  and paste the regenerated table if it reports drift.
+  `ff_h274_film_grain_params_supported()` in `libavcodec/h274.h` (model 0,
+  8-bit 4:2:0) justifies the emitted model and log2 scale.
+- **Re-test after rebase**: on a Vulkan device, run the estimator with
+  `model=h274` on flat white Gaussian grain of two 8-bit code values and print
+  the metadata. Expect `grain_lag1` near −0.167, `h274_cutoff_h` 14 and
+  `h274_scale_y` 10, and AV1 `ar_coeffs_y` of about `{ -11 0 0 0 }` in
+  `showinfo`.
+
 The older sections below preserve the release and benchmark environment in
 which each change landed. Their unqualified gate names are historical
 shorthand; use the pinned commands above for all current rebases.

@@ -115,37 +115,31 @@ The BSF rejects a configuration it cannot write before the first packet:
 
 ## Mapping the estimator's output to the options
 
-`vf_pelorus_grain_estimate_vulkan` (`model=h274`) writes three H.274 mode
-scalars into the `PEL_SEC_FILMGRAIN` interop section: `h274_model_id`,
-`h274_blending_mode`, and `h274_log2_scale`. Do not copy `h274_model_id` (1)
-or `h274_log2_scale` (8) into this BSF. The estimator fits no auto-regression
-model, FFmpeg ignores model 1, and a scale factor of 8 attenuates the grain below
-one code value. Keep the defaults `model_id=0` and `log2_scale=2`;
-`h274_blending_mode` (0) matches the default.
+With `model=h274`, `vf_pelorus_grain_estimate_vulkan` emits the H.274 model-0
+values as frame metadata, named after the options they feed
+([ADR-0161](../adr/0161-grain-estimate-rounding-and-h274-mapping.md)):
 
-The section also carries a per-luma-band RMS residual: the normalized grain
-standard deviation at each of eight intensity bands. For the single-interval
-v0.x model, collapse it to one luma value:
+| Estimator metadata | Option |
+| --- | --- |
+| `lavfi.pelorus.h274_model_id` (0) | `model_id` |
+| `lavfi.pelorus.h274_log2_scale` (2) | `log2_scale` |
+| `lavfi.pelorus.h274_scale_y` | `scale_y` |
+| `lavfi.pelorus.h274_cutoff_h`, `lavfi.pelorus.h274_cutoff_v` | `cutoff_h`, `cutoff_v` ([ADR-0155](../adr/0155-fgs-bsf-rdd5-profile.md)) |
 
-1. `sigma` = `mean(band_rms) * strength * 255`: the grain standard deviation in
-   8-bit code values, using the same `strength` you passed to the estimator. For
-   10-bit streams multiply by 4, because model values use the stream's bit depth.
-   Use a band-weighted mean if grain is concentrated in a luma range, and set
-   `intensity_low`/`intensity_high` to that range.
-2. `scale_y` = `round(sigma * 2^log2_scale * 16 / (cutoff + 1))`, with
-   `cutoff` = `cutoff_h` = `cutoff_v`. H.274
-   equations (27) to (31) give model-0 grain a standard deviation of
-   `scale_y * sqrt((cutoff_h + 1) * (cutoff_v + 1)) / 16 / 2^log2_scale`. With
-   the defaults (`log2_scale=2`, both cutoffs 8) that is `scale_y ≈ 7 * sigma`,
-   and the default `scale_y=16` predicts 2.25 code values. FFmpeg's fixed-point
-   grain patterns at cutoff 8 are about 6% weaker than the formula, and the
-   measured result is 1.91 (see [Verification](#verification)).
-3. `scale_c` is the chroma counterpart; leave it at the default unless you
-   select `cb`/`cr` (the estimator derives chroma from luma by default).
+The `PEL_SEC_FILMGRAIN` section carries the same mode scalars
+(`h274_model_id` 0, `h274_blending_mode` 0, `h274_log2_scale` 2). The scale and
+cutoff come from a table calibrated against FFmpeg's own model-0 synthesizer, so
+FFmpeg's decoder reproduces the measured grain; the estimator's `strength`
+option does not apply to them. The values cover one full-range luma interval.
+Read them over a representative stretch of frames (for example the median),
+pass them as static options, and leave `scale_c` at its default unless you
+select `cb`/`cr` (the estimator derives chroma from luma). The measured round
+trip and its limits are in
+[grain_estimate.md](../metrics/grain_estimate.md#h274-model-0-mapping).
 
-This is an offline/manual mapping recipe, not code the BSF performs. These are
-guidance values, not a measured BD-rate-optimal mapping; tune against the vmafx
-encoded-VMAF oracle ([ADR-0106](../adr/0106-autotune-control-plane.md)).
+This is an offline/manual mapping, not code the BSF performs. The values
+reproduce the measured grain, not a BD-rate-optimal model; tune against the
+vmafx encoded-VMAF oracle ([ADR-0106](../adr/0106-autotune-control-plane.md)).
 
 ## Usage
 
@@ -156,9 +150,9 @@ ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
   -c:v libx265 -crf 28 grainless.hevc
 
 # 2. Insert the H.274 FGC SEI so a decoder re-synthesizes the grain.
-#    (scale_y comes from the estimate's per-band RMS; see the recipe above.)
+#    (Copy the estimator's lavfi.pelorus.h274_* metadata onto the options.)
 ffmpeg -i grainless.hevc -c:v copy \
-  -bsf:v "pelorus_fgs=scale_y=24:intensity_low=16:intensity_high=235" \
+  -bsf:v "pelorus_fgs=model_id=0:blending_mode=0:log2_scale=2:scale_y=10:intensity_low=0:intensity_high=255" \
   -f hevc out.hevc
 
 # FFmpeg applies H.274 grain when decoding; export it instead to decode clean:

@@ -117,6 +117,32 @@ All notable changes to Pelorus are documented here. The format is
   reference (BUG-025). New fast test `shader-plane-bounds`.
 - Hardened the repository scripts: `scripts/bench/fetch-corpus.sh` now downloads with `--fail`, a bounded deadline and a bounded retry into a temporary file that is checksum-verified before it replaces the cache (BUG-022); `ffmpeg-patches/generate.sh` requires exactly one `format-patch` output per series index instead of swallowing a failed rename (BUG-023); the remaining `|| true` sites in the replay, matrix, changelog and agent-hook scripts use explicit status handling; the FFmpeg replay scripts ignore global and system Git configuration and `GIT_COMMITTER_*`, with a checker that anchors the canonical `git am` command to a non-comment line; and the interop fixture checks owner-only access on the open descriptor, reports distinct failure causes and loops over short writes (Closes #65).
 - The build-config self-test (`scripts/check-build-config.py --self-test`) now drops the repository-locating Git variables (`git rev-parse --local-env-vars`) before its fixtures run. Started from a Git hook, it had inherited `GIT_DIR` and rewritten the invoking repository's `.git/config` (`core.bare`, `core.hooksPath`, `gpg.program`, `user.*`), branch refs and worktree list; `scripts/test-selftest-git-isolation.py` proves an invoking repository stays untouched.
+- Fixed `vf_pelorus_grain_estimate_vulkan`'s lag-1 correlation, which was
+  pinned at −1.0 for every input, so the AV1 parameters always carried
+  `ar_coeffs_y[0] = −64` (BUG-010). The lag-1 sum used a bias of 1.0 at a scale
+  of 2000 and truncated each add, and that bias swamped the product of real
+  grain residuals. Every accumulator add is now rounded to the nearest unit,
+  and the lag-1 product is stored with a bias of `0.08²` at a scale of 150000.
+  On Arc, NVIDIA and RADV the lag-1 coefficient is now within 0.004 of a float
+  reference (white grain gives about −0.167 and `ar_coeffs_y[0]` about −11), and
+  the per-band RMS within 1% (it read up to 5% low for light grain). AV1
+  estimates and `lavfi.pelorus.grain_sigma` therefore change slightly for
+  every input. The `grain-accumulator-bounds` fast test now also checks the
+  rounding and the precision against a float reference, and `--self-test`
+  plants nine defects
+  ([ADR-0161](docs/adr/0161-grain-estimate-rounding-and-h274-mapping.md)).
+- Fixed the estimator's H.274 output, which FFmpeg could not synthesize
+  (BUG-029). `PEL_SEC_FILMGRAIN` now carries `h274_model_id` 0 and
+  `h274_log2_scale` 2 (the SMPTE RDD 5 profile and the `pelorus_fgs` defaults)
+  instead of 1 and 8. With `model=h274`, the filter also emits
+  `lavfi.pelorus.h274_model_id`, `h274_log2_scale`, `h274_scale_y`,
+  `h274_cutoff_h` and `h274_cutoff_v`. Their scale and cutoff come from a table
+  calibrated against FFmpeg's `libavcodec/h274.c`
+  (`scripts/gen-h274-grain-calibration.py`). Through `pelorus_fgs` with
+  explicit cutoffs and FFmpeg's HEVC decoder, white grain of one to three code
+  values comes back within 4% of its source standard deviation. The new
+  `lavfi.pelorus.grain_lag1` key exposes the measured residual correlation
+  ([ADR-0161](docs/adr/0161-grain-estimate-rounding-and-h274-mapping.md)).
 - Fixed the `deblock` and `aa` Vulkan filters to write every plane on formats
   whose full-size plane follows a subsampled one (BUG-028). The `deblock`
   plane loop and the `aa` fast=0 loop ended the invocation at the first plane
