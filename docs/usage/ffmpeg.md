@@ -167,6 +167,16 @@ packet count with a 128-frame margin). Memory stays flat over the stream length
 instead of growing per frame; `-v verbose` prints the built and peak-live event
 counts at close.
 
+Because the library's last event is sticky, a frame that carries no ROI side data
+(or an ROI whose deltas all round to zero) would silently keep the previous
+frame's ROI. SVT-AV1 documents no reset call, so on the first such frame after a
+non-neutral event the encoder submits a neutral event (every superblock in
+segment 0, zero delta); the following frames inherit that neutral map. Measured
+with libsvtav1 4.2.0, CRF 30, 90 frames, ROI on the first 33 frames only: before
+the fix the remaining frames were byte-identical to an encode with the ROI on
+all frames (1130764 bytes); with the fix they match an encode without any ROI
+(2034761 vs 2036142 bytes).
+
 Use **constant-quality** (`-crf` / `-qp`); SVT-AV1's own variance AQ can override
 the segment map, and VBR rate-control redistribution erodes the win (same caveat
 as NVENC/QSV). The whole path is compile-gated by SVT-AV1 ≥ 1.6.0 (the release
