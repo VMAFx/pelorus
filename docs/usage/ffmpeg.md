@@ -301,8 +301,15 @@ graceful: AV1 is skipped (NVENC's AV1 path uses a different per-superblock hint
 struct), a device that reports no external-ME support warns once and passes
 through, and an FFmpeg built against ffnvcodec headers without the external-ME
 structs (pre-SDK-8.1) no-ops at init with a one-shot warning. If a frame carries
-no `PEL_SEC_MOTION` section the hint buffer is left unset for that frame, so
-NVENC runs its own search. On-hardware A/B (RTX 4090, `hevc_nvenc -preset p7`,
+no `PEL_SEC_MOTION` section (no `pelorus_mc_vulkan` in the chain, or a frame the
+filter produced no vectors for), the patch submits one zero-MV candidate per
+16×16 block for that frame and logs one warning per encoder instance. A session
+opened for external hints requires a populated hint buffer on every frame:
+submitting zero candidates fails the whole encode on the device (`EncodePicture
+failed!: invalid param (8): SetupCEAHints failed`, RTX 4090, driver 615.71.09),
+and the SDK documents no other "no hint" value. A zero-MV seed is neutral but not
+identical to hints-off: the ASIC still searches around the co-located block, so
+the stream differs from an encode without `-pelorus_me_hints`. On-hardware A/B (RTX 4090, `hevc_nvenc -preset p7`,
 1280×720, 600 frames): hints engaged but produced a ~2–3% *slowdown* (hints-off
 114 fps vs hints-on 110 fps) — the per-frame hint upload outweighs ME-search
 savings on Ada VDEnc at p7. Kept default off and documented as an honest negative

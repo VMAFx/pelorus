@@ -52,7 +52,7 @@
  
      if (ctx->nvencoder) {
          p_nvenc->nvEncDestroyEncoder(ctx->nvencoder);
-@@ -2956,3 +3000,207 @@
+@@ -2956,3 +3000,235 @@
 +/* Pelorus external ME hints -------------------------------------------------
 + *
 + * A vf_pelorus_mc_vulkan stage emits a per-block integer-pel motion-vector
@@ -185,9 +185,28 @@
 + * the producer uses (cur[pos] ~= ref[pos + mv]); the field is clamped to the
 + * NVENC bitfield ranges (mvx S12 [-2048,2047], mvy S10 [-512,511]).
 + *
-+ * If the frame carries no Pelorus motion section the hint buffer is left unset
-+ * for this frame (meHintCountsPerBlock stays zero), so NVENC runs its own
-+ * search and behaviour is unchanged. Returns 0 or a negative AVERROR. */
++ * A session opened with enableExternalMEHints requires a well-formed hint
++ * buffer on EVERY frame: a frame submitted with zero candidates per block fails
++ * the encode ("invalid param (8): SetupCEAHints failed", verified on an RTX 4090
++ * with driver 615.71.09), and the SDK headers document no "no hint" value other
++ * than a populated buffer. A frame that carries no Pelorus motion section
++ * therefore submits one zero-MV candidate per 16x16 block. That is a valid,
++ * neutral seed (the ASIC searches around the co-located block) and the encode
++ * proceeds; it is logged once. Returns 0 or a negative AVERROR. */
++static void nvenc_fill_zero_me_hints(NvencContext *ctx)
++{
++    for (int i = 0; i < ctx->me_hints_count; i++) {
++        NVENC_EXTERNAL_ME_HINT *h = &ctx->me_hints[i];
++
++        memset(h, 0, sizeof(*h));
++        h->refidx     = 0;
++        h->dir        = 0;   /* L0 */
++        h->partType   = 0;   /* 16x16 */
++        h->lastofPart = 1;
++        h->lastOfMB   = 1;
++    }
++}
++
 +static int nvenc_setup_me_hints(AVCodecContext *avctx, const AVFrame *frame,
 +                                NV_ENC_PIC_PARAMS *pic_params)
 +{
@@ -201,10 +220,19 @@
 +        return 0;
 +
 +    sd = av_frame_get_side_data(frame, AV_FRAME_DATA_SEI_UNREGISTERED);
-+    if (!sd)
++    if (!sd || pelorus_find_motion(sd->data, sd->size, &mv_field, &gc, &gr) < 0) {
++        if (!ctx->me_hints_absent_warned) {
++            ctx->me_hints_absent_warned = 1;
++            av_log(avctx, AV_LOG_WARNING,
++                   "pelorus_me_hints: a frame carries no Pelorus motion data; "
++                   "submitting zero-MV hints for such frames (reported once).\n");
++        }
++        nvenc_fill_zero_me_hints(ctx);
++        pic_params->meHintCountsPerBlock[0].numCandsPerBlk16x16 = 1;
++        pic_params->meHintCountsPerBlock[1].numCandsPerBlk16x16 = 0;
++        pic_params->meExternalHints = ctx->me_hints;
 +        return 0;
-+    if (pelorus_find_motion(sd->data, sd->size, &mv_field, &gc, &gr) < 0)
-+        return 0;
++    }
 +
 +    /* Producer block edge in luma px from the grid geometry it self-describes:
 +     * ceil(W/bsize) = gc => bsize ~= ceil(W/gc). Recover per-axis so a non-16
@@ -270,7 +298,7 @@
          pic_params.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
 --- a/libavcodec/nvenc.h
 +++ b/libavcodec/nvenc.h
-@@ -278,3 +278,20 @@
+@@ -278,3 +278,21 @@
 +
 +    /* Pelorus: external motion-vector hints fed to NVENC's hardware motion
 +     * search from the PEL_SEC_MOTION interop section a vf_pelorus_mc_vulkan
@@ -287,7 +315,8 @@
 +    int     me_hints_count;  ///< entries = me_hints_w * me_hints_h
 +    int     me_hints_w;      ///< 16x16 blocks across = ceil(width  / 16)
 +    int     me_hints_h;      ///< 16x16 blocks down  = ceil(height / 16)
-+    int     me_hints_warned; ///< rate-limit incompatibility/absence warnings to once
++    int     me_hints_warned; ///< rate-limit the AQ/lookahead note to once
++    int     me_hints_absent_warned; ///< rate-limit the "frame had no motion data" warning
  } NvencContext;
  
  int ff_nvenc_encode_init(AVCodecContext *avctx);
