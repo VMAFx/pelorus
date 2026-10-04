@@ -55,7 +55,7 @@ ADR: docs/adr/0118-nvenc-av1-filmgrain.md, docs/adr/0115-grain-estimate.md (prod
  3 files changed, 313 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index 193dc8b6b3222fbb23339e36064064a26a9c971b..6ab92e570783a2b56f8df56c013f0a26d651fb4d 100644
+index a6809de3422cdd27d1e5be7cfd6cdf8a6300ed61..28dc6dca1cc3083339451c7c50615de193323aac 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
 @@ -1689,6 +1689,31 @@ static av_cold int nvenc_setup_av1_config(AVCodecContext *avctx)
