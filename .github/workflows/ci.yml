@@ -4,12 +4,17 @@ on:
   push:
     branches: [master]
   pull_request:
+  # The Release workflow calls this file so a tag publishes only after the
+  # full CI matrix (FFmpeg stack, sanitizers, Windows, docs) is green.
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # In a called run the context is the caller's, so the workflow name keeps a
+  # Release call out of a push/PR run's group (no mutual cancellation).
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -155,6 +160,63 @@ jobs:
             -Dc_args=-fno-sanitize-recover=alignment
           meson test -C build-san --suite=fast --print-errorlogs
 
+  windows:
+    # ADR-0149: the native Windows leg. It exists for the Windows-only halves of
+    # the fast suite (the UTF-8 -> UTF-16 _wfopen path contract) and to keep
+    # libpelorus building warning-free with MinGW-w64 GCC on the UCRT runtime.
+    name: libpelorus (Windows · MSYS2 UCRT64 · fast suite)
+    runs-on: windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Check out without CRLF conversion
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install MSYS2 UCRT64 toolchain
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-meson
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-glslang
+            mingw-w64-ucrt-x86_64-shaderc
+      - name: Load build configuration
+        run: |
+          while IFS= read -r entry; do
+            case "$entry" in
+              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
+                printf '%s\n' "$entry" >> "$GITHUB_ENV"
+                ;;
+            esac
+          done < build-config.env
+      - name: Runner and toolchain receipt
+        run: |
+          echo "ImageOS=${ImageOS:-unset}"
+          echo "ImageVersion=${ImageVersion:-unset}"
+          echo "MSYSTEM=${MSYSTEM}"
+          uname -a
+          pacman -Q mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-meson mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-glslang mingw-w64-ucrt-x86_64-shaderc
+          gcc --version
+          meson --version
+          python3 --version
+          glslc --version
+          glslangValidator --version
+      - name: Configure + build
+        run: meson setup build && ninja -C build
+      - name: Test (fast suite, including the UTF-8 path contract)
+        run: meson test -C build --suite=fast --print-errorlogs
+      - name: UTF-8 path contract transcript
+        run: meson test -C build path-utf8 --verbose
+
   docs:
     name: docs + changelog + workflow hygiene
     runs-on: ubuntu-26.04
@@ -186,10 +248,10 @@ jobs:
             }
           done
           exit $missing
-      - name: Set up Go 1.26 for actionlint
+      - name: Set up Go for actionlint
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.x'
+          go-version: '1.27.x'
           cache: false
       - name: Validate workflow syntax
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12

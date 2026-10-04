@@ -14,6 +14,21 @@
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\nFFMPEG_REMOTE=https://github\\.com/FFmpeg/FFmpeg\\.git\\nFFMPEG_TAG=(?<currentValue>n\\d+\\.\\d+\\.\\d+)\\nFFMPEG_COMMIT=(?<currentDigest>[0-9a-f]{40})"
       ],
       "versioningTemplate": "regex:^n(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Bump the build-config checker's actionlint Go toolchain in the same renovate/go-<major>.x branch as ci.yml's setup-go go-version (mirrors Renovate's actions/setup-go known-action config)",
+      "managerFilePatterns": [
+        "/^scripts/check-build-config\\.py$/"
+      ],
+      "matchStrings": [
+        "ACTIONLINT_GO_VERSION = \"(?<currentValue>\\d+\\.\\d+\\.x)\""
+      ],
+      "depNameTemplate": "go",
+      "packageNameTemplate": "actions/go-versions",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "npm",
+      "extractVersionTemplate": "^(?<version>\\d+\\.\\d+\\.\\d+)(-\\d+)?$"
     }
   ],
   "packageRules": [
@@ -26,6 +41,38 @@
         "FFmpeg/FFmpeg"
       ],
       "pinDigests": true
+    },
+    {
+      "description": "praetor-managed files: praetorctl adopt ships their updates and praetorctl audit locks them byte for byte",
+      "matchFileNames": [
+        ".github/workflows/praetor-docs.yml",
+        "tools/markdownlint/package.json",
+        "tools/markdownlint/package-lock.json",
+        "tools/markdownlint/markdownlint-cli2.yaml",
+        "tools/markdownlint/verify.mjs",
+        "tools/markdownlint/no-private-scratch-links.mjs",
+        "tools/figures/core.mjs",
+        "tools/figures/checks.mjs",
+        "tools/figures/build.mjs",
+        "tools/figures/types.ts",
+        "tools/figures/third_party/interfig/vendor.json",
+        "tools/figures/third_party/interfig/VENDOR.md",
+        "tools/figures/third_party/interfig/upstream/LICENSE",
+        "tools/figures/third_party/interfig/upstream/src/svg.ts",
+        "tools/figures/third_party/interfig/upstream/src/geometry.ts",
+        "tools/figures/third_party/interfig/upstream/src/model.ts",
+        "tools/figures/dist/loader.js",
+        "tools/figures/dist/player.js",
+        "tools/figures/dist/THIRD-PARTY-LICENSES.txt",
+        "tools/figures/figures.css",
+        "tools/figures/mkdocs_hook.py",
+        "tools/figures/astro.mjs",
+        "tools/figures/serve.mjs",
+        "tools/figures/README.md",
+        ".devcontainer/devcontainer.json",
+        ".devcontainer/Dockerfile.praetor"
+      ],
+      "enabled": false
     }
   ]
 }

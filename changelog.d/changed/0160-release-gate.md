@@ -1,0 +1,1 @@
+- The release workflow now calls the full CI workflow (patch-stack replay and link, sanitizers, Windows, docs) and publishes only after it passes, and a tag push fails unless the tag equals the `meson.build` version; `scripts/check-build-config.py` enforces both (audit A14, A15).

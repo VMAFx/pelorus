@@ -146,8 +146,9 @@ encoder. A documented, retunable composition, not a new meta-filter. See
   sanitizer/compile-complete, on-Intel-HW proof pending;
   [ADR-0146](docs/adr/0146-qsv-roi-frame-ownership.md)),
   and the native **Vulkan-Video** encoders via `VK_KHR_video_encode_quantization_map`
-  (Tier 2, compile-verified; on-HW proof blocked by the dev box's driver
-  feedback-flag gap). The same map also steers **SVT-AV1** (`libsvtav1`) via its
+  (Tier 2; proven on an RTX 4090 for positive offsets, since that driver accepts
+  no negative delta; RADV disables it with a warning;
+  [ADR-0166](docs/adr/0166-vulkan-qpmap-activation.md)). The same map also steers **SVT-AV1** (`libsvtav1`) via its
   per-superblock ROI segment map (`SvtAv1RoiMapEvt`, ADR-0121, proven on hardware:
   CAMBI −1.5% at CRF 35, an honest modest gain on a mild synthetic source).
   Patches 0004 / 0005 / 0009 / 0012 (libaom) / 0013 (SVT-AV1).
@@ -202,3 +203,56 @@ FFmpeg when applied.
 
 If Pelorus is useful to you: [GitHub Sponsors](https://github.com/sponsors/lusoris)
 · [Ko-fi](https://ko-fi.com/lusoris).
+
+## Standards & Governance
+
+Pelorus adopts the Praetor/HISS policy at engine commit `0af07a73` with a
+56-finding legacy baseline (28 HISS-01, one HISS-02, 25 HISS-04, two HISS-07).
+Canonical agent guidance lives in `AGENTS.md`; generated vendor contexts are
+checked for drift, and a locked Markdown gate lints the public documentation.
+The hosted Standards and Documentation Governance workflows run both on every
+pull request; Standards also fails a baseline that grows against the target
+branch unless the increase carries a recorded reason. A local `make audit`
+stops at its final check until Praetor honours the declined `git-hooks` step;
+see [ADR-0145](docs/adr/0145-praetor-governance-adoption.md). The pinned
+install provides a binary named `standardsctl`; Praetor's generated text,
+including the block below, calls the same program `praetorctl`. Claude Code,
+Codex, and Gemini CLI sessions run Praetor's pre-tool command hook, so agent
+users also need a copy named `praetorctl` on `PATH`
+([CONTRIBUTING.md](CONTRIBUTING.md#governance-and-agent-contexts)).
+
+| Gate | Command | Description |
+| :--- | :--- | :--- |
+| **Native verification** | `make verify-native` | Builds, tests, formats, lints, and checks changelog rendering |
+| **Full verification** | `make verify-all` | Adds context, HISS, and documentation checks |
+| **HISS audit** | `make audit` | Applies the pinned 56-finding baseline ratchet |
+| **Documentation** | `make docs-lint docs-figures` | Runs the locked Markdown and figure checks (Node.js 22 or newer) |
+| **Context sync** | `make compile-context` | Compiles canonical agent guidance to vendor targets |
+
+<!-- praetor:readme-governance:start -->
+[![HISS Adopted][praetor-hiss-badge]][praetor-hiss-agents]
+[![Documentation Governance][praetor-docs-badge]][praetor-docs-runs]
+
+Praetor manages this repository's declared governance policy. This managed
+block records adoption state; it is not a verification certificate.
+
+**Verification**: `make verify-all` runs the repository's configured
+verification cascade.
+
+**HISS Audit**: `praetorctl audit` enforces policy, generated-surface
+integrity, and the debt ratchet.
+
+**Context Sync**: `praetorctl compile-context --verify` verifies every
+generated agent context against `AGENTS.md`.
+
+**Documentation**: `make docs-lint` enforces locked Markdown style and the
+private scratch-link policy.
+
+**Debt Baseline**: `.standards-baseline.json` anchors the debt ratchet at
+56 recorded infractions; audit forbids growth.
+
+[praetor-hiss-badge]: https://img.shields.io/badge/Standards-HISS%20Adopted%20(56%20baselined)-yellow
+[praetor-hiss-agents]: https://github.com/VMAFx/pelorus/blob/HEAD/AGENTS.md
+[praetor-docs-badge]: https://github.com/VMAFx/pelorus/actions/workflows/praetor-docs.yml/badge.svg
+[praetor-docs-runs]: https://github.com/VMAFx/pelorus/actions/workflows/praetor-docs.yml
+<!-- praetor:readme-governance:end -->

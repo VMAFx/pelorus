@@ -223,9 +223,9 @@ void main()
      * bounds-GUARDED rather than early-returned and the barriers stay
      * workgroup-uniform regardless of plane order.
      *
-     * fast=0: `if (!IS_WITHIN(pos, size)) return;` per plane, so the first
-     * plane that does not contain `pos` ends the invocation. Subsampled chroma
-     * is therefore skipped for positions only valid in luma, by design.
+     * fast=0: each plane is bounds-checked on its own and skipped with
+     * `continue`, so a later full-size plane (yuva420p alpha) is still
+     * written. No barriers on this path, so the skip is safe.
      *
      * `fast`, `planes` and `plane_mask` are specialization constants, so this
      * folds down to the single generated variant, as before. */
@@ -256,7 +256,7 @@ void main()
         for (uint i = 0; i < planes; i++) {
             size = imageSize(output_images[i]);
             if (!all(lessThan(pos, size)))
-                return;
+                continue;
 
             if ((plane_mask & (1u << i)) != 0u) {
                 vec4 texel = imageLoad(input_images[i], pos);

@@ -52,10 +52,41 @@ remain in whole luma pixels. The shipped shader is
 a second shipped implementation. Luma loads are converted to the logical
 sample domain before SAD evaluation.
 
+### MV units
+
+The search itself runs on the integer luma-pel grid; only its output is
+refined to quarter-pel. Each MV-carrying field therefore has a fixed unit:
+
+| Field | Unit |
+| --- | --- |
+| shader output `mv_x[]` / `mv_y[]` | Q2 quarter-pel luma |
+| `PEL_SEC_MOTION` grid | Q2 quarter-pel luma, `int16` |
+| `PelorusMotionSection` scalars | luma pixels (`float`) |
+| shader input `prev_mv[]`, push constants `gpred_x` / `gpred_y`, `search` | integer luma pel |
+
+The host is the single conversion point. When it rolls a frame's Q2 field into
+the next frame's predictors it rounds each vector to integer pel, half away from
+zero (the rounding the NVENC ME-hint consumer applies to the same grid), and
+rounds the exact mean the same way for the global predictor. The helpers live
+in `ffmpeg-patches/files/pelorus_mc_stats.h`, and the `mc-stats` fast test
+covers them. Before this conversion existed, the host returned the Q2 values
+unchanged, and the search read them as whole pixels, four times too far
+(BUG-009).
+
+### Host-side cost
+
+After each dispatch the host copies the MV and SAD buffers out of device-local
+mapped memory with one sequential copy per buffer. Every later pass (frame
+scalars, confidence grid, predictors) then reads cached host memory. The copy
+targets and the p95 scratch are allocated when the block grid first appears or
+grows, never per frame in steady state. `motion_magnitude_p95` is an O(n) radix
+select over the non-negative magnitudes, bit-identical to the earlier O(n²)
+counting scan (BUG-014).
+
 ## Options
 
 | Option | Default | Range | Meaning |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `bsize` | 16 | 8–32 | motion-estimation block edge in luma pixels |
 | `search` | 24 | 1–256 | max search radius per axis in luma pixels |
 | `meta` | on | bool | attach the `PEL_SEC_MOTION` interop section (the MV field + scalars) |
@@ -69,7 +100,7 @@ is a product for any Vulkan GPU, not tuned to one device.
 The estimator reads the source luma; place it after `hwupload` and before any
 pixel-modifying stage so its MVs describe the frames the encoder will see:
 
-```
+```text
 hwupload → pelorus_analyze → pelorus_mc → pelorus_denoise → pelorus_deband → (hwdownload) → encoder
 ```
 
@@ -91,8 +122,9 @@ appended after it (the `vf_pelorus_analyze` map-payload convention):
 
 - `global_motion_x` / `global_motion_y` — mean block MV (pixels).
 - `motion_magnitude_mean`, `motion_magnitude_p95` — MV magnitude mean and 95th
-  percentile (the p95 is the robust pan/scene-cut signal; prefer it over the
-  mean, which is diluted by aperture-ambiguous flat blocks).
+  percentile in pixels; the p95 is the `ceil(0.95 × N)`-th smallest block
+  magnitude. The p95 is the robust pan/scene-cut signal; prefer it over the
+  mean, which is diluted by aperture-ambiguous flat blocks.
 - `motion_entropy` — normalized mean deviation of block MVs from the global MV
   (0 = rigid global motion, higher = complex / independent block motion).
 - `has_scene_cut` — set when the mean residual SAD is high (no good match
@@ -117,22 +149,52 @@ warp and NVENC ME-hint consumers.
   are aperture-ambiguous (a range of displacements gives near-equal SAD) and settle
   at a small wrong MV, diluting the *mean*. Use `motion_magnitude_p95` or weight by
   per-block SAD rather than trusting the raw global mean for magnitude.
+- **Start-up and large search radii.** Frame 1 has only the zero predictor, so a
+  pan wider than the texture's correlation length needs a few frames to lock on
+  through the temporal predictor. The global predictor is the plain mean, so
+  wrong blocks pull it off the true pan; with `search=48` the 5 px pan below
+  needed about 20 frames to converge.
 
-## Verification (this PR)
+## Verification
 
-Direction verified on synthetic pans of a static textured still
-(`mandelbrot`, looped, `crop`-translated), `bsize=16 search=48`, on a Vulkan
-device:
+Measured with a noise-textured still (`testsrc2` + uniform noise + `gblur`,
+looped), translated by `crop` with a known per-frame shift, 1920×1080 NV12,
+30 frames, on an RTX 4090. "Exact" is the share of interior blocks whose Q2
+vector equals the true shift; "steady" averages frames 10–29. Before is the
+filter without the BUG-009 predictor conversion.
 
-| Fixture | Expected | Observed `global_motion` (steady state) |
-|---|---|---|
-| crop pans right 10 px/frame (content moves left) | `dx > 0` | `(+7, +2)` |
-| crop pans left 10 px/frame | `dx < 0` | `(−7, +1)` |
-| static (no pan) | `(0, 0)` | `(0, 0)` exactly |
+| Pan (px/frame) | Options | Before: exact / mean vector | After: exact / mean vector |
+| --- | --- | --- | --- |
+| (2, 0) | `bsize=16:search=24` | 83.6% / (1.73, 0.03) | 99.8% / (2.00, 0.00) |
+| (6, 0) | `bsize=16:search=24` | 30.0% / (7.87, 6.15) | 99.8% / (6.00, 0.00) |
+| (10, 0) | `bsize=16:search=24` | 63.0% / (10.52, 0.36) | 99.8% / (10.00, 0.00) |
+| (3, −2) | `bsize=16:search=24` | 20.8% / (6.30, −5.91) | 99.9% / (3.00, −2.00) |
+| (7, 3) | `bsize=16:search=24` | 6.2% / (7.62, 7.15) | 98.6% / (6.92, 2.96) |
+| (2, 0) | `bsize=8:search=24` | 52.1% / (1.67, 0.00) | 99.7% / (2.00, 0.00) |
+| (5, 0) | `bsize=16:search=48` | 16.6% / (−11.46, 13.25) | 86.1% / (3.02, −0.03) |
+| static | `bsize=16:search=24` | 100% / (0, 0) | 100% / (0, 0) |
 
-The sign is correct in every case and static is exact; the magnitude (≈7 vs the
-true 10) under-reads as documented above (mean dilution on the mandelbrot's flat
-interior). This is the GPU producer's expected behaviour for an ME *seed*.
+Over the same frames the mean per-block confidence rose from 218–249 to
+249–255, and a hard cut spliced at frame 15 was flagged on that frame alone,
+both before and after. The `search=48` case reaches 99.8% at frame 21 and 100%
+from frame 22 (see the scope note above). The emitted p95 equals an O(n²) recomputation from the
+emitted grid on every frame.
+
+Wall time per frame (`ffmpeg -benchmark` rtime, median of interleaved before
+and after runs, whole pipeline including source generation and upload). The
+two values are two benchmark sessions on a shared host:
+
+| Grid | Before | After |
+| --- | --- | --- |
+| 1080p, `bsize=16` (8160 blocks) | 30.1 / 41.9 ms | 4.5 / 3.0 ms |
+| 1080p, `bsize=8` (32400 blocks) | 157.0 / 182.6 ms | 11.5 / 9.4 ms |
+| 2160p, `bsize=8` (129600 blocks) | 1340.8 / 1570.3 ms | 56.3 / 45.7 ms |
+
+Almost all of the old cost was host-side: the O(n²) p95 scan and element-wise
+reads of the mapped GPU buffers.
+
+The earlier mandelbrot pan check, which read about 7 px for a 10 px pan, was
+taken with the 4× predictor error and is superseded by the table above.
 
 ## Usage
 

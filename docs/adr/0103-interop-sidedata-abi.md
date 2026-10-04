@@ -35,7 +35,7 @@ explicit: a consumer reads `min(producer_size, its_known_size)` per section
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `SEI_UNREGISTERED` + project UUID | Standard escape hatch; round-trips the graph; coexists with other SEIs; no FFmpeg patch | Consumer must iterate side-data and UUID-match (only first is returned by helper) | **Chosen** |
 | New `AVFrameSideDataType` enum value | Cleaner typing | Requires patching libavutil; creates an ABI fork; not portable to a stock FFmpeg | Avoided |
 | `AVFrame.metadata` (AVDictionary) | Survives the graph | String-keyed, stringified, not zero-copy for binary per-cell maps | Wrong for binary map data |

@@ -52,7 +52,7 @@ filter's inline GLSL stay in lockstep (AGENTS hard rule 4).
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Causal NLM-lite + gated temporal (this) | No latency/flush; edge-preserving; cheap; prerequisite-free | Static-region gain only (no MC) | **Chosen** — best gain/risk for a first kernel |
 | Centred window (atadenoise model, prev/cur/next) | Symmetric taps | Forces 1-frame latency + a `request_frame` EOF flush | Rejected — needless complexity for a pre-encode pass |
 | Motion-compensated temporal | Cleans moving regions too | Needs the optical-flow / ME pass (build-order step 5) first; warp-artifact failure modes | Deferred to `vf_pelorus_mc` |

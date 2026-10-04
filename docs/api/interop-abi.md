@@ -85,6 +85,33 @@ it to an `AVBufferRef` with a free callback that calls `pel_blob_free` (do **not
 `av_free` it — allocator mismatch). `pel_blob_find_section` returns a pointer
 into the blob (no copy) and the readable byte count `min(producer, consumer)`.
 
+### Chained producers (several blobs on one frame)
+
+`av_frame_new_side_data_from_buf` appends; it never merges or replaces. A frame
+that passed through several Pelorus producers (for example `pelorus_mc`, then
+`pelorus_analyze`, then `pelorus_denoise`) therefore carries one
+`AV_FRAME_DATA_SEI_UNREGISTERED` entry per producer, each with its own header and
+grid. `av_frame_get_side_data` returns only the first one.
+
+Pelorus's FFmpeg consumers (`pelorus_analyze`, `pelorus_denoise` motion
+compensation, `pelorus_scenecut`) use `pelorus_sd_find_section`
+(`ffmpeg-patches/files/pelorus_sidedata.h`): scan all entries **newest first**
+and take the section from the newest valid Pelorus blob that contains it. Read
+the grid (`grid_cols`/`grid_rows`) from that same blob, never from another one.
+Every field read is guarded by the readable size (R4): a section written by an
+older, shorter producer is read only as far as `got` covers
+(`PEL_SD_FIELD_OK(got, Type, field)`).
+
+`pelorus_denoise` maps the motion grid back to pixels with the producer's block
+edge, recovered from the frame size and the grid
+(`pelorus_mc_cell_pitch`: the single `bsize` in 8..32 with
+`ceil(W/b) == grid_cols` and `ceil(H/b) == grid_rows`). `PelorusMotionSection`
+carries no block-size field. On small frames several block sizes can fit (a
+96x64 frame with a 6x4 grid fits 16 to 19). When the `vf_pelorus_mc` default
+(`bsize=16`) is one of them, it is assumed and a warning saying so is logged
+once. If nothing fits, or the ambiguity excludes the default, motion
+compensation is skipped for that frame and a warning is logged once.
+
 ### QP-report reader stub (closed loop)
 
 `pel_qp_report_from_blocks` folds an encoder's per-block actual-QP grid onto the
@@ -123,25 +150,105 @@ stability tag as the rest of this header — append-only; signatures do not chan
 incompatibly. They are *consumer* helpers and touch no wire layout (the
 `PELORUS_ABI_MINOR` is unchanged by their addition).
 
+**Path encoding** ([ADR-0149](../adr/0149-windows-utf8-paths.md)): `path` is a
+NUL-terminated **UTF-8** string on every platform, never the Windows ANSI code
+page. On POSIX the bytes go to `fopen` unchanged (byte-for-byte the earlier
+behavior: no validation, so a non-UTF-8 byte name still opens). On Windows the
+reader converts the path strictly to UTF-16 (`MultiByteToWideChar` with
+`MB_ERR_INVALID_CHARS`) and opens it with `_wfopen`, so the result does not depend
+on the active code page. It adds no `\\?\` prefix: to exceed `MAX_PATH`, pass an
+extended-length path such as `\\?\C:\very\long\x265.csv` (backslashes, absolute),
+or opt the host process into long paths. A path ends at its first NUL; there is
+no length argument, so an embedded NUL cannot be expressed. Windows hosts that
+receive paths as UTF-16 (`wmain`, `CommandLineToArgvW`, the shell) convert them
+with `WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, ...)` first, as the
+`pelorus_qp_report` tool does.
+
 **Ownership / lifetime**: `out_frames` (parse) and `frames` + `out_section`
-(fold) are caller-owned and caller-allocated; the functions write into them,
-allocate nothing on the heap, and retain no reference. `pel_x265_csv_parse` opens
-and closes the file itself (it uses only bounded stack buffers internally).
+(fold) are caller-owned and caller-allocated; the functions write into them and
+retain no reference. `pel_x265_csv_parse` opens and closes the file itself and
+uses bounded stack buffers; on Windows only, it also makes one temporary heap
+copy of the path in UTF-16 (at most 64 KiB), which it frees before returning on
+every path. `pel_qp_report_from_x265_frames` allocates nothing.
 `requested_qp`, when non-NULL, must hold `nb` entries in the same order as
 `frames`.
 
 **Thread-safety**: neither function holds global or static state, so concurrent
-calls are safe as long as buffers do not alias. `pel_x265_csv_parse` performs its
-own `fopen`/`fgets`/`fclose` on a private `FILE *`, so two concurrent calls on the
-same *path* are safe (independent streams); the caller must not share one open
-`FILE *` across them (the function never accepts one).
+calls are safe as long as buffers do not alias. `pel_x265_csv_parse` opens,
+reads and closes a private `FILE *` of its own (`fopen` on POSIX, `_wfopen` on
+Windows), so two concurrent calls on the same *path* are safe (independent
+streams); the caller must not share one open `FILE *` across them (the function
+never accepts one). The Windows UTF-16 path copy is allocated and freed within
+the one call and is never shared between calls.
 
 Return codes (`pel_result`): `pel_x265_csv_parse` returns `PEL_OK`,
-`PEL_ERR_INVALID` (NULL args / `cap == 0`), `PEL_ERR_ABSENT` (file missing, or no
-header with recognizable `QP` + `Bits` columns), or `PEL_ERR_RANGE` (more frame
-rows than `cap` — `out_count` is clamped to `cap`, the parsed rows are still
-usable). `pel_qp_report_from_x265_frames` returns `PEL_OK` or `PEL_ERR_INVALID`
-(NULL `frames`/`out_section`, or `nb == 0`).
+`PEL_ERR_INVALID` (NULL args / `cap == 0`; on Windows also a path that is not
+well-formed UTF-8), `PEL_ERR_ABSENT` (the file cannot be opened, or no header
+with recognizable `QP` + `Bits` columns), `PEL_ERR_NOMEM` (Windows only: the
+UTF-16 path copy could not be allocated), `PEL_ERR_TRUNCATED` (a read error
+mid-file), or `PEL_ERR_RANGE` (more frame rows than `cap` — `out_count` is
+clamped to `cap`, the parsed rows are still usable).
+`pel_qp_report_from_x265_frames` returns `PEL_OK` or `PEL_ERR_INVALID` (NULL
+`frames`/`out_section`, or `nb == 0`).
+
+What `pel_x265_csv_parse` leaves in `*out_count` depends on where it stopped:
+
+| Result | `*out_count` |
+| --- | --- |
+| `PEL_ERR_INVALID` from argument validation (NULL `path`/`out_frames`/`out_count`, `cap == 0`) | not written (the caller's value is kept) |
+| `PEL_ERR_INVALID` (ill-formed UTF-8), `PEL_ERR_ABSENT`, `PEL_ERR_NOMEM` | 0 |
+| `PEL_ERR_TRUNCATED` | the rows parsed before the read error (they are in `out_frames`) |
+| `PEL_ERR_RANGE` | `cap` |
+| `PEL_OK` | the rows parsed |
+
+Treat any result other than `PEL_OK` and `PEL_ERR_RANGE` as a failed read.
+ADR-0149 added two results a caller may not have branched on before, both on
+Windows only: `PEL_ERR_INVALID` for an ill-formed UTF-8 path and
+`PEL_ERR_NOMEM`.
+
+On Windows the path checks run in a fixed order, so the result depends only on
+the bytes, never on the code page or locale:
+
+| Check (Windows) | Result | `errno` |
+| --- | --- | --- |
+| more than 98301 bytes (3 × 32767; cannot be any Windows path), not decoded | `PEL_ERR_ABSENT` | `ENAMETOOLONG` |
+| ill-formed UTF-8: stray/truncated sequence, overlong form, encoded surrogate, > U+10FFFF | `PEL_ERR_INVALID` | `EILSEQ` |
+| more than 32767 UTF-16 code units | `PEL_ERR_ABSENT` | `ENAMETOOLONG` |
+| UTF-16 copy allocation fails | `PEL_ERR_NOMEM` | `ENOMEM` |
+| `_wfopen` fails (missing, denied, bad name, …) | `PEL_ERR_ABSENT` | as set by `_wfopen` |
+
+On POSIX, every `fopen` failure is `PEL_ERR_ABSENT` with `errno` as `fopen` set
+it, exactly as before ADR-0149. `errno` is diagnostic only: the `pel_result` is
+the contract.
+
+## Conformance fixture files (ADR-0148)
+
+The shared fixture (`libpelorus/test/interop_test.c`, which VMAFx vendors as
+`core/test/test_pelorus_interop.c`) writes a few small files into the test's
+working directory: `pelorus_x265_csv_test.csv` for the x265 CSV reader, and
+`pelorus_fixture_*.tmp` for its own file-safety regression. Every one is
+created exclusively and owner-only, and removed before the test returns.
+
+| Property | POSIX | Windows |
+|---|---|---|
+| Creation | `open(O_CREAT\|O_EXCL\|O_NOFOLLOW\|O_CLOEXEC, 0600)` | `CreateFileA(CREATE_NEW, FILE_FLAG_OPEN_REPARSE_POINT)` |
+| Access from the first open | mode `0600`; asserted under `umask(0)` | protected DACL `D:P(A;;FA;;;OW)`, owner only; nothing inherited |
+| Existing file, link, or dangling link at the name | refused (`EEXIST`); target untouched | refused (`ERROR_FILE_EXISTS`); target untouched |
+| Link cases in the regression | always run | need Developer Mode or `SeCreateSymbolicLinkPrivilege`; skipped with a note otherwise |
+
+If a killed run leaves one of these files behind, the next run fails with
+`exclusive create refused (stale file from an aborted run?)`. The test never
+deletes a file it did not create, so remove the named file by hand.
+
+Build requirements for a consumer compiling the fixture: on glibc the body
+needs POSIX.1-2008 declarations. The Pelorus target passes
+`-D_POSIX_C_SOURCE=200809L`; VMAFx's `_GNU_SOURCE` also works. On Windows it
+links `advapi32`, which Meson's default `c_winlibs` provides; MSVC also gets it
+through `#pragma comment(lib, "advapi32.lib")`. After a Pelorus change to the
+fixture, VMAFx re-pins `PELORUS_VENDOR_SHA` and re-vendors with
+`scripts/sync-pelorus-interop.sh --update`. The rendered mirror is byte-identical
+to the Pelorus body except for the include rewrite; see
+[research digest 0148](../research/0148-owner-only-exclusive-test-fixtures.md).
 
 ## Stability rules (normative — see interop.h)
 

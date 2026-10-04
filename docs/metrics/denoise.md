@@ -46,7 +46,7 @@ All thresholds are normalized in `[0,1]`, independent of bit depth. Per-plane
 options follow the `{Y, Cb, Cr}` split.
 
 | Option | Default | Range | Meaning |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `sigma` | 0.03 | 0–0.5 | luma spatial range sigma (edge sensitivity) |
 | `sigmac` | 0.04 | 0–0.5 | chroma spatial range sigma |
 | `sigmat` | 0.05 | 0–0.5 | temporal gate bandwidth |
@@ -61,7 +61,7 @@ options follow the `{Y, Cb, Cr}` split.
 | `planes` | 0xF | bitmask | physical planes to process; a selected semi-planar chroma plane contains both U and V |
 | `meta` | off | bool | attach the `PEL_SEC_DENOISE` interop section (adds one GPU→host readback) |
 | `mc` | off | bool | motion-compensated temporal taps: warp the temporal fetch by an upstream `pelorus_mc` quarter-pel MV field, gated by per-block confidence + `tcut` ([ADR-0131](../adr/0131-mc-denoise-warp.md)). Requires `pelorus_mc_vulkan=meta=1` **before** denoise; with no upstream MV field denoise falls back to same-coordinate taps |
-| `tile` | off | bool | cache the current-frame spatial search window in shared memory before the NLM scan ([ADR-0134](../adr/0134-denoise-shared-mem-tile.md)). Output is **bit-identical**; a large throughput win on bandwidth-limited GPUs (~2.9× on an Arc A380), ~neutral on cache-rich GPUs (a 4090's L2 already absorbs the redundant fetches). Default off (flagship-first) — enable on weak / integrated / mobile GPUs |
+| `tile` | off | bool | cache the current-frame spatial search window in shared memory before the NLM scan ([ADR-0134](../adr/0134-denoise-shared-mem-tile.md)). Output is **bit-identical** on every driver tested (RTX 4090, Arc A380, RADV; 8/10/12-bit, planar and semi-planar, with `mc=1`); a large throughput win on bandwidth-limited GPUs (~2.9× on an Arc A380), ~neutral on cache-rich GPUs (a 4090's L2 already absorbs the redundant fetches). Default off (flagship-first) — enable on weak / integrated / mobile GPUs |
 | `lookahead` | 0 | 0–1 | forward-lookahead temporal depth ([ADR-0137](../adr/0137-denoise-forward-lookahead-cadence.md)). `1` delays output by one frame so the temporal walk also samples the **next** frame (same-coordinate, `tcut`-gated), recovering the leading frame of a held animation drawing (2s/3s cadence). `0` (default) is causal, bit-identical, no latency. Opt-in for cadence / animation content (+0.37 dB on a 2s-cadence clip); neutral on motion (the forward tap `tcut`-breaks) |
 
 Plane masks address physical storage planes. On NV12/P010/P012, plane 1 holds
@@ -77,7 +77,7 @@ Defaults are the conservative pre-encode preset — a safe floor the vmafx
 Denoise runs **before** deband so deband's flat-test sees a clean low-variance
 field (not noise mistaken for texture) and re-injects its dither *after*:
 
-```
+```text
 hwupload → pelorus_analyze → [pelorus_mc] → pelorus_denoise → pelorus_deband → (hwdownload) → encoder
 ```
 
@@ -91,6 +91,15 @@ version bump): per-plane `residual_energy` (mean `|in−out|`), `applied_strengt
 `noise_sigma_estimate` (residual stddev), `psnr_vs_input`, and
 `denoiser_id = PEL_DENOISER_BILATERAL_TEMPORAL`. These are telemetry for vmafx and
 the autotune loop; they free-ride the denoise dispatch (one small readback).
+
+The residual sums are exact: each workgroup reduces its residuals in shared
+memory and adds one partial per statistic to 64-bit fixed-point slices (scale
+2^23) of the readback buffer, so `noise_sigma_estimate` is non-zero on clean
+content (it read 0 at the earlier 1e3 scale, which rounded every residual below
+about 0.03 to zero in the squared sum) and cannot wrap at DCI 8K.
+`scripts/test-denoise-accumulator-bounds.py` (fast suite) proves the bounds.
+On the measured sigma check the estimate matches a CPU RMS of the downloaded
+frames within 1.5% (8-bit) and 0.5% (10/12-bit).
 
 ## Gain envelope (honest)
 

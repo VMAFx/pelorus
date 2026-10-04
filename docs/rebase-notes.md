@@ -52,7 +52,11 @@ names the patches it regenerates.
   libaom, SVT-AV1, and NVENC consumer so its Pelorus AVOptions are present. It
   must also install the static FFmpeg libraries and compile/run an external
   `pkg-config --static libavfilter` consumer, asserting that the link flags close
-  over `-lpelorus`.
+  over `-lpelorus`. Every `git am` supplies the ephemeral `Pelorus-Replay`
+  committer identity, neutralizes signing, hooks, and diff ordering through `-c`
+  settings, and passes `--no-gpg-sign --no-verify`; preserve those overrides
+  when changing either replay loop (`scripts/check-build-config.py` matches one
+  shared command pattern for both).
 - **Focused QSV gate**:
   `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/qsv-roi-regression.sh`.
 - **Shader model**: canonical shipped sources are
@@ -62,9 +66,185 @@ names the patches it regenerates.
 - **Compatibility floor**: interop-consuming filters require
   `libpelorus >= 0.2.0`; the Pelorus source release remains `0.2.2`.
 
+## Unreleased — patch 0010 (pelorus_fgs RDD 5 defaults and init validation)
+
+- **Patch**: `ffmpeg-patches/0010-add-pelorus_fgs_bsf.patch`, regenerated from
+  `files/h265_pelorus_fgs_bsf.c` and `.commit-msg-fgs-bsf.txt`
+  ([ADR-0155](adr/0155-fgs-bsf-rdd5-profile.md)). The registration hunks are
+  unchanged. The BSF now includes `libavutil/pixdesc.h`, reads
+  `AVBSFContext.par_in` (`format`, `bits_per_raw_sample`) at init, and wraps
+  `ff_cbs_bsf_generic_filter()` in its own `.filter` callback.
+- **Rebase-sensitive upstream contracts**: `ff_h274_film_grain_params_supported()`
+  in `libavcodec/h274.h` (model 0 only) and the clamp of the cutoffs to [2, 14]
+  in `libavcodec/h274.c` justify the defaults and the explicit cutoffs. The
+  `ses()` bounds on `comp_model_value` in
+  `libavcodec/cbs_h265_syntax_template.c` are mirrored by
+  `pel_fgs_model_value_max()`. If an FFmpeg bump changes any of these, update the
+  BSF and `scripts/test-fgs-bsf-contract.py` together.
+- **Re-test after rebase**: run the full replay, then a CPU build with
+  `--enable-libx265 --enable-bsf=pelorus_fgs,trace_headers --enable-decoder=hevc`.
+  Check four results: defaults insert a model-0 SEI with three model values
+  (`trace_headers`); FFmpeg decodes it with visible grain (compare against
+  `-export_side_data film_grain`); `model_id=1:scale_y=200` on 8-bit input fails
+  init with a non-zero exit; and `intensity_low=200:intensity_high=10` fails
+  init.
+
+## Unreleased — patch 0006 (grain estimator rounding and H.274 model 0)
+
+- **Patch**: `ffmpeg-patches/0006-add-vf_pelorus_grain_estimate_vulkan.patch`,
+  regenerated from `files/vf_pelorus_grain_estimate_vulkan.c`,
+  `files/vulkan/pelorus_grain_estimate.comp.glsl` and
+  `.commit-msg-grain_estimate.txt`
+  ([ADR-0161](adr/0161-grain-estimate-rounding-and-h274-mapping.md)). The
+  registration hunks, the descriptor layout and the push constants are
+  unchanged. The shader rounds each accumulator add, and the lag-1 bias and
+  scale changed in both sources (`scripts/test-grain-accumulator-bounds.py`
+  keeps them in step). The host code is split into goto-free helpers
+  (`init_filter`, `record_estimator`, `run_estimator`, `attach_estimate`) to
+  meet the HISS touched-file rule; the recorded command sequence is unchanged.
+  The unused `buf_content` string now states the real SSBO sizes.
+- **Rebase-sensitive upstream contract**: the H.274 calibration table in the
+  filter is derived from `libavcodec/h274.c` (grain tables, `init_slice_c()`,
+  the 8×8 generation and deblocking). If an FFmpeg bump touches that file, run
+  `FFMPEG_REPO=/path/to/ffmpeg scripts/gen-h274-grain-calibration.py --check`
+  and paste the regenerated table if it reports drift.
+  `ff_h274_film_grain_params_supported()` in `libavcodec/h274.h` (model 0,
+  8-bit 4:2:0) justifies the emitted model and log2 scale.
+- **Re-test after rebase**: on a Vulkan device, run the estimator with
+  `model=h274` on flat white Gaussian grain of two 8-bit code values and print
+  the metadata. Expect `grain_lag1` near −0.167, `h274_cutoff_h` 14 and
+  `h274_scale_y` 10, and AV1 `ar_coeffs_y` of about `{ -11 0 0 0 }` in
+  `showinfo`.
+
+- **Shared consumer header (BUG-003/004/005/015)**:
+  `ffmpeg-patches/files/pelorus_sidedata.h` is installed into `libavfilter/` by
+  patch 0001 (beside `pelorus_vulkan_sample.h`) and included by
+  `vf_pelorus_analyze_vulkan.c` (0002), `vf_pelorus_denoise_vulkan.c` (0003) and
+  `vf_pelorus_scenecut.c` (0016). It replaces their first-entry
+  `av_frame_get_side_data(..., SEI_UNREGISTERED)` lookup with a newest-first scan
+  of every Pelorus blob, size-checks each motion/confidence field read, and
+  derives the denoise MC cell pitch from the producer block edge. On a rebase,
+  keep the `cp` line in `generate.sh`'s first loop iteration and the three
+  `#include "pelorus_sidedata.h"` lines. The helper is private to the patch
+  stack; libpelorus's public API and ABI are unchanged. Fast-suite regression:
+  `meson test -C build ffmpeg-sidedata-consumers`.
+
 The older sections below preserve the release and benchmark environment in
 which each change landed. Their unqualified gate names are historical
 shorthand; use the pinned commands above for all current rebases.
+
+## Unreleased — deblock/aa plane loops continue (BUG-028)
+
+- `pelorus_deblock.comp.glsl` and the fast=0 loop of `pelorus_aa.comp.glsl`
+  skip a plane that excludes `pos` with `continue` instead of `return`, so a
+  later full-size plane (yuva420p alpha) is written. Only patches 0015 (aa) and
+  0017 (deblock) change; the fast=1 aa loop is untouched (it already guards per
+  plane, keeping its barriers workgroup-uniform). Re-apply: regenerate with
+  `generate.sh` and replay the full series. Regression:
+  `scripts/test-shader-plane-continue.py` (fast suite).
+
+## Unreleased — encoder follow-ups (BUG-030, BUG-031, BUG-032; regenerates 0008, 0009, 0011, 0013)
+
+- **Patches**: `0008` (nvenc ME hints), `0009` (Vulkan QP map) and `0013`
+  (SVT-AV1 ROI) change content. `0011` (nvenc film grain) changes only hunk
+  offsets, because `0008` adds lines to `libavcodec/nvenc.c`.
+- **0008 (BUG-031)**: `nvenc_setup_me_hints()` no longer returns with
+  `meHintCountsPerBlock` zero on a frame without a `PEL_SEC_MOTION` section.
+  It fills the scratch buffer with one zero-MV candidate per 16x16 block
+  (`nvenc_fill_zero_me_hints()`), sets one L0 candidate per block, and warns
+  once through the new `NvencContext.me_hints_absent_warned` field. The
+  `me_hints_warned` comment now names only the AQ/lookahead note. The
+  `NvencContext` fields stay at the tail of the struct; rebase conflicts in that
+  block keep both new fields.
+- **0009 (BUG-032)**: `pelorus_qp_range()` delegates to the new
+  `pelorus_qp_range_for(codec_id, bit_depth)`, which returns 255 for
+  `AV_CODEC_ID_AV1`. The driver delta clamp (ADR-0166) is unchanged. A debug
+  line per applied rectangle logs the resulting delta.
+- **0013 (BUG-030)**: `svtav1_build_roi_evt()` calls the new
+  `svtav1_neutral_roi_evt()` for a frame with no ROI side data or an all-zero
+  map, and `svtav1_push_roi_evt()` carries the queueing that used to be inline.
+  `SvtContext.roi_sticky` records whether the library's sticky event is
+  non-neutral; a neutral event is built only on that transition.
+- **Tests**: `nvenc-me-hints`, `svtav1-roi-sticky` (new C harnesses over the
+  hand diffs) and an extended `vulkan-qpmap-contract` run in the fast suite.
+- **Replay**: the stack applies cumulatively on `n9.0.2`; regenerate twice and
+  compare all 18 patches byte-for-byte.
+
+## Unreleased — ADR-0166 Vulkan QP-map activation (regenerates 0009)
+
+- **Patch**: 0009 only. The hand-maintained source
+  `ffmpeg-patches/files/vulkan-pelorus-qpmap.patch` now also touches
+  `libavutil/hwcontext_vulkan.c`, `libavutil/vulkan_functions.h`,
+  `libavutil/vulkan_loader.h`, and `libavcodec/vulkan_encode_h265.c`. No later
+  patch touches these files or `vulkan_encode.[ch]`, so their file sections can
+  be rebuilt by diffing a tree with the stack applied against the pinned commit;
+  the `configure`, `libavcodec/vulkan/Makefile` and shader sections stay as they
+  are, because later patches also edit `configure`.
+- **Device enablement**: stock FFmpeg enables neither
+  `VK_KHR_video_encode_quantization_map` nor its `videoEncodeQuantizationMap`
+  feature. 0009 adds `FF_VK_EXT_VIDEO_ENCODE_QUANTIZATION_MAP` (bit 54; re-check
+  that the bit is still free after a bump), the `ff_vk_extensions_to_mask`
+  mapping, the optional device-extension entry, and the `VulkanDeviceFeatures`
+  member with its `FF_VK_STRUCT_EXT` link and `COPY_VAL`. If upstream adds its
+  own flag or feature member for this extension, drop these hunks and point the
+  probe at upstream's names.
+- **Valid-usage invariants**: keep the map fill block **before**
+  `vkCmdBeginVideoCodingKHR` in `vulkan_encode_issue()`; create the map image
+  with the probed `ctx->qpmap_tiling`; keep
+  `VK_VIDEO_SESSION_PARAMETERS_CREATE_QUANTIZATION_MAP_COMPATIBLE_BIT_KHR` on
+  the session parameters; keep the H.265 `cu_qp_delta_enabled_flag` override in
+  `init_sequence_headers()`; keep the delta clamp derived from
+  `pelorus_qpmap_query_delta_range()`.
+- **Static gate**: `scripts/check-vulkan-qpmap-contract.py --self-test` (fast
+  suite) fails when any of the above disappears from the hand-maintained diff.
+- **On-device gate**: encode with `-rc_mode cqp -pelorus_roi 1` and
+  `-init_hw_device vulkan=vk:N,debug=1`, then repeat without `-pelorus_roi`.
+  The QP-map run must not add VUIDs to the stock encoder's own set, and the
+  decoded stream must stay intact outside the region of interest. ADR-0166
+  records the 2026-10-03 RTX 4090, RADV and ANV results.
+
+## Unreleased — mc predictor units and O(n) p95 (BUG-009, BUG-014)
+
+- **Patch**: 0007 (mc) only. It now also installs the private header
+  `libavfilter/pelorus_mc_stats.h` (canonical source
+  `ffmpeg-patches/files/pelorus_mc_stats.h`, copied by `generate.sh` before the
+  filter). The header is plain C with no libav* include, so Pelorus's fast suite
+  compiles and runs it directly (`mc-stats`,
+  `ffmpeg-patches/test/mc_stats_test.c`). Keep it plain C on a rebase.
+- **Unit boundary**: the shader writes Q2 quarter-pel `mv_x`/`mv_y` but reads
+  `prev_mv` and the `gpred_x`/`gpred_y` push constants as integer pel. The host
+  converts with `pel_mc_build_predictors()` (round half away from zero) when it
+  fills the next frame's `prev_mv` buffer. Do not reintroduce a raw copy of the
+  readback into `prev_mv`. The push-constant layout and descriptor order are
+  unchanged.
+- **Readback**: after the dispatch, `mc_snapshot()` copies the mapped MV/SAD
+  SSBOs into av_fast_malloc'd host scratch once, and all host passes read the
+  scratch. Element-wise reads of the device-local mapped buffers were the
+  dominant per-frame cost.
+- **Consumers**: the `PEL_SEC_MOTION` grid stays Q2 and the summary scalars stay
+  in pixels, so 0008 (NVENC ME hints) and the denoise `mc=1` path are untouched.
+
+## Unreleased — denoise numerics (BUG-016, BUG-027; regenerates 0003)
+
+- **Patches**: `0003` only (denoise filter + shader). No registration, option,
+  numbering or ABI change; `PEL_SEC_DENOISE` layout is unchanged.
+- **BUG-016**: the `meta=1` residual sums moved from per-pixel uint32 adds at a
+  1e3 scale to per-workgroup partials added into 64-bit slices at scale 2^23.
+  The `stat_buffer` layout and size changed (`sum_lo[64]`, `sum_hi[64]`,
+  `cnt_y[16]`, `cnt_c[16]`); the C `PelorusDenoiseBuf`, `buf_content` string and
+  shader block must stay in lockstep (checked by
+  `scripts/test-denoise-accumulator-bounds.py`).
+- **BUG-027**: tile=0 and tile=1 are separate pipelines, and the RTX 4090 driver
+  lowered them differently (1 code value at 8/10/12-bit). Every output-path value
+  in the shader is now `precise`, loop-invariant divisions are hoisted
+  (`exp(x)` becomes `exp2(x * LOG2E)`), `mix()`/`smoothstep()` are spelled out.
+  Output may differ from the previous release by 1 code value on a few pixels.
+  The standalone reference `libpelorus/shaders/pelorus_denoise.comp` mirrors it.
+- **Re-test after rebase**: replay the stack, then
+  `ffmpeg-patches/test/vulkan-format-matrix.sh` on every available GPU vendor
+  (it now asserts tile=0/tile=1 identity at 8/10/12-bit, semi-planar and `mc=1`).
+  Overlap: PR #68 also edits `pelorus_denoise.comp.glsl` (`precise` in
+  `pel_to_sample`, sampled-image reads); take both, keep `pel_to_sample` as is.
 
 ## Unreleased — ADR-0147 Vulkan sample domain and component preservation
 
@@ -109,6 +289,58 @@ shorthand; use the pinned commands above for all current rebases.
 See [ADR-0147](adr/0147-vulkan-sample-domain-and-components.md) and the
 [research digest](research/0147-vulkan-storage-domain.md) for the reproduced
 pre-fix failures and derivation.
+
+## Unreleased — NVENC AV1 film-grain bias and ROI qindex span (regenerates 0004, 0008, 0011)
+
+- **Patches**: `0004` (nvenc ROI hand diff) and `0011` (nvenc film-grain hand
+  diff) change content. `0008` (nvenc ME hints) changes only its hunk offsets
+  and blob index, because `0004` adds 14 lines to `libavcodec/nvenc.c`.
+- **0011 (BUG-019)**: `NV_ENC_FILM_GRAIN_PARAMS_AV1` mirrors the AV1
+  `film_grain_params()` syntax elements, so `cbMult`/`cbLumaMult`/`crMult`/
+  `crLumaMult` take the raw `+128`-biased value and `cbOffset`/`crOffset` the raw
+  `+256`-biased value. `AVFilmGrainAOMParams` carries them unbiased (FFmpeg's
+  AV1 grain synthesis, the AFGS1 parser, and libdav1d's export all agree), so
+  `pel_fg_from_aom()` clamps to the signed range and adds the bias. FFmpeg's
+  native `av1dec.c` copies the raw coded values instead; a source decoded that
+  way into `-pelorus_film_grain` would be double-biased. Use libdav1d for
+  grain passthrough.
+- **0004 (BUG-020)**: `pelorus_roi_qp_range()` returns `51 + 6*(bit_depth-8)`
+  for H.264/HEVC and 255 for AV1. NVENC adds `qpDeltaMap` entries in the
+  codec's own QP units (AV1 qindex for `av1_nvenc`), and the int8 map
+  saturates larger AV1 deltas.
+- **Regression gate**: the fast-suite test `nvenc-pelorus-mapping`
+  (`scripts/test-nvenc-pelorus-mapping.py`) extracts `pel_fg_from_aom()` and
+  `pelorus_roi_qp_range()` from the hand diffs and runs them in a C harness,
+  using the installed ffnvcodec header when pkg-config finds it. Keep both
+  function names and their `static` top-level form when rebasing, or the
+  extractor fails loudly.
+- **Re-test after rebase**: build with `--enable-nvenc --enable-libdav1d`, then
+  on NVENC hardware (1) decode a libaom `film-grain-test=1` AV1 stream with
+  `-c:v libdav1d -export_side_data film_grain`, encode it with
+  `av1_nvenc -pelorus_film_grain 1`, and compare `trace_headers`
+  `cb_mult`/`cb_luma_mult`/`cb_offset` against the source; and (2) encode
+  `av1_nvenc -rc constqp -qp 160` with a full-frame `addroi` of
+  `qoffset=-40/255` and `-pelorus_roi 1`. Its size and PSNR must track a plain
+  `-qp 120` encode.
+
+## Unreleased — ADR-0163 dehalo ring gate and pull (patch 0014)
+
+- **Patch**: only 0014 (dehalo) changes. The registration hunks and the C
+  descriptor, push-constant, and specialization layout are unchanged. The
+  `edge` AVOption help text now names the edge-step unit.
+- **Shader contract**: `files/vulkan/pelorus_dehalo.comp.glsl` reads up to
+  `MAX_R + 2` px from the pixel (the 5×5 box-mean grid of the 3×3 `Repair`
+  window), so `PEL_HALO` is 10 and `PEL_TILE` is 52 for the 32×32 workgroup.
+  Keep the tile at least that deep: a shallower tile makes `tile=1` read
+  shared memory out of bounds without failing to compile. Keep the `precise`
+  qualifiers on the arithmetic locals; without them `tile=0` and `tile=1`
+  differ by single rounding flips.
+- **Gates**: compile the shipped shader, run the fast suite, prove a second
+  generation byte-identical, and replay all 18 patches. On a device, run
+  `ffmpeg-patches/test/vulkan-format-matrix.sh`: its dehalo rows assert ring
+  overshoot removal, line-art preservation, and direct/tiled identity.
+
+See [ADR-0163](adr/0163-dehalo-gate-and-pull.md).
 
 ## v0.2.0 — FFmpeg base bump n8.1.1 → n9.0.1 (whole stack)
 
@@ -917,3 +1149,35 @@ are filter-only around `vf_libvmaf.c` and never touched the Vulkan shader API.
   high-motion clip vs a clean reference — `mc=1` must run (no validation error)
   and beat `mc=0` on the moving content; `meson test --suite=fast` must stay
   11/11 (the new conformance case).
+
+## Shader plane bounds (regenerates 0001, 0018)
+
+- **What changed**: `pelorus_deband.comp.glsl` and `pelorus_borderfix.comp.glsl`
+  now `continue` (not `return`) when `pos` lies outside a plane, so a full-size
+  plane that follows subsampled chroma (`yuva420p` alpha) is still written.
+  `bayer8` in the deband shader is the canonical Bayer matrix, and the borderfix
+  clamp bounds are order-safe. No C, descriptor, push-constant or spec-constant
+  change; no rebase conflict surface beyond the two `.comp.glsl` files.
+- **Re-test after rebase**: `meson test --suite=fast` (`shader-plane-bounds`),
+  then run deband and borderfix on `yuva420p` and confirm the alpha plane is
+  bit-exact versus the input.
+- Other plane-loop shaders (`deblock`, `aa`) keep the early-return pattern and
+  are not covered by this change.
+
+## Fix wave 2026-10-03 — QSV EnableMBQP warning, SVT-AV1 ROI event reclamation (regenerates 0005, 0013)
+
+- **Patches**: `0005` (qsv ROI) and `0013` (SVT-AV1 ROI); no registration or
+  numbering change. Sources: `files/qsv-pelorus-roi.patch`,
+  `files/svtav1-pelorus-roi.patch`.
+- **qsv**: `qsvenc_pelorus_roi_update_mbqp_enabled()` now takes `avctx` and
+  logs once when `pelorus_roi` is on but the final attached CodingOption3 has
+  `EnableMBQP` off; `QSVEncContext` gains `pelorus_roi_mbqp_warned`. Re-verify
+  that `ff_qsv_enc_init()` / `update_parameters()` still call it after
+  `MFXVideoENCODE_Init` / `Reset`.
+- **svtav1**: `SvtContext.roi_evts` is now a queue of `{event, input index}`
+  slots, reclaimed from `eb_receive_packet()` and before each append. It relies
+  on SVT-AV1 internals that must be re-read on a bump: `ROI_MAP_EVENT` data is
+  never copied or freed by the library (`enc_handle.c`, `rc_process.c`),
+  `enc_ctx->roi_map_evt` is sticky across frames
+  (`resource_coordination_process.c`), packets leave in decode order and the
+  mini-GOP is at most 64 frames. Checked against SVT-AV1 v2.3.0 and v4.2.0.

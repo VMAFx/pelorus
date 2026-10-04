@@ -24,6 +24,14 @@ FFmpeg AV1 encoder honours the estimate with no Pelorus-specific BSF. The
 OBU/SEI bitstream writer and the full per-lag AR fit are documented
 follow-ups (ADR-0115).
 
+Each fixed-point accumulator add is rounded to the nearest unit, and the
+lag-1 product is stored with a bias of RES_CLAMP^2 at a scale of 150000, so
+the sums are unbiased and bounded through DCI 8K. With model=h274 the filter
+also emits lavfi.pelorus.h274_* frame metadata: SMPTE RDD 5 model-0 values
+(model 0, log2_scale_factor 2, a cutoff and a scale) derived through a table
+calibrated against libavcodec/h274.c, named after the pelorus_fgs options they
+feed (ADR-0161).
+
 The shipped shader is the canonical
 libavfilter/vulkan/pelorus_grain_estimate.comp.glsl, compiled to SPIR-V at
 FFmpeg build time; Pelorus also compile-checks a standalone reference shader.
@@ -33,3 +41,4 @@ AVOptions: edge, strength, model (aom/h274), native.
 Requires libpelorus >= 0.2.0 (pkg-config) when the filter is enabled.
 
 ADR: docs/adr/0115-grain-estimate.md
+ADR: docs/adr/0161-grain-estimate-rounding-and-h274-mapping.md

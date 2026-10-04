@@ -42,10 +42,11 @@
  * latency, no flush — bit-identical to pre-ADR-0137.
  *
  * Interop: when `meta=1` the filter free-rides a residual reduction in the same
- * dispatch (atomic accumulation of |in-out| and (in-out)^2 into a HOST_VISIBLE
- * SSBO) and attaches a Pelorus PEL_SEC_DENOISE blob
- * (AV_FRAME_DATA_SEI_UNREGISTERED, UUID-keyed) so a downstream vmafx vf_libvmaf*
- * can react. See <pelorus/interop.h> and docs/metrics/denoise.md.
+ * dispatch (per-workgroup sums of |in-out| and (in-out)^2, added atomically to
+ * 64-bit fixed-point slices of a HOST_VISIBLE SSBO) and attaches a Pelorus
+ * PEL_SEC_DENOISE blob (AV_FRAME_DATA_SEI_UNREGISTERED, UUID-keyed) so a
+ * downstream vmafx vf_libvmaf* can react. See <pelorus/interop.h> and
+ * docs/metrics/denoise.md.
  *
  * The algorithm lives in vulkan/pelorus_denoise.comp.glsl, compiled to SPIR-V
  * at build time and linked in — a single source of truth (FFmpeg 9 removed the
@@ -57,6 +58,7 @@
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
+#include "pelorus_sidedata.h"
 #include "pelorus_vulkan_sample.h"
 #include "vulkan_filter.h"
 
@@ -78,15 +80,30 @@
  * while rejecting absurd dimensions before the cell count is used for sizing. */
 #define PEL_DENOISE_MAX_CELLS (8192u * 8192u)
 
-/* Host-readback accumulator for the meta=1 residual free-ride. Sliced to spread
- * atomic contention, exactly as vf_pelorus_analyze does; summed host-side. */
+/* meta=1 residual statistics, in the shader's RES_GS fixed point. 2^23 resolves
+ * a one-code 10-bit residual squared as 8 units, while a full 16x16 workgroup
+ * partial stays below 2^31 (BUG-016). The shader mirrors these constants;
+ * scripts/test-denoise-accumulator-bounds.py checks both sides and the DCI 8K
+ * bounds. */
+#define PEL_DENOISE_STATS 4
+#define PEL_DENOISE_RES_GS 8388608.0
+
+enum pel_denoise_stat {
+    PEL_DENOISE_STAT_ABS_Y = 0, /* sum |in-out|, luma   */
+    PEL_DENOISE_STAT_ABS_U = 1, /* sum |in-out|, U      */
+    PEL_DENOISE_STAT_ABS_V = 2, /* sum |in-out|, V      */
+    PEL_DENOISE_STAT_SQ_Y = 3,  /* sum (in-out)^2, luma */
+};
+
+/* Host-readback accumulator for the meta=1 residual free-ride. Each workgroup
+ * reduces its residuals in shared memory and adds one partial per statistic to
+ * slice (workgroup index % PEL_SLICES). sum_lo/sum_hi are the low and high
+ * words of a 64-bit sum per [stat * PEL_SLICES + slice]; summed host-side. */
 typedef struct PelorusDenoiseBuf {
-    uint32_t abs_sum_y[PEL_SLICES]; /* sum |in-out| * GS, luma                 */
-    uint32_t abs_sum_u[PEL_SLICES];
-    uint32_t abs_sum_v[PEL_SLICES];
-    uint32_t sq_sum_y[PEL_SLICES]; /* sum (in-out)^2 * GS, luma               */
-    uint32_t cnt_y[PEL_SLICES];    /* luma pixel count                        */
-    uint32_t cnt_c[PEL_SLICES];    /* chroma pixel count (per chroma plane)   */
+    uint32_t sum_lo[PEL_DENOISE_STATS * PEL_SLICES];
+    uint32_t sum_hi[PEL_DENOISE_STATS * PEL_SLICES];
+    uint32_t cnt_y[PEL_SLICES]; /* luma pixel count                        */
+    uint32_t cnt_c[PEL_SLICES]; /* chroma pixel count (per chroma plane)   */
 } PelorusDenoiseBuf;
 
 typedef struct PelorusDenoiseVulkanContext {
@@ -116,8 +133,8 @@ typedef struct PelorusDenoiseVulkanContext {
         int32_t want_meta;      /* 1 => accumulate residual into the SSBO  @88 */
         int32_t grid_cols;      /* MV/conf grid cols (0 => no MC this frame)@92 */
         int32_t grid_rows;      /*                                         @96 */
-        int32_t cell_w;         /* ceil(lumaW / grid_cols)                 @100*/
-        int32_t cell_h;         /* ceil(lumaH / grid_rows)                 @104*/
+        int32_t cell_w;         /* producer block edge (luma px)           @100*/
+        int32_t cell_h;         /* producer block edge (luma px)           @104*/
         int32_t chroma_shift_w; /* log2_chroma_w (MV luma->plane scale)  @108*/
         int32_t chroma_shift_h; /*                                       @112*/
         float mv_scale;         /* stored MV -> luma px (0.25 = quarter-pel)@116*/
@@ -149,6 +166,8 @@ typedef struct PelorusDenoiseVulkanContext {
      * parsed from PEL_SEC_MOTION / PEL_SEC_MOTION_CONF and uploaded as SSBOs. */
     AVBufferPool *mv_buf_pool;
     AVBufferPool *conf_buf_pool;
+    int mc_grid_warned; /* the unmappable-grid warning was logged once */
+    int mc_grid_assumed_warned; /* the assumed-default-bsize warning was logged once */
 
     /* Causal previous-frame ring (clones — refcount bumps, no pixel copy). */
     AVFrame *ring[PEL_DENOISE_MAX_PREV];
@@ -297,8 +316,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .mem_layout = "std430",
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-                .buf_content = "uint abs_sum_y[16]; uint abs_sum_u[16]; "
-                               "uint abs_sum_v[16]; uint sq_sum_y[16]; "
+                .buf_content = "uint sum_lo[64]; uint sum_hi[64]; "
                                "uint cnt_y[16]; uint cnt_c[16];",
             },
             {
@@ -354,6 +372,20 @@ static void pel_sd_free(void *opaque, uint8_t *data)
     pel_blob_free(data);
 }
 
+/* Sum one statistic's 64-bit slices and return it in sample units. A slice is
+ * below 2^45 at DCI 8K, so the uint64 total cannot wrap. */
+static double pel_denoise_stat(const PelorusDenoiseBuf *acc, enum pel_denoise_stat stat)
+{
+    uint64_t total = 0;
+    int i;
+
+    for (i = 0; i < PEL_SLICES; i++) {
+        const int k = (int)stat * PEL_SLICES + i;
+        total += ((uint64_t)acc->sum_hi[k] << 32) | acc->sum_lo[k];
+    }
+    return (double)total / PEL_DENOISE_RES_GS;
+}
+
 /* Derive the denoise residual summaries from the read-back accumulators and
  * attach a measured PEL_SEC_DENOISE section to the output frame. */
 static int attach_interop(PelorusDenoiseVulkanContext *s, AVFrame *out,
@@ -366,31 +398,30 @@ static int attach_interop(PelorusDenoiseVulkanContext *s, AVFrame *out,
     uint8_t *blob = NULL;
     size_t len = 0;
     AVBufferRef *buf;
-    double abs_y = 0.0, abs_u = 0.0, abs_v = 0.0, sq_y = 0.0;
+    const double abs_y = pel_denoise_stat(acc, PEL_DENOISE_STAT_ABS_Y);
+    const double abs_u = pel_denoise_stat(acc, PEL_DENOISE_STAT_ABS_U);
+    const double abs_v = pel_denoise_stat(acc, PEL_DENOISE_STAT_ABS_V);
+    const double sq_y = pel_denoise_stat(acc, PEL_DENOISE_STAT_SQ_Y);
     uint64_t cnt_y = 0, cnt_c = 0;
     float res_y = 0.0f, res_u = 0.0f, res_v = 0.0f;
     float sigma_est = 0.0f, psnr = 0.0f, msq = 0.0f;
     int i;
 
     for (i = 0; i < PEL_SLICES; i++) {
-        abs_y += acc->abs_sum_y[i];
-        abs_u += acc->abs_sum_u[i];
-        abs_v += acc->abs_sum_v[i];
-        sq_y += acc->sq_sum_y[i];
         cnt_y += acc->cnt_y[i];
         cnt_c += acc->cnt_c[i];
     }
 
     if (cnt_y > 0) {
-        res_y = (float)(abs_y / 1e3 / (double)cnt_y);
-        msq = (float)(sq_y / 1e3 / (double)cnt_y);
+        res_y = (float)(abs_y / (double)cnt_y);
+        msq = (float)(sq_y / (double)cnt_y);
         sigma_est = sqrtf(msq);
         /* denoised-vs-input PSNR on a [0,1] domain: peak^2 / mean-square = 1/msq */
         psnr = msq > 0.0f ? (float)(10.0 * log10(1.0 / (double)msq)) : 0.0f;
     }
     if (cnt_c > 0) {
-        res_u = (float)(abs_u / 1e3 / (double)cnt_c);
-        res_v = (float)(abs_v / 1e3 / (double)cnt_c);
+        res_u = (float)(abs_u / (double)cnt_c);
+        res_v = (float)(abs_v / (double)cnt_c);
     }
 
     memset(&meta, 0, sizeof(meta));
@@ -498,20 +529,28 @@ static int denoise_dispatch(PelorusDenoiseVulkanContext *s, AVFrame *out, AVFram
      * descriptor); grid_cols == 0 makes the shader take the same-coord path. */
     s->opts.grid_cols = 0;
     {
-        AVFrameSideData *sd =
-            s->mc ? av_frame_get_side_data(cur, AV_FRAME_DATA_SEI_UNREGISTERED) : NULL;
+        const AVFrameSideData *sd = NULL;
         const void *mp = NULL, *cp = NULL;
         size_t msz = 0, csz = 0;
         const uint8_t *mv_field = NULL, *conf_field = NULL;
-        int gc = 0, gr = 0;
+        int gc = 0, gr = 0, pitch = 0;
         uint64_t cells = 0, ncells;
         uint64_t j;
 
+        /* Newest Pelorus blob carrying PEL_SEC_MOTION (every producer appends its
+         * own SEI_UNREGISTERED entry, so av_frame_get_side_data's first entry can
+         * be another producer's). The confidence section and the grid dimensions
+         * must come from that same blob: the grid belongs to its header. */
+        if (s->mc)
+            sd = pelorus_sd_find_section(cur, PEL_SEC_MOTION, sizeof(PelorusMotionSection), &mp,
+                                         &msz);
         if (sd &&
-            pel_blob_find_section(sd->data, sd->size, PEL_SEC_MOTION, sizeof(PelorusMotionSection),
-                                  &mp, &msz) == PEL_OK &&
             pel_blob_find_section(sd->data, sd->size, PEL_SEC_MOTION_CONF,
-                                  sizeof(PelorusMotionConfSection), &cp, &csz) == PEL_OK) {
+                                  sizeof(PelorusMotionConfSection), &cp, &csz) == PEL_OK &&
+            cp != NULL &&
+            /* A shorter (older) producer section must still cover every field read. */
+            PEL_SD_FIELD_OK(msz, PelorusMotionSection, mv_field_size) &&
+            PEL_SD_FIELD_OK(csz, PelorusMotionConfSection, conf_field_size)) {
             const PelorusMotionSection *mo = mp;
             const PelorusMotionConfSection *mcs = cp;
             const PelorusSideData *bh =
@@ -528,8 +567,25 @@ static int denoise_dispatch(PelorusDenoiseVulkanContext *s, AVFrame *out, AVFram
                     sd->size &&
                 (size_t)PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset + mcs->conf_field_size <=
                     sd->size) {
-                mv_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mo->mv_field_offset;
-                conf_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset;
+                /* The cell pitch is the producer's block edge, not ceil(W/gc). */
+                int fit = pelorus_mc_cell_pitch(out->width, out->height, gc, gr, &pitch);
+                if (fit == 2 && !s->mc_grid_assumed_warned) {
+                    s->mc_grid_assumed_warned = 1;
+                    av_log(vkctx, AV_LOG_WARNING,
+                           "motion grid %dx%d fits several block sizes for a %dx%d frame; "
+                           "assuming the mc default bsize=%d\n",
+                           gc, gr, out->width, out->height, PEL_SD_MC_BSIZE_DEFAULT);
+                }
+                if (fit) {
+                    mv_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mo->mv_field_offset;
+                    conf_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset;
+                } else if (!s->mc_grid_warned) {
+                    s->mc_grid_warned = 1;
+                    av_log(vkctx, AV_LOG_WARNING,
+                           "motion grid %dx%d does not map to a unique block size for a %dx%d "
+                           "frame; motion compensation disabled for such frames\n",
+                           gc, gr, out->width, out->height);
+                }
             }
         }
 
@@ -557,8 +613,8 @@ static int denoise_dispatch(PelorusDenoiseVulkanContext *s, AVFrame *out, AVFram
             }
             s->opts.grid_cols = gc;
             s->opts.grid_rows = gr;
-            s->opts.cell_w = (out->width + gc - 1) / gc;
-            s->opts.cell_h = (out->height + gr - 1) / gr;
+            s->opts.cell_w = pitch;
+            s->opts.cell_h = pitch;
         } else {
             ((uint32_t *)mvbuf_vk->mapped_mem)[0] = 0;
             ((uint32_t *)confbuf_vk->mapped_mem)[0] = 0;

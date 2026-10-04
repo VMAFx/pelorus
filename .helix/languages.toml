@@ -1,0 +1,10 @@
+# Language configurations for Helix
+[[language]]
+name = "c"
+auto-format = true
+formatter = { command = "clang-format" }
+
+[[language]]
+name = "cpp"
+auto-format = true
+formatter = { command = "clang-format" }

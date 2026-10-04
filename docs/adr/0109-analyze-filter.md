@@ -31,7 +31,7 @@ frame-level scalars (per-cell map payloads are a later, append-only addition).
 ## Alternatives considered
 
 | Option | Pros | Cons | Why not chosen |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | GPU reduction + small readback (this) | Frame already in VRAM; tiny readback; reuses the scdet pattern | A per-frame GPU→host sync point | **Chosen** |
 | Compute the stats inside the deband shader | One pass | Deband runs per-plane with different geometry; conflates "measure" and "transform"; can't run analyze standalone | Rejected — separate concerns |
 | CPU pass over decoded pixels | Simple, no Vulkan | Forces a VRAM→RAM download, defeating zero-copy | Rejected |

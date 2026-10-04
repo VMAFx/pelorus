@@ -38,7 +38,10 @@
  * predictors are the zero MV, the previous frame's global-motion MV, and the
  * collocated previous-frame block MV (a persistent MV SSBO ping-ponged frame to
  * frame) — every predictor is resolved BEFORE the dispatch, so there is no
- * cross-workgroup intra-frame neighbour race. Block-matching on raw pixels
+ * cross-workgroup intra-frame neighbour race. The shader emits Q2 quarter-pel
+ * vectors but searches on the integer-pel grid, so the host rounds the Q2 field
+ * to integer pel when it rolls it into the next frame's predictors (the unit
+ * contract lives in pelorus_mc_stats.h). Block-matching on raw pixels
  * matches grain as readily as motion (ADR-0113 found in-denoise raw-pixel MC
  * noise-limited); the sub-pel refinement (ADR-0130) sharpens the field for a
  * motion-compensated denoise consumer, which the winning-SAD per-block
@@ -56,6 +59,7 @@
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
+#include "pelorus_mc_stats.h"
 #include "pelorus_vulkan_sample.h"
 #include "vulkan_filter.h"
 
@@ -88,16 +92,16 @@ extern const unsigned int ff_pelorus_mc_comp_spv_len;
 /* Per-frame push constants. Mirrors the std430 push-constant block in
  * vulkan/pelorus_mc.comp.glsl, byte-for-byte. */
 typedef struct PelorusMcPush {
-    int32_t width;      /*  0 */
-    int32_t height;     /*  4 */
-    int32_t grid_cols;  /*  8 */
-    int32_t grid_rows;  /* 12 */
-    int32_t bsize;      /* 16 */
-    int32_t search;     /* 20 */
-    int32_t gpred_x;    /* 24 */
-    int32_t gpred_y;    /* 28 */
-    int32_t has_prev;   /* 32 */
-    float sample_scale; /* 36: storage UNORM -> logical sample domain */
+    int32_t width;      /*  0: luma width, pixels                                  */
+    int32_t height;     /*  4: luma height, pixels                                 */
+    int32_t grid_cols;  /*  8: blocks per row                                      */
+    int32_t grid_rows;  /* 12: blocks per column                                   */
+    int32_t bsize;      /* 16: block edge, luma pixels                             */
+    int32_t search;     /* 20: search radius per axis, INTEGER luma pel            */
+    int32_t gpred_x;    /* 24: global-motion predictor, INTEGER luma pel (not Q2)  */
+    int32_t gpred_y;    /* 28: global-motion predictor, INTEGER luma pel (not Q2)  */
+    int32_t has_prev;   /* 32: 1 => ref image + prev_mv are valid                  */
+    float sample_scale; /* 36: storage UNORM -> logical sample domain              */
 } PelorusMcPush;
 
 typedef struct PelorusMcVulkanContext {
@@ -114,21 +118,36 @@ typedef struct PelorusMcVulkanContext {
     int meta;   /* attach the PEL_SEC_MOTION interop section                 */
 
     /* Persistent per-block MV field, ping-ponged frame to frame. Allocated at
-     * the first frame from the block grid. cur_mv is written this dispatch;
-     * prev_mv (last frame's field, interleaved (dx,dy)) is the temporal
-     * predictor source; sad holds the winning SAD for confidence/scene-cut. */
+     * the first frame from the block grid. The mv_x/mv_y pools hold this
+     * dispatch's output (Q2 quarter-pel luma); prev_mv is last frame's field
+     * rounded to INTEGER luma pel, interleaved (dx,dy), the temporal predictor
+     * source; sad holds the winning SAD for confidence/scene-cut. */
     AVBufferPool *mvx_pool;
     AVBufferPool *mvy_pool;
     AVBufferPool *sad_pool;
     AVBufferPool *prevmv_pool;
-    AVBufferRef *prevmv_buf; /* the interleaved (dx,dy) field of the LAST frame */
+    AVBufferRef *prevmv_buf; /* LAST frame's (dx,dy), INTEGER luma pel */
 
     /* Causal previous frame (a clone — refcount bump, no pixel copy). */
     AVFrame *prev;
 
-    /* Global-motion predictor carried from the previous frame's MV field. */
-    int gpred_x;
-    int gpred_y;
+    /* Global-motion predictor: the previous frame's mean MV, INTEGER luma pel. */
+    int32_t gpred_x;
+    int32_t gpred_y;
+
+    /* Host scratch, grown with av_fast_malloc() only when the grid first
+     * appears or grows, so the steady-state per-frame path never allocates.
+     * mv_host holds this frame's Q2 field (all dx, then all dy) and sad_host its
+     * winning SADs, copied out of the device-local mapped SSBOs in one
+     * sequential pass (host reads of that memory are uncached, and on a
+     * discrete GPU each one crosses PCIe). mag_scratch holds per-block
+     * magnitudes for the p95 select. */
+    int32_t *mv_host;
+    unsigned int mv_host_size;
+    uint32_t *sad_host;
+    unsigned int sad_host_size;
+    float *mag_scratch;
+    unsigned int mag_scratch_size;
 
     int grid_cols;
     int grid_rows;
@@ -196,6 +215,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
                 .stages = VK_SHADER_STAGE_COMPUTE_BIT,
             },
             {
+                /* Output, Q2 quarter-pel luma. */
                 .name = "mv_x_buf",
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .mem_layout = "std430",
@@ -203,6 +223,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
                 .buf_content = "int mv_x[];",
             },
             {
+                /* Output, Q2 quarter-pel luma. */
                 .name = "mv_y_buf",
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .mem_layout = "std430",
@@ -217,6 +238,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
                 .buf_content = "uint sad_out[];",
             },
             {
+                /* Input, interleaved (dx,dy) in INTEGER luma pel. */
                 .name = "prev_mv_buf",
                 .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .mem_layout = "std430",
@@ -262,7 +284,7 @@ static int attach_motion(PelorusMcVulkanContext *s, AVFrame *frame, const int32_
     AVBufferRef *buf;
     double sum_x = 0.0, sum_y = 0.0, sum_mag = 0.0;
     double mean_mag, mean_sad = 0.0;
-    float *mags = NULL;
+    float *mags = s->mag_scratch; /* >= nblocks floats, sized by the caller */
     int i;
 
     /* Frame scalars. global_motion = mean MV; magnitude mean + p95; a crude
@@ -281,11 +303,8 @@ static int attach_motion(PelorusMcVulkanContext *s, AVFrame *frame, const int32_
     mean_mag = nblocks ? sum_mag / nblocks : 0.0;
     mean_sad = nblocks ? mean_sad / nblocks : 0.0;
 
-    mags = av_calloc((size_t)FFMAX(nblocks, 1), sizeof(*mags));
-    if (!mags)
-        return AVERROR(ENOMEM);
     for (i = 0; i < nblocks; i++)
-        mags[i] = (float)(0.25 * sqrt((double)mvx[i] * mvx[i] + (double)mvy[i] * mvy[i]));
+        mags[i] = pel_mc_mv_mag_px(mvx[i], mvy[i]);
 
     memset(&meta, 0, sizeof(meta));
     meta.frame_pts = (uint64_t)frame->pts;
@@ -302,27 +321,9 @@ static int attach_motion(PelorusMcVulkanContext *s, AVFrame *frame, const int32_
     mo.global_motion_y = (float)(nblocks ? sum_y / nblocks : 0.0);
     mo.motion_magnitude_mean = (float)mean_mag;
 
-    /* p95 magnitude: simple selection over a scratch copy (nblocks is small —
-     * O(blocks) cells, e.g. ~8160 for 1080p/16). Insertion is overkill; a
-     * partial nth_element is not in libavutil, so a bounded linear scan picks
-     * the ceil(0.95*N)-th smallest by counting. */
-    {
-        int rank = (int)ceil(0.95 * (double)FFMAX(nblocks, 1)) - 1;
-        float p95 = 0.0f;
-        int k;
-        rank = av_clip(rank, 0, FFMAX(nblocks - 1, 0));
-        for (k = 0; k < nblocks; k++) {
-            int below = 0, j;
-            for (j = 0; j < nblocks; j++)
-                if (mags[j] < mags[k] || (mags[j] == mags[k] && j < k))
-                    below++;
-            if (below == rank) {
-                p95 = mags[k];
-                break;
-            }
-        }
-        mo.motion_magnitude_p95 = p95;
-    }
+    /* p95 magnitude: the ceil(0.95*N)-th smallest, by an O(N) radix select
+     * over the non-negative float magnitudes (a 4K/8 grid has ~130k cells). */
+    mo.motion_magnitude_p95 = pel_mc_p95_nonneg(mags, nblocks);
 
     /* Entropy proxy: normalized mean deviation of block MVs from the global MV
      * (0 = rigid global motion, higher = complex / independent block motion). */
@@ -345,8 +346,6 @@ static int attach_motion(PelorusMcVulkanContext *s, AVFrame *frame, const int32_
         double per_pixel = s->bsize > 0 ? mean_sad / ((double)s->bsize * s->bsize) : 0.0;
         mo.has_scene_cut = (per_pixel > 0.08) ? 1 : 0;
     }
-
-    av_free(mags);
 
     /* Per-block confidence from the winning SAD: a sharp, low-residual match is
      * trustworthy (255), a high residual means the block matched noise or is
@@ -637,10 +636,36 @@ fail:
     return err;
 }
 
+/* Size the host scratch to the block grid. Only grows, so a fixed-size stream
+ * allocates on its first frame and never again. */
+static int mc_reserve_scratch(PelorusMcVulkanContext *s, int nblocks)
+{
+    const size_t n = (size_t)nblocks;
+
+    av_fast_malloc(&s->mv_host, &s->mv_host_size, 2 * n * sizeof(*s->mv_host));
+    av_fast_malloc(&s->sad_host, &s->sad_host_size, n * sizeof(*s->sad_host));
+    av_fast_malloc(&s->mag_scratch, &s->mag_scratch_size, n * sizeof(*s->mag_scratch));
+    return (s->mv_host && s->sad_host && s->mag_scratch) ? 0 : AVERROR(ENOMEM);
+}
+
+/* Copy the dispatch's MV (Q2) and SAD spans from the mapped SSBOs into the host
+ * scratch, one sequential memcpy per span. Every later host pass (interop
+ * stats, p95, predictors) then reads cached memory instead of issuing one
+ * uncached device read per element. */
+static void mc_snapshot(PelorusMcVulkanContext *s, const AVBufferRef *mvx_ref,
+                        const AVBufferRef *mvy_ref, const AVBufferRef *sad_ref, int nblocks)
+{
+    const size_t bytes = (size_t)nblocks * sizeof(int32_t);
+
+    memcpy(s->mv_host, ((const FFVkBuffer *)mvx_ref->data)->mapped_mem, bytes);
+    memcpy(s->mv_host + nblocks, ((const FFVkBuffer *)mvy_ref->data)->mapped_mem, bytes);
+    if (s->meta)
+        memcpy(s->sad_host, ((const FFVkBuffer *)sad_ref->data)->mapped_mem, bytes);
+}
+
 static int mc_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
 {
     int err;
-    int i;
     AVFilterContext *ctx = link->dst;
     PelorusMcVulkanContext *s = ctx->priv;
     FFVulkanContext *vkctx = &s->vkctx;
@@ -676,6 +701,8 @@ static int mc_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
                (size_t)nblocks * 2 * sizeof(int32_t));
     }
 
+    RET(mc_reserve_scratch(s, nblocks));
+
     pc.width = in->width;
     pc.height = in->height;
     pc.grid_cols = s->grid_cols;
@@ -692,10 +719,15 @@ static int mc_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
      * stand-in (the shader's has_prev==0 path never reads it). */
     RET(mc_dispatch(s, in, s->prev ? s->prev : in, &pc, nblocks, &mvx_ref, &mvy_ref, &sad_ref));
 
+    mc_snapshot(s, mvx_ref, mvy_ref, sad_ref, nblocks);
+    av_buffer_unref(&mvx_ref);
+    av_buffer_unref(&mvy_ref);
+    av_buffer_unref(&sad_ref);
+
     {
-        const int32_t *mvx = (const int32_t *)((FFVkBuffer *)mvx_ref->data)->mapped_mem;
-        const int32_t *mvy = (const int32_t *)((FFVkBuffer *)mvy_ref->data)->mapped_mem;
-        const uint32_t *sad = (const uint32_t *)((FFVkBuffer *)sad_ref->data)->mapped_mem;
+        const int32_t *mvx = s->mv_host;
+        const int32_t *mvy = s->mv_host + nblocks;
+        const uint32_t *sad = s->sad_host;
 
         if (s->meta) {
             err = attach_motion(s, in, mvx, mvy, sad, nblocks);
@@ -703,8 +735,10 @@ static int mc_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
                 goto fail;
         }
 
-        /* Roll the MV field into next frame's prev_mv (interleaved) and update
-         * the global-motion predictor (mean MV, integer-pel). */
+        /* Roll the Q2 field into next frame's predictors: prev_mv (interleaved)
+         * and the global-motion mean, both rounded to the INTEGER-pel grid the
+         * shader searches on. Passing Q2 through unconverted seeded the search
+         * four times too far (BUG-009). */
         RET(ff_vk_get_pooled_buffer(
             &s->vkctx, &s->prevmv_pool, &next_prevmv,
             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
@@ -712,26 +746,12 @@ static int mc_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
         next_prevmv_vk = (FFVkBuffer *)next_prevmv->data;
-        {
-            int32_t *dst = (int32_t *)next_prevmv_vk->mapped_mem;
-            double sx = 0.0, sy = 0.0;
-            for (i = 0; i < nblocks; i++) {
-                dst[2 * i + 0] = mvx[i];
-                dst[2 * i + 1] = mvy[i];
-                sx += mvx[i];
-                sy += mvy[i];
-            }
-            s->gpred_x = nblocks ? (int)lrint(sx / nblocks) : 0;
-            s->gpred_y = nblocks ? (int)lrint(sy / nblocks) : 0;
-        }
+        pel_mc_build_predictors(mvx, mvy, nblocks, (int32_t *)next_prevmv_vk->mapped_mem,
+                                &s->gpred_x, &s->gpred_y);
         av_buffer_unref(&s->prevmv_buf);
         s->prevmv_buf = next_prevmv;
         next_prevmv = NULL;
     }
-
-    av_buffer_unref(&mvx_ref);
-    av_buffer_unref(&mvy_ref);
-    av_buffer_unref(&sad_ref);
 
     /* Push the current frame into the 1-deep ring (clone — refcount bump on the
      * hwframe images, no pixel copy) as next frame's reference. */
@@ -781,6 +801,10 @@ static void mc_vulkan_uninit(AVFilterContext *avctx)
 
     av_frame_free(&s->prev);
     av_buffer_unref(&s->prevmv_buf);
+    av_freep(&s->mv_host);
+    av_freep(&s->sad_host);
+    av_freep(&s->mag_scratch);
+    s->mv_host_size = s->sad_host_size = s->mag_scratch_size = 0;
 
     ff_vk_exec_pool_free(vkctx, &s->e);
     ff_vk_shader_free(vkctx, &s->shd);

@@ -39,7 +39,7 @@ output bit-identical to `tile=0` (`cmp` 0 differing bytes, SSIM 1.000000 every
 frame, both GPUs):
 
 | GPU | tile=0 | tile=1 | Δ |
-|---|---:|---:|---|
+| --- | ---: | ---: | --- |
 | Intel Arc A380 | ~12.2 s | ~7.5 s | **−38 % (1.6×)** |
 | NVIDIA RTX 4090 | ~1.2–1.5 s | ~1.25–1.6 s | ~neutral |
 
@@ -51,8 +51,8 @@ mobile GPUs (and the `tune=anime` pipeline, which leans on dehalo).
 
 - Bit-identical, so safe to enable anywhere; a throughput knob only. One
   `shared float[2500]` (10 KB) when `tile=1`.
-- Second filter to adopt the ADR-0134 tiling idiom; the `aa` ALU-bound refutation
-  + this fetch-bound confirmation map which kernels the pattern fits.
+- Second filter to adopt the ADR-0134 tiling idiom; the `aa` ALU-bound refutation +
+  this fetch-bound confirmation map which kernels the pattern fits.
 
 ## References
 

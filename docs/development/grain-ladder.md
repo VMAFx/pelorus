@@ -24,7 +24,7 @@ A single scene is not a measurement of a title. Across the 750 titles with multi
 scenes, the within-title spread (max−min, relative to that title's own median) is:
 
 | | spread |
-|---|---|
+| --- | --- |
 | median | 0.71x |
 | p75 | 1.18x |
 | p90 | 2.02x |
@@ -37,7 +37,7 @@ treated as noise.
 ## What real content measures (per-title medians, n=752)
 
 | percentile | `grain_sigma` |
-|---|---|
+| --- | --- |
 | min | 0.00079 |
 | p10 | 0.00201 |
 | p25 | 0.00290 |
@@ -49,7 +49,7 @@ treated as noise.
 By decade:
 
 | decade | film (n) | median | TV (n) | median |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 1960s | 8 | 0.00486 | — | — |
 | 1970s | 25 | **0.00720** | — | — |
 | 1980s | 48 | **0.00714** | 7 | 0.00782 |
@@ -62,7 +62,7 @@ By decade:
 ## The biggest single split is not decade — it is resolution tier
 
 | tier | n | median | p25 | p75 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 4K | 402 | **0.00323** | 0.00221 | 0.00484 |
 | 1080p / standard | 350 | **0.00724** | 0.00519 | 0.00914 |
 
@@ -84,7 +84,7 @@ finds essentially the entire frame flat). Digital acquisition plus routine DNR.
 the reading:
 
 | `--grain` | `grain_sigma` | Δ vs clean | `grain_flat` | trustworthy? |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 0 | 0.01243 | — | 0.600 | yes |
 | 4 | 0.01253 | +0.00010 | 0.593 | yes |
 | 8 | 0.01380 | +0.00137 | 0.572 | yes |
@@ -130,7 +130,7 @@ This document originally reported an 86-title, **single-scene** probe. Re-runnin
 752 titles with three scenes each changed individual decade buckets by up to **78%**:
 
 | bucket | n=86, 1 scene | n=752, 3 scenes | error |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 2010s TV | 0.00822 | 0.00462 | **+78%** |
 | 1960s film | 0.00823 | 0.00486 | **+69%** |
 | 2010s film | 0.00649 | 0.00455 | +43% |

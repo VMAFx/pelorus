@@ -38,6 +38,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#endif
+
 #define MAX_FRAMES 4096u
 
 static int fail(const char *what, pel_result rc)
@@ -140,7 +148,7 @@ static int parse_args(int argc, char **argv, const char **csv_path, double *requ
     return 0;
 }
 
-int main(int argc, char **argv)
+static int run(int argc, char **argv)
 {
     const char *csv_path = NULL;
     const float *req_ptr = NULL;
@@ -198,4 +206,75 @@ int main(int argc, char **argv)
         return fail("blob round-trip", rc);
     }
     return EXIT_SUCCESS;
+}
+
+#ifdef _WIN32
+static void free_argv(char **argv, int argc)
+{
+    int i;
+
+    if (argv == NULL) {
+        return;
+    }
+    for (i = 0; i < argc; i++) {
+        free(argv[i]);
+    }
+    free((void *)argv); /* explicit: bugprone-multi-level-implicit-pointer-conversion */
+}
+
+/* Windows hands main() its arguments in the ANSI code page, but libpelorus
+ * paths are UTF-8 (ADR-0149): rebuild argv as UTF-8 from the UTF-16 command
+ * line, so a non-ASCII CSV path reaches pel_x265_csv_parse intact. Returns NULL
+ * on failure (including an argument with an unpaired surrogate).
+ * CommandLineToArgvW splits like the CRT except for "" inside a quoted argument
+ * and for argv[0]; no Windows path can contain '"', and argv[0] only names the
+ * program in the usage line. */
+static char **utf8_argv(int *argc)
+{
+    int wargc = 0;
+    wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
+    char **argv = NULL;
+    int i;
+
+    if (wargv != NULL && wargc > 0) {
+        argv = (char **)calloc((size_t)wargc + 1u, sizeof(*argv));
+    }
+    for (i = 0; argv != NULL && i < wargc; i++) {
+        const int n =
+            WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wargv[i], -1, NULL, 0, NULL, NULL);
+
+        argv[i] = (n > 0) ? malloc((size_t)n) : NULL;
+        if (argv[i] == NULL || WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wargv[i], -1,
+                                                   argv[i], n, NULL, NULL) != n) {
+            free_argv(argv, i + 1);
+            argv = NULL;
+        }
+    }
+    if (wargv != NULL) {
+        (void)LocalFree((HLOCAL)wargv);
+    }
+    if (argv != NULL) {
+        *argc = wargc;
+    }
+    return argv;
+}
+#endif
+
+int main(int argc, char **argv)
+{
+#ifdef _WIN32
+    char **utf8 = utf8_argv(&argc);
+    int rc;
+
+    (void)argv;
+    if (utf8 == NULL) {
+        (void)fprintf(stderr, "pelorus_qp_report: cannot read the command line as UTF-8\n");
+        return EXIT_FAILURE;
+    }
+    rc = run(argc, utf8);
+    free_argv(utf8, argc);
+    return rc;
+#else
+    return run(argc, argv);
+#endif
 }

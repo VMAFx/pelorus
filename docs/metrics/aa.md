@@ -44,7 +44,7 @@ ranges below are the filter's actual `AVOption` table
 (`ffmpeg-patches/files/vf_pelorus_aa_vulkan.c`).
 
 | Option | Type | Default | Range | Meaning |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `blur` | int | 2 | 0–8 | edge-map blur radius in pixels (box is `(2·blur+1)²`) |
 | `depth` | float | 8.0 | 0–64 | warp displacement scale (pixels per unit edge-map gradient) |
 | `thresh` | float | 0.5 | 0–1 | edge-map clamp ceiling (normalized) — caps any single edge's contribution to the blur |
@@ -82,7 +82,7 @@ typically after any deband/denoise stage. Keep it inside the VRAM segment of the
 graph; pair `hwupload`/`hwdownload` only at the pipeline edges, never mid-graph
 (it breaks zero-copy):
 
-```
+```text
 hwupload → pelorus_dehalo_vulkan → pelorus_aa_vulkan → (deband/denoise) → hwdownload → encoder
 ```
 

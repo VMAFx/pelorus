@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # Benchmarking — proving the BD-rate win
 
-### The grain axis (`--grain N`)
+## The grain axis (`--grain N`)
 
 Reductive pre-encode filtering is the project's central claim, and ADR-0142's measured law
 says its gain scales with how much removable impairment exists. Testing that needs a
@@ -16,7 +16,7 @@ run-bench.py --src .bench-corpus/netflix-bar.yuv --grain 12 ... # implies --clea
 Verified monotonic and reproducible on `netflix-bar`:
 
 | `--grain` | `grain_sigma` | `grain_flat` |
-|---|---|---|
+| --- | --- | --- |
 | 0 | 0.0124 | 0.600 |
 | 4 | 0.0125 | 0.593 |
 | 8 | 0.0138 | 0.572 |
@@ -39,7 +39,7 @@ impairment this project exists to exploit.
 640x360/48-frame corpus workload:
 
 | source | `grain_sigma` | `grain_flat` |
-|---|---|---|
+| --- | --- | --- |
 | real Blu-ray scan, 1994 remux | 0.0047–0.0101 | 0.96–0.98 |
 | real Blu-ray scan, 2000 | 0.0079 | 0.94 |
 | real film scan, 1971 | 0.0079 | 0.73 |
@@ -61,7 +61,7 @@ meaningless). `--grain` keeps the estimate in the supported regime — see
 ### What each corpus entry is for
 
 | entry | source | what it exercises |
-|---|---|---|
+| --- | --- | --- |
 | `bbb` | Big Buck Bunny (360p) | clean animation — the low-impairment end. Reductive filters are expected to show ~0 here (ADR-0142) |
 | `netflix-bar` | Netflix Chimera *BarScene* via Xiph.Org | real camera content: **2.4x the texture, 3.1x the variance and 1.7x the banding** of `bbb` at the same workload |
 | `synth-banding` | lavfi gradient | deband torture — a smooth dark gradient with nothing else in it |
@@ -119,7 +119,7 @@ hash, and extracts the pinned segment to raw YUV — byte-reproducible from the
 source. Current corpus:
 
 | name | source | why |
-|---|---|---|
+| --- | --- | --- |
 | `bbb` | Big Buck Bunny (Blender, CC-BY 3.0), pinned segment | real content — shows behavior on clean footage |
 | `synth-banding` | deterministic lavfi dark gradient | controlled banding torture — where deband is *designed* to help |
 

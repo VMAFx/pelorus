@@ -77,10 +77,10 @@ float tpdf(int x, int y, uint s, int salt) {
 float bayer8(int i, int j) {
     int x = i & 7, y = j & 7;
     int v = 0;
+    /* Canonical recursive Bayer: coordinate bits LSB-first, so the finest
+     * level supplies the most significant bits of the threshold. */
     for (int b = 0; b < 3; b++) {
-        v = (v << 2)
-          | (((x >> (2 - b)) & 1) << 1)
-          | (((x >> (2 - b)) & 1) ^ ((y >> (2 - b)) & 1));
+        v = (v << 2) | ((((x >> b) & 1) ^ ((y >> b) & 1)) << 1) | ((y >> b) & 1);
     }
     return float(v) / 64.0;
 }

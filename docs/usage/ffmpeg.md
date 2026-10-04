@@ -106,6 +106,15 @@ behaviour change). Use **constant-QP** and the encoder's own spatial/temporal AQ
 OFF: the encoder AQ overrides the delta-QP map, and VBR rate-control
 redistribution erodes the perceptual win.
 
+NVENC adds each `qpDeltaMap` entry to the rate-control QP in the codec's own QP
+units, so a region's delta is `qoffset` scaled by a per-codec span:
+`51 + 6 × (bit_depth − 8)` H.264/HEVC QP steps for `h264_nvenc`/`hevc_nvenc`,
+and 255 AV1 qindex steps for `av1_nvenc` (the same scale as its
+`-qp`/`-qmin`/`-qmax`, and the scale the libaom, SVT-AV1, VAAPI and D3D12 AV1 ROI
+paths use). The map holds signed bytes, so an AV1 delta saturates at
+[−128, 127] qindex; the analyze filter's default `roi_strength=0.333` stays inside
+that range.
+
 For QSV, use `-q:v N` (or otherwise set `AV_CODEC_FLAG_QSCALE`) to select CQP.
 `-global_quality N` alone selects ICQ in FFmpeg n9.0.2 and therefore cannot use
 the dense MBQP path. The patch does not add `-pelorus_roi` to `av1_qsv`.
@@ -150,7 +159,23 @@ quantised into up to 8 AV1 segments (`MAX_SEGMENTS`); each segment carries a
 more bits, matching the `qoffset` sign). Segment 0 is the zero-delta background,
 so superblocks no region covers keep the encoder's default decision. The map is
 attached per frame via SVT-AV1's `ROI_MAP_EVENT` private-data node and
-`enable_roi_map` is turned on at init.
+`enable_roi_map` is turned on at init. SVT-AV1 never copies or frees the event
+(it keeps the bare pointer, and a frame without an ROI node inherits the last
+one), so the encoder owns each event and frees it once a newer event has
+replaced it and the frames before that newer event are encoded (judged from the
+packet count with a 128-frame margin). Memory stays flat over the stream length
+instead of growing per frame; `-v verbose` prints the built and peak-live event
+counts at close.
+
+Because the library's last event is sticky, a frame that carries no ROI side data
+(or an ROI whose deltas all round to zero) would silently keep the previous
+frame's ROI. SVT-AV1 documents no reset call, so on the first such frame after a
+non-neutral event the encoder submits a neutral event (every superblock in
+segment 0, zero delta); the following frames inherit that neutral map. Measured
+with libsvtav1 4.2.0, CRF 30, 90 frames, ROI on the first 33 frames only: before
+the fix the remaining frames were byte-identical to an encode with the ROI on
+all frames (1130764 bytes); with the fix they match an encode without any ROI
+(2034761 vs 2036142 bytes).
 
 Use **constant-quality** (`-crf` / `-qp`); SVT-AV1's own variance AQ can override
 the segment map, and VBR rate-control redistribution erodes the win (same caveat
@@ -177,29 +202,75 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
 
 The map kind is chosen automatically from the negotiated rate-control mode: a
 signed **delta-QP map** (`R8_SINT`) under CQP, or an **emphasis map**
-(`R8_UNORM`) under CBR/VBR. The path is fully **runtime-probed**: the
-`VK_KHR_video_encode_quantization_map` extension must be enabled, the codec must
-advertise the matching delta/emphasis capability flag, and a usable map format +
-texel size must be returned for the profile. Any miss degrades to a one-shot
-warning + pass-through; a frame with no ROI binds no map (zero behaviour change).
+(`R8_UNORM`) under CBR/VBR. Use `-rc_mode cqp` for the delta map; no driver
+tested so far advertises the emphasis map.
 
-The map texel image is filled **on the GPU**: the canonical build-time
-`libavcodec/vulkan/pelorus_qpmap.comp.glsl` compute shader reads the coalesced
-ROI rectangle list from a small SSBO and `imageStore`s the per-texel
-delta/emphasis directly, eliminating the host per-texel raster + staging upload.
-This on-GPU path is preferred whenever the encode queue family also advertises
-`VK_QUEUE_COMPUTE_BIT` (so the dispatch records on the encode command buffer with
-no cross-queue ownership transfer); otherwise it transparently falls back to the
-host raster + `vkCmdCopyBufferToImage` path. Both share the same `qoffset`→ΔQP
-convention and default off.
+The path is fully **runtime-probed** and any miss degrades to a one-shot
+warning plus pass-through:
 
-> **Driver maturity.** This Nov-2024 extension has uneven beta Linux driver
-> coverage. Some drivers (including this project's current dev box) fail
-> `*_vulkan` *encode* at init with "Driver does not support required encode
-> feedback flags (BUFFER_OFFSET and BYTES_WRITTEN)" — a driver gap unrelated to
-> the QP-map path, which simply never runs there. The patch is compile-verified;
-> an on-HW BD-rate A/B is a follow-up once a driver advertising the extension is
-> available. See [ADR-0114](../adr/0114-encoder-steering.md) Tier 2.
+- **Device enablement.** The device must enable both the
+  `VK_KHR_video_encode_quantization_map` extension and its
+  `videoEncodeQuantizationMap` feature. Patch 0009 adds both to FFmpeg's
+  optional Vulkan device extensions and features, so a device created by FFmpeg
+  (`-init_hw_device vulkan=…`, or one derived from another hardware device)
+  enables them automatically whenever the driver supports them; check the
+  `-v verbose` line `Using device extension VK_KHR_video_encode_quantization_map`.
+  An application that passes its own `AVVulkanDeviceContext` must enable both
+  itself. Passing the extension alone through the `device_extensions` option
+  is not enough: without the feature the session is invalid
+  (`VUID-VkVideoSessionCreateInfoKHR-flags-10264`).
+- **Map format.** The codec must advertise the delta or emphasis capability
+  flag, and `vkGetPhysicalDeviceVideoFormatPropertiesKHR` must return an
+  `R8_SINT` (delta) or `R8_UNORM` (emphasis) entry whose usages allow the fill
+  path (`TRANSFER_DST` for the host raster, `STORAGE` for the on-GPU raster).
+  The map image is created with that entry's tiling.
+- **Delta range.** Each delta-map value is clamped to the driver's per-codec
+  range (`minQpDelta`/`maxQpDelta` for H.264/H.265, `minQIndexDelta`/
+  `maxQIndexDelta` for AV1) as well as to the `qoffset` span; a value outside
+  the driver range would leave the block QP undefined. When the range excludes
+  negative values the probe warns that regions asking for a *lower* QP get no
+  extra bits.
+
+The `qoffset` span is per codec: `51 + 6 × (bit_depth − 8)` QP steps for H.264
+and H.265, and 255 qindex steps for AV1 (the NVENC, libaom and SVT-AV1 scale; the
+H.26x span would give an AV1 region a fifth of the requested delta). `-v debug`
+prints each applied rectangle (`pelorus_roi: texels (0,0)-(10,12) qoffset 0.200 ->
+delta 51 (span 255, clamp [0, 127])`).
+
+`-v verbose` prints the chosen map (`Pelorus QP-map steering enabled: delta(R8_SINT)
+map, 60x34 texels (32x32 px/texel, linear tiling), dQP [0, 51]`) and `-v debug`
+prints one `pelorus_roi: frame N: host map slot S, R region(s)` line per frame
+that binds a map. A frame with no ROI side data binds no map (zero behaviour
+change). With a map bound, `hevc_vulkan` signals per-CU QP deltas
+(`cu_qp_delta_enabled_flag`) even under CQP.
+
+The map texel image is filled **on the GPU** when it can be: the canonical
+build-time `libavcodec/vulkan/pelorus_qpmap.comp.glsl` compute shader reads the
+coalesced ROI rectangle list from a small SSBO and `imageStore`s the per-texel
+delta/emphasis directly. That path needs an encode queue family that also
+advertises `VK_QUEUE_COMPUTE_BIT` (the dispatch records on the encode command
+buffer with no cross-queue ownership transfer) and a map format with `STORAGE`
+usage; otherwise the host raster + `vkCmdCopyBufferToImage` path runs. Both
+share the same `qoffset`→ΔQP convention, are recorded before the video coding
+scope begins, and default off.
+
+> **Driver status (measured 2026-10-03, ADR-0166).**
+>
+> | Device / driver | Extension + feature | Delta map advertised | Result |
+> | --- | --- | --- | --- |
+> | RTX 4090, NVIDIA 615.71.09 | yes | `R8_SINT`, LINEAR only, ΔQP [0, 51] (H.264/H.265), ΔqIndex [0, 255] (AV1) | Steering active on all three encoders; only **positive** offsets (raise QP) take effect |
+> | Radeon iGPU, RADV (Mesa 26.2.4) | yes | `R32_SINT`, usage `QUANTIZATION_DELTA_MAP` only | Disabled with a warning: no fill path for that format yet |
+> | Arc A380, ANV (Mesa 26.2.4) | no | — | Disabled with a warning (no extension; video encode itself needs `ANV_DEBUG=video-encode`) |
+>
+> On NVIDIA a `+0.3` `qoffset` over the left half of a 1080p clip at `-qp 30`
+> raised the decoded H.264 macroblock QP there from 30 to about 45, cut the
+> stream by 30 % (HEVC: 50 %) and left the other half's PSNR unchanged. The
+> negative offsets `pelorus_analyze_vulkan roi=1` emits ("spend more bits here")
+> clamp to 0 on this driver, so they bind a neutral map. `av1_vulkan` on this
+> driver already emits streams libdav1d cannot fully decode without
+> `-pelorus_roi`, so its quality was not measured. See
+> [ADR-0114](../adr/0114-encoder-steering.md) Tier 2 and
+> [ADR-0166](../adr/0166-vulkan-qpmap-activation.md).
 
 ## Encoder motion-search seeding (NVENC external ME hints)
 
@@ -230,8 +301,15 @@ graceful: AV1 is skipped (NVENC's AV1 path uses a different per-superblock hint
 struct), a device that reports no external-ME support warns once and passes
 through, and an FFmpeg built against ffnvcodec headers without the external-ME
 structs (pre-SDK-8.1) no-ops at init with a one-shot warning. If a frame carries
-no `PEL_SEC_MOTION` section the hint buffer is left unset for that frame, so
-NVENC runs its own search. On-hardware A/B (RTX 4090, `hevc_nvenc -preset p7`,
+no `PEL_SEC_MOTION` section (no `pelorus_mc_vulkan` in the chain, or a frame the
+filter produced no vectors for), the patch submits one zero-MV candidate per
+16×16 block for that frame and logs one warning per encoder instance. A session
+opened for external hints requires a populated hint buffer on every frame:
+submitting zero candidates fails the whole encode on the device (`EncodePicture
+failed!: invalid param (8): SetupCEAHints failed`, RTX 4090, driver 615.71.09),
+and the SDK documents no other "no hint" value. A zero-MV seed is neutral but not
+identical to hints-off: the ASIC still searches around the co-located block, so
+the stream differs from an encode without `-pelorus_me_hints`. On-hardware A/B (RTX 4090, `hevc_nvenc -preset p7`,
 1280×720, 600 frames): hints engaged but produced a ~2–3% *slowdown* (hints-off
 114 fps vs hints-on 110 fps) — the per-frame hint upload outweighs ME-search
 savings on Ada VDEnc at p7. Kept default off and documented as an honest negative
@@ -271,7 +349,10 @@ and points `filmGrainParams` at a persistent `NV_ENC_FILM_GRAIN_PARAMS_AV1`; per
 frame it refills that struct from the estimate (native channel preferred, the
 interop section as a fallback) and raises the AV1 pic-params
 `filmGrainParamsUpdate` flag (a time-varying model). The `AVFilmGrainAOMParams`
-set maps field-for-field onto the NVENC struct.
+set maps field-for-field onto the NVENC struct. NVENC takes the raw AV1 syntax
+values, so the chroma multipliers gain the AV1 `+128` bias and the chroma offsets
+the `+256` bias on the way in (`AVFilmGrainAOMParams` and the
+`PEL_SEC_FILMGRAIN` section carry them unbiased, as dav1d exports them).
 
 The option defaults OFF (zero behaviour change) and is registered on `av1_nvenc`
 only — H.264/HEVC NVENC have no AV1 film grain. It is compile-gated by a new
@@ -279,9 +360,12 @@ only — H.264/HEVC NVENC have no AV1 film grain. It is compile-gated by a new
 the film-grain struct landed); an FFmpeg built against older headers warns once
 at init and passes through. If a frame carries no usable AV1 grain estimate the
 update flag stays clear, so NVENC keeps the previous params (or the zero-init
-no-op). No grain-match or BD-rate number ships yet — the estimate is wired into
-NVENC's AV1 film-grain config and the on-hardware proof is a documented
-follow-up. See [ADR-0118](../adr/0118-nvenc-av1-filmgrain.md),
+no-op). On an RTX 4090 (driver 615.71.09) the encoded stream signals
+`film_grain_params_present=1` with `apply_grain=1` in every frame header, and
+dav1d synthesizes the grain at decode. A libaom film-grain test vector decoded
+through libdav1d keeps every film-grain syntax value except `grain_seed`, which
+NVENC chooses itself. No grain-match or BD-rate number ships yet. See
+[ADR-0118](../adr/0118-nvenc-av1-filmgrain.md),
 [ADR-0115](../adr/0115-grain-estimate.md), and
 [ADR-0114](../adr/0114-encoder-steering.md).
 

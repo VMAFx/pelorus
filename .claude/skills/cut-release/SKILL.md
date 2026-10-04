@@ -6,7 +6,8 @@ description: Use when cutting a Pelorus release — verify the gate, bump the ve
 # /cut-release
 
 Releases are **tag-triggered**: pushing `vX.Y.Z` runs `.github/workflows/release.yml`,
-which gates on build+tests, extracts notes from the `[Unreleased]` changelog
+which first runs the full CI workflow, asserts the tag equals the `meson.build`
+version, gates on build+tests, extracts notes from the `[Unreleased]` changelog
 block, packages the FFmpeg patch stack, and publishes the GitHub release.
 
 ## Steps
