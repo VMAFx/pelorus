@@ -202,8 +202,8 @@
 +        h->refidx     = 0;
 +        h->dir        = 0;   /* L0 */
 +        h->partType   = 0;   /* 16x16 */
-+        h->lastofPart = 1;
-+        h->lastOfMB   = 1;
++        h->lastofPart = -1; /* nvEncodeAPI.h: int32_t lastofPart : 1, so set == -1 */
++        h->lastOfMB   = -1; /* int32_t lastOfMB : 1 */
 +    }
 +}
 +
@@ -264,8 +264,8 @@
 +            h->refidx     = 0;   /* one reference per direction for ext hints */
 +            h->dir        = 0;   /* L0 */
 +            h->partType   = 0;   /* 16x16 */
-+            h->lastofPart = 1;
-+            h->lastOfMB   = 1;
++            h->lastofPart = -1; /* nvEncodeAPI.h: int32_t lastofPart : 1, so set == -1 */
++            h->lastOfMB   = -1; /* int32_t lastOfMB : 1 */
 +        }
 +    }
 +
