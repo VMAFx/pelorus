@@ -2656,87 +2656,90 @@ def validate_renovate() -> list[str]:
     )
 
 
-def renovate_validator_regressions() -> list[str]:
-    """Prove that removing or breaking the mirroring Go manager fails (ADR-0152)."""
-    failures: list[str] = []
-    source = RENOVATE_CONFIG.read_text(encoding="utf-8")
-    checker = Path(__file__).resolve().read_text(encoding="utf-8")
-    config = json.loads(source)
+def _managers_matching_checker(manager: dict) -> bool:
+    """Whether one renovate customManager targets the checker file."""
+    return any(
+        renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
+        for pattern in manager.get("managerFilePatterns", [])
+    )
 
-    def without_checker_manager(value: dict) -> dict:
-        value["customManagers"] = [
-            manager
-            for manager in value["customManagers"]
-            if not any(
-                renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
-                for pattern in manager.get("managerFilePatterns", [])
-            )
-        ]
+
+def _without_checker_manager(value: dict) -> dict:
+    value["customManagers"] = [
+        manager for manager in value["customManagers"] if not _managers_matching_checker(manager)
+    ]
+    return value
+
+
+def _mutate_checker_manager(key: str, replacement: object):
+    def mutate(value: dict) -> dict:
+        for manager in value["customManagers"]:
+            if _managers_matching_checker(manager):
+                manager[key] = replacement
         return value
 
-    def mutate_checker_manager(key: str, replacement: object):
-        def mutate(value: dict) -> dict:
-            for manager in value["customManagers"]:
-                if any(
-                    renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
-                    for pattern in manager.get("managerFilePatterns", [])
-                ):
-                    manager[key] = replacement
-            return value
+    return mutate
 
-        return mutate
 
-    def with_extra_manager(patterns: list[str]):
-        def mutate(value: dict) -> dict:
-            value["customManagers"].append(
-                {
-                    "customType": "regex",
-                    "managerFilePatterns": patterns,
-                    "matchStrings": ['GO = "(?<currentValue>[^"]+)"'],
-                    "datasourceTemplate": "github-releases",
-                }
-            )
-            return value
+def _with_extra_manager(patterns: list[str]):
+    def mutate(value: dict) -> dict:
+        value["customManagers"].append(
+            {
+                "customType": "regex",
+                "managerFilePatterns": patterns,
+                "matchStrings": ['GO = "(?<currentValue>[^"]+)"'],
+                "datasourceTemplate": "github-releases",
+            }
+        )
+        return value
 
-        return mutate
+    return mutate
 
-    cases = {
+
+def _renovate_regression_cases() -> dict:
+    """Each broken-manager mutation with the diagnostic the validator must give."""
+    return {
         "second manager via /regex/i": (
-            with_extra_manager(["/SCRIPTS/CHECK-BUILD-CONFIG\\.PY$/i"]),
+            _with_extra_manager(["/SCRIPTS/CHECK-BUILD-CONFIG\\.PY$/i"]),
             "expected exactly one regex customManager",
         ),
         "second manager via glob": (
-            with_extra_manager(["**/*.py"]),
+            _with_extra_manager(["**/*.py"]),
             "expected exactly one regex customManager",
         ),
         "unevaluable file pattern": (
-            with_extra_manager(["scripts/[a-z]*.py"]),
+            _with_extra_manager(["scripts/[a-z]*.py"]),
             "is not evaluated by this checker",
         ),
         "missing Go manager": (
-            without_checker_manager,
+            _without_checker_manager,
             "expected exactly one regex customManager",
         ),
         "golang-version datasource": (
-            mutate_checker_manager("datasourceTemplate", "golang-version"),
+            _mutate_checker_manager("datasourceTemplate", "golang-version"),
             "needs datasourceTemplate 'github-releases'",
         ),
         "different depName": (
-            mutate_checker_manager("depNameTemplate", "golang"),
+            _mutate_checker_manager("depNameTemplate", "golang"),
             "needs depNameTemplate 'go'",
         ),
         "semver versioning": (
-            mutate_checker_manager("versioningTemplate", "semver"),
+            _mutate_checker_manager("versioningTemplate", "semver"),
             "needs versioningTemplate 'npm'",
         ),
         "matchString misses literal": (
-            mutate_checker_manager(
+            _mutate_checker_manager(
                 "matchStrings", ['GO_VERSION = "(?<currentValue>\\d+\\.\\d+)"']
             ),
             "matchString must capture exactly",
         ),
     }
-    for name, (mutate, expected) in cases.items():
+
+
+def _renovate_case_failures(config: dict, checker: str) -> list[str]:
+    """Run every mutation case and report the ones the validator accepted."""
+    failures: list[str] = []
+    for name, (mutate, expected) in _renovate_regression_cases().items():
         try:
             mutated = json.dumps(mutate(json.loads(json.dumps(config))))
         except RenovatePatternError as exc:
@@ -2748,6 +2751,14 @@ def renovate_validator_regressions() -> list[str]:
         errors = validate_renovate_text(mutated, checker)
         if not any(expected in error for error in errors):
             failures.append(f"renovate regression: {name} was accepted")
+    return failures
+
+
+def renovate_validator_regressions() -> list[str]:
+    """Prove that removing or breaking the mirroring Go manager fails (ADR-0152)."""
+    source = RENOVATE_CONFIG.read_text(encoding="utf-8")
+    checker = Path(__file__).resolve().read_text(encoding="utf-8")
+    failures = _renovate_case_failures(json.loads(source), checker)
     stale = checker.replace(
         f'ACTIONLINT_GO_VERSION = "{ACTIONLINT_GO_VERSION}"',
         'ACTIONLINT_GO_VERSION = "go1.0"',
@@ -2790,7 +2801,48 @@ def validate_consumers() -> list[str]:
     return errors
 
 
+# Variables that make Git pick a repository instead of discovering one from the working
+# directory. Git sets them for every hook it runs; a fixture that inherited them would run
+# its `git init`, `git branch` and `git commit` against the repository being pushed.
+GIT_REPOSITORY_ENV = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_PREFIX",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+)
+
+
+def scrub_git_repository_env() -> None:
+    """Drop the repository-selecting Git variables so fixtures stay in their temp dirs."""
+    for key in GIT_REPOSITORY_ENV:
+        os.environ.pop(key, None)
+
+
+def git_repository_env_regression() -> list[str]:
+    """Prove a hook's GIT_DIR cannot reach a fixture command."""
+    saved = {key: os.environ.get(key) for key in GIT_REPOSITORY_ENV}
+    os.environ["GIT_DIR"] = "/definitely/not/a/repository"
+    os.environ["GIT_WORK_TREE"] = "/definitely/not/a/worktree"
+    try:
+        scrub_git_repository_env()
+        leaked = [key for key in GIT_REPOSITORY_ENV if key in os.environ]
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    if leaked:
+        return [f"fixture regression: {', '.join(leaked)} survived the Git env scrub"]
+    return []
+
+
 def main() -> int:
+    scrub_git_repository_env()
     if not CONFIG.is_file():
         print("build-config.env: missing", file=sys.stderr)
         return 1
@@ -2810,6 +2862,7 @@ def main() -> int:
         errors.extend(qsv_validator_regressions())
         errors.extend(surface_validator_regressions())
         errors.extend(fixture_subprocess_regression())
+        errors.extend(git_repository_env_regression())
         errors.extend(git_fixture_policy_regression())
         errors.extend(git_tag_ref_regression())
         errors.extend(git_dirty_worktree_cleanup_regression())

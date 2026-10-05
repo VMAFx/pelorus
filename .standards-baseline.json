@@ -1,9 +1,9 @@
 {
   "version": 1,
-  "generated_at": "2026-10-05T10:38:52Z",
+  "generated_at": "2026-10-05T10:41:49Z",
   "repository": "VMAFx/pelorus",
-  "commit_sha": "10a87d18d9feef5e3414d82114d8658a40f882f5",
-  "total_infractions": 94,
+  "commit_sha": "2f3298db2e4eb0d54b2eaf0c85b98b60685c9c76",
+  "total_infractions": 93,
   "infractions": [
     {
       "rule_id": "HISS-07",
@@ -737,15 +737,6 @@
       "message": "Function 'main' (88 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:main",
       "fingerprint": "scripts/bench/run-bench.py:HISS-04:fn:main#1"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "scripts/check-build-config.py",
-      "line_number": 2659,
-      "symbol": "renovate_validator_regressions",
-      "message": "Function 'renovate_validator_regressions' (100 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "anchor": "fn:renovate_validator_regressions",
-      "fingerprint": "scripts/check-build-config.py:HISS-04:fn:renovate_validator_regressions#1"
     },
     {
       "rule_id": "HISS-07",
