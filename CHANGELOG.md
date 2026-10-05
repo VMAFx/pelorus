@@ -56,6 +56,12 @@ All notable changes to Pelorus are documented here. The format is
   split the Go bump are not evaluated; such a split shows up as a red
   `build-config-sync` on the Renovate PR
   ([ADR-0152](docs/adr/0152-renovate-guard-enforcement-scope.md)).
+- **The interop parser and the x265 CSV reader meet the HISS limits.**
+  `pel_blob_pack()`, `pel_blob_find_section()`, `pel_qp_report_from_blocks()` and
+  `pel_x265_csv_parse()` are split into helpers without a change in behaviour
+  (the conformance fixture passes unchanged), and the field splitter of the CSV
+  reader carries an explicit scalar bound. The HISS baseline loses 5
+  infractions (99 to 93, with one more from `scripts/check-build-config.py`, whose Renovate regression table is split into helpers).
 - Re-pinned the Praetor governance engine from `25451d88` to `0af07a73`. The
   engine now scans shell scripts, so the HISS baseline records 37 more findings
   in unchanged scripts (62 → 99) until a follow-up retires them. The locked
@@ -90,6 +96,13 @@ All notable changes to Pelorus are documented here. The format is
   runs natively under MSYS2 UCRT64 (with a Windows-safe SPIR-V discard target),
   and CI gains a pinned `windows-2025` job that runs it
   ([ADR-0149](docs/adr/0149-windows-utf8-paths.md)).
+- **`scripts/check-build-config.py --self-test` no longer runs its Git fixtures
+  against the repository being pushed.** Git exports `GIT_DIR` and
+  `GIT_WORK_TREE` to hooks, and the fixtures inherited them: a push hook that ran
+  the fast suite committed `fixture` commits onto the pushed branch, created
+  `base` and `n1.2.3` branches and wrote `core.hooksPath`, `commit.gpgsign` and
+  `user.name` into the repository's config. The checker now drops the
+  repository-selecting variables first, and a regression proves it.
 
 ### Security
 
