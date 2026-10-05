@@ -109,8 +109,9 @@ static char *trim(char *s)
  * Writes up to max_fields into fields[]; returns the field count.
  *
  * Loop bound (P10 r2): `line` is always a fgets-filled, NUL-terminated buffer of
- * <= PEL_CSV_LINE_MAX bytes, so the walk hits '\0' in a bounded number of steps;
- * the `n >= max_fields` break bounds the field count independently. */
+ * <= PEL_CSV_LINE_MAX bytes, so the walk hits '\0' within PEL_CSV_LINE_MAX steps, the
+ * explicit scalar bound of the loop; the `n >= max_fields` break bounds the field count
+ * independently. */
 static size_t split_fields(char *line, char **fields, size_t max_fields)
 {
     size_t n = 0;
@@ -120,7 +121,7 @@ static size_t split_fields(char *line, char **fields, size_t max_fields)
     if (max_fields == 0) {
         return 0;
     }
-    for (;;) {
+    for (size_t step = 0; step <= (size_t)PEL_CSV_LINE_MAX; step++) {
         if (*p == ',' || *p == '\0') {
             int last = (*p == '\0');
             *p = '\0';
@@ -405,15 +406,48 @@ static pel_result open_utf8(const char *path, const char *mode, FILE **out)
     return (*out != NULL) ? PEL_OK : PEL_ERR_ABSENT;
 }
 
+/* Read the header and the frame rows from fp into out_frames. Sets *truncated when more frame
+ * rows exist than cap, *have_header once a usable header was seen, and returns PEL_ERR_ABSENT
+ * for a header without the QP and Bits columns. */
+static pel_result x265_csv_read_rows(FILE *fp, PelorusX265Frame *out_frames, size_t cap,
+                                     size_t *count, int *truncated, int *have_header)
+{
+    char line[PEL_CSV_LINE_MAX]; /* bounded, fixed (Po10): no heap, no VLA  */
+    char *fields[PEL_CSV_MAX_FIELDS];
+    csv_cols cols;
+
+    while (fgets(line, (int)sizeof(line), fp) != NULL) {
+        size_t nf = split_fields(line, fields, PEL_CSV_MAX_FIELDS);
+
+        if (!*have_header) {
+            locate_columns(fields, nf, &cols);
+            /* QP + Bits are the minimum we require to call this an x265 CSV. */
+            if (cols.qp < 0 || cols.bits < 0) {
+                return PEL_ERR_ABSENT;
+            }
+            *have_header = 1;
+            continue;
+        }
+
+        if (nf == 0 || !row_is_frame(fields, nf, &cols)) {
+            continue;
+        }
+        if (*count >= cap) {
+            *truncated = 1;
+            break;
+        }
+        row_to_frame(fields, nf, &cols, &out_frames[*count]);
+        (*count)++;
+    }
+    return PEL_OK;
+}
+
 pel_result pel_x265_csv_parse(const char *path, PelorusX265Frame *out_frames, size_t cap,
                               size_t *out_count)
 {
     FILE *fp;
-    char line[PEL_CSV_LINE_MAX]; /* bounded, fixed (Po10): no heap, no VLA  */
-    char *fields[PEL_CSV_MAX_FIELDS];
-    csv_cols cols;
     size_t count = 0;
-    pel_result rc = PEL_OK;
+    pel_result rc;
     int truncated = 0;
     int have_header = 0;
 
@@ -427,30 +461,7 @@ pel_result pel_x265_csv_parse(const char *path, PelorusX265Frame *out_frames, si
         return rc;
     }
 
-    while (fgets(line, (int)sizeof(line), fp) != NULL) {
-        size_t nf = split_fields(line, fields, PEL_CSV_MAX_FIELDS);
-
-        if (!have_header) {
-            locate_columns(fields, nf, &cols);
-            /* QP + Bits are the minimum we require to call this an x265 CSV. */
-            if (cols.qp < 0 || cols.bits < 0) {
-                rc = PEL_ERR_ABSENT;
-                break;
-            }
-            have_header = 1;
-            continue;
-        }
-
-        if (nf == 0 || !row_is_frame(fields, nf, &cols)) {
-            continue;
-        }
-        if (count >= cap) {
-            truncated = 1;
-            break;
-        }
-        row_to_frame(fields, nf, &cols, &out_frames[count]);
-        count++;
-    }
+    rc = x265_csv_read_rows(fp, out_frames, cap, &count, &truncated, &have_header);
 
     /* Distinguish EOF from a mid-file read error (CERT FIO35-C): fgets returns
      * NULL for both, so without this a truncated read would report PEL_OK. */
