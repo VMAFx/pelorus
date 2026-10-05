@@ -25,15 +25,15 @@
  * independently. No external test framework — exit non-zero on first failure.
  */
 
+#include "pelorus/deband.h"
+#include "pelorus/interop.h"
+#include "pelorus/pelorus.h"
+
 /* NOLINTBEGIN(modernize-use-nullptr): this C translation unit is built as C23
  * by vmafx, where clang-tidy also proposes the `nullptr` keyword, but MSVC's C
  * mode has no `nullptr` (C2065); the Windows builds compile it with cl.exe.
  * The NULL macro stays. Same decision as vmafx ADR-1138
  * (docs/adr/1138-c-translation-units-keep-null.md in VMAFx/vmafx). */
-
-#include "pelorus/deband.h"
-#include "pelorus/interop.h"
-#include "pelorus/pelorus.h"
 
 #include <stdio.h>
 #include <stdlib.h>
