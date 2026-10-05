@@ -68,6 +68,12 @@ All notable changes to Pelorus are documented here. The format is
   documentation gate's npm dependencies now audit clean (previously eight
   advisories, six high)
   ([ADR-0154](docs/adr/0154-praetor-engine-repin.md)).
+- The interop sources and their conformance test now pass clang-tidy at the
+  VMAFx profile, which lints the vendored copies. The conformance test splits
+  its long checks into helpers and patches blob headers through `memcpy`
+  instead of casting the byte buffer through `void *`. Each interop translation
+  unit keeps the `NULL` macro inside one `NOLINT(modernize-use-nullptr)` block,
+  because MSVC's C mode has no `nullptr`. No behaviour or ABI change.
 
 ### Fixed
 

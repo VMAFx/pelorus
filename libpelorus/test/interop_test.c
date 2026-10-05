@@ -29,6 +29,12 @@
 #include "pelorus/interop.h"
 #include "pelorus/pelorus.h"
 
+/* NOLINTBEGIN(modernize-use-nullptr): this C translation unit is built as C23
+ * by vmafx, where clang-tidy also proposes the `nullptr` keyword, but MSVC's C
+ * mode has no `nullptr` (C2065); the Windows builds compile it with cl.exe.
+ * The NULL macro stays. Same decision as vmafx ADR-1138
+ * (docs/adr/1138-c-translation-units-keep-null.md in VMAFx/vmafx). */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -363,7 +369,7 @@ static void fill_meta(PelorusSideData *m)
     m->producer_id = PEL_FOURCC('P', 'L', 'R', 'S');
 }
 
-static void check_roundtrip_sections(const uint8_t *blob, size_t len)
+static void check_roundtrip_banding(const uint8_t *blob, size_t len)
 {
     const void *p = NULL;
     size_t got = 0;
@@ -376,6 +382,12 @@ static void check_roundtrip_sections(const uint8_t *blob, size_t len)
         CHECK(b->global_banding_risk == 0.42f);
         CHECK(b->flat_area_fraction == 0.61f);
     }
+}
+
+static void check_roundtrip_variance(const uint8_t *blob, size_t len)
+{
+    const void *p = NULL;
+    size_t got = 0;
 
     CHECK(pel_blob_find_section(blob, len, PEL_SEC_VARIANCE, sizeof(PelorusVarianceSection), &p,
                                 &got) == PEL_OK);
@@ -383,6 +395,12 @@ static void check_roundtrip_sections(const uint8_t *blob, size_t len)
         const PelorusVarianceSection *v = p;
         CHECK(v->texture_energy == 0.33f);
     }
+}
+
+static void check_roundtrip_filmgrain(const uint8_t *blob, size_t len)
+{
+    const void *p = NULL;
+    size_t got = 0;
 
     CHECK(pel_blob_find_section(blob, len, PEL_SEC_FILMGRAIN, sizeof(PelorusFilmGrainSection), &p,
                                 &got) == PEL_OK);
@@ -392,7 +410,16 @@ static void check_roundtrip_sections(const uint8_t *blob, size_t len)
         CHECK(g->num_y_points == 3);
         CHECK(g->apply == 1);
     }
+}
 
+static void check_roundtrip_sections(const uint8_t *blob, size_t len)
+{
+    const void *p = NULL;
+    size_t got = 0;
+
+    check_roundtrip_banding(blob, len);
+    check_roundtrip_variance(blob, len);
+    check_roundtrip_filmgrain(blob, len);
     CHECK(pel_blob_find_section(blob, len, PEL_SEC_MOTION, sizeof(PelorusMotionSection), &p,
                                 &got) == PEL_ERR_ABSENT);
 }
@@ -473,6 +500,21 @@ static void test_forward_compat(void)
     pel_blob_free(blob);
 }
 
+/* Header and directory patches go through memcpy on the byte buffer: the blob
+ * is a uint8_t array, so no struct pointer is formed over it. */
+static PelorusSideData blob_header_load(const uint8_t *blob)
+{
+    PelorusSideData hdr;
+
+    memcpy(&hdr, blob + PELORUS_SIDEDATA_UUID_LEN, sizeof(hdr));
+    return hdr;
+}
+
+static void blob_header_store(uint8_t *blob, const PelorusSideData *hdr)
+{
+    memcpy(blob + PELORUS_SIDEDATA_UUID_LEN, hdr, sizeof(*hdr));
+}
+
 /* R6: an ABI-major mismatch is detected and rejected, not misread. */
 static void test_abi_major_mismatch(void)
 {
@@ -483,7 +525,7 @@ static void test_abi_major_mismatch(void)
     size_t len = 0;
     const void *p = NULL;
     size_t got = 0;
-    PelorusSideData *hdr;
+    PelorusSideData hdr;
 
     fill_meta(&meta);
     memset(&band, 0, sizeof(band));
@@ -492,8 +534,9 @@ static void test_abi_major_mismatch(void)
     sec.size = (uint32_t)sizeof(band);
     CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
 
-    hdr = (PelorusSideData *)(void *)(blob + PELORUS_SIDEDATA_UUID_LEN);
-    hdr->abi_major = (uint16_t)(PELORUS_ABI_MAJOR + 1u);
+    hdr = blob_header_load(blob);
+    hdr.abi_major = (uint16_t)(PELORUS_ABI_MAJOR + 1u);
+    blob_header_store(blob, &hdr);
 
     CHECK(pel_blob_is_present(blob, len) == 0);
     CHECK(pel_blob_find_section(blob, len, PEL_SEC_BANDING, sizeof(PelorusBandingSection), &p,
@@ -569,8 +612,9 @@ static void test_misaligned_offset(void)
     size_t len = 0;
     const void *p = NULL;
     size_t got = 0;
-    PelorusSideData *hdr;
-    PelorusSectionDir *dir;
+    PelorusSideData hdr;
+    PelorusSectionDir dir;
+    size_t dir_off;
 
     fill_meta(&meta);
     memset(&grain, 0, sizeof(grain));
@@ -586,9 +630,11 @@ static void test_misaligned_offset(void)
 
     /* Now hand-patch dir[0].offset to a misaligned value (+4). The section then
      * still fits the buffer but its start is no longer 8-aligned. */
-    hdr = (PelorusSideData *)(void *)(blob + PELORUS_SIDEDATA_UUID_LEN);
-    dir = (PelorusSectionDir *)(void *)(blob + PELORUS_SIDEDATA_UUID_LEN + hdr->header_size);
-    dir[0].offset += 4u;
+    hdr = blob_header_load(blob);
+    dir_off = (size_t)PELORUS_SIDEDATA_UUID_LEN + hdr.header_size;
+    memcpy(&dir, blob + dir_off, sizeof(dir));
+    dir.offset += 4u;
+    memcpy(blob + dir_off, &dir, sizeof(dir));
 
     CHECK(pel_blob_find_section(blob, len, PEL_SEC_FILMGRAIN, sizeof(PelorusFilmGrainSection), &p,
                                 &got) == PEL_ERR_ABI);
@@ -618,6 +664,28 @@ static void test_pack_size_overflow(void)
     CHECK(blob == NULL);
 }
 
+static void check_qp_report_scalars(const PelorusQpReportSection *r)
+{
+    CHECK(r->avg_qp == 27.5f);
+    CHECK(r->psnr_y == 41.2f);
+    CHECK(r->total_bits == 1234567ULL);
+    CHECK(r->num_inter_blocks == 200);
+    CHECK(r->honored_fraction == 0.75f);
+    CHECK(r->report_source == PEL_QPSRC_QSV);
+    CHECK(r->block_size_log2 == 4);
+}
+
+static void check_qp_report_fields(const PelorusQpReportSection *r, uint16_t cells)
+{
+    check_qp_report_scalars(r);
+    CHECK(r->qp_valid == 1);
+    CHECK(r->qp_cell_size == cells);
+    CHECK(r->num_intra_blocks == 40);
+    CHECK(r->num_skipped_blocks == 16);
+    CHECK(r->psnr_u == 0.0f);
+    CHECK(r->psnr_v == 0.0f);
+}
+
 static void check_qp_report_section(const uint8_t *blob, size_t len, uint16_t cells)
 {
     const void *p = NULL;
@@ -626,22 +694,7 @@ static void check_qp_report_section(const uint8_t *blob, size_t len, uint16_t ce
     CHECK(pel_blob_find_section(blob, len, PEL_SEC_QPREPORT, sizeof(PelorusQpReportSection), &p,
                                 &got) == PEL_OK);
     CHECK(got == sizeof(PelorusQpReportSection));
-    {
-        const PelorusQpReportSection *r = p;
-        CHECK(r->avg_qp == 27.5f);
-        CHECK(r->psnr_y == 41.2f);
-        CHECK(r->total_bits == 1234567ULL);
-        CHECK(r->num_inter_blocks == 200);
-        CHECK(r->honored_fraction == 0.75f);
-        CHECK(r->report_source == PEL_QPSRC_QSV);
-        CHECK(r->block_size_log2 == 4);
-        CHECK(r->qp_valid == 1);
-        CHECK(r->qp_cell_size == cells);
-        CHECK(r->num_intra_blocks == 40);
-        CHECK(r->num_skipped_blocks == 16);
-        CHECK(r->psnr_u == 0.0f);
-        CHECK(r->psnr_v == 0.0f);
-    }
+    check_qp_report_fields(p, cells);
 
     /* An older consumer (knows only the first two floats) still parses (R4). */
     CHECK(pel_blob_find_section(blob, len, PEL_SEC_QPREPORT, 8, &p, &got) == PEL_OK);
@@ -725,32 +778,10 @@ static void check_motion_conf_pair(const PelorusSideData *meta,
     pel_blob_free(blob);
 }
 
-/* PEL_SEC_MOTION_CONF (g): pack the per-block MV confidence section, parse it
- * back, verify the offset/size/metric fields round-trip; a consumer that knows
- * only the offset/size (not conf_metric) still parses (R4); and a section we did
- * not write is absent (R3). */
-static void test_motion_conf_roundtrip(void)
+static void check_motion_conf_fields(const uint8_t *blob, size_t len)
 {
-    PelorusSideData meta;
-    PelorusMotionConfSection conf;
-    PelorusPackSection sec;
-    uint8_t *blob = NULL;
-    size_t len = 0;
     const void *p = NULL;
     size_t got = 0;
-
-    fill_meta(&meta);
-    memset(&conf, 0, sizeof(conf));
-    conf.conf_field_offset = 0;    /* producer patches once it appends the map */
-    conf.conf_field_size = 16 * 9; /* matches fill_meta grid (uint8 per cell)  */
-    conf.conf_metric = PEL_MOTION_CONF_SAD;
-
-    sec.id = PEL_SEC_MOTION_CONF;
-    sec.data = &conf;
-    sec.size = (uint32_t)sizeof(conf);
-    CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
-    CHECK(blob != NULL);
-    CHECK(pel_blob_is_present(blob, len) == 1);
 
     CHECK(pel_blob_find_section(blob, len, PEL_SEC_MOTION_CONF, sizeof(PelorusMotionConfSection),
                                 &p, &got) == PEL_OK);
@@ -769,10 +800,60 @@ static void test_motion_conf_roundtrip(void)
     /* R3: the plain motion section we did NOT write is absent. */
     CHECK(pel_blob_find_section(blob, len, PEL_SEC_MOTION, sizeof(PelorusMotionSection), &p,
                                 &got) == PEL_ERR_ABSENT);
+}
+
+/* PEL_SEC_MOTION_CONF (g): pack the per-block MV confidence section, parse it
+ * back, verify the offset/size/metric fields round-trip; a consumer that knows
+ * only the offset/size (not conf_metric) still parses (R4); and a section we did
+ * not write is absent (R3). */
+static void test_motion_conf_roundtrip(void)
+{
+    PelorusSideData meta;
+    PelorusMotionConfSection conf;
+    PelorusPackSection sec;
+    uint8_t *blob = NULL;
+    size_t len = 0;
+
+    fill_meta(&meta);
+    memset(&conf, 0, sizeof(conf));
+    conf.conf_field_offset = 0;    /* producer patches once it appends the map */
+    conf.conf_field_size = 16 * 9; /* matches fill_meta grid (uint8 per cell)  */
+    conf.conf_metric = PEL_MOTION_CONF_SAD;
+
+    sec.id = PEL_SEC_MOTION_CONF;
+    sec.data = &conf;
+    sec.size = (uint32_t)sizeof(conf);
+    CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
+    CHECK(blob != NULL);
+    CHECK(pel_blob_is_present(blob, len) == 1);
+
+    check_motion_conf_fields(blob, len);
 
     pel_blob_free(blob);
     /* Production writes MOTION and MOTION_CONF together; both must survive. */
     check_motion_conf_pair(&meta, &conf);
+}
+
+static void check_complexity_values(const PelorusComplexitySection *r)
+{
+    CHECK(r->complexity == 0.625f);
+    CHECK(r->texture_energy == 0.5f);
+    CHECK(r->motion_component == 0.25f);
+    CHECK(r->has_scene_cut == 1);
+}
+
+static void check_complexity_fields(const uint8_t *blob, size_t len)
+{
+    const void *p = NULL;
+    size_t got = 0;
+
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_COMPLEXITY, sizeof(PelorusComplexitySection), &p,
+                                &got) == PEL_OK);
+    CHECK(got == sizeof(PelorusComplexitySection));
+    check_complexity_values(p);
+    /* R4: a consumer that knows only `complexity` (first 4 bytes) still parses. */
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_COMPLEXITY, 4, &p, &got) == PEL_OK);
+    CHECK(got == 4);
 }
 
 /* PEL_SEC_COMPLEXITY (h): pack the per-frame complexity scalar, round-trip the
@@ -785,8 +866,6 @@ static void test_complexity_roundtrip(void)
     PelorusPackSection sec;
     uint8_t *blob = NULL;
     size_t len = 0;
-    const void *p = NULL;
-    size_t got = 0;
 
     fill_meta(&meta);
     memset(&cx, 0, sizeof(cx));
@@ -801,20 +880,31 @@ static void test_complexity_roundtrip(void)
     CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
     CHECK(blob != NULL);
 
-    CHECK(pel_blob_find_section(blob, len, PEL_SEC_COMPLEXITY, sizeof(PelorusComplexitySection), &p,
-                                &got) == PEL_OK);
-    CHECK(got == sizeof(PelorusComplexitySection));
-    {
-        const PelorusComplexitySection *r = p;
-        CHECK(r->complexity == 0.625f);
-        CHECK(r->texture_energy == 0.5f);
-        CHECK(r->motion_component == 0.25f);
-        CHECK(r->has_scene_cut == 1);
-    }
-    /* R4: a consumer that knows only `complexity` (first 4 bytes) still parses. */
-    CHECK(pel_blob_find_section(blob, len, PEL_SEC_COMPLEXITY, 4, &p, &got) == PEL_OK);
-    CHECK(got == 4);
+    check_complexity_fields(blob, len);
     pel_blob_free(blob);
+}
+
+static void check_fold_uniform(const PelorusQpReportSection *out, const int8_t *cells, size_t n)
+{
+    size_t i;
+
+    CHECK(out->qp_valid == 1);
+    CHECK(out->qp_cell_size == 4u * 2u);
+    CHECK(out->report_source == PEL_QPSRC_QSV);
+    CHECK(out->avg_qp == 30.0f);
+    for (i = 0; i < n; i++) {
+        CHECK(cells[i] == 30); /* uniform block QP -> uniform cell QP */
+    }
+}
+
+static void check_fold_stats_only(const PelorusQpReportInput *in)
+{
+    PelorusQpReportSection out;
+
+    CHECK(pel_qp_report_from_blocks(in, 4, 2, &out, NULL, 0) == PEL_OK);
+    CHECK(out.qp_valid == 0);
+    CHECK(out.qp_cell_size == 0u);
+    CHECK(out.avg_qp == 30.0f);
 }
 
 /* The reader stub: fold a per-block QP grid onto the cell grid. With a block
@@ -841,20 +931,11 @@ static void test_qp_report_fold(void)
     in.num_inter_blocks = 32;
 
     CHECK(pel_qp_report_from_blocks(&in, 4, 2, &out, cells, sizeof(cells)) == PEL_OK);
-    CHECK(out.qp_valid == 1);
-    CHECK(out.qp_cell_size == 4u * 2u);
-    CHECK(out.report_source == PEL_QPSRC_QSV);
-    CHECK(out.avg_qp == 30.0f);
-    for (i = 0; i < (int)(sizeof(cells)); i++) {
-        CHECK(cells[i] == 30); /* uniform block QP -> uniform cell QP */
-    }
+    check_fold_uniform(&out, cells, sizeof(cells));
 
     /* Frame-stats-only path: no block grid -> qp_valid 0, scalars preserved. */
     in.block_qp = NULL;
-    CHECK(pel_qp_report_from_blocks(&in, 4, 2, &out, NULL, 0) == PEL_OK);
-    CHECK(out.qp_valid == 0);
-    CHECK(out.qp_cell_size == 0u);
-    CHECK(out.avg_qp == 30.0f);
+    check_fold_stats_only(&in);
 
     /* Too-small output buffer is rejected, not overrun. */
     in.block_qp = blocks;
@@ -865,6 +946,17 @@ static void test_qp_report_fold(void)
     CHECK(pel_qp_report_from_blocks(&in, 0, 2, &out, cells, sizeof(cells)) == PEL_ERR_INVALID);
 }
 
+static void check_x265_fold_scalars(const PelorusQpReportSection *qp)
+{
+    CHECK(qp->qp_valid == 0);
+    CHECK(qp->report_source == PEL_QPSRC_NONE);
+    CHECK(qp->total_bits == 35000ULL);
+    /* bit-weighted: (26*24000 + 30*8000 + 34*3000)/35000 = 27.6 exactly. */
+    CHECK(qp->avg_qp > 27.55f && qp->avg_qp < 27.65f);
+    CHECK(qp->psnr_y > 41.0f && qp->psnr_y < 43.2f); /* I-frame-dominated */
+    CHECK(qp->honored_fraction == 0.0f);             /* no request to compare */
+}
+
 static void check_x265_fold(const PelorusX265Frame *frames, size_t count)
 {
     PelorusQpReportSection qp;
@@ -872,13 +964,7 @@ static void check_x265_fold(const PelorusX265Frame *frames, size_t count)
     const float requested_shaped[3] = {24.0f, 30.0f, 36.0f};
 
     CHECK(pel_qp_report_from_x265_frames(frames, count, NULL, &qp) == PEL_OK);
-    CHECK(qp.qp_valid == 0);
-    CHECK(qp.report_source == PEL_QPSRC_NONE);
-    CHECK(qp.total_bits == 35000ULL);
-    /* bit-weighted: (26*24000 + 30*8000 + 34*3000)/35000 = 27.6 exactly. */
-    CHECK(qp.avg_qp > 27.55f && qp.avg_qp < 27.65f);
-    CHECK(qp.psnr_y > 41.0f && qp.psnr_y < 43.2f); /* I-frame-dominated */
-    CHECK(qp.honored_fraction == 0.0f);            /* no request to compare */
+    check_x265_fold_scalars(&qp);
 
     /* Flat requested QP agrees only with the achieved mean frame: 1/3. */
     CHECK(pel_qp_report_from_x265_frames(frames, count, requested_flat, &qp) == PEL_OK);
@@ -887,6 +973,16 @@ static void check_x265_fold(const PelorusX265Frame *frames, size_t count)
     /* A requested shape matching achieved low/flat/high QP agrees everywhere. */
     CHECK(pel_qp_report_from_x265_frames(frames, count, requested_shaped, &qp) == PEL_OK);
     CHECK(qp.honored_fraction == 1.0f);
+}
+
+static void check_x265_frames(const PelorusX265Frame *frames)
+{
+    CHECK(frames[0].slice_type == 'I');
+    CHECK(frames[0].qp == 26.0f);
+    CHECK(frames[0].bits == 24000ULL);
+    CHECK(frames[1].slice_type == 'P');
+    CHECK(frames[2].qp == 34.0f);
+    CHECK(frames[2].psnr_v == 35.5f);
 }
 
 /* The x265 CSV reader (ADR-0122): write a minimal x265-shaped CSV to a temp
@@ -919,12 +1015,7 @@ static void test_x265_csv_reader(void)
     /* Parse: 3 coded frames, the "Total frames" aggregate row dropped. */
     CHECK(pel_x265_csv_parse(path, frames, 8, &count) == PEL_OK);
     CHECK(count == 3);
-    CHECK(frames[0].slice_type == 'I');
-    CHECK(frames[0].qp == 26.0f);
-    CHECK(frames[0].bits == 24000ULL);
-    CHECK(frames[1].slice_type == 'P');
-    CHECK(frames[2].qp == 34.0f);
-    CHECK(frames[2].psnr_v == 35.5f);
+    check_x265_frames(frames);
 
     check_x265_fold(frames, count);
 
@@ -966,6 +1057,24 @@ static void test_deband_params(void)
     CHECK(what != NULL && strcmp(what, "range") == 0);
 }
 
+/* Parse one re-homed copy of the film-grain blob and read the payload through
+ * memcpy, as a careful consumer does. */
+static void check_skewed_blob(const uint8_t *skewed, size_t len)
+{
+    PelorusFilmGrainSection got_grain;
+    const void *p = NULL;
+    size_t got = 0;
+
+    CHECK(pel_blob_is_present(skewed, len) == 1);
+    CHECK(pel_blob_find_section(skewed, len, PEL_SEC_FILMGRAIN, sizeof(PelorusFilmGrainSection), &p,
+                                &got) == PEL_OK);
+    CHECK(p != NULL && got == sizeof(PelorusFilmGrainSection));
+    if (p != NULL && got == sizeof(got_grain)) {
+        memcpy(&got_grain, p, sizeof(got_grain));
+        CHECK(got_grain.seed == 0xDEADBEEFCAFEULL);
+    }
+}
+
 /* Issue #44: the parser must not assume the caller's blob base is 8-byte
  * aligned. Before the memcpy-based parse this produced 26 -fsanitize=alignment
  * diagnostics and is genuine UB on strict-alignment targets. The section
@@ -976,14 +1085,10 @@ static void test_misaligned_blob_base(void)
 {
     PelorusSideData meta;
     PelorusFilmGrainSection grain; /* u64 at offset 0 -> alignment matters */
-    PelorusFilmGrainSection got_grain;
     PelorusPackSection sec;
     uint8_t *blob = NULL;
     uint8_t *raw = NULL;
-    uint8_t *skewed = NULL;
     size_t len = 0;
-    const void *p = NULL;
-    size_t got = 0;
     size_t skew;
 
     fill_meta(&meta);
@@ -1002,20 +1107,8 @@ static void test_misaligned_blob_base(void)
         return;
     }
     for (skew = 1u; skew < 8u; skew++) {
-        skewed = raw + skew;
-        memcpy(skewed, blob, len);
-
-        CHECK(pel_blob_is_present(skewed, len) == 1);
-
-        p = NULL;
-        got = 0;
-        CHECK(pel_blob_find_section(skewed, len, PEL_SEC_FILMGRAIN, sizeof(PelorusFilmGrainSection),
-                                    &p, &got) == PEL_OK);
-        CHECK(p != NULL && got == sizeof(PelorusFilmGrainSection));
-        if (p != NULL && got == sizeof(got_grain)) {
-            memcpy(&got_grain, p, sizeof(got_grain));
-            CHECK(got_grain.seed == 0xDEADBEEFCAFEULL);
-        }
+        memcpy(raw + skew, blob, len);
+        check_skewed_blob(raw + skew, len);
     }
 
     free(raw);
@@ -1034,7 +1127,7 @@ static void test_unaligned_header_size(void)
     size_t len = 0;
     const void *p = NULL;
     size_t got = 0;
-    PelorusSideData *hdr;
+    PelorusSideData hdr;
 
     fill_meta(&meta);
     memset(&grain, 0, sizeof(grain));
@@ -1043,8 +1136,9 @@ static void test_unaligned_header_size(void)
     sec.size = (uint32_t)sizeof(grain);
     CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
 
-    hdr = (PelorusSideData *)(void *)(blob + PELORUS_SIDEDATA_UUID_LEN);
-    hdr->header_size = (uint16_t)(hdr->header_size + 4u);
+    hdr = blob_header_load(blob);
+    hdr.header_size = (uint16_t)(hdr.header_size + 4u);
+    blob_header_store(blob, &hdr);
     CHECK(pel_blob_find_section(blob, len, PEL_SEC_FILMGRAIN, sizeof(PelorusFilmGrainSection), &p,
                                 &got) == PEL_ERR_ABI);
 
@@ -1080,3 +1174,5 @@ int main(void)
                  pelorus_version_string(), PELORUS_ABI_MAJOR, PELORUS_ABI_MINOR);
     return EXIT_SUCCESS;
 }
+
+/* NOLINTEND(modernize-use-nullptr) */

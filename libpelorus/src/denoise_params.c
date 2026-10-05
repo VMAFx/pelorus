@@ -22,6 +22,12 @@
  * autotune loop (ADR-0106) sweeps strength/sigma upward from. See denoise.h.
  */
 
+/* NOLINTBEGIN(modernize-use-nullptr): this C translation unit is built as C23
+ * by vmafx, where clang-tidy also proposes the `nullptr` keyword, but MSVC's C
+ * mode has no `nullptr` (C2065); the Windows builds compile it with cl.exe.
+ * The NULL macro stays. Same decision as vmafx ADR-1138
+ * (docs/adr/1138-c-translation-units-keep-null.md in VMAFx/vmafx). */
+
 #include "pelorus/denoise.h"
 
 #include <stddef.h>
@@ -109,3 +115,5 @@ pel_result pel_denoise_params_validate(const PelorusDenoiseParams *p, const char
     }
     return PEL_OK;
 }
+
+/* NOLINTEND(modernize-use-nullptr) */

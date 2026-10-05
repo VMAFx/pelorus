@@ -37,6 +37,12 @@
  * dependency is kernel32 (MultiByteToWideChar), which every Windows link has.
  */
 
+/* NOLINTBEGIN(modernize-use-nullptr): this C translation unit is built as C23
+ * by vmafx, where clang-tidy also proposes the `nullptr` keyword, but MSVC's C
+ * mode has no `nullptr` (C2065); the Windows builds compile it with cl.exe.
+ * The NULL macro stays. Same decision as vmafx ADR-1138
+ * (docs/adr/1138-c-translation-units-keep-null.md in VMAFx/vmafx). */
+
 #include "pelorus/interop.h"
 
 #include <errno.h>
@@ -573,3 +579,5 @@ pel_result pel_qp_report_from_x265_frames(const PelorusX265Frame *frames, size_t
 
     return PEL_OK;
 }
+
+/* NOLINTEND(modernize-use-nullptr) */
