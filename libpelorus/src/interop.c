@@ -331,8 +331,7 @@ pel_result pel_blob_find_section(const uint8_t *blob, size_t len, enum pel_secti
         if (ent.section_id != (uint32_t)sec) {
             continue;
         }
-        return find_section_payload(&ent, image, image_len, consumer_known_size, out_ptr,
-                                    out_size);
+        return find_section_payload(&ent, image, image_len, consumer_known_size, out_ptr, out_size);
     }
     return PEL_ERR_ABSENT;
 }
