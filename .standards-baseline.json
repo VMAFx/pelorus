@@ -1,10 +1,9 @@
 {
   "version": 1,
-  "generated_at": "2026-10-03T14:32:38Z",
+  "generated_at": "2026-10-05T10:41:49Z",
   "repository": "VMAFx/pelorus",
-  "commit_sha": "f65b16750f8a0664fd4cc660fcccaafeb8b83957",
-  "total_infractions": 99,
-  "increase_rationale": "ADR-0154: Praetor engine 25451d88 -\u003e 0af07a73. The HISS scanner now reads shell scripts, which surfaces 36 HISS-07 '|| true' sites and one HISS-02 unbounded curl in unchanged scripts; entries are re-keyed by rule, file and function. No product code changed; the script-hardening follow-up burns these down.",
+  "commit_sha": "2f3298db2e4eb0d54b2eaf0c85b98b60685c9c76",
+  "total_infractions": 93,
   "infractions": [
     {
       "rule_id": "HISS-07",
@@ -715,50 +714,6 @@
       "fingerprint": "ffmpeg-patches/test/vulkan-format-matrix.sh:HISS-07:fn:pel_check_validation#1"
     },
     {
-      "rule_id": "HISS-04",
-      "file_path": "libpelorus/src/interop.c",
-      "line_number": 114,
-      "symbol": "pel_blob_pack",
-      "message": "Function 'pel_blob_pack' (85 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "anchor": "fn:pel_blob_pack",
-      "fingerprint": "libpelorus/src/interop.c:HISS-04:fn:pel_blob_pack#1"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "libpelorus/src/interop.c",
-      "line_number": 225,
-      "symbol": "pel_blob_find_section",
-      "message": "Function 'pel_blob_find_section' (78 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "anchor": "fn:pel_blob_find_section",
-      "fingerprint": "libpelorus/src/interop.c:HISS-04:fn:pel_blob_find_section#1"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "libpelorus/src/interop.c",
-      "line_number": 307,
-      "symbol": "pel_qp_report_from_blocks",
-      "message": "Function 'pel_qp_report_from_blocks' (68 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "anchor": "fn:pel_qp_report_from_blocks",
-      "fingerprint": "libpelorus/src/interop.c:HISS-04:fn:pel_qp_report_from_blocks#1"
-    },
-    {
-      "rule_id": "HISS-02",
-      "file_path": "libpelorus/src/qp_report_csv.c",
-      "line_number": 123,
-      "message": "Legacy unbounded loop in native code",
-      "anchor": "fn:split_fields",
-      "fingerprint": "libpelorus/src/qp_report_csv.c:HISS-02:fn:split_fields#1"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "libpelorus/src/qp_report_csv.c",
-      "line_number": 410,
-      "symbol": "pel_x265_csv_parse",
-      "message": "Function 'pel_x265_csv_parse' (64 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "anchor": "fn:pel_x265_csv_parse",
-      "fingerprint": "libpelorus/src/qp_report_csv.c:HISS-04:fn:pel_x265_csv_parse#1"
-    },
-    {
       "rule_id": "HISS-07",
       "file_path": "scripts/bench/bd_rate.py",
       "line_number": 22,
@@ -782,15 +737,6 @@
       "message": "Function 'main' (88 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:main",
       "fingerprint": "scripts/bench/run-bench.py:HISS-04:fn:main#1"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "scripts/check-build-config.py",
-      "line_number": 2659,
-      "symbol": "renovate_validator_regressions",
-      "message": "Function 'renovate_validator_regressions' (100 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "anchor": "fn:renovate_validator_regressions",
-      "fingerprint": "scripts/check-build-config.py:HISS-04:fn:renovate_validator_regressions#1"
     },
     {
       "rule_id": "HISS-07",

@@ -248,9 +248,9 @@ generated agent context against `AGENTS.md`.
 private scratch-link policy.
 
 **Debt Baseline**: `.standards-baseline.json` anchors the debt ratchet at
-99 recorded infractions; audit forbids growth.
+93 recorded infractions; audit forbids growth.
 
-[praetor-hiss-badge]: https://img.shields.io/badge/Standards-HISS%20Adopted%20(99%20baselined)-yellow
+[praetor-hiss-badge]: https://img.shields.io/badge/Standards-HISS%20Adopted%20(93%20baselined)-yellow
 [praetor-hiss-agents]: https://github.com/VMAFx/pelorus/blob/HEAD/AGENTS.md
 [praetor-docs-badge]: https://github.com/VMAFx/pelorus/actions/workflows/praetor-docs.yml/badge.svg
 [praetor-docs-runs]: https://github.com/VMAFx/pelorus/actions/workflows/praetor-docs.yml
