@@ -414,7 +414,9 @@ static pel_result x265_csv_read_rows(FILE *fp, PelorusX265Frame *out_frames, siz
 {
     char line[PEL_CSV_LINE_MAX]; /* bounded, fixed (Po10): no heap, no VLA  */
     char *fields[PEL_CSV_MAX_FIELDS];
-    csv_cols cols;
+    /* Every index starts "absent" (-1): a row is then never admitted before a header has set the
+     * real indices, and the compiler sees a defined value on every path. */
+    csv_cols cols = {-1, -1, -1, -1, -1, -1, -1};
 
     while (fgets(line, (int)sizeof(line), fp) != NULL) {
         size_t nf = split_fields(line, fields, PEL_CSV_MAX_FIELDS);

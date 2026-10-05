@@ -45,6 +45,10 @@ jobs:
           glslangValidator --version
       - name: Configure + build
         run: meson setup build && ninja -C build
+      - name: Optimised gcc build (-O2, warnings are errors)
+        # gcc raises -Wmaybe-uninitialized only with the optimiser on, which the
+        # default debug build above does not run.
+        run: CC=gcc meson setup build-o2 --buildtype=debugoptimized && ninja -C build-o2
       - name: Test (fast suite — interop ABI + shader compile)
         run: meson test -C build --suite=fast --print-errorlogs
       - name: clang-format (touched-tree clean)
