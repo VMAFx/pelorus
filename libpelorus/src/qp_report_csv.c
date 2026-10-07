@@ -33,7 +33,7 @@
  *
  * The CSV path is UTF-8 on every platform (ADR-0149). On Windows the narrow CRT
  * decodes a path through the process ANSI code page, so the one open goes
- * through open_utf8(), which widens to UTF-16 for _wfopen; the only extra
+ * through open_utf8(), which widens to UTF-16 for _wfsopen; the only extra
  * dependency is kernel32 (MultiByteToWideChar), which every Windows link has.
  */
 
@@ -55,6 +55,7 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#include <share.h>
 #include <wchar.h>
 #include <windows.h>
 #endif
@@ -381,7 +382,8 @@ static pel_result utf8_to_wide(const char *path, wchar_t **out)
  * POSIX: a literal fopen(path, mode). The kernel takes a path as bytes, so this
  * is byte-for-byte the pre-ADR-0149 behaviour (a non-UTF-8 byte name still
  * opens). Windows: the narrow CRT would decode the bytes through the ANSI code
- * page, so the path is widened strictly and opened with _wfopen. No \\?\ prefix
+ * page, so the path is widened strictly and opened with _wfsopen (_SH_DENYNO: the
+ * sharing _wfopen gives, without its C4996 deprecation). No \\?\ prefix
  * is added: a caller that needs an extended-length path passes one.
  *
  * Every failure of the open itself maps to PEL_ERR_ABSENT (the pre-ADR-0149
@@ -402,7 +404,7 @@ static pel_result open_utf8(const char *path, const char *mode, FILE **out)
     if (rc != PEL_OK) {
         return rc; /* nothing was allocated: utf8_to_wide frees on its failures */
     }
-    *out = _wfopen(wpath, wmode);
+    *out = _wfsopen(wpath, wmode, _SH_DENYNO);
     open_errno = errno;
     free(wpath); /* the one allocation, released before any return below */
     errno = open_errno;
