@@ -117,6 +117,7 @@ All notable changes to Pelorus are documented here. The format is
   missing column, so behaviour is unchanged. CI gains an optimised gcc build
   with warnings as errors; the default debug build never ran the optimiser and
   could not see this class of warning.
+- `qp_report_csv.c` opens its CSV on Windows with `_wfsopen(..., _SH_DENYNO)` instead of the deprecated `_wfopen()`: same sharing, no MSVC C4996 warning for a host that builds with warnings as errors.
 
 ### Security
 
