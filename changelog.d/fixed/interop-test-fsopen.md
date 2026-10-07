@@ -1,0 +1,1 @@
+- The interop conformance test reads its fixtures back with `_fsopen(..., _SH_DENYNO)` on Windows instead of the deprecated `fopen()`: same sharing, no `-Wdeprecated-declarations` under clang-cl or icx-cl (C4996 under cl.exe) for a host that builds the test with warnings as errors.
