@@ -109,6 +109,7 @@ All notable changes to Pelorus are documented here. The format is
   `base` and `n1.2.3` branches and wrote `core.hooksPath`, `commit.gpgsign` and
   `user.name` into the repository's config. The checker now drops the
   repository-selecting variables first, and a regression proves it.
+- The interop conformance test reads its fixtures back with `_fsopen(..., _SH_DENYNO)` on Windows instead of the deprecated `fopen()`: same sharing, no `-Wdeprecated-declarations` under clang-cl or icx-cl (C4996 under cl.exe) for a host that builds the test with warnings as errors.
 - **The x265 CSV reader initialises its column indices before the header row
   sets them.** `x265_csv_read_rows()` left the column-index struct
   uninitialised until the header was read, and gcc 16 at `-O2` reported seven
