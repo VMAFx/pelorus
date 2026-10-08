@@ -58,10 +58,24 @@ no Vulkan device of its own):
 ffmpeg -init_hw_device vulkan -hwaccel vulkan -hwaccel_output_format vulkan \
        -i input.mkv \
        -vf "pelorus_mc_vulkan=meta=1,hwdownload,format=yuv420p,pelorus_scenecut" \
+       -force_key_frames source \
        -c:v hevc_nvenc -cq 28 out.mkv      # or x264 / x265 / hevc_qsv / libsvtav1
 ```
 
 The encoder opens a fresh GOP on every frame the cut detector flagged.
+
+**The `ffmpeg` command line needs `-force_key_frames source`.** Before each
+encode, `fftools` overwrites `frame->pict_type` with the result of its own
+forced-keyframe logic (`fftools/ffmpeg_enc.c:798` at the pinned `n9.0.2`,
+`forced_kf_apply`). Without a `-force_key_frames` mode that matches the frame,
+that result is `AV_PICTURE_TYPE_NONE`, so the `I` this filter sets is discarded.
+`-force_key_frames source` keys every frame whose `AV_FRAME_FLAG_KEY` is set
+(`ffmpeg_enc.c:763`). The filter sets that flag on each cut, so the cuts reach
+the encoder. The option also keys the frames the decoder marked as keyframes
+in the source. Applications that drive libavcodec directly receive the
+`pict_type` unchanged and need no option. Measured on `hevc_qsv` (Arc B580 and
+UHD 770, long-GOP source, hard cut at frame 10): without the option the only
+keyframe is frame 0, with it frames 0 and 10 (PR #68).
 
 ## Interactions and limits (honest scope)
 
@@ -75,7 +89,8 @@ The encoder opens a fresh GOP on every frame the cut detector flagged.
 - **Codec-agnostic, no patch.** `pict_type == I` is the standard keyframe-request
   path; x264/x265/NVENC/QSV/SVT-AV1 all honour it. No per-encoder fork patch is
   shipped or needed (unlike the ROI/delta-QP tiers — see
-  [ADR-0114](../adr/0114-encoder-steering.md)).
+  [ADR-0114](../adr/0114-encoder-steering.md)). The `ffmpeg` command line needs
+  `-force_key_frames source` to pass the request through (see Usage).
 - **Detector fidelity inherits from `mc`.** The cut flag is the mean-residual-SAD
   heuristic in `vf_pelorus_mc` ([docs/metrics/mc.md](mc.md)); false positives /
   negatives there propagate here as spurious / missed IDRs. Tuning that threshold

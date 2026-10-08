@@ -1,0 +1,1 @@
+- Documented that the `ffmpeg` command line needs `-force_key_frames source` for `pelorus_scenecut`'s forced keyframes to reach the encoder: `fftools` overwrites `frame->pict_type` before each encode (`fftools/ffmpeg_enc.c:798` at `n9.0.2`), and the `source` mode keys on the `AV_FRAME_FLAG_KEY` the filter sets ([ADR-0126](docs/adr/0126-scenecut-idr.md)).
