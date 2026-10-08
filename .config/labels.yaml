@@ -57,3 +57,87 @@ labels:
   - name: "dependencies"
     color: "0366d6"
     description: "Pull requests that update a dependency file"
+
+  - name: "area:backends"
+    color: "006b75"
+    description: "Compute backends: CUDA, SYCL, HIP, Metal, libgpudispatch"
+
+  - name: "area:codecs"
+    color: "0052cc"
+    description: "Codec legs: VVC, VP9, H.264, AV1, grain models"
+
+  - name: "area:docs"
+    color: "0075ca"
+    description: "Documentation and docs portal"
+
+  - name: "area:encoders"
+    color: "5319e7"
+    description: "Encoder steering patches, ROI, QP feedback"
+
+  - name: "area:evidence"
+    color: "f9d0c4"
+    description: "BD-rate proofs, corpus, benchmark method"
+
+  - name: "area:filters"
+    color: "0e8a16"
+    description: "Vulkan pre-encode filters and their algorithms"
+
+  - name: "area:governance"
+    color: "bfd4f2"
+    description: "Praetor, HISS, CI policy, code health"
+
+  - name: "area:interop"
+    color: "1d76db"
+    description: "Interop ABI, PelorusSideData, telemetry and provenance schemas"
+
+  - name: "area:licensing"
+    color: "d4c5f9"
+    description: "Licences, REUSE, notices, patents"
+
+  - name: "area:release"
+    color: "c5def5"
+    description: "Release engineering, rc tags, provenance"
+
+  - name: "area:tester"
+    color: "fbca04"
+    description: "Tester images, kits and hardware reports"
+
+  - name: "area:upstream"
+    color: "c2e0c6"
+    description: "FFmpeg, driver and encoder upstream work"
+
+  - name: "area:zero-copy"
+    color: "b60205"
+    description: "GPU-resident frame path from decode to vmafx"
+
+  - name: "priority:P0"
+    color: "b60205"
+    description: "Blocks a release or a vmafx gate"
+
+  - name: "priority:P1"
+    color: "d93f0b"
+    description: "Next up in its milestone"
+
+  - name: "priority:P2"
+    color: "fbca04"
+    description: "Planned"
+
+  - name: "priority:P3"
+    color: "c5def5"
+    description: "Nice to have"
+
+  - name: "blocked"
+    color: "000000"
+    description: "Waiting on another issue or repository"
+
+  - name: "needs-decision"
+    color: "d876e3"
+    description: "Needs a maintainer decision before work"
+
+  - name: "release-blocker"
+    color: "b60205"
+    description: "Must close before the milestone's release"
+
+  - name: "vmafx-ask"
+    color: "5319e7"
+    description: "Explicitly requested by VMAFx/vmafx"
