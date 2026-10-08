@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0153: Adopt Praetor's dev container, Git hooks, and branch ruleset
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-10-03, re-rendered 2026-10-08
 - **Deciders**: Lusoris
 - **Tags**: governance, standards, hooks, devcontainer, ci

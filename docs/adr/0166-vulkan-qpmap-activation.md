@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0166: Patch 0009 enables the Vulkan quantization-map extension and follows the driver's map contract
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-10-03
 - **Deciders**: Lusoris
 - **Tags**: ffmpeg, vulkan, roi, encoder-steering, hwcontext, validation

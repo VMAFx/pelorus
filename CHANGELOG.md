@@ -31,6 +31,10 @@ All notable changes to Pelorus are documented here. The format is
   (`docs/research/0172-*.md`) and the 21 forge labels in
   `.config/labels.yaml`. `CONTRIBUTING.md` now states that the Standards
   workflow enforces the sign-off.
+- Added `scripts/adr/check-status.py`, a docs check that fails on a `Proposed`
+  ADR without an `Implementation: pending (#N)` header line, so a merged but
+  unflipped ADR cannot stay Proposed; it runs in `make docs-check` and the CI
+  `docs` job.
 
 ### Changed
 

@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0171: Pelorus is EUPL-1.2; the files that become part of FFmpeg stay LGPL-2.1-or-later
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-10-08
 - **Deciders**: Lusoris
 - **Tags**: license, compliance, ffmpeg, interop, ci, docs

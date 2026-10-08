@@ -3,6 +3,7 @@
 
 - **Status**: Proposed (2026-06-27) — design accepted; first enabler (grain-sigma metadata) shipped in this PR; per-content legs validated + the router built incrementally
 - **Date**: 2026-06-27
+- **Implementation**: pending (#112)
 - **Deciders**: Lusoris
 
 ## Context

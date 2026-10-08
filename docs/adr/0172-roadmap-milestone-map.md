@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0172: Roadmap to 1.0 and beyond: milestone map 0.3 to 3.0 and four Ongoing buckets
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-10-08
 - **Deciders**: Lusoris
 - **Tags**: roadmap, release, process, docs, vmafx

@@ -23,7 +23,9 @@ mv "docs/adr/$N-<kebab-slug>.md.stub" /dev/null 2>/dev/null || rm -f "docs/adr/$
 
 ## Rules
 
-- Status starts `Proposed`, flips to `Accepted` when the implementing PR merges;
+- Status starts `Proposed` with header line `- **Implementation**: pending (#N)`
+  (`scripts/adr/check-status.py` fails without it), flips to `Accepted` when the
+  implementing PR merges;
   Accepted ADRs are immutable — supersede with a new ADR, don't edit the body.
 - `## Alternatives considered` must list at least the runner-up (an empty table
   means it wasn't a real decision).

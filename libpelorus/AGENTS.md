@@ -63,7 +63,7 @@ libpelorus/
    caller path on Windows.** Every file open of caller-supplied path goes
    through `open_utf8()` in `qp_report_csv.c`. POSIX: literal `fopen`
    (byte-for-byte unchanged). Windows: strict `MultiByteToWideChar(CP_UTF8,
-   MB_ERR_INVALID_CHARS)` + `_wfopen`. Ill-formed UTF-8 = `PEL_ERR_INVALID`;
+   MB_ERR_INVALID_CHARS)` + `_wfsopen(..., _SH_DENYNO)`. Ill-formed UTF-8 = `PEL_ERR_INVALID`;
    any open failure stays `PEL_ERR_ABSENT`. New path-taking API reuses helper
    and extends `test/path_utf8_test.c`. vmafx mirrors `qp_report_csv.c`
    verbatim -> helper stays static, depends only on kernel32. (ADR-0149)
