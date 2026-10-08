@@ -331,8 +331,12 @@ returns `PEL_ERR_RANGE` with the length the image needs. Leave the
 `*_map_offset` and `*_map_size` members of `frame` zero: the packer computes
 them, and validation rejects a non-zero one under a clear bit.
 
-The contract for callers outside FFmpeg (VMAFx's codec-adapter package,
-VMAFx/vmafx#2147):
+The contract for callers outside FFmpeg, that is a Pelorus-side producer
+driving an encoder without FFmpeg. VMAFx's codec-adapter package
+(VMAFx/vmafx#2147) fills and validates the same struct
+(`pel_enc_telemetry_validate`) for its own records, but never packs a blob
+under the Pelorus UUID (single-writer invariant,
+[interop-abi.md](interop-abi.md#sections)):
 
 - Fill `frame` with `adapter = external`, and set the bits for exactly the
   fields you have.
@@ -404,9 +408,11 @@ python3 -I scripts/check-telemetry-field-parity.py --vmafx FILE  # any VMAFx lis
    the script without `--update`, which must report no drift.
 3. The re-pin touches only the existing ten mirrored files: `interop.h`
    (sections i and j, the motion field, the `PEL_TLM_F_*` bits),
-   `interop.c` (`section_bit_valid`, `pel_blob_map`,
-   `pel_encode_record_digest_text`), `pelorus.h` (`PEL_ERR_MISMATCH`) and the
-   conformance fixture. No new manifest row is needed at RC4.
+   `interop.c` (`section_bit_valid`, `pel_blob_pack_into`, `pel_blob_map`,
+   `pel_encode_record_digest_text`),
+   `libpelorus/include/pelorus/pelorus.h` (`PEL_ERR_MISMATCH`),
+   `libpelorus/src/version.c` (its `pel_result_str` text) and the conformance
+   fixture. No new manifest row is needed at RC4.
 4. One prerequisite is already known on the VMAFx side. `render_vendor`
    expects the former 17-line BSD+Patent header, but Pelorus files now open
    with the 6-line EUPL-1.2 header (ADR-0171). The EUPL re-vendor that

@@ -10,8 +10,10 @@
  * (interop ABI 1.4, ADR-0174, docs/api/encoder-telemetry.md).
  *
  * Any encoder adapter fills one plain-C struct: an FFmpeg wrapper, a stats-file
- * reader, a hardware-feedback reader, or a caller outside FFmpeg such as VMAFx's
- * codec-adapter package (issue #221, VMAFx/vmafx#2147). This header holds no
+ * reader, a hardware-feedback reader, or a caller outside FFmpeg (issue #221).
+ * VMAFx's codec-adapter package (VMAFx/vmafx#2147) may fill and validate it,
+ * but only Pelorus packs a blob under the Pelorus UUID (single-writer
+ * invariant, docs/api/interop-abi.md); VMAFx uses its own UUID. This header holds no
  * FFmpeg, SDK or OS type: it includes only pelorus/interop.h and the C standard
  * headers below, and the telemetry test compiles it without FFmpeg include paths.
  *

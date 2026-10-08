@@ -48,8 +48,8 @@ pass.
 ## Filling a record outside FFmpeg (issue #221)
 
 `pelorus/telemetry.h` includes only `pelorus/interop.h` and the C standard
-headers; the telemetry test compiles it with no FFmpeg include path. A caller
-such as VMAFx's codec-adapter package (VMAFx/vmafx#2147):
+headers; the telemetry test compiles it with no FFmpeg include path. A
+Pelorus-side producer that drives an encoder without FFmpeg:
 
 1. Fills `PelorusEncTelemetryInput.frame` with `adapter =
    PEL_TLM_ADAPTER_EXTERNAL`, the codec, `granularity`, and a
@@ -63,6 +63,12 @@ such as VMAFx's codec-adapter package (VMAFx/vmafx#2147):
    and calls `pel_enc_telemetry_pack()` per frame. Nothing is allocated, and an
    invalid record returns `PEL_ERR_INVALID` or `PEL_ERR_RANGE` without
    writing.
+
+VMAFx's codec-adapter package (VMAFx/vmafx#2147) uses steps 1 and 2 and
+`pel_enc_telemetry_validate()` for its own records. It does not pack: a blob
+under the Pelorus UUID has one writer, Pelorus, and a VMAFx-origin annotation
+uses VMAFx's own UUID ([interop-abi.md](../api/interop-abi.md#sections),
+VMAFx ADR-1113).
 
 `pel_qp_normalize()` fills `avg_qp_norm` for H.26x `slice_qp` values (the
 identity). For AV1 and VP9 it returns `PEL_ERR_UNSUPPORTED` until the

@@ -58,6 +58,12 @@ section with measured honored-QP/bits/PSNR + a `honored_fraction`, demonstrated 
 
 **Single-writer invariant**: Pelorus is the only writer. vmafx reads; if it ever
 needs to annotate back it attaches its *own* distinct-UUID blob, never edits ours.
+The writers are `pel_blob_pack` and `pel_blob_pack_into` in the mirrored
+`interop.c`, and `pel_enc_telemetry_pack` in `telemetry.c`; VMAFx code must not
+call them to emit a blob under the Pelorus UUID. A VMAFx-origin annotation, telemetry
+included, uses VMAFx's own UUID (VMAFx ADR-1113 keeps the mirror read-only).
+Filling and validating a `PelorusEncTelemetryInput` is reading the contract,
+not writing a Pelorus blob.
 
 ## API
 

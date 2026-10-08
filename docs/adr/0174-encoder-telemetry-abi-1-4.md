@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0174: Interop ABI 1.4 adds a normalised encoder-telemetry section, the motion block size and an encode-record section in one minor bump, specified before the code
 
-- **Status**: Proposed
-- **Implementation**: pending (#86)
+- **Status**: Accepted
 - **Date**: 2026-10-09
 - **Deciders**: Lusoris
 - **Tags**: interop, abi, telemetry, vmafx
@@ -141,7 +140,8 @@ changes.
     [encoder-telemetry.md](../api/encoder-telemetry.md).
 11. **What the VMAFx mirror carries at RC4.** The ABI 1.4 re-pin changes only
     the existing ten mirrored files: `interop.h`, `interop.c`, the fixture,
-    and `pelorus.h` for `PEL_ERR_MISMATCH` from ADR-0175. The new translation
+    `libpelorus/include/pelorus/pelorus.h` for `PEL_ERR_MISMATCH` from
+    ADR-0175, and `libpelorus/src/version.c` for its `pel_result_str` text. The new translation
     units (`telemetry.c`, `encode_record.c`, `sha256.c`) and the registry are
     not mirrored at RC4. The registry joins the mirror with
     VMAFx/vmafx#2271 (VMAFx 1.1) through a verbatim manifest row, because
@@ -224,9 +224,10 @@ changes.
   maps can reach about 7 MiB per frame at the bound. A new error code and two
   new bits widen the mirrored surface. The AV1 and VP9 normalisation constants
   stay unverified until the adapters land.
-- **Neutral / follow-ups**: the implementing pull request (ABI code, fixture,
-  `bump-abi` skill, `interop-abi-reviewer` sign-off); adapters and the
-  `docs/metrics/` coverage matrix (#86 items 2-4, VMAFx 1.2); the parity test
+- **Neutral / follow-ups**: the layout, `telemetry.h`, the registry and the
+  parity check are implemented with the ABI 1.4 pull request; the adapters,
+  their capability tables, the AV1/VP9 normalisation constants and the
+  `docs/metrics/` coverage matrix stay #86 follow-ups (items 2-4, VMAFx 1.2); the parity test
   (#220) once VMAFx/vmafx#2271 publishes its field list; the mirror contract
   page (#223).
 

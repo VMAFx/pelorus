@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0175: The encode provenance record is canonical JSON whose SHA-256 digest VMAFx binds unchanged, and side data carries only the digest and a locator
 
-- **Status**: Proposed
-- **Implementation**: pending (#81)
+- **Status**: Accepted
 - **Date**: 2026-10-09
 - **Deciders**: Lusoris
 - **Tags**: interop, abi, provenance, vmafx
@@ -158,8 +157,9 @@ takes unchanged. Side data carries only that digest and a locator.
 - **Negative**: reals are not readable in the record. The tooling and the
   documentation decode them. libpelorus gains a SHA-256 and a JSON
   canonicaliser to maintain.
-- **Neutral / follow-ups**: option-string parsers for x264, x265 and FFmpeg
-  argument lists (#81 item 2, VMAFx 1.1); a producer filter or tool that
+- **Neutral / follow-ups**: the record, its digest, the API and the section
+  are implemented with the ABI 1.4 pull request; the option-string parsers for
+  x264, x265 and FFmpeg argument lists stay #81 follow-ups (item 2, VMAFx 1.1); a producer filter or tool that
   writes the section; SEI carriage tests per encoder; the C2PA assertion on
   the VMAFx side (VMAFx/vmafx#2159).
 
