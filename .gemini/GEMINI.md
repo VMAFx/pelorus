@@ -13,11 +13,8 @@ standardsctl audit
 make docs-lint docs-figures
 ```
 
-`make verify-all` runs all four. Docs gate needs Node 22+. Local `audit` fails
-on its last check while `git-hooks` stays declined: no `.git/hooks/pre-commit`
-(Praetor issue 175). CI skips that check. Make stops at `audit`, before native
-and docs gates: run `make -k verify-all` so later gates still run. Never install
-hooks or fake a hook file to pass it; report local exit 1 with that cause.
+`make verify-all` runs all four. Docs gate needs Node 22.12+. Never install
+hooks or fake hook file to pass gate.
 
 Engine binary: pinned `go install .../cmd/standardsctl@<pin>` installs
 `standardsctl`. `praetorctl`: same engine under its newer name; generated text
@@ -37,7 +34,7 @@ shell call runs without Praetor policy.
 | **HISS-07** | Error handling | Rule 7 | Public errors use `pel_result`; every non-void result checked or explicitly discarded. | clang-tidy + C review |
 | **HISS-08** | Determinism | Rule 8 | No dynamic execution; reject banned libc from project contract. | C review + build |
 | **HISS-09** | Reference safety | Rule 9 | Bound offset arithmetic before pointer formation; avoid pointer chasing. | CERT C review + tests |
-| **HISS-10** | Warning hygiene | Rule 10 | Compiler, formatter, and configured clang-tidy gate exit clean. | Native gate |
+| **HISS-10** | Warning hygiene | Rule 10 | Compiler, formatter, and configured clang-tidy gate exit clean. Every CI `meson setup` passes `--werror`; audit ignores `default_options`. | Native gate + audit |
 | **HISS-15** | 3D testing | Rule 5 | Public interfaces cover positive, negative, and boundary cases. | Test + PR review |
 | **HISS-16** | Context integrity | Fleet | `AGENTS.md` plus `.agents/agents/*.md` are canonical; vendor Markdown is generated. | Context verify |
 
@@ -138,7 +135,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 3. No mutable global state or static-init side effects. Banned: `gets`, `strcpy`, `strcat`, `sprintf`, `strtok`, `atoi`, `atof`, `rand`, `system`.
 4. FFmpeg filter shader source lives once: `ffmpeg-patches/files/vulkan/pelorus_<name>.comp.glsl`; FFmpeg 9 compiles SPIR-V at build time. Never add runtime or inline GLSL. `libpelorus/shaders/*.comp`: standalone fast-gate references, not shipped mirrors. Spec IDs `253`, `254`, `255`: reserved workgroup sizes. Descriptor order and push layout must match C exactly.
 5. Patch consumers changed -> update `ffmpeg-patches/files/` plus regenerated stack in same PR. Verify full `series.txt` replay; per-patch apply check insufficient.
-6. Touched files: `-Wall -Wextra -Werror`, clang-format, clang-tidy clean. Each `// NOLINT`: inline citation.
+6. Touched files: `-Wall -Wextra -Werror`, clang-format, clang-tidy clean. Each `// NOLINT`: inline citation. New Meson-built C unit -> add to `.config/clang-tidy/lane-files.txt` (clang-tidy lane; audit fails unread unit, ADR-0168).
 7. Every commit: zero warnings; fast suite green; deband shader compiled by glslang.
 8. Embeddable library code: no `printf` or `fprintf(stderr, ...)`. Return `pel_result`; host logs.
 9. New dependency: ADR names considered alternative plus reason this one wins.
@@ -165,7 +162,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 | `tools/markdownlint/`, `tools/figures/` | Praetor-managed docs gate; refresh via `adopt` only |
 | `scripts/` | ADR claim, bench, release, build-config + shader checks |
 | `Makefile`, `lefthook.yml` | native + governance entry points; Git hooks opt-in |
-| `.standards.yaml`, `.standards.lock`, `.standards-baseline.json`, `.config/` | Praetor policy, lock, catalog, labels, HISS baseline |
+| `.standards.yaml`, `.standards.lock`, `.standards-baseline.json`, `.config/` | Praetor policy, lock, catalog, labels, HISS baseline, clang-tidy lane list |
 | `.paperclip/` | Paperclip harness pair; string edit: re-pin `register.sources` from `standardsctl caveman check --configured-sources --root=.` |
 | `.agents/agents/` | canonical reviewer personas |
 | `.claude/agents/`, `.codex/agents/`, `.github/agents/`, `.gemini/agents/` | generated persona projections |
@@ -187,6 +184,7 @@ New top-level package: add row here. New module: scoped `AGENTS.md`.
 | `bump-abi` | append-only interop ABI extension |
 | `render-changelog` | render `CHANGELOG.md` from `changelog.d/` |
 | `cut-release` | version bump + tag; release workflow |
+| `caveman`, `social-text`, `adhd-format` | text register forms; Praetor-installed in `.agents/skills/`, projected by `compile-context` |
 
 `.claude/skills/superpowers/`: vendored obra/superpowers process skills (verification-before-completion, systematic-debugging, test-driven-development, code review, git worktrees); template for new skills. Topic links: `docs/references.md`.
 
@@ -217,7 +215,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | compile contexts | `standardsctl compile-context` |
 | verify contexts | `standardsctl compile-context --verify` |
 | audit baseline | `standardsctl audit` |
-| docs gate (Node 22+) | `make docs-lint docs-figures` |
+| docs gate (Node 22.12+) | `make docs-lint docs-figures` |
 | explicit hook install | `make hooks-install` |
 
 ## Reviewer routing
@@ -239,7 +237,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | FFmpeg Vulkan models | `vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c`, `vf_scdet_vulkan.c` |
 | AV1 grain ABI mirror | `libavutil/film_grain_params.h` |
 | vmafx control plane | `libvmaf_tune`, `/v1/score`, `vmaf-mcp` |
-| Praetor engine | `0af07a733e6534269b435cea185da4d1df7aba0c` from `.github/workflows/standards-gate.yml` |
+| Praetor engine | `492a00f930e1a2df557ffebb76564cfa65637b77` from `.github/workflows/standards-gate.yml` |
 | Go for actionlint (`ci.yml` docs job) | `1.27.x`; change with `ACTIONLINT_GO_VERSION` in `scripts/check-build-config.py`; checker's Renovate manager keeps setup-go's `go` identity ([ADR-0151](docs/adr/0151-renovate-mirrors-checker-toolchain-pins.md)) |
 
 ## Delivery

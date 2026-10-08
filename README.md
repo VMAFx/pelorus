@@ -206,15 +206,18 @@ If Pelorus is useful to you: [GitHub Sponsors](https://github.com/sponsors/lusor
 
 ## Standards & Governance
 
-Pelorus adopts the Praetor/HISS policy at engine commit `0af07a73` with a
-51-finding legacy baseline (28 HISS-01, 21 HISS-04, two HISS-07).
+Pelorus adopts the Praetor/HISS policy
+([ADR-0145](docs/adr/0145-praetor-governance-adoption.md)) at engine commit
+`492a00f9` with a 51-finding legacy baseline (28 HISS-01, 21 HISS-04, two
+HISS-07).
 Canonical agent guidance lives in `AGENTS.md`; generated vendor contexts are
 checked for drift, and a locked Markdown gate lints the public documentation.
 The hosted Standards and Documentation Governance workflows run both on every
 pull request; Standards also fails a baseline that grows against the target
-branch unless the increase carries a recorded reason. A local `make audit`
-stops at its final check until Praetor honours the declined `git-hooks` step;
-see [ADR-0145](docs/adr/0145-praetor-governance-adoption.md). The pinned
+branch unless the increase carries a recorded reason. The audit also requires
+every hosted Meson lane to build with `--werror` and every tracked C unit to
+sit in a clang-tidy lane or a dated exception
+([ADR-0168](docs/adr/0168-praetor-engine-492a00f.md)). The pinned
 install provides a binary named `standardsctl`; Praetor's generated text,
 including the block below, calls the same program `praetorctl`. Claude Code,
 Codex, and Gemini CLI sessions run Praetor's pre-tool command hook, so agent
@@ -226,7 +229,7 @@ users also need a copy named `praetorctl` on `PATH`
 | **Native verification** | `make verify-native` | Builds, tests, formats, lints, and checks changelog rendering |
 | **Full verification** | `make verify-all` | Adds context, HISS, and documentation checks |
 | **HISS audit** | `make audit` | Applies the pinned 51-finding baseline ratchet |
-| **Documentation** | `make docs-lint docs-figures` | Runs the locked Markdown and figure checks (Node.js 22 or newer) |
+| **Documentation** | `make docs-lint docs-figures` | Runs the locked Markdown and figure checks (Node.js 22.12 or newer) |
 | **Context sync** | `make compile-context` | Compiles canonical agent guidance to vendor targets |
 
 <!-- praetor:readme-governance:start -->

@@ -104,24 +104,25 @@ Meson tree, for example `BUILD_DIR=build-asan make verify-native`.
 
 The governance targets use the first `standardsctl` or `praetorctl` on `PATH`.
 Pin another executable explicitly with `PRAETORCTL=/absolute/path/to/standardsctl`.
-The documentation targets need Node.js 22 or newer; the gate installs its own
+The documentation targets need Node.js 22.12 or newer; the gate installs its own
 locked `markdownlint-cli2` 0.23.2 dependency tree into a temporary directory.
 
 | Target | Composition and purpose |
 | --- | --- |
 | `make compile-context` | Regenerate cross-tool context and persona projections from their canonical sources |
 | `make compile-context-verify` | Fail if a generated projection has drifted |
-| `make audit` | Verify the pinned manifest/lock and enforce the 51-finding HISS baseline ratchet in the hosted Standards mode (`--base`, touched-debt delta; `AUDIT_BASE` overrides the base) |
+| `make audit` | Verify the pinned manifest/lock, enforce the 51-finding HISS baseline ratchet in the hosted Standards mode (`--base`, touched-debt delta; `AUDIT_BASE` overrides the base), and run the engine's policy checks (build warnings, clang-tidy coverage, supply chain, Paperclip pair) |
 | `make docs-lint` | Lint public Markdown with the locked Praetor configuration and reject links into private scratch directories |
 | `make docs-figures` | Check figure specs and sources; skips with a reason while `docs/figures/` has none |
-| `make verify-all` | Run context verification, the audit, `verify-native`, then `docs-lint` and `docs-figures`; outside CI use `make -k verify-all`, because the audit's known local failure (below) otherwise stops Make before `verify-native` |
+| `make verify-all` | Run context verification, the audit, `verify-native`, then `docs-lint` and `docs-figures` |
 | `make hooks-install` | Install the tracked Lefthook commands into the shared Git hooks directory; see the note below |
 
-The baseline accepts 62 existing findings in the scanner's supported-file scope
-(C, headers, and Python): HISS-01=31 (`goto` cleanup jumps), HISS-02=1,
-HISS-04=28 (functions over 60 lines), and HISS-07=2 (`sys.exit` outside a
-`__main__` entry point). It is a non-regression ceiling, not a claim of zero
-debt or whole-tree source coverage. Fingerprints are keyed by file and line
+The baseline accepts 51 existing findings in the scanner's supported-file scope
+(C, headers, Python, shell, JavaScript/TypeScript, and workflow files):
+HISS-01=28 (`goto` cleanup jumps), HISS-04=21 (functions over 60 lines: 19 in
+C, two in Python), and HISS-07=2 (`sys.exit` calls outside a `__main__` entry
+point). It is a non-regression ceiling, not a claim of zero debt or whole-tree
+source coverage. Fingerprints are keyed by file and line
 ([Praetor issue 29](https://github.com/cordanaLLM/praetor/issues/29)), so
 moving a legacy function can surface it as new.
 
@@ -129,7 +130,8 @@ The local target and the hosted job apply that ceiling differently:
 
 | Where | Command | Fails when |
 | --- | --- | --- |
-| `make audit` | `standardsctl audit` | a finding's fingerprint is not in the baseline; the total exceeds the baseline; any finding, baselined or not, sits in a file with uncommitted changes (Praetor's touched-file rule) |
+| `standardsctl audit` (plain) | `standardsctl audit` | a finding's fingerprint is not in the baseline; the total exceeds the baseline; any finding, baselined or not, sits in a file with uncommitted changes (Praetor's touched-file rule) |
+| `make audit` | `standardsctl audit --base "$(AUDIT_BASE)" --touched-debt-delta-reason "$(AUDIT_DEBT_REASON)"`, base `origin/master` unless `AUDIT_BASE` is set | as hosted step 1 |
 | Hosted, step 1 | `standardsctl audit --base <target> --touched-debt-delta-reason <reason>` | the committed baseline records more findings than the baseline on the target (growth guard); a file the branch touches has more findings of some rule than the committed baseline records; a finding in an untouched file is not in the baseline; the total exceeds the baseline |
 | Hosted, step 2 | `standardsctl baseline --verify` | a current finding is not recorded at its current line; the total exceeds the baseline |
 
@@ -156,25 +158,47 @@ standardsctl baseline --verify
 ```
 
 Two hosted workflows run on every pull request. `Standards` installs Praetor at
-the commit in [ADR-0145](../adr/0145-praetor-governance-adoption.md), prints
+the commit in [ADR-0168](../adr/0168-praetor-engine-492a00f.md), prints
 the module version Go recorded for it, verifies generated contexts, and runs
 the two ratchet steps above. `Standards` is not yet a required status check on
 `master`; branch protection requires the `core`, `ffmpeg-stack`, and `docs`
 jobs. `Praetor Documentation Governance` is Praetor's locked
 workflow for the `docs:seo-portal` facet: it runs the same Markdown and figure
-checks as `make docs-lint docs-figures`. `praetorctl audit` compares that
+checks as `make docs-lint docs-figures`. On a draft pull request its first
+step, `Stop on a draft pull request`, fails on purpose and the checks do not
+run; they run once the pull request is marked ready for review. `praetorctl
+audit` compares that
 workflow, `tools/markdownlint/`, `tools/figures/`, the documentation block in
 the `Makefile`, and the managed block at the end of `.gitattributes` byte for
 byte with the pinned engine's assets. Refresh them only with the adoption
 command in the ADR, never by hand.
 
-Outside CI the audit ends with one known failure: `Pre-commit hook
-.git/hooks/pre-commit is missing or inactive`. The manifest declines
-`git-hooks`, but the auditor ignores that decline
-([Praetor issue 175](https://github.com/cordanaLLM/praetor/issues/175)).
-Hosted runners set `CI=true`, and the auditor then skips only that check. Do
-not create a placeholder hook file, weaken the manifest, or run remote sync to
-get past it.
+The manifest declines `git-hooks`, and the audit reports that decline as a
+pass, locally and in CI ([Praetor issue
+175](https://github.com/cordanaLLM/praetor/issues/175), fixed before the
+ADR-0168 pin). Do not create a placeholder hook file, weaken the manifest, or
+run remote sync to get past a failing check.
+
+Two audit checks read lists that ordinary code changes can break:
+
+- **Build warnings (HISS-10).** Every `meson setup` in `.github/workflows/`
+  passes `--werror`. The audit reads only the command line, not the
+  `werror=true` in `meson.build`'s `default_options`, so a hosted lane without
+  the flag fails even though Meson would build it with warnings as errors.
+  `scripts/check-build-config.py` also pins the Windows job's
+  `meson setup --werror build && ninja -C build`.
+- **clang-tidy coverage.** `.standards.yaml` declares one clang-tidy lane,
+  `libpelorus`, whose units are listed in `.config/clang-tidy/lane-files.txt`:
+  every C file the Meson build compiles (`libpelorus/src`, `libpelorus/test`,
+  `tools`, and the two `ffmpeg-patches/test` programs Meson builds against a
+  stub header). `make tidy` and the `core` job's clang-tidy step read that same
+  list, so the lane the audit judges is the lane that runs. A tracked C unit
+  that no lane reads fails the audit unless the top-level `exceptions` list
+  names it with a reason and an expiry at most 90 days ahead. Add a new Meson
+  unit to the list in the same change. The 13 `ffmpeg-patches` units that
+  build only inside an FFmpeg tree have one `clang-tidy-coverage` exception
+  each, expiring 2027-01-06; VMAFx/pelorus#94 tracks the FFmpeg-tree lane that
+  replaces them.
 
 Triage failures by boundary:
 
@@ -184,9 +208,9 @@ Triage failures by boundary:
   patch a generated projection directly.
 - A `docs-lint` diagnostic names a file, line, and markdownlint rule. Fix the
   Markdown; the rule set is locked by the engine.
-- Any audit failure before the final pre-commit-hook diagnostic is a local
-  governance regression. The hook diagnostic alone, outside CI, is the known
-  upstream issue 175.
+- Any audit failure is a governance regression in this repository. Fix it,
+  or, where the check allows one, declare a dated entry in the `exceptions`
+  list of `.standards.yaml` in a reviewed change.
 
 Canonical context sources are `AGENTS.md` and `.agents/agents/*.md`. Generated
 files that `compile-context` owns include root `CLAUDE.md`,
@@ -198,6 +222,14 @@ by verification. The text register block between the
 `<!-- praetor:register:start -->` markers in `AGENTS.md` is rendered from the
 manifest by `compile-context`; do not edit it by hand.
 
+The engine installs three text-register skills (`caveman`, `social-text`,
+`adhd-format`) under `.agents/skills/`; `compile-context` copies them to
+`.claude/skills/`. `compile-context --verify` and the audit also lint the
+nested `ffmpeg-patches/AGENTS.md`, `libpelorus/AGENTS.md`, and
+`tools/AGENTS.md` in the Caveman register: at most 2.0 articles per 100 prose
+words and at most 30 words per sentence. Check one file with
+`praetorctl caveman check --kind=context <file>`.
+
 `.paperclip/harness.json` and `.paperclip/rules.md` are a separate generated
 pair from `standardsctl paperclip harness`; `compile-context` does not own them.
 Regenerating that pair requires an explicit consumer review because the pinned
@@ -205,7 +237,8 @@ generator does not yet honor every Pelorus branch, language, and policy choice
 (Praetor issue 321). The audit lints the harness's operating-contract and
 invariant strings in the internal (Caveman) register. `register.sources` in
 `.standards.yaml` records how many strings it read and their digest, so an
-edited string also needs new pins. `adopt` refuses to re-bind that drift, even
+edited string also needs new pins. Since the ADR-0168 pin the audit also fails
+when `rules.md` is not the engine's rendering of `harness.json`. `adopt` refuses to re-bind that drift, even
 with `--force`. Stage the edit, run
 `standardsctl caveman check --configured-sources --root=.`, and copy the
 `actual` digest (and count, if it changed) that it reports into
@@ -215,13 +248,13 @@ with `--force`. Stage the edit, run
 
 The profile and facets in `.standards.yaml` declare more controls than Pelorus
 executes. The audit verifies the lock, the baseline, generated surfaces, and the
-documentation gate. It does not check the controls below, and no workflow
-implements them; they are declared only
+documentation gate. It does not check the controls below unless a row says
+so, and no workflow implements them; they are declared only
 ([ADR-0145](../adr/0145-praetor-governance-adoption.md)).
 
 | Declared by | Control | Current state |
 | --- | --- | --- |
-| `native-gpu-systems`, `security:high` | SLSA level 3 provenance, keyless cosign signatures, SBOM | Not produced; the release workflow publishes the patch archive without them |
+| `native-gpu-systems`, `security:high` | SLSA level 3 provenance, keyless cosign signatures, SBOM | Not produced; the release workflow publishes the patch archive without them. Since ADR-0168 the audit measures them (HISS-11) and fails until `release.yml` produces them or `.standards.yaml` declares the gap with an expiry |
 | `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, two approving reviews, stale-review dismissal | Not enforced; `master` protection requires linear history and three CI checks, no signatures and no reviews |
 | `native-gpu-systems` | `semgrep`, `cppcheck`, `clippy` | Not run; Pelorus has no Rust for `clippy` |
 | `security:high` | `gitleaks`, `trivy` | Not run; `.gitleaks.toml` only configures a manual `gitleaks` run |
@@ -230,12 +263,13 @@ implements them; they are declared only
 | `native-gpu-systems` | No per-frame dynamic allocation | HISS-03, by C review only |
 
 The declared linters that do run are `clang-tidy` (the `core` job and
-`make verify-native`) and `markdownlint` (the documentation gate). HISS-04
+`make verify-native`, over the units in `.config/clang-tidy/lane-files.txt`)
+and `markdownlint` (the documentation gate). HISS-04
 complexity is split the same way. For C the audit ratchets only the 60-line
 function cap. Its cyclomatic, cognitive, and statement measurement covers Go
 sources only, so the effective limits of 10, 12, and 40 are not machine-checked
 here. The `.clang-tidy` function-size thresholds (75 lines, 120 statements, 20
-branches) are advisory and cover `libpelorus` only. Those limits are reviewer
+branches) are advisory and cover the clang-tidy lane only. Those limits are reviewer
 checks.
 
 ### Agent hooks are registered; Git hooks stay opt-in
@@ -268,7 +302,7 @@ an executable named `praetorctl` on `PATH`. The pinned `go install` builds
 sample payload from the repository root:
 
 ```bash
-go install github.com/cordanaLLM/praetor/cmd/standardsctl@0af07a733e6534269b435cea185da4d1df7aba0c
+go install github.com/cordanaLLM/praetor/cmd/standardsctl@492a00f930e1a2df557ffebb76564cfa65637b77
 cp "$(go env GOPATH)/bin/standardsctl" "$(go env GOPATH)/bin/praetorctl"   # Windows: standardsctl.exe to praetorctl.exe
 printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"hook_event_name":"PreToolUse"}' \
   | praetorctl hook claude pre-tool; echo "exit=$?"                          # expect exit=0, no output
