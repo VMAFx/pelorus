@@ -182,6 +182,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 | `docs/research/` | measured deep-dive evidence |
 | `changelog.d/` | Keep-a-Changelog fragments |
 | `tools/pelorus_qp_report.c` | libpelorus CLI demonstrator; not installed |
+| `tools/tester/` | tester report program (stdlib Python, `python3 -I`), JSON schema, `--self-test` (ADR-0173) |
 | `tools/markdownlint/`, `tools/figures/` | Praetor-managed docs gate; refresh via `adopt` only |
 | `scripts/` | ADR claim, bench, release, build-config + shader checks |
 | `Makefile`, `lefthook.yml` | native + governance entry points; Git hooks opt-in (`make hooks-install`; `no_auto_install`) |
