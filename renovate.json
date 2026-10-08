@@ -29,6 +29,18 @@
       "datasourceTemplate": "github-releases",
       "versioningTemplate": "npm",
       "extractVersionTemplate": "^(?<version>\\d+\\.\\d+\\.\\d+)(-\\d+)?$"
+    },
+    {
+      "customType": "regex",
+      "description": "Bump the actionlint release that ci.yml's docs job runs through go run (the github-actions manager cannot see a go run line)",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/ci\\.yml$/"
+      ],
+      "matchStrings": [
+        "go run github\\.com/rhysd/actionlint/cmd/actionlint@(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "github.com/rhysd/actionlint",
+      "datasourceTemplate": "go"
     }
   ],
   "packageRules": [

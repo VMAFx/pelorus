@@ -385,10 +385,25 @@ minimatch glob with `dot` and `nocase`. Globs may use `*`, `?`, whole-segment
 error rather than guess at it: character classes, extglobs, escapes, ranges,
 and braces that span `/`. Use a `/regex/` entry for anything more specific.
 
+The docs job's `actions/setup-go` pin and the actionlint release follow the same
+rule as setup-msys2: the checker holds no copy of either value and checks only
+the shape. The job needs exactly one
+`uses: actions/setup-go@<40-hex digest> # vX.Y.Z` line and exactly one
+`run: go run github.com/rhysd/actionlint/cmd/actionlint@vX.Y.Z` line, with no
+floating tag or branch ref. Renovate's github-actions manager bumps the
+setup-go digest. A third regex manager in `renovate.json` covers only
+`.github/workflows/ci.yml`, reads the actionlint tag as `currentValue`, and
+looks it up as dependency `github.com/rhysd/actionlint` in the `go` datasource.
+The checker requires exactly one regex manager for `ci.yml`, with those two
+templates and a `matchStrings` entry that matches `ci.yml` once. The manager
+for the checker file stays the Go-toolchain one above
+([ADR-0170](../adr/0170-renovate-shape-guards.md),
+[research digest 0170](../research/0170-renovate-actionlint-manager.md)).
+
 When bumping by hand, change the `go-version` in `.github/workflows/ci.yml` and
 `ACTIONLINT_GO_VERSION` together, then run
 `python3 scripts/check-build-config.py --self-test` and
-`go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12`.
+`go run github.com/rhysd/actionlint/cmd/actionlint@<the tag in ci.yml>`.
 
 ## Release
 
