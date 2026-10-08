@@ -25,6 +25,12 @@ All notable changes to Pelorus are documented here. The format is
   builds, attests, and signs; the publishing job only uploads its files on a
   tag push. `docs/development/build.md` shows how to verify a release
   ([ADR-0169](docs/adr/0169-release-provenance-slsa3.md)).
+- Added the roadmap to 1.0 and beyond: the milestone map 0.3 to 3.0 with four
+  Ongoing buckets ([ADR-0172](docs/adr/0172-roadmap-milestone-map.md),
+  `docs/roadmap.md`), six research digests behind it
+  (`docs/research/0172-*.md`) and the 21 forge labels in
+  `.config/labels.yaml`. `CONTRIBUTING.md` now states that the Standards
+  workflow enforces the sign-off.
 
 ### Changed
 
