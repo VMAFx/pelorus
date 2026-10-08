@@ -68,6 +68,7 @@ All notable changes to Pelorus are documented here. The format is
   documentation gate's npm dependencies now audit clean (previously eight
   advisories, six high)
   ([ADR-0154](docs/adr/0154-praetor-engine-repin.md)).
+- The release workflow now calls the full CI workflow (patch-stack replay and link, sanitizers, Windows, docs) and publishes only after it passes, and a tag push fails unless the tag equals the `meson.build` version; `scripts/check-build-config.py` enforces both (audit A14, A15).
 - The interop sources and their conformance test now pass clang-tidy at the
   VMAFx profile, which lints the vendored copies. The conformance test splits
   its long checks into helpers and patches blob headers through `memcpy`
@@ -109,6 +110,160 @@ All notable changes to Pelorus are documented here. The format is
   `base` and `n1.2.3` branches and wrote `core.hooksPath`, `commit.gpgsign` and
   `user.name` into the repository's config. The checker now drops the
   repository-selecting variables first, and a regression proves it.
+- Fixed `pelorus_fgs` so its default H.274 film-grain SEI is actually
+  synthesized. The old defaults (`model_id=1`, `log2_scale=8`) were ignored by
+  FFmpeg's HEVC decoder and, with model 0, attenuated the grain below one code
+  value; the defaults are now `model_id=0` and `log2_scale=2`. Model 0 now writes
+  explicit cutoff frequencies through the new `cutoff_h`/`cutoff_v` options, and
+  Cb/Cr get their own `intensity_low_c`/`intensity_high_c` interval instead of
+  the luma one (BUG-001, BUG-012). An empty intensity interval, or a
+  `scale_y`/`scale_c` beyond the H.274 range for the model and bit depth (for
+  example 200 with `model_id=1` on 8-bit video), now fails at init with a clear
+  error and a non-zero ffmpeg exit. Previously the first case inserted an SEI
+  that matched no sample, and the second dropped every packet and still exited 0
+  with an empty file (BUG-002, BUG-024). Existing command lines that set
+  `model_id=1` or `log2_scale=8` keep working, but now log why FFmpeg will not
+  show their grain ([ADR-0155](docs/adr/0155-fgs-bsf-rdd5-profile.md)).
+- Fixed the FFmpeg-side Pelorus consumers (`pelorus_analyze`, `pelorus_denoise`
+  motion compensation, `pelorus_scenecut`) to scan every appended
+  `AV_FRAME_DATA_SEI_UNREGISTERED` blob newest first instead of only the first
+  entry, so sections from a later producer in a chain are no longer invisible
+  (BUG-005); to check the readable section size before every field read, so a
+  shorter section from an older producer is no longer read past its end
+  (BUG-003, BUG-004); and to map the motion-vector grid onto pixels with the
+  producer's block edge instead of `ceil(size / cells)`, which disagreed with
+  `pelorus_mc` for block sizes such as 31 (BUG-015). On small frames where
+  several block sizes fit the grid, the `pelorus_mc` default (16) is assumed with
+  a one-time warning; a grid that fits nothing, or whose ambiguity excludes the
+  default, disables motion compensation for that frame with a one-time warning. See [the interop guide](docs/api/interop-abi.md).
+- Fixed the deband and borderfix Vulkan shaders ending the invocation at the
+  first plane that does not contain the position: on a subsampled layout such
+  as `yuva420p` the full-size alpha plane (after the half-size chroma planes)
+  was never written. Each plane is now bounds-checked on its own (BUG-007,
+  BUG-008).
+- Fixed the deband `bayer8` dither matrix, which was not a Bayer matrix (the
+  coordinate bits were consumed MSB-first); it is now the canonical recursive
+  8x8 Bayer matrix in both the shipped shader and the reference (BUG-013).
+- Made the borderfix clamp bounds order-safe when `left + right` (or
+  `top + bottom`) reaches the plane size, in the shipped shader and the
+  reference (BUG-025). New fast test `shader-plane-bounds`.
+- Fixed `pelorus_mc_vulkan` seeding each frame's search with predictors four
+  times too far from the true motion (BUG-009). Since the quarter-pel output of
+  [ADR-0130](docs/adr/0130-mc-subpel-quarterpel.md), the shader has emitted Q2
+  vectors, but the host passed them back unconverted as the global-motion and
+  collocated-block predictors, which the integer-pel search reads as whole
+  pixels. The host now rounds the Q2 field to integer pel (half away from zero,
+  the same rounding as the NVENC ME-hint consumer) before it seeds the next
+  frame, and every MV field in the filter, both shaders, and
+  `PelorusMotionSection` names its unit. On a 1080p synthetic pan the
+  steady-state field now matches the known shift on 98.6–99.9% of blocks
+  (2–10 px, diagonal, `bsize=8`), up from 6–84%. The `PEL_SEC_MOTION` grid and
+  scalars keep their units, so the NVENC and denoise consumers are unchanged.
+- Fixed the `motion_magnitude_p95` selection in `pelorus_mc_vulkan` scanning
+  O(n²) per frame (BUG-014). It is now an O(n) radix select that the new
+  `mc-stats` fast test proves bit-identical to the old scan. The host also copies
+  the mapped MV and SAD buffers once per frame instead of reading device memory
+  element by element, and keeps its scratch across frames. On an RTX 4090 a
+  1080p `bsize=16` frame drops from 30–42 ms to 3–4.5 ms of wall time, and a
+  2160p `bsize=8` frame from 1.3–1.6 s to 46–56 ms.
+- Hardened the repository scripts: `scripts/bench/fetch-corpus.sh` now downloads with `--fail`, a bounded deadline and a bounded retry into a temporary file that is checksum-verified before it replaces the cache (BUG-022); `ffmpeg-patches/generate.sh` requires exactly one `format-patch` output per series index instead of swallowing a failed rename (BUG-023); the remaining `|| true` sites in the replay, matrix, changelog and agent-hook scripts use explicit status handling; the FFmpeg replay scripts ignore global and system Git configuration and `GIT_COMMITTER_*`, with a checker that anchors the canonical `git am` command to a non-comment line; and the interop fixture checks owner-only access on the open descriptor, reports distinct failure causes and loops over short writes (Closes #65).
+- The build-config self-test (`scripts/check-build-config.py --self-test`) now drops the repository-locating Git variables (`git rev-parse --local-env-vars`) before its fixtures run. Started from a Git hook, it had inherited `GIT_DIR` and rewritten the invoking repository's `.git/config` (`core.bare`, `core.hooksPath`, `gpg.program`, `user.*`), branch refs and worktree list; `scripts/test-selftest-git-isolation.py` proves an invoking repository stays untouched.
+- Fixed `vf_pelorus_grain_estimate_vulkan`'s lag-1 correlation, which was
+  pinned at −1.0 for every input, so the AV1 parameters always carried
+  `ar_coeffs_y[0] = −64` (BUG-010). The lag-1 sum used a bias of 1.0 at a scale
+  of 2000 and truncated each add, and that bias swamped the product of real
+  grain residuals. Every accumulator add is now rounded to the nearest unit,
+  and the lag-1 product is stored with a bias of `0.08²` at a scale of 150000.
+  On Arc, NVIDIA and RADV the lag-1 coefficient is now within 0.004 of a float
+  reference (white grain gives about −0.167 and `ar_coeffs_y[0]` about −11), and
+  the per-band RMS within 1% (it read up to 5% low for light grain). AV1
+  estimates and `lavfi.pelorus.grain_sigma` therefore change slightly for
+  every input. The `grain-accumulator-bounds` fast test now also checks the
+  rounding and the precision against a float reference, and `--self-test`
+  plants nine defects
+  ([ADR-0161](docs/adr/0161-grain-estimate-rounding-and-h274-mapping.md)).
+- Fixed the estimator's H.274 output, which FFmpeg could not synthesize
+  (BUG-029). `PEL_SEC_FILMGRAIN` now carries `h274_model_id` 0 and
+  `h274_log2_scale` 2 (the SMPTE RDD 5 profile and the `pelorus_fgs` defaults)
+  instead of 1 and 8. With `model=h274`, the filter also emits
+  `lavfi.pelorus.h274_model_id`, `h274_log2_scale`, `h274_scale_y`,
+  `h274_cutoff_h` and `h274_cutoff_v`. Their scale and cutoff come from a table
+  calibrated against FFmpeg's `libavcodec/h274.c`
+  (`scripts/gen-h274-grain-calibration.py`). Through `pelorus_fgs` with
+  explicit cutoffs and FFmpeg's HEVC decoder, white grain of one to three code
+  values comes back within 4% of its source standard deviation. The new
+  `lavfi.pelorus.grain_lag1` key exposes the measured residual correlation
+  ([ADR-0161](docs/adr/0161-grain-estimate-rounding-and-h274-mapping.md)).
+- Fixed the denoise `meta=1` residual statistics and the tile=0/tile=1 identity
+  (BUG-016, BUG-027). `noise_sigma_estimate` read 0 on clean content because the
+  squared residual was truncated at a 1e3 fixed-point scale; each workgroup now
+  reduces in shared memory and adds into 64-bit slices at scale 2^23 (bounds
+  proven at DCI 8K by `scripts/test-denoise-accumulator-bounds.py`). On the RTX
+  4090 `tile=1` differed from `tile=0` by one code value at 8/10/12-bit; the
+  shader now pins every output-path operation (`precise`, hoisted divisors,
+  explicit `fma`, spelled-out `mix`/`smoothstep`), and the format matrix asserts
+  identity at 8/10/12-bit, semi-planar and `mc=1`. Output can move by one code
+  value on a few pixels versus the previous release.
+- Fixed `pelorus_dehalo_vulkan` corrupting line-art (BUG-011). The old gate
+  compared `edge` with a raw Sobel magnitude that reads 4× the step, and a thin
+  stroke's symmetric core reads a zero Sobel, so the filter rewrote stroke
+  pixels by up to 129 codes (clean synthetic image: 41.5 dB PSNR; now 76.0 dB,
+  line pixels unchanged). `edge` is now an edge step (Sobel magnitude / 4), the
+  near-line scan tests the edge mask in both polarities and excludes the gap
+  between close edges, and the pull follows `DeHalo_alpha` again
+  (`MaskedMerge(halos, clp, so)` plus the `Repair` clamp). This is a harm-fix,
+  not halo removal: halo RMS at the defaults drops by at most 1.3%, because
+  steep halo flanks still count as line-art. Real halo removal (a feathered
+  `FineDehalo`-style mask) is tracked as a separate follow-up
+  ([ADR-0163](docs/adr/0163-dehalo-gate-and-pull.md)).
+- Fixed the `deblock` and `aa` Vulkan filters to write every plane on formats
+  whose full-size plane follows a subsampled one (BUG-028). The `deblock`
+  plane loop and the `aa` fast=0 loop ended the invocation at the first plane
+  whose size excluded the position, so on `yuva420p` the alpha plane outside
+  the chroma extent was never written. Each plane is now bounds-checked on its
+  own with `continue`. The `aa` fast=1 path already guarded per plane, so its
+  workgroup barriers stay uniform. Luma and chroma output is unchanged.
+- Fixed two NVENC value mappings in the FFmpeg patch stack. `av1_nvenc
+  -pelorus_film_grain 1` (patch 0011) now writes the AV1 chroma film-grain
+  multipliers and offsets with their raw `+128`/`+256` biases. Before this fix
+  the unbiased `AVFilmGrainAOMParams` values went straight into NVENC, which
+  corrupted the chroma grain: a dav1d-exported `cb_offset` of −238 was coded
+  as 274 instead of 18 (BUG-019). `av1_nvenc -pelorus_roi 1` (patch 0004) now
+  scales a region's `qoffset` by the AV1 qindex span (255) instead of the
+  H.264/HEVC QP span (51 at 8-bit), so an AV1 region receives the intended
+  delta, saturating at the int8 map limit, instead of about a fifth of it at
+  8-bit (BUG-020). H.264 and
+  HEVC ROI output is unchanged. On an RTX 4090 the round trip now reproduces a
+  libaom test vector's `cb_mult`/`cb_luma_mult`/`cb_offset` (247/192/18)
+  exactly, and a full-frame AV1 delta of −40 matches a 40-lower constant qindex.
+  A new fast-suite test, `nvenc-pelorus-mapping`, compiles both mappings from
+  the hand-maintained diffs and checks them.
+- Fixed `-pelorus_roi` on `h264_vulkan`, `hevc_vulkan` and `av1_vulkan`, which
+  never activated: FFmpeg's Vulkan hwcontext enabled neither
+  `VK_KHR_video_encode_quantization_map` nor its `videoEncodeQuantizationMap`
+  feature (BUG-017). Patch 0009 now enables both, clamps delta-map values to
+  the driver's per-codec range instead of the libx264 span (BUG-018), creates
+  the map with the advertised tiling, records the map upload before the video
+  coding scope, creates `QUANTIZATION_MAP_COMPATIBLE` session parameters, and
+  enables H.265 `cu_qp_delta` so the stream stays decodable. Verified on an RTX
+  4090; RADV disables steering with a warning because its map format cannot be
+  filled yet ([ADR-0166](docs/adr/0166-vulkan-qpmap-activation.md)).
+- Fixed `-pelorus_roi` on `hevc_qsv` silently falling back to rectangle ROI when the runtime clears `EnableMBQP` after init: the encoder now logs a one-time warning naming the cause (BUG-021), and fixed SVT-AV1 ROI events accumulating until encoder close by reclaiming each event once the library can no longer read it, so memory no longer grows with stream length (BUG-026).
+- Fixed three encoder-patch defects. `hevc_nvenc -pelorus_me_hints 1` (patch
+  0008) failed the whole encode with `invalid param (8): SetupCEAHints failed`
+  on any frame that carried no Pelorus motion data, because NVENC rejects a
+  session opened for external hints when a frame supplies zero candidates per
+  block. Such frames now submit one zero-MV candidate per 16x16 block and log one
+  warning; frames with motion data are bit-identical to before (BUG-031).
+  `av1_vulkan -pelorus_roi 1` (patch 0009) scaled the ROI `qoffset` by the
+  H.264/HEVC QP span (51 at 8-bit) instead of the AV1 qindex span (255), giving
+  AV1 regions a fifth of the requested delta; a `qoffset` of 0.2 now maps to
+  delta 51 instead of 10, still clamped to the driver range (BUG-032).
+  `libsvtav1 -pelorus_roi 1` (patch 0013) let a frame without ROI data, or with
+  an all-zero-delta map, inherit the previous frame's ROI through SVT-AV1's
+  sticky event pointer; the encoder now submits a neutral event on that frame
+  (BUG-030). New fast-suite tests: `nvenc-me-hints`, `svtav1-roi-sticky`, and
+  per-codec span checks in `vulkan-qpmap-contract`.
 - The interop conformance test reads its fixtures back with `_fsopen(..., _SH_DENYNO)` on Windows instead of the deprecated `fopen()`: same sharing, no `-Wdeprecated-declarations` under clang-cl or icx-cl (C4996 under cl.exe) for a host that builds the test with warnings as errors.
 - **The x265 CSV reader initialises its column indices before the header row
   sets them.** `x265_csv_read_rows()` left the column-index struct
