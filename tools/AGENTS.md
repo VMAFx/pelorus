@@ -10,7 +10,8 @@ deliverable (ADR-0108). Gated by `tools` meson option (default on).
 
 ```text
 tools/
-└── pelorus_qp_report.c   x265 --csv -> PEL_SEC_QPREPORT demonstrator (ADR-0122)
+├── pelorus_qp_report.c   x265 --csv -> PEL_SEC_QPREPORT demonstrator (ADR-0122)
+└── tester/               tester report program + schema, Python stdlib only (ADR-0173)
 ```
 
 ## Conventions
@@ -34,3 +35,14 @@ tools/
 
 - Tools never become stability surface: no other code depends on their output
   format. They demonstrate; they do not define ABI.
+
+## tester/
+
+- `python3 -I tools/tester/pelorus_tester_report.py`; stdlib only, no cross-repo
+  import. Functions <= 60 LOC, no recursion (iterative walks, bounded), every
+  subprocess bounded in time and bytes.
+- Report schema = `report.schema.json`; program checks the keyword subset it
+  names. Changing a field -> schema, program, `--self-test` planted case, and
+  `docs/development/tester.md` in one change.
+- New validator rule -> planted bad case + RULES entry so
+  `--self-test --disable <rule>` goes red.

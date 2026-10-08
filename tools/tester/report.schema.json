@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/VMAFx/pelorus/tools/tester/report.schema.json",
+  "title": "Pelorus tester report, schema version 1",
+  "description": "Written by tools/tester/pelorus_tester_report.py (ADR-0173). The program checks it with the keyword subset type, const, enum, pattern, maxLength, minimum, minItems, required, properties, additionalProperties and items.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tool", "generated_utc", "commit", "package", "host", "devices", "require_device", "stage_count", "stages", "verdict", "exit_code", "failed_stages", "note", "redaction", "report_sha256"],
+  "properties": {
+    "schema_version": {"const": 1, "description": "Bumped when a field is removed or changes meaning; added fields stay in version 1 only if optional."},
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"const": "pelorus-tester-report"},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}
+      }
+    },
+    "generated_utc": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "commit": {"type": "string", "pattern": "^([0-9a-f]{40}|unknown)$", "description": "Source commit of the kit; 'unknown' only for a run outside a published package."},
+    "package": {"type": "string", "maxLength": 128},
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch", "cpu_count", "python"],
+      "properties": {
+        "os": {"type": "string", "maxLength": 64},
+        "arch": {"type": "string", "maxLength": 64},
+        "cpu_count": {"type": "integer", "minimum": 0},
+        "python": {"type": "string", "maxLength": 32}
+      }
+    },
+    "devices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "driver", "api_version", "vendor_id", "device_type"],
+        "properties": {
+          "name": {"type": "string", "maxLength": 256},
+          "driver": {"type": "string", "maxLength": 256},
+          "api_version": {"type": "string", "maxLength": 64},
+          "vendor_id": {"type": "string", "maxLength": 32},
+          "device_type": {"type": "string", "maxLength": 64}
+        }
+      }
+    },
+    "require_device": {"type": "boolean"},
+    "stage_count": {"type": "integer", "minimum": 1},
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "reason", "needs_device", "duration_s", "exit_code", "log_tail"],
+        "properties": {
+          "id": {"enum": ["probe", "libpelorus_suite", "registration", "format_matrix", "steering_smoke", "sidedata_roundtrip", "zero_copy_chain", "bench"]},
+          "status": {"enum": ["pass", "fail", "not_run", "no_device", "incomplete"]},
+          "reason": {"type": "string", "maxLength": 1000},
+          "needs_device": {"type": "boolean"},
+          "duration_s": {"type": "number", "minimum": 0},
+          "exit_code": {"type": ["integer", "null"]},
+          "log_tail": {"type": "string", "maxLength": 4000}
+        }
+      }
+    },
+    "verdict": {"enum": ["pass", "fail", "incomplete", "unavailable"]},
+    "exit_code": {"enum": [0, 1, 2, 100]},
+    "failed_stages": {"type": "array", "items": {"type": "string"}},
+    "note": {"type": "string", "maxLength": 2000},
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["applied", "rules"],
+      "properties": {
+        "applied": {"type": "boolean"},
+        "rules": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "report_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
