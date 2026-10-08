@@ -111,11 +111,11 @@ locked `markdownlint-cli2` 0.23.2 dependency tree into a temporary directory.
 | --- | --- |
 | `make compile-context` | Regenerate cross-tool context and persona projections from their canonical sources |
 | `make compile-context-verify` | Fail if a generated projection has drifted |
-| `make audit` | Verify the pinned manifest/lock, enforce the 51-finding HISS baseline ratchet in the hosted Standards mode (`--base`, touched-debt delta; `AUDIT_BASE` overrides the base), and run the engine's policy checks (build warnings, clang-tidy coverage, supply chain, Paperclip pair) |
+| `make audit` | Verify the pinned manifest/lock, enforce the 51-finding HISS baseline ratchet in the hosted Standards mode (`--base`, touched-debt delta; `AUDIT_BASE` overrides the base), and run the engine's policy checks (build warnings, clang-tidy coverage, supply chain, Paperclip pair, hooks, dev container, ruleset). `AUDIT_FLAGS=--offline` skips the forge reads, as the pre-commit hook does |
 | `make docs-lint` | Lint public Markdown with the locked Praetor configuration and reject links into private scratch directories |
 | `make docs-figures` | Check figure specs and sources; skips with a reason while `docs/figures/` has none |
 | `make verify-all` | Run context verification, the audit, `verify-native`, then `docs-lint` and `docs-figures` |
-| `make hooks-install` | Install the tracked Lefthook commands into the shared Git hooks directory; see the note below |
+| `make hooks-install` | Install the tracked Lefthook hooks into the shared Git hooks directory; see [Git hooks](#git-hooks-opt-in-per-clone) |
 
 The baseline accepts 51 existing findings in the scanner's supported-file scope
 (C, headers, Python, shell, JavaScript/TypeScript, and workflow files):
@@ -160,9 +160,10 @@ standardsctl baseline --verify
 Two hosted workflows run on every pull request. `Standards` installs Praetor at
 the commit in [ADR-0168](../adr/0168-praetor-engine-492a00f.md), prints
 the module version Go recorded for it, verifies generated contexts, and runs
-the two ratchet steps above. `Standards` is not yet a required status check on
-`master`; branch protection requires the `core`, `ffmpeg-stack`, and `docs`
-jobs. `Praetor Documentation Governance` is Praetor's locked
+the two ratchet steps above. The live `master` protection, a classic branch
+rule, requires `Standards` and the `core`, `ffmpeg-stack`, and `docs` jobs; the
+committed ruleset requires all seven pull-request checks once it is applied
+([Branch ruleset](#branch-ruleset)). `Praetor Documentation Governance` is Praetor's locked
 workflow for the `docs:seo-portal` facet: it runs the same Markdown and figure
 checks as `make docs-lint docs-figures`. On a draft pull request its first
 step, `Stop on a draft pull request`, fails on purpose and the checks do not
@@ -173,11 +174,24 @@ the `Makefile`, and the managed block at the end of `.gitattributes` byte for
 byte with the pinned engine's assets. Refresh them only with the adoption
 command in the ADR, never by hand.
 
-The manifest declines `git-hooks`, and the audit reports that decline as a
-pass, locally and in CI ([Praetor issue
-175](https://github.com/cordanaLLM/praetor/issues/175), fixed before the
-ADR-0168 pin). Do not create a placeholder hook file, weaken the manifest, or
-run remote sync to get past a failing check.
+Since [ADR-0153](../adr/0153-praetor-full-adoption.md) the manifest declines
+no adoption step. A local audit therefore also needs two things CI does not
+check:
+
+- **An installed pre-commit hook.** The audit requires Lefthook's
+  `pre-commit` hook in the Git hooks directory that every linked worktree
+  shares; run `make hooks-install` once ([Git hooks](#git-hooks-opt-in-per-clone)).
+  CI installs no hooks, and the audit skips that check when `CI` is set.
+- **Live branch protection that matches the ruleset.** With a forge token
+  (`GITHUB_TOKEN`, `GH_TOKEN`, or a `gh` login) and an `origin` that names
+  `VMAFx/pelorus`, the audit compares the protection GitHub enforces on
+  `master` with `.github/rulesets/main.json`. Until the ruleset is applied,
+  that comparison fails ([Branch ruleset](#branch-ruleset)). The hosted job
+  has no token and reports the check as not made. `AUDIT_FLAGS=--offline`
+  (or `--offline`) skips it locally.
+
+Do not create a placeholder hook file, weaken the manifest, or run remote sync
+to get past a failing check.
 
 Two audit checks read lists that ordinary code changes can break:
 
@@ -255,7 +269,7 @@ controls below, and no workflow implements them; they are declared only
 
 | Declared by | Control | Current state |
 | --- | --- | --- |
-| `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, two approving reviews, stale-review dismissal | Not enforced; `master` protection requires linear history and three CI checks, no signatures and no reviews |
+| `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, stale-review dismissal, review-thread resolution, seven required checks | Committed in `.github/rulesets/main.json`, not applied yet; live `master` protection requires linear history and four checks, no signatures. Approving reviews: zero under `review_mode: single_maintainer` ([Branch ruleset](#branch-ruleset)) |
 | `native-gpu-systems` | `semgrep`, `cppcheck`, `clippy` | Not run; Pelorus has no Rust for `clippy` |
 | `security:high` | `gitleaks`, `trivy` | Not run; `.gitleaks.toml` only configures a manual `gitleaks` run |
 | `api:public-contract` | `buf`, `spectral`, OpenAPI drift, `Migration:` footer check | Not run; Pelorus has no protobuf or OpenAPI surface. The append-only C ABI is guarded by the interop conformance fixture and review |
@@ -272,7 +286,7 @@ here. The `.clang-tidy` function-size thresholds (75 lines, 120 statements, 20
 branches) are advisory and cover the clang-tidy lane only. Those limits are reviewer
 checks.
 
-### Agent hooks are registered; Git hooks stay opt-in
+### Agent hooks are registered
 
 The manifest no longer declines `agent-hooks`
 ([ADR-0145](../adr/0145-praetor-governance-adoption.md)). Adoption registers
@@ -329,19 +343,133 @@ that already has one byte for byte as it is, so re-running the adoption command
 in the ADR is how to restore a row. Keep Pelorus's own hook entries where they
 are; the merge preserves them.
 
-The manifest still declines `git-hooks`, so adoption never installs Lefthook
-into `.git/hooks`. `make hooks-install` remains available for explicit
-hook-integration testing. The tracked `lefthook.yml` binds pre-commit to
-`make compile-context-verify` and `make audit`, and pre-push to
-`make verify-all`, so an installed hook also needs Go, the pinned engine, and
-Node.js. Linked worktrees share the repository's Git hooks directory, so
-installing or removing hooks is repository-wide. Remove them with Lefthook's
-verified removal command, typed in your own terminal (the agent hook denies it
-to agents):
+### Git hooks (opt-in per clone)
+
+The manifest adopts `git-hooks`
+([ADR-0153](../adr/0153-praetor-full-adoption.md)). `lefthook.yml` holds the
+jobs the pinned engine renders plus two Pelorus jobs, and
+`.config/lefthook/` and `.config/agent/` hold the checkpoint scripts, the
+checkpoint policy, and the agent interceptor that come with them. Install the
+hooks once per clone, in your own terminal:
+
+```bash
+make hooks-install   # runs `lefthook install`
+```
+
+| Hook | Jobs |
+| --- | --- |
+| pre-commit | `context-check` (`compile-context --verify`), `hiss-audit` (`audit --offline`), `pelorus-audit` (`make audit AUDIT_FLAGS=--offline`) |
+| post-commit | `state-sync`, `dedupe-cadence` (governance bookkeeping in the git-ignored `.workingdir/`) |
+| pre-push | `flavor-audit`, `audit` (reads the forge), `gate` (`gate run --admit-unsupported`), `verify-all` (`make verify-all`) |
+
+`pelorus-audit` and `verify-all` are the Pelorus additions. The pre-push
+`gate` job needs a clean working tree, and admits a Meson repository without
+signing a receipt. The pre-push `audit` and `verify-all` read the forge, so
+they fail while live `master` protection differs from the committed ruleset
+([Branch ruleset](#branch-ruleset)). Installed hooks need `praetorctl` (or
+`standardsctl`), `lefthook` 2.1.14 or newer, `make`, Python 3.10 or newer, and,
+for a push, the native and documentation toolchains of `make verify-all`.
+
+`lefthook.yml` sets `no_auto_install: true`. Without it, `lefthook run`
+re-installs the hooks whenever the file differs from the one installed, from
+whichever worktree commits first. Run `make hooks-install` again after
+`lefthook.yml` changes. Because adoption installs hooks only for an unedited
+rendering, it does not install them here either.
+
+Linked worktrees share the repository's Git hooks directory, so installing or
+removing hooks is repository-wide. Remove them with Lefthook's verified
+removal command, typed in your own terminal (the agent hook denies it to
+agents):
 
 ```bash
 lefthook uninstall
 ```
+
+### Branch ruleset
+
+`.github/rulesets/main.json` is the ruleset `praetor-main-protection` that the
+engine renders for `master` and `lts-*`. `.standards.yaml` declares
+`overrides.branch_protection.review_mode: single_maintainer` (Praetor's
+`docs/guides/review-policy.md`), so the rendering requires:
+
+| Rule | Value |
+| --- | --- |
+| Pull request | 0 approving reviews, no code-owner review, stale reviews dismissed, review threads resolved |
+| Required status checks (strict) | the five `ci.yml` jobs, `Documentation Governance`, `Standards & Invariant Verification Gate` |
+| History | signed commits, linear history, no force push, no deletion |
+| Bypass | repository admin role, pull requests only |
+
+The engine derives the checks from the workflows: a job is required when every
+pull request reports it. The `Dev container image` workflow is path-filtered,
+so it adds none. The audit re-renders the file and fails on any drift; never
+edit it by hand. A change to a job name or a trigger changes the rendering, so
+regenerate the file with the adoption command in ADR-0153 in the same change.
+
+The ruleset is committed, not applied. After the change that adds it lands,
+the maintainer applies it from an up-to-date `master`:
+
+```bash
+praetorctl plan --remote    # preview; reads GITHUB_TOKEN or GH_TOKEN
+praetorctl sync --remote    # writes the ruleset, labels and repository metadata
+```
+
+`sync --remote` writes rulesets only: the first run creates
+`praetor-main-protection` with its bypass actor, a later run keeps the checks
+it finds there, and each run prints a review setting it lowers. The classic
+`master` rule stays until it is removed by hand. The repository merges by squash only; GitHub signs a squash
+commit made in the web interface, which the signed-commit rule needs. Until
+the ruleset is applied, an audit with a forge token fails like this:
+
+```text
+[FAIL] Live branch protection of master on GitHub does not match the declared policy (protected by branch protection):
+  Dismiss stale reviews: declared required, live not enforced
+  Signed commits: declared required, live not enforced
+  Required status checks: declared 7, live 4 of 7 required; missing: ...
+```
+
+### Dev container
+
+`.devcontainer/` holds the bundle the pinned engine renders:
+`devcontainer.json`, `Dockerfile.praetor`, and six `praetor-source.*.b64`
+parts that build `praetorctl` into the image. The audit compares them with the
+rendering byte for byte; regenerate them with
+`praetorctl devcontainer --source-root <Praetor checkout at the pin> --force`,
+never by hand. The rendered image is Praetor's reviewed
+`mcr.microsoft.com/devcontainers/base` digest plus `praetorctl` and the
+catalog's `common-utils`, `nix`, and `rust` features. It has no Meson, Ninja,
+clang, glslc, Vulkan headers, or Node.js, so its `postCreateCommand`
+(`make verify-all`) stops at the first Meson call.
+
+`.devcontainer/base/Containerfile` is the toolchain base that fixes this. It
+starts from the same reviewed base digest and installs the packages the CI jobs
+install, Node.js 24, actionlint, and Lefthook, each download checked against
+its published SHA-256. The `Dev container image` workflow
+(`.github/workflows/devcontainer-image.yml`) handles it:
+
+| Trigger | Job | Result |
+| --- | --- | --- |
+| Pull request touching `.devcontainer/base/**` or the workflow | `build` | builds the image, pushes nothing; on a draft its first step fails by design |
+| Push to `master` touching the same paths, or manual dispatch | `publish` | pushes `ghcr.io/vmafx/pelorus-dev` tagged with the commit SHA and `latest`, reads the digest back, attests SLSA build provenance for it |
+
+Only `publish` holds `packages: write`, with `id-token`, `attestations`, and
+`artifact-metadata` for the attestation. Check a published digest with:
+
+```bash
+gh attestation verify oci://ghcr.io/vmafx/pelorus-dev@sha256:<digest> --repo VMAFx/pelorus
+```
+
+Pointing the bundle at the image is a separate change: re-render with
+`praetorctl devcontainer --source-root <Praetor checkout at the pin> --force
+--base-image ghcr.io/vmafx/pelorus-dev@sha256:<digest>`. Until then the
+rendered container runs the governance gates only; run the native and
+documentation gates on the host, or in the base image built locally:
+
+```bash
+docker build --file .devcontainer/base/Containerfile --tag pelorus-dev .devcontainer/base
+```
+
+Neither image passes a GPU through: the Vulkan shaders compile, the GPU tests
+do not run.
 
 ## Dependency updates (Renovate)
 

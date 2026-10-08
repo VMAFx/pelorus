@@ -46,13 +46,17 @@ compile-context-verify:
 # Same ratchet as the hosted Standards gate (ADR-0145): touched files keep their
 # baselined findings but may not gain one; the baseline may not grow against
 # AUDIT_BASE unless the increase carries a recorded reason.
+# AUDIT_FLAGS=--offline reads nothing from the forge; the pre-commit hook uses it.
 AUDIT_BASE ?= origin/master
 AUDIT_DEBT_REASON ?= ADR-0145 baseline ratchet; touched files keep baselined debt but may not add findings; zero-debt mode deferred
+AUDIT_FLAGS ?=
 
 audit:
-	$(PRAETORCTL) audit --base "$(AUDIT_BASE)" --touched-debt-delta-reason "$(AUDIT_DEBT_REASON)"
+	$(PRAETORCTL) audit $(AUDIT_FLAGS) --base "$(AUDIT_BASE)" --touched-debt-delta-reason "$(AUDIT_DEBT_REASON)"
 
-# Explicit opt-in only. Adoption and CI never install or replace shared hooks.
+# Explicit opt-in only. CI never installs hooks; adoption installs them only in
+# a checkout whose lefthook.yml is an unedited Praetor rendering, which this one
+# is not. Re-run after lefthook.yml changes (no_auto_install).
 hooks-install:
 	@command -v lefthook >/dev/null || { echo "error: lefthook not found" >&2; exit 1; }
 	lefthook install

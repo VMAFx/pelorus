@@ -1,0 +1,72 @@
+# Pelorus dev container toolchain base (ADR-0153).
+#
+# Praetor renders .devcontainer/devcontainer.json, Dockerfile.praetor and the
+# praetor-source.*.b64 parts from the pinned engine; audit verifies them byte for
+# byte, so the native toolchain cannot be added there. This image is the
+# digest-pinned --base-image that Dockerfile.praetor is meant to build on. It
+# starts from Praetor's reviewed default base and adds the packages the CI jobs
+# in .github/workflows/ci.yml install on their ubuntu-26.04 runners, plus the
+# repository gate tools.
+#
+# .github/workflows/devcontainer-image.yml builds it on pull requests and
+# publishes ghcr.io/vmafx/pelorus-dev from master. The bundle names the
+# published digest only after a separate re-render (docs/development/build.md#dev-container).
+FROM mcr.microsoft.com/devcontainers/base:ubuntu26.04@sha256:edfb983aab9c579a385dc23c57d7d3703f5ec920124d99c16204a2cac465aab4
+
+ARG ACTIONLINT_VERSION=1.7.12
+ARG ACTIONLINT_SHA256=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+ARG LEFTHOOK_VERSION=2.1.14
+ARG LEFTHOOK_SHA256=2be3187101b3a2edd5edf8b546aa2e3820531c517b4cd0216601a9c06f07c42d
+ARG NODE_VERSION=24.21.0
+ARG NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+USER root
+
+# core + sanitizers jobs: Meson, Ninja, clang (format, tidy), SPIR-V compilers.
+# ffmpeg-stack job: native build, Vulkan and encoder headers, assemblers.
+# docs job and gates: Python, black, shellcheck.
+# DL3008: the CI jobs install the same packages unpinned from the runner's
+# archive; Ubuntu drops superseded versions, so a version pin breaks the build
+# at the next security update. The base image itself is digest-pinned.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential ca-certificates curl git make pkg-config xz-utils \
+        meson ninja-build clang clang-format clang-tidy glslc glslang-tools \
+        nasm yasm libvulkan-dev libvpl-dev libaom-dev libsvtav1enc-dev \
+        libffmpeg-nvenc-dev \
+        python3 black shellcheck \
+    && rm -rf /var/lib/apt/lists/*
+
+# The documentation gate runs TypeScript figure sources through Node's type
+# stripping, which Ubuntu's nodejs 22 build lacks (process.features.typescript
+# is false). Install the official Node.js 24 build, the major the locked
+# praetor-docs.yml workflow sets up, after checking its SHASUMS256.txt entry.
+RUN curl -fsSLo /tmp/node.tar.xz \
+        "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+    && echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner \
+        --exclude=CHANGELOG.md --exclude=LICENSE --exclude=README.md \
+    && rm -f /tmp/node.tar.xz \
+    && node --version \
+    && node -p 'process.features.typescript' | grep -qx strip
+
+# actionlint and Lefthook have no Ubuntu package; install the pinned release
+# binaries after checking the checksums their release pages publish.
+RUN curl -fsSLo /tmp/actionlint.tar.gz \
+        "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+    && echo "${ACTIONLINT_SHA256}  /tmp/actionlint.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/actionlint.tar.gz -C /usr/local/bin actionlint \
+    && curl -fsSLo /tmp/lefthook.gz \
+        "https://github.com/evilmartians/lefthook/releases/download/v${LEFTHOOK_VERSION}/lefthook_${LEFTHOOK_VERSION}_Linux_x86_64.gz" \
+    && echo "${LEFTHOOK_SHA256}  /tmp/lefthook.gz" | sha256sum -c - \
+    && gunzip -c /tmp/lefthook.gz > /usr/local/bin/lefthook \
+    && chmod 0755 /usr/local/bin/actionlint /usr/local/bin/lefthook \
+    && rm -f /tmp/actionlint.tar.gz /tmp/lefthook.gz
+
+LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
+      org.opencontainers.image.description="Pelorus dev container toolchain base (ADR-0153)" \
+      org.opencontainers.image.licenses="BSD-2-Clause-Patent"
+
+USER vscode

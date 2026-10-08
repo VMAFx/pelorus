@@ -68,6 +68,19 @@ All notable changes to Pelorus are documented here. The format is
   (the conformance fixture passes unchanged), and the field splitter of the CSV
   reader carries an explicit scalar bound. The HISS baseline loses 5
   infractions (99 to 93, with one more from `scripts/check-build-config.py`, whose Renovate regression table is split into helpers).
+- Pelorus now adopts Praetor's Git hooks, dev container, and branch ruleset
+  instead of declining them. `make hooks-install` installs Lefthook hooks that
+  run the context check and two offline audits on commit and the audit, gate,
+  and `make verify-all` on push; `lefthook.yml` sets `no_auto_install`, so
+  rerun it after the file changes. `.github/rulesets/main.json` requires
+  signed commits, linear history, and the seven pull-request checks with zero
+  approving reviews; it takes effect once the maintainer applies it with
+  `praetorctl sync --remote`, and until then a local audit with a forge token
+  reports the live protection drift. `.devcontainer/` holds the rendered dev
+  container, and the new `Dev container image` workflow builds its toolchain
+  base on pull requests and publishes it, with build provenance, as
+  `ghcr.io/vmafx/pelorus-dev` from `master`
+  ([ADR-0153](docs/adr/0153-praetor-full-adoption.md)).
 - Re-pinned the Praetor governance engine from `25451d88` to `0af07a73`. The
   engine now scans shell scripts, so the HISS baseline records 37 more findings
   in unchanged scripts (62 → 99) until a follow-up retires them. The locked

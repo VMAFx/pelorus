@@ -14,11 +14,9 @@ facets:
   - api:public-contract
   - docs:seo-portal
   - agent:sandboxed
-adoption:
-  decline:
-    - branch-ruleset
-    - dev-container
-    - git-hooks
+overrides:
+  branch_protection:
+    review_mode: single_maintainer
 register:
   sources:
     expected: 12

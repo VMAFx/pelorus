@@ -1,0 +1,111 @@
+name: Dev container image
+
+# Builds the dev container toolchain base image from
+# .devcontainer/base/Containerfile (ADR-0153). A pull request that touches the
+# Containerfile or this workflow builds the image and pushes nothing. A push to
+# master that touches them, or a manual run, builds it, pushes
+# ghcr.io/vmafx/pelorus-dev tagged with the commit SHA and latest, and attests
+# SLSA build provenance for the pushed digest.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '.devcontainer/base/**'
+      - '.github/workflows/devcontainer-image.yml'
+  push:
+    branches: [master]
+    paths:
+      - '.devcontainer/base/**'
+      - '.github/workflows/devcontainer-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: devcontainer-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/vmafx/pelorus-dev
+
+jobs:
+  build:
+    # Pull requests only: build the image, push nothing. The first step is the
+    # Praetor hosted-gate draft step (HISS-18), so a draft does not spend a build.
+    name: Build pelorus-dev (no push)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - name: Stop on a draft pull request
+        if: github.event.pull_request.draft == true
+        env:
+          TITLE: Gate not run on a draft
+          MESSAGE: >-
+            The gate did not run because the pull request is a draft.
+            It runs when the pull request is marked ready for review.
+        run: |
+          echo "::error title=$TITLE::$MESSAGE"
+          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event.pull_request.draft != true
+        with:
+          persist-credentials: false
+      - name: Build
+        if: github.event.pull_request.draft != true
+        run: |
+          docker build \
+            --tag "$IMAGE:pr-${GITHUB_SHA}" \
+            --file .devcontainer/base/Containerfile \
+            .devcontainer/base
+
+  publish:
+    name: Build, push and attest pelorus-dev
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Log in to ghcr.io
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin
+      - name: Build
+        run: |
+          docker build \
+            --tag "$IMAGE:$GITHUB_SHA" \
+            --tag "$IMAGE:latest" \
+            --file .devcontainer/base/Containerfile \
+            .devcontainer/base
+      - name: Push
+        id: push
+        shell: bash
+        run: |
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker push "$IMAGE:latest"
+          # The digest the registry serves for the SHA tag is the attestation subject.
+          digest="$(docker buildx imagetools inspect "$IMAGE:$GITHUB_SHA" --format '{{json .Manifest}}' \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["digest"])')"
+          if ! printf '%s\n' "$digest" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
+            echo "::error::registry returned no sha256 digest for $IMAGE:$GITHUB_SHA: '$digest'"
+            exit 1
+          fi
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+          printf 'Pushed %s@%s (tags %s, latest).\n' "$IMAGE" "$digest" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Attest build provenance (SLSA v1.0)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
