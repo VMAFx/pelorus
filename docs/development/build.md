@@ -111,7 +111,7 @@ locked `markdownlint-cli2` 0.23.2 dependency tree into a temporary directory.
 | --- | --- |
 | `make compile-context` | Regenerate cross-tool context and persona projections from their canonical sources |
 | `make compile-context-verify` | Fail if a generated projection has drifted |
-| `make audit` | Verify the pinned manifest/lock and enforce the 56-finding HISS baseline ratchet in the hosted Standards mode (`--base`, touched-debt delta; `AUDIT_BASE` overrides the base) |
+| `make audit` | Verify the pinned manifest/lock and enforce the 51-finding HISS baseline ratchet in the hosted Standards mode (`--base`, touched-debt delta; `AUDIT_BASE` overrides the base) |
 | `make docs-lint` | Lint public Markdown with the locked Praetor configuration and reject links into private scratch directories |
 | `make docs-figures` | Check figure specs and sources; skips with a reason while `docs/figures/` has none |
 | `make verify-all` | Run context verification, the audit, `verify-native`, then `docs-lint` and `docs-figures`; outside CI use `make -k verify-all`, because the audit's known local failure (below) otherwise stops Make before `verify-native` |
