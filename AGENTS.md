@@ -15,10 +15,14 @@ hooks or fake hook file to pass gate.
 
 Engine binary: pinned `go install .../cmd/standardsctl@<pin>` installs
 `standardsctl`. `praetorctl`: same engine under its newer name; generated text
-uses it. Makefile takes either. Agent hooks call `praetorctl` by name: copy or
-rename pinned `standardsctl` to `praetorctl` on `PATH`. Missing binary: hook
-exits 127 (bash) or 1 (cmd, PowerShell); clients report non-blocking error and
-shell call runs without Praetor policy.
+uses it. Pin = `PRAETOR_REF` in `.github/workflows/standards-gate.yml`. Lefthook
+jobs and Makefile run it via `scripts/praetor-engine.sh`: cached in git-ignored
+`.workingdir/bin/<pin>/`, installed on first use, never PATH. Wrong version, no
+Go + empty cache, failed install -> exit 1, one stderr line.
+`PRAETORCTL=<path>` overrides, unchecked. Agent hooks call `praetorctl` by name:
+copy or rename pinned `standardsctl` to `praetorctl` on `PATH`. Missing binary:
+hook exits 127 (bash) or 1 (cmd, PowerShell); clients report non-blocking error
+and shell call runs without Praetor policy.
 
 ## Core Directives & Invariants (Modernized NASA JPL Power-of-10)
 
