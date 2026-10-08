@@ -28,9 +28,9 @@ extern "C" {
 
 /* ---- Library version (SemVer; tracks git tags v<MAJOR>.<MINOR>.<PATCH>) --- */
 #define PELORUS_VERSION_MAJOR 0
-#define PELORUS_VERSION_MINOR 2
-#define PELORUS_VERSION_PATCH 2
-#define PELORUS_VERSION_STR "0.2.2"
+#define PELORUS_VERSION_MINOR 3
+#define PELORUS_VERSION_PATCH 0
+#define PELORUS_VERSION_STR "0.3.0"
 
 /* Packed integer version for runtime comparisons: (major<<16)|(minor<<8)|patch. */
 #define PELORUS_VERSION_INT                                                                        \

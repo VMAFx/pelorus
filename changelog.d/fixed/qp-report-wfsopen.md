@@ -1,1 +1,0 @@
-- `qp_report_csv.c` opens its CSV on Windows with `_wfsopen(..., _SH_DENYNO)` instead of the deprecated `_wfopen()`: same sharing, no MSVC C4996 warning for a host that builds with warnings as errors.

@@ -5,7 +5,7 @@ Re-apply / re-test work created for the FFmpeg patch stack after an upstream
 FFmpeg bump or a `libpelorus` ABI change. One entry per change that affects the
 patches (ADR-0108 deliverable #6).
 
-## Unreleased — FFmpeg base bump n9.0.1 → n9.0.2
+## 0.3.0 — FFmpeg base bump n9.0.1 → n9.0.2
 
 - **Immutable base**: `build-config.env` binds tag `n9.0.2` to peeled commit
   `946fcce07b6dcd0331c8cc609192aeff5e1924f8`. Every generator, replay, and
@@ -33,9 +33,9 @@ patches (ADR-0108 deliverable #6).
   `libpelorus/shaders/*.comp` are standalone fast-gate references, not a
   lockstep delivery surface.
 - **Compatibility floor**: interop-consuming filters require
-  `libpelorus >= 0.2.0`; the Pelorus source release remains `0.2.2`.
+  `libpelorus >= 0.2.0`; the Pelorus source release is `0.3.0`.
 
-## Unreleased — patch 0010 (pelorus_fgs RDD 5 defaults and init validation)
+## 0.3.0 — patch 0010 (pelorus_fgs RDD 5 defaults and init validation)
 
 - **Patch**: `ffmpeg-patches/0010-add-pelorus_fgs_bsf.patch`, regenerated from
   `files/h265_pelorus_fgs_bsf.c` and `.commit-msg-fgs-bsf.txt`
@@ -58,7 +58,7 @@ patches (ADR-0108 deliverable #6).
   init with a non-zero exit; and `intensity_low=200:intensity_high=10` fails
   init.
 
-## Unreleased — patch 0006 (grain estimator rounding and H.274 model 0)
+## 0.3.0 — patch 0006 (grain estimator rounding and H.274 model 0)
 
 - **Patch**: `ffmpeg-patches/0006-add-vf_pelorus_grain_estimate_vulkan.patch`,
   regenerated from `files/vf_pelorus_grain_estimate_vulkan.c`,
@@ -102,7 +102,7 @@ The older sections below preserve the release and benchmark environment in
 which each change landed. Their unqualified gate names are historical
 shorthand; use the pinned commands above for all current rebases.
 
-## Unreleased — deblock/aa plane loops continue (BUG-028)
+## 0.3.0 — deblock/aa plane loops continue (BUG-028)
 
 - `pelorus_deblock.comp.glsl` and the fast=0 loop of `pelorus_aa.comp.glsl`
   skip a plane that excludes `pos` with `continue` instead of `return`, so a
@@ -112,7 +112,7 @@ shorthand; use the pinned commands above for all current rebases.
   `generate.sh` and replay the full series. Regression:
   `scripts/test-shader-plane-continue.py` (fast suite).
 
-## Unreleased — encoder follow-ups (BUG-030, BUG-031, BUG-032; regenerates 0008, 0009, 0011, 0013)
+## 0.3.0 — encoder follow-ups (BUG-030, BUG-031, BUG-032; regenerates 0008, 0009, 0011, 0013)
 
 - **Patches**: `0008` (nvenc ME hints), `0009` (Vulkan QP map) and `0013`
   (SVT-AV1 ROI) change content. `0011` (nvenc film grain) changes only hunk
@@ -139,7 +139,7 @@ shorthand; use the pinned commands above for all current rebases.
 - **Replay**: the stack applies cumulatively on `n9.0.2`; regenerate twice and
   compare all 18 patches byte-for-byte.
 
-## Unreleased — ADR-0166 Vulkan QP-map activation (regenerates 0009)
+## 0.3.0 — ADR-0166 Vulkan QP-map activation (regenerates 0009)
 
 - **Patch**: 0009 only. The hand-maintained source
   `ffmpeg-patches/files/vulkan-pelorus-qpmap.patch` now also touches
@@ -172,7 +172,7 @@ shorthand; use the pinned commands above for all current rebases.
   decoded stream must stay intact outside the region of interest. ADR-0166
   records the 2026-10-03 RTX 4090, RADV and ANV results.
 
-## Unreleased — mc predictor units and O(n) p95 (BUG-009, BUG-014)
+## 0.3.0 — mc predictor units and O(n) p95 (BUG-009, BUG-014)
 
 - **Patch**: 0007 (mc) only. It now also installs the private header
   `libavfilter/pelorus_mc_stats.h` (canonical source
@@ -193,7 +193,7 @@ shorthand; use the pinned commands above for all current rebases.
 - **Consumers**: the `PEL_SEC_MOTION` grid stays Q2 and the summary scalars stay
   in pixels, so 0008 (NVENC ME hints) and the denoise `mc=1` path are untouched.
 
-## Unreleased — denoise numerics (BUG-016, BUG-027; regenerates 0003)
+## 0.3.0 — denoise numerics (BUG-016, BUG-027; regenerates 0003)
 
 - **Patches**: `0003` only (denoise filter + shader). No registration, option,
   numbering or ABI change; `PEL_SEC_DENOISE` layout is unchanged.
@@ -215,7 +215,7 @@ shorthand; use the pinned commands above for all current rebases.
   Overlap: PR #68 also edits `pelorus_denoise.comp.glsl` (`precise` in
   `pel_to_sample`, sampled-image reads); take both, keep `pel_to_sample` as is.
 
-## Unreleased — ADR-0147 Vulkan sample domain and component preservation
+## 0.3.0 — ADR-0147 Vulkan sample domain and component preservation
 
 - **Patches**: 0001 (deband + shared private header), 0002 (analyze), 0003
   (denoise), 0006 (grain estimate), 0007 (mc), 0014 (dehalo), 0015 (aa), and
@@ -259,7 +259,7 @@ See [ADR-0147](adr/0147-vulkan-sample-domain-and-components.md) and the
 [research digest](research/0147-vulkan-storage-domain.md) for the reproduced
 pre-fix failures and derivation.
 
-## Unreleased — NVENC AV1 film-grain bias and ROI qindex span (regenerates 0004, 0008, 0011)
+## 0.3.0 — NVENC AV1 film-grain bias and ROI qindex span (regenerates 0004, 0008, 0011)
 
 - **Patches**: `0004` (nvenc ROI hand diff) and `0011` (nvenc film-grain hand
   diff) change content. `0008` (nvenc ME hints) changes only its hunk offsets
@@ -292,7 +292,7 @@ pre-fix failures and derivation.
   `qoffset=-40/255` and `-pelorus_roi 1`. Its size and PSNR must track a plain
   `-qp 120` encode.
 
-## Unreleased — ADR-0163 dehalo ring gate and pull (patch 0014)
+## 0.3.0 — ADR-0163 dehalo ring gate and pull (patch 0014)
 
 - **Patch**: only 0014 (dehalo) changes. The registration hunks and the C
   descriptor, push-constant, and specialization layout are unchanged. The

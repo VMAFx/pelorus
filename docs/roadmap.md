@@ -25,7 +25,7 @@ say which vmafx phase they serve.
 
 ## Where to start
 
-- **Using Pelorus now**: the current release is v0.2.2 with interop ABI 1.3;
+- **Using Pelorus now**: the current release is v0.3.0 with interop ABI 1.3;
   see the [README](../README.md).
 - **Checking what ships next**: [0.3](#03-hardened-release) is the next release.
 - **Contributing**: take an issue from the lowest open milestone, preferring

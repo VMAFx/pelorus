@@ -1,1 +1,0 @@
-- Fixed `-pelorus_roi` on `hevc_qsv` silently falling back to rectangle ROI when the runtime clears `EnableMBQP` after init: the encoder now logs a one-time warning naming the cause (BUG-021), and fixed SVT-AV1 ROI events accumulating until encoder close by reclaiming each event once the library can no longer read it, so memory no longer grows with stream length (BUG-026).

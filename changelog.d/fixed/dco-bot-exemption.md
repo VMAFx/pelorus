@@ -1,1 +1,0 @@
-- Exempted Renovate's own commits in pull requests Renovate opened from the Standards gate's DCO sign-off check, as `CONTRIBUTING.md` already stated; every Renovate pull request failed the required gate after #184. The step now also fails when the commit range is empty or cannot be listed instead of passing on no commits.
