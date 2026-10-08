@@ -19,8 +19,8 @@ import sys
 
 try:
     import numpy as np
-except ImportError:
-    sys.exit("bd_rate.py needs numpy (pip install numpy)")
+except ImportError as exc:
+    raise ImportError("bd_rate.py needs numpy (pip install numpy)") from exc
 
 
 def _bd(rate_a, q_a, rate_b, q_b, mode):
@@ -48,7 +48,9 @@ def _bd(rate_a, q_a, rate_b, q_b, mode):
         # too few points: trapezoid on the clamped range
         xs = np.linspace(lo, hi, 200)
         ys = np.interp(xs, x, y)
-        return np.trapz(ys, xs)
+        # np.trapz was removed in NumPy 2.0; trapezoid is the same integral.
+        trapezoid = getattr(np, "trapezoid", None) or np.trapz
+        return trapezoid(ys, xs)
 
     # b = pelorus, a = baseline. Both modes report the change of pelorus
     # relative to baseline: rate -> negative when pelorus needs fewer bits;
