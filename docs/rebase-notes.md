@@ -15,10 +15,23 @@ patches (ADR-0108 deliverable #6).
   the named edge and falls back to `pelorus_mc_cell_pitch()` for a 1.3 section
   or the value 0; `vf_pelorus_denoise_vulkan.c` calls it instead of the
   inference. 0001 changes because it carries `pelorus_sidedata.h`.
-- **Rebase-sensitive**: the consumers need libpelorus with ABI 1.4 headers
-  (`PelorusMotionSection` is 36 bytes). A reader detects a 1.3 producer by the
-  readable size, never by the value: keep `PEL_SD_FIELD_OK(got,
-  PelorusMotionSection, block_size_log2)` in front of the field read.
+- **pkg-config minimum stays `libpelorus >= 0.2.0`**: the configure probes
+  in the stack do not require ABI 1.4. Every `block_size_log2` use is
+  therefore behind `#if PELORUS_ABI_MINOR >= 4`: the producer write in
+  `vf_pelorus_mc_vulkan.c` and the reader in `pelorus_mc_block_pitch()`
+  (`pelorus_sidedata.h`). Built against older libpelorus headers, the
+  producer omits the field and the consumer always takes the documented
+  inference (`pelorus_mc_cell_pitch()`). Keep the guard on any new use, or
+  raise the probe minimum to the first release carrying ABI 1.4.
+- **Rebase-sensitive**: a reader detects a 1.3 producer by the readable size,
+  never by the value: keep `PEL_SD_FIELD_OK(got, PelorusMotionSection,
+  block_size_log2)` in front of the field read.
+- **Proof against both headers**: the filter sources that use the field or
+  `pelorus_sidedata.h` (`vf_pelorus_mc_vulkan.c`,
+  `vf_pelorus_denoise_vulkan.c`, `vf_pelorus_analyze_vulkan.c`,
+  `vf_pelorus_scenecut.c`) compile against the ABI 1.3 `interop.h` of
+  v0.3.0 and against 1.4; the preprocessed mc and denoise sources contain
+  `block_size_log2` only with the 1.4 header.
 - **Regeneration**: `FFMPEG_REPO=/absolute/path/to/ffmpeg
   ffmpeg-patches/generate.sh`, run twice: byte-identical.
 - **Replay**: `JOBS=4 FFMPEG_REPO=/absolute/path/to/ffmpeg

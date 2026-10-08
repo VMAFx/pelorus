@@ -86,11 +86,15 @@ static inline const AVFrameSideData *pelorus_sd_find_section(const AVFrame *fram
 /*
  * Recover the motion-grid cell pitch (the producer's block edge, luma pixels)
  * from the frame size and the grid the blob describes. The producer lays the
- * grid out as cols = ceil(W / b), rows = ceil(H / b) (vf_pelorus_mc_vulkan.c),
- * and an ABI 1.3 PelorusMotionSection carries no block-size field, so the pitch
- * is the integer b in [MIN, MAX] that reproduces BOTH dimensions exactly. ABI
- * 1.4 producers name the edge; use pelorus_mc_block_pitch(), which prefers it. ceil(W /
+ * grid out as cols = ceil(W / b), rows = ceil(H / b) (vf_pelorus_mc_vulkan.c).
+ *
+ * ABI 1.3: PelorusMotionSection carries no block-size field, so the pitch is
+ * the integer b in [MIN, MAX] that reproduces BOTH dimensions exactly. ceil(W /
  * cols) is NOT equivalent: e.g. W=100, b=32 gives 4 cols but ceil(100/4)=25.
+ *
+ * ABI 1.4: the producer names the edge in block_size_log2. Callers use
+ * pelorus_mc_block_pitch(), which prefers the named edge and comes back here
+ * only for a 1.3 section, a 0 value, or a libpelorus whose headers predate 1.4.
  *
  * Returns 1 and sets *pitch when exactly one b fits. When several fit (small
  * frames: 96x64 with a 6x4 grid fits b = 16..19) and vf_pelorus_mc's default
@@ -132,11 +136,14 @@ static inline int pelorus_mc_cell_pitch(int width, int height, int cols, int row
  * section contradicts itself and 0 is returned. An ABI 1.3 section (`got` ends
  * before the field, detected by size, not by value) or a 0 ("not reported",
  * e.g. bsize=12) falls back to pelorus_mc_cell_pitch() and returns its result.
- * Returns 1 for an exact pitch, 2 for the assumed default, 0 for none.
+ * Built against libpelorus headers older than ABI 1.4 (PELORUS_ABI_MINOR < 4)
+ * it always takes the inference. Returns 1 for an exact pitch, 2 for the
+ * assumed default, 0 for none.
  */
 static inline int pelorus_mc_block_pitch(const PelorusMotionSection *mo, size_t got, int width,
                                          int height, int cols, int rows, int *pitch)
 {
+#if PELORUS_ABI_MINOR >= 4
     int b;
 
     if (!mo || !PEL_SD_FIELD_OK(got, PelorusMotionSection, block_size_log2) ||
@@ -150,6 +157,13 @@ static inline int pelorus_mc_block_pitch(const PelorusMotionSection *mo, size_t 
         return 0;
     *pitch = b;
     return 1;
+#else
+    /* libpelorus headers older than ABI 1.4 (the pkg-config probe accepts
+     * >= 0.2.0): the struct has no block_size_log2, so infer the edge. */
+    (void)mo;
+    (void)got;
+    return pelorus_mc_cell_pitch(width, height, cols, rows, pitch);
+#endif
 }
 
 #endif /* AVFILTER_PELORUS_SIDEDATA_H */

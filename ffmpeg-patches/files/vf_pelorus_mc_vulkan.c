@@ -335,7 +335,9 @@ static int attach_motion(PelorusMcVulkanContext *s, AVFrame *frame, const int32_
     meta.producer_id = PEL_FOURCC('P', 'L', 'M', 'C');
 
     memset(&mo, 0, sizeof(mo));
-    mo.block_size_log2 = pel_mc_bsize_log2(s->bsize); /* ABI 1.4; 0 = not a power of two */
+#if PELORUS_ABI_MINOR >= 4
+    mo.block_size_log2 = pel_mc_bsize_log2(s->bsize); /* 0 = not a power of two */
+#endif
     mo.global_motion_x = (float)(nblocks ? sum_x / nblocks : 0.0);
     mo.global_motion_y = (float)(nblocks ? sum_y / nblocks : 0.0);
     mo.motion_magnitude_mean = (float)mean_mag;
