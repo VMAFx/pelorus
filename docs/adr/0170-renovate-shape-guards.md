@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0170: The build-config checker validates the shape of the setup-go and actionlint pins; a ci.yml regex manager tracks actionlint
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-10-08
 - **Deciders**: Lusoris
 - **Tags**: ci, build, renovate, supply-chain

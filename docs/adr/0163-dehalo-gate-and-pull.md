@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0163: Dehalo harm-fix: ring gate in edge-step units and the DeHalo_alpha MaskedMerge + Repair pull
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-10-03
 - **Deciders**: Lusoris
 - **Tags**: `vulkan`, `ffmpeg`, `dehalo`, `quality`

@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0161: The grain estimator rounds its fixed-point sums and maps to H.274 model 0 through a calibration against FFmpeg's synthesizer
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-10-03
 - **Deciders**: Lusoris
 - **Tags**: grain, fgs, h274, av1, vulkan, ffmpeg

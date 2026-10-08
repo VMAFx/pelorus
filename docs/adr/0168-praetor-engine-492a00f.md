@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0168: Re-pin the Praetor engine to `492a00f9`
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-10-08
 - **Deciders**: Lusoris
 - **Tags**: governance, ci, standards, build

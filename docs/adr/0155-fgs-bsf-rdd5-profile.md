@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0155: pelorus_fgs defaults to the SMPTE RDD 5 profile and rejects unwritable models at init
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-10-03
 - **Deciders**: Lusoris
 - **Tags**: grain, fgs, h274, hevc, bsf, ffmpeg, sei

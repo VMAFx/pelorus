@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0169: Build, attest, and sign releases in a reusable workflow (SLSA Build Level 3)
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-10-08
 - **Deciders**: Lusoris
 - **Tags**: release, ci, supply-chain, governance
