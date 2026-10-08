@@ -38,6 +38,8 @@ tidy: build
 
 docs-check:
 	bash scripts/release/concat-changelog-fragments.sh --check
+	python3 -I scripts/adr/check-status.py --self-test
+	python3 -I scripts/adr/check-status.py
 
 compile-context:
 	$(PRAETORCTL) compile-context

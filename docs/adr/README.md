@@ -8,6 +8,13 @@ the file. Land the ADR **before** the implementing commit; cite the user request
 (`req`) or popup answer (`Q<r>.<q>`) in `## References`. Decisions are immutable
 once Accepted — supersede with a new ADR rather than editing the body.
 
+Status follows the merge: an ADR is `Proposed` until its implementing PR
+merges, then flips to `Accepted` in that PR or the next docs sweep. A
+`Proposed` ADR must carry the header line
+`- **Implementation**: pending (#<open issue or epic>)`; one without it counts
+as merged but unflipped. `scripts/adr/check-status.py` enforces this in
+`make docs-check` and the CI `docs` job; `--self-test` plants the failing cases.
+
 Numbering: project decisions start at `0001`; rules adopted from the vmafx
 sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 
