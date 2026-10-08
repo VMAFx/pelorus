@@ -1,0 +1,192 @@
+<!-- markdownlint-disable MD013 MD060 -->
+# Mesa lavapipe as the hosted-CI Vulkan device for the Pelorus filters
+
+**Date:** 2026-10-09
+
+**Decision:** none yet; input to [ADR-0173](../adr/0173-tester-programme.md) and
+[#228](https://github.com/VMAFx/pelorus/issues/228)
+
+**Scope:** Mesa 26.2.2 lavapipe (LLVM 21.1.8), Vulkan validation layer from the
+host, FFmpeg `n9.0.2-18-g91f2c4ce94` (pin `946fcce0` plus the 18-patch stack),
+libpelorus 0.3.0, x86-64 workstation.
+
+## Verdict: partial go
+
+The real shaders run on lavapipe. All ten filters finish with exit 0, and the
+53-row Vulkan format matrix completes with every output comparison passing.
+The "validation clean" bar is not met: lavapipe exposes `VK_EXT_host_image_copy`,
+which makes FFmpeg's upload path emit validation errors that the matrix
+allow-list does not cover, and `pelorus_grain_estimate_vulkan` shows two more
+layout errors that no tested GPU run produces. Hosted CI can therefore run
+lavapipe as a functional gate today with validation off, and as a validation
+gate after the two items under "Open before a lane" are settled.
+
+## Baseline per filter
+
+Each row ran `testsrc2` through `format=yuv420p,hwupload,<filter>,hwdownload`
+on lavapipe only (`VK_DRIVER_FILES` pointing at the lavapipe ICD, so the local
+RTX 4090 was not visible). Time is wall clock for the whole `ffmpeg` process,
+including start-up, one run each, on a workstation under load.
+
+| Filter | Exit | 320x180 x5, validation off | 1280x720 x3, validation off | VUIDs with `PELORUS_VALIDATE=1` |
+| --- | --- | --- | --- | --- |
+| `pelorus_deband_vulkan` | 0 | 0.12 s | 0.10 s | 09064, 09059 (320x180); 09064 (720p) |
+| `pelorus_analyze_vulkan` | 0 | 0.11 s | 0.10 s | 09064, 09059 |
+| `pelorus_denoise_vulkan` | 0 | 0.37 s | 0.38 s | 09064, 09059 (320x180); 09064 (720p) |
+| `pelorus_grain_estimate_vulkan` | 0 | 0.08 s | 0.10 s | 09064, 09059, **00344, 09600** |
+| `pelorus_mc_vulkan` | 0 | 0.28 s | 0.56 s | 09064, 09059 |
+| `pelorus_dehalo_vulkan` | 0 | 0.15 s | 0.17 s | 09064, 09059 (320x180); 09064 (720p) |
+| `pelorus_aa_vulkan` | 0 | 0.12 s | 0.35 s | 09064, 09059 (320x180); 09064 (720p) |
+| `pelorus_deblock_vulkan` | 0 | 0.15 s | 0.07 s | 09064, 09059 (320x180); 09064 (720p) |
+| `pelorus_borderfix_vulkan` | 0 | 0.16 s | 0.07 s | 09064, 09059 (320x180); 09064 (720p) |
+| `pelorus_scenecut` | 0 | 0.00 s | 0.01 s | none (software frames, never touches Vulkan) |
+
+VUID short names: `09064` is `VUID-VkCopyImageToMemoryInfo-srcImageLayout-09064`,
+`09059` is `VUID-VkCopyMemoryToImageInfo-dstImageLayout-09059`, `00344` is
+`VUID-vkCmdDispatch-imageLayout-00344`, `09600` is `VUID-vkCmdDraw-None-09600`.
+
+No shader failed to compile, no filter failed to initialise, and no required
+extension was missing. `pelorus_scenecut` is a metadata-only filter on software
+frames, so lavapipe says nothing about it.
+
+### Format matrix
+
+`ffmpeg-patches/test/vulkan-format-matrix.sh` (ADR-0147), unmodified, stops at
+the first unexpected VUID. It stopped at `denoise-tile0-yuv420p` after 30 passing
+rows. A copy that records a VUID failure and continues ran to the end in
+1 min 44 s: 43 rows pass outright, and 10 rows (`denoise-tile0` and
+`denoise-tile1` for yuv420p, yuv420p10le, p010le, yuv420p12le, p012le) fail only
+on `09059`. The pixel comparisons in those 10 rows pass. Over the whole matrix
+the layer logged 470 x `09064` (already allow-listed) and 52 x `09059` (not
+allow-listed).
+
+## Findings
+
+1. **`09064` and `09059` come from FFmpeg, not from Pelorus.** Both are raised
+   inside `vkCopyImageToMemoryEXT` and `vkCopyMemoryToImageEXT`, called from
+   `libavutil/hwcontext_vulkan.c:4640` (FFmpeg `hwupload` and `hwdownload`). The
+   layer says the copy passes `TRANSFER_DST_OPTIMAL` while the image is in
+   `GENERAL`. `09064` is already on the matrix allow-list for the same reason;
+   `09059` is its upload twin. The RTX 4090 run under validation shows neither,
+   because the NVIDIA driver path does not take the host-copy route. lavapipe
+   advertises `VK_EXT_host_image_copy`, so it does.
+2. **`pelorus_grain_estimate_vulkan` adds `00344` and `09600`.** The layer reports
+   the input image in `TRANSFER_DST_OPTIMAL` at dispatch while the descriptor
+   says `GENERAL`. The same filter on the RTX 4090 shows only the allow-listed
+   VUIDs. Hypothesis, not verified: the host copy leaves the image in a layout
+   that FFmpeg's tracking does not know about, and the manual barrier in
+   `record_estimator` (`vf_pelorus_grain_estimate_vulkan.c:506`) transitions
+   from the tracked layout. The other filters use the same pattern and do not
+   trip it, so a Pelorus-side ordering defect cannot be ruled out. It needs a
+   look with the layer's object names turned on.
+3. **Missing-extension behaviour is not testable as written.** The filters declare
+   no extension requirement of their own; FFmpeg picks device extensions and
+   silently drops an unknown one requested with `device_extensions=` (checked
+   with `VK_NV_nonexistent_ext`: exit 0, no message). The shaders need
+   `GL_KHR_shader_subgroup_basic/_arithmetic` (`pelorus_mc`) and
+   `GL_EXT_shader_image_load_formatted` (nine shaders); a device lacking them
+   would fail at pipeline creation with a driver error, not a named
+   requirement. Acceptance item "missing required extension fails with its name"
+   needs a probe step in the lane (see below), not a change in the filters.
+4. **The tester report cannot express a lavapipe run today.** Running
+   `tools/tester/pelorus_tester_report.py run` with lavapipe forced records the
+   device (`PHYSICAL_DEVICE_TYPE_CPU`, driver `llvmpipe`), marks `format_matrix`,
+   `steering_smoke` and `zero_copy_chain` as `no_device`, and ends with verdict
+   `pass`, exit 0. Nothing in the report says "software Vulkan", so a consumer
+   who skips the device list cannot tell it from a GPU pass, and the
+   functional rows that did run on lavapipe are not recorded at all.
+
+## Negative design: a lavapipe report cannot claim GPU evidence
+
+Not implemented here; the change touches the schema, the producer, the
+validator and the self-test planted cases, and belongs with
+[#226](https://github.com/VMAFx/pelorus/issues/226).
+
+- Add required field `execution_class`, derived by the producer and re-derived
+  by the validator from `devices[]`: `hardware` when at least one device has a
+  `device_type` other than `PHYSICAL_DEVICE_TYPE_CPU`, `software_vulkan` when
+  every device is CPU type (lavapipe, SwiftShader), `no_vulkan` when there are
+  none. The validator refuses a report whose `execution_class` does not follow
+  from its own `devices[]`.
+- Add required field `evidence_claim`, one of `functional` or `gpu`. The
+  validator rejects `gpu` unless `execution_class` is `hardware`, and rejects any
+  `needs_device` stage with status `pass` unless `execution_class` is
+  `hardware` or the stage carries a new status value `pass_software` (a
+  functional pass on `software_vulkan`, never counted toward a GPU claim).
+- Planted bad cases for the self-test, each of which must be rejected, and the
+  self-test must fail when its rule is switched off: a lavapipe device list with
+  `evidence_claim: gpu`; a lavapipe device list with `execution_class: hardware`;
+  a `needs_device` stage `pass` on `software_vulkan`.
+- `report.schema.json` stays at version 1 only if both fields are optional with
+  a default of `no_vulkan` and `functional`; otherwise bump to 2 before first
+  publication, which costs nothing yet because no report is published.
+
+## Cost and a CI lane
+
+Measured on the workstation under load (load average 25 to 27 of 32 cores):
+
+| Step | Wall time | Notes |
+| --- | --- | --- |
+| libpelorus build, install | under 30 s | included in the line below |
+| 18-patch replay, FFmpeg configure, `make -j4 ffmpeg` | 4 min 50 s | `--disable-debug`, no encoder SDKs |
+| format matrix, validation on | 1 min 44 s to 2 min 14 s | |
+| per-filter smoke, 10 filters | about 3 s | one `ffmpeg` start each |
+
+A 4-vCPU hosted runner builds more slowly than that under similar load, so plan
+8 to 12 minutes for build plus replay, plus 2 to 3 minutes for the matrix.
+`ci.yml` already has `ffmpeg-stack` (60 minute timeout, `ubuntu-26.04`) that
+does the replay and link, but `build-and-run.sh` deletes its scratch directory
+and the binary on exit. A lavapipe step therefore needs either a keep-binary
+switch in `build-and-run.sh` or a second build, so this is a script change, not
+only a workflow change. This spike did not use the script for that reason: it
+ran the same steps by hand (meson install, `git am` of `series.txt`, `./configure
+--enable-vulkan --disable-doc --disable-debug`, `make ffmpeg`).
+
+Lane needs:
+
+- Packages on top of `ffmpeg-stack`: `mesa-vulkan-drivers`, `vulkan-tools`
+  (for `vulkaninfo`), `vulkan-validationlayers`.
+- Environment: `VK_DRIVER_FILES` set to the lavapipe ICD JSON
+  (`/usr/share/vulkan/icd.d/lvp_icd.json` on Debian-family images; the path is
+  not verified on `ubuntu-26.04`), `PELORUS_VALIDATE=1`, `FFMPEG_BIN`.
+- A first step that runs `vulkaninfo --summary` and fails unless the device is
+  `llvmpipe`, so the lane cannot silently run on another driver, and a second
+  step that checks the named device extensions (`VK_EXT_shader_object`,
+  `VK_EXT_descriptor_buffer`, `VK_KHR_push_descriptor`) so a missing one is
+  reported by name.
+- Timeout: 30 minutes if the binary is reused from `ffmpeg-stack`, 45 if it is
+  rebuilt.
+
+## Open before a lane
+
+1. Decide how the matrix treats `09059`. Options: add it to the allow-list with
+   the same upstream citation as `09064`, or run the lane with validation off
+   and keep validation as a GPU-box step. Allow-listing a VUID that only a
+   software driver produces hides it from nobody, but the allow-list is shared
+   with the GPU box, so the entry should say where it comes from.
+2. Find out whether `00344` and `09600` on `grain_estimate` are the same host
+   copy problem or a Pelorus ordering defect (finding 2).
+3. Confirm Mesa and the validation layer versions on `ubuntu-26.04`; this spike
+   used Mesa 26.2.2 from a Flatpak runtime, because no lavapipe was installed on
+   the workstation and no container image was pulled.
+4. Land the report fields above before any lavapipe result is published.
+
+## Reproduce
+
+```bash
+# lavapipe-only ICD file (path = your libvulkan_lvp.so)
+printf '{"ICD":{"api_version":"1.4.354","library_path":"%s"},"file_format_version":"1.0.1"}\n' \
+  /path/to/libvulkan_lvp.so > lvp.json
+VK_DRIVER_FILES=$PWD/lvp.json vulkaninfo --summary    # expect deviceType CPU, llvmpipe
+
+# patched FFmpeg, same steps as ffmpeg-patches/test/build-and-run.sh, binary kept
+meson setup pb . --prefix=$PWD/prefix --libdir=lib && meson install -C pb
+PKG_CONFIG_PATH=$PWD/prefix/lib/pkgconfig  # then git am series.txt, configure, make ffmpeg
+
+# matrix and one filter
+VK_DRIVER_FILES=$PWD/lvp.json PELORUS_VALIDATE=1 FFMPEG_BIN=/path/to/ffmpeg \
+  ffmpeg-patches/test/vulkan-format-matrix.sh
+VK_DRIVER_FILES=$PWD/lvp.json VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
+  ffmpeg -init_hw_device vulkan=v -filter_hw_device v -f lavfi -i testsrc2=size=320x180 \
+  -frames:v 5 -vf format=yuv420p,hwupload,pelorus_grain_estimate_vulkan,hwdownload,format=yuv420p -f null -
+```

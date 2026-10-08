@@ -24,6 +24,7 @@ All notable changes to Pelorus are documented here. The format is
   with a worked example any party can recompute
   ([ADR-0175](docs/adr/0175-encode-provenance-record.md),
   `docs/api/encode-record.md`).
+- Lavapipe spike: the ten filters run on Mesa software Vulkan and the format matrix passes its comparisons, but validation is not clean (host-image-copy layout errors, plus two more on grain_estimate); research digest and report-marking design in [docs/research/0228-lavapipe-spike.md](docs/research/0228-lavapipe-spike.md) (#228).
 
 <!-- END UNRELEASED -->
 
