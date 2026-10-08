@@ -17,6 +17,7 @@ Environment (read from `ctx["env"]`): `FFMPEG_BIN` (default `ffmpeg`),
 override), `VMAF_BIN` (bench scoring).
 """
 
+import datetime
 import hashlib
 import importlib.util
 import re
@@ -31,7 +32,9 @@ REPO_ROOT = HERE.parent.parent
 RULES = (
     "zc_hwdownload", "zc_hwupload", "zc_scale", "zc_graph_nonempty",
     "validate_fail_closed", "validation_absent_not_run", "encoder_absent_not_run",
+    "vuid_unlisted", "vuid_expiry", "vuid_reference", "vuid_gate_every_stage",
     "steering_effect", "steering_decode", "steering_control", "steering_selfreport",
+    "steering_baseline_defect",
     "sd_present", "sd_structure", "sd_decode_tap", "sd_pts",
 )
 
@@ -45,14 +48,9 @@ STEER_FRAMES = (8, 16)
 SIDEDATA_FRAMES = 4
 VK_LAYER = "VK_LAYER_KHRONOS_validation"
 VUID_RE = re.compile(r"VUID-[A-Za-z0-9_.-]+")
-KNOWN_UPSTREAM_VUIDS = (
-    "vkCmdCopyBufferToImage-srcBuffer-00174",
-    "vkCmdCopyImageToBuffer-dstBuffer-00191",
-    "VkCopyImageToMemoryInfo-srcImageLayout-09064",
-    "VkDescriptorSetLayoutBinding-descriptorType-00282",
-    "VkImageMemoryBarrier2-srcAccessMask-03909",
-    "VkImageMemoryBarrier2-srcAccessMask-07454",
-)
+ALLOWLIST_PATH = REPO_ROOT / "ffmpeg-patches" / "test" / "vulkan-vuid-allowlist.txt"
+ALLOWLIST_MAX_LINES = 500
+REF_RE = re.compile(r"^(#\d+|VMAFx/[A-Za-z0-9_.-]+#\d+|https://\S+)$")
 PELORUS_UUID = bytes.fromhex("e1d7c4a26b934f089a550f3c2db17e64")
 PELORUS_MAGIC = b"PELOR1\0\0"
 SEC_BANDING, SEC_VARIANCE = 1, 2
@@ -87,7 +85,16 @@ ENCODERS = (
     {"name": "libaom-av1", "codec": "av1", "kind": "sw", "pix": "yuv420p",
      "args": ["-crf", "30", "-cpu-used", "8"]},
 )
-SEI_ENCODERS = ("hevc_nvenc", "h264_nvenc")
+# Encoders that can write the Pelorus blob as user-data-unregistered SEI with
+# -udu_sei 1: NVENC (stock), QSV (patch 0019), Vulkan Video (patch 0020).
+SEI_CARRIERS = (
+    {"name": "hevc_nvenc", "codec": "hevc", "kind": "hw", "args": []},
+    {"name": "h264_nvenc", "codec": "h264", "kind": "hw", "args": []},
+    {"name": "hevc_qsv", "codec": "hevc", "kind": "hw", "args": []},
+    {"name": "h264_qsv", "codec": "h264", "kind": "hw", "args": []},
+    {"name": "hevc_vulkan", "codec": "hevc", "kind": "vulkan", "args": ["-qp", "30"]},
+    {"name": "h264_vulkan", "codec": "h264", "kind": "vulkan", "args": ["-qp", "30"]},
+)
 
 
 def outcome(status, reason, log=""):
@@ -119,9 +126,55 @@ def validation_decision(mode, layer, need_layer, disabled=frozenset()):
     return None, ""
 
 
-def unexpected_vuids(text):
-    found = sorted(set(VUID_RE.findall(text)))
-    return [v for v in found if not v.endswith(KNOWN_UPSTREAM_VUIDS)]
+def parse_allowlist(text, today, disabled=frozenset()):
+    """Entries of the shared VUID allow-list that may match today.
+
+    Line: `<VUID without prefix> | <reference> | <YYYY-MM-DD expiry>`. An entry with
+    no reference, a malformed expiry or a past expiry never matches."""
+    entries = []
+    for line in text.splitlines()[:ALLOWLIST_MAX_LINES]:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) != 3 or not parts[0]:
+            continue
+        vuid, ref, expiry = parts
+        if "vuid_reference" not in disabled and not REF_RE.match(ref):
+            continue
+        try:
+            until = datetime.date.fromisoformat(expiry)
+        except ValueError:
+            continue
+        if until < today and "vuid_expiry" not in disabled:
+            continue
+        entries.append({"vuid": vuid, "line": " | ".join(parts)})
+    return entries
+
+
+def vuid_gate(text, entries, disabled=frozenset()):
+    """Split the VUIDs in a log into (unlisted, listed entry lines)."""
+    by_name = {e["vuid"]: e["line"] for e in entries}
+    unlisted, listed = [], []
+    for found in sorted(set(VUID_RE.findall(text))):
+        entry = by_name.get(found[len("VUID-"):])
+        if entry is None and "vuid_unlisted" not in disabled:
+            unlisted.append(found)
+        elif entry is not None:
+            listed.append(entry)
+    return unlisted, listed
+
+
+def load_allowlist(ctx):
+    """Allow-list entries valid today; unreadable file means no entries (fail closed)."""
+    if "allowlist" not in ctx:
+        path = Path(ctx["env"].get("PELORUS_VUID_ALLOWLIST") or ALLOWLIST_PATH)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        today = ctx.get("today") or datetime.date.today()
+        ctx["allowlist"] = parse_allowlist(text, today, ctx["disabled"])
+    return ctx["allowlist"]
 
 
 def filter_type(name):
@@ -162,14 +215,23 @@ def frames_from_size(size, width, height):
     return size // frame if frame and size % frame == 0 else -1
 
 
-def steering_verdict(h, counts, notes="", disabled=frozenset()):
+def steering_verdict(h, counts, notes="", disabled=frozenset(), errs=None):
     """Return (status, reason): pass, fail, or skip for an inconclusive control.
 
     `h` maps none8, none8b, roi8, none16, roi16 to bitstream digests; `counts`
     maps the same keys (except none8b) to decoded frame numbers; `notes` is the
     steered encodes' log, searched for the encoder's own statement that it
-    ignores the steering data (named in the reason, never silent)."""
+    ignores the steering data (named in the reason, never silent); `errs` maps a
+    key to the decoder's error line. An unsteered baseline that does not decode
+    is an encoder or driver defect, a named skip; a steered stream that does not
+    decode is a failure."""
+    errs = errs or {}
     want = {"none8": 8, "roi8": 8, "none16": 16, "roi16": 16}
+    broken = [k for k in ("none8", "none16") if counts.get(k) != want[k]]
+    if broken and "steering_baseline_defect" not in disabled:
+        return "skip", ("baseline output does not decode (encoder/driver defect): %s decoded "
+                        "%s frames, expected %d; %s" % (broken[0], counts.get(broken[0]),
+                                                       want[broken[0]], errs.get(broken[0], "no decoder output")))
     for key, n in want.items():
         if counts.get(key) != n and "steering_decode" not in disabled:
             return "fail", "%s decoded %s frames, expected %d" % (key, counts.get(key), n)
@@ -385,27 +447,32 @@ def device_indices(ctx):
 
 
 def ffrun(ctx, argv, timeout_s=ENC_TIMEOUT_S):
-    """Run FFmpeg; with PELORUS_VALIDATE=1 the layer is on and new VUIDs recorded."""
+    """Run FFmpeg. With PELORUS_VALIDATE=1 the layer is on and every VUID is gated."""
     env = dict(ctx["env"])
-    if env.get("PELORUS_VALIDATE") == "1":
+    validating = env.get("PELORUS_VALIDATE") == "1"
+    if validating:
         env["VK_INSTANCE_LAYERS"] = VK_LAYER
     code, text, err = ctx["run"]([ffmpeg_info(ctx)["bin"]] + argv, timeout_s, env)
-    if env.get("PELORUS_VALIDATE") == "1":
-        ctx.setdefault("vuids", set()).update(unexpected_vuids(text))
+    if validating:
+        bad, ok = vuid_gate(text, load_allowlist(ctx), ctx["disabled"])
+        ctx.setdefault("vuids", set()).update(bad)
+        ctx.setdefault("vuid_hits", set()).update(ok)
     return code, text, err
 
 
 def finish(ctx, result):
-    """Name validation diagnostics seen on codec paths; only format_matrix gates them.
+    """Gate Vulkan validation messages: an unlisted VUID fails the stage.
 
-    Vulkan Video decode and encode run inside driver and FFmpeg code the project
-    does not own, so their diagnostics are reported, not failed."""
-    vuids = ctx.pop("vuids", set())
-    if not vuids:
-        return result
-    note = "; validation diagnostics, not gating here (format_matrix gates): %d, e.g. %s" % (
-        len(vuids), ", ".join(sorted(vuids)[:2]))
-    return outcome(result[0], (result[1] + note)[:900], result[2])
+    A listed VUID passes through the shared allow-list and the reason names the
+    entry (VUID, reference, expiry)."""
+    bad, hits = ctx.pop("vuids", set()), ctx.pop("vuid_hits", set())
+    status, reason, log = result
+    if bad and status != "no_device" and "vuid_gate_every_stage" not in ctx["disabled"]:
+        return outcome("fail", ("%s; unlisted Vulkan validation VUIDs: %s" % (
+            reason, ", ".join(sorted(bad)[:4])))[:900], log)
+    if hits:
+        reason = "%s; allow-listed VUIDs: %s" % (reason, "; ".join(sorted(hits)[:3]))
+    return outcome(status, reason[:900], log)
 
 
 def fixture_for(ctx, name):
@@ -450,12 +517,16 @@ def encode(ctx, enc, dev, entry, src, frames, steered, out):
 
 
 def decoded_frames(ctx, stream, entry, out_raw):
+    """Decode a stream to raw yuv420p; returns (frame count or -1, decoder error line)."""
     argv = ["-hide_banner", "-loglevel", "error", "-y", "-i", str(stream), "-f",
             "rawvideo", "-pix_fmt", "yuv420p", str(out_raw)]
-    code, _, _ = ffrun(ctx, argv)
+    code, text, err = ffrun(ctx, argv)
+    failed = [l.strip() for l in text.splitlines() if re.search(r"(?i)fail|corrupt|error|invalid", l)]
+    line = (failed[0] if failed else first_line(text))[:160]
     if code != 0 or not Path(out_raw).is_file():
-        return -1
-    return frames_from_size(Path(out_raw).stat().st_size, entry["width"], entry["height"])
+        return -1, err or line
+    count = frames_from_size(Path(out_raw).stat().st_size, entry["width"], entry["height"])
+    return count, line if count < 0 or failed else ""
 
 
 def stage_dir(ctx, sid):
@@ -522,9 +593,11 @@ def steer_judge(ctx, outs, notes, entry, work, dev):
         hashes = {k: digest(p) for k, p in outs.items()}
     except OSError as exc:
         return "fail", "cannot read an encoder output: %s" % exc.strerror
-    counts = {k: decoded_frames(ctx, p, entry, work / (k + ".raw"))
-              for k, p in outs.items() if k != "none8b"}
-    state, why = steering_verdict(hashes, counts, notes, ctx["disabled"])
+    decoded = {k: decoded_frames(ctx, p, entry, work / (k + ".raw"))
+               for k, p in outs.items() if k != "none8b"}
+    counts = {k: n for k, (n, _) in decoded.items()}
+    errs = {k: e for k, (_, e) in decoded.items()}
+    state, why = steering_verdict(hashes, counts, notes, ctx["disabled"], errs)
     return state, "%s on device %d" % (why, dev) if state == "pass" else why
 
 
@@ -552,42 +625,54 @@ def run_sidedata(ctx, spec):
     stop = gpu_prologue(ctx)
     if stop:
         return stop
-    have = ffmpeg_info(ctx)["encoders"]
-    enc_name = next((e for e in SEI_ENCODERS if e in have), None)
-    if enc_name is None:
-        return outcome("not_run", "no encoder that carries SEI unregistered "
-                       "(needs %s with -udu_sei)" % " or ".join(SEI_ENCODERS))
     src, entry, stop = fixture_for(ctx, "synth-banding")
     if stop:
         return stop
     work, devs = stage_dir(ctx, "sidedata_roundtrip"), device_indices(ctx)
-    if not devs:
-        return outcome("no_device", "no hardware Vulkan device index known")
-    codec = enc_name.split("_")[0]
-    return finish(ctx, sidedata_roundtrip(ctx, enc_name, codec, devs[0], entry, src, work))
+    have, results = ffmpeg_info(ctx)["encoders"], []
+    for car in SEI_CARRIERS:
+        if car["name"] not in have:
+            results.append((car["name"], "skip", "not built into this FFmpeg"))
+        elif devs:
+            results.append((car["name"],) + carrier_roundtrip(ctx, car, devs, entry, src, work))
+    status, reason = aggregate_encoders(results, ctx["disabled"])
+    if status == "not_run":
+        reason = "no encoder carries SEI unregistered here; " + reason
+    return finish(ctx, outcome(status, reason))
 
 
-def sidedata_roundtrip(ctx, enc_name, codec, dev, entry, src, work):
-    out = work / ("sd." + codec)
-    argv = ["-hide_banner", "-loglevel", "error", "-y", "-init_hw_device",
-            "vulkan=vk:%d" % dev, "-filter_hw_device", "vk"]
-    argv += input_args(entry, src) + ["-frames:v", str(SIDEDATA_FRAMES), "-vf",
-            "format=nv12,hwupload,pelorus_analyze_vulkan,pelorus_deband_vulkan,"
-            "hwdownload,format=nv12", "-c:v", enc_name, "-udu_sei", "1", "-f", codec, str(out)]
-    code, text, err = ffrun(ctx, argv)
-    if code != 0 or not out.is_file():
-        return outcome("not_run", "%s cannot encode on this host: %s" % (
-            enc_name, err or first_line(text)))
-    frames = pelorus_blobs_per_frame(out.read_bytes(), codec)
+def carrier_encode(ctx, car, devs, entry, src, out):
+    """Encode with -udu_sei 1 on the first device that works; returns (dev, why)."""
+    head = "format=nv12,hwupload,pelorus_analyze_vulkan,pelorus_deband_vulkan"
+    chain = head if car["kind"] == "vulkan" else head + ",hwdownload,format=nv12"
+    why = "no device"
+    for dev in (devs if car["kind"] == "vulkan" else devs[:1]):
+        argv = ["-hide_banner", "-loglevel", "error", "-y", "-init_hw_device",
+                "vulkan=vk:%d" % dev, "-filter_hw_device", "vk"]
+        argv += input_args(entry, src) + ["-frames:v", str(SIDEDATA_FRAMES), "-vf", chain]
+        argv += ["-c:v", car["name"]] + car["args"] + ["-udu_sei", "1", "-f", car["codec"], str(out)]
+        code, text, err = ffrun(ctx, argv)
+        if code == 0 and Path(out).is_file() and Path(out).stat().st_size > 0:
+            return dev, ""
+        why = (err or first_line(text))[:160]
+    return None, why
+
+
+def carrier_roundtrip(ctx, car, devs, entry, src, work):
+    """Encode, read the blobs back from the stream, then through the decode tap."""
+    out = work / ("sd-%s.%s" % (car["name"], car["codec"]))
+    dev, why = carrier_encode(ctx, car, devs, entry, src, out)
+    if dev is None:
+        return "skip", "cannot encode on this host: " + why
+    frames = pelorus_blobs_per_frame(out.read_bytes(), car["codec"])
     errs = sidedata_problems(frames, SIDEDATA_FRAMES, ctx["disabled"])
     code, tap, err = ffrun(ctx, ["-hide_banner", "-loglevel", "info", "-i", str(out),
                                  "-vf", "showinfo", "-f", "null", "-"])
     errs += decode_tap_problems(tap, SIDEDATA_FRAMES, ctx["disabled"]) if code == 0 \
         else ["decode of the encoded stream failed: " + (err or first_line(tap))]
     if errs:
-        return outcome("fail", "; ".join(errs[:4]))
-    return outcome("pass", "%d frames: blob survives filters, %s and decode (sections %#x+)"
-                   % (SIDEDATA_FRAMES, enc_name, REQUIRED_SECTIONS))
+        return "fail", "; ".join(errs[:3])
+    return "pass", "%d frames, blob in stream and decode tap, device %d" % (SIDEDATA_FRAMES, dev)
 
 
 # --------------------------------------------------------------- zero-copy
@@ -657,8 +742,8 @@ def run_zero_copy(ctx, spec):
     errs = graph_problems(text, False, False, NATIVE_FILTERS, ctx["disabled"]) if code == 0 \
         else ["native leg exit code %s" % code]
     if errs or sw_state == "fail":
-        return outcome("fail", "native: %s; software-encoder leg %s: %s" % (
-            "; ".join(errs) or "ok", sw_state, sw_why))
+        return finish(ctx, outcome("fail", "native: %s; software-encoder leg %s: %s" % (
+            "; ".join(errs) or "ok", sw_state, sw_why)))
     return finish(ctx, outcome("pass", "native %s on device %d has no hwupload, hwdownload "
                                "or scale; software-encoder leg %s" % (enc["name"], dev, sw_state)))
 
@@ -775,6 +860,14 @@ def self_test_steering(expect, disabled):
     said = "Pelorus ROI: AOME_SET_ROI_MAP failed (res=8); continuing without ROI bias."
     expect("steering_selfreport_skips", steering_verdict(flat, good, said, disabled)[0] == "skip")
     expect("steering_silent_noop_fails", steering_verdict(flat, good, "all fine", disabled)[0] == "fail")
+    broken = dict(good, none8=-1, none16=-1)
+    got = steering_verdict(base, broken, "", disabled, {"none8": "Corrupt frame detected"})
+    expect("steering_broken_baseline_is_named_skip", got[0] == "skip"
+           and "baseline output does not decode (encoder/driver defect)" in got[1]
+           and "Corrupt frame detected" in got[1])
+    steered_only = dict(good, roi8=-1)
+    expect("steering_broken_steered_still_fails",
+           steering_verdict(base, steered_only, "", disabled)[0] == "fail")
     expect("encoders_none_is_not_run", aggregate_encoders(
         [("x", "skip", "absent")], disabled)[0] == "not_run")
     expect("encoders_failure_fails", aggregate_encoders(
@@ -803,6 +896,46 @@ def self_test_sidedata(expect, disabled):
     expect("sd_parser_reads_hevc_sei", got == [[b"\xaa" * 4]])
 
 
+ALLOW_TEXT = """\
+# comment
+VkListed-thing-00001 | #214 | 2027-03-31
+VkExpired-thing-00002 | #214 | 2026-01-01
+VkNoRef-thing-00003 |  | 2027-03-31
+VkBadRef-thing-00004 | maybe | 2027-03-31
+"""
+TODAY = datetime.date(2026, 10, 9)
+
+
+def fake_gate_ctx(disabled, text):
+    """A context whose FFmpeg 'prints' text; PELORUS_VALIDATE=1 with the layer on."""
+    ctx = stage_ctx({"PELORUS_VALIDATE": "1"}, lambda argv, t, env=None: (0, text, ""))
+    ctx.update(disabled=disabled, today=TODAY, allowlist=parse_allowlist(ALLOW_TEXT, TODAY, disabled))
+    ctx["ff"] = {"bin": "ffmpeg", "filters": set(), "encoders": set()}
+    return ctx
+
+
+def self_test_vuids(expect, disabled):
+    entries = parse_allowlist(ALLOW_TEXT, TODAY, disabled)
+    log = "VUID-VkListed-thing-00001 VUID-VkExpired-thing-00002 VUID-VkNoRef-thing-00003 " \
+          "VUID-VkBadRef-thing-00004 VUID-vkUnknown-x-00005"
+    bad, hit = vuid_gate(log, entries, disabled)
+    expect("vuid_listed_entry_named", hit == ["VkListed-thing-00001 | #214 | 2027-03-31"])
+    expect("vuid_unknown_is_unlisted", "VUID-vkUnknown-x-00005" in bad)
+    expect("vuid_expired_entry_is_unlisted", "VUID-VkExpired-thing-00002" in bad)
+    expect("vuid_entry_without_reference_is_unlisted", "VUID-VkNoRef-thing-00003" in bad)
+    expect("vuid_bad_reference_is_unlisted", "VUID-VkBadRef-thing-00004" in bad)
+    ctx = fake_gate_ctx(disabled, "VUID-vkUnknown-x-00005")
+    ffrun(ctx, [])
+    expect("stage_fails_on_unlisted_vuid", finish(ctx, outcome("pass", "ok"))[0] == "fail")
+    ctx = fake_gate_ctx(disabled, "VUID-VkListed-thing-00001")
+    ffrun(ctx, [])
+    done = finish(ctx, outcome("pass", "ok"))
+    expect("stage_passes_listed_vuid_and_names_it",
+           done[0] == "pass" and "VkListed-thing-00001 | #214 | 2027-03-31" in done[1])
+    expect("shared_allowlist_file_parses", bool(parse_allowlist(
+        ALLOWLIST_PATH.read_text(encoding="utf-8"), datetime.date.today(), disabled)))
+
+
 def self_test_gates(expect, disabled):
     expect("validate_1_absent_fails_closed", validation_decision(
         "1", False, False, disabled)[0] == "fail")
@@ -817,9 +950,7 @@ def self_test_gates(expect, disabled):
     expect("stage_no_layer_not_run", run_format_matrix(ctx, {})[0] == "not_run")
     ctx = stage_ctx({"PELORUS_VALIDATE": "0", "FFMPEG_BIN": "/nonexistent"}, no_layer_run)
     expect("stage_no_ffmpeg_not_run", run_steering(ctx, {})[0] == "not_run")
-    expect("vuid_filter_flags_new", unexpected_vuids("VUID-vkFoo-bar-00001") != [])
-    expect("vuid_filter_allows_known", not unexpected_vuids(
-        "VUID-" + KNOWN_UPSTREAM_VUIDS[0]))
+    self_test_vuids(expect, disabled)
 
 
 def self_test(disabled=frozenset()):

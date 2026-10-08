@@ -77,11 +77,33 @@ if ((PEL_VALIDATION_ENABLED)); then
     PEL_VALIDATION_ENV=(VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation)
 fi
 
+# Upstream-owned diagnostics are listed one per line in the allow-list file,
+# shared with the tester stages: "<VUID without prefix> | <reference> | <expiry>".
+# An entry without a reference, with a malformed or past expiry, never matches.
+PEL_VUID_ALLOWLIST="${PEL_VUID_ALLOWLIST:-$(dirname "${BASH_SOURCE[0]}")/vulkan-vuid-allowlist.txt}"
+[[ -r "$PEL_VUID_ALLOWLIST" ]] || {
+    echo "FAIL: VUID allow-list is unreadable: $PEL_VUID_ALLOWLIST" >&2
+    exit 1
+}
+
+pel_allowlist_entry()
+{
+    awk -F'|' -v want="${1#VUID-}" -v today="$(date +%F)" '
+        /^[[:space:]]*(#|$)/ { next }
+        {
+            for (i = 1; i <= 3; i++) gsub(/^[[:space:]]+|[[:space:]]+$/, "", $i)
+            if (NF == 3 && $1 == want && $2 != "" && $3 ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/ &&
+                $3 >= today) { print $1 " | " $2 " | " $3; found = 1; exit }
+        }
+        END { exit !found }' "$PEL_VUID_ALLOWLIST"
+}
+
 pel_check_validation()
 {
     local log
     local vuid
     local vuids
+    local entry
     local grep_status
 
     ((PEL_VALIDATION_ENABLED)) || return 0
@@ -95,20 +117,13 @@ pel_check_validation()
         fi
         while IFS= read -r vuid; do
             [[ -n "$vuid" ]] || continue
-            case "$vuid" in
-                *vkCmdCopyBufferToImage-srcBuffer-00174 | \
-                    *vkCmdCopyImageToBuffer-dstBuffer-00191 | \
-                    *VkCopyImageToMemoryInfo-srcImageLayout-09064 | \
-                    *VkDescriptorSetLayoutBinding-descriptorType-00282 | \
-                    *VkImageMemoryBarrier2-srcAccessMask-03909 | \
-                    *VkImageMemoryBarrier2-srcAccessMask-07454)
-                    echo "$vuid" >>"$PEL_OUTPUT_ROOT/validation-known-upstream.txt"
-                    ;;
-                *)
-                    echo "Unexpected validation diagnostic in $log: $vuid" >&2
-                    return 1
-                    ;;
-            esac
+            if entry="$(pel_allowlist_entry "$vuid")"; then
+                echo "$vuid" >>"$PEL_OUTPUT_ROOT/validation-known-upstream.txt"
+                echo "$entry" >>"$PEL_OUTPUT_ROOT/validation-allowlisted.txt"
+            else
+                echo "Unexpected validation diagnostic in $log: $vuid" >&2
+                return 1
+            fi
         done <<<"$vuids"
     done
 }

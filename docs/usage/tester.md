@@ -19,9 +19,9 @@ it is never reported as `pass`.
 | 1 | `probe` | `vulkaninfo --summary` exits 0 | no hardware device: `no_device` for every stage marked "GPU" below |
 | 2 | `libpelorus_suite` | not part of this kit version | `not_run` |
 | 3 | `registration` | not part of this kit version | `not_run` |
-| 4 | `format_matrix` (GPU) | [`vulkan-format-matrix.sh`](../../ffmpeg-patches/test/vulkan-format-matrix.sh) exits 0 with the validation layer on; every Vulkan diagnostic is on the script's upstream allow-list | layer absent: `not_run`; script exit 77: `no_device`; no `ffmpeg`: `not_run` |
+| 4 | `format_matrix` (GPU) | [`vulkan-format-matrix.sh`](../../ffmpeg-patches/test/vulkan-format-matrix.sh) exits 0 with the validation layer on; every Vulkan diagnostic is on the [allow-list](#validation-gate) | layer absent: `not_run`; script exit 77: `no_device`; no `ffmpeg`: `not_run` |
 | 5 | `steering_smoke` (GPU) | for each usable encoder, 8- and 16-frame encodes both decode to 8 and 16 frames, and the steered bitstream differs from the unsteered one at both lengths | encoder not built or not usable on this host: skipped and named; none usable: `not_run` |
-| 6 | `sidedata_roundtrip` (GPU) | `pelorus_analyze_vulkan` + `pelorus_deband_vulkan`, then `hevc_nvenc` or `h264_nvenc` with `-udu_sei 1`: every coded picture carries a well-formed `PelorusSideData` blob with the banding and variance sections, distinct `frame_pts` echoes, and the decoder returns the blob as frame side data on every picture | neither NVENC encoder usable: `not_run` |
+| 6 | `sidedata_roundtrip` (GPU) | `pelorus_analyze_vulkan` + `pelorus_deband_vulkan`, then each usable carrier with `-udu_sei 1` (`hevc_nvenc`, `h264_nvenc`, `hevc_qsv`, `h264_qsv`, `hevc_vulkan`, `h264_vulkan`): every coded picture carries a well-formed `PelorusSideData` blob with the banding and variance sections, distinct `frame_pts` echoes, and the decoder returns the blob as frame side data on every picture | carrier not built or not usable here: skipped and named; none usable: `not_run`; AV1 has no carrier |
 | 7 | `zero_copy_chain` (GPU) | the `-loglevel debug` graph holds no `hwdownload`, `hwupload` or `scale` beyond the allowed edges (below) and contains the Pelorus filters | no device with Vulkan Video decode and encode: `not_run` (the software-encoder leg still runs and can fail) |
 | 8 | `bench` (GPU, opt-in) | non-gating: `scripts/bench/run-bench.py` writes `result.json` for a 4-point CQ ladder; a failure is recorded but never changes the verdict | needs `--bench`, a `vmaf` binary, `hevc_nvenc` or `av1_nvenc`: otherwise `not_run` |
 
@@ -36,6 +36,10 @@ hardware device in turn and the first device that encodes is used.
 Per encoder the stage encodes the clip five times (unsteered 8 frames twice,
 steered 8, unsteered 16, steered 16) and decodes four of them:
 
+- an unsteered stream that does not decode is an encoder or driver defect, not a
+  steering result: the encoder is skipped with the reason `baseline output does
+  not decode (encoder/driver defect)`, its name and the decoder error line. A
+  steered stream that does not decode while the baseline does is a `fail`;
 - the two unsteered 8-frame streams must be identical; if not, the encoder is
   not deterministic and the encoder is skipped as inconclusive;
 - a steered stream identical to its unsteered twin is a `fail`, unless the
@@ -71,10 +75,32 @@ software-encoder leg.
 | --- | --- |
 | `FFMPEG_BIN` | patched FFmpeg binary (default `ffmpeg` on `PATH`) |
 | `VULKAN_DEVICE` | FFmpeg Vulkan device index; default is the hardware devices in `vulkaninfo` order |
-| `PELORUS_VALIDATE` | `auto` (default), `1` or `0`. `format_matrix` needs `VK_LAYER_KHRONOS_validation`: with `auto` and the layer absent it is `not_run`; with `0` it runs without validation and says so. `1` with the layer absent is a `fail` in every GPU stage (fail closed). With `1`, the other GPU stages run with the layer on and list new diagnostics in their reason without failing: those come from Vulkan Video code the project does not own, and only `format_matrix` gates them |
+| `PELORUS_VALIDATE` | `auto` (default), `1` or `0`. `format_matrix` needs `VK_LAYER_KHRONOS_validation`: with `auto` and the layer absent it is `not_run`; with `0` it runs without validation and says so. `1` with the layer absent is a `fail` in every GPU stage (fail closed); with the layer present every GPU stage runs with it on and [gates its messages](#validation-gate) |
+| `PELORUS_VUID_ALLOWLIST` | path of the VUID allow-list (default `ffmpeg-patches/test/vulkan-vuid-allowlist.txt`) |
+| `LIBVA_DRIVER_NAME` | passed through to FFmpeg; QSV needs `iHD` on hosts where another VA driver is found first |
 | `PELORUS_TESTER_CACHE` | fixture cache directory (default `$XDG_CACHE_HOME/pelorus-tester`) |
 | `PELORUS_FORMAT_MATRIX` | path of the format matrix script, for images that install it elsewhere |
 | `VMAF_BIN` | `vmaf` binary for the bench stage |
+
+## Validation gate
+
+With `PELORUS_VALIDATE=1` every GPU stage fails on a Vulkan validation message
+(`VUID-...`) that is not on the allow-list. There is no blanket ignore. The list
+is one file, [`vulkan-vuid-allowlist.txt`](../../ffmpeg-patches/test/vulkan-vuid-allowlist.txt),
+read by `vulkan-format-matrix.sh` and by the stage runners:
+
+```text
+<VUID without the "VUID-" prefix> | <reference> | <expiry YYYY-MM-DD>
+```
+
+- one line per VUID, never a pattern;
+- the reference is an issue (`#214`) or a filed upstream report, and the owner of
+  the defect, not Pelorus; every current entry reproduces with a plain FFmpeg
+  command and no Pelorus filter or patch;
+- an entry without a reference, with a bad expiry or past its expiry stops
+  matching, so the message fails again;
+- a stage that passes through a listed VUID names the entry (VUID, reference,
+  expiry) in its reason.
 
 ## Fixtures
 
@@ -122,6 +148,9 @@ bad case per rule below, and `--self-test --disable <rule>` must exit 1 for each
 | `zc_hwdownload`, `zc_hwupload` | a graph with an extra `hwdownload` or `hwupload`; a second `hwdownload` in the software-encoder leg |
 | `zc_scale` | an `auto-inserting filter 'auto_scale_1'` line |
 | `zc_graph_nonempty` | an empty graph; a graph without the Pelorus filters |
+| `vuid_unlisted`, `vuid_gate_every_stage` | an unknown VUID in any GPU stage must fail it |
+| `vuid_expiry`, `vuid_reference` | an expired entry, and an entry without a valid reference, must not match |
+| `steering_baseline_defect` | an unsteered baseline that does not decode: named skip; a steered-only failure stays a `fail` |
 | `validate_fail_closed` | `PELORUS_VALIDATE=1`, layer absent: must be `fail` |
 | `validation_absent_not_run` | `auto`, layer absent: must be `not_run` |
 | `encoder_absent_not_run` | no usable encoder: must be `not_run`, not `pass` |
