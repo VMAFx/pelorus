@@ -265,6 +265,24 @@ static void pel_sd_free(void *opaque, uint8_t *data)
     pel_blob_free(data);
 }
 
+/* Entropy proxy of PEL_SEC_MOTION: the mean deviation of the block MVs (Q2) from
+ * the global MV (luma pixels), normalized by the search radius + 1 (0 = rigid
+ * global motion, higher = complex / independent block motion). */
+static float mc_motion_entropy(const int32_t *mvx, const int32_t *mvy, int nblocks, float gx,
+                               float gy, int search)
+{
+    double dev = 0.0;
+    double norm = (double)search + 1.0;
+    int i;
+
+    for (i = 0; i < nblocks; i++) {
+        double ex = mvx[i] * 0.25 - gx;
+        double ey = mvy[i] * 0.25 - gy;
+        dev += sqrt(ex * ex + ey * ey);
+    }
+    return (float)(nblocks ? (dev / nblocks) / norm : 0.0);
+}
+
 /* Derive the frame scalars from the read-back per-block MV field, pack the dense
  * int16 (dx,dy) grid + PEL_SEC_MOTION summary, and attach to the frame. The grid
  * lives contiguously after the section struct (the analyze attach_stats map
@@ -317,6 +335,7 @@ static int attach_motion(PelorusMcVulkanContext *s, AVFrame *frame, const int32_
     meta.producer_id = PEL_FOURCC('P', 'L', 'M', 'C');
 
     memset(&mo, 0, sizeof(mo));
+    mo.block_size_log2 = pel_mc_bsize_log2(s->bsize); /* ABI 1.4; 0 = not a power of two */
     mo.global_motion_x = (float)(nblocks ? sum_x / nblocks : 0.0);
     mo.global_motion_y = (float)(nblocks ? sum_y / nblocks : 0.0);
     mo.motion_magnitude_mean = (float)mean_mag;
@@ -325,18 +344,8 @@ static int attach_motion(PelorusMcVulkanContext *s, AVFrame *frame, const int32_
      * over the non-negative float magnitudes (a 4K/8 grid has ~130k cells). */
     mo.motion_magnitude_p95 = pel_mc_p95_nonneg(mags, nblocks);
 
-    /* Entropy proxy: normalized mean deviation of block MVs from the global MV
-     * (0 = rigid global motion, higher = complex / independent block motion). */
-    {
-        double dev = 0.0;
-        double norm = (double)s->search + 1.0;
-        for (i = 0; i < nblocks; i++) {
-            double ex = mvx[i] * 0.25 - mo.global_motion_x;
-            double ey = mvy[i] * 0.25 - mo.global_motion_y;
-            dev += sqrt(ex * ex + ey * ey);
-        }
-        mo.motion_entropy = (float)(nblocks ? (dev / nblocks) / norm : 0.0);
-    }
+    mo.motion_entropy = mc_motion_entropy(mvx, mvy, nblocks, mo.global_motion_x,
+                                          mo.global_motion_y, s->search);
 
     /* Scene-cut heuristic: a high mean residual SAD means the diamond found no
      * good match anywhere — characteristic of a cut, not coherent motion. The
