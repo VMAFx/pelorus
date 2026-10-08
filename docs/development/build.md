@@ -102,8 +102,26 @@ Meson/Ninja, runs the fast suite, checks C formatting and clang-tidy, and checks
 that `CHANGELOG.md` matches `changelog.d/`. Override `BUILD_DIR` to use another
 Meson tree, for example `BUILD_DIR=build-asan make verify-native`.
 
-The governance targets use the first `standardsctl` or `praetorctl` on `PATH`.
-Pin another executable explicitly with `PRAETORCTL=/absolute/path/to/standardsctl`.
+The governance targets and the Lefthook jobs run the Praetor engine pinned at
+`PRAETOR_REF` in `.github/workflows/standards-gate.yml`, whatever `praetorctl`
+or `standardsctl` is first on `PATH`. `scripts/praetor-engine.sh` resolves it: it
+installs the pinned commit with `go install` into `.workingdir/bin/<PRAETOR_REF>/`
+(git-ignored) on first use and checks that `version` names that commit. It fails
+closed, with one line on stderr, when the pin is unreadable, the cache is empty
+and Go is missing or offline, or the cached binary reports another commit. It
+never falls back to `PATH`. A worktree has its own cache; the Go build cache
+makes the second install fast.
+
+To refresh the engine after a pin bump (`PRAETOR_REF` changes), run
+`sh scripts/praetor-engine.sh version`: the new pin gets a new directory. To
+reinstall a damaged cache, delete `.workingdir/bin/<PRAETOR_REF>/` and rerun.
+`sh scripts/praetor-engine.sh --print-path` prints the resolved binary.
+
+`PRAETORCTL=/absolute/path/to/engine` overrides the choice for `make` and the
+hooks. The override is not version-checked and the script prints a line naming
+it. Agent hooks (`.claude/settings.json`) still call `praetorctl` by name from
+`PATH`. The PATH coupling is reported upstream as
+[cordanaLLM/praetor#906](https://github.com/cordanaLLM/praetor/issues/906).
 The documentation targets need Node.js 22.12 or newer; the gate installs its own
 locked `markdownlint-cli2` 0.23.2 dependency tree into a temporary directory.
 

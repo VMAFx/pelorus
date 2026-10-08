@@ -1,5 +1,7 @@
 # Pelorus native + Praetor verification entry points.
-PRAETORCTL ?= $(shell command -v standardsctl 2>/dev/null || command -v praetorctl 2>/dev/null || echo standardsctl)
+# The engine pinned at PRAETOR_REF (scripts/praetor-engine.sh), not the PATH one.
+# PRAETORCTL=/path/to/engine overrides it.
+PRAETORCTL ?= sh scripts/praetor-engine.sh
 BUILD_DIR ?= build
 
 .PHONY: all verify-all verify-native configure build test format-check tidy \
