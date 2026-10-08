@@ -1,7 +1,8 @@
 /*
  * pelorus_borderfix.comp — dirty-line / border repair compute shader (reference).
  *
- * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ * Copyright 2026 Lusoris
+ * SPDX-License-Identifier: EUPL-1.2
  *
  * Cropped, telecined, and analog-captured sources carry garbage rows/columns at
  * the frame edge (half-pixels, black/grey clamp lines, head-switching noise).

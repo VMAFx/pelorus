@@ -1,4 +1,8 @@
-/* Copyright 2026 Lusoris. BSD-2-Clause-Patent. */
+/*
+ * Copyright 2026 Lusoris
+ *
+ * SPDX-License-Identifier: LGPL-2.1-or-later
+ */
 
 /*
  * Direct regression coverage for the Pelorus QSV ROI patch.

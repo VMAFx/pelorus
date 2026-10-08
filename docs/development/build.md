@@ -162,7 +162,7 @@ the commit in [ADR-0168](../adr/0168-praetor-engine-492a00f.md), prints
 the module version Go recorded for it, verifies generated contexts, and runs
 the two ratchet steps above. The live `master` protection, a classic branch
 rule, requires `Standards` and the `core`, `ffmpeg-stack`, and `docs` jobs; the
-committed ruleset requires all seven pull-request checks once it is applied
+committed ruleset requires all eight pull-request checks once it is applied
 ([Branch ruleset](#branch-ruleset)). `Praetor Documentation Governance` is Praetor's locked
 workflow for the `docs:seo-portal` facet: it runs the same Markdown and figure
 checks as `make docs-lint docs-figures`. On a draft pull request its first
@@ -269,7 +269,7 @@ controls below, and no workflow implements them; they are declared only
 
 | Declared by | Control | Current state |
 | --- | --- | --- |
-| `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, stale-review dismissal, review-thread resolution, seven required checks | Committed in `.github/rulesets/main.json`, not applied yet; live `master` protection requires linear history and four checks, no signatures. Approving reviews: zero under `review_mode: single_maintainer` ([Branch ruleset](#branch-ruleset)) |
+| `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, stale-review dismissal, review-thread resolution, eight required checks | Committed in `.github/rulesets/main.json`, not applied yet; live `master` protection requires linear history and four checks, no signatures. Approving reviews: zero under `review_mode: single_maintainer` ([Branch ruleset](#branch-ruleset)) |
 | `native-gpu-systems` | `semgrep`, `cppcheck`, `clippy` | Not run; Pelorus has no Rust for `clippy` |
 | `security:high` | `gitleaks`, `trivy` | Not run; `.gitleaks.toml` only configures a manual `gitleaks` run |
 | `api:public-contract` | `buf`, `spectral`, OpenAPI drift, `Migration:` footer check | Not run; Pelorus has no protobuf or OpenAPI surface. The append-only C ABI is guarded by the interop conformance fixture and review |
@@ -358,7 +358,7 @@ make hooks-install   # runs `lefthook install`
 
 | Hook | Jobs |
 | --- | --- |
-| pre-commit | `context-check` (`compile-context --verify`), `hiss-audit` (`audit --offline`), `pelorus-audit` (`make audit AUDIT_FLAGS=--offline`) |
+| pre-commit | `reuse-lint` (`reuse lint`; skipped where reuse is not installed, fails on a reuse other than 6.x), `context-check` (`compile-context --verify`), `hiss-audit` (`audit --offline`), `pelorus-audit` (`make audit AUDIT_FLAGS=--offline`) |
 | post-commit | `state-sync`, `dedupe-cadence` (governance bookkeeping in the git-ignored `.workingdir/`) |
 | pre-push | `flavor-audit`, `audit` (reads the forge), `gate` (`gate run --admit-unsupported`), `verify-all` (`make verify-all`) |
 
@@ -395,7 +395,7 @@ engine renders for `master` and `lts-*`. `.standards.yaml` declares
 | Rule | Value |
 | --- | --- |
 | Pull request | 0 approving reviews, no code-owner review, stale reviews dismissed, review threads resolved |
-| Required status checks (strict) | the five `ci.yml` jobs, `Documentation Governance`, `Standards & Invariant Verification Gate` |
+| Required status checks (strict) | the five `ci.yml` jobs, `Documentation Governance`, `REUSE lint`, `Standards & Invariant Verification Gate` |
 | History | signed commits, linear history, no force push, no deletion |
 | Bypass | repository admin role, pull requests only |
 
@@ -424,7 +424,7 @@ the ruleset is applied, an audit with a forge token fails like this:
 [FAIL] Live branch protection of master on GitHub does not match the declared policy (protected by branch protection):
   Dismiss stale reviews: declared required, live not enforced
   Signed commits: declared required, live not enforced
-  Required status checks: declared 7, live 4 of 7 required; missing: ...
+  Required status checks: declared 8, live 4 of 8 required; missing: ...
 ```
 
 ### Dev container
@@ -553,7 +553,8 @@ order ([ADR-0169](../adr/0169-release-provenance-slsa3.md)):
    `meson setup --werror build`, builds with `make build`, runs the fast suite,
    checks the rendered changelog, extracts the release notes, and packages
    `pelorus-ffmpeg-patches-<tag>.tar.gz` (`series.txt`, the README, the
-   numbered patches, and `files/`). It then writes an SPDX JSON SBOM of that
+   numbered patches, `files/`, and the LGPL-2.1-or-later and EUPL-1.2 texts
+   from `LICENSES/`, [licensing](../licensing.md)). It then writes an SPDX JSON SBOM of that
    archive, writes `SHA256SUMS` over the archive and the SBOM, attests SLSA v1.0
    build provenance for both with `actions/attest-build-provenance`, signs
    `SHA256SUMS` keyless with cosign into `SHA256SUMS.sigstore.json`, verifies

@@ -85,7 +85,8 @@ jobs:
           printf 'artifact-name=pelorus-release-%s\n' "$artifact_label" >> "$GITHUB_OUTPUT"
           tar czf "dist/pelorus-ffmpeg-patches-${artifact_label}.tar.gz" \
             ffmpeg-patches/series.txt ffmpeg-patches/README.md \
-            ffmpeg-patches/0*.patch ffmpeg-patches/files
+            ffmpeg-patches/0*.patch ffmpeg-patches/files \
+            LICENSES/LGPL-2.1-or-later.txt LICENSES/EUPL-1.2.txt
       - name: SBOM of the release archive (SPDX JSON)
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:

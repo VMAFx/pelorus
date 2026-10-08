@@ -1,7 +1,8 @@
 /*
  * pelorus_aa.comp — anime warp anti-aliasing + line-darkening (reference).
  *
- * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ * Copyright 2026 Lusoris
+ * SPDX-License-Identifier: EUPL-1.2
  *
  * A single-pass GPU port of awarpsharp2 (the VapourSynth/AviSynth warp-AA) plus
  * an optional FastLineDarken-style line-darkening pass. Anime line-art is drawn

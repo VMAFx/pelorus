@@ -3,7 +3,8 @@
 # bench.sh — the repeatable Pelorus proof. Pinned corpus, pinned encode/filter
 # settings; emits a BD-rate + CAMBI report. See docs/development/benchmarking.md.
 #
-# Copyright 2026 Lusoris. BSD-2-Clause-Patent.
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
 #
 # Requires a built ffmpeg+pelorus (FFMPEG=...), a built vmafx (VMAF=...), a
 # Vulkan GPU (DEVICE=vk:0), libpelorus on LD_LIBRARY_PATH, and network for the

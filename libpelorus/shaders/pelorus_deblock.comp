@@ -1,7 +1,8 @@
 /*
  * pelorus_deblock.comp — re-encode deblock/dering compute shader (reference).
  *
- * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ * Copyright 2026 Lusoris
+ * SPDX-License-Identifier: EUPL-1.2
  *
  * The largest real-world pre-encode corpus is *re-transcode*: archival and
  * streaming pipelines re-encode already-compressed sources, which carry DCT

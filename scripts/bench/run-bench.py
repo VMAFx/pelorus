@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # run-bench.py — prove a Pelorus pre-filter improves a hardware encode.
 #
-# Copyright 2026 Lusoris. BSD-2-Clause-Patent.
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
 #
 # For each CQ point and each variant (baseline = no filter, pelorus = pre-filter
 # in the zero-copy Vulkan pipeline), encode the source, decode it, and score it

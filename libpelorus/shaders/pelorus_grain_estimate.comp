@@ -1,7 +1,8 @@
 /*
  * pelorus_grain_estimate.comp — film-grain parameter estimator (reference).
  *
- * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ * Copyright 2026 Lusoris
+ * SPDX-License-Identifier: EUPL-1.2
  *
  * Measures the film-grain characteristics of a luma plane so a downstream
  * encoder / bitstream filter can RE-SYNTHESIZE the grain (AV1 AOM film_grain

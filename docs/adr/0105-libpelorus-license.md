@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0105: libpelorus is BSD-2-Clause-Patent; FFmpeg filter files are LGPL-2.1
 
-- **Status**: Accepted
+- **Status**: Superseded by [ADR-0171](0171-eupl-relicense.md)
 - **Date**: 2026-06-14
 - **Deciders**: Lusoris
 - **Tags**: license

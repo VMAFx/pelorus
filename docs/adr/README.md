@@ -18,7 +18,7 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0102](0102-flagship-smart-deband.md) | Smart deband (f3kdb) is the flagship filter | Accepted |
 | [0103](0103-interop-sidedata-abi.md) | Pelorus⇄vmafx interop via a UUID-keyed AVFrame side-data ABI | Accepted |
 | [0104](0104-ffmpeg-patch-stack.md) | Delivery — libpelorus core + an FFmpeg patch stack | Accepted |
-| [0105](0105-libpelorus-license.md) | libpelorus is BSD-2-Clause-Patent; FFmpeg files are LGPL-2.1 | Accepted |
+| [0105](0105-libpelorus-license.md) | libpelorus is BSD-2-Clause-Patent; FFmpeg files are LGPL-2.1 | Superseded by [0171](0171-eupl-relicense.md) |
 | [0106](0106-autotune-control-plane.md) | Control plane — tune filter strength against VMAF via vmafx | Accepted |
 | [0108](0108-deep-dive-deliverables-rule.md) | Fork-local PRs ship the deep-dive deliverables | Accepted |
 | [0109](0109-analyze-filter.md) | vf_pelorus_analyze emits measured banding/variance via GPU readback | Accepted |
@@ -73,3 +73,4 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0168](0168-praetor-engine-492a00f.md) | Re-pin the Praetor engine to `492a00f9`: every hosted `meson setup` passes `--werror`; one clang-tidy `files` lane lists all ten Meson-built C units and drives `make tidy` and CI; the 13 FFmpeg-tree units get one dated exception each (follow-up #94); `rules.md` is the engine's rendering of the Pelorus `harness.json`; nested `AGENTS.md` rewritten in Caveman; issue-175 workaround dropped | Proposed |
 | [0169](0169-release-provenance-slsa3.md) | Releases are built, attested (SLSA v1.0 provenance, Build Level 3), SBOM'd and cosign-signed in the reusable `release-build.yml`; `release.yml` runs `ci` → `build` → tag-only `publish`, the only job with `contents: write` | Proposed |
 | [0170](0170-renovate-shape-guards.md) | The build-config checker validates the shape of the `actions/setup-go` and actionlint pins instead of their values; a `ci.yml` regex manager makes Renovate track actionlint | Proposed |
+| [0171](0171-eupl-relicense.md) | Pelorus is EUPL-1.2 (copyright `2026 Lusoris`, sole holder of the work Pelorus wrote); the files that become part of FFmpeg (`ffmpeg-patches/files/*.c`, `*.h`, `vulkan/**`, the QSV regression test) stay LGPL-2.1-or-later, and the patches and the nine Vulkan filter host files carry FFmpeg's copyright next to Lusoris's; vendored superpowers and interfig keep MIT; `REUSE.toml` labels every file, `reuse lint` runs in pre-commit and CI; supersedes 0105 | Proposed |

@@ -1,7 +1,8 @@
 /*
  * pelorus_denoise.comp — temporal denoise compute shader (standalone reference).
  *
- * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ * Copyright 2026 Lusoris
+ * SPDX-License-Identifier: EUPL-1.2
  *
  * Edge-preserving spatio-temporal denoiser (PEL_DENOISER_BILATERAL_TEMPORAL).
  * Single compute pass over a CAUSAL window: image 0 is the current frame, images

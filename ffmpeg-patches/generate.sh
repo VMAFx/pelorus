@@ -2,8 +2,11 @@
 #
 # generate.sh — regenerate the Pelorus FFmpeg patch stack from files/.
 #
-# Copyright 2026 Lusoris. BSD-2-Clause-Patent for the patches authored here;
-# the linked FFmpeg binary's distribution is governed by FFmpeg's LGPL/GPL.
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
+#
+# This script is EUPL-1.2. The patches it writes change FFmpeg's
+# LGPL-2.1-or-later sources and stay under that licence (REUSE.toml, ADR-0171).
 #
 # Mirrors vmafx's /ffmpeg-build-patches workflow: check out a pristine FFmpeg
 # base in an isolated git worktree, drop in the canonical filter sources from

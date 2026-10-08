@@ -27,8 +27,7 @@ ffmpeg-patches/
   commit, uses isolated worktree, must be byte-stable on second run.
 - Replay entire cumulative series with `test/build-and-run.sh`. Per-patch
   `git apply --check` = no substitute.
-- New `libavfilter/*.c` files carry FFmpeg's LGPL-2.1 header (`Copyright 2026
-  Lusoris`), not libpelorus BSD-2-Clause-Patent header (ADR-0105).
+- New `libavfilter/*.c` files: FFmpeg LGPL-2.1 header naming Lusoris; LGPL-2.1-or-later per `REUSE.toml`. Scripts, tests outside FFmpeg tree: EUPL-1.2 SPDX header (ADR-0171).
 
 ## FFmpeg 9 Vulkan model
 
