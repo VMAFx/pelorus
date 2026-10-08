@@ -1,11 +1,13 @@
 <!-- markdownlint-disable MD013 MD060 -->
-# Encode provenance record (specification)
+# Encode provenance record
 
 > [!IMPORTANT]
-> **Status: specified, not implemented.** The record format, its digest and
-> the `PEL_SEC_ENCODE_RECORD` section (interop ABI 1.4) are fixed by
-> [ADR-0175](../adr/0175-encode-provenance-record.md) (issue #81). The
-> functions named below do not exist yet.
+> **Status: the record, its digest, the API and the `PEL_SEC_ENCODE_RECORD`
+> section (interop ABI 1.4) are implemented**
+> ([ADR-0175](../adr/0175-encode-provenance-record.md), issue #81). The
+> option-string parsers that fill `encoder.params` from x264, x265 and FFmpeg
+> argument lists, and a producer that attaches the section, are follow-ups
+> (#81 item 2).
 
 ## In one paragraph
 
@@ -66,7 +68,11 @@ restrictions that make every conforming writer, including Python's
   are written as they are.
 - Bounds (HISS-02): text at most 65 536 bytes, at most 64 filters, at most
   256 entries per `params` object, nesting depth at most 4, values at most
-  1024 bytes.
+  1024 bytes. The canonicaliser does not read the schema, so it applies them
+  generically: every object has at most 256 members, every array at most 64
+  entries, at most 4 containers nest below the root object (the worked
+  example's `thr` array is the fourth), keys are at most 64 bytes and string
+  values at most 1024 bytes once decoded. The input text is bounded too.
 
 **Normalisation.** Each encoder's parameter table maps aliases to one
 spelling (for example x264 `b-adapt` and `b_adapt`) and declares each known
@@ -132,6 +138,10 @@ text = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=Fals
 print("sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest())
 ```
 
+**Duplicate keys.** The canonical form has unique keys, so the canonicaliser
+and the builder reject a repeated key. "A repeated option takes its last
+value" is the job of the option-string parser that fills `params`.
+
 ## Side-data section
 
 `PEL_SEC_ENCODE_RECORD = 1u << 9` (section j, ABI 1.4), struct
@@ -149,7 +159,11 @@ print("sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest())
 | 43 | `uint8_t[5]` | `_pad` | reserved, zero |
 
 A producer attaches the section at least to the first frame of a stream. A
-consumer uses the first valid section it reads. `pel_encode_record_digest_text()`
+consumer uses the first valid section it reads. The producer places the
+locator after the packed sections at an 8-aligned blob-relative offset, like
+every map, so `pel_blob_map(blob, len, locator_offset, locator_size,
+locator_size, 1, &p)` validates it; a reader also checks `locator_size <=
+PEL_ENCODE_RECORD_LOCATOR_MAX` (4096). `pel_encode_record_digest_text()`
 (in the mirrored `interop.c`) turns the section into the 71-character text.
 A VMAFx reader then calls:
 
@@ -166,26 +180,55 @@ option exists on `libx264`, `libx265`, `h264_nvenc` and `hevc_nvenc` (research
 
 ## API
 
-All functions return `pel_result`, write into caller buffers, and allocate
-nothing.
+Header [`pelorus/encode_record.h`](../../libpelorus/include/pelorus/encode_record.h);
+implementation `libpelorus/src/encode_record.c` with the private SHA-256
+`libpelorus/src/sha256.c`. All functions return `pel_result`, write into
+caller buffers, allocate nothing, keep no pointer they were given and hold no
+global state, so concurrent calls on distinct buffers are safe. The
+canonicaliser uses an explicit stack of five frames (about 15 KiB of stack),
+never recursion. Text outputs are NUL-terminated: `cap` must hold the text
+plus one byte, and a short buffer returns `PEL_ERR_RANGE` with the needed
+length (without the NUL) in `*out_len`.
 
 | Function | Result |
 |---|---|
 | `pel_encode_record_build(const PelorusEncodeRecordInput *in, char *buf, size_t cap, size_t *out_len)` | canonical text with `digest` filled |
 | `pel_encode_record_canonicalize(const char *json, size_t len, char *buf, size_t cap, size_t *out_len)` | canonical text of any record; `PEL_ERR_INVALID` on a duplicate key, a non-string scalar, invalid UTF-8 or a bound overrun |
 | `pel_encode_record_hash(const char *json, size_t len, uint8_t digest[32])` | the digest of the record |
-| `pel_encode_record_verify(const char *json, size_t len, const uint8_t expected[32])` | `PEL_OK`, or `PEL_ERR_MISMATCH` (new, -8) when the embedded `digest` or `expected` (if non-NULL) differs |
+| `pel_encode_record_verify(const char *json, size_t len, const uint8_t expected[32])` | `PEL_OK`, or `PEL_ERR_MISMATCH` (new, -8) when the embedded `digest` or `expected` (if non-NULL) differs; `PEL_ERR_ABSENT` when the record has no `digest` member and `expected` is NULL, since there is nothing to verify against |
+| `pel_encode_record_int(int64_t v, char out[24])`, `pel_encode_record_f64(double v, char out[24])` | the canonical scalar texts: plain decimal, and `f64:` with 16 hex digits (`-0.0` as `+0.0`; `PEL_ERR_RANGE` for NaN or infinity) |
 | `pel_encode_record_digest_text(const PelorusEncodeRecordSection *s, size_t got, char *out, size_t cap)` | `sha256:` text; `PEL_ERR_INVALID` on `digest_alg != 1` or `got` shorter than the section |
 
-SHA-256 is a libpelorus port of VMAFx `core/src/vmafx/sha256.c` (FIPS 180-4).
-It is not mirrored back into VMAFx.
+SHA-256 is a libpelorus port of VMAFx `core/src/vmafx/sha256.c` (FIPS 180-4,
+VMAFx commit `c3fdc200`, same holder and licence: Lusoris, EUPL-1.2). It is not
+mirrored back into VMAFx.
 
-## Tests the implementation adds
+`pel_encode_record_build()` takes a `PelorusEncodeRecordInput`: the encoder's
+name, version and codec (required), its `params` and `unknown_params` as
+arrays of `PelorusEncodeParam` (`key`, one scalar text or an array of them),
+`input_digest` and/or `input_id`, the `filters` in chain order
+(`PelorusEncodeFilter`: `name`, `library`, `version`, `params`,
+`unknown_params`), the optional `hardware_path` (one of the seven names
+above), `hardware_device`, `hardware_driver`, and `elapsed_ns` with
+`has_elapsed_ns`. Parameters may come in any order: the builder sorts them.
+It checks what the canonicaliser cannot know: required members, the
+`input.digest` form and the `hardware.path` name.
+
+## Tests
+
+`libpelorus/test/encode_record_test.c` (Meson test `encode-record`; it reads
+this page as its argument):
 
 | Acceptance (#81) | Test |
 |---|---|
-| any single parameter change changes the hash | mutation over a table of every encoder and filter parameter in the fixture record: each mutation gives a different digest |
-| option order equal, value change different | two x265 option strings that differ only in order hash equal; one that differs in a value does not |
-| unknown key kept and flagged; a dropped key fails | an unknown option lands in `unknown_params`; removing any key from a built record makes `pel_encode_record_verify` return `PEL_ERR_MISMATCH` |
-| round trip; a tampered field fails | build, serialise, parse, verify passes; flipping one character in any value fails |
-| independent reproduction | the C digest of the worked example equals the Python digest above |
+| any single parameter change changes the hash | every encoder and filter parameter of the worked example, changed one at a time, gives a different digest |
+| option order equal, value change different | the builder input lists the parameters out of key order and still produces the worked example byte for byte; value changes are the row above. Option-string order arrives with the parsers |
+| unknown key kept and flagged; a dropped key fails | the unknown option sits in `unknown_params`; removing a known key, the unknown key or the `digest` member fails verification (`PEL_ERR_MISMATCH`, `PEL_ERR_ABSENT`) |
+| round trip; a tampered field fails | build, verify, canonicalize again (a fixed point) pass; one changed character in a value fails |
+| independent reproduction | the C digest of this page's JSON block, and of an embedded copy, equals the Python digest above; so does the `range` mutation; an escape and key-order case matches Python's bytes |
+
+The same file checks SHA-256 against the FIPS 180-4 examples, one million
+`a`, the padding boundaries 55 to 120 bytes and streamed chunks, and every
+canonical-form bound on both sides of its limit. The section and
+`pel_encode_record_digest_text()` are covered by the shared conformance
+fixture `libpelorus/test/interop_test.c`.

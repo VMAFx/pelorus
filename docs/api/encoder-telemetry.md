@@ -1,13 +1,16 @@
 <!-- markdownlint-disable MD013 MD060 -->
-# Encoder telemetry (interop ABI 1.4 specification)
+# Encoder telemetry (interop ABI 1.4)
 
 > [!IMPORTANT]
-> **Status: specified, not implemented.** The shipped ABI is 1.3
-> (`PELORUS_ABI_MINOR 3u` in
-> [`interop.h`](../../libpelorus/include/pelorus/interop.h)). This page fixes
-> the names, bits and layouts that the ABI 1.4 pull request implements
-> ([ADR-0174](../adr/0174-encoder-telemetry-abi-1-4.md), issue #86). Nothing
-> on this page can be called yet.
+> **Status: the layout, the input contract and the checks are implemented;
+> the adapters are not.** `PELORUS_ABI_MINOR` is 4 in
+> [`interop.h`](../../libpelorus/include/pelorus/interop.h)
+> ([ADR-0174](../adr/0174-encoder-telemetry-abi-1-4.md), issue #86). The
+> section, `pelorus/telemetry.h`, the registry and the parity check ship now.
+> The adapters (x265 CSV, FFmpeg quality stats, SVT-AV1, libaom, VVenC,
+> hardware feedback), their capability tables, the AV1 and VP9 QP
+> normalisation constants and `pel_enc_telemetry_to_json()` come later (#86
+> items 2 to 4). Until then only `adapter = external` records carry fields.
 
 ## In one paragraph
 
@@ -76,9 +79,11 @@ them. Its own `coded_bit_depth` and `map_cols`/`map_rows` apply.
 
 ## Presence bits
 
-`#define PEL_TLM_F_<KEY> (UINT64_C(1) << n)`, where `<KEY>` is the upper-cased
-JSON key. Bits are append-only and a retired bit is never reused (R2). Bits
-23..63 are free.
+`#define PEL_TLM_F_<KEY> (UINT64_C(1) << nu)`, where `<KEY>` is the upper-cased
+JSON key and `n` the bit (the shift count is unsigned so the defines are
+clang-tidy clean). Bits are append-only and a retired bit is never reused
+(R2). Bits 23..63 are free. `PEL_TLM_KNOWN_MASK` covers bits 0..22: a reader
+ignores any other bit (R3), the validator rejects it.
 
 | Bit | Constant | Bit | Constant |
 |---:|---|---:|---|
@@ -132,6 +137,10 @@ step size in H.264 units at 8 bits. H.264 defines `Qstep(QP) = 0.625 *
   **unverified** today (research 0174, E3).
 - An adapter writes `avg_qp_norm` only when `coded_bit_depth` is known.
 
+`pel_qp_normalize()` implements the identity for `slice_qp` and returns
+`PEL_ERR_UNSUPPORTED` for the three `base_q_idx` scales until the table lands,
+so no unverified constant reaches a record.
+
 The check that keeps the table honest is #86 acceptance item 2. The same clip
 encoded by libx264, libx265 and libsvtav1 at settings the table calls equal in
 step size must give `avg_qp_norm` values within 1.0 of each other. An adapter
@@ -172,8 +181,10 @@ patches the offsets. Telemetry adds the 8-byte alignment of every map offset.
    `total_size` no larger than the received length. Otherwise the result is
    `PEL_ERR_TRUNCATED`.
 
-The planned helper `pel_blob_map()` in `interop.c` runs checks 3 to 5. VMAFx
-gets it through the mirror.
+`pel_blob_map()` in `interop.c` runs checks 3 to 5 (and the blob framing
+first); VMAFx gets it through the mirror. `pel_enc_telemetry_map()` in
+`telemetry.c` runs all five for one map bit and returns `PEL_ERR_ABSENT` for
+check 1 and `PEL_ERR_ABI` for check 2.
 
 ## Validation (writer and builder)
 
@@ -193,11 +204,29 @@ gets it through the mirror.
   checked for `external`);
 - a map breaks the bounds above, or a map bit is set at `frame` granularity.
 
+The implementation adds the checks the rules above imply, so a record never
+says two things at once:
+
+- `qp_scale` belongs to the codec: `slice_qp` to `h264`, `hevc` and `vvc`,
+  `av1_qindex` and `av1_encoder_qp` to `av1`, `vp9_qindex` to `vp9`
+  (`PEL_ERR_INVALID`);
+- `row` or `block` granularity carries at least one map, and `row` has
+  `map_cols == 1` (`PEL_ERR_INVALID`);
+- every `mode_map` element is a `pel_block_mode` value (`PEL_ERR_INVALID`) and
+  every `qp_map` element lies inside the scale's range times 4
+  (`PEL_ERR_RANGE`);
+- the `slice_qp` range is `-6 * (coded_bit_depth - 8)` to 51 (63 for `vvc`);
+  without a reported bit depth the lower bound is -24, the 12-bit offset.
+
+`pel_tlm_adapter_caps()` reports every defined bit for `external`. The other
+adapters return `PEL_ERR_UNSUPPORTED` with an empty mask until their tables
+land with them, so a record from them validates only when it reports nothing.
+
 ## JSON form
 
 The JSON form is used by the field-name parity check, by VMAFx's result
-document and by the planned `pel_enc_telemetry_to_json()`. A stream is one
-object:
+document and by `pel_enc_telemetry_to_json()`, which is not implemented yet.
+A stream is one object:
 
 ```json
 {
@@ -229,9 +258,12 @@ settled with that adapter. The rules:
 
 ## Field registry and cross-walk with VMAFx stream metadata
 
-The normative names are the keys of `libpelorus/schema/telemetry-fields.json`,
-which lands with the ABI 1.4 code. Each row has `key`, `bit` (or `null`),
-`json` type, `c` type, `unit`, `range` and `decoder`. A `shared` key is one
+The normative names are the keys of
+[`libpelorus/schema/telemetry-fields.json`](../../libpelorus/schema/telemetry-fields.json)
+(schema `pelorus/telemetry-fields/1`, 31 keys). Each row has `key`, `bit` (or
+`null`), `json` type, `c` type, `unit`, `range` and `decoder`. The units are
+the tokens `none`, `frame`, `byte`, `bit`, `qp_scale`, `h264_qp`, `dB`,
+`linear`, `area_share`, `element` and `log2_px`. A `shared` key is one
 that the VMAFx decode-side stream metadata must spell, type and unit exactly
 like this, if it carries the field at all. An `encoder_only` key is one only
 an encoder can know.
@@ -285,7 +317,17 @@ pel_result pel_enc_telemetry_pack(const PelorusSideData *meta, const PelorusEncT
                                   uint8_t *buf, size_t cap, size_t *out_len);
 pel_result pel_tlm_adapter_caps(uint8_t adapter, uint8_t codec, uint64_t *out_mask);
 pel_result pel_qp_normalize(uint8_t qp_scale, uint8_t coded_bit_depth, float qp, float *out_norm);
+/* reader: checks 1 to 5 for one map bit */
+pel_result pel_enc_telemetry_map(const uint8_t *blob, size_t len,
+                                 const PelorusEncTelemetrySection *t, size_t got, uint64_t map_bit,
+                                 const void **out_ptr, uint32_t *out_elems);
 ```
+
+The packer builds on `pel_blob_pack_into()` (`interop.h`), the non-allocating
+form of `pel_blob_pack()`; `pel_blob_pack_into(meta, secs, nb, NULL, 0, &len)`
+returns `PEL_ERR_RANGE` with the length the image needs. Leave the
+`*_map_offset` and `*_map_size` members of `frame` zero: the packer computes
+them, and validation rejects a non-zero one under a clear bit.
 
 The contract for callers outside FFmpeg (VMAFx's codec-adapter package,
 VMAFx/vmafx#2147):
@@ -295,7 +337,8 @@ VMAFx/vmafx#2147):
 - Pass map pointers that you own. They are read during the call, never kept.
 - Size `buf` once with `pel_enc_telemetry_blob_size()` for your largest
   frame. `pel_enc_telemetry_pack()` writes the UUID, header, directory,
-  section and maps into it, and allocates nothing.
+  section and maps into it, and allocates nothing. A short `buf` returns
+  `PEL_ERR_RANGE` with the needed length in `*out_len` and is left untouched.
 - An out-of-range enum, an oversized grid or a bit-value mismatch returns
   `PEL_ERR_INVALID` or `PEL_ERR_RANGE`, never a partial blob.
 
@@ -317,8 +360,9 @@ direction it can break:
 | `libpelorus/schema/telemetry-fields.json` | Pelorus | Pelorus check; VMAFx check (through the mirror) |
 | VMAFx stream-metadata field list (same shape, `schema` `vmafx/stream-metadata-fields/1`, each field marked `pelorus: shared` or `vmafx_only`, plus a top-level `not_carried` list) | VMAFx (#2271) | VMAFx check; Pelorus check through a pinned snapshot `libpelorus/test/fixtures/vmafx-stream-metadata-fields.json` whose `source` member names `VMAFx/vmafx@<40-hex sha>:<path>` |
 
-The comparator `scripts/check-telemetry-field-parity.py` (planned) applies
-these rules and prints both names on any difference:
+The comparator
+[`scripts/check-telemetry-field-parity.py`](../../scripts/check-telemetry-field-parity.py)
+applies these rules and prints both names on any difference:
 
 1. Each file parses, carries its expected `schema`, has at least one field and
    no duplicate key. An empty or malformed file is an error (exit 2), never
@@ -339,8 +383,15 @@ side, a one-sided key on each side, an empty file, malformed JSON, a unit
 difference, a bit difference) and one matching pair that must pass. Until
 VMAFx/vmafx#2271 publishes its list, the fast-suite test runs rule 5 and the
 registry checks, then exits 77. Meson reports that as SKIP, with the reason
-"VMAFx field list not pinned (VMAFx/vmafx#2271)", not as a pass. `docs/metrics/`
-names the pinned VMAFx revision once one exists.
+"VMAFx field list not pinned (VMAFx/vmafx#2271)", not as a pass.
+[`docs/metrics/encoder-telemetry.md`](../metrics/encoder-telemetry.md) names
+the pinned VMAFx revision once one exists.
+
+```bash
+python3 -I scripts/check-telemetry-field-parity.py               # 77 = SKIP today
+python3 -I scripts/check-telemetry-field-parity.py --self-test   # 0
+python3 -I scripts/check-telemetry-field-parity.py --vmafx FILE  # any VMAFx list
+```
 
 ## How VMAFx re-vendors ABI 1.4
 
@@ -364,13 +415,15 @@ names the pinned VMAFx revision once one exists.
    `libpelorus/schema/telemetry-fields.json`. JSON has no comment syntax for
    the banner.
 
-## Tests the implementation adds
+## Tests
+
+The rows marked "adapters" arrive with the adapters (#86 items 2 to 4).
 
 | Acceptance (issue) | Test |
 |---|---|
-| #86 item 1: a truncated or field-shifted stats file is an error | each adapter's reader on a planted truncated and a column-shifted fixture returns `PEL_ERR_TRUNCATED`/`PEL_ERR_INVALID` and writes no record |
-| #86 item 2: matched QP agrees within one step | libx264, libx265, libsvtav1 fixture records at table-matched step size: `abs(avg_qp_norm` difference`) <= 1.0`; a planted adapter without conversion fails |
-| #86 item 3: "not reported", not zero | per adapter: a field outside its capability mask has a clear bit and is absent in JSON; a planted 0 with a set bit fails validation |
-| #86 item 4 and #218: layout lock and fixture | `_Static_assert` sizes 104, 48, 36; fixture packs and parses every new section; a 1.3-sized motion section reads `block_size_log2` as absent (by size); `vf_pelorus_mc` with `bsize` 8, 16 and 32 writes 3, 4 and 5, also on the smallest supported frame |
-| #221 | a header-only compile test without FFmpeg include paths; a hand-filled `external` input packs and parses; an out-of-range enum and an oversized grid return `PEL_ERR_INVALID`/`PEL_ERR_RANGE` |
-| #220 | the comparator `--self-test` above, run in the fast suite |
+| #86 item 1 (adapters): a truncated or field-shifted stats file is an error | each adapter's reader on a planted truncated and a column-shifted fixture returns `PEL_ERR_TRUNCATED`/`PEL_ERR_INVALID` and writes no record |
+| #86 item 2 (adapters): matched QP agrees within one step | libx264, libx265, libsvtav1 fixture records at table-matched step size: `abs(avg_qp_norm` difference`) <= 1.0`; a planted adapter without conversion fails |
+| #86 item 3: "not reported", not zero | `libpelorus/test/telemetry_test.c`: a value under a clear bit fails, a reported 0 dB passes, a set bit outside an adapter's (empty) mask fails; per-adapter JSON cases arrive with the adapters |
+| #86 item 4 and #218: layout lock and fixture | `_Static_assert` sizes 104, 48, 36 plus every member offset in `interop.h`; `libpelorus/test/interop_test.c` packs and parses every new section and reads a 1.3-sized motion section as absent by size; `ffmpeg-patches/test/mc_stats_test.c` (`bsize` 8, 16, 32 write 3, 4, 5; other edges write 0); `ffmpeg-patches/test/pelorus_sidedata_test.c` (the named edge wins, also on a 1x1 frame and on grids that inference cannot resolve) |
+| #221 | `libpelorus/test/telemetry_test.c` includes `pelorus/telemetry.h` first and builds without FFmpeg include paths; a hand-filled `external` input packs and parses; an out-of-range enum and an oversized grid return `PEL_ERR_INVALID`/`PEL_ERR_RANGE` |
+| #220 | the Meson tests `telemetry-field-parity` (SKIP until VMAFx/vmafx#2271) and `telemetry-field-parity-self-test` |

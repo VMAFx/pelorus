@@ -41,6 +41,8 @@ consumer can cast the returned pointer to the struct without an unaligned access
 | `PEL_SEC_QPREPORT` | `PelorusQpReportSection` | closed-loop QSV reader (ADR-0119) | next pass, vmafx | encoder-honored: frame mean QP, PSNR Y/U/V, total bits, intra/inter/skipped counts, per-cell actual-QP + bits maps, `honored_fraction`, `report_source` |
 | `PEL_SEC_MOTION_CONF` | `PelorusMotionConfSection` | `vf_pelorus_mc` | `vf_pelorus_denoise` (MC warp), autotune | per-cell motion confidence map (`uint8`, 0..255, low SAD ⇒ high) gating the ADR-0131 MC→denoise warp; offset/size + `conf_metric` |
 | `PEL_SEC_COMPLEXITY` | `PelorusComplexitySection` | `vf_pelorus_analyze` | per-shot CRF steering (ADR-0132), autotune | per-frame complexity scalar `[0,1]` (texture + edge, folds in motion when `PEL_SEC_MOTION` is upstream), EMA-smoothed + scene-cut reset; `texture_energy`/`motion_component`/`has_scene_cut` |
+| `PEL_SEC_ENC_TELEMETRY` (ABI 1.4) | `PelorusEncTelemetrySection` | encoder adapters through `pelorus/telemetry.h` (ADR-0174) | vmafx, a later pass | one record per coded frame: QP in its native scale plus an H.264-equivalent value, bits, picture type, flags, PSNR/SSIM, area shares, optional row or block maps on the encoder's grid; a `present_mask` bit per optional field ([encoder-telemetry.md](encoder-telemetry.md)) |
+| `PEL_SEC_ENCODE_RECORD` (ABI 1.4) | `PelorusEncodeRecordSection` | an encode producer (ADR-0175) | vmafx provenance (`encode_record`) | raw SHA-256 of the canonical encode record plus a locator of the record file ([encode-record.md](encode-record.md)) |
 
 `PEL_SEC_QPREPORT` (ABI 1.1) is the **read-back** half of encoder steering: unlike
 sections (a)–(e), which carry *pre-encode* GPU measurements pushed *to* the encoder,
@@ -103,15 +105,18 @@ older, shorter producer is read only as far as `got` covers
 (`PEL_SD_FIELD_OK(got, Type, field)`).
 
 `pelorus_denoise` maps the motion grid back to pixels with the producer's block
-edge, recovered from the frame size and the grid
+edge (`pelorus_mc_block_pitch` in `pelorus_sidedata.h`). Since ABI 1.4
+`vf_pelorus_mc` names it: `block_size_log2` is 3, 4 or 5 for `bsize` 8, 16 or
+32, and 0 ("not reported") for the other edges the option accepts, such as 12.
+A named edge must reproduce the grid, or motion compensation is skipped for
+that frame. A 1.3 motion section (32 bytes, detected by its readable size) or
+the value 0 falls back to inference from the frame size and the grid
 (`pelorus_mc_cell_pitch`: the single `bsize` in 8..32 with
-`ceil(W/b) == grid_cols` and `ceil(H/b) == grid_rows`). `PelorusMotionSection`
-carries no block-size field in ABI 1.3; ABI 1.4 appends `block_size_log2`
-(see [ABI 1.4](#abi-14-specified-not-implemented)), and this inference stays
-as the fallback for 1.3 blobs. On small frames several block sizes can fit (a
-96x64 frame with a 6x4 grid fits 16 to 19). When the `vf_pelorus_mc` default
-(`bsize=16`) is one of them, it is assumed and a warning saying so is logged
-once. If nothing fits, or the ambiguity excludes the default, motion
+`ceil(W/b) == grid_cols` and `ceil(H/b) == grid_rows`). On small frames
+several block sizes can fit (a 96x64 frame with a 6x4 grid fits 16 to 19).
+When the `vf_pelorus_mc` default (`bsize=16`) is one of them, it is assumed
+and a warning saying so is logged once. If nothing fits, or the ambiguity
+excludes the default (`bsize=8` on a 64x64 frame fits 8 and 9), motion
 compensation is skipped for that frame and a warning is logged once.
 
 ### QP-report reader stub (closed loop)
@@ -133,7 +138,22 @@ Return codes (`pel_result`): `PEL_OK`, `PEL_ERR_ABSENT` (no Pelorus blob / secti
 not present — fall back to current behavior), `PEL_ERR_ABI` (major mismatch —
 ignore the blob), `PEL_ERR_TRUNCATED`, `PEL_ERR_INVALID`, `PEL_ERR_RANGE`
 (`pel_qp_report_from_blocks` only — the `qp_cell_out` buffer is smaller than the
-cell grid).
+cell grid). ABI 1.4 appends `PEL_ERR_MISMATCH` (-8): a recomputed encode-record
+digest differs from the expected one (`pel_encode_record_verify`). A consumer
+that switches on `pel_result` maps an unknown value to its generic error.
+
+### ABI 1.4 helpers in `interop.c`
+
+| Function | Purpose |
+|---|---|
+| `pel_blob_pack_into(meta, sections, nb, buf, cap, &len)` | `pel_blob_pack` into a caller buffer, no allocation; `cap` 0 asks for the length (`PEL_ERR_RANGE`, `len` set) |
+| `pel_blob_map(blob, len, offset, size, elem_count, elem_size, &ptr)` | locate a map a section references: framing, `size == elem_count * elem_size` (64-bit), 8-aligned offset (`PEL_ERR_ABI`), inside `total_size` (`PEL_ERR_TRUNCATED`) |
+| `pel_encode_record_digest_text(sec, got, text, cap)` | the 71-character `sha256:` text VMAFx stores, from a `PelorusEncodeRecordSection`; `cap >= PEL_DIGEST_TEXT_SIZE` (72) |
+
+The writer-side telemetry contract (`telemetry.c`) and the encode-record
+canonicaliser (`encode_record.c`, `sha256.c`) are separate units that the
+VMAFx mirror does not carry at RC4 (ADR-0174 decision 11). The shared fixture
+therefore calls only `interop.c`.
 
 ### x265 CSV reader (the runnable closed loop, ADR-0122)
 
@@ -252,11 +272,12 @@ fixture, VMAFx re-pins `PELORUS_VENDOR_SHA` and re-vendors with
 to the Pelorus body except for the include rewrite; see
 [research digest 0148](../research/0148-owner-only-exclusive-test-fixtures.md).
 
-## ABI 1.4 (specified, not implemented)
+## ABI 1.4
 
-The shipped ABI is 1.3. ABI 1.4 is fixed in specification before any header
-changes ([ADR-0174](../adr/0174-encoder-telemetry-abi-1-4.md)). The
-implementing pull request bumps `PELORUS_ABI_MINOR` to 4 for three additions:
+`PELORUS_ABI_MINOR` is 4 ([ADR-0174](../adr/0174-encoder-telemetry-abi-1-4.md)).
+Release v0.3.0 shipped ABI 1.3; the next release carries 1.4. The minor bump
+covers three additions, each locked by `_Static_assert` on its size and on
+every member offset:
 
 | Change | Struct and size | Specification |
 |---|---|---|
@@ -266,8 +287,25 @@ implementing pull request bumps `PELORUS_ABI_MINOR` to 4 for three additions:
 
 A 1.4 reader detects a 1.3 motion section by its readable size
 (`PEL_SD_FIELD_OK(got, PelorusMotionSection, block_size_log2)` is false) and
-keeps the `pelorus_mc_cell_pitch` fallback above. VMAFx's re-vendor steps are
-in [encoder-telemetry.md](encoder-telemetry.md#how-vmafx-re-vendors-abi-14).
+keeps the `pelorus_mc_cell_pitch` fallback above. A 1.3 consumer reading a 1.4
+blob gets 32 readable bytes (R4) and never sees the field. VMAFx's re-vendor
+steps are in [encoder-telemetry.md](encoder-telemetry.md#how-vmafx-re-vendors-abi-14).
+
+Migration for a reader of the motion section (the commit's `Migration:`
+footer):
+
+```c
+/* Before (ABI 1.3) */
+_Static_assert(sizeof(PelorusMotionSection) == 32, "motion section ABI");
+bsize = pelorus_mc_cell_pitch(w, h, grid_cols, grid_rows);
+/* After (ABI 1.4) */
+_Static_assert(sizeof(PelorusMotionSection) == 36, "motion section ABI");
+if (PEL_SD_FIELD_OK(got, PelorusMotionSection, block_size_log2) &&
+    mo->block_size_log2 != 0)
+    bsize = 1u << mo->block_size_log2;
+else
+    bsize = pelorus_mc_cell_pitch(w, h, grid_cols, grid_rows);
+```
 
 ## Stability rules (normative — see interop.h)
 
