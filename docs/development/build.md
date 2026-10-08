@@ -247,14 +247,14 @@ with `--force`. Stage the edit, run
 ### Declared policy that no gate runs
 
 The profile and facets in `.standards.yaml` declare more controls than Pelorus
-executes. The audit verifies the lock, the baseline, generated surfaces, and the
-documentation gate. It does not check the controls below unless a row says
-so, and no workflow implements them; they are declared only
+executes. The audit verifies the lock, the baseline, generated surfaces, the
+documentation gate, build warnings, clang-tidy coverage, and the release
+provenance, signature, and SBOM ([Release](#release)). It does not check the
+controls below, and no workflow implements them; they are declared only
 ([ADR-0145](../adr/0145-praetor-governance-adoption.md)).
 
 | Declared by | Control | Current state |
 | --- | --- | --- |
-| `native-gpu-systems`, `security:high` | SLSA level 3 provenance, keyless cosign signatures, SBOM | Not produced; the release workflow publishes the patch archive without them. Since ADR-0168 the audit measures them (HISS-11) and fails until `release.yml` produces them or `.standards.yaml` declares the gap with an expiry |
 | `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, two approving reviews, stale-review dismissal | Not enforced; `master` protection requires linear history and three CI checks, no signatures and no reviews |
 | `native-gpu-systems` | `semgrep`, `cppcheck`, `clippy` | Not run; Pelorus has no Rust for `clippy` |
 | `security:high` | `gitleaks`, `trivy` | Not run; `.gitleaks.toml` only configures a manual `gitleaks` run |
@@ -396,25 +396,76 @@ SemVer tags `v<major>.<minor>.<patch>`. The interop ABI is append-only from
 v0.1.0 (`PELORUS_ABI_MINOR` bumps on additions). The shared conformance fixture
 must pass in both Pelorus and vmafx before a release that touches the ABI.
 
-The `Release` workflow has two intentionally different entry points:
+The `Release` workflow (`.github/workflows/release.yml`) runs three jobs in
+order ([ADR-0169](../adr/0169-release-provenance-slsa3.md)):
 
-- A manual `workflow_dispatch` is a **non-publishing rehearsal**. It runs the
-  build/fast-test gate, checks the rendered changelog, extracts release notes,
-  and constructs the FFmpeg patch-stack archive in the runner, but it cannot run
-  `gh release create` and retains no published release artifact.
-- Both entry points first run the whole `CI` workflow as a reusable call (`ci`
-  job, `uses: ./.github/workflows/ci.yml`: core, FFmpeg patch-stack regenerate,
-  replay, link and smoke, sanitizers, Windows, docs). The `release` job
-  `needs: ci`, so a tagged commit with a broken stack never publishes. The call
-  runs with the caller's `github` context, and `ci.yml` keys its concurrency
-  group on the workflow name so it cannot cancel a push or pull-request run.
-- A tag push also asserts that `${GITHUB_REF_NAME#v}` equals the version meson
-  reports (`meson introspect --projectinfo build`; meson already fails
-  configuration if `pelorus.h` disagrees) and fails with an `::error::` line on
-  a mismatch. A manual dispatch skips only this assertion.
-  `scripts/check-build-config.py` enforces the call, the `needs`, the
-  `workflow_call` trigger and the tag step.
-- Pushing a `v*` tag runs the same gate and packaging, then publishes the GitHub
-  release and attaches `pelorus-ffmpeg-patches-<tag>.tar.gz`. Review the tag and
-  rendered `[Unreleased]` notes before pushing: a manual dispatch is not a
-  substitute for the tag event and never publishes on its own.
+1. `ci` calls the whole `CI` workflow (`uses: ./.github/workflows/ci.yml`:
+   core, FFmpeg patch-stack regenerate, replay, link and smoke, sanitizers,
+   Windows, docs), so a tagged commit with a broken stack never builds a
+   release. The call runs with the caller's `github` context, and `ci.yml`
+   keys its concurrency group on the workflow name so it cannot cancel a push
+   or pull-request run.
+2. `build` (`needs: ci`) calls the reusable `.github/workflows/release-build.yml`,
+   whose only trigger is `workflow_call`. Its one job configures with
+   `meson setup --werror build`, builds with `make build`, runs the fast suite,
+   checks the rendered changelog, extracts the release notes, and packages
+   `pelorus-ffmpeg-patches-<tag>.tar.gz` (`series.txt`, the README, the
+   numbered patches, and `files/`). It then writes an SPDX JSON SBOM of that
+   archive, writes `SHA256SUMS` over the archive and the SBOM, attests SLSA v1.0
+   build provenance for both with `actions/attest-build-provenance`, signs
+   `SHA256SUMS` keyless with cosign into `SHA256SUMS.sigstore.json`, verifies
+   that signature against its own workflow identity, and uploads the files as
+   one workflow artefact. No step downloads an artefact or restores a cache
+   before the attestation, so the attestation covers only what this job built.
+   GitHub signs it with the reusable workflow's identity, isolated from the
+   caller: SLSA Build Level 3, which `praetorctl audit` measures (HISS-11).
+3. `publish` (`needs: build`) runs only on a `v*` tag push. It downloads the
+   artefact, re-checks `SHA256SUMS`, and runs `gh release create` with the
+   archive, the SBOM, the provenance bundle, `SHA256SUMS`, and
+   `SHA256SUMS.sigstore.json`. It is the only job with `contents: write`.
+
+A tag push also asserts that `${GITHUB_REF_NAME#v}` equals the version meson
+reports (`meson introspect --projectinfo build`; meson already fails
+configuration if `pelorus.h` disagrees) and fails with an `::error::` line on a
+mismatch. A manual `workflow_dispatch` is a **non-publishing rehearsal**: it
+runs `ci` and `build`, including the attestation and the signature, skips only
+the tag assertion, and never runs `publish`. Review the tag and the rendered
+`[Unreleased]` notes before pushing a tag: a manual dispatch is not a
+substitute for the tag event and never publishes on its own.
+
+`scripts/check-build-config.py` enforces this shape: the CI call and the
+`needs` chain, `workflow_call` as the only trigger of `release-build.yml`, the
+tag step, the build-before-attestation step order, no artefact download or
+cache in the release build, the SBOM action's upload switches, the signer
+identity of the verification, the tag-only `publish` job, its asset list, and
+`contents: write` on `publish` alone. Its self-test rejects a mutation of each.
+
+### Verifying a release
+
+Each release carries five files besides the notes. Verify them with the GitHub
+CLI, cosign v3 or newer, and `sha256sum`:
+
+```bash
+TAG=v0.2.3
+gh release download "$TAG" --repo VMAFx/pelorus
+# SLSA provenance: signed by the reusable release build, built from the tag
+gh attestation verify "pelorus-ffmpeg-patches-$TAG.tar.gz" -R VMAFx/pelorus \
+  --signer-workflow VMAFx/pelorus/.github/workflows/release-build.yml \
+  --source-ref "refs/tags/$TAG"
+# cosign signature over the checksums
+cosign verify-blob \
+  --certificate-identity "https://github.com/VMAFx/pelorus/.github/workflows/release-build.yml@refs/tags/$TAG" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --bundle SHA256SUMS.sigstore.json \
+  SHA256SUMS
+# the archive and the SBOM match the signed checksums
+sha256sum -c SHA256SUMS
+```
+
+`gh attestation verify` fetches the attestation from GitHub; pass
+`--bundle "pelorus-ffmpeg-patches-$TAG.provenance.sigstore.json"` to verify
+against the bundle attached to the release instead. Because a reusable
+workflow signs the attestation, `--signer-workflow` names
+`release-build.yml`, not `release.yml`. The SBOM,
+`pelorus-ffmpeg-patches-<tag>.spdx.json`, has no signature of its own:
+`SHA256SUMS` covers it, and the provenance names it as a subject.

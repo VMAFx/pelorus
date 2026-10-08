@@ -36,6 +36,7 @@ LIBPELORUS_FILTERS = (
 WORKFLOWS = (
     ROOT / ".github" / "workflows" / "ci.yml",
     ROOT / ".github" / "workflows" / "release.yml",
+    ROOT / ".github" / "workflows" / "release-build.yml",
 )
 # ADR-0149: the native Windows fast-suite leg of ci.yml. setup-msys2 is pinned by
 # full commit digest with the release comment Renovate maintains. Per ADR-0151
@@ -2225,6 +2226,61 @@ def validate_windows_job(relative: str, block: str | None) -> list[str]:
 
 CI_CALL_USES = "uses: ./.github/workflows/ci.yml"
 TAG_GUARD = "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+# ADR-0169: release.yml calls the reusable release build, which builds, attests
+# SLSA provenance, writes the SBOM and signs SHA256SUMS in one job; the publish
+# job only downloads those files and creates the release on a tag push.
+RELEASE_BUILD_CALL_USES = "uses: ./.github/workflows/release-build.yml"
+RELEASE_BUILD_JOB = "build"
+PUBLISH_JOB = "publish"
+RELEASE_FILE_STEM = "pelorus-ffmpeg-patches-${artifact_label}"
+RELEASE_ASSETS = (
+    f'"{RELEASE_FILE_STEM}.tar.gz"',
+    f'"{RELEASE_FILE_STEM}.spdx.json"',
+    f'"{RELEASE_FILE_STEM}.provenance.sigstore.json"',
+    "SHA256SUMS \\",
+    "SHA256SUMS.sigstore.json",
+)
+# In file order: an attestation counts as SLSA Build Level 3 only when a build
+# step of its own job runs before it (Praetor internal/forge MeasureProvenance).
+RELEASE_BUILD_ORDER = (
+    "run: meson setup --werror build",
+    "run: make build BUILD_DIR=build",
+    "name: Tag matches the project version",
+    "name: Package the FFmpeg patch stack",
+    "uses: anchore/sbom-action@",
+    "uses: actions/attest-build-provenance@",
+    "run: cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS",
+    "cosign verify-blob",
+    "uses: actions/upload-artifact@",
+)
+RELEASE_BUILD_TOKENS = (
+    "id-token: write",
+    "attestations: write",
+    "upload-artifact: false",
+    "upload-release-assets: false",
+    "format: spdx-json",
+    "--certificate-identity-regexp "
+    "'^https://github\\.com/VMAFx/pelorus/\\.github/workflows/release-build\\.yml@'",
+    "--certificate-oidc-issuer https://token.actions.githubusercontent.com",
+    "GITHUB_REF_NAME//\\//-",
+    "ARTIFACT_LABEL",
+)
+# Any of these before the attestation would make it attest files the job did
+# not build (Level 2); the reusable release build uses none of them.
+RELEASE_BUILD_IMPORTS = ("actions/download-artifact", "actions/cache", "gh run download")
+
+
+def is_job_call(block: str) -> bool:
+    """True when a job calls a reusable workflow of this repository."""
+    return re.search(r"^    uses: \./\.github/workflows/", block, re.MULTILINE) is not None
+
+
+def workflow_triggers(text: str) -> list[str]:
+    """The event names of the top-level `on:` mapping, in file order."""
+    match = re.search(r"^on:[ ]*\n(?P<body>(?:(?:[ ]+.*|[ ]*)\n)+)", text, re.MULTILINE)
+    if match is None:
+        return []
+    return re.findall(r"^  ([A-Za-z_]+):", match.group("body"), re.MULTILINE)
 
 
 def is_reusable_ci_call(block: str) -> bool:
@@ -2259,34 +2315,89 @@ def job_needs(block: str) -> set[str]:
 
 
 def _validate_release_gate(relative: str, jobs: dict[str, str]) -> list[str]:
-    """A14/A15: release needs the full CI call and a tag == version assertion."""
+    """A14/A15 + ADR-0169: CI call -> release build call -> tag-only publish."""
     errors: list[str] = []
     calls = [name for name, block in jobs.items() if is_reusable_ci_call(block)]
     if not calls:
         errors.append(f"{relative}: missing job that calls ./.github/workflows/ci.yml")
-    publish = jobs.get("release", "")
-    if calls and not set(calls) & job_needs(publish):
+    build = jobs.get(RELEASE_BUILD_JOB, "")
+    if RELEASE_BUILD_CALL_USES not in build:
         errors.append(
-            f"{relative}: release job must list the ci call "
+            f"{relative}: job {RELEASE_BUILD_JOB} must call "
+            "./.github/workflows/release-build.yml"
+        )
+    if calls and not set(calls) & job_needs(build):
+        errors.append(
+            f"{relative}: release build job must list the ci call "
             f"({', '.join(calls)}) in needs"
         )
-    step = publish.find("name: Tag matches the project version")
+    publish = jobs.get(PUBLISH_JOB, "")
+    if RELEASE_BUILD_JOB not in job_needs(publish):
+        errors.append(f"{relative}: publish job must need the release build")
+    if f"    {TAG_GUARD}\n" not in publish:
+        errors.append(f"{relative}: publish job must run only on a v* tag push")
+    for token in (
+        "uses: actions/download-artifact@",
+        "needs.build.outputs.artifact-name",
+        "gh release create",
+        "GITHUB_REF_NAME//\\//-",
+    ) + RELEASE_ASSETS:
+        if token not in publish:
+            errors.append(f"{relative}: publish job is missing {token}")
+    if "uses: actions/checkout@" in publish:
+        errors.append(f"{relative}: publish job must publish the attested files only")
+    writers = [n for n, b in jobs.items() if "contents: write" in b]
+    if writers != [PUBLISH_JOB]:
+        errors.append(f"{relative}: only the publish job may hold contents: write")
+    return errors
+
+
+def _validate_tag_version_step(relative: str, block: str) -> list[str]:
+    """A15: a tag push fails unless the tag equals the meson.build version."""
+    step = block.find("name: Tag matches the project version")
     if step < 0:
-        errors.append(f"{relative}: release job is missing the tag==version step")
-    else:
-        end = publish.find("\n      - name:", step)
-        body = publish[step:] if end < 0 else publish[step:end]
+        return [f"{relative}: release build is missing the tag==version step"]
+    end = block.find("\n      - name:", step)
+    body = block[step:] if end < 0 else block[step:end]
+    return [
+        f"{relative}: tag==version step is missing {token}"
         for token in (
             TAG_GUARD,
             "GITHUB_REF_NAME#v",
             "meson introspect --projectinfo build",
             "::error::",
             "exit 1",
-        ):
-            if token not in body:
-                errors.append(f"{relative}: tag==version step is missing {token}")
-        if step > publish.find("name: Publish GitHub release"):
-            errors.append(f"{relative}: tag==version step must precede publishing")
+        )
+        if token not in body
+    ]
+
+
+def _validate_release_build(relative: str, text: str, jobs: dict[str, str]) -> list[str]:
+    """ADR-0169: build, SBOM, Level 3 attestation and cosign in one called job."""
+    errors: list[str] = []
+    if workflow_triggers(text) != ["workflow_call"]:
+        errors.append(f"{relative}: release-build.yml must be triggered by workflow_call only")
+    block = jobs.get(RELEASE_BUILD_JOB)
+    if block is None:
+        return errors + [f"{relative}: missing job {RELEASE_BUILD_JOB}"]
+    errors.extend(_validate_tag_version_step(relative, block))
+    for token in RELEASE_BUILD_TOKENS:
+        if token not in block:
+            errors.append(f"{relative}: release build is missing {token}")
+    for token in RELEASE_BUILD_IMPORTS:
+        if token in text:
+            errors.append(f"{relative}: release build must not use {token}")
+    positions = [block.find(token) for token in RELEASE_BUILD_ORDER]
+    for token, position in zip(RELEASE_BUILD_ORDER, positions):
+        if position < 0:
+            errors.append(f"{relative}: release build is missing {token}")
+    found = [position for position in positions if position >= 0]
+    if found != sorted(found):
+        errors.append(
+            f"{relative}: release build steps are out of order (expected: "
+            + " -> ".join(RELEASE_BUILD_ORDER)
+            + ")"
+        )
     return errors
 
 
@@ -2316,13 +2427,16 @@ def _validate_workflow_structure_and_jobs(
         "GITHUB_ENV",
     )
     is_ci = Path(relative).name == "ci.yml"
+    is_release = Path(relative).name == "release.yml"
     for name, block in jobs.items():
-        if is_reusable_ci_call(block):
+        if is_job_call(block):
             continue  # a reusable-workflow call has no runner or steps of its own
         runner = WINDOWS_RUNNER if is_ci and name == WINDOWS_JOB else "ubuntu-26.04"
         runners = re.findall(r"^\s+runs-on:\s*([^\s#]+)", block, re.MULTILINE)
         if runners != [runner]:
             errors.append(f"{relative}: job {name} must run exactly on {runner}")
+        if is_release and name == PUBLISH_JOB:
+            continue  # publishes the release build's files; no checkout, no build
         checkout = block.find("uses: actions/checkout@")
         load = block.find("name: Load build configuration")
         if checkout < 0 or load < checkout:
@@ -2341,7 +2455,7 @@ def _validate_workflow_structure_and_jobs(
         "glslc --version",
         "glslangValidator --version",
     ):
-        if token not in text:
+        if token not in text and not is_release:
             errors.append(f"{relative}: environment receipt is missing {token}")
     return errors
 
@@ -2352,7 +2466,7 @@ def _validate_workflow_native_packages(
     errors: list[str] = []
     build_jobs = {
         "ci.yml": ("core", "ffmpeg-stack", "sanitizers"),
-        "release.yml": ("release",),
+        "release-build.yml": (RELEASE_BUILD_JOB,),
     }.get(Path(relative).name, ())
     for name in build_jobs:
         block = jobs.get(name)
@@ -2418,22 +2532,9 @@ def _validate_workflow_specialized_jobs(
     elif rel_name == "release.yml":
         if "workflow_dispatch:" not in text:
             errors.append(f"{relative}: release gate needs workflow_dispatch")
-        publish = jobs.get("release", "")
         errors.extend(_validate_release_gate(relative, jobs))
-        guard = (
-            "if: github.event_name == 'push' && "
-            "startsWith(github.ref, 'refs/tags/v')"
-        )
-        if guard not in publish:
-            errors.append(
-                f"{relative}: publish step must be tag-push-only for manual safety"
-            )
-        for token in (
-            "GITHUB_REF_NAME//\\//-",
-            "ARTIFACT_LABEL",
-        ):
-            if token not in publish:
-                errors.append(f"{relative}: manual package naming is missing {token}")
+    elif rel_name == "release-build.yml":
+        errors.extend(_validate_release_build(relative, text, jobs))
     return errors
 
 
@@ -2549,42 +2650,63 @@ def windows_pin_bump_regression(source: str, relative: str) -> list[str]:
     return []
 
 
-def release_gate_regressions(source: str, relative: str) -> list[str]:
-    """Prove the A14/A15 release gate and the ci.yml workflow_call are enforced."""
+def _rejected(relative: str, original: str, cases: dict[str, tuple[str, str]]) -> list[str]:
+    """Each mutation must change the file and be rejected with its expected error."""
     failures: list[str] = []
+    for name, (mutated, expected) in cases.items():
+        if mutated == original:
+            failures.append(f"workflow regression: {name} mutation changed nothing")
+        elif not any(expected in e for e in validate_workflow_text(relative, mutated)):
+            failures.append(f"workflow regression: {name} was accepted")
+    if validate_workflow_text(relative, original):
+        failures.append(f"workflow regression: current {relative} is rejected")
+    return failures
+
+
+def release_gate_regressions(source: str, relative: str) -> list[str]:
+    """Prove the A14/A15 + ADR-0169 release gate and ci.yml workflow_call."""
     release_path = WORKFLOWS[1]
     release = release_path.read_text(encoding="utf-8")
     release_rel = release_path.relative_to(ROOT).as_posix()
-    tag_step = "name: Tag matches the project version"
-    release_cases = {
-        "release without needs: ci": (
+    guard_line = f"    {TAG_GUARD}\n"
+    failures = _rejected(release_rel, release, {
+        "release build without needs: ci": (
             release.replace("    needs: ci\n", "", 1),
-            "release job must list the ci call",
+            "release build job must list the ci call",
         ),
-        "release needs lists only another job": (
+        "release build needs lists only another job": (
             release.replace("    needs: ci\n", "    needs: [other]\n", 1),
-            "release job must list the ci call",
+            "release build job must list the ci call",
         ),
         "release without ci call job": (
             release.replace(CI_CALL_USES, "uses: ./.github/workflows/other.yml", 1),
             "missing job that calls ./.github/workflows/ci.yml",
         ),
-        "release without tag==version step": (
-            release.replace(tag_step, "name: Something else", 1),
-            "missing the tag==version step",
+        "publish on every run": (
+            release.replace(guard_line, "", 1),
+            "publish job must run only on a v* tag push",
         ),
-        "release tag step without error annotation": (
-            release.replace("::error::", "", 1),
-            "tag==version step is missing ::error::",
+        "publish before the release build": (
+            release.replace("    needs: build\n", "    needs: ci\n", 1),
+            "publish job must need the release build",
         ),
-    }
-    for name, (mutated, expected) in release_cases.items():
-        if mutated == release:
-            failures.append(f"workflow regression: {name} mutation changed nothing")
-        elif not any(
-            expected in e for e in validate_workflow_text(release_rel, mutated)
-        ):
-            failures.append(f"workflow regression: {name} was accepted")
+        "publish without the SHA256SUMS signature": (
+            release.replace("            SHA256SUMS.sigstore.json\n", "", 1),
+            "publish job is missing SHA256SUMS.sigstore.json",
+        ),
+        "publish rebuilds from a checkout": (
+            release.replace(
+                "    steps:\n",
+                "    steps:\n      - uses: actions/checkout@" + "0" * 40 + "\n",
+                1,
+            ),
+            "publish job must publish the attested files only",
+        ),
+        "release build may write contents": (
+            release.replace("      id-token: write\n", "      contents: write\n", 1),
+            "only the publish job may hold contents: write",
+        ),
+    })
     # Boundary: needs as flow and block lists with other entries stay accepted.
     for label, needs in (
         ("flow", "    needs: [other, ci]\n"),
@@ -2593,15 +2715,59 @@ def release_gate_regressions(source: str, relative: str) -> list[str]:
         boundary = release.replace("    needs: ci\n", needs, 1)
         if boundary == release or validate_workflow_text(release_rel, boundary):
             failures.append(f"workflow regression: needs {label} list was rejected")
-    if validate_workflow_text(release_rel, release):
-        failures.append("workflow regression: current release.yml is rejected")
     no_call = source.replace("  workflow_call:\n", "", 1)
     if no_call == source or not any(
         "must declare workflow_call" in e
         for e in validate_workflow_text(relative, no_call)
     ):
         failures.append("workflow regression: ci.yml without workflow_call was accepted")
-    return failures
+    return failures + release_build_regressions()
+
+
+def release_build_regressions() -> list[str]:
+    """Prove the ADR-0169 reusable release build contract is enforced."""
+    path = WORKFLOWS[2]
+    text = path.read_text(encoding="utf-8")
+    attest = "      - name: Attest build provenance (SLSA v1.0)\n"
+    download = (
+        "      - uses: actions/download-artifact@" + "0" * 40 + "\n"
+        "        with:\n          name: x\n"
+    )
+    return _rejected(path.relative_to(ROOT).as_posix(), text, {
+        "release build also runs on push": (
+            text.replace("  workflow_call:\n", "  push:\n  workflow_call:\n", 1),
+            "must be triggered by workflow_call only",
+        ),
+        "artefact downloaded before the attestation": (
+            text.replace(attest, download + attest, 1),
+            "release build must not use actions/download-artifact",
+        ),
+        "attestation without a build step": (
+            text.replace("run: make build BUILD_DIR=build", "run: ninja -C build", 1),
+            "release build is missing run: make build BUILD_DIR=build",
+        ),
+        "signature before the attestation": (
+            text.replace(attest, "      - run: cosign sign-blob --yes --bundle "
+                         "SHA256SUMS.sigstore.json SHA256SUMS\n" + attest, 1),
+            "release build steps are out of order",
+        ),
+        "SBOM uploaded to the release by the action": (
+            text.replace("upload-release-assets: false", "upload-release-assets: true", 1),
+            "release build is missing upload-release-assets: false",
+        ),
+        "signature verified without the signer identity": (
+            text.replace("--certificate-identity-regexp", "--certificate-identity-ignored", 1),
+            "release build is missing --certificate-identity-regexp",
+        ),
+        "release build without tag==version step": (
+            text.replace("name: Tag matches the project version", "name: Other", 1),
+            "release build is missing the tag==version step",
+        ),
+        "tag step without error annotation": (
+            text.replace("::error::", "", 1),
+            "tag==version step is missing ::error::",
+        ),
+    })
 
 
 def workflow_validator_regressions() -> list[str]:

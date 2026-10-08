@@ -6,9 +6,13 @@ description: Use when cutting a Pelorus release — verify the gate, bump the ve
 # /cut-release
 
 Releases are **tag-triggered**: pushing `vX.Y.Z` runs `.github/workflows/release.yml`,
-which first runs the full CI workflow, asserts the tag equals the `meson.build`
-version, gates on build+tests, extracts notes from the `[Unreleased]` changelog
-block, packages the FFmpeg patch stack, and publishes the GitHub release.
+which first runs the full CI workflow, then calls `.github/workflows/release-build.yml`.
+That reusable workflow asserts the tag equals the `meson.build` version, gates on
+build+tests, extracts notes from the `[Unreleased]` changelog block, packages the
+FFmpeg patch stack, writes an SPDX SBOM and `SHA256SUMS`, attests SLSA build
+provenance, and signs `SHA256SUMS` with cosign (ADR-0169). The `publish` job then
+creates the GitHub release with five assets: `pelorus-ffmpeg-patches-vX.Y.Z.tar.gz`,
+`.spdx.json`, `.provenance.sigstore.json`, `SHA256SUMS`, `SHA256SUMS.sigstore.json`.
 
 ## Steps
 
@@ -28,7 +32,9 @@ block, packages the FFmpeg patch stack, and publishes the GitHub release.
    git tag vX.Y.Z && git push origin vX.Y.Z
    ```
 
-6. Watch `gh run watch` for the release job; verify `gh release view vX.Y.Z`.
+6. Watch `gh run watch` for the release run; check `gh release view vX.Y.Z` lists
+   the five assets, then verify them as `docs/development/build.md`
+   ("Verifying a release") shows.
 
 ## Rules
 
