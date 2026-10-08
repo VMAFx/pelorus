@@ -1,0 +1,20 @@
+feat(vulkan): carry unregistered user data SEI side data in H.264/HEVC
+
+The Vulkan Video encoders write A/53 captions and HDR SEI but drop
+AV_FRAME_DATA_SEI_UNREGISTERED, so the PelorusSideData blob never reaches the
+bitstream on the zero-copy path.
+
+Add a udu_sei AVOption (default off, same name as nvenc and qsv) to
+h264_vulkan and hevc_vulkan. When set and the input frame carries
+SEI_UNREGISTERED side data, write_extra_headers adds one
+user_data_unregistered SEI message per entry (up to four, UUID taken from the
+first 16 bytes) to the picture's access unit through the existing CBS SEI path.
+Entries shorter than the UUID are skipped.
+
+AV1 is not covered: vulkan_encode_av1.c writes only HDR metadata OBUs and has
+no passthrough for unregistered or T.35 payloads.
+
+Verified on an Arc A380 (ANV) and a Radeon 610M (RADV): four frames through
+pelorus_analyze_vulkan and pelorus_deband_vulkan give four Pelorus blobs in the
+H.264 and HEVC streams. The RTX 4090 driver on this host does not expose
+VK_KHR_video_encode_queue, so it was not tested.

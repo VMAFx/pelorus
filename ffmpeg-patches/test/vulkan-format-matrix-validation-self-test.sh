@@ -121,4 +121,41 @@ grep -Fx 'VUID-VkImageMemoryBarrier2-srcAccessMask-03909' \
 grep -Fx 'VUID-VkCopyImageToMemoryInfo-srcImageLayout-09064' \
     "$RUN_ROOT/allowlist/evidence/validation-known-upstream.txt" >/dev/null
 
+# An expired entry, and an entry without a reference, must not match.
+stale_case()
+{
+    local name="$1"
+    local vuid="$2"
+    local entry="$3"
+    local status=0
+    local root="$RUN_ROOT/$name"
+
+    mkdir -p "$root/evidence"
+    printf '%s\n' "$entry" "$4" >"$root/allowlist.txt"
+    PATH="$RUN_ROOT/bin:$PATH" \
+    PEL_FAKE_SCENARIO=allowlist \
+    PEL_FAKE_STATE="$root/state" \
+    FFMPEG_BIN="$RUN_ROOT/bin/ffmpeg" \
+    OUTPUT_ROOT="$root/evidence" \
+    PELORUS_VALIDATE=1 \
+    PEL_VUID_ALLOWLIST="$root/allowlist.txt" \
+        "$HERE/vulkan-format-matrix.sh" >"$root/run.stdout" 2>"$root/run.stderr" || status=$?
+    if ((status == 0)); then
+        echo "FAIL: $name entry was accepted" >&2
+        return 1
+    fi
+    grep -F "device-probe.stdout: $vuid" "$root/run.stderr" >/dev/null || {
+        sed -n '1,40p' "$root/run.stderr" >&2
+        echo "FAIL: $name entry was not reported as unexpected" >&2
+        return 1
+    }
+}
+
+stale_case expired VUID-VkImageMemoryBarrier2-srcAccessMask-03909 \
+    'VkImageMemoryBarrier2-srcAccessMask-03909 | #214 | 2020-01-01' \
+    'VkCopyImageToMemoryInfo-srcImageLayout-09064 | #214 | 2999-01-01'
+stale_case no-reference VUID-VkCopyImageToMemoryInfo-srcImageLayout-09064 \
+    'VkCopyImageToMemoryInfo-srcImageLayout-09064 | | 2999-01-01' \
+    'VkImageMemoryBarrier2-srcAccessMask-03909 | #214 | 2999-01-01'
+
 echo 'Vulkan validation stream self-test: PASS'

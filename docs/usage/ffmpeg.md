@@ -376,3 +376,24 @@ NVENC chooses itself. No grain-match or BD-rate number ships yet. See
 - Prefer **10-bit** intermediate/output even for 8-bit delivery — it preserves
   the dithered gradient through quantization (research 0101).
 - List options: `ffmpeg -h filter=pelorus_deband_vulkan`.
+
+## Carrying the side-data blob into the bitstream (`udu_sei`)
+
+The `PelorusSideData` blob rides each frame as `AV_FRAME_DATA_SEI_UNREGISTERED`.
+Encoders write it into the H.264 or HEVC stream as a user-data-unregistered SEI
+message when `-udu_sei 1` is set (default off):
+
+| Encoder | Source of the option |
+| --- | --- |
+| `h264_nvenc`, `hevc_nvenc` | stock FFmpeg |
+| `h264_qsv`, `hevc_qsv` | patch 0019 |
+| `h264_vulkan`, `hevc_vulkan` | patch 0020 |
+
+```bash
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
+       -vf "format=nv12,hwupload,pelorus_analyze_vulkan,hwdownload,format=nv12" \
+       -c:v hevc_qsv -udu_sei 1 out.mkv
+```
+
+AV1 encoders do not carry it. The tester stage `sidedata_roundtrip` reads the
+blob back from the stream and from a decode: [tester kit stages](tester.md).

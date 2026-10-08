@@ -5,6 +5,36 @@ Re-apply / re-test work created for the FFmpeg patch stack after an upstream
 FFmpeg bump or a `libpelorus` ABI change. One entry per change that affects the
 patches (ADR-0108 deliverable #6).
 
+## 0.3.0 — patches 0019 and 0020 (`udu_sei` for QSV and Vulkan Video; cumulative on 0001–0018)
+
+- **Patches**: `ffmpeg-patches/0019-qsv-pelorus-udu-sei.patch` (canonical diff
+  `files/qsv-pelorus-udu-sei.patch`) and
+  `ffmpeg-patches/0020-vulkan-pelorus-udu-sei.patch` (`files/vulkan-pelorus-udu-sei.patch`).
+  Hand-maintained libavcodec diffs applied by `generate.sh` after 0018, so no
+  shipped patch is renumbered. They carry `AV_FRAME_DATA_SEI_UNREGISTERED`
+  (the `PelorusSideData` blob) into the H.264 and HEVC bitstream, behind a
+  `udu_sei` AVOption (default off) named like the stock NVENC option.
+- **0019 touches**: `libavcodec/qsvenc.c` (new `qsvenc_add_udu_payloads`, called
+  after `set_encode_ctrl_cb` and before `EncodeFrameAsync`), `qsvenc.h`
+  (`QSVEncContext.udu_sei`), `qsvenc_h264.c` and `qsvenc_hevc.c` (the option).
+  Each side-data entry becomes one `mfxPayload` (type 5, SEI header in front of
+  UUID and data) in the free slots of `QSV_MAX_ENC_PAYLOAD`, freed by
+  `free_encoder_ctrl`. Rebase risk: the payload slot count, `set_encode_ctrl_cb`
+  order and `free_encoder_ctrl` ownership.
+- **0020 touches**: `libavcodec/vulkan_encode_h264.c` and `vulkan_encode_h265.c`:
+  a `UNIT_SEI_UDU` unit, the `udu_sei` option, a check in the picture-header
+  preparation and CBS `SEI_TYPE_USER_DATA_UNREGISTERED` messages in
+  `write_extra_headers`. Rebase risk: the `UnitElems` enum, the `FF_HW_BASE`
+  picture header hooks and `ff_cbs_sei_add_message` (prefix flag).
+- **Not covered**: AV1. `qsvenc_av1.c` and `vulkan_encode_av1.c` have no
+  passthrough for unregistered or T.35 metadata OBUs; adding one is a separate
+  decision.
+- **Re-test after rebase**: replay the full stack with
+  `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh`
+  (it checks `udu_sei` on `h264_qsv`, `hevc_qsv`, `h264_vulkan`, `hevc_vulkan`),
+  then run the tester stage `sidedata_roundtrip`
+  ([usage](usage/tester.md)) on a device with each encoder.
+
 ## 0.3.0 — FFmpeg base bump n9.0.1 → n9.0.2
 
 - **Immutable base**: `build-config.env` binds tag `n9.0.2` to peeled commit

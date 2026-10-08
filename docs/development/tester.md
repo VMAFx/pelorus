@@ -2,11 +2,13 @@
 # Tester kit: run it, read the report, file it
 
 A tester runs one prepared kit on hardware the project does not own and sends
-back one JSON report. This page covers the report program that exists today
-([ADR-0173](../adr/0173-tester-programme.md)). The images that bundle it
-(NVIDIA, Intel, AMD, arm64) and the stage runners are later children of
-[#108](https://github.com/VMAFx/pelorus/issues/108); until they land, six of
-the eight stages are recorded as `not_run` with that reason.
+back one JSON report. This page covers the report program
+([ADR-0173](../adr/0173-tester-programme.md)). The stage runners and their pass
+rules are in [tester kit stages](../usage/tester.md). The images that bundle
+the kit (NVIDIA, Intel, AMD, arm64) are later children of
+[#108](https://github.com/VMAFx/pelorus/issues/108); `libpelorus_suite` and
+`registration` have no runner yet and are recorded as `not_run` with that
+reason.
 
 A tester package is evidence for one `master` commit, named
 `tester-<YYYYMMDD>-<sha8>`. It is not a release and is never `latest`.
@@ -37,7 +39,11 @@ Options of `run`:
 | `--note TEXT` | free text stored in the report (redacted like everything else) |
 | `--plan FILE` | JSON that overrides stage commands, `{"stages": {"<id>": {"argv": [...], "timeout_s": 60, "expect": "regex"}}}` |
 
-The run needs no network. It writes nothing outside `--out`.
+The run needs no network. It writes the report only under `--out`, keeps its
+scratch files in a temporary directory that it removes, and reads fixtures from
+the cache described in [tester kit stages](../usage/tester.md#fixtures).
+`FFMPEG_BIN` names the patched FFmpeg; `PELORUS_VALIDATE=1` fails every GPU
+stage when the Vulkan validation layer is absent.
 
 ## 2. Read the report
 
@@ -56,7 +62,7 @@ Stage statuses:
 | Status | Meaning |
 | --- | --- |
 | `pass` | exit code 0 and, if the stage names one, the expected output matched |
-| `fail` | non-zero exit code or the expected output was absent |
+| `fail` | non-zero exit code, the expected output was absent, or the stage's pass rule was not met |
 | `not_run` | skipped on purpose, with the reason (opt-in stage, command not found, runner not yet part of the kit) |
 | `no_device` | needs a hardware Vulkan device and none is visible; the reason names the option to add. Not a failure |
 | `incomplete` | the stage timed out |
@@ -64,7 +70,7 @@ Stage statuses:
 The eight stages run in this order: `probe` (`vulkaninfo --summary`),
 `libpelorus_suite`, `registration`, `format_matrix`, `steering_smoke`,
 `sidedata_roundtrip`, `zero_copy_chain`, `bench`. The pass rule of each stage
-is specified in [#227](https://github.com/VMAFx/pelorus/issues/227). A software
+is listed in [tester kit stages](../usage/tester.md#stages). A software
 device (lavapipe, `PHYSICAL_DEVICE_TYPE_CPU`) does not count as hardware.
 
 `report.json` follows [`tools/tester/report.schema.json`](../../tools/tester/report.schema.json),
@@ -133,7 +139,8 @@ python3 -I tools/tester/pelorus_tester_report.py --self-test --disable redaction
 
 Rule names for `--disable`: `no_device_nonfailure`, `redaction`,
 `exit_mapping`, `truncation`, `schema_version`, `reason_required`,
-`stage_failure`. Changing a report field means changing the schema, the
+`stage_failure`, `bench_nongating`, plus the stage and fixture rules listed in
+[tester kit stages](../usage/tester.md#planted-failures). Changing a report field means changing the schema, the
 program, a planted case and this page in one change.
 
 ## Related

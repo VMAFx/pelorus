@@ -197,8 +197,8 @@ while IFS= read -r patch || [[ -n "$patch" ]]; do
     fi
     PATCHES+=("$patch")
 done < "$PATCHDIR/series.txt"
-if (( ${#PATCHES[@]} != 18 )); then
-    echo "ERROR: expected 18 patches, found ${#PATCHES[@]}" >&2
+if (( ${#PATCHES[@]} != 20 )); then
+    echo "ERROR: expected 20 patches, found ${#PATCHES[@]}" >&2
     exit 1
 fi
 
@@ -276,7 +276,7 @@ verify_static_avfilter_consumer() {
     "$consumer"
 }
 
-run_logged "apply 18-patch FFmpeg stack" "$LOG_DIR/ffmpeg-apply.log" \
+run_logged "apply 20-patch FFmpeg stack" "$LOG_DIR/ffmpeg-apply.log" \
     apply_stack
 run_logged "configure FFmpeg" "$LOG_DIR/ffmpeg-configure.log" \
     configure_ffmpeg
@@ -364,8 +364,8 @@ verify_encoder_options() {
 }
 
 if pkg-config --exists vpl; then
-    verify_encoder_options h264_qsv pelorus_roi
-    verify_encoder_options hevc_qsv pelorus_roi
+    verify_encoder_options h264_qsv pelorus_roi udu_sei
+    verify_encoder_options hevc_qsv pelorus_roi udu_sei
 fi
 if pkg-config --exists aom; then
     verify_encoder_options libaom-av1 pelorus_roi
@@ -378,8 +378,8 @@ if pkg-config --exists ffnvcodec; then
     verify_encoder_options hevc_nvenc pelorus_roi pelorus_me_hints
     verify_encoder_options av1_nvenc pelorus_roi pelorus_film_grain
 fi
-verify_encoder_options h264_vulkan pelorus_roi
-verify_encoder_options hevc_vulkan pelorus_roi
+verify_encoder_options h264_vulkan pelorus_roi udu_sei
+verify_encoder_options hevc_vulkan pelorus_roi udu_sei
 verify_encoder_options av1_vulkan pelorus_roi
 
-echo "OK: 18 patches applied and ffmpeg linked against private libpelorus"
+echo "OK: 20 patches applied and ffmpeg linked against private libpelorus"

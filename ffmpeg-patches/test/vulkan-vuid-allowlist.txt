@@ -1,0 +1,25 @@
+# Upstream-owned Vulkan validation diagnostics that the tester may pass.
+# One line per VUID: <VUID without the "VUID-" prefix> | <reference> | <expiry>
+#   reference = issue or filed report that owns the defect (VMAFx/pelorus#214 or an upstream URL)
+#   expiry    = YYYY-MM-DD, at most 180 days ahead when added; an expired entry stops matching
+# Read by ffmpeg-patches/test/vulkan-format-matrix.sh and tools/tester/pelorus_tester_stages.py.
+# Anything not listed fails. Evidence per entry: docs/adr/0143-ffmpeg-9-migration.md,
+# docs/research/0147-vulkan-storage-domain.md.
+vkCmdCopyBufferToImage-srcBuffer-00174 | #214 | 2027-03-31
+vkCmdCopyImageToBuffer-dstBuffer-00191 | #214 | 2027-03-31
+VkCopyImageToMemoryInfo-srcImageLayout-09064 | #214 | 2027-03-31
+VkDescriptorSetLayoutBinding-descriptorType-00282 | #214 | 2027-03-31
+VkImageMemoryBarrier2-srcAccessMask-03909 | #214 | 2027-03-31
+VkImageMemoryBarrier2-srcAccessMask-07454 | #214 | 2027-03-31
+# Vulkan Video (Intel ANV, FFmpeg n9.0.2). Each reproduces with a plain FFmpeg
+# command and no Pelorus filter or patch: encode = lavfi testsrc2 | hwupload |
+# {h264,hevc,av1}_vulkan; decode = -hwaccel vulkan (08334 also with stock gblur_vulkan).
+# #214 gets a checklist line for each before filing. Re-check on every FFmpeg or driver bump.
+vkCmdEncodeVideoKHR-pEncodeInfo-08206 | #214 | 2027-03-31
+vkDestroyDevice-device-05137 | #214 | 2027-03-31
+vkCmdEncodeVideoKHR-pStdPictureInfo-10350 | #214 | 2027-03-31
+VkVideoEncodeAV1PictureInfoKHR-pStdPictureInfo-10291 | #214 | 2027-03-31
+vkCmdDecodeVideoKHR-pDecodeInfo-07142 | #214 | 2027-03-31
+VkVideoBeginCodingInfoKHR-pPictureResource-07240 | #214 | 2027-03-31
+VkImageCreateInfo-pNext-06811 | #214 | 2027-03-31
+VkImageViewCreateInfo-image-08334 | #214 | 2027-03-31

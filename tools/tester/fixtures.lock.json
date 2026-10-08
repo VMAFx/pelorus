@@ -1,0 +1,51 @@
+{
+  "lock_version": 1,
+  "description": "Tester fixtures (ADR-0173, #225). Each entry pins the bytes the tester decodes by SHA-256 and records the licence of those bytes. Verified offline; fetched at most once into the cache. netflix-bar is not listed: its licence is unconfirmed and it is not shipped until it is.",
+  "fixtures": [
+    {
+      "name": "synth-banding",
+      "file": "synth-banding.yuv",
+      "sha256": "aa1ec0f0a18e45abf5e8aea68a4d6a141ece361744a4dd222557a81b6b7efdba",
+      "size": 8294400,
+      "pixfmt": "yuv420p",
+      "width": 640,
+      "height": 360,
+      "frames": 24,
+      "fps": 25,
+      "generate": {
+        "lavfi": "gradients=size=640x360:x0=0:y0=0:x1=0:y1=360:c0=0x060608:c1=0x2a3038:nb_colors=2:rate=25:seed=1",
+        "note": "seed=1 is required: the filter is random without it. Hash pinned against FFmpeg n9.0.2."
+      },
+      "licence": {
+        "spdx": "EUPL-1.2",
+        "holder": "2026 Lusoris",
+        "source": "generated from the recorded lavfi recipe; no third-party content",
+        "attribution": ""
+      }
+    },
+    {
+      "name": "bbb",
+      "file": "bbb.yuv",
+      "sha256": "9fcbaa5822b2db153fa3b0f84b8de945384a1b5ff64d314b0c950e66975c6ae9",
+      "size": 16588800,
+      "pixfmt": "yuv420p",
+      "width": 640,
+      "height": 360,
+      "frames": 48,
+      "fps": 30,
+      "download": {
+        "url": "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_30MB.mp4",
+        "sha256": "1472c825b2936af0a23f1fb9d5f672423f71bc4b8f563f9db47fd767f01168dd",
+        "max_bytes": 67108864,
+        "input_args": ["-ss", "4", "-t", "2"],
+        "filter": "scale=640:360:flags=bicubic,format=yuv420p"
+      },
+      "licence": {
+        "spdx": "CC-BY-3.0",
+        "holder": "Blender Foundation",
+        "source": "https://peach.blender.org/ (Big Buck Bunny, 2008)",
+        "attribution": "Big Buck Bunny, (c) copyright 2008, Blender Foundation, www.bigbuckbunny.org, licensed under Creative Commons Attribution 3.0 (https://creativecommons.org/licenses/by/3.0/). Changes: a 2 second excerpt of a third-party 640x360 H.264 transcode, rescaled and decoded to raw YUV 4:2:0."
+      }
+    }
+  ]
+}

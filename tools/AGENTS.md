@@ -11,7 +11,7 @@ deliverable (ADR-0108). Gated by `tools` meson option (default on).
 ```text
 tools/
 ├── pelorus_qp_report.c   x265 --csv -> PEL_SEC_QPREPORT demonstrator (ADR-0122)
-└── tester/               tester report program + schema, Python stdlib only (ADR-0173)
+└── tester/               tester report program, stage runners, fixtures + lock, schema; Python stdlib only (ADR-0173)
 ```
 
 ## Conventions
@@ -46,3 +46,10 @@ tools/
   `docs/development/tester.md` in one change.
 - New validator rule -> planted bad case + RULES entry so
   `--self-test --disable <rule>` goes red.
+- Stage runners = `pelorus_tester_stages.py`; pass rules = small pure functions,
+  each with planted case. Fixtures = `pelorus_tester_fixtures.py` +
+  `fixtures.lock.json`; every entry pinned by SHA-256 + licence record.
+  Stage or fixture change -> `docs/usage/tester.md` same change.
+  Device, encoder or layer missing -> `not_run`/`no_device` + reason;
+  `PELORUS_VALIDATE=1` + layer missing -> `fail`. No silent fallback.
+- Siblings load by path (`importlib`): `python3 -I` drops script dir from `sys.path`.

@@ -1,0 +1,176 @@
+diff --git a/libavcodec/vulkan_encode_h264.c b/libavcodec/vulkan_encode_h264.c
+index 33a9b0a7b8..f46c928dd5 100644
+--- a/libavcodec/vulkan_encode_h264.c
++++ b/libavcodec/vulkan_encode_h264.c
+@@ -38,8 +38,11 @@ enum UnitElems {
+     UNIT_SEI_IDENTIFIER = 1 << 2,
+     UNIT_SEI_RECOVERY   = 1 << 3,
+     UNIT_SEI_A53_CC     = 1 << 4,
++    UNIT_SEI_UDU        = 1 << 5,
+ };
+ 
++#define UDU_SEI_MAX 4
++
+ const FFVulkanEncodeDescriptor ff_vk_enc_h264_desc = {
+     .codec_id         = AV_CODEC_ID_H264,
+     .encode_extension = FF_VK_EXT_VIDEO_ENCODE_H264,
+@@ -92,6 +95,7 @@ typedef struct VulkanEncodeH264Context {
+     FFHWBaseEncodeH264Opts unit_opts;
+ 
+     enum UnitElems unit_elems;
++    int udu_sei;
+ 
+     uint8_t fixed_qp_p;
+     uint8_t fixed_qp_b;
+@@ -241,6 +245,18 @@ static int vk_enc_h264_update_pic_info(AVCodecContext *avctx,
+         }
+     }
+ 
++    if (enc->udu_sei) {
++        for (int i = 0; i < pic->input_image->nb_side_data; i++) {
++            const AVFrameSideData *sd = pic->input_image->side_data[i];
++
++            /* same predicate as write_extra_headers: UUID plus payload */
++            if (sd->type == AV_FRAME_DATA_SEI_UNREGISTERED && sd->size >= 16) {
++                hp->units_needed |= UNIT_SEI_UDU;
++                break;
++            }
++        }
++    }
++
+     return 0;
+ }
+ 
+@@ -1264,6 +1280,7 @@ static int write_extra_headers(AVCodecContext *avctx,
+     VulkanEncodeH264Context *enc = avctx->priv_data;
+     VulkanEncodeH264Picture  *hp = base_pic->codec_priv;
+     CodedBitstreamFragment   *au = &enc->current_access_unit;
++    SEIRawUserDataUnregistered udu[UDU_SEI_MAX] = { 0 };
+ 
+     if (hp->units_needed & UNIT_AUD) {
+         err = vulkan_encode_h264_add_nal(avctx, au, &enc->raw_aud);
+@@ -1310,6 +1327,27 @@ static int write_extra_headers(AVCodecContext *avctx,
+             goto fail;
+     }
+ 
++    if (hp->units_needed & UNIT_SEI_UDU) {
++        const AVFrame *in = base_pic->input_image;
++        int n = 0;
++
++        for (int i = 0; i < in->nb_side_data && n < UDU_SEI_MAX; i++) {
++            const AVFrameSideData *sd = in->side_data[i];
++
++            if (sd->type != AV_FRAME_DATA_SEI_UNREGISTERED || sd->size < 16)
++                continue;
++            memcpy(udu[n].uuid_iso_iec_11578, sd->data, 16);
++            udu[n].data        = sd->data + 16;
++            udu[n].data_length = sd->size - 16;
++            err = ff_cbs_sei_add_message(enc->cbs, au, 1,
++                                         SEI_TYPE_USER_DATA_UNREGISTERED,
++                                         &udu[n], NULL);
++            if (err < 0)
++                goto fail;
++            n++;
++        }
++    }
++
+     if (hp->units_needed) {
+         err = write_access_unit(avctx, data, data_len, au);
+         if (err < 0)
+@@ -1623,6 +1661,8 @@ static const AVOption vulkan_encode_h264_options[] = {
+         { "recovery",   "Include recovery points where appropriate", 0, AV_OPT_TYPE_CONST, { .i64 = UNIT_SEI_RECOVERY }, INT_MIN, INT_MAX, FLAGS, "units" },
+         { "a53_cc",     "Include A/53 caption data", 0, AV_OPT_TYPE_CONST, { .i64 = UNIT_SEI_A53_CC }, INT_MIN, INT_MAX, FLAGS, "units" },
+ 
++    { "udu_sei", "Include unregistered user data SEI from frame side data (Pelorus side data)", OFFSET(udu_sei), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
++
+     { NULL },
+ };
+ 
+diff --git a/libavcodec/vulkan_encode_h265.c b/libavcodec/vulkan_encode_h265.c
+index 98e0d7bc32..c0c8a0aaa2 100644
+--- a/libavcodec/vulkan_encode_h265.c
++++ b/libavcodec/vulkan_encode_h265.c
+@@ -36,8 +36,11 @@ enum UnitElems {
+     UNIT_SEI_MASTERING_DISPLAY   = 1 << 1,
+     UNIT_SEI_CONTENT_LIGHT_LEVEL = 1 << 2,
+     UNIT_SEI_A53_CC              = 1 << 3,
++    UNIT_SEI_UDU                 = 1 << 4,
+ };
+ 
++#define UDU_SEI_MAX 4
++
+ const FFVulkanEncodeDescriptor ff_vk_enc_h265_desc = {
+     .codec_id         = AV_CODEC_ID_H265,
+     .encode_extension = FF_VK_EXT_VIDEO_ENCODE_H265,
+@@ -84,6 +87,7 @@ typedef struct VulkanEncodeH265Context {
+     FFHWBaseEncodeH265Opts unit_opts;
+ 
+     enum UnitElems unit_elems;
++    int udu_sei;
+ 
+     uint8_t fixed_qp_idr;
+     uint8_t fixed_qp_p;
+@@ -288,6 +292,18 @@ static int vk_enc_h265_update_pic_info(AVCodecContext *avctx,
+         }
+     }
+ 
++    if (enc->udu_sei) {
++        for (int i = 0; i < pic->input_image->nb_side_data; i++) {
++            const AVFrameSideData *sd = pic->input_image->side_data[i];
++
++            /* same predicate as write_extra_headers: UUID plus payload */
++            if (sd->type == AV_FRAME_DATA_SEI_UNREGISTERED && sd->size >= 16) {
++                hp->units_needed |= UNIT_SEI_UDU;
++                break;
++            }
++        }
++    }
++
+     return 0;
+ }
+ 
+@@ -1447,6 +1463,7 @@ static int write_extra_headers(AVCodecContext *avctx,
+     VulkanEncodeH265Context *enc = avctx->priv_data;
+     VulkanEncodeH265Picture  *hp = base_pic->codec_priv;
+     CodedBitstreamFragment   *au = &enc->current_access_unit;
++    SEIRawUserDataUnregistered udu[UDU_SEI_MAX] = { 0 };
+ 
+     if (hp->units_needed & UNIT_AUD) {
+         err = vulkan_encode_h265_add_nal(avctx, au, &enc->raw_aud);
+@@ -1477,6 +1494,27 @@ static int write_extra_headers(AVCodecContext *avctx,
+             goto fail;
+     }
+ 
++    if (hp->units_needed & UNIT_SEI_UDU) {
++        const AVFrame *in = base_pic->input_image;
++        int n = 0;
++
++        for (int i = 0; i < in->nb_side_data && n < UDU_SEI_MAX; i++) {
++            const AVFrameSideData *sd = in->side_data[i];
++
++            if (sd->type != AV_FRAME_DATA_SEI_UNREGISTERED || sd->size < 16)
++                continue;
++            memcpy(udu[n].uuid_iso_iec_11578, sd->data, 16);
++            udu[n].data        = sd->data + 16;
++            udu[n].data_length = sd->size - 16;
++            err = ff_cbs_sei_add_message(enc->cbs, au, 1,
++                                         SEI_TYPE_USER_DATA_UNREGISTERED,
++                                         &udu[n], NULL);
++            if (err < 0)
++                goto fail;
++            n++;
++        }
++    }
++
+     if (hp->units_needed) {
+         err = write_access_unit(avctx, data, data_len, au);
+         if (err < 0)
+@@ -1755,6 +1793,8 @@ static const AVOption vulkan_encode_h265_options[] = {
+         { "hdr",        "Include HDR metadata for mastering display colour volume and content light level information", 0, AV_OPT_TYPE_CONST, { .i64 = UNIT_SEI_MASTERING_DISPLAY | UNIT_SEI_CONTENT_LIGHT_LEVEL }, INT_MIN, INT_MAX, FLAGS, "units" },
+         { "a53_cc",     "Include A/53 caption data", 0, AV_OPT_TYPE_CONST, { .i64 = UNIT_SEI_A53_CC }, INT_MIN, INT_MAX, FLAGS, "units" },
+ 
++    { "udu_sei", "Include unregistered user data SEI from frame side data (Pelorus side data)", OFFSET(udu_sei), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
++
+     { NULL },
+ };
+ 
