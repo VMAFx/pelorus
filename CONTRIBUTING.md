@@ -173,4 +173,4 @@ Every commit carries a sign-off: `git commit -s` appends
 [Developer Certificate of Origin 1.1](https://developercertificate.org/), that
 you wrote the change or have the right to submit it under the licence of the
 files it touches. There is no contributor licence agreement. Bot commits
-(Renovate) are exempt. No CI check enforces the sign-off yet.
+(Renovate) are exempt. The `commit-msg` Lefthook job (installed with `make hooks-install`) checks the trailer locally, and the `Standards` workflow checks every pull request commit in its "Verify DCO sign-off" step, so an unsigned commit fails the pull request.
