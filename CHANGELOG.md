@@ -99,6 +99,7 @@ All notable changes to Pelorus are documented here. The format is
 
 ### Fixed
 
+- Documented that the `ffmpeg` command line needs `-force_key_frames source` for `pelorus_scenecut`'s forced keyframes to reach the encoder: `fftools` overwrites `frame->pict_type` before each encode (`fftools/ffmpeg_enc.c:798` at `n9.0.2`), and the `source` mode keys on the `AV_FRAME_FLAG_KEY` the filter sets ([ADR-0126](docs/adr/0126-scenecut-idr.md)).
 - Fixed QSV dense ROI maps to remain frame-owned through asynchronous encode, bounded the path to progressive HEVC+CQP on runtime API 1.28 or newer, preserved stock ROI fallback elsewhere, and added checked aligned-layout regression coverage ([ADR-0146](docs/adr/0146-qsv-roi-frame-ownership.md)).
 - Corrected all arithmetic Vulkan filters to convert storage-image values into
   the logical sample domain before applying normalized thresholds, so planar
