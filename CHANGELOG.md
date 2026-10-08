@@ -19,6 +19,12 @@ All notable changes to Pelorus are documented here. The format is
   conformance, and Praetor's pre-tool command hook in the Claude Code, Codex,
   and Gemini CLI settings, which needs `praetorctl` on `PATH`
   ([ADR-0145](docs/adr/0145-praetor-governance-adoption.md)).
+- Releases now carry SLSA v1.0 build provenance, an SPDX SBOM of the patch
+  archive, `SHA256SUMS`, and a keyless cosign signature of it
+  (`SHA256SUMS.sigstore.json`). A reusable workflow, `release-build.yml`,
+  builds, attests, and signs; the publishing job only uploads its files on a
+  tag push. `docs/development/build.md` shows how to verify a release
+  ([ADR-0169](docs/adr/0169-release-provenance-slsa3.md)).
 
 ### Changed
 
@@ -69,6 +75,15 @@ All notable changes to Pelorus are documented here. The format is
   advisories, six high)
   ([ADR-0154](docs/adr/0154-praetor-engine-repin.md)).
 - The release workflow now calls the full CI workflow (patch-stack replay and link, sanitizers, Windows, docs) and publishes only after it passes, and a tag push fails unless the tag equals the `meson.build` version; `scripts/check-build-config.py` enforces both (audit A14, A15).
+- Re-pinned the Praetor governance engine from `0af07a73` to `492a00f9`. Every
+  hosted `meson setup` now passes `--werror`, because the engine's audit reads
+  only the command line. clang-tidy now lints the libpelorus tests, the
+  `pelorus_qp_report` tool, and the two Meson-built FFmpeg-patch tests as well
+  as the library, from one list in `.config/clang-tidy/lane-files.txt`; the 13
+  units that build only inside an FFmpeg tree carry dated exceptions until
+  #94 adds a lane for them. A local `make audit` no longer fails on the
+  declined Git hooks, and the documentation gate needs Node.js 22.12 or newer
+  ([ADR-0168](docs/adr/0168-praetor-engine-492a00f.md)).
 - The interop sources and their conformance test now pass clang-tidy at the
   VMAFx profile, which lints the vendored copies. The conformance test splits
   its long checks into helpers and patches blob headers through `memcpy`

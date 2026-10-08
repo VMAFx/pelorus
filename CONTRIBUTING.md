@@ -13,10 +13,7 @@ and follows the same engineering contract. Read [AGENTS.md](AGENTS.md) and
   refactor, docs, test, build, ci, chore, revert`. `!` / `BREAKING CHANGE:`
   for breaks. Branches: `type/<slug>`.
 - **Local gate before pushing.** Run `make verify-native`. If the pinned
-  Praetor engine is installed, also run `make -k verify-all`. Outside CI the
-  audit fails only its final `.git/hooks/pre-commit` check
-  ([Praetor issue 175](https://github.com/cordanaLLM/praetor/issues/175)), and
-  `-k` lets the native and documentation gates run after it;
+  Praetor engine is installed, also run `make verify-all`;
   see [Governance and agent contexts](#governance-and-agent-contexts) below.
 - **Lint-clean touched files.** Every file your PR touches leaves the tree
   warning-clean to `-Wall -Wextra -Werror` and clang-tidy. A `// NOLINT` needs
@@ -54,13 +51,13 @@ consumer reconciliation. The complete ownership map, target composition,
 baseline semantics, and failure triage are in
 [docs/development/build.md](docs/development/build.md#repository-verification-entry-points).
 
-A clean clone needs Go 1.27, Node.js 22 or newer for the documentation gate,
+A clean clone needs Go 1.27, Node.js 22.12 or newer for the documentation gate,
 and the exact Praetor engine pin used by CI:
 
 ```bash
-go install github.com/cordanaLLM/praetor/cmd/standardsctl@0af07a733e6534269b435cea185da4d1df7aba0c
+go install github.com/cordanaLLM/praetor/cmd/standardsctl@492a00f930e1a2df557ffebb76564cfa65637b77
 export PATH="$(go env GOPATH)/bin:$PATH"
-go version -m "$(command -v standardsctl)" | grep -F 0af07a733e65
+go version -m "$(command -v standardsctl)" | grep -F 492a00f930e1
 ```
 
 `standardsctl version` names the build commit, and the module
@@ -93,15 +90,17 @@ make docs-lint docs-figures   # locked Markdown and figure checks
 make verify-all               # context + audit + native Pelorus gate + docs gate
 ```
 
-Outside CI, `make audit` fails its final check because no
-`.git/hooks/pre-commit` exists while the manifest declines `git-hooks`; the
-auditor ignores that decline
-([Praetor issue 175](https://github.com/cordanaLLM/praetor/issues/175)). Every
-earlier check must pass. `make verify-all` runs the audit before
-`verify-native` and the documentation gate, so plain `make` stops there; use
-`make -k verify-all` to run the remaining gates anyway. The hosted Standards job sets `CI=true`, which makes
-the auditor skip only that hook check. Do not create a placeholder hook file,
-weaken the manifest, or run remote sync to get past it.
+The manifest declines `git-hooks`, and the audit reports that decline as a
+pass, locally and in CI. Every audit check must pass. Do not create a
+placeholder hook file, weaken the manifest, or run remote sync to get past a
+failing check.
+
+The audit also reads two lists that a code change can break. Every hosted
+`meson setup` passes `--werror`, because the audit does not read Meson's
+`default_options`. Every C file the Meson build compiles is listed in
+`.config/clang-tidy/lane-files.txt`, which `make tidy` and the `core` job lint;
+a new unit that is not listed fails the audit
+([ADR-0168](docs/adr/0168-praetor-engine-492a00f.md)).
 
 The hosted job also compares your branch with its target. The recorded
 baseline total may not grow unless the increase carries a recorded reason, and

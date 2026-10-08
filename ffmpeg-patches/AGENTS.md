@@ -1,10 +1,10 @@
 <!-- markdownlint-disable MD013 -->
 # Agent guide — ffmpeg-patches/
 
-Pelorus ships an ordered patch stack against the exact FFmpeg tag and peeled
-commit in root `build-config.env`. The current baseline is FFmpeg n9.0.2.
-Parent rules in [`../AGENTS.md`](../AGENTS.md) also apply;
-[ADR-0104](../docs/adr/0104-ffmpeg-patch-stack.md) governs the delivery model.
+Pelorus ships ordered patch stack against exact FFmpeg tag and peeled commit
+in root `build-config.env`. Current baseline: FFmpeg n9.0.2. Parent rules in
+[`../AGENTS.md`](../AGENTS.md) also apply;
+[ADR-0104](../docs/adr/0104-ffmpeg-patch-stack.md) governs delivery model.
 
 ## Source and generated artifacts
 
@@ -21,118 +21,119 @@ ffmpeg-patches/
 ```
 
 - Edit `files/`, shader sources, hand diffs, or commit-message inputs; never
-  hand-edit a numbered patch.
-- Regenerate with `FFMPEG_REPO=/absolute/path ./generate.sh`. The script reads
-  the tag and commit from `build-config.env`, verifies that the tag peels to the
-  pinned commit, uses an isolated worktree, and must be byte-stable on a second
-  run.
-- Replay the entire cumulative series with `test/build-and-run.sh`. Per-patch
-  `git apply --check` is not a substitute.
+  hand-edit numbered patch.
+- Regenerate with `FFMPEG_REPO=/absolute/path ./generate.sh`. Script reads
+  tag and commit from `build-config.env`, verifies tag peels to pinned
+  commit, uses isolated worktree, must be byte-stable on second run.
+- Replay entire cumulative series with `test/build-and-run.sh`. Per-patch
+  `git apply --check` = no substitute.
 - New `libavfilter/*.c` files carry FFmpeg's LGPL-2.1 header (`Copyright 2026
-  Lusoris`), not the libpelorus BSD-2-Clause-Patent header (ADR-0105).
+  Lusoris`), not libpelorus BSD-2-Clause-Patent header (ADR-0105).
 
 ## FFmpeg 9 Vulkan model
 
 - Model filters on FFmpeg 9's `vf_gblur_vulkan.c` / `vf_nlmeans_vulkan.c`:
   `FFVulkanContext` first, lazy pipeline initialization, explicit descriptors,
-  specialization constants, push constants matching std430, and a precompiled
+  specialization constants, push constants matching std430, precompiled
   SPIR-V shader.
-- The only shipped shader source for a filter is
+- Only shipped shader source for filter:
   `files/vulkan/pelorus_<name>.comp.glsl`. `generate.sh` copies it to
-  `libavfilter/vulkan/`, registers its `.spv.o`, and the C filter links the
-  generated `ff_pelorus_<name>_comp_spv_data[]` symbol. Do not reintroduce
-  runtime or inline GLSL. `libpelorus/shaders/*.comp` are standalone references
-  compiled by Pelorus's fast gate, not a second implementation to synchronize
+  `libavfilter/vulkan/`, registers its `.spv.o`; C filter links generated
+  `ff_pelorus_<name>_comp_spv_data[]` symbol. Do not reintroduce runtime or
+  inline GLSL. `libpelorus/shaders/*.comp` = standalone references compiled
+  by Pelorus's fast gate, not second implementation to synchronize
   (ADR-0143).
-- Compute filters use `*_filter_deps="vulkan spirv_compiler"`. `libpelorus` is
-  not an FFmpeg config component and must not appear in `_deps`; filters that
-  consume it use a guarded `require_pkg_config` probe plus a symbolic
-  `*_filter_extralibs="libpelorus_extralibs"` assignment. Never add libpelorus
-  to global executable extralibs: the per-filter assignment is what also closes
-  `avfilter_extralibs` and generated `libavfilter.pc` for static consumers. Pure
-  transforms do not link it.
-- Descriptor binding order and push-constant layout are hand-maintained across
-  C and GLSL. Specialization IDs 253/254/255 are reserved for workgroup size.
-- Keep luma-only accesses to unsized per-plane image arrays behind an explicit
-  specialization constant, even when the value is always zero. A literal
-  `[0]` lets `glslc` contract the SPIR-V descriptor to one element while
-  FFmpeg still binds every frame plane. The C specialization list and GLSL
-  `constant_id` are one contract.
-- When current and reference inputs share one `AVVkFrame`, enqueue its
-  dependency, create its views, and transition its image only once; overlapping
-  barriers for the same image in one dependency are invalid on strict drivers.
+- Compute filters use `*_filter_deps="vulkan spirv_compiler"`. `libpelorus`
+  = no FFmpeg config component; must not appear in `_deps`. Filters that
+  consume it use guarded `require_pkg_config` probe plus symbolic
+  `*_filter_extralibs="libpelorus_extralibs"` assignment. Never add
+  libpelorus to global executable extralibs: per-filter assignment also
+  closes `avfilter_extralibs` and generated `libavfilter.pc` for static
+  consumers. Pure transforms do not link it.
+- Descriptor binding order and push-constant layout: hand-maintained across
+  C and GLSL. Specialization IDs 253/254/255 reserved for workgroup size.
+- Keep luma-only accesses to unsized per-plane image arrays behind explicit
+  specialization constant, even when value always zero. Literal `[0]` lets
+  `glslc` contract SPIR-V descriptor to one element while FFmpeg still binds
+  every frame plane. C specialization list and GLSL `constant_id` = one
+  contract.
+- Current and reference inputs share one `AVVkFrame` -> enqueue its
+  dependency, create its views, transition its image only once. Overlapping
+  barriers for same image in one dependency = invalid on strict drivers.
 
 ## Rebase-sensitive invariants
 
-1. Filter registration touches `configure`, `libavfilter/Makefile`, and
-   `libavfilter/allfilters.c`; Vulkan filters also register the shader object in
-   `libavfilter/vulkan/Makefile`. Link the final FFmpeg binary: an object-only
-   build does not prove the embedded SPIR-V or `-lpelorus` wiring.
-2. Arithmetic filters convert storage-image values into the logical sample
-   domain using `pelorus_vulkan_sample.h`. `FF_VK_REP_FLOAT` only normalizes
-   against the Vulkan storage container; LSB-aligned planar 10/12-bit formats
-   need `sample_scale`, while P010/P012 require their descriptor shift. Multiply
-   loads before math and divide transform results at the store boundary.
-   Quantized P010/P012 writeback derives `code_max` from the descriptor shift as
-   a specialization constant, not a push field; denoise keeps its push block at
+1. Filter registration touches `configure`, `libavfilter/Makefile`,
+   `libavfilter/allfilters.c`; Vulkan filters also register shader object in
+   `libavfilter/vulkan/Makefile`. Link final FFmpeg binary: object-only build
+   does not prove embedded SPIR-V or `-lpelorus` wiring.
+2. Arithmetic filters convert storage-image values into logical sample domain
+   via `pelorus_vulkan_sample.h`. `FF_VK_REP_FLOAT` only normalizes against
+   Vulkan storage container. LSB-aligned planar 10/12-bit formats need
+   `sample_scale`; P010/P012 require their descriptor shift. Multiply loads
+   before math; divide transform results at store boundary. Quantized
+   P010/P012 writeback derives `code_max` from descriptor shift as
+   specialization constant, not push field. Denoise keeps its push block at
    or below Vulkan's 128-byte guaranteed minimum. Whole-texel copies such as
-   borderfix are exempt (ADR-0147).
-3. The `planes` AVOption selects physical planes. A selected semi-planar chroma
-   plane contains both U and V and both components must be processed. Scalar
-   kernels use read-modify-write so packed or otherwise unowned components are
+   borderfix: exempt (ADR-0147).
+3. `planes` AVOption selects physical planes. Selected semi-planar chroma
+   plane contains both U and V; both components must be processed. Scalar
+   kernels use read-modify-write -> packed or otherwise unowned components
    preserved. Validate selected and pass-through paths on-device.
-4. Any consumed `libpelorus` surface change requires its canonical consumer,
-   regenerated numbered patch, docs, and full-series replay in the same PR.
-   The public side-data ABI remains append-only.
-5. GLSL reserved words are invalid identifiers. Compile every canonical shader
-   before regeneration; compilation alone does not validate descriptor order,
+4. Any consumed `libpelorus` surface change -> its canonical consumer,
+   regenerated numbered patch, docs, full-series replay in same PR. Public
+   side-data ABI stays append-only.
+5. GLSL reserved words = invalid identifiers. Compile every canonical shader
+   before regeneration. Compilation alone does not validate descriptor order,
    component preservation, or runtime image formats.
-6. NVENC and QSV ROI patches (0004/0005) are hand-maintained libavcodec diffs.
-   QSV dense `mfxExtMBQP` and stock rectangle `mfxExtEncoderROI` are mutually
-   exclusive. Dense MBQP is eligible only for progressive HEVC CQP on runtime
-   API 1.28 or newer and when state cached after successful init/reset says the
-   final attached `mfxExtCodingOption3` buffer, after external-buffer merging,
-   has `EnableMBQP` enabled. An `AVQSVContext` same-BufferId replacement owns
-   that final value. Never rescan `q->param.ExtParam` per frame: parameter
-   retrieval uses a transient query list. Every other case retains stock ROI.
-   Each dense-path frame owns one contiguous header+map
-   allocation through `QSVFrame::enc_ctrl` until its surface unlocks; never
-   share mutable map scratch across asynchronous frames. Size the 16x16 raster
-   from aligned `mfxFrameInfo.Width/Height`, clip regions to the visible frame,
-   preserve zero padding, and retain every overflow/narrowing check. Build the
-   affected encoder TU with oneVPL and run the dedicated sanitizer regression
-   (ADR-0146).
+6. NVENC and QSV ROI patches (0004/0005) = hand-maintained libavcodec diffs.
+   QSV dense `mfxExtMBQP` and stock rectangle `mfxExtEncoderROI`: mutually
+   exclusive. Dense MBQP eligible only when all hold:
+   - progressive HEVC CQP;
+   - runtime API 1.28 or newer;
+   - state cached after successful init/reset says final attached
+     `mfxExtCodingOption3` buffer, after external-buffer merging, has
+     `EnableMBQP` enabled.
+
+   `AVQSVContext` same-BufferId replacement owns that final value. Never
+   rescan `q->param.ExtParam` per frame: parameter retrieval uses transient
+   query list. Every other case retains stock ROI. Each dense-path frame owns
+   one contiguous header+map allocation through `QSVFrame::enc_ctrl` until
+   its surface unlocks. Never share mutable map scratch across asynchronous
+   frames. Size 16x16 raster from aligned `mfxFrameInfo.Width/Height`, clip
+   regions to visible frame, preserve zero padding, retain every
+   overflow/narrowing check. Build affected encoder TU with oneVPL and run
+   dedicated sanitizer regression (ADR-0146).
 7. Other hand-maintained encoder/bitstream diffs (NVENC ME hints, qpmap, H.274
-   FGS, NVENC film grain, libaom ROI, SVT-AV1 ROI) must be compiled in their
-   feature-enabled configuration. A default FFmpeg build may omit those TUs.
+   FGS, NVENC film grain, libaom ROI, SVT-AV1 ROI): compile in their
+   feature-enabled configuration. Default FFmpeg build may omit those TUs.
    Preserve libaom's one-shot diagnostic and non-fatal fallback while its
-   non-RTC `AOME_SET_ROI_MAP` path rejects the map.
-8. `vf_pelorus_scenecut` is metadata-only: no Vulkan dependency or shader, but
-   it links libpelorus. `dehalo`, `aa`, `deblock`, and `borderfix` are pure
+   non-RTC `AOME_SET_ROI_MAP` path rejects map.
+8. `vf_pelorus_scenecut` = metadata-only: no Vulkan dependency or shader, but
+   links libpelorus. `dehalo`, `aa`, `deblock`, `borderfix` = pure
    transforms: Vulkan/SPIR-V dependencies, no libpelorus link, no interop side
    data.
-9. Every ephemeral `git am` replay supplies the `Pelorus-Replay` committer
+9. Every ephemeral `git am` replay supplies `Pelorus-Replay` committer
    identity, neutralizes signing, hooks, and diff ordering, and passes
-   `--no-gpg-sign --no-verify`. Do not rely on a
-   workstation's global Git configuration; the hosted runner intentionally has
-   no identity.
+   `--no-gpg-sign --no-verify`. Do not rely on workstation's global Git
+   configuration; hosted runner intentionally has no identity.
 
 ## Required checks
 
-Before calling a patch-stack change complete:
+Before calling patch-stack change complete:
 
 1. format touched C and shell-check touched shell;
-2. compile all canonical GLSL and run the Pelorus fast suite;
+2. compile all canonical GLSL and run Pelorus fast suite;
 3. regenerate twice and compare bytes;
-4. replay all 18 patches at the pinned FFmpeg commit;
-5. build/link/smoke the relevant feature-enabled FFmpeg configuration;
-6. install the static FFmpeg libraries and compile/run the external
+4. replay all 18 patches at pinned FFmpeg commit;
+5. build/link/smoke relevant feature-enabled FFmpeg configuration;
+6. install static FFmpeg libraries and compile/run external
    `pkg-config --static libavfilter` consumer, asserting its link flags include
    `-lpelorus`; and
-7. run the affected Vulkan formats and plane masks on hardware. If no device is
-   available, record that row as unexecuted rather than treating compile success
-   as runtime evidence.
+7. run affected Vulkan formats and plane masks on hardware. No device
+   available -> record that row as unexecuted; compile success = no runtime
+   evidence.
 
-Never insert an implicit `hwdownload` between Pelorus stages; the pipeline must
-remain zero-copy. Never release a `pel_blob_pack` allocation with `av_free`;
-wrap it in an `AVBufferRef` whose callback calls `pel_blob_free`.
+Never insert implicit `hwdownload` between Pelorus stages: pipeline must stay
+zero-copy. Never release `pel_blob_pack` allocation with `av_free`; wrap it in
+`AVBufferRef` whose callback calls `pel_blob_free`.
