@@ -49,11 +49,11 @@ jobs:
           glslc --version
           glslangValidator --version
       - name: Configure + build
-        run: meson setup build && ninja -C build
+        run: meson setup --werror build && ninja -C build
       - name: Optimised gcc build (-O2, warnings are errors)
         # gcc raises -Wmaybe-uninitialized only with the optimiser on, which the
         # default debug build above does not run.
-        run: CC=gcc meson setup build-o2 --buildtype=debugoptimized && ninja -C build-o2
+        run: CC=gcc meson setup --werror build-o2 --buildtype=debugoptimized && ninja -C build-o2
       - name: Test (fast suite — interop ABI + shader compile)
         run: meson test -C build --suite=fast --print-errorlogs
       - name: clang-format (touched-tree clean)
@@ -160,7 +160,7 @@ jobs:
         run: |
           # Meson's sanitizer option adds the runtime to every shared-library
           # link. Make alignment UB fatal: issue #44 otherwise logged and passed.
-          meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false \
+          meson setup --werror build-san -Db_sanitize=address,undefined -Db_lundef=false \
             -Dc_args=-fno-sanitize-recover=alignment
           meson test -C build-san --suite=fast --print-errorlogs
 
@@ -215,7 +215,7 @@ jobs:
           glslc --version
           glslangValidator --version
       - name: Configure + build
-        run: meson setup build && ninja -C build
+        run: meson setup --werror build && ninja -C build
       - name: Test (fast suite, including the UTF-8 path contract)
         run: meson test -C build --suite=fast --print-errorlogs
       - name: UTF-8 path contract transcript
