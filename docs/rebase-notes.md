@@ -35,7 +35,7 @@ patches (ADR-0108 deliverable #6).
 - **Regeneration**: `FFMPEG_REPO=/absolute/path/to/ffmpeg
   ffmpeg-patches/generate.sh`, run twice: byte-identical.
 - **Replay**: `JOBS=4 FFMPEG_REPO=/absolute/path/to/ffmpeg
-  ffmpeg-patches/test/build-and-run.sh` applies all 18 patches, links FFmpeg
+  ffmpeg-patches/test/build-and-run.sh` applies all 20 patches, links FFmpeg
   and the static consumer. The fast suite covers the new helpers without an
   FFmpeg tree (`mc-stats`, `ffmpeg-sidedata-consumers`).
 

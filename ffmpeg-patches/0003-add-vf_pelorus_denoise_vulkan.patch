@@ -92,7 +92,7 @@ index c781df8365397465a0f8cb2c25ac450585938b01..a21da384818d0b64f4b5af635ae53e9a
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_denoise_vulkan.c b/libavfilter/vf_pelorus_denoise_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..4f7e11c7b23f77e420125376b1234187bd0aa0f3
+index 0000000000000000000000000000000000000000..3bdf2f27de3b99d07349749808f4a71bd77cf569
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_denoise_vulkan.c
 @@ -0,0 +1,1134 @@
@@ -673,8 +673,8 @@ index 0000000000000000000000000000000000000000..4f7e11c7b23f77e420125376b1234187
 +                    sd->size &&
 +                (size_t)PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset + mcs->conf_field_size <=
 +                    sd->size) {
-+                /* The cell pitch is the producer's block edge, not ceil(W/gc). */
-+                int fit = pelorus_mc_cell_pitch(out->width, out->height, gc, gr, &pitch);
++                /* The producer's block edge (named since ABI 1.4), not ceil(W/gc). */
++                int fit = pelorus_mc_block_pitch(mo, msz, out->width, out->height, gc, gr, &pitch);
 +                if (fit == 2 && !s->mc_grid_assumed_warned) {
 +                    s->mc_grid_assumed_warned = 1;
 +                    av_log(vkctx, AV_LOG_WARNING,
