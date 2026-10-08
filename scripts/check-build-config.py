@@ -78,7 +78,23 @@ LIBPELORUS_FLOOR_INPUTS = tuple(
     ROOT / "ffmpeg-patches" / f".commit-msg-{name}.txt"
     for name in ("deband", "analyze", "denoise", "grain_estimate", "mc")
 )
-SETUP_GO_COMMIT = "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
+# ADR-0170: the docs job pins actions/setup-go and actionlint by shape, never by
+# value. Renovate's github-actions manager bumps the setup-go digest and its
+# `# vX.Y.Z` comment, and the regex manager for ci.yml bumps the actionlint tag,
+# in ci.yml alone; a checker-held copy of either would turn every such bump red.
+SETUP_GO_PIN = re.compile(
+    r"^[ ]+(?:- )?uses: actions/setup-go@[0-9a-f]{40} # v\d+\.\d+\.\d+$", re.MULTILINE
+)
+ACTIONLINT_MODULE = "github.com/rhysd/actionlint"
+ACTIONLINT_RUN = re.compile(
+    r"^[ ]+run: go run github\.com/rhysd/actionlint/cmd/actionlint@(?P<tag>v\d+\.\d+\.\d+)$",
+    re.MULTILINE,
+)
+CI_RELATIVE = ".github/workflows/ci.yml"
+ACTIONLINT_RENOVATE_TEMPLATES = {
+    "depNameTemplate": ACTIONLINT_MODULE,
+    "datasourceTemplate": "go",
+}
 # The Go toolchain that runs actionlint in ci.yml's docs job. Renovate's
 # github-actions manager bumps the setup-go go-version input; the regex
 # customManager in renovate.json (validated below) rewrites this literal with
@@ -2516,12 +2532,21 @@ def _validate_workflow_specialized_jobs(
         docs = jobs.get("docs", "")
         for token in (
             ACTIONLINT_GO_STEP,
-            f"actions/setup-go@{SETUP_GO_COMMIT}",
             f"go-version: '{ACTIONLINT_GO_VERSION}'",
-            "github.com/rhysd/actionlint/cmd/actionlint@v1.7.12",
         ):
             if token not in docs:
                 errors.append(f"{relative}: docs job is missing {token}")
+        if docs.count("actions/setup-go@") != 1 or SETUP_GO_PIN.search(docs) is None:
+            errors.append(
+                f"{relative}: docs job must pin actions/setup-go once by full commit "
+                "digest with its `# vX.Y.Z` release comment"
+            )
+        if docs.count("actionlint/cmd/actionlint@") != 1 or ACTIONLINT_RUN.search(docs) is None:
+            errors.append(
+                f"{relative}: docs job must run actionlint once as "
+                "`go run github.com/rhysd/actionlint/cmd/actionlint@vX.Y.Z` "
+                "(exact release tag)"
+            )
         go_versions = re.findall(r"go-version:\s*(\S+)", docs)
         if go_versions != [f"'{ACTIONLINT_GO_VERSION}'"]:
             errors.append(
@@ -2770,6 +2795,45 @@ def release_build_regressions() -> list[str]:
     })
 
 
+def _docs_pin_shape_cases(source: str) -> dict:
+    """Shape mutations of the docs job's setup-go and actionlint pins (ADR-0170)."""
+    return {
+        "floating setup-go tag": (
+            re.sub(r"actions/setup-go@[0-9a-f]{40} # v\d+\.\d+\.\d+", "actions/setup-go@v7", source, count=1),
+            "docs job must pin actions/setup-go once by full commit digest",
+        ),
+        "setup-go pin without release comment": (
+            re.sub(r"(actions/setup-go@[0-9a-f]{40}) # v\d+\.\d+\.\d+", r"\1", source, count=1),
+            "docs job must pin actions/setup-go once by full commit digest",
+        ),
+        "short setup-go digest": (
+            re.sub(r"actions/setup-go@[0-9a-f]{40}", "actions/setup-go@b7ad1da", source, count=1),
+            "docs job must pin actions/setup-go once by full commit digest",
+        ),
+        "second setup-go step": (
+            re.sub(
+                r"(\n( +)- name: Validate workflow syntax)",
+                r"\n\2- uses: actions/setup-go@v7\1",
+                source,
+                count=1,
+            ),
+            "docs job must pin actions/setup-go once by full commit digest",
+        ),
+        "actionlint @latest": (
+            re.sub(r"(actionlint/cmd/actionlint)@v\d+\.\d+\.\d+", r"\1@latest", source, count=1),
+            "docs job must run actionlint once as",
+        ),
+        "actionlint branch ref": (
+            re.sub(r"(actionlint/cmd/actionlint)@v\d+\.\d+\.\d+", r"\1@main", source, count=1),
+            "docs job must run actionlint once as",
+        ),
+        "actionlint without version": (
+            re.sub(r"(actionlint/cmd/actionlint)@v\d+\.\d+\.\d+", r"\1", source, count=1),
+            "docs job must run actionlint once as",
+        ),
+    }
+
+
 def workflow_validator_regressions() -> list[str]:
     """Prove runner and native-toolchain regressions are rejected."""
     failures: list[str] = []
@@ -2814,6 +2878,7 @@ def workflow_validator_regressions() -> list[str]:
             f"docs job is missing {ACTIONLINT_GO_STEP}",
         ),
     }
+    cases.update(_docs_pin_shape_cases(source))
     relative = ci_path.relative_to(ROOT).as_posix()
     failures.extend(windows_pin_bump_regression(source, relative))
     for name, (mutated, expected) in cases.items():
@@ -2987,7 +3052,7 @@ def python_regex(renovate_regex: str) -> str:
     return re.sub(r"\(\?<(?=[A-Za-z_])", "(?P<", renovate_regex)
 
 
-def validate_renovate_text(text: str, checker_source: str) -> list[str]:
+def _validate_go_manager_text(text: str, checker_source: str) -> list[str]:
     """Require one regex manager that bumps ACTIONLINT_GO_VERSION as `go`."""
     try:
         config = json.loads(text)
@@ -3042,6 +3107,65 @@ def validate_renovate_text(text: str, checker_source: str) -> list[str]:
     return errors
 
 
+def _validate_actionlint_manager(managers: object, ci_source: str) -> list[str]:
+    """Require one ci.yml regex manager that bumps the actionlint tag (ADR-0170)."""
+    prefix = f"renovate.json: {CI_RELATIVE} manager"
+    try:
+        covering = [
+            manager
+            for manager in (managers if isinstance(managers, list) else [])
+            if isinstance(manager, dict)
+            and manager.get("customType") == "regex"
+            and isinstance(manager.get("managerFilePatterns"), list)
+            and any(
+                renovate_file_pattern_matches(pattern, CI_RELATIVE)
+                for pattern in manager["managerFilePatterns"]
+            )
+        ]
+    except RenovatePatternError as exc:
+        return [f"renovate.json: {exc}"]
+    if len(covering) != 1:
+        return [
+            (
+                f"renovate.json: expected exactly one regex customManager for "
+                f"{CI_RELATIVE} (found {len(covering)})"
+            )
+        ]
+    manager = covering[0]
+    errors = [
+        f"{prefix} needs {key} {value!r}"
+        for key, value in ACTIONLINT_RENOVATE_TEMPLATES.items()
+        if manager.get(key) != value
+    ]
+    pinned = ACTIONLINT_RUN.search(ci_source)
+    match_strings = manager.get("matchStrings")
+    if pinned is None:
+        return errors + [f"{prefix}: ci.yml has no exact-tag actionlint run line"]
+    if not isinstance(match_strings, list) or len(match_strings) != 1:
+        return errors + [f"{prefix} needs one matchString"]
+    try:
+        matches = list(re.finditer(python_regex(str(match_strings[0])), ci_source))
+    except re.error as exc:
+        return errors + [f"{prefix} matchString: {exc}"]
+    if len(matches) != 1 or matches[0].groupdict().get("currentValue") != pinned["tag"]:
+        errors.append(
+            f"{prefix} matchString must capture exactly the actionlint tag "
+            f"{pinned['tag']} as currentValue (found {len(matches)} matches)"
+        )
+    return errors
+
+
+def validate_renovate_text(text: str, checker_source: str, ci_source: str) -> list[str]:
+    """Validate the Go-mirroring manager (ADR-0151/0152) and the actionlint manager (ADR-0170)."""
+    errors = _validate_go_manager_text(text, checker_source)
+    try:
+        config = json.loads(text)
+    except json.JSONDecodeError:
+        return errors
+    managers = config.get("customManagers") if isinstance(config, dict) else None
+    return errors + _validate_actionlint_manager(managers, ci_source)
+
+
 def validate_renovate() -> list[str]:
     """Validate the checked-in Renovate config against this checker."""
     if not RENOVATE_CONFIG.is_file():
@@ -3050,6 +3174,7 @@ def validate_renovate() -> list[str]:
     return validate_renovate_text(
         RENOVATE_CONFIG.read_text(encoding="utf-8"),
         checker.read_text(encoding="utf-8"),
+        (ROOT / CI_RELATIVE).read_text(encoding="utf-8"),
     )
 
 
@@ -3078,6 +3203,35 @@ def _mutate_checker_manager(key: str, replacement: object):
     return mutate
 
 
+def _ci_manager(manager: dict) -> bool:
+    return any(
+        renovate_file_pattern_matches(pattern, CI_RELATIVE)
+        for pattern in manager.get("managerFilePatterns", [])
+    )
+
+
+def _mutate_ci_manager(key: str, replacement: object):
+    def mutate(value: dict) -> dict:
+        for manager in value["customManagers"]:
+            if _ci_manager(manager):
+                manager[key] = replacement
+        return value
+
+    return mutate
+
+
+def _without_ci_manager(value: dict) -> dict:
+    value["customManagers"] = [m for m in value["customManagers"] if not _ci_manager(m)]
+    return value
+
+
+def _ci_manager_also_targets_checker(value: dict) -> dict:
+    for manager in value["customManagers"]:
+        if _ci_manager(manager):
+            manager["managerFilePatterns"].append("/^scripts/check-build-config\\.py$/")
+    return value
+
+
 def _with_extra_manager(patterns: list[str]):
     def mutate(value: dict) -> dict:
         value["customManagers"].append(
@@ -3093,9 +3247,41 @@ def _with_extra_manager(patterns: list[str]):
     return mutate
 
 
+def _actionlint_renovate_cases() -> dict:
+    """Broken-manager mutations for the ci.yml actionlint manager (ADR-0170)."""
+    return {
+        "missing actionlint manager": (
+            _without_ci_manager,
+            f"expected exactly one regex customManager for {CI_RELATIVE}",
+        ),
+        "second ci.yml manager": (
+            _with_extra_manager(["/^\\.github/workflows/ci\\.yml$/"]),
+            f"expected exactly one regex customManager for {CI_RELATIVE}",
+        ),
+        "actionlint manager also targets the checker": (
+            _ci_manager_also_targets_checker,
+            f"expected exactly one regex customManager for {CHECKER_RELATIVE}",
+        ),
+        "actionlint github-tags datasource": (
+            _mutate_ci_manager("datasourceTemplate", "github-tags"),
+            "needs datasourceTemplate 'go'",
+        ),
+        "actionlint different depName": (
+            _mutate_ci_manager("depNameTemplate", "rhysd/actionlint"),
+            f"needs depNameTemplate {ACTIONLINT_MODULE!r}",
+        ),
+        "actionlint floating matchString": (
+            _mutate_ci_manager(
+                "matchStrings", ["actionlint@(?<currentValue>[a-z]+)"]
+            ),
+            "matchString must capture exactly the actionlint tag",
+        ),
+    }
+
+
 def _renovate_regression_cases() -> dict:
     """Each broken-manager mutation with the diagnostic the validator must give."""
-    return {
+    cases = {
         "second manager via /regex/i": (
             _with_extra_manager(["/SCRIPTS/CHECK-BUILD-CONFIG\\.PY$/i"]),
             "expected exactly one regex customManager",
@@ -3131,9 +3317,10 @@ def _renovate_regression_cases() -> dict:
             "matchString must capture exactly",
         ),
     }
+    return cases | _actionlint_renovate_cases()
 
 
-def _renovate_case_failures(config: dict, checker: str) -> list[str]:
+def _renovate_case_failures(config: dict, checker: str, ci: str) -> list[str]:
     """Run every mutation case and report the ones the validator accepted."""
     failures: list[str] = []
     for name, (mutate, expected) in _renovate_regression_cases().items():
@@ -3145,7 +3332,7 @@ def _renovate_case_failures(config: dict, checker: str) -> list[str]:
         if json.loads(mutated) == config:
             failures.append(f"renovate regression: {name} mutation changed nothing")
             continue
-        errors = validate_renovate_text(mutated, checker)
+        errors = validate_renovate_text(mutated, checker, ci)
         if not any(expected in error for error in errors):
             failures.append(f"renovate regression: {name} was accepted")
     return failures
@@ -3155,13 +3342,14 @@ def renovate_validator_regressions() -> list[str]:
     """Prove that removing or breaking the mirroring Go manager fails (ADR-0152)."""
     source = RENOVATE_CONFIG.read_text(encoding="utf-8")
     checker = Path(__file__).resolve().read_text(encoding="utf-8")
-    failures = _renovate_case_failures(json.loads(source), checker)
+    ci = (ROOT / CI_RELATIVE).read_text(encoding="utf-8")
+    failures = _renovate_case_failures(json.loads(source), checker, ci)
     stale = checker.replace(
         f'ACTIONLINT_GO_VERSION = "{ACTIONLINT_GO_VERSION}"',
         'ACTIONLINT_GO_VERSION = "go1.0"',
         1,
     )
-    if stale == checker or not validate_renovate_text(source, stale):
+    if stale == checker or not validate_renovate_text(source, stale, ci):
         failures.append("renovate regression: unmatched checker literal was accepted")
     return failures
 

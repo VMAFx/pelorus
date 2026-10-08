@@ -84,6 +84,12 @@ All notable changes to Pelorus are documented here. The format is
   #94 adds a lane for them. A local `make audit` no longer fails on the
   declined Git hooks, and the documentation gate needs Node.js 22.12 or newer
   ([ADR-0168](docs/adr/0168-praetor-engine-492a00f.md)).
+- The build-config checker no longer holds a copy of the `actions/setup-go`
+  digest or the actionlint tag. It checks the shape of both pins in `ci.yml`
+  (full digest with a `# vX.Y.Z` comment; exact `@vX.Y.Z` tag), so Renovate
+  bumps of either stay green. A new `renovate.json` regex manager for `ci.yml`
+  makes Renovate track the actionlint release through the `go` datasource, and
+  the checker validates that manager. See ADR-0170.
 - The interop sources and their conformance test now pass clang-tidy at the
   VMAFx profile, which lints the vendored copies. The conformance test splits
   its long checks into helpers and patches blob headers through `memcpy`
