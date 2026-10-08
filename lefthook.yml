@@ -12,6 +12,9 @@
 # (go.mod) or Cargo (Cargo.lock) toolchain stage ran. A root with neither
 # gets no receipt: the job names the languages it could not verify and
 # admits the push; a root with either fails when its stages did not run.
+# REUSE.toml or LICENSES/ was present at adoption: the reuse-lint job runs
+# reuse lint at the release line fsfe/reuse-action@v6 runs in CI.
+# It skips where reuse is not installed and fails on another reuse major.
 ---
 no_auto_install: true
 agent-checkpoint-tool:
@@ -29,6 +32,15 @@ agent-checkpoint-stop:
 pre-commit:
   parallel: true
   commands:
+    reuse-lint:
+      run: >-
+        if [ -f REUSE.toml ] || [ -d LICENSES ]; then if command -v reuse
+        >/dev/null 2>&1; then if [ x$(reuse --version | head -n 1 | tr -dc 0-9.
+        | cut -d . -f 1) = x6 ]; then reuse lint; else echo reuse 6.x is
+        required, the release line fsfe/reuse-action@v6 runs in CI >&2; exit 1;
+        fi; else echo reuse is not installed, skipping >&2; fi; else echo no
+        REUSE.toml or LICENSES/ at the repository root, skipping reuse lint >&2;
+        fi
     context-check:
       run: >-
         if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v

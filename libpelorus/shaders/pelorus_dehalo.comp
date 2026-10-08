@@ -1,7 +1,8 @@
 /*
  * pelorus_dehalo.comp — anime/2D dehalo + dering compute shader (reference).
  *
- * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ * Copyright 2026 Lusoris
+ * SPDX-License-Identifier: EUPL-1.2
  *
  * A single-pass GPU port of HAvsFunc DeHalo_alpha + FineDehalo (the de-facto
  * VapourSynth anime halo remover). Halos are the bright/dark ringing that

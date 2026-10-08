@@ -133,6 +133,44 @@ forbidden — mint a new section bit instead. See
 
 ## License
 
-By contributing you agree your work is licensed under BSD-2-Clause-Patent
-(libpelorus) / LGPL-2.1 (files that become part of FFmpeg). New wholly-new
-files carry the `Copyright 2026 Lusoris` header for their tree.
+A contribution falls under the licence of the file it changes; a file says
+which in its `SPDX-License-Identifier` line or, without one, in
+[`REUSE.toml`](REUSE.toml) ([ADR-0171](docs/adr/0171-eupl-relicense.md),
+[docs/licensing.md](docs/licensing.md)):
+
+- **A new file, or a change to a Pelorus file**: [EUPL-1.2](LICENSES/EUPL-1.2.txt),
+  a reciprocal licence. By contributing you license your contribution under
+  the EUPL-1.2. A new C, shell or Python file starts with the copyright line
+  and the SPDX line, in the comment syntax of its language:
+
+  <!-- REUSE-IgnoreStart -->
+  ```c
+  /*
+   * Copyright 2026 Lusoris
+   *
+   * SPDX-License-Identifier: EUPL-1.2
+   */
+  ```
+  <!-- REUSE-IgnoreEnd -->
+
+  Name yourself in the copyright line of a file you create; files without a
+  header of their own are covered by `REUSE.toml`.
+- **A file the patch stack adds to FFmpeg** (`ffmpeg-patches/files/`, and a
+  test built inside the FFmpeg tree): LGPL-2.1-or-later, with FFmpeg's LGPL
+  header, so the file can join FFmpeg.
+- **Vendored files** (`.claude/skills/superpowers/`,
+  `tools/figures/third_party/`): their upstream licence. Change them only by
+  re-vendoring.
+
+A new file that needs other terms gets a table in `REUSE.toml`, after the
+whole-tree default. `reuse lint` (the `reuse-lint` pre-commit job and the
+`REUSE lint` CI check) must pass.
+
+### Developer Certificate of Origin
+
+Every commit carries a sign-off: `git commit -s` appends
+`Signed-off-by: Your Name <you@example.org>`. It states, under the
+[Developer Certificate of Origin 1.1](https://developercertificate.org/), that
+you wrote the change or have the right to submit it under the licence of the
+files it touches. There is no contributor licence agreement. Bot commits
+(Renovate) are exempt. No CI check enforces the sign-off yet.

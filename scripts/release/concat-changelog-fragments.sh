@@ -5,7 +5,8 @@
 # ADR-0108. The block between the BEGIN/END UNRELEASED markers in CHANGELOG.md is
 # generated; everything else (header, released sections, link refs) is manual.
 #
-# Copyright 2026 Lusoris. BSD-2-Clause-Patent.
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
 #
 #   concat-changelog-fragments.sh --write   rewrite the block in place
 #   concat-changelog-fragments.sh --check   fail if the block is out of date

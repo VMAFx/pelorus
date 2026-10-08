@@ -3,7 +3,8 @@
 # build-and-run.sh — build this Pelorus tree, replay its complete patch stack on
 # the configured immutable FFmpeg commit, link ffmpeg, and verify registration.
 #
-# Copyright 2026 Lusoris. BSD-2-Clause-Patent.
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
 #
 # Requires: an explicit local FFmpeg checkout, a Vulkan loader + headers, and a
 # `glslc` SPIR-V compiler. libpelorus is built, tested, and installed privately

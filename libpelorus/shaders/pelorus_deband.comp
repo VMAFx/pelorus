@@ -1,7 +1,8 @@
 /*
  * pelorus_deband.comp — smart-deband compute shader (standalone reference).
  *
- * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ * Copyright 2026 Lusoris
+ * SPDX-License-Identifier: EUPL-1.2
  *
  * Psychovisual debander modeled on flash3kyuu_deband (f3kdb). The flat-test is
  * the FFmpeg vf_deband.c algorithm (4-tap rotated reference sampling, per-plane

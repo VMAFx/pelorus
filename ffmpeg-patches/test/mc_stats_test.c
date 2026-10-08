@@ -1,4 +1,8 @@
-/* Copyright 2026 Lusoris. BSD-2-Clause-Patent. */
+/*
+ * Copyright 2026 Lusoris
+ *
+ * SPDX-License-Identifier: EUPL-1.2
+ */
 
 /*
  * Unit tests for ffmpeg-patches/files/pelorus_mc_stats.h, the host-side motion

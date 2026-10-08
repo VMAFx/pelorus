@@ -137,12 +137,14 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 8. Embeddable library code: no `printf` or `fprintf(stderr, ...)`. Return `pel_result`; host logs.
 9. New dependency: ADR names considered alternative plus reason this one wins.
 10. No new top-level Markdown docs unless task needs one; extend `docs/` topic tree.
+11. Licence (ADR-0171): own files EUPL-1.2, copyright `2026 Lusoris`; files joining FFmpeg tree (`ffmpeg-patches/files/`, patches) LGPL-2.1-or-later; vendored files keep upstream licence. New C, shell or Python file: copyright line plus `SPDX-License-Identifier`. Other terms: `REUSE.toml` table after whole-tree default. `reuse lint` exits 0.
 
 ## Layout and ownership
 
 | Path | Contract |
 | --- | --- |
 | `meson.build`, `meson_options.txt` | build root: libpelorus, tests, shaders |
+| `LICENSE`, `LICENSES/`, `REUSE.toml` | EUPL-1.2 root text (bytes of `LICENSES/EUPL-1.2.txt`); every licence text in use; per-file copyright + licence, REUSE 3.3, default table first; audit checks table order + root licence (ADR-0171) |
 | `libpelorus/include/pelorus/` | public API, version, append-only interop ABI |
 | `libpelorus/src/` | core pack/parse + parameter logic |
 | `libpelorus/test/` | ABI and API conformance; UTF-8 path test |
@@ -166,8 +168,8 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 | `.claude/agents/`, `.codex/agents/`, `.github/agents/`, `.gemini/agents/` | generated persona projections |
 | `.claude/skills/`, `.claude/hooks/`, `.codex/hooks/`, `.gemini/settings.json` | agent skills + hooks; see below |
 | `.vscode/`, `.zed/`, `.idea/`, `.helix/`, `.fleet/`, `.nvim.lua`, `lua/`, `.dir-locals.el`, `standards.sublime-project` | reconciled editor settings |
-| `.github/workflows/` | `ci.yml` product jobs, `standards-gate.yml`, locked `praetor-docs.yml`, `release.yml` (`ci` -> `build` -> tag-only `publish`), reusable `release-build.yml`: build, SBOM, SLSA L3 attestation, cosign; no artefact download or cache before attestation (ADR-0169); `devcontainer-image.yml` builds base image on PR, pushes + attests `ghcr.io/vmafx/pelorus-dev` from `master` |
-| `.github/rulesets/main.json` | rendered `master` ruleset (0 reviews, signed commits, linear history, 7 checks); committed, applied only by maintainer `praetorctl sync --remote` |
+| `.github/workflows/` | `ci.yml` product jobs, `standards-gate.yml`, locked `praetor-docs.yml`, `release.yml` (`ci` -> `build` -> tag-only `publish`), reusable `release-build.yml`: build, SBOM, SLSA L3 attestation, cosign; no artefact download or cache before attestation (ADR-0169); `devcontainer-image.yml` builds base image on PR, pushes + attests `ghcr.io/vmafx/pelorus-dev` from `master`; Praetor-rendered `reuse.yml` runs `reuse lint` |
+| `.github/rulesets/main.json` | rendered `master` ruleset (0 reviews, signed commits, linear history, 8 checks); committed, applied only by maintainer `praetorctl sync --remote` |
 
 New top-level package: add row here. New module: scoped `AGENTS.md`.
 
@@ -215,6 +217,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | verify contexts | `standardsctl compile-context --verify` |
 | audit baseline | `standardsctl audit` |
 | docs gate (Node 22.12+) | `make docs-lint docs-figures` |
+| licence check | `reuse lint` (reuse 6.x) |
 | explicit hook install | `make hooks-install` |
 
 ## Reviewer routing

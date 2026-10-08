@@ -105,6 +105,12 @@ for the full zero-copy pipeline.
 
 ## License
 
-BSD-2-Clause-Patent for the patches authored here; the linked FFmpeg binary's
-distribution is governed by FFmpeg's LGPL/GPL. New `libavfilter/*.c` files
-carry FFmpeg's LGPL-2.1 header (they become part of FFmpeg when applied).
+The patches and the sources under `files/` that they add to FFmpeg are
+LGPL-2.1-or-later, the licence of the FFmpeg tree they join; the patches also
+carry FFmpeg's own code in their context lines. New `libavfilter/*.c` files
+carry FFmpeg's LGPL-2.1 header. The scripts, tests and documents here are
+EUPL-1.2, like the rest of Pelorus, except `test/qsv-roi-regression.c`, which
+is built inside FFmpeg's tree and is LGPL-2.1-or-later. The filters that link
+`libpelorus` (EUPL-1.2) combine both licences in one FFmpeg build; see
+[docs/licensing.md](../docs/licensing.md#the-ffmpeg-boundary) and
+[ADR-0171](../docs/adr/0171-eupl-relicense.md).

@@ -20,8 +20,9 @@ Use FFmpeg 9's precompiled-SPIR-V model and preserve the released patch order.
    pipeline creation, explicit descriptor order, specialization constants,
    std430-compatible push constants, and linked precompiled SPIR-V. Runtime or
    inline GLSL is not part of this model. Specialization IDs 253/254/255 are
-   reserved for workgroup size. New FFmpeg C files use the LGPL-2.1 header and
-   `Copyright 2026 Lusoris`.
+   reserved for workgroup size. New FFmpeg C files use FFmpeg's LGPL-2.1
+   header with Lusoris's copyright line; `REUSE.toml` already labels
+   `ffmpeg-patches/files/` LGPL-2.1-or-later (ADR-0171).
 4. Register C and shader objects, the alphabetical extern, and
    `*_filter_deps="vulkan spirv_compiler"`. Any interop producer or consumer
    using libpelorus separately uses `enabled pelorus_<name>_vulkan_filter &&

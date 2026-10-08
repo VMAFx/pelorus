@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # bd_rate.py — Bjøntegaard delta-rate / delta-quality between two RD curves.
 #
-# Copyright 2026 Lusoris. BSD-2-Clause-Patent.
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
 #
 # BD-rate = average % bitrate change at equal quality (negative = Pelorus needs
 # fewer bits for the same quality = a win). BD-quality = average quality change

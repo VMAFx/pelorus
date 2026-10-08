@@ -62,6 +62,9 @@
             "context": "Documentation Governance"
           },
           {
+            "context": "REUSE lint"
+          },
+          {
             "context": "Standards \u0026 Invariant Verification Gate"
           }
         ],

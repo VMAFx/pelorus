@@ -2,7 +2,8 @@
 #
 # fetch-corpus.sh — materialize the pinned benchmark corpus as raw YUV.
 #
-# Copyright 2026 Lusoris. BSD-2-Clause-Patent.
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
 #
 # Reads scripts/bench/corpus.lock, downloads each pinned clip (cached + sha256
 # verified), and extracts its pinned segment to raw YUV at the pinned

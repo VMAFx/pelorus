@@ -2,7 +2,8 @@
 #
 # next-free.sh — atomically reserve the next ADR number.
 #
-# Copyright 2026 Lusoris. BSD-2-Clause-Patent.
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
 #
 # Local-first allocator (a trimmed form of vmafx's remote-aware version): scans
 # docs/adr/ for the highest NNNN among *.md and *.md.stub and returns max+1,

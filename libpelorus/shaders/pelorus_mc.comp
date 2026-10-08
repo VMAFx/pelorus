@@ -1,7 +1,8 @@
 /*
  * pelorus_mc.comp — block-matching motion estimation (standalone reference).
  *
- * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ * Copyright 2026 Lusoris
+ * SPDX-License-Identifier: EUPL-1.2
  *
  * GPU per-block integer-pel motion estimator. ONE WORKGROUP PER BLOCK: the
  * workgroup's invocations cooperatively evaluate a candidate motion vector by

@@ -1,7 +1,8 @@
 /*
  * pelorus_qpmap.comp — on-GPU quantization-map rasterizer (standalone reference).
  *
- * Copyright 2026 Lusoris. BSD+Patent (see libpelorus/include/pelorus/pelorus.h).
+ * Copyright 2026 Lusoris
+ * SPDX-License-Identifier: EUPL-1.2
  *
  * Writes the VK_KHR_video_encode_quantization_map texel image DIRECTLY on the
  * GPU from the analyze ROI cell grid, eliminating the host per-texel raster +

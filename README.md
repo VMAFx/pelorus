@@ -2,7 +2,7 @@
 # Pelorus
 
 [![CI](https://github.com/vmafx/pelorus/actions/workflows/ci.yml/badge.svg)](https://github.com/vmafx/pelorus/actions)
-[![License: BSD-2-Clause-Patent](https://img.shields.io/badge/License-BSD--2--Clause--Patent-blue.svg)](LICENSE)
+[![License: EUPL-1.2](https://img.shields.io/badge/License-EUPL--1.2-blue.svg)](LICENSE)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/vmafx/pelorus/badge)](https://securityscorecards.dev/viewer/?uri=github.com/vmafx/pelorus)
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ff69b4.svg)](https://github.com/sponsors/lusoris)
 [![ko-fi](https://img.shields.io/badge/ko--fi-support-FF5E5B.svg)](https://ko-fi.com/lusoris)
@@ -195,9 +195,21 @@ Pre-1.0 (`v0.2.2`). Public API and the interop ABI may evolve before
 
 ## License
 
-[BSD-2-Clause-Patent](LICENSE) for `libpelorus` (so the interop TU is
-co-vendorable with vmafx); FFmpeg's LGPL-2.1 for filters that become part of
-FFmpeg when applied.
+Pelorus is licensed under the [EUPL-1.2](LICENSE), a reciprocal licence, like
+its sibling vmafx. The files the patch stack adds to FFmpeg stay under FFmpeg's
+LGPL-2.1-or-later, and vendored files keep their own terms
+([ADR-0171](docs/adr/0171-eupl-relicense.md)):
+
+| Code | Licence | Text |
+| --- | --- | --- |
+| `libpelorus`, tools, scripts, docs, build and CI | EUPL-1.2 | [`LICENSE`](LICENSE) |
+| Filters, bitstream filter, headers and shaders added to FFmpeg (`ffmpeg-patches/files/`), and the patches | LGPL-2.1-or-later | [`LICENSES/LGPL-2.1-or-later.txt`](LICENSES/LGPL-2.1-or-later.txt) |
+| Vendored superpowers skills and Praetor's interfig figure engine | MIT | [`LICENSES/MIT.txt`](LICENSES/MIT.txt) |
+
+[`REUSE.toml`](REUSE.toml) records the licence of every file, and `reuse lint`
+checks it. Releases up to `v0.2.2` stay available under BSD-2-Clause-Patent.
+What the EUPL-1.2 asks of a product that ships `libpelorus`, and how the
+licences meet in an FFmpeg build, is in [docs/licensing.md](docs/licensing.md).
 
 ## Support
 
@@ -235,6 +247,7 @@ users also need a copy named `praetorctl` on `PATH`
 | **HISS audit** | `make audit` | Applies the pinned 51-finding baseline ratchet |
 | **Documentation** | `make docs-lint docs-figures` | Runs the locked Markdown and figure checks (Node.js 22.12 or newer) |
 | **Context sync** | `make compile-context` | Compiles canonical agent guidance to vendor targets |
+| **Licensing** | `reuse lint` | Checks every file's copyright and licence against `REUSE.toml` (reuse 6.x) |
 
 <!-- praetor:readme-governance:start -->
 [![HISS Adopted][praetor-hiss-badge]][praetor-hiss-agents]
