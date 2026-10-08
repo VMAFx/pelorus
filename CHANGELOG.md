@@ -114,6 +114,12 @@ All notable changes to Pelorus are documented here. The format is
   lint` CI check, and the release archive of the patch stack now carries the
   LGPL-2.1-or-later and EUPL-1.2 texts
   ([ADR-0171](docs/adr/0171-eupl-relicense.md), [licensing](docs/licensing.md)).
+- Enforced the commit message policy. A `commit-msg` Lefthook job runs
+  `forge check-message` and a `Signed-off-by` (DCO) check, and the `Standards`
+  workflow runs `forge check-commits` plus a DCO check over every pull request
+  commit, so a breaking change without a `Migration:` footer is refused. The
+  agent context lists all 21 HISS invariants and states which ones are review
+  only.
 - The interop sources and their conformance test now pass clang-tidy at the
   VMAFx profile, which lints the vendored copies. The conformance test splits
   its long checks into helpers and patches blob headers through `memcpy`

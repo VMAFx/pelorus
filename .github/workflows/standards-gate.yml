@@ -50,6 +50,39 @@ jobs:
       - name: Verify canonical agent contexts
         run: standardsctl compile-context --verify
 
+      # Commit policy (HISS-14). A commit made with its hooks skipped carries no
+      # proof that the commit-msg hook ran, so CI re-checks every commit of the
+      # pull request range: a Conventional Commits subject, the `Migration:`
+      # footer on a breaking change, and the `Signed-off-by` trailer (DCO) that
+      # CONTRIBUTING asks for. The range ends at the pull request head, not at
+      # the synthetic merge commit the checkout holds. Event values travel
+      # through env, never through `${{ }}` inside the command.
+      - name: Enforce commit message policy (Conventional Commits, HISS-14 Migration footer)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: standardsctl forge check-commits --base "origin/${BASE_REF}" --head "${HEAD_SHA}"
+
+      - name: Verify DCO sign-off on every pull request commit
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for sha in $(git rev-list --no-merges "origin/${BASE_REF}..${HEAD_SHA}"); do
+            if ! git show -s --format=%B "${sha}" | grep -Eq '^Signed-off-by: [^<>]+ <[^<>[:space:]]+@[^<>[:space:]]+>$'; then
+              echo "::error::${sha} has no Signed-off-by trailer (DCO); amend with git commit -s"
+              missing=$((missing + 1))
+            fi
+          done
+          if [ "${missing}" -ne 0 ]; then
+            echo "${missing} commit(s) lack a Signed-off-by trailer" >&2
+            exit 1
+          fi
+
       # HISS-13 ratchet (ADR-0145), in two steps. `--base` turns on the engine's
       # growth guard: the committed baseline may not record more findings than
       # the one on the target (pull request) or the replaced commit (push),

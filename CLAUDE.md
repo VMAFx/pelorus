@@ -27,16 +27,27 @@ shell call runs without Praetor policy.
 
 | Invariant | Scope | NASA Rule | Enforcement Mechanism | Failure Action |
 | :--- | :--- | :--- | :--- | :--- |
-| **HISS-01** | Control flow | Rule 1 | No recursion. Allow one-level `goto fail` cleanup only; reject other new `goto`. | Audit ratchet + C review |
-| **HISS-02** | Loops | Rule 2 | Every loop has scalar upper bound; validate external counts before iteration. | Audit ratchet + C review |
-| **HISS-03** | Memory | Rule 3 | No dynamic allocation after init in hot per-frame paths. | C review + tests |
-| **HISS-04** | Complexity | Rule 4 | New/touched functions: $\le 60$ LOC. Effective policy also sets cyclomatic $\le 10$, cognitive $\le 12$, statements $\le 40$. | LOC: audit ratchet. Other limits: C review only (audit measures Go only; clang-tidy size check advisory). |
-| **HISS-07** | Error handling | Rule 7 | Public errors use `pel_result`; every non-void result checked or explicitly discarded. | clang-tidy + C review |
-| **HISS-08** | Determinism | Rule 8 | No dynamic execution; reject banned libc from project contract. | C review + build |
-| **HISS-09** | Reference safety | Rule 9 | Bound offset arithmetic before pointer formation; avoid pointer chasing. | CERT C review + tests |
-| **HISS-10** | Warning hygiene | Rule 10 | Compiler, formatter, and configured clang-tidy gate exit clean. Every CI `meson setup` passes `--werror`; audit ignores `default_options`. | Native gate + audit |
-| **HISS-15** | 3D testing | Rule 5 | Public interfaces cover positive, negative, and boundary cases. | Test + PR review |
-| **HISS-16** | Context integrity | Fleet | `AGENTS.md` plus `.agents/agents/*.md` are canonical; vendor Markdown is generated. | Context verify |
+| **HISS-01** | Control flow | Rule 1 | No recursion. Allow one-level `goto fail` cleanup only; reject other new `goto`. | Audit `HISS invariant scan` (C scanner) + C review; baseline ratchet |
+| **HISS-02** | Loops | Rule 2 | Every loop has scalar upper bound; validate external counts before iteration. Audit scanner flags unbounded C loops; I/O deadlines not measured for C. | Audit `HISS invariant scan` + C review; baseline ratchet |
+| **HISS-03** | Memory | Rule 3 | No dynamic allocation after init in hot per-frame paths. | Review only (`c-reviewer`) + tests; no scanner |
+| **HISS-04** | Complexity | Rule 4 | New/touched functions: $\le 60$ LOC. Effective policy also sets cyclomatic $\le 10$, cognitive $\le 12$, statements $\le 40$. | LOC: audit `HISS invariant scan` + baseline ratchet. Other limits: `[REPORT] HISS-04 complexity measured, not enforced` (Go only) + C review; clang-tidy size check advisory. |
+| **HISS-05** | Scoping | Rule 6 | Declare each identifier in smallest scope, at first use. | Review only (`c-reviewer`); spec marks advisory, no analyzer attached |
+| **HISS-06** | Concurrency | Rule 2 (extended) | Worker pools and parallel fan-out declare scalar upper bound. | Review only; spec marks advisory, no analyzer; sanitizer CI job finds races, not pool bounds |
+| **HISS-07** | Error handling | Rule 7 | Public errors use `pel_result`; every non-void result checked or explicitly discarded. | clang-tidy (`make verify-native`) + C review; audit scanner reads Python/shell for this rule, not C |
+| **HISS-08** | Determinism | Rule 8 | No dynamic execution; reject banned libc from project contract. | Audit `HISS invariant scan` (banned-call rule) + C review + build |
+| **HISS-09** | Reference safety | Rule 9 | Bound offset arithmetic before pointer formation; avoid pointer chasing. | Review only (`c-reviewer`, CERT C) + tests + `sanitizers` CI job; audit scanner has no C rule |
+| **HISS-10** | Warning hygiene | Rule 10 | Compiler, formatter, and configured clang-tidy gate exit clean. Every CI `meson setup` passes `--werror`; audit ignores `default_options`. | Audit `Build warnings (HISS-10)` + `clang-tidy translation-unit coverage` + `make verify-native`; fails audit and CI |
+| **HISS-11** | Supply chain | Fleet | Pinned inputs; SLSA Build L3 provenance, cosign signing, SBOM on releases. | Audit `Supply chain (HISS-11)`: L3 measured from `release.yml`, SBOM from `release-build.yml`; reads workflow files only, not published attestations |
+| **HISS-12** | Secrets | Fleet | No credentials in Git history. | Review only: no `gitleaks` or `make secrets` target wired here |
+| **HISS-13** | Debt ratchet | Fleet | Recorded findings never grow against `.standards-baseline.json`. | `standardsctl baseline --verify` + audit ratchet (`--base`, touched-debt delta) in `make audit`, pre-commit and `standards-gate.yml`; fails CI |
+| **HISS-14** | Public ABI | Fleet | `PelorusSideData` ABI append-only. Breaking change: `!` subject plus `Migration:` footer with before/after C snippets. | Footer: `commit-msg` hook (`forge check-message`) + CI `forge check-commits` in `standards-gate.yml`. Append-only: `interop_test.c` conformance fixture + `interop-abi-reviewer`. Hook is opt-in (`make hooks-install`); CI is authoritative. |
+| **HISS-15** | 3D testing | Rule 5 | Public interfaces cover positive, negative, and boundary cases. | Fast suite (`meson test --suite=fast`) in `core` CI job + PR review; audit `touched files clean` covers debt only |
+| **HISS-16** | Context integrity | Fleet | `AGENTS.md` plus `.agents/agents/*.md` are canonical; vendor Markdown is generated. | `compile-context --verify` (pre-commit `context-check`, `standards-gate.yml`) + audit context, persona and caveman checks |
+| **HISS-17** | State ledger | Fleet | Agent turns keep git-ignored `.workingdir/` ledger: `praetorctl state status` at start, `state sync .` at end. | Lefthook `post-commit` `state-sync` (when hooks installed) + `session-start` hook; no gate fails on a stale ledger. Review only otherwise. |
+| **HISS-18** | CI efficiency | Fleet | Workflows skip drafts and wasted runs through the hosted gate shape. | Audit `Workflow triggers (HISS-18)`: `[WARN]` only, 6 open findings (5 in `ci.yml`, 1 in `standards-gate.yml`); not enforced |
+| **HISS-19** | Reuse | Fleet | One behavior, one implementation; search before writing. | Review only: `praetorctl dedupe scan` reads Go only and this repository has none; only `dedupe-cadence` post-commit bookkeeping runs |
+| **HISS-20** | Replayable evidence | Fleet | Enforcement claims replay against fixtures. | Not wired: no `.config/hiss/coverage.yaml`, so `praetorctl hiss coverage --verify` cannot run; `make verify-all` replays gates, not claims |
+| **HISS-21** | Platform neutrality | Fleet | Gates and hooks run on Linux, macOS, Windows, or skip with stated reason. | Partial: `windows` CI job (MSYS2 UCRT64, fast suite). Make, shell and Lefthook gates are Linux-first; no macOS leg, no declared skip reasons. Review only. |
 
 ## Operational Rules
 
