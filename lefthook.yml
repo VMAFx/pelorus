@@ -1,6 +1,8 @@
 # Lefthook Configuration (HISS Governance)
 # Pelorus additions to the generated jobs: pre-commit pelorus-audit (make audit
-# in the hosted debt-delta mode, offline like hiss-audit) and pre-push
+# in the hosted debt-delta mode, offline like hiss-audit), commit-msg
+# message-policy and dco-signoff (commit message policy and the Signed-off-by
+# trailer; CI re-checks both over every pull request commit), and pre-push
 # verify-all (make verify-all). no_auto_install keeps hook installation
 # explicit (make hooks-install): lefthook run never rewrites the hooks in the
 # Git directory that every linked worktree shares when this file changes.
@@ -55,6 +57,21 @@ pre-commit:
         standardsctl is installed >&2; exit 1; fi
     pelorus-audit:
       run: make audit AUDIT_FLAGS=--offline
+
+commit-msg:
+  commands:
+    message-policy:
+      run: >-
+        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
+        standardsctl 2>/dev/null); then "$praetor_cli" forge check-message
+        "{1}"; else echo HISS governance hook cannot run because neither
+        praetorctl nor standardsctl is installed >&2; exit 1; fi
+    dco-signoff:
+      run: >-
+        grep -v '^#' "{1}" | grep -Eq
+        '^Signed-off-by: [^<>]+ <[^<>[:space:]]+@[^<>[:space:]]+>$' || {
+        echo 'Commit requires a Signed-off-by trailer (DCO). Use git commit -s.'
+        >&2; exit 1; }
 
 post-commit:
   commands:

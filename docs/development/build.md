@@ -347,7 +347,7 @@ are; the merge preserves them.
 
 The manifest adopts `git-hooks`
 ([ADR-0153](../adr/0153-praetor-full-adoption.md)). `lefthook.yml` holds the
-jobs the pinned engine renders plus two Pelorus jobs, and
+jobs the pinned engine renders plus four Pelorus jobs, and
 `.config/lefthook/` and `.config/agent/` hold the checkpoint scripts, the
 checkpoint policy, and the agent interceptor that come with them. Install the
 hooks once per clone, in your own terminal:
@@ -359,16 +359,36 @@ make hooks-install   # runs `lefthook install`
 | Hook | Jobs |
 | --- | --- |
 | pre-commit | `reuse-lint` (`reuse lint`; skipped where reuse is not installed, fails on a reuse other than 6.x), `context-check` (`compile-context --verify`), `hiss-audit` (`audit --offline`), `pelorus-audit` (`make audit AUDIT_FLAGS=--offline`) |
+| commit-msg | `message-policy` (`forge check-message`: Conventional Commits subject, `Migration:` footer on a breaking change), `dco-signoff` (`Signed-off-by` trailer) |
 | post-commit | `state-sync`, `dedupe-cadence` (governance bookkeeping in the git-ignored `.workingdir/`) |
 | pre-push | `flavor-audit`, `audit` (reads the forge), `gate` (`gate run --admit-unsupported`), `verify-all` (`make verify-all`) |
 
-`pelorus-audit` and `verify-all` are the Pelorus additions. The pre-push
+`pelorus-audit`, `message-policy`, `dco-signoff` and `verify-all` are the
+Pelorus additions. The pre-push
 `gate` job needs a clean working tree, and admits a Meson repository without
 signing a receipt. The pre-push `audit` and `verify-all` read the forge, so
 they fail while live `master` protection differs from the committed ruleset
 ([Branch ruleset](#branch-ruleset)). Installed hooks need `praetorctl` (or
 `standardsctl`), `lefthook` 2.1.14 or newer, `make`, Python 3.10 or newer, and,
 for a push, the native and documentation toolchains of `make verify-all`.
+
+#### Commit policy
+
+Every commit needs a Conventional Commits subject, a `Signed-off-by` trailer
+(`git commit -s`), and, when breaking (`!` in the subject), a `Migration:`
+footer with before/after snippets (HISS-14). The hooks are opt-in, so CI is the
+authority: the `Standards` workflow runs `standardsctl forge check-commits`
+and a DCO check over every commit of a pull request, from the base branch to
+the pull request head.
+
+| Where | Check | Command |
+| --- | --- | --- |
+| `commit-msg` hook | subject + `Migration:` footer | `praetorctl forge check-message <file>` |
+| `commit-msg` hook | DCO trailer | `grep` for `Signed-off-by: Name <email>` in the message |
+| `standards-gate.yml`, pull requests | subject + `Migration:` footer | `standardsctl forge check-commits --base origin/<base> --head <pr head>` |
+| `standards-gate.yml`, pull requests | DCO trailer | `git rev-list` loop over the same range |
+
+Check a range locally with `praetorctl forge check-commits --base origin/master`.
 
 `lefthook.yml` sets `no_auto_install: true`. Without it, `lefthook run`
 re-installs the hooks whenever the file differs from the one installed, from
