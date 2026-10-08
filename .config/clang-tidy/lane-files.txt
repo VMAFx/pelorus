@@ -9,9 +9,14 @@ ffmpeg-patches/test/mc_stats_test.c
 ffmpeg-patches/test/pelorus_sidedata_test.c
 libpelorus/src/deband_params.c
 libpelorus/src/denoise_params.c
+libpelorus/src/encode_record.c
 libpelorus/src/interop.c
 libpelorus/src/qp_report_csv.c
+libpelorus/src/sha256.c
+libpelorus/src/telemetry.c
 libpelorus/src/version.c
+libpelorus/test/encode_record_test.c
 libpelorus/test/interop_test.c
 libpelorus/test/path_utf8_test.c
+libpelorus/test/telemetry_test.c
 tools/pelorus_qp_report.c

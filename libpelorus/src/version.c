@@ -38,6 +38,8 @@ const char *pel_result_str(pel_result r)
         return "buffer truncated";
     case PEL_ERR_UNSUPPORTED:
         return "unsupported";
+    case PEL_ERR_MISMATCH:
+        return "digest mismatch";
     default:
         return "unknown error";
     }

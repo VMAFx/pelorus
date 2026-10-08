@@ -7,6 +7,9 @@ libpelorus_inc = include_directories('include')
 libpelorus_sources = files(
   'src/interop.c',
   'src/qp_report_csv.c',
+  'src/telemetry.c',
+  'src/encode_record.c',
+  'src/sha256.c',
   'src/deband_params.c',
   'src/denoise_params.c',
   'src/version.c',
@@ -15,6 +18,8 @@ libpelorus_sources = files(
 libpelorus_headers = files(
   'include/pelorus/pelorus.h',
   'include/pelorus/interop.h',
+  'include/pelorus/telemetry.h',
+  'include/pelorus/encode_record.h',
   'include/pelorus/deband.h',
   'include/pelorus/denoise.h',
 )

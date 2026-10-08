@@ -54,6 +54,8 @@ static int section_bit_valid(uint32_t id)
     case PEL_SEC_QPREPORT:
     case PEL_SEC_MOTION_CONF:
     case PEL_SEC_COMPLEXITY:
+    case PEL_SEC_ENC_TELEMETRY:
+    case PEL_SEC_ENCODE_RECORD:
         return 1;
     default:
         return 0;
@@ -146,20 +148,16 @@ static void write_pack_sections(uint8_t *blob, const PelorusPackSection *section
     }
 }
 
-pel_result pel_blob_pack(const PelorusSideData *meta, const PelorusPackSection *sections, int nb,
-                         uint8_t **out_blob, size_t *out_len)
+/* Check the pack arguments and compute the image layout: section mask, first
+ * payload offset (`cursor`) and total_size. Shared by both pack entry points. */
+static pel_result pack_layout(const PelorusSideData *meta, const PelorusPackSection *sections,
+                              int nb, uint32_t *out_mask, uint32_t *out_cursor, uint32_t *out_total)
 {
     const uint32_t header_size = (uint32_t)sizeof(PelorusSideData);
     const uint32_t dir_size = (uint32_t)sizeof(PelorusSectionDir);
-    uint32_t section_mask = 0;
-    uint32_t cursor;
-    uint32_t total_size = 0;
-    size_t blob_len;
-    uint8_t *blob;
-    PelorusSideData hdr;
     pel_result rc;
 
-    if (meta == NULL || out_blob == NULL || out_len == NULL) {
+    if (meta == NULL) {
         return PEL_ERR_INVALID;
     }
     if (nb < 0 || (nb > 0 && sections == NULL)) {
@@ -169,19 +167,50 @@ pel_result pel_blob_pack(const PelorusSideData *meta, const PelorusPackSection *
         return PEL_ERR_RANGE;
     }
 
-    rc = validate_pack_sections(sections, nb, &section_mask);
+    rc = validate_pack_sections(sections, nb, out_mask);
     if (rc != PEL_OK) {
         return rc;
     }
 
     /* Layout: header, dir[], then 8-aligned section payloads (header + dir is 48 + 16*nb
      * bytes, already a multiple of 8). */
-    cursor = PEL_ALIGN8(header_size + (uint32_t)nb * dir_size);
+    *out_cursor = PEL_ALIGN8(header_size + (uint32_t)nb * dir_size);
+    return pack_total_size(sections, nb, *out_cursor, out_total);
+}
 
+/* Write the whole image into `blob` (16 + total bytes, already zeroed so padding is
+ * deterministic). The header is built in an aligned local and memcpy'd out: both
+ * directions stay cast-free, which keeps bugprone-casting-through-void a real guard
+ * (issue #44). */
+static void pack_image(uint8_t *blob, const PelorusSideData *meta,
+                       const PelorusPackSection *sections, int nb, uint32_t mask, uint32_t cursor,
+                       uint32_t total)
+{
+    PelorusSideData hdr;
+
+    memcpy(blob, pelorus_sidedata_uuid, PELORUS_SIDEDATA_UUID_LEN);
+    write_pack_header(&hdr, meta, total, mask, nb);
+    memcpy(blob + PELORUS_SIDEDATA_UUID_LEN, &hdr, sizeof(hdr));
+    write_pack_sections(blob, sections, nb, cursor);
+}
+
+pel_result pel_blob_pack(const PelorusSideData *meta, const PelorusPackSection *sections, int nb,
+                         uint8_t **out_blob, size_t *out_len)
+{
+    uint32_t section_mask = 0;
+    uint32_t cursor = 0;
+    uint32_t total_size = 0;
+    size_t blob_len;
+    uint8_t *blob;
+    pel_result rc;
+
+    if (out_blob == NULL || out_len == NULL) {
+        return PEL_ERR_INVALID;
+    }
     *out_blob = NULL;
     *out_len = 0;
 
-    rc = pack_total_size(sections, nb, cursor, &total_size);
+    rc = pack_layout(meta, sections, nb, &section_mask, &cursor, &total_size);
     if (rc != PEL_OK) {
         return rc;
     }
@@ -191,18 +220,42 @@ pel_result pel_blob_pack(const PelorusSideData *meta, const PelorusPackSection *
     if (blob == NULL) {
         return PEL_ERR_NOMEM;
     }
-
-    /* UUID prefix, then the header, built in an aligned local and memcpy'd out: both directions
-     * stay cast-free, which keeps bugprone-casting-through-void a real guard (issue #44). */
-    memcpy(blob, pelorus_sidedata_uuid, PELORUS_SIDEDATA_UUID_LEN);
-    write_pack_header(&hdr, meta, total_size, section_mask, nb);
-    memcpy(blob + PELORUS_SIDEDATA_UUID_LEN, &hdr, sizeof(hdr));
-
-    /* Directory + payloads. */
-    write_pack_sections(blob, sections, nb, cursor);
+    pack_image(blob, meta, sections, nb, section_mask, cursor, total_size);
 
     *out_blob = blob;
     *out_len = blob_len;
+    return PEL_OK;
+}
+
+pel_result pel_blob_pack_into(const PelorusSideData *meta, const PelorusPackSection *sections,
+                              int nb, uint8_t *buf, size_t cap, size_t *out_len)
+{
+    uint32_t section_mask = 0;
+    uint32_t cursor = 0;
+    uint32_t total_size = 0;
+    size_t need;
+    pel_result rc;
+
+    if (out_len == NULL) {
+        return PEL_ERR_INVALID;
+    }
+    *out_len = 0;
+    if (buf == NULL && cap > 0) {
+        return PEL_ERR_INVALID;
+    }
+
+    rc = pack_layout(meta, sections, nb, &section_mask, &cursor, &total_size);
+    if (rc != PEL_OK) {
+        return rc;
+    }
+
+    need = (size_t)PELORUS_SIDEDATA_UUID_LEN + (size_t)total_size;
+    *out_len = need; /* also on a short buffer: the caller sizes from it */
+    if (buf == NULL || cap < need) {
+        return PEL_ERR_RANGE;
+    }
+    memset(buf, 0, need); /* deterministic padding, as calloc gives pel_blob_pack */
+    pack_image(buf, meta, sections, nb, section_mask, cursor, total_size);
     return PEL_OK;
 }
 
@@ -229,11 +282,10 @@ int pel_blob_is_present(const uint8_t *blob, size_t len)
     return hdr.abi_major == (uint16_t)PELORUS_ABI_MAJOR;
 }
 
-/* Validate the blob framing and the header for `sec`; on PEL_OK `*hdr` holds the header and
- * `*image` / `*image_len` the byte range that starts at the header magic. */
-static pel_result find_section_framing(const uint8_t *blob, size_t len, enum pel_section sec,
-                                       PelorusSideData *hdr, const uint8_t **image,
-                                       size_t *image_len)
+/* Validate the blob framing (uuid, magic, major, total_size); on PEL_OK `*hdr` holds the
+ * header and `*image` / `*image_len` the byte range that starts at the header magic. */
+static pel_result blob_framing(const uint8_t *blob, size_t len, PelorusSideData *hdr,
+                               const uint8_t **image, size_t *image_len)
 {
     if (len < (size_t)PELORUS_SIDEDATA_UUID_LEN + sizeof(PelorusSideData)) {
         return PEL_ERR_ABSENT;
@@ -253,9 +305,23 @@ static pel_result find_section_framing(const uint8_t *blob, size_t len, enum pel
     if (hdr->abi_major != (uint16_t)PELORUS_ABI_MAJOR) {
         return PEL_ERR_ABI; /* consumer cannot trust the layout (R6) */
     }
-    /* Framing sanity: declared size must fit, dir[] must fit. */
+    /* Framing sanity: the declared size must fit the received bytes. */
     if (hdr->total_size > *image_len || hdr->header_size < sizeof(*hdr)) {
         return PEL_ERR_TRUNCATED;
+    }
+    return PEL_OK;
+}
+
+/* Validate the blob framing and the header for `sec` (dir[] must fit and be aligned, the
+ * section bit must be set); on PEL_OK the outputs are those of blob_framing. */
+static pel_result find_section_framing(const uint8_t *blob, size_t len, enum pel_section sec,
+                                       PelorusSideData *hdr, const uint8_t **image,
+                                       size_t *image_len)
+{
+    pel_result rc = blob_framing(blob, len, hdr, image, image_len);
+
+    if (rc != PEL_OK) {
+        return rc;
     }
     /* The packer always 8-aligns the directory. A header_size that is not a
      * multiple of 8 is corrupt framing from an untrusted producer; reject it
@@ -329,6 +395,69 @@ pel_result pel_blob_find_section(const uint8_t *blob, size_t len, enum pel_secti
         return find_section_payload(&ent, image, image_len, consumer_known_size, out_ptr, out_size);
     }
     return PEL_ERR_ABSENT;
+}
+
+pel_result pel_blob_map(const uint8_t *blob, size_t len, uint32_t offset, uint32_t size,
+                        uint32_t elem_count, uint32_t elem_size, const void **out_ptr)
+{
+    PelorusSideData hdr;
+    const uint8_t *image = NULL;
+    size_t image_len = 0;
+    pel_result rc;
+
+    if (out_ptr != NULL) {
+        *out_ptr = NULL;
+    }
+    if (blob == NULL || out_ptr == NULL || elem_count == 0u || elem_size == 0u) {
+        return PEL_ERR_INVALID;
+    }
+    rc = blob_framing(blob, len, &hdr, &image, &image_len);
+    if (rc != PEL_OK) {
+        return rc;
+    }
+    /* Check 3: the size is exactly the element count times the element size (64-bit, so the
+     * product of two untrusted uint32 values cannot wrap). */
+    if ((uint64_t)elem_count * (uint64_t)elem_size != (uint64_t)size) {
+        return PEL_ERR_ABI;
+    }
+    /* Check 4: maps are 8-aligned like section payloads (R5). */
+    if ((offset & 7u) != 0u) {
+        return PEL_ERR_ABI;
+    }
+    /* Check 5: inside total_size, which blob_framing bounded by the received length. The
+     * subtraction cannot wrap: offset <= total_size is tested first. */
+    if (offset > hdr.total_size || size > hdr.total_size - offset) {
+        return PEL_ERR_TRUNCATED;
+    }
+    *out_ptr = image + offset;
+    return PEL_OK;
+}
+
+pel_result pel_encode_record_digest_text(const PelorusEncodeRecordSection *s, size_t got, char *out,
+                                         size_t cap)
+{
+    static const char hex_digits[] = "0123456789abcdef";
+    static const char prefix[] = "sha256:";
+    const size_t prefix_len = sizeof(prefix) - 1u;
+    size_t i;
+
+    if (s == NULL || out == NULL || got < sizeof(*s)) {
+        return PEL_ERR_INVALID;
+    }
+    if (s->digest_alg != (uint8_t)PEL_DIGEST_ALG_SHA256) {
+        return PEL_ERR_INVALID;
+    }
+    if (cap < (size_t)PEL_DIGEST_TEXT_SIZE) {
+        return PEL_ERR_RANGE;
+    }
+    memcpy(out, prefix, prefix_len);
+    for (i = 0; i < sizeof(s->digest); i++) {
+        const unsigned byte = s->digest[i];
+        out[prefix_len + 2u * i] = hex_digits[byte >> 4u];
+        out[prefix_len + 2u * i + 1u] = hex_digits[byte & 0x0fu];
+    }
+    out[prefix_len + 2u * sizeof(s->digest)] = '\0';
+    return PEL_OK;
 }
 
 /* Copy the frame statistics into the section; the per-cell QP grid is not valid yet. */
