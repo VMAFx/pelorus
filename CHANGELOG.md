@@ -24,7 +24,12 @@ All notable changes to Pelorus are documented here. The format is
   with a worked example any party can recompute
   ([ADR-0175](docs/adr/0175-encode-provenance-record.md),
   `docs/api/encode-record.md`).
+- Tester kit stages: real runners for `format_matrix`, `steering_smoke`, `sidedata_roundtrip`, `zero_copy_chain` (fails on any `hwdownload`, `hwupload` or `scale` outside the software-encoder edges) and the opt-in non-gating `bench`, plus offline hash-pinned tester fixtures with recorded licences (Big Buck Bunny CC BY 3.0 notice) and `docs/usage/tester.md` ([ADR-0173](docs/adr/0173-tester-programme.md)).
 - Lavapipe spike: the ten filters run on Mesa software Vulkan and the format matrix passes its comparisons, but validation is not clean (host-image-copy layout errors, plus two more on grain_estimate); research digest and report-marking design in [docs/research/0228-lavapipe-spike.md](docs/research/0228-lavapipe-spike.md) (#228).
+
+### Fixed
+
+- `scripts/bench/bd_rate.py` no longer crashes on NumPy 2 (`np.trapz` was removed); it uses `np.trapezoid` when present.
 
 <!-- END UNRELEASED -->
 

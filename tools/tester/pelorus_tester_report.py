@@ -19,6 +19,7 @@ that finds no hardware device is `no_device`, a reasoned non-failure, unless
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -30,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TOOL_NAME = "pelorus-tester-report"
-TOOL_VERSION = "0.1.0"
+TOOL_VERSION = "0.2.0"
 SCHEMA_VERSION = 1
 SCHEMA_PATH = Path(__file__).with_name("report.schema.json")
 
@@ -45,8 +46,22 @@ STAGE_IDS = (
     "bench",
 )
 EXIT_BY_VERDICT = {"pass": 0, "fail": 1, "incomplete": 2, "unavailable": 100}
-RULES = ("no_device_nonfailure", "redaction", "exit_mapping", "truncation",
-         "schema_version", "reason_required", "stage_failure")
+HERE = Path(__file__).resolve().parent
+
+
+def load_sibling(name):
+    """Import a sibling module by path; `python3 -I` keeps the script dir off sys.path."""
+    spec = importlib.util.spec_from_file_location(name, HERE / (name + ".py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+FIXTURES = load_sibling("pelorus_tester_fixtures")
+STAGES = load_sibling("pelorus_tester_stages")
+RULES = (("no_device_nonfailure", "redaction", "exit_mapping", "truncation",
+          "schema_version", "reason_required", "stage_failure", "bench_nongating")
+         + FIXTURES.RULES + STAGES.RULES)
 
 MAX_OUTPUT_BYTES = 262144
 LOG_TAIL_CHARS = 4000
@@ -57,16 +72,17 @@ NO_DEVICE_REASON = ("no Vulkan hardware device visible; start the container "
                     "with --device /dev/dri (Intel, AMD) or --gpus all "
                     "(NVIDIA), or run on a host with a GPU driver")
 
-# Default plan. argv None = the stage runner is not part of this kit version.
+# Default plan. argv set = run that command; argv None and runner true = the
+# built-in runner in pelorus_tester_stages.py; neither = not part of this kit.
 DEFAULT_PLAN = {
     "probe": {"argv": ["vulkaninfo", "--summary"], "parser": "vulkaninfo"},
     "libpelorus_suite": {"argv": None},
     "registration": {"argv": None},
-    "format_matrix": {"argv": None, "needs_device": True},
-    "steering_smoke": {"argv": None, "needs_device": True},
-    "sidedata_roundtrip": {"argv": None},
-    "zero_copy_chain": {"argv": None, "needs_device": True},
-    "bench": {"argv": None, "needs_device": True, "opt_in": True},
+    "format_matrix": {"argv": None, "runner": True, "needs_device": True},
+    "steering_smoke": {"argv": None, "runner": True, "needs_device": True},
+    "sidedata_roundtrip": {"argv": None, "runner": True, "needs_device": True},
+    "zero_copy_chain": {"argv": None, "runner": True, "needs_device": True},
+    "bench": {"argv": None, "runner": True, "needs_device": True, "opt_in": True},
 }
 
 UUID_RE = re.compile(
@@ -219,8 +235,14 @@ def validate_schema(instance, schema):
 
 # ------------------------------------------------------------- verdict rules
 
+def gating_stages(stages, disabled):
+    """The bench stage is non-gating performance data (ADR-0173 decision 3)."""
+    return [s for s in stages if s["id"] != "bench" or "bench_nongating" in disabled]
+
+
 def compute_verdict(stages, require_device, disabled=frozenset()):
     """Map stage statuses to (verdict, exit code, failed stage ids)."""
+    stages = gating_stages(stages, disabled)
     status = [s["status"] for s in stages]
     bad = [s["id"] for s in stages if s["status"] in ("fail", "incomplete")]
     if "fail" in status and "stage_failure" not in disabled:
@@ -290,7 +312,7 @@ def validate_report(report, schema, forbid=(), disabled=frozenset()):
 
 # ------------------------------------------------------------ process runner
 
-def run_command(argv, timeout_s):
+def run_command(argv, timeout_s, env=None):
     """Run argv directly, bounded in time and captured bytes.
 
     Returns (returncode or None, output text, error text or "")."""
@@ -299,7 +321,7 @@ def run_command(argv, timeout_s):
     with tempfile.TemporaryFile() as sink:
         try:
             proc = subprocess.Popen(argv, stdout=sink, stderr=subprocess.STDOUT,
-                                    stdin=subprocess.DEVNULL,
+                                    stdin=subprocess.DEVNULL, env=env,
                                     start_new_session=(os.name == "posix"))
         except FileNotFoundError:
             return None, "", "command not found: %s" % argv[0]
@@ -383,6 +405,21 @@ def probe_adjust(rec, devices):
     return rec
 
 
+def run_builtin(sid, spec, ctx, needs):
+    """Run the built-in runner of a stage, if the plan has one."""
+    fn = STAGES.RUNNERS.get(sid) if spec.get("runner") else None
+    if fn is None:
+        return stage_record(sid, "not_run",
+                            "stage runner is not part of this kit version (#227)", needs)
+    started = datetime.now().timestamp()
+    status, reason, log = fn(ctx, spec)
+    rec = stage_record(sid, status, redact_text(reason, ctx["literals"], ctx["disabled"])[:1000],
+                       needs)
+    rec["log_tail"] = redact_text(log, ctx["literals"], ctx["disabled"])[-LOG_TAIL_CHARS:]
+    rec["duration_s"] = round(datetime.now().timestamp() - started, 3)
+    return rec
+
+
 def run_stage(sid, spec, ctx):
     needs = spec.get("needs_device", False)
     if spec.get("opt_in") and not ctx["enabled"].get(sid):
@@ -390,8 +427,7 @@ def run_stage(sid, spec, ctx):
     if needs and ctx["probed"] and not ctx["hardware"]:
         return stage_record(sid, "no_device", NO_DEVICE_REASON, needs)
     if spec.get("argv") is None:
-        return stage_record(sid, "not_run",
-                            "stage runner is not part of this kit version (#227)", needs)
+        return run_builtin(sid, spec, ctx, needs)
     rec, devices = exec_stage(sid, spec, ctx)
     if devices is not None:
         ctx["probed"], ctx["devices"] = True, devices
@@ -418,8 +454,12 @@ def merge_plan(plan_file):
 
 def build_report(plan, opts, disabled=frozenset()):
     ctx = {"literals": local_literals(), "disabled": disabled, "probed": False,
-           "hardware": False, "devices": [], "enabled": {"bench": opts["bench"]}}
-    stages = [run_stage(sid, plan[sid], ctx) for sid in STAGE_IDS]
+           "hardware": False, "devices": [], "enabled": {"bench": opts["bench"]},
+           "env": dict(opts.get("env", os.environ)), "run": run_command,
+           "is_hardware": is_hardware, "fixtures": FIXTURES}
+    with tempfile.TemporaryDirectory(prefix="pelorus-tester-") as work:
+        ctx["work"] = work
+        stages = [run_stage(sid, plan[sid], ctx) for sid in STAGE_IDS]
     verdict, code, bad = compute_verdict(stages, opts["require_device"], disabled)
     report = {
         "schema_version": SCHEMA_VERSION,
@@ -522,10 +562,14 @@ def py_stage(code, **extra):
 
 def good_report(tmp, plan_stages, **opt):
     plan, _ = merge_plan(None)
+    for sid in STAGE_IDS:
+        plan[sid].update(NO_RUNNERS[sid])   # a self-test never runs real GPU stages
     for sid, spec in plan_stages.items():
         plan[sid].update(spec)
-    opts = {"bench": False, "require_device": opt.get("require_device", False),
-            "note": ""}
+    opts = {"bench": opt.get("bench", False), "note": "",
+            "require_device": opt.get("require_device", False)}
+    if "env" in opt:
+        opts["env"] = opt["env"]
     return build_report(plan, opts, opt.get("disabled", frozenset()))
 
 
@@ -548,6 +592,24 @@ def planted_bad(report):
     yield mutate("not_run_without_reason", lambda r: r["stages"][1].update(reason=""))
 
 
+NO_RUNNERS = {sid: {"runner": None} for sid in STAGE_IDS}
+
+
+def self_test_stages(expect, disabled):
+    """Plumbing of the built-in runners and the non-gating bench rule."""
+    off = {"PELORUS_VALIDATE": "0", "FFMPEG_BIN": "/nonexistent/pelorus-ffmpeg"}
+    runner_ids = ("format_matrix", "steering_smoke", "sidedata_roundtrip", "zero_copy_chain")
+    gpu = {"probe": py_stage("print(%r)" % SYNTH_VULKANINFO),
+           **{sid: {"runner": True} for sid in runner_ids}}
+    rep, _ = good_report(None, gpu, disabled=disabled, env=off)
+    got = [s["status"] for s in rep["stages"] if s["id"] in runner_ids]
+    expect("runners_without_ffmpeg_not_run", got == ["not_run"] * 4 and rep["exit_code"] == 0)
+    bench = {**gpu, **NO_RUNNERS, "bench": py_stage("import sys; sys.exit(3)")}
+    rep, _ = good_report(None, bench, disabled=disabled, bench=True)
+    expect("bench_failure_is_nongating", rep["stages"][7]["status"] == "fail"
+           and rep["exit_code"] == 0 and rep["failed_stages"] == [])
+
+
 def self_test(disabled=frozenset()):
     schema = load_schema()
     failures = []
@@ -564,7 +626,7 @@ def self_test(disabled=frozenset()):
     expect("cpu_only_valid", not validate_report(rep, schema, disabled=disabled))
     rep, _ = good_report(None, cpu_only, require_device=True, disabled=disabled)
     expect("require_device_100", rep["exit_code"] == 100)
-    gpu = {"probe": py_stage("print(%r)" % SYNTH_VULKANINFO)}
+    gpu = {"probe": py_stage("print(%r)" % SYNTH_VULKANINFO), **NO_RUNNERS}
     rep, lit = good_report(None, gpu, disabled=disabled)
     expect("gpu_probe_pass", rep["stages"][0]["status"] == "pass"
            and rep["devices"] and rep["stages"][3]["status"] == "not_run")
@@ -585,6 +647,8 @@ def self_test(disabled=frozenset()):
     expect("rejects_hostname_literal", bool(validate_report(
         base, schema, forbid=["pelorus-tester-report"], disabled=disabled)))
     expect("rejects_malformed_json", cmd_validate_text("{\"schema_ver", schema) != 0)
+    self_test_stages(expect, disabled)
+    failures.extend(STAGES.self_test(disabled) + FIXTURES.self_test(disabled))
     for line in failures:
         print("SELF-TEST FAIL: " + line, file=sys.stderr)
     print("self-test: %s" % ("FAILED (%d)" % len(failures) if failures else "ok"))
