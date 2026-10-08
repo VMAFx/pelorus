@@ -147,7 +147,7 @@ that switches on `pel_result` maps an unknown value to its generic error.
 | Function | Purpose |
 |---|---|
 | `pel_blob_pack_into(meta, sections, nb, buf, cap, &len)` | `pel_blob_pack` into a caller buffer, no allocation; `cap` 0 asks for the length (`PEL_ERR_RANGE`, `len` set) |
-| `pel_blob_map(blob, len, offset, size, elem_count, elem_size, &ptr)` | locate a map a section references: framing, `size == elem_count * elem_size` (64-bit), 8-aligned offset (`PEL_ERR_ABI`), inside `total_size` (`PEL_ERR_TRUNCATED`) |
+| `pel_blob_map(blob, len, offset, size, elem_count, elem_size, &ptr)` | locate a map a section references: framing, `size == elem_count * elem_size` (64-bit), 8-aligned offset, no overlap with the header or `dir[]` (`offset >= header_size + section_count * 16`; each `PEL_ERR_ABI`), inside `total_size` (`PEL_ERR_TRUNCATED`) |
 | `pel_encode_record_digest_text(sec, got, text, cap)` | the 71-character `sha256:` text VMAFx stores, from a `PelorusEncodeRecordSection`; `cap >= PEL_DIGEST_TEXT_SIZE` (72) |
 
 The writer-side telemetry contract (`telemetry.c`) and the encode-record

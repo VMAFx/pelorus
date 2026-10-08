@@ -647,6 +647,8 @@ int pel_blob_is_present(const uint8_t *blob, size_t len);
  *   - the blob framing (uuid, magic, major, total_size <= len - 16);
  *   - size == elem_count * elem_size, else PEL_ERR_ABI;
  *   - offset % 8 == 0, else PEL_ERR_ABI;
+ *   - offset >= header_size + section_count * sizeof(PelorusSectionDir): a map
+ *     that overlaps the header or the directory is PEL_ERR_ABI;
  *   - offset <= total_size and size <= total_size - offset, else
  *     PEL_ERR_TRUNCATED.
  * The caller first checks the section's own geometry (presence bit, element

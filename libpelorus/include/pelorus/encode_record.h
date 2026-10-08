@@ -46,7 +46,7 @@ extern "C" {
 /* One parameter: a key and either one scalar text or an array of them (a
  * per-plane value). Scalar texts come from pel_encode_record_int / _f64, are
  * "true" / "false", or are the string itself. Keys are printable ASCII
- * (0x21..0x7e without '"' and '\\'), unique per object, at most 64 bytes. */
+ * (0x21..0x7e without '"' and '\\'), unique per object, 1 to 64 bytes. */
 typedef struct PelorusEncodeParam {
     const char *key;
     const char *const *values; /* nb_values NUL-terminated UTF-8 texts            */
@@ -98,20 +98,24 @@ pel_result pel_encode_record_f64(double v, char out[PEL_ENCODE_RECORD_SCALAR_SIZ
 
 /*
  * Build the canonical text of a record with its `digest` member filled in.
- * buf receives *out_len bytes plus a NUL. Returns PEL_OK, PEL_ERR_INVALID (NULL
- * arguments, a missing required member, a malformed input_digest, an unknown
- * hardware_path, a bad or duplicate key, invalid UTF-8, a bound overrun), or
- * PEL_ERR_RANGE (cap shorter than the text plus NUL; *out_len holds the length).
+ * buf receives *out_len bytes plus a NUL. buf NULL with cap 0 is a size query:
+ * PEL_ERR_RANGE with the length in *out_len, as for pel_blob_pack_into. Returns
+ * PEL_OK, PEL_ERR_INVALID (NULL in/out_len, NULL buf with cap > 0, a missing
+ * required member, a malformed input_digest, an unknown hardware_path, an empty,
+ * bad or duplicate key, invalid UTF-8, a bound overrun), or PEL_ERR_RANGE (cap
+ * shorter than the text plus NUL; *out_len holds the length).
  */
 pel_result pel_encode_record_build(const PelorusEncodeRecordInput *in, char *buf, size_t cap,
                                    size_t *out_len);
 
 /*
  * The canonical text of any record (`json`, `len` bytes of UTF-8 JSON whose
- * root is an object). buf receives *out_len bytes plus a NUL. Returns PEL_OK,
- * PEL_ERR_INVALID (malformed JSON, a duplicate key, a non-string scalar, invalid
- * UTF-8 or a lone surrogate, a key outside printable ASCII, a bound overrun) or
- * PEL_ERR_RANGE (cap shorter than the text plus NUL; *out_len holds the length).
+ * root is an object). buf receives *out_len bytes plus a NUL; buf NULL with cap
+ * 0 is a size query (PEL_ERR_RANGE, length in *out_len). Returns PEL_OK,
+ * PEL_ERR_INVALID (NULL json/out_len, NULL buf with cap > 0, malformed JSON, a
+ * duplicate or empty key, a non-string scalar, invalid UTF-8 or a lone
+ * surrogate, a key outside printable ASCII, a bound overrun) or PEL_ERR_RANGE
+ * (cap shorter than the text plus NUL; *out_len holds the length).
  */
 pel_result pel_encode_record_canonicalize(const char *json, size_t len, char *buf, size_t cap,
                                           size_t *out_len);

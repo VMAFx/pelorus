@@ -1544,6 +1544,19 @@ static void check_blob_map_rejects(const uint8_t *blob, size_t len, uint32_t off
     CHECK(pel_blob_map(blob, len - 1u, off, 16u, 8u, 2u, &p) == PEL_ERR_TRUNCATED);
 }
 
+/* A map aliasing the header or dir[] (one entry: 48 + 16 bytes) is corrupt framing. */
+static void check_blob_map_overlap(const uint8_t *blob, size_t len)
+{
+    const void *p = NULL;
+
+    CHECK(pel_blob_map(blob, len, 0u, 16u, 8u, 2u, &p) == PEL_ERR_ABI);  /* the header */
+    CHECK(pel_blob_map(blob, len, 48u, 16u, 8u, 2u, &p) == PEL_ERR_ABI); /* dir[0] */
+    CHECK(pel_blob_map(blob, len, 56u, 16u, 8u, 2u, &p) == PEL_ERR_ABI); /* inside dir[0] */
+    CHECK(p == NULL);
+    /* Boundary: the first byte after dir[] may start a map (the rule ends there). */
+    CHECK(pel_blob_map(blob, len, 64u, 16u, 8u, 2u, &p) == PEL_OK);
+}
+
 static void test_blob_map_bounds(void)
 {
     FixtureBlob fx;
@@ -1561,6 +1574,7 @@ static void test_blob_map_bounds(void)
     total = (uint32_t)(len - PELORUS_SIDEDATA_UUID_LEN);
     check_blob_map_rejects(fx.bytes, len, t.qp_map_offset, total);
 
+    check_blob_map_overlap(fx.bytes, len);
     /* Boundary: a map that ends exactly at total_size is inside; one byte more is not. */
     CHECK(pel_blob_map(fx.bytes, len, t.mode_map_offset, 8u, 8u, 1u, &p) == PEL_OK);
     CHECK(t.mode_map_offset + 8u == total);

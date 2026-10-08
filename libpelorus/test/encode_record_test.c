@@ -62,7 +62,9 @@ static int sha_matches(const void *data, size_t len, const char *want_hex)
     uint8_t digest[32];
     char hex[65];
 
-    pel_sha256(data, len, digest);
+    if (pel_sha256(data, len, digest) != PEL_OK) {
+        return 0;
+    }
     to_hex(digest, hex);
     return strcmp(hex, want_hex) == 0;
 }
@@ -107,11 +109,55 @@ static void test_sha256_fips(void)
     memset(block, 'a', sizeof(block));
     pel_sha256_init(&sha);
     for (i = 0; i < 1000u; i++) {
-        pel_sha256_update(&sha, block, sizeof(block));
+        CHECK(pel_sha256_update(&sha, block, sizeof(block)) == PEL_OK);
     }
     pel_sha256_final(&sha, digest);
     to_hex(digest, hex);
     CHECK(strcmp(hex, "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0") == 0);
+}
+
+/* NULL data is the empty message only at length 0; with a length it is an error and
+ * hashes nothing (c-reviewer: it must never pass for the empty digest). */
+static void test_sha256_null_data(void)
+{
+    static const char empty_hex[] =
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    uint8_t digest[32];
+    char hex[65];
+    PelSha256 sha;
+
+    memset(digest, 0xA5, sizeof(digest));
+    CHECK(pel_sha256(NULL, 5, digest) == PEL_ERR_INVALID);
+    CHECK(digest[0] == 0xA5 && digest[31] == 0xA5); /* untouched */
+    CHECK(sha_matches(NULL, 0, empty_hex));
+    pel_sha256_init(&sha);
+    CHECK(pel_sha256_update(&sha, NULL, 3) == PEL_ERR_INVALID);
+    CHECK(pel_sha256_update(&sha, NULL, 0) == PEL_OK);
+    CHECK(pel_sha256_update(&sha, "abc", 3) == PEL_OK);
+    pel_sha256_final(&sha, digest);
+    to_hex(digest, hex); /* the rejected update added nothing: still SHA-256("abc") */
+    CHECK(strcmp(hex, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") == 0);
+}
+
+/* `message[0..len)` fed in `chunk`-byte pieces gives `want_hex`. */
+static int streamed_matches(const uint8_t *message, size_t len, size_t chunk, const char *want_hex)
+{
+    PelSha256 sha;
+    uint8_t digest[32];
+    char hex[65];
+    size_t at;
+    int ok = 1;
+
+    pel_sha256_init(&sha);
+    for (at = 0; at < len; at += chunk) {
+        const size_t left = len - at;
+        if (pel_sha256_update(&sha, message + at, left < chunk ? left : chunk) != PEL_OK) {
+            ok = 0;
+        }
+    }
+    pel_sha256_final(&sha, digest);
+    to_hex(digest, hex);
+    return ok && strcmp(hex, want_hex) == 0;
 }
 
 static void test_sha256_boundaries(void)
@@ -127,19 +173,8 @@ static void test_sha256_boundaries(void)
     for (i = 0; i < sizeof(boundary_cases) / sizeof(boundary_cases[0]); i++) {
         CHECK(sha_matches(message, boundary_cases[i].len, boundary_cases[i].hex));
         for (c = 0; c < sizeof(chunk_sizes) / sizeof(chunk_sizes[0]); c++) {
-            PelSha256 sha;
-            uint8_t digest[32];
-            char hex[65];
-            size_t at;
-            pel_sha256_init(&sha);
-            for (at = 0; at < boundary_cases[i].len; at += chunk_sizes[c]) {
-                const size_t left = boundary_cases[i].len - at;
-                pel_sha256_update(&sha, message + at,
-                                  left < chunk_sizes[c] ? left : chunk_sizes[c]);
-            }
-            pel_sha256_final(&sha, digest);
-            to_hex(digest, hex);
-            CHECK(strcmp(hex, boundary_cases[i].hex) == 0);
+            CHECK(streamed_matches(message, boundary_cases[i].len, chunk_sizes[c],
+                                   boundary_cases[i].hex));
         }
     }
 }
@@ -399,7 +434,7 @@ static void test_build_matches_worked_example(void)
     size_t len = 0;
 
     /* input.digest is the SHA-256 of the bytes "example input bytes". */
-    pel_sha256("example input bytes", 19, input_digest);
+    CHECK(pel_sha256("example input bytes", 19, input_digest) == PEL_OK);
     to_hex(input_digest, input_hex);
     CHECK(strcmp(input_hex, "6d7233c7036e18b055f7861cd3c9f534093477b15efe8f58a80fecce4993c2ae") ==
           0);
@@ -411,6 +446,10 @@ static void test_build_matches_worked_example(void)
     /* The text and its NUL must fit: 705 is one byte short, 706 is exact. */
     CHECK(pel_encode_record_build(&in, text, 705, &len) == PEL_ERR_RANGE && len == 705u);
     CHECK(pel_encode_record_build(&in, text, 706, &len) == PEL_OK && text[705] == '\0');
+    /* Size query: no buffer, cap 0 (pel_blob_pack_into's convention). */
+    len = 0;
+    CHECK(pel_encode_record_build(&in, NULL, 0, &len) == PEL_ERR_RANGE && len == 705u);
+    CHECK(pel_encode_record_build(&in, NULL, 706, &len) == PEL_ERR_INVALID);
 }
 
 /* #81 item 1: every single encoder option or filter parameter change changes the digest. */
@@ -517,6 +556,8 @@ static void test_build_rejects_params(void)
     CHECK(pel_encode_record_build(&in, text, sizeof(text), &len) == PEL_ERR_INVALID);
     dup[1].key = "has space";
     CHECK(pel_encode_record_build(&in, text, sizeof(text), &len) == PEL_ERR_INVALID);
+    dup[1].key = ""; /* an empty key names nothing */
+    CHECK(pel_encode_record_build(&in, text, sizeof(text), &len) == PEL_ERR_INVALID);
     dup[1].key = "ok";
     dup[1].values = bad_utf8;
     CHECK(pel_encode_record_build(&in, text, sizeof(text), &len) == PEL_ERR_INVALID);
@@ -545,6 +586,8 @@ static const CanonCase canon_cases[] = {
     {"{\"a\":\"\x01\"}", PEL_ERR_INVALID},           /* raw control character */
     {"{\"a\":\"\\x\"}", PEL_ERR_INVALID},            /* unknown escape */
     {"{\"a b\":\"1\"}", PEL_ERR_INVALID},            /* key outside 0x21..0x7e */
+    {"{\"\":\"1\"}", PEL_ERR_INVALID},               /* empty key */
+    {"{\"a\":{\"\":\"1\"}}", PEL_ERR_INVALID},       /* empty nested key */
     {"{\"\\u0061\":\"1\"}", PEL_ERR_INVALID},        /* escaped key */
     {"{\"a\":\"1\"} x", PEL_ERR_INVALID},            /* trailing text */
     {"[\"a\"]", PEL_ERR_INVALID},                    /* root is not an object */
@@ -674,6 +717,11 @@ static void test_canonical_bounds(void)
                                          &len) == PEL_ERR_INVALID);
     /* A short output buffer reports the length it needs. */
     CHECK(pel_encode_record_canonicalize("{}", 2, out, 2, &len) == PEL_ERR_RANGE && len == 2u);
+    /* Size query: no buffer, cap 0; a NULL buffer with a capacity is an error. */
+    len = 0;
+    CHECK(pel_encode_record_canonicalize("{}", 2, NULL, 0, &len) == PEL_ERR_RANGE && len == 2u);
+    CHECK(pel_encode_record_canonicalize("{}", 2, NULL, 8, &len) == PEL_ERR_INVALID);
+    CHECK(pel_encode_record_canonicalize("{\"a\":1}", 7, NULL, 0, &len) == PEL_ERR_INVALID);
     free(big);
     free(out);
 }
@@ -682,6 +730,7 @@ int main(int argc, char **argv)
 {
     test_sha256_fips();
     test_sha256_boundaries();
+    test_sha256_null_data();
     test_scalar_int();
     test_scalar_f64();
     test_worked_example();

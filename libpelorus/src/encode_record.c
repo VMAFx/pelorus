@@ -80,8 +80,9 @@ static void er_put(ErSink *s, const char *p, size_t n)
     if (s->buf != NULL && s->cap > s->len && n < s->cap - s->len) {
         memcpy(s->buf + s->len, p, n);
     }
-    if (s->sha != NULL) {
-        pel_sha256_update(s->sha, p, n);
+    if (s->sha != NULL && pel_sha256_update(s->sha, p, n) != PEL_OK) {
+        s->err = PEL_ERR_INVALID; /* unreachable: p is never NULL for n > 0 */
+        return;
     }
     s->len += n;
 }
@@ -318,7 +319,7 @@ static int er_key_char_ok(uint8_t c)
     return c >= 0x21u && c <= 0x7Eu && c != '"' && c != '\\';
 }
 
-/* A caller key: printable ASCII without '"' and '\\', at most MAX_KEY bytes. */
+/* A caller key: 1 to MAX_KEY bytes of printable ASCII without '"' and '\\'. */
 static int er_cstr_key_ok(const char *key)
 {
     size_t n;
@@ -328,8 +329,8 @@ static int er_cstr_key_ok(const char *key)
         return 0;
     }
     n = er_strnlen(key, PEL_ENCODE_RECORD_MAX_KEY + 1u);
-    if (n > PEL_ENCODE_RECORD_MAX_KEY) {
-        return 0;
+    if (n == 0u || n > PEL_ENCODE_RECORD_MAX_KEY) {
+        return 0; /* an empty key names nothing */
     }
     for (i = 0; i < n; i++) {
         if (!er_key_char_ok((uint8_t)key[i])) {
@@ -483,7 +484,8 @@ static size_t er_skip_value(const char *p, size_t len, size_t pos)
     return ER_BAD;
 }
 
-/* Parse `"key"` ws ':' ws at *i into `it`; 0 when the key breaks the key rule. */
+/* Parse `"key"` ws ':' ws at *i into `it`; 0 when the key breaks the key rule (empty,
+ * longer than MAX_KEY, or outside printable ASCII without '"' and '\\'). */
 static int er_parse_key(const char *p, size_t len, size_t *i, ErItem *it)
 {
     const size_t k = *i;
@@ -502,7 +504,7 @@ static int er_parse_key(const char *p, size_t len, size_t *i, ErItem *it)
             return 0;
         }
     }
-    if (n > PEL_ENCODE_RECORD_MAX_KEY || k + 1u + n >= len) {
+    if (n == 0u || n > PEL_ENCODE_RECORD_MAX_KEY || k + 1u + n >= len) {
         return 0;
     }
     it->key_off = (uint32_t)(k + 1u);
@@ -727,12 +729,16 @@ pel_result pel_encode_record_canonicalize(const char *json, size_t len, char *bu
         return PEL_ERR_INVALID;
     }
     *out_len = 0;
-    if (json == NULL || buf == NULL) {
+    if (json == NULL || (buf == NULL && cap > 0u)) {
         return PEL_ERR_INVALID;
     }
     er_sink_init(&s, buf, cap, NULL);
     rc = er_walk(json, len, &s, 0);
-    return rc == PEL_OK ? er_finish(&s, out_len) : rc;
+    if (rc == PEL_OK) {
+        rc = er_finish(&s, out_len);
+    }
+    /* buf NULL with cap 0 is a size query: the length is in *out_len. */
+    return (rc == PEL_OK && buf == NULL) ? PEL_ERR_RANGE : rc;
 }
 
 pel_result pel_encode_record_hash(const char *json, size_t len,
@@ -1083,7 +1089,7 @@ pel_result pel_encode_record_build(const PelorusEncodeRecordInput *in, char *buf
         return PEL_ERR_INVALID;
     }
     *out_len = 0;
-    if (in == NULL || buf == NULL) {
+    if (in == NULL || (buf == NULL && cap > 0u)) {
         return PEL_ERR_INVALID;
     }
     /* Pass 1 hashes the text without digest and elapsed_ns; pass 2 writes the record. */
@@ -1101,7 +1107,9 @@ pel_result pel_encode_record_build(const PelorusEncodeRecordInput *in, char *buf
     }
     er_sink_init(&s, buf, cap, NULL);
     er_build_root(&s, in, text);
-    return er_finish(&s, out_len);
+    rc = er_finish(&s, out_len);
+    /* buf NULL with cap 0 is a size query: the length is in *out_len. */
+    return (rc == PEL_OK && buf == NULL) ? PEL_ERR_RANGE : rc;
 }
 
 /* NOLINTEND(modernize-use-nullptr) */

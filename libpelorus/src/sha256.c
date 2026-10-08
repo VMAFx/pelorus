@@ -11,8 +11,9 @@
  *
  * Port of VMAFx core/src/vmafx/sha256.c (VMAFx/vmafx commit c3fdc200, same
  * holder and licence: Lusoris, EUPL-1.2) with pel_ names, the digest returned
- * as bytes instead of hex, and the asserts replaced by the documented
- * preconditions of this private API. It is not mirrored back into VMAFx, so each
+ * as bytes instead of hex, and the asserts replaced by pel_result checks (NULL
+ * data with a non-zero length is PEL_ERR_INVALID, never the empty message). It
+ * is not mirrored back into VMAFx, so each
  * repository keeps one implementation. libpelorus/test/encode_record_test.c
  * checks it against the FIPS 180-4 example messages and the padding boundaries.
  */
@@ -134,13 +135,16 @@ void pel_sha256_init(PelSha256 *sha)
     sha->total = 0;
 }
 
-void pel_sha256_update(PelSha256 *sha, const void *data, size_t len)
+pel_result pel_sha256_update(PelSha256 *sha, const void *data, size_t len)
 {
     const uint8_t *bytes = data;
     size_t full;
 
-    if (bytes == NULL || len == 0u) {
-        return; /* nothing to add; also keeps a NULL buffer away from memcpy */
+    if (len == 0u) {
+        return PEL_OK; /* nothing to add, whatever `data` is */
+    }
+    if (bytes == NULL) {
+        return PEL_ERR_INVALID; /* never hashed as if the message were shorter */
     }
     sha->total += len;
     if (sha->block_len) {
@@ -151,7 +155,7 @@ void pel_sha256_update(PelSha256 *sha, const void *data, size_t len)
         bytes += take;
         len -= take;
         if (sha->block_len < SHA256_BLOCK) {
-            return;
+            return PEL_OK;
         }
         compress(sha->state, sha->block);
         sha->block_len = 0;
@@ -164,6 +168,7 @@ void pel_sha256_update(PelSha256 *sha, const void *data, size_t len)
     if (sha->block_len) {
         memcpy(sha->block, bytes + full * (size_t)SHA256_BLOCK, sha->block_len);
     }
+    return PEL_OK;
 }
 
 void pel_sha256_final(PelSha256 *sha, uint8_t digest[PEL_SHA256_DIGEST_SIZE])
@@ -172,17 +177,22 @@ void pel_sha256_final(PelSha256 *sha, uint8_t digest[PEL_SHA256_DIGEST_SIZE])
     store_digest(sha->state, digest);
 }
 
-void pel_sha256(const void *data, size_t len, uint8_t digest[PEL_SHA256_DIGEST_SIZE])
+pel_result pel_sha256(const void *data, size_t len, uint8_t digest[PEL_SHA256_DIGEST_SIZE])
 {
     const uint8_t *const bytes = data;
-    const size_t full = bytes != NULL ? len / SHA256_BLOCK : 0u;
+    const size_t full = len / SHA256_BLOCK;
     uint32_t state[8];
 
+    if (bytes == NULL && len > 0u) {
+        return PEL_ERR_INVALID;
+    }
     memcpy(state, initial_state, sizeof(state));
     for (size_t b = 0; b < full; b++) {
         compress(state, bytes + b * (size_t)SHA256_BLOCK);
     }
+    /* len == 0 here when bytes is NULL, so no tail byte is read. */
     compress_tail(state, bytes != NULL ? bytes + full * (size_t)SHA256_BLOCK : bytes,
-                  bytes != NULL ? len % SHA256_BLOCK : 0u, bytes != NULL ? (uint64_t)len : 0u);
+                  len % SHA256_BLOCK, (uint64_t)len);
     store_digest(state, digest);
+    return PEL_OK;
 }

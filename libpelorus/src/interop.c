@@ -424,6 +424,12 @@ pel_result pel_blob_map(const uint8_t *blob, size_t len, uint32_t offset, uint32
     if ((offset & 7u) != 0u) {
         return PEL_ERR_ABI;
     }
+    /* A map never aliases the header or dir[]: they end before the first payload. Both
+     * terms are untrusted, so the sum is formed in 64 bits. */
+    if ((uint64_t)offset <
+        (uint64_t)hdr.header_size + (uint64_t)hdr.section_count * sizeof(PelorusSectionDir)) {
+        return PEL_ERR_ABI;
+    }
     /* Check 5: inside total_size, which blob_framing bounded by the received length. The
      * subtraction cannot wrap: offset <= total_size is tested first. */
     if (offset > hdr.total_size || size > hdr.total_size - offset) {

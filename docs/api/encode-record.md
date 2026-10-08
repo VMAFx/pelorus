@@ -60,8 +60,8 @@ restrictions that make every conforming writer, including Python's
 | per-plane value | an array of the strings above |
 | string or enum | the UTF-8 text; invalid UTF-8 is rejected |
 
-- Keys are printable ASCII (0x21..0x7e without `"` and `\`), at most 64
-  bytes, and unique per object. Byte order then equals RFC 8785's UTF-16
+- Keys are printable ASCII (0x21..0x7e without `"` and `\`), 1 to 64
+  bytes (an empty key is rejected), and unique per object. Byte order then equals RFC 8785's UTF-16
   order.
 - Escapes are `\"`, `\\`, `\b`, `\t`, `\n`, `\f`, `\r`, and lower-case
   `\u00xx` for other control characters. `/`, DEL and non-ASCII characters
@@ -188,7 +188,9 @@ global state, so concurrent calls on distinct buffers are safe. The
 canonicaliser uses an explicit stack of five frames (about 15 KiB of stack),
 never recursion. Text outputs are NUL-terminated: `cap` must hold the text
 plus one byte, and a short buffer returns `PEL_ERR_RANGE` with the needed
-length (without the NUL) in `*out_len`.
+length (without the NUL) in `*out_len`. `buf = NULL` with `cap = 0` is a size
+query with the same result, as for `pel_blob_pack_into`; `NULL` with a
+non-zero `cap` is `PEL_ERR_INVALID`.
 
 | Function | Result |
 |---|---|

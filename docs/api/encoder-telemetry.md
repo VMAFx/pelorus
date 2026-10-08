@@ -182,7 +182,9 @@ patches the offsets. Telemetry adds the 8-byte alignment of every map offset.
    `PEL_ERR_TRUNCATED`.
 
 `pel_blob_map()` in `interop.c` runs checks 3 to 5 (and the blob framing
-first); VMAFx gets it through the mirror. `pel_enc_telemetry_map()` in
+first); VMAFx gets it through the mirror. Between checks 4 and 5 it also
+rejects a map that overlaps the header or the directory (`offset <
+header_size + section_count * 16`, `PEL_ERR_ABI`). `pel_enc_telemetry_map()` in
 `telemetry.c` runs all five for one map bit and returns `PEL_ERR_ABSENT` for
 check 1 and `PEL_ERR_ABI` for check 2.
 
