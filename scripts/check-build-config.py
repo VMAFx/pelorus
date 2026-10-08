@@ -2388,6 +2388,27 @@ def _validate_tag_version_step(relative: str, block: str) -> list[str]:
     ]
 
 
+def _validate_release_notes_step(relative: str, block: str) -> list[str]:
+    """Release notes come from the "## [<version>]" section, never [Unreleased]."""
+    step = block.find("name: Extract release notes")
+    if step < 0:
+        return [f"{relative}: release build is missing the release notes step"]
+    end = block.find("\n      - name:", step)
+    body = block[step:] if end < 0 else block[step:end]
+    errors = [
+        f"{relative}: release notes step is missing {token}"
+        for token in (
+            "meson introspect --projectinfo build",
+            "scripts/release/extract-release-notes.sh",
+            '"$project_version"',
+        )
+        if token not in body
+    ]
+    if "UNRELEASED" in body or "Unreleased" in body:
+        errors.append(f"{relative}: release notes step must not read [Unreleased]")
+    return errors
+
+
 def _validate_release_build(relative: str, text: str, jobs: dict[str, str]) -> list[str]:
     """ADR-0169: build, SBOM, Level 3 attestation and cosign in one called job."""
     errors: list[str] = []
@@ -2397,6 +2418,7 @@ def _validate_release_build(relative: str, text: str, jobs: dict[str, str]) -> l
     if block is None:
         return errors + [f"{relative}: missing job {RELEASE_BUILD_JOB}"]
     errors.extend(_validate_tag_version_step(relative, block))
+    errors.extend(_validate_release_notes_step(relative, block))
     for token in RELEASE_BUILD_TOKENS:
         if token not in block:
             errors.append(f"{relative}: release build is missing {token}")
@@ -2787,6 +2809,18 @@ def release_build_regressions() -> list[str]:
         "release build without tag==version step": (
             text.replace("name: Tag matches the project version", "name: Other", 1),
             "release build is missing the tag==version step",
+        ),
+        "release notes read the Unreleased block": (
+            text.replace(
+                'bash scripts/release/extract-release-notes.sh "$project_version" CHANGELOG.md',
+                "awk '/<!-- BEGIN UNRELEASED/{f=1;next} /<!-- END UNRELEASED/{f=0} f' CHANGELOG.md",
+                1,
+            ),
+            "release notes step is missing scripts/release/extract-release-notes.sh",
+        ),
+        "release notes without the version section read": (
+            text.replace('"$project_version" CHANGELOG.md', "CHANGELOG.md", 1),
+            'release notes step is missing "$project_version"',
         ),
         "tag step without error annotation": (
             text.replace("::error::", "", 1),

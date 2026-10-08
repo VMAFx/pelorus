@@ -70,11 +70,13 @@ jobs:
           fi
       - name: Changelog is rendered
         run: bash scripts/release/concat-changelog-fragments.sh --check
-      - name: Extract release notes (the [Unreleased] block)
+      - name: Extract release notes (the version section)
         run: |
           mkdir -p dist
-          awk '/<!-- BEGIN UNRELEASED/{f=1;next} /<!-- END UNRELEASED/{f=0} f' \
-            CHANGELOG.md | sed '/^## \[Unreleased\]/d' > dist/RELEASE_NOTES.md
+          project_version="$(meson introspect --projectinfo build \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+          bash scripts/release/extract-release-notes.sh "$project_version" CHANGELOG.md \
+            > dist/RELEASE_NOTES.md
           echo "--- notes ---"
           cat dist/RELEASE_NOTES.md
       - name: Package the FFmpeg patch stack
