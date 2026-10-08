@@ -106,7 +106,9 @@ older, shorter producer is read only as far as `got` covers
 edge, recovered from the frame size and the grid
 (`pelorus_mc_cell_pitch`: the single `bsize` in 8..32 with
 `ceil(W/b) == grid_cols` and `ceil(H/b) == grid_rows`). `PelorusMotionSection`
-carries no block-size field. On small frames several block sizes can fit (a
+carries no block-size field in ABI 1.3; ABI 1.4 appends `block_size_log2`
+(see [ABI 1.4](#abi-14-specified-not-implemented)), and this inference stays
+as the fallback for 1.3 blobs. On small frames several block sizes can fit (a
 96x64 frame with a 6x4 grid fits 16 to 19). When the `vf_pelorus_mc` default
 (`bsize=16`) is one of them, it is assumed and a warning saying so is logged
 once. If nothing fits, or the ambiguity excludes the default, motion
@@ -249,6 +251,23 @@ fixture, VMAFx re-pins `PELORUS_VENDOR_SHA` and re-vendors with
 `scripts/sync-pelorus-interop.sh --update`. The rendered mirror is byte-identical
 to the Pelorus body except for the include rewrite; see
 [research digest 0148](../research/0148-owner-only-exclusive-test-fixtures.md).
+
+## ABI 1.4 (specified, not implemented)
+
+The shipped ABI is 1.3. ABI 1.4 is fixed in specification before any header
+changes ([ADR-0174](../adr/0174-encoder-telemetry-abi-1-4.md)). The
+implementing pull request bumps `PELORUS_ABI_MINOR` to 4 for three additions:
+
+| Change | Struct and size | Specification |
+|---|---|---|
+| `PEL_SEC_ENC_TELEMETRY` (bit 8, section i): one normalised encoder-telemetry record per coded frame, optional row or block maps | `PelorusEncTelemetrySection`, 104 bytes | [encoder-telemetry.md](encoder-telemetry.md) (#86, #220, #221) |
+| `PEL_SEC_ENCODE_RECORD` (bit 9, section j): SHA-256 digest of the canonical encode record plus a locator | `PelorusEncodeRecordSection`, 48 bytes | [encode-record.md](encode-record.md), [ADR-0175](../adr/0175-encode-provenance-record.md) (#81) |
+| `PelorusMotionSection.block_size_log2` appended at the tail (0 = not reported) | 32 -> 36 bytes | ADR-0174 decision 9 (#218, BUG-035) |
+
+A 1.4 reader detects a 1.3 motion section by its readable size
+(`PEL_SD_FIELD_OK(got, PelorusMotionSection, block_size_log2)` is false) and
+keeps the `pelorus_mc_cell_pitch` fallback above. VMAFx's re-vendor steps are
+in [encoder-telemetry.md](encoder-telemetry.md#how-vmafx-re-vendors-abi-14).
 
 ## Stability rules (normative — see interop.h)
 
