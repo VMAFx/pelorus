@@ -161,14 +161,16 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 | `tools/pelorus_qp_report.c` | libpelorus CLI demonstrator; not installed |
 | `tools/markdownlint/`, `tools/figures/` | Praetor-managed docs gate; refresh via `adopt` only |
 | `scripts/` | ADR claim, bench, release, build-config + shader checks |
-| `Makefile`, `lefthook.yml` | native + governance entry points; Git hooks opt-in |
-| `.standards.yaml`, `.standards.lock`, `.standards-baseline.json`, `.config/` | Praetor policy, lock, catalog, labels, HISS baseline, clang-tidy lane list |
+| `Makefile`, `lefthook.yml` | native + governance entry points; Git hooks opt-in (`make hooks-install`; `no_auto_install`) |
+| `.standards.yaml`, `.standards.lock`, `.standards-baseline.json`, `.config/` | Praetor policy, lock, catalog, labels, HISS baseline, clang-tidy lane list, Lefthook checkpoint scripts + policy, agent interceptor |
+| `.devcontainer/` | Praetor-rendered dev container bundle (audit: byte-exact; regenerate, never hand-edit); `base/Containerfile` toolchain base image (ADR-0153) |
 | `.paperclip/` | Paperclip harness pair; string edit: re-pin `register.sources` from `standardsctl caveman check --configured-sources --root=.` |
 | `.agents/agents/` | canonical reviewer personas |
 | `.claude/agents/`, `.codex/agents/`, `.github/agents/`, `.gemini/agents/` | generated persona projections |
 | `.claude/skills/`, `.claude/hooks/`, `.codex/hooks/`, `.gemini/settings.json` | agent skills + hooks; see below |
 | `.vscode/`, `.zed/`, `.idea/`, `.helix/`, `.fleet/`, `.nvim.lua`, `lua/`, `.dir-locals.el`, `standards.sublime-project` | reconciled editor settings |
-| `.github/workflows/` | `ci.yml` product jobs, `standards-gate.yml`, locked `praetor-docs.yml`, `release.yml` (`ci` -> `build` -> tag-only `publish`), reusable `release-build.yml`: build, SBOM, SLSA L3 attestation, cosign; no artefact download or cache before attestation (ADR-0169) |
+| `.github/workflows/` | `ci.yml` product jobs, `standards-gate.yml`, locked `praetor-docs.yml`, `release.yml` (`ci` -> `build` -> tag-only `publish`), reusable `release-build.yml`: build, SBOM, SLSA L3 attestation, cosign; no artefact download or cache before attestation (ADR-0169); `devcontainer-image.yml` builds base image on PR, pushes + attests `ghcr.io/vmafx/pelorus-dev` from `master` |
+| `.github/rulesets/main.json` | rendered `master` ruleset (0 reviews, signed commits, linear history, 7 checks); committed, applied only by maintainer `praetorctl sync --remote` |
 
 New top-level package: add row here. New module: scoped `AGENTS.md`.
 

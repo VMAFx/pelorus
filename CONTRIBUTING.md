@@ -90,10 +90,14 @@ make docs-lint docs-figures   # locked Markdown and figure checks
 make verify-all               # context + audit + native Pelorus gate + docs gate
 ```
 
-The manifest declines `git-hooks`, and the audit reports that decline as a
-pass, locally and in CI. Every audit check must pass. Do not create a
-placeholder hook file, weaken the manifest, or run remote sync to get past a
-failing check.
+The manifest declines no adoption step
+([ADR-0153](docs/adr/0153-praetor-full-adoption.md)), so a local audit
+requires the Lefthook pre-commit hook (`make hooks-install`) and, when it finds
+a forge token, compares the live `master` protection with the committed
+ruleset. That comparison fails until the maintainer applies the ruleset;
+`make audit AUDIT_FLAGS=--offline` skips it, and CI has no token. Every other
+audit check must pass. Do not create a placeholder hook file, weaken the
+manifest, or run remote sync to get past a failing check.
 
 The audit also reads two lists that a code change can break. Every hosted
 `meson setup` passes `--werror`, because the audit does not read Meson's
@@ -108,11 +112,16 @@ the baseline must record every current finding at its current line. The exact
 commands, their local equivalents, and what each one allows are in the
 development guide.
 
-`make hooks-install` stays opt-in: it installs the tracked Lefthook commands
-into the Git hooks directory that every linked worktree shares. Adoption and CI
-do not install Git hooks, apply repository rulesets, or run remote Praetor
-sync. Adoption does register the agent pre-tool hook above in the tracked
-client settings. See the development guide for the full operational notes.
+`make hooks-install` stays opt-in: it installs the tracked Lefthook hooks
+into the Git hooks directory that every linked worktree shares. A commit then
+runs the context check and two offline audits; a push runs the audit, the
+flavor audit, the Praetor gate, and `make verify-all`. `lefthook.yml` sets
+`no_auto_install`, so rerun `make hooks-install` after it changes. CI does not
+install Git hooks, apply the ruleset, or run remote Praetor sync; the
+maintainer applies `.github/rulesets/main.json` with `praetorctl sync --remote`.
+Adoption does register the agent pre-tool hook above in the tracked client
+settings. The development guide covers the hooks, the ruleset, and the dev
+container (`.devcontainer/`).
 
 ## ABI changes
 

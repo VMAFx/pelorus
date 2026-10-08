@@ -217,7 +217,11 @@ pull request; Standards also fails a baseline that grows against the target
 branch unless the increase carries a recorded reason. The audit also requires
 every hosted Meson lane to build with `--werror` and every tracked C unit to
 sit in a clang-tidy lane or a dated exception
-([ADR-0168](docs/adr/0168-praetor-engine-492a00f.md)). The pinned
+([ADR-0168](docs/adr/0168-praetor-engine-492a00f.md)). The manifest
+declines no adoption step: it commits Lefthook hooks (opt-in with
+`make hooks-install`), a dev container, and a `master` ruleset that the
+maintainer applies with `praetorctl sync --remote`
+([ADR-0153](docs/adr/0153-praetor-full-adoption.md)). The pinned
 install provides a binary named `standardsctl`; Praetor's generated text,
 including the block below, calls the same program `praetorctl`. Claude Code,
 Codex, and Gemini CLI sessions run Praetor's pre-tool command hook, so agent
