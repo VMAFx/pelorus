@@ -1,0 +1,1 @@
+- Fixed the GitHub release body: the release build now extracts the `## [X.Y.Z]` changelog section for the tagged version and fails when it is missing or empty, instead of reading the already-empty `[Unreleased]` block (v0.2.2 shipped "No unreleased changes").

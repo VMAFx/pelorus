@@ -589,7 +589,10 @@ order ([ADR-0169](../adr/0169-release-provenance-slsa3.md)):
 2. `build` (`needs: ci`) calls the reusable `.github/workflows/release-build.yml`,
    whose only trigger is `workflow_call`. Its one job configures with
    `meson setup --werror build`, builds with `make build`, runs the fast suite,
-   checks the rendered changelog, extracts the release notes, and packages
+   checks the rendered changelog, extracts the release notes from the
+   `## [X.Y.Z]` section for the meson version
+   (`scripts/release/extract-release-notes.sh`; a missing or empty section
+   fails the build), and packages
    `pelorus-ffmpeg-patches-<tag>.tar.gz` (`series.txt`, the README, the
    numbered patches, `files/`, and the LGPL-2.1-or-later and EUPL-1.2 texts
    from `LICENSES/`, [licensing](../licensing.md)). It then writes an SPDX JSON SBOM of that
@@ -611,8 +614,8 @@ reports (`meson introspect --projectinfo build`; meson already fails
 configuration if `pelorus.h` disagrees) and fails with an `::error::` line on a
 mismatch. A manual `workflow_dispatch` is a **non-publishing rehearsal**: it
 runs `ci` and `build`, including the attestation and the signature, skips only
-the tag assertion, and never runs `publish`. Review the tag and the rendered
-`[Unreleased]` notes before pushing a tag: a manual dispatch is not a
+the tag assertion, and never runs `publish`. Review the tag and the
+`## [X.Y.Z]` notes before pushing a tag: a manual dispatch is not a
 substitute for the tag event and never publishes on its own.
 
 `scripts/check-build-config.py` enforces this shape: the CI call and the

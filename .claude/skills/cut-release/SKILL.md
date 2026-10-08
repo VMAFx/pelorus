@@ -8,7 +8,7 @@ description: Use when cutting a Pelorus release — verify the gate, bump the ve
 Releases are **tag-triggered**: pushing `vX.Y.Z` runs `.github/workflows/release.yml`,
 which first runs the full CI workflow, then calls `.github/workflows/release-build.yml`.
 That reusable workflow asserts the tag equals the `meson.build` version, gates on
-build+tests, extracts notes from the `[Unreleased]` changelog block, packages the
+build+tests, extracts notes from the `## [X.Y.Z]` changelog section (fails if missing or empty), packages the
 FFmpeg patch stack, writes an SPDX SBOM and `SHA256SUMS`, attests SLSA build
 provenance, and signs `SHA256SUMS` with cosign (ADR-0169). The `publish` job then
 creates the GitHub release with five assets: `pelorus-ffmpeg-patches-vX.Y.Z.tar.gz`,
@@ -22,8 +22,11 @@ creates the GitHub release with five assets: `pelorus-ffmpeg-patches-vX.Y.Z.tar.
    - `meson.build` (`version:`)
    (If the interop ABI changed this cycle, confirm `PELORUS_ABI_MINOR` was
    bumped too — see `/bump-abi`.)
-3. **Render the changelog**: `/render-changelog` (`--write`), and confirm the
-   `[Unreleased]` block reads as the release notes you want.
+3. **Render and rotate the changelog**: `/render-changelog` (`--write`), then
+   rotate `[Unreleased]` into a `## [X.Y.Z] - YYYY-MM-DD` section, delete the
+   consumed `changelog.d/` fragments, and re-run `--write` so `[Unreleased]` is
+   empty and `--check` passes. The release notes are that section, as in
+   `93bef12`; the tag build fails if it is missing or empty.
 4. **Commit** the version bump (`chore(release): vX.Y.Z`), open a PR, merge to
    `master`.
 5. **Tag + push**:
