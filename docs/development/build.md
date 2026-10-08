@@ -472,14 +472,12 @@ the ruleset is applied, an audit with a forge token fails like this:
 parts that build `praetorctl` into the image. The audit compares them with the
 rendering byte for byte; regenerate them with
 `praetorctl devcontainer --source-root <Praetor checkout at the pin> --force`,
-never by hand. The rendered image is Praetor's reviewed
-`mcr.microsoft.com/devcontainers/base` digest plus `praetorctl` and the
-catalog's `common-utils`, `nix`, and `rust` features. It has no Meson, Ninja,
-clang, glslc, Vulkan headers, or Node.js, so its `postCreateCommand`
-(`make verify-all`) stops at the first Meson call.
+never by hand. The rendered image is the Pelorus toolchain base (below) plus
+`praetorctl` and the catalog's `common-utils`, `nix`, and `rust` features, so
+its `postCreateCommand` (`make verify-all`) finds Meson, Ninja, clang, glslc,
+Vulkan headers, and Node.js.
 
-`.devcontainer/base/Containerfile` is the toolchain base that fixes this. It
-starts from the same reviewed base digest and installs the packages the CI jobs
+`.devcontainer/base/Containerfile` is that toolchain base. It starts from the same reviewed base digest and installs the packages the CI jobs
 install, Node.js 24, actionlint, and Lefthook, each download checked against
 its published SHA-256. The `Dev container image` workflow
 (`.github/workflows/devcontainer-image.yml`) handles it:
@@ -496,11 +494,28 @@ Only `publish` holds `packages: write`, with `id-token`, `attestations`, and
 gh attestation verify oci://ghcr.io/vmafx/pelorus-dev@sha256:<digest> --repo VMAFx/pelorus
 ```
 
-Pointing the bundle at the image is a separate change: re-render with
-`praetorctl devcontainer --source-root <Praetor checkout at the pin> --force
---base-image ghcr.io/vmafx/pelorus-dev@sha256:<digest>`. Until then the
-rendered container runs the governance gates only; run the native and
-documentation gates on the host, or in the base image built locally:
+The bundle builds on that image. `.devcontainer/Dockerfile.praetor` and the
+`baseImage` field in `devcontainer.json` name
+`ghcr.io/vmafx/pelorus-dev@sha256:33c934d385fed06b9f7062842526c6eb3fb0c1884f433aa7c0754707ebb9e178`,
+the image `publish` built from `10e032a`, the last commit to change
+`.devcontainer/base/Containerfile`. The reference is a digest, never a tag; the
+renderer rejects a tag-only `--base-image`, and the audit's `DevContainer
+bundle` check fails on any drift from the rendering. The package is public: the
+digest resolves without a login.
+
+Refresh the pin whenever `.devcontainer/base/Containerfile` changes:
+
+1. Merge the Containerfile change to `master`; wait for `publish` to push.
+2. Read the new digest from the `publish` run summary, or from
+   `gh api 'orgs/VMAFx/packages/container/pelorus-dev/versions?per_page=5'`
+   (the version tagged with the commit SHA).
+3. Verify it: `gh attestation verify oci://ghcr.io/vmafx/pelorus-dev@sha256:<digest> --repo VMAFx/pelorus`.
+4. Re-render, never hand-edit:
+   `praetorctl devcontainer --force --source-root <Praetor checkout at the pin>
+   --base-image ghcr.io/vmafx/pelorus-dev@sha256:<digest>`.
+5. Run `praetorctl audit --offline` and confirm `DevContainer bundle` reports in sync.
+
+To try the toolchain base without the registry, build it locally:
 
 ```bash
 docker build --file .devcontainer/base/Containerfile --tag pelorus-dev .devcontainer/base
