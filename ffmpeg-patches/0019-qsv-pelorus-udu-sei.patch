@@ -1,0 +1,143 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lusoris <lusoris@pm.me>
+Date: Thu, 1 Jan 2026 00:00:00 +0000
+Subject: [PATCH 19/20] feat(qsv): carry unregistered user data SEI side data
+ in H.264/HEVC
+
+Stock h264_qsv and hevc_qsv drop AV_FRAME_DATA_SEI_UNREGISTERED, so the
+PelorusSideData blob that the filters attach to each frame never reaches the
+bitstream. NVENC already carries it through its udu_sei option.
+
+Add the same-named udu_sei AVOption (default off) to h264_qsv and hevc_qsv.
+When set, every SEI_UNREGISTERED side-data entry of the input frame becomes one
+mfxPayload of type 5 on the frame's mfxEncodeCtrl, in the payload slots the
+stock A/53 callback leaves free (QSV_MAX_ENC_PAYLOAD). The payload carries the
+SEI message header (type, 0xFF-extended size) before the UUID and data, like the
+stock A/53 payload, and is released with the other payloads when the surface
+unlocks. Entries shorter than the 16-byte UUID are skipped.
+
+AV1 is not covered: qsvenc_av1.c has no metadata OBU path for it.
+
+Verified on an Arc A380 (oneVPL, iHD): four frames through
+pelorus_analyze_vulkan and pelorus_deband_vulkan give four Pelorus blobs in the
+H.264 and HEVC streams with udu_sei=1 and none with udu_sei=0.
+---
+ libavcodec/qsvenc.c      | 56 ++++++++++++++++++++
+ libavcodec/qsvenc.h      |  2 +
+ libavcodec/qsvenc_h264.c |  2 +
+ libavcodec/qsvenc_hevc.c |  2 +
+ 4 files changed, 62 insertions(+)
+
+diff --git a/libavcodec/qsvenc.c b/libavcodec/qsvenc.c
+index 6124fd72a5d8706eb611c67666ef51c3a255c206..a7e1a5521b0c11032ace4db821a1b8d1c4abd7ff 100644
+--- a/libavcodec/qsvenc.c
++++ b/libavcodec/qsvenc.c
+@@ -1956,6 +1956,56 @@ int ff_qsv_enc_init(AVCodecContext *avctx, QSVEncContext *q)
+     return 0;
+ }
+ 
++/**
++ * Append one SEI user-data-unregistered payload (type 5) per
++ * AV_FRAME_DATA_SEI_UNREGISTERED side-data entry of the frame to enc_ctrl, in
++ * the slots the stock A/53 callback left free. The payload buffer carries the
++ * SEI message header (type, size) in front of the UUID and data, like the A/53
++ * payload in qsvenc_h264.c. Freed with the other payloads in free_encoder_ctrl.
++ */
++static int qsvenc_add_udu_payloads(AVCodecContext *avctx, QSVEncContext *q,
++                                   const AVFrame *frame, mfxEncodeCtrl *enc_ctrl)
++{
++    for (int i = 0; i < frame->nb_side_data; i++) {
++        const AVFrameSideData *sd = frame->side_data[i];
++        size_t hdr = 2 + sd->size / 255;
++        mfxPayload *payload;
++        mfxU8 *data;
++        size_t size;
++
++        if (sd->type != AV_FRAME_DATA_SEI_UNREGISTERED || sd->size < 16)
++            continue;
++        if (enc_ctrl->NumPayload >= QSV_MAX_ENC_PAYLOAD) {
++            if (!q->udu_sei_warned) {
++                q->udu_sei_warned = 1;
++                av_log(avctx, AV_LOG_WARNING, "udu_sei: only %d SEI payloads fit "
++                       "per frame; further side data is not written.\n",
++                       QSV_MAX_ENC_PAYLOAD);
++            }
++            break;
++        }
++        /* NumBit is an mfxU32: payload size in bits must not overflow it. */
++        if (sd->size > UINT32_MAX / 8 - 16)
++            return AVERROR(EINVAL);
++        size = hdr + sd->size;
++        payload = av_mallocz(sizeof(*payload) + size);
++        if (!payload)
++            return AVERROR(ENOMEM);
++        data    = (mfxU8 *)(payload + 1);
++        data[0] = 5;                       /* user_data_unregistered */
++        memset(data + 1, 0xFF, sd->size / 255);
++        data[1 + sd->size / 255] = sd->size % 255;
++        memcpy(data + hdr, sd->data, sd->size);
++
++        payload->BufSize = size;
++        payload->NumBit  = size * 8;
++        payload->Type    = 5;
++        payload->Data    = data;
++        enc_ctrl->Payload[enc_ctrl->NumPayload++] = payload;
++    }
++    return 0;
++}
++
+ static void free_encoder_ctrl(mfxEncodeCtrl* enc_ctrl)
+ {
+     if (enc_ctrl) {
+@@ -2821,6 +2871,12 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
+          enc_ctrl && QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 13))
+         set_skip_frame_encode_ctrl(avctx, frame, enc_ctrl);
+ 
++    if (q->udu_sei && enc_ctrl && frame) {
++        ret = qsvenc_add_udu_payloads(avctx, q, frame, enc_ctrl);
++        if (ret < 0)
++            goto free;
++    }
++
+     pkt.sync = av_mallocz(sizeof(*pkt.sync));
+     if (!pkt.sync)
+         goto nomem;
+diff --git a/libavcodec/qsvenc.h b/libavcodec/qsvenc.h
+index 6c6162d1f2d18983eb8902e6e2f31218d60da8e7..9243dd5e216a7efad9d1bdd837b38faae98611bb 100644
+--- a/libavcodec/qsvenc.h
++++ b/libavcodec/qsvenc.h
+@@ -285,6 +285,8 @@ typedef struct QSVEncContext {
+     int pelorus_roi;
+     int pelorus_roi_mbqp_enabled; ///< final attached EnableMBQP is ON
+     int pelorus_roi_mbqp_warned;  ///< EnableMBQP-cleared fallback warned once
++    int udu_sei;                  ///< carry frame SEI_UNREGISTERED side data as SEI payloads
++    int udu_sei_warned;           ///< dropped-payload warning given once
+     int roi_warned;            ///< rate-limit ext-buffer-slot warnings to once
+     int roi_interlaced_warned; ///< rate-limit per-frame fallback warnings to once
+     int low_delay_brc;
+diff --git a/libavcodec/qsvenc_h264.c b/libavcodec/qsvenc_h264.c
+index 329ab36badbc696126d7f2467a3e93a165036fdc..15ec52e07f4d4100a6e015b00fc1b64e51a0b866 100644
+--- a/libavcodec/qsvenc_h264.c
++++ b/libavcodec/qsvenc_h264.c
+@@ -103,6 +103,8 @@ static const AVOption options[] = {
+     QSV_COMMON_OPTS
+     { "pelorus_roi",  "Honor AV_FRAME_DATA_REGIONS_OF_INTEREST (H.264 uses the stock per-region QSV ROI path)",
+                                                             OFFSET(qsv.pelorus_roi), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VE },
++    { "udu_sei",      "Include unregistered user data SEI from frame side data (Pelorus side data)",
++                                                            OFFSET(qsv.udu_sei), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VE },
+     QSV_OPTION_RDO
+     QSV_OPTION_MAX_FRAME_SIZE
+     QSV_OPTION_MAX_SLICE_SIZE
+diff --git a/libavcodec/qsvenc_hevc.c b/libavcodec/qsvenc_hevc.c
+index 7e8c75dd8f46591ee6905a00c83c00434ec2a476..b71b2559ab1c0ab5069110ac9665b5f77e8cab00 100644
+--- a/libavcodec/qsvenc_hevc.c
++++ b/libavcodec/qsvenc_hevc.c
+@@ -307,6 +307,8 @@ static const AVOption options[] = {
+     QSV_COMMON_OPTS
+     { "pelorus_roi",  "Honor AV_FRAME_DATA_REGIONS_OF_INTEREST via dense QSV delta-QP maps for progressive CQP on runtime API 1.28+, otherwise the stock per-region ROI path",
+                                                             OFFSET(qsv.pelorus_roi), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VE },
++    { "udu_sei",      "Include unregistered user data SEI from frame side data (Pelorus side data)",
++                                                            OFFSET(qsv.udu_sei), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VE },
+     QSV_OPTION_RDO
+     QSV_OPTION_MAX_FRAME_SIZE
+     QSV_OPTION_MAX_SLICE_SIZE

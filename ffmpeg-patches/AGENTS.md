@@ -14,7 +14,7 @@ ffmpeg-patches/
 │   ├── pelorus_vulkan_sample.h
 │   └── vulkan/*.comp.glsl   canonical shipped shader sources
 ├── .commit-msg-*.txt        synthetic commit messages
-├── 0001-*.patch … 0018-*    generated cumulative patch series
+├── 0001-*.patch … 0020-*    generated cumulative patch series
 ├── series.txt               apply order
 ├── generate.sh              deterministic isolated regeneration
 └── test/build-and-run.sh    pinned replay, build, link, and smoke gate
@@ -124,7 +124,7 @@ Before calling patch-stack change complete:
 1. format touched C and shell-check touched shell;
 2. compile all canonical GLSL and run Pelorus fast suite;
 3. regenerate twice and compare bytes;
-4. replay all 18 patches at pinned FFmpeg commit;
+4. replay all 20 patches at pinned FFmpeg commit;
 5. build/link/smoke relevant feature-enabled FFmpeg configuration;
 6. install static FFmpeg libraries and compile/run external
    `pkg-config --static libavfilter` consumer, asserting its link flags include

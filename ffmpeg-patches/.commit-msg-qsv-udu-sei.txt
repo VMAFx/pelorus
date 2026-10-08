@@ -1,0 +1,19 @@
+feat(qsv): carry unregistered user data SEI side data in H.264/HEVC
+
+Stock h264_qsv and hevc_qsv drop AV_FRAME_DATA_SEI_UNREGISTERED, so the
+PelorusSideData blob that the filters attach to each frame never reaches the
+bitstream. NVENC already carries it through its udu_sei option.
+
+Add the same-named udu_sei AVOption (default off) to h264_qsv and hevc_qsv.
+When set, every SEI_UNREGISTERED side-data entry of the input frame becomes one
+mfxPayload of type 5 on the frame's mfxEncodeCtrl, in the payload slots the
+stock A/53 callback leaves free (QSV_MAX_ENC_PAYLOAD). The payload carries the
+SEI message header (type, 0xFF-extended size) before the UUID and data, like the
+stock A/53 payload, and is released with the other payloads when the surface
+unlocks. Entries shorter than the 16-byte UUID are skipped.
+
+AV1 is not covered: qsvenc_av1.c has no metadata OBU path for it.
+
+Verified on an Arc A380 (oneVPL, iHD): four frames through
+pelorus_analyze_vulkan and pelorus_deband_vulkan give four Pelorus blobs in the
+H.264 and HEVC streams with udu_sei=1 and none with udu_sei=0.
