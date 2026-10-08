@@ -69,10 +69,27 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           set -euo pipefail
           missing=0
-          for sha in $(git rev-list --no-merges "origin/${BASE_REF}..${HEAD_SHA}"); do
+          # A failed or empty rev-list would let the loop pass on no commits.
+          shas="$(git rev-list --no-merges "origin/${BASE_REF}..${HEAD_SHA}")"
+          if [ -z "${shas}" ]; then
+            echo "::error::no commits between origin/${BASE_REF} and ${HEAD_SHA}; cannot verify DCO"
+            exit 1
+          fi
+          for sha in ${shas}; do
+            # Bot commits are exempt (CONTRIBUTING.md): only when the bot opened
+            # the pull request and authored the commit, so a person cannot opt
+            # out by copying the bot's author line.
+            author="$(git show -s --format=%ae "${sha}")"
+            case "${PR_AUTHOR}:${author}" in
+              'renovate[bot]:29139614+renovate[bot]@users.noreply.github.com')
+                echo "${sha}: Renovate commit in a Renovate pull request, DCO exempt"
+                continue
+                ;;
+            esac
             if ! git show -s --format=%B "${sha}" | grep -Eq '^Signed-off-by: [^<>]+ <[^<>[:space:]]+@[^<>[:space:]]+>$'; then
               echo "::error::${sha} has no Signed-off-by trailer (DCO); amend with git commit -s"
               missing=$((missing + 1))
