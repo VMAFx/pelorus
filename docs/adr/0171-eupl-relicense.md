@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0171: Pelorus is EUPL-1.2; the files that become part of FFmpeg stay LGPL-2.1-or-later
 
-- **Status**: Accepted
+- **Status**: Proposed
 - **Date**: 2026-10-08
 - **Deciders**: Lusoris
 - **Tags**: license, compliance, ffmpeg, interop, ci, docs
@@ -65,7 +65,12 @@ follow FFmpeg's Vulkan filter model (`vf_gblur_vulkan.c`,
 and two of its bitstream filters, a file shares 4 to 57 of its 56 to 551
 distinct lines longer than 25 characters, and the shared lines are FFmpeg's
 API idiom (calls, barrier field names, `#include` lines), not copied logic.
-Their headers name Lusoris alone.
+Their headers name Lusoris alone. The nine Vulkan filter host files
+(`vf_pelorus_{aa,analyze,borderfix,deband,deblock,dehalo,denoise,grain_estimate,mc}_vulkan.c`)
+each share 18 to 52 such lines with `vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c`
+and `vf_scdet_vulkan.c` alone, not counting the licence header and
+`#include` lines; `vf_pelorus_scenecut.c` shares 2 and `h265_pelorus_fgs_bsf.c`
+none.
 
 ## Decision
 
@@ -80,7 +85,12 @@ Their headers name Lusoris alone.
    ADR-0105 put there: `ffmpeg-patches/files/*.c`, `files/*.h` and
    `files/vulkan/**`. `ffmpeg-patches/test/qsv-roi-regression.c` joins them:
    `qsv-roi-regression.sh` copies it into FFmpeg's `libavcodec/tests/`, and it
-   `#include`s `qsvenc.c` into one translation unit.
+   `#include`s `qsvenc.c` into one translation unit. The nine Vulkan filter
+   host files follow FFmpeg's model filters, so `REUSE.toml` names "the FFmpeg
+   developers" as copyright holders next to Lusoris for
+   `ffmpeg-patches/files/vf_pelorus_*_vulkan.c` (maintainer decision,
+   2026-10-08). The files are not edited, so the patch stack stays
+   byte-stable.
 3. **The patches are LGPL-2.1-or-later with FFmpeg's copyright next to
    Lusoris's**: the numbered `ffmpeg-patches/0*.patch` and the hunk files
    `ffmpeg-patches/files/*.patch`, as vmafx annotates its own patches.
@@ -141,14 +151,17 @@ Their headers name Lusoris alone.
   - The maintainer applies the ruleset with the new `REUSE lint` check with
     `praetorctl sync --remote` after merge ([build guide](../development/build.md#branch-ruleset)).
   - The EUPL-1.2's copyleft clause lets a licensee use a later EUPL version
-    unless the work is "expressly distributed only under this version". Pelorus
-    states `EUPL-1.2`, as vmafx does, and makes no "v. 1.2 only" statement; the
-    maintainer decides whether to add one, together with vmafx.
-  - A prebuilt Pelorus-enabled FFmpeg (1.0 scope) is built with
-    `--enable-gpl --enable-version3`, never `--enable-nonfree`, and is
-    distributed under GPL-3.0-or-later with its corresponding source, as vmafx
-    does (vmafx ADR-1514). `libpelorus` joins that build through the EUPL's
-    compatibility clause ([licensing guide](../licensing.md)).
+    unless the work is "expressly distributed only under this version".
+    Pelorus states `EUPL-1.2`, as vmafx does, and makes no "v. 1.2 only"
+    statement anywhere (maintainer decision, 2026-10-08).
+  - A prebuilt Pelorus-enabled FFmpeg (1.0 scope) follows vmafx (vmafx
+    ADR-1514): configured with `--enable-gpl --enable-version3`, x264 and x265
+    included, which FFmpeg's `configure` reports as "GPL version 3 or later";
+    never `--enable-nonfree`, so none of `cuda_nvcc`, `cuda_sdk`, `libfdk_aac`
+    or `decklink`, which `configure` lists as nonfree; distributed under
+    GPL-3.0-or-later next to a `-source` image with its corresponding source.
+    `libpelorus` joins that build through the EUPL's compatibility clause
+    ([licensing guide](../licensing.md)).
   - vmafx#1455 plans `libgpudispatch` under the EUPL-1.2. Linking it from the
     LGPL-2.1-or-later filter files needs its own compatibility decision before
     Pelorus adopts it.
@@ -181,5 +194,12 @@ Their headers name Lusoris alone.
 - Source: maintainer direction, 2026-10-08, relayed by the session coordinator:
   "relicense Pelorus to EUPL-1.2 like VMAFx/vmafx, ASAP, before v0.3.0. ADR-0105
   (libpelorus BSD-2-Clause-Patent; FFmpeg filter files LGPL-2.1) is superseded."
+- Source: maintainer decisions, 2026-10-08, relayed by the session coordinator:
+  "EUPL version: like vmafx — NO "v1.2 only" statement anywhere"; "ADD "the
+  FFmpeg developers" as co-copyright holder on the ffmpeg-patches/files host
+  files that follow FFmpeg model filters"; "Prebuilt FFmpeg stance in docs:
+  GPL-3.0-or-later like vmafx (--enable-gpl --enable-version3, x264/x265
+  included, -source image, never --enable-nonfree / cuda-nvcc / cuda-sdk /
+  libfdk-aac / decklink)".
 - Source: `Q-012` answer, 2026-10-08 (`.workingdir/QUESTIONS.md`): "licensing
   handled like vmafx (REUSE/notices/licence matrix)".

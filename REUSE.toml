@@ -34,6 +34,16 @@ precedence = "closest"
 SPDX-FileCopyrightText = "2026 Lusoris"
 SPDX-License-Identifier = "LGPL-2.1-or-later"
 
+# The nine Vulkan filter host files follow FFmpeg's model filters
+# (vf_gblur_vulkan.c, vf_nlmeans_vulkan.c, vf_scdet_vulkan.c) and share their
+# API idiom, so the FFmpeg developers are named next to Lusoris (ADR-0171).
+# The files themselves stay unchanged, which keeps the patch stack byte-stable.
+[[annotations]]
+path = ["ffmpeg-patches/files/vf_pelorus_*_vulkan.c"]
+precedence = "override"
+SPDX-FileCopyrightText = ["2000-2026 the FFmpeg developers", "2026 Lusoris"]
+SPDX-License-Identifier = "LGPL-2.1-or-later"
+
 # The patches change FFmpeg's own LGPL-2.1-or-later sources (configure,
 # Makefiles, allfilters.c, the NVENC, QSV, libaom, SVT-AV1 and Vulkan encoders,
 # hwcontext_vulkan.c) and carry their context lines, so FFmpeg's copyright

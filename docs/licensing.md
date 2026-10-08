@@ -14,6 +14,7 @@ A file's own `SPDX-License-Identifier` line, where it has one, says the same.
 | --- | --- | --- |
 | Everything not listed below: `libpelorus/`, `tools/`, `scripts/`, `docs/`, the build files, CI, the tests and scripts under `ffmpeg-patches/` | EUPL-1.2 ([`LICENSE`](../LICENSE)) | 2026 Lusoris |
 | Sources the patch stack adds to FFmpeg: `ffmpeg-patches/files/*.c`, `files/*.h`, `files/vulkan/*.comp.glsl`, and `ffmpeg-patches/test/qsv-roi-regression.c`, which is built inside FFmpeg's `libavcodec/tests/` | LGPL-2.1-or-later ([`LICENSES/LGPL-2.1-or-later.txt`](../LICENSES/LGPL-2.1-or-later.txt)) | 2026 Lusoris |
+| Of those, the nine Vulkan filter host files `ffmpeg-patches/files/vf_pelorus_*_vulkan.c`, which follow FFmpeg's model filters `vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c` and `vf_scdet_vulkan.c` | LGPL-2.1-or-later | 2000-2026 the FFmpeg developers, 2026 Lusoris |
 | The patches: `ffmpeg-patches/0*.patch` and `ffmpeg-patches/files/*.patch` | LGPL-2.1-or-later | 2000-2026 the FFmpeg developers, 2026 Lusoris |
 | `.claude/skills/superpowers/`, vendored from [obra/superpowers](https://github.com/obra/superpowers) (its `NOTICE.md` is Pelorus's, EUPL-1.2) | MIT ([`LICENSE`](../.claude/skills/superpowers/LICENSE)) | 2025 Jesse Vincent |
 | `tools/figures/third_party/interfig/upstream/`, Praetor's vendored interfig | MIT | 2025 Vectorize AI, Inc. |
@@ -54,7 +55,7 @@ default comes first), and the root holds one licence file with the declared
 licence's text:
 
 ```text
-[PASS] REUSE.toml annotation order: no path of its 8 annotations is matched whole by the annotations after it.
+[PASS] REUSE.toml annotation order: no path of its 9 annotations is matched whole by the annotations after it.
 [PASS] root licence: LICENSE holds the text of LICENSES/EUPL-1.2.txt; no other root file named like a licence.
 ```
 
@@ -104,9 +105,20 @@ parts.
 Pelorus publishes no FFmpeg binary today: a release carries the patch stack
 (`pelorus-ffmpeg-patches-<tag>.tar.gz`) with `LICENSES/LGPL-2.1-or-later.txt`
 and `LICENSES/EUPL-1.2.txt`. A Pelorus-enabled FFmpeg the project publishes
-later follows vmafx's rule: configured with `--enable-gpl --enable-version3`,
-never `--enable-nonfree` (a nonfree build is not redistributable), distributed
-under GPL-3.0-or-later together with its corresponding source.
+later follows vmafx's rule ([ADR-0171](adr/0171-eupl-relicense.md)):
+
+- configured with `--enable-gpl --enable-version3`, with x264 and x265 among
+  its libraries; FFmpeg's `configure` reports the result as "GPL version 3 or
+  later";
+- never configured with `--enable-nonfree`, so never with the libraries
+  `configure` lists as nonfree, among them `cuda_nvcc`, `cuda_sdk`,
+  `libfdk_aac` and `decklink`: such a build is "nonfree and unredistributable"
+  (the Pelorus filters are Vulkan and need none of them);
+- distributed under GPL-3.0-or-later, with a `-source` image next to it that
+  holds the corresponding source of FFmpeg, its libraries and `libpelorus`.
+
+The `libpelorus` part stays EUPL-1.2 on its own; the compatibility clause is
+what lets it join the GPL-3.0-or-later build.
 
 ## Contributing
 
