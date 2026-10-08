@@ -11,7 +11,8 @@ clang-format --dry-run --Werror $(find libpelorus -name '*.c' -o -name '*.h')
 
 # static analysis — needs a configured build/ for compile_commands.json
 meson setup build 2>/dev/null || true
-clang-tidy -p build libpelorus/src/*.c
+# every unit of the .standards.yaml clang_tidy lane (ADR-0168)
+grep -Ev '^(#|$)' .config/clang-tidy/lane-files.txt | xargs clang-tidy -p build
 
 # shaders compile to SPIR-V (also covered by `meson test --suite=fast`)
 for s in libpelorus/shaders/*.comp; do

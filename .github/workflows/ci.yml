@@ -59,7 +59,8 @@ jobs:
       - name: clang-format (touched-tree clean)
         run: find libpelorus \( -name '*.c' -o -name '*.h' \) -exec clang-format --dry-run --Werror {} +
       - name: clang-tidy
-        run: clang-tidy -p build libpelorus/src/*.c
+        # Every unit of the .standards.yaml clang_tidy lane (ADR-0168).
+        run: grep -Ev '^(#|$)' .config/clang-tidy/lane-files.txt | xargs clang-tidy -p build
 
   ffmpeg-stack:
     name: ffmpeg patch stack (regenerate · replay · link · smoke)

@@ -27,8 +27,12 @@ test: build
 format-check:
 	clang-format --dry-run --Werror $$(find libpelorus tools -type f \( -name '*.c' -o -name '*.h' \))
 
+# The clang_tidy lane of .standards.yaml: one list drives this run, the ci.yml
+# core job and the audit's translation-unit coverage check (ADR-0168).
+TIDY_FILES := .config/clang-tidy/lane-files.txt
+
 tidy: build
-	clang-tidy -p "$(BUILD_DIR)" libpelorus/src/*.c
+	grep -Ev '^(#|$$)' $(TIDY_FILES) | xargs clang-tidy -p "$(BUILD_DIR)"
 
 docs-check:
 	bash scripts/release/concat-changelog-fragments.sh --check

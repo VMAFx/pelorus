@@ -1,0 +1,17 @@
+# clang-tidy lane "libpelorus" (.standards.yaml clang_tidy.lanes, ADR-0168).
+# `make tidy` and the ci.yml core job run clang-tidy over exactly these files,
+# so the lane the audit judges is the lane that runs. One path per line; these
+# are every C unit the Meson build compiles (libpelorus/src, libpelorus/test,
+# tools, and the two ffmpeg-patches tests Meson builds without an FFmpeg tree).
+# The other ffmpeg-patches units build only inside FFmpeg's tree; each has a
+# dated exception in .standards.yaml (VMAFx/pelorus#94).
+ffmpeg-patches/test/mc_stats_test.c
+ffmpeg-patches/test/pelorus_sidedata_test.c
+libpelorus/src/deband_params.c
+libpelorus/src/denoise_params.c
+libpelorus/src/interop.c
+libpelorus/src/qp_report_csv.c
+libpelorus/src/version.c
+libpelorus/test/interop_test.c
+libpelorus/test/path_utf8_test.c
+tools/pelorus_qp_report.c
