@@ -37,6 +37,14 @@ if [ "${1:-}" = "--print-path" ]; then
 fi
 
 if [ -n "${PRAETORCTL:-}" ]; then
+	# A bare name (PRAETORCTL=standardsctl) resolves on PATH, as make does.
+	case "$PRAETORCTL" in
+	*/*) ;;
+	*)
+		name=$PRAETORCTL
+		PRAETORCTL=$(command -v -- "$name" 2>/dev/null) || die "PRAETORCTL=$name is not on PATH"
+		;;
+	esac
 	[ -x "$PRAETORCTL" ] || die "PRAETORCTL=$PRAETORCTL is not an executable file"
 	printf 'praetor-engine: PRAETORCTL override %s, pin not checked\n' "$PRAETORCTL" >&2
 	if [ "$print_only" = 1 ]; then
