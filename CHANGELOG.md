@@ -327,6 +327,7 @@ All notable changes to Pelorus are documented here. The format is
   sticky event pointer; the encoder now submits a neutral event on that frame
   (BUG-030). New fast-suite tests: `nvenc-me-hints`, `svtav1-roi-sticky`, and
   per-codec span checks in `vulkan-qpmap-contract`.
+- Exempted Renovate's own commits in pull requests Renovate opened from the Standards gate's DCO sign-off check, as `CONTRIBUTING.md` already stated; every Renovate pull request failed the required gate after #184. The step now also fails when the commit range is empty or cannot be listed instead of passing on no commits.
 - The interop conformance test reads its fixtures back with `_fsopen(..., _SH_DENYNO)` on Windows instead of the deprecated `fopen()`: same sharing, no `-Wdeprecated-declarations` under clang-cl or icx-cl (C4996 under cl.exe) for a host that builds the test with warnings as errors.
 - **The x265 CSV reader initialises its column indices before the header row
   sets them.** `x265_csv_read_rows()` left the column-index struct
