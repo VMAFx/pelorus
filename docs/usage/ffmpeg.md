@@ -383,11 +383,35 @@ The `PelorusSideData` blob rides each frame as `AV_FRAME_DATA_SEI_UNREGISTERED`.
 Encoders write it into the H.264 or HEVC stream as a user-data-unregistered SEI
 message when `-udu_sei 1` is set (default off):
 
-| Encoder | Source of the option |
-| --- | --- |
-| `h264_nvenc`, `hevc_nvenc` | stock FFmpeg |
-| `h264_qsv`, `hevc_qsv` | patch 0019 |
-| `h264_vulkan`, `hevc_vulkan` | patch 0020 |
+| Encoder | Source of the option | Size limit per picture |
+| --- | --- | --- |
+| `h264_nvenc` | stock FFmpeg | none found up to 64 KiB |
+| `hevc_nvenc` | stock FFmpeg, limit handling in patch 0022 | 768 bytes of SEI (see below) |
+| `h264_qsv`, `hevc_qsv` | patch 0019 | none measured |
+| `h264_vulkan`, `hevc_vulkan` | patch 0020 | none measured |
+
+`hevc_nvenc` fails a picture whose parameter sets and SEI exceed 1024 bytes
+([ADR-0181](../adr/0181-hevc-nvenc-sei-header-budget.md),
+[research 0181](../research/0181-hevc-nvenc-sei-header-budget.md)). Patch 0022
+keeps 768 of them for the side data, in frame order:
+
+- an entry that fits is written whole;
+- a Pelorus blob that does not fit is written without its per-cell maps. Every
+  scalar section stays, and the blob equals what `pelorus_analyze_vulkan=maps=0`
+  writes. The analyze maps fit only up to about 90 cells, so at real frame sizes
+  the stream carries the scalars and the maps stay in the filter graph;
+- any other entry that does not fit is not written.
+
+The encoder warns at the first stripped blob and the first dropped entry, logs
+later ones at `-loglevel verbose`, and prints both totals when it closes:
+
+```text
+[hevc_nvenc] udu_sei: frame pts 0: the 12424-byte Pelorus side data is written without its per-cell maps (184 bytes): hevc_nvenc writes at most 1024 bytes of parameter sets and SEI per picture.
+```
+
+Before patch 0022 the encode stopped with `Failed locking bitstream buffer: out
+of memory` (`-12`). `ffmpeg-patches/test/nvenc-udu-sei-smoke.sh` checks the
+cases on an NVIDIA host and exits 77 with the reason elsewhere.
 
 ```bash
 ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \

@@ -166,6 +166,10 @@ ffprobe -f lavfi -i "movie=in.mkv,format=yuv420p,hwupload,pelorus_analyze_vulkan
 - **Blob size**: the maps add 6 bytes per cell, 12 KiB per frame at 1080p and
   48 KiB at 2160p with `cell=32`. An encoder with `udu_sei=1` writes them into
   the bitstream; use `maps=0` there unless a decoder-side reader needs them.
+  `hevc_nvenc` keeps 768 bytes per picture for SEI and writes a blob that does
+  not fit without its maps, the same bytes as `maps=0`, with a warning
+  ([ADR-0181](../adr/0181-hevc-nvenc-sei-header-budget.md),
+  [`udu_sei`](../usage/ffmpeg.md#carrying-the-side-data-blob-into-the-bitstream-udu_sei)).
 - **VMAFx reads the first blob**: its reader takes the first
   `SEI_UNREGISTERED` entry only, so put `pelorus_analyze_vulkan` before other
   Pelorus producers (as in the example above) in a graph VMAFx scores.

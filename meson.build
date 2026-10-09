@@ -310,6 +310,21 @@ if get_option('tests')
   test('analyze-maps-legacy-pack', analyze_maps_legacy_test, suite: 'fast')
 endif
 
+# Issue #267 / ADR-0181: hevc_nvenc's udu_sei path keeps each picture's
+# parameter sets and SEI within NVENC's 1024-byte limit
+# (ffmpeg-patches/files/pelorus_sei_fit.h): a Pelorus blob that does not fit
+# is carried as its scalar sections, byte-identical to the maps=0 blob, and
+# anything else that does not fit is dropped, never cut short.
+if get_option('tests')
+  sei_fit_test = executable(
+    'pelorus_sei_fit_test',
+    files('ffmpeg-patches/test/sei_fit_test.c'),
+    include_directories: include_directories('ffmpeg-patches/files'),
+    dependencies: [libpelorus_dep, cc.find_library('m', required: false)],
+  )
+  test('sei-fit', sei_fit_test, suite: 'fast')
+endif
+
 # The hardware rows of vulkan-format-matrix.sh decode the analyze maps with
 # analyze-maps-check.py; --self-test plants one defect per reader rule and
 # requires each to be rejected.

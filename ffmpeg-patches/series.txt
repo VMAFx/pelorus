@@ -34,3 +34,4 @@
 0019-qsv-pelorus-udu-sei.patch
 0020-vulkan-pelorus-udu-sei.patch
 0021-vulkan-frame-barrier-queue-family.patch
+0022-nvenc-pelorus-udu-sei.patch

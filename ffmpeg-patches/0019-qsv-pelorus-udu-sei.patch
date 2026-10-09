@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
 Date: Thu, 1 Jan 2026 00:00:00 +0000
-Subject: [PATCH 19/21] feat(qsv): carry unregistered user data SEI side data
+Subject: [PATCH 19/22] feat(qsv): carry unregistered user data SEI side data
  in H.264/HEVC
 
 Stock h264_qsv and hevc_qsv drop AV_FRAME_DATA_SEI_UNREGISTERED, so the

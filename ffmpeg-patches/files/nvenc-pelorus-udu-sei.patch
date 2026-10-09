@@ -1,0 +1,166 @@
+diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
+index 28dc6dca1c..e62251f6bd 100644
+--- a/libavcodec/nvenc.c
++++ b/libavcodec/nvenc.c
+@@ -24,6 +24,7 @@
+ 
+ #include "nvenc.h"
+ #include "hevc/sei.h"
++#include "pelorus_sei_fit.h"
+ #if CONFIG_AV1_NVENC_ENCODER
+ #include "av1.h"
+ #endif
+@@ -2185,6 +2186,13 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
+     av_frame_free(&ctx->frame);
+ 
+     av_freep(&ctx->sei_data);
++    if (ctx->pelorus_udu_stripped || ctx->pelorus_udu_dropped)
++        av_log(avctx, AV_LOG_WARNING, "udu_sei: %"PRId64" frame(s) carried "
++               "Pelorus side data without its per-cell maps and %"PRId64" user "
++               "data unregistered SEI payload(s) were not written, to stay within "
++               "hevc_nvenc's %u bytes of parameter sets and SEI per picture.\n",
++               ctx->pelorus_udu_stripped, ctx->pelorus_udu_dropped,
++               PEL_SEI_HEVC_NVENC_CAP);
+     av_freep(&ctx->qp_delta_map);
+     av_freep(&ctx->me_hints);
+ 
+@@ -2800,9 +2808,69 @@ static int output_ready(AVCodecContext *avctx, int flush)
+     return (nb_ready > 0) && (nb_ready + nb_pending >= ctx->async_depth);
+ }
+ 
++/* Pelorus: hevc_nvenc fails the encode with ENOMEM when the parameter sets
++ * and SEI of one picture exceed 1024 bytes (issue #267, ADR-0181,
++ * pelorus_sei_fit.h). Return what is left of the user SEI share after the
++ * A/53 and timecode SEI already in the array. */
++static size_t pelorus_udu_budget(const NV_ENC_SEI_PAYLOAD *sei, int count)
++{
++    size_t budget = PEL_SEI_HEVC_USER_BUDGET;
++
++    for (int i = 0; i < count; i++) {
++        size_t need = pel_sei_nal_bytes(sei[i].payload, sei[i].payloadSize, budget);
++        budget = need < budget ? budget - need : 0;
++    }
++    return budget;
++}
++
++static void pelorus_udu_log(AVCodecContext *avctx, const AVFrame *frame,
++                            const AVFrameSideData *sd, size_t kept)
++{
++    NvencContext *ctx = avctx->priv_data;
++    int first = kept ? !ctx->pelorus_udu_stripped : !ctx->pelorus_udu_dropped;
++    int level = first ? AV_LOG_WARNING : AV_LOG_VERBOSE;
++
++    if (kept) {
++        ctx->pelorus_udu_stripped++;
++        av_log(avctx, level, "udu_sei: frame pts %"PRId64": the %zu-byte "
++               "Pelorus side data is written without its per-cell maps "
++               "(%zu bytes): hevc_nvenc writes at most %u bytes of "
++               "parameter sets and SEI per picture.\n", frame->pts, sd->size,
++               kept, PEL_SEI_HEVC_NVENC_CAP);
++    } else {
++        ctx->pelorus_udu_dropped++;
++        av_log(avctx, level, "udu_sei: frame pts %"PRId64": a %zu-byte "
++               "user data unregistered SEI is not written: hevc_nvenc "
++               "writes at most %u bytes of parameter sets and SEI per picture.\n",
++               frame->pts, sd->size, PEL_SEI_HEVC_NVENC_CAP);
++    }
++}
++
++/* Strip the maps from a shortened Pelorus blob copy and charge the payload
++ * against *budget. 0 when it does not fit: the caller frees and skips it. */
++static int pelorus_udu_commit(AVCodecContext *avctx, const AVFrame *frame,
++                              const AVFrameSideData *sd, NV_ENC_SEI_PAYLOAD *sei,
++                              size_t *budget)
++{
++    size_t need;
++
++    if (sei->payloadSize < sd->size)
++        pel_sei_strip_maps(sei->payload, sei->payloadSize);
++    need = pel_sei_nal_bytes(sei->payload, sei->payloadSize, *budget);
++    if (need > *budget) {
++        pelorus_udu_log(avctx, frame, sd, 0);
++        return 0;
++    }
++    *budget -= need;
++    if (sei->payloadSize < sd->size)
++        pelorus_udu_log(avctx, frame, sd, sei->payloadSize);
++    return 1;
++}
++
+ static int prepare_sei_data_array(AVCodecContext *avctx, const AVFrame *frame)
+ {
+     NvencContext *ctx = avctx->priv_data;
++    size_t udu_budget = 0;
+     int sei_count = 0;
+     int i, res;
+ 
+@@ -2877,13 +2945,27 @@ static int prepare_sei_data_array(AVCodecContext *avctx, const AVFrame *frame)
+     if (!ctx->udu_sei)
+         return sei_count;
+ 
++    if (avctx->codec->id == AV_CODEC_ID_HEVC)
++        udu_budget = pelorus_udu_budget(ctx->sei_data, sei_count);
++
+     for (i = 0; i < frame->nb_side_data; i++) {
+         AVFrameSideData *side_data = frame->side_data[i];
++        size_t udu_size = side_data->size;
+         void *tmp;
+ 
+         if (side_data->type != AV_FRAME_DATA_SEI_UNREGISTERED)
+             continue;
+ 
++        if (avctx->codec->id == AV_CODEC_ID_HEVC) {
++            if (!side_data->size)
++                continue; /* an empty entry has nothing to write */
++            udu_size = pel_sei_fit_len(side_data->data, side_data->size, udu_budget);
++            if (!udu_size) {
++                pelorus_udu_log(avctx, frame, side_data, 0);
++                continue;
++            }
++        }
++
+         tmp = av_fast_realloc(ctx->sei_data,
+                               &ctx->sei_data_size,
+                               (sei_count + 1) * sizeof(*ctx->sei_data));
+@@ -2892,15 +2974,22 @@ static int prepare_sei_data_array(AVCodecContext *avctx, const AVFrame *frame)
+             goto error;
+         } else {
+             ctx->sei_data = tmp;
+-            ctx->sei_data[sei_count].payloadSize = side_data->size;
++            ctx->sei_data[sei_count].payloadSize = (uint32_t)udu_size;
+             ctx->sei_data[sei_count].payloadType = SEI_TYPE_USER_DATA_UNREGISTERED;
+-            ctx->sei_data[sei_count].payload = av_memdup(side_data->data, side_data->size);
++            ctx->sei_data[sei_count].payload = av_memdup(side_data->data, udu_size);
+ 
+             if (!ctx->sei_data[sei_count].payload) {
+                 res = AVERROR(ENOMEM);
+                 goto error;
+             }
+ 
++            if (avctx->codec->id == AV_CODEC_ID_HEVC &&
++                !pelorus_udu_commit(avctx, frame, side_data,
++                                    &ctx->sei_data[sei_count], &udu_budget)) {
++                av_freep(&ctx->sei_data[sei_count].payload);
++                continue;
++            }
++
+             sei_count++;
+         }
+     }
+diff --git a/libavcodec/nvenc.h b/libavcodec/nvenc.h
+index 499477b275..9fb32d009f 100644
+--- a/libavcodec/nvenc.h
++++ b/libavcodec/nvenc.h
+@@ -328,6 +328,12 @@ typedef struct NvencContext
+     int     me_hints_h;      ///< 16x16 blocks down  = ceil(height / 16)
+     int     me_hints_warned; ///< rate-limit the AQ/lookahead note to once
+     int     me_hints_absent_warned; ///< rate-limit the "frame had no motion data" warning
++
++    /* Pelorus: with udu_sei on hevc_nvenc, side-data payloads that do not fit
++     * the per-picture header limit (pelorus_sei_fit.h, ADR-0181). The first of
++     * each kind is a warning, later ones verbose, the totals a warning at close. */
++    int64_t pelorus_udu_stripped; ///< Pelorus blobs written without their maps
++    int64_t pelorus_udu_dropped;  ///< SEI payloads not written at all
+ } NvencContext;
+ 
+ int ff_nvenc_encode_init(AVCodecContext *avctx);

@@ -5,6 +5,40 @@ Re-apply / re-test work created for the FFmpeg patch stack after an upstream
 FFmpeg bump or a `libpelorus` ABI change. One entry per change that affects the
 patches (ADR-0108 deliverable #6).
 
+## Unreleased — patch 0022 (`hevc_nvenc` `udu_sei` header limit, #267, ADR-0181; cumulative on 0001–0021)
+
+- **Patch**: `ffmpeg-patches/0022-nvenc-pelorus-udu-sei.patch` (canonical
+  diff `files/nvenc-pelorus-udu-sei.patch`, header `files/pelorus_sei_fit.h`
+  that `generate.sh` copies to `libavcodec/`, message
+  `.commit-msg-nvenc-udu-sei.txt`). Applied after 0021, so no shipped patch is
+  renumbered; 0001–0021 change only in their `[PATCH n/22]` subject line.
+- **What it fixes**: NVENC's HEVC encoder fails `nvEncLockBitstream()` with
+  `NV_ENC_ERR_OUT_OF_MEMORY` when a picture's VPS, SPS, PPS, AUD and SEI NAL
+  units exceed 1024 bytes (Annex B, measured on driver 615.71.09,
+  [research 0181](research/0181-hevc-nvenc-sei-header-budget.md)). For HEVC,
+  `prepare_sei_data_array()` now charges each `SEI_UNREGISTERED` entry against
+  768 bytes per picture less the queued A/53 and timecode SEI: whole when it
+  fits, a Pelorus blob without its maps when that fits, else not written.
+  `NvencContext` gains two counters; `ff_nvenc_encode_close()` logs them.
+- **Rebase-sensitive**: the stock `udu_sei` loop in
+  `prepare_sei_data_array()` (the hunk replaces its `av_memdup()` size),
+  `NV_ENC_SEI_PAYLOAD` field names, and the Pelorus block at the end of
+  `NvencContext` (after 0008's fields). `pelorus_sei_fit.h` mirrors interop
+  offsets; `sei_fit_test.c` checks them with `offsetof()`, so a new section
+  with maps needs its fields in `pel_sei_map_fields` and its bit in
+  `PEL_SEI_STRIPPABLE`. Re-measure the limit after a driver or SDK change: the
+  smoke `maps-1080p` case fails the same way as before if it shrinks.
+- **Upstream**: the budget and drop path is useful to any `hevc_nvenc`
+  `udu_sei` user (a 2 KiB foreign SEI also stops the stock encode); the map
+  stripping is Pelorus-only.
+- **Regeneration**: `FFMPEG_REPO=/absolute/path/to/ffmpeg
+  ffmpeg-patches/generate.sh`, run twice: byte-identical.
+- **Replay**: `JOBS=4 FFMPEG_REPO=/absolute/path/to/ffmpeg
+  ffmpeg-patches/test/build-and-run.sh` applies all 22 patches, links FFmpeg
+  and runs `test/nvenc-udu-sei-smoke.sh` (exit 77 with the reason when the host
+  has no NVENC or Vulkan device; any other failure fails the replay). The fast
+  suite covers the header (`sei-fit`).
+
 ## Unreleased — analyze per-cell maps (#219, ADR-0177; regenerates 0002)
 
 - **What changed**: `vf_pelorus_analyze_vulkan.c` fills the ABI 1.0 map

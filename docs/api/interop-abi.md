@@ -180,7 +180,11 @@ if (pel_blob_find_section(sd->data, sd->size, PEL_SEC_BANDING, sizeof(PelorusBan
 Each frame through the filter costs 6 bytes per cell plus at most 14 bytes of
 alignment: 12 KiB at 1920x1080 and 48 KiB at 3840x2160 with `cell=32`. An
 encoder with `udu_sei=1` writes the blob into the bitstream, so pass `maps=0`
-there when the maps are not needed downstream.
+there when the maps are not needed downstream. `hevc_nvenc` writes a blob that
+does not fit its per-picture SEI limit without the maps: their offsets and
+sizes are zero, as in a `maps=0` blob, so read maps from the frame side data in
+the filter graph, not from an HEVC NVENC stream
+([ADR-0181](../adr/0181-hevc-nvenc-sei-header-budget.md)).
 
 ### QP-report reader stub (closed loop)
 
