@@ -34,6 +34,9 @@ The workstation ran other jobs, so the durations below are approximate.
   bitrate-control artifact: `hevc_vaapi` with one ROI rectangle writes a
   corrupt stream on this GPU (PSNR-Y 13.81 dB at `qoffset=-0.15`, 41.02 dB
   without ROI). The same ROI through `hevc_qsv` on the same encoder is clean.
+  The cause is FFmpeg writing `cu_qp_delta_enabled_flag=0` in constant QP
+  while still sending the ROI; the fix is
+  [FFmpeg #24977](https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/24977).
   The claim that every Arc A-series low-power encode is invalid does not hold.
 
 ## Software bitrate control (ExtBRC)
@@ -192,7 +195,29 @@ At `qoffset=-0.15`, the ROI strength of the v0.5 NVENC run, PSNR-Y is
 range the driver's native ROI handles. In constant QP the media driver's HEVC
 ROI strategies (`encode_hevc_vdenc_roi_strategy.cpp`, `CreateStrategy`) use HuC
 only when VDEnc bitrate control is on, so HuC is not the cause by the code.
-The exact failure point is not traced.
+
+The failure point is in FFmpeg. In constant QP, `vaapi_encode_h265.c` sets
+`cu_qp_delta_enabled_flag` from `ctx->va_rc_mode != VA_RC_CQP`, so the PPS
+carries 0, yet `vaapi_encode.c` still allows ROI in constant QP and passes it
+to the driver. The media driver applies the ROI as per-block QP and copies the
+PPS flag through without checking it, although its DG2 capability table
+reports the flag as required. The stream then has no `cu_qp_delta` syntax, the
+decoder reconstructs every CU with the slice QP, and the mismatch spreads
+through prediction to the half outside the ROI. `h264_vaapi` always carries
+`mb_qp_delta` and is clean with the same ROI:
+
+| Run (`-rc_mode CQP -qp 30`) | Bytes | PSNR-Y (dB) | Top half | Bottom half |
+| --- | --- | --- | --- | --- |
+| `hevc_vaapi`, no ROI | 81459 | 41.02 | 52.51 | 38.17 |
+| `hevc_vaapi`, ROI −0.15 | 84077 | 13.81 | 24.77 | 10.98 |
+| `hevc_vaapi` with the fix, no ROI | 81577 | 41.02 | 52.51 | 38.17 |
+| `hevc_vaapi` with the fix, ROI −0.15 | 85443 | 41.12 | 54.83 | 38.20 |
+| `h264_vaapi`, no ROI | 75375 | 41.15 | 52.84 | 38.29 |
+| `h264_vaapi`, ROI −0.15 | 76790 | 41.17 | 53.32 | 38.29 |
+
+The fix enables `cu_qp_delta` when ROI is used in constant QP and is filed as
+[FFmpeg #24977](https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/24977). Measured
+with media driver 26.3.5 and libva 2.24.1.
 
 VMAF and CAMBI (vmafx `vmaf` 3.2.0, CAMBI lower is less banding) on the image
 streams:

@@ -303,7 +303,7 @@ ROI redistributes bits into the banding region, raising bitrate a few %% — thi
 **NVENC** (patch) and **AMD radeonsi** (vanilla VAAPI) both reduce banding with
 VMAF up — banding steering reaches two HW vendors from one map. **Intel** is the
 honest negative: the Arc A380 exposes only the low-power `VAEntrypointEncSliceLP`
-encode path, and iHD's ROI on that path produced a broken encode (PSNR 13.8 dB;
+encode path, and `hevc_vaapi` ROI on that path produced a broken encode (PSNR 13.8 dB;
 the VMAF=100 it scored is a model-clamp artifact, not quality). The baseline Intel
 encode is clean (PSNR 44.8 dB, VMAF 96.0), so the pipeline is fine. Combined with
 libx265 (v0.5, −47%) and NVENC (v0.5, −41%), the steering is proven on **three**
@@ -319,11 +319,20 @@ without the ROI, with media driver 25.2.3 and 26.3.5 alike. The whole picture is
 corrupt (the bottom half, outside the ROI, scores 10.98 dB), at any ROI
 strength (24.2 dB at −0.05, 9.7 dB at −0.3). The same ROI through `hevc_qsv` on
 the same low-power encoder is clean: 38.57 dB against 38.51 dB unsteered, with
-the ROI half 4.4 dB better. The defect is iHD's VA-API ROI path on this GPU, not
-the low-power encoder as a whole. The earlier attribution to a "known Arc
-A-series (Alchemist) low-power encode bug, fixed only in Arc B (Battlemage)",
-and the advice to treat every Arc A low-power result as invalid, had no source
-and are withdrawn. VA-API ROI on the A380 stays unusable; QSV ROI works.
+the ROI half 4.4 dB better. The cause is in FFmpeg, not in the driver or the
+low-power encoder: in constant QP, `vaapi_encode_h265.c` writes the PPS with
+`cu_qp_delta_enabled_flag=0` but still passes the ROI to the driver. The driver
+applies the ROI as a per-block QP change that the stream has no syntax to
+signal, so the decoder reconstructs with the slice QP and the error spreads
+through prediction. `h264_vaapi`, whose syntax always carries `mb_qp_delta`, is
+clean with the same ROI (41.17 dB). The fix is filed upstream as
+[FFmpeg #24977](https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/24977); with it the
+ROI encode scores 41.12 dB and the encode without ROI is unchanged. The earlier
+attribution to a "known Arc A-series (Alchemist) low-power encode bug, fixed
+only in Arc B (Battlemage)", and the advice to treat every Arc A low-power
+result as invalid, had no source and are withdrawn. Until that fix ships,
+`hevc_vaapi` ROI in constant QP stays unusable; QSV ROI and `h264_vaapi` ROI
+work.
 
 ## v0.7 — AMD ROI at **true iso-bitrate** (VBR matched target)
 
@@ -346,7 +355,7 @@ redistribution win on AMD hardware, PSNR-clean (no corruption). The gain tapers 
 content/bitrate dependence (ROI helps most where the encoder is starving the flat
 regions). Same `addroi` side data as every other consumer; no patch (radeonsi
 honors ROI vanilla). Confounded-result guard worked: both arms' bitrates match to
-&lt;2% and PSNR is sane, unlike the Intel iHD VA-API ROI case (PSNR 13.8, v0.6).
+&lt;2% and PSNR is sane, unlike the Intel `hevc_vaapi` ROI case (PSNR 13.8, v0.6).
 
 ## v0.8 — QSV ROI on the Arc: a crash bug found + fixed, then a driver wall
 
