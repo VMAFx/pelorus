@@ -66,10 +66,14 @@ NVENC's own non-VCL bytes: 114 on an IDR picture and 13 on a P picture at
 1024-byte limit holds at every preset tried and does not grow with the
 picture size.
 
-At the end of a stream the failure is silent: a single over-limit frame gives
-no packet and the encode returns success; with two frames, the over-limit IDR
-picture is missing from the output. Only the `Failed locking bitstream buffer`
-line shows it.
+At the end of a stream the failure shows only as an error line: a single
+over-limit frame gives no packet; with two frames, the over-limit IDR picture
+is missing from the output. The `Failed locking bitstream buffer` line shows
+it. The `ffmpeg` CLI still fails: the drain error from `avcodec_send_frame(NULL)`
+is returned by `fftools/ffmpeg_enc.c` ("Error submitting", line 724; "Error
+flushing encoder", line 944) and the run ends with `Conversion failed!`. The
+"returns success" seen in this research came from the `seiprobe` harness, which
+did not check the result of `avcodec_send_frame(c, NULL)`.
 
 ## After patch 0022
 

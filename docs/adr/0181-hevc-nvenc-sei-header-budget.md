@@ -74,8 +74,10 @@ data in the filter graph, before the encoder. No interop ABI change.
   measured on one driver; a driver that changes it needs a new measurement
   (`ffmpeg-patches/test/nvenc-udu-sei-smoke.sh`, research 0181).
 - **Neutral / follow-ups**: `h264_nvenc` keeps the stock path (no limit
-  found up to 64 KiB). `av1_nvenc` with `udu_sei` writes type-5 metadata
-  OBUs, which AV1 defines as timecode; that is a separate stock bug. The
+  found up to 64 KiB). `av1_nvenc` has no `udu_sei` option in n9.0.2 or on
+  FFmpeg master, and no Pelorus patch adds one, so the type-5 metadata OBU
+  write in `prepare_sei_data_array()` (type 5 is timecode in AV1) is not
+  reachable; it would matter only if an option were added later. The
   tester's `sidedata_roundtrip` stage still skips the case instead of
   failing (issue #268).
 

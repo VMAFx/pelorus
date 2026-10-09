@@ -20,8 +20,8 @@ no passthrough for unregistered or T.35 payloads.
 
 Verified on an Arc A380 (ANV) and a Radeon 610M (RADV): four frames through
 pelorus_analyze_vulkan and pelorus_deband_vulkan give four Pelorus blobs in the
-H.264 and HEVC streams. The RTX 4090 driver on this host does not expose
-VK_KHR_video_encode_queue, so it was not tested.
+H.264 and HEVC streams. The RTX 4090 (NVIDIA 615.71.09) exposes
+VK_KHR_video_encode_queue, but this patch was not run on it.
 ---
  libavcodec/vulkan_encode_h264.c | 40 ++++++++++++++++++++
  libavcodec/vulkan_encode_h265.c | 40 ++++++++++++++++++++

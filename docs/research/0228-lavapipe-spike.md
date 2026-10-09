@@ -93,9 +93,12 @@ allow-listed).
    constant; with a literal index it reports the same two VUIDs.
 3. **Missing-extension behaviour has no filter-side hook; the lane guard owns it.**
    The filters declare no extension requirement of their own; FFmpeg picks
-   device extensions and silently drops an unknown one requested with
-   `device_extensions=` (checked with `VK_NV_nonexistent_ext`: exit 0, no
-   message). In FFmpeg 9 even the extensions it prefers are optional:
+   device extensions and drops an unknown one requested with
+   `device_extensions=` and continues (checked with `VK_NV_nonexistent_ext`:
+   exit 0). The drop is logged at warning level (`extension "..." not found,
+   excluding.`, `libavutil/hwcontext_vulkan.c:1020` at n9.0.2), so a run at
+   `-v error` shows nothing; the spike's "no message" was not rechecked at the
+   default log level. In FFmpeg 9 even the extensions it prefers are optional:
    `libavutil/vulkan.c` uses `VK_KHR_push_descriptor` (`:2319`) and
    `VK_EXT_shader_object` (`:2403`) when the device has them and otherwise
    takes another path, and `hwcontext_vulkan.c` copies through

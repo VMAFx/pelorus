@@ -13,8 +13,10 @@ adds a `pelorus_film_grain` AVOption (default off, registered on av1_nvenc
 only) that, when set, carries the AV1 (AOM) film-grain-synthesis parameters a
 vf_pelorus_grain_estimate_vulkan stage emits into NVENC's hardware AV1
 film-grain config so the decoder re-synthesizes the grain — the HW-AV1 leg of
-the FGS round-trip (the H.274 BSF, patch 0010, covers HEVC; the AV1 software
-encoders consume the native side data directly).
+the FGS round-trip (the H.274 BSF, patch 0010, covers HEVC). No AV1
+software encoder reads the native AV_FRAME_DATA_FILM_GRAIN_PARAMS side data
+(checked on FFmpeg master: only decoders do), so libaom and SVT-AV1 do not
+consume it.
 
 At init, when enabled, we set NV_ENC_CONFIG_AV1::enableFilmGrainParams and
 point filmGrainParams at a persistent NV_ENC_FILM_GRAIN_PARAMS_AV1 in the
