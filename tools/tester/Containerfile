@@ -33,8 +33,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
-# The build context is trimmed by tools/tester/Containerfile.dockerignore.
-COPY . /src/pelorus
+# Only what the build reads, so a change to the tester tools, the docs or the
+# licence record does not rebuild FFmpeg (the layer cache keys on these paths).
+# The context is also trimmed by tools/tester/Containerfile.dockerignore.
+COPY meson.build meson_options.txt /src/pelorus/
+COPY libpelorus /src/pelorus/libpelorus
+COPY ffmpeg-patches /src/pelorus/ffmpeg-patches
 RUN meson setup --werror -Dtests=false -Dtools=false -Dshaders=false --prefix=/opt/pelorus --libdir=lib /src/pelorus-build /src/pelorus \
     && ninja -C /src/pelorus-build install
 
@@ -69,19 +73,44 @@ COPY tools/tester/check-ffmpeg-licence.sh tools/tester/check-ffmpeg-licence-self
 RUN /opt/gate/check-ffmpeg-licence-self-test.sh \
     && LD_LIBRARY_PATH=/opt/ffmpeg/lib:/opt/pelorus/lib /opt/gate/check-ffmpeg-licence.sh /opt/ffmpeg/bin/ffmpeg
 
-FROM ${DEBIAN_IMAGE} AS runtime
+# Everything the image ships, before the licence record gate and the runtime
+# settings. Vendor images (NVIDIA #229, Intel/AMD #230) add their stages here.
+FROM ${DEBIAN_IMAGE} AS assembled
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-ARG PELORUS_COMMIT
 # hadolint ignore=DL3008
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates libvulkan1 python3-minimal vulkan-tools \
+        ca-certificates libvulkan1 python3 vulkan-tools \
     && dpkg-query -W -f='${source:Package}=${source:Version}\n' | sort -u > /installed-sources.txt \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /opt/ffmpeg /opt/ffmpeg
 COPY --from=build /opt/pelorus /opt/pelorus
 COPY --from=build /opt/source/COPYING.GPLv3 /usr/share/licenses/pelorus-ffmpeg/COPYING.GPLv3
 COPY tools/tester /opt/pelorus/tester
+COPY LICENSES /usr/share/licenses/pelorus-tester/texts
+
+# Licence record gate (ADR-0178, #236). tools/tester/licensing.json records
+# every component of the image; the gate writes the notices file and then fails
+# the build on a file no component owns, a licence that is unknown or not
+# redistributable, a Debian package without its copyright file or from outside
+# the permitted archive components, a missing licence text, or stale notices.
+# Its self-test plants each defect first, so a broken gate cannot pass. The
+# runtime stage takes the notices from this stage, so it cannot be built
+# without the gate having passed on the finished tree.
+FROM assembled AS licence
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ARG FFMPEG_REMOTE
+ARG FFMPEG_COMMIT
+ARG PELORUS_COMMIT
+RUN python3 -I -B /opt/pelorus/tester/licensing.py self-test \
+    && python3 -I -B /opt/pelorus/tester/licensing.py notices --root / \
+        --commit "${PELORUS_COMMIT}" --ffmpeg-remote "${FFMPEG_REMOTE}" --ffmpeg-commit "${FFMPEG_COMMIT}" \
+    && python3 -I -B /opt/pelorus/tester/licensing.py check --root / \
+        --commit "${PELORUS_COMMIT}" --ffmpeg-remote "${FFMPEG_REMOTE}" --ffmpeg-commit "${FFMPEG_COMMIT}"
+
+FROM assembled AS runtime
+ARG PELORUS_COMMIT
+COPY --from=licence /usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt /usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt
 ENV FFMPEG_BIN=/opt/ffmpeg/bin/ffmpeg \
     PATH=/opt/ffmpeg/bin:${PATH} \
     LD_LIBRARY_PATH=/opt/ffmpeg/lib:/opt/pelorus/lib

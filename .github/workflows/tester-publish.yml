@@ -1,7 +1,10 @@
 name: Tester publish
 
 # Tester images are evidence for one commit reachable from master, never a
-# release (ADR-0173, ADR-0176). Pull requests build the image and push nothing.
+# release (ADR-0173, ADR-0176). Pull requests build the image and push nothing,
+# only when they touch what the image is built from (a docs-only pull request
+# does not start it). A nightly schedule builds master once and publishes
+# nothing: only the `build` job can run on it (ADR-0178, #235).
 # A manual dispatch is the only way to publish: `validate` refuses a commit that
 # master does not contain, then `publish` waits for the `tester-publish`
 # environment approval before it builds, gates, pushes, signs, attests and
@@ -15,8 +18,15 @@ on:
     paths:
       - 'tools/tester/**'
       - 'ffmpeg-patches/**'
+      - 'libpelorus/**'
+      - 'meson.build'
+      - 'meson_options.txt'
       - 'build-config.env'
+      - 'LICENSES/**'
+      - 'REUSE.toml'
       - '.github/workflows/tester-publish.yml'
+  schedule:
+    - cron: '17 2 * * *'
   workflow_dispatch:
     inputs:
       ref:
@@ -36,10 +46,11 @@ env:
 
 jobs:
   build:
-    # Pull requests only: build the image and run the licence gate, push nothing.
-    # The first step is the Praetor hosted-gate draft step (HISS-18).
+    # Pull requests and the nightly schedule: build the image and run the
+    # licence gate, push nothing. The first step is the Praetor hosted-gate
+    # draft step (HISS-18); it does not match on a scheduled run.
     name: Build tester image (no push)
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VMAFx/pelorus')
     runs-on: ubuntu-26.04
     timeout-minutes: 90
     steps:
@@ -71,6 +82,11 @@ jobs:
       - name: Licence gate refuses a planted flag
         if: github.event.pull_request.draft != true
         run: bash tools/tester/check-ffmpeg-licence-self-test.sh
+      - name: Licence record is valid and its gate refuses planted defects
+        if: github.event.pull_request.draft != true
+        run: |
+          python3 -I -B tools/tester/licensing.py record
+          python3 -I -B tools/tester/licensing.py self-test
       - name: Build (the Containerfile runs the licence gate)
         if: github.event.pull_request.draft != true
         run: |
@@ -161,6 +177,10 @@ jobs:
           done < build-config.env
       - name: Licence gate refuses a planted flag
         run: bash tools/tester/check-ffmpeg-licence-self-test.sh
+      - name: Licence record is valid and its gate refuses planted defects
+        run: |
+          python3 -I -B tools/tester/licensing.py record
+          python3 -I -B tools/tester/licensing.py self-test
       - name: Build the tester image (the Containerfile runs the licence gate)
         run: |
           docker build \
@@ -177,6 +197,11 @@ jobs:
           printf '#!/usr/bin/env bash\nexec docker run --rm --entrypoint ffmpeg "%s" "$@"\n' "${IMAGE}:${TAG}" > "$wrapper"
           chmod +x "$wrapper"
           bash tools/tester/check-ffmpeg-licence.sh "$wrapper"
+      - name: Licence record gate on the built image
+        run: |
+          docker run --rm --entrypoint python3 "${IMAGE}:${TAG}" \
+            -I -B /opt/pelorus/tester/licensing.py check --root / \
+            --commit "${SHA}" --ffmpeg-remote "${FFMPEG_REMOTE}" --ffmpeg-commit "${FFMPEG_COMMIT}"
       - name: Run the documented command without a GPU and validate the report
         run: |
           mkdir -p "${RUNNER_TEMP}/report"

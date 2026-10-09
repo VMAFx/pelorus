@@ -610,8 +610,8 @@ order ([ADR-0169](../adr/0169-release-provenance-slsa3.md)):
    (`scripts/release/extract-release-notes.sh`; a missing or empty section
    fails the build), and packages
    `pelorus-ffmpeg-patches-<tag>.tar.gz` (`series.txt`, the README, the
-   numbered patches, `files/`, and the LGPL-2.1-or-later and EUPL-1.2 texts
-   from `LICENSES/`, [licensing](../licensing.md)). It then writes an SPDX JSON SBOM of that
+   numbered patches, `files/`, the LGPL-2.1-or-later and EUPL-1.2 texts
+   from `LICENSES/`, and a generated `NOTICE`, [licensing](../licensing.md)). It then writes an SPDX JSON SBOM of that
    archive, writes `SHA256SUMS` over the archive and the SBOM, attests SLSA v1.0
    build provenance for both with `actions/attest-build-provenance`, signs
    `SHA256SUMS` keyless with cosign into `SHA256SUMS.sigstore.json`, verifies
