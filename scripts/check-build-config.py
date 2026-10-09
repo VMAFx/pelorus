@@ -4426,6 +4426,153 @@ def isolate_from_invoking_repository() -> list[str]:
     return []
 
 
+# ADR-0179 (#256): the pelorus-dev image starts from plain Ubuntu, records every
+# file it holds, and runs the licence gate in a stage the final stage depends on.
+DEV_IMAGE_CONTAINERFILE = ROOT / ".devcontainer" / "base" / "Containerfile"
+DEV_IMAGE_RECORD = ROOT / ".devcontainer" / "base" / "licensing.json"
+DEV_IMAGE_WORKFLOW = ROOT / ".github" / "workflows" / "devcontainer-image.yml"
+DEV_IMAGE_NOTICES_LABEL = "dev.vmafx.pelorus.notices"
+DEV_IMAGE_FROM = re.compile(r"^FROM ubuntu:26\.04@sha256:[0-9a-f]{64} AS assembled$", re.MULTILINE)
+DEV_IMAGE_GATE = ("licensing.py self-test", "licensing.py notices", "licensing.py check")
+DEV_IMAGE_WORKFLOW_TOKENS = (
+    "--build-arg PELORUS_COMMIT=\"$GITHUB_SHA\"",
+    "--file .devcontainer/base/Containerfile",
+    "'tools/tester/licensing.py'",
+    "'LICENSES/EUPL-1.2.txt'",
+)
+
+
+def _dev_image_stages(relative: str, text: str) -> list[str]:
+    errors: list[str] = []
+    start = text.find("FROM assembled AS licence")
+    final = text.find("FROM assembled AS final")
+    if start < 0 or final < start:
+        return [f"{relative}: stage licence must come before stage final, both starting from assembled"]
+    positions = [text.find(token, start, final) for token in DEV_IMAGE_GATE]
+    if min(positions) < 0 or positions != sorted(positions):
+        errors.append(f"{relative}: stage licence must run licensing.py self-test, notices and check in that order")
+    if "ARG PELORUS_COMMIT" not in text[start:final]:
+        errors.append(f"{relative}: stage licence needs ARG PELORUS_COMMIT")
+    if "COPY --from=licence " not in text[final:]:
+        errors.append(f"{relative}: stage final must copy from stage licence, so the gate cannot be skipped")
+    return errors
+
+
+def validate_dev_image_text(relative: str, text: str, record: dict) -> list[str]:
+    """The Containerfile builds on plain Ubuntu behind the licence gate and agrees with its record."""
+    errors: list[str] = []
+    if not DEV_IMAGE_FROM.search(text):
+        errors.append(f"{relative}: must start FROM a digest-pinned ubuntu:26.04 AS assembled, not a vendor base image")
+    if "image.licenses=" in text:
+        errors.append(f"{relative}: must not set org.opencontainers.image.licenses; the notices file names the licences")
+    notices = "/" + str(record.get("notices_path", ""))
+    if f'{DEV_IMAGE_NOTICES_LABEL}="{notices}"' not in text:
+        errors.append(f"{relative}: label {DEV_IMAGE_NOTICES_LABEL} must name the record's notices file {notices}")
+    for component in record.get("components", []):
+        for licence_file in component.get("licence_files", []):
+            directory = "/" + licence_file.rsplit("/", 1)[0]
+            if directory not in text and not licence_file.startswith("usr/share/common-licenses/"):
+                errors.append(f"{relative}: nothing installs {directory} for component {component.get('id')}")
+    errors.extend(_dev_image_stages(relative, text))
+    return errors
+
+
+def validate_dev_image_workflow_text(relative: str, text: str) -> list[str]:
+    errors = [f"{relative}: missing {token}" for token in DEV_IMAGE_WORKFLOW_TOKENS if token not in text]
+    if text.count("--build-arg PELORUS_COMMIT=") != 2:
+        errors.append(f"{relative}: both docker build steps must pass --build-arg PELORUS_COMMIT")
+    if ".devcontainer/base\n" in text.replace(" ", "").replace("\\\n", ""):
+        errors.append(f"{relative}: the build context must be the repository root, which holds the licence gate")
+    return errors
+
+
+def validate_dev_image() -> list[str]:
+    errors: list[str] = []
+    try:
+        record = json.loads(DEV_IMAGE_RECORD.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as err:
+        return [f"{DEV_IMAGE_RECORD.relative_to(ROOT).as_posix()}: {err}"]
+    for path, check in (
+        (DEV_IMAGE_CONTAINERFILE, lambda rel, text: validate_dev_image_text(rel, text, record)),
+        (DEV_IMAGE_WORKFLOW, validate_dev_image_workflow_text),
+    ):
+        relative = path.relative_to(ROOT).as_posix()
+        if not path.is_file():
+            errors.append(f"{relative}: missing")
+            continue
+        errors.extend(check(relative, path.read_text(encoding="utf-8")))
+    return errors
+
+
+def _dev_image_cases(text: str) -> dict[str, tuple[str, str]]:
+    first = DEV_IMAGE_FROM.search(text)
+    base = first.group(0) if first else ""
+    return {
+        "vendor base image": (
+            text.replace(base, "FROM mcr.microsoft.com/devcontainers/base:ubuntu26.04@sha256:" + "0" * 64 + " AS assembled", 1),
+            "must start FROM a digest-pinned ubuntu:26.04",
+        ),
+        "tag-only base": (text.replace("@sha256:", "@sha256x:", 1), "must start FROM a digest-pinned ubuntu:26.04"),
+        "licence label back": (
+            text + '\nLABEL org.opencontainers.image.licenses="EUPL-1.2"\n',
+            "must not set org.opencontainers.image.licenses",
+        ),
+        "notices label dropped": (text.replace(DEV_IMAGE_NOTICES_LABEL, "dev.example.notices", 1), "must name the record's notices file"),
+        "gate check removed": (text.replace("licensing.py check --root", "licensing.py record --root", 1), "self-test, notices and check in that order"),
+        "gate order swapped": (
+            text.replace("licensing.py notices --root", "licensing.py zzz", 1).replace("licensing.py check --root", "licensing.py notices --root", 1)
+            .replace("licensing.py zzz", "licensing.py check --root", 1),
+            "self-test, notices and check in that order",
+        ),
+        "final stage skips the gate": (text.replace("COPY --from=licence ", "COPY --from=assembled ", 1), "must copy from stage licence"),
+        "node licence not installed": (text.replace("/usr/local/share/licenses/node", "/opt/n", -1), "nothing installs /usr/local/share/licenses/node"),
+        "lefthook licence not installed": (
+            text.replace("/usr/local/share/licenses/lefthook", "/opt/l", -1),
+            "nothing installs /usr/local/share/licenses/lefthook",
+        ),
+    }
+
+
+def _dev_image_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
+    return {
+        "no commit argument": (text.replace("--build-arg PELORUS_COMMIT=", "--build-arg OTHER=", 1), "both docker build steps must pass"),
+        "gate not a trigger": (text.replace("      - 'tools/tester/licensing.py'\n", "", -1), "missing 'tools/tester/licensing.py'"),
+        "context without the gate": (
+            text.replace("--file .devcontainer/base/Containerfile \\\n            .\n", "--file .devcontainer/base/Containerfile \\\n            .devcontainer/base\n", 1),
+            "the build context must be the repository root",
+        ),
+    }
+
+
+def _dev_image_regressions_for(name: str, original: str, cases: dict[str, tuple[str, str]], validate) -> list[str]:
+    failures: list[str] = []
+    for case, (mutated, expected) in cases.items():
+        if mutated == original:
+            failures.append(f"dev image regression: {name} {case} mutation changed nothing")
+        elif not any(expected in error for error in validate(mutated)):
+            failures.append(f"dev image regression: {name} {case} was accepted")
+    return failures
+
+
+def dev_image_regressions() -> list[str]:
+    """Prove each ADR-0179 rule rejects its planted defect."""
+    record = json.loads(DEV_IMAGE_RECORD.read_text(encoding="utf-8"))
+    container = DEV_IMAGE_CONTAINERFILE.read_text(encoding="utf-8")
+    workflow = DEV_IMAGE_WORKFLOW.read_text(encoding="utf-8")
+    failures: list[str] = []
+    if validate_dev_image_text("Containerfile", container, record):
+        failures.append("dev image regression: the current Containerfile is rejected")
+    if validate_dev_image_workflow_text("workflow", workflow):
+        failures.append("dev image regression: the current workflow is rejected")
+    failures += _dev_image_regressions_for(
+        "Containerfile", container, _dev_image_cases(container), lambda t: validate_dev_image_text("Containerfile", t, record)
+    )
+    failures += _dev_image_regressions_for(
+        "workflow", workflow, _dev_image_workflow_cases(workflow), lambda t: validate_dev_image_workflow_text("workflow", t)
+    )
+    return failures
+
+
 def main() -> int:
     scrub_git_repository_env()
     if not CONFIG.is_file():
@@ -4438,6 +4585,7 @@ def main() -> int:
     errors.extend(validate_consumers())
     errors.extend(validate_renovate())
     errors.extend(validate_tester_publish())
+    errors.extend(validate_dev_image())
     if not parse_errors:
         errors.extend(validate_current_surfaces(values))
     if "--self-test" in sys.argv[1:]:
@@ -4459,6 +4607,7 @@ def main() -> int:
         errors.extend(git_format_config_regression())
         errors.extend(workflow_validator_regressions())
         errors.extend(tester_publish_regressions())
+        errors.extend(dev_image_regressions())
         errors.extend(renovate_pattern_regressions())
         errors.extend(renovate_validator_regressions())
 

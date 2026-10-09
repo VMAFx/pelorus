@@ -477,9 +477,12 @@ never by hand. The rendered image is the Pelorus toolchain base (below) plus
 its `postCreateCommand` (`make verify-all`) finds Meson, Ninja, clang, glslc,
 Vulkan headers, and Node.js.
 
-`.devcontainer/base/Containerfile` is that toolchain base. It starts from the same reviewed base digest and installs the packages the CI jobs
-install, Node.js 24, actionlint, and Lefthook, each download checked against
-its published SHA-256. The `Dev container image` workflow
+`.devcontainer/base/Containerfile` is that toolchain base. It starts from the
+plain `ubuntu:26.04` image, pinned by digest ([ADR-0179](../adr/0179-dev-image-licence-record.md)),
+not from Microsoft's devcontainers base, which ships a source-built GPL `git`.
+It adds the `vscode` user with `sudo`, the packages the CI jobs install (git is
+Ubuntu's package), Node.js 24, actionlint, and Lefthook, each download checked
+against its published SHA-256. The `Dev container image` workflow
 (`.github/workflows/devcontainer-image.yml`) handles it:
 
 | Trigger | Job | Result |
@@ -515,10 +518,38 @@ Refresh the pin whenever `.devcontainer/base/Containerfile` changes:
    --base-image ghcr.io/vmafx/pelorus-dev@sha256:<digest>`.
 5. Run `praetorctl audit --offline` and confirm `DevContainer bundle` reports in sync.
 
-To try the toolchain base without the registry, build it locally:
+#### Licence record and notices
+
+The image is public, so it carries the same licence record as the tester image.
+`.devcontainer/base/licensing.json` lists every component outside the Ubuntu
+packages (Node.js, actionlint, Lefthook, Canonical's `pebble`, the gate itself)
+with its SPDX licence, paths, source and licence texts. Ubuntu files are recorded
+by package ownership, and each package needs a copyright file and an archive
+component of `main` or `universe`. The `licence` stage of the Containerfile runs
+`tools/tester/licensing.py` on the finished tree and fails the build on a file
+that no package, component or expiring ignore rule owns, an unknown or
+non-redistributable licence, or a missing licence text. A tool added under
+`/usr/local` without a record entry therefore fails the pull request build.
+
+Inside the image:
+
+| Path | Content |
+| --- | --- |
+| `/usr/share/licenses/pelorus-dev/THIRD_PARTY_NOTICES.txt` | generated notices: repository and commit, every component with its licence, every Ubuntu package with its version |
+| `/usr/local/share/licenses/{node,actionlint,lefthook}/` | licence text of each tool installed outside the package system |
+| `/usr/local/share/pelorus-dev/licensing.{py,json}` | the gate and the record; run `python3 -I -B licensing.py check --root / --record licensing.json --commit <40-digit commit>` to repeat the build check |
+
+The image sets no `org.opencontainers.image.licenses` label; the label
+`dev.vmafx.pelorus.notices` names the notices file. After a change to what the
+image installs, edit `licensing.json` in the same commit and check it without
+an image: `python3 -I -B tools/tester/licensing.py record --record .devcontainer/base/licensing.json`.
+
+To try the toolchain base without the registry, build it locally from the
+repository root (the licence gate lives in `tools/tester/`):
 
 ```bash
-docker build --file .devcontainer/base/Containerfile --tag pelorus-dev .devcontainer/base
+docker build --file .devcontainer/base/Containerfile \
+  --build-arg PELORUS_COMMIT="$(git rev-parse HEAD)" --tag pelorus-dev .
 ```
 
 Neither image passes a GPU through: the Vulkan shaders compile, the GPU tests
