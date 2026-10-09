@@ -139,8 +139,15 @@ Exit criteria:
   parity gate runs.
 - vmafx reads the remaining interop sections (`QPREPORT`, `MOTION_CONF`,
   `DENOISE`, `FILMGRAIN`, `MOTION`).
+- Encoder adapters fill the ABI 1.4 sections that v0.4.0-rc.1 shipped: stats
+  adapters for libx264, libx265 and libsvtav1
+  ([#263](https://github.com/VMAFx/pelorus/issues/263)), NVENC, QSV and Vulkan
+  Video adapters ([#264](https://github.com/VMAFx/pelorus/issues/264)), and
+  encode-record option-string parsers
+  ([#265](https://github.com/VMAFx/pelorus/issues/265)). They moved here from
+  0.4 to follow VMAFx's 1.1 and 1.2 adapter phase.
 
-Epic [#196](https://github.com/VMAFx/pelorus/issues/196), 15 children.
+Epic [#196](https://github.com/VMAFx/pelorus/issues/196), 18 children.
 
 ## 0.7 Multi-backend compute
 
