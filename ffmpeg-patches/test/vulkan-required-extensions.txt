@@ -4,6 +4,7 @@
 # these as optional and falls back to another path when the device lacks it, so
 # without this list a lane could pass on a path that no GPU runs. Missing -> the
 # guard fails and names the extension.
+# Unused by FFmpeg master (libavutil/vulkan.c dropped shader objects in 82cecf4ef8); drop at the next FFmpeg rebase.
 VK_EXT_shader_object | libavutil/vulkan.c creates pipelines through shader objects when present
 VK_KHR_push_descriptor | libavutil/vulkan.c pushes descriptors instead of allocating sets when present
 VK_EXT_host_image_copy | hwupload and hwdownload copy through vkCopyMemoryToImageEXT when present
