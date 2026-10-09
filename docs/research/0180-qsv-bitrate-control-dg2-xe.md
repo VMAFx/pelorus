@@ -90,11 +90,14 @@ earlier instrumented build, in ICQ and VBR, showed the underlying statuses
 `MFX_ERR_GPU_HANG` (−21) for H.264 and `MFX_ERR_DEVICE_FAILED` (−17) for HEVC
 and AV1. The strings are from `libavcodec/qsv.c` and `qsvenc.c` in FFmpeg n9.
 The kernel logs nothing for these QSV failures, and later encodes on the same
-device work. The VA-API bitrate-control encodes of the re-measure below are
-different: each one made the kernel log `Engine memory CAT error: class=vcs`,
-`Engine reset: engine_class=vcs` and `Timedout job ... in ffmpeg`, and write a
-device coredump. In the end-to-end tester run the whole steering stage,
-three hardware CBR legs included, took 30 seconds.
+device work. During the re-measure session below, the kernel did log
+`Engine memory CAT error: class=vcs`, `Engine reset: engine_class=vcs` and
+`Timedout job ... in ffmpeg`, and wrote a device coredump, six times between
+19:02 and 19:04. Repeating the VA-API and QSV bitrate-control encodes
+afterwards (H.264 and HEVC, CBR and ICQ, with and without an ROI, 640x360 and
+1280x720, Arch media driver 26.3.5 and Debian 25.2.3 non-free) logged nothing,
+so the trigger of those resets is not identified. In the end-to-end tester run
+the whole steering stage, three hardware CBR legs included, took 30 seconds.
 
 The media driver's README lists HuC as necessary for low-power bitrate
 control. On `xe` the driver does not ask the kernel whether HuC is loaded; it

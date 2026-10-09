@@ -143,9 +143,9 @@ The `xe` kernel driver loads no HuC firmware on DG2 (Arc A-series), and the
 media driver's low-power encoder, the only one DG2 has, runs its bitrate
 control on HuC. On such a host every hardware bitrate-control mode (CBR, VBR,
 ICQ) fails without writing a frame: `h264_qsv` logs `GPU Hang (-21)` or
-`Invalid FrameType:0`, `hevc_qsv` and `av1_qsv` `Invalid FrameType:0`. Through
-VA-API (`-rc_mode CBR`) the kernel also logs `Engine reset:
-engine_class=vcs`. Constant QP (`-q:v N`) works.
+`Invalid FrameType:0`, `hevc_qsv` and `av1_qsv` `Invalid FrameType:0`. VA-API
+(`-rc_mode CBR`) fails the same way with `Input/output error`. Constant QP
+(`-q:v N`) works.
 
 For CBR or VBR on `h264_qsv` and `hevc_qsv`, add `-extbrc 1`. oneVPL then
 picks each frame's QP on the CPU and drives the driver in constant QP, which
