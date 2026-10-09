@@ -16,6 +16,12 @@
  * section the header cannot strip, and malformed blobs are dropped, never cut.
  * Boundary: the largest grid (2^20 cells, 6 MiB) is stripped without a scan,
  * a payload exactly at the budget fits and one byte more does not.
+ *
+ * Zero-free carrier (issue #284, ADR-0183): every Pelorus blob leaves the
+ * encoder as pel_sei_carrier_write() writes it, byte-identical to libpelorus's
+ * pel_blob_carrier_encode() and turned back into the blob by pel_blob_unwrap();
+ * the budget is charged for the carrier, so flat maps that fit as a carrier
+ * keep them, and a payload from another producer is never converted.
  */
 
 #include <stddef.h>
@@ -72,7 +78,7 @@ typedef struct Blob {
     size_t len;
 } Blob;
 
-static Blob pack_analyze(uint16_t cols, uint16_t rows, int with_maps)
+static Blob pack_analyze_fill(uint16_t cols, uint16_t rows, int with_maps, int flat)
 {
     const size_t cells = (size_t)cols * rows;
     PelorusSideData meta;
@@ -94,7 +100,7 @@ static Blob pack_analyze(uint16_t cols, uint16_t rows, int with_maps)
     if (maps.band && maps.var && maps.edge && pel_an_blob_size(&meta, with_maps, &need) == PEL_OK)
         b.bytes = calloc(need, 1);
     if (b.bytes) {
-        for (size_t i = 0; i < cells; i++) {
+        for (size_t i = 0; i < cells && !flat; i++) {
             maps.band[i] = (uint8_t)(i * 7u);
             maps.var[i] = 0.001f * (float)(i % 100u);
             maps.edge[i] = (uint8_t)(255u - (i & 0xFFu));
@@ -110,27 +116,75 @@ static Blob pack_analyze(uint16_t cols, uint16_t rows, int with_maps)
     return b;
 }
 
-/* The encoder's three steps for one payload: fit, copy (strip), charge. 0 when
- * the payload is dropped; else the carried length, copied into *out. */
+/* vf_pelorus_analyze's blob with patterned maps. */
+static Blob pack_analyze(uint16_t cols, uint16_t rows, int with_maps)
+{
+    return pack_analyze_fill(cols, rows, with_maps, 0);
+}
+
+/* nvenc.c's pelorus_udu_carrier() on a payload copy: strip a shortened blob,
+ * then replace a blob with its carrier. Returns the written length. */
+static size_t to_carrier(uint8_t **copy, size_t len, size_t n)
+{
+    uint8_t *carrier;
+    size_t clen;
+
+    if (len < n)
+        pel_sei_strip_maps(*copy, len);
+    if (!pel_sei_is_blob(*copy, len))
+        return len;
+    clen = pel_sei_carrier_len(*copy, len);
+    carrier = malloc(clen);
+    if (!carrier) {
+        free(*copy);
+        *copy = NULL;
+        return 0;
+    }
+    pel_sei_carrier_write(*copy, len, carrier);
+    free(*copy);
+    *copy = carrier;
+    return clen;
+}
+
+/* The encoder's steps for one payload: fit, copy, strip and convert, charge.
+ * 0 when the payload is dropped; else the written length, copied into *out
+ * (a Pelorus blob as its carrier). */
 static size_t carry(const uint8_t *p, size_t n, size_t *budget, uint8_t **out)
 {
     size_t len = pel_sei_fit_len(p, n, *budget);
     uint8_t *copy;
+    size_t need;
 
     *out = NULL;
     copy = len != 0u ? malloc(len) : NULL;
     if (!copy)
         return 0;
     memcpy(copy, p, len);
-    if (len < n)
-        pel_sei_strip_maps(copy, len);
-    if (pel_sei_nal_bytes(copy, len, *budget) > *budget) {
+    len = to_carrier(&copy, len, n);
+    if (!copy)
+        return 0;
+    need = pel_sei_nal_bytes(copy, len, *budget);
+    if (need > *budget) {
         free(copy);
         return 0;
     }
-    *budget -= pel_sei_nal_bytes(copy, len, *budget);
+    *budget -= need;
     *out = copy;
     return len;
+}
+
+/* 1 when the written payload `w` of `wn` bytes unwraps to exactly `want`. */
+static int unwraps_to(const uint8_t *w, size_t wn, const uint8_t *want, size_t want_n)
+{
+    uint8_t *scratch = w ? malloc(wn) : NULL;
+    const uint8_t *blob = NULL;
+    size_t len = 0;
+    int ok;
+
+    ok = scratch && pel_blob_unwrap(w, wn, scratch, wn, &blob, &len) == PEL_OK && blob == scratch &&
+         len == want_n && memcmp(blob, want, want_n) == 0;
+    free(scratch);
+    return ok;
 }
 
 static void test_nal_bytes(TestCtx *t)
@@ -159,11 +213,11 @@ static void check_1080p(TestCtx *t, const Blob *maps, const Blob *scal)
     CHECK(maps->len == 12424u && scal->len == 184u);
     CHECK(pel_sei_scalar_len(maps->bytes, maps->len) == scal->len);
     len = carry(maps->bytes, maps->len, &budget, &out);
-    CHECK(len == scal->len && out != NULL);
-    if (out)
-        CHECK(memcmp(out, scal->bytes, scal->len) == 0);
+    CHECK(len == pel_sei_carrier_len(scal->bytes, scal->len) && out != NULL);
+    CHECK(unwraps_to(out, len, scal->bytes, scal->len));
     free(out);
-    CHECK(budget == PEL_SEI_HEVC_USER_BUDGET - pel_sei_nal_bytes(scal->bytes, scal->len, 1000));
+    CHECK(budget ==
+          PEL_SEI_HEVC_USER_BUDGET - pel_sei_carrier_nal_bytes(scal->bytes, scal->len, 1000));
     /* A maps=0 blob has nothing to strip and fits whole. */
     CHECK(pel_sei_scalar_len(scal->bytes, scal->len) == 0u);
     CHECK(pel_sei_fit_len(scal->bytes, scal->len, PEL_SEI_HEVC_USER_BUDGET) == scal->len);
@@ -189,9 +243,10 @@ static void test_small_grid_keeps_maps(TestCtx *t)
 
     CHECK(one.bytes != NULL);
     if (one.bytes) {
-        CHECK(carry(one.bytes, one.len, &budget, &out) == one.len);
-        if (out)
-            CHECK(memcmp(out, one.bytes, one.len) == 0);
+        const size_t clen = pel_sei_carrier_len(one.bytes, one.len);
+
+        CHECK(carry(one.bytes, one.len, &budget, &out) == clen);
+        CHECK(unwraps_to(out, clen, one.bytes, one.len));
     }
     free(out);
     free(one.bytes);
@@ -206,10 +261,11 @@ static void test_largest_grid(TestCtx *t)
 
     CHECK(big.bytes && scal.bytes);
     if (big.bytes && scal.bytes) {
+        const size_t clen = pel_sei_carrier_len(scal.bytes, scal.len);
+
         CHECK(big.len > (size_t)6u * PEL_AN_MAX_CELLS);
-        CHECK(carry(big.bytes, big.len, &budget, &out) == scal.len);
-        if (out)
-            CHECK(memcmp(out, scal.bytes, scal.len) == 0);
+        CHECK(carry(big.bytes, big.len, &budget, &out) == clen);
+        CHECK(unwraps_to(out, clen, scal.bytes, scal.len));
     }
     free(out);
     free(big.bytes);
@@ -282,6 +338,106 @@ static void test_rejects_corrupt(TestCtx *t)
     free(maps.bytes);
 }
 
+/* One blob through both encoders: header and libpelorus agree byte for byte,
+ * the carrier holds no zero byte and its NAL needs no emulation prevention. */
+static void check_carrier_twin(TestCtx *t, const uint8_t *p, size_t n)
+{
+    const size_t clen = pel_sei_carrier_len(p, n);
+    uint8_t *mine = malloc(clen);
+    uint8_t *ref = malloc(PEL_CARRIER_MAX_LEN(n));
+    size_t rlen = 0;
+
+    CHECK(pel_sei_is_blob(p, n));
+    CHECK(mine && ref);
+    if (mine && ref) {
+        pel_sei_carrier_write(p, n, mine);
+        CHECK(pel_blob_carrier_encode(p, n, ref, PEL_CARRIER_MAX_LEN(n), &rlen) == PEL_OK);
+        CHECK(rlen == clen && memcmp(mine, ref, clen) == 0);
+        CHECK(memchr(mine, 0, clen) == NULL && pel_sei_epb(mine, clen) == 0u);
+        CHECK(pel_sei_carrier_nal_bytes(p, n, SIZE_MAX) == pel_sei_nal_bytes(mine, clen, SIZE_MAX));
+        CHECK(unwraps_to(mine, clen, p, n));
+    }
+    free(mine);
+    free(ref);
+}
+
+static void test_carrier_twin(TestCtx *t)
+{
+    static const uint16_t grids[][2] = {{1, 1}, {10, 6}, {60, 34}, {120, 68}};
+    uint8_t blob[16u + 48u + 600u];
+    Blob scal = pack_analyze(60, 34, 0);
+
+    for (size_t g = 0; g < sizeof(grids) / sizeof(grids[0]); g++) {
+        for (int flat = 0; flat < 2; flat++) {
+            Blob b = pack_analyze_fill(grids[g][0], grids[g][1], 1, flat);
+
+            CHECK(b.bytes != NULL);
+            if (b.bytes)
+                check_carrier_twin(t, b.bytes, b.len);
+            free(b.bytes);
+        }
+    }
+    /* Tails without a zero byte: one full block, one byte past it, two blocks. */
+    CHECK(scal.bytes != NULL);
+    for (size_t tail = 254; tail <= 508 && scal.bytes; tail += 127) {
+        memcpy(blob, scal.bytes, 16u + 48u);
+        for (size_t i = 0; i < tail; i++)
+            blob[16u + 48u + i] = (uint8_t)(1u + i % 255u);
+        check_carrier_twin(t, blob, 16u + 48u + tail);
+    }
+    free(scal.bytes);
+}
+
+/* Flat content, 10x8 cells of zero maps: written whole as a carrier with its
+ * maps, although the blob's own emulation prevention would not fit. */
+static void test_flat_maps_fit_as_carrier(TestCtx *t)
+{
+    Blob flat = pack_analyze_fill(10, 8, 1, 1);
+    size_t budget = PEL_SEI_HEVC_USER_BUDGET;
+    uint8_t *out = NULL;
+
+    CHECK(flat.bytes != NULL);
+    if (flat.bytes) {
+        const size_t clen = pel_sei_carrier_len(flat.bytes, flat.len);
+
+        CHECK(pel_sei_nal_bytes(flat.bytes, flat.len, SIZE_MAX) > PEL_SEI_HEVC_USER_BUDGET);
+        CHECK(pel_sei_carrier_nal_bytes(flat.bytes, flat.len, budget) <= budget);
+        CHECK(carry(flat.bytes, flat.len, &budget, &out) == clen);
+        CHECK(unwraps_to(out, clen, flat.bytes, flat.len));
+    }
+    free(out);
+    free(flat.bytes);
+}
+
+/* Only an ABI 1.x Pelorus blob is converted. */
+static void test_carrier_only_for_blobs(TestCtx *t)
+{
+    Blob b = pack_analyze(1, 1, 0);
+    uint8_t other[300];
+    uint8_t *out = NULL;
+    size_t budget = PEL_SEI_HEVC_USER_BUDGET;
+
+    memset(other, 0x5A, sizeof(other));
+    CHECK(!pel_sei_is_blob(other, sizeof(other)) && !pel_sei_is_blob(NULL, 100));
+    CHECK(carry(other, sizeof(other), &budget, &out) == sizeof(other));
+    if (out)
+        CHECK(memcmp(out, other, sizeof(other)) == 0);
+    free(out);
+    CHECK(b.bytes != NULL);
+    if (b.bytes) {
+        CHECK(pel_sei_is_blob(b.bytes, b.len) && !pel_sei_is_blob(b.bytes, 63u));
+        b.bytes[16 + 8] = 2; /* abi_major 2: not a blob this encoder may rewrite */
+        CHECK(!pel_sei_is_blob(b.bytes, b.len));
+        b.bytes[16 + 8] = 1;
+        b.bytes[16] = 'X'; /* bad magic */
+        CHECK(!pel_sei_is_blob(b.bytes, b.len));
+        b.bytes[16] = 'P';
+        b.bytes[0] ^= 1u; /* another UUID */
+        CHECK(!pel_sei_is_blob(b.bytes, b.len));
+    }
+    free(b.bytes);
+}
+
 int main(void)
 {
     TestCtx ctx = {0};
@@ -294,6 +450,9 @@ int main(void)
     test_budget_edge(t);
     test_rejects_foreign(t);
     test_rejects_corrupt(t);
+    test_carrier_twin(t);
+    test_flat_maps_fit_as_carrier(t);
+    test_carrier_only_for_blobs(t);
     if (t->failures != 0) {
         (void)fprintf(stderr, "%d check(s) failed\n", t->failures);
         return EXIT_FAILURE;

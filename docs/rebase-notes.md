@@ -5,6 +5,39 @@ Re-apply / re-test work created for the FFmpeg patch stack after an upstream
 FFmpeg bump or a `libpelorus` ABI change. One entry per change that affects the
 patches (ADR-0108 deliverable #6).
 
+## Unreleased — zero-free carrier in patch 0022 (#284, ADR-0183; interop ABI 1.5; regenerates 0022)
+
+- **Patch**: 0022 only, still `0022-nvenc-pelorus-udu-sei.patch` (canonical
+  diff `files/nvenc-pelorus-udu-sei.patch`, header `files/pelorus_sei_fit.h`,
+  message `.commit-msg-nvenc-udu-sei.txt`, new subject "write Pelorus side
+  data zero-free and within NVENC's header limit"). The `nvenc.c` and
+  `nvenc.h` sections were rebuilt with
+  `git diff HEAD~1 -- libavcodec/nvenc.c libavcodec/nvenc.h` in a tree with all
+  22 patches applied and the edit made on top. 0001 to 0021 are
+  byte-identical.
+- **What changed**: in `prepare_sei_data_array()`, after the `av_memdup()` of
+  each `SEI_UNREGISTERED` entry, `pelorus_udu_carrier()` strips a shortened
+  Pelorus blob (moved there from `pelorus_udu_commit()`) and replaces every
+  Pelorus blob with its zero-free carrier (`pel_sei_carrier_write()`), on
+  `h264_nvenc` as well as `hevc_nvenc`. `pelorus_udu_commit()` charges the
+  payload as written and takes the stripped length as an argument.
+  `pel_sei_fit_len()` measures a Pelorus blob as its carrier
+  (`pel_sei_carrier_nal_bytes()`). `NvencContext` gains
+  `pelorus_udu_carrier_logged` for the one verbose note.
+- **Rebase-sensitive**: the COBS encoder in `pelorus_sei_fit.h` must stay
+  byte-identical to `interop.c`'s `pel_blob_carrier_encode()`; the fast test
+  `sei-fit` compares them, and the carrier UUID in both files must match
+  `pelorus_carrier_uuid`. `av1_nvenc` has no `udu_sei`; if one is ever added,
+  its metadata OBUs need no carrier.
+- **Interop**: `PELORUS_ABI_MINOR` 5. Readers of decoded frames call
+  `pel_blob_unwrap()`; the VMAFx mirror re-pins
+  ([mirror contract](api/mirror-contract.md)).
+- **Checks**: `generate.sh` twice, byte-identical; `build-and-run.sh` with
+  `JOBS=4` (22 patches, link, static consumer); `nvenc-udu-sei-smoke.sh` on an
+  RTX 4090 with the new `flat-h264` and `flat-hevc` cases (issue #284): it
+  passes on this stack and fails on the rc.2 build ("8 Pelorus blobs not in
+  the carrier form").
+
 ## Unreleased — Vulkan QP-map formats and fill paths (#278, ADR-0182; regenerates 0009)
 
 - **Patch**: 0009 only. Edit the hand-maintained source

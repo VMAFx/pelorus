@@ -14,8 +14,8 @@ scope), VMAFx ADR-1113 (the mirror) and VMAFx ADR-1276 (released-commit pins).
    released commits only (tag `vX.Y.Z`), so ship it in a release.
 2. Tick the "VMAFx mirror" item in the pull-request checklist and name the
    follow-up VMAFx issue in the PR body.
-3. If the change adds or moves a wire field, bump `PELORUS_ABI_MINOR` and add
-   the ABI entry (see "ABI changelog").
+3. If the change adds or moves a wire field, or adds a wire form, bump
+   `PELORUS_ABI_MINOR` and add the ABI entry (see "ABI changelog").
 4. Keep the file renderable by the VMAFx sync script: a source opens with a
    `/** ... */` licence comment holding exactly one SPDX licence line, naming
    `EUPL-1.2`, then a blank line, and has at most
@@ -74,7 +74,7 @@ reruns the drift check and runs the sanitizer job, when a Pelorus release:
 
 | Trigger | Example |
 | --- | --- |
-| bumps `PELORUS_ABI_MINOR` | ABI 1.4 (ADR-0174) |
+| bumps `PELORUS_ABI_MINOR` | ABI 1.4 (ADR-0174); ABI 1.5, the zero-free carrier that NVENC streams carry: VMAFx also calls `pel_blob_unwrap()` before parsing (ADR-0183) |
 | fixes parser correctness or safety, even with the ABI number unchanged | v0.2.2 aligned-access fix (VMAFx ADR-1276) |
 | changes any other mirrored file in a way that alters its bytes | `pel_result_str` text in `version.c`; fixture cases |
 
@@ -84,9 +84,10 @@ A change that touches none of the ten files needs no re-pin.
 
 - Per release: `CHANGELOG.md` (rendered from `changelog.d/`), one entry per ABI
   minor, tagged "interop ABI".
-- Per layout: [`docs/api/interop-abi.md`](interop-abi.md) section "ABI 1.4" and
-  the matching ADR hold the before/after C snippets required by the
-  `Migration:` commit footer.
+- Per layout: [`docs/api/interop-abi.md`](interop-abi.md) sections "ABI 1.4" and
+  "Zero-free carrier form (ABI 1.5)" and the matching ADRs hold the
+  before/after C snippets for readers (the `Migration:` commit footer when a
+  change breaks one).
 - The ABI is append-only and the `PELORUS_ABI_MAJOR` stays 1; see the stability
   rules in [`interop-abi.md`](interop-abi.md).
 

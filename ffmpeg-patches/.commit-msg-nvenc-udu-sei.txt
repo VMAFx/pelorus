@@ -1,40 +1,57 @@
-fix(nvenc): keep hevc_nvenc udu_sei within NVENC's per-picture header limit
+fix(nvenc): write Pelorus side data zero-free and within NVENC's header limit
 
-hevc_nvenc with udu_sei=1 stops the encode with "Failed locking bitstream
-buffer: out of memory" (AVERROR(ENOMEM)) once a picture's SEI is large.
-NVENC's HEVC encoder accepts at most 1024 bytes of non-VCL NAL units per
-picture: VPS, SPS, PPS, access unit delimiter and every SEI NAL unit, in
-Annex B form with start codes and emulation prevention bytes. Above that,
+Two NVENC defects lose user data unregistered SEI that Pelorus filters
+attach to frames with udu_sei=1.
+
+1. hevc_nvenc stops the encode with "Failed locking bitstream buffer: out
+of memory" (AVERROR(ENOMEM)) once a picture's SEI is large. NVENC's HEVC
+encoder accepts at most 1024 bytes of non-VCL NAL units per picture: VPS,
+SPS, PPS, access unit delimiter and every SEI NAL unit, in Annex B form
+with start codes and emulation prevention bytes. Above that,
 nvEncLockBitstream() returns NV_ENC_ERR_OUT_OF_MEMORY. At the end of a
 stream the same picture is lost with only an error line. h264_nvenc
 carries 64 KiB payloads. Neither nvEncodeAPI.h 13.1 nor the NVENC
 programming guide 13.1 states the limit.
 
-A pelorus_analyze_vulkan blob with its per-cell maps is 12 424 bytes at
-1080p with 32-pixel cells, so every analyze graph into hevc_nvenc with
-udu_sei failed.
+2. h264_nvenc and hevc_nvenc write a SEI payload truncated, without its
+trailing bits, when its emulation prevention bytes exceed ceil(P / 3) + 3
+for a P-byte payload; FFmpeg's decoders then drop it without an error.
+The zero runs of a pelorus_analyze_vulkan blob on flat content reach
+that: at 1080p with 32-pixel cells (12 424 bytes) no picture kept its
+side data.
+
+Every Pelorus blob (UUID e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64, magic
+PELOR1, ABI major 1) is written in the zero-free carrier form of the
+Pelorus interop ABI 1.5: UUID 3f9b37b8-fd9a-4621-920e-9b78b55cf9b5, then
+the COBS encoding of the blob image. It holds no zero byte, so its NAL
+unit needs no emulation prevention, and costs one byte plus one per 254
+bytes. libpelorus's pel_blob_unwrap() turns it back into the blob. Any
+other payload is written unchanged. The first carrier is noted in the
+verbose log.
 
 For HEVC, budget 768 bytes per picture for the SEI passed in
 seiPayloadArray, less the A/53 and timecode SEI already queued, and keep
 256 bytes for the NAL units NVENC writes on its own (128 bytes measured at
-8K Main10 with VUI and AUD). Each SEI_UNREGISTERED entry, in frame order:
+8K Main10 with VUI and AUD). Each SEI_UNREGISTERED entry, in frame order,
+is charged as written (a Pelorus blob as its carrier):
 
-- fits: written unchanged;
+- fits: written whole;
 - a Pelorus blob that does not fit: written without the per-cell maps
   appended after its sections. Every scalar stays, and each map offset and
-  size is zero, which the Pelorus ABI defines as an absent map. The result
-  is byte-identical to the analyze filter's maps=0 blob;
+  size is zero, which the Pelorus ABI defines as an absent map. The blob
+  is byte-identical to the analyze filter's maps=0 blob before it becomes
+  a carrier;
 - anything else that does not fit: not written.
 
 The first stripped blob and the first dropped payload are warnings, later
 ones verbose, and the totals are a warning when the encoder closes. The
-size arithmetic lives in libavcodec/pelorus_sei_fit.h, which the Pelorus
-fast suite tests against the libpelorus packer.
+size arithmetic and the carrier encoder live in
+libavcodec/pelorus_sei_fit.h, which the Pelorus fast suite tests against
+the libpelorus packer and carrier encoder.
 
-Measured on an RTX 4090, driver 615.71.09: the largest payload that
-encodes is 898 bytes on an IDR picture and 999 bytes on a P picture at
-1080p, which is 1024 bytes of non-VCL NAL units in both cases; two
-payloads fit 495 bytes each, an all-zero payload 747 bytes, and -aud 1
-lowers the limit by the 7-byte delimiter. With this change, analyze maps=1
-into hevc_nvenc -udu_sei 1 encodes at 1080p and at 8192x8192 with 8-pixel
-cells, and the decoded stream carries the scalar sections on every picture.
+Measured on an RTX 4090, driver 615.71.09 and 615.78.08: the largest
+payload that encodes is 898 bytes on an IDR picture and 999 bytes on a P
+picture at 1080p, which is 1024 bytes of non-VCL NAL units in both cases.
+48 analyze blobs (320x180 to 1920x1080, flat, gradient and detailed
+content, maps on and off): 11 of 48 lost every picture's side data on
+h264_nvenc as written before, none as carriers, up to 49 145 bytes.

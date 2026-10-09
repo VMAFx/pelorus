@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# nvenc-udu-sei-smoke.sh — hevc_nvenc carries pelorus_analyze_vulkan's side
-# data with -udu_sei 1 (issue #267, ADR-0181).
+# nvenc-udu-sei-smoke.sh — hevc_nvenc and h264_nvenc carry
+# pelorus_analyze_vulkan's side data with -udu_sei 1 (issues #267 and #284,
+# ADR-0181, ADR-0183).
 #
 # Copyright 2026 Lusoris
 # SPDX-License-Identifier: EUPL-1.2
@@ -17,6 +18,14 @@
 #                without maps.
 #   foreign      a 2 017-byte user data unregistered SEI from another producer:
 #                not written, named in the log, and the encode succeeds.
+#   flat-h264    issue #284: flat 1080p, maps=1, cell 32 (12 424-byte blob of
+#                zero maps) into h264_nvenc. Before the zero-free carrier NVENC
+#                wrote every SEI truncated and the decoder dropped it; now each
+#                picture carries the blob, maps included, as a carrier.
+#   flat-hevc    issue #284: flat 320x180, maps=1, cell 32 into hevc_nvenc: the
+#                10x6 zero maps fit the budget as a carrier and stay.
+# Every Pelorus payload in an NVENC stream must be in the carrier form (no
+# blob UUID); analyze-maps-check.py decodes it as pel_blob_unwrap() does.
 #
 # Env:
 #   FFMPEG_BIN     patched ffmpeg binary (required)
@@ -36,6 +45,7 @@ PEL_OUT="${OUTPUT_ROOT:-$(mktemp -d "${TMPDIR:-/tmp}/pelorus-nvenc-udu-sei.XXXXX
 mkdir -p "$PEL_OUT"
 PEL_CHECK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/analyze-maps-check.py"
 PEL_UUID="e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64"
+PEL_CARRIER_UUID="3f9b37b8-fd9a-4621-920e-9b78b55cf9b5"
 PEL_FOREIGN_UUID="0f1e2d3c-4b5a-4968-8776-655443322110"
 
 pel_skip()
@@ -94,29 +104,34 @@ if ! "$PEL_FFMPEG" -hide_banner -loglevel error -init_hw_device "$PEL_DEVICE" \
     pel_skip "no usable Vulkan device ($PEL_DEVICE): $(head -c 160 "$PEL_OUT/probe-vulkan.log" | head -n 1)"
 fi
 
-# encode NAME SOURCE FRAMES FILTERS: analyze on Vulkan, then hevc_nvenc -udu_sei 1.
+# encode NAME SOURCE FRAMES FILTERS [CODEC]: analyze on Vulkan, then
+# CODEC_nvenc -udu_sei 1 (CODEC hevc or h264, default hevc) into NAME.CODEC.
 pel_encode()
 {
-    local name="$1" source="$2" frames="$3" filters="$4"
+    local name="$1" source="$2" frames="$3" filters="$4" codec="${5:-hevc}"
 
-    "$PEL_FFMPEG" -hide_banner -loglevel info -y -init_hw_device "$PEL_DEVICE" \
+    "$PEL_FFMPEG" -hide_banner -loglevel verbose -y -init_hw_device "$PEL_DEVICE" \
         -filter_hw_device pel_vk -f lavfi -i "$source" -frames:v "$frames" \
-        -vf "$filters" -c:v hevc_nvenc -udu_sei 1 -f hevc "$PEL_OUT/$name.hevc" \
+        -vf "$filters" -c:v "${codec}_nvenc" -udu_sei 1 -f "$codec" "$PEL_OUT/$name.$codec" \
         >"$PEL_OUT/$name-encode.log" 2>&1 ||
-        pel_fail "$name: hevc_nvenc -udu_sei 1 failed: $(pel_first_error "$PEL_OUT/$name-encode.log")"
+        pel_fail "$name: ${codec}_nvenc -udu_sei 1 failed: $(pel_first_error "$PEL_OUT/$name-encode.log")"
 }
 
-# tap NAME FRAMES: decode the stream; every picture carries one Pelorus blob.
+# tap NAME FRAMES [CODEC]: decode the stream; every picture carries one Pelorus
+# blob, and NVENC wrote each in the zero-free carrier form (ADR-0183).
 pel_tap()
 {
-    local name="$1" frames="$2" pictures blobs
+    local name="$1" frames="$2" codec="${3:-hevc}" pictures blobs carriers
 
-    "$PEL_FFMPEG" -hide_banner -loglevel info -i "$PEL_OUT/$name.hevc" -vf showinfo \
+    "$PEL_FFMPEG" -hide_banner -loglevel info -i "$PEL_OUT/$name.$codec" -vf showinfo \
         -f null - >"$PEL_OUT/$name-tap.log" 2>&1 || pel_fail "$name: decode of the stream failed"
     pictures="$(pel_pictures "$PEL_OUT/$name-tap.log")"
     blobs="$(pel_count "$PEL_OUT/$name-tap.log" "UUID=$PEL_UUID")"
+    carriers="$(pel_count "$PEL_OUT/$name-tap.log" "UUID=$PEL_CARRIER_UUID")"
     [[ "$pictures" == "$frames" ]] || pel_fail "$name: $pictures of $frames pictures decoded"
-    [[ "$blobs" == "$frames" ]] || pel_fail "$name: $blobs Pelorus blobs for $frames pictures"
+    [[ "$blobs" == 0 ]] || pel_fail "$name: $blobs Pelorus blobs not in the carrier form"
+    [[ "$carriers" == "$frames" ]] ||
+        pel_fail "$name: $carriers Pelorus carriers for $frames pictures"
 }
 
 pel_maps_check()
@@ -155,6 +170,25 @@ pel_encode grid-max "color=c=gray:size=8192x8192:rate=25" 2 \
 pel_tap grid-max 2
 pel_maps_check grid-max no-maps "$PEL_OUT/grid-max-tap.log" --grid 1024x1024
 echo "PASS grid-2^20: 2 pictures, scalar sections in the stream"
+
+# flat-h264: the issue #284 reproducer. Zero maps, every picture decoded with them.
+pel_encode flat-h264 "color=c=gray:size=1920x1080:rate=25" "$PEL_FRAMES" \
+    "$PEL_HEAD,pelorus_analyze_vulkan=maps=1:cell=32,$PEL_TAIL" h264
+grep -q 'zero-free carrier form' "$PEL_OUT/flat-h264-encode.log" ||
+    pel_fail "flat-h264: the encoder log does not name the carrier form"
+pel_tap flat-h264 "$PEL_FRAMES" h264
+pel_maps_check flat-h264 maps "$PEL_OUT/flat-h264-tap.log" --grid 60x34
+echo "PASS flat-h264: $PEL_FRAMES pictures, the zero maps reach the decoder whole"
+
+# flat-hevc: 10x6 zero maps fit hevc_nvenc's budget as a carrier and stay.
+pel_encode flat-hevc "color=c=gray:size=320x180:rate=25" "$PEL_FRAMES" \
+    "$PEL_HEAD,pelorus_analyze_vulkan=maps=1:cell=32,$PEL_TAIL"
+if grep -q 'written without its per-cell maps' "$PEL_OUT/flat-hevc-encode.log"; then
+    pel_fail "flat-hevc: maps removed although the carrier fits"
+fi
+pel_tap flat-hevc "$PEL_FRAMES"
+pel_maps_check flat-hevc maps "$PEL_OUT/flat-hevc-tap.log" --grid 10x6
+echo "PASS flat-hevc: $PEL_FRAMES pictures, the 10x6 zero maps stay in the stream"
 
 # foreign: h264_metadata adds a 2 017-byte SEI (UUID + 2 000 bytes + NUL) to the
 # first picture, the decoder exports it as frame side data.
