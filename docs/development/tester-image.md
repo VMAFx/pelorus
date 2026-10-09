@@ -11,7 +11,7 @@ Status: `tools/tester/Containerfile` builds three kits
 (NVENC through the host driver, no NVIDIA file inside) and `intel` (Mesa ANV,
 oneVPL, the Expat-licensed non-free media driver), each with a GPL-3.0-or-later FFmpeg, its
 licence gates and a `-source` target. All three build locally; the NVIDIA kit
-passes on an RTX 4090 and the Intel kit on an Arc A380, with `hevc_qsv` steering
+passes on an RTX 4090 and the Intel kit on an Arc A380 (`xe` kernel driver, no HuC), with `hevc_qsv` steering
 through `intel-media-va-driver-non-free`
 ([research 0229](../research/0229-tester-vendor-images.md)). Nothing has been
 dispatched end to end yet: the hosted build, the push and the SBOM attestation

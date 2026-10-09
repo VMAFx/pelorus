@@ -83,9 +83,11 @@ docker run --rm --device /dev/dri -v "$PWD/report:/report" ghcr.io/vmafx/pelorus
 - QSV finds the Intel GPU by vendor id among the render nodes (the image's
   FFmpeg is built with libdrm for that), so another vendor's render node first
   in the list does not matter.
-- The non-free media driver is what lets `hevc_qsv` encode on Arc A-series
-  (the free `intel-media-va-driver` fails with `Invalid FrameType:0` on an
-  A380). If the stage finds only the free driver installed (a run from a
+- On an Arc A380 bound to the `xe` kernel driver, which loads no HuC
+  firmware, only the non-free media driver lets `hevc_qsv` encode (the free
+  `intel-media-va-driver` fails with `Invalid FrameType:0`). Without HuC no
+  Intel media driver encodes with bitrate control on Arc A-series; the tester's
+  QSV legs use constant QP. If the stage finds only the free driver installed (a run from a
   checkout on a host that has it, or an image built by hand), the `hevc_qsv`
   steering and side-data legs are `not_run` and the reason names the installed
   free driver and the missing `intel-media-va-driver-non-free`; the stage reads

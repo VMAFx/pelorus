@@ -12,7 +12,7 @@ built locally at `-j4` from the pinned FFmpeg `n9.0.2` plus the patch stack,
 Debian trixie (`debian:trixie-slim` digest from the Containerfile). Host: kernel
 7.2.9, Docker 29.8.2 (rootful, cgroup v2, systemd driver), NVIDIA Container
 Toolkit 1.20.1 with a CDI specification in `/var/run/cdi`, NVIDIA driver
-615.71.09 on an RTX 4090, Arc A380 on the `xe` kernel driver, Radeon 610M on
+615.71.09 on an RTX 4090, Arc A380 on the `xe` kernel driver (HuC firmware not loaded; GuC 70.53.0), Radeon 610M on
 `amdgpu`. Inside the Intel image: Mesa 25.0.7, `intel-media-va-driver-non-free`
 25.2.3+ds1-1, `libmfx-gen1.2` 25.1.4, `libvpl2` 2.14.0.
 
@@ -123,17 +123,15 @@ and lavapipe. Findings, in the order they appeared:
 | Encoder | Free `intel-media-va-driver` 25.2.3 | Non-free 25.2.3 (the driver of the published kit) |
 | --- | --- | --- |
 | `h264_qsv` | encodes, 8 frames; with `-pelorus_roi` on and off byte-identical (both arms carried ROI side data, see 4) | same |
-| `hevc_qsv` | every encode fails: `Invalid FrameType:0` | encodes, 8 frames; steered 6390 B against 2466 B unsteered |
+| `hevc_qsv` | every encode fails: `Invalid FrameType:0` (runtime status `MFX_ERR_ABORTED` or `MFX_ERR_DEVICE_FAILED`; `vaRenderPicture` returns `VA_STATUS_ERROR_INVALID_BUFFER`) | encodes, 8 frames; steered 6390 B against 2466 B unsteered |
 | `av1_qsv` | encodes, 8 frames (no `-pelorus_roi`, so its leg is `not_run`) | same |
 
-HEVC encode on this GPU needs the non-free media driver, which the published
+On this host (A380 on `xe`, no HuC) HEVC encode needs the non-free media driver, which the published
 Intel image now ships (decision 4a of ADR-0180); with only the free driver
 installed (a host run, or an image built by hand) both `hevc_qsv` legs are
 `not_run` and name the installed free driver and the missing non-free one
-(read with `dpkg-query`). The non-free HEVC result (more than double the
-bytes at the same `-q:v`) matches the Arc A-series low-power encode defect
-recorded in [bench results](../development/bench-results.md); the A380 exposes
-only the low-power entry point, so these runs prove the path, not quality.
+(read with `dpkg-query`). The quality of these encodes is not measured
+here; the runs prove the path, not quality.
 
 ### `h264_qsv` ROI works; the control arm was steered too
 
@@ -215,5 +213,7 @@ kit 3 min 43 s. Image sizes: NVIDIA 965 MB, Intel 1.06 GB on disk.
   "no AV1 encode on this GPU or driver" is proven by planted logs only.
 - WSL2 (`/dev/dxg`, `/usr/lib/wsl/lib`) for either vendor.
 - A legacy (non-CDI) NVIDIA Container Toolkit, where `graphics` matters.
+- The A380 with HuC firmware loaded (`i915`, or `xe` once it loads DG2 HuC):
+  bitrate-control modes, and HEVC with the free driver, may work there.
 - QSV on Arc B-series and Xe-LP (B580, UHD 770), where HEVC may encode with the
   free driver and the low-power defect is absent.

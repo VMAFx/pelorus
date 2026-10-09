@@ -83,7 +83,8 @@ FILTER_CHAIN = "pelorus_analyze_vulkan=roi=1"
 CONTROL_CHAIN = "pelorus_analyze_vulkan=roi=0"
 # Intel media driver packages; a QSV leg that fails with only the free one
 # installed (a host run or a custom image: the tester-intel image ships the
-# non-free one) names the non-free one it lacks (ADR-0180).
+# non-free one) says it may need the non-free one (ADR-0180); HEVC with the
+# free driver failed on an A380 under xe without HuC (research 0229).
 MEDIA_DRIVER_FREE = "intel-media-va-driver"
 MEDIA_DRIVER_NONFREE = "intel-media-va-driver-non-free"
 # kind: vulkan = frames stay in VRAM to the encoder; hw = hwdownload to a
@@ -466,8 +467,9 @@ def free_driver_leg(ctx, enc, state, note):
     if (state != "not_run" or note.startswith("no AV1 encode") or MEDIA_DRIVER_FREE not in drivers
             or MEDIA_DRIVER_NONFREE in drivers):
         return state, note
-    return "not_run", ("%s does not encode here with the free %s %s; %s is not installed (the "
-                       "tester-intel image ships it, ADR-0180): %s" % (
+    return "not_run", ("%s did not encode with the free %s %s; it may need %s, which is not "
+                       "installed (the tester-intel image ships it, ADR-0180; HEVC with the "
+                       "free driver failed on an A380 under xe without HuC): %s" % (
                            enc["name"], MEDIA_DRIVER_FREE, drivers[MEDIA_DRIVER_FREE],
                            MEDIA_DRIVER_NONFREE, note))[:400]
 
@@ -1081,7 +1083,7 @@ def fake_encode_ctx(disabled, work):
 
 
 def fake_qsv_ctx(work, dpkg_text):
-    """FFmpeg stand-in where hevc_qsv fails as with the free driver on an Arc A380."""
+    """FFmpeg stand-in where hevc_qsv fails as with the free driver on an A380 under xe without HuC."""
     def run(argv, timeout_s, env=None):
         if argv[0] == "dpkg-query":
             return 1, dpkg_text, ""
@@ -1105,7 +1107,7 @@ def self_test_free_driver(expect, disabled, entry):
     with tempfile.TemporaryDirectory(prefix="pelorus-qsv-") as tmp:
         got = steer_one(fake_qsv_ctx(tmp, free), enc, [0], entry, "src", Path(tmp))
         expect("free_driver_leg_names_nonfree", got[0] == "not_run"
-               and "intel-media-va-driver-non-free is not installed" in got[1]
+               and "may need intel-media-va-driver-non-free" in got[1]
                and "Invalid FrameType:0" in got[1])
         got = steer_one(fake_qsv_ctx(tmp, both), enc, [0], entry, "src", Path(tmp))
         expect("nonfree_installed_no_driver_claim", got[0] == "not_run"

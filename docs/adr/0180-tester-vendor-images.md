@@ -68,8 +68,12 @@ library path for Docker Desktop on WSL2 (unproven). Run line:
 `libmfx-gen1.2`, `libva2`, `libva-drm2` and `intel-media-va-driver-non-free`;
 all but the media driver come from Debian `main` (decision 4a). FFmpeg adds `--enable-libvpl --enable-vaapi
 --enable-libdrm --disable-xlib` (libdrm makes QSV pick the Intel render node by
-vendor id instead of `renderD128`). On the Arc A380 the free driver cannot
-encode HEVC (`Invalid FrameType:0`); the non-free build can. A run that finds
+vendor id instead of `renderD128`). On the Arc A380 bound to the `xe` kernel
+driver, which loads no HuC firmware on DG2, the free driver cannot encode HEVC in
+any rate-control mode (`Invalid FrameType:0`); the non-free build encodes HEVC
+with constant QP. Without HuC no media driver encodes with bitrate control (ICQ,
+VBR) on DG2, so the tester's QSV legs use constant QP. The A380 with HuC loaded
+is not measured. A run that finds
 only the free `intel-media-va-driver` installed (a host run, or an image built
 by hand) gets `not_run` `hevc_qsv` legs whose reason names the installed free
 driver and the missing `intel-media-va-driver-non-free`, both read from dpkg.
@@ -82,7 +86,9 @@ file as Expat (the bundled googletest, which is test code, as BSD-3-Clause) and
 says the package is in `non-free` because "those kernels ... come without
 source", so Debian cannot rebuild them. Expat needs no source offer. The
 published Intel image therefore installs it, which gives `hevc_qsv` steering
-and side-data legs on Arc A-series GPUs.
+and side-data legs on the measured Arc A380 (`xe` kernel driver, no HuC); other
+Arc A-series configurations, and the free driver with HuC loaded, are not
+measured.
 
 The licence record admits it as an exception that names one package, not as a
 tier: a `dpkg` component may carry `archive_component` (`non-free`, `contrib`
@@ -152,7 +158,7 @@ command without a device and validate the report against its kit.
 | NVIDIA image on `nvidia/cuda` runtime base | NVIDIA's documented path | Ships CUDA runtime files under the CUDA EULA; vmafx ADR-1503 shows the cost | No NVIDIA file in the image (ADR-0173) |
 | `nv-codec-headers` `n13.0.19.0` (what CI's Ubuntu ships) | Newest NVENC features (SDK 13) | Needs Linux driver 570 or newer; testers on older drivers get no NVENC | FFmpeg n9's floor `n12.1.14.0` covers drivers from 530 and Ada AV1 NVENC; a later bump is one ARG |
 | Debian `libffmpeg-nvenc-dev` instead of the git pin | No git fetch | Version moves with Debian point releases; its source would not reach the `-source` image | A pinned commit, verified in the build, with its tree in `-source` |
-| Free `intel-media-va-driver` only | Everything from Debian `main` | No HEVC QSV on Arc A-series (A380: `Invalid FrameType:0`) | The package in `non-free` is Expat and redistributable (decision 4a) |
+| Free `intel-media-va-driver` only | Everything from Debian `main` | No HEVC QSV on the A380 under `xe` without HuC (`Invalid FrameType:0`); not measured with HuC | The package in `non-free` is Expat and redistributable (decision 4a) |
 | AV1 decode through NVDEC or VA-API in the check | No new library | The judge would share the encoder's vendor stack; differs per kit | dav1d decodes the same way on every kit |
 | Local-only non-free build (`INTEL_MEDIA_DRIVER=nonfree`, kit `intel-nonfree-local`, marker; the previous decision 4a) | Published image stays all-`main` | Rested on the premise that the package is not redistributable, which Debian's copyright file refutes; added a build argument, a kit, a marker and a second licence path; testers got no HEVC QSV evidence | The premise was wrong (decision 4a) |
 | Name the Intel render node in the steering commands instead of linking libdrm | No new library | The node number differs per host and the tester would have to find it; FFmpeg's own vendor filter needs libdrm | libdrm (MIT, already pulled in by Mesa and libva) lets FFmpeg pick the Intel node |
