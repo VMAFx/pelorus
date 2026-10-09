@@ -1,0 +1,1 @@
+- The tester report treats a user name as a whole-word literal and no longer treats a generic CI or container account (`runner`, `root`, `ubuntu`, `vscode`, ...) as private; on GitHub runners the program refused its own report because the fixed text "stage runner" contained the account name (tool 0.4.1).

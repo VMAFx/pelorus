@@ -21,6 +21,7 @@ All notable changes to Pelorus are documented here. The format is
 
 ### Fixed
 
+- The tester report treats a user name as a whole-word literal and no longer treats a generic CI or container account (`runner`, `root`, `ubuntu`, `vscode`, ...) as private; on GitHub runners the program refused its own report because the fixed text "stage runner" contained the account name (tool 0.4.1).
 - The `ghcr.io/vmafx/pelorus-dev` image no longer redistributes a source-built GPL `git` without a source offer: it starts from plain `ubuntu:26.04` and uses Ubuntu's `git` package. Node.js, actionlint and Lefthook now ship their licence texts under `/usr/local/share/licenses/`, the misleading `EUPL-1.2` image label is replaced by a notices file, and a licence record plus gate (`.devcontainer/base/licensing.json`) fails the image build on any unrecorded file ([ADR-0179](docs/adr/0179-dev-image-licence-record.md), #256). The dev container bundle keeps the old digest until the new image is published and re-pinned.
 
 <!-- END UNRELEASED -->
