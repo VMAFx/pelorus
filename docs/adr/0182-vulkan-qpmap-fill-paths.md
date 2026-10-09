@@ -67,8 +67,21 @@ that the encode queue family can record:
    which the host may write a linear image again.
 5. **One map image per exec context**, indexed by `exec->idx`: the fence wait
    in `ff_vk_exec_start()` then orders every rewrite, host or GPU, after the
-   encode that last read the image.
-6. **No silent choice.** `-v verbose` lists every advertised entry with the
+   encode that last read the image. The CPU-side record of a host-mapped
+   image's layout moves to `GENERAL` only after `ff_vk_exec_submit()`
+   succeeded.
+6. **Init-time creation.** Every map image, its memory and the host raster
+   scratch are created by `pelorus_qpmap_init()` after
+   `ff_vk_exec_pool_init()` and before the video session; nothing is allocated
+   per frame (HISS-03). The memory type (host-visible coherent for the
+   host-mapped image, device-local otherwise) is checked against the image's
+   `memoryTypeBits` first. A missing type or a failed image disables steering
+   with a warning before the session is created with the QP-map flags.
+7. **Extent.** The probe refuses a map larger than
+   `VkVideoEncodeQuantizationMapCapabilitiesKHR::maxQuantizationMapExtent`
+   (warning, pass-through) instead of clamping it. RADV allows 256x256 texels
+   for H.264 and 128x68 for H.265 (64x64 px, 8192x4352).
+8. **No silent choice.** `-v verbose` lists every advertised entry with the
    path it allows and the chosen format, tiling and path; with no fillable
    entry the probe warns and passes through.
 
@@ -92,10 +105,9 @@ that the encode queue family can record:
 - **Neutral / follow-ups**: `scripts/test-vulkan-qpmap-fill.py --self-test`
   runs the entry classifier and the host raster from the hand diff in a C
   harness; `scripts/check-vulkan-qpmap-contract.py --self-test` pins the query,
-  the queue-capability source, the layouts and the slot. Open: an on-GPU raster
-  for 16- and 32-bit formats; RADV CBR/VBR (RADV advertises no emphasis map);
-  `maxQuantizationMapExtent` is not checked (RADV H.265: 128x68 texels of
-  64x64 px, enough for 8192x4352).
+  the queue-capability source, the layouts, the slot, init-time creation, the
+  extent check and the post-submit layout record. Open: an on-GPU raster for
+  16- and 32-bit formats; RADV CBR/VBR (RADV advertises no emphasis map).
 
 ## Measured
 
@@ -132,6 +144,10 @@ stream equalled its control (research 0231, reproduced on this build).
   `VUID-VkImageMemoryBarrier2-srcAccessMask-03915` (FFmpeg's source-frame
   barrier on a video-encode-only family). NVIDIA: `05137` and
   `VUID-vkCmdEncodeVideoKHR-pEncodeInfo-08206`, as before this change.
+- After the review changes (init-time images and memory-type check, extent
+  check, layout recorded after the submission) all 20 RADV and 20 NVIDIA
+  encodes are byte-identical to the table and runs above, with the same VUID
+  sets.
 - Mesa 25.0.7 RADV (tester image driver, same FFmpeg build): `pelorus_roi:
   device does not enable VK_KHR_video_encode_quantization_map; QP-map
   steering disabled (pass-through).`, steered stream equal to the control.

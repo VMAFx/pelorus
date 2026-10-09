@@ -150,7 +150,7 @@ test('vulkan-storage-domain',
 # the check rejects each defect.
 test('vulkan-qpmap-contract',
      python_prog,
-     args: [meson.project_source_root() / 'scripts' / 'check-vulkan-qpmap-contract.py',
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-vulkan-qpmap-contract.py',
             '--self-test'],
      workdir: meson.project_source_root(),
      suite: 'fast')
@@ -161,7 +161,7 @@ test('vulkan-qpmap-contract',
 # and the host raster run in a C harness; --self-test plants a defect per rule.
 test('vulkan-qpmap-fill',
      python_prog,
-     args: [meson.project_source_root() / 'scripts' / 'test-vulkan-qpmap-fill.py',
+     args: ['-I', meson.project_source_root() / 'scripts' / 'test-vulkan-qpmap-fill.py',
             '--self-test', '--cc'] + meson.get_compiler('c').cmd_array(),
      workdir: meson.project_source_root(),
      suite: 'fast')

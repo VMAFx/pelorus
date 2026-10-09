@@ -7,13 +7,23 @@ patches (ADR-0108 deliverable #6).
 
 ## Unreleased — Vulkan QP-map formats and fill paths (#278, ADR-0182; regenerates 0009)
 
-- **Patch**: 0009 only. The `libavcodec/vulkan_encode.c` and
-  `libavcodec/vulkan_encode.h` sections of
-  `ffmpeg-patches/files/vulkan-pelorus-qpmap.patch` were rebuilt with
-  `git diff <pinned commit> -- libavcodec/vulkan_encode.c libavcodec/vulkan_encode.h`
+- **Patch**: 0009 only. Edit the hand-maintained source
+  `ffmpeg-patches/files/vulkan-pelorus-qpmap.patch`; `0009-*.patch` is
+  generated from it. Its `libavcodec/vulkan_encode.c` and
+  `libavcodec/vulkan_encode.h` sections were rebuilt with
+  `git diff 946fcce07b6dcd0331c8cc609192aeff5e1924f8 -- libavcodec/vulkan_encode.c libavcodec/vulkan_encode.h`
   in a tree with all 22 patches applied (no other patch touches those two
-  files); the other sections and the shader are unchanged. The hunk headers'
-  new-file line numbers, stale since an earlier hand edit, are now exact.
+  files); the other sections and the shader are unchanged. That rebuild also
+  corrected the hunk headers' new-file line numbers in `files/`, stale since
+  an earlier hand edit; the correction is cosmetic (`git apply` locates hunks
+  by the old-file side) and reaches 0009 only through regeneration.
+- **Regenerate and replay** (n9.0.2, `946fcce07b`, from `build-config.env`):
+
+  ```bash
+  FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh   # twice; bytes must match
+  FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh
+  ```
+
 - **What changed**: the probe no longer assumes `R8_SINT`. It accepts the
   advertised `R8_SINT`/`R16_SINT`/`R32_SINT` delta or `R8_UNORM`/`R16_UNORM`
   emphasis format, asks `vkGetPhysicalDeviceVideoFormatPropertiesKHR` for the
@@ -24,20 +34,30 @@ patches (ADR-0108 deliverable #6).
   queue requirement). The queue capabilities come from
   `FFVulkanContext.qf_props[qf_enc->idx]`, not from
   `AVVulkanDeviceQueueFamily.flags`, which lists only the purposes FFmpeg
-  picked the family for. One map image per exec context, indexed by
-  `exec->idx` (the old `qpmap_next` round robin is gone).
-- **Rebase-sensitive invariants**: keep the host-mapped fill
-  (`pelorus_qpmap_host_fill()`) before `vkCmdBeginVideoCodingKHR` and
-  `pelorus_qpmap_host_release()` after `vkCmdEndVideoCodingKHR` in
-  `vulkan_encode_issue()`; keep the map slot equal to `exec->idx`, so
+  picked the family for. The probe refuses a map larger than
+  `maxQuantizationMapExtent`. `pelorus_qpmap_query_delta_range()` became
+  `pelorus_qpmap_query_caps()`, which also returns that extent. One map image
+  per exec context, indexed by `exec->idx` (the old `qpmap_next` round robin
+  is gone), all created with the host raster scratch by `pelorus_qpmap_init()`
+  after `ff_vk_exec_pool_init()` and before the video session, so a missing
+  memory type or a failed image disables steering at init.
+- **Rebase-sensitive invariants**: keep `pelorus_qpmap_init()` between
+  `ff_vk_exec_pool_init()` and the session creation in
+  `ff_vulkan_encode_init()`, and no allocation in `vulkan_encode_issue()`;
+  keep the host-mapped fill (`pelorus_qpmap_host_fill()`) before
+  `vkCmdBeginVideoCodingKHR`, `pelorus_qpmap_host_release()` after
+  `vkCmdEndVideoCodingKHR`, and the `GENERAL` layout record after a successful
+  `ff_vk_exec_submit()`; keep the map slot equal to `exec->idx`, so
   `ff_vk_exec_start()`'s fence wait guards the host write; keep the
   host-mapped image `PREINITIALIZED` in host-visible coherent memory. If
-  upstream changes `FFVulkanContext.qf_props`, `tot_nb_qfs` or
-  `FFVkExecContext.idx`, re-point the probe and the slot.
+  upstream changes `FFVulkanContext.qf_props`, `tot_nb_qfs`, `mprops` or
+  `FFVkExecContext.idx`, re-point the probe, the memory-type check and the
+  slot.
 - **Static gates**: `scripts/check-vulkan-qpmap-contract.py --self-test` (now
-  19 mutations) and the new C harness `scripts/test-vulkan-qpmap-fill.py
+  24 mutations) and the new C harness `scripts/test-vulkan-qpmap-fill.py
   --self-test` (entry classifier and host raster extracted from the hand diff,
-  10 mutations) in the fast suite.
+  built with `-Wall -Wextra -Werror`, 10 mutations and one planted warning) in
+  the fast suite, both under `python3 -I`.
 - **On-device gate**: the ADR-0166 gate, on RADV (Mesa 26.2 or newer, ICD
   pinned to `radeon_icd.json`) and NVIDIA: `-rc_mode cqp -pelorus_roi 1` must
   change the stream against the unsteered control, with

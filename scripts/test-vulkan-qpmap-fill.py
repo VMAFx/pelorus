@@ -22,8 +22,10 @@ ADR-0182:
   rows ``pitch`` bytes apart, padding untouched; the first rectangle wins on
   overlap; emphasis maps scale to the unorm width.
 
-``--self-test`` plants a defect in the extracted code for each rule and
-requires the harness to reject every one.
+The extracted code compiles with ``-Wall -Wextra -Werror``. ``--self-test``
+plants a defect in the extracted code for each rule and requires the harness
+to reject every one, and plants one compiler warning and requires the strict
+build to refuse it.
 """
 
 from __future__ import annotations
@@ -252,6 +254,9 @@ int main(void)
 }
 """
 
+# Proves the strict flags bite: -Wall's -Wunused-variable inside extracted code.
+PLANTED_WARNING = "\nstatic int pelorus_planted_warning(void) { int unused_local; return 0; }\n"
+
 MUTATIONS = (
     ("copy ignores the queue family",
      "if (can_copy && (p->imageUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT))",
@@ -353,6 +358,11 @@ def main() -> int:
         return 0
 
     failures = 0
+    status, _ = build_and_run(args.cc, chunk + PLANTED_WARNING)
+    if status != 2:
+        print("SELF-TEST: a planted compiler warning did not fail the strict build",
+              file=sys.stderr)
+        failures += 1
     for name, old, new in MUTATIONS:
         if chunk.count(old) != 1:
             print(f"SELF-TEST: mutation '{name}' does not apply (stale)", file=sys.stderr)
@@ -371,7 +381,8 @@ def main() -> int:
             failures += 1
     if failures:
         return 1
-    print(f"vulkan qpmap fill self-test: {len(MUTATIONS)} mutations rejected")
+    print(f"vulkan qpmap fill self-test: {len(MUTATIONS)} mutations rejected, "
+          "planted warning refused by -Wall -Wextra -Werror")
     return 0
 
 

@@ -288,6 +288,10 @@ warning plus pass-through:
   negative values the probe warns that regions asking for a *lower* QP get no
   extra bits. The value is also clamped to the range of the map's texel
   format.
+- **Map size.** A picture whose map (width and height over the texel block,
+  rounded up) exceeds the driver's `maxQuantizationMapExtent` disables
+  steering with a warning; the map is never clamped. RADV allows 256x256
+  texels for H.264 (16x16 px) and 128x68 for H.265 (64x64 px, 8192x4352).
 
 The `qoffset` span is per codec: `51 + 6 × (bit_depth − 8)` QP steps for H.264
 and H.265, and 255 qindex steps for AV1 (the NVENC, libaom and SVT-AV1 scale; the
@@ -328,8 +332,11 @@ path in this order that an advertised entry allows:
    from the queue family. RADV, whose encode queue family has
    `VK_QUEUE_VIDEO_ENCODE_BIT_KHR` only, uses this path.
 
-There is one map image per encode execution context; a context's fence wait
-guards the image before the host or the GPU writes it again. All paths share
+There is one map image per encode execution context, created with its memory
+when the encoder opens, before the video session; a missing memory type or a
+failed image disables steering there with a warning, and nothing is allocated
+per frame. A context's fence wait guards the image before the host or the GPU
+writes it again. All paths share
 the same `qoffset`→ΔQP convention, are recorded before the video coding scope
 begins, and default off.
 
