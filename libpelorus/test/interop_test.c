@@ -1680,6 +1680,122 @@ static void test_encode_record_section(void)
     }
 }
 
+/* vf_pelorus_analyze maps (issue #219, Pelorus ADR-0177): the per-cell banding (uint8),
+ * variance (float) and edge (uint8) maps behind the ABI 1.0 offset/size fields, each at the
+ * next 8-aligned offset after the packed sections, total_size ending at the last map byte.
+ * Built here with interop.c alone (the producer packs it in pelorus_analyze_maps.h); a
+ * reader locates every map through pel_blob_map() on the header's grid. */
+static size_t pack_analysis_maps(FixtureBlob *fx, const uint8_t *band, const float *var,
+                                 const uint8_t *edge)
+{
+    PelorusSideData meta;
+    PelorusSideData hdr;
+    PelorusVarianceSection v;
+    PelorusBandingSection b;
+    PelorusComplexitySection cx;
+    PelorusPackSection secs[3];
+    size_t len = 0;
+    uint32_t end;
+
+    fill_meta(&meta);
+    meta.grid_cols = 3;
+    meta.grid_rows = 2;
+    memset(&v, 0, sizeof(v));
+    memset(&b, 0, sizeof(b));
+    memset(&cx, 0, sizeof(cx));
+    v.global_variance = 0.0625f;
+    b.global_banding_risk = 0.5f;
+    /* Layout first: header 48 + 3 dir entries, then 28 -> 32, 24 and 16 section bytes. */
+    end = 48u + 3u * 16u + 32u + 24u + 16u;
+    b.cell_data_offset = end;
+    b.cell_data_size = 6u;
+    v.var_cell_offset = (end + 6u + 7u) & ~7u;
+    v.var_cell_size = 6u * 4u;
+    v.edge_cell_offset = v.var_cell_offset + v.var_cell_size;
+    v.edge_cell_size = 6u;
+    secs[0].id = PEL_SEC_VARIANCE;
+    secs[0].data = &v;
+    secs[0].size = (uint32_t)sizeof(v);
+    secs[1].id = PEL_SEC_BANDING;
+    secs[1].data = &b;
+    secs[1].size = (uint32_t)sizeof(b);
+    secs[2].id = PEL_SEC_COMPLEXITY;
+    secs[2].data = &cx;
+    secs[2].size = (uint32_t)sizeof(cx);
+    memset(fx->bytes, 0, sizeof(fx->bytes));
+    if (pel_blob_pack_into(&meta, secs, 3, fx->bytes, sizeof(fx->bytes), &len) != PEL_OK ||
+        len != (size_t)PELORUS_SIDEDATA_UUID_LEN + end) {
+        CHECK(!"the analysis sections did not pack to the documented size");
+        return 0;
+    }
+    CHECK(fixture_append(fx, &end, band, 6u) == b.cell_data_offset);
+    CHECK(fixture_append(fx, &end, var, 24u) == v.var_cell_offset);
+    CHECK(fixture_append(fx, &end, edge, 6u) == v.edge_cell_offset);
+    hdr = blob_header_load(fx->bytes);
+    hdr.total_size = end;
+    blob_header_store(fx->bytes, &hdr);
+    return (size_t)PELORUS_SIDEDATA_UUID_LEN + end;
+}
+
+/* Every map reads back through pel_blob_map() on the header grid; one element
+ * more than the grid is refused. */
+static void check_analysis_maps(const FixtureBlob *fx, size_t len, uint32_t cells,
+                                const PelorusVarianceSection *v, const PelorusBandingSection *b,
+                                const uint8_t *band, const float *var, const uint8_t *edge)
+{
+    const void *m = NULL;
+    uint32_t i;
+
+    CHECK(pel_blob_map(fx->bytes, len, b->cell_data_offset, b->cell_data_size, cells, 1u, &m) ==
+          PEL_OK);
+    CHECK(m != NULL && memcmp(m, band, cells) == 0);
+    CHECK(pel_blob_map(fx->bytes, len, v->var_cell_offset, v->var_cell_size, cells, 4u, &m) ==
+          PEL_OK);
+    for (i = 0; m != NULL && i < cells; i++) {
+        float got_var;
+        memcpy(&got_var, (const uint8_t *)m + (size_t)i * sizeof(got_var), sizeof(got_var));
+        CHECK(got_var == var[i]); /* values, not object representations */
+    }
+    CHECK(pel_blob_map(fx->bytes, len, v->edge_cell_offset, v->edge_cell_size, cells, 1u, &m) ==
+          PEL_OK);
+    CHECK(m != NULL && memcmp(m, edge, cells) == 0);
+    CHECK(pel_blob_map(fx->bytes, len, v->var_cell_offset, v->var_cell_size, cells + 1u, 4u, &m) ==
+          PEL_ERR_ABI);
+}
+
+static void test_analysis_maps_layout(void)
+{
+    static const uint8_t band[6] = {0, 51, 102, 153, 204, 255};
+    static const float var[6] = {0.0f, 0.001f, 0.01f, 0.1f, 0.25f, 0.002f};
+    static const uint8_t edge[6] = {9, 8, 7, 6, 5, 4};
+    FixtureBlob fx;
+    PelorusVarianceSection v;
+    PelorusBandingSection b;
+    PelorusSideData hdr;
+    const void *p = NULL;
+    size_t got = 0;
+    size_t len = pack_analysis_maps(&fx, band, var, edge);
+    uint32_t cells;
+
+    hdr = blob_header_load(fx.bytes);
+    cells = (uint32_t)hdr.grid_cols * (uint32_t)hdr.grid_rows;
+    CHECK(cells == 6u && hdr.total_size == (uint32_t)(len - PELORUS_SIDEDATA_UUID_LEN));
+    memset(&b, 0, sizeof(b));
+    memset(&v, 0, sizeof(v));
+    CHECK(pel_blob_find_section(fx.bytes, len, PEL_SEC_BANDING, sizeof(b), &p, &got) == PEL_OK);
+    if (p != NULL && got == sizeof(b)) {
+        memcpy(&b, p, sizeof(b));
+    }
+    CHECK(pel_blob_find_section(fx.bytes, len, PEL_SEC_VARIANCE, sizeof(v), &p, &got) == PEL_OK);
+    if (p != NULL && got == sizeof(v)) {
+        memcpy(&v, p, sizeof(v));
+    }
+    check_analysis_maps(&fx, len, cells, &v, &b, band, var, edge);
+    /* An older consumer reading the banding scalars only still parses (R4). */
+    CHECK(pel_blob_find_section(fx.bytes, len, PEL_SEC_BANDING, 8u, &p, &got) == PEL_OK);
+    CHECK(got == 8u);
+}
+
 int main(void)
 {
     test_roundtrip();
@@ -1705,6 +1821,7 @@ int main(void)
     test_enc_telemetry_roundtrip();
     test_blob_map_bounds();
     test_encode_record_section();
+    test_analysis_maps_layout();
 
     if (g_fail != 0) {
         (void)fprintf(stderr, "%d check(s) failed\n", g_fail);

@@ -83,7 +83,7 @@ green · the deband shader compiles.**
 | `pelorus_deband_vulkan` | Smart deband (f3kdb): flatten banding + TPDF/blue-noise dither, detail-protected, zero-copy | **Working** |
 | `pelorus_dehalo_vulkan` | Anime/2D dehalo + dering: single-pass GPU port of DeHalo_alpha + FineDehalo, removes the ring next to line-art (luma by default; optional selected chroma); foundation of `tune=anime` | **Built (tuning pending)** |
 | `pelorus_denoise_vulkan` | Edge-preserving spatio-temporal denoise (the biggest BD-rate lever): NLM-lite joint bilateral + gated temporal averaging over a causal window, with optional motion-compensated warp | **Working** |
-| `pelorus_analyze_vulkan` | Measured banding/variance/edge stats → interop side data (GPU reduction + readback) | **Working** |
+| `pelorus_analyze_vulkan` | Measured banding/variance/edge stats and per-cell maps → interop side data (GPU reduction + readback) | **Working** |
 | `pelorus_grain_estimate_vulkan` | Film-grain param estimation (GPU per-band HF-residual) → PEL_SEC_FILMGRAIN + native AV1 side data | **Estimator built** |
 | `pelorus_mc_vulkan` | Block-matching motion estimator → per-block motion + confidence side data for denoise warping and encoder hints | **Working** |
 | `pelorus_fgs` (BSF) | Inserts a static, AVOption-supplied H.274 FGC SEI into HEVC so a decoder re-synthesizes grain; it does not read estimator frame side data inline | **Working (static model)** |

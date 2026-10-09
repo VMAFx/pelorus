@@ -24,12 +24,18 @@
  * so the shader is now compiled to SPIR-V at build time and linked in — which
  * retires that duplication and the whole class of lockstep-drift defects.
  *
- * One 32x32 workgroup reduces one tile of the luma plane in shared memory,
- * then invocation 0 writes the tile's variance / edge density / low-amplitude
+ * One workgroup reduces one cell (tile) of the luma plane in shared memory,
+ * then invocation 0 writes the cell's variance / edge density / low-amplitude
  * gradient / valid flag / mean into a position-preserving struct-of-arrays
  * SSBO at tile[k * ntiles + (tile_y * grid_cols + tile_x)], k in 0..4. The
- * host sums the spans into the PEL_SEC_* frame scalars and drives the ROI
- * auto-detection off the per-tile values.
+ * host sums the spans into the PEL_SEC_* frame scalars, packs them as the
+ * per-cell banding / variance / edge maps (ADR-0177) and drives the ROI
+ * auto-detection off the per-cell values.
+ *
+ * The cell edge is the filter's `cell` option, a power of two in 8..64. The
+ * workgroup edge is min(cell, 32) (C side: pel_an_workgroup()), and each
+ * invocation covers cell_span x cell_span pixels of its cell, so a 64-pixel
+ * cell runs on a 32x32 workgroup with a 2x2 span.
  */
 
 #pragma shader_stage(compute)
@@ -38,7 +44,7 @@
 #extension GL_EXT_nonuniform_qualifier : require
 
 /* Workgroup-size IDs 253/254/255 are reserved by ff_vk_shader_load(); the C
- * side loads { PEL_TILE, PEL_TILE, 1 }. One workgroup == one tile. */
+ * side loads { wg, wg, 1 } with wg = min(cell, 32). One workgroup == one cell. */
 layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
 
 /* Mirrors the C `pc` struct byte-for-byte (2 * int + 2 * float = 16 bytes). */
@@ -61,6 +67,9 @@ layout (set = 0, binding = 1, std430) buffer tile_buffer {
 /* Preserve input_images as a runtime descriptor array in SPIR-V. A literal
  * zero index is folded by glslc into a fixed one-element descriptor array. */
 layout (constant_id = 0) const uint luma_plane = 0u;
+/* Pixels per invocation along each axis: cell / workgroup edge, 1 or 2. The C
+ * specialization list sets it once at pipeline creation (SPEC_LIST_ADD id 1). */
+layout (constant_id = 1) const uint cell_span = 1u;
 
 shared uint s_sum;
 shared uint s_sumsq;
@@ -73,6 +82,29 @@ float pel_to_sample(float value)
     return value * sample_scale;
 }
 
+/* Accumulate one pixel into this invocation's fixed-point partial sums. Each
+ * term is truncated per pixel exactly as the former per-pixel atomicAdd did, so
+ * the integer totals (and the host's results) are unchanged at cell_span 1. */
+void accumulate(ivec2 pos, ivec2 size, inout uvec4 acc, inout uint cnt)
+{
+    const float TS = 65535.0;
+    float l = pel_to_sample(imageLoad(input_images[luma_plane], pos).x);
+    ivec2 rp = clamp(pos + ivec2(1, 0), ivec2(0), size - 1);
+    ivec2 dp = clamp(pos + ivec2(0, 1), ivec2(0), size - 1);
+    float gx = abs(pel_to_sample(imageLoad(input_images[luma_plane], rp).x) - l);
+    float gy = abs(pel_to_sample(imageLoad(input_images[luma_plane], dp).x) - l);
+    float g = gx + gy;
+    float edge = clamp(g, 0.0, 1.0);
+    /* A "real but low-amplitude" step (>= grad_lo) is the banding
+     * signature; a dead-flat constant tile (g < grad_lo) and a textured
+     * tile (large g) both contribute 0 to the gradient accumulator. The
+     * window [grad_lo, 8*grad_lo] isolates the slope that bands. */
+    float band_g = (g >= grad_lo && g < grad_lo * 8.0)
+                   ? g : 0.0;
+    acc += uvec4(uint(l * TS), uint(l * l * TS), uint(edge * TS), uint(band_g * TS));
+    cnt += 1u;
+}
+
 void main()
 {
     const float TS = 65535.0;
@@ -83,28 +115,27 @@ void main()
     }
     barrier();
     ivec2 size = imageSize(input_images[luma_plane]);
-    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
-    /* Was IS_WITHIN(pos, size) — the n8 GLSL prelude is gone in FFmpeg 9.
-     * NOT an early return: every invocation must reach the barrier below. */
-    if (all(lessThan(pos, size))) {
-        float l = pel_to_sample(imageLoad(input_images[luma_plane], pos).x);
-        ivec2 rp = clamp(pos + ivec2(1, 0), ivec2(0), size - 1);
-        ivec2 dp = clamp(pos + ivec2(0, 1), ivec2(0), size - 1);
-        float gx = abs(pel_to_sample(imageLoad(input_images[luma_plane], rp).x) - l);
-        float gy = abs(pel_to_sample(imageLoad(input_images[luma_plane], dp).x) - l);
-        float g = gx + gy;
-        float edge = clamp(g, 0.0, 1.0);
-        /* A "real but low-amplitude" step (>= grad_lo) is the banding
-         * signature; a dead-flat constant tile (g < grad_lo) and a textured
-         * tile (large g) both contribute 0 to the gradient accumulator. The
-         * window [grad_lo, 8*grad_lo] isolates the slope that bands. */
-        float band_g = (g >= grad_lo && g < grad_lo * 8.0)
-                       ? g : 0.0;
-        atomicAdd(s_sum,   uint(l * TS));
-        atomicAdd(s_sumsq, uint(l * l * TS));
-        atomicAdd(s_edge,  uint(edge * TS));
-        atomicAdd(s_grad,  uint(band_g * TS));
-        atomicAdd(s_cnt,   1u);
+    ivec2 wg = ivec2(gl_WorkGroupSize.xy);
+    ivec2 origin = ivec2(gl_WorkGroupID.xy) * wg * int(cell_span)
+                   + ivec2(gl_LocalInvocationID.xy);
+    uvec4 acc = uvec4(0u);
+    uint cnt = 0u;
+    /* Bounded by the specialization constant (<= 2): HISS-02. Out-of-frame
+     * pixels of a partial last cell are skipped, NOT returned early: every
+     * invocation must reach the barrier below. */
+    for (uint sy = 0u; sy < cell_span; sy++) {
+        for (uint sx = 0u; sx < cell_span; sx++) {
+            ivec2 pos = origin + ivec2(int(sx), int(sy)) * wg;
+            if (all(lessThan(pos, size)))
+                accumulate(pos, size, acc, cnt);
+        }
+    }
+    if (cnt > 0u) {
+        atomicAdd(s_sum,   acc.x);
+        atomicAdd(s_sumsq, acc.y);
+        atomicAdd(s_edge,  acc.z);
+        atomicAdd(s_grad,  acc.w);
+        atomicAdd(s_cnt,   cnt);
     }
     barrier();
     if (gl_LocalInvocationIndex == 0u) {

@@ -9,12 +9,13 @@ ABI: [interop-abi.md](../api/interop-abi.md).
 
 ## What it does
 
-A compute shader reduces the luma plane tile-by-tile (shared-memory reduction
-into a 16-slice SSBO, summed on the host) to per-frame:
+A compute shader reduces the luma plane cell by cell (one workgroup per
+`cell` x `cell` cell, a shared-memory reduction into a per-cell SSBO read back
+by the host) to per-frame:
 
-- **variance** — mean per-tile spatial variance (texture/activity proxy),
-- **edge density** — mean per-tile gradient magnitude,
-- **flat-area fraction** — share of low-variance (banding-prone) tiles,
+- **variance** — mean per-cell spatial variance (texture/activity proxy),
+- **edge density** — mean per-cell gradient magnitude,
+- **flat-area fraction** — share of low-variance (banding-prone) cells,
 - **banding risk** — coarse proxy = flat-area fraction (v0.1).
 
 Loads are converted from the Vulkan storage domain to the logical `[0,1]`
@@ -25,8 +26,7 @@ storage normalization alone is not sufficient for every layout.
 These populate `PEL_SEC_VARIANCE` (`global_variance`, `edge_density`,
 `texture_energy`) and `PEL_SEC_BANDING` (`flat_area_fraction`,
 `global_banding_risk`, `contour_strength_mean`), attached to the frame as the
-UUID-keyed Pelorus side-data blob (producer `PLRA`). Per-cell maps are a future
-append-only addition; v0.1 emits frame-level scalars.
+UUID-keyed Pelorus side-data blob (producer `PLRA`).
 
 It also emits `PEL_SEC_COMPLEXITY` (ADR-0132): a per-frame complexity scalar in
 `[0,1]` (a normalized texture/edge energy, folding in `motion_component` when an
@@ -53,6 +53,39 @@ single-scale blind spot: a 0x10→0x30 ramp (CAMBI 0.625) flagged 0 tiles before
 and 27 after, and an A/B encode confirmed lower output CAMBI with no regression
 on textured tiles (the coarse scale is gated to flats).
 
+## Per-cell maps
+
+With `maps=1` (the default) the same blob carries three maps on the cell grid
+the header names (`grid_cols` x `grid_rows`,
+[ADR-0177](../adr/0177-analyze-per-cell-maps.md)):
+
+| Map | Section fields | Element | Value |
+| --- | --- | --- | --- |
+| banding risk | `PelorusBandingSection.cell_data_*` | `uint8` | round(255 x the per-cell banding score that `roi=1` steers by) |
+| variance | `PelorusVarianceSection.var_cell_*` | `float` | luma variance of the cell, [0, 1] sample domain; the grid mean is `global_variance` |
+| edge density | `PelorusVarianceSection.edge_cell_*` | `uint8` | round(255 x edge density of the cell) |
+
+The grid is `ceil(W / cell)` x `ceil(H / cell)`, row-major; partial last cells
+cover only the pixels inside the frame, and a frame smaller than one cell is a
+1x1 grid. The layout, the reader checks and a reading example are in
+[interop-abi.md](../api/interop-abi.md#analysis-maps-vf_pelorus_analyze).
+VMAFx's perceptual pooling (VMAFx ADR-1118) averages the banding and variance
+maps; without them it falls back to the frame scalars.
+
+The grid is limited to 2^20 cells. A larger one (above `8192x8192` at
+`cell=8`) fails when the filter graph is configured:
+
+```text
+[Parsed_pelorus_analyze_vulkan_2 @ ...] 8200x8192 at cell=8 exceeds the grid limit of 1048576 cells and 65535 per side; use a larger cell
+```
+
+Measured on the Vulkan format matrix
+(`ffmpeg-patches/test/vulkan-format-matrix.sh`, identical on an RTX 4090, an
+Arc A380 and RADV): a 256x128 8-bit ramp with one code step every 4 pixels
+gives a banding-map mean of 0.952, flat grey with `noise=alls=40` gives 0.000,
+and the ramp as `p010le` matches `yuv420p`. Details:
+[research 0177](../research/0177-analyze-per-cell-maps.md).
+
 ## Options
 
 | Option | Type | Default | Meaning |
@@ -62,6 +95,8 @@ on textured tiles (the coarse scale is gated to flats).
 | `roi_strength` | float 0–1 | 0.333 | max \|qoffset\| (fraction of the QP range) applied to a fully banding tile |
 | `grad_lo` | float 0–0.5 | 0.002 | min per-tile gradient counted as a real (banding) slope |
 | `grad_hi` | float 0–0.5 | 0.01 | per-tile gradient at which banding risk peaks before the tile turns textured |
+| `cell` | int 8–64 | 32 | cell edge in luma pixels, a power of two (8, 16, 32 or 64): the analysis tile, the map grid and the ROI rectangle unit |
+| `maps` | bool | 1 | attach the per-cell banding, variance and edge maps; 0 keeps the scalar-only blob |
 
 ## Example
 
@@ -117,6 +152,20 @@ ffprobe -f lavfi -i "movie=in.mkv,format=yuv420p,hwupload,pelorus_analyze_vulkan
   live yet — see [ADR-0109](../adr/0109-analyze-filter.md)).
 - **Place it before** the filters that should benefit (deband) so the measured
   blob is present; the blob round-trips the graph via `av_frame_copy_props`.
-- **v0.1 scalars only**: `contour_strength_mean` is the mean tile variance and
-  `global_banding_risk` is the flat-area fraction — coarse proxies until a
-  dedicated contour estimator and per-cell maps land.
+- **Coarse scalars**: `contour_strength_mean` is the mean cell variance and
+  `global_banding_risk` is the flat-area fraction, coarse proxies until a
+  dedicated contour estimator lands. The banding map carries the per-cell
+  score instead.
+- **Thresholds are per cell**: `flat`, `grad_lo` and the coarse step window
+  (1 to 12 code values between neighbouring cells) are tuned at `cell=32`. A
+  smaller cell sees less of a shallow ramp: the matrix ramp scores 0.952 at
+  `cell=32`, 0.788 at 64 and 0.085 at 8.
+- **Light grain reads as banding-prone**: a flat field with low-amplitude
+  noise sits in the same variance window as a ramp (`noise=alls=12` scores a
+  banding-map mean of 0.88, `alls=30` 0.19, `alls=40` 0).
+- **Blob size**: the maps add 6 bytes per cell, 12 KiB per frame at 1080p and
+  48 KiB at 2160p with `cell=32`. An encoder with `udu_sei=1` writes them into
+  the bitstream; use `maps=0` there unless a decoder-side reader needs them.
+- **VMAFx reads the first blob**: its reader takes the first
+  `SEI_UNREGISTERED` entry only, so put `pelorus_analyze_vulkan` before other
+  Pelorus producers (as in the example above) in a graph VMAFx scores.

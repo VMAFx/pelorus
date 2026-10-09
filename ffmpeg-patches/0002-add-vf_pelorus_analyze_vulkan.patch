@@ -9,7 +9,7 @@ Content-Transfer-Encoding: 8bit
 
 A Vulkan compute analyzer that reduces each frame's luma to per-frame
 banding / variance / edge statistics on the GPU (per-tile shared-memory
-reduction into a sliced SSBO), reads them back, and attaches the *measured*
+reduction into a per-cell SSBO), reads them back, and attaches the *measured*
 Pelorus interop sections (PEL_SEC_VARIANCE + PEL_SEC_BANDING) — the data a
 downstream vmafx vf_libvmaf* uses for perceptually-weighted scoring, and the
 maps the deband filter only approximates today. The frame passes through
@@ -30,22 +30,33 @@ ffprobe/metadata=print-readable) since the interop blob is not muxed to file.
 Codec-agnostic: the statistics describe the source, independent of the chosen
 encoder (HEVC, AV1, ...).
 
+Per-cell maps (ADR-0177): the same blob carries a uint8 banding-risk map, a
+float luma-variance map and a uint8 edge-density map in the PEL_SEC_BANDING /
+PEL_SEC_VARIANCE offset/size fields ABI 1.0 defines, one element per cell of
+the header's grid, each at an 8-aligned blob-relative offset after the
+sections. The cell edge is a power of two in 8..64; a grid above 2^20 cells is
+refused when the link is configured. The host side (grid, per-cell scores,
+packer) lives in the private pelorus_analyze_maps.h, and blobs come from a
+pool sized once per grid.
+
 AVOptions: flat (per-tile banding-prone variance threshold), roi (emit ROI side
 data), roi_strength (max |qoffset| fraction), grad_lo/grad_hi (banding-slope
-gradient window).
+gradient window), cell (cell edge, default 32), maps (attach the per-cell maps,
+default 1).
 
 Requires libpelorus >= 0.2.0 (pkg-config) when the filter is enabled.
 
 ADR: docs/adr/0109-analyze-filter.md, docs/adr/0132-per-shot-crf-steering.md,
-docs/adr/0133-analyze-coarse-banding-cambi.md
+docs/adr/0133-analyze-coarse-banding-cambi.md, docs/adr/0177-analyze-per-cell-maps.md
 ---
  configure                                    |   3 +
  libavfilter/Makefile                         |   1 +
  libavfilter/allfilters.c                     |   1 +
+ libavfilter/pelorus_analyze_maps.h           | 473 +++++++++++
  libavfilter/vf_pelorus_analyze_vulkan.c      | 861 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |   1 +
- libavfilter/vulkan/pelorus_analyze.comp.glsl | 136 ++++
- 6 files changed, 1003 insertions(+)
+ libavfilter/vulkan/pelorus_analyze.comp.glsl | 167 ++++
+ 7 files changed, 1507 insertions(+)
 
 diff --git a/configure b/configure
 index 00b13ed09edcf3fb2b44ff9d0bfbb4420f45c68e..aec9b3ae17deb53929fc15870fdaeb58db717c8f 100755
@@ -92,9 +103,488 @@ index 78a01c74a326700f3c6c4799906c5ae17b613830..c781df8365397465a0f8cb2c25ac4505
  extern const FFFilter ff_vf_pelorus_deband_vulkan;
  extern const FFFilter ff_vf_perms;
  extern const FFFilter ff_vf_perspective;
+diff --git a/libavfilter/pelorus_analyze_maps.h b/libavfilter/pelorus_analyze_maps.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..7cad81149ad9daa95f4dae3fe9169878bc608b11
+--- /dev/null
++++ b/libavfilter/pelorus_analyze_maps.h
+@@ -0,0 +1,473 @@
++/*
++ * Copyright 2026 Lusoris
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or modify it under
++ * the terms of the GNU Lesser General Public License as published by the
++ * Free Software Foundation; either version 2.1 of the License, or (at
++ * your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
++ * License for more details.
++ */
++
++/*
++ * Host-side cell grid, per-cell scores and map packing for
++ * vf_pelorus_analyze_vulkan (issue #219, ADR-0177, docs/api/interop-abi.md
++ * "Analysis maps"). Plain C on libpelorus's interop API with no libav*
++ * dependency, so Pelorus's fast suite compiles and tests it directly
++ * (ffmpeg-patches/test/analyze_maps_test.c).
++ *
++ * Grid: cells are `cell` x `cell` luma pixels, `cell` a power of two in
++ * PEL_AN_CELL_MIN..PEL_AN_CELL_MAX; the grid is ceil(W / cell) x
++ * ceil(H / cell), row-major from the top-left, with a partial last column and
++ * row when the frame is not a multiple of the cell. A frame smaller than one
++ * cell is a 1x1 grid. The blob header's grid_cols / grid_rows name it.
++ *
++ * Maps (grid_cols * grid_rows elements each, behind the ABI 1.0 offset/size
++ * fields, so no wire layout changes):
++ *   PelorusBandingSection.cell_data_*   uint8  round(255 * banding score)
++ *   PelorusVarianceSection.var_cell_*   float  luma variance, [0, 1] domain
++ *   PelorusVarianceSection.edge_cell_*  uint8  round(255 * edge density)
++ * Each map starts at the next 8-aligned blob-relative offset after the packed
++ * sections (the pel_blob_map() convention) and total_size ends at the last map
++ * byte.
++ */
++
++#ifndef AVFILTER_PELORUS_ANALYZE_MAPS_H
++#define AVFILTER_PELORUS_ANALYZE_MAPS_H
++
++#include <math.h>
++#include <stddef.h>
++#include <stdint.h>
++#include <string.h>
++
++#include <pelorus/interop.h>
++
++/* Cell edge range in luma pixels; the edge is also a power of two. */
++#define PEL_AN_CELL_MIN 8u
++#define PEL_AN_CELL_MAX 64u
++/* Workgroup edge cap: 32 x 32 = 1024 invocations, Vulkan's guaranteed
++ * maxComputeWorkGroupInvocations. A 64-pixel cell runs a 2 x 2 span per
++ * invocation (pelorus_analyze.comp.glsl, constant_id 1). */
++#define PEL_AN_WG_MAX 32u
++/* Grid bound (HISS-02): grid_cols * grid_rows <= this. 8192 x 8192 at cell 8 is
++ * exactly the bound; the three maps then carry 6 MiB. */
++#define PEL_AN_MAX_CELLS (1u << 20u)
++/* Fixed-point scale shared by the shader writes and the host reads. */
++#define PEL_AN_GS 1000000.0
++/* Per-tile variance floor: a tile at or below it is constant, not a ramp. */
++#define PEL_AN_VAR_LO 2e-6f
++
++#define PEL_AN_ALIGN8(x) (((x) + 7u) & ~7u)
++
++/* The shader's per-tile records, struct of arrays, each cols * rows long. */
++typedef struct PelAnTiles {
++    const uint32_t *var;   /* tile luma variance          * PEL_AN_GS        */
++    const uint32_t *edge;  /* tile mean edge density      * PEL_AN_GS        */
++    const uint32_t *grad;  /* tile low-amplitude gradient * PEL_AN_GS        */
++    const uint32_t *valid; /* 1 if the tile had in-bounds pixels             */
++    const uint32_t *mean;  /* tile mean luma              * PEL_AN_GS        */
++    int cols;
++    int rows;
++} PelAnTiles;
++
++/* The two detector thresholds of the filter's `flat` and `grad_lo` options. */
++typedef struct PelAnThresholds {
++    float flat_thr;
++    float grad_lo;
++} PelAnThresholds;
++
++/* The per-cell maps of one frame plus their scratch, cols * rows each. */
++typedef struct PelAnMaps {
++    float *score;  /* banding score [0, 1]: the ROI input */
++    uint8_t *band; /* round(255 * score)                  */
++    float *var;    /* luma variance [0, 1]                */
++    uint8_t *edge; /* round(255 * edge density)           */
++} PelAnMaps;
++
++/* The sections of one analyze blob. The packer writes the map offset/size
++ * members of `var` and `band`; leave them zero. */
++typedef struct PelAnSections {
++    PelorusVarianceSection var;
++    PelorusBandingSection band;
++    PelorusComplexitySection cx;
++} PelAnSections;
++
++static inline float pel_an_clampf(float a, float lo, float hi)
++{
++    a = a > lo ? a : lo; /* NaN maps to lo, as FFMIN(FFMAX(a, lo), hi) does */
++    return a < hi ? a : hi;
++}
++
++static inline int pel_an_cell_ok(uint32_t cell)
++{
++    return cell >= PEL_AN_CELL_MIN && cell <= PEL_AN_CELL_MAX && (cell & (cell - 1u)) == 0u;
++}
++
++/* Workgroup edge for a cell: the cell itself, capped at PEL_AN_WG_MAX. */
++static inline uint32_t pel_an_workgroup(uint32_t cell)
++{
++    return cell < PEL_AN_WG_MAX ? cell : PEL_AN_WG_MAX;
++}
++
++/*
++ * The grid of a width x height frame at `cell`. PEL_OK; PEL_ERR_INVALID for
++ * NULL outputs, a zero dimension or a bad cell edge; PEL_ERR_RANGE for a grid
++ * above PEL_AN_MAX_CELLS or wider or taller than 65535 cells. On error both
++ * outputs are 0.
++ */
++static inline pel_result pel_an_grid(uint32_t width, uint32_t height, uint32_t cell,
++                                     uint16_t *out_cols, uint16_t *out_rows)
++{
++    uint32_t cols;
++    uint32_t rows;
++
++    if (!out_cols || !out_rows)
++        return PEL_ERR_INVALID;
++    *out_cols = 0;
++    *out_rows = 0;
++    if (width == 0u || height == 0u || !pel_an_cell_ok(cell))
++        return PEL_ERR_INVALID;
++    /* ceil without width + cell - 1, which could wrap near UINT32_MAX */
++    cols = width / cell + (width % cell != 0u ? 1u : 0u);
++    rows = height / cell + (height % cell != 0u ? 1u : 0u);
++    if (cols > UINT16_MAX || rows > UINT16_MAX ||
++        (uint64_t)cols * (uint64_t)rows > (uint64_t)PEL_AN_MAX_CELLS)
++        return PEL_ERR_RANGE;
++    *out_cols = (uint16_t)cols;
++    *out_rows = (uint16_t)rows;
++    return PEL_OK;
++}
++
++/*
++ * Fine (per-tile) banding score in [0, 1]. A tile bands, and variance AQ
++ * starves it, when it is not constant (var above PEL_AN_VAR_LO) yet not
++ * textured (var below flat_thr). The score is ~1 on the flattest real ramps
++ * and falls to 0 at flat_thr. A tile without even a minimal slope (grad below
++ * grad_lo / 4) is a flat colour with sensor-floor noise and is scaled down.
++ */
++static inline float pel_an_fine_score(const PelAnThresholds *t, float var, float grad)
++{
++    const float flat_thr = t->flat_thr;
++    float score;
++
++    if (var <= PEL_AN_VAR_LO || var >= flat_thr)
++        return 0.0f;
++    score = (flat_thr - var) / (flat_thr - PEL_AN_VAR_LO);
++    if (grad < t->grad_lo * 0.25f)
++        score *= pel_an_clampf(grad / (t->grad_lo * 0.25f), 0.0f, 1.0f);
++    return pel_an_clampf(score, 0.0f, 1.0f);
++}
++
++/*
++ * Coarse (inter-tile) banding score, the CAMBI multi-scale alignment
++ * (ADR-0133). A flat tile on a smooth ramp spanning many tiles bands visibly
++ * but its own variance stays under the floor. Detect it from the tile-mean
++ * field: a step of about 1 to 12 code values per tile is banding-prone, a
++ * larger step is an edge. The score grows with the step.
++ */
++static inline float pel_an_coarse_score(const PelAnThresholds *t, const PelAnTiles *tv, int tx,
++                                        int ty)
++{
++    const int gc = tv->cols;
++    const int idx = ty * gc + tx;
++    const float lo = 1.0f / 255.0f;  /* >= ~1 code per tile: a real step   */
++    const float hi = 12.0f / 255.0f; /* > ~12 codes per tile: an edge      */
++    float m;
++    float ml;
++    float mr;
++    float mu;
++    float md;
++    float gx;
++    float gy;
++    float g;
++
++    if (!tv->valid[idx] || (float)(tv->var[idx] / PEL_AN_GS) >= t->flat_thr)
++        return 0.0f; /* textured tiles mask banding */
++    m = (float)(tv->mean[idx] / PEL_AN_GS);
++    ml = tx > 0 ? (float)(tv->mean[idx - 1] / PEL_AN_GS) : m;
++    mr = tx < gc - 1 ? (float)(tv->mean[idx + 1] / PEL_AN_GS) : m;
++    mu = ty > 0 ? (float)(tv->mean[idx - gc] / PEL_AN_GS) : m;
++    md = ty < tv->rows - 1 ? (float)(tv->mean[idx + gc] / PEL_AN_GS) : m;
++    gx = (mr - ml) * 0.5f;
++    gy = (md - mu) * 0.5f;
++    g = sqrtf(gx * gx + gy * gy);
++    if (g < lo || g > hi)
++        return 0.0f;
++    return pel_an_clampf((g - lo) / (hi - lo), 0.0f, 1.0f);
++}
++
++/* Unit-interval value to a uint8 map element, round half up. */
++static inline uint8_t pel_an_u8(float v)
++{
++    return (uint8_t)(pel_an_clampf(v, 0.0f, 1.0f) * 255.0f + 0.5f);
++}
++
++/*
++ * Fill the per-cell maps from the tile records. score is max(fine, coarse), the
++ * value the ROI detector also uses; an invalid tile scores 0 and reports 0
++ * variance and edge. Bounded by cols * rows <= PEL_AN_MAX_CELLS (HISS-02).
++ */
++static inline void pel_an_cell_maps(const PelAnThresholds *t, const PelAnTiles *tv,
++                                    const PelAnMaps *out)
++{
++    const int n = tv->cols * tv->rows;
++    int i;
++
++    for (i = 0; i < n; i++) {
++        const int ok = tv->valid[i] != 0u;
++        const float var = ok ? (float)(tv->var[i] / PEL_AN_GS) : 0.0f;
++        const float grad = ok ? (float)(tv->grad[i] / PEL_AN_GS) : 0.0f;
++        const float fine = ok ? pel_an_fine_score(t, var, grad) : 0.0f;
++        const float coarse = pel_an_coarse_score(t, tv, i % tv->cols, i / tv->cols);
++
++        out->score[i] = fine > coarse ? fine : coarse;
++        out->band[i] = pel_an_u8(out->score[i]);
++        out->var[i] = pel_an_clampf(var, 0.0f, 1.0f);
++        out->edge[i] = ok ? pel_an_u8((float)(tv->edge[i] / PEL_AN_GS)) : 0u;
++    }
++}
++
++/* Blob-relative map offsets of one blob; band_off 0 means no maps. */
++typedef struct PelAnLayout {
++    uint32_t cells;
++    uint32_t band_off;
++    uint32_t var_off;
++    uint32_t edge_off;
++    uint32_t end; /* total_size of the finished blob */
++} PelAnLayout;
++
++/* Place the maps after packed sections that end at `end` (blob-relative); with_maps 0
++ * places none. cells <= PEL_AN_MAX_CELLS, so no offset can wrap. */
++static inline void pel_an_layout(uint32_t end, uint32_t cells, int with_maps, PelAnLayout *lay)
++{
++    memset(lay, 0, sizeof(*lay));
++    lay->cells = cells;
++    lay->end = end;
++    if (!with_maps)
++        return;
++    lay->band_off = PEL_AN_ALIGN8(end);
++    lay->var_off = PEL_AN_ALIGN8(lay->band_off + cells);
++    lay->edge_off = PEL_AN_ALIGN8(lay->var_off + cells * (uint32_t)sizeof(float));
++    lay->end = lay->edge_off + cells;
++}
++
++/* The section list in blob order: variance, banding, complexity. */
++static inline void pel_an_section_list(const PelAnSections *sec, PelorusPackSection list[3])
++{
++    list[0].id = PEL_SEC_VARIANCE;
++    list[0].data = &sec->var;
++    list[0].size = (uint32_t)sizeof(sec->var);
++    list[1].id = PEL_SEC_BANDING;
++    list[1].data = &sec->band;
++    list[1].size = (uint32_t)sizeof(sec->band);
++    list[2].id = PEL_SEC_COMPLEXITY;
++    list[2].data = &sec->cx;
++    list[2].size = (uint32_t)sizeof(sec->cx);
++}
++
++/* Grid, map set and variance values of one pack request. */
++static inline pel_result pel_an_check(const PelorusSideData *meta, const PelAnMaps *maps)
++{
++    const uint32_t cells = meta ? (uint32_t)meta->grid_cols * (uint32_t)meta->grid_rows : 0u;
++    uint32_t i;
++
++    if (!meta || meta->grid_cols == 0u || meta->grid_rows == 0u)
++        return PEL_ERR_INVALID;
++    if (cells > PEL_AN_MAX_CELLS)
++        return PEL_ERR_RANGE;
++    if (!maps)
++        return PEL_OK;
++    if (!maps->band || !maps->var || !maps->edge)
++        return PEL_ERR_INVALID; /* the three maps travel together */
++    for (i = 0; i < cells; i++) {
++        if (!(maps->var[i] >= 0.0f && maps->var[i] <= 1.0f))
++            return PEL_ERR_RANGE; /* also rejects NaN */
++    }
++    return PEL_OK;
++}
++
++/* ABI 1.4 headers pack into the caller's buffer without allocating. Older
++ * headers (the stack accepts libpelorus >= 0.2.0) pack with pel_blob_pack() and
++ * copy. The fast suite builds both paths: PEL_AN_FORCE_LEGACY_PACK selects the
++ * older one on 1.4 headers (meson test analyze-maps-legacy-pack). */
++#if PELORUS_ABI_MINOR >= 4 && !defined(PEL_AN_FORCE_LEGACY_PACK)
++#define PEL_AN_PACK_INTO 1
++#else
++#define PEL_AN_PACK_INTO 0
++#endif
++
++/* Byte length of the three packed sections (UUID included) without writing them. */
++static inline pel_result pel_an_sections_len(const PelorusSideData *meta,
++                                             const PelorusPackSection *list, size_t *len)
++{
++#if PEL_AN_PACK_INTO
++    pel_result rc = pel_blob_pack_into(meta, list, 3, NULL, 0, len);
++
++    return rc == PEL_ERR_RANGE ? PEL_OK : (rc == PEL_OK ? PEL_ERR_INVALID : rc);
++#else
++    uint8_t *blob = NULL;
++    pel_result rc = pel_blob_pack(meta, list, 3, &blob, len);
++
++    pel_blob_free(blob);
++    return rc;
++#endif
++}
++
++/* Write the three packed sections (`len` bytes, from pel_an_sections_len) to buf. */
++static inline pel_result pel_an_sections_write(const PelorusSideData *meta,
++                                               const PelorusPackSection *list, uint8_t *buf,
++                                               size_t len)
++{
++#if PEL_AN_PACK_INTO
++    size_t got = 0;
++    pel_result rc = pel_blob_pack_into(meta, list, 3, buf, len, &got);
++
++    return rc == PEL_OK && got != len ? PEL_ERR_ABI : rc;
++#else
++    uint8_t *blob = NULL;
++    size_t got = 0;
++    pel_result rc = pel_blob_pack(meta, list, 3, &blob, &got);
++
++    if (rc == PEL_OK && got != len)
++        rc = PEL_ERR_ABI;
++    if (rc == PEL_OK)
++        memcpy(buf, blob, len);
++    pel_blob_free(blob);
++    return rc;
++#endif
++}
++
++/* Blob length for this grid, with or without maps. */
++static inline pel_result pel_an_blob_size(const PelorusSideData *meta, int with_maps,
++                                          size_t *out_len)
++{
++    PelAnSections sec;
++    PelorusPackSection list[3];
++    PelAnLayout lay;
++    size_t len = 0;
++    pel_result rc;
++
++    if (!out_len)
++        return PEL_ERR_INVALID;
++    *out_len = 0;
++    rc = pel_an_check(meta, NULL);
++    if (rc != PEL_OK)
++        return rc;
++    memset(&sec, 0, sizeof(sec));
++    pel_an_section_list(&sec, list);
++    rc = pel_an_sections_len(meta, list, &len);
++    if (rc != PEL_OK)
++        return rc;
++    pel_an_layout((uint32_t)(len - PELORUS_SIDEDATA_UUID_LEN),
++                  (uint32_t)meta->grid_cols * (uint32_t)meta->grid_rows, with_maps, &lay);
++    *out_len = (size_t)PELORUS_SIDEDATA_UUID_LEN + lay.end;
++    return PEL_OK;
++}
++
++/* Copy one map to `off`, zeroing the alignment gap after `*end`, and advance `*end`. */
++static inline void pel_an_put(uint8_t *image, uint32_t *end, uint32_t off, const void *data,
++                              uint32_t size)
++{
++    memset(image + *end, 0, (size_t)(off - *end));
++    memcpy(image + off, data, size);
++    *end = off + size;
++}
++
++/* Point the packed variance and banding sections at the maps and append them. */
++static inline pel_result pel_an_write_maps(uint8_t *buf, size_t packed_len, const PelAnLayout *lay,
++                                           const PelAnMaps *maps)
++{
++    uint8_t *image = buf + PELORUS_SIDEDATA_UUID_LEN;
++    const void *pv = NULL;
++    const void *pb = NULL;
++    size_t got = 0;
++    uint32_t end;
++    PelorusVarianceSection var;
++    PelorusBandingSection band;
++    PelorusSideData hdr;
++
++    if (pel_blob_find_section(buf, packed_len, PEL_SEC_VARIANCE, sizeof(var), &pv, &got) !=
++            PEL_OK ||
++        got != sizeof(var) ||
++        pel_blob_find_section(buf, packed_len, PEL_SEC_BANDING, sizeof(band), &pb, &got) !=
++            PEL_OK ||
++        got != sizeof(band))
++        return PEL_ERR_ABI;
++    memcpy(&var, pv, sizeof(var));
++    memcpy(&band, pb, sizeof(band));
++    var.var_cell_offset = lay->var_off;
++    var.var_cell_size = lay->cells * (uint32_t)sizeof(float);
++    var.edge_cell_offset = lay->edge_off;
++    var.edge_cell_size = lay->cells;
++    band.cell_data_offset = lay->band_off;
++    band.cell_data_size = lay->cells;
++    memcpy(buf + ((const uint8_t *)pv - buf), &var, sizeof(var));
++    memcpy(buf + ((const uint8_t *)pb - buf), &band, sizeof(band));
++
++    end = (uint32_t)(packed_len - PELORUS_SIDEDATA_UUID_LEN);
++    pel_an_put(image, &end, lay->band_off, maps->band, lay->cells);
++    pel_an_put(image, &end, lay->var_off, maps->var, lay->cells * (uint32_t)sizeof(float));
++    pel_an_put(image, &end, lay->edge_off, maps->edge, lay->cells);
++    memcpy(&hdr, image, sizeof(hdr));
++    hdr.total_size = lay->end;
++    memcpy(image, &hdr, sizeof(hdr));
++    return PEL_OK;
++}
++
++/*
++ * Pack one analyze blob into buf: header from `meta` (its grid names the map
++ * grid), the variance, banding and complexity sections, then the three maps
++ * when `maps` is non-NULL. With maps NULL the blob is exactly pel_blob_pack()
++ * of the three sections. With ABI 1.4 headers nothing is allocated (the
++ * sections go through pel_blob_pack_into()); older headers pack with
++ * pel_blob_pack() and copy (PEL_AN_PACK_INTO). buf is caller-owned and reused
++ * (a pooled buffer).
++ *
++ * PEL_OK with *out_len set; PEL_ERR_INVALID for NULL buf / out_len / sec, a
++ * zero grid or a partial map set; PEL_ERR_RANGE for a grid above the bound, a
++ * variance element outside [0, 1] or NaN, or cap shorter than the blob (then
++ * *out_len holds the length needed and buf is unchanged); PEL_ERR_NOMEM from
++ * pel_blob_pack() on pre-1.4 headers.
++ */
++static inline pel_result pel_an_pack(const PelorusSideData *meta, const PelAnSections *sec,
++                                     const PelAnMaps *maps, uint8_t *buf, size_t cap,
++                                     size_t *out_len)
++{
++    PelorusPackSection list[3];
++    PelAnLayout lay;
++    size_t len = 0;
++    pel_result rc;
++
++    if (!out_len)
++        return PEL_ERR_INVALID;
++    *out_len = 0;
++    if (!buf || !sec)
++        return PEL_ERR_INVALID;
++    rc = pel_an_check(meta, maps);
++    if (rc != PEL_OK)
++        return rc;
++    pel_an_section_list(sec, list);
++    rc = pel_an_sections_len(meta, list, &len);
++    if (rc != PEL_OK)
++        return rc;
++    pel_an_layout((uint32_t)(len - PELORUS_SIDEDATA_UUID_LEN),
++                  (uint32_t)meta->grid_cols * (uint32_t)meta->grid_rows, maps != NULL, &lay);
++    if (cap < (size_t)PELORUS_SIDEDATA_UUID_LEN + lay.end) {
++        *out_len = (size_t)PELORUS_SIDEDATA_UUID_LEN + lay.end;
++        return PEL_ERR_RANGE; /* never a partial blob: buf is untouched */
++    }
++    rc = pel_an_sections_write(meta, list, buf, len);
++    if (rc == PEL_OK && maps)
++        rc = pel_an_write_maps(buf, len, &lay, maps);
++    if (rc != PEL_OK)
++        return rc;
++    *out_len = (size_t)PELORUS_SIDEDATA_UUID_LEN + lay.end;
++    return PEL_OK;
++}
++
++#endif /* AVFILTER_PELORUS_ANALYZE_MAPS_H */
 diff --git a/libavfilter/vf_pelorus_analyze_vulkan.c b/libavfilter/vf_pelorus_analyze_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1ce974a995
+index 0000000000000000000000000000000000000000..dd8a962c33b69e966fbea22ee7290051ceb5bf74
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_analyze_vulkan.c
 @@ -0,0 +1,861 @@
@@ -126,11 +616,14 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 + * data is added. Readback follows the vf_scdet_vulkan pattern. See
 + * <pelorus/interop.h> and docs/metrics/analyze.md.
 + *
-+ * The GPU reduction is *per tile* (one 32x32 compute workgroup == one tile): each
-+ * tile's luma mean / variance / edge-density / low-amplitude-gradient is written
-+ * to a position-preserving SSBO indexed by (tile_y * grid_cols + tile_x). The
-+ * frame-scalar PEL_SEC_* summaries are then derived host-side by summing over all
-+ * tiles. With `roi=1` the same per-tile signals drive an *auto-detected*
++ * The GPU reduction is *per cell* (one compute workgroup == one `cell` x `cell`
++ * tile, 32 by default): each cell's luma mean / variance / edge-density /
++ * low-amplitude-gradient is written to a position-preserving SSBO indexed by
++ * (tile_y * grid_cols + tile_x). The frame-scalar PEL_SEC_* summaries are derived
++ * host-side by summing over all cells, and with `maps=1` (default) the per-cell
++ * banding / variance / edge values ride the same blob as the maps the ABI 1.0
++ * sections already point at (issue #219, ADR-0177, pelorus_analyze_maps.h). With
++ * `roi=1` the same per-cell signals drive an *auto-detected*
 + * banding-prone ROI map emitted as AV_FRAME_DATA_REGIONS_OF_INTEREST — a negative
 + * qoffset on flat-but-not-constant tiles that variance-AQ starves (ADR-0114
 + * Tier 0; bench-results.md v0.4 proved the concept at −36% banding iso-bitrate
@@ -145,6 +638,7 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
 +#include "libavutil/rational.h"
++#include "pelorus_analyze_maps.h"
 +#include "pelorus_sidedata.h"
 +#include "pelorus_vulkan_sample.h"
 +#include "vulkan_filter.h"
@@ -157,21 +651,8 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +
 +#include <pelorus/interop.h>
 +
-+/* One 32x32 compute workgroup reduces one tile. */
-+#define PEL_TILE 32
-+
-+/* Per-tile reduction record written by the shader (std430, all uint fixed
-+ * point). Index = tile_y * grid_cols + tile_x — position preserving, unlike the
-+ * old hashed 16-slice scheme that only supported a frame scalar. */
-+typedef struct PelorusTile {
-+    uint32_t var;   /* tile luma variance         * GS  ([0, ~0.25] range)     */
-+    uint32_t edge;  /* tile mean edge density     * GS  ([0, 1])               */
-+    uint32_t grad;  /* tile low-amplitude gradient * GS  (flat-but-not-const)  */
-+    uint32_t valid; /* 1 if the tile had any in-bounds pixels                  */
-+} PelorusTile;
-+
 +/* Fixed-point scale shared by shader writes and host reads. */
-+#define PEL_GS 1000000.0
++#define PEL_GS PEL_AN_GS
 +
 +/* Max ROI rectangles we coalesce banding tiles into (keeps side data compact;
 + * one AVRegionOfInterest is 24 bytes). */
@@ -194,9 +675,21 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +    double grad_lo;      /* min tile gradient to count as a real gradient    */
 +    double grad_hi;      /* gradient above which a tile is "textured", score 0 */
 +
-+    /* Allocated lazily at first frame from the tile grid dimensions. */
++    int cell; /* cell edge, luma pixels: a power of two in 8..64 */
++    int maps; /* attach the per-cell maps (ADR-0177)               */
++
++    /* Grid and per-grid buffers, sized by analyze_size_grid() at link setup and
++     * again only if the frame size changes: nothing is allocated per frame for
++     * the maps or the blob (HISS-03). */
++    int width;
++    int height;
 +    int grid_cols;
 +    int grid_rows;
++    PelAnMaps cells;              /* per-cell score + the three maps       */
++    AVRegionOfInterest *roi_runs; /* coalesce_roi scratch, one run per cell */
++    AVRegionOfInterest roi_detected[PEL_MAX_ROI];
++    AVBufferPool *sd_pool; /* side-data blobs of sd_len bytes */
++    size_t sd_len;
 +
 +    /* Per-frame complexity scalar (ADR-0132), EMA-smoothed across frames and
 +     * reset on a scene cut. complexity_seen guards the first frame. */
@@ -211,6 +704,45 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +extern const unsigned char ff_pelorus_analyze_comp_spv_data[];
 +extern const unsigned int ff_pelorus_analyze_comp_spv_len;
 +
++/* The push block of vulkan/pelorus_analyze.comp.glsl, byte for byte (std430,
++ * 2 * int + 2 * float = 16 bytes). */
++typedef struct PelorusAnalyzePush {
++    int32_t grid_cols;
++    int32_t ntiles;
++    float grad_lo;
++    float sample_scale;
++} PelorusAnalyzePush;
++
++/* Descriptor set in the order of the shader's bindings, then the push block. */
++static void analyze_shader_layout(FFVulkanContext *vkctx, FFVulkanShader *shd, int planes)
++{
++    FFVulkanDescriptorSetBinding desc[] = {
++        {
++            .name = "input_images",
++            .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++            .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
++            .mem_quali = "readonly",
++            .dimensions = 2,
++            .elems = planes,
++            .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++        },
++        {
++            .name = "tile_buffer",
++            .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
++            .mem_layout = "std430",
++            .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++            /* One runtime-sized array (GLSL allows only one, and last);
++             * struct-of-arrays by field: tile[k*ntiles + idx], k in 0..4
++             * for var/edge/grad/valid/mean. Host reads the five contiguous
++             * spans (mean feeds the coarse inter-tile banding scale). */
++            .buf_content = "uint tile[];",
++        },
++    };
++
++    ff_vk_shader_add_descriptor_set(vkctx, shd, desc, 2, 0);
++    ff_vk_shader_add_push_const(shd, 0, sizeof(PelorusAnalyzePush), VK_SHADER_STAGE_COMPUTE_BIT);
++}
++
 +static av_cold int init_filter(AVFilterContext *ctx)
 +{
 +    int err = 0;
@@ -218,12 +750,12 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +    FFVulkanContext *vkctx = &s->vkctx;
 +    FFVulkanShader *shd = &s->shd;
 +    const int planes = av_pix_fmt_count_planes(vkctx->input_format);
++    const uint32_t wg = pel_an_workgroup((uint32_t)s->cell);
 +
 +    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
 +    if (!s->qf) {
 +        av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
-+        err = AVERROR(ENOTSUP);
-+        goto fail;
++        return AVERROR(ENOTSUP);
 +    }
 +
 +    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
@@ -231,40 +763,13 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +     * array to a fixed one-element SPIR-V array, diverging from the FFmpeg
 +     * descriptor layout below on multi-plane frames. Keep the luma index as a
 +     * specialization constant so the runtime descriptor-array contract is
-+     * retained. */
-+    SPEC_LIST_CREATE(sl, 1, sizeof(uint32_t))
++     * retained. Constant 1 is the per-invocation span: one wg x wg workgroup
++     * covers one cell x cell cell. */
++    SPEC_LIST_CREATE(sl, 2, 2 * sizeof(uint32_t))
 +    SPEC_LIST_ADD(sl, 0, 32, 0u);
-+    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){PEL_TILE, PEL_TILE, 1}, 0);
-+
-+    {
-+        FFVulkanDescriptorSetBinding desc[] = {
-+            {
-+                .name = "input_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "readonly",
-+                .dimensions = 2,
-+                .elems = planes,
-+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-+            },
-+            {
-+                .name = "tile_buffer",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-+                .mem_layout = "std430",
-+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-+                /* One runtime-sized array (GLSL allows only one, and last);
-+                 * struct-of-arrays by field: tile[k*ntiles + idx], k in 0..4
-+                 * for var/edge/grad/valid/mean. Host reads the five contiguous
-+                 * spans (mean feeds the coarse inter-tile banding scale). */
-+                .buf_content = "uint tile[];",
-+            },
-+        };
-+        ff_vk_shader_add_descriptor_set(vkctx, shd, desc, 2, 0);
-+    }
-+
-+    /* Mirrors the pushConstants block in vulkan/pelorus_analyze.comp.glsl. */
-+    ff_vk_shader_add_push_const(shd, 0, 2 * sizeof(int) + 2 * sizeof(float),
-+                                VK_SHADER_STAGE_COMPUTE_BIT);
++    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->cell / wg);
++    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){wg, wg, 1}, 0);
++    analyze_shader_layout(vkctx, shd, planes);
 +
 +    RET(ff_vk_shader_link(vkctx, shd, ff_pelorus_analyze_comp_spv_data,
 +                          ff_pelorus_analyze_comp_spv_len, "main"));
@@ -276,86 +781,87 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +    return err;
 +}
 +
-+static void pel_sd_free(void *opaque, uint8_t *data)
++/* Release the grid-sized buffers and the side-data pool. Blobs still riding
++ * frames keep the pool alive until they are freed (av_buffer_pool_uninit). */
++static void analyze_free_grid(PelorusAnalyzeVulkanContext *s)
 +{
-+    pel_blob_free(data);
++    av_freep(&s->cells.score);
++    av_freep(&s->cells.band);
++    av_freep(&s->cells.var);
++    av_freep(&s->cells.edge);
++    av_freep(&s->roi_runs);
++    av_buffer_pool_uninit(&s->sd_pool);
++    s->sd_len = 0;
++    s->width = 0;
++    s->height = 0;
++    s->grid_cols = 0;
++    s->grid_rows = 0;
 +}
 +
-+/* Per-tile accumulators read back from the SSBO, split into four uint arrays
-+ * matching the std430 flexible-array layout (t_var[], t_edge[], t_grad[],
-+ * t_valid[]). */
-+typedef struct PelorusTileView {
-+    const uint32_t *t_var;
-+    const uint32_t *t_edge;
-+    const uint32_t *t_grad;
-+    const uint32_t *t_valid;
-+    const uint32_t *t_mean; /* tile-mean luma * GS — coarse inter-tile scale */
-+    int ntiles;
-+    int grid_cols; /* for the host coarse (inter-tile) banding neighbourhood */
-+    int grid_rows;
-+} PelorusTileView;
-+
-+/* Per-tile banding-prone score in [0,1]. A tile bands (and is starved by
-+ * variance-AQ) when it is FLAT (low variance) AND carries a real but
-+ * low-amplitude gradient (flat-but-not-constant). Textured tiles -> ~0. */
-+static float tile_band_score(const PelorusAnalyzeVulkanContext *s, float var, float grad)
++/* Size the cell grid, the per-cell buffers and the side-data pool for a frame
++ * size. Runs at link setup and again only when the frame size changes, so the
++ * per-frame path allocates nothing for the maps or the blob (HISS-03). A grid
++ * above PEL_AN_MAX_CELLS (or an invalid `cell`) is refused here. */
++static int analyze_size_grid(AVFilterContext *ctx, int width, int height)
 +{
-+    /* Smooth-ramp banding detector by VARIANCE band. A tile bands precisely
-+     * when it is NOT constant (var above a small floor — a dead-flat colour
-+     * has nothing to band) yet NOT textured (var below flat_thr — high detail
-+     * masks quantisation and the encoder's own AQ already over-bits it). Unlike
-+     * a gradient window, the variance of a smooth ramp is UNIFORM across the
-+     * whole gradient, so every gradient tile scores ~1 (full coverage); the
-+     * grad signal only gates dead-constant tiles in (rare ties). */
-+    const float var_lo = 2e-6f;
-+    float flat_thr = (float)s->flat_thr;
-+    float score;
++    PelorusAnalyzeVulkanContext *s = ctx->priv;
++    PelorusSideData meta;
++    uint16_t cols = 0, rows = 0;
++    size_t cells;
++    pel_result rc;
 +
-+    if (var <= var_lo || var >= flat_thr)
-+        return 0.0f;
-+    /* ~1 just above the constant floor, ramping to 0 as var approaches the
-+     * texture threshold — strongest on the flattest real ramps. */
-+    score = (flat_thr - var) / (flat_thr - var_lo);
-+    /* A truly dead-flat tile (no gradient at all) is constant, not a ramp:
-+     * require a minimal slope so a flat colour block with sensor-floor noise
-+     * doesn't get bits it cannot use. */
-+    if (grad < (float)s->grad_lo * 0.25f)
-+        score *= av_clipf(grad / ((float)s->grad_lo * 0.25f), 0.0f, 1.0f);
-+    return av_clipf(score, 0.0f, 1.0f);
++    if (width == s->width && height == s->height && s->sd_pool)
++        return 0;
++    analyze_free_grid(s);
++    rc = pel_an_grid((uint32_t)FFMAX(width, 0), (uint32_t)FFMAX(height, 0), (uint32_t)s->cell,
++                     &cols, &rows);
++    if (rc == PEL_ERR_RANGE) {
++        av_log(ctx, AV_LOG_ERROR,
++               "%dx%d at cell=%d exceeds the grid limit of %u cells and 65535 per side; "
++               "use a larger cell\n",
++               width, height, s->cell, PEL_AN_MAX_CELLS);
++        return AVERROR(ERANGE);
++    }
++    if (rc != PEL_OK) {
++        av_log(ctx, AV_LOG_ERROR, "cell=%d is not a power of two in %u..%u\n", s->cell,
++               PEL_AN_CELL_MIN, PEL_AN_CELL_MAX);
++        return AVERROR(EINVAL);
++    }
++    cells = (size_t)cols * rows;
++    s->cells.score = av_calloc(cells, sizeof(*s->cells.score));
++    s->cells.band = av_calloc(cells, sizeof(*s->cells.band));
++    s->cells.var = av_calloc(cells, sizeof(*s->cells.var));
++    s->cells.edge = av_calloc(cells, sizeof(*s->cells.edge));
++    if (s->roi) /* coalesce_roi() runs only with roi=1 */
++        s->roi_runs = av_calloc(cells, sizeof(*s->roi_runs));
++    memset(&meta, 0, sizeof(meta));
++    meta.grid_cols = cols;
++    meta.grid_rows = rows;
++    rc = pel_an_blob_size(&meta, s->maps, &s->sd_len);
++    if (rc == PEL_OK)
++        s->sd_pool = av_buffer_pool_init(s->sd_len, NULL);
++    if (!s->cells.score || !s->cells.band || !s->cells.var || !s->cells.edge ||
++        (s->roi && !s->roi_runs) || !s->sd_pool) {
++        analyze_free_grid(s);
++        return rc == PEL_OK || rc == PEL_ERR_NOMEM ? AVERROR(ENOMEM) : AVERROR(EINVAL);
++    }
++    s->width = width;
++    s->height = height;
++    s->grid_cols = cols;
++    s->grid_rows = rows;
++    return 0;
 +}
 +
-+/* Coarse (inter-tile) banding score — the CAMBI multi-scale alignment (ADR-0132).
-+ * A tile whose OWN variance is below the per-tile floor can still sit on a smooth
-+ * low-amplitude luma ramp spanning many tiles (sky / shadow gradients), which
-+ * bands visibly but is invisible to a single 32×32-tile detector. Detect it from
-+ * the tile-MEAN field: a flat tile carrying a small but non-zero inter-tile mean
-+ * gradient (≈1..12 code-values per tile) is banding-prone; a larger step is a
-+ * real edge, not banding. The score is contrast-weighted by the step amplitude. */
-+static float tile_coarse_band_score(const PelorusAnalyzeVulkanContext *s, const PelorusTileView *tv,
-+                                    int tx, int ty)
++static int analyze_vulkan_config_input(AVFilterLink *inlink)
 +{
-+    int gc = tv->grid_cols, gr = tv->grid_rows;
-+    int idx = ty * gc + tx;
-+    float m, ml, mr, mu, md, gx, gy, g;
-+    const float lo = 1.0f / 255.0f;  /* >= ~1 code/tile: a real step           */
-+    const float hi = 12.0f / 255.0f; /* > ~12 codes/tile: an edge, not banding */
++    int err = ff_vk_filter_config_input(inlink);
 +
-+    if (!tv->t_valid[idx] || (float)(tv->t_var[idx] / PEL_GS) >= (float)s->flat_thr)
-+        return 0.0f; /* textured tiles mask banding; the encoder over-bits them */
-+    m = (float)(tv->t_mean[idx] / PEL_GS);
-+    ml = tx > 0 ? (float)(tv->t_mean[idx - 1] / PEL_GS) : m;
-+    mr = tx < gc - 1 ? (float)(tv->t_mean[idx + 1] / PEL_GS) : m;
-+    mu = ty > 0 ? (float)(tv->t_mean[idx - gc] / PEL_GS) : m;
-+    md = ty < gr - 1 ? (float)(tv->t_mean[idx + gc] / PEL_GS) : m;
-+    gx = (mr - ml) * 0.5f;
-+    gy = (md - mu) * 0.5f;
-+    g = sqrtf(gx * gx + gy * gy); /* inter-tile mean gradient (normalized luma) */
-+    if (g < lo || g > hi)
-+        return 0.0f;
-+    return av_clipf((g - lo) / (hi - lo), 0.0f, 1.0f);
++    if (err < 0)
++        return err;
++    return analyze_size_grid(inlink->dst, inlink->w, inlink->h);
 +}
 +
-+/* Map a per-tile banding score to an AVRational qoffset (negative => more bits /
++/* Map a per-cell banding score to an AVRational qoffset (negative => more bits /
 + * lower QP). Magnitude = score * roi_strength, clamped to [-roi_strength, 0].
 + * Encoded as num/1000 so libx265's qoffset.num/qoffset.den read is exact. */
 +static AVRational score_to_qoffset(const PelorusAnalyzeVulkanContext *s, float score)
@@ -366,7 +872,7 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +}
 +
 +/* qsort comparator: order coalesced runs by descending banding strength. A
-+ * stronger banding tile gets a more-negative qoffset.num (down to -1000), so the
++ * stronger banding cell gets a more-negative qoffset.num (down to -1000), so the
 + * strongest run is the most negative one — sort ascending by qoffset.num. */
 +static int roi_strength_cmp(const void *pa, const void *pb)
 +{
@@ -379,60 +885,22 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +    return 0;
 +}
 +
-+/* Greedy row-run coalescing: scan tiles row-major, merge horizontally adjacent
-+ * banding tiles of the same qoffset bucket into one rectangle. ALL runs are
-+ * collected first, then ranked by banding strength (|qoffset|) and the top
-+ * `max` are kept (drop the lowest-score remainder once full). Per-tile
-+ * rectangles fall out naturally when neighbours differ. Writes into out[] and
-+ * returns the rectangle count. */
++/* Greedy row-run coalescing: scan cells row-major, merge horizontally adjacent
++ * banding cells of the same qoffset bucket into one rectangle. ALL runs are
++ * collected into s->roi_runs (at most one per cell, sized with the grid), then
++ * ranked by banding strength (|qoffset|) and the top `max` are kept (drop the
++ * lowest-score remainder once full). Per-cell rectangles fall out naturally when
++ * neighbours differ. Writes into out[] and returns the rectangle count. */
 +static int coalesce_roi(const PelorusAnalyzeVulkanContext *s, const float *score,
 +                        AVRegionOfInterest *out, int max)
 +{
-+    int cols = s->grid_cols, rows = s->grid_rows;
++    const int cols = s->grid_cols, rows = s->grid_rows, cell = s->cell;
++    AVRegionOfInterest *runs = s->roi_runs;
 +    int n = 0;
 +    int ty, tx;
-+    AVRegionOfInterest *runs;
-+    /* Worst case: every tile is a singleton run (no horizontal merge). */
-+    size_t cap = (size_t)cols * (size_t)rows;
 +
 +    if (max <= 0)
 +        return 0;
-+
-+    runs = av_calloc(cap > 0 ? cap : 1, sizeof(*runs));
-+    if (!runs) {
-+        /* Fallback: positional emission (the prior behaviour) so a transient
-+         * alloc failure still yields a usable, bounded ROI set rather than none. */
-+        for (ty = 0; ty < rows && n < max; ty++) {
-+            tx = 0;
-+            while (tx < cols && n < max) {
-+                float sc = score[ty * cols + tx];
-+                int q0, run, x;
-+                if (sc <= 0.0f) {
-+                    tx++;
-+                    continue;
-+                }
-+                q0 = score_to_qoffset(s, sc).num;
-+                run = 1;
-+                for (x = tx + 1; x < cols; x++) {
-+                    float scn = score[ty * cols + x];
-+                    if (scn <= 0.0f || score_to_qoffset(s, scn).num != q0)
-+                        break;
-+                    run++;
-+                }
-+                out[n] = (AVRegionOfInterest){
-+                    .self_size = sizeof(AVRegionOfInterest),
-+                    .top = ty * PEL_TILE,
-+                    .bottom = FFMIN((ty + 1) * PEL_TILE, s->vkctx.output_height),
-+                    .left = tx * PEL_TILE,
-+                    .right = FFMIN((tx + run) * PEL_TILE, s->vkctx.output_width),
-+                    .qoffset = av_make_q(q0, 1000),
-+                };
-+                n++;
-+                tx += run;
-+            }
-+        }
-+        return n;
-+    }
 +
 +    /* Collect every coalesced run (uncapped). */
 +    for (ty = 0; ty < rows; ty++) {
@@ -455,10 +923,10 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +            }
 +            runs[n] = (AVRegionOfInterest){
 +                .self_size = sizeof(AVRegionOfInterest),
-+                .top = ty * PEL_TILE,
-+                .bottom = FFMIN((ty + 1) * PEL_TILE, s->vkctx.output_height),
-+                .left = tx * PEL_TILE,
-+                .right = FFMIN((tx + run) * PEL_TILE, s->vkctx.output_width),
++                .top = ty * cell,
++                .bottom = FFMIN((ty + 1) * cell, s->vkctx.output_height),
++                .left = tx * cell,
++                .right = FFMIN((tx + run) * cell, s->vkctx.output_width),
 +                .qoffset = av_make_q(q0, 1000),
 +            };
 +            n++;
@@ -472,69 +940,42 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +    if (n > max)
 +        n = max;
 +    memcpy(out, runs, (size_t)n * sizeof(*out));
-+    av_free(runs);
 +    return n;
 +}
 +
-+/* Auto-detect banding-prone tiles and attach them as the standard
-+ * AV_FRAME_DATA_REGIONS_OF_INTEREST side data (ADR-0114 Tier 0). Mirrors
-+ * vf_addroi's attach mechanics: one buffer, nb_regions*sizeof(AVRegionOfInterest),
-+ * each region's self_size set. Appends to any pre-existing ROI side data. */
-+static int attach_roi(PelorusAnalyzeVulkanContext *s, AVFrame *frame, const PelorusTileView *tv)
++/* Attach the banding-prone cells as the standard AV_FRAME_DATA_REGIONS_OF_INTEREST
++ * side data (ADR-0114 Tier 0). The per-cell score is max(fine, coarse) from
++ * pel_an_cell_maps(): a cell flagged by EITHER the fine (per-cell) or the coarse
++ * (inter-cell mean ramp) scale is banding-prone (CAMBI multi-scale, ADR-0133).
++ * Mirrors vf_addroi's attach mechanics: one buffer,
++ * nb_regions*sizeof(AVRegionOfInterest), each region's self_size set. Appends to
++ * any pre-existing ROI side data. */
++static int attach_roi(PelorusAnalyzeVulkanContext *s, AVFrame *frame)
 +{
-+    AVRegionOfInterest *detected;
 +    AVRegionOfInterest *roi;
 +    AVFrameSideData *sd_old, *sd_new;
 +    AVBufferRef *roi_ref;
-+    float *score;
 +    int ndet, nb_old = 0, nb_total, i;
 +    uint32_t old_size = sizeof(AVRegionOfInterest);
 +
-+    score = av_calloc((size_t)tv->ntiles, sizeof(*score));
-+    detected = av_calloc(PEL_MAX_ROI, sizeof(*detected));
-+    if (!score || !detected) {
-+        av_free(score);
-+        av_free(detected);
-+        return AVERROR(ENOMEM);
-+    }
-+
-+    for (i = 0; i < tv->ntiles; i++) {
-+        float var = tv->t_valid[i] ? (float)(tv->t_var[i] / PEL_GS) : 0.0f;
-+        float grad = tv->t_valid[i] ? (float)(tv->t_grad[i] / PEL_GS) : 0.0f;
-+        float fine = tv->t_valid[i] ? tile_band_score(s, var, grad) : 0.0f;
-+        /* CAMBI multi-scale: a tile flagged by EITHER the fine (per-tile) or the
-+         * coarse (inter-tile mean ramp) scale is banding-prone. The coarse scale
-+         * catches shallow gradients whose per-tile variance is below the floor. */
-+        float coarse = tile_coarse_band_score(s, tv, i % tv->grid_cols, i / tv->grid_cols);
-+        score[i] = FFMAX(fine, coarse);
-+    }
-+
-+    ndet = coalesce_roi(s, score, detected, PEL_MAX_ROI);
-+    av_free(score);
-+
-+    if (ndet == 0) {
-+        av_free(detected);
-+        return 0; /* no banding-prone tiles — leave the frame to the encoder */
-+    }
++    ndet = coalesce_roi(s, s->cells.score, s->roi_detected, PEL_MAX_ROI);
++    if (ndet == 0)
++        return 0; /* no banding-prone cells — leave the frame to the encoder */
 +
 +    /* Append to existing ROI side data (e.g. a manual vf_addroi upstream). */
 +    sd_old = av_frame_get_side_data(frame, AV_FRAME_DATA_REGIONS_OF_INTEREST);
 +    if (sd_old) {
 +        const AVRegionOfInterest *o = (const AVRegionOfInterest *)sd_old->data;
 +        old_size = o->self_size;
-+        if (!old_size || sd_old->size % old_size != 0) {
-+            av_free(detected);
++        if (!old_size || sd_old->size % old_size != 0)
 +            return AVERROR(EINVAL);
-+        }
 +        nb_old = sd_old->size / old_size;
 +    }
 +
 +    nb_total = nb_old + ndet;
 +    roi_ref = av_buffer_alloc(sizeof(AVRegionOfInterest) * (size_t)nb_total);
-+    if (!roi_ref) {
-+        av_free(detected);
++    if (!roi_ref)
 +        return AVERROR(ENOMEM);
-+    }
 +    roi = (AVRegionOfInterest *)roi_ref->data;
 +
 +    /* Copy the pre-existing regions first (they take precedence on overlap:
@@ -552,8 +993,7 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +        };
 +    }
 +    for (i = 0; i < ndet; i++)
-+        roi[nb_old + i] = detected[i];
-+    av_free(detected);
++        roi[nb_old + i] = s->roi_detected[i];
 +
 +    if (sd_old)
 +        av_frame_remove_side_data(frame, AV_FRAME_DATA_REGIONS_OF_INTEREST);
@@ -566,9 +1006,6 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +    return 0;
 +}
 +
-+/* Derive the frame summaries from the per-tile records and attach the measured
-+ * PEL_SEC_VARIANCE + PEL_SEC_BANDING sections to the frame. Summing over all
-+ * tiles reproduces the same frame scalars the old hashed-slice scheme emitted. */
 +/* Emit a per-frame scalar as FFmpeg frame metadata (the vf_scdet idiom). Lets a
 + * host-side pass read analyze's signals via `ffprobe -show_frames` or the
 + * `metadata=print` filter without decoding the interop blob — the extraction
@@ -580,37 +1017,100 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +    av_dict_set(&frame->metadata, key, buf, 0);
 +}
 +
-+static int attach_stats(PelorusAnalyzeVulkanContext *s, AVFrame *frame, const PelorusTileView *tv)
++/* Frame scalars over the valid cells: mean variance, mean edge density, and the
++ * share of flat (banding-prone) cells. Summing over all cells reproduces the
++ * frame scalars the old hashed-slice scheme emitted. Returns the valid-cell
++ * count; 0 leaves the outputs untouched. */
++static uint64_t frame_scalars(const PelorusAnalyzeVulkanContext *s, const PelAnTiles *tv,
++                              float *gvar, float *gedge, float *flat_frac)
 +{
-+    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
-+    PelorusSideData meta;
-+    PelorusVarianceSection var;
-+    PelorusBandingSection band;
-+    PelorusComplexitySection cx;
-+    PelorusPackSection secs[3];
-+    uint8_t *blob = NULL;
-+    size_t len = 0;
-+    AVBufferRef *buf;
++    const int ntiles = tv->cols * tv->rows;
 +    double var_sum = 0.0, edge_sum = 0.0;
 +    uint64_t flat = 0, total = 0;
-+    float gvar, gedge, flat_frac;
 +    int i;
 +
-+    for (i = 0; i < tv->ntiles; i++) {
-+        if (!tv->t_valid[i])
++    for (i = 0; i < ntiles; i++) {
++        if (!tv->valid[i])
 +            continue;
-+        var_sum += tv->t_var[i];
-+        edge_sum += tv->t_edge[i];
-+        if ((double)(tv->t_var[i] / PEL_GS) < s->flat_thr)
++        var_sum += tv->var[i];
++        edge_sum += tv->edge[i];
++        if ((double)(tv->var[i] / PEL_GS) < s->flat_thr)
 +            flat++;
 +        total++;
 +    }
 +    if (total == 0)
-+        return 0; /* nothing to report (degenerate frame) */
++        return 0;
++    *gvar = (float)(var_sum / PEL_GS / (double)total);
++    *gedge = (float)(edge_sum / PEL_GS / (double)total);
++    *flat_frac = (float)((double)flat / (double)total);
++    return total;
++}
 +
-+    gvar = (float)(var_sum / PEL_GS / (double)total);
-+    gedge = (float)(edge_sum / PEL_GS / (double)total);
-+    flat_frac = (float)((double)flat / (double)total);
++/* Per-frame complexity (ADR-0132): a normalized texture energy from the
++ * variance + edge aggregates, folding in motion when an upstream pelorus_mc
++ * attached PEL_SEC_MOTION, EMA-smoothed and reset on a scene cut. The per-shot
++ * CRF steering maps this to a qoffset (autotune-learned). Also mirrors the
++ * per-frame scalars as frame metadata (host-readable). */
++static void complexity_section(PelorusAnalyzeVulkanContext *s, AVFrame *frame, float gvar,
++                               float gedge, float flat_frac, PelorusComplexitySection *cx)
++{
++    float texture = av_clipf(0.5f * FFMIN(gvar / 0.05f, 1.0f) + 0.5f * gedge, 0.0f, 1.0f);
++    float motion = 0.0f;
++    int scene_cut = 0;
++    const void *mp = NULL;
++    size_t msz = 0;
++    float craw, cema;
++
++    /* Newest Pelorus blob carrying PEL_SEC_MOTION (every producer appends its
++     * own entry); msz is the producer/consumer minimum (R4), so each field is
++     * read only when an older, shorter producer section still covers it. */
++    if (pelorus_sd_find_section(frame, PEL_SEC_MOTION, sizeof(PelorusMotionSection), &mp, &msz)) {
++        const PelorusMotionSection *mo = mp;
++        if (PEL_SD_FIELD_OK(msz, PelorusMotionSection, motion_magnitude_mean))
++            motion = av_clipf(mo->motion_magnitude_mean / 8.0f, 0.0f, 1.0f);
++        if (PEL_SD_FIELD_OK(msz, PelorusMotionSection, has_scene_cut))
++            scene_cut = mo->has_scene_cut ? 1 : 0;
++    }
++
++    craw = av_clipf(0.7f * texture + 0.3f * motion, 0.0f, 1.0f);
++    if (!s->complexity_seen || scene_cut)
++        cema = craw; /* reset on first frame / scene cut */
++    else
++        cema = 0.3f * craw + 0.7f * s->complexity_ema;
++    s->complexity_ema = cema;
++    s->complexity_seen = 1;
++
++    memset(cx, 0, sizeof(*cx));
++    cx->complexity = cema;
++    cx->texture_energy = texture;
++    cx->motion_component = motion;
++    cx->has_scene_cut = (uint8_t)scene_cut;
++
++    pel_set_meta_f(frame, "lavfi.pelorus.complexity", cema);
++    pel_set_meta_f(frame, "lavfi.pelorus.texture", texture);
++    pel_set_meta_f(frame, "lavfi.pelorus.motion", motion);
++    pel_set_meta_f(frame, "lavfi.pelorus.variance", gvar);
++    pel_set_meta_f(frame, "lavfi.pelorus.edge", gedge);
++    pel_set_meta_f(frame, "lavfi.pelorus.banding", flat_frac);
++    av_dict_set(&frame->metadata, "lavfi.pelorus.scene_cut", scene_cut ? "1" : "0", 0);
++}
++
++/* Derive the frame summaries from the per-cell records and attach the measured
++ * PEL_SEC_VARIANCE + PEL_SEC_BANDING (+ PEL_SEC_COMPLEXITY) sections, with the
++ * per-cell maps unless maps=0, as one blob from the grid-sized pool. */
++static int attach_stats(AVFilterContext *ctx, AVFrame *frame, const PelAnTiles *tv)
++{
++    PelorusAnalyzeVulkanContext *s = ctx->priv;
++    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
++    PelorusSideData meta;
++    PelAnSections sec;
++    AVBufferRef *buf;
++    size_t len = 0;
++    float gvar = 0.0f, gedge = 0.0f, flat_frac = 0.0f;
++    pel_result rc;
++
++    if (frame_scalars(s, tv, &gvar, &gedge, &flat_frac) == 0)
++        return 0; /* nothing to report (degenerate frame) */
 +
 +    memset(&meta, 0, sizeof(meta));
 +    meta.frame_pts = (uint64_t)frame->pts;
@@ -622,81 +1122,24 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +    meta.grid_rows = (uint16_t)s->grid_rows;
 +    meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'A');
 +
-+    memset(&var, 0, sizeof(var));
-+    var.global_variance = gvar;
-+    var.edge_density = gedge;
-+    var.texture_energy = gedge; /* edge density is the v0.1 texture proxy */
++    memset(&sec, 0, sizeof(sec));
++    sec.var.global_variance = gvar;
++    sec.var.edge_density = gedge;
++    sec.var.texture_energy = gedge; /* edge density is the v0.1 texture proxy */
++    sec.band.flat_area_fraction = flat_frac;
++    sec.band.global_banding_risk = flat_frac; /* coarse: low-variance area share */
++    sec.band.contour_strength_mean = gvar;
++    complexity_section(s, frame, gvar, gedge, flat_frac, &sec.cx);
 +
-+    memset(&band, 0, sizeof(band));
-+    band.flat_area_fraction = flat_frac;
-+    band.global_banding_risk = flat_frac; /* coarse: low-variance area share */
-+    band.contour_strength_mean = gvar;
-+
-+    secs[0].id = PEL_SEC_VARIANCE;
-+    secs[0].data = &var;
-+    secs[0].size = (uint32_t)sizeof(var);
-+    secs[1].id = PEL_SEC_BANDING;
-+    secs[1].data = &band;
-+    secs[1].size = (uint32_t)sizeof(band);
-+
-+    /* Per-frame complexity (ADR-0132): a normalized texture energy from the
-+     * variance + edge aggregates, folding in motion when an upstream
-+     * pelorus_mc attached PEL_SEC_MOTION, EMA-smoothed and reset on a scene
-+     * cut. The per-shot CRF steering maps this to a qoffset (autotune-learned). */
-+    {
-+        float texture = av_clipf(0.5f * FFMIN(gvar / 0.05f, 1.0f) + 0.5f * gedge, 0.0f, 1.0f);
-+        float motion = 0.0f;
-+        int scene_cut = 0;
-+        const void *mp = NULL;
-+        size_t msz = 0;
-+        float craw, cema;
-+
-+        /* Newest Pelorus blob carrying PEL_SEC_MOTION (every producer appends its
-+         * own entry); msz is the producer/consumer minimum (R4), so each field is
-+         * read only when an older, shorter producer section still covers it. */
-+        if (pelorus_sd_find_section(frame, PEL_SEC_MOTION, sizeof(PelorusMotionSection), &mp,
-+                                    &msz)) {
-+            const PelorusMotionSection *mo = mp;
-+            if (PEL_SD_FIELD_OK(msz, PelorusMotionSection, motion_magnitude_mean))
-+                motion = av_clipf(mo->motion_magnitude_mean / 8.0f, 0.0f, 1.0f);
-+            if (PEL_SD_FIELD_OK(msz, PelorusMotionSection, has_scene_cut))
-+                scene_cut = mo->has_scene_cut ? 1 : 0;
-+        }
-+
-+        craw = av_clipf(0.7f * texture + 0.3f * motion, 0.0f, 1.0f);
-+        if (!s->complexity_seen || scene_cut)
-+            cema = craw; /* reset on first frame / scene cut */
-+        else
-+            cema = 0.3f * craw + 0.7f * s->complexity_ema;
-+        s->complexity_ema = cema;
-+        s->complexity_seen = 1;
-+
-+        memset(&cx, 0, sizeof(cx));
-+        cx.complexity = cema;
-+        cx.texture_energy = texture;
-+        cx.motion_component = motion;
-+        cx.has_scene_cut = (uint8_t)scene_cut;
-+
-+        /* Mirror the per-frame scalars as frame metadata (host-readable). */
-+        pel_set_meta_f(frame, "lavfi.pelorus.complexity", cema);
-+        pel_set_meta_f(frame, "lavfi.pelorus.texture", texture);
-+        pel_set_meta_f(frame, "lavfi.pelorus.motion", motion);
-+        pel_set_meta_f(frame, "lavfi.pelorus.variance", gvar);
-+        pel_set_meta_f(frame, "lavfi.pelorus.edge", gedge);
-+        pel_set_meta_f(frame, "lavfi.pelorus.banding", flat_frac);
-+        av_dict_set(&frame->metadata, "lavfi.pelorus.scene_cut", scene_cut ? "1" : "0", 0);
-+    }
-+    secs[2].id = PEL_SEC_COMPLEXITY;
-+    secs[2].data = &cx;
-+    secs[2].size = (uint32_t)sizeof(cx);
-+
-+    if (pel_blob_pack(&meta, secs, 3, &blob, &len) != PEL_OK || !blob)
++    buf = av_buffer_pool_get(s->sd_pool);
++    if (!buf)
 +        return AVERROR(ENOMEM);
-+
-+    buf = av_buffer_create(blob, len, pel_sd_free, NULL, 0);
-+    if (!buf) {
-+        pel_blob_free(blob);
-+        return AVERROR(ENOMEM);
++    rc = pel_an_pack(&meta, &sec, s->maps ? &s->cells : NULL, buf->data, (size_t)buf->size, &len);
++    if (rc != PEL_OK || len != (size_t)buf->size) {
++        av_log(ctx, AV_LOG_ERROR, "side-data pack failed (pel_result %d, %zu of %zu bytes)\n",
++               (int)rc, len, (size_t)buf->size);
++        av_buffer_unref(&buf);
++        return rc == PEL_ERR_NOMEM ? AVERROR(ENOMEM) : AVERROR(EINVAL);
 +    }
 +    if (!av_frame_new_side_data_from_buf(frame, AV_FRAME_DATA_SEI_UNREGISTERED, buf)) {
 +        av_buffer_unref(&buf);
@@ -705,78 +1148,11 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +    return 0;
 +}
 +
-+static int analyze_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
++/* Zero the tile SSBO and order it, and the input frame, before the dispatch. */
++static void analyze_record_clear(FFVulkanFunctions *vk, FFVkExecContext *exec,
++                                 const FFVkBuffer *buf_vk, const VkImageMemoryBarrier2 *img_bar,
++                                 int nb_img_bar)
 +{
-+    int err;
-+    AVFilterContext *ctx = link->dst;
-+    PelorusAnalyzeVulkanContext *s = ctx->priv;
-+    AVFilterLink *outlink = ctx->outputs[0];
-+
-+    VkImageView views[AV_NUM_DATA_POINTERS];
-+    VkImageMemoryBarrier2 img_bar[8];
-+    int nb_img_bar = 0;
-+
-+    FFVulkanContext *vkctx = &s->vkctx;
-+    FFVulkanFunctions *vk = &vkctx->vkfn;
-+    FFVkExecContext *exec = NULL;
-+    AVBufferRef *buf = NULL;
-+    FFVkBuffer *buf_vk;
-+    PelorusTileView tv;
-+    const uint32_t *base;
-+    size_t buf_bytes;
-+    int ntiles;
-+    struct {
-+        int32_t grid_cols;
-+        int32_t ntiles;
-+        float grad_lo;
-+        float sample_scale;
-+    } pc;
-+
-+    if (!s->initialized)
-+        RET(init_filter(ctx));
-+
-+    /* The tile grid is fixed by the frame size; compute once. */
-+    s->grid_cols = (in->width + PEL_TILE - 1) / PEL_TILE;
-+    s->grid_rows = (in->height + PEL_TILE - 1) / PEL_TILE;
-+    ntiles = s->grid_cols * s->grid_rows;
-+
-+    /* Five uint arrays (t_var/t_edge/t_grad/t_valid/t_mean), each ntiles long. */
-+    buf_bytes = (size_t)ntiles * 5 * sizeof(uint32_t);
-+
-+    pc.grid_cols = s->grid_cols;
-+    pc.ntiles = ntiles;
-+    pc.grad_lo = (float)s->grad_lo;
-+    pc.sample_scale = pel_vk_sample_scale(vkctx->input_format);
-+
-+    RET(ff_vk_get_pooled_buffer(
-+        vkctx, &s->stat_buf_pool, &buf,
-+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL, buf_bytes,
-+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
-+    buf_vk = (FFVkBuffer *)buf->data;
-+    base = (const uint32_t *)buf_vk->mapped_mem;
-+    tv.t_var = base;
-+    tv.t_edge = base + ntiles;
-+    tv.t_grad = base + 2 * ntiles;
-+    tv.t_valid = base + 3 * ntiles;
-+    tv.t_mean = base + 4 * ntiles;
-+    tv.ntiles = ntiles;
-+    tv.grid_cols = s->grid_cols;
-+    tv.grid_rows = s->grid_rows;
-+
-+    exec = ff_vk_exec_get(vkctx, &s->e);
-+    ff_vk_exec_start(vkctx, exec);
-+
-+    RET(ff_vk_exec_add_dep_frame(vkctx, exec, in, VK_PIPELINE_STAGE_2_NONE,
-+                                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
-+    RET(ff_vk_create_imageviews(vkctx, exec, views, in, FF_VK_REP_FLOAT));
-+    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, in, views, 0, 0, VK_IMAGE_LAYOUT_GENERAL,
-+                                  VK_NULL_HANDLE);
-+    ff_vk_frame_barrier(vkctx, exec, in, img_bar, &nb_img_bar, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-+                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
-+                        VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED);
-+
-+    /* zero the accumulators */
 +    vk->CmdPipelineBarrier2(exec->buf,
 +                            &(VkDependencyInfo){
 +                                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
@@ -816,16 +1192,12 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +                                    },
 +                                .bufferMemoryBarrierCount = 1,
 +                            });
++}
 +
-+    RET(ff_vk_shader_update_desc_buffer(&s->vkctx, exec, &s->shd, 0, 1, 0, buf_vk, 0, buf_vk->size,
-+                                        VK_FORMAT_UNDEFINED));
-+    ff_vk_exec_bind_shader(vkctx, exec, &s->shd);
-+    ff_vk_shader_update_push_const(vkctx, exec, &s->shd, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc),
-+                                   &pc);
-+
-+    vk->CmdDispatch(exec->buf, FFALIGN(in->width, s->shd.lg_size[0]) / s->shd.lg_size[0],
-+                    FFALIGN(in->height, s->shd.lg_size[1]) / s->shd.lg_size[1], s->shd.lg_size[2]);
-+
++/* Make the shader's SSBO writes visible to the host read after the wait. */
++static void analyze_record_host_barrier(FFVulkanFunctions *vk, FFVkExecContext *exec,
++                                        const FFVkBuffer *buf_vk)
++{
 +    vk->CmdPipelineBarrier2(exec->buf,
 +                            &(VkDependencyInfo){
 +                                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
@@ -845,29 +1217,130 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +                                    },
 +                                .bufferMemoryBarrierCount = 1,
 +                            });
++}
 +
-+    RET(ff_vk_exec_submit(vkctx, exec));
-+    ff_vk_exec_wait(vkctx, exec);
++/* Record, submit and wait for one reduction: one workgroup per cell (the
++ * shader's span covers cells wider than the workgroup). The cell records are
++ * in buf_vk->mapped_mem on success. */
++static int analyze_dispatch(PelorusAnalyzeVulkanContext *s, AVFrame *in, FFVkBuffer *buf_vk,
++                            PelorusAnalyzePush *pc)
++{
++    FFVulkanContext *vkctx = &s->vkctx;
++    FFVulkanFunctions *vk = &vkctx->vkfn;
++    VkImageView views[AV_NUM_DATA_POINTERS];
++    VkImageMemoryBarrier2 img_bar[8];
++    int nb_img_bar = 0;
++    FFVkExecContext *exec = ff_vk_exec_get(vkctx, &s->e);
++    int err;
 +
-+    err = attach_stats(s, in, &tv);
-+    if (err < 0)
-+        goto fail;
-+
-+    if (s->roi) {
-+        err = attach_roi(s, in, &tv);
-+        if (err < 0)
-+            goto fail;
++    ff_vk_exec_start(vkctx, exec);
++    err = ff_vk_exec_add_dep_frame(vkctx, exec, in, VK_PIPELINE_STAGE_2_NONE,
++                                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
++    if (err >= 0)
++        err = ff_vk_create_imageviews(vkctx, exec, views, in, FF_VK_REP_FLOAT);
++    if (err < 0) {
++        ff_vk_exec_discard_deps(vkctx, exec);
++        return err;
 +    }
++    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, in, views, 0, 0, VK_IMAGE_LAYOUT_GENERAL,
++                                  VK_NULL_HANDLE);
++    ff_vk_frame_barrier(vkctx, exec, in, img_bar, &nb_img_bar, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
++                        VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED);
++    analyze_record_clear(vk, exec, buf_vk, img_bar, nb_img_bar);
 +
-+    av_buffer_unref(&buf);
-+    return ff_filter_frame(outlink, in);
++    err = ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 1, 0, buf_vk, 0, buf_vk->size,
++                                          VK_FORMAT_UNDEFINED);
++    if (err < 0) {
++        ff_vk_exec_discard_deps(vkctx, exec);
++        return err;
++    }
++    ff_vk_exec_bind_shader(vkctx, exec, &s->shd);
++    ff_vk_shader_update_push_const(vkctx, exec, &s->shd, VK_SHADER_STAGE_COMPUTE_BIT, 0,
++                                   sizeof(*pc), pc);
++    vk->CmdDispatch(exec->buf, (uint32_t)s->grid_cols, (uint32_t)s->grid_rows, 1);
++    analyze_record_host_barrier(vk, exec, buf_vk);
 +
-+fail:
-+    if (exec)
-+        ff_vk_exec_discard_deps(&s->vkctx, exec);
++    err = ff_vk_exec_submit(vkctx, exec); /* discards its dependencies on failure */
++    if (err < 0)
++        return err;
++    ff_vk_exec_wait(vkctx, exec);
++    return 0;
++}
++
++/* Run the reduction into a pooled host-visible buffer (five uint spans,
++ * var/edge/grad/valid/mean, each grid_cols * grid_rows long) and point `tv` at
++ * them. The caller keeps *buf alive while it reads `tv`. */
++static int analyze_reduce(PelorusAnalyzeVulkanContext *s, AVFrame *in, AVBufferRef **buf,
++                          PelAnTiles *tv)
++{
++    FFVulkanContext *vkctx = &s->vkctx;
++    const int ntiles = s->grid_cols * s->grid_rows;
++    PelorusAnalyzePush pc = {
++        .grid_cols = s->grid_cols,
++        .ntiles = ntiles,
++        .grad_lo = (float)s->grad_lo,
++        .sample_scale = pel_vk_sample_scale(vkctx->input_format),
++    };
++    const uint32_t *base;
++    FFVkBuffer *buf_vk;
++    int err;
++
++    err = ff_vk_get_pooled_buffer(
++        vkctx, &s->stat_buf_pool, buf,
++        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
++        (size_t)ntiles * 5 * sizeof(uint32_t),
++        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
++    if (err < 0)
++        return err;
++    buf_vk = (FFVkBuffer *)(*buf)->data;
++    err = analyze_dispatch(s, in, buf_vk, &pc);
++    if (err < 0)
++        return err;
++
++    base = (const uint32_t *)buf_vk->mapped_mem;
++    tv->var = base;
++    tv->edge = base + ntiles;
++    tv->grad = base + 2 * ntiles;
++    tv->valid = base + 3 * ntiles;
++    tv->mean = base + 4 * ntiles;
++    tv->cols = s->grid_cols;
++    tv->rows = s->grid_rows;
++    return 0;
++}
++
++static int analyze_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
++{
++    AVFilterContext *ctx = link->dst;
++    PelorusAnalyzeVulkanContext *s = ctx->priv;
++    AVBufferRef *buf = NULL;
++    PelAnTiles tv;
++    int err = 0;
++
++    if (!s->initialized)
++        err = init_filter(ctx);
++    /* The cell grid was sized for the link (config_input); this only resizes
++     * if a frame arrives with another size. */
++    if (err >= 0)
++        err = analyze_size_grid(ctx, in->width, in->height);
++    if (err >= 0)
++        err = analyze_reduce(s, in, &buf, &tv);
++    if (err >= 0) {
++        /* Per-cell score and maps; the score also feeds the ROI detector. */
++        const PelAnThresholds thr = {(float)s->flat_thr, (float)s->grad_lo};
++
++        pel_an_cell_maps(&thr, &tv, &s->cells);
++        err = attach_stats(ctx, in, &tv);
++    }
++    if (err >= 0 && s->roi)
++        err = attach_roi(s, in);
 +    av_buffer_unref(&buf);
-+    av_frame_free(&in);
-+    return err;
++    if (err < 0) {
++        av_frame_free(&in);
++        return err;
++    }
++    return ff_filter_frame(ctx->outputs[0], in);
 +}
 +
 +static void analyze_vulkan_uninit(AVFilterContext *avctx)
@@ -878,6 +1351,7 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +    ff_vk_exec_pool_free(vkctx, &s->e);
 +    ff_vk_shader_free(vkctx, &s->shd);
 +    av_buffer_pool_uninit(&s->stat_buf_pool);
++    analyze_free_grid(s);
 +    ff_vk_uninit(&s->vkctx);
 +    s->initialized = 0;
 +}
@@ -925,6 +1399,22 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +     0.0,
 +     0.5,
 +     FLAGS},
++    {"cell",
++     "cell edge of the analysis grid and its maps, luma pixels (8, 16, 32 or 64)",
++     OFFSET(cell),
++     AV_OPT_TYPE_INT,
++     {.i64 = 32},
++     PEL_AN_CELL_MIN,
++     PEL_AN_CELL_MAX,
++     FLAGS},
++    {"maps",
++     "attach the per-cell banding, variance and edge maps to the side data",
++     OFFSET(maps),
++     AV_OPT_TYPE_BOOL,
++     {.i64 = 1},
++     0,
++     1,
++     FLAGS},
 +    {NULL}};
 +
 +AVFILTER_DEFINE_CLASS(pelorus_analyze_vulkan);
@@ -934,7 +1424,7 @@ index 0000000000000000000000000000000000000000..37106fdc775cc93cfffad9a3402afa1c
 +        .name = "default",
 +        .type = AVMEDIA_TYPE_VIDEO,
 +        .filter_frame = &analyze_vulkan_filter_frame,
-+        .config_props = &ff_vk_filter_config_input,
++        .config_props = &analyze_vulkan_config_input,
 +    },
 +};
 +
@@ -970,10 +1460,10 @@ index e62ab231cb50888e10c829ad66e15e4cb8d66670..578953efb422d850e60c82c891364c76
 +OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vulkan/pelorus_analyze.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_analyze.comp.glsl b/libavfilter/vulkan/pelorus_analyze.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..97d9f12fb28d047c6c44bc93008a224843a7869c
+index 0000000000000000000000000000000000000000..e3bbb492295fc69865d5af0f607c88274f00eedd
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_analyze.comp.glsl
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,167 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -1000,12 +1490,18 @@ index 0000000000000000000000000000000000000000..97d9f12fb28d047c6c44bc93008a2248
 + * so the shader is now compiled to SPIR-V at build time and linked in — which
 + * retires that duplication and the whole class of lockstep-drift defects.
 + *
-+ * One 32x32 workgroup reduces one tile of the luma plane in shared memory,
-+ * then invocation 0 writes the tile's variance / edge density / low-amplitude
++ * One workgroup reduces one cell (tile) of the luma plane in shared memory,
++ * then invocation 0 writes the cell's variance / edge density / low-amplitude
 + * gradient / valid flag / mean into a position-preserving struct-of-arrays
 + * SSBO at tile[k * ntiles + (tile_y * grid_cols + tile_x)], k in 0..4. The
-+ * host sums the spans into the PEL_SEC_* frame scalars and drives the ROI
-+ * auto-detection off the per-tile values.
++ * host sums the spans into the PEL_SEC_* frame scalars, packs them as the
++ * per-cell banding / variance / edge maps (ADR-0177) and drives the ROI
++ * auto-detection off the per-cell values.
++ *
++ * The cell edge is the filter's `cell` option, a power of two in 8..64. The
++ * workgroup edge is min(cell, 32) (C side: pel_an_workgroup()), and each
++ * invocation covers cell_span x cell_span pixels of its cell, so a 64-pixel
++ * cell runs on a 32x32 workgroup with a 2x2 span.
 + */
 +
 +#pragma shader_stage(compute)
@@ -1014,7 +1510,7 @@ index 0000000000000000000000000000000000000000..97d9f12fb28d047c6c44bc93008a2248
 +#extension GL_EXT_nonuniform_qualifier : require
 +
 +/* Workgroup-size IDs 253/254/255 are reserved by ff_vk_shader_load(); the C
-+ * side loads { PEL_TILE, PEL_TILE, 1 }. One workgroup == one tile. */
++ * side loads { wg, wg, 1 } with wg = min(cell, 32). One workgroup == one cell. */
 +layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
 +
 +/* Mirrors the C `pc` struct byte-for-byte (2 * int + 2 * float = 16 bytes). */
@@ -1037,6 +1533,9 @@ index 0000000000000000000000000000000000000000..97d9f12fb28d047c6c44bc93008a2248
 +/* Preserve input_images as a runtime descriptor array in SPIR-V. A literal
 + * zero index is folded by glslc into a fixed one-element descriptor array. */
 +layout (constant_id = 0) const uint luma_plane = 0u;
++/* Pixels per invocation along each axis: cell / workgroup edge, 1 or 2. The C
++ * specialization list sets it once at pipeline creation (SPEC_LIST_ADD id 1). */
++layout (constant_id = 1) const uint cell_span = 1u;
 +
 +shared uint s_sum;
 +shared uint s_sumsq;
@@ -1049,6 +1548,29 @@ index 0000000000000000000000000000000000000000..97d9f12fb28d047c6c44bc93008a2248
 +    return value * sample_scale;
 +}
 +
++/* Accumulate one pixel into this invocation's fixed-point partial sums. Each
++ * term is truncated per pixel exactly as the former per-pixel atomicAdd did, so
++ * the integer totals (and the host's results) are unchanged at cell_span 1. */
++void accumulate(ivec2 pos, ivec2 size, inout uvec4 acc, inout uint cnt)
++{
++    const float TS = 65535.0;
++    float l = pel_to_sample(imageLoad(input_images[luma_plane], pos).x);
++    ivec2 rp = clamp(pos + ivec2(1, 0), ivec2(0), size - 1);
++    ivec2 dp = clamp(pos + ivec2(0, 1), ivec2(0), size - 1);
++    float gx = abs(pel_to_sample(imageLoad(input_images[luma_plane], rp).x) - l);
++    float gy = abs(pel_to_sample(imageLoad(input_images[luma_plane], dp).x) - l);
++    float g = gx + gy;
++    float edge = clamp(g, 0.0, 1.0);
++    /* A "real but low-amplitude" step (>= grad_lo) is the banding
++     * signature; a dead-flat constant tile (g < grad_lo) and a textured
++     * tile (large g) both contribute 0 to the gradient accumulator. The
++     * window [grad_lo, 8*grad_lo] isolates the slope that bands. */
++    float band_g = (g >= grad_lo && g < grad_lo * 8.0)
++                   ? g : 0.0;
++    acc += uvec4(uint(l * TS), uint(l * l * TS), uint(edge * TS), uint(band_g * TS));
++    cnt += 1u;
++}
++
 +void main()
 +{
 +    const float TS = 65535.0;
@@ -1059,28 +1581,27 @@ index 0000000000000000000000000000000000000000..97d9f12fb28d047c6c44bc93008a2248
 +    }
 +    barrier();
 +    ivec2 size = imageSize(input_images[luma_plane]);
-+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
-+    /* Was IS_WITHIN(pos, size) — the n8 GLSL prelude is gone in FFmpeg 9.
-+     * NOT an early return: every invocation must reach the barrier below. */
-+    if (all(lessThan(pos, size))) {
-+        float l = pel_to_sample(imageLoad(input_images[luma_plane], pos).x);
-+        ivec2 rp = clamp(pos + ivec2(1, 0), ivec2(0), size - 1);
-+        ivec2 dp = clamp(pos + ivec2(0, 1), ivec2(0), size - 1);
-+        float gx = abs(pel_to_sample(imageLoad(input_images[luma_plane], rp).x) - l);
-+        float gy = abs(pel_to_sample(imageLoad(input_images[luma_plane], dp).x) - l);
-+        float g = gx + gy;
-+        float edge = clamp(g, 0.0, 1.0);
-+        /* A "real but low-amplitude" step (>= grad_lo) is the banding
-+         * signature; a dead-flat constant tile (g < grad_lo) and a textured
-+         * tile (large g) both contribute 0 to the gradient accumulator. The
-+         * window [grad_lo, 8*grad_lo] isolates the slope that bands. */
-+        float band_g = (g >= grad_lo && g < grad_lo * 8.0)
-+                       ? g : 0.0;
-+        atomicAdd(s_sum,   uint(l * TS));
-+        atomicAdd(s_sumsq, uint(l * l * TS));
-+        atomicAdd(s_edge,  uint(edge * TS));
-+        atomicAdd(s_grad,  uint(band_g * TS));
-+        atomicAdd(s_cnt,   1u);
++    ivec2 wg = ivec2(gl_WorkGroupSize.xy);
++    ivec2 origin = ivec2(gl_WorkGroupID.xy) * wg * int(cell_span)
++                   + ivec2(gl_LocalInvocationID.xy);
++    uvec4 acc = uvec4(0u);
++    uint cnt = 0u;
++    /* Bounded by the specialization constant (<= 2): HISS-02. Out-of-frame
++     * pixels of a partial last cell are skipped, NOT returned early: every
++     * invocation must reach the barrier below. */
++    for (uint sy = 0u; sy < cell_span; sy++) {
++        for (uint sx = 0u; sx < cell_span; sx++) {
++            ivec2 pos = origin + ivec2(int(sx), int(sy)) * wg;
++            if (all(lessThan(pos, size)))
++                accumulate(pos, size, acc, cnt);
++        }
++    }
++    if (cnt > 0u) {
++        atomicAdd(s_sum,   acc.x);
++        atomicAdd(s_sumsq, acc.y);
++        atomicAdd(s_edge,  acc.z);
++        atomicAdd(s_grad,  acc.w);
++        atomicAdd(s_cnt,   cnt);
 +    }
 +    barrier();
 +    if (gl_LocalInvocationIndex == 0u) {
