@@ -194,6 +194,12 @@ for filter in deband analyze denoise; do
         # Shared consumer-side side-data lookup (analyze, denoise, scenecut).
         cp "$FILES_DIR/pelorus_sidedata.h" "$WORKTREE/libavfilter/"
     fi
+    if [[ "$filter" == "analyze" ]]; then
+        # Host-side cell grid, per-cell scores and map packing (ADR-0177), a
+        # private header Pelorus's fast suite unit-tests directly
+        # (ffmpeg-patches/test/analyze_maps_test.c).
+        cp "$FILES_DIR/pelorus_analyze_maps.h" "$WORKTREE/libavfilter/"
+    fi
     cp "$FILES_DIR/vf_pelorus_${filter}_vulkan.c" "$WORKTREE/libavfilter/"
     install_vk_shader "$filter"
     python3 - "$WORKTREE" "$filter" <<'PY'

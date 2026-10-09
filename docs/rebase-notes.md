@@ -5,6 +5,37 @@ Re-apply / re-test work created for the FFmpeg patch stack after an upstream
 FFmpeg bump or a `libpelorus` ABI change. One entry per change that affects the
 patches (ADR-0108 deliverable #6).
 
+## Unreleased — analyze per-cell maps (#219, ADR-0177; regenerates 0002)
+
+- **What changed**: `vf_pelorus_analyze_vulkan.c` fills the ABI 1.0 map
+  fields (`cell_data_*`, `var_cell_*`, `edge_cell_*`) through the new private
+  header `files/pelorus_analyze_maps.h` (grid, per-cell scores, packer), which
+  `generate.sh` adds to patch 0002. New options `cell` and `maps`; the input
+  pad's `config_props` is now `analyze_vulkan_config_input`, which sizes the
+  grid, the per-cell buffers and the side-data `AVBufferPool` and refuses a
+  grid above 2^20 cells. The ROI and scalar code moved into the header
+  unchanged (`pel_an_fine_score`, `pel_an_coarse_score`).
+- **Shader contract**: `pelorus_analyze.comp.glsl` gains specialization
+  constant 1 (`cell_span`, cell / workgroup edge); the C side loads
+  `{wg, wg, 1}` with `wg = pel_an_workgroup(cell)` and dispatches
+  `grid_cols x grid_rows` workgroups. The push block and the descriptor order
+  are unchanged.
+- **pkg-config minimum stays `libpelorus >= 0.2.0`**: on ABI 1.4 headers the
+  header packs with `pel_blob_pack_into()` (no allocation); below 1.4 it falls
+  back to `pel_blob_pack()` plus a copy (`PEL_AN_PACK_INTO`). Both paths are in
+  the fast suite (`analyze-maps`, and `analyze-maps-legacy-pack` built with
+  `-DPEL_AN_FORCE_LEGACY_PACK`), and the filter compiles against the ABI 1.3
+  headers of v0.3.0.
+- **Rebase-sensitive**: `total_size` must end at the last map byte (the tester
+  checks it against the blob length), and each map offset stays 8-aligned for
+  `pel_blob_map()`.
+- **Regeneration**: `FFMPEG_REPO=/absolute/path/to/ffmpeg
+  ffmpeg-patches/generate.sh`, run twice: byte-identical; only 0002 changes.
+- **Replay**: `JOBS=4 FFMPEG_REPO=/absolute/path/to/ffmpeg
+  ffmpeg-patches/test/build-and-run.sh`. The fast suite covers the header
+  (`analyze-maps`) and the reader layout (`interop-abi`); the hardware rows
+  are in `test/vulkan-format-matrix.sh` (`maps-*`).
+
 ## Unreleased — patch 0021 (`ff_vk_frame_barrier` queue family on single-family devices; cumulative on 0001–0020)
 
 - **Patch**: `ffmpeg-patches/0021-vulkan-frame-barrier-queue-family.patch`

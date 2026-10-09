@@ -5,6 +5,7 @@
 # tools, and the two ffmpeg-patches tests Meson builds without an FFmpeg tree).
 # The other ffmpeg-patches units build only inside FFmpeg's tree; each has a
 # dated exception in .standards.yaml (VMAFx/pelorus#94).
+ffmpeg-patches/test/analyze_maps_test.c
 ffmpeg-patches/test/mc_stats_test.c
 ffmpeg-patches/test/pelorus_sidedata_test.c
 libpelorus/src/deband_params.c

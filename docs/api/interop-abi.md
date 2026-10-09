@@ -33,8 +33,8 @@ consumer can cast the returned pointer to the struct without an unaligned access
 
 | Bit | Struct | Writer | Reader | Carries |
 |---|---|---|---|---|
-| `PEL_SEC_BANDING` | `PelorusBandingSection` | `vf_pelorus_deband` / `_analyze` | `vf_libvmaf*` | banding risk, flat-area fraction, per-cell risk map offset |
-| `PEL_SEC_VARIANCE` | `PelorusVarianceSection` | `vf_pelorus_analyze` | `vf_libvmaf*` | variance, edge density, texture energy, per-cell maps |
+| `PEL_SEC_BANDING` | `PelorusBandingSection` | `vf_pelorus_deband` / `_analyze` | `vf_libvmaf*` | banding risk, flat-area fraction, per-cell risk map (`uint8`; `_analyze` only, [analysis maps](#analysis-maps-vf_pelorus_analyze)) |
+| `PEL_SEC_VARIANCE` | `PelorusVarianceSection` | `vf_pelorus_analyze` | `vf_libvmaf*` | variance, edge density, texture energy, per-cell variance (`float`) and edge (`uint8`) maps ([analysis maps](#analysis-maps-vf_pelorus_analyze)) |
 | `PEL_SEC_DENOISE` | `PelorusDenoiseSection` | `vf_pelorus_denoise` | telemetry | residual energy, applied strength, sigma estimate |
 | `PEL_SEC_FILMGRAIN` | `PelorusFilmGrainSection` | `vf_pelorus_grain_estimate` | encoder + vmafx | film-grain params: AV1 AOM fields (→ `AV_FILM_GRAIN_PARAMS_AV1`) + a `grain_model` tag and H.274 mode scalars for HEVC/VVC (→ `AV_FILM_GRAIN_PARAMS_H274`) |
 | `PEL_SEC_MOTION` | `PelorusMotionSection` | `vf_pelorus_mc` | `vf_libvmaf*`, autotune | global/peak motion, MV-field offset, scene-cut flag |
@@ -124,6 +124,63 @@ When the `vf_pelorus_mc` default (`bsize=16`) is one of them, it is assumed
 and a warning saying so is logged once. If nothing fits, or the ambiguity
 excludes the default (`bsize=8` on a 64x64 frame fits 8 and 9), motion
 compensation is skipped for that frame and a warning is logged once.
+
+### Analysis maps (vf_pelorus_analyze)
+
+`vf_pelorus_analyze_vulkan` fills the map fields `PelorusBandingSection` and
+`PelorusVarianceSection` have carried since ABI 1.0
+([ADR-0177](../adr/0177-analyze-per-cell-maps.md)). The layout and the field
+types are unchanged, so `PELORUS_ABI_MINOR` stays 4 and a reader of any minor
+can read the maps. `vf_pelorus_deband` still writes a banding section with an
+empty grid and no map.
+
+**Grid.** The header's `grid_cols` x `grid_rows` is the cell grid of the frame:
+cells are `cell` x `cell` luma pixels (`cell` option, a power of two in 8..64,
+default 32), row-major from the top-left, `grid_cols = ceil(W / cell)` and
+`grid_rows = ceil(H / cell)`. The last column and row are partial when the
+frame size is not a multiple of the cell; their values cover only the pixels
+inside the frame. A frame smaller than one cell is a 1x1 grid. The filter
+refuses a grid above 2^20 cells (`8192x8192` at `cell=8` is the largest) when
+the link is configured. A reader that needs the pixel pitch takes the one power
+of two in 8..64 that reproduces both dimensions; when `grid_cols` and
+`grid_rows` are both 1 the single cell covers the whole frame.
+
+**Maps** (`grid_cols * grid_rows` elements each):
+
+| Field pair | Element | Value |
+| --- | --- | --- |
+| `PelorusBandingSection.cell_data_offset` / `_size` | `uint8` | round(255 x banding score); the score in [0, 1] is the one `roi=1` steers by: the larger of the fine per-cell score and the coarse inter-cell score ([ADR-0133](../adr/0133-analyze-coarse-banding-cambi.md)) |
+| `PelorusVarianceSection.var_cell_offset` / `_size` | `float` | luma variance of the cell in the [0, 1] sample domain (at most 0.25); the grid mean is `global_variance` |
+| `PelorusVarianceSection.edge_cell_offset` / `_size` | `uint8` | round(255 x edge density of the cell); the grid mean / 255 is `edge_density` within rounding |
+
+The maps follow the packed sections in that order, each at the next 8-aligned
+blob-relative offset, and `total_size` ends at the last map byte. Every map
+passes `pel_blob_map(blob, len, offset, size, grid_cols * grid_rows,
+elem_size, &ptr)` (the ABI 1.4 helper; a reader on 1.3 headers applies the
+same checks itself); read the `float` map with `memcpy` unless the blob base is
+8-aligned (R5). With `maps=0` all six fields are 0 and the blob is the
+scalar-only one; a reader then uses the frame scalars, as it does for a blob
+from an older Pelorus.
+
+```c
+const void *p, *band = NULL;
+size_t got;
+if (pel_blob_find_section(sd->data, sd->size, PEL_SEC_BANDING, sizeof(PelorusBandingSection),
+                          &p, &got) == PEL_OK && got == sizeof(PelorusBandingSection)) {
+    PelorusBandingSection b;
+    memcpy(&b, p, sizeof(b));
+    if (b.cell_data_size != 0 &&
+        pel_blob_map(sd->data, sd->size, b.cell_data_offset, b.cell_data_size,
+                     (uint32_t)grid_cols * grid_rows, 1, &band) == PEL_OK) {
+        /* band[i] / 255.0 is the banding score of cell i */
+    }
+}
+```
+
+Each frame through the filter costs 6 bytes per cell plus at most 14 bytes of
+alignment: 12 KiB at 1920x1080 and 48 KiB at 3840x2160 with `cell=32`. An
+encoder with `udu_sei=1` writes the blob into the bitstream, so pass `maps=0`
+there when the maps are not needed downstream.
 
 ### QP-report reader stub (closed loop)
 

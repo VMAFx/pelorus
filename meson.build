@@ -275,6 +275,39 @@ if get_option('tests')
   test('mc-stats', mc_stats_test, suite: 'fast')
 endif
 
+# Issue #219 / ADR-0177: vf_pelorus_analyze_vulkan's per-cell maps
+# (ffmpeg-patches/files/pelorus_analyze_maps.h): the cell grid and its bound, the
+# per-cell banding score on a synthetic banded ramp against a flat noisy frame,
+# and the map packing round trip through libpelorus's reader.
+if get_option('tests')
+  analyze_maps_test = executable(
+    'pelorus_analyze_maps_test',
+    files('ffmpeg-patches/test/analyze_maps_test.c'),
+    include_directories: include_directories('ffmpeg-patches/files'),
+    dependencies: [libpelorus_dep, cc.find_library('m', required: false)],
+  )
+  test('analyze-maps', analyze_maps_test, suite: 'fast')
+  # The pre-ABI-1.4 packing path (pel_blob_pack + copy), forced on 1.4 headers.
+  analyze_maps_legacy_test = executable(
+    'pelorus_analyze_maps_legacy_test',
+    files('ffmpeg-patches/test/analyze_maps_test.c'),
+    c_args: ['-DPEL_AN_FORCE_LEGACY_PACK'],
+    include_directories: include_directories('ffmpeg-patches/files'),
+    dependencies: [libpelorus_dep, cc.find_library('m', required: false)],
+  )
+  test('analyze-maps-legacy-pack', analyze_maps_legacy_test, suite: 'fast')
+endif
+
+# The hardware rows of vulkan-format-matrix.sh decode the analyze maps with
+# analyze-maps-check.py; --self-test plants one defect per reader rule and
+# requires each to be rejected.
+test('analyze-maps-check-self-test',
+     python_prog,
+     args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'analyze-maps-check.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 # BUG-016: the denoise meta=1 residual sums are per-workgroup uint32 partials
 # added into 64-bit slices. Prove the DCI 8K bounds and the fixed-point
 # resolution that keeps noise_sigma_estimate non-zero on clean content.

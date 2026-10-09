@@ -246,6 +246,86 @@ for fmt in formats[1:]:
 print("PASS: analyzer logical-domain equivalence")
 PY_ANALYZE
 
+# Issue #219 / ADR-0177: per-cell banding, variance and edge maps. showinfo
+# prints each Pelorus blob; analyze-maps-check.py decodes it with the
+# pel_blob_map() reader rules and checks the values against the frame scalars.
+PEL_MAPS_CHECK="$(dirname "${BASH_SOURCE[0]}")/analyze-maps-check.py"
+PEL_MAPS_RAMP="color=gray:size=256x128:rate=1:duration=1,format=yuv420p,"
+PEL_MAPS_RAMP+="geq=lum='16+X*64/W':cb=128:cr=128"
+PEL_MAPS_NOISE="color=c=0x808080:size=256x128:rate=1:duration=1,format=yuv420p,"
+PEL_MAPS_NOISE+="noise=alls=40:allf=u:all_seed=7"
+
+pel_maps_run()
+{
+    local label="$1"
+    local source="$2"
+    local format="$3"
+    local options="$4"
+
+    pel_run "$label" -loglevel info -f lavfi -i "$source" -frames:v 1 \
+        -vf "format=${format},hwupload,pelorus_analyze_vulkan${options},hwdownload,format=${format},showinfo" \
+        -f null -
+}
+
+pel_maps_check()
+{
+    python3 -I "$PEL_MAPS_CHECK" "$@" || pel_fail "analyze maps: $*"
+}
+
+# Negative case: a run that must fail, with `pattern` on stderr and no new VUID.
+pel_run_refused()
+{
+    local label="$1"
+    local pattern="$2"
+    shift 2
+    local stdout="$PEL_OUTPUT_ROOT/${label}.stdout"
+    local stderr="$PEL_OUTPUT_ROOT/${label}.stderr"
+
+    if env "${PEL_VALIDATION_ENV[@]}" "$PEL_FFMPEG_BIN" \
+        "${PEL_COMMON[@]}" "$@" >"$stdout" 2>"$stderr"; then
+        pel_fail "$label was accepted"
+    fi
+    if ! grep -F -- "$pattern" "$stderr" >/dev/null; then
+        sed -n '1,80p' "$stderr" >&2
+        pel_fail "$label failed without: $pattern"
+    fi
+    pel_check_validation "$stdout" "$stderr" || \
+        pel_fail "$label emitted a new Vulkan VUID"
+    echo "PASS: $label"
+}
+
+pel_maps_run maps-ramp "$PEL_MAPS_RAMP" yuv420p ''
+pel_maps_run maps-noise "$PEL_MAPS_NOISE" yuv420p ''
+pel_maps_run maps-ramp-p010le "$PEL_MAPS_RAMP" p010le ''
+pel_maps_run maps-ramp-cell8 "$PEL_MAPS_RAMP" yuv420p '=cell=8'
+pel_maps_run maps-ramp-cell64 "$PEL_MAPS_RAMP" yuv420p '=cell=64'
+pel_maps_run maps-off "$PEL_MAPS_RAMP" yuv420p '=maps=0'
+# Boundaries: a frame smaller than one cell, partial last cells, the largest grid.
+pel_maps_run maps-one-cell \
+    "color=gray:size=16x16:rate=1:duration=1,format=yuv420p,geq=lum='16+X*16/W':cb=128:cr=128" \
+    yuv420p ''
+pel_maps_run maps-partial \
+    "color=gray:size=100x70:rate=1:duration=1,format=yuv420p,geq=lum='16+X*32/W':cb=128:cr=128" \
+    yuv420p ''
+pel_maps_run maps-max-grid 'color=c=gray:size=8192x8192:rate=1:duration=1' yuv420p '=cell=8'
+pel_run_refused maps-oversized-grid 'exceeds the grid limit of 1048576 cells' \
+    -f lavfi -i 'color=c=gray:size=8200x8192:rate=1:duration=1' -frames:v 1 \
+    -vf 'format=yuv420p,hwupload,pelorus_analyze_vulkan=cell=8,hwdownload,format=yuv420p' \
+    -f null -
+
+pel_maps_check maps "$PEL_OUTPUT_ROOT/maps-ramp.stderr" --grid 8x4 --band-min 0.8
+pel_maps_check maps "$PEL_OUTPUT_ROOT/maps-noise.stderr" --grid 8x4 --band-max 0.1
+pel_maps_check contrast "$PEL_OUTPUT_ROOT/maps-ramp.stderr" "$PEL_OUTPUT_ROOT/maps-noise.stderr" --margin 0.5
+pel_maps_check maps "$PEL_OUTPUT_ROOT/maps-ramp-p010le.stderr" --grid 8x4 --band-min 0.8
+pel_maps_check same "$PEL_OUTPUT_ROOT/maps-ramp.stderr" "$PEL_OUTPUT_ROOT/maps-ramp-p010le.stderr"
+pel_maps_check maps "$PEL_OUTPUT_ROOT/maps-ramp-cell8.stderr" --grid 32x16
+pel_maps_check maps "$PEL_OUTPUT_ROOT/maps-ramp-cell64.stderr" --grid 4x2 --band-min 0.5
+pel_maps_check no-maps "$PEL_OUTPUT_ROOT/maps-off.stderr" --grid 8x4
+pel_maps_check maps "$PEL_OUTPUT_ROOT/maps-one-cell.stderr" --grid 1x1 --band-min 0.5
+pel_maps_check maps "$PEL_OUTPUT_ROOT/maps-partial.stderr" --grid 4x3 --band-min 0.5
+pel_maps_check maps "$PEL_OUTPUT_ROOT/maps-max-grid.stderr" --grid 1024x1024
+echo 'PASS: analyzer per-cell maps'
+
 # A representative active transform must produce equivalent normalized luma
 # across the same layouts. The static family checker covers every arithmetic
 # shader; this runtime row catches representation mistakes on real hardware.
