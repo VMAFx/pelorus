@@ -38,6 +38,7 @@ RULES = (
     "steering_effect", "steering_decode", "steering_control", "steering_selfreport",
     "steering_baseline_defect",
     "sd_present", "sd_structure", "sd_decode_tap", "sd_pts", "sd_carrier_masking",
+    "sd_integrity_count", "sd_integrity_bytes", "sd_integrity_stripped",
     "brc_bitrate", "brc_decode", "brc_extbrc_engaged", "brc_no_huc", "brc_hw_refused",
 )
 
@@ -114,12 +115,23 @@ ENCODERS = (
 # Encoders that can write the Pelorus blob as user-data-unregistered SEI with
 # -udu_sei 1: NVENC (stock), QSV (patch 0019), Vulkan Video (patch 0020).
 SEI_CARRIERS = (
-    {"name": "hevc_nvenc", "codec": "hevc", "kind": "hw", "args": []},
+    {"name": "hevc_nvenc", "codec": "hevc", "kind": "hw", "args": [], "strips": True},
     {"name": "h264_nvenc", "codec": "h264", "kind": "hw", "args": []},
     {"name": "hevc_qsv", "codec": "hevc", "kind": "hw", "args": []},
     {"name": "h264_qsv", "codec": "h264", "kind": "hw", "args": []},
     {"name": "hevc_vulkan", "codec": "hevc", "kind": "vulkan", "args": ["-qp", "30"]},
     {"name": "h264_vulkan", "codec": "h264", "kind": "vulkan", "args": ["-qp", "30"]},
+)
+# Cases of the side-data round trip (#284). Every case runs on every carrier; the
+# flat ones make an analyze blob of mostly zero bytes, which NVENC truncates in its
+# SEI NAL units; maps=0 is the small blob that always fits. "strips" on a carrier
+# marks the one that may write the blob without its per-cell maps (ADR-0181).
+SIDEDATA_CASES = (
+    {"name": "gradient-default", "fixture": "synth-banding", "opts": ""},
+    {"name": "flat-180p-maps1-cell32", "fixture": "synth-flat-180p", "opts": "maps=1:cell=32"},
+    {"name": "flat-1080p-maps1-cell32", "fixture": "synth-flat-1080p", "opts": "maps=1:cell=32"},
+    {"name": "flat-180p-maps0", "fixture": "synth-flat-180p", "opts": "maps=0"},
+    {"name": "flat-1080p-maps0", "fixture": "synth-flat-1080p", "opts": "maps=0"},
 )
 # QSV bitrate-control legs of the steering stage (ADR-0180 decision 8): CBR at
 # BRC_TARGET with a one-second buffer over the synth-motion fixture played
@@ -411,13 +423,25 @@ def sei_messages(rbsp):
         pos += size
 
 
+def unescape_nal(body):
+    """RBSP of a NAL unit body: each emulation prevention byte (0x03 after two zeros) removed."""
+    out, zeros = bytearray(), 0
+    for byte in body:
+        if zeros >= 2 and byte == 3:
+            zeros = 0
+            continue
+        out.append(byte)
+        zeros = zeros + 1 if byte == 0 else 0
+    return bytes(out)
+
+
 def pelorus_blobs_per_frame(data, codec):
     """List, per coded picture, of the Pelorus blobs in its SEI NAL units."""
     frames, pending = [], []
     for nal in split_nals(data)[:MAX_SEI_NALS]:
         kind, skip = nal_kind(nal, codec)
         if kind == "sei":
-            rbsp = nal[skip:].replace(b"\x00\x00\x03", b"\x00\x00")
+            rbsp = unescape_nal(nal[skip:])
             pending.extend(pl[16:] for t, pl in sei_messages(rbsp)
                            if t == 5 and pl[:16] == PELORUS_UUID)
         elif kind == "vcl":
@@ -491,6 +515,130 @@ def decode_tap_problems(showinfo_text, n_expected, disabled=frozenset()):
         return ["decode tap saw %d frames with %d Pelorus blobs, expected %d each"
                 % (frames, uuids, n_expected)]
     return []
+
+
+# Integrity of the blob through the encoder (#284). The analyze filter attaches a
+# blob to every frame; what the encoder writes and the decoder hands back must
+# equal it byte for byte. The one legitimate difference is the maps-stripped form
+# hevc_nvenc writes when the blob does not fit its header budget (patch 0022,
+# ADR-0181). The offsets below mirror ffmpeg-patches/files/pelorus_sei_fit.h.
+SEI_STRIPPABLE = 0xDF
+SEI_MAX_SECTIONS = 32
+SEI_DIR_ENTRY = 16
+# (section bit, byte offset in the section of a uint32 map offset; the size follows)
+SEI_MAP_FIELDS = ((1 << 0, 8), (1 << 1, 12), (1 << 1, 20), (1 << 4, 20), (1 << 6, 0))
+PELORUS_UUID_TEXT = "UUID=e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64"
+SHOWINFO_FRAME_RE = re.compile(r"\bn:\s*(\d+)\s+pts:")
+SHOWINFO_DATA_RE = re.compile(r"User Data=([0-9a-fA-F]*)")
+
+
+def showinfo_blobs(text):
+    """Pelorus blobs (UUID excluded) per frame of a showinfo log: one list per `n:` line.
+
+    A frame can carry other user data SEI (h264_vulkan writes an encoder-version one on
+    the first picture); only messages with the Pelorus UUID count."""
+    frames, mine = [], False
+    for line in text.splitlines()[:200000]:
+        if SHOWINFO_FRAME_RE.search(line):
+            frames.append([])
+            mine = False
+        elif "UUID=" in line:
+            mine = PELORUS_UUID_TEXT in line
+        else:
+            hit = SHOWINFO_DATA_RE.search(line)
+            if hit and frames and mine:
+                hexed = hit.group(1)
+                frames[-1].append(bytes.fromhex(hexed[:len(hexed) & ~1]))
+    return frames
+
+
+def stripped_form(blob):
+    """The blob without its per-cell maps, as hevc_nvenc writes it (pel_sei_scalar_len
+    and pel_sei_strip_maps in pelorus_sei_fit.h): everything up to the end of the last
+    section, map offset and size fields zeroed, total_size set to the new end. None when
+    the blob is not a strippable ABI 1.x blob or nothing follows its sections."""
+    if len(blob) < HEADER_BYTES or blob[:8] != PELORUS_MAGIC \
+            or struct.unpack_from("<H", blob, 8)[0] != 1:
+        return None
+    total, mask, count, hsize = struct.unpack_from("<IIHH", blob, 12)
+    dir_end = hsize + count * SEI_DIR_ENTRY
+    if mask & ~SEI_STRIPPABLE or total > len(blob) or hsize < HEADER_BYTES \
+            or count > SEI_MAX_SECTIONS or dir_end > total:
+        return None
+    end, entries = dir_end, []
+    for i in range(count):
+        sid, off, size, _ = struct.unpack_from(DIR_FMT, blob, hsize + i * SEI_DIR_ENTRY)
+        if not sid & SEI_STRIPPABLE or sid & (sid - 1) or off < dir_end \
+                or size > total or off > total - size:
+            return None
+        entries.append((sid, off, size))
+        end = max(end, off + size)
+    if end >= total:
+        return None
+    out = bytearray(blob[:end])
+    for sid, off, size in entries:
+        for field_sid, at in SEI_MAP_FIELDS:
+            if field_sid == sid and at + 8 <= size:
+                out[off + at:off + at + 8] = bytes(8)
+    struct.pack_into("<I", out, 12, end)
+    return bytes(out)
+
+
+def first_difference(a, b):
+    """Offset of the first byte where a and b differ (the shorter length when one is a prefix)."""
+    n = min(len(a), len(b))
+    return next((i for i in range(n) if a[i] != b[i]), n)
+
+
+def blob_pts(blob):
+    """frame_pts echo of a blob, or None when the blob is too short to hold one."""
+    return struct.unpack_from("<Q", blob, 24)[0] if len(blob) >= 32 else None
+
+
+def pictures_by_pts(frames):
+    """Pictures in display order: sorted by the frame_pts echo of their first blob,
+    pictures without a blob last (a stream lists pictures in decode order)."""
+    return sorted(frames, key=lambda f: (not f or blob_pts(f[0]) is None,
+                                         blob_pts(f[0]) or 0 if f else 0))
+
+
+def blob_matches(want, got, strips, disabled):
+    """(ok, stripped): got equals want, or is its maps-stripped form on a carrier that strips.
+
+    With sd_integrity_stripped off, any shorter blob that parses counts as stripped."""
+    if got == want:
+        return True, False
+    if not strips:
+        return False, False
+    if "sd_integrity_stripped" in disabled:
+        return (len(got) < len(want) and not blob_problems(got)[0]), True
+    return got == stripped_form(want), True
+
+
+def integrity_problems(want, got, label, strips=False, disabled=frozenset()):
+    """Compare what the analyze filter wrote (want) with what came back (got), per picture.
+
+    Returns (problems, number of pictures carrying the maps-stripped form). A problem
+    names the picture, the sizes and the first differing offset."""
+    errs, stripped = [], 0
+    if len(got) != len(want) and "sd_integrity_count" not in disabled:
+        errs.append("%s: %d pictures, expected %d" % (label, len(got), len(want)))
+    for idx, (w, g) in enumerate(zip(want, got)):
+        if len(g) != len(w):
+            if "sd_integrity_count" not in disabled:
+                errs.append("%s picture %d: %d blobs, expected %d%s" % (
+                    label, idx, len(g), len(w), " (blob missing)" if not g else ""))
+            continue
+        for wb, gb in zip(w, g):
+            ok, was_stripped = blob_matches(wb, gb, strips, disabled)
+            if ok:
+                stripped += was_stripped
+            elif "sd_integrity_bytes" not in disabled:
+                errs.append("%s picture %d: blob %d bytes, expected %d, first difference at "
+                            "offset %d%s" % (label, idx, len(gb), len(wb), first_difference(wb, gb),
+                                             "" if strips or gb != stripped_form(wb)
+                                             else " (maps stripped; this carrier does not strip)"))
+    return errs, stripped
 
 
 # ---------------------------------------------------------------- helpers
@@ -909,32 +1057,47 @@ def hw_brc_leg(ctx, enc, dev, entry, src, work):
 
 # ------------------------------------------------------ side-data round trip
 
+def sidedata_cases(ctx):
+    """[(case, source path, fixture entry)] for the round trip, or an outcome to stop with."""
+    cases = []
+    for case in SIDEDATA_CASES:
+        src, entry, stop = fixture_for(ctx, case["fixture"])
+        if stop:
+            return None, stop
+        cases.append((case, src, entry))
+    return cases, None
+
+
 def run_sidedata(ctx, spec):
     stop = gpu_prologue(ctx)
     if stop:
         return stop
-    src, entry, stop = fixture_for(ctx, "synth-banding")
+    cases, stop = sidedata_cases(ctx)
     if stop:
         return stop
     work, devs = stage_dir(ctx, "sidedata_roundtrip"), device_indices(ctx)
-    have, results = ffmpeg_info(ctx)["encoders"], []
+    have, results, refs = ffmpeg_info(ctx)["encoders"], [], {}
     for car in SEI_CARRIERS:
         if car["name"] not in have:
             results.append((car["name"], car["codec"], "not_run", "not built into this FFmpeg"))
         elif devs:
-            results.append((car["name"], car["codec"]) + carrier_roundtrip(ctx, car, devs, entry, src, work))
+            results.append((car["name"], car["codec"]) + carrier_roundtrip(ctx, car, devs, cases, work, refs))
     status, reason, log, legs = aggregate_legs(results, ctx["disabled"])
     if status == "not_run":
         reason = "no encoder carries SEI unregistered here; " + reason
     return finish(ctx, outcome(status, reason, log, legs))
 
 
-def carrier_encode(ctx, car, devs, entry, src, out, sidedata=True):
+def analyze_filter(opts):
+    return "pelorus_analyze_vulkan" + ("=" + opts if opts else "")
+
+
+def carrier_encode(ctx, car, devs, entry, src, out, sidedata=True, opts=""):
     """Encode on the first device that works; returns (dev, why).
 
     With sidedata the analyze filter runs and -udu_sei 1 is set; without, the
     baseline keeps the same input, deband and encoder but carries neither."""
-    head = "format=nv12,hwupload," + ("pelorus_analyze_vulkan," if sidedata else "") \
+    head = "format=nv12,hwupload," + (analyze_filter(opts) + "," if sidedata else "") \
         + "pelorus_deband_vulkan"
     chain = head if car["kind"] == "vulkan" else head + ",hwdownload,format=nv12"
     why = "no device"
@@ -966,21 +1129,67 @@ def carrier_failure(ctx, car, devs, entry, src, work, why):
         car["name"], dev, why))[:400]
 
 
-def carrier_roundtrip(ctx, car, devs, entry, src, work):
-    """Encode, read the blobs back from the stream, then through the decode tap."""
-    out = work / ("sd-%s.%s" % (car["name"], car["codec"]))
-    dev, why = carrier_encode(ctx, car, devs, entry, src, out)
+def written_blobs(ctx, refs, dev, case, entry, src):
+    """(per-frame blobs the analyze filter attaches, problem): the same chain as the
+    encode, read at the encoder's input through showinfo. Cached per case and device."""
+    key = (case["name"], dev)
+    if key not in refs:
+        chain = "format=nv12,hwupload,%s,pelorus_deband_vulkan,hwdownload,format=nv12,showinfo" \
+            % analyze_filter(case["opts"])
+        argv = ["-hide_banner", "-loglevel", "info", "-init_hw_device", "vulkan=vk:%d" % dev,
+                "-filter_hw_device", "vk"] + input_args(entry, src)
+        argv += ["-frames:v", str(SIDEDATA_FRAMES), "-vf", chain, "-f", "null", "-"]
+        code, text, err = ffrun(ctx, argv)
+        # The null muxer's graph can emit one frame more than -frames:v lets the encoder take.
+        frames = showinfo_blobs(text)[:SIDEDATA_FRAMES] if code == 0 else []
+        bad = code != 0 or len(frames) != SIDEDATA_FRAMES or not all(len(f) == 1 for f in frames)
+        refs[key] = (None, "reference run of the chain without an encoder gave %s" % (
+            (err or first_line(text)) if code != 0 else
+            "%s blobs on %d frames" % ([len(f) for f in frames], len(frames)))) \
+            if bad else (frames, "")
+    return refs[key]
+
+
+def carrier_case(ctx, car, devs, case, entry, src, work, refs):
+    """One case on one carrier: encode, read the blobs back from the stream and through
+    the decode tap, and compare each with the blob the analyze filter wrote."""
+    out = work / ("sd-%s-%s.%s" % (car["name"], case["name"], car["codec"]))
+    dev, why = carrier_encode(ctx, car, devs, entry, src, out, opts=case["opts"])
     if dev is None:
         return carrier_failure(ctx, car, devs, entry, src, work, why)
+    want, why = written_blobs(ctx, refs, dev, case, entry, src)
+    if want is None:
+        return "fail", why
+    strips, disabled = car.get("strips", False), ctx["disabled"]
     frames = pelorus_blobs_per_frame(out.read_bytes(), car["codec"])
-    errs = sidedata_problems(frames, SIDEDATA_FRAMES, ctx["disabled"])
+    errs, stripped = integrity_problems(want, pictures_by_pts(frames), "stream", strips, disabled)
+    errs += sidedata_problems(frames, SIDEDATA_FRAMES, disabled)
     code, tap, err = ffrun(ctx, ["-hide_banner", "-loglevel", "info", "-i", str(out),
                                  "-vf", "showinfo", "-f", "null", "-"])
-    errs += decode_tap_problems(tap, SIDEDATA_FRAMES, ctx["disabled"]) if code == 0 \
-        else ["decode of the encoded stream failed: " + (err or first_line(tap))]
+    if code == 0:
+        more, stripped = integrity_problems(want, showinfo_blobs(tap), "decoded", strips, disabled)
+        errs += more + decode_tap_problems(tap, SIDEDATA_FRAMES, disabled)
+    else:
+        errs.append("decode of the encoded stream failed: " + (err or first_line(tap)))
     if errs:
         return "fail", "; ".join(errs[:3])
-    return "pass", "%d frames, blob in stream and decode tap, device %d" % (SIDEDATA_FRAMES, dev)
+    return "pass", "%d frames, blob in stream and decode tap equal to the written blob%s, device %d" % (
+        SIDEDATA_FRAMES, " (maps stripped on %d, ADR-0181)" % stripped if stripped else "", dev)
+
+
+def carrier_roundtrip(ctx, car, devs, cases, work, refs=None):
+    """Every case on one carrier; one leg: fail if any case fails, pass if one passes."""
+    refs = {} if refs is None else refs
+    done = [(case["name"],) + carrier_case(ctx, car, devs, case, entry, src, work, refs)
+            for case, src, entry in cases]
+    failed = [d for d in done if d[1] == "fail"]
+    passed = [d for d in done if d[1] == "pass"]
+    if failed:
+        return "fail", "; ".join("%s: %s" % (d[0], d[2]) for d in failed)[:400]
+    if not passed:
+        return "not_run", done[0][2]
+    return "pass", "; ".join("%s: %s" % (d[0], d[2]) for d in passed[:1]) \
+        + "; %d of %d cases pass" % (len(passed), len(done))
 
 
 # --------------------------------------------------------------- zero-copy
@@ -1344,12 +1553,76 @@ def self_test_legs(expect, disabled):
     expect("legs_recorded", status == "pass" and [l["status"] for l in legs] == ["pass", "not_run"])
 
 
+def pack_map_blob(pts=0, maps=True):
+    """A blob with a banding map and a variance map behind its sections; with maps=False the
+    form hevc_nvenc writes (pelorus_sei_fit.h): map fields zero, nothing after the sections."""
+    secs = ((1, 80, 16), (2, 96, 28))
+    tail = 40 if maps else 0
+    body = bytearray(124 + tail)
+    struct.pack_into(HEADER_FMT, body, 0, PELORUS_MAGIC, 1, 3, 124 + tail, 3, 2, HEADER_BYTES, pts)
+    for i, (sid, off, size) in enumerate(secs):
+        struct.pack_into(DIR_FMT, body, HEADER_BYTES + 16 * i, sid, off, size, 3)
+    if maps:
+        struct.pack_into("<II", body, 80 + 8, 124, 16)      # banding cell_data
+        struct.pack_into("<II", body, 96 + 12, 140, 12)     # variance var_cell
+        struct.pack_into("<II", body, 96 + 20, 152, 12)     # variance edge_cell
+        body[124:] = bytes(range(1, 41))
+    return bytes(body)
+
+
+def self_test_integrity(expect, disabled):
+    """Integrity of the blob through the encoder: equal, or the exact maps-stripped form."""
+    want = [[pack_map_blob(pts=i)] for i in range(4)]
+    cut = lambda b, n: b[:len(b) - n]
+    flip = bytearray(want[2][0])
+    flip[100] ^= 0x01
+    wrong = bytearray(pack_map_blob(pts=1, maps=False))
+    wrong[100] ^= 0x01
+    short = lambda b: bytes(b[:124])
+    check = lambda got, strips=False: integrity_problems(want, got, "t", strips, disabled)[0]
+    expect("sd_int_equal_passes", not check(want))
+    expect("sd_int_stripped_form_matches_header_math", stripped_form(want[1][0]) == pack_map_blob(1, False))
+    stripped = [[pack_map_blob(pts=i, maps=False)] for i in range(4)]
+    got, n = integrity_problems(want, stripped, "t", True, disabled)
+    expect("sd_int_stripped_form_passes_where_carrier_strips", not got and n == 4)
+    expect("sd_int_rejects_dropped_blob", bool(check(want[:3] + [[]])))
+    expect("sd_int_rejects_missing_picture", bool(check(want[:3])))
+    expect("sd_int_rejects_extra_blob", bool(check(want[:3] + [want[3] * 2])))
+    expect("sd_int_rejects_truncated_blob", bool(check(want[:3] + [[cut(want[3][0], 10)]])))
+    expect("sd_int_rejects_byte_flip", bool(check(want[:2] + [[bytes(flip)]] + want[3:])))
+    expect("sd_int_rejects_stripped_without_carrier_strip", bool(check(stripped)))
+    expect("sd_int_rejects_stripped_total_not_updated", bool(integrity_problems(
+        want, [[short(w[0])] for w in want], "t", True, disabled)[0]))
+    expect("sd_int_rejects_stripped_with_flipped_scalar", bool(integrity_problems(
+        want, want[:1] + [[bytes(wrong)]] + want[2:], "t", True, disabled)[0]))
+    left = bytearray(pack_map_blob(pts=3, maps=False))
+    struct.pack_into("<II", left, 88, 124, 16)   # map offset and size left in place
+    expect("sd_int_rejects_stripped_with_map_fields_left", bool(integrity_problems(
+        want, want[:3] + [[bytes(left)]], "t", True, disabled)[0]))
+    msg = integrity_problems(want, want[:2] + [[bytes(flip)]] + want[3:], "stream")[0]
+    expect("sd_int_names_picture_size_and_offset", msg == [
+        "stream picture 2: blob 164 bytes, expected 164, first difference at offset 100"])
+    expect("sd_int_not_strippable_blob_is_none", stripped_form(pack_map_blob(0, False)) is None
+           and stripped_form(b"short") is None)
+    order = pictures_by_pts([[pack_map_blob(pts=2)], [], [pack_map_blob(pts=0)], [pack_map_blob(pts=1)]])
+    expect("sd_int_stream_pictures_sorted_by_pts", [blob_pts(f[0]) if f else None for f in order] == [0, 1, 2, None])
+    log = "\n".join("[Parsed_showinfo_0 @ 0x1] n:   %d pts:  %d pts_time:0\n[Parsed_showinfo_0 @ 0x1]   side data - "
+                    "H.26[45] User Data Unregistered SEI message: UUID=e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64\n[Parsed_showinfo_0 @ 0x1] "
+                    "User Data=%s" % (i, i, want[i][0].hex()) for i in range(2))
+    log += "\n[Parsed_showinfo_0 @ 0x1] n:   2 pts:  2 pts_time:0\n"
+    log += "[x] side data - H.26[45] User Data Unregistered SEI message: UUID=03fdf20a-5d4c\n[x] User Data=aabb\n"
+    expect("sd_int_showinfo_parser", showinfo_blobs(log) == want[:2] + [[]])
+    nal = bytes([0, 0, 3, 0, 0, 3, 1, 0, 0, 3])
+    expect("sd_int_unescape_keeps_data", unescape_nal(nal) == bytes([0, 0, 0, 0, 1, 0, 0]))
+
+
 def self_test_carrier(expect, disabled):
     """A carrier whose baseline encodes but whose side-data encode fails is a fail, never not_run."""
     import tempfile
     entry = {"pixfmt": "yuv420p", "width": 16, "height": 16, "fps": 24}
     car = {"name": "hevc_nvenc", "codec": "hevc", "kind": "hw", "args": ["-qp", "30"]}
     enomem = "[hevc_nvenc @ 0x1] Cannot allocate memory\nConversion failed!\n"
+    cases = [(SIDEDATA_CASES[0], "src", entry)]
 
     def stub(fail_when):
         def run(argv, timeout_s, env=None):
@@ -1363,12 +1636,12 @@ def self_test_carrier(expect, disabled):
         ctx = fake_encode_ctx(disabled, tmp)
         ctx["env"] = {"PELORUS_VALIDATE": "0"}
         ctx["run"] = stub(lambda a: "-udu_sei" in a)
-        got = carrier_roundtrip(ctx, car, [0], entry, "src", Path(tmp))
+        got = carrier_roundtrip(ctx, car, [0], cases, Path(tmp))
         expect("sd_carrier_sidedata_only_failure_fails", got[0] == "fail" and "Cannot allocate" in got[1])
         status, reason, _, legs = aggregate_legs([(car["name"], car["codec"]) + got], disabled)
         expect("sd_carrier_failure_fails_stage", status == "fail" and legs[0]["status"] == "fail")
         ctx["run"] = stub(lambda a: True)
-        got = carrier_roundtrip(ctx, car, [0], entry, "src", Path(tmp))
+        got = carrier_roundtrip(ctx, car, [0], cases, Path(tmp))
         expect("sd_carrier_baseline_failure_not_run", got[0] == "not_run" and "Cannot allocate" in got[1])
 
 
@@ -1491,6 +1764,7 @@ def self_test(disabled=frozenset()):
     self_test_gates(expect, disabled)
     self_test_legs(expect, disabled)
     self_test_carrier(expect, disabled)
+    self_test_integrity(expect, disabled)
     self_test_brc_rules(expect, disabled)
     self_test_brc_failures(expect, disabled)
     self_test_render_host(expect)

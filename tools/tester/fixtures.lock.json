@@ -45,6 +45,48 @@
       }
     },
     {
+      "name": "synth-flat-180p",
+      "file": "synth-flat-180p.yuv",
+      "sha256": "d42a3c538a25e42b2391881b5c8d6255835f48d27bd3e4a28e2f9f529387205b",
+      "size": 345600,
+      "pixfmt": "yuv420p",
+      "width": 320,
+      "height": 180,
+      "frames": 4,
+      "fps": 25,
+      "generate": {
+        "lavfi": "color=c=gray:s=320x180:r=25",
+        "note": "Flat gray for the side-data round trip: the analyze blob of flat content is mostly zero bytes, which NVENC truncates in its SEI NAL units (issue #284). Hash pinned against FFmpeg n9.0.2."
+      },
+      "licence": {
+        "spdx": "EUPL-1.2",
+        "holder": "2026 Lusoris",
+        "source": "generated from the recorded lavfi recipe; no third-party content",
+        "attribution": ""
+      }
+    },
+    {
+      "name": "synth-flat-1080p",
+      "file": "synth-flat-1080p.yuv",
+      "sha256": "3f5671eef82881c55b044bb8fdf1d4e6d4cded5894313bba0c5cc24abf8f4a29",
+      "size": 12441600,
+      "pixfmt": "yuv420p",
+      "width": 1920,
+      "height": 1080,
+      "frames": 4,
+      "fps": 25,
+      "generate": {
+        "lavfi": "color=c=gray:s=1920x1080:r=25",
+        "note": "Flat gray at 1080p for the side-data round trip: at cell=32 the maps no longer fit hevc_nvenc's header budget (ADR-0181) and are all zero. Hash pinned against FFmpeg n9.0.2."
+      },
+      "licence": {
+        "spdx": "EUPL-1.2",
+        "holder": "2026 Lusoris",
+        "source": "generated from the recorded lavfi recipe; no third-party content",
+        "attribution": ""
+      }
+    },
+    {
       "name": "bbb",
       "file": "bbb.yuv",
       "sha256": "9fcbaa5822b2db153fa3b0f84b8de945384a1b5ff64d314b0c950e66975c6ae9",
