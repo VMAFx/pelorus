@@ -24,6 +24,33 @@ Options (`meson_options.txt`):
 | `shaders` | true | compile the standalone reference `.comp` shaders to SPIR-V (needs glslang) |
 | `tools` | true | build the libpelorus CLI demonstrators (`pelorus_qp_report`; not installed) |
 
+## Software Vulkan lane (Mesa lavapipe)
+
+The `lavapipe` job of `.github/workflows/ci.yml` runs the real shaders of the
+21-patch stack on Mesa lavapipe, so a runner without a GPU still executes all
+ten filters with the Khronos validation layer on. Its result is functional
+evidence on software Vulkan, never GPU evidence; the research digest has the
+measurements and the reasoning
+([research 0228](../research/0228-lavapipe-spike.md)). On a draft pull request
+it stops on purpose, like the other hosted gates.
+
+To reproduce it locally, with `lvp_icd.json` pointing at your lavapipe:
+
+```bash
+FFMPEG_REPO=/absolute/path/to/ffmpeg KEEP_DIR=$PWD/kept ffmpeg-patches/test/build-and-run.sh
+export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json PELORUS_VALIDATE=1 \
+  LD_LIBRARY_PATH=$PWD/kept/lib FFMPEG_BIN=$PWD/kept/ffmpeg
+ffmpeg-patches/test/vulkan-lavapipe-guard.sh     # device, extensions, features
+ffmpeg-patches/test/vulkan-lavapipe-filters.sh   # ten filters, zero VUIDs
+ffmpeg-patches/test/vulkan-format-matrix.sh
+ffmpeg-patches/test/vulkan-lavapipe-report.sh    # software_vulkan, functional
+```
+
+`KEEP_DIR` must be an absolute path that does not exist yet. The guard names
+every missing device extension from
+`ffmpeg-patches/test/vulkan-required-extensions.txt`; FFmpeg 9 itself treats
+them as optional and would fall back silently.
+
 ## Windows (MSYS2 UCRT64)
 
 libpelorus and its fast suite build natively on Windows with the MSYS2 UCRT64
@@ -180,7 +207,7 @@ the commit in [ADR-0168](../adr/0168-praetor-engine-492a00f.md), prints
 the module version Go recorded for it, verifies generated contexts, and runs
 the two ratchet steps above. The live `master` protection, a classic branch
 rule, requires `Standards` and the `core`, `ffmpeg-stack`, and `docs` jobs; the
-committed ruleset requires all eight pull-request checks once it is applied
+committed ruleset requires all nine pull-request checks once it is applied
 ([Branch ruleset](#branch-ruleset)). `Praetor Documentation Governance` is Praetor's locked
 workflow for the `docs:seo-portal` facet: it runs the same Markdown and figure
 checks as `make docs-lint docs-figures`. On a draft pull request its first
@@ -287,7 +314,7 @@ controls below, and no workflow implements them; they are declared only
 
 | Declared by | Control | Current state |
 | --- | --- | --- |
-| `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, stale-review dismissal, review-thread resolution, eight required checks | Committed in `.github/rulesets/main.json`, not applied yet; live `master` protection requires linear history and four checks, no signatures. Approving reviews: zero under `review_mode: single_maintainer` ([Branch ruleset](#branch-ruleset)) |
+| `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, stale-review dismissal, review-thread resolution, nine required checks | Committed in `.github/rulesets/main.json`, not applied yet; live `master` protection requires linear history and four checks, no signatures. Approving reviews: zero under `review_mode: single_maintainer` ([Branch ruleset](#branch-ruleset)) |
 | `native-gpu-systems` | `semgrep`, `cppcheck`, `clippy` | Not run; Pelorus has no Rust for `clippy` |
 | `security:high` | `gitleaks`, `trivy` | Not run; `.gitleaks.toml` only configures a manual `gitleaks` run |
 | `api:public-contract` | `buf`, `spectral`, OpenAPI drift, `Migration:` footer check | Not run; Pelorus has no protobuf or OpenAPI surface. The append-only C ABI is guarded by the interop conformance fixture and review |
@@ -628,8 +655,8 @@ The `Release` workflow (`.github/workflows/release.yml`) runs three jobs in
 order ([ADR-0169](../adr/0169-release-provenance-slsa3.md)):
 
 1. `ci` calls the whole `CI` workflow (`uses: ./.github/workflows/ci.yml`:
-   core, FFmpeg patch-stack regenerate, replay, link and smoke, sanitizers,
-   Windows, docs), so a tagged commit with a broken stack never builds a
+   core, FFmpeg patch-stack regenerate, replay, link and smoke, the lavapipe
+   lane, sanitizers, Windows, docs), so a tagged commit with a broken stack never builds a
    release. The call runs with the caller's `github` context, and `ci.yml`
    keys its concurrency group on the workflow name so it cannot cancel a push
    or pull-request run.

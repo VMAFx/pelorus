@@ -185,7 +185,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 | `.claude/skills/`, `.claude/hooks/`, `.codex/hooks/`, `.gemini/settings.json` | agent skills + hooks; see below |
 | `.vscode/`, `.zed/`, `.idea/`, `.helix/`, `.fleet/`, `.nvim.lua`, `lua/`, `.dir-locals.el`, `standards.sublime-project` | reconciled editor settings |
 | `.github/workflows/` | `ci.yml` product jobs, `standards-gate.yml`, locked `praetor-docs.yml`, `release.yml` (`ci` -> `build` -> tag-only `publish`), reusable `release-build.yml`: build, SBOM, SLSA L3 attestation, cosign; no artefact download or cache before attestation (ADR-0169); `devcontainer-image.yml` builds base image on PR, pushes + attests `ghcr.io/vmafx/pelorus-dev` from `master`; Praetor-rendered `reuse.yml` runs `reuse lint` |
-| `.github/rulesets/main.json` | rendered `master` ruleset (0 reviews, signed commits, linear history, 8 checks); committed, applied only by maintainer `praetorctl sync --remote` |
+| `.github/rulesets/main.json` | rendered `master` ruleset (0 reviews, signed commits, linear history, 9 checks); committed, applied only by maintainer `praetorctl sync --remote` |
 
 New top-level package: add row here. New module: scoped `AGENTS.md`.
 

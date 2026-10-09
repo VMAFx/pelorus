@@ -101,6 +101,30 @@ ACTIONLINT_RENOVATE_TEMPLATES = {
 # the same package identity, so both land in one renovate/go-<major>.x branch.
 ACTIONLINT_GO_VERSION = "1.27.x"
 ACTIONLINT_GO_STEP = "- name: Set up Go for actionlint"
+# #228: the hosted lavapipe lane (software Vulkan). It is functional evidence
+# only. The Praetor hosted-gate draft step comes first (HISS-18), every later
+# step carries the draft guard, and the lane keeps a bounded budget.
+LAVAPIPE_JOB = "lavapipe"
+LAVAPIPE_MAX_TIMEOUT_MINUTES = 45
+LAVAPIPE_DRAFT_STEP = "- name: Stop on a draft pull request"
+LAVAPIPE_DRAFT_GUARD = "if: github.event.pull_request.draft != true"
+LAVAPIPE_PACKAGES = ("mesa-vulkan-drivers", "vulkan-tools", "vulkan-validationlayers")
+LAVAPIPE_TOKENS = (
+    "if: github.event.pull_request.draft == true",
+    "KEEP_DIR=",
+    "ffmpeg-patches/test/build-and-run.sh",
+    "VK_DRIVER_FILES=",
+    "echo \"PELORUS_VALIDATE=1\"",
+    "ffmpeg-patches/test/vulkan-lavapipe-guard.sh --self-test --disable",
+    "ffmpeg-patches/test/vulkan-lavapipe-filters.sh --self-test",
+    "ffmpeg-patches/test/vulkan-lavapipe-report.sh --self-test",
+    "ffmpeg-patches/test/vulkan-lavapipe-guard.sh\n",
+    "ffmpeg-patches/test/vulkan-lavapipe-filters.sh\n",
+    "ffmpeg-patches/test/vulkan-format-matrix.sh\n",
+    "ffmpeg-patches/test/vulkan-lavapipe-report.sh\n",
+)
+LAVAPIPE_FORBIDDEN = ("continue-on-error", "PELORUS_VALIDATE=0", "|| true")
+USES_LINE = re.compile(r"^\s+(?:- )?uses:\s*(\S+)", re.MULTILINE)
 RENOVATE_CONFIG = ROOT / "renovate.json"
 CHECKER_RELATIVE = "scripts/check-build-config.py"
 # Mirrors Renovate's known-action config for actions/setup-go (datasource,
@@ -803,8 +827,21 @@ def consumer_validator_regressions() -> list[str]:
     failures.extend(_consumer_replay_am_and_trap_regressions(replay, replay_relative))
     failures.extend(_consumer_replay_identity_regressions(replay))
     failures.extend(_consumer_replay_sdk_and_query_regressions(replay))
+    failures.extend(_consumer_replay_keep_regressions(replay))
     failures.extend(_hermetic_regressions("replay", replay, validate_replay_text))
     return failures
+
+
+def _consumer_replay_keep_regressions(replay: str) -> list[str]:
+    mutated = replay.replace("KEEP_DIR", "KEEP_REMOVED")
+    if mutated == replay:
+        return ["consumer regression: KEEP_DIR mutation did not change fixture"]
+    if not any(
+        "must keep the linked binary for the lavapipe lane" in error
+        for error in validate_replay_text(mutated)
+    ):
+        return ["consumer regression: replay without KEEP_DIR was accepted"]
+    return []
 
 
 def static_consumer_validator_regressions() -> list[str]:
@@ -1979,6 +2016,7 @@ def _validate_replay_tokens_and_filters(replay: str) -> list[str]:
         "--enable-libaom": "must compile libaom consumers when available",
         "--enable-libsvtav1": "must compile SVT-AV1 consumers when available",
         "--disable-doc": "must disable FFmpeg documentation",
+        "KEEP_DIR": "must keep the linked binary for the lavapipe lane",
         "pelorus_fgs": "must verify the Pelorus FGS bitstream filter",
         "libaom-av1": "must verify the libaom Pelorus option",
         "libsvtav1": "must verify the SVT-AV1 Pelorus option",
@@ -2237,6 +2275,41 @@ def validate_windows_job(relative: str, block: str | None) -> list[str]:
     ):
         if token not in block:
             errors.append(f"{prefix} is missing {token}")
+    return errors
+
+
+def validate_lavapipe_job(relative: str, block: str | None) -> list[str]:
+    """Validate the lavapipe lane: draft stop first, bounded, pinned, guarded."""
+    if block is None:
+        return [f"{relative}: missing lavapipe job {LAVAPIPE_JOB}"]
+    prefix = f"{relative}: lavapipe job"
+    errors: list[str] = []
+    steps = re.findall(r"^      - (?:name|uses):", block, re.MULTILINE)
+    first = block.find("\n      - ")
+    if first < 0 or not block[first + 1 :].lstrip().startswith(LAVAPIPE_DRAFT_STEP):
+        errors.append(f"{prefix} must start with the draft stop step")
+    if block.count(LAVAPIPE_DRAFT_GUARD) != len(steps) - 1:
+        errors.append(f"{prefix} must guard every step after the draft stop with draft != true")
+    timeout = re.search(r"^    timeout-minutes:\s*(\d+)\s*$", block, re.MULTILINE)
+    if timeout is None or int(timeout.group(1)) > LAVAPIPE_MAX_TIMEOUT_MINUTES:
+        errors.append(
+            f"{prefix} must set timeout-minutes of at most {LAVAPIPE_MAX_TIMEOUT_MINUTES}"
+        )
+    for action in USES_LINE.findall(block):
+        if not re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", action):
+            errors.append(f"{prefix} must pin {action} by full commit digest")
+    install_start = block.find("sudo apt-get install")
+    install_end = block.find("\n      - name:", install_start)
+    install = block[install_start:install_end] if install_start >= 0 else ""
+    for package in LAVAPIPE_PACKAGES:
+        if not re.search(rf"(?<![A-Za-z0-9_-]){re.escape(package)}(?![A-Za-z0-9_-])", install):
+            errors.append(f"{prefix} must install {package}")
+    for token in LAVAPIPE_TOKENS:
+        if token not in block:
+            errors.append(f"{prefix} is missing {token.strip()}")
+    for token in LAVAPIPE_FORBIDDEN:
+        if token in block:
+            errors.append(f"{prefix} must not contain {token}")
     return errors
 
 
@@ -2580,7 +2653,7 @@ def _validate_workflow_native_packages(
 ) -> list[str]:
     errors: list[str] = []
     build_jobs = {
-        "ci.yml": ("core", "ffmpeg-stack", "sanitizers"),
+        "ci.yml": ("core", "ffmpeg-stack", LAVAPIPE_JOB, "sanitizers"),
         "release-build.yml": (RELEASE_BUILD_JOB,),
     }.get(Path(relative).name, ())
     for name in build_jobs:
@@ -2653,6 +2726,7 @@ def _validate_workflow_specialized_jobs(
                 f"'{ACTIONLINT_GO_VERSION}' (found {go_versions})"
             )
         errors.extend(validate_windows_job(relative, jobs.get(WINDOWS_JOB)))
+        errors.extend(validate_lavapipe_job(relative, jobs.get(LAVAPIPE_JOB)))
     elif rel_name == "release.yml":
         if "workflow_dispatch:" not in text:
             errors.append(f"{relative}: release gate needs workflow_dispatch")
@@ -4179,6 +4253,93 @@ def _docs_pin_shape_cases(source: str) -> dict:
     }
 
 
+def lavapipe_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Mutations of the #228 lavapipe lane that the validator must reject."""
+    lane = workflow_job_blocks(source).get(LAVAPIPE_JOB, "")
+
+    def mutate(old: str, new: str) -> str:
+        return replace_in_job(source, LAVAPIPE_JOB, old, new)
+
+    pin = re.search(r"actions/checkout@[0-9a-f]{40}", lane)
+    return {
+        "missing lavapipe job": (
+            source.replace(lane, "", 1) if lane else source,
+            f"missing lavapipe job {LAVAPIPE_JOB}",
+        ),
+        "lavapipe lane without draft stop": (
+            mutate(LAVAPIPE_DRAFT_STEP, "- name: Something else"),
+            "must start with the draft stop step",
+        ),
+        "lavapipe step without draft guard": (
+            mutate(f"        {LAVAPIPE_DRAFT_GUARD}\n", "", ),
+            "must guard every step after the draft stop",
+        ),
+        "lavapipe unbounded timeout": (
+            mutate("timeout-minutes: 45", "timeout-minutes: 90"),
+            "must set timeout-minutes of at most",
+        ),
+        "lavapipe unpinned action": (
+            mutate(pin.group(0), "actions/checkout@v7") if pin else source,
+            "must pin actions/checkout@v7 by full commit digest",
+        ),
+    }
+
+
+def lavapipe_step_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Mutations of the lavapipe lane's packages and guard steps."""
+
+    def mutate(old: str, new: str) -> str:
+        return replace_in_job(source, LAVAPIPE_JOB, old, new)
+
+    return {
+        "lavapipe without lavapipe driver": (
+            mutate("mesa-vulkan-drivers", "mesa-drivers-removed"),
+            "must install mesa-vulkan-drivers",
+        ),
+        "lavapipe without validation layers": (
+            mutate("vulkan-validationlayers", "layers-removed"),
+            "must install vulkan-validationlayers",
+        ),
+        "lavapipe without validation": (
+            mutate('echo "PELORUS_VALIDATE=1"', 'echo "PELORUS_VALIDATE=0"'),
+            "must not contain PELORUS_VALIDATE=0",
+        ),
+        "lavapipe device guard dropped": (
+            mutate("ffmpeg-patches/test/vulkan-lavapipe-guard.sh\n", "true\n"),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-guard.sh",
+        ),
+        "lavapipe guard red-proof dropped": (
+            mutate("vulkan-lavapipe-guard.sh --self-test --disable", "vulkan-lavapipe-guard.sh --self-test"),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-guard.sh --self-test --disable",
+        ),
+        "lavapipe ten-filter run dropped": (
+            mutate("ffmpeg-patches/test/vulkan-lavapipe-filters.sh\n", "true\n"),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-filters.sh",
+        ),
+        "lavapipe format matrix dropped": (
+            mutate("ffmpeg-patches/test/vulkan-format-matrix.sh\n", "true\n"),
+            "is missing ffmpeg-patches/test/vulkan-format-matrix.sh",
+        ),
+        "lavapipe report guard dropped": (
+            mutate("ffmpeg-patches/test/vulkan-lavapipe-report.sh\n", "true\n"),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-report.sh",
+        ),
+        "lavapipe failure ignored": (
+            mutate("vulkan-lavapipe-filters.sh\n", "vulkan-lavapipe-filters.sh || true\n"),
+            "must not contain || true",
+        ),
+        "lavapipe continue-on-error": (
+            mutate("    timeout-minutes: 45\n", "    timeout-minutes: 45\n    continue-on-error: true\n"),
+            "must not contain continue-on-error",
+        ),
+        "lavapipe binary not kept": (
+            mutate("KEEP_DIR=", "KEEP_DIR_REMOVED="),
+            "is missing KEEP_DIR=",
+        ),
+    }
+
+
+
 def workflow_validator_regressions() -> list[str]:
     """Prove runner and native-toolchain regressions are rejected."""
     failures: list[str] = []
@@ -4186,6 +4347,8 @@ def workflow_validator_regressions() -> list[str]:
     source = ci_path.read_text(encoding="utf-8")
     cases = {
         **windows_workflow_cases(source),
+        **lavapipe_workflow_cases(source),
+        **lavapipe_step_cases(source),
         "floating runner": (
             source.replace("ubuntu-26.04", "ubuntu-latest", 1),
             "forbidden workflow token ubuntu-latest",
