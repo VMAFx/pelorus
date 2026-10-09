@@ -30,7 +30,10 @@ patches (ADR-0108 deliverable #6).
   smoke `maps-1080p` case fails the same way as before if it shrinks.
 - **Upstream**: the budget and drop path is useful to any `hevc_nvenc`
   `udu_sei` user (a 2 KiB foreign SEI also stops the stock encode); the map
-  stripping is Pelorus-only.
+  stripping is Pelorus-only. The stock failure, `ENOMEM` at the 1024-byte
+  non-VCL limit with no hint at the cause, is reported as
+  [FFmpeg issue #24972](https://code.ffmpeg.org/FFmpeg/FFmpeg/issues/24972).
+  Keep 0022 until FFmpeg budgets or rejects oversized user SEI itself.
 - **Regeneration**: `FFMPEG_REPO=/absolute/path/to/ffmpeg
   ffmpeg-patches/generate.sh`, run twice: byte-identical.
 - **Replay**: `JOBS=4 FFMPEG_REPO=/absolute/path/to/ffmpeg
@@ -94,9 +97,15 @@ patches (ADR-0108 deliverable #6).
   `VK_QUEUE_FAMILY_EXTERNAL` or `VK_QUEUE_FAMILY_FOREIGN_EXT`.
 - **Upstream**: FFmpeg master has the same code (checked 2026-10-09). The
   patch carries no Pelorus names and its header is a `git format-patch`
-  message, so it can go to ffmpeg-devel as is. Drop 0021 on the first FFmpeg
-  bump that contains an equivalent fix; renumbering is not needed because it
-  is last.
+  message. It is upstream for review as
+  [FFmpeg PR #24970](https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/24970)
+  (rebased onto master `7bc3576910`). The validation layer's missing check is
+  [KhronosGroup/Vulkan-ValidationLayers#13405](https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/13405),
+  with the fix in
+  [#13409](https://github.com/KhronosGroup/Vulkan-ValidationLayers/pull/13409).
+  Drop 0021 on the first FFmpeg bump that contains #24970 or an equivalent
+  fix; the later patches then move up one number (`ffmpeg-patches/AGENTS.md`
+  rule 9).
 - **Rebase-sensitive**: `ff_vk_frame_barrier()` in `libavutil/vulkan.c`
   (source of `srcQueueFamilyIndex`), `create_frame()` queue-family tracking and
   `switch_layout()` `dst_qf` in `libavutil/hwcontext_vulkan.c`. If upstream
@@ -458,7 +467,9 @@ pre-fix failures and derivation.
   `pel_fg_from_aom()` clamps to the signed range and adds the bias. FFmpeg's
   native `av1dec.c` copies the raw coded values instead; a source decoded that
   way into `-pelorus_film_grain` would be double-biased. Use libdav1d for
-  grain passthrough.
+  grain passthrough. The `av1dec` fix is upstream for review as
+  [FFmpeg PR #24974](https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/24974); once
+  the FFmpeg base contains it, both decoders export the same values.
 - **0004 (BUG-020)**: `pelorus_roi_qp_range()` returns `51 + 6*(bit_depth-8)`
   for H.264/HEVC and 255 for AV1. NVENC adds `qpDeltaMap` entries in the
   codec's own QP units (AV1 qindex for `av1_nvenc`), and the int8 map
