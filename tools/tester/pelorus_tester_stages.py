@@ -36,7 +36,7 @@ RULES = (
     "vuid_unlisted", "vuid_expiry", "vuid_reference", "vuid_gate_every_stage",
     "steering_effect", "steering_decode", "steering_control", "steering_selfreport",
     "steering_baseline_defect",
-    "sd_present", "sd_structure", "sd_decode_tap", "sd_pts",
+    "sd_present", "sd_structure", "sd_decode_tap", "sd_pts", "sd_carrier_masking",
 )
 
 ENC_TIMEOUT_S = 180
@@ -723,21 +723,41 @@ def run_sidedata(ctx, spec):
     return finish(ctx, outcome(status, reason, log, legs))
 
 
-def carrier_encode(ctx, car, devs, entry, src, out):
-    """Encode with -udu_sei 1 on the first device that works; returns (dev, why)."""
-    head = "format=nv12,hwupload,pelorus_analyze_vulkan,pelorus_deband_vulkan"
+def carrier_encode(ctx, car, devs, entry, src, out, sidedata=True):
+    """Encode on the first device that works; returns (dev, why).
+
+    With sidedata the analyze filter runs and -udu_sei 1 is set; without, the
+    baseline keeps the same input, deband and encoder but carries neither."""
+    head = "format=nv12,hwupload," + ("pelorus_analyze_vulkan," if sidedata else "") \
+        + "pelorus_deband_vulkan"
     chain = head if car["kind"] == "vulkan" else head + ",hwdownload,format=nv12"
     why = "no device"
     for dev in (devs if car["kind"] == "vulkan" else devs[:1]):
         argv = ["-hide_banner", "-loglevel", "error", "-y", "-init_hw_device",
                 "vulkan=vk:%d" % dev, "-filter_hw_device", "vk"]
         argv += input_args(entry, src) + ["-frames:v", str(SIDEDATA_FRAMES), "-vf", chain]
-        argv += ["-c:v", car["name"]] + car["args"] + ["-udu_sei", "1", "-f", car["codec"], str(out)]
+        argv += ["-c:v", car["name"]] + car["args"] + (["-udu_sei", "1"] if sidedata else [])
+        argv += ["-f", car["codec"], str(out)]
         code, text, err = ffrun(ctx, argv)
         if code == 0 and Path(out).is_file() and Path(out).stat().st_size > 0:
             return dev, ""
-        why = (err or first_line(text))[:160]
+        why = (encoder_error_line(text, car["name"]) if text else err)[:160] or first_line(text)[:160]
     return None, why
+
+
+def carrier_failure(ctx, car, devs, entry, src, work, why):
+    """Classify a failed side-data encode against a baseline encode of the same input.
+
+    not_run only when the baseline fails too (the host cannot encode); a baseline
+    that encodes makes the side data the cause, which is a fail (ADR-0173)."""
+    if "sd_carrier_masking" in ctx["disabled"]:
+        return free_driver_leg(ctx, car, "not_run", "cannot encode on this host: " + why)
+    base = work / ("sd-base-%s.%s" % (car["name"], car["codec"]))
+    dev, base_why = carrier_encode(ctx, car, devs, entry, src, base, sidedata=False)
+    if dev is None:
+        return free_driver_leg(ctx, car, "not_run", "cannot encode on this host: " + base_why)
+    return "fail", ("%s encodes without the side data but fails with it (device %d): %s" % (
+        car["name"], dev, why))[:400]
 
 
 def carrier_roundtrip(ctx, car, devs, entry, src, work):
@@ -745,7 +765,7 @@ def carrier_roundtrip(ctx, car, devs, entry, src, work):
     out = work / ("sd-%s.%s" % (car["name"], car["codec"]))
     dev, why = carrier_encode(ctx, car, devs, entry, src, out)
     if dev is None:
-        return free_driver_leg(ctx, car, "not_run", "cannot encode on this host: " + why)
+        return carrier_failure(ctx, car, devs, entry, src, work, why)
     frames = pelorus_blobs_per_frame(out.read_bytes(), car["codec"])
     errs = sidedata_problems(frames, SIDEDATA_FRAMES, ctx["disabled"])
     code, tap, err = ffrun(ctx, ["-hide_banner", "-loglevel", "info", "-i", str(out),
@@ -1118,6 +1138,34 @@ def self_test_legs(expect, disabled):
     expect("legs_recorded", status == "pass" and [l["status"] for l in legs] == ["pass", "not_run"])
 
 
+def self_test_carrier(expect, disabled):
+    """A carrier whose baseline encodes but whose side-data encode fails is a fail, never not_run."""
+    import tempfile
+    entry = {"pixfmt": "yuv420p", "width": 16, "height": 16, "fps": 24}
+    car = {"name": "hevc_nvenc", "codec": "hevc", "kind": "hw", "args": ["-qp", "30"]}
+    enomem = "[hevc_nvenc @ 0x1] Cannot allocate memory\nConversion failed!\n"
+
+    def stub(fail_when):
+        def run(argv, timeout_s, env=None):
+            if fail_when(argv):
+                return 1, enomem, ""
+            Path(argv[-1]).write_bytes(b"\x00" * 64)
+            return 0, "", ""
+        return run
+
+    with tempfile.TemporaryDirectory(prefix="pelorus-carrier-") as tmp:
+        ctx = fake_encode_ctx(disabled, tmp)
+        ctx["env"] = {"PELORUS_VALIDATE": "0"}
+        ctx["run"] = stub(lambda a: "-udu_sei" in a)
+        got = carrier_roundtrip(ctx, car, [0], entry, "src", Path(tmp))
+        expect("sd_carrier_sidedata_only_failure_fails", got[0] == "fail" and "Cannot allocate" in got[1])
+        status, reason, _, legs = aggregate_legs([(car["name"], car["codec"]) + got], disabled)
+        expect("sd_carrier_failure_fails_stage", status == "fail" and legs[0]["status"] == "fail")
+        ctx["run"] = stub(lambda a: True)
+        got = carrier_roundtrip(ctx, car, [0], entry, "src", Path(tmp))
+        expect("sd_carrier_baseline_failure_not_run", got[0] == "not_run" and "Cannot allocate" in got[1])
+
+
 def self_test(disabled=frozenset()):
     """Return failing check names; every rule has a planted bad case."""
     failures = []
@@ -1131,4 +1179,5 @@ def self_test(disabled=frozenset()):
     self_test_sidedata(expect, disabled)
     self_test_gates(expect, disabled)
     self_test_legs(expect, disabled)
+    self_test_carrier(expect, disabled)
     return failures

@@ -1,0 +1,1 @@
+- The tester's `sidedata_roundtrip` stage no longer reports a carrier as `not_run` when only the side-data encode fails: it encodes the same input without side data and records a `fail` leg with the encoder's error when that baseline encodes; `not_run` stays for a host that cannot encode at all. New self-test rule `sd_carrier_masking` (tool 0.4.2, #268).

@@ -4,6 +4,7 @@
     {"sha256": "e94dad3e3eed02cd993ce8df8240dda2e213036761c782f00de76ae253c2ee9d", "tool_version": "0.3.0", "note": "schema 2: execution_class, evidence_claim, pass_software, tool.sha256"},
     {"sha256": "da8518f3ed847ca45ee8ed1e26e9f630e8ebb1170c2f9b901c432625298860fd", "tool_version": "0.4.0", "note": "schema 2 with optional kit and legs; kit-specific no_device reasons; NVENC and QSV steering legs (ADR-0180)"},
     {"sha256": "7cf0489465918946af87f99b4674378c33887f50db17bc63486254487036a482", "tool_version": "0.4.0", "note": "kit intel-nonfree-local from the NOT-FOR-REDISTRIBUTION marker; steering control without ROI side data; QSV legs name the missing non-free media driver (ADR-0180)"},
-    {"sha256": "2d0712b9a2fc1040688e90ba476b8b27bf4792f09a8f2230fa515f21a6908d98", "tool_version": "0.4.1", "note": "a bare user name is a whole-word literal and a generic CI or container account (runner, root, ubuntu, ...) is not private; the lavapipe lane on GitHub runners refused its own report (#228)"}
+    {"sha256": "2d0712b9a2fc1040688e90ba476b8b27bf4792f09a8f2230fa515f21a6908d98", "tool_version": "0.4.1", "note": "a bare user name is a whole-word literal and a generic CI or container account (runner, root, ubuntu, ...) is not private; the lavapipe lane on GitHub runners refused its own report (#228)"},
+    {"sha256": "40c5b4484c7729b7850b5f017f53beeb1030cabcec34a7f87eddfa821cd88e92", "tool_version": "0.4.2", "note": "the side-data round trip fails a carrier that encodes without the side data and reports not_run only when the baseline fails too (#268)"}
   ]
 }
