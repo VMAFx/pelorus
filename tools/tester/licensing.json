@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "comment": "Licence record of the Pelorus tester image (ADR-0178, #236), read by licensing.py. Every file in the image belongs to one component below (first match in list order), to a Debian package (dpkg ownership; its copyright file is required), or to an ignore rule that names a reason and an expiry date. A new package, library, licence or file fails the image build until it is recorded here. Edit this file together with the Containerfile; `licensing.py record` checks it without an image.",
+  "comment": "Licence record of the Pelorus tester image (ADR-0178, #236), read by licensing.py. Every file in the image belongs to one component below (first match in list order), to a Debian package (dpkg ownership; its copyright file is required), or to an ignore rule that names a reason and an expiry date. A new package, library, licence or file fails the image build until it is recorded here. Components that name `kits` belong to those image kits only (ADR-0180); `forbidden` files and packages fail every kit whoever owns them. Edit this file together with the Containerfile; `licensing.py record` checks it without an image.",
   "repository": "https://github.com/VMAFx/pelorus",
   "notices_path": "usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt",
   "licences": {
@@ -52,6 +52,14 @@
     "LicenseRef-NVIDIA-CUDA-EULA": {
       "redistributable": false,
       "text": null
+    },
+    "BSD-3-Clause": {
+      "redistributable": true,
+      "text": "usr/share/common-licenses/BSD"
+    },
+    "BSD-2-Clause": {
+      "redistributable": true,
+      "text": "usr/share/doc/libdav1d7/copyright"
     }
   },
   "debian": {
@@ -59,6 +67,60 @@
       "main"
     ],
     "sources_file": "etc/apt/sources.list.d/debian.sources"
+  },
+  "kits": [
+    "generic",
+    "nvidia",
+    "intel"
+  ],
+  "forbidden": {
+    "files": [
+      {
+        "paths": [
+          "**/libcuda.so*",
+          "**/libcudart.so*",
+          "**/libnvcuvid.so*",
+          "**/libnvidia-*.so*",
+          "**/libnvoptix.so*",
+          "**/libnvrtc*.so*",
+          "**/libnvJitLink.so*",
+          "**/libnpp*.so*",
+          "**/libcublas*.so*",
+          "**/libGLX_nvidia.so*",
+          "**/libEGL_nvidia.so*",
+          "**/libGLESv1_CM_nvidia.so*",
+          "**/libGLESv2_nvidia.so*",
+          "**/nvidia_icd.json",
+          "**/nvidia_layers.json",
+          "**/10_nvidia.json",
+          "**/nvidia-smi"
+        ],
+        "why": "NVIDIA driver and CUDA files come from the host through the NVIDIA Container Toolkit and are never shipped (ADR-0173 decision 5, ADR-0180)"
+      }
+    ],
+    "packages": [
+      {
+        "names": [
+          "intel-media-va-driver-non-free"
+        ],
+        "why": "only the free Intel media driver from Debian main ships (ADR-0180)"
+      },
+      {
+        "names": [
+          "nvidia-*",
+          "libnvidia-*",
+          "libcuda*",
+          "libnvcuvid*",
+          "libnvoptix*",
+          "libgl1-nvidia*",
+          "libegl-nvidia*",
+          "libgles-nvidia*",
+          "libglx-nvidia*",
+          "xserver-xorg-video-nvidia*"
+        ],
+        "why": "NVIDIA driver packages are never installed; the host supplies the driver (ADR-0180)"
+      }
+    ]
   },
   "ignore": [
     {
@@ -335,6 +397,67 @@
         "ca-certificates"
       ],
       "source": "https://tracker.debian.org/pkg/ca-certificates",
+      "redistributable": true
+    },
+    {
+      "id": "nv-codec-headers",
+      "name": "FFmpeg nv-codec-headers (NVENC/NVDEC API headers and dynamic loader)",
+      "version": "n12.1.14.0",
+      "version_from": "tools/tester/Containerfile:NV_CODEC_HEADERS_TAG",
+      "spdx": "MIT",
+      "kits": [
+        "nvidia"
+      ],
+      "paths": [
+        "usr/share/licenses/pelorus-tester/nv-codec-headers/NOTICE.txt"
+      ],
+      "source": "https://code.ffmpeg.org/FFmpeg/nv-codec-headers",
+      "notes": [
+        "Compiled into ffmpeg: the headers' loader opens the host driver's libcuda.so.1 and libnvidia-encode.so.1 at run time. No NVIDIA library is in the image; the NVIDIA Container Toolkit mounts the driver with --gpus all.",
+        "NOTICE.txt holds the copyright and permission notice of each header; the tree at the pinned commit is in the -source image under /source/kit/nv-codec-headers."
+      ],
+      "redistributable": true
+    },
+    {
+      "id": "intel-media-stack",
+      "name": "Intel GPU user-mode stack from Debian main (Mesa Vulkan drivers, oneVPL, free media driver, VA-API)",
+      "version": "Debian trixie",
+      "spdx": "MIT AND BSD-3-Clause",
+      "kind": "dpkg",
+      "kits": [
+        "intel"
+      ],
+      "packages": [
+        "intel-media-va-driver",
+        "libmfx-gen1.2",
+        "libva-drm2",
+        "libva2",
+        "libvpl2",
+        "mesa-vulkan-drivers"
+      ],
+      "source": "https://tracker.debian.org/pkg/intel-media-driver",
+      "notes": [
+        "intel-media-va-driver is the free build (Debian main); intel-media-va-driver-non-free is a forbidden package. The copyright file of each package under /usr/share/doc is authoritative for its licences; the source is in the -source image."
+      ],
+      "redistributable": true
+    },
+    {
+      "id": "dav1d",
+      "name": "dav1d AV1 decoder (Debian libdav1d7)",
+      "version": "Debian trixie",
+      "spdx": "BSD-2-Clause",
+      "kind": "dpkg",
+      "kits": [
+        "nvidia",
+        "intel"
+      ],
+      "packages": [
+        "libdav1d7"
+      ],
+      "source": "https://tracker.debian.org/pkg/dav1d",
+      "notes": [
+        "FFmpeg links it (--enable-libdav1d) so the steering smoke decodes the AV1 streams of av1_nvenc and av1_qsv in software, independent of the encoder's vendor stack. The licence text is the package's copyright file."
+      ],
       "redistributable": true
     }
   ]

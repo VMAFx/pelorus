@@ -9,7 +9,7 @@ report plus SHA256SUMS and a manifest. Standard library only; run it as
 
     pelorus_tester_report.py run [--plan FILE] [--out DIR] [--require-device]
                                  [--bench] [--note TEXT]
-    pelorus_tester_report.py validate REPORT [--forbid LITERAL ...]
+    pelorus_tester_report.py validate REPORT [--forbid LITERAL ...] [--kit KIT]
     pelorus_tester_report.py tool-hash
     pelorus_tester_report.py --self-test [--disable RULE]
 
@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TOOL_NAME = "pelorus-tester-report"
-TOOL_VERSION = "0.3.0"
+TOOL_VERSION = "0.4.0"
 SCHEMA_VERSION = 2
 SCHEMA_PATH = Path(__file__).with_name("report.schema.json")
 
@@ -66,7 +66,8 @@ STAGES = load_sibling("pelorus_tester_stages")
 RULES = (("no_device_nonfailure", "redaction", "exit_mapping", "truncation",
           "schema_version", "reason_required", "stage_failure", "bench_nongating",
           "execution_class_derived", "claim_gpu_needs_hardware",
-          "software_pass_status", "pass_software_class")
+          "software_pass_status", "pass_software_class", "no_device_option",
+          "legs_consistent")
          + FIXTURES.RULES + STAGES.RULES)
 
 MAX_OUTPUT_BYTES = 262144
@@ -77,6 +78,13 @@ DEFAULT_TIMEOUT_S = 600
 NO_DEVICE_REASON = ("no Vulkan hardware device visible; start the container "
                     "with --device /dev/dri (Intel, AMD) or --gpus all "
                     "(NVIDIA), or run on a host with a GPU driver")
+# Tester image kits (ADR-0180). The image sets PELORUS_TESTER_KIT; a run from a
+# checkout is kit "source". A kit's no_device reason names one of its options.
+KITS = ("source", "generic", "nvidia", "intel")
+KIT_OPTIONS = {"nvidia": ("--gpus all", "NVIDIA_DRIVER_CAPABILITIES"),
+               "intel": ("--device /dev/dri", "--group-add")}
+MAX_DEV_NODES = 64
+ICD_DIRS = ("/etc/vulkan/icd.d", "/usr/share/vulkan/icd.d")
 
 # Default plan. argv set = run that command; argv None and runner true = the
 # built-in runner in pelorus_tester_stages.py; neither = not part of this kit.
@@ -156,6 +164,63 @@ def derive_claim(execution_class, stages, verdict):
     """gpu only for a passing run on hardware with at least one device stage passed."""
     ran = any(s["needs_device"] and s["status"] == "pass" for s in stages)
     return "gpu" if execution_class == "hardware" and verdict == "pass" and ran else "functional"
+
+
+# ------------------------------------------------------------ device nodes
+
+def observe_nodes(dev_root="/dev", icd_dirs=ICD_DIRS):
+    """What the container was given: the NVIDIA control node and Vulkan ICD, the DRM render nodes."""
+    root = Path(dev_root)
+    try:
+        names = sorted(os.listdir(root / "dri"))[:MAX_DEV_NODES]
+    except OSError:
+        names = []
+    render = [root / "dri" / n for n in names if n.startswith("renderD")]
+    usable = [p for p in render if os.access(p, os.R_OK | os.W_OK)]
+    try:
+        gid = os.stat(render[0]).st_gid if render else -1
+    except OSError:
+        gid = -1
+    return {"nvidiactl": (root / "nvidiactl").exists(), "render": len(render),
+            "render_usable": len(usable), "render_gid": gid,
+            "nvidia_icd": any((Path(d) / "nvidia_icd.json").is_file() for d in icd_dirs)}
+
+
+def no_device_reason(kit, nodes):
+    """The reason a GPU stage is no_device, naming the option this kit lacks.
+
+    None when the kit's device and driver are both in the container: a probe
+    that then finds no Vulkan device is a failure, not a missing device."""
+    if kit == "nvidia" and not nodes["nvidiactl"]:
+        return ("no NVIDIA device in the container; start it with --gpus all "
+                "(the host needs the NVIDIA Container Toolkit)")
+    if kit == "nvidia" and nodes["nvidia_icd"]:
+        return None
+    if kit == "nvidia":
+        return ("NVIDIA device nodes are present but no Vulkan driver was mounted; the NVIDIA "
+                "Container Toolkit must provide the graphics capability (the image sets "
+                "NVIDIA_DRIVER_CAPABILITIES=compute,utility,video,graphics): update the toolkit "
+                "or regenerate its CDI specification")
+    if kit == "intel" and not nodes["render"]:
+        return "no DRM render node in the container; start it with --device /dev/dri"
+    if kit == "intel" and not nodes["render_usable"]:
+        return ("render nodes are present but this user cannot open them; add --group-add %d "
+                "(the group of /dev/dri/renderD*)" % nodes["render_gid"])
+    if kit == "intel":
+        return ("render nodes are present (--device /dev/dri) but Mesa found no hardware Vulkan "
+                "device on them; ANV does not drive this GPU")
+    if kit == "generic":
+        return ("the generic tester image has no GPU driver; run the tester-nvidia image with "
+                "--gpus all or the tester-intel image with --device /dev/dri")
+    return NO_DEVICE_REASON
+
+
+def runtime_kit(env):
+    """(kit, error): PELORUS_TESTER_KIT from the image, `source` when unset."""
+    kit = env.get("PELORUS_TESTER_KIT", "") or "source"
+    if kit not in KITS:
+        return None, "PELORUS_TESTER_KIT must be one of %s, got %r" % (", ".join(KITS), kit)
+    return kit, ""
 
 
 # ---------------------------------------------------------------- redaction
@@ -356,6 +421,34 @@ def check_execution(report, disabled):
     return errs
 
 
+def check_kit(report, disabled):
+    """A vendor kit's no_device stage names the docker option that kit lacks."""
+    options = KIT_OPTIONS.get(report.get("kit", "source"), ())
+    if not options or "no_device_option" in disabled:
+        return []
+    return ["stage %s: no_device reason names none of %s" % (st["id"], ", ".join(options))
+            for st in report["stages"] if st["status"] == "no_device"
+            and not any(o in st["reason"] for o in options)]
+
+
+def check_legs(report, disabled):
+    """A stage cannot pass with a failed leg, or without one passing leg."""
+    if "legs_consistent" in disabled:
+        return []
+    errs = []
+    for st in report["stages"]:
+        states = [leg["status"] for leg in st.get("legs", [])]
+        passed = st["status"] in ("pass", "pass_software")
+        if passed and "fail" in states:
+            errs.append("stage %s: %s with a failed leg" % (st["id"], st["status"]))
+        elif passed and "legs" in st and "pass" not in states:
+            errs.append("stage %s: %s without a passing leg" % (st["id"], st["status"]))
+        errs.extend("stage %s: leg %s is %s without a reason" % (st["id"], leg["encoder"], leg["status"])
+                    for leg in st.get("legs", [])
+                    if leg["status"] != "pass" and not leg["reason"])
+    return errs
+
+
 def validate_report(report, schema, forbid=(), disabled=frozenset()):
     """Return a list of problems; an empty list means the report is valid."""
     sch = dict(schema)
@@ -367,7 +460,8 @@ def validate_report(report, schema, forbid=(), disabled=frozenset()):
     if errs:
         return errs
     errs = (check_stages(report, disabled) + check_verdict(report, disabled)
-            + check_execution(report, disabled))
+            + check_execution(report, disabled) + check_kit(report, disabled)
+            + check_legs(report, disabled))
     if report["report_sha256"] != report_hash(report):
         errs.append("report_sha256 does not match the report body")
     if "redaction" not in disabled:
@@ -458,12 +552,19 @@ def exec_stage(sid, spec, ctx):
     return rec, devices
 
 
-def probe_adjust(rec, devices):
-    """A failing vulkaninfo with no devices means no device, not a failure."""
-    if rec["status"] in ("fail", "not_run") and not devices:
+def probe_adjust(rec, devices, reason=NO_DEVICE_REASON):
+    """A failing vulkaninfo with no devices means no device, not a failure.
+
+    With the kit's device and driver present (reason None) it stays a failure
+    and names the loader's first line."""
+    if reason is None and rec["status"] == "fail":
+        tail = rec["log_tail"].strip().splitlines()[:1]
+        rec["reason"] = (rec["reason"] + (": " + tail[0] if tail else "") +
+                         "; the kit's device and Vulkan driver are present but no device loaded")[:1000]
+    elif rec["status"] in ("fail", "not_run") and not devices:
         tail = rec["log_tail"].strip().splitlines()[:1]
         why = rec["reason"] + (": " + tail[0] if tail else "")
-        rec.update(status="no_device", reason=why + "; " + NO_DEVICE_REASON)
+        rec.update(status="no_device", reason=(why + "; " + reason)[:1000])
     return rec
 
 
@@ -474,10 +575,13 @@ def run_builtin(sid, spec, ctx, needs):
         return stage_record(sid, "not_run",
                             "stage runner is not part of this kit version (#227)", needs)
     started = datetime.now().timestamp()
-    status, reason, log = fn(ctx, spec)
+    status, reason, log, legs = fn(ctx, spec)
     rec = stage_record(sid, status, redact_text(reason, ctx["literals"], ctx["disabled"])[:1000],
                        needs)
     rec["log_tail"] = redact_text(log, ctx["literals"], ctx["disabled"])[-LOG_TAIL_CHARS:]
+    if legs is not None:
+        rec["legs"] = [dict(leg, reason=redact_text(leg["reason"], ctx["literals"],
+                                                    ctx["disabled"])[:400]) for leg in legs]
     rec["duration_s"] = round(datetime.now().timestamp() - started, 3)
     return rec
 
@@ -486,15 +590,17 @@ def run_stage(sid, spec, ctx):
     needs = spec.get("needs_device", False)
     if spec.get("opt_in") and not ctx["enabled"].get(sid):
         return stage_record(sid, "not_run", "opt-in stage; pass --bench", needs)
+    if needs and ctx["probed"] and not ctx["hardware"] and ctx["no_device_reason"] is None:
+        return stage_record(sid, "not_run", "the probe failed with the kit's device present", needs)
     if needs and ctx["probed"] and not ctx["hardware"]:
-        return stage_record(sid, "no_device", NO_DEVICE_REASON, needs)
+        return stage_record(sid, "no_device", ctx["no_device_reason"], needs)
     if spec.get("argv") is None:
         return run_builtin(sid, spec, ctx, needs)
     rec, devices = exec_stage(sid, spec, ctx)
     if devices is not None:
         ctx["probed"], ctx["devices"] = True, devices
         ctx["hardware"] = any(is_hardware(d) for d in devices)
-        rec = probe_adjust(rec, devices)
+        rec = probe_adjust(rec, devices, ctx["no_device_reason"])
     return rec
 
 
@@ -515,10 +621,13 @@ def merge_plan(plan_file):
 
 
 def build_report(plan, opts, disabled=frozenset()):
+    env = dict(opts.get("env", os.environ))
+    kit = runtime_kit(env)[0] or "source"
     ctx = {"literals": local_literals(), "disabled": disabled, "probed": False,
            "hardware": False, "devices": [], "enabled": {"bench": opts["bench"]},
-           "env": dict(opts.get("env", os.environ)), "run": run_command,
-           "is_hardware": is_hardware, "fixtures": FIXTURES}
+           "env": env, "run": run_command, "is_hardware": is_hardware, "fixtures": FIXTURES,
+           "no_device_reason": no_device_reason(kit, observe_nodes(
+               opts.get("dev_root", "/dev"), opts.get("icd_dirs", ICD_DIRS)))}
     with tempfile.TemporaryDirectory(prefix="pelorus-tester-") as work:
         ctx["work"] = work
         stages = [run_stage(sid, plan[sid], ctx) for sid in STAGE_IDS]
@@ -531,6 +640,7 @@ def build_report(plan, opts, disabled=frozenset()):
         "generated_utc": now_utc(),
         "commit": os.environ.get("PELORUS_TESTER_COMMIT", "unknown"),
         "package": os.environ.get("PELORUS_TESTER_PACKAGE", "source-checkout"),
+        "kit": kit,
         "host": host_facts(),
         "devices": [{k: redact_text(v, ctx["literals"], disabled) for k, v in d.items()}
                     for d in ctx["devices"]],
@@ -578,6 +688,7 @@ def load_schema():
 
 def cmd_run(args, disabled=frozenset()):
     plan, err = merge_plan(args.plan)
+    err = err or runtime_kit(os.environ)[1]
     if err:
         print("error: " + err, file=sys.stderr)
         return EXIT_BY_VERDICT["incomplete"]
@@ -605,6 +716,8 @@ def cmd_validate(args):
         print("invalid: cannot parse %s: %s" % (args.report, exc), file=sys.stderr)
         return 1
     problems = validate_report(report, load_schema(), forbid=args.forbid)
+    if args.kit and report.get("kit", "source") != args.kit:
+        problems.append("kit %r, expected %r" % (report.get("kit", "source"), args.kit))
     for p in problems:
         print("invalid: " + p, file=sys.stderr)
     print("valid" if not problems else "%d problem(s)" % len(problems))
@@ -639,7 +752,8 @@ def good_report(tmp, plan_stages, **opt):
     for sid, spec in plan_stages.items():
         plan[sid].update(spec)
     opts = {"bench": opt.get("bench", False), "note": "",
-            "require_device": opt.get("require_device", False)}
+            "require_device": opt.get("require_device", False),
+            "dev_root": opt.get("dev_root", "/dev"), "icd_dirs": opt.get("icd_dirs", ())}
     if "env" in opt:
         opts["env"] = opt["env"]
     return build_report(plan, opts, opt.get("disabled", frozenset()))
@@ -710,6 +824,62 @@ def self_test_execution(expect, disabled, schema):
         expect(name, bool(validate_report(bad, schema, disabled=disabled)))
 
 
+def self_test_kits(expect, disabled, schema):
+    """A vendor image without its device names the docker option it lacks (#229, #230)."""
+    cpu_only = {"probe": py_stage("import sys; sys.exit(1)")}
+    with tempfile.TemporaryDirectory(prefix="pelorus-dev-") as dev:
+        for kit, want, never in (("nvidia", "--gpus all", "/dev/dri"),
+                                 ("intel", "--device /dev/dri", "--gpus")):
+            rep, _ = good_report(None, cpu_only, disabled=disabled, dev_root=dev,
+                                 env=dict(os.environ, PELORUS_TESTER_KIT=kit))
+            why = rep["stages"][3]["reason"]
+            expect("no_device_names_option_" + kit, rep["stages"][3]["status"] == "no_device"
+                   and want in why and never not in why and rep.get("kit") == kit)
+            expect("no_device_valid_" + kit, not validate_report(rep, schema, disabled=disabled))
+            expect("rejects_no_device_without_option_" + kit, bool(validate_report(reseal(
+                rep, stage0={"reason": "no device"}), schema, disabled=disabled)))
+        locked = {"nvidiactl": False, "render": 1, "render_usable": 0, "render_gid": 988,
+                  "nvidia_icd": False}
+        expect("render_not_readable_names_group_add",
+               "--group-add 988" in no_device_reason("intel", locked))
+        nv = dict(os.environ, PELORUS_TESTER_KIT="nvidia")
+        Path(dev, "nvidiactl").write_text("")
+        rep, _ = good_report(None, cpu_only, disabled=disabled, dev_root=dev, env=nv)
+        expect("nvidia_without_icd_names_capability", rep["stages"][3]["status"] == "no_device"
+               and "NVIDIA_DRIVER_CAPABILITIES" in rep["stages"][3]["reason"])
+        Path(dev, "nvidia_icd.json").write_text("{}")
+        rep, _ = good_report(None, cpu_only, disabled=disabled, dev_root=dev, env=nv, icd_dirs=(dev,))
+        expect("nvidia_driver_present_probe_fails", rep["stages"][0]["status"] == "fail"
+               and rep["stages"][3]["status"] == "not_run" and rep["exit_code"] == 1
+               and not validate_report(rep, schema, disabled=disabled))
+
+
+def with_legs(report, status, legs):
+    """Copy of `report` whose steering stage carries `legs`, resealed."""
+    copy = json.loads(json.dumps(report))
+    copy["stages"][4].update(status=status, reason="planted", legs=legs)
+    copy["report_sha256"] = report_hash(copy)
+    return copy
+
+
+def self_test_legs(expect, disabled, schema):
+    """A stage cannot pass with a failed leg or without a passing one."""
+    hard, _ = good_report(None, {**NO_RUNNERS, "probe": py_stage("print(%r)" % SYNTH_VULKANINFO)},
+                          disabled=disabled)
+    ok = {"encoder": "hevc_nvenc", "codec": "hevc", "status": "pass", "reason": ""}
+    av1 = {"encoder": "av1_nvenc", "codec": "av1", "status": "not_run",
+           "reason": "no AV1 encode on this GPU or driver"}
+    bad = dict(ok, encoder="h264_nvenc", codec="h264", status="fail", reason="x")
+    expect("legs_valid", not validate_report(with_legs(hard, "pass", [ok, av1]), schema,
+                                             disabled=disabled))
+    expect("rejects_pass_with_failed_leg", bool(validate_report(
+        with_legs(hard, "pass", [ok, bad]), schema, disabled=disabled)))
+    expect("rejects_pass_without_passing_leg", bool(validate_report(
+        with_legs(hard, "pass", [av1]), schema, disabled=disabled)))
+    expect("rejects_leg_without_reason", bool(validate_report(
+        with_legs(hard, "pass", [ok, dict(av1, reason="")]), schema, disabled=disabled)))
+
+
 def self_test_stages(expect, disabled):
     """Plumbing of the built-in runners and the non-gating bench rule."""
     off = {"PELORUS_VALIDATE": "0", "FFMPEG_BIN": "/nonexistent/pelorus-ffmpeg"}
@@ -764,6 +934,8 @@ def self_test(disabled=frozenset()):
     expect("rejects_malformed_json", cmd_validate_text("{\"schema_ver", schema) != 0)
     self_test_stages(expect, disabled)
     self_test_execution(expect, disabled, schema)
+    self_test_kits(expect, disabled, schema)
+    self_test_legs(expect, disabled, schema)
     failures.extend(STAGES.self_test(disabled) + FIXTURES.self_test(disabled))
     for line in failures:
         print("SELF-TEST FAIL: " + line, file=sys.stderr)
@@ -795,6 +967,7 @@ def parse_args(argv):
     val = sub.add_parser("validate")
     val.add_argument("report")
     val.add_argument("--forbid", action="append", default=[])
+    val.add_argument("--kit", choices=KITS, help="the report must come from this image kit")
     return top.parse_args(argv), top
 
 

@@ -11,7 +11,7 @@ deliverable (ADR-0108). Gated by `tools` meson option (default on).
 ```text
 tools/
 ├── pelorus_qp_report.c   x265 --csv -> PEL_SEC_QPREPORT demonstrator (ADR-0122)
-└── tester/               tester report program, stage runners, fixtures + lock, schema; Python stdlib only (ADR-0173); image Containerfile + FFmpeg licence gate (ADR-0176)
+└── tester/               tester report program, stage runners, fixtures + lock, schema; Python stdlib only (ADR-0173); image Containerfile per kit (generic, nvidia, intel; ADR-0180) + build-ffmpeg.sh + FFmpeg licence gate (ADR-0176)
 ```
 
 ## Conventions
@@ -53,3 +53,4 @@ tools/
   Device, encoder or layer missing -> `not_run`/`no_device` + reason;
   `PELORUS_VALIDATE=1` + layer missing -> `fail`. No silent fallback.
 - Siblings load by path (`importlib`): `python3 -I` drops script dir from `sys.path`.
+- Image kit set via `PELORUS_TESTER_KIT`; vendor kit `no_device` reason names its docker option (`--gpus all`, `--device /dev/dri`). Licence record forbids NVIDIA driver files + `intel-media-va-driver-non-free` in every kit (ADR-0180).

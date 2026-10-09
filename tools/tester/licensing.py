@@ -9,14 +9,17 @@ it may be redistributed. This program checks a finished image tree against
 that record and writes the notices file that travels inside the image.
 
     licensing.py record      [--record FILE] [--repo DIR]
-    licensing.py check       --root DIR --commit SHA [--ffmpeg-remote URL --ffmpeg-commit SHA] [--record FILE]
-    licensing.py notices     --root DIR --commit SHA [--ffmpeg-remote URL --ffmpeg-commit SHA] [--record FILE]
+    licensing.py check       [--kit KIT] --root DIR --commit SHA [--ffmpeg-remote URL --ffmpeg-commit SHA] [--record FILE]
+    licensing.py notices     [--kit KIT] --root DIR --commit SHA [--ffmpeg-remote URL --ffmpeg-commit SHA] [--record FILE]
     licensing.py self-test
 
 `check` exits 1 when a file belongs to no component, a licence is unknown or
 not redistributable, a Debian package has no copyright file or comes from
 outside the permitted archive components, a licence text is missing, a record
-component matches no file, or the notices file is absent or stale. `record`
+component matches no file, the notices file is absent or stale, or the tree
+holds a forbidden file or package (an NVIDIA driver library, the non-free Intel
+media driver) whoever owns it. Every image kit (ADR-0180) is checked against the
+components that name it, or name no kit. `record`
 checks the record itself and its version pins against the repository and
 needs no image. `self-test` plants each defect in a fake tree and requires the
 check to refuse it; the Containerfile runs it before the real check.
@@ -56,6 +59,7 @@ HEADER_LINES = 25
 MAX_FILES = 2_000_000
 MAX_LINK_DEPTH = 40
 REQUIRED_COMPONENT_KEYS = ("id", "name", "version", "spdx", "source", "redistributable")
+MAX_FORBIDDEN_HITS = 50
 DEP5_NAME_RE = re.compile(
     r"^License:\s*([A-Za-z0-9][A-Za-z0-9.+_-]*(?: (?:or|and|with|WITH) [A-Za-z0-9.+_-]+)*)\s*$"
 )
@@ -281,6 +285,54 @@ def component_shape_problems(component):
     return problems
 
 
+def kit_problems(record):
+    """Kits named by components exist; every forbidden rule names what and why.
+
+    A record without `kits` describes one image; a record with them needs
+    `forbidden` too (the vendor images, ADR-0180)."""
+    kits = record.get("kits")
+    if kits is None:
+        problems = [f"component {c.get('id')}: names kits but the record has none"
+                    for c in record["components"] if "kits" in c]
+        return problems + (forbidden_rule_problems(record["forbidden"]) if "forbidden" in record else [])
+    if not isinstance(kits, list) or not kits or not all(COMPONENT_ID_RE.match(str(k)) for k in kits):
+        return ["record: kits must be a non-empty list of kit names"]
+    problems = [f"component {c.get('id')}: kit {k} is not in the record's kits"
+                for c in record["components"] for k in c.get("kits", []) if k not in kits]
+    if "forbidden" not in record:
+        return problems + ["record: a record with kits needs forbidden files and packages"]
+    return problems + forbidden_rule_problems(record["forbidden"])
+
+
+def forbidden_rule_problems(forbidden):
+    problems = []
+    for kind, key in (("files", "paths"), ("packages", "names")):
+        rules = forbidden.get(kind)
+        if not rules:
+            problems.append(f"record: forbidden.{kind} needs at least one rule")
+        for rule in rules or []:
+            if not rule.get(key) or not rule.get("why"):
+                problems.append(f"record: every forbidden.{kind} rule needs {key} and why")
+    return problems
+
+
+def kit_selection_problems(record, kit):
+    """--kit is required by a record with kits and refused by one without."""
+    kits = record.get("kits")
+    if kits is None:
+        return [f"--kit {kit}: this record has no kits"] if kit else []
+    if kit is None:
+        return [f"--kit is required: this record has kits {kits}"]
+    return [] if kit in kits else [f"--kit {kit} is not one of the record's kits {kits}"]
+
+
+def scoped(record, kit):
+    """The record as one kit sees it: components that name the kit or name none."""
+    copy = dict(record)
+    copy["components"] = [c for c in record["components"] if kit in c.get("kits", [kit])]
+    return copy
+
+
 def record_problems(record):
     problems = []
     for key in ("schema_version", "repository", "notices_path", "licences", "components", "ignore", "debian"):
@@ -303,6 +355,7 @@ def record_problems(record):
     for component in record["components"]:
         if component.get("kind") == "embedded" and component.get("embedded_in") not in ids:
             problems.append(f"component {component.get('id')}: embedded_in names no component")
+    problems.extend(kit_problems(record))
     for ident, entry in record["licences"].items():
         if not isinstance(entry.get("redistributable"), bool):
             problems.append(f"licence {ident}: redistributable must be true or false")
@@ -363,6 +416,21 @@ class Claims:
             if matches(compiled, rel):
                 return "component", component
         return None, None
+
+
+def forbidden_problems(record, files, packages, aliases):
+    """Forbidden files and packages fail whoever owns them (ADR-0180)."""
+    rules = record.get("forbidden", {})
+    problems = []
+    for rule in rules.get("files", []):
+        compiled = compile_globs(rule["paths"])
+        problems.extend(f"forbidden file: {rel} ({rule['why']})"
+                        for rel in files if matches(compiled, canonical(rel, aliases)))
+    for rule in rules.get("packages", []):
+        compiled = compile_globs(rule["names"])
+        problems.extend(f"forbidden package: {f['Package']} ({rule['why']})"
+                        for f in packages if matches(compiled, f["Package"]))
+    return problems[:MAX_FORBIDDEN_HITS]
 
 
 def debian_problems(record, root, packages, aliases):
@@ -465,15 +533,21 @@ def check_tree(record, root, args):
         return problems
     if not SHA_RE.match(args.commit or ""):
         return ["--commit must be a 40-digit hex commit"]
+    problems = kit_selection_problems(record, args.kit)
+    if problems:
+        return problems
     packages = dpkg_packages(root)
     if packages is None:
         return ["var/lib/dpkg/status is missing: not a Debian image tree"]
     aliases = usr_prefix(root)
     owned = dpkg_owned(root, packages, aliases)
+    files = walk_tree(root)
+    problems.extend(forbidden_problems(record, files, packages, aliases))
+    record = scoped(record, args.kit)
     claims = Claims(record)
     claimed = {c["id"]: [] for c in record["components"]}
     unrecorded = []
-    for rel in walk_tree(root):
+    for rel in files:
         kind, who = claims.owner(canonical(rel, aliases))
         if kind == "component":
             claimed[who["id"]].append(rel)
@@ -603,8 +677,10 @@ def cmd_notices(args):
     record = load_record(args.record)
     problems = record_problems(record)
     packages = dpkg_packages(args.root)
+    problems = problems or kit_selection_problems(record, args.kit)
     if problems or packages is None or not SHA_RE.match(args.commit or ""):
         return report(problems or ["need a Debian tree and a 40-digit --commit"], "notices")
+    record = scoped(record, args.kit)
     target = Path(args.root) / record["notices_path"]
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(render_notices(record, args.root, args, packages), encoding="utf-8")
@@ -658,6 +734,11 @@ def fake_record():
             "LicenseRef-nonfree": {"redistributable": False, "text": None},
         },
         "debian": {"components": ["main"]},
+        "kits": ["generic", "nvidia"],
+        "forbidden": {
+            "files": [{"paths": ["**/libnvidia-*.so*", "**/nvidia_icd.json"], "why": "host driver files"}],
+            "packages": [{"names": ["intel-media-va-driver-non-free", "libnvidia-*"], "why": "non-free"}],
+        },
         "ignore": [{"paths": ["var/lib/dpkg/**"], "why": "package manager state", "expires": "2999-01-01"}],
         "components": [
             {"id": "own", "name": "own", "version": "@commit", "spdx": "EUPL-1.2", "paths": ["opt/own/*.py"],
@@ -668,6 +749,8 @@ def fake_record():
             {"id": "fixtures", "name": "fixtures", "version": "1", "spdx": "MIT", "kind": "lock",
              "paths": ["opt/own/fixtures.lock.json"], "lock": "opt/own/fixtures.lock.json",
              "source": "https://example.invalid/repo", "redistributable": True},
+            {"id": "nv-notice", "name": "nv notice", "version": "1", "spdx": "MIT", "kits": ["nvidia"],
+             "paths": ["opt/nv/NOTICE.txt"], "source": "https://example.invalid/nv", "redistributable": True},
         ],
     }
 
@@ -683,14 +766,15 @@ def fake_tree(root, record):
         "spdx": "CC-BY-3.0", "holder": "h", "source": "https://example.invalid", "attribution": "credit"}}]}
     write(root, "opt/own/fixtures.lock.json", json.dumps(lock))
     write(root, "usr/share/licenses/t/EUPL-1.2.txt")
-    args = argparse.Namespace(commit="a" * 40, ffmpeg_remote="https://example.invalid/ff", ffmpeg_commit="b" * 40)
-    packages = dpkg_packages(root)
-    write(root, record["notices_path"], render_notices(record, root, args, packages))
+    args = argparse.Namespace(commit="a" * 40, ffmpeg_remote="https://example.invalid/ff", ffmpeg_commit="b" * 40,
+                              kit="generic")
+    regenerate(root, record, args)
     return args
 
 
 def regenerate(root, record, args):
-    write(root, record["notices_path"], render_notices(record, root, args, dpkg_packages(root)))
+    view = scoped(record, args.kit)
+    write(root, record["notices_path"], render_notices(view, root, args, dpkg_packages(root)))
 
 
 def plant_file(root, record, args):
@@ -737,6 +821,41 @@ def undated_ignore(root, record, args):
 def missing_licence_file(root, record, args):
     record["components"][1]["licence_files"] = ["usr/share/licenses/t/MIT-notice.txt"]
 
+def planted_nvidia_library(root, record, args):
+    write(root, "usr/lib/libnvidia-encode.so.1")
+    with open(Path(root) / "var/lib/dpkg/info/libfoo1.list", "a", encoding="utf-8") as fh:
+        fh.write("/usr/lib/libnvidia-encode.so.1\n")
+
+def planted_nvidia_icd(root, record, args):
+    write(root, "opt/own/nvidia_icd.json")
+    record["components"][0]["paths"].append("opt/own/*.json")
+
+def nonfree_media_driver(root, record, args):
+    name = "intel-media-va-driver-non-free"
+    status = Path(root) / "var/lib/dpkg/status"
+    status.write_text(status.read_text() + f"Package: {name}\nStatus: install ok installed\nVersion: 1\n"
+                      "Section: video\nArchitecture: amd64\n\n")
+    write(root, f"usr/share/doc/{name}/copyright", "Format: dep5\n\nLicense: MIT\n")
+    write(root, f"var/lib/dpkg/info/{name}.list", f"/usr/share/doc/{name}/copyright\n")
+
+def other_kit_files_missing(root, record, args):
+    args.kit = "nvidia"
+
+def unknown_kit(root, record, args):
+    args.kit = "amd"
+
+def component_unknown_kit(root, record, args):
+    record["components"][3]["kits"] = ["amd"]
+
+def no_forbidden_rules(root, record, args):
+    record["forbidden"]["files"] = []
+
+def no_kit_given(root, record, args):
+    args.kit = None
+
+def kits_without_forbidden(root, record, args):
+    del record["forbidden"]
+
 def unattributed_fixture(root, record, args):
     lock = json.loads((Path(root) / "opt/own/fixtures.lock.json").read_text())
     lock["fixtures"][0]["licence"]["attribution"] = ""
@@ -759,6 +878,15 @@ SELF_TEST_CASES = [
     ("fixture without attribution", unattributed_fixture, "requires an attribution text", True),
     ("expired ignore rule", expired_ignore, "expired on 2020-01-01", True),
     ("ignore rule without expiry", undated_ignore, "needs paths, why and expires", True),
+    ("NVIDIA library owned by a package", planted_nvidia_library, "forbidden file: usr/lib/libnvidia-encode.so.1", False),
+    ("NVIDIA ICD claimed by a component", planted_nvidia_icd, "forbidden file: opt/own/nvidia_icd.json", True),
+    ("non-free Intel media driver from main", nonfree_media_driver, "forbidden package: intel-media-va-driver-non-free", True),
+    ("kit component without its files", other_kit_files_missing, "component nv-notice: no file in the image", True),
+    ("unknown kit", unknown_kit, "--kit amd is not one of the record's kits", False),
+    ("component names an unknown kit", component_unknown_kit, "kit amd is not in the record's kits", False),
+    ("forbidden file rules removed", no_forbidden_rules, "forbidden.files needs at least one rule", False),
+    ("record with kits checked without --kit", no_kit_given, "--kit is required", False),
+    ("record with kits but no forbidden rules", kits_without_forbidden, "a record with kits needs forbidden", False),
 ]
 
 
@@ -811,6 +939,7 @@ def parser():
     rec.set_defaults(run=cmd_record)
     for name, run in (("check", cmd_check), ("notices", cmd_notices)):
         p = sub.add_parser(name)
+        p.add_argument("--kit", default=None, help="image kit of a record with kits: generic, nvidia or intel (ADR-0180)")
         p.add_argument("--record", default=str(RECORD))
         p.add_argument("--root", default="/")
         p.add_argument("--commit", required=True)

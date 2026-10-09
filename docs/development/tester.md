@@ -5,13 +5,16 @@ A tester runs one prepared kit on hardware the project does not own and sends
 back one JSON report. This page covers the report program
 ([ADR-0173](../adr/0173-tester-programme.md)). The stage runners and their pass
 rules are in [tester kit stages](../usage/tester.md). The images that bundle
-the kit (NVIDIA, Intel, AMD, arm64) are later children of
-[#108](https://github.com/VMAFx/pelorus/issues/108); `libpelorus_suite` and
+the kit are described under [tester images](../usage/tester.md#tester-images):
+`generic` (CPU), `nvidia` and `intel` ([ADR-0180](../adr/0180-tester-vendor-images.md));
+AMD and arm64 are later children of
+[#108](https://github.com/VMAFx/pelorus/issues/108). `libpelorus_suite` and
 `registration` have no runner yet and are recorded as `not_run` with that
 reason.
 
 A tester package is evidence for one `master` commit, named
-`tester-<YYYYMMDD>-<sha8>`. It is not a release and is never `latest`.
+`tester-<YYYYMMDD>-<sha8>` (CPU image) or `tester-<kit>-<YYYYMMDD>-<sha8>`
+(`nvidia`, `intel`). It is not a release and is never `latest`.
 
 ## 1. Run the kit
 
@@ -22,12 +25,16 @@ python3 -I tools/tester/pelorus_tester_report.py run --out pelorus-tester-report
 ```
 
 Inside a tester image the same command is the entry point. Give the container
-the device it should test, or the GPU stages report `no_device`:
+the device it should test, or the GPU stages report `no_device` and name the
+option that is missing:
 
-| Hardware | Container option |
+| Image | Container option |
 | --- | --- |
-| Intel, AMD | `--device /dev/dri` |
-| NVIDIA | `--gpus all` (needs the NVIDIA Container Toolkit; the driver comes from the host) |
+| `tester-intel-...` | `--device /dev/dri` (plus `--group-add <gid of /dev/dri/renderD*>` when you add `--user`) |
+| `tester-nvidia-...` | `--gpus all` (needs the NVIDIA Container Toolkit; the driver comes from the host) |
+| `tester-...` (CPU) | none; it has no GPU driver and reports `no_device` |
+
+The full `docker run` lines are under [tester images](../usage/tester.md#tester-images).
 
 Options of `run`:
 
@@ -83,10 +90,13 @@ hash of `SHA256SUMS`. Both give integrity only, not proof of who made the file.
 Tool version and tool digest, schema version, `execution_class` and
 `evidence_claim` ([what they mean](../usage/tester.md#execution-class-and-evidence-claim)), UTC time, the source commit and package name (from
 `PELORUS_TESTER_COMMIT` and `PELORUS_TESTER_PACKAGE`, `unknown` and
-`source-checkout` outside an image), OS, architecture, CPU count, Python
-version, per device name, driver, Vulkan API version, vendor id and device
-type, per stage status, reason, duration, exit code and the last 4000
-characters of its output.
+`source-checkout` outside an image), the image `kit` (from
+`PELORUS_TESTER_KIT`: `generic`, `nvidia`, `intel`, or `source` outside an
+image), OS, architecture, CPU count, Python version, per device name, driver,
+Vulkan API version, vendor id and device type, per stage status, reason,
+duration, exit code and the last 4000 characters of its output. The steering
+and side-data stages add `legs`: one entry per encoder with its codec, `pass`,
+`fail` or `not_run`, and a reason for anything but `pass`.
 
 ### What it excludes
 
@@ -110,7 +120,14 @@ python3 -I tools/tester/pelorus_tester_report.py validate report.json --forbid "
 `validate` exits 0 for a valid report. It rejects a missing field, a truncated
 stage list, a schema-version mismatch, an exit code that does not follow from
 the stages, a changed body (hash mismatch), a software or absent device that
-claims GPU evidence, and any identifier listed above.
+claims GPU evidence, an `nvidia` or `intel` report whose `no_device` reason
+names none of that kit's options, a stage that passes with a failed leg or
+without a passing one, and any identifier listed above. `--kit KIT` also
+requires the report to come from that kit.
+
+`kit` and `legs` were added by tool version 0.4.0 as optional fields, so schema
+version 2 is unchanged and earlier reports stay valid; a report without `kit`
+counts as `source`.
 
 ## 3. File it
 
@@ -135,8 +152,11 @@ must exit 0 with `no_device` stages and a valid report; a failing stage must
 exit non-zero; a timeout must exit 2; `--require-device` must exit 100; and
 the validator must reject each planted bad report (missing field, UUID, PCI
 bus, user path, wrong exit mapping, schema-version mismatch, truncated stage
-list, missing reason, malformed JSON, a forbidden literal, and a software-Vulkan
-report that claims GPU evidence). To prove a rule is
+list, missing reason, malformed JSON, a forbidden literal, a software-Vulkan
+report that claims GPU evidence, an NVIDIA or Intel `no_device` reason without
+the kit's option, and a stage that passes with a failed leg or without a
+passing one). An NVIDIA kit run whose device and Vulkan driver are present but
+whose probe fails is a `fail`, never `no_device`. To prove a rule is
 live, switch it off and expect the self-test to fail:
 
 ```bash
@@ -146,7 +166,8 @@ python3 -I tools/tester/pelorus_tester_report.py --self-test --disable redaction
 Rule names for `--disable`: `no_device_nonfailure`, `redaction`,
 `exit_mapping`, `truncation`, `schema_version`, `reason_required`,
 `stage_failure`, `bench_nongating`, `execution_class_derived`,
-`claim_gpu_needs_hardware`, `software_pass_status`, `pass_software_class`, plus the stage and fixture rules listed in
+`claim_gpu_needs_hardware`, `software_pass_status`, `pass_software_class`,
+`no_device_option`, `legs_consistent`, plus the stage and fixture rules listed in
 [tester kit stages](../usage/tester.md#planted-failures). Changing a report field means changing the schema, the
 program, a planted case and this page in one change.
 

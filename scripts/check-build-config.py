@@ -2937,6 +2937,24 @@ def release_build_regressions() -> list[str]:
 
 TESTER_PUBLISH = ROOT / ".github" / "workflows" / "tester-publish.yml"
 TESTER_CONTAINERFILE = ROOT / "tools" / "tester" / "Containerfile"
+TESTER_BUILD_SCRIPT = ROOT / "tools" / "tester" / "build-ffmpeg.sh"
+# ADR-0180: one image per kit; every job runs once per kit.
+TESTER_KITS = ("generic", "nvidia", "intel")
+TESTER_KIT_MATRIX = "        kit: [generic, nvidia, intel]\n"
+# What each vendor kit's stages must carry (ADR-0180).
+TESTER_KIT_TOKENS = {
+    "build-nvidia": ("ARG NV_CODEC_HEADERS_COMMIT=", "--enable-ffnvcodec --enable-nvenc", "--enable-libdav1d"),
+    # The host's Vulkan ICD (libGLX_nvidia.so.0) links libXext.so.6 and opens
+    # the GLVND libEGL.so.1 (research 0229).
+    "assembled-nvidia": ("libegl1", "libxext6"),
+    "final-nvidia": ("NVIDIA_DRIVER_CAPABILITIES=compute,utility,video,graphics",),
+    # libdrm: QSV picks the Intel render node by vendor id (research 0229).
+    "build-intel": ("--enable-libvpl --enable-vaapi --enable-libdrm", "--enable-libdav1d"),
+    "assembled-intel": ("intel-media-va-driver", "libvpl2", "libmfx-gen1.2", "mesa-vulkan-drivers"),
+}
+# No apt-installed package and no source component may bring a vendor driver
+# or a non-free archive component into any kit.
+TESTER_APT_FORBIDDEN = re.compile(r"nvidia|cuda|non-?free|contrib", re.IGNORECASE)
 CANDIDATE_LEGS = ROOT / "scripts" / "release" / "candidate-legs.json"
 LICENCE_FLAGS_ARG = 'ARG FFMPEG_LICENCE_FLAGS="--enable-gpl --enable-version3"'
 # ADR-0173 decision 5: a tester image never ships these, in any file we author.
@@ -2952,6 +2970,7 @@ BANNED_FFMPEG_FLAGS = (
 ACTION_USES = re.compile(r"^\s*(?:- )?uses: (\S+)(.*)$", re.MULTILINE)
 PINNED_USE = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")
 TESTER_PUBLISH_ORDER = (
+    "name: Name the image tags of this kit",
     "name: Licence gate refuses a planted flag",
     "name: Licence record is valid and its gate refuses planted defects",
     "name: Build the tester image",
@@ -2984,14 +3003,30 @@ TESTER_PUBLISH_TOKENS = (
     "--certificate-identity-regexp "
     "'^https://github\\.com/VMAFx/pelorus/\\.github/workflows/tester-publish\\.yml@'",
     "--certificate-oidc-issuer https://token.actions.githubusercontent.com",
-    "--target source",
+    '--target "final-${KIT}"',
+    '--target "source-${KIT}"',
     '--tag "${IMAGE}:${TAG}-source"',
     "bash tools/tester/check-ffmpeg-licence.sh",
     "bash tools/tester/check-ffmpeg-licence-self-test.sh",
     "python3 -I -B tools/tester/licensing.py record",
     "python3 -I -B tools/tester/licensing.py self-test",
-    "/opt/pelorus/tester/licensing.py check --root /",
-    "pelorus_tester_report.py validate",
+    '/opt/pelorus/tester/licensing.py check --kit "${KIT}" --root /',
+    'pelorus_tester_report.py validate "${RUNNER_TEMP}/report/report.json" --kit "${KIT}"',
+    # ADR-0180 tags: the generic kit keeps tester-<date>-<sha8>.
+    'tag="tester-${STAMP}"',
+    'tag="tester-${KIT}-${STAMP}"',
+    "      fail-fast: false\n",
+    TESTER_KIT_MATRIX,
+    "      KIT: ${{ matrix.kit }}\n",
+)
+# The pull-request and nightly build job builds every kit and checks the
+# report each one writes without a device (ADR-0180).
+TESTER_BUILD_TOKENS = (
+    TESTER_KIT_MATRIX,
+    "      fail-fast: false\n",
+    "      KIT: ${{ matrix.kit }}\n",
+    '--target "final-${KIT}"',
+    'pelorus_tester_report.py validate "${RUNNER_TEMP}/report/report.json" --kit "${KIT}"',
 )
 # ADR-0178 (#235): hosted-minute bounds. A job's timeout is a number no larger
 # than its cap, so a stuck build fails instead of running for six hours.
@@ -3156,6 +3191,7 @@ def _tester_jobs(relative: str, jobs: dict[str, str]) -> list[str]:
         errors.append(
             f"{relative}: build job must run only on pull_request or the schedule of VMAFx/pelorus"
         )
+    errors.extend(f"{relative}: build job is missing {t.strip()}" for t in TESTER_BUILD_TOKENS if t not in build)
     draft = build.find("name: Stop on a draft pull request")
     first_checkout = build.find("uses: actions/checkout@")
     if draft < 0 or first_checkout < 0 or draft > first_checkout:
@@ -3225,53 +3261,135 @@ def validate_tester_publish_text(relative: str, text: str) -> list[str]:
     return errors
 
 
-def _tester_licence_stage(relative: str, text: str) -> list[str]:
-    """ADR-0178: the licence record gate is a stage the runtime stage depends on."""
-    start = text.find("AS licence")
-    runtime = text.find("AS runtime")
-    if start < 0 or runtime < start:
-        return [f"{relative}: stage licence must come before stage runtime"]
-    stage = text[start:runtime]
+def tester_stage(text: str, name: str) -> str:
+    """The instructions of Containerfile stage `name`, up to the next FROM."""
+    match = re.search(rf"^FROM \S+ AS {re.escape(name)}\n(.*?)(?=^FROM |\Z)", text, re.MULTILINE | re.DOTALL)
+    return match.group(0) if match else ""
+
+
+def _tester_licence_stage(relative: str, text: str, kit: str) -> list[str]:
+    """ADR-0178: each kit's licence record gate is a stage its final stage depends on."""
+    stage = tester_stage(text, f"licence-{kit}")
     errors: list[str] = []
-    positions = [stage.find(t) for t in ("licensing.py self-test", "licensing.py notices", "licensing.py check")]
+    steps = ("licensing.py self-test", f"licensing.py notices --kit {kit} ", f"licensing.py check --kit {kit} ")
+    positions = [stage.find(t) for t in steps]
     if min(positions) < 0 or positions != sorted(positions):
-        errors.append(f"{relative}: stage licence must run licensing.py self-test, notices and check in that order")
-    if "FROM assembled AS licence" not in text or "FROM assembled AS runtime" not in text:
-        errors.append(f"{relative}: licence and runtime stages must both start from assembled")
-    if "COPY --from=licence " not in text[runtime:]:
-        errors.append(f"{relative}: stage runtime must copy from stage licence, so the gate cannot be skipped")
+        errors.append(
+            f"{relative}: stage licence-{kit} must run licensing.py self-test, notices --kit {kit} "
+            f"and check --kit {kit} in that order"
+        )
+    if f"FROM assembled-{kit} AS licence-{kit}" not in text or f"FROM assembled-{kit} AS final-{kit}" not in text:
+        errors.append(f"{relative}: stages licence-{kit} and final-{kit} must both start from assembled-{kit}")
+    if f"COPY --from=licence-{kit} " not in tester_stage(text, f"final-{kit}"):
+        errors.append(f"{relative}: stage final-{kit} must copy from stage licence-{kit}, so the gate cannot be skipped")
     for arg in ("ARG FFMPEG_REMOTE", "ARG FFMPEG_COMMIT", "ARG PELORUS_COMMIT"):
         if arg not in stage:
-            errors.append(f"{relative}: stage licence needs {arg}")
+            errors.append(f"{relative}: stage licence-{kit} needs {arg}")
+    return errors
+
+
+def _tester_kit_stages(relative: str, text: str) -> list[str]:
+    """ADR-0180: every kit has its build, gate, image and -source stages."""
+    errors: list[str] = []
+    for kit in TESTER_KITS:
+        missing = [
+            f"{relative}: missing stage AS {stage}-{kit}"
+            for stage in ("build", "assembled", "licence", "final", "debian-sources", "source")
+            if not tester_stage(text, f"{stage}-{kit}")
+        ]
+        if missing:
+            errors.extend(missing)
+            continue
+        errors.extend(_tester_licence_stage(relative, text, kit))
+        if "/opt/gate/build-ffmpeg.sh" not in tester_stage(text, f"build-{kit}"):
+            errors.append(f"{relative}: stage build-{kit} must build FFmpeg with /opt/gate/build-ffmpeg.sh")
+        if f"PELORUS_TESTER_KIT={kit} " not in tester_stage(text, f"final-{kit}"):
+            errors.append(f"{relative}: stage final-{kit} must set PELORUS_TESTER_KIT={kit}")
+        source = tester_stage(text, f"source-{kit}")
+        for token in (f"COPY --from=build-{kit} /opt/source /source/ffmpeg",
+                      f"COPY --from=debian-sources-{kit} /debian-source /source/debian"):
+            if token not in source:
+                errors.append(f"{relative}: stage source-{kit} is missing {token}")
+    for stage, tokens in TESTER_KIT_TOKENS.items():
+        errors.extend(
+            f"{relative}: stage {stage} is missing {token}" for token in tokens if token not in tester_stage(text, stage)
+        )
+    return errors
+
+
+def tester_apt_packages(text: str) -> list[str]:
+    """Package names of every `apt-get install` in a Containerfile."""
+    joined = re.sub(r"\\\n", " ", text)
+    packages: list[str] = []
+    for segment in re.split(r"&&|;|\n", joined):
+        if "apt-get install" not in segment:
+            continue
+        words = segment.split("apt-get install", 1)[1].split()
+        packages.extend(w for w in words if not w.startswith("-") and "=" not in w)
+    return packages
+
+
+def _tester_vendor_files(relative: str, text: str) -> list[str]:
+    """No kit installs a vendor driver or enables a non-free archive component."""
+    errors = [
+        f"{relative}: forbidden package {name} (vendor driver or non-free, ADR-0180)"
+        for name in tester_apt_packages(text)
+        if TESTER_APT_FORBIDDEN.search(name)
+    ]
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        if "Components:" in line or "debian.sources" in line:
+            if TESTER_APT_FORBIDDEN.search(line):
+                errors.append(f"{relative}: a non-free or contrib archive component is enabled: {line.strip()}")
     return errors
 
 
 def validate_tester_containerfile_text(relative: str, text: str) -> list[str]:
-    """The Containerfile builds GPL-3.0-or-later FFmpeg behind the licence gate."""
+    """The Containerfile builds GPL-3.0-or-later FFmpeg per kit behind the licence gates."""
     errors: list[str] = []
     if LICENCE_FLAGS_ARG not in text:
         errors.append(f"{relative}: licence flags must default to --enable-gpl --enable-version3")
     for flag in BANNED_FFMPEG_FLAGS:
         if flag in text:
             errors.append(f"{relative}: forbidden FFmpeg flag {flag}")
-    gate = text.find("/opt/gate/check-ffmpeg-licence.sh /opt/ffmpeg/bin/ffmpeg")
-    selftest = text.find("/opt/gate/check-ffmpeg-licence-self-test.sh")
-    runtime = text.find("AS runtime")
-    if selftest < 0 or gate < 0 or not selftest < gate < runtime:
-        errors.append(
-            f"{relative}: the licence gate and its self-test must run in the build stage before runtime"
-        )
-    for stage in ("AS build", "AS assembled", "AS licence", "AS runtime", "AS source"):
-        if stage not in text:
-            errors.append(f"{relative}: missing stage {stage}")
-    errors.extend(_tester_licence_stage(relative, text))
-    for token in ("libpelorus-commit.txt", "ffmpeg-configure-line.txt", "series.txt", "installed-sources.txt"):
+    copy = "COPY tools/tester/build-ffmpeg.sh tools/tester/check-ffmpeg-licence.sh tools/tester/check-ffmpeg-licence-self-test.sh /opt/gate/"
+    if copy not in tester_stage(text, "build"):
+        errors.append(f"{relative}: stage build must copy build-ffmpeg.sh and the licence gate to /opt/gate/")
+    for stage in ("build", "base"):
+        if not tester_stage(text, stage):
+            errors.append(f"{relative}: missing stage AS {stage}")
+    errors.extend(_tester_kit_stages(relative, text))
+    errors.extend(_tester_vendor_files(relative, text))
+    for token in ("libpelorus-commit.txt", "installed-sources.txt"):
         if token not in text:
             errors.append(f"{relative}: -source image is missing {token}")
     if not re.search(r"^FROM \$\{DEBIAN_IMAGE\} AS build$", text, re.MULTILINE) or not re.search(
         r"^ARG DEBIAN_IMAGE=\S+@sha256:[0-9a-f]{64}$", text, re.MULTILINE
     ):
         errors.append(f"{relative}: base image must be pinned by digest")
+    return errors
+
+
+def validate_tester_build_script_text(relative: str, text: str) -> list[str]:
+    """build-ffmpeg.sh runs the licence gate after its self-test and never takes a licence flag."""
+    errors: list[str] = []
+    for flag in BANNED_FFMPEG_FLAGS:
+        if flag in text:
+            errors.append(f"{relative}: forbidden FFmpeg flag {flag}")
+    selftest = text.find("\n/opt/gate/check-ffmpeg-licence-self-test.sh\n")
+    gate = text.find("\n/opt/gate/check-ffmpeg-licence.sh /opt/ffmpeg/bin/ffmpeg\n")
+    if selftest < 0 or gate < 0 or selftest > gate:
+        errors.append(f"{relative}: the licence gate self-test must run, then the gate on /opt/ffmpeg/bin/ffmpeg")
+    for token in (
+        "set -euo pipefail",
+        "is a licence decision, not a kit feature; refused",
+        "${FFMPEG_LICENCE_FLAGS} ${FFMPEG_FEATURE_FLAGS} \"$@\"",
+        "/opt/source/ffmpeg-configure-line.txt",
+        "/opt/source/series.txt",
+    ):
+        if token not in text:
+            errors.append(f"{relative}: build-ffmpeg.sh is missing {token}")
     return errors
 
 
@@ -3306,6 +3424,7 @@ def validate_tester_publish() -> list[str]:
     for path, check in (
         (TESTER_PUBLISH, validate_tester_publish_text),
         (TESTER_CONTAINERFILE, validate_tester_containerfile_text),
+        (TESTER_BUILD_SCRIPT, validate_tester_build_script_text),
     ):
         relative = path.relative_to(ROOT).as_posix()
         if not path.is_file():
@@ -3507,8 +3626,8 @@ def _tester_gate_cases(text: str) -> dict[str, tuple[str, str]]:
             "publish job is missing python3 -I -B tools/tester/licensing.py self-test",
         ),
         "licence record gate on the image dropped": (
-            text.replace("/opt/pelorus/tester/licensing.py check --root /", "/opt/pelorus/tester/licensing.py record"),
-            "publish job is missing /opt/pelorus/tester/licensing.py check --root /",
+            text.replace('/opt/pelorus/tester/licensing.py check --kit "${KIT}" --root /', "/opt/pelorus/tester/licensing.py record"),
+            'publish job is missing /opt/pelorus/tester/licensing.py check --kit "${KIT}" --root /',
         ),
         "no licence gate on the image": (
             text.replace("name: Licence gate on the built image", "name: Other", 1),
@@ -3529,13 +3648,65 @@ def _tester_gate_cases(text: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def _tester_build_kit_cases(text: str) -> dict[str, tuple[str, str]]:
+    """ADR-0180: the pull-request build covers every kit and checks its no-device report."""
+    return {
+        "build job drops a kit": (
+            replace_in_job(text, "build", "kit: [generic, nvidia, intel]", "kit: [generic, nvidia]"),
+            "build job is missing kit: [generic, nvidia, intel]",
+        ),
+        "build job skips the no-device report": (
+            replace_in_job(text, "build", '/report/report.json" --kit "${KIT}"', '/report/report.json"'),
+            "build job is missing pelorus_tester_report.py validate",
+        ),
+        "build job builds one fixed kit": (
+            replace_in_job(text, "build", '--target "final-${KIT}"', "--target final-generic"),
+            'build job is missing --target "final-${KIT}"',
+        ),
+    }
+
+
+def _tester_kit_cases(text: str) -> dict[str, tuple[str, str]]:
+    """ADR-0180: every kit publishes, with its own tags, and one kit never cancels another."""
+    return {
+        "publish drops a kit": (
+            replace_in_job(text, "publish", "kit: [generic, nvidia, intel]", "kit: [generic, intel]"),
+            "publish job is missing         kit: [generic, nvidia, intel]",
+        ),
+        "publish is fail-fast": (
+            replace_in_job(text, "publish", "fail-fast: false", "fail-fast: true"),
+            "publish job is missing       fail-fast: false",
+        ),
+        "generic tag shape changed": (
+            text.replace('tag="tester-${STAMP}"', 'tag="tester-generic-${STAMP}"', 1),
+            'publish job is missing tag="tester-${STAMP}"',
+        ),
+        "vendor tag without the kit": (
+            text.replace('tag="tester-${KIT}-${STAMP}"', 'tag="tester-${STAMP}-x"', 1),
+            'publish job is missing tag="tester-${KIT}-${STAMP}"',
+        ),
+        "report not checked against the kit": (
+            replace_in_job(text, "publish", '/report/report.json" --kit "${KIT}"', '/report/report.json"'),
+            'publish job is missing pelorus_tester_report.py validate "${RUNNER_TEMP}/report/report.json" --kit',
+        ),
+        "licence record gate without the kit": (
+            text.replace('licensing.py check --kit "${KIT}" --root /', "licensing.py check --kit generic --root /", 1),
+            'publish job is missing /opt/pelorus/tester/licensing.py check --kit "${KIT}"',
+        ),
+        "-source of one fixed kit": (
+            text.replace('--target "source-${KIT}"', "--target source-generic", 1),
+            'publish job is missing --target "source-${KIT}"',
+        ),
+    }
+
+
 def _tester_publish_cases(text: str) -> dict[str, tuple[str, str]]:
     sbom = "      - name: SBOM of the tester image (SPDX JSON)\n"
     sbom_path = "sbom-path: ${{ runner.temp }}/tester.spdx.json\n          push-to-registry: "
     return {
         "no -source image": (
-            text.replace("--target source", "--target runtime", 1),
-            "publish job is missing --target source",
+            text.replace('--target "source-${KIT}"', '--target "final-${KIT}"', 1),
+            'publish job is missing --target "source-${KIT}"',
         ),
         "SBOM not pushed to registry": (
             text.replace(sbom_path + "true", sbom_path + "false", 1),
@@ -3580,10 +3751,13 @@ def _tester_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
         **_tester_nightly_cases(text),
         **_tester_gate_cases(text),
         **_tester_publish_cases(text),
+        **_tester_kit_cases(text),
+        **_tester_build_kit_cases(text),
     }
 
 
-def _tester_containerfile_cases(text: str) -> dict[str, tuple[str, str]]:
+def _tester_containerfile_licence_cases(text: str) -> dict[str, tuple[str, str]]:
+    """The licence flags, the gates and their order in every kit."""
     flags = '"--enable-gpl --enable-version3"'
     return {
         "nonfree default": (
@@ -3597,43 +3771,139 @@ def _tester_containerfile_cases(text: str) -> dict[str, tuple[str, str]]:
             text.replace(flags, '"--enable-version3"', 1),
             "licence flags must default to",
         ),
-        "gate removed": (
-            text.replace("/opt/gate/check-ffmpeg-licence.sh /opt/ffmpeg/bin/ffmpeg", "true", 1),
-            "licence gate and its self-test must run",
+        "gate scripts not copied": (
+            text.replace("tools/tester/check-ffmpeg-licence-self-test.sh /opt/gate/", "/opt/gate/", 1),
+            "stage build must copy build-ffmpeg.sh and the licence gate",
         ),
-        "gate self-test removed": (
-            text.replace("/opt/gate/check-ffmpeg-licence-self-test.sh", "true", 1),
-            "licence gate and its self-test must run",
+        "kit built without the gate script": (
+            text.replace("RUN /opt/gate/build-ffmpeg.sh --enable-libvpl", "RUN /src/ffmpeg/configure --enable-libvpl", 1),
+            "stage build-intel must build FFmpeg with /opt/gate/build-ffmpeg.sh",
         ),
-        "no source stage": (text.replace("AS source", "AS other", 1), "missing stage AS source"),
-        "no licence stage": (text.replace("AS licence", "AS other", 1), "missing stage AS licence"),
         "licence self-test removed": (
             text.replace("licensing.py self-test", "licensing.py record", 1),
-            "stage licence must run licensing.py self-test, notices and check in that order",
+            "stage licence-generic must run licensing.py self-test",
         ),
-        "licence check removed": (
-            text.replace("licensing.py check --root /", "licensing.py record --root /", 1),
-            "stage licence must run licensing.py self-test, notices and check in that order",
+        "licence check of another kit": (
+            text.replace("licensing.py check --kit nvidia ", "licensing.py check --kit generic ", 1),
+            "stage licence-nvidia must run licensing.py self-test, notices --kit nvidia and check --kit nvidia",
         ),
         "licence check before notices": (
-            text.replace("licensing.py notices", "licensing.py zzz", 1).replace("licensing.py check", "licensing.py notices", 1).replace("licensing.py zzz", "licensing.py check", 1),
-            "stage licence must run licensing.py self-test, notices and check in that order",
+            text.replace("licensing.py notices --kit intel", "licensing.py zzz --kit intel", 1)
+            .replace("licensing.py check --kit intel", "licensing.py notices --kit intel", 1)
+            .replace("licensing.py zzz --kit intel", "licensing.py check --kit intel", 1),
+            "stage licence-intel must run licensing.py self-test",
         ),
-        "runtime skips the licence stage": (
-            text.replace("COPY --from=licence ", "COPY --from=assembled ", 1),
-            "stage runtime must copy from stage licence",
+        "final skips the licence stage": (
+            text.replace("COPY --from=licence-nvidia ", "COPY --from=assembled-nvidia ", 1),
+            "stage final-nvidia must copy from stage licence-nvidia",
         ),
         "licence stage without the commit": (
             text.replace("ARG FFMPEG_COMMIT\nARG PELORUS_COMMIT\nRUN python3", "ARG PELORUS_COMMIT\nRUN python3", 1),
-            "stage licence needs ARG FFMPEG_COMMIT",
-        ),
-        "no configure line in source": (
-            text.replace("ffmpeg-configure-line.txt", "x.txt"),
-            "-source image is missing ffmpeg-configure-line.txt",
+            "stage licence-generic needs ARG FFMPEG_COMMIT",
         ),
         "floating base image": (
             re.sub(r"(ARG DEBIAN_IMAGE=\S+)@sha256:[0-9a-f]{64}", r"\1", text, count=1),
             "base image must be pinned by digest",
+        ),
+    }
+
+
+def _tester_containerfile_stage_cases(text: str) -> dict[str, tuple[str, str]]:
+    """ADR-0180: every kit has its stages, its kit name and its own FFmpeg tree in -source."""
+    return {
+        "no nvidia -source stage": (
+            text.replace("AS source-nvidia", "AS other", 1),
+            "missing stage AS source-nvidia",
+        ),
+        "no intel licence stage": (
+            text.replace("AS licence-intel", "AS other", 1),
+            "missing stage AS licence-intel",
+        ),
+        "final without its kit": (
+            text.replace("PELORUS_TESTER_KIT=intel ", "PELORUS_TESTER_KIT=generic ", 1),
+            "stage final-intel must set PELORUS_TESTER_KIT=intel",
+        ),
+        "-source without the kit's FFmpeg tree": (
+            text.replace("COPY --from=build-intel /opt/source /source/ffmpeg", "COPY --from=build-generic /opt/source /source/ffmpeg", 1),
+            "stage source-intel is missing COPY --from=build-intel /opt/source /source/ffmpeg",
+        ),
+    }
+
+
+def _tester_containerfile_vendor_cases(text: str) -> dict[str, tuple[str, str]]:
+    """ADR-0180: what each vendor kit needs, and no vendor driver or non-free package."""
+    intel_apt = "        intel-media-va-driver libdav1d7"
+    return {
+        "nvidia without the graphics capability": (
+            text.replace("NVIDIA_DRIVER_CAPABILITIES=compute,utility,video,graphics", "NVIDIA_DRIVER_CAPABILITIES=compute,utility,video", 1),
+            "stage final-nvidia is missing NVIDIA_DRIVER_CAPABILITIES=compute,utility,video,graphics",
+        ),
+        "nvidia without libXext for the host ICD": (
+            text.replace("libdav1d7 libegl1 libxext6", "libdav1d7 libegl1", 1),
+            "stage assembled-nvidia is missing libxext6",
+        ),
+        "nvidia without the GLVND libEGL for the host ICD": (
+            text.replace("libdav1d7 libegl1 libxext6", "libdav1d7 libxext6", 1),
+            "stage assembled-nvidia is missing libegl1",
+        ),
+        "intel without libdrm picks the first render node": (
+            text.replace("--enable-vaapi --enable-libdrm", "--enable-vaapi", 1),
+            "stage build-intel is missing --enable-libvpl --enable-vaapi --enable-libdrm",
+        ),
+        "intel without an AV1 decoder for the steering check": (
+            text.replace("--disable-xlib --enable-libdav1d", "--disable-xlib", 1),
+            "stage build-intel is missing --enable-libdav1d",
+        ),
+        "nvidia without NVENC": (
+            text.replace("--enable-ffnvcodec --enable-nvenc", "--enable-ffnvcodec", 1),
+            "stage build-nvidia is missing --enable-ffnvcodec --enable-nvenc",
+        ),
+        "planted NVIDIA driver package": (
+            text.replace(intel_apt, "        libnvidia-encode1 " + intel_apt.strip(), 1),
+            "forbidden package libnvidia-encode1",
+        ),
+        "planted CUDA toolkit": (
+            text.replace("libva-dev libvpl-dev", "libva-dev libvpl-dev nvidia-cuda-toolkit", 1),
+            "forbidden package nvidia-cuda-toolkit",
+        ),
+        "non-free media driver": (
+            text.replace(intel_apt, "        intel-media-va-driver-non-free libdav1d7", 1),
+            "forbidden package intel-media-va-driver-non-free",
+        ),
+        "non-free archive component": (
+            text.replace("RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources",
+                         "RUN sed -i 's/^Components: main$/Components: main non-free/' /etc/apt/sources.list.d/debian.sources", 1),
+            "a non-free or contrib archive component is enabled",
+        ),
+    }
+
+
+def _tester_containerfile_cases(text: str) -> dict[str, tuple[str, str]]:
+    return {
+        **_tester_containerfile_licence_cases(text),
+        **_tester_containerfile_stage_cases(text),
+        **_tester_containerfile_vendor_cases(text),
+    }
+
+
+def _tester_build_script_cases(text: str) -> dict[str, tuple[str, str]]:
+    gate = "/opt/gate/check-ffmpeg-licence.sh /opt/ffmpeg/bin/ffmpeg\n"
+    selftest = "/opt/gate/check-ffmpeg-licence-self-test.sh\n"
+    return {
+        "gate removed": (text.replace(gate, "true\n", 1), "the licence gate self-test must run, then the gate"),
+        "gate self-test removed": (text.replace(selftest, "true\n", 1), "the licence gate self-test must run, then the gate"),
+        "gate before its self-test": (
+            text.replace(selftest, "SELFTEST\n", 1).replace(gate, selftest, 1).replace("SELFTEST\n", gate, 1),
+            "the licence gate self-test must run, then the gate",
+        ),
+        "kit flag guard removed": (
+            text.replace("is a licence decision, not a kit feature; refused", "accepted", 1),
+            "build-ffmpeg.sh is missing is a licence decision",
+        ),
+        "planted nonfree flag": (text + "\n# --enable-nonfree\n", "forbidden FFmpeg flag --enable-nonfree"),
+        "configure line not kept": (
+            text.replace("/opt/source/ffmpeg-configure-line.txt", "/dev/null", 1),
+            "build-ffmpeg.sh is missing /opt/source/ffmpeg-configure-line.txt",
         ),
     }
 
@@ -3669,10 +3939,18 @@ def tester_publish_regressions() -> list[str]:
     wf_rel = TESTER_PUBLISH.relative_to(ROOT).as_posix()
     container = TESTER_CONTAINERFILE.read_text(encoding="utf-8")
     cf_rel = TESTER_CONTAINERFILE.relative_to(ROOT).as_posix()
+    script = TESTER_BUILD_SCRIPT.read_text(encoding="utf-8")
+    sc_rel = TESTER_BUILD_SCRIPT.relative_to(ROOT).as_posix()
     if validate_tester_publish_text(wf_rel, workflow):
         failures.append("tester publish regression: the current workflow is rejected")
     if validate_tester_containerfile_text(cf_rel, container):
         failures.append("tester publish regression: the current Containerfile is rejected")
+    if validate_tester_build_script_text(sc_rel, script):
+        failures.append("tester publish regression: the current build-ffmpeg.sh is rejected")
+    for name, (mutated, expected) in _tester_build_script_cases(script).items():
+        failures.extend(
+            _all_rejected(name, mutated, script, lambda t: validate_tester_build_script_text(sc_rel, t), expected)
+        )
     for name, (mutated, expected) in _tester_workflow_cases(workflow).items():
         failures.extend(
             _all_rejected(name, mutated, workflow, lambda t: validate_tester_publish_text(wf_rel, t), expected)

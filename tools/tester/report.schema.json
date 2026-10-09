@@ -21,6 +21,7 @@
     "generated_utc": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
     "commit": {"type": "string", "pattern": "^([0-9a-f]{40}|unknown)$", "description": "Source commit of the kit; 'unknown' only for a run outside a published package."},
     "package": {"type": "string", "maxLength": 128},
+    "kit": {"enum": ["source", "generic", "nvidia", "intel"], "description": "Optional, added in tool 0.4.0 (absent means source). The tester image kit that ran (PELORUS_TESTER_KIT, ADR-0180), or source for a run from a checkout. A vendor kit's no_device reasons name its docker option (--gpus all, --device /dev/dri)."},
     "host": {
       "type": "object",
       "additionalProperties": false,
@@ -65,7 +66,22 @@
           "needs_device": {"type": "boolean"},
           "duration_s": {"type": "number", "minimum": 0},
           "exit_code": {"type": ["integer", "null"]},
-          "log_tail": {"type": "string", "maxLength": 4000}
+          "log_tail": {"type": "string", "maxLength": 4000},
+          "legs": {
+            "type": "array",
+            "description": "Optional, added in tool 0.4.0: one entry per encoder the stage tried (steering_smoke, sidedata_roundtrip). A stage cannot pass with a failed leg or without a passing one; a leg that is not pass carries a reason.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["encoder", "codec", "status", "reason"],
+              "properties": {
+                "encoder": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"},
+                "codec": {"enum": ["h264", "hevc", "av1"]},
+                "status": {"enum": ["pass", "fail", "not_run"]},
+                "reason": {"type": "string", "maxLength": 400}
+              }
+            }
+          }
         }
       }
     },

@@ -281,7 +281,11 @@ def ensure_offline(entry, cache, ffmpeg, run):
     if "generate" not in entry:
         return None, ["%s: not in the cache and the tester runs offline "
                       "(run `fetch` once)" % entry["name"]], True
-    Path(cache).mkdir(parents=True, exist_ok=True)
+    try:
+        Path(cache).mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return None, ["cannot create the fixture cache %s: %s (set PELORUS_TESTER_CACHE "
+                      "to a writable directory)" % (cache, exc.strerror)], False
     errs = generate(entry, cache, ffmpeg, run)
     return (None if errs else path), errs, False
 
@@ -317,6 +321,10 @@ def self_test(disabled=frozenset()):
         remote = {k: v for k, v in good.items() if k != "generate"}
         remote.update(file="none.yuv", download={"url": "https://example.invalid/x"})
         expect("offline_download_absent", ensure_offline(remote, tmp, "ffmpeg", None)[2])
+        blocked = ensure_offline(dict(good, file="new.yuv"), Path(tmp) / "good.yuv" / "cache",
+                                 "ffmpeg", None)
+        expect("unwritable_cache_is_named", blocked[0] is None and not blocked[2]
+               and "cannot create the fixture cache" in blocked[1][0])
     entries, err = load_lock()
     expect("lock_loads", not err and bool(entries))
     expect("lock_entries_licensed", not [e for e in entries if licence_problems(e, disabled)])
