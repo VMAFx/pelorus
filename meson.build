@@ -3,7 +3,7 @@
 project(
   'pelorus',
   'c',
-  version: '0.3.0',
+  version: '0.4.0-rc.1',
   license: 'EUPL-1.2',
   default_options: [
     'c_std=c11',

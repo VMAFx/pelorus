@@ -1,1 +1,0 @@
-- `scripts/bench/bd_rate.py` no longer crashes on NumPy 2 (`np.trapz` was removed); it uses `np.trapezoid` when present.

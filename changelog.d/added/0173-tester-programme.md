@@ -1,1 +1,0 @@
-- Tester programme foundation: ADR-0173 (tester artifacts are evidence for a master commit, licence rules before first publication, `tester-publish` environment), the `tools/tester/` report program with its JSON schema and `--self-test`, and `docs/development/tester.md` ([ADR-0173](docs/adr/0173-tester-programme.md)).

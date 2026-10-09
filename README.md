@@ -199,7 +199,7 @@ clang-format --dry-run -Werror libpelorus/**/*.{c,h}   # format check
 
 ## Status
 
-Pre-1.0 (`v0.3.0`). Public API and the interop ABI may evolve before
+Pre-1.0 (`v0.4.0-rc.1`). Public API and the interop ABI may evolve before
 `v1.0.0`; the ABI is append-only from here.
 
 ## License

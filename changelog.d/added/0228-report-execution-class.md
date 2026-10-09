@@ -1,2 +1,0 @@
-- Tester report schema version 2: required `execution_class` and `evidence_claim` keep a lavapipe or absent device from claiming GPU evidence, the new stage status `pass_software` records a functional pass on software Vulkan, and `tool.sha256` records the program that wrote the report; the validator re-derives the class and the self-test plants each refusal (#228).
-- Vulkan allow-list: `VkCopyMemoryToImageInfo-dstImageLayout-09059`, the upload twin of the listed 09064, raised by FFmpeg's host-image-copy path (#228, #214).
