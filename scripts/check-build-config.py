@@ -2261,7 +2261,9 @@ RELEASE_ASSETS = (
 RELEASE_BUILD_ORDER = (
     "run: meson setup --werror build",
     "run: make build BUILD_DIR=build",
+    "name: Release tag shape and rc numbering",
     "name: Tag matches the project version",
+    "name: Candidate legs are green on this commit",
     "name: Package the FFmpeg patch stack",
     "uses: anchore/sbom-action@",
     "uses: actions/attest-build-provenance@",
@@ -2270,6 +2272,8 @@ RELEASE_BUILD_ORDER = (
     "uses: actions/upload-artifact@",
 )
 RELEASE_BUILD_TOKENS = (
+    "actions: read",
+    "prerelease: ${{ steps.tag.outputs.prerelease }}",
     "id-token: write",
     "attestations: write",
     "upload-artifact: false",
@@ -2357,6 +2361,13 @@ def _validate_release_gate(relative: str, jobs: dict[str, str]) -> list[str]:
         "needs.build.outputs.artifact-name",
         "gh release create",
         "GITHUB_REF_NAME//\\//-",
+        "PRERELEASE: ${{ needs.build.outputs.prerelease }}",
+        "true) kind=(--prerelease --latest=false) ;;",
+        "false) kind=() ;;",
+        '"${kind[@]}"',
+        "*) echo \"::error::release build did not classify",
+        "gh release view",
+        "--json isPrerelease",
     ) + RELEASE_ASSETS:
         if token not in publish:
             errors.append(f"{relative}: publish job is missing {token}")
@@ -2383,9 +2394,55 @@ def _validate_tag_version_step(relative: str, block: str) -> list[str]:
             "meson introspect --projectinfo build",
             "::error::",
             "exit 1",
+            "python3 -I scripts/release/verify-release.py version",
+            "--meson-version",
+            "libpelorus/include/pelorus/pelorus.h",
         )
         if token not in body
     ]
+
+
+def _step_body(block: str, name: str) -> str | None:
+    """The text of one named step, up to the next step; None when absent."""
+    start = block.find(f"name: {name}")
+    if start < 0:
+        return None
+    end = block.find("\n      - ", start)
+    return block[start:] if end < 0 else block[start:end]
+
+
+def _validate_rc_steps(relative: str, block: str) -> list[str]:
+    """ADR-0176: tag shape, rc numbering and candidate legs before any build output."""
+    errors: list[str] = []
+    shape = _step_body(block, "Release tag shape and rc numbering")
+    if shape is None:
+        return [f"{relative}: release build is missing the tag shape and rc numbering step"]
+    for token in (
+        "id: tag",
+        TAG_GUARD.removeprefix("if: "),
+        "git ls-remote --tags --refs origin",
+        "test -s",
+        "python3 -I scripts/release/verify-release.py tag",
+        "--tags-file",
+        "set -o pipefail",
+        "GITHUB_OUTPUT",
+    ):
+        if token not in shape:
+            errors.append(f"{relative}: tag shape step is missing {token}")
+    legs = _step_body(block, "Candidate legs are green on this commit")
+    if legs is None:
+        return errors + [f"{relative}: release build is missing the candidate legs step"]
+    for token in (
+        "steps.tag.outputs.prerelease == 'true'",
+        TAG_GUARD.removeprefix("if: ").split(" && ")[0],
+        "python3 -I scripts/release/check-candidate-legs.py",
+        '--sha "$GITHUB_SHA"',
+        "dist/CANDIDATE_LEGS.json",
+        "GH_TOKEN: ${{ github.token }}",
+    ):
+        if token not in legs:
+            errors.append(f"{relative}: candidate legs step is missing {token}")
+    return errors
 
 
 def _validate_release_notes_step(relative: str, block: str) -> list[str]:
@@ -2417,6 +2474,7 @@ def _validate_release_build(relative: str, text: str, jobs: dict[str, str]) -> l
     block = jobs.get(RELEASE_BUILD_JOB)
     if block is None:
         return errors + [f"{relative}: missing job {RELEASE_BUILD_JOB}"]
+    errors.extend(_validate_rc_steps(relative, block))
     errors.extend(_validate_tag_version_step(relative, block))
     errors.extend(_validate_release_notes_step(relative, block))
     for token in RELEASE_BUILD_TOKENS:
@@ -2738,7 +2796,7 @@ def release_gate_regressions(source: str, relative: str) -> list[str]:
             "publish job must need the release build",
         ),
         "publish without the SHA256SUMS signature": (
-            release.replace("            SHA256SUMS.sigstore.json\n", "", 1),
+            release.replace("            SHA256SUMS.sigstore.json \\\n", "", 1),
             "publish job is missing SHA256SUMS.sigstore.json",
         ),
         "publish rebuilds from a checkout": (
@@ -2827,6 +2885,581 @@ def release_build_regressions() -> list[str]:
             "tag==version step is missing ::error::",
         ),
     })
+
+
+# --- ADR-0176: tester-publish.yml, its Containerfile and the candidate legs ---
+
+TESTER_PUBLISH = ROOT / ".github" / "workflows" / "tester-publish.yml"
+TESTER_CONTAINERFILE = ROOT / "tools" / "tester" / "Containerfile"
+CANDIDATE_LEGS = ROOT / "scripts" / "release" / "candidate-legs.json"
+LICENCE_FLAGS_ARG = 'ARG FFMPEG_LICENCE_FLAGS="--enable-gpl --enable-version3"'
+# ADR-0173 decision 5: a tester image never ships these, in any file we author.
+BANNED_FFMPEG_FLAGS = (
+    "--enable-nonfree",
+    "--enable-cuda-nvcc",
+    "--enable-cuda-sdk",
+    "--enable-libfdk-aac",
+    "--enable-libfdk_aac",
+    "--enable-decklink",
+    "--enable-libmpeghdec",
+)
+ACTION_USES = re.compile(r"^\s*(?:- )?uses: (\S+)(.*)$", re.MULTILINE)
+PINNED_USE = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")
+TESTER_PUBLISH_ORDER = (
+    "name: Licence gate refuses a planted flag",
+    "name: Build the tester image",
+    "name: Licence gate on the built image",
+    "name: Run the documented command without a GPU",
+    "name: Build the -source companion",
+    "name: Log in to ghcr.io",
+    "name: Push both images",
+    "uses: anchore/sbom-action@",
+    "uses: actions/attest-build-provenance@",
+    "uses: actions/attest@",
+    "uses: sigstore/cosign-installer@",
+    "cosign sign --yes",
+    "cosign verify",
+    "gh attestation verify",
+    "name: The package is public",
+)
+TESTER_PUBLISH_TOKENS = (
+    "environment: tester-publish",
+    "id-token: write",
+    "attestations: write",
+    "packages: write",
+    "push-to-registry: true",
+    "format: spdx-json",
+    "upload-artifact: false",
+    "upload-release-assets: false",
+    "sbom-path:",
+    "--signer-workflow VMAFx/pelorus/.github/workflows/tester-publish.yml",
+    "--certificate-identity-regexp "
+    "'^https://github\\.com/VMAFx/pelorus/\\.github/workflows/tester-publish\\.yml@'",
+    "--certificate-oidc-issuer https://token.actions.githubusercontent.com",
+    "--target source",
+    '--tag "${IMAGE}:${TAG}-source"',
+    "bash tools/tester/check-ffmpeg-licence.sh",
+    "bash tools/tester/check-ffmpeg-licence-self-test.sh",
+    "pelorus_tester_report.py validate",
+)
+
+
+def _tester_pins(relative: str, text: str) -> list[str]:
+    """Every action is pinned by full digest with its `# vX.Y.Z` release comment."""
+    errors: list[str] = []
+    for match in ACTION_USES.finditer(text):
+        target, rest = match.group(1), match.group(2)
+        if target.startswith("./"):
+            continue
+        if PINNED_USE.fullmatch(target) is None or not re.fullmatch(
+            r"\s+# v\d+\.\d+\.\d+\s*", rest
+        ):
+            errors.append(
+                f"{relative}: action {target} must be pinned by full commit digest "
+                "with a `# vX.Y.Z` release comment"
+            )
+    return errors
+
+
+def _tester_job_hygiene(relative: str, jobs: dict[str, str]) -> list[str]:
+    """Runner, timeout, checkout credentials and publish-only privileges per job."""
+    errors: list[str] = []
+    for name, block in jobs.items():
+        if re.findall(r"^\s+runs-on:\s*([^\s#]+)", block, re.MULTILINE) != ["ubuntu-26.04"]:
+            errors.append(f"{relative}: job {name} must run exactly on ubuntu-26.04")
+        if "timeout-minutes:" not in block:
+            errors.append(f"{relative}: job {name} needs timeout-minutes")
+        for checkout in re.finditer(
+            r"uses: actions/checkout@[^\n]*\n(?P<with>(?:        .*\n)*)", block
+        ):
+            if "persist-credentials: false" not in checkout.group("with"):
+                errors.append(
+                    f"{relative}: job {name} checkout must set persist-credentials: false"
+                )
+        if name == "publish":
+            continue
+        for token in ("docker push", "docker login", "secrets.", "packages: write", "id-token: write"):
+            if token in block:
+                errors.append(f"{relative}: job {name} must not use {token}; only publish publishes")
+    return errors
+
+
+def _tester_jobs(relative: str, jobs: dict[str, str]) -> list[str]:
+    errors = [f"{relative}: missing job {n}" for n in ("build", "validate", "publish") if n not in jobs]
+    if errors:
+        return errors
+    build, validate, publish = jobs["build"], jobs["validate"], jobs["publish"]
+    errors.extend(_tester_job_hygiene(relative, jobs))
+    if "    if: github.event_name == 'pull_request'\n" not in build:
+        errors.append(f"{relative}: build job must run only on pull_request")
+    draft = build.find("name: Stop on a draft pull request")
+    first_checkout = build.find("uses: actions/checkout@")
+    if draft < 0 or first_checkout < 0 or draft > first_checkout:
+        errors.append(
+            f"{relative}: build job must stop on a draft pull request before it checks out (HISS-18)"
+        )
+    for job_name, block in (("validate", validate), ("publish", publish)):
+        if "    if: github.event_name == 'workflow_dispatch'\n" not in block:
+            errors.append(f"{relative}: {job_name} job must run only on workflow_dispatch")
+    if "validate" not in job_needs(publish):
+        errors.append(f"{relative}: publish job must need validate")
+    for token in (
+        "git merge-base --is-ancestor",
+        "origin/master",
+        "fetch-depth: 0",
+        'for commit in "$sha" "$GITHUB_SHA"',
+    ):
+        if token not in validate:
+            errors.append(f"{relative}: validate job is missing {token}")
+    return errors
+
+
+def _tester_publish_steps(relative: str, publish: str) -> list[str]:
+    errors = [
+        f"{relative}: publish job is missing {t}" for t in TESTER_PUBLISH_TOKENS if t not in publish
+    ]
+    positions = [publish.find(token) for token in TESTER_PUBLISH_ORDER]
+    errors.extend(
+        f"{relative}: publish job is missing {token}"
+        for token, position in zip(TESTER_PUBLISH_ORDER, positions)
+        if position < 0
+    )
+    found = [position for position in positions if position >= 0]
+    if found != sorted(found):
+        errors.append(
+            f"{relative}: publish steps are out of order (expected: "
+            + " -> ".join(TESTER_PUBLISH_ORDER)
+            + ")"
+        )
+    if publish.count("push-to-registry: true") < 3:
+        errors.append(
+            f"{relative}: publish job must attest the image, its SBOM and the -source image to the registry"
+        )
+    if publish.count("cosign sign --yes") != 2:
+        errors.append(f"{relative}: publish job must sign both the image and the -source image")
+    return errors
+
+
+def validate_tester_publish_text(relative: str, text: str) -> list[str]:
+    """Shape of the dispatch-only tester publish workflow (ADR-0173/0176)."""
+    errors: list[str] = []
+    jobs = workflow_job_blocks(text)
+    if not jobs:
+        return [f"{relative}: no jobs found"]
+    if workflow_triggers(text) != ["pull_request", "workflow_dispatch"]:
+        errors.append(f"{relative}: triggers must be exactly pull_request and workflow_dispatch")
+    if not re.search(r"^permissions:\n  contents: read\n", text, re.MULTILINE):
+        errors.append(f"{relative}: top-level permissions must be contents: read only")
+    for token in ("ubuntu-latest", "windows-latest", "/home/kilian/", *BANNED_FFMPEG_FLAGS):
+        if token in text:
+            errors.append(f"{relative}: forbidden workflow token {token}")
+    errors.extend(_tester_pins(relative, text))
+    errors.extend(_tester_jobs(relative, jobs))
+    errors.extend(_tester_publish_steps(relative, jobs.get("publish", "")))
+    return errors
+
+
+def validate_tester_containerfile_text(relative: str, text: str) -> list[str]:
+    """The Containerfile builds GPL-3.0-or-later FFmpeg behind the licence gate."""
+    errors: list[str] = []
+    if LICENCE_FLAGS_ARG not in text:
+        errors.append(f"{relative}: licence flags must default to --enable-gpl --enable-version3")
+    for flag in BANNED_FFMPEG_FLAGS:
+        if flag in text:
+            errors.append(f"{relative}: forbidden FFmpeg flag {flag}")
+    gate = text.find("/opt/gate/check-ffmpeg-licence.sh /opt/ffmpeg/bin/ffmpeg")
+    selftest = text.find("/opt/gate/check-ffmpeg-licence-self-test.sh")
+    runtime = text.find("AS runtime")
+    if selftest < 0 or gate < 0 or not selftest < gate < runtime:
+        errors.append(
+            f"{relative}: the licence gate and its self-test must run in the build stage before runtime"
+        )
+    for stage in ("AS build", "AS runtime", "AS source"):
+        if stage not in text:
+            errors.append(f"{relative}: missing stage {stage}")
+    for token in ("libpelorus-commit.txt", "ffmpeg-configure-line.txt", "series.txt", "installed-sources.txt"):
+        if token not in text:
+            errors.append(f"{relative}: -source image is missing {token}")
+    if not re.search(r"^FROM \$\{DEBIAN_IMAGE\} AS build$", text, re.MULTILINE) or not re.search(
+        r"^ARG DEBIAN_IMAGE=\S+@sha256:[0-9a-f]{64}$", text, re.MULTILINE
+    ):
+        errors.append(f"{relative}: base image must be pinned by digest")
+    return errors
+
+
+def validate_candidate_legs_text(
+    legs_text: str, release_text: str, workflows: set[str]
+) -> list[str]:
+    """Every leg of candidate-legs.json names a job or workflow that exists."""
+    try:
+        doc = json.loads(legs_text)
+    except json.JSONDecodeError as error:
+        return [f"scripts/release/candidate-legs.json: {error}"]
+    errors: list[str] = []
+    jobs = workflow_job_blocks(release_text)
+    build_needs = job_needs(jobs.get(RELEASE_BUILD_JOB, ""))
+    for leg in doc.get("legs", []):
+        leg_id = leg.get("id")
+        if leg.get("kind") == "needs":
+            job = leg.get("job")
+            if job not in jobs:
+                errors.append(f"candidate-legs.json: leg {leg_id} names job {job}, which release.yml lacks")
+            elif job not in build_needs:
+                errors.append(f"candidate-legs.json: release build does not need {job} (leg {leg_id})")
+        if leg.get("kind") == "workflow_run" and leg.get("workflow") not in workflows:
+            errors.append(
+                f"candidate-legs.json: leg {leg_id} names workflow {leg.get('workflow')}, which does not exist"
+            )
+    return errors
+
+
+def validate_tester_publish() -> list[str]:
+    errors: list[str] = []
+    for path, check in (
+        (TESTER_PUBLISH, validate_tester_publish_text),
+        (TESTER_CONTAINERFILE, validate_tester_containerfile_text),
+    ):
+        relative = path.relative_to(ROOT).as_posix()
+        if not path.is_file():
+            errors.append(f"{relative}: missing")
+            continue
+        errors.extend(check(relative, path.read_text(encoding="utf-8")))
+    if CANDIDATE_LEGS.is_file():
+        names = {p.name for p in (ROOT / ".github" / "workflows").glob("*.yml")}
+        errors.extend(
+            validate_candidate_legs_text(
+                CANDIDATE_LEGS.read_text(encoding="utf-8"),
+                WORKFLOWS[1].read_text(encoding="utf-8"),
+                names,
+            )
+        )
+    else:
+        errors.append("scripts/release/candidate-legs.json: missing")
+    return errors
+
+
+def _all_rejected(name: str, mutated: str, original: str, validate, expected: str) -> list[str]:
+    if mutated == original:
+        return [f"tester publish regression: {name} mutation changed nothing"]
+    if not any(expected in error for error in validate(mutated)):
+        return [f"tester publish regression: {name} was accepted"]
+    return []
+
+
+def _tester_trigger_job_cases(text: str) -> dict[str, tuple[str, str]]:
+    pinned = r"([0-9a-f]{40}) # v\d+\.\d+\.\d+"
+    return {
+        "push trigger": (
+            text.replace("on:\n", "on:\n  push:\n    branches: [master]\n", 1),
+            "triggers must be exactly",
+        ),
+        "schedule trigger": (
+            text.replace(
+                "  workflow_dispatch:\n    inputs:",
+                "  schedule:\n    - cron: '0 3 * * *'\n  workflow_dispatch:\n    inputs:",
+                1,
+            ),
+            "triggers must be exactly",
+        ),
+        "floating action tag": (
+            re.sub(r"(actions/attest@)" + pinned, r"\1v4", text, count=1),
+            "must be pinned by full commit digest",
+        ),
+        "pin without release comment": (
+            re.sub(r"(actions/checkout@[0-9a-f]{40}) # v\d+\.\d+\.\d+", r"\1", text, count=1),
+            "must be pinned by full commit digest",
+        ),
+    }
+
+
+def _tester_job_cases(text: str) -> dict[str, tuple[str, str]]:
+    draft = "      - name: Stop on a draft pull request"
+    return {
+        "publish without environment": (
+            text.replace("    environment: tester-publish\n", "", 1),
+            "publish job is missing environment: tester-publish",
+        ),
+        "publish on pull_request": (
+            text.replace(
+                "    needs: validate\n    if: github.event_name == 'workflow_dispatch'\n",
+                "    needs: validate\n",
+                1,
+            ),
+            "publish job must run only on workflow_dispatch",
+        ),
+        "validate without master ancestry": (
+            text.replace("git merge-base --is-ancestor", "git merge-base", 1),
+            "validate job is missing git merge-base --is-ancestor",
+        ),
+        "validate skips the workflow commit": (
+            text.replace('for commit in "$sha" "$GITHUB_SHA"', 'for commit in "$sha"', 1),
+            "validate job is missing for commit",
+        ),
+        "build job pushes": (
+            replace_in_job(text, "build", "          docker build \\\n", "          docker push x\n          docker build \\\n"),
+            "job build must not use docker push",
+        ),
+        "build job holds packages: write": (
+            replace_in_job(text, "build", "    timeout-minutes: 90\n", "    timeout-minutes: 90\n    permissions:\n      packages: write\n"),
+            "job build must not use packages: write",
+        ),
+        "no draft step": (
+            text.replace("name: Stop on a draft pull request", "name: Other", 1),
+            "must stop on a draft pull request",
+        ),
+        "draft step after checkout": (
+            text.replace(
+                draft,
+                "      - uses: actions/checkout@" + "0" * 40 + " # v1.0.0\n        with:\n          persist-credentials: false\n" + draft,
+                1,
+            ),
+            "must stop on a draft pull request",
+        ),
+        "checkout keeps credentials": (
+            text.replace("          persist-credentials: false\n", "", 1),
+            "must set persist-credentials: false",
+        ),
+        "write permission at top level": (
+            text.replace("permissions:\n  contents: read\n", "permissions:\n  contents: write\n", 1),
+            "top-level permissions must be contents: read only",
+        ),
+    }
+
+
+def _tester_gate_cases(text: str) -> dict[str, tuple[str, str]]:
+    return {
+        "no licence gate on the image": (
+            text.replace("name: Licence gate on the built image", "name: Other", 1),
+            "publish job is missing name: Licence gate on the built image",
+        ),
+        "no planted-flag self-test": (
+            text.replace("bash tools/tester/check-ffmpeg-licence-self-test.sh", "true"),
+            "publish job is missing bash tools/tester/check-ffmpeg-licence-self-test.sh",
+        ),
+        "planted nonfree flag": (
+            text + "\n# --enable-nonfree\n",
+            "forbidden workflow token --enable-nonfree",
+        ),
+        "planted cuda-nvcc flag": (
+            text + "\n# --enable-cuda-nvcc\n",
+            "forbidden workflow token --enable-cuda-nvcc",
+        ),
+    }
+
+
+def _tester_publish_cases(text: str) -> dict[str, tuple[str, str]]:
+    sbom = "      - name: SBOM of the tester image (SPDX JSON)\n"
+    sbom_path = "sbom-path: ${{ runner.temp }}/tester.spdx.json\n          push-to-registry: "
+    return {
+        "no -source image": (
+            text.replace("--target source", "--target runtime", 1),
+            "publish job is missing --target source",
+        ),
+        "SBOM not pushed to registry": (
+            text.replace(sbom_path + "true", sbom_path + "false", 1),
+            "must attest the image, its SBOM",
+        ),
+        "no SBOM": (
+            text.replace("anchore/sbom-action@", "other/sbom-action@", 1),
+            "publish job is missing uses: anchore/sbom-action@",
+        ),
+        "-source image unsigned": (
+            text.replace('          cosign sign --yes "${IMAGE}@${SOURCE_DIGEST}"\n', "", 1),
+            "must sign both",
+        ),
+        "no signature verification": (
+            text.replace("cosign verify \\\n", "cosign inspect \\\n", 1),
+            "publish job is missing cosign verify",
+        ),
+        "no attestation verification": (
+            text.replace("gh attestation verify", "gh attestation download"),
+            "publish job is missing gh attestation verify",
+        ),
+        "signing before the push": (
+            text.replace(sbom, "      - run: cosign sign --yes x\n" + sbom, 1),
+            "publish steps are out of order",
+        ),
+        "no anonymous pull check": (
+            text.replace("name: The package is public", "name: Other", 1),
+            "publish job is missing name: The package is public",
+        ),
+        "runner floats": (
+            text.replace("ubuntu-26.04", "ubuntu-latest", 1),
+            "forbidden workflow token ubuntu-latest",
+        ),
+    }
+
+
+def _tester_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
+    return {
+        **_tester_trigger_job_cases(text),
+        **_tester_job_cases(text),
+        **_tester_gate_cases(text),
+        **_tester_publish_cases(text),
+    }
+
+
+def _tester_containerfile_cases(text: str) -> dict[str, tuple[str, str]]:
+    flags = '"--enable-gpl --enable-version3"'
+    return {
+        "nonfree default": (
+            text.replace(flags, '"--enable-gpl --enable-version3 --enable-nonfree"', 1),
+            "forbidden FFmpeg flag --enable-nonfree",
+        ),
+        "planted cuda-sdk": (text + "\n# --enable-cuda-sdk\n", "forbidden FFmpeg flag --enable-cuda-sdk"),
+        "planted fdk-aac": (text + "\n# --enable-libfdk-aac\n", "forbidden FFmpeg flag --enable-libfdk-aac"),
+        "planted decklink": (text + "\n# --enable-decklink\n", "forbidden FFmpeg flag --enable-decklink"),
+        "LGPL default": (
+            text.replace(flags, '"--enable-version3"', 1),
+            "licence flags must default to",
+        ),
+        "gate removed": (
+            text.replace("/opt/gate/check-ffmpeg-licence.sh /opt/ffmpeg/bin/ffmpeg", "true", 1),
+            "licence gate and its self-test must run",
+        ),
+        "gate self-test removed": (
+            text.replace("/opt/gate/check-ffmpeg-licence-self-test.sh", "true", 1),
+            "licence gate and its self-test must run",
+        ),
+        "no source stage": (text.replace("AS source", "AS other", 1), "missing stage AS source"),
+        "no configure line in source": (
+            text.replace("ffmpeg-configure-line.txt", "x.txt"),
+            "-source image is missing ffmpeg-configure-line.txt",
+        ),
+        "floating base image": (
+            re.sub(r"(ARG DEBIAN_IMAGE=\S+)@sha256:[0-9a-f]{64}", r"\1", text, count=1),
+            "base image must be pinned by digest",
+        ),
+    }
+
+
+def _candidate_legs_failures() -> list[str]:
+    release = WORKFLOWS[1].read_text(encoding="utf-8")
+    legs = CANDIDATE_LEGS.read_text(encoding="utf-8")
+    names = {p.name for p in (ROOT / ".github" / "workflows").glob("*.yml")}
+    failures: list[str] = []
+    if validate_candidate_legs_text(legs, release, names):
+        failures.append("tester publish regression: the shipped candidate legs are rejected")
+    cases = {
+        "leg names a missing job": (legs.replace('"job": "ci"', '"job": "nope"', 1), release),
+        "leg names a missing workflow": (legs.replace("tester-publish.yml", "gone.yml", 1), release),
+        "needs leg the release build does not need": (
+            legs,
+            release.replace("    needs: ci\n", "    needs: []\n", 1),
+        ),
+        "legs file is not JSON": ("{", release),
+    }
+    for name, (legs_text, release_text) in cases.items():
+        if release_text == release and legs_text == legs and "need" not in name:
+            failures.append(f"tester publish regression: {name} mutation changed nothing")
+        elif not validate_candidate_legs_text(legs_text, release_text, names):
+            failures.append(f"tester publish regression: {name} was accepted")
+    return failures
+
+
+def tester_publish_regressions() -> list[str]:
+    """Prove each ADR-0173/0176 publish rule rejects its planted defect."""
+    failures: list[str] = []
+    workflow = TESTER_PUBLISH.read_text(encoding="utf-8")
+    wf_rel = TESTER_PUBLISH.relative_to(ROOT).as_posix()
+    container = TESTER_CONTAINERFILE.read_text(encoding="utf-8")
+    cf_rel = TESTER_CONTAINERFILE.relative_to(ROOT).as_posix()
+    if validate_tester_publish_text(wf_rel, workflow):
+        failures.append("tester publish regression: the current workflow is rejected")
+    if validate_tester_containerfile_text(cf_rel, container):
+        failures.append("tester publish regression: the current Containerfile is rejected")
+    for name, (mutated, expected) in _tester_workflow_cases(workflow).items():
+        failures.extend(
+            _all_rejected(name, mutated, workflow, lambda t: validate_tester_publish_text(wf_rel, t), expected)
+        )
+    for name, (mutated, expected) in _tester_containerfile_cases(container).items():
+        failures.extend(
+            _all_rejected(name, mutated, container, lambda t: validate_tester_containerfile_text(cf_rel, t), expected)
+        )
+    return failures + _candidate_legs_failures() + rc_release_regressions()
+
+
+def _rc_build_cases(build: str) -> dict[str, tuple[str, str]]:
+    return {
+        "no tag shape step": (
+            build.replace("name: Release tag shape and rc numbering", "name: Other", 1),
+            "release build is missing the tag shape and rc numbering step",
+        ),
+        "shape step does not read existing tags": (
+            build.replace("git ls-remote --tags --refs origin", "git tag --list", 1),
+            "tag shape step is missing git ls-remote",
+        ),
+        "shape step accepts an empty tag list": (
+            build.replace('          test -s "$RUNNER_TEMP/tags.txt"\n', "", 1),
+            "tag shape step is missing test -s",
+        ),
+        "no version file check": (
+            build.replace("verify-release.py version", "verify-release.py other", 1),
+            "tag==version step is missing python3 -I scripts/release/verify-release.py version",
+        ),
+        "no candidate legs step": (
+            build.replace("name: Candidate legs are green on this commit", "name: Other", 1),
+            "release build is missing the candidate legs step",
+        ),
+        "legs step for every tag": (
+            build.replace(" && steps.tag.outputs.prerelease == 'true'", "", 1),
+            "candidate legs step is missing steps.tag.outputs.prerelease == 'true'",
+        ),
+        "legs checked against another commit": (
+            build.replace('--sha "$GITHUB_SHA"', '--sha "$GITHUB_REF"', 1),
+            'candidate legs step is missing --sha "$GITHUB_SHA"',
+        ),
+        "no prerelease output": (
+            build.replace("prerelease: ${{ steps.tag.outputs.prerelease }}", "", 1),
+            "release build is missing prerelease: ${{ steps.tag.outputs.prerelease }}",
+        ),
+    }
+
+
+def _rc_release_cases(release: str) -> dict[str, tuple[str, str]]:
+    return {
+        "rc published as a normal release": (
+            release.replace("true) kind=(--prerelease --latest=false) ;;", "true) kind=() ;;", 1),
+            "publish job is missing true) kind=(--prerelease --latest=false) ;;",
+        ),
+        "kind flags not passed": (
+            release.replace('"${kind[@]}"', "", 1),
+            'publish job is missing "${kind[@]}"',
+        ),
+        "unclassified tag treated as final": (
+            release.replace('*) echo "::error::release build did not classify', '*) echo "::notice::', 1),
+            "publish job is missing *) echo",
+        ),
+        "no flag read-back": (
+            release.replace("--json isPrerelease", "--json url", 1),
+            "publish job is missing --json isPrerelease",
+        ),
+        "prerelease output not consumed": (
+            release.replace("PRERELEASE: ${{ needs.build.outputs.prerelease }}", "PRERELEASE: ''", 1),
+            "publish job is missing PRERELEASE:",
+        ),
+    }
+
+
+def rc_release_regressions() -> list[str]:
+    """Prove the ADR-0176 rc rules of release.yml and release-build.yml are pinned."""
+    failures: list[str] = []
+    build_path, release_path = WORKFLOWS[2], WORKFLOWS[1]
+    build = build_path.read_text(encoding="utf-8")
+    release = release_path.read_text(encoding="utf-8")
+    build_rel = build_path.relative_to(ROOT).as_posix()
+    release_rel = release_path.relative_to(ROOT).as_posix()
+    build_cases = _rc_build_cases(build)
+    release_cases = _rc_release_cases(release)
+    for name, (mutated, expected) in build_cases.items():
+        failures.extend(
+            _all_rejected(name, mutated, build, lambda t: validate_workflow_text(build_rel, t), expected)
+        )
+    for name, (mutated, expected) in release_cases.items():
+        failures.extend(
+            _all_rejected(name, mutated, release, lambda t: validate_workflow_text(release_rel, t), expected)
+        )
+    return failures
 
 
 def _docs_pin_shape_cases(source: str) -> dict:
@@ -3499,6 +4132,7 @@ def main() -> int:
     errors = validate_config(config_text)
     errors.extend(validate_consumers())
     errors.extend(validate_renovate())
+    errors.extend(validate_tester_publish())
     if not parse_errors:
         errors.extend(validate_current_surfaces(values))
     if "--self-test" in sys.argv[1:]:
@@ -3519,6 +4153,7 @@ def main() -> int:
         errors.extend(git_smudge_cleanup_regression())
         errors.extend(git_format_config_regression())
         errors.extend(workflow_validator_regressions())
+        errors.extend(tester_publish_regressions())
         errors.extend(renovate_pattern_regressions())
         errors.extend(renovate_validator_regressions())
 

@@ -588,7 +588,8 @@ When bumping by hand, change the `go-version` in `.github/workflows/ci.yml` and
 
 ## Release
 
-SemVer tags `v<major>.<minor>.<patch>`. The interop ABI is append-only from
+SemVer tags `v<major>.<minor>.<patch>` and release candidates
+`v<major>.<minor>.<patch>-rc.<N>` ([procedure](release.md)). The interop ABI is append-only from
 v0.1.0 (`PELORUS_ABI_MINOR` bumps on additions). The shared conformance fixture
 must pass in both Pelorus and vmafx before a release that touches the ABI.
 
@@ -624,10 +625,14 @@ order ([ADR-0169](../adr/0169-release-provenance-slsa3.md)):
    archive, the SBOM, the provenance bundle, `SHA256SUMS`, and
    `SHA256SUMS.sigstore.json`. It is the only job with `contents: write`.
 
-A tag push also asserts that `${GITHUB_REF_NAME#v}` equals the version meson
+A tag push first checks the tag shape and the rc numbering
+(`scripts/release/verify-release.py tag`, [release candidates](release.md)),
+then asserts that `${GITHUB_REF_NAME#v}` equals the version meson
 reports (`meson introspect --projectinfo build`; meson already fails
-configuration if `pelorus.h` disagrees) and fails with an `::error::` line on a
-mismatch. A manual `workflow_dispatch` is a **non-publishing rehearsal**: it
+configuration if `pelorus.h` disagrees), that `pelorus.h` carries the same
+number for number, and fails with an `::error::` line on a mismatch. A
+`vX.Y.Z-rc.N` tag additionally runs the candidate legs check and publishes a
+prerelease that is never `latest`. A manual `workflow_dispatch` is a **non-publishing rehearsal**: it
 runs `ci` and `build`, including the attestation and the signature, skips only
 the tag assertion, and never runs `publish`. Review the tag and the
 `## [X.Y.Z]` notes before pushing a tag: a manual dispatch is not a
@@ -661,6 +666,9 @@ cosign verify-blob \
 # the archive and the SBOM match the signed checksums
 sha256sum -c SHA256SUMS
 ```
+
+A release candidate carries a sixth file, `CANDIDATE_LEGS.json`, which
+`SHA256SUMS` covers like the SBOM.
 
 `gh attestation verify` fetches the attestation from GitHub; pass
 `--bundle "pelorus-ffmpeg-patches-$TAG.provenance.sigstore.json"` to verify

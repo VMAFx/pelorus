@@ -28,7 +28,7 @@ libpelorus = library(
   'pelorus',
   libpelorus_sources,
   include_directories: libpelorus_inc,
-  version: meson.project_version(),
+  version: pelorus_core_version,
   soversion: '0',
   install: true,
   gnu_symbol_visibility: 'default',
@@ -48,7 +48,7 @@ pkg.generate(
   libpelorus,
   name: 'libpelorus',
   description: 'Pelorus GPU pre-encode core: side-data interop ABI + filter contracts',
-  version: meson.project_version(),
+  version: pelorus_core_version,
 )
 
 if get_option('tests')

@@ -5,7 +5,8 @@ description: Use when cutting a Pelorus release — verify the gate, bump the ve
 
 # /cut-release
 
-Releases are **tag-triggered**: pushing `vX.Y.Z` runs `.github/workflows/release.yml`,
+Releases are **tag-triggered**: pushing `vX.Y.Z` (or a candidate `vX.Y.Z-rc.N`,
+see below) runs `.github/workflows/release.yml`,
 which first runs the full CI workflow, then calls `.github/workflows/release-build.yml`.
 That reusable workflow asserts the tag equals the `meson.build` version, gates on
 build+tests, extracts notes from the `## [X.Y.Z]` changelog section (fails if missing or empty), packages the
@@ -38,6 +39,21 @@ creates the GitHub release with five assets: `pelorus-ffmpeg-patches-vX.Y.Z.tar.
 6. Watch `gh run watch` for the release run; check `gh release view vX.Y.Z` lists
    the five assets, then verify them as `docs/development/build.md`
    ("Verifying a release") shows.
+
+## Release candidates
+
+From 0.4.0 every minor goes through `vX.Y.Z-rc.N` first; the full procedure is
+`docs/development/release.md` (ADR-0176). Differences from a final cut:
+
+- Version `X.Y.Z-rc.N` in `meson.build` and `PELORUS_VERSION_STR`; the
+  `PELORUS_VERSION_MAJOR/MINOR/PATCH` numbers stay `X`, `Y`, `Z`. The
+  `README.md` and `AGENTS.md` release line names `vX.Y.Z-rc.N`.
+- Changelog section `## [X.Y.Z-rc.N]`; the final `## [X.Y.Z]` lists the whole release.
+- Before tagging, dispatch `Tester publish` from the default branch at the
+  release commit and wait for it to go green (the candidate gate reads that run).
+- The tag is refused when its shape is wrong, when `rc.(N-1)` does not exist, or
+  when a leg of `scripts/release/candidate-legs.json` is red. The release is a
+  prerelease and never `latest`; check `gh release view vX.Y.Z-rc.N --json isPrerelease`.
 
 ## Rules
 

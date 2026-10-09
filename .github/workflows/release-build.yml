@@ -7,12 +7,20 @@ name: Release build
 # signs SHA256SUMS keyless with cosign and uploads everything for the caller's
 # publish job. No artefact is downloaded or restored from a cache before the
 # attestation. release.yml is the only caller.
+#
+# A tag is vX.Y.Z or vX.Y.Z-rc.N (ADR-0176). The tag steps refuse any other
+# shape and any rc numbering gap, an rc goes through the candidate-legs check on
+# its exact commit, and the `prerelease` output tells the publish job which kind
+# of release to create.
 on:
   workflow_call:
     outputs:
       artifact-name:
         description: Name of the uploaded artefact that holds the release files
         value: ${{ jobs.build.outputs.artifact-name }}
+      prerelease:
+        description: '"true" for a vX.Y.Z-rc.N tag, "false" for vX.Y.Z; empty on a run without a tag'
+        value: ${{ jobs.build.outputs.prerelease }}
 
 permissions:
   contents: read
@@ -23,10 +31,12 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
+      actions: read
       id-token: write
       attestations: write
     outputs:
       artifact-name: ${{ steps.package.outputs.artifact-name }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -58,6 +68,17 @@ jobs:
         run: make build BUILD_DIR=build
       - name: Fast tests
         run: meson test -C build --suite=fast --print-errorlogs
+      - name: Release tag shape and rc numbering
+        id: tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -o pipefail
+          git ls-remote --tags --refs origin | sed 's#^.*refs/tags/##' > "$RUNNER_TEMP/tags.txt"
+          # The pushed tag is always listed; an empty list means the read failed.
+          test -s "$RUNNER_TEMP/tags.txt"
+          python3 -I scripts/release/verify-release.py tag "$GITHUB_REF_NAME" \
+            --tags-file "$RUNNER_TEMP/tags.txt" > "$RUNNER_TEMP/tag.out"
+          tee -a "$GITHUB_OUTPUT" < "$RUNNER_TEMP/tag.out"
       - name: Tag matches the project version
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         run: |
@@ -68,6 +89,18 @@ jobs:
             echo "::error::tag ${GITHUB_REF_NAME} does not match meson.build version ${project_version}"
             exit 1
           fi
+          python3 -I scripts/release/verify-release.py version "$GITHUB_REF_NAME" \
+            --meson-version "$project_version" \
+            --header libpelorus/include/pelorus/pelorus.h
+      - name: Candidate legs are green on this commit
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && steps.tag.outputs.prerelease == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          python3 -I scripts/release/check-candidate-legs.py \
+            --sha "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" \
+            --output dist/CANDIDATE_LEGS.json
       - name: Changelog is rendered
         run: bash scripts/release/concat-changelog-fragments.sh --check
       - name: Extract release notes (the version section)
@@ -100,8 +133,11 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: |
-          sha256sum "pelorus-ffmpeg-patches-${ARTIFACT_LABEL}.tar.gz" \
-            "pelorus-ffmpeg-patches-${ARTIFACT_LABEL}.spdx.json" > SHA256SUMS
+          files=("pelorus-ffmpeg-patches-${ARTIFACT_LABEL}.tar.gz" \
+            "pelorus-ffmpeg-patches-${ARTIFACT_LABEL}.spdx.json")
+          # A release candidate records its legs; the signed checksums cover them.
+          if [ -f CANDIDATE_LEGS.json ]; then files+=(CANDIDATE_LEGS.json); fi
+          sha256sum "${files[@]}" > SHA256SUMS
           cat SHA256SUMS
       - name: Attest build provenance (SLSA v1.0)
         id: attest

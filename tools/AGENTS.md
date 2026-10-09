@@ -11,7 +11,7 @@ deliverable (ADR-0108). Gated by `tools` meson option (default on).
 ```text
 tools/
 ├── pelorus_qp_report.c   x265 --csv -> PEL_SEC_QPREPORT demonstrator (ADR-0122)
-└── tester/               tester report program, stage runners, fixtures + lock, schema; Python stdlib only (ADR-0173)
+└── tester/               tester report program, stage runners, fixtures + lock, schema; Python stdlib only (ADR-0173); image Containerfile + FFmpeg licence gate (ADR-0176)
 ```
 
 ## Conventions

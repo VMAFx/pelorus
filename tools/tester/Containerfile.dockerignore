@@ -1,0 +1,10 @@
+# Trims the tester image build context (BuildKit reads <Containerfile>.dockerignore).
+.git
+.claude
+.claude-wt-*
+.workingdir
+.workingdir2
+build
+**/__pycache__
+docs
+changelog.d

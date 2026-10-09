@@ -28,6 +28,13 @@ if _ver_str != meson.project_version()
         .format(meson.project_version(), _ver_str))
 endif
 
+# A release candidate is `X.Y.Z-rc.N` (docs/development/release.md, ADR-0176).
+# Meson rejects a suffix in a shared-library version, and pkg-config orders
+# `0.4.0-rc.1` after `0.4.0`, so the shared object and the .pc file carry the
+# numeric core and only project(), pelorus.h and the release tag carry the full
+# string. For a final release the two are identical.
+pelorus_core_version = meson.project_version().split('-')[0]
+
 # Power-of-10 / CERT-leaning baseline: keep the warning surface wide. Project
 # code is warning-clean to -Wall -Wextra; add a few high-signal extras.
 add_project_arguments(
@@ -75,6 +82,27 @@ endif
 test('build-config-sync',
      python_prog,
      args: build_config_args,
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
+# ADR-0176: release tag shape and rc numbering, the candidate legs check and the
+# tester image licence gate. Each --self-test plants a defect per rule and must
+# see it rejected.
+test('release-tag-rules',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'release' / 'verify-release.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+test('candidate-legs',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'release' / 'check-candidate-legs.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+test('tester-licence-gate',
+     bash_prog,
+     args: [meson.project_source_root() / 'tools' / 'tester' / 'check-ffmpeg-licence-self-test.sh'],
      workdir: meson.project_source_root(),
      suite: 'fast')
 

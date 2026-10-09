@@ -1,0 +1,287 @@
+name: Tester publish
+
+# Tester images are evidence for one commit reachable from master, never a
+# release (ADR-0173, ADR-0176). Pull requests build the image and push nothing.
+# A manual dispatch is the only way to publish: `validate` refuses a commit that
+# master does not contain, then `publish` waits for the `tester-publish`
+# environment approval before it builds, gates, pushes, signs, attests and
+# verifies the image and its -source companion. The FFmpeg inside is
+# GPL-3.0-or-later and never nonfree; the licence gate fails the build otherwise.
+run-name: tester-publish ${{ github.event_name }} ${{ github.sha }}
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'tools/tester/**'
+      - 'ffmpeg-patches/**'
+      - 'build-config.env'
+      - '.github/workflows/tester-publish.yml'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit, branch or tag to publish; it must be reachable from master. Empty publishes the dispatched commit.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tester-publish-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/vmafx/pelorus
+
+jobs:
+  build:
+    # Pull requests only: build the image and run the licence gate, push nothing.
+    # The first step is the Praetor hosted-gate draft step (HISS-18).
+    name: Build tester image (no push)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    steps:
+      - name: Stop on a draft pull request
+        if: github.event.pull_request.draft == true
+        env:
+          TITLE: Gate not run on a draft
+          MESSAGE: >-
+            The gate did not run because the pull request is a draft.
+            It runs when the pull request is marked ready for review.
+        run: |
+          echo "::error title=$TITLE::$MESSAGE"
+          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event.pull_request.draft != true
+        with:
+          persist-credentials: false
+      - name: Load build configuration
+        if: github.event.pull_request.draft != true
+        run: |
+          while IFS= read -r entry; do
+            case "$entry" in
+              FFMPEG_REMOTE=*|FFMPEG_COMMIT=*)
+                printf '%s\n' "$entry" >> "$GITHUB_ENV"
+                ;;
+            esac
+          done < build-config.env
+      - name: Licence gate refuses a planted flag
+        if: github.event.pull_request.draft != true
+        run: bash tools/tester/check-ffmpeg-licence-self-test.sh
+      - name: Build (the Containerfile runs the licence gate)
+        if: github.event.pull_request.draft != true
+        run: |
+          docker build \
+            --file tools/tester/Containerfile \
+            --target runtime \
+            --build-arg "FFMPEG_REMOTE=${FFMPEG_REMOTE}" \
+            --build-arg "FFMPEG_COMMIT=${FFMPEG_COMMIT}" \
+            --build-arg "PELORUS_COMMIT=${GITHUB_SHA}" \
+            --tag "tester-pr:${GITHUB_SHA}" \
+            .
+
+  validate:
+    # Dispatch only: the commit to publish, and the commit that runs this
+    # workflow, must both be reachable from master.
+    name: Validate the ref
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    outputs:
+      sha: ${{ steps.ref.outputs.sha }}
+      tag: ${{ steps.ref.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve the ref and require master ancestry
+        id: ref
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          ref="${INPUT_REF:-$GITHUB_SHA}"
+          if ! printf '%s' "$ref" | grep -Eqx '[A-Za-z0-9._/-]{1,100}'; then
+            echo "::error::ref '${ref}' is not a plain commit, branch or tag name"
+            exit 1
+          fi
+          sha=""
+          for candidate in "$ref" "origin/$ref" "refs/tags/$ref"; do
+            if sha="$(git rev-parse --verify --quiet --end-of-options "${candidate}^{commit}")"; then
+              break
+            fi
+            sha=""
+          done
+          if [ -z "$sha" ]; then
+            echo "::error::ref '${ref}' does not name a commit"
+            exit 1
+          fi
+          for commit in "$sha" "$GITHUB_SHA"; do
+            if ! git merge-base --is-ancestor "$commit" origin/master; then
+              echo "::error::commit ${commit} is not reachable from master; tester images are evidence for master commits only"
+              exit 1
+            fi
+          done
+          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
+          printf 'tag=tester-%s-%s\n' "$(date -u +%Y%m%d)" "${sha:0:8}" >> "$GITHUB_OUTPUT"
+
+  publish:
+    # Runs only after the maintainer approves the `tester-publish` environment.
+    name: Build, gate, push, sign and attest
+    needs: validate
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 150
+    environment: tester-publish
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      SHA: ${{ needs.validate.outputs.sha }}
+      TAG: ${{ needs.validate.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          persist-credentials: false
+      - name: Load build configuration
+        run: |
+          while IFS= read -r entry; do
+            case "$entry" in
+              FFMPEG_REMOTE=*|FFMPEG_COMMIT=*)
+                printf '%s\n' "$entry" >> "$GITHUB_ENV"
+                ;;
+            esac
+          done < build-config.env
+      - name: Licence gate refuses a planted flag
+        run: bash tools/tester/check-ffmpeg-licence-self-test.sh
+      - name: Build the tester image (the Containerfile runs the licence gate)
+        run: |
+          docker build \
+            --file tools/tester/Containerfile \
+            --target runtime \
+            --build-arg "FFMPEG_REMOTE=${FFMPEG_REMOTE}" \
+            --build-arg "FFMPEG_COMMIT=${FFMPEG_COMMIT}" \
+            --build-arg "PELORUS_COMMIT=${SHA}" \
+            --tag "${IMAGE}:${TAG}" \
+            .
+      - name: Licence gate on the built image
+        run: |
+          wrapper="${RUNNER_TEMP}/ffmpeg-in-image"
+          printf '#!/usr/bin/env bash\nexec docker run --rm --entrypoint ffmpeg "%s" "$@"\n' "${IMAGE}:${TAG}" > "$wrapper"
+          chmod +x "$wrapper"
+          bash tools/tester/check-ffmpeg-licence.sh "$wrapper"
+      - name: Run the documented command without a GPU and validate the report
+        run: |
+          mkdir -p "${RUNNER_TEMP}/report"
+          docker run --rm --volume "${RUNNER_TEMP}/report:/report" "${IMAGE}:${TAG}" run --out /report
+          python3 -I tools/tester/pelorus_tester_report.py validate "${RUNNER_TEMP}/report/report.json"
+      - name: Build the -source companion
+        run: |
+          docker build \
+            --file tools/tester/Containerfile \
+            --target source \
+            --build-arg "FFMPEG_REMOTE=${FFMPEG_REMOTE}" \
+            --build-arg "FFMPEG_COMMIT=${FFMPEG_COMMIT}" \
+            --build-arg "PELORUS_COMMIT=${SHA}" \
+            --tag "${IMAGE}:${TAG}-source" \
+            .
+      - name: Log in to ghcr.io
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin
+      - name: Push both images and read their digests
+        id: push
+        shell: bash
+        run: |
+          for suffix in "" "-source"; do
+            docker push "${IMAGE}:${TAG}${suffix}"
+            digest="$(docker buildx imagetools inspect "${IMAGE}:${TAG}${suffix}" --format '{{json .Manifest}}' \
+              | python3 -c 'import json, sys; print(json.load(sys.stdin)["digest"])')"
+            if ! printf '%s\n' "$digest" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
+              echo "::error::registry returned no sha256 digest for ${IMAGE}:${TAG}${suffix}: '${digest}'"
+              exit 1
+            fi
+            if [ -z "$suffix" ]; then name=image; else name=source; fi
+            printf '%s=%s\n' "${name}-digest" "$digest" >> "$GITHUB_OUTPUT"
+            printf 'Pushed %s@%s (tag %s%s).\n' "$IMAGE" "$digest" "$TAG" "$suffix" >> "$GITHUB_STEP_SUMMARY"
+          done
+      - name: SBOM of the tester image (SPDX JSON)
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.push.outputs.image-digest }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/tester.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Attest build provenance of the tester image (SLSA v1.0)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.image-digest }}
+          push-to-registry: true
+      - name: Attest the SBOM of the tester image
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.image-digest }}
+          sbom-path: ${{ runner.temp }}/tester.spdx.json
+          push-to-registry: true
+      - name: Attest build provenance of the -source image (SLSA v1.0)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.source-digest }}
+          push-to-registry: true
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign both images (keyless)
+        env:
+          IMAGE_DIGEST: ${{ steps.push.outputs.image-digest }}
+          SOURCE_DIGEST: ${{ steps.push.outputs.source-digest }}
+        run: |
+          cosign sign --yes "${IMAGE}@${IMAGE_DIGEST}"
+          cosign sign --yes "${IMAGE}@${SOURCE_DIGEST}"
+      - name: Verify signatures and attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_DIGEST: ${{ steps.push.outputs.image-digest }}
+          SOURCE_DIGEST: ${{ steps.push.outputs.source-digest }}
+        run: |
+          for digest in "$IMAGE_DIGEST" "$SOURCE_DIGEST"; do
+            cosign verify \
+              --certificate-identity-regexp '^https://github\.com/VMAFx/pelorus/\.github/workflows/tester-publish\.yml@' \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "${IMAGE}@${digest}" > /dev/null
+            gh attestation verify "oci://${IMAGE}@${digest}" -R VMAFx/pelorus \
+              --signer-workflow VMAFx/pelorus/.github/workflows/tester-publish.yml
+          done
+          gh attestation verify "oci://${IMAGE}@${IMAGE_DIGEST}" -R VMAFx/pelorus \
+            --signer-workflow VMAFx/pelorus/.github/workflows/tester-publish.yml \
+            --predicate-type https://spdx.dev/Document/v2.3
+      # Last on purpose: GHCR creates a package on its first push, private, and
+      # only the maintainer can make it public. A first run therefore proves
+      # every other step and fails here; it never publishes a private image as
+      # if testers could pull it.
+      - name: The package is public (anonymous pull of both digests, fails closed)
+        env:
+          IMAGE_DIGEST: ${{ steps.push.outputs.image-digest }}
+          SOURCE_DIGEST: ${{ steps.push.outputs.source-digest }}
+        run: |
+          accept='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'
+          for digest in "$IMAGE_DIGEST" "$SOURCE_DIGEST"; do
+            if ! token="$(curl -fsS --max-time 30 "https://ghcr.io/token?service=ghcr.io&scope=repository:vmafx/pelorus:pull" \
+                 | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])')" \
+               || ! curl -fsS --max-time 30 -o /dev/null -H "Authorization: Bearer ${token}" -H "Accept: ${accept}" \
+                 "https://ghcr.io/v2/vmafx/pelorus/manifests/${digest}"; then
+              echo "::error::${IMAGE}@${digest} is not pullable anonymously. A first publish creates the package private: the maintainer makes it public once and re-runs this workflow (docs/development/tester-image.md)."
+              exit 1
+            fi
+          done
