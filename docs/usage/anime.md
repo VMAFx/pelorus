@@ -86,6 +86,11 @@ right rate control:
 - **QSV dense maps are HEVC-only.** `-q:v N` sets the QScale flag needed for
   CQP; `-global_quality N` alone selects ICQ and falls back to stock rectangles.
   `av1_qsv` has no `-pelorus_roi` option.
+- **Native Vulkan-Video encoders honour the map only where the driver allows.**
+  Mesa RADV (25.0.7 and 26.2.4) encodes `h264_vulkan` and `hevc_vulkan` but
+  currently ignores `-pelorus_roi 1`; the encoder logs a pass-through warning
+  and the bitstream equals the unsteered one
+  ([research 0231](../research/0231-amd-radv-vulkan-encode-spike.md)).
 - **Turn the encoder's own spatial/temporal AQ off.** The encoder's variance-AQ
   *overrides* the delta-QP map (a one-shot warning fires otherwise).
 
