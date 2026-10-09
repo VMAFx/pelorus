@@ -20,8 +20,8 @@ CORPUS="${CORPUS:-$ROOT/.bench-corpus}"
 OUT="${OUT:-$ROOT/bench-out}"
 
 # --- pinned matrix --------------------------------------------------------
-CLIPS=("${CLIPS:-bbb synth-banding}")
-ENCODERS=("${ENCODERS:-hevc_nvenc av1_nvenc}")
+read -r -a CLIPS <<< "${CLIPS:-bbb synth-banding}"
+read -r -a ENCODERS <<< "${ENCODERS:-hevc_nvenc av1_nvenc}"
 PRESET="${PRESET:-p5}"
 CQ="${CQ:-28 34 40 46}"
 DEBAND_FILTER="pelorus_deband_vulkan=range=15:thry=0.012:dither=bluenoise:dynamic=1:protect=1"
@@ -29,7 +29,7 @@ DEBAND_FILTER="pelorus_deband_vulkan=range=15:thry=0.012:dither=bluenoise:dynami
 
 mkdir -p "$OUT"
 # shellcheck disable=SC2086
-FFMPEG="$FFMPEG" CORPUS="$CORPUS" "$HERE/fetch-corpus.sh" ${CLIPS[*]}
+FFMPEG="$FFMPEG" CORPUS="$CORPUS" "$HERE/fetch-corpus.sh" "${CLIPS[@]}"
 
 report="$OUT/REPORT.md"
 {
@@ -44,11 +44,16 @@ report="$OUT/REPORT.md"
   echo "|---|---|---:|---:|---|---:|"
 } > "$report"
 
-for clip in ${CLIPS[*]}; do
+for clip in "${CLIPS[@]}"; do
   meta="$CORPUS/$clip.meta"; [ -f "$meta" ] || { echo "missing $meta"; continue; }
+  # fetch-corpus.sh writes these five keys; a meta without one stops the bench.
+  width='' height='' pixfmt='' frames='' fps=''
   # shellcheck disable=SC1090
   source "$meta"
-  for enc in ${ENCODERS[*]}; do
+  for key in width height pixfmt frames fps; do
+    [ -n "${!key}" ] || { echo "$meta has no $key" >&2; exit 1; }
+  done
+  for enc in "${ENCODERS[@]}"; do
     echo "=== $clip / $enc ==="
     odir="$OUT/${clip}_${enc}"
     # shellcheck disable=SC2086
@@ -57,7 +62,7 @@ for clip in ${CLIPS[*]}; do
       --width "$width" --height "$height" --pixfmt "$pixfmt" \
       --frames "$frames" --fps "$fps" \
       --encoder "$enc" --preset "$PRESET" --filter "$DEBAND_FILTER" \
-      --device "$DEVICE" --cq $CQ --out "$odir"
+      --device "$DEVICE" --cq $CQ --cambi --out "$odir"
     python3 - "$odir/result.json" "$clip" "$enc" >> "$report" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1])); clip, enc = sys.argv[2], sys.argv[3]
