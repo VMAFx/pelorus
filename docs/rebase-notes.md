@@ -5,6 +5,65 @@ Re-apply / re-test work created for the FFmpeg patch stack after an upstream
 FFmpeg bump or a `libpelorus` ABI change. One entry per change that affects the
 patches (ADR-0108 deliverable #6).
 
+## Unreleased — Vulkan QP-map formats and fill paths (#278, ADR-0182; regenerates 0009)
+
+- **Patch**: 0009 only. Edit the hand-maintained source
+  `ffmpeg-patches/files/vulkan-pelorus-qpmap.patch`; `0009-*.patch` is
+  generated from it. Its `libavcodec/vulkan_encode.c` and
+  `libavcodec/vulkan_encode.h` sections were rebuilt with
+  `git diff 946fcce07b6dcd0331c8cc609192aeff5e1924f8 -- libavcodec/vulkan_encode.c libavcodec/vulkan_encode.h`
+  in a tree with all 22 patches applied (no other patch touches those two
+  files); the other sections and the shader are unchanged. That rebuild also
+  corrected the hunk headers' new-file line numbers in `files/`, stale since
+  an earlier hand edit; the correction is cosmetic (`git apply` locates hunks
+  by the old-file side) and reaches 0009 only through regeneration.
+- **Regenerate and replay** (n9.0.2, `946fcce07b`, from `build-config.env`):
+
+  ```bash
+  FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh   # twice; bytes must match
+  FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh
+  ```
+
+- **What changed**: the probe no longer assumes `R8_SINT`. It accepts the
+  advertised `R8_SINT`/`R16_SINT`/`R32_SINT` delta or `R8_UNORM`/`R16_UNORM`
+  emphasis format, asks `vkGetPhysicalDeviceVideoFormatPropertiesKHR` for the
+  map usage together with the fill usages the encode queue family can record
+  (then for the map usage alone), and picks a fill path: on-GPU raster (8-bit
+  formats, compute on the encode family), staging copy (transfer-, graphics- or
+  compute-capable encode family) or the new host-mapped `LINEAR` image (no
+  queue requirement). The queue capabilities come from
+  `FFVulkanContext.qf_props[qf_enc->idx]`, not from
+  `AVVulkanDeviceQueueFamily.flags`, which lists only the purposes FFmpeg
+  picked the family for. The probe refuses a map larger than
+  `maxQuantizationMapExtent`. `pelorus_qpmap_query_delta_range()` became
+  `pelorus_qpmap_query_caps()`, which also returns that extent. One map image
+  per exec context, indexed by `exec->idx` (the old `qpmap_next` round robin
+  is gone), all created with the host raster scratch by `pelorus_qpmap_init()`
+  after `ff_vk_exec_pool_init()` and before the video session, so a missing
+  memory type or a failed image disables steering at init.
+- **Rebase-sensitive invariants**: keep `pelorus_qpmap_init()` between
+  `ff_vk_exec_pool_init()` and the session creation in
+  `ff_vulkan_encode_init()`, and no allocation in `vulkan_encode_issue()`;
+  keep the host-mapped fill (`pelorus_qpmap_host_fill()`) before
+  `vkCmdBeginVideoCodingKHR`, `pelorus_qpmap_host_release()` after
+  `vkCmdEndVideoCodingKHR`, and the `GENERAL` layout record after a successful
+  `ff_vk_exec_submit()`; keep the map slot equal to `exec->idx`, so
+  `ff_vk_exec_start()`'s fence wait guards the host write; keep the
+  host-mapped image `PREINITIALIZED` in host-visible coherent memory. If
+  upstream changes `FFVulkanContext.qf_props`, `tot_nb_qfs`, `mprops` or
+  `FFVkExecContext.idx`, re-point the probe, the memory-type check and the
+  slot.
+- **Static gates**: `scripts/check-vulkan-qpmap-contract.py --self-test` (now
+  24 mutations) and the new C harness `scripts/test-vulkan-qpmap-fill.py
+  --self-test` (entry classifier and host raster extracted from the hand diff,
+  built with `-Wall -Wextra -Werror`, 10 mutations and one planted warning) in
+  the fast suite, both under `python3 -I`.
+- **On-device gate**: the ADR-0166 gate, on RADV (Mesa 26.2 or newer, ICD
+  pinned to `radeon_icd.json`) and NVIDIA: `-rc_mode cqp -pelorus_roi 1` must
+  change the stream against the unsteered control, with
+  `-init_hw_device vulkan=vk:0,debug=1` adding no VUID to the control's set.
+  The RTX 4090 steered streams must stay byte-identical to the previous patch.
+
 ## Unreleased — patch 0022 (`hevc_nvenc` `udu_sei` header limit, #267, ADR-0181; cumulative on 0001–0021)
 
 - **Patch**: `ffmpeg-patches/0022-nvenc-pelorus-udu-sei.patch` (canonical

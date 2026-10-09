@@ -147,8 +147,10 @@ encoder. A documented, retunable composition, not a new meta-filter. See
   [ADR-0146](docs/adr/0146-qsv-roi-frame-ownership.md)),
   and the native **Vulkan-Video** encoders via `VK_KHR_video_encode_quantization_map`
   (Tier 2; proven on an RTX 4090 for positive offsets, since that driver accepts
-  no negative delta; RADV disables it with a warning;
-  [ADR-0166](docs/adr/0166-vulkan-qpmap-activation.md)). The same map also steers **SVT-AV1** (`libsvtav1`) via its
+  no negative delta, and on RADV with Mesa 26.2 for both signs through a
+  host-mapped `R32_SINT` map;
+  [ADR-0166](docs/adr/0166-vulkan-qpmap-activation.md),
+  [ADR-0182](docs/adr/0182-vulkan-qpmap-fill-paths.md)). The same map also steers **SVT-AV1** (`libsvtav1`) via its
   per-superblock ROI segment map (`SvtAv1RoiMapEvt`, ADR-0121, proven on hardware:
   CAMBI −1.5% at CRF 35, an honest modest gain on a mild synthetic source).
   Patches 0004 / 0005 / 0009 / 0012 (libaom) / 0013 (SVT-AV1).
