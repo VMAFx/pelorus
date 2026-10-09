@@ -1,30 +1,45 @@
-# Pelorus tester image skeleton (ADR-0173, ADR-0176).
+# Pelorus tester images (ADR-0173, ADR-0176, ADR-0178, ADR-0180).
+#
+# One image per kit, each with its -source companion. Targets:
+#
+#   final-generic   source-generic   CPU image, no GPU driver (hosted CI runs it)
+#   final-nvidia    source-nvidia    NVENC through the host driver: no NVIDIA file inside;
+#                                    run with --gpus all (NVIDIA Container Toolkit)
+#   final-intel     source-intel     Mesa ANV, oneVPL (libvpl2, libmfx-gen1.2) and the
+#                                    free intel-media-va-driver; run with --device /dev/dri
+#
+# Local only: --build-arg INTEL_MEDIA_DRIVER=nonfree builds final-intel with
+# Debian's non-free media driver for HEVC QSV evidence. That image carries the
+# NOT-FOR-REDISTRIBUTION marker, its report says kit intel-nonfree-local, it has
+# no -source image, and the publish gate refuses it (ADR-0180). The workflows
+# never pass INTEL_MEDIA_DRIVER (scripts/check-build-config.py).
+#
+#   docker build -f tools/tester/Containerfile --target final-<kit>  ... .
+#   docker build -f tools/tester/Containerfile --target source-<kit> ... .
 #
 # Build inputs only: the pinned Debian base, the FFmpeg pin from
-# build-config.env, the licence flags and the libpelorus commit. Vendor images
-# (NVIDIA #229, Intel/AMD #230) extend the `runtime` target with their own
-# stages; the licence rules below bind every one of them.
-#
-#   docker build -f tools/tester/Containerfile --target runtime ... .   tester image
-#   docker build -f tools/tester/Containerfile --target source  ... .   -source companion
-#
-# The context is the repository root. .github/workflows/tester-publish.yml is
-# the only publisher and passes every ARG below on the command line.
+# build-config.env, the licence flags, the libpelorus commit and, for NVIDIA,
+# the pinned nv-codec-headers (MIT). The context is the repository root.
+# .github/workflows/tester-publish.yml is the only publisher and passes every
+# ARG below that has no default on the command line.
 ARG DEBIAN_IMAGE=docker.io/library/debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 
+# --- build: toolchain, libpelorus and the patched FFmpeg tree, shared by every kit
 FROM ${DEBIAN_IMAGE} AS build
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # From build-config.env; the workflow reads the file and passes the values.
 ARG FFMPEG_REMOTE
 ARG FFMPEG_COMMIT
 # The licence of the FFmpeg that ships: GPL-3.0-or-later, never nonfree. The
-# gate below fails the build on anything else, whatever these ARGs say.
+# gate in build-ffmpeg.sh fails the build on anything else, whatever these say.
 ARG FFMPEG_LICENCE_FLAGS="--enable-gpl --enable-version3"
 ARG FFMPEG_FEATURE_FLAGS="--enable-vulkan --disable-doc"
-ARG PELORUS_COMMIT
 ARG MAKE_JOBS=2
+ENV FFMPEG_LICENCE_FLAGS=${FFMPEG_LICENCE_FLAGS} \
+    FFMPEG_FEATURE_FLAGS=${FFMPEG_FEATURE_FLAGS} \
+    MAKE_JOBS=${MAKE_JOBS}
 # DL3008: the base image is digest-pinned, and the installed versions are
-# recorded in /opt/pelorus/installed-packages.txt and shipped as source.
+# recorded in /installed-sources.txt and shipped as source.
 # hadolint ignore=DL3008
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -53,80 +68,240 @@ RUN git init -q /src/ffmpeg \
                 am --3way "/src/pelorus/ffmpeg-patches/${patch}"; \
           done
 
-# Configure line and tree are kept for the -source image.
-WORKDIR /src/ffmpeg
-# hadolint ignore=SC2086
-RUN export PKG_CONFIG_PATH=/opt/pelorus/lib/pkgconfig \
-    && ./configure --prefix=/opt/ffmpeg ${FFMPEG_LICENCE_FLAGS} ${FFMPEG_FEATURE_FLAGS} \
-    && make -j"${MAKE_JOBS}" \
-    && make install \
-    && mkdir -p /opt/source \
-    && git archive --format=tar HEAD | tar -x -C /opt/source \
-    && printf '%s\n' "$(/opt/ffmpeg/bin/ffmpeg -hide_banner -version | sed -n 's/^configuration: *//p')" > /opt/source/ffmpeg-configure-line.txt \
-    && cp /src/pelorus/ffmpeg-patches/series.txt /opt/source/series.txt \
-    && printf '%s\n' "${PELORUS_COMMIT}" > /opt/source/libpelorus-commit.txt
+# build-ffmpeg.sh configures, builds and installs one kit's FFmpeg, keeps the
+# tree and configure line for the -source image, and runs the licence gate
+# (ADR-0173 decision 5): the build fails when the binary reports nonfree or
+# lacks GPL version 3; the planted-flag self-test runs first.
+COPY tools/tester/build-ffmpeg.sh tools/tester/check-ffmpeg-licence.sh tools/tester/check-ffmpeg-licence-self-test.sh /opt/gate/
 
-# Licence gate (ADR-0173 decision 5): the build fails when the binary reports
-# nonfree or lacks GPL version 3. The planted-flag self-test runs first so a
-# broken gate cannot pass.
-COPY tools/tester/check-ffmpeg-licence.sh tools/tester/check-ffmpeg-licence-self-test.sh /opt/gate/
-RUN /opt/gate/check-ffmpeg-licence-self-test.sh \
-    && LD_LIBRARY_PATH=/opt/ffmpeg/lib:/opt/pelorus/lib /opt/gate/check-ffmpeg-licence.sh /opt/ffmpeg/bin/ffmpeg
+# --- one FFmpeg per kit -------------------------------------------------------
+FROM build AS build-generic
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+RUN /opt/gate/build-ffmpeg.sh
+ARG PELORUS_COMMIT
+RUN printf '%s\n' "${PELORUS_COMMIT}" > /opt/source/libpelorus-commit.txt \
+    && mkdir -p /opt/kit-source /opt/kit-licences
 
-# Everything the image ships, before the licence record gate and the runtime
-# settings. Vendor images (NVIDIA #229, Intel/AMD #230) add their stages here.
-FROM ${DEBIAN_IMAGE} AS assembled
+# NVENC needs only nv-codec-headers (MIT): FFmpeg's loader opens the host
+# driver's libcuda.so.1 and libnvidia-encode.so.1 at run time. No CUDA SDK,
+# no cuda-nvcc, no NVIDIA library at build or run time. dav1d (BSD-2-Clause)
+# decodes the AV1 steering streams in software, independent of the encoder.
+FROM build AS build-nvidia
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libdav1d-dev \
+    && rm -rf /var/lib/apt/lists/*
+ARG NV_CODEC_HEADERS_REMOTE=https://code.ffmpeg.org/FFmpeg/nv-codec-headers.git
+ARG NV_CODEC_HEADERS_TAG=n12.1.14.0
+ARG NV_CODEC_HEADERS_COMMIT=1889e62e2d35ff7aa9baca2bceb14f053785e6f1
+RUN git init -q /src/nv-codec-headers \
+    && git -C /src/nv-codec-headers fetch -q --depth 1 "${NV_CODEC_HEADERS_REMOTE}" "${NV_CODEC_HEADERS_COMMIT}" \
+    && git -C /src/nv-codec-headers checkout -q FETCH_HEAD \
+    && test "$(git -C /src/nv-codec-headers rev-parse HEAD)" = "${NV_CODEC_HEADERS_COMMIT}" \
+    && make -C /src/nv-codec-headers install PREFIX=/opt/nv-codec-headers \
+    && mkdir -p /opt/kit-source/nv-codec-headers /opt/kit-licences/nv-codec-headers \
+    && git -C /src/nv-codec-headers archive --format=tar HEAD | tar -x -C /opt/kit-source/nv-codec-headers \
+    && for header in nvEncodeAPI.h dynlink_loader.h dynlink_cuda.h dynlink_cuviddec.h dynlink_nvcuvid.h; do \
+        { echo "include/ffnvcodec/${header} of nv-codec-headers ${NV_CODEC_HEADERS_TAG} (${NV_CODEC_HEADERS_COMMIT}):"; \
+          sed -n '1,/\*\//p' "/src/nv-codec-headers/include/ffnvcodec/${header}"; echo; } \
+          >> /opt/kit-licences/nv-codec-headers/NOTICE.txt; \
+       done \
+    && test "$(grep -c 'Permission is hereby granted' /opt/kit-licences/nv-codec-headers/NOTICE.txt)" -eq 5
+RUN PKG_CONFIG_PATH=/opt/nv-codec-headers/lib/pkgconfig /opt/gate/build-ffmpeg.sh --enable-ffnvcodec --enable-nvenc --enable-libdav1d
+ARG PELORUS_COMMIT
+RUN printf '%s\n' "${PELORUS_COMMIT}" > /opt/source/libpelorus-commit.txt
+
+# QSV through oneVPL (libvpl, MIT) on a VA-API device; no X11. libdrm lets
+# FFmpeg pick the Intel render node by vendor id (without it QSV opens
+# renderD128, whatever GPU that is). dav1d decodes the AV1 steering streams
+# in software.
+FROM build AS build-intel
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libdav1d-dev libdrm-dev libva-dev libvpl-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN /opt/gate/build-ffmpeg.sh --enable-libvpl --enable-vaapi --enable-libdrm --disable-xlib --enable-libdav1d
+ARG PELORUS_COMMIT
+RUN printf '%s\n' "${PELORUS_COMMIT}" > /opt/source/libpelorus-commit.txt \
+    && mkdir -p /opt/kit-source /opt/kit-licences
+
+# --- runtime base: what every kit ships besides its FFmpeg ---------------------
+FROM ${DEBIAN_IMAGE} AS base
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # hadolint ignore=DL3008
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates libvulkan1 python3 vulkan-tools \
-    && dpkg-query -W -f='${source:Package}=${source:Version}\n' | sort -u > /installed-sources.txt \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=build /opt/ffmpeg /opt/ffmpeg
-COPY --from=build /opt/pelorus /opt/pelorus
-COPY --from=build /opt/source/COPYING.GPLv3 /usr/share/licenses/pelorus-ffmpeg/COPYING.GPLv3
+# HOME=/tmp: a run with --user (any uid) still has a writable fixture cache.
+ENV FFMPEG_BIN=/opt/ffmpeg/bin/ffmpeg \
+    PATH=/opt/ffmpeg/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/ffmpeg/lib:/opt/pelorus/lib \
+    HOME=/tmp
+ENTRYPOINT ["python3", "-I", "/opt/pelorus/tester/pelorus_tester_report.py"]
+CMD ["run", "--out", "/report"]
+
+# --- assembled-<kit>: everything the image ships, before the licence gate -------
+# Each records the Debian source packages it installed, takes its kit's FFmpeg,
+# and fails when a binary has an unresolved library.
+FROM base AS assembled-generic
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+RUN dpkg-query -W -f='${source:Package}=${source:Version}\n' | sort -u > /installed-sources.txt
+COPY --from=build-generic /opt/ffmpeg /opt/ffmpeg
+COPY --from=build-generic /opt/pelorus /opt/pelorus
+COPY --from=build-generic /opt/source/COPYING.GPLv3 /usr/share/licenses/pelorus-ffmpeg/COPYING.GPLv3
 COPY tools/tester /opt/pelorus/tester
 COPY LICENSES /usr/share/licenses/pelorus-tester/texts
+RUN ! ldd /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe | grep 'not found' && ffmpeg -hide_banner -version > /dev/null
 
-# Licence record gate (ADR-0178, #236). tools/tester/licensing.json records
-# every component of the image; the gate writes the notices file and then fails
-# the build on a file no component owns, a licence that is unknown or not
-# redistributable, a Debian package without its copyright file or from outside
-# the permitted archive components, a missing licence text, or stale notices.
-# Its self-test plants each defect first, so a broken gate cannot pass. The
-# runtime stage takes the notices from this stage, so it cannot be built
-# without the gate having passed on the finished tree.
-FROM assembled AS licence
+# NVIDIA: no driver file. The NVIDIA Container Toolkit mounts the host's
+# libcuda, libnvidia-encode and Vulkan ICD with --gpus all; Docker Desktop on
+# WSL2 mounts /usr/lib/wsl/lib. The licence gate refuses any NVIDIA library.
+# The ICD (libGLX_nvidia.so.0) links libXext.so.6 and opens the GLVND
+# libEGL.so.1 before it creates an instance, so the image carries Debian's
+# libxext6 and libegl1 (with libglvnd0); without either, Vulkan finds no
+# NVIDIA device (research 0229).
+FROM base AS assembled-nvidia
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libdav1d7 libegl1 libxext6 \
+    && dpkg-query -W -f='${source:Package}=${source:Version}\n' | sort -u > /installed-sources.txt \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build-nvidia /opt/ffmpeg /opt/ffmpeg
+COPY --from=build-nvidia /opt/pelorus /opt/pelorus
+COPY --from=build-nvidia /opt/source/COPYING.GPLv3 /usr/share/licenses/pelorus-ffmpeg/COPYING.GPLv3
+COPY --from=build-nvidia /opt/kit-licences/nv-codec-headers /usr/share/licenses/pelorus-tester/nv-codec-headers
+COPY tools/tester /opt/pelorus/tester
+COPY LICENSES /usr/share/licenses/pelorus-tester/texts
+RUN ! ldd /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe | grep 'not found' && ffmpeg -hide_banner -version > /dev/null
+
+# Intel: Mesa's Vulkan drivers (ANV), the oneVPL dispatcher and GPU runtime, and
+# the free media driver from Debian main. intel-media-va-driver-non-free is
+# forbidden by the licence record in every published kit; only the local
+# INTEL_MEDIA_DRIVER=nonfree build installs it (kit intel-nonfree-local).
+FROM base AS assembled-intel
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ARG INTEL_MEDIA_DRIVER=free
+# hadolint ignore=DL3008
+RUN case "${INTEL_MEDIA_DRIVER}" in \
+      free) media_driver=intel-media-va-driver ;; \
+      nonfree) media_driver=intel-media-va-driver-non-free \
+        && sed -i 's/^Components: main$/Components: main non-free/' /etc/apt/sources.list.d/debian.sources ;; \
+      *) echo "INTEL_MEDIA_DRIVER must be free or nonfree, not '${INTEL_MEDIA_DRIVER}'" >&2; exit 1 ;; \
+    esac \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        "${media_driver}" libdav1d7 libmfx-gen1.2 libva-drm2 libva2 libvpl2 mesa-vulkan-drivers \
+    && dpkg-query -W -f='${source:Package}=${source:Version}\n' | sort -u > /installed-sources.txt \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build-intel /opt/ffmpeg /opt/ffmpeg
+COPY --from=build-intel /opt/pelorus /opt/pelorus
+COPY --from=build-intel /opt/source/COPYING.GPLv3 /usr/share/licenses/pelorus-ffmpeg/COPYING.GPLv3
+COPY tools/tester /opt/pelorus/tester
+COPY LICENSES /usr/share/licenses/pelorus-tester/texts
+RUN ! ldd /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe | grep 'not found' && ffmpeg -hide_banner -version > /dev/null
+
+# --- licence-<kit>: the licence record gate (ADR-0178) -------------------------
+# tools/tester/licensing.json records every component of every kit; the gate
+# writes the notices file and then fails the build on a file no component owns,
+# a forbidden file or package (an NVIDIA driver library, the non-free media
+# driver), a licence that is unknown or not redistributable, a Debian package
+# without its copyright file or from outside main, a missing licence text, or
+# stale notices. Its self-test plants each defect first, so a broken gate cannot
+# pass. final-<kit> takes the notices from this stage, so it cannot be built
+# without the gate having passed on the finished tree.
+FROM assembled-generic AS licence-generic
 ARG FFMPEG_REMOTE
 ARG FFMPEG_COMMIT
 ARG PELORUS_COMMIT
 RUN python3 -I -B /opt/pelorus/tester/licensing.py self-test \
-    && python3 -I -B /opt/pelorus/tester/licensing.py notices --root / \
+    && python3 -I -B /opt/pelorus/tester/licensing.py notices --kit generic --root / \
         --commit "${PELORUS_COMMIT}" --ffmpeg-remote "${FFMPEG_REMOTE}" --ffmpeg-commit "${FFMPEG_COMMIT}" \
-    && python3 -I -B /opt/pelorus/tester/licensing.py check --root / \
+    && python3 -I -B /opt/pelorus/tester/licensing.py check --kit generic --root / \
         --commit "${PELORUS_COMMIT}" --ffmpeg-remote "${FFMPEG_REMOTE}" --ffmpeg-commit "${FFMPEG_COMMIT}"
 
-FROM assembled AS runtime
+FROM assembled-nvidia AS licence-nvidia
+ARG FFMPEG_REMOTE
+ARG FFMPEG_COMMIT
 ARG PELORUS_COMMIT
-COPY --from=licence /usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt /usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt
-ENV FFMPEG_BIN=/opt/ffmpeg/bin/ffmpeg \
-    PATH=/opt/ffmpeg/bin:${PATH} \
-    LD_LIBRARY_PATH=/opt/ffmpeg/lib:/opt/pelorus/lib
+RUN python3 -I -B /opt/pelorus/tester/licensing.py self-test \
+    && python3 -I -B /opt/pelorus/tester/licensing.py notices --kit nvidia --root / \
+        --commit "${PELORUS_COMMIT}" --ffmpeg-remote "${FFMPEG_REMOTE}" --ffmpeg-commit "${FFMPEG_COMMIT}" \
+    && python3 -I -B /opt/pelorus/tester/licensing.py check --kit nvidia --root / \
+        --commit "${PELORUS_COMMIT}" --ffmpeg-remote "${FFMPEG_REMOTE}" --ffmpeg-commit "${FFMPEG_COMMIT}"
+
+# The local non-free build is checked as kit intel-nonfree-local: the gate lets
+# that kit carry the non-free driver and writes the NOT-FOR-REDISTRIBUTION
+# marker, which `check --kit intel` (the publish gate) refuses.
+FROM assembled-intel AS licence-intel
+ARG FFMPEG_REMOTE
+ARG FFMPEG_COMMIT
+ARG PELORUS_COMMIT
+ARG INTEL_MEDIA_DRIVER=free
+RUN kit=intel \
+    && if [ "${INTEL_MEDIA_DRIVER}" = nonfree ]; then kit=intel-nonfree-local; fi \
+    && python3 -I -B /opt/pelorus/tester/licensing.py self-test \
+    && python3 -I -B /opt/pelorus/tester/licensing.py notices --kit "${kit}" --root / \
+        --commit "${PELORUS_COMMIT}" --ffmpeg-remote "${FFMPEG_REMOTE}" --ffmpeg-commit "${FFMPEG_COMMIT}" \
+    && python3 -I -B /opt/pelorus/tester/licensing.py check --kit "${kit}" --root / \
+        --commit "${PELORUS_COMMIT}" --ffmpeg-remote "${FFMPEG_REMOTE}" --ffmpeg-commit "${FFMPEG_COMMIT}"
+
+# --- final-<kit>: the tester images ------------------------------------------
+FROM assembled-generic AS final-generic
+ARG PELORUS_COMMIT
+COPY --from=licence-generic /usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt /usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt
+ENV PELORUS_TESTER_KIT=generic \
+    PELORUS_TESTER_PACKAGE=tester-generic \
+    PELORUS_TESTER_COMMIT=${PELORUS_COMMIT}
 LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
-      org.opencontainers.image.description="Pelorus tester image: evidence for one master commit, not a release (ADR-0173)" \
+      org.opencontainers.image.title="pelorus-tester-generic" \
+      org.opencontainers.image.description="Pelorus tester image, CPU kit: evidence for one master commit, not a release (ADR-0173)" \
       org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2" \
       org.opencontainers.image.revision="${PELORUS_COMMIT}"
-ENTRYPOINT ["python3", "-I", "/opt/pelorus/tester/pelorus_tester_report.py"]
-CMD ["run", "--out", "/report"]
 
-# The -source companion: the patched FFmpeg tree as compiled, series.txt, the
-# configure line, the libpelorus commit, and the Debian source packages at the
-# versions the runtime image installed.
-FROM ${DEBIAN_IMAGE} AS debian-sources
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-COPY --from=runtime /installed-sources.txt /installed-sources.txt
+# NVIDIA_DRIVER_CAPABILITIES asks the toolkit for libcuda (compute), nvidia-smi
+# and NVML (utility), libnvidia-encode (video) and the Vulkan ICD (graphics;
+# "required for rendering OpenGL, EGL, and Vulkan applications" in the toolkit
+# documentation). A CDI specification mounts them whatever this says.
+FROM assembled-nvidia AS final-nvidia
+ARG PELORUS_COMMIT
+COPY --from=licence-nvidia /usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt /usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,video,graphics \
+    LD_LIBRARY_PATH=/opt/ffmpeg/lib:/opt/pelorus/lib:/usr/lib/wsl/lib \
+    PELORUS_TESTER_KIT=nvidia \
+    PELORUS_TESTER_PACKAGE=tester-nvidia \
+    PELORUS_TESTER_COMMIT=${PELORUS_COMMIT}
+LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
+      org.opencontainers.image.title="pelorus-tester-nvidia" \
+      org.opencontainers.image.description="Pelorus tester image, NVIDIA kit (run with --gpus all; no NVIDIA file inside): evidence for one master commit, not a release (ADR-0173, ADR-0180)" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2" \
+      org.opencontainers.image.revision="${PELORUS_COMMIT}"
+
+# The whole licence directory: the notices and, in the local non-free build
+# only, the NOT-FOR-REDISTRIBUTION marker (the report then says kit
+# intel-nonfree-local).
+FROM assembled-intel AS final-intel
+ARG PELORUS_COMMIT
+ARG INTEL_MEDIA_DRIVER=free
+COPY --from=licence-intel /usr/share/licenses/pelorus-tester/ /usr/share/licenses/pelorus-tester/
+ENV PELORUS_TESTER_KIT=intel \
+    PELORUS_TESTER_PACKAGE=tester-intel \
+    PELORUS_TESTER_COMMIT=${PELORUS_COMMIT}
+LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
+      org.opencontainers.image.title="pelorus-tester-intel" \
+      org.opencontainers.image.description="Pelorus tester image, Intel kit (run with --device /dev/dri; media driver ${INTEL_MEDIA_DRIVER}, nonfree builds are local only and NOT FOR REDISTRIBUTION): evidence for one master commit, not a release (ADR-0173, ADR-0180)" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2" \
+      org.opencontainers.image.revision="${PELORUS_COMMIT}"
+
+# --- source-<kit>: the -source companions --------------------------------------
+# The patched FFmpeg tree as compiled, series.txt, the configure line, the
+# libpelorus commit, the kit's extra build sources (nv-codec-headers) and the
+# Debian source packages at the versions the kit's image installed.
+FROM ${DEBIAN_IMAGE} AS debian-sources-generic
+COPY --from=assembled-generic /installed-sources.txt /installed-sources.txt
 RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
     && mkdir /debian-source
@@ -134,11 +309,54 @@ WORKDIR /debian-source
 RUN xargs -a /installed-sources.txt apt-get source --download-only \
     && rm -rf /var/lib/apt/lists/*
 
-FROM scratch AS source
-COPY --from=build /opt/source /source/ffmpeg
-COPY --from=debian-sources /debian-source /source/debian
-COPY --from=debian-sources /installed-sources.txt /source/installed-sources.txt
+FROM ${DEBIAN_IMAGE} AS debian-sources-nvidia
+COPY --from=assembled-nvidia /installed-sources.txt /installed-sources.txt
+RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && mkdir /debian-source
+WORKDIR /debian-source
+RUN xargs -a /installed-sources.txt apt-get source --download-only \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM ${DEBIAN_IMAGE} AS debian-sources-intel
+ARG INTEL_MEDIA_DRIVER=free
+COPY --from=assembled-intel /installed-sources.txt /installed-sources.txt
+RUN if [ "${INTEL_MEDIA_DRIVER}" != free ]; then \
+        echo "a non-free Intel build has no -source image: it is local only and never published" >&2; exit 1; \
+    fi \
+    && sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && mkdir /debian-source
+WORKDIR /debian-source
+RUN xargs -a /installed-sources.txt apt-get source --download-only \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM scratch AS source-generic
+COPY --from=build-generic /opt/source /source/ffmpeg
+COPY --from=build-generic /opt/kit-source /source/kit
+COPY --from=debian-sources-generic /debian-source /source/debian
+COPY --from=debian-sources-generic /installed-sources.txt /source/installed-sources.txt
 COPY LICENSES /source/LICENSES
 LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
-      org.opencontainers.image.description="Corresponding source of the Pelorus tester image (GPL-3.0-or-later)" \
+      org.opencontainers.image.description="Corresponding source of the Pelorus tester image, CPU kit (GPL-3.0-or-later)" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2"
+
+FROM scratch AS source-nvidia
+COPY --from=build-nvidia /opt/source /source/ffmpeg
+COPY --from=build-nvidia /opt/kit-source /source/kit
+COPY --from=debian-sources-nvidia /debian-source /source/debian
+COPY --from=debian-sources-nvidia /installed-sources.txt /source/installed-sources.txt
+COPY LICENSES /source/LICENSES
+LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
+      org.opencontainers.image.description="Corresponding source of the Pelorus tester image, NVIDIA kit (GPL-3.0-or-later; nv-codec-headers under /source/kit)" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2"
+
+FROM scratch AS source-intel
+COPY --from=build-intel /opt/source /source/ffmpeg
+COPY --from=build-intel /opt/kit-source /source/kit
+COPY --from=debian-sources-intel /debian-source /source/debian
+COPY --from=debian-sources-intel /installed-sources.txt /source/installed-sources.txt
+COPY LICENSES /source/LICENSES
+LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
+      org.opencontainers.image.description="Corresponding source of the Pelorus tester image, Intel kit (GPL-3.0-or-later)" \
       org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2"

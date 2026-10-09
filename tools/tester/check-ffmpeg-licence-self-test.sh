@@ -14,7 +14,7 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/pelorus-licence-gate.XXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
 
 good_config='--prefix=/usr --enable-gpl --enable-version3 --enable-vulkan --enable-libx264'
-good_licence='ffmpeg is free software; ... either version 3 of the License, or (at your option) any later version.'
+good_licence='ffmpeg is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation; either version 3 of the License, or (at your option) any later version.'
 
 # make_stub NAME CONFIGURE_LINE LICENCE_TEXT -> path of a stub that answers -version and -L
 make_stub() {
@@ -54,6 +54,8 @@ expect refuse "GPL build without --enable-version3" \
   "$(make_stub no-v3 '--prefix=/usr --enable-gpl' "$good_licence")"
 expect refuse "nonfree text in -L" \
   "$(make_stub text-nonfree "$good_config" 'This version has nonfree parts compiled in. either version 3 of the License')"
+expect refuse "-L naming the LGPL version 3" \
+  "$(make_stub lgpl3 "$good_config" 'ffmpeg is free software; you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License as published by the Free Software Foundation; either version 3 of the License, or (at your option) any later version.')"
 expect refuse "-L without GPL version 3" \
   "$(make_stub gpl2 "$good_config" 'either version 2 of the License')"
 expect refuse "several banned flags at once" \

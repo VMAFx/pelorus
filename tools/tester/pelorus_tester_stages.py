@@ -5,8 +5,9 @@
 
 Loaded by `pelorus_tester_report.py`; not run on its own. Each runner takes the
 report context and the stage spec and returns an outcome tuple
-`(status, reason, log)` where status is `pass`, `fail`, `not_run`,
-`no_device` or `incomplete`. Pass rules live in small pure functions
+`(status, reason, log, legs)` where status is `pass`, `fail`, `not_run`,
+`no_device` or `incomplete`, and legs is None or one record per encoder tried
+(`pass`, `fail` or `not_run` with a reason). Pass rules live in small pure functions
 (`steering_verdict`, `graph_problems`, `blob_problems`, ...) so `self_test`
 can plant a failure for each rule without hardware.
 
@@ -67,19 +68,40 @@ CODECS = {"h264": "h264", "hevc": "hevc", "av1": "obu"}
 # Steering and zero-copy streams go into bitexact Matroska: the container keeps
 # the AV1 sequence header (a raw OBU stream does not) and is reproducible.
 MUX_ARGS = ["-fflags", "+bitexact", "-f", "matroska"]
+# An AV1 encoder that fails its first encode with one of these has no AV1
+# encode on this GPU or driver (NVENC before Ada, QSV before Arc).
+NO_AV1_RE = re.compile(r"(?i)(no capable devices|codec not supported|unsupported|"
+                       r"not supported|no usable encoding profile)")
+STEER_OPTION = "pelorus_roi"
 NOEFFECT_RE = re.compile(r"(continuing without ROI bias"
-                         r"|regions asking for a lower QP[^\n]*clamped to \d+)")
+                         r"|regions asking for a lower QP[^\n]*clamped to \d+"
+                         r"|pelorus_roi: [^\n]*\bdisabl(?:ed|ing)\b[^\n]*)")
+# The steered encodes get ROI side data; the unsteered control gets none, because
+# FFmpeg's stock QSV path applies ROI rectangles whatever -pelorus_roi says
+# (h264_qsv on an Arc A380: research 0229).
 FILTER_CHAIN = "pelorus_analyze_vulkan=roi=1"
+CONTROL_CHAIN = "pelorus_analyze_vulkan=roi=0"
+# Intel media driver packages; a QSV leg that fails with only the free one
+# installed names the non-free one it lacks (ADR-0180).
+MEDIA_DRIVER_FREE = "intel-media-va-driver"
+MEDIA_DRIVER_NONFREE = "intel-media-va-driver-non-free"
 # kind: vulkan = frames stay in VRAM to the encoder; hw = hwdownload to a
 # hardware encoder; sw = hwdownload to a software encoder.
 ENCODERS = (
     {"name": "h264_vulkan", "codec": "h264", "kind": "vulkan", "pix": "nv12", "args": ["-qp", "30"]},
     {"name": "hevc_vulkan", "codec": "hevc", "kind": "vulkan", "pix": "nv12", "args": ["-qp", "30"]},
     {"name": "av1_vulkan", "codec": "av1", "kind": "vulkan", "pix": "nv12", "args": ["-qp", "30"]},
+    {"name": "h264_nvenc", "codec": "h264", "kind": "hw", "pix": "nv12",
+     "args": ["-rc", "constqp", "-qp", "30"]},
     {"name": "hevc_nvenc", "codec": "hevc", "kind": "hw", "pix": "nv12",
      "args": ["-rc", "constqp", "-qp", "30"]},
     {"name": "av1_nvenc", "codec": "av1", "kind": "hw", "pix": "nv12",
      "args": ["-rc", "constqp", "-qp", "80"]},
+    # QSV: -q:v selects CQP (the dense ROI path needs it); patch 0005 steers
+    # h264_qsv and hevc_qsv, so av1_qsv shows as a not_run leg after its probe.
+    {"name": "h264_qsv", "codec": "h264", "kind": "hw", "pix": "nv12", "args": ["-q:v", "30"]},
+    {"name": "hevc_qsv", "codec": "hevc", "kind": "hw", "pix": "nv12", "args": ["-q:v", "30"]},
+    {"name": "av1_qsv", "codec": "av1", "kind": "hw", "pix": "nv12", "args": ["-q:v", "30"]},
     {"name": "libsvtav1", "codec": "av1", "kind": "sw", "pix": "yuv420p",
      "args": ["-crf", "30", "-svtav1-params", "aq-mode=0"]},
     {"name": "libaom-av1", "codec": "av1", "kind": "sw", "pix": "yuv420p",
@@ -97,8 +119,8 @@ SEI_CARRIERS = (
 )
 
 
-def outcome(status, reason, log=""):
-    return status, reason, log
+def outcome(status, reason, log="", legs=None):
+    return status, reason, log, legs
 
 
 def load_sibling(name):
@@ -216,49 +238,52 @@ def frames_from_size(size, width, height):
 
 
 def steering_verdict(h, counts, notes="", disabled=frozenset(), errs=None):
-    """Return (status, reason): pass, fail, or skip for an inconclusive control.
+    """Return (status, reason): pass, fail, or not_run for an inconclusive control.
 
     `h` maps none8, none8b, roi8, none16, roi16 to bitstream digests; `counts`
     maps the same keys (except none8b) to decoded frame numbers; `notes` is the
     steered encodes' log, searched for the encoder's own statement that it
     ignores the steering data (named in the reason, never silent); `errs` maps a
     key to the decoder's error line. An unsteered baseline that does not decode
-    is an encoder or driver defect, a named skip; a steered stream that does not
-    decode is a failure."""
+    is an encoder or driver defect, a named not_run; a steered stream that does
+    not decode is a failure."""
     errs = errs or {}
     want = {"none8": 8, "roi8": 8, "none16": 16, "roi16": 16}
     broken = [k for k in ("none8", "none16") if counts.get(k) != want[k]]
     if broken and "steering_baseline_defect" not in disabled:
-        return "skip", ("baseline output does not decode (encoder/driver defect): %s decoded "
+        return "not_run", ("baseline output does not decode (encoder/driver defect): %s decoded "
                         "%s frames, expected %d; %s" % (broken[0], counts.get(broken[0]),
                                                        want[broken[0]], errs.get(broken[0], "no decoder output")))
     for key, n in want.items():
         if counts.get(key) != n and "steering_decode" not in disabled:
             return "fail", "%s decoded %s frames, expected %d" % (key, counts.get(key), n)
     if h["none8"] != h["none8b"] and "steering_control" not in disabled:
-        return "skip", "baseline encode is not deterministic; steering test inconclusive"
+        return "not_run", "baseline encode is not deterministic; steering test inconclusive"
     same = [k for k in ("8", "16") if h["roi" + k] == h["none" + k]]
     said = NOEFFECT_RE.search(notes)
     if same and said and "steering_selfreport" not in disabled:
-        return "skip", "encoder reports it ignores the steering data: " + said.group(0)
+        return "not_run", "encoder reports it ignores the steering data: " + said.group(0)
     if same and "steering_effect" not in disabled:
         return "fail", "steering did not change the %s-frame bitstream" % "/".join(same)
     return "pass", "steering changes the bitstream at 8 and 16 frames; both decode"
 
 
-def aggregate_encoders(results, disabled=frozenset()):
-    """results: list of (encoder, state, note). Return (status, reason)."""
-    parts = {"pass": [], "fail": [], "skip": []}
-    for name, state, note in results:
+def aggregate_legs(results, disabled=frozenset()):
+    """results: list of (encoder, codec, state, note). Return an outcome with one leg each."""
+    parts = {"pass": [], "fail": [], "not_run": []}
+    legs = []
+    for name, codec, state, note in results:
         parts[state].append("%s (%s)" % (name, note) if note else name)
+        legs.append({"encoder": name, "codec": codec, "status": state,
+                     "reason": "" if state == "pass" else (note or "no reason given")[:400]})
     text = "; ".join("%s: %s" % (k, ", ".join(v)) for k, v in parts.items() if v)
     if parts["fail"]:
-        return "fail", text
+        return outcome("fail", text, legs=legs)
     if not parts["pass"]:
         if "encoder_absent_not_run" in disabled:
-            return "pass", text
-        return "not_run", "no usable encoder; " + text
-    return "pass", text
+            return outcome("pass", text, legs=legs)
+        return outcome("not_run", "no usable encoder; " + text, legs=legs)
+    return outcome("pass", text, legs=legs)
 
 
 # ------------------------------------------------------------- SEI parsing
@@ -401,6 +426,61 @@ def first_line(text):
     return (lines[-1] if lines else "no output")[:200]
 
 
+def encoder_error_line(text, name):
+    """The first two lines FFmpeg logged for this encoder, else the last line of the log."""
+    own = [l.split("]", 1)[-1].strip() for l in text.splitlines()[:2000] if "[%s @" % name in l]
+    return ("%s: %s" % (name, "; ".join(own[:2])) if own else first_line(text))[:200]
+
+
+def unusable(enc, text, why):
+    """not_run leg for an encoder whose first encode failed; names a missing AV1 encoder.
+
+    Only the encoder's own lines decide "no AV1 encode": another component's
+    "not supported" (a VA-API probe, a filter) is no statement about AV1."""
+    line = encoder_error_line(text, enc["name"]) if text else why
+    if enc["codec"] == "av1" and NO_AV1_RE.search(line):
+        return "not_run", "no AV1 encode on this GPU or driver: " + line
+    return "not_run", "not usable on this host: " + line
+
+
+def installed_media_drivers(ctx):
+    """{package: version} of the Intel media drivers dpkg lists as installed; cached.
+
+    Empty outside a Debian image (no dpkg-query): then no leg names a driver."""
+    if "media_drivers" not in ctx:
+        code, text, _ = ctx["run"](["dpkg-query", "-W", "-f", "${Package} ${Version} ${db:Status-Abbrev}\n",
+                                    MEDIA_DRIVER_FREE, MEDIA_DRIVER_NONFREE], 30, ctx["env"])
+        found = {}
+        for line in text.splitlines()[:16] if code is not None else []:
+            parts = line.split()
+            if len(parts) >= 3 and parts[0] in (MEDIA_DRIVER_FREE, MEDIA_DRIVER_NONFREE) and parts[2] == "ii":
+                found[parts[0]] = parts[1]
+        ctx["media_drivers"] = found
+    return ctx["media_drivers"]
+
+
+def free_driver_leg(ctx, enc, state, note):
+    """A QSV leg that cannot encode with only the free media driver names the driver it lacks."""
+    drivers = installed_media_drivers(ctx) if enc["name"].endswith("_qsv") else {}
+    if (state != "not_run" or note.startswith("no AV1 encode") or MEDIA_DRIVER_FREE not in drivers
+            or MEDIA_DRIVER_NONFREE in drivers):
+        return state, note
+    return "not_run", ("%s does not encode here with the free %s %s; %s is not installed (the "
+                       "published image ships the free driver only, ADR-0180): %s" % (
+                           enc["name"], MEDIA_DRIVER_FREE, drivers[MEDIA_DRIVER_FREE],
+                           MEDIA_DRIVER_NONFREE, note))[:400]
+
+
+def encoder_has_option(ctx, name, option):
+    """Whether `ffmpeg -h encoder=<name>` lists -<option>; cached per encoder."""
+    helps = ctx["ff"].setdefault("help", {})
+    if name not in helps:
+        code, text, _ = ctx["run"]([ctx["ff"]["bin"], "-hide_banner", "-h", "encoder=" + name],
+                                   60, ctx["env"])
+        helps[name] = text if code == 0 else ""
+    return re.search(r"^\s*-%s\b" % re.escape(option), helps[name], re.M) is not None
+
+
 def ffmpeg_info(ctx):
     """Cached (binary path or None, filter names, encoder names)."""
     if "ff" in ctx:
@@ -466,13 +546,13 @@ def finish(ctx, result):
     A listed VUID passes through the shared allow-list and the reason names the
     entry (VUID, reference, expiry)."""
     bad, hits = ctx.pop("vuids", set()), ctx.pop("vuid_hits", set())
-    status, reason, log = result
+    status, reason, log, legs = result
     if bad and status != "no_device" and "vuid_gate_every_stage" not in ctx["disabled"]:
         return outcome("fail", ("%s; unlisted Vulkan validation VUIDs: %s" % (
-            reason, ", ".join(sorted(bad)[:4])))[:900], log)
+            reason, ", ".join(sorted(bad)[:4])))[:900], log, legs)
     if hits:
         reason = "%s; allow-listed VUIDs: %s" % (reason, "; ".join(sorted(hits)[:3]))
-    return outcome(status, reason[:900], log)
+    return outcome(status, reason[:900], log, legs)
 
 
 def fixture_for(ctx, name):
@@ -496,8 +576,8 @@ def input_args(entry, path):
             str(entry["fps"]), "-i", path]
 
 
-def chain_for(enc, extra=""):
-    head = "format=%s,hwupload,%s" % (enc["pix"], FILTER_CHAIN)
+def chain_for(enc, steered=True):
+    head = "format=%s,hwupload,%s" % (enc["pix"], FILTER_CHAIN if steered else CONTROL_CHAIN)
     if enc["kind"] == "vulkan":
         return head
     return "%s,hwdownload,format=%s" % (head, enc["pix"])
@@ -507,7 +587,7 @@ def encode(ctx, enc, dev, entry, src, frames, steered, out):
     """One encode; returns (ok, error line, log text)."""
     argv = ["-hide_banner", "-loglevel", "verbose" if steered else "error", "-y",
             "-init_hw_device", "vulkan=vk:%d" % dev, "-filter_hw_device", "vk"]
-    argv += input_args(entry, src) + ["-frames:v", str(frames), "-vf", chain_for(enc)]
+    argv += input_args(entry, src) + ["-frames:v", str(frames), "-vf", chain_for(enc, steered)]
     argv += ["-c:v", enc["name"]] + enc["args"]
     argv += ["-pelorus_roi", "1"] if steered else []
     argv += MUX_ARGS + [str(out)]
@@ -555,8 +635,8 @@ def run_format_matrix(ctx, spec):
     if err:
         return outcome("incomplete", err, text)
     if code == 77:
-        return outcome("no_device", "matrix script found no usable Vulkan device; "
-                       "start the container with a GPU device", text)
+        return outcome("no_device", "matrix script found no usable Vulkan device; " +
+                       ctx.get("no_device_reason", "start the container with a GPU device"), text)
     mode = env.get("PELORUS_VALIDATE", "auto")
     note = "validation off (PELORUS_VALIDATE=0)" if mode == "0" else "validation layer on"
     if code != 0:
@@ -569,16 +649,19 @@ def run_format_matrix(ctx, spec):
 
 def steer_one(ctx, enc, devs, entry, src, work):
     """Run the five encodes of one encoder; returns (state, note)."""
-    dev, outs, logs = None, {}, []
+    dev, outs, logs, why, text = None, {}, [], "no device", ""
     plan = (("none8", 8, False), ("none8b", 8, False), ("roi8", 8, True),
             ("none16", 16, False), ("roi16", 16, True))
     for dev_try in (devs if enc["kind"] == "vulkan" else devs[:1]):
-        ok, why, _ = encode(ctx, enc, dev_try, entry, src, 8, False, work / "probe.mkv")
+        ok, why, text = encode(ctx, enc, dev_try, entry, src, 8, False, work / "probe.mkv")
         if ok:
             dev = dev_try
             break
     if dev is None:
-        return "skip", "not usable on this host: " + why
+        return free_driver_leg(ctx, enc, *unusable(enc, text, why))
+    if not encoder_has_option(ctx, enc["name"], STEER_OPTION):
+        return "not_run", ("%s encodes on device %d but has no -%s option in this FFmpeg; "
+                           "the patch stack does not steer it" % (enc["name"], dev, STEER_OPTION))
     for key, frames, steered in plan:
         outs[key] = work / ("%s-%s.mkv" % (enc["name"], key))
         ok, why, text = encode(ctx, enc, dev, entry, src, frames, steered, outs[key])
@@ -612,11 +695,10 @@ def run_steering(ctx, spec):
     have = ffmpeg_info(ctx)["encoders"]
     for enc in ENCODERS:
         if enc["name"] not in have:
-            results.append((enc["name"], "skip", "not built into this FFmpeg"))
+            results.append((enc["name"], enc["codec"], "not_run", "not built into this FFmpeg"))
         elif devs:
-            results.append((enc["name"],) + steer_one(ctx, enc, devs, entry, src, work))
-    status, reason = aggregate_encoders(results, ctx["disabled"])
-    return finish(ctx, outcome(status, reason))
+            results.append((enc["name"], enc["codec"]) + steer_one(ctx, enc, devs, entry, src, work))
+    return finish(ctx, aggregate_legs(results, ctx["disabled"]))
 
 
 # ------------------------------------------------------ side-data round trip
@@ -632,13 +714,13 @@ def run_sidedata(ctx, spec):
     have, results = ffmpeg_info(ctx)["encoders"], []
     for car in SEI_CARRIERS:
         if car["name"] not in have:
-            results.append((car["name"], "skip", "not built into this FFmpeg"))
+            results.append((car["name"], car["codec"], "not_run", "not built into this FFmpeg"))
         elif devs:
-            results.append((car["name"],) + carrier_roundtrip(ctx, car, devs, entry, src, work))
-    status, reason = aggregate_encoders(results, ctx["disabled"])
+            results.append((car["name"], car["codec"]) + carrier_roundtrip(ctx, car, devs, entry, src, work))
+    status, reason, log, legs = aggregate_legs(results, ctx["disabled"])
     if status == "not_run":
         reason = "no encoder carries SEI unregistered here; " + reason
-    return finish(ctx, outcome(status, reason))
+    return finish(ctx, outcome(status, reason, log, legs))
 
 
 def carrier_encode(ctx, car, devs, entry, src, out):
@@ -663,7 +745,7 @@ def carrier_roundtrip(ctx, car, devs, entry, src, work):
     out = work / ("sd-%s.%s" % (car["name"], car["codec"]))
     dev, why = carrier_encode(ctx, car, devs, entry, src, out)
     if dev is None:
-        return "skip", "cannot encode on this host: " + why
+        return free_driver_leg(ctx, car, "not_run", "cannot encode on this host: " + why)
     frames = pelorus_blobs_per_frame(out.read_bytes(), car["codec"])
     errs = sidedata_problems(frames, SIDEDATA_FRAMES, ctx["disabled"])
     code, tap, err = ffrun(ctx, ["-hide_banner", "-loglevel", "info", "-i", str(out),
@@ -729,7 +811,8 @@ def run_zero_copy(ctx, spec):
         return stop
     work, devs = stage_dir(ctx, "zero_copy_chain"), device_indices(ctx)
     if not devs:
-        return outcome("no_device", "no hardware Vulkan device index known")
+        return outcome("no_device", "no hardware Vulkan device index known; " +
+                       ctx.get("no_device_reason", "start the container with a GPU device"))
     sw_state, sw_why = sw_leg(ctx, devs[0], entry, src, work)
     pair = find_native_pair(ctx, entry, src, work)
     if pair is None:
@@ -856,22 +939,26 @@ def self_test_steering(expect, disabled):
     short = dict(good, roi16=15)
     expect("steering_rejects_short_decode", steering_verdict(base, short, "", disabled)[0] == "fail")
     noisy = dict(base, none8b="z")
-    expect("steering_flags_nondeterministic", steering_verdict(noisy, good, "", disabled)[0] == "skip")
+    expect("steering_flags_nondeterministic", steering_verdict(noisy, good, "", disabled)[0] == "not_run")
     said = "Pelorus ROI: AOME_SET_ROI_MAP failed (res=8); continuing without ROI bias."
-    expect("steering_selfreport_skips", steering_verdict(flat, good, said, disabled)[0] == "skip")
+    expect("steering_selfreport_not_run", steering_verdict(flat, good, said, disabled)[0] == "not_run")
     expect("steering_silent_noop_fails", steering_verdict(flat, good, "all fine", disabled)[0] == "fail")
+    passthrough = ("[h264_vulkan @ 0x1] pelorus_roi: device does not enable "
+                   "VK_KHR_video_encode_quantization_map; QP-map steering disabled (pass-through).")
+    got = steering_verdict(flat, good, passthrough, disabled)
+    expect("steering_passthrough_selfreport_not_run", got[0] == "not_run" and "pass-through" in got[1])
     broken = dict(good, none8=-1, none16=-1)
     got = steering_verdict(base, broken, "", disabled, {"none8": "Corrupt frame detected"})
-    expect("steering_broken_baseline_is_named_skip", got[0] == "skip"
+    expect("steering_broken_baseline_is_named_not_run", got[0] == "not_run"
            and "baseline output does not decode (encoder/driver defect)" in got[1]
            and "Corrupt frame detected" in got[1])
     steered_only = dict(good, roi8=-1)
     expect("steering_broken_steered_still_fails",
            steering_verdict(base, steered_only, "", disabled)[0] == "fail")
-    expect("encoders_none_is_not_run", aggregate_encoders(
-        [("x", "skip", "absent")], disabled)[0] == "not_run")
-    expect("encoders_failure_fails", aggregate_encoders(
-        [("x", "pass", ""), ("y", "fail", "bad")], disabled)[0] == "fail")
+    expect("encoders_none_is_not_run", aggregate_legs(
+        [("x", "h264", "not_run", "absent")], disabled)[0] == "not_run")
+    expect("encoders_failure_fails", aggregate_legs(
+        [("x", "h264", "pass", ""), ("y", "hevc", "fail", "bad")], disabled)[0] == "fail")
 
 
 def self_test_sidedata(expect, disabled):
@@ -953,6 +1040,84 @@ def self_test_gates(expect, disabled):
     self_test_vuids(expect, disabled)
 
 
+NO_AV1_LOG = ("[av1_nvenc @ 0x1] Codec not supported\n"
+              "[av1_nvenc @ 0x1] No capable devices found\n"
+              "[vost#0:0/av1_nvenc @ 0x2] Error while opening encoder\nConversion failed!\n")
+
+
+def fake_encode_ctx(disabled, work):
+    """FFmpeg stand-in: av1_nvenc fails as on a GPU without AV1 NVENC; the rest encode."""
+    def run(argv, timeout_s, env=None):
+        if "av1_nvenc" in argv:
+            return 1, NO_AV1_LOG, ""
+        Path(argv[-1]).write_bytes(b"\x00" * 64)
+        return 0, "", ""
+    ctx = stage_ctx({"PELORUS_VALIDATE": "0"}, run)
+    ctx.update(disabled=disabled, work=str(work))
+    ctx["ff"] = {"bin": "ffmpeg", "filters": {"pelorus_analyze_vulkan"},
+                 "encoders": {"av1_nvenc", "av1_qsv"}, "help": {"av1_qsv": "no steering here"}}
+    return ctx
+
+
+def fake_qsv_ctx(work, dpkg_text):
+    """FFmpeg stand-in where hevc_qsv fails as with the free driver on an Arc A380."""
+    def run(argv, timeout_s, env=None):
+        if argv[0] == "dpkg-query":
+            return 1, dpkg_text, ""
+        if "hevc_qsv" in argv:
+            return 183, "[hevc_qsv @ 0x1] Invalid FrameType:0.\n", ""
+        Path(argv[-1]).write_bytes(b"\x00" * 64)
+        return 0, "", ""
+    ctx = stage_ctx({"PELORUS_VALIDATE": "0"}, run)
+    ctx.update(work=str(work))
+    ctx["ff"] = {"bin": "ffmpeg", "filters": {"pelorus_analyze_vulkan"}, "encoders": {"hevc_qsv"},
+                 "help": {}}
+    return ctx
+
+
+def self_test_free_driver(expect, disabled, entry):
+    """hevc_qsv with only the free media driver names the non-free one; with it, it does not."""
+    import tempfile
+    enc = next(e for e in ENCODERS if e["name"] == "hevc_qsv")
+    free = "intel-media-va-driver 25.2.3+dfsg1-1 ii \ndpkg-query: no packages found matching x\n"
+    both = free + "intel-media-va-driver-non-free 25.2.3+ds1-1 ii \n"
+    with tempfile.TemporaryDirectory(prefix="pelorus-qsv-") as tmp:
+        got = steer_one(fake_qsv_ctx(tmp, free), enc, [0], entry, "src", Path(tmp))
+        expect("free_driver_leg_names_nonfree", got[0] == "not_run"
+               and "intel-media-va-driver-non-free is not installed" in got[1]
+               and "Invalid FrameType:0" in got[1])
+        got = steer_one(fake_qsv_ctx(tmp, both), enc, [0], entry, "src", Path(tmp))
+        expect("nonfree_installed_no_driver_claim", got[0] == "not_run"
+               and "intel-media-va-driver-non-free" not in got[1])
+        got = steer_one(fake_qsv_ctx(tmp, ""), enc, [0], entry, "src", Path(tmp))
+        expect("no_dpkg_no_driver_claim", got[0] == "not_run" and "free" not in got[1])
+
+
+def self_test_legs(expect, disabled):
+    """AV1 without hardware support, and an encoder without the steering option, are named not_run legs."""
+    import tempfile
+    entry = {"pixfmt": "yuv420p", "width": 16, "height": 16, "fps": 24}
+    with tempfile.TemporaryDirectory(prefix="pelorus-legs-") as tmp:
+        ctx = fake_encode_ctx(disabled, tmp)
+        enc = {e["name"]: e for e in ENCODERS}
+        got = steer_one(ctx, enc["av1_nvenc"], [0], entry, "src", Path(tmp))
+        expect("av1_unsupported_leg_not_run", got[0] == "not_run" and "no AV1 encode" in got[1]
+               and "No capable devices found" in got[1])
+        got = steer_one(ctx, enc["av1_qsv"], [0], entry, "src", Path(tmp))
+        expect("missing_steering_option_leg_not_run", got[0] == "not_run" and "-pelorus_roi" in got[1])
+    vaapi = ("[AVHWDeviceContext @ 0x1] VAAPI profile not supported\n"
+             "[av1_qsv @ 0x2] Failed to create a VAAPI device.\nConversion failed!\n")
+    got = unusable({"name": "av1_qsv", "codec": "av1"}, vaapi, "Conversion failed!")
+    expect("other_component_unsupported_is_not_av1", got == (
+        "not_run", "not usable on this host: av1_qsv: Failed to create a VAAPI device."))
+    expect("control_arm_has_no_roi", all(
+        "roi=0" in chain_for(e, False) and "roi=1" in chain_for(e, True) for e in ENCODERS))
+    self_test_free_driver(expect, disabled, entry)
+    status, _, _, legs = aggregate_legs([("hevc_nvenc", "hevc", "pass", ""),
+                                         ("av1_nvenc", "av1", "not_run", "no AV1 encode")], disabled)
+    expect("legs_recorded", status == "pass" and [l["status"] for l in legs] == ["pass", "not_run"])
+
+
 def self_test(disabled=frozenset()):
     """Return failing check names; every rule has a planted bad case."""
     failures = []
@@ -965,4 +1130,5 @@ def self_test(disabled=frozenset()):
     self_test_steering(expect, disabled)
     self_test_sidedata(expect, disabled)
     self_test_gates(expect, disabled)
+    self_test_legs(expect, disabled)
     return failures

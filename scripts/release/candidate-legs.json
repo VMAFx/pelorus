@@ -12,7 +12,7 @@
       "kind": "workflow_run",
       "workflow": "tester-publish.yml",
       "event": "workflow_dispatch",
-      "proves": "The tester image built, passed the licence gate, was signed and attested, and its -source companion shipped, for this exact commit."
+      "proves": "Every tester image kit (generic, nvidia, intel) built, passed the licence gates, was signed and attested, and its -source companion shipped, for this exact commit."
     },
     {
       "id": "hardware-coverage",

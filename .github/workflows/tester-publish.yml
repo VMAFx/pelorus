@@ -1,15 +1,20 @@
 name: Tester publish
 
 # Tester images are evidence for one commit reachable from master, never a
-# release (ADR-0173, ADR-0176). Pull requests build the image and push nothing,
+# release (ADR-0173, ADR-0176). There is one image per kit (ADR-0180): generic
+# (CPU), nvidia (NVENC through the host driver, no NVIDIA file inside) and intel
+# (Mesa ANV, oneVPL, the free media driver); each job runs once per kit and a
+# kit never cancels another. Pull requests build the images and push nothing,
 # only when they touch what the image is built from (a docs-only pull request
 # does not start it). A nightly schedule builds master once and publishes
 # nothing: only the `build` job can run on it (ADR-0178, #235).
 # A manual dispatch is the only way to publish: `validate` refuses a commit that
 # master does not contain, then `publish` waits for the `tester-publish`
 # environment approval before it builds, gates, pushes, signs, attests and
-# verifies the image and its -source companion. The FFmpeg inside is
-# GPL-3.0-or-later and never nonfree; the licence gate fails the build otherwise.
+# verifies each image and its -source companion: tester-<date>-<sha8> for the
+# generic kit, tester-<kit>-<date>-<sha8> for a vendor kit, each with a -source
+# tag. The FFmpeg inside is GPL-3.0-or-later and never nonfree; the licence
+# gates fail the build otherwise.
 run-name: tester-publish ${{ github.event_name }} ${{ github.sha }}
 
 on:
@@ -46,13 +51,20 @@ env:
 
 jobs:
   build:
-    # Pull requests and the nightly schedule: build the image and run the
-    # licence gate, push nothing. The first step is the Praetor hosted-gate
-    # draft step (HISS-18); it does not match on a scheduled run.
-    name: Build tester image (no push)
+    # Pull requests and the nightly schedule: build each kit's image and run the
+    # licence gates and the no-device report, push nothing. The first step is
+    # the Praetor hosted-gate draft step (HISS-18); it does not match on a
+    # scheduled run.
+    name: Build tester image ${{ matrix.kit }} (no push)
     if: github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VMAFx/pelorus')
     runs-on: ubuntu-26.04
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        kit: [generic, nvidia, intel]
+    env:
+      KIT: ${{ matrix.kit }}
     steps:
       - name: Stop on a draft pull request
         if: github.event.pull_request.draft == true
@@ -87,17 +99,23 @@ jobs:
         run: |
           python3 -I -B tools/tester/licensing.py record
           python3 -I -B tools/tester/licensing.py self-test
-      - name: Build (the Containerfile runs the licence gate)
+      - name: Build (the Containerfile runs the licence gates)
         if: github.event.pull_request.draft != true
         run: |
           docker build \
             --file tools/tester/Containerfile \
-            --target runtime \
+            --target "final-${KIT}" \
             --build-arg "FFMPEG_REMOTE=${FFMPEG_REMOTE}" \
             --build-arg "FFMPEG_COMMIT=${FFMPEG_COMMIT}" \
             --build-arg "PELORUS_COMMIT=${GITHUB_SHA}" \
-            --tag "tester-pr:${GITHUB_SHA}" \
+            --tag "tester-pr-${KIT}:${GITHUB_SHA}" \
             .
+      - name: Without a device the report says no_device and names the kit's docker option
+        if: github.event.pull_request.draft != true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/report"
+          docker run --rm --volume "${RUNNER_TEMP}/report:/report" "tester-pr-${KIT}:${GITHUB_SHA}" run --out /report
+          python3 -I tools/tester/pelorus_tester_report.py validate "${RUNNER_TEMP}/report/report.json" --kit "${KIT}"
 
   validate:
     # Dispatch only: the commit to publish, and the commit that runs this
@@ -108,7 +126,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       sha: ${{ steps.ref.outputs.sha }}
-      tag: ${{ steps.ref.outputs.tag }}
+      stamp: ${{ steps.ref.outputs.stamp }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -142,16 +160,22 @@ jobs:
             fi
           done
           printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
-          printf 'tag=tester-%s-%s\n' "$(date -u +%Y%m%d)" "${sha:0:8}" >> "$GITHUB_OUTPUT"
+          printf 'stamp=%s-%s\n' "$(date -u +%Y%m%d)" "${sha:0:8}" >> "$GITHUB_OUTPUT"
 
   publish:
-    # Runs only after the maintainer approves the `tester-publish` environment.
-    name: Build, gate, push, sign and attest
+    # Runs only after the maintainer approves the `tester-publish` environment,
+    # once per kit. fail-fast is off: a failing kit must not cancel another
+    # kit's job between its push and its signature.
+    name: Build, gate, push, sign and attest ${{ matrix.kit }}
     needs: validate
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-26.04
     timeout-minutes: 150
     environment: tester-publish
+    strategy:
+      fail-fast: false
+      matrix:
+        kit: [generic, nvidia, intel]
     permissions:
       contents: read
       packages: write
@@ -160,7 +184,8 @@ jobs:
       artifact-metadata: write
     env:
       SHA: ${{ needs.validate.outputs.sha }}
-      TAG: ${{ needs.validate.outputs.tag }}
+      STAMP: ${{ needs.validate.outputs.stamp }}
+      KIT: ${{ matrix.kit }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -175,17 +200,25 @@ jobs:
                 ;;
             esac
           done < build-config.env
+      - name: Name the image tags of this kit
+        run: |
+          if [ "$KIT" = generic ]; then
+            tag="tester-${STAMP}"
+          else
+            tag="tester-${KIT}-${STAMP}"
+          fi
+          printf 'TAG=%s\n' "$tag" >> "$GITHUB_ENV"
       - name: Licence gate refuses a planted flag
         run: bash tools/tester/check-ffmpeg-licence-self-test.sh
       - name: Licence record is valid and its gate refuses planted defects
         run: |
           python3 -I -B tools/tester/licensing.py record
           python3 -I -B tools/tester/licensing.py self-test
-      - name: Build the tester image (the Containerfile runs the licence gate)
+      - name: Build the tester image (the Containerfile runs the licence gates)
         run: |
           docker build \
             --file tools/tester/Containerfile \
-            --target runtime \
+            --target "final-${KIT}" \
             --build-arg "FFMPEG_REMOTE=${FFMPEG_REMOTE}" \
             --build-arg "FFMPEG_COMMIT=${FFMPEG_COMMIT}" \
             --build-arg "PELORUS_COMMIT=${SHA}" \
@@ -200,18 +233,18 @@ jobs:
       - name: Licence record gate on the built image
         run: |
           docker run --rm --entrypoint python3 "${IMAGE}:${TAG}" \
-            -I -B /opt/pelorus/tester/licensing.py check --root / \
+            -I -B /opt/pelorus/tester/licensing.py check --kit "${KIT}" --root / \
             --commit "${SHA}" --ffmpeg-remote "${FFMPEG_REMOTE}" --ffmpeg-commit "${FFMPEG_COMMIT}"
-      - name: Run the documented command without a GPU and validate the report
+      - name: Run the documented command without a GPU and validate the report (no_device names the kit's option)
         run: |
           mkdir -p "${RUNNER_TEMP}/report"
           docker run --rm --volume "${RUNNER_TEMP}/report:/report" "${IMAGE}:${TAG}" run --out /report
-          python3 -I tools/tester/pelorus_tester_report.py validate "${RUNNER_TEMP}/report/report.json"
+          python3 -I tools/tester/pelorus_tester_report.py validate "${RUNNER_TEMP}/report/report.json" --kit "${KIT}"
       - name: Build the -source companion
         run: |
           docker build \
             --file tools/tester/Containerfile \
-            --target source \
+            --target "source-${KIT}" \
             --build-arg "FFMPEG_REMOTE=${FFMPEG_REMOTE}" \
             --build-arg "FFMPEG_COMMIT=${FFMPEG_COMMIT}" \
             --build-arg "PELORUS_COMMIT=${SHA}" \

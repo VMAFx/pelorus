@@ -1,6 +1,8 @@
 {
   "description": "Append-only. One entry per released digest of the tester program (pelorus_tester_report.py tool-hash). Report intake accepts a report only when its tool.sha256 is listed here with the same tool version. Never edit or remove an entry.",
   "entries": [
-    {"sha256": "e94dad3e3eed02cd993ce8df8240dda2e213036761c782f00de76ae253c2ee9d", "tool_version": "0.3.0", "note": "schema 2: execution_class, evidence_claim, pass_software, tool.sha256"}
+    {"sha256": "e94dad3e3eed02cd993ce8df8240dda2e213036761c782f00de76ae253c2ee9d", "tool_version": "0.3.0", "note": "schema 2: execution_class, evidence_claim, pass_software, tool.sha256"},
+    {"sha256": "da8518f3ed847ca45ee8ed1e26e9f630e8ebb1170c2f9b901c432625298860fd", "tool_version": "0.4.0", "note": "schema 2 with optional kit and legs; kit-specific no_device reasons; NVENC and QSV steering legs (ADR-0180)"},
+    {"sha256": "7cf0489465918946af87f99b4674378c33887f50db17bc63486254487036a482", "tool_version": "0.4.0", "note": "kit intel-nonfree-local from the NOT-FOR-REDISTRIBUTION marker; steering control without ROI side data; QSV legs name the missing non-free media driver (ADR-0180)"}
   ]
 }
