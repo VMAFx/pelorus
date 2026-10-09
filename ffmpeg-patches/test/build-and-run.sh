@@ -197,8 +197,8 @@ while IFS= read -r patch || [[ -n "$patch" ]]; do
     fi
     PATCHES+=("$patch")
 done < "$PATCHDIR/series.txt"
-if (( ${#PATCHES[@]} != 20 )); then
-    echo "ERROR: expected 20 patches, found ${#PATCHES[@]}" >&2
+if (( ${#PATCHES[@]} != 21 )); then
+    echo "ERROR: expected 21 patches, found ${#PATCHES[@]}" >&2
     exit 1
 fi
 
@@ -276,7 +276,7 @@ verify_static_avfilter_consumer() {
     "$consumer"
 }
 
-run_logged "apply 20-patch FFmpeg stack" "$LOG_DIR/ffmpeg-apply.log" \
+run_logged "apply 21-patch FFmpeg stack" "$LOG_DIR/ffmpeg-apply.log" \
     apply_stack
 run_logged "configure FFmpeg" "$LOG_DIR/ffmpeg-configure.log" \
     configure_ffmpeg
@@ -382,4 +382,4 @@ verify_encoder_options h264_vulkan pelorus_roi udu_sei
 verify_encoder_options hevc_vulkan pelorus_roi udu_sei
 verify_encoder_options av1_vulkan pelorus_roi
 
-echo "OK: 20 patches applied and ffmpeg linked against private libpelorus"
+echo "OK: 21 patches applied and ffmpeg linked against private libpelorus"

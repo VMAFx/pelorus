@@ -58,6 +58,7 @@ All notable changes to Pelorus are documented here. The format is
 ### Fixed
 
 - `scripts/bench/bd_rate.py` no longer crashes on NumPy 2 (`np.trapz` was removed); it uses `np.trapezoid` when present.
+- FFmpeg patch 0021 stops `ff_vk_frame_barrier()` from turning the first barrier on a frame into a queue family ownership transfer to `VK_QUEUE_FAMILY_IGNORED` on devices with one queue family (Mesa lavapipe), which the Vulkan spec forbids (`VUID-VkImageMemoryBarrier2-image-09118`). The validation layer no longer loses the image layout there and stops reporting `00344`, `09600`, `09059` and `09064`; devices with several queue families are unaffected (`docs/rebase-notes.md`, patch 0021).
 
 <!-- END UNRELEASED -->
 

@@ -14,7 +14,7 @@ ffmpeg-patches/
 │   ├── pelorus_vulkan_sample.h
 │   └── vulkan/*.comp.glsl   canonical shipped shader sources
 ├── .commit-msg-*.txt        synthetic commit messages
-├── 0001-*.patch … 0020-*    generated cumulative patch series
+├── 0001-*.patch … 0021-*    generated cumulative patch series
 ├── series.txt               apply order
 ├── generate.sh              deterministic isolated regeneration
 └── test/build-and-run.sh    pinned replay, build, link, and smoke gate
@@ -112,7 +112,12 @@ ffmpeg-patches/
    links libpelorus. `dehalo`, `aa`, `deblock`, `borderfix` = pure
    transforms: Vulkan/SPIR-V dependencies, no libpelorus link, no interop side
    data.
-9. Every ephemeral `git am` replay supplies `Pelorus-Replay` committer
+9. Patch 0021 = upstream-bound `libavutil/vulkan.c` fix, no Pelorus names:
+   `ff_vk_frame_barrier()` keeps frame's concrete owning queue family when
+   caller passes `VK_QUEUE_FAMILY_IGNORED` (single-family `EXCLUSIVE` frames;
+   `VUID-VkImageMemoryBarrier2-image-09118`). Keep it last; drop on first
+   FFmpeg bump with equivalent fix. Proof = lavapipe validation run.
+10. Every ephemeral `git am` replay supplies `Pelorus-Replay` committer
    identity, neutralizes signing, hooks, and diff ordering, and passes
    `--no-gpg-sign --no-verify`. Do not rely on workstation's global Git
    configuration; hosted runner intentionally has no identity.
@@ -124,7 +129,7 @@ Before calling patch-stack change complete:
 1. format touched C and shell-check touched shell;
 2. compile all canonical GLSL and run Pelorus fast suite;
 3. regenerate twice and compare bytes;
-4. replay all 20 patches at pinned FFmpeg commit;
+4. replay all 21 patches at pinned FFmpeg commit;
 5. build/link/smoke relevant feature-enabled FFmpeg configuration;
 6. install static FFmpeg libraries and compile/run external
    `pkg-config --static libavfilter` consumer, asserting its link flags include

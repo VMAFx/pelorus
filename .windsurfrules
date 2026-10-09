@@ -137,7 +137,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 
 ## Project state
 
-- Inventory: 10 filters (deband, analyze, denoise, grain_estimate, mc, dehalo, aa, deblock, borderfix, scenecut) plus `pelorus_fgs` BSF; 20-patch stack.
+- Inventory: 10 filters (deband, analyze, denoise, grain_estimate, mc, dehalo, aa, deblock, borderfix, scenecut) plus `pelorus_fgs` BSF; 21-patch stack.
 - Encoder steering: NVENC, QSV, Vulkan, libaom, SVT-AV1 patches; QP-feedback path. README "Modules" table: current inventory, no stubs.
 - FFmpeg 9 base: build-time SPIR-V, no runtime GLSL API (ADR-0143).
 - Forge: `VMAFx/pelorus`. Run `gh repo set-default vmafx/pelorus` before any `gh` command.

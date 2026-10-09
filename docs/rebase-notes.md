@@ -5,6 +5,63 @@ Re-apply / re-test work created for the FFmpeg patch stack after an upstream
 FFmpeg bump or a `libpelorus` ABI change. One entry per change that affects the
 patches (ADR-0108 deliverable #6).
 
+## Unreleased — patch 0021 (`ff_vk_frame_barrier` queue family on single-family devices; cumulative on 0001–0020)
+
+- **Patch**: `ffmpeg-patches/0021-vulkan-frame-barrier-queue-family.patch`
+  (canonical diff `files/vulkan-frame-barrier-queue-family.patch`, message
+  `.commit-msg-vulkan-frame-barrier.txt`). Hand-maintained `libavutil/vulkan.c`
+  diff applied by `generate.sh` after 0020, so no shipped patch is renumbered;
+  0001–0020 change only in their `[PATCH n/21]` subject line.
+- **What it fixes**: on a device with one queue family (Mesa lavapipe),
+  `hwcontext_vulkan.c` creates `EXCLUSIVE` frames tracked as owned by that
+  family, and every filter or codec call of `ff_vk_frame_barrier()` passes
+  `VK_QUEUE_FAMILY_IGNORED`. The first barrier per frame became an ownership
+  transfer to `IGNORED`, invalid under `VUID-VkImageMemoryBarrier2-image-09118`
+  (Vulkan spec, "Queue Family Ownership Transfer": unequal indices define a
+  transfer). Validation layer 1.4.363 records it as a release that is never
+  acquired and keeps the old layout, so it reports `00344`, `09600`, `09059`
+  and `09064`. The patch keeps the frame's owning family as the destination
+  when the caller passes `IGNORED` and the tracked family is a concrete index:
+  equal indices form no transfer, and the tracked family stays the one
+  `hwcontext_vulkan.c` itself passes on such devices.
+- **Unchanged**: frames tracked as `IGNORED` (every device with more than one
+  queue family, where FFmpeg uses `CONCURRENT` images) and frames owned by
+  `VK_QUEUE_FAMILY_EXTERNAL` or `VK_QUEUE_FAMILY_FOREIGN_EXT`.
+- **Upstream**: FFmpeg master has the same code (checked 2026-10-09). The
+  patch carries no Pelorus names and its header is a `git format-patch`
+  message, so it can go to ffmpeg-devel as is. Drop 0021 on the first FFmpeg
+  bump that contains an equivalent fix; renumbering is not needed because it
+  is last.
+- **Rebase-sensitive**: `ff_vk_frame_barrier()` in `libavutil/vulkan.c`
+  (source of `srcQueueFamilyIndex`), `create_frame()` queue-family tracking and
+  `switch_layout()` `dst_qf` in `libavutil/hwcontext_vulkan.c`. If upstream
+  starts tracking `IGNORED` for single-family frames, the condition in 0021
+  never fires and the patch can go.
+- **Proof**: one FFmpeg tree, built with 0001–0020 ("before") and again after
+  `git am` of 0021 ("after"). Validation layer 1.4.363, one ICD per run
+  through `VK_DRIVER_FILES`; `testsrc2` 320x180, 5 frames,
+  `format=yuv420p,hwupload,<filter>,hwdownload` for `pelorus_grain_estimate_vulkan`,
+  `pelorus_analyze_vulkan`, `pelorus_deband_vulkan`, stock `gblur_vulkan` and
+  `scdet_vulkan`; then `ffmpeg-patches/test/vulkan-format-matrix.sh` with
+  `PELORUS_VALIDATE=1`. Counts of `00344`/`09600`/`09059`/`09064`, summed over
+  the five filters (the layer stops repeating a message after 10 per run):
+
+  | Device (queue families) | Five filters, before | after | Format matrix, before | after |
+  | --- | --- | --- | --- | --- |
+  | Mesa 26.2.2 lavapipe (1) | 1 / 5 / 35 / 50 | 0 / 0 / 0 / 0 | stops at row 31 on `09059` | 53/53 pass, no VUID |
+  | Intel Arc A380, ANV (3) | 0 | 0 | 53/53, no VUID | 53/53, no VUID |
+  | AMD RADV iGPU (5) | 0 | 0 | 53/53, no VUID | 53/53, no VUID |
+  | RTX 4090, NVIDIA 615.71.09 (6) | 0 | 0 | 53/53 | 53/53 |
+
+  On the RTX 4090 the remaining allow-listed VUIDs (`00174`, `00191`, `03909`,
+  `07454`) keep the same counts before and after, in the five-filter runs and
+  in the matrix, and the 40 matrix outputs are byte-identical.
+- **Regeneration**: `FFMPEG_REPO=/absolute/path/to/ffmpeg
+  ffmpeg-patches/generate.sh`, run twice: byte-identical.
+- **Replay**: `JOBS=4 FFMPEG_REPO=/absolute/path/to/ffmpeg
+  ffmpeg-patches/test/build-and-run.sh` applies all 21 patches and links
+  FFmpeg and the static consumer.
+
 ## Unreleased — interop ABI 1.4 motion block size (#218; regenerates 0001, 0003, 0007)
 
 - **What changed**: `vf_pelorus_mc_vulkan.c` writes
