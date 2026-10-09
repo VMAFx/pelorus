@@ -85,7 +85,14 @@ if [ ! -x "$bin" ]; then
 		die "go install of praetor@$short failed (offline or no module access?); retry online or set PRAETORCTL=<path>"
 	check_version "$tmp/standardsctl"
 	mkdir -p "$dir"
-	mv -f "$tmp/standardsctl" "$bin"
+	# TMPDIR is often another filesystem (tmpfs), where mv copies in place and
+	# a concurrent hook can run a half-written binary. Stage the copy next to
+	# the target so the final mv is an atomic rename.
+	stage=$(mktemp "$dir/.standardsctl.XXXXXX")
+	trap 'rm -rf "$tmp"; rm -f "$stage"' EXIT
+	cp "$tmp/standardsctl" "$stage"
+	chmod 755 "$stage"
+	mv -f "$stage" "$bin"
 fi
 check_version "$bin"
 
