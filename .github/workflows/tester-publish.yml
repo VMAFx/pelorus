@@ -161,15 +161,6 @@ jobs:
           done < build-config.env
       - name: Licence gate refuses a planted flag
         run: bash tools/tester/check-ffmpeg-licence-self-test.sh
-      - name: The package is public (anonymous read, fails closed)
-        run: |
-          token="$(curl -fsS --max-time 30 "https://ghcr.io/token?service=ghcr.io&scope=repository:vmafx/pelorus:pull" \
-            | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])')"
-          curl -fsS --max-time 30 -o /dev/null -H "Authorization: Bearer ${token}" \
-            "https://ghcr.io/v2/vmafx/pelorus/tags/list" || {
-            echo "::error::ghcr.io/vmafx/pelorus is not readable anonymously; the maintainer creates the package and makes it public once (docs/development/tester-image.md)"
-            exit 1
-          }
       - name: Build the tester image (the Containerfile runs the licence gate)
         run: |
           docker build \
@@ -275,3 +266,22 @@ jobs:
           gh attestation verify "oci://${IMAGE}@${IMAGE_DIGEST}" -R VMAFx/pelorus \
             --signer-workflow VMAFx/pelorus/.github/workflows/tester-publish.yml \
             --predicate-type https://spdx.dev/Document/v2.3
+      # Last on purpose: GHCR creates a package on its first push, private, and
+      # only the maintainer can make it public. A first run therefore proves
+      # every other step and fails here; it never publishes a private image as
+      # if testers could pull it.
+      - name: The package is public (anonymous pull of both digests, fails closed)
+        env:
+          IMAGE_DIGEST: ${{ steps.push.outputs.image-digest }}
+          SOURCE_DIGEST: ${{ steps.push.outputs.source-digest }}
+        run: |
+          accept='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'
+          for digest in "$IMAGE_DIGEST" "$SOURCE_DIGEST"; do
+            if ! token="$(curl -fsS --max-time 30 "https://ghcr.io/token?service=ghcr.io&scope=repository:vmafx/pelorus:pull" \
+                 | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])')" \
+               || ! curl -fsS --max-time 30 -o /dev/null -H "Authorization: Bearer ${token}" -H "Accept: ${accept}" \
+                 "https://ghcr.io/v2/vmafx/pelorus/manifests/${digest}"; then
+              echo "::error::${IMAGE}@${digest} is not pullable anonymously. A first publish creates the package private: the maintainer makes it public once and re-runs this workflow (docs/development/tester-image.md)."
+              exit 1
+            fi
+          done

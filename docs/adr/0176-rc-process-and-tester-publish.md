@@ -60,11 +60,13 @@ own commit to be reachable from `master`. `publish` runs in the environment
 fails the build unless `ffmpeg -version` shows `--enable-gpl --enable-version3`,
 no banned flag (`--enable-nonfree`, `cuda-nvcc`, `cuda-sdk`, libfdk-aac,
 decklink, libmpeghdec) and `-L` reports GPL version 3 or later without the word
-nonfree; a self-test plants each flag first. It checks anonymous read access to
-the package, runs the documented command without a GPU and validates the report,
-pushes `ghcr.io/vmafx/pelorus:tester-<date>-<sha8>` and a `-source` companion,
-and attaches an SPDX SBOM, SLSA provenance and a keyless cosign signature, then
-verifies each. `scripts/check-build-config.py` pins the shape of both
+nonfree; a self-test plants each flag first. It runs the documented command
+without a GPU and validates the report, pushes
+`ghcr.io/vmafx/pelorus:tester-<date>-<sha8>` and a `-source` companion, and
+attaches an SPDX SBOM, SLSA provenance and a keyless cosign signature, then
+verifies each. Its last step pulls both digests anonymously and fails closed: a
+first push creates the package private, so the first run fails there until the
+maintainer makes the package public. `scripts/check-build-config.py` pins the shape of both
 workflows, the Containerfile and the legs file, and its self-test plants a
 defect per rule.
 
@@ -87,8 +89,8 @@ defect per rule.
   dispatch of the skeleton image is expected to need the vendor work in #229 and
   #230 before it passes the report step. The SBOM attestation verify line uses
   predicate type `https://spdx.dev/Document/v2.3`, which no run has confirmed yet.
-- **Neutral / follow-ups**: the maintainer creates the public GHCR package and
-  the `tester-publish` environment (restricted to `master`, required reviewer);
+- **Neutral / follow-ups**: the maintainer makes the GHCR package public after
+  the first dispatch creates it, and creates the `tester-publish` environment (restricted to `master`, required reviewer);
   `docs/development/release.md` and `docs/development/tester-image.md` hold the
   procedures; ADR-0173 flips to Accepted when the first dispatch is shown to
   wait for approval.

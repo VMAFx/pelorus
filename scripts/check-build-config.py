@@ -2907,7 +2907,6 @@ ACTION_USES = re.compile(r"^\s*(?:- )?uses: (\S+)(.*)$", re.MULTILINE)
 PINNED_USE = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")
 TESTER_PUBLISH_ORDER = (
     "name: Licence gate refuses a planted flag",
-    "name: The package is public",
     "name: Build the tester image",
     "name: Licence gate on the built image",
     "name: Run the documented command without a GPU",
@@ -2921,6 +2920,7 @@ TESTER_PUBLISH_ORDER = (
     "cosign sign --yes",
     "cosign verify",
     "gh attestation verify",
+    "name: The package is public",
 )
 TESTER_PUBLISH_TOKENS = (
     "environment: tester-publish",

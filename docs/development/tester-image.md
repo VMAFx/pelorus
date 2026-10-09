@@ -17,9 +17,12 @@ unproven until the first dispatch.
 
 ## One-time setup (maintainer)
 
-1. Create the package `ghcr.io/vmafx/pelorus` and make it public. A new GHCR
-   package starts private and its visibility cannot be changed through the API.
-   The workflow reads `tags/list` anonymously before it pushes and fails closed.
+1. Make the package `ghcr.io/vmafx/pelorus` public after the first publish.
+   GHCR creates a package on its first push, private, and its visibility
+   cannot be changed through the API. The first dispatch therefore runs every
+   step, then fails its last step, the anonymous pull of both digests. In the
+   package settings, link it to `VMAFx/pelorus`, change its visibility to
+   public, and run the workflow again.
 2. Create the GitHub environment `tester-publish`: deployment branches limited
    to the default branch, the maintainer as required reviewer.
 3. Apply the ruleset change with `praetorctl sync --remote` if it names the
@@ -37,8 +40,7 @@ gh workflow run tester-publish.yml -R VMAFx/pelorus --ref master
 | `validate` | resolves the ref; the commit and the workflow's own commit must be ancestors of `origin/master`, else the run fails |
 | `publish` | waits for the environment approval, then builds, gates, pushes, signs, attests and verifies |
 
-Inside `publish`, in order: the licence gate refuses planted flags; the package
-is publicly readable; the image builds (the Containerfile runs the licence gate
+Inside `publish`, in order: the licence gate refuses planted flags; the image builds (the Containerfile runs the licence gate
 on the new `ffmpeg`); the gate runs again against the built image; the documented
 command runs without a GPU and the report validates; the `-source` image builds;
 both images are pushed as `tester-<YYYYMMDD>-<sha8>` and
