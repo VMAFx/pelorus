@@ -171,10 +171,10 @@ index 0000000000..97e545732f
 +    }
 +}
 diff --git a/libavcodec/vulkan_encode.c b/libavcodec/vulkan_encode.c
-index 39c43300c4..6393ec2001 100644
+index 39c43300c4..ade98889c8 100644
 --- a/libavcodec/vulkan_encode.c
 +++ b/libavcodec/vulkan_encode.c
-@@ -28,6 +28,1015 @@ const AVCodecHWConfigInternal *const ff_vulkan_encode_hw_configs[] = {
+@@ -28,6 +28,1307 @@ const AVCodecHWConfigInternal *const ff_vulkan_encode_hw_configs[] = {
      NULL,
  };
  
@@ -188,12 +188,14 @@ index 39c43300c4..6393ec2001 100644
 + * this path with no separate producer.
 + *
 + * Two driver-probed map kinds (the extension exposes both):
-+ *   - DELTA map (R8_SINT) under CQP: a signed per-texel-block dQP added on top
-+ *     of the constant quantizer. This is the high-fidelity path and the direct
-+ *     analogue of the Tier-1 NVENC/QSV delta maps.
-+ *   - EMPHASIS map (R8_UNORM) under CBR/VBR: a [0,1] per-block emphasis where
-+ *     higher = "spend more bits here". analyze's 0..1 banding score maps almost
-+ *     directly; we invert the (negative-for-better-quality) ROI qoffset into it.
++ *   - DELTA map (R8_SINT, R16_SINT or R32_SINT, as advertised) under CQP: a
++ *     signed per-texel-block dQP added on top of the constant quantizer. This
++ *     is the high-fidelity path and the direct analogue of the Tier-1 NVENC/QSV
++ *     delta maps. NVIDIA advertises R8_SINT, RADV R32_SINT.
++ *   - EMPHASIS map (R8_UNORM or R16_UNORM) under CBR/VBR: a [0,1] per-block
++ *     emphasis where higher = "spend more bits here". analyze's 0..1 banding
++ *     score maps almost directly; we invert the (negative-for-better-quality)
++ *     ROI qoffset into it.
 + *
 + * Everything is runtime-probed and degrades to a one-shot warning + pass-through
 + * when the driver lacks the extension, the map mode, or a usable texel size - no
@@ -206,15 +208,24 @@ index 39c43300c4..6393ec2001 100644
 + * vulkan_encode already requires at init) the encoder either degrades here or
 + * never reaches this code; that is a driver limitation, not a patch defect.
 + *
-+ * ON-GPU RASTER: the map texel image is filled by the canonical build-time
-+ * SPIR-V compute shader (pelorus_qpmap.comp.glsl), which reads the coalesced
-+ * ROI rectangle list from a small
-+ * SSBO and imageStores the per-texel delta/emphasis, eliminating the host
-+ * per-texel raster + staging upload the v0.1.0 host path used. It is preferred
-+ * only when the encode queue family also advertises VK_QUEUE_COMPUTE_BIT (so the
-+ * dispatch records on the same encode command buffer — no cross-queue ownership
-+ * transfer); otherwise the host raster + vkCmdCopyBufferToImage path is the
-+ * fallback. Both are gated by the same runtime probe and default off.
++ * FILL PATHS (ADR-0182). Every fill is recorded on the encode command buffer,
++ * so what may fill the map depends on the encode queue family:
++ *   - ON-GPU RASTER: the canonical build-time SPIR-V compute shader
++ *     (pelorus_qpmap.comp.glsl) reads the coalesced ROI rectangle list from a
++ *     small SSBO and imageStores the per-texel delta/emphasis. Needs
++ *     VK_QUEUE_COMPUTE_BIT on the encode queue family, STORAGE usage, and an
++ *     8-bit map format (the shader declares r8i / r8).
++ *   - COPY: host raster + staging buffer + vkCmdCopyBufferToImage. Needs a
++ *     transfer-, graphics- or compute-capable encode queue family and
++ *     TRANSFER_DST usage. NVIDIA (transfer on its encode family) uses it.
++ *   - HOST-MAPPED: the host rasterizes straight into a persistently mapped
++ *     LINEAR map image; the command buffer only changes its layout. Needs a
++ *     LINEAR entry and host-visible memory, nothing from the queue family.
++ *     RADV, whose encode family has VK_QUEUE_VIDEO_ENCODE_BIT_KHR only, uses
++ *     it.
++ * The probe asks the driver for the map usage together with the fill usages
++ * this queue family can record (drivers answer with the usages asked for) and
++ * picks the first path in the order above that an advertised entry allows.
 + */
 +#ifdef VK_KHR_video_encode_quantization_map
 +
@@ -341,23 +352,226 @@ index 39c43300c4..6393ec2001 100644
 +    return 0;
 +}
 +
-+/* Probe VK_KHR_video_encode_quantization_map for this profile and pick the map
-+ * kind from the negotiated rate-control mode. Fills ctx->qpmap_* and leaves
-+ * ctx->qpmap_enabled set on success; on any miss it logs once at VERBOSE and
-+ * leaves the path inert (pass-through). Never fails the encoder. */
-+static void pelorus_qpmap_probe(AVCodecContext *avctx, FFVulkanEncodeContext *ctx)
++/* Bytes per texel of a map format the rasterizers can write: signed delta
++ * formats for a delta map, unorm formats for an emphasis map. 0 = not one. */
++static int pelorus_qpmap_texel_bytes(VkFormat format, int emphasis)
++{
++    if (emphasis) {
++        switch (format) {
++        case VK_FORMAT_R8_UNORM:  return 1;
++        case VK_FORMAT_R16_UNORM: return 2;
++        default:                  return 0;
++        }
++    }
++    switch (format) {
++    case VK_FORMAT_R8_SINT:  return 1;
++    case VK_FORMAT_R16_SINT: return 2;
++    case VK_FORMAT_R32_SINT: return 4;
++    default:                 return 0;
++    }
++}
++
++static const char *pelorus_qpmap_fill_name(int fill)
++{
++    switch (fill) {
++    case PELORUS_QPMAP_FILL_GPU:  return "on-GPU compute (pelorus_qpmap)";
++    case PELORUS_QPMAP_FILL_COPY: return "host raster + staging copy";
++    case PELORUS_QPMAP_FILL_HOST: return "host raster into a mapped linear image";
++    default:                      return "none";
++    }
++}
++
++/* The fill path that can write one advertised map entry, or FILL_NONE.
++ * `can_copy`: the encode queue family may record vkCmdCopyBufferToImage
++ * (transfer, graphics or compute; VUID-vkCmdCopyBufferToImage-commandBuffer-
++ * cmdpool). `want_gpu`: the compute rasterizer is built in and the encode queue
++ * family has compute. The shader declares 8-bit storage formats (r8i / r8), so
++ * a wider format goes to a host path. DRM-modifier tiling needs a modifier list
++ * this encoder does not build, so only OPTIMAL and LINEAR entries count. */
++static int pelorus_qpmap_entry_fill(const VkVideoFormatPropertiesKHR *p,
++                                    const VkVideoFormatQuantizationMapPropertiesKHR *q,
++                                    int emphasis, int can_copy, int want_gpu)
++{
++    if (!pelorus_qpmap_texel_bytes(p->format, emphasis) ||
++        !q->quantizationMapTexelSize.width || !q->quantizationMapTexelSize.height ||
++        (p->imageTiling != VK_IMAGE_TILING_OPTIMAL &&
++         p->imageTiling != VK_IMAGE_TILING_LINEAR))
++        return PELORUS_QPMAP_FILL_NONE;
++    if (want_gpu && (p->imageUsageFlags & VK_IMAGE_USAGE_STORAGE_BIT) &&
++        p->format == (emphasis ? VK_FORMAT_R8_UNORM : VK_FORMAT_R8_SINT))
++        return PELORUS_QPMAP_FILL_GPU;
++    if (can_copy && (p->imageUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
++        return PELORUS_QPMAP_FILL_COPY;
++    if (p->imageTiling == VK_IMAGE_TILING_LINEAR)
++        return PELORUS_QPMAP_FILL_HOST;
++    return PELORUS_QPMAP_FILL_NONE;
++}
++
++/* One vkGetPhysicalDeviceVideoFormatPropertiesKHR round for the map image usage
++ * `usage`, with VkVideoFormatQuantizationMapPropertiesKHR (the per-texel block,
++ * commonly 16x16 to 64x64 px) chained to every entry. Returns the number of
++ * entries in *props / *qprops (caller frees both), 0 when the driver offers
++ * nothing for this usage combination, or a negative AVERROR. */
++static int pelorus_qpmap_query_formats(FFVulkanEncodeContext *ctx,
++                                       VkImageUsageFlags usage,
++                                       VkVideoFormatPropertiesKHR **props,
++                                       VkVideoFormatQuantizationMapPropertiesKHR **qprops)
 +{
 +    VkResult ret;
 +    FFVulkanContext *s = &ctx->s;
 +    FFVulkanFunctions *vk = &s->vkfn;
-+    uint32_t nb_props = 0;
-+    VkVideoFormatPropertiesKHR *props = NULL;
-+    VkVideoFormatQuantizationMapPropertiesKHR *qprops = NULL;
-+    VkPhysicalDeviceVideoFormatInfoKHR fmt_info;
++    uint32_t nb = 0;
++    VkPhysicalDeviceVideoFormatInfoKHR fmt_info = {
++        .sType      = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_FORMAT_INFO_KHR,
++        .pNext      = &ctx->profile_list,
++        .imageUsage = usage,
++    };
++
++    *props  = NULL;
++    *qprops = NULL;
++    ret = vk->GetPhysicalDeviceVideoFormatPropertiesKHR(s->hwctx->phys_dev,
++                                                        &fmt_info, &nb, NULL);
++    if (ret != VK_SUCCESS || !nb)
++        return 0;
++
++    *props  = av_calloc(nb, sizeof(**props));
++    *qprops = av_calloc(nb, sizeof(**qprops));
++    if (!*props || !*qprops)
++        return AVERROR(ENOMEM);
++    for (uint32_t i = 0; i < nb; i++) {
++        (*qprops)[i].sType = VK_STRUCTURE_TYPE_VIDEO_FORMAT_QUANTIZATION_MAP_PROPERTIES_KHR;
++        (*props)[i].sType  = VK_STRUCTURE_TYPE_VIDEO_FORMAT_PROPERTIES_KHR;
++        (*props)[i].pNext  = &(*qprops)[i];
++    }
++
++    ret = vk->GetPhysicalDeviceVideoFormatPropertiesKHR(s->hwctx->phys_dev,
++                                                        &fmt_info, &nb, *props);
++    if (ret != VK_SUCCESS && ret != VK_INCOMPLETE)
++        return 0;
++    return nb;
++}
++
++/* Choose the map format, tiling and fill path. Drivers answer the format query
++ * with the image usages asked for (RADV returns exactly those bits; NVIDIA adds
++ * more), so the map usage alone says nothing about fillability. Ask first for
++ * the map usage plus every fill usage this encode queue family can record; if
++ * the driver offers nothing for that combination, ask for each fill usage on
++ * its own, then for the map usage alone (host-mapped fill of a LINEAR entry).
++ * The first query with a fillable entry decides: within it the best fill path
++ * wins, then the narrowest texel. Sets ctx->qpmap_{fill,format,texel_bytes,
++ * texel_size,tiling,fmt_usage}. Returns 1 on success, 0 when nothing is
++ * fillable (warned, with every advertised entry listed), or a negative
++ * AVERROR. */
++static int pelorus_qpmap_pick_format(AVCodecContext *avctx,
++                                     FFVulkanEncodeContext *ctx,
++                                     VkImageUsageFlags map_usage)
++{
++    const FFVulkanContext *s = &ctx->s;
++    /* What the encode command buffer may record is set by the queue family's
++     * own capabilities (the command-pool VUIDs), not by the purposes
++     * AVVulkanDeviceQueueFamily.flags lists FFmpeg picked it for: NVIDIA's
++     * encode family also has TRANSFER, RADV's has VIDEO_ENCODE only. */
++    const VkQueueFlags qflags = s->qf_props && ctx->qf_enc->idx < s->tot_nb_qfs ?
++        s->qf_props[ctx->qf_enc->idx].queueFamilyProperties.queueFlags :
++        ctx->qf_enc->flags;
++    const int can_copy = !!(qflags & (VK_QUEUE_TRANSFER_BIT | VK_QUEUE_GRAPHICS_BIT |
++                                      VK_QUEUE_COMPUTE_BIT));
++    int want_gpu = 0, nb_queries = 0, found = 0, nb_seen = 0;
++    VkImageUsageFlags queries[4];
++
++    /* The on-GPU raster records a compute dispatch on the encode command
++     * buffer, so it needs an encode queue family with VK_QUEUE_COMPUTE_BIT;
++     * without CONFIG_PELORUS_QPMAP_GPU the rasterizer is not compiled in. */
++#if CONFIG_PELORUS_QPMAP_GPU
++    want_gpu = !!(qflags & VK_QUEUE_COMPUTE_BIT);
++#endif
++
++    queries[nb_queries++] = map_usage |
++                            (can_copy ? VK_IMAGE_USAGE_TRANSFER_DST_BIT : 0) |
++                            (want_gpu ? VK_IMAGE_USAGE_STORAGE_BIT : 0);
++    if (can_copy && want_gpu) {
++        queries[nb_queries++] = map_usage | VK_IMAGE_USAGE_STORAGE_BIT;
++        queries[nb_queries++] = map_usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
++    }
++    if (queries[0] != map_usage)
++        queries[nb_queries++] = map_usage;
++
++    for (int k = 0; k < nb_queries && !found; k++) {
++        VkVideoFormatPropertiesKHR *props;
++        VkVideoFormatQuantizationMapPropertiesKHR *qprops;
++        int sel = -1, sel_fill = PELORUS_QPMAP_FILL_NONE;
++        int nb = pelorus_qpmap_query_formats(ctx, queries[k], &props, &qprops);
++
++        if (nb < 0) {
++            av_free(props);
++            av_free(qprops);
++            return nb;
++        }
++        av_log(avctx, AV_LOG_VERBOSE, "pelorus_roi: map format query, image "
++               "usage 0x%x: %d entr%s.\n", queries[k], nb, nb == 1 ? "y" : "ies");
++        for (int i = 0; i < nb; i++) {
++            int fill = pelorus_qpmap_entry_fill(&props[i], &qprops[i],
++                                                ctx->qpmap_emphasis, can_copy,
++                                                want_gpu);
++            av_log(avctx, AV_LOG_VERBOSE, "    format %d tiling %d usage 0x%x "
++                   "texel %ux%u: fill %s\n", props[i].format,
++                   props[i].imageTiling, props[i].imageUsageFlags,
++                   qprops[i].quantizationMapTexelSize.width,
++                   qprops[i].quantizationMapTexelSize.height,
++                   pelorus_qpmap_fill_name(fill));
++            if (fill > sel_fill ||
++                (fill != PELORUS_QPMAP_FILL_NONE && fill == sel_fill &&
++                 pelorus_qpmap_texel_bytes(props[i].format, ctx->qpmap_emphasis) <
++                 pelorus_qpmap_texel_bytes(props[sel].format, ctx->qpmap_emphasis))) {
++                sel      = i;
++                sel_fill = fill;
++            }
++        }
++        nb_seen += nb;
++        if (sel_fill != PELORUS_QPMAP_FILL_NONE) {
++            ctx->qpmap_fill        = sel_fill;
++            ctx->qpmap_format      = props[sel].format;
++            ctx->qpmap_texel_bytes = pelorus_qpmap_texel_bytes(props[sel].format,
++                                                               ctx->qpmap_emphasis);
++            ctx->qpmap_texel_size  = qprops[sel].quantizationMapTexelSize;
++            ctx->qpmap_tiling      = props[sel].imageTiling;
++            ctx->qpmap_fmt_usage   = props[sel].imageUsageFlags;
++            found = 1;
++        }
++        av_free(props);
++        av_free(qprops);
++    }
++
++    if (!found)
++        av_log(avctx, AV_LOG_WARNING, "pelorus_roi: none of the %d advertised "
++               "%s-map format entries is fillable on this encode queue family "
++               "(flags 0x%x: staging copy %s, compute raster %s; a LINEAR "
++               "%s entry needs no queue support); disabled. -v verbose lists "
++               "the entries.\n", nb_seen,
++               ctx->qpmap_emphasis ? "emphasis" : "delta", (unsigned)qflags,
++               can_copy ? "allowed" : "not allowed",
++               want_gpu ? "allowed" : "not allowed",
++               ctx->qpmap_emphasis ? "R8_UNORM/R16_UNORM" : "R8/R16/R32_SINT");
++    return found;
++}
++
++/* Signed range of a delta-map texel `bytes` wide. */
++static void pelorus_qpmap_texel_range(int bytes, int *lo, int *hi)
++{
++    *lo = bytes == 1 ? INT8_MIN : bytes == 2 ? INT16_MIN : INT32_MIN;
++    *hi = bytes == 1 ? INT8_MAX : bytes == 2 ? INT16_MAX : INT32_MAX;
++}
++
++/* Probe VK_KHR_video_encode_quantization_map for this profile and pick the map
++ * kind from the negotiated rate-control mode. Fills ctx->qpmap_* and leaves
++ * ctx->qpmap_enabled set on success; on any miss it warns once and leaves the
++ * path inert (pass-through). Never fails the encoder. */
++static void pelorus_qpmap_probe(AVCodecContext *avctx, FFVulkanEncodeContext *ctx)
++{
++    FFVulkanContext *s = &ctx->s;
 +    VkImageUsageFlags map_usage;
 +    const VkPhysicalDeviceVideoEncodeQuantizationMapFeaturesKHR *qmap_feats;
-+    int delta_ok, emphasis_ok, want_emphasis, want_gpu;
-+    int sel = -1, sel_gpu = -1, qp_range;
++    int delta_ok, emphasis_ok, want_emphasis, qp_range, texel_min, texel_max;
 +
 +    if (!ctx->opts.pelorus_roi)
 +        return;
@@ -395,11 +609,9 @@ index 39c43300c4..6393ec2001 100644
 +
 +    if (want_emphasis && emphasis_ok) {
 +        ctx->qpmap_emphasis = 1;
-+        ctx->qpmap_format   = VK_FORMAT_R8_UNORM;
 +        map_usage = VK_IMAGE_USAGE_VIDEO_ENCODE_EMPHASIS_MAP_BIT_KHR;
 +    } else if (!want_emphasis && delta_ok) {
 +        ctx->qpmap_emphasis = 0;
-+        ctx->qpmap_format   = VK_FORMAT_R8_SINT;
 +        map_usage = VK_IMAGE_USAGE_VIDEO_ENCODE_QUANTIZATION_DELTA_MAP_BIT_KHR;
 +    } else {
 +        av_log(avctx, AV_LOG_WARNING, "pelorus_roi: no quantization-map mode for "
@@ -408,86 +620,12 @@ index 39c43300c4..6393ec2001 100644
 +        return;
 +    }
 +
-+    /* Query the supported map formats + their texel block size for this profile.
-+     * VkVideoFormatQuantizationMapPropertiesKHR is chained off each returned
-+     * VkVideoFormatPropertiesKHR; quantizationMapTexelSize is the per-texel
-+     * block (commonly 16x16 or 32x32) we rasterize against. */
-+    fmt_info = (VkPhysicalDeviceVideoFormatInfoKHR) {
-+        .sType      = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_FORMAT_INFO_KHR,
-+        .pNext      = &ctx->profile_list,
-+        .imageUsage = map_usage,
-+    };
-+
-+    ret = vk->GetPhysicalDeviceVideoFormatPropertiesKHR(s->hwctx->phys_dev,
-+                                                        &fmt_info, &nb_props, NULL);
-+    if (ret != VK_SUCCESS || !nb_props) {
-+        av_log(avctx, AV_LOG_WARNING, "pelorus_roi: no quantization-map image "
-+               "format advertised; disabled.\n");
-+        return;
-+    }
-+
-+    props  = av_calloc(nb_props, sizeof(*props));
-+    qprops = av_calloc(nb_props, sizeof(*qprops));
-+    if (!props || !qprops)
-+        goto out;
-+
-+    for (uint32_t i = 0; i < nb_props; i++) {
-+        qprops[i].sType = VK_STRUCTURE_TYPE_VIDEO_FORMAT_QUANTIZATION_MAP_PROPERTIES_KHR;
-+        props[i].sType  = VK_STRUCTURE_TYPE_VIDEO_FORMAT_PROPERTIES_KHR;
-+        props[i].pNext  = &qprops[i];
-+    }
-+
-+    ret = vk->GetPhysicalDeviceVideoFormatPropertiesKHR(s->hwctx->phys_dev,
-+                                                        &fmt_info, &nb_props, props);
-+    if (ret != VK_SUCCESS)
-+        goto out;
-+
-+    /* The on-GPU raster records a compute dispatch on the encode command
-+     * buffer, so it needs an encode queue family with VK_QUEUE_COMPUTE_BIT;
-+     * without CONFIG_PELORUS_QPMAP_GPU the rasterizer is not compiled in. */
-+#if CONFIG_PELORUS_QPMAP_GPU
-+    want_gpu = !!(ctx->qf_enc->flags & VK_QUEUE_COMPUTE_BIT);
-+#else
-+    want_gpu = 0;
-+#endif
-+
-+    /* Pick an advertised entry of the wanted format whose image usages cover
-+     * the fill path: STORAGE for the on-GPU raster, TRANSFER_DST for the host
-+     * raster's buffer-to-image copy. The map image is later created with
-+     * exactly that entry's tiling (VUID-VkImageCreateInfo-pNext-06811):
++    /* Format, tiling and fill path. The map image is later created with
++     * exactly the chosen entry's tiling (VUID-VkImageCreateInfo-pNext-06811):
 +     * drivers differ here, e.g. NVIDIA advertises its R8_SINT delta map in
-+     * LINEAR tiling only. */
-+    for (uint32_t i = 0; i < nb_props; i++) {
-+        if (props[i].format != ctx->qpmap_format ||
-+            !qprops[i].quantizationMapTexelSize.width ||
-+            !qprops[i].quantizationMapTexelSize.height)
-+            continue;
-+        if (want_gpu && sel_gpu < 0 &&
-+            (props[i].imageUsageFlags & VK_IMAGE_USAGE_STORAGE_BIT))
-+            sel_gpu = i;
-+        if (sel < 0 && (props[i].imageUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
-+            sel = i;
-+    }
-+    ctx->qpmap_gpu = sel_gpu >= 0;
-+    if (ctx->qpmap_gpu)
-+        sel = sel_gpu;
-+
-+    if (sel < 0) {
-+        av_log(avctx, AV_LOG_WARNING, "pelorus_roi: no advertised quantization-map "
-+               "entry has format %d with a fillable usage (%s); disabled. "
-+               "Advertised:\n", ctx->qpmap_format,
-+               want_gpu ? "STORAGE or TRANSFER_DST" : "TRANSFER_DST");
-+        for (uint32_t i = 0; i < nb_props; i++)
-+            av_log(avctx, AV_LOG_WARNING, "    format %d tiling %d usage 0x%x "
-+                   "texel %ux%u\n", props[i].format, props[i].imageTiling,
-+                   props[i].imageUsageFlags,
-+                   qprops[i].quantizationMapTexelSize.width,
-+                   qprops[i].quantizationMapTexelSize.height);
-+        goto out;
-+    }
-+    ctx->qpmap_texel_size = qprops[sel].quantizationMapTexelSize;
-+    ctx->qpmap_tiling     = props[sel].imageTiling;
-+    ctx->qpmap_fmt_usage  = props[sel].imageUsageFlags;
++     * LINEAR tiling only, RADV its R32_SINT map in OPTIMAL and LINEAR. */
++    if (pelorus_qpmap_pick_format(avctx, ctx, map_usage) <= 0)
++        return;
 +
 +    ctx->qpmap_w = (avctx->width  + ctx->qpmap_texel_size.width  - 1) /
 +                   ctx->qpmap_texel_size.width;
@@ -498,7 +636,8 @@ index 39c43300c4..6393ec2001 100644
 +     * convention). An emphasis map is normalized against that span. A delta
 +     * map is additionally clamped to the driver-reported per-codec delta
 +     * range, which can be far narrower (NVIDIA reports [0, 51] for H.264 and
-+     * H.265, i.e. no negative dQP), and to the R8_SINT texel range. */
++     * H.265, i.e. no negative dQP), and to the range of the map texel format
++     * (R8_SINT, R16_SINT or R32_SINT). */
 +    qp_range = pelorus_qp_range(avctx);
 +    ctx->qpmap_qp_delta_min = -qp_range;
 +    ctx->qpmap_qp_delta_max =  qp_range;
@@ -509,17 +648,18 @@ index 39c43300c4..6393ec2001 100644
 +            cap_max <= cap_min) {
 +            av_log(avctx, AV_LOG_WARNING, "pelorus_roi: could not query the "
 +                   "driver's quantization delta range; disabled.\n");
-+            goto out;
++            return;
 +        }
-+        ctx->qpmap_qp_delta_min = FFMAX(FFMAX(cap_min, -qp_range), INT8_MIN);
-+        ctx->qpmap_qp_delta_max = FFMIN(FFMIN(cap_max,  qp_range), INT8_MAX);
++        pelorus_qpmap_texel_range(ctx->qpmap_texel_bytes, &texel_min, &texel_max);
++        ctx->qpmap_qp_delta_min = FFMAX(FFMAX(cap_min, -qp_range), texel_min);
++        ctx->qpmap_qp_delta_max = FFMIN(FFMIN(cap_max,  qp_range), texel_max);
 +        /* Texels outside every ROI carry 0 (no change); a range that excludes
 +         * 0 cannot express "no change", so steering would distort the whole
 +         * frame. */
 +        if (ctx->qpmap_qp_delta_min > 0 || ctx->qpmap_qp_delta_max < 0) {
 +            av_log(avctx, AV_LOG_WARNING, "pelorus_roi: driver delta range [%d, %d] "
 +                   "excludes 0; disabled.\n", cap_min, cap_max);
-+            goto out;
++            return;
 +        }
 +        if (ctx->qpmap_qp_delta_min == 0)
 +            av_log(avctx, AV_LOG_WARNING, "pelorus_roi: driver delta range is "
@@ -536,25 +676,49 @@ index 39c43300c4..6393ec2001 100644
 +    ctx->base.roi_allowed = 1;
 +
 +    av_log(avctx, AV_LOG_VERBOSE, "Pelorus QP-map steering enabled: %s map, "
-+           "%dx%d texels (%dx%d px/texel, %s tiling), dQP [%d, %d].\n",
-+           ctx->qpmap_emphasis ? "emphasis(R8_UNORM)" : "delta(R8_SINT)",
++           "format %d (%d byte%s/texel), %dx%d texels (%dx%d px/texel, %s "
++           "tiling), dQP [%d, %d], fill: %s.\n",
++           ctx->qpmap_emphasis ? "emphasis" : "delta", ctx->qpmap_format,
++           ctx->qpmap_texel_bytes, ctx->qpmap_texel_bytes == 1 ? "" : "s",
 +           ctx->qpmap_w, ctx->qpmap_h,
 +           ctx->qpmap_texel_size.width, ctx->qpmap_texel_size.height,
 +           ctx->qpmap_tiling == VK_IMAGE_TILING_LINEAR ? "linear" : "optimal",
-+           ctx->qpmap_qp_delta_min, ctx->qpmap_qp_delta_max);
++           ctx->qpmap_qp_delta_min, ctx->qpmap_qp_delta_max,
++           pelorus_qpmap_fill_name(ctx->qpmap_fill));
 +
-+    /* qpmap_gpu (set above) prefers the on-GPU raster: compute imageStore from
-+     * the ROI rect SSBO, recorded on the encode command buffer with no
-+     * cross-queue ownership transfer. The shader build is deferred to
-+     * pelorus_qpmap_init_gpu() because it registers against enc_pool, which is
-+     * not created until after this probe. */
-+
-+out:
-+    av_free(props);
-+    av_free(qprops);
++    /* An on-GPU fill builds its shader in pelorus_qpmap_init_gpu() because it
++     * registers against enc_pool, which is not created until after this
++     * probe. */
 +}
 +
-+/* Lazily create the quant-map image for one exec-pool slot (sized from
++/* Host-mapped fill: map the slot's LINEAR image memory once and record where
++ * its texels start and how far apart its rows are. The memory stays mapped
++ * until vkFreeMemory, which unmaps it implicitly. Returns 0 or AVERROR. */
++static int pelorus_qpmap_map_host(FFVulkanEncodeContext *ctx, int slot)
++{
++    FFVulkanContext *s = &ctx->s;
++    FFVulkanFunctions *vk = &s->vkfn;
++    VkSubresourceLayout layout = { 0 };
++    void *mapped = NULL;
++
++    if (vk->MapMemory(s->hwctx->act_dev, ctx->qpmap_mem[slot], 0, VK_WHOLE_SIZE,
++                      0, &mapped) != VK_SUCCESS)
++        return AVERROR_EXTERNAL;
++    vk->GetImageSubresourceLayout(s->hwctx->act_dev, ctx->qpmap_img[slot],
++                                  &(VkImageSubresource) {
++                                      .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
++                                  }, &layout);
++    if (layout.rowPitch < (VkDeviceSize)ctx->qpmap_w * ctx->qpmap_texel_bytes)
++        return AVERROR_EXTERNAL;
++    ctx->qpmap_host[slot] = (PelorusQpMapHostSlot) {
++        .texels = (uint8_t *)mapped + layout.offset,
++        .pitch  = layout.rowPitch,
++        .layout = VK_IMAGE_LAYOUT_PREINITIALIZED,
++    };
++    return 0;
++}
++
++/* Lazily create the quant-map image for one exec-pool context (sized from
 + * qpmap_w/h). The arrays themselves are allocated on first call. Returns 0 on
 + * success; on failure clears qpmap_enabled and degrades to pass-through. */
 +static int pelorus_qpmap_ensure_image(AVCodecContext *avctx,
@@ -576,22 +740,29 @@ index 39c43300c4..6393ec2001 100644
 +        VK_IMAGE_USAGE_VIDEO_ENCODE_EMPHASIS_MAP_BIT_KHR :
 +        VK_IMAGE_USAGE_VIDEO_ENCODE_QUANTIZATION_DELTA_MAP_BIT_KHR;
 +    VkMemoryPropertyFlagBits mem_flags;
++    const int host = ctx->qpmap_fill == PELORUS_QPMAP_FILL_HOST;
 +    int err = 0;
 +
-+    /* The on-GPU raster compute-stores into the map (GENERAL layout) instead of
-+     * a transfer copy, so it needs STORAGE rather than TRANSFER_DST usage. The
-+     * dispatch records on the encode command buffer (the encode queue family is
-+     * probed for VK_QUEUE_COMPUTE_BIT before qpmap_gpu is set), so the image
-+     * stays EXCLUSIVE to one queue family — no ownership transfer. */
-+    VkImageUsageFlags fill_usage = ctx->qpmap_gpu ?
-+        VK_IMAGE_USAGE_STORAGE_BIT : VK_IMAGE_USAGE_TRANSFER_DST_BIT;
++    /* Image usage = map usage + what the fill path writes with. The on-GPU
++     * raster compute-stores into the map (GENERAL layout), so it needs STORAGE;
++     * the copy path needs TRANSFER_DST; the host-mapped path writes through a
++     * memory mapping and needs no extra usage, but host-visible memory and a
++     * PREINITIALIZED start (host access to a linear image is defined only in
++     * PREINITIALIZED or GENERAL layout). Every fill records on the encode
++     * command buffer, so the image stays EXCLUSIVE to one queue family — no
++     * ownership transfer. */
++    VkImageUsageFlags fill_usage =
++        ctx->qpmap_fill == PELORUS_QPMAP_FILL_GPU  ? VK_IMAGE_USAGE_STORAGE_BIT :
++        ctx->qpmap_fill == PELORUS_QPMAP_FILL_COPY ? VK_IMAGE_USAGE_TRANSFER_DST_BIT : 0;
 +
 +    if (!ctx->qpmap_img) {
 +        ctx->qpmap_nb_img = ctx->enc_pool.pool_size;
 +        ctx->qpmap_img  = av_calloc(ctx->qpmap_nb_img, sizeof(*ctx->qpmap_img));
 +        ctx->qpmap_mem  = av_calloc(ctx->qpmap_nb_img, sizeof(*ctx->qpmap_mem));
 +        ctx->qpmap_view = av_calloc(ctx->qpmap_nb_img, sizeof(*ctx->qpmap_view));
-+        if (!ctx->qpmap_img || !ctx->qpmap_mem || !ctx->qpmap_view) {
++        ctx->qpmap_host = av_calloc(ctx->qpmap_nb_img, sizeof(*ctx->qpmap_host));
++        if (!ctx->qpmap_img || !ctx->qpmap_mem || !ctx->qpmap_view ||
++            !ctx->qpmap_host) {
 +            err = AVERROR(ENOMEM);
 +            goto fail;
 +        }
@@ -612,7 +783,8 @@ index 39c43300c4..6393ec2001 100644
 +        .tiling        = ctx->qpmap_tiling,
 +        .usage         = usage | fill_usage,
 +        .sharingMode   = VK_SHARING_MODE_EXCLUSIVE,
-+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
++        .initialLayout = host ? VK_IMAGE_LAYOUT_PREINITIALIZED
++                              : VK_IMAGE_LAYOUT_UNDEFINED,
 +    };
 +    ret = vk->CreateImage(s->hwctx->act_dev, &img_info, s->hwctx->alloc,
 +                          &ctx->qpmap_img[slot]);
@@ -624,7 +796,9 @@ index 39c43300c4..6393ec2001 100644
 +    mreq_info.image = ctx->qpmap_img[slot];
 +    vk->GetImageMemoryRequirements2(s->hwctx->act_dev, &mreq_info, &mreq);
 +    err = ff_vk_alloc_mem(s, &mreq.memoryRequirements,
-+                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, NULL,
++                          host ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++                                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
++                               : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, NULL,
 +                          &mem_flags, &ctx->qpmap_mem[slot]);
 +    if (err < 0)
 +        goto fail;
@@ -636,6 +810,9 @@ index 39c43300c4..6393ec2001 100644
 +        err = AVERROR_EXTERNAL;
 +        goto fail;
 +    }
++
++    if (host && (err = pelorus_qpmap_map_host(ctx, slot)) < 0)
++        goto fail;
 +
 +    view_info = (VkImageViewCreateInfo) {
 +        .sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -667,12 +844,15 @@ index 39c43300c4..6393ec2001 100644
 +        ctx->qpmap_img[slot] = VK_NULL_HANDLE;
 +    if (ctx->qpmap_mem)
 +        ctx->qpmap_mem[slot] = VK_NULL_HANDLE;
++    if (ctx->qpmap_host)
++        ctx->qpmap_host[slot] = (PelorusQpMapHostSlot) { 0 };
 +    ctx->qpmap_enabled = 0;
 +    if (!ctx->qpmap_warned) {
 +        ctx->qpmap_warned = 1;
 +        av_log(avctx, AV_LOG_WARNING,
-+               "pelorus_roi: failed to create the quantization-map image; "
-+               "disabling QP-map steering (pass-through).\n");
++               "pelorus_roi: failed to create the quantization-map image "
++               "(format %d, %s); disabling QP-map steering (pass-through).\n",
++               ctx->qpmap_format, pelorus_qpmap_fill_name(ctx->qpmap_fill));
 +    }
 +    return err;
 +}
@@ -824,8 +1004,8 @@ index 39c43300c4..6393ec2001 100644
 + * time: one invocation per map texel reverse-scans the ROI rect SSBO and
 + * imageStores the winning delta (R8_SINT) or emphasis (R8_UNORM). Registered
 + * against the encode exec pool so the dispatch records on the encode command
-+ * buffer. On any failure it returns < 0 and the caller clears qpmap_gpu, so the
-+ * host raster path takes over.
++ * buffer. On any failure it returns < 0 and the caller falls back to a host
++ * fill path (pelorus_qpmap_init_gpu).
 + *
 + * The descriptor-set binding order below MUST match the declaration order in
 + * pelorus_qpmap.comp.glsl exactly; with precompiled SPIR-V a mismatch is silent
@@ -894,14 +1074,16 @@ index 39c43300c4..6393ec2001 100644
 +     * double-free. */
 +    ff_vk_shader_free(s, shd);
 +    av_log(avctx, AV_LOG_VERBOSE, "pelorus_roi: could not build the on-GPU "
-+           "rasterizer; using the host raster path.\n");
++           "rasterizer.\n");
 +    return err;
 +}
 +
 +/* GPU-raster bring-up: build the rasterizer shader (registered against the now-
 + * initialized enc_pool) and the inactive-binding placeholder image. On any
-+ * failure clear qpmap_gpu so the host raster path takes over. Called once, after
-+ * ff_vk_exec_pool_init. */
++ * failure fall back to a host fill path the chosen entry allows: the staging
++ * copy if it advertises TRANSFER_DST (an encode family with compute may record
++ * the copy), else the host-mapped fill for a LINEAR entry, else disable.
++ * Called once, after ff_vk_exec_pool_init. */
 +static int pelorus_qpmap_init_gpu(AVCodecContext *avctx,
 +                                  FFVulkanEncodeContext *ctx)
 +{
@@ -909,20 +1091,23 @@ index 39c43300c4..6393ec2001 100644
 +                                          : VK_FORMAT_R8_UNORM;
 +    if (pelorus_qpmap_build_shader(avctx, ctx) < 0 ||
 +        pelorus_qpmap_placeholder(avctx, ctx, ph_fmt) < 0) {
-+        ctx->qpmap_gpu = 0;
-+        if (!(ctx->qpmap_fmt_usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
++        if (ctx->qpmap_fmt_usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) {
++            ctx->qpmap_fill = PELORUS_QPMAP_FILL_COPY;
++        } else if (ctx->qpmap_tiling == VK_IMAGE_TILING_LINEAR) {
++            ctx->qpmap_fill = PELORUS_QPMAP_FILL_HOST;
++        } else {
++            ctx->qpmap_fill    = PELORUS_QPMAP_FILL_NONE;
 +            ctx->qpmap_enabled = 0;
 +            av_log(avctx, AV_LOG_WARNING, "pelorus_roi: on-GPU raster setup "
-+                   "failed and the map format has no TRANSFER_DST usage for "
-+                   "the host raster; disabled.\n");
++                   "failed and the map entry allows no host fill (no "
++                   "TRANSFER_DST usage, not LINEAR); disabled.\n");
 +            return 0;
 +        }
 +        av_log(avctx, AV_LOG_VERBOSE, "pelorus_roi: on-GPU raster setup failed; "
-+               "using the host raster path.\n");
++               "falling back.\n");
 +    }
 +    av_log(avctx, AV_LOG_VERBOSE, "Pelorus QP-map raster: %s.\n",
-+           ctx->qpmap_gpu ? "on-GPU compute (pelorus_qpmap)"
-+                          : "host raster + staging copy");
++           pelorus_qpmap_fill_name(ctx->qpmap_fill));
 +    return 0;
 +}
 +
@@ -1042,15 +1227,145 @@ index 39c43300c4..6393ec2001 100644
 +}
 +#endif /* CONFIG_PELORUS_QPMAP_GPU */
 +
-+/* Host-raster fallback (no compute on the encode queue, or shader build failed):
-+ * paint the ROI rect list into the per-texel scratch, then upload it into the
-+ * device-local quant-map image via a staging buffer + vkCmdCopyBufferToImage on
-+ * the encode command buffer, leaving the image in
-+ * VK_IMAGE_LAYOUT_VIDEO_ENCODE_QUANTIZATION_MAP_KHR ready for the encode. Records
-+ * on the passed exec; the staging buffer is kept alive as an exec dependency.
-+ * Uses the SAME rect list and dQP convention as the GPU path. Returns 0. */
++/* Store one map texel `bytes` wide in host byte order: the low bytes of the
++ * two's-complement value for a signed delta format, the code value for a
++ * unorm emphasis format. */
++static void pelorus_qpmap_store_texel(uint8_t *dst, int bytes, int32_t v)
++{
++    if (bytes == 1) {
++        dst[0] = (uint8_t)v;
++    } else if (bytes == 2) {
++        uint16_t u = (uint16_t)v;
++        memcpy(dst, &u, sizeof(u));
++    } else {
++        memcpy(dst, &v, sizeof(v));
++    }
++}
++
++/* Host raster shared by the copy and host-mapped fills: paint the ROI rect
++ * list into the per-texel scratch (one int32 dQP per texel), then store it in
++ * the probed map format as qpmap_h rows of qpmap_w texels, `pitch` bytes apart.
++ * Reverse scan so the first rect wins on overlap (lockstep with the shader and
++ * the libx265/NVENC/QSV rasterizers). A delta map stores the signed dQP
++ * verbatim; an emphasis map converts it to a unorm code value where a request
++ * for *lower* QP (negative dQP, "spend more bits") becomes a *higher*
++ * emphasis. Uses the SAME rect list and dQP convention as the GPU path. */
++static void pelorus_qpmap_raster(FFVulkanEncodeContext *ctx,
++                                 const PelorusQpRect *rects, int nb_rects,
++                                 uint8_t *dst, size_t pitch)
++{
++    const int mapw = ctx->qpmap_w, maph = ctx->qpmap_h;
++    const int bytes = ctx->qpmap_texel_bytes;
++    const int code_max = bytes == 1 ? UINT8_MAX : UINT16_MAX;
++    int range = ctx->qpmap_qp_delta_max - ctx->qpmap_qp_delta_min;
++
++    if (range <= 0)
++        range = 1;
++
++    memset(ctx->qpmap_scratch, 0,
++           ctx->qpmap_scratch_size * sizeof(*ctx->qpmap_scratch));
++    for (int i = nb_rects - 1; i >= 0; i--) {
++        const PelorusQpRect *r = &rects[i];
++        for (int y = r->y0; y < r->y1; y++)
++            for (int x = r->x0; x < r->x1; x++)
++                ctx->qpmap_scratch[x + y * mapw] = r->delta;
++    }
++
++    for (int y = 0; y < maph; y++) {
++        uint8_t *row = dst + (size_t)y * pitch;
++        for (int x = 0; x < mapw; x++) {
++            int32_t v = ctx->qpmap_scratch[x + y * mapw];
++            if (ctx->qpmap_emphasis) {
++                float emph = (float)(-v - ctx->qpmap_qp_delta_min) / (float)range;
++                v = av_clip(lrintf(emph * code_max), 0, code_max);
++            }
++            pelorus_qpmap_store_texel(row + (size_t)x * bytes, bytes, v);
++        }
++    }
++}
++
++/* Host-mapped fill (PELORUS_QPMAP_FILL_HOST), for an encode queue family that
++ * can record neither a copy nor a dispatch (RADV's has VIDEO_ENCODE only): the
++ * host rasterizes straight into this context's persistently mapped LINEAR map
++ * image, then one barrier on the encode command buffer moves it from the
++ * host-writable layout to VK_IMAGE_LAYOUT_VIDEO_ENCODE_QUANTIZATION_MAP_KHR.
++ * ff_vk_exec_start() has already waited for this context's previous
++ * submission, the last one that read the image, so the host write cannot race
++ * the encoder; the queue submission makes the host write visible to the
++ * device. HOST and VIDEO_ENCODE are the only stages involved, both valid on a
++ * video-encode-only queue. pelorus_qpmap_host_release() returns the image to
++ * GENERAL after the encode. */
++static void pelorus_qpmap_host_fill(FFVulkanEncodeContext *ctx,
++                                    FFVkExecContext *exec, int slot,
++                                    const PelorusQpRect *rects, int nb_rects)
++{
++    FFVulkanFunctions *vk = &ctx->s.vkfn;
++    PelorusQpMapHostSlot *hs = &ctx->qpmap_host[slot];
++
++    pelorus_qpmap_raster(ctx, rects, nb_rects, hs->texels, hs->pitch);
++
++    vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
++        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++        .imageMemoryBarrierCount = 1,
++        .pImageMemoryBarriers = &(VkImageMemoryBarrier2) {
++            .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
++            .srcStageMask  = VK_PIPELINE_STAGE_2_HOST_BIT,
++            .srcAccessMask = VK_ACCESS_2_HOST_WRITE_BIT,
++            .dstStageMask  = VK_PIPELINE_STAGE_2_VIDEO_ENCODE_BIT_KHR,
++            .dstAccessMask = VK_ACCESS_2_VIDEO_ENCODE_READ_BIT_KHR,
++            .oldLayout     = hs->layout,
++            .newLayout     = VK_IMAGE_LAYOUT_VIDEO_ENCODE_QUANTIZATION_MAP_KHR,
++            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++            .image = ctx->qpmap_img[slot],
++            .subresourceRange = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
++                                  .levelCount = 1, .layerCount = 1 },
++        },
++    });
++}
++
++/* Recorded after vkCmdEndVideoCodingKHR on the same command buffer: move a
++ * host-filled map back to GENERAL once the encode has read it, so the host may
++ * write it again after this context's fence signals (host access to a linear
++ * image is defined only in PREINITIALIZED or GENERAL layout, while the encode
++ * needs VIDEO_ENCODE_QUANTIZATION_MAP_KHR, VUID-vkCmdEncodeVideoKHR-pNext-
++ * 10314). The fence wait in ff_vk_exec_start() orders the transition before
++ * the next host write. */
++static void pelorus_qpmap_host_release(FFVulkanEncodeContext *ctx,
++                                       FFVkExecContext *exec, int slot)
++{
++    FFVulkanFunctions *vk = &ctx->s.vkfn;
++
++    vk->CmdPipelineBarrier2(exec->buf, &(VkDependencyInfo) {
++        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++        .imageMemoryBarrierCount = 1,
++        .pImageMemoryBarriers = &(VkImageMemoryBarrier2) {
++            .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
++            .srcStageMask  = VK_PIPELINE_STAGE_2_VIDEO_ENCODE_BIT_KHR,
++            .srcAccessMask = VK_ACCESS_2_NONE,
++            .dstStageMask  = VK_PIPELINE_STAGE_2_NONE,
++            .dstAccessMask = VK_ACCESS_2_NONE,
++            .oldLayout     = VK_IMAGE_LAYOUT_VIDEO_ENCODE_QUANTIZATION_MAP_KHR,
++            .newLayout     = VK_IMAGE_LAYOUT_GENERAL,
++            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++            .image = ctx->qpmap_img[slot],
++            .subresourceRange = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
++                                  .levelCount = 1, .layerCount = 1 },
++        },
++    });
++    ctx->qpmap_host[slot].layout = VK_IMAGE_LAYOUT_GENERAL;
++}
++
++/* Copy fill (PELORUS_QPMAP_FILL_COPY; also the fallback when the shader build
++ * failed): raster the ROI rect list into a staging buffer, then upload it into
++ * the device-local quant-map image with vkCmdCopyBufferToImage on the encode
++ * command buffer, leaving the image in
++ * VK_IMAGE_LAYOUT_VIDEO_ENCODE_QUANTIZATION_MAP_KHR ready for the encode. Only
++ * chosen when the encode queue family supports the copy. Records on the passed
++ * exec; the staging buffer is kept alive as an exec dependency. Returns 0. */
 +static int pelorus_qpmap_upload(AVCodecContext *avctx, FFVulkanEncodeContext *ctx,
-+                                FFVkExecContext *exec, int slot, int emphasis,
++                                FFVkExecContext *exec, int slot,
 +                                const PelorusQpRect *rects, int nb_rects)
 +{
 +    int err;
@@ -1058,44 +1373,19 @@ index 39c43300c4..6393ec2001 100644
 +    FFVulkanFunctions *vk = &s->vkfn;
 +    AVBufferRef *stage_ref = NULL;
 +    FFVkBuffer *stage;
-+    int mapw = ctx->qpmap_w;
-+    size_t n = (size_t)ctx->qpmap_w * ctx->qpmap_h;
-+    uint8_t *dst;
-+
-+    /* Reverse scan so the first rect wins on overlap (lockstep with the shader
-+     * and the libx265/NVENC/QSV rasterizers). */
-+    memset(ctx->qpmap_scratch, 0, ctx->qpmap_scratch_size);
-+    for (int i = nb_rects - 1; i >= 0; i--) {
-+        const PelorusQpRect *r = &rects[i];
-+        for (int y = r->y0; y < r->y1; y++)
-+            for (int x = r->x0; x < r->x1; x++)
-+                ctx->qpmap_scratch[x + y * mapw] = (int8_t)r->delta;
-+    }
++    size_t pitch = (size_t)ctx->qpmap_w * ctx->qpmap_texel_bytes;
 +
 +    err = ff_vk_get_pooled_buffer(s, &ctx->qpmap_stage_pool, &stage_ref,
-+                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT, NULL, n,
++                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT, NULL,
++                                  pitch * ctx->qpmap_h,
 +                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
 +                                  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 +    if (err < 0)
 +        return err;
 +    stage = (FFVkBuffer *)stage_ref->data;
-+    dst = stage->mapped_mem;
 +
-+    /* Delta map: store the signed dQP bytes verbatim (R8_SINT). Emphasis map:
-+     * convert dQP into a [0,255] emphasis where a request for *lower* QP
-+     * (negative dQP, "spend more bits") becomes a *higher* emphasis value. */
-+    if (!emphasis) {
-+        memcpy(dst, ctx->qpmap_scratch, n);
-+    } else {
-+        int range = ctx->qpmap_qp_delta_max - ctx->qpmap_qp_delta_min;
-+        if (range <= 0)
-+            range = 1;
-+        for (size_t i = 0; i < n; i++) {
-+            float emph = (float)(-ctx->qpmap_scratch[i] - ctx->qpmap_qp_delta_min) /
-+                         (float)range;
-+            dst[i] = (uint8_t)av_clip(lrintf(emph * 255.0f), 0, 255);
-+        }
-+    }
++    /* Tightly packed rows: bufferRowLength 0 below means qpmap_w texels. */
++    pelorus_qpmap_raster(ctx, rects, nb_rects, stage->mapped_mem, pitch);
 +
 +    err = ff_vk_exec_add_dep_buf(s, exec, &stage_ref, 1, 0);
 +    if (err < 0) {
@@ -1169,9 +1459,11 @@ index 39c43300c4..6393ec2001 100644
 +        if (ctx->qpmap_mem && ctx->qpmap_mem[i])
 +            vk->FreeMemory(s->hwctx->act_dev, ctx->qpmap_mem[i], s->hwctx->alloc);
 +    }
++    /* vkFreeMemory unmaps a host-mapped (FILL_HOST) map implicitly. */
 +    av_freep(&ctx->qpmap_view);
 +    av_freep(&ctx->qpmap_img);
 +    av_freep(&ctx->qpmap_mem);
++    av_freep(&ctx->qpmap_host);
 +    if (ctx->qpmap_shader_ready)
 +        ff_vk_shader_free(s, &ctx->qpmap_shd);
 +    if (ctx->qpmap_ph_view)
@@ -1190,7 +1482,7 @@ index 39c43300c4..6393ec2001 100644
  av_cold void ff_vulkan_encode_uninit(FFVulkanEncodeContext *ctx)
  {
      FFVulkanContext *s = &ctx->s;
-@@ -36,6 +1031,10 @@ av_cold void ff_vulkan_encode_uninit(FFVulkanEncodeContext *ctx)
+@@ -36,6 +1337,10 @@ av_cold void ff_vulkan_encode_uninit(FFVulkanEncodeContext *ctx)
      /* Wait on and free execution pool */
      ff_vk_exec_pool_free(s, &ctx->enc_pool);
  
@@ -1201,36 +1493,40 @@ index 39c43300c4..6393ec2001 100644
      /* Destroy the session params */
      if (ctx->session_params)
          vk->DestroyVideoSessionParametersKHR(s->hwctx->act_dev,
-@@ -173,6 +1172,9 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
+@@ -173,6 +1478,10 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
  
      VkVideoReferenceSlotInfoKHR ref_slot[37];
      VkVideoEncodeInfoKHR encode_info;
 +#ifdef VK_KHR_video_encode_quantization_map
 +    VkVideoEncodeQuantizationMapInfoKHR qpmap_info;
++    int qpmap_host_slot = -1;
 +#endif
  
      /* Create packet data buffer */
      max_pkt_size = FFALIGN(3 * ctx->base.surface_width * ctx->base.surface_height + (1 << 16),
-@@ -412,6 +1414,69 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
+@@ -412,6 +1721,79 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
              .imageMemoryBarrierCount = nb_img_bar,
          });
  
 +#ifdef VK_KHR_video_encode_quantization_map
 +    /* Pelorus: rasterize this frame's ROI into the quant-map image and chain it
 +     * onto the encode. The ROI side data is coalesced into a compact rect list
-+     * once; the on-GPU path (qpmap_gpu) dispatches a compute shader that writes
-+     * the texel image directly, the host fallback paints + uploads it. A frame
-+     * with no ROI side data binds no map (pass-through, zero behaviour change).
-+     * The copy/dispatch is recorded BEFORE vkCmdBeginVideoCodingKHR: transfer
-+     * and compute commands are invalid inside a video coding scope
-+     * (VUID-vkCmdCopyBufferToImage-videocoding, VUID-vkCmdDispatch-videocoding).
-+     * ADR-0114 Tier 2. */
++     * once; the probed fill path writes the texel image (compute dispatch,
++     * staging copy, or host write into a mapped linear image; ADR-0182). A
++     * frame with no ROI side data binds no map (pass-through, zero behaviour
++     * change). The copy/dispatch/layout change is recorded BEFORE
++     * vkCmdBeginVideoCodingKHR: transfer and compute commands are invalid
++     * inside a video coding scope (VUID-vkCmdCopyBufferToImage-videocoding,
++     * VUID-vkCmdDispatch-videocoding). ADR-0114 Tier 2. */
 +    if (ctx->qpmap_enabled) {
 +        PelorusQpRect qpmap_rects[PELORUS_QPMAP_MAX_RECTS];
 +        int qpmap_nb_rects = 0;
-+        int qpmap_slot = ctx->qpmap_next;
++        /* One map image per exec-pool context: ff_vk_exec_start() above
++         * waited for this context's previous submission, the last encode that
++         * read image[exec->idx]. */
++        int qpmap_slot = exec->idx;
 +
-+        if (!ctx->qpmap_gpu && !ctx->qpmap_scratch) {
++        if (ctx->qpmap_fill != PELORUS_QPMAP_FILL_GPU && !ctx->qpmap_scratch) {
 +            ctx->qpmap_scratch_size = ctx->qpmap_w * ctx->qpmap_h;
 +            ctx->qpmap_scratch = av_calloc(ctx->qpmap_scratch_size,
 +                                           sizeof(*ctx->qpmap_scratch));
@@ -1243,26 +1539,33 @@ index 39c43300c4..6393ec2001 100644
 +        if (pelorus_qpmap_build_rects(avctx, ctx, src, qpmap_rects,
 +                                      PELORUS_QPMAP_MAX_RECTS, &qpmap_nb_rects) &&
 +            pelorus_qpmap_ensure_image(avctx, ctx, qpmap_slot) == 0) {
++            switch (ctx->qpmap_fill) {
 +#if CONFIG_PELORUS_QPMAP_GPU
-+            if (ctx->qpmap_gpu)
++            case PELORUS_QPMAP_FILL_GPU:
 +                err = pelorus_qpmap_dispatch(avctx, ctx, exec, qpmap_slot,
 +                                             qpmap_rects, qpmap_nb_rects);
-+            else
++                break;
 +#endif
++            case PELORUS_QPMAP_FILL_HOST:
++                pelorus_qpmap_host_fill(ctx, exec, qpmap_slot,
++                                        qpmap_rects, qpmap_nb_rects);
++                qpmap_host_slot = qpmap_slot;
++                err = 0;
++                break;
++            default:
 +                err = pelorus_qpmap_upload(avctx, ctx, exec, qpmap_slot,
-+                                           ctx->qpmap_emphasis,
 +                                           qpmap_rects, qpmap_nb_rects);
++                break;
++            }
 +            if (err < 0)
 +                goto fail;
 +
 +            av_log(avctx, AV_LOG_DEBUG, "pelorus_roi: frame %" PRId64 ": %s map "
 +                   "slot %d, %d region(s).\n", base_pic->display_order,
-+                   ctx->qpmap_gpu ? "on-GPU" : "host", qpmap_slot,
-+                   qpmap_nb_rects);
-+
-+            /* Advance the round-robin only once a frame actually bound a map, so
-+             * the per-slot image lines up with the exec pool's own cycling. */
-+            ctx->qpmap_next = (ctx->qpmap_next + 1) % ctx->qpmap_nb_img;
++                   ctx->qpmap_fill == PELORUS_QPMAP_FILL_GPU  ? "on-GPU" :
++                   ctx->qpmap_fill == PELORUS_QPMAP_FILL_HOST ? "host-mapped" :
++                                                                "host",
++                   qpmap_slot, qpmap_nb_rects);
 +
 +            qpmap_info = (VkVideoEncodeQuantizationMapInfoKHR) {
 +                .sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_QUANTIZATION_MAP_INFO_KHR,
@@ -1281,7 +1584,20 @@ index 39c43300c4..6393ec2001 100644
      /* Start, use parameters */
      vk->CmdBeginVideoCodingKHR(cmd_buf, &encode_start);
  
-@@ -885,6 +1950,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -429,6 +1811,12 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
+     /* End encoding */
+     vk->CmdEndVideoCodingKHR(cmd_buf, &encode_end);
+ 
++#ifdef VK_KHR_video_encode_quantization_map
++    /* Pelorus: hand a host-mapped map back to the host-writable layout. */
++    if (qpmap_host_slot >= 0)
++        pelorus_qpmap_host_release(ctx, exec, qpmap_host_slot);
++#endif
++
+     /* End recording and submit for execution */
+     err = ff_vk_exec_submit(&ctx->s, vp->exec);
+     if (err < 0)
+@@ -885,6 +2273,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      if (err < 0)
          return err;
  
@@ -1294,7 +1610,7 @@ index 39c43300c4..6393ec2001 100644
      /* Create command and query pool */
      query_create = (VkQueryPoolVideoEncodeFeedbackCreateInfoKHR) {
          .sType = VK_STRUCTURE_TYPE_QUERY_POOL_VIDEO_ENCODE_FEEDBACK_CREATE_INFO_KHR,
-@@ -897,6 +1968,15 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -897,6 +2291,15 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      if (err < 0)
          return err;
  
@@ -1302,7 +1618,7 @@ index 39c43300c4..6393ec2001 100644
 +#if CONFIG_PELORUS_QPMAP_GPU
 +    /* Now that enc_pool exists, build the on-GPU rasterizer (or fall back to the
 +     * host raster). Never fails the encoder. */
-+    if (ctx->qpmap_enabled && ctx->qpmap_gpu)
++    if (ctx->qpmap_enabled && ctx->qpmap_fill == PELORUS_QPMAP_FILL_GPU)
 +        pelorus_qpmap_init_gpu(avctx, ctx);
 +#endif
 +#endif
@@ -1310,7 +1626,7 @@ index 39c43300c4..6393ec2001 100644
      if (ctx->opts.quality > ctx->enc_caps.maxQualityLevels) {
          av_log(avctx, AV_LOG_ERROR, "Invalid quality level %i: allowed range is "
                                      "0 to %i\n",
-@@ -1038,6 +2118,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -1038,6 +2441,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      /* Create session */
      session_create.pVideoProfile = &ctx->profile;
      session_create.flags = 0x0;
@@ -1323,7 +1639,7 @@ index 39c43300c4..6393ec2001 100644
      session_create.queueFamilyIndex = ctx->qf_enc->idx;
      session_create.maxCodedExtent = ctx->caps.maxCodedExtent;
      session_create.maxDpbSlots = ctx->caps.maxDpbSlots;
-@@ -1076,18 +2162,39 @@ int ff_vulkan_encode_create_session_params(AVCodecContext *avctx, FFVulkanEncode
+@@ -1076,18 +2485,39 @@ int ff_vulkan_encode_create_session_params(AVCodecContext *avctx, FFVulkanEncode
  
      VkVideoEncodeQualityLevelInfoKHR q_info;
      VkVideoSessionParametersCreateInfoKHR session_params_create;
@@ -1364,10 +1680,10 @@ index 39c43300c4..6393ec2001 100644
      /* Create session parameters */
      ret = vk->CreateVideoSessionParametersKHR(s->hwctx->act_dev, &session_params_create,
 diff --git a/libavcodec/vulkan_encode.h b/libavcodec/vulkan_encode.h
-index 23c35898c1..5d7f77a965 100644
+index 23c35898c1..3001be41b7 100644
 --- a/libavcodec/vulkan_encode.h
 +++ b/libavcodec/vulkan_encode.h
-@@ -155,6 +155,16 @@ typedef struct FFVkEncodeCommonOptions {
+@@ -155,6 +155,17 @@ typedef struct FFVkEncodeCommonOptions {
      int qp;
      int quality;
      int profile;
@@ -1377,14 +1693,15 @@ index 23c35898c1..5d7f77a965 100644
 +     * (default off). When enabled at init we runtime-probe
 +     * VK_KHR_video_encode_quantization_map: a per-block delta-QP map under CQP
 +     * (VK_VIDEO_ENCODE_CAPABILITY_QUANTIZATION_DELTA_MAP_BIT_KHR), or an
-+     * R8_UNORM emphasis map under CBR/VBR (..._EMPHASIS_MAP_BIT_KHR). The map
-+     * image is bound zero-copy at vkCmdEncodeVideoKHR. ADR-0114 Tier 2. */
++     * emphasis map under CBR/VBR (..._EMPHASIS_MAP_BIT_KHR), in whichever map
++     * format the driver advertises. The map image is bound zero-copy at
++     * vkCmdEncodeVideoKHR. ADR-0114 Tier 2, ADR-0182. */
 +    int pelorus_roi;
 +
      int level;
      int tier;
      int async_depth;
-@@ -166,6 +176,23 @@ typedef struct FFVkEncodeCommonOptions {
+@@ -166,6 +177,42 @@ typedef struct FFVkEncodeCommonOptions {
  #define FF_VK_RC_MODE_AUTO 0xFFFFFFFF
  } FFVkEncodeCommonOptions;
  
@@ -1405,10 +1722,29 @@ index 23c35898c1..5d7f77a965 100644
 +    int32_t _pad2;
 +} PelorusQpRect;
 +
++/* Pelorus QP-map fill paths (ADR-0182), in order of preference. Which one can
++ * write the map depends on the encode queue family, the usages and tiling of
++ * the advertised map format, and the build. */
++enum PelorusQpMapFill {
++    PELORUS_QPMAP_FILL_NONE = 0,
++    PELORUS_QPMAP_FILL_HOST,  ///< host writes a mapped LINEAR image; the encode
++                              ///< queue needs neither transfer nor compute
++    PELORUS_QPMAP_FILL_COPY,  ///< host raster + vkCmdCopyBufferToImage
++    PELORUS_QPMAP_FILL_GPU,   ///< pelorus_qpmap compute shader (8-bit formats)
++};
++
++/* Per-slot state of a host-mapped (PELORUS_QPMAP_FILL_HOST) map image. */
++typedef struct PelorusQpMapHostSlot {
++    uint8_t      *texels;     ///< first texel of the persistently mapped image
++    VkDeviceSize  pitch;      ///< row pitch in bytes (vkGetImageSubresourceLayout)
++    VkImageLayout layout;     ///< layout the host writes in: PREINITIALIZED
++                              ///< before the first encode, GENERAL after
++} PelorusQpMapHostSlot;
++
  typedef struct FFVulkanEncodeContext {
      FFVulkanContext s;
      FFVkVideoCommon common;
-@@ -195,6 +222,43 @@ typedef struct FFVulkanEncodeContext {
+@@ -195,6 +242,45 @@ typedef struct FFVulkanEncodeContext {
      AVVulkanDeviceQueueFamily *qf_enc;
      FFVkExecPool enc_pool;
  
@@ -1416,10 +1752,12 @@ index 23c35898c1..5d7f77a965 100644
 +     * inert unless opts.pelorus_roi is set and the driver advertises the
 +     * VK_KHR_video_encode_quantization_map extension + a usable map mode. */
 +    int      qpmap_enabled;       ///< probe succeeded; bind a map per frame
-+    int      qpmap_emphasis;      ///< 1 = emphasis map (CBR/VBR, R8_UNORM),
-+                                  ///< 0 = delta map (CQP, R8_SINT)
++    int      qpmap_emphasis;      ///< 1 = emphasis map (CBR/VBR, unorm),
++                                  ///< 0 = delta map (CQP, signed)
 +    int      qpmap_warned;        ///< rate-limit the degrade warning to once
-+    VkFormat qpmap_format;        ///< quant-map image format (R8_SINT/R8_UNORM)
++    VkFormat qpmap_format;        ///< advertised map format: R8/R16/R32_SINT
++                                  ///< (delta) or R8/R16_UNORM (emphasis)
++    int      qpmap_texel_bytes;   ///< bytes per texel of qpmap_format
 +    VkImageTiling qpmap_tiling;   ///< advertised tiling of the chosen map format
 +    VkImageUsageFlags qpmap_fmt_usage; ///< usages advertised for that entry
 +    VkExtent2D qpmap_texel_size;  ///< driver texel block size (e.g. 16x16)
@@ -1427,7 +1765,7 @@ index 23c35898c1..5d7f77a965 100644
 +    int      qpmap_h;             ///< map height in texels = ceil(H / texel.h)
 +    int      qpmap_qp_delta_min;  ///< clamp floor: driver min delta (delta map)
 +    int      qpmap_qp_delta_max;  ///< clamp ceil:  driver max delta (delta map)
-+    int      qpmap_gpu;           ///< raster on the GPU (compute) vs host raster
++    int      qpmap_fill;          ///< enum PelorusQpMapFill: how the map is written
 +    int      qpmap_shader_ready;  ///< qpmap_shd is built and must be freed
 +    FFVulkanShader qpmap_shd;     ///< the pelorus_qpmap rasterizer (compute)
 +    AVBufferPool  *qpmap_roi_pool;///< pooled host-visible ROI rect SSBOs (GPU path)
@@ -1435,24 +1773,24 @@ index 23c35898c1..5d7f77a965 100644
 +    VkDeviceMemory qpmap_ph_mem;  ///< (delta vs emphasis: only one is the real map)
 +    VkImageView    qpmap_ph_view; ///< placeholder view in the inactive map format
 +
-+    /* One host-rasterized map image PER encode exec-pool slot. The enc_pool
-+     * round-robins slots and ff_vk_exec_start() waits the slot's fence before
-+     * reuse, so binding image[slot] to frame N and only re-touching it when that
-+     * slot is reacquired guarantees the prior encode that read it has completed
-+     * (no cross-frame race at async_depth > 1). Allocated lazily, sized once. */
++    /* One map image PER encode exec-pool context, indexed by the context's
++     * idx. ff_vk_exec_start() waits for the context's fence before it records
++     * again, so when a frame writes image[exec->idx] the previous encode that
++     * read it has completed (no cross-frame race at async_depth > 1, also for
++     * the host-mapped fill). Allocated lazily, sized once. */
 +    int            qpmap_nb_img;  ///< == enc_pool.pool_size
-+    int            qpmap_next;    ///< round-robin index, mirrors the exec pool
 +    VkImage        *qpmap_img;    ///< [qpmap_nb_img]
 +    VkDeviceMemory *qpmap_mem;    ///< [qpmap_nb_img]
 +    VkImageView    *qpmap_view;   ///< [qpmap_nb_img]
++    PelorusQpMapHostSlot *qpmap_host; ///< [qpmap_nb_img], FILL_HOST only
 +    AVBufferPool  *qpmap_stage_pool;
-+    int8_t        *qpmap_scratch; ///< host map: one signed byte per texel
++    int32_t       *qpmap_scratch; ///< host raster: one signed dQP per texel
 +    int            qpmap_scratch_size;
 +
      FFHWBaseEncodePicture *slots[32];
  
      AVBufferRef *prev_buf_ref;
-@@ -204,6 +268,7 @@ typedef struct FFVulkanEncodeContext {
+@@ -204,6 +290,7 @@ typedef struct FFVulkanEncodeContext {
  #define VULKAN_ENCODE_COMMON_OPTIONS \
      { "qp", "Use an explicit constant quantizer for the whole stream", OFFSET(common.opts.qp), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 255, FLAGS }, \
      { "quality", "Set encode quality (trades off against speed, higher is slower)", OFFSET(common.opts.quality), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, FLAGS }, \

@@ -22,6 +22,15 @@ visible to a compiler, so this check pins each repair in the canonical diff:
 * Valid usage: the session parameters are QUANTIZATION_MAP_COMPATIBLE, the map
   image uses the advertised tiling, the map fill is recorded before
   ``vkCmdBeginVideoCodingKHR``, and H.265 enables ``cu_qp_delta``.
+* #278 / ADR-0182: the format query asks for the fill usages with the map
+  usage (RADV answers with the usages asked for), the format is the advertised
+  one rather than a hard-coded ``R8_SINT``, the delta clamp follows the texel
+  width, what the encode command buffer may record follows the encode queue
+  family's own capabilities, and the host-mapped fill (one map image per exec
+  context, PREINITIALIZED host-visible LINEAR image) moves the map into the
+  encode layout before ``vkCmdBeginVideoCodingKHR`` and back to GENERAL after
+  ``vkCmdEndVideoCodingKHR``.  The entry classifier and host raster themselves
+  run in ``scripts/test-vulkan-qpmap-fill.py``.
 
 ``--self-test`` mutates the patch text in memory and requires every mutation to
 be rejected, so the check is proven to fail on the defects it guards.
@@ -237,6 +246,51 @@ def check_valid_usage(files: dict[str, list[str]], enc: str) -> list[str]:
     return errors
 
 
+def check_fill_paths(files: dict[str, list[str]], enc: str, probe: str) -> list[str]:
+    """#278 / ADR-0182: a fillable map on every driver that advertises one."""
+
+    errors: list[str] = []
+    pick = function_body(enc, "pelorus_qpmap_pick_format")
+    if not pick:
+        return [f"{ENC}: no pelorus_qpmap_pick_format() (#278)"]
+    if not re.search(r"queries\[nb_queries\+\+\]\s*=\s*map_usage\s*\|[^;]*"
+                     r"VK_IMAGE_USAGE_TRANSFER_DST_BIT[^;]*VK_IMAGE_USAGE_STORAGE_BIT", pick):
+        errors.append(f"{ENC}: format query does not ask for the fill usages with the "
+                      "map usage (#278)")
+    if not re.search(r"queries\[nb_queries\+\+\]\s*=\s*map_usage\s*;", pick):
+        errors.append(f"{ENC}: no map-usage-only query for the host-mapped fill (#278)")
+    if not re.search(r"qf_props\[\s*ctx->qf_enc->idx\s*\]\.queueFamilyProperties\.queueFlags",
+                     pick):
+        errors.append(f"{ENC}: fill paths do not follow the encode queue family's own "
+                      "capabilities (VUID-vkCmdCopyBufferToImage-commandBuffer-cmdpool)")
+    if not re.search(r"qpmap_format\s*=\s*props\[sel\]\.format", pick) or \
+            re.search(r"qpmap_format\s*=\s*VK_FORMAT_", enc):
+        errors.append(f"{ENC}: map format is hard-coded instead of the advertised one (#278)")
+    if "INT8_MIN" in probe or "INT8_MAX" in probe or \
+            not re.search(r"pelorus_qpmap_texel_range\(\s*ctx->qpmap_texel_bytes", probe):
+        errors.append(f"{ENC}: delta clamp does not follow the map texel width (#278)")
+    image = function_body(enc, "pelorus_qpmap_ensure_image")
+    if "VK_IMAGE_LAYOUT_PREINITIALIZED" not in image or \
+            "VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT" not in image:
+        errors.append(f"{ENC}: host-mapped map image is not PREINITIALIZED host-visible "
+                      "memory (ADR-0182)")
+    issue = strip_comments(hunks_of(files[ENC], "vulkan_encode_issue"))
+    if not re.search(r"qpmap_slot\s*=\s*exec->idx\s*;", issue):
+        errors.append(f"{ENC}: map image is not tied to the exec context whose fence "
+                      "guards it (ADR-0182)")
+    fill = issue.find("pelorus_qpmap_host_fill(")
+    release = issue.find("pelorus_qpmap_host_release(")
+    begin = issue.find("CmdBeginVideoCodingKHR(")
+    end = issue.find("CmdEndVideoCodingKHR(")
+    if fill < 0 or begin < 0 or fill > begin:
+        errors.append(f"{ENC}: host-mapped fill is not recorded before "
+                      "vkCmdBeginVideoCodingKHR (ADR-0182)")
+    if release < 0 or end < 0 or release < end:
+        errors.append(f"{ENC}: host-mapped map is not returned to GENERAL after "
+                      "vkCmdEndVideoCodingKHR (ADR-0182)")
+    return errors
+
+
 def check(patch: str) -> list[str]:
     """Return every contract violation in the patch text."""
 
@@ -261,6 +315,7 @@ def check(patch: str) -> list[str]:
     errors += check_delta_range(enc, probe)
     errors += check_qp_range(enc)
     errors += check_valid_usage(files, enc)
+    errors += check_fill_paths(files, enc, probe)
     return errors
 
 
@@ -276,7 +331,7 @@ MUTATIONS = (
     ("ignore the AV1 qindex caps",
      lambda t: t.replace("qmap_caps.av1.minQIndexDelta", "0")),
     ("clamp only to the libx264 span",
-     lambda t: t.replace("FFMAX(FFMAX(cap_min, -qp_range), INT8_MIN)", "-qp_range")),
+     lambda t: t.replace("FFMAX(FFMAX(cap_min, -qp_range), texel_min)", "-qp_range")),
     ("scale AV1 by the H.26x QP span",
      lambda t: t.replace("+        return 255;", "+        return 51 + 6 * (bit_depth - 8);")),
     ("ignore the codec id in the span",
@@ -296,6 +351,27 @@ MUTATIONS = (
                          "+    /* Pelorus: rasterize", 1)),
     ("leave H.265 cu_qp_delta off",
      lambda t: t.replace("unit_opts->cu_qp_delta_enabled_flag = 1;", ";")),
+    ("query the map usage alone (#278)",
+     lambda t: t.replace("+                            (can_copy ? VK_IMAGE_USAGE_TRANSFER_DST_BIT : 0) |\n"
+                         "+                            (want_gpu ? VK_IMAGE_USAGE_STORAGE_BIT : 0);",
+                         "+                            0;")),
+    ("drop the map-usage-only query",
+     lambda t: t.replace("+        queries[nb_queries++] = map_usage;\n", "+        ;\n")),
+    ("trust FFmpeg's queue purpose flags",
+     lambda t: t.replace("s->qf_props[ctx->qf_enc->idx].queueFamilyProperties.queueFlags",
+                         "ctx->qf_enc->flags")),
+    ("hard-code R8_SINT (#278)",
+     lambda t: t.replace("ctx->qpmap_format      = props[sel].format;",
+                         "ctx->qpmap_format      = VK_FORMAT_R8_SINT;")),
+    ("8-bit clamp for every texel width",
+     lambda t: t.replace("FFMAX(FFMAX(cap_min, -qp_range), texel_min)",
+                         "FFMAX(FFMAX(cap_min, -qp_range), INT8_MIN)")),
+    ("host map starts UNDEFINED",
+     lambda t: t.replace("host ? VK_IMAGE_LAYOUT_PREINITIALIZED", "host ? VK_IMAGE_LAYOUT_UNDEFINED")),
+    ("map slot not tied to the exec context",
+     lambda t: t.replace("int qpmap_slot = exec->idx;", "int qpmap_slot = 0;")),
+    ("host map never returned to GENERAL",
+     lambda t: t.replace("+        pelorus_qpmap_host_release(ctx, exec, qpmap_host_slot);", "+        ;")),
 )
 
 
@@ -329,7 +405,7 @@ def main(argv: list[str]) -> int:
             return 1
         print(f"Vulkan QP-map contract self-test: {len(MUTATIONS)} mutations rejected")
     print("Vulkan QP-map contract: extension/feature enablement, driver dQP range, "
-          "per-codec ROI span, and valid-usage repairs present")
+          "per-codec ROI span, valid-usage repairs, and advertised-format fill paths present")
     return 0
 
 

@@ -228,6 +228,30 @@ today it cannot.
 - Other RDNA 2+ parts (a discrete card) may differ in map texel size and
   extent.
 
+## Fixed (2026-10-09, #278)
+
+[ADR-0182](../adr/0182-vulkan-qpmap-fill-paths.md) fixes the probe as the
+first Open item proposes, with one finding this spike missed: RADV's encode
+queue family has `VK_QUEUE_VIDEO_ENCODE_BIT_KHR` only, so it may record
+neither the transfer copy nor the compute store. Patch 0009 now fills RADV's
+`R32_SINT` map from the host through a mapped `LINEAR` image. The steering
+table above, rerun on a host build with Mesa 26.2.4 (same fixtures and
+commands):
+
+| Clip | Codec | Left dB, off → `-0.3` | Left dB, off → `+0.3` | Bytes, off → `-0.3` / `+0.3` |
+| --- | --- | --- | --- | --- |
+| detail | h264_vulkan | 36.68 → 44.82 | 36.68 → 31.70 | 91499 → 1084250 / 84025 |
+| detail | hevc_vulkan | 36.80 → 45.41 | 36.80 → 32.39 | 103003 → 1197268 / 87514 |
+| synth-banding | h264_vulkan | 54.06 → 60.79 | 54.06 → 40.97 | 2717 → 5120 / 2695 |
+| synth-banding | hevc_vulkan | 58.80 → 65.75 | 58.80 → 47.05 | 2279 → 5655 / 2146 |
+
+Every steered stream differs from its control and decodes to 24 of 24
+frames; on the detail clip the right half stays within 0.2 dB. The
+validation layer reports the same VUIDs with and without `-pelorus_roi`.
+Mesa 25.0.7 still passes through with the "device does not enable" warning.
+ADR-0182 "Measured" has packet MD5s, the right half and the NVIDIA
+regression run.
+
 ## Reproduce
 
 ```bash
