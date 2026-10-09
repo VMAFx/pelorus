@@ -9,6 +9,7 @@
 #     decklink or libmpeghdec in the configure line;
 #   - the word "nonfree" anywhere in `-version` or `-L`;
 #   - a `-L` text that does not name "either version 3 of the License".
+#   - a `-L` text that names the Lesser GPL instead of the GNU GPL.
 #
 # Usage: check-ffmpeg-licence.sh FFMPEG_BINARY
 # Exit: 0 accepted, 1 refused (each reason on stderr), 2 usage.
@@ -62,6 +63,11 @@ if printf '%s\n%s\n' "$version_out" "$licence_out" | grep -qi 'nonfree'; then
 fi
 if ! printf '%s\n' "$licence_out" | grep -q 'either version 3 of the License'; then
   refuse "'-L' does not report GPL version 3 or later"
+fi
+# The LGPL notice also says "either version 3"; only the GPL one may pass.
+if ! printf '%s\n' "$licence_out" | grep -q 'GNU General Public License' \
+  || printf '%s\n' "$licence_out" | grep -q 'Lesser'; then
+  refuse "'-L' does not name the GNU General Public License"
 fi
 
 if [ "$status" -eq 0 ]; then
