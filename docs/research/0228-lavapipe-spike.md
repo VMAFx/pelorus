@@ -6,20 +6,23 @@
 **Decision:** none yet; input to [ADR-0173](../adr/0173-tester-programme.md) and
 [#228](https://github.com/VMAFx/pelorus/issues/228)
 
-**Scope:** Mesa 26.2.2 lavapipe (LLVM 21.1.8), Vulkan validation layer from the
-host, FFmpeg `n9.0.2-18-g91f2c4ce94` (pin `946fcce0` plus the 18-patch stack),
+**Scope:** Mesa 26.2.2 lavapipe (LLVM 21.1.8), Vulkan validation layer 1.4.363 from
+the host, FFmpeg `n9.0.2-18-g91f2c4ce94` (pin `946fcce0` plus the 18-patch stack),
 libpelorus 0.3.0, x86-64 workstation.
 
 ## Verdict: partial go
 
 The real shaders run on lavapipe. All ten filters finish with exit 0, and the
 53-row Vulkan format matrix completes with every output comparison passing.
-The "validation clean" bar is not met: lavapipe exposes `VK_EXT_host_image_copy`,
-which makes FFmpeg's upload path emit validation errors that the matrix
-allow-list does not cover, and `pelorus_grain_estimate_vulkan` shows two more
-layout errors that no tested GPU run produces. Hosted CI can therefore run
-lavapipe as a functional gate today with validation off, and as a validation
-gate after the two items under "Open before a lane" are settled.
+The "validation clean" bar is not met. lavapipe has a single queue family, and
+on such a device FFmpeg records each frame's first image barrier as a
+queue-family ownership release that is never acquired. The validation layer
+then keeps a stale layout for the image and reports `09059` and `09064` on
+every filter, plus `00344` and `09600` on `pelorus_grain_estimate_vulkan`. All
+four come from that one FFmpeg barrier, not from Pelorus code (see
+[Root cause](#root-cause-of-the-lavapipe-layout-vuids)). Hosted CI can therefore
+run lavapipe as a functional gate today with validation off, and as a
+validation gate once "Open before a lane" item 1 is settled.
 
 ## Baseline per filter
 
@@ -65,20 +68,18 @@ allow-listed).
 1. **`09064` and `09059` come from FFmpeg, not from Pelorus.** Both are raised
    inside `vkCopyImageToMemoryEXT` and `vkCopyMemoryToImageEXT`, called from
    `libavutil/hwcontext_vulkan.c:4640` (FFmpeg `hwupload` and `hwdownload`). The
-   layer says the copy passes `TRANSFER_DST_OPTIMAL` while the image is in
-   `GENERAL`. `09064` is already on the matrix allow-list for the same reason;
-   `09059` is its upload twin. The RTX 4090 run under validation shows neither,
-   because the NVIDIA driver path does not take the host-copy route. lavapipe
-   advertises `VK_EXT_host_image_copy`, so it does.
-2. **`pelorus_grain_estimate_vulkan` adds `00344` and `09600`.** The layer reports
-   the input image in `TRANSFER_DST_OPTIMAL` at dispatch while the descriptor
-   says `GENERAL`. The same filter on the RTX 4090 shows only the allow-listed
-   VUIDs. Hypothesis, not verified: the host copy leaves the image in a layout
-   that FFmpeg's tracking does not know about, and the manual barrier in
-   `record_estimator` (`vf_pelorus_grain_estimate_vulkan.c:506`) transitions
-   from the tracked layout. The other filters use the same pattern and do not
-   trip it, so a Pelorus-side ordering defect cannot be ruled out. It needs a
-   look with the layer's object names turned on.
+   copy passes `GENERAL`, which is the image's real layout; the layer still
+   tracks `TRANSFER_DST_OPTIMAL` because it never applied the transition that
+   FFmpeg's first compute barrier recorded. Stock `gblur_vulkan` and
+   `scdet_vulkan` show the same pair. The host-copy route is not the trigger:
+   Intel ANV also takes it and is clean. See
+   [Root cause](#root-cause-of-the-lavapipe-layout-vuids).
+2. **`pelorus_grain_estimate_vulkan` adds `00344` and `09600` from the same
+   cause.** The filter's barrier sequence matches `pelorus_analyze_vulkan` call
+   for call. Only `grain_estimate` reports these two because its shader indexes
+   `input_images[0]` with a literal, and the layer checks descriptor layouts
+   only for indices it can resolve. `analyze` indexes with a specialization
+   constant; with a literal index it reports the same two VUIDs.
 3. **Missing-extension behaviour is not testable as written.** The filters declare
    no extension requirement of their own; FFmpeg picks device extensions and
    silently drops an unknown one requested with `device_extensions=` (checked
@@ -95,6 +96,100 @@ allow-listed).
    `pass`, exit 0. Nothing in the report says "software Vulkan", so a consumer
    who skips the device list cannot tell it from a GPU pass, and the
    functional rows that did run on lavapipe are not recorded at all.
+
+## Root cause of the lavapipe layout VUIDs
+
+**Verdict:** FFmpeg defect, made visible by a gap in the validation layer. No
+Pelorus change fixes it at the source, and none is made here.
+
+### Mechanism
+
+1. lavapipe exposes one queue family. FFmpeg then creates frames with
+   `VK_SHARING_MODE_EXCLUSIVE` and tracks each frame's queue family as that
+   concrete index, not `VK_QUEUE_FAMILY_IGNORED` (n9.0.2
+   `libavutil/hwcontext_vulkan.c:2722`, `:2748`). Devices with more than one
+   family get `CONCURRENT` images and `IGNORED`.
+2. `ff_vk_frame_barrier()` takes `srcQueueFamilyIndex` from that tracked value
+   (`libavutil/vulkan.c:2121`). `hwcontext_vulkan.c` passes the same concrete
+   family as the new one, but all 30 calls in `libavfilter/` and `libavcodec/`
+   pass `VK_QUEUE_FAMILY_IGNORED`, among them
+   `ff_vk_filter_process_simple()` (`libavfilter/vulkan_filter.c:290`, `:297`),
+   and so does Pelorus's `record_estimator()`
+   (`ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c:508`). The first
+   barrier on each new `hwupload` frame is therefore `src=0`, `dst=IGNORED`,
+   `TRANSFER_DST_OPTIMAL` to `GENERAL`. FFmpeg master (checked 2026-10-09) has
+   the same code at all three places.
+3. The Vulkan spec treats unequal queue-family indices as an ownership transfer
+   and, for an `EXCLUSIVE` image, requires `dstQueueFamilyIndex` to be a valid,
+   external or foreign family (`VUID-VkImageMemoryBarrier2-image-09118`).
+   `IGNORED` is none of these, so the barrier is invalid.
+4. Validation layer 1.4.363 does not report `09118`: it accepts `IGNORED` as a
+   special family (`IsQueueFamilySpecial`, `layers/core_checks/cc_synchronization.cpp`).
+   Because `src` equals the command pool's family, it then records the barrier
+   as a release and defers the layout change to an acquire that never comes
+   (`RecordTransitionImageLayout`, `layers/core_checks/cc_image_layout.cpp`).
+   Its tracked layout stays `TRANSFER_DST_OPTIMAL`.
+5. Every later use is reported against that stale layout: the dispatch in the
+   same command buffer (`00344`), the next submits (`09600`), and the host
+   copies, which pass the correct `GENERAL` (`09059`, `09064`). From the second
+   frame on, FFmpeg's barrier is `GENERAL` to `GENERAL` with both families
+   `IGNORED`; the layer records nothing for it, so the stale state never heals.
+
+The validation message text reads the other way round from what one expects:
+in "`srcImageLayout` is currently `TRANSFER_DST_OPTIMAL` but expected to be
+`GENERAL`", the first layout is the layer's tracked one and the second is the
+value FFmpeg passed (`ValidateHostCopyCurrentLayout`,
+`layers/core_checks/cc_image_layout.cpp`).
+
+### Evidence
+
+`testsrc2` 320x180, 5 frames, `format=yuv420p,hwupload,<filter>,hwdownload`,
+`VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`, one ICD per run through
+`VK_DRIVER_FILES`. FFmpeg n9.0.2 with the 20-patch stack of `e64962e`. Counts
+are messages; 10 is the layer's per-message default cap.
+
+| Device (queue families) | Host copy | `grain_estimate` | `analyze` | stock `gblur_vulkan` |
+| --- | --- | --- | --- | --- |
+| lavapipe, Mesa 26.2.2 (1) | yes | 00344 x1, 09600 x5, 09059 x10, 09064 x10 | 09059 x10, 09064 x10 | 09059 x3, 09064 x10 |
+| lavapipe, FFmpeg barrier changed (1) | yes | none | none | none |
+| Intel Arc A380, ANV Mesa 26.2.4 (3) | yes | none | none | none |
+| AMD Raphael iGPU, RADV Mesa 26.2.4 (5) | no | none | none | none |
+| RTX 4090, NVIDIA 615.71.09 (6) | no | allow-listed only | allow-listed only | allow-listed only |
+
+- "FFmpeg barrier changed" is a scratch build in which `ff_vk_frame_barrier()`
+  sets `srcQueueFamilyIndex` to `VK_QUEUE_FAMILY_IGNORED` when the caller passes
+  `IGNORED` and the tracked family is a concrete index. That one change clears
+  all four VUIDs for `grain_estimate`, `analyze`, `deband`, `gblur_vulkan` and
+  `scdet_vulkan` on lavapipe. Reverting it brings all four back.
+- Tracing `ff_vk_frame_barrier()` showed identical barriers for
+  `grain_estimate` and `analyze`: `src=0 dst=IGNORED` on the first frame, then
+  `IGNORED`/`IGNORED`. On ANV, RADV and NVIDIA the first barrier is already
+  `IGNORED`/`IGNORED`.
+- Rebuilding `analyze` with `input_images[0]` in place of
+  `input_images[luma_plane]` makes it report the same `00344` x1 and
+  `09600` x5 as `grain_estimate`.
+- ANV takes the same host-copy route as lavapipe (`vulkan_transfer_host`) and
+  reports nothing, so `VK_EXT_host_image_copy` is not the cause.
+
+### Consequences
+
+- The `09064` allow-list entry (#214) covers this defect on lavapipe. `09059` is
+  its upload twin, and `00344` and `09600` are the same defect seen through a
+  descriptor.
+- `00344` and `09600` are generic layout VUIDs. An allow-list entry for them
+  also hides genuine layout defects in Pelorus filters on the GPU box, because
+  the allow-list is shared. A lavapipe-only allow-list, or keeping
+  `grain_estimate` out of a validating lavapipe lane, avoids that.
+- Upstream fixes, both outside this repository: FFmpeg can emit
+  `IGNORED`/`IGNORED` in `ff_vk_frame_barrier()` when the caller passes
+  `IGNORED` (what the scratch build did), or track `IGNORED` for
+  single-family frames in `hwcontext_vulkan.c`. The validation layer can
+  report `09118` for `dst=IGNORED` on an `EXCLUSIVE` image. Both belong on
+  [#214](https://github.com/VMAFx/pelorus/issues/214).
+- A Pelorus-only workaround (passing the frame's tracked family as the new
+  family) would clear `grain_estimate`, but frames produced through FFmpeg's
+  own helpers would keep the defect, and it would depart from the upstream
+  filter idiom.
 
 ## Negative design: a lavapipe report cannot claim GPU evidence
 
@@ -159,13 +254,15 @@ Lane needs:
 
 ## Open before a lane
 
-1. Decide how the matrix treats `09059`. Options: add it to the allow-list with
-   the same upstream citation as `09064`, or run the lane with validation off
-   and keep validation as a GPU-box step. Allow-listing a VUID that only a
-   software driver produces hides it from nobody, but the allow-list is shared
-   with the GPU box, so the entry should say where it comes from.
-2. Find out whether `00344` and `09600` on `grain_estimate` are the same host
-   copy problem or a Pelorus ordering defect (finding 2).
+1. Decide how a validating lavapipe lane treats `09059`, `00344` and `09600`,
+   all from the FFmpeg barrier described under
+   [Root cause](#root-cause-of-the-lavapipe-layout-vuids). Options: add them to
+   the allow-list with the `09064` citation, use a lavapipe-only allow-list,
+   or run the lane with validation off and keep validation as a GPU-box step.
+   The shared allow-list would also hide `00344` and `09600` on the GPU box,
+   where they would point at a real Pelorus defect.
+2. Settled: `00344` and `09600` on `grain_estimate` are the FFmpeg barrier
+   defect, not a Pelorus ordering defect (finding 2).
 3. Confirm Mesa and the validation layer versions on `ubuntu-26.04`; this spike
    used Mesa 26.2.2 from a Flatpak runtime, because no lavapipe was installed on
    the workstation and no container image was pulled.
@@ -189,4 +286,16 @@ VK_DRIVER_FILES=$PWD/lvp.json PELORUS_VALIDATE=1 FFMPEG_BIN=/path/to/ffmpeg \
 VK_DRIVER_FILES=$PWD/lvp.json VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
   ffmpeg -init_hw_device vulkan=v -filter_hw_device v -f lavfi -i testsrc2=size=320x180 \
   -frames:v 5 -vf format=yuv420p,hwupload,pelorus_grain_estimate_vulkan,hwdownload,format=yuv420p -f null -
+
+# root-cause comparison, one ICD per run (evidence table rows 1, 3, 4, 5)
+for icd in $PWD/lvp.json /usr/share/vulkan/icd.d/{intel,radeon,nvidia}_icd.json; do
+  echo "$icd queue families: $(VK_DRIVER_FILES=$icd vulkaninfo 2>/dev/null | grep -c 'queueProperties\[')"
+  for f in pelorus_grain_estimate_vulkan pelorus_analyze_vulkan gblur_vulkan; do
+    VK_DRIVER_FILES=$icd VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
+      ffmpeg -hide_banner -loglevel warning -init_hw_device vulkan=v -filter_hw_device v \
+      -f lavfi -i testsrc2=size=320x180 -frames:v 5 \
+      -vf "format=yuv420p,hwupload,$f,hwdownload,format=yuv420p" -f null - 2>&1 |
+      grep '^Validation Error' | grep -oE 'VUID-[[:alnum:]_.-]+' | sort | uniq -c
+  done
+done
 ```
