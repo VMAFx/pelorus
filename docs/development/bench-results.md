@@ -298,19 +298,41 @@ ROI redistributes bits into the banding region, raising bitrate a few %% — thi
 |---|---|---:|---:|---:|---|
 | NVIDIA `hevc_nvenc` | our `qpDeltaMap` patch | 247→263 kbps | 1.472 → **0.953** (−35%) | +0.86 | ✓ clean |
 | AMD `hevc_vaapi` (radeonsi) | vanilla ROI | 684→744 kbps | 1.229 → **1.027** (−16%) | +0.74 | ✓ clean |
-| Intel `hevc_vaapi` (iHD) | vanilla ROI | — | — | — | ✗ unstable |
+| Intel `hevc_vaapi` (iHD) | vanilla ROI | — | — | — | ✗ corrupt stream (VA-API ROI path, see below) |
 
 **NVENC** (patch) and **AMD radeonsi** (vanilla VAAPI) both reduce banding with
 VMAF up — banding steering reaches two HW vendors from one map. **Intel** is the
 honest negative: the Arc A380 exposes only the low-power `VAEntrypointEncSliceLP`
-encode path, and iHD's ROI on that path produced a broken encode (PSNR 13.8 dB;
+encode path, and `hevc_vaapi` ROI on that path produced a broken encode (PSNR 13.8 dB;
 the VMAF=100 it scored is a model-clamp artifact, not quality). The baseline Intel
-encode is clean (PSNR 44.8 dB, VMAF 96.0), so the pipeline is fine — it is the
-**known Arc A-series (Alchemist) low-power encode bug** (fixed only in Arc B /
-Battlemage), not a Pelorus issue, and the A380 has no non-low-power entrypoint to
-fall back to. Treat *all* Arc A low-power encode results as invalid. Combined with
+encode is clean (PSNR 44.8 dB, VMAF 96.0), so the pipeline is fine. Combined with
 libx265 (v0.5, −47%) and NVENC (v0.5, −41%), the steering is proven on **three**
 consumers (libx265, NVENC, AMD).
+
+**Re-measured 2026-10-09** on the A380 bound to the `xe` kernel driver, which
+loads no HuC firmware ([research 0180](../research/0180-qsv-bitrate-control-dg2-xe.md);
+the original command was not recorded, so the composite clip of v0.4 was
+rebuilt). The 13.8 dB reproduces in constant QP, so it is not a bitrate-control
+or HuC artifact: `hevc_vaapi -rc_mode CQP -qp 30` with one `addroi` rectangle
+over the top half at `qoffset=-0.15` gives PSNR-Y 13.81 dB, against 41.02 dB
+without the ROI, with media driver 25.2.3 and 26.3.5 alike. The whole picture is
+corrupt (the bottom half, outside the ROI, scores 10.98 dB), at any ROI
+strength (24.2 dB at −0.05, 9.7 dB at −0.3). The same ROI through `hevc_qsv` on
+the same low-power encoder is clean: 38.57 dB against 38.51 dB unsteered, with
+the ROI half 4.4 dB better. The cause is in FFmpeg, not in the driver or the
+low-power encoder: in constant QP, `vaapi_encode_h265.c` writes the PPS with
+`cu_qp_delta_enabled_flag=0` but still passes the ROI to the driver. The driver
+applies the ROI as a per-block QP change that the stream has no syntax to
+signal, so the decoder reconstructs with the slice QP and the error spreads
+through prediction. `h264_vaapi`, whose syntax always carries `mb_qp_delta`, is
+clean with the same ROI (41.17 dB). The fix is filed upstream as
+[FFmpeg #24977](https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/24977); with it the
+ROI encode scores 41.12 dB and the encode without ROI is unchanged. The earlier
+attribution to a "known Arc A-series (Alchemist) low-power encode bug, fixed
+only in Arc B (Battlemage)", and the advice to treat every Arc A low-power
+result as invalid, had no source and are withdrawn. Until that fix ships,
+`hevc_vaapi` ROI in constant QP stays unusable; QSV ROI and `h264_vaapi` ROI
+work.
 
 ## v0.7 — AMD ROI at **true iso-bitrate** (VBR matched target)
 
@@ -333,7 +355,7 @@ redistribution win on AMD hardware, PSNR-clean (no corruption). The gain tapers 
 content/bitrate dependence (ROI helps most where the encoder is starving the flat
 regions). Same `addroi` side data as every other consumer; no patch (radeonsi
 honors ROI vanilla). Confounded-result guard worked: both arms' bitrates match to
-&lt;2% and PSNR is sane, unlike the Intel iHD low-power case (PSNR 13.8, v0.6).
+&lt;2% and PSNR is sane, unlike the Intel `hevc_vaapi` ROI case (PSNR 13.8, v0.6).
 
 ## v0.8 — QSV ROI on the Arc: a crash bug found + fixed, then a driver wall
 
@@ -355,20 +377,22 @@ patch and ran `hevc_qsv -q:v 30 -low_power 1 -pelorus_roi 1` on the Arc A380
    context-wide mutable scratch, so a later asynchronous submission could
    repaint an earlier frame's still-live map. Patch 0005 now owns a separate
    header+map allocation on each `QSVFrame` control until its surface unlocks.
-3. **Driver wall (gain unvalidated).** Despite a correct map, the encode is
-   anomalous — banding *worse* (CAMBI ↑) and bitrate *explodes* (+45–108% at the
-   same `-q:v`). A correct-but-wrong map would shift bits, not double bitrate and
-   worsen banding. This is the Arc's **low-power encode path** mishandling
-   `mfxExtMBQP` — the same path that corrupted VAAPI ROI (PSNR 13.8, v0.6).
-   **Root cause (authoritative): the Arc A-series (Alchemist) low-power encode is a
-   known hardware/driver bug, fixed only in the Arc B-series (Battlemage).** The
-   A380 exposes *only* the low-power entrypoint (`EncSliceLP`), so every encode on
-   it runs the bugged path — these results are **invalid by construction**, not
-   inconclusive. **Conclusion:** the old run showed the expected values for one
-   sampled frame but did not validate async ownership. The ADR-0146 correction
-   is sanitizer- and compile-verified; its on-hardware async execution still
-   needs a new run on an **Arc B (Battlemage)** or another full-`EncSlice` Intel
-   target. No QSV gain is claimed.
+3. **Bitrate rise and banding: no driver defect (re-measured 2026-10-09).** The
+   run recorded banding *worse* (CAMBI ↑) and bitrate +45–108% at the same
+   `-q:v`, and blamed the low-power encode path, the one that corrupted VA-API
+   ROI in v0.6. A re-run on the A380 under `xe`
+   ([research 0180](../research/0180-qsv-bitrate-control-dg2-xe.md); rebuilt
+   composite clip, `qoffset=-0.3`) does not support that: `-pelorus_roi 1` logs
+   the dense path, the stream decodes clean (PSNR-Y 38.58 dB against 38.51 dB
+   unsteered), the ROI half gains 7.3 dB while the other half is unchanged, and
+   CAMBI falls from 4.90 to 4.31. The bitrate rose 155% at the same QP, the
+   expected cost of a −15 QP region over half the picture in a fixed-QP demo.
+   The v0.8 CAMBI increase is not reproduced on this clip; its own clip and
+   command were not recorded. The attribution to an Arc A-series low-power
+   encode bug had no source and is withdrawn (see v0.6). **Still open:** the
+   re-run used the same map on every frame, so the ADR-0146 per-frame ownership
+   correction (sanitizer- and compile-verified) still has no on-hardware run
+   with changing maps. No QSV gain is claimed.
 
 ## v0.9 — NVENC external ME hints: functional, but **no speed gain** (honest negative)
 

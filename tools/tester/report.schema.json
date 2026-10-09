@@ -69,7 +69,7 @@
           "log_tail": {"type": "string", "maxLength": 4000},
           "legs": {
             "type": "array",
-            "description": "Optional, added in tool 0.4.0: one entry per encoder the stage tried (steering_smoke, sidedata_roundtrip). A stage cannot pass with a failed leg or without a passing one; a leg that is not pass carries a reason.",
+            "description": "Optional, added in tool 0.4.0: one entry per encoder the stage tried (steering_smoke, sidedata_roundtrip), and from tool 0.4.5 two QSV bitrate-control legs per QSV encoder in steering_smoke (rate_control set). A stage cannot pass with a failed leg or without a passing one; a leg that is not pass carries a reason.",
             "items": {
               "type": "object",
               "additionalProperties": false,
@@ -78,7 +78,8 @@
                 "encoder": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"},
                 "codec": {"enum": ["h264", "hevc", "av1"]},
                 "status": {"enum": ["pass", "fail", "not_run"]},
-                "reason": {"type": "string", "maxLength": 400}
+                "reason": {"type": "string", "maxLength": 400},
+                "rate_control": {"enum": ["cbr_extbrc", "cbr_hw"], "description": "Optional, added in tool 0.4.5; absent on the stage's own legs. A steering_smoke leg that encodes CBR with oneVPL's software bitrate control (cbr_extbrc, -extbrc 1) or the hardware's own (cbr_hw) and passes when every frame decodes within 15 % of the target bitrate (ADR-0180 decision 8)."}
               }
             }
           }

@@ -65,8 +65,11 @@ the frame scalars and sets `qp_valid = 0`.
 
 ## The runnable reader — x265 `--csv` (ADR-0122)
 
-The QSV per-block path above is the eventual hardware source, but the dev box's
-Arc-A QSV is low-power-bugged, so it cannot be validated on HW here. To get one
+The QSV per-block path above is the eventual hardware source, but its libavcodec
+consumer is still a follow-up (below), so it has not run on hardware. (An
+earlier note blamed an Arc A-series low-power encode bug; a 2026-10-09
+re-measure found QSV encodes on the dev box's A380 clean,
+[research 0180](../research/0180-qsv-bitrate-control-dg2-xe.md).) To get one
 surface that runs **end-to-end** and populates `PEL_SEC_QPREPORT` with real,
 non-synthetic numbers, libpelorus also reads the per-frame statistics the HEVC
 software reference encoder x265 emits with `--csv --csv-log-level 2`. This stays

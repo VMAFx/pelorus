@@ -137,6 +137,55 @@ See [QSV ROI steering](../backends/qsv-roi.md),
 [ADR-0114](../adr/0114-encoder-steering.md), and its QSV contract correction
 [ADR-0146](../adr/0146-qsv-roi-frame-ownership.md).
 
+### Intel Arc A-series on the `xe` kernel driver: bitrate control
+
+The `xe` kernel driver loads no HuC firmware on DG2 (Arc A-series), and the
+media driver's low-power encoder, the only one DG2 has, runs its bitrate
+control on HuC. On such a host every hardware bitrate-control mode (CBR, VBR,
+ICQ) fails without writing a frame: `h264_qsv` logs `GPU Hang (-21)` or
+`Invalid FrameType:0`, `hevc_qsv` and `av1_qsv` `Invalid FrameType:0`. VA-API
+(`-rc_mode CBR`) fails the same way with `Input/output error`. Constant QP
+(`-q:v N`) works.
+
+For CBR or VBR on `h264_qsv` and `hevc_qsv`, add `-extbrc 1`. oneVPL then
+picks each frame's QP on the CPU and drives the driver in constant QP, which
+needs no HuC; the encoder log says `ExtBRC: ON`. On an A380 this held CBR within
+2 % of the target over 16 seconds:
+
+```bash
+LIBVA_DRIVER_NAME=iHD ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
+       -vf "format=nv12,hwupload,pelorus_deband_vulkan,hwdownload,format=nv12" \
+       -c:v hevc_qsv -b:v 4M -maxrate 4M -bufsize 4M -extbrc 1 out.mkv
+```
+
+- ICQ (`-global_quality N` without a bitrate) has no software counterpart and
+  stays unavailable; so does `av1_qsv` bitrate control, because oneVPL applies
+  `-extbrc` to AV1 only through look-ahead tools that also failed on the A380.
+  Use `-q:v N` for AV1.
+- With `-extbrc 1` the session is not constant QP, so `-pelorus_roi 1` on
+  `hevc_qsv` takes the stock ROI rectangles, not the dense map
+  ([QSV ROI steering](../backends/qsv-roi.md)).
+- VA-API encoders (`hevc_vaapi`, `h264_vaapi`) have no software bitrate control:
+  constant QP only on this setup. ROI side data through `hevc_vaapi` produces a
+  corrupt stream on the A380 even in constant QP; steer through `hevc_qsv`.
+
+To name the GPU instead of letting FFmpeg pick the Intel render node, either
+form works:
+
+```bash
+-init_hw_device vaapi=va:/dev/dri/renderD130 -init_hw_device qsv=qs@va -filter_hw_device qs
+-init_hw_device qsv=qs:hw,child_device=/dev/dri/renderD130 -filter_hw_device qs
+```
+
+followed by `-vf "...,hwupload=extra_hw_frames=64"` for QSV frames. If the
+environment sets `LIBVA_DRIVER_NAME` for another GPU (for example `nvidia` on a
+host whose desktop runs on an NVIDIA card), set it to `iHD` for the Intel
+command: otherwise libva loads the other driver and QSV fails with `Error
+creating a MFX session: -9`, whichever form is used. Measurements:
+[research 0180](../research/0180-qsv-bitrate-control-dg2-xe.md); the tester's
+bitrate-control legs check this on every Intel run
+([tester kit stages](tester.md#qsv-bitrate-control-legs)).
+
 ### SVT-AV1 software (ADR-0121)
 
 The same `-pelorus_roi 1` AVOption is registered on `libsvtav1` (the `av1_svt`

@@ -85,13 +85,22 @@ docker run --rm --device /dev/dri -v "$PWD/report:/report" ghcr.io/vmafx/pelorus
   in the list does not matter.
 - On an Arc A380 bound to the `xe` kernel driver, which loads no HuC
   firmware, only the non-free media driver lets `hevc_qsv` encode (the free
-  `intel-media-va-driver` fails with `Invalid FrameType:0`). Without HuC no
-  Intel media driver encodes with bitrate control on Arc A-series; the tester's
-  QSV legs use constant QP. If the stage finds only the free driver installed (a run from a
-  checkout on a host that has it, or an image built by hand), the `hevc_qsv`
-  steering and side-data legs are `not_run` and the reason names the installed
-  free driver and the missing `intel-media-va-driver-non-free`; the stage reads
-  both from dpkg ([research 0229](../research/0229-tester-vendor-images.md)).
+  `intel-media-va-driver` fails with `Invalid FrameType:0`). If the stage finds
+  only the free driver installed (a run from a checkout on a host that has it,
+  or an image built by hand), the `hevc_qsv` steering and side-data legs are
+  `not_run` and the reason names the installed free driver and the missing
+  `intel-media-va-driver-non-free`; the stage reads both from dpkg
+  ([research 0229](../research/0229-tester-vendor-images.md)).
+- Without HuC the GPU's own bitrate control (CBR, VBR, ICQ) fails on DG2
+  (Arc A-series) with every media driver. The steering and side-data legs use
+  constant QP. The [bitrate-control legs](#qsv-bitrate-control-legs) show what
+  works there: CBR through oneVPL's software bitrate control (`-extbrc 1`)
+  passes on `h264_qsv` and `hevc_qsv`, and the hardware CBR legs are `not_run`
+  with the reason "hardware bitrate control needs HuC firmware, and the xe
+  kernel driver loads none on DG2 (Arc A-series)". Each hardware CBR leg
+  there waits until oneVPL gives up: under a second for `h264_qsv`, 10 to 25
+  seconds for `hevc_qsv` and `av1_qsv`
+  ([research 0180](../research/0180-qsv-bitrate-control-dg2-xe.md)).
 - `av1_qsv` encodes on Arc and newer GPUs, but the patch stack adds
   `-pelorus_roi` to `h264_qsv` and `hevc_qsv` only, so the AV1 QSV steering leg
   is `not_run` and says so. On a GPU without AV1 encode the same leg reads
@@ -125,7 +134,9 @@ status `pass_software` and `tool.sha256` (the digest the
 published under version 1, so the version was bumped instead of keeping the
 fields optional with defaults. A later change that removes a field or changes
 its meaning bumps the version again; an added field stays in the same version
-only when it is optional with a default.
+only when it is optional with a default. Tool 0.4.5 adds the optional leg field
+`rate_control` (`cbr_extbrc`, `cbr_hw`) under that rule; a leg without it is
+the stage's own leg.
 
 ## Stages
 
@@ -135,7 +146,7 @@ only when it is optional with a default.
 | 2 | `libpelorus_suite` | not part of this kit version | `not_run` |
 | 3 | `registration` | not part of this kit version | `not_run` |
 | 4 | `format_matrix` (GPU) | [`vulkan-format-matrix.sh`](../../ffmpeg-patches/test/vulkan-format-matrix.sh) exits 0 with the validation layer on; every Vulkan diagnostic is on the [allow-list](#validation-gate) | layer absent: `not_run`; script exit 77: `no_device`; no `ffmpeg`: `not_run` |
-| 5 | `steering_smoke` (GPU) | for each usable encoder, 8- and 16-frame encodes both decode to 8 and 16 frames, and the steered bitstream differs from the unsteered one at both lengths | encoder not built, not usable on this host, or without `-pelorus_roi`: a `not_run` leg with the reason; none usable: `not_run` |
+| 5 | `steering_smoke` (GPU) | for each usable encoder, 8- and 16-frame encodes both decode to 8 and 16 frames, and the steered bitstream differs from the unsteered one at both lengths; for each QSV encoder, the [bitrate-control legs](#qsv-bitrate-control-legs) decode to every frame within 15 % of the target bitrate or are a named `not_run` | encoder not built, not usable on this host, or without `-pelorus_roi`: a `not_run` leg with the reason; none usable: `not_run` (a bitrate-control leg cannot pass the stage alone) |
 | 6 | `sidedata_roundtrip` (GPU) | `pelorus_analyze_vulkan` + `pelorus_deband_vulkan`, then each usable carrier with `-udu_sei 1` (`hevc_nvenc`, `h264_nvenc`, `hevc_qsv`, `h264_qsv`, `hevc_vulkan`, `h264_vulkan`): every coded picture carries a well-formed `PelorusSideData` blob with the banding and variance sections, distinct `frame_pts` echoes, and the decoder returns the blob as frame side data on every picture | carrier not built, or its encode fails and the same encode without the side data fails too: a `not_run` leg with the encoder's error; none usable: `not_run`; AV1 has no carrier. A carrier whose encode fails only with the side data (baseline encodes) is a `fail` leg, never `not_run` ([ADR-0173](../adr/0173-tester-programme.md)) |
 | 7 | `zero_copy_chain` (GPU) | the `-loglevel debug` graph holds no `hwdownload`, `hwupload` or `scale` beyond the allowed edges (below) and contains the Pelorus filters | no device with Vulkan Video decode and encode: `not_run` (the software-encoder leg still runs and can fail) |
 | 8 | `bench` (GPU, opt-in) | non-gating: `scripts/bench/run-bench.py` writes `result.json` for a 4-point CQ ladder; a failure is recorded but never changes the verdict | needs `--bench`, a `vmaf` binary, `hevc_nvenc` or `av1_nvenc`: otherwise `not_run` |
@@ -177,11 +188,40 @@ carried them would be steered too.
   or the Vulkan driver clamping negative QP deltas to 0). Then the leg is
   `not_run` and the reason carries that log line.
 
-The stage is `fail` when any leg fails, `pass` when at least one passes and
-none fails, and `not_run` when none was usable; the validator refuses a stage
-that passes with a failed leg or without a passing one. A hardware encoder whose
-driver cannot honour the map therefore shows as a named `not_run` leg, not as a
-green result.
+The stage is `fail` when any leg fails, `pass` when at least one steering leg
+passes and none fails, and `not_run` when no steering leg was usable; the
+validator refuses a stage that passes with a failed leg or without a passing
+steering leg. A hardware encoder whose driver cannot honour the map therefore
+shows as a named `not_run` leg, not as a green result.
+
+#### QSV bitrate-control legs
+
+For each QSV encoder in the FFmpeg build (`h264_qsv`, `hevc_qsv`, `av1_qsv` in
+the Intel image) the stage adds two legs, marked in the report with
+`rate_control` ([ADR-0180](../adr/0180-tester-vendor-images.md) decision 8):
+
+| `rate_control` | Encode |
+| --- | --- |
+| `cbr_extbrc` | CBR with `-extbrc 1`: oneVPL picks each frame's QP and drives the driver in constant QP, so no HuC firmware is needed |
+| `cbr_hw` | CBR with the GPU's own bitrate control |
+
+Both encode the `synth-motion` fixture eight times over (400 frames, 16 s)
+through `pelorus_deband_vulkan`, with `-b:v 1000k -maxrate 1000k -bufsize
+1000k`, into an elementary stream. A leg passes when the stream decodes to all
+400 frames and its bitrate is within 15 % of 1000 kb/s; a `cbr_extbrc` encode
+must also log `ExtBRC: ON`. On the Arc A380 under `xe` the image measured
++1.8 % (`h264_qsv`) and +1.0 % (`hevc_qsv`).
+
+| Outcome | Leg |
+| --- | --- |
+| bitrate more than 15 % off, a frame missing, or `ExtBRC` not on | `fail` |
+| `av1_qsv` `cbr_extbrc` | `not_run` without an encode: oneVPL applies `-extbrc` to AV1 only through its look-ahead tools, which `av1_qsv` does not enable by default |
+| the encode fails and a constant-QP encode of the same input fails too | `not_run`: the encoder is not usable on this host (with the free media driver named, as in the steering legs) |
+| `cbr_extbrc` fails while constant QP encodes | `fail` |
+| `cbr_hw` fails with `Invalid FrameType:0`, `GPU Hang (-21)` or `device failed (-17)` while constant QP encodes, and an Intel render node is a DG2 (PCI id `0x56xx`) bound to `xe` | `not_run`: "hardware bitrate control needs HuC firmware, and the xe kernel driver loads none on DG2 (Arc A-series)" |
+| the same failure, but `/sys/class/drm` names no Intel render node | `not_run` that says the cause is not confirmed |
+| `cbr_hw` fails with `Selected ratecontrol mode is unsupported` | `not_run`: the media driver offers no hardware bitrate control |
+| any other `cbr_hw` failure, or the no-HuC failure on another GPU or kernel driver | `fail` |
 
 ### Stage 7: zero-copy chain
 
@@ -209,7 +249,7 @@ software-encoder leg.
 | `VULKAN_DEVICE` | FFmpeg Vulkan device index; default is the hardware devices in `vulkaninfo` order |
 | `PELORUS_VALIDATE` | `auto` (default), `1` or `0`. `format_matrix` needs `VK_LAYER_KHRONOS_validation`: with `auto` and the layer absent it is `not_run`; with `0` it runs without validation and says so. `1` with the layer absent is a `fail` in every GPU stage (fail closed); with the layer present every GPU stage runs with it on and [gates its messages](#validation-gate) |
 | `PELORUS_VUID_ALLOWLIST` | path of the VUID allow-list (default `ffmpeg-patches/test/vulkan-vuid-allowlist.txt`) |
-| `LIBVA_DRIVER_NAME` | passed through to FFmpeg; QSV needs `iHD` on hosts where another VA driver is found first |
+| `LIBVA_DRIVER_NAME` | passed through to FFmpeg. A run from a checkout on a host that sets it for another GPU (for example `nvidia`) must set `iHD`: otherwise QSV fails with `Error creating a MFX session: -9` and every QSV leg is `not_run`. The images do not set it; libva then picks the driver of the render node |
 | `PELORUS_TESTER_CACHE` | fixture cache directory (default `$XDG_CACHE_HOME/pelorus-tester`) |
 | `PELORUS_FORMAT_MATRIX` | path of the format matrix script, for images that install it elsewhere |
 | `VMAF_BIN` | `vmaf` binary for the bench stage |
@@ -249,13 +289,15 @@ python3 -I tools/tester/pelorus_tester_fixtures.py notices  # attribution text f
 | Fixture | Source | Licence |
 | --- | --- | --- |
 | `synth-banding` | recorded `lavfi` recipe (`gradients` with `seed=1`), 640x360, 24 frames; rendered into the cache on first use, no network | EUPL-1.2 |
+| `synth-motion` | recorded `lavfi` recipe (`testsrc2`), 640x360, 50 frames at 25 fps, for the QSV bitrate-control legs; rendered into the cache on first use, no network | EUPL-1.2 |
 | `bbb` | Big Buck Bunny excerpt, 640x360, 48 frames, downloaded once and extracted | CC BY 3.0, see below |
 
 `verify` fails when a file is missing from the cache, when its hash differs from
 the pin (one flipped byte is enough), and when an entry lacks a licence record:
 SPDX id, holder and source, plus attribution text naming the holder for CC BY
-licences. The stages use `synth-banding`; a stage that needs a fixture that is
-not in the cache reports `not_run` rather than downloading.
+licences. The stages use `synth-banding`, and the QSV bitrate-control legs
+`synth-motion`; a stage that needs a fixture that is not in the cache reports
+`not_run` rather than downloading.
 
 `netflix-bar` is not in the lock. Its licence is unconfirmed
 ([#225](https://github.com/VMAFx/pelorus/issues/225)); it ships only after that
@@ -300,7 +342,12 @@ bad case per rule below, and `--self-test --disable <rule>` must exit 1 for each
 | `software_pass_status` | a GPU stage with status `pass` on `software_vulkan` |
 | `pass_software_class` | a `pass_software` stage on a `hardware` report |
 | `no_device_option` | an `nvidia` or `intel` report whose `no_device` reason names none of the kit's options (`--gpus all` or `NVIDIA_DRIVER_CAPABILITIES`; `--device /dev/dri` or `--group-add`) |
-| `legs_consistent` | a stage that passes with a failed leg, without a passing leg, or with a `not_run` leg that has no reason |
+| `legs_consistent` | a stage that passes with a failed leg, without a passing leg, with only a bitrate-control leg passing, or with a `not_run` leg that has no reason |
+| `brc_bitrate` | a bitrate-control stream 16 % above or below the target; an `-extbrc 1` encode at 1.4 Mb/s |
+| `brc_decode` | a bitrate-control stream that decodes to 399 of 400 frames |
+| `brc_extbrc_engaged` | an `-extbrc 1` encode that logs `ExtBRC: OFF`, or no ExtBRC state |
+| `brc_no_huc` | hardware CBR failing with `Invalid FrameType:0`, `GPU Hang (-21)` or `device failed (-17)` on a DG2 under `xe`: must be the named `not_run`, and stays a `fail` on another GPU |
+| `brc_hw_refused` | hardware CBR refused with `Selected ratecontrol mode is unsupported`: must be a named `not_run` |
 | `fixture_hash` | one flipped byte in a fixture |
 | `fixture_licence` | a fixture without a licence record |
 | `fixture_attribution` | a CC BY fixture without attribution text |

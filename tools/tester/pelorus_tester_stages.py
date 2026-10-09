@@ -7,9 +7,10 @@ Loaded by `pelorus_tester_report.py`; not run on its own. Each runner takes the
 report context and the stage spec and returns an outcome tuple
 `(status, reason, log, legs)` where status is `pass`, `fail`, `not_run`,
 `no_device` or `incomplete`, and legs is None or one record per encoder tried
-(`pass`, `fail` or `not_run` with a reason). Pass rules live in small pure functions
-(`steering_verdict`, `graph_problems`, `blob_problems`, ...) so `self_test`
-can plant a failure for each rule without hardware.
+(`pass`, `fail` or `not_run` with a reason; a QSV bitrate-control leg also names
+its `rate_control`). Pass rules live in small pure functions
+(`steering_verdict`, `graph_problems`, `blob_problems`, `brc_verdict`, ...) so
+`self_test` can plant a failure for each rule without hardware.
 
 Environment (read from `ctx["env"]`): `FFMPEG_BIN` (default `ffmpeg`),
 `VULKAN_DEVICE` (FFmpeg Vulkan device index), `PELORUS_VALIDATE` (`auto`,
@@ -37,6 +38,7 @@ RULES = (
     "steering_effect", "steering_decode", "steering_control", "steering_selfreport",
     "steering_baseline_defect",
     "sd_present", "sd_structure", "sd_decode_tap", "sd_pts", "sd_carrier_masking",
+    "brc_bitrate", "brc_decode", "brc_extbrc_engaged", "brc_no_huc", "brc_hw_refused",
 )
 
 ENC_TIMEOUT_S = 180
@@ -119,6 +121,35 @@ SEI_CARRIERS = (
     {"name": "hevc_vulkan", "codec": "hevc", "kind": "vulkan", "args": ["-qp", "30"]},
     {"name": "h264_vulkan", "codec": "h264", "kind": "vulkan", "args": ["-qp", "30"]},
 )
+# QSV bitrate-control legs of the steering stage (ADR-0180 decision 8): CBR at
+# BRC_TARGET with a one-second buffer over the synth-motion fixture played
+# BRC_LOOPS + 1 times (400 frames, 16 s). A leg passes when every frame decodes and
+# the bitrate is within BRC_TOLERANCE of the target. cbr_extbrc asks oneVPL for its
+# software bitrate control (-extbrc 1: the runtime picks each frame's QP and drives
+# the driver in constant QP); cbr_hw leaves bitrate control to the hardware.
+BRC_FIXTURE = "synth-motion"
+BRC_TARGET = 1000000
+BRC_TOLERANCE = 0.15
+BRC_LOOPS = 7
+BRC_RATE = ["-b:v", "1000k", "-maxrate", "1000k", "-bufsize", "1000k"]
+BRC_CHAIN = "format=nv12,hwupload,pelorus_deband_vulkan,hwdownload,format=nv12"
+EXTBRC_RE = re.compile(r"\bExtBRC: (\w+)")
+# How the encoder reports a hardware bitrate-control encode that produced no frame
+# on DG2 under xe, which loads no HuC firmware: the runtime's GPU Hang (-21) or
+# device failed (-17), or an empty bitstream (ADR-0180 decision 8).
+NO_HUC_RE = re.compile(r"Invalid FrameType:0\b|GPU Hang \(-21\)|device failed \(-17\)")
+NO_HW_BRC_RE = re.compile(r"Selected ratecontrol mode is unsupported")
+PROBLEM_RE = re.compile(r"(?i)\b(?:error|invalid|fail\w*|unsupported|hang)\b")
+NO_HUC_REASON = ("hardware bitrate control needs HuC firmware, and the xe kernel driver loads "
+                 "none on DG2 (Arc A-series): constant QP encodes, CBR does not")
+# oneVPL honours ExtBRC for AV1 only through its EncTools look-ahead (LookAheadDepth > 0,
+# vpl-gpu-rt av1ehw_base_enctools_com.h IsSwEncToolsImplicit, 25.1.4 and main); FFmpeg's
+# av1_qsv sets no look-ahead by default.
+AV1_EXTBRC_REASON = ("oneVPL applies -extbrc to AV1 only through its look-ahead tools, which "
+                     "av1_qsv does not enable by default; on an A380 under xe the AV1 encode "
+                     "with -extbrc 1 failed like hardware bitrate control")
+DG2_PCI_PREFIX = "0x56"
+MAX_RENDER_NODES = 64
 
 
 def outcome(status, reason, log="", legs=None):
@@ -271,21 +302,66 @@ def steering_verdict(h, counts, notes="", disabled=frozenset(), errs=None):
 
 
 def aggregate_legs(results, disabled=frozenset()):
-    """results: list of (encoder, codec, state, note). Return an outcome with one leg each."""
+    """results: list of (encoder, codec, state, note[, rate_control]). Return an outcome with one leg each.
+
+    A bitrate-control leg (rate_control set) can fail the stage but never pass it alone."""
     parts = {"pass": [], "fail": [], "not_run": []}
     legs = []
-    for name, codec, state, note in results:
-        parts[state].append("%s (%s)" % (name, note) if note else name)
+    for name, codec, state, note, *rate in results:
+        label = " ".join([name] + rate[:1])
+        parts[state].append("%s (%s)" % (label, note) if note else label)
         legs.append({"encoder": name, "codec": codec, "status": state,
                      "reason": "" if state == "pass" else (note or "no reason given")[:400]})
+        if rate:
+            legs[-1]["rate_control"] = rate[0]
     text = "; ".join("%s: %s" % (k, ", ".join(v)) for k, v in parts.items() if v)
     if parts["fail"]:
         return outcome("fail", text, legs=legs)
-    if not parts["pass"]:
+    if not any(l["status"] == "pass" and "rate_control" not in l for l in legs):
         if "encoder_absent_not_run" in disabled:
             return outcome("pass", text, legs=legs)
         return outcome("not_run", "no usable encoder; " + text, legs=legs)
     return outcome("pass", text, legs=legs)
+
+
+def brc_verdict(size, decoded, expected, fps, disabled=frozenset()):
+    """Pass rule of a bitrate-control leg: every frame decodes and the bitrate of
+    `size` bytes over `expected` frames is within BRC_TOLERANCE of BRC_TARGET."""
+    if decoded != expected and "brc_decode" not in disabled:
+        return "fail", "decoded %s of %d frames" % (decoded, expected)
+    rate = size * 8.0 * fps / expected if expected else 0.0
+    off = rate / BRC_TARGET - 1.0
+    text = "%.0f kb/s, %+.1f%% off the %d kb/s target" % (rate / 1000, off * 100, BRC_TARGET // 1000)
+    if abs(off) > BRC_TOLERANCE and "brc_bitrate" not in disabled:
+        return "fail", "%s (allowed: within %d%%)" % (text, round(BRC_TOLERANCE * 100))
+    return "pass", "%s; %d frames decode" % (text, expected)
+
+
+def extbrc_problems(log, disabled=frozenset()):
+    """An -extbrc 1 encode must report the runtime's software bitrate control as on."""
+    seen = EXTBRC_RE.search(log)
+    if "brc_extbrc_engaged" in disabled or (seen and seen.group(1) == "ON"):
+        return []
+    return ["-extbrc 1 was set but the encoder reports %s" % (
+        seen.group(0) if seen else "no ExtBRC state")]
+
+
+def hw_brc_failure(line, host, disabled=frozenset()):
+    """(status, reason) of a hardware-CBR encode that failed while constant QP encodes.
+
+    `host` is intel_render_host(): the no-HuC signature is a named not_run only on a
+    DG2 bound to xe (or, unconfirmed, when the kernel driver cannot be read); a driver
+    that refuses the mode is a named not_run; anything else is a fail."""
+    if NO_HUC_RE.search(line) and "brc_no_huc" not in disabled:
+        if host == "xe-dg2":
+            return "not_run", "%s: %s" % (NO_HUC_REASON, line)
+        if host == "unknown":
+            return "not_run", ("hardware CBR fails as on DG2 under xe without HuC firmware, but "
+                               "the GPU's kernel driver could not be read, so that cause is not "
+                               "confirmed: " + line)
+    if NO_HW_BRC_RE.search(line) and "brc_hw_refused" not in disabled:
+        return "not_run", "the media driver offers no hardware bitrate control here: " + line
+    return "fail", "hardware CBR fails while constant QP encodes: " + line
 
 
 # ------------------------------------------------------------- SEI parsing
@@ -432,6 +508,39 @@ def encoder_error_line(text, name):
     """The first two lines FFmpeg logged for this encoder, else the last line of the log."""
     own = [l.split("]", 1)[-1].strip() for l in text.splitlines()[:2000] if "[%s @" % name in l]
     return ("%s: %s" % (name, "; ".join(own[:2])) if own else first_line(text))[:200]
+
+
+def encoder_problem_line(text, name):
+    """First line the encoder logged that names a problem; for a verbose log, where
+    the encoder's first lines are its settings."""
+    tag = "[%s @" % name
+    own = [l.split("]", 1)[-1].strip() for l in text.splitlines()[:5000]
+           if tag in l and PROBLEM_RE.search(l.split("]", 1)[-1])]
+    return ("%s: %s" % (name, own[0]))[:200] if own else first_line(text)
+
+
+def intel_render_host(dev_root="/dev", sys_root="/sys"):
+    """'xe-dg2' when an Intel DG2 render node (PCI id 0x56xx, linux
+    include/drm/intel/pciids.h) under dev_root/dri is bound to xe; 'unknown' when no
+    Intel render node can be read from sys_root; else 'other'."""
+    try:
+        nodes = sorted(p.name for p in Path(dev_root, "dri").iterdir() if p.name.startswith("renderD"))
+    except OSError:
+        return "unknown"
+    seen = False
+    for node in nodes[:MAX_RENDER_NODES]:
+        base = Path(sys_root, "class", "drm", node, "device")
+        try:
+            vendor = (base / "vendor").read_text(encoding="ascii").strip()
+            device = (base / "device").read_text(encoding="ascii").strip().lower()
+        except OSError:
+            continue
+        if vendor != "0x8086":
+            continue
+        seen = True
+        if device.startswith(DG2_PCI_PREFIX) and (base / "driver").resolve().name == "xe":
+            return "xe-dg2"
+    return "other" if seen else "unknown"
 
 
 def unusable(enc, text, why):
@@ -701,7 +810,101 @@ def run_steering(ctx, spec):
             results.append((enc["name"], enc["codec"], "not_run", "not built into this FFmpeg"))
         elif devs:
             results.append((enc["name"], enc["codec"]) + steer_one(ctx, enc, devs, entry, src, work))
+    if devs:
+        results += brc_legs(ctx, devs[0], work)
     return finish(ctx, aggregate_legs(results, ctx["disabled"]))
+
+
+# ------------------------------------------------- QSV bitrate-control legs
+
+def brc_legs(ctx, dev, work):
+    """cbr_extbrc and cbr_hw legs for each QSV encoder this FFmpeg has (ADR-0180 decision 8)."""
+    have = ffmpeg_info(ctx)["encoders"]
+    qsv = [e for e in ENCODERS if e["name"].endswith("_qsv") and e["name"] in have]
+    if not qsv:
+        return []
+    src, entry, stop = fixture_for(ctx, BRC_FIXTURE)
+    results = []
+    for enc in qsv:
+        for mode, leg in (("cbr_extbrc", extbrc_leg), ("cbr_hw", hw_brc_leg)):
+            if stop:
+                state = "fail" if stop[0] == "fail" else "not_run"
+                results.append((enc["name"], enc["codec"], state, stop[1], mode))
+            else:
+                results.append((enc["name"], enc["codec"]) + leg(ctx, enc, dev, entry, src, work) + (mode,))
+    return results
+
+
+def brc_encode(ctx, enc, dev, entry, src, out, rate_args):
+    """One encode of the looped bitrate fixture through pelorus_deband_vulkan; (ok, why, log)."""
+    frames = entry["frames"] * (BRC_LOOPS + 1)
+    argv = ["-hide_banner", "-loglevel", "verbose", "-y", "-init_hw_device", "vulkan=vk:%d" % dev,
+            "-filter_hw_device", "vk", "-stream_loop", str(BRC_LOOPS)] + input_args(entry, src)
+    argv += ["-frames:v", str(frames), "-vf", BRC_CHAIN, "-c:v", enc["name"]] + rate_args
+    argv += ["-f", CODECS[enc["codec"]], str(out)]
+    code, text, err = ffrun(ctx, argv)
+    ok = code == 0 and Path(out).is_file() and Path(out).stat().st_size > 0
+    return ok, err or (encoder_problem_line(text, enc["name"]) if text else "no output"), text
+
+
+def decoded_count(ctx, stream):
+    """Frames FFmpeg decodes from `stream` (framecrc lines): (count or -1, first error line)."""
+    code, text, err = ffrun(ctx, ["-hide_banner", "-loglevel", "error", "-i", str(stream),
+                                  "-f", "framecrc", "-"])
+    lines = text.splitlines()[:100000]
+    count = sum(1 for l in lines if re.match(r"^0,\s*-?\d+,", l))
+    errors = [l.strip() for l in lines if l.strip() and not l.startswith(("0,", "#"))]
+    if code != 0:
+        return -1, (err or (errors[0] if errors else first_line(text)))[:160]
+    return count, (errors[0] if errors else "")[:160]
+
+
+def brc_judge(ctx, entry, out):
+    """Bitrate and decode verdict of an encoded bitrate-control stream."""
+    decoded, why = decoded_count(ctx, out)
+    state, note = brc_verdict(Path(out).stat().st_size, decoded, entry["frames"] * (BRC_LOOPS + 1),
+                              entry["fps"], ctx["disabled"])
+    return state, ("%s; decoder: %s" % (note, why) if why and state == "fail" else note)
+
+
+def brc_baseline(ctx, enc, dev, entry, src, work):
+    """The encoder's constant-QP encode of the same input, (ok, why, log); cached per encoder."""
+    cache = ctx.setdefault("brc_baseline", {})
+    if enc["name"] not in cache:
+        out = work / ("brc-%s-cqp.%s" % (enc["name"], CODECS[enc["codec"]]))
+        cache[enc["name"]] = brc_encode(ctx, enc, dev, entry, src, out, enc["args"])
+    return cache[enc["name"]]
+
+
+def extbrc_leg(ctx, enc, dev, entry, src, work):
+    """CBR with -extbrc 1: oneVPL's software bitrate control."""
+    if enc["codec"] == "av1":
+        return "not_run", AV1_EXTBRC_REASON
+    if not encoder_has_option(ctx, enc["name"], "extbrc"):
+        return "not_run", "%s has no -extbrc option in this FFmpeg" % enc["name"]
+    out = work / ("brc-%s-extbrc.%s" % (enc["name"], CODECS[enc["codec"]]))
+    ok, why, text = brc_encode(ctx, enc, dev, entry, src, out, BRC_RATE + ["-extbrc", "1"])
+    if not ok:
+        base_ok, base_why, _ = brc_baseline(ctx, enc, dev, entry, src, work)
+        if not base_ok:
+            return free_driver_leg(ctx, enc, *unusable(enc, "", base_why))
+        return "fail", "CBR with -extbrc 1 fails while constant QP encodes: " + why
+    errs = extbrc_problems(text, ctx["disabled"])
+    return ("fail", errs[0]) if errs else brc_judge(ctx, entry, out)
+
+
+def hw_brc_leg(ctx, enc, dev, entry, src, work):
+    """CBR with the hardware's own bitrate control."""
+    out = work / ("brc-%s-hw.%s" % (enc["name"], CODECS[enc["codec"]]))
+    ok, why, _ = brc_encode(ctx, enc, dev, entry, src, out, BRC_RATE)
+    if ok:
+        return brc_judge(ctx, entry, out)
+    base_ok, base_why, _ = brc_baseline(ctx, enc, dev, entry, src, work)
+    if not base_ok:
+        return free_driver_leg(ctx, enc, *unusable(enc, "", base_why))
+    if "intel_host" not in ctx:
+        ctx["intel_host"] = intel_render_host()
+    return hw_brc_failure(why, ctx["intel_host"], ctx["disabled"])
 
 
 # ------------------------------------------------------ side-data round trip
@@ -1169,6 +1372,111 @@ def self_test_carrier(expect, disabled):
         expect("sd_carrier_baseline_failure_not_run", got[0] == "not_run" and "Cannot allocate" in got[1])
 
 
+def self_test_brc_rules(expect, disabled):
+    """Bitrate-control pass rules: on target, the +-15 % boundary, decode, ExtBRC engagement."""
+    full = lambda rate: int(rate * 16 / 8)   # bytes for `rate` bit/s over 400 frames at 25 fps
+    expect("brc_on_target_passes", brc_verdict(full(1040000), 400, 400, 25, disabled)[0] == "pass")
+    expect("brc_boundary_14_passes", brc_verdict(full(1140000), 400, 400, 25, disabled)[0] == "pass")
+    over = brc_verdict(full(1160000), 400, 400, 25, disabled)
+    expect("brc_rejects_16_over", over[0] == "fail" and "+16.0% off the 1000 kb/s target" in over[1])
+    expect("brc_rejects_16_under", brc_verdict(full(840000), 400, 400, 25, disabled)[0] == "fail")
+    expect("brc_rejects_short_decode", brc_verdict(full(1000000), 399, 400, 25, disabled)[0] == "fail")
+    expect("brc_extbrc_on_passes", not extbrc_problems("[h264_qsv @ 0x1] MBBRC: OFF; ExtBRC: ON", disabled))
+    expect("brc_rejects_extbrc_off", bool(extbrc_problems("[h264_qsv @ 0x1] ExtBRC: OFF", disabled)))
+    expect("brc_rejects_extbrc_absent", bool(extbrc_problems("", disabled)))
+
+
+def self_test_brc_failures(expect, disabled):
+    """A failed hardware-CBR encode: named not_run for no HuC on DG2/xe and for a refusal, else fail."""
+    hang = "hevc_qsv: Invalid FrameType:0."
+    got = hw_brc_failure(hang, "xe-dg2", disabled)
+    expect("brc_no_huc_named_not_run", got[0] == "not_run" and NO_HUC_REASON in got[1] and hang in got[1])
+    for line in ("h264_qsv: Error during encoding: GPU Hang (-21)",
+                 "av1_qsv: Error during encoding: device failed (-17)"):
+        expect("brc_no_huc_status_" + line[:4], hw_brc_failure(line, "xe-dg2", disabled)[0] == "not_run")
+    expect("brc_signature_elsewhere_fails", hw_brc_failure(hang, "other", disabled)[0] == "fail")
+    got = hw_brc_failure(hang, "unknown", disabled)
+    expect("brc_signature_unknown_host_unconfirmed", got[0] == "not_run" and "not confirmed" in got[1])
+    got = hw_brc_failure("hevc_qsv: Selected ratecontrol mode is unsupported", "other", disabled)
+    expect("brc_refusal_named_not_run", got[0] == "not_run" and "no hardware bitrate control" in got[1])
+    expect("brc_other_failure_fails", hw_brc_failure(
+        "hevc_qsv: Error during encoding: unknown error (-1)", "xe-dg2", disabled)[0] == "fail")
+
+
+def self_test_render_host(expect):
+    """intel_render_host reads the kernel driver and PCI id of the Intel render nodes."""
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="pelorus-sys-") as tmp:
+        def plant(name, vendor, device, driver):
+            Path(tmp, "dev", "dri").mkdir(parents=True, exist_ok=True)
+            Path(tmp, "dev", "dri", name).write_text("")
+            base = Path(tmp, "sys", "class", "drm", name, "device")
+            base.mkdir(parents=True, exist_ok=True)
+            (base / "vendor").write_text(vendor + "\n")
+            (base / "device").write_text(device + "\n")
+            Path(tmp, "drivers", driver).mkdir(parents=True, exist_ok=True)
+            link = base / "driver"
+            if link.is_symlink():
+                link.unlink()
+            link.symlink_to(Path(tmp, "drivers", driver))
+        host = lambda: intel_render_host(str(Path(tmp, "dev")), str(Path(tmp, "sys")))
+        expect("render_host_no_dri_unknown", host() == "unknown")
+        plant("renderD128", "0x10de", "0x2684", "nvidia")
+        expect("render_host_no_intel_unknown", host() == "unknown")
+        plant("renderD130", "0x8086", "0x56a5", "i915")
+        expect("render_host_dg2_i915_other", host() == "other")
+        plant("renderD130", "0x8086", "0xe20b", "xe")
+        expect("render_host_bmg_xe_other", host() == "other")
+        plant("renderD130", "0x8086", "0x56A5", "xe")
+        expect("render_host_dg2_xe", host() == "xe-dg2")
+
+
+def fake_brc_ctx(work, disabled, extbrc_rate, extbrc_state="ON"):
+    """FFmpeg stand-in for hevc_qsv on a DG2 under xe: CQP and -extbrc 1 encode (the latter at
+    `extbrc_rate` bit/s), hardware CBR fails as without HuC, decodes yield every frame."""
+    def run(argv, timeout_s, env=None):
+        if "framecrc" in argv:
+            return 0, "".join("0, %d, %d, 1, 384, 0x0\n" % (i, i) for i in range(16)), ""
+        if "-b:v" in argv and "-extbrc" not in argv:
+            return 183, "[hevc_qsv @ 0x1] ExtBRC: OFF\n[hevc_qsv @ 0x1] Invalid FrameType:0.\n", ""
+        size = int(extbrc_rate * 0.64 / 8) if "-extbrc" in argv else 64
+        Path(argv[-1]).write_bytes(b"\x00" * size)
+        return 0, "[hevc_qsv @ 0x1] BitrateLimit: unknown; MBBRC: OFF; ExtBRC: %s\n" % extbrc_state, ""
+    ctx = stage_ctx({"PELORUS_VALIDATE": "0"}, run)
+    ctx.update(disabled=disabled, work=str(work), intel_host="xe-dg2")
+    ctx["ff"] = {"bin": "ffmpeg", "filters": {"pelorus_analyze_vulkan"}, "encoders": {"hevc_qsv"},
+                 "help": {"hevc_qsv": "  -extbrc            <int>        E..V....... Extended bitrate control"}}
+    return ctx
+
+
+def self_test_brc_legs(expect, disabled):
+    """End to end through the leg runners with a stand-in FFmpeg."""
+    import tempfile
+    entry = {"pixfmt": "yuv420p", "width": 16, "height": 16, "fps": 25, "frames": 2}
+    enc = {e["name"]: e for e in ENCODERS}
+    with tempfile.TemporaryDirectory(prefix="pelorus-brc-") as tmp:
+        args = (enc["hevc_qsv"], 0, entry, "src", Path(tmp))
+        good = extbrc_leg(fake_brc_ctx(tmp, disabled, 1030000), *args)
+        expect("brc_leg_extbrc_on_target_passes", good[0] == "pass" and "+3.0%" in good[1])
+        off = extbrc_leg(fake_brc_ctx(tmp, disabled, 1400000), *args)
+        expect("brc_leg_extbrc_off_target_fails", off[0] == "fail" and "+40.0%" in off[1])
+        dropped = extbrc_leg(fake_brc_ctx(tmp, disabled, 1000000, "OFF"), *args)
+        expect("brc_leg_extbrc_not_engaged_fails", dropped[0] == "fail" and "ExtBRC: OFF" in dropped[1])
+        hw = hw_brc_leg(fake_brc_ctx(tmp, disabled, 1000000), *args)
+        expect("brc_leg_hw_no_huc_named_not_run", hw[0] == "not_run" and NO_HUC_REASON in hw[1]
+               and "Invalid FrameType:0" in hw[1])
+        av1 = extbrc_leg(fake_brc_ctx(tmp, disabled, 1000000), enc["av1_qsv"], *args[1:])
+        expect("brc_leg_av1_extbrc_named_not_run", av1 == ("not_run", AV1_EXTBRC_REASON))
+    status, _, _, legs = aggregate_legs([("hevc_qsv", "hevc", "pass", ""),
+                                         ("hevc_qsv", "hevc") + off + ("cbr_extbrc",),
+                                         ("hevc_qsv", "hevc") + hw + ("cbr_hw",)], disabled)
+    expect("brc_failed_leg_fails_stage", status == "fail"
+           and [l.get("rate_control") for l in legs] == [None, "cbr_extbrc", "cbr_hw"])
+    status = aggregate_legs([("hevc_qsv", "hevc", "not_run", "no -pelorus_roi"),
+                             ("hevc_qsv", "hevc") + good + ("cbr_extbrc",)], disabled)[0]
+    expect("brc_pass_alone_is_not_a_steering_pass", status == "not_run")
+
+
 def self_test(disabled=frozenset()):
     """Return failing check names; every rule has a planted bad case."""
     failures = []
@@ -1183,4 +1491,8 @@ def self_test(disabled=frozenset()):
     self_test_gates(expect, disabled)
     self_test_legs(expect, disabled)
     self_test_carrier(expect, disabled)
+    self_test_brc_rules(expect, disabled)
+    self_test_brc_failures(expect, disabled)
+    self_test_render_host(expect)
+    self_test_brc_legs(expect, disabled)
     return failures
