@@ -103,7 +103,10 @@ and side-data stages add `legs`: one entry per encoder with its codec, `pass`,
 
 Before writing, the program replaces and then re-scans for:
 
-- host name, home directory, repository path and user name;
+- host name, home directory, repository path and user name. The user name is
+  matched as a whole word, so `ann` does not hit `channel`, and a generic CI or
+  container account (`runner`, `root`, `ubuntu`, `vscode`, ...) is not treated
+  as private, because it names nobody (tool version 0.4.1);
 - Vulkan `deviceUUID`, `driverUUID` and LUID values, and any UUID;
 - PCI bus ids (`0000:01:00.0`);
 - `/home/<user>`, `/Users/<user>` and `C:\Users\<user>` paths.

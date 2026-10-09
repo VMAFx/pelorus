@@ -53,6 +53,9 @@
             "context": "ffmpeg patch stack (regenerate · replay · link · smoke)"
           },
           {
+            "context": "lavapipe (software Vulkan · ten filters · validation · format matrix)"
+          },
+          {
             "context": "libpelorus (ASan + UBSan — the interop conformance fixture)"
           },
           {

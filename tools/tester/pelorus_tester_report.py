@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TOOL_NAME = "pelorus-tester-report"
-TOOL_VERSION = "0.4.0"
+TOOL_VERSION = "0.4.1"
 SCHEMA_VERSION = 2
 SCHEMA_PATH = Path(__file__).with_name("report.schema.json")
 
@@ -109,6 +109,11 @@ UUID_RE = re.compile(
 LABEL_RE = re.compile(r"(?i)\b((?:device|driver)UUID|deviceLUID|LUID)\b"
                       r"[ \t]*[=:]?[ \t]*\S*")
 PCI_RE = re.compile(r"\b[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]\b")
+# CI and container accounts name nobody; a bare user name is private only
+# when it is a person's login (USER_PATH_RE still redacts every home path).
+GENERIC_ACCOUNTS = frozenset({"root", "runner", "ubuntu", "vscode", "user",
+                              "builder", "docker", "nobody", "ci"})
+WORD_PREFIX = "word:"
 USER_PATH_RE = re.compile(r"(/home/|/Users/|[A-Za-z]:\\Users\\)(?!<)[^/\\\s\"']+")
 LEAK_KINDS = (("uuid", UUID_RE), ("label", LABEL_RE), ("pci", PCI_RE),
               ("user_path", USER_PATH_RE))
@@ -256,17 +261,32 @@ def local_literals():
         pass
     found.append((str(Path.home()), "<home>"))
     found.append((os.getcwd(), "<repo>"))
-    user = os.environ.get("USER") or os.environ.get("USERNAME") or ""
-    found.append((user, "<user>"))
-    kept = [(lit, tok) for lit, tok in found if len(lit) >= 3]
+    user = user_literal(os.environ.get("USER") or os.environ.get("USERNAME") or "")
+    if user:
+        found.append(user)
+    kept = [(lit, tok) for lit, tok in found if len(lit.removeprefix(WORD_PREFIX)) >= 3]
     return sorted(kept, key=lambda p: -len(p[0]))
+
+
+def user_literal(user):
+    """Whole-word literal for a person's login; None for a generic account."""
+    if not user or user.lower() in GENERIC_ACCOUNTS:
+        return None
+    return (WORD_PREFIX + user, "<user>")
+
+
+def literal_regex(lit):
+    """Pattern for one literal; WORD_PREFIX marks a whole-word literal."""
+    if lit.startswith(WORD_PREFIX):
+        return re.compile(r"(?<![\w.-])" + re.escape(lit[len(WORD_PREFIX):]) + r"(?![\w-])")
+    return re.compile(re.escape(lit))
 
 
 def redact_text(text, literals, disabled=frozenset()):
     if "redaction" in disabled:
         return text
     for lit, tok in literals:
-        text = text.replace(lit, tok)
+        text = literal_regex(lit).sub(tok, text)
     text = LABEL_RE.sub(lambda m: m.group(1) + " <uuid>", text)
     text = UUID_RE.sub("<uuid>", text)
     text = PCI_RE.sub("<pci>", text)
@@ -300,7 +320,8 @@ def find_leaks(report, forbid=()):
             hit = rx.search(text)
             if hit and not (kind == "label" and hit.group(0).endswith("<uuid>")):
                 leaks.append((path, kind))
-        leaks.extend((path, "literal") for lit in forbid if lit and lit in text)
+        leaks.extend((path, "literal") for lit in forbid
+                     if lit and literal_regex(lit).search(text))
     return leaks
 
 
@@ -937,6 +958,19 @@ def self_test_stages(expect, disabled):
            and rep["exit_code"] == 0 and rep["failed_stages"] == [])
 
 
+def self_test_user_literal(expect, disabled):
+    """A bare login is private; a CI account or a substring of a word is not."""
+    expect("generic_account_not_private", user_literal("runner") is None)
+    person = user_literal("kilian")
+    expect("person_login_is_literal", person == (WORD_PREFIX + "kilian", "<user>"))
+    expect("login_whole_word_only",
+           not find_leaks({"r": "the channel is open"}, [WORD_PREFIX + "ann"]))
+    expect("login_leak_caught",
+           bool(find_leaks({"r": "uid=1000(kilian)"}, [person[0]])))
+    red = redact_text("uid=1000(kilian) at /home/kilian/x", [person], disabled)
+    expect("login_redacted", "kilian" not in red or "redaction" in disabled)
+
+
 def self_test(disabled=frozenset()):
     schema = load_schema()
     failures = []
@@ -944,6 +978,8 @@ def self_test(disabled=frozenset()):
     def expect(name, cond):
         if not cond:
             failures.append(name)
+
+    self_test_user_literal(expect, disabled)
 
     cpu_only = {"probe": py_stage("import sys; sys.exit(1)")}
     rep, lit = good_report(None, cpu_only, disabled=disabled)

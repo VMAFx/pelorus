@@ -15,6 +15,9 @@
 #   FFMPEG_REPO  path to a FFmpeg git checkout      (required)
 #   WORKTREE     new path for the FFmpeg worktree   (optional)
 #   JOBS         parallel build jobs                (default nproc)
+#   KEEP_DIR     absolute path of a new directory that receives the linked
+#                ffmpeg and libpelorus.so* (lib/) after every check passed;
+#                run it with LD_LIBRARY_PATH=$KEEP_DIR/lib (optional)
 set -euo pipefail
 
 # Hermetic Git: neither global/system configuration (apply.whitespace,
@@ -381,5 +384,24 @@ fi
 verify_encoder_options h264_vulkan pelorus_roi udu_sei
 verify_encoder_options hevc_vulkan pelorus_roi udu_sei
 verify_encoder_options av1_vulkan pelorus_roi
+
+keep_binary() {
+    if [[ "$KEEP_DIR" != /* ]]; then
+        echo "ERROR: KEEP_DIR must be an absolute path: $KEEP_DIR" >&2
+        return 1
+    fi
+    if [[ -e "$KEEP_DIR" || -L "$KEEP_DIR" ]]; then
+        echo "ERROR: refusing existing KEEP_DIR: $KEEP_DIR" >&2
+        return 1
+    fi
+    mkdir -p -- "$KEEP_DIR/lib"
+    cp -- "$WORKTREE/ffmpeg" "$KEEP_DIR/ffmpeg"
+    cp -P -- "$PRIVATE_PREFIX"/lib/libpelorus.so* "$KEEP_DIR/lib/"
+    echo "kept ffmpeg and libpelorus in $KEEP_DIR"
+}
+
+if [[ -n "${KEEP_DIR:-}" ]]; then
+    keep_binary
+fi
 
 echo "OK: 21 patches applied and ffmpeg linked against private libpelorus"

@@ -1,0 +1,9 @@
+# Vulkan device extensions the lavapipe lane requires, one per line:
+#   <extension name> | <why the lane needs it>
+# Read by ffmpeg-patches/test/vulkan-lavapipe-guard.sh. FFmpeg 9 treats each of
+# these as optional and falls back to another path when the device lacks it, so
+# without this list a lane could pass on a path that no GPU runs. Missing -> the
+# guard fails and names the extension.
+VK_EXT_shader_object | libavutil/vulkan.c creates pipelines through shader objects when present
+VK_KHR_push_descriptor | libavutil/vulkan.c pushes descriptors instead of allocating sets when present
+VK_EXT_host_image_copy | hwupload and hwdownload copy through vkCopyMemoryToImageEXT when present

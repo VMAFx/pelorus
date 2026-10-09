@@ -12,6 +12,7 @@ All notable changes to Pelorus are documented here. The format is
 
 ### Added
 
+- CI runs all ten Pelorus filters, the Vulkan format matrix and the tester report on Mesa lavapipe with Vulkan validation on, in the new `lavapipe` job of `ci.yml`. A guard refuses any device but a single llvmpipe CPU device and names every missing device extension; the result is functional evidence on software Vulkan, never GPU evidence ([research 0228](docs/research/0228-lavapipe-spike.md), #228). `build-and-run.sh` gains `KEEP_DIR` to keep the linked binary.
 - NVIDIA and Intel tester images: `tools/tester/Containerfile` builds one image per kit (`final-generic`, `final-nvidia`, `final-intel`, each with a `source-<kit>` companion), published as `tester-<date>-<sha8>` (CPU, unchanged) and `tester-<kit>-<date>-<sha8>`; the NVIDIA image builds NVENC from the MIT `nv-codec-headers` only and ships no NVIDIA file (the host driver and Vulkan ICD come through the NVIDIA Container Toolkit), the Intel image carries Mesa ANV, oneVPL and the free `intel-media-va-driver` from Debian `main`; the licence record gains kits and forbidden files and packages (an NVIDIA library or `intel-media-va-driver-non-free` fails the build); a report without its device names the missing docker option (`--gpus all`, `--device /dev/dri`), records the image `kit` and one `legs` entry per encoder, an AV1 encoder the GPU lacks is a `not_run` leg with the reason, a QSV leg the free media driver cannot run names the missing `intel-media-va-driver-non-free`, and the steering control runs without ROI side data; a local-only build with `--build-arg INTEL_MEDIA_DRIVER=nonfree` (kit `intel-nonfree-local`) carries a NOT-FOR-REDISTRIBUTION marker that the publish gate refuses, and no workflow may pass that build arg ([ADR-0180](docs/adr/0180-tester-vendor-images.md), [research 0229](docs/research/0229-tester-vendor-images.md)).
 
 ### Changed
@@ -20,6 +21,7 @@ All notable changes to Pelorus are documented here. The format is
 
 ### Fixed
 
+- The tester report treats a user name as a whole-word literal and no longer treats a generic CI or container account (`runner`, `root`, `ubuntu`, `vscode`, ...) as private; on GitHub runners the program refused its own report because the fixed text "stage runner" contained the account name (tool 0.4.1).
 - The `ghcr.io/vmafx/pelorus-dev` image no longer redistributes a source-built GPL `git` without a source offer: it starts from plain `ubuntu:26.04` and uses Ubuntu's `git` package. Node.js, actionlint and Lefthook now ship their licence texts under `/usr/local/share/licenses/`, the misleading `EUPL-1.2` image label is replaced by a notices file, and a licence record plus gate (`.devcontainer/base/licensing.json`) fails the image build on any unrecorded file ([ADR-0179](docs/adr/0179-dev-image-licence-record.md), #256). The dev container bundle keeps the old digest until the new image is published and re-pinned.
 
 <!-- END UNRELEASED -->
