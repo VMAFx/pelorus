@@ -33,3 +33,4 @@
 0018-add-vf_pelorus_borderfix_vulkan.patch
 0019-qsv-pelorus-udu-sei.patch
 0020-vulkan-pelorus-udu-sei.patch
+0021-vulkan-frame-barrier-queue-family.patch

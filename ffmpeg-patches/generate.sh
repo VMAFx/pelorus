@@ -124,7 +124,7 @@ if [[ "$TAG_COMMIT" != "$FFMPEG_COMMIT" ]]; then
 fi
 
 # Deterministic output. `git format-patch` stamps each patch with the commit
-# Date:, so without a fixed date two runs of this script produce 20 patches that
+# Date:, so without a fixed date two runs of this script produce patches that
 # differ only in a timestamp -- which makes "do the committed artifacts still
 # match generate.sh?" unanswerable, and silently hides real drift in the noise.
 # The commits are synthetic anyway (format-patch runs with --zero-commit), so a
@@ -637,6 +637,16 @@ git -C "$WORKTREE" apply "$FILES_DIR/vulkan-pelorus-udu-sei.patch"
 git -C "$WORKTREE" add -A
 commit_patch "$HERE/.commit-msg-vulkan-udu-sei.txt"
 
+# libavutil fix (NOT Pelorus-specific, written to go upstream): on a device with
+# a single queue family, ff_vk_frame_barrier() turned the first barrier on each
+# frame into a queue family ownership transfer to VK_QUEUE_FAMILY_IGNORED, which
+# an exclusive image does not allow; the validation layer then lost the image's
+# layout. Same hand-maintained-diff model as the encoder patches; applied last
+# (-> patch 0021) so no shipped patch is renumbered.
+git -C "$WORKTREE" apply "$FILES_DIR/vulkan-frame-barrier-queue-family.patch"
+git -C "$WORKTREE" add -A
+commit_patch "$HERE/.commit-msg-vulkan-frame-barrier.txt"
+
 # Clean stale patches, regenerate the whole range.
 rm -f "$HERE"/0*.patch
 # Every byte-affecting format choice is explicit. Besides full blob hashes, this
@@ -680,6 +690,7 @@ pelorus_patch_names=(
     "0018-add-vf_pelorus_borderfix_vulkan.patch"
     "0019-qsv-pelorus-udu-sei.patch"
     "0020-vulkan-pelorus-udu-sei.patch"
+    "0021-vulkan-frame-barrier-queue-family.patch"
 )
 for pelorus_patch_name in "${pelorus_patch_names[@]}"; do
     pelorus_patch_index="${pelorus_patch_name%%-*}"

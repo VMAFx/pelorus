@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
 Date: Thu, 1 Jan 2026 00:00:00 +0000
-Subject: [PATCH 13/20] feat(svtav1): honor AV_FRAME_DATA_REGIONS_OF_INTEREST
+Subject: [PATCH 13/21] feat(svtav1): honor AV_FRAME_DATA_REGIONS_OF_INTEREST
  via the ROI segment map
 
 The flagship modern AV1 software encoder (libsvtav1 / av1_svt) had zero Pelorus
