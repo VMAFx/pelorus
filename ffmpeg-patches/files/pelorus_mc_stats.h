@@ -144,4 +144,20 @@ static inline float pel_mc_p95_nonneg(const float *v, int n)
     return pel_mc_select_nonneg(v, (size_t)n, (size_t)rank);
 }
 
+/* PelorusMotionSection.block_size_log2 for a bsize option value (interop ABI
+ * 1.4, #218): log2 of the block edge when it is a power of two in the option
+ * range 8..32 (3, 4 or 5), else 0, "not reported". The bsize option also
+ * accepts edges such as 12 that a log2 cannot express; a consumer then infers
+ * the edge from the grid, as it does for an ABI 1.3 blob. */
+static inline uint8_t pel_mc_bsize_log2(int bsize)
+{
+    uint8_t n;
+
+    for (n = 3; n <= 5; n++) {
+        if (bsize == 1 << n)
+            return n;
+    }
+    return 0;
+}
+
 #endif /* AVFILTER_PELORUS_MC_STATS_H */

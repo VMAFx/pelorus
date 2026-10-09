@@ -1,0 +1,285 @@
+{
+  "schema": "pelorus/telemetry-fields/1",
+  "description": "Normative field names of PEL_SEC_ENC_TELEMETRY (interop ABI 1.4, ADR-0174, docs/api/encoder-telemetry.md). Append-only: a bit is never renumbered or reused. decoder 'shared' = VMAFx stream metadata (VMAFx/vmafx#2271) spells, types and units the field exactly like this when it carries it.",
+  "fields": [
+    {
+      "key": "display_index",
+      "bit": 0,
+      "json": "integer",
+      "c": "uint32_t display_index",
+      "unit": "frame",
+      "range": "0-based display order",
+      "decoder": "shared"
+    },
+    {
+      "key": "decode_index",
+      "bit": 1,
+      "json": "integer",
+      "c": "uint32_t decode_index",
+      "unit": "frame",
+      "range": "0-based coding order",
+      "decoder": "shared"
+    },
+    {
+      "key": "frame_bytes",
+      "bit": 2,
+      "json": "integer",
+      "c": "uint32_t frame_bytes",
+      "unit": "byte",
+      "range": "coded frame, headers included, container excluded",
+      "decoder": "shared"
+    },
+    {
+      "key": "header_bits",
+      "bit": 3,
+      "json": "integer",
+      "c": "uint32_t header_bits",
+      "unit": "bit",
+      "range": "bits that are not residual (headers, modes, motion)",
+      "decoder": "encoder_only"
+    },
+    {
+      "key": "residual_bits",
+      "bit": 4,
+      "json": "integer",
+      "c": "uint32_t residual_bits",
+      "unit": "bit",
+      "range": "bits of transform coefficients",
+      "decoder": "encoder_only"
+    },
+    {
+      "key": "avg_qp",
+      "bit": 5,
+      "json": "number",
+      "c": "float avg_qp",
+      "unit": "qp_scale",
+      "range": "inside the qp_scale range",
+      "decoder": "shared"
+    },
+    {
+      "key": "avg_qp_norm",
+      "bit": 6,
+      "json": "number",
+      "c": "float avg_qp_norm",
+      "unit": "h264_qp",
+      "range": "6 * log2(Qstep / 0.625), finite",
+      "decoder": "shared"
+    },
+    {
+      "key": "psnr_y",
+      "bit": 7,
+      "json": "number",
+      "c": "float psnr_y",
+      "unit": "dB",
+      "range": "finite, >= 0",
+      "decoder": "encoder_only"
+    },
+    {
+      "key": "psnr_u",
+      "bit": 8,
+      "json": "number",
+      "c": "float psnr_u",
+      "unit": "dB",
+      "range": "finite, >= 0",
+      "decoder": "encoder_only"
+    },
+    {
+      "key": "psnr_v",
+      "bit": 9,
+      "json": "number",
+      "c": "float psnr_v",
+      "unit": "dB",
+      "range": "finite, >= 0",
+      "decoder": "encoder_only"
+    },
+    {
+      "key": "ssim_y",
+      "bit": 10,
+      "json": "number",
+      "c": "float ssim_y",
+      "unit": "linear",
+      "range": "0..1, not dB",
+      "decoder": "encoder_only"
+    },
+    {
+      "key": "intra_fraction",
+      "bit": 11,
+      "json": "number",
+      "c": "float intra_fraction",
+      "unit": "area_share",
+      "range": "0..1 of the luma area",
+      "decoder": "encoder_only"
+    },
+    {
+      "key": "inter_fraction",
+      "bit": 12,
+      "json": "number",
+      "c": "float inter_fraction",
+      "unit": "area_share",
+      "range": "0..1 of the luma area, skip excluded",
+      "decoder": "encoder_only"
+    },
+    {
+      "key": "skip_fraction",
+      "bit": 13,
+      "json": "number",
+      "c": "float skip_fraction",
+      "unit": "area_share",
+      "range": "0..1 of the luma area",
+      "decoder": "encoder_only"
+    },
+    {
+      "key": "picture_type",
+      "bit": 14,
+      "json": "string",
+      "c": "uint8_t picture_type (enum pel_picture_type)",
+      "unit": "none",
+      "range": "i|p|b",
+      "decoder": "shared"
+    },
+    {
+      "key": "key_frame",
+      "bit": 15,
+      "json": "boolean",
+      "c": "uint8_t frame_flags & PEL_TLM_FRAME_KEY",
+      "unit": "none",
+      "range": "random-access point",
+      "decoder": "shared"
+    },
+    {
+      "key": "reference",
+      "bit": 16,
+      "json": "boolean",
+      "c": "uint8_t frame_flags & PEL_TLM_FRAME_REFERENCE",
+      "unit": "none",
+      "range": "used for prediction",
+      "decoder": "shared"
+    },
+    {
+      "key": "shown",
+      "bit": 17,
+      "json": "boolean",
+      "c": "uint8_t frame_flags & PEL_TLM_FRAME_SHOWN",
+      "unit": "none",
+      "range": "displayed",
+      "decoder": "shared"
+    },
+    {
+      "key": "scene_cut",
+      "bit": 18,
+      "json": "boolean",
+      "c": "uint8_t frame_flags & PEL_TLM_FRAME_SCENE_CUT",
+      "unit": "none",
+      "range": "the encoder detected a cut",
+      "decoder": "encoder_only"
+    },
+    {
+      "key": "qp_map",
+      "bit": 19,
+      "json": "array",
+      "c": "int16_t[map_cols * map_rows], native QP x 4",
+      "unit": "qp_scale",
+      "range": "inside the qp_scale range; JSON writes native QP",
+      "decoder": "shared"
+    },
+    {
+      "key": "bits_map",
+      "bit": 20,
+      "json": "array",
+      "c": "uint32_t[map_cols * map_rows]",
+      "unit": "bit",
+      "range": "coded bits per element",
+      "decoder": "encoder_only"
+    },
+    {
+      "key": "mode_map",
+      "bit": 21,
+      "json": "array",
+      "c": "uint8_t[map_cols * map_rows] (enum pel_block_mode)",
+      "unit": "none",
+      "range": "none|intra|inter|skip",
+      "decoder": "encoder_only"
+    },
+    {
+      "key": "coded_bit_depth",
+      "bit": 22,
+      "json": "integer",
+      "c": "uint8_t coded_bit_depth",
+      "unit": "bit",
+      "range": "8|10|12",
+      "decoder": "shared"
+    },
+    {
+      "key": "codec",
+      "bit": null,
+      "json": "string",
+      "c": "uint8_t codec (enum pel_tlm_codec)",
+      "unit": "none",
+      "range": "h264|hevc|vvc|av1|vp9",
+      "decoder": "shared"
+    },
+    {
+      "key": "qp_scale",
+      "bit": null,
+      "json": "string",
+      "c": "uint8_t qp_scale (enum pel_qp_scale)",
+      "unit": "none",
+      "range": "slice_qp|av1_qindex|vp9_qindex|av1_encoder_qp",
+      "decoder": "shared"
+    },
+    {
+      "key": "granularity",
+      "bit": null,
+      "json": "string",
+      "c": "uint8_t granularity (enum pel_tlm_granularity)",
+      "unit": "none",
+      "range": "frame|row|block",
+      "decoder": "shared"
+    },
+    {
+      "key": "map_cols",
+      "bit": null,
+      "json": "integer",
+      "c": "uint16_t map_cols",
+      "unit": "element",
+      "range": "1..65535, 1 for row granularity",
+      "decoder": "shared"
+    },
+    {
+      "key": "map_rows",
+      "bit": null,
+      "json": "integer",
+      "c": "uint16_t map_rows",
+      "unit": "element",
+      "range": "1..65535; map_cols * map_rows <= 1048576",
+      "decoder": "shared"
+    },
+    {
+      "key": "block_size_log2",
+      "bit": null,
+      "json": "integer",
+      "c": "uint8_t block_size_log2",
+      "unit": "log2_px",
+      "range": "2..7 with maps, 0 at frame granularity",
+      "decoder": "shared"
+    },
+    {
+      "key": "metric_source",
+      "bit": null,
+      "json": "string",
+      "c": "uint8_t metric_source (enum pel_tlm_metric_source)",
+      "unit": "none",
+      "range": "encoder|adapter_sse",
+      "decoder": "encoder_only"
+    },
+    {
+      "key": "adapter",
+      "bit": null,
+      "json": "string",
+      "c": "uint8_t adapter (enum pel_tlm_adapter)",
+      "unit": "none",
+      "range": "ffmpeg_quality_stats|x265_csv|svtav1_stat_file|libaom_stats|vvenc_log|qsv|nvenc|amf|vulkan_feedback|external",
+      "decoder": "encoder_only"
+    }
+  ]
+}

@@ -32,3 +32,27 @@ path_utf8_test = executable(
   dependencies: libpelorus_dep,
 )
 test('path-utf8', path_utf8_test, suite: 'fast')
+
+# ABI 1.4 encoder telemetry (ADR-0174): validation, non-allocating pack, the map
+# reader, and the #221 rule that pelorus/telemetry.h compiles with no FFmpeg
+# include path (this target has none). Not part of the VMAFx-mirrored fixture:
+# telemetry.c is not mirrored at RC4.
+telemetry_test = executable(
+  'pelorus_telemetry_test',
+  files('telemetry_test.c'),
+  dependencies: libpelorus_dep,
+)
+test('enc-telemetry', telemetry_test, suite: 'fast')
+
+# ADR-0175 encode record: SHA-256 (FIPS 180-4 vectors), canonical JSON, the
+# worked example's digest from docs/api/encode-record.md, verify and mutations.
+# Includes the private src/sha256.h to test the port directly.
+encode_record_test = executable(
+  'pelorus_encode_record_test',
+  files('encode_record_test.c'),
+  include_directories: include_directories('../src'),
+  dependencies: libpelorus_dep,
+)
+test('encode-record', encode_record_test,
+     args: [meson.project_source_root() / 'docs' / 'api' / 'encode-record.md'],
+     suite: 'fast')

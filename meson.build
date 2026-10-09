@@ -78,6 +78,23 @@ test('build-config-sync',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# Issue #220 / ADR-0174: telemetry field names are shared with VMAFx's stream
+# metadata (VMAFx/vmafx#2271). The check runs the registry and interop.h rules;
+# until VMAFx publishes its field list it exits 77, which Meson reports as SKIP
+# with the reason printed, never as a pass. The --self-test plants a failure for
+# every rule and must reject each.
+test('telemetry-field-parity',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'check-telemetry-field-parity.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+test('telemetry-field-parity-self-test',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'check-telemetry-field-parity.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 # ADR-0147: FF_VK_REP_FLOAT exposes the storage container's UNORM domain, not
 # necessarily the logical sample domain.  Keep conversion and component
 # preservation consistent across the entire arithmetic-filter family.

@@ -25,6 +25,8 @@
  * (docs/adr/1138-c-translation-units-keep-null.md in VMAFx/vmafx). */
 
 #include <errno.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1257,6 +1259,427 @@ static void test_unaligned_header_size(void)
     pel_blob_free(blob);
 }
 
+/* ===================== ABI 1.4 (ADR-0174, ADR-0175) ===================== */
+
+/* True when the readable size `got` covers field `f` of section struct `T` (R4). */
+#define FIXTURE_FIELD_OK(got, T, f) ((got) >= offsetof(T, f) + sizeof(((const T *)0)->f))
+
+/* An 8-aligned scratch blob for the non-allocating packer (R5 alignment holds for it). */
+typedef union FixtureBlob {
+    uint64_t align;
+    uint8_t bytes[1024];
+} FixtureBlob;
+
+/* Pack one motion section of `size` bytes; return what a consumer knowing `known` bytes reads. */
+static size_t motion_readable_size_for(const PelorusMotionSection *mo, uint32_t size, size_t known)
+{
+    PelorusSideData meta;
+    PelorusPackSection sec;
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    const void *p = NULL;
+    size_t got = 0;
+
+    fill_meta(&meta);
+    sec.id = PEL_SEC_MOTION;
+    sec.data = mo;
+    sec.size = size;
+    CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_MOTION, known, &p, &got) == PEL_OK);
+    pel_blob_free(blob);
+    return got;
+}
+
+/* Pack one motion section of `size` bytes; return the readable size a 1.4 consumer sees. */
+static size_t motion_readable_size(const PelorusMotionSection *mo, uint32_t size,
+                                   PelorusMotionSection *out)
+{
+    PelorusSideData meta;
+    PelorusPackSection sec;
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    const void *p = NULL;
+    size_t got = 0;
+
+    fill_meta(&meta);
+    meta.grid_cols = 8; /* vf_pelorus_mc, bsize 8 on a 64x64 frame */
+    meta.grid_rows = 8;
+    sec.id = PEL_SEC_MOTION;
+    sec.data = mo;
+    sec.size = size;
+    memset(out, 0, sizeof(*out));
+    CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_MOTION, sizeof(PelorusMotionSection), &p,
+                                &got) == PEL_OK);
+    if (p != NULL && got <= sizeof(*out)) {
+        memcpy(out, p, got);
+    }
+    pel_blob_free(blob);
+    return got;
+}
+
+/* #218: the 1.4 motion section names its block edge; a 1.3 section (32 bytes) is
+ * detected by its readable size, not by the value; a 1.3 consumer still parses (R4). */
+static void test_motion_block_size(void)
+{
+    PelorusMotionSection mo;
+    PelorusMotionSection got_mo;
+    const uint32_t size_1_3 = (uint32_t)offsetof(PelorusMotionSection, block_size_log2);
+    size_t got;
+
+    memset(&mo, 0, sizeof(mo));
+    mo.has_scene_cut = 1;
+    mo.block_size_log2 = 3; /* bsize 8 */
+
+    got = motion_readable_size(&mo, (uint32_t)sizeof(mo), &got_mo);
+    CHECK(got == 36u);
+    CHECK(FIXTURE_FIELD_OK(got, PelorusMotionSection, block_size_log2));
+    CHECK(got_mo.block_size_log2 == 3);
+
+    /* A 1.3 producer wrote 32 bytes: the field is absent, not a zero-valued edge. */
+    got = motion_readable_size(&mo, size_1_3, &got_mo);
+    CHECK(size_1_3 == 32u);
+    CHECK(got == 32u);
+    CHECK(!FIXTURE_FIELD_OK(got, PelorusMotionSection, block_size_log2));
+    CHECK(FIXTURE_FIELD_OK(got, PelorusMotionSection, has_scene_cut) && got_mo.has_scene_cut == 1);
+
+    /* R4: a 1.3 consumer (knows 32 bytes) reads a 1.4 blob and never sees the field. */
+    CHECK(motion_readable_size_for(&mo, (uint32_t)sizeof(mo), size_1_3) == 32u);
+
+    /* Boundary: the largest edge vf_pelorus_mc writes (bsize 32 -> 5). */
+    mo.block_size_log2 = 5;
+    got = motion_readable_size(&mo, (uint32_t)sizeof(mo), &got_mo);
+    CHECK(got == 36u && got_mo.block_size_log2 == 5);
+}
+
+/* The non-allocating packer writes the same image as pel_blob_pack. */
+static void check_pack_into_matches(const PelorusSideData *meta, const PelorusPackSection *sec)
+{
+    FixtureBlob fx;
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    size_t need = 0;
+
+    CHECK(pel_blob_pack(meta, sec, 1, &blob, &len) == PEL_OK);
+    /* Size query: cap 0 reports the length the image needs. */
+    CHECK(pel_blob_pack_into(meta, sec, 1, NULL, 0, &need) == PEL_ERR_RANGE);
+    CHECK(need == len);
+    CHECK(pel_blob_pack_into(meta, sec, 1, fx.bytes, need - 1u, &need) == PEL_ERR_RANGE);
+    memset(fx.bytes, 0xA5, sizeof(fx.bytes));
+    CHECK(pel_blob_pack_into(meta, sec, 1, fx.bytes, sizeof(fx.bytes), &need) == PEL_OK);
+    CHECK(need == len);
+    CHECK(blob != NULL && memcmp(fx.bytes, blob, len) == 0);
+    CHECK(fx.bytes[len] == 0xA5); /* nothing past the image is touched */
+    pel_blob_free(blob);
+}
+
+static void test_pack_into(void)
+{
+    PelorusSideData meta;
+    PelorusEncodeRecordSection rec;
+    PelorusPackSection sec;
+    uint8_t buf[256];
+    size_t out_len = 0;
+
+    fill_meta(&meta);
+    memset(&rec, 0, sizeof(rec));
+    rec.digest_alg = PEL_DIGEST_ALG_SHA256;
+    sec.id = PEL_SEC_ENCODE_RECORD;
+    sec.data = &rec;
+    sec.size = (uint32_t)sizeof(rec);
+    check_pack_into_matches(&meta, &sec);
+
+    CHECK(pel_blob_pack_into(&meta, &sec, 1, NULL, 8, &out_len) == PEL_ERR_INVALID);
+    CHECK(pel_blob_pack_into(&meta, &sec, 1, buf, sizeof(buf), NULL) == PEL_ERR_INVALID);
+    CHECK(pel_blob_pack_into(NULL, &sec, 1, buf, sizeof(buf), &out_len) == PEL_ERR_INVALID);
+    /* Bit 10 is not minted: still rejected after the two 1.4 bits joined. The value is
+     * copied in because it is no enumerator of pel_section. */
+    {
+        const uint32_t unminted = 0x400u; /* 1 << 10 */
+        memcpy(&sec.id, &unminted,
+               sizeof(sec.id) < sizeof(unminted) ? sizeof(sec.id) : sizeof(unminted));
+    }
+    CHECK(pel_blob_pack_into(&meta, &sec, 1, buf, sizeof(buf), &out_len) == PEL_ERR_RANGE);
+}
+
+/* Fill a telemetry record with every scalar present and two maps on a 4x2 block grid. */
+static void fill_enc_telemetry(PelorusEncTelemetrySection *t)
+{
+    memset(t, 0, sizeof(*t));
+    t->present_mask = PEL_TLM_F_DISPLAY_INDEX | PEL_TLM_F_DECODE_INDEX | PEL_TLM_F_FRAME_BYTES |
+                      PEL_TLM_F_AVG_QP | PEL_TLM_F_PICTURE_TYPE | PEL_TLM_F_KEY_FRAME |
+                      PEL_TLM_F_QP_MAP | PEL_TLM_F_MODE_MAP;
+    t->display_index = 4;
+    t->decode_index = 1;
+    t->frame_bytes = 12034;
+    t->avg_qp = 30.0f;
+    t->picture_type = PEL_PICTURE_P;
+    t->frame_flags = 0; /* key_frame reported, and it is not one */
+    t->map_cols = 4;
+    t->map_rows = 2;
+    t->codec = PEL_TLM_CODEC_HEVC;
+    t->qp_scale = PEL_QP_SCALE_SLICE_QP;
+    t->granularity = PEL_TLM_GRAN_BLOCK;
+    t->block_size_log2 = 4;
+    t->adapter = PEL_TLM_ADAPTER_EXTERNAL;
+}
+
+/* Append `size` bytes at the next 8-aligned blob-relative offset after `*end`; return it. */
+static uint32_t fixture_append(FixtureBlob *fx, uint32_t *end, const void *data, uint32_t size)
+{
+    uint32_t off = (*end + 7u) & ~7u;
+
+    memcpy(fx->bytes + PELORUS_SIDEDATA_UUID_LEN + off, data, size);
+    *end = off + size;
+    return off;
+}
+
+/* Producer side: pack the record without allocating, append its maps, patch the offsets
+ * and total_size (the mv_field convention). Returns the blob length. */
+static size_t pack_enc_telemetry(FixtureBlob *fx, PelorusEncTelemetrySection *t)
+{
+    static const int16_t qp_map[8] = {120, 124, 128, 132, 116, 120, 124, 1020};
+    static const uint8_t mode_map[8] = {1, 2, 2, 3, 3, 2, 1, 0};
+    PelorusSideData meta;
+    PelorusSideData hdr;
+    PelorusPackSection sec;
+    size_t len = 0;
+    const void *p = NULL;
+    size_t got = 0;
+    uint32_t end;
+
+    fill_meta(&meta);
+    sec.id = PEL_SEC_ENC_TELEMETRY;
+    sec.data = t;
+    sec.size = (uint32_t)sizeof(*t);
+    memset(fx->bytes, 0, sizeof(fx->bytes));
+    if (pel_blob_pack_into(&meta, &sec, 1, fx->bytes, sizeof(fx->bytes), &len) != PEL_OK) {
+        CHECK(!"pel_blob_pack_into refused the telemetry section");
+        return 0; /* every later parse of a 0-byte blob fails its own CHECK */
+    }
+    end = (uint32_t)(len - PELORUS_SIDEDATA_UUID_LEN);
+    t->qp_map_size = (uint32_t)sizeof(qp_map);
+    t->qp_map_offset = fixture_append(fx, &end, qp_map, t->qp_map_size);
+    t->mode_map_size = (uint32_t)sizeof(mode_map);
+    t->mode_map_offset = fixture_append(fx, &end, mode_map, t->mode_map_size);
+
+    CHECK(pel_blob_find_section(fx->bytes, len, PEL_SEC_ENC_TELEMETRY, sizeof(*t), &p, &got) ==
+          PEL_OK);
+    if (p != NULL) { /* patch the packed record in place: it lives inside fx->bytes */
+        memcpy(fx->bytes + ((const uint8_t *)p - fx->bytes), t, sizeof(*t));
+    }
+    hdr = blob_header_load(fx->bytes);
+    hdr.total_size = end;
+    blob_header_store(fx->bytes, &hdr);
+    return (size_t)PELORUS_SIDEDATA_UUID_LEN + end;
+}
+
+static void check_enc_telemetry_maps(const uint8_t *blob, size_t len,
+                                     const PelorusEncTelemetrySection *t)
+{
+    const void *qp = NULL;
+    const void *mode = NULL;
+    const void *bits = NULL;
+    int16_t q = 0;
+
+    CHECK(pel_blob_map(blob, len, t->qp_map_offset, t->qp_map_size, 8u, 2u, &qp) == PEL_OK);
+    CHECK(pel_blob_map(blob, len, t->mode_map_offset, t->mode_map_size, 8u, 1u, &mode) == PEL_OK);
+    if (qp != NULL && mode != NULL) {
+        memcpy(&q, (const uint8_t *)qp + 7u * sizeof(q), sizeof(q));
+        CHECK(q == 1020); /* AV1 qindex 255 in Q2 still fits int16 */
+        CHECK(((const uint8_t *)mode)[3] == PEL_BLOCK_MODE_SKIP);
+    }
+    /* "not reported" is the clear bit: the bits_map offset/size stay zero. */
+    CHECK((t->present_mask & PEL_TLM_F_BITS_MAP) == 0u);
+    CHECK(t->bits_map_offset == 0u && t->bits_map_size == 0u);
+    CHECK(pel_blob_map(blob, len, t->bits_map_offset, t->bits_map_size, 8u, 4u, &bits) ==
+          PEL_ERR_ABI);
+}
+
+/* PEL_SEC_ENC_TELEMETRY (i): pack, parse, read both maps; an older consumer that knows
+ * only present_mask still parses (R4). */
+static void test_enc_telemetry_roundtrip(void)
+{
+    FixtureBlob fx;
+    PelorusEncTelemetrySection t;
+    const void *p = NULL;
+    size_t got = 0;
+    size_t len;
+
+    fill_enc_telemetry(&t);
+    len = pack_enc_telemetry(&fx, &t);
+    CHECK(pel_blob_find_section(fx.bytes, len, PEL_SEC_ENC_TELEMETRY, sizeof(t), &p, &got) ==
+          PEL_OK);
+    CHECK(got == 104u);
+    if (p != NULL && got == sizeof(t)) {
+        PelorusEncTelemetrySection r;
+        memcpy(&r, p, sizeof(r));
+        CHECK(r.present_mask == t.present_mask && r.frame_bytes == 12034u);
+        CHECK(r.avg_qp == 30.0f && r.codec == PEL_TLM_CODEC_HEVC && r.adapter == 10u);
+        /* present_mask: psnr_y not reported (bit clear) is not a reported 0 dB. */
+        CHECK((r.present_mask & PEL_TLM_F_PSNR_Y) == 0u && r.psnr_y == 0.0f);
+        CHECK((r.present_mask & PEL_TLM_F_KEY_FRAME) != 0u && r.frame_flags == 0u);
+        check_enc_telemetry_maps(fx.bytes, len, &r);
+    }
+    CHECK(pel_blob_find_section(fx.bytes, len, PEL_SEC_ENC_TELEMETRY, 8, &p, &got) == PEL_OK);
+    CHECK(got == 8u);
+}
+
+/* pel_blob_map reader checks 3 to 5, in order, plus framing and argument guards. */
+static void check_blob_map_rejects(const uint8_t *blob, size_t len, uint32_t off, uint32_t total)
+{
+    const void *p = NULL;
+
+    CHECK(pel_blob_map(blob, len, off, 16u, 7u, 2u, &p) == PEL_ERR_ABI);      /* check 3 */
+    CHECK(pel_blob_map(blob, len, off + 4u, 16u, 8u, 2u, &p) == PEL_ERR_ABI); /* check 4 */
+    CHECK(p == NULL);
+    CHECK(pel_blob_map(blob, len, total + 8u, 8u, 8u, 1u, &p) == PEL_ERR_TRUNCATED); /* 5 */
+    CHECK(pel_blob_map(blob, len, 0xFFFFFFF8u, 8u, 8u, 1u, &p) == PEL_ERR_TRUNCATED);
+    /* elem_count * elem_size wraps 32 bits to 0: computed in 64 bits, so ABI, not OK. */
+    CHECK(pel_blob_map(blob, len, off, 0u, 0x10000u, 0x10000u, &p) == PEL_ERR_ABI);
+    CHECK(pel_blob_map(blob, len, off, 16u, 0u, 2u, &p) == PEL_ERR_INVALID);
+    CHECK(pel_blob_map(NULL, len, off, 16u, 8u, 2u, &p) == PEL_ERR_INVALID);
+    CHECK(pel_blob_map(blob, len, off, 16u, 8u, 2u, NULL) == PEL_ERR_INVALID);
+    /* A received length shorter than total_size fails the framing. */
+    CHECK(pel_blob_map(blob, len - 1u, off, 16u, 8u, 2u, &p) == PEL_ERR_TRUNCATED);
+}
+
+/* A map aliasing the header or dir[] (one entry: 48 + 16 bytes) is corrupt framing. */
+static void check_blob_map_overlap(const uint8_t *blob, size_t len)
+{
+    const void *p = NULL;
+
+    CHECK(pel_blob_map(blob, len, 0u, 16u, 8u, 2u, &p) == PEL_ERR_ABI);  /* the header */
+    CHECK(pel_blob_map(blob, len, 48u, 16u, 8u, 2u, &p) == PEL_ERR_ABI); /* dir[0] */
+    CHECK(pel_blob_map(blob, len, 56u, 16u, 8u, 2u, &p) == PEL_ERR_ABI); /* inside dir[0] */
+    CHECK(p == NULL);
+    /* Boundary: the first byte after dir[] may start a map (the rule ends there). */
+    CHECK(pel_blob_map(blob, len, 64u, 16u, 8u, 2u, &p) == PEL_OK);
+}
+
+static void test_blob_map_bounds(void)
+{
+    FixtureBlob fx;
+    PelorusEncTelemetrySection t;
+    uint8_t foreign[96];
+    const void *p = NULL;
+    size_t len;
+    uint32_t total;
+
+    fill_enc_telemetry(&t);
+    len = pack_enc_telemetry(&fx, &t);
+    if (len == 0u) {
+        return; /* the packer refused; pack_enc_telemetry already counted the failure */
+    }
+    total = (uint32_t)(len - PELORUS_SIDEDATA_UUID_LEN);
+    check_blob_map_rejects(fx.bytes, len, t.qp_map_offset, total);
+
+    check_blob_map_overlap(fx.bytes, len);
+    /* Boundary: a map that ends exactly at total_size is inside; one byte more is not. */
+    CHECK(pel_blob_map(fx.bytes, len, t.mode_map_offset, 8u, 8u, 1u, &p) == PEL_OK);
+    CHECK(t.mode_map_offset + 8u == total);
+    CHECK(pel_blob_map(fx.bytes, len, t.mode_map_offset, 9u, 9u, 1u, &p) == PEL_ERR_TRUNCATED);
+
+    memset(foreign, 0xAB, sizeof(foreign));
+    CHECK(pel_blob_map(foreign, sizeof(foreign), 64u, 8u, 8u, 1u, &p) == PEL_ERR_ABSENT);
+}
+
+/* SHA-256("abc") from FIPS 180-4, as the raw digest a producer stores. */
+static const uint8_t fixture_digest_abc[32] = {
+    0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
+    0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad};
+
+static const char fixture_digest_abc_text[] =
+    "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+/* Pack a record section with its locator appended; return the blob length. */
+static size_t pack_encode_record(FixtureBlob *fx, PelorusEncodeRecordSection *rec,
+                                 const char *locator)
+{
+    PelorusSideData meta;
+    PelorusSideData hdr;
+    PelorusPackSection sec;
+    size_t len = 0;
+    const void *p = NULL;
+    size_t got = 0;
+    uint32_t end;
+
+    fill_meta(&meta);
+    memset(rec, 0, sizeof(*rec));
+    memcpy(rec->digest, fixture_digest_abc, sizeof(rec->digest));
+    rec->digest_alg = PEL_DIGEST_ALG_SHA256;
+    rec->locator_kind = PEL_LOCATOR_MEDIA_PATH;
+    rec->record_major = (uint8_t)PEL_ENCODE_RECORD_MAJOR;
+    sec.id = PEL_SEC_ENCODE_RECORD;
+    sec.data = rec;
+    sec.size = (uint32_t)sizeof(*rec);
+    memset(fx->bytes, 0, sizeof(fx->bytes));
+    if (pel_blob_pack_into(&meta, &sec, 1, fx->bytes, sizeof(fx->bytes), &len) != PEL_OK) {
+        CHECK(!"pel_blob_pack_into refused the encode-record section");
+        return 0;
+    }
+    end = (uint32_t)(len - PELORUS_SIDEDATA_UUID_LEN);
+    rec->locator_size = (uint32_t)strlen(locator); /* UTF-8, no NUL */
+    rec->locator_offset = fixture_append(fx, &end, locator, rec->locator_size);
+    CHECK(pel_blob_find_section(fx->bytes, len, PEL_SEC_ENCODE_RECORD, sizeof(*rec), &p, &got) ==
+          PEL_OK);
+    if (p != NULL) {
+        memcpy(fx->bytes + ((const uint8_t *)p - fx->bytes), rec, sizeof(*rec));
+    }
+    hdr = blob_header_load(fx->bytes);
+    hdr.total_size = end;
+    blob_header_store(fx->bytes, &hdr);
+    return (size_t)PELORUS_SIDEDATA_UUID_LEN + end;
+}
+
+static void check_digest_text_guards(const PelorusEncodeRecordSection *rec)
+{
+    PelorusEncodeRecordSection bad;
+    char text[PEL_DIGEST_TEXT_SIZE];
+
+    memset(text, 'x', sizeof(text));
+    CHECK(pel_encode_record_digest_text(rec, sizeof(*rec), text, sizeof(text) - 1u) ==
+          PEL_ERR_RANGE);
+    CHECK(text[0] == 'x'); /* untouched on error */
+    CHECK(pel_encode_record_digest_text(rec, sizeof(*rec) - 1u, text, sizeof(text)) ==
+          PEL_ERR_INVALID);
+    CHECK(pel_encode_record_digest_text(NULL, sizeof(*rec), text, sizeof(text)) == PEL_ERR_INVALID);
+    CHECK(pel_encode_record_digest_text(rec, sizeof(*rec), NULL, sizeof(text)) == PEL_ERR_INVALID);
+    memcpy(&bad, rec, sizeof(bad));
+    bad.digest_alg = 0; /* 0 is invalid */
+    CHECK(pel_encode_record_digest_text(&bad, sizeof(bad), text, sizeof(text)) == PEL_ERR_INVALID);
+}
+
+/* PEL_SEC_ENCODE_RECORD (j): the digest text is what VMAFx's
+ * vmafx_context_set_encode_record() accepts; the locator reads through pel_blob_map. */
+static void test_encode_record_section(void)
+{
+    static const char locator[] = "clip.encode-record.json";
+    FixtureBlob fx;
+    PelorusEncodeRecordSection rec;
+    char text[PEL_DIGEST_TEXT_SIZE];
+    const void *p = NULL;
+    const void *loc = NULL;
+    size_t got = 0;
+    size_t len;
+
+    len = pack_encode_record(&fx, &rec, locator);
+    CHECK(pel_blob_find_section(fx.bytes, len, PEL_SEC_ENCODE_RECORD, sizeof(rec), &p, &got) ==
+          PEL_OK);
+    CHECK(got == 48u);
+    if (p != NULL && got == sizeof(rec)) {
+        PelorusEncodeRecordSection r;
+        memcpy(&r, p, sizeof(r));
+        CHECK(pel_encode_record_digest_text(&r, got, text, sizeof(text)) == PEL_OK);
+        CHECK(strlen(text) == 71u && strcmp(text, fixture_digest_abc_text) == 0);
+        CHECK(r.locator_size <= PEL_ENCODE_RECORD_LOCATOR_MAX && r.record_major == 1u);
+        CHECK(pel_blob_map(fx.bytes, len, r.locator_offset, r.locator_size, r.locator_size, 1u,
+                           &loc) == PEL_OK);
+        CHECK(loc != NULL && memcmp(loc, locator, sizeof(locator) - 1u) == 0);
+        check_digest_text_guards(&r);
+    }
+}
+
 int main(void)
 {
     test_roundtrip();
@@ -1277,6 +1700,11 @@ int main(void)
     test_x265_csv_reader();
     test_x265_csv_reader_guards();
     test_deband_params();
+    test_motion_block_size();
+    test_pack_into();
+    test_enc_telemetry_roundtrip();
+    test_blob_map_bounds();
+    test_encode_record_section();
 
     if (g_fail != 0) {
         (void)fprintf(stderr, "%d check(s) failed\n", g_fail);

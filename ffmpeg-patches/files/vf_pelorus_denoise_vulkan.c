@@ -575,8 +575,8 @@ static int denoise_dispatch(PelorusDenoiseVulkanContext *s, AVFrame *out, AVFram
                     sd->size &&
                 (size_t)PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset + mcs->conf_field_size <=
                     sd->size) {
-                /* The cell pitch is the producer's block edge, not ceil(W/gc). */
-                int fit = pelorus_mc_cell_pitch(out->width, out->height, gc, gr, &pitch);
+                /* The producer's block edge (named since ABI 1.4), not ceil(W/gc). */
+                int fit = pelorus_mc_block_pitch(mo, msz, out->width, out->height, gc, gr, &pitch);
                 if (fit == 2 && !s->mc_grid_assumed_warned) {
                     s->mc_grid_assumed_warned = 1;
                     av_log(vkctx, AV_LOG_WARNING,

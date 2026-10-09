@@ -227,6 +227,58 @@ static void test_cell_pitch_sweep(void)
     CHECK(bad == 0);
 }
 
+/* #218 (ABI 1.4): a section that names its block edge is used as named, also where
+ * the grid alone is ambiguous or unresolvable; a 1.3-sized section, or the value 0,
+ * falls back to inference; a named edge that contradicts the grid is refused. */
+static void test_block_pitch_named(void)
+{
+    PelorusMotionSection mo;
+    int pitch = 0;
+
+    memset(&mo, 0, sizeof(mo));
+    /* mc bsize=8 on a 64x64 frame (8x8 grid): the grid fits 8 and 9, so 1.3 inference
+     * gives up; the named edge resolves it. */
+    mo.block_size_log2 = 3;
+    CHECK(pelorus_mc_block_pitch(&mo, sizeof(mo), 64, 64, 8, 8, &pitch) == 1 && pitch == 8);
+    CHECK(pelorus_mc_cell_pitch(64, 64, 8, 8, &pitch) == 0);
+    /* 96x64 with a 6x4 grid fits 16..19: named, nothing is assumed (BUG-035). */
+    mo.block_size_log2 = 4;
+    CHECK(pelorus_mc_block_pitch(&mo, sizeof(mo), 96, 64, 6, 4, &pitch) == 1 && pitch == 16);
+    /* The smallest frame, one cell: each bsize the producer can name is taken as named. */
+    mo.block_size_log2 = 3;
+    CHECK(pelorus_mc_block_pitch(&mo, sizeof(mo), 1, 1, 1, 1, &pitch) == 1 && pitch == 8);
+    mo.block_size_log2 = 5;
+    CHECK(pelorus_mc_block_pitch(&mo, sizeof(mo), 1, 1, 1, 1, &pitch) == 1 && pitch == 32);
+}
+
+static void test_block_pitch_fallback(void)
+{
+    PelorusMotionSection mo;
+    const size_t size_1_3 = offsetof(PelorusMotionSection, block_size_log2);
+    int pitch = 0;
+
+    memset(&mo, 0, sizeof(mo));
+    /* An ABI 1.3 section: absent by size, whatever the bytes past `got` hold. */
+    mo.block_size_log2 = 3;
+    CHECK(pelorus_mc_block_pitch(&mo, size_1_3, 96, 64, 6, 4, &pitch) == 2 && pitch == 16);
+    CHECK(pelorus_mc_block_pitch(&mo, size_1_3, 1920, 1080, 240, 135, &pitch) == 1 &&
+          pitch == 8);
+    /* 0 = not reported (bsize=12 has no log2): the grid decides. */
+    mo.block_size_log2 = 0;
+    CHECK(pelorus_mc_block_pitch(&mo, sizeof(mo), 1920, 1080, 160, 90, &pitch) == 1 &&
+          pitch == 12);
+    /* A named edge that contradicts the grid, or lies outside 8..32, is refused. */
+    mo.block_size_log2 = 4;
+    CHECK(pelorus_mc_block_pitch(&mo, sizeof(mo), 64, 64, 8, 8, &pitch) == 0);
+    mo.block_size_log2 = 2;
+    CHECK(pelorus_mc_block_pitch(&mo, sizeof(mo), 8, 8, 2, 2, &pitch) == 0);
+    mo.block_size_log2 = 6;
+    CHECK(pelorus_mc_block_pitch(&mo, sizeof(mo), 128, 128, 2, 2, &pitch) == 0);
+    mo.block_size_log2 = 200;
+    CHECK(pelorus_mc_block_pitch(&mo, sizeof(mo), 64, 64, 1, 1, &pitch) == 0);
+    CHECK(pelorus_mc_block_pitch(NULL, 0, 1920, 1080, 240, 135, &pitch) == 1 && pitch == 8);
+}
+
 int main(void)
 {
     test_scan_all_entries();
@@ -234,6 +286,8 @@ int main(void)
     test_short_producer_section();
     test_cell_pitch_table();
     test_cell_pitch_sweep();
+    test_block_pitch_named();
+    test_block_pitch_fallback();
     if (failures) {
         (void)fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

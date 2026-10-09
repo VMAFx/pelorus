@@ -11,8 +11,10 @@ resize, repurpose, or remove a field/section bit.
 
 ## Add a field to an existing section
 
-1. Add the field at the **end** of the struct, above its `APPEND-ONLY` marker
-   (consume reserved `_pad` if present; keep the struct's alignment).
+1. Add the field at the **end** of the struct, above its `APPEND-ONLY` marker;
+   keep the struct's alignment. Prefer growing the struct over consuming a
+   reserved `_pad`: a reader then detects an older producer by readable size
+   (`got`), never by a zero value (ADR-0174 decision 9).
 2. Update the `_Static_assert(sizeof(...) == N)` to the new size — a tripped
    assert means you changed the layout; recompute, don't delete it.
 3. Bump `PELORUS_ABI_MINOR`.

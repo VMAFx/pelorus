@@ -304,6 +304,36 @@ static void test_predictors_rounding(TestCtx *t)
     CHECK(pel_mc_mean_q2_to_pel(123, 0) == 0);
 }
 
+/* PelorusMotionSection.block_size_log2 (ABI 1.4, #218): bsize 8, 16 and 32 write 3,
+ * 4 and 5; every other edge the bsize option accepts writes 0, "not reported". */
+static void test_bsize_log2(TestCtx *t)
+{
+    int pow2 = 0;
+    int b;
+
+    CHECK(pel_mc_bsize_log2(8) == 3);
+    CHECK(pel_mc_bsize_log2(16) == 4);
+    CHECK(pel_mc_bsize_log2(32) == 5);
+    for (b = 8; b <= 32; b++) {
+        const unsigned l = pel_mc_bsize_log2(b);
+        if (l != 0u) {
+            pow2++;
+            CHECK((1u << l) == (unsigned)b);
+        }
+    }
+    CHECK(pow2 == 3);
+}
+
+/* Edges block_size_log2 cannot carry stay "not reported", never a wrong edge. */
+static void test_bsize_log2_unnamed(TestCtx *t)
+{
+    CHECK(pel_mc_bsize_log2(12) == 0);
+    CHECK(pel_mc_bsize_log2(4) == 0);  /* below the option range */
+    CHECK(pel_mc_bsize_log2(64) == 0); /* above it */
+    CHECK(pel_mc_bsize_log2(0) == 0);
+    CHECK(pel_mc_bsize_log2(-8) == 0);
+}
+
 int main(void)
 {
     TestCtx ctx = {0x9E3779B97F4A7C15ull, 0};
@@ -314,6 +344,8 @@ int main(void)
         return 1;
     }
     test_q2_to_pel(&ctx);
+    test_bsize_log2(&ctx);
+    test_bsize_log2_unnamed(&ctx);
     test_q2_to_pel_edges(&ctx);
     test_predictors_rigid_pan(&ctx);
     test_predictors_rounding(&ctx);

@@ -4,7 +4,9 @@
 Shared core: Pelorus⇄vmafx side-data interop ABI plus filter parameter
 contracts. Parent: [../AGENTS.md](../AGENTS.md). Governing ADRs:
 [0103](../docs/adr/0103-interop-sidedata-abi.md) (ABI),
-[0105](../docs/adr/0105-libpelorus-license.md) (license).
+[0105](../docs/adr/0105-libpelorus-license.md) (license),
+[0174](../docs/adr/0174-encoder-telemetry-abi-1-4.md) (ABI 1.4 telemetry),
+[0175](../docs/adr/0175-encode-provenance-record.md) (encode record).
 
 ## Scope
 
@@ -13,11 +15,16 @@ libpelorus/
 ├── include/pelorus/   public ABI surface (stability-tagged)
 │   ├── pelorus.h      version, pel_result
 │   ├── interop.h      PelorusSideData blob + pack/parse (the cross-repo contract)
+│   ├── telemetry.h    encoder-telemetry input, no FFmpeg types (ABI 1.4)
+│   ├── encode_record.h canonical encode record + digest (ADR-0175)
 │   └── deband.h       smart-deband parameter contract
-├── src/               interop.c, qp_report_csv.c, deband_params.c, version.c
+├── schema/            telemetry-fields.json — normative telemetry field names
+├── src/               interop.c, qp_report_csv.c, deband_params.c, version.c,
+│                      telemetry.c, encode_record.c, sha256.c (+ private sha256.h)
 ├── shaders/           standalone reference .comp shaders (CI-compiled)
 └── test/              interop_test.c — the shared ABI conformance fixture
                        path_utf8_test.c — the UTF-8 path contract (ADR-0149)
+                       telemetry_test.c, encode_record_test.c — not mirrored
 ```
 
 ## Conventions
@@ -67,6 +74,27 @@ libpelorus/
    any open failure stays `PEL_ERR_ABSENT`. New path-taking API reuses helper
    and extends `test/path_utf8_test.c`. vmafx mirrors `qp_report_csv.c`
    verbatim -> helper stays static, depends only on kernel32. (ADR-0149)
+
+8. **ABI 1.4 (ADR-0174, ADR-0175).** `PEL_SEC_ENC_TELEMETRY` (bit 8, 104
+   bytes), `PEL_SEC_ENCODE_RECORD` (bit 9, 48 bytes),
+   `PelorusMotionSection.block_size_log2` (32 -> 36 bytes): size and
+   member-offset asserts lock each. Reader detects 1.3 motion section by
+   readable size, never by value. Maps, locators: 8-aligned blob-relative
+   offsets; read only through `pel_blob_map()`.
+9. **VMAFx mirror at RC4 = existing ten files only.** `telemetry.c`,
+   `encode_record.c`, `sha256.c`, registry: not mirrored -> `test/interop_test.c`
+   calls only `interop.c` API. New file: EUPL header, SPDX line, at most one
+   `#include "pelorus/..."` (VMAFx `render_vendor`).
+10. **Telemetry names = registry.** `PEL_TLM_F_*` bit, key in
+    `schema/telemetry-fields.json`, API page: change together; bits
+    append-only, never renumbered or reused. Fast suite runs
+    `scripts/check-telemetry-field-parity.py` (SKIP until VMAFx/vmafx#2271
+    publishes its list) plus its `--self-test`.
+11. **Encode-record digest = Python reference.** Canonical text equals
+    `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)`
+    for every accepted record. Worked example in `docs/api/encode-record.md`
+    = test input: change example and digest together. No recursion:
+    canonicaliser keeps explicit 5-frame stack.
 
 ## Don't
 

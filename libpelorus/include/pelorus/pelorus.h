@@ -47,14 +47,16 @@ const char *pelorus_version_string(void);
  * values are errors; PEL_OK is success. No bare -1 crosses an API boundary.
  */
 typedef enum pel_result {
-    PEL_OK = 0,              /* success                                        */
-    PEL_ERR_INVALID = -1,    /* invalid argument / NULL where non-NULL needed  */
-    PEL_ERR_NOMEM = -2,      /* allocation failed                              */
-    PEL_ERR_RANGE = -3,      /* value outside the documented valid range       */
-    PEL_ERR_ABI = -4,        /* blob ABI major mismatch / corrupt framing      */
-    PEL_ERR_ABSENT = -5,     /* requested section / data not present           */
-    PEL_ERR_TRUNCATED = -6,  /* buffer shorter than its self-described size    */
-    PEL_ERR_UNSUPPORTED = -7 /* feature not compiled in / not available       */
+    PEL_OK = 0,               /* success                                        */
+    PEL_ERR_INVALID = -1,     /* invalid argument / NULL where non-NULL needed  */
+    PEL_ERR_NOMEM = -2,       /* allocation failed                              */
+    PEL_ERR_RANGE = -3,       /* value outside the documented valid range       */
+    PEL_ERR_ABI = -4,         /* blob ABI major mismatch / corrupt framing      */
+    PEL_ERR_ABSENT = -5,      /* requested section / data not present           */
+    PEL_ERR_TRUNCATED = -6,   /* buffer shorter than its self-described size    */
+    PEL_ERR_UNSUPPORTED = -7, /* feature not compiled in / not available       */
+    PEL_ERR_MISMATCH = -8     /* verified digest differs from the expected one  */
+    /* Append-only: a value is never reused or renumbered (ADR-0175). */
 } pel_result;
 
 /* Human-readable, static string for a pel_result. Never NULL. */

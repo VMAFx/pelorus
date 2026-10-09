@@ -48,11 +48,11 @@ ADR: docs/adr/0116-pelorus-mc.md
  configure                               |   3 +
  libavfilter/Makefile                    |   1 +
  libavfilter/allfilters.c                |   1 +
- libavfilter/pelorus_mc_stats.h          | 147 ++++
- libavfilter/vf_pelorus_mc_vulkan.c      | 861 ++++++++++++++++++++
+ libavfilter/pelorus_mc_stats.h          | 163 ++++
+ libavfilter/vf_pelorus_mc_vulkan.c      | 872 ++++++++++++++++++++
  libavfilter/vulkan/Makefile             |   1 +
  libavfilter/vulkan/pelorus_mc.comp.glsl | 237 ++++++
- 7 files changed, 1251 insertions(+)
+ 7 files changed, 1278 insertions(+)
 
 diff --git a/configure b/configure
 index 0571e96aa7a4f64c2eb951c9c842462225deb3ac..839033a423604cbfaf45a7fffd984bc587d44839 100755
@@ -101,10 +101,10 @@ index b6aee7e0bdb6c35c4e3c720b063be56cd22d8934..8ecaf738be23d70633dc7e84a35a3772
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/pelorus_mc_stats.h b/libavfilter/pelorus_mc_stats.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..c58c496b197c29b6e8d4d5b7851d79173b206fd3
+index 0000000000000000000000000000000000000000..64afbf6a8544040ef672640fdf1dd0ccfa5c970d
 --- /dev/null
 +++ b/libavfilter/pelorus_mc_stats.h
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,163 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -251,13 +251,29 @@ index 0000000000000000000000000000000000000000..c58c496b197c29b6e8d4d5b7851d7917
 +    return pel_mc_select_nonneg(v, (size_t)n, (size_t)rank);
 +}
 +
++/* PelorusMotionSection.block_size_log2 for a bsize option value (interop ABI
++ * 1.4, #218): log2 of the block edge when it is a power of two in the option
++ * range 8..32 (3, 4 or 5), else 0, "not reported". The bsize option also
++ * accepts edges such as 12 that a log2 cannot express; a consumer then infers
++ * the edge from the grid, as it does for an ABI 1.3 blob. */
++static inline uint8_t pel_mc_bsize_log2(int bsize)
++{
++    uint8_t n;
++
++    for (n = 3; n <= 5; n++) {
++        if (bsize == 1 << n)
++            return n;
++    }
++    return 0;
++}
++
 +#endif /* AVFILTER_PELORUS_MC_STATS_H */
 diff --git a/libavfilter/vf_pelorus_mc_vulkan.c b/libavfilter/vf_pelorus_mc_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..51451ba37aeeb051c24bcefb99b4cdaaa0e7cab3
+index 0000000000000000000000000000000000000000..eef56b726618cb562bd8f19220ffbd8e9c2851d7
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_mc_vulkan.c
-@@ -0,0 +1,861 @@
+@@ -0,0 +1,872 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -525,6 +541,24 @@ index 0000000000000000000000000000000000000000..51451ba37aeeb051c24bcefb99b4cdaa
 +    pel_blob_free(data);
 +}
 +
++/* Entropy proxy of PEL_SEC_MOTION: the mean deviation of the block MVs (Q2) from
++ * the global MV (luma pixels), normalized by the search radius + 1 (0 = rigid
++ * global motion, higher = complex / independent block motion). */
++static float mc_motion_entropy(const int32_t *mvx, const int32_t *mvy, int nblocks, float gx,
++                               float gy, int search)
++{
++    double dev = 0.0;
++    double norm = (double)search + 1.0;
++    int i;
++
++    for (i = 0; i < nblocks; i++) {
++        double ex = mvx[i] * 0.25 - gx;
++        double ey = mvy[i] * 0.25 - gy;
++        dev += sqrt(ex * ex + ey * ey);
++    }
++    return (float)(nblocks ? (dev / nblocks) / norm : 0.0);
++}
++
 +/* Derive the frame scalars from the read-back per-block MV field, pack the dense
 + * int16 (dx,dy) grid + PEL_SEC_MOTION summary, and attach to the frame. The grid
 + * lives contiguously after the section struct (the analyze attach_stats map
@@ -577,6 +611,9 @@ index 0000000000000000000000000000000000000000..51451ba37aeeb051c24bcefb99b4cdaa
 +    meta.producer_id = PEL_FOURCC('P', 'L', 'M', 'C');
 +
 +    memset(&mo, 0, sizeof(mo));
++#if PELORUS_ABI_MINOR >= 4
++    mo.block_size_log2 = pel_mc_bsize_log2(s->bsize); /* 0 = not a power of two */
++#endif
 +    mo.global_motion_x = (float)(nblocks ? sum_x / nblocks : 0.0);
 +    mo.global_motion_y = (float)(nblocks ? sum_y / nblocks : 0.0);
 +    mo.motion_magnitude_mean = (float)mean_mag;
@@ -585,18 +622,8 @@ index 0000000000000000000000000000000000000000..51451ba37aeeb051c24bcefb99b4cdaa
 +     * over the non-negative float magnitudes (a 4K/8 grid has ~130k cells). */
 +    mo.motion_magnitude_p95 = pel_mc_p95_nonneg(mags, nblocks);
 +
-+    /* Entropy proxy: normalized mean deviation of block MVs from the global MV
-+     * (0 = rigid global motion, higher = complex / independent block motion). */
-+    {
-+        double dev = 0.0;
-+        double norm = (double)s->search + 1.0;
-+        for (i = 0; i < nblocks; i++) {
-+            double ex = mvx[i] * 0.25 - mo.global_motion_x;
-+            double ey = mvy[i] * 0.25 - mo.global_motion_y;
-+            dev += sqrt(ex * ex + ey * ey);
-+        }
-+        mo.motion_entropy = (float)(nblocks ? (dev / nblocks) / norm : 0.0);
-+    }
++    mo.motion_entropy = mc_motion_entropy(mvx, mvy, nblocks, mo.global_motion_x,
++                                          mo.global_motion_y, s->search);
 +
 +    /* Scene-cut heuristic: a high mean residual SAD means the diamond found no
 +     * good match anywhere — characteristic of a cut, not coherent motion. The

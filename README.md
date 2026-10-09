@@ -163,6 +163,15 @@ encoder. A documented, retunable composition, not a new meta-filter. See
   requested-vs-honored `honored_fraction` — the loop is now demonstrable
   end-to-end on the HEVC software encoder (the `tools/pelorus_qp_report`
   demonstrator; measured, not synthetic). The QSV per-block path stays HW-blocked.
+- Interop ABI 1.4 (ADR-0174 / ADR-0175): `PEL_SEC_ENC_TELEMETRY` carries one
+  normalised encoder-telemetry record per coded frame (native and
+  H.264-equivalent QP, bits, picture type, PSNR/SSIM, optional maps, a presence
+  bit per field) filled through the FFmpeg-free `pelorus/telemetry.h`;
+  `PEL_SEC_ENCODE_RECORD` carries the `sha256:` digest of the canonical encode
+  record that VMAFx binds to a score (`pelorus/encode_record.h`); and the motion
+  section names its block edge (`block_size_log2`). Layout, validation,
+  canonical JSON and digests are tested; the per-encoder adapters and the
+  option-string parsers are follow-ups (#86, #81).
 - [x] Step 10 — Anime `tune` chain: `vf_pelorus_aa_vulkan` (patch 0015) — warp
       anti-aliasing (awarpsharp2) plus optional line-darkening (FastLineDarken).
       De-jaggies line-art by warping along the gradient of a blurred edge map,
