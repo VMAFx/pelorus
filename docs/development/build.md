@@ -499,8 +499,8 @@ gh attestation verify oci://ghcr.io/vmafx/pelorus-dev@sha256:<digest> --repo VMA
 
 The bundle builds on that image. `.devcontainer/Dockerfile.praetor` and the
 `baseImage` field in `devcontainer.json` name
-`ghcr.io/vmafx/pelorus-dev@sha256:33c934d385fed06b9f7062842526c6eb3fb0c1884f433aa7c0754707ebb9e178`,
-the image `publish` built from `10e032a`, the last commit to change
+`ghcr.io/vmafx/pelorus-dev@sha256:92599aa475c90ef9609d28979f6ee56d85fd995f52ca0af94c27dd4205040498`,
+the image `publish` built from `8e6a41e`, the last commit to change
 `.devcontainer/base/Containerfile`. The reference is a digest, never a tag; the
 renderer rejects a tag-only `--base-image`, and the audit's `DevContainer
 bundle` check fails on any drift from the rendering. The package is public: the

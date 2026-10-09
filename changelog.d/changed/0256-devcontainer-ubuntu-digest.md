@@ -1,0 +1,1 @@
+- The dev container bundle builds on `ghcr.io/vmafx/pelorus-dev@sha256:92599aa4…`, the first image on the plain Ubuntu base with a licence record ([#256](https://github.com/VMAFx/pelorus/issues/256), ADR-0179); its provenance attestation verifies to `devcontainer-image.yml` on `master` at `8e6a41e`.
