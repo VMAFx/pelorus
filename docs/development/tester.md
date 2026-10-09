@@ -114,11 +114,13 @@ claims GPU evidence, and any identifier listed above.
 
 ## 3. File it
 
-The intake path (an issue form and a tracked `docs/hardware-reports/`
-directory) is [#233](https://github.com/VMAFx/pelorus/issues/233) and is not
-live yet. Until then, attach `report.json` to a new issue on
-[VMAFx/pelorus](https://github.com/VMAFx/pelorus/issues) and say which package
-and machine you used. Do not attach logs from outside the kit.
+Open a [hardware report issue](https://github.com/VMAFx/pelorus/issues/new?template=hardware_report.yml)
+and attach `report.json`, or open a pull request that adds it to
+[`docs/hardware-reports/`](../hardware-reports/index.md) as an intake record.
+The record format, the checks, the tool hash and the credit rule (an empty
+credit is listed as `anonymous`) are in
+[hardware we need](../usage/hardware-we-need.md#send-a-report). Do not attach
+logs from outside the kit.
 
 ## 4. Change the program
 
@@ -147,6 +149,21 @@ Rule names for `--disable`: `no_device_nonfailure`, `redaction`,
 `claim_gpu_needs_hardware`, `software_pass_status`, `pass_software_class`, plus the stage and fixture rules listed in
 [tester kit stages](../usage/tester.md#planted-failures). Changing a report field means changing the schema, the
 program, a planted case and this page in one change.
+
+Any edit under `tools/tester/` changes the tool digest. Append the new digest to
+`tools/tester/tool-hashes.json` in the same change (never edit or remove an
+entry); `make docs-check` fails until you do:
+
+```bash
+python3 -I tools/tester/pelorus_tester_report.py tool-hash
+```
+
+The intake scripts have the same kind of self-test, with `--disable` rules:
+
+```bash
+python3 -I scripts/hardware-reports/check-reports.py --self-test
+python3 -I scripts/hardware-reports/generate-index.py --self-test
+```
 
 ## Related
 

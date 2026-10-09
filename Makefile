@@ -42,6 +42,11 @@ docs-check:
 	python3 -I scripts/adr/check-status.py
 	python3 -I scripts/check-mirror-contract.py --self-test
 	python3 -I scripts/check-mirror-contract.py
+	python3 -I tools/tester/pelorus_tester_report.py --self-test
+	python3 -I scripts/hardware-reports/check-reports.py --self-test
+	python3 -I scripts/hardware-reports/check-reports.py
+	python3 -I scripts/hardware-reports/generate-index.py --self-test
+	python3 -I scripts/hardware-reports/generate-index.py --check
 
 compile-context:
 	$(PRAETORCTL) compile-context

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/VMAFx/pelorus/docs/hardware-reports/intake.schema.json",
+  "title": "Pelorus hardware report intake record, version 1",
+  "description": "One tracked file under docs/hardware-reports/: the tester's report.json plus who to credit. scripts/hardware-reports/check-reports.py checks it with the keyword subset that tools/tester/pelorus_tester_report.py implements.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["intake_version", "report"],
+  "properties": {
+    "intake_version": {"const": 1},
+    "credit": {"type": "string", "maxLength": 100, "description": "Name or handle to credit. Empty or absent: recorded as anonymous. No e-mail address."},
+    "machine": {"type": "string", "maxLength": 200, "description": "Free text, for example 'Ryzen 7 7840U with Radeon 780M, Linux 6.12'."},
+    "report": {"type": "object", "description": "The unchanged report.json; validated with tools/tester/report.schema.json."}
+  }
+}
