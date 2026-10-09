@@ -68,8 +68,23 @@ library path for Docker Desktop on WSL2 (unproven). Run line:
 all from Debian `main`; FFmpeg adds `--enable-libvpl --enable-vaapi
 --enable-libdrm --disable-xlib` (libdrm makes QSV pick the Intel render node by
 vendor id instead of `renderD128`). On the Arc A380 the free driver cannot
-encode HEVC (`Invalid FrameType:0`), so `hevc_qsv` is a `not_run` leg there;
-the free-only rule stands. Run line: `docker run --rm --device /dev/dri -v
+encode HEVC (`Invalid FrameType:0`), so the `hevc_qsv` legs are `not_run` there
+and their reason names the installed free driver and the missing
+`intel-media-va-driver-non-free`, both read from dpkg inside the image.
+
+**4a. Local-only non-free Intel build.** Per maintainer decision for #230 the
+published Intel image stays free-only, and a local build may use the non-free
+driver: `--build-arg INTEL_MEDIA_DRIVER=nonfree` (default `free`) installs
+`intel-media-va-driver-non-free` from Debian `non-free`. The licence gate
+checks that tree as kit `intel-nonfree-local`, a `local_only_kits` entry of
+`licensing.json` that may carry that one package and archive component; the
+package is recorded as not redistributable, and the gate writes
+`/usr/share/licenses/pelorus-tester/NOT-FOR-REDISTRIBUTION` and a NOT FOR
+REDISTRIBUTION line in the notices. The report of such an image has kit
+`intel-nonfree-local`. Refusal points: no workflow may name `INTEL_MEDIA_DRIVER`
+or the local kit (`check-build-config.py`); `source-intel` refuses the
+non-free build; and `licensing.py check` of every published kit refuses a tree
+with the marker, so the publish job's licence gate fails on such an image. Run line: `docker run --rm --device /dev/dri -v
 "$PWD/report:/report" <image>`; a non-root `--user` also needs `--group-add`
 with the group of `/dev/dri/renderD*`.
 
@@ -101,7 +116,10 @@ tries `h264_nvenc`, `h264_qsv`, `hevc_qsv` and `av1_qsv` besides the earlier
 encoders. An AV1 encoder whose first encode fails as unsupported is a `not_run`
 leg reading "no AV1 encode on this GPU or driver", and an encoder without
 `-pelorus_roi` (today `av1_qsv`) is a `not_run` leg naming the option. A stage
-cannot pass with a failed leg or without a passing one.
+cannot pass with a failed leg or without a passing one. The unsteered control
+encodes run without region-of-interest side data (`pelorus_analyze_vulkan=roi=0`),
+because FFmpeg's stock QSV path applies ROI rectangles whether or not
+`-pelorus_roi` is set; with side data in the control, `h264_qsv` looked unsteered.
 
 **7. Workflow.** `tester-publish.yml` runs `build` and `publish` once per kit
 (matrix, `fail-fast: false`, so a failing kit never cancels another kit's job
@@ -119,6 +137,8 @@ command without a device and validate the report against its kit.
 | Debian `libffmpeg-nvenc-dev` instead of the git pin | No git fetch | Version moves with Debian point releases; its source would not reach the `-source` image | A pinned commit, verified in the build, with its tree in `-source` |
 | `intel-media-va-driver-non-free` | Encode on some older Intel generations | Debian `non-free`; closed kernels | Free variant only; the gate forbids the package |
 | AV1 decode through NVDEC or VA-API in the check | No new library | The judge would share the encoder's vendor stack; differs per kit | dav1d decodes the same way on every kit |
+| Free driver only, no local non-free path | Nothing non-free anywhere in the build | No HEVC QSV evidence at all on Arc A-series hosts, where the free driver cannot encode HEVC | The maintainer wants that evidence locally; the marker and the refusal points keep it off the registry |
+| Publish a non-free Intel kit | HEVC QSV for every tester | Debian puts the driver in `non-free`; ADR-0173 decision 5 ships no vendor driver | Redistribution is the line ADR-0173 draws; a local build crosses no line |
 | Name the Intel render node in the steering commands instead of linking libdrm | No new library | The node number differs per host and the tester would have to find it; FFmpeg's own vendor filter needs libdrm | libdrm (MIT, already pulled in by Mesa and libva) lets FFmpeg pick the Intel node |
 | Tags `tester-<date>-<sha8>-<kit>` (ADR-0173 wording) | Matches the ADR-0173 text | `-source` then reads `...-nvidia-source`, kit last; differs from the Windows zip order | Kit first, like `tester-windows-<date>-<sha8>`; generic unchanged |
 | One reason naming both options for every kit | No kit awareness in the report | A tester with an NVIDIA image is told about `/dev/dri`; intake cannot check it | Kit-specific reason, enforced by the validator |
@@ -133,8 +153,8 @@ command without a device and validate the report against its kit.
   builds all three); the Intel image carries Mesa's whole Vulkan driver package
   (RADV, lavapipe and others come with ANV); the NVIDIA image cannot use NVENC on
   drivers older than 530.41.03; with the free media driver an Arc A-series GPU
-  gives no HEVC QSV leg, and the A380 gives no positive QSV steering result at
-  all (research 0229).
+  gives no HEVC QSV leg in a published image (local non-free builds give it,
+  research 0229).
 - **Neutral / follow-ups**: the AV1 boundary on a pre-Ada NVIDIA or pre-Arc Intel
   GPU and the WSL2 paths are not measured here (research 0229 lists them);
   `qsv-roi-regression.sh` stays a build-tree test, not an image stage; the AMD
@@ -146,3 +166,4 @@ command without a device and validate the report against its kit.
 - NVIDIA Container Toolkit, specialized configurations: `NVIDIA_DRIVER_CAPABILITIES` (read 2026-10-09).
 - VMAFx `docker/Dockerfile.tester` targets `final-cuda` and `final-sycl` (read-only precedent).
 - Source: per user direction in the vendor-images task brief (paraphrased): one image per kit as Containerfile targets, kit-first tags with `-source`, no NVIDIA library in the image, the free media driver only, and a `no_device` report that names the missing docker option.
+- Source: maintainer decision for #230 on 2026-10-09, "Free + local non-free" (verbatim popup answer): the published Intel image stays free-only, and a local build may use the non-free media driver under a NOT-FOR-REDISTRIBUTION marker.

@@ -76,7 +76,15 @@ STEER_OPTION = "pelorus_roi"
 NOEFFECT_RE = re.compile(r"(continuing without ROI bias"
                          r"|regions asking for a lower QP[^\n]*clamped to \d+"
                          r"|pelorus_roi: [^\n]*\bdisabl(?:ed|ing)\b[^\n]*)")
+# The steered encodes get ROI side data; the unsteered control gets none, because
+# FFmpeg's stock QSV path applies ROI rectangles whatever -pelorus_roi says
+# (h264_qsv on an Arc A380: research 0229).
 FILTER_CHAIN = "pelorus_analyze_vulkan=roi=1"
+CONTROL_CHAIN = "pelorus_analyze_vulkan=roi=0"
+# Intel media driver packages; a QSV leg that fails with only the free one
+# installed names the non-free one it lacks (ADR-0180).
+MEDIA_DRIVER_FREE = "intel-media-va-driver"
+MEDIA_DRIVER_NONFREE = "intel-media-va-driver-non-free"
 # kind: vulkan = frames stay in VRAM to the encoder; hw = hwdownload to a
 # hardware encoder; sw = hwdownload to a software encoder.
 ENCODERS = (
@@ -435,6 +443,34 @@ def unusable(enc, text, why):
     return "not_run", "not usable on this host: " + line
 
 
+def installed_media_drivers(ctx):
+    """{package: version} of the Intel media drivers dpkg lists as installed; cached.
+
+    Empty outside a Debian image (no dpkg-query): then no leg names a driver."""
+    if "media_drivers" not in ctx:
+        code, text, _ = ctx["run"](["dpkg-query", "-W", "-f", "${Package} ${Version} ${db:Status-Abbrev}\n",
+                                    MEDIA_DRIVER_FREE, MEDIA_DRIVER_NONFREE], 30, ctx["env"])
+        found = {}
+        for line in text.splitlines()[:16] if code is not None else []:
+            parts = line.split()
+            if len(parts) >= 3 and parts[0] in (MEDIA_DRIVER_FREE, MEDIA_DRIVER_NONFREE) and parts[2] == "ii":
+                found[parts[0]] = parts[1]
+        ctx["media_drivers"] = found
+    return ctx["media_drivers"]
+
+
+def free_driver_leg(ctx, enc, state, note):
+    """A QSV leg that cannot encode with only the free media driver names the driver it lacks."""
+    drivers = installed_media_drivers(ctx) if enc["name"].endswith("_qsv") else {}
+    if (state != "not_run" or note.startswith("no AV1 encode") or MEDIA_DRIVER_FREE not in drivers
+            or MEDIA_DRIVER_NONFREE in drivers):
+        return state, note
+    return "not_run", ("%s does not encode here with the free %s %s; %s is not installed (the "
+                       "published image ships the free driver only, ADR-0180): %s" % (
+                           enc["name"], MEDIA_DRIVER_FREE, drivers[MEDIA_DRIVER_FREE],
+                           MEDIA_DRIVER_NONFREE, note))[:400]
+
+
 def encoder_has_option(ctx, name, option):
     """Whether `ffmpeg -h encoder=<name>` lists -<option>; cached per encoder."""
     helps = ctx["ff"].setdefault("help", {})
@@ -540,8 +576,8 @@ def input_args(entry, path):
             str(entry["fps"]), "-i", path]
 
 
-def chain_for(enc, extra=""):
-    head = "format=%s,hwupload,%s" % (enc["pix"], FILTER_CHAIN)
+def chain_for(enc, steered=True):
+    head = "format=%s,hwupload,%s" % (enc["pix"], FILTER_CHAIN if steered else CONTROL_CHAIN)
     if enc["kind"] == "vulkan":
         return head
     return "%s,hwdownload,format=%s" % (head, enc["pix"])
@@ -551,7 +587,7 @@ def encode(ctx, enc, dev, entry, src, frames, steered, out):
     """One encode; returns (ok, error line, log text)."""
     argv = ["-hide_banner", "-loglevel", "verbose" if steered else "error", "-y",
             "-init_hw_device", "vulkan=vk:%d" % dev, "-filter_hw_device", "vk"]
-    argv += input_args(entry, src) + ["-frames:v", str(frames), "-vf", chain_for(enc)]
+    argv += input_args(entry, src) + ["-frames:v", str(frames), "-vf", chain_for(enc, steered)]
     argv += ["-c:v", enc["name"]] + enc["args"]
     argv += ["-pelorus_roi", "1"] if steered else []
     argv += MUX_ARGS + [str(out)]
@@ -622,7 +658,7 @@ def steer_one(ctx, enc, devs, entry, src, work):
             dev = dev_try
             break
     if dev is None:
-        return unusable(enc, text, why)
+        return free_driver_leg(ctx, enc, *unusable(enc, text, why))
     if not encoder_has_option(ctx, enc["name"], STEER_OPTION):
         return "not_run", ("%s encodes on device %d but has no -%s option in this FFmpeg; "
                            "the patch stack does not steer it" % (enc["name"], dev, STEER_OPTION))
@@ -709,7 +745,7 @@ def carrier_roundtrip(ctx, car, devs, entry, src, work):
     out = work / ("sd-%s.%s" % (car["name"], car["codec"]))
     dev, why = carrier_encode(ctx, car, devs, entry, src, out)
     if dev is None:
-        return "not_run", "cannot encode on this host: " + why
+        return free_driver_leg(ctx, car, "not_run", "cannot encode on this host: " + why)
     frames = pelorus_blobs_per_frame(out.read_bytes(), car["codec"])
     errs = sidedata_problems(frames, SIDEDATA_FRAMES, ctx["disabled"])
     code, tap, err = ffrun(ctx, ["-hide_banner", "-loglevel", "info", "-i", str(out),
@@ -1023,6 +1059,40 @@ def fake_encode_ctx(disabled, work):
     return ctx
 
 
+def fake_qsv_ctx(work, dpkg_text):
+    """FFmpeg stand-in where hevc_qsv fails as with the free driver on an Arc A380."""
+    def run(argv, timeout_s, env=None):
+        if argv[0] == "dpkg-query":
+            return 1, dpkg_text, ""
+        if "hevc_qsv" in argv:
+            return 183, "[hevc_qsv @ 0x1] Invalid FrameType:0.\n", ""
+        Path(argv[-1]).write_bytes(b"\x00" * 64)
+        return 0, "", ""
+    ctx = stage_ctx({"PELORUS_VALIDATE": "0"}, run)
+    ctx.update(work=str(work))
+    ctx["ff"] = {"bin": "ffmpeg", "filters": {"pelorus_analyze_vulkan"}, "encoders": {"hevc_qsv"},
+                 "help": {}}
+    return ctx
+
+
+def self_test_free_driver(expect, disabled, entry):
+    """hevc_qsv with only the free media driver names the non-free one; with it, it does not."""
+    import tempfile
+    enc = next(e for e in ENCODERS if e["name"] == "hevc_qsv")
+    free = "intel-media-va-driver 25.2.3+dfsg1-1 ii \ndpkg-query: no packages found matching x\n"
+    both = free + "intel-media-va-driver-non-free 25.2.3+ds1-1 ii \n"
+    with tempfile.TemporaryDirectory(prefix="pelorus-qsv-") as tmp:
+        got = steer_one(fake_qsv_ctx(tmp, free), enc, [0], entry, "src", Path(tmp))
+        expect("free_driver_leg_names_nonfree", got[0] == "not_run"
+               and "intel-media-va-driver-non-free is not installed" in got[1]
+               and "Invalid FrameType:0" in got[1])
+        got = steer_one(fake_qsv_ctx(tmp, both), enc, [0], entry, "src", Path(tmp))
+        expect("nonfree_installed_no_driver_claim", got[0] == "not_run"
+               and "intel-media-va-driver-non-free" not in got[1])
+        got = steer_one(fake_qsv_ctx(tmp, ""), enc, [0], entry, "src", Path(tmp))
+        expect("no_dpkg_no_driver_claim", got[0] == "not_run" and "free" not in got[1])
+
+
 def self_test_legs(expect, disabled):
     """AV1 without hardware support, and an encoder without the steering option, are named not_run legs."""
     import tempfile
@@ -1040,6 +1110,9 @@ def self_test_legs(expect, disabled):
     got = unusable({"name": "av1_qsv", "codec": "av1"}, vaapi, "Conversion failed!")
     expect("other_component_unsupported_is_not_av1", got == (
         "not_run", "not usable on this host: av1_qsv: Failed to create a VAAPI device."))
+    expect("control_arm_has_no_roi", all(
+        "roi=0" in chain_for(e, False) and "roi=1" in chain_for(e, True) for e in ENCODERS))
+    self_test_free_driver(expect, disabled, entry)
     status, _, _, legs = aggregate_legs([("hevc_nvenc", "hevc", "pass", ""),
                                          ("av1_nvenc", "av1", "not_run", "no AV1 encode")], disabled)
     expect("legs_recorded", status == "pass" and [l["status"] for l in legs] == ["pass", "not_run"])

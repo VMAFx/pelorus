@@ -80,8 +80,10 @@ docker run --rm --device /dev/dri -v "$PWD/report:/report" ghcr.io/vmafx/pelorus
   FFmpeg is built with libdrm for that), so another vendor's render node first
   in the list does not matter.
 - With the free media driver, `hevc_qsv` cannot encode on Arc A-series (A380:
-  `Invalid FrameType:0` on every encode); its leg is `not_run` with that error.
-  The non-free driver that can is never shipped
+  `Invalid FrameType:0` on every encode). Its steering and side-data legs are
+  `not_run` and the reason names the installed free driver and the missing
+  `intel-media-va-driver-non-free`; the stage reads both from dpkg inside the
+  image. The published image never ships the non-free driver
   ([research 0229](../research/0229-tester-vendor-images.md)).
 - `av1_qsv` encodes on Arc and newer GPUs, but the patch stack adds
   `-pelorus_roi` to `h264_qsv` and `hevc_qsv` only, so the AV1 QSV steering leg
@@ -90,6 +92,34 @@ docker run --rm --device /dev/dri -v "$PWD/report:/report" ghcr.io/vmafx/pelorus
 - WSL2: Intel GPUs in WSL2 use `/dev/dxg` and the Windows driver's libraries
   under `/usr/lib/wsl/lib`, which this image does not use; the Linux render
   node path above is the supported one ([research 0229](../research/0229-tester-vendor-images.md)).
+
+#### Local build with the non-free media driver
+
+For HEVC QSV evidence on a GPU the free driver cannot encode HEVC on, build the
+Intel image yourself with Debian's non-free media driver. The image is for your
+machine only: never push, publish or share it
+([ADR-0180](../adr/0180-tester-vendor-images.md)).
+
+```bash
+. ./build-config.env
+docker build -f tools/tester/Containerfile --target final-intel \
+  --build-arg INTEL_MEDIA_DRIVER=nonfree \
+  --build-arg "FFMPEG_REMOTE=$FFMPEG_REMOTE" --build-arg "FFMPEG_COMMIT=$FFMPEG_COMMIT" \
+  --build-arg "PELORUS_COMMIT=$(git rev-parse HEAD)" --build-arg MAKE_JOBS=4 \
+  --tag pelorus-tester:intel-nonfree-local .
+docker run --rm --device /dev/dri -v "$PWD/report:/report" pelorus-tester:intel-nonfree-local
+```
+
+- The licence gate checks that build as kit `intel-nonfree-local`: it records
+  `intel-media-va-driver-non-free` as not redistributable, writes
+  `/usr/share/licenses/pelorus-tester/NOT-FOR-REDISTRIBUTION` and puts a
+  NOT FOR REDISTRIBUTION line at the top of the notices.
+- The report of that image says `"kit": "intel-nonfree-local"`.
+- The publish workflow cannot produce it: no workflow may name
+  `INTEL_MEDIA_DRIVER` (`scripts/check-build-config.py`), the publish gate
+  (`licensing.py check --kit intel`) refuses a tree with the marker or the
+  non-free package, and `--target source-intel` refuses to build with
+  `INTEL_MEDIA_DRIVER=nonfree`.
 
 ## Execution class and evidence claim
 
@@ -151,7 +181,11 @@ An encoder that encodes but has no `-pelorus_roi` option (`av1_qsv`) is a
 `not_run` leg that names the option.
 
 Per encoder the stage encodes the clip five times (unsteered 8 frames twice,
-steered 8, unsteered 16, steered 16) and decodes four of them:
+steered 8, unsteered 16, steered 16) and decodes four of them. The unsteered
+encodes run `pelorus_analyze_vulkan=roi=0`, so no region-of-interest side data
+reaches the encoder: FFmpeg's stock QSV path applies ROI rectangles whether or
+not `-pelorus_roi` is set (it is how `h264_qsv` is steered), so a control that
+carried them would be steered too.
 
 - an unsteered stream that does not decode is an encoder or driver defect, not a
   steering result: the leg is `not_run` with the reason `baseline output does

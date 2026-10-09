@@ -21,12 +21,13 @@ Toolkit 1.20.1 with a CDI specification in `/var/run/cdi`, NVIDIA driver
 | Kit | Without its device | With it | Licence gate |
 | --- | --- | --- | --- |
 | `nvidia` | exit 0, every GPU stage `no_device`: "start it with --gpus all" | **pass**, `execution_class` hardware, `evidence_claim` gpu; steering passes on `h264_nvenc`, `hevc_nvenc`, `av1_nvenc` and `hevc_vulkan` | planted `libnvidia-encode.so.1` refused |
-| `intel` | exit 0, lavapipe only (`software_vulkan`), every GPU stage `no_device`: "start it with --device /dev/dri" | **fail** on the A380: `hevc_qsv` cannot encode with the free media driver, `h264_qsv` encodes but its ROI has no effect | `intel-media-va-driver-non-free` refused |
+| `intel` | exit 0, lavapipe only (`software_vulkan`), every GPU stage `no_device`: "start it with --device /dev/dri" | **pass** on the A380, `evidence_claim` gpu: `h264_qsv` steering and round trip pass; `hevc_qsv` legs are `not_run` naming the missing `intel-media-va-driver-non-free` | `intel-media-va-driver-non-free` refused |
+| `intel-nonfree-local` (local build only) | as `intel` | **pass**: `h264_qsv` and `hevc_qsv` steering and round trip pass; report kit `intel-nonfree-local` | accepted as a local-only kit with the NOT-FOR-REDISTRIBUTION marker; the publish gate refuses it |
 
-Both reports validate (schema 2, `--kit` checked). The NVIDIA kit meets the
-positive acceptance of #229 on this host. The Intel kit runs, opens QSV on the
-right GPU and passes the side-data round trip on `h264_qsv`, but the A380 cannot
-give a positive QSV steering result with the free driver (below).
+All reports validate (schema 2, `--kit` checked). The NVIDIA kit meets the
+positive acceptance of #229 on this host. The Intel kit meets the QSV steering
+acceptance of #230 for `h264_qsv` with the free driver and for `hevc_qsv` only
+in the local non-free build (below).
 
 ## Device access
 
@@ -121,20 +122,54 @@ and lavapipe. Findings, in the order they appeared:
 
 | Encoder | Free `intel-media-va-driver` 25.2.3 | Non-free 25.2.3 (throwaway container, never shipped) |
 | --- | --- | --- |
-| `h264_qsv` | encodes, 8 frames; steered output byte-identical to unsteered | same |
+| `h264_qsv` | encodes, 8 frames; with `-pelorus_roi` on and off byte-identical (both arms carried ROI side data, see 4) | same |
 | `hevc_qsv` | every encode fails: `Invalid FrameType:0` | encodes, 8 frames; steered 6390 B against 2466 B unsteered |
 | `av1_qsv` | encodes, 8 frames (no `-pelorus_roi`, so its leg is `not_run`) | same |
 
-HEVC encode on this GPU needs the non-free media driver, which the licence rule
-forbids; with the free driver the `hevc_qsv` leg is `not_run` with the error.
-`h264_qsv` uses FFmpeg's per-region `mfxExtEncoderROI` path (patch 0005 keeps
-the dense map for HEVC), and the runtime ignores it at constant QP on this GPU
-with either driver, so the steering leg fails as "steering did not change the
-bitstream". The non-free HEVC result (more than double the bytes at the same
-`-q:v`) matches the Arc A-series low-power encode defect recorded in
-[bench results](../development/bench-results.md); the A380 exposes only the
-low-power entry point. A positive QSV steering result needs an Arc B-series
-or a Xe-LP iGPU (the B580 and UHD 770 of PR #68).
+HEVC encode on this GPU needs the non-free media driver, which the published
+image does not ship; with the free driver both `hevc_qsv` legs are `not_run`
+and name the installed free driver and the missing non-free one (read with
+`dpkg-query` inside the image). The non-free HEVC result (more than double the
+bytes at the same `-q:v`) matches the Arc A-series low-power encode defect
+recorded in [bench results](../development/bench-results.md); the A380 exposes
+only the low-power entry point, so these runs prove the path, not quality.
+
+### `h264_qsv` ROI works; the control arm was steered too
+
+The first runs compared `-pelorus_roi 0` against `-pelorus_roi 1` with
+`pelorus_analyze_vulkan=roi=1` in both arms. Patch 0005 keeps the dense map
+for HEVC, so `h264_qsv` takes FFmpeg's stock `mfxExtEncoderROI` path in both
+arms (`ffmpeg-patches/0005-qsv-pelorus-roi.patch`, the `!use_mbqp` branch
+that calls `set_roi_encode_ctrl`), and the outputs matched. Varying the side
+data instead, 8 frames at `-q:v 30`:
+
+| `h264_qsv` arm | Free driver | Non-free driver |
+| --- | --- | --- |
+| `roi=0`, `-pelorus_roi 0` (no side data) | 1343 B | 1569 B |
+| `roi=1`, `-pelorus_roi 0` (256 `ROI:` debug lines) | 2736 B | 3253 B |
+| `roi=1`, `-pelorus_roi 1` | 2736 B, identical to the line above | 3253 B, identical |
+
+So DG2 honours the ROI rectangles with either driver; neither the driver nor
+patch 0005 was at fault. The unsteered encodes now run
+`pelorus_analyze_vulkan=roi=0`; with that control the `h264_qsv` steering leg
+passes on the A380 with the free driver.
+
+## Local non-free build
+
+`docker build --target final-intel --build-arg INTEL_MEDIA_DRIVER=nonfree`
+builds; the licence stage checks the tree as kit `intel-nonfree-local`
+(`intel-media-va-driver-non-free` recorded as `LicenseRef-nonfree`, not
+redistributable), writes `/usr/share/licenses/pelorus-tester/NOT-FOR-REDISTRIBUTION`
+and a NOT FOR REDISTRIBUTION line in the notices. Its run on the A380 passes
+with `hevc_qsv` steering (bitstream changed) and round trip, report kit
+`intel-nonfree-local`. Refusals of the publish path:
+
+| Attempt | Result |
+| --- | --- |
+| the publish step `licensing.py check --kit intel` on the local non-free image | refused, 8 problems, among them `forbidden package: intel-media-va-driver-non-free` and the marker line |
+| the same check on the free image plus a planted marker file | refused: `NOT-FOR-REDISTRIBUTION is present: this tree is a local-only build ... never published as kit intel` |
+| `--target source-intel` with `INTEL_MEDIA_DRIVER=nonfree` | build exit 1: `a non-free Intel build has no -source image` |
+| `INTEL_MEDIA_DRIVER` or `intel-nonfree-local` in `tester-publish.yml` or `ci.yml` | refused by `check-build-config.py` (planted cases in its self-test) |
 
 ## Licence gate proofs
 
@@ -161,4 +196,5 @@ kit 3 min 43 s. Image sizes: NVIDIA 965 MB, Intel 1.06 GB on disk.
   "no AV1 encode on this GPU or driver" is proven by planted logs only.
 - WSL2 (`/dev/dxg`, `/usr/lib/wsl/lib`) for either vendor.
 - A legacy (non-CDI) NVIDIA Container Toolkit, where `graphics` matters.
-- QSV on Arc B-series and Xe-LP (B580, UHD 770).
+- QSV on Arc B-series and Xe-LP (B580, UHD 770), where HEVC may encode with the
+  free driver and the low-power defect is absent.

@@ -11,8 +11,8 @@ Status: `tools/tester/Containerfile` builds three kits
 (NVENC through the host driver, no NVIDIA file inside) and `intel` (Mesa ANV,
 oneVPL, the free media driver), each with a GPL-3.0-or-later FFmpeg, its
 licence gates and a `-source` target. All three build locally; the NVIDIA kit
-passes on an RTX 4090 and the Intel kit runs on an Arc A380, where QSV steering
-does not pass with the free driver
+passes on an RTX 4090 and the Intel kit on an Arc A380, where `hevc_qsv` needs
+the non-free media driver and its legs are named `not_run`
 ([research 0229](../research/0229-tester-vendor-images.md)). Nothing has been
 dispatched end to end yet: the hosted build, the push and the SBOM attestation
 verify line (predicate type `https://spdx.dev/Document/v2.3`) are unproven
@@ -26,7 +26,16 @@ until the first dispatch.
 | `nvidia` | `final-nvidia` | `source-nvidia` | `tester-nvidia-<YYYYMMDD>-<sha8>` | `libegl1` and `libxext6` (the host's Vulkan ICD needs both), `libdav1d7`; FFmpeg with `--enable-ffnvcodec --enable-nvenc --enable-libdav1d` against `nv-codec-headers` `n12.1.14.0`, whose notices ship and whose tree is in `-source` under `/source/kit/` |
 | `intel` | `final-intel` | `source-intel` | `tester-intel-<YYYYMMDD>-<sha8>` | `mesa-vulkan-drivers`, `libvpl2`, `libmfx-gen1.2`, `libva2`, `libva-drm2`, `intel-media-va-driver`, `libdav1d7`; FFmpeg with `--enable-libvpl --enable-vaapi --enable-libdrm --disable-xlib --enable-libdav1d` |
 
-Every `-source` tag is the image tag plus `-source`. The stages of one kit are
+Every `-source` tag is the image tag plus `-source`. A fourth kit,
+`intel-nonfree-local`, exists only as a local build of `final-intel` with
+`--build-arg INTEL_MEDIA_DRIVER=nonfree` (the line is in
+[tester images](../usage/tester.md#local-build-with-the-non-free-media-driver)).
+It is never published, and four points refuse it on the way: no workflow may
+name `INTEL_MEDIA_DRIVER` or the kit (`scripts/check-build-config.py`, with a
+planted case for `ci.yml` and both tester jobs); the build arg defaults to
+`free` in every stage that reads it; `--target source-intel` refuses
+`nonfree`; and the publish gate, `licensing.py check --kit intel`, refuses a
+tree with the NOT-FOR-REDISTRIBUTION marker or the non-free package. The stages of one kit are
 `build-<kit>` (FFmpeg through `tools/tester/build-ffmpeg.sh`), `assembled-<kit>`,
 `licence-<kit>`, `final-<kit>`, `debian-sources-<kit>` and `source-<kit>`; the
 `build` stage (toolchain, libpelorus, the patched FFmpeg tree) and the `base`

@@ -80,9 +80,13 @@ NO_DEVICE_REASON = ("no Vulkan hardware device visible; start the container "
                     "(NVIDIA), or run on a host with a GPU driver")
 # Tester image kits (ADR-0180). The image sets PELORUS_TESTER_KIT; a run from a
 # checkout is kit "source". A kit's no_device reason names one of its options.
-KITS = ("source", "generic", "nvidia", "intel")
+KITS = ("source", "generic", "nvidia", "intel", "intel-nonfree-local")
 KIT_OPTIONS = {"nvidia": ("--gpus all", "NVIDIA_DRIVER_CAPABILITIES"),
-               "intel": ("--device /dev/dri", "--group-add")}
+               "intel": ("--device /dev/dri", "--group-add"),
+               "intel-nonfree-local": ("--device /dev/dri", "--group-add")}
+# An intel image whose licence gate wrote this marker is the local build with
+# the non-free media driver (INTEL_MEDIA_DRIVER=nonfree): kit intel-nonfree-local.
+LOCAL_KITS = {"intel": "intel-nonfree-local"}
 MAX_DEV_NODES = 64
 ICD_DIRS = ("/etc/vulkan/icd.d", "/usr/share/vulkan/icd.d")
 
@@ -201,6 +205,7 @@ def no_device_reason(kit, nodes):
                 "Container Toolkit must provide the graphics capability (the image sets "
                 "NVIDIA_DRIVER_CAPABILITIES=compute,utility,video,graphics): update the toolkit "
                 "or regenerate its CDI specification")
+    kit = "intel" if kit == "intel-nonfree-local" else kit
     if kit == "intel" and not nodes["render"]:
         return "no DRM render node in the container; start it with --device /dev/dri"
     if kit == "intel" and not nodes["render_usable"]:
@@ -215,12 +220,29 @@ def no_device_reason(kit, nodes):
     return NO_DEVICE_REASON
 
 
-def runtime_kit(env):
-    """(kit, error): PELORUS_TESTER_KIT from the image, `source` when unset."""
+def local_marker(root="/"):
+    """Path of the NOT-FOR-REDISTRIBUTION marker named by the licence record next to this program."""
+    try:
+        rel = json.loads((HERE / "licensing.json").read_text(encoding="utf-8")).get("local_marker")
+    except (OSError, ValueError):
+        rel = None
+    return Path(root) / rel if rel else None
+
+
+def runtime_kit(env, root="/"):
+    """(kit, error): PELORUS_TESTER_KIT from the image, `source` when unset.
+
+    The marker of a local non-free build turns kit intel into intel-nonfree-local;
+    the kit is never claimed without the marker, or the marker under another kit."""
     kit = env.get("PELORUS_TESTER_KIT", "") or "source"
-    if kit not in KITS:
-        return None, "PELORUS_TESTER_KIT must be one of %s, got %r" % (", ".join(KITS), kit)
-    return kit, ""
+    marker = local_marker(root)
+    present = bool(marker and marker.is_file())
+    if kit not in KITS or kit in LOCAL_KITS.values():
+        return None, "PELORUS_TESTER_KIT must be one of %s, got %r" % (
+            ", ".join(k for k in KITS if k not in LOCAL_KITS.values()), kit)
+    if present and kit not in LOCAL_KITS:
+        return None, "%s is present in a kit %s image; only a local intel build carries it" % (marker, kit)
+    return (LOCAL_KITS[kit] if present else kit), ""
 
 
 # ---------------------------------------------------------------- redaction
@@ -622,7 +644,7 @@ def merge_plan(plan_file):
 
 def build_report(plan, opts, disabled=frozenset()):
     env = dict(opts.get("env", os.environ))
-    kit = runtime_kit(env)[0] or "source"
+    kit = runtime_kit(env, opts.get("root", "/"))[0] or "source"
     ctx = {"literals": local_literals(), "disabled": disabled, "probed": False,
            "hardware": False, "devices": [], "enabled": {"bench": opts["bench"]},
            "env": env, "run": run_command, "is_hardware": is_hardware, "fixtures": FIXTURES,
@@ -753,7 +775,8 @@ def good_report(tmp, plan_stages, **opt):
         plan[sid].update(spec)
     opts = {"bench": opt.get("bench", False), "note": "",
             "require_device": opt.get("require_device", False),
-            "dev_root": opt.get("dev_root", "/dev"), "icd_dirs": opt.get("icd_dirs", ())}
+            "dev_root": opt.get("dev_root", "/dev"), "icd_dirs": opt.get("icd_dirs", ()),
+            "root": opt.get("root", "/nonexistent-pelorus-root")}
     if "env" in opt:
         opts["env"] = opt["env"]
     return build_report(plan, opts, opt.get("disabled", frozenset()))
@@ -842,6 +865,7 @@ def self_test_kits(expect, disabled, schema):
                   "nvidia_icd": False}
         expect("render_not_readable_names_group_add",
                "--group-add 988" in no_device_reason("intel", locked))
+        self_test_local_kit(expect, disabled, schema, cpu_only, dev)
         nv = dict(os.environ, PELORUS_TESTER_KIT="nvidia")
         Path(dev, "nvidiactl").write_text("")
         rep, _ = good_report(None, cpu_only, disabled=disabled, dev_root=dev, env=nv)
@@ -852,6 +876,24 @@ def self_test_kits(expect, disabled, schema):
         expect("nvidia_driver_present_probe_fails", rep["stages"][0]["status"] == "fail"
                and rep["stages"][3]["status"] == "not_run" and rep["exit_code"] == 1
                and not validate_report(rep, schema, disabled=disabled))
+
+
+def self_test_local_kit(expect, disabled, schema, cpu_only, dev):
+    """The marker of a local non-free build shows in the report as kit intel-nonfree-local."""
+    with tempfile.TemporaryDirectory(prefix="pelorus-root-") as root:
+        marker = local_marker(root)
+        if marker is None:
+            expect("licence_record_names_local_marker", False)
+            return
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("NOT FOR REDISTRIBUTION\n", encoding="utf-8")
+        intel = dict(os.environ, PELORUS_TESTER_KIT="intel")
+        rep, _ = good_report(None, cpu_only, disabled=disabled, dev_root=dev, env=intel, root=root)
+        expect("marker_makes_local_kit", rep["kit"] == "intel-nonfree-local"
+               and "--device /dev/dri" in rep["stages"][3]["reason"]
+               and not validate_report(rep, schema, disabled=disabled))
+        expect("marker_refused_in_nvidia_image", runtime_kit({"PELORUS_TESTER_KIT": "nvidia"}, root)[0] is None)
+    expect("local_kit_never_from_env", runtime_kit({"PELORUS_TESTER_KIT": "intel-nonfree-local"}, dev)[0] is None)
 
 
 def with_legs(report, status, legs):
