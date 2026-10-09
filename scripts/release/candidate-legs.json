@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "legs": [
+    {
+      "id": "ci",
+      "kind": "needs",
+      "job": "ci",
+      "proves": "Full CI (core, FFmpeg stack replay and link, sanitizers, Windows, docs) is green on the tagged commit; release.yml runs the release build only after it."
+    },
+    {
+      "id": "tester-publish",
+      "kind": "workflow_run",
+      "workflow": "tester-publish.yml",
+      "event": "workflow_dispatch",
+      "proves": "The tester image built, passed the licence gate, was signed and attested, and its -source companion shipped, for this exact commit."
+    },
+    {
+      "id": "hardware-coverage",
+      "kind": "manual",
+      "proves": "Hardware reports cover the vendor rows this candidate claims; the maintainer confirms it in the release pull request. Not machine-verified."
+    },
+    {
+      "id": "bench-smoke",
+      "kind": "manual",
+      "proves": "The bench subset is unchanged against the previous candidate; the maintainer confirms it. Not machine-verified."
+    }
+  ]
+}

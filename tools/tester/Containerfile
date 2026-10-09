@@ -1,0 +1,115 @@
+# Pelorus tester image skeleton (ADR-0173, ADR-0176).
+#
+# Build inputs only: the pinned Debian base, the FFmpeg pin from
+# build-config.env, the licence flags and the libpelorus commit. Vendor images
+# (NVIDIA #229, Intel/AMD #230) extend the `runtime` target with their own
+# stages; the licence rules below bind every one of them.
+#
+#   docker build -f tools/tester/Containerfile --target runtime ... .   tester image
+#   docker build -f tools/tester/Containerfile --target source  ... .   -source companion
+#
+# The context is the repository root. .github/workflows/tester-publish.yml is
+# the only publisher and passes every ARG below on the command line.
+ARG DEBIAN_IMAGE=docker.io/library/debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+
+FROM ${DEBIAN_IMAGE} AS build
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# From build-config.env; the workflow reads the file and passes the values.
+ARG FFMPEG_REMOTE
+ARG FFMPEG_COMMIT
+# The licence of the FFmpeg that ships: GPL-3.0-or-later, never nonfree. The
+# gate below fails the build on anything else, whatever these ARGs say.
+ARG FFMPEG_LICENCE_FLAGS="--enable-gpl --enable-version3"
+ARG FFMPEG_FEATURE_FLAGS="--enable-vulkan --disable-doc"
+ARG PELORUS_COMMIT
+ARG MAKE_JOBS=2
+# DL3008: the base image is digest-pinned, and the installed versions are
+# recorded in /opt/pelorus/installed-packages.txt and shipped as source.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential ca-certificates git meson ninja-build pkg-config nasm \
+        glslc glslang-tools libvulkan-dev python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+# The build context is trimmed by tools/tester/Containerfile.dockerignore.
+COPY . /src/pelorus
+RUN meson setup --werror -Dtests=false -Dtools=false -Dshaders=false --prefix=/opt/pelorus --libdir=lib /src/pelorus-build /src/pelorus \
+    && ninja -C /src/pelorus-build install
+
+# The pinned FFmpeg commit, the whole series applied in order (a per-patch
+# check is not enough, AGENTS.md hard rule 5).
+RUN git init -q /src/ffmpeg \
+    && git -C /src/ffmpeg fetch -q --depth 1 "${FFMPEG_REMOTE}" "${FFMPEG_COMMIT}" \
+    && git -C /src/ffmpeg checkout -q FETCH_HEAD \
+    && grep -Ev '^(#|$)' /src/pelorus/ffmpeg-patches/series.txt \
+        | while read -r patch; do \
+            git -C /src/ffmpeg -c user.name=tester-build -c user.email=tester-build@invalid \
+                am --3way "/src/pelorus/ffmpeg-patches/${patch}"; \
+          done
+
+# Configure line and tree are kept for the -source image.
+WORKDIR /src/ffmpeg
+# hadolint ignore=SC2086
+RUN export PKG_CONFIG_PATH=/opt/pelorus/lib/pkgconfig \
+    && ./configure --prefix=/opt/ffmpeg ${FFMPEG_LICENCE_FLAGS} ${FFMPEG_FEATURE_FLAGS} \
+    && make -j"${MAKE_JOBS}" \
+    && make install \
+    && mkdir -p /opt/source \
+    && git archive --format=tar HEAD | tar -x -C /opt/source \
+    && printf '%s\n' "$(/opt/ffmpeg/bin/ffmpeg -hide_banner -version | sed -n 's/^configuration: *//p')" > /opt/source/ffmpeg-configure-line.txt \
+    && cp /src/pelorus/ffmpeg-patches/series.txt /opt/source/series.txt \
+    && printf '%s\n' "${PELORUS_COMMIT}" > /opt/source/libpelorus-commit.txt
+
+# Licence gate (ADR-0173 decision 5): the build fails when the binary reports
+# nonfree or lacks GPL version 3. The planted-flag self-test runs first so a
+# broken gate cannot pass.
+COPY tools/tester/check-ffmpeg-licence.sh tools/tester/check-ffmpeg-licence-self-test.sh /opt/gate/
+RUN /opt/gate/check-ffmpeg-licence-self-test.sh \
+    && LD_LIBRARY_PATH=/opt/ffmpeg/lib:/opt/pelorus/lib /opt/gate/check-ffmpeg-licence.sh /opt/ffmpeg/bin/ffmpeg
+
+FROM ${DEBIAN_IMAGE} AS runtime
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ARG PELORUS_COMMIT
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates libvulkan1 python3-minimal vulkan-tools \
+    && dpkg-query -W -f='${source:Package}=${source:Version}\n' | sort -u > /installed-sources.txt \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /opt/ffmpeg /opt/ffmpeg
+COPY --from=build /opt/pelorus /opt/pelorus
+COPY --from=build /opt/source/COPYING.GPLv3 /usr/share/licenses/pelorus-ffmpeg/COPYING.GPLv3
+COPY tools/tester /opt/pelorus/tester
+ENV FFMPEG_BIN=/opt/ffmpeg/bin/ffmpeg \
+    PATH=/opt/ffmpeg/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/ffmpeg/lib:/opt/pelorus/lib
+LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
+      org.opencontainers.image.description="Pelorus tester image: evidence for one master commit, not a release (ADR-0173)" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2" \
+      org.opencontainers.image.revision="${PELORUS_COMMIT}"
+ENTRYPOINT ["python3", "-I", "/opt/pelorus/tester/pelorus_tester_report.py"]
+CMD ["run", "--out", "/report"]
+
+# The -source companion: the patched FFmpeg tree as compiled, series.txt, the
+# configure line, the libpelorus commit, and the Debian source packages at the
+# versions the runtime image installed.
+FROM ${DEBIAN_IMAGE} AS debian-sources
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+COPY --from=runtime /installed-sources.txt /installed-sources.txt
+RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && mkdir /debian-source
+WORKDIR /debian-source
+RUN xargs -a /installed-sources.txt apt-get source --download-only \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM scratch AS source
+COPY --from=build /opt/source /source/ffmpeg
+COPY --from=debian-sources /debian-source /source/debian
+COPY --from=debian-sources /installed-sources.txt /source/installed-sources.txt
+COPY LICENSES /source/LICENSES
+LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
+      org.opencontainers.image.description="Corresponding source of the Pelorus tester image (GPL-3.0-or-later)" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2"

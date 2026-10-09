@@ -2,6 +2,7 @@ name: Release
 
 # Tag pushes publish. workflow_dispatch runs the same gates, build,
 # attestation and signing but deliberately cannot create a GitHub release.
+# A vX.Y.Z-rc.N tag publishes a prerelease that is never "latest" (ADR-0176).
 on:
   push:
     tags: ['v*']
@@ -22,6 +23,7 @@ jobs:
     needs: ci
     permissions:
       contents: read
+      actions: read
       id-token: write
       attestations: write
     uses: ./.github/workflows/release-build.yml
@@ -44,14 +46,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
         run: |
           artifact_label="${GITHUB_REF_NAME//\//-}"
           sha256sum --check SHA256SUMS
+          # The release build classified the tag; an empty value is a bug, not "final".
+          case "$PRERELEASE" in
+            true) kind=(--prerelease --latest=false) ;;
+            false) kind=() ;;
+            *) echo "::error::release build did not classify ${GITHUB_REF_NAME}"; exit 1 ;;
+          esac
+          extra=()
+          if [ -f CANDIDATE_LEGS.json ]; then extra+=(CANDIDATE_LEGS.json); fi
           gh release create "${GITHUB_REF_NAME}" \
             --title "Pelorus ${GITHUB_REF_NAME}" \
             --notes-file RELEASE_NOTES.md \
+            "${kind[@]}" \
             "pelorus-ffmpeg-patches-${artifact_label}.tar.gz" \
             "pelorus-ffmpeg-patches-${artifact_label}.spdx.json" \
             "pelorus-ffmpeg-patches-${artifact_label}.provenance.sigstore.json" \
             SHA256SUMS \
-            SHA256SUMS.sigstore.json
+            SHA256SUMS.sigstore.json \
+            "${extra[@]}"
+          # The flag on the forge must match the tag; a mismatch fails the run.
+          actual="$(gh release view "${GITHUB_REF_NAME}" --json isPrerelease --jq .isPrerelease)"
+          if [ "$actual" != "$PRERELEASE" ]; then
+            echo "::error::release ${GITHUB_REF_NAME} has isPrerelease=${actual}, expected ${PRERELEASE}"
+            exit 1
+          fi
