@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TOOL_NAME = "pelorus-tester-report"
-TOOL_VERSION = "0.4.4"
+TOOL_VERSION = "0.4.5"
 SCHEMA_VERSION = 2
 SCHEMA_PATH = Path(__file__).with_name("report.schema.json")
 
@@ -453,20 +453,22 @@ def check_kit(report, disabled):
 
 
 def check_legs(report, disabled):
-    """A stage cannot pass with a failed leg, or without one passing leg."""
+    """A stage cannot pass with a failed leg, or without one passing leg of its own
+    (a bitrate-control leg, rate_control set, does not count)."""
     if "legs_consistent" in disabled:
         return []
     errs = []
     for st in report["stages"]:
         states = [leg["status"] for leg in st.get("legs", [])]
+        own = [leg["status"] for leg in st.get("legs", []) if "rate_control" not in leg]
         passed = st["status"] in ("pass", "pass_software")
         if passed and "fail" in states:
             errs.append("stage %s: %s with a failed leg" % (st["id"], st["status"]))
-        elif passed and "legs" in st and "pass" not in states:
+        elif passed and "legs" in st and "pass" not in own:
             errs.append("stage %s: %s without a passing leg" % (st["id"], st["status"]))
-        errs.extend("stage %s: leg %s is %s without a reason" % (st["id"], leg["encoder"], leg["status"])
-                    for leg in st.get("legs", [])
-                    if leg["status"] != "pass" and not leg["reason"])
+        errs.extend("stage %s: leg %s is %s without a reason" % (
+            st["id"], " ".join([leg["encoder"]] + [leg[k] for k in ("rate_control",) if k in leg]),
+            leg["status"]) for leg in st.get("legs", []) if leg["status"] != "pass" and not leg["reason"])
     return errs
 
 
@@ -900,6 +902,17 @@ def self_test_legs(expect, disabled, schema):
         with_legs(hard, "pass", [av1]), schema, disabled=disabled)))
     expect("rejects_leg_without_reason", bool(validate_report(
         with_legs(hard, "pass", [ok, dict(av1, reason="")]), schema, disabled=disabled)))
+    brc = dict(ok, encoder="hevc_qsv", rate_control="cbr_extbrc")
+    no_huc = dict(brc, status="not_run", reason="hardware bitrate control needs HuC firmware",
+                  rate_control="cbr_hw")
+    expect("legs_rate_control_valid", not validate_report(
+        with_legs(hard, "pass", [ok, brc, no_huc]), schema, disabled=disabled))
+    expect("rejects_unknown_rate_control", bool(validate_report(
+        with_legs(hard, "pass", [ok, dict(brc, rate_control="vbr")]), schema, disabled=disabled)))
+    expect("rejects_brc_leg_without_reason", bool(validate_report(
+        with_legs(hard, "pass", [ok, dict(no_huc, reason="")]), schema, disabled=disabled)))
+    expect("rejects_pass_with_only_brc_leg_passing", bool(validate_report(
+        with_legs(hard, "pass", [av1, brc]), schema, disabled=disabled)))
 
 
 def self_test_stages(expect, disabled):

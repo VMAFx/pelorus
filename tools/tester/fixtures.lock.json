@@ -24,6 +24,27 @@
       }
     },
     {
+      "name": "synth-motion",
+      "file": "synth-motion.yuv",
+      "sha256": "b6dfb6aac22c51eda8e5f20e2bc0ab0740db32840d9525838ce338812559eb83",
+      "size": 17280000,
+      "pixfmt": "yuv420p",
+      "width": 640,
+      "height": 360,
+      "frames": 50,
+      "fps": 25,
+      "generate": {
+        "lavfi": "testsrc2=size=640x360:rate=25",
+        "note": "Moving test pattern with detail, for the QSV bitrate-control legs: a CBR target needs content that spends bits. Deterministic; hash pinned against FFmpeg n9.0.2 (also matches FFmpeg master 7bc3576910)."
+      },
+      "licence": {
+        "spdx": "EUPL-1.2",
+        "holder": "2026 Lusoris",
+        "source": "generated from the recorded lavfi recipe; no third-party content",
+        "attribution": ""
+      }
+    },
+    {
       "name": "bbb",
       "file": "bbb.yuv",
       "sha256": "9fcbaa5822b2db153fa3b0f84b8de945384a1b5ff64d314b0c950e66975c6ae9",

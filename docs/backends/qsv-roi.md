@@ -77,6 +77,22 @@ H.264, an older runtime, or another HEVC rate-control mode is valid, but
 `-pelorus_roi 1` then selects the stock rectangle path and emits a diagnostic
 explaining why. The option does not turn unsupported dense cases into a no-op.
 
+## Arc A-series on the `xe` kernel driver
+
+On DG2 (Arc A-series) bound to `xe`, which loads no HuC firmware, constant QP
+is the only hardware rate control that works, so the dense path is available
+there. Bitrate control needs `-extbrc 1` (oneVPL's software bitrate control,
+CBR or VBR, `h264_qsv` and `hevc_qsv` only); that session is not constant QP,
+so `-pelorus_roi 1` uses the stock rectangles. Set `LIBVA_DRIVER_NAME=iHD` when
+the environment names another VA driver. Details and device options:
+[Intel Arc A-series on the `xe` kernel driver](../usage/ffmpeg.md#intel-arc-a-series-on-the-xe-kernel-driver-bitrate-control).
+
+On an A380 under `xe` (2026-10-09, [research 0180](../research/0180-qsv-bitrate-control-dg2-xe.md)),
+a 60-frame `hevc_qsv -low_power 1 -q:v 30 -pelorus_roi 1` encode logged the
+dense path, decoded clean (PSNR-Y 38.58 dB against 38.51 dB unsteered) and
+raised the ROI half by 7.3 dB. The ROI was the same on every frame, so that run
+does not test per-frame map ownership.
+
 ## Deterministic validation
 
 The hardware-independent regression reads the immutable FFmpeg n9.0.2 tag and
