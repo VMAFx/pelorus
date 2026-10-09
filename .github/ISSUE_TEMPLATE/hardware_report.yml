@@ -1,0 +1,50 @@
+name: Hardware report
+description: Send the report.json of the Pelorus tester kit from your machine.
+title: "[hardware report] "
+labels: [hardware-report]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for running the tester kit (see `docs/development/tester.md`; the
+        hardware that is still missing is listed in `docs/usage/hardware-we-need.md`).
+        Attach the `report.json` it wrote. The kit removes host name, user name,
+        device UUIDs and PCI bus ids, but read the file before you attach it.
+        A report with verdict `fail` is welcome: it is a finding.
+  - type: textarea
+    id: report
+    attributes:
+      label: report.json
+      description: Drag the file into this box, or paste its content.
+    validations:
+      required: true
+  - type: dropdown
+    id: package
+    attributes:
+      label: Which package did you run?
+      options:
+        - NVIDIA GPU image
+        - Intel GPU image
+        - AMD GPU image
+        - CPU image (software Vulkan)
+        - Windows zip
+        - macOS (MoltenVK spike)
+        - Source checkout (python3 tools/tester/pelorus_tester_report.py)
+    validations:
+      required: true
+  - type: input
+    id: machine
+    attributes:
+      label: Machine
+      description: For example "Ryzen 7 7840U with Radeon 780M, Linux 6.12" or "GeForce RTX 3080, Windows 11".
+    validations:
+      required: false
+  - type: input
+    id: credit
+    attributes:
+      label: Credit (optional)
+      description: >-
+        Name or GitHub handle to credit when a maintainer commits the report to
+        docs/hardware-reports/. No e-mail address. Leave empty to be listed as anonymous.
+    validations:
+      required: false

@@ -10,6 +10,7 @@ report plus SHA256SUMS and a manifest. Standard library only; run it as
     pelorus_tester_report.py run [--plan FILE] [--out DIR] [--require-device]
                                  [--bench] [--note TEXT]
     pelorus_tester_report.py validate REPORT [--forbid LITERAL ...]
+    pelorus_tester_report.py tool-hash
     pelorus_tester_report.py --self-test [--disable RULE]
 
 Exit codes of `run`: 0 pass, 1 fail, 2 incomplete, 100 unavailable. A stage
@@ -31,8 +32,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TOOL_NAME = "pelorus-tester-report"
-TOOL_VERSION = "0.2.0"
-SCHEMA_VERSION = 1
+TOOL_VERSION = "0.3.0"
+SCHEMA_VERSION = 2
 SCHEMA_PATH = Path(__file__).with_name("report.schema.json")
 
 STAGE_IDS = (
@@ -45,6 +46,9 @@ STAGE_IDS = (
     "zero_copy_chain",
     "bench",
 )
+# Files whose bytes make up the tool digest recorded in every report.
+TOOL_FILES = ("pelorus_tester_report.py", "pelorus_tester_stages.py",
+              "pelorus_tester_fixtures.py", "report.schema.json")
 EXIT_BY_VERDICT = {"pass": 0, "fail": 1, "incomplete": 2, "unavailable": 100}
 HERE = Path(__file__).resolve().parent
 
@@ -60,7 +64,9 @@ def load_sibling(name):
 FIXTURES = load_sibling("pelorus_tester_fixtures")
 STAGES = load_sibling("pelorus_tester_stages")
 RULES = (("no_device_nonfailure", "redaction", "exit_mapping", "truncation",
-          "schema_version", "reason_required", "stage_failure", "bench_nongating")
+          "schema_version", "reason_required", "stage_failure", "bench_nongating",
+          "execution_class_derived", "claim_gpu_needs_hardware",
+          "software_pass_status", "pass_software_class")
          + FIXTURES.RULES + STAGES.RULES)
 
 MAX_OUTPUT_BYTES = 262144
@@ -111,6 +117,45 @@ def canonical(report):
 def report_hash(report):
     body = {k: v for k, v in report.items() if k != "report_sha256"}
     return sha256_bytes(canonical(body))
+
+
+def tool_digest():
+    """Digest of the program files: sha256 over `<sha256>  <name>` lines, in TOOL_FILES order.
+
+    Recorded as tool.sha256; report intake looks it up in tools/tester/tool-hashes.json."""
+    lines = ["%s  %s\n" % (sha256_bytes((HERE / name).read_bytes()), name)
+             for name in TOOL_FILES]
+    return sha256_bytes("".join(lines).encode())
+
+
+# ------------------------------------------------------- execution class
+
+def is_hardware(dev):
+    return "TYPE_CPU" not in dev.get("device_type", "")
+
+
+def derive_execution_class(devices):
+    """hardware, software_vulkan (every device is CPU type) or no_vulkan (no device)."""
+    if not devices:
+        return "no_vulkan"
+    return "hardware" if any(is_hardware(d) for d in devices) else "software_vulkan"
+
+
+def mark_software_passes(stages, execution_class):
+    """A needs_device pass on software Vulkan is functional evidence, never a GPU pass."""
+    if execution_class != "software_vulkan":
+        return stages
+    for st in stages:
+        if st["needs_device"] and st["status"] == "pass":
+            st.update(status="pass_software",
+                      reason="passed on software Vulkan (functional evidence only, not a GPU result)")
+    return stages
+
+
+def derive_claim(execution_class, stages, verdict):
+    """gpu only for a passing run on hardware with at least one device stage passed."""
+    ran = any(s["needs_device"] and s["status"] == "pass" for s in stages)
+    return "gpu" if execution_class == "hardware" and verdict == "pass" and ran else "functional"
 
 
 # ---------------------------------------------------------------- redaction
@@ -291,6 +336,26 @@ def check_verdict(report, disabled):
     return errs
 
 
+def check_execution(report, disabled):
+    """Rules that keep a software or absent device from claiming GPU evidence."""
+    errs, klass = [], report["execution_class"]
+    derived = derive_execution_class(report["devices"])
+    if klass != derived and "execution_class_derived" not in disabled:
+        errs.append("execution_class %r, devices imply %r" % (klass, derived))
+    if (report["evidence_claim"] == "gpu" and klass != "hardware"
+            and "claim_gpu_needs_hardware" not in disabled):
+        errs.append("evidence_claim gpu needs execution_class hardware, not %r" % klass)
+    for st in report["stages"]:
+        if (st["needs_device"] and st["status"] == "pass" and klass != "hardware"
+                and "software_pass_status" not in disabled):
+            errs.append("stage %s: pass on %s; a software run reports pass_software"
+                        % (st["id"], klass))
+        if (st["status"] == "pass_software" and klass != "software_vulkan"
+                and "pass_software_class" not in disabled):
+            errs.append("stage %s: pass_software on %s" % (st["id"], klass))
+    return errs
+
+
 def validate_report(report, schema, forbid=(), disabled=frozenset()):
     """Return a list of problems; an empty list means the report is valid."""
     sch = dict(schema)
@@ -301,7 +366,8 @@ def validate_report(report, schema, forbid=(), disabled=frozenset()):
     errs = validate_schema(report, sch)
     if errs:
         return errs
-    errs = check_stages(report, disabled) + check_verdict(report, disabled)
+    errs = (check_stages(report, disabled) + check_verdict(report, disabled)
+            + check_execution(report, disabled))
     if report["report_sha256"] != report_hash(report):
         errs.append("report_sha256 does not match the report body")
     if "redaction" not in disabled:
@@ -362,10 +428,6 @@ def parse_vulkaninfo(text):
         if key:
             cur[key] = m.group(2)
     return devices
-
-
-def is_hardware(dev):
-    return "TYPE_CPU" not in dev.get("device_type", "")
 
 
 def stage_record(sid, status, reason="", needs=False, **extra):
@@ -460,16 +522,20 @@ def build_report(plan, opts, disabled=frozenset()):
     with tempfile.TemporaryDirectory(prefix="pelorus-tester-") as work:
         ctx["work"] = work
         stages = [run_stage(sid, plan[sid], ctx) for sid in STAGE_IDS]
+    klass = derive_execution_class(ctx["devices"])
+    stages = mark_software_passes(stages, klass)
     verdict, code, bad = compute_verdict(stages, opts["require_device"], disabled)
     report = {
         "schema_version": SCHEMA_VERSION,
-        "tool": {"name": TOOL_NAME, "version": TOOL_VERSION},
+        "tool": {"name": TOOL_NAME, "version": TOOL_VERSION, "sha256": tool_digest()},
         "generated_utc": now_utc(),
         "commit": os.environ.get("PELORUS_TESTER_COMMIT", "unknown"),
         "package": os.environ.get("PELORUS_TESTER_PACKAGE", "source-checkout"),
         "host": host_facts(),
         "devices": [{k: redact_text(v, ctx["literals"], disabled) for k, v in d.items()}
                     for d in ctx["devices"]],
+        "execution_class": klass,
+        "evidence_claim": derive_claim(klass, stages, verdict),
         "require_device": opts["require_device"],
         "stage_count": len(stages),
         "stages": stages,
@@ -554,6 +620,12 @@ SYNTH_VULKANINFO = (
     "\tdeviceUUID         = 11111111-2222-3333-4444-555555555555\n")
 
 
+SYNTH_LAVAPIPE = (
+    "Devices:\n========\nGPU0:\n\tapiVersion         = 1.4.354\n"
+    "\tvendorID           = 0x10005\n\tdeviceType         = PHYSICAL_DEVICE_TYPE_CPU\n"
+    "\tdeviceName         = llvmpipe (LLVM 21.1.8, 256 bits)\n\tdriverName         = llvmpipe\n")
+
+
 def py_stage(code, **extra):
     spec = {"argv": [sys.executable, "-I", "-c", code]}
     spec.update(extra)
@@ -586,13 +658,56 @@ def planted_bad(report):
     yield mutate("pci_bus_present", lambda r: r.update(note="at 0000:01:00.0"))
     yield mutate("user_path_present", lambda r: r.update(note="in /home/alice/x"))
     yield mutate("wrong_exit_mapping", lambda r: r.update(exit_code=0, verdict="fail"))
-    yield mutate("schema_version_mismatch", lambda r: r.update(schema_version=2))
+    yield mutate("schema_version_mismatch", lambda r: r.update(schema_version=1))
     yield mutate("truncated_stage_list", lambda r: (
         r["stages"].pop(), r.update(stage_count=len(r["stages"]))))
     yield mutate("not_run_without_reason", lambda r: r["stages"][1].update(reason=""))
 
 
 NO_RUNNERS = {sid: {"runner": None} for sid in STAGE_IDS}
+
+
+def reseal(report, **changes):
+    """Copy of `report` with `changes` applied and a fresh hash, for planted cases."""
+    copy = json.loads(json.dumps(report))
+    for key, val in changes.items():
+        if key == "stage0":
+            copy["stages"][3].update(val)
+        else:
+            copy[key] = val
+    copy["report_sha256"] = report_hash(copy)
+    return copy
+
+
+def self_test_execution(expect, disabled, schema):
+    """A software or absent device must not claim GPU evidence (#228)."""
+    soft, _ = good_report(None, {**NO_RUNNERS,
+                                 "probe": py_stage("print(%r)" % SYNTH_LAVAPIPE)}, disabled=disabled)
+    expect("lavapipe_class", soft["execution_class"] == "software_vulkan"
+           and soft["evidence_claim"] == "functional")
+    expect("lavapipe_valid", not validate_report(soft, schema, disabled=disabled))
+    hard, _ = good_report(None, {**NO_RUNNERS,
+                                 "probe": py_stage("print(%r)" % SYNTH_VULKANINFO)}, disabled=disabled)
+    expect("gpu_class", hard["execution_class"] == "hardware")
+    none, _ = good_report(None, {"probe": py_stage("import sys; sys.exit(1)")},
+                          disabled=disabled)
+    expect("no_vulkan_class", none["execution_class"] == "no_vulkan")
+    gpu_pass = reseal(hard, stage0={"status": "pass", "reason": ""}, evidence_claim="gpu")
+    expect("gpu_claim_on_hardware_valid", not validate_report(gpu_pass, schema))
+    marked = mark_software_passes([stage_record("format_matrix", "pass", needs=True)],
+                                  "software_vulkan")
+    expect("software_pass_marked", marked[0]["status"] == "pass_software" and marked[0]["reason"])
+    expect("gpu_claim_needs_run", derive_claim("hardware", hard["stages"], "pass") == "functional")
+    planted = {
+        "rejects_lavapipe_gpu_claim": reseal(soft, evidence_claim="gpu"),
+        "rejects_lavapipe_as_hardware": reseal(soft, execution_class="hardware"),
+        "rejects_software_stage_pass": reseal(soft, stage0={"status": "pass", "reason": ""}),
+        "rejects_pass_software_on_hardware": reseal(
+            hard, stage0={"status": "pass_software", "reason": "x"}),
+        "rejects_no_vulkan_as_software": reseal(none, execution_class="software_vulkan"),
+    }
+    for name, bad in planted.items():
+        expect(name, bool(validate_report(bad, schema, disabled=disabled)))
 
 
 def self_test_stages(expect, disabled):
@@ -604,7 +719,7 @@ def self_test_stages(expect, disabled):
     rep, _ = good_report(None, gpu, disabled=disabled, env=off)
     got = [s["status"] for s in rep["stages"] if s["id"] in runner_ids]
     expect("runners_without_ffmpeg_not_run", got == ["not_run"] * 4 and rep["exit_code"] == 0)
-    bench = {**gpu, **NO_RUNNERS, "bench": py_stage("import sys; sys.exit(3)")}
+    bench = {**NO_RUNNERS, "probe": gpu["probe"], "bench": py_stage("import sys; sys.exit(3)")}
     rep, _ = good_report(None, bench, disabled=disabled, bench=True)
     expect("bench_failure_is_nongating", rep["stages"][7]["status"] == "fail"
            and rep["exit_code"] == 0 and rep["failed_stages"] == [])
@@ -626,7 +741,7 @@ def self_test(disabled=frozenset()):
     expect("cpu_only_valid", not validate_report(rep, schema, disabled=disabled))
     rep, _ = good_report(None, cpu_only, require_device=True, disabled=disabled)
     expect("require_device_100", rep["exit_code"] == 100)
-    gpu = {"probe": py_stage("print(%r)" % SYNTH_VULKANINFO), **NO_RUNNERS}
+    gpu = {**NO_RUNNERS, "probe": py_stage("print(%r)" % SYNTH_VULKANINFO)}
     rep, lit = good_report(None, gpu, disabled=disabled)
     expect("gpu_probe_pass", rep["stages"][0]["status"] == "pass"
            and rep["devices"] and rep["stages"][3]["status"] == "not_run")
@@ -648,6 +763,7 @@ def self_test(disabled=frozenset()):
         base, schema, forbid=["pelorus-tester-report"], disabled=disabled)))
     expect("rejects_malformed_json", cmd_validate_text("{\"schema_ver", schema) != 0)
     self_test_stages(expect, disabled)
+    self_test_execution(expect, disabled, schema)
     failures.extend(STAGES.self_test(disabled) + FIXTURES.self_test(disabled))
     for line in failures:
         print("SELF-TEST FAIL: " + line, file=sys.stderr)
@@ -675,6 +791,7 @@ def parse_args(argv):
     run.add_argument("--require-device", action="store_true")
     run.add_argument("--bench", action="store_true")
     run.add_argument("--note", default="")
+    sub.add_parser("tool-hash")
     val = sub.add_parser("validate")
     val.add_argument("report")
     val.add_argument("--forbid", action="append", default=[])
@@ -690,6 +807,9 @@ def main(argv):
         return cmd_run(args)
     if args.cmd == "validate":
         return cmd_validate(args)
+    if args.cmd == "tool-hash":
+        print("%s  tool %s" % (tool_digest(), TOOL_VERSION))
+        return 0
     top.print_usage(sys.stderr)
     return EXIT_BY_VERDICT["incomplete"]
 

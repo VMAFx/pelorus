@@ -66,6 +66,7 @@ Stage statuses:
 | `not_run` | skipped on purpose, with the reason (opt-in stage, command not found, runner not yet part of the kit) |
 | `no_device` | needs a hardware Vulkan device and none is visible; the reason names the option to add. Not a failure |
 | `incomplete` | the stage timed out |
+| `pass_software` | a GPU stage passed on software Vulkan (lavapipe); functional evidence, never a GPU result |
 
 The eight stages run in this order: `probe` (`vulkaninfo --summary`),
 `libpelorus_suite`, `registration`, `format_matrix`, `steering_smoke`,
@@ -74,12 +75,13 @@ is listed in [tester kit stages](../usage/tester.md#stages). A software
 device (lavapipe, `PHYSICAL_DEVICE_TYPE_CPU`) does not count as hardware.
 
 `report.json` follows [`tools/tester/report.schema.json`](../../tools/tester/report.schema.json),
-schema version 1. `SHA256SUMS` lists its hash and `manifest.json` lists the
+schema version 2. `SHA256SUMS` lists its hash and `manifest.json` lists the
 hash of `SHA256SUMS`. Both give integrity only, not proof of who made the file.
 
 ### What the report contains
 
-Tool and schema version, UTC time, the source commit and package name (from
+Tool version and tool digest, schema version, `execution_class` and
+`evidence_claim` ([what they mean](../usage/tester.md#execution-class-and-evidence-claim)), UTC time, the source commit and package name (from
 `PELORUS_TESTER_COMMIT` and `PELORUS_TESTER_PACKAGE`, `unknown` and
 `source-checkout` outside an image), OS, architecture, CPU count, Python
 version, per device name, driver, Vulkan API version, vendor id and device
@@ -107,15 +109,18 @@ python3 -I tools/tester/pelorus_tester_report.py validate report.json --forbid "
 
 `validate` exits 0 for a valid report. It rejects a missing field, a truncated
 stage list, a schema-version mismatch, an exit code that does not follow from
-the stages, a changed body (hash mismatch) and any identifier listed above.
+the stages, a changed body (hash mismatch), a software or absent device that
+claims GPU evidence, and any identifier listed above.
 
 ## 3. File it
 
-The intake path (an issue form and a tracked `docs/hardware-reports/`
-directory) is [#233](https://github.com/VMAFx/pelorus/issues/233) and is not
-live yet. Until then, attach `report.json` to a new issue on
-[VMAFx/pelorus](https://github.com/VMAFx/pelorus/issues) and say which package
-and machine you used. Do not attach logs from outside the kit.
+Open a [hardware report issue](https://github.com/VMAFx/pelorus/issues/new?template=hardware_report.yml)
+and attach `report.json`, or open a pull request that adds it to
+[`docs/hardware-reports/`](../hardware-reports/index.md) as an intake record.
+The record format, the checks, the tool hash and the credit rule (an empty
+credit is listed as `anonymous`) are in
+[hardware we need](../usage/hardware-we-need.md#send-a-report). Do not attach
+logs from outside the kit.
 
 ## 4. Change the program
 
@@ -130,7 +135,8 @@ must exit 0 with `no_device` stages and a valid report; a failing stage must
 exit non-zero; a timeout must exit 2; `--require-device` must exit 100; and
 the validator must reject each planted bad report (missing field, UUID, PCI
 bus, user path, wrong exit mapping, schema-version mismatch, truncated stage
-list, missing reason, malformed JSON, a forbidden literal). To prove a rule is
+list, missing reason, malformed JSON, a forbidden literal, and a software-Vulkan
+report that claims GPU evidence). To prove a rule is
 live, switch it off and expect the self-test to fail:
 
 ```bash
@@ -139,9 +145,25 @@ python3 -I tools/tester/pelorus_tester_report.py --self-test --disable redaction
 
 Rule names for `--disable`: `no_device_nonfailure`, `redaction`,
 `exit_mapping`, `truncation`, `schema_version`, `reason_required`,
-`stage_failure`, `bench_nongating`, plus the stage and fixture rules listed in
+`stage_failure`, `bench_nongating`, `execution_class_derived`,
+`claim_gpu_needs_hardware`, `software_pass_status`, `pass_software_class`, plus the stage and fixture rules listed in
 [tester kit stages](../usage/tester.md#planted-failures). Changing a report field means changing the schema, the
 program, a planted case and this page in one change.
+
+Any edit under `tools/tester/` changes the tool digest. Append the new digest to
+`tools/tester/tool-hashes.json` in the same change (never edit or remove an
+entry); `make docs-check` fails until you do:
+
+```bash
+python3 -I tools/tester/pelorus_tester_report.py tool-hash
+```
+
+The intake scripts have the same kind of self-test, with `--disable` rules:
+
+```bash
+python3 -I scripts/hardware-reports/check-reports.py --self-test
+python3 -I scripts/hardware-reports/generate-index.py --self-test
+```
 
 ## Related
 

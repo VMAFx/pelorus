@@ -8,6 +8,7 @@
 vkCmdCopyBufferToImage-srcBuffer-00174 | #214 | 2027-03-31
 vkCmdCopyImageToBuffer-dstBuffer-00191 | #214 | 2027-03-31
 VkCopyImageToMemoryInfo-srcImageLayout-09064 | #214 | 2027-03-31
+VkCopyMemoryToImageInfo-dstImageLayout-09059 | #214 | 2027-03-31
 VkDescriptorSetLayoutBinding-descriptorType-00282 | #214 | 2027-03-31
 VkImageMemoryBarrier2-srcAccessMask-03909 | #214 | 2027-03-31
 VkImageMemoryBarrier2-srcAccessMask-07454 | #214 | 2027-03-31

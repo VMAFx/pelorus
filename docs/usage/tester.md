@@ -2,8 +2,8 @@
 # Tester kit stages and their pass rules
 
 The tester report program runs eight stages in a fixed order and records each as
-`pass`, `fail`, `not_run`, `no_device` or `incomplete`, with a reason for
-everything except `pass`. How to run the kit and read the report:
+`pass`, `pass_software`, `fail`, `not_run`, `no_device` or `incomplete`, with a
+reason for everything except `pass`. How to run the kit and read the report:
 [tester kit](../development/tester.md). Rules and licence terms:
 [ADR-0173](../adr/0173-tester-programme.md). Stage runners:
 [`tools/tester/pelorus_tester_stages.py`](../../tools/tester/pelorus_tester_stages.py).
@@ -11,6 +11,33 @@ everything except `pass`. How to run the kit and read the report:
 A stage never substitutes another path for a missing one. A missing device,
 encoder or validation layer is `not_run` or `no_device` with the reason named;
 it is never reported as `pass`.
+
+## Execution class and evidence claim
+
+Every report states what kind of device it ran on and what it may claim
+([research 0228](../research/0228-lavapipe-spike.md), #228). The producer
+derives both fields and the validator re-derives them; a mismatch is refused.
+
+| Field | Values | Rule |
+| --- | --- | --- |
+| `execution_class` | `hardware`, `software_vulkan`, `no_vulkan` | `hardware` when a listed device is not `PHYSICAL_DEVICE_TYPE_CPU`; `software_vulkan` when every device is CPU type (lavapipe, SwiftShader); `no_vulkan` when the probe found none |
+| `evidence_claim` | `functional`, `gpu` | `gpu` only with `execution_class` `hardware`, and only for a run whose verdict is `pass` with at least one GPU stage passed; otherwise `functional` |
+
+A GPU stage that passes on software Vulkan is recorded as `pass_software`, never
+`pass`, and counts toward no GPU claim. The validator rejects a GPU stage with
+status `pass` unless `execution_class` is `hardware`, and `pass_software` on any
+other class. The stage runners still report `no_device` on a software-only host,
+so `pass_software` appears only when a run executes a GPU stage there on purpose.
+
+### Report schema version 2
+
+`report.schema.json` is at version 2. Version 2 adds the two fields above, the
+status `pass_software` and `tool.sha256` (the digest the
+[report intake](../development/tester.md#3-file-it) checks). No report had been
+published under version 1, so the version was bumped instead of keeping the
+fields optional with defaults. A later change that removes a field or changes
+its meaning bumps the version again; an added field stays in the same version
+only when it is optional with a default.
 
 ## Stages
 
@@ -163,6 +190,10 @@ bad case per rule below, and `--self-test --disable <rule>` must exit 1 for each
 | `sd_pts` | identical `frame_pts` echoes on all pictures |
 | `sd_decode_tap` | decoder output without the Pelorus UUID |
 | `bench_nongating` | a failing bench stage: verdict must stay `pass` |
+| `execution_class_derived` | a lavapipe device list with `execution_class: hardware`; a report with no device and `software_vulkan` |
+| `claim_gpu_needs_hardware` | a lavapipe device list with `evidence_claim: gpu` |
+| `software_pass_status` | a GPU stage with status `pass` on `software_vulkan` |
+| `pass_software_class` | a `pass_software` stage on a `hardware` report |
 | `fixture_hash` | one flipped byte in a fixture |
 | `fixture_licence` | a fixture without a licence record |
 | `fixture_attribution` | a CC BY fixture without attribution text |
