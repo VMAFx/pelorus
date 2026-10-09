@@ -200,8 +200,8 @@ while IFS= read -r patch || [[ -n "$patch" ]]; do
     fi
     PATCHES+=("$patch")
 done < "$PATCHDIR/series.txt"
-if (( ${#PATCHES[@]} != 21 )); then
-    echo "ERROR: expected 21 patches, found ${#PATCHES[@]}" >&2
+if (( ${#PATCHES[@]} != 22 )); then
+    echo "ERROR: expected 22 patches, found ${#PATCHES[@]}" >&2
     exit 1
 fi
 
@@ -279,7 +279,7 @@ verify_static_avfilter_consumer() {
     "$consumer"
 }
 
-run_logged "apply 21-patch FFmpeg stack" "$LOG_DIR/ffmpeg-apply.log" \
+run_logged "apply 22-patch FFmpeg stack" "$LOG_DIR/ffmpeg-apply.log" \
     apply_stack
 run_logged "configure FFmpeg" "$LOG_DIR/ffmpeg-configure.log" \
     configure_ffmpeg
@@ -385,6 +385,20 @@ verify_encoder_options h264_vulkan pelorus_roi udu_sei
 verify_encoder_options hevc_vulkan pelorus_roi udu_sei
 verify_encoder_options av1_vulkan pelorus_roi
 
+# GPU smoke: hevc_nvenc -udu_sei 1 with the analyze maps (issue #267,
+# ADR-0181). Exit 77 names why this host cannot run it (no NVENC device, no
+# Vulkan device); any other failure fails the replay.
+echo "== hevc_nvenc udu_sei smoke =="
+smoke_status=0
+FFMPEG_BIN="$WORKTREE/ffmpeg" OUTPUT_ROOT="$LOG_DIR/nvenc-udu-sei" \
+    "$HERE/nvenc-udu-sei-smoke.sh" || smoke_status=$?
+if (( smoke_status != 0 && smoke_status != 77 )); then
+    echo "ERROR: hevc_nvenc udu_sei smoke failed (exit $smoke_status); this run" \
+        "removes its logs, so rerun test/nvenc-udu-sei-smoke.sh with FFMPEG_BIN" \
+        "and OUTPUT_ROOT to keep them" >&2
+    exit 1
+fi
+
 keep_binary() {
     if [[ "$KEEP_DIR" != /* ]]; then
         echo "ERROR: KEEP_DIR must be an absolute path: $KEEP_DIR" >&2
@@ -404,4 +418,4 @@ if [[ -n "${KEEP_DIR:-}" ]]; then
     keep_binary
 fi
 
-echo "OK: 21 patches applied and ffmpeg linked against private libpelorus"
+echo "OK: 22 patches applied and ffmpeg linked against private libpelorus"

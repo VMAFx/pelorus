@@ -653,6 +653,18 @@ git -C "$WORKTREE" apply "$FILES_DIR/vulkan-frame-barrier-queue-family.patch"
 git -C "$WORKTREE" add -A
 commit_patch "$HERE/.commit-msg-vulkan-frame-barrier.txt"
 
+# Pelorus libavcodec fix (NOT a filter): hevc_nvenc fails the encode when one
+# picture's parameter sets and SEI exceed NVENC's 1024-byte limit, which the
+# analyze maps do through udu_sei (issue #267, ADR-0181). The size arithmetic is
+# a private header Pelorus's fast suite unit-tests directly
+# (ffmpeg-patches/test/sei_fit_test.c); the nvenc.c/nvenc.h edit is a
+# hand-maintained diff like the other encoder patches. Applied last (-> patch
+# 0022) so no shipped patch is renumbered.
+cp "$FILES_DIR/pelorus_sei_fit.h" "$WORKTREE/libavcodec/"
+git -C "$WORKTREE" apply "$FILES_DIR/nvenc-pelorus-udu-sei.patch"
+git -C "$WORKTREE" add -A
+commit_patch "$HERE/.commit-msg-nvenc-udu-sei.txt"
+
 # Clean stale patches, regenerate the whole range.
 rm -f "$HERE"/0*.patch
 # Every byte-affecting format choice is explicit. Besides full blob hashes, this
@@ -697,6 +709,7 @@ pelorus_patch_names=(
     "0019-qsv-pelorus-udu-sei.patch"
     "0020-vulkan-pelorus-udu-sei.patch"
     "0021-vulkan-frame-barrier-queue-family.patch"
+    "0022-nvenc-pelorus-udu-sei.patch"
 )
 for pelorus_patch_name in "${pelorus_patch_names[@]}"; do
     pelorus_patch_index="${pelorus_patch_name%%-*}"

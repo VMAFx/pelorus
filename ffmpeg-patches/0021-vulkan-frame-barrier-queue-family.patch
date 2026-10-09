@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
 Date: Thu, 1 Jan 2026 00:00:00 +0000
-Subject: [PATCH 21/21] vulkan: don't release frames to VK_QUEUE_FAMILY_IGNORED
+Subject: [PATCH 21/22] vulkan: don't release frames to VK_QUEUE_FAMILY_IGNORED
 
 On a device with a single queue family, hwcontext_vulkan creates frames
 with VK_SHARING_MODE_EXCLUSIVE and tracks them as owned by that family.

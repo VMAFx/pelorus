@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
 Date: Thu, 1 Jan 2026 00:00:00 +0000
-Subject: [PATCH 05/21] fix(qsv): make dense ROI maps frame-owned and
+Subject: [PATCH 05/22] fix(qsv): make dense ROI maps frame-owned and
  contract-bounded
 
 Stock qsvenc maps AV_FRAME_DATA_REGIONS_OF_INTEREST onto
