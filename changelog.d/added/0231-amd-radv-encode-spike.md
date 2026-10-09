@@ -1,0 +1,1 @@
+- Research digest for the AMD spike: Mesa RADV encodes H.264 and HEVC through the Vulkan encoders and runs the Pelorus filters, but `-pelorus_roi 1` leaves the bitstream unchanged because patch 0009's quantization-map probe does not match what RADV advertises; no AV1 encode ([research 0231](docs/research/0231-amd-radv-vulkan-encode-spike.md), #231).
