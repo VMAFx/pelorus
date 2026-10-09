@@ -135,8 +135,8 @@ published under version 1, so the version was bumped instead of keeping the
 fields optional with defaults. A later change that removes a field or changes
 its meaning bumps the version again; an added field stays in the same version
 only when it is optional with a default. Tool 0.4.5 adds the optional leg field
-`rate_control` (`cbr_extbrc`, `cbr_hw`) under that rule; tool 0.4.6 changes no
-field; a leg without it is
+`rate_control` (`cbr_extbrc`, `cbr_hw`) under that rule; tools 0.4.6 and 0.4.7
+change no field; a leg without it is
 the stage's own leg.
 
 ## Stages
@@ -148,7 +148,7 @@ the stage's own leg.
 | 3 | `registration` | not part of this kit version | `not_run` |
 | 4 | `format_matrix` (GPU) | [`vulkan-format-matrix.sh`](../../ffmpeg-patches/test/vulkan-format-matrix.sh) exits 0 with the validation layer on; every Vulkan diagnostic is on the [allow-list](#validation-gate) | layer absent: `not_run`; script exit 77: `no_device`; no `ffmpeg`: `not_run` |
 | 5 | `steering_smoke` (GPU) | for each usable encoder, 8- and 16-frame encodes both decode to 8 and 16 frames, and the steered bitstream differs from the unsteered one at both lengths; for each QSV encoder, the [bitrate-control legs](#qsv-bitrate-control-legs) decode to every frame within 15 % of the target bitrate or are a named `not_run` | encoder not built, not usable on this host, or without `-pelorus_roi`: a `not_run` leg with the reason; none usable: `not_run` (a bitrate-control leg cannot pass the stage alone) |
-| 6 | `sidedata_roundtrip` (GPU) | `pelorus_analyze_vulkan` + `pelorus_deband_vulkan`, then each usable carrier with `-udu_sei 1` (`hevc_nvenc`, `h264_nvenc`, `hevc_qsv`, `h264_qsv`, `hevc_vulkan`, `h264_vulkan`): every coded picture carries a well-formed `PelorusSideData` blob with the banding and variance sections and distinct `frame_pts` echoes, the decoder returns the blob as frame side data on every picture, and in both places each blob equals the one the analyze filter attached, byte for byte (or, on `hevc_nvenc` only, its [maps-stripped form](#stage-6-side-data-round-trip)); five cases per carrier | carrier not built, or its encode fails and the same encode without the side data fails too: a `not_run` leg with the encoder's error; none usable: `not_run`; AV1 has no carrier. A carrier whose encode fails only with the side data (baseline encodes) is a `fail` leg, never `not_run` ([ADR-0173](../adr/0173-tester-programme.md)) |
+| 6 | `sidedata_roundtrip` (GPU) | `pelorus_analyze_vulkan` + `pelorus_deband_vulkan`, then each usable carrier with `-udu_sei 1` (`hevc_nvenc`, `h264_nvenc`, `hevc_qsv`, `h264_qsv`, `hevc_vulkan`, `h264_vulkan`): every coded picture carries a well-formed `PelorusSideData` blob with the banding and variance sections and distinct `frame_pts` echoes, the decoder returns the blob as frame side data on every picture, and in both places each blob equals the one the analyze filter attached, byte for byte (or, on `hevc_nvenc` only, its [maps-stripped form](#stage-6-side-data-round-trip)); `hevc_nvenc` and `h264_nvenc` carry it as the [zero-free carrier](#stage-6-side-data-round-trip), every other carrier as the plain blob; five cases per carrier | carrier not built, or its encode fails and the same encode without the side data fails too: a `not_run` leg with the encoder's error; none usable: `not_run`; AV1 has no carrier. A carrier whose encode fails only with the side data (baseline encodes) is a `fail` leg, never `not_run` ([ADR-0173](../adr/0173-tester-programme.md)) |
 | 7 | `zero_copy_chain` (GPU) | the `-loglevel debug` graph holds no `hwdownload`, `hwupload` or `scale` beyond the allowed edges (below) and contains the Pelorus filters | no device with Vulkan Video decode and encode: `not_run` (the software-encoder leg still runs and can fail) |
 | 8 | `bench` (GPU, opt-in) | non-gating: `scripts/bench/run-bench.py` writes `result.json` for a 4-point CQ ladder; a failure is recorded but never changes the verdict | needs `--bench`, a `vmaf` binary, `hevc_nvenc` or `av1_nvenc`: otherwise `not_run` |
 
@@ -266,11 +266,24 @@ Each carrier runs five cases, and its leg fails when any case fails:
 | `flat-1080p-maps1-cell32` | `synth-flat-1080p` | `maps=1:cell=32` |
 | `flat-180p-maps0`, `flat-1080p-maps0` | the two flat clips | `maps=0` |
 
-Flat content gives a blob that is mostly zero bytes. NVENC cuts a zero run of
-about 63 bytes or more short inside its SEI NAL unit, so the decoder drops the
-blob (measured in [issue #284](https://github.com/VMAFx/pelorus/issues/284)); a
-gradient never shows this. The `maps=0` cases are the small blob that always
-survives.
+Flat content gives a blob that is mostly zero bytes. On an RTX 4090 with driver
+615.78.08, NVENC writes a SEI payload truncated when it needs more emulation
+prevention bytes than `ceil(P / 3) + 3` for a `P`-byte payload, which those
+zero runs reach, so the decoder drops the blob
+([issue #284](https://github.com/VMAFx/pelorus/issues/284)); a gradient never
+shows this. The `maps=0` cases are the small blob that always survives.
+
+Since interop ABI 1.5, `hevc_nvenc` and `h264_nvenc` (patch 0022) write every
+Pelorus blob in its zero-free carrier form: the UUID
+`3f9b37b8-fd9a-4621-920e-9b78b55cf9b5`, then the COBS-encoded blob, with no zero
+byte ([ADR-0183](../adr/0183-sidedata-zero-free-carrier.md)). The runner reads
+both forms in the stream and at the decode tap. It decodes a carrier as strictly
+as `pel_blob_unwrap()`: a zero byte, a block that runs past the end, an empty
+final block after a full one or an image shorter than the header fails the
+leg as a malformed carrier. An NVENC leg must carry every Pelorus payload as a
+carrier, and every other carrier must write the plain blob; the wrong form fails
+the leg and names how many payloads had it. The decoded carrier is then compared
+like a plain blob.
 
 The expected blob is not a constant. The runner repeats the encode's filter
 chain with `showinfo` in place of the encoder and reads each frame's blob at
@@ -377,6 +390,8 @@ bad case per rule below, and `--self-test --disable <rule>` must exit 1 for each
 | `sd_integrity_count` | a dropped blob, a missing picture, an extra blob |
 | `sd_integrity_bytes` | a truncated blob, one flipped byte, a maps-stripped blob from a carrier that does not strip |
 | `sd_integrity_stripped` | a maps-stripped blob with `total_size` kept, a flipped scalar or map fields left in place |
+| `sd_carrier_form` | a plain blob on an NVENC leg; a zero-free carrier on any other leg |
+| `sd_carrier_strict` | a carrier that ends with an empty block after a full one (non-canonical) |
 | `bench_nongating` | a failing bench stage: verdict must stay `pass` |
 | `execution_class_derived` | a lavapipe device list with `execution_class: hardware`; a report with no device and `software_vulkan` |
 | `claim_gpu_needs_hardware` | a lavapipe device list with `evidence_claim: gpu` |
