@@ -26,6 +26,7 @@ Each item: `PASS`, `FAIL`, or explicit `N-A` reason.
 - User surface: matching docs; route detail to `doc-reviewer`.
 - Consumed libpelorus surface: regenerated patch; route detail to `ffmpeg-patch-reviewer`.
 - Touched files lint-clean; each suppression cited.
+- Mirror: diff touches path in `libpelorus/mirror-paths.txt` -> PR body needs checked "VMAFx mirror" item plus VMAFx follow-up. Missing -> FAIL; detail to `interop-abi-reviewer`. No mirrored path -> N-A.
 - Branch differs from `master`.
 
 ## Output

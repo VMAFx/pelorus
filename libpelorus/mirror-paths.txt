@@ -1,0 +1,14 @@
+# Pelorus-side paths of the ten files VMAFx mirrors (VMAFx ADR-1113).
+# Source: scripts/ci/pelorus-mirror-paths.txt and the manifest in
+# scripts/sync-pelorus-interop.sh in VMAFx/vmafx. Keep sorted.
+# docs/api/mirror-contract.md must name every line; scripts/check-mirror-contract.py enforces it.
+libpelorus/include/pelorus/deband.h
+libpelorus/include/pelorus/denoise.h
+libpelorus/include/pelorus/interop.h
+libpelorus/include/pelorus/pelorus.h
+libpelorus/src/deband_params.c
+libpelorus/src/denoise_params.c
+libpelorus/src/interop.c
+libpelorus/src/qp_report_csv.c
+libpelorus/src/version.c
+libpelorus/test/interop_test.c
