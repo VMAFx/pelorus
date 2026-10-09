@@ -129,7 +129,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 - Codec scope: deband, denoise, motion codec-agnostic; film grain uses AV1 AOM or HEVC/VVC H.274.
 - Sibling `VMAFx/vmafx`: quality oracle + autotune control plane.
 - Shared contract: `PelorusSideData`; Pelorus writers, vmafx readers.
-- Release `v0.3.0`: library version 0.x, interop ABI 1.3. `master`: interop ABI 1.4 (`PELORUS_ABI_MAJOR` 1, `PELORUS_ABI_MINOR` 4), append-only.
+- Release `v0.4.0-rc.1`: library version 0.x, interop ABI 1.4 (`PELORUS_ABI_MAJOR` 1, `PELORUS_ABI_MINOR` 4), append-only.
 - Architecture: `docs/architecture/overview.md`; rules: `docs/principles.md`.
 
 ## Project state
