@@ -3015,6 +3015,18 @@ TESTER_BUILD_SCRIPT = ROOT / "tools" / "tester" / "build-ffmpeg.sh"
 # ADR-0180: one image per kit; every job runs once per kit.
 TESTER_KITS = ("generic", "nvidia", "intel")
 TESTER_KIT_MATRIX = "        kit: [generic, nvidia, intel]\n"
+# No apt-installed package and no source component may bring a vendor driver
+# or a non-free archive component into any kit, with one exception that names
+# one package and the stages that handle it (ADR-0180 decision 4a): Debian's
+# intel-media-va-driver-non-free is Expat and sits in non-free only because its
+# GPU kernels come without source. The licence record gate admits that package
+# alone from outside main; here the Containerfile may name it, and enable the
+# non-free area, only where the Intel kit installs it and fetches its source.
+TESTER_APT_FORBIDDEN = re.compile(r"nvidia|cuda|non-?free|contrib", re.IGNORECASE)
+TESTER_NONFREE_PACKAGE = "intel-media-va-driver-non-free"
+TESTER_NONFREE_AREA_SED = "s/^Components: main$/Components: main non-free/"
+TESTER_NONFREE_PACKAGE_STAGE = "assembled-intel"
+TESTER_NONFREE_AREA_STAGES = ("assembled-intel", "debian-sources-intel")
 # What each vendor kit's stages must carry (ADR-0180).
 TESTER_KIT_TOKENS = {
     "build-nvidia": ("ARG NV_CODEC_HEADERS_COMMIT=", "--enable-ffnvcodec --enable-nvenc", "--enable-libdav1d"),
@@ -3024,18 +3036,9 @@ TESTER_KIT_TOKENS = {
     "final-nvidia": ("NVIDIA_DRIVER_CAPABILITIES=compute,utility,video,graphics",),
     # libdrm: QSV picks the Intel render node by vendor id (research 0229).
     "build-intel": ("--enable-libvpl --enable-vaapi --enable-libdrm", "--enable-libdav1d"),
-    "assembled-intel": ("intel-media-va-driver", "libvpl2", "libmfx-gen1.2", "mesa-vulkan-drivers"),
+    "assembled-intel": (TESTER_NONFREE_PACKAGE, TESTER_NONFREE_AREA_SED, "libvpl2", "libmfx-gen1.2", "mesa-vulkan-drivers"),
+    "debian-sources-intel": (TESTER_NONFREE_AREA_SED,),
 }
-# No apt-installed package and no source component may bring a vendor driver
-# or a non-free archive component into any kit.
-TESTER_APT_FORBIDDEN = re.compile(r"nvidia|cuda|non-?free|contrib", re.IGNORECASE)
-# The one local-only exception (maintainer decision for #230, ADR-0180): the
-# `nonfree)` branch of the INTEL_MEDIA_DRIVER case in assembled-intel. Its
-# default is free in every stage that reads it, and no workflow may set it.
-TESTER_LOCAL_ARG = "ARG INTEL_MEDIA_DRIVER=free"
-TESTER_LOCAL_ARG_STAGES = ("assembled-intel", "licence-intel", "final-intel", "debian-sources-intel")
-TESTER_NONFREE_BRANCH = re.compile(r"^      nonfree\) [^\n]*(?:\n(?!      \S+\) )[^\n]*)*?;; \\\n", re.MULTILINE)
-TESTER_WORKFLOW_LOCAL_TOKENS = ("INTEL_MEDIA_DRIVER", "intel-nonfree-local", "intel-media-va-driver-non-free")
 CANDIDATE_LEGS = ROOT / "scripts" / "release" / "candidate-legs.json"
 LICENCE_FLAGS_ARG = 'ARG FFMPEG_LICENCE_FLAGS="--enable-gpl --enable-version3"'
 # ADR-0173 decision 5: a tester image never ships these, in any file we author.
@@ -3337,7 +3340,6 @@ def validate_tester_publish_text(relative: str, text: str) -> list[str]:
         if token in text:
             errors.append(f"{relative}: forbidden workflow token {token}")
     errors.extend(_tester_pins(relative, text))
-    errors.extend(validate_workflows_local_only({relative: text}))
     errors.extend(_tester_jobs(relative, jobs))
     errors.extend(_tester_publish_steps(relative, jobs.get("publish", "")))
     return errors
@@ -3353,8 +3355,7 @@ def _tester_licence_stage(relative: str, text: str, kit: str) -> list[str]:
     """ADR-0178: each kit's licence record gate is a stage its final stage depends on."""
     stage = tester_stage(text, f"licence-{kit}")
     errors: list[str] = []
-    # A stage may pick the kit in a shell variable that starts as the kit itself.
-    arg = '"${kit}" ' if f"kit={kit} " in stage else f"{kit} "
+    arg = f"{kit} "
     steps = ("licensing.py self-test", f"licensing.py notices --kit {arg}", f"licensing.py check --kit {arg}")
     positions = [stage.find(t) for t in steps]
     if min(positions) < 0 or positions != sorted(positions):
@@ -3413,41 +3414,20 @@ def tester_apt_packages(text: str) -> list[str]:
     return packages
 
 
-def _tester_local_build(relative: str, text: str) -> tuple[list[str], str]:
-    """The local non-free Intel build: errors, and the Containerfile without its one allowed branch."""
-    stage = tester_stage(text, "assembled-intel")
-    branches = TESTER_NONFREE_BRANCH.findall(text)
-    errors: list[str] = []
-    if len(branches) != 1 or branches[0] not in stage:
-        errors.append(f"{relative}: the non-free media driver may appear only in the one nonfree) branch of assembled-intel")
-    errors.extend(
-        f"{relative}: stage {name} must default {TESTER_LOCAL_ARG}"
-        for name in TESTER_LOCAL_ARG_STAGES
-        if TESTER_LOCAL_ARG not in tester_stage(text, name)
-    )
-    if len(re.findall(r"^ARG INTEL_MEDIA_DRIVER\b", text, re.MULTILINE)) != len(TESTER_LOCAL_ARG_STAGES):
-        errors.append(f"{relative}: INTEL_MEDIA_DRIVER is read only by {', '.join(TESTER_LOCAL_ARG_STAGES)}")
-    if 'kit=intel-nonfree-local' not in tester_stage(text, "licence-intel"):
-        errors.append(f"{relative}: stage licence-intel must check a non-free build as kit intel-nonfree-local")
-    if "has no -source image" not in tester_stage(text, "debian-sources-intel"):
-        errors.append(f"{relative}: stage debian-sources-intel must refuse a non-free build")
-    return errors, text.replace(branches[0], "", 1) if len(branches) == 1 else text
-
-
-def validate_workflows_local_only(named_texts: dict[str, str]) -> list[str]:
-    """No workflow builds or names the local-only non-free kit (ADR-0180)."""
-    return [
-        f"{name}: forbidden workflow token {token} (the non-free Intel build is local only)"
-        for name, text in named_texts.items()
-        for token in TESTER_WORKFLOW_LOCAL_TOKENS
-        if token in text
-    ]
+def _tester_without_nonfree_exception(text: str) -> str:
+    """The Containerfile without the one package and the one source-area edit the Intel kit may name."""
+    stage = tester_stage(text, TESTER_NONFREE_PACKAGE_STAGE)
+    text = text.replace(stage, stage.replace(TESTER_NONFREE_PACKAGE, ""), 1) if stage else text
+    for name in TESTER_NONFREE_AREA_STAGES:
+        stage = tester_stage(text, name)
+        text = text.replace(stage, stage.replace(TESTER_NONFREE_AREA_SED, ""), 1) if stage else text
+    return text
 
 
 def _tester_vendor_files(relative: str, text: str) -> list[str]:
     """No kit installs a vendor driver or enables a non-free archive component."""
-    errors, text = _tester_local_build(relative, text)
-    errors += [
+    text = _tester_without_nonfree_exception(text)
+    errors = [
         f"{relative}: forbidden package {name} (vendor driver or non-free, ADR-0180)"
         for name in tester_apt_packages(text)
         if TESTER_APT_FORBIDDEN.search(name)
@@ -3547,10 +3527,6 @@ def validate_tester_publish() -> list[str]:
             errors.append(f"{relative}: missing")
             continue
         errors.extend(check(relative, path.read_text(encoding="utf-8")))
-    errors.extend(validate_workflows_local_only(
-        {p.relative_to(ROOT).as_posix(): p.read_text(encoding="utf-8")
-         for p in sorted((ROOT / ".github" / "workflows").glob("*.yml"))}
-    ))
     if CANDIDATE_LEGS.is_file():
         names = {p.name for p in (ROOT / ".github" / "workflows").glob("*.yml")}
         errors.extend(
@@ -3789,20 +3765,6 @@ def _tester_build_kit_cases(text: str) -> dict[str, tuple[str, str]]:
 def _tester_kit_cases(text: str) -> dict[str, tuple[str, str]]:
     """ADR-0180: every kit publishes, with its own tags, and one kit never cancels another."""
     return {
-        "publish passes the non-free build arg": (
-            replace_in_job(text, "publish", '--target "final-${KIT}" \\\n',
-                           '--target "final-${KIT}" \\\n            --build-arg "INTEL_MEDIA_DRIVER=nonfree" \\\n'),
-            "forbidden workflow token INTEL_MEDIA_DRIVER",
-        ),
-        "build job passes the non-free build arg": (
-            replace_in_job(text, "build", '--target "final-${KIT}" \\\n',
-                           '--target "final-${KIT}" \\\n            --build-arg INTEL_MEDIA_DRIVER=nonfree \\\n'),
-            "forbidden workflow token INTEL_MEDIA_DRIVER",
-        ),
-        "matrix gains the local kit": (
-            text.replace("kit: [generic, nvidia, intel]", "kit: [generic, nvidia, intel, intel-nonfree-local]", 1),
-            "forbidden workflow token intel-nonfree-local",
-        ),
         "publish drops a kit": (
             replace_in_job(text, "publish", "kit: [generic, nvidia, intel]", "kit: [generic, intel]"),
             "publish job is missing         kit: [generic, nvidia, intel]",
@@ -3966,7 +3928,7 @@ def _tester_containerfile_stage_cases(text: str) -> dict[str, tuple[str, str]]:
 
 def _tester_containerfile_vendor_cases(text: str) -> dict[str, tuple[str, str]]:
     """ADR-0180: what each vendor kit needs, and no vendor driver or non-free package."""
-    intel_apt = '        "${media_driver}" libdav1d7'
+    intel_apt = "        intel-media-va-driver-non-free libdav1d7"
     return {
         "nvidia without the graphics capability": (
             text.replace("NVIDIA_DRIVER_CAPABILITIES=compute,utility,video,graphics", "NVIDIA_DRIVER_CAPABILITIES=compute,utility,video", 1),
@@ -4000,13 +3962,9 @@ def _tester_containerfile_vendor_cases(text: str) -> dict[str, tuple[str, str]]:
             text.replace("libva-dev libvpl-dev", "libva-dev libvpl-dev nvidia-cuda-toolkit", 1),
             "forbidden package nvidia-cuda-toolkit",
         ),
-        "non-free media driver": (
-            text.replace(intel_apt, "        intel-media-va-driver-non-free libdav1d7", 1),
-            "forbidden package intel-media-va-driver-non-free",
-        ),
         "non-free archive component": (
             text.replace("RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources",
-                         "RUN sed -i 's/^Components: main$/Components: main non-free/' /etc/apt/sources.list.d/debian.sources", 1),
+                         "RUN sed -i 's/^Components: main$/Components: main contrib/' /etc/apt/sources.list.d/debian.sources", 1),
             "a non-free or contrib archive component is enabled",
         ),
     }
@@ -4017,35 +3975,43 @@ def _tester_containerfile_cases(text: str) -> dict[str, tuple[str, str]]:
         **_tester_containerfile_licence_cases(text),
         **_tester_containerfile_stage_cases(text),
         **_tester_containerfile_vendor_cases(text),
-        **_tester_local_build_cases(text),
+        **_tester_nonfree_exception_cases(text),
     }
 
 
-def _tester_local_build_cases(text: str) -> dict[str, tuple[str, str]]:
-    """ADR-0180: the local non-free Intel build stays local and is checked as such."""
-    branch = TESTER_NONFREE_BRANCH.findall(text)[0]
+def _tester_nonfree_exception_cases(text: str) -> dict[str, tuple[str, str]]:
+    """ADR-0180 decision 4a: the one non-free package stays in the Intel kit, and nothing else follows it."""
+    nvidia_apt = "    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libdav1d7 libegl1"
     return {
-        "non-free by default": (
-            text.replace("ARG INTEL_MEDIA_DRIVER=free\n# hadolint", "ARG INTEL_MEDIA_DRIVER=nonfree\n# hadolint", 1),
-            "stage assembled-intel must default ARG INTEL_MEDIA_DRIVER=free",
+        "non-free media driver in the NVIDIA kit": (
+            text.replace(nvidia_apt, nvidia_apt.replace("libdav1d7", TESTER_NONFREE_PACKAGE + " libdav1d7"), 1),
+            f"forbidden package {TESTER_NONFREE_PACKAGE}",
         ),
-        "non-free branch in the NVIDIA kit": (
-            text.replace("    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libdav1d7 libegl1",
-                         "    && case x in\n" + branch + "    esac \\\n"
-                         "    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libdav1d7 libegl1", 1),
-            "the non-free media driver may appear only in the one nonfree) branch of assembled-intel",
+        "non-free media driver in the build stage": (
+            text.replace("libva-dev libvpl-dev", "libva-dev libvpl-dev " + TESTER_NONFREE_PACKAGE, 1),
+            f"forbidden package {TESTER_NONFREE_PACKAGE}",
         ),
-        "non-free build checked as the published kit": (
-            text.replace("then kit=intel-nonfree-local; fi", "then kit=intel; fi", 1),
-            "stage licence-intel must check a non-free build as kit intel-nonfree-local",
+        "non-free area enabled in the generic kit": (
+            text.replace("FROM base AS assembled-generic\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\n",
+                         "FROM base AS assembled-generic\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\n"
+                         f"RUN sed -i '{TESTER_NONFREE_AREA_SED}' /etc/apt/sources.list.d/debian.sources\n", 1),
+            "a non-free or contrib archive component is enabled",
         ),
-        "-source of a non-free build": (
-            text.replace("has no -source image", "has a -source image", 1),
-            "stage debian-sources-intel must refuse a non-free build",
+        "contrib area enabled in the Intel kit": (
+            text.replace(TESTER_NONFREE_AREA_SED, "s/^Components: main$/Components: main non-free contrib/", 1),
+            "a non-free or contrib archive component is enabled",
         ),
-        "another stage reads the build arg": (
-            text.replace("FROM build AS build-intel\n", "FROM build AS build-intel\nARG INTEL_MEDIA_DRIVER=free\n", 1),
-            "INTEL_MEDIA_DRIVER is read only by",
+        "second non-free package in the Intel kit": (
+            text.replace(TESTER_NONFREE_PACKAGE + " libdav1d7", TESTER_NONFREE_PACKAGE + " firmware-misc-nonfree libdav1d7", 1),
+            "forbidden package firmware-misc-nonfree",
+        ),
+        "Intel kit without the non-free media driver": (
+            text.replace(TESTER_NONFREE_PACKAGE + " libdav1d7", "intel-media-va-driver libdav1d7", 1),
+            f"stage assembled-intel is missing {TESTER_NONFREE_PACKAGE}",
+        ),
+        "Intel -source without the non-free area": (
+            text.replace(" -e '" + TESTER_NONFREE_AREA_SED + "'", "", 1),
+            f"stage debian-sources-intel is missing {TESTER_NONFREE_AREA_SED}",
         ),
     }
 
@@ -4111,11 +4077,6 @@ def tester_publish_regressions() -> list[str]:
         failures.append("tester publish regression: the current Containerfile is rejected")
     if validate_tester_build_script_text(sc_rel, script):
         failures.append("tester publish regression: the current build-ffmpeg.sh is rejected")
-    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    if validate_workflows_local_only({"ci.yml": ci}):
-        failures.append("tester publish regression: the current ci.yml is rejected")
-    if not validate_workflows_local_only({"ci.yml": ci + "\n# docker build --build-arg INTEL_MEDIA_DRIVER=nonfree\n"}):
-        failures.append("tester publish regression: ci.yml passing the non-free build arg was accepted")
     for name, (mutated, expected) in _tester_build_script_cases(script).items():
         failures.extend(
             _all_rejected(name, mutated, script, lambda t: validate_tester_build_script_text(sc_rel, t), expected)

@@ -5,14 +5,11 @@
 #   final-generic   source-generic   CPU image, no GPU driver (hosted CI runs it)
 #   final-nvidia    source-nvidia    NVENC through the host driver: no NVIDIA file inside;
 #                                    run with --gpus all (NVIDIA Container Toolkit)
-#   final-intel     source-intel     Mesa ANV, oneVPL (libvpl2, libmfx-gen1.2) and the
-#                                    free intel-media-va-driver; run with --device /dev/dri
-#
-# Local only: --build-arg INTEL_MEDIA_DRIVER=nonfree builds final-intel with
-# Debian's non-free media driver for HEVC QSV evidence. That image carries the
-# NOT-FOR-REDISTRIBUTION marker, its report says kit intel-nonfree-local, it has
-# no -source image, and the publish gate refuses it (ADR-0180). The workflows
-# never pass INTEL_MEDIA_DRIVER (scripts/check-build-config.py).
+#   final-intel     source-intel     Mesa ANV, oneVPL (libvpl2, libmfx-gen1.2) and
+#                                    intel-media-va-driver-non-free (Expat; Debian
+#                                    ships it in non-free because Intel's GPU
+#                                    kernels come without source); run with
+#                                    --device /dev/dri
 #
 #   docker build -f tools/tester/Containerfile --target final-<kit>  ... .
 #   docker build -f tools/tester/Containerfile --target source-<kit> ... .
@@ -179,22 +176,19 @@ COPY LICENSES /usr/share/licenses/pelorus-tester/texts
 RUN ! ldd /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe | grep 'not found' && ffmpeg -hide_banner -version > /dev/null
 
 # Intel: Mesa's Vulkan drivers (ANV), the oneVPL dispatcher and GPU runtime, and
-# the free media driver from Debian main. intel-media-va-driver-non-free is
-# forbidden by the licence record in every published kit; only the local
-# INTEL_MEDIA_DRIVER=nonfree build installs it (kit intel-nonfree-local).
+# Debian's intel-media-va-driver-non-free. The package is Expat (debian/copyright
+# of intel-media-driver-non-free 25.2.3+ds1-1) and sits in the archive area
+# non-free only because Intel's GPU kernels come without source; HEVC encode on
+# Arc A-series GPUs needs it, the free driver cannot do it (research 0229).
+# tools/tester/licensing.json records it with its reason; it is the only
+# package the licence gate admits from outside main (ADR-0180 decision 4a).
 FROM base AS assembled-intel
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-ARG INTEL_MEDIA_DRIVER=free
 # hadolint ignore=DL3008
-RUN case "${INTEL_MEDIA_DRIVER}" in \
-      free) media_driver=intel-media-va-driver ;; \
-      nonfree) media_driver=intel-media-va-driver-non-free \
-        && sed -i 's/^Components: main$/Components: main non-free/' /etc/apt/sources.list.d/debian.sources ;; \
-      *) echo "INTEL_MEDIA_DRIVER must be free or nonfree, not '${INTEL_MEDIA_DRIVER}'" >&2; exit 1 ;; \
-    esac \
+RUN sed -i 's/^Components: main$/Components: main non-free/' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        "${media_driver}" libdav1d7 libmfx-gen1.2 libva-drm2 libva2 libvpl2 mesa-vulkan-drivers \
+        intel-media-va-driver-non-free libdav1d7 libmfx-gen1.2 libva-drm2 libva2 libvpl2 mesa-vulkan-drivers \
     && dpkg-query -W -f='${source:Package}=${source:Version}\n' | sort -u > /installed-sources.txt \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build-intel /opt/ffmpeg /opt/ffmpeg
@@ -207,9 +201,10 @@ RUN ! ldd /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe | grep 'not found' && f
 # --- licence-<kit>: the licence record gate (ADR-0178) -------------------------
 # tools/tester/licensing.json records every component of every kit; the gate
 # writes the notices file and then fails the build on a file no component owns,
-# a forbidden file or package (an NVIDIA driver library, the non-free media
-# driver), a licence that is unknown or not redistributable, a Debian package
-# without its copyright file or from outside main, a missing licence text, or
+# a forbidden file or package (an NVIDIA driver library), a licence that is
+# unknown or not redistributable, a Debian package without its copyright file
+# or from outside main (but for the packages the record admits from non-free
+# with a redistributable licence), a missing licence text, or
 # stale notices. Its self-test plants each defect first, so a broken gate cannot
 # pass. final-<kit> takes the notices from this stage, so it cannot be built
 # without the gate having passed on the finished tree.
@@ -233,20 +228,14 @@ RUN python3 -I -B /opt/pelorus/tester/licensing.py self-test \
     && python3 -I -B /opt/pelorus/tester/licensing.py check --kit nvidia --root / \
         --commit "${PELORUS_COMMIT}" --ffmpeg-remote "${FFMPEG_REMOTE}" --ffmpeg-commit "${FFMPEG_COMMIT}"
 
-# The local non-free build is checked as kit intel-nonfree-local: the gate lets
-# that kit carry the non-free driver and writes the NOT-FOR-REDISTRIBUTION
-# marker, which `check --kit intel` (the publish gate) refuses.
 FROM assembled-intel AS licence-intel
 ARG FFMPEG_REMOTE
 ARG FFMPEG_COMMIT
 ARG PELORUS_COMMIT
-ARG INTEL_MEDIA_DRIVER=free
-RUN kit=intel \
-    && if [ "${INTEL_MEDIA_DRIVER}" = nonfree ]; then kit=intel-nonfree-local; fi \
-    && python3 -I -B /opt/pelorus/tester/licensing.py self-test \
-    && python3 -I -B /opt/pelorus/tester/licensing.py notices --kit "${kit}" --root / \
+RUN python3 -I -B /opt/pelorus/tester/licensing.py self-test \
+    && python3 -I -B /opt/pelorus/tester/licensing.py notices --kit intel --root / \
         --commit "${PELORUS_COMMIT}" --ffmpeg-remote "${FFMPEG_REMOTE}" --ffmpeg-commit "${FFMPEG_COMMIT}" \
-    && python3 -I -B /opt/pelorus/tester/licensing.py check --kit "${kit}" --root / \
+    && python3 -I -B /opt/pelorus/tester/licensing.py check --kit intel --root / \
         --commit "${PELORUS_COMMIT}" --ffmpeg-remote "${FFMPEG_REMOTE}" --ffmpeg-commit "${FFMPEG_COMMIT}"
 
 # --- final-<kit>: the tester images ------------------------------------------
@@ -280,19 +269,15 @@ LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
       org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2" \
       org.opencontainers.image.revision="${PELORUS_COMMIT}"
 
-# The whole licence directory: the notices and, in the local non-free build
-# only, the NOT-FOR-REDISTRIBUTION marker (the report then says kit
-# intel-nonfree-local).
 FROM assembled-intel AS final-intel
 ARG PELORUS_COMMIT
-ARG INTEL_MEDIA_DRIVER=free
-COPY --from=licence-intel /usr/share/licenses/pelorus-tester/ /usr/share/licenses/pelorus-tester/
+COPY --from=licence-intel /usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt /usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt
 ENV PELORUS_TESTER_KIT=intel \
     PELORUS_TESTER_PACKAGE=tester-intel \
     PELORUS_TESTER_COMMIT=${PELORUS_COMMIT}
 LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
       org.opencontainers.image.title="pelorus-tester-intel" \
-      org.opencontainers.image.description="Pelorus tester image, Intel kit (run with --device /dev/dri; media driver ${INTEL_MEDIA_DRIVER}, nonfree builds are local only and NOT FOR REDISTRIBUTION): evidence for one master commit, not a release (ADR-0173, ADR-0180)" \
+      org.opencontainers.image.description="Pelorus tester image, Intel kit (run with --device /dev/dri; media driver intel-media-va-driver-non-free, Expat): evidence for one master commit, not a release (ADR-0173, ADR-0180)" \
       org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2" \
       org.opencontainers.image.revision="${PELORUS_COMMIT}"
 
@@ -318,13 +303,10 @@ WORKDIR /debian-source
 RUN xargs -a /installed-sources.txt apt-get source --download-only \
     && rm -rf /var/lib/apt/lists/*
 
+# deb-src of main and non-free: the media driver's source package is in non-free.
 FROM ${DEBIAN_IMAGE} AS debian-sources-intel
-ARG INTEL_MEDIA_DRIVER=free
 COPY --from=assembled-intel /installed-sources.txt /installed-sources.txt
-RUN if [ "${INTEL_MEDIA_DRIVER}" != free ]; then \
-        echo "a non-free Intel build has no -source image: it is local only and never published" >&2; exit 1; \
-    fi \
-    && sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources \
+RUN sed -i -e 's/^Types: deb$/Types: deb deb-src/' -e 's/^Components: main$/Components: main non-free/' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
     && mkdir /debian-source
 WORKDIR /debian-source
@@ -358,5 +340,5 @@ COPY --from=debian-sources-intel /debian-source /source/debian
 COPY --from=debian-sources-intel /installed-sources.txt /source/installed-sources.txt
 COPY LICENSES /source/LICENSES
 LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
-      org.opencontainers.image.description="Corresponding source of the Pelorus tester image, Intel kit (GPL-3.0-or-later)" \
+      org.opencontainers.image.description="Corresponding source of the Pelorus tester image, Intel kit (GPL-3.0-or-later; the media driver source package is under /source/debian)" \
       org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2"

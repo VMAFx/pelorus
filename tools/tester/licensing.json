@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "comment": "Licence record of the Pelorus tester image (ADR-0178, #236), read by licensing.py. Every file in the image belongs to one component below (first match in list order), to a Debian package (dpkg ownership; its copyright file is required), or to an ignore rule that names a reason and an expiry date. A new package, library, licence or file fails the image build until it is recorded here. Components that name `kits` belong to those image kits only (ADR-0180); `forbidden` files and packages fail every kit whoever owns them, except what a `local_only_kits` policy allows; such a kit is built locally only, writes the `local_marker` file, and every other kit refuses a tree that carries it. Edit this file together with the Containerfile; `licensing.py record` checks it without an image.",
+  "comment": "Licence record of the Pelorus tester image (ADR-0178, #236), read by licensing.py. Every file in the image belongs to one component below (first match in list order), to a Debian package (dpkg ownership; its copyright file is required), or to an ignore rule that names a reason and an expiry date. A new package, library, licence or file fails the image build until it is recorded here. Components that name `kits` belong to those image kits only (ADR-0180); `forbidden` files and packages fail every kit whoever owns them. Only Debian `main` is permitted, except the packages of a dpkg component that names `archive_component` and `archive_reason` and has a redistributable licence (ADR-0180 decision 4a). Edit this file together with the Containerfile; `licensing.py record` checks it without an image.",
   "repository": "https://github.com/VMAFx/pelorus",
   "notices_path": "usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt",
   "licences": {
@@ -45,10 +45,6 @@
       "redistributable": true,
       "text": null
     },
-    "LicenseRef-nonfree": {
-      "redistributable": false,
-      "text": null
-    },
     "LicenseRef-NVIDIA-CUDA-EULA": {
       "redistributable": false,
       "text": null
@@ -71,21 +67,8 @@
   "kits": [
     "generic",
     "nvidia",
-    "intel",
-    "intel-nonfree-local"
+    "intel"
   ],
-  "local_only_kits": {
-    "intel-nonfree-local": {
-      "why": "maintainer decision 2026-10-09 (#230): a local build with the non-free Intel media driver gives HEVC QSV evidence on GPUs the free driver cannot encode HEVC on; it is never published (ADR-0180)",
-      "archive_components": [
-        "non-free"
-      ],
-      "allow_packages": [
-        "intel-media-va-driver-non-free"
-      ]
-    }
-  },
-  "local_marker": "usr/share/licenses/pelorus-tester/NOT-FOR-REDISTRIBUTION",
   "forbidden": {
     "files": [
       {
@@ -112,12 +95,6 @@
       }
     ],
     "packages": [
-      {
-        "names": [
-          "intel-media-va-driver-non-free"
-        ],
-        "why": "only the free Intel media driver from Debian main ships (ADR-0180)"
-      },
       {
         "names": [
           "nvidia-*",
@@ -438,8 +415,7 @@
       "spdx": "MIT",
       "kind": "dpkg",
       "kits": [
-        "intel",
-        "intel-nonfree-local"
+        "intel"
       ],
       "packages": [
         "libmfx-gen1.2",
@@ -456,7 +432,7 @@
     },
     {
       "id": "intel-media-driver",
-      "name": "Intel media driver for VA-API, free build (Debian intel-media-va-driver)",
+      "name": "Intel media driver for VA-API (Debian intel-media-va-driver-non-free, archive area non-free)",
       "version": "Debian trixie",
       "spdx": "MIT AND BSD-3-Clause",
       "kind": "dpkg",
@@ -464,47 +440,15 @@
         "intel"
       ],
       "packages": [
-        "intel-media-va-driver"
-      ],
-      "source": "https://tracker.debian.org/pkg/intel-media-driver",
-      "notes": [
-        "The free build from Debian main; intel-media-va-driver-non-free is a forbidden package in every published kit. On an Arc A380 it cannot encode HEVC (research 0229); the hevc_qsv leg names that."
-      ],
-      "redistributable": true
-    },
-    {
-      "id": "intel-media-driver-non-free",
-      "name": "Intel media driver for VA-API, non-free build (Debian intel-media-va-driver-non-free)",
-      "version": "Debian trixie",
-      "spdx": "LicenseRef-nonfree",
-      "kind": "dpkg",
-      "kits": [
-        "intel-nonfree-local"
-      ],
-      "packages": [
         "intel-media-va-driver-non-free"
       ],
-      "source": "https://tracker.debian.org/pkg/intel-media-driver-non-free",
-      "local_only": true,
+      "archive_component": "non-free",
+      "archive_reason": "Intel's GPU kernels come without source, so Debian cannot rebuild them and ships the package in non-free; the licence of the package is still Expat (MIT), which allows redistribution (debian/copyright of intel-media-driver-non-free 25.2.3+ds1-1)",
+      "source": "https://github.com/intel/media-driver",
       "notes": [
-        "From Debian non-free. Only the local build with INTEL_MEDIA_DRIVER=nonfree installs it; that image carries the NOT-FOR-REDISTRIBUTION marker and is never pushed or published (ADR-0180)."
-      ],
-      "redistributable": false
-    },
-    {
-      "id": "local-build-marker",
-      "name": "NOT-FOR-REDISTRIBUTION marker of a local-only build",
-      "version": "@commit",
-      "spdx": "EUPL-1.2",
-      "kits": [
-        "intel-nonfree-local"
-      ],
-      "paths": [
-        "usr/share/licenses/pelorus-tester/NOT-FOR-REDISTRIBUTION"
-      ],
-      "source": "https://github.com/VMAFx/pelorus/blob/master/tools/tester/licensing.py",
-      "notes": [
-        "Written by licensing.py notices for a local-only kit; licensing.py check of any published kit refuses a tree that has it."
+        "Debian source package: https://tracker.debian.org/pkg/intel-media-driver-non-free. Its debian/copyright lists every file as Expat and only the bundled googletest (test code, not in the binary package) as BSD-3-Clause; the licence text is the package's copyright file.",
+        "MIT needs no source offer. The -source image carries the Debian source package (intel-media-driver-non-free_25.2.3+ds1-1 .dsc, .orig and .debian tarballs, fetched with deb-src of main non-free), so the exact build can be reproduced.",
+        "Only this package is admitted from non-free (ADR-0180 decision 4a, decided by the maintainer on 2026-10-09 after the Debian copyright file showed Expat). Any other non-free or contrib package still fails the gate. It lets hevc_qsv encode on Arc A-series GPUs, which the free intel-media-va-driver cannot (research 0229)."
       ],
       "redistributable": true
     },
@@ -516,8 +460,7 @@
       "kind": "dpkg",
       "kits": [
         "nvidia",
-        "intel",
-        "intel-nonfree-local"
+        "intel"
       ],
       "packages": [
         "libdav1d7"

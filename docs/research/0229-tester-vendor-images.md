@@ -12,22 +12,22 @@ built locally at `-j4` from the pinned FFmpeg `n9.0.2` plus the patch stack,
 Debian trixie (`debian:trixie-slim` digest from the Containerfile). Host: kernel
 7.2.9, Docker 29.8.2 (rootful, cgroup v2, systemd driver), NVIDIA Container
 Toolkit 1.20.1 with a CDI specification in `/var/run/cdi`, NVIDIA driver
-615.71.09 on an RTX 4090, Arc A380 on the `xe` kernel driver, Radeon 610M on
-`amdgpu`. Inside the Intel image: Mesa 25.0.7, `intel-media-va-driver`
-25.2.3 (free), `libmfx-gen1.2` 25.1.4, `libvpl2` 2.14.0.
+615.71.09 on an RTX 4090, Arc A380 on the `xe` kernel driver (HuC firmware not loaded; GuC 70.53.0), Radeon 610M on
+`amdgpu`. Inside the Intel image: Mesa 25.0.7, `intel-media-va-driver-non-free`
+25.2.3+ds1-1, `libmfx-gen1.2` 25.1.4, `libvpl2` 2.14.0.
 
 ## Verdict
 
 | Kit | Without its device | With it | Licence gate |
 | --- | --- | --- | --- |
 | `nvidia` | exit 0, every GPU stage `no_device`: "start it with --gpus all" | **pass**, `execution_class` hardware, `evidence_claim` gpu; steering passes on `h264_nvenc`, `hevc_nvenc`, `av1_nvenc` and `hevc_vulkan` | planted `libnvidia-encode.so.1` refused |
-| `intel` | exit 0, lavapipe only (`software_vulkan`), every GPU stage `no_device`: "start it with --device /dev/dri" | **pass** on the A380, `evidence_claim` gpu: `h264_qsv` steering and round trip pass; `hevc_qsv` legs are `not_run` naming the missing `intel-media-va-driver-non-free` | `intel-media-va-driver-non-free` refused |
-| `intel-nonfree-local` (local build only) | as `intel` | **pass**: `h264_qsv` and `hevc_qsv` steering and round trip pass; report kit `intel-nonfree-local` | accepted as a local-only kit with the NOT-FOR-REDISTRIBUTION marker; the publish gate refuses it |
+| `intel` | exit 0, lavapipe only (`software_vulkan`), every GPU stage `no_device`: "start it with --device /dev/dri" | **pass** on the A380, `execution_class` hardware, `evidence_claim` gpu: `h264_qsv` and `hevc_qsv` steering change the bitstream, the side-data round trip passes on both | a planted second non-free package (`unrar`) refused; the recorded `intel-media-va-driver-non-free` accepted (below) |
 
 All reports validate (schema 2, `--kit` checked). The NVIDIA kit meets the
 positive acceptance of #229 on this host. The Intel kit meets the QSV steering
-acceptance of #230 for `h264_qsv` with the free driver and for `hevc_qsv` only
-in the local non-free build (below).
+acceptance of #230 for `h264_qsv` and `hevc_qsv` with the non-free media driver
+(below). The first revision of this note measured the free driver and a local
+non-free build separately; the table and sections below keep both columns.
 
 ## Device access
 
@@ -120,19 +120,18 @@ and lavapipe. Findings, in the order they appeared:
 3. **QSV with the free media driver.** Unsteered and steered 8-frame encodes,
    decoded back with FFmpeg:
 
-| Encoder | Free `intel-media-va-driver` 25.2.3 | Non-free 25.2.3 (throwaway container, never shipped) |
+| Encoder | Free `intel-media-va-driver` 25.2.3 | Non-free 25.2.3 (the driver of the published kit) |
 | --- | --- | --- |
 | `h264_qsv` | encodes, 8 frames; with `-pelorus_roi` on and off byte-identical (both arms carried ROI side data, see 4) | same |
-| `hevc_qsv` | every encode fails: `Invalid FrameType:0` | encodes, 8 frames; steered 6390 B against 2466 B unsteered |
+| `hevc_qsv` | every encode fails: `Invalid FrameType:0` (runtime status `MFX_ERR_ABORTED` or `MFX_ERR_DEVICE_FAILED`; `vaRenderPicture` returns `VA_STATUS_ERROR_INVALID_BUFFER`) | encodes, 8 frames; steered 6390 B against 2466 B unsteered |
 | `av1_qsv` | encodes, 8 frames (no `-pelorus_roi`, so its leg is `not_run`) | same |
 
-HEVC encode on this GPU needs the non-free media driver, which the published
-image does not ship; with the free driver both `hevc_qsv` legs are `not_run`
-and name the installed free driver and the missing non-free one (read with
-`dpkg-query` inside the image). The non-free HEVC result (more than double the
-bytes at the same `-q:v`) matches the Arc A-series low-power encode defect
-recorded in [bench results](../development/bench-results.md); the A380 exposes
-only the low-power entry point, so these runs prove the path, not quality.
+On this host (A380 on `xe`, no HuC) HEVC encode needs the non-free media driver, which the published
+Intel image now ships (decision 4a of ADR-0180); with only the free driver
+installed (a host run, or an image built by hand) both `hevc_qsv` legs are
+`not_run` and name the installed free driver and the missing non-free one
+(read with `dpkg-query`). The quality of these encodes is not measured
+here; the runs prove the path, not quality.
 
 ### `h264_qsv` ROI works; the control arm was steered too
 
@@ -152,24 +151,42 @@ data instead, 8 frames at `-q:v 30`:
 So DG2 honours the ROI rectangles with either driver; neither the driver nor
 patch 0005 was at fault. The unsteered encodes now run
 `pelorus_analyze_vulkan=roi=0`; with that control the `h264_qsv` steering leg
-passes on the A380 with the free driver.
+passes on the A380 with either driver.
 
-## Local non-free build
+## The non-free media driver is redistributable
 
-`docker build --target final-intel --build-arg INTEL_MEDIA_DRIVER=nonfree`
-builds; the licence stage checks the tree as kit `intel-nonfree-local`
-(`intel-media-va-driver-non-free` recorded as `LicenseRef-nonfree`, not
-redistributable), writes `/usr/share/licenses/pelorus-tester/NOT-FOR-REDISTRIBUTION`
-and a NOT FOR REDISTRIBUTION line in the notices. Its run on the A380 passes
-with `hevc_qsv` steering (bitstream changed) and round trip, report kit
-`intel-nonfree-local`. Refusals of the publish path:
+The first revision of this note, and ADR-0180 as first written, treated
+`intel-media-va-driver-non-free` as not redistributable and confined it to a
+local build with a NOT-FOR-REDISTRIBUTION marker. The maintainer corrected that
+on 2026-10-09 and the Debian copyright file supports it. `debian/copyright` of
+`intel-media-driver-non-free` 25.2.3+ds1-1
+(<https://sources.debian.org/data/non-free/i/intel-media-driver-non-free/25.2.3+ds1-1/debian/copyright>,
+read 2026-10-09): `Files: *`, `License: Expat`; only
+`media_driver/linux/ult/ult_app/googletest/*` is BSD-3-clause (test code); the
+header comment says the kernels move to `non-free` "as they come without
+source, i.e. we cannot rebuild them with intel-gen4asm (or similar)". The
+package sits in `non-free` for lack of kernel source, not for its terms.
+Expat needs no source offer. The ban on FFmpeg `--enable-nonfree`
+(`cuda-nvcc`, `cuda-sdk`, `libnpp`, `fdk-aac`, `decklink`, `libmpeghdec`) stays,
+because those make the FFmpeg binary non-redistributable.
+
+`docker build --target final-intel` (no build argument any more) on this host:
+the licence stage records the driver as a component with `archive_component:
+non-free` and its reason and accepts the tree (`licensing: image tree
+accepted`, self-test 31 planted defects refused); `dpkg-query` in the image
+lists `intel-media-va-driver-non-free:amd64 25.2.3+ds1-1` and no free driver.
+`docker run --rm --device /dev/dri` on the A380: verdict pass, report kit
+`intel`, `execution_class` hardware, `evidence_claim` gpu, the report validates
+with `--kit intel`; `h264_qsv` and `hevc_qsv` steering change the bitstream at 8
+and 16 frames, and the side-data round trip passes on `hevc_qsv` and
+`h264_qsv`.
 
 | Attempt | Result |
 | --- | --- |
-| the publish step `licensing.py check --kit intel` on the local non-free image | refused, 8 problems, among them `forbidden package: intel-media-va-driver-non-free` and the marker line |
-| the same check on the free image plus a planted marker file | refused: `NOT-FOR-REDISTRIBUTION is present: this tree is a local-only build ... never published as kit intel` |
-| `--target source-intel` with `INTEL_MEDIA_DRIVER=nonfree` | build exit 1: `a non-free Intel build has no -source image` |
-| `INTEL_MEDIA_DRIVER` or `intel-nonfree-local` in `tester-publish.yml` or `ci.yml` | refused by `check-build-config.py` (planted cases in its self-test) |
+| `unrar` (Debian `non-free`) added to the assembled Intel stage, `--target final-intel` | build exit 1: `debian package unrar: archive component non-free is not permitted (['main'])` |
+| `--target source-intel` | build exit 0; `/source/debian` holds `intel-media-driver-non-free_25.2.3+ds1-1.dsc`, `.orig.tar.xz` and `.debian.tar.xz`, and `installed-sources.txt` lists `intel-media-driver-non-free=25.2.3+ds1-1` |
+| FFmpeg `--enable-nonfree` through `FFMPEG_LICENCE_FLAGS` | `--target build-intel`, build exit 1: `check-ffmpeg-licence: configure line has --enable-nonfree, which this image never ships` |
+| the non-free package or the `non-free` area in any other stage, `contrib`, a second non-free package in the Intel kit | refused by `check-build-config.py` (planted cases in its self-test) |
 
 ## Licence gate proofs
 
@@ -179,7 +196,7 @@ Each planted image was built from the kit's `assembled-<kit>` stage and fed to
 | Planted | Kit | Gate output |
 | --- | --- | --- |
 | empty `/usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1` | nvidia | `forbidden file: usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1`, `unrecorded file`; build exit 1 |
-| `intel-media-va-driver-non-free` from `non-free` | intel | `forbidden package: intel-media-va-driver-non-free`, archive component `non-free` not permitted, sources name `non-free`, `intel-media-va-driver` not installed; build exit 1 |
+| `unrar` from `non-free`, beside the recorded media driver | intel | `debian package unrar: archive component non-free is not permitted (['main'])`, `unrecorded file: usr/bin/unrar`; build exit 1 |
 
 The master gate, given the same planted trees in its self-test harness, named
 neither defect (`.workingdir/evidence/229-vendor-images/vendor-failing-first-licensing.txt`,
@@ -196,5 +213,7 @@ kit 3 min 43 s. Image sizes: NVIDIA 965 MB, Intel 1.06 GB on disk.
   "no AV1 encode on this GPU or driver" is proven by planted logs only.
 - WSL2 (`/dev/dxg`, `/usr/lib/wsl/lib`) for either vendor.
 - A legacy (non-CDI) NVIDIA Container Toolkit, where `graphics` matters.
+- The A380 with HuC firmware loaded (`i915`, or `xe` once it loads DG2 HuC):
+  bitrate-control modes, and HEVC with the free driver, may work there.
 - QSV on Arc B-series and Xe-LP (B580, UHD 770), where HEVC may encode with the
   free driver and the low-power defect is absent.

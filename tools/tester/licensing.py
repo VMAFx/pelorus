@@ -17,13 +17,14 @@ that record and writes the notices file that travels inside the image.
 not redistributable, a Debian package has no copyright file or comes from
 outside the permitted archive components, a licence text is missing, a record
 component matches no file, the notices file is absent or stale, or the tree
-holds a forbidden file or package (an NVIDIA driver library, the non-free Intel
-media driver) whoever owns it. Every image kit (ADR-0180) is checked against the
-components that name it, or name no kit. A local-only kit (`local_only_kits`)
-may carry the packages and archive components its policy allows and components
-marked `local_only` that are not redistributable; `notices` then also writes the
-NOT-FOR-REDISTRIBUTION marker, and `check` of any other kit refuses a tree that
-has the marker, so such a build cannot pass the publish gate. `record`
+holds a forbidden file or package (an NVIDIA driver library) whoever owns it.
+Every image kit (ADR-0180) is checked against the components that name it, or
+name no kit. Only Debian `main` is permitted, with one exception: a `dpkg`
+component that names `archive_component` (for example `non-free`) and
+`archive_reason` admits exactly its own packages from that area, and only with a
+redistributable licence; any other package outside `main` fails (ADR-0180
+decision 4a: Debian's intel-media-va-driver-non-free is Expat, in `non-free`
+because its GPU kernels come without source). `record`
 checks the record itself and its version pins against the repository and
 needs no image. `self-test` plants each defect in a fake tree and requires the
 check to refuse it; the Containerfile runs it before the real check.
@@ -57,6 +58,7 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 URL_RE = re.compile(r"^https://[^\s]+$")
 COMPONENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 SKIPPED_TOP = frozenset({"proc", "sys", "dev"})
+ARCHIVE_AREAS = frozenset({"contrib", "non-free", "non-free-firmware"})
 USR_ALIASES = ("bin", "sbin", "lib", "lib32", "lib64", "libx32")
 SPDX_OPERATORS = frozenset({"AND", "OR", "WITH"})
 HEADER_LINES = 25
@@ -251,7 +253,7 @@ def spdx_ids(expression):
     return [t for t in re.split(r"[\s()]+", expression) if t and t not in SPDX_OPERATORS]
 
 
-def licence_problems(record, expression, what, local_only=False):
+def licence_problems(record, expression, what):
     problems = []
     registry = record.get("licences", {})
     ids = spdx_ids(expression)
@@ -261,7 +263,7 @@ def licence_problems(record, expression, what, local_only=False):
         entry = registry.get(ident)
         if entry is None:
             problems.append(f"{what}: licence {ident} is not in the record's licence registry")
-        elif entry.get("redistributable") is not True and not local_only:
+        elif entry.get("redistributable") is not True:
             problems.append(f"{what}: licence {ident} is not redistributable")
     return problems
 
@@ -271,7 +273,7 @@ def component_shape_problems(component):
     problems = [f"component {cid}: missing {k}" for k in REQUIRED_COMPONENT_KEYS if k not in component]
     if "id" in component and not COMPONENT_ID_RE.match(str(component["id"])):
         problems.append(f"component {cid}: id must match {COMPONENT_ID_RE.pattern}")
-    if component.get("redistributable") is not True and not component.get("local_only"):
+    if component.get("redistributable") is not True:
         problems.append(f"component {cid}: redistributable is not true")
     if not (str(component.get("source", "")).startswith("https://") or component.get("source_in")):
         problems.append(f"component {cid}: source must be an https URL or name source_in")
@@ -280,12 +282,29 @@ def component_shape_problems(component):
         problems.append(f"component {cid}: unknown kind {kind}")
     if kind == "dpkg" and not component.get("packages"):
         problems.append(f"component {cid}: kind dpkg needs packages")
+    problems.extend(archive_component_problems(component))
     if kind in ("files", "lock") and not component.get("paths"):
         problems.append(f"component {cid}: kind {kind} needs paths")
     if kind == "embedded" and not component.get("embedded_in"):
         problems.append(f"component {cid}: kind embedded needs embedded_in")
     if kind == "lock" and not component.get("lock"):
         problems.append(f"component {cid}: kind lock needs lock")
+    return problems
+
+
+def archive_component_problems(component):
+    """A component outside Debian main is a dpkg component that says which area and why."""
+    area = component.get("archive_component")
+    cid = component.get("id", "?")
+    if area is None:
+        return [f"component {cid}: archive_reason needs archive_component"] if "archive_reason" in component else []
+    problems = []
+    if area not in ARCHIVE_AREAS:
+        problems.append(f"component {cid}: archive_component must be one of {sorted(ARCHIVE_AREAS)}")
+    if component.get("kind") != "dpkg":
+        problems.append(f"component {cid}: archive_component needs kind dpkg")
+    if not str(component.get("archive_reason", "")).strip():
+        problems.append(f"component {cid}: archive_component needs archive_reason")
     return problems
 
 
@@ -305,31 +324,7 @@ def kit_problems(record):
                 for c in record["components"] for k in c.get("kits", []) if k not in kits]
     if "forbidden" not in record:
         return problems + ["record: a record with kits needs forbidden files and packages"]
-    return problems + forbidden_rule_problems(record["forbidden"]) + local_kit_problems(record)
-
-
-def local_kit_problems(record):
-    """Local-only kits name a reason and their allowances; local_only components stay in them."""
-    local = record.get("local_only_kits", {})
-    problems = [f"record: local-only kit {k} is not in the record's kits" for k in local if k not in record["kits"]]
-    for kit, policy in local.items():
-        if not policy.get("why"):
-            problems.append(f"record: local-only kit {kit} needs why")
-        for key in ("archive_components", "allow_packages"):
-            if not isinstance(policy.get(key, []), list):
-                problems.append(f"record: local-only kit {kit}: {key} must be a list")
-    if local and not record.get("local_marker"):
-        problems.append("record: local-only kits need local_marker")
-    for component in record["components"]:
-        kits = set(component.get("kits", []))
-        if component.get("local_only") and (not kits or not kits <= set(local)):
-            problems.append(f"component {component.get('id')}: local_only needs kits that are all local-only kits")
-    return problems
-
-
-def local_kit(record, kit):
-    """The policy of a local-only kit, or None for a kit that may be published."""
-    return record.get("local_only_kits", {}).get(kit)
+    return problems + forbidden_rule_problems(record["forbidden"])
 
 
 def forbidden_rule_problems(forbidden):
@@ -378,8 +373,7 @@ def record_problems(record):
             problems.append(f"component {cid}: duplicate id")
         seen.add(cid)
         if "spdx" in component:
-            problems.extend(licence_problems(record, str(component["spdx"]), f"component {cid}",
-                                             bool(component.get("local_only"))))
+            problems.extend(licence_problems(record, str(component["spdx"]), f"component {cid}"))
     ids = {c.get("id") for c in record["components"]}
     for component in record["components"]:
         if component.get("kind") == "embedded" and component.get("embedded_in") not in ids:
@@ -447,10 +441,8 @@ class Claims:
         return None, None
 
 
-def forbidden_problems(record, files, packages, aliases, allow=()):
-    """Forbidden files and packages fail whoever owns them (ADR-0180).
-
-    `allow` names the packages a local-only kit's policy permits."""
+def forbidden_problems(record, files, packages, aliases):
+    """Forbidden files and packages fail whoever owns them (ADR-0180)."""
     rules = record.get("forbidden", {})
     problems = []
     for rule in rules.get("files", []):
@@ -460,44 +452,38 @@ def forbidden_problems(record, files, packages, aliases, allow=()):
     for rule in rules.get("packages", []):
         compiled = compile_globs(rule["names"])
         problems.extend(f"forbidden package: {f['Package']} ({rule['why']})"
-                        for f in packages if matches(compiled, f["Package"]) and f["Package"] not in allow)
+                        for f in packages if matches(compiled, f["Package"]))
     return problems[:MAX_FORBIDDEN_HITS]
 
 
-def marker_problems(record, root, args):
-    """A local-only kit carries the NOT-FOR-REDISTRIBUTION marker; every other kit refuses it."""
-    marker = record.get("local_marker")
-    if not marker:
-        return []
-    present = (Path(root) / marker).is_file()
-    policy = local_kit(record, args.kit)
-    if policy is None and present:
-        return [f"{marker} is present: this tree is a local-only build (NOT FOR REDISTRIBUTION) "
-                f"and is never published as kit {args.kit}"]
-    if policy is not None and not present:
-        return [f"{marker} is missing: local-only kit {args.kit} must carry it"]
-    if policy is not None and read_text(Path(root) / marker) != render_marker(record, args, policy):
-        return [f"{marker} is stale: regenerate it with licensing.py notices"]
-    return []
+def recorded_areas(record):
+    """{archive area: package names} the record's components admit outside Debian main."""
+    areas = {}
+    for component in record["components"]:
+        if component.get("archive_component") and component.get("kind") == "dpkg":
+            areas.setdefault(component["archive_component"], set()).update(component["packages"])
+    return areas
 
 
-def debian_problems(record, root, packages, aliases, extra=()):
+def debian_problems(record, root, packages, aliases):
+    """Debian main only, plus the packages a redistributable component records from another area."""
     problems = []
     policy = record["debian"]
-    allowed = set(policy.get("components", ["main"])) | set(extra)
+    allowed = set(policy.get("components", ["main"]))
+    recorded = recorded_areas(record)
     for fields in packages:
         name = fields["Package"]
         section = fields.get("Section", "")
         component = section.split("/", 1)[0] if "/" in section else "main"
-        if component not in allowed:
+        if component not in allowed and name not in recorded.get(component, ()):
             problems.append(f"debian package {name}: archive component {component} is not permitted ({sorted(allowed)})")
         if copyright_path(root, name) is None:
             problems.append(f"debian package {name}: usr/share/doc/{name}/copyright is missing or empty")
     sources = read_text(Path(root) / policy.get("sources_file", "")) if policy.get("sources_file") else None
     if sources is not None:
         for line in sources.splitlines():
-            if line.startswith("Components:") and set(line.split(":", 1)[1].split()) - allowed:
-                problems.append(f"debian sources: {line.strip()} names a component outside {sorted(allowed)}")
+            if line.startswith("Components:") and set(line.split(":", 1)[1].split()) - allowed - set(recorded):
+                problems.append(f"debian sources: {line.strip()} names a component outside {sorted(allowed | set(recorded))}")
     installed = {f["Package"] for f in packages}
     for component in record["components"]:
         if component.get("kind") == "dpkg":
@@ -590,9 +576,7 @@ def check_tree(record, root, args):
     aliases = usr_prefix(root)
     owned = dpkg_owned(root, packages, aliases)
     files = walk_tree(root)
-    policy = local_kit(record, args.kit) or {}
-    problems.extend(forbidden_problems(record, files, packages, aliases, policy.get("allow_packages", ())))
-    problems.extend(marker_problems(record, root, args))
+    problems.extend(forbidden_problems(record, files, packages, aliases))
     record = scoped(record, args.kit)
     claims = Claims(record)
     claimed = {c["id"]: [] for c in record["components"]}
@@ -604,7 +588,7 @@ def check_tree(record, root, args):
         elif kind is None and canonical(rel, aliases) not in owned:
             unrecorded.append(rel)
     problems.extend(f"unrecorded file: {rel}" for rel in unrecorded)
-    problems.extend(debian_problems(record, root, packages, aliases, policy.get("archive_components", ())))
+    problems.extend(debian_problems(record, root, packages, aliases))
     for component in record["components"]:
         kind = component.get("kind", "files")
         if kind in ("files", "lock") and not claimed[component["id"]] and not component.get("optional"):
@@ -641,8 +625,6 @@ def component_lines(component, commit):
         lines.append(f"    files: /{path}")
     for path in component.get("licence_files", []):
         lines.append(f"    licence text: /{path}")
-    if component.get("redistributable") is not True:
-        lines.append("    redistributable: no (local-only build, never published)")
     for package in component.get("packages", []):
         lines.append(f"    debian package: {package}")
     for note in component.get("notes", []):
@@ -700,22 +682,8 @@ def notices_head(record, args):
     ]
 
 
-def render_marker(record, args, policy):
-    """Text of the NOT-FOR-REDISTRIBUTION marker of a local-only kit."""
-    lines = ["NOT FOR REDISTRIBUTION",
-             f"Local-only build of kit {args.kit} at commit {args.commit} (ADR-0180).",
-             f"Why: {policy['why']}",
-             "Not redistributable:"]
-    lines.extend(f"    [{c['id']}] {c['name']}: {c['spdx']}" for c in scoped(record, args.kit)["components"]
-                 if c.get("redistributable") is not True)
-    lines.append("Never push, publish or share this image or files taken from it.")
-    return "\n".join(lines) + "\n"
-
-
 def render_notices(record, root, args, packages):
     out = notices_head(record, args)
-    if local_kit(record, args.kit) is not None:
-        out += ["", f"NOT FOR REDISTRIBUTION: local-only build of kit {args.kit}; see /{record['local_marker']}."]
     out += [
         "",
         "Components",
@@ -753,12 +721,9 @@ def cmd_notices(args):
 
 
 def write_notices(record, root, args, packages):
-    """Write the notices file and, for a local-only kit, the marker; return the paths written."""
+    """Write the notices file; return the paths written."""
     view = scoped(record, args.kit)
     written = [(record["notices_path"], render_notices(view, root, args, packages))]
-    policy = local_kit(record, args.kit)
-    if policy is not None:
-        written.append((record["local_marker"], render_marker(record, args, policy)))
     for rel, text in written:
         target = Path(root) / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -811,14 +776,11 @@ def fake_record():
             "CC-BY-3.0": {"redistributable": True, "text": None, "attribution_required": True},
             "LicenseRef-nonfree": {"redistributable": False, "text": None},
         },
-        "debian": {"components": ["main"]},
-        "kits": ["generic", "nvidia", "local"],
-        "local_only_kits": {"local": {"why": "local evidence only", "archive_components": ["non-free"],
-                                      "allow_packages": ["intel-media-va-driver-non-free"]}},
-        "local_marker": "usr/share/licenses/t/NOT-FOR-REDISTRIBUTION",
+        "debian": {"components": ["main"], "sources_file": "etc/apt/sources.list.d/debian.sources"},
+        "kits": ["generic", "nvidia", "intel"],
         "forbidden": {
             "files": [{"paths": ["**/libnvidia-*.so*", "**/nvidia_icd.json"], "why": "host driver files"}],
-            "packages": [{"names": ["intel-media-va-driver-non-free", "libnvidia-*"], "why": "non-free"}],
+            "packages": [{"names": ["libnvidia-*"], "why": "host driver packages"}],
         },
         "ignore": [{"paths": ["var/lib/dpkg/**"], "why": "package manager state", "expires": "2999-01-01"}],
         "components": [
@@ -832,9 +794,10 @@ def fake_record():
              "source": "https://example.invalid/repo", "redistributable": True},
             {"id": "nv-notice", "name": "nv notice", "version": "1", "spdx": "MIT", "kits": ["nvidia"],
              "paths": ["opt/nv/NOTICE.txt"], "source": "https://example.invalid/nv", "redistributable": True},
-            {"id": "nonfree-driver", "name": "non-free driver", "version": "1", "spdx": "LicenseRef-nonfree",
-             "kind": "dpkg", "packages": ["intel-media-va-driver-non-free"], "kits": ["local"],
-             "local_only": True, "source": "https://example.invalid/nf", "redistributable": False},
+            {"id": "nonfree-driver", "name": "driver in non-free", "version": "1", "spdx": "MIT",
+             "kind": "dpkg", "packages": ["media-driver-nf"], "kits": ["intel"],
+             "archive_component": "non-free", "archive_reason": "GPU kernels come without source",
+             "source": "https://example.invalid/nf", "redistributable": True},
         ],
     }
 
@@ -842,7 +805,8 @@ def fake_record():
 def fake_tree(root, record):
     status = "Package: libfoo1\nStatus: install ok installed\nVersion: 1\nSection: libs\nArchitecture: amd64\n"
     write(root, "var/lib/dpkg/status", status + "\n")
-    write(root, "var/lib/dpkg/info/libfoo1.list", "/usr/lib/libfoo.so.1\n/usr/share/doc/libfoo1/copyright\n")
+    write(root, "etc/apt/sources.list.d/debian.sources", "Types: deb\nComponents: main\n")
+    write(root, "var/lib/dpkg/info/libfoo1.list", "/usr/lib/libfoo.so.1\n/usr/share/doc/libfoo1/copyright\n/etc/apt/sources.list.d/debian.sources\n")
     write(root, "usr/lib/libfoo.so.1")
     write(root, "usr/share/doc/libfoo1/copyright", "Format: dep5\n\nLicense: MIT\n")
     write(root, "opt/own/tool.py", f"# {SPDX_TAG} EUPL-1.2\n")
@@ -913,13 +877,15 @@ def planted_nvidia_icd(root, record, args):
     write(root, "opt/own/nvidia_icd.json")
     record["components"][0]["paths"].append("opt/own/*.json")
 
-def nonfree_media_driver(root, record, args):
-    name = "intel-media-va-driver-non-free"
+def add_package(root, name, section):
     status = Path(root) / "var/lib/dpkg/status"
     status.write_text(status.read_text() + f"Package: {name}\nStatus: install ok installed\nVersion: 1\n"
-                      "Section: video\nArchitecture: amd64\n\n")
+                      f"Section: {section}\nArchitecture: amd64\n\n")
     write(root, f"usr/share/doc/{name}/copyright", "Format: dep5\n\nLicense: MIT\n")
     write(root, f"var/lib/dpkg/info/{name}.list", f"/usr/share/doc/{name}/copyright\n")
+
+def nvidia_package(root, record, args):
+    add_package(root, "libnvidia-encode1", "libs")
 
 def other_kit_files_missing(root, record, args):
     args.kit = "nvidia"
@@ -939,32 +905,40 @@ def no_kit_given(root, record, args):
 def kits_without_forbidden(root, record, args):
     del record["forbidden"]
 
-def local_tree(root, record, args):
-    """The clean tree of the local-only kit: the non-free driver from non-free, marker written."""
-    nonfree_media_driver(root, record, args)
-    status = Path(root) / "var/lib/dpkg/status"
-    status.write_text(status.read_text().replace("Section: video\n", "Section: non-free/video\n"))
-    args.kit = "local"
+def intel_tree(root, record, args):
+    """The clean tree of kit intel: the recorded driver from non-free, its source area enabled."""
+    add_package(root, "media-driver-nf", "non-free/video")
+    write(root, "etc/apt/sources.list.d/debian.sources", "Types: deb\nComponents: main non-free\n")
+    args.kit = "intel"
     regenerate(root, record, args)
 
-def marker_in_published_kit(root, record, args):
-    write(root, record["local_marker"], "NOT FOR REDISTRIBUTION\n")
+def driver_outside_its_kit(root, record, args):
+    add_package(root, "media-driver-nf", "non-free/video")
 
-def local_without_marker(root, record, args):
-    local_tree(root, record, args)
-    os.unlink(Path(root) / record["local_marker"])
-
-def local_stale_marker(root, record, args):
-    local_tree(root, record, args)
-    write(root, record["local_marker"], "NOT FOR REDISTRIBUTION\n")
-
-def local_only_in_published_kit(root, record, args):
-    record["components"][4]["kits"] = ["generic"]
-
-def local_allowance_leaks(root, record, args):
-    local_tree(root, record, args)
-    args.kit = "generic"
+def other_package_beside_driver(root, record, args):
+    intel_tree(root, record, args)
+    add_package(root, "other-nf", "non-free/libs")
     regenerate(root, record, args)
+
+def contrib_beside_driver(root, record, args):
+    intel_tree(root, record, args)
+    add_package(root, "other-contrib", "contrib/libs")
+    regenerate(root, record, args)
+
+def unrecorded_source_area(root, record, args):
+    intel_tree(root, record, args)
+    write(root, "etc/apt/sources.list.d/debian.sources", "Types: deb\nComponents: main non-free contrib\n")
+
+def driver_not_redistributable(root, record, args):
+    intel_tree(root, record, args)
+    record["licences"]["LicenseRef-nonfree"] = {"redistributable": False, "text": None}
+    record["components"][4]["spdx"] = "LicenseRef-nonfree"
+
+def driver_without_reason(root, record, args):
+    del record["components"][4]["archive_reason"]
+
+def driver_in_unknown_area(root, record, args):
+    record["components"][4]["archive_component"] = "restricted"
 
 def unattributed_fixture(root, record, args):
     lock = json.loads((Path(root) / "opt/own/fixtures.lock.json").read_text())
@@ -990,18 +964,20 @@ SELF_TEST_CASES = [
     ("ignore rule without expiry", undated_ignore, "needs paths, why and expires", True),
     ("NVIDIA library owned by a package", planted_nvidia_library, "forbidden file: usr/lib/libnvidia-encode.so.1", False),
     ("NVIDIA ICD claimed by a component", planted_nvidia_icd, "forbidden file: opt/own/nvidia_icd.json", True),
-    ("non-free Intel media driver from main", nonfree_media_driver, "forbidden package: intel-media-va-driver-non-free", True),
+    ("NVIDIA driver package", nvidia_package, "forbidden package: libnvidia-encode1", False),
     ("kit component without its files", other_kit_files_missing, "component nv-notice: no file in the image", True),
     ("unknown kit", unknown_kit, "--kit amd is not one of the record's kits", False),
     ("component names an unknown kit", component_unknown_kit, "kit amd is not in the record's kits", False),
     ("forbidden file rules removed", no_forbidden_rules, "forbidden.files needs at least one rule", False),
     ("record with kits checked without --kit", no_kit_given, "--kit is required", False),
     ("record with kits but no forbidden rules", kits_without_forbidden, "a record with kits needs forbidden", False),
-    ("NOT-FOR-REDISTRIBUTION marker in a published kit", marker_in_published_kit, "is never published as kit generic", True),
-    ("local-only kit without its marker", local_without_marker, "NOT-FOR-REDISTRIBUTION is missing", False),
-    ("local-only kit with a stale marker", local_stale_marker, "NOT-FOR-REDISTRIBUTION is stale", False),
-    ("local_only component in a published kit", local_only_in_published_kit, "local_only needs kits that are all local-only", False),
-    ("local-only allowance used by a published kit", local_allowance_leaks, "forbidden package: intel-media-va-driver-non-free", False),
+    ("recorded non-free package in a kit that does not record it", driver_outside_its_kit, "debian package media-driver-nf: archive component non-free is not permitted", False),
+    ("other non-free package beside the recorded one", other_package_beside_driver, "debian package other-nf: archive component non-free is not permitted", False),
+    ("contrib package beside the recorded non-free one", contrib_beside_driver, "debian package other-contrib: archive component contrib is not permitted", False),
+    ("source area the record does not name", unrecorded_source_area, "names a component outside", False),
+    ("non-free package with a non-redistributable licence", driver_not_redistributable, "is not redistributable", False),
+    ("non-free component without a reason", driver_without_reason, "archive_component needs archive_reason", False),
+    ("non-free component in an unknown archive area", driver_in_unknown_area, "archive_component must be one of", False),
 ]
 
 
@@ -1031,13 +1007,13 @@ def cmd_self_test(_args):
         problems = check_tree(record, good, args)
         if problems:
             failures.append(f"the clean tree was refused: {problems}")
-        local = base / "local"
-        local.mkdir()
-        args = fake_tree(local, record)
-        local_tree(local, record, args)
-        problems = check_tree(record, local, args)
-        if problems or "NOT FOR REDISTRIBUTION" not in read_text(local / record["notices_path"]):
-            failures.append(f"the clean local-only tree was refused or its notices lack the banner: {problems}")
+        intel = base / "intel"
+        intel.mkdir()
+        args = fake_tree(intel, record)
+        intel_tree(intel, record, args)
+        problems = check_tree(record, intel, args)
+        if problems:
+            failures.append(f"the clean tree of the kit with a recorded non-free package was refused: {problems}")
         for index, (name, mutate, expected, regen) in enumerate(self_test_cases()):
             problems = run_case(base, index, mutate, regen)
             if not any(expected in p for p in problems):
@@ -1048,7 +1024,7 @@ def cmd_self_test(_args):
 
 
 def self_test_ok():
-    print(f"licensing: self-test accepted the clean and the local-only tree and refused all "
+    print(f"licensing: self-test accepted the clean trees (with a recorded non-free package) and refused all "
           f"{len(self_test_cases())} planted defects")
     return 0
 

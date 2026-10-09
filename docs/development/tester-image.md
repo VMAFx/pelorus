@@ -9,10 +9,10 @@ The rules are fixed by [ADR-0173](../adr/0173-tester-programme.md) and
 Status: `tools/tester/Containerfile` builds three kits
 ([ADR-0180](../adr/0180-tester-vendor-images.md)): `generic` (CPU), `nvidia`
 (NVENC through the host driver, no NVIDIA file inside) and `intel` (Mesa ANV,
-oneVPL, the free media driver), each with a GPL-3.0-or-later FFmpeg, its
+oneVPL, the Expat-licensed non-free media driver), each with a GPL-3.0-or-later FFmpeg, its
 licence gates and a `-source` target. All three build locally; the NVIDIA kit
-passes on an RTX 4090 and the Intel kit on an Arc A380, where `hevc_qsv` needs
-the non-free media driver and its legs are named `not_run`
+passes on an RTX 4090 and the Intel kit on an Arc A380 (`xe` kernel driver, no HuC), with `hevc_qsv` steering
+through `intel-media-va-driver-non-free`
 ([research 0229](../research/0229-tester-vendor-images.md)). Nothing has been
 dispatched end to end yet: the hosted build, the push and the SBOM attestation
 verify line (predicate type `https://spdx.dev/Document/v2.3`) are unproven
@@ -24,18 +24,30 @@ until the first dispatch.
 | --- | --- | --- | --- | --- |
 | `generic` | `final-generic` | `source-generic` | `tester-<YYYYMMDD>-<sha8>` | nothing |
 | `nvidia` | `final-nvidia` | `source-nvidia` | `tester-nvidia-<YYYYMMDD>-<sha8>` | `libegl1` and `libxext6` (the host's Vulkan ICD needs both), `libdav1d7`; FFmpeg with `--enable-ffnvcodec --enable-nvenc --enable-libdav1d` against `nv-codec-headers` `n12.1.14.0`, whose notices ship and whose tree is in `-source` under `/source/kit/` |
-| `intel` | `final-intel` | `source-intel` | `tester-intel-<YYYYMMDD>-<sha8>` | `mesa-vulkan-drivers`, `libvpl2`, `libmfx-gen1.2`, `libva2`, `libva-drm2`, `intel-media-va-driver`, `libdav1d7`; FFmpeg with `--enable-libvpl --enable-vaapi --enable-libdrm --disable-xlib --enable-libdav1d` |
+| `intel` | `final-intel` | `source-intel` | `tester-intel-<YYYYMMDD>-<sha8>` | `mesa-vulkan-drivers`, `libvpl2`, `libmfx-gen1.2`, `libva2`, `libva-drm2`, `intel-media-va-driver-non-free` (Debian `non-free`; Expat, see below), `libdav1d7`; FFmpeg with `--enable-libvpl --enable-vaapi --enable-libdrm --disable-xlib --enable-libdav1d` |
 
-Every `-source` tag is the image tag plus `-source`. A fourth kit,
-`intel-nonfree-local`, exists only as a local build of `final-intel` with
-`--build-arg INTEL_MEDIA_DRIVER=nonfree` (the line is in
-[tester images](../usage/tester.md#local-build-with-the-non-free-media-driver)).
-It is never published, and four points refuse it on the way: no workflow may
-name `INTEL_MEDIA_DRIVER` or the kit (`scripts/check-build-config.py`, with a
-planted case for `ci.yml` and both tester jobs); the build arg defaults to
-`free` in every stage that reads it; `--target source-intel` refuses
-`nonfree`; and the publish gate, `licensing.py check --kit intel`, refuses a
-tree with the NOT-FOR-REDISTRIBUTION marker or the non-free package. The stages of one kit are
+Every `-source` tag is the image tag plus `-source`.
+
+The Intel kit is the only package outside Debian `main`. `intel-media-va-driver-non-free`
+is Expat-licensed (`debian/copyright` of `intel-media-driver-non-free`
+25.2.3+ds1-1); Debian ships it in `non-free` because Intel's GPU kernels come
+without source, not because of its licence ([ADR-0180](../adr/0180-tester-vendor-images.md)
+decision 4a). Three places carry that one exception and nothing wider:
+
+- `tools/tester/licensing.json`: the component `intel-media-driver` names
+  `archive_component: non-free` and an `archive_reason`; `licensing.py check`
+  admits exactly that component's packages from that area, and only with a
+  redistributable licence. Another `non-free` or `contrib` package, or the
+  driver in a kit that does not record it, fails.
+- `tools/tester/Containerfile`: the `non-free` area is enabled only in
+  `assembled-intel` and `debian-sources-intel` (the `-source` image fetches the
+  driver's Debian source package with `deb-src` of `main non-free`).
+- `scripts/check-build-config.py`: refuses the package name or the `non-free`
+  area anywhere else, `contrib`, and any second non-free package.
+
+Expat needs no source offer; the Debian source package is in `-source` anyway.
+FFmpeg `--enable-nonfree` and the other nonfree components stay refused
+(`check-ffmpeg-licence.sh`, `check-build-config.py`). The stages of one kit are
 `build-<kit>` (FFmpeg through `tools/tester/build-ffmpeg.sh`), `assembled-<kit>`,
 `licence-<kit>`, `final-<kit>`, `debian-sources-<kit>` and `source-<kit>`; the
 `build` stage (toolchain, libpelorus, the patched FFmpeg tree) and the `base`
@@ -150,10 +162,10 @@ Kits ([ADR-0180](../adr/0180-tester-vendor-images.md)): the record lists the
 kits, a component may name the kits it belongs to (no list: every kit), and
 `licensing.py check` and `notices` take `--kit`. The record's `forbidden`
 section names files (`libcuda.so*`, `libnvidia-*.so*`, `nvidia_icd.json`, ...)
-and packages (`intel-media-va-driver-non-free`, `nvidia-*`, `libnvidia-*`,
-`libcuda*`, ...) that fail every kit whoever owns them, a dpkg package or a
-component glob. `scripts/check-build-config.py` also refuses a vendor driver,
-CUDA or non-free package in any `apt-get install` of the Containerfile.
+and packages (`nvidia-*`, `libnvidia-*`, `libcuda*`, ...) that fail every kit
+whoever owns them, a dpkg package or a component glob. `scripts/check-build-config.py` also refuses a vendor driver,
+CUDA or non-free package in any `apt-get install` of the Containerfile, except
+the one named above.
 
 To see a failure, plant it in a copy of a kit's assembled stage and build that
 kit's image against it; the `licence-<kit>` stage must fail:
@@ -166,12 +178,12 @@ printf 'FROM planted-base\nRUN touch /usr/lib/x86_64-linux-gnu/libnvidia-encode.
 docker build -f tools/tester/Containerfile --target final-nvidia ... \
   --build-context assembled-nvidia=docker-image://planted .     # fails: forbidden file
 
-# the non-free media driver in the Intel image
+# a second non-free package in the Intel image
 docker build -f tools/tester/Containerfile --target assembled-intel ... --tag planted-base .
-printf 'FROM planted-base\nRUN sed -i "s/^Components: main$/Components: main non-free/" /etc/apt/sources.list.d/debian.sources \\\n && apt-get update && apt-get install -y intel-media-va-driver-non-free\n' \
+printf 'FROM planted-base\nRUN sed -i "s/^Components: main$/Components: main non-free/" /etc/apt/sources.list.d/debian.sources \\\n && apt-get update && apt-get install -y firmware-misc-nonfree\n' \
   | docker build -t planted -
 docker build -f tools/tester/Containerfile --target final-intel ... \
-  --build-context assembled-intel=docker-image://planted .      # fails: forbidden package
+  --build-context assembled-intel=docker-image://planted .      # fails: archive component non-free is not permitted
 ```
 
 ## Licence gate

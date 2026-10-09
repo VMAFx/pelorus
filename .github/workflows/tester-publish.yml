@@ -3,8 +3,8 @@ name: Tester publish
 # Tester images are evidence for one commit reachable from master, never a
 # release (ADR-0173, ADR-0176). There is one image per kit (ADR-0180): generic
 # (CPU), nvidia (NVENC through the host driver, no NVIDIA file inside) and intel
-# (Mesa ANV, oneVPL, the free media driver); each job runs once per kit and a
-# kit never cancels another. Pull requests build the images and push nothing,
+# (Mesa ANV, oneVPL, Debian's Expat-licensed non-free media driver); each job
+# runs once per kit and a kit never cancels another. Pull requests build the images and push nothing,
 # only when they touch what the image is built from (a docs-only pull request
 # does not start it). A nightly schedule builds master once and publishes
 # nothing: only the `build` job can run on it (ADR-0178, #235).
