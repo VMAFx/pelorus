@@ -85,12 +85,16 @@ libpelorus/
    `encode_record.c`, `sha256.c`, registry: not mirrored -> `test/interop_test.c`
    calls only `interop.c` API. New file: EUPL header, SPDX line, at most one
    `#include "pelorus/..."` (VMAFx `render_vendor`).
-10. **Telemetry names = registry.** `PEL_TLM_F_*` bit, key in
+10. **Mirror contract.** Change to a file in `libpelorus/mirror-paths.txt`:
+    must be on `master` and released before VMAFx pins it; follow
+    `docs/api/mirror-contract.md`; PR carries the mirror checklist item.
+    `scripts/check-mirror-contract.py` keeps page and list in step.
+11. **Telemetry names = registry.** `PEL_TLM_F_*` bit, key in
     `schema/telemetry-fields.json`, API page: change together; bits
     append-only, never renumbered or reused. Fast suite runs
     `scripts/check-telemetry-field-parity.py` (SKIP until VMAFx/vmafx#2271
     publishes its list) plus its `--self-test`.
-11. **Encode-record digest = Python reference.** Canonical text equals
+12. **Encode-record digest = Python reference.** Canonical text equals
     `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)`
     for every accepted record. Worked example in `docs/api/encode-record.md`
     = test input: change example and digest together. No recursion:

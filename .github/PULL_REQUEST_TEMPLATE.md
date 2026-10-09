@@ -24,6 +24,7 @@
 - [ ] **Rebase note** `docs/rebase-notes.md` if the FFmpeg patch stack is affected (or "no rebase impact: REASON")
 - [ ] **Patch-stack sync**: a libpelorus surface the patches consume changed ⇒ regenerated patch is included (`/ffmpeg-build-patches`)
 - [ ] **Interop ABI** (if touched) is **append-only**, `PELORUS_ABI_MINOR` bumped, conformance fixture extended (`/bump-abi`)
+- [ ] **VMAFx mirror** (if a file in `libpelorus/mirror-paths.txt` changed): lands on `master` before VMAFx re-pins, follow-up VMAFx issue named, contract in `docs/api/mirror-contract.md` followed (or n/a: no mirrored file touched)
 - [ ] **Shader source**: canonical `ffmpeg-patches/files/vulkan/*.comp.glsl` updated; no inline/runtime GLSL added; standalone reference impact reviewed
 - [ ] Touched files **lint-clean** (clang-format + clang-tidy); any `// NOLINT` cited
 - [ ] Conventional Commit subject; not committing to `master` directly

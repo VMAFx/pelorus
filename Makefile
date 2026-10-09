@@ -40,6 +40,8 @@ docs-check:
 	bash scripts/release/concat-changelog-fragments.sh --check
 	python3 -I scripts/adr/check-status.py --self-test
 	python3 -I scripts/adr/check-status.py
+	python3 -I scripts/check-mirror-contract.py --self-test
+	python3 -I scripts/check-mirror-contract.py
 
 compile-context:
 	$(PRAETORCTL) compile-context

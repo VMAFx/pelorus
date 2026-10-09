@@ -131,6 +131,9 @@ conformance fixture (`libpelorus/test/interop_test.c`). A breaking change is
 forbidden — mint a new section bit instead. See
 [docs/adr/0103-interop-sidedata-abi.md](docs/adr/0103-interop-sidedata-abi.md).
 
+Ten of the libpelorus files are mirrored by VMAFx; changing one follows the
+[mirror contract](docs/api/mirror-contract.md).
+
 ## License
 
 A contribution falls under the licence of the file it changes; a file says
