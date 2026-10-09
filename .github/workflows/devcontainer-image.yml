@@ -2,7 +2,8 @@ name: Dev container image
 
 # Builds the dev container toolchain base image from
 # .devcontainer/base/Containerfile (ADR-0153). A pull request that touches the
-# Containerfile or this workflow builds the image and pushes nothing. A push to
+# Containerfile, its licence record or the licence gate it runs, or this
+# workflow builds the image and pushes nothing. A push to
 # master that touches them, or a manual run, builds it, pushes
 # ghcr.io/vmafx/pelorus-dev tagged with the commit SHA and latest, and attests
 # SLSA build provenance for the pushed digest.
@@ -11,11 +12,15 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - '.devcontainer/base/**'
+      - 'tools/tester/licensing.py'
+      - 'LICENSES/EUPL-1.2.txt'
       - '.github/workflows/devcontainer-image.yml'
   push:
     branches: [master]
     paths:
       - '.devcontainer/base/**'
+      - 'tools/tester/licensing.py'
+      - 'LICENSES/EUPL-1.2.txt'
       - '.github/workflows/devcontainer-image.yml'
   workflow_dispatch:
 
@@ -57,9 +62,10 @@ jobs:
         if: github.event.pull_request.draft != true
         run: |
           docker build \
+            --build-arg PELORUS_COMMIT="$GITHUB_SHA" \
             --tag "$IMAGE:pr-${GITHUB_SHA}" \
             --file .devcontainer/base/Containerfile \
-            .devcontainer/base
+            .
 
   publish:
     name: Build, push and attest pelorus-dev
@@ -86,8 +92,9 @@ jobs:
           docker build \
             --tag "$IMAGE:$GITHUB_SHA" \
             --tag "$IMAGE:latest" \
+            --build-arg PELORUS_COMMIT="$GITHUB_SHA" \
             --file .devcontainer/base/Containerfile \
-            .devcontainer/base
+            .
       - name: Push
         id: push
         shell: bash

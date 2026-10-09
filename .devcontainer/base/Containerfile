@@ -1,17 +1,25 @@
-# Pelorus dev container toolchain base (ADR-0153).
+# Pelorus dev container toolchain base (ADR-0153, ADR-0179).
 #
 # Praetor renders .devcontainer/devcontainer.json, Dockerfile.praetor and the
 # praetor-source.*.b64 parts from the pinned engine; audit verifies them byte for
 # byte, so the native toolchain cannot be added there. This image is the
 # digest-pinned --base-image that Dockerfile.praetor is meant to build on. It
-# starts from Praetor's reviewed default base and adds the packages the CI jobs
-# in .github/workflows/ci.yml install on their ubuntu-26.04 runners, plus the
+# starts from the plain Ubuntu image, not from Microsoft's devcontainers base:
+# that base ships a git built from source in /usr/local (GPL, no source offer)
+# and oh-my-zsh, none of which this image has a licence record for (ADR-0179).
+# On top it adds the user the dev container runs as, the packages the CI jobs
+# in .github/workflows/ci.yml install on their ubuntu-26.04 runners, and the
 # repository gate tools.
+#
+# Every file in the finished image belongs to an Ubuntu package or to a
+# component of .devcontainer/base/licensing.json, or the build fails (stage
+# licence). Build from the repository root:
+#   docker build -f .devcontainer/base/Containerfile --build-arg PELORUS_COMMIT=$(git rev-parse HEAD) .
 #
 # .github/workflows/devcontainer-image.yml builds it on pull requests and
 # publishes ghcr.io/vmafx/pelorus-dev from master. The bundle names the
 # published digest only after a separate re-render (docs/development/build.md#dev-container).
-FROM mcr.microsoft.com/devcontainers/base:ubuntu26.04@sha256:edfb983aab9c579a385dc23c57d7d3703f5ec920124d99c16204a2cac465aab4
+FROM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7 AS assembled
 
 ARG ACTIONLINT_VERSION=1.7.12
 ARG ACTIONLINT_SHA256=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
@@ -19,9 +27,11 @@ ARG LEFTHOOK_VERSION=2.1.14
 ARG LEFTHOOK_SHA256=2be3187101b3a2edd5edf8b546aa2e3820531c517b4cd0216601a9c06f07c42d
 ARG NODE_VERSION=24.21.0
 ARG NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+# The Lefthook release archive holds the binary only; its licence text comes
+# from the release tag, pinned by hash like the archive itself.
+ARG LEFTHOOK_LICENSE_SHA256=bada014d17255e0adcb77f0f3fdc65949fc9623e334999ad1dad4c102e0cbf43
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-USER root
 
 # core + sanitizers jobs: Meson, Ninja, clang (format, tidy), SPIR-V compilers.
 # ffmpeg-stack job: native build, Vulkan and encoder headers, assemblers.
@@ -32,12 +42,20 @@ USER root
 # hadolint ignore=DL3008
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        build-essential ca-certificates curl git make pkg-config xz-utils \
+        build-essential ca-certificates curl git make pkg-config sudo xz-utils \
         meson ninja-build clang clang-format clang-tidy glslc glslang-tools \
         nasm yasm libvulkan-dev libvpl-dev libaom-dev libsvtav1enc-dev \
         libffmpeg-nvenc-dev \
         python3 black shellcheck \
     && rm -rf /var/lib/apt/lists/*
+
+# The user the dev container runs as (devcontainer.json remoteUser). Ubuntu's
+# image already holds uid 1000 as "ubuntu"; rename it, so the uid stays 1000 and
+# the dev container features find the user they expect.
+RUN usermod -l vscode -d /home/vscode -m ubuntu \
+    && groupmod -n vscode ubuntu \
+    && echo 'vscode ALL=(root) NOPASSWD:ALL' > /etc/sudoers.d/vscode \
+    && chmod 0440 /etc/sudoers.d/vscode
 
 # The documentation gate runs TypeScript figure sources through Node's type
 # stripping, which Ubuntu's nodejs 22 build lacks (process.features.typescript
@@ -47,26 +65,66 @@ RUN curl -fsSLo /tmp/node.tar.xz \
         "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
     && echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - \
     && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner \
-        --exclude=CHANGELOG.md --exclude=LICENSE --exclude=README.md \
+        --exclude=CHANGELOG.md --exclude=README.md \
+    && install -d /usr/local/share/licenses/node \
+    && mv /usr/local/LICENSE /usr/local/share/licenses/node/LICENSE \
     && rm -f /tmp/node.tar.xz \
     && node --version \
     && node -p 'process.features.typescript' | grep -qx strip
 
 # actionlint and Lefthook have no Ubuntu package; install the pinned release
-# binaries after checking the checksums their release pages publish.
+# binaries after checking the checksums their release pages publish. Each
+# tool's licence text goes to /usr/local/share/licenses/<tool>/ (ADR-0179).
 RUN curl -fsSLo /tmp/actionlint.tar.gz \
         "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
     && echo "${ACTIONLINT_SHA256}  /tmp/actionlint.tar.gz" | sha256sum -c - \
-    && tar -xzf /tmp/actionlint.tar.gz -C /usr/local/bin actionlint \
+    && install -d /tmp/actionlint /usr/local/share/licenses/actionlint /usr/local/share/licenses/lefthook \
+    && tar -xzf /tmp/actionlint.tar.gz -C /tmp/actionlint actionlint LICENSE.txt \
+    && install -m 0755 /tmp/actionlint/actionlint /usr/local/bin/actionlint \
+    && install -m 0644 /tmp/actionlint/LICENSE.txt /usr/local/share/licenses/actionlint/LICENSE.txt \
+    && curl -fsSLo /usr/local/share/licenses/lefthook/LICENSE \
+        "https://raw.githubusercontent.com/evilmartians/lefthook/v${LEFTHOOK_VERSION}/LICENSE" \
+    && echo "${LEFTHOOK_LICENSE_SHA256}  /usr/local/share/licenses/lefthook/LICENSE" | sha256sum -c - \
     && curl -fsSLo /tmp/lefthook.gz \
         "https://github.com/evilmartians/lefthook/releases/download/v${LEFTHOOK_VERSION}/lefthook_${LEFTHOOK_VERSION}_Linux_x86_64.gz" \
     && echo "${LEFTHOOK_SHA256}  /tmp/lefthook.gz" | sha256sum -c - \
     && gunzip -c /tmp/lefthook.gz > /usr/local/bin/lefthook \
-    && chmod 0755 /usr/local/bin/actionlint /usr/local/bin/lefthook \
-    && rm -f /tmp/actionlint.tar.gz /tmp/lefthook.gz
+    && chmod 0755 /usr/local/bin/lefthook \
+    && rm -rf /tmp/actionlint /tmp/actionlint.tar.gz /tmp/lefthook.gz
 
-LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
-      org.opencontainers.image.description="Pelorus dev container toolchain base (ADR-0153)" \
-      org.opencontainers.image.licenses="EUPL-1.2"
+# The licence gate (ADR-0179, #256). .devcontainer/base/licensing.json records
+# every component the image holds beyond the Ubuntu packages; tools/tester/
+# licensing.py checks the finished tree against it.
+COPY tools/tester/licensing.py /usr/local/share/pelorus-dev/licensing.py
+COPY .devcontainer/base/licensing.json /usr/local/share/pelorus-dev/licensing.json
+COPY LICENSES/EUPL-1.2.txt /usr/share/licenses/pelorus-dev/texts/EUPL-1.2.txt
+
+# Writes the notices file, then fails the build on a file no Ubuntu package or
+# component owns, a licence that is unknown or not redistributable, a package
+# without its copyright file or from outside main and universe, a missing
+# licence text, or stale notices. Its self-test plants each defect first, so a
+# broken gate cannot pass. The final stage takes the notices from this stage,
+# so the image cannot be built without the gate having passed on the finished
+# tree.
+FROM assembled AS licence
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ARG PELORUS_COMMIT
+RUN python3 -I -B /usr/local/share/pelorus-dev/licensing.py self-test \
+    && python3 -I -B /usr/local/share/pelorus-dev/licensing.py notices --root / \
+        --record /usr/local/share/pelorus-dev/licensing.json --commit "${PELORUS_COMMIT}" \
+    && python3 -I -B /usr/local/share/pelorus-dev/licensing.py check --root / \
+        --record /usr/local/share/pelorus-dev/licensing.json --commit "${PELORUS_COMMIT}"
+
+FROM assembled AS final
+ARG PELORUS_COMMIT
+COPY --from=licence /usr/share/licenses/pelorus-dev/THIRD_PARTY_NOTICES.txt /usr/share/licenses/pelorus-dev/THIRD_PARTY_NOTICES.txt
+# No org.opencontainers.image.licenses label: the image holds software under
+# many licences, and one SPDX expression for all of it would be wrong or
+# unreadable. The notices file and the record name each component's licence.
+LABEL org.opencontainers.image.title="pelorus-dev" \
+      org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
+      org.opencontainers.image.description="Pelorus dev container toolchain base (ADR-0153); licences in /usr/share/licenses/pelorus-dev/THIRD_PARTY_NOTICES.txt (ADR-0179)" \
+      org.opencontainers.image.revision="${PELORUS_COMMIT}" \
+      dev.vmafx.pelorus.notices="/usr/share/licenses/pelorus-dev/THIRD_PARTY_NOTICES.txt"
 
 USER vscode

@@ -1,0 +1,6 @@
+# The dev image build context (BuildKit reads <Containerfile>.dockerignore):
+# the repository root, cut down to the three files the licence gate copies.
+*
+!tools/tester/licensing.py
+!.devcontainer/base/licensing.json
+!LICENSES/EUPL-1.2.txt

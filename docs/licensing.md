@@ -128,6 +128,10 @@ a file, package or licence that record does not cover and writes
 `/usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt` into the image
 ([ADR-0178](adr/0178-tester-artifact-licence-record.md),
 [the runbook](development/tester-image.md#licence-record)).
+The public `pelorus-dev` image does the same with `.devcontainer/base/licensing.json`
+and `/usr/share/licenses/pelorus-dev/THIRD_PARTY_NOTICES.txt`
+([ADR-0179](adr/0179-dev-image-licence-record.md),
+[the build guide](development/build.md#licence-record-and-notices)).
 
 ## Contributing
 
