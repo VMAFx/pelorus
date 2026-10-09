@@ -92,8 +92,7 @@ Tool version and tool digest, schema version, `execution_class` and
 `PELORUS_TESTER_COMMIT` and `PELORUS_TESTER_PACKAGE`, `unknown` and
 `source-checkout` outside an image), the image `kit` (from
 `PELORUS_TESTER_KIT`: `generic`, `nvidia`, `intel`, or `source` outside an
-image; `intel-nonfree-local` for a local build with the non-free Intel media
-driver, recognised by its NOT-FOR-REDISTRIBUTION marker), OS, architecture, CPU count, Python version, per device name, driver,
+image), OS, architecture, CPU count, Python version, per device name, driver,
 Vulkan API version, vendor id and device type, per stage status, reason,
 duration, exit code and the last 4000 characters of its output. The steering
 and side-data stages add `legs`: one entry per encoder with its codec, `pass`,

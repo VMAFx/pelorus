@@ -82,7 +82,8 @@ NOEFFECT_RE = re.compile(r"(continuing without ROI bias"
 FILTER_CHAIN = "pelorus_analyze_vulkan=roi=1"
 CONTROL_CHAIN = "pelorus_analyze_vulkan=roi=0"
 # Intel media driver packages; a QSV leg that fails with only the free one
-# installed names the non-free one it lacks (ADR-0180).
+# installed (a host run or a custom image: the tester-intel image ships the
+# non-free one) names the non-free one it lacks (ADR-0180).
 MEDIA_DRIVER_FREE = "intel-media-va-driver"
 MEDIA_DRIVER_NONFREE = "intel-media-va-driver-non-free"
 # kind: vulkan = frames stay in VRAM to the encoder; hw = hwdownload to a
@@ -466,7 +467,7 @@ def free_driver_leg(ctx, enc, state, note):
             or MEDIA_DRIVER_NONFREE in drivers):
         return state, note
     return "not_run", ("%s does not encode here with the free %s %s; %s is not installed (the "
-                       "published image ships the free driver only, ADR-0180): %s" % (
+                       "tester-intel image ships it, ADR-0180): %s" % (
                            enc["name"], MEDIA_DRIVER_FREE, drivers[MEDIA_DRIVER_FREE],
                            MEDIA_DRIVER_NONFREE, note))[:400]
 

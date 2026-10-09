@@ -21,7 +21,7 @@
     "generated_utc": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
     "commit": {"type": "string", "pattern": "^([0-9a-f]{40}|unknown)$", "description": "Source commit of the kit; 'unknown' only for a run outside a published package."},
     "package": {"type": "string", "maxLength": 128},
-    "kit": {"enum": ["source", "generic", "nvidia", "intel", "intel-nonfree-local"], "description": "Optional, added in tool 0.4.0 (absent means source). The tester image kit that ran (PELORUS_TESTER_KIT, ADR-0180), or source for a run from a checkout. intel-nonfree-local: a local build with the non-free Intel media driver (its image carries the NOT-FOR-REDISTRIBUTION marker and is never published). A vendor kit's no_device reasons name its docker option (--gpus all, --device /dev/dri)."},
+    "kit": {"enum": ["source", "generic", "nvidia", "intel"], "description": "Optional, added in tool 0.4.0 (absent means source). The tester image kit that ran (PELORUS_TESTER_KIT, ADR-0180), or source for a run from a checkout. A vendor kit's no_device reasons name its docker option (--gpus all, --device /dev/dri)."},
     "host": {
       "type": "object",
       "additionalProperties": false,

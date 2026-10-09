@@ -67,9 +67,13 @@ docker run --rm --device /dev/dri -v "$PWD/report:/report" ghcr.io/vmafx/pelorus
 ```
 
 - The image carries Mesa's Vulkan drivers (ANV for Intel), the oneVPL
-  dispatcher and GPU runtime (`libvpl2`, `libmfx-gen1.2`) and the free
-  `intel-media-va-driver`, all from Debian `main`. It never carries
-  `intel-media-va-driver-non-free`; the licence gate fails the build if it does.
+  dispatcher and GPU runtime (`libvpl2`, `libmfx-gen1.2`) from Debian `main`
+  and Debian's `intel-media-va-driver-non-free`. That package is Expat-licensed
+  and redistributable; Debian lists it under `non-free` only because Intel's
+  GPU kernels come without source. It is the only package the licence gate
+  admits from outside `main`: the gate records it with that reason and fails
+  the build on any other `non-free` or `contrib` package
+  ([ADR-0180](../adr/0180-tester-vendor-images.md)).
 - `--device /dev/dri` passes every GPU of the host. To test one GPU on a
   machine with several, pass only its render node, found under
   `/dev/dri/by-path/` (for example `--device /dev/dri/renderD129`).
@@ -79,12 +83,13 @@ docker run --rm --device /dev/dri -v "$PWD/report:/report" ghcr.io/vmafx/pelorus
 - QSV finds the Intel GPU by vendor id among the render nodes (the image's
   FFmpeg is built with libdrm for that), so another vendor's render node first
   in the list does not matter.
-- With the free media driver, `hevc_qsv` cannot encode on Arc A-series (A380:
-  `Invalid FrameType:0` on every encode). Its steering and side-data legs are
-  `not_run` and the reason names the installed free driver and the missing
-  `intel-media-va-driver-non-free`; the stage reads both from dpkg inside the
-  image. The published image never ships the non-free driver
-  ([research 0229](../research/0229-tester-vendor-images.md)).
+- The non-free media driver is what lets `hevc_qsv` encode on Arc A-series
+  (the free `intel-media-va-driver` fails with `Invalid FrameType:0` on an
+  A380). If the stage finds only the free driver installed (a run from a
+  checkout on a host that has it, or an image built by hand), the `hevc_qsv`
+  steering and side-data legs are `not_run` and the reason names the installed
+  free driver and the missing `intel-media-va-driver-non-free`; the stage reads
+  both from dpkg ([research 0229](../research/0229-tester-vendor-images.md)).
 - `av1_qsv` encodes on Arc and newer GPUs, but the patch stack adds
   `-pelorus_roi` to `h264_qsv` and `hevc_qsv` only, so the AV1 QSV steering leg
   is `not_run` and says so. On a GPU without AV1 encode the same leg reads
@@ -92,34 +97,6 @@ docker run --rm --device /dev/dri -v "$PWD/report:/report" ghcr.io/vmafx/pelorus
 - WSL2: Intel GPUs in WSL2 use `/dev/dxg` and the Windows driver's libraries
   under `/usr/lib/wsl/lib`, which this image does not use; the Linux render
   node path above is the supported one ([research 0229](../research/0229-tester-vendor-images.md)).
-
-#### Local build with the non-free media driver
-
-For HEVC QSV evidence on a GPU the free driver cannot encode HEVC on, build the
-Intel image yourself with Debian's non-free media driver. The image is for your
-machine only: never push, publish or share it
-([ADR-0180](../adr/0180-tester-vendor-images.md)).
-
-```bash
-. ./build-config.env
-docker build -f tools/tester/Containerfile --target final-intel \
-  --build-arg INTEL_MEDIA_DRIVER=nonfree \
-  --build-arg "FFMPEG_REMOTE=$FFMPEG_REMOTE" --build-arg "FFMPEG_COMMIT=$FFMPEG_COMMIT" \
-  --build-arg "PELORUS_COMMIT=$(git rev-parse HEAD)" --build-arg MAKE_JOBS=4 \
-  --tag pelorus-tester:intel-nonfree-local .
-docker run --rm --device /dev/dri -v "$PWD/report:/report" pelorus-tester:intel-nonfree-local
-```
-
-- The licence gate checks that build as kit `intel-nonfree-local`: it records
-  `intel-media-va-driver-non-free` as not redistributable, writes
-  `/usr/share/licenses/pelorus-tester/NOT-FOR-REDISTRIBUTION` and puts a
-  NOT FOR REDISTRIBUTION line at the top of the notices.
-- The report of that image says `"kit": "intel-nonfree-local"`.
-- The publish workflow cannot produce it: no workflow may name
-  `INTEL_MEDIA_DRIVER` (`scripts/check-build-config.py`), the publish gate
-  (`licensing.py check --kit intel`) refuses a tree with the marker or the
-  non-free package, and `--target source-intel` refuses to build with
-  `INTEL_MEDIA_DRIVER=nonfree`.
 
 ## Execution class and evidence claim
 
