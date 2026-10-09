@@ -105,6 +105,18 @@ test('tester-licence-gate',
      args: [meson.project_source_root() / 'tools' / 'tester' / 'check-ffmpeg-licence-self-test.sh'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+# ADR-0178 / #236: the artifact licence record is well formed and matches the
+# repository pins, and its gate refuses every planted defect.
+test('tester-licence-record',
+     python_prog,
+     args: ['-I', '-B', meson.project_source_root() / 'tools' / 'tester' / 'licensing.py', 'record'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+test('tester-licence-record-self-test',
+     python_prog,
+     args: ['-I', '-B', meson.project_source_root() / 'tools' / 'tester' / 'licensing.py', 'self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
 
 # Issue #220 / ADR-0174: telemetry field names are shared with VMAFx's stream
 # metadata (VMAFx/vmafx#2271). The check runs the registry and interop.h rules;

@@ -103,8 +103,10 @@ such a binary gives its recipients the corresponding source of all three
 parts.
 
 Pelorus publishes no FFmpeg binary today: a release carries the patch stack
-(`pelorus-ffmpeg-patches-<tag>.tar.gz`) with `LICENSES/LGPL-2.1-or-later.txt`
-and `LICENSES/EUPL-1.2.txt`. A Pelorus-enabled FFmpeg the project publishes
+(`pelorus-ffmpeg-patches-<tag>.tar.gz`) with `LICENSES/LGPL-2.1-or-later.txt`,
+`LICENSES/EUPL-1.2.txt` and a `NOTICE` that maps paths to licences and names the
+release commit and the FFmpeg base commit
+(`scripts/release/write-patch-notice.sh`). A Pelorus-enabled FFmpeg the project publishes
 later follows vmafx's rule ([ADR-0171](adr/0171-eupl-relicense.md)):
 
 - configured with `--enable-gpl --enable-version3`, with x264 and x265 among
@@ -119,6 +121,13 @@ later follows vmafx's rule ([ADR-0171](adr/0171-eupl-relicense.md)):
 
 The `libpelorus` part stays EUPL-1.2 on its own; the compatibility clause is
 what lets it join the GPL-3.0-or-later build.
+
+The tester image ([ADR-0173](adr/0173-tester-programme.md)) records the licence
+of every file it ships in `tools/tester/licensing.json`; the image build fails on
+a file, package or licence that record does not cover and writes
+`/usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt` into the image
+([ADR-0178](adr/0178-tester-artifact-licence-record.md),
+[the runbook](development/tester-image.md#licence-record)).
 
 ## Contributing
 

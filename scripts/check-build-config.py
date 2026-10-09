@@ -2466,6 +2466,24 @@ def _validate_release_notes_step(relative: str, block: str) -> list[str]:
     return errors
 
 
+def _validate_patch_notice(relative: str, block: str) -> list[str]:
+    """#236: the patch archive carries a NOTICE that names the repository and the commit."""
+    notice = _step_body(block, "Notice for the patch archive")
+    package = _step_body(block, "Package the FFmpeg patch stack")
+    if notice is None or package is None:
+        return [f"{relative}: release build is missing the patch archive notice step"]
+    errors = [
+        f"{relative}: patch archive notice step is missing {token}"
+        for token in ("bash scripts/release/write-patch-notice.sh", '"$GITHUB_REF_NAME" "$GITHUB_SHA"')
+        if token not in notice
+    ]
+    if block.find("name: Notice for the patch archive") > block.find("name: Package the FFmpeg patch stack"):
+        errors.append(f"{relative}: the patch archive notice must be written before the archive")
+    if 'NOTICE' not in package or "LICENSES/LGPL-2.1-or-later.txt" not in package or "LICENSES/EUPL-1.2.txt" not in package:
+        errors.append(f"{relative}: the patch archive must ship NOTICE and both licence texts")
+    return errors
+
+
 def _validate_release_build(relative: str, text: str, jobs: dict[str, str]) -> list[str]:
     """ADR-0169: build, SBOM, Level 3 attestation and cosign in one called job."""
     errors: list[str] = []
@@ -2477,6 +2495,7 @@ def _validate_release_build(relative: str, text: str, jobs: dict[str, str]) -> l
     errors.extend(_validate_rc_steps(relative, block))
     errors.extend(_validate_tag_version_step(relative, block))
     errors.extend(_validate_release_notes_step(relative, block))
+    errors.extend(_validate_patch_notice(relative, block))
     for token in RELEASE_BUILD_TOKENS:
         if token not in block:
             errors.append(f"{relative}: release build is missing {token}")
@@ -2829,6 +2848,32 @@ def release_gate_regressions(source: str, relative: str) -> list[str]:
     return failures + release_build_regressions()
 
 
+def _patch_notice_cases(text: str) -> dict[str, tuple[str, str]]:
+    """#236: mutations of the patch archive NOTICE step the validator must reject."""
+    return {
+        "no patch archive notice step": (
+            text.replace("name: Notice for the patch archive", "name: Other", 1),
+            "release build is missing the patch archive notice step",
+        ),
+        "patch notice not generated": (
+            text.replace("bash scripts/release/write-patch-notice.sh", "true", 1),
+            "patch archive notice step is missing bash scripts/release/write-patch-notice.sh",
+        ),
+        "patch notice without the commit": (
+            text.replace('"$GITHUB_REF_NAME" "$GITHUB_SHA"', '"$GITHUB_REF_NAME" HEAD', 1),
+            'patch archive notice step is missing "$GITHUB_REF_NAME" "$GITHUB_SHA"',
+        ),
+        "patch notice left out of the archive": (
+            text.replace(' \\\n            -C "$RUNNER_TEMP/patch-notice" NOTICE', "", 1),
+            "the patch archive must ship NOTICE and both licence texts",
+        ),
+        "licence text left out of the archive": (
+            text.replace("LICENSES/EUPL-1.2.txt ", "", 1),
+            "the patch archive must ship NOTICE and both licence texts",
+        ),
+    }
+
+
 def release_build_regressions() -> list[str]:
     """Prove the ADR-0169 reusable release build contract is enforced."""
     path = WORKFLOWS[2]
@@ -2880,6 +2925,7 @@ def release_build_regressions() -> list[str]:
             text.replace('"$project_version" CHANGELOG.md', "CHANGELOG.md", 1),
             'release notes step is missing "$project_version"',
         ),
+        **_patch_notice_cases(text),
         "tag step without error annotation": (
             text.replace("::error::", "", 1),
             "tag==version step is missing ::error::",
@@ -2907,8 +2953,10 @@ ACTION_USES = re.compile(r"^\s*(?:- )?uses: (\S+)(.*)$", re.MULTILINE)
 PINNED_USE = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")
 TESTER_PUBLISH_ORDER = (
     "name: Licence gate refuses a planted flag",
+    "name: Licence record is valid and its gate refuses planted defects",
     "name: Build the tester image",
     "name: Licence gate on the built image",
+    "name: Licence record gate on the built image",
     "name: Run the documented command without a GPU",
     "name: Build the -source companion",
     "name: Log in to ghcr.io",
@@ -2940,8 +2988,121 @@ TESTER_PUBLISH_TOKENS = (
     '--tag "${IMAGE}:${TAG}-source"',
     "bash tools/tester/check-ffmpeg-licence.sh",
     "bash tools/tester/check-ffmpeg-licence-self-test.sh",
+    "python3 -I -B tools/tester/licensing.py record",
+    "python3 -I -B tools/tester/licensing.py self-test",
+    "/opt/pelorus/tester/licensing.py check --root /",
     "pelorus_tester_report.py validate",
 )
+# ADR-0178 (#235): hosted-minute bounds. A job's timeout is a number no larger
+# than its cap, so a stuck build fails instead of running for six hours.
+TESTER_TIMEOUT_CAPS = {"build": 90, "validate": 10, "publish": 150}
+TESTER_TIMEOUT_DEFAULT_CAP = 150
+TESTER_TRIGGERS = ["pull_request", "schedule", "workflow_dispatch"]
+TESTER_BUILD_IF = (
+    "    if: github.event_name == 'pull_request' || "
+    "(github.event_name == 'schedule' && github.repository == 'VMAFx/pelorus')\n"
+)
+# A pull request that changes only these must not start the image build; a
+# change to any of the next set must.
+TESTER_PATHS_QUIET = (
+    "docs/development/tester-image.md",
+    "docs/adr/0178-tester-artifact-licence-record.md",
+    "docs/research/0236-tester-artifact-licence-audit.md",
+    "CHANGELOG.md",
+    "changelog.d/added/x.md",
+    "README.md",
+    "scripts/check-build-config.py",
+    ".claude/skills/build/SKILL.md",
+)
+TESTER_PATHS_LOUD = (
+    "tools/tester/Containerfile",
+    "tools/tester/licensing.json",
+    "tools/tester/licensing.py",
+    "ffmpeg-patches/0001-x.patch",
+    "libpelorus/src/pelorus.c",
+    "build-config.env",
+    "LICENSES/EUPL-1.2.txt",
+    ".github/workflows/tester-publish.yml",
+)
+
+
+def _path_glob(pattern: str) -> re.Pattern[str]:
+    """GitHub path filter glob: `**` crosses directories, `*` and `?` do not."""
+    out: list[str] = []
+    index = 0
+    while index < len(pattern):
+        if pattern.startswith("**/", index):
+            out.append("(?:.*/)?")
+            index += 3
+        elif pattern.startswith("**", index):
+            out.append(".*")
+            index += 2
+        elif pattern[index] == "*":
+            out.append("[^/]*")
+            index += 1
+        elif pattern[index] == "?":
+            out.append("[^/]")
+            index += 1
+        else:
+            out.append(re.escape(pattern[index]))
+            index += 1
+    return re.compile("".join(out) + r"\Z")
+
+
+def tester_pull_request_paths(text: str) -> list[str]:
+    """The `paths:` list of the pull_request trigger, empty when there is none."""
+    match = re.search(
+        r"^  pull_request:\n(?:    (?!paths:).*\n)*    paths:\n((?:      - .*\n)+)", text, re.MULTILINE
+    )
+    if match is None:
+        return []
+    return [p.strip().strip("'\"") for p in re.findall(r"^      - (.*)$", match.group(1), re.MULTILINE)]
+
+
+def _tester_paths(relative: str, text: str) -> list[str]:
+    """A docs-only pull request must not start the image build; an image input must."""
+    paths = tester_pull_request_paths(text)
+    if not paths:
+        return [f"{relative}: pull_request needs a paths filter (hosted-minute cost, #235)"]
+    globs = [_path_glob(p) for p in paths]
+    errors = [
+        f"{relative}: pull_request paths match a docs-only change ({sample}); the image build would start"
+        for sample in TESTER_PATHS_QUIET
+        if any(g.match(sample) for g in globs)
+    ]
+    errors.extend(
+        f"{relative}: pull_request paths miss an image input ({sample})"
+        for sample in TESTER_PATHS_LOUD
+        if not any(g.match(sample) for g in globs)
+    )
+    return errors
+
+
+def _tester_timeouts(relative: str, jobs: dict[str, str]) -> list[str]:
+    errors: list[str] = []
+    for name, block in jobs.items():
+        match = re.search(r"^    timeout-minutes:[ ]*(\S+)[ ]*$", block, re.MULTILINE)
+        cap = TESTER_TIMEOUT_CAPS.get(name, TESTER_TIMEOUT_DEFAULT_CAP)
+        if match is None or not match.group(1).isdigit():
+            errors.append(f"{relative}: job {name} needs a numeric timeout-minutes")
+        elif not 0 < int(match.group(1)) <= cap:
+            errors.append(f"{relative}: job {name} timeout-minutes {match.group(1)} exceeds its cap {cap}")
+    return errors
+
+
+def _tester_nightly(relative: str, text: str, jobs: dict[str, str]) -> list[str]:
+    """The nightly schedule builds and never publishes (#235): only `build` can run on it."""
+    errors: list[str] = []
+    if len(re.findall(r"^    - cron:", text, re.MULTILINE)) != 1:
+        errors.append(f"{relative}: schedule needs exactly one cron entry")
+    for name, block in jobs.items():
+        mentions = "schedule" in block or "always()" in block
+        if name != "build" and mentions:
+            errors.append(f"{relative}: job {name} must not run on schedule or use always()")
+    for name in ("validate", "publish"):
+        if "github.event_name != 'workflow_dispatch'" in jobs.get(name, ""):
+            errors.append(f"{relative}: job {name} must not negate workflow_dispatch")
+    return errors
 
 
 def _tester_pins(relative: str, text: str) -> list[str]:
@@ -2990,8 +3151,11 @@ def _tester_jobs(relative: str, jobs: dict[str, str]) -> list[str]:
         return errors
     build, validate, publish = jobs["build"], jobs["validate"], jobs["publish"]
     errors.extend(_tester_job_hygiene(relative, jobs))
-    if "    if: github.event_name == 'pull_request'\n" not in build:
-        errors.append(f"{relative}: build job must run only on pull_request")
+    errors.extend(_tester_timeouts(relative, jobs))
+    if TESTER_BUILD_IF not in build:
+        errors.append(
+            f"{relative}: build job must run only on pull_request or the schedule of VMAFx/pelorus"
+        )
     draft = build.find("name: Stop on a draft pull request")
     first_checkout = build.find("uses: actions/checkout@")
     if draft < 0 or first_checkout < 0 or draft > first_checkout:
@@ -3046,8 +3210,10 @@ def validate_tester_publish_text(relative: str, text: str) -> list[str]:
     jobs = workflow_job_blocks(text)
     if not jobs:
         return [f"{relative}: no jobs found"]
-    if workflow_triggers(text) != ["pull_request", "workflow_dispatch"]:
-        errors.append(f"{relative}: triggers must be exactly pull_request and workflow_dispatch")
+    if workflow_triggers(text) != TESTER_TRIGGERS:
+        errors.append(f"{relative}: triggers must be exactly pull_request, schedule and workflow_dispatch")
+    errors.extend(_tester_paths(relative, text))
+    errors.extend(_tester_nightly(relative, text, jobs))
     if not re.search(r"^permissions:\n  contents: read\n", text, re.MULTILINE):
         errors.append(f"{relative}: top-level permissions must be contents: read only")
     for token in ("ubuntu-latest", "windows-latest", "/home/kilian/", *BANNED_FFMPEG_FLAGS):
@@ -3056,6 +3222,27 @@ def validate_tester_publish_text(relative: str, text: str) -> list[str]:
     errors.extend(_tester_pins(relative, text))
     errors.extend(_tester_jobs(relative, jobs))
     errors.extend(_tester_publish_steps(relative, jobs.get("publish", "")))
+    return errors
+
+
+def _tester_licence_stage(relative: str, text: str) -> list[str]:
+    """ADR-0178: the licence record gate is a stage the runtime stage depends on."""
+    start = text.find("AS licence")
+    runtime = text.find("AS runtime")
+    if start < 0 or runtime < start:
+        return [f"{relative}: stage licence must come before stage runtime"]
+    stage = text[start:runtime]
+    errors: list[str] = []
+    positions = [stage.find(t) for t in ("licensing.py self-test", "licensing.py notices", "licensing.py check")]
+    if min(positions) < 0 or positions != sorted(positions):
+        errors.append(f"{relative}: stage licence must run licensing.py self-test, notices and check in that order")
+    if "FROM assembled AS licence" not in text or "FROM assembled AS runtime" not in text:
+        errors.append(f"{relative}: licence and runtime stages must both start from assembled")
+    if "COPY --from=licence " not in text[runtime:]:
+        errors.append(f"{relative}: stage runtime must copy from stage licence, so the gate cannot be skipped")
+    for arg in ("ARG FFMPEG_REMOTE", "ARG FFMPEG_COMMIT", "ARG PELORUS_COMMIT"):
+        if arg not in stage:
+            errors.append(f"{relative}: stage licence needs {arg}")
     return errors
 
 
@@ -3074,9 +3261,10 @@ def validate_tester_containerfile_text(relative: str, text: str) -> list[str]:
         errors.append(
             f"{relative}: the licence gate and its self-test must run in the build stage before runtime"
         )
-    for stage in ("AS build", "AS runtime", "AS source"):
+    for stage in ("AS build", "AS assembled", "AS licence", "AS runtime", "AS source"):
         if stage not in text:
             errors.append(f"{relative}: missing stage {stage}")
+    errors.extend(_tester_licence_stage(relative, text))
     for token in ("libpelorus-commit.txt", "ffmpeg-configure-line.txt", "series.txt", "installed-sources.txt"):
         if token not in text:
             errors.append(f"{relative}: -source image is missing {token}")
@@ -3153,12 +3341,16 @@ def _tester_trigger_job_cases(text: str) -> dict[str, tuple[str, str]]:
             text.replace("on:\n", "on:\n  push:\n    branches: [master]\n", 1),
             "triggers must be exactly",
         ),
-        "schedule trigger": (
-            text.replace(
-                "  workflow_dispatch:\n    inputs:",
-                "  schedule:\n    - cron: '0 3 * * *'\n  workflow_dispatch:\n    inputs:",
-                1,
-            ),
+        "no schedule trigger": (
+            text.replace("  schedule:\n    - cron: '17 2 * * *'\n", "", 1),
+            "triggers must be exactly",
+        ),
+        "second cron entry": (
+            text.replace("    - cron: '17 2 * * *'\n", "    - cron: '17 2 * * *'\n    - cron: '17 3 * * *'\n", 1),
+            "schedule needs exactly one cron entry",
+        ),
+        "workflow_run trigger": (
+            text.replace("  workflow_dispatch:\n    inputs:", "  workflow_run:\n    workflows: [CI]\n  workflow_dispatch:\n    inputs:", 1),
             "triggers must be exactly",
         ),
         "floating action tag": (
@@ -3226,8 +3418,98 @@ def _tester_job_cases(text: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def _tester_cost_cases(text: str) -> dict[str, tuple[str, str]]:
+    """#235: a docs-only pull request does not start the image build."""
+    return {
+        "docs path in the filter": (
+            text.replace("      - 'LICENSES/**'\n", "      - 'LICENSES/**'\n      - 'docs/**'\n", 1),
+            "match a docs-only change (docs/development/tester-image.md)",
+        ),
+        "catch-all path in the filter": (
+            text.replace("      - 'LICENSES/**'\n", "      - '**'\n", 1),
+            "match a docs-only change (CHANGELOG.md)",
+        ),
+        "markdown path in the filter": (
+            text.replace("      - 'LICENSES/**'\n", "      - '**/*.md'\n", 1),
+            "match a docs-only change (README.md)",
+        ),
+        "tester tools dropped from the filter": (
+            text.replace("      - 'tools/tester/**'\n", "", 1),
+            "miss an image input (tools/tester/Containerfile)",
+        ),
+        "libpelorus dropped from the filter": (
+            text.replace("      - 'libpelorus/**'\n", "", 1),
+            "miss an image input (libpelorus/src/pelorus.c)",
+        ),
+        "no paths filter": (
+            re.sub(r"    paths:\n(?:      - .*\n)+", "", text, count=1),
+            "pull_request needs a paths filter",
+        ),
+    }
+
+
+def _tester_nightly_cases(text: str) -> dict[str, tuple[str, str]]:
+    """#235: the nightly schedule never reaches publish; every job has a bounded timeout."""
+    publish_if = "    needs: validate\n    if: github.event_name == 'workflow_dispatch'\n"
+    validate_if = "    if: github.event_name == 'workflow_dispatch'\n    runs-on"
+    return {
+        "nightly reaches publish": (
+            text.replace(publish_if, "    needs: validate\n    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'\n", 1),
+            "job publish must not run on schedule",
+        ),
+        "nightly reaches validate": (
+            text.replace(validate_if, "    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'\n    runs-on", 1),
+            "job validate must not run on schedule",
+        ),
+        "publish negates dispatch": (
+            text.replace(publish_if, "    needs: validate\n    if: github.event_name != 'workflow_dispatch'\n", 1),
+            "job publish must not negate workflow_dispatch",
+        ),
+        "publish runs always": (
+            text.replace(publish_if, "    needs: validate\n    if: always()\n", 1),
+            "job publish must not run on schedule or use always()",
+        ),
+        "nightly build without the repository guard": (
+            text.replace(" && github.repository == 'VMAFx/pelorus'", "", 1),
+            "build job must run only on pull_request or the schedule of VMAFx/pelorus",
+        ),
+        "build timeout removed": (
+            replace_in_job(text, "build", "    timeout-minutes: 90\n", ""),
+            "job build needs a numeric timeout-minutes",
+        ),
+        "build timeout too large": (
+            replace_in_job(text, "build", "timeout-minutes: 90", "timeout-minutes: 360"),
+            "job build timeout-minutes 360 exceeds its cap 90",
+        ),
+        "publish timeout too large": (
+            replace_in_job(text, "publish", "timeout-minutes: 150", "timeout-minutes: 151"),
+            "job publish timeout-minutes 151 exceeds its cap 150",
+        ),
+        "timeout from an expression": (
+            replace_in_job(text, "validate", "timeout-minutes: 10", "timeout-minutes: ${{ vars.T }}"),
+            "job validate needs a numeric timeout-minutes",
+        ),
+    }
+
+
 def _tester_gate_cases(text: str) -> dict[str, tuple[str, str]]:
     return {
+        "no licence record step": (
+            replace_in_job(text, "publish", "name: Licence record is valid and its gate refuses planted defects", "name: Other"),
+            "publish job is missing name: Licence record is valid",
+        ),
+        "no licence record gate on the image": (
+            text.replace("name: Licence record gate on the built image", "name: Other", 1),
+            "publish job is missing name: Licence record gate on the built image",
+        ),
+        "licence record self-test dropped": (
+            text.replace("python3 -I -B tools/tester/licensing.py self-test", "true"),
+            "publish job is missing python3 -I -B tools/tester/licensing.py self-test",
+        ),
+        "licence record gate on the image dropped": (
+            text.replace("/opt/pelorus/tester/licensing.py check --root /", "/opt/pelorus/tester/licensing.py record"),
+            "publish job is missing /opt/pelorus/tester/licensing.py check --root /",
+        ),
         "no licence gate on the image": (
             text.replace("name: Licence gate on the built image", "name: Other", 1),
             "publish job is missing name: Licence gate on the built image",
@@ -3294,6 +3576,8 @@ def _tester_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
     return {
         **_tester_trigger_job_cases(text),
         **_tester_job_cases(text),
+        **_tester_cost_cases(text),
+        **_tester_nightly_cases(text),
         **_tester_gate_cases(text),
         **_tester_publish_cases(text),
     }
@@ -3322,6 +3606,27 @@ def _tester_containerfile_cases(text: str) -> dict[str, tuple[str, str]]:
             "licence gate and its self-test must run",
         ),
         "no source stage": (text.replace("AS source", "AS other", 1), "missing stage AS source"),
+        "no licence stage": (text.replace("AS licence", "AS other", 1), "missing stage AS licence"),
+        "licence self-test removed": (
+            text.replace("licensing.py self-test", "licensing.py record", 1),
+            "stage licence must run licensing.py self-test, notices and check in that order",
+        ),
+        "licence check removed": (
+            text.replace("licensing.py check --root /", "licensing.py record --root /", 1),
+            "stage licence must run licensing.py self-test, notices and check in that order",
+        ),
+        "licence check before notices": (
+            text.replace("licensing.py notices", "licensing.py zzz", 1).replace("licensing.py check", "licensing.py notices", 1).replace("licensing.py zzz", "licensing.py check", 1),
+            "stage licence must run licensing.py self-test, notices and check in that order",
+        ),
+        "runtime skips the licence stage": (
+            text.replace("COPY --from=licence ", "COPY --from=assembled ", 1),
+            "stage runtime must copy from stage licence",
+        ),
+        "licence stage without the commit": (
+            text.replace("ARG FFMPEG_COMMIT\nARG PELORUS_COMMIT\nRUN python3", "ARG PELORUS_COMMIT\nRUN python3", 1),
+            "stage licence needs ARG FFMPEG_COMMIT",
+        ),
         "no configure line in source": (
             text.replace("ffmpeg-configure-line.txt", "x.txt"),
             "-source image is missing ffmpeg-configure-line.txt",
