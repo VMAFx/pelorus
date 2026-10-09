@@ -21,8 +21,8 @@ checks the record itself and its version pins against the repository and
 needs no image. `self-test` plants each defect in a fake tree and requires the
 check to refuse it; the Containerfile runs it before the real check.
 
-Debian's python3-minimal is the only interpreter in the image, so this file
-uses no shutil, tempfile, urllib or http. Run it as `python3 -I -B`.
+It needs only the standard library of the image's Debian python3 and runs on
+every platform the fast suite covers. Run it as `python3 -I -B`.
 """
 
 import argparse
@@ -31,6 +31,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -150,7 +151,7 @@ def walk_tree(root):
     """Relative paths of every file and symlink; symlinked directories count as files."""
     found = []
     for base, dirs, files in os.walk(root, followlinks=False):
-        rel_base = os.path.relpath(base, root)
+        rel_base = Path(os.path.relpath(base, root)).as_posix()
         rel_base = "" if rel_base == "." else rel_base
         if rel_base == "":
             dirs[:] = [d for d in dirs if d not in SKIPPED_TOP]
@@ -749,8 +750,7 @@ def run_case(base, index, mutate, regen):
 
 
 def cmd_self_test(_args):
-    base = Path(f"/tmp/licensing-self-test-{os.getpid()}")
-    base.mkdir()
+    base = Path(tempfile.mkdtemp(prefix="licensing-self-test-"))
     failures = []
     try:
         good = base / "good"
