@@ -135,7 +135,8 @@ published under version 1, so the version was bumped instead of keeping the
 fields optional with defaults. A later change that removes a field or changes
 its meaning bumps the version again; an added field stays in the same version
 only when it is optional with a default. Tool 0.4.5 adds the optional leg field
-`rate_control` (`cbr_extbrc`, `cbr_hw`) under that rule; a leg without it is
+`rate_control` (`cbr_extbrc`, `cbr_hw`) under that rule; tool 0.4.6 changes no
+field; a leg without it is
 the stage's own leg.
 
 ## Stages
@@ -147,7 +148,7 @@ the stage's own leg.
 | 3 | `registration` | not part of this kit version | `not_run` |
 | 4 | `format_matrix` (GPU) | [`vulkan-format-matrix.sh`](../../ffmpeg-patches/test/vulkan-format-matrix.sh) exits 0 with the validation layer on; every Vulkan diagnostic is on the [allow-list](#validation-gate) | layer absent: `not_run`; script exit 77: `no_device`; no `ffmpeg`: `not_run` |
 | 5 | `steering_smoke` (GPU) | for each usable encoder, 8- and 16-frame encodes both decode to 8 and 16 frames, and the steered bitstream differs from the unsteered one at both lengths; for each QSV encoder, the [bitrate-control legs](#qsv-bitrate-control-legs) decode to every frame within 15 % of the target bitrate or are a named `not_run` | encoder not built, not usable on this host, or without `-pelorus_roi`: a `not_run` leg with the reason; none usable: `not_run` (a bitrate-control leg cannot pass the stage alone) |
-| 6 | `sidedata_roundtrip` (GPU) | `pelorus_analyze_vulkan` + `pelorus_deband_vulkan`, then each usable carrier with `-udu_sei 1` (`hevc_nvenc`, `h264_nvenc`, `hevc_qsv`, `h264_qsv`, `hevc_vulkan`, `h264_vulkan`): every coded picture carries a well-formed `PelorusSideData` blob with the banding and variance sections, distinct `frame_pts` echoes, and the decoder returns the blob as frame side data on every picture | carrier not built, or its encode fails and the same encode without the side data fails too: a `not_run` leg with the encoder's error; none usable: `not_run`; AV1 has no carrier. A carrier whose encode fails only with the side data (baseline encodes) is a `fail` leg, never `not_run` ([ADR-0173](../adr/0173-tester-programme.md)) |
+| 6 | `sidedata_roundtrip` (GPU) | `pelorus_analyze_vulkan` + `pelorus_deband_vulkan`, then each usable carrier with `-udu_sei 1` (`hevc_nvenc`, `h264_nvenc`, `hevc_qsv`, `h264_qsv`, `hevc_vulkan`, `h264_vulkan`): every coded picture carries a well-formed `PelorusSideData` blob with the banding and variance sections and distinct `frame_pts` echoes, the decoder returns the blob as frame side data on every picture, and in both places each blob equals the one the analyze filter attached, byte for byte (or, on `hevc_nvenc` only, its [maps-stripped form](#stage-6-side-data-round-trip)); five cases per carrier | carrier not built, or its encode fails and the same encode without the side data fails too: a `not_run` leg with the encoder's error; none usable: `not_run`; AV1 has no carrier. A carrier whose encode fails only with the side data (baseline encodes) is a `fail` leg, never `not_run` ([ADR-0173](../adr/0173-tester-programme.md)) |
 | 7 | `zero_copy_chain` (GPU) | the `-loglevel debug` graph holds no `hwdownload`, `hwupload` or `scale` beyond the allowed edges (below) and contains the Pelorus filters | no device with Vulkan Video decode and encode: `not_run` (the software-encoder leg still runs and can fail) |
 | 8 | `bench` (GPU, opt-in) | non-gating: `scripts/bench/run-bench.py` writes `result.json` for a 4-point CQ ladder; a failure is recorded but never changes the verdict | needs `--bench`, a `vmaf` binary, `hevc_nvenc` or `av1_nvenc`: otherwise `not_run` |
 
@@ -254,6 +255,42 @@ software-encoder leg.
 | `PELORUS_FORMAT_MATRIX` | path of the format matrix script, for images that install it elsewhere |
 | `VMAF_BIN` | `vmaf` binary for the bench stage |
 
+### Stage 6: side-data round trip
+
+Each carrier runs five cases, and its leg fails when any case fails:
+
+| Case | Input | `pelorus_analyze_vulkan` options |
+| --- | --- | --- |
+| `gradient-default` | `synth-banding` | defaults |
+| `flat-180p-maps1-cell32` | `synth-flat-180p` | `maps=1:cell=32` |
+| `flat-1080p-maps1-cell32` | `synth-flat-1080p` | `maps=1:cell=32` |
+| `flat-180p-maps0`, `flat-1080p-maps0` | the two flat clips | `maps=0` |
+
+Flat content gives a blob that is mostly zero bytes. NVENC cuts a zero run of
+about 63 bytes or more short inside its SEI NAL unit, so the decoder drops the
+blob (measured in [issue #284](https://github.com/VMAFx/pelorus/issues/284)); a
+gradient never shows this. The `maps=0` cases are the small blob that always
+survives.
+
+The expected blob is not a constant. The runner repeats the encode's filter
+chain with `showinfo` in place of the encoder and reads each frame's blob at
+the encoder's input. It then compares, per picture:
+
+- the blobs parsed out of the encoded stream (pictures ordered by their
+  `frame_pts` echo, because a stream lists them in decode order), and
+- the blobs the decoder returns as frame side data (`showinfo` of a decode).
+
+A picture passes when its blob equals the written blob byte for byte. The one
+exception is `hevc_nvenc`, which writes a blob that does not fit its
+1024-byte header budget without the per-cell maps (patch 0022,
+[ADR-0181](../adr/0181-hevc-nvenc-sei-header-budget.md)): the sections up to
+the last one, every map offset and size zero, `total_size` the new end. The
+tester builds that form exactly as `pelorus_sei_fit.h` does and accepts nothing
+else; the pass reason says how many pictures were stripped. Any other
+difference fails the leg with the carrier, the picture index, both lengths and
+the first differing offset, as does a picture count or a per-picture blob count
+that differs from what was written.
+
 ## Validation gate
 
 With `PELORUS_VALIDATE=1` every GPU stage fails on a Vulkan validation message
@@ -289,14 +326,15 @@ python3 -I tools/tester/pelorus_tester_fixtures.py notices  # attribution text f
 | Fixture | Source | Licence |
 | --- | --- | --- |
 | `synth-banding` | recorded `lavfi` recipe (`gradients` with `seed=1`), 640x360, 24 frames; rendered into the cache on first use, no network | EUPL-1.2 |
+| `synth-flat-180p`, `synth-flat-1080p` | recorded `lavfi` recipe (`color=c=gray`), 320x180 and 1920x1080, 4 frames at 25 fps, for the flat side-data cases; rendered into the cache on first use, no network | EUPL-1.2 |
 | `synth-motion` | recorded `lavfi` recipe (`testsrc2`), 640x360, 50 frames at 25 fps, for the QSV bitrate-control legs; rendered into the cache on first use, no network | EUPL-1.2 |
 | `bbb` | Big Buck Bunny excerpt, 640x360, 48 frames, downloaded once and extracted | CC BY 3.0, see below |
 
 `verify` fails when a file is missing from the cache, when its hash differs from
 the pin (one flipped byte is enough), and when an entry lacks a licence record:
 SPDX id, holder and source, plus attribution text naming the holder for CC BY
-licences. The stages use `synth-banding`, and the QSV bitrate-control legs
-`synth-motion`; a stage that needs a fixture that is not in the cache reports
+licences. The stages use `synth-banding`, the side-data round trip also the
+two `synth-flat-*` clips, and the QSV bitrate-control legs `synth-motion`; a stage that needs a fixture that is not in the cache reports
 `not_run` rather than downloading.
 
 `netflix-bar` is not in the lock. Its licence is unconfirmed
@@ -336,6 +374,9 @@ bad case per rule below, and `--self-test --disable <rule>` must exit 1 for each
 | `sd_structure` | wrong total size or ABI major in the blob |
 | `sd_pts` | identical `frame_pts` echoes on all pictures |
 | `sd_decode_tap` | decoder output without the Pelorus UUID |
+| `sd_integrity_count` | a dropped blob, a missing picture, an extra blob |
+| `sd_integrity_bytes` | a truncated blob, one flipped byte, a maps-stripped blob from a carrier that does not strip |
+| `sd_integrity_stripped` | a maps-stripped blob with `total_size` kept, a flipped scalar or map fields left in place |
 | `bench_nongating` | a failing bench stage: verdict must stay `pass` |
 | `execution_class_derived` | a lavapipe device list with `execution_class: hardware`; a report with no device and `software_vulkan` |
 | `claim_gpu_needs_hardware` | a lavapipe device list with `evidence_claim: gpu` |
