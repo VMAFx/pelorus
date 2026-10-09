@@ -104,7 +104,10 @@ where a shader indexes the image array with a literal (`grain_estimate`).
 Patch 0021 (`ffmpeg-patches/files/vulkan-frame-barrier-queue-family.patch`)
 keeps the frame's owning family in that barrier, so no transfer is formed.
 Devices with several queue families use `VK_SHARING_MODE_CONCURRENT` and are not
-affected. Root cause and measurements: `docs/rebase-notes.md` (patch 0021).
+affected. With the patch no tested device (lavapipe, ANV, RADV, RTX 4090) reports
+`09059` or `09064`, so `ffmpeg-patches/test/vulkan-vuid-allowlist.txt` no longer
+lists them and a run that shows either fails validation. Root cause and
+measurements: `docs/rebase-notes.md` (patch 0021).
 
 ## Building the FFmpeg integration
 

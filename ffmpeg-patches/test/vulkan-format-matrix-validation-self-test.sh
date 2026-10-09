@@ -64,7 +64,7 @@ case "$PEL_FAKE_SCENARIO:$count" in
         ;;
     allowlist:1)
         echo 'Validation Error: VUID-VkImageMemoryBarrier2-srcAccessMask-03909'
-        echo 'Validation Error: VUID-VkCopyImageToMemoryInfo-srcImageLayout-09064'
+        echo 'Validation Error: VUID-vkCmdCopyImageToBuffer-dstBuffer-00191'
         exit 0
         ;;
     allowlist:2)
@@ -118,7 +118,7 @@ run_case pel-stderr analyze-yuv420p stderr \
 run_case allowlist analyze-yuv420p stdout VUID-vkCmdDispatch-imageLayout-00344
 grep -Fx 'VUID-VkImageMemoryBarrier2-srcAccessMask-03909' \
     "$RUN_ROOT/allowlist/evidence/validation-known-upstream.txt" >/dev/null
-grep -Fx 'VUID-VkCopyImageToMemoryInfo-srcImageLayout-09064' \
+grep -Fx 'VUID-vkCmdCopyImageToBuffer-dstBuffer-00191' \
     "$RUN_ROOT/allowlist/evidence/validation-known-upstream.txt" >/dev/null
 
 # An expired entry, and an entry without a reference, must not match.
@@ -153,9 +153,9 @@ stale_case()
 
 stale_case expired VUID-VkImageMemoryBarrier2-srcAccessMask-03909 \
     'VkImageMemoryBarrier2-srcAccessMask-03909 | #214 | 2020-01-01' \
-    'VkCopyImageToMemoryInfo-srcImageLayout-09064 | #214 | 2999-01-01'
-stale_case no-reference VUID-VkCopyImageToMemoryInfo-srcImageLayout-09064 \
-    'VkCopyImageToMemoryInfo-srcImageLayout-09064 | | 2999-01-01' \
+    'vkCmdCopyImageToBuffer-dstBuffer-00191 | #214 | 2999-01-01'
+stale_case no-reference VUID-vkCmdCopyImageToBuffer-dstBuffer-00191 \
+    'vkCmdCopyImageToBuffer-dstBuffer-00191 | | 2999-01-01' \
     'VkImageMemoryBarrier2-srcAccessMask-03909 | #214 | 2999-01-01'
 
 echo 'Vulkan validation stream self-test: PASS'
