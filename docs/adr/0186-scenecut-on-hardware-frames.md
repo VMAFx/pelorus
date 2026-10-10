@@ -37,8 +37,10 @@ and the rule for filters that are not frame-aware copies the input
    reason in [scenecut](../metrics/scenecut.md): `fftools` overwrites
    `pict_type` before the encoder otherwise.
 4. **The filter source comment** in `ffmpeg-patches/files/vf_pelorus_scenecut.c`
-   ("Run it after hwdownload") is corrected together with a regenerated patch
-   stack; that change is a follow-up of this PR (see Consequences).
+   ("Run it after hwdownload") is corrected in this change, together with the
+   regenerated patch `0016` (see Consequences). The comment in
+   `vf_pelorus_denoise_vulkan.c` that called `lookahead=1` the default is
+   corrected the same way: the option default is `0`.
 
 ## Alternatives considered
 
@@ -64,10 +66,9 @@ without it at frame 0 only.
 
 - Not measured: AMF (no AMF runtime on the test host) and the software
   encoders (the test binary has none).
-- The filter source comment and the regenerated patch `0016` are not in this
-  change: regenerating the stack needs the full FFmpeg replay. Next step:
-  edit the comment, run `ffmpeg-patches/generate.sh`, then
-  `ffmpeg-patches/test/build-and-run.sh`.
+- The filter source comments are corrected in this change (comment only, no
+  behaviour change). The regenerated patches `0016` (scenecut) and `0003`
+  (denoise) were replayed with `ffmpeg-patches/test/build-and-run.sh`.
 - `hevc_vulkan` stalled at the cut once when `-g 250` was set together with
   `-force_key_frames source`, and also on a plain `-force_key_frames 2` without
   any Pelorus filter, so the stall is not caused by this filter.
