@@ -31,10 +31,10 @@ ADR: docs/adr/0124-anime-aa.md
  configure                               |   1 +
  libavfilter/Makefile                    |   1 +
  libavfilter/allfilters.c                |   1 +
- libavfilter/vf_pelorus_aa_vulkan.c      | 286 ++++++++++++++++++++
+ libavfilter/vf_pelorus_aa_vulkan.c      | 296 ++++++++++++++++++++
  libavfilter/vulkan/Makefile             |   1 +
  libavfilter/vulkan/pelorus_aa.comp.glsl | 265 ++++++++++++++++++
- 6 files changed, 555 insertions(+)
+ 6 files changed, 565 insertions(+)
 
 diff --git a/configure b/configure
 index f052412ba00f78d88734beaa51c4a4e82a5ebea6..021915e788bf3f971443131919f665036148b3b6 100755
@@ -74,10 +74,10 @@ index 2ac2a6540fb0f9b500bfbd6137278ca1ddc56b4a..0ee727c8c38cefe87c4d23504c0e43dd
  extern const FFFilter ff_vf_pelorus_dehalo_vulkan;
 diff --git a/libavfilter/vf_pelorus_aa_vulkan.c b/libavfilter/vf_pelorus_aa_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..bda8e239fc0e9512e2929fe32957a1f16db3d27b
+index 0000000000000000000000000000000000000000..b82383dee4541170d7a9b8634c59964c8286e63c
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_aa_vulkan.c
-@@ -0,0 +1,286 @@
+@@ -0,0 +1,296 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -116,6 +116,7 @@ index 0000000000000000000000000000000000000000..bda8e239fc0e9512e2929fe32957a1f1
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
 +#include "pelorus_vulkan_sample.h"
++#include "pelorus_vulkan_pool.h"
 +#include "vulkan_filter.h"
 +
 +#include "filters.h"
@@ -144,6 +145,7 @@ index 0000000000000000000000000000000000000000..bda8e239fc0e9512e2929fe32957a1f1
 +
 +    int planes; /* plane bitmask to process (luma-only by default)           */
 +    int fast;   /* hoist sobel_mag into shared mem (opt-in; default 0)        */
++    PelVkPoolOpts pool; /* output pool tiling (ADR-0184) */
 +} PelorusAaVulkanContext;
 +
 +/* The warp-AA algorithm now lives in vulkan/pelorus_aa.comp.glsl, compiled to
@@ -270,6 +272,13 @@ index 0000000000000000000000000000000000000000..bda8e239fc0e9512e2929fe32957a1f1
 +    s->initialized = 0;
 +}
 +
++static int pelorus_aa_vulkan_config_output(AVFilterLink *outlink)
++{
++    PelorusAaVulkanContext *s = outlink->src->priv;
++
++    return pel_vk_pool_config_output(outlink, &s->pool);
++}
++
 +#define OFFSET(x) offsetof(PelorusAaVulkanContext, x)
 +#define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 +static const AVOption pelorus_aa_vulkan_options[] = {
@@ -330,6 +339,7 @@ index 0000000000000000000000000000000000000000..bda8e239fc0e9512e2929fe32957a1f1
 +     0,
 +     1,
 +     FLAGS},
++    PEL_VK_POOL_OPTIONS(OFFSET(pool.tiling), OFFSET(pool.drm_modifiers), FLAGS),
 +    {NULL}};
 +
 +AVFILTER_DEFINE_CLASS(pelorus_aa_vulkan);
@@ -347,7 +357,7 @@ index 0000000000000000000000000000000000000000..bda8e239fc0e9512e2929fe32957a1f1
 +    {
 +        .name = "default",
 +        .type = AVMEDIA_TYPE_VIDEO,
-+        .config_props = &ff_vk_filter_config_output,
++        .config_props = &pelorus_aa_vulkan_config_output,
 +    },
 +};
 +

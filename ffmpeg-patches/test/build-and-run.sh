@@ -236,6 +236,12 @@ configure_ffmpeg() (
         echo "enabling oneVPL $(pkg-config --modversion vpl)"
         configure_extra+=(--enable-libvpl)
     fi
+    # libdrm compiles FFmpeg's Vulkan -> DRM PRIME / VAAPI map, the path the
+    # tiling=drm output pools exist for (ADR-0184); FFmpeg never autodetects it.
+    if pkg-config --exists libdrm; then
+        echo "enabling libdrm $(pkg-config --modversion libdrm)"
+        configure_extra+=(--enable-libdrm)
+    fi
     if pkg-config --exists aom; then
         echo "enabling libaom $(pkg-config --modversion aom)"
         configure_extra+=(--enable-libaom)

@@ -37,6 +37,41 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
 When the decoder, filter, and encoder all speak Vulkan/VRAM, no frame touches
 system RAM.
 
+## Zero-copy into VAAPI and QSV encoders (Linux)
+
+`tiling=drm` on the last Pelorus filter that writes frames lets `hwmap` hand
+its output to a VAAPI encoder, or on to QSV, without `hwdownload` (8-bit NV12
+today; P010 and AMD wait on FFmpeg fixes, see
+[Vulkan output pools](../backends/vulkan-drm-modifiers.md)). Derive Vulkan from
+the VAAPI device so both run on the same GPU. VAAPI encoder:
+
+```bash
+LIBVA_DRIVER_NAME=iHD ffmpeg -v verbose -init_hw_device vaapi=va:/dev/dri/renderD130 \
+       -init_hw_device vulkan=vk@va -filter_hw_device vk -i input.mkv \
+       -vf "format=nv12,hwupload,pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi" \
+       -c:v h264_vaapi -rc_mode CQP -qp 20 out.mkv
+```
+
+With `-v verbose` the filter names the pool's layout, for example on an Arc
+A380:
+
+```text
+[Parsed_pelorus_deband_vulkan_2 @ 0x...] tiling=drm: nv12 1280x720 pool uses DRM format modifier 0x0100000000000009 (I915_FORMAT_MOD_4_TILED), chosen by the driver from 3
+```
+
+QSV encoder, mapped on from VAAPI; each hardware format is named so that format
+negotiation cannot pick another:
+
+```bash
+LIBVA_DRIVER_NAME=iHD ffmpeg -init_hw_device vaapi=va:/dev/dri/renderD130 \
+       -init_hw_device vulkan=vk@va -filter_hw_device vk -i input.mkv \
+       -vf "format=nv12,hwupload,pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi,format=vaapi,hwmap=derive_device=qsv,format=qsv" \
+       -c:v hevc_qsv -q:v 24 out.mkv
+```
+
+On an Arc A380 under `xe`, VAAPI encoders need constant QP (`-rc_mode CQP -qp
+N`) and QSV bitrate control needs `-extbrc 1` (see below).
+
 ## Chaining stages
 
 ```bash

@@ -1,0 +1,1 @@
+- `ffmpeg-patches/test/build-and-run.sh` configures FFmpeg with `--enable-libdrm` when libdrm is installed, so the replayed build compiles the Vulkan to DRM PRIME and VAAPI map that `tiling=drm` pools are for; the new `vulkan-drm-map` fast-suite test runs that map on a GPU when `FFMPEG_BIN` and `RENDER_NODE` are set ([#103](https://github.com/VMAFx/pelorus/issues/103), ADR-0184).

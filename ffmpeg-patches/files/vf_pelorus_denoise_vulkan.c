@@ -60,6 +60,7 @@
 #include "libavutil/pixdesc.h"
 #include "pelorus_sidedata.h"
 #include "pelorus_vulkan_sample.h"
+#include "pelorus_vulkan_pool.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -172,6 +173,7 @@ typedef struct PelorusDenoiseVulkanContext {
     /* Causal previous-frame ring (clones — refcount bumps, no pixel copy). */
     AVFrame *ring[PEL_DENOISE_MAX_PREV];
     int ring_count; /* valid entries in ring[] (0..n_prev)                    */
+    PelVkPoolOpts pool; /* output pool tiling (ADR-0184) */
 } PelorusDenoiseVulkanContext;
 
 static_assert(sizeof(((PelorusDenoiseVulkanContext *)0)->opts) <= 128,
@@ -958,6 +960,13 @@ static void denoise_vulkan_uninit(AVFilterContext *avctx)
     s->initialized = 0;
 }
 
+static int pelorus_denoise_vulkan_config_output(AVFilterLink *outlink)
+{
+    PelorusDenoiseVulkanContext *s = outlink->src->priv;
+
+    return pel_vk_pool_config_output(outlink, &s->pool);
+}
+
 #define OFFSET(x) offsetof(PelorusDenoiseVulkanContext, x)
 #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 static const AVOption pelorus_denoise_vulkan_options[] = {
@@ -1096,6 +1105,7 @@ static const AVOption pelorus_denoise_vulkan_options[] = {
      0,
      1,
      FLAGS},
+    PEL_VK_POOL_OPTIONS(OFFSET(pool.tiling), OFFSET(pool.drm_modifiers), FLAGS),
     {NULL}};
 
 AVFILTER_DEFINE_CLASS(pelorus_denoise_vulkan);
@@ -1114,7 +1124,7 @@ static const AVFilterPad pelorus_denoise_vulkan_outputs[] = {
     {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
-        .config_props = &ff_vk_filter_config_output,
+        .config_props = &pelorus_denoise_vulkan_config_output,
     },
 };
 
