@@ -1,9 +1,16 @@
 # Ordered list of Pelorus patches against FFmpeg n9.0.2 at
-# 946fcce07b6dcd0331c8cc609192aeff5e1924f8.
+# 946fcce07b6dcd0331c8cc609192aeff5e1924f8, on top of the shared FFmpeg fix
+# series pinned in root build-config.env (FFMPEG_SERIES_*, VMAFx/ffmpeg-patches,
+# ADR-0185). Apply that series first, in its own series.txt order, then this
+# list; scripts/fetch-ffmpeg-series.sh of the Pelorus repository fetches and
+# verifies it, and the NOTICE of a released archive names its tag and sha256.
 # Applied in order by ffmpeg-patches/test/build-and-run.sh, and regenerated
 # from files/ by ffmpeg-patches/generate.sh. Apply with `git am --3way` onto
 # the pinned checkout (see README.md). The stack is cumulative; verify
 # with a full series replay, never per-patch `git apply --check`.
+#
+# Number 0021 is retired: its queue family fix is patch 0001 of the shared
+# series. The other numbers stay as shipped.
 #
 # Interop-consuming patches require libpelorus >= 0.2.0 through a separate
 # pkg-config probe. Compute filters are gated by `vulkan spirv_compiler` so they
@@ -33,6 +40,5 @@
 0018-add-vf_pelorus_borderfix_vulkan.patch
 0019-qsv-pelorus-udu-sei.patch
 0020-vulkan-pelorus-udu-sei.patch
-0021-vulkan-frame-barrier-queue-family.patch
 0022-nvenc-pelorus-udu-sei.patch
 0023-qsv-pelorus-udu-sei-budget.patch

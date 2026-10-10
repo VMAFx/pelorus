@@ -40,6 +40,10 @@ These mirror vmafx's rules; reviewers verify them.
    patches consume updates `ffmpeg-patches/files/` + the regenerated patch in
    the same PR, verified by a full series replay
    (`FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh`).
+   The replay applies the shared FFmpeg fix series first. A fix to a stock
+   FFmpeg file that carries no Pelorus name goes to
+   [VMAFx/ffmpeg-patches](https://github.com/VMAFx/ffmpeg-patches), not into
+   this stack ([ADR-0185](docs/adr/0185-shared-ffmpeg-fix-series.md)).
 
 ## Governance and agent contexts
 

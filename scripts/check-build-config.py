@@ -14,8 +14,24 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "build-config.env"
-EXPECTED_KEYS = {"FFMPEG_REMOTE", "FFMPEG_TAG", "FFMPEG_COMMIT"}
+FFMPEG_KEYS = ("FFMPEG_REMOTE", "FFMPEG_TAG", "FFMPEG_COMMIT")
+# ADR-0185: the shared FFmpeg fix series Pelorus applies before its own stack,
+# pinned by repository, release tag, tagged commit and tarball sha256. Renovate
+# does not track it: a bump moves all four together from a verified release.
+SERIES_KEYS = (
+    "FFMPEG_SERIES_REPO",
+    "FFMPEG_SERIES_TAG",
+    "FFMPEG_SERIES_COMMIT",
+    "FFMPEG_SERIES_SHA256",
+)
+EXPECTED_KEYS = set(FFMPEG_KEYS + SERIES_KEYS)
 RENOVATE_MARKER = "# renovate: datasource=github-tags depName=FFmpeg/FFmpeg"
+SERIES_COMMENT = (
+    "# Shared FFmpeg fix series, applied before ffmpeg-patches/series.txt (ADR-0185)."
+)
+SERIES_REPO = "VMAFx/ffmpeg-patches"
+SERIES_FETCH = '"$ROOT/scripts/fetch-ffmpeg-series.sh"'
+SERIES_TIP_ASSIGN = 'SERIES_TIP="$(git -C "$WORKTREE" rev-parse --verify HEAD)"'
 CONSUMERS = (
     ROOT / "ffmpeg-patches" / "generate.sh",
     ROOT / "ffmpeg-patches" / "test" / "build-and-run.sh",
@@ -124,6 +140,14 @@ LAVAPIPE_TOKENS = (
     "ffmpeg-patches/test/vulkan-lavapipe-report.sh\n",
 )
 LAVAPIPE_FORBIDDEN = ("continue-on-error", "PELORUS_VALIDATE=0", "|| true")
+# ADR-0185: every lane that replays or regenerates the stack fetches the shared
+# FFmpeg fix series, so it needs cosign (the release.yml installer pin) and a
+# token for gh attestation verify.
+SERIES_WORKFLOW_TOKENS = (
+    "uses: sigstore/cosign-installer@",
+    "GH_TOKEN: ${{ github.token }}",
+)
+LAVAPIPE_TOKENS += SERIES_WORKFLOW_TOKENS
 USES_LINE = re.compile(r"^\s+(?:- )?uses:\s*(\S+)", re.MULTILINE)
 RENOVATE_CONFIG = ROOT / "renovate.json"
 CHECKER_RELATIVE = "scripts/check-build-config.py"
@@ -245,21 +269,27 @@ def validate_config(text: str) -> list[str]:
         errors.append("FFMPEG_TAG: expected nMAJOR.MINOR.PATCH")
     if not re.fullmatch(r"[0-9a-f]{40}", values.get("FFMPEG_COMMIT", "")):
         errors.append("FFMPEG_COMMIT: expected a lowercase 40-hex commit")
+    if values.get("FFMPEG_SERIES_REPO") != SERIES_REPO:
+        errors.append(f"FFMPEG_SERIES_REPO: expected {SERIES_REPO}")
+    if not re.fullmatch(r"v\d+\.\d+\.\d+(?:-rc\.\d+)?", values.get("FFMPEG_SERIES_TAG", "")):
+        errors.append("FFMPEG_SERIES_TAG: expected vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-rc.N")
+    if not re.fullmatch(r"[0-9a-f]{40}", values.get("FFMPEG_SERIES_COMMIT", "")):
+        errors.append("FFMPEG_SERIES_COMMIT: expected a lowercase 40-hex commit")
+    if not re.fullmatch(r"[0-9a-f]{64}", values.get("FFMPEG_SERIES_SHA256", "")):
+        errors.append("FFMPEG_SERIES_SHA256: expected a lowercase 64-hex sha256")
 
     if not errors:
         canonical = "\n".join(
-            (
-                RENOVATE_MARKER,
-                f"FFMPEG_REMOTE={values['FFMPEG_REMOTE']}",
-                f"FFMPEG_TAG={values['FFMPEG_TAG']}",
-                f"FFMPEG_COMMIT={values['FFMPEG_COMMIT']}",
-                "",
-            )
+            (RENOVATE_MARKER,)
+            + tuple(f"{key}={values[key]}" for key in FFMPEG_KEYS)
+            + (SERIES_COMMENT,)
+            + tuple(f"{key}={values[key]}" for key in SERIES_KEYS)
+            + ("",)
         )
         if text != canonical:
             errors.append(
                 "build-config.env: assignments must remain in the canonical "
-                "contiguous Renovate block"
+                "contiguous Renovate block, then the shared series block"
             )
 
     return errors
@@ -436,6 +466,11 @@ def validator_regressions() -> list[str]:
             "FFMPEG_REMOTE=https://github.com/FFmpeg/FFmpeg.git",
             "FFMPEG_TAG=n1.2.3",
             f"FFMPEG_COMMIT={'a' * 40}",
+            SERIES_COMMENT,
+            f"FFMPEG_SERIES_REPO={SERIES_REPO}",
+            "FFMPEG_SERIES_TAG=v0.1.0-rc.1",
+            f"FFMPEG_SERIES_COMMIT={'b' * 40}",
+            f"FFMPEG_SERIES_SHA256={'c' * 64}",
             "",
         )
     )
@@ -446,6 +481,16 @@ def validator_regressions() -> list[str]:
         ),
         "indented": canonical.replace("FFMPEG_TAG=", " FFMPEG_TAG="),
         "blank-separated": canonical.replace("FFMPEG_TAG=", "\nFFMPEG_TAG="),
+        # ADR-0185: the series pin is complete, well formed and after the FFmpeg block.
+        "series pin without sha256": canonical.replace(f"FFMPEG_SERIES_SHA256={'c' * 64}\n", ""),
+        "short series sha256": canonical.replace("c" * 64, "c" * 63),
+        "series commit abbreviated": canonical.replace("b" * 40, "b" * 12),
+        "series from another repository": canonical.replace(SERIES_REPO, "someone/ffmpeg-patches"),
+        "series tag without v": canonical.replace("=v0.1.0-rc.1", "=0.1.0-rc.1"),
+        "series block inside the Renovate block": canonical.replace(
+            f"FFMPEG_COMMIT={'a' * 40}\n{SERIES_COMMENT}\n", f"{SERIES_COMMENT}\n"
+        ).replace(f"FFMPEG_SERIES_SHA256={'c' * 64}\n", f"FFMPEG_SERIES_SHA256={'c' * 64}\nFFMPEG_COMMIT={'a' * 40}\n"),
+        "series block without its comment": canonical.replace(SERIES_COMMENT + "\n", ""),
     }
     failures = []
     if validate_config(canonical):
@@ -829,6 +874,63 @@ def consumer_validator_regressions() -> list[str]:
     failures.extend(_consumer_replay_sdk_and_query_regressions(replay))
     failures.extend(_consumer_replay_keep_regressions(replay))
     failures.extend(_hermetic_regressions("replay", replay, validate_replay_text))
+    failures.extend(_hermetic_regressions("generator", source, validate_generator_text))
+    failures.extend(_series_first_regressions(source, replay))
+    return failures
+
+
+def _series_first_regressions(source: str, replay: str) -> list[str]:
+    """ADR-0185: the generator and the replay cannot skip or reorder the shared series."""
+    series_loop = 'done < "$SERIES_DIR/series.txt"'
+    pelorus_add = 'PATCHES+=("$PATCHDIR/$patch")'
+    series_add = 'PATCHES+=("$SERIES_DIR/patches/$patch")'
+    swapped = (
+        replay.replace(series_add, "SWAP", 1).replace(pelorus_add, series_add, 1).replace("SWAP", pelorus_add, 1)
+    )
+    generator_cases = {
+        "generator range from the FFmpeg base": (
+            source.replace('"${SERIES_TIP}..HEAD"', '"${FFMPEG_COMMIT}..HEAD"', 1),
+            "format-patch range must start at the shared series tip",
+        ),
+        "generator without the series fetch": (
+            source.replace(SERIES_FETCH, '"$ROOT/scripts/other.sh"', 1),
+            "must fetch and verify the shared FFmpeg fix series",
+        ),
+        "generator without the series patches": (
+            source.replace(series_loop, 'done < "$HERE/series.txt"', 1),
+            "must apply the verified shared series in its series.txt order",
+        ),
+        "generator records the tip after a Pelorus commit": (
+            source.replace(SERIES_TIP_ASSIGN + "\n", "", 1).replace(
+                "# Pelorus libavcodec edit (NOT a filter): make NVENC honor ROI",
+                SERIES_TIP_ASSIGN + "\n# Pelorus libavcodec edit (NOT a filter): make NVENC honor ROI",
+                1,
+            ),
+            "record SERIES_TIP before the first Pelorus commit",
+        ),
+    }
+    replay_cases = {
+        "replay without the series fetch": (
+            replay.replace(SERIES_FETCH, '"$ROOT/scripts/other.sh"', 1),
+            "must fetch and verify the shared FFmpeg fix series",
+        ),
+        "replay applies the series after the Pelorus stack": (
+            swapped,
+            "must apply the shared FFmpeg fix series before the Pelorus stack",
+        ),
+    }
+    failures: list[str] = []
+    for label, cases, validate, original in (
+        ("generator", generator_cases, validate_generator_text, source),
+        ("replay", replay_cases, validate_replay_text, replay),
+    ):
+        for name, (mutated, expected) in cases.items():
+            if mutated == original:
+                failures.append(f"consumer regression: {name} mutation changed nothing")
+            elif not any(expected in error for error in validate(mutated)):
+                failures.append(f"consumer regression: {name} was accepted")
+    if validate_generator_text(source) or validate_replay_text(replay):
+        failures.append("consumer regression: the shipped generator or replay is rejected")
     return failures
 
 
@@ -909,6 +1011,16 @@ def qsv_validator_regressions() -> list[str]:
         "implicit committer": (
             source.replace("        -c user.name=Pelorus-Replay \\\n", "", 1),
             "git am must neutralize Git configuration",
+        ),
+        "no shared series": (
+            source.replace(SERIES_FETCH, '"$ROOT/scripts/other.sh"', 1),
+            "must fetch and verify the shared FFmpeg fix series",
+        ),
+        "shared series after the Pelorus patches": (
+            source.replace('PATCHES+=("$SERIES_DIR/patches/$patch")', "SWAP", 1)
+            .replace('PATCHES+=("$PATCHDIR/$patch")', 'PATCHES+=("$SERIES_DIR/patches/$patch")', 1)
+            .replace("SWAP", 'PATCHES+=("$PATCHDIR/$patch")', 1),
+            "must apply the shared FFmpeg fix series before the Pelorus stack",
         ),
     }
     failures: list[str] = []
@@ -1943,14 +2055,99 @@ def validate_consumer(path: Path) -> list[str]:
     return validate_consumer_text(relative, path.read_text(encoding="utf-8"))
 
 
+def _validate_series_first(relative: str, text: str) -> list[str]:
+    """ADR-0185: the shared series is fetched, verified and applied before Pelorus."""
+    errors: list[str] = []
+    fetch = text.find(SERIES_FETCH)
+    series_order = text.find('done < "$SERIES_DIR/series.txt"')
+    series = text.find('"$SERIES_DIR/patches/')
+    if fetch < 0:
+        errors.append(
+            f"{relative}: must fetch and verify the shared FFmpeg fix series "
+            "with scripts/fetch-ffmpeg-series.sh"
+        )
+    if series < 0 or series_order < 0 or series < fetch:
+        errors.append(
+            f"{relative}: must apply the verified shared series in its series.txt order"
+        )
+    pelorus = text.find('"$PATCHDIR/$patch"')
+    if pelorus >= 0 and (series < 0 or series > pelorus):
+        errors.append(
+            f"{relative}: must apply the shared FFmpeg fix series before the Pelorus stack"
+        )
+    return errors
+
+
+PATCH_NOTICE = ROOT / "scripts" / "release" / "write-patch-notice.sh"
+
+
+def validate_patch_notice_text(text: str) -> list[str]:
+    """ADR-0185: the released patch archive says which shared series it needs first."""
+    relative = PATCH_NOTICE.relative_to(ROOT).as_posix()
+    errors = [
+        f"{relative}: the NOTICE must take {key} from build-config.env"
+        for key in SERIES_KEYS
+        if f'"$(value {key})"' not in text
+    ]
+    for token in (
+        "Needs first: the shared FFmpeg fix series ${series_tag}",
+        "https://github.com/${series_repo} (commit ${series_commit})",
+        "${series_sha256}",
+        "This archive does not contain it.",
+    ):
+        if token not in text:
+            errors.append(f"{relative}: the NOTICE must state the shared series dependency ({token})")
+    return errors
+
+
+def patch_notice_regressions() -> list[str]:
+    """Prove the NOTICE cannot drop the shared series pin."""
+    text = PATCH_NOTICE.read_text(encoding="utf-8")
+    cases = {
+        "notice without the series sha256": text.replace("            ${series_sha256}\n", "", 1),
+        "notice without the series tag": text.replace("series ${series_tag} of", "series of", 1),
+        "notice with a copied series commit": text.replace(
+            '"$(value FFMPEG_SERIES_COMMIT)"', '"ea78aa5"', 1
+        ),
+    }
+    failures: list[str] = []
+    if validate_patch_notice_text(text):
+        failures.append("patch notice regression: the shipped script is rejected")
+    for name, mutated in cases.items():
+        if mutated == text:
+            failures.append(f"patch notice regression: {name} mutation changed nothing")
+        elif not validate_patch_notice_text(mutated):
+            failures.append(f"patch notice regression: {name} was accepted")
+    return failures
+
+
+def _validate_generator_series(generator: str) -> list[str]:
+    """ADR-0185: the Pelorus patches are the range above the applied shared series."""
+    errors: list[str] = []
+    relative = "ffmpeg-patches/generate.sh"
+    if '"${SERIES_TIP}..HEAD"' not in generator or '"${FFMPEG_COMMIT}..HEAD"' in generator:
+        errors.append(
+            f"{relative}: format-patch range must start at the shared series tip "
+            "(SERIES_TIP)"
+        )
+    errors.extend(_validate_series_first(relative, generator))
+    shell_generator = generator.replace("\\\n", " ")
+    if not re.search(GIT_AM_COMMAND_PATTERN, shell_generator):
+        errors.append(f"{relative}: git am must neutralize Git configuration")
+    errors.extend(validate_hermetic_git_env(relative, shell_generator))
+    tip = generator.find(SERIES_TIP_ASSIGN)
+    first_commit = generator.find('commit_patch "$HERE/')
+    if tip < 0 or first_commit < 0 or tip > first_commit:
+        errors.append(
+            f"{relative}: must apply the shared FFmpeg fix series and record "
+            "SERIES_TIP before the first Pelorus commit"
+        )
+    return errors
+
+
 def validate_generator_text(generator: str) -> list[str]:
     """Validate requirements specific to patch generation."""
-    errors: list[str] = []
-    if '"${FFMPEG_COMMIT}..HEAD"' not in generator:
-        errors.append(
-            "ffmpeg-patches/generate.sh: format-patch range must start at "
-            "FFMPEG_COMMIT"
-        )
+    errors = _validate_generator_series(generator)
     hermetic_tokens = (
         tuple(f"-c {setting}" for setting in FORMAT_PATCH_CONFIG) + FORMAT_PATCH_OPTIONS
     )
@@ -2105,6 +2302,7 @@ def validate_replay_text(replay: str) -> list[str]:
     errors: list[str] = []
     errors.extend(_validate_replay_tokens_and_filters(replay))
     errors.extend(_validate_replay_structure(replay, shell_replay))
+    errors.extend(_validate_series_first("ffmpeg-patches/test/build-and-run.sh", replay))
     errors.extend(
         validate_hermetic_git_env("ffmpeg-patches/test/build-and-run.sh", shell_replay)
     )
@@ -2160,6 +2358,7 @@ def validate_qsv_replay_text(replay: str) -> list[str]:
     errors: list[str] = []
     shell_replay = replay.replace("\\\n", " ")
     errors.extend(_validate_qsv_replay_tokens(relative, replay))
+    errors.extend(_validate_series_first(relative, replay))
 
     worktree = re.search(
         r'git\s+-C\s+"\$FFMPEG_REPO"\s+-c\s+core\.hooksPath=/dev/null\s+'
@@ -2698,6 +2897,8 @@ def _validate_workflow_specialized_jobs(
             '"$FFMPEG_COMMIT"',
             "ffmpeg-patches/generate.sh",
             "ffmpeg-patches/test/build-and-run.sh",
+            *SERIES_WORKFLOW_TOKENS,
+            "scripts/fetch-ffmpeg-series.sh --self-test",
         ):
             if token not in ffmpeg:
                 errors.append(f"{relative}: FFmpeg job is missing {token}")
@@ -3057,6 +3258,10 @@ TESTER_PUBLISH_ORDER = (
     "name: Name the image tags of this kit",
     "name: Licence gate refuses a planted flag",
     "name: Licence record is valid and its gate refuses planted defects",
+    # ADR-0185: cosign is installed before the image build, which needs the
+    # verified shared FFmpeg fix series in its context.
+    "uses: sigstore/cosign-installer@",
+    "name: Fetch and verify the shared FFmpeg fix series",
     "name: Build the tester image",
     "name: Licence gate on the built image",
     "name: Licence record gate on the built image",
@@ -3067,7 +3272,6 @@ TESTER_PUBLISH_ORDER = (
     "uses: anchore/sbom-action@",
     "uses: actions/attest-build-provenance@",
     "uses: actions/attest@",
-    "uses: sigstore/cosign-installer@",
     "cosign sign --yes",
     "cosign verify",
     "gh attestation verify",
@@ -3111,7 +3315,11 @@ TESTER_BUILD_TOKENS = (
     "      KIT: ${{ matrix.kit }}\n",
     '--target "final-${KIT}"',
     'pelorus_tester_report.py validate "${RUNNER_TEMP}/report/report.json" --kit "${KIT}"',
+    *SERIES_WORKFLOW_TOKENS,
 )
+# ADR-0185: the runner fetches and verifies the shared series into the build
+# context; the Containerfile checks the sha256 pin again and applies it first.
+TESTER_SERIES_FETCH = "run: scripts/fetch-ffmpeg-series.sh .ffmpeg-series\n"
 # ADR-0178 (#235): hosted-minute bounds. A job's timeout is a number no larger
 # than its cap, so a stuck build fails instead of running for six hours.
 TESTER_TIMEOUT_CAPS = {"build": 90, "validate": 10, "publish": 150}
@@ -3140,6 +3348,7 @@ TESTER_PATHS_LOUD = (
     "ffmpeg-patches/0001-x.patch",
     "libpelorus/src/pelorus.c",
     "build-config.env",
+    "scripts/fetch-ffmpeg-series.sh",
     "LICENSES/EUPL-1.2.txt",
     ".github/workflows/tester-publish.yml",
 )
@@ -3276,6 +3485,16 @@ def _tester_jobs(relative: str, jobs: dict[str, str]) -> list[str]:
             f"{relative}: build job must run only on pull_request or the schedule of VMAFx/pelorus"
         )
     errors.extend(f"{relative}: build job is missing {t.strip()}" for t in TESTER_BUILD_TOKENS if t not in build)
+    for job_name, block, image_build in (
+        ("build", build, "name: Build (the Containerfile runs the licence gates)"),
+        ("publish", publish, "name: Build the tester image"),
+    ):
+        fetch = block.find(TESTER_SERIES_FETCH)
+        if fetch < 0 or fetch > block.find(image_build):
+            errors.append(
+                f"{relative}: {job_name} job must fetch and verify the shared FFmpeg fix "
+                "series into .ffmpeg-series before the image build"
+            )
     draft = build.find("name: Stop on a draft pull request")
     first_checkout = build.find("uses: actions/checkout@")
     if draft < 0 or first_checkout < 0 or draft > first_checkout:
@@ -3441,6 +3660,26 @@ def _tester_vendor_files(relative: str, text: str) -> list[str]:
     return errors
 
 
+def _tester_series_first(relative: str, build: str) -> list[str]:
+    """ADR-0185: the image build re-checks the series pin and applies the series first."""
+    errors: list[str] = []
+    for token in (
+        "COPY .ffmpeg-series/*.tar.gz /src/ffmpeg-series-release/",
+        "COPY scripts/fetch-ffmpeg-series.sh /src/pelorus/scripts/",
+        "/src/pelorus/scripts/fetch-ffmpeg-series.sh --unpack",
+    ):
+        if token not in build:
+            errors.append(f"{relative}: stage build is missing {token}")
+    series = build.find("/src/ffmpeg-series/series/series.txt")
+    pelorus = build.find("/src/pelorus/ffmpeg-patches/series.txt")
+    if series < 0 or pelorus < 0 or series > pelorus:
+        errors.append(
+            f"{relative}: stage build must apply the shared FFmpeg fix series before "
+            "ffmpeg-patches/series.txt"
+        )
+    return errors
+
+
 def validate_tester_containerfile_text(relative: str, text: str) -> list[str]:
     """The Containerfile builds GPL-3.0-or-later FFmpeg per kit behind the licence gates."""
     errors: list[str] = []
@@ -3452,6 +3691,7 @@ def validate_tester_containerfile_text(relative: str, text: str) -> list[str]:
     copy = "COPY tools/tester/build-ffmpeg.sh tools/tester/check-ffmpeg-licence.sh tools/tester/check-ffmpeg-licence-self-test.sh /opt/gate/"
     if copy not in tester_stage(text, "build"):
         errors.append(f"{relative}: stage build must copy build-ffmpeg.sh and the licence gate to /opt/gate/")
+    errors.extend(_tester_series_first(relative, tester_stage(text, "build")))
     for stage in ("build", "base"):
         if not tester_stage(text, stage):
             errors.append(f"{relative}: missing stage AS {stage}")
@@ -3483,6 +3723,7 @@ def validate_tester_build_script_text(relative: str, text: str) -> list[str]:
         "${FFMPEG_LICENCE_FLAGS} ${FFMPEG_FEATURE_FLAGS} \"$@\"",
         "/opt/source/ffmpeg-configure-line.txt",
         "/opt/source/series.txt",
+        "/src/ffmpeg-series-release/ffmpeg-patches-*.tar.gz /opt/source/",
     ):
         if token not in text:
             errors.append(f"{relative}: build-ffmpeg.sh is missing {token}")
@@ -3759,6 +4000,18 @@ def _tester_build_kit_cases(text: str) -> dict[str, tuple[str, str]]:
             replace_in_job(text, "build", '--target "final-${KIT}"', "--target final-generic"),
             'build job is missing --target "final-${KIT}"',
         ),
+        "build job without the shared series": (
+            replace_in_job(text, "build", TESTER_SERIES_FETCH, "run: true\n"),
+            "build job must fetch and verify the shared FFmpeg fix series",
+        ),
+        "publish job without the shared series": (
+            replace_in_job(text, "publish", TESTER_SERIES_FETCH, "run: true\n"),
+            "publish job must fetch and verify the shared FFmpeg fix series",
+        ),
+        "build job without cosign": (
+            replace_in_job(text, "build", "uses: sigstore/cosign-installer@", "uses: other/cosign@"),
+            "build job is missing uses: sigstore/cosign-installer@",
+        ),
     }
 
 
@@ -3923,6 +4176,16 @@ def _tester_containerfile_stage_cases(text: str) -> dict[str, tuple[str, str]]:
             text.replace("COPY --from=build-intel /opt/source /source/ffmpeg", "COPY --from=build-generic /opt/source /source/ffmpeg", 1),
             "stage source-intel is missing COPY --from=build-intel /opt/source /source/ffmpeg",
         ),
+        "shared series pin not re-checked": (
+            text.replace("/src/pelorus/scripts/fetch-ffmpeg-series.sh --unpack", "tar -xzf", 1),
+            "stage build is missing /src/pelorus/scripts/fetch-ffmpeg-series.sh --unpack",
+        ),
+        "shared series applied after the Pelorus stack": (
+            text.replace("/src/ffmpeg-series/series/series.txt", "SWAP", 1)
+            .replace("/src/pelorus/ffmpeg-patches/series.txt", "/src/ffmpeg-series/series/series.txt", 1)
+            .replace("SWAP", "/src/pelorus/ffmpeg-patches/series.txt", 1),
+            "stage build must apply the shared FFmpeg fix series before",
+        ),
     }
 
 
@@ -4034,6 +4297,10 @@ def _tester_build_script_cases(text: str) -> dict[str, tuple[str, str]]:
         "configure line not kept": (
             text.replace("/opt/source/ffmpeg-configure-line.txt", "/dev/null", 1),
             "build-ffmpeg.sh is missing /opt/source/ffmpeg-configure-line.txt",
+        ),
+        "shared series left out of the -source image": (
+            text.replace("/src/ffmpeg-series-release/ffmpeg-patches-*.tar.gz /opt/source/", "/dev/null /tmp/", 1),
+            "build-ffmpeg.sh is missing /src/ffmpeg-series-release/",
         ),
     }
 
@@ -4301,6 +4568,32 @@ def lavapipe_step_cases(source: str) -> dict[str, tuple[str, str]]:
 
 
 
+def series_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
+    """ADR-0185: mutations of the stack lanes' shared series prerequisites."""
+    return {
+        "FFmpeg job without cosign": (
+            replace_in_job(source, "ffmpeg-stack", "uses: sigstore/cosign-installer@", "uses: other/cosign@"),
+            "FFmpeg job is missing uses: sigstore/cosign-installer@",
+        ),
+        "FFmpeg job without a token for the attestation": (
+            replace_in_job(source, "ffmpeg-stack", "GH_TOKEN: ${{ github.token }}", "OTHER: x"),
+            "FFmpeg job is missing GH_TOKEN",
+        ),
+        "FFmpeg job without the series verifier self-test": (
+            replace_in_job(source, "ffmpeg-stack", "scripts/fetch-ffmpeg-series.sh --self-test", "true"),
+            "FFmpeg job is missing scripts/fetch-ffmpeg-series.sh --self-test",
+        ),
+        "lavapipe without cosign": (
+            replace_in_job(source, LAVAPIPE_JOB, "uses: sigstore/cosign-installer@", "uses: other/cosign@"),
+            "lavapipe job is missing uses: sigstore/cosign-installer@",
+        ),
+        "lavapipe without a token for the attestation": (
+            replace_in_job(source, LAVAPIPE_JOB, "GH_TOKEN: ${{ github.token }}", "OTHER: x"),
+            "lavapipe job is missing GH_TOKEN",
+        ),
+    }
+
+
 def workflow_validator_regressions() -> list[str]:
     """Prove runner and native-toolchain regressions are rejected."""
     failures: list[str] = []
@@ -4310,6 +4603,7 @@ def workflow_validator_regressions() -> list[str]:
         **windows_workflow_cases(source),
         **lavapipe_workflow_cases(source),
         **lavapipe_step_cases(source),
+        **series_workflow_cases(source),
         "floating runner": (
             source.replace("ubuntu-26.04", "ubuntu-latest", 1),
             "forbidden workflow token ubuntu-latest",
@@ -4852,6 +5146,10 @@ def validate_consumers() -> list[str]:
             validate_svtav1_roi_patch_text(SVTAV1_ROI_PATCH.read_text(encoding="utf-8"))
         )
     errors.extend(validate_workflows())
+    if not PATCH_NOTICE.is_file():
+        errors.append("scripts/release/write-patch-notice.sh: missing")
+    else:
+        errors.extend(validate_patch_notice_text(PATCH_NOTICE.read_text(encoding="utf-8")))
     return errors
 
 
@@ -5089,6 +5387,7 @@ def main() -> int:
         errors.extend(isolate_from_invoking_repository())
         errors.extend(validator_regressions())
         errors.extend(consumer_validator_regressions())
+        errors.extend(patch_notice_regressions())
         errors.extend(static_consumer_validator_regressions())
         errors.extend(svtav1_roi_patch_validator_regression())
         errors.extend(qsv_validator_regressions())

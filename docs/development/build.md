@@ -27,14 +27,16 @@ Options (`meson_options.txt`):
 ## Software Vulkan lane (Mesa lavapipe)
 
 The `lavapipe` job of `.github/workflows/ci.yml` runs the real shaders of the
-23-patch stack on Mesa lavapipe, so a runner without a GPU still executes all
+patch stack on Mesa lavapipe, so a runner without a GPU still executes all
 ten filters with the Khronos validation layer on. Its result is functional
 evidence on software Vulkan, never GPU evidence; the research digest has the
 measurements and the reasoning
 ([research 0228](../research/0228-lavapipe-spike.md)). On a draft pull request
 it stops on purpose, like the other hosted gates.
 
-To reproduce it locally, with `lvp_icd.json` pointing at your lavapipe:
+To reproduce it locally, with `lvp_icd.json` pointing at your lavapipe (the
+replay script fetches the shared series, so it needs what
+[the patch stack section](#the-shared-ffmpeg-fix-series-comes-first) lists):
 
 ```bash
 FFMPEG_REPO=/absolute/path/to/ffmpeg KEEP_DIR=$PWD/kept ffmpeg-patches/test/build-and-run.sh
@@ -102,7 +104,8 @@ The FFmpeg patch-stack scripts below remain Linux-only.
 ## FFmpeg filters (the patch stack)
 
 Requires `libpelorus` installed (visible to `pkg-config`) plus a Vulkan loader +
-SPIR-V compiler.
+SPIR-V compiler, and `cosign` plus an authenticated `gh` for the shared series
+below.
 
 ```bash
 cd ffmpeg-patches
@@ -117,6 +120,69 @@ the sources under `files/` and regenerate. Patch replay supplies its own
 ephemeral committer identity and neutralizes caller signing, hooks, and diff
 ordering, so the same command works on a clean CI runner and a configured
 developer workstation.
+
+### The shared FFmpeg fix series comes first
+
+Pelorus's 22 patches do not apply to stock FFmpeg. They apply on top of the
+shared FFmpeg fix series, a separate release of
+[VMAFx/ffmpeg-patches](https://github.com/VMAFx/ffmpeg-patches) that holds the
+FFmpeg fixes every VMAFx project needs
+([ADR-0185](../adr/0185-shared-ffmpeg-fix-series.md)). You do not download it
+by hand: `generate.sh`, `test/build-and-run.sh` and
+`test/qsv-roi-regression.sh` call one script, which fetches the pinned
+release, verifies it and unpacks it. The tester workflow runs the same script
+on the runner, and the image build checks the pin again with `--unpack`:
+
+```bash
+scripts/fetch-ffmpeg-series.sh /absolute/path/to/new-dir   # prints new-dir/series
+scripts/fetch-ffmpeg-series.sh --self-test                 # the verifier refuses planted defects
+scripts/fetch-ffmpeg-series.sh --unpack TARBALL NEW_DIR    # image build only: sha256 pin, then unpack
+```
+
+What you need for the first two: network access, `cosign` on `PATH`, and
+`gh auth login` or a `GH_TOKEN`.
+
+| Variable | Use |
+| --- | --- |
+| `GH_TOKEN` | credential of `gh attestation verify`; CI passes `github.token` |
+| `FFMPEG_SERIES_FROM` | directory with the four release files, taken instead of a download and verified the same way |
+| `CURL_MAX_TIME` | download deadline per file in seconds, default 120 |
+
+The script fails, and removes its output, when any of these does not hold:
+
+| Check | Command it runs | What it proves |
+| --- | --- | --- |
+| sha256 pin | `sha256sum` against `FFMPEG_SERIES_SHA256` | the tarball is the pinned one, byte for byte |
+| signature | `cosign verify-blob --bundle SHA256SUMS.sigstore.json`, identity `release-build.yml@refs/tags/<tag>` | the series repository's release workflow signed the checksums |
+| checksums | `sha256sum --check --strict SHA256SUMS` | the tarball is the one the signed checksums list |
+| provenance | `gh attestation verify`, source ref and commit pinned | the tarball was built from `FFMPEG_SERIES_COMMIT` at that tag on a GitHub-hosted runner |
+| base | `base.env` of the tarball against `build-config.env` | the series was made for the pinned FFmpeg release |
+
+The script also refuses a tarball whose members leave its top-level directory
+or are not plain files, and a `series.txt` that lists a missing patch. The fast
+test `fetch-ffmpeg-series-fail-closed` (`scripts/test-fetch-ffmpeg-series.py`)
+plants those defects and the sha256 and base ones without network; the
+signature and provenance defects are planted by `--self-test`, which the
+`ffmpeg-stack` CI job runs.
+
+Apply order, wherever FFmpeg is patched: the series in its own `series.txt`
+order, then `ffmpeg-patches/series.txt`. To do it by hand, in an FFmpeg
+checkout of `FFMPEG_COMMIT`:
+
+```bash
+series="$(scripts/fetch-ffmpeg-series.sh "$PWD/../series-release")"
+grep -Ev '^(#|$)' "$series/series.txt" | sed "s#^#$series/patches/#" | xargs git -C /path/to/ffmpeg am --3way
+grep -Ev '^(#|$)' ffmpeg-patches/series.txt | sed "s#^#$PWD/ffmpeg-patches/#" | xargs git -C /path/to/ffmpeg am --3way
+```
+
+`build-config.env` holds the pin: `FFMPEG_SERIES_REPO` (the series
+repository, `VMAFx/ffmpeg-patches`), `FFMPEG_SERIES_TAG`, `FFMPEG_SERIES_COMMIT`
+(the commit the tag names) and `FFMPEG_SERIES_SHA256` (of the tarball). To
+move to another series release, change the last three together from that
+release's notes, run `scripts/fetch-ffmpeg-series.sh --self-test` (it
+downloads the release, so it needs the network, `cosign` and `gh` too),
+regenerate twice and replay. Number 0021 of the Pelorus stack is retired: that
+fix is series patch 0001 now.
 
 ## Repository verification entry points
 
@@ -590,7 +656,12 @@ either would leave a copied value behind:
 
 - **FFmpeg pin** — one regex manager updates `FFMPEG_TAG` and `FFMPEG_COMMIT`
   in `build-config.env` together
-  ([ADR-0144](../adr/0144-ffmpeg-pin-and-ci-runner-policy.md)).
+  ([ADR-0144](../adr/0144-ffmpeg-pin-and-ci-runner-policy.md)). The shared
+  series pin below it (`FFMPEG_SERIES_*`) is bumped by hand: Renovate cannot
+  derive the tarball sha256 or the tagged commit, and
+  `scripts/fetch-ffmpeg-series.sh` refuses a series made for another FFmpeg
+  release, so an FFmpeg bump needs a series release on the new base first
+  ([ADR-0185](../adr/0185-shared-ffmpeg-fix-series.md)).
 - **actionlint Go toolchain** — the docs job's `actions/setup-go` step
   (`go-version: '<major>.<minor>.x'`) is bumped by Renovate's built-in
   github-actions handling as dependency `go` (datasource `github-releases`,
@@ -669,7 +740,9 @@ order ([ADR-0169](../adr/0169-release-provenance-slsa3.md)):
    fails the build), and packages
    `pelorus-ffmpeg-patches-<tag>.tar.gz` (`series.txt`, the README, the
    numbered patches, `files/`, the LGPL-2.1-or-later and EUPL-1.2 texts
-   from `LICENSES/`, and a generated `NOTICE`, [licensing](../licensing.md)). It then writes an SPDX JSON SBOM of that
+   from `LICENSES/`, and a generated `NOTICE`, [licensing](../licensing.md)). The `NOTICE` names
+   the shared FFmpeg fix series release the stack needs first (tag, commit,
+   tarball sha256); the archive does not contain that series. It then writes an SPDX JSON SBOM of that
    archive, writes `SHA256SUMS` over the archive and the SBOM, attests SLSA v1.0
    build provenance for both with `actions/attest-build-provenance`, signs
    `SHA256SUMS` keyless with cosign into `SHA256SUMS.sigstore.json`, verifies

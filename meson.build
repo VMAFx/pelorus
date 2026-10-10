@@ -215,6 +215,16 @@ if build_machine.system() != 'windows'
        args: [meson.project_source_root() / 'scripts' / 'test-fetch-corpus.py'],
        workdir: meson.project_source_root(),
        suite: 'fast')
+  # ADR-0185: the offline checks of scripts/fetch-ffmpeg-series.sh (sha256 pin,
+  # FFmpeg base, listed patches, archive members) refuse planted defects. Its
+  # network checks (cosign, attestation) have their planted defects in the
+  # script's --self-test, which the ffmpeg-stack CI job runs. Linux bash and
+  # GNU tar, like the patch-stack scripts it serves.
+  test('fetch-ffmpeg-series-fail-closed',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-fetch-ffmpeg-series.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
 endif
 
 # The build-config self-test drives throwaway Git repositories. Started from a

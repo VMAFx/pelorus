@@ -46,8 +46,8 @@ export PKG_CONFIG_PATH="/opt/pelorus/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONF
 make -j"${MAKE_JOBS}"
 make install
 
-# The tree as compiled, the configure line and the patch order go to the
-# -source image.
+# The tree as compiled, the configure line, the patch order and the shared
+# FFmpeg fix series release (applied first, ADR-0185) go to the -source image.
 mkdir -p /opt/source
 git archive --format=tar HEAD | tar -x -C /opt/source
 export LD_LIBRARY_PATH=/opt/ffmpeg/lib:/opt/pelorus/lib
@@ -58,6 +58,7 @@ if [ -z "$configuration" ]; then
 fi
 printf '%s\n' "$configuration" > /opt/source/ffmpeg-configure-line.txt
 cp /src/pelorus/ffmpeg-patches/series.txt /opt/source/series.txt
+cp /src/ffmpeg-series-release/ffmpeg-patches-*.tar.gz /opt/source/
 
 # Licence gate: the planted-flag self-test runs first, so a broken gate cannot
 # pass the binary.

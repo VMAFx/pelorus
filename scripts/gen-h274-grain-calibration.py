@@ -11,7 +11,9 @@ It reports, per cutoff, the residual lag-1 correlation (rho_r) and the
 residual RMS in 8-bit code values per unit of comp_model_value[0] (gain_r).
 
 The grain tables (Gaussian_LUT, Seed_LUT, R64T) are read from FFmpeg's source
-at the commit pinned in build-config.env, so nothing is vendored.
+at the commit pinned in build-config.env, so nothing is vendored. The shared
+FFmpeg fix series applied on that commit (FFMPEG_SERIES_*, ADR-0185) does not
+change libavcodec/h274.c, so the pinned file is the one a build compiles.
 
     FFMPEG_REPO=/path/to/ffmpeg scripts/gen-h274-grain-calibration.py
     FFMPEG_REPO=/path/to/ffmpeg scripts/gen-h274-grain-calibration.py --check
@@ -19,7 +21,7 @@ at the commit pinned in build-config.env, so nothing is vendored.
 --check compares the regenerated table with the one in the filter source and
 exits 1 on drift. This is a development tool: it needs numpy and an FFmpeg
 checkout, so it is not part of the fast suite. Rerun it after an FFmpeg bump
-that touches libavcodec/h274.c.
+or a shared series bump that touches libavcodec/h274.c.
 """
 
 from __future__ import annotations

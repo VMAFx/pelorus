@@ -2,8 +2,9 @@
 #
 # write-patch-notice.sh - NOTICE of the FFmpeg patch archive (#236, ADR-0178).
 # The archive carries the licence texts; this file says which text covers which
-# path, which FFmpeg the stack applies to, and where the Pelorus repository and
-# the exact release commit are (EUPL-1.2 Article 5).
+# path, which FFmpeg the stack applies to, which shared FFmpeg fix series has to
+# be applied first (ADR-0185), and where the Pelorus repository and the exact
+# release commit are (EUPL-1.2 Article 5).
 #
 #   write-patch-notice.sh OUT TAG COMMIT
 #
@@ -33,6 +34,10 @@ value() {
 ffmpeg_remote="$(value FFMPEG_REMOTE)"
 ffmpeg_tag="$(value FFMPEG_TAG)"
 ffmpeg_commit="$(value FFMPEG_COMMIT)"
+series_repo="$(value FFMPEG_SERIES_REPO)"
+series_tag="$(value FFMPEG_SERIES_TAG)"
+series_commit="$(value FFMPEG_SERIES_COMMIT)"
+series_sha256="$(value FFMPEG_SERIES_SHA256)"
 
 cat >"$out" <<NOTICE
 Pelorus FFmpeg patch stack: notice
@@ -42,6 +47,15 @@ Commit:     ${commit}
 Repository: https://github.com/VMAFx/pelorus (source of every file in this archive
             at the commit above; EUPL-1.2 Article 5)
 Applies to: FFmpeg ${ffmpeg_tag} (${ffmpeg_commit}) from ${ffmpeg_remote}
+Needs first: the shared FFmpeg fix series ${series_tag} of
+            https://github.com/${series_repo} (commit ${series_commit}).
+            This archive does not contain it. Download its release, check
+            ffmpeg-patches-${series_tag}.tar.gz against sha256
+            ${series_sha256}
+            and against the signature and provenance its release notes name,
+            apply its patches in its series.txt order, then this stack in
+            ffmpeg-patches/series.txt order. Without the series the stack does
+            not apply.
 
 Licence of each path (the texts are in LICENSES/):
 

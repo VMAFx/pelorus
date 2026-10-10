@@ -30,23 +30,30 @@
  * header-budget.md); neither nvEncodeAPI.h 13.1 nor the NVENC programming
  * guide 13.1 states the limit. h264_nvenc carries 64 KiB payloads.
  *
- * The SEI a caller passes in seiPayloadArray gets PEL_SEI_HEVC_USER_BUDGET of
- * the 1024 bytes. The reserve keeps room for the NAL units NVENC writes on its
- * own: at most 128 bytes measured (8K Main10, VUI, AUD), plus the HDR10 and
- * 3D reference display SEI it builds from picture parameters.
+ * The budget itself is stock-side since the shared FFmpeg fix series
+ * (VMAFx/ffmpeg-patches, ADR-0185): its patch 0003 gives the SEI a caller
+ * passes in seiPayloadArray 768 of the 1024 bytes (NVENC_HEVC_SEI_BUDGET),
+ * charges each payload with nvenc_sei_nal_size() and drops one that does not
+ * fit (nvenc_hevc_sei_fits()). The reserve keeps room for the NAL units NVENC
+ * writes on its own: at most 128 bytes measured (8K Main10, VUI, AUD), plus
+ * the HDR10 and 3D reference display SEI it builds from picture parameters.
+ * PEL_SEI_HEVC_USER_BUDGET and pel_sei_nal_bytes() mirror that budget and
+ * that size, so this file can decide on the stripping and the fast suite can
+ * test it without libavcodec.
  *
- * A payload that does not fit and is a Pelorus blob (interop.h) is carried
- * without the per-cell maps appended after its sections: the sections, which
- * hold every scalar, stay, and each map offset and size becomes zero, which
- * interop.h defines as an absent map. A payload that still does not fit is
- * dropped. The caller logs both.
+ * A Pelorus blob (interop.h) that does not fit is carried without the
+ * per-cell maps appended after its sections: the sections, which hold every
+ * scalar, stay, and each map offset and size becomes zero, which interop.h
+ * defines as an absent map. Patch 0022 strips the payload right before
+ * nvenc_hevc_sei_fits(), which then charges or drops it and logs a drop.
  *
  * NVENC (h264_nvenc and hevc_nvenc) also writes a SEI payload truncated when
  * its emulation prevention bytes exceed ceil(P / 3) + 3 for a P-byte payload
- * (issue #284), which the zero runs of flat per-cell maps reach. Every Pelorus
- * blob therefore goes into an NVENC stream in the zero-free carrier form of
- * interop ABI 1.5 (ADR-0183): pelorus_carrier_uuid, then the COBS encoding of
- * the blob image, with no 0x00 byte and so no emulation prevention at all.
+ * (issue #284), which the zero runs of flat per-cell maps reach; series patch
+ * 0004 drops such a payload instead. Every Pelorus blob therefore goes into
+ * an NVENC stream in the zero-free carrier form of interop ABI 1.5
+ * (ADR-0183): pelorus_carrier_uuid, then the COBS encoding of the blob image,
+ * with no 0x00 byte and so no emulation prevention at all.
  * pel_sei_carrier_write() produces the bytes pel_blob_carrier_encode() does;
  * sei_fit_test.c checks the two against each other. The budget is charged for
  * the carrier, after any stripping.
@@ -60,7 +67,8 @@
 #include <string.h>
 
 /* Non-VCL bytes per picture hevc_nvenc accepts, and the share left for SEI
- * passed in seiPayloadArray. */
+ * passed in seiPayloadArray: NVENC_HEVC_NON_VCL_LIMIT and NVENC_HEVC_SEI_BUDGET
+ * of shared series patch 0003, mirrored. */
 #define PEL_SEI_HEVC_NVENC_CAP 1024u
 #define PEL_SEI_HEVC_NVENC_RESERVE 256u
 #define PEL_SEI_HEVC_USER_BUDGET (PEL_SEI_HEVC_NVENC_CAP - PEL_SEI_HEVC_NVENC_RESERVE)

@@ -7,8 +7,10 @@
 # Copyright 2026 Lusoris
 # SPDX-License-Identifier: EUPL-1.2
 #
-# GPU test. Before patch 0022, the 1080p case stopped the encode with
-# "Failed locking bitstream buffer: out of memory" (AVERROR(ENOMEM)). Cases:
+# GPU test. Before the header limit handling (patch 0003 of the shared FFmpeg
+# fix series plus Pelorus patch 0022, ADR-0185), the 1080p case stopped the
+# encode with "Failed locking bitstream buffer: out of memory"
+# (AVERROR(ENOMEM)). Cases:
 #   maps-1080p   analyze maps=1 at 1920x1080, cell 32 (12 424-byte blob): the
 #                encode succeeds, the encoder log names the removed maps, and
 #                every picture carries the scalar sections without maps.
@@ -201,7 +203,9 @@ pel_text="$(printf '%2000s' '' | tr ' ' 'x')"
 "$PEL_FFMPEG" -hide_banner -loglevel info -y -i "$PEL_OUT/foreign-src.h264" -c:v hevc_nvenc \
     -udu_sei 1 -f hevc "$PEL_OUT/foreign.hevc" >"$PEL_OUT/foreign-encode.log" 2>&1 ||
     pel_fail "foreign: hevc_nvenc -udu_sei 1 failed: $(pel_first_error "$PEL_OUT/foreign-encode.log")"
-grep -q 'user data unregistered SEI is not written' "$PEL_OUT/foreign-encode.log" ||
+# The drop and its message are the shared series' (patch 0003, ADR-0185).
+grep -q 'byte user data unregistered SEI at pts .*: hevc_nvenc fails a picture' \
+    "$PEL_OUT/foreign-encode.log" ||
     pel_fail "foreign: the encoder log does not name the dropped SEI"
 "$PEL_FFMPEG" -hide_banner -loglevel info -i "$PEL_OUT/foreign.hevc" -vf showinfo -f null - \
     >"$PEL_OUT/foreign-tap.log" 2>&1 || pel_fail "foreign: decode of the stream failed"

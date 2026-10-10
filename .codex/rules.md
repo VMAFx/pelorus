@@ -137,7 +137,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 
 ## Project state
 
-- Inventory: 10 filters (deband, analyze, denoise, grain_estimate, mc, dehalo, aa, deblock, borderfix, scenecut) plus `pelorus_fgs` BSF; 23-patch stack.
+- Inventory: 10 filters (deband, analyze, denoise, grain_estimate, mc, dehalo, aa, deblock, borderfix, scenecut) plus `pelorus_fgs` BSF; 22-patch stack (number 0021 retired) on shared FFmpeg fix series `v0.1.0-rc.1` (VMAFx/ffmpeg-patches, ADR-0185).
 - Encoder steering: NVENC, QSV, Vulkan, libaom, SVT-AV1 patches; QP-feedback path. README "Modules" table: current inventory, no stubs.
 - FFmpeg 9 base: build-time SPIR-V, no runtime GLSL API (ADR-0143).
 - Forge: `VMAFx/pelorus`. Run `gh repo set-default vmafx/pelorus` before any `gh` command.
@@ -149,7 +149,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 2. Public non-void APIs return `pel_result`. Check each non-void call or cast `(void)`. No bare `return -1` across API boundary.
 3. No mutable global state or static-init side effects. Banned: `gets`, `strcpy`, `strcat`, `sprintf`, `strtok`, `atoi`, `atof`, `rand`, `system`.
 4. FFmpeg filter shader source lives once: `ffmpeg-patches/files/vulkan/pelorus_<name>.comp.glsl`; FFmpeg 9 compiles SPIR-V at build time. Never add runtime or inline GLSL. `libpelorus/shaders/*.comp`: standalone fast-gate references, not shipped mirrors. Spec IDs `253`, `254`, `255`: reserved workgroup sizes. Descriptor order and push layout must match C exactly.
-5. Patch consumers changed -> update `ffmpeg-patches/files/` plus regenerated stack in same PR. Verify full `series.txt` replay; per-patch apply check insufficient.
+5. Patch consumers changed -> update `ffmpeg-patches/files/` plus regenerated stack in same PR. Verify full `series.txt` replay; per-patch apply check insufficient. Shared FFmpeg fix series applies first, fetched + verified by `scripts/fetch-ffmpeg-series.sh` (sha256 pin, cosign, `gh attestation verify`; fail closed). Generic FFmpeg fix (stock file, no Pelorus name) -> VMAFx/ffmpeg-patches, never this stack.
 6. Touched files: `-Wall -Wextra -Werror`, clang-format, clang-tidy clean. Each `// NOLINT`: inline citation. New Meson-built C unit -> add to `.config/clang-tidy/lane-files.txt` (clang-tidy lane; audit fails unread unit, ADR-0168).
 7. Every commit: zero warnings; fast suite green; deband shader compiled by glslang.
 8. Embeddable library code: no `printf` or `fprintf(stderr, ...)`. Return `pel_result`; host logs.
@@ -170,7 +170,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 | `ffmpeg-patches/files/` | canonical FFmpeg host/filter sources |
 | `ffmpeg-patches/files/vulkan/` | canonical shipped shader sources |
 | `ffmpeg-patches/0001-*.patch` | generated artifacts; never hand-edit |
-| `ffmpeg-patches/{generate.sh,series.txt,test/}` | regeneration, apply order, replay + smoke gate |
+| `ffmpeg-patches/{generate.sh,series.txt,test/}` | regeneration, apply order (after shared series), replay + smoke gate |
 | `docs/adr/` | decisions; reserve via `scripts/adr/next-free.sh --claim <slug>` |
 | `docs/{architecture,api,metrics,usage,backends,development}/` | human-readable surface docs |
 | `docs/research/` | measured deep-dive evidence |
@@ -178,7 +178,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 | `tools/pelorus_qp_report.c` | libpelorus CLI demonstrator; not installed |
 | `tools/tester/` | tester report program (stdlib Python, `python3 -I`), JSON schema, `--self-test` (ADR-0173) |
 | `tools/markdownlint/`, `tools/figures/` | Praetor-managed docs gate; refresh via `adopt` only |
-| `scripts/` | ADR claim, bench, release, build-config + shader checks |
+| `scripts/` | ADR claim, bench, release, build-config + shader checks, shared-series fetch + verify (`fetch-ffmpeg-series.sh`, ADR-0185) |
 | `Makefile`, `lefthook.yml` | native + governance entry points; Git hooks opt-in (`make hooks-install`; `no_auto_install`) |
 | `.standards.yaml`, `.standards.lock`, `.standards-baseline.json`, `.config/` | Praetor policy, lock, catalog, labels, HISS baseline, clang-tidy lane list, Lefthook checkpoint scripts + policy, agent interceptor |
 | `.devcontainer/` | Praetor-rendered dev container bundle (audit: byte-exact; regenerate, never hand-edit); `base/Containerfile` toolchain base image (ADR-0153) |
@@ -230,6 +230,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | native gate | `make verify-native` |
 | governance + native gate | `PRAETORCTL=standardsctl make verify-all` |
 | install | `ninja -C build install` |
+| fetch + verify shared series | `scripts/fetch-ffmpeg-series.sh /absolute/new-dir` (`--self-test`: planted defects) |
 | regenerate patches | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh` |
 | replay stack | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh` |
 | compile contexts | `standardsctl compile-context` |
@@ -255,6 +256,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | Component | Pin |
 | --- | --- |
 | FFmpeg patch base | `n9.0.2` / `946fcce07b6dcd0331c8cc609192aeff5e1924f8` from `build-config.env` |
+| Shared FFmpeg fix series | VMAFx/ffmpeg-patches `v0.1.0-rc.1` / `ea78aa5daf7ffaa22ac1ab75d0c160cf5f457ea3`, tarball sha256 `75193707608546171e00dc24c28eda8370491e28528727bd33f933529d6c948b`, from `build-config.env`; hand bump, no Renovate ([ADR-0185](docs/adr/0185-shared-ffmpeg-fix-series.md)) |
 | FFmpeg Vulkan models | `vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c`, `vf_scdet_vulkan.c` |
 | AV1 grain ABI mirror | `libavutil/film_grain_params.h` |
 | vmafx control plane | `libvmaf_tune`, `/v1/score`, `vmaf-mcp` |

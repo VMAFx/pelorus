@@ -10,15 +10,40 @@ single filtergraph can carry the Pelorus side-data blob straight through to a
 hardware encoder, and a downstream vmafx `vf_libvmaf*` can read it. See
 [docs/adr/0104-ffmpeg-patch-stack.md](../docs/adr/0104-ffmpeg-patch-stack.md).
 
+The stack applies **on top of the shared FFmpeg fix series**
+([VMAFx/ffmpeg-patches](https://github.com/VMAFx/ffmpeg-patches), release pinned
+in root `build-config.env`), not on stock FFmpeg: see
+[Shared series first](#shared-series-first).
+
 ## Layout
 
 | Path | Role |
 | --- | --- |
 | `files/` | Canonical filter sources — the source of truth a maintainer edits. |
 | `0001-*.patch` … | Generated artifacts (`git format-patch`), the applied form. |
-| `series.txt` | Ordered apply list (cumulative stack). |
-| `generate.sh` | Regenerate the patches from `files/` against a base tag. |
-| `test/build-and-run.sh` | Apply + configure + build + smoke-test gate. |
+| `series.txt` | Ordered apply list (cumulative stack, 22 patches; number 0021 is retired). |
+| `generate.sh` | Regenerate the patches from `files/` on the shared series tip. |
+| `test/build-and-run.sh` | Shared series + stack apply, configure, build, smoke-test gate. |
+
+## Shared series first
+
+Generic FFmpeg fixes live in the shared FFmpeg fix series, one release for
+every VMAFx project ([ADR-0185](../docs/adr/0185-shared-ffmpeg-fix-series.md)).
+Root `build-config.env` pins it by tag, commit and tarball sha256
+(`FFMPEG_SERIES_*`). Wherever FFmpeg is patched, the order is:
+
+1. the shared series, in its own `series.txt` order;
+2. this stack, in `series.txt` order.
+
+`../scripts/fetch-ffmpeg-series.sh <new-dir>` downloads the pinned release,
+verifies it (sha256 pin, signed `SHA256SUMS` with `cosign`, build provenance
+with `gh attestation verify`, FFmpeg base) and unpacks it to `<new-dir>/series`.
+It needs network access, `cosign` and an authenticated `gh`, and it fails
+closed. `generate.sh` and both replay scripts call it themselves. Release
+`v0.1.0-rc.1` holds four patches: the Vulkan queue family fix that was Pelorus
+patch 0021, GCC 14 and 16 diagnostics, the `hevc_nvenc` user data SEI budget,
+and the drop of SEI that NVENC would write truncated. Pelorus patch 0022 builds
+on the last two.
 
 ## Prerequisites
 
@@ -30,6 +55,8 @@ hardware encoder, and a downstream vmafx `vf_libvmaf*` can read it. See
 - **libpelorus installed and visible to pkg-config**
   (`pkg-config --exists libpelorus`). Build it from the repo root:
   `meson setup build && ninja -C build && ninja -C build install`.
+- For regeneration and replay: network access, `cosign` and an authenticated
+  `gh` (the shared series fetch above).
 
 ## Replay and build
 
@@ -39,7 +66,8 @@ FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh
 
 The gate verifies the qualified `n9.0.2` tag against root `build-config.env`,
 checks out the immutable commit in a run-owned worktree, builds and installs
-this Pelorus tree into a private prefix, applies `series.txt` with
+this Pelorus tree into a private prefix, fetches and verifies the shared
+series, applies it and then `series.txt` with
 `git am --3way`, links FFmpeg, and smoke-tests filter, BSF, and encoder-option
 registration. When their pkg-config modules are present, the gate enables and
 compiles the oneVPL, libaom, SVT-AV1, and NVENC consumers as well. Per-patch
@@ -85,9 +113,12 @@ FFMPEG_REPO=/absolute/path/to/ffmpeg ./generate.sh
 ```
 
 `generate.sh` reads and verifies the tag plus commit in root
-`build-config.env`; `BASE_TAG` is not an input. Edit the sources under `files/`,
+`build-config.env`; `BASE_TAG` is not an input. It applies the shared series on
+that commit and writes the Pelorus patches as the range above the series tip,
+so no Pelorus patch carries a series change. Edit the sources under `files/`,
 rerun it twice to prove byte-stability, and commit both sources and regenerated
-`*.patch` artifacts in the same change.
+`*.patch` artifacts in the same change. File numbers are the shipped ones (0021
+stays unused); the `[PATCH n/22]` subject of a patch counts its position.
 
 ## Use
 

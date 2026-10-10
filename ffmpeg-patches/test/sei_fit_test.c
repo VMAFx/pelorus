@@ -131,45 +131,55 @@ static Blob pack_analyze(uint16_t cols, uint16_t rows, int with_maps)
     return pack_analyze_fill(cols, rows, with_maps, 0);
 }
 
-/* nvenc.c's pelorus_udu_carrier() on a payload copy: strip a shortened blob,
- * then replace a blob with its carrier. Returns the written length. */
-static size_t to_carrier(uint8_t **copy, size_t len, size_t n)
+/* nvenc.c's pelorus_udu_carrier() (patch 0022) on the `n`-byte payload copy the
+ * shared series made (ADR-0185): any other payload stays as it is; with a
+ * budget (hevc_nvenc; SIZE_MAX means none), a blob whose carrier does not fit
+ * loses its maps in the copy; then the blob is replaced by its carrier. A blob
+ * that cannot be stripped is converted whole, and the series' charge drops it.
+ * Returns the written length. */
+static size_t to_carrier(uint8_t **copy, size_t n, size_t budget)
 {
     uint8_t *carrier;
+    size_t keep = n;
     size_t clen;
 
-    if (len < n)
-        pel_sei_strip_maps(*copy, len);
-    if (!pel_sei_is_blob(*copy, len))
-        return len;
-    clen = pel_sei_carrier_len(*copy, len);
+    if (!pel_sei_is_blob(*copy, n))
+        return n;
+    if (budget != SIZE_MAX) {
+        keep = pel_sei_fit_len(*copy, n, budget);
+        if (keep != 0u && keep < n)
+            pel_sei_strip_maps(*copy, keep);
+        else
+            keep = n;
+    }
+    clen = pel_sei_carrier_len(*copy, keep);
     carrier = malloc(clen);
     if (!carrier) {
         free(*copy);
         *copy = NULL;
         return 0;
     }
-    pel_sei_carrier_write(*copy, len, carrier);
+    pel_sei_carrier_write(*copy, keep, carrier);
     free(*copy);
     *copy = carrier;
     return clen;
 }
 
-/* The encoder's steps for one payload: fit, copy, strip and convert, charge.
- * 0 when the payload is dropped; else the written length, copied into *out
- * (a Pelorus blob as its carrier). */
+/* The encoder's steps for one payload: the series' copy, the Pelorus hook,
+ * then the series' charge against the picture's budget (nvenc_hevc_sei_fits(),
+ * the size pel_sei_nal_bytes() mirrors). 0 when the payload is dropped; else
+ * the written length, copied into *out (a Pelorus blob as its carrier). */
 static size_t carry(const uint8_t *p, size_t n, size_t *budget, uint8_t **out)
 {
-    size_t len = pel_sei_fit_len(p, n, *budget);
-    uint8_t *copy;
+    uint8_t *copy = n != 0u ? malloc(n) : NULL;
+    size_t len;
     size_t need;
 
     *out = NULL;
-    copy = len != 0u ? malloc(len) : NULL;
     if (!copy)
         return 0;
-    memcpy(copy, p, len);
-    len = to_carrier(&copy, len, n);
+    memcpy(copy, p, n);
+    len = to_carrier(&copy, n, *budget);
     if (!copy)
         return 0;
     need = pel_sei_nal_bytes(copy, len, *budget);
@@ -598,6 +608,39 @@ static void test_qsv_plan_matches_fit(TestCtx *t)
     free(maps.bytes);
 }
 
+/* The hook of patch 0022 on the paths the GPU smoke cannot reach from a filter
+ * graph. A blob with a section this file cannot strip and a carrier over the
+ * budget goes out whole, so the series' charge drops it and the picture's
+ * budget is untouched; it is never cut. Without a budget (h264_nvenc) the same
+ * blob and the 1080p blob go out whole as carriers, maps included. */
+static void test_hook_unstrippable_and_no_budget(TestCtx *t)
+{
+    Blob maps = pack_analyze(60, 34, 1);
+    size_t budget = PEL_SEI_HEVC_USER_BUDGET;
+    size_t none = SIZE_MAX;
+    uint8_t *out = NULL;
+    size_t len;
+
+    CHECK(maps.bytes != NULL);
+    if (!maps.bytes)
+        return;
+    len = carry(maps.bytes, maps.len, &none, &out);
+    CHECK(len == pel_sei_carrier_len(maps.bytes, maps.len));
+    CHECK(unwraps_to(out, len, maps.bytes, maps.len));
+    free(out);
+    maps.bytes[PEL_SEI_UUID_LEN + 16u] |= (uint8_t)PEL_SEC_QPREPORT;
+    CHECK(pel_sei_is_blob(maps.bytes, maps.len));
+    CHECK(pel_sei_fit_len(maps.bytes, maps.len, budget) == 0u);
+    CHECK(carry(maps.bytes, maps.len, &budget, &out) == 0u && out == NULL);
+    CHECK(budget == PEL_SEI_HEVC_USER_BUDGET);
+    none = SIZE_MAX;
+    len = carry(maps.bytes, maps.len, &none, &out);
+    CHECK(len == pel_sei_carrier_len(maps.bytes, maps.len));
+    CHECK(unwraps_to(out, len, maps.bytes, maps.len));
+    free(out);
+    free(maps.bytes);
+}
+
 int main(void)
 {
     TestCtx ctx = {0};
@@ -613,6 +656,7 @@ int main(void)
     test_carrier_twin(t);
     test_flat_maps_fit_as_carrier(t);
     test_carrier_only_for_blobs(t);
+    test_hook_unstrippable_and_no_budget(t);
     test_qsv_message_len(t);
     test_qsv_boundary(t);
     test_qsv_sum_over_payloads(t);

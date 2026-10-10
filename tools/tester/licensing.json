@@ -212,7 +212,7 @@
   "components": [
     {
       "id": "ffmpeg",
-      "name": "FFmpeg with the Pelorus patch stack",
+      "name": "FFmpeg with the shared FFmpeg fix series and the Pelorus patch stack",
       "version": "n9.0.2",
       "version_from": "build-config.env:FFMPEG_TAG",
       "spdx": "GPL-3.0-or-later",
@@ -228,7 +228,8 @@
       "source": "https://github.com/FFmpeg/FFmpeg",
       "notes": [
         "Built with --enable-gpl --enable-version3, never nonfree (tools/tester/check-ffmpeg-licence.sh). FFmpeg's own sources are LGPL-2.1-or-later and GPL parts are enabled; the combined binary is GPL-3.0-or-later.",
-        "The exact FFmpeg commit and the Pelorus commit are named at the top of this file; the companion -source image holds the tree as compiled."
+        "The exact FFmpeg commit and the Pelorus commit are named at the top of this file; the companion -source image holds the tree as compiled.",
+        "The shared FFmpeg fix series (github.com/VMAFx/ffmpeg-patches, LGPL-2.1-or-later patches to FFmpeg's sources) is applied before the Pelorus patch stack; build-config.env of the Pelorus commit pins its release tag, commit and tarball sha256, and the -source image holds the release tarball (ADR-0185)."
       ],
       "redistributable": true
     },

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
 Date: Thu, 1 Jan 2026 00:00:00 +0000
-Subject: [PATCH 11/23] feat(nvenc): carry the Pelorus AV1 film-grain estimate
+Subject: [PATCH 11/22] feat(nvenc): carry the Pelorus AV1 film-grain estimate
  into av1_nvenc
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -57,10 +57,10 @@ ADR: docs/adr/0118-nvenc-av1-filmgrain.md, docs/adr/0115-grain-estimate.md (prod
  3 files changed, 313 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index a6809de3422cdd27d1e5be7cfd6cdf8a6300ed61..28dc6dca1cc3083339451c7c50615de193323aac 100644
+index e76be245e0dfe6f949a6cc3943ada80aca90170b..4932034eb712015be3a1e21881c2ace65696ac7e 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
-@@ -1689,6 +1689,31 @@ static av_cold int nvenc_setup_av1_config(AVCodecContext *avctx)
+@@ -1698,6 +1698,31 @@ static av_cold int nvenc_setup_av1_config(AVCodecContext *avctx)
      av1->numFwdRefs = avctx->refs;
      av1->numBwdRefs = avctx->refs;
  
@@ -92,7 +92,7 @@ index a6809de3422cdd27d1e5be7cfd6cdf8a6300ed61..28dc6dca1cc3083339451c7c50615de1
  #ifdef NVENC_HAVE_H264_AND_AV1_TEMPORAL_FILTER
      if (ctx->tf_level >= 0) {
          av1->tfLevel = ctx->tf_level;
-@@ -2981,6 +3006,266 @@ static void reconfig_encoder(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3124,6 +3149,266 @@ static void reconfig_encoder(AVCodecContext *avctx, const AVFrame *frame)
      }
  }
  
@@ -359,7 +359,7 @@ index a6809de3422cdd27d1e5be7cfd6cdf8a6300ed61..28dc6dca1cc3083339451c7c50615de1
  #ifdef NVENC_HAVE_HEVC_AND_AV1_MASTERING_METADATA
  static int nvenc_set_mastering_display_data(AVCodecContext *avctx, const AVFrame *frame, NV_ENC_PIC_PARAMS *pic_params,
                                              MASTERING_DISPLAY_INFO *mastering_disp_info, CONTENT_LIGHT_LEVEL *content_light_level)
-@@ -3505,6 +3790,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3648,6 +3933,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
          }
  #endif
  
@@ -373,7 +373,7 @@ index a6809de3422cdd27d1e5be7cfd6cdf8a6300ed61..28dc6dca1cc3083339451c7c50615de1
          if (res < 0)
              return res;
 diff --git a/libavcodec/nvenc.h b/libavcodec/nvenc.h
-index 8a0dbaea8384b05e90965a5e45a0973b04e467f2..499477b2750a72edbd4917741dd0974321822151 100644
+index 84606443da38ad358bacdf81c9204b5079750e9f..00edb5dce7f4ec5dcc564a44dfb9138cfc3f066f 100644
 --- a/libavcodec/nvenc.h
 +++ b/libavcodec/nvenc.h
 @@ -45,6 +45,9 @@ typedef void ID3D11Device;
@@ -386,7 +386,7 @@ index 8a0dbaea8384b05e90965a5e45a0973b04e467f2..499477b2750a72edbd4917741dd09743
  #define NVENC_HAVE_HEVC_OUTPUT_RECOVERY_POINT_SEI
  #endif
  
-@@ -213,6 +216,23 @@ typedef struct NvencContext
+@@ -215,6 +218,23 @@ typedef struct NvencContext
  
      int support_dyn_bitrate;
  

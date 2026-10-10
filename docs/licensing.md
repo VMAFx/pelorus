@@ -86,7 +86,11 @@ The patch stack turns Pelorus into part of an FFmpeg build. Three kinds of
 code meet there:
 
 - FFmpeg's own sources, LGPL-2.1-or-later (some parts GPL when FFmpeg is
-  configured with `--enable-gpl`);
+  configured with `--enable-gpl`), with the shared FFmpeg fix series applied
+  first: patches to FFmpeg's own files, LGPL-2.1-or-later, published by
+  [VMAFx/ffmpeg-patches](https://github.com/VMAFx/ffmpeg-patches) and not part
+  of this repository or its release archive
+  ([ADR-0185](adr/0185-shared-ffmpeg-fix-series.md));
 - the Pelorus files the stack adds to FFmpeg, LGPL-2.1-or-later like the tree
   they join;
 - `libpelorus`, EUPL-1.2, which the filters `pelorus_analyze_vulkan`,
@@ -105,8 +109,8 @@ parts.
 Pelorus publishes no FFmpeg binary today: a release carries the patch stack
 (`pelorus-ffmpeg-patches-<tag>.tar.gz`) with `LICENSES/LGPL-2.1-or-later.txt`,
 `LICENSES/EUPL-1.2.txt` and a `NOTICE` that maps paths to licences and names the
-release commit and the FFmpeg base commit
-(`scripts/release/write-patch-notice.sh`). A Pelorus-enabled FFmpeg the project publishes
+release commit, the FFmpeg base commit and the shared fix series release the
+stack needs first (`scripts/release/write-patch-notice.sh`). A Pelorus-enabled FFmpeg the project publishes
 later follows vmafx's rule ([ADR-0171](adr/0171-eupl-relicense.md)):
 
 - configured with `--enable-gpl --enable-version3`, with x264 and x265 among
