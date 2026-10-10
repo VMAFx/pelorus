@@ -95,7 +95,8 @@ pel_check_frames()
 
     n="$(awk '!/^#/ { n++ } END { print n + 0 }' "$host")"
     [[ "$n" == "$frames" ]] || { echo "$name: $n of $frames frames read back"; return 1; }
-    diff -q <(grep -v '^#' "$zc") <(grep -v '^#' "$host") >/dev/null ||
+    # Plain string comparison: the MSYS2 CI image has no diff(1).
+    [[ "$(grep -v '^#' "$zc")" == "$(grep -v '^#' "$host")" ]] ||
         { echo "$name: mapped surface differs from the filter's frame"; return 1; }
 }
 
