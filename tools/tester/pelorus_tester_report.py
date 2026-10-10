@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TOOL_NAME = "pelorus-tester-report"
-TOOL_VERSION = "0.4.8"
+TOOL_VERSION = "0.4.9"
 SCHEMA_VERSION = 2
 SCHEMA_PATH = Path(__file__).with_name("report.schema.json")
 
