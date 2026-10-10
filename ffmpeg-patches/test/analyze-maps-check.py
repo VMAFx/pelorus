@@ -6,7 +6,10 @@
 Reads the Pelorus blobs that FFmpeg's `showinfo` filter prints ("User Data="
 hex after the Pelorus UUID line), decodes the header, the variance and banding
 sections and their three maps, and applies the reader rules of `pel_blob_map()`
-plus value checks. Called by vulkan-format-matrix.sh; `--self-test` plants one
+plus value checks. A payload in the zero-free carrier form (interop ABI 1.5,
+ADR-0183: carrier UUID, then the COBS-encoded image, which NVENC streams carry)
+is decoded as strictly as `pel_blob_unwrap()` does first. Called by
+vulkan-format-matrix.sh and nvenc-udu-sei-smoke.sh; `--self-test` plants one
 defect per rule and requires each to be rejected.
 
   analyze-maps-check.py maps LOG --grid COLSxROWS [--band-min X] [--band-max X]
@@ -22,6 +25,7 @@ import struct
 import sys
 
 PELORUS_UUID = "e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64"
+CARRIER_UUID = "3f9b37b8-fd9a-4621-920e-9b78b55cf9b5"
 HEADER_FMT = "<8sHHIIHHQBBHHHII"
 HEADER_BYTES = 48
 SEC_BANDING, SEC_VARIANCE, SEC_COMPLEXITY = 1, 2, 128
@@ -37,17 +41,43 @@ class MapError(Exception):
     """A blob or map that a reader must refuse."""
 
 
-def blobs_from_log(text):
-    """Pelorus blob images (header onward) in the order showinfo printed them."""
-    blobs, pending = [], False
+def uncobs(enc):
+    """Strict COBS decode, the rules of pel_blob_unwrap(): no zero byte, no block
+    past the end, no empty final block after a full one."""
+    out, pos, prev = bytearray(), 0, 0
+    while pos < len(enc):
+        code = enc[pos]
+        if code == 0 or code - 1 > len(enc) - pos - 1:
+            raise MapError("carrier: code byte %d at %d runs past the end" % (code, pos))
+        if pos + code == len(enc) and code == 1 and prev == 0xFF:
+            raise MapError("carrier: empty block after a full one (non-canonical)")
+        block = enc[pos + 1:pos + code]
+        if 0 in block:
+            raise MapError("carrier: zero byte in a block at %d" % pos)
+        out += block
+        pos += code
+        if code != 0xFF and pos < len(enc):
+            out.append(0)
+        prev = code
+    return bytes(out)
+
+
+def blobs_from_log(text, forms=None):
+    """Pelorus blob images (header onward) in the order showinfo printed them.
+    A carrier payload is decoded; `forms`, when a list, receives "blob" or
+    "carrier" per image."""
+    blobs, pending = [], None
     for line in text.splitlines():
-        if PELORUS_UUID in line:
-            pending = True
+        if PELORUS_UUID in line or CARRIER_UUID in line:
+            pending = "blob" if PELORUS_UUID in line else "carrier"
             continue
         match = re.search(r"User Data=([0-9a-f]*)\s*$", line)
         if match and pending:
-            blobs.append(bytes.fromhex(match.group(1)))
-            pending = False
+            data = bytes.fromhex(match.group(1))
+            blobs.append(uncobs(data) if pending == "carrier" else data)
+            if forms is not None:
+                forms.append(pending)
+            pending = None
             if len(blobs) >= MAX_BLOBS:
                 break
     return blobs
@@ -240,9 +270,45 @@ def pack_blob(cols, rows, band, var, edge, maps=True):
     return bytes(image)
 
 
-def as_log(image):
+def cobs(data):
+    """COBS as pel_blob_carrier_encode() writes it (no empty block after a final full one)."""
+    out, idx, code = bytearray([0]), 0, 1
+    for i, byte in enumerate(data):
+        if byte:
+            out.append(byte)
+            code += 1
+        if not byte or (code == 0xFF and i + 1 < len(data)):
+            out[idx] = code
+            idx, code = len(out), 1
+            out.append(0)
+    out[idx] = code
+    return bytes(out)
+
+
+def as_log(image, carrier=False):
+    uuid, data = (CARRIER_UUID, cobs(image)) if carrier else (PELORUS_UUID, image)
     return ("[Parsed_showinfo_5 @ 0x1] side data - User Data Unregistered SEI message: "
-            "UUID=%s\n[Parsed_showinfo_5 @ 0x1] User Data=%s\n" % (PELORUS_UUID, image.hex()))
+            "UUID=%s\n[Parsed_showinfo_5 @ 0x1] User Data=%s\n" % (uuid, data.hex()))
+
+
+def carrier_self_test(good):
+    """The carrier form decodes to the same image; corrupt stuffing is refused."""
+    failures, forms = [], []
+    if blobs_from_log(as_log(good, carrier=True), forms) != [good] or forms != ["carrier"]:
+        failures.append("carrier form of a valid blob not decoded to the blob")
+    if cobs(bytes(range(1, 255))) != b"\xff" + bytes(range(1, 255)):
+        failures.append("cobs: a final full block got an empty block after it")
+    enc = cobs(good)
+    for label, bad in (("zero byte in the carrier", enc[:5] + b"\x00" + enc[6:]),
+                       ("block past the end of the carrier", enc + b"\x09"),
+                       ("empty block after a final full block",
+                        b"\xff" + bytes(range(1, 255)) + b"\x01")):
+        try:
+            blobs_from_log("UUID=%s\nUser Data=%s\n" % (CARRIER_UUID, bad.hex()))
+        except MapError:
+            continue
+        failures.append("planted defect accepted: " + label)
+    return failures
 
 
 def self_test():
@@ -285,6 +351,7 @@ def self_test():
     rejected("edge map mean != edge_density", bytes(bad))
     if blobs_from_log("User Data=00ff\n"):
         failures.append("a foreign SEI was read as a Pelorus blob")
+    failures += carrier_self_test(good)
     low = decode(pack_blob(3, 2, [10] * 6, var, edge))
     if contrast_problems(ok, low, 0.25):
         failures.append("valid contrast rejected")

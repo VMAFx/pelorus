@@ -1796,6 +1796,312 @@ static void test_analysis_maps_layout(void)
     CHECK(got == 8u);
 }
 
+/* ---- ABI 1.5: zero-free carrier form (ADR-0183) -------------------------- */
+
+/* Known answer, shared with VMAFx and any reader written from the spec: a
+ * header-only ABI 1.5 image (frame_pts 123456, 10-bit, 16x9 grid, 'PLRS') and
+ * its carrier form. */
+static const uint8_t kat_image[48] = {
+    0x50, 0x45, 0x4c, 0x4f, 0x52, 0x31, 0x00, 0x00, 0x01, 0x00, 0x05, 0x00, 0x30, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x00, 0x40, 0xe2, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x0a, 0x10, 0x00, 0x09, 0x00, 0x00, 0x00, 0x50, 0x4c, 0x52, 0x53, 0x00, 0x00, 0x00, 0x00};
+static const uint8_t kat_carrier[65] = {
+    0x3f, 0x9b, 0x37, 0xb8, 0xfd, 0x9a, 0x46, 0x21, 0x92, 0x0e, 0x9b, 0x78, 0xb5,
+    0x5c, 0xf9, 0xb5, 0x07, 0x50, 0x45, 0x4c, 0x4f, 0x52, 0x31, 0x01, 0x02, 0x01,
+    0x02, 0x05, 0x02, 0x30, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x02,
+    0x30, 0x04, 0x40, 0xe2, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x03, 0x0a, 0x10,
+    0x02, 0x09, 0x01, 0x01, 0x05, 0x50, 0x4c, 0x52, 0x53, 0x01, 0x01, 0x01, 0x01};
+
+/* The carrier of blob in a new heap buffer after checking the length query, the short-buffer
+ * answer and the output shape (carrier UUID, no zero byte). NULL on a failed step. */
+static uint8_t *encode_carrier_checked(const uint8_t *blob, size_t len, size_t *out_clen)
+{
+    uint8_t *carrier = malloc(PEL_CARRIER_MAX_LEN(len));
+    size_t clen = 0;
+    size_t olen = 0;
+    size_t i;
+
+    *out_clen = 0;
+    if (carrier == NULL) {
+        return NULL;
+    }
+    CHECK(pel_blob_carrier_encode(blob, len, NULL, 0, &clen) == PEL_ERR_RANGE); /* query */
+    CHECK(clen > len && clen <= PEL_CARRIER_MAX_LEN(len));
+    CHECK(pel_blob_carrier_encode(blob, len, carrier, clen - 1u, &olen) == PEL_ERR_RANGE);
+    CHECK(olen == clen);
+    CHECK(pel_blob_carrier_encode(blob, len, carrier, PEL_CARRIER_MAX_LEN(len), &olen) == PEL_OK);
+    CHECK(olen == clen && memcmp(carrier, pelorus_carrier_uuid, PELORUS_SIDEDATA_UUID_LEN) == 0);
+    for (i = 0; i < clen; i++) {
+        CHECK(carrier[i] != 0u); /* zero-free: nothing for NVENC to escape */
+    }
+    *out_clen = clen;
+    return carrier;
+}
+
+/* Encode blob, unwrap the carrier and compare byte for byte. Returns the carrier length (0 on a
+ * failed step). */
+static size_t check_carrier_roundtrip(const uint8_t *blob, size_t len)
+{
+    size_t clen = 0;
+    uint8_t *carrier = encode_carrier_checked(blob, len, &clen);
+    uint8_t *scratch = (carrier != NULL && clen != 0u) ? malloc(clen) : NULL;
+    const uint8_t *out = NULL;
+    size_t olen = 0;
+    size_t done = 0;
+
+    CHECK(scratch != NULL);
+    if (scratch != NULL) {
+        /* What an ABI 1.4 reader sees: a foreign SEI, ignored (R3). */
+        CHECK(pel_blob_is_present(carrier, clen) == 0);
+        CHECK(pel_blob_unwrap(carrier, clen, scratch, clen, &out, &olen) == PEL_OK);
+        CHECK(out == scratch && olen == len && memcmp(out, blob, len) == 0);
+        done = clen;
+    }
+    free(scratch);
+    free(carrier);
+    return done;
+}
+
+/* Positive: a packed blob round-trips through the carrier form byte for byte; a blob passes
+ * pel_blob_unwrap unchanged; the known answer matches byte for byte. */
+static void test_carrier_roundtrip(void)
+{
+    PelorusSideData meta;
+    PelorusBandingSection band;
+    PelorusPackSection sec;
+    uint8_t kat_blob[PELORUS_SIDEDATA_UUID_LEN + sizeof(kat_image)];
+    uint8_t out[sizeof(kat_carrier)];
+    uint8_t scratch[sizeof(kat_carrier)];
+    const uint8_t *res = NULL;
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    size_t olen = 0;
+
+    fill_meta(&meta);
+    memset(&band, 0, sizeof(band));
+    band.global_banding_risk = 0.42f;
+    band.flat_area_fraction = 0.61f;
+    sec.id = PEL_SEC_BANDING;
+    sec.data = &band;
+    sec.size = (uint32_t)sizeof(band);
+    CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
+    if (blob != NULL) {
+        CHECK(check_carrier_roundtrip(blob, len) != 0u);
+        CHECK(pel_blob_unwrap(blob, len, NULL, 0, &res, &olen) == PEL_OK);
+        CHECK(res == blob && olen == len); /* the blob itself, no copy */
+    }
+    pel_blob_free(blob);
+
+    memcpy(kat_blob, pelorus_sidedata_uuid, PELORUS_SIDEDATA_UUID_LEN);
+    memcpy(kat_blob + PELORUS_SIDEDATA_UUID_LEN, kat_image, sizeof(kat_image));
+    CHECK(pel_blob_carrier_encode(kat_blob, sizeof(kat_blob), out, sizeof(out), &olen) == PEL_OK);
+    CHECK(olen == sizeof(kat_carrier) && memcmp(out, kat_carrier, sizeof(kat_carrier)) == 0);
+    CHECK(pel_blob_unwrap(kat_carrier, sizeof(kat_carrier), scratch, sizeof(scratch), &res,
+                          &olen) == PEL_OK);
+    CHECK(olen == sizeof(kat_blob) && res != NULL && memcmp(res, kat_blob, olen) == 0);
+}
+
+/* A valid header followed by `tail` bytes from fill(i); heap, caller frees. */
+static uint8_t *carrier_test_blob(size_t tail, uint8_t (*fill)(size_t), size_t *out_len)
+{
+    const size_t head = PELORUS_SIDEDATA_UUID_LEN + sizeof(kat_image);
+    uint8_t *b = malloc(head + tail);
+    size_t i;
+
+    *out_len = 0;
+    if (b == NULL) {
+        return NULL;
+    }
+    memcpy(b, pelorus_sidedata_uuid, PELORUS_SIDEDATA_UUID_LEN);
+    memcpy(b + PELORUS_SIDEDATA_UUID_LEN, kat_image, sizeof(kat_image));
+    for (i = 0; i < tail; i++) {
+        b[head + i] = fill(i);
+    }
+    *out_len = head + tail;
+    return b;
+}
+
+static uint8_t fill_zero(size_t i)
+{
+    (void)i;
+    return 0u;
+}
+
+static uint8_t fill_nonzero(size_t i)
+{
+    return (uint8_t)(1u + i % 255u);
+}
+
+static uint8_t fill_ramp(size_t i)
+{
+    return (uint8_t)(i * 7u);
+}
+
+/* Boundary: an all-zero tail (the flat-content maps of issue #284), tails without a zero that end
+ * exactly on a full 254-byte block or one byte past it, and the largest analyze blob (2^20 cells,
+ * 6 bytes each). */
+static void test_carrier_boundaries(void)
+{
+    static const struct {
+        size_t tail;
+        uint8_t (*fill)(size_t);
+        size_t want; /* carrier length; 0 = only the bound is checked */
+    } cases[] = {
+        {40000u, fill_zero, 16u + 48u + 40000u + 1u}, {254u, fill_nonzero, 16u + 48u + 254u + 1u},
+        {255u, fill_nonzero, 16u + 48u + 255u + 2u},  {508u, fill_nonzero, 16u + 48u + 508u + 2u},
+        {(size_t)6u << 20u, fill_ramp, 0u},
+    };
+    size_t c;
+
+    for (c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        size_t len = 0;
+        uint8_t *blob = carrier_test_blob(cases[c].tail, cases[c].fill, &len);
+        size_t clen;
+
+        CHECK(blob != NULL);
+        if (blob == NULL) {
+            continue;
+        }
+        clen = check_carrier_roundtrip(blob, len);
+        CHECK(clen != 0u && (cases[c].want == 0u || clen == cases[c].want));
+        free(blob);
+    }
+}
+
+/* Corrupt one byte of a carrier copy; unwrap must return `want`. */
+static void check_carrier_corrupt(size_t at, uint8_t value, size_t len, pel_result want)
+{
+    uint8_t bad[sizeof(kat_carrier)];
+    uint8_t scratch[sizeof(kat_carrier)];
+    const uint8_t *res = NULL;
+    size_t olen = 0;
+
+    memcpy(bad, kat_carrier, sizeof(bad));
+    bad[at] = value;
+    CHECK(pel_blob_unwrap(bad, len, scratch, sizeof(scratch), &res, &olen) == want);
+    CHECK(res == NULL);
+}
+
+/* A blob whose image ends in 254 non-zero bytes ends its carrier with one full 0xFF block;
+ * with one more zero byte the carrier ends 0xFF ... 01 01. Both decode back; the full block
+ * followed by an empty final block (never written) is refused. */
+static void check_carrier_full_block_endings(void)
+{
+    uint8_t blob[16u + 48u + 255u];
+    uint8_t carrier[PEL_CARRIER_MAX_LEN(sizeof(blob)) + 1u];
+    uint8_t scratch[sizeof(carrier)];
+    const uint8_t *res = NULL;
+    size_t clen = 0;
+    size_t olen = 0;
+
+    memcpy(blob, pelorus_sidedata_uuid, 16u);
+    memcpy(blob + 16, kat_image, sizeof(kat_image));
+    memset(blob + 64, 0x41, 254u);
+    blob[sizeof(blob) - 1u] = 0u;
+    CHECK(pel_blob_carrier_encode(blob, sizeof(blob), carrier, sizeof(carrier), &clen) == PEL_OK);
+    CHECK(clen == sizeof(blob) + 2u && carrier[clen - 2u] == 1u && carrier[clen - 1u] == 1u &&
+          carrier[clen - 3u - 254u] == 0xFFu);
+    CHECK(pel_blob_unwrap(carrier, clen, scratch, sizeof(scratch), &res, &olen) == PEL_OK);
+    CHECK(olen == sizeof(blob) && res != NULL && memcmp(res, blob, olen) == 0);
+    CHECK(pel_blob_carrier_encode(blob, sizeof(blob) - 1u, carrier, sizeof(carrier), &clen) ==
+          PEL_OK);
+    CHECK(clen == sizeof(blob) && carrier[clen - 255u] == 0xFFu);
+    carrier[clen] = 0x01u; /* empty final block after the full one */
+    CHECK(pel_blob_unwrap(carrier, clen + 1u, scratch, sizeof(scratch), &res, &olen) ==
+          PEL_ERR_ABI);
+    CHECK(pel_blob_unwrap(carrier, clen, scratch, sizeof(scratch), &res, &olen) == PEL_OK);
+}
+
+/* Negative: corrupt stuffing, truncation and a non-canonical ending are refused, never misread;
+ * the canonical form of the same bytes decodes. */
+static void test_carrier_rejects(void)
+{
+    uint8_t noise[16u + 1u + 60u];
+    uint8_t wide[16u + 300u];
+    const uint8_t *res = NULL;
+    size_t olen = 0;
+
+    check_carrier_corrupt(42u, 0x00u, sizeof(kat_carrier), PEL_ERR_ABI);   /* zero data byte */
+    check_carrier_corrupt(64u, 0x09u, sizeof(kat_carrier), PEL_ERR_ABI);   /* block past the end */
+    check_carrier_corrupt(16u, 0x00u, sizeof(kat_carrier), PEL_ERR_ABI);   /* zero code byte */
+    check_carrier_corrupt(0u, 0x3eu, sizeof(kat_carrier), PEL_ERR_ABSENT); /* foreign UUID */
+    check_carrier_corrupt(16u, 0x07u, 58u, PEL_ERR_ABI); /* cut inside the last data block */
+    check_carrier_corrupt(16u, 0x07u, 16u + 20u, PEL_ERR_TRUNCATED); /* image < header */
+    check_carrier_corrupt(16u, 0x07u, 16u, PEL_ERR_TRUNCATED);       /* empty image */
+
+    check_carrier_full_block_endings();
+    /* Well-formed stuffing of 60 bytes that are no Pelorus image: refused. */
+    memcpy(noise, pelorus_carrier_uuid, 16u);
+    noise[16] = 61u;
+    memset(noise + 17, 0x41, 60u);
+    CHECK(pel_blob_unwrap(noise, sizeof(noise), wide, sizeof(wide), &res, &olen) == PEL_ERR_ABI);
+    CHECK(res == NULL);
+}
+
+/* Negative: foreign payloads, short buffers and NULL arguments are refused by both functions. */
+static void test_carrier_rejects_arguments(void)
+{
+    uint8_t scratch[sizeof(kat_carrier)];
+    const uint8_t *res = NULL;
+    size_t olen = 0;
+
+    /* Short scratch: PEL_ERR_RANGE names a length that suffices. */
+    CHECK(pel_blob_unwrap(kat_carrier, sizeof(kat_carrier), scratch, sizeof(kat_carrier) - 1u, &res,
+                          &olen) == PEL_ERR_RANGE);
+    CHECK(olen == sizeof(kat_carrier) && res == NULL);
+    CHECK(pel_blob_unwrap(kat_carrier, sizeof(kat_carrier), NULL, 0u, &res, &olen) ==
+          PEL_ERR_RANGE);
+    CHECK(pel_blob_unwrap(kat_carrier, 15u, scratch, sizeof(scratch), &res, &olen) ==
+          PEL_ERR_ABSENT);
+    CHECK(pel_blob_unwrap(NULL, 20u, scratch, sizeof(scratch), &res, &olen) == PEL_ERR_INVALID);
+    CHECK(pel_blob_unwrap(kat_carrier, sizeof(kat_carrier), scratch, sizeof(scratch), NULL,
+                          &olen) == PEL_ERR_INVALID);
+}
+
+/* Negative: encoding refuses anything that is not a Pelorus blob, and bad arguments. */
+static void test_carrier_encode_rejects(void)
+{
+    uint8_t scratch[sizeof(kat_carrier)];
+    size_t olen = 0;
+
+    CHECK(pel_blob_carrier_encode(kat_carrier, sizeof(kat_carrier), scratch, sizeof(scratch),
+                                  &olen) == PEL_ERR_ABSENT);
+    CHECK(olen == 0u);
+    CHECK(pel_blob_carrier_encode(kat_carrier, sizeof(kat_carrier), NULL, 8u, &olen) ==
+          PEL_ERR_INVALID);
+    CHECK(pel_blob_carrier_encode(NULL, 64u, scratch, sizeof(scratch), &olen) == PEL_ERR_INVALID);
+    CHECK(pel_blob_carrier_encode(kat_carrier, sizeof(kat_carrier), scratch, sizeof(scratch),
+                                  NULL) == PEL_ERR_INVALID);
+}
+
+/* A carrier unwrapped after a truncation that ends on a block boundary decodes, but the image is
+ * shorter than total_size: pel_blob_find_section reports it as truncated, as for any blob. */
+static void test_carrier_truncated_image(void)
+{
+    uint8_t carrier[sizeof(kat_carrier) + 64u];
+    uint8_t scratch[sizeof(carrier)];
+    uint8_t blob[16u + 48u + 40u];
+    const uint8_t *res = NULL;
+    const void *p = NULL;
+    size_t got = 0;
+    size_t clen = 0;
+    size_t olen = 0;
+    PelorusSideData hdr;
+
+    memset(blob, 0, sizeof(blob));
+    memcpy(blob, pelorus_sidedata_uuid, 16u);
+    memcpy(blob + 16, kat_image, sizeof(kat_image));
+    memcpy(&hdr, blob + 16, sizeof(hdr));
+    hdr.total_size = 48u + 40u; /* 40 zero bytes after the header belong to the blob */
+    memcpy(blob + 16, &hdr, sizeof(hdr));
+    CHECK(pel_blob_carrier_encode(blob, sizeof(blob), carrier, sizeof(carrier), &clen) == PEL_OK);
+    /* The 40 zeros are 40 one-byte blocks at the end: drop 10 of them. */
+    CHECK(pel_blob_unwrap(carrier, clen - 10u, scratch, sizeof(scratch), &res, &olen) == PEL_OK);
+    CHECK(olen == sizeof(blob) - 10u);
+    CHECK(pel_blob_find_section(res, olen, PEL_SEC_BANDING, sizeof(PelorusBandingSection), &p,
+                                &got) == PEL_ERR_TRUNCATED);
+}
+
 int main(void)
 {
     test_roundtrip();
@@ -1822,6 +2128,12 @@ int main(void)
     test_blob_map_bounds();
     test_encode_record_section();
     test_analysis_maps_layout();
+    test_carrier_roundtrip();
+    test_carrier_boundaries();
+    test_carrier_rejects();
+    test_carrier_rejects_arguments();
+    test_carrier_encode_rejects();
+    test_carrier_truncated_image();
 
     if (g_fail != 0) {
         (void)fprintf(stderr, "%d check(s) failed\n", g_fail);

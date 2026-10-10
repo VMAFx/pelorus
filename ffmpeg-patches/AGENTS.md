@@ -118,12 +118,16 @@ ffmpeg-patches/
    `VUID-VkImageMemoryBarrier2-image-09118`). Never insert patch before it;
    new patches append after it. Drop on first FFmpeg bump with equivalent
    fix; later patches move up one number. Proof = lavapipe validation run.
-10. Patch 0022 = `hevc_nvenc` `udu_sei` header limit (ADR-0181): NVENC HEVC
-   refuses >1024 non-VCL bytes per picture. `files/pelorus_sei_fit.h` =
-   size arithmetic + map stripping, mirrors interop offsets; fast test
-   `sei-fit` checks them with `offsetof()`. New section with maps -> add
-   its fields to `pel_sei_map_fields`, its bit to `PEL_SEI_STRIPPABLE`.
-   GPU proof = `test/nvenc-udu-sei-smoke.sh` (exit 77 = no NVENC/Vulkan).
+10. Patch 0022 = NVENC `udu_sei`: `hevc_nvenc` header limit (ADR-0181) plus
+   zero-free carrier on both NVENC codecs (ADR-0183). NVENC HEVC refuses
+   more than 1024 non-VCL bytes per picture; NVENC truncates SEI when
+   `epb > ceil(P/3)+3`. `files/pelorus_sei_fit.h` = size arithmetic, map
+   stripping, COBS carrier encoder; mirrors interop offsets and `interop.c`
+   encoder; fast test `sei-fit` checks offsets with `offsetof()` and carrier
+   bytes against `pel_blob_carrier_encode()`. Budget charges carrier, never
+   blob. New section with maps -> add its fields to `pel_sei_map_fields`, its
+   bit to `PEL_SEI_STRIPPABLE`. GPU proof = `test/nvenc-udu-sei-smoke.sh`
+   (exit 77 = no NVENC/Vulkan).
 11. Every ephemeral `git am` replay supplies `Pelorus-Replay` committer
    identity, neutralizes signing, hooks, and diff ordering, and passes
    `--no-gpg-sign --no-verify`. Do not rely on workstation's global Git

@@ -1,5 +1,5 @@
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index 28dc6dca1c..e62251f6bd 100644
+index 28dc6dca1c..b6ff133ddc 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
 @@ -24,6 +24,7 @@
@@ -10,10 +10,11 @@ index 28dc6dca1c..e62251f6bd 100644
  #if CONFIG_AV1_NVENC_ENCODER
  #include "av1.h"
  #endif
-@@ -2185,6 +2186,13 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
+@@ -2185,6 +2186,14 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
      av_frame_free(&ctx->frame);
  
      av_freep(&ctx->sei_data);
++    av_freep(&ctx->pelorus_udu_buf);
 +    if (ctx->pelorus_udu_stripped || ctx->pelorus_udu_dropped)
 +        av_log(avctx, AV_LOG_WARNING, "udu_sei: %"PRId64" frame(s) carried "
 +               "Pelorus side data without its per-cell maps and %"PRId64" user "
@@ -24,7 +25,7 @@ index 28dc6dca1c..e62251f6bd 100644
      av_freep(&ctx->qp_delta_map);
      av_freep(&ctx->me_hints);
  
-@@ -2800,9 +2808,69 @@ static int output_ready(AVCodecContext *avctx, int flush)
+@@ -2800,9 +2809,116 @@ static int output_ready(AVCodecContext *avctx, int flush)
      return (nb_ready > 0) && (nb_ready + nb_pending >= ctx->async_depth);
  }
  
@@ -66,24 +67,71 @@ index 28dc6dca1c..e62251f6bd 100644
 +    }
 +}
 +
-+/* Strip the maps from a shortened Pelorus blob copy and charge the payload
-+ * against *budget. 0 when it does not fit: the caller frees and skips it. */
++/* Pelorus: NVENC writes a SEI payload truncated once its emulation prevention
++ * bytes exceed ceil(P / 3) + 3 for P bytes (issue #284, measured on an RTX 4090
++ * with driver 615.78.08), which the zero runs of flat analyze maps reach, and
++ * the decoder then drops it. Every Pelorus blob is written in its zero-free
++ * carrier form (interop ABI 1.5, ADR-0183, pelorus_sei_fit.h), which needs no
++ * emulation prevention; any other payload is copied unchanged. The carrier is
++ * encoded straight from the side data into the one allocation the payload
++ * needs, as the stock av_memdup() did. A blob pel_sei_fit_len() shortened
++ * (`keep` < size) loses its maps first, in a per-encoder buffer reused across
++ * frames and freed at close, so no frame allocates more than its payloads. */
++static int pelorus_udu_payload(AVCodecContext *avctx, const AVFrameSideData *sd,
++                               size_t keep, NV_ENC_SEI_PAYLOAD *sei)
++{
++    NvencContext *ctx = avctx->priv_data;
++    const int blob = pel_sei_is_blob(sd->data, sd->size);
++    const uint8_t *src = sd->data;
++    size_t len;
++
++    sei->payload = NULL;
++    if (blob && keep < sd->size) {
++        av_fast_malloc(&ctx->pelorus_udu_buf, &ctx->pelorus_udu_buf_size, keep);
++        if (!ctx->pelorus_udu_buf)
++            return AVERROR(ENOMEM);
++        memcpy(ctx->pelorus_udu_buf, sd->data, keep);
++        pel_sei_strip_maps(ctx->pelorus_udu_buf, keep);
++        src = ctx->pelorus_udu_buf;
++    }
++    len = blob ? pel_sei_carrier_len(src, keep) : keep;
++    if (len > UINT32_MAX)
++        return AVERROR(EINVAL);
++    sei->payload = av_malloc(len);
++    if (!sei->payload)
++        return AVERROR(ENOMEM);
++    sei->payloadSize = (uint32_t)len;
++    if (!blob) {
++        memcpy(sei->payload, sd->data, keep);
++        return 0;
++    }
++    pel_sei_carrier_write(src, keep, sei->payload);
++    if (!ctx->pelorus_udu_carrier_logged) {
++        ctx->pelorus_udu_carrier_logged = 1;
++        av_log(avctx, AV_LOG_VERBOSE, "udu_sei: Pelorus side data is written "
++               "in its zero-free carrier form (UUID "
++               "3f9b37b8-fd9a-4621-920e-9b78b55cf9b5), which needs no emulation "
++               "prevention.\n");
++    }
++    return 0;
++}
++
++/* Charge the payload as written (a Pelorus blob as its carrier) against
++ * *budget; `stripped` is the length of a blob written without its maps, else
++ * 0. 0 when it does not fit: the caller frees and skips it. */
 +static int pelorus_udu_commit(AVCodecContext *avctx, const AVFrame *frame,
 +                              const AVFrameSideData *sd, NV_ENC_SEI_PAYLOAD *sei,
-+                              size_t *budget)
++                              size_t *budget, size_t stripped)
 +{
-+    size_t need;
++    size_t need = pel_sei_nal_bytes(sei->payload, sei->payloadSize, *budget);
 +
-+    if (sei->payloadSize < sd->size)
-+        pel_sei_strip_maps(sei->payload, sei->payloadSize);
-+    need = pel_sei_nal_bytes(sei->payload, sei->payloadSize, *budget);
 +    if (need > *budget) {
 +        pelorus_udu_log(avctx, frame, sd, 0);
 +        return 0;
 +    }
 +    *budget -= need;
-+    if (sei->payloadSize < sd->size)
-+        pelorus_udu_log(avctx, frame, sd, sei->payloadSize);
++    if (stripped)
++        pelorus_udu_log(avctx, frame, sd, stripped);
 +    return 1;
 +}
 +
@@ -94,7 +142,7 @@ index 28dc6dca1c..e62251f6bd 100644
      int sei_count = 0;
      int i, res;
  
-@@ -2877,13 +2945,27 @@ static int prepare_sei_data_array(AVCodecContext *avctx, const AVFrame *frame)
+@@ -2877,13 +2993,27 @@ static int prepare_sei_data_array(AVCodecContext *avctx, const AVFrame *frame)
      if (!ctx->udu_sei)
          return sei_count;
  
@@ -122,45 +170,49 @@ index 28dc6dca1c..e62251f6bd 100644
          tmp = av_fast_realloc(ctx->sei_data,
                                &ctx->sei_data_size,
                                (sei_count + 1) * sizeof(*ctx->sei_data));
-@@ -2892,15 +2974,22 @@ static int prepare_sei_data_array(AVCodecContext *avctx, const AVFrame *frame)
+@@ -2892,13 +3022,18 @@ static int prepare_sei_data_array(AVCodecContext *avctx, const AVFrame *frame)
              goto error;
          } else {
              ctx->sei_data = tmp;
 -            ctx->sei_data[sei_count].payloadSize = side_data->size;
-+            ctx->sei_data[sei_count].payloadSize = (uint32_t)udu_size;
              ctx->sei_data[sei_count].payloadType = SEI_TYPE_USER_DATA_UNREGISTERED;
 -            ctx->sei_data[sei_count].payload = av_memdup(side_data->data, side_data->size);
-+            ctx->sei_data[sei_count].payload = av_memdup(side_data->data, udu_size);
- 
-             if (!ctx->sei_data[sei_count].payload) {
-                 res = AVERROR(ENOMEM);
+-
+-            if (!ctx->sei_data[sei_count].payload) {
+-                res = AVERROR(ENOMEM);
++            res = pelorus_udu_payload(avctx, side_data, udu_size,
++                                      &ctx->sei_data[sei_count]);
++            if (res < 0)
                  goto error;
-             }
- 
++
 +            if (avctx->codec->id == AV_CODEC_ID_HEVC &&
 +                !pelorus_udu_commit(avctx, frame, side_data,
-+                                    &ctx->sei_data[sei_count], &udu_budget)) {
++                                    &ctx->sei_data[sei_count], &udu_budget,
++                                    udu_size < side_data->size ? udu_size : 0)) {
 +                av_freep(&ctx->sei_data[sei_count].payload);
 +                continue;
-+            }
-+
+             }
+ 
              sei_count++;
-         }
-     }
 diff --git a/libavcodec/nvenc.h b/libavcodec/nvenc.h
-index 499477b275..9fb32d009f 100644
+index 499477b275..bbcb06601f 100644
 --- a/libavcodec/nvenc.h
 +++ b/libavcodec/nvenc.h
-@@ -328,6 +328,12 @@ typedef struct NvencContext
+@@ -328,6 +328,17 @@ typedef struct NvencContext
      int     me_hints_h;      ///< 16x16 blocks down  = ceil(height / 16)
      int     me_hints_warned; ///< rate-limit the AQ/lookahead note to once
      int     me_hints_absent_warned; ///< rate-limit the "frame had no motion data" warning
 +
 +    /* Pelorus: with udu_sei on hevc_nvenc, side-data payloads that do not fit
 +     * the per-picture header limit (pelorus_sei_fit.h, ADR-0181). The first of
-+     * each kind is a warning, later ones verbose, the totals a warning at close. */
++     * each kind is a warning, later ones verbose, the totals a warning at close.
++     * On both codecs Pelorus blobs go out in the zero-free carrier form
++     * (ADR-0183). */
 +    int64_t pelorus_udu_stripped; ///< Pelorus blobs written without their maps
 +    int64_t pelorus_udu_dropped;  ///< SEI payloads not written at all
++    int     pelorus_udu_carrier_logged; ///< the zero-free carrier note was given (ADR-0183)
++    uint8_t *pelorus_udu_buf;           ///< maps-stripped blob copy, reused across frames
++    unsigned int pelorus_udu_buf_size;  ///< allocated size of pelorus_udu_buf
  } NvencContext;
  
  int ff_nvenc_encode_init(AVCodecContext *avctx);
