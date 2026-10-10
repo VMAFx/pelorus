@@ -18,6 +18,11 @@ the graph (`av_frame_copy_props` propagates side data) and never collides with
 other unregistered SEIs. Inside, an 8-byte magic `"PELOR1\0\0"`, an ABI version,
 a section directory, and the present sections.
 
+In a bitstream the blob can also arrive in its zero-free carrier form (ABI 1.5,
+[below](#zero-free-carrier-form-abi-15)): NVENC writes it so, under the UUID
+`3f9b37b8-fd9a-4621-920e-9b78b55cf9b5`. A reader of decoded frames passes every
+entry through `pel_blob_unwrap()` first.
+
 ## Layout
 
 ```
@@ -66,6 +71,11 @@ Filling and validating a `PelorusEncTelemetryInput` is reading the contract,
 not writing a Pelorus blob.
 
 ## API
+
+Readers of decoded frames: since ABI 1.5 a payload can also arrive in the
+zero-free carrier form; pass it through `pel_blob_unwrap()` first and use the
+blob it hands out (see [Zero-free carrier form](#zero-free-carrier-form-abi-15)
+for `pel_blob_carrier_encode()` and `pel_blob_unwrap()`).
 
 ```c
 /* Producer (vf_pelorus_*) */
@@ -130,8 +140,8 @@ compensation is skipped for that frame and a warning is logged once.
 `vf_pelorus_analyze_vulkan` fills the map fields `PelorusBandingSection` and
 `PelorusVarianceSection` have carried since ABI 1.0
 ([ADR-0177](../adr/0177-analyze-per-cell-maps.md)). The layout and the field
-types are unchanged, so `PELORUS_ABI_MINOR` stays 4 and a reader of any minor
-can read the maps. `vf_pelorus_deband` still writes a banding section with an
+types are unchanged, so the maps took no minor bump and a reader of any minor
+can read them. `vf_pelorus_deband` still writes a banding section with an
 empty grid and no map.
 
 **Grid.** The header's `grid_cols` x `grid_rows` is the cell grid of the frame:
@@ -184,7 +194,10 @@ there when the maps are not needed downstream. `hevc_nvenc` writes a blob that
 does not fit its per-picture SEI limit without the maps: their offsets and
 sizes are zero, as in a `maps=0` blob, so read maps from the frame side data in
 the filter graph, not from an HEVC NVENC stream
-([ADR-0181](../adr/0181-hevc-nvenc-sei-header-budget.md)).
+([ADR-0181](../adr/0181-hevc-nvenc-sei-header-budget.md)). Both NVENC encoders
+write the blob as its zero-free carrier
+([ADR-0183](../adr/0183-sidedata-zero-free-carrier.md)): flat content gives maps
+that are mostly zero bytes, which NVENC otherwise writes truncated.
 
 ### QP-report reader stub (closed loop)
 
@@ -341,8 +354,9 @@ to the Pelorus body except for the include rewrite; see
 
 ## ABI 1.4
 
-`PELORUS_ABI_MINOR` is 4 ([ADR-0174](../adr/0174-encoder-telemetry-abi-1-4.md)).
-Release v0.3.0 shipped ABI 1.3; the next release carries 1.4. The minor bump
+ABI 1.4 ([ADR-0174](../adr/0174-encoder-telemetry-abi-1-4.md)) shipped in
+v0.4.0-rc.1, after ABI 1.3 in v0.3.0; ABI 1.5 adds the
+[zero-free carrier form](#zero-free-carrier-form-abi-15). The 1.4 minor bump
 covers three additions, each locked by `_Static_assert` on its size and on
 every member offset:
 
@@ -374,14 +388,151 @@ else
     bsize = pelorus_mc_cell_pitch(w, h, grid_cols, grid_rows);
 ```
 
+## Zero-free carrier form (ABI 1.5)
+
+`PELORUS_ABI_MINOR` is 5 ([ADR-0183](../adr/0183-sidedata-zero-free-carrier.md),
+[research 0183](../research/0183-sidedata-zero-free-carrier.md)). No section,
+field or bit changes; ABI 1.5 adds a second way to carry the same blob in a
+bitstream.
+
+**Why.** On an RTX 4090 with driver 615.78.08, `h264_nvenc` and `hevc_nvenc` write a user data
+unregistered SEI truncated when its emulation prevention bytes exceed
+`ceil(P / 3) + 3` for a `P`-byte payload, and the decoder drops it without an
+error (issue #284; the rule is pinned on that driver,
+[research 0183](../research/0183-sidedata-zero-free-carrier.md)). Zero runs
+cause emulation prevention, and the analyze maps of flat content are mostly
+zeros. A payload without any zero byte needs no emulation prevention, so the
+rule cannot apply to it, whatever the content.
+
+**Layout.**
+
+```
+[16-byte carrier UUID 3f9b37b8-fd9a-4621-920e-9b78b55cf9b5] [COBS(image)]
+```
+
+`image` is the blob without its UUID: the header, `dir[]`, the sections and the
+maps, exactly as `pel_blob_pack` lays them out. COBS (Cheshire and Baker, 1999)
+without a frame delimiter: the encoding is a sequence of blocks, each a code
+byte `c` (1 to 255) followed by `c - 1` non-zero bytes. Every block except a
+full one (`c = 255`) and the last one stands for one zero byte after its data.
+A full block that ends the image is not followed by an empty block. The result
+holds no zero byte and is one byte longer than the image, plus one byte per
+254 bytes without a zero. The carrier UUID has no zero byte either.
+`PEL_CARRIER_MAX_LEN(n)` bounds the carrier of an `n`-byte blob; it is part of
+the ABI 1.5 contract (the bound never shrinks), valid for `n <= SIZE_MAX / 2`,
+and evaluates `n` twice. For the exact length, call
+`pel_blob_carrier_encode(blob, len, NULL, 0, &need)`.
+
+Known answer (the conformance fixture checks it): the header-only image
+`50 45 4c 4f 52 31 00 00 01 00 05 00 30 00 00 00 00 00 00 00 00 00 30 00 40 e2
+01 00 00 00 00 00 00 0a 10 00 09 00 00 00 50 4c 52 53 00 00 00 00` encodes, after
+the carrier UUID, to `07 50 45 4c 4f 52 31 01 02 01 02 05 02 30 01 01 01 01 01
+01 01 01 02 30 04 40 e2 01 01 01 01 01 01 03 0a 10 02 09 01 01 05 50 4c 52 53 01
+01 01 01`.
+
+| Function | Purpose |
+|---|---|
+| `pel_blob_carrier_encode(blob, len, out, cap, &out_len)` | blob to carrier into a caller buffer, no allocation; `PEL_ERR_ABSENT` for a payload that is not a Pelorus blob (write it unchanged); `out` NULL and `cap` 0 ask for the length (`PEL_ERR_RANGE`, `out_len` set) |
+| `pel_blob_unwrap(data, len, scratch, cap, &blob, &blob_len)` | either form to the blob: a blob comes back as `data` itself (no copy, `scratch` untouched), a carrier is decoded into `scratch` (`cap >= len` always suffices) as blob UUID + image; `PEL_ERR_ABSENT` for any other UUID |
+
+`pel_blob_carrier_encode()` results:
+
+| Result | Condition |
+|---|---|
+| `PEL_OK` | `out[0..*out_len)` holds the carrier |
+| `PEL_ERR_INVALID` | `blob` or `out_len` NULL, or `out` NULL with `cap > 0` |
+| `PEL_ERR_ABSENT` | `blob` is not a Pelorus blob (`pel_blob_is_present()` is 0); `*out_len` is 0 |
+| `PEL_ERR_RANGE` | `out` NULL or `cap` shorter than the carrier; `*out_len` is the length needed |
+
+`pel_blob_unwrap()` results:
+
+| Result | Condition |
+|---|---|
+| `PEL_OK` | `*blob` and `*blob_len` describe the blob |
+| `PEL_ERR_INVALID` | `data`, `blob` or `blob_len` NULL, or `scratch` NULL with `cap > 0` |
+| `PEL_ERR_ABSENT` | `len < 16`, or neither UUID: a foreign payload, ignore it |
+| `PEL_ERR_RANGE` | a carrier with `scratch` NULL or `cap < len`; `*blob_len` is `len`, which suffices |
+| `PEL_ERR_ABI` | a zero byte, a block past the end, an empty final block after a full one, or a decoded image without the Pelorus magic and ABI major |
+| `PEL_ERR_TRUNCATED` | the decoded image is shorter than the 48-byte header |
+
+On any error `*blob` is NULL, and for a carrier `scratch` may be partly
+written. The decoder never writes past `cap` and never allocates; a payload
+decodes to one image and encodes back to the same bytes. Sections and maps are
+checked by `pel_blob_find_section()` and `pel_blob_map()` on the unwrapped
+blob, so a carrier cut on a block boundary reports `PEL_ERR_TRUNCATED` there,
+like a short blob. Decoding a 49 KB carrier took at most 0.17 ms on a debug
+build.
+
+**Ownership and lifetime.** Both functions write only into caller-owned
+buffers and keep no reference. `*blob` aliases `data` (blob form) or `scratch`
+(carrier form): keep that buffer alive and unchanged while you read the blob
+and the section pointers taken from it. `scratch` must not overlap `data`
+(no in-place unwrap); an 8-byte aligned `scratch` keeps the cast guarantee of
+R5 for section pointers. **Thread safety:** both are reentrant, with no global
+or static state; concurrent calls on buffers that do not alias are safe.
+
+**Writers.** Pelorus filters keep attaching the blob, and in-graph consumers
+read it in place as before. `h264_nvenc` and `hevc_nvenc` (patch 0022) write
+every Pelorus blob as its carrier; QSV (patch 0019), Vulkan Video (patch 0020)
+and the software encoders write the blob, which they carry intact. Pelorus is
+still the only writer: VMAFx must not call `pel_blob_carrier_encode` on its
+own data.
+
+**Readers.** Call `pel_blob_unwrap()` on every `AV_FRAME_DATA_SEI_UNREGISTERED`
+entry a decoder exports, then read sections as before:
+
+```c
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "pelorus/interop.h"
+
+/* Banding risk of one decoded SEI_UNREGISTERED payload in either form; -1 when the
+ * payload holds no usable Pelorus banding section. ABI 1.4 readers called
+ * pel_blob_find_section(data, size, ...) directly. */
+static float banding_risk(const uint8_t *data, size_t size)
+{
+    uint8_t *scratch = malloc(size > 0 ? size : 1); /* >= size always suffices */
+    const uint8_t *blob = NULL;
+    size_t blob_len = 0;
+    const void *p = NULL;
+    size_t got = 0;
+    float risk = -1.0f;
+    PelorusBandingSection b;
+
+    if (scratch != NULL &&
+        pel_blob_unwrap(data, size, scratch, size, &blob, &blob_len) == PEL_OK &&
+        pel_blob_find_section(blob, blob_len, PEL_SEC_BANDING, sizeof(b), &p, &got) ==
+            PEL_OK &&
+        got == sizeof(b)) {
+        memcpy(&b, p, sizeof(b)); /* p points into blob: data or scratch */
+        risk = b.global_banding_risk;
+    }
+    free(scratch); /* after the last use of blob and p */
+    return risk;
+}
+```
+
+A per-frame reader allocates `scratch` once, at the largest payload size it
+accepts, rather than per call as the example does (HISS-03).
+
+A reader built on ABI 1.4 sees a carrier as an unregistered SEI with a foreign
+UUID: `pel_blob_is_present()` returns 0 and the frame has no Pelorus data for
+it (R3). It never misreads a carrier. VMAFx re-pins to the release that ships
+ABI 1.5 and adds the call ([mirror contract](mirror-contract.md)); until then
+it scores frames from NVENC streams unweighted, the same result as the
+truncated SEI it replaces on flat content.
+
 ## Stability rules (normative — see interop.h)
 
 - **R1 Append-only**: new fields at the end of a section; new sections take a new
   bit. **R2**: never reorder, resize, remove, or repurpose. **R3**: every section
   is optional via `section_mask`; ignore unknown bits, tolerate absent ones.
   **R4**: read `min(producer_size, your_known_size)`. **R5**: little-endian wire,
-  pointer-free. **R6**: `PELORUS_ABI_MINOR` bumps on additions; `MAJOR` never
-  (additive evolution is forced by R1/R2).
+  pointer-free. **R6**: `PELORUS_ABI_MINOR` bumps on additions, a new carrier
+  form included (ABI 1.5); `MAJOR` never (additive evolution is forced by
+  R1/R2).
 - Adding a field/section: bump `PELORUS_ABI_MINOR`, extend the conformance
   fixture, document the new field here. Changing meaning: mint a **new** section
   bit; leave the old bit reserved.

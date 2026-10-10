@@ -5,6 +5,47 @@ Re-apply / re-test work created for the FFmpeg patch stack after an upstream
 FFmpeg bump or a `libpelorus` ABI change. One entry per change that affects the
 patches (ADR-0108 deliverable #6).
 
+## Unreleased — zero-free carrier in patch 0022 (#284, ADR-0183; interop ABI 1.5; regenerates 0022)
+
+- **Patch**: 0022 only, still `0022-nvenc-pelorus-udu-sei.patch` (canonical
+  diff `files/nvenc-pelorus-udu-sei.patch`, header `files/pelorus_sei_fit.h`,
+  message `.commit-msg-nvenc-udu-sei.txt`, new subject "write Pelorus side
+  data zero-free and within NVENC's header limit"). The `nvenc.c` and
+  `nvenc.h` sections were rebuilt with
+  `git diff HEAD~1 -- libavcodec/nvenc.c libavcodec/nvenc.h` in a tree with all
+  22 patches applied and the edit made on top. 0001 to 0021 are
+  byte-identical.
+- **What changed**: in `prepare_sei_data_array()`, `pelorus_udu_payload()`
+  replaces the stock `av_memdup()` of each `SEI_UNREGISTERED` entry, on
+  `h264_nvenc` as well as `hevc_nvenc`: a Pelorus blob is encoded as its
+  zero-free carrier (`pel_sei_carrier_write()`) straight from the side data
+  into the payload's one allocation; a blob `pel_sei_fit_len()` shortened is
+  first stripped in `NvencContext.pelorus_udu_buf`, reused across frames
+  (`av_fast_malloc()`) and freed in `ff_nvenc_encode_close()`; any other
+  payload is copied as before. So a frame allocates one buffer per payload,
+  as stock does (HISS-03). `pelorus_udu_commit()` charges the payload as
+  written and takes the stripped length as an argument. `pel_sei_fit_len()`
+  measures a Pelorus blob as its carrier (`pel_sei_carrier_nal_bytes()`).
+  `NvencContext` also gains `pelorus_udu_carrier_logged` for the one verbose
+  note.
+- **Rebase-sensitive**: the COBS encoder in `pelorus_sei_fit.h` must stay
+  byte-identical to `interop.c`'s `pel_blob_carrier_encode()`; the fast test
+  `sei-fit` compares them, and the carrier UUID in both files must match
+  `pelorus_carrier_uuid`. `av1_nvenc` has no `udu_sei`; if one is ever added,
+  its metadata OBUs need no carrier. Patches 0004 (ROI), 0008 (ME hints) and
+  0011 (film grain) edit neighbouring regions of `nvenc.c` and `nvenc.h`; the
+  full replay applies them with 0022 last in the stack.
+- **Interop**: `PELORUS_ABI_MINOR` 5. Readers of decoded frames call
+  `pel_blob_unwrap()`; the VMAFx mirror re-pins
+  ([mirror contract](api/mirror-contract.md)).
+- **Checks**: `generate.sh` twice, byte-identical; `build-and-run.sh` (22
+  patches, link, static consumer), run with `JOBS=2` for the first version and
+  `JOBS=4` for the single-allocation version, the GPU hidden so its smoke
+  skipped there; `nvenc-udu-sei-smoke.sh` then on the kept binary on an RTX
+  4090 with the new `flat-h264` and `flat-hevc` cases (issue #284): it passes
+  on this stack and fails on the rc.2 build ("8 Pelorus blobs not in the
+  carrier form").
+
 ## Unreleased — Vulkan QP-map formats and fill paths (#278, ADR-0182; regenerates 0009)
 
 - **Patch**: 0009 only. Edit the hand-maintained source

@@ -40,6 +40,13 @@
 const uint8_t pelorus_sidedata_uuid[PELORUS_SIDEDATA_UUID_LEN] = {
     0xe1, 0xd7, 0xc4, 0xa2, 0x6b, 0x93, 0x4f, 0x08, 0x9a, 0x55, 0x0f, 0x3c, 0x2d, 0xb1, 0x7e, 0x64};
 
+/* pelorus-sidedata-zero-free-v1 = 3f9b37b8-fd9a-4621-920e-9b78b55cf9b5 (ABI 1.5) */
+const uint8_t pelorus_carrier_uuid[PELORUS_SIDEDATA_UUID_LEN] = {
+    0x3f, 0x9b, 0x37, 0xb8, 0xfd, 0x9a, 0x46, 0x21, 0x92, 0x0e, 0x9b, 0x78, 0xb5, 0x5c, 0xf9, 0xb5};
+
+/* COBS code byte of a full block: 254 data bytes and no implied zero. */
+#define PEL_COBS_FULL 0xFFu
+
 #define PEL_ALIGN8(x) (((x) + 7u) & ~7u)
 
 /* Section bits that are individually valid (R3); reject anything else. */
@@ -437,6 +444,176 @@ pel_result pel_blob_map(const uint8_t *blob, size_t len, uint32_t offset, uint32
     }
     *out_ptr = image + offset;
     return PEL_OK;
+}
+
+/* COBS-encode in[0..n) into out (Cheshire and Baker, 1999; no frame delimiter):
+ * each block is a code byte c in 1..0xFF followed by c - 1 non-zero bytes, and
+ * every block except a full (0xFF) one and the last stands for a trailing zero.
+ * A full block that ends the input is not followed by an empty block. With out
+ * NULL only the length is computed. Returns the encoded length; the loop is
+ * bounded by n (HISS-02). */
+static size_t cobs_encode(const uint8_t *in, size_t n, uint8_t *out)
+{
+    size_t code_at = 0; /* position of the open block's code byte */
+    size_t w = 1;       /* next output position                    */
+    size_t code = 1;    /* 1 + data bytes of the open block        */
+    size_t i;
+
+    for (i = 0; i < n; i++) {
+        const int full = in[i] != 0u && code + 1u == PEL_COBS_FULL && i + 1u < n;
+
+        if (in[i] != 0u) {
+            if (out != NULL) {
+                out[w] = in[i];
+            }
+            w++;
+            code++;
+        }
+        if (in[i] == 0u || full) {
+            if (out != NULL) {
+                out[code_at] = (uint8_t)code;
+            }
+            code_at = w++;
+            code = 1;
+        }
+    }
+    if (out != NULL) {
+        out[code_at] = (uint8_t)code;
+    }
+    return w;
+}
+
+/* Copy the data bytes of one COBS block; PEL_ERR_ABI when one of them is zero. */
+static pel_result cobs_copy_block(const uint8_t *in, size_t count, uint8_t *out)
+{
+    size_t k;
+
+    for (k = 0; k < count; k++) {
+        if (in[k] == 0u) {
+            return PEL_ERR_ABI;
+        }
+        out[k] = in[k];
+    }
+    return PEL_OK;
+}
+
+/* Strictly decode the COBS bytes in[0..n) into out, which holds at least n
+ * bytes (a decoded image is never longer than its encoding). On PEL_OK *out_n
+ * is the decoded length. PEL_ERR_ABI for a zero code byte, a block past the
+ * end, a zero data byte or an empty final block after a full one (non-canonical:
+ * cobs_encode never writes it, so encode(decode(x)) == x for every accepted x). */
+static pel_result cobs_decode(const uint8_t *in, size_t n, uint8_t *out, size_t *out_n)
+{
+    size_t r = 0;
+    size_t w = 0;
+    size_t prev = 0;
+
+    while (r < n) { /* bounded: r grows by code >= 1 each pass (HISS-02) */
+        const size_t code = in[r];
+
+        if (code == 0u || code - 1u > n - r - 1u) {
+            return PEL_ERR_ABI;
+        }
+        if (r + code == n && code == 1u && prev == PEL_COBS_FULL) {
+            return PEL_ERR_ABI;
+        }
+        if (cobs_copy_block(in + r + 1u, code - 1u, out + w) != PEL_OK) {
+            return PEL_ERR_ABI;
+        }
+        w += code - 1u;
+        r += code;
+        if (code != PEL_COBS_FULL && r < n) {
+            out[w++] = 0u;
+        }
+        prev = code;
+    }
+    *out_n = w;
+    return PEL_OK;
+}
+
+pel_result pel_blob_carrier_encode(const uint8_t *blob, size_t len, uint8_t *out, size_t cap,
+                                   size_t *out_len)
+{
+    const size_t uuid_len = (size_t)PELORUS_SIDEDATA_UUID_LEN;
+    size_t need;
+
+    if (out_len == NULL) {
+        return PEL_ERR_INVALID;
+    }
+    *out_len = 0;
+    if (blob == NULL || (out == NULL && cap > 0u)) {
+        return PEL_ERR_INVALID;
+    }
+    if (!pel_blob_is_present(blob, len)) {
+        return PEL_ERR_ABSENT;
+    }
+    need = uuid_len + cobs_encode(blob + uuid_len, len - uuid_len, NULL);
+    *out_len = need; /* also on a short buffer: the caller sizes from it */
+    if (out == NULL || cap < need) {
+        return PEL_ERR_RANGE;
+    }
+    memcpy(out, pelorus_carrier_uuid, uuid_len);
+    (void)cobs_encode(blob + uuid_len, len - uuid_len, out + uuid_len);
+    return PEL_OK;
+}
+
+/* Decode a carrier payload (pelorus_carrier_uuid first, len >= 16) into scratch
+ * as pelorus_sidedata_uuid + image. */
+static pel_result unwrap_carrier(const uint8_t *data, size_t len, uint8_t *scratch, size_t cap,
+                                 size_t *out_len)
+{
+    const size_t uuid_len = (size_t)PELORUS_SIDEDATA_UUID_LEN;
+    size_t image_len = 0;
+    pel_result rc;
+
+    if (scratch == NULL || cap < len) {
+        *out_len = len; /* enough for any carrier of this length */
+        return PEL_ERR_RANGE;
+    }
+    rc = cobs_decode(data + uuid_len, len - uuid_len, scratch + uuid_len, &image_len);
+    if (rc != PEL_OK) {
+        return rc;
+    }
+    if (image_len < sizeof(PelorusSideData)) {
+        return PEL_ERR_TRUNCATED;
+    }
+    memcpy(scratch, pelorus_sidedata_uuid, uuid_len);
+    if (!pel_blob_is_present(scratch, uuid_len + image_len)) {
+        return PEL_ERR_ABI; /* well-formed stuffing, but not a Pelorus image */
+    }
+    *out_len = uuid_len + image_len;
+    return PEL_OK;
+}
+
+pel_result pel_blob_unwrap(const uint8_t *data, size_t len, uint8_t *scratch, size_t cap,
+                           const uint8_t **out_blob, size_t *out_len)
+{
+    const size_t uuid_len = (size_t)PELORUS_SIDEDATA_UUID_LEN;
+    pel_result rc;
+
+    if (out_blob != NULL) {
+        *out_blob = NULL;
+    }
+    if (data == NULL || out_blob == NULL || out_len == NULL || (scratch == NULL && cap > 0u)) {
+        return PEL_ERR_INVALID;
+    }
+    *out_len = 0;
+    if (len < uuid_len) {
+        return PEL_ERR_ABSENT;
+    }
+    if (memcmp(data, pelorus_sidedata_uuid, uuid_len) == 0) {
+        *out_blob = data;
+        *out_len = len;
+        return PEL_OK;
+    }
+    if (memcmp(data, pelorus_carrier_uuid, uuid_len) != 0) {
+        return PEL_ERR_ABSENT;
+    }
+    rc = unwrap_carrier(data, len, scratch, cap, out_len);
+    if (rc == PEL_OK) {
+        *out_blob = scratch;
+    }
+    return rc;
 }
 
 pel_result pel_encode_record_digest_text(const PelorusEncodeRecordSection *s, size_t got, char *out,

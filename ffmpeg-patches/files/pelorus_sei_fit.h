@@ -40,6 +40,16 @@
  * hold every scalar, stay, and each map offset and size becomes zero, which
  * interop.h defines as an absent map. A payload that still does not fit is
  * dropped. The caller logs both.
+ *
+ * NVENC (h264_nvenc and hevc_nvenc) also writes a SEI payload truncated when
+ * its emulation prevention bytes exceed ceil(P / 3) + 3 for a P-byte payload
+ * (issue #284), which the zero runs of flat per-cell maps reach. Every Pelorus
+ * blob therefore goes into an NVENC stream in the zero-free carrier form of
+ * interop ABI 1.5 (ADR-0183): pelorus_carrier_uuid, then the COBS encoding of
+ * the blob image, with no 0x00 byte and so no emulation prevention at all.
+ * pel_sei_carrier_write() produces the bytes pel_blob_carrier_encode() does;
+ * sei_fit_test.c checks the two against each other. The budget is charged for
+ * the carrier, after any stripping.
  */
 
 #ifndef AVCODEC_PELORUS_SEI_FIT_H
@@ -136,6 +146,80 @@ static inline size_t pel_sei_nal_bytes(const uint8_t *p, size_t n, size_t limit)
     return fixed + pel_sei_epb(p, n);
 }
 
+/* interop.h pelorus_sidedata_uuid and pelorus_carrier_uuid (ABI 1.5). */
+static const uint8_t pel_sei_blob_uuid[PEL_SEI_UUID_LEN] = {
+    0xe1, 0xd7, 0xc4, 0xa2, 0x6b, 0x93, 0x4f, 0x08, 0x9a, 0x55, 0x0f, 0x3c, 0x2d, 0xb1, 0x7e, 0x64};
+static const uint8_t pel_sei_carrier_uuid[PEL_SEI_UUID_LEN] = {
+    0x3f, 0x9b, 0x37, 0xb8, 0xfd, 0x9a, 0x46, 0x21, 0x92, 0x0e, 0x9b, 0x78, 0xb5, 0x5c, 0xf9, 0xb5};
+
+/* 1 when `p` is an ABI 1.x Pelorus blob (UUID, magic, major 1), the test
+ * pel_blob_is_present() applies: such a payload goes out as a carrier. */
+static inline int pel_sei_is_blob(const uint8_t *p, size_t n)
+{
+    return p && n >= PEL_SEI_UUID_LEN + PEL_SEI_HDR_MIN &&
+           !memcmp(p, pel_sei_blob_uuid, PEL_SEI_UUID_LEN) &&
+           !memcmp(p + PEL_SEI_UUID_LEN, "PELOR1\0\0", 8) &&
+           pel_sei_rd16(p + PEL_SEI_UUID_LEN + 8) == 1u;
+}
+
+/*
+ * COBS-encode in[0..n) into out (Cheshire and Baker, 1999; no delimiter), the
+ * encoding interop.c's pel_blob_carrier_encode() writes: blocks of a code byte
+ * c (1..255) and c - 1 non-zero bytes; every block but a full one (255) and
+ * the last stands for a zero; a full block that ends the input gets no empty
+ * block after it. out NULL: length only. Returns the encoded length.
+ */
+static inline size_t pel_sei_cobs(const uint8_t *in, size_t n, uint8_t *out)
+{
+    size_t code_at = 0; /* position of the open block's code byte */
+    size_t w = 1;       /* next output position                    */
+    size_t code = 1;    /* 1 + data bytes of the open block        */
+
+    for (size_t i = 0; i < n; i++) {
+        const int full = in[i] && code + 1u == 0xFFu && i + 1u < n;
+
+        if (in[i]) {
+            if (out)
+                out[w] = in[i];
+            w++;
+            code++;
+        }
+        if (!in[i] || full) {
+            if (out)
+                out[code_at] = (uint8_t)code;
+            code_at = w++;
+            code = 1;
+        }
+    }
+    if (out)
+        out[code_at] = (uint8_t)code;
+    return w;
+}
+
+/* Bytes of the carrier form of the `n`-byte blob `p` (pel_sei_is_blob()). */
+static inline size_t pel_sei_carrier_len(const uint8_t *p, size_t n)
+{
+    return PEL_SEI_UUID_LEN + pel_sei_cobs(p + PEL_SEI_UUID_LEN, n - PEL_SEI_UUID_LEN, NULL);
+}
+
+/* Write the carrier form of the blob `p` into `out`, which holds
+ * pel_sei_carrier_len(p, n) bytes and does not overlap `p`. */
+static inline void pel_sei_carrier_write(const uint8_t *p, size_t n, uint8_t *out)
+{
+    memcpy(out, pel_sei_carrier_uuid, PEL_SEI_UUID_LEN);
+    pel_sei_cobs(p + PEL_SEI_UUID_LEN, n - PEL_SEI_UUID_LEN, out + PEL_SEI_UUID_LEN);
+}
+
+/* SEI NAL bytes of the carrier of the blob `p` (no emulation prevention: it
+ * holds no zero byte). Only a blob whose carrier can fit `limit` is scanned:
+ * a carrier is at least one byte longer than its blob. */
+static inline size_t pel_sei_carrier_nal_bytes(const uint8_t *p, size_t n, size_t limit)
+{
+    const size_t c = n + 1u > limit ? n + 1u : pel_sei_carrier_len(p, n);
+
+    return c + c / 255u + 10u;
+}
+
 /* The header fields of a Pelorus blob the stripper needs. */
 typedef struct PelSeiBlob {
     uint32_t total; /* total_size, blob-relative (UUID excluded) */
@@ -205,9 +289,13 @@ static inline size_t pel_sei_scalar_len(const uint8_t *p, size_t n)
 static inline void pel_sei_strip_maps(uint8_t *p, size_t len)
 {
     uint8_t *img = p + PEL_SEI_UUID_LEN;
-    const uint32_t count = pel_sei_rd16(img + 20);
-    const uint32_t hsize = pel_sei_rd16(img + 22);
+    uint32_t count;
+    uint32_t hsize;
 
+    if (len < PEL_SEI_UUID_LEN + PEL_SEI_HDR_MIN)
+        return; /* not a pel_sei_scalar_len() result: nothing to strip */
+    count = pel_sei_rd16(img + 20);
+    hsize = pel_sei_rd16(img + 22);
     for (uint32_t i = 0; i < count && i < PEL_SEI_MAX_SECTIONS; i++) {
         const uint8_t *d = img + hsize + i * PEL_SEI_DIR_ENTRY;
         const uint32_t id = pel_sei_rd32(d);
@@ -228,13 +316,17 @@ static inline void pel_sei_strip_maps(uint8_t *p, size_t len)
  * How many leading bytes of one SEI payload `p` of `n` bytes to carry when
  * `budget` bytes of SEI NAL units are left in the picture: `n` when the whole
  * payload fits, pel_sei_scalar_len() when it does not and `p` is a strippable
- * Pelorus blob (strip the copy with pel_sei_strip_maps(), then check it with
- * pel_sei_nal_bytes(), which also covers bytes the zeroed fields add), 0 to
- * drop the payload.
+ * Pelorus blob (strip the copy with pel_sei_strip_maps(), turn it into its
+ * carrier and check that with pel_sei_nal_bytes(), which also covers bytes the
+ * zeroed fields change), 0 to drop the payload. A Pelorus blob is measured as
+ * its carrier, the form the encoder writes.
  */
 static inline size_t pel_sei_fit_len(const uint8_t *p, size_t n, size_t budget)
 {
-    if (pel_sei_nal_bytes(p, n, budget) <= budget)
+    const size_t need = pel_sei_is_blob(p, n) ? pel_sei_carrier_nal_bytes(p, n, budget)
+                                              : pel_sei_nal_bytes(p, n, budget);
+
+    if (need <= budget)
         return n;
     return pel_sei_scalar_len(p, n);
 }

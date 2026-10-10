@@ -3,7 +3,7 @@
 
 > [!IMPORTANT]
 > **Status: the layout, the input contract and the checks are implemented;
-> the adapters are not.** `PELORUS_ABI_MINOR` is 4 in
+> the adapters are not.** The section arrived with `PELORUS_ABI_MINOR` 4 in
 > [`interop.h`](../../libpelorus/include/pelorus/interop.h)
 > ([ADR-0174](../adr/0174-encoder-telemetry-abi-1-4.md), issue #86). The
 > section, `pelorus/telemetry.h`, the registry and the parity check ship now.

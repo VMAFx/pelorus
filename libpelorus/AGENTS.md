@@ -99,6 +99,13 @@ libpelorus/
     for every accepted record. Worked example in `docs/api/encode-record.md`
     = test input: change example and digest together. No recursion:
     canonicaliser keeps explicit 5-frame stack.
+13. **ABI 1.5 zero-free carrier (ADR-0183).** `pelorus_carrier_uuid` = constant
+    forever, no `0x00` byte. Carrier = that UUID + COBS of blob image; no
+    delimiter, no empty block after final `0xFF` block. Decoder strict: zero
+    byte, block past end, non-canonical end -> `PEL_ERR_ABI`; image under
+    header -> `PEL_ERR_TRUNCATED`. Known-answer vector in `test/interop_test.c`
+    = spec: change format -> new UUID, never edit vector. Twin encoder in
+    `ffmpeg-patches/files/pelorus_sei_fit.h`; `sei-fit` test compares bytes.
 
 ## Don't
 

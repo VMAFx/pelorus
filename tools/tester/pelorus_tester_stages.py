@@ -39,6 +39,7 @@ RULES = (
     "steering_baseline_defect",
     "sd_present", "sd_structure", "sd_decode_tap", "sd_pts", "sd_carrier_masking",
     "sd_integrity_count", "sd_integrity_bytes", "sd_integrity_stripped",
+    "sd_carrier_form", "sd_carrier_strict",
     "brc_bitrate", "brc_decode", "brc_extbrc_engaged", "brc_no_huc", "brc_hw_refused",
 )
 
@@ -56,6 +57,9 @@ ALLOWLIST_PATH = REPO_ROOT / "ffmpeg-patches" / "test" / "vulkan-vuid-allowlist.
 ALLOWLIST_MAX_LINES = 500
 REF_RE = re.compile(r"^(#\d+|VMAFx/[A-Za-z0-9_.-]+#\d+|https://\S+)$")
 PELORUS_UUID = bytes.fromhex("e1d7c4a26b934f089a550f3c2db17e64")
+# Zero-free carrier form of the blob (interop ABI 1.5, ADR-0183): this UUID, then
+# the COBS-encoded blob image. NVENC writes every Pelorus blob this way.
+CARRIER_UUID = bytes.fromhex("3f9b37b8fd9a4621920e9b78b55cf9b5")
 PELORUS_MAGIC = b"PELOR1\0\0"
 SEC_BANDING, SEC_VARIANCE = 1, 2
 REQUIRED_SECTIONS = SEC_BANDING | SEC_VARIANCE
@@ -114,9 +118,12 @@ ENCODERS = (
 )
 # Encoders that can write the Pelorus blob as user-data-unregistered SEI with
 # -udu_sei 1: NVENC (stock), QSV (patch 0019), Vulkan Video (patch 0020).
+# "zero_free" marks the encoders that must write the zero-free carrier form
+# (patch 0022, ADR-0183); every other one must write the plain blob.
 SEI_CARRIERS = (
-    {"name": "hevc_nvenc", "codec": "hevc", "kind": "hw", "args": [], "strips": True},
-    {"name": "h264_nvenc", "codec": "h264", "kind": "hw", "args": []},
+    {"name": "hevc_nvenc", "codec": "hevc", "kind": "hw", "args": [], "strips": True,
+     "zero_free": True},
+    {"name": "h264_nvenc", "codec": "h264", "kind": "hw", "args": [], "zero_free": True},
     {"name": "hevc_qsv", "codec": "hevc", "kind": "hw", "args": []},
     {"name": "h264_qsv", "codec": "h264", "kind": "hw", "args": []},
     {"name": "hevc_vulkan", "codec": "hevc", "kind": "vulkan", "args": ["-qp", "30"]},
@@ -435,19 +442,85 @@ def unescape_nal(body):
     return bytes(out)
 
 
+PAYLOAD_FORMS = {PELORUS_UUID: "blob", CARRIER_UUID: "carrier"}
+
+
 def pelorus_blobs_per_frame(data, codec):
-    """List, per coded picture, of the Pelorus blobs in its SEI NAL units."""
+    """List, per coded picture, of the (form, bytes after the UUID) of the Pelorus payloads
+    in its SEI NAL units; form is "blob" or "carrier" (decode with unwrap_payloads)."""
     frames, pending = [], []
     for nal in split_nals(data)[:MAX_SEI_NALS]:
         kind, skip = nal_kind(nal, codec)
         if kind == "sei":
             rbsp = unescape_nal(nal[skip:])
-            pending.extend(pl[16:] for t, pl in sei_messages(rbsp)
-                           if t == 5 and pl[:16] == PELORUS_UUID)
+            pending.extend((PAYLOAD_FORMS[pl[:16]], pl[16:]) for t, pl in sei_messages(rbsp)
+                           if t == 5 and pl[:16] in PAYLOAD_FORMS)
         elif kind == "vcl":
             frames.append(pending)
             pending = []
     return frames
+
+
+def uncobs(data, strict=True):
+    """Decode a carrier body (COBS, no delimiter) as pel_blob_unwrap() does: (image, None) or
+    (None, why). Strict: no zero byte, no block past the end, no empty final block after a
+    full one, an image at least as long as the header. strict=False (rule sd_carrier_strict
+    off) keeps only what is needed to make progress."""
+    out, pos, prev = bytearray(), 0, 0
+    while pos < len(data):  # bounded: pos grows by the code byte, which is at least 1
+        code = data[pos]
+        if code == 0:
+            return None, "zero code byte at offset %d" % pos
+        if strict and code - 1 > len(data) - pos - 1:
+            return None, "block at offset %d runs past the end" % pos
+        if strict and pos + code == len(data) and code == 1 and prev == 0xFF:
+            return None, "empty final block after a full one (non-canonical)"
+        block = data[pos + 1:pos + code]
+        if strict and 0 in block:
+            return None, "zero byte in the block at offset %d" % pos
+        out += block
+        pos += code
+        if code != 0xFF and pos < len(data):
+            out.append(0)
+        prev = code
+    if strict and len(out) < HEADER_BYTES:
+        return None, "decoded image of %d bytes is shorter than the header" % len(out)
+    return bytes(out), None
+
+
+def form_problem(wrong, total, zero_free, label):
+    """NVENC must write the zero-free carrier, every other encoder the plain blob; one
+    problem names how many of the Pelorus payloads are in the wrong form."""
+    if not wrong:
+        return None
+    if zero_free:
+        return ("%s: %d of %d Pelorus payloads in the plain blob form; NVENC truncates zero "
+                "runs, so it must write the zero-free carrier (ADR-0183)" % (label, wrong, total))
+    return ("%s: %d of %d Pelorus payloads in the zero-free carrier form, which only NVENC "
+            "writes (ADR-0183)" % (label, wrong, total))
+
+
+def unwrap_payloads(frames, zero_free, label, disabled=frozenset()):
+    """(blob images per picture, problems) from per-picture (form, payload) lists: a carrier
+    is decoded strictly; payloads in the wrong form for this encoder are one problem."""
+    images, errs, wrong, total = [], [], 0, 0
+    strict = "sd_carrier_strict" not in disabled
+    for idx, payloads in enumerate(frames):
+        pic = []
+        for form, data in payloads[:MAX_SEI_MESSAGES]:
+            total += 1
+            wrong += (form == "carrier") != bool(zero_free)
+            if form == "carrier":
+                data, why = uncobs(data, strict)
+                if data is None:
+                    errs.append("%s picture %d: malformed zero-free carrier: %s" % (label, idx, why))
+                    data = b""
+            pic.append(data)
+        images.append(pic)
+    bad = form_problem(wrong, total, zero_free, label)
+    if bad and "sd_carrier_form" not in disabled:
+        errs.insert(0, bad)
+    return images, errs
 
 
 def header_errors(fields, length):
@@ -510,7 +583,7 @@ def decode_tap_problems(showinfo_text, n_expected, disabled=frozenset()):
     if "sd_decode_tap" in disabled:
         return []
     frames = len(re.findall(r"\bn:\s*\d+\s+pts:", showinfo_text))
-    uuids = showinfo_text.count("UUID=e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64")
+    uuids = showinfo_text.count(PELORUS_UUID_TEXT) + showinfo_text.count(CARRIER_UUID_TEXT)
     if frames != n_expected or uuids < n_expected:
         return ["decode tap saw %d frames with %d Pelorus blobs, expected %d each"
                 % (frames, uuids, n_expected)]
@@ -528,28 +601,37 @@ SEI_DIR_ENTRY = 16
 # (section bit, byte offset in the section of a uint32 map offset; the size follows)
 SEI_MAP_FIELDS = ((1 << 0, 8), (1 << 1, 12), (1 << 1, 20), (1 << 4, 20), (1 << 6, 0))
 PELORUS_UUID_TEXT = "UUID=e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64"
+CARRIER_UUID_TEXT = "UUID=3f9b37b8-fd9a-4621-920e-9b78b55cf9b5"
 SHOWINFO_FRAME_RE = re.compile(r"\bn:\s*(\d+)\s+pts:")
 SHOWINFO_DATA_RE = re.compile(r"User Data=([0-9a-fA-F]*)")
 
 
-def showinfo_blobs(text):
-    """Pelorus blobs (UUID excluded) per frame of a showinfo log: one list per `n:` line.
+def showinfo_payloads(text):
+    """Pelorus payloads per frame of a showinfo log, one list per `n:` line, each a
+    (form, bytes after the UUID) pair: "blob" or "carrier" (ADR-0183).
 
     A frame can carry other user data SEI (h264_vulkan writes an encoder-version one on
-    the first picture); only messages with the Pelorus UUID count."""
-    frames, mine = [], False
+    the first picture); only messages with a Pelorus UUID count."""
+    frames, form = [], None
     for line in text.splitlines()[:200000]:
         if SHOWINFO_FRAME_RE.search(line):
             frames.append([])
-            mine = False
+            form = None
         elif "UUID=" in line:
-            mine = PELORUS_UUID_TEXT in line
+            form = "blob" if PELORUS_UUID_TEXT in line else \
+                "carrier" if CARRIER_UUID_TEXT in line else None
         else:
             hit = SHOWINFO_DATA_RE.search(line)
-            if hit and frames and mine:
+            if hit and frames and form:
                 hexed = hit.group(1)
-                frames[-1].append(bytes.fromhex(hexed[:len(hexed) & ~1]))
+                frames[-1].append((form, bytes.fromhex(hexed[:len(hexed) & ~1])))
     return frames
+
+
+def showinfo_blobs(text):
+    """Pelorus blobs in the plain form (UUID excluded) per frame of a showinfo log: what
+    the analyze filter attaches, read at the encoder's input."""
+    return [[data for form, data in frame if form == "blob"] for frame in showinfo_payloads(text)]
 
 
 def stripped_form(blob):
@@ -1160,21 +1242,24 @@ def carrier_case(ctx, car, devs, case, entry, src, work, refs):
     want, why = written_blobs(ctx, refs, dev, case, entry, src)
     if want is None:
         return "fail", why
-    strips, disabled = car.get("strips", False), ctx["disabled"]
-    frames = pelorus_blobs_per_frame(out.read_bytes(), car["codec"])
-    errs, stripped = integrity_problems(want, pictures_by_pts(frames), "stream", strips, disabled)
-    errs += sidedata_problems(frames, SIDEDATA_FRAMES, disabled)
+    strips, zero_free, disabled = car.get("strips", False), car.get("zero_free", False), ctx["disabled"]
+    frames, errs = unwrap_payloads(pelorus_blobs_per_frame(out.read_bytes(), car["codec"]),
+                                   zero_free, "stream", disabled)
+    more, stripped = integrity_problems(want, pictures_by_pts(frames), "stream", strips, disabled)
+    errs += more + sidedata_problems(frames, SIDEDATA_FRAMES, disabled)
     code, tap, err = ffrun(ctx, ["-hide_banner", "-loglevel", "info", "-i", str(out),
                                  "-vf", "showinfo", "-f", "null", "-"])
     if code == 0:
-        more, stripped = integrity_problems(want, showinfo_blobs(tap), "decoded", strips, disabled)
-        errs += more + decode_tap_problems(tap, SIDEDATA_FRAMES, disabled)
+        decoded, form_errs = unwrap_payloads(showinfo_payloads(tap), zero_free, "decoded", disabled)
+        more, stripped = integrity_problems(want, decoded, "decoded", strips, disabled)
+        errs += form_errs + more + decode_tap_problems(tap, SIDEDATA_FRAMES, disabled)
     else:
         errs.append("decode of the encoded stream failed: " + (err or first_line(tap)))
     if errs:
         return "fail", "; ".join(errs[:3])
-    return "pass", "%d frames, blob in stream and decode tap equal to the written blob%s, device %d" % (
-        SIDEDATA_FRAMES, " (maps stripped on %d, ADR-0181)" % stripped if stripped else "", dev)
+    return "pass", "%d frames, blob in stream and decode tap equal to the written blob%s%s, device %d" % (
+        SIDEDATA_FRAMES, " as zero-free carriers" if zero_free else "",
+        " (maps stripped on %d, ADR-0181)" % stripped if stripped else "", dev)
 
 
 def carrier_roundtrip(ctx, car, devs, cases, work, refs=None):
@@ -1415,7 +1500,7 @@ def self_test_sidedata(expect, disabled):
     sei = bytes([0x4E, 0x01, 5, 16 + 4]) + PELORUS_UUID + b"\xaa" * 4 + b"\x80"
     stream = b"\x00\x00\x01" + sei + b"\x00\x00\x01\x26\x01\xff"
     got = pelorus_blobs_per_frame(stream, "hevc")
-    expect("sd_parser_reads_hevc_sei", got == [[b"\xaa" * 4]])
+    expect("sd_parser_reads_hevc_sei", got == [[("blob", b"\xaa" * 4)]])
 
 
 ALLOW_TEXT = """\
@@ -1616,6 +1701,65 @@ def self_test_integrity(expect, disabled):
     expect("sd_int_unescape_keeps_data", unescape_nal(nal) == bytes([0, 0, 0, 0, 1, 0, 0]))
 
 
+def cobs_encode(data):
+    """COBS as pel_blob_carrier_encode() writes it (self-test only): no empty block after a
+    final full block."""
+    out, idx, code = bytearray([0]), 0, 1
+    for i, byte in enumerate(data):
+        if byte:
+            out.append(byte)
+            code += 1
+        if not byte or (code == 0xFF and i + 1 < len(data)):
+            out[idx] = code
+            idx, code = len(out), 1
+            out.append(0)
+    out[idx] = code
+    return bytes(out)
+
+
+# Known answer shared with libpelorus/test/interop_test.c (kat_image, kat_carrier).
+KAT_IMAGE = bytes.fromhex("50454c4f523100000100050030000000000000000000300040e2010000000000000a1000"
+                          "09000000504c525300000000")
+KAT_CARRIER_BODY = bytes.fromhex("0750454c4f523101020102050230010101010101010102300440e20101010101"
+                                 "01030a100209010105504c525301010101")
+
+
+def self_test_carrier_form(expect, disabled):
+    """Zero-free carrier (ADR-0183): decoded strictly, required on NVENC, refused elsewhere."""
+    want = [[pack_map_blob(pts=i)] for i in range(4)]
+    carriers = [[("carrier", cobs_encode(w[0]))] for w in want]
+    plain = [[("blob", w[0])] for w in want]
+
+    def check(frames, zero_free):
+        images, errs = unwrap_payloads(frames, zero_free, "t", disabled)
+        return errs + integrity_problems(want, images, "t", False, disabled)[0]
+
+    expect("sd_carrier_known_answer", uncobs(KAT_CARRIER_BODY) == (KAT_IMAGE, None)
+           and cobs_encode(KAT_IMAGE) == KAT_CARRIER_BODY)
+    expect("sd_carrier_valid_passes_on_nvenc", not check(carriers, True))
+    expect("sd_plain_valid_passes_off_nvenc", not check(plain, False))
+    expect("sd_carrier_rejects_plain_on_nvenc", bool(check(plain, True)))
+    expect("sd_carrier_rejects_carrier_off_nvenc", bool(check(carriers, False)))
+    body = carriers[1][0][1]
+    expect("sd_carrier_rejects_zero_byte", bool(check(
+        carriers[:1] + [[("carrier", body[:5] + b"\0" + body[6:])]] + carriers[2:], True)))
+    expect("sd_carrier_rejects_truncated", bool(check(
+        carriers[:3] + [[("carrier", carriers[3][0][1][:-3])]], True)))
+    full = b"\xff" + bytes(range(1, 255))
+    expect("sd_carrier_rejects_noncanonical_end",
+           uncobs(full + b"\x01", "sd_carrier_strict" not in disabled)[0] is None
+           and uncobs(full + b"\x01\x01", False)[0] == bytes(range(1, 255)) + b"\0")
+    log = "\n".join("[Parsed_showinfo_0 @ 0x1] n:   %d pts:  %d pts_time:0\n[x] side data - H.26[45] "
+                    "User Data Unregistered SEI message: %s\n[x] User Data=%s"
+                    % (i, i, CARRIER_UUID_TEXT, carriers[i][0][1].hex()) for i in range(4))
+    expect("sd_carrier_showinfo_parser", showinfo_payloads(log) == carriers
+           and showinfo_blobs(log) == [[], [], [], []])
+    expect("sd_carrier_counts_at_decode_tap", not decode_tap_problems(log, 4, disabled))
+    sei = bytes([0x4E, 0x01, 5, len(carriers[0][0][1]) + 16]) + CARRIER_UUID + carriers[0][0][1] + b"\x80"
+    got = pelorus_blobs_per_frame(b"\x00\x00\x01" + sei + b"\x00\x00\x01\x26\x01\xff", "hevc")
+    expect("sd_carrier_stream_parser", got == [carriers[0]])
+
+
 def self_test_carrier(expect, disabled):
     """A carrier whose baseline encodes but whose side-data encode fails is a fail, never not_run."""
     import tempfile
@@ -1765,6 +1909,7 @@ def self_test(disabled=frozenset()):
     self_test_legs(expect, disabled)
     self_test_carrier(expect, disabled)
     self_test_integrity(expect, disabled)
+    self_test_carrier_form(expect, disabled)
     self_test_brc_rules(expect, disabled)
     self_test_brc_failures(expect, disabled)
     self_test_render_host(expect)
