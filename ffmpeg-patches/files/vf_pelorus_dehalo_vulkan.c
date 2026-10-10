@@ -37,6 +37,7 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "pelorus_vulkan_sample.h"
+#include "pelorus_vulkan_pool.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -66,6 +67,7 @@ typedef struct PelorusDehaloVulkanContext {
 
     int planes; /* plane bitmask to process (luma-only by default)           */
     int tile;   /* shared-memory tile the box-blur window (ADR-0139, opt-in)  */
+    PelVkPoolOpts pool; /* output pool tiling (ADR-0184) */
 } PelorusDehaloVulkanContext;
 
 /* The dehalo algorithm — including the ADR-0139 shared-memory box-blur tiling
@@ -194,6 +196,13 @@ static void pelorus_dehalo_vulkan_uninit(AVFilterContext *avctx)
     s->initialized = 0;
 }
 
+static int pelorus_dehalo_vulkan_config_output(AVFilterLink *outlink)
+{
+    PelorusDehaloVulkanContext *s = outlink->src->priv;
+
+    return pel_vk_pool_config_output(outlink, &s->pool);
+}
+
 #define OFFSET(x) offsetof(PelorusDehaloVulkanContext, x)
 #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 static const AVOption pelorus_dehalo_vulkan_options[] = {
@@ -269,6 +278,7 @@ static const AVOption pelorus_dehalo_vulkan_options[] = {
      0,
      1,
      FLAGS},
+    PEL_VK_POOL_OPTIONS(OFFSET(pool.tiling), OFFSET(pool.drm_modifiers), FLAGS),
     {NULL}};
 
 AVFILTER_DEFINE_CLASS(pelorus_dehalo_vulkan);
@@ -286,7 +296,7 @@ static const AVFilterPad pelorus_dehalo_vulkan_outputs[] = {
     {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
-        .config_props = &ff_vk_filter_config_output,
+        .config_props = &pelorus_dehalo_vulkan_config_output,
     },
 };
 

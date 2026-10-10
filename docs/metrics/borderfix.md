@@ -57,6 +57,8 @@ Band widths are integers in **each plane's own pixels** (not luma pixels).
 | `top` | 0 | 0–4096 | dirty band height on the top edge |
 | `bottom` | 0 | 0–4096 | dirty band height on the bottom edge |
 | `planes` | 0xF | 0x0–0xF | planes to process (bitmask; default all) |
+| `tiling` | optimal | optimal, drm | output pool: `optimal` is FFmpeg's pool; `drm` is a DRM-format-modifier pool that `hwmap=derive_device=vaapi` maps to VAAPI and QSV without `hwdownload` ([Vulkan output pools](../backends/vulkan-drm-modifiers.md)) |
+| `drm_modifiers` | empty | up to 64, `\|`-separated | with `tiling=drm`: DRM format modifiers the consumer imports, 0x hex; empty = any usable modifier, `0x0` = LINEAR; ignored (with a warning) without `tiling=drm` |
 
 The widths are the **only** knob — set each to the measured thickness of the
 source's dirty band on that edge. Default `0` is a no-op: nothing happens until

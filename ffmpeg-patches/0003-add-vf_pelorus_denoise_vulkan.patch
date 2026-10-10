@@ -40,10 +40,10 @@ ADR: docs/adr/0112-temporal-denoise.md
  configure                                    |    3 +
  libavfilter/Makefile                         |    1 +
  libavfilter/allfilters.c                     |    1 +
- libavfilter/vf_pelorus_denoise_vulkan.c      | 1134 ++++++++++++++++++++
+ libavfilter/vf_pelorus_denoise_vulkan.c      | 1144 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |    1 +
  libavfilter/vulkan/pelorus_denoise.comp.glsl |  499 +++++++++
- 6 files changed, 1639 insertions(+)
+ 6 files changed, 1649 insertions(+)
 
 diff --git a/configure b/configure
 index aec9b3ae17deb53929fc15870fdaeb58db717c8f..c18161349c774eea0347f47effa8aa611e6b8771 100755
@@ -92,10 +92,10 @@ index c781df8365397465a0f8cb2c25ac450585938b01..a21da384818d0b64f4b5af635ae53e9a
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_denoise_vulkan.c b/libavfilter/vf_pelorus_denoise_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..3bdf2f27de3b99d07349749808f4a71bd77cf569
+index 0000000000000000000000000000000000000000..67a259cb3d3ee6537dbbf77b0cc18fceb3886870
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_denoise_vulkan.c
-@@ -0,0 +1,1134 @@
+@@ -0,0 +1,1144 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -158,6 +158,7 @@ index 0000000000000000000000000000000000000000..3bdf2f27de3b99d07349749808f4a71b
 +#include "libavutil/pixdesc.h"
 +#include "pelorus_sidedata.h"
 +#include "pelorus_vulkan_sample.h"
++#include "pelorus_vulkan_pool.h"
 +#include "vulkan_filter.h"
 +
 +#include "filters.h"
@@ -270,6 +271,7 @@ index 0000000000000000000000000000000000000000..3bdf2f27de3b99d07349749808f4a71b
 +    /* Causal previous-frame ring (clones — refcount bumps, no pixel copy). */
 +    AVFrame *ring[PEL_DENOISE_MAX_PREV];
 +    int ring_count; /* valid entries in ring[] (0..n_prev)                    */
++    PelVkPoolOpts pool; /* output pool tiling (ADR-0184) */
 +} PelorusDenoiseVulkanContext;
 +
 +static_assert(sizeof(((PelorusDenoiseVulkanContext *)0)->opts) <= 128,
@@ -1056,6 +1058,13 @@ index 0000000000000000000000000000000000000000..3bdf2f27de3b99d07349749808f4a71b
 +    s->initialized = 0;
 +}
 +
++static int pelorus_denoise_vulkan_config_output(AVFilterLink *outlink)
++{
++    PelorusDenoiseVulkanContext *s = outlink->src->priv;
++
++    return pel_vk_pool_config_output(outlink, &s->pool);
++}
++
 +#define OFFSET(x) offsetof(PelorusDenoiseVulkanContext, x)
 +#define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 +static const AVOption pelorus_denoise_vulkan_options[] = {
@@ -1194,6 +1203,7 @@ index 0000000000000000000000000000000000000000..3bdf2f27de3b99d07349749808f4a71b
 +     0,
 +     1,
 +     FLAGS},
++    PEL_VK_POOL_OPTIONS(OFFSET(pool.tiling), OFFSET(pool.drm_modifiers), FLAGS),
 +    {NULL}};
 +
 +AVFILTER_DEFINE_CLASS(pelorus_denoise_vulkan);
@@ -1212,7 +1222,7 @@ index 0000000000000000000000000000000000000000..3bdf2f27de3b99d07349749808f4a71b
 +    {
 +        .name = "default",
 +        .type = AVMEDIA_TYPE_VIDEO,
-+        .config_props = &ff_vk_filter_config_output,
++        .config_props = &pelorus_denoise_vulkan_config_output,
 +    },
 +};
 +

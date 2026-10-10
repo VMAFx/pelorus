@@ -337,6 +337,40 @@ if get_option('tests')
   test('sei-fit', sei_fit_test, suite: 'fast')
 endif
 
+# Issue #103 / ADR-0184: the DRM format modifier rule of the tiling=drm output
+# pools (ffmpeg-patches/files/pelorus_drm_modifier.h): storage-capable modifiers
+# without auxiliary planes, intersected with drm_modifiers, and the logged
+# DRM_FORMAT_MOD_LINEAR substitution when the intersection is empty.
+if get_option('tests')
+  drm_modifier_test = executable(
+    'pelorus_drm_modifier_test',
+    files('ffmpeg-patches/test/drm_modifier_test.c'),
+    include_directories: include_directories('ffmpeg-patches/files'),
+  )
+  test('drm-modifier', drm_modifier_test, suite: 'fast')
+endif
+
+# The hardware smoke for the same pools: --self-test plants defects into its
+# checks; the GPU run needs FFMPEG_BIN and a VAAPI-capable RENDER_NODE and
+# otherwise exits 77 (skip) with the reason. It belongs in the fast suite only
+# because it skips by default: nothing sets FFMPEG_BIN in CI or `make
+# verify-native`, so the suite never needs a GPU; export FFMPEG_BIN and
+# RENDER_NODE to run it on a workstation.
+test('vulkan-drm-map-self-test',
+     bash_prog,
+     args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'vulkan-drm-map-smoke.sh',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+if build_machine.system() != 'windows'
+  test('vulkan-drm-map',
+       bash_prog,
+       args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'vulkan-drm-map-smoke.sh'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
+endif
+
 # The hardware rows of vulkan-format-matrix.sh decode the analyze maps with
 # analyze-maps-check.py; --self-test plants one defect per reader rule and
 # requires each to be rejected.

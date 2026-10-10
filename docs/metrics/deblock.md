@@ -48,6 +48,8 @@ Thresholds are normalized in `[0,1]`, independent of bit depth.
 | `thr` | 0.06 | 0–1 | cross-boundary step below which it is an artefact (smooth); above it, real structure (preserve) |
 | `str` | 0.6 | 0–1 | deblock strength — blend toward the low-pass (0 = off, 1 = full) |
 | `planes` | 0x1 | 0x0–0xF | physical planes to process (default `0x1` = luma); selecting a semi-planar chroma plane processes both U and V components |
+| `tiling` | optimal | optimal, drm | output pool: `optimal` is FFmpeg's pool; `drm` is a DRM-format-modifier pool that `hwmap=derive_device=vaapi` maps to VAAPI and QSV without `hwdownload` ([Vulkan output pools](../backends/vulkan-drm-modifiers.md)) |
+| `drm_modifiers` | empty | up to 64, `\|`-separated | with `tiling=drm`: DRM format modifiers the consumer imports, 0x hex; empty = any usable modifier, `0x0` = LINEAR; ignored (with a warning) without `tiling=drm` |
 
 `bsize` matches the prior codec's transform grid (8 for legacy H.264/MPEG-style
 8×8 DCT — the default). `thr` is the key knob: raise it to deblock more

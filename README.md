@@ -48,7 +48,9 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
 
 NVENC, QSV, VAAPI, and AMF use different FFmpeg hardware-frame domains; add an
 explicit download/upload or mapping boundary for those encoders instead of
-feeding them `AV_PIX_FMT_VULKAN` frames directly.
+feeding them `AV_PIX_FMT_VULKAN` frames directly. On Linux, VAAPI and QSV take
+Pelorus output through `hwmap` without `hwdownload` when the last filter runs
+with `tiling=drm` ([Vulkan output pools](docs/backends/vulkan-drm-modifiers.md)).
 
 ## Principles
 

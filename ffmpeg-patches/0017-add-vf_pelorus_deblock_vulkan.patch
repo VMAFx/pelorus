@@ -27,10 +27,10 @@ ADR: docs/adr/0127-deblock.md
  configure                                    |   1 +
  libavfilter/Makefile                         |   1 +
  libavfilter/allfilters.c                     |   1 +
- libavfilter/vf_pelorus_deblock_vulkan.c      | 270 ++++++++++++++++++++
+ libavfilter/vf_pelorus_deblock_vulkan.c      | 280 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |   1 +
- libavfilter/vulkan/pelorus_deblock.comp.glsl | 131 ++++++++++
- 6 files changed, 405 insertions(+)
+ libavfilter/vulkan/pelorus_deblock.comp.glsl | 131 +++++++++
+ 6 files changed, 415 insertions(+)
 
 diff --git a/configure b/configure
 index 5f48b12e31eb76d3cae37489068aa5eac5f0dccb..b890fae94423562137ed098673ca7a24cee3bacc 100755
@@ -70,10 +70,10 @@ index d6632cc826123b6f1b3bbc93db698e8023ca8591..9985efd56d8026261a43cba1283408ac
  extern const FFFilter ff_vf_pelorus_grain_estimate_vulkan;
 diff --git a/libavfilter/vf_pelorus_deblock_vulkan.c b/libavfilter/vf_pelorus_deblock_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..87a78075caafd80904e3f7f3425c27f644494114
+index 0000000000000000000000000000000000000000..4fbf4cac8562c672edf3665c979bccf3798e7d95
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_deblock_vulkan.c
-@@ -0,0 +1,270 @@
+@@ -0,0 +1,280 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -110,6 +110,7 @@ index 0000000000000000000000000000000000000000..87a78075caafd80904e3f7f3425c27f6
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
 +#include "pelorus_vulkan_sample.h"
++#include "pelorus_vulkan_pool.h"
 +#include "vulkan_filter.h"
 +
 +#include "filters.h"
@@ -136,6 +137,7 @@ index 0000000000000000000000000000000000000000..87a78075caafd80904e3f7f3425c27f6
 +
 +    float opt_thr; /* AVOption `thr`: fraction of the *data* range          */
 +    int planes;    /* plane bitmask to process (luma-only by default)          */
++    PelVkPoolOpts pool; /* output pool tiling (ADR-0184) */
 +} PelorusDeblockVulkanContext;
 +
 +/* The deblock algorithm now lives in vulkan/pelorus_deblock.comp.glsl, compiled
@@ -267,6 +269,13 @@ index 0000000000000000000000000000000000000000..87a78075caafd80904e3f7f3425c27f6
 +    s->initialized = 0;
 +}
 +
++static int pelorus_deblock_vulkan_config_output(AVFilterLink *outlink)
++{
++    PelorusDeblockVulkanContext *s = outlink->src->priv;
++
++    return pel_vk_pool_config_output(outlink, &s->pool);
++}
++
 +#define OFFSET(x) offsetof(PelorusDeblockVulkanContext, x)
 +#define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 +static const AVOption pelorus_deblock_vulkan_options[] = {
@@ -310,6 +319,7 @@ index 0000000000000000000000000000000000000000..87a78075caafd80904e3f7f3425c27f6
 +     0,
 +     0xF,
 +     FLAGS},
++    PEL_VK_POOL_OPTIONS(OFFSET(pool.tiling), OFFSET(pool.drm_modifiers), FLAGS),
 +    {NULL}};
 +
 +AVFILTER_DEFINE_CLASS(pelorus_deblock_vulkan);
@@ -327,7 +337,7 @@ index 0000000000000000000000000000000000000000..87a78075caafd80904e3f7f3425c27f6
 +    {
 +        .name = "default",
 +        .type = AVMEDIA_TYPE_VIDEO,
-+        .config_props = &ff_vk_filter_config_output,
++        .config_props = &pelorus_deblock_vulkan_config_output,
 +    },
 +};
 +

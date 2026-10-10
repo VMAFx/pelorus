@@ -4,7 +4,10 @@
 Pelorus is a **zero-copy GPU pre-encode pipeline**. Frames stay in VRAM from
 decode, through one or more Vulkan compute filters, to a hardware encoder — the
 moment a frame drops to system RAM, PCIe bandwidth destroys throughput, so the
-whole design is built to avoid it.
+whole design is built to avoid it. Vulkan encoders take Pelorus frames as they
+are; on Linux, VAAPI and QSV encoders take them through `hwmap` without
+`hwdownload` when the last filter runs with `tiling=drm`
+([Vulkan output pools](../backends/vulkan-drm-modifiers.md)).
 
 It is **codec-agnostic**: deband, denoise, and motion-hint stages pre-process
 pixels and help any hardware encoder — HEVC (`hevc_nvenc`/`hevc_qsv`/

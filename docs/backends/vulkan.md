@@ -109,6 +109,15 @@ affected. With the patch no tested device (lavapipe, ANV, RADV, RTX 4090) report
 lists them and a run that shows either fails validation. Root cause and
 measurements: `docs/rebase-notes.md` (patch 0021).
 
+## Output pools for VAAPI and QSV
+
+The filters that write new frames allocate FFmpeg's OPTIMAL pool by default,
+which cannot be mapped to VAAPI. `tiling=drm` gives them a DRM-format-modifier
+pool that `hwmap=derive_device=vaapi` maps without `hwdownload`; the modifier
+rule and current limits are in
+[Vulkan output pools for VAAPI and QSV](vulkan-drm-modifiers.md)
+([ADR-0184](../adr/0184-vulkan-drm-modifier-output-pools.md)).
+
 ## Building the FFmpeg integration
 
 ```bash

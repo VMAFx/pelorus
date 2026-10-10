@@ -70,6 +70,8 @@ All thresholds are normalized in `[0,1]`, independent of bit depth.
 | `ring` | 2.0 | 1–8 | edge-mask dilation — the halo-band half-width in pixels |
 | `planes` | 0x1 | 0x0–0xF | physical planes to process (default `0x1` = luma); selecting a semi-planar chroma plane processes both U and V components |
 | `tile` | 0 | 0–1 | cache the filter's read window in shared memory ([ADR-0139](../adr/0139-dehalo-shared-mem-tile.md)). Output is **bit-identical**. Since [ADR-0163](../adr/0163-dehalo-gate-and-pull.md) only ring pixels read the box-mean window, so the win depends on the radii: on an Arc A380 at 1080p (wall time including upload/download), `tile=1` is about 8% slower at the default radii and about 25% faster at `blur=8:ring=8`. Default off — enable on weak / integrated / mobile GPUs with large radii |
+| `tiling` | optimal | optimal, drm | output pool: `optimal` is FFmpeg's pool; `drm` is a DRM-format-modifier pool that `hwmap=derive_device=vaapi` maps to VAAPI and QSV without `hwdownload` ([Vulkan output pools](../backends/vulkan-drm-modifiers.md)) |
+| `drm_modifiers` | empty | up to 64, `\|`-separated | with `tiling=drm`: DRM format modifiers the consumer imports, 0x hex; empty = any usable modifier, `0x0` = LINEAR; ignored (with a warning) without `tiling=drm` |
 
 `darkstr`/`brightstr` are the main intensity knobs; `edge` and `ring` shape
 *where* the pull is allowed (raise `edge` to gate to only the hardest lines;
