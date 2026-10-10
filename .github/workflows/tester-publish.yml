@@ -27,6 +27,7 @@ on:
       - 'meson.build'
       - 'meson_options.txt'
       - 'build-config.env'
+      - 'scripts/fetch-ffmpeg-series.sh'
       - 'LICENSES/**'
       - 'REUSE.toml'
       - '.github/workflows/tester-publish.yml'
@@ -99,6 +100,16 @@ jobs:
         run: |
           python3 -I -B tools/tester/licensing.py record
           python3 -I -B tools/tester/licensing.py self-test
+      - name: Install cosign
+        if: github.event.pull_request.draft != true
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Fetch and verify the shared FFmpeg fix series
+        if: github.event.pull_request.draft != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # The Containerfile checks the tarball against the sha256 pin once more
+        # and applies the series before ffmpeg-patches/series.txt (ADR-0185).
+        run: scripts/fetch-ffmpeg-series.sh .ffmpeg-series
       - name: Build (the Containerfile runs the licence gates)
         if: github.event.pull_request.draft != true
         run: |
@@ -214,6 +225,14 @@ jobs:
         run: |
           python3 -I -B tools/tester/licensing.py record
           python3 -I -B tools/tester/licensing.py self-test
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Fetch and verify the shared FFmpeg fix series
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # The Containerfile checks the tarball against the sha256 pin once more
+        # and applies the series before ffmpeg-patches/series.txt (ADR-0185).
+        run: scripts/fetch-ffmpeg-series.sh .ffmpeg-series
       - name: Build the tester image (the Containerfile runs the licence gates)
         run: |
           docker build \
@@ -298,8 +317,6 @@ jobs:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.push.outputs.source-digest }}
           push-to-registry: true
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Sign both images (keyless)
         env:
           IMAGE_DIGEST: ${{ steps.push.outputs.image-digest }}

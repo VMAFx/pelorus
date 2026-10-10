@@ -513,8 +513,8 @@ message when `-udu_sei 1` is set (default off):
 
 | Encoder | Source of the option | Form in the stream | Size limit per picture |
 | --- | --- | --- | --- |
-| `h264_nvenc` | stock FFmpeg, carrier in patch 0022 | zero-free carrier | none found; carriers tested to 60 017 bytes (RTX 4090) |
-| `hevc_nvenc` | stock FFmpeg, carrier and limit handling in patch 0022 | zero-free carrier | 768 bytes of SEI (see below) |
+| `h264_nvenc` | stock FFmpeg; truncation drop in shared series patch 0004, carrier in patch 0022 | zero-free carrier | none found; carriers tested to 60 017 bytes (RTX 4090) |
+| `hevc_nvenc` | stock FFmpeg; limit in shared series patch 0003, truncation drop in 0004, carrier and map stripping in patch 0022 | zero-free carrier | 768 bytes of SEI (see below) |
 | `h264_qsv` | patch 0019, budget in patch 0023 | blob | 40 960 bytes of SEI per picture (see below) |
 | `hevc_qsv` | patch 0019, budget in patch 0023 | blob | 4 040 bytes of SEI per picture (see below) |
 | `h264_vulkan`, `hevc_vulkan` | patch 0020 | blob | none measured |
@@ -529,7 +529,14 @@ COBS-encoded blob, with no zero byte, one byte longer per 254 bytes
 ([ADR-0183](../adr/0183-sidedata-zero-free-carrier.md),
 [interop ABI 1.5](../api/interop-abi.md#zero-free-carrier-form-abi-15)). A reader
 of the decoded frames turns it back into the blob with `pel_blob_unwrap()`;
-`-loglevel verbose` names the form once:
+`-loglevel verbose` names the form once. A payload from another producer is
+written as it is, unless NVENC would truncate it: patch 0004 of the shared
+FFmpeg fix series ([ADR-0185](../adr/0185-shared-ffmpeg-fix-series.md)) then
+leaves it out and warns (`Not writing a N-byte user data unregistered SEI at
+pts ...: NVENC would write it truncated`): the first time as a warning, later
+at `-loglevel verbose`, with the total when the encoder closes. Before, the
+truncated SEI reached the stream and the decoder discarded it. A carrier holds
+no zero byte and is never affected:
 
 ```text
 [h264_nvenc] udu_sei: Pelorus side data is written in its zero-free carrier form (UUID 3f9b37b8-fd9a-4621-920e-9b78b55cf9b5), which needs no emulation prevention.
@@ -540,8 +547,9 @@ sees no Pelorus data on frames from an NVENC stream.
 
 `hevc_nvenc` fails a picture whose parameter sets and SEI exceed 1024 bytes
 ([ADR-0181](../adr/0181-hevc-nvenc-sei-header-budget.md),
-[research 0181](../research/0181-hevc-nvenc-sei-header-budget.md)). Patch 0022
-keeps 768 of them for the side data, in frame order:
+[research 0181](../research/0181-hevc-nvenc-sei-header-budget.md)). Patch 0003
+of the shared series keeps 768 of them for the side data, in frame order, and
+patch 0022 strips a Pelorus blob to fit:
 
 - an entry that fits is written whole; a Pelorus blob is charged as its
   carrier, which needs no emulation prevention;
@@ -557,9 +565,10 @@ later ones at `-loglevel verbose`, and prints both totals when it closes:
 
 ```text
 [hevc_nvenc] udu_sei: frame pts 0: the 12424-byte Pelorus side data is written without its per-cell maps (184 bytes): hevc_nvenc writes at most 1024 bytes of parameter sets and SEI per picture.
+[hevc_nvenc] Not writing a 2017-byte user data unregistered SEI at pts 0: hevc_nvenc fails a picture whose parameter sets and SEI exceed 1024 bytes.
 ```
 
-Before patch 0022 the encode stopped with `Failed locking bitstream buffer: out
+Without these patches the encode stopped with `Failed locking bitstream buffer: out
 of memory` (`-12`). `ffmpeg-patches/test/nvenc-udu-sei-smoke.sh` checks the
 cases, the flat-content carriers of issue #284 included, on an NVIDIA host and
 exits 77 with the reason elsewhere.

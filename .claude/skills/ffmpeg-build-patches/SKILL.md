@@ -19,7 +19,11 @@ FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh
 
 `FFMPEG_REPO` is required. `BASE_TAG` is not an input. The generator verifies
 the qualified tag against the pinned commit, uses a run-owned hook-neutral
-worktree, and preserves the caller checkout.
+worktree, and preserves the caller checkout. It applies the shared FFmpeg fix
+series first (`scripts/fetch-ffmpeg-series.sh`, ADR-0185; needs network access,
+`cosign` and an authenticated `gh`) and formats the range above the series tip,
+so a generic FFmpeg fix never lands in a Pelorus patch: it goes to
+VMAFx/ffmpeg-patches.
 
 Run the command twice and prove every numbered patch is byte-identical. Then
 use `ffmpeg-apply-patches`; regeneration alone is not verification.
@@ -36,7 +40,8 @@ use `ffmpeg-apply-patches`; regeneration alone is not verification.
    `enabled pelorus_<name>_vulkan_filter && require_pkg_config libpelorus
    "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack && add_extralibs
    $libpelorus_extralibs`. Pure transforms do not link it.
-5. Extend the generator's deterministic filename map, `series.txt`, replay
+5. Extend the generator's deterministic filename map (mapped by position;
+   number 0021 is retired and stays unused), `series.txt`, replay
    patch-count assertion, and filter-registration list together. Update or
    derive every hardcoded patch-count label, success message, comment, and
    current AGENTS/docs reference; do not leave an “18 patches” cache behind.

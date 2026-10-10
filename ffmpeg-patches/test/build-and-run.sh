@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 #
-# build-and-run.sh — build this Pelorus tree, replay its complete patch stack on
-# the configured immutable FFmpeg commit, link ffmpeg, and verify registration.
+# build-and-run.sh — build this Pelorus tree, replay the shared FFmpeg fix series
+# and then its complete patch stack on the configured immutable FFmpeg commit,
+# link ffmpeg, and verify registration.
 #
 # Copyright 2026 Lusoris
 # SPDX-License-Identifier: EUPL-1.2
 #
-# Requires: an explicit local FFmpeg checkout, a Vulkan loader + headers, and a
-# `glslc` SPIR-V compiler. libpelorus is built, tested, and installed privately
+# Requires: an explicit local FFmpeg checkout, a Vulkan loader + headers, a
+# `glslc` SPIR-V compiler, and what scripts/fetch-ffmpeg-series.sh needs to
+# fetch and verify the shared series (network, cosign, an authenticated gh;
+# ADR-0185). libpelorus is built, tested, and installed privately
 # here. Optional encoder SDKs are enabled when their pkg-config packages are
 # available so the cumulative link covers QSV, libaom, SVT-AV1, and NVENC.
 #
@@ -40,6 +43,7 @@ PELORUS_BUILD=""
 PRIVATE_PREFIX=""
 FFMPEG_PREFIX=""
 LOG_DIR=""
+SERIES_ROOT=""
 OWNED_WORKTREE=""
 CALLER_WORKTREE=0
 
@@ -84,7 +88,7 @@ cleanup() {
     fi
 
     for owned_dir in \
-        "$PELORUS_BUILD" "$PRIVATE_PREFIX" "$FFMPEG_PREFIX" "$LOG_DIR"; do
+        "$PELORUS_BUILD" "$PRIVATE_PREFIX" "$FFMPEG_PREFIX" "$LOG_DIR" "$SERIES_ROOT"; do
         if [[ -n "$RUN_ROOT" && "$owned_dir" == "$RUN_ROOT/"* ]]; then
             if ! rm -rf -- "$owned_dir"; then
                 echo "WARNING: could not remove owned path: $owned_dir" >&2
@@ -149,6 +153,7 @@ PELORUS_BUILD="$RUN_ROOT/pelorus-build"
 PRIVATE_PREFIX="$RUN_ROOT/prefix"
 FFMPEG_PREFIX="$RUN_ROOT/ffmpeg-prefix"
 LOG_DIR="$RUN_ROOT/logs"
+SERIES_ROOT="$RUN_ROOT/ffmpeg-series"
 mkdir "$LOG_DIR"
 if (( ! CALLER_WORKTREE )); then
     WORKTREE="$RUN_ROOT/ffmpeg"
@@ -189,7 +194,19 @@ if [[ "$(pkg-config --variable=prefix libpelorus)" != "$PRIVATE_PREFIX" ]]; then
 fi
 echo "libpelorus version: $(pkg-config --modversion libpelorus)"
 
+# The shared FFmpeg fix series first (ADR-0185), fetched and verified (sha256
+# pin, signed SHA256SUMS, build provenance), then the Pelorus stack.
+SERIES_DIR="$("$ROOT/scripts/fetch-ffmpeg-series.sh" "$SERIES_ROOT")"
 PATCHES=()
+SERIES_COUNT=0
+while IFS= read -r patch || [[ -n "$patch" ]]; do
+    case "$patch" in
+        ''|'#'*) continue ;;
+    esac
+    PATCHES+=("$SERIES_DIR/patches/$patch")
+    SERIES_COUNT=$((SERIES_COUNT + 1))
+done < "$SERIES_DIR/series.txt"
+PELORUS_COUNT=0
 while IFS= read -r patch || [[ -n "$patch" ]]; do
     case "$patch" in
         ''|'#'*) continue ;;
@@ -198,10 +215,12 @@ while IFS= read -r patch || [[ -n "$patch" ]]; do
         echo "ERROR: missing patch listed in series.txt: $patch" >&2
         exit 1
     fi
-    PATCHES+=("$patch")
+    PATCHES+=("$PATCHDIR/$patch")
+    PELORUS_COUNT=$((PELORUS_COUNT + 1))
 done < "$PATCHDIR/series.txt"
-if (( ${#PATCHES[@]} != 23 )); then
-    echo "ERROR: expected 23 patches, found ${#PATCHES[@]}" >&2
+if (( SERIES_COUNT < 1 || PELORUS_COUNT != 22 )); then
+    echo "ERROR: expected the shared series and 22 Pelorus patches," \
+        "found $SERIES_COUNT and $PELORUS_COUNT" >&2
     exit 1
 fi
 
@@ -224,7 +243,7 @@ apply_stack() {
             -c commit.gpgSign=false \
             -c core.hooksPath=/dev/null \
             -c diff.orderFile=/dev/null \
-            am --3way --no-gpg-sign --no-verify "$PATCHDIR/$patch"
+            am --3way --no-gpg-sign --no-verify "$patch"
     done
 }
 
@@ -285,8 +304,8 @@ verify_static_avfilter_consumer() {
     "$consumer"
 }
 
-run_logged "apply 23-patch FFmpeg stack" "$LOG_DIR/ffmpeg-apply.log" \
-    apply_stack
+run_logged "apply the shared series and the Pelorus stack" \
+    "$LOG_DIR/ffmpeg-apply.log" apply_stack
 run_logged "configure FFmpeg" "$LOG_DIR/ffmpeg-configure.log" \
     configure_ffmpeg
 run_logged "link ffmpeg" "$LOG_DIR/ffmpeg-build.log" \
@@ -424,4 +443,5 @@ if [[ -n "${KEEP_DIR:-}" ]]; then
     keep_binary
 fi
 
-echo "OK: 23 patches applied and ffmpeg linked against private libpelorus"
+echo "OK: $SERIES_COUNT shared series and $PELORUS_COUNT Pelorus patches applied" \
+    "and ffmpeg linked against private libpelorus"

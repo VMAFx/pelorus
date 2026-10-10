@@ -9,15 +9,26 @@
 # LGPL-2.1-or-later sources and stay under that licence (REUSE.toml, ADR-0171).
 #
 # Mirrors vmafx's /ffmpeg-build-patches workflow: check out a pristine FFmpeg
-# base in an isolated git worktree, drop in the canonical filter sources from
-# files/, wire each filter's registration hunks as its own commit, and
-# `git format-patch` the whole range. The cumulative stack (0001 deband, then
-# 0002 analyze on top) is the artifact; files/ is the source of truth.
+# base in an isolated git worktree, apply the shared FFmpeg fix series
+# (VMAFx/ffmpeg-patches, ADR-0185) on it, drop in the canonical filter sources
+# from files/, wire each filter's registration hunks as its own commit, and
+# `git format-patch` the range above the series tip. The cumulative stack (0001
+# deband, then 0002 analyze on top) is the artifact; files/ is the source of
+# truth. The series is fetched and verified by scripts/fetch-ffmpeg-series.sh,
+# which needs network access, cosign and an authenticated gh.
 #
 # Usage:
 #   FFMPEG_REPO=/path/to/ffmpeg ./generate.sh
 #
 set -euo pipefail
+
+# Hermetic Git: no global or system configuration (apply.whitespace,
+# core.autocrlf, am.*, ...) and no GIT_COMMITTER_* may change what `git am`
+# applies or what the synthetic commits hold; identity and policy come from
+# explicit -c options, the fixed dates from the exports below.
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+unset GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
@@ -26,6 +37,7 @@ source "$ROOT/build-config.env"
 : "${FFMPEG_REPO:?FFMPEG_REPO must name a local FFmpeg checkout}"
 FILES_DIR="$HERE/files"
 RUN_ROOT=""
+SERIES_ROOT=""
 OWNED_WORKTREE=""
 
 canonicalize_existing_dir() {
@@ -68,6 +80,10 @@ cleanup() {
     fi
     if [[ -n "$RUN_ROOT" ]] && ! rmdir "$RUN_ROOT" 2>/dev/null; then
         echo "WARNING: owned scratch directory is not empty: $RUN_ROOT" >&2
+        cleanup_failed=1
+    fi
+    if [[ -n "$SERIES_ROOT" ]] && ! rm -rf -- "$SERIES_ROOT"; then
+        echo "WARNING: could not remove series scratch directory: $SERIES_ROOT" >&2
         cleanup_failed=1
     fi
 
@@ -150,6 +166,30 @@ git -C "$FFMPEG_REPO" -c core.hooksPath=/dev/null \
 OWNED_WORKTREE="$WORKTREE"
 git -C "$WORKTREE" -c core.hooksPath=/dev/null \
     checkout --force --detach "$FFMPEG_COMMIT"
+
+# The shared FFmpeg fix series comes first (ADR-0185): fetched, verified
+# (sha256 pin, signed SHA256SUMS, build provenance) and applied in its
+# series.txt order. The Pelorus patches are generated above its tip, so none of
+# them carries a series change, and `git am` replays them on the same tree.
+SERIES_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/pelorus-ffmpeg-series.XXXXXX")"
+SERIES_DIR="$("$ROOT/scripts/fetch-ffmpeg-series.sh" "$SERIES_ROOT/release")"
+while IFS= read -r series_patch || [[ -n "$series_patch" ]]; do
+    case "$series_patch" in
+        ''|'#'*) continue ;;
+    esac
+    git -C "$WORKTREE" \
+        -c user.name=Pelorus-Replay \
+        -c user.email=replay@pelorus.invalid \
+        -c commit.gpgSign=false \
+        -c core.hooksPath=/dev/null \
+        -c diff.orderFile=/dev/null \
+        am --3way --no-gpg-sign --no-verify "$SERIES_DIR/patches/$series_patch"
+done < "$SERIES_DIR/series.txt"
+SERIES_TIP="$(git -C "$WORKTREE" rev-parse --verify HEAD)"
+if [[ "$SERIES_TIP" == "$FFMPEG_COMMIT" ]]; then
+    echo "ERROR: the shared FFmpeg fix series applied no patch" >&2
+    exit 1
+fi
 
 # FFmpeg 9 moved Vulkan filters from runtime-built inline GLSL to shaders compiled
 # to SPIR-V at build time (ADR-0143). Each filter therefore ships a .comp.glsl that
@@ -647,23 +687,18 @@ git -C "$WORKTREE" apply "$FILES_DIR/vulkan-pelorus-udu-sei.patch"
 git -C "$WORKTREE" add -A
 commit_patch "$HERE/.commit-msg-vulkan-udu-sei.txt"
 
-# libavutil fix (NOT Pelorus-specific, written to go upstream): on a device with
-# a single queue family, ff_vk_frame_barrier() turned the first barrier on each
-# frame into a queue family ownership transfer to VK_QUEUE_FAMILY_IGNORED, which
-# an exclusive image does not allow; the validation layer then lost the image's
-# layout. Same hand-maintained-diff model as the encoder patches; applied last
-# (-> patch 0021) so no shipped patch is renumbered.
-git -C "$WORKTREE" apply "$FILES_DIR/vulkan-frame-barrier-queue-family.patch"
-git -C "$WORKTREE" add -A
-commit_patch "$HERE/.commit-msg-vulkan-frame-barrier.txt"
-
-# Pelorus libavcodec fix (NOT a filter): hevc_nvenc fails the encode when one
-# picture's parameter sets and SEI exceed NVENC's 1024-byte limit, which the
-# analyze maps do through udu_sei (issue #267, ADR-0181). The size arithmetic is
-# a private header Pelorus's fast suite unit-tests directly
+# Number 0021 is retired: its libavutil/vulkan.c queue family fix is patch 0001
+# of the shared series now (ADR-0185), and no shipped number moves.
+#
+# Pelorus libavcodec fix (NOT a filter): with udu_sei, NVENC writes every
+# Pelorus blob in its zero-free carrier form (issue #284, ADR-0183) and
+# hevc_nvenc strips the analyze maps from a blob that does not fit the picture's
+# 1024-byte header limit (issue #267, ADR-0181). The limit itself and the drop
+# of truncated payloads are shared series patches 0003 and 0004; this edit is
+# one call between their av_memdup() and nvenc_hevc_sei_fits(). The size
+# arithmetic is a private header Pelorus's fast suite unit-tests directly
 # (ffmpeg-patches/test/sei_fit_test.c); the nvenc.c/nvenc.h edit is a
-# hand-maintained diff like the other encoder patches. Applied last (-> patch
-# 0022) so no shipped patch is renumbered.
+# hand-maintained diff like the other encoder patches (-> patch 0022).
 cp "$FILES_DIR/pelorus_sei_fit.h" "$WORKTREE/libavcodec/"
 git -C "$WORKTREE" apply "$FILES_DIR/nvenc-pelorus-udu-sei.patch"
 git -C "$WORKTREE" add -A
@@ -701,9 +736,11 @@ git -C "$WORKTREE" \
     --no-cover-letter --numbered --suffix=.patch --subject-prefix=PATCH \
     --no-signoff --no-base --no-attach --no-to --no-cc --no-add-header \
     --no-from --no-force-in-body-from --no-notes --filename-max-length=64 \
-    --start-number=1 --quiet -o "$HERE" "${FFMPEG_COMMIT}..HEAD"
+    --start-number=1 --quiet -o "$HERE" "${SERIES_TIP}..HEAD"
 
-# Normalize auto-generated filenames to the series.txt names.
+# Normalize auto-generated filenames to the series.txt names. format-patch
+# numbers its output by position; the shipped names keep their numbers, so the
+# retired 0021 leaves a gap and the mapping goes by position, not by number.
 pelorus_patch_names=(
     "0001-add-vf_pelorus_deband_vulkan.patch"
     "0002-add-vf_pelorus_analyze_vulkan.patch"
@@ -725,21 +762,31 @@ pelorus_patch_names=(
     "0018-add-vf_pelorus_borderfix_vulkan.patch"
     "0019-qsv-pelorus-udu-sei.patch"
     "0020-vulkan-pelorus-udu-sei.patch"
-    "0021-vulkan-frame-barrier-queue-family.patch"
     "0022-nvenc-pelorus-udu-sei.patch"
     "0023-qsv-pelorus-udu-sei-budget.patch"
 )
-for pelorus_patch_name in "${pelorus_patch_names[@]}"; do
-    pelorus_patch_index="${pelorus_patch_name%%-*}"
-    pelorus_matches=("$HERE/${pelorus_patch_index}"-*.patch)
-    # Exactly one format-patch output per index: an unmatched glob stays literal.
-    if [[ ${#pelorus_matches[@]} -ne 1 || ! -f "${pelorus_matches[0]}" ]]; then
-        echo "ERROR: expected exactly one ${pelorus_patch_index}-*.patch in $HERE," \
-            "found: ${pelorus_matches[*]}" >&2
+pelorus_generated=("$HERE"/0*.patch)
+if [[ ${#pelorus_generated[@]} -ne ${#pelorus_patch_names[@]} ||
+      ! -f "${pelorus_generated[0]}" ]]; then
+    echo "ERROR: expected ${#pelorus_patch_names[@]} generated patches in $HERE," \
+        "found: ${pelorus_generated[*]}" >&2
+    exit 1
+fi
+# Last to first: a name only ever moves to an equal or higher number, so no
+# rename lands on an output that has not moved yet.
+for (( pelorus_index = ${#pelorus_patch_names[@]} - 1; pelorus_index >= 0; pelorus_index-- )); do
+    pelorus_from="${pelorus_generated[pelorus_index]}"
+    pelorus_to="$HERE/${pelorus_patch_names[pelorus_index]}"
+    if [[ "$(basename -- "$pelorus_from")" != "$(printf '%04d' $((pelorus_index + 1)))"-* ]]; then
+        echo "ERROR: generated patch out of order: $pelorus_from" >&2
         exit 1
     fi
-    if [[ "${pelorus_matches[0]}" != "$HERE/$pelorus_patch_name" ]]; then
-        mv -- "${pelorus_matches[0]}" "$HERE/$pelorus_patch_name"
+    if [[ "$pelorus_from" != "$pelorus_to" ]]; then
+        if [[ -e "$pelorus_to" ]]; then
+            echo "ERROR: refusing to overwrite $pelorus_to" >&2
+            exit 1
+        fi
+        mv -- "$pelorus_from" "$pelorus_to"
     fi
 done
 
