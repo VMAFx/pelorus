@@ -19,7 +19,9 @@ shared FFmpeg fix series, number 0021 retired).
 - **Rebase-sensitive**: nothing new.
 - **Interop**: none.
 - **Checks**: `generate.sh` twice, byte-identical; `build-and-run.sh` over the
-  shared series and the 22 Pelorus patches: 4 series and 22 Pelorus patches applied, ffmpeg linked, exit code 0, `hevc_nvenc` `udu_sei` smoke 6 of 6 on an RTX 4090.
+  shared series and the 22 Pelorus patches: shared series 0001-0004 and the
+  22 Pelorus patches applied, ffmpeg linked, exit code 0, `hevc_nvenc`
+  `udu_sei` smoke 6 of 6 on an RTX 4090.
 
 ## Unreleased — shared FFmpeg fix series first (ADR-0185)
 

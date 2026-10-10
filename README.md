@@ -50,7 +50,10 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
 NVENC, QSV, VAAPI, and AMF use different FFmpeg hardware-frame domains, so each
 needs its own boundary instead of `AV_PIX_FMT_VULKAN` frames. None of them needs
 `hwdownload`. NVENC takes a VRAM-to-VRAM `hwupload` to CUDA on a Vulkan device
-created with `disable_multiplane=1`; some graphs fail on that hop behind NVDEC today ([#296](https://github.com/VMAFx/pelorus/issues/296)); a software decoder avoids it. On Linux, VAAPI and QSV take Pelorus output
+created with `disable_multiplane=1`. Behind NVDEC, only graphs that end in one
+writing filter pass this hop today ([#296](https://github.com/VMAFx/pelorus/issues/296)); with a software decoder the
+measured graphs pass (8-bit). See
+[NVENC](docs/usage/ffmpeg.md#nvenc-nvdec--vulkan-filters--nvenc). On Linux, VAAPI and QSV take Pelorus output
 through `hwmap` when the last filter runs with `tiling=drm`
 ([Vulkan output pools](docs/backends/vulkan-drm-modifiers.md)). AMF has no
 Vulkan input in FFmpeg n9.0.2. Only software encoders (libaom, SVT-AV1, x265)

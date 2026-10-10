@@ -30,7 +30,7 @@ a hardware frames context). Anything else says so next to the recipe.
 
 | Recipe | GPU | Status |
 | --- | --- | --- |
-| NVENC through the CUDA hop | RTX 4090, driver 615.78.08 | verified behind NVDEC for graphs ending in one writing filter (3000 frames) and behind a software decoder for the listed graphs; other NVDEC graphs fail, measured ([#296](https://github.com/VMAFx/pelorus/issues/296)) |
+| NVENC through the CUDA hop | RTX 4090, driver 615.78.08 | verified behind NVDEC for graphs ending in one writing filter (deband alone, `mc` + deband and aa alone at 3000 frames) and behind a software decoder for the listed graphs; other NVDEC graphs fail ([#296](https://github.com/VMAFx/pelorus/issues/296)) |
 | VAAPI and QSV through `tiling=drm`, NV12 | Arc A380, iHD, `xe` | verified |
 | Vulkan decode to Vulkan encode | RTX 4090 | verified for `hevc_vulkan` with the graphs listed below; the AV1 variant not run |
 | P010 into VAAPI and QSV | any | not working: stock FFmpeg defect ([Vulkan output pools](../backends/vulkan-drm-modifiers.md)) |
@@ -39,15 +39,18 @@ a hardware frames context). Anything else says so next to the recipe.
 | libaom, SVT-AV1, x265 recipes | none | not re-run on hardware: the test binary has none of these encoders; the graph shape is the same as the verified ones |
 
 The verified runs used an FFmpeg `n9.0.2` build with the shared fix series
-(patches 0001 to 0004) and the Pelorus patch stack at `50b625b`, on clips of
-120 frames at 1280x720. Host: NVIDIA driver 615.78.08, Linux 7.2.9, Arc A380 on
+(patches 0001 to 0004) and the Pelorus patch stack at `50b625b`, on
+120-frame clips (3000 frames where stated) at 1280x720, 8-bit unless a recipe
+says 10-bit. Host: NVIDIA driver 615.78.08, Linux 7.2.9, Arc A380 on
 the `xe` kernel driver with iHD.
 
 ## NVENC: NVDEC → Vulkan filters → NVENC
 
 FFmpeg `n9.0.2` has no Vulkan-to-NVENC map. The two hops between CUDA and
 Vulkan are `hwupload` calls that copy within VRAM; no frame reaches system
-memory. The Vulkan device needs `disable_multiplane=1`, because the CUDA
+memory in the NVDEC variant; the software-decode variant uploads the decoded
+frames from system memory once (inherent to a software decoder) and downloads
+nothing. The Vulkan device needs `disable_multiplane=1`, because the CUDA
 interop refuses a multiplane NV12 or P010 image (one image for two planes):
 
 ```bash
@@ -64,8 +67,9 @@ encoder`. Without `disable_multiplane=1` the same command fails with `Cannot
 map a multiplane Vulkan image (1 image(s) for 2 plane(s)) to CUDA; create the
 Vulkan device with the disable_multiplane=1 option` (exit code 218).
 
-The failure listed below needs the first hop (NVDEC `cuda` frames to
-`hwupload` to Vulkan). With a software decoder, put the upload first:
+Behind NVDEC, end the chain in exactly one writing filter (deband, aa, deblock,
+dehalo). Any other chain (denoise, deband twice, pass-through filters only, ...)
+fails on this hop behind NVDEC ([#296](https://github.com/VMAFx/pelorus/issues/296)); use a software decoder for those:
 
 ```bash
 ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk -i input.mkv \
@@ -74,7 +78,7 @@ ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk -i 
 ```
 
 Verified on an RTX 4090, exit code 0, no CUDA error, no `hwdownload` in the
-log, 8-bit input: every graph in the failing rows below, 120 frames each; deband
+log, 8-bit input: every graph in the two failing rows below, 120 frames each; deband
 twice and `pelorus_mc_vulkan=meta=1,pelorus_denoise_vulkan=prev=3:mc=1` also at
 3000 frames. The 10-bit form (`format=p010le`) was not run.
 
@@ -83,15 +87,14 @@ clip, exit code 0 means all frames encoded):
 
 | Graph between the two `hwupload` calls | Result |
 | --- | --- |
-| one of `pelorus_deband_vulkan`, `pelorus_aa_vulkan`, `pelorus_deblock_vulkan`, `pelorus_dehalo_vulkan` | works |
+| one of `pelorus_deband_vulkan`, `pelorus_aa_vulkan`, `pelorus_deblock_vulkan`, `pelorus_dehalo_vulkan` | works (3000 frames for deband alone, aa alone and `mc` + deband; 120 frames for deblock and dehalo) |
 | `pelorus_analyze_vulkan` or `pelorus_mc_vulkan` followed by one writing filter (deband) | works |
 | `pelorus_analyze_vulkan=roi=1`, `pelorus_dehalo_vulkan`, `pelorus_aa_vulkan`, `pelorus_deband_vulkan`, 10-bit | works |
 | `pelorus_grain_estimate_vulkan` followed by deband | works |
 | `pelorus_mc_vulkan` followed by `pelorus_scenecut` and deband | works |
 | `pelorus_denoise_vulkan` alone or after `pelorus_mc_vulkan`; deband twice; `pelorus_borderfix_vulkan` twice; `pelorus_grain_estimate_vulkan` with denoise | fails after 2 to 37 frames: `cuWaitExternalSemaphoresAsync failed -> CUDA_ERROR_INVALID_VALUE` (exit code 187) |
-| a pass-through filter alone (`pelorus_analyze_vulkan`, `pelorus_mc_vulkan`, `pelorus_scenecut`) | fails the same way |
-| the failing graphs above, behind a software decoder | works (120 frames; deband twice and mc with denoise also 3000 frames) |
-| deband alone, `mc` with deband, `aa` alone, behind NVDEC | works also at 3000 frames |
+| a pass-through filter alone (`pelorus_analyze_vulkan`, `pelorus_mc_vulkan`, `pelorus_scenecut`) | fails at the first frames (exit code 187) |
+| any graph above that fails behind NVDEC, behind a software decoder | works (120 frames; deband twice and `mc` + denoise also 3000 frames) |
 
 A larger upload pool (`hwupload=extra_hw_frames=64`) and an explicitly created
 CUDA device did not change the failures. The cause is not found ([#296](https://github.com/VMAFx/pelorus/issues/296)). For the
@@ -275,8 +278,7 @@ consume it through a dense `mfxExtMBQP` delta map:
 ```bash
 # HEVC, NVENC, constant-QP (the clean mode for QP-map steering). Verified on
 # an RTX 4090, exit code 0, 120 frames, software decode. Behind NVDEC this graph
-# fails on the CUDA hop (#296); a graph ending in one writing filter (for
-# example deband) works there.
+# needs a trailing writing filter; see the NVENC section.
 ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
        -i input.mkv \
        -vf "format=nv12,hwupload,pelorus_analyze_vulkan=roi=1,hwupload=derive_device=cuda" \
@@ -574,8 +576,7 @@ NVENC's external-ME-hint input (`enableExternalMEHints` +
 ```bash
 # HEVC, NVENC: produce the MV field, then let NVENC seed its search from it.
 # Verified on an RTX 4090, exit code 0, 120 frames, software decode. Behind
-# NVDEC this graph fails on the CUDA hop (#296); a graph ending in one writing
-# filter (for example deband) works there.
+# NVDEC this graph needs a trailing writing filter; see the NVENC section.
 ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
   -i in.mkv \
   -vf "format=nv12,hwupload,pelorus_mc_vulkan=bsize=16:search=24,hwupload=derive_device=cuda" \
@@ -628,8 +629,8 @@ the grain:
 ```bash
 # AV1, NVENC: estimate the grain, then let NVENC re-synthesize it in hardware.
 # Verified on an RTX 4090, exit code 0, 120 frames (8-bit input), software
-# decode. Behind NVDEC this graph fails on the CUDA hop (#296); a graph ending in
-# one writing filter (for example deband) works there.
+# decode. Behind NVDEC this graph needs a trailing writing filter; see the NVENC
+# section.
 ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
   -i in.mkv \
   -vf "format=nv12,hwupload,pelorus_grain_estimate_vulkan,hwupload=derive_device=cuda" \

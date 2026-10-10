@@ -130,7 +130,13 @@ Verified on an RTX 4090 (exit code 0, 120 frames, no `hwdownload`, no CUDA hop).
 fails after 2 to 37 frames ([#296](https://github.com/VMAFx/pelorus/issues/296)), so this recipe uses the Vulkan Video encoder.
 
 NVENC alternative: behind NVDEC the denoise graph fails on the CUDA hop
-([#296](https://github.com/VMAFx/pelorus/issues/296)); behind a software decoder it ran with exit code 0 (denoise alone, 120 frames; `mc` with denoise, 120 and 3000 frames), with
-`-vf "format=nv12,hwupload,pelorus_denoise_vulkan,hwupload=derive_device=cuda"` after
-`-init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk` and no `-hwaccel`
-(see [NVENC](../usage/ffmpeg.md#nvenc-nvdec--vulkan-filters--nvenc)).
+([#296](https://github.com/VMAFx/pelorus/issues/296)); behind a software decoder it runs
+([NVENC](../usage/ffmpeg.md#nvenc-nvdec--vulkan-filters--nvenc)):
+
+```bash
+# Verified on an RTX 4090, exit code 0, software decode, 120 frames (default options, `prev=3`).
+ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
+       -i in.mkv \
+       -vf "format=nv12,hwupload,pelorus_denoise_vulkan,hwupload=derive_device=cuda" \
+       -c:v hevc_nvenc -cq 28 out.mkv
+```
