@@ -26,8 +26,8 @@ ADR: docs/adr/0126-scenecut-idr.md
  configure                         |   2 +
  libavfilter/Makefile              |   1 +
  libavfilter/allfilters.c          |   1 +
- libavfilter/vf_pelorus_scenecut.c | 108 ++++++++++++++++++++
- 4 files changed, 112 insertions(+)
+ libavfilter/vf_pelorus_scenecut.c | 111 ++++++++++++++++++++
+ 4 files changed, 115 insertions(+)
 
 diff --git a/configure b/configure
 index 021915e788bf3f971443131919f665036148b3b6..5f48b12e31eb76d3cae37489068aa5eac5f0dccb 100755
@@ -68,10 +68,10 @@ index 0ee727c8c38cefe87c4d23504c0e43ddd6f82554..d6632cc826123b6f1b3bbc93db698e80
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_scenecut.c b/libavfilter/vf_pelorus_scenecut.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..0433eb18b757986f55b3ec867f6dfc35552df2d9
+index 0000000000000000000000000000000000000000..b6f459c78cb3a2bc7a031c179efe55e9380734fd
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_scenecut.c
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,111 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -100,10 +100,13 @@ index 0000000000000000000000000000000000000000..0433eb18b757986f55b3ec867f6dfc35
 + * frame->pict_type = AV_PICTURE_TYPE_I (+ the key flag) so the downstream
 + * encoder opens a fresh GOP exactly at the cut. No GPU work, no pixels touched,
 + * codec-agnostic (x264/x265/NVENC/QSV/SVT all honour pict_type==I for a forced
-+ * keyframe). Run it after hwdownload, just before the encoder; the motion side
++ * keyframe). Run it on the frames as they are, after the last Pelorus stage: it
++ * reads side data only, so a hardware encoder needs no hwdownload, and with a
++ * software encoder it may sit on either side of hwdownload. The motion side
 + * data rides the frame through av_frame_copy_props.
 + *
-+ * Consumes the standard interop ABI (<pelorus/interop.h>); ADR-0126.
++ * Consumes the standard interop ABI (<pelorus/interop.h>); ADR-0126, placement
++ * ADR-0186.
 + */
 +
 +#include "libavutil/frame.h"

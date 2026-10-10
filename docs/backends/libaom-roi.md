@@ -11,6 +11,8 @@ software-AV1 leg of the Tier-1 encoder steering in ADR-0114, alongside the NVENC
 ## Usage
 
 ```bash
+# hwdownload is inherent: libaom-av1 takes system-memory frames.
+# Not run on hardware: the test binary has no libaom.
 ffmpeg -init_hw_device vulkan=vk:0 -i input.mkv \
   -vf "format=yuv420p,hwupload,pelorus_analyze_vulkan=roi=1,hwdownload,format=yuv420p" \
   -c:v libaom-av1 -pelorus_roi 1 out.mkv

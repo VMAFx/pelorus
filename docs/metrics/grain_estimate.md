@@ -121,6 +121,8 @@ shipped with this filter; it must be measured under the
 ```bash
 # AV1: estimate grain on the source, denoise it, let the AV1 encoder
 # re-synthesize it from the attached AV_FRAME_DATA_FILM_GRAIN_PARAMS.
+# hwdownload is inherent: libaom-av1 takes system-memory frames.
+# Not run on hardware: the test binary has no libaom.
 ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
   -vf "hwupload,pelorus_grain_estimate_vulkan=strength=2.0,pelorus_denoise_vulkan=strength=0.4,hwdownload,format=yuv420p" \
   -c:v libaom-av1 -crf 30 out.mkv
@@ -142,11 +144,18 @@ ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv -frames:v 48 \
 # 2. Denoise and encode, then insert a static H.274 FGC SEI with those values
 #    (here scale_y=10, cutoff 14). pelorus_fgs does not read the metadata
 #    inline, even when used in the same command.
-ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
-  -vf "hwupload,pelorus_denoise_vulkan=strength=0.4,hwdownload,format=yuv420p" \
-  -c:v hevc_nvenc -preset p5 -cq 28 \
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
+  -hwaccel vulkan -hwaccel_device vk -hwaccel_output_format vulkan -extra_hw_frames 3 -i in.mkv \
+  -vf "pelorus_denoise_vulkan=strength=0.4" \
+  -c:v hevc_vulkan -qp 28 \
   -bsf:v "pelorus_fgs=model_id=0:log2_scale=2:scale_y=10:cutoff_h=14:cutoff_v=14" out.mkv
 ```
+
+Verified on an RTX 4090 (exit code 0, 120 frames, no `hwdownload`). Denoise keeps
+`prev=3` frames, hence `-extra_hw_frames 3`
+([frames the filters keep](../usage/ffmpeg.md#frames-the-filters-keep--extra_hw_frames)); denoise on the
+NVENC CUDA hop fails after 2 to 37 frames, so the recipe uses the Vulkan Video
+encoder.
 
 The `cutoff_h`/`cutoff_v` options are part of the `pelorus_fgs` SMPTE RDD 5
 profile ([ADR-0155](../adr/0155-fgs-bsf-rdd5-profile.md)). Without them the

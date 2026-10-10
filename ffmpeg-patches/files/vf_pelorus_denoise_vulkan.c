@@ -33,13 +33,14 @@
  * keeps a ring of up to PEL_DENOISE_MAX_PREV previous frames as cheap
  * av_frame_clone refcount bumps on the hwframe images (no pixel copy).
  *
- * Forward-lookahead (ADR-0137): with lookahead=1 (default) the temporal walk is
- * bidirectional — output is delayed by one frame (buffered .activate lifecycle)
- * so the denoise can also sample the NEXT frame (same-coordinate, tcut-gated like
- * the prev taps), closing the leading-frame gap of a held animation drawing. This
- * adds a 1-frame latency + an EOF flush of the last held frame. lookahead=0 is
- * the original purely-causal behaviour: process each frame immediately, no
- * latency, no flush — bit-identical to pre-ADR-0137.
+ * Forward-lookahead (ADR-0137): with lookahead=1 (opt-in; the default is 0) the
+ * temporal walk is bidirectional — output is delayed by one frame (buffered
+ * .activate lifecycle) so the denoise can also sample the NEXT frame
+ * (same-coordinate, tcut-gated like the prev taps), closing the leading-frame
+ * gap of a held animation drawing. This adds a 1-frame latency + an EOF flush of
+ * the last held frame. lookahead=0 (the default) is the original purely-causal
+ * behaviour: process each frame immediately, no latency, no flush —
+ * bit-identical to pre-ADR-0137.
  *
  * Interop: when `meta=1` the filter free-rides a residual reduction in the same
  * dispatch (per-workgroup sums of |in-out| and (in-out)^2, added atomically to

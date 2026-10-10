@@ -199,9 +199,26 @@ taken with the 4× predictor error and is superseded by the table above.
 ## Usage
 
 ```bash
-ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
-  -vf "hwupload,pelorus_mc_vulkan=bsize=16:search=24:meta=1,pelorus_denoise_vulkan=mc=1,hwdownload,format=yuv420p" \
-  -c:v hevc_nvenc -preset p5 -cq 28 out.mkv
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
+  -hwaccel vulkan -hwaccel_device vk -hwaccel_output_format vulkan -extra_hw_frames 4 -i in.mkv \
+  -vf "pelorus_mc_vulkan=bsize=16:search=24:meta=1,pelorus_denoise_vulkan=mc=1" \
+  -c:v hevc_vulkan -qp 28 out.mkv
+```
+
+Verified on an RTX 4090 (exit code 0, 120 frames, no `hwdownload`, no CUDA hop).
+`mc` keeps 1 frame and `denoise` keeps `prev=3` (default), hence
+`-extra_hw_frames 4` ([frames the filters keep](../usage/ffmpeg.md#frames-the-filters-keep--extra_hw_frames)).
+
+NVENC alternative: behind NVDEC the `mc` with denoise graph fails on the CUDA hop
+([#296](https://github.com/VMAFx/pelorus/issues/296)); behind a software decoder it runs
+([NVENC](../usage/ffmpeg.md#nvenc-nvdec--vulkan-filters--nvenc)):
+
+```bash
+# Verified on an RTX 4090, exit code 0, software decode, 120 and 3000 frames.
+ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
+       -i in.mkv \
+       -vf "format=nv12,hwupload,pelorus_mc_vulkan=meta=1,pelorus_denoise_vulkan=prev=3:mc=1,hwupload=derive_device=cuda" \
+       -c:v hevc_nvenc -cq 28 out.mkv
 ```
 
 The MV field rides the frames as `AV_FRAME_DATA_SEI_UNREGISTERED` (UUID-keyed)

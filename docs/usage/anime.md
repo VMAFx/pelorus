@@ -18,23 +18,28 @@ flag — read the chain, understand each stage, and retune per source
 ## The recommended chain
 
 ```bash
-ffmpeg -init_hw_device vulkan -i in.mkv -vf "
-  format=yuv420p10le,hwupload,
+ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
+  -hwaccel cuda -hwaccel_output_format cuda -i in.mkv -vf "
+  hwupload,
   pelorus_analyze_vulkan=roi=1,
   pelorus_dehalo_vulkan=blur=2:darkstr=1:brightstr=1,
   pelorus_aa_vulkan=depth=8:blur=2:darkstr=0.3,
   pelorus_deband_vulkan=range=15:thry=0.02:dither=bluenoise:dynamic=1:protect=1,
-  hwdownload,format=p010le
+  hwupload=derive_device=cuda
 " -c:v hevc_nvenc -pelorus_roi 1 -preset p5 -rc constqp -qp 22 out.mkv
 ```
+
+Verified on an RTX 4090 with a 10-bit HEVC input (exit code 0, 120 frames, no
+`hwdownload`). The NVENC hop copies within VRAM and needs `disable_multiplane=1`
+([the zero-copy pipeline](ffmpeg.md#nvenc-nvdec--vulkan-filters--nvenc)).
 
 The pixel-processing chain is codec-agnostic: swap `hevc_nvenc` for
 `av1_nvenc`, `hevc_qsv` / `av1_qsv`, or native `hevc_vulkan`. Encoder ROI
 support is narrower: `-pelorus_roi 1` exists on NVENC, `h264_qsv`/`hevc_qsv`,
 the native Vulkan-Video encoders, and the documented software bridges, but not
 on `av1_qsv`. Drop the option when using that encoder. See
-[ffmpeg.md](ffmpeg.md). `hwupload`/`hwdownload` belong only at the edges — every
-Pelorus stage runs in VRAM.
+[ffmpeg.md](ffmpeg.md). Every Pelorus stage runs in VRAM; only software
+encoders need a `hwdownload`.
 
 ## Stage by stage
 

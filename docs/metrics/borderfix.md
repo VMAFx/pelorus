@@ -77,10 +77,16 @@ it does not link libpelorus and emits no interop section.
 ## Usage
 
 ```bash
-ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
-  -vf "hwupload,pelorus_borderfix_vulkan=left=4:right=4:planes=0x1,pelorus_borderfix_vulkan=left=2:right=2:planes=0xE,hwdownload,format=yuv420p" \
-  -c:v hevc_nvenc -preset p5 -cq 28 out.mkv
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
+  -hwaccel vulkan -hwaccel_device vk -hwaccel_output_format vulkan -i in.mkv \
+  -vf "pelorus_borderfix_vulkan=left=4:right=4:planes=0x1,pelorus_borderfix_vulkan=left=2:right=2:planes=0xE" \
+  -c:v hevc_vulkan -qp 28 out.mkv
 ```
+
+Verified on an RTX 4090 (exit code 0, 120 frames, no `hwdownload`, no CUDA hop).
+Two borderfix passes in a row fail on the NVENC CUDA hop after 2 to 37 frames (see
+[the zero-copy pipeline](../usage/ffmpeg.md#nvenc-nvdec--vulkan-filters--nvenc)), so this recipe
+uses the Vulkan Video encoder.
 
 Here the first pass removes a 4-pixel dirty band from luma. The second selects
 all non-luma physical planes and removes the corresponding 2-pixel band from
