@@ -1982,18 +1982,46 @@ static void check_carrier_corrupt(size_t at, uint8_t value, size_t len, pel_resu
     CHECK(res == NULL);
 }
 
+/* A blob whose image ends in 254 non-zero bytes ends its carrier with one full 0xFF block;
+ * with one more zero byte the carrier ends 0xFF ... 01 01. Both decode back; the full block
+ * followed by an empty final block (never written) is refused. */
+static void check_carrier_full_block_endings(void)
+{
+    uint8_t blob[16u + 48u + 255u];
+    uint8_t carrier[PEL_CARRIER_MAX_LEN(sizeof(blob)) + 1u];
+    uint8_t scratch[sizeof(carrier)];
+    const uint8_t *res = NULL;
+    size_t clen = 0;
+    size_t olen = 0;
+
+    memcpy(blob, pelorus_sidedata_uuid, 16u);
+    memcpy(blob + 16, kat_image, sizeof(kat_image));
+    memset(blob + 64, 0x41, 254u);
+    blob[sizeof(blob) - 1u] = 0u;
+    CHECK(pel_blob_carrier_encode(blob, sizeof(blob), carrier, sizeof(carrier), &clen) == PEL_OK);
+    CHECK(clen == sizeof(blob) + 2u && carrier[clen - 2u] == 1u && carrier[clen - 1u] == 1u &&
+          carrier[clen - 3u - 254u] == 0xFFu);
+    CHECK(pel_blob_unwrap(carrier, clen, scratch, sizeof(scratch), &res, &olen) == PEL_OK);
+    CHECK(olen == sizeof(blob) && res != NULL && memcmp(res, blob, olen) == 0);
+    CHECK(pel_blob_carrier_encode(blob, sizeof(blob) - 1u, carrier, sizeof(carrier), &clen) ==
+          PEL_OK);
+    CHECK(clen == sizeof(blob) && carrier[clen - 255u] == 0xFFu);
+    carrier[clen] = 0x01u; /* empty final block after the full one */
+    CHECK(pel_blob_unwrap(carrier, clen + 1u, scratch, sizeof(scratch), &res, &olen) ==
+          PEL_ERR_ABI);
+    CHECK(pel_blob_unwrap(carrier, clen, scratch, sizeof(scratch), &res, &olen) == PEL_OK);
+}
+
 /* Negative: corrupt stuffing, truncation and a non-canonical ending are refused, never misread;
  * the canonical form of the same bytes decodes. */
 static void test_carrier_rejects(void)
 {
-    static const uint8_t full_then_empty_tail[2] = {0x01u, 0x01u};
-    uint8_t noncanon[16u + 1u + 254u + 1u];
-    uint8_t big[16u + 300u];
+    uint8_t noise[16u + 1u + 60u];
     uint8_t wide[16u + 300u];
     const uint8_t *res = NULL;
     size_t olen = 0;
 
-    check_carrier_corrupt(17u, 0x00u, sizeof(kat_carrier), PEL_ERR_ABI);   /* zero data byte */
+    check_carrier_corrupt(42u, 0x00u, sizeof(kat_carrier), PEL_ERR_ABI);   /* zero data byte */
     check_carrier_corrupt(64u, 0x09u, sizeof(kat_carrier), PEL_ERR_ABI);   /* block past the end */
     check_carrier_corrupt(16u, 0x00u, sizeof(kat_carrier), PEL_ERR_ABI);   /* zero code byte */
     check_carrier_corrupt(0u, 0x3eu, sizeof(kat_carrier), PEL_ERR_ABSENT); /* foreign UUID */
@@ -2001,20 +2029,13 @@ static void test_carrier_rejects(void)
     check_carrier_corrupt(16u, 0x07u, 16u + 20u, PEL_ERR_TRUNCATED); /* image < header */
     check_carrier_corrupt(16u, 0x07u, 16u, PEL_ERR_TRUNCATED);       /* empty image */
 
-    /* 0xFF block then an empty final block decodes like the 0xFF block alone: refused. */
-    memcpy(noncanon, pelorus_carrier_uuid, 16u);
-    noncanon[16] = 0xFFu;
-    memset(noncanon + 17, 0x41, 254u);
-    noncanon[sizeof(noncanon) - 1u] = full_then_empty_tail[0];
-    CHECK(pel_blob_unwrap(noncanon, sizeof(noncanon), big, sizeof(big), &res, &olen) ==
-          PEL_ERR_ABI);
-    /* ...while the canonical 0xFF block, 01, 01 (254 bytes then one zero) decodes. */
-    memset(big, 0x41, sizeof(big));
-    memcpy(big, pelorus_carrier_uuid, 16u);
-    big[16] = 0xFFu;
-    memcpy(big + 17u + 254u, full_then_empty_tail, sizeof(full_then_empty_tail));
-    CHECK(pel_blob_unwrap(big, 17u + 254u + 2u, wide, sizeof(wide), &res, &olen) == PEL_OK);
-    CHECK(olen == 16u + 255u && res == wide && wide[16u + 254u] == 0u);
+    check_carrier_full_block_endings();
+    /* Well-formed stuffing of 60 bytes that are no Pelorus image: refused. */
+    memcpy(noise, pelorus_carrier_uuid, 16u);
+    noise[16] = 61u;
+    memset(noise + 17, 0x41, 60u);
+    CHECK(pel_blob_unwrap(noise, sizeof(noise), wide, sizeof(wide), &res, &olen) == PEL_ERR_ABI);
+    CHECK(res == NULL);
 }
 
 /* Negative: foreign payloads, short buffers and NULL arguments are refused by both functions. */

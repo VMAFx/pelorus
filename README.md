@@ -176,7 +176,8 @@ encoder. A documented, retunable composition, not a new meta-filter. See
   option-string parsers are follow-ups (#86, #81).
 - Interop ABI 1.5 (ADR-0183): a zero-free carrier form of the blob (COBS under
   its own UUID) that `h264_nvenc` and `hevc_nvenc` write, because NVENC
-  truncates SEI payloads with many zero bytes (#284); readers of decoded frames
+  truncates SEI payloads with many zero bytes (#284; rule pinned on an RTX 4090,
+  driver 615.78.08); readers of decoded frames
   call `pel_blob_unwrap()`. Across 48 analyze cases on an RTX 4090 no picture
   loses its side data on either NVENC encoder (`hevc_nvenc` still strips
   maps over its budget, ADR-0181).

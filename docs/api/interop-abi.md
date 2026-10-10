@@ -72,6 +72,11 @@ not writing a Pelorus blob.
 
 ## API
 
+Readers of decoded frames: since ABI 1.5 a payload can also arrive in the
+zero-free carrier form; pass it through `pel_blob_unwrap()` first and use the
+blob it hands out (see [Zero-free carrier form](#zero-free-carrier-form-abi-15)
+for `pel_blob_carrier_encode()` and `pel_blob_unwrap()`).
+
 ```c
 /* Producer (vf_pelorus_*) */
 PelorusSideData meta = { .frame_pts = pts, .producer_id = PEL_FOURCC('P','L','R','S'),
@@ -390,11 +395,14 @@ else
 field or bit changes; ABI 1.5 adds a second way to carry the same blob in a
 bitstream.
 
-**Why.** `h264_nvenc` and `hevc_nvenc` write a user data unregistered SEI
-truncated when its emulation prevention bytes exceed `ceil(P / 3) + 3` for a
-`P`-byte payload, and the decoder drops it without an error (issue #284). Zero
-runs cause emulation prevention, and the analyze maps of flat content are
-mostly zeros. A payload without any zero byte needs no emulation prevention.
+**Why.** On an RTX 4090 with driver 615.78.08, `h264_nvenc` and `hevc_nvenc` write a user data
+unregistered SEI truncated when its emulation prevention bytes exceed
+`ceil(P / 3) + 3` for a `P`-byte payload, and the decoder drops it without an
+error (issue #284; the rule is pinned on that driver,
+[research 0183](../research/0183-sidedata-zero-free-carrier.md)). Zero runs
+cause emulation prevention, and the analyze maps of flat content are mostly
+zeros. A payload without any zero byte needs no emulation prevention, so the
+rule cannot apply to it, whatever the content.
 
 **Layout.**
 
@@ -409,8 +417,11 @@ byte `c` (1 to 255) followed by `c - 1` non-zero bytes. Every block except a
 full one (`c = 255`) and the last one stands for one zero byte after its data.
 A full block that ends the image is not followed by an empty block. The result
 holds no zero byte and is one byte longer than the image, plus one byte per
-254 bytes without a zero (`PEL_CARRIER_MAX_LEN(n)` bounds a carrier of an
-`n`-byte blob). The carrier UUID has no zero byte either.
+254 bytes without a zero. The carrier UUID has no zero byte either.
+`PEL_CARRIER_MAX_LEN(n)` bounds the carrier of an `n`-byte blob; it is part of
+the ABI 1.5 contract (the bound never shrinks), valid for `n <= SIZE_MAX / 2`,
+and evaluates `n` twice. For the exact length, call
+`pel_blob_carrier_encode(blob, len, NULL, 0, &need)`.
 
 Known answer (the conformance fixture checks it): the header-only image
 `50 45 4c 4f 52 31 00 00 01 00 05 00 30 00 00 00 00 00 00 00 00 00 30 00 40 e2
@@ -421,17 +432,44 @@ the carrier UUID, to `07 50 45 4c 4f 52 31 01 02 01 02 05 02 30 01 01 01 01 01
 
 | Function | Purpose |
 |---|---|
-| `pel_blob_carrier_encode(blob, len, out, cap, &out_len)` | blob to carrier into a caller buffer, no allocation; `PEL_ERR_ABSENT` for a payload that is not a Pelorus blob (write it unchanged); `cap` 0 asks for the length (`PEL_ERR_RANGE`, `out_len` set) |
+| `pel_blob_carrier_encode(blob, len, out, cap, &out_len)` | blob to carrier into a caller buffer, no allocation; `PEL_ERR_ABSENT` for a payload that is not a Pelorus blob (write it unchanged); `out` NULL and `cap` 0 ask for the length (`PEL_ERR_RANGE`, `out_len` set) |
 | `pel_blob_unwrap(data, len, scratch, cap, &blob, &blob_len)` | either form to the blob: a blob comes back as `data` itself (no copy, `scratch` untouched), a carrier is decoded into `scratch` (`cap >= len` always suffices) as blob UUID + image; `PEL_ERR_ABSENT` for any other UUID |
 
-The decoder is strict and allocates nothing. It returns `PEL_ERR_ABI` for a zero
-byte, a block that runs past the end, or an empty final block after a full one
-(a form the encoder never writes, so a payload decodes to one image and
-encodes back to the same bytes), and `PEL_ERR_TRUNCATED` when the image is
-shorter than the 48-byte header. Every other framing check stays where it is:
-`pel_blob_find_section()` and `pel_blob_map()` on the unwrapped blob, so a
-carrier cut on a block boundary reports `PEL_ERR_TRUNCATED` there like a short
-blob. Decoding a 49 KB carrier took at most 0.17 ms on a debug build.
+`pel_blob_carrier_encode()` results:
+
+| Result | Condition |
+|---|---|
+| `PEL_OK` | `out[0..*out_len)` holds the carrier |
+| `PEL_ERR_INVALID` | `blob` or `out_len` NULL, or `out` NULL with `cap > 0` |
+| `PEL_ERR_ABSENT` | `blob` is not a Pelorus blob (`pel_blob_is_present()` is 0); `*out_len` is 0 |
+| `PEL_ERR_RANGE` | `out` NULL or `cap` shorter than the carrier; `*out_len` is the length needed |
+
+`pel_blob_unwrap()` results:
+
+| Result | Condition |
+|---|---|
+| `PEL_OK` | `*blob` and `*blob_len` describe the blob |
+| `PEL_ERR_INVALID` | `data`, `blob` or `blob_len` NULL, or `scratch` NULL with `cap > 0` |
+| `PEL_ERR_ABSENT` | `len < 16`, or neither UUID: a foreign payload, ignore it |
+| `PEL_ERR_RANGE` | a carrier with `scratch` NULL or `cap < len`; `*blob_len` is `len`, which suffices |
+| `PEL_ERR_ABI` | a zero byte, a block past the end, an empty final block after a full one, or a decoded image without the Pelorus magic and ABI major |
+| `PEL_ERR_TRUNCATED` | the decoded image is shorter than the 48-byte header |
+
+On any error `*blob` is NULL, and for a carrier `scratch` may be partly
+written. The decoder never writes past `cap` and never allocates; a payload
+decodes to one image and encodes back to the same bytes. Sections and maps are
+checked by `pel_blob_find_section()` and `pel_blob_map()` on the unwrapped
+blob, so a carrier cut on a block boundary reports `PEL_ERR_TRUNCATED` there,
+like a short blob. Decoding a 49 KB carrier took at most 0.17 ms on a debug
+build.
+
+**Ownership and lifetime.** Both functions write only into caller-owned
+buffers and keep no reference. `*blob` aliases `data` (blob form) or `scratch`
+(carrier form): keep that buffer alive and unchanged while you read the blob
+and the section pointers taken from it. `scratch` must not overlap `data`
+(no in-place unwrap); an 8-byte aligned `scratch` keeps the cast guarantee of
+R5 for section pointers. **Thread safety:** both are reentrant, with no global
+or static state; concurrent calls on buffers that do not alias are safe.
 
 **Writers.** Pelorus filters keep attaching the blob, and in-graph consumers
 read it in place as before. `h264_nvenc` and `hevc_nvenc` (patch 0022) write
@@ -444,17 +482,40 @@ own data.
 entry a decoder exports, then read sections as before:
 
 ```c
-/* Before (ABI 1.4): only the blob form */
-if (pel_blob_find_section(sd->data, sd->size, PEL_SEC_BANDING,
-                          sizeof(PelorusBandingSection), &p, &got) == PEL_OK) { ... }
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
-/* After (ABI 1.5): either form; scratch holds at least sd->size bytes */
-const uint8_t *blob;
-size_t len;
-if (pel_blob_unwrap(sd->data, sd->size, scratch, scratch_cap, &blob, &len) == PEL_OK &&
-    pel_blob_find_section(blob, len, PEL_SEC_BANDING,
-                          sizeof(PelorusBandingSection), &p, &got) == PEL_OK) { ... }
+#include "pelorus/interop.h"
+
+/* Banding risk of one decoded SEI_UNREGISTERED payload in either form; -1 when the
+ * payload holds no usable Pelorus banding section. ABI 1.4 readers called
+ * pel_blob_find_section(data, size, ...) directly. */
+static float banding_risk(const uint8_t *data, size_t size)
+{
+    uint8_t *scratch = malloc(size > 0 ? size : 1); /* >= size always suffices */
+    const uint8_t *blob = NULL;
+    size_t blob_len = 0;
+    const void *p = NULL;
+    size_t got = 0;
+    float risk = -1.0f;
+    PelorusBandingSection b;
+
+    if (scratch != NULL &&
+        pel_blob_unwrap(data, size, scratch, size, &blob, &blob_len) == PEL_OK &&
+        pel_blob_find_section(blob, blob_len, PEL_SEC_BANDING, sizeof(b), &p, &got) ==
+            PEL_OK &&
+        got == sizeof(b)) {
+        memcpy(&b, p, sizeof(b)); /* p points into blob: data or scratch */
+        risk = b.global_banding_risk;
+    }
+    free(scratch); /* after the last use of blob and p */
+    return risk;
+}
 ```
+
+A per-frame reader allocates `scratch` once, at the largest payload size it
+accepts, rather than per call as the example does (HISS-03).
 
 A reader built on ABI 1.4 sees a carrier as an unregistered SEI with a foreign
 UUID: `pel_blob_is_present()` returns 0 and the frame has no Pelorus data for

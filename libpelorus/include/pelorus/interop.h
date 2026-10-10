@@ -101,7 +101,10 @@ extern const uint8_t pelorus_sidedata_uuid[PELORUS_SIDEDATA_UUID_LEN];
 extern const uint8_t pelorus_carrier_uuid[PELORUS_SIDEDATA_UUID_LEN];
 
 /* Upper bound of the carrier form of an n-byte blob (UUID included): COBS
- * adds one code byte, plus one per 254 bytes without a zero. */
+ * adds one code byte, plus one per 254 bytes without a zero. Part of the ABI 1.5
+ * contract: the bound never shrinks. Domain: n <= SIZE_MAX / 2 (the sum would
+ * wrap above it); n is evaluated twice, so pass a plain variable. For the exact
+ * length, ask pel_blob_carrier_encode(blob, len, NULL, 0, &need) instead. */
 #define PEL_CARRIER_MAX_LEN(n) ((size_t)(n) + 1u + (size_t)(n) / 254u)
 
 /* ---- Section catalogue (R1/R2: append-only; bits are NEVER reused) ------ */
@@ -685,18 +688,21 @@ pel_result pel_blob_map(const uint8_t *blob, size_t len, uint32_t offset, uint32
  * docs/api/interop-abi.md "Zero-free carrier form"): pelorus_carrier_uuid,
  * then the COBS encoding (Cheshire and Baker, 1999; no frame delimiter) of the
  * len - 16 bytes after pelorus_sidedata_uuid. The output holds no 0x00 byte.
- * An encoder whose SEI writer mishandles zero runs (NVENC) writes this form;
- * the Pelorus filters keep attaching the blob itself.
+ * Patch 0022 writes this form on NVENC; the Pelorus filters keep attaching the
+ * blob itself.
  *
  *   blob, len  a blob that pel_blob_is_present() accepts; written whole.
- *   out, cap   caller buffer; must not overlap blob. PEL_CARRIER_MAX_LEN(len)
- *              always suffices.
+ *   out, cap   caller-owned buffer; must not overlap blob.
+ *              PEL_CARRIER_MAX_LEN(len) always suffices.
  *   out_len    receives the carrier length on PEL_OK, and the length it NEEDS
- *              on PEL_ERR_RANGE from a short buffer (query with cap 0).
+ *              on PEL_ERR_RANGE from a short buffer (query with out NULL, cap 0).
  *
- * Allocates nothing. Returns PEL_OK, PEL_ERR_INVALID (NULL blob/out_len, NULL
- * out with cap > 0), PEL_ERR_ABSENT (not a Pelorus blob: write it unchanged)
- * or PEL_ERR_RANGE.
+ * Reentrant: no global or static state, nothing allocated; concurrent calls on
+ * buffers that do not alias are safe. On an error out is not written.
+ *   PEL_OK            out[0..*out_len) holds the carrier
+ *   PEL_ERR_INVALID   blob or out_len NULL, or out NULL with cap > 0
+ *   PEL_ERR_ABSENT    blob is not a Pelorus blob (write it unchanged); *out_len 0
+ *   PEL_ERR_RANGE     out NULL or cap shorter than the carrier; *out_len = need
  */
 pel_result pel_blob_carrier_encode(const uint8_t *blob, size_t len, uint8_t *out, size_t cap,
                                    size_t *out_len);
@@ -707,23 +713,29 @@ pel_result pel_blob_carrier_encode(const uint8_t *blob, size_t len, uint8_t *out
  * AV_FRAME_DATA_SEI_UNREGISTERED entry a decoder exports.
  *
  *   data, len    the payload, UUID first.
- *   scratch, cap caller buffer for a decoded carrier; cap >= len always
- *                suffices (decoding never grows the payload). Must not
- *                overlap data. 8-byte aligned keeps the R5 cast guarantee.
+ *   scratch, cap caller-owned buffer for a decoded carrier; cap >= len always
+ *                suffices (decoding never grows the payload). Must not overlap
+ *                data (no in-place unwrap); 8-byte aligned keeps the R5 cast
+ *                guarantee for section pointers.
  *   out_blob     receives data itself for a blob (pelorus_sidedata_uuid
  *                first; scratch untouched), or scratch for a carrier, decoded
- *                to pelorus_sidedata_uuid + image.
+ *                to pelorus_sidedata_uuid + image. It aliases data or scratch:
+ *                keep that buffer alive and unchanged while using the blob.
  *   out_len      receives the blob length.
  *
  * The decoder is strict: a 0x00 byte, a code byte whose block runs past the
  * end, an empty final block after a 0xFF block (an encoding the encoder never
- * writes) or a decoded image shorter than the header fail. Framing beyond that
- * is checked by pel_blob_find_section() and pel_blob_map() as for any blob.
- * Allocates nothing. Returns PEL_OK, PEL_ERR_INVALID (NULL data/out_blob/
- * out_len, NULL scratch with cap > 0), PEL_ERR_ABSENT (neither UUID: a foreign
- * payload), PEL_ERR_RANGE (cap < len for a carrier; *out_len receives len),
- * PEL_ERR_ABI (malformed encoding) or PEL_ERR_TRUNCATED (decoded image shorter
- * than the header). On error *out_blob is NULL.
+ * writes), a decoded image shorter than the header or one without the Pelorus
+ * magic and ABI major fail. Sections and maps are checked afterwards by
+ * pel_blob_find_section() and pel_blob_map(), as for any blob. Reentrant: no
+ * global or static state, nothing allocated. On any error *out_blob is NULL,
+ * and for a carrier scratch may be partly written.
+ *   PEL_OK            *out_blob, *out_len: the blob
+ *   PEL_ERR_INVALID   data, out_blob or out_len NULL, or scratch NULL with cap > 0
+ *   PEL_ERR_ABSENT    len < 16 or neither UUID: a foreign payload, ignore it
+ *   PEL_ERR_RANGE     carrier with scratch NULL or cap < len; *out_len = len
+ *   PEL_ERR_ABI       malformed COBS, or the decoded image is not a Pelorus blob
+ *   PEL_ERR_TRUNCATED decoded image shorter than the 48-byte header
  */
 pel_result pel_blob_unwrap(const uint8_t *data, size_t len, uint8_t *scratch, size_t cap,
                            const uint8_t **out_blob, size_t *out_len);

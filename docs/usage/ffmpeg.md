@@ -478,15 +478,16 @@ message when `-udu_sei 1` is set (default off):
 
 | Encoder | Source of the option | Form in the stream | Size limit per picture |
 | --- | --- | --- | --- |
-| `h264_nvenc` | stock FFmpeg, carrier in patch 0022 | zero-free carrier | none found up to 64 KiB |
+| `h264_nvenc` | stock FFmpeg, carrier in patch 0022 | zero-free carrier | none found; carriers tested to 60 017 bytes (RTX 4090) |
 | `hevc_nvenc` | stock FFmpeg, carrier and limit handling in patch 0022 | zero-free carrier | 768 bytes of SEI (see below) |
 | `h264_qsv` | patch 0019 | blob | fails between 12 424 and 49 144 bytes on Arc A380 |
-| `hevc_qsv` | patch 0019 | blob | 4 089 bytes on Arc A380 (larger payloads corrupt the stream; see the hevc_qsv size issue) |
+| `hevc_qsv` | patch 0019 | blob | 4 089 bytes on Arc A380: at 4 090 one byte of the access unit is overwritten but it decodes, from 4 091 the VPS is destroyed and no picture decodes, from about 11 000 the encode fails ([#286](https://github.com/VMAFx/pelorus/issues/286)) |
 | `h264_vulkan`, `hevc_vulkan` | patch 0020 | blob | none measured |
 
-NVENC writes a SEI truncated when the payload needs more emulation prevention
-bytes than about a third of its length, and the decoder then drops it without
-an error (issue #284). The analyze maps of flat content are mostly zero bytes
+On an RTX 4090 with driver 615.78.08, NVENC writes a SEI truncated when the payload needs more
+emulation prevention bytes than about a third of its length (`ceil(P / 3) + 3`,
+pinned on that driver), and the decoder then drops it without an error
+(issue #284). The analyze maps of flat content are mostly zero bytes
 and reach that. Both NVENC encoders therefore write every Pelorus blob in its
 zero-free carrier form: UUID `3f9b37b8-fd9a-4621-920e-9b78b55cf9b5`, then the
 COBS-encoded blob, with no zero byte, one byte longer per 254 bytes
@@ -496,7 +497,7 @@ of the decoded frames turns it back into the blob with `pel_blob_unwrap()`;
 `-loglevel verbose` names the form once:
 
 ```text
-[h264_nvenc] udu_sei: Pelorus side data is written in its zero-free carrier form (UUID 3f9b37b8-fd9a-4621-920e-9b78b55cf9b5), which NVENC does not truncate.
+[h264_nvenc] udu_sei: Pelorus side data is written in its zero-free carrier form (UUID 3f9b37b8-fd9a-4621-920e-9b78b55cf9b5), which needs no emulation prevention.
 ```
 
 A reader built before ABI 1.5 (VMAFx before its re-pin) ignores the carrier and

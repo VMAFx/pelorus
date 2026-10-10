@@ -578,6 +578,9 @@ static pel_result unwrap_carrier(const uint8_t *data, size_t len, uint8_t *scrat
         return PEL_ERR_TRUNCATED;
     }
     memcpy(scratch, pelorus_sidedata_uuid, uuid_len);
+    if (!pel_blob_is_present(scratch, uuid_len + image_len)) {
+        return PEL_ERR_ABI; /* well-formed stuffing, but not a Pelorus image */
+    }
     *out_len = uuid_len + image_len;
     return PEL_OK;
 }

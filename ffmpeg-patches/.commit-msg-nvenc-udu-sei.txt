@@ -15,7 +15,8 @@ programming guide 13.1 states the limit.
 
 2. h264_nvenc and hevc_nvenc write a SEI payload truncated, without its
 trailing bits, when its emulation prevention bytes exceed ceil(P / 3) + 3
-for a P-byte payload; FFmpeg's decoders then drop it without an error.
+for a P-byte payload (rule pinned on an RTX 4090, driver 615.78.08);
+FFmpeg's decoders then drop it without an error.
 The zero runs of a pelorus_analyze_vulkan blob on flat content reach
 that: at 1080p with 32-pixel cells (12 424 bytes) no picture kept its
 side data.
@@ -26,8 +27,11 @@ Pelorus interop ABI 1.5: UUID 3f9b37b8-fd9a-4621-920e-9b78b55cf9b5, then
 the COBS encoding of the blob image. It holds no zero byte, so its NAL
 unit needs no emulation prevention, and costs one byte plus one per 254
 bytes. libpelorus's pel_blob_unwrap() turns it back into the blob. Any
-other payload is written unchanged. The first carrier is noted in the
-verbose log.
+other payload is written unchanged. The carrier is encoded straight from
+the side data into the payload's one allocation, as the stock
+av_memdup() did; a blob that loses its maps is stripped in a per-encoder
+buffer reused across frames and freed at close. The first carrier is
+noted in the verbose log.
 
 For HEVC, budget 768 bytes per picture for the SEI passed in
 seiPayloadArray, less the A/53 and timecode SEI already queued, and keep

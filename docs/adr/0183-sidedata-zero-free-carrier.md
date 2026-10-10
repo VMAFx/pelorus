@@ -22,8 +22,9 @@ error (issue #284). The rule is pinned exactly on an RTX 4090, driver
 615.78.08, for both codecs and for IDR and P pictures: a payload of `P` bytes
 (UUID included) is truncated when its emulation prevention bytes exceed
 `ceil(P / 3) + 3`; with several entries in one picture the limit follows the
-largest one (`.workingdir/evidence/nvenc-sei-zero-run-rule/results.md`,
-0 mismatches over about 77 000 payloads). Emulation prevention comes from
+largest one (0 mismatches over about 77 000 payloads; local evidence
+`.workingdir/evidence/nvenc-sei-zero-run-rule/results.md`, key numbers in
+[research 0183](../research/0183-sidedata-zero-free-carrier.md)). Emulation prevention comes from
 pairs of zero bytes, and the per-cell maps of `pelorus_analyze_vulkan` on flat
 content are mostly zeros: at 1920x1080 with 32-pixel cells the 12 424-byte blob
 holds a run of 9 968 zero bytes. Measured with the real blobs of 48 analyze
@@ -53,7 +54,8 @@ We add a second wire form of the blob, the zero-free carrier, in interop ABI
    non-zero bytes; every block except a full one (255) and the last stands
    for one zero byte; a full block that ends the image gets no empty block
    after it. The carrier holds no zero byte, so its NAL unit needs no emulation
-   prevention: it can never meet NVENC's rule, whatever the content. It costs
+   prevention: by construction it cannot meet NVENC's rule as pinned on that
+   driver, whatever the content. It costs
    one byte plus one per 254 bytes without a zero (`PEL_CARRIER_MAX_LEN`).
 2. **API.** `interop.c` gains `pel_blob_carrier_encode()` (blob to carrier,
    caller buffer, no allocation) and `pel_blob_unwrap()` (either form to the
@@ -61,7 +63,8 @@ We add a second wire form of the blob, the zero-free carrier, in interop ABI
    of at least the payload's length). The decoder is strict: a zero byte, a
    block past the end, an empty final block after a full one, or an image
    shorter than the header fail, so `encode(decode(x)) == x` for every
-   accepted payload. Readers then use `pel_blob_find_section()` and
+   accepted payload; a decoded image without the Pelorus magic and ABI
+   major is refused too. Readers then use `pel_blob_find_section()` and
    `pel_blob_map()` unchanged. No section, field or bit changes.
 3. **Writers.** Filters keep attaching the blob; in-graph consumers are
    unchanged. Patch 0022 converts every Pelorus blob (blob UUID, magic, major
@@ -100,15 +103,17 @@ frames whose decoded payload equals the one written.
 | (d) Split the blob into four SEI payloads | 227/384 / 152/168 | +48 bytes (UUIDs) | Smaller messages | Zero runs stay (up to 12 283 bytes in one piece); NVENC's limit follows the largest entry, so splitting cannot lower it | Rejected by measurement |
 | (e) Write the carrier from the filters | as (a) | as (a) | One form everywhere | Every in-graph consumer (denoise, scenecut, analyze, VMAFx in-graph) must decode a copy per frame, losing the in-place read (R5) and adding a per-frame buffer (HISS-03), to fix one encoder | Rejected: the defect is in the carrier, the fix stays there |
 | An encoder option to keep the blob form for ABI 1.4 readers | 296/384 / 160/168 (the blob form) | 0 | VMAFx before its re-pin keeps reading blobs that survive | Keeps a known-lossy path selectable; one VMAFx re-pin closes the gap | Rejected |
-| Write the carrier only when a blob is at risk | as (a) where used | as (a) | ABI 1.4 readers keep the blobs NVENC writes intact | The predicate is NVENC's buffer rule, measured on one driver; a carrier needs none | Rejected |
+| Write the carrier only when a blob is at risk | measured offline with the pinned predicate: 11 of 48 cases at risk, the other 37 would stay blobs | as (a) where used | ABI 1.4 readers keep reading those 37 cases | The predicate is NVENC's buffer rule, pinned on one driver; a driver that changes it reopens #284 for the blobs left unconverted; a carrier needs no predicate | Rejected |
 
 ## Consequences
 
 - **Positive**: Pelorus side data reaches the decoder intact through
-  `h264_nvenc` and `hevc_nvenc` for every measured case, maps included on
+  `h264_nvenc` and `hevc_nvenc` for every measured case (RTX 4090, driver
+  615.78.08), maps included on
   H.264 and on HEVC where the carrier fits the budget. The carrier needs no
-  knowledge of NVENC's rule, so a driver that changes it does not reopen
-  #284. Decode cost: at most 0.17 ms for a 49 KB blob on a debug build.
+  knowledge of NVENC's rule: a payload without zero bytes needs no emulation
+  prevention, so a driver that moves the threshold does not reopen #284
+  unless it starts to fail on payloads without emulation prevention. Decode cost: at most 0.17 ms for a 49 KB blob on a debug build.
 - **Negative**: VMAFx and any other reader must call `pel_blob_unwrap()`; a
   reader pinned at ABI 1.4 scores NVENC streams unweighted until it re-pins.
   The COBS encoder exists twice, in `interop.c` and in
@@ -118,12 +123,16 @@ frames whose decoded payload equals the one written.
 - **Neutral / follow-ups**: QSV fails on size, not on zero runs, and the
   carrier does not fix it: `hevc_qsv` (Arc A380, iHD 26.3.5, vpl-gpu-rt
   26.3.5) writes the tail of a payload over 4 089 bytes onto the start of the
-  access unit, so from 4 091 bytes no picture decodes and from about 11 000
-  bytes the encode fails; `h264_qsv` fails at 49 144 bytes. See the hevc_qsv
-  size issue and the QSV table of the research digest. AV1 is not a
+  access unit: at 4 090 bytes one byte is overwritten and the stream still
+  decodes, from 4 091 bytes the VPS start code is destroyed and no picture
+  decodes, and from about 11 000 bytes the encode fails; `h264_qsv` works at
+  12 424 bytes and fails at 49 144 bytes. A `hevc_qsv` budget of at most
+  4 089 bytes belongs in patch 0019 ([#286](https://github.com/VMAFx/pelorus/issues/286); QSV table of the research digest).
+  AV1 is not a
   carrier: metadata OBUs have no emulation prevention and no Pelorus AV1
   encoder writes `udu_sei`. The NVENC defect itself is reported upstream only
-  with the maintainer's go (issue #284).
+  with the maintainer's go (issue #284). Status stays Proposed until the
+  implementing pull request merges, as for ADR-0180 to ADR-0182.
 
 ## References
 

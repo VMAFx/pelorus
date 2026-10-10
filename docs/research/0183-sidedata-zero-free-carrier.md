@@ -28,6 +28,21 @@ brings every one of the 48 cases through intact: 384 of 384 pictures on
 0022's maps stripped, with no picture lost. The carrier costs 1 to 70 bytes
 per blob.
 
+## The NVENC rule (pinned separately)
+
+A separate investigation on the same RTX 4090 and driver (local evidence
+`.workingdir/evidence/nvenc-sei-zero-run-rule/`, not in the repository) pinned
+the trigger: for one user data unregistered entry of `P` bytes (UUID
+included) and `epb` emulation prevention bytes the spec requires for its RBSP,
+the SEI is truncated if and only if `epb > ceil(P / 3) + 3`. With several entries
+in one picture the limit follows the largest. It holds for `h264_nvenc` and
+`hevc_nvenc`, IDR and P pictures, 320x180 and 1920x1080, with 0 mismatches over
+about 77 000 payloads, a separator grid of 17 836 cases included. The simpler
+candidates fail against the same data: "a zero run of 63 or more bytes" misses
+7 314 and falsely flags 19 874 of 76 870 cases, "more than 30 emulation
+prevention bytes" misses 67 and falsely flags 26 651. A payload without a zero
+byte has `epb = 0`, so the rule cannot apply to it.
+
 ## Method
 
 1. **Blobs.** `pelorus_analyze_vulkan` on the RTX 4090 for 4 sizes (320x180,
@@ -124,8 +139,8 @@ QSV fails on size, not on zero runs, and the carrier does not change that:
 | `h264_qsv` | 12 424 bytes, zero-heavy | written, decodes byte-exact |
 | `h264_qsv` | 49 144 bytes | encode fails, "Invalid FrameType:0" |
 
-That is a separate defect (see the hevc_qsv size issue); patch 0019 needs its
-own budget, as patch 0022 has for `hevc_nvenc`.
+That is a separate defect ([#286](https://github.com/VMAFx/pelorus/issues/286)); patch 0019 needs its own budget of at most
+4 089 bytes for `hevc_qsv`, as patch 0022 has for `hevc_nvenc`.
 
 ## Per-case tables
 
@@ -253,7 +268,7 @@ carrier form".
 
 ## References
 
-- Issue [#284](https://github.com/VMAFx/pelorus/issues/284); NVENC rule: `.workingdir/evidence/nvenc-sei-zero-run-rule/results.md` (local).
+- Issue [#284](https://github.com/VMAFx/pelorus/issues/284); NVENC rule: `.workingdir/evidence/nvenc-sei-zero-run-rule/results.md` (local evidence, not in the repository; key numbers above); QSV size defect: [#286](https://github.com/VMAFx/pelorus/issues/286).
 - [ADR-0181](../adr/0181-hevc-nvenc-sei-header-budget.md), [research 0181](0181-hevc-nvenc-sei-header-budget.md).
 - S. Cheshire and M. Baker, "Consistent Overhead Byte Stuffing", IEEE/ACM Transactions on Networking 7(2), 1999.
 - FFmpeg `n9.0.2`: `libavcodec/hevc/ps.c:1255` ("VPS %d does not exist"), `libavcodec/hevc/hevcdec.c:3678` ("Skipping invalid undecodable NALU").
