@@ -25,8 +25,8 @@ say which vmafx phase they serve.
 
 ## Where to start
 
-- **Using Pelorus now**: the current release candidate is v0.4.0-rc.1 with
-  interop ABI 1.4, and the latest final release is v0.3.0; see the
+- **Using Pelorus now**: the current release candidate is v0.4.0-rc.2 with
+  interop ABI 1.5, and the latest final release is v0.3.0; see the
   [README](../README.md).
 - **Checking what ships next**: [0.4](#04-telemetry-schemas-and-tester-kit)
   becomes final as v0.4.0 after its candidates.
