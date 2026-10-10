@@ -361,7 +361,7 @@ an executable named `praetorctl` on `PATH`. The pinned `go install` builds
 sample payload from the repository root:
 
 ```bash
-go install github.com/cordanaLLM/praetor/cmd/standardsctl@492a00f930e1a2df557ffebb76564cfa65637b77
+go install github.com/cordanaLLM/praetor/cmd/standardsctl@9615f1b907cc7e677a3ae71f6e864deb4450b9de
 cp "$(go env GOPATH)/bin/standardsctl" "$(go env GOPATH)/bin/praetorctl"   # Windows: standardsctl.exe to praetorctl.exe
 printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"hook_event_name":"PreToolUse"}' \
   | praetorctl hook claude pre-tool; echo "exit=$?"                          # expect exit=0, no output

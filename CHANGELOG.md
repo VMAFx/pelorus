@@ -17,6 +17,7 @@ All notable changes to Pelorus are documented here. The format is
 ### Changed
 
 - `ffmpeg-patches/test/build-and-run.sh` configures FFmpeg with `--enable-libdrm` when libdrm is installed, so the replayed build compiles the Vulkan to DRM PRIME and VAAPI map that `tiling=drm` pools are for; the new `vulkan-drm-map` fast-suite test runs that map on a GPU when `FFMPEG_BIN` and `RENDER_NODE` are set ([#103](https://github.com/VMAFx/pelorus/issues/103), ADR-0184).
+- Re-pinned the Praetor governance engine from `492a00f9` to `9615f1b9` (ADR-0168 keeps the pin rule). The engine now also renders `AGENTS.readonly.md`, the agent context for read-only agents; the documentation workflow gains a `merge_group` trigger, and `.gitignore` excludes the engine cache `/.standards/cache/`.
 
 <!-- END UNRELEASED -->
 
