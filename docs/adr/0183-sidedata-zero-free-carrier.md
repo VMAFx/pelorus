@@ -121,12 +121,10 @@ frames whose decoded payload equals the one written.
   libpelorus); `sei_fit_test.c` compares their output byte for byte. The
   tester's `sidedata_roundtrip` stage must learn the carrier UUID.
 - **Neutral / follow-ups**: QSV fails on size, not on zero runs, and the
-  carrier does not fix it: `hevc_qsv` (Arc A380, iHD 26.3.5, vpl-gpu-rt
-  26.3.5) writes the tail of a payload over 4 089 bytes onto the start of the
-  access unit: at 4 090 bytes one byte is overwritten and the stream still
-  decodes, from 4 091 bytes the VPS start code is destroyed and no picture
-  decodes, and from about 11 000 bytes the encode fails; `h264_qsv` works at
-  12 424 bytes and fails at 49 144 bytes. A `hevc_qsv` budget of at most
+  carrier does not fix it: on `hevc_qsv` (Arc A380, iHD 26.3.5, vpl-gpu-rt
+  26.3.5) a payload over 4 089 bytes damages the encoded access unit, from
+  4 091 bytes no picture decodes, and from about 11 000 bytes the encode
+  fails; `h264_qsv` works at 12 424 bytes and fails at 49 144 bytes. A `hevc_qsv` budget of at most
   4 089 bytes belongs in patch 0019 ([#286](https://github.com/VMAFx/pelorus/issues/286); QSV table of the research digest).
   AV1 is not a
   carrier: metadata OBUs have no emulation prevention and no Pelorus AV1

@@ -481,7 +481,7 @@ message when `-udu_sei 1` is set (default off):
 | `h264_nvenc` | stock FFmpeg, carrier in patch 0022 | zero-free carrier | none found; carriers tested to 60 017 bytes (RTX 4090) |
 | `hevc_nvenc` | stock FFmpeg, carrier and limit handling in patch 0022 | zero-free carrier | 768 bytes of SEI (see below) |
 | `h264_qsv` | patch 0019 | blob | fails between 12 424 and 49 144 bytes on Arc A380 |
-| `hevc_qsv` | patch 0019 | blob | 4 089 bytes on Arc A380: at 4 090 one byte of the access unit is overwritten but it decodes, from 4 091 the VPS is destroyed and no picture decodes, from about 11 000 the encode fails ([#286](https://github.com/VMAFx/pelorus/issues/286)) |
+| `hevc_qsv` | patch 0019 | blob | 4 089 bytes on Arc A380: larger payloads damage the encoded access unit (from 4 091 no picture decodes), and from about 11 000 the encode fails ([#286](https://github.com/VMAFx/pelorus/issues/286)) |
 | `h264_vulkan`, `hevc_vulkan` | patch 0020 | blob | none measured |
 
 On an RTX 4090 with driver 615.78.08, NVENC writes a SEI truncated when the payload needs more
