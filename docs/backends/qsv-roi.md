@@ -63,11 +63,17 @@ Use runtime API 1.28 or newer with progressive HEVC+CQP when dense steering is
 wanted:
 
 ```bash
-ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
-  -i input.mkv \
-  -vf "format=p010le,hwupload,pelorus_analyze_vulkan=roi=1,hwdownload,format=p010le" \
+LIBVA_DRIVER_NAME=iHD ffmpeg -init_hw_device vaapi=va:/dev/dri/renderD130 -init_hw_device vulkan=vk@va \
+  -hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi -i input.mkv \
+  -vf "hwmap=derive_device=vulkan,pelorus_analyze_vulkan=roi=1,pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi,format=vaapi,hwmap=derive_device=qsv,format=qsv" \
   -c:v hevc_qsv -q:v 30 -pelorus_roi 1 output.mkv
 ```
+
+Verified on an Arc A380 (exit code 0, 120 frames, no `hwdownload`; the encoder
+log says `Pelorus ROI: requesting per-frame HEVC delta-QP maps (mfxExtMBQP)`).
+`analyze` passes its input through, so a writing filter with `tiling=drm` comes
+last. This path is 8-bit NV12: P010 into VAAPI and QSV is not working
+([Vulkan output pools](vulkan-drm-modifiers.md)).
 
 `-q:v 30` sets FFmpeg's QScale flag as well as the quality value, so
 `select_rc_mode()` actually selects QSV CQP. `-global_quality 30` by itself

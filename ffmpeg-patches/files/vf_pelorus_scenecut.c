@@ -26,10 +26,13 @@
  * frame->pict_type = AV_PICTURE_TYPE_I (+ the key flag) so the downstream
  * encoder opens a fresh GOP exactly at the cut. No GPU work, no pixels touched,
  * codec-agnostic (x264/x265/NVENC/QSV/SVT all honour pict_type==I for a forced
- * keyframe). Run it after hwdownload, just before the encoder; the motion side
+ * keyframe). Run it on the frames as they are, after the last Pelorus stage: it
+ * reads side data only, so a hardware encoder needs no hwdownload, and with a
+ * software encoder it may sit on either side of hwdownload. The motion side
  * data rides the frame through av_frame_copy_props.
  *
- * Consumes the standard interop ABI (<pelorus/interop.h>); ADR-0126.
+ * Consumes the standard interop ABI (<pelorus/interop.h>); ADR-0126, placement
+ * ADR-0186.
  */
 
 #include "libavutil/frame.h"

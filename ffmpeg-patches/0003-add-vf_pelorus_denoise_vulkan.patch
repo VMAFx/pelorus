@@ -40,10 +40,10 @@ ADR: docs/adr/0112-temporal-denoise.md
  configure                                    |    3 +
  libavfilter/Makefile                         |    1 +
  libavfilter/allfilters.c                     |    1 +
- libavfilter/vf_pelorus_denoise_vulkan.c      | 1144 ++++++++++++++++++++
+ libavfilter/vf_pelorus_denoise_vulkan.c      | 1145 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |    1 +
  libavfilter/vulkan/pelorus_denoise.comp.glsl |  499 +++++++++
- 6 files changed, 1649 insertions(+)
+ 6 files changed, 1650 insertions(+)
 
 diff --git a/configure b/configure
 index aec9b3ae17deb53929fc15870fdaeb58db717c8f..c18161349c774eea0347f47effa8aa611e6b8771 100755
@@ -92,10 +92,10 @@ index c781df8365397465a0f8cb2c25ac450585938b01..a21da384818d0b64f4b5af635ae53e9a
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_denoise_vulkan.c b/libavfilter/vf_pelorus_denoise_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..67a259cb3d3ee6537dbbf77b0cc18fceb3886870
+index 0000000000000000000000000000000000000000..08a66b1ba1b5f830b154784cbfe83ca86e8f3b60
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_denoise_vulkan.c
-@@ -0,0 +1,1144 @@
+@@ -0,0 +1,1145 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -131,13 +131,14 @@ index 0000000000000000000000000000000000000000..67a259cb3d3ee6537dbbf77b0cc18fce
 + * keeps a ring of up to PEL_DENOISE_MAX_PREV previous frames as cheap
 + * av_frame_clone refcount bumps on the hwframe images (no pixel copy).
 + *
-+ * Forward-lookahead (ADR-0137): with lookahead=1 (default) the temporal walk is
-+ * bidirectional — output is delayed by one frame (buffered .activate lifecycle)
-+ * so the denoise can also sample the NEXT frame (same-coordinate, tcut-gated like
-+ * the prev taps), closing the leading-frame gap of a held animation drawing. This
-+ * adds a 1-frame latency + an EOF flush of the last held frame. lookahead=0 is
-+ * the original purely-causal behaviour: process each frame immediately, no
-+ * latency, no flush — bit-identical to pre-ADR-0137.
++ * Forward-lookahead (ADR-0137): with lookahead=1 (opt-in; the default is 0) the
++ * temporal walk is bidirectional — output is delayed by one frame (buffered
++ * .activate lifecycle) so the denoise can also sample the NEXT frame
++ * (same-coordinate, tcut-gated like the prev taps), closing the leading-frame
++ * gap of a held animation drawing. This adds a 1-frame latency + an EOF flush of
++ * the last held frame. lookahead=0 (the default) is the original purely-causal
++ * behaviour: process each frame immediately, no latency, no flush —
++ * bit-identical to pre-ADR-0137.
 + *
 + * Interop: when `meta=1` the filter free-rides a residual reduction in the same
 + * dispatch (per-workgroup sums of |in-out| and (in-out)^2, added atomically to

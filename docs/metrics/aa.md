@@ -63,11 +63,15 @@ smoother warp field). Enable line-darkening with `darkstr` and gate it with
 ## Example
 
 ```bash
-ffmpeg -init_hw_device vulkan -hwaccel vulkan -hwaccel_output_format vulkan \
-       -i input.mkv \
-       -vf "hwupload,pelorus_aa_vulkan=blur=2:depth=8:darkstr=0.3:edge=0.08,hwdownload,format=yuv420p" \
-       -c:v hevc_nvenc -cq 24 out.mkv      # codec-agnostic; or av1_nvenc / hevc_qsv
+ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
+       -hwaccel cuda -hwaccel_output_format cuda -i input.mkv \
+       -vf "hwupload,pelorus_aa_vulkan=blur=2:depth=8:darkstr=0.3:edge=0.08,hwupload=derive_device=cuda" \
+       -c:v hevc_nvenc -cq 24 out.mkv
 ```
+
+Verified on an RTX 4090 (exit code 0, 120 frames, no `hwdownload` in the graph).
+The NVENC hop needs `disable_multiplane=1` and copies within VRAM; see
+[the zero-copy pipeline](../usage/ffmpeg.md#nvenc-nvdec--vulkan-filters--nvenc).
 
 Output: a de-aliased (and optionally line-darkened) video stream. The filter
 adds **no side data** — it is a pure pixel transform, so it does not link

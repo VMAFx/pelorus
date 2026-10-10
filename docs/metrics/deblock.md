@@ -67,10 +67,15 @@ does not link libpelorus and emits no interop section.
 ## Usage
 
 ```bash
-ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
-  -vf "hwupload,pelorus_deblock_vulkan=bsize=8:thr=0.06:str=0.6,hwdownload,format=yuv420p" \
+ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
+  -hwaccel cuda -hwaccel_output_format cuda -i in.mkv \
+  -vf "hwupload,pelorus_deblock_vulkan=bsize=8:thr=0.06:str=0.6,hwupload=derive_device=cuda" \
   -c:v hevc_nvenc -preset p5 -cq 28 out.mkv
 ```
+
+Verified on an RTX 4090 (exit code 0, 120 frames, no `hwdownload` in the graph).
+The NVENC hop needs `disable_multiplane=1` and copies within VRAM; see
+[the zero-copy pipeline](../usage/ffmpeg.md#nvenc-nvdec--vulkan-filters--nvenc).
 
 ## Pipeline placement
 

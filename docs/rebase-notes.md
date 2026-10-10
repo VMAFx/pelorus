@@ -8,6 +8,21 @@ the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
 ranges in older entries predate the first entry below (22 patches on the
 shared FFmpeg fix series, number 0021 retired).
 
+## Unreleased — filter header comments corrected (#102, ADR-0186; regenerates 0003, 0016)
+
+- **Patches**: no new patch. Two header comments in `files/` change, so two
+  patches regenerate: 0003 (`vf_pelorus_denoise_vulkan.c`: `lookahead` default
+  is `0`, not `1`) and 0016 (`vf_pelorus_scenecut.c`: run the filter on the
+  frames as they are, no `hwdownload` for a hardware encoder). Every other
+  patch is byte-identical.
+- **Behaviour**: none. Comment-only; no code, option or default changes.
+- **Rebase-sensitive**: nothing new.
+- **Interop**: none.
+- **Checks**: `generate.sh` twice, byte-identical; `build-and-run.sh` over the
+  shared series and the 22 Pelorus patches: shared series 0001-0004 and the
+  22 Pelorus patches applied, ffmpeg linked, exit code 0, `hevc_nvenc`
+  `udu_sei` smoke 6 of 6 on an RTX 4090.
+
 ## Unreleased — shared FFmpeg fix series first (ADR-0185)
 
 - **Base**: the stack no longer applies to stock `n9.0.2`. It applies to
