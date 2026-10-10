@@ -135,7 +135,7 @@ published under version 1, so the version was bumped instead of keeping the
 fields optional with defaults. A later change that removes a field or changes
 its meaning bumps the version again; an added field stays in the same version
 only when it is optional with a default. Tool 0.4.5 adds the optional leg field
-`rate_control` (`cbr_extbrc`, `cbr_hw`) under that rule; tools 0.4.6 to 0.4.8
+`rate_control` (`cbr_extbrc`, `cbr_hw`) under that rule; tools 0.4.6 to 0.4.9
 change no field; a leg without it is
 the stage's own leg.
 
@@ -273,6 +273,17 @@ zero runs reach, so the decoder drops the blob
 ([issue #284](https://github.com/VMAFx/pelorus/issues/284)); a gradient never
 shows this. The `maps=0` cases are the small blob that always survives.
 
+The reference for each case comes from the same chain run without an encoder,
+with `showinfo` printing the blob as a hex dump into the log. The tester runs
+that graph with `-nostats`: the progress line is written by another thread and
+can land in the middle of a long hex dump, which cut a 12 408-byte reference
+down to a few kilobytes and failed a healthy carrier
+([issue #290](https://github.com/VMAFx/pelorus/issues/290)). Every reference
+blob is also checked against the `total_size` in its own header and against the
+picture count. A reference that fails the check is read once more; a second
+failure ends the stage as `incomplete` (exit code 2, a harness error) and never
+as a carrier `fail`. A real carrier `fail` on another leg still wins.
+
 Since interop ABI 1.5, `hevc_nvenc` and `h264_nvenc` (patch 0022) write every
 Pelorus blob in its zero-free carrier form: the UUID
 `3f9b37b8-fd9a-4621-920e-9b78b55cf9b5`, then the COBS-encoded blob, with no zero
@@ -395,6 +406,8 @@ bad case per rule below, and `--self-test --disable <rule>` must exit 1 for each
 | `sd_strip_carriers` | a maps-stripped blob accepted from any carrier but `hevc_nvenc`, `hevc_qsv` and `h264_qsv` (the carrier set that may strip) |
 | `sd_carrier_form` | a plain blob on an NVENC leg; a zero-free carrier on any other leg |
 | `sd_carrier_strict` | a carrier that ends with an empty block after a full one (non-canonical) |
+| `sd_reference_length` | a reference blob shorter than the `total_size` in its own header, a missing or doubled reference blob |
+| `sd_reference_not_carrier_fail` | a reference that stays unusable after the one retry, reported as a `fail` instead of an `incomplete` stage |
 | `bench_nongating` | a failing bench stage: verdict must stay `pass` |
 | `execution_class_derived` | a lavapipe device list with `execution_class: hardware`; a report with no device and `software_vulkan` |
 | `claim_gpu_needs_hardware` | a lavapipe device list with `evidence_claim: gpu` |
