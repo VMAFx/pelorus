@@ -5,6 +5,37 @@ Re-apply / re-test work created for the FFmpeg patch stack after an upstream
 FFmpeg bump or a `libpelorus` ABI change. One entry per change that affects the
 patches (ADR-0108 deliverable #6).
 
+## Unreleased — patch 0023 (QSV `udu_sei` SEI budget, #286; cumulative on 0001–0022)
+
+- **Patch**: `ffmpeg-patches/0023-qsv-pelorus-udu-sei-budget.patch` (canonical
+  diff `files/qsv-pelorus-udu-sei-budget.patch`, header `files/pelorus_sei_fit_qsv.h`
+  that `generate.sh` copies to `libavcodec/`, message
+  `.commit-msg-qsv-udu-sei-budget.txt`). Applied after 0022, so no shipped patch
+  is renumbered; 0001–0022 change only in their `[PATCH n/23]` subject line.
+  `generate.sh` applies 0023 last, after 0022. **Depends on 0019** (it rewrites that patch's `qsvenc_add_udu_payloads()`) **and on
+  0022** (`pelorus_sei_fit_qsv.h` includes `pelorus_sei_fit.h` for the blob stripper).
+- **What it fixes**: the QSV runtime reserves a fixed SEI space per picture; larger
+  payloads damage the encoded access unit (`hevc_qsv`) or fail the encode
+  (`h264_qsv`) ([research 0286](research/0286-qsv-udu-sei-budget.md)).
+  `qsvenc_add_udu_payloads()` charges each `SEI_UNREGISTERED` entry against 4 040
+  (HEVC) or 40 960 (H.264) bytes of `mfxPayload.BufSize` per picture, less the
+  payloads already queued: whole when it fits, a Pelorus blob without its maps when
+  that fits, else not written. `QSVEncContext` gains two counters;
+  `ff_qsv_enc_close()` logs them. `pel_sei_qsv_plan()` decides before the payload is
+  allocated, so a dropped payload costs no allocation; the payload is built in one
+  allocation as before, and a stripped payload's header is right-aligned in it.
+- **Rebase-sensitive**: `qsvenc_add_udu_payloads()` and the `QSVEncContext` fields
+  (patch 0019); `QSV_MAX_ENC_PAYLOAD`; the `mfxPayload` field names; the
+  `ff_qsv_enc_close()` prologue. Patch 0005 (QSV ROI) edits neighbouring regions
+  of `qsvenc.c` and `qsvenc.h`. The budgets are measured on one runtime build
+  (`iHD` 26.3.5, `vpl-gpu-rt` 26.3.5, `libvpl` 2.17.0) and need a new measurement
+  when the runtime changes; the fast test `sei-fit` checks the arithmetic only.
+- **Interop**: none; the plain blob form is unchanged, only its size on QSV.
+- **Checks**: `generate.sh` twice, byte-identical; `build-and-run.sh` (23
+  patches, link, static consumer); the tester's `sidedata_roundtrip` on `hevc_qsv`
+  and `h264_qsv` on an Arc A380 (tool 0.4.8); 48 analyze blobs through both
+  encoders (research 0286).
+
 ## Unreleased — zero-free carrier in patch 0022 (#284, ADR-0183; interop ABI 1.5; regenerates 0022)
 
 - **Patch**: 0022 only, still `0022-nvenc-pelorus-udu-sei.patch` (canonical

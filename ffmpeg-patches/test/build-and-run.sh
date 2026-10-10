@@ -200,8 +200,8 @@ while IFS= read -r patch || [[ -n "$patch" ]]; do
     fi
     PATCHES+=("$patch")
 done < "$PATCHDIR/series.txt"
-if (( ${#PATCHES[@]} != 22 )); then
-    echo "ERROR: expected 22 patches, found ${#PATCHES[@]}" >&2
+if (( ${#PATCHES[@]} != 23 )); then
+    echo "ERROR: expected 23 patches, found ${#PATCHES[@]}" >&2
     exit 1
 fi
 
@@ -279,7 +279,7 @@ verify_static_avfilter_consumer() {
     "$consumer"
 }
 
-run_logged "apply 22-patch FFmpeg stack" "$LOG_DIR/ffmpeg-apply.log" \
+run_logged "apply 23-patch FFmpeg stack" "$LOG_DIR/ffmpeg-apply.log" \
     apply_stack
 run_logged "configure FFmpeg" "$LOG_DIR/ffmpeg-configure.log" \
     configure_ffmpeg
@@ -418,4 +418,4 @@ if [[ -n "${KEEP_DIR:-}" ]]; then
     keep_binary
 fi
 
-echo "OK: 22 patches applied and ffmpeg linked against private libpelorus"
+echo "OK: 23 patches applied and ffmpeg linked against private libpelorus"

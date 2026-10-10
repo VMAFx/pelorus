@@ -129,7 +129,7 @@ jobs:
 
   lavapipe:
     # Mesa lavapipe is software Vulkan: this lane runs the real shaders of the
-    # 22-patch stack with the Khronos validation layer on, and its result is
+    # 23-patch stack with the Khronos validation layer on, and its result is
     # functional evidence only, never GPU evidence (#228, docs/research/0228).
     # It builds the stack once more (45 minute budget) because the stack job
     # discards its binary.

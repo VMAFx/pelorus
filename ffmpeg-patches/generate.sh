@@ -665,6 +665,19 @@ git -C "$WORKTREE" apply "$FILES_DIR/nvenc-pelorus-udu-sei.patch"
 git -C "$WORKTREE" add -A
 commit_patch "$HERE/.commit-msg-nvenc-udu-sei.txt"
 
+# Pelorus libavcodec fix (NOT a filter): the QSV runtime reserves a fixed SEI
+# space per picture and damages the access unit (HEVC) or fails the encode
+# (H.264) beyond it, which patch 0019's udu_sei did not guard against (issue
+# #286). The budget arithmetic is a private header built on 0022's stripper
+# (pelorus_sei_fit.h) that Pelorus's fast suite unit-tests directly
+# (ffmpeg-patches/test/sei_fit_test.c); the qsvenc.c/qsvenc.h edit is a
+# hand-maintained diff. Applied last (-> patch 0023) so no shipped patch is
+# renumbered; it needs 0019 (the function it changes) and 0022 (the header).
+cp "$FILES_DIR/pelorus_sei_fit_qsv.h" "$WORKTREE/libavcodec/"
+git -C "$WORKTREE" apply "$FILES_DIR/qsv-pelorus-udu-sei-budget.patch"
+git -C "$WORKTREE" add -A
+commit_patch "$HERE/.commit-msg-qsv-udu-sei-budget.txt"
+
 # Clean stale patches, regenerate the whole range.
 rm -f "$HERE"/0*.patch
 # Every byte-affecting format choice is explicit. Besides full blob hashes, this
@@ -710,6 +723,7 @@ pelorus_patch_names=(
     "0020-vulkan-pelorus-udu-sei.patch"
     "0021-vulkan-frame-barrier-queue-family.patch"
     "0022-nvenc-pelorus-udu-sei.patch"
+    "0023-qsv-pelorus-udu-sei-budget.patch"
 )
 for pelorus_patch_name in "${pelorus_patch_names[@]}"; do
     pelorus_patch_index="${pelorus_patch_name%%-*}"
