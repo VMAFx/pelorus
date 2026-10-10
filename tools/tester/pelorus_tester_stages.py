@@ -38,7 +38,7 @@ RULES = (
     "steering_effect", "steering_decode", "steering_control", "steering_selfreport",
     "steering_baseline_defect",
     "sd_present", "sd_structure", "sd_decode_tap", "sd_pts", "sd_carrier_masking",
-    "sd_integrity_count", "sd_integrity_bytes", "sd_integrity_stripped",
+    "sd_integrity_count", "sd_integrity_bytes", "sd_integrity_stripped", "sd_strip_carriers",
     "sd_carrier_form", "sd_carrier_strict",
     "brc_bitrate", "brc_decode", "brc_extbrc_engaged", "brc_no_huc", "brc_hw_refused",
 )
@@ -119,13 +119,16 @@ ENCODERS = (
 # Encoders that can write the Pelorus blob as user-data-unregistered SEI with
 # -udu_sei 1: NVENC (stock), QSV (patch 0019), Vulkan Video (patch 0020).
 # "zero_free" marks the encoders that must write the zero-free carrier form
-# (patch 0022, ADR-0183); every other one must write the plain blob.
+# (patch 0022, ADR-0183); every other one must write the plain blob. "strips" marks
+# the encoders that may write a blob that exceeds their per-picture SEI budget
+# without its per-cell maps: hevc_nvenc (patch 0022, ADR-0181) and the two QSV
+# encoders (patch 0023, #286); no other encoder has a budget.
 SEI_CARRIERS = (
     {"name": "hevc_nvenc", "codec": "hevc", "kind": "hw", "args": [], "strips": True,
      "zero_free": True},
     {"name": "h264_nvenc", "codec": "h264", "kind": "hw", "args": [], "zero_free": True},
-    {"name": "hevc_qsv", "codec": "hevc", "kind": "hw", "args": []},
-    {"name": "h264_qsv", "codec": "h264", "kind": "hw", "args": []},
+    {"name": "hevc_qsv", "codec": "hevc", "kind": "hw", "args": [], "strips": True},
+    {"name": "h264_qsv", "codec": "h264", "kind": "hw", "args": [], "strips": True},
     {"name": "hevc_vulkan", "codec": "hevc", "kind": "vulkan", "args": ["-qp", "30"]},
     {"name": "h264_vulkan", "codec": "h264", "kind": "vulkan", "args": ["-qp", "30"]},
 )
@@ -593,8 +596,9 @@ def decode_tap_problems(showinfo_text, n_expected, disabled=frozenset()):
 # Integrity of the blob through the encoder (#284). The analyze filter attaches a
 # blob to every frame; what the encoder writes and the decoder hands back must
 # equal it byte for byte. The one legitimate difference is the maps-stripped form
-# hevc_nvenc writes when the blob does not fit its header budget (patch 0022,
-# ADR-0181). The offsets below mirror ffmpeg-patches/files/pelorus_sei_fit.h.
+# hevc_nvenc (patch 0022, ADR-0181) and hevc_qsv and h264_qsv (patch 0023) write
+# when the blob does not fit their per-picture SEI budget. The offsets below mirror
+# ffmpeg-patches/files/pelorus_sei_fit.h.
 SEI_STRIPPABLE = 0xDF
 SEI_MAX_SECTIONS = 32
 SEI_DIR_ENTRY = 16
@@ -682,6 +686,13 @@ def pictures_by_pts(frames):
     pictures without a blob last (a stream lists pictures in decode order)."""
     return sorted(frames, key=lambda f: (not f or blob_pts(f[0]) is None,
                                          blob_pts(f[0]) or 0 if f else 0))
+
+
+def strips_allowed(car, disabled=frozenset()):
+    """True where the maps-stripped blob is an accepted form: the carriers marked "strips".
+
+    With sd_strip_carriers off, every carrier may strip."""
+    return bool(car.get("strips", False)) or "sd_strip_carriers" in disabled
 
 
 def blob_matches(want, got, strips, disabled):
@@ -1242,7 +1253,8 @@ def carrier_case(ctx, car, devs, case, entry, src, work, refs):
     want, why = written_blobs(ctx, refs, dev, case, entry, src)
     if want is None:
         return "fail", why
-    strips, zero_free, disabled = car.get("strips", False), car.get("zero_free", False), ctx["disabled"]
+    disabled = ctx["disabled"]
+    strips, zero_free = strips_allowed(car, disabled), car.get("zero_free", False)
     frames, errs = unwrap_payloads(pelorus_blobs_per_frame(out.read_bytes(), car["codec"]),
                                    zero_free, "stream", disabled)
     more, stripped = integrity_problems(want, pictures_by_pts(frames), "stream", strips, disabled)
@@ -1684,6 +1696,14 @@ def self_test_integrity(expect, disabled):
     struct.pack_into("<II", left, 88, 124, 16)   # map offset and size left in place
     expect("sd_int_rejects_stripped_with_map_fields_left", bool(integrity_problems(
         want, want[:3] + [[bytes(left)]], "t", True, disabled)[0]))
+    strippers = {c["name"] for c in SEI_CARRIERS if strips_allowed(c, disabled)}
+    expect("sd_strip_set_is_nvenc_hevc_and_qsv", strippers == {"hevc_nvenc", "hevc_qsv", "h264_qsv"})
+    vulkan = next(c for c in SEI_CARRIERS if c["name"] == "hevc_vulkan")
+    expect("sd_strip_rejects_stripped_blob_from_vulkan", bool(integrity_problems(
+        want, stripped, "t", strips_allowed(vulkan, disabled), disabled)[0]))
+    qsv = next(c for c in SEI_CARRIERS if c["name"] == "hevc_qsv")
+    got, n = integrity_problems(want, stripped, "t", strips_allowed(qsv, disabled), disabled)
+    expect("sd_strip_accepts_stripped_blob_from_qsv", not got and n == 4)
     msg = integrity_problems(want, want[:2] + [[bytes(flip)]] + want[3:], "stream")[0]
     expect("sd_int_names_picture_size_and_offset", msg == [
         "stream picture 2: blob 164 bytes, expected 164, first difference at offset 100"])

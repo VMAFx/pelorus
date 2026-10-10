@@ -480,8 +480,8 @@ message when `-udu_sei 1` is set (default off):
 | --- | --- | --- | --- |
 | `h264_nvenc` | stock FFmpeg, carrier in patch 0022 | zero-free carrier | none found; carriers tested to 60 017 bytes (RTX 4090) |
 | `hevc_nvenc` | stock FFmpeg, carrier and limit handling in patch 0022 | zero-free carrier | 768 bytes of SEI (see below) |
-| `h264_qsv` | patch 0019 | blob | limited per picture ([#286](https://github.com/VMAFx/pelorus/issues/286)) |
-| `hevc_qsv` | patch 0019 | blob | limited per picture ([#286](https://github.com/VMAFx/pelorus/issues/286)) |
+| `h264_qsv` | patch 0019, budget in patch 0023 | blob | 40 960 bytes of SEI per picture (see below) |
+| `hevc_qsv` | patch 0019, budget in patch 0023 | blob | 4 040 bytes of SEI per picture (see below) |
 | `h264_vulkan`, `hevc_vulkan` | patch 0020 | blob | none measured |
 
 On an RTX 4090 with driver 615.78.08, NVENC writes a SEI truncated when the payload needs more
@@ -534,6 +534,37 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
        -vf "format=nv12,hwupload,pelorus_analyze_vulkan,hwdownload,format=nv12" \
        -c:v hevc_qsv -udu_sei 1 out.mkv
 ```
+
+### QSV: the SEI space per picture
+
+The QSV runtime has a fixed amount of room for SEI in each picture
+([#286](https://github.com/VMAFx/pelorus/issues/286), [research 0286](../research/0286-qsv-udu-sei-budget.md)).
+The room is per picture, not per payload: it is the sum of the SEI messages as handed to the runtime
+(type byte, size bytes and payload), and on `h264_qsv` it also counts the emulation prevention bytes.
+Patch 0023 keeps 4 040 bytes on `hevc_qsv` and 40 960 bytes on `h264_qsv` (set on an Intel Arc A380,
+`iHD` 26.3.5, `vpl-gpu-rt` 26.3.5, `libvpl` 2.17.0), less what the A/53 caption payload already uses,
+and treats each `SEI_UNREGISTERED` entry in frame order like `hevc_nvenc` does
+([ADR-0181](../adr/0181-hevc-nvenc-sei-header-budget.md)):
+
+- an entry that fits is written whole;
+- a Pelorus blob that does not fit is written without its per-cell maps (every scalar section stays, the
+  maps are absent as the ABI defines), which is what `pelorus_analyze_vulkan=maps=0` writes;
+- any other entry that does not fit, and a blob whose scalars do not fit, is not written.
+
+QSV writes the plain blob; the zero-free carrier is for NVENC. At 1080p the `cell=32` blob (12 424
+bytes) therefore reaches an `hevc_qsv` stream as its 184 scalar bytes and an `h264_qsv` stream whole;
+the `cell=16` blob (49 144 bytes) loses its maps on both. Only two payloads per picture are queued
+(`QSV_MAX_ENC_PAYLOAD`); the warning of patch 0019 names a third. The encoder warns at the first
+stripped blob and the first dropped entry, logs later ones at `-loglevel verbose`, and prints both totals
+when it closes:
+
+```text
+[hevc_qsv] udu_sei: frame pts 0: the 12424-byte Pelorus side data is written without its per-cell maps (184 bytes): the QSV runtime reserves too little SEI space per picture for more.
+```
+
+On the A380, 48 analyze blobs (184 to 49 144 bytes) went through both encoders within the budgets.
+Another runtime or GPU needs a new measurement; the budgets are the constants of
+`pelorus_sei_fit_qsv.h`.
 
 AV1 encoders do not carry it. The tester stage `sidedata_roundtrip` reads the
 blob back from the stream and from a decode: [tester kit stages](tester.md).

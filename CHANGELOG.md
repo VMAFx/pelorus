@@ -23,6 +23,7 @@ All notable changes to Pelorus are documented here. The format is
 - The published Intel tester image installs Debian's `intel-media-va-driver-non-free`, so `hevc_qsv` steering and side-data legs run on the Arc A380 (measured on the `xe` kernel driver without HuC). The package is Expat-licensed; Debian ships it in `non-free` only because Intel's GPU kernels come without source. `tools/tester/licensing.json` records it with that reason, and the licence gate admits a package from outside Debian `main` only when a component records it with a redistributable licence: any other `non-free` or `contrib` package still fails the build, and so do FFmpeg `--enable-nonfree` and the other nonfree components. The `-source` image carries the driver's Debian source package. The local-only `INTEL_MEDIA_DRIVER=nonfree` build, the `intel-nonfree-local` kit and the NOT-FOR-REDISTRIBUTION marker are removed; tester tool 0.4.4 ([ADR-0180](docs/adr/0180-tester-vendor-images.md), [research 0229](docs/research/0229-tester-vendor-images.md)).
 - The dev container bundle builds on `ghcr.io/vmafx/pelorus-dev@sha256:92599aa4…`, the first image on the plain Ubuntu base with a licence record ([#256](https://github.com/VMAFx/pelorus/issues/256), ADR-0179); its provenance attestation verifies to `devcontainer-image.yml` on `master` at `8e6a41e`.
 - The tester's `sidedata_roundtrip` stage reads the zero-free carrier form of interop ABI 1.5 (#284, ADR-0183): it decodes a carrier in the stream and at the decode tap as strictly as `pel_blob_unwrap()` and compares the result like a plain blob, requires the carrier on `hevc_nvenc` and `h264_nvenc` legs and the plain blob on every other carrier, and names the wrong form or the malformed carrier in the failure. New self-test rules `sd_carrier_form` and `sd_carrier_strict` (tool 0.4.7). Measured on an RTX 4090 (driver 615.78.08) with patch 0022: every case of both NVENC legs passes; the rc.2 build fails them.
+- The tester's `sidedata_roundtrip` stage accepts the maps-stripped blob from `hevc_qsv` and `h264_qsv` as well as `hevc_nvenc` (#286, patch 0023) and from no other carrier; new self-test rule `sd_strip_carriers` (tool 0.4.8). Measured on an Arc A380: all five cases of both QSV legs pass with patch 0023, and `hevc_qsv` `flat-1080p-maps1-cell32` fails on the 22-patch stack.
 
 ### Fixed
 
@@ -35,6 +36,7 @@ All notable changes to Pelorus are documented here. The format is
 - The pinned bench compares the same `synth-banding` clip on every run: `fetch-corpus.sh` generates it from lavfi `gradients` with `seed=1` and refuses bytes that differ from the sha256 now pinned in `corpus.lock`. Before, `gradients` drew a new random pattern each run, so two candidates were benched on different input. `bench.sh` also passes `--cambi`, so its report shows CAMBI instead of nan.
 - Pelorus side data reaches the decoder intact through `h264_nvenc` and `hevc_nvenc` on flat content (#284). On an RTX 4090 with driver 615.78.08, NVENC writes a SEI payload truncated when it needs more emulation prevention bytes than about a third of its length, which the zero maps of `pelorus_analyze_vulkan` reach, and the decoder drops it without an error. Patch 0022 now writes every Pelorus blob in a zero-free carrier form (interop ABI 1.5), and `hevc_nvenc` charges its budget for the carrier, so small flat grids keep their maps. ([ADR-0183](docs/adr/0183-sidedata-zero-free-carrier.md), [research 0183](docs/research/0183-sidedata-zero-free-carrier.md))
 - The tester's `sidedata_roundtrip` stage now fails when Pelorus side data is lost or changed on its way through an encoder (#284). Each carrier runs five cases, including flat 320x180 and 1080p clips with `maps=1:cell=32` that NVENC truncates, and every blob in the stream and at the decode tap must equal the blob the analyze filter attached, byte for byte, or be the exact maps-stripped form `hevc_nvenc` writes by design ([ADR-0181](docs/adr/0181-hevc-nvenc-sei-header-budget.md)). A failure names the carrier, case, picture, both lengths and the first differing offset. Tool 0.4.6, schema 2 unchanged; three new self-test rules each go red when disabled.
+- `hevc_qsv` and `h264_qsv` with `-udu_sei 1` now keep large Pelorus side data within a per-picture SEI budget (#286, patch 0023). The QSV runtime accepts a limited amount of user data SEI per picture; the encoders now keep 4 040 and 40 960 bytes per picture, write a Pelorus blob that does not fit without its per-cell maps, and skip any other payload that does not fit, with a warning naming the frame and sizes. At 1080p the `cell=32` analyze blob reaches an `hevc_qsv` stream as its scalar sections ([research 0286](docs/research/0286-qsv-udu-sei-budget.md)).
 - `scripts/praetor-engine.sh` installs the pinned engine with an atomic rename: it stages the verified binary next to its target before `mv`. When `TMPDIR` is another filesystem (tmpfs), the old `mv` copied in place, and a parallel Lefthook job on a fresh worktree could run a half-written engine and fail with "no version output" (reproduced: 11 of 24 parallel first runs; after the fix 0 of 36).
 
 <!-- END UNRELEASED -->
@@ -93,7 +95,6 @@ All notable changes to Pelorus are documented here. The format is
 
 - `scripts/bench/bd_rate.py` no longer crashes on NumPy 2 (`np.trapz` was removed); it uses `np.trapezoid` when present.
 - FFmpeg patch 0021 stops `ff_vk_frame_barrier()` from turning the first barrier on a frame into a queue family ownership transfer to `VK_QUEUE_FAMILY_IGNORED` on devices with one queue family (Mesa lavapipe), which the Vulkan spec forbids (`VUID-VkImageMemoryBarrier2-image-09118`). The validation layer no longer loses the image layout there and stops reporting `00344`, `09600`, `09059` and `09064`; devices with several queue families are unaffected (`docs/rebase-notes.md`, patch 0021). `09059` and `09064` leave the VUID allow-list, since no tested device (lavapipe, ANV, RADV, RTX 4090) reports them with the patch.
-
 
 ## [0.3.0] - 2026-10-09
 
@@ -470,7 +471,6 @@ nine times the sample and records what changed.
   crops) — 4K masters are denoised hard enough to compress, so 1080p is where the removable
   impairment actually lives. See [docs/development/grain-ladder.md](docs/development/grain-ladder.md).
 
-
 ## [0.2.1] - 2026-08-30
 
 Closes the two verification gaps v0.2.0 shipped as *documented* rather than fixed, and
@@ -614,8 +614,6 @@ throughout.
 - **`vf_pelorus_mc_vulkan` out-of-bounds descriptor write**: the `cur_image` and `ref_image` bindings were declared `.elems = 1` (the shader reads only plane 0), but the host fill `ff_vk_shader_update_img_array()` writes one descriptor per frame plane (`dstArrayElement` 0..nb_planes−1). On any multi-plane input (yuv420p = 3 planes) the plane-1/2 writes landed past the one-element array — an out-of-bounds `VkWriteDescriptorSet` (VUID-…-dstArrayElement-00321) that a strict driver or the validation layers reject, and that only "worked" on the dev box's NVIDIA driver with validation absent. The per-plane image views already exist, so the binding size was the only defect. Fixed by sizing both bindings to `.elems = av_pix_fmt_count_planes(vkctx->input_format)`, matching the `deband`/`denoise` precedent. ADR-0129.
 - **Bug-hunt remediation** ([ADR-0138](docs/adr/0138-bug-hunt-remediation.md)) — a verified sweep fixed 9 defects: **(must-fix)** `vf_pelorus_denoise_vulkan` left descriptor binding 5 (`stat_buffer`, statically used by the shader) **unbound on the default `meta=0` path** (invalid Vulkan / device-lost on strict drivers) — now always bound; and an uninitialized `exec` read on an error path. **(should-fix)** `vf_pelorus_mc_vulkan` `s_part[]` OOB on GPUs with `subgroupSize < 8`; `libpelorus` `pel_blob_pack` `uint32` size overflow → heap overflow (now rejected with `PEL_ERR_RANGE`) and `pel_blob_find_section` missing the R5 8-byte-alignment check (now `PEL_ERR_ABI`); `denoise` MC-consumer `grid_cols*grid_rows` signed-int overflow from untrusted side-data; `mc` growing a libc-allocated blob with `av_realloc` (cross-allocator UB); and `analyze` `coalesce_roi` truncating the ROI by raster position instead of by banding strength. Interop conformance fixture extended with malformed-blob rejection tests. No wire-ABI change.
 
-
-
 ## [0.1.0] - 2026-06-14
 
 Initial tagged release: the `libpelorus` interop ABI plus the smart-deband
@@ -631,7 +629,6 @@ flagship and the measured `analyze` pass, CI-verified end to end.
 - **`vf_pelorus_analyze_vulkan`** (`ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c`): a pass-through Vulkan compute analyzer that reduces each frame's luma to per-frame banding / variance / edge statistics on the GPU (per-tile shared-memory reduction → sliced SSBO), reads them back (vf_scdet_vulkan pattern), and attaches the *measured* `PEL_SEC_VARIANCE` + `PEL_SEC_BANDING` interop sections — the data the deband filter only approximates. Codec-agnostic. AVOption: `flat`. Shipped as `ffmpeg-patches/0002-add-vf_pelorus_analyze_vulkan.patch` (cumulative on 0001, applies via `git am --3way`). ADR-0109.
 - **Reference shader** (`libpelorus/shaders/pelorus_analyze.comp`): standalone reduction, CI-compiled to SPIR-V.
 - **Docs**: `docs/metrics/analyze.md`.
-
 
 [Unreleased]: https://github.com/VMAFx/pelorus/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/VMAFx/pelorus/compare/v0.2.2...v0.3.0

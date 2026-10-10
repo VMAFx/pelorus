@@ -323,7 +323,8 @@ endif
 
 # Issue #267 / ADR-0181: hevc_nvenc's udu_sei path keeps each picture's
 # parameter sets and SEI within NVENC's 1024-byte limit
-# (ffmpeg-patches/files/pelorus_sei_fit.h): a Pelorus blob that does not fit
+# (ffmpeg-patches/files/pelorus_sei_fit.h; the QSV budget of issue #286 is
+# pelorus_sei_fit_qsv.h): a Pelorus blob that does not fit
 # is carried as its scalar sections, byte-identical to the maps=0 blob, and
 # anything else that does not fit is dropped, never cut short.
 if get_option('tests')

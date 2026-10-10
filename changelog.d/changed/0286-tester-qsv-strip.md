@@ -1,0 +1,1 @@
+- The tester's `sidedata_roundtrip` stage accepts the maps-stripped blob from `hevc_qsv` and `h264_qsv` as well as `hevc_nvenc` (#286, patch 0023) and from no other carrier; new self-test rule `sd_strip_carriers` (tool 0.4.8). Measured on an Arc A380: all five cases of both QSV legs pass with patch 0023, and `hevc_qsv` `flat-1080p-maps1-cell32` fails on the 22-patch stack.
