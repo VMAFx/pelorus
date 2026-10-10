@@ -133,9 +133,9 @@ QSV fails on size, not on zero runs, and the carrier does not change that:
 | Encoder (A380) | Payload | Result |
 | --- | --- | --- |
 | `hevc_qsv` | up to 4 089 bytes, zero-heavy or not | written, decodes byte-exact |
-| `hevc_qsv` | 4 090 bytes | the last byte of the SEI overwrites the first byte of the access unit; still decodes |
-| `hevc_qsv` | 4 091 to about 10 000 bytes | the SEI tail overwrites the VPS start code; "VPS 0 does not exist", no picture decodes |
-| `hevc_qsv` | about 11 000 bytes and more | encode fails, "Invalid FrameType:0"; crashes in `libmfx-gen.so.1.2.17` at close |
+| `hevc_qsv` | 4 090 bytes | access unit damaged; still decodes |
+| `hevc_qsv` | 4 091 to about 10 000 bytes | access unit damaged; no picture decodes |
+| `hevc_qsv` | about 11 000 bytes and more | encode fails, "Invalid FrameType:0" |
 | `h264_qsv` | 12 424 bytes, zero-heavy | written, decodes byte-exact |
 | `h264_qsv` | 49 144 bytes | encode fails, "Invalid FrameType:0" |
 
