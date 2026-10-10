@@ -2,7 +2,9 @@
 # Agent guide — ffmpeg-patches/
 
 Pelorus ships ordered patch stack against exact FFmpeg tag and peeled commit
-in root `build-config.env`. Current baseline: FFmpeg n9.0.2. Parent rules in
+in root `build-config.env`, applied on top of shared FFmpeg fix series pinned
+there (`FFMPEG_SERIES_*`, ADR-0185). Current baseline: FFmpeg n9.0.2, series
+`v0.1.0-rc.1`. Parent rules in
 [`../AGENTS.md`](../AGENTS.md) also apply;
 [ADR-0104](../docs/adr/0104-ffmpeg-patch-stack.md) governs delivery model.
 
@@ -14,8 +16,8 @@ ffmpeg-patches/
 │   ├── pelorus_vulkan_sample.h
 │   └── vulkan/*.comp.glsl   canonical shipped shader sources
 ├── .commit-msg-*.txt        synthetic commit messages
-├── 0001-*.patch … 0023-*    generated cumulative patch series
-├── series.txt               apply order
+├── 0001-*.patch … 0023-*    generated cumulative patch series (22; 0021 retired)
+├── series.txt               apply order, after shared series
 ├── generate.sh              deterministic isolated regeneration
 └── test/build-and-run.sh    pinned replay, build, link, and smoke gate
 ```
@@ -25,6 +27,14 @@ ffmpeg-patches/
 - Regenerate with `FFMPEG_REPO=/absolute/path ./generate.sh`. Script reads
   tag and commit from `build-config.env`, verifies tag peels to pinned
   commit, uses isolated worktree, must be byte-stable on second run.
+- Shared series first, everywhere: `generate.sh`, both replay scripts, tester
+  Containerfile call `scripts/fetch-ffmpeg-series.sh` (sha256 pin, `cosign`,
+  `gh attestation verify`, base check; fail closed; needs network, cosign,
+  authenticated `gh`), `git am` its `series.txt`, then Pelorus patches.
+  `generate.sh` formats range above `SERIES_TIP`; names map by position.
+- Generic FFmpeg fix (stock file, no Pelorus name) -> VMAFx/ffmpeg-patches,
+  never this stack. Series bump = `FFMPEG_SERIES_TAG`, `_COMMIT`, `_SHA256`
+  together, `--self-test`, regenerate twice, replay.
 - Replay entire cumulative series with `test/build-and-run.sh`. Per-patch
   `git apply --check` = no substitute.
 - New `libavfilter/*.c` files: FFmpeg LGPL-2.1 header naming Lusoris; LGPL-2.1-or-later per `REUSE.toml`. Scripts, tests outside FFmpeg tree: EUPL-1.2 SPDX header (ADR-0171).
@@ -112,22 +122,27 @@ ffmpeg-patches/
    links libpelorus. `dehalo`, `aa`, `deblock`, `borderfix` = pure
    transforms: Vulkan/SPIR-V dependencies, no libpelorus link, no interop side
    data.
-9. Patch 0021 = upstream-bound `libavutil/vulkan.c` fix, no Pelorus names:
-   `ff_vk_frame_barrier()` keeps frame's concrete owning queue family when
-   caller passes `VK_QUEUE_FAMILY_IGNORED` (single-family `EXCLUSIVE` frames;
-   `VUID-VkImageMemoryBarrier2-image-09118`). Never insert patch before it;
-   new patches append after it. Drop on first FFmpeg bump with equivalent
-   fix; later patches move up one number. Proof = lavapipe validation run.
-10. Patch 0022 = NVENC `udu_sei`: `hevc_nvenc` header limit (ADR-0181) plus
-   zero-free carrier on both NVENC codecs (ADR-0183). NVENC HEVC refuses
-   more than 1024 non-VCL bytes per picture; NVENC truncates SEI when
-   `epb > ceil(P/3)+3`. `files/pelorus_sei_fit.h` = size arithmetic, map
-   stripping, COBS carrier encoder; mirrors interop offsets and `interop.c`
-   encoder; fast test `sei-fit` checks offsets with `offsetof()` and carrier
-   bytes against `pel_blob_carrier_encode()`. Budget charges carrier, never
-   blob. New section with maps -> add its fields to `pel_sei_map_fields`, its
-   bit to `PEL_SEI_STRIPPABLE`. GPU proof = `test/nvenc-udu-sei-smoke.sh`
-   (exit 77 = no NVENC/Vulkan).
+9. Number 0021 = retired (ADR-0185). Its `ff_vk_frame_barrier()` queue
+   family fix (`VUID-VkImageMemoryBarrier2-image-09118`) = shared series
+   patch 0001. Never reuse number; never renumber 0022/0023 (docs, ADRs,
+   tester, `v0.4.0-rc.2` cite them). New patches append after 0023. Proof of
+   fix = lavapipe validation run, unchanged.
+10. Patch 0022 = Pelorus half of NVENC `udu_sei`, one call
+   (`pelorus_udu_carrier()`) between series 0003's `av_memdup()` and
+   `nvenc_hevc_sei_fits()` in `prepare_sei_data_array()`: blob -> zero-free
+   carrier on `h264_nvenc` and `hevc_nvenc` (ADR-0183); on `hevc_nvenc` blob
+   whose carrier misses series' `sei_budget` loses maps first (ADR-0181).
+   Series owns budget (0003: 1024 non-VCL bytes, 768 for SEI), drop of
+   truncated SEI (0004: `epb > ceil(P/3)+3`), their log lines. Never
+   re-add budget or drop code here; never edit series lines. Rebase-sensitive:
+   hook position, `sei_budget` name, `NV_ENC_SEI_PAYLOAD` copy owned by loop.
+   `files/pelorus_sei_fit.h` = size arithmetic (mirror of series
+   `nvenc_sei_nal_size()`), map stripping, COBS carrier encoder; mirrors
+   interop offsets and `interop.c` encoder; fast test `sei-fit` checks offsets
+   with `offsetof()` and carrier bytes against `pel_blob_carrier_encode()`.
+   Budget charges carrier, never blob. New section with maps -> add its fields
+   to `pel_sei_map_fields`, its bit to `PEL_SEI_STRIPPABLE`. GPU proof =
+   `test/nvenc-udu-sei-smoke.sh` (exit 77 = no NVENC/Vulkan).
 11. Every ephemeral `git am` replay supplies `Pelorus-Replay` committer
    identity, neutralizes signing, hooks, and diff ordering, and passes
    `--no-gpg-sign --no-verify`. Do not rely on workstation's global Git
@@ -158,7 +173,7 @@ Before calling patch-stack change complete:
 1. format touched C and shell-check touched shell;
 2. compile all canonical GLSL and run Pelorus fast suite;
 3. regenerate twice and compare bytes;
-4. replay all 23 patches at pinned FFmpeg commit;
+4. replay shared series plus all 22 patches at pinned FFmpeg commit;
 5. build/link/smoke relevant feature-enabled FFmpeg configuration;
 6. install static FFmpeg libraries and compile/run external
    `pkg-config --static libavfilter` consumer, asserting its link flags include

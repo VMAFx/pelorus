@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Compile and run the QSV ROI lifetime/layout regression without QSV hardware.
 #
+# The tree is the pinned FFmpeg commit with the shared FFmpeg fix series
+# (fetched and verified by scripts/fetch-ffmpeg-series.sh, ADR-0185) and the
+# Pelorus patches before 0005 applied, then the 0005 source diff.
+#
 # Env:
 #   FFMPEG_REPO  path to a local FFmpeg checkout (required)
 #   JOBS         make -j value                    (default nproc)
@@ -21,6 +25,7 @@ source "$ROOT/build-config.env"
 : "${FFMPEG_REPO:?FFMPEG_REPO must name a local FFmpeg checkout}"
 JOBS="${JOBS:-$(nproc)}"
 RUN_ROOT=""
+SERIES_ROOT=""
 OWNED_WORKTREE=""
 
 canonicalize_existing_dir() {
@@ -48,6 +53,10 @@ cleanup() {
             echo "WARNING: could not remove owned worktree: $OWNED_WORKTREE" >&2
             cleanup_failed=1
         fi
+    fi
+    if [[ -n "$SERIES_ROOT" ]] && ! rm -rf -- "$SERIES_ROOT"; then
+        echo "WARNING: could not remove series scratch directory: $SERIES_ROOT" >&2
+        cleanup_failed=1
     fi
     if [[ -n "$RUN_ROOT" ]] && ! rmdir "$RUN_ROOT" 2>/dev/null; then
         echo "WARNING: owned scratch directory is not empty: $RUN_ROOT" >&2
@@ -95,19 +104,31 @@ OWNED_WORKTREE="$WORKTREE"
 git -C "$WORKTREE" -c core.hooksPath=/dev/null \
     checkout --force --detach "$FFMPEG_COMMIT"
 
+SERIES_ROOT="$RUN_ROOT/ffmpeg-series"
+SERIES_DIR="$("$ROOT/scripts/fetch-ffmpeg-series.sh" "$SERIES_ROOT")"
+PATCHES=()
+while IFS= read -r patch || [[ -n "$patch" ]]; do
+    case "$patch" in
+        ""|\#*) continue ;;
+    esac
+    PATCHES+=("$SERIES_DIR/patches/$patch")
+done < "$SERIES_DIR/series.txt"
 while IFS= read -r patch || [[ -n "$patch" ]]; do
     case "$patch" in
         ""|\#*) continue ;;
         0005-qsv-pelorus-roi.patch) break ;;
     esac
+    PATCHES+=("$PATCHDIR/$patch")
+done < "$PATCHDIR/series.txt"
+for patch in "${PATCHES[@]}"; do
     git -C "$WORKTREE" \
         -c user.name=Pelorus-Replay \
         -c user.email=replay@pelorus.invalid \
         -c commit.gpgSign=false \
         -c core.hooksPath=/dev/null \
         -c diff.orderFile=/dev/null \
-        am --3way --no-gpg-sign --no-verify "$PATCHDIR/$patch"
-done < "$PATCHDIR/series.txt"
+        am --3way --no-gpg-sign --no-verify "$patch"
+done
 git -C "$WORKTREE" -c core.hooksPath=/dev/null \
     apply "$PATCHDIR/files/qsv-pelorus-roi.patch"
 

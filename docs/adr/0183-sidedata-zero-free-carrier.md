@@ -6,6 +6,7 @@
 - **Date**: 2026-10-10
 - **Deciders**: Lusoris
 - **Tags**: interop, nvenc, ffmpeg, vmafx, abi
+- **Amended by**: [ADR-0185](0185-shared-ffmpeg-fix-series.md): patch 0022 writes the carrier from a hook behind the shared FFmpeg fix series' NVENC code, whose patch 0004 leaves out any other payload NVENC would truncate. The decision is unchanged.
 
 ## Context
 

@@ -53,10 +53,16 @@ FFmpeg `--enable-nonfree` and the other nonfree components stay refused
 `build` stage (toolchain, libpelorus, the patched FFmpeg tree) and the `base`
 stage (runtime packages every kit needs) are shared.
 
-Build one kit locally (FFmpeg compiles once per kit, a few minutes at `-j4`):
+Build one kit locally (FFmpeg compiles once per kit, a few minutes at `-j4`).
+The image build applies the shared FFmpeg fix series before the Pelorus stack
+([ADR-0185](../adr/0185-shared-ffmpeg-fix-series.md)), so fetch and verify its
+release into the build context first; the Containerfile checks the tarball
+against the sha256 pin again and fails without it. `.ffmpeg-series/` is
+git-ignored and must not exist before the fetch:
 
 ```bash
 . ./build-config.env
+rm -rf .ffmpeg-series && scripts/fetch-ffmpeg-series.sh .ffmpeg-series
 docker build -f tools/tester/Containerfile --target final-nvidia \
   --build-arg "FFMPEG_REMOTE=$FFMPEG_REMOTE" --build-arg "FFMPEG_COMMIT=$FFMPEG_COMMIT" \
   --build-arg "PELORUS_COMMIT=$(git rev-parse HEAD)" --build-arg MAKE_JOBS=4 \
@@ -111,7 +117,7 @@ image and never publishes by itself.
 
 | Trigger | Runs | Pushes |
 | --- | --- | --- |
-| pull request that changes `tools/tester/`, `ffmpeg-patches/`, `libpelorus/`, `meson.build`, `meson_options.txt`, `build-config.env`, `LICENSES/`, `REUSE.toml` or the workflow | `build`, one amd64 image build per kit (three) with both licence gates and the no-device report | nothing |
+| pull request that changes `tools/tester/`, `ffmpeg-patches/`, `libpelorus/`, `meson.build`, `meson_options.txt`, `build-config.env`, `scripts/fetch-ffmpeg-series.sh`, `LICENSES/`, `REUSE.toml` or the workflow | `build`, one amd64 image build per kit (three) with both licence gates and the no-device report | nothing |
 | pull request that changes only other paths (docs, ADRs, changelog fragments, scripts) | nothing | nothing |
 | nightly schedule (02:17 UTC, this repository only) | `build` on the default branch | nothing |
 | `workflow_dispatch` | `validate`, then `publish` after environment approval | the image and its `-source` image |
@@ -215,8 +221,9 @@ gh attestation verify "oci://$IMAGE@$DIGEST" -R VMAFx/pelorus \
 ```
 
 The `-source` image has the same two checks against its own digest. It holds
-`/source/ffmpeg` (the patched tree as compiled, `series.txt`,
-`ffmpeg-configure-line.txt`, `libpelorus-commit.txt`), `/source/kit` (the
+`/source/ffmpeg` (the patched tree as compiled, `series.txt`, the shared
+FFmpeg fix series release `ffmpeg-patches-<tag>.tar.gz` that was applied
+first, `ffmpeg-configure-line.txt`, `libpelorus-commit.txt`), `/source/kit` (the
 NVIDIA kit's `nv-codec-headers` tree; empty for the other kits),
 `/source/debian` (source packages at the versions the image installed) and
 `/source/LICENSES`.

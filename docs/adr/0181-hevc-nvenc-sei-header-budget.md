@@ -6,6 +6,7 @@
 - **Date**: 2026-10-09
 - **Deciders**: Lusoris
 - **Tags**: nvenc, interop, analyze, ffmpeg
+- **Amended by**: [ADR-0185](0185-shared-ffmpeg-fix-series.md): the budget, the drop of a payload that does not fit and their log lines are patch 0003 of the shared FFmpeg fix series; patch 0022 keeps the map stripping. The decision is unchanged.
 
 ## Context
 

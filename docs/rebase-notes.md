@@ -3,7 +3,52 @@
 
 Re-apply / re-test work created for the FFmpeg patch stack after an upstream
 FFmpeg bump or a `libpelorus` ABI change. One entry per change that affects the
-patches (ADR-0108 deliverable #6).
+patches (ADR-0108 deliverable #6). An entry describes the stack as it was when
+the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
+ranges in older entries predate the first entry below (22 patches on the
+shared FFmpeg fix series, number 0021 retired).
+
+## Unreleased — shared FFmpeg fix series first (ADR-0185)
+
+- **Base**: the stack no longer applies to stock `n9.0.2`. It applies to
+  `n9.0.2` plus the shared FFmpeg fix series
+  [VMAFx/ffmpeg-patches](https://github.com/VMAFx/ffmpeg-patches)
+  `v0.1.0-rc.1` (four patches), pinned in `build-config.env` (`FFMPEG_SERIES_*`)
+  and fetched and verified by `scripts/fetch-ffmpeg-series.sh`. `generate.sh`
+  applies the series and formats the range above its tip.
+- **Patches**: 22. Patch 0021 is dropped: series patch 0001 is the same diff.
+  Its number stays unused; 0022 and 0023 keep theirs, and `generate.sh` maps
+  its output to the shipped names by position. Every patch changes in its
+  `[PATCH n/22]` subject line, which counts position (0022 reads `21/22`).
+  0004, 0008 and 0011 also change in `nvenc.c` and `nvenc.h` line numbers and
+  blob ids, because series 0003 and 0004 edit those files first; their source
+  diffs under `files/` are untouched and apply with offsets. 0009 and 0023 are
+  unchanged in content.
+- **Patch 0022** shrinks to one call. Series 0003 owns the `hevc_nvenc` budget
+  (`NVENC_HEVC_SEI_BUDGET`, `nvenc_sei_nal_size()`, `nvenc_hevc_sei_fits()`) and
+  series 0004 the drop of truncated payloads. `pelorus_udu_carrier()` runs
+  between the series' `av_memdup()` and `nvenc_hevc_sei_fits()`: it strips a
+  Pelorus blob's maps in the copy when its carrier misses the remaining
+  `sei_budget`, then replaces the copy by the carrier. Gone from the patch:
+  `pelorus_udu_budget()`, `pelorus_udu_commit()`, `pelorus_udu_log()`, the
+  per-encoder scratch buffer, the dropped-payload counter and the skip of
+  empty entries. `NvencContext` keeps `pelorus_udu_stripped` and
+  `pelorus_udu_carrier_logged`.
+- **Rebase-sensitive**: the hook position and the name `sei_budget` in
+  `prepare_sei_data_array()`; `pel_sei_nal_bytes()` must keep matching the
+  series' `nvenc_sei_nal_size()` (the "stripped" log line predicts the fit
+  with it); the series' base must equal the FFmpeg pin, which the fetch script
+  checks. On an FFmpeg bump, wait for a series release on the new base, move
+  the four `FFMPEG_SERIES_*` values together, then regenerate.
+- **Interop**: none. Streams are as before for Pelorus side data. A payload
+  from another producer that NVENC would truncate is now dropped with a
+  warning (series 0004).
+- **Checks** ([research 0185](research/0185-shared-ffmpeg-fix-series.md)):
+  `scripts/fetch-ffmpeg-series.sh --self-test`; `generate.sh` twice,
+  byte-identical; `build-and-run.sh` (4 series and 22 Pelorus patches, link,
+  registration, NVENC smoke 6 of 6 on an RTX 4090); tester
+  `sidedata_roundtrip` on `hevc_nvenc` and `h264_nvenc`; `hevc_qsv` and
+  `h264_qsv` smoke on an Arc A380.
 
 ## Unreleased — `tiling=drm` output pools (#103, ADR-0184; regenerates 0001, 0003, 0014, 0015, 0017, 0018)
 
@@ -171,6 +216,9 @@ patches (ADR-0108 deliverable #6).
 
 ## Unreleased — patch 0022 (`hevc_nvenc` `udu_sei` header limit, #267, ADR-0181; cumulative on 0001–0021)
 
+- **Split** (ADR-0185): the budget and the drop described here are patch 0003
+  of the shared FFmpeg fix series now; patch 0022 keeps the map stripping and
+  the carrier (first entry of this file).
 - **Patch**: `ffmpeg-patches/0022-nvenc-pelorus-udu-sei.patch` (canonical
   diff `files/nvenc-pelorus-udu-sei.patch`, header `files/pelorus_sei_fit.h`
   that `generate.sh` copies to `libavcodec/`, message
@@ -239,6 +287,9 @@ patches (ADR-0108 deliverable #6).
 
 ## Unreleased — patch 0021 (`ff_vk_frame_barrier` queue family on single-family devices; cumulative on 0001–0020)
 
+- **Moved** (ADR-0185): this fix is patch 0001 of the shared FFmpeg fix series
+  now and no longer a Pelorus patch; the entry stays for its root cause and
+  measurements.
 - **Patch**: `ffmpeg-patches/0021-vulkan-frame-barrier-queue-family.patch`
   (canonical diff `files/vulkan-frame-barrier-queue-family.patch`, message
   `.commit-msg-vulkan-frame-barrier.txt`). Hand-maintained `libavutil/vulkan.c`

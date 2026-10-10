@@ -33,7 +33,8 @@ shared side-data ABI and vmafx's VMAF-in-the-loop autotune — see
 # build + install the shared core (the FFmpeg filters link it)
 meson setup build && ninja -C build && ninja -C build install
 
-# regenerate and replay the stack at the pinned n9.0.2 commit
+# regenerate and replay the stack at the pinned n9.0.2 commit; both scripts
+# first fetch and verify the shared FFmpeg fix series (needs cosign and gh auth)
 cd ffmpeg-patches
 FFMPEG_REPO=/absolute/path/to/ffmpeg ./generate.sh
 FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh
@@ -79,6 +80,13 @@ green · the deband shader compiles.**
 | `test/interop_test.c` | Shared ABI conformance fixture | — |
 
 ### FFmpeg filters — `ffmpeg-patches/`
+
+The stack is 22 patches against FFmpeg n9.0.2. It applies on top of the shared
+FFmpeg fix series ([VMAFx/ffmpeg-patches](https://github.com/VMAFx/ffmpeg-patches),
+release pinned in `build-config.env`), which carries the generic FFmpeg fixes
+every VMAFx project needs; `scripts/fetch-ffmpeg-series.sh` fetches and
+verifies it ([ADR-0185](docs/adr/0185-shared-ffmpeg-fix-series.md),
+[build guide](docs/development/build.md#the-shared-ffmpeg-fix-series-comes-first)).
 
 | Filter | Purpose | Status |
 |---|---|---|

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
 Date: Thu, 1 Jan 2026 00:00:00 +0000
-Subject: [PATCH 08/23] feat(nvenc): feed the Pelorus MV field to NVENC
+Subject: [PATCH 08/22] feat(nvenc): feed the Pelorus MV field to NVENC
  external ME hints
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -45,10 +45,10 @@ ADR: docs/adr/0116-pelorus-mc.md (consumer section), docs/adr/0114-encoder-steer
  4 files changed, 302 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index 0bb1516ed57db83dd5ca3d4198864ee84290196a..a6809de3422cdd27d1e5be7cfd6cdf8a6300ed61 100644
+index 0109cba3016f04f41d9744f216a809d9503544b2..e76be245e0dfe6f949a6cc3943ada80aca90170b 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
-@@ -1120,6 +1120,49 @@ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
+@@ -1129,6 +1129,49 @@ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
                 ctx->qp_delta_map_w, ctx->qp_delta_map_h, blk);
      }
  
@@ -98,7 +98,7 @@ index 0bb1516ed57db83dd5ca3d4198864ee84290196a..a6809de3422cdd27d1e5be7cfd6cdf8a
      if (ctx->rc_lookahead > 0) {
          int lkd_bound = FFMIN(ctx->nb_surfaces, ctx->async_depth) -
                          ctx->encode_config.frameIntervalP - 4;
-@@ -2118,6 +2161,7 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
+@@ -2138,6 +2181,7 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
  
      av_freep(&ctx->sei_data);
      av_freep(&ctx->qp_delta_map);
@@ -106,7 +106,7 @@ index 0bb1516ed57db83dd5ca3d4198864ee84290196a..a6809de3422cdd27d1e5be7cfd6cdf8a
  
      if (ctx->nvencoder) {
          p_nvenc->nvEncDestroyEncoder(ctx->nvencoder);
-@@ -3098,6 +3142,238 @@ static int nvenc_setup_roi(AVCodecContext *avctx, const AVFrame *frame,
+@@ -3241,6 +3285,238 @@ static int nvenc_setup_roi(AVCodecContext *avctx, const AVFrame *frame,
      return 0;
  }
  
@@ -345,7 +345,7 @@ index 0bb1516ed57db83dd5ca3d4198864ee84290196a..a6809de3422cdd27d1e5be7cfd6cdf8a
  static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
  {
      NVENCSTATUS nv_status;
-@@ -3237,6 +3513,10 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3380,6 +3656,10 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
          if (res < 0)
              return res;
  
@@ -357,10 +357,10 @@ index 0bb1516ed57db83dd5ca3d4198864ee84290196a..a6809de3422cdd27d1e5be7cfd6cdf8a
      } else {
          pic_params.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
 diff --git a/libavcodec/nvenc.h b/libavcodec/nvenc.h
-index 66cd7b158243520d5228c958b3fc13c0dd6e6431..8a0dbaea8384b05e90965a5e45a0973b04e467f2 100644
+index b95075faa0d03f0b8b7b0add29e5ee6c392adbea..84606443da38ad358bacdf81c9204b5079750e9f 100644
 --- a/libavcodec/nvenc.h
 +++ b/libavcodec/nvenc.h
-@@ -290,6 +290,24 @@ typedef struct NvencContext
+@@ -292,6 +292,24 @@ typedef struct NvencContext
      int     qp_delta_map_w;  ///< blocks across = ceil(width  / block size)
      int     qp_delta_map_h;  ///< blocks down  = ceil(height / block size)
      int     roi_warned;      ///< rate-limit incompatibility warnings to once

@@ -67,6 +67,10 @@ jobs:
     name: ffmpeg patch stack (regenerate · replay · link · smoke)
     runs-on: ubuntu-26.04
     timeout-minutes: 60
+    env:
+      # scripts/fetch-ffmpeg-series.sh verifies the shared FFmpeg fix series'
+      # build provenance with gh attestation verify (ADR-0185).
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -87,6 +91,8 @@ jobs:
             build-essential meson ninja-build pkg-config nasm yasm git ca-certificates \
             libvulkan-dev glslc glslang-tools libvpl-dev libaom-dev \
             libsvtav1enc-dev libffmpeg-nvenc-dev
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Runner and toolchain receipt
         run: |
           echo "ImageOS=${ImageOS:-unset}"
@@ -98,6 +104,10 @@ jobs:
           done
           glslc --version
           glslangValidator --version
+          cosign version
+          gh --version
+      - name: Shared FFmpeg fix series verifier refuses planted defects
+        run: scripts/fetch-ffmpeg-series.sh --self-test
       - name: Fetch and verify pinned FFmpeg source
         run: |
           git init ffmpeg
@@ -129,13 +139,17 @@ jobs:
 
   lavapipe:
     # Mesa lavapipe is software Vulkan: this lane runs the real shaders of the
-    # 23-patch stack with the Khronos validation layer on, and its result is
+    # patch stack with the Khronos validation layer on, and its result is
     # functional evidence only, never GPU evidence (#228, docs/research/0228).
     # It builds the stack once more (45 minute budget) because the stack job
     # discards its binary.
     name: lavapipe (software Vulkan · ten filters · validation · format matrix)
     runs-on: ubuntu-26.04
     timeout-minutes: 45
+    env:
+      # scripts/fetch-ffmpeg-series.sh verifies the shared FFmpeg fix series'
+      # build provenance with gh attestation verify (ADR-0185).
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Stop on a draft pull request
         if: github.event.pull_request.draft == true
@@ -170,6 +184,9 @@ jobs:
             build-essential meson ninja-build pkg-config nasm yasm git ca-certificates \
             libvulkan-dev glslc glslang-tools \
             mesa-vulkan-drivers vulkan-tools vulkan-validationlayers
+      - name: Install cosign
+        if: github.event.pull_request.draft != true
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Runner and toolchain receipt
         if: github.event.pull_request.draft != true
         run: |
@@ -180,6 +197,7 @@ jobs:
             mesa-vulkan-drivers vulkan-tools vulkan-validationlayers libvulkan-dev
           glslc --version
           glslangValidator --version
+          cosign version
       - name: Fetch and verify pinned FFmpeg source
         if: github.event.pull_request.draft != true
         run: |

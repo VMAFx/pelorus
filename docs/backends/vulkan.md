@@ -101,13 +101,14 @@ n9.0.2 then turns the first barrier on each frame into an ownership transfer to
 the image layout: it reports `09059` and `09064` on the `hwupload` and
 `hwdownload` host copies of every Vulkan filter chain, and `00344` and `09600`
 where a shader indexes the image array with a literal (`grain_estimate`).
-Patch 0021 (`ffmpeg-patches/files/vulkan-frame-barrier-queue-family.patch`)
+Patch 0001 of the shared FFmpeg fix series (Pelorus patch 0021 until
+[ADR-0185](../adr/0185-shared-ffmpeg-fix-series.md); FFmpeg pull request 24970)
 keeps the frame's owning family in that barrier, so no transfer is formed.
 Devices with several queue families use `VK_SHARING_MODE_CONCURRENT` and are not
 affected. With the patch no tested device (lavapipe, ANV, RADV, RTX 4090) reports
 `09059` or `09064`, so `ffmpeg-patches/test/vulkan-vuid-allowlist.txt` no longer
 lists them and a run that shows either fails validation. Root cause and
-measurements: `docs/rebase-notes.md` (patch 0021).
+measurements: `docs/rebase-notes.md` (the patch 0021 entry).
 
 ## Output pools for VAAPI and QSV
 

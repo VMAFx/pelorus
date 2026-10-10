@@ -15,8 +15,11 @@
 #   docker build -f tools/tester/Containerfile --target source-<kit> ... .
 #
 # Build inputs only: the pinned Debian base, the FFmpeg pin from
-# build-config.env, the licence flags, the libpelorus commit and, for NVIDIA,
-# the pinned nv-codec-headers (MIT). The context is the repository root.
+# build-config.env, the shared FFmpeg fix series pinned there (ADR-0185), the
+# licence flags, the libpelorus commit and, for NVIDIA, the pinned
+# nv-codec-headers (MIT). The context is the repository root, with the series
+# release in .ffmpeg-series/: scripts/fetch-ffmpeg-series.sh .ffmpeg-series
+# fetches and verifies it there before the build.
 # .github/workflows/tester-publish.yml is the only publisher and passes every
 # ARG below that has no default on the command line.
 ARG DEBIAN_IMAGE=docker.io/library/debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
@@ -51,19 +54,33 @@ WORKDIR /src
 COPY meson.build meson_options.txt /src/pelorus/
 COPY libpelorus /src/pelorus/libpelorus
 COPY ffmpeg-patches /src/pelorus/ffmpeg-patches
+# The shared FFmpeg fix series as the runner verified it (sha256 pin, signed
+# SHA256SUMS, build provenance); the same script checks the tarball against
+# the sha256 pin once more and unpacks it.
+COPY build-config.env /src/pelorus/
+COPY scripts/fetch-ffmpeg-series.sh /src/pelorus/scripts/
+COPY .ffmpeg-series/*.tar.gz /src/ffmpeg-series-release/
 RUN meson setup --werror -Dtests=false -Dtools=false -Dshaders=false --prefix=/opt/pelorus --libdir=lib /src/pelorus-build /src/pelorus \
     && ninja -C /src/pelorus-build install
 
-# The pinned FFmpeg commit, the whole series applied in order (a per-patch
-# check is not enough, AGENTS.md hard rule 5).
-RUN git init -q /src/ffmpeg \
+# The pinned FFmpeg commit, the shared FFmpeg fix series and then the whole
+# Pelorus series, each applied in order (a per-patch check is not enough,
+# AGENTS.md hard rule 5).
+RUN . /src/pelorus/build-config.env \
+    && /src/pelorus/scripts/fetch-ffmpeg-series.sh --unpack \
+        "/src/ffmpeg-series-release/ffmpeg-patches-${FFMPEG_SERIES_TAG}.tar.gz" /src/ffmpeg-series \
+    && git init -q /src/ffmpeg \
     && git -C /src/ffmpeg fetch -q --depth 1 "${FFMPEG_REMOTE}" "${FFMPEG_COMMIT}" \
     && git -C /src/ffmpeg checkout -q FETCH_HEAD \
+    && grep -Ev '^(#|$)' /src/ffmpeg-series/series/series.txt \
+        | sed 's#^#/src/ffmpeg-series/series/patches/#' > /src/apply-order.txt \
     && grep -Ev '^(#|$)' /src/pelorus/ffmpeg-patches/series.txt \
-        | while read -r patch; do \
+        | sed 's#^#/src/pelorus/ffmpeg-patches/#' >> /src/apply-order.txt \
+    && while read -r patch; do \
             git -C /src/ffmpeg -c user.name=tester-build -c user.email=tester-build@invalid \
-                am --3way "/src/pelorus/ffmpeg-patches/${patch}"; \
-          done
+                am --3way "${patch}" || exit 1; \
+          done < /src/apply-order.txt \
+    && test "$(git -C /src/ffmpeg rev-list --count FETCH_HEAD..HEAD)" -eq "$(wc -l < /src/apply-order.txt)"
 
 # build-ffmpeg.sh configures, builds and installs one kit's FFmpeg, keeps the
 # tree and configure line for the -source image, and runs the licence gate
@@ -282,7 +299,8 @@ LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
       org.opencontainers.image.revision="${PELORUS_COMMIT}"
 
 # --- source-<kit>: the -source companions --------------------------------------
-# The patched FFmpeg tree as compiled, series.txt, the configure line, the
+# The patched FFmpeg tree as compiled, series.txt, the shared series release
+# tarball, the configure line, the
 # libpelorus commit, the kit's extra build sources (nv-codec-headers) and the
 # Debian source packages at the versions the kit's image installed.
 FROM ${DEBIAN_IMAGE} AS debian-sources-generic
