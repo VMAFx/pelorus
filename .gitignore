@@ -55,4 +55,5 @@ x265_2pass.log*
 /.workingdir2/
 /.standards/worktrees/
 /.agents/mcp_config.json
+/.standards/cache/
 # END praetor private artifacts
