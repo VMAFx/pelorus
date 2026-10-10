@@ -39,7 +39,7 @@ RULES = (
     "steering_baseline_defect",
     "sd_present", "sd_structure", "sd_decode_tap", "sd_pts", "sd_carrier_masking",
     "sd_integrity_count", "sd_integrity_bytes", "sd_integrity_stripped", "sd_strip_carriers",
-    "sd_carrier_form", "sd_carrier_strict",
+    "sd_carrier_form", "sd_carrier_strict", "sd_reference_length", "sd_reference_not_carrier_fail",
     "brc_bitrate", "brc_decode", "brc_extbrc_engaged", "brc_no_huc", "brc_hw_refused",
 )
 
@@ -1175,7 +1175,11 @@ def run_sidedata(ctx, spec):
             results.append((car["name"], car["codec"], "not_run", "not built into this FFmpeg"))
         elif devs:
             results.append((car["name"], car["codec"]) + carrier_roundtrip(ctx, car, devs, cases, work, refs))
+    harness = [r for r in results if r[2] == "incomplete"]
+    results = [r for r in results if r[2] != "incomplete"]
     status, reason, log, legs = aggregate_legs(results, ctx["disabled"])
+    if harness and status != "fail":
+        return finish(ctx, outcome("incomplete", "; ".join("%s: %s" % (r[0], r[3]) for r in harness)[:1000]))
     if status == "not_run":
         reason = "no encoder carries SEI unregistered here; " + reason
     return finish(ctx, outcome(status, reason, log, legs))
@@ -1222,24 +1226,57 @@ def carrier_failure(ctx, car, devs, entry, src, work, why):
         car["name"], dev, why))[:400]
 
 
+def reference_problems(frames, n_expected, disabled=frozenset()):
+    """Why a reference parsed from a showinfo log cannot be trusted, or []. Each picture
+    must hold exactly one blob as long as the total_size in its own header: a log line
+    interleaved into the hex dump (the stats line, tool 0.4.8 and earlier) or cut off by
+    the capture leaves a shorter blob that passes for a complete one."""
+    if "sd_reference_length" in disabled:
+        return []
+    errs = []
+    if len(frames) != n_expected or not all(len(f) == 1 for f in frames):
+        errs.append("%s blobs on %d frames, expected one on each of %d" % (
+            [len(f) for f in frames], len(frames), n_expected))
+    for idx, blobs in enumerate(frames):
+        for blob in blobs[:1]:
+            if len(blob) < HEADER_BYTES:
+                errs.append("picture %d: %d bytes, shorter than the header" % (idx, len(blob)))
+                continue
+            total = struct.unpack(HEADER_FMT, blob[:struct.calcsize(HEADER_FMT)])[3]
+            if total != len(blob):
+                errs.append("picture %d: parsed %d bytes, header total_size %d" % (idx, len(blob), total))
+    return errs
+
+
+def reference_run(ctx, dev, case, entry, src):
+    """(frames, problem): one showinfo run of the encode chain without an encoder.
+    -nostats keeps the progress line, which another thread writes into the middle of the
+    hex dump, out of the log."""
+    chain = "format=nv12,hwupload,%s,pelorus_deband_vulkan,hwdownload,format=nv12,showinfo" \
+        % analyze_filter(case["opts"])
+    argv = ["-hide_banner", "-nostats", "-loglevel", "info", "-init_hw_device", "vulkan=vk:%d" % dev,
+            "-filter_hw_device", "vk"] + input_args(entry, src)
+    argv += ["-frames:v", str(SIDEDATA_FRAMES), "-vf", chain, "-f", "null", "-"]
+    code, text, err = ffrun(ctx, argv)
+    if code != 0:
+        return None, "reference run of the chain without an encoder gave " + (err or first_line(text))
+    # The null muxer's graph can emit one frame more than -frames:v lets the encoder take.
+    frames = showinfo_blobs(text)[:SIDEDATA_FRAMES]
+    errs = reference_problems(frames, SIDEDATA_FRAMES, ctx["disabled"])
+    return (None, "; ".join(errs[:3])) if errs else (frames, "")
+
+
 def written_blobs(ctx, refs, dev, case, entry, src):
     """(per-frame blobs the analyze filter attaches, problem): the same chain as the
-    encode, read at the encoder's input through showinfo. Cached per case and device."""
+    encode, read at the encoder's input through showinfo. Cached per case and device.
+    A reference that fails its own length check is read once more; a second failure
+    leaves frames None, which is a harness error and never a carrier verdict."""
     key = (case["name"], dev)
     if key not in refs:
-        chain = "format=nv12,hwupload,%s,pelorus_deband_vulkan,hwdownload,format=nv12,showinfo" \
-            % analyze_filter(case["opts"])
-        argv = ["-hide_banner", "-loglevel", "info", "-init_hw_device", "vulkan=vk:%d" % dev,
-                "-filter_hw_device", "vk"] + input_args(entry, src)
-        argv += ["-frames:v", str(SIDEDATA_FRAMES), "-vf", chain, "-f", "null", "-"]
-        code, text, err = ffrun(ctx, argv)
-        # The null muxer's graph can emit one frame more than -frames:v lets the encoder take.
-        frames = showinfo_blobs(text)[:SIDEDATA_FRAMES] if code == 0 else []
-        bad = code != 0 or len(frames) != SIDEDATA_FRAMES or not all(len(f) == 1 for f in frames)
-        refs[key] = (None, "reference run of the chain without an encoder gave %s" % (
-            (err or first_line(text)) if code != 0 else
-            "%s blobs on %d frames" % ([len(f) for f in frames], len(frames)))) \
-            if bad else (frames, "")
+        frames, why = reference_run(ctx, dev, case, entry, src)
+        if frames is None:
+            frames, why = reference_run(ctx, dev, case, entry, src)
+        refs[key] = (frames, why)
     return refs[key]
 
 
@@ -1252,14 +1289,15 @@ def carrier_case(ctx, car, devs, case, entry, src, work, refs):
         return carrier_failure(ctx, car, devs, entry, src, work, why)
     want, why = written_blobs(ctx, refs, dev, case, entry, src)
     if want is None:
-        return "fail", why
+        return ("fail" if "sd_reference_not_carrier_fail" in ctx["disabled"] else "incomplete",
+                "reference unusable (harness error, not a carrier result): " + why)
     disabled = ctx["disabled"]
     strips, zero_free = strips_allowed(car, disabled), car.get("zero_free", False)
     frames, errs = unwrap_payloads(pelorus_blobs_per_frame(out.read_bytes(), car["codec"]),
                                    zero_free, "stream", disabled)
     more, stripped = integrity_problems(want, pictures_by_pts(frames), "stream", strips, disabled)
     errs += more + sidedata_problems(frames, SIDEDATA_FRAMES, disabled)
-    code, tap, err = ffrun(ctx, ["-hide_banner", "-loglevel", "info", "-i", str(out),
+    code, tap, err = ffrun(ctx, ["-hide_banner", "-nostats", "-loglevel", "info", "-i", str(out),
                                  "-vf", "showinfo", "-f", "null", "-"])
     if code == 0:
         decoded, form_errs = unwrap_payloads(showinfo_payloads(tap), zero_free, "decoded", disabled)
@@ -1281,8 +1319,11 @@ def carrier_roundtrip(ctx, car, devs, cases, work, refs=None):
             for case, src, entry in cases]
     failed = [d for d in done if d[1] == "fail"]
     passed = [d for d in done if d[1] == "pass"]
+    broken = [d for d in done if d[1] == "incomplete"]
     if failed:
         return "fail", "; ".join("%s: %s" % (d[0], d[2]) for d in failed)[:400]
+    if broken:
+        return "incomplete", "; ".join("%s: %s" % (d[0], d[2]) for d in broken)[:400]
     if not passed:
         return "not_run", done[0][2]
     return "pass", "; ".join("%s: %s" % (d[0], d[2]) for d in passed[:1]) \
@@ -1780,6 +1821,55 @@ def self_test_carrier_form(expect, disabled):
     expect("sd_carrier_stream_parser", got == [carriers[0]])
 
 
+def showinfo_log(blobs):
+    """A showinfo log of one Pelorus blob per picture, in the layout FFmpeg prints."""
+    return "\n".join(
+        "[Parsed_showinfo_0 @ 0x1] n:   %d pts:  %d pts_time:0\n[Parsed_showinfo_0 @ 0x1]   side data - "
+        "H.26[45] User Data Unregistered SEI message: UUID=%s\n[Parsed_showinfo_0 @ 0x1] User Data=%s"
+        % (i, i, PELORUS_UUID_TEXT, blob.hex()) for i, blob in enumerate(blobs)) + "\n"
+
+
+def self_test_reference(expect, disabled):
+    """A reference cut short by a log line interleaved into its hex dump is read once more
+    and, if still short, is a harness error (stage incomplete), never a carrier fail."""
+    import tempfile
+    blobs = [pack_map_blob(pts=i) for i in range(4)]
+    whole = showinfo_log(blobs)
+    # The stats line lands in the middle of the last picture's dump; the rest of the
+    # dump follows on a line of its own, which the parser does not read.
+    cut = whole[:-60] + "\nframe=    4 fps=0.0\r[Parsed_showinfo_0 @ 0x1] " + whole[-60:]
+    want = [[b] for b in blobs]
+    expect("sd_ref_parser_reads_cut_log_short", len(showinfo_blobs(cut)[3][0]) < len(blobs[3]))
+    expect("sd_ref_whole_log_passes", not reference_problems(showinfo_blobs(whole), 4))
+    expect("sd_ref_rejects_short_blob", bool(reference_problems(showinfo_blobs(cut), 4)))
+    expect("sd_ref_rejects_missing_picture", bool(reference_problems(want[:3], 4)))
+    expect("sd_ref_rejects_empty_picture", bool(reference_problems(want[:3] + [[]], 4)))
+    entry = {"pixfmt": "yuv420p", "width": 16, "height": 16, "fps": 24}
+    car = {"name": "hevc_nvenc", "codec": "hevc", "kind": "hw", "args": ["-qp", "30"]}
+    cases = [(SIDEDATA_CASES[0], "src", entry)]
+
+    def stub(logs):
+        runs = []
+
+        def run(argv, timeout_s, env=None):
+            if "-f" in argv and argv[-2:] == ["null", "-"] and "-vf" in argv:
+                runs.append(1)
+                return 0, logs[min(len(runs), len(logs)) - 1], ""
+            Path(argv[-1]).write_bytes(b"\x00" * 64)
+            return 0, "", ""
+        return run, runs
+
+    with tempfile.TemporaryDirectory(prefix="pelorus-ref-") as tmp:
+        ctx = fake_encode_ctx(disabled, tmp)
+        ctx["env"] = {"PELORUS_VALIDATE": "0"}
+        ctx["run"], runs = stub([cut, whole])
+        got = written_blobs(ctx, {}, 0, SIDEDATA_CASES[0], entry, "src")
+        expect("sd_ref_short_read_retried_once", got[0] == want and len(runs) == 2)
+        ctx["run"], runs = stub([cut])
+        got = carrier_roundtrip(ctx, car, [0], cases, Path(tmp), {})
+        expect("sd_ref_still_short_is_harness_error", got[0] == "incomplete" and len(runs) == 2)
+
+
 def self_test_carrier(expect, disabled):
     """A carrier whose baseline encodes but whose side-data encode fails is a fail, never not_run."""
     import tempfile
@@ -1928,6 +2018,7 @@ def self_test(disabled=frozenset()):
     self_test_gates(expect, disabled)
     self_test_legs(expect, disabled)
     self_test_carrier(expect, disabled)
+    self_test_reference(expect, disabled)
     self_test_integrity(expect, disabled)
     self_test_carrier_form(expect, disabled)
     self_test_brc_rules(expect, disabled)
