@@ -1,19 +1,36 @@
 diff --git a/libavcodec/qsvenc.c b/libavcodec/qsvenc.c
-index fc1b8795d8..d978301577 100644
+index c79db089a0..d31f36d285 100644
 --- a/libavcodec/qsvenc.c
 +++ b/libavcodec/qsvenc.c
-@@ -1113,6 +1113,35 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
+@@ -1117,6 +1117,53 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
          q->extco3.Header.BufferId      = MFX_EXTBUFF_CODING_OPTION3;
          q->extco3.Header.BufferSz      = sizeof(q->extco3);
  
 +#if QSV_HAVE_MBQP
 +        /* Pelorus: per-block QP steering requires EnableMBQP at init, and the
 +         * SDK only honors it under CQP rate control (mfxExtCodingOption3 doc).
-+         * Probe that here and degrade gracefully: if the precondition fails we
-+         * clear pelorus_roi so the per-frame path becomes a pass-through. */
-+        if (q->pelorus_roi &&
-+            (avctx->codec_id == AV_CODEC_ID_HEVC ||
-+             avctx->codec_id == AV_CODEC_ID_H264)) {
++         * Check the preconditions here and degrade gracefully: clearing
++         * pelorus_roi re-enables the upstream per-region mfxExtEncoderROI path
++         * in encode_frame(), so ROI steering keeps working either way.
++         *
++         * The delta map is HEVC-only on purpose. The AVC encoder ignores
++         * mfxExtMBQP::Mode and consumes the array as ABSOLUTE per-macroblock QP
++         * (MFX_MBQP_MODE_QP_VALUE is 0, so that is what an unhandled Mode falls
++         * back to), which inverts every request: a qoffset of 0 becomes QP 0.
++         * This is not discoverable at runtime -- MFXVideoENCODE_Query returns
++         * EnableMBQP unchanged for AVC, and mfxExtMBQP is a per-frame buffer
++         * that Query does not round-trip for either codec -- so gate on the
++         * codec. mfxExtMBQP::BlockSize is documented "valid for HEVC only" for
++         * the same reason. */
++        if (q->pelorus_roi && avctx->codec_id != AV_CODEC_ID_HEVC) {
++            av_log(avctx, AV_LOG_WARNING,
++                   "pelorus_roi: the per-block QP map (mfxExtMBQP) is only "
++                   "honored as a delta by the HEVC encoder; falling back to the "
++                   "per-region mfxExtEncoderROI path.\n");
++            q->pelorus_roi = 0;
++        }
++
++        if (q->pelorus_roi) {
 +            if (q->param.mfx.RateControlMethod == MFX_RATECONTROL_CQP) {
 +                q->extco3.EnableMBQP = MFX_CODINGOPTION_ON;
 +                av_log(avctx, AV_LOG_VERBOSE,
@@ -21,7 +38,8 @@ index fc1b8795d8..d978301577 100644
 +            } else {
 +                av_log(avctx, AV_LOG_WARNING,
 +                       "pelorus_roi requires CQP rate control for the per-block "
-+                       "QP map; disabling ROI steering.\n");
++                       "QP map; falling back to the per-region "
++                       "mfxExtEncoderROI path.\n");
 +                q->pelorus_roi = 0;
 +            }
 +        }
@@ -38,17 +56,16 @@ index fc1b8795d8..d978301577 100644
          if (avctx->codec_id == AV_CODEC_ID_HEVC ||
              avctx->codec_id == AV_CODEC_ID_H264) {
              switch (q->p_strategy) {
-@@ -2129,6 +2159,131 @@ static void print_interlace_msg(AVCodecContext *avctx, QSVEncContext *q)
+@@ -2133,6 +2180,135 @@ static void print_interlace_msg(AVCodecContext *avctx, QSVEncContext *q)
      }
  }
  
 +#if QSV_HAVE_MBQP
 +/* Pelorus: size in luma pixels of one mfxExtMBQP DeltaQP entry. The oneVPL /
-+ * MediaSDK docs fix the MBQP map at a 16x16 block alignment for *both* AVC and
-+ * HEVC ("MBQP map should be aligned for 16x16 block size", mfxExtMBQP), so the
-+ * array layout is 16x16 regardless of codec. (HEVC additionally exposes the
-+ * BlockSize field; 16 is always a legal value and keeps the rasterizer codec-
-+ * independent -- we do not assume any one GPU's coding-tree size.) */
++ * MediaSDK docs fix the MBQP map at a 16x16 block alignment ("MBQP map should
++ * be aligned for 16x16 block size", mfxExtMBQP), and 16 is always a legal
++ * BlockSize, so the rasterizer does not have to assume any one GPU's
++ * coding-tree size. */
 +#define PELORUS_QSV_MBQP_BLOCK 16
 +
 +/* Pelorus: build a per-block delta-QP map from AV_FRAME_DATA_REGIONS_OF_INTEREST
@@ -61,17 +78,25 @@ index fc1b8795d8..d978301577 100644
 + * qp_range convention matches libx264 (51 + 6*(bit_depth-8)); MBQP DeltaQP
 + * entries are signed bytes applied on top of the rate-control QP.
 + *
-+ * The DeltaQP array itself is the persistent ctx->qp_delta_map (allocated lazily
-+ * here, sized from the coded dimensions and reused frame-to-frame). Only the
-+ * small mfxExtMBQP header is per-frame; free_encoder_ctrl() reclaims it like the
-+ * existing mfxExtEncoderROI path. A frame with no ROI side data attaches nothing,
-+ * so the encoder sees a zero delta and behaviour is unchanged. */
++ * HEVC only -- see the codec gate in init_video_param(): the AVC encoder
++ * consumes the array as absolute QP and inverts the steering.
++ *
++ * The header and its DeltaQP array are one per-frame allocation, the array
++ * living immediately behind the mfxExtMBQP header, so free_encoder_ctrl()
++ * reclaims both when the surface unlocks -- exactly like the mfxExtEncoderROI
++ * of set_roi_encode_ctrl(). That lifetime is required, not merely tidy:
++ * MFXVideoENCODE_EncodeFrameAsync is asynchronous and holds the ext-buffers of
++ * up to async_depth frames at once, so a single context-wide map would be
++ * repainted for frame N+1 while frame N was still being encoded against it. A
++ * frame with no ROI side data attaches nothing, so the encoder sees a zero
++ * delta and behaviour is unchanged. */
 +static int qsvenc_setup_roi(AVCodecContext *avctx, QSVEncContext *q,
 +                            const AVFrame *frame, mfxEncodeCtrl *enc_ctrl)
 +{
 +    AVFrameSideData *sd;
 +    const AVRegionOfInterest *roi;
 +    mfxExtMBQP *mbqp;
++    int8_t *qp_map;
 +    const AVPixFmtDescriptor *desc;
 +    uint32_t roi_size;
 +    int nb_rois, mbx, mby, map_size, bit_depth, qp_range;
@@ -79,8 +104,7 @@ index fc1b8795d8..d978301577 100644
 +
 +    if (!q->pelorus_roi || !frame)
 +        return 0;
-+    if (avctx->codec_id != AV_CODEC_ID_HEVC &&
-+        avctx->codec_id != AV_CODEC_ID_H264)
++    if (avctx->codec_id != AV_CODEC_ID_HEVC)
 +        return 0;
 +
 +    sd = av_frame_get_side_data(frame, AV_FRAME_DATA_REGIONS_OF_INTEREST);
@@ -96,17 +120,11 @@ index fc1b8795d8..d978301577 100644
 +        return 0;
 +    }
 +
-+    mbx = q->qp_delta_map_w = (avctx->width  + blk - 1) / blk;
-+    mby = q->qp_delta_map_h = (avctx->height + blk - 1) / blk;
++    mbx = (avctx->width  + blk - 1) / blk;
++    mby = (avctx->height + blk - 1) / blk;
 +    map_size = mbx * mby;
 +    if (map_size <= 0)
 +        return 0;
-+
-+    if (!q->qp_delta_map) {
-+        q->qp_delta_map = av_calloc(map_size, sizeof(*q->qp_delta_map));
-+        if (!q->qp_delta_map)
-+            return AVERROR(ENOMEM);
-+    }
 +
 +    desc = av_pix_fmt_desc_get(avctx->sw_pix_fmt == AV_PIX_FMT_NONE ?
 +                               avctx->pix_fmt : avctx->sw_pix_fmt);
@@ -121,7 +139,13 @@ index fc1b8795d8..d978301577 100644
 +    }
 +    nb_rois = sd->size / roi_size;
 +
-+    memset(q->qp_delta_map, 0, map_size);
++    /* One allocation: the mfxExtMBQP header immediately followed by its DeltaQP
++     * array, so the map's lifetime is the ext-buffer's. av_mallocz() zeroes it,
++     * which is the correct "no delta" default for blocks no region covers. */
++    mbqp = av_mallocz(sizeof(*mbqp) + (size_t)map_size);
++    if (!mbqp)
++        return AVERROR(ENOMEM);
++    qp_map = (int8_t *)(mbqp + 1);
 +
 +    /* Reverse iteration: the first region in the list takes precedence on
 +     * overlap, so writing it last lets it overwrite later regions. */
@@ -134,6 +158,7 @@ index fc1b8795d8..d978301577 100644
 +        if (roi->qoffset.den == 0) {
 +            av_log(avctx, AV_LOG_ERROR,
 +                   "AVRegionOfInterest.qoffset.den must not be zero.\n");
++            av_freep(&mbqp);
 +            return AVERROR(EINVAL);
 +        }
 +
@@ -148,19 +173,16 @@ index fc1b8795d8..d978301577 100644
 +
 +        for (int y = starty; y < endy; y++)
 +            for (int x = startx; x < endx; x++)
-+                q->qp_delta_map[x + y * mbx] = delta;
++                qp_map[x + y * mbx] = delta;
 +    }
 +
-+    mbqp = av_mallocz(sizeof(*mbqp));
-+    if (!mbqp)
-+        return AVERROR(ENOMEM);
 +    mbqp->Header.BufferId = MFX_EXTBUFF_MBQP;
 +    mbqp->Header.BufferSz = sizeof(*mbqp);
 +    mbqp->Mode            = MFX_MBQP_MODE_QP_DELTA;
-+    mbqp->BlockSize       = blk;   /* honored for HEVC; ignored for AVC */
++    mbqp->BlockSize       = blk;   /* valid for HEVC only (mfxExtMBQP doc) */
 +    mbqp->Pitch           = mbx;
 +    mbqp->NumQPAlloc      = map_size;
-+    mbqp->DeltaQP         = q->qp_delta_map;
++    mbqp->DeltaQP         = qp_map;
 +
 +    enc_ctrl->ExtParam[enc_ctrl->NumExtParam++] = (mfxExtBuffer *)mbqp;
 +    return 0;
@@ -170,7 +192,7 @@ index fc1b8795d8..d978301577 100644
  static int set_roi_encode_ctrl(AVCodecContext *avctx, const AVFrame *frame,
                                 mfxEncodeCtrl *enc_ctrl)
  {
-@@ -2517,7 +2672,20 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
+@@ -2521,7 +2697,20 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
          q->set_encode_ctrl_cb(avctx, frame, enc_ctrl);
      }
  
@@ -192,19 +214,8 @@ index fc1b8795d8..d978301577 100644
           avctx->codec_id == AV_CODEC_ID_H265) &&
           enc_ctrl && QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 8)) {
          ret = set_roi_encode_ctrl(avctx, frame, enc_ctrl);
-@@ -2752,6 +2920,10 @@ int ff_qsv_enc_close(AVCodecContext *avctx, QSVEncContext *q)
-     av_freep(&q->extparam_str);
-     av_freep(&q->extparam);
- 
-+#if QSV_HAVE_MBQP
-+    av_freep(&q->qp_delta_map);
-+#endif
-+
-     return 0;
- }
- 
 diff --git a/libavcodec/qsvenc.h b/libavcodec/qsvenc.h
-index 4bc77f2f7c..b0c4ee4283 100644
+index 4bc77f2f7c..15cba9d8dc 100644
 --- a/libavcodec/qsvenc.h
 +++ b/libavcodec/qsvenc.h
 @@ -39,6 +39,13 @@
@@ -221,33 +232,32 @@ index 4bc77f2f7c..b0c4ee4283 100644
  #if defined(_WIN32) || defined(__CYGWIN__)
  #define QSV_HAVE_AVBR   1
  #define QSV_HAVE_VCM    1
-@@ -265,6 +272,17 @@ typedef struct QSVEncContext {
+@@ -265,6 +272,16 @@ typedef struct QSVEncContext {
      char *load_plugins;
      SetEncodeCtrlCB *set_encode_ctrl_cb;
      int forced_idr;
 +
 +    /* Pelorus: per-block QP steering from AV_FRAME_DATA_REGIONS_OF_INTEREST,
 +     * gated by the "pelorus_roi" AVOption (default off). When enabled at init
-+     * (CQP rate control only) we turn on mfxExtCodingOption3::EnableMBQP and
-+     * rasterize each frame's ROI side data into qp_delta_map (one signed byte
-+     * per 16x16 block, raster order), carried by a per-frame mfxExtMBQP. */
++     * (HEVC under CQP rate control only) we turn on
++     * mfxExtCodingOption3::EnableMBQP and rasterize each frame's ROI side data
++     * into a per-frame mfxExtMBQP that carries its own delta-QP map (one signed
++     * byte per 16x16 block, raster order). The map must not be shared between
++     * frames: EncodeFrameAsync keeps it live until the frame completes. */
 +    int pelorus_roi;
-+    int8_t *qp_delta_map;      ///< persistent per-block delta-QP scratch
-+    int     qp_delta_map_w;    ///< blocks across = ceil(width  / 16)
-+    int     qp_delta_map_h;    ///< blocks down   = ceil(height / 16)
-+    int     roi_warned;        ///< rate-limit incompatibility warnings to once
++    int roi_warned;            ///< rate-limit incompatibility warnings to once
      int low_delay_brc;
  
      int co2_idx;
 diff --git a/libavcodec/qsvenc_h264.c b/libavcodec/qsvenc_h264.c
-index 7d39338d6a..a1af783dc1 100644
+index 7d39338d6a..852eb80ce1 100644
 --- a/libavcodec/qsvenc_h264.c
 +++ b/libavcodec/qsvenc_h264.c
 @@ -101,6 +101,8 @@ static av_cold int qsv_enc_close(AVCodecContext *avctx)
  #define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
  static const AVOption options[] = {
      QSV_COMMON_OPTS
-+    { "pelorus_roi",  "Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the QSV per-block QP map (CQP only)",
++    { "pelorus_roi",  "Honor AV_FRAME_DATA_REGIONS_OF_INTEREST per-region QP via the QSV per-block QP map (HEVC only; on H.264 this falls back to the per-region ROI path)",
 +                                                            OFFSET(qsv.pelorus_roi), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VE },
      QSV_OPTION_RDO
      QSV_OPTION_MAX_FRAME_SIZE

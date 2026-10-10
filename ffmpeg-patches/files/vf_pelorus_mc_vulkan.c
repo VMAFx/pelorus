@@ -242,6 +242,20 @@ static void pel_sd_free(void *opaque, uint8_t *data)
     pel_blob_free(data);
 }
 
+/* Full-scale rescale for the shader's SAD. FF_VK_REP_FLOAT hands the shader
+ * LSB-packed >8-bit samples inside a 16-bit UNORM container WITHOUT shifting, so
+ * imageLoad() returns raw/65535 instead of raw/((1<<depth)-1) — the SAD, and
+ * with it the scene-cut decision and the whole confidence grid, come out 2^(16-depth)
+ * times too small. 8-bit (8-bit container) and MSB-aligned P010/P016 (shift != 0)
+ * already fill the container, so their factor is exactly 1.0. */
+static double mc_sample_scale(const AVPixFmtDescriptor *d)
+{
+    if (d && d->comp[0].depth < 16 && d->comp[0].step == 2 &&
+        d->comp[0].shift == 0)
+        return 65535.0 / (double)((1u << d->comp[0].depth) - 1u);
+    return 1.0;
+}
+
 /* Derive the frame scalars from the read-back per-block MV field, pack the dense
  * int16 (dx,dy) grid + PEL_SEC_MOTION summary, and attach to the frame. The grid
  * lives contiguously after the section struct (the analyze attach_stats map
@@ -251,6 +265,7 @@ static int attach_motion(PelorusMcVulkanContext *s, AVFrame *frame,
                          const uint32_t *sad, int nblocks)
 {
     const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
+    const double sscale = mc_sample_scale(d);
     PelorusSideData meta;
     PelorusMotionSection mo;
     PelorusMotionConfSection mo_conf;
@@ -344,7 +359,7 @@ static int attach_motion(PelorusMcVulkanContext *s, AVFrame *frame,
      * a bsize^2 block, so normalize). Conservative; tune via bench. */
     {
         double per_pixel = s->bsize > 0
-                               ? mean_sad / ((double)s->bsize * s->bsize)
+                               ? mean_sad * sscale / ((double)s->bsize * s->bsize)
                                : 0.0;
         mo.has_scene_cut = (per_pixel > 0.08) ? 1 : 0;
     }
@@ -362,7 +377,7 @@ static int attach_motion(PelorusMcVulkanContext *s, AVFrame *frame,
         const double CONF_SCALE = 0.10; /* per-pixel mean-abs-diff at conf = 0 */
         for (i = 0; i < nblocks; i++) {
             double per_pixel = s->bsize > 0
-                                   ? (sad[i] / PEL_MC_SAD_SCALE)
+                                   ? (sad[i] / PEL_MC_SAD_SCALE) * sscale
                                          / ((double)s->bsize * s->bsize)
                                    : 1.0;
             double c = 1.0 - per_pixel / CONF_SCALE;

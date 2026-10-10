@@ -109,6 +109,26 @@ typedef struct PelorusAnalyzeVulkanContext {
 extern const unsigned char ff_pelorus_analyze_comp_spv_data[];
 extern const unsigned int  ff_pelorus_analyze_comp_spv_len;
 
+/* FF_VK_REP_FLOAT normalizes an image read by the CONTAINER, not by the
+ * content bit depth. FFmpeg's >8-bit planar formats (yuv420p10/12, yuv422p10,
+ * yuv444p10, gray10, ...) are LSB-aligned in a 16-bit container, so
+ * imageLoad() yields raw/65535 — only 1/64 of full scale at 10-bit, 1/16 at
+ * 12-bit — and every statistic derived from it comes out that much too small.
+ * The shader multiplies each load by this factor to restore true [0,1] luma,
+ * which is what makes the reported statistics bit-depth independent. An 8-bit
+ * format uses an 8-bit container and p010/p016 are MSB-aligned (shift != 0):
+ * both already fill their container, so the factor is exactly 1.0 and the
+ * shader math is unchanged (bit-identical) for them. */
+static float pel_depth_scale(enum AVPixelFormat fmt)
+{
+    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(fmt);
+
+    if (!d || d->comp[0].step != 2 || d->comp[0].shift != 0 ||
+        d->comp[0].depth >= 16 || d->comp[0].depth < 1)
+        return 1.0f;
+    return 65535.0f / (float)((1 << d->comp[0].depth) - 1);
+}
+
 static av_cold int init_filter(AVFilterContext *ctx)
 {
     int err = 0;
@@ -159,7 +179,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
     }
 
     /* Mirrors the pushConstants block in vulkan/pelorus_analyze.comp.glsl. */
-    ff_vk_shader_add_push_const(shd, 0, 2 * sizeof(int) + sizeof(float),
+    ff_vk_shader_add_push_const(shd, 0, 2 * sizeof(int) + 2 * sizeof(float),
                                 VK_SHADER_STAGE_COMPUTE_BIT);
 
     RET(ff_vk_shader_link(vkctx, shd,
@@ -632,6 +652,7 @@ static int analyze_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
         int32_t grid_cols;
         int32_t ntiles;
         float grad_lo;
+        float depth_scale;
     } pc;
 
     if (!s->initialized)
@@ -648,6 +669,7 @@ static int analyze_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     pc.grid_cols = s->grid_cols;
     pc.ntiles = ntiles;
     pc.grad_lo = (float)s->grad_lo;
+    pc.depth_scale = pel_depth_scale(vkctx->input_format);
 
     RET(ff_vk_get_pooled_buffer(vkctx, &s->stat_buf_pool, &buf,
                                 VK_BUFFER_USAGE_TRANSFER_DST_BIT |

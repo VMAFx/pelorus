@@ -41,11 +41,17 @@
  * side loads { PEL_TILE, PEL_TILE, 1 }. One workgroup == one tile. */
 layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
 
-/* Mirrors the C `pc` struct byte-for-byte (2 * int + float = 12 bytes). */
+/* Mirrors the C `pc` struct byte-for-byte (2 * int + 2 * float = 16 bytes). */
 layout (push_constant, std430) uniform pushConstants {
     int grid_cols;
     int ntiles;
     float grad_lo;
+    /* FF_VK_REP_FLOAT normalizes by the 16-bit CONTAINER, not the content bit
+     * depth, and FFmpeg's >8-bit planar formats are LSB-aligned in it. This
+     * factor (host: pel_depth_scale()) rescales a load back to true [0,1]
+     * luma, so every statistic below is bit-depth independent. It is exactly
+     * 1.0 for 8-bit and for MSB-aligned p010/p016. */
+    float depth_scale;
 };
 
 /* Binding order MUST match the C FFVulkanDescriptorSetBinding array. */
@@ -74,11 +80,11 @@ void main()
     /* Was IS_WITHIN(pos, size) — the n8 GLSL prelude is gone in FFmpeg 9.
      * NOT an early return: every invocation must reach the barrier below. */
     if (all(lessThan(pos, size))) {
-        float l = imageLoad(input_images[0], pos).x;
+        float l = imageLoad(input_images[0], pos).x * depth_scale;
         ivec2 rp = clamp(pos + ivec2(1, 0), ivec2(0), size - 1);
         ivec2 dp = clamp(pos + ivec2(0, 1), ivec2(0), size - 1);
-        float gx = abs(imageLoad(input_images[0], rp).x - l);
-        float gy = abs(imageLoad(input_images[0], dp).x - l);
+        float gx = abs(imageLoad(input_images[0], rp).x * depth_scale - l);
+        float gy = abs(imageLoad(input_images[0], dp).x * depth_scale - l);
         float g = gx + gy;
         float edge = clamp(g, 0.0, 1.0);
         /* A "real but low-amplitude" step (>= grad_lo) is the banding

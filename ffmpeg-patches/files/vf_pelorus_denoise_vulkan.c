@@ -171,6 +171,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
     FFVulkanContext *vkctx = &s->vkctx;
     FFVulkanShader *shd = &s->shd;
     const int planes = av_pix_fmt_count_planes(vkctx->output_format);
+    int semi_planar = 0;
 
     /* Broadcast luma/chroma scalars into the per-plane vec4s ({Y,Cb,Cr,A}). */
     s->opts.sigma_s[0] = (float)s->opt_sigma_y;
@@ -197,6 +198,12 @@ static av_cold int init_filter(AVFilterContext *ctx)
         const AVPixFmtDescriptor *pd = av_pix_fmt_desc_get(vkctx->output_format);
         s->opts.chroma_shift_w = pd ? pd->log2_chroma_w : 1;
         s->opts.chroma_shift_h = pd ? pd->log2_chroma_h : 1;
+        /* Semi-planar (NV12/P010/NV16/NV24/P016): U and V share plane 1, so
+         * that plane's image has TWO components and both carry picture data.
+         * The shader must filter both and must never synthesise the stored
+         * texel, or the second component (V) is written as a constant. */
+        semi_planar = (pd && pd->nb_components >= 3 &&
+                       pd->comp[1].plane == pd->comp[2].plane) ? 1 : 0;
     }
     /* MV/conf grid dims are set per-frame in the dispatch; 0 => no MC. */
     s->opts.grid_cols = 0;
@@ -219,11 +226,13 @@ static av_cold int init_filter(AVFilterContext *ctx)
      * const-folded into the generated GLSL before FFmpeg 9 (the per-plane main()
      * was unrolled in C). With precompiled SPIR-V they become specialization
      * constants, resolved at pipeline creation — the same const-folding, one step
-     * later. The push-constant block itself now lives in the .comp.glsl. */
-    SPEC_LIST_CREATE(sl, 3, 3 * sizeof(uint32_t))
+     * later. `semi_planar` joins them so the shader knows plane 1 carries two
+     * components. The push-constant block itself now lives in the .comp.glsl. */
+    SPEC_LIST_CREATE(sl, 4, 4 * sizeof(uint32_t))
     SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
     SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
     SPEC_LIST_ADD(sl, 2, 32, (uint32_t)(s->tile ? 1 : 0));
+    SPEC_LIST_ADD(sl, 3, 32, (uint32_t)semi_planar);
 
     ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
                       (uint32_t []) { 16, 16, 1 }, 0);

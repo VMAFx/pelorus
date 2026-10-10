@@ -29,8 +29,14 @@
  * so the shader is now compiled to SPIR-V at build time and linked in — which
  * retires that duplication and the whole class of lockstep-drift defects.
  *
- * Works in FF_VK_REP_FLOAT (UNORM) space, i.e. samples are already in [0,1];
- * the old standalone .comp normalized r16ui by 65535 instead.
+ * Works in FF_VK_REP_FLOAT (UNORM) space, i.e. samples are container-normalized;
+ * the old standalone .comp normalized r16ui by 65535 instead. NOTE: for an
+ * LSB-packed sub-16-bit format (yuv420p10le, ...) the hwcontext leaves the
+ * sample in a 16-bit UNORM container unshifted, so a sample only spans
+ * [0, (2^depth - 1)/65535] here. `thr` is a fraction of the *data* range, so
+ * the C side pre-scales it by that same factor before pushing it (see
+ * pel_depth_scale() in vf_pelorus_deblock_vulkan.c); the gate below therefore
+ * needs no depth term of its own and the push-constant layout is unchanged.
  */
 
 #pragma shader_stage(compute)
@@ -50,7 +56,7 @@ layout (constant_id = 1) const uint plane_mask = 0x1;
 layout (push_constant, std430) uniform pushConstants {
     int   bsize;
     int   edge;
-    float thr;
+    float thr;   /* pre-scaled by the C side to the container's units */
     float str;
 };
 
@@ -84,7 +90,13 @@ void deblock(ivec2 pos, int idx) {
             result = mix(result, lp, str);
         }
     }
-    imageStore(output_images[idx], pos, vec4(clamp(result, 0.0, 1.0)));
+    /* Replace only the component this shader computed. On a multi-component
+     * plane (semi-planar chroma: NV12/P010 R8G8/R16G16 with U in .x and V in
+     * .y; packed RGBA) a synthesised vec4 would broadcast the filtered .x over
+     * every other component and destroy it. Same form as pelorus_deband. */
+    vec4 orig = imageLoad(input_images[idx], pos);
+    orig.x = clamp(result, 0.0, 1.0);
+    imageStore(output_images[idx], pos, orig);
 }
 
 void main()

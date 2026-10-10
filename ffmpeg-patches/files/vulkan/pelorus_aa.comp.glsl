@@ -179,7 +179,16 @@ void aa(ivec2 pos, int idx) {
             warp = mix(warp, lo, darkstr);
         }
     }
-    imageStore(output_images[idx], pos, vec4(clamp(warp, 0.0, 1.0)));
+    /* Read-modify-write the full texel: aa is a LUMA-only operator (pel_luma,
+     * bilinear and sobel_mag all read .x), so only component 0 may be replaced.
+     * A scalar-splat vec4(warp) store would broadcast the warped first
+     * component over every other component the plane's image view has --
+     * annihilating V on semi-planar chroma (NV12/P010 plane 1 is R8G8/R16G16)
+     * and G/B/A on packed RGBA. output_images is `writeonly`, so the source
+     * texel comes from input_images. Same form as pelorus_deband.comp.glsl. */
+    vec4 px = imageLoad(input_images[idx], pos);
+    px.x = clamp(warp, 0.0, 1.0);
+    imageStore(output_images[idx], pos, px);
 }
 
 void main()

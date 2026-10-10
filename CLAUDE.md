@@ -1,120 +1,149 @@
 <!-- markdownlint-disable MD013 -->
-# Claude Code guide — Pelorus
+<!-- Compiled automatically by praetorctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->
 
-> Claude Code-specific guide. For cross-tool conventions read [AGENTS.md](AGENTS.md)
-> first; this file extends it. Repo: `vmafx/pelorus` (hosted under the `vmafx`
-> GitHub org, alongside `VMAFx/vmafx`). Run `gh repo set-default vmafx/pelorus`
-> at the start of a session before any `gh` command.
+<!-- markdownlint-disable MD013 -->
+# Agent guide — Pelorus
 
-## What this is
+> Cross-tool context for Claude Code, Cursor, Aider, Codex, Continue, and other
+> coding assistants. **Read this before suggesting changes.** Then read the
+> per-subdirectory `AGENTS.md` for the area you're touching. Claude Code users:
+> [CLAUDE.md](CLAUDE.md) extends this file.
 
-The GPU pre-encode sibling of vmafx. Vulkan compute + FFmpeg filters that
-pre-process frames in VRAM to close the BD-rate gap to CPU encoders. Flagship:
-`vf_pelorus_deband_vulkan` (smart deband). The shared `libpelorus` interop ABI
-is what makes Pelorus⇄vmafx bidirectional.
+## What this repo is
 
-## How to build / test
+`Pelorus` is a GPU **pre-encode** pipeline: Vulkan compute filters + FFmpeg
+filters that fix the psychovisual flaws of a hardware video encoder *before* it
+sees the pixels, entirely in VRAM (zero-copy). The goal is to close the BD-rate
+gap between fixed-function GPU encoders (NVENC/AMF/QSV) and slow CPU encoders
+(x265/SVT-AV1) — debanding, temporal denoise, film-grain synthesis, and
+optical-flow motion hints. These are **codec-agnostic**: deband/denoise/motion
+help HEVC (`hevc_nvenc`/`hevc_qsv`/`hevc_vaapi`/`hevc_amf`, rivaling x265) and
+AV1 equally; only film-grain is codec-specific (AV1 = AOM, HEVC/VVC = H.274).
 
-```bash
-meson setup build && ninja -C build      # libpelorus + interop test + shader
-meson test -C build --suite=fast         # the pre-push gate
-ninja -C build install                   # install so the FFmpeg patches see it
-cd ffmpeg-patches && ./generate.sh        # regenerate the patch stack
-ffmpeg-patches/test/build-and-run.sh      # apply + build + smoke the filter
+Pelorus is the sibling of **vmafx** (the VMAF fork), hosted under the same
+`vmafx` GitHub org. vmafx dropped its own Vulkan backend (its ADR-0726), so
+Pelorus is the Vulkan home; vmafx stays the **quality oracle**. The two are
+bidirectionally wired: Pelorus filters write a shared side-data blob that vmafx
+reads for perceptually-weighted scoring, and Pelorus tunes its filter strength
+against VMAF using vmafx's autotune loop. See
+[docs/architecture/overview.md](docs/architecture/overview.md) and
+[docs/principles.md](docs/principles.md).
+
+## Hard rules
+
+1. **Never break the `libpelorus` public ABI without a `Migration:` footer.**
+   The `PelorusSideData` interop blob is append-only (interop.h R1/R2): add a
+   field or section bit and bump `PELORUS_ABI_MINOR` — never reorder, resize, or
+   remove. A breaking change is forbidden; mint a new section bit instead.
+2. **All errors flow through `pel_result`.** No bare `return -1;` across a
+   `libpelorus` API boundary. Every non-void return is checked or `(void)`-cast.
+3. **No global mutable state / no static-init side effects.** Lifecycle is
+   explicit. Banned C functions: `gets`, `strcpy`, `strcat`, `sprintf`,
+   `strtok`, `atoi`, `atof`, `rand`, `system` (see docs/principles.md §1.2).
+4. **One shader source per filter — never re-introduce inline GLSL.** Since the
+   FFmpeg 9 migration (ADR-0143) each filter's shader lives once, at
+   `ffmpeg-patches/files/vulkan/pelorus_<name>.comp.glsl`, and is compiled to
+   SPIR-V at build time. FFmpeg 9 deleted the runtime GLSL builder
+   (`GLSLC`/`GLSLF`/`GLSLD`, `ff_vk_shader_init`), so building shader text from C
+   is no longer possible — and the old hand-mirrored duplication is what produced
+   the ADR-0129 defect. `libpelorus/shaders/*.comp` remain standalone references
+   compiled by the fast gate; they are NOT a second implementation to sync.
+   Values the C side used to const-fold into generated GLSL are specialization
+   constants (`constant_id` 0..N; **253/254/255 are reserved** for workgroup size),
+   and the `.glsl` binding order must match the C descriptor array exactly — a
+   mismatch is silent corruption, not a build error.
+5. **Patch-stack sync.** A change to any `libpelorus` surface the FFmpeg patches
+   consume updates `ffmpeg-patches/files/` + the regenerated patch in the same
+   PR. Verify with a full series replay (`ffmpeg-patches/test/build-and-run.sh`),
+   not per-patch `git apply --check`.
+6. **Every PR leaves touched files lint-clean** to `-Wall -Wextra -Werror` +
+   clang-tidy. A `// NOLINT` carries an inline citation.
+7. **Every merged commit: 0 warnings · clang-tidy clean · `meson test
+   --suite=fast` green · the deband shader compiles (glslang).**
+
+See [docs/principles.md](docs/principles.md) for the full Power-of-10,
+SEI-CERT-C, style, and Vulkan-usage contract, and [CONTRIBUTING.md](CONTRIBUTING.md)
+for the per-PR deliverables (ADRs, per-surface docs, changelog fragments).
+
+## Repository layout
+
+```text
+Pelorus/
+├── meson.build  meson_options.txt   # build root (libpelorus + tests + shaders)
+│
+├── libpelorus/                       # the shared core (vendored by vmafx too)
+│   ├── include/pelorus/
+│   │   ├── pelorus.h                 #   umbrella: version, pel_result
+│   │   ├── interop.h                 #   the Pelorus<->vmafx side-data ABI
+│   │   └── deband.h                  #   smart-deband parameter contract
+│   ├── src/                          #   interop.c (pack/parse), deband_params.c
+│   ├── shaders/                      #   standalone reference .comp shaders
+│   └── test/                         #   interop ABI conformance fixture
+│
+├── ffmpeg-patches/                   # vf_pelorus_* filters, stacked vs n9.0.1
+│   ├── files/                        #   canonical filter sources (edit here)
+│   │   └── vulkan/                   #     per-filter .comp.glsl -> build-time SPIR-V
+│   ├── 0001-*.patch  series.txt      #   generated artifacts + apply order
+│   ├── generate.sh                   #   regenerate patches from files/
+│   └── test/build-and-run.sh         #   apply + build + smoke-test gate
+│
+├── docs/
+│   ├── principles.md                 #   the coding + Vulkan-usage contract
+│   ├── adr/                          #   Architecture Decision Records (Nygard)
+│   ├── architecture/ api/ metrics/   #   per-surface docs (C4, interop, filters)
+│   ├── usage/ backends/ development/  #   pipeline, Vulkan path, build/release
+│   └── research/                     #   deep-dive digests
+│
+├── tools/                            # libpelorus CLI demonstrators (not installed)
+│   └── pelorus_qp_report.c           #   x265 --csv -> PEL_SEC_QPREPORT (ADR-0122)
+│
+├── changelog.d/                      # Keep-a-Changelog fragments (rendered)
+└── AGENTS.md  CLAUDE.md  CONTRIBUTING.md  README.md
 ```
 
-## Where the code is
+Per-subdirectory `AGENTS.md` files give unit-level conventions + the
+rebase-sensitive invariants.
 
-- `libpelorus/include/pelorus/interop.h` — the side-data ABI (the cross-repo
-  contract; append-only).
-- `libpelorus/src/interop.c` — pack/parse; **vendored verbatim by vmafx too**.
-- `libpelorus/shaders/pelorus_deband.comp` — standalone reference shader.
-- `ffmpeg-patches/files/vf_pelorus_deband_vulkan.c` — the in-tree filter (inline
-  GLSL). Keep its algorithm in lockstep with the `.comp`.
+## Common tasks
 
-## Skills available
-
-In `.claude/skills/` (invoke via `/<name>`):
-
-| Skill | When |
+| Task | Command |
 |---|---|
-| `build` | configure + build + fast test (the local gate) |
-| `format-all` / `lint-all` | clang-format / clang-tidy + shader compile |
-| `add-vulkan-filter` | scaffold a new `vf_pelorus_*` filter end-to-end |
-| `ffmpeg-build-patches` / `ffmpeg-apply-patches` | regenerate / apply+build the patch stack |
-| `new-adr` | reserve + create an ADR before the commit |
-| `bump-abi` | extend the interop ABI the append-only way |
-| `render-changelog` | render CHANGELOG from `changelog.d/` fragments |
-| `cut-release` | version bump + tag → release workflow |
+| Configure + build | `meson setup build && ninja -C build` |
+| Fast test gate | `meson test -C build --suite=fast` |
+| Install (for the FFmpeg patches) | `ninja -C build install` |
+| Regenerate FFmpeg patches | `cd ffmpeg-patches && ./generate.sh` |
+| Apply + build + smoke FFmpeg | `ffmpeg-patches/test/build-and-run.sh` |
+| Lint | `clang-format --dry-run -Werror` + `clang-tidy` on touched files |
+| Reserve an ADR number | `scripts/adr/next-free.sh --claim <slug>` |
 
-Plus the vendored [obra/superpowers](https://github.com/obra/superpowers)
-meta-skills under `.claude/skills/superpowers/` (verification-before-completion,
-systematic-debugging, test-driven-development, requesting/receiving-code-review,
-using-git-worktrees, …) — use them as the template for new skills and as process
-guidance. Review subagents live in `.claude/agents/` (c-reviewer,
-vulkan-shader-reviewer, interop-abi-reviewer, ffmpeg-patch-reviewer, doc-reviewer,
-pr-body-checker). Curated topic links: [docs/references.md](docs/references.md).
+## Pinned upstream references
 
-## Hooks active
+| Component | Version |
+|---|---|
+| FFmpeg base for the patch stack | `n9.0.1` |
+| FFmpeg Vulkan filter model | `libavfilter/vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c` |
+| AV1 film-grain struct mirrored by interop §(d) | `libavutil/film_grain_params.h` |
+| vmafx control plane (autotune) | `libvmaf_tune` filter, `vmafx-server` `/v1/score`, `vmaf-mcp` |
 
-In `.claude/hooks/` (wired in `.claude/settings.json`):
+## When in doubt
 
-- **PreToolUse(Bash)** `block-unsafe-bash` — blocks `rm -rf /`, force-push to
-  master, hard-reset onto origin/master, `git clean -xf`, fork bombs.
-- **PostToolUse(Edit|Write)** `auto-format-on-edit` (clang-format C/H),
-  `shader-lockstep-warn` (.comp ⇄ filter inline GLSL), `docs-drift-warn`
-  (ABI/surface/build-flag → docs/ADR/changelog/patch reminders).
-- **SessionStart** `session-start` — branch + PLAN/STATE orientation, build staleness.
-- **Stop** `stop` — reminds to run the local gate when sources are unverified.
+Read [docs/principles.md](docs/principles.md), then the per-subdirectory
+`AGENTS.md` for the area you're touching. Decisions live in
+[docs/adr/](docs/adr/); the project plan + current status live in
+`.workingdir/PLAN.md` + `.workingdir/STATE.md` (local, gitignored).
 
-## Tone
+## Text Register
 
-- Be terse. No preamble.
-- When changing the `libpelorus` public ABI: write the `Migration:` footer in
-  the commit body, with before/after C snippets, and bump `PELORUS_ABI_MINOR`.
-- When adding a dependency: state the alternative you considered and why this
-  one wins, in the ADR.
-- Never add static-init side effects. Lifecycle is explicit.
+<!-- praetor:register:start -->
+Register follows the audience, then the task label of your brief (`register:` in `.standards.yaml`; labels are the router's `target_tasks`).
 
-## Don't
+| Register | Where | Form |
+| :--- | :--- | :--- |
+| social | forge: issues, PR bodies, review comments, commit bodies | `social-text` skill: BLUF, full sentences, scannable, enough and no more; conventional commit subject unchanged; changelog fragment unchanged |
+| docs | docs/, README, ADR bodies | complete without bloat: newcomer path first, expert reference after; every claim points at a file, command or test; no restated code |
+| internal | briefs, agent-to-agent traffic, research fan-outs, workflow returns | `caveman` skill: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict |
 
-- Don't edit the two deband implementations independently — the `.comp` and the
-  filter's inline GLSL must stay in lockstep (AGENTS.md hard rule 4).
-- Don't reorder/resize/remove a field in any `PelorusSideData` struct — it is a
-  frozen wire ABI (interop.h R1/R2). Append only; new meaning = new section bit.
-- Don't hand-edit a generated `*.patch` — edit `ffmpeg-patches/files/` and rerun
-  `generate.sh`.
-- Don't `printf`/`fprintf(stderr,...)` from library code paths meant to be
-  embeddable; return a `pel_result` and let the host log.
-- Don't silence a linter without an inline justification next to the `// NOLINT`.
-- Don't create new top-level markdown docs unless the task needs them; extend
-  the existing `docs/` topic tree.
-
-## Per-PR deliverables (mirrors vmafx)
-
-Every non-trivial PR ships, in the same PR: an **ADR** (claim the number with
-`scripts/adr/next-free.sh --claim <slug>`), **per-surface docs** under `docs/`,
-a **changelog.d fragment**, and — for anything touching a surface the FFmpeg
-patches consume — the **regenerated patch**. See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Project state
-
-- Tagged `v0.1.0`, but master is far ahead of that tag: **11 filters + 1 BSF**
-  ship as an 18-patch stack. Working: deband, analyze, denoise, grain_estimate,
-  mc, dehalo, aa, deblock, borderfix, scenecut, and the `pelorus_fgs` BSF, plus
-  the NVENC / QSV / Vulkan / libaom / SVT-AV1 encoder-steering patches and the
-  QP-feedback path. Interop ABI is at **1.3**. Nothing in the module list is a
-  stub any more — treat the README "Modules" table as the current inventory.
-- **Base tag is FFmpeg `n9.0.1`** (migrated from n8.1.1; FFmpeg 9 deleted the
-  runtime inline-GLSL shader API, so filters now ship precompiled SPIR-V — see
-  `.workingdir/FFMPEG9-MIGRATION-BRIEF.md`).
-- Plan + status: `.workingdir/PLAN.md` and `.workingdir/STATE.md` (local), plus
-  `.workingdir/AUDIT-2026-08-30.md` for the open maintenance backlog.
-
-## Every commit: keep docs + state in sync
-
-- Update `.workingdir/STATE.md` session log with the commit summary.
-- Update [README.md](README.md) "Landed so far" when a build-order step lands.
-- Update [AGENTS.md](AGENTS.md) layout tree when adding top-level packages.
-- Write a per-subpackage `AGENTS.md` for any new module.
-- Land the ADR + per-surface docs + changelog fragment in the same PR.
+- Task rows: social = commit_message_synthesis, waiver_signoff; docs = architecture_synthesis, function_docstrings; every other label and any unlabeled text = internal. Subagent launch brief: `caveman` brief shape with `task:` = routing label.
+- Evidence above 58 lines or 1500 tokens leaves the message as a file under `.workingdir/evidence/`; return `evidence: <path> sha256:<12 hex> lines:<n>` and fetch it only when a decision needs it.
+- An internal return carries verdict, changed paths, commands run, evidence pointers and open questions, nothing else.
+<!-- praetor:register:end -->

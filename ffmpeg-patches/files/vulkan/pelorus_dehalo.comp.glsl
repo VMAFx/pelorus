@@ -181,7 +181,18 @@ void dehalo(ivec2 pos, int idx)
     }
     float ring_mask = (near_line && !on_line) ? 1.0 : 0.0;
     float result = mix(c, out_v, ring_mask);
-    imageStore(output_images[idx], pos, vec4(clamp(result, 0.0, 1.0)));
+    /* Component-preserving store: dehalo() only ever computes the FIRST
+     * component (every read above is pel_luma(), i.e. `.x`), so only `.x` may
+     * be written back. Splatting the scalar over a synthesised vec4 destroyed
+     * every other component the plane view carries — V on a semi-planar chroma
+     * plane (NV12/P010/NV16/NV24/P016 with planes=3) and G/B/A on a packed
+     * format. Re-load the source texel and replace just `.x`; on a
+     * single-component plane view (the planar-YUV default) the other lanes are
+     * ignored, so this is a no-op there. Same form as pelorus_deband. Note
+     * output_images is `writeonly`, so the texel must come from input_images. */
+    vec4 px = imageLoad(input_images[idx], pos);
+    px.x = clamp(result, 0.0, 1.0);
+    imageStore(output_images[idx], pos, px);
 }
 
 void main()

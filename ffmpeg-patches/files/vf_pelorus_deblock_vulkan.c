@@ -51,10 +51,11 @@ typedef struct PelorusDeblockVulkanContext {
     struct {
         int32_t bsize;  /* prior codec block size (DCT grid, usually 8)     */
         int32_t edge;   /* half-width of the deblocked band (px)            */
-        float thr;      /* cross-boundary step below which it is artefact   */
+        float thr;      /* opt_thr scaled into the container's units        */
         float str;      /* deblock strength [0,1]                           */
     } opts;
 
+    float opt_thr; /* AVOption `thr`: fraction of the *data* range          */
     int planes; /* plane bitmask to process (luma-only by default)          */
 } PelorusDeblockVulkanContext;
 
@@ -65,6 +66,26 @@ typedef struct PelorusDeblockVulkanContext {
 extern const unsigned char ff_pelorus_deblock_comp_spv_data[];
 extern const unsigned int  ff_pelorus_deblock_comp_spv_len;
 
+/* FF_VK_REP_FLOAT normalizes against the storage container, not the bit depth.
+ * FFmpeg's Vulkan hwcontext puts an LSB-packed sub-16-bit sample (yuv420p10le,
+ * yuv444p12le, gray10, ...) into a 16-bit UNORM container *unshifted*, so the
+ * shader sees raw/65535 and a sample only spans [0, (2^depth - 1)/65535] — 1/64
+ * of full scale at 10 bit, 1/16 at 12 bit. `thr` is documented as a fraction of
+ * the data range and is only ever compared against sample differences, so it is
+ * scaled here on the host and the shader keeps its [0,1] form. 8-bit formats use
+ * an 8-bit container and P010/P016 are MSB-aligned (shift != 0): both already
+ * fill the container, so they scale by exactly 1.0 and are bit-identical. */
+static float pel_depth_scale(enum AVPixelFormat sw_format)
+{
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(sw_format);
+
+    if (!desc || desc->comp[0].depth >= 16 ||
+        desc->comp[0].step != 2 || desc->comp[0].shift != 0)
+        return 1.0f;
+
+    return (float)((1 << desc->comp[0].depth) - 1) / 65535.0f;
+}
+
 static av_cold int init_filter(AVFilterContext *ctx)
 {
     int err = 0;
@@ -72,6 +93,8 @@ static av_cold int init_filter(AVFilterContext *ctx)
     FFVulkanContext *vkctx = &s->vkctx;
     FFVulkanShader *shd = &s->shd;
     const int planes = av_pix_fmt_count_planes(vkctx->output_format);
+
+    s->opts.thr = s->opt_thr * pel_depth_scale(vkctx->input_format);
 
     s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
     if (!s->qf) {
@@ -182,7 +205,7 @@ static const AVOption pelorus_deblock_vulkan_options[] = {
       AV_OPT_TYPE_INT, { .i64 = 8 }, 2, 64, FLAGS },
     { "edge", "half-width of the deblocked band around a boundary (px)", OFFSET(opts.edge),
       AV_OPT_TYPE_INT, { .i64 = 1 }, 0, 8, FLAGS },
-    { "thr", "cross-boundary step below which it is an artefact (normalized)", OFFSET(opts.thr),
+    { "thr", "cross-boundary step below which it is an artefact (normalized)", OFFSET(opt_thr),
       AV_OPT_TYPE_FLOAT, { .dbl = 0.06 }, 0.0, 1.0, FLAGS },
     { "str", "deblock strength (blend toward the low-pass)", OFFSET(opts.str),
       AV_OPT_TYPE_FLOAT, { .dbl = 0.6 }, 0.0, 1.0, FLAGS },

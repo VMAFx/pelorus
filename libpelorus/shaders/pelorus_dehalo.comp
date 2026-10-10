@@ -182,6 +182,15 @@ void main() {
 
     float result = mix(c, out_v, ring_mask);
 
+    /* Component-preserving store (the uint-domain twin of the in-tree shader's
+     * fix): main() only ever computes the FIRST component -- every read goes
+     * through load_norm(), i.e. `.r` -- so only `.r` may be written back.
+     * Synthesising the other lanes zeroes whatever the plane view carries in
+     * them; on r16ui here that is inert, but the in-tree filter runs against
+     * multi-component plane views (semi-planar chroma, packed formats) where it
+     * destroyed V / G,B,A. Load the source texel, replace `.r`, store it whole. */
     int outv = clamp(int(round(result * 65535.0)), 0, 65535);
-    imageStore(dstImg, ivec2(x, y), uvec4(uint(outv), 0u, 0u, 0u));
+    uvec4 px = imageLoad(srcImg, ivec2(x, y));
+    px.r = uint(outv);
+    imageStore(dstImg, ivec2(x, y), px);
 }
