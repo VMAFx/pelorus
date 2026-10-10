@@ -14,7 +14,7 @@ ffmpeg-patches/
 │   ├── pelorus_vulkan_sample.h
 │   └── vulkan/*.comp.glsl   canonical shipped shader sources
 ├── .commit-msg-*.txt        synthetic commit messages
-├── 0001-*.patch … 0022-*    generated cumulative patch series
+├── 0001-*.patch … 0023-*    generated cumulative patch series
 ├── series.txt               apply order
 ├── generate.sh              deterministic isolated regeneration
 └── test/build-and-run.sh    pinned replay, build, link, and smoke gate
@@ -132,6 +132,13 @@ ffmpeg-patches/
    identity, neutralizes signing, hooks, and diff ordering, and passes
    `--no-gpg-sign --no-verify`. Do not rely on workstation's global Git
    configuration; hosted runner intentionally has no identity.
+12. Patch 0023 = QSV `udu_sei` SEI budget (#286). Needs 0019 (changes its
+   `qsvenc_add_udu_payloads()`) and 0022 (`pelorus_sei_fit.h`).
+   `files/pelorus_sei_fit_qsv.h` = per-picture budget (sum of `mfxPayload.BufSize`;
+   H.264 adds emulation prevention bytes), reuses 0022 stripper; plain blob form,
+   never the NVENC carrier. Budgets 4040 B HEVC, 40960 B H.264, margin under
+   Arc A380 limits (docs/usage/ffmpeg.md). Fast test `sei-fit` covers it.
+   GPU proof = `tools/tester` `sidedata_roundtrip` on `hevc_qsv`, `h264_qsv`.
 
 ## Required checks
 
@@ -140,7 +147,7 @@ Before calling patch-stack change complete:
 1. format touched C and shell-check touched shell;
 2. compile all canonical GLSL and run Pelorus fast suite;
 3. regenerate twice and compare bytes;
-4. replay all 22 patches at pinned FFmpeg commit;
+4. replay all 23 patches at pinned FFmpeg commit;
 5. build/link/smoke relevant feature-enabled FFmpeg configuration;
 6. install static FFmpeg libraries and compile/run external
    `pkg-config --static libavfilter` consumer, asserting its link flags include

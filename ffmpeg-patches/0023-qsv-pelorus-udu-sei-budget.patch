@@ -1,0 +1,341 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lusoris <lusoris@pm.me>
+Date: Thu, 1 Jan 2026 00:00:00 +0000
+Subject: [PATCH 23/23] fix(qsv): budget udu_sei per picture on hevc_qsv and
+ h264_qsv
+
+With udu_sei=1, hevc_qsv and h264_qsv handed the runtime every
+SEI_UNREGISTERED entry whole. Larger payloads damage the encoded access
+unit: no picture of a hevc_qsv stream decodes (a 4 091-byte payload is
+enough) and the encode fails from about 11 KB; the h264_qsv encode
+fails from about 42 KB. A Pelorus analyze blob at 1080p with
+32-pixel cells (12 424 bytes) hit it on hevc_qsv.
+
+The limit is per picture, not per payload: the sum of the
+mfxPayload.BufSize values (SEI message type, size bytes and payload)
+passed in one mfxEncodeCtrl. h264_qsv also counts the emulation
+prevention bytes of the payloads. Per picture budget:
+
+- hevc_qsv: 4 040 bytes. The runtime damages the picture past 4 107.
+- h264_qsv: 40 960 bytes. The encode fails past about 42 420.
+
+The payloads the stock A/53 callback already queued are charged first.
+Each SEI_UNREGISTERED entry, in frame order, is then:
+
+- fits: written whole;
+- a Pelorus blob that does not fit: written without the per-cell maps
+  appended after its sections (every scalar stays, each map offset and
+  size is zero, the ABI's absent map), as hevc_nvenc does (ADR-0181);
+- anything else that does not fit: not written.
+
+QSV writes a Pelorus blob in its plain form; the zero-free carrier is
+for NVENC. The first stripped blob and the first dropped payload are
+warnings, later ones verbose, and the totals are a warning at close. The
+budget arithmetic is libavcodec/pelorus_sei_fit_qsv.h, built on
+pelorus_sei_fit.h from patch 0022, and tested by the Pelorus fast suite.
+
+Measured on an Arc A380 (iHD 26.3.5, vpl-gpu-rt 26.3.5, libvpl 2.17.0),
+at 640x360, 1920x1080 and 3840x2160 alike. Depends on patches 0019 and
+0022.
+
+Known issue, not fixed here: h264_qsv with udu_sei can crash
+intermittently inside Intel's QSV runtime, more often with larger
+payloads. It reproduces with stock FFmpeg, so Pelorus does not cause it
+and the budget does not prevent it.
+---
+ libavcodec/pelorus_sei_fit_qsv.h | 133 ++++++++++++++++++++
+ libavcodec/qsvenc.c              |  89 +++++++++++--
+ libavcodec/qsvenc.h              |   2 +
+ 3 files changed, 212 insertions(+), 12 deletions(-)
+
+diff --git a/libavcodec/pelorus_sei_fit_qsv.h b/libavcodec/pelorus_sei_fit_qsv.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..8c5e56e74bcde9b8dcd2e599d9ae40104c89a114
+--- /dev/null
++++ b/libavcodec/pelorus_sei_fit_qsv.h
+@@ -0,0 +1,133 @@
++/*
++ * Copyright 2026 Lusoris
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or modify it under
++ * the terms of the GNU Lesser General Public License as published by the
++ * Free Software Foundation; either version 2.1 of the License, or (at
++ * your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
++ * License for more details.
++ */
++
++/*
++ * Fit user data unregistered SEI payloads into the SEI space the Intel QSV
++ * runtime reserves per picture (issue #286). Plain C with no libav* and no
++ * libpelorus dependency: libavcodec/qsvenc.c includes it, and Pelorus's fast
++ * suite tests it (ffmpeg-patches/test/sei_fit_test.c). The Pelorus blob
++ * stripper is pelorus_sei_fit.h's (patch 0022); this file only adds the QSV
++ * budget and its cost model.
++ *
++ * Measured on an Intel Arc A380 (iHD 26.3.5, vpl-gpu-rt 26.3.5, libvpl 2.17.0),
++ * 1080p, 640x360 and 2160p alike, docs/usage/ffmpeg.md:
++ *
++ * - The limit is per picture, not per payload: it is the sum of the
++ *   mfxPayload.BufSize values (SEI message type byte, size bytes, payload)
++ *   passed in one mfxEncodeCtrl. hevc_qsv damages the access unit once that
++ *   sum passes 4 107 bytes (one payload of UUID + data = 4 089 bytes, or two
++ *   of 2 043 and 2 044). Emulation prevention bytes do not count. h264_qsv
++ *   fails the encode once the sum plus the emulation prevention bytes of the
++ *   payloads passes about 42 420 bytes (42 255 bytes in one payload, or two of
++ *   21 125); a zero-heavy payload hits it earlier.
++ * - Both budgets stay below that with a margin: 4 040 bytes (67 bytes, 1.6 %)
++ *   for HEVC and 40 960 bytes (about 1 460 bytes, 3.4 %) for H.264. The
++ *   margin covers SEI the runtime writes on its own (pic_timing, buffering
++ *   period) in case it shares the space.
++ *
++ * H.264 emulation prevention bytes are counted per payload in isolation: the
++ * bytes of payloads already queued (the A/53 caption payload) and the type and
++ * size header bytes of the message are not scanned, so a run of zeros across
++ * such a boundary can add a byte or two the cost misses. The 3.4 % margin
++ * covers that.
++ *
++ * A Pelorus blob that does not fit is written without the per-cell maps after
++ * its sections (pel_sei_scalar_len() and pel_sei_strip_maps(), the same
++ * stripping hevc_nvenc applies, ADR-0181); anything else that does not fit,
++ * and a blob that still does not fit, is dropped. QSV writes a Pelorus blob in
++ * its plain form: the zero-free carrier of ADR-0183 is for NVENC.
++ */
++
++#ifndef AVCODEC_PELORUS_SEI_FIT_QSV_H
++#define AVCODEC_PELORUS_SEI_FIT_QSV_H
++
++#include "pelorus_sei_fit.h"
++
++/* Per picture, bytes of mfxPayload.BufSize (plus, for H.264, emulation
++ * prevention bytes). */
++#define PEL_SEI_QSV_HEVC_BUDGET 4040u
++#define PEL_SEI_QSV_H264_BUDGET 40960u
++
++/* Bytes of the SEI message the encoder is handed for an `n`-byte payload:
++ * type byte, n / 255 + 1 size bytes, the payload (mfxPayload.BufSize). */
++static inline size_t pel_sei_qsv_msg_len(size_t n)
++{
++    return n + n / 255u + 2u;
++}
++
++/* Budget bytes the `n`-byte payload `p` costs. `escaped` is 1 for H.264, whose
++ * runtime counts the emulation prevention bytes. Only a payload that can fit
++ * `limit` is scanned; a larger one returns more than `limit`. */
++static inline size_t pel_sei_qsv_cost(const uint8_t *p, size_t n, int escaped, size_t limit)
++{
++    const size_t msg = pel_sei_qsv_msg_len(n);
++
++    if (!escaped || n > limit || !p)
++        return msg;
++    return msg + pel_sei_epb(p, n);
++}
++
++/* Upper bound on the emulation prevention bytes the zeroed map fields of a
++ * stripped blob add (five 8-byte fields: at most one byte per two zeros). */
++#define PEL_SEI_QSV_STRIP_SLACK 24u
++
++/*
++ * How many bytes of the `n`-byte payload `p` to write when `budget` bytes are
++ * left in the picture, decided without a copy so that a payload to drop is
++ * never allocated: `n` when it fits whole, the length of the Pelorus blob
++ * without its maps when that fits (an upper bound on its cost, so
++ * pel_sei_qsv_fit() below never refuses it), 0 to drop.
++ */
++static inline size_t pel_sei_qsv_plan(const uint8_t *p, size_t n, int escaped, size_t budget)
++{
++    size_t keep;
++
++    if (pel_sei_qsv_cost(p, n, escaped, budget) <= budget)
++        return n;
++    keep = pel_sei_scalar_len(p, n);
++    if (!keep)
++        return 0;
++    return pel_sei_qsv_cost(p, keep, escaped, budget) + (escaped ? PEL_SEI_QSV_STRIP_SLACK : 0u) <=
++                   budget
++               ? keep
++               : 0;
++}
++
++/*
++ * Decide what to write of the `n`-byte payload `p` when `budget` bytes are
++ * left in the picture. `out` holds `n` bytes and does not overlap `p`.
++ * Returns the number of bytes copied to `out` to write: `n` when the whole
++ * payload fits, the length of the Pelorus blob without its maps (UUID
++ * included, maps zeroed in the copy) when only that fits, 0 to drop it.
++ */
++static inline size_t pel_sei_qsv_fit(const uint8_t *p, size_t n, int escaped, size_t budget,
++                                     uint8_t *out)
++{
++    size_t keep;
++
++    if (pel_sei_qsv_cost(p, n, escaped, budget) <= budget) {
++        memcpy(out, p, n);
++        return n;
++    }
++    keep = pel_sei_scalar_len(p, n);
++    if (!keep)
++        return 0;
++    memcpy(out, p, keep);
++    pel_sei_strip_maps(out, keep);
++    return pel_sei_qsv_cost(out, keep, escaped, budget) <= budget ? keep : 0;
++}
++
++#endif /* AVCODEC_PELORUS_SEI_FIT_QSV_H */
+diff --git a/libavcodec/qsvenc.c b/libavcodec/qsvenc.c
+index a7e1a5521b0c11032ace4db821a1b8d1c4abd7ff..a494f98d69ec24b1e20830e56a883e1e8711bb25 100644
+--- a/libavcodec/qsvenc.c
++++ b/libavcodec/qsvenc.c
+@@ -40,6 +40,7 @@
+ #include "encode.h"
+ #include "qsv.h"
+ #include "qsv_internal.h"
++#include "pelorus_sei_fit_qsv.h"
+ #include "qsvenc.h"
+ #include "libavutil/refstruct.h"
+ 
+@@ -1956,22 +1957,63 @@ int ff_qsv_enc_init(AVCodecContext *avctx, QSVEncContext *q)
+     return 0;
+ }
+ 
++/* Pelorus: the QSV runtime reserves a fixed SEI space per picture and damages
++ * the access unit or fails the encode beyond it (issue #286,
++ * pelorus_sei_fit_qsv.h). Return what is left of it after the payloads already
++ * in enc_ctrl (the A/53 caption payload). */
++static size_t qsvenc_udu_budget(const AVCodecContext *avctx, const mfxEncodeCtrl *enc_ctrl)
++{
++    size_t budget = avctx->codec_id == AV_CODEC_ID_HEVC ? PEL_SEI_QSV_HEVC_BUDGET
++                                                         : PEL_SEI_QSV_H264_BUDGET;
++
++    for (int i = 0; i < enc_ctrl->NumPayload && i < QSV_MAX_ENC_PAYLOAD; i++) {
++        const size_t used = enc_ctrl->Payload[i]->BufSize;
++        budget = used < budget ? budget - used : 0;
++    }
++    return budget;
++}
++
++static void qsvenc_udu_log(AVCodecContext *avctx, QSVEncContext *q, const AVFrame *frame,
++                           const AVFrameSideData *sd, size_t kept)
++{
++    int first = kept ? !q->udu_sei_stripped : !q->udu_sei_dropped;
++    int level = first ? AV_LOG_WARNING : AV_LOG_VERBOSE;
++
++    if (kept) {
++        q->udu_sei_stripped++;
++        av_log(avctx, level, "udu_sei: frame pts %"PRId64": the %zu-byte Pelorus side "
++               "data is written without its per-cell maps (%zu bytes): the QSV runtime "
++               "reserves too little SEI space per picture for more.\n",
++               frame->pts, sd->size, kept);
++    } else {
++        q->udu_sei_dropped++;
++        av_log(avctx, level, "udu_sei: frame pts %"PRId64": a %zu-byte user data "
++               "unregistered SEI is not written: it does not fit the SEI space the QSV "
++               "runtime reserves per picture.\n", frame->pts, sd->size);
++    }
++}
++
+ /**
+  * Append one SEI user-data-unregistered payload (type 5) per
+  * AV_FRAME_DATA_SEI_UNREGISTERED side-data entry of the frame to enc_ctrl, in
+  * the slots the stock A/53 callback left free. The payload buffer carries the
+  * SEI message header (type, size) in front of the UUID and data, like the A/53
+  * payload in qsvenc_h264.c. Freed with the other payloads in free_encoder_ctrl.
++ * A payload that does not fit the picture's SEI budget is written without the
++ * maps of a Pelorus blob, or not at all (pel_sei_qsv_fit()).
+  */
+ static int qsvenc_add_udu_payloads(AVCodecContext *avctx, QSVEncContext *q,
+                                    const AVFrame *frame, mfxEncodeCtrl *enc_ctrl)
+ {
++    const int escaped = avctx->codec_id != AV_CODEC_ID_HEVC;
++    size_t budget = qsvenc_udu_budget(avctx, enc_ctrl);
++
+     for (int i = 0; i < frame->nb_side_data; i++) {
+         const AVFrameSideData *sd = frame->side_data[i];
+-        size_t hdr = 2 + sd->size / 255;
++        const size_t hdr = 2 + sd->size / 255;
+         mfxPayload *payload;
+         mfxU8 *data;
+-        size_t size;
++        size_t keep, hdr_keep, cost;
+ 
+         if (sd->type != AV_FRAME_DATA_SEI_UNREGISTERED || sd->size < 16)
+             continue;
+@@ -1987,20 +2029,35 @@ static int qsvenc_add_udu_payloads(AVCodecContext *avctx, QSVEncContext *q,
+         /* NumBit is an mfxU32: payload size in bits must not overflow it. */
+         if (sd->size > UINT32_MAX / 8 - 16)
+             return AVERROR(EINVAL);
+-        size = hdr + sd->size;
+-        payload = av_mallocz(sizeof(*payload) + size);
++        keep = pel_sei_qsv_plan(sd->data, sd->size, escaped, budget);
++        if (!keep) {
++            qsvenc_udu_log(avctx, q, frame, sd, 0);
++            continue;
++        }
++        payload = av_mallocz(sizeof(*payload) + hdr + sd->size);
+         if (!payload)
+             return AVERROR(ENOMEM);
+-        data    = (mfxU8 *)(payload + 1);
+-        data[0] = 5;                       /* user_data_unregistered */
+-        memset(data + 1, 0xFF, sd->size / 255);
+-        data[1 + sd->size / 255] = sd->size % 255;
+-        memcpy(data + hdr, sd->data, sd->size);
+-
+-        payload->BufSize = size;
+-        payload->NumBit  = size * 8;
++        data = (mfxU8 *)(payload + 1);
++        keep = pel_sei_qsv_fit(sd->data, sd->size, escaped, budget, data + hdr);
++        if (keep < sd->size)
++            qsvenc_udu_log(avctx, q, frame, sd, keep);
++        if (!keep) {
++            av_free(payload);
++            continue;
++        }
++        /* The header is shorter for a stripped payload: right-align it. */
++        hdr_keep = 2 + keep / 255;
++        data    += hdr - hdr_keep;
++        data[0]  = 5;                      /* user_data_unregistered */
++        memset(data + 1, 0xFF, keep / 255);
++        data[1 + keep / 255] = keep % 255;
++
++        payload->BufSize = hdr_keep + keep;
++        payload->NumBit  = payload->BufSize * 8;
+         payload->Type    = 5;
+         payload->Data    = data;
++        cost   = pel_sei_qsv_cost(data + hdr_keep, keep, escaped, budget);
++        budget = cost < budget ? budget - cost : 0;
+         enc_ctrl->Payload[enc_ctrl->NumPayload++] = payload;
+     }
+     return 0;
+@@ -3058,6 +3115,14 @@ int ff_qsv_enc_close(AVCodecContext *avctx, QSVEncContext *q)
+ {
+     QSVFrame *cur;
+ 
++    if (q->udu_sei_stripped || q->udu_sei_dropped)
++        av_log(avctx, AV_LOG_WARNING, "udu_sei: %"PRId64" frame(s) carried Pelorus side "
++               "data without its per-cell maps and %"PRId64" user data unregistered SEI "
++               "payload(s) were not written, to stay within the SEI space the QSV "
++               "runtime reserves per picture (%u bytes for HEVC, %u for H.264).\n",
++               q->udu_sei_stripped, q->udu_sei_dropped,
++               PEL_SEI_QSV_HEVC_BUDGET, PEL_SEI_QSV_H264_BUDGET);
++
+     if (q->session)
+         MFXVideoENCODE_Close(q->session);
+ 
+diff --git a/libavcodec/qsvenc.h b/libavcodec/qsvenc.h
+index 9243dd5e216a7efad9d1bdd837b38faae98611bb..9cdfad5334587e4c86f5ea21324cc8552ecbe9d6 100644
+--- a/libavcodec/qsvenc.h
++++ b/libavcodec/qsvenc.h
+@@ -287,6 +287,8 @@ typedef struct QSVEncContext {
+     int pelorus_roi_mbqp_warned;  ///< EnableMBQP-cleared fallback warned once
+     int udu_sei;                  ///< carry frame SEI_UNREGISTERED side data as SEI payloads
+     int udu_sei_warned;           ///< dropped-payload warning given once
++    int64_t udu_sei_stripped;     ///< Pelorus blobs written without their maps
++    int64_t udu_sei_dropped;      ///< payloads over the SEI budget, not written
+     int roi_warned;            ///< rate-limit ext-buffer-slot warnings to once
+     int roi_interlaced_warned; ///< rate-limit per-frame fallback warnings to once
+     int low_delay_brc;

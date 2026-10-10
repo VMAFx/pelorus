@@ -27,7 +27,7 @@ Options (`meson_options.txt`):
 ## Software Vulkan lane (Mesa lavapipe)
 
 The `lavapipe` job of `.github/workflows/ci.yml` runs the real shaders of the
-22-patch stack on Mesa lavapipe, so a runner without a GPU still executes all
+23-patch stack on Mesa lavapipe, so a runner without a GPU still executes all
 ten filters with the Khronos validation layer on. Its result is functional
 evidence on software Vulkan, never GPU evidence; the research digest has the
 measurements and the reasoning

@@ -135,7 +135,7 @@ published under version 1, so the version was bumped instead of keeping the
 fields optional with defaults. A later change that removes a field or changes
 its meaning bumps the version again; an added field stays in the same version
 only when it is optional with a default. Tool 0.4.5 adds the optional leg field
-`rate_control` (`cbr_extbrc`, `cbr_hw`) under that rule; tools 0.4.6 and 0.4.7
+`rate_control` (`cbr_extbrc`, `cbr_hw`) under that rule; tools 0.4.6 to 0.4.8
 change no field; a leg without it is
 the stage's own leg.
 
@@ -148,7 +148,7 @@ the stage's own leg.
 | 3 | `registration` | not part of this kit version | `not_run` |
 | 4 | `format_matrix` (GPU) | [`vulkan-format-matrix.sh`](../../ffmpeg-patches/test/vulkan-format-matrix.sh) exits 0 with the validation layer on; every Vulkan diagnostic is on the [allow-list](#validation-gate) | layer absent: `not_run`; script exit 77: `no_device`; no `ffmpeg`: `not_run` |
 | 5 | `steering_smoke` (GPU) | for each usable encoder, 8- and 16-frame encodes both decode to 8 and 16 frames, and the steered bitstream differs from the unsteered one at both lengths; for each QSV encoder, the [bitrate-control legs](#qsv-bitrate-control-legs) decode to every frame within 15 % of the target bitrate or are a named `not_run` | encoder not built, not usable on this host, or without `-pelorus_roi`: a `not_run` leg with the reason; none usable: `not_run` (a bitrate-control leg cannot pass the stage alone) |
-| 6 | `sidedata_roundtrip` (GPU) | `pelorus_analyze_vulkan` + `pelorus_deband_vulkan`, then each usable carrier with `-udu_sei 1` (`hevc_nvenc`, `h264_nvenc`, `hevc_qsv`, `h264_qsv`, `hevc_vulkan`, `h264_vulkan`): every coded picture carries a well-formed `PelorusSideData` blob with the banding and variance sections and distinct `frame_pts` echoes, the decoder returns the blob as frame side data on every picture, and in both places each blob equals the one the analyze filter attached, byte for byte (or, on `hevc_nvenc` only, its [maps-stripped form](#stage-6-side-data-round-trip)); `hevc_nvenc` and `h264_nvenc` carry it as the [zero-free carrier](#stage-6-side-data-round-trip), every other carrier as the plain blob; five cases per carrier | carrier not built, or its encode fails and the same encode without the side data fails too: a `not_run` leg with the encoder's error; none usable: `not_run`; AV1 has no carrier. A carrier whose encode fails only with the side data (baseline encodes) is a `fail` leg, never `not_run` ([ADR-0173](../adr/0173-tester-programme.md)) |
+| 6 | `sidedata_roundtrip` (GPU) | `pelorus_analyze_vulkan` + `pelorus_deband_vulkan`, then each usable carrier with `-udu_sei 1` (`hevc_nvenc`, `h264_nvenc`, `hevc_qsv`, `h264_qsv`, `hevc_vulkan`, `h264_vulkan`): every coded picture carries a well-formed `PelorusSideData` blob with the banding and variance sections and distinct `frame_pts` echoes, the decoder returns the blob as frame side data on every picture, and in both places each blob equals the one the analyze filter attached, byte for byte (or, on `hevc_nvenc`, `hevc_qsv` and `h264_qsv` only, its [maps-stripped form](#stage-6-side-data-round-trip)); `hevc_nvenc` and `h264_nvenc` carry it as the [zero-free carrier](#stage-6-side-data-round-trip), every other carrier as the plain blob; five cases per carrier | carrier not built, or its encode fails and the same encode without the side data fails too: a `not_run` leg with the encoder's error; none usable: `not_run`; AV1 has no carrier. A carrier whose encode fails only with the side data (baseline encodes) is a `fail` leg, never `not_run` ([ADR-0173](../adr/0173-tester-programme.md)) |
 | 7 | `zero_copy_chain` (GPU) | the `-loglevel debug` graph holds no `hwdownload`, `hwupload` or `scale` beyond the allowed edges (below) and contains the Pelorus filters | no device with Vulkan Video decode and encode: `not_run` (the software-encoder leg still runs and can fail) |
 | 8 | `bench` (GPU, opt-in) | non-gating: `scripts/bench/run-bench.py` writes `result.json` for a 4-point CQ ladder; a failure is recorded but never changes the verdict | needs `--bench`, a `vmaf` binary, `hevc_nvenc` or `av1_nvenc`: otherwise `not_run` |
 
@@ -293,10 +293,12 @@ the encoder's input. It then compares, per picture:
   `frame_pts` echo, because a stream lists them in decode order), and
 - the blobs the decoder returns as frame side data (`showinfo` of a decode).
 
-A picture passes when its blob equals the written blob byte for byte. The one
-exception is `hevc_nvenc`, which writes a blob that does not fit its
+A picture passes when its blob equals the written blob byte for byte. The only
+exceptions are `hevc_nvenc`, which writes a blob that does not fit its
 1024-byte header budget without the per-cell maps (patch 0022,
-[ADR-0181](../adr/0181-hevc-nvenc-sei-header-budget.md)): the sections up to
+[ADR-0181](../adr/0181-hevc-nvenc-sei-header-budget.md)), and `hevc_qsv` and
+`h264_qsv`, which do the same for the SEI space the QSV runtime reserves per
+picture (patch 0023, [research 0286](../research/0286-qsv-udu-sei-budget.md)): the sections up to
 the last one, every map offset and size zero, `total_size` the new end. The
 tester builds that form exactly as `pelorus_sei_fit.h` does and accepts nothing
 else; the pass reason says how many pictures were stripped. Any other
@@ -390,6 +392,7 @@ bad case per rule below, and `--self-test --disable <rule>` must exit 1 for each
 | `sd_integrity_count` | a dropped blob, a missing picture, an extra blob |
 | `sd_integrity_bytes` | a truncated blob, one flipped byte, a maps-stripped blob from a carrier that does not strip |
 | `sd_integrity_stripped` | a maps-stripped blob with `total_size` kept, a flipped scalar or map fields left in place |
+| `sd_strip_carriers` | a maps-stripped blob accepted from any carrier but `hevc_nvenc`, `hevc_qsv` and `h264_qsv` (the carrier set that may strip) |
 | `sd_carrier_form` | a plain blob on an NVENC leg; a zero-free carrier on any other leg |
 | `sd_carrier_strict` | a carrier that ends with an empty block after a full one (non-canonical) |
 | `bench_nongating` | a failing bench stage: verdict must stay `pass` |

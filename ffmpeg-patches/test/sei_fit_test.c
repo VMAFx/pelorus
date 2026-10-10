@@ -22,6 +22,14 @@
  * pel_blob_carrier_encode() and turned back into the blob by pel_blob_unwrap();
  * the budget is charged for the carrier, so flat maps that fit as a carrier
  * keep them, and a payload from another producer is never converted.
+ *
+ * QSV (issue #286, pelorus_sei_fit_qsv.h): the per-picture budget counts the
+ * SEI message as handed to the runtime, plus emulation prevention bytes on
+ * H.264 only. Positive: the 1080p blob loses its maps on hevc_qsv, byte-identical
+ * to the maps=0 blob, and fits whole on h264_qsv. Negative: a foreign payload
+ * and a blob whose scalars exceed the budget are dropped, never cut. Boundary:
+ * the largest payload that fits and one byte more, the sum over payloads, and
+ * budgets that stay under the A380 limits (4 107 and about 42 420 bytes).
  */
 
 #include <stddef.h>
@@ -32,6 +40,7 @@
 
 #include "pelorus_analyze_maps.h"
 #include "pelorus_sei_fit.h"
+#include "pelorus_sei_fit_qsv.h"
 
 /* NOLINTBEGIN(modernize-use-nullptr): C translation unit kept buildable by MSVC's
  * C mode, which has no `nullptr` (same decision as interop_test.c). */
@@ -438,6 +447,157 @@ static void test_carrier_only_for_blobs(TestCtx *t)
     free(b.bytes);
 }
 
+_Static_assert(PEL_SEI_QSV_HEVC_BUDGET < 4107u, "hevc_qsv budget under the measured limit");
+_Static_assert(PEL_SEI_QSV_H264_BUDGET < 42422u, "h264_qsv budget under the measured limit");
+
+/* Fit `n` bytes of `p` into `*budget` as the QSV encoder does: charge what is
+ * written. Returns the bytes kept; `out` (n bytes) holds them. */
+static size_t qsv_charge(const uint8_t *p, size_t n, int escaped, size_t *budget, uint8_t *out)
+{
+    const size_t keep = pel_sei_qsv_fit(p, n, escaped, *budget, out);
+    const size_t cost = keep ? pel_sei_qsv_cost(out, keep, escaped, *budget) : 0u;
+
+    *budget -= cost;
+    return keep;
+}
+
+static void test_qsv_message_len(TestCtx *t)
+{
+    CHECK(pel_sei_qsv_msg_len(16u) == 18u);
+    CHECK(pel_sei_qsv_msg_len(254u) == 256u);
+    CHECK(pel_sei_qsv_msg_len(255u) == 258u); /* size 255 is 0xFF 0x00 */
+    CHECK(pel_sei_qsv_msg_len(4089u) == 4107u);
+    CHECK(pel_sei_qsv_msg_len(42255u) == 42422u);
+}
+
+static void test_qsv_boundary(TestCtx *t)
+{
+    static uint8_t in[5000];
+    static uint8_t out[5000];
+    size_t budget = PEL_SEI_QSV_HEVC_BUDGET;
+
+    memset(in, 0x61, sizeof(in));
+    /* The largest payload that fits 4 040 bytes, and one byte more. */
+    CHECK(pel_sei_qsv_msg_len(4023u) == PEL_SEI_QSV_HEVC_BUDGET);
+    CHECK(qsv_charge(in, 4023u, 0, &budget, out) == 4023u && budget == 0u);
+    budget = PEL_SEI_QSV_HEVC_BUDGET;
+    CHECK(qsv_charge(in, 4024u, 0, &budget, out) == 0u && budget == PEL_SEI_QSV_HEVC_BUDGET);
+    /* Per picture: two 2 000-byte payloads cost 4 018 bytes and leave 22. */
+    budget = PEL_SEI_QSV_HEVC_BUDGET;
+    CHECK(qsv_charge(in, 2000u, 0, &budget, out) == 2000u);
+    CHECK(qsv_charge(in, 2000u, 0, &budget, out) == 2000u && budget == 22u);
+    CHECK(qsv_charge(in, 100u, 0, &budget, out) == 0u);
+}
+
+static void test_qsv_sum_over_payloads(TestCtx *t)
+{
+    static uint8_t in[2100];
+    static uint8_t out[2100];
+    size_t budget = PEL_SEI_QSV_HEVC_BUDGET;
+
+    memset(in, 0x61, sizeof(in));
+    /* Each payload fits alone; 2 x 2 033 = 4 066 bytes does not fit a picture. */
+    CHECK(qsv_charge(in, 2023u, 0, &budget, out) == 2023u);
+    CHECK(qsv_charge(in, 2023u, 0, &budget, out) == 0u);
+}
+
+static void test_qsv_emulation_prevention(TestCtx *t)
+{
+    static uint8_t zeros[28000];
+    static uint8_t out[28000];
+
+    /* hevc_qsv does not count emulation prevention bytes: 4 000 zeros fit. */
+    CHECK(pel_sei_qsv_fit(zeros, 4000u, 0, PEL_SEI_QSV_HEVC_BUDGET, out) == 4000u);
+    /* h264_qsv does: 4 000 zeros need 1 999 more bytes. */
+    CHECK(pel_sei_qsv_cost(zeros, 4000u, 1, SIZE_MAX) == pel_sei_qsv_msg_len(4000u) + 1999u);
+    CHECK(pel_sei_qsv_fit(zeros, 27000u, 1, PEL_SEI_QSV_H264_BUDGET, out) == 27000u);
+    CHECK(pel_sei_qsv_fit(zeros, 28000u, 1, PEL_SEI_QSV_H264_BUDGET, out) == 0u);
+    CHECK(pel_sei_qsv_fit(zeros, 28000u, 0, PEL_SEI_QSV_H264_BUDGET, out) == 28000u);
+}
+
+static void check_qsv_1080p(TestCtx *t, const Blob *maps, const Blob *scal)
+{
+    static uint8_t out[12424];
+
+    /* hevc_qsv: the scalar sections only, byte-identical to the maps=0 blob. */
+    CHECK(pel_sei_qsv_fit(maps->bytes, maps->len, 0, PEL_SEI_QSV_HEVC_BUDGET, out) == scal->len);
+    CHECK(memcmp(out, scal->bytes, scal->len) == 0);
+    /* h264_qsv: 12 424 bytes (and its emulation prevention bytes) fit whole. */
+    CHECK(pel_sei_qsv_fit(maps->bytes, maps->len, 1, PEL_SEI_QSV_H264_BUDGET, out) == maps->len);
+    CHECK(memcmp(out, maps->bytes, maps->len) == 0);
+    /* Scalars that do not fit the budget are dropped, never cut. */
+    CHECK(pel_sei_qsv_fit(maps->bytes, maps->len, 0, scal->len, out) == 0u);
+    CHECK(pel_sei_qsv_fit(scal->bytes, scal->len, 0, scal->len, out) == 0u);
+    CHECK(pel_sei_qsv_fit(scal->bytes, scal->len, 0, pel_sei_qsv_msg_len(scal->len), out) ==
+          scal->len);
+}
+
+static void test_qsv_blob(TestCtx *t)
+{
+    Blob maps = pack_analyze(60, 34, 1);
+    Blob scal = pack_analyze(60, 34, 0);
+    Blob big = pack_analyze(240, 135, 1); /* 3840x2160 at cell 16 */
+
+    CHECK(maps.bytes && scal.bytes && big.bytes);
+    if (maps.bytes && scal.bytes)
+        check_qsv_1080p(t, &maps, &scal);
+    if (big.bytes) {
+        uint8_t *out = malloc(big.len);
+
+        CHECK(out != NULL);
+        /* A 4K blob is over h264_qsv's budget as well: it loses its maps there too. */
+        if (out)
+            CHECK(pel_sei_qsv_fit(big.bytes, big.len, 1, PEL_SEI_QSV_H264_BUDGET, out) ==
+                  pel_sei_scalar_len(big.bytes, big.len));
+        free(out);
+    }
+    free(maps.bytes);
+    free(scal.bytes);
+    free(big.bytes);
+}
+
+static void test_qsv_foreign(TestCtx *t)
+{
+    static uint8_t other[12424];
+    static uint8_t out[12424];
+
+    memset(other, 0x61, sizeof(other));
+    CHECK(pel_sei_qsv_fit(other, sizeof(other), 0, PEL_SEI_QSV_HEVC_BUDGET, out) == 0u);
+    CHECK(pel_sei_qsv_fit(other, sizeof(other), 1, PEL_SEI_QSV_H264_BUDGET, out) == sizeof(other));
+}
+
+/* The decision made before allocating (pel_sei_qsv_plan) agrees with the one that
+ * writes (pel_sei_qsv_fit): a payload planned to be kept is never refused, and a
+ * payload planned to be dropped is dropped by both. */
+static void test_qsv_plan_matches_fit(TestCtx *t)
+{
+    static uint8_t zeros[28000];
+    static uint8_t other[12424];
+    static uint8_t out[28000];
+    Blob maps = pack_analyze(60, 34, 1);
+    const size_t budgets[2] = {PEL_SEI_QSV_HEVC_BUDGET, PEL_SEI_QSV_H264_BUDGET};
+
+    memset(other, 0x61, sizeof(other));
+    for (int e = 0; e < 2; e++) {
+        const size_t b = budgets[e];
+
+        CHECK(pel_sei_qsv_plan(other, 4023u, e, b) == 4023u);
+        CHECK(pel_sei_qsv_plan(other, sizeof(other), e, b) == (e ? sizeof(other) : 0u));
+        CHECK(pel_sei_qsv_plan(zeros, 27000u, e, b) == (e ? 27000u : 0u));
+        CHECK(pel_sei_qsv_plan(zeros, 28000u, e, b) == 0u);
+        for (size_t n = 4020u; n < 4030u; n++)
+            CHECK(pel_sei_qsv_plan(other, n, e, b) == pel_sei_qsv_fit(other, n, e, b, out));
+        if (maps.bytes) {
+            const size_t plan = pel_sei_qsv_plan(maps.bytes, maps.len, e, b);
+            const uint8_t *src = maps.bytes;
+
+            CHECK(plan == pel_sei_qsv_fit(src, maps.len, e, b, out));
+            CHECK(pel_sei_qsv_plan(src, maps.len, e, 100u) == 0u);
+        }
+    }
+    free(maps.bytes);
+}
+
 int main(void)
 {
     TestCtx ctx = {0};
@@ -453,6 +613,13 @@ int main(void)
     test_carrier_twin(t);
     test_flat_maps_fit_as_carrier(t);
     test_carrier_only_for_blobs(t);
+    test_qsv_message_len(t);
+    test_qsv_boundary(t);
+    test_qsv_sum_over_payloads(t);
+    test_qsv_emulation_prevention(t);
+    test_qsv_blob(t);
+    test_qsv_foreign(t);
+    test_qsv_plan_matches_fit(t);
     if (t->failures != 0) {
         (void)fprintf(stderr, "%d check(s) failed\n", t->failures);
         return EXIT_FAILURE;

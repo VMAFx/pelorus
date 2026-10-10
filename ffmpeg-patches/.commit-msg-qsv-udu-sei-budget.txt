@@ -1,0 +1,40 @@
+fix(qsv): budget udu_sei per picture on hevc_qsv and h264_qsv
+
+With udu_sei=1, hevc_qsv and h264_qsv handed the runtime every
+SEI_UNREGISTERED entry whole. Larger payloads damage the encoded access
+unit: no picture of a hevc_qsv stream decodes (a 4 091-byte payload is
+enough) and the encode fails from about 11 KB; the h264_qsv encode
+fails from about 42 KB. A Pelorus analyze blob at 1080p with
+32-pixel cells (12 424 bytes) hit it on hevc_qsv.
+
+The limit is per picture, not per payload: the sum of the
+mfxPayload.BufSize values (SEI message type, size bytes and payload)
+passed in one mfxEncodeCtrl. h264_qsv also counts the emulation
+prevention bytes of the payloads. Per picture budget:
+
+- hevc_qsv: 4 040 bytes. The runtime damages the picture past 4 107.
+- h264_qsv: 40 960 bytes. The encode fails past about 42 420.
+
+The payloads the stock A/53 callback already queued are charged first.
+Each SEI_UNREGISTERED entry, in frame order, is then:
+
+- fits: written whole;
+- a Pelorus blob that does not fit: written without the per-cell maps
+  appended after its sections (every scalar stays, each map offset and
+  size is zero, the ABI's absent map), as hevc_nvenc does (ADR-0181);
+- anything else that does not fit: not written.
+
+QSV writes a Pelorus blob in its plain form; the zero-free carrier is
+for NVENC. The first stripped blob and the first dropped payload are
+warnings, later ones verbose, and the totals are a warning at close. The
+budget arithmetic is libavcodec/pelorus_sei_fit_qsv.h, built on
+pelorus_sei_fit.h from patch 0022, and tested by the Pelorus fast suite.
+
+Measured on an Arc A380 (iHD 26.3.5, vpl-gpu-rt 26.3.5, libvpl 2.17.0),
+at 640x360, 1920x1080 and 3840x2160 alike. Depends on patches 0019 and
+0022.
+
+Known issue, not fixed here: h264_qsv with udu_sei can crash
+intermittently inside Intel's QSV runtime, more often with larger
+payloads. It reproduces with stock FFmpeg, so Pelorus does not cause it
+and the budget does not prevent it.
