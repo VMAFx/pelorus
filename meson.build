@@ -352,7 +352,10 @@ endif
 
 # The hardware smoke for the same pools: --self-test plants defects into its
 # checks; the GPU run needs FFMPEG_BIN and a VAAPI-capable RENDER_NODE and
-# otherwise exits 77 (skip) with the reason.
+# otherwise exits 77 (skip) with the reason. It belongs in the fast suite only
+# because it skips by default: nothing sets FFMPEG_BIN in CI or `make
+# verify-native`, so the suite never needs a GPU; export FFMPEG_BIN and
+# RENDER_NODE to run it on a workstation.
 test('vulkan-drm-map-self-test',
      bash_prog,
      args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'vulkan-drm-map-smoke.sh',

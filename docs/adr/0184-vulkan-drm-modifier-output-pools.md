@@ -65,9 +65,19 @@ through, so their output lives in the upstream pool.
    `VK_EXT_image_drm_format_modifier`, `VK_EXT_external_memory_dma_buf` and
    `VK_KHR_external_memory_fd`, is an error: the filter never allocates OPTIMAL
    when `tiling=drm` was asked for.
-5. **Stock defects go upstream.** Three defects found on the way are in stock
-   FFmpeg and are routed to the shared fix series, not this stack (see
-   Consequences).
+5. **Stock defects stay out of this stack.** Three defects found on the way
+   are in stock FFmpeg. The P010 import row and the export-capability
+   format-list fix are queued in VMAFx/ffmpeg-patches; the RADV map
+   synchronisation needs a root cause first (see Consequences). Until it is
+   fixed, `tiling=drm` warns on AMD Vulkan drivers (RADV, AMDVLK, AMD
+   proprietary) that mapped frames can carry unfinished pixels.
+6. **No silent paths.** The filter warns when `drm_modifiers` is set without
+   `tiling=drm`, names the offending token of a malformed list, and warns when
+   FFmpeg was built without libdrm, where `hwmap` cannot map the pool at all.
+
+The PR that carries this ADR implements it; the Implementation line keeps the
+`pending (#103)` form that `scripts/adr/check-status.py` requires of a Proposed
+ADR until the status sweep, as for ADR-0180 to ADR-0183.
 
 ## Alternatives considered
 
@@ -91,13 +101,16 @@ through, so their output lives in the upstream pool.
   `hwcontext_vaapi.c` `vaapi_drm_format_map` accepts only `R16` + `RG1616` for
   P010 and P012, so VAAPI refuses it ("DRM format not supported by VAAPI").
   With a `GR1616` row added in a diagnostic build, P010 maps bit-exact on both
-  GPUs. The `tiling=drm` P010 pool itself exports as DRM PRIME.
+  GPUs. The `tiling=drm` P010 pool itself exports as DRM PRIME. State: the
+  import row is queued in VMAFx/ffmpeg-patches.
 - Stock defect 2, AMD synchronisation: on RADV with radeonsi, a VAAPI readback
   of the mapped surface sees unfinished Vulkan writes in 14-17 of 20 frames,
   for every modifier, LINEAR included; delaying the map hides it, and forcing
   `vulkan_map_to_drm()` onto its CPU `vkWaitSemaphores()` path instead of the
   sync_file export makes it bit-exact (20 of 20). The encoder streams in the
-  same runs were bit-exact, but that is timing, not a guarantee.
+  same runs were bit-exact, but that is timing, not a guarantee. State: needs a
+  root cause (sync_file export or radeonsi's wait on imported fences) before a
+  fix; the filter warns on AMD drivers meanwhile.
 - Stock defect 3, validation: any DRM-modifier pool triggers
   `VUID-VkPhysicalDeviceImageFormatInfo2-tiling-02313` from
   `try_export_flags()` (no format list in its query), and the export path adds
@@ -105,7 +118,9 @@ through, so their output lives in the upstream pool.
   runs, command-buffer reuse VUIDs (`03874`, `03875`, `00049`) and
   `VUID-VkSemaphoreGetFdInfoKHR-handleType-03254` in
   `vulkan_drm_export_sync_fd()`. The default path is unchanged: master and this
-  change report no VUID on the `hwdownload` recipe.
+  change report no VUID on the `hwdownload` recipe. State: the
+  export-capability format-list fix (`02313`) is queued in
+  VMAFx/ffmpeg-patches; the others are observed, without a fix yet.
 - `disable_multiplane=1` devices get one image per plane; VAAPI then refuses
   the two-object frame, while DRM PRIME consumers can take it.
 - Pass-through filters (`analyze`, `grain_estimate`, `mc`) carry the upstream

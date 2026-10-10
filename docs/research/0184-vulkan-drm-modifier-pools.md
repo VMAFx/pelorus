@@ -25,7 +25,9 @@ timing is reported. Raw logs: `.workingdir/evidence/vulkan-drm-modifier/`
   map to QSV, write the same stream as the `hwdownload` path. 641x361 behaves
   the same.
 - P010 needs a stock FFmpeg fix; AMD needs a stock synchronisation fix. Both
-  are proven by diagnostic builds and routed to the shared fix series.
+  are proven by diagnostic builds. The P010 import row and the export-capability
+  format-list fix are queued in VMAFx/ffmpeg-patches; the RADV synchronisation
+  needs a root cause first.
 
 ## Method
 

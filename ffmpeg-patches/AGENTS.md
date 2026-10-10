@@ -145,8 +145,9 @@ ffmpeg-patches/
    `files/pelorus_vulkan_pool.h`; `tiling=drm` = DRM-modifier pool, modifier
    rule in `files/pelorus_drm_modifier.h` (fast test `drm-modifier`). Both
    headers enter with 0001. Never patch stock `vulkan_filter.c` or
-   `hwcontext_*.c` for this: stock defects (P010 `GR1616`, AMD sync_file,
-   export VUIDs) go to shared FFmpeg fix series. Never fall back to OPTIMAL
+   `hwcontext_*.c` for this: P010 `GR1616` import row and export-capability
+   format-list fix queued in VMAFx/ffmpeg-patches; AMD sync_file needs root
+   cause, filter warns on AMD drivers until then. Never fall back to OPTIMAL
    when `drm` requested. New frame-writing filter: same option and pad.
    GPU proof = `test/vulkan-drm-map-smoke.sh` (exit 77 = no binary/GPU).
 

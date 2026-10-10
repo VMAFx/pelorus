@@ -36,6 +36,8 @@ normalize LSB-aligned planar 10/12-bit samples.
 | `protect` | bool | 1 | gate debanding off textured regions |
 | `planes` | int bitmask | 0xF | physical planes to process; a selected semi-planar chroma plane contains both U and V |
 | `meta` | bool | 0 | attach the Pelorus interop side-data blob |
+| `tiling` | enum | optimal | output pool: `optimal` is FFmpeg's pool; `drm` is a DRM-format-modifier pool that `hwmap=derive_device=vaapi` maps to VAAPI and QSV without `hwdownload` ([Vulkan output pools](../backends/vulkan-drm-modifiers.md)); `optimal` or `drm` |
+| `drm_modifiers` | string | empty | with `tiling=drm`: DRM format modifiers the consumer imports, 0x hex; empty = any usable modifier, `0x0` = LINEAR; ignored (with a warning) without `tiling=drm`; up to 64, `\|`-separated |
 
 ## Example
 

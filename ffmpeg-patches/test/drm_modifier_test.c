@@ -57,13 +57,27 @@ static void test_parse_valid(TestCtx *t)
 {
     uint64_t out[PEL_DRM_MOD_MAX] = {0};
 
-    CHECK(pel_drm_mod_parse_list(NULL, out, PEL_DRM_MOD_MAX) == 0);
-    CHECK(pel_drm_mod_parse_list("", out, PEL_DRM_MOD_MAX) == 0);
-    CHECK(pel_drm_mod_parse_list("0x0100000000000009", out, PEL_DRM_MOD_MAX) == 1);
+    CHECK(pel_drm_mod_parse_list(NULL, out, PEL_DRM_MOD_MAX, NULL) == 0);
+    CHECK(pel_drm_mod_parse_list("", out, PEL_DRM_MOD_MAX, NULL) == 0);
+    CHECK(pel_drm_mod_parse_list("0x0100000000000009", out, PEL_DRM_MOD_MAX, NULL) == 1);
     CHECK(out[0] == I915_4);
     CHECK(pel_drm_mod_parse_list(" 0x0|72057594037927937 | 0x0200000000401b03 ", out,
-                                 PEL_DRM_MOD_MAX) == 3);
+                                 PEL_DRM_MOD_MAX, NULL) == 3);
     CHECK(out[0] == PEL_DRM_MOD_LINEAR && out[1] == I915_X && out[2] == AMD_R_X);
+}
+
+/* The parser points at the offending token, which the filter names. */
+static void test_parse_bad_token(TestCtx *t)
+{
+    uint64_t out[PEL_DRM_MOD_MAX] = {0};
+    const char *bad = NULL;
+    const char *bad_list = "0x9|0x1ffffffffffffffff|0x0";
+
+    CHECK(pel_drm_mod_parse_list(bad_list, out, PEL_DRM_MOD_MAX, &bad) == -1);
+    CHECK(bad == bad_list + 4);
+    CHECK(pel_drm_mod_parse_list("0x9", out, PEL_DRM_MOD_MAX, &bad) == 1 && bad == NULL);
+    CHECK(pel_drm_mod_parse_list("0x9|zz", out, PEL_DRM_MOD_MAX, &bad) == -1);
+    CHECK(bad && !strcmp(bad, "zz"));
 }
 
 static void test_parse_invalid(TestCtx *t)
@@ -72,16 +86,16 @@ static void test_parse_invalid(TestCtx *t)
     char list[PEL_DRM_MOD_MAX * 4 + 8];
     size_t pos = 0;
 
-    CHECK(pel_drm_mod_parse_list("zz", out, PEL_DRM_MOD_MAX) == -1);
-    CHECK(pel_drm_mod_parse_list("0x9,", out, PEL_DRM_MOD_MAX) == -1);
-    CHECK(pel_drm_mod_parse_list("-1", out, PEL_DRM_MOD_MAX) == -1);
-    CHECK(pel_drm_mod_parse_list("0x1ffffffffffffffff", out, PEL_DRM_MOD_MAX) == -1);
-    CHECK(pel_drm_mod_parse_list("0x00ffffffffffffff", out, PEL_DRM_MOD_MAX) == -1);
+    CHECK(pel_drm_mod_parse_list("zz", out, PEL_DRM_MOD_MAX, NULL) == -1);
+    CHECK(pel_drm_mod_parse_list("0x9,", out, PEL_DRM_MOD_MAX, NULL) == -1);
+    CHECK(pel_drm_mod_parse_list("-1", out, PEL_DRM_MOD_MAX, NULL) == -1);
+    CHECK(pel_drm_mod_parse_list("0x1ffffffffffffffff", out, PEL_DRM_MOD_MAX, NULL) == -1);
+    CHECK(pel_drm_mod_parse_list("0x00ffffffffffffff", out, PEL_DRM_MOD_MAX, NULL) == -1);
     for (int i = 0; i < PEL_DRM_MOD_MAX; i++)
         pos += (size_t)snprintf(list + pos, sizeof(list) - pos, "%d|", i % 10);
-    CHECK(pel_drm_mod_parse_list(list, out, PEL_DRM_MOD_MAX) == PEL_DRM_MOD_MAX);
+    CHECK(pel_drm_mod_parse_list(list, out, PEL_DRM_MOD_MAX, NULL) == PEL_DRM_MOD_MAX);
     (void)snprintf(list + pos, sizeof(list) - pos, "7");
-    CHECK(pel_drm_mod_parse_list(list, out, PEL_DRM_MOD_MAX) == -1);
+    CHECK(pel_drm_mod_parse_list(list, out, PEL_DRM_MOD_MAX, NULL) == -1);
 }
 
 static void test_name(TestCtx *t)
@@ -148,6 +162,7 @@ int main(void)
 
     test_parse_valid(t);
     test_parse_invalid(t);
+    test_parse_bad_token(t);
     test_name(t);
     test_choose_anv(t);
     test_choose_radv(t);

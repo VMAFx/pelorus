@@ -67,32 +67,36 @@ typedef struct PelDrmModChoice {
 
 /* Parse a '|'- or space-separated list of modifiers (hex with 0x, octal with
  * 0, or decimal). Returns the count, or -1 on a malformed token, on
- * DRM_FORMAT_MOD_INVALID, or on more than `max` entries. NULL or an empty
- * string is an empty list. */
-static inline int pel_drm_mod_parse_list(const char *str, uint64_t *out, int max)
+ * DRM_FORMAT_MOD_INVALID, or on more than `max` entries; then *bad (when not
+ * NULL) points at the offending token. NULL or an empty string is an empty
+ * list. */
+static inline int pel_drm_mod_parse_list(const char *str, uint64_t *out, int max, const char **bad)
 {
     int n = 0;
 
+    if (bad)
+        *bad = NULL;
     if (!str)
         return 0;
     for (int guard = 0; guard <= 4 * PEL_DRM_MOD_MAX; guard++) {
         char *end = NULL;
-        unsigned long long value;
+        unsigned long long value = 0;
 
         while (*str == '|' || *str == ' ')
             str++;
         if (!*str)
             return n;
-        if (*str < '0' || *str > '9' || n >= max)
-            return -1;
         errno = 0;
-        value = strtoull(str, &end, 0);
-        if (errno || end == str || (*end && *end != '|' && *end != ' ') ||
+        if (*str >= '0' && *str <= '9' && n < max)
+            value = strtoull(str, &end, 0);
+        if (!end || errno || end == str || (*end && *end != '|' && *end != ' ') ||
             value == PEL_DRM_MOD_INVALID)
-            return -1;
+            break;
         out[n++] = value;
         str = end;
     }
+    if (bad)
+        *bad = str;
     return -1;
 }
 

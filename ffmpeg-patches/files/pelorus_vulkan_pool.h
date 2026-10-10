@@ -40,6 +40,8 @@
 #include <inttypes.h>
 #include <string.h>
 
+#include "config.h"
+
 #include "libavutil/buffer.h"
 #include "libavutil/frame.h"
 #include "libavutil/hwcontext.h"
@@ -64,37 +66,40 @@ typedef struct PelVkPoolOpts {
 } PelVkPoolOpts;
 
 /* AVOption rows shared by every filter that writes new frames. */
-#define PEL_VK_POOL_OPTIONS(tiling_offset, modifiers_offset, flags)                                \
-    {"tiling",                                                                                     \
-     "output pool tiling",                                                                         \
-     (tiling_offset),                                                                              \
-     AV_OPT_TYPE_INT,                                                                              \
-     {.i64 = PEL_VK_POOL_OPTIMAL},                                                                 \
-     PEL_VK_POOL_OPTIMAL,                                                                          \
-     PEL_VK_POOL_DRM,                                                                              \
-     (flags),                                                                                      \
-     .unit = "pel_tiling"},                                                                        \
-        {"optimal",                                                                                \
-         "FFmpeg default: reuse the input pool or allocate OPTIMAL tiling",                        \
-         0,                                                                                        \
-         AV_OPT_TYPE_CONST,                                                                        \
-         {.i64 = PEL_VK_POOL_OPTIMAL},                                                             \
-         0,                                                                                        \
-         0,                                                                                        \
-         (flags),                                                                                  \
-         .unit = "pel_tiling"},                                                                    \
-        {"drm",                                                                                    \
-         "DRM format modifier tiling with DMA-BUF export (hwmap to VAAPI, QSV)",                   \
-         0,                                                                                        \
-         AV_OPT_TYPE_CONST,                                                                        \
-         {.i64 = PEL_VK_POOL_DRM},                                                                 \
-         0,                                                                                        \
-         0,                                                                                        \
-         (flags),                                                                                  \
-         .unit = "pel_tiling"},                                                                    \
-    {                                                                                              \
-        "drm_modifiers", "with tiling=drm: modifiers the consumer imports, '|'-separated",         \
-            (modifiers_offset), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, (flags)                   \
+#define PEL_VK_POOL_OPTIONS(tiling_offset, modifiers_offset, flags)                                 \
+    {"tiling",                                                                                      \
+     "output pool tiling: optimal (default, FFmpeg's pool) or drm (DRM-format-modifier pool "       \
+     "that maps to VAAPI/QSV)",                                                                     \
+     (tiling_offset),                                                                               \
+     AV_OPT_TYPE_INT,                                                                               \
+     {.i64 = PEL_VK_POOL_OPTIMAL},                                                                  \
+     PEL_VK_POOL_OPTIMAL,                                                                           \
+     PEL_VK_POOL_DRM,                                                                               \
+     (flags),                                                                                       \
+     .unit = "pel_tiling"},                                                                         \
+        {"optimal",                                                                                 \
+         "FFmpeg default: reuse the input pool or allocate OPTIMAL tiling",                         \
+         0,                                                                                         \
+         AV_OPT_TYPE_CONST,                                                                         \
+         {.i64 = PEL_VK_POOL_OPTIMAL},                                                              \
+         0,                                                                                         \
+         0,                                                                                         \
+         (flags),                                                                                   \
+         .unit = "pel_tiling"},                                                                     \
+        {"drm",                                                                                     \
+         "DRM format modifier tiling with DMA-BUF export (hwmap to VAAPI, QSV)",                    \
+         0,                                                                                         \
+         AV_OPT_TYPE_CONST,                                                                         \
+         {.i64 = PEL_VK_POOL_DRM},                                                                  \
+         0,                                                                                         \
+         0,                                                                                         \
+         (flags),                                                                                   \
+         .unit = "pel_tiling"},                                                                     \
+    {                                                                                               \
+        "drm_modifiers",                                                                            \
+            "with tiling=drm: DRM format modifiers the consumer imports, 0x hex separated by '|'; " \
+            "empty (default) = any usable modifier; 0x0 = LINEAR",                                  \
+            (modifiers_offset), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, (flags)                    \
     }
 
 #define PEL_VK_POOL_MAX_VIEWS 8
@@ -187,7 +192,11 @@ static inline int pel_vk_pool_probe(AVFilterContext *avctx, AVBufferRef *device_
     return 0;
 }
 
-/* Fill props with the driver's modifiers for fmt; returns their count. */
+/* Fill props with the driver's modifiers for fmt; returns their count. The
+ * v1 list (VkFormatFeatureFlags, 32 bits) is enough: the only feature tested
+ * is VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT. The 64-bit List2 would be needed for
+ * the *_WITHOUT_FORMAT storage features, which the filters do not rely on
+ * (their storage views always name a format). */
 static inline uint32_t pel_vk_pool_mod_list(FFVulkanContext *s, VkFormat fmt,
                                             VkDrmFormatModifierPropertiesEXT *props)
 {
@@ -419,13 +428,19 @@ static inline int pel_vk_pool_choose(AVFilterContext *avctx, FFVulkanContext *s,
 {
     PelDrmModCandidate cand[PEL_DRM_MOD_MAX];
     uint64_t consumer[PEL_DRM_MOD_MAX];
-    const int nb_consumer = pel_drm_mod_parse_list(opts->drm_modifiers, consumer, PEL_DRM_MOD_MAX);
+    const char *bad = NULL;
+    const int nb_consumer =
+        pel_drm_mod_parse_list(opts->drm_modifiers, consumer, PEL_DRM_MOD_MAX, &bad);
     const char *fmt = av_get_pix_fmt_name(s->output_format);
     char name[PEL_DRM_MOD_NAME_SIZE];
     int nb_cand;
 
     if (nb_consumer < 0) {
-        av_log(avctx, AV_LOG_ERROR, "drm_modifiers: cannot parse \"%s\"\n", opts->drm_modifiers);
+        av_log(avctx, AV_LOG_ERROR,
+               "drm_modifiers: cannot parse \"%.*s\" in \"%s\": want at most %d modifiers, "
+               "0x hex or decimal, separated by '|', not DRM_FORMAT_MOD_INVALID\n",
+               bad ? (int)strcspn(bad, "| ") : 0, bad ? bad : "", opts->drm_modifiers,
+               PEL_DRM_MOD_MAX);
         return AVERROR(EINVAL);
     }
     nb_cand = pel_vk_pool_candidates(avctx, s, p, cand);
@@ -488,8 +503,11 @@ static inline int pel_vk_pool_drm(AVFilterContext *avctx, FFVulkanContext *s,
     PelVkPoolProbe probe = {0};
     int err;
 
-    if (!s->input_frames_ref)
+    if (!s->input_frames_ref) {
+        av_log(avctx, AV_LOG_ERROR,
+               "tiling=drm: no input frames context to take the device from\n");
         return AVERROR(EINVAL);
+    }
     device_ref = ((AVHWFramesContext *)s->input_frames_ref->data)->device_ref;
     err = pel_vk_pool_load(avctx, s, device_ref);
     if (err >= 0)
@@ -513,6 +531,27 @@ static inline int pel_vk_pool_drm(AVFilterContext *avctx, FFVulkanContext *s,
     return err;
 }
 
+/* Known limits of a working DRM-modifier pool, named instead of silent. */
+static inline void pel_vk_pool_warn_limits(AVFilterContext *avctx, const FFVulkanContext *s)
+{
+    const VkDriverId driver = s->driver_props.driverID;
+
+#if !CONFIG_LIBDRM
+    av_log(avctx, AV_LOG_WARNING,
+           "tiling=drm: this FFmpeg is built without libdrm, so hwmap cannot map the pool to "
+           "DRM PRIME or VAAPI\n");
+#endif
+    /* research 0184: on RADV with radeonsi the sync_file attached by
+     * vulkan_map_to_drm() did not hold VAAPI reads back in 14-17 of 20 frames. */
+    if (driver == VK_DRIVER_ID_MESA_RADV || driver == VK_DRIVER_ID_AMD_OPEN_SOURCE ||
+        driver == VK_DRIVER_ID_AMD_PROPRIETARY)
+        av_log(avctx, AV_LOG_WARNING,
+               "tiling=drm on an AMD Vulkan driver (%s): a frame mapped to VAAPI can be read "
+               "before the filter finished writing it (silently wrong pixels) until FFmpeg's "
+               "map synchronisation is fixed; see docs/backends/vulkan-drm-modifiers.md\n",
+               s->driver_props.driverName);
+}
+
 /* config_props of the output pad of every Pelorus filter that writes new
  * frames. */
 static inline int pel_vk_pool_config_output(AVFilterLink *outlink, const PelVkPoolOpts *opts)
@@ -523,14 +562,18 @@ static inline int pel_vk_pool_config_output(AVFilterLink *outlink, const PelVkPo
     PelDrmModChoice choice;
     int err;
 
-    if (opts->tiling != PEL_VK_POOL_DRM)
+    if (opts->tiling != PEL_VK_POOL_DRM) {
+        if (opts->drm_modifiers && *opts->drm_modifiers)
+            av_log(avctx, AV_LOG_WARNING, "drm_modifiers is ignored without tiling=drm\n");
         return ff_vk_filter_config_output(outlink);
+    }
     av_buffer_unref(&l->hw_frames_ctx);
     err = pel_vk_pool_drm(avctx, s, opts, &choice);
     if (err >= 0)
         err = pel_vk_pool_report(avctx, s, &choice);
     if (err < 0)
         return err;
+    pel_vk_pool_warn_limits(avctx, s);
     l->hw_frames_ctx = av_buffer_ref(s->frames_ref);
     if (!l->hw_frames_ctx)
         return AVERROR(ENOMEM);

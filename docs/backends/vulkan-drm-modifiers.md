@@ -76,22 +76,40 @@ Measured on an Arc A380 and a Radeon 610M
 
 | Path | Arc A380 (ANV, iHD) | Radeon 610M (RADV, radeonsi) |
 |---|---|---|
-| NV12 to VAAPI, odd sizes included | bit-exact | maps, but the readback can see unfinished writes (below) |
+| NV12 to VAAPI, odd sizes included | bit-exact | maps, but 14-17 of 20 frames read back with unfinished pixels (below) |
 | NV12 to QSV | bit-exact | not applicable |
 | P010 to VAAPI | refused by stock FFmpeg (below) | refused by stock FFmpeg |
 | P010 to DRM PRIME | exports | exports |
 
-Two stock FFmpeg `n9.0.2` defects remain, routed to the shared FFmpeg fix
-series rather than this patch stack:
+Two stock FFmpeg `n9.0.2` defects remain; they are not fixed in the Pelorus
+patch stack:
 
 - **P010 to VAAPI.** FFmpeg exports a P010 Vulkan frame as layers `R16` +
   `GR1616`, and its VAAPI import accepts P010 only as `R16` + `RG1616`
-  (`libavutil/hwcontext_vaapi.c`, `vaapi_drm_format_map`); the map fails with
-  `DRM format not supported by VAAPI`.
-- **AMD synchronisation.** On RADV with radeonsi, the sync_file that
-  `vulkan_map_to_drm()` attaches does not hold VAAPI reads back until the
-  Vulkan write ends; FFmpeg's CPU-wait branch does. Until that is fixed, treat
-  AMD `tiling=drm` output as unverified.
+  (`libavutil/hwcontext_vaapi.c`, `vaapi_drm_format_map`). The import row is
+  queued in VMAFx/ffmpeg-patches, together with the format-list fix for the
+  validation error the export-capability query raises.
+- **AMD synchronisation.** On a Radeon 610M (RADV, radeonsi) a VAAPI readback
+  of the mapped frame showed unfinished Vulkan writes in 14-17 of 20 frames,
+  with no error: the pixels are silently wrong. FFmpeg's CPU-wait branch in
+  `vulkan_map_to_drm()` removes it; the sync_file branch it uses by default
+  does not. It needs a root cause before a fix. The filter warns on RADV,
+  AMDVLK and the AMD proprietary driver; do not rely on AMD `tiling=drm`
+  output until the fix lands.
+
+## Failure modes
+
+| Symptom | Message | Cause |
+|---|---|---|
+| Filter fails at start | `tiling=drm needs VK_EXT_image_drm_format_modifier, VK_EXT_external_memory_dma_buf and VK_KHR_external_memory_fd on the device; refusing to allocate OPTIMAL tiling instead` | The Vulkan device lacks a DRM-modifier or DMA-BUF extension. |
+| Filter fails at start | `tiling=drm: no DRM format modifier, DRM_FORMAT_MOD_LINEAR included, supports storage images and DMA-BUF export for nv12 on this device; refusing to allocate OPTIMAL tiling instead` | No modifier passes the rule, not even LINEAR. |
+| Warning, then the pool is linear | `tiling=drm: no modifier in drm_modifiers supports storage images and DMA-BUF export for nv12; substituting DRM_FORMAT_MOD_LINEAR (0x0000000000000000)` | None of the listed modifiers is usable on this GPU. |
+| Filter fails at start | `drm_modifiers: cannot parse "zz" in "0x9\|zz": want at most 64 modifiers, 0x hex or decimal, separated by '\|', not DRM_FORMAT_MOD_INVALID` | Malformed `drm_modifiers`; the first quoted value is the bad entry. |
+| Warning only | `drm_modifiers is ignored without tiling=drm` | `drm_modifiers` set while `tiling=optimal`. |
+| Warning, then `hwmap` fails with `Failed to map frame: -38` | `tiling=drm: this FFmpeg is built without libdrm, so hwmap cannot map the pool to DRM PRIME or VAAPI` | FFmpeg configured without `--enable-libdrm`. |
+| No error; 14-17 of 20 frames carry unfinished pixels (Radeon 610M) | `tiling=drm on an AMD Vulkan driver (radv): a frame mapped to VAAPI can be read before the filter finished writing it (silently wrong pixels) until FFmpeg's map synchronisation is fixed; ...` | Stock FFmpeg map synchronisation on AMD (above). |
+| `hwmap` to VAAPI fails for P010 | `DRM format not supported by VAAPI.` then `Failed to map frame` | Stock FFmpeg P010 layer format mismatch (above). |
+| `hwmap` fails with `Unable to export the image as a FD!` | (from FFmpeg) | The filter before `hwmap` runs with `tiling=optimal`, or is a pass-through filter (`analyze`, `grain_estimate`, `mc`). |
 
 A device created with `disable_multiplane=1` (the CUDA interop setting) puts
 each plane in its own image; VAAPI refuses such two-object frames.
