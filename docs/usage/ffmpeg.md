@@ -37,6 +37,25 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
 When the decoder, filter, and encoder all speak Vulkan/VRAM, no frame touches
 system RAM.
 
+## Zero-copy into VAAPI and QSV encoders (Linux)
+
+`tiling=drm` on the last Pelorus filter that writes frames lets `hwmap` hand
+its output to a VAAPI encoder, or on to QSV, without `hwdownload` (8-bit NV12
+today; P010 and AMD wait on FFmpeg fixes, see
+[Vulkan output pools](../backends/vulkan-drm-modifiers.md)):
+
+```bash
+LIBVA_DRIVER_NAME=iHD ffmpeg -init_hw_device vaapi=va:/dev/dri/renderD130 \
+       -init_hw_device vulkan=vk@va -filter_hw_device vk -i input.mkv \
+       -vf "format=nv12,hwupload,pelorus_deband_vulkan=tiling=drm,
+            hwmap=derive_device=vaapi,format=vaapi,hwmap=derive_device=qsv,format=qsv" \
+       -c:v hevc_qsv -q:v 24 out.mkv
+```
+
+For `h264_vaapi` or `hevc_vaapi`, stop after `hwmap=derive_device=vaapi`. On an
+Arc A380 under `xe`, VAAPI encoders need constant QP (`-rc_mode CQP -qp N`) and
+QSV bitrate control needs `-extbrc 1` (see below).
+
 ## Chaining stages
 
 ```bash

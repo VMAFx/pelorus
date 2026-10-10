@@ -34,6 +34,7 @@
 
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
+#include "pelorus_vulkan_pool.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -58,6 +59,7 @@ typedef struct PelorusBorderfixVulkanContext {
     } opts;
 
     int planes; /* plane bitmask to process (all planes by default)          */
+    PelVkPoolOpts pool; /* output pool tiling (ADR-0184) */
 } PelorusBorderfixVulkanContext;
 
 /* The borderfix algorithm now lives in vulkan/pelorus_borderfix.comp.glsl,
@@ -177,6 +179,13 @@ static void pelorus_borderfix_vulkan_uninit(AVFilterContext *avctx)
     s->initialized = 0;
 }
 
+static int pelorus_borderfix_vulkan_config_output(AVFilterLink *outlink)
+{
+    PelorusBorderfixVulkanContext *s = outlink->src->priv;
+
+    return pel_vk_pool_config_output(outlink, &s->pool);
+}
+
 #define OFFSET(x) offsetof(PelorusBorderfixVulkanContext, x)
 #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 static const AVOption pelorus_borderfix_vulkan_options[] = {
@@ -190,6 +199,7 @@ static const AVOption pelorus_borderfix_vulkan_options[] = {
       AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 4096, FLAGS },
     { "planes", "planes to process (bitmask; default all)", OFFSET(planes),
       AV_OPT_TYPE_INT, { .i64 = 0xF }, 0, 0xF, FLAGS },
+    PEL_VK_POOL_OPTIONS(OFFSET(pool.tiling), OFFSET(pool.drm_modifiers), FLAGS),
     { NULL }
 };
 
@@ -208,7 +218,7 @@ static const AVFilterPad pelorus_borderfix_vulkan_outputs[] = {
     {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
-        .config_props = &ff_vk_filter_config_output,
+        .config_props = &pelorus_borderfix_vulkan_config_output,
     },
 };
 

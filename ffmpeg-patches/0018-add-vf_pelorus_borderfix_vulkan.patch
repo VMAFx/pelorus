@@ -26,10 +26,10 @@ ADR: docs/adr/0128-borderfix.md
  configure                                      |   1 +
  libavfilter/Makefile                           |   1 +
  libavfilter/allfilters.c                       |   1 +
- libavfilter/vf_pelorus_borderfix_vulkan.c      | 227 ++++++++++++++++++++
+ libavfilter/vf_pelorus_borderfix_vulkan.c      | 237 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                    |   1 +
- libavfilter/vulkan/pelorus_borderfix.comp.glsl |  86 ++++++++
- 6 files changed, 317 insertions(+)
+ libavfilter/vulkan/pelorus_borderfix.comp.glsl |  86 +++++++
+ 6 files changed, 327 insertions(+)
 
 diff --git a/configure b/configure
 index b890fae94423562137ed098673ca7a24cee3bacc..ab6d0d9ac09d93a7cee643e596120c2401b9ff85 100755
@@ -69,10 +69,10 @@ index 9985efd56d8026261a43cba1283408ac3409ba25..570b308238750a84ce432a4e3484241d
  extern const FFFilter ff_vf_pelorus_dehalo_vulkan;
 diff --git a/libavfilter/vf_pelorus_borderfix_vulkan.c b/libavfilter/vf_pelorus_borderfix_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..b3d7e930f9e0975e4436a9299462c980413f605e
+index 0000000000000000000000000000000000000000..d624bdfafe25df0065a0e232a2c85f4e43de16db
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_borderfix_vulkan.c
-@@ -0,0 +1,227 @@
+@@ -0,0 +1,237 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -109,6 +109,7 @@ index 0000000000000000000000000000000000000000..b3d7e930f9e0975e4436a9299462c980
 +
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
++#include "pelorus_vulkan_pool.h"
 +#include "vulkan_filter.h"
 +
 +#include "filters.h"
@@ -133,6 +134,7 @@ index 0000000000000000000000000000000000000000..b3d7e930f9e0975e4436a9299462c980
 +    } opts;
 +
 +    int planes; /* plane bitmask to process (all planes by default)          */
++    PelVkPoolOpts pool; /* output pool tiling (ADR-0184) */
 +} PelorusBorderfixVulkanContext;
 +
 +/* The borderfix algorithm now lives in vulkan/pelorus_borderfix.comp.glsl,
@@ -252,6 +254,13 @@ index 0000000000000000000000000000000000000000..b3d7e930f9e0975e4436a9299462c980
 +    s->initialized = 0;
 +}
 +
++static int pelorus_borderfix_vulkan_config_output(AVFilterLink *outlink)
++{
++    PelorusBorderfixVulkanContext *s = outlink->src->priv;
++
++    return pel_vk_pool_config_output(outlink, &s->pool);
++}
++
 +#define OFFSET(x) offsetof(PelorusBorderfixVulkanContext, x)
 +#define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 +static const AVOption pelorus_borderfix_vulkan_options[] = {
@@ -265,6 +274,7 @@ index 0000000000000000000000000000000000000000..b3d7e930f9e0975e4436a9299462c980
 +      AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 4096, FLAGS },
 +    { "planes", "planes to process (bitmask; default all)", OFFSET(planes),
 +      AV_OPT_TYPE_INT, { .i64 = 0xF }, 0, 0xF, FLAGS },
++    PEL_VK_POOL_OPTIONS(OFFSET(pool.tiling), OFFSET(pool.drm_modifiers), FLAGS),
 +    { NULL }
 +};
 +
@@ -283,7 +293,7 @@ index 0000000000000000000000000000000000000000..b3d7e930f9e0975e4436a9299462c980
 +    {
 +        .name = "default",
 +        .type = AVMEDIA_TYPE_VIDEO,
-+        .config_props = &ff_vk_filter_config_output,
++        .config_props = &pelorus_borderfix_vulkan_config_output,
 +    },
 +};
 +

@@ -36,6 +36,7 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "pelorus_vulkan_sample.h"
+#include "pelorus_vulkan_pool.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -64,6 +65,7 @@ typedef struct PelorusAaVulkanContext {
 
     int planes; /* plane bitmask to process (luma-only by default)           */
     int fast;   /* hoist sobel_mag into shared mem (opt-in; default 0)        */
+    PelVkPoolOpts pool; /* output pool tiling (ADR-0184) */
 } PelorusAaVulkanContext;
 
 /* The warp-AA algorithm now lives in vulkan/pelorus_aa.comp.glsl, compiled to
@@ -190,6 +192,13 @@ static void pelorus_aa_vulkan_uninit(AVFilterContext *avctx)
     s->initialized = 0;
 }
 
+static int pelorus_aa_vulkan_config_output(AVFilterLink *outlink)
+{
+    PelorusAaVulkanContext *s = outlink->src->priv;
+
+    return pel_vk_pool_config_output(outlink, &s->pool);
+}
+
 #define OFFSET(x) offsetof(PelorusAaVulkanContext, x)
 #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 static const AVOption pelorus_aa_vulkan_options[] = {
@@ -250,6 +259,7 @@ static const AVOption pelorus_aa_vulkan_options[] = {
      0,
      1,
      FLAGS},
+    PEL_VK_POOL_OPTIONS(OFFSET(pool.tiling), OFFSET(pool.drm_modifiers), FLAGS),
     {NULL}};
 
 AVFILTER_DEFINE_CLASS(pelorus_aa_vulkan);
@@ -267,7 +277,7 @@ static const AVFilterPad pelorus_aa_vulkan_outputs[] = {
     {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
-        .config_props = &ff_vk_filter_config_output,
+        .config_props = &pelorus_aa_vulkan_config_output,
     },
 };
 

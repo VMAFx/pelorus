@@ -36,6 +36,7 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "pelorus_vulkan_sample.h"
+#include "pelorus_vulkan_pool.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -77,6 +78,7 @@ typedef struct PelorusDebandVulkanContext {
     int protect_detail;
     int meta; /* attach Pelorus interop side data                     */
     int64_t frame_idx;
+    PelVkPoolOpts pool; /* output pool tiling (ADR-0184) */
 } PelorusDebandVulkanContext;
 
 /* The deband algorithm now lives in vulkan/pelorus_deband.comp.glsl, compiled
@@ -268,6 +270,13 @@ static void pelorus_deband_vulkan_uninit(AVFilterContext *avctx)
     s->initialized = 0;
 }
 
+static int pelorus_deband_vulkan_config_output(AVFilterLink *outlink)
+{
+    PelorusDebandVulkanContext *s = outlink->src->priv;
+
+    return pel_vk_pool_config_output(outlink, &s->pool);
+}
+
 #define OFFSET(x) offsetof(PelorusDebandVulkanContext, x)
 #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 static const AVOption pelorus_deband_vulkan_options[] = {
@@ -427,6 +436,7 @@ static const AVOption pelorus_deband_vulkan_options[] = {
      0,
      1,
      FLAGS},
+    PEL_VK_POOL_OPTIONS(OFFSET(pool.tiling), OFFSET(pool.drm_modifiers), FLAGS),
     {NULL}};
 
 AVFILTER_DEFINE_CLASS(pelorus_deband_vulkan);
@@ -444,7 +454,7 @@ static const AVFilterPad pelorus_deband_vulkan_outputs[] = {
     {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
-        .config_props = &ff_vk_filter_config_output,
+        .config_props = &pelorus_deband_vulkan_config_output,
     },
 };
 

@@ -31,10 +31,10 @@ ADR: docs/adr/0123-anime-dehalo.md
  configure                                   |   1 +
  libavfilter/Makefile                        |   1 +
  libavfilter/allfilters.c                    |   1 +
- libavfilter/vf_pelorus_dehalo_vulkan.c      | 305 +++++++++++++++++++
+ libavfilter/vf_pelorus_dehalo_vulkan.c      | 315 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
  libavfilter/vulkan/pelorus_dehalo.comp.glsl | 315 ++++++++++++++++++++
- 6 files changed, 624 insertions(+)
+ 6 files changed, 634 insertions(+)
 
 diff --git a/configure b/configure
 index 3283718ba10ab831a499f230e165d15201c9a29c..f052412ba00f78d88734beaa51c4a4e82a5ebea6 100755
@@ -74,10 +74,10 @@ index 8ecaf738be23d70633dc7e84a35a37729ffe9de4..2ac2a6540fb0f9b500bfbd6137278ca1
  extern const FFFilter ff_vf_pelorus_mc_vulkan;
 diff --git a/libavfilter/vf_pelorus_dehalo_vulkan.c b/libavfilter/vf_pelorus_dehalo_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..4a48cdf949a492f8dfad987c210663daf47cf670
+index 0000000000000000000000000000000000000000..adcb0887ceeed59a77b668fda36a871110d342f1
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_dehalo_vulkan.c
-@@ -0,0 +1,305 @@
+@@ -0,0 +1,315 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -117,6 +117,7 @@ index 0000000000000000000000000000000000000000..4a48cdf949a492f8dfad987c210663da
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
 +#include "pelorus_vulkan_sample.h"
++#include "pelorus_vulkan_pool.h"
 +#include "vulkan_filter.h"
 +
 +#include "filters.h"
@@ -146,6 +147,7 @@ index 0000000000000000000000000000000000000000..4a48cdf949a492f8dfad987c210663da
 +
 +    int planes; /* plane bitmask to process (luma-only by default)           */
 +    int tile;   /* shared-memory tile the box-blur window (ADR-0139, opt-in)  */
++    PelVkPoolOpts pool; /* output pool tiling (ADR-0184) */
 +} PelorusDehaloVulkanContext;
 +
 +/* The dehalo algorithm — including the ADR-0139 shared-memory box-blur tiling
@@ -274,6 +276,13 @@ index 0000000000000000000000000000000000000000..4a48cdf949a492f8dfad987c210663da
 +    s->initialized = 0;
 +}
 +
++static int pelorus_dehalo_vulkan_config_output(AVFilterLink *outlink)
++{
++    PelorusDehaloVulkanContext *s = outlink->src->priv;
++
++    return pel_vk_pool_config_output(outlink, &s->pool);
++}
++
 +#define OFFSET(x) offsetof(PelorusDehaloVulkanContext, x)
 +#define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 +static const AVOption pelorus_dehalo_vulkan_options[] = {
@@ -349,6 +358,7 @@ index 0000000000000000000000000000000000000000..4a48cdf949a492f8dfad987c210663da
 +     0,
 +     1,
 +     FLAGS},
++    PEL_VK_POOL_OPTIONS(OFFSET(pool.tiling), OFFSET(pool.drm_modifiers), FLAGS),
 +    {NULL}};
 +
 +AVFILTER_DEFINE_CLASS(pelorus_dehalo_vulkan);
@@ -366,7 +376,7 @@ index 0000000000000000000000000000000000000000..4a48cdf949a492f8dfad987c210663da
 +    {
 +        .name = "default",
 +        .type = AVMEDIA_TYPE_VIDEO,
-+        .config_props = &ff_vk_filter_config_output,
++        .config_props = &pelorus_dehalo_vulkan_config_output,
 +    },
 +};
 +
