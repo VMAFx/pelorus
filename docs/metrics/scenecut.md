@@ -80,8 +80,8 @@ last Pelorus stage. For a software encoder (x264, x265, libsvtav1) the frames
 are downloaded anyway; place the filter on either side of `hwdownload`
 (inherent there). The software-encoder placement was not run on hardware.
 `hevc_vulkan` with `-g 250` stalled at the cut in one run (the same encoder also
-stalled on a plain `-force_key_frames 2` without any Pelorus filter), so the
-recipe sets neither.
+stalled on a plain numeric `-force_key_frames 2` without any Pelorus filter), so
+the recipe sets no `-g` and uses `-force_key_frames source` only.
 
 The encoder opens a fresh GOP on every frame the cut detector flagged.
 

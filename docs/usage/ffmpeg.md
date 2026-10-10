@@ -30,7 +30,7 @@ a hardware frames context). Anything else says so next to the recipe.
 
 | Recipe | GPU | Status |
 | --- | --- | --- |
-| NVENC through the CUDA hop | RTX 4090, driver 615.78.08 | verified for the graphs listed in [NVENC](#nvenc-nvdec--vulkan-filters--nvenc); other graphs fail, measured |
+| NVENC through the CUDA hop | RTX 4090, driver 615.78.08 | verified behind NVDEC for graphs ending in one writing filter (3000 frames) and behind a software decoder for the listed graphs; other NVDEC graphs fail, measured ([#296](https://github.com/VMAFx/pelorus/issues/296)) |
 | VAAPI and QSV through `tiling=drm`, NV12 | Arc A380, iHD, `xe` | verified |
 | Vulkan decode to Vulkan encode | RTX 4090 | verified for `hevc_vulkan` with the graphs listed below; the AV1 variant not run |
 | P010 into VAAPI and QSV | any | not working: stock FFmpeg defect ([Vulkan output pools](../backends/vulkan-drm-modifiers.md)) |
@@ -64,9 +64,19 @@ encoder`. Without `disable_multiplane=1` the same command fails with `Cannot
 map a multiplane Vulkan image (1 image(s) for 2 plane(s)) to CUDA; create the
 Vulkan device with the disable_multiplane=1 option` (exit code 218).
 
-With a software decoder, put the upload first: `-vf
-"format=nv12,hwupload,<filters>,hwupload=derive_device=cuda"`. That variant
-was not run.
+The failure listed below needs the first hop (NVDEC `cuda` frames to
+`hwupload` to Vulkan). With a software decoder, put the upload first:
+
+```bash
+ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk -i input.mkv \
+       -vf "format=nv12,hwupload,<filters>,hwupload=derive_device=cuda" \
+       -c:v hevc_nvenc -cq 28 out.mkv
+```
+
+Verified on an RTX 4090, exit code 0, no CUDA error, no `hwdownload` in the
+log, 8-bit input: every graph in the failing rows below, 120 frames each; deband
+twice and `pelorus_mc_vulkan=meta=1,pelorus_denoise_vulkan=prev=3:mc=1` also at
+3000 frames. The 10-bit form (`format=p010le`) was not run.
 
 Which graphs work on this hop was measured, not derived (RTX 4090, 120-frame
 clip, exit code 0 means all frames encoded):
@@ -80,11 +90,13 @@ clip, exit code 0 means all frames encoded):
 | `pelorus_mc_vulkan` followed by `pelorus_scenecut` and deband | works |
 | `pelorus_denoise_vulkan` alone or after `pelorus_mc_vulkan`; deband twice; `pelorus_borderfix_vulkan` twice; `pelorus_grain_estimate_vulkan` with denoise | fails after 2 to 37 frames: `cuWaitExternalSemaphoresAsync failed -> CUDA_ERROR_INVALID_VALUE` (exit code 187) |
 | a pass-through filter alone (`pelorus_analyze_vulkan`, `pelorus_mc_vulkan`, `pelorus_scenecut`) | fails the same way |
+| the failing graphs above, behind a software decoder | works (120 frames; deband twice and mc with denoise also 3000 frames) |
+| deband alone, `mc` with deband, `aa` alone, behind NVDEC | works also at 3000 frames |
 
 A larger upload pool (`hwupload=extra_hw_frames=64`) and an explicitly created
-CUDA device did not change the failures. The cause is not found. For the
-failing graphs, use the Vulkan Video encoder below, which has no CUDA hop, or
-the Intel path.
+CUDA device did not change the failures. The cause is not found ([#296](https://github.com/VMAFx/pelorus/issues/296)). For the
+failing graphs, use a software decoder with the same graph, or the Vulkan Video
+encoder below.
 
 ## Full zero-copy: Vulkan decode → filters → Vulkan HW encode
 
@@ -262,11 +274,12 @@ consume it through a dense `mfxExtMBQP` delta map:
 
 ```bash
 # HEVC, NVENC, constant-QP (the clean mode for QP-map steering). Verified on
-# an RTX 4090, exit code 0, 120 frames. The analyze filter passes its input
-# through, so a writing filter follows it for the CUDA hop to work.
+# an RTX 4090, exit code 0, 120 frames, software decode. Behind NVDEC this graph
+# fails on the CUDA hop (#296); a graph ending in one writing filter (for
+# example deband) works there.
 ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
-       -hwaccel cuda -hwaccel_output_format cuda -i input.mkv \
-       -vf "hwupload,pelorus_analyze_vulkan=roi=1,pelorus_deband_vulkan,hwupload=derive_device=cuda" \
+       -i input.mkv \
+       -vf "format=nv12,hwupload,pelorus_analyze_vulkan=roi=1,hwupload=derive_device=cuda" \
        -c:v hevc_nvenc -rc constqp -qp 30 -pelorus_roi 1 out.mkv
 
 # HEVC, Intel QSV, progressive CQP (-q:v also sets AV_CODEC_FLAG_QSCALE).
@@ -560,11 +573,12 @@ NVENC's external-ME-hint input (`enableExternalMEHints` +
 
 ```bash
 # HEVC, NVENC: produce the MV field, then let NVENC seed its search from it.
-# Verified on an RTX 4090, exit code 0, 120 frames. mc passes its input
-# through, so a writing filter follows it; mc keeps one frame (-extra_hw_frames).
+# Verified on an RTX 4090, exit code 0, 120 frames, software decode. Behind
+# NVDEC this graph fails on the CUDA hop (#296); a graph ending in one writing
+# filter (for example deband) works there.
 ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
-  -hwaccel cuda -hwaccel_output_format cuda -extra_hw_frames 1 -i in.mkv \
-  -vf "hwupload,pelorus_mc_vulkan=bsize=16:search=24,pelorus_deband_vulkan,hwupload=derive_device=cuda" \
+  -i in.mkv \
+  -vf "format=nv12,hwupload,pelorus_mc_vulkan=bsize=16:search=24,hwupload=derive_device=cuda" \
   -c:v hevc_nvenc -preset p5 -cq 28 -pelorus_me_hints 1 out.mkv
 ```
 
@@ -613,11 +627,12 @@ the grain:
 
 ```bash
 # AV1, NVENC: estimate the grain, then let NVENC re-synthesize it in hardware.
-# Verified on an RTX 4090, exit code 0, 120 frames (8-bit input). The estimator
-# passes its input through, so a writing filter follows it.
+# Verified on an RTX 4090, exit code 0, 120 frames (8-bit input), software
+# decode. Behind NVDEC this graph fails on the CUDA hop (#296); a graph ending in
+# one writing filter (for example deband) works there.
 ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
-  -hwaccel cuda -hwaccel_output_format cuda -i in.mkv \
-  -vf "hwupload,pelorus_grain_estimate_vulkan,pelorus_deband_vulkan,hwupload=derive_device=cuda" \
+  -i in.mkv \
+  -vf "format=nv12,hwupload,pelorus_grain_estimate_vulkan,hwupload=derive_device=cuda" \
   -c:v av1_nvenc -cq 32 -pelorus_film_grain 1 out.mkv
 ```
 
