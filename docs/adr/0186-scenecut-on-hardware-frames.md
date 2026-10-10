@@ -14,7 +14,7 @@ tells users to run `pelorus_scenecut` after `hwdownload`, just before the
 encoder, and the filter source comment and the README repeated it. Every
 hardware-encoder recipe that followed that placement round-tripped full frames
 through system memory, which the zero-copy requirement forbids
-([research 0172](../research/0172-zero-copy-audit.md) section 1, gap ZC-G13).
+([research 0172](../research/0172-zero-copy-audit.md) sections 1 and 6, gap ZC-G13).
 
 The source read in that research said the placement is not required: the
 filter has no format callback, so format negotiation accepts hardware formats,

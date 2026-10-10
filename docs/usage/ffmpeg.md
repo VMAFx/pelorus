@@ -30,7 +30,7 @@ a hardware frames context). Anything else says so next to the recipe.
 
 | Recipe | GPU | Status |
 | --- | --- | --- |
-| NVENC through the CUDA hop | RTX 4090, driver 615.x | verified for the graphs listed in [NVENC](#nvenc-nvdec--vulkan-filters--nvenc); other graphs fail, measured |
+| NVENC through the CUDA hop | RTX 4090, driver 615.78.08 | verified for the graphs listed in [NVENC](#nvenc-nvdec--vulkan-filters--nvenc); other graphs fail, measured |
 | VAAPI and QSV through `tiling=drm`, NV12 | Arc A380, iHD, `xe` | verified |
 | Vulkan decode to Vulkan encode | RTX 4090 | verified for `hevc_vulkan` with the graphs listed below; the AV1 variant not run |
 | P010 into VAAPI and QSV | any | not working: stock FFmpeg defect ([Vulkan output pools](../backends/vulkan-drm-modifiers.md)) |
@@ -40,7 +40,8 @@ a hardware frames context). Anything else says so next to the recipe.
 
 The verified runs used an FFmpeg `n9.0.2` build with the shared fix series
 (patches 0001 to 0004) and the Pelorus patch stack at `50b625b`, on clips of
-120 frames at 1280x720.
+120 frames at 1280x720. Host: NVIDIA driver 615.78.08, Linux 7.2.9, Arc A380 on
+the `xe` kernel driver with iHD.
 
 ## NVENC: NVDEC → Vulkan filters → NVENC
 
@@ -77,7 +78,7 @@ clip, exit code 0 means all frames encoded):
 | `pelorus_analyze_vulkan=roi=1`, `pelorus_dehalo_vulkan`, `pelorus_aa_vulkan`, `pelorus_deband_vulkan`, 10-bit | works |
 | `pelorus_grain_estimate_vulkan` followed by deband | works |
 | `pelorus_mc_vulkan` followed by `pelorus_scenecut` and deband | works |
-| `pelorus_denoise_vulkan` alone or after `pelorus_mc_vulkan`; deband twice; `pelorus_borderfix_vulkan` twice; `pelorus_grain_estimate_vulkan` with denoise | fails after about 32 frames: `cuWaitExternalSemaphoresAsync failed -> CUDA_ERROR_INVALID_VALUE` (exit code 187) |
+| `pelorus_denoise_vulkan` alone or after `pelorus_mc_vulkan`; deband twice; `pelorus_borderfix_vulkan` twice; `pelorus_grain_estimate_vulkan` with denoise | fails after 2 to 37 frames: `cuWaitExternalSemaphoresAsync failed -> CUDA_ERROR_INVALID_VALUE` (exit code 187) |
 | a pass-through filter alone (`pelorus_analyze_vulkan`, `pelorus_mc_vulkan`, `pelorus_scenecut`) | fails the same way |
 
 A larger upload pool (`hwupload=extra_hw_frames=64`) and an explicitly created
@@ -424,7 +425,8 @@ encoders `h264_vulkan`, `hevc_vulkan` and `av1_vulkan` (one shared edit in
 every GPU vendor's Vulkan encoder, with no host roundtrip:
 
 ```bash
-# HEVC, native Vulkan-Video encoder, constant-QP (GPU-resident after upload):
+# HEVC, native Vulkan-Video encoder, constant-QP (GPU-resident after upload).
+# Not run on hardware for this page: the verified Vulkan-encoder runs used Vulkan decode and no ROI option.
 ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
        -vf "format=p010le,hwupload,pelorus_analyze_vulkan=roi=1" \
        -c:v hevc_vulkan -rc_mode cqp -qp 30 -pelorus_roi 1 out.mkv

@@ -127,4 +127,4 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
 Verified on an RTX 4090 (exit code 0, 120 frames, no `hwdownload`, no CUDA hop).
 `mc` keeps 1 frame and `prev=3` keeps 3, hence `-extra_hw_frames 4`
 ([frames the filters keep](../usage/ffmpeg.md#frames-the-filters-keep--extra_hw_frames)). Denoise on the NVENC CUDA hop
-fails after about 32 frames, so this recipe uses the Vulkan Video encoder.
+fails after 2 to 37 frames, so this recipe uses the Vulkan Video encoder.

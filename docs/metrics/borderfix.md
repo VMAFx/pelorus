@@ -84,7 +84,7 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
 ```
 
 Verified on an RTX 4090 (exit code 0, 120 frames, no `hwdownload`, no CUDA hop).
-Two borderfix passes in a row fail on the NVENC CUDA hop after about 32 frames (see
+Two borderfix passes in a row fail on the NVENC CUDA hop after 2 to 37 frames (see
 [the zero-copy pipeline](../usage/ffmpeg.md#nvenc-nvdec--vulkan-filters--nvenc)), so this recipe
 uses the Vulkan Video encoder.
 

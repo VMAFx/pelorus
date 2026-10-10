@@ -154,7 +154,7 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
 Verified on an RTX 4090 (exit code 0, 120 frames, no `hwdownload`). Denoise keeps
 `prev=3` frames, hence `-extra_hw_frames 3`
 ([frames the filters keep](../usage/ffmpeg.md#frames-the-filters-keep--extra_hw_frames)); denoise on the
-NVENC CUDA hop fails after about 32 frames, so the recipe uses the Vulkan Video
+NVENC CUDA hop fails after 2 to 37 frames, so the recipe uses the Vulkan Video
 encoder.
 
 The `cutoff_h`/`cutoff_v` options are part of the `pelorus_fgs` SMPTE RDD 5
