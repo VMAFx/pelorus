@@ -1,8 +1,7 @@
-<!-- markdownlint-disable MD013 -->
-<!-- Compiled automatically by praetorctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->
-
 <!-- markdownlint-disable MD013 MD025 -->
 # Pelorus Agent Operating Harness
+
+Run read-only: file edits, state mutations, commits prohibited. Mutating steps dropped; prohibitions kept.
 
 Before delivery:
 
@@ -13,7 +12,7 @@ standardsctl audit
 make docs-lint docs-figures
 ```
 
-`make verify-all` runs all four. Docs gate needs Node 22.12+. Never install
+verification gate runs all four. Docs gate needs Node 22.12+. Never install
 hooks or fake hook file to pass gate.
 
 Engine binary: pinned `go install .../cmd/standardsctl@<pin>` installs
@@ -47,10 +46,10 @@ and shell call runs without Praetor policy.
 | **HISS-14** | Public ABI | Fleet | `PelorusSideData` ABI append-only. Breaking change: `!` subject plus `Migration:` footer with before/after C snippets. | Footer: `commit-msg` hook (`forge check-message`) + CI `forge check-commits` in `standards-gate.yml`. Append-only: `interop_test.c` conformance fixture + `interop-abi-reviewer`. Hook is opt-in (`make hooks-install`); CI is authoritative. |
 | **HISS-15** | 3D testing | Rule 5 | Public interfaces cover positive, negative, and boundary cases. | Fast suite (`meson test --suite=fast`) in `core` CI job + PR review; audit `touched files clean` covers debt only |
 | **HISS-16** | Context integrity | Fleet | `AGENTS.md` plus `.agents/agents/*.md` are canonical; vendor Markdown is generated. | `compile-context --verify` (pre-commit `context-check`, `standards-gate.yml`) + audit context, persona and caveman checks |
-| **HISS-17** | State ledger | Fleet | Agent turns keep git-ignored `.workingdir/` ledger: `praetorctl state status` at start, `state sync .` at end. | Lefthook `post-commit` `state-sync` (when hooks installed) + `session-start` hook; no gate fails on a stale ledger. Review only otherwise. |
+| **HISS-17** | State ledger | Fleet | read-only run: step dropped | Lefthook `post-commit` `state-sync` (when hooks installed) + `session-start` hook; no gate fails on a stale ledger. Review only otherwise. |
 | **HISS-18** | CI efficiency | Fleet | Workflows skip drafts and wasted runs through the hosted gate shape. | Audit `Workflow triggers (HISS-18)`: `[WARN]` only, 6 open findings (5 in `ci.yml`, 1 in `standards-gate.yml`); not enforced |
 | **HISS-19** | Reuse | Fleet | One behavior, one implementation; search before writing. | Review only: `praetorctl dedupe scan` reads Go only and this repository has none; only `dedupe-cadence` post-commit bookkeeping runs |
-| **HISS-20** | Replayable evidence | Fleet | Enforcement claims replay against fixtures. | Not wired: no `.config/hiss/coverage.yaml`, so `praetorctl hiss coverage --verify` cannot run; `make verify-all` replays gates, not claims |
+| **HISS-20** | Replayable evidence | Fleet | Enforcement claims replay against fixtures. | Not wired: no `.config/hiss/coverage.yaml`, so `praetorctl hiss coverage --verify` cannot run; verification gate replays gates, not claims |
 | **HISS-21** | Platform neutrality | Fleet | Gates and hooks run on Linux, macOS, Windows, or skip with stated reason. | Partial: `windows` CI job (MSYS2 UCRT64, fast suite). Make, shell and Lefthook gates are Linux-first; no macOS leg, no declared skip reasons. Review only. |
 
 ## Operational Rules
@@ -112,9 +111,6 @@ standardsctl audit
 # Hosted ratchet: growth guard + debt delta, then fingerprint-exact baseline
 CI=true standardsctl audit --base origin/master --touched-debt-delta-reason "<why>"
 standardsctl baseline --verify
-
-# Run all formatting, linting, and security gates
-make verify-all
 ```
 
 <!-- praetor:harness:end -->
@@ -228,7 +224,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | build | `ninja -C build` |
 | fast tests | `meson test -C build --suite=fast --print-errorlogs` |
 | native gate | `make verify-native` |
-| governance + native gate | `PRAETORCTL=standardsctl make verify-all` |
+| governance + native gate | `PRAETORCTL=standardsctl verification gate` |
 | install | `ninja -C build install` |
 | regenerate patches | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh` |
 | replay stack | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh` |
