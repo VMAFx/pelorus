@@ -34,10 +34,20 @@ constant).
     python3 -I scripts/check-doc-recipes.py --self-test
 """
 
+import datetime
 import re
 import sys
 import tempfile
 from pathlib import Path
+
+# Declared exceptions: one file, one rule, a reason and an expiry. An expired
+# exception no longer suppresses its finding, so the file fails like any other.
+EXCEPTIONS = (
+    ("docs/adr/0125-anime-tune.md", "hw-hwdownload", datetime.date(2027, 4, 10),
+     "Accepted ADR, body frozen; docs/usage/anime.md carries the current recipe"),
+    ("docs/research/0229-tester-vendor-images.md", "hw-hwdownload", datetime.date(2027, 4, 10),
+     "reproduces a measured failure of that exact command; changing it would falsify the record"),
+)
 
 RULES = ("hw-hwdownload", "sw-label", "unknown-encoder", "retained-table", "extra-hw-frames")
 
@@ -302,7 +312,21 @@ def doc_files(root):
     return out
 
 
-def run(root, off):
+def apply_exceptions(findings, today, exceptions=None):
+    """Drop findings covered by an unexpired exception; flag the expired ones."""
+    table = EXCEPTIONS if exceptions is None else exceptions
+    out = []
+    for path, line, rule, msg in findings:
+        match = [e for e in table if e[0] == path and e[1] == rule]
+        if match and today <= match[0][2]:
+            continue
+        if match:
+            msg += " (exception expired %s: %s)" % (match[0][2].isoformat(), match[0][3])
+        out.append((path, line, rule, msg))
+    return out
+
+
+def run(root, off, today=None):
     consts = load_constants(root)
     findings = []
     for path in doc_files(root):
@@ -310,7 +334,7 @@ def run(root, off):
         text = path.read_text(encoding="utf-8")
         findings += check_recipes(rel, text, consts, off)
         findings += check_table(rel, text, consts, off)
-    return findings
+    return apply_exceptions(findings, today or datetime.date.today())
 
 
 def report(findings):
@@ -398,12 +422,32 @@ def self_test():
             if quiet:
                 failures += 1
                 print("self-test FAIL: %s: still reported with %s disabled" % (name, expect[1]))
+    failures += self_test_exceptions()
     failures += self_test_constants()
     if failures:
         print("check-doc-recipes self-test: %d failure(s)" % failures)
         return 1
     print("check-doc-recipes self-test: ok")
     return 0
+
+
+def self_test_exceptions():
+    failures = 0
+    finding = [("a.md", 3, "hw-hwdownload", "m"), ("b.md", 4, "hw-hwdownload", "m"),
+               ("a.md", 5, "sw-label", "m")]
+    table = (("a.md", "hw-hwdownload", datetime.date(2027, 1, 1), "reason"),)
+    live = apply_exceptions(finding, datetime.date(2026, 10, 10), table)
+    if [(f[0], f[2]) for f in live] != [("b.md", "hw-hwdownload"), ("a.md", "sw-label")]:
+        failures += 1
+        print("self-test FAIL: an exception must cover one file and one rule only: %s" % live)
+    dead = apply_exceptions(finding, datetime.date(2027, 1, 2), table)
+    if len(dead) != 3 or "expired" not in dead[0][3]:
+        failures += 1
+        print("self-test FAIL: an expired exception still suppresses: %s" % dead)
+    if any(e[2] <= datetime.date.today() for e in EXCEPTIONS):
+        failures += 1
+        print("self-test FAIL: a declared exception has expired; renew or remove it")
+    return failures
 
 
 def self_test_constants():

@@ -48,19 +48,40 @@ Non-cut frames pass through unchanged.
 
 ## Usage
 
-Place it **after `hwdownload`**, just before the encoder. `vf_pelorus_mc_vulkan`
-runs upstream in VRAM with `meta=1` to emit `PEL_SEC_MOTION`; the side data is
-metadata and rides the frame through `hwdownload` via `av_frame_copy_props`, so
-the consumer sees the flag while working on a plain system-memory frame (it needs
-no Vulkan device of its own):
+Run it **on the Vulkan frames**, right after `vf_pelorus_mc_vulkan` (and any
+later Pelorus stage), before the frames leave VRAM. The filter has no format
+callback, so it accepts hardware frames and passes the input frames context on;
+it reads the side data and sets `pict_type` and the key flag, and touches no
+pixels. Hardware encoders honour the `I` on hardware frames, so a hardware
+recipe needs no `hwdownload`
+([ADR-0186](../adr/0186-scenecut-on-hardware-frames.md)). Measured on a 120-frame
+clip with a hard cut at frame 60 and a single keyframe at frame 0 in the
+source; the encoder output has its `I` pictures at frames 0 and 60, and at
+frame 0 only without `pelorus_scenecut`:
+
+| Encoder | GPU | Graph | Exit code | `I` pictures |
+| --- | --- | --- | --- | --- |
+| `hevc_vulkan` | RTX 4090 | Vulkan decode, `mc`, `scenecut` | 0 | 0, 60 |
+| `hevc_nvenc` | RTX 4090 | NVDEC, CUDA hop, `mc`, deband, `scenecut` | 0 | 0, 60 |
+| `hevc_qsv` | Arc A380 | VAAPI decode, `mc`, deband `tiling=drm`, `scenecut`, map to QSV | 0 | 0, 60 |
 
 ```bash
-ffmpeg -init_hw_device vulkan -hwaccel vulkan -hwaccel_output_format vulkan \
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
+       -hwaccel vulkan -hwaccel_device vk -hwaccel_output_format vulkan -extra_hw_frames 1 \
        -i input.mkv \
-       -vf "pelorus_mc_vulkan=meta=1,hwdownload,format=yuv420p,pelorus_scenecut" \
+       -vf "pelorus_mc_vulkan=meta=1,pelorus_scenecut" \
        -force_key_frames source \
-       -c:v hevc_nvenc -cq 28 out.mkv      # or x264 / x265 / hevc_qsv / libsvtav1
+       -c:v hevc_vulkan -qp 28 out.mkv
 ```
+
+The NVENC and QSV graphs are the ones in
+[the zero-copy pipeline](../usage/ffmpeg.md) with `pelorus_scenecut` after the
+last Pelorus stage. For a software encoder (x264, x265, libsvtav1) the frames
+are downloaded anyway; place the filter on either side of `hwdownload`
+(inherent there). The software-encoder placement was not run on hardware.
+`hevc_vulkan` with `-g 250` stalled at the cut in one run (the same encoder also
+stalled on a plain `-force_key_frames 2` without any Pelorus filter), so the
+recipe sets neither.
 
 The encoder opens a fresh GOP on every frame the cut detector flagged.
 
@@ -83,9 +104,10 @@ keyframe is frame 0, with it frames 0 and 10 (PR #68).
   produced only by the motion estimator. Without an upstream `mc` emitting
   `PEL_SEC_MOTION`, there is no side data to read and the filter is a no-op (it
   never forces a keyframe).
-- **Run it after `hwdownload`.** The motion side data is metadata, so it survives
-  `hwdownload`; place the consumer just before the encoder, on plain frames. It
-  does no GPU work and needs no Vulkan device.
+- **No `hwdownload` needed.** The motion side data is metadata and rides the
+  frame through every hop (`av_frame_copy_props`); the consumer works on
+  Vulkan frames as well as on system-memory frames. It does no GPU work and
+  needs no Vulkan device of its own.
 - **Codec-agnostic, no patch.** `pict_type == I` is the standard keyframe-request
   path; x264/x265/NVENC/QSV/SVT-AV1 all honour it. No per-encoder fork patch is
   shipped or needed (unlike the ROI/delta-QP tiers — see

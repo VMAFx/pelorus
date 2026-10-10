@@ -3,28 +3,89 @@
 
 Pelorus filters are libavfilter Vulkan filters: they consume and produce
 `AV_PIX_FMT_VULKAN` frames. The win comes from keeping frames in VRAM from
-decode to encode — so `hwupload`/`hwdownload` belong only at the pipeline edges,
-never between Pelorus stages.
+decode to encode, so a recipe for a hardware encoder never contains
+`hwdownload`. `hwdownload` stays only in recipes for software encoders
+(libaom, SVT-AV1, x265), where it is inherent: those encoders read system
+memory. `scripts/check-doc-recipes.py` enforces both rules on every recipe in
+this repository.
 
 **Codec-agnostic.** The filters pre-process pixels; the encoder is your choice,
-but FFmpeg hardware-frame domains must match. The minimal example downloads to
-software frames before NVENC. The end-to-end zero-copy example instead uses a
-Vulkan Video encoder. NVENC, QSV, VAAPI, and AMF require an explicit transfer
-or mapping boundary from `AV_PIX_FMT_VULKAN`. Deband, denoise, and motion hints
-help HEVC (rivaling x265) and AV1 alike.
+but FFmpeg hardware-frame domains must match, and each encoder family has its
+own boundary:
 
-## Minimal: software decode → upload → deband → download → HW encode
+| Encoder | Boundary from `AV_PIX_FMT_VULKAN` | Copy | Section |
+| --- | --- | --- | --- |
+| Vulkan Video (`*_vulkan`) | none: same frames context | none | [Full zero-copy](#full-zero-copy-vulkan-decode--filters--vulkan-hw-encode) |
+| NVENC | `hwupload` to CUDA, `disable_multiplane=1` | VRAM to VRAM copy | [NVENC](#nvenc-nvdec--vulkan-filters--nvenc) |
+| VAAPI, QSV (Linux, Intel) | `tiling=drm` on the last writing filter, then `hwmap` | none (map) | [VAAPI and QSV](#zero-copy-into-vaapi-and-qsv-encoders-linux) |
+| AMF | none exists in FFmpeg n9.0.2 | not available | [AMF](#amf-and-windows) |
+| libaom, SVT-AV1, x265 | `hwdownload` | host round trip, inherent | [Software encoders](#software-encoders-hwdownload-is-inherent) |
+
+## Hardware status of the recipes
+
+Every recipe on this page is one of three kinds. "Verified" means it ran on
+the named GPU with the named binary, ended with exit code 0 and the log shows
+the claimed path (no `hwdownload`, no auto-inserted scale, the encoder taking
+a hardware frames context). Anything else says so next to the recipe.
+
+| Recipe | GPU | Status |
+| --- | --- | --- |
+| NVENC through the CUDA hop | RTX 4090, driver 615.x | verified for the graphs listed in [NVENC](#nvenc-nvdec--vulkan-filters--nvenc); other graphs fail, measured |
+| VAAPI and QSV through `tiling=drm`, NV12 | Arc A380, iHD, `xe` | verified |
+| Vulkan decode to Vulkan encode | RTX 4090 | verified for `hevc_vulkan` with the graphs listed below; the AV1 variant not run |
+| P010 into VAAPI and QSV | any | not working: stock FFmpeg defect ([Vulkan output pools](../backends/vulkan-drm-modifiers.md)) |
+| `tiling=drm` on AMD | Ryzen iGPU, RADV | maps, but frames can be read unfinished; not a working recipe |
+| AMF | none | not run on hardware: no AMF runtime on the Linux test host, and FFmpeg has no Vulkan-to-AMF path |
+| libaom, SVT-AV1, x265 recipes | none | not re-run on hardware: the test binary has none of these encoders; the graph shape is the same as the verified ones |
+
+The verified runs used an FFmpeg `n9.0.2` build with the shared fix series
+(patches 0001 to 0004) and the Pelorus patch stack at `50b625b`, on clips of
+120 frames at 1280x720.
+
+## NVENC: NVDEC → Vulkan filters → NVENC
+
+FFmpeg `n9.0.2` has no Vulkan-to-NVENC map. The two hops between CUDA and
+Vulkan are `hwupload` calls that copy within VRAM; no frame reaches system
+memory. The Vulkan device needs `disable_multiplane=1`, because the CUDA
+interop refuses a multiplane NV12 or P010 image (one image for two planes):
 
 ```bash
-ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
-       -i input.mkv \
-       -vf "format=p010le,hwupload,
-            pelorus_deband_vulkan=range=15:dither=bluenoise:dynamic=1,
-            hwdownload,format=p010le" \
-       -c:v hevc_nvenc -cq 28 out.mkv      # or av1_nvenc / hevc_qsv / hevc_vaapi
+ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
+       -hwaccel cuda -hwaccel_output_format cuda -i input.mkv \
+       -vf "hwupload,pelorus_deband_vulkan=range=15:dither=bluenoise:dynamic=1,hwupload=derive_device=cuda" \
+       -c:v hevc_nvenc -cq 28 out.mkv      # or av1_nvenc / h264_nvenc
 ```
 
-## Full zero-copy: Vulkan decode → deband → Vulkan HW encode
+Verified on an RTX 4090: exit code 0, 120 frames; the log shows `pixfmt:cuda`
+at the graph input, `Transferred CUDA image to Vulkan!`, `Transferred Vulkan
+image to CUDA!` and `Using input frames context (format cuda) with hevc_nvenc
+encoder`. Without `disable_multiplane=1` the same command fails with `Cannot
+map a multiplane Vulkan image (1 image(s) for 2 plane(s)) to CUDA; create the
+Vulkan device with the disable_multiplane=1 option` (exit code 218).
+
+With a software decoder, put the upload first: `-vf
+"format=nv12,hwupload,<filters>,hwupload=derive_device=cuda"`. That variant
+was not run.
+
+Which graphs work on this hop was measured, not derived (RTX 4090, 120-frame
+clip, exit code 0 means all frames encoded):
+
+| Graph between the two `hwupload` calls | Result |
+| --- | --- |
+| one of `pelorus_deband_vulkan`, `pelorus_aa_vulkan`, `pelorus_deblock_vulkan`, `pelorus_dehalo_vulkan` | works |
+| `pelorus_analyze_vulkan` or `pelorus_mc_vulkan` followed by one writing filter (deband) | works |
+| `pelorus_analyze_vulkan=roi=1`, `pelorus_dehalo_vulkan`, `pelorus_aa_vulkan`, `pelorus_deband_vulkan`, 10-bit | works |
+| `pelorus_grain_estimate_vulkan` followed by deband | works |
+| `pelorus_mc_vulkan` followed by `pelorus_scenecut` and deband | works |
+| `pelorus_denoise_vulkan` alone or after `pelorus_mc_vulkan`; deband twice; `pelorus_borderfix_vulkan` twice; `pelorus_grain_estimate_vulkan` with denoise | fails after about 32 frames: `cuWaitExternalSemaphoresAsync failed -> CUDA_ERROR_INVALID_VALUE` (exit code 187) |
+| a pass-through filter alone (`pelorus_analyze_vulkan`, `pelorus_mc_vulkan`, `pelorus_scenecut`) | fails the same way |
+
+A larger upload pool (`hwupload=extra_hw_frames=64`) and an explicitly created
+CUDA device did not change the failures. The cause is not found. For the
+failing graphs, use the Vulkan Video encoder below, which has no CUDA hop, or
+the Intel path.
+
+## Full zero-copy: Vulkan decode → filters → Vulkan HW encode
 
 ```bash
 ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
@@ -35,20 +96,27 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
 ```
 
 When the decoder, filter, and encoder all speak Vulkan/VRAM, no frame touches
-system RAM.
+system RAM. The deband graph above was not run for this page. These ran on
+the RTX 4090 with `hevc_vulkan -qp 28` and exit code 0 (120 frames): borderfix twice,
+`pelorus_mc_vulkan=meta=1` with `pelorus_denoise_vulkan=mc=1` (with
+`-extra_hw_frames 4`), and `pelorus_grain_estimate_vulkan` with
+`pelorus_denoise_vulkan`.
 
 ## Zero-copy into VAAPI and QSV encoders (Linux)
 
 `tiling=drm` on the last Pelorus filter that writes frames lets `hwmap` hand
 its output to a VAAPI encoder, or on to QSV, without `hwdownload` (8-bit NV12
-today; P010 and AMD wait on FFmpeg fixes, see
+only; P010 and AMD wait on FFmpeg fixes, see
 [Vulkan output pools](../backends/vulkan-drm-modifiers.md)). Derive Vulkan from
-the VAAPI device so both run on the same GPU. VAAPI encoder:
+the VAAPI device so both run on the same GPU, and decode with VAAPI so the
+decoder output maps into Vulkan too. VAAPI encoder, verified on an Arc A380
+(exit code 0, 120 frames):
 
 ```bash
 LIBVA_DRIVER_NAME=iHD ffmpeg -v verbose -init_hw_device vaapi=va:/dev/dri/renderD130 \
-       -init_hw_device vulkan=vk@va -filter_hw_device vk -i input.mkv \
-       -vf "format=nv12,hwupload,pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi" \
+       -init_hw_device vulkan=vk@va \
+       -hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi -i input.mkv \
+       -vf "hwmap=derive_device=vulkan,pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi,format=vaapi" \
        -c:v h264_vaapi -rc_mode CQP -qp 20 out.mkv
 ```
 
@@ -56,21 +124,88 @@ With `-v verbose` the filter names the pool's layout, for example on an Arc
 A380:
 
 ```text
-[Parsed_pelorus_deband_vulkan_2 @ 0x...] tiling=drm: nv12 1280x720 pool uses DRM format modifier 0x0100000000000009 (I915_FORMAT_MOD_4_TILED), chosen by the driver from 3
+[Parsed_pelorus_deband_vulkan_1 @ 0x...] tiling=drm: nv12 1280x720 pool uses DRM format modifier 0x0100000000000009 (I915_FORMAT_MOD_4_TILED), chosen by the driver from 3
 ```
 
+The log has no `hwdownload` and no scale filter, and the encoder reports
+`Using input frames context (format vaapi) with h264_vaapi encoder`.
+
 QSV encoder, mapped on from VAAPI; each hardware format is named so that format
-negotiation cannot pick another:
+negotiation cannot pick another. Verified on the same card (exit code 0,
+120 frames):
 
 ```bash
 LIBVA_DRIVER_NAME=iHD ffmpeg -init_hw_device vaapi=va:/dev/dri/renderD130 \
-       -init_hw_device vulkan=vk@va -filter_hw_device vk -i input.mkv \
-       -vf "format=nv12,hwupload,pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi,format=vaapi,hwmap=derive_device=qsv,format=qsv" \
+       -init_hw_device vulkan=vk@va \
+       -hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi -i input.mkv \
+       -vf "hwmap=derive_device=vulkan,pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi,format=vaapi,hwmap=derive_device=qsv,format=qsv" \
        -c:v hevc_qsv -q:v 24 out.mkv
 ```
 
+With a software decoder, replace the decode options and the first `hwmap` by
+`-i input.mkv -vf "format=nv12,hwupload,..."` (measured in ADR-0184, not
+re-run for this page).
+
 On an Arc A380 under `xe`, VAAPI encoders need constant QP (`-rc_mode CQP -qp
 N`) and QSV bitrate control needs `-extbrc 1` (see below).
+
+## Frames the filters keep: `-extra_hw_frames`
+
+Two filters hold on to input frames after they have output them. Hardware
+decoders allocate a fixed pool of surfaces, so frames a filter keeps are
+surfaces the decoder cannot reuse.
+
+<!-- gate: retained-frames -->
+
+| Filter | Frames kept | Default | Maximum |
+| --- | --- | --- | --- |
+| `pelorus_mc_vulkan` | the previous input frame, always | 1 | 1 |
+| `pelorus_denoise_vulkan` | `prev` earlier frames plus the held frame when `lookahead=1` | 3 | 5 |
+
+The default is `prev=3`, `lookahead=0`; the maximum is `prev=4` and
+`lookahead=1`. `scripts/check-doc-recipes.py` reads the numbers from
+`PEL_DENOISE_MAX_PREV`, the option defaults in
+`vf_pelorus_denoise_vulkan.c` and the single `AVFrame *prev` of
+`vf_pelorus_mc_vulkan.c`, and fails when this table or an `-extra_hw_frames`
+value in a recipe disagrees. A chain that holds frames in both filters needs the
+sum.
+
+Pass `-extra_hw_frames N` before `-i` with N at least the number of frames the
+chain keeps, so the decoder pool has room for them:
+
+```bash
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
+       -hwaccel vulkan -hwaccel_device vk -hwaccel_output_format vulkan -extra_hw_frames 4 \
+       -i input.mkv \
+       -vf "pelorus_mc_vulkan=meta=1,pelorus_denoise_vulkan=prev=3:mc=1" \
+       -c:v hevc_vulkan -qp 28 out.mkv
+```
+
+Verified (RTX 4090, exit code 0, 120 frames; `mc` 1 + `prev=3` = 4). Starvation
+without the option was not reproduced: the same chain behind VAAPI decode on
+the Arc A380 and NVDEC with `mc` ran to completion without it, so the option is
+a safeguard sized by the table, not a measured fix.
+
+## AMF and Windows
+
+FFmpeg `n9.0.2` has no Vulkan-to-AMF and no Vulkan-to-D3D11 path, and AMF takes
+software, D3D11 or DXVA2 frames only ([research 0172](../research/0172-zero-copy-audit.md),
+hop matrix rows D and G). A Windows or AMF recipe therefore cannot avoid a host
+copy today, and none is given. Not run on hardware: the test host is Linux
+without an AMF runtime.
+
+## Software encoders: `hwdownload` is inherent
+
+libaom, SVT-AV1 and x265 read frames from system memory, so the Pelorus output
+must be downloaded. Keep Pelorus stages in VRAM and download once, last:
+
+```bash
+# hwdownload is inherent: libsvtav1 takes system-memory frames.
+# Not run on hardware: the test binary has no libsvtav1.
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
+       -vf "format=p010le,hwupload,pelorus_deband_vulkan,hwdownload,format=p010le" \
+       -c:v libsvtav1 -crf 35 -preset 6 out.mkv
+```
 
 ## Chaining stages
 
@@ -101,6 +236,8 @@ rides every frame to the encoder.
 Score the processed-then-encoded output against the source, in the same graph:
 
 ```bash
+# hwdownload is inherent here: libvmaf_tune scores system-memory frames.
+# Not run on hardware: the test binary has no libvmaf_tune.
 ffmpeg -i src.mkv -i src.mkv -filter_complex \
   "[0:v]hwupload,pelorus_deband_vulkan=thry=0.012:meta=1,hwdownload,format=p010le[pre];
    [pre][1:v]libvmaf_tune=recommend_target_vmaf=93:model=version=vmaf_v0.6.1" \
@@ -123,14 +260,20 @@ QSV honors only coarse rectangle regions; the Pelorus patch stack adds a
 consume it through a dense `mfxExtMBQP` delta map:
 
 ```bash
-# HEVC, NVENC, constant-QP (the clean mode for QP-map steering):
-ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
-       -vf "format=p010le,hwupload,pelorus_analyze_vulkan=roi=1,hwdownload,format=p010le" \
+# HEVC, NVENC, constant-QP (the clean mode for QP-map steering). Verified on
+# an RTX 4090, exit code 0, 120 frames. The analyze filter passes its input
+# through, so a writing filter follows it for the CUDA hop to work.
+ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
+       -hwaccel cuda -hwaccel_output_format cuda -i input.mkv \
+       -vf "hwupload,pelorus_analyze_vulkan=roi=1,pelorus_deband_vulkan,hwupload=derive_device=cuda" \
        -c:v hevc_nvenc -rc constqp -qp 30 -pelorus_roi 1 out.mkv
 
-# HEVC, Intel QSV, progressive CQP (-q:v also sets AV_CODEC_FLAG_QSCALE):
-ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
-       -vf "format=p010le,hwupload,pelorus_analyze_vulkan=roi=1,hwdownload,format=p010le" \
+# HEVC, Intel QSV, progressive CQP (-q:v also sets AV_CODEC_FLAG_QSCALE).
+# Verified on an Arc A380, exit code 0, 120 frames; the log says "Pelorus ROI:
+# requesting per-frame HEVC delta-QP maps (mfxExtMBQP)". 8-bit NV12 only.
+LIBVA_DRIVER_NAME=iHD ffmpeg -init_hw_device vaapi=va:/dev/dri/renderD130 -init_hw_device vulkan=vk@va \
+       -hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi -i input.mkv \
+       -vf "hwmap=derive_device=vulkan,pelorus_analyze_vulkan=roi=1,pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi,format=vaapi,hwmap=derive_device=qsv,format=qsv" \
        -c:v hevc_qsv -q:v 30 -pelorus_roi 1 out.mkv
 ```
 
@@ -188,8 +331,9 @@ needs no HuC; the encoder log says `ExtBRC: ON`. On an A380 this held CBR within
 2 % of the target over 16 seconds:
 
 ```bash
-LIBVA_DRIVER_NAME=iHD ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
-       -vf "format=nv12,hwupload,pelorus_deband_vulkan,hwdownload,format=nv12" \
+LIBVA_DRIVER_NAME=iHD ffmpeg -init_hw_device vaapi=va:/dev/dri/renderD130 -init_hw_device vulkan=vk@va \
+       -hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi -i input.mkv \
+       -vf "hwmap=derive_device=vulkan,pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi,format=vaapi,hwmap=derive_device=qsv,format=qsv" \
        -c:v hevc_qsv -b:v 4M -maxrate 4M -bufsize 4M -extbrc 1 out.mkv
 ```
 
@@ -231,7 +375,9 @@ SVT-AV1's native **per-superblock ROI segment map** (`SvtAv1RoiMapEvt`) rather
 than a per-block delta-QP map, because that is the ABI SVT-AV1 exposes:
 
 ```bash
-# AV1, SVT-AV1, constant-quality CRF (the clean mode for ROI segment steering):
+# AV1, SVT-AV1, constant-quality CRF (the clean mode for ROI segment steering).
+# hwdownload is inherent: libsvtav1 takes system-memory frames.
+# Not run on hardware: the test binary has no libsvtav1.
 ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i in.mkv \
        -vf "format=p010le,hwupload,pelorus_analyze_vulkan=roi=1,hwdownload,format=p010le" \
        -c:v libsvtav1 -crf 35 -preset 6 -pelorus_roi 1 out.mkv
@@ -412,8 +558,11 @@ NVENC's external-ME-hint input (`enableExternalMEHints` +
 
 ```bash
 # HEVC, NVENC: produce the MV field, then let NVENC seed its search from it.
-ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
-  -vf "hwupload,pelorus_mc_vulkan=bsize=16:search=24,hwdownload,format=p010le" \
+# Verified on an RTX 4090, exit code 0, 120 frames. mc passes its input
+# through, so a writing filter follows it; mc keeps one frame (-extra_hw_frames).
+ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
+  -hwaccel cuda -hwaccel_output_format cuda -extra_hw_frames 1 -i in.mkv \
+  -vf "hwupload,pelorus_mc_vulkan=bsize=16:search=24,pelorus_deband_vulkan,hwupload=derive_device=cuda" \
   -c:v hevc_nvenc -preset p5 -cq 28 -pelorus_me_hints 1 out.mkv
 ```
 
@@ -462,8 +611,11 @@ the grain:
 
 ```bash
 # AV1, NVENC: estimate the grain, then let NVENC re-synthesize it in hardware.
-ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
-  -vf "hwupload,pelorus_grain_estimate_vulkan,hwdownload,format=p010le" \
+# Verified on an RTX 4090, exit code 0, 120 frames (8-bit input). The estimator
+# passes its input through, so a writing filter follows it.
+ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
+  -hwaccel cuda -hwaccel_output_format cuda -i in.mkv \
+  -vf "hwupload,pelorus_grain_estimate_vulkan,pelorus_deband_vulkan,hwupload=derive_device=cuda" \
   -c:v av1_nvenc -cq 32 -pelorus_film_grain 1 out.mkv
 ```
 
@@ -574,9 +726,11 @@ cases, the flat-content carriers of issue #284 included, on an NVIDIA host and
 exits 77 with the reason elsewhere.
 
 ```bash
-ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
-       -vf "format=nv12,hwupload,pelorus_analyze_vulkan,hwdownload,format=nv12" \
-       -c:v hevc_qsv -udu_sei 1 out.mkv
+# Verified on an Arc A380, exit code 0, 120 frames.
+LIBVA_DRIVER_NAME=iHD ffmpeg -init_hw_device vaapi=va:/dev/dri/renderD130 -init_hw_device vulkan=vk@va \
+       -hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi -i input.mkv \
+       -vf "hwmap=derive_device=vulkan,pelorus_analyze_vulkan,pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi,format=vaapi,hwmap=derive_device=qsv,format=qsv" \
+       -c:v hevc_qsv -udu_sei 1 -q:v 24 out.mkv
 ```
 
 ### QSV: the SEI space per picture

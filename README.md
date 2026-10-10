@@ -47,11 +47,15 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
        -c:v hevc_vulkan -pix_fmt vulkan -qp 28 out.mkv  # or: av1_vulkan
 ```
 
-NVENC, QSV, VAAPI, and AMF use different FFmpeg hardware-frame domains; add an
-explicit download/upload or mapping boundary for those encoders instead of
-feeding them `AV_PIX_FMT_VULKAN` frames directly. On Linux, VAAPI and QSV take
-Pelorus output through `hwmap` without `hwdownload` when the last filter runs
-with `tiling=drm` ([Vulkan output pools](docs/backends/vulkan-drm-modifiers.md)).
+NVENC, QSV, VAAPI, and AMF use different FFmpeg hardware-frame domains, so each
+needs its own boundary instead of `AV_PIX_FMT_VULKAN` frames. None of them needs
+`hwdownload`. NVENC takes a VRAM-to-VRAM `hwupload` to CUDA on a Vulkan device
+created with `disable_multiplane=1`. On Linux, VAAPI and QSV take Pelorus output
+through `hwmap` when the last filter runs with `tiling=drm`
+([Vulkan output pools](docs/backends/vulkan-drm-modifiers.md)). AMF has no
+Vulkan input in FFmpeg n9.0.2. Only software encoders (libaom, SVT-AV1, x265)
+need `hwdownload`. Recipes and the hardware each ran on:
+[the zero-copy pipeline](docs/usage/ffmpeg.md).
 
 ## Principles
 
@@ -145,7 +149,8 @@ encoder. A documented, retunable composition, not a new meta-filter. See
       already emits in `PEL_SEC_MOTION` and sets `pict_type=I` on cut frames, so
       the encoder opens a fresh GOP exactly at the cut. Vendor-neutral
       (`pict_type==I` honoured by x264/x265/NVENC/QSV/SVT-AV1 with no per-encoder
-      patch); links libpelorus, not gated on Vulkan; run after `hwdownload`.
+      patch); links libpelorus, not gated on Vulkan; runs on Vulkan frames, no
+      `hwdownload` needed (ADR-0186).
       Producer + consumer + mechanism are build-verified; the end-to-end BD-rate
       A/B (cut-aligned GOPs vs periodic IDR on multi-shot content) is a documented
       follow-up — no number claimed (ADR-0126 / ADR-0111).
