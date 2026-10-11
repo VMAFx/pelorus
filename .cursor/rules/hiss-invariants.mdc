@@ -126,7 +126,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 - Encoder steering: NVENC, QSV, Vulkan, libaom, SVT-AV1 patches; QP-feedback path. README "Modules" table: current inventory, no stubs.
 - FFmpeg 9 base: build-time SPIR-V, no runtime GLSL API (ADR-0143).
 - Forge: `VMAFx/pelorus`. Run `gh repo set-default vmafx/pelorus` before any `gh` command.
-- Plan/status: `.workingdir/PLAN.md`, `.workingdir/STATE.md`, backlog `.workingdir/AUDIT-2026-08-30.md` (local, git-ignored).
+- Plan/status: `docs/roadmap.md` + forge milestones; local, git-ignored: `.workingdir/OPEN.md`, `.workingdir/STATE.md`, backlog `.workingdir/BACKLOG.md`.
 
 ## Hard rules
 
@@ -284,5 +284,5 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 - FFmpeg-impacting PR: rebase note + regenerated stack.
 - New module: scoped `AGENTS.md`.
 - Every commit: `.workingdir/STATE.md` session-log entry; README "Landed so far" row when build-order step lands; layout row for new top-level package.
-- Decision/status truth: `docs/adr/`, `.workingdir/PLAN.md`, `.workingdir/STATE.md`.
+- Decision/status truth: `docs/adr/`, `docs/roadmap.md`, `.workingdir/OPEN.md`, `.workingdir/STATE.md`.
 - Uncertainty: verify `docs/principles.md`, scoped `AGENTS.md`, current source, current executable help.

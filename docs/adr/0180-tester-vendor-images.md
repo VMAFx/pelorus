@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0180: Tester images per kit: NVIDIA ships no NVIDIA file and builds NVENC from the MIT headers only, Intel ships Debian's media stack with the Expat-licensed non-free media driver, and a report without its device names the missing docker option
 
-- **Status**: Proposed
-- **Implementation**: pending (#229)
+- **Status**: Accepted
 - **Date**: 2026-10-09
 - **Deciders**: Lusoris
 - **Tags**: tester, licensing, supply-chain, ci, nvidia, intel

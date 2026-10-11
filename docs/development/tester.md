@@ -10,7 +10,8 @@ the kit are described under [tester images](../usage/tester.md#tester-images):
 AMD and arm64 are later children of
 [#108](https://github.com/VMAFx/pelorus/issues/108). `libpelorus_suite` and
 `registration` have no runner yet and are recorded as `not_run` with that
-reason.
+reason; the runners are tracked in
+[#302](https://github.com/VMAFx/pelorus/issues/302).
 
 A tester package is evidence for one `master` commit, named
 `tester-<YYYYMMDD>-<sha8>` (CPU image) or `tester-<kit>-<YYYYMMDD>-<sha8>`

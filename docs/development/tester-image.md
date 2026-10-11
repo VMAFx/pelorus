@@ -13,10 +13,11 @@ oneVPL, the Expat-licensed non-free media driver), each with a GPL-3.0-or-later 
 licence gates and a `-source` target. All three build locally; the NVIDIA kit
 passes on an RTX 4090 and the Intel kit on an Arc A380 (`xe` kernel driver, no HuC), with `hevc_qsv` steering
 through `intel-media-va-driver-non-free`
-([research 0229](../research/0229-tester-vendor-images.md)). Nothing has been
-dispatched end to end yet: the hosted build, the push and the SBOM attestation
-verify line (predicate type `https://spdx.dev/Document/v2.3`) are unproven
-until the first dispatch.
+([research 0229](../research/0229-tester-vendor-images.md)). The hosted
+build, push, signature and attestations ran end to end for `v0.4.0-rc.3`
+([run 38149990882](https://github.com/VMAFx/pelorus/actions/runs/38149990882),
+commit `3c8e7da0`): the three kit images and their `-source` images pass the
+checks under [Verify an image](#verify-an-image).
 
 ## Kits and targets
 
@@ -218,9 +219,14 @@ cosign verify \
   "$IMAGE@$DIGEST"
 gh attestation verify "oci://$IMAGE@$DIGEST" -R VMAFx/pelorus \
   --signer-workflow VMAFx/pelorus/.github/workflows/tester-publish.yml
+gh attestation verify "oci://$IMAGE@$DIGEST" -R VMAFx/pelorus \
+  --signer-workflow VMAFx/pelorus/.github/workflows/tester-publish.yml \
+  --predicate-type https://spdx.dev/Document/v2.3
 ```
 
-The `-source` image has the same two checks against its own digest. It holds
+The third command checks the SBOM attestation (SPDX 2.3). The `-source` image
+has the first two checks against its own digest and carries no SBOM
+attestation, so the third command fails on it. It holds
 `/source/ffmpeg` (the patched tree as compiled, `series.txt`, the shared
 FFmpeg fix series release `ffmpeg-patches-<tag>.tar.gz` that was applied
 first, `ffmpeg-configure-line.txt`, `libpelorus-commit.txt`), `/source/kit` (the

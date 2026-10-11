@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0181: hevc_nvenc writes Pelorus side data within NVENC's 1024-byte header limit, without the per-cell maps when they do not fit
 
-- **Status**: Proposed
-- **Implementation**: pending (#267)
+- **Status**: Accepted
 - **Date**: 2026-10-09
 - **Deciders**: Lusoris
 - **Tags**: nvenc, interop, analyze, ffmpeg

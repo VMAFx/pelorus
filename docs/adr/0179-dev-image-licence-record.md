@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0179: The pelorus-dev image starts from plain Ubuntu, records every file it holds, and fails its build on an unrecorded one
 
-- **Status**: Proposed
-- **Implementation**: pending (#256)
+- **Status**: Accepted
 - **Date**: 2026-10-09
 - **Deciders**: Lusoris
 - **Tags**: licensing, supply-chain, devcontainer, ci
