@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0176: Release candidates are `vX.Y.Z-rc.N` prereleases gated on candidate legs; tester images publish only from a dispatched, approved workflow
 
-- **Status**: Proposed
-- **Implementation**: pending (#234)
+- **Status**: Accepted
 - **Date**: 2026-10-09
 - **Deciders**: Lusoris
 - **Tags**: release, ci, supply-chain, licensing, tester

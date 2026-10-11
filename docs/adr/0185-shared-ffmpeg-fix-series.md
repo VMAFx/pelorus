@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0185: Take generic FFmpeg fixes from the shared fix series, as a pinned and verified release
 
-- **Status**: Proposed
-- **Implementation**: pending (#129)
+- **Status**: Accepted
 - **Date**: 2026-10-10
 - **Deciders**: Lusoris
 - **Tags**: ffmpeg, patch-stack, supply-chain, nvenc, vulkan

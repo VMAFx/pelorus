@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0184: Opt-in DRM-format-modifier output pools so Pelorus frames map to VAAPI and QSV without hwdownload
 
-- **Status**: Proposed
-- **Implementation**: pending (#103)
+- **Status**: Accepted
 - **Date**: 2026-10-10
 - **Deciders**: Lusoris
 - **Tags**: vulkan, zero-copy, vaapi, qsv, ffmpeg

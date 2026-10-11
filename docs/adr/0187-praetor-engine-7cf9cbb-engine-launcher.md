@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0187: Re-pin the Praetor engine to `7cf9cbb2`, run it through the engine's launcher, and take the engine's harness block
 
-- **Status**: Proposed
-- **Implementation**: pending (#209)
+- **Status**: Accepted
 - **Date**: 2026-10-11
 - **Deciders**: Lusoris
 - **Tags**: governance, ci, standards, build
