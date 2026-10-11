@@ -8,6 +8,25 @@ the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
 ranges in older entries predate the first entry below (22 patches on the
 shared FFmpeg fix series, number 0021 retired).
 
+## Unreleased — shared FFmpeg fix series pinned at `v0.1.0` (ADR-0185; no patch changes)
+
+- **Base**: `FFMPEG_SERIES_TAG` moves from `v0.1.0-rc.1` to `v0.1.0` and
+  `FFMPEG_SERIES_SHA256` to the sha256 of the `v0.1.0` tarball.
+  `FFMPEG_SERIES_COMMIT` stays `ea78aa5d`: both tags peel to that commit. The
+  two tarballs unpack to the same 16 files; only the top folder name differs.
+- **Patches**: none change. `generate.sh` on the new pin writes 22 patches
+  that are byte-identical to the committed stack.
+- **Behaviour**: none.
+- **Rebase-sensitive**: nothing new. A later series release needs the same
+  three-value bump by hand (no Renovate rule, ADR-0185).
+- **Interop**: none.
+- **Checks**: `scripts/fetch-ffmpeg-series.sh --self-test` on the new pin
+  (genuine release verified; flipped byte, own-sha256 tamper, wrong sha256
+  pin, tampered `SHA256SUMS` and wrong commit pin each refused);
+  `scripts/check-build-config.py`; `generate.sh` with no difference in
+  `ffmpeg-patches/`. The replay and link over the series and the 22 patches
+  runs in CI for this change.
+
 ## Unreleased — filter header comments corrected (#102, ADR-0186; regenerates 0003, 0016)
 
 - **Patches**: no new patch. Two header comments in `files/` change, so two
