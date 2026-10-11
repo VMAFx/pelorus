@@ -40,7 +40,7 @@ verifies it (sha256 pin, signed `SHA256SUMS` with `cosign`, build provenance
 with `gh attestation verify`, FFmpeg base) and unpacks it to `<new-dir>/series`.
 It needs network access, `cosign` and an authenticated `gh`, and it fails
 closed. `generate.sh` and both replay scripts call it themselves. Release
-`v0.1.0-rc.1` holds four patches: the Vulkan queue family fix that was Pelorus
+`v0.1.0` holds four patches: the Vulkan queue family fix that was Pelorus
 patch 0021, GCC 14 and 16 diagnostics, the `hevc_nvenc` user data SEI budget,
 and the drop of SEI that NVENC would write truncated. Pelorus patch 0022 builds
 on the last two.
