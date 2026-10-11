@@ -7,7 +7,7 @@ cd "$root"
 
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')
 echo "Pelorus session — branch: $branch" >&2
-echo "  read .workingdir/PLAN.md + STATE.md and AGENTS.md before non-trivial work." >&2
+echo "  read .workingdir/OPEN.md + STATE.md and AGENTS.md before non-trivial work." >&2
 
 if [ "$branch" = "master" ]; then
     echo "  on master: feature work goes on a branch + PR (see CONTRIBUTING.md)." >&2

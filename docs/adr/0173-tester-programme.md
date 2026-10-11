@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0173: Tester programme: artifacts are evidence for a master commit, licence rules bind before first publication
 
-- **Status**: Proposed
-- **Implementation**: pending (#108)
+- **Status**: Accepted
 - **Date**: 2026-10-08
 - **Deciders**: Lusoris
 - **Tags**: tester, release, licensing, supply-chain, ci, docs

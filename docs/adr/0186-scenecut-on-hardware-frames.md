@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0186: pelorus_scenecut runs on hardware frames, not after hwdownload
 
-- **Status**: Proposed
-- **Implementation**: pending (#102)
+- **Status**: Accepted
 - **Date**: 2026-10-10
 - **Deciders**: Lusoris
 - **Tags**: scenecut, zero-copy, encoder-steering, docs

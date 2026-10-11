@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0183: NVENC writes Pelorus side data in a zero-free COBS carrier under its own UUID (interop ABI 1.5)
 
-- **Status**: Proposed
-- **Implementation**: pending (#284)
+- **Status**: Accepted
 - **Date**: 2026-10-10
 - **Deciders**: Lusoris
 - **Tags**: interop, nvenc, ffmpeg, vmafx, abi

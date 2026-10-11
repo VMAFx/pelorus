@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0178: Every tester image file has a recorded licence, a gate fails the build on an unrecorded one, and the tester CI runs only on image inputs and never publishes from a schedule
 
-- **Status**: Proposed
-- **Implementation**: pending (#236)
+- **Status**: Accepted
 - **Date**: 2026-10-09
 - **Deciders**: Lusoris
 - **Tags**: licensing, supply-chain, ci, release, tester

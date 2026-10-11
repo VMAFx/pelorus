@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0182: Patch 0009 writes the QP map in the advertised format, by a fill path the encode queue family can record
 
-- **Status**: Proposed
-- **Implementation**: pending (#278)
+- **Status**: Accepted
 - **Date**: 2026-10-09
 - **Deciders**: Lusoris
 - **Tags**: ffmpeg, vulkan, roi, encoder-steering, radv

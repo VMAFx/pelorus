@@ -836,7 +836,8 @@ win. **Measured, the picture is narrower than that headline:**
   the cost is the per-candidate **memory fetches** (each lane does two displaced
   `imageLoad`s), not the sum. The real mc headroom is **shared-memory reference
   caching** (the diamond search reuses overlapping reference pixels across
-  candidates) — a larger algorithmic change, tracked as a follow-up.
+  candidates) — a larger algorithmic change, tracked in
+  [#301](https://github.com/VMAFx/pelorus/issues/301).
 - **analyze / grain_estimate were not optimized**: they are already ~0.15–0.22 s
   (mostly the up/download floor), so a subgroup rewrite of their reductions would
   not move the end-to-end number — cargo-cult complexity for no measured gain.
@@ -858,7 +859,8 @@ not reductions. `scripts/bench/plot_rd.py` regenerates the graph.
    same-QP mechanism demo); and the analyze→VAAPI dual-device auto pipeline
    (ROI side data surviving `hwupload` to a second GPU).
 3. Re-prove 10-bit deband with a single consistent `yuv420p10le` pipeline
-   (correctness confirmation; deband's gain is banding, scored by CAMBI).
+   (correctness confirmation; deband's gain is banding, scored by CAMBI):
+   [#300](https://github.com/VMAFx/pelorus/issues/300).
 4. Harness fixes shipped: `--clean-reference` (decouple scoring ref from encoder
    input) and `--vmaf-timeout` (vmaf hangs at 0% CPU *after* writing its JSON;
    the harness bounds it and reads the already-flushed result).

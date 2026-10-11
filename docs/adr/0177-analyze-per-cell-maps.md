@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0177: vf_pelorus_analyze fills the ABI 1.0 banding, variance and edge map fields on a power-of-two cell grid, packed FFmpeg-side
 
-- **Status**: Proposed
-- **Implementation**: pending (#219)
+- **Status**: Accepted
 - **Date**: 2026-10-09
 - **Deciders**: Lusoris
 - **Tags**: analyze, interop, vulkan, ffmpeg, vmafx
