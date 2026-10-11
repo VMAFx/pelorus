@@ -59,16 +59,17 @@ A clean clone needs Go 1.27, Node.js 22.12 or newer for the documentation gate,
 and the exact Praetor engine pin used by CI:
 
 ```bash
-go install github.com/cordanaLLM/praetor/cmd/standardsctl@9615f1b907cc7e677a3ae71f6e864deb4450b9de
+go install github.com/cordanaLLM/praetor/cmd/standardsctl@7cf9cbb2d8cce4000bde5ba2cf2a5b770fc90712
 export PATH="$(go env GOPATH)/bin:$PATH"
-go version -m "$(command -v standardsctl)" | grep -F 9615f1b907cc
+go version -m "$(command -v standardsctl)" | grep -F 7cf9cbb2d8cc
 ```
 
 `standardsctl version` names the build commit, and the module
 pseudo-version that `go version -m` prints names it too; CI checks both. The pin
 installs a binary named `standardsctl`. Praetor's own text, including the
-generated README block, calls the same program `praetorctl`; the `Makefile`
-uses whichever of the two it finds first on `PATH`.
+generated README block, calls the same program `praetorctl`. The `Makefile`
+and the Lefthook jobs do not use the binary on `PATH`: they run the pinned
+commit through `.config/lefthook/engine.sh`, which installs it on first use.
 
 The agent hooks call it by the name `praetorctl` only. If you run Claude Code,
 Codex, or Gemini CLI in this repository, put a copy under that name next to

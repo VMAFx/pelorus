@@ -197,22 +197,33 @@ Meson tree, for example `BUILD_DIR=build-asan make verify-native`.
 
 The governance targets and the Lefthook jobs run the Praetor engine pinned at
 `PRAETOR_REF` in `.github/workflows/standards-gate.yml`, whatever `praetorctl`
-or `standardsctl` is first on `PATH`. `scripts/praetor-engine.sh` resolves it: it
-installs the pinned commit with `go install` into `.workingdir/bin/<PRAETOR_REF>/`
-(git-ignored) on first use and checks that `version` names that commit. It fails
-closed, with one line on stderr, when the pin is unreadable, the cache is empty
-and Go is missing or offline, or the cached binary reports another commit. It
-never falls back to `PATH`. A worktree has its own cache; the Go build cache
-makes the second install fast.
+or `standardsctl` is first on `PATH`. The engine's own launcher,
+`.config/lefthook/engine.sh`, resolves it: it installs the pinned commit with
+`go install` into `${XDG_CACHE_HOME:-$HOME/.cache}/praetor/engine/<PRAETOR_REF>/`
+on first use (at most `PRAETOR_ENGINE_INSTALL_TIMEOUT` seconds, default 300) and
+runs it from there. `make` reaches the same launcher through
+`.config/praetor/engine.mk`, which the `Makefile` includes. Both files are
+written by `praetorctl adopt`; do not edit them
+([ADR-0187](../adr/0187-praetor-engine-7cf9cbb-engine-launcher.md)). The launcher
+fails closed, with one line on stderr that names the pin, the cache directory
+and the command that fixes it, when the pin is unreadable or declared twice with
+different values, or when the cache is empty and Go is missing or the install
+fails. It never falls back to `PATH`. Every worktree and every adopted
+repository on the machine that pins the same commit shares one cache directory.
+The launcher does not compare the cached binary's `version` with the pin; the
+hosted `Standards` job does.
 
 To refresh the engine after a pin bump (`PRAETOR_REF` changes), run
-`sh scripts/praetor-engine.sh version`: the new pin gets a new directory. To
-reinstall a damaged cache, delete `.workingdir/bin/<PRAETOR_REF>/` and rerun.
-`sh scripts/praetor-engine.sh --print-path` prints the resolved binary.
+`sh .config/lefthook/engine.sh version`: the new pin gets a new directory. To
+reinstall a damaged cache, delete that pin's directory and rerun.
+`sh .config/lefthook/engine.sh --print-path` prints the resolved binary, and so
+does `make praetor-engine-path`. Call the engine through the launcher for
+direct commands too (`sh .config/lefthook/engine.sh audit`): a `praetorctl` on
+`PATH` may be another commit and then judges the tree by other rules.
 
-`PRAETORCTL=/absolute/path/to/engine` overrides the choice for `make` and the
-hooks. The override is not version-checked and the script prints a line naming
-it. Agent hooks (`.claude/settings.json`) still call `praetorctl` by name from
+`PRAETORCTL=/absolute/path/to/engine` overrides the choice for `make` only; the
+hooks always run the pin. The override is not version-checked and prints
+nothing. Agent hooks (`.claude/settings.json`) still call `praetorctl` by name from
 `PATH`. The PATH coupling is reported upstream as
 [cordanaLLM/praetor#906](https://github.com/cordanaLLM/praetor/issues/906).
 The documentation targets need Node.js 22.12 or newer; the gate installs its own
@@ -427,7 +438,7 @@ an executable named `praetorctl` on `PATH`. The pinned `go install` builds
 sample payload from the repository root:
 
 ```bash
-go install github.com/cordanaLLM/praetor/cmd/standardsctl@9615f1b907cc7e677a3ae71f6e864deb4450b9de
+go install github.com/cordanaLLM/praetor/cmd/standardsctl@7cf9cbb2d8cce4000bde5ba2cf2a5b770fc90712
 cp "$(go env GOPATH)/bin/standardsctl" "$(go env GOPATH)/bin/praetorctl"   # Windows: standardsctl.exe to praetorctl.exe
 printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"hook_event_name":"PreToolUse"}' \
   | praetorctl hook claude pre-tool; echo "exit=$?"                          # expect exit=0, no output

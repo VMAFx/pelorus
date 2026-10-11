@@ -1,7 +1,8 @@
 # Pelorus native + Praetor verification entry points.
-# The engine pinned at PRAETOR_REF (scripts/praetor-engine.sh), not the PATH one.
-# PRAETORCTL=/path/to/engine overrides it.
-PRAETORCTL ?= sh scripts/praetor-engine.sh
+# PRAETORCTL comes from the engine's make fragment: the engine pinned at
+# PRAETOR_REF, resolved by .config/lefthook/engine.sh, not the PATH one (ADR-0187).
+# PRAETORCTL=/path/to/engine on the command line or in the environment overrides it.
+include .config/praetor/engine.mk
 BUILD_DIR ?= build
 
 .PHONY: all verify-all verify-native configure build test format-check tidy \
