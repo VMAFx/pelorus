@@ -1,84 +1,59 @@
-<!-- markdownlint-disable MD013 MD025 -->
-# Pelorus Agent Operating Harness
+<!-- markdownlint-disable MD013 -->
+# VMAFx/pelorus Agent Operating Harness
 
 Run read-only: file edits, state mutations, commits prohibited. Mutating steps dropped; prohibitions kept.
 
-Before delivery:
+<!-- praetor:head -->
 
-```bash
-make verify-native
-standardsctl compile-context --verify
-standardsctl audit
-make docs-lint docs-figures
-```
+## Core Directives & Invariants
 
-verification gate runs all four. Docs gate needs Node 22.12+. Never install
-hooks or fake hook file to pass gate.
+Adopted check = check adoption generated here (none: no generated verification gate, no praetor `lefthook.yml`), as written at adoption; later edits to those files not reflected. `not enforced` = rule binds, no generated check decides it for repository languages.
 
-Engine binary: pinned `go install .../cmd/standardsctl@<pin>` installs
-`standardsctl`. `praetorctl`: same engine under its newer name; generated text
-uses it. Pin = `PRAETOR_REF` in `.github/workflows/standards-gate.yml`. Lefthook
-jobs and Makefile run it via `scripts/praetor-engine.sh`: cached in git-ignored
-`.workingdir/bin/<pin>/`, installed on first use, never PATH. Wrong version, no
-Go + empty cache, failed install -> exit 1, one stderr line.
-`PRAETORCTL=<path>` overrides, unchecked. Agent hooks call `praetorctl` by name:
-copy or rename pinned `standardsctl` to `praetorctl` on `PATH`. Missing binary:
-hook exits 127 (bash) or 1 (cmd, PowerShell); clients report non-blocking error
-and shell call runs without Praetor policy.
-
-## Core Directives & Invariants (Modernized NASA JPL Power-of-10)
-
-| Invariant | Scope | NASA Rule | Enforcement Mechanism | Failure Action |
-| :--- | :--- | :--- | :--- | :--- |
-| **HISS-01** | Control flow | Rule 1 | No recursion. Allow one-level `goto fail` cleanup only; reject other new `goto`. | Audit `HISS invariant scan` (C scanner) + C review; baseline ratchet |
-| **HISS-02** | Loops | Rule 2 | Every loop has scalar upper bound; validate external counts before iteration. Audit scanner flags unbounded C loops; I/O deadlines not measured for C. | Audit `HISS invariant scan` + C review; baseline ratchet |
-| **HISS-03** | Memory | Rule 3 | No dynamic allocation after init in hot per-frame paths. | Review only (`c-reviewer`) + tests; no scanner |
-| **HISS-04** | Complexity | Rule 4 | New/touched functions: $\le 60$ LOC. Effective policy also sets cyclomatic $\le 10$, cognitive $\le 12$, statements $\le 40$. | LOC: audit `HISS invariant scan` + baseline ratchet. Other limits: `[REPORT] HISS-04 complexity measured, not enforced` (Go only) + C review; clang-tidy size check advisory. |
-| **HISS-05** | Scoping | Rule 6 | Declare each identifier in smallest scope, at first use. | Review only (`c-reviewer`); spec marks advisory, no analyzer attached |
-| **HISS-06** | Concurrency | Rule 2 (extended) | Worker pools and parallel fan-out declare scalar upper bound. | Review only; spec marks advisory, no analyzer; sanitizer CI job finds races, not pool bounds |
-| **HISS-07** | Error handling | Rule 7 | Public errors use `pel_result`; every non-void result checked or explicitly discarded. | clang-tidy (`make verify-native`) + C review; audit scanner reads Python/shell for this rule, not C |
-| **HISS-08** | Determinism | Rule 8 | No dynamic execution; reject banned libc from project contract. | Audit `HISS invariant scan` (banned-call rule) + C review + build |
-| **HISS-09** | Reference safety | Rule 9 | Bound offset arithmetic before pointer formation; avoid pointer chasing. | Review only (`c-reviewer`, CERT C) + tests + `sanitizers` CI job; audit scanner has no C rule |
-| **HISS-10** | Warning hygiene | Rule 10 | Compiler, formatter, and configured clang-tidy gate exit clean. Every CI `meson setup` passes `--werror`; audit ignores `default_options`. | Audit `Build warnings (HISS-10)` + `clang-tidy translation-unit coverage` + `make verify-native`; fails audit and CI |
-| **HISS-11** | Supply chain | Fleet | Pinned inputs; SLSA Build L3 provenance, cosign signing, SBOM on releases. | Audit `Supply chain (HISS-11)`: L3 measured from `release.yml`, SBOM from `release-build.yml`; reads workflow files only, not published attestations |
-| **HISS-12** | Secrets | Fleet | No credentials in Git history. | Review only: no `gitleaks` or `make secrets` target wired here |
-| **HISS-13** | Debt ratchet | Fleet | Recorded findings never grow against `.standards-baseline.json`. | `standardsctl baseline --verify` + audit ratchet (`--base`, touched-debt delta) in `make audit`, pre-commit and `standards-gate.yml`; fails CI |
-| **HISS-14** | Public ABI | Fleet | `PelorusSideData` ABI append-only. Breaking change: `!` subject plus `Migration:` footer with before/after C snippets. | Footer: `commit-msg` hook (`forge check-message`) + CI `forge check-commits` in `standards-gate.yml`. Append-only: `interop_test.c` conformance fixture + `interop-abi-reviewer`. Hook is opt-in (`make hooks-install`); CI is authoritative. |
-| **HISS-15** | 3D testing | Rule 5 | Public interfaces cover positive, negative, and boundary cases. | Fast suite (`meson test --suite=fast`) in `core` CI job + PR review; audit `touched files clean` covers debt only |
-| **HISS-16** | Context integrity | Fleet | `AGENTS.md` plus `.agents/agents/*.md` are canonical; vendor Markdown is generated. | `compile-context --verify` (pre-commit `context-check`, `standards-gate.yml`) + audit context, persona and caveman checks |
-| **HISS-17** | State ledger | Fleet | read-only run: step dropped | Lefthook `post-commit` `state-sync` (when hooks installed) + `session-start` hook; no gate fails on a stale ledger. Review only otherwise. |
-| **HISS-18** | CI efficiency | Fleet | Workflows skip drafts and wasted runs through the hosted gate shape. | Audit `Workflow triggers (HISS-18)`: `[WARN]` only, 6 open findings (5 in `ci.yml`, 1 in `standards-gate.yml`); not enforced |
-| **HISS-19** | Reuse | Fleet | One behavior, one implementation; search before writing. | Review only: `praetorctl dedupe scan` reads Go only and this repository has none; only `dedupe-cadence` post-commit bookkeeping runs |
-| **HISS-20** | Replayable evidence | Fleet | Enforcement claims replay against fixtures. | Not wired: no `.config/hiss/coverage.yaml`, so `praetorctl hiss coverage --verify` cannot run; verification gate replays gates, not claims |
-| **HISS-21** | Platform neutrality | Fleet | Gates and hooks run on Linux, macOS, Windows, or skip with stated reason. | Partial: `windows` CI job (MSYS2 UCRT64, fast suite). Make, shell and Lefthook gates are Linux-first; no macOS leg, no declared skip reasons. Review only. |
+| Invariant | Rule | Adopted check | On fail |
+| :--- | :--- | :--- | :--- |
+| **HISS-01** control flow | recursion prohibited; call graph = DAG; C/C++: zero `goto` | not enforced | advisory |
+| **HISS-02** loops, I/O | scalar upper bound on every loop; explicit deadline on every I/O call | not enforced | advisory |
+| **HISS-03** memory | C/C++: zero heap allocation in hot simulation/tick loops | not enforced | advisory |
+| **HISS-04** complexity | McCabe cyclomatic <= 10, cognitive <= 12, statements <= 40; func LOC <= 60 (audit ceiling) | not enforced | advisory |
+| **HISS-05** scoping | declare every identifier in smallest lexical scope serving it | not enforced | advisory |
+| **HISS-06** concurrency | explicit scalar upper bound on every worker pool + concurrent fan-out | not enforced | advisory |
+| **HISS-07** errors | every error handled or wrapped with context | not enforced | advisory |
+| **HISS-08** determinism | zero dynamic code execution (`eval` / `exec`); C/C++: zero banned libc (`gets` / `strcpy` / `sprintf`) | not enforced | advisory |
+| **HISS-09** reference safety | n/a: no such construct in repository languages; advisory | not enforced | advisory |
+| **HISS-10** warnings | zero warnings: compiler, linter, format sweeps | not enforced | advisory |
+| **HISS-11** supply chain | pinned lockfiles; zero floating tags; signed provenance | not enforced | advisory |
+| **HISS-12** secrets | zero credentials in Git history | not enforced | advisory |
+| **HISS-13** debt ratchet | recorded infractions never grow vs committed baseline | not enforced | advisory |
+| **HISS-14** append-only ABI | public API append-only; breaking change = `!` subject + `Migration:` footer | not enforced | advisory |
+| **HISS-15** 3D testing | positive + negative + boundary tests, every public interface | not enforced | advisory |
+| **HISS-16** context integrity | single canonical `AGENTS.md`; vendor files compiled via `praetorctl compile-context` | not enforced | advisory |
+| **HISS-17** state ledger | turn start `praetorctl state status` | not enforced | advisory |
+| **HISS-18** CI efficiency | diff-aware gating via `praetorctl ci filter` | not enforced | advisory |
+| **HISS-19** reuse before writing | one behavior = one implementation; extend or call existing code | not enforced | advisory |
+| **HISS-20** replayable evidence | every enforcement claim backed by fixtures replayed both directions | not enforced | advisory |
+| **HISS-21** platform neutrality | gates, hooks, emitted templates run on Linux, macOS, Windows, or skip with stated reason | not enforced | advisory |
 
 ## Operational Rules
 
-1. **Act on verified state.** Read source and executable help before edits. Never
-   guess flags, signatures, or repository configuration.
+1. **Act on verified state.** Read source files, run real commands before hypothesis or edit. Never guess flag names, library signatures, repo configuration from memory.
 
-2. **Lead with output.** Direct answers, diffs, commands. No filler or request
-   restatement.
+2. **Lead with output.** Direct answers, diffs, commands. No filler preamble, no "Based on", no restatement, no chatter.
 
-3. **Context transpiler first.** Never edit `CLAUDE.md`,
-   `.cursor/rules/*.mdc`, `.windsurfrules`,
-   `.github/copilot-instructions.md`, `.gemini/GEMINI.md`, or
-   `.codex/rules.md` manually. Update `AGENTS.md`, then:
+3. **Context transpiler first.** Never edit `CLAUDE.md`, `.cursor/rules/hiss-invariants.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`, `.gemini/GEMINI.md`, `.codex/rules.md` manually. All agent instruction updates -> `AGENTS.md`, then:
 
    ```bash
-   standardsctl compile-context
+   praetorctl compile-context
    ```
 
-   Canonical agent text must pass `standardsctl caveman check`.
+   - `AGENTS.md` = agent-only text -> caveman (internal register). `praetorctl compile-context --verify` + `praetorctl audit` run caveman lint; findings fail gate; no opt-out. Check first: `praetorctl caveman check --kind=context AGENTS.md`.
 
-4. **Preserve useful evidence.** Keep long logs under ignored
-   `.workingdir/evidence/`; report root causes with file and line pointers.
+4. **SARIF diagnostic distillation.** Compiler/linter errors -> distill to $\le 1,500$ tokens ($< 60$ lines): top 3 root-cause failures with file/line pointers; full SARIF logs -> ephemeral storage.
 
-5. **No evasion.** Never use `--no-verify`, disable Lefthook, or modify shared
-   `.git/hooks` to bypass a gate. Hook installation is explicit.
+5. **No evasion.** Never attempt `--no-verify`, `LEFTHOOK=0`, or modifying `.git/hooks`. Adoption installed no hooks here (`lefthook.yml` not praetor-written, or `git-hooks` declined). Adoption adds no server-side `praetorctl` gate run. Scaffolded CI: `.github/workflows/praetor-docs.yml` runs step `Stop on a draft pull request`, `node tools/markdownlint/verify.mjs`, step `Verify figures`.
 
-6. **Stop repeated failure loops.** Same diff and error category three times:
-   re-evaluate root cause before another edit.
+6. **Anti-loop interception.** Same AST diff + error category repeats $\ge 3$ times -> halt immediately. Re-evaluate design; no micro-textual retries.
+
+<!-- praetor:config -->
 
 ## Text Register
 
@@ -96,23 +71,24 @@ Register follows the audience, then the task label of your brief (`register:` in
 - An internal return carries verdict, changed paths, commands run, evidence pointers and open questions, nothing else.
 <!-- praetor:register:end -->
 
+<!-- praetor:tail -->
+
 ## Primary Verification Commands
 
 ```bash
 # Fast local test suite
-make verify-native
+# Declared commands only; run them before claiming application verification.
+'make' 'verify-all'
 
 # Recompile and verify cross-agent context outputs
-standardsctl compile-context --verify
+praetorctl compile-context --verify
 
 # Audit repository against declared HISS standards
-standardsctl audit
-
-# Hosted ratchet: growth guard + debt delta, then fingerprint-exact baseline
-CI=true standardsctl audit --base origin/master --touched-debt-delta-reason "<why>"
-standardsctl baseline --verify
+praetorctl audit
 ```
 
+<!-- markdownlint-enable MD013 -->
+<!-- markdownlint-disable MD025 -->
 <!-- praetor:harness:end -->
 
 ---
@@ -153,6 +129,36 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 10. No new top-level Markdown docs unless task needs one; extend `docs/` topic tree.
 11. Licence (ADR-0171): own files EUPL-1.2, copyright `2026 Lusoris`; files joining FFmpeg tree (`ffmpeg-patches/files/`, patches) LGPL-2.1-or-later; vendored files keep upstream licence. New C, shell or Python file: copyright line plus `SPDX-License-Identifier`. Other terms: `REUSE.toml` table after whole-tree default. `reuse lint` exits 0.
 
+## Enforcement here
+
+Harness table = engine rendering; `not enforced` there = no engine-generated check. Checks wired in this repository:
+
+| Rule | Decided here by |
+| --- | --- |
+| HISS-01 | audit `HISS invariant scan` (C scanner) + `c-reviewer`; baseline ratchet. One-level `goto fail` cleanup allowed; other new `goto` rejected |
+| HISS-02 | audit `HISS invariant scan` (unbounded C loops) + `c-reviewer`; baseline ratchet. I/O deadlines not measured for C |
+| HISS-03 | review only (`c-reviewer`) + tests; no scanner |
+| HISS-04 | LOC <= 60: audit scan + baseline ratchet. Cyclomatic, cognitive, statements: `[REPORT]` only (Go only) + `c-reviewer`; clang-tidy size check advisory |
+| HISS-05 | review only (`c-reviewer`); no analyzer |
+| HISS-06 | review only; no analyzer; `sanitizers` CI job finds races, not pool bounds |
+| HISS-07 | `pel_result` contract: clang-tidy (`make verify-native`) + `c-reviewer`; audit scanner reads Python/shell for this rule, not C |
+| HISS-08 | audit scan (banned-call rule) + `c-reviewer` + build |
+| HISS-09 | bound offset arithmetic before pointer formation: review only (`c-reviewer`, CERT C) + tests + `sanitizers` CI job |
+| HISS-10 | audit `Build warnings (HISS-10)` + `clang-tidy translation-unit coverage` + `make verify-native`; every CI `meson setup` passes `--werror`; fails audit and CI |
+| HISS-11 | audit `Supply chain (HISS-11)`: L3 from `release.yml`, SBOM from `release-build.yml`; reads workflow files only, not published attestations |
+| HISS-12 | review only: no `gitleaks` or `make secrets` target |
+| HISS-13 | `baseline --verify` + audit ratchet (`--base`, touched-debt delta) in `make audit`, pre-commit, `standards-gate.yml`; fails CI |
+| HISS-14 | footer: `commit-msg` hook (`forge check-message`) + CI `forge check-commits`. Append-only: `interop_test.c` fixture + `interop-abi-reviewer`. Hooks opt-in; CI authoritative |
+| HISS-15 | fast suite (`meson test --suite=fast`) in `core` CI job + PR review |
+| HISS-16 | `compile-context --verify` (pre-commit `context-check`, `standards-gate.yml`) + audit context, persona, caveman checks |
+| HISS-17 | Lefthook `post-commit` `state-sync` (hooks installed) + `session-start` hook; no gate fails on stale ledger |
+| HISS-18 | audit `Workflow triggers (HISS-18)`: `[WARN]` only, 10 open findings in 5 of 8 workflows (#207) |
+| HISS-19 | review only: `dedupe scan` reads Go only, none here; `dedupe-cadence` post-commit bookkeeping runs |
+| HISS-20 | not wired: no `.config/hiss/coverage.yaml`, so `hiss coverage --verify` cannot run |
+| HISS-21 | partial: `windows` CI job (MSYS2 UCRT64, fast suite); Make, shell, Lefthook gates Linux-first; no macOS leg |
+
+Engine: pin = `PRAETOR_REF` in `.github/workflows/standards-gate.yml`. Make (`.config/praetor/engine.mk`) + Lefthook jobs run it via `.config/lefthook/engine.sh`: `go install` on first use into `${XDG_CACHE_HOME:-~/.cache}/praetor/engine/<pin>/`, never PATH, fail closed (ADR-0187). Direct engine call: `sh .config/lefthook/engine.sh <args>`. `PRAETORCTL=<path>` overrides make only, unchecked. Agent hooks call `praetorctl` by name: copy pinned `standardsctl` to `praetorctl` on `PATH`; missing binary -> hook exits 127 (bash) or 1 (cmd, PowerShell), client reports non-blocking error, shell call runs without Praetor policy. Docs gate needs Node 22.12+. Never install hooks or fake hook file to pass gate.
+
 ## Layout and ownership
 
 | Path | Contract |
@@ -176,9 +182,9 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 | `tools/markdownlint/`, `tools/figures/` | Praetor-managed docs gate; refresh via `adopt` only |
 | `scripts/` | ADR claim, bench, release, build-config + shader checks, shared-series fetch + verify (`fetch-ffmpeg-series.sh`, ADR-0185) |
 | `Makefile`, `lefthook.yml` | native + governance entry points; Git hooks opt-in (`make hooks-install`; `no_auto_install`) |
-| `.standards.yaml`, `.standards.lock`, `.standards-baseline.json`, `.config/` | Praetor policy, lock, catalog, labels, HISS baseline, clang-tidy lane list, Lefthook checkpoint scripts + policy, agent interceptor |
+| `.standards.yaml`, `.standards.lock`, `.standards-baseline.json`, `.config/` | Praetor policy, lock, catalog, labels, HISS baseline, clang-tidy lane list, Lefthook checkpoint scripts + policy, engine launcher (`lefthook/engine.sh`) + make fragment (`praetor/engine.mk`), agent interceptor |
 | `.devcontainer/` | Praetor-rendered dev container bundle (audit: byte-exact; regenerate, never hand-edit); `base/Containerfile` toolchain base image (ADR-0153) |
-| `.paperclip/` | Paperclip harness pair; string edit: re-pin `register.sources` from `standardsctl caveman check --configured-sources --root=.` |
+| `.paperclip/` | Paperclip harness pair; string edit: re-pin `register.sources` from `sh .config/lefthook/engine.sh caveman check --configured-sources --root=.` |
 | `.agents/agents/` | canonical reviewer personas |
 | `.claude/agents/`, `.codex/agents/`, `.github/agents/`, `.gemini/agents/` | generated persona projections |
 | `.claude/skills/`, `.claude/hooks/`, `.codex/hooks/`, `.gemini/settings.json` | agent skills + hooks; see below |
@@ -224,14 +230,14 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | build | `ninja -C build` |
 | fast tests | `meson test -C build --suite=fast --print-errorlogs` |
 | native gate | `make verify-native` |
-| governance + native gate | `PRAETORCTL=standardsctl verification gate` |
+| governance + native gate | verification gate |
 | install | `ninja -C build install` |
 | fetch + verify shared series | `scripts/fetch-ffmpeg-series.sh /absolute/new-dir` (`--self-test`: planted defects) |
 | regenerate patches | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh` |
 | replay stack | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh` |
-| compile contexts | `standardsctl compile-context` |
-| verify contexts | `standardsctl compile-context --verify` |
-| audit baseline | `standardsctl audit` |
+| compile contexts | `make compile-context` |
+| verify contexts | `make compile-context-verify` |
+| audit baseline | `sh .config/lefthook/engine.sh audit` |
 | docs gate (Node 22.12+) | `make docs-lint docs-figures` |
 | licence check | `reuse lint` (reuse 6.x) |
 | explicit hook install | `make hooks-install` |
@@ -256,7 +262,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | FFmpeg Vulkan models | `vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c`, `vf_scdet_vulkan.c` |
 | AV1 grain ABI mirror | `libavutil/film_grain_params.h` |
 | vmafx control plane | `libvmaf_tune`, `/v1/score`, `vmaf-mcp` |
-| Praetor engine | `9615f1b907cc7e677a3ae71f6e864deb4450b9de` from `.github/workflows/standards-gate.yml` |
+| Praetor engine | `7cf9cbb2d8cce4000bde5ba2cf2a5b770fc90712` from `.github/workflows/standards-gate.yml` |
 | Go for actionlint (`ci.yml` docs job) | `1.27.x`; change with `ACTIONLINT_GO_VERSION` in `scripts/check-build-config.py`; checker's Renovate manager keeps setup-go's `go` identity ([ADR-0151](docs/adr/0151-renovate-mirrors-checker-toolchain-pins.md)) |
 
 ## Delivery
