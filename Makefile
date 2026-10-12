@@ -26,6 +26,7 @@ build: configure
 
 test: build
 	meson test -C "$(BUILD_DIR)" --suite=fast --print-errorlogs
+	python3 -I scripts/check-test-skips.py "$(BUILD_DIR)/meson-logs/testlog.json"
 
 format-check:
 	clang-format --dry-run --Werror $$(find libpelorus tools -type f \( -name '*.c' -o -name '*.h' \))
