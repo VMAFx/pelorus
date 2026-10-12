@@ -13,6 +13,7 @@ All notable changes to Pelorus are documented here. The format is
 ### Changed
 
 - The shared FFmpeg fix series pin moves from the release candidate `v0.1.0-rc.1` to the final release [VMAFx/ffmpeg-patches `v0.1.0`](https://github.com/VMAFx/ffmpeg-patches/releases/tag/v0.1.0) (ADR-0185). Both tags name commit `ea78aa5d` and both tarballs unpack to the same 16 files, so the four series patches and the 22 Pelorus patches are unchanged; only `FFMPEG_SERIES_TAG` and `FFMPEG_SERIES_SHA256` in `build-config.env` change.
+- Re-pinned the Praetor governance engine from `7cf9cbb2` to `66223619` (ADR-0187 keeps the pin rule and the launcher). The engine's re-adoption refreshes the documentation gate scripts (`tools/markdownlint/verify.mjs`, `tools/markdownlint/no-private-scratch-links.mjs`, `tools/figures/checks.mjs`: each file is read through one open descriptor, and regular-expression class escaping is corrected) and the agent interceptor `.config/agent/hooks/block_evasion.py` (chained exception).
 - Thirteen decision records whose work is merged and released in the `v0.4.0` candidates are now Accepted: ADR-0173 and ADR-0176 to ADR-0187. `docs/development/tester-image.md` records the verified end-to-end tester image publish for `v0.4.0-rc.3` and adds the SBOM attestation check to "Verify an image".
 
 <!-- END UNRELEASED -->
