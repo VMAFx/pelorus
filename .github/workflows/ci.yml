@@ -135,6 +135,10 @@ jobs:
           fi
           echo "committed patches are byte-identical to fresh regeneration"
       - name: Replay all patches, link FFmpeg, and verify registrations
+        # The hosted runner has no NVIDIA driver: the NVENC smoke may skip for
+        # that reason only (ADR-0189).
+        env:
+          NVENC_SMOKE_SKIP: Cannot load libcuda.so.1
         run: |
           FFMPEG_REPO="$GITHUB_WORKSPACE/ffmpeg" \
             ffmpeg-patches/test/build-and-run.sh
@@ -215,6 +219,10 @@ jobs:
           }
       - name: Replay all patches, link FFmpeg, keep the binary
         if: github.event.pull_request.draft != true
+        # This lane installs no ffnvcodec: the NVENC smoke may skip for that
+        # reason only (ADR-0189).
+        env:
+          NVENC_SMOKE_SKIP: hevc_nvenc is not built into
         run: |
           echo "LANE_DIR=$RUNNER_TEMP/pelorus-lane" >> "$GITHUB_ENV"
           FFMPEG_REPO="$GITHUB_WORKSPACE/ffmpeg" KEEP_DIR="$RUNNER_TEMP/pelorus-lane" \

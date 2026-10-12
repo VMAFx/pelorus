@@ -142,7 +142,9 @@ ffmpeg-patches/
    with `offsetof()` and carrier bytes against `pel_blob_carrier_encode()`.
    Budget charges carrier, never blob. New section with maps -> add its fields
    to `pel_sei_map_fields`, its bit to `PEL_SEI_STRIPPABLE`. GPU proof =
-   `test/nvenc-udu-sei-smoke.sh` (exit 77 = no NVENC/Vulkan).
+   `test/nvenc-udu-sei-smoke.sh` (exit 77 = no NVENC/Vulkan; `build-and-run.sh`
+   passes skip only when `NVENC_SMOKE_SKIP` names reason; `test/named-skip.sh`,
+   ADR-0189).
 11. Every ephemeral `git am` replay supplies `Pelorus-Replay` committer
    identity, neutralizes signing, hooks, and diff ordering, and passes
    `--no-gpg-sign --no-verify`. Do not rely on workstation's global Git
