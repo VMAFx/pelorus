@@ -59,9 +59,9 @@ A clean clone needs Go 1.27, Node.js 22.12 or newer for the documentation gate,
 and the exact Praetor engine pin used by CI:
 
 ```bash
-go install github.com/cordanaLLM/praetor/cmd/standardsctl@7cf9cbb2d8cce4000bde5ba2cf2a5b770fc90712
+go install github.com/cordanaLLM/praetor/cmd/standardsctl@6622361940dc66399d027f3a203884bce2f616ac
 export PATH="$(go env GOPATH)/bin:$PATH"
-go version -m "$(command -v standardsctl)" | grep -F 7cf9cbb2d8cc
+go version -m "$(command -v standardsctl)" | grep -F 6622361940dc
 ```
 
 `standardsctl version` names the build commit, and the module
