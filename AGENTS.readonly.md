@@ -149,7 +149,7 @@ Harness table = engine rendering; `not enforced` there = no engine-generated che
 | HISS-12 | review only: no `gitleaks` or `make secrets` target |
 | HISS-13 | `baseline --verify` + audit ratchet (`--base`, touched-debt delta) in `make audit`, pre-commit, `standards-gate.yml`; fails CI |
 | HISS-14 | footer: `commit-msg` hook (`forge check-message`) + CI `forge check-commits`. Append-only: `interop_test.c` fixture + `interop-abi-reviewer`. Hooks opt-in; CI authoritative |
-| HISS-15 | fast suite (`meson test --suite=fast`) in `core` CI job + PR review |
+| HISS-15 | fast suite (`meson test --suite=fast`) in `core` CI job + PR review; skip passes only when named (`check-test-skips.py`, ADR-0188) |
 | HISS-16 | `compile-context --verify` (pre-commit `context-check`, `standards-gate.yml`) + audit context, persona, caveman checks |
 | HISS-17 | Lefthook `post-commit` `state-sync` (hooks installed) + `session-start` hook; no gate fails on stale ledger |
 | HISS-18 | audit `Workflow triggers (HISS-18)`: `[WARN]` only, 10 open findings in 5 of 8 workflows (#207) |
@@ -182,7 +182,7 @@ Engine: pin = `PRAETOR_REF` in `.github/workflows/standards-gate.yml`. Make (`.c
 | `tools/markdownlint/`, `tools/figures/` | Praetor-managed docs gate; refresh via `adopt` only |
 | `scripts/` | ADR claim, bench, release, build-config + shader checks, shared-series fetch + verify (`fetch-ffmpeg-series.sh`, ADR-0185) |
 | `Makefile`, `lefthook.yml` | native + governance entry points; Git hooks opt-in (`make hooks-install`; `no_auto_install`) |
-| `.standards.yaml`, `.standards.lock`, `.standards-baseline.json`, `.config/` | Praetor policy, lock, catalog, labels, HISS baseline, clang-tidy lane list, Lefthook checkpoint scripts + policy, engine launcher (`lefthook/engine.sh`) + make fragment (`praetor/engine.mk`), agent interceptor |
+| `.standards.yaml`, `.standards.lock`, `.standards-baseline.json`, `.config/` | Praetor policy, lock, catalog, labels, HISS baseline, clang-tidy lane list, named test skips (`test-skips.json`, ADR-0188), Lefthook checkpoint scripts + policy, engine launcher (`lefthook/engine.sh`) + make fragment (`praetor/engine.mk`), agent interceptor |
 | `.devcontainer/` | Praetor-rendered dev container bundle (audit: byte-exact; regenerate, never hand-edit); `base/Containerfile` toolchain base image (ADR-0153) |
 | `.paperclip/` | Paperclip harness pair; string edit: re-pin `register.sources` from `sh .config/lefthook/engine.sh caveman check --configured-sources --root=.` |
 | `.agents/agents/` | canonical reviewer personas |
