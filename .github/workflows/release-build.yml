@@ -67,7 +67,9 @@ jobs:
       - name: Build
         run: make build BUILD_DIR=build
       - name: Fast tests
-        run: meson test -C build --suite=fast --print-errorlogs
+        run: |
+          meson test -C build --suite=fast --print-errorlogs
+          python3 -I scripts/check-test-skips.py build/meson-logs/testlog.json
       - name: Release tag shape and rc numbering
         id: tag
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')

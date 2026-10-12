@@ -195,6 +195,14 @@ Meson/Ninja, runs the fast suite, checks C formatting and clang-tidy, and checks
 that `CHANGELOG.md` matches `changelog.d/`. Override `BUILD_DIR` to use another
 Meson tree, for example `BUILD_DIR=build-asan make verify-native`.
 
+A test that exits 77 is a skip, and `meson test` exits 0 for it. The fast suite
+counts a skip as passed only when [`.config/test-skips.json`](../../.config/test-skips.json)
+lists the test with the exact `SKIP:` line it prints and the issue or ADR that
+keeps it ([ADR-0188](../adr/0188-named-test-skips.md)).
+`scripts/check-test-skips.py <build>/meson-logs/testlog.json` checks this after
+`make test` and in every CI fast-suite run. A new skip, or a changed skip message,
+fails until the list names it.
+
 The governance targets and the Lefthook jobs run the Praetor engine pinned at
 `PRAETOR_REF` in `.github/workflows/standards-gate.yml`, whatever `praetorctl`
 or `standardsctl` is first on `PATH`. The engine's own launcher,

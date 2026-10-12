@@ -128,6 +128,17 @@ test('telemetry-field-parity',
      args: [meson.project_source_root() / 'scripts' / 'check-telemetry-field-parity.py'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+# ADR-0188: `meson test` passes a test that exits 77 whatever the reason.
+# scripts/check-test-skips.py fails every skip that .config/test-skips.json does
+# not list with its exact reason; make test and each CI fast-suite run call it on
+# testlog.json. --self-test plants an unlisted skip, a listed test skipping for
+# another reason, and malformed inputs, and requires each to be rejected.
+test('test-skips-self-test',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'check-test-skips.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
 test('telemetry-field-parity-self-test',
      python_prog,
      args: [meson.project_source_root() / 'scripts' / 'check-telemetry-field-parity.py',
