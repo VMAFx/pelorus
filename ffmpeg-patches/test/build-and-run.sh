@@ -21,6 +21,10 @@
 #   KEEP_DIR     absolute path of a new directory that receives the linked
 #                ffmpeg and libpelorus.so* (lib/) after every check passed;
 #                run it with LD_LIBRARY_PATH=$KEEP_DIR/lib (optional)
+#   NVENC_SMOKE_SKIP  fixed text the NVENC smoke's SKIP line must contain for
+#                its skip (exit 77) to pass, e.g. "Cannot load libcuda.so.1"
+#                on a host without an NVIDIA driver; unset, a skip fails the
+#                replay (optional, ADR-0189)
 set -euo pipefail
 
 # Hermetic Git: neither global/system configuration (apply.whitespace,
@@ -412,15 +416,18 @@ verify_encoder_options av1_vulkan pelorus_roi
 
 # GPU smoke: hevc_nvenc -udu_sei 1 with the analyze maps (issue #267,
 # ADR-0181). Exit 77 names why this host cannot run it (no NVENC device, no
-# Vulkan device); any other failure fails the replay.
+# Vulkan device); it passes only when NVENC_SMOKE_SKIP names that reason
+# (ADR-0189). Any other failure fails the replay.
 echo "== hevc_nvenc udu_sei smoke =="
 smoke_status=0
 FFMPEG_BIN="$WORKTREE/ffmpeg" OUTPUT_ROOT="$LOG_DIR/nvenc-udu-sei" \
-    "$HERE/nvenc-udu-sei-smoke.sh" || smoke_status=$?
-if (( smoke_status != 0 && smoke_status != 77 )); then
-    echo "ERROR: hevc_nvenc udu_sei smoke failed (exit $smoke_status); this run" \
-        "removes its logs, so rerun test/nvenc-udu-sei-smoke.sh with FFMPEG_BIN" \
-        "and OUTPUT_ROOT to keep them" >&2
+    "$HERE/nvenc-udu-sei-smoke.sh" 2>&1 | tee "$LOG_DIR/nvenc-udu-sei.log" ||
+    smoke_status=$? # pipefail: the smoke's status, tee exits 0
+if ! "$HERE/named-skip.sh" "hevc_nvenc udu_sei smoke" "$smoke_status" \
+    "$LOG_DIR/nvenc-udu-sei.log" "${NVENC_SMOKE_SKIP:-}"; then
+    echo "ERROR: this run removes its logs, so rerun test/nvenc-udu-sei-smoke.sh" \
+        "with FFMPEG_BIN and OUTPUT_ROOT to keep them; on a host that cannot run" \
+        "the smoke, set NVENC_SMOKE_SKIP to the reason it prints" >&2
     exit 1
 fi
 

@@ -371,6 +371,16 @@ if get_option('tests')
   test('drm-modifier', drm_modifier_test, suite: 'fast')
 endif
 
+# build-and-run.sh passes the NVENC smoke's skip (exit 77) only when the caller
+# names its reason (ADR-0189); --self-test plants an unnamed skip, a skip for
+# another reason and a 77 without a SKIP line.
+test('named-skip-self-test',
+     bash_prog,
+     args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'named-skip.sh',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 # The hardware smoke for the same pools: --self-test plants defects into its
 # checks; the GPU run needs FFMPEG_BIN and a VAAPI-capable RENDER_NODE and
 # otherwise exits 77 (skip) with the reason. It belongs in the fast suite only

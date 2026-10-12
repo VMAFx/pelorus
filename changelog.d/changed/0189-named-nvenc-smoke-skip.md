@@ -1,0 +1,1 @@
+- `ffmpeg-patches/test/build-and-run.sh` passes the NVENC SEI smoke's skip only when `NVENC_SMOKE_SKIP` names its reason (ADR-0189); before, any exit 77 passed, so a GPU host whose driver or Vulkan device went missing reported green. Without an NVIDIA driver, set `NVENC_SMOKE_SKIP="Cannot load libcuda.so.1"`.
