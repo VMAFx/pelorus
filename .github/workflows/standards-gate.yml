@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     env:
-      PRAETOR_REF: 6622361940dc66399d027f3a203884bce2f616ac
+      PRAETOR_REF: 3bbde07342bdece12c46f74b0ee2c1f51129478f
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

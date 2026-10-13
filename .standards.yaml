@@ -1,3 +1,4 @@
+---
 version: 1
 repository:
   owner: VMAFx
@@ -38,55 +39,67 @@ clang_tidy:
     - name: "libpelorus"
       files: ".config/clang-tidy/lane-files.txt"
 exceptions:
-  - rule: "clang-tidy-coverage"
-    path: "ffmpeg-patches/files/h265_pelorus_fgs_bsf.c"
-    reason: "builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)"
+  - rule: clang-tidy-coverage
+    path: ffmpeg-patches/files/h265_pelorus_fgs_bsf.c
+    reason: builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)
     expires: "2027-01-06"
-  - rule: "clang-tidy-coverage"
-    path: "ffmpeg-patches/files/vf_pelorus_aa_vulkan.c"
-    reason: "builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)"
+  - rule: clang-tidy-coverage
+    path: ffmpeg-patches/files/vf_pelorus_aa_vulkan.c
+    reason: builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)
     expires: "2027-01-06"
-  - rule: "clang-tidy-coverage"
-    path: "ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c"
-    reason: "builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)"
+  - rule: clang-tidy-coverage
+    path: ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c
+    reason: builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)
     expires: "2027-01-06"
-  - rule: "clang-tidy-coverage"
-    path: "ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c"
-    reason: "builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)"
+  - rule: clang-tidy-coverage
+    path: ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c
+    reason: builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)
     expires: "2027-01-06"
-  - rule: "clang-tidy-coverage"
-    path: "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c"
-    reason: "builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)"
+  - rule: clang-tidy-coverage
+    path: ffmpeg-patches/files/vf_pelorus_deband_vulkan.c
+    reason: builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)
     expires: "2027-01-06"
-  - rule: "clang-tidy-coverage"
-    path: "ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c"
-    reason: "builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)"
+  - rule: clang-tidy-coverage
+    path: ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c
+    reason: builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)
     expires: "2027-01-06"
-  - rule: "clang-tidy-coverage"
-    path: "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c"
-    reason: "builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)"
+  - rule: clang-tidy-coverage
+    path: ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c
+    reason: builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)
     expires: "2027-01-06"
-  - rule: "clang-tidy-coverage"
-    path: "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c"
-    reason: "builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)"
+  - rule: clang-tidy-coverage
+    path: ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c
+    reason: builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)
     expires: "2027-01-06"
-  - rule: "clang-tidy-coverage"
-    path: "ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c"
-    reason: "builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)"
+  - rule: clang-tidy-coverage
+    path: ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c
+    reason: builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)
     expires: "2027-01-06"
-  - rule: "clang-tidy-coverage"
-    path: "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c"
-    reason: "builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)"
+  - rule: clang-tidy-coverage
+    path: ffmpeg-patches/files/vf_pelorus_mc_vulkan.c
+    reason: builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)
     expires: "2027-01-06"
-  - rule: "clang-tidy-coverage"
-    path: "ffmpeg-patches/files/vf_pelorus_scenecut.c"
-    reason: "builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)"
+  - rule: clang-tidy-coverage
+    path: ffmpeg-patches/files/vf_pelorus_scenecut.c
+    reason: builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)
     expires: "2027-01-06"
-  - rule: "clang-tidy-coverage"
-    path: "ffmpeg-patches/test/qsv-roi-regression.c"
-    reason: "builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)"
+  - rule: clang-tidy-coverage
+    path: ffmpeg-patches/test/qsv-roi-regression.c
+    reason: builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)
     expires: "2027-01-06"
-  - rule: "clang-tidy-coverage"
-    path: "ffmpeg-patches/test/static-libavfilter-consumer.c"
-    reason: "builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)"
+  - rule: clang-tidy-coverage
+    path: ffmpeg-patches/test/static-libavfilter-consumer.c
+    reason: builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)
     expires: "2027-01-06"
+  - rule: declared-linters
+    tool: cppcheck
+    reason: no workflow runs cppcheck yet; C static analysis runs through clang-tidy on every Meson-built unit (make verify-native, CI core job, ADR-0168), and a cppcheck lane first needs a recorded baseline of its current findings (ADR-0190)
+    expires: "2027-01-11"
+  - rule: declared-linters
+    tool: semgrep
+    reason: no workflow runs semgrep yet; it needs a pinned rule set kept in this repository, because registry configurations download their rules at run time and are not pinned (ADR-0190)
+    expires: "2027-01-11"
+  - rule: declared-linters
+    tool: trivy
+    reason: no workflow runs trivy yet; it needs a pinned vulnerability database, because trivy downloads its database at run time and two runs of one commit can disagree (ADR-0190)
+    expires: "2027-01-11"
