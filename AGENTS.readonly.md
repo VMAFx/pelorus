@@ -146,7 +146,7 @@ Harness table = engine rendering; `not enforced` there = no engine-generated che
 | HISS-09 | bound offset arithmetic before pointer formation: review only (`c-reviewer`, CERT C) + tests + `sanitizers` CI job |
 | HISS-10 | audit `Build warnings (HISS-10)` + `clang-tidy translation-unit coverage` + `make verify-native`; every CI `meson setup` passes `--werror`; fails audit and CI |
 | HISS-11 | audit `Supply chain (HISS-11)`: L3 from `release.yml`, SBOM from `release-build.yml`; reads workflow files only, not published attestations |
-| HISS-12 | review only: no `gitleaks` or `make secrets` target |
+| HISS-12 | `scripts/check-gitleaks.sh` in required `docs` CI job: pinned gitleaks, every branch + tag, `--self-test` planted side-branch secret; exceptions = `.gitleaksignore` fingerprints only (ADR-0190). Not in verification gate |
 | HISS-13 | `baseline --verify` + audit ratchet (`--base`, touched-debt delta) in `make audit`, pre-commit, `standards-gate.yml`; fails CI |
 | HISS-14 | footer: `commit-msg` hook (`forge check-message`) + CI `forge check-commits`. Append-only: `interop_test.c` fixture + `interop-abi-reviewer`. Hooks opt-in; CI authoritative |
 | HISS-15 | fast suite (`meson test --suite=fast`) in `core` CI job + PR review; skip passes only when named (`check-test-skips.py`, ADR-0188) |
@@ -180,7 +180,7 @@ Engine: pin = `PRAETOR_REF` in `.github/workflows/standards-gate.yml`. Make (`.c
 | `tools/pelorus_qp_report.c` | libpelorus CLI demonstrator; not installed |
 | `tools/tester/` | tester report program (stdlib Python, `python3 -I`), JSON schema, `--self-test` (ADR-0173) |
 | `tools/markdownlint/`, `tools/figures/` | Praetor-managed docs gate; refresh via `adopt` only |
-| `scripts/` | ADR claim, bench, release, build-config + shader checks, shared-series fetch + verify (`fetch-ffmpeg-series.sh`, ADR-0185) |
+| `scripts/` | ADR claim, bench, release, build-config + shader checks, shared-series fetch + verify (`fetch-ffmpeg-series.sh`, ADR-0185), secret scan (`check-gitleaks.sh`, ADR-0190) |
 | `Makefile`, `lefthook.yml` | native + governance entry points; Git hooks opt-in (`make hooks-install`; `no_auto_install`) |
 | `.standards.yaml`, `.standards.lock`, `.standards-baseline.json`, `.config/` | Praetor policy, lock, catalog, labels, HISS baseline, clang-tidy lane list, named test skips (`test-skips.json`, ADR-0188), Lefthook checkpoint scripts + policy, engine launcher (`lefthook/engine.sh`) + make fragment (`praetor/engine.mk`), agent interceptor |
 | `.devcontainer/` | Praetor-rendered dev container bundle (audit: byte-exact; regenerate, never hand-edit); `base/Containerfile` toolchain base image (ADR-0153) |
@@ -262,7 +262,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | FFmpeg Vulkan models | `vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c`, `vf_scdet_vulkan.c` |
 | AV1 grain ABI mirror | `libavutil/film_grain_params.h` |
 | vmafx control plane | `libvmaf_tune`, `/v1/score`, `vmaf-mcp` |
-| Praetor engine | `6622361940dc66399d027f3a203884bce2f616ac` from `.github/workflows/standards-gate.yml` |
+| Praetor engine | `3bbde07342bdece12c46f74b0ee2c1f51129478f` from `.github/workflows/standards-gate.yml` |
 | Go for actionlint (`ci.yml` docs job) | `1.27.x`; change with `ACTIONLINT_GO_VERSION` in `scripts/check-build-config.py`; checker's Renovate manager keeps setup-go's `go` identity ([ADR-0151](docs/adr/0151-renovate-mirrors-checker-toolchain-pins.md)) |
 
 ## Delivery

@@ -13,10 +13,15 @@ All notable changes to Pelorus are documented here. The format is
 ### Changed
 
 - The shared FFmpeg fix series pin moves from the release candidate `v0.1.0-rc.1` to the final release [VMAFx/ffmpeg-patches `v0.1.0`](https://github.com/VMAFx/ffmpeg-patches/releases/tag/v0.1.0) (ADR-0185). Both tags name commit `ea78aa5d` and both tarballs unpack to the same 16 files, so the four series patches and the 22 Pelorus patches are unchanged; only `FFMPEG_SERIES_TAG` and `FFMPEG_SERIES_SHA256` in `build-config.env` change.
+- Re-pinned the Praetor governance engine from `66223619` to `3bbde073` (ADR-0187 keeps the pin rule and the launcher). The new engine's declared-linters gate fails the audit when a linter the policy declares runs in no workflow; re-adoption records dated exceptions (expiry 2027-01-11) for `cppcheck`, `semgrep` and `trivy`, each with its reason in `.standards.yaml` (ADR-0190).
 - Re-pinned the Praetor governance engine from `7cf9cbb2` to `66223619` (ADR-0187 keeps the pin rule and the launcher). The engine's re-adoption refreshes the documentation gate scripts (`tools/markdownlint/verify.mjs`, `tools/markdownlint/no-private-scratch-links.mjs`, `tools/figures/checks.mjs`: each file is read through one open descriptor, and regular-expression class escaping is corrected) and the agent interceptor `.config/agent/hooks/block_evasion.py` (chained exception).
 - Thirteen decision records whose work is merged and released in the `v0.4.0` candidates are now Accepted: ADR-0173 and ADR-0176 to ADR-0187. `docs/development/tester-image.md` records the verified end-to-end tester image publish for `v0.4.0-rc.3` and adds the SBOM attestation check to "Verify an image".
 - A skipped fast-suite test now passes only when `.config/test-skips.json` names it with its exact `SKIP:` reason (ADR-0188). `scripts/check-test-skips.py` runs after `make test` and every CI fast-suite run; before, `meson test` exited 0 for any skip, so a GPU smoke pointed at the wrong FFmpeg reported green.
 - `ffmpeg-patches/test/build-and-run.sh` passes the NVENC SEI smoke's skip only when `NVENC_SMOKE_SKIP` names its reason (ADR-0189); before, any exit 77 passed, so a GPU host whose driver or Vulkan device went missing reported green. Without an NVIDIA driver, set `NVENC_SMOKE_SKIP="Cannot load libcuda.so.1"`.
+
+### Security
+
+- CI scans the full history of every branch and tag for credentials: the required `docs` job installs gitleaks 8.30.1 pinned by sha256, runs `scripts/check-gitleaks.sh --self-test` (a secret planted on a remote-tracking side branch must fail), then scans every ref. Exceptions are fingerprint lines in `.gitleaksignore` only (ADR-0190).
 
 <!-- END UNRELEASED -->
 
