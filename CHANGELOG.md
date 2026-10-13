@@ -19,6 +19,10 @@ All notable changes to Pelorus are documented here. The format is
 - A skipped fast-suite test now passes only when `.config/test-skips.json` names it with its exact `SKIP:` reason (ADR-0188). `scripts/check-test-skips.py` runs after `make test` and every CI fast-suite run; before, `meson test` exited 0 for any skip, so a GPU smoke pointed at the wrong FFmpeg reported green.
 - `ffmpeg-patches/test/build-and-run.sh` passes the NVENC SEI smoke's skip only when `NVENC_SMOKE_SKIP` names its reason (ADR-0189); before, any exit 77 passed, so a GPU host whose driver or Vulkan device went missing reported green. Without an NVIDIA driver, set `NVENC_SMOKE_SKIP="Cannot load libcuda.so.1"`.
 
+### Fixed
+
+- The NVDEC → Vulkan → NVENC recipes now derive the Vulkan device from the decoder's CUDA device (`-init_hw_device cuda=cu:0 -init_hw_device vulkan=vk@cu`), so both hops use one CUDA context. The old setup with a separate Vulkan device failed with `cuWaitExternalSemaphoresAsync` `CUDA_ERROR_INVALID_VALUE` (exit 187) on pass-through graphs, temporal filters and chained writing filters, a defect in stock FFmpeg's `hwcontext_vulkan` (#296). Denoise, motion estimation, borderfix and chained deband now run behind NVDEC without a software decoder; a new GPU smoke (`ffmpeg-patches/test/nvenc-cuda-hop-smoke.sh`) checks nine chains. ([ADR-0191](docs/adr/0191-nvenc-hop-derived-vulkan-device.md))
+
 ### Security
 
 - CI scans the full history of every branch and tag for credentials: the required `docs` job installs gitleaks 8.30.1 pinned by sha256, runs `scripts/check-gitleaks.sh --self-test` (a secret planted on a remote-tracking side branch must fail), then scans every ref. Exceptions are fingerprint lines in `.gitleaksignore` only (ADR-0190).

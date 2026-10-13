@@ -62,7 +62,7 @@ frame 0 only without `pelorus_scenecut`:
 | Encoder | GPU | Graph | Exit code | `I` pictures |
 | --- | --- | --- | --- | --- |
 | `hevc_vulkan` | RTX 4090 | Vulkan decode, `mc`, `scenecut` | 0 | 0, 60 |
-| `hevc_nvenc` | RTX 4090 | NVDEC, CUDA hop, `mc`, deband, `scenecut` | 0 | 0, 60 |
+| `hevc_nvenc` | RTX 4090 | NVDEC, Vulkan device derived from CUDA (`vulkan=vk@cu`, ADR-0191), `mc`, deband, `scenecut` | 0 | 0, 60 |
 | `hevc_qsv` | Arc A380 | VAAPI decode, `mc`, deband `tiling=drm`, `scenecut`, map to QSV | 0 | 0, 60 |
 
 ```bash
