@@ -41,6 +41,19 @@
       ],
       "depNameTemplate": "github.com/rhysd/actionlint",
       "datasourceTemplate": "go"
+    },
+    {
+      "customType": "regex",
+      "description": "Bump the gitleaks release that scripts/check-gitleaks.sh installs; GITLEAKS_SHA256 is updated by hand from the release checksums, and --install fails until it matches (ADR-0190)",
+      "managerFilePatterns": [
+        "/^scripts/check-gitleaks\\.sh$/"
+      ],
+      "matchStrings": [
+        "GITLEAKS_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)\\n"
+      ],
+      "depNameTemplate": "gitleaks/gitleaks",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>\\d+\\.\\d+\\.\\d+)$"
     }
   ],
   "packageRules": [

@@ -215,6 +215,23 @@ keeps it ([ADR-0188](../adr/0188-named-test-skips.md)).
 `make test` and in every CI fast-suite run. A new skip, or a changed skip message,
 fails until the list names it.
 
+No branch or tag may hold a credential (HISS-12,
+[ADR-0190](../adr/0190-gitleaks-every-ref.md)). The CI `docs` job installs the
+gitleaks release pinned by version and sha256 in `scripts/check-gitleaks.sh`,
+runs `scripts/check-gitleaks.sh --self-test`, then scans the full history of
+every ref. To run it locally:
+
+```bash
+GITLEAKS="$(scripts/check-gitleaks.sh --install /absolute/new-dir)" \
+  scripts/check-gitleaks.sh --self-test
+GITLEAKS=/absolute/new-dir/gitleaks scripts/check-gitleaks.sh
+```
+
+A false positive is exempted by adding its fingerprint
+(`commit:file:rule:line`, printed by the failing scan) to `.gitleaksignore`.
+`.gitleaks.toml` may only extend the default rules and add rules; an allowlist
+there is refused.
+
 The governance targets and the Lefthook jobs run the Praetor engine pinned at
 `PRAETOR_REF` in `.github/workflows/standards-gate.yml`, whatever `praetorctl`
 or `standardsctl` is first on `PATH`. The engine's own launcher,
@@ -458,7 +475,7 @@ an executable named `praetorctl` on `PATH`. The pinned `go install` builds
 sample payload from the repository root:
 
 ```bash
-go install github.com/cordanaLLM/praetor/cmd/standardsctl@6622361940dc66399d027f3a203884bce2f616ac
+go install github.com/cordanaLLM/praetor/cmd/standardsctl@3bbde07342bdece12c46f74b0ee2c1f51129478f
 cp "$(go env GOPATH)/bin/standardsctl" "$(go env GOPATH)/bin/praetorctl"   # Windows: standardsctl.exe to praetorctl.exe
 printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"hook_event_name":"PreToolUse"}' \
   | praetorctl hook claude pre-tool; echo "exit=$?"                          # expect exit=0, no output

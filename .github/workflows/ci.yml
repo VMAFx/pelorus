@@ -382,7 +382,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Full history of every branch and tag for the secret scan below.
+          fetch-depth: 0
           persist-credentials: false
+      - name: Install the pinned gitleaks release
+        run: |
+          gitleaks_bin=$(scripts/check-gitleaks.sh --install "$RUNNER_TEMP/gitleaks")
+          printf 'GITLEAKS=%s\n' "$gitleaks_bin" >> "$GITHUB_ENV"
+      - name: No credentials in any branch or tag (gitleaks, HISS-12)
+        run: |
+          scripts/check-gitleaks.sh --self-test
+          scripts/check-gitleaks.sh
       - name: Load build configuration
         run: |
           while IFS= read -r entry; do
