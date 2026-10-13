@@ -126,12 +126,21 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
 
 Verified on an RTX 4090 (exit code 0, 120 frames, no `hwdownload`, no CUDA hop).
 `mc` keeps 1 frame and `prev=3` keeps 3, hence `-extra_hw_frames 4`
-([frames the filters keep](../usage/ffmpeg.md#frames-the-filters-keep--extra_hw_frames)). Denoise on the NVENC CUDA hop
-fails after 2 to 37 frames ([#296](https://github.com/VMAFx/pelorus/issues/296)), so this recipe uses the Vulkan Video encoder.
+([frames the filters keep](../usage/ffmpeg.md#frames-the-filters-keep--extra_hw_frames)).
 
-NVENC alternative: behind NVDEC the denoise graph fails on the CUDA hop
-([#296](https://github.com/VMAFx/pelorus/issues/296)); behind a software decoder it runs
-([NVENC](../usage/ffmpeg.md#nvenc-nvdec--vulkan-filters--nvenc)):
+NVENC zero-copy path (NVDEC → Vulkan → NVENC): with the derived Vulkan device
+(`vulkan=vk@cu`), denoise passes all 120 frames without CUDA errors ([#296](https://github.com/VMAFx/pelorus/issues/296),
+[ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md); see [NVENC](../usage/ffmpeg.md#nvenc-nvdec--vulkan-filters--nvenc)):
+
+```bash
+# Verified on an RTX 4090, exit code 0, NVDEC, 120 frames (default options, `prev=3`).
+ffmpeg -init_hw_device cuda=cu:0 -init_hw_device vulkan=vk@cu -filter_hw_device vk \
+       -hwaccel cuda -hwaccel_device cu -hwaccel_output_format cuda -extra_hw_frames 3 -i in.mkv \
+       -vf "hwupload,pelorus_denoise_vulkan,hwupload=derive_device=cuda" \
+       -c:v hevc_nvenc -cq 28 out.mkv
+```
+
+The software-decode alternative on the separate device setup also remains verified (120 frames):
 
 ```bash
 # Verified on an RTX 4090, exit code 0, software decode, 120 frames (default options, `prev=3`).

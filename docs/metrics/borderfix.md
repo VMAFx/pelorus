@@ -84,9 +84,12 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
 ```
 
 Verified on an RTX 4090 (exit code 0, 120 frames, no `hwdownload`, no CUDA hop).
-Two borderfix passes in a row fail on the NVENC CUDA hop after 2 to 37 frames (see
-[the zero-copy pipeline](../usage/ffmpeg.md#nvenc-nvdec--vulkan-filters--nvenc)), so this recipe
-uses the Vulkan Video encoder.
+The same two passes also run behind NVDEC with NVENC when the Vulkan device is
+derived from the decoder's CUDA device (`vulkan=vk@cu`, 120 frames; see
+[the zero-copy pipeline](../usage/ffmpeg.md#nvenc-nvdec--vulkan-filters--nvenc),
+[#296](https://github.com/VMAFx/pelorus/issues/296) and
+[ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md)). With a separate
+Vulkan device they failed on that hop after 2 to 37 frames.
 
 Here the first pass removes a 4-pixel dirty band from luma. The second selects
 all non-luma physical planes and removes the corresponding 2-pixel band from

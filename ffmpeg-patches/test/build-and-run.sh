@@ -25,6 +25,10 @@
 #                its skip (exit 77) to pass, e.g. "Cannot load libcuda.so.1"
 #                on a host without an NVIDIA driver; unset, a skip fails the
 #                replay (optional, ADR-0189)
+#   NVENC_HOP_SMOKE_SKIP  fixed text the NVENC CUDA-hop smoke's SKIP line must
+#                contain for its skip (exit 77) to pass, e.g.
+#                "no usable CUDA or Vulkan device"; unset, a skip fails the
+#                replay (optional, ADR-0189, ADR-0191)
 set -euo pipefail
 
 # Hermetic Git: neither global/system configuration (apply.whitespace,
@@ -428,6 +432,23 @@ if ! "$HERE/named-skip.sh" "hevc_nvenc udu_sei smoke" "$smoke_status" \
     echo "ERROR: this run removes its logs, so rerun test/nvenc-udu-sei-smoke.sh" \
         "with FFMPEG_BIN and OUTPUT_ROOT to keep them; on a host that cannot run" \
         "the smoke, set NVENC_SMOKE_SKIP to the reason it prints" >&2
+    exit 1
+fi
+
+# GPU smoke: NVDEC -> Vulkan -> NVENC hop with derived Vulkan device (issue
+# #296, ADR-0191). Exit 77 names why this host cannot run it; it passes only
+# when NVENC_HOP_SMOKE_SKIP names that reason (ADR-0189). Any other failure
+# fails the replay.
+echo "== nvenc cuda hop smoke =="
+hop_smoke_status=0
+FFMPEG_BIN="$WORKTREE/ffmpeg" OUTPUT_ROOT="$LOG_DIR/nvenc-cuda-hop" \
+    "$HERE/nvenc-cuda-hop-smoke.sh" 2>&1 | tee "$LOG_DIR/nvenc-cuda-hop.log" ||
+    hop_smoke_status=$? # pipefail: the smoke's status, tee exits 0
+if ! "$HERE/named-skip.sh" "nvenc cuda hop smoke" "$hop_smoke_status" \
+    "$LOG_DIR/nvenc-cuda-hop.log" "${NVENC_HOP_SMOKE_SKIP:-}"; then
+    echo "ERROR: this run removes its logs, so rerun test/nvenc-cuda-hop-smoke.sh" \
+        "with FFMPEG_BIN and OUTPUT_ROOT to keep them; on a host that cannot run" \
+        "the smoke, set NVENC_HOP_SMOKE_SKIP to the reason it prints" >&2
     exit 1
 fi
 

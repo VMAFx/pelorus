@@ -18,8 +18,8 @@ flag — read the chain, understand each stage, and retune per source
 ## The recommended chain
 
 ```bash
-ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
-  -hwaccel cuda -hwaccel_output_format cuda -i in.mkv -vf "
+ffmpeg -init_hw_device cuda=cu:0 -init_hw_device vulkan=vk@cu -filter_hw_device vk \
+  -hwaccel cuda -hwaccel_device cu -hwaccel_output_format cuda -i in.mkv -vf "
   hwupload,
   pelorus_analyze_vulkan=roi=1,
   pelorus_dehalo_vulkan=blur=2:darkstr=1:brightstr=1,
@@ -29,9 +29,11 @@ ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk \
 " -c:v hevc_nvenc -pelorus_roi 1 -preset p5 -rc constqp -qp 22 out.mkv
 ```
 
-Verified on an RTX 4090 with a 10-bit HEVC input (exit code 0, 120 frames, no
-`hwdownload`). The NVENC hop copies within VRAM and needs `disable_multiplane=1`
-([the zero-copy pipeline](ffmpeg.md#nvenc-nvdec--vulkan-filters--nvenc)).
+Verified on an RTX 4090 with a 10-bit HEVC input under the separate device setup
+(exit code 0, 120 frames, no `hwdownload`); 10-bit under the derived device was
+not measured. The NVENC hop derives Vulkan from CUDA (`vulkan=vk@cu`) and copies
+within VRAM ([the zero-copy pipeline](ffmpeg.md#nvenc-nvdec--vulkan-filters--nvenc),
+[#296](https://github.com/VMAFx/pelorus/issues/296), [ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md)).
 
 The pixel-processing chain is codec-agnostic: swap `hevc_nvenc` for
 `av1_nvenc`, `hevc_qsv` / `av1_qsv`, or native `hevc_vulkan`. Encoder ROI
