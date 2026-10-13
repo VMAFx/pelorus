@@ -121,15 +121,20 @@ ephemeral committer identity and neutralizes caller signing, hooks, and diff
 ordering, so the same command works on a clean CI runner and a configured
 developer workstation.
 
-`build-and-run.sh` ends with the `hevc_nvenc` SEI smoke, which needs an NVIDIA
-driver and a Vulkan device. A host that lacks one makes the smoke skip, and the
-replay then fails unless `NVENC_SMOKE_SKIP` names the reason the smoke prints,
-so a GPU host whose driver or device went missing cannot pass by accident
+`build-and-run.sh` ends with two GPU smokes: the `hevc_nvenc` SEI smoke and
+the NVDEC → Vulkan → NVENC hop smoke (`test/nvenc-cuda-hop-smoke.sh`, nine
+filter chains on the derived Vulkan device,
+[ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md)). Both need an
+NVIDIA driver and a Vulkan device. A host that lacks one makes a smoke skip,
+and the replay then fails unless `NVENC_SMOKE_SKIP` (SEI smoke) and
+`NVENC_HOP_SMOKE_SKIP` (hop smoke) name the reason each smoke prints, so a GPU
+host whose driver or device went missing cannot pass by accident
 ([ADR-0189](../adr/0189-named-nvenc-smoke-skip.md)). On a machine without an
 NVIDIA driver:
 
 ```bash
 NVENC_SMOKE_SKIP="Cannot load libcuda.so.1" \
+  NVENC_HOP_SMOKE_SKIP="Cannot load libcuda.so.1" \
   FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh
 ```
 

@@ -144,7 +144,9 @@ ffmpeg-patches/
    to `pel_sei_map_fields`, its bit to `PEL_SEI_STRIPPABLE`. GPU proof =
    `test/nvenc-udu-sei-smoke.sh` (exit 77 = no NVENC/Vulkan; `build-and-run.sh`
    passes skip only when `NVENC_SMOKE_SKIP` names reason; `test/named-skip.sh`,
-   ADR-0189).
+   ADR-0189). Hop smoke `test/nvenc-cuda-hop-smoke.sh` (9 chains, derived
+   Vulkan device `vulkan=vk@cu`, `--self-test` = old separate setup must fail
+   `CUDA_ERROR_INVALID_VALUE`): skip named by `NVENC_HOP_SMOKE_SKIP` (ADR-0191).
 11. Every ephemeral `git am` replay supplies `Pelorus-Replay` committer
    identity, neutralizes signing, hooks, and diff ordering, and passes
    `--no-gpg-sign --no-verify`. Do not rely on workstation's global Git
