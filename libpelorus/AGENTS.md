@@ -92,8 +92,9 @@ libpelorus/
 11. **Telemetry names = registry.** `PEL_TLM_F_*` bit, key in
     `schema/telemetry-fields.json`, API page: change together; bits
     append-only, never renumbered or reused. Fast suite runs
-    `scripts/check-telemetry-field-parity.py` (SKIP until VMAFx/vmafx#2271
-    publishes its list) plus its `--self-test`.
+    `scripts/check-telemetry-field-parity.py` against pinned VMAFx list
+    `test/fixtures/vmafx-stream-metadata-fields.json` (missing = SKIP =
+    fail) plus its `--self-test`.
 12. **Encode-record digest = Python reference.** Canonical text equals
     `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)`
     for every accepted record. Worked example in `docs/api/encode-record.md`

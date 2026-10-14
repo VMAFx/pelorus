@@ -386,15 +386,16 @@ applies these rules and prints both names on any difference:
 
 `--self-test` plants one failing case for each rule (a renamed key on each
 side, a one-sided key on each side, an empty file, malformed JSON, a unit
-difference, a bit difference) and one matching pair that must pass. Until
-VMAFx/vmafx#2271 publishes its list, the fast-suite test runs rule 5 and the
-registry checks, then exits 77. Meson reports that as SKIP, with the reason
-"VMAFx field list not pinned (VMAFx/vmafx#2271)", not as a pass.
+difference, a bit difference) and one matching pair that must pass. The
+fast-suite test runs every rule against the pinned snapshot. Without the
+snapshot it exits 77 with the reason "VMAFx field list not pinned
+(VMAFx/vmafx#2271)"; Meson reports SKIP, and `scripts/check-test-skips.py`
+fails it because the test is not on the declared skip list.
 [`docs/metrics/encoder-telemetry.md`](../metrics/encoder-telemetry.md) names
-the pinned VMAFx revision once one exists.
+the pinned VMAFx revision.
 
 ```bash
-python3 -I scripts/check-telemetry-field-parity.py               # 77 = SKIP today
+python3 -I scripts/check-telemetry-field-parity.py               # 0
 python3 -I scripts/check-telemetry-field-parity.py --self-test   # 0
 python3 -I scripts/check-telemetry-field-parity.py --vmafx FILE  # any VMAFx list
 ```
@@ -434,4 +435,4 @@ The rows marked "adapters" arrive with the adapters (#86 items 2 to 4).
 | #86 item 3: "not reported", not zero | `libpelorus/test/telemetry_test.c`: a value under a clear bit fails, a reported 0 dB passes, a set bit outside an adapter's (empty) mask fails; per-adapter JSON cases arrive with the adapters |
 | #86 item 4 and #218: layout lock and fixture | `_Static_assert` sizes 104, 48, 36 plus every member offset in `interop.h`; `libpelorus/test/interop_test.c` packs and parses every new section and reads a 1.3-sized motion section as absent by size; `ffmpeg-patches/test/mc_stats_test.c` (`bsize` 8, 16, 32 write 3, 4, 5; other edges write 0); `ffmpeg-patches/test/pelorus_sidedata_test.c` (the named edge wins, also on a 1x1 frame and on grids that inference cannot resolve) |
 | #221 | `libpelorus/test/telemetry_test.c` includes `pelorus/telemetry.h` first and builds without FFmpeg include paths; a hand-filled `external` input packs and parses; an out-of-range enum and an oversized grid return `PEL_ERR_INVALID`/`PEL_ERR_RANGE` |
-| #220 | the Meson tests `telemetry-field-parity` (SKIP until VMAFx/vmafx#2271) and `telemetry-field-parity-self-test` |
+| #220 | the Meson tests `telemetry-field-parity` (against the pinned VMAFx list) and `telemetry-field-parity-self-test` |
