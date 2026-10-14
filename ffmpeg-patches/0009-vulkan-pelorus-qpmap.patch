@@ -1990,7 +1990,7 @@ index 1218017555b7d1bf51601f71d1fae6bb70ac8430..98e0d7bc327b4f3decc90ad27cb1800a
      unit_opts->nb_slices = 1;
  
 diff --git a/libavutil/hwcontext_vulkan.c b/libavutil/hwcontext_vulkan.c
-index 90d3d14dbb6ce2fec3fe081e57a884a10f04c0aa..0d49c8ed6c5e91b99b2906eb3bf25effc18c68f4 100644
+index d92a6a586208bd68c4849eead1e980f51164e9b3..6ad1193c90fb501e2f50a4fc06cce524815b5e60 100644
 --- a/libavutil/hwcontext_vulkan.c
 +++ b/libavutil/hwcontext_vulkan.c
 @@ -109,6 +109,11 @@ typedef struct VulkanDeviceFeatures {

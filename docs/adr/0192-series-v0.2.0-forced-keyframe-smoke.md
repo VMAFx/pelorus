@@ -62,6 +62,11 @@ loses 0008.
 ## Consequences
 
 - A GPU host with Vulkan HEVC encode and decode runs 60 encodes per replay.
+- The pin also brings series patches 0005 to 0007: VAAPI import of P010 and
+  P012 chroma that Vulkan exports as `GR1616`, the image format list in the
+  Vulkan export query, and a CPU wait before mapping RADV frames to DRM. They
+  touch `libavutil/hwcontext_vaapi.c` and `libavutil/hwcontext_vulkan.c`;
+  Pelorus patch 0009 regenerates with a new blob index only.
 - Hosted CI does not run the encodes; the smoke's planted cases are measured
   locally (see References), not in CI.
 - Dropping 0008 from the series is due once the pinned FFmpeg base carries
