@@ -33,17 +33,19 @@ the fast suite runs it twice:
 
 | Meson test | Command | Result today |
 |---|---|---|
-| `telemetry-field-parity` | `python3 -I scripts/check-telemetry-field-parity.py` | SKIP (exit 77): "VMAFx field list not pinned (VMAFx/vmafx#2271)", after the registry and `interop.h` checks pass |
+| `telemetry-field-parity` | `python3 -I scripts/check-telemetry-field-parity.py` | pass: "pelorus and vmafx agree (17 shared fields)", after the registry and `interop.h` checks pass |
 | `telemetry-field-parity-self-test` | `python3 -I scripts/check-telemetry-field-parity.py --self-test` | pass: a planted failure for every rule is rejected, a matching pair passes |
 
-**Pinned VMAFx revision: none yet.** VMAFx/vmafx#2271 has not published its
-field list. When it does, its file is copied to
-`libpelorus/test/fixtures/vmafx-stream-metadata-fields.json` with a `source`
-member `VMAFx/vmafx@<40-hex sha>:<path>`, this paragraph names that revision,
-and the first test stops skipping. A difference then fails with both names
-printed, for example `missing in vmafx: frame_bytes` or
-`type/unit differs: avg_qp`. An empty or malformed file exits 2 and is never a
-pass.
+**Pinned VMAFx revision: `243904ab13ea58ebce86d62e727b3289042fbf54`** (VMAFx pull request 2773,
+`api/stream-metadata-fields.json`). Its file is copied unchanged, apart from a
+`source` member `VMAFx/vmafx@243904ab13ea58ebce86d62e727b3289042fbf54:api/stream-metadata-fields.json`,
+to `libpelorus/test/fixtures/vmafx-stream-metadata-fields.json`. A difference
+fails with both names printed, for example `missing in vmafx: frame_bytes` or
+`type/unit differs: avg_qp`. An empty or malformed file, or a `source` that
+names no 40-hex commit, exits 2 and is never a pass. A missing file exits 77;
+the test is not on the declared skip list (`.config/test-skips.json`), so
+`scripts/check-test-skips.py` fails that SKIP. To move the pin, copy the newer
+VMAFx file, set `source` to its commit and update this paragraph.
 
 ## Filling a record outside FFmpeg (issue #221)
 
