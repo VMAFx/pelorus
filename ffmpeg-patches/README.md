@@ -40,10 +40,13 @@ verifies it (sha256 pin, signed `SHA256SUMS` with `cosign`, build provenance
 with `gh attestation verify`, FFmpeg base) and unpacks it to `<new-dir>/series`.
 It needs network access, `cosign` and an authenticated `gh`, and it fails
 closed. `generate.sh` and both replay scripts call it themselves. Release
-`v0.1.0` holds four patches: the Vulkan queue family fix that was Pelorus
+`v0.2.0` holds eight patches: the Vulkan queue family fix that was Pelorus
 patch 0021, GCC 14 and 16 diagnostics, the `hevc_nvenc` user data SEI budget,
-and the drop of SEI that NVENC would write truncated. Pelorus patch 0022 builds
-on the last two.
+the drop of SEI that NVENC would write truncated, VAAPI GR1616 chroma for P010
+and P012 DRM import, the image format list for the Vulkan export query, a CPU
+wait before mapping RADV frames to DRM, and the Vulkan queue de-phase that ends
+the `hevc_vulkan` hang under `-force_key_frames` (#309, ADR-0192). Pelorus
+patch 0022 builds on the two NVENC patches.
 
 ## Prerequisites
 

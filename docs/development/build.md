@@ -121,20 +121,27 @@ ephemeral committer identity and neutralizes caller signing, hooks, and diff
 ordering, so the same command works on a clean CI runner and a configured
 developer workstation.
 
-`build-and-run.sh` ends with two GPU smokes: the `hevc_nvenc` SEI smoke and
+`build-and-run.sh` ends with three GPU smokes: the `hevc_nvenc` SEI smoke,
 the NVDEC → Vulkan → NVENC hop smoke (`test/nvenc-cuda-hop-smoke.sh`, nine
 filter chains on the derived Vulkan device,
-[ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md)). Both need an
-NVIDIA driver and a Vulkan device. A host that lacks one makes a smoke skip,
-and the replay then fails unless `NVENC_SMOKE_SKIP` (SEI smoke) and
-`NVENC_HOP_SMOKE_SKIP` (hop smoke) name the reason each smoke prints, so a GPU
-host whose driver or device went missing cannot pass by accident
+[ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md)) and the Vulkan
+forced-keyframe smoke (`test/vulkan-forced-keyframe-smoke.sh`, 60 Vulkan HEVC
+encodes with `-force_key_frames 2`, a hang fails it,
+[ADR-0192](../adr/0192-series-v0.2.0-forced-keyframe-smoke.md); its header
+lists `INPUT`, `RUNS`, `OUTPUT_ROOT` and `--self-test`). The first
+two need an NVIDIA driver and a Vulkan device; the third needs a Vulkan device
+with HEVC video decode and encode. A host that lacks one makes a smoke skip,
+and the replay then fails unless `NVENC_SMOKE_SKIP` (SEI smoke),
+`NVENC_HOP_SMOKE_SKIP` (hop smoke) and `KEYFRAME_SMOKE_SKIP` (keyframe smoke)
+name the reason each smoke prints, so a GPU host whose driver or device went
+missing cannot pass by accident
 ([ADR-0189](../adr/0189-named-nvenc-smoke-skip.md)). On a machine without an
-NVIDIA driver:
+NVIDIA driver or Vulkan video:
 
 ```bash
 NVENC_SMOKE_SKIP="Cannot load libcuda.so.1" \
   NVENC_HOP_SMOKE_SKIP="Cannot load libcuda.so.1" \
+  KEYFRAME_SMOKE_SKIP="no Vulkan device with HEVC video" \
   FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh
 ```
 

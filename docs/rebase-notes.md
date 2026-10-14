@@ -8,6 +8,37 @@ the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
 ranges in older entries predate the first entry below (22 patches on the
 shared FFmpeg fix series, number 0021 retired).
 
+## Unreleased — shared FFmpeg fix series pinned at `v0.2.0` (#309, ADR-0192; regenerates 0009)
+
+- **Base**: `FFMPEG_SERIES_TAG` moves from `v0.1.0` to `v0.2.0`,
+  `FFMPEG_SERIES_COMMIT` from `ea78aa5d` to `d958384a` and
+  `FFMPEG_SERIES_SHA256` to `1f16f72e`, the sha256 of the `v0.2.0` tarball as
+  listed in its signed `SHA256SUMS`. The FFmpeg base stays `n9.0.2`.
+- **Patches**: the series grows from four to eight patches. 0005 touches
+  `libavutil/hwcontext_vaapi.c`; 0006 and 0007 touch
+  `libavutil/hwcontext_vulkan.c`; 0008 touches `libavutil/vulkan.c` and
+  `libavcodec/ffv1enc_vulkan.c`. Pelorus patch 0009 also edits
+  `hwcontext_vulkan.c`, so it regenerates: only the two blob ids in its
+  `index` line change (pre-image `90d3d14d` to `d92a6a58`, post-image
+  `0d49c8ed` to `6ad1193c`), hunks and context are unchanged. The other 21
+  patches are byte-identical.
+- **Behaviour**: `hevc_vulkan` with `-force_key_frames` no longer hangs at frame
+  61 (0008). Vulkan P010 and P012 frames map to VAAPI (0005); the Vulkan export
+  query carries the image format list (0006); frames mapped from RADV to DRM
+  wait on the CPU first (0007).
+- **Rebase-sensitive**: drop 0008 from the series once the pinned FFmpeg base
+  carries `d0d7d81317` (FFmpeg pull request 25060 asks for it on release/9.0).
+  A base bump that loses it fails `test/vulkan-forced-keyframe-smoke.sh` on a
+  GPU host.
+- **Interop**: none.
+- **Checks**: `scripts/fetch-ffmpeg-series.sh --self-test` on the new pin
+  (genuine release verified; flipped byte, own-sha256 tamper, wrong sha256 pin,
+  tampered `SHA256SUMS` and wrong commit pin each refused);
+  `scripts/check-build-config.py`; `generate.sh` twice, byte-identical, with
+  0009 the only changed patch. The replay and link over the series and the 22
+  patches runs in CI for this change, with the forced-keyframe smoke up to its
+  named skip.
+
 ## Unreleased — shared FFmpeg fix series pinned at `v0.1.0` (ADR-0185; no patch changes)
 
 - **Base**: `FFMPEG_SERIES_TAG` moves from `v0.1.0-rc.1` to `v0.1.0` and
