@@ -119,10 +119,11 @@ test('tester-licence-record-self-test',
      suite: 'fast')
 
 # Issue #220 / ADR-0174: telemetry field names are shared with VMAFx's stream
-# metadata (VMAFx/vmafx#2271). The check runs the registry and interop.h rules;
-# until VMAFx publishes its field list it exits 77, which Meson reports as SKIP
-# with the reason printed, never as a pass. The --self-test plants a failure for
-# every rule and must reject each.
+# metadata (VMAFx/vmafx#2271). The check runs the registry and interop.h rules
+# and compares the registry with the pinned VMAFx field list in
+# libpelorus/test/fixtures/. Without that file it exits 77, which Meson reports
+# as SKIP and scripts/check-test-skips.py refuses (no declared skip). The
+# --self-test plants a failure for every rule and must reject each.
 test('telemetry-field-parity',
      python_prog,
      args: [meson.project_source_root() / 'scripts' / 'check-telemetry-field-parity.py'],
