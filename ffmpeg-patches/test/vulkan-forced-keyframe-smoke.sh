@@ -16,6 +16,12 @@
 # with hevc_vulkan -g 1000 -bf 0); a clip made this way reproduced the hang with
 # an unpatched build. A binary that cannot generate it skips with the reason.
 #
+# Skip reasons (stdout "SKIP: ..."): "hevc_vulkan encoder not found",
+# "hevc decoder not found", "cannot generate the input clip", and
+# "no Vulkan device with HEVC video" (no device, or one without HEVC decode or
+# encode, e.g. lavapipe). Generating the clip fails, never skips, once the
+# device probe passed.
+#
 # Modes:
 #   Normal:        runs RUNS times (default 60). Passes (exit 0) when all runs
 #                  encode all frames with rc 0. Fails (exit 1) on any hang or
@@ -63,6 +69,14 @@ pel_first_error()
     awk 'tolower($0) ~ /error|failed/ { print; exit }' "$1"
 }
 
+# pel_why LOG — first error line of LOG, else its last line.
+pel_why()
+{
+    local e
+    e="$(pel_first_error "$1")"
+    echo "${e:-$(tail -n 1 "$1")}"
+}
+
 pel_last_frame()
 {
     sed -E -n 's/.*frame=[[:space:]]*([0-9]+).*/\1/p' "$1" | tail -n 1
@@ -94,7 +108,45 @@ grep -Eq '^[[:space:]]*V[^[:space:]]*[[:space:]]+hevc_vulkan[[:space:]]' "$PEL_O
 grep -Eq '^[[:space:]]*V[^[:space:]]*[[:space:]]+hevc[[:space:]]' "$PEL_OUT/decoders.txt" ||
     pel_skip "hevc decoder not found in $PEL_FFMPEG"
 
+timeout -k 5 30 "$PEL_FFMPEG" -hide_banner -filters >"$PEL_OUT/filters.txt" 2>&1 < /dev/null ||
+    pel_fail "ffmpeg -filters failed"
+timeout -k 5 30 "$PEL_FFMPEG" -hide_banner -demuxers >"$PEL_OUT/demuxers.txt" 2>&1 < /dev/null ||
+    pel_fail "ffmpeg -demuxers failed"
+
+# pel_has LIST NAME — NAME is a component in LIST. The name sits in column 2,
+# or 3 after the demuxers' device flag "d", and may be a comma-separated list.
+pel_has()
+{
+    awk -v n="$2" '{
+        k = split(($2 == "d" && NF >= 3) ? $3 : $2, a, ",")
+        for (j = 1; j <= k; j++) if (a[j] == n) found = 1
+    } END { exit !found }' "$PEL_OUT/$1"
+}
+
+# pel_vk_probe LOG ARGS... — encode one frame with hevc_vulkan; skip when the
+# host has no Vulkan device that decodes and encodes HEVC.
+pel_vk_probe()
+{
+    local log="$1"
+    shift
+    if ! timeout -k 5 30 "$PEL_FFMPEG" -nostdin -hide_banner -loglevel verbose -y \
+        -init_hw_device vulkan=vk:0 -filter_hw_device vk "$@" \
+        -frames:v 1 -c:v hevc_vulkan -qp 28 "$PEL_OUT/probe_vk.mkv" \
+        >"$log" 2>&1 < /dev/null; then
+        pel_skip "no Vulkan device with HEVC video: $(pel_why "$log")"
+    fi
+}
+
 if [[ -z "$PEL_INPUT" ]]; then
+    # Allow-list of what the generation command uses: lavfi demuxer, the
+    # wrapped_avframe decoder it outputs, and every filter in the graph.
+    for need in demuxers:lavfi decoders:wrapped_avframe filters:testsrc2 \
+        filters:smptehdbars filters:concat filters:format filters:hwupload; do
+        pel_has "${need%%:*}.txt" "${need#*:}" ||
+            pel_skip "cannot generate the input clip: no ${need#*:} in $PEL_FFMPEG -${need%%:*}; set INPUT"
+    done
+    pel_vk_probe "$PEL_OUT/probe_vk_enc.log" \
+        -f lavfi -i testsrc2=s=1280x720:r=30:d=0.1 -vf format=nv12,hwupload
     PEL_INPUT="$PEL_OUT/input.mkv"
     if ! timeout -k 5 120 "$PEL_FFMPEG" -nostdin -hide_banner -y \
         -init_hw_device vulkan=vk:0 -filter_hw_device vk \
@@ -103,18 +155,13 @@ if [[ -z "$PEL_INPUT" ]]; then
         -filter_complex '[0:v][1:v]concat=n=2:v=1:a=0,format=nv12,hwupload[v]' \
         -map '[v]' -c:v hevc_vulkan -g 1000 -bf 0 -qp 20 \
         "$PEL_INPUT" >"$PEL_OUT/input.log" 2>&1 < /dev/null; then
-        pel_skip "cannot generate the input clip, set INPUT: $(pel_first_error "$PEL_OUT/input.log")"
+        pel_fail "generating the input clip failed: $(pel_why "$PEL_OUT/input.log")"
     fi
 fi
 [[ -f "$PEL_INPUT" ]] || pel_fail "input clip does not exist: $PEL_INPUT"
 
-if ! timeout -k 5 30 "$PEL_FFMPEG" -nostdin -hide_banner -loglevel verbose -y \
-    -init_hw_device vulkan=vk:0 -filter_hw_device vk \
-    -hwaccel vulkan -hwaccel_device vk -hwaccel_output_format vulkan \
-    -i "$PEL_INPUT" -frames:v 1 -c:v hevc_vulkan -qp 28 \
-    "$PEL_OUT/probe_vk.mkv" >"$PEL_OUT/probe_vk.log" 2>&1 < /dev/null; then
-    pel_skip "no usable Vulkan device: $(pel_first_error "$PEL_OUT/probe_vk.log")"
-fi
+pel_vk_probe "$PEL_OUT/probe_vk.log" \
+    -hwaccel vulkan -hwaccel_device vk -hwaccel_output_format vulkan -i "$PEL_INPUT"
 
 vk_dev="$(pel_device "$PEL_OUT/probe_vk.log")"
 if [[ -n "$vk_dev" ]]; then
@@ -156,8 +203,7 @@ for ((i = 1; i <= RUNS; i++)); do
     fi
 
     if (( rc != 0 )); then
-        first_err="$(pel_first_error "$log")"
-        pel_fail "run $i/$RUNS failed (rc $rc): ${first_err:-$(head -n 1 "$log")}"
+        pel_fail "run $i/$RUNS failed (rc $rc): $(pel_why "$log")"
     fi
 
     if [[ "${fr:-0}" != "$PEL_EXPECTED_FRAMES" ]]; then

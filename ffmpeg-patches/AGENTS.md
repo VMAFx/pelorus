@@ -147,6 +147,11 @@ ffmpeg-patches/
    ADR-0189). Hop smoke `test/nvenc-cuda-hop-smoke.sh` (9 chains, derived
    Vulkan device `vulkan=vk@cu`, `--self-test` = old separate setup must fail
    `CUDA_ERROR_INVALID_VALUE`): skip named by `NVENC_HOP_SMOKE_SKIP` (ADR-0191).
+   Keyframe smoke `test/vulkan-forced-keyframe-smoke.sh` (#309: 60 runs Vulkan
+   HEVC decode -> `hevc_vulkan -force_key_frames 2`, 30 s timeout each, hang =
+   fail; `--self-test` = unfixed binary must hang; no `INPUT` -> generates clip
+   with binary under test, missing component -> skip with name): skip named by
+   `KEYFRAME_SMOKE_SKIP` (ADR-0192).
 11. Every ephemeral `git am` replay supplies `Pelorus-Replay` committer
    identity, neutralizes signing, hooks, and diff ordering, and passes
    `--no-gpg-sign --no-verify`. Do not rely on workstation's global Git
