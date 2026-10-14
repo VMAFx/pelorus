@@ -29,6 +29,10 @@
 #                contain for its skip (exit 77) to pass, e.g.
 #                "no usable CUDA or Vulkan device"; unset, a skip fails the
 #                replay (optional, ADR-0189, ADR-0191)
+#   KEYFRAME_SMOKE_SKIP  fixed text the Vulkan forced-keyframe smoke's SKIP
+#                line must contain for its skip (exit 77) to pass, e.g.
+#                "no Vulkan device with HEVC video"; unset, a skip fails the
+#                replay (optional, ADR-0189)
 set -euo pipefail
 
 # Hermetic Git: neither global/system configuration (apply.whitespace,
@@ -449,6 +453,25 @@ if ! "$HERE/named-skip.sh" "nvenc cuda hop smoke" "$hop_smoke_status" \
     echo "ERROR: this run removes its logs, so rerun test/nvenc-cuda-hop-smoke.sh" \
         "with FFMPEG_BIN and OUTPUT_ROOT to keep them; on a host that cannot run" \
         "the smoke, set NVENC_HOP_SMOKE_SKIP to the reason it prints" >&2
+    exit 1
+fi
+
+# GPU smoke: Vulkan HEVC decode into hevc_vulkan with -force_key_frames, 60
+# runs (issue #309, series patch 0008). Exit 77 names why this host cannot run
+# it; it passes only when KEYFRAME_SMOKE_SKIP names that reason (ADR-0189). A
+# hang or any other failure fails the replay.
+echo "== vulkan forced keyframe smoke =="
+kf_smoke_status=0
+FFMPEG_BIN="$WORKTREE/ffmpeg" OUTPUT_ROOT="$LOG_DIR/vulkan-forced-keyframe" \
+    "$HERE/vulkan-forced-keyframe-smoke.sh" 2>&1 |
+    tee "$LOG_DIR/vulkan-forced-keyframe.log" ||
+    kf_smoke_status=$? # pipefail: the smoke's status, tee exits 0
+if ! "$HERE/named-skip.sh" "vulkan forced keyframe smoke" "$kf_smoke_status" \
+    "$LOG_DIR/vulkan-forced-keyframe.log" "${KEYFRAME_SMOKE_SKIP:-}"; then
+    echo "ERROR: this run removes its logs, so rerun" \
+        "test/vulkan-forced-keyframe-smoke.sh with FFMPEG_BIN and OUTPUT_ROOT to" \
+        "keep them; on a host that cannot run the smoke, set KEYFRAME_SMOKE_SKIP" \
+        "to the reason it prints" >&2
     exit 1
 fi
 
