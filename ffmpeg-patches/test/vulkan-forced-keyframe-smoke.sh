@@ -7,8 +7,9 @@
 # SPDX-License-Identifier: EUPL-1.2
 #
 # GPU test. With -force_key_frames 2 -c:v hevc_vulkan, unpatched FFmpeg (n9.0.2
-# plus shared series 0001-0007) intermittently hangs at frame 61 (~1 in 5 runs),
-# killed by timeout (rc 124/137). Upstream FFmpeg commit d0d7d81317 (series
+# plus shared series 0001-0007) intermittently hangs at frame 61 (25 of 60 runs
+# on the release/9.0 tip), killed by timeout (rc 124/137). The input frame count
+# comes from a stream copy; a copy that fails or counts no frame fails the smoke. Upstream FFmpeg commit d0d7d81317 (series
 # 0008 backport) resolves the hang.
 #
 # Input: a 1280x720 HEVC clip of 120 frames whose only keyframe is frame 0.
@@ -168,15 +169,13 @@ if [[ -n "$vk_dev" ]]; then
     echo "Vulkan device: $vk_dev"
 fi
 
-PEL_EXPECTED_FRAMES=120
-if timeout -k 5 60 "$PEL_FFMPEG" -nostdin -hide_banner -y -i "$PEL_INPUT" -c copy -f matroska \
-    "$PEL_OUT/probe_count.mkv" >"$PEL_OUT/probe_count.log" 2>&1 < /dev/null; then
-    detected_frames="$(pel_last_frame "$PEL_OUT/probe_count.log")"
-    if [[ -n "$detected_frames" && "$detected_frames" -gt 0 ]]; then
-        PEL_EXPECTED_FRAMES="$detected_frames"
-    fi
-    rm -f "$PEL_OUT/probe_count.mkv"
-fi
+timeout -k 5 60 "$PEL_FFMPEG" -nostdin -hide_banner -y -i "$PEL_INPUT" -c copy -f matroska \
+    "$PEL_OUT/probe_count.mkv" >"$PEL_OUT/probe_count.log" 2>&1 < /dev/null \
+    || pel_fail "counting the input frames failed: $(tail -n 1 "$PEL_OUT/probe_count.log")"
+rm -f "$PEL_OUT/probe_count.mkv"
+PEL_EXPECTED_FRAMES="$(pel_last_frame "$PEL_OUT/probe_count.log")"
+[[ "${PEL_EXPECTED_FRAMES:-0}" -gt 0 ]] \
+    || pel_fail "counting the input frames found no frame: $PEL_OUT/probe_count.log"
 
 out_mkv="$PEL_OUT/run.mkv"
 

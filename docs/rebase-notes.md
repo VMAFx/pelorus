@@ -18,9 +18,10 @@ shared FFmpeg fix series, number 0021 retired).
   `libavutil/hwcontext_vaapi.c`; 0006 and 0007 touch
   `libavutil/hwcontext_vulkan.c`; 0008 touches `libavutil/vulkan.c` and
   `libavcodec/ffv1enc_vulkan.c`. Pelorus patch 0009 also edits
-  `hwcontext_vulkan.c`, so it regenerates: only the pre-image blob in its
-  `index` line changes (`90d3d14d` to `d92a6a58`), hunks and context are
-  unchanged. The other 21 patches are byte-identical.
+  `hwcontext_vulkan.c`, so it regenerates: only the two blob ids in its
+  `index` line change (pre-image `90d3d14d` to `d92a6a58`, post-image
+  `0d49c8ed` to `6ad1193c`), hunks and context are unchanged. The other 21
+  patches are byte-identical.
 - **Behaviour**: `hevc_vulkan` with `-force_key_frames` no longer hangs at frame
   61 (0008). Vulkan P010 and P012 frames map to VAAPI (0005); the Vulkan export
   query carries the image format list (0006); frames mapped from RADV to DRM

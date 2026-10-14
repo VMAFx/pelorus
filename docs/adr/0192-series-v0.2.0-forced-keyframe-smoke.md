@@ -53,8 +53,9 @@ loses 0008.
   binary under test can produce an equivalent clip. Measured: a clip generated
   this way makes an unfixed build hang (`--self-test` passed at run 1 of 60).
 - **Fewer runs.** Rejected: the hang is intermittent. On unfixed builds the first
-  hang came between run 1 and run 20 across six 60-run measurements; 10 runs would
-  have missed one of them. 60 clean runs take about 49 s on an RTX 4090.
+  hang came between run 1 and run 20 (digest table "First hang per measurement");
+  10 runs would have missed the run-20 measurement. 60 clean runs take under a
+  minute on an RTX 4090.
 - **No CI wiring, manual runs only.** Rejected: the replay is where a lost 0008
   would show; on GPU hosts the smoke then runs with every replay, and on hosted
   lanes the named skip keeps any other skip reason failing.
@@ -66,7 +67,7 @@ loses 0008.
   P012 chroma that Vulkan exports as `GR1616`, the image format list in the
   Vulkan export query, and a CPU wait before mapping RADV frames to DRM. They
   touch `libavutil/hwcontext_vaapi.c` and `libavutil/hwcontext_vulkan.c`;
-  Pelorus patch 0009 regenerates with a new blob index only.
+  Pelorus patch 0009 regenerates with new blob ids in its `index` line only.
 - Hosted CI does not run the encodes; the smoke's planted cases are measured
   locally (see References), not in CI.
 - Dropping 0008 from the series is due once the pinned FFmpeg base carries

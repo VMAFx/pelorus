@@ -127,7 +127,8 @@ filter chains on the derived Vulkan device,
 [ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md)) and the Vulkan
 forced-keyframe smoke (`test/vulkan-forced-keyframe-smoke.sh`, 60 Vulkan HEVC
 encodes with `-force_key_frames 2`, a hang fails it,
-[ADR-0192](../adr/0192-series-v0.2.0-forced-keyframe-smoke.md)). The first
+[ADR-0192](../adr/0192-series-v0.2.0-forced-keyframe-smoke.md); its header
+lists `INPUT`, `RUNS`, `OUTPUT_ROOT` and `--self-test`). The first
 two need an NVIDIA driver and a Vulkan device; the third needs a Vulkan device
 with HEVC video decode and encode. A host that lacks one makes a smoke skip,
 and the replay then fails unless `NVENC_SMOKE_SKIP` (SEI smoke),
