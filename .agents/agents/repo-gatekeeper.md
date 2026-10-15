@@ -1,6 +1,7 @@
 ---
 name: repo-gatekeeper
 description: Verifies dependency, security, context, native, and worktree gates before delivery.
+model: flash
 mainAgent: true
 subagent: true
 commandExecutionPolicy: auto

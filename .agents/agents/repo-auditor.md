@@ -1,6 +1,7 @@
 ---
 name: repo-auditor
 description: Runs repository HISS sweeps and baseline compliance checks.
+model: pro
 mainAgent: true
 subagent: true
 commandExecutionPolicy: auto
