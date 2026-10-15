@@ -293,9 +293,10 @@ def self_test() -> list[str]:
     with tempfile.TemporaryDirectory() as tmp:
         raw_file = Path(tmp) / "rc-body.md"
         raw_file.write_text("### Added\n\n- Wrapped bullet line one\n  line two.\n", encoding="utf-8")
-        sh = Path(__file__).with_name("extract-release-notes.sh")
+        # Run this program, not the bash wrapper: on the Windows CI leg a bare
+        # "bash" resolves to the WSL launcher, which has no distribution.
         done = subprocess.run(
-            ["bash", str(sh), "--unwrap", str(raw_file)],
+            [sys.executable, "-I", str(Path(__file__).resolve()), "--unwrap", str(raw_file)],
             check=False,
             capture_output=True,
             text=True,
