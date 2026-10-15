@@ -1,6 +1,8 @@
 <!-- markdownlint-disable MD013 -->
 # `pelorus_aa_vulkan` — anime warp anti-aliasing + line-darkening
 
+**Stance:** `experimental` — Available for anime line-art anti-aliasing today; promotion requires pinned-corpus anti-aliasing quality and BD-rate evidence ([bench #202](https://github.com/VMAFx/pelorus/issues/202)).
+
 A single-pass Vulkan compute filter that removes the stair-stepped aliasing
 ("jaggies") anime line-art accumulates through repeated scale/encode, and
 optionally darkens real lines so they stay crisp. A zero-copy GPU port of

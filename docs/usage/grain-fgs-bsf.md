@@ -1,6 +1,8 @@
 <!-- markdownlint-disable MD013 -->
 # pelorus_fgs — H.274 film-grain SEI bitstream filter (HEVC)
 
+**Stance:** `experimental` — Available to insert static H.274 film-grain metadata today; promotion requires pinned-corpus grain-synthesis BD-rate evidence ([bench #197](https://github.com/VMAFx/pelorus/issues/197)).
+
 `pelorus_fgs` is a libavcodec **bitstream filter** (BSF) that inserts an ITU-T
 H.274 **Film Grain Characteristics (FGC) SEI** message into an HEVC elementary
 stream, so a conforming decoder re-synthesizes film grain that was removed

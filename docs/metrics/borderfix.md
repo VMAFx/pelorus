@@ -1,6 +1,8 @@
 <!-- markdownlint-disable MD013 -->
 # vf_pelorus_borderfix_vulkan
 
+**Stance:** `experimental` — Available for deterministic dirty-border repair today; promotion requires pinned-corpus border-repair quality and BD-rate evidence ([bench #202](https://github.com/VMAFx/pelorus/issues/202)).
+
 Dirty-line / **border repair**, run as a zero-copy pre-encode pass in VRAM. A
 single-pass Vulkan compute filter — the GPU equivalent of FFmpeg's
 `fillborders=smear` — that replaces the garbage rows/columns at the frame edge

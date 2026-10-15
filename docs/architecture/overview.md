@@ -56,18 +56,22 @@ HEVC/VVC (H.274 / SEI FGC).
 
 ## Pipeline stages (roadmap)
 
-| Stage | Filter | Effect | Status |
+The stance follows [ADR-0193](../adr/0193-filter-stance-labels.md): every stage
+remains experimental until a measured result on the pinned public corpus links
+its evidence.
+
+| Stage | Filter | Effect | Stance |
 | --- | --- | --- | --- |
-| borderfix | `pelorus_borderfix_vulkan` | dirty-line / border repair — clamp the dirty edge band onto the clean interior rect (the zero-copy equivalent of `fillborders=smear`); all planes, band widths in each plane's own pixels; runs **first**, before any other stage | **built** (deterministic smear — no quality A/B needed; BD-rate note on a dirty-border corpus is a nice-to-have follow-up) |
-| analyze | `pelorus_analyze_vulkan` | measure banding/variance/edge stats → side data | **working** |
-| deband | `pelorus_deband_vulkan` | flatten contours + dither | **working** |
-| deblock | `pelorus_deblock_vulkan` | re-encode deblock/dering — gated `[1 2 1]` low-pass across the prior codec's DCT block grid; smooths blocking so the new encoder does not code it as false residual (luma by default; optional selected chroma); runs early, before deband | **built** (on-content tuning + SSIMULACRA2/BD-rate proof on a re-transcode corpus pending) |
-| dehalo | `pelorus_dehalo_vulkan` | anime/2D dehalo + dering — single-pass GPU port of DeHalo_alpha + FineDehalo; removes the ring next to line-art (luma by default; optional selected chroma); foundation of `tune=anime` | **built** (on-content tuning + SSIMULACRA2/edge-VMAF-NEG/CAMBI proof pending) |
-| denoise | `pelorus_denoise_vulkan` | edge-preserving spatio-temporal denoise (biggest BD-rate lever) | **working** |
-| grain | `pelorus_grain_estimate_vulkan` | estimate film-grain params → PEL_SEC_FILMGRAIN + native AV1 side data; HEVC uses separately configured static `pelorus_fgs` BSF AVOptions (no inline frame-side-data bridge, ADR-0117); `av1_nvenc` via `-pelorus_film_grain` (ADR-0118); per-frame HEVC/H.264/VVC legs deferred | estimator working; HEVC BSF working (static/manual); av1_nvenc HW grain wired |
-| mc | `pelorus_mc_vulkan` | block-matching motion estimator → per-block motion + confidence side data; denoise `mc=1` consumes it for confidence-gated temporal warping; NVENC ME-hint consumer (`-pelorus_me_hints`, patch 0008) uses it for encode speed, with no gain on the measured 4090 case (~2–3% slowdown at p7 — see bench-results.md v0.9) | **working** |
-| aa | `pelorus_aa_vulkan` | anime warp anti-aliasing (awarpsharp2) + optional line-darkening (FastLineDarken); luma by default with optional selected chroma, single-pass transform, no side data; second stage of the anime `tune` chain after dehalo (ADR-0124); defaults unproven on content (SSIMULACRA2 / edge-region VMAF-NEG proof deferred) | **built** |
-| scenecut | `pelorus_scenecut` | scene-cut → forced IDR — metadata-only consumer (NOT a Vulkan filter, no GPU work) that reads `PEL_SEC_MOTION.has_scene_cut` (from `mc`) and sets `pict_type=I` so the encoder opens a fresh GOP at the cut; vendor-neutral encoder steering, no per-encoder patch (ADR-0126); the `ffmpeg` CLI needs `-force_key_frames source` ([scenecut](../metrics/scenecut.md#usage)); runs on Vulkan frames, no `hwdownload` needed (ADR-0186); BD-rate A/B is a documented follow-up | **built** |
+| borderfix | `pelorus_borderfix_vulkan` | dirty-line / border repair — clamp the dirty edge band onto the clean interior rect (the zero-copy equivalent of `fillborders=smear`); all planes, band widths in each plane's own pixels; runs **first**, before any other stage | `experimental` |
+| analyze | `pelorus_analyze_vulkan` | measure banding/variance/edge stats → side data | `experimental` |
+| deband | `pelorus_deband_vulkan` | flatten contours + dither | `experimental` |
+| deblock | `pelorus_deblock_vulkan` | re-encode deblock/dering — gated `[1 2 1]` low-pass across the prior codec's DCT block grid; smooths blocking so the new encoder does not code it as false residual (luma by default; optional selected chroma); runs early, before deband | `experimental` |
+| dehalo | `pelorus_dehalo_vulkan` | anime/2D dehalo + dering — single-pass GPU port of DeHalo_alpha + FineDehalo; removes the ring next to line-art (luma by default; optional selected chroma); foundation of `tune=anime` | `experimental` |
+| denoise | `pelorus_denoise_vulkan` | edge-preserving spatio-temporal denoise (biggest BD-rate lever) | `experimental` |
+| grain | `pelorus_grain_estimate_vulkan`; `pelorus_fgs` (BSF) | estimate film-grain params → PEL_SEC_FILMGRAIN + native AV1 side data; HEVC uses separately configured static `pelorus_fgs` BSF AVOptions (no inline frame-side-data bridge, ADR-0117); `av1_nvenc` via `-pelorus_film_grain` (ADR-0118); per-frame HEVC/H.264/VVC legs deferred | `experimental` |
+| mc | `pelorus_mc_vulkan` | block-matching motion estimator → per-block motion + confidence side data; denoise `mc=1` consumes it for confidence-gated temporal warping; NVENC ME-hint consumer (`-pelorus_me_hints`, patch 0008) uses it for encode speed, with no gain on the measured 4090 case (~2–3% slowdown at p7 — see bench-results.md v0.9) | `experimental` |
+| aa | `pelorus_aa_vulkan` | anime warp anti-aliasing (awarpsharp2) + optional line-darkening (FastLineDarken); luma by default with optional selected chroma, single-pass transform, no side data; second stage of the anime `tune` chain after dehalo (ADR-0124); defaults unproven on content (SSIMULACRA2 / edge-region VMAF-NEG proof deferred) | `experimental` |
+| scenecut | `pelorus_scenecut` | scene-cut → forced IDR — metadata-only consumer (NOT a Vulkan filter, no GPU work) that reads `PEL_SEC_MOTION.has_scene_cut` (from `mc`) and sets `pict_type=I` so the encoder opens a fresh GOP at the cut; vendor-neutral encoder steering, no per-encoder patch (ADR-0126); the `ffmpeg` CLI needs `-force_key_frames source` ([scenecut](../metrics/scenecut.md#usage)); runs on Vulkan frames, no `hwdownload` needed (ADR-0186); BD-rate A/B is a documented follow-up | `experimental` |
 
 The **anime tune** composes these stages into one recommended GPU pre-encode
 chain — analyze-ROI + dehalo + aa + deband at 10-bit, then encoder ROI steering —

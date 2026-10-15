@@ -1,6 +1,8 @@
 <!-- markdownlint-disable MD013 -->
 # `pelorus_scenecut` — scene-cut → forced IDR (encoder steering)
 
+**Stance:** `experimental` — Available to force IDRs from Pelorus scene-cut metadata today; promotion requires pinned-corpus scene-cut BD-rate evidence ([bench #202](https://github.com/VMAFx/pelorus/issues/202)).
+
 A tiny **metadata-only** consumer that turns the scene-cut flag
 `vf_pelorus_mc_vulkan` already measures into a **forced keyframe at the cut**. It
 is **not** a Vulkan filter — no shader, no GPU work, no pixels touched
