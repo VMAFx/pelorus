@@ -41,10 +41,11 @@ The underlying contracts are the `AVOption` tables in `ffmpeg-patches/files/`
 match the host-side validation in `libpelorus/src/deband_params.c` and
 [`pelorus/deband.h`](../../libpelorus/include/pelorus/deband.h).
 
-## Frozen knobs (autotune-relevant)
+## Frozen knobs: `pelorus_deband_vulkan`
 
-These are the options `vmaf-tune` may set and sweep. Name, FFmpeg `AVOption`
-type, valid range (`min`–`max`), default, and one-line semantics:
+These are the `pelorus_deband_vulkan` options `vmaf-tune` may set and sweep.
+Name, FFmpeg `AVOption` type, valid range (`min`–`max`), default, and one-line
+semantics:
 
 | AVOption | Type | Min | Max | Default | Semantics |
 | --- | --- | --- | --- | --- | --- |
@@ -59,7 +60,7 @@ type, valid range (`min`–`max`), default, and one-line semantics:
 | `dynamic` | bool | 0 | 1 | 1 | re-seed grain each frame |
 | `protect` | bool | 0 | 1 | 1 | gate debanding off textured regions |
 
-Notes on the contract:
+Notes on the `pelorus_deband_vulkan` contract:
 
 - **Normalization is part of the contract.** `thry`/`thrc`/`grainy`/`grainc`/
   `detail` are normalized to full range, **bit-depth independent** — the filter
@@ -167,7 +168,10 @@ In ADR-0106's in-graph mode, `vmaf-tune` builds an FFmpeg filtergraph that runs
 `pelorus_deband_vulkan` (or any other Pelorus prefilter via VMAFx's
 `FilterAdapter` protocol, VMAFx ADR-1116) with optimizer-chosen values for the
 `tunable: true` (`effect_class: "strength"`) knobs, then scores the
-processed-then-encoded output with `libvmaf_tune` in the same pass:
+processed-then-encoded output with `libvmaf_tune` in the same pass. This pipeline
+is illustrative (the command requires `libvmaf_tune` from the sibling vmafx
+FFmpeg patches, which is not linked into the Pelorus test binary; see
+[docs/usage/ffmpeg.md](../usage/ffmpeg.md#vmaf-in-the-loop-autotune-with-vmafx)):
 
 ```bash
 # vmaf-tune sweeps thry/grainy/range (frozen knobs) against VMAF as the oracle
