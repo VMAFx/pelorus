@@ -35,8 +35,10 @@ HEVC/VVC (H.274 / SEI FGC).
 ## Components
 
 - **libpelorus** — the shared core: the side-data interop ABI
-  ([interop.h](../api/interop-abi.md)) plus filter parameter contracts
-  ([deband.h](../metrics/deband.md)). Both Pelorus and vmafx link/vendor it.
+  ([interop.h](../api/interop-abi.md)), filter parameter contracts
+  ([deband.h](../metrics/deband.md)), and FFmpeg-free encoder-stat adapters
+  ([encoder telemetry](../metrics/encoder-telemetry.md)). Both Pelorus and vmafx
+  link/vendor it.
 - **vf_pelorus_\* filters** (`ffmpeg-patches/`) — Vulkan compute stages. Each is
   frame-in/frame-out, runs a compute shader, and (optionally) annotates the
   frame with a Pelorus side-data section.
@@ -72,6 +74,7 @@ its evidence.
 | mc | `pelorus_mc_vulkan` | block-matching motion estimator → per-block motion + confidence side data; denoise `mc=1` consumes it for confidence-gated temporal warping; NVENC ME-hint consumer (`-pelorus_me_hints`, patch 0008) uses it for encode speed, with no gain on the measured 4090 case (~2–3% slowdown at p7 — see bench-results.md v0.9) | `experimental` |
 | aa | `pelorus_aa_vulkan` | anime warp anti-aliasing (awarpsharp2) + optional line-darkening (FastLineDarken); luma by default with optional selected chroma, single-pass transform, no side data; second stage of the anime `tune` chain after dehalo (ADR-0124); defaults unproven on content (SSIMULACRA2 / edge-region VMAF-NEG proof deferred) | `experimental` |
 | scenecut | `pelorus_scenecut` | scene-cut → forced IDR — metadata-only consumer (NOT a Vulkan filter, no GPU work) that reads `PEL_SEC_MOTION.has_scene_cut` (from `mc`) and sets `pict_type=I` so the encoder opens a fresh GOP at the cut; vendor-neutral encoder steering, no per-encoder patch (ADR-0126); the `ffmpeg` CLI needs `-force_key_frames source` ([scenecut](../metrics/scenecut.md#usage)); runs on Vulkan frames, no `hwdownload` needed (ADR-0186); BD-rate A/B is a documented follow-up | `experimental` |
+| telemetry | `libpelorus` x265 CSV and SVT-AV1 stat-file adapters | parse caller-supplied encoder-stat text into validated per-frame telemetry records; CPU-only and independent of FFmpeg | `experimental` |
 
 The **anime tune** composes these stages into one recommended GPU pre-encode
 chain — analyze-ROI + dehalo + aa + deband at 10-bit, then encoder ROI steering —
