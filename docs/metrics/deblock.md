@@ -1,6 +1,8 @@
 <!-- markdownlint-disable MD013 -->
 # vf_pelorus_deblock_vulkan
 
+**Stance:** `experimental` — Available for prior-codec block-grid cleanup today; promotion requires pinned-corpus deblocking quality and BD-rate evidence ([bench #202](https://github.com/VMAFx/pelorus/issues/202)).
+
 Re-encode **deblock / dering**, run as a zero-copy pre-encode pass in VRAM. A
 single-pass Vulkan compute filter that smooths the prior codec's DCT block-edge
 discontinuities ("blocking") so the new encoder does not waste bits coding them

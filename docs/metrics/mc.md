@@ -1,6 +1,8 @@
 <!-- markdownlint-disable MD013 -->
 # vf_pelorus_mc_vulkan
 
+**Stance:** `experimental` — Available for motion side data and denoise warping today; promotion requires pinned-corpus MC-denoise evidence ([bench #202](https://github.com/VMAFx/pelorus/issues/202)).
+
 A GPU block-matching **motion estimator**, run as a zero-copy pass in VRAM. It
 produces a per-block quarter-pel (sub-pel-refined) motion-vector field for the current frame
 relative to the previous frame and attaches it as the pre-reserved

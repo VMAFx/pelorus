@@ -1,6 +1,8 @@
 <!-- markdownlint-disable MD013 -->
 # `pelorus_deband_vulkan` — smart deband
 
+**Stance:** `experimental` — Available for smart debanding today; promotion requires pinned-corpus BD-rate evidence that survives encoding ([bench #200](https://github.com/VMAFx/pelorus/issues/200)).
+
 A Vulkan compute debander that flattens the false contours a hardware encoder
 amplifies, then re-injects sub-visible blue-noise so the gradient survives
 quantization. Zero-copy: it operates on `AV_PIX_FMT_VULKAN` frames and never

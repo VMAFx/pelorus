@@ -1,6 +1,8 @@
 <!-- markdownlint-disable MD013 -->
 # `pelorus_analyze_vulkan` — frame statistics analyzer
 
+**Stance:** `experimental` — Available for banding, variance, edge, and ROI measurement today; promotion requires pinned-corpus ROI gains across every capable encoder ([bench #204](https://github.com/VMAFx/pelorus/issues/204)).
+
 A pass-through Vulkan compute filter that measures each frame's banding /
 variance / edge statistics on the GPU and attaches them as the Pelorus interop
 sections a downstream vmafx `vf_libvmaf*` reads for perceptually-weighted

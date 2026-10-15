@@ -1,6 +1,8 @@
 <!-- markdownlint-disable MD013 -->
 # vf_pelorus_denoise_vulkan
 
+**Stance:** `experimental` — Available for edge-preserving temporal denoise today; promotion requires a pinned-corpus four-arm comparison against encoder temporal filtering ([bench #198](https://github.com/VMAFx/pelorus/issues/198)).
+
 Edge-preserving spatio-temporal denoiser, run as a zero-copy pre-encode pass in
 VRAM. Removing temporally-incoherent grain before the encoder sees it is the
 biggest BD-rate lever in the pipeline — the encoder would otherwise re-code the
