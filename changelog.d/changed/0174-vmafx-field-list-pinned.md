@@ -1,1 +1,0 @@
-- The `telemetry-field-parity` fast test now compares the registry with the VMAFx field list pinned at VMAFx/vmafx@243904ab (VMAFx pull request 2773) and passes instead of skipping; its declared skip is removed (ADR-0174, ADR-0188).

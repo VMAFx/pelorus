@@ -1,1 +1,0 @@
-- Re-pinned the Praetor governance engine from `66223619` to `3bbde073` (ADR-0187 keeps the pin rule and the launcher). The new engine's declared-linters gate fails the audit when a linter the policy declares runs in no workflow; re-adoption records dated exceptions (expiry 2027-01-11) for `cppcheck`, `semgrep` and `trivy`, each with its reason in `.standards.yaml` (ADR-0190).
