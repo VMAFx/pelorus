@@ -886,7 +886,14 @@ order ([ADR-0169](../adr/0169-release-provenance-slsa3.md)):
    fails the build), and packages
    `pelorus-ffmpeg-patches-<tag>.tar.gz` (`series.txt`, the README, the
    numbered patches, `files/`, the LGPL-2.1-or-later and EUPL-1.2 texts
-   from `LICENSES/`, and a generated `NOTICE`, [licensing](../licensing.md)). The `NOTICE` names
+   from `LICENSES/`, and a generated `NOTICE`, [licensing](../licensing.md)).
+   The release notes extractor unwraps paragraphs and list items, orders
+   `### Highlights` first and `### Maintenance` last, and rewrites root-relative
+   documentation links and reference definitions into absolute GitHub blob
+   URLs pinned to `v<VERSION>` at `<server>/<owner>/<repo>/blob/<tag>/<path>`
+   (via `--repo` or `$GITHUB_REPOSITORY`, with `$GITHUB_SERVER_URL` defaulting
+   to `https://github.com`), refusing link targets that escape the repository root (`../`).
+   The `NOTICE` names
    the shared FFmpeg fix series release the stack needs first (tag, commit,
    tarball sha256); the archive does not contain that series. It then writes an SPDX JSON SBOM of that
    archive, writes `SHA256SUMS` over the archive and the SBOM, attests SLSA v1.0
