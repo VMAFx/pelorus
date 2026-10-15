@@ -68,22 +68,25 @@ exist.
 2. Merge. Dispatch `Tester publish` from the default branch with an empty `ref`
    (the commit must be the merge commit), wait for the environment approval and a
    green run ([runbook](tester-image.md)).
-3. Tag that commit and push the tag:
-   `git tag -s vX.Y.Z-rc.N && git push origin vX.Y.Z-rc.N`.
+3. Tag that commit with the pre-tag guard and push the tag:
+   `bash scripts/release/tag-release.sh vX.Y.Z-rc.N && git push origin vX.Y.Z-rc.N`.
 4. Watch the run. The result is a prerelease with the same assets as a release
    plus `CANDIDATE_LEGS.json`. `gh release view vX.Y.Z-rc.N --json isPrerelease`
    must print `true`.
 
 ## Cut the final release
 
-Same steps with `X.Y.Z`, without the suffix. The `## [X.Y.Z]` section is the
-whole release: merge the bullets of the candidate sections into it and remove the
-candidate headings (the prereleases keep their own notes). The release build
-refuses the tag when no candidate of that version exists (from 0.4.0).
+Same steps with `X.Y.Z`, without the suffix. Tag with
+`bash scripts/release/tag-release.sh vX.Y.Z && git push origin vX.Y.Z`.
+The `## [X.Y.Z]` section is the whole release: merge the bullets of the candidate
+sections into it and remove the candidate headings (the prereleases keep their
+own notes). The release build refuses the tag when no candidate of that version
+exists (from 0.4.0).
 
 ## Rehearse
 
 A manual dispatch of `Release` runs `ci` and `build` without the tag steps and
 never publishes. To rehearse the tag steps, push `vX.Y.Z-rc.N` in a fork, or
-test the rules directly: `python3 -I scripts/release/verify-release.py --self-test`
-and `python3 -I scripts/release/check-candidate-legs.py --self-test`.
+test the rules directly: `python3 -I scripts/release/verify-release.py --self-test`,
+`python3 -I scripts/release/check-candidate-legs.py --self-test` and
+`bash scripts/release/tag-release.sh --self-test`.

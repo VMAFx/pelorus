@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
-"""Regression test: check-build-config.py --self-test must not touch the invoking repo.
+"""Regression test: a self-test must not touch the invoking repo.
+
+Usage: test-selftest-git-isolation.py [COMMAND...]
+Without COMMAND it runs `check-build-config.py --self-test`; with one it runs
+COMMAND from the repository root (meson also passes
+`bash scripts/release/tag-release.sh --self-test`).
 
 Git hooks run with GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE exported. When the
 pre-push `make verify-all` ran the self-test, its fixture `git init`/`config`/
 `commit` calls followed those variables into the developer's repository and left
 core.bare=true, a core.hooksPath into /tmp, gpg.program=/bin/false, a fixture
 user.* identity, fixture branches and moved branch refs behind.
+
+The pre-tag guard's self-test (tag-release.sh) repeated the same leak from
+the pre-push hook: core.bare=true, a fixture identity and two fixture commits
+on the pushed branch.
 
 This test points the same variables at a sacrificial repository, runs the
 self-test, and fails if that repository's config, refs or worktree list changed.
@@ -56,7 +65,8 @@ def snapshot(repo: pathlib.Path) -> tuple[str, str, str]:
     return config, refs, worktrees
 
 
-def main() -> int:
+def main(argv: list[str]) -> int:
+    command = tuple(argv) or (sys.executable, str(CHECKER), "--self-test")
     with tempfile.TemporaryDirectory(prefix="pelorus-isolation-") as tmp:
         repo = pathlib.Path(tmp) / "invoking"
         repo.mkdir()
@@ -75,7 +85,7 @@ def main() -> int:
             }
         )
         run = subprocess.run(
-            (sys.executable, str(CHECKER), "--self-test"),
+            command,
             cwd=ROOT,
             capture_output=True,
             text=True,
@@ -99,9 +109,9 @@ def main() -> int:
         print(f"FAIL: {failure}", file=sys.stderr)
     if failures:
         return 1
-    print("self-test leaves the invoking repository untouched")
+    print(f"{' '.join(command)} leaves the invoking repository untouched")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))
