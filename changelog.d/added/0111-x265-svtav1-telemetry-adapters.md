@@ -1,0 +1,1 @@
+- Parse x265 CSV and SVT-AV1 stat-file buffers into encoder-neutral per-frame telemetry, including verified AV1 QP normalisation ([ADR-0174](../../docs/adr/0174-encoder-telemetry-abi-1-4.md), [#111](https://github.com/VMAFx/pelorus/issues/111)).

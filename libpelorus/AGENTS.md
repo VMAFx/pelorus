@@ -19,12 +19,12 @@ libpelorus/
 │   ├── encode_record.h canonical encode record + digest (ADR-0175)
 │   └── deband.h       smart-deband parameter contract
 ├── schema/            telemetry-fields.json — normative telemetry field names
-├── src/               interop.c, qp_report_csv.c, deband_params.c, version.c,
-│                      telemetry.c, encode_record.c, sha256.c (+ private sha256.h)
+├── src/               interop.c, qp_report_csv.c, telemetry_adapters.c,
+│                      telemetry.c, encode_record.c, sha256.c, parameter units
 ├── shaders/           standalone reference .comp shaders (CI-compiled)
 └── test/              interop_test.c — the shared ABI conformance fixture
                        path_utf8_test.c — the UTF-8 path contract (ADR-0149)
-                       telemetry_test.c, encode_record_test.c — not mirrored
+                       telemetry tests + recorded adapter fixtures — not mirrored
 ```
 
 ## Conventions

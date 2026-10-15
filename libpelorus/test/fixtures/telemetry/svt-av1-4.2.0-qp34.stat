@@ -1,0 +1,18 @@
+Picture Number:    0	TL:    0	 QP:   34	 Average QP:   34  [ PSNR-Y: 43.41 dB,	PSNR-U: 39.10 dB,	PSNR-V: 36.73 dB,	MSE-Y: 2.96,	MSE-U: 8.00,	MSE-V: 13.81,	SSIM-Y: 0.99230,	SSIM-U: 0.98908,	SSIM-V: 0.99024 ]	   1364 bytes	 VBV delay: 0.000 s
+Picture Number:    1	TL:    3	 QP:   34	 Average QP:   34  [ PSNR-Y: 40.56 dB,	PSNR-U: 37.24 dB,	PSNR-V: 35.99 dB,	MSE-Y: 5.72,	MSE-U: 12.27,	MSE-V: 16.35,	SSIM-Y: 0.98558,	SSIM-U: 0.98445,	SSIM-V: 0.98806 ]	   3365 bytes	 VBV delay: 0.000 s
+Picture Number:    2	TL:    2	 QP:   34	 Average QP:   34  [ PSNR-Y: 40.19 dB,	PSNR-U: 37.18 dB,	PSNR-V: 35.99 dB,	MSE-Y: 6.22,	MSE-U: 12.44,	MSE-V: 16.38,	SSIM-Y: 0.98516,	SSIM-U: 0.98324,	SSIM-V: 0.98707 ]	      5 bytes	 VBV delay: 0.000 s
+Picture Number:    3	TL:    3	 QP:   34	 Average QP:   34  [ PSNR-Y: 39.30 dB,	PSNR-U: 36.06 dB,	PSNR-V: 35.17 dB,	MSE-Y: 7.64,	MSE-U: 16.12,	MSE-V: 19.78,	SSIM-Y: 0.98138,	SSIM-U: 0.97273,	SSIM-V: 0.97648 ]	    464 bytes	 VBV delay: 0.000 s
+Picture Number:    4	TL:    1	 QP:   34	 Average QP:   34  [ PSNR-Y: 40.60 dB,	PSNR-U: 37.61 dB,	PSNR-V: 36.58 dB,	MSE-Y: 5.67,	MSE-U: 11.28,	MSE-V: 14.29,	SSIM-Y: 0.98646,	SSIM-U: 0.98452,	SSIM-V: 0.98686 ]	      5 bytes	 VBV delay: 0.000 s
+Picture Number:    5	TL:    3	 QP:   34	 Average QP:   34  [ PSNR-Y: 39.76 dB,	PSNR-U: 36.94 dB,	PSNR-V: 35.66 dB,	MSE-Y: 6.88,	MSE-U: 13.16,	MSE-V: 17.68,	SSIM-Y: 0.98210,	SSIM-U: 0.98403,	SSIM-V: 0.98565 ]	   1078 bytes	 VBV delay: 0.000 s
+Picture Number:    6	TL:    2	 QP:   34	 Average QP:   34  [ PSNR-Y: 40.15 dB,	PSNR-U: 37.40 dB,	PSNR-V: 36.37 dB,	MSE-Y: 6.28,	MSE-U: 11.83,	MSE-V: 14.99,	SSIM-Y: 0.98395,	SSIM-U: 0.98389,	SSIM-V: 0.98547 ]	      5 bytes	 VBV delay: 0.000 s
+Picture Number:    7	TL:    3	 QP:   34	 Average QP:   34  [ PSNR-Y: 39.65 dB,	PSNR-U: 36.27 dB,	PSNR-V: 35.57 dB,	MSE-Y: 7.05,	MSE-U: 15.36,	MSE-V: 18.04,	SSIM-Y: 0.98211,	SSIM-U: 0.98167,	SSIM-V: 0.98488 ]	    497 bytes	 VBV delay: 0.000 s
+Picture Number:    8	TL:    0	 QP:   34	 Average QP:   34  [ PSNR-Y: 41.51 dB,	PSNR-U: 37.73 dB,	PSNR-V: 37.16 dB,	MSE-Y: 4.60,	MSE-U: 10.98,	MSE-V: 12.50,	SSIM-Y: 0.98760,	SSIM-U: 0.98757,	SSIM-V: 0.98877 ]	      5 bytes	 VBV delay: 0.000 s
+Picture Number:    9	TL:    1	 QP:   34	 Average QP:   34  [ PSNR-Y: 39.12 dB,	PSNR-U: 36.27 dB,	PSNR-V: 35.71 dB,	MSE-Y: 7.96,	MSE-U: 15.35,	MSE-V: 17.45,	SSIM-Y: 0.97828,	SSIM-U: 0.98055,	SSIM-V: 0.98296 ]	    681 bytes	 VBV delay: 0.000 s
+
+SUMMARY -----------------------------------------------------------------
+Total Frames		Frame Rate		Byte Count		Bitrate
+          10		25.00 fps		      7469		149.38 kbps
+
+				Average PSNR (using per-frame PSNR)		|	Overall PSNR (using per-frame MSE)		|	Average SSIM
+Total Frames	Average QP  	Y-PSNR   	U-PSNR   	V-PSNR		| 	Y-PSNR   	U-PSNR   	V-PSNR   	|	Y-SSIM   	U-SSIM   	V-SSIM   	|	Bitrate
+        10  	   34.00    	40.42 dB	37.18 dB	36.09 dB  	|	40.28 dB	37.10 dB	36.06 dB 	|	0.98449 	0.98317 	0.98565		|	149.38 kbps

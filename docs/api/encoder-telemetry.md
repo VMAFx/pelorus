@@ -2,15 +2,13 @@
 # Encoder telemetry (interop ABI 1.4)
 
 > [!IMPORTANT]
-> **Status: the layout, the input contract and the checks are implemented;
-> the adapters are not.** The section arrived with `PELORUS_ABI_MINOR` 4 in
+> **Status: the layout, input contract, checks, x265 CSV adapter and SVT-AV1
+> stat-file adapter are implemented.** The section arrived with `PELORUS_ABI_MINOR` 4 in
 > [`interop.h`](../../libpelorus/include/pelorus/interop.h)
 > ([ADR-0174](../adr/0174-encoder-telemetry-abi-1-4.md), issue #86). The
 > section, `pelorus/telemetry.h`, the registry and the parity check ship now.
-> The adapters (x265 CSV, FFmpeg quality stats, SVT-AV1, libaom, VVenC,
-> hardware feedback), their capability tables, the AV1 and VP9 QP
-> normalisation constants and `pel_enc_telemetry_to_json()` come later (#86
-> items 2 to 4). Until then only `adapter = external` records carry fields.
+> FFmpeg quality stats, libaom, VVenC, hardware feedback, raw AV1/VP9 qindex
+> normalisation and `pel_enc_telemetry_to_json()` remain future work (#86).
 
 ## In one paragraph
 
@@ -131,20 +129,31 @@ step size in H.264 units at 8 bits. H.264 defines `Qstep(QP) = 0.625 *
 2^(QP / 6)`, so the value is the H.264 QP with the same step size.
 
 - `slice_qp`: identity, `avg_qp_norm == avg_qp`.
-- `av1_qindex`, `vp9_qindex`, `av1_encoder_qp`: the step size comes from the
+- `av1_encoder_qp`: the step size comes from libaom v3.15.2's public
+  quantizer-to-qindex mapping and luma AC QTX tables. Pelorus uses
+  `qstep_8bit = ac_q / (8 << (coded_bit_depth-8))`; fractional QP interpolates
+  `log2(qstep_8bit)` between adjacent integer entries.
+- `av1_qindex`, `vp9_qindex`: the step size comes from the
   codec's AC quantiser table at `coded_bit_depth`. The table is scaled to
-  H.264 units and to 8 bits. The constants ship with the adapters and are
-  **unverified** today (research 0174, E3).
+  H.264 units and to 8 bits. These raw-qindex paths remain unsupported.
 - An adapter writes `avg_qp_norm` only when `coded_bit_depth` is known.
 
-`pel_qp_normalize()` implements the identity for `slice_qp` and returns
-`PEL_ERR_UNSUPPORTED` for the three `base_q_idx` scales until the table lands,
-so no unverified constant reaches a record.
+`pel_qp_normalize()` implements the identity for `slice_qp` and the verified
+SVT-AV1 encoder-QP conversion. It returns `PEL_ERR_UNSUPPORTED` for raw AV1
+and VP9 qindex scales, so no unverified constant reaches a record.
 
-The check that keeps the table honest is #86 acceptance item 2. The same clip
-encoded by libx264, libx265 and libsvtav1 at settings the table calls equal in
-step size must give `avg_qp_norm` values within 1.0 of each other. An adapter
-that skips the conversion fails it.
+SVT-AV1's stat-file `Average QP` is rounded mean qindex divided by four, not
+an encoder-QP value. `pel_tlm_parse_svtav1_stat()` reconstructs qindex,
+inversely interpolates the encoder's 64-entry QP mapping, and stores the result
+as `av1_encoder_qp`. The stat file loses at most 0.5 encoder-QP through this
+rounding. `Average QP: 64`, emitted at the top of the range, maps to encoder
+QP 63.
+
+The check that keeps the table honest is #86 acceptance item 2. The recorded
+x265 and SVT-AV1 encodes use native QPs whose table-derived step sizes match.
+Their `avg_qp_norm` values must differ by no more than 1.0. The test also
+asserts that their unconverted native QPs differ by more than 1.0, so copying
+the SVT-AV1 QP without conversion fails.
 
 ## Maps
 
@@ -220,9 +229,10 @@ says two things at once:
 - the `slice_qp` range is `-6 * (coded_bit_depth - 8)` to 51 (63 for `vvc`);
   without a reported bit depth the lower bound is -24, the 12-bit offset.
 
-`pel_tlm_adapter_caps()` reports every defined bit for `external`. The other
-adapters return `PEL_ERR_UNSUPPORTED` with an empty mask until their tables
-land with them, so a record from them validates only when it reports nothing.
+`pel_tlm_adapter_caps()` reports every defined bit for `external`, the exact
+level-1 CSV fields for `x265_csv` with HEVC, and the exact stat-file fields for
+`svtav1_stat_file` with AV1. Other adapter/codec pairs return
+`PEL_ERR_UNSUPPORTED` with an empty mask.
 
 ## JSON form
 
@@ -235,17 +245,17 @@ A stream is one object:
   "schema": "pelorus/enc-telemetry/1",
   "codec": "hevc",
   "adapter": "x265_csv",
-  "available": ["avg_qp", "decode_index", "display_index", "frame_bytes", "picture_type", "psnr_u", "psnr_v", "psnr_y"],
-  "unavailable": ["avg_qp_norm", "bits_map", "coded_bit_depth", "header_bits", "inter_fraction", "intra_fraction", "key_frame", "mode_map", "qp_map", "reference", "residual_bits", "scene_cut", "shown", "skip_fraction", "ssim_y"],
+  "available": ["avg_qp", "avg_qp_norm", "coded_bit_depth", "decode_index", "display_index", "frame_bytes", "key_frame", "picture_type", "reference", "scene_cut", "shown"],
+  "unavailable": ["bits_map", "header_bits", "inter_fraction", "intra_fraction", "mode_map", "psnr_u", "psnr_v", "psnr_y", "qp_map", "residual_bits", "skip_fraction", "ssim_y"],
   "frames": [
-    {"decode_index": 0, "display_index": 0, "picture_type": "i", "frame_bytes": 41872, "avg_qp": 27.0, "qp_scale": "slice_qp", "granularity": "frame", "psnr_y": 41.2, "metric_source": "encoder"},
-    {"decode_index": 1, "display_index": 4, "picture_type": "p", "frame_bytes": 12034, "avg_qp": 30.0, "qp_scale": "slice_qp", "granularity": "frame", "psnr_y": 39.8, "metric_source": "encoder"}
+    {"decode_index": 0, "display_index": 0, "picture_type": "i", "key_frame": true, "reference": true, "shown": true, "scene_cut": false, "frame_bytes": 41872, "avg_qp": 27.0, "avg_qp_norm": 27.0, "coded_bit_depth": 8, "qp_scale": "slice_qp", "granularity": "frame"},
+    {"decode_index": 1, "display_index": 4, "picture_type": "p", "key_frame": false, "reference": true, "shown": true, "scene_cut": false, "frame_bytes": 12034, "avg_qp": 30.0, "avg_qp_norm": 30.0, "coded_bit_depth": 8, "qp_scale": "slice_qp", "granularity": "frame"}
   ]
 }
 ```
 
-The values are illustrative, and the `available` list for `x265_csv` is
-settled with that adapter. The rules:
+The values are illustrative; the `available` list is the shipped level-1 x265
+CSV capability mask. The rules:
 
 - `available` is the adapter's capability mask as keys, and `unavailable` is
   the rest of the registry's bit-carrying keys. A key in `unavailable` is
@@ -323,7 +333,101 @@ pel_result pel_qp_normalize(uint8_t qp_scale, uint8_t coded_bit_depth, float qp,
 pel_result pel_enc_telemetry_map(const uint8_t *blob, size_t len,
                                  const PelorusEncTelemetrySection *t, size_t got, uint64_t map_bit,
                                  const void **out_ptr, uint32_t *out_elems);
+pel_result pel_tlm_parse_x265_csv(const char *text, size_t len, uint8_t coded_bit_depth,
+                                  PelorusEncTelemetryInput *out_frames, size_t cap,
+                                  size_t *out_count);
+pel_result pel_tlm_parse_svtav1_stat(const char *text, size_t len, uint8_t coded_bit_depth,
+                                     PelorusEncTelemetryInput *out_frames, size_t cap,
+                                     size_t *out_count);
 ```
+
+**Stability:** these functions are stable public libpelorus API. They were
+appended to `telemetry.h`; their signatures do not change incompatibly. They
+touch no wire layout, so adding them does not change `PELORUS_ABI_MINOR`.
+
+The two parsers consume one complete encoder-stat text buffer and perform no
+file I/O or allocation in their record loops. They create and release one
+call-local C numeric-locale handle, so the encoders' dot-decimal
+fields do not depend on the process locale. `text` is borrowed and read only
+for the duration of the call. `out_frames` and `out_count` are caller-owned;
+every returned frame owns its scalar data and contains no pointer into `text`.
+The parsers are reentrant and safe for concurrent calls whose input and output
+buffers do not alias. They use no mutable global or static state.
+
+Building the adapters requires `newlocale`, `freelocale` and `strtod_l` on
+non-Windows systems, or `_create_locale`, `_free_locale` and `_strtod_l` on
+Windows UCRT. Meson probes every symbol at configure time. At musl commit
+`b1efda5b91735e33635376ca11c9b497a1c66e39`, musl implements
+[`newlocale`](https://git.musl-libc.org/cgit/musl/tree/src/locale/newlocale.c?id=b1efda5b91735e33635376ca11c9b497a1c66e39#n62),
+[`freelocale`](https://git.musl-libc.org/cgit/musl/tree/src/locale/freelocale.c?id=b1efda5b91735e33635376ca11c9b497a1c66e39#n9),
+and [`strtod_l`](https://git.musl-libc.org/cgit/musl/tree/src/locale/strtod_l.c?id=b1efda5b91735e33635376ca11c9b497a1c66e39#n10);
+the last is a wrapper around its locale-independent `strtod`. Non-Windows
+builds also require libm, which the generated pkg-config metadata carries in
+`Libs.private` for static consumers.
+
+### Input grammar and field mapping
+
+Both adapters ignore blank lines. Their recorded inputs are fixtures under
+[`libpelorus/test/fixtures/telemetry/`](../../libpelorus/test/fixtures/telemetry/).
+
+| Input | Accepted grammar | Output mapping | Failure |
+| --- | --- | --- | --- |
+| x265 header | Comma-separated fields containing `Encode Order`, `Type`, `POC`, `QP`, `Bits` and `Scenecut` exactly once; other columns remain positional | Names select the fields below, independent of column order | Missing or repeated required name: `PEL_ERR_INVALID` |
+| x265 `Type` | Exactly `I-SLICE`, `P-SLICE`, `B-SLICE` or `b-SLICE` | `I` -> I picture, key, reference; `P` -> P picture, reference; `B` -> B picture, reference; `b` -> B picture, non-reference; all four are shown | Any other token: `PEL_ERR_INVALID` |
+| x265 scalar fields | Unsigned decimal `Encode Order`, `POC`, `Bits` and `Scenecut`; finite decimal `QP`; `Bits` must be divisible by eight | `Encode Order` -> `decode_index`; `POC` -> `display_index`; `Bits / 8` -> `frame_bytes`; `QP` -> `avg_qp` and `avg_qp_norm` | Malformed field: `PEL_ERR_INVALID`; out-of-range value: `PEL_ERR_RANGE` |
+| x265 `Scenecut` | `0` or `1` | `0` clears scene-cut; `1` sets scene-cut | Any unsigned value above `1`: `PEL_ERR_RANGE` |
+| SVT-AV1 record | `Picture Number: <u32> TL: <u32> QP: <u32> Average QP: <u32> [ PSNR-Y: <float> dB, PSNR-U: <float> dB, PSNR-V: <float> dB, MSE-Y: <float>, MSE-U: <float>, MSE-V: <float>, SSIM-Y: <float>, SSIM-U: <float>, SSIM-V: <float> ] <u32> bytes VBV delay: <float> s`; the full line must match, all floats must be finite, and ranges are `TL <= 5`, `QP <= 63`, `Average QP <= 64`, non-negative PSNR/MSE/VBV delay and `0 <= SSIM <= 1` | `Picture Number` -> `display_index`; inverse-mapped `Average QP` -> `avg_qp` and `avg_qp_norm`; PSNR planes -> `psnr_y/u/v`; `SSIM-Y` -> `ssim_y`; byte count -> `frame_bytes`; `TL`, `QP`, MSE, chroma SSIM and VBV delay are syntax/range checks only | Missing token: `PEL_ERR_TRUNCATED`; shifted or trailing token: `PEL_ERR_INVALID`; value outside a stated range: `PEL_ERR_RANGE` |
+| SVT-AV1 stream control | A line beginning `SUMMARY` terminates successfully. Before the first record or summary, any other non-empty text is not a stat file | Records before `SUMMARY` are returned; summary fields are not parsed | Non-stat text before recognition: `PEL_ERR_ABSENT`; non-stat text after a record: `PEL_ERR_INVALID` |
+
+An x265 header must contain each required column name exactly once. A repeated
+required name is ambiguous and returns `PEL_ERR_INVALID`, whether the repeat
+precedes or follows the other required columns. Repeated unconsumed column
+names are accepted: they remain positional fields, and every data row must
+still have exactly the header's field count.
+
+SVT-AV1 4.2.0 does not print infinity for a lossless plane: its
+[`get_psnr()` zero-SSE path](https://gitlab.com/AOMediaCodec/SVT-AV1/-/blob/v4.2.0/Source/App/app_process_cmd.c#L785-793)
+computes a finite capped PSNR before the
+[stat-file writer formats it with `%.2f`](https://gitlab.com/AOMediaCodec/SVT-AV1/-/blob/v4.2.0/Source/App/app_process_cmd.c#L1010-1031).
+Consequently the adapter accepts finite decimal metrics only and rejects
+`inf` and `nan` tokens as `PEL_ERR_INVALID`.
+
+Validation completes before the output pass, so an error writes no frame.
+When `out_count` is non-NULL it is set to zero before argument and content
+validation. Results are:
+
+| Result | Meaning | `out_count` |
+| --- | --- | --- |
+| `PEL_OK` | every record parsed; a header-only x265 CSV or SVT `SUMMARY` has zero records | parsed record count, possibly zero |
+| `PEL_ERR_INVALID` | NULL input/output, zero capacity, bad x265 header, or malformed/shifted field | zero |
+| `PEL_ERR_ABSENT` | empty input; SVT-AV1 also uses it for text that is not a stat file | zero |
+| `PEL_ERR_TRUNCATED` | a row ends before all required fields | zero |
+| `PEL_ERR_RANGE` | bit depth is not 8/10/12, input exceeds 1,048,576 bytes, a line exceeds 4096 bytes, an x265 row exceeds 256 fields, a number is out of range, or `cap` is too small | zero, except insufficient capacity reports the required count |
+| `PEL_ERR_NOMEM` | the call's C numeric-locale handle could not be created | zero |
+
+This complete example parses one x265 frame from an in-memory buffer:
+
+```c
+#include <stddef.h>
+
+#include "pelorus/telemetry.h"
+
+int main(void)
+{
+    static const char csv[] =
+        "Layer, Encode Order, Type, POC, QP, Bits, Scenecut\n"
+        "0,0,I-SLICE,0,32,15040,0\n";
+    PelorusEncTelemetryInput frames[1];
+    size_t count = 0;
+    pel_result rc;
+
+    rc = pel_tlm_parse_x265_csv(csv, sizeof(csv) - 1u, 8u, frames, 1u, &count);
+    return rc == PEL_OK && count == 1u && frames[0].frame.avg_qp == 32.0f ? 0 : 1;
+}
+```
+
+The recorded encoder fixtures and reproduction commands are under
+[`libpelorus/test/fixtures/telemetry/`](../../libpelorus/test/fixtures/telemetry/).
 
 The packer builds on `pel_blob_pack_into()` (`interop.h`), the non-allocating
 form of `pel_blob_pack()`; `pel_blob_pack_into(meta, secs, nb, NULL, 0, &len)`
@@ -348,7 +452,7 @@ under the Pelorus UUID (single-writer invariant,
 - An out-of-range enum, an oversized grid or a bit-value mismatch returns
   `PEL_ERR_INVALID` or `PEL_ERR_RANGE`, never a partial blob.
 
-The FFmpeg adapter reads the documented `AV_PKT_DATA_QUALITY_STATS` bytes
+The future FFmpeg adapter will read the documented `AV_PKT_DATA_QUALITY_STATS` bytes
 (`u32le` quality, `u8` picture type, `u8` error count, `u16` reserved,
 `u64le` SSE per error) as a byte buffer. libpelorus therefore never includes
 FFmpeg headers. A quality factor of 0 means "no QP": `libaomenc` writes 0
@@ -426,13 +530,11 @@ python3 -I scripts/check-telemetry-field-parity.py --vmafx FILE  # any VMAFx lis
 
 ## Tests
 
-The rows marked "adapters" arrive with the adapters (#86 items 2 to 4).
-
 | Acceptance (issue) | Test |
 |---|---|
-| #86 item 1 (adapters): a truncated or field-shifted stats file is an error | each adapter's reader on a planted truncated and a column-shifted fixture returns `PEL_ERR_TRUNCATED`/`PEL_ERR_INVALID` and writes no record |
-| #86 item 2 (adapters): matched QP agrees within one step | libx264, libx265, libsvtav1 fixture records at table-matched step size: `abs(avg_qp_norm` difference`) <= 1.0`; a planted adapter without conversion fails |
-| #86 item 3: "not reported", not zero | `libpelorus/test/telemetry_test.c`: a value under a clear bit fails, a reported 0 dB passes, a set bit outside an adapter's (empty) mask fails; per-adapter JSON cases arrive with the adapters |
+| #86 item 1 (adapters): a truncated or field-shifted stats file is an error | `telemetry_adapter_test.c` gives each parser a planted truncated and shifted row; each returns `PEL_ERR_TRUNCATED`/`PEL_ERR_INVALID` and leaves the record unchanged |
+| #86 item 2 (adapters): matched QP agrees within one step | the x265 QP 32 and SVT-AV1 QP 34 fixtures produce `abs(avg_qp_norm difference) <= 1.0`; the test separately requires their native-QP difference to exceed 1.0 |
+| #86 item 3: "not reported", not zero | `telemetry_adapter_test.c` matches each record mask to `pel_tlm_adapter_caps()` and checks absent fields remain zero; `telemetry_test.c` checks clear-bit values fail and reported zero remains valid |
 | #86 item 4 and #218: layout lock and fixture | `_Static_assert` sizes 104, 48, 36 plus every member offset in `interop.h`; `libpelorus/test/interop_test.c` packs and parses every new section and reads a 1.3-sized motion section as absent by size; `ffmpeg-patches/test/mc_stats_test.c` (`bsize` 8, 16, 32 write 3, 4, 5; other edges write 0); `ffmpeg-patches/test/pelorus_sidedata_test.c` (the named edge wins, also on a 1x1 frame and on grids that inference cannot resolve) |
 | #221 | `libpelorus/test/telemetry_test.c` includes `pelorus/telemetry.h` first and builds without FFmpeg include paths; a hand-filled `external` input packs and parses; an out-of-range enum and an oversized grid return `PEL_ERR_INVALID`/`PEL_ERR_RANGE` |
 | #220 | the Meson tests `telemetry-field-parity` (against the pinned VMAFx list) and `telemetry-field-parity-self-test` |

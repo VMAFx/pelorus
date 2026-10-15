@@ -3,5 +3,10 @@
     "test": "pelorus:vulkan-drm-map",
     "reason": "SKIP: FFMPEG_BIN unset (needs a patched ffmpeg and a VAAPI-capable GPU)",
     "issue": "ADR-0184: GPU smoke for workstations; CI and make verify-native set no FFMPEG_BIN. Any other skip reason, such as a missing device with FFMPEG_BIN set, fails"
+  },
+  {
+    "test": "pelorus:enc-telemetry-adapters-locale",
+    "reason": "SKIP: comma-decimal LC_NUMERIC locale unavailable",
+    "issue": "#111: locale-independence check needs an installed comma-decimal locale; all other adapter checks run in pelorus:enc-telemetry-adapters. Revisit: remove this entry when every supported local test environment guarantees de_DE.UTF-8, de_DE.utf8, or fr_FR.UTF-8"
   }
 ]

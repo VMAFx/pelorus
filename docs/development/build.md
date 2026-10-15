@@ -24,6 +24,25 @@ Options (`meson_options.txt`):
 | `shaders` | true | compile the standalone reference `.comp` shaders to SPIR-V (needs glslang) |
 | `tools` | true | build the libpelorus CLI demonstrators (`pelorus_qp_report`; not installed) |
 
+### Telemetry-adapter locale probes
+
+The encoder-telemetry text adapters parse dot-decimal numbers through a
+call-local C locale. Meson checks `newlocale`, `freelocale` and `strtod_l` at
+configure time on POSIX systems, and `_create_locale`, `_free_locale` and
+`_strtod_l` on Windows UCRT. A missing symbol stops configuration with the
+symbol and platform in the error. Linux probes define `_GNU_SOURCE`, matching
+the feature-test macro used by the adapter translation unit.
+
+Non-Windows builds link libm; Meson carries that dependency into the installed
+pkg-config metadata so static consumers receive it through `Libs.private`.
+The Linux `core` CI job installs locale data and generates `de_DE.UTF-8` before
+the fast suite. `pelorus:enc-telemetry-adapters-locale` then changes
+`LC_NUMERIC` to a comma-decimal locale and verifies that both adapters still
+parse dot decimals. Local systems without `de_DE.UTF-8`, `de_DE.utf8` or
+`fr_FR.UTF-8` emit the named skip recorded in
+[`.config/test-skips.json`](../../.config/test-skips.json); the ordinary
+`pelorus:enc-telemetry-adapters` test still runs all other adapter checks.
+
 ## Software Vulkan lane (Mesa lavapipe)
 
 The `lavapipe` job of `.github/workflows/ci.yml` runs the real shaders of the
