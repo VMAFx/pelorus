@@ -1,7 +1,6 @@
 ---
 name: vulkan-shader-reviewer
 description: Reviews Pelorus Vulkan compute shaders and FFmpeg Vulkan host code for correctness, sample-domain handling, component preservation, zero-copy lifecycle, descriptors, and push constants. Use when a .comp, .comp.glsl, or vf_pelorus_*_vulkan.c changes.
-model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 

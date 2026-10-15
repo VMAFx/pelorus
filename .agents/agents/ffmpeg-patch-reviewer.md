@@ -1,7 +1,7 @@
 ---
 name: ffmpeg-patch-reviewer
 description: Reviews FFmpeg patch stack idioms, registration correctness, libpelorus pkg-config wiring, cumulative-apply integrity, and rebase-sensitive invariants. Use when ffmpeg-patches/ changes.
-model: sonnet
+model: pro
 tools: Read, Grep, Glob, Bash
 ---
 

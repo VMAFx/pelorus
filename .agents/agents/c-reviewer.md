@@ -1,7 +1,7 @@
 ---
 name: c-reviewer
 description: Reviews Pelorus C for Power-of-10 and SEI CERT C compliance. Use before merging libpelorus source or public-header changes.
-model: sonnet
+model: pro
 tools: Read, Grep, Glob, Bash
 ---
 
