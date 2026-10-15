@@ -5,7 +5,8 @@
 
 **Decision:** [ADR-0184](../adr/0184-vulkan-drm-modifier-output-pools.md), issue
 [#103](https://github.com/VMAFx/pelorus/issues/103) (zero-copy gap ZC-G2 of
-[research 0172](0172-zero-copy-audit.md)).
+[research 0172](0172-zero-copy-audit.md)). Follow-up on shared series v0.2.0:
+[research 0103](0103-p010-amd-drm-map.md).
 
 **Scope:** FFmpeg `n9.0.2` (pin `946fcce0`) with the 23-patch stack of `master`
 at `91826e5`, then with `tiling=drm`; configured with Vulkan, VAAPI, libdrm
@@ -27,7 +28,9 @@ timing is reported. Raw logs: `.workingdir/evidence/vulkan-drm-modifier/`
 - P010 needs a stock FFmpeg fix; AMD needs a stock synchronisation fix. Both
   are proven by diagnostic builds. The P010 import row and the export-capability
   format-list fix are queued in VMAFx/ffmpeg-patches; the RADV synchronisation
-  needs a root cause first.
+  needs a root cause first. (Superseded: shared series v0.2.0 patches
+  0005 to 0007 carry all three fixes; see
+  [research 0103](0103-p010-amd-drm-map.md).)
 
 ## Method
 

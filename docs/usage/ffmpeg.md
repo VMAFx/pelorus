@@ -31,10 +31,9 @@ a hardware frames context). Anything else says so next to the recipe.
 | Recipe | GPU | Status |
 | --- | --- | --- |
 | NVENC through the CUDA hop (derived Vulkan device) | RTX 4090, driver 615.78.08 | verified behind NVDEC for all 9 measured filter chains on the derived device; separate Vulkan device fails with CUDA_ERROR_INVALID_VALUE ([#296](https://github.com/VMAFx/pelorus/issues/296), [ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md)) |
-| VAAPI and QSV through `tiling=drm`, NV12 | Arc A380, iHD, `xe` | verified |
+| VAAPI and QSV through `tiling=drm`, NV12 and P010 | Arc A380, iHD, `xe` | verified, bit-exact ([#103](https://github.com/VMAFx/pelorus/issues/103)) |
 | Vulkan decode to Vulkan encode | RTX 4090 | verified for `hevc_vulkan` with the graphs listed below; the AV1 variant not run |
-| P010 into VAAPI and QSV | any | not working: stock FFmpeg defect ([Vulkan output pools](../backends/vulkan-drm-modifiers.md)) |
-| `tiling=drm` on AMD | Ryzen iGPU, RADV | maps, but frames can be read unfinished; not a working recipe |
+| VAAPI through `tiling=drm` on AMD, NV12 and P010 | Radeon 610M, RADV, radeonsi | verified, bit-exact ([#103](https://github.com/VMAFx/pelorus/issues/103)) |
 | AMF | none | not run on hardware: no AMF runtime on the Linux test host, and FFmpeg has no Vulkan-to-AMF path |
 | libaom, SVT-AV1, x265 recipes | none | not re-run on hardware: the test binary has none of these encoders; the graph shape is the same as the verified ones |
 
@@ -136,9 +135,9 @@ the RTX 4090 with `hevc_vulkan -qp 28` and exit code 0 (120 frames): borderfix t
 ## Zero-copy into VAAPI and QSV encoders (Linux)
 
 `tiling=drm` on the last Pelorus filter that writes frames lets `hwmap` hand
-its output to a VAAPI encoder, or on to QSV, without `hwdownload` (8-bit NV12
-only; P010 and AMD wait on FFmpeg fixes, see
-[Vulkan output pools](../backends/vulkan-drm-modifiers.md)). Derive Vulkan from
+its output to a VAAPI encoder, or on to QSV, without `hwdownload` (NV12 and P010,
+Intel and AMD; the shared FFmpeg fix series carries the stock fixes this
+needs, see [Vulkan output pools](../backends/vulkan-drm-modifiers.md)). Derive Vulkan from
 the VAAPI device so both run on the same GPU, and decode with VAAPI so the
 decoder output maps into Vulkan too. VAAPI encoder, verified on an Arc A380
 (exit code 0, 120 frames):
