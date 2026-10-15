@@ -24,10 +24,15 @@ creates the GitHub release with five assets: `pelorus-ffmpeg-patches-vX.Y.Z.tar.
    (If the interop ABI changed this cycle, confirm `PELORUS_ABI_MINOR` was
    bumped too — see `/bump-abi`.)
 3. **Render and rotate the changelog**: `/render-changelog` (`--write`), then
-   rotate `[Unreleased]` into a `## [X.Y.Z] - YYYY-MM-DD` section, delete the
-   consumed `changelog.d/` fragments, and re-run `--write` so `[Unreleased]` is
-   empty and `--check` passes. The release notes are that section, as in
-   `93bef12`; the tag build fails if it is missing or empty.
+   rotate `[Unreleased]` into a `## [X.Y.Z] - YYYY-MM-DD` section, write a
+   leading `### Highlights` subsection by hand (3 to 6 user-facing bullets
+   summarising the section's own entries; maintainer-internal items stay in the
+   closing `### Maintenance` subsection), delete the consumed `changelog.d/`
+   fragments, and re-run `--write` so `[Unreleased]` is empty and `--check`
+   passes. `scripts/release/extract-release-notes.sh` unwraps paragraphs and
+   list items to one line each, places `### Highlights` first and
+   `### Maintenance` last, and fails the tag build if the section or its
+   `### Highlights` (3 to 6 bullets) is missing.
 4. **Commit** the version bump (`chore(release): vX.Y.Z`), open a PR, merge to
    `master`.
 5. **Tag + push** (signed tag via pre-tag guard):
