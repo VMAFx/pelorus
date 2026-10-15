@@ -18,8 +18,16 @@ two lines at eighty columns.
   0022) preserves flat analysis maps across the bitstream.
   - Nested bullet item that is also wrapped
     across two lines with its two-space indent.
+- Relative docs link: [architecture guide](docs/architecture/overview.md) and
+  [ADR-0185](docs/adr/0185-shared-ffmpeg-fix-series.md#decision).
+- Reference link usage: [telemetry reference][ref-telemetry].
+- External link: [upstream project](https://example.com/project) and anchor: [jump to highlights](#highlights).
+- Code with literal link `[not a link](docs/inline.md)` preserved.
+
+[ref-telemetry]: docs/api/encoder-telemetry.md
 
 ```sh
+# See [docs in code](docs/usage/ffmpeg.md)
 ffmpeg -init_hw_device vulkan=vk:0 -i input.mp4 \
   -vf "hwupload,pelorus_deband_vulkan,hwdownload" \
   -c:v libx264 output.mp4

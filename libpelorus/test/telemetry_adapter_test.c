@@ -550,6 +550,614 @@ static int test_non_c_numeric_locale(void)
     /* NOLINTEND(concurrency-mt-unsafe) */
 }
 
+static void write_u32le(uint8_t *p, uint32_t val)
+{
+    p[0] = (uint8_t)(val & 0xFFu);
+    p[1] = (uint8_t)((val >> 8u) & 0xFFu);
+    p[2] = (uint8_t)((val >> 16u) & 0xFFu);
+    p[3] = (uint8_t)((val >> 24u) & 0xFFu);
+}
+
+static void write_u64le(uint8_t *p, uint64_t val)
+{
+    p[0] = (uint8_t)(val & 0xFFu);
+    p[1] = (uint8_t)((val >> 8u) & 0xFFu);
+    p[2] = (uint8_t)((val >> 16u) & 0xFFu);
+    p[3] = (uint8_t)((val >> 24u) & 0xFFu);
+    p[4] = (uint8_t)((val >> 32u) & 0xFFu);
+    p[5] = (uint8_t)((val >> 40u) & 0xFFu);
+    p[6] = (uint8_t)((val >> 48u) & 0xFFu);
+    p[7] = (uint8_t)((val >> 56u) & 0xFFu);
+}
+
+static int check_ffmpeg_qstats_x264_frame(const PelorusEncTelemetryInput *frame)
+{
+    int failures = 0;
+
+    CHECK(frame->frame.adapter == PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS);
+    CHECK(frame->frame.codec == PEL_TLM_CODEC_H264);
+    CHECK(frame->frame.qp_scale == PEL_QP_SCALE_SLICE_QP);
+    CHECK(frame->frame.avg_qp == 26.0f);
+    CHECK(frame->frame.avg_qp_norm == 26.0f);
+    CHECK(frame->frame.picture_type == PEL_PICTURE_I);
+    CHECK(frame->frame.metric_source == PEL_TLM_METRIC_ADAPTER_SSE);
+    return failures;
+}
+
+static int check_ffmpeg_qstats_x264_psnr(const PelorusEncTelemetryInput *frame,
+                                         const uint64_t plane_samples[3])
+{
+    const double peak = 255.0;
+    const double exp_y = 10.0 * log10((peak * peak * (double)plane_samples[0]) / 1000.0);
+    const double exp_u = 10.0 * log10((peak * peak * (double)plane_samples[1]) / 200.0);
+    const double exp_v = 10.0 * log10((peak * peak * (double)plane_samples[2]) / 150.0);
+    int failures = 0;
+
+    CHECK(fabsf(frame->frame.psnr_y - (float)exp_y) < 0.01f);
+    CHECK(fabsf(frame->frame.psnr_u - (float)exp_u) < 0.01f);
+    CHECK(fabsf(frame->frame.psnr_v - (float)exp_v) < 0.01f);
+    CHECK(pel_enc_telemetry_validate(frame) == PEL_OK);
+    return failures;
+}
+
+static int test_ffmpeg_qstats_positive_x264(void)
+{
+    uint8_t buf[8 + 8 * 3];
+    uint64_t plane_samples[3] = {(uint64_t)1920u * 1080u, (uint64_t)960u * 540u,
+                                 (uint64_t)960u * 540u};
+    PelorusEncTelemetryInput frame;
+    int failures = 0;
+
+    (void)memset(buf, 0, sizeof(buf));
+    write_u32le(buf, 26u * 118u);
+    buf[4] = 1u; /* I-frame */
+    buf[5] = 3u; /* 3 error planes */
+    write_u64le(buf + 8, 1000u);
+    write_u64le(buf + 16, 200u);
+    write_u64le(buf + 24, 150u);
+
+    (void)memset(&frame, 0, sizeof(frame));
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_H264,
+                                             PEL_QP_SCALE_SLICE_QP, 8u, plane_samples,
+                                             &frame) == PEL_OK);
+    failures += check_ffmpeg_qstats_x264_frame(&frame);
+    failures += check_ffmpeg_qstats_x264_psnr(&frame, plane_samples);
+    return failures;
+}
+
+static int test_ffmpeg_qstats_positive_x265(void)
+{
+    uint8_t x265_buf[8];
+    PelorusEncTelemetryInput frame;
+    int failures = 0;
+
+    (void)memset(x265_buf, 0, sizeof(x265_buf));
+    write_u32le(x265_buf, 32u * 118u);
+    x265_buf[4] = 2u; /* P-frame */
+    x265_buf[5] = 0u; /* no SSE */
+    (void)memset(&frame, 0, sizeof(frame));
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(x265_buf, sizeof(x265_buf), PEL_TLM_CODEC_HEVC,
+                                             PEL_QP_SCALE_SLICE_QP, 8u, NULL, &frame) == PEL_OK);
+    CHECK(frame.frame.avg_qp == 32.0f);
+    CHECK(frame.frame.avg_qp_norm == 32.0f);
+    CHECK(frame.frame.picture_type == PEL_PICTURE_P);
+    CHECK((frame.frame.present_mask & PEL_TLM_F_PSNR_Y) == 0u);
+    CHECK(frame.frame.metric_source == 0u);
+    CHECK(pel_enc_telemetry_validate(&frame) == PEL_OK);
+    return failures;
+}
+
+static int test_ffmpeg_qstats_positive_aom(void)
+{
+    uint8_t aom_buf[8 + 8 * 3];
+    uint64_t plane_samples[3] = {(uint64_t)1920u * 1080u, (uint64_t)960u * 540u,
+                                 (uint64_t)960u * 540u};
+    PelorusEncTelemetryInput frame;
+    int failures = 0;
+
+    (void)memset(aom_buf, 0, sizeof(aom_buf));
+    aom_buf[4] = 1u; /* I-frame */
+    aom_buf[5] = 3u; /* 3 SSE */
+    write_u64le(aom_buf + 8, 500u);
+    write_u64le(aom_buf + 16, 100u);
+    write_u64le(aom_buf + 24, 100u);
+    (void)memset(&frame, 0, sizeof(frame));
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(aom_buf, sizeof(aom_buf), PEL_TLM_CODEC_AV1,
+                                             PEL_QP_SCALE_AV1_ENCODER_QP, 8u, plane_samples,
+                                             &frame) == PEL_OK);
+    CHECK((frame.frame.present_mask & PEL_TLM_F_AVG_QP) == 0u);
+    CHECK((frame.frame.present_mask & PEL_TLM_F_AVG_QP_NORM) == 0u);
+    CHECK(frame.frame.avg_qp == 0.0f);
+    CHECK(frame.frame.avg_qp_norm == 0.0f);
+    CHECK(frame.frame.qp_scale == 0u);
+    CHECK(frame.frame.picture_type == PEL_PICTURE_I);
+    CHECK((frame.frame.present_mask & PEL_TLM_F_PSNR_Y) != 0u);
+    CHECK(frame.frame.metric_source == PEL_TLM_METRIC_ADAPTER_SSE);
+    CHECK(pel_enc_telemetry_validate(&frame) == PEL_OK);
+    return failures;
+}
+
+static int check_ffmpeg_qstats_vp9_qp(const PelorusEncTelemetryInput *frame)
+{
+    int failures = 0;
+
+    CHECK(frame->frame.codec == PEL_TLM_CODEC_VP9);
+    CHECK((frame->frame.present_mask & (PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM)) == 0u);
+    CHECK(frame->frame.avg_qp == 0.0f);
+    CHECK(frame->frame.avg_qp_norm == 0.0f);
+    CHECK(frame->frame.qp_scale == 0u);
+    return failures;
+}
+
+static int check_ffmpeg_qstats_vp9_metrics(const PelorusEncTelemetryInput *frame)
+{
+    int failures = 0;
+
+    CHECK((frame->frame.present_mask & PEL_TLM_F_PICTURE_TYPE) != 0u);
+    CHECK(frame->frame.picture_type == PEL_PICTURE_P);
+    CHECK((frame->frame.present_mask & PEL_TLM_F_PSNR_Y) != 0u);
+    CHECK(frame->frame.psnr_y > 0.0f);
+    CHECK(frame->frame.metric_source == PEL_TLM_METRIC_ADAPTER_SSE);
+    CHECK(pel_enc_telemetry_validate(frame) == PEL_OK);
+    return failures;
+}
+
+static int test_ffmpeg_qstats_positive_vp9(void)
+{
+    uint8_t buf[8 + 8 * 3];
+    uint64_t plane_samples[3] = {(uint64_t)1920u * 1080u, (uint64_t)960u * 540u,
+                                 (uint64_t)960u * 540u};
+    PelorusEncTelemetryInput frame;
+    int failures = 0;
+
+    (void)memset(buf, 0, sizeof(buf));
+    /* libvpxenc writes VP8E_GET_LAST_QUANTIZER_64 * 118; ignored by adapter */
+    write_u32le(buf, 35u * 118u);
+    buf[4] = 2u; /* P-frame */
+    buf[5] = 3u;
+    write_u64le(buf + 8, 1000u);
+    write_u64le(buf + 16, 500u);
+    write_u64le(buf + 24, 500u);
+
+    (void)memset(&frame, 0, sizeof(frame));
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_VP9,
+                                             PEL_QP_SCALE_VP9_QINDEX, 8u, plane_samples,
+                                             &frame) == PEL_OK);
+    failures += check_ffmpeg_qstats_vp9_qp(&frame);
+    failures += check_ffmpeg_qstats_vp9_metrics(&frame);
+    return failures;
+}
+
+static int test_ffmpeg_qstats_depth10_and_sse0(void)
+{
+    uint8_t buf[8 + 8 * 3];
+    uint64_t plane_samples[3] = {(uint64_t)1920u * 1080u, (uint64_t)960u * 540u,
+                                 (uint64_t)960u * 540u};
+    PelorusEncTelemetryInput frame;
+    double peak = 1023.0;
+    double exp_y = 10.0 * log10((peak * peak * (double)plane_samples[0]) / 2500.0);
+    int failures = 0;
+
+    (void)memset(buf, 0, sizeof(buf));
+    write_u32le(buf, 28u * 118u);
+    buf[4] = 3u; /* B-frame */
+    buf[5] = 3u;
+    write_u64le(buf + 8, 2500u);
+    write_u64le(buf + 16, 0u); /* SSE 0 -> 100 dB cap */
+    write_u64le(buf + 24, 500u);
+
+    (void)memset(&frame, 0, sizeof(frame));
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_HEVC,
+                                             PEL_QP_SCALE_SLICE_QP, 10u, plane_samples,
+                                             &frame) == PEL_OK);
+    CHECK(frame.frame.coded_bit_depth == 10u);
+    CHECK(frame.frame.picture_type == PEL_PICTURE_B);
+    CHECK(fabsf(frame.frame.psnr_y - (float)exp_y) < 0.01f);
+    CHECK(frame.frame.psnr_u == 100.0f);
+    CHECK(pel_enc_telemetry_validate(&frame) == PEL_OK);
+    return failures;
+}
+
+static int test_ffmpeg_qstats_boundaries(void)
+{
+    uint8_t b0[8];
+    uint8_t b255[8 + 8 * 255];
+    PelorusEncTelemetryInput frame;
+    int failures = 0;
+
+    (void)memset(b0, 0, sizeof(b0));
+    write_u32le(b0, 20u * 118u);
+    b0[4] = 1u;
+    b0[5] = 0u;
+    (void)memset(&frame, 0, sizeof(frame));
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(b0, sizeof(b0), PEL_TLM_CODEC_H264,
+                                             PEL_QP_SCALE_SLICE_QP, 8u, NULL, &frame) == PEL_OK);
+    CHECK(frame.frame.avg_qp == 20.0f);
+
+    (void)memset(b255, 0, sizeof(b255));
+    write_u32le(b255, 20u * 118u);
+    b255[4] = 1u;
+    b255[5] = 255u;
+    (void)memset(&frame, 0, sizeof(frame));
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(b255, sizeof(b255), PEL_TLM_CODEC_H264,
+                                             PEL_QP_SCALE_SLICE_QP, 8u, NULL, &frame) == PEL_OK);
+    CHECK(frame.frame.avg_qp == 20.0f);
+    return failures;
+}
+
+static int test_ffmpeg_qstats_negative_args(void)
+{
+    uint8_t buf[8 + 8 * 3];
+    PelorusEncTelemetryInput frame;
+    PelorusEncTelemetryInput untouched;
+    int failures = 0;
+
+    (void)memset(buf, 0, sizeof(buf));
+    write_u32le(buf, 26u * 118u);
+    buf[4] = 1u;
+    buf[5] = 3u;
+    (void)memset(&untouched, 0x5a, sizeof(untouched));
+
+    frame = untouched;
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(NULL, sizeof(buf), PEL_TLM_CODEC_H264,
+                                             PEL_QP_SCALE_SLICE_QP, 8u, NULL,
+                                             &frame) == PEL_ERR_INVALID);
+    CHECK(bytes_equal(&frame, &untouched, sizeof(frame)));
+
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_H264,
+                                             PEL_QP_SCALE_SLICE_QP, 8u, NULL,
+                                             NULL) == PEL_ERR_INVALID);
+
+    frame = untouched;
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_H264,
+                                             PEL_QP_SCALE_AV1_ENCODER_QP, 8u, NULL,
+                                             &frame) == PEL_ERR_INVALID);
+    CHECK(bytes_equal(&frame, &untouched, sizeof(frame)));
+
+    frame = untouched;
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_AV1,
+                                             PEL_QP_SCALE_AV1_QINDEX, 8u, NULL,
+                                             &frame) == PEL_ERR_INVALID);
+    CHECK(bytes_equal(&frame, &untouched, sizeof(frame)));
+
+    frame = untouched;
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_H264,
+                                             PEL_QP_SCALE_SLICE_QP, 9u, NULL,
+                                             &frame) == PEL_ERR_RANGE);
+    CHECK(bytes_equal(&frame, &untouched, sizeof(frame)));
+    return failures;
+}
+
+static int test_ffmpeg_qstats_negative_lens(void)
+{
+    uint8_t buf[8 + 8 * 3];
+    PelorusEncTelemetryInput frame;
+    PelorusEncTelemetryInput untouched;
+    int failures = 0;
+
+    (void)memset(buf, 0, sizeof(buf));
+    write_u32le(buf, 26u * 118u);
+    buf[4] = 1u;
+    buf[5] = 3u;
+    (void)memset(&untouched, 0x5a, sizeof(untouched));
+
+    frame = untouched;
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, 7u, PEL_TLM_CODEC_H264, PEL_QP_SCALE_SLICE_QP, 8u,
+                                             NULL, &frame) == PEL_ERR_TRUNCATED);
+    CHECK(bytes_equal(&frame, &untouched, sizeof(frame)));
+
+    frame = untouched;
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, 24u, PEL_TLM_CODEC_H264, PEL_QP_SCALE_SLICE_QP,
+                                             8u, NULL, &frame) == PEL_ERR_TRUNCATED);
+    CHECK(bytes_equal(&frame, &untouched, sizeof(frame)));
+
+    buf[5] = 1u;
+    frame = untouched;
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, 15u, PEL_TLM_CODEC_H264, PEL_QP_SCALE_SLICE_QP,
+                                             8u, NULL, &frame) == PEL_ERR_TRUNCATED);
+    CHECK(bytes_equal(&frame, &untouched, sizeof(frame)));
+    return failures;
+}
+
+static int test_ffmpeg_qstats_tolerant_bytes(void)
+{
+    uint8_t buf[8 + 8 * 3];
+    PelorusEncTelemetryInput frame;
+    int failures = 0;
+
+    (void)memset(buf, 0, sizeof(buf));
+    write_u32le(buf, 26u * 118u);
+    buf[4] = 1u;
+    buf[5] = 0u;
+    /* Reserved bytes 6..7 must be ignored, not refused */
+    buf[6] = 0xefu;
+    buf[7] = 0xbeu;
+    (void)memset(&frame, 0, sizeof(frame));
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, 8u, PEL_TLM_CODEC_H264, PEL_QP_SCALE_SLICE_QP, 8u,
+                                             NULL, &frame) == PEL_OK);
+    CHECK(frame.frame.avg_qp == 26.0f);
+
+    /* Trailing bytes on 0 SSE planes (len 16 > 8) must be accepted and ignored */
+    (void)memset(&frame, 0, sizeof(frame));
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, 16u, PEL_TLM_CODEC_H264, PEL_QP_SCALE_SLICE_QP,
+                                             8u, NULL, &frame) == PEL_OK);
+    CHECK(frame.frame.avg_qp == 26.0f);
+
+    /* Trailing bytes with SSE planes (1 plane = 16 bytes, passed len 32) */
+    buf[5] = 1u;
+    write_u64le(buf + 8, 100u);
+    (void)memset(&frame, 0, sizeof(frame));
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, 32u, PEL_TLM_CODEC_H264, PEL_QP_SCALE_SLICE_QP,
+                                             8u, NULL, &frame) == PEL_OK);
+    CHECK(frame.frame.avg_qp == 26.0f);
+    return failures;
+}
+
+static int test_ffmpeg_qstats_pict_types(void)
+{
+    uint8_t buf[8];
+    PelorusEncTelemetryInput frame;
+    PelorusEncTelemetryInput untouched;
+    int failures = 0;
+
+    (void)memset(buf, 0, sizeof(buf));
+    write_u32le(buf, 20u * 118u);
+
+    buf[4] = 0u;
+    (void)memset(&frame, 0, sizeof(frame));
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_H264,
+                                             PEL_QP_SCALE_SLICE_QP, 8u, NULL, &frame) == PEL_OK);
+    CHECK((frame.frame.present_mask & PEL_TLM_F_PICTURE_TYPE) == 0u);
+    CHECK(frame.frame.picture_type == 0u);
+
+    buf[4] = 4u;
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_H264,
+                                             PEL_QP_SCALE_SLICE_QP, 8u, NULL, &frame) == PEL_OK);
+    CHECK((frame.frame.present_mask & PEL_TLM_F_PICTURE_TYPE) == 0u);
+
+    (void)memset(&untouched, 0x5a, sizeof(untouched));
+    frame = untouched;
+    buf[4] = 8u;
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_H264,
+                                             PEL_QP_SCALE_SLICE_QP, 8u, NULL,
+                                             &frame) == PEL_ERR_RANGE);
+    CHECK(bytes_equal(&frame, &untouched, sizeof(frame)));
+    return failures;
+}
+
+static int test_ffmpeg_qstats_positive_av1_encoder_qp(void)
+{
+    uint8_t buf[8];
+    PelorusEncTelemetryInput frame;
+    int failures = 0;
+
+    (void)memset(buf, 0, sizeof(buf));
+    write_u32le(buf, 30u * 118u);
+    buf[4] = 1u;
+    buf[5] = 0u;
+    (void)memset(&frame, 0, sizeof(frame));
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_AV1,
+                                             PEL_QP_SCALE_AV1_ENCODER_QP, 8u, NULL,
+                                             &frame) == PEL_OK);
+    CHECK((frame.frame.present_mask & PEL_TLM_F_AVG_QP) != 0u);
+    CHECK((frame.frame.present_mask & PEL_TLM_F_AVG_QP_NORM) != 0u);
+    CHECK(frame.frame.avg_qp == 30.0f);
+    CHECK(frame.frame.avg_qp_norm > 0.0f);
+    CHECK(frame.frame.qp_scale == PEL_QP_SCALE_AV1_ENCODER_QP);
+    CHECK(pel_enc_telemetry_validate(&frame) == PEL_OK);
+    return failures;
+}
+
+static int test_ffmpeg_qstats_plane_selection_y_only(void)
+{
+    uint8_t buf[8 + 8 * 3];
+    uint64_t plane_samples_y[3] = {(uint64_t)1920u * 1080u, 0u, 0u};
+    PelorusEncTelemetryInput frame;
+    int failures = 0;
+
+    (void)memset(buf, 0, sizeof(buf));
+    write_u32le(buf, 26u * 118u);
+    buf[4] = 1u;
+    buf[5] = 3u;
+    write_u64le(buf + 8, 1000u);
+    write_u64le(buf + 16, 200u);
+    write_u64le(buf + 24, 150u);
+
+    (void)memset(&frame, 0, sizeof(frame));
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_H264,
+                                             PEL_QP_SCALE_SLICE_QP, 8u, plane_samples_y,
+                                             &frame) == PEL_OK);
+    CHECK((frame.frame.present_mask & PEL_TLM_F_PSNR_Y) != 0u);
+    CHECK((frame.frame.present_mask & (PEL_TLM_F_PSNR_U | PEL_TLM_F_PSNR_V)) == 0u);
+    CHECK(frame.frame.psnr_y > 0.0f);
+    CHECK(frame.frame.psnr_u == 0.0f);
+    CHECK(frame.frame.psnr_v == 0.0f);
+    CHECK(pel_enc_telemetry_validate(&frame) == PEL_OK);
+    return failures;
+}
+
+static int test_ffmpeg_qstats_plane_selection_count1(void)
+{
+    uint8_t buf[8 + 8];
+    uint64_t plane_samples_all[3] = {(uint64_t)1920u * 1080u, (uint64_t)960u * 540u,
+                                     (uint64_t)960u * 540u};
+    PelorusEncTelemetryInput frame;
+    int failures = 0;
+
+    (void)memset(buf, 0, sizeof(buf));
+    write_u32le(buf, 26u * 118u);
+    buf[4] = 1u;
+    buf[5] = 1u;
+    write_u64le(buf + 8, 1000u);
+
+    (void)memset(&frame, 0, sizeof(frame));
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_H264,
+                                             PEL_QP_SCALE_SLICE_QP, 8u, plane_samples_all,
+                                             &frame) == PEL_OK);
+    CHECK((frame.frame.present_mask & PEL_TLM_F_PSNR_Y) != 0u);
+    CHECK((frame.frame.present_mask & (PEL_TLM_F_PSNR_U | PEL_TLM_F_PSNR_V)) == 0u);
+    CHECK(frame.frame.psnr_y > 0.0f);
+    CHECK(frame.frame.psnr_u == 0.0f);
+    CHECK(frame.frame.psnr_v == 0.0f);
+    CHECK(pel_enc_telemetry_validate(&frame) == PEL_OK);
+    return failures;
+}
+
+static int test_ffmpeg_qstats_tiny_sse_and_depth12(void)
+{
+    uint8_t buf[8 + 8];
+    uint64_t plane_samples[3] = {(uint64_t)1920u * 1080u, 0u, 0u};
+    PelorusEncTelemetryInput frame;
+    const double peak12 = 4095.0;
+    const double exp12_y = 10.0 * log10((peak12 * peak12 * (double)plane_samples[0]) / 20000000.0);
+    int failures = 0;
+
+    (void)memset(buf, 0, sizeof(buf));
+    write_u32le(buf, 26u * 118u);
+    buf[4] = 1u;
+    buf[5] = 1u;
+    write_u64le(buf + 8, 1u); /* tiny nonzero SSE -> PSNR exactly 100.0f cap */
+
+    (void)memset(&frame, 0, sizeof(frame));
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_H264,
+                                             PEL_QP_SCALE_SLICE_QP, 8u, plane_samples,
+                                             &frame) == PEL_OK);
+    CHECK(frame.frame.psnr_y == 100.0f);
+    CHECK(pel_enc_telemetry_validate(&frame) == PEL_OK);
+
+    write_u64le(buf + 8, 20000000u);
+    (void)memset(&frame, 0, sizeof(frame));
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_HEVC,
+                                             PEL_QP_SCALE_SLICE_QP, 12u, plane_samples,
+                                             &frame) == PEL_OK);
+    CHECK(frame.frame.coded_bit_depth == 12u);
+    CHECK(fabsf(frame.frame.psnr_y - (float)exp12_y) < 0.01f);
+    CHECK(pel_enc_telemetry_validate(&frame) == PEL_OK);
+    return failures;
+}
+
+static int test_ffmpeg_qstats_negative_codecs_and_scales(void)
+{
+    uint8_t buf[8];
+    PelorusEncTelemetryInput frame;
+    PelorusEncTelemetryInput untouched;
+    int failures = 0;
+
+    (void)memset(buf, 0, sizeof(buf));
+    write_u32le(buf, 26u * 118u);
+    buf[4] = 1u;
+    buf[5] = 0u;
+    (void)memset(&untouched, 0x5a, sizeof(untouched));
+
+    frame = untouched;
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_VP9,
+                                             PEL_QP_SCALE_SLICE_QP, 8u, NULL,
+                                             &frame) == PEL_ERR_INVALID);
+    CHECK(bytes_equal(&frame, &untouched, sizeof(frame)));
+
+    frame = untouched;
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), 0u, PEL_QP_SCALE_SLICE_QP, 8u, NULL,
+                                             &frame) == PEL_ERR_INVALID);
+    CHECK(bytes_equal(&frame, &untouched, sizeof(frame)));
+
+    frame = untouched;
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), 6u, PEL_QP_SCALE_SLICE_QP, 8u, NULL,
+                                             &frame) == PEL_ERR_INVALID);
+    CHECK(bytes_equal(&frame, &untouched, sizeof(frame)));
+    return failures;
+}
+
+static int test_ffmpeg_qstats_negative_quality_and_sse(void)
+{
+    uint8_t buf[8 + 8];
+    uint64_t plane_samples[3] = {100u, 0u, 0u};
+    PelorusEncTelemetryInput frame;
+    PelorusEncTelemetryInput untouched;
+    int failures = 0;
+
+    (void)memset(buf, 0, sizeof(buf));
+    write_u32le(buf, 200u * 118u); /* huge quality factor -> PEL_ERR_RANGE */
+    buf[4] = 1u;
+    buf[5] = 0u;
+    (void)memset(&untouched, 0x5a, sizeof(untouched));
+
+    frame = untouched;
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, 8u, PEL_TLM_CODEC_H264, PEL_QP_SCALE_SLICE_QP, 8u,
+                                             NULL, &frame) == PEL_ERR_RANGE);
+    CHECK(bytes_equal(&frame, &untouched, sizeof(frame)));
+
+    write_u32le(buf, UINT32_MAX);
+    frame = untouched;
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, 8u, PEL_TLM_CODEC_H264, PEL_QP_SCALE_SLICE_QP, 8u,
+                                             NULL, &frame) == PEL_ERR_RANGE);
+    CHECK(bytes_equal(&frame, &untouched, sizeof(frame)));
+
+    write_u32le(buf, 26u * 118u);
+    buf[5] = 1u;
+    write_u64le(buf + 8, 7000000u); /* SSE > peak^2 * samples (6502500) -> PEL_ERR_RANGE */
+    frame = untouched;
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, 16u, PEL_TLM_CODEC_H264, PEL_QP_SCALE_SLICE_QP,
+                                             8u, plane_samples, &frame) == PEL_ERR_RANGE);
+    CHECK(bytes_equal(&frame, &untouched, sizeof(frame)));
+    return failures;
+}
+
+static int check_ffmpeg_qstats_codec_caps(uint8_t codec, uint64_t exp)
+{
+    uint64_t caps = 0;
+    int failures = 0;
+
+    CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS, codec, &caps) == PEL_OK);
+    CHECK(caps == exp);
+    return failures;
+}
+
+static int test_ffmpeg_qstats_caps(void)
+{
+    uint64_t caps = 0;
+    const uint64_t exp_caps =
+        (PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM | PEL_TLM_F_PICTURE_TYPE | PEL_TLM_F_PSNR_Y |
+         PEL_TLM_F_PSNR_U | PEL_TLM_F_PSNR_V | PEL_TLM_F_CODED_BIT_DEPTH);
+    const uint64_t exp_vp9_caps = (PEL_TLM_F_PICTURE_TYPE | PEL_TLM_F_PSNR_Y | PEL_TLM_F_PSNR_U |
+                                   PEL_TLM_F_PSNR_V | PEL_TLM_F_CODED_BIT_DEPTH);
+    int failures = 0;
+
+    failures += check_ffmpeg_qstats_codec_caps(PEL_TLM_CODEC_H264, exp_caps);
+    failures += check_ffmpeg_qstats_codec_caps(PEL_TLM_CODEC_HEVC, exp_caps);
+    failures += check_ffmpeg_qstats_codec_caps(PEL_TLM_CODEC_AV1, exp_caps);
+    failures += check_ffmpeg_qstats_codec_caps(PEL_TLM_CODEC_VP9, exp_vp9_caps);
+    CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS, PEL_TLM_CODEC_VP9, &caps) ==
+          PEL_OK);
+    CHECK((caps & (PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM)) == 0u);
+    CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS, 0u, &caps) == PEL_ERR_INVALID);
+    CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS, 6u, &caps) == PEL_ERR_INVALID);
+    return failures;
+}
+
+static int test_ffmpeg_quality_stats(void)
+{
+    int failures = 0;
+
+    failures += test_ffmpeg_qstats_positive_x264();
+    failures += test_ffmpeg_qstats_positive_x265();
+    failures += test_ffmpeg_qstats_positive_aom();
+    failures += test_ffmpeg_qstats_positive_vp9();
+    failures += test_ffmpeg_qstats_positive_av1_encoder_qp();
+    failures += test_ffmpeg_qstats_plane_selection_y_only();
+    failures += test_ffmpeg_qstats_plane_selection_count1();
+    failures += test_ffmpeg_qstats_depth10_and_sse0();
+    failures += test_ffmpeg_qstats_tiny_sse_and_depth12();
+    failures += test_ffmpeg_qstats_boundaries();
+    failures += test_ffmpeg_qstats_tolerant_bytes();
+    failures += test_ffmpeg_qstats_negative_args();
+    failures += test_ffmpeg_qstats_negative_lens();
+    failures += test_ffmpeg_qstats_negative_codecs_and_scales();
+    failures += test_ffmpeg_qstats_negative_quality_and_sse();
+    failures += test_ffmpeg_qstats_pict_types();
+    failures += test_ffmpeg_qstats_caps();
+    return failures;
+}
+
 int main(int argc, char **argv)
 {
     PelorusEncTelemetryInput x265;
@@ -582,6 +1190,7 @@ int main(int argc, char **argv)
     failures += test_total_text_bound();
     failures += test_capacity(argv[1]);
     failures += test_svt_capacity(argv[2]);
+    failures += test_ffmpeg_quality_stats();
     if (failures != 0) {
         (void)fprintf(stderr, "%d check(s) failed\n", failures);
         return EXIT_FAILURE;

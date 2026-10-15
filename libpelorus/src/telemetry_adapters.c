@@ -789,3 +789,170 @@ pel_result pel_tlm_parse_svtav1_stat(const char *text, size_t len, uint8_t coded
     tlm_locale_free(locale);
     return rc;
 }
+
+static uint32_t ffmpeg_read_u32le(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8u) | ((uint32_t)p[2] << 16u) |
+           ((uint32_t)p[3] << 24u);
+}
+
+static uint64_t ffmpeg_read_u64le(const uint8_t *p)
+{
+    return (uint64_t)p[0] | ((uint64_t)p[1] << 8u) | ((uint64_t)p[2] << 16u) |
+           ((uint64_t)p[3] << 24u) | ((uint64_t)p[4] << 32u) | ((uint64_t)p[5] << 40u) |
+           ((uint64_t)p[6] << 48u) | ((uint64_t)p[7] << 56u);
+}
+
+static int ffmpeg_scale_fits_codec(uint8_t scale, uint8_t codec)
+{
+    switch (scale) {
+    case PEL_QP_SCALE_SLICE_QP:
+        return codec == PEL_TLM_CODEC_H264 || codec == PEL_TLM_CODEC_HEVC ||
+               codec == PEL_TLM_CODEC_VVC;
+    case PEL_QP_SCALE_AV1_ENCODER_QP:
+        return codec == PEL_TLM_CODEC_AV1;
+    case PEL_QP_SCALE_VP9_QINDEX:
+        return codec == PEL_TLM_CODEC_VP9;
+    default:
+        return 0;
+    }
+}
+
+static pel_result ffmpeg_qstats_check_args(const uint8_t *buf, size_t len, uint8_t codec,
+                                           uint8_t qp_scale, uint8_t depth,
+                                           const PelorusEncTelemetryInput *out)
+{
+    size_t expected_len;
+
+    if (buf == NULL || out == NULL) {
+        return PEL_ERR_INVALID;
+    }
+    if (codec < PEL_TLM_CODEC_H264 || codec > PEL_TLM_CODEC_VP9 ||
+        !ffmpeg_scale_fits_codec(qp_scale, codec)) {
+        return PEL_ERR_INVALID;
+    }
+    if (depth != 8u && depth != 10u && depth != 12u) {
+        return PEL_ERR_RANGE;
+    }
+    if (len < 8u) {
+        return PEL_ERR_TRUNCATED;
+    }
+    expected_len = 8u + 8u * (size_t)buf[5];
+    if (len < expected_len) {
+        return PEL_ERR_TRUNCATED;
+    }
+    return PEL_OK;
+}
+
+static pel_result ffmpeg_qstats_parse_qp(uint32_t quality, uint8_t qp_scale, uint8_t depth,
+                                         PelorusEncTelemetryInput *rec)
+{
+    float qp;
+    float norm = 0.0f;
+    pel_result rc;
+
+    if (quality == 0u) {
+        return PEL_OK;
+    }
+    qp = (float)quality / 118.0f;
+    rc = pel_qp_normalize(qp_scale, depth, qp, &norm);
+    if (rc != PEL_OK) {
+        return rc;
+    }
+    rec->frame.avg_qp = qp;
+    rec->frame.avg_qp_norm = norm;
+    rec->frame.qp_scale = qp_scale;
+    rec->frame.present_mask |= PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM;
+    return PEL_OK;
+}
+
+static pel_result ffmpeg_qstats_parse_sse(const uint8_t *buf, uint8_t count, uint8_t depth,
+                                          const uint64_t plane_samples[3],
+                                          PelorusEncTelemetryInput *rec)
+{
+    const double peak = (double)((1u << depth) - 1u);
+    const unsigned planes = count < 3u ? (unsigned)count : 3u;
+    unsigned i;
+
+    for (i = 0u; i < planes; i++) {
+        uint64_t sse;
+        float psnr;
+
+        if (plane_samples == NULL || plane_samples[i] == 0u) {
+            continue;
+        }
+        sse = ffmpeg_read_u64le(buf + 8u + (size_t)i * 8u);
+        if (sse == 0u) {
+            psnr = 100.0f;
+        } else {
+            const double mse = (double)sse / (double)plane_samples[i];
+            const double psnr_val = 10.0 * log10((peak * peak) / mse);
+
+            if (!isfinite(psnr_val) || psnr_val < 0.0) {
+                return PEL_ERR_RANGE;
+            }
+            psnr = (float)psnr_val;
+            if (psnr > 100.0f) {
+                psnr = 100.0f;
+            }
+        }
+        if (i == 0u) {
+            rec->frame.psnr_y = psnr;
+            rec->frame.present_mask |= PEL_TLM_F_PSNR_Y;
+        } else if (i == 1u) {
+            rec->frame.psnr_u = psnr;
+            rec->frame.present_mask |= PEL_TLM_F_PSNR_U;
+        } else {
+            rec->frame.psnr_v = psnr;
+            rec->frame.present_mask |= PEL_TLM_F_PSNR_V;
+        }
+    }
+    if ((rec->frame.present_mask & (PEL_TLM_F_PSNR_Y | PEL_TLM_F_PSNR_U | PEL_TLM_F_PSNR_V)) !=
+        0u) {
+        rec->frame.metric_source = PEL_TLM_METRIC_ADAPTER_SSE;
+    }
+    return PEL_OK;
+}
+
+pel_result pel_tlm_parse_ffmpeg_quality_stats(const uint8_t *buf, size_t len, uint8_t codec,
+                                              uint8_t qp_scale, uint8_t coded_bit_depth,
+                                              const uint64_t plane_samples[3],
+                                              PelorusEncTelemetryInput *out)
+{
+    PelorusEncTelemetryInput rec;
+    uint8_t pict_type;
+    pel_result rc;
+
+    rc = ffmpeg_qstats_check_args(buf, len, codec, qp_scale, coded_bit_depth, out);
+    if (rc != PEL_OK) {
+        return rc;
+    }
+    pict_type = buf[4];
+    if (pict_type > 7u) {
+        return PEL_ERR_RANGE;
+    }
+    (void)memset(&rec, 0, sizeof(rec));
+    rec.frame.adapter = PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS;
+    rec.frame.codec = codec;
+    rec.frame.granularity = PEL_TLM_GRAN_FRAME;
+    rec.frame.coded_bit_depth = coded_bit_depth;
+    rec.frame.present_mask = PEL_TLM_F_CODED_BIT_DEPTH;
+    if (pict_type >= 1u && pict_type <= 3u) {
+        rec.frame.picture_type = pict_type;
+        rec.frame.present_mask |= PEL_TLM_F_PICTURE_TYPE;
+    }
+    if (codec != PEL_TLM_CODEC_VP9) {
+        const uint32_t quality = ffmpeg_read_u32le(buf);
+        rc = ffmpeg_qstats_parse_qp(quality, qp_scale, coded_bit_depth, &rec);
+    }
+    if (rc == PEL_OK) {
+        rc = ffmpeg_qstats_parse_sse(buf, buf[5], coded_bit_depth, plane_samples, &rec);
+    }
+    if (rc == PEL_OK) {
+        rc = pel_enc_telemetry_validate(&rec);
+    }
+    if (rc == PEL_OK) {
+        *out = rec;
+    }
+    return rc;
+}

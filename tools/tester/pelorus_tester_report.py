@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TOOL_NAME = "pelorus-tester-report"
-TOOL_VERSION = "0.4.9"
+TOOL_VERSION = "0.4.10"
 SCHEMA_VERSION = 2
 SCHEMA_PATH = Path(__file__).with_name("report.schema.json")
 
@@ -90,8 +90,8 @@ ICD_DIRS = ("/etc/vulkan/icd.d", "/usr/share/vulkan/icd.d")
 # built-in runner in pelorus_tester_stages.py; neither = not part of this kit.
 DEFAULT_PLAN = {
     "probe": {"argv": ["vulkaninfo", "--summary"], "parser": "vulkaninfo"},
-    "libpelorus_suite": {"argv": None},
-    "registration": {"argv": None},
+    "libpelorus_suite": {"argv": None, "runner": True},
+    "registration": {"argv": None, "runner": True},
     "format_matrix": {"argv": None, "runner": True, "needs_device": True},
     "steering_smoke": {"argv": None, "runner": True, "needs_device": True},
     "sidedata_roundtrip": {"argv": None, "runner": True, "needs_device": True},
