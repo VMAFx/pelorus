@@ -22,9 +22,11 @@ override), `VMAF_BIN` (bench scoring).
 import datetime
 import hashlib
 import importlib.util
+import os
 import re
 import shutil
 import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,6 +43,7 @@ RULES = (
     "sd_integrity_count", "sd_integrity_bytes", "sd_integrity_stripped", "sd_strip_carriers",
     "sd_carrier_form", "sd_carrier_strict", "sd_reference_length", "sd_reference_not_carrier_fail",
     "brc_bitrate", "brc_decode", "brc_extbrc_engaged", "brc_no_huc", "brc_hw_refused",
+    "registration_missing", "suite_failure",
 )
 
 ENC_TIMEOUT_S = 180
@@ -835,16 +838,21 @@ def encoder_has_option(ctx, name, option):
 
 
 def ffmpeg_info(ctx):
-    """Cached (binary path or None, filter names, encoder names)."""
+    """Cached (binary path or None, filter names, encoder names, bsf names)."""
     if "ff" in ctx:
         return ctx["ff"]
     binary = shutil.which(ctx["env"].get("FFMPEG_BIN", "ffmpeg"))
-    info = {"bin": binary, "filters": set(), "encoders": set()}
+    info = {"bin": binary, "filters": set(), "encoders": set(), "bsfs": set()}
     for flag, key in (("-filters", "filters"), ("-encoders", "encoders")):
         if binary:
             code, text, _ = ctx["run"]([binary, "-hide_banner", flag], 60, ctx["env"])
             rows = [l.split() for l in text.splitlines()[:5000]] if code == 0 else []
             info[key] = {r[1] for r in rows if len(r) > 1}
+    if binary:
+        code, text, _ = ctx["run"]([binary, "-hide_banner", "-bsfs"], 60, ctx["env"])
+        if code == 0:
+            info["bsfs"] = {l.strip().split()[0] for l in text.splitlines()[:5000]
+                            if l.strip() and not l.startswith("Bitstream filters")}
     ctx["ff"] = info
     return info
 
@@ -966,6 +974,121 @@ def stage_dir(ctx, sid):
     d = Path(ctx["work"]) / sid
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+# -------------------------------------------------------- libpelorus suite
+
+SUITE_TIMEOUT_S = 300
+
+
+def find_build_dir(ctx):
+    if "PELORUS_BUILD_DIR" in ctx["env"]:
+        candidate = Path(ctx["env"]["PELORUS_BUILD_DIR"])
+        return candidate if candidate.is_dir() and (candidate / "build.ninja").is_file() else None
+    for name in ("build", "build-release"):
+        candidate = REPO_ROOT / name
+        if candidate.is_dir() and (candidate / "build.ninja").is_file():
+            return candidate
+    for opt_path in (Path("/opt/pelorus/build"), Path("/opt/pelorus-build")):
+        if opt_path.is_dir() and (opt_path / "build.ninja").is_file():
+            return opt_path
+    return None
+
+
+def run_libpelorus_suite(ctx, spec):
+    """Run the fast test suite via Meson or test runner stub; report not_run when absent."""
+    custom = ctx["env"].get("PELORUS_SUITE_CMD") or ctx["env"].get("PELORUS_SUITE_SCRIPT")
+    if custom:
+        code, text, err = ctx["run"]([custom], SUITE_TIMEOUT_S, ctx["env"])
+        if err:
+            return outcome("incomplete", err, text)
+        if code != 0 and "suite_failure" not in ctx.get("disabled", frozenset()):
+            return outcome("fail", "fast suite exit code %s" % code, text)
+        return outcome("pass", "fast suite passed (%s)" % Path(custom).name, text)
+
+    build_dir = find_build_dir(ctx)
+    if build_dir is not None:
+        meson = shutil.which(ctx["env"].get("MESON_BIN", "meson"))
+        if not meson:
+            return outcome("not_run", "meson binary not found to run fast suite in %s" % build_dir)
+        argv = [meson, "test", "-C", str(build_dir), "--suite=fast", "--print-errorlogs"]
+        code, text, err = ctx["run"](argv, SUITE_TIMEOUT_S, ctx["env"])
+        if err:
+            return outcome("incomplete", err, text)
+        if code != 0 and "suite_failure" not in ctx.get("disabled", frozenset()):
+            return outcome("fail", "fast suite exit code %s" % code, text)
+        return outcome("pass", "fast suite passed (%s)" % build_dir.name, text)
+
+    test_dir = ctx["env"].get("PELORUS_TEST_BIN_DIR")
+    if test_dir and Path(test_dir).is_dir():
+        binaries = sorted(p for p in Path(test_dir).iterdir() if p.is_file() and os.access(p, os.X_OK))
+        if binaries:
+            logs = []
+            for b in binaries:
+                code, text, err = ctx["run"]([str(b)], 60, ctx["env"])
+                logs.append("=== %s ===\n%s" % (b.name, text))
+                if err:
+                    return outcome("incomplete", "%s: %s" % (b.name, err), "\n".join(logs))
+                if code != 0 and "suite_failure" not in ctx.get("disabled", frozenset()):
+                    return outcome("fail", "%s failed with exit code %s" % (b.name, code), "\n".join(logs))
+            return outcome("pass", "all %d installed test binaries passed" % len(binaries), "\n".join(logs))
+
+    return outcome("not_run", "fast suite artefact is absent (no Meson build directory or test binary found)")
+
+
+# ------------------------------------------------------------ registration
+
+def expected_pelorus_registrations(patches_dir=None):
+    """Expected filter and BSF registration names derived from ffmpeg-patches/files."""
+    if patches_dir is None:
+        patches_dir = REPO_ROOT / "ffmpeg-patches" / "files"
+    path = Path(patches_dir)
+    filters = set()
+    bsfs = set()
+    if path.is_dir():
+        for p in sorted(path.glob("vf_pelorus_*.c")):
+            for m in re.finditer(r'\.p\.name\s*=\s*"([^"]+)"', p.read_text(encoding="utf-8")):
+                filters.add(m.group(1))
+        for p in sorted(path.glob("*_pelorus_fgs_bsf.c")):
+            for m in re.finditer(r'\.p\.name\s*=\s*"([^"]+)"', p.read_text(encoding="utf-8")):
+                bsfs.add(m.group(1))
+        if not bsfs:
+            for p in sorted(path.glob("*pelorus*bsf.c")):
+                for m in re.finditer(r'\.p\.name\s*=\s*"([^"]+)"', p.read_text(encoding="utf-8")):
+                    bsfs.add(m.group(1))
+    return filters, bsfs
+
+
+def run_registration(ctx, spec):
+    """Ask kit FFmpeg for -filters and -bsfs; fail when any Pelorus registration is missing."""
+    info = ffmpeg_info(ctx)
+    if not info.get("bin"):
+        return outcome("not_run", "ffmpeg not found (set FFMPEG_BIN)")
+    exp_filters, exp_bsfs = expected_pelorus_registrations(
+        ctx["env"].get("PELORUS_PATCHES_FILES"))
+    if not exp_filters and not exp_bsfs:
+        return outcome("not_run", "cannot find Pelorus filter/BSF sources to determine expected registrations")
+
+    missing_filters = sorted(exp_filters - info["filters"])
+    missing_bsfs = sorted(exp_bsfs - info.get("bsfs", set()))
+    missing = missing_filters + missing_bsfs
+
+    if missing and "registration_missing" not in ctx.get("disabled", frozenset()):
+        lines = []
+        if missing_filters:
+            lines.append("missing filters: " + ", ".join(missing_filters))
+        if missing_bsfs:
+            lines.append("missing bitstream filters: " + ", ".join(missing_bsfs))
+        reason = "; ".join(lines)
+        log = "Missing Pelorus registrations:\n" + "\n".join("  " + m for m in missing)
+        return outcome("fail", reason, log)
+
+    total = len(exp_filters) + len(exp_bsfs)
+    reason = "all %d Pelorus registrations present (%d filters, %d BSF)" % (
+        total, len(exp_filters), len(exp_bsfs))
+    log = ("Registered Pelorus filters:\n" + "\n".join("  " + f for f in sorted(exp_filters))
+           + "\n\nRegistered Pelorus bitstream filters:\n" + "\n".join("  " + b for b in sorted(exp_bsfs)))
+    return outcome("pass", reason, log)
 
 
 # ------------------------------------------------------------ format matrix
@@ -1437,6 +1560,8 @@ def run_bench(ctx, spec):
 
 
 RUNNERS = {
+    "libpelorus_suite": run_libpelorus_suite,
+    "registration": run_registration,
     "format_matrix": run_format_matrix,
     "steering_smoke": run_steering,
     "sidedata_roundtrip": run_sidedata,
@@ -2004,6 +2129,111 @@ def self_test_brc_legs(expect, disabled):
     expect("brc_pass_alone_is_not_a_steering_pass", status == "not_run")
 
 
+def subproc_run(argv, timeout_s, env=None):
+    try:
+        proc = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              timeout=timeout_s, env=env, text=True)
+        return proc.returncode, proc.stdout + proc.stderr, ""
+    except subprocess.TimeoutExpired:
+        return None, "", "timed out after %ss" % timeout_s
+    except OSError as exc:
+        return None, "", str(exc)
+
+
+def _write_ffmpeg_stub(path, filters_text, bsfs_text):
+    """Write an executable stub that prints the given -filters and -bsfs lists."""
+    path.write_text(f"""#!{sys.executable}
+import sys
+if "-filters" in sys.argv:
+    sys.stdout.write({filters_text!r})
+elif "-bsfs" in sys.argv:
+    sys.stdout.write({bsfs_text!r})
+else:
+    sys.stdout.write("FFmpeg stub\\n")
+sys.exit(0)
+""")
+    path.chmod(0o755)
+    return path
+
+
+def _registration_with_stub(path, disabled):
+    ctx = stage_ctx({"FFMPEG_BIN": str(path)}, subproc_run)
+    ctx["disabled"] = disabled
+    return run_registration(ctx, {})
+
+
+def self_test_registration(expect, disabled):
+    """Registration runner self-test with fake FFmpeg stubs."""
+    import tempfile
+    exp_filters, exp_bsfs = expected_pelorus_registrations()
+    expect("registration_has_expected_filters", len(exp_filters) >= 10)
+    expect("registration_has_expected_bsfs", len(exp_bsfs) >= 1)
+
+    def listing(names):
+        return "Filters:\n" + "".join(" .. %s V->V Pelorus filter\n" % f for f in names)
+
+    filters_text = listing(exp_filters)
+    bsfs_text = "Bitstream filters:\n" + "".join("%s\n" % b for b in exp_bsfs)
+    dropped_filter = sorted(exp_filters)[0]
+    dropped_bsf = sorted(exp_bsfs)[0]
+    with tempfile.TemporaryDirectory(prefix="pelorus-reg-") as tmp:
+        full = _write_ffmpeg_stub(Path(tmp) / "ffmpeg_full", filters_text, bsfs_text)
+        status, _, _, _ = _registration_with_stub(full, disabled)
+        expect("registration_full_stub_passes", status == "pass")
+
+        missing = _write_ffmpeg_stub(
+            Path(tmp) / "ffmpeg_missing",
+            listing(f for f in exp_filters if f != dropped_filter), bsfs_text)
+        status, reason, log, _ = _registration_with_stub(missing, disabled)
+        expect("registration_missing_filter_fails",
+               status == "fail" and dropped_filter in reason and dropped_filter in log)
+
+        no_bsf = _write_ffmpeg_stub(
+            Path(tmp) / "ffmpeg_missing_bsf", filters_text, "Bitstream filters:\n")
+        status, reason, _, _ = _registration_with_stub(no_bsf, disabled)
+        expect("registration_missing_bsf_fails", status == "fail" and dropped_bsf in reason)
+
+        status, _, _, _ = _registration_with_stub(Path("/nonexistent/ffmpeg"), disabled)
+        expect("registration_no_ffmpeg_not_run", status == "not_run")
+
+
+def self_test_suite(expect, disabled):
+    """libpelorus_suite runner self-test with stub scripts."""
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="pelorus-suite-") as tmp:
+        # 1. Full stub (passing suite) -> pass
+        suite_pass = Path(tmp) / "suite_pass"
+        suite_pass.write_text(f"""#!{sys.executable}
+import sys
+sys.stdout.write("1/1 interop-abi OK 0.01s\\n")
+sys.exit(0)
+""")
+        suite_pass.chmod(0o755)
+        ctx_pass = stage_ctx({"PELORUS_SUITE_CMD": str(suite_pass)}, subproc_run)
+        ctx_pass["disabled"] = disabled
+        status, reason, log, _ = run_libpelorus_suite(ctx_pass, {})
+        expect("suite_full_stub_passes", status == "pass" and "passed" in reason)
+
+        # 2. Failing suite stub -> stage fail
+        suite_fail = Path(tmp) / "suite_fail"
+        suite_fail.write_text(f"""#!{sys.executable}
+import sys
+sys.stderr.write("Test assertion failed\\n")
+sys.exit(1)
+""")
+        suite_fail.chmod(0o755)
+        ctx_fail = stage_ctx({"PELORUS_SUITE_CMD": str(suite_fail)}, subproc_run)
+        ctx_fail["disabled"] = disabled
+        status, reason, log, _ = run_libpelorus_suite(ctx_fail, {})
+        expect("suite_failing_stub_fails", status == "fail" and "exit code 1" in reason)
+
+        # 3. Absent suite artefact -> not_run
+        ctx_absent = stage_ctx({"PELORUS_BUILD_DIR": str(Path(tmp) / "nonexistent")}, subproc_run)
+        ctx_absent["disabled"] = disabled
+        status, reason, _, _ = run_libpelorus_suite(ctx_absent, {})
+        expect("suite_absent_artefact_not_run", status == "not_run" and "absent" in reason)
+
+
 def self_test(disabled=frozenset()):
     """Return failing check names; every rule has a planted bad case."""
     failures = []
@@ -2025,4 +2255,7 @@ def self_test(disabled=frozenset()):
     self_test_brc_failures(expect, disabled)
     self_test_render_host(expect)
     self_test_brc_legs(expect, disabled)
+    self_test_registration(expect, disabled)
+    self_test_suite(expect, disabled)
     return failures
+
