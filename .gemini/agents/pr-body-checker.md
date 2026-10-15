@@ -1,7 +1,6 @@
 ---
 name: pr-body-checker
 description: Verifies ADR-0108 deep-dive deliverables and per-PR rules. Use immediately before opening or approving PRs.
-model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
