@@ -103,3 +103,13 @@ SPDX-FileCopyrightText = [
     "Meta Platforms, Inc. and affiliates",
 ]
 SPDX-License-Identifier = "EUPL-1.2 AND MIT"
+
+# Acceptance-case fixtures for the Praetor licence provenance gate (ADR-0195).
+# The JSON fixture records synthetic headers (including test cases with invalid
+# or non-human holders) as data; override precedence prevents REUSE from reading
+# the test strings as this repository's own copyright.
+[[annotations]]
+path = ["scripts/fixtures/licence-provenance/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Lusoris"
+SPDX-License-Identifier = "EUPL-1.2"

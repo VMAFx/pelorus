@@ -144,6 +144,25 @@ under the EUPL-1.2 unless it joins the FFmpeg tree. Every commit carries a
 Developer Certificate of Origin sign-off; there is no contributor licence
 agreement ([CONTRIBUTING.md](../CONTRIBUTING.md#license)).
 
+## AI tools and copyright
+
+An AI coding tool, model, or assistant is never named as a copyright holder.
+Neither
+`SPDX-FileCopyrightText`, `Copyright` notices, `REUSE.toml`, nor this document
+may name an AI tool or model as a copyright holder. Copyright in contributions
+is held by the human author or Lusoris.
+
+Project and fleet rules prohibit AI co-author trailers and "generated with"
+footers in commit messages, pull request descriptions, and file headers. A
+`Co-authored-by:` trailer in git history is an attribution remark, not a
+copyright statement.
+
+A file header must agree with its `REUSE.toml` annotation; an `override`
+annotation may add co-holders, as it does for the nine Vulkan filter host files.
+The rule, its header invariants, and its verification via Praetor's licence
+provenance gate (cordanaLLM/praetor#907) are specified in
+[ADR-0195](adr/0195-ai-tool-not-copyright-holder.md).
+
 ## Sources
 
 Fetched or read on 2026-10-08:
