@@ -1,1 +1,0 @@
-- Thirteen decision records whose work is merged and released in the `v0.4.0` candidates are now Accepted: ADR-0173 and ADR-0176 to ADR-0187. `docs/development/tester-image.md` records the verified end-to-end tester image publish for `v0.4.0-rc.3` and adds the SBOM attestation check to "Verify an image".

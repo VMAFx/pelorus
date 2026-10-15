@@ -1,1 +1,0 @@
-- Every registered filter and the `pelorus_fgs` bitstream filter now carries an evidence stance in the README and its component page; all are `experimental` until a pinned-public-corpus result links its evidence, and a source-derived documentation check prevents missing or unsupported labels. ([ADR-0193](docs/adr/0193-filter-stance-labels.md))

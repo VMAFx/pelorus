@@ -1,1 +1,0 @@
-- CI scans the full history of every branch and tag for credentials: the required `docs` job installs gitleaks 8.30.1 pinned by sha256, runs `scripts/check-gitleaks.sh --self-test` (a secret planted on a remote-tracking side branch must fail), then scans every ref. Exceptions are fingerprint lines in `.gitleaksignore` only (ADR-0190).
