@@ -241,12 +241,20 @@ endif
 
 # The build-config self-test drives throwaway Git repositories. Started from a
 # Git hook it inherits GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE, and its fixtures then
-# rewrote the developer's own .git/config and refs. Prove the self-test leaves an
-# invoking repository untouched.
+# rewrote the developer's own .git/config and refs. Prove each self-test that
+# builds fixture repositories leaves an invoking repository untouched.
 if build_machine.system() != 'windows'
   test('build-config-selftest-isolation',
        python_prog,
        args: [meson.project_source_root() / 'scripts' / 'test-selftest-git-isolation.py'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
+  test('tag-release-selftest-isolation',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-selftest-git-isolation.py',
+              'bash', meson.project_source_root() / 'scripts' / 'release' / 'tag-release.sh',
+              '--self-test'],
        workdir: meson.project_source_root(),
        timeout: 600,
        suite: 'fast')

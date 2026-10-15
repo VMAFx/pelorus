@@ -30,10 +30,10 @@ creates the GitHub release with five assets: `pelorus-ffmpeg-patches-vX.Y.Z.tar.
    `93bef12`; the tag build fails if it is missing or empty.
 4. **Commit** the version bump (`chore(release): vX.Y.Z`), open a PR, merge to
    `master`.
-5. **Tag + push**:
+5. **Tag + push** (signed tag via pre-tag guard):
 
    ```sh
-   git tag vX.Y.Z && git push origin vX.Y.Z
+   bash scripts/release/tag-release.sh vX.Y.Z && git push origin vX.Y.Z
    ```
 
 6. Watch `gh run watch` for the release run; check `gh release view vX.Y.Z` lists
@@ -51,7 +51,8 @@ From 0.4.0 every minor goes through `vX.Y.Z-rc.N` first; the full procedure is
 - Changelog section `## [X.Y.Z-rc.N]`; the final `## [X.Y.Z]` lists the whole release.
 - Before tagging, dispatch `Tester publish` from the default branch at the
   release commit and wait for it to go green (the candidate gate reads that run).
-- The tag is refused when its shape is wrong, when `rc.(N-1)` does not exist, or
+- The pre-tag guard (`bash scripts/release/tag-release.sh vX.Y.Z-rc.N`)
+  refuses the tag when its shape is wrong, when `rc.(N-1)` does not exist, or
   when a leg of `scripts/release/candidate-legs.json` is red. The release is a
   prerelease and never `latest`; check `gh release view vX.Y.Z-rc.N --json isPrerelease`.
 
