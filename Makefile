@@ -51,6 +51,8 @@ docs-check:
 	python3 -I scripts/check-doc-recipes.py
 	python3 -I scripts/check-filter-stance.py --self-test
 	python3 -I scripts/check-filter-stance.py
+	python3 -I scripts/check-filter-knob-contracts.py --self-test
+	python3 -I scripts/check-filter-knob-contracts.py
 	python3 -I tools/tester/pelorus_tester_report.py --self-test
 	python3 -I scripts/hardware-reports/check-reports.py --self-test
 	python3 -I scripts/hardware-reports/check-reports.py

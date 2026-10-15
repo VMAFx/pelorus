@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "stability": "pre-1.0",
+  "filter": "pelorus_fgs",
+  "kind": "bsf",
+  "source": "ffmpeg-patches/files/h265_pelorus_fgs_bsf.c",
+  "options": [
+    {
+      "name": "model_id",
+      "type": "int",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "H.274 film_grain_model_id (0=frequency filtering, 1=auto-regression)"
+    },
+    {
+      "name": "blending_mode",
+      "type": "int",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "H.274 blending_mode_id (0=additive, 1=multiplicative)"
+    },
+    {
+      "name": "log2_scale",
+      "type": "int",
+      "min": 0,
+      "max": 15,
+      "default": 2,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "H.274 log2_scale_factor; each step halves the grain sigma (RDD 5: 2..7)"
+    },
+    {
+      "name": "components",
+      "type": "flags",
+      "min": 0,
+      "max": 7,
+      "default": 1,
+      "unit": "components",
+      "constants": [
+        {
+          "name": "y",
+          "value": 1,
+          "help": "luma"
+        },
+        {
+          "name": "cb",
+          "value": 2,
+          "help": "chroma Cb"
+        },
+        {
+          "name": "cr",
+          "value": 4,
+          "help": "chroma Cr"
+        }
+      ],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "colour components that carry a grain model (bitmask: 1=Y, 2=Cb, 4=Cr)"
+    },
+    {
+      "name": "intensity_low",
+      "type": "int",
+      "min": 0,
+      "max": 255,
+      "default": 0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "lower bound of the luma intensity interval the model covers"
+    },
+    {
+      "name": "intensity_high",
+      "type": "int",
+      "min": 0,
+      "max": 255,
+      "default": 255,
+      "unit": null,
+      "constants": [],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "upper bound of the luma intensity interval the model covers"
+    },
+    {
+      "name": "intensity_low_c",
+      "type": "int",
+      "min": 0,
+      "max": 255,
+      "default": 0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "lower bound of the Cb/Cr intensity interval the chroma model covers"
+    },
+    {
+      "name": "intensity_high_c",
+      "type": "int",
+      "min": 0,
+      "max": 255,
+      "default": 255,
+      "unit": null,
+      "constants": [],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "upper bound of the Cb/Cr intensity interval the chroma model covers"
+    },
+    {
+      "name": "scale_y",
+      "type": "int",
+      "min": 0,
+      "max": 255,
+      "default": 16,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "luma grain sigma (comp_model_value[Y][0][0]); 0..127 for model_id=1 at 8-bit"
+    },
+    {
+      "name": "scale_c",
+      "type": "int",
+      "min": 0,
+      "max": 255,
+      "default": 8,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "chroma grain sigma (comp_model_value[Cb/Cr][0][0]) when cb/cr selected"
+    },
+    {
+      "name": "cutoff_h",
+      "type": "int",
+      "min": 2,
+      "max": 14,
+      "default": 8,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "model 0 horizontal high cutoff frequency (comp_model_value[c][0][1])"
+    },
+    {
+      "name": "cutoff_v",
+      "type": "int",
+      "min": 2,
+      "max": 14,
+      "default": 8,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "model 0 vertical high cutoff frequency (comp_model_value[c][0][2])"
+    },
+    {
+      "name": "persistence",
+      "type": "bool",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": null,
+      "constants": [],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "film_grain_characteristics_persistence_flag (apply until cancelled)"
+    },
+    {
+      "name": "skip_existing",
+      "type": "bool",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": null,
+      "constants": [],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "do not insert if the access unit already carries an FGC SEI"
+    }
+  ]
+}

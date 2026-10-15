@@ -135,7 +135,7 @@ published under version 1, so the version was bumped instead of keeping the
 fields optional with defaults. A later change that removes a field or changes
 its meaning bumps the version again; an added field stays in the same version
 only when it is optional with a default. Tool 0.4.5 adds the optional leg field
-`rate_control` (`cbr_extbrc`, `cbr_hw`) under that rule; tools 0.4.6 to 0.4.9
+`rate_control` (`cbr_extbrc`, `cbr_hw`) under that rule; tools 0.4.6 to 0.4.10
 change no field; a leg without it is
 the stage's own leg.
 
@@ -144,8 +144,8 @@ the stage's own leg.
 | # | Stage | Pass rule | Not run / no device |
 | --- | --- | --- | --- |
 | 1 | `probe` | `vulkaninfo --summary` exits 0 | no hardware device: `no_device` for every stage marked "GPU" below |
-| 2 | `libpelorus_suite` | not part of this kit version | `not_run` |
-| 3 | `registration` | not part of this kit version | `not_run` |
+| 2 | `libpelorus_suite` | fast test suite (`meson test --suite=fast` or installed test binaries) passes | fast suite artefact absent: `not_run` |
+| 3 | `registration` | all Pelorus filters and bitstream filters derived from `ffmpeg-patches/files` are registered in kit FFmpeg (`-filters`, `-bsfs`) | no `ffmpeg`: `not_run` |
 | 4 | `format_matrix` (GPU) | [`vulkan-format-matrix.sh`](../../ffmpeg-patches/test/vulkan-format-matrix.sh) exits 0 with the validation layer on; every Vulkan diagnostic is on the [allow-list](#validation-gate) | layer absent: `not_run`; script exit 77: `no_device`; no `ffmpeg`: `not_run` |
 | 5 | `steering_smoke` (GPU) | for each usable encoder, 8- and 16-frame encodes both decode to 8 and 16 frames, and the steered bitstream differs from the unsteered one at both lengths; for each QSV encoder, the [bitrate-control legs](#qsv-bitrate-control-legs) decode to every frame within 15 % of the target bitrate or are a named `not_run` | encoder not built, not usable on this host, or without `-pelorus_roi`: a `not_run` leg with the reason; none usable: `not_run` (a bitrate-control leg cannot pass the stage alone) |
 | 6 | `sidedata_roundtrip` (GPU) | `pelorus_analyze_vulkan` + `pelorus_deband_vulkan`, then each usable carrier with `-udu_sei 1` (`hevc_nvenc`, `h264_nvenc`, `hevc_qsv`, `h264_qsv`, `hevc_vulkan`, `h264_vulkan`): every coded picture carries a well-formed `PelorusSideData` blob with the banding and variance sections and distinct `frame_pts` echoes, the decoder returns the blob as frame side data on every picture, and in both places each blob equals the one the analyze filter attached, byte for byte (or, on `hevc_nvenc`, `hevc_qsv` and `h264_qsv` only, its [maps-stripped form](#stage-6-side-data-round-trip)); `hevc_nvenc` and `h264_nvenc` carry it as the [zero-free carrier](#stage-6-side-data-round-trip), every other carrier as the plain blob; five cases per carrier | carrier not built, or its encode fails and the same encode without the side data fails too: a `not_run` leg with the encoder's error; none usable: `not_run`; AV1 has no carrier. A carrier whose encode fails only with the side data (baseline encodes) is a `fail` leg, never `not_run` ([ADR-0173](../adr/0173-tester-programme.md)) |

@@ -1,0 +1,236 @@
+{
+  "schema_version": 1,
+  "stability": "pre-1.0",
+  "filter": "pelorus_denoise_vulkan",
+  "kind": "vf",
+  "source": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c",
+  "options": [
+    {
+      "name": "sigma",
+      "type": "double",
+      "min": 0.0,
+      "max": 0.5,
+      "default": 0.03,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "luma spatial range sigma (edge sensitivity, normalized)"
+    },
+    {
+      "name": "sigmac",
+      "type": "double",
+      "min": 0.0,
+      "max": 0.5,
+      "default": 0.04,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "chroma spatial range sigma (normalized)"
+    },
+    {
+      "name": "sigmat",
+      "type": "double",
+      "min": 0.0,
+      "max": 0.5,
+      "default": 0.05,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "temporal gate bandwidth (normalized)"
+    },
+    {
+      "name": "strength",
+      "type": "double",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.3,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "luma dry/wet mix (0..1)"
+    },
+    {
+      "name": "strengthc",
+      "type": "double",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.2,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "chroma dry/wet mix (0..1)"
+    },
+    {
+      "name": "blend",
+      "type": "double",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.6,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "spatial<->temporal blend (0=spatial, 1=temporal)"
+    },
+    {
+      "name": "tdecay",
+      "type": "double",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.8,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "per-frame temporal trust falloff"
+    },
+    {
+      "name": "tcut",
+      "type": "double",
+      "min": 0.0,
+      "max": 0.5,
+      "default": 0.1,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "per-pixel scene-cut/fast-motion clamp (normalized)"
+    },
+    {
+      "name": "patch",
+      "type": "int",
+      "min": 0,
+      "max": 3,
+      "default": 1,
+      "unit": null,
+      "constants": [],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "spatial window radius (0 = temporal-only)"
+    },
+    {
+      "name": "prev",
+      "type": "int",
+      "min": 0,
+      "max": 4,
+      "default": 3,
+      "unit": null,
+      "constants": [],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "causal temporal depth (previous frames held in VRAM)"
+    },
+    {
+      "name": "protect",
+      "type": "bool",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "damp strength on textured / edge regions"
+    },
+    {
+      "name": "planes",
+      "type": "int",
+      "min": 0,
+      "max": 15,
+      "default": 15,
+      "unit": null,
+      "constants": [],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "planes to process (bitmask)"
+    },
+    {
+      "name": "meta",
+      "type": "bool",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "reporting",
+      "tunable": false,
+      "help": "attach Pelorus interop side data"
+    },
+    {
+      "name": "mc",
+      "type": "bool",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "motion-compensated temporal taps (consume an upstream pelorus_mc PEL_SEC_MOTION field; requires mc before denoise)"
+    },
+    {
+      "name": "tile",
+      "type": "bool",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "cache the spatial search window in shared memory (large win on bandwidth-limited GPUs, ~neutral on cache-rich ones; output is bit-identical)"
+    },
+    {
+      "name": "lookahead",
+      "type": "int",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "forward-lookahead temporal depth (0 = causal, the default, bit-identical; 1 = bidirectional: delay output 1 frame so the temporal walk also samples the NEXT frame, tcut-gated \u2014 recovers the leading frame of a held animation drawing, ADR-0137; opt-in for cadence/animation content)"
+    },
+    {
+      "name": "tiling",
+      "type": "const-enum",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": "pel_tiling",
+      "constants": [
+        {
+          "name": "optimal",
+          "value": 0,
+          "help": "FFmpeg default: reuse the input pool or allocate OPTIMAL tiling"
+        },
+        {
+          "name": "drm",
+          "value": 1,
+          "help": "DRM format modifier tiling with DMA-BUF export (hwmap to VAAPI, QSV)"
+        }
+      ],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "output pool tiling: optimal (default, FFmpeg's pool) or drm (DRM-format-modifier pool that maps to VAAPI/QSV)"
+    },
+    {
+      "name": "drm_modifiers",
+      "type": "string",
+      "min": null,
+      "max": null,
+      "default": null,
+      "unit": null,
+      "constants": [],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "with tiling=drm: DRM format modifiers the consumer imports, 0x hex separated by '|'; empty (default) = any usable modifier; 0x0 = LINEAR"
+    }
+  ]
+}
