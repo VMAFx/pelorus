@@ -18,10 +18,12 @@ scope), VMAFx ADR-1113 (the mirror) and VMAFx ADR-1276 (released-commit pins).
    `PELORUS_ABI_MINOR` and add the ABI entry (see "ABI changelog").
 4. Keep the file renderable by the VMAFx sync script: a source opens with a
    `/** ... */` licence comment holding exactly one SPDX licence line, naming
-   `EUPL-1.2`, then a blank line, and has at most
-   one `#include "pelorus/..."`. The fixture holds that one SPDX line before its
-   first `#include "pelorus/..."`. `make docs-check` runs
-   `scripts/check-mirror-contract.py`, which enforces both shapes.
+   `EUPL-1.2`, and exactly one `SPDX-FileCopyrightText: 2026 Lusoris` line
+   (rule 3), then a blank line, and has at most
+   one `#include "pelorus/..."`. The fixture holds that one SPDX licence line and
+   that one `SPDX-FileCopyrightText` line before its first `#include "pelorus/..."`.
+   `make docs-check` runs `scripts/check-mirror-contract.py`, which enforces
+   the layout and copyright rules.
 
 ## Mirrored files
 

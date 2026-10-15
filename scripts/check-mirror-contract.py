@@ -11,7 +11,10 @@ Rules:
      opens with "/**", its first " */" line is followed by a blank line, that
      comment holds exactly one SPDX line naming EUPL-1.2, and the body has at
      most one intra-Pelorus include; the fixture holds that one SPDX line
-     before its first intra-Pelorus include.
+     before its first intra-Pelorus include;
+  3. every listed file holds exactly one line
+     " * SPDX-FileCopyrightText: 2026 Lusoris" (sources: inside the leading
+     licence comment; fixture: before its first intra-Pelorus include).
 
     python3 -I scripts/check-mirror-contract.py [--list F] [--page F] [--root D]
     python3 -I scripts/check-mirror-contract.py --self-test
@@ -25,9 +28,12 @@ LIST = Path("libpelorus/mirror-paths.txt")
 PAGE = Path("docs/api/mirror-contract.md")
 FIXTURE = "libpelorus/test/interop_test.c"
 LICENSE = "EUPL-1.2"
+HOLDER = "2026 Lusoris"
 # Split so REUSE does not take the joined tag for the licence of this script.
 TAG = "SPDX-" + "License-Identifier:"
+COPYRIGHT_TAG = "SPDX-" + "FileCopyrightText:"
 SPDX_LINE = " * %s %s" % (TAG, LICENSE)
+COPYRIGHT_LINE = " * %s %s" % (COPYRIGHT_TAG, HOLDER)
 INCLUDE = '#include "pelorus/'
 
 
@@ -49,6 +55,8 @@ def source_layout(lines):
         return "licence comment is not followed by a blank line"
     if [x for x in lines[:end] if TAG in x] != [SPDX_LINE]:
         return "licence comment does not hold exactly one %r" % SPDX_LINE
+    if [x for x in lines[:end] if COPYRIGHT_TAG in x] != [COPYRIGHT_LINE]:
+        return "licence comment does not hold exactly one %r" % COPYRIGHT_LINE
     if sum(x.startswith(INCLUDE) for x in lines[end + 2:]) > 1:
         return "more than one intra-Pelorus include to rewrite"
     return None
@@ -61,6 +69,8 @@ def fixture_layout(lines):
         return "no intra-Pelorus include"
     if [x for x in lines[:first] if TAG in x] != [SPDX_LINE]:
         return "prefix does not hold exactly one %r" % SPDX_LINE
+    if [x for x in lines[:first] if COPYRIGHT_TAG in x] != [COPYRIGHT_LINE]:
+        return "prefix does not hold exactly one %r" % COPYRIGHT_LINE
     return None
 
 
@@ -93,13 +103,16 @@ def run(list_path, page_path, root=Path(".")):
     return 1 if errors else 0
 
 
-GOOD_SOURCE = "/**\n *\n%s\n */\n\n%sx.h\"\nint x;\n" % (SPDX_LINE, INCLUDE)
-GOOD_FIXTURE = "/**\n%s\n */\n\n%sa.h\"\n%sb.h\"\n" % (SPDX_LINE, INCLUDE, INCLUDE)
+GOOD_SOURCE = "/**\n *\n%s\n%s\n */\n\n%sx.h\"\nint x;\n" % (COPYRIGHT_LINE, SPDX_LINE, INCLUDE)
+GOOD_FIXTURE = "/**\n%s\n%s\n */\n\n%sa.h\"\n%sb.h\"\n" % (COPYRIGHT_LINE, SPDX_LINE, INCLUDE, INCLUDE)
 SOURCE_DEFECTS = [
     ("no blank after header", GOOD_SOURCE.replace(" */\n\n", " */\nint y;\n")),
     ("other licence", GOOD_SOURCE.replace(LICENSE, "MIT")),
     ("two SPDX lines", GOOD_SOURCE.replace(SPDX_LINE, SPDX_LINE + "\n" + SPDX_LINE)),
     ("no SPDX line", GOOD_SOURCE.replace(SPDX_LINE + "\n", "")),
+    ("no copyright line", GOOD_SOURCE.replace(COPYRIGHT_LINE + "\n", "")),
+    ("two copyright lines", GOOD_SOURCE.replace(COPYRIGHT_LINE, COPYRIGHT_LINE + "\n" + COPYRIGHT_LINE)),
+    ("wrong copyright holder", GOOD_SOURCE.replace(HOLDER, "2025 Other")),
     ("17-line header", "/*\n" + " * x\n" * 15 + " */\n\n" + INCLUDE + 'x.h"\n'),
     ("second include", GOOD_SOURCE + INCLUDE + 'y.h"\n'),
 ]
@@ -127,7 +140,10 @@ def self_test():
         ("removed name", GOOD_SOURCE, GOOD_FIXTURE, page.replace("src/a.c", "a"), 1),
         ("empty page", GOOD_SOURCE, GOOD_FIXTURE, "", 1),
         ("fixture other licence", GOOD_SOURCE, GOOD_FIXTURE.replace(LICENSE, "MIT"), page, 1),
-        ("fixture no include", GOOD_SOURCE, "/**\n%s\n */\n" % SPDX_LINE, page, 1),
+        ("fixture no copyright", GOOD_SOURCE, GOOD_FIXTURE.replace(COPYRIGHT_LINE + "\n", ""), page, 1),
+        ("fixture two copyright lines", GOOD_SOURCE, GOOD_FIXTURE.replace(COPYRIGHT_LINE, COPYRIGHT_LINE + "\n" + COPYRIGHT_LINE), page, 1),
+        ("fixture wrong copyright", GOOD_SOURCE, GOOD_FIXTURE.replace(HOLDER, "2025 Other"), page, 1),
+        ("fixture no include", GOOD_SOURCE, "/**\n%s\n%s\n */\n" % (COPYRIGHT_LINE, SPDX_LINE), page, 1),
     ]
     cases += [(lab, src, GOOD_FIXTURE, page, 1) for lab, src in SOURCE_DEFECTS]
     failed = 0
