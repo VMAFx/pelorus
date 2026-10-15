@@ -9,12 +9,14 @@ validation rule are on the API page,
 operational questions: where the field names live, how the VMAFx name check
 runs, and what a caller outside FFmpeg fills in.
 
-Four software-encoder adapters ship: x265 CSV, SVT-AV1 stat files, FFmpeg
-`AV_PKT_DATA_QUALITY_STATS` packet side data, and libaom in-process C values.
-All four read caller-provided values and write caller-provided frame records; the library performs no file
-I/O or allocation in its record loops. One transient C numeric-locale handle
-per call makes text adapters process-locale independent. Callers supply the
-coded bit depth because none of the formats record it.
+Five adapters ship: x265 CSV, SVT-AV1 stat files and VVenC verbose log
+buffers read text, FFmpeg `AV_PKT_DATA_QUALITY_STATS` packet side data
+reads one binary packet, and the libaom adapter reads in-process C values.
+All read caller-provided values and write caller-provided frame records; the
+library performs no file I/O or allocation in its record loops. One transient
+C numeric-locale handle per call makes text adapters process-locale
+independent. Callers supply the coded bit depth because none of these formats
+records it.
 
 ## Adapter coverage
 
@@ -24,40 +26,49 @@ means the bit stays clear and its value stays zero: not reported, not a
 reported zero. These rows are the exact masks returned by
 `pel_tlm_adapter_caps()`.
 
-| Field | x265 CSV level 1 | SVT-AV1 stat file | FFmpeg quality stats | libaom C values |
-|---|---:|---:|---:| ---: |
-| `display_index` | yes | yes | - | caller |
-| `decode_index` | yes | - | - | caller |
-| `frame_bytes` | yes | yes | - | yes |
-| `header_bits` | - | - | - | - |
-| `residual_bits` | - | - | - | - |
-| `avg_qp` | yes | yes | yes | yes |
-| `avg_qp_norm` | yes | yes | yes | yes |
-| `psnr_y` | - | yes | yes | yes |
-| `psnr_u` | - | yes | yes | yes |
-| `psnr_v` | - | yes | yes | yes |
-| `ssim_y` | - | yes | - | - |
-| `intra_fraction` | - | - | - | - |
-| `inter_fraction` | - | - | - | - |
-| `skip_fraction` | - | - | - | - |
-| `picture_type` | yes | - | yes | yes |
-| `key_frame` | yes | - | - | yes |
-| `reference` | yes | - | - | - |
-| `shown` | yes | - | - | - |
-| `scene_cut` | yes | - | - | - |
-| `qp_map` | - | - | - | - |
-| `bits_map` | - | - | - | - |
-| `mode_map` | - | - | - | - |
-| `coded_bit_depth` | caller | caller | caller | caller |
+| Field | x265 CSV level 1 | SVT-AV1 stat file | VVenC log (-v 4) | FFmpeg quality stats | libaom C values |
+|---|---:|---:|---:|---:|---:|
+| `display_index` | yes | yes | yes | - | caller |
+| `decode_index` | yes | - | yes | - | caller |
+| `frame_bytes` | yes | yes | yes | - | yes |
+| `header_bits` | - | - | - | - | - |
+| `residual_bits` | - | - | - | - | - |
+| `avg_qp` | yes | yes | yes | yes | yes |
+| `avg_qp_norm` | yes | yes | yes | yes | yes |
+| `psnr_y` | - | yes | yes | yes | yes |
+| `psnr_u` | - | yes | yes | yes | yes |
+| `psnr_v` | - | yes | yes | yes | yes |
+| `ssim_y` | - | yes | - | - | - |
+| `intra_fraction` | - | - | - | - | - |
+| `inter_fraction` | - | - | - | - | - |
+| `skip_fraction` | - | - | - | - | - |
+| `picture_type` | yes | - | yes | yes | yes |
+| `key_frame` | yes | - | yes | - | yes |
+| `reference` | yes | - | - | - | - |
+| `shown` | yes | - | yes | - | - |
+| `scene_cut` | yes | - | - | - | - |
+| `qp_map` | - | - | - | - | - |
+| `bits_map` | - | - | - | - | - |
+| `mode_map` | - | - | - | - | - |
+| `coded_bit_depth` | caller | caller | caller | caller | caller |
 
 x265's `POC`, `Encode Order`, `Bits`, `QP`, `Type` and `Scenecut` columns
 supply its fields. SVT-AV1's `Picture Number`, `Average QP`, per-plane PSNR,
-luma SSIM and byte count supply its fields. FFmpeg's `quality`, `picture_type`
-and `error_count` SSE planes supply its fields. libaom uses caller-associated frame
-flags, byte size, last quantizer and optional per-plane PSNR; its QP and metric
-bits are optional per call. Reference and shown status are not inferred; see
-the [libaom API contract](../api/encoder-telemetry.md#libaom-in-process-adapter). A malformed, truncated or
-field-shifted row returns an error before any output record is written.
+luma SSIM and byte count supply its fields. VVenC's `POC` lines supply
+`display_index`, `decode_index` (emission order), `frame_bytes`, `avg_qp`,
+per-plane PSNR, slice picture type and key-frame flag. FFmpeg's `quality`,
+`picture_type` and `error_count` SSE planes supply its fields. VVenC's `reference` flag is
+not reported: in VVenC v1.14.0 `EncGOP.cpp:2932`, lowercase slice characters
+are emitted only when
+`!pic->isReferenced && pic->refCounter == 0 && !m_maxParallelFrames`. When
+parallel frame encoding is enabled (the default multi-threaded mode),
+non-reference B-frames remain uppercase, so uppercase does not reliably signal a
+reference frame. libaom uses caller-associated frame flags, byte size, last
+quantizer and optional per-plane PSNR; its QP and metric bits are optional per
+call. Reference and shown status are not inferred; see the
+[libaom API contract](../api/encoder-telemetry.md#libaom-in-process-adapter).
+A malformed, truncated or field-shifted row or packet returns an error before
+any output record is written.
 
 The x265 `Bits` value must be divisible by eight. In x265 4.3 commit
 `e9b88125dc21393b3fd8d68e98083bdfb89778a8`, the frame encoder derives the
@@ -68,6 +79,11 @@ and the CSV writer emits that field as
 [`Bits`](https://github.com/Multicorewareinc/x265/blob/e9b88125dc21393b3fd8d68e98083bdfb89778a8/source/encoder/api.cpp#L1441-L1448).
 A non-multiple therefore cannot be an x265 4.3 frame byte count and is rejected
 instead of rounded.
+
+The VVenC `bits` value must likewise be divisible by eight. In VVenC v1.14.0
+`EncGOP.cpp:2884`, the GOP encoder derives `const uint32_t uibits = numRBSPBytes * 8;`
+before logging. Any non-multiple of eight cannot be a valid VVenC frame bit count
+and returns `PEL_ERR_INVALID` instead of being rounded.
 
 ## Where the field names live
 

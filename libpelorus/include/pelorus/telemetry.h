@@ -94,10 +94,11 @@ pel_result pel_enc_telemetry_pack(const PelorusSideData *meta, const PelorusEncT
  * can fill. A record's present_mask must be a subset of it.
  *
  * PEL_TLM_ADAPTER_EXTERNAL reports every bit this ABI minor defines. X265_CSV
- * with HEVC and SVTAV1_STAT_FILE / LIBAOM_STATS with AV1 report their adapter
- * fields. FFMPEG_QUALITY_STATS reports its codec-specific fields. Other
- * adapter/codec pairs report PEL_ERR_UNSUPPORTED with *out_mask = 0. Returns
- * PEL_ERR_INVALID for a NULL out_mask or an adapter or codec out of range.
+ * with HEVC, SVTAV1_STAT_FILE / LIBAOM_STATS with AV1 and VVENC_LOG with VVC
+ * report their adapter fields. FFMPEG_QUALITY_STATS reports its
+ * codec-specific fields. Other adapter/codec pairs report PEL_ERR_UNSUPPORTED
+ * with *out_mask = 0. Returns PEL_ERR_INVALID for a NULL out_mask or an
+ * adapter or codec out of range.
  */
 pel_result pel_tlm_adapter_caps(uint8_t adapter, uint8_t codec, uint64_t *out_mask);
 
@@ -225,6 +226,40 @@ pel_result pel_tlm_parse_ffmpeg_quality_stats(const uint8_t *buf, size_t len, ui
                                               uint8_t qp_scale, uint8_t coded_bit_depth,
                                               const uint64_t plane_samples[3],
                                               PelorusEncTelemetryInput *out);
+
+/*
+ * Parse a VVenC (Fraunhofer HHI VVC) verbose log buffer (`-v 4` / `notice`,
+ * `-v 5` / `verbose`, `-v 6` / `details`) into caller-owned frame records.
+ * Only per-frame `POC` lines are parsed; all startup configuration lines,
+ * notices, and summary lines are ignored. Lines starting with `TId:` or
+ * containing `-SLICE` without a `POC` prefix are treated as malformed/shifted
+ * frame lines. The bit count must be an exact multiple of 8 as emitted by
+ * EncGOP.cpp (numRBSPBytes * 8).
+ *
+ * Argument, allocation, and buffer limits match pel_tlm_parse_x265_csv():
+ * input text bounded at 1,048,576 bytes, each line at 4,096 bytes.
+ *
+ * Return causes:
+ * - PEL_OK: all frame records successfully parsed, or input contains zero frame
+ *   records (*out_count is set to the record count, 0 if empty or no POC lines).
+ * - PEL_ERR_INVALID: NULL text, out_frames, or out_count; cap == 0; malformed
+ *   POC prefix, non-numeric POC, unknown slice character, inverted tokens, or
+ *   bit count not divisible by 8.
+ * - PEL_ERR_TRUNCATED: a POC frame line is truncated before bits, within the
+ *   slice parentheses, or inside the PSNR brackets.
+ * - PEL_ERR_RANGE: coded_bit_depth other than 8, 10, or 12; input text exceeds
+ *   1,048,576 bytes; a line exceeds 4,096 bytes; numeric values out of valid
+ *   domain (QP outside [-6 * (depth - 8), 63], temporal layer > 6); or cap is
+ *   smaller than the parsed record count (in which case *out_count holds the
+ *   required record capacity).
+ * - PEL_ERR_NOMEM: the transient C numeric-locale handle could not be created.
+ *
+ * No output record is written on error. *out_count is zero on error except for
+ * insufficient capacity, where it receives the required record count.
+ */
+pel_result pel_tlm_parse_vvenc_log(const char *text, size_t len, uint8_t coded_bit_depth,
+                                   PelorusEncTelemetryInput *out_frames, size_t cap,
+                                   size_t *out_count);
 
 #ifdef __cplusplus
 }
