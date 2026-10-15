@@ -1,0 +1,259 @@
+{
+  "schema_version": 1,
+  "filter": "pelorus_deband_vulkan",
+  "kind": "vf",
+  "source": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c",
+  "options": [
+    {
+      "name": "range",
+      "type": "int",
+      "min": 1,
+      "max": 31,
+      "default": 15,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "reference-sampling radius in pixels"
+    },
+    {
+      "name": "thry",
+      "type": "double",
+      "min": 0.0,
+      "max": 0.25,
+      "default": 0.012,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "luma threshold (normalized)"
+    },
+    {
+      "name": "thrc",
+      "type": "double",
+      "min": 0.0,
+      "max": 0.25,
+      "default": 0.012,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "chroma threshold (normalized)"
+    },
+    {
+      "name": "grainy",
+      "type": "double",
+      "min": 0.0,
+      "max": 0.4,
+      "default": 0.006,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "luma grain amplitude (normalized)"
+    },
+    {
+      "name": "grainc",
+      "type": "double",
+      "min": 0.0,
+      "max": 0.4,
+      "default": 0.0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "chroma grain amplitude (normalized)"
+    },
+    {
+      "name": "softness",
+      "type": "float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "soft-blend transition width (0=hard switch)"
+    },
+    {
+      "name": "detail",
+      "type": "float",
+      "min": 0.0,
+      "max": 0.25,
+      "default": 0.06,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "detail-mask activity threshold (normalized)"
+    },
+    {
+      "name": "sample",
+      "type": "const-enum",
+      "min": 1,
+      "max": 4,
+      "default": 2,
+      "unit": "sample",
+      "constants": [
+        {
+          "name": "column",
+          "value": 1,
+          "help": "2 vertical taps"
+        },
+        {
+          "name": "square",
+          "value": 2,
+          "help": "4 rotated taps"
+        },
+        {
+          "name": "row",
+          "value": 3,
+          "help": "2 horizontal taps"
+        },
+        {
+          "name": "square_rot",
+          "value": 4,
+          "help": "4 taps + per-frame rotation"
+        }
+      ],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "reference-tap topology"
+    },
+    {
+      "name": "blur",
+      "type": "const-enum",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": "blur",
+      "constants": [
+        {
+          "name": "average",
+          "value": 0,
+          "help": "|center-avg| < thr"
+        },
+        {
+          "name": "allrefs",
+          "value": 1,
+          "help": "every tap within thr"
+        }
+      ],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "flat-test mode"
+    },
+    {
+      "name": "dither",
+      "type": "const-enum",
+      "min": 0,
+      "max": 2,
+      "default": 2,
+      "unit": "dither",
+      "constants": [
+        {
+          "name": "none",
+          "value": 0,
+          "help": "no grain"
+        },
+        {
+          "name": "bayer8",
+          "value": 1,
+          "help": "ordered 8x8 Bayer"
+        },
+        {
+          "name": "bluenoise",
+          "value": 2,
+          "help": "hashed TPDF"
+        }
+      ],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "grain / dither mode"
+    },
+    {
+      "name": "dynamic",
+      "type": "bool",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "re-seed grain each frame"
+    },
+    {
+      "name": "protect",
+      "type": "bool",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "gate debanding off textured regions"
+    },
+    {
+      "name": "planes",
+      "type": "int",
+      "min": 0,
+      "max": 15,
+      "default": 15,
+      "unit": null,
+      "constants": [],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "planes to process (bitmask)"
+    },
+    {
+      "name": "meta",
+      "type": "bool",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "reporting",
+      "tunable": false,
+      "help": "attach Pelorus interop side data"
+    },
+    {
+      "name": "tiling",
+      "type": "const-enum",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": "pel_tiling",
+      "constants": [
+        {
+          "name": "optimal",
+          "value": 0,
+          "help": "FFmpeg default: reuse the input pool or allocate OPTIMAL tiling"
+        },
+        {
+          "name": "drm",
+          "value": 1,
+          "help": "DRM format modifier tiling with DMA-BUF export (hwmap to VAAPI, QSV)"
+        }
+      ],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "output pool tiling: optimal (default, FFmpeg's pool) or drm (DRM-format-modifier pool that maps to VAAPI/QSV)"
+    },
+    {
+      "name": "drm_modifiers",
+      "type": "string",
+      "min": null,
+      "max": null,
+      "default": null,
+      "unit": null,
+      "constants": [],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "with tiling=drm: DRM format modifiers the consumer imports, 0x hex separated by '|'; empty (default) = any usable modifier; 0x0 = LINEAR"
+    }
+  ]
+}

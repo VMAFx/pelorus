@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "filter": "pelorus_borderfix_vulkan",
+  "kind": "vf",
+  "source": "ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c",
+  "options": [
+    {
+      "name": "left",
+      "type": "int",
+      "min": 0,
+      "max": 4096,
+      "default": 0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "dirty band width on the left edge (this plane's px)"
+    },
+    {
+      "name": "right",
+      "type": "int",
+      "min": 0,
+      "max": 4096,
+      "default": 0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "dirty band width on the right edge"
+    },
+    {
+      "name": "top",
+      "type": "int",
+      "min": 0,
+      "max": 4096,
+      "default": 0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "dirty band height on the top edge"
+    },
+    {
+      "name": "bottom",
+      "type": "int",
+      "min": 0,
+      "max": 4096,
+      "default": 0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "dirty band height on the bottom edge"
+    },
+    {
+      "name": "planes",
+      "type": "int",
+      "min": 0,
+      "max": 15,
+      "default": 15,
+      "unit": null,
+      "constants": [],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "planes to process (bitmask; default all)"
+    },
+    {
+      "name": "tiling",
+      "type": "const-enum",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": "pel_tiling",
+      "constants": [
+        {
+          "name": "optimal",
+          "value": 0,
+          "help": "FFmpeg default: reuse the input pool or allocate OPTIMAL tiling"
+        },
+        {
+          "name": "drm",
+          "value": 1,
+          "help": "DRM format modifier tiling with DMA-BUF export (hwmap to VAAPI, QSV)"
+        }
+      ],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "output pool tiling: optimal (default, FFmpeg's pool) or drm (DRM-format-modifier pool that maps to VAAPI/QSV)"
+    },
+    {
+      "name": "drm_modifiers",
+      "type": "string",
+      "min": null,
+      "max": null,
+      "default": null,
+      "unit": null,
+      "constants": [],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "with tiling=drm: DRM format modifiers the consumer imports, 0x hex separated by '|'; empty (default) = any usable modifier; 0x0 = LINEAR"
+    }
+  ]
+}

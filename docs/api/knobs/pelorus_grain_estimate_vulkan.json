@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "filter": "pelorus_grain_estimate_vulkan",
+  "kind": "vf",
+  "source": "ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c",
+  "options": [
+    {
+      "name": "edge",
+      "type": "double",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.06,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "3x3 range above which a pixel is an edge (excluded from grain)"
+    },
+    {
+      "name": "strength",
+      "type": "double",
+      "min": 0.0,
+      "max": 64.0,
+      "default": 2.0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "scales the measured per-band RMS residual to the AV1 [0,255] scaling function (synthesis intensity)"
+    },
+    {
+      "name": "model",
+      "type": "const-enum",
+      "min": 1,
+      "max": 2,
+      "default": 1,
+      "unit": "model",
+      "constants": [
+        {
+          "name": "aom",
+          "value": 1,
+          "help": "AV1 (AOM) film-grain params"
+        },
+        {
+          "name": "h274",
+          "value": 2,
+          "help": "HEVC/VVC H.274 FGC SEI scalars"
+        }
+      ],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "FGS model the estimate targets"
+    },
+    {
+      "name": "native",
+      "type": "bool",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": null,
+      "constants": [],
+      "effect_class": "reporting",
+      "tunable": false,
+      "help": "also attach native AV_FRAME_DATA_FILM_GRAIN_PARAMS (AV1)"
+    }
+  ]
+}
