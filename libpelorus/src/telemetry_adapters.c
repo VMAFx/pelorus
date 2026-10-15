@@ -1233,3 +1233,94 @@ pel_result pel_tlm_parse_ffmpeg_quality_stats(const uint8_t *buf, size_t len, ui
     }
     return rc;
 }
+
+/* libaom v3.15.2 aom/aom_codec.h:288-299 defines the public frame flags.
+ * aom/aom_codec.h:226-230 allocates 0x10000-0x800000 to the encoder;
+ * av1/av1_cx_iface.c:3279 (get_frame_pkt_flags) sets flags = lib_flags << 16.
+ * Validate unknown bits only in 0x0000FFFF; ignore encoder-private bits 16-31. */
+#define TLM_AOM_PUBLIC_MASK 0x0000ffffu
+#define TLM_AOM_KEY 0x1u
+#define TLM_AOM_DROPPABLE 0x2u
+#define TLM_AOM_INTRAONLY 0x10u
+#define TLM_AOM_SWITCH 0x20u
+#define TLM_AOM_ERROR_RESILIENT 0x40u
+#define TLM_AOM_DELAYED_RANDOM_ACCESS_POINT 0x80u
+#define TLM_AOM_FLAGS                                                                              \
+    (TLM_AOM_KEY | TLM_AOM_DROPPABLE | TLM_AOM_INTRAONLY | TLM_AOM_SWITCH |                        \
+     TLM_AOM_ERROR_RESILIENT | TLM_AOM_DELAYED_RANDOM_ACCESS_POINT)
+
+static pel_result libaom_psnr(const PelTlmLibaomFrame *in, PelorusEncTelemetryInput *rec)
+{
+    float planes[3] = {0.0f};
+
+    if (in->has_psnr == 0u) {
+        return PEL_OK;
+    }
+    for (unsigned i = 0u; i < 4u; i++) {
+        const double value = in->psnr[i];
+        if (isnan(value) || value < 0.0) {
+            return PEL_ERR_RANGE;
+        }
+        if (i > 0u) {
+            planes[i - 1u] = value > 100.0 ? 100.0f : (float)value;
+        }
+    }
+    rec->frame.psnr_y = planes[0];
+    rec->frame.psnr_u = planes[1];
+    rec->frame.psnr_v = planes[2];
+    rec->frame.metric_source = PEL_TLM_METRIC_ENCODER;
+    rec->frame.present_mask |= PEL_TLM_F_PSNR_Y | PEL_TLM_F_PSNR_U | PEL_TLM_F_PSNR_V;
+    return PEL_OK;
+}
+
+pel_result pel_tlm_from_libaom(const PelTlmLibaomFrame *in, uint8_t coded_bit_depth,
+                               PelorusEncTelemetryInput *out)
+{
+    PelorusEncTelemetryInput rec;
+    pel_result rc;
+
+    if (in == NULL || out == NULL) {
+        return PEL_ERR_INVALID;
+    }
+    if ((in->frame_flags & TLM_AOM_PUBLIC_MASK & ~TLM_AOM_FLAGS) != 0u || in->has_psnr > 1u) {
+        return PEL_ERR_INVALID;
+    }
+    if (in->frame_bytes > UINT32_MAX || in->quantizer_64 < -1 || in->quantizer_64 > 63) {
+        return PEL_ERR_RANGE;
+    }
+    (void)memset(&rec, 0, sizeof(rec));
+    rec.frame.adapter = PEL_TLM_ADAPTER_LIBAOM_STATS;
+    rec.frame.codec = PEL_TLM_CODEC_AV1;
+    rec.frame.granularity = PEL_TLM_GRAN_FRAME;
+    rec.frame.coded_bit_depth = coded_bit_depth;
+    rec.frame.display_index = in->display_index;
+    rec.frame.decode_index = in->decode_index;
+    rec.frame.frame_bytes = (uint32_t)in->frame_bytes;
+    rec.frame.present_mask = PEL_TLM_F_DISPLAY_INDEX | PEL_TLM_F_DECODE_INDEX |
+                             PEL_TLM_F_FRAME_BYTES | PEL_TLM_F_CODED_BIT_DEPTH |
+                             PEL_TLM_F_PICTURE_TYPE | PEL_TLM_F_KEY_FRAME;
+    /* The ABI defines P as every other AV1 frame (interop.h pel_picture_type),
+     * not a P/B reference-direction claim. No trustworthy reference/shown
+     * status is inferred from this mirror; DROPPABLE is only accepted. */
+    rec.frame.picture_type =
+        (in->frame_flags & (TLM_AOM_KEY | TLM_AOM_INTRAONLY)) != 0u ? PEL_PICTURE_I : PEL_PICTURE_P;
+    rec.frame.frame_flags = (in->frame_flags & TLM_AOM_KEY) != 0u ? PEL_TLM_FRAME_KEY : 0u;
+    if (in->quantizer_64 != -1) {
+        rec.frame.avg_qp = (float)in->quantizer_64;
+        rec.frame.qp_scale = PEL_QP_SCALE_AV1_ENCODER_QP;
+        rec.frame.present_mask |= PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM;
+        rc = pel_qp_normalize(rec.frame.qp_scale, coded_bit_depth, rec.frame.avg_qp,
+                              &rec.frame.avg_qp_norm);
+        if (rc != PEL_OK) {
+            return rc;
+        }
+    }
+    rc = libaom_psnr(in, &rec);
+    if (rc == PEL_OK) {
+        rc = pel_enc_telemetry_validate(&rec);
+    }
+    if (rc == PEL_OK) {
+        *out = rec;
+    }
+    return rc;
+}

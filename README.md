@@ -82,7 +82,7 @@ green · the deband shader compiles.**
 | Module | Purpose | Key dep |
 |---|---|---|
 | `include/pelorus/interop.h` + `src/interop.c` | The Pelorus⇄vmafx side-data ABI (pack/parse, append-only, vendored by vmafx) | — |
-| `include/pelorus/telemetry.h` + `src/telemetry*.c` | FFmpeg-free encoder telemetry records, validation, normalisation, and x265/SVT-AV1/VVenC/FFmpeg adapters | libm |
+| `include/pelorus/telemetry.h` + `src/telemetry*.c` | FFmpeg-free encoder telemetry records, validation, normalisation, and x265/SVT-AV1/VVenC/FFmpeg/libaom adapters | libm |
 | `include/pelorus/deband.h` + `src/deband_params.c` | Smart-deband parameter contract (shared by filter + autotune) | — |
 | `shaders/pelorus_deband.comp` | Standalone reference deband shader (f3kdb) | glslang |
 | `test/interop_test.c` | Shared ABI conformance fixture | — |
@@ -190,7 +190,7 @@ encoder. A documented, retunable composition, not a new meta-filter. See
   H.264-equivalent QP, bits, picture type, PSNR/SSIM, optional maps, a presence
   bit per field) filled through the FFmpeg-free `pelorus/telemetry.h`. Its first
   adapters parse x265 level-1 CSV and SVT-AV1 stat files into caller-owned frame
-  records; FFmpeg quality stats and other encoder adapters remain follow-ups;
+  records; FFmpeg quality stats and caller-filled libaom C values also have adapters;
   `PEL_SEC_ENCODE_RECORD` carries the `sha256:` digest of the canonical encode
   record that VMAFx binds to a score (`pelorus/encode_record.h`); and the motion
   section names its block edge (`block_size_log2`). Layout, validation,

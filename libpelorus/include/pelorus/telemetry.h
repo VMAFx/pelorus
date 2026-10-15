@@ -94,10 +94,11 @@ pel_result pel_enc_telemetry_pack(const PelorusSideData *meta, const PelorusEncT
  * can fill. A record's present_mask must be a subset of it.
  *
  * PEL_TLM_ADAPTER_EXTERNAL reports every bit this ABI minor defines. X265_CSV
- * with HEVC, SVTAV1_STAT_FILE with AV1 and VVENC_LOG with VVC report their
- * parser fields. Other adapter/codec pairs report PEL_ERR_UNSUPPORTED with
- * *out_mask = 0. Returns PEL_ERR_INVALID for a NULL out_mask or an adapter or
- * codec out of range.
+ * with HEVC, SVTAV1_STAT_FILE / LIBAOM_STATS with AV1 and VVENC_LOG with VVC
+ * report their adapter fields. FFMPEG_QUALITY_STATS reports its
+ * codec-specific fields. Other adapter/codec pairs report PEL_ERR_UNSUPPORTED
+ * with *out_mask = 0. Returns PEL_ERR_INVALID for a NULL out_mask or an
+ * adapter or codec out of range.
  */
 pel_result pel_tlm_adapter_caps(uint8_t adapter, uint8_t codec, uint64_t *out_mask);
 
@@ -130,6 +131,35 @@ pel_result pel_qp_normalize(uint8_t qp_scale, uint8_t coded_bit_depth, float qp,
 pel_result pel_enc_telemetry_map(const uint8_t *blob, size_t len,
                                  const PelorusEncTelemetrySection *t, size_t got, uint64_t map_bit,
                                  const void **out_ptr, uint32_t *out_elems);
+
+/* Caller-associated values for one libaom frame packet. No libaom dependency.
+ * Indices are caller-owned 0-based orders, not raw packet PTS (timebase units).
+ * Query quantizer_64 immediately for the corresponding coded frame; use -1
+ * when unavailable. has_psnr is 0 or 1; psnr = overall, Y, U, V. */
+typedef struct PelTlmLibaomFrame {
+    uint32_t frame_flags;
+    uint64_t frame_bytes;
+    int32_t quantizer_64;
+    uint32_t has_psnr;
+    double psnr[4];
+    uint32_t display_index;
+    uint32_t decode_index;
+} PelTlmLibaomFrame;
+
+/* Convert caller-associated libaom values into one AV1 frame record, then
+ * validate it. KEY/INTRAONLY map to I, other frames to the ABI's AV1 P type.
+ * Reference/shown status is not reported. Zero bytes is a reported zero,
+ * including without DROPPABLE; no inference about packet validity is made.
+ * Encoder-private frame_flags bits 16-31 are ignored, never interpreted.
+ * Returns PEL_ERR_INVALID for NULL arguments, unknown flag bits within
+ * 0x0000FFFF or has_psnr outside 0..1; PEL_ERR_RANGE for bytes > UINT32_MAX,
+ * quantizer outside -1..63, depth outside 8/10/12, or NaN/negative PSNR
+ * (all four values when present).
+ * PSNR above 100 dB, including +infinity, is capped; overall is validated but
+ * has no output slot. With has_psnr=0 the array is ignored. With quantizer=-1
+ * both QP bits and qp_scale stay clear. On error, out stays untouched. */
+pel_result pel_tlm_from_libaom(const PelTlmLibaomFrame *in, uint8_t coded_bit_depth,
+                               PelorusEncTelemetryInput *out);
 
 /*
  * Parse an x265 `--csv --csv-log-level 1` text buffer into caller-owned frame

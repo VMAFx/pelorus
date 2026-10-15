@@ -3,11 +3,12 @@
 
 > [!IMPORTANT]
 > **Status: the layout, input contract, checks, x265 CSV adapter, SVT-AV1
-> stat-file adapter, VVenC log adapter and FFmpeg quality-stats adapter are implemented.** The section arrived with `PELORUS_ABI_MINOR` 4 in
+> stat-file adapter, VVenC log adapter, FFmpeg quality-stats adapter and libaom
+> C-value adapter are implemented.** The section arrived with `PELORUS_ABI_MINOR` 4 in
 > [`interop.h`](../../libpelorus/include/pelorus/interop.h)
 > ([ADR-0174](../adr/0174-encoder-telemetry-abi-1-4.md), issue #86). The
 > section, `pelorus/telemetry.h`, the registry and the parity check ship now.
-> FFmpeg quality stats, libaom, hardware feedback, raw AV1/VP9 qindex
+> Hardware feedback, raw AV1/VP9 qindex
 > normalisation and `pel_enc_telemetry_to_json()` remain future work (#86).
 
 ## In one paragraph
@@ -231,7 +232,8 @@ says two things at once:
 
 `pel_tlm_adapter_caps()` reports every defined bit for `external`, the exact
 level-1 CSV fields for `x265_csv` with HEVC, and the exact stat-file fields for
-`svtav1_stat_file` with AV1. Other adapter/codec pairs return
+`svtav1_stat_file` and `libaom_stats` with AV1, and the FFmpeg quality-stats
+fields for its supported codecs. Other adapter/codec pairs return
 `PEL_ERR_UNSUPPORTED` with an empty mask.
 
 ## JSON form
@@ -461,6 +463,100 @@ under the Pelorus UUID (single-writer invariant,
   `PEL_ERR_RANGE` with the needed length in `*out_len` and is left untouched.
 - An out-of-range enum, an oversized grid or a bit-value mismatch returns
   `PEL_ERR_INVALID` or `PEL_ERR_RANGE`, never a partial blob.
+
+### libaom in-process adapter
+
+```c
+pel_result pel_tlm_from_libaom(const PelTlmLibaomFrame *in,
+                              uint8_t coded_bit_depth,
+                              PelorusEncTelemetryInput *out);
+```
+
+**Stability:** stable public API, appended without changing the telemetry wire
+layout or ABI minor. Input is borrowed read-only for this call. Output is
+caller-owned and contains only copied scalars and NULL map pointers; no input
+pointer is retained. The function allocates nothing, performs no I/O, and is
+reentrant and thread-safe when callers provide separate output objects.
+
+Save this complete example as `build/libaom-example.c` after configuring the
+repository. It uses caller-filled values and needs no libaom headers:
+
+```c
+#include "pelorus/telemetry.h"
+
+int main(void)
+{
+    const PelTlmLibaomFrame input = {
+        .frame_flags = 0x1u,
+        .frame_bytes = 123u,
+        .quantizer_64 = 32,
+        .has_psnr = 1u,
+        .psnr = {40.0, 41.0, 42.0, 43.0},
+        .display_index = 0u,
+        .decode_index = 0u,
+    };
+    PelorusEncTelemetryInput output;
+    const pel_result rc = pel_tlm_from_libaom(&input, 8u, &output);
+    return rc == PEL_OK && output.frame.psnr_y == 41.0f ? 0 : 1;
+}
+```
+
+From the repository root after building libpelorus:
+
+```console
+cc -std=c11 -Wall -Wextra -Werror -Ilibpelorus/include build/libaom-example.c -Lbuild/libpelorus -Wl,-rpath,build/libpelorus -lpelorus -lm -o build/libaom-example
+build/libaom-example
+```
+
+`PelTlmLibaomFrame` in [`telemetry.h`](../../libpelorus/include/pelorus/telemetry.h)
+mirrors caller-filled C API values from libaom 3.15.2. The library includes no
+libaom header and acquires no libaom dependency. This implements option A in
+[research 0111](../research/0111-aom-vvenc-telemetry-logs.md#43-architectural-recommendation-for-libaom-adapter);
+it does not parse `aomenc` progress output.
+
+| Input member | Caller supplies | Record mapping |
+|---|---|---|
+| `frame_flags` | `AOM_CODEC_CX_FRAME_PKT.data.frame.flags` | KEY sets `key_frame`; KEY or INTRAONLY gives `picture_type = i`, otherwise `p` (the ABI's generic AV1 inter type, not a P/B distinction) |
+| `frame_bytes` | `data.frame.sz`, as `uint64_t` | `frame_bytes`, checked before narrowing to `uint32_t` |
+| `quantizer_64` | `AOME_GET_LAST_QUANTIZER_64`, or -1 if unavailable | 0..63 gives `avg_qp` with `av1_encoder_qp` and `avg_qp_norm`; -1 leaves both bits and `qp_scale` clear |
+| `has_psnr`, `psnr[4]` | 0 or 1; when 1, associated `AOM_CODEC_PSNR_PKT.data.psnr.psnr` (overall, Y, U, V) | Per-plane values, `metric_source = encoder`; overall is validated but has no wire field |
+| `display_index`, `decode_index` | 0-based orders tracked by caller | Both indices always reported |
+
+Raw `data.frame.pts` is in timebase units, so callers must derive display order;
+there is no PTS slot in the telemetry section. Preserve the original PTS in the
+blob header through `pel_enc_telemetry_pack()` metadata when needed. Callers must
+associate the frame packet, quantizer query and optional PSNR packet correctly.
+A last-quantizer query describes the last coded frame, not every packet in a
+batched drain: use -1 when association cannot be established. The
+[recorder](../../libpelorus/test/fixtures/telemetry/libaom-record.c) uses lag zero,
+one thread, no altref, and verifies exactly one frame and one PSNR packet per input.
+
+Accepted flag bits mirror installed libaom 3.15.2 `aom/aom_codec.h:288-299`:
+KEY `0x1`, DROPPABLE `0x2`, INTRAONLY `0x10`, SWITCH `0x20`, ERROR_RESILIENT
+`0x40`, DELAYED_RANDOM_ACCESS_POINT `0x80`. Unknown bits within the public range
+`0x0000FFFF` return `PEL_ERR_INVALID`; encoder-private bits 16-31 are ignored
+and never interpreted. In libaom v3.15.2, `aom/aom_codec.h:226-230` allocates
+`0x10000` through `0x800000` to the encoder, and
+`av1/av1_cx_iface.c:3279` (`get_frame_pkt_flags`) puts `lib_flags << 16` into
+each packet's flags. The recorded key frame's `0x1F0011` is therefore accepted
+and mapped to I + KEY from its public bits.
+The reference and shown bits stay clear: the pinned evidence does not establish
+DROPPABLE as a trustworthy inverse of reference status for every packet, and
+these flags do not determine display status. No scene-cut or block maps are inferred.
+
+Zero bytes is accepted and reported as zero even without DROPPABLE: this adapter
+records caller values and does not certify a decodable packet. More than
+`UINT32_MAX` bytes, quantizer outside -1..63, or bit depth outside 8/10/12 returns
+`PEL_ERR_RANGE`. `has_psnr` outside 0..1 returns `PEL_ERR_INVALID`. With PSNR
+present, any NaN or negative value (including negative infinity) in all four slots
+returns `PEL_ERR_RANGE`; values above 100 dB, including positive infinity, cap at
+100 dB. With PSNR absent, its array is ignored and metric fields stay zero.
+
+NULL input/output returns `PEL_ERR_INVALID`. Every successful result passes
+`pel_enc_telemetry_validate()`; every error leaves `out` byte-for-byte unchanged.
+The capability mask includes only the fields above, for AV1 only. Recorded
+fixture replay and positive, negative and boundary cases live in
+[`telemetry_adapter_test.c`](../../libpelorus/test/telemetry_adapter_test.c).
 
 ### FFmpeg AV_PKT_DATA_QUALITY_STATS adapter
 

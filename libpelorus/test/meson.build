@@ -54,6 +54,7 @@ test('enc-telemetry-adapters', telemetry_adapter_test,
        meson.current_source_dir() / 'fixtures' / 'telemetry' / 'x265-4.3-qp32.csv',
        meson.current_source_dir() / 'fixtures' / 'telemetry' / 'svt-av1-4.2.0-qp34.stat',
        meson.current_source_dir() / 'fixtures' / 'telemetry' / 'vvenc-1.14.0-qp32.log',
+       meson.current_source_dir() / 'fixtures' / 'telemetry' / 'libaom-3.15.2-cq32.txt',
      ],
      suite: 'fast')
 test('enc-telemetry-adapters-locale', telemetry_adapter_test,
