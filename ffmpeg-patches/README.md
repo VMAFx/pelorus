@@ -24,6 +24,7 @@ in root `build-config.env`), not on stock FFmpeg: see
 | `series.txt` | Ordered apply list (cumulative stack, 22 patches; number 0021 is retired). |
 | `generate.sh` | Regenerate the patches from `files/` on the shared series tip. |
 | `test/build-and-run.sh` | Shared series + stack apply, configure, build, smoke-test gate. |
+| `test/series-coexistence.sh` | Shared + external vmafx + Pelorus cumulative apply and overlap gate. |
 
 ## Shared series first
 
@@ -76,6 +77,12 @@ registration. When their pkg-config modules are present, the gate enables and
 compiles the oneVPL, libaom, SVT-AV1, and NVENC consumers as well. Per-patch
 `git apply --check` is not a substitute: the stack is cumulative and later
 patches' context can depend on earlier ones.
+
+For a three-stack replay with the sibling vmafx project, use the
+[coexistence procedure](../docs/development/build.md#apply-order-with-the-vmafx-series).
+The checker takes the sibling checkout's `ffmpeg-patches/` directory and reads
+its `series.txt`; it does not depend on patch numbers or filenames. The full
+checkout is required for the compiled vendored-ABI comparison under `core/`.
 
 **Building an object is not a gate.** Naming a `.spv.o` on the make command line
 builds it through the pattern rule whether or not the Makefile's `OBJS` ever
