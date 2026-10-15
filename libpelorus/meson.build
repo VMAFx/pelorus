@@ -29,7 +29,7 @@ libpelorus = library(
   libpelorus_sources,
   include_directories: libpelorus_inc,
   version: pelorus_core_version,
-  soversion: '0',
+  soversion: '1',
   install: true,
   gnu_symbol_visibility: 'default',
 )

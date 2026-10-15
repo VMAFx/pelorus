@@ -226,8 +226,9 @@ clang-format --dry-run -Werror libpelorus/**/*.{c,h}   # format check
 
 ## Status
 
-Pre-1.0 (`v0.4.0-rc.3`). Public API and the interop ABI may evolve before
-`v1.0.0`; the ABI is append-only from here.
+Pre-1.0 (`v0.4.0-rc.3`). The public names covered by the
+[1.0 contract](docs/api/contract.md) are frozen; compatible additions remain
+allowed. The interop ABI keeps its stricter append-only rule.
 
 ## License
 

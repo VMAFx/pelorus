@@ -8,6 +8,13 @@ the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
 ranges in older entries predate the first entry below (22 patches on the
 shared FFmpeg fix series, number 0021 retired).
 
+## Renumbering
+
+Patch numbers are not a compatibility surface. Between releases, patches may
+be renumbered, merged, or split; consumers apply the filenames in `series.txt`
+order. A retired number is recorded in the changelog. A tagged stack and its
+`series.txt` remain immutable ([ADR-0194](adr/0194-stable-contract-1-0.md)).
+
 ## Unreleased — shared FFmpeg fix series pinned at `v0.2.0` (#309, ADR-0192; regenerates 0009)
 
 - **Base**: `FFMPEG_SERIES_TAG` moves from `v0.1.0` to `v0.2.0`,

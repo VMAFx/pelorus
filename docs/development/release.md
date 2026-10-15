@@ -28,13 +28,15 @@ the tag list read from the remote.
 | `meson.build` `version:` | `0.4.0-rc.1` | `0.4.0` |
 | `PELORUS_VERSION_STR` | `"0.4.0-rc.1"` | `"0.4.0"` |
 | `PELORUS_VERSION_MAJOR`, `_MINOR`, `_PATCH` | `0`, `4`, `0` | `0`, `4`, `0` |
-| `libpelorus.so.0.4.0`, `libpelorus.pc` `Version:` | `0.4.0` | `0.4.0` |
+| `libpelorus.so.1` SONAME | `libpelorus.so.1` | `libpelorus.so.1` |
+| shared-object file version, `libpelorus.pc` `Version:` | `0.4.0` | `0.4.0` |
 | `README.md` and `AGENTS.md` release line | `v0.4.0-rc.1` | `v0.4.0` |
 | changelog section, release notes | `## [0.4.0-rc.1]` | `## [0.4.0]` |
 
 Meson rejects a suffix in a shared-library version and pkg-config sorts
-`0.4.0-rc.1` after `0.4.0`, so the shared object and the `.pc` file use the
-numeric core (`pelorus_core_version` in `meson.build`). The tag step compares
+`0.4.0-rc.1` after `0.4.0`, so the shared-object file version and the `.pc` file
+use the numeric core (`pelorus_core_version` in `meson.build`). The dynamic-link
+SONAME remains `libpelorus.so.1` throughout the 1.x contract. The tag step compares
 the tag with the meson version with plain string equality, then checks that
 `pelorus.h` agrees on the string and on the three numbers. There is no fallback
 from an rc to its core.

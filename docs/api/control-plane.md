@@ -1,9 +1,11 @@
 <!-- markdownlint-disable MD013 -->
 # Control-plane contract — `vf_pelorus_deband_vulkan` AVOptions
 
-The **autotune control-plane contract** between Pelorus and vmafx. It freezes
+The **autotune control-plane contract** between Pelorus and vmafx. It describes
 the subset of `vf_pelorus_deband_vulkan` AVOptions that vmafx's `vmaf-tune`
-autotune sweeps as a stable, named surface. Decision:
+autotune sweeps. Every Pelorus AVOption name is now frozen by the general
+[1.0 contract](contract.md); this page adds the search-space semantics and
+two-repository coordination rules for the deband subset. Decision:
 [ADR-0110](../adr/0110-avoption-control-plane-contract.md); coupling design:
 [ADR-0106](0106-autotune-control-plane.md).
 
@@ -59,12 +61,13 @@ Notes on the contract:
 - **`range` is an integer search dimension** — TPE/grid should treat it as
   ordinal, not continuous.
 
-## Out-of-contract options (NOT frozen — do not autotune)
+## Outside the autotune subset (still frozen — do not autotune)
 
-`vf_pelorus_deband_vulkan` exposes other AVOptions that are **intentionally
-excluded** from the control-plane freeze. They are pipeline-topology or
-reporting switches, not perceptual-strength knobs, and may change without a
-two-repo coordination:
+`vf_pelorus_deband_vulkan` exposes other AVOptions that are intentionally
+excluded from the vmafx autotune search space. They are pipeline-topology or
+reporting switches, not perceptual-strength knobs. Their names remain frozen by
+the general 1.0 contract, but compatible additions and semantic changes that do
+not repurpose a name need no two-repository coordination:
 
 | AVOption | Why excluded |
 | --- | --- |
@@ -100,9 +103,11 @@ modes.
 
 1. **Backward-compatible** (widen a range, add a new tunable knob): land in
    Pelorus; document the new range/knob here; vmafx adopts it on its own
-   schedule. No two-repo coordination required.
+   schedule. Record a new name in `libpelorus/frozen-surface.txt`. No two-repo
+   coordination required.
 2. **Breaking** (rename, remove, narrow a range, change a type, repurpose a
    value): forbidden as an incidental change. Open a coordinated PR pair —
    Pelorus updates the `AVOption` table + `pel_deband_params_validate` + this doc;
-   vmafx updates `vmaf-tune`'s search space — and land them together. Note the
-   break in the commit body and this repo's `docs/rebase-notes.md`.
+   vmafx updates `vmaf-tune`'s search space — and land them together. The
+   general contract also requires deprecation through one minor release,
+   removal only at a major bump, a `!` subject, and a `Migration:` footer.

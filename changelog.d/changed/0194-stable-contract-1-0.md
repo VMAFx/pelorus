@@ -1,0 +1,1 @@
+- The Pelorus 1.0 contract now freezes every installed libpelorus header and exported `pel_*` function, all filter and bitstream-filter names, every AVOption and `lavfi.pelorus.*` metadata key, and the tagged FFmpeg stack in `series.txt` order; a checked manifest guards the surface, patch numbers may change between releases, and libpelorus now uses soversion 1 (ADR-0194).

@@ -544,5 +544,7 @@ banding/variance sections as perceptual-weighting input; vmafx's `libvmaf_tune`
 / `vmafx-server` `/v1/score` / `vmaf-mcp` drive the VMAF-in-the-loop search. The
 autotune-relevant deband `AVOption`s are frozen as a stable contract in
 [control-plane.md](control-plane.md) ([ADR-0110](../adr/0110-avoption-control-plane-contract.md)).
+They are a subset of the general [Pelorus 1.0 contract](contract.md), which
+freezes every Pelorus filter and bitstream-filter option name.
 See [ADR-0106](../adr/0106-autotune-control-plane.md) and
 [docs/usage/ffmpeg.md](../usage/ffmpeg.md).

@@ -19,6 +19,7 @@ All notable changes to Pelorus are documented here. The format is
 - Thirteen decision records whose work is merged and released in the `v0.4.0` candidates are now Accepted: ADR-0173 and ADR-0176 to ADR-0187. `docs/development/tester-image.md` records the verified end-to-end tester image publish for `v0.4.0-rc.3` and adds the SBOM attestation check to "Verify an image".
 - A skipped fast-suite test now passes only when `.config/test-skips.json` names it with its exact `SKIP:` reason (ADR-0188). `scripts/check-test-skips.py` runs after `make test` and every CI fast-suite run; before, `meson test` exited 0 for any skip, so a GPU smoke pointed at the wrong FFmpeg reported green.
 - `ffmpeg-patches/test/build-and-run.sh` passes the NVENC SEI smoke's skip only when `NVENC_SMOKE_SKIP` names its reason (ADR-0189); before, any exit 77 passed, so a GPU host whose driver or Vulkan device went missing reported green. Without an NVIDIA driver, set `NVENC_SMOKE_SKIP="Cannot load libcuda.so.1"`.
+- The Pelorus 1.0 contract now freezes every installed libpelorus header and exported `pel_*` function, all filter and bitstream-filter names, every AVOption and `lavfi.pelorus.*` metadata key, and the tagged FFmpeg stack in `series.txt` order; a checked manifest guards the surface, patch numbers may change between releases, and libpelorus now uses soversion 1 (ADR-0194).
 
 ### Fixed
 
