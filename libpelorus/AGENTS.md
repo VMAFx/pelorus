@@ -89,6 +89,8 @@ libpelorus/
     must be on `master` and released before VMAFx pins it; follow
     `docs/api/mirror-contract.md`; PR carries the mirror checklist item.
     `scripts/check-mirror-contract.py` keeps page and list in step.
+    Mirrored files keep exactly one SPDX-License-Identifier line naming EUPL-1.2
+    (VMAFx sync script refuses other or none) plus one SPDX-FileCopyrightText line.
 11. **Telemetry names = registry.** `PEL_TLM_F_*` bit, key in
     `schema/telemetry-fields.json`, API page: change together; bits
     append-only, never renumbered or reused. Fast suite runs

@@ -1,0 +1,1 @@
+- The ten files VMAFx mirrors (`libpelorus/mirror-paths.txt`) now hold an explicit `SPDX-FileCopyrightText: 2026 Lusoris` line above the licence identifier, enforced by rule 3 in `scripts/check-mirror-contract.py` (#247).
