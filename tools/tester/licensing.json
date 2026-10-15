@@ -263,6 +263,43 @@
       "redistributable": true
     },
     {
+      "id": "native-fast-suite",
+      "name": "Native fast-test binaries, runner and conformance inputs",
+      "version": "@commit",
+      "spdx": "EUPL-1.2 AND LGPL-2.1-or-later",
+      "paths": [
+        "opt/pelorus/tests/**"
+      ],
+      "spdx_headers": [
+        ".sh"
+      ],
+      "source": "https://github.com/VMAFx/pelorus",
+      "notes": [
+        "Meson introspection supplies each native fast test's arguments, environment and workdir. Includes telemetry fixtures and the encode-record worked example.",
+        "The CPU FFmpeg helper tests embed LGPL-2.1-or-later headers from ffmpeg-patches/files; the runner, libpelorus tests and conformance inputs use EUPL-1.2."
+      ],
+      "redistributable": true
+    },
+    {
+      "id": "generated-locale",
+      "name": "German UTF-8 locale compiled from Debian glibc locale data",
+      "version": "Debian trixie",
+      "spdx": "LicenseRef-licence-text",
+      "paths": [
+        "usr/lib/locale/locale-archive",
+        "etc/locale.gen",
+        "etc/default/locale"
+      ],
+      "licence_files": [
+        "usr/share/doc/locales/copyright"
+      ],
+      "source": "https://tracker.debian.org/pkg/glibc",
+      "notes": [
+        "localedef generates locale-archive for the comma-decimal native test; generated files need their own ownership record. Debian's locales copyright file carries the locale data terms; the glibc source package is in each kit's -source image."
+      ],
+      "redistributable": true
+    },
+    {
       "id": "tester-fixtures",
       "name": "Tester fixtures",
       "version": "lock 1",
@@ -286,6 +323,7 @@
       "paths": [
         "opt/pelorus/tester/*.py",
         "opt/pelorus/tester/*.sh",
+        "opt/pelorus/tester/*.sh.in",
         "opt/pelorus/tester/report.schema.json",
         "opt/pelorus/tester/licensing.json",
         "opt/pelorus/tester/Containerfile",

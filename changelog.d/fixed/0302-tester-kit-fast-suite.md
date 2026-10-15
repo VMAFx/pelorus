@@ -1,0 +1,1 @@
+- Tester kit images (`generic`, `nvidia`, `intel`) now bundle and run every native fast-test entry with its Meson arguments, fixtures and comma-decimal locale, so `libpelorus_suite` reports pass or fail instead of `not_run` ([#302](https://github.com/VMAFx/pelorus/issues/302)).

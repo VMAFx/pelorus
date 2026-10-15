@@ -6,5 +6,7 @@
 .workingdir2
 build
 **/__pycache__
-docs
+docs/**
+!docs/api
+!docs/api/encode-record.md
 changelog.d
