@@ -1,1 +1,0 @@
-- A skipped fast-suite test now passes only when `.config/test-skips.json` names it with its exact `SKIP:` reason (ADR-0188). `scripts/check-test-skips.py` runs after `make test` and every CI fast-suite run; before, `meson test` exited 0 for any skip, so a GPU smoke pointed at the wrong FFmpeg reported green.
