@@ -25,11 +25,10 @@ say which vmafx phase they serve.
 
 ## Where to start
 
-- **Using Pelorus now**: the current release candidate is v0.4.0-rc.4 with
-  interop ABI 1.5, and the latest final release is v0.3.0; see the
-  [README](../README.md).
-- **Checking what ships next**: [0.4](#04-telemetry-schemas-and-tester-kit)
-  becomes final as v0.4.0 after its candidates.
+- **Using Pelorus now**: the latest final release is v0.4.0 with interop
+  ABI 1.5; see the [README](../README.md).
+- **Checking what ships next**: [0.5](#05-zero-copy-and-live-integration)
+  is the next milestone.
 - **Contributing**: take an issue from the lowest open milestone, preferring
   `priority:P0` and `release-blocker`. [CONTRIBUTING](../CONTRIBUTING.md) has
   the rules.

@@ -31,7 +31,7 @@ extern "C" {
 #define PELORUS_VERSION_MAJOR 0
 #define PELORUS_VERSION_MINOR 4
 #define PELORUS_VERSION_PATCH 0
-#define PELORUS_VERSION_STR "0.4.0-rc.4"
+#define PELORUS_VERSION_STR "0.4.0"
 
 /* Packed integer version for runtime comparisons: (major<<16)|(minor<<8)|patch. */
 #define PELORUS_VERSION_INT                                                                        \
