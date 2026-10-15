@@ -244,9 +244,9 @@ checker reads patch names and numbers from its `series.txt` and compiles the
 vendored interop header and source under the sibling `core/` directory. A
 series-only extraction is insufficient. `VMAFX_SERIES_DIR` is an unverified,
 unpinned input (unlike the pinned, checksum-verified shared series); the
-checker records the vmafx commit in its output. The checker creates detached
-worktrees at the FFmpeg tag pinned by `build-config.env`, fetches and verifies
-the shared series, then measures both cumulative orders:
+checker records its commit and dirty state in its output. The checker creates
+detached worktrees at the FFmpeg tag pinned by `build-config.env`, fetches and
+verifies the shared series, then measures both cumulative orders:
 
 1. shared fixes → vmafx → Pelorus (preferred candidate);
 2. shared fixes → Pelorus → vmafx (reverse measurement).

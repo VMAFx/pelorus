@@ -90,6 +90,13 @@ cleanup()
     exit "$status"
 }
 
+install_traps()
+{
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+}
+
 patch_path()
 {
     local dir="$1" relative="$2"
@@ -636,6 +643,54 @@ self_test_bad_jobs()
     }
 }
 
+self_test_trap_signals()
+{
+    local mark="$RUN_ROOT/trap-subshell.path" sub_dir="" rc=0
+
+    # Subshell simulates an interrupted run receiving TERM
+    (
+        RUN_ROOT="$(mktemp -d "$ROOT/build/series-coexistence-self-test.XXXXXX")"
+        printf '%s\n' "$RUN_ROOT" >"$mark"
+        ACTIVE_WORKTREES=()
+        FFMPEG_REPO=""
+        install_traps
+        kill -TERM "$BASHPID"
+    ) >/dev/null 2>&1 || rc=$?
+
+    [[ -r "$mark" ]] || { fail "trap TERM self-test failed to record RUN_ROOT"; return 1; }
+    sub_dir="$(cat "$mark")"
+    rm -f "$mark"
+
+    [[ "$rc" == 143 ]] || { fail "trap TERM returned $rc, expected 143"; return 1; }
+    if [[ -d "$sub_dir" ]]; then
+        rm -rf -- "$sub_dir"
+        fail "trap TERM left RUN_ROOT behind: $sub_dir"
+        return 1
+    fi
+
+    # Subshell simulates an interrupted run receiving INT
+    rc=0
+    (
+        RUN_ROOT="$(mktemp -d "$ROOT/build/series-coexistence-self-test.XXXXXX")"
+        printf '%s\n' "$RUN_ROOT" >"$mark"
+        ACTIVE_WORKTREES=()
+        FFMPEG_REPO=""
+        install_traps
+        kill -INT "$BASHPID"
+    ) >/dev/null 2>&1 || rc=$?
+
+    [[ -r "$mark" ]] || { fail "trap INT self-test failed to record RUN_ROOT"; return 1; }
+    sub_dir="$(cat "$mark")"
+    rm -f "$mark"
+
+    [[ "$rc" == 130 ]] || { fail "trap INT returned $rc, expected 130"; return 1; }
+    if [[ -d "$sub_dir" ]]; then
+        rm -rf -- "$sub_dir"
+        fail "trap INT left RUN_ROOT behind: $sub_dir"
+        return 1
+    fi
+}
+
 self_test_apply_pair()
 {
     local log="$RUN_ROOT/context-failure.log" rc=0
@@ -689,7 +744,7 @@ self_test()
 
     mkdir -p "$ROOT/build"
     RUN_ROOT="$(mktemp -d "$ROOT/build/series-coexistence-self-test.XXXXXX")"
-    trap cleanup EXIT INT TERM
+    install_traps
     fixture="$RUN_ROOT/repo"
     mkdir "$fixture" "$RUN_ROOT/shared" "$RUN_ROOT/vmafx" "$RUN_ROOT/pelorus"
     git -C "$fixture" init -q
@@ -725,7 +780,8 @@ self_test()
     self_test_reader_flow
     self_test_reader_abi_failing_cc
     self_test_bad_jobs
-    echo "self-test: PASS (2 non-overlap controls; planted overlap rejected in both orders; final reader flow guarded; planted CC=false and bad JOBS rejected)"
+    self_test_trap_signals
+    echo "self-test: PASS (2 non-overlap controls; planted overlap rejected in both orders; final reader flow guarded; planted CC=false and bad JOBS rejected; TERM and INT exit 143 and 130 after cleanup)"
 }
 
 verify_shared_override()
@@ -781,10 +837,13 @@ prepare_run()
         return 1
     fi
     vmafx_commit="$(git -C "$VMAFX_SERIES_DIR" rev-parse HEAD 2>/dev/null)" || vmafx_commit="uncommitted"
+    if [[ "$vmafx_commit" != "uncommitted" && -n "$(git -C "$VMAFX_SERIES_DIR" status --porcelain 2>/dev/null)" ]]; then
+        vmafx_commit="${vmafx_commit}-dirty"
+    fi
     echo "INPUT: vmafx commit $vmafx_commit (unpinned, unverified input)"
     mkdir -p "$ROOT/build"
     RUN_ROOT="$(mktemp -d "$ROOT/build/series-coexistence.XXXXXX")"
-    trap cleanup EXIT INT TERM
+    install_traps
     if [[ -n "${SHARED_SERIES_DIR:-}" ]]; then
         SHARED_SERIES_DIR="$(canonical_dir "$SHARED_SERIES_DIR")" || {
             fail "SHARED_SERIES_DIR is inaccessible"
@@ -831,6 +890,7 @@ normal_run()
     else
         prepare_reader_tree || return 1
     fi
+    # set +e / set -e wraps the subshell to keep the PREFERRED_RC message reachable.
     set +e
     (
         set -e

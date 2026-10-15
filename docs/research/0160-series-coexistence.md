@@ -20,8 +20,9 @@ checkouts; their locations are runtime inputs, not encoded in the checker. For
 the shared override, the checker compared `base.env`, `series.txt`, and all
 eight `.patch` files with pinned commit `d958384a`. The vmafx series is an
 unpinned and unverified input (unlike the pinned, checksum-verified shared
-series); the checker records its commit in the output. FFmpeg was checked only
-through detached worktrees created under this repository's `build/` directory.
+series); the checker records its commit and dirty state in the output. FFmpeg
+was checked only through detached worktrees created under this repository's
+`build/` directory.
 
 ## Result
 
