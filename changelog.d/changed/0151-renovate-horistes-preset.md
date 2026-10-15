@@ -1,0 +1,1 @@
+- `renovate.json` extends the family preset `github>plurano/horistes` instead of `config:recommended` and keeps only the Pelorus custom managers and package rules. The preset adds a three-day wait after each release, a sign-off line on bot commits, no bot merges and no runner-image proposals ([ADR-0151](docs/adr/0151-renovate-mirrors-checker-toolchain-pins.md)).
