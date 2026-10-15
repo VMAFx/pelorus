@@ -1,0 +1,1 @@
+- The rolling milestones are renamed to "Ongoing — Code health and deduplication" and "Ongoing — Research and upstream watch"; the roadmap bucket table follows, and the label taxonomy gains `research-watch` for research, upstream and competitor watch items ([ADR-0172](docs/adr/0172-roadmap-milestone-map.md)).

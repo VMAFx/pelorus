@@ -30,6 +30,7 @@ All notable changes to Pelorus are documented here. The format is
 
 ### Maintenance
 
+- The rolling milestones are renamed to "Ongoing — Code health and deduplication" and "Ongoing — Research and upstream watch"; the roadmap bucket table follows, and the label taxonomy gains `research-watch` for research, upstream and competitor watch items ([ADR-0172](docs/adr/0172-roadmap-milestone-map.md)).
 - `scripts/release/extract-release-notes.sh` (`scripts/release/release_notes.py`) unwraps hard-wrapped paragraphs and list items onto single lines while preserving code fences, tables, headings, HTML comments, blank lines, and nested list indentation, requires a `### Highlights` section with 3 to 6 bullets first, and orders `### Maintenance` last; `scripts/release/concat-changelog-fragments.sh` adds the `maintenance/` fragment directory ([ADR-0176](docs/adr/0176-rc-process-and-tester-publish.md), `docs/development/release.md`).
 
 <!-- END UNRELEASED -->

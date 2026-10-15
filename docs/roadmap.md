@@ -222,9 +222,9 @@ improvement.
 | Bucket | Purpose | Epic |
 | --- | --- | --- |
 | [Proven filters](https://github.com/VMAFx/pelorus/milestone/14) | Measured BD-rate evidence, including negative results, on a public corpus with noisy-source references and the encoders' own temporal-filter baselines. No filter claims to beat an encoder before the method item lands. Method and claims ladder: [competitive audit](research/0172-competitive-audit.md) | [#123](https://github.com/VMAFx/pelorus/issues/123), 11 children |
-| [Code health and governance](https://github.com/VMAFx/pelorus/milestone/15) | HISS baseline, tidy findings, exceptions before expiry (the FFmpeg-tree tidy lane, [#94](https://github.com/VMAFx/pelorus/issues/94), is due 2027-01-06), Praetor and Renovate drift | [#126](https://github.com/VMAFx/pelorus/issues/126), 8 children |
+| [Code health and deduplication](https://github.com/VMAFx/pelorus/milestone/15) | Duplicate and dead code, oversized dependencies, unification candidates, HISS baseline, tidy findings, exceptions before expiry (the FFmpeg-tree tidy lane, [#94](https://github.com/VMAFx/pelorus/issues/94), is due 2027-01-06), Praetor and Renovate drift | [#126](https://github.com/VMAFx/pelorus/issues/126), 8 children |
 | [Upstream and rebases](https://github.com/VMAFx/pelorus/milestone/16) | FFmpeg rebases, upstream bug reports, upstream zero-copy interop work, patch submissions | [#129](https://github.com/VMAFx/pelorus/issues/129), 4 children |
-| [Research and competitive watch](https://github.com/VMAFx/pelorus/milestone/17) | Quarterly competitor and patent refresh. Ideas wait here until a premise check passes and they move to a milestone | [#121](https://github.com/VMAFx/pelorus/issues/121), checklist |
+| [Research and upstream watch](https://github.com/VMAFx/pelorus/milestone/17) | Quarterly competitor, upstream and patent refresh; issues carry the `research-watch` label. Ideas wait here until a premise check passes and they move to a milestone | [#121](https://github.com/VMAFx/pelorus/issues/121), checklist |
 
 ## How to propose a change
 
