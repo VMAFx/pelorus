@@ -12,6 +12,7 @@ All notable changes to Pelorus are documented here. The format is
 
 ### Added
 
+- `pel_tlm_parse_ffmpeg_quality_stats` turns FFmpeg `AV_PKT_DATA_QUALITY_STATS` packet side data into one encoder telemetry record: QP for H.264, HEVC, VVC and AV1 encoder QP, picture type, and per-plane PSNR from SSE when the caller gives plane sample counts. VP9 QP is not reported, because libvpx writes a 0..63 quantizer no Pelorus scale describes; the per-encoder table is in [docs/api/encoder-telemetry.md](docs/api/encoder-telemetry.md) and the writer evidence in [research 0111](docs/research/0111-ffmpeg-quality-stats-writers.md). Part of [#111](https://github.com/VMAFx/pelorus/issues/111).
 - Parse x265 CSV and SVT-AV1 stat-file buffers into encoder-neutral per-frame telemetry, including verified AV1 QP normalisation ([ADR-0174](docs/adr/0174-encoder-telemetry-abi-1-4.md), [#111](https://github.com/VMAFx/pelorus/issues/111)).
 - `scripts/release/tag-release.sh` makes the signed release tag only after the candidate legs of the tagged commit are green (a dispatched `Tester publish` run among them), the tag shape is valid, the tag is new and `meson.build` names the same version; `make docs-check` runs its planted-defect self-test, and the fast suite proves that self-test leaves an invoking repository untouched when Git hook variables are set. The rc.4 tag was pushed before its `Tester publish` run, which made the first release build fail.
 

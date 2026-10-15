@@ -66,6 +66,10 @@ static const uint16_t av1_encoder_ac_qtx[3][64] = {
      PEL_TLM_F_PSNR_Y | PEL_TLM_F_PSNR_U | PEL_TLM_F_PSNR_V | PEL_TLM_F_SSIM_Y |                   \
      PEL_TLM_F_CODED_BIT_DEPTH)
 
+#define TLM_FFMPEG_QUALITY_STATS_CAPS                                                              \
+    (PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM | PEL_TLM_F_PICTURE_TYPE | PEL_TLM_F_PSNR_Y |        \
+     PEL_TLM_F_PSNR_U | PEL_TLM_F_PSNR_V | PEL_TLM_F_CODED_BIT_DEPTH)
+
 enum tlm_kind { TLM_U32 = 0, TLM_F32 = 1, TLM_U8 = 2 };
 
 /* One optional scalar: its presence bit and where it lives in the section. */
@@ -600,6 +604,14 @@ pel_result pel_tlm_adapter_caps(uint8_t adapter, uint8_t codec, uint64_t *out_ma
     if (adapter < PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS || adapter > PEL_TLM_ADAPTER_EXTERNAL ||
         codec < PEL_TLM_CODEC_H264 || codec > PEL_TLM_CODEC_VP9) {
         return PEL_ERR_INVALID;
+    }
+    if (adapter == PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS) {
+        if (codec == PEL_TLM_CODEC_VP9) {
+            *out_mask = TLM_FFMPEG_QUALITY_STATS_CAPS & ~(PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM);
+        } else {
+            *out_mask = TLM_FFMPEG_QUALITY_STATS_CAPS;
+        }
+        return PEL_OK;
     }
     if (adapter == PEL_TLM_ADAPTER_X265_CSV && codec == PEL_TLM_CODEC_HEVC) {
         *out_mask = TLM_X265_CAPS;
