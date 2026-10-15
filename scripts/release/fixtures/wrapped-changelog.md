@@ -1,0 +1,63 @@
+<!-- markdownlint-disable MD013 MD024 MD048 -->
+<!-- Copyright 2026 Lusoris -->
+<!-- SPDX-License-Identifier: EUPL-1.2 -->
+# Changelog
+
+## [1.2.3] - 2026-10-15
+
+### Added
+
+Introductory paragraph wrapped across
+two lines at eighty columns.
+
+<!-- Copyright 2026 Lusoris -->
+<!-- SPDX-License-Identifier: EUPL-1.2 -->
+
+- Added zero-free side-data carrier (`pel_blob_carrier_encode` and
+  `pel_blob_unwrap`) so `hevc_nvenc` (patch
+  0022) preserves flat analysis maps across the bitstream.
+  - Nested bullet item that is also wrapped
+    across two lines with its two-space indent.
+
+```sh
+ffmpeg -init_hw_device vulkan=vk:0 -i input.mp4 \
+  -vf "hwupload,pelorus_deband_vulkan,hwdownload" \
+  -c:v libx264 output.mp4
+```
+
+~~~c
+int x = 1;
+  int y = 2;
+~~~
+
+| Encoder | Option | Carrier |
+| --- | --- | --- |
+| `hevc_nvenc` | `-udu_sei 1` | zero-free COBS |
+| `hevc_qsv` | `-udu_sei 1` | raw blob |
+
+### Maintenance
+
+- Re-pinned the Praetor governance engine from `66223619` to `2d23b292` and
+  refreshed the locked documentation gate scripts.
+
+### Highlights
+
+- Zero-free COBS side-data carrier in interop ABI 1.5 keeps flat analysis maps
+  intact through `h264_nvenc` and `hevc_nvenc`.
+- Per-cell banding, variance, and edge-density maps from
+  `pelorus_analyze_vulkan` feed perceptual pooling directly.
+- Hardware encode recipes avoid `hwdownload` across NVENC, VAAPI, QSV, and
+  Vulkan Video encoders.
+
+### Fixed
+
+- Fixed `hevc_nvenc -udu_sei 1` failing with `Cannot allocate memory` when
+  per-cell analysis maps exceed the 1024-byte SEI budget.
+
+## [1.2.2] - 2026-10-01
+
+### Highlights
+
+- Earlier release highlight one.
+- Earlier release highlight two.
+- Earlier release highlight three.

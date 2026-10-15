@@ -42,6 +42,7 @@ docs-check:
 	bash scripts/release/concat-changelog-fragments.sh --check
 	python3 -I scripts/release/check-candidate-legs.py --self-test
 	bash scripts/release/tag-release.sh --self-test
+	bash scripts/release/extract-release-notes.sh --self-test
 	python3 -I scripts/adr/check-status.py --self-test
 	python3 -I scripts/adr/check-status.py
 	python3 -I scripts/check-mirror-contract.py --self-test

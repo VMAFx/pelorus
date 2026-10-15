@@ -100,6 +100,12 @@ test('candidate-legs',
             '--self-test'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+test('release-notes',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'release' / 'release_notes.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
 test('tester-licence-gate',
      bash_prog,
      args: [meson.project_source_root() / 'tools' / 'tester' / 'check-ffmpeg-licence-self-test.sh'],

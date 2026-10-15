@@ -61,7 +61,11 @@ exist.
 1. In the release pull request, bump `meson.build`, `pelorus.h` (string and
    numbers) and the release line in `README.md` and `AGENTS.md` (then
    `standardsctl compile-context`) to `X.Y.Z-rc.N`. Rotate the fragments of
-   `changelog.d/` into `## [X.Y.Z-rc.N] - YYYY-MM-DD` and run
+   `changelog.d/` into `## [X.Y.Z-rc.N] - YYYY-MM-DD`, write a leading
+   `### Highlights` subsection by hand (3 to 6 user-facing bullets drawn from
+   the section's own entries; `scripts/release/extract-release-notes.sh` refuses
+   a section without `### Highlights` or outside 3 to 6 bullets, unwraps hard
+   line breaks, and places `### Maintenance` last), and run
    `bash scripts/release/concat-changelog-fragments.sh --write`. The section
    holds the changes since the previous candidate, or since the previous
    release for `rc.1`.
@@ -78,9 +82,12 @@ exist.
 
 Same steps with `X.Y.Z`, without the suffix. Tag with
 `bash scripts/release/tag-release.sh vX.Y.Z && git push origin vX.Y.Z`.
-The `## [X.Y.Z]` section is the whole release: merge the bullets of the candidate
-sections into it and remove the candidate headings (the prereleases keep their
-own notes). The release build refuses the tag when no candidate of that version
+The `## [X.Y.Z]` section is the
+whole release: merge the bullets of the candidate sections into it, write its
+`### Highlights` subsection by hand (3 to 6 user-facing bullets for the whole
+release), keep maintainer-internal items in the closing `### Maintenance`
+subsection, and remove the candidate headings (the prereleases keep their own
+notes). The release build refuses the tag when no candidate of that version
 exists (from 0.4.0).
 
 ## Rehearse
@@ -88,5 +95,6 @@ exists (from 0.4.0).
 A manual dispatch of `Release` runs `ci` and `build` without the tag steps and
 never publishes. To rehearse the tag steps, push `vX.Y.Z-rc.N` in a fork, or
 test the rules directly: `python3 -I scripts/release/verify-release.py --self-test`,
-`python3 -I scripts/release/check-candidate-legs.py --self-test` and
-`bash scripts/release/tag-release.sh --self-test`.
+`python3 -I scripts/release/check-candidate-legs.py --self-test`,
+`bash scripts/release/tag-release.sh --self-test` and
+`bash scripts/release/extract-release-notes.sh --self-test`.
