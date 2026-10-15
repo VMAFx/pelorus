@@ -18,7 +18,9 @@ Pelorus series apply cumulatively without an overlapping hunk?
 The vmafx series and shared series came from operator-supplied read-only Git
 checkouts; their locations are runtime inputs, not encoded in the checker. For
 the shared override, the checker compared `base.env`, `series.txt`, and all
-eight `.patch` files with pinned commit `d958384a`. FFmpeg was checked only
+eight `.patch` files with pinned commit `d958384a`. The vmafx series is an
+unpinned and unverified input (unlike the pinned, checksum-verified shared
+series); the checker records its commit in the output. FFmpeg was checked only
 through detached worktrees created under this repository's `build/` directory.
 
 ## Result
@@ -74,14 +76,17 @@ buffer and must fail. A second negative fixture removes the call in a later
 revision and proves that only the final cumulative source is accepted. The
 reader check ran even though no combined tree reached the post-apply state: the
 checker retained a separate shared-plus-vmafx cumulative tree for the FFmpeg
-call site and compiled both projects' headers directly.
+call site and compiled both projects' headers directly. Because both cumulative
+orders collide at `configure:7457` before any build can take place, the `BUILD=1`
+path and the reader-ABI compilation-failure path have no executed evidence on
+real trees; those paths are verified via synthetic `--self-test` fixtures.
 
 ## Commands and evidence
 
 | Command | Result |
 | --- | --- |
-| `bash ffmpeg-patches/test/series-coexistence.sh --self-test` | exit 0; two non-overlap controls accepted; planted overlap rejected in both orders; final-tree reader removal rejected |
-| `SHARED_SERIES_DIR=/path/to/shared-series FFMPEG_REPO=/path/to/ffmpeg VMAFX_SERIES_DIR=/path/to/vmafx/ffmpeg-patches BUILD=0 JOBS=4 bash ffmpeg-patches/test/series-coexistence.sh` | exit 1; both orders unsupported; reader contract passes |
+| `bash ffmpeg-patches/test/series-coexistence.sh --self-test` | exit 0; two non-overlap controls accepted; planted overlap rejected in both orders; context failure rejected; final-tree reader removal rejected; synthetic reader ABI positive control accepted, planted failing compiler (`CC=false`) rejected; bad `JOBS`/`BUILD` inputs rejected |
+| `SHARED_SERIES_DIR=/path/to/shared-series FFMPEG_REPO=/path/to/ffmpeg VMAFX_SERIES_DIR=/path/to/vmafx/ffmpeg-patches BUILD=0 JOBS=4 bash ffmpeg-patches/test/series-coexistence.sh` | exit 1; both orders unsupported; reader contract passes; `BUILD=1` unexecuted on real trees |
 
 Raw log: `.workingdir/evidence/0160-series-coexistence-real.log`, sha256
 `e68ed3e62a285d6eba11e21ab1c80f4c987b2a5ac8a80ebb0cb3b98e94077bc3`, 133

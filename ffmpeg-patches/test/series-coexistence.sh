@@ -74,10 +74,14 @@ cleanup_worktree()
 cleanup()
 {
     local status=$? worktree
-    trap - EXIT
+    trap - EXIT INT TERM
     for worktree in "${ACTIVE_WORKTREES[@]}"; do
         cleanup_worktree "$worktree"
     done
+    if [[ -n "${FFMPEG_REPO:-}" && -d "$FFMPEG_REPO" ]]; then
+        git -C "$FFMPEG_REPO" worktree prune >/dev/null 2>&1 ||
+            echo "WARNING: could not prune worktrees in $FFMPEG_REPO" >&2
+    fi
     case "$RUN_ROOT" in
         "$ROOT"/build/series-coexistence.*|"$ROOT"/build/series-coexistence-self-test.*)
             rm -rf -- "$RUN_ROOT"
@@ -358,17 +362,25 @@ check_reader_abi()
     local reader_minor producer_minor reader_norm producer_norm reader_uuid producer_uuid
     local cc_bin="${CC:-cc}"
 
-    write_probe
+    write_probe || return 1
     "$cc_bin" -std=c11 -Wall -Wextra -Werror -I"$ROOT/libpelorus/include" \
         '-DINTEROP_HEADER="pelorus/interop.h"' "$RUN_ROOT/abi-probe.c" \
-        -o "$RUN_ROOT/producer-probe"
+        -o "$RUN_ROOT/producer-probe" || return 1
     "$cc_bin" -std=c11 -Wall -Wextra -Werror -I"$vmafx_root/core/include" \
         '-DINTEROP_HEADER="libvmaf/pelorus/interop.h"' "$RUN_ROOT/abi-probe.c" \
-        -o "$RUN_ROOT/reader-probe"
-    producer="$("$RUN_ROOT/producer-probe")"
-    reader="$("$RUN_ROOT/reader-probe")"
+        -o "$RUN_ROOT/reader-probe" || return 1
+    producer="$("$RUN_ROOT/producer-probe")" || return 1
+    reader="$("$RUN_ROOT/reader-probe")" || return 1
+    [[ -n "$producer" && -n "$reader" ]] || {
+        fail "ABI probe returned empty output"
+        return 1
+    }
     producer_minor="$(sed -n 's/.*abi_minor=\([0-9][0-9]*\).*/\1/p' <<<"$producer")"
     reader_minor="$(sed -n 's/.*abi_minor=\([0-9][0-9]*\).*/\1/p' <<<"$reader")"
+    [[ -n "$producer_minor" && -n "$reader_minor" ]] || {
+        fail "could not extract abi_minor from probe output"
+        return 1
+    }
     producer_norm="${producer/abi_minor=$producer_minor/abi_minor=X}"
     reader_norm="${reader/abi_minor=$reader_minor/abi_minor=X}"
     if [[ "$producer_norm" != "$reader_norm" ]]; then
@@ -383,7 +395,7 @@ check_reader_abi()
     fi
     producer_uuid="$(uuid_initializer "$ROOT/libpelorus/src/interop.c")"
     reader_uuid="$(uuid_initializer "$vmafx_source")"
-    [[ "$producer_uuid" == "$reader_uuid" ]] || {
+    [[ -n "$producer_uuid" && "$producer_uuid" == "$reader_uuid" ]] || {
         fail "vmafx pelorus_sidedata_uuid differs from libpelorus"
         return 1
     }
@@ -421,7 +433,7 @@ check_reader_contract()
     reader="$(reader_source "$worktree")" || return 1
     check_reader_flow "$reader" || return 1
     echo "READER: AV_FRAME_DATA_SEI_UNREGISTERED -> vmaf_set_perceptual_sidedata"
-    check_reader_abi "$vmafx_root" "$vmafx_source"
+    check_reader_abi "$vmafx_root" "$vmafx_source" || return 1
 }
 
 check_memory()
@@ -439,10 +451,10 @@ build_private_pelorus()
 {
     local jobs="$1" build_dir="$RUN_ROOT/pelorus-build" prefix="$RUN_ROOT/prefix"
 
-    meson setup "$build_dir" "$ROOT" --prefix="$prefix" --libdir=lib
-    meson compile -C "$build_dir" -j "$jobs"
-    meson test -C "$build_dir" --suite=fast --print-errorlogs
-    meson install -C "$build_dir"
+    meson setup "$build_dir" "$ROOT" --prefix="$prefix" --libdir=lib || return 1
+    meson compile -C "$build_dir" -j "$jobs" || return 1
+    meson test -C "$build_dir" --suite=fast --num-processes "$jobs" --print-errorlogs || return 1
+    meson install -C "$build_dir" || return 1
 }
 
 build_ffmpeg()
@@ -473,34 +485,38 @@ build_ffmpeg()
     for filter in "${pelorus_filters[@]}"; do
         filter_options+=("--enable-filter=$filter")
     done
-    mkdir "$build_dir"
+    mkdir "$build_dir" || return 1
     (
+        set -e
         export PKG_CONFIG_PATH="$prefix/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
         export LD_LIBRARY_PATH="$prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-        cd "$build_dir"
-        "$worktree/configure" --disable-doc --disable-debug --disable-autodetect \
-            --enable-vulkan --enable-bsf=pelorus_fgs \
-            "${filter_options[@]}" "${vmaf_option[@]}"
-        make -j"$jobs" ffmpeg
-        filter_output="$(./ffmpeg -hide_banner -filters)"
+        cd "$build_dir" || exit 1
+        "$worktree/configure" \
+            --prefix="$prefix" \
+            --libdir="$prefix/lib" \
+            --enable-vulkan --disable-doc \
+            --enable-bsf=pelorus_fgs \
+            "${filter_options[@]}" "${vmaf_option[@]}" || exit 1
+        make -j"$jobs" ffmpeg || exit 1
+        filter_output="$(./ffmpeg -hide_banner -filters)" || exit 1
         for filter in "${pelorus_filters[@]}"; do
             if ! awk -v name="$filter" '$2 == name { found = 1 } END { exit !found }' <<<"$filter_output"; then
                 fail "built ffmpeg omitted exact filter registration $filter"
-                return 1
+                exit 1
             fi
         done
-        bsf_output="$(./ffmpeg -hide_banner -bsfs)"
+        bsf_output="$(./ffmpeg -hide_banner -bsfs)" || exit 1
         if ! awk -v name=pelorus_fgs '$1 == name { found = 1 } END { exit !found }' <<<"$bsf_output"; then
             fail "built ffmpeg omitted exact bitstream-filter registration pelorus_fgs"
-            return 1
+            exit 1
         fi
         if (( vmaf_enabled )); then
             if ! awk '$2 == "libvmaf" { found = 1 } END { exit !found }' <<<"$filter_output"; then
                 fail "built ffmpeg omitted exact filter registration libvmaf"
-                return 1
+                exit 1
             fi
         fi
-    )
+    ) || return 1
 }
 
 make_fixture_patch()
@@ -545,6 +561,81 @@ self_test_reader_flow()
     fi
 }
 
+self_test_reader_abi_failing_cc()
+{
+    local vmafx_mock="$RUN_ROOT/vmafx-mock"
+    local tree_mock="$RUN_ROOT/tree-mock"
+    local log="$RUN_ROOT/planted-cc.log"
+    local rc=0 saved_vmafx_series="$VMAFX_SERIES_DIR"
+
+    mkdir -p "$vmafx_mock/core/include/libvmaf/pelorus" "$vmafx_mock/core/src/interop" "$vmafx_mock/ffmpeg-patches"
+    cp "$ROOT/libpelorus/include/pelorus/pelorus.h" "$vmafx_mock/core/include/libvmaf/pelorus/pelorus.h"
+    sed 's#"pelorus/pelorus.h"#"libvmaf/pelorus/pelorus.h"#' \
+        "$ROOT/libpelorus/include/pelorus/interop.h" >"$vmafx_mock/core/include/libvmaf/pelorus/interop.h"
+    cp "$ROOT/libpelorus/src/interop.c" "$vmafx_mock/core/src/interop/pelorus_interop.c"
+
+    mkdir -p "$tree_mock/libavfilter"
+    cat >"$tree_mock/libavfilter/vf_libvmaf.c" <<'EOF'
+sd = av_frame_get_side_data(dist, AV_FRAME_DATA_SEI_UNREGISTERED);
+vmaf_set_perceptual_sidedata(s->vmaf, sd->data, sd->size, index);
+EOF
+
+    VMAFX_SERIES_DIR="$vmafx_mock/ffmpeg-patches"
+
+    # Positive control: with working CC, check_reader_contract must pass
+    check_reader_contract "$tree_mock" >/dev/null 2>&1 || {
+        VMAFX_SERIES_DIR="$saved_vmafx_series"
+        fail "reader contract synthetic positive control failed"
+        return 1
+    }
+
+    # Planted failing CC in subshell must fail
+    (
+        set -e
+        CC=false
+        check_reader_contract "$tree_mock"
+    ) >"$log" 2>&1 || rc=$?
+
+    if [[ "$rc" == 0 ]]; then
+        VMAFX_SERIES_DIR="$saved_vmafx_series"
+        fail "planted failing CC=false in subshell accepted by check_reader_contract"
+        return 1
+    fi
+
+    # Planted failing CC under || must also fail
+    rc=0
+    CC=false check_reader_contract "$tree_mock" >"$log" 2>&1 || rc=$?
+
+    VMAFX_SERIES_DIR="$saved_vmafx_series"
+    if [[ "$rc" == 0 ]]; then
+        fail "planted failing CC=false under || accepted by check_reader_contract"
+        return 1
+    fi
+}
+
+self_test_bad_jobs()
+{
+    local log="$RUN_ROOT/bad-jobs.log" rc=0
+
+    (
+        JOBS=5 prepare_run
+    ) >"$log" 2>&1 || rc=$?
+    [[ "$rc" == 1 ]] || { fail "bad JOBS=5 returned $rc, expected 1"; return 1; }
+    grep -Fq "JOBS must be an integer from 1 to 4" "$log" || {
+        fail "bad JOBS=5 omitted expected error: $(cat "$log")"
+        return 1
+    }
+    rc=0
+    (
+        BUILD=2 prepare_run
+    ) >"$log" 2>&1 || rc=$?
+    [[ "$rc" == 1 ]] || { fail "bad BUILD=2 returned $rc, expected 1"; return 1; }
+    grep -Fq "BUILD must be 0 or 1" "$log" || {
+        fail "bad BUILD=2 omitted expected error: $(cat "$log")"
+        return 1
+    }
+}
+
 self_test_apply_pair()
 {
     local log="$RUN_ROOT/context-failure.log" rc=0
@@ -567,14 +658,38 @@ EOF
     grep -Fq 'hunk: @@' "$log" || { fail "context failure omitted hunk"; return 1; }
 }
 
+self_test_overlap_pair()
+{
+    local base="$1" order log rc
+
+    make_fixture_patch "$FFMPEG_REPO" "$base" pelorus-overlap configure \
+        $'alpha\nbeta\npelorus\ndelta' "$RUN_ROOT/pelorus/pelorus-overlap.patch"
+    printf 'pelorus-overlap.patch\n' >"$RUN_ROOT/pelorus/series.txt"
+    for order in forward-overlap reverse-overlap; do
+        log="$RUN_ROOT/$order.log"
+        rc=0
+        if [[ "$order" == forward-overlap ]]; then
+            run_order "$order" vmafx "$VMAFX_SERIES_DIR" pelorus "$RUN_ROOT/pelorus" >"$log" 2>&1 || rc=$?
+        else
+            run_order "$order" pelorus "$RUN_ROOT/pelorus" vmafx "$VMAFX_SERIES_DIR" >"$log" 2>&1 || rc=$?
+        fi
+        [[ "$rc" == 1 ]] || { fail "$order returned $rc, expected 1"; return 1; }
+        grep -Fq 'OVERLAP pair:' "$log" || { fail "$order omitted patch pair"; return 1; }
+        grep -Fq 'vmafx-change.patch' "$log" || { fail "$order omitted vmafx patch"; return 1; }
+        grep -Fq 'pelorus-overlap.patch' "$log" || { fail "$order omitted Pelorus patch"; return 1; }
+        grep -Fq 'file: configure' "$log" || { fail "$order omitted touched file"; return 1; }
+        grep -Fq 'hunk: @@' "$log" || { fail "$order omitted hunks"; return 1; }
+    done
+}
+
 self_test()
 {
-    local fixture base rc log
+    local fixture base
     local -a controls=(forward-control reverse-control)
 
     mkdir -p "$ROOT/build"
     RUN_ROOT="$(mktemp -d "$ROOT/build/series-coexistence-self-test.XXXXXX")"
-    trap cleanup EXIT
+    trap cleanup EXIT INT TERM
     fixture="$RUN_ROOT/repo"
     mkdir "$fixture" "$RUN_ROOT/shared" "$RUN_ROOT/vmafx" "$RUN_ROOT/pelorus"
     git -C "$fixture" init -q
@@ -605,27 +720,12 @@ self_test()
         cleanup_worktree "$LAST_WORKTREE"
     done
 
-    make_fixture_patch "$fixture" "$base" pelorus-overlap configure \
-        $'alpha\nbeta\npelorus\ndelta' "$RUN_ROOT/pelorus/pelorus-overlap.patch"
-    printf 'pelorus-overlap.patch\n' >"$RUN_ROOT/pelorus/series.txt"
-    for order in forward-overlap reverse-overlap; do
-        log="$RUN_ROOT/$order.log"
-        rc=0
-        if [[ "$order" == forward-overlap ]]; then
-            run_order "$order" vmafx "$VMAFX_SERIES_DIR" pelorus "$RUN_ROOT/pelorus" >"$log" 2>&1 || rc=$?
-        else
-            run_order "$order" pelorus "$RUN_ROOT/pelorus" vmafx "$VMAFX_SERIES_DIR" >"$log" 2>&1 || rc=$?
-        fi
-        [[ "$rc" == 1 ]] || { fail "$order returned $rc, expected 1"; return 1; }
-        grep -Fq 'OVERLAP pair:' "$log" || { fail "$order omitted patch pair"; return 1; }
-        grep -Fq 'vmafx-change.patch' "$log" || { fail "$order omitted vmafx patch"; return 1; }
-        grep -Fq 'pelorus-overlap.patch' "$log" || { fail "$order omitted Pelorus patch"; return 1; }
-        grep -Fq 'file: configure' "$log" || { fail "$order omitted touched file"; return 1; }
-        grep -Fq 'hunk: @@' "$log" || { fail "$order omitted hunks"; return 1; }
-    done
+    self_test_overlap_pair "$base"
     self_test_apply_pair
     self_test_reader_flow
-    echo "self-test: PASS (2 non-overlap controls; planted overlap rejected in both orders; final reader flow guarded)"
+    self_test_reader_abi_failing_cc
+    self_test_bad_jobs
+    echo "self-test: PASS (2 non-overlap controls; planted overlap rejected in both orders; final reader flow guarded; planted CC=false and bad JOBS rejected)"
 }
 
 verify_shared_override()
@@ -662,7 +762,11 @@ verify_shared_override()
 
 prepare_run()
 {
-    local fetched=""
+    local fetched="" vmafx_commit
+    local jobs="${JOBS:-4}" build="${BUILD:-0}"
+
+    [[ "$jobs" =~ ^[1-4]$ ]] || { fail "JOBS must be an integer from 1 to 4"; return 1; }
+    [[ "$build" =~ ^[01]$ ]] || { fail "BUILD must be 0 or 1"; return 1; }
     : "${FFMPEG_REPO:?FFMPEG_REPO must name a local FFmpeg checkout}"
     : "${VMAFX_SERIES_DIR:?VMAFX_SERIES_DIR must name the vmafx ffmpeg-patches directory}"
     FFMPEG_REPO="$(canonical_dir "$FFMPEG_REPO")" || { fail "FFMPEG_REPO is inaccessible"; return 1; }
@@ -676,9 +780,11 @@ prepare_run()
         fail "$FFMPEG_TAG does not peel to configured $FFMPEG_COMMIT"
         return 1
     fi
+    vmafx_commit="$(git -C "$VMAFX_SERIES_DIR" rev-parse HEAD 2>/dev/null)" || vmafx_commit="uncommitted"
+    echo "INPUT: vmafx commit $vmafx_commit (unpinned, unverified input)"
     mkdir -p "$ROOT/build"
     RUN_ROOT="$(mktemp -d "$ROOT/build/series-coexistence.XXXXXX")"
-    trap cleanup EXIT
+    trap cleanup EXIT INT TERM
     if [[ -n "${SHARED_SERIES_DIR:-}" ]]; then
         SHARED_SERIES_DIR="$(canonical_dir "$SHARED_SERIES_DIR")" || {
             fail "SHARED_SERIES_DIR is inaccessible"
@@ -725,7 +831,13 @@ normal_run()
     else
         prepare_reader_tree || return 1
     fi
-    check_reader_contract "$READER_TREE" || reader_rc=$?
+    set +e
+    (
+        set -e
+        check_reader_contract "$READER_TREE"
+    )
+    reader_rc=$?
+    set -e
     if (( PREFERRED_RC != 0 )); then
         fail "preferred order shared -> vmafx -> Pelorus is unsupported"
         return 1
@@ -733,9 +845,6 @@ normal_run()
     (( reader_rc == 0 )) || return "$reader_rc"
     if [[ "${BUILD:-0}" == 1 ]]; then
         build_ffmpeg "$PREFERRED_TREE" || return 1
-    elif [[ "${BUILD:-0}" != 0 ]]; then
-        fail "BUILD must be 0 or 1"
-        return 1
     fi
     if (( REVERSE_RC != 0 )); then
         echo "REVERSE: unsupported"

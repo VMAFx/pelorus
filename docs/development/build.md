@@ -242,9 +242,11 @@ ffmpeg-patches/test/series-coexistence.sh
 The input is the `ffmpeg-patches/` directory inside a full vmafx checkout: the
 checker reads patch names and numbers from its `series.txt` and compiles the
 vendored interop header and source under the sibling `core/` directory. A
-series-only extraction is insufficient. The checker creates detached worktrees
-at the FFmpeg tag pinned by `build-config.env`, fetches and verifies the shared
-series, then measures both cumulative orders:
+series-only extraction is insufficient. `VMAFX_SERIES_DIR` is an unverified,
+unpinned input (unlike the pinned, checksum-verified shared series); the
+checker records the vmafx commit in its output. The checker creates detached
+worktrees at the FFmpeg tag pinned by `build-config.env`, fetches and verifies
+the shared series, then measures both cumulative orders:
 
 1. shared fixes → vmafx → Pelorus (preferred candidate);
 2. shared fixes → Pelorus → vmafx (reverse measurement).
@@ -260,12 +262,17 @@ registration by its exact name. `JOBS` defaults to 4 and cannot exceed 4. When
 with a named `SKIP:` reason checked by `test/named-skip.sh`. ABI probes use
 `CC`, which defaults to `cc`.
 
-Every patch first passes `git apply --check` against the cumulative tree. A
+Every patch first passes `git apply --check` against the cumulative tree. The
+checker is an overlap detector using `git apply --check` (no three-way merge); it
+reports textual hunk collisions across patch series and does not replace
+`test/build-and-run.sh`, which performs full three-way `git am` replay,
+configure, build, link, and runtime smoke testing of the Pelorus stack. A
 failure prints the current patch and its conflicting patch or cumulative-tree
 predecessor, plus the file and unified-diff hunk headers, before the worktree is
 removed. `--self-test`, wired into the Meson fast suite, plants a same-line
-collision and a non-overlap context failure, guards the side-data call flow, and
-also proves two non-overlapping controls.
+collision and a non-overlap context failure, guards the side-data call flow,
+verifies that planted failing `CC=false` probes and bad `JOBS` inputs are
+rejected, and also proves two non-overlapping controls.
 
 The measurement on 2026-10-15 found neither order supported: both stop at the
 `configure` hunk shared by vmafx's `vmaf_pre` registration and Pelorus's first
