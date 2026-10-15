@@ -65,7 +65,8 @@ exist.
    `### Highlights` subsection by hand (3 to 6 user-facing bullets drawn from
    the section's own entries; `scripts/release/extract-release-notes.sh` refuses
    a section without `### Highlights` or outside 3 to 6 bullets, unwraps hard
-   line breaks, and places `### Maintenance` last), and run
+   line breaks, rewrites relative documentation links to absolute blob URLs
+   at the release tag, and places `### Maintenance` last), and run
    `bash scripts/release/concat-changelog-fragments.sh --write`. The section
    holds the changes since the previous candidate, or since the previous
    release for `rc.1`.

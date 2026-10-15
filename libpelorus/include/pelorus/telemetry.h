@@ -162,6 +162,42 @@ pel_result pel_tlm_parse_svtav1_stat(const char *text, size_t len, uint8_t coded
                                      size_t *out_count);
 
 /*
+ * Parse an FFmpeg AV_PKT_DATA_QUALITY_STATS side-data packet buffer into one
+ * PelorusEncTelemetryInput record (adapter PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS).
+ *
+ * Buffer layout (libavcodec/packet.h (FFmpeg n9.0)):
+ *   u32le quality (lambda = QP * 118, or 0 if QP not reported)
+ *   u8    picture_type (AV_PICTURE_TYPE_NONE=0, I=1, P=2, B=3, S=4, SI=5, SP=6, BI=7)
+ *   u8    error_count (number of u64le SSE entries following)
+ *   u16   reserved (ignored; FFmpeg never writes them)
+ *   u64le sse[error_count]
+ *
+ * `codec` and `qp_scale` specify the encoded stream format; `coded_bit_depth`
+ * must be 8, 10 or 12. AV1 accepts only PEL_QP_SCALE_AV1_ENCODER_QP (qindex scale
+ * cannot normalise). For VP9, the FFmpeg value is a libvpx 0..63 quantizer with no
+ * PEL scale: quality is ignored entirely (AVG_QP bits clear), while picture type and
+ * SSE are parsed; caller passes PEL_QP_SCALE_VP9_QINDEX.
+ *
+ * If `plane_samples` is non-NULL, nonzero elements supply the sample count for each
+ * plane (0=Y, 1=U, 2=V) to convert SSE into PSNR (dB). PSNR capped at 100 dB (SSE 0
+ * or tiny MSE). Quality 0 leaves AVG_QP clear; a QP 0 (lossless) frame also writes
+ * quality 0 and reports no QP.
+ *
+ * Total length must be at least 8 + 8*error_count; trailing bytes are ignored
+ * because FFmpeg may reuse an existing side-data buffer that is larger.
+ *
+ * Returns PEL_OK; PEL_ERR_INVALID for NULL arguments or codec/scale mismatch (such
+ * as AV1 with PEL_QP_SCALE_AV1_QINDEX); PEL_ERR_TRUNCATED if len < 8 or
+ * len < 8 + 8*error_count; PEL_ERR_RANGE for pict_type > 7, QP outside scale range,
+ * SSE > peak^2 * samples (negative PSNR), or unsupported bit depth (!= 8, 10, 12).
+ * On any error, the whole call is refused and `out` is left untouched.
+ */
+pel_result pel_tlm_parse_ffmpeg_quality_stats(const uint8_t *buf, size_t len, uint8_t codec,
+                                              uint8_t qp_scale, uint8_t coded_bit_depth,
+                                              const uint64_t plane_samples[3],
+                                              PelorusEncTelemetryInput *out);
+
+/*
  * Parse a VVenC (Fraunhofer HHI VVC) verbose log buffer (`-v 4` / `notice`,
  * `-v 5` / `verbose`, `-v 6` / `details`) into caller-owned frame records.
  * Only per-frame `POC` lines are parsed; all startup configuration lines,
@@ -183,7 +219,7 @@ pel_result pel_tlm_parse_svtav1_stat(const char *text, size_t len, uint8_t coded
  *   slice parentheses, or inside the PSNR brackets.
  * - PEL_ERR_RANGE: coded_bit_depth other than 8, 10, or 12; input text exceeds
  *   1,048,576 bytes; a line exceeds 4,096 bytes; numeric values out of valid
- *   domain (QP outside [-6 * (depth - 8), 63], temporal layer > 5); or cap is
+ *   domain (QP outside [-6 * (depth - 8), 63], temporal layer > 6); or cap is
  *   smaller than the parsed record count (in which case *out_count holds the
  *   required record capacity).
  * - PEL_ERR_NOMEM: the transient C numeric-locale handle could not be created.

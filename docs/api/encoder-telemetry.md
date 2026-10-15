@@ -3,7 +3,7 @@
 
 > [!IMPORTANT]
 > **Status: the layout, input contract, checks, x265 CSV adapter, SVT-AV1
-> stat-file adapter and VVenC log adapter are implemented.** The section arrived with `PELORUS_ABI_MINOR` 4 in
+> stat-file adapter, VVenC log adapter and FFmpeg quality-stats adapter are implemented.** The section arrived with `PELORUS_ABI_MINOR` 4 in
 > [`interop.h`](../../libpelorus/include/pelorus/interop.h)
 > ([ADR-0174](../adr/0174-encoder-telemetry-abi-1-4.md), issue #86). The
 > section, `pelorus/telemetry.h`, the registry and the parity check ship now.
@@ -462,11 +462,109 @@ under the Pelorus UUID (single-writer invariant,
 - An out-of-range enum, an oversized grid or a bit-value mismatch returns
   `PEL_ERR_INVALID` or `PEL_ERR_RANGE`, never a partial blob.
 
-The future FFmpeg adapter will read the documented `AV_PKT_DATA_QUALITY_STATS` bytes
-(`u32le` quality, `u8` picture type, `u8` error count, `u16` reserved,
-`u64le` SSE per error) as a byte buffer. libpelorus therefore never includes
-FFmpeg headers. A quality factor of 0 means "no QP": `libaomenc` writes 0
-there (research 0174, E2).
+### FFmpeg AV_PKT_DATA_QUALITY_STATS adapter
+
+The FFmpeg adapter parses raw `AV_PKT_DATA_QUALITY_STATS` packet side-data bytes
+(`libavcodec/packet.h (FFmpeg n9.0)`) into one `PelorusEncTelemetryInput` record
+(`PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS`). libpelorus does not include FFmpeg
+headers and performs no file I/O or allocation.
+
+```c
+pel_result pel_tlm_parse_ffmpeg_quality_stats(
+    const uint8_t *buf,
+    size_t len,
+    uint8_t codec,
+    uint8_t qp_scale,
+    uint8_t coded_bit_depth,
+    const uint64_t plane_samples[3],
+    PelorusEncTelemetryInput *out);
+```
+
+#### Byte layout
+
+The side-data buffer layout follows FFmpeg's `ff_encode_add_stats_side_data`:
+
+| Offset | Type | Field | Description |
+|---|---|---|---|
+| 0 | `u32le` | `quality` | Quality factor in lambda units (`QP * 118`), or 0 if QP not reported |
+| 4 | `u8` | `picture_type` | `AVPictureType` (`NONE=0`, `I=1`, `P=2`, `B=3`, `S=4`, `SI=5`, `SP=6`, `BI=7`) |
+| 5 | `u8` | `error_count` | Number of `u64le` SSE entries following (typically 0 or 3) |
+| 6 | `u16` | `reserved` | Reserved bytes; ignored (FFmpeg never writes them) |
+| 8 | `u64le[error_count]` | `sse` | Sum of squared differences between encoder input and output per plane |
+
+Total length must be at least `8 + 8 * error_count`. Trailing bytes are ignored
+because FFmpeg reuses existing side-data buffers when present and only requires
+`size >= 8 + 8 * count`. Reserved bytes 6..7 are ignored because FFmpeg never
+writes them (`ff_encode_add_stats_side_data`); future meaning must not break the
+reader. A shorter buffer (`len < 8` or `len < 8 + 8 * error_count`) returns
+`PEL_ERR_TRUNCATED`. A NULL pointer or a codec/scale mismatch (such as AV1 with
+`PEL_QP_SCALE_AV1_QINDEX` instead of `PEL_QP_SCALE_AV1_ENCODER_QP`) returns
+`PEL_ERR_INVALID`. Causes for `PEL_ERR_RANGE`: `pict_type > 7`, QP outside scale
+range, `SSE > peak^2 * samples` (negative PSNR), or unsupported bit depth
+(!= 8, 10, 12); on any error, the whole call is refused and `out` is left
+untouched.
+
+#### Encoder writer mappings
+
+FFmpeg encoders write to `AV_PKT_DATA_QUALITY_STATS` with specific semantics:
+
+| Encoder | Caller `qp_scale` | Quality writer | Picture type | SSE error count | Field mappings |
+|---|---|---|---|---|---|
+| `libx264` | `PEL_QP_SCALE_SLICE_QP` | `(i_qpplus1 - 1) * 118` | `I`, `P`, `B` | 3 when PSNR enabled | `avg_qp`, `avg_qp_norm`, `picture_type`, `psnr_y/u/v` |
+| `libx265` | `PEL_QP_SCALE_SLICE_QP` | `qp * 118` | `I`, `P`, `B` | 0 | `avg_qp`, `avg_qp_norm`, `picture_type` |
+| `libsvtav1` | `PEL_QP_SCALE_AV1_ENCODER_QP` | `headerPtr->qp * 118` (SVT picture qp, 0..63 -> `AV1_ENCODER_QP`) | `I`, `P`, `B` | 0 | `avg_qp`, `avg_qp_norm`, `picture_type` |
+| `libaomenc` | `PEL_QP_SCALE_AV1_ENCODER_QP` | `0` (not reported) | `I`, `P` | 3 when `have_sse` | `picture_type`, `psnr_y/u/v` (`avg_qp` clear) |
+| `libvpxenc` | `PEL_QP_SCALE_VP9_QINDEX` | `VP8E_GET_LAST_QUANTIZER_64 * 118` (QP ignored; 0..63 quantizer has no PEL scale) | `I`, `P` | 3 when `have_sse` | `picture_type`, `psnr_y/u/v` (`avg_qp` clear) |
+| `nvenc` | `PEL_QP_SCALE_SLICE_QP` | `(frameAvgQP - 1) * 118`; parsed QP is one below NVENC `frameAvgQP` | `I`, `P`, `B` | 0 | `avg_qp`, `avg_qp_norm`, `picture_type` |
+| `qsvenc` | `PEL_QP_SCALE_SLICE_QP` | `QP * 118` (H.264 only) | `I`, `P`, `B` | 0 | `avg_qp`, `avg_qp_norm`, `picture_type` |
+
+#### Lambda rounding and QP normalization
+
+Writer evidence: [research 0111](../research/0111-ffmpeg-quality-stats-writers.md).
+
+Callers supply `qp_scale` for the target codec (FFmpeg side-data carries raw bytes
+without codec or scale tags). For AV1, callers pass `PEL_QP_SCALE_AV1_ENCODER_QP`;
+`PEL_QP_SCALE_AV1_QINDEX` is refused with `PEL_ERR_INVALID` because raw AV1 qindex
+cannot be normalized. For VP9, `libvpxenc` writes a 0..63 user quantizer rather
+than a standard VP9 qindex; because this user quantizer has no defined Pelorus
+scale, the adapter ignores quality entirely for VP9 (`avg_qp` and `avg_qp_norm`
+remain clear and `qp_scale` is set to 0). Callers still pass
+`PEL_QP_SCALE_VP9_QINDEX`; `pel_tlm_adapter_caps(PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS, PEL_TLM_CODEC_VP9)`
+excludes `PEL_TLM_F_AVG_QP` and `PEL_TLM_F_AVG_QP_NORM`.
+
+When `quality` is 0 (`libaomenc`), QP is considered not reported: `avg_qp` and
+`avg_qp_norm` bits remain clear and their values stay 0.0f, with `qp_scale` set to 0.
+A frame coded at QP 0 (lossless) also carries `quality` 0; the side data cannot
+tell the two apart, so such a frame reports no QP either.
+
+When `quality > 0` (for codecs other than VP9), `qp = (float)quality / 118.0f`.
+Lambda is not integer-rounded, preserving fractional quantizers when encoders scale
+sub-integer QPs by `FF_QP2LAMBDA` (= 118). Exact integer multiples of 118 map exactly
+to whole-number float32 values. `pel_qp_normalize()` validates that `qp` falls
+within the native scale bounds and computes `avg_qp_norm`.
+
+#### Picture type mapping
+
+Picture types 1..3 map to `PEL_PICTURE_I`, `PEL_PICTURE_P`, and `PEL_PICTURE_B`
+with `PEL_TLM_F_PICTURE_TYPE` set. Type 0 (`AV_PICTURE_TYPE_NONE`) and types 4..7
+(`S`, `SI`, `SP`, `BI`) leave `PEL_TLM_F_PICTURE_TYPE` clear and `picture_type = 0`
+("not reported"). Values above 7 are rejected with `PEL_ERR_RANGE`.
+
+#### SSE to PSNR calculation
+
+When `plane_samples` is non-NULL, nonzero elements `plane_samples[i]` define
+sample counts for plane `i` (`0 = Y`, `1 = U`, `2 = V`). For planes
+`0 <= i < min(error_count, 3)`:
+
+- `peak = (1 << coded_bit_depth) - 1`
+- `mse = (double)sse / (double)plane_samples[i]`
+- PSNR capped at 100 dB (when `sse == 0` or when MSE is tiny, matching libaom,
+  libvpx, and SVT-AV1 convention).
+- Otherwise, `psnr = 10.0 * log10((peak * peak) / mse)` clamped to `<= 100.0 dB`.
+- If any PSNR plane is populated, `metric_source` is set to
+  `PEL_TLM_METRIC_ADAPTER_SSE`.
+- If `plane_samples` is NULL or an element is 0, PSNR for that plane is not
+  computed.
 
 ## Field-name parity (issue #220)
 
