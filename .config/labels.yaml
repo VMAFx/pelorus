@@ -141,3 +141,7 @@ labels:
   - name: "vmafx-ask"
     color: "5319e7"
     description: "Explicitly requested by VMAFx/vmafx"
+
+  - name: "research-watch"
+    color: "c5def5"
+    description: "Research, upstream or competitor watch item (feed for the research hub)"
