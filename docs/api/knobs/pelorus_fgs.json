@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "stability": "pre-1.0",
   "filter": "pelorus_fgs",
   "kind": "bsf",
   "source": "ffmpeg-patches/files/h265_pelorus_fgs_bsf.c",

@@ -133,6 +133,7 @@ order:
 | Field | Scope | Type | Description |
 | --- | --- | --- | --- |
 | `schema_version` | root | `int` | Contract schema version (`1`). |
+| `stability` | root | `string` | `"pre-1.0"`: contract may change before the 1.0 freeze (#319); freeze sets `"stable"`. |
 | `filter` | root | `string` | Canonical FFmpeg `.p.name` (for example `"pelorus_deband_vulkan"` or `"pelorus_fgs"`). |
 | `kind` | root | `string` | `"vf"` for video filters (`FFFilter`) or `"bsf"` for bitstream filters (`FFBitStreamFilter`). |
 | `source` | root | `string` | Repository-relative C source path under `ffmpeg-patches/files/`. |

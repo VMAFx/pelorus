@@ -30,8 +30,16 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_VERSION = 1
+STABILITY = "pre-1.0"
 VALID_EFFECT_CLASSES = ("strength", "shape", "topology", "reporting")
-ROOT_KEYS = ("schema_version", "filter", "kind", "source", "options")
+ROOT_KEYS = (
+    "schema_version",
+    "stability",
+    "filter",
+    "kind",
+    "source",
+    "options",
+)
 OPTION_KEYS = (
     "name",
     "type",
@@ -608,6 +616,7 @@ def build_contracts_from_sources(root: Path) -> dict[str, dict[str, Any]]:
         )
         contracts[filter_name] = {
             "schema_version": SCHEMA_VERSION,
+            "stability": STABILITY,
             "filter": filter_name,
             "kind": kind,
             "source": source_rel,
@@ -671,7 +680,7 @@ def compare_contract(
         errs.append(
             f"{filter_name}.root_keys: expected {list(ROOT_KEYS)}, got {list(act.keys())}"
         )
-    for top_key in ("schema_version", "filter", "kind", "source"):
+    for top_key in ("schema_version", "stability", "filter", "kind", "source"):
         if act.get(top_key) != exp[top_key]:
             errs.append(
                 f"{filter_name}.{top_key}: expected {exp[top_key]!r}, "
@@ -862,6 +871,15 @@ def _replace_in_file(path: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
+def _st_stability_drift(sandbox: Path) -> None:
+    def _set_stable(data: dict[str, Any]) -> None:
+        data["stability"] = "stable"
+
+    _mutate_json(
+        sandbox / "docs/api/knobs/pelorus_deband_vulkan.json", _set_stable
+    )
+
+
 def _st_json_range_change(sandbox: Path) -> None:
     def _set_max(data: dict[str, Any]) -> None:
         data["options"][0]["max"] = 63
@@ -994,6 +1012,7 @@ def _st_conflicting_constant(sandbox: Path) -> None:
 def _build_self_test_mutations() -> list[tuple[str, Any, str, bool]]:
     """Return `(case_name, mutator, expected_substring, expect_gate_error)` tuples."""
     return [
+        ("stability_drift", _st_stability_drift, ".stability", False),
         ("range_change", _st_json_range_change, "pelorus_deband_vulkan.range.max", False),
         ("default_change", _st_json_default_change, "pelorus_denoise_vulkan.sigma.default", False),
         ("removed_option", _st_json_removed_option, "pelorus_deblock_vulkan.ghost: stale option", False),

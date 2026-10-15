@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "stability": "pre-1.0",
   "filter": "pelorus_mc_vulkan",
   "kind": "vf",
   "source": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c",
