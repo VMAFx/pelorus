@@ -9,12 +9,12 @@ validation rule are on the API page,
 operational questions: where the field names live, how the VMAFx name check
 runs, and what a caller outside FFmpeg fills in.
 
-Two software-encoder adapters ship: x265 CSV and SVT-AV1 stat files. Both read
-a caller-provided text buffer and write caller-provided frame records; the
-library performs no file I/O or allocation in its record loops. One transient C
-numeric-locale handle per call makes dot-decimal fields process-locale
-independent. The caller also supplies the coded bit depth because neither
-format records it.
+Three software-encoder adapters ship: x265 CSV, SVT-AV1 stat files, and FFmpeg
+`AV_PKT_DATA_QUALITY_STATS` packet side data. All three read caller-provided
+buffers and write caller-provided frame records; the library performs no file
+I/O or allocation in its record loops. One transient C numeric-locale handle
+per call makes text adapters process-locale independent. Callers supply the
+coded bit depth because none of the formats record it.
 
 ## Adapter coverage
 
@@ -24,35 +24,36 @@ means the bit stays clear and its value stays zero: not reported, not a
 reported zero. These rows are the exact masks returned by
 `pel_tlm_adapter_caps()`.
 
-| Field | x265 CSV level 1 | SVT-AV1 stat file |
-|---|---:|---:|
-| `display_index` | yes | yes |
-| `decode_index` | yes | - |
-| `frame_bytes` | yes | yes |
-| `header_bits` | - | - |
-| `residual_bits` | - | - |
-| `avg_qp` | yes | yes |
-| `avg_qp_norm` | yes | yes |
-| `psnr_y` | - | yes |
-| `psnr_u` | - | yes |
-| `psnr_v` | - | yes |
-| `ssim_y` | - | yes |
-| `intra_fraction` | - | - |
-| `inter_fraction` | - | - |
-| `skip_fraction` | - | - |
-| `picture_type` | yes | - |
-| `key_frame` | yes | - |
-| `reference` | yes | - |
-| `shown` | yes | - |
-| `scene_cut` | yes | - |
-| `qp_map` | - | - |
-| `bits_map` | - | - |
-| `mode_map` | - | - |
-| `coded_bit_depth` | caller | caller |
+| Field | x265 CSV level 1 | SVT-AV1 stat file | FFmpeg quality stats |
+|---|---:|---:|---:|
+| `display_index` | yes | yes | - |
+| `decode_index` | yes | - | - |
+| `frame_bytes` | yes | yes | - |
+| `header_bits` | - | - | - |
+| `residual_bits` | - | - | - |
+| `avg_qp` | yes | yes | yes |
+| `avg_qp_norm` | yes | yes | yes |
+| `psnr_y` | - | yes | yes |
+| `psnr_u` | - | yes | yes |
+| `psnr_v` | - | yes | yes |
+| `ssim_y` | - | yes | - |
+| `intra_fraction` | - | - | - |
+| `inter_fraction` | - | - | - |
+| `skip_fraction` | - | - | - |
+| `picture_type` | yes | - | yes |
+| `key_frame` | yes | - | - |
+| `reference` | yes | - | - |
+| `shown` | yes | - | - |
+| `scene_cut` | yes | - | - |
+| `qp_map` | - | - | - |
+| `bits_map` | - | - | - |
+| `mode_map` | - | - | - |
+| `coded_bit_depth` | caller | caller | caller |
 
 x265's `POC`, `Encode Order`, `Bits`, `QP`, `Type` and `Scenecut` columns
 supply its fields. SVT-AV1's `Picture Number`, `Average QP`, per-plane PSNR,
-luma SSIM and byte count supply its fields. A malformed, truncated or
+luma SSIM and byte count supply its fields. FFmpeg's `quality`, `picture_type`
+and `error_count` SSE planes supply its fields. A malformed, truncated or
 field-shifted row returns an error before any output record is written.
 
 The x265 `Bits` value must be divisible by eight. In x265 4.3 commit
