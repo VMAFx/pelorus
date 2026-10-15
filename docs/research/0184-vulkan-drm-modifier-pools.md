@@ -28,7 +28,9 @@ timing is reported. Raw logs: `.workingdir/evidence/vulkan-drm-modifier/`
 - P010 needs a stock FFmpeg fix; AMD needs a stock synchronisation fix. Both
   are proven by diagnostic builds. The P010 import row and the export-capability
   format-list fix are queued in VMAFx/ffmpeg-patches; the RADV synchronisation
-  needs a root cause first.
+  needs a root cause first. (Superseded: shared series v0.2.0 patches
+  0005 to 0007 carry all three fixes; see
+  [research 0103](0103-p010-amd-drm-map.md).)
 
 ## Method
 

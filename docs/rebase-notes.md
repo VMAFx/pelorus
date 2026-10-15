@@ -137,7 +137,7 @@ shared FFmpeg fix series, number 0021 retired).
   format-list fix (`02313`, 0006), and the RADV CPU wait in `vulkan_map_to_drm()`
   (0007) are carried by shared series v0.2.0. The AMD warning in
   `pel_vk_pool_warn_limits()` has been removed and `p010-640x360` is required
-  by default in `test/vulkan-drm-map-smoke.sh` (opt-out under `STOCK_FFMPEG=1`).
+  by default in `test/vulkan-drm-map-smoke.sh` (opt-out under `STOCK_FFMPEG=1` for an FFmpeg built without the shared series).
   Other export-path validation errors ([research 0184](research/0184-vulkan-drm-modifier-pools.md))
   remain to be monitored on bumps.
 - **Interop**: none.

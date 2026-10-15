@@ -121,7 +121,8 @@ each plane in its own image; VAAPI refuses such two-object frames.
 The smoke script checks the zero-copy pipeline against readback and encode.
 Explicitly set `LIBVA_DRIVER_NAME` and `VK_DRIVER_FILES` per GPU so multi-GPU
 hosts or environment overrides (such as `LIBVA_DRIVER_NAME=nvidia`) do not load
-the wrong driver:
+the wrong driver. The render nodes and ICD paths below are the test host's;
+list yours with `ls /dev/dri` and `ls /usr/share/vulkan/icd.d`:
 
 Intel Arc A380 (`renderD130`, `iHD`, `intel_icd.json`, `QSV=1`):
 

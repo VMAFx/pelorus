@@ -242,14 +242,12 @@ if ! "$FFMPEG_BIN" -hide_banner -v verbose "${PEL_DEVS[@]}" -f lavfi -i testsrc2
     pel_skip "no VAAPI + Vulkan pair on $PEL_NODE: $(pel_first_error "$PEL_OUT/probe.log")"
 fi
 pel_dev="$(pel_device "$PEL_OUT/probe.log")"
-pel_check_device "$PEL_OUT/probe.log" ||
-    pel_fail "Vulkan device '$pel_dev' does not match '$EXPECT_DEVICE'"
+pel_check_device "$PEL_OUT/probe.log" || pel_fail "Vulkan device check failed (see above)"
 echo "Vulkan device: $pel_dev"
 
 pel_drv="$(pel_vaapi_driver "$PEL_OUT/probe.log")"
 echo "VAAPI driver: $pel_drv"
-pel_check_vaapi "$PEL_OUT/probe.log" ||
-    pel_fail "VAAPI driver '$pel_drv' does not match '$EXPECT_VAAPI'"
+pel_check_vaapi "$PEL_OUT/probe.log" || pel_fail "VAAPI driver check failed (see above)"
 
 # run NAME SIZE SWFMT TAIL OUTPUT_ARGS...: testsrc2 -> SWFMT -> hwupload -> TAIL
 # into NAME.out; the log is NAME.log.
