@@ -462,6 +462,11 @@ static void test_adapter_caps_supported(void)
     const uint64_t svt = PEL_TLM_F_DISPLAY_INDEX | PEL_TLM_F_FRAME_BYTES | PEL_TLM_F_AVG_QP |
                          PEL_TLM_F_AVG_QP_NORM | PEL_TLM_F_PSNR_Y | PEL_TLM_F_PSNR_U |
                          PEL_TLM_F_PSNR_V | PEL_TLM_F_SSIM_Y | PEL_TLM_F_CODED_BIT_DEPTH;
+    const uint64_t vvenc = PEL_TLM_F_DISPLAY_INDEX | PEL_TLM_F_DECODE_INDEX |
+                           PEL_TLM_F_FRAME_BYTES | PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM |
+                           PEL_TLM_F_PSNR_Y | PEL_TLM_F_PSNR_U | PEL_TLM_F_PSNR_V |
+                           PEL_TLM_F_PICTURE_TYPE | PEL_TLM_F_KEY_FRAME | PEL_TLM_F_SHOWN |
+                           PEL_TLM_F_CODED_BIT_DEPTH;
 
     CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_EXTERNAL, PEL_TLM_CODEC_AV1, &mask) == PEL_OK);
     CHECK(mask == PEL_TLM_KNOWN_MASK);
@@ -470,6 +475,8 @@ static void test_adapter_caps_supported(void)
     CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_SVTAV1_STAT_FILE, PEL_TLM_CODEC_AV1, &mask) ==
           PEL_OK);
     CHECK(mask == svt);
+    CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_VVENC_LOG, PEL_TLM_CODEC_VVC, &mask) == PEL_OK);
+    CHECK(mask == vvenc);
 }
 
 static void test_adapter_caps_errors(void)

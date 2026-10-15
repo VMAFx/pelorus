@@ -75,6 +75,16 @@ typedef struct SvtValues {
     float vbv_delay;
 } SvtValues;
 
+typedef struct VvencValues {
+    uint32_t poc;
+    uint32_t tid;
+    uint32_t bits;
+    float qp;
+    float psnr[3];
+    uint8_t picture_type;
+    uint8_t frame_flags;
+} VvencValues;
+
 static int ascii_space(char c)
 {
     return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v';
@@ -107,6 +117,22 @@ static int span_starts(TlmSpan s, const char *literal)
     const size_t n = strlen(literal);
 
     return s.len >= n && memcmp(s.ptr, literal, n) == 0;
+}
+
+static int span_contains(TlmSpan s, const char *literal)
+{
+    const size_t n = strlen(literal);
+    size_t i;
+
+    if (s.len < n) {
+        return 0;
+    }
+    for (i = 0; i <= s.len - n; i++) {
+        if (memcmp(s.ptr + i, literal, n) == 0) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 /* One bounded line from a pointer+length buffer; no NUL terminator is assumed. */
@@ -478,7 +504,7 @@ static pel_result cursor_number(TlmCursor *c, TlmSpan *out)
     cursor_space(c);
     start = c->pos;
     while (c->pos < c->line.len && !ascii_space(c->line.ptr[c->pos]) &&
-           c->line.ptr[c->pos] != ',' && c->line.ptr[c->pos] != ']') {
+           c->line.ptr[c->pos] != ',' && c->line.ptr[c->pos] != ']' && c->line.ptr[c->pos] != ')') {
         c->pos++;
     }
     out->ptr = c->line.ptr + start;
@@ -785,6 +811,257 @@ pel_result pel_tlm_parse_svtav1_stat(const char *text, size_t len, uint8_t coded
         rc = PEL_ERR_RANGE;
     } else if (rc == PEL_OK) {
         rc = svt_walk(text, len, coded_bit_depth, locale, out_frames, out_count);
+    }
+    tlm_locale_free(locale);
+    return rc;
+}
+
+static pel_result vvenc_prefix(TlmCursor *c, VvencValues *v)
+{
+    pel_result rc = cursor_expect(c, "POC");
+
+    if (rc == PEL_OK) {
+        rc = cursor_u32(c, &v->poc);
+    }
+    if (rc == PEL_OK) {
+        rc = cursor_expect(c, "TId:");
+    }
+    if (rc == PEL_OK) {
+        rc = cursor_u32(c, &v->tid);
+    }
+    if (rc == PEL_OK && v->tid > 6u) {
+        rc = PEL_ERR_RANGE;
+    }
+    if (rc == PEL_OK) {
+        rc = cursor_expect(c, "(");
+    }
+    return rc;
+}
+
+static pel_result vvenc_slice_type(TlmCursor *c, uint8_t *picture_type)
+{
+    char slice_ch;
+
+    cursor_space(c);
+    if (c->line.len - c->pos < 7u) {
+        return PEL_ERR_TRUNCATED;
+    }
+    slice_ch = c->line.ptr[c->pos];
+    if (memcmp(c->line.ptr + c->pos + 1u, "-SLICE", 6u) != 0) {
+        return PEL_ERR_INVALID;
+    }
+    if (slice_ch == 'I' || slice_ch == 'i') {
+        *picture_type = PEL_PICTURE_I;
+    } else if (slice_ch == 'P' || slice_ch == 'p') {
+        *picture_type = PEL_PICTURE_P;
+    } else if (slice_ch == 'B' || slice_ch == 'b') {
+        *picture_type = PEL_PICTURE_B;
+    } else {
+        return PEL_ERR_INVALID;
+    }
+    c->pos += 7u;
+    return PEL_OK;
+}
+
+static pel_result vvenc_slice_info(TlmCursor *c, VvencValues *v)
+{
+    size_t start;
+    TlmSpan nal;
+    int is_key;
+    pel_result rc;
+
+    cursor_space(c);
+    start = c->pos;
+    while (c->pos < c->line.len && c->line.ptr[c->pos] != ',' && c->line.ptr[c->pos] != ')') {
+        c->pos++;
+    }
+    if (c->pos >= c->line.len) {
+        return PEL_ERR_TRUNCATED;
+    }
+    nal.ptr = c->line.ptr + start;
+    nal.len = c->pos - start;
+    nal = span_trim(nal);
+    if (nal.len == 0u) {
+        return PEL_ERR_INVALID;
+    }
+    is_key = span_starts(nal, "IDR") || span_eq(nal, "CRA") || span_eq(nal, "GDR");
+    rc = cursor_expect(c, ",");
+    if (rc == PEL_OK) {
+        rc = vvenc_slice_type(c, &v->picture_type);
+    }
+    if (rc != PEL_OK) {
+        return rc;
+    }
+    v->frame_flags = PEL_TLM_FRAME_SHOWN | (is_key ? PEL_TLM_FRAME_KEY : 0u);
+    rc = cursor_expect(c, ",");
+    if (rc == PEL_OK) {
+        rc = cursor_expect(c, "QP");
+    }
+    if (rc == PEL_OK) {
+        rc = cursor_float(c, &v->qp);
+    }
+    while (rc == PEL_OK && c->pos < c->line.len && c->line.ptr[c->pos] != ')') {
+        c->pos++;
+    }
+    if (rc == PEL_OK) {
+        rc = cursor_expect(c, ")");
+    }
+    return rc;
+}
+
+static pel_result vvenc_psnr_metric(TlmCursor *c, const char *name, const char *unit, float *out)
+{
+    pel_result rc = cursor_expect(c, name);
+
+    if (rc == PEL_OK) {
+        TlmSpan token;
+
+        rc = cursor_number(c, &token);
+        if (rc == PEL_OK) {
+            if (span_eq(token, "inf")) {
+                *out = 100.0f;
+            } else {
+                rc = span_float(token, out, c->locale);
+            }
+        }
+    }
+    if (rc == PEL_OK && unit != NULL) {
+        rc = cursor_expect(c, unit);
+    }
+    return rc;
+}
+
+static pel_result vvenc_metrics(TlmCursor *c, VvencValues *v)
+{
+    pel_result rc = cursor_u32(c, &v->bits);
+
+    if (rc == PEL_OK) {
+        rc = cursor_expect(c, "bits");
+    }
+    if (rc == PEL_OK && (v->bits % 8u) != 0u) {
+        return PEL_ERR_INVALID;
+    }
+    if (rc == PEL_OK) {
+        rc = cursor_expect(c, "[");
+    }
+    if (rc == PEL_OK) {
+        rc = vvenc_psnr_metric(c, "Y", "dB", &v->psnr[0]);
+    }
+    if (rc == PEL_OK) {
+        rc = vvenc_psnr_metric(c, "U", "dB", &v->psnr[1]);
+    }
+    if (rc == PEL_OK) {
+        rc = vvenc_psnr_metric(c, "V", "dB", &v->psnr[2]);
+    }
+    if (rc == PEL_OK) {
+        rc = cursor_expect(c, "]");
+    }
+    return rc;
+}
+
+static pel_result vvenc_record(TlmSpan line, uint8_t depth, size_t decode_order, TlmLocale locale,
+                               PelorusEncTelemetryInput *out)
+{
+    VvencValues v;
+    TlmCursor cursor = {line, 0u, locale};
+    uint64_t caps = 0;
+    pel_result rc;
+
+    (void)memset(&v, 0, sizeof(v));
+    rc = vvenc_prefix(&cursor, &v);
+    if (rc == PEL_OK) {
+        rc = vvenc_slice_info(&cursor, &v);
+    }
+    if (rc == PEL_OK) {
+        rc = vvenc_metrics(&cursor, &v);
+    }
+    if (rc != PEL_OK) {
+        return rc;
+    }
+    (void)memset(out, 0, sizeof(*out));
+    rc = pel_tlm_adapter_caps(PEL_TLM_ADAPTER_VVENC_LOG, PEL_TLM_CODEC_VVC, &caps);
+    out->frame.present_mask = caps;
+    out->frame.display_index = v.poc;
+    out->frame.decode_index = (uint32_t)decode_order;
+    out->frame.frame_bytes = v.bits / 8u;
+    out->frame.avg_qp = v.qp;
+    out->frame.psnr_y = v.psnr[0];
+    out->frame.psnr_u = v.psnr[1];
+    out->frame.psnr_v = v.psnr[2];
+    out->frame.picture_type = v.picture_type;
+    out->frame.frame_flags = v.frame_flags;
+    out->frame.codec = PEL_TLM_CODEC_VVC;
+    out->frame.qp_scale = PEL_QP_SCALE_SLICE_QP;
+    out->frame.granularity = PEL_TLM_GRAN_FRAME;
+    out->frame.coded_bit_depth = depth;
+    out->frame.metric_source = PEL_TLM_METRIC_ENCODER;
+    out->frame.adapter = PEL_TLM_ADAPTER_VVENC_LOG;
+    if (rc == PEL_OK) {
+        rc = pel_qp_normalize(out->frame.qp_scale, depth, v.qp, &out->frame.avg_qp_norm);
+    }
+    return rc == PEL_OK ? pel_enc_telemetry_validate(out) : rc;
+}
+
+static pel_result vvenc_walk(const char *text, size_t len, uint8_t depth, TlmLocale locale,
+                             PelorusEncTelemetryInput *out, size_t *out_count)
+{
+    size_t offset = 0;
+    size_t count = 0;
+    size_t iteration;
+    int have_line = 0;
+    pel_result rc = PEL_OK;
+
+    /* len is capped by adapter_args(); one-byte lines give at most len + 1 calls. */
+    for (iteration = 0u; rc == PEL_OK && iteration <= len && iteration <= TLM_TEXT_TOTAL_MAX;
+         iteration++) {
+        TlmSpan line;
+        PelorusEncTelemetryInput record;
+
+        rc = next_line(text, len, &offset, &line, &have_line);
+        if (rc != PEL_OK || !have_line) {
+            break;
+        }
+        if (line.len == 0u) {
+            continue;
+        }
+        if (span_starts(line, "POC ") || span_starts(line, "POC\t") || span_eq(line, "POC")) {
+            rc = vvenc_record(line, depth, count, locale, &record);
+            if (rc == PEL_OK && out != NULL) {
+                out[count] = record;
+            }
+            if (rc == PEL_OK) {
+                count++;
+            }
+        } else if (span_starts(line, "TId:") || span_contains(line, "-SLICE")) {
+            rc = PEL_ERR_INVALID;
+            break;
+        }
+    }
+    *out_count = count;
+    return rc;
+}
+
+pel_result pel_tlm_parse_vvenc_log(const char *text, size_t len, uint8_t coded_bit_depth,
+                                   PelorusEncTelemetryInput *out_frames, size_t cap,
+                                   size_t *out_count)
+{
+    size_t count = 0;
+    TlmLocale locale;
+    pel_result rc = adapter_args(text, len, coded_bit_depth, out_frames, cap, out_count);
+
+    if (rc != PEL_OK) {
+        return rc;
+    }
+    locale = tlm_locale_create();
+    if (locale == (TlmLocale)0) {
+        return PEL_ERR_NOMEM;
+    }
+    rc = vvenc_walk(text, len, coded_bit_depth, locale, NULL, &count);
+    if (rc == PEL_OK && count > cap) {
+        *out_count = count;
+        rc = PEL_ERR_RANGE;
+    } else if (rc == PEL_OK) {
+        rc = vvenc_walk(text, len, coded_bit_depth, locale, out_frames, out_count);
     }
     tlm_locale_free(locale);
     return rc;

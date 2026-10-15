@@ -1,0 +1,1 @@
+- Parse VVenC verbose log buffers into encoder-neutral per-frame telemetry, mapping VVC slice QP, picture type, and lossless PSNR (Part of [#111](https://github.com/VMAFx/pelorus/issues/111)).
