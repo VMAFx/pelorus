@@ -41,7 +41,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build glslc glslang-tools clang clang-format clang-tidy \
-            pkg-config
+            locales pkg-config
+      - name: Generate comma-decimal locale
+        run: |
+          sudo locale-gen de_DE.UTF-8
+          locale -a | grep -E '^de_DE\.(UTF-8|utf8)$'
       - name: Runner and toolchain receipt
         run: |
           echo "ImageOS=${ImageOS:-unset}"

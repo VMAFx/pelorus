@@ -93,11 +93,10 @@ pel_result pel_enc_telemetry_pack(const PelorusSideData *meta, const PelorusEncT
  * The static capability mask of an adapter for a codec: the PEL_TLM_F_* bits it
  * can fill. A record's present_mask must be a subset of it.
  *
- * PEL_TLM_ADAPTER_EXTERNAL reports every bit this ABI minor defines. The other
- * adapters' tables land with the adapters themselves (#86 items 2-4); until then
- * they report PEL_ERR_UNSUPPORTED with *out_mask = 0, so only an empty record
- * validates for them. Returns PEL_ERR_INVALID for a NULL out_mask or an adapter
- * or codec out of range.
+ * PEL_TLM_ADAPTER_EXTERNAL reports every bit this ABI minor defines. X265_CSV
+ * with HEVC and SVTAV1_STAT_FILE with AV1 report their parser fields. Other
+ * adapter/codec pairs report PEL_ERR_UNSUPPORTED with *out_mask = 0. Returns
+ * PEL_ERR_INVALID for a NULL out_mask or an adapter or codec out of range.
  */
 pel_result pel_tlm_adapter_caps(uint8_t adapter, uint8_t codec, uint64_t *out_mask);
 
@@ -105,13 +104,11 @@ pel_result pel_tlm_adapter_caps(uint8_t adapter, uint8_t codec, uint64_t *out_ma
  * The H.264-equivalent QP of `qp` in `qp_scale`: 6 * log2(Qstep / 0.625), with
  * Qstep the frame's luma AC step in H.264 units at 8 bits.
  *
- * PEL_QP_SCALE_SLICE_QP is the identity. The base_q_idx scales (AV1, VP9 and the
- * AV1 encoder --qp) need the codec's quantiser table; those constants are not
- * verified yet (research 0174, E3) and return PEL_ERR_UNSUPPORTED, so an adapter
- * leaves PEL_TLM_F_AVG_QP_NORM clear. Returns PEL_ERR_INVALID for a NULL
- * out_norm or an unknown scale, and PEL_ERR_RANGE for a coded_bit_depth other
- * than 8, 10 or 12 or a qp outside the scale. *out_norm is written only on
- * PEL_OK.
+ * PEL_QP_SCALE_SLICE_QP is the identity. AV1_ENCODER_QP maps the public 0..63
+ * scale through the AV1 luma AC quantiser table. Raw AV1 and VP9 qindex scales
+ * remain unsupported. Returns PEL_ERR_INVALID for a NULL out_norm or an unknown
+ * scale, and PEL_ERR_RANGE for a coded_bit_depth other than 8, 10 or 12 or a qp
+ * outside the scale. *out_norm is written only on PEL_OK.
  */
 pel_result pel_qp_normalize(uint8_t qp_scale, uint8_t coded_bit_depth, float qp, float *out_norm);
 
@@ -132,6 +129,36 @@ pel_result pel_qp_normalize(uint8_t qp_scale, uint8_t coded_bit_depth, float qp,
 pel_result pel_enc_telemetry_map(const uint8_t *blob, size_t len,
                                  const PelorusEncTelemetrySection *t, size_t got, uint64_t map_bit,
                                  const void **out_ptr, uint32_t *out_elems);
+
+/*
+ * Parse an x265 `--csv --csv-log-level 1` text buffer into caller-owned frame
+ * records. `coded_bit_depth` is the encoded stream depth; the CSV does not
+ * carry it. The parser performs no file I/O or per-record allocation; it owns
+ * one transient C numeric-locale handle for the call.
+ *
+ * Input text is bounded at 1,048,576 bytes, each line at 4,096 bytes, and an
+ * x265 CSV row at 256 fields. These limits bound both parser passes and all
+ * nested scans independently of caller-controlled input.
+ *
+ * Returns PEL_OK, PEL_ERR_INVALID for bad arguments or malformed/shifted fields,
+ * PEL_ERR_ABSENT for an empty buffer, PEL_ERR_TRUNCATED for a short row, or
+ * PEL_ERR_RANGE for invalid numeric ranges, an oversized input or line, too
+ * many CSV fields, or insufficient record capacity; PEL_ERR_NOMEM means the
+ * locale handle could not be created.
+ * No output record is written on error. `*out_count` is zero on error except
+ * insufficient capacity, when it is the required record count.
+ */
+pel_result pel_tlm_parse_x265_csv(const char *text, size_t len, uint8_t coded_bit_depth,
+                                  PelorusEncTelemetryInput *out_frames, size_t cap,
+                                  size_t *out_count);
+
+/*
+ * Parse an SVT-AV1 `--enable-stat-report 1 --stat-file` text buffer. Argument,
+ * allocation, error and output semantics match pel_tlm_parse_x265_csv().
+ */
+pel_result pel_tlm_parse_svtav1_stat(const char *text, size_t len, uint8_t coded_bit_depth,
+                                     PelorusEncTelemetryInput *out_frames, size_t cap,
+                                     size_t *out_count);
 
 #ifdef __cplusplus
 }

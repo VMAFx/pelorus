@@ -44,6 +44,21 @@ telemetry_test = executable(
 )
 test('enc-telemetry', telemetry_test, suite: 'fast')
 
+telemetry_adapter_test = executable(
+  'pelorus_telemetry_adapter_test',
+  files('telemetry_adapter_test.c'),
+  dependencies: libpelorus_dep,
+)
+test('enc-telemetry-adapters', telemetry_adapter_test,
+     args: [
+       meson.current_source_dir() / 'fixtures' / 'telemetry' / 'x265-4.3-qp32.csv',
+       meson.current_source_dir() / 'fixtures' / 'telemetry' / 'svt-av1-4.2.0-qp34.stat',
+     ],
+     suite: 'fast')
+test('enc-telemetry-adapters-locale', telemetry_adapter_test,
+     args: ['--locale-only'],
+     suite: 'fast')
+
 # ADR-0175 encode record: SHA-256 (FIPS 180-4 vectors), canonical JSON, the
 # worked example's digest from docs/api/encode-record.md, verify and mutations.
 # Includes the private src/sha256.h to test the port directly.

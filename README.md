@@ -82,6 +82,7 @@ green · the deband shader compiles.**
 | Module | Purpose | Key dep |
 |---|---|---|
 | `include/pelorus/interop.h` + `src/interop.c` | The Pelorus⇄vmafx side-data ABI (pack/parse, append-only, vendored by vmafx) | — |
+| `include/pelorus/telemetry.h` + `src/telemetry*.c` | FFmpeg-free encoder telemetry records, validation, normalisation, and x265/SVT-AV1 text adapters | libm |
 | `include/pelorus/deband.h` + `src/deband_params.c` | Smart-deband parameter contract (shared by filter + autotune) | — |
 | `shaders/pelorus_deband.comp` | Standalone reference deband shader (f3kdb) | glslang |
 | `test/interop_test.c` | Shared ABI conformance fixture | — |
@@ -187,12 +188,14 @@ encoder. A documented, retunable composition, not a new meta-filter. See
 - Interop ABI 1.4 (ADR-0174 / ADR-0175): `PEL_SEC_ENC_TELEMETRY` carries one
   normalised encoder-telemetry record per coded frame (native and
   H.264-equivalent QP, bits, picture type, PSNR/SSIM, optional maps, a presence
-  bit per field) filled through the FFmpeg-free `pelorus/telemetry.h`;
+  bit per field) filled through the FFmpeg-free `pelorus/telemetry.h`. Its first
+  adapters parse x265 level-1 CSV and SVT-AV1 stat files into caller-owned frame
+  records; FFmpeg quality stats and other encoder adapters remain follow-ups;
   `PEL_SEC_ENCODE_RECORD` carries the `sha256:` digest of the canonical encode
   record that VMAFx binds to a score (`pelorus/encode_record.h`); and the motion
   section names its block edge (`block_size_log2`). Layout, validation,
-  canonical JSON and digests are tested; the per-encoder adapters and the
-  option-string parsers are follow-ups (#86, #81).
+  canonical JSON and digests are tested; option-string parsers are a follow-up
+  (#81).
 - Interop ABI 1.5 (ADR-0183): a zero-free carrier form of the blob (COBS under
   its own UUID) that `h264_nvenc` and `hevc_nvenc` write, because NVENC
   truncates SEI payloads with many zero bytes (#284; rule pinned on an RTX 4090,

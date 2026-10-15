@@ -18,6 +18,7 @@
 
 #include "pelorus/telemetry.h"
 
+#include <assert.h>
 #include <float.h>
 #include <math.h>
 #include <string.h>
@@ -34,6 +35,36 @@
 #define TLM_FRACTION_SUM_MAX 1.001f /* 1 + 1e-3: three rounded shares may overshoot */
 #define TLM_BLOCK_LOG2_MIN 2u
 #define TLM_BLOCK_LOG2_MAX 7u
+
+/* libaom v3.15.2 commit af3dc9aa: luma AC QTX values from quant_common.c,
+ * sampled through av1_quantize.c's public 0..63 quantizer-to-qindex table.
+ * QTX is Q3 and high-bit-depth tables retain their input-depth scaling. */
+static const uint16_t av1_encoder_ac_qtx[3][64] = {
+    {4,   11,  15,  19,  23,  27,  31,  35,  39,   43,   47,   51,   55,   59,   63,   67,
+     71,  75,  79,  83,  87,  91,  95,  99,  104,  112,  120,  128,  136,  144,  152,  164,
+     176, 188, 200, 215, 231, 247, 265, 285, 305,  329,  353,  380,  408,  440,  474,  510,
+     550, 593, 639, 689, 743, 801, 864, 933, 1007, 1087, 1173, 1267, 1369, 1479, 1628, 1828},
+    {4,    16,   27,   40,   55,   71,   88,   105,  122,  140,  158,  177,  195,
+     213,  231,  249,  267,  284,  302,  319,  337,  354,  371,  388,  409,  441,
+     474,  506,  539,  571,  604,  652,  700,  749,  797,  857,  922,  986,  1058,
+     1138, 1218, 1314, 1411, 1519, 1631, 1759, 1895, 2039, 2199, 2371, 2555, 2755,
+     2971, 3203, 3455, 3731, 4028, 4348, 4692, 5068, 5476, 5916, 6512, 7312},
+    {4,     35,    75,    126,   183,   247,   314,   384,   456,   530,   604,   679,   753,
+     828,   902,   976,   1049,  1121,  1193,  1264,  1335,  1405,  1474,  1543,  1627,  1758,
+     1889,  2020,  2150,  2281,  2411,  2605,  2798,  2992,  3185,  3426,  3684,  3941,  4230,
+     4550,  4871,  5256,  5641,  6073,  6522,  7034,  7579,  8155,  8795,  9484,  10220, 11020,
+     11885, 12813, 13821, 14925, 16110, 17390, 18766, 20270, 21902, 23662, 26047, 29247},
+};
+
+#define TLM_X265_CAPS                                                                              \
+    (PEL_TLM_F_DISPLAY_INDEX | PEL_TLM_F_DECODE_INDEX | PEL_TLM_F_FRAME_BYTES | PEL_TLM_F_AVG_QP | \
+     PEL_TLM_F_AVG_QP_NORM | PEL_TLM_F_PICTURE_TYPE | PEL_TLM_F_KEY_FRAME | PEL_TLM_F_REFERENCE |  \
+     PEL_TLM_F_SHOWN | PEL_TLM_F_SCENE_CUT | PEL_TLM_F_CODED_BIT_DEPTH)
+
+#define TLM_SVTAV1_CAPS                                                                            \
+    (PEL_TLM_F_DISPLAY_INDEX | PEL_TLM_F_FRAME_BYTES | PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM |  \
+     PEL_TLM_F_PSNR_Y | PEL_TLM_F_PSNR_U | PEL_TLM_F_PSNR_V | PEL_TLM_F_SSIM_Y |                   \
+     PEL_TLM_F_CODED_BIT_DEPTH)
 
 enum tlm_kind { TLM_U32 = 0, TLM_F32 = 1, TLM_U8 = 2 };
 
@@ -475,6 +506,18 @@ pel_result pel_enc_telemetry_blob_size(const PelorusEncTelemetryInput *in, size_
     return rc;
 }
 
+static int tlm_maps_ready(const PelorusEncTelemetryInput *in, const TlmLayout *lay)
+{
+    unsigned i;
+
+    for (i = 0; i < TLM_NB_MAPS; i++) {
+        if (lay->size[i] != 0u && tlm_map(in, i).data == NULL) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 /* Copy the maps to their offsets, zero the alignment gaps, and close total_size. */
 static void tlm_write_maps(const PelorusEncTelemetryInput *in, const TlmLayout *lay, uint8_t *buf,
                            uint32_t end)
@@ -488,13 +531,14 @@ static void tlm_write_maps(const PelorusEncTelemetryInput *in, const TlmLayout *
         if (lay->size[i] == 0u) {
             continue;
         }
-        memset(image + end, 0, (size_t)(lay->offset[i] - end));
-        memcpy(image + lay->offset[i], m.data, lay->size[i]);
+        assert(m.data != NULL); /* guard lives in tlm_maps_ready(), before any output write */
+        (void)memset(image + end, 0, (size_t)(lay->offset[i] - end));
+        (void)memcpy(image + lay->offset[i], m.data, lay->size[i]);
         end = lay->offset[i] + lay->size[i];
     }
-    memcpy(&hdr, image, sizeof(hdr));
+    (void)memcpy(&hdr, image, sizeof(hdr));
     hdr.total_size = lay->end;
-    memcpy(image, &hdr, sizeof(hdr));
+    (void)memcpy(image, &hdr, sizeof(hdr));
 }
 
 pel_result pel_enc_telemetry_pack(const PelorusSideData *meta, const PelorusEncTelemetryInput *in,
@@ -520,6 +564,9 @@ pel_result pel_enc_telemetry_pack(const PelorusSideData *meta, const PelorusEncT
     if (rc != PEL_OK) {
         return rc;
     }
+    if (!tlm_maps_ready(in, &lay)) {
+        return PEL_ERR_INVALID;
+    }
     if (cap < lay.blob_len) {
         *out_len = lay.blob_len;
         return PEL_ERR_RANGE; /* never a partial blob: buf is untouched */
@@ -531,7 +578,7 @@ pel_result pel_enc_telemetry_pack(const PelorusSideData *meta, const PelorusEncT
     sec.bits_map_size = lay.size[1];
     sec.mode_map_offset = lay.offset[2];
     sec.mode_map_size = lay.size[2];
-    memset(sec._pad, 0, sizeof(sec._pad));
+    (void)memset(sec._pad, 0, sizeof(sec._pad));
     ps.id = PEL_SEC_ENC_TELEMETRY;
     ps.data = &sec;
     ps.size = (uint32_t)sizeof(sec);
@@ -554,8 +601,16 @@ pel_result pel_tlm_adapter_caps(uint8_t adapter, uint8_t codec, uint64_t *out_ma
         codec < PEL_TLM_CODEC_H264 || codec > PEL_TLM_CODEC_VP9) {
         return PEL_ERR_INVALID;
     }
+    if (adapter == PEL_TLM_ADAPTER_X265_CSV && codec == PEL_TLM_CODEC_HEVC) {
+        *out_mask = TLM_X265_CAPS;
+        return PEL_OK;
+    }
+    if (adapter == PEL_TLM_ADAPTER_SVTAV1_STAT_FILE && codec == PEL_TLM_CODEC_AV1) {
+        *out_mask = TLM_SVTAV1_CAPS;
+        return PEL_OK;
+    }
     if (adapter != PEL_TLM_ADAPTER_EXTERNAL) {
-        return PEL_ERR_UNSUPPORTED; /* the table lands with the adapter (#86) */
+        return PEL_ERR_UNSUPPORTED;
     }
     *out_mask = PEL_TLM_KNOWN_MASK;
     return PEL_OK;
@@ -565,6 +620,11 @@ pel_result pel_qp_normalize(uint8_t qp_scale, uint8_t coded_bit_depth, float qp,
 {
     float lo = 0.0f;
     float hi = 0.0f;
+    float norm;
+    float qtx;
+    float scale;
+    unsigned row;
+    unsigned qi;
 
     if (out_norm == NULL || !tlm_qp_range(qp_scale, 0u, coded_bit_depth, &lo, &hi)) {
         return PEL_ERR_INVALID;
@@ -572,11 +632,26 @@ pel_result pel_qp_normalize(uint8_t qp_scale, uint8_t coded_bit_depth, float qp,
     if (!tlm_depth_ok(coded_bit_depth) || !isfinite(qp) || qp < lo || qp > hi) {
         return PEL_ERR_RANGE;
     }
-    if (qp_scale != PEL_QP_SCALE_SLICE_QP) {
-        return PEL_ERR_UNSUPPORTED; /* step-size constants unverified (research 0174, E3) */
+    if (qp_scale == PEL_QP_SCALE_SLICE_QP) {
+        *out_norm = qp;
+        return PEL_OK;
     }
-    *out_norm = qp; /* H.26x SliceQpY: the identity */
-    return PEL_OK;
+    if (qp_scale != PEL_QP_SCALE_AV1_ENCODER_QP) {
+        return PEL_ERR_UNSUPPORTED;
+    }
+    row = (unsigned)(coded_bit_depth - 8u) / 2u;
+    qi = (unsigned)qp;
+    qtx = (float)av1_encoder_ac_qtx[row][qi];
+    scale = (float)(8u << (coded_bit_depth - 8u));
+    norm = 6.0f * log2f((qtx / scale) / 0.625f);
+    if (qi < 63u) {
+        const float next_qtx = (float)av1_encoder_ac_qtx[row][qi + 1u];
+        const float next_norm = 6.0f * log2f((next_qtx / scale) / 0.625f);
+
+        norm += (qp - (float)qi) * (next_norm - norm);
+    }
+    *out_norm = norm;
+    return isfinite(*out_norm) ? PEL_OK : PEL_ERR_RANGE;
 }
 
 /* The section fields of one map bit; 0 for any other bit. */

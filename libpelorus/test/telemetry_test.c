@@ -452,14 +452,31 @@ static void test_map_reader_checks(void)
           PEL_ERR_ABSENT);
 }
 
-static void test_adapter_caps(void)
+static void test_adapter_caps_supported(void)
 {
     uint64_t mask = 1;
+    const uint64_t x265 = PEL_TLM_F_DISPLAY_INDEX | PEL_TLM_F_DECODE_INDEX | PEL_TLM_F_FRAME_BYTES |
+                          PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM | PEL_TLM_F_PICTURE_TYPE |
+                          PEL_TLM_F_KEY_FRAME | PEL_TLM_F_REFERENCE | PEL_TLM_F_SHOWN |
+                          PEL_TLM_F_SCENE_CUT | PEL_TLM_F_CODED_BIT_DEPTH;
+    const uint64_t svt = PEL_TLM_F_DISPLAY_INDEX | PEL_TLM_F_FRAME_BYTES | PEL_TLM_F_AVG_QP |
+                         PEL_TLM_F_AVG_QP_NORM | PEL_TLM_F_PSNR_Y | PEL_TLM_F_PSNR_U |
+                         PEL_TLM_F_PSNR_V | PEL_TLM_F_SSIM_Y | PEL_TLM_F_CODED_BIT_DEPTH;
 
     CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_EXTERNAL, PEL_TLM_CODEC_AV1, &mask) == PEL_OK);
     CHECK(mask == PEL_TLM_KNOWN_MASK);
-    /* No adapter table has landed yet (#86): "not reported" for every field. */
-    CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_X265_CSV, PEL_TLM_CODEC_HEVC, &mask) ==
+    CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_X265_CSV, PEL_TLM_CODEC_HEVC, &mask) == PEL_OK);
+    CHECK(mask == x265);
+    CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_SVTAV1_STAT_FILE, PEL_TLM_CODEC_AV1, &mask) ==
+          PEL_OK);
+    CHECK(mask == svt);
+}
+
+static void test_adapter_caps_errors(void)
+{
+    uint64_t mask = 1;
+
+    CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_X265_CSV, PEL_TLM_CODEC_AV1, &mask) ==
           PEL_ERR_UNSUPPORTED);
     CHECK(mask == 0u);
     CHECK(pel_tlm_adapter_caps(0, PEL_TLM_CODEC_HEVC, &mask) == PEL_ERR_INVALID);
@@ -482,15 +499,28 @@ static void test_qp_normalize_slice_qp(void)
     CHECK(pel_qp_normalize(PEL_QP_SCALE_SLICE_QP, 8, NAN, &norm) == PEL_ERR_RANGE);
 }
 
-/* Unverified step-size tables (research 0174, E3): refused, never guessed. */
+static void test_qp_normalize_av1_encoder(void)
+{
+    float norm8 = -1.0f;
+    float norm10 = -1.0f;
+    float norm12 = -1.0f;
+
+    CHECK(pel_qp_normalize(PEL_QP_SCALE_AV1_ENCODER_QP, 8, 34.0f, &norm8) == PEL_OK);
+    CHECK(pel_qp_normalize(PEL_QP_SCALE_AV1_ENCODER_QP, 10, 34.0f, &norm10) == PEL_OK);
+    CHECK(pel_qp_normalize(PEL_QP_SCALE_AV1_ENCODER_QP, 12, 34.0f, &norm12) == PEL_OK);
+    CHECK(fabsf(norm8 - 32.0f) <= 1.0f);
+    CHECK(fabsf(norm8 - norm10) < 0.1f && fabsf(norm8 - norm12) < 0.1f);
+    CHECK(pel_qp_normalize(PEL_QP_SCALE_AV1_ENCODER_QP, 8, 63.0f, &norm8) == PEL_OK);
+    CHECK(pel_qp_normalize(PEL_QP_SCALE_AV1_ENCODER_QP, 8, 63.5f, &norm8) == PEL_ERR_RANGE);
+}
+
+/* Round one does not add raw AV1/VP9 qindex adapters. */
 static void test_qp_normalize_refused(void)
 {
     float norm = -1.0f;
 
     CHECK(pel_qp_normalize(PEL_QP_SCALE_AV1_QINDEX, 8, 120.0f, &norm) == PEL_ERR_UNSUPPORTED);
     CHECK(pel_qp_normalize(PEL_QP_SCALE_VP9_QINDEX, 8, 120.0f, &norm) == PEL_ERR_UNSUPPORTED);
-    CHECK(pel_qp_normalize(PEL_QP_SCALE_AV1_ENCODER_QP, 8, 32.0f, &norm) == PEL_ERR_UNSUPPORTED);
-    CHECK(norm == -1.0f);
     CHECK(pel_qp_normalize(0, 8, 30.0f, &norm) == PEL_ERR_INVALID);
     CHECK(pel_qp_normalize(5, 8, 30.0f, &norm) == PEL_ERR_INVALID);
     CHECK(pel_qp_normalize(PEL_QP_SCALE_SLICE_QP, 8, 30.0f, NULL) == PEL_ERR_INVALID);
@@ -505,8 +535,10 @@ int main(void)
     test_pack_roundtrip();
     test_pack_rejects();
     test_map_reader_checks();
-    test_adapter_caps();
+    test_adapter_caps_supported();
+    test_adapter_caps_errors();
     test_qp_normalize_slice_qp();
+    test_qp_normalize_av1_encoder();
     test_qp_normalize_refused();
 
     if (g_fail != 0) {

@@ -48,21 +48,40 @@ alignment. The worst-case map payload, `(1 << 20) * (2 + 4 + 1)`, is
 Reproduce: `grep -n 'ff_encode_add_stats_side_data' libavcodec/lib{x265,svtav1,aomenc}.c`
 in the FFmpeg checkout.
 
-## E3. The AV1 and VP9 normalisation constants are not verified
+## E3. The AV1 encoder-QP normalization table is verified
 
-`avg_qp_norm` for the qindex scales needs the codec's AC quantiser table and
-the scale between its step size and H.264's. Neither was read for this
-specification. Treat any remembered constant as unverified. The adapter pull
-request reads the tables from libaom and libvpx source at a pinned revision,
-cites them, and must pass #86 acceptance item 2 (within 1.0 across libx264,
-libx265 and libsvtav1).
+Update 2026-10-15: the adapter round verified the AV1 encoder `--qp` 0..63
+scale against libaom v3.15.2. The three luma AC QTX tables were sampled through
+libaom's quantizer-to-qindex mapping: 192 values compared, 0 mismatches. The
+pinned sources, fingerprints, conversion formula and fractional interpolation
+domain are recorded in
+[research 0174 E3](0174-e3-av1-qp-scale.md). Raw AV1 and VP9 qindex
+normalization remains unsupported.
 
-## E4. The scale of SVT-AV1's `headerPtr->qp` is not verified
+## E4. SVT-AV1 stat-file and FFmpeg values are separate
 
-E2 shows that FFmpeg multiplies the value by `FF_QP2LAMBDA`. Whether it is
-the encoder's 0..63 scale or `base_q_idx` was not read. The SVT-AV1
-adapter decides between `av1_encoder_qp` and `av1_qindex` from the SVT-AV1
-source.
+Update 2026-10-15: the shipped adapter reads SVT-AV1 v4.2.0's stat file, not
+FFmpeg's `headerPtr->qp`. The application writes the stat row's `QP` from
+`header_ptr->qp` and `Average QP` from `header_ptr->avg_qp` in
+[`app_process_cmd.c`](https://github.com/AOMediaCodec/SVT-AV1/blob/9292ec8e32bce26f781f277ec8739b53426c4300/Source/App/app_process_cmd.c#L1010-L1032).
+Packetization fills those members from `picture_qp` and `avg_qp` in
+[`packetization_process.c`](https://github.com/AOMediaCodec/SVT-AV1/blob/9292ec8e32bce26f781f277ec8739b53426c4300/Source/Lib/Codec/packetization_process.c#L703-L710).
+The frame average is derived from accumulated qindex values and divided by
+four in
+[`ec_process.c`](https://github.com/AOMediaCodec/SVT-AV1/blob/9292ec8e32bce26f781f277ec8739b53426c4300/Source/Lib/Codec/ec_process.c#L257-L262),
+while the encoder-QP-to-qindex table has 64 entries in
+[`md_process.c`](https://github.com/AOMediaCodec/SVT-AV1/blob/9292ec8e32bce26f781f277ec8739b53426c4300/Source/Lib/Codec/md_process.c#L20-L24).
+The checked tag `v4.2.0` peels to commit
+`9292ec8e32bce26f781f277ec8739b53426c4300`.
+
+The adapter reconstructs approximate mean qindex as
+`min(Average QP * 4, 255)` and inversely interpolates the cited 64-entry map.
+It then stores and normalizes the result as `av1_encoder_qp`. SVT's integer
+stat field loses at most two qindex units, or 0.5 encoder-QP. This also maps
+the valid fixed-QP-63 stat value `Average QP: 64` back to encoder QP 63.
+
+E2's FFmpeg wrapper field is a different input path. Its scale remains
+unverified and is not consumed by `pel_tlm_parse_svtav1_stat()`.
 
 ## E5. A Pelorus blob can reach the bitstream
 
