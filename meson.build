@@ -396,6 +396,26 @@ test('named-skip-self-test',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# Issue #160: plant an overlapping hunk and require the cumulative shared +
+# vmafx + Pelorus series checker to reject both apply orders with patch-pair,
+# file and hunk diagnostics. The fixture is synthetic and needs no FFmpeg tree.
+test('series-coexistence-self-test',
+     bash_prog,
+     args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'series-coexistence.sh',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+if build_machine.system() != 'windows'
+  test('series-coexistence-selftest-isolation',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-selftest-git-isolation.py',
+              'bash', meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'series-coexistence.sh',
+              '--self-test'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
+endif
+
 # The hardware smoke for the same pools: --self-test plants defects into its
 # checks; the GPU run needs FFMPEG_BIN and a VAAPI-capable RENDER_NODE and
 # otherwise exits 77 (skip) with the reason. It belongs in the fast suite only

@@ -1,0 +1,1 @@
+- Add a fail-closed FFmpeg series coexistence checker that reads the sibling vmafx `series.txt`, measures both project-stack orders, identifies patch-pair hunk collisions, and compiles the shared `PelorusSideData` reader contract ([#160](https://github.com/VMAFx/pelorus/issues/160)).

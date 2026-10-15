@@ -19,7 +19,8 @@ ffmpeg-patches/
 ├── 0001-*.patch … 0023-*    generated cumulative patch series (22; 0021 retired)
 ├── series.txt               apply order, after shared series
 ├── generate.sh              deterministic isolated regeneration
-└── test/build-and-run.sh    pinned replay, build, link, and smoke gate
+├── test/build-and-run.sh    pinned replay, build, link, and smoke gate
+└── test/series-coexistence.sh  shared + vmafx + Pelorus order/overlap gate
 ```
 
 - Edit `files/`, shader sources, hand diffs, or commit-message inputs; never
@@ -174,6 +175,17 @@ ffmpeg-patches/
    warning removed. Never fall back to OPTIMAL when `drm` requested. New
    frame-writing filter: same option and pad.
    GPU proof = `test/vulkan-drm-map-smoke.sh` (exit 77 = no binary/GPU).
+14. vmafx-series coexistence (#160): `test/series-coexistence.sh` takes a full
+    VMAFx checkout's `ffmpeg-patches/` directory because its reader probe also
+    needs `../core`; patch numbers and names = opaque `series.txt` entries.
+    Check shared -> vmafx -> Pelorus and reverse. `git apply --check`
+    before every cumulative `git apply`; any failure names patch pair, file,
+    hunks. Current measured result = both orders unsupported at `configure`;
+    never hide conflict with 3-way auto-resolution. Reader check =
+    `AV_FRAME_DATA_SEI_UNREGISTERED` -> `vmaf_set_perceptual_sidedata`, compiled
+    distorted-frame buffer flow, raw `PelorusSideData` identity/major/layout,
+    and reader minor <= producer minor. ABI 1.5 COBS carrier = separate,
+    unsupported by vmafx ABI 1.3 reader, not part of raw filtergraph check.
 
 ## Required checks
 
