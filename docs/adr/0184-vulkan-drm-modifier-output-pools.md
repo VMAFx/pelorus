@@ -134,3 +134,19 @@ ADR until the status sweep, as for ADR-0180 to ADR-0183.
 - Research: [0172 zero-copy audit](../research/0172-zero-copy-audit.md) sections 1, 2a, 5, 10; [0184 DRM-modifier pools](../research/0184-vulkan-drm-modifier-pools.md); evidence `.workingdir/evidence/vulkan-drm-modifier/` (local).
 - FFmpeg `n9.0.2`: `libavfilter/vulkan_filter.c` (`ff_vk_filter_init_context`, `ff_vk_filter_config_output`), `libavutil/hwcontext_vulkan.c` (`try_export_flags`, `vulkan_pool_alloc`, `vulkan_frames_init`, `vulkan_drm_export_sync_fd`, `vulkan_map_to_drm`, `vulkan_drm_format_map`), `libavutil/hwcontext_vaapi.c` (`vaapi_drm_format_map`, `vaapi_map_from_drm`), `libavfilter/vf_hwmap.c` (reverse mapping).
 - Vulkan 1.4 specification: `VK_EXT_image_drm_format_modifier` (`VkImageDrmFormatModifierListCreateInfoEXT`, `VkDrmFormatModifierPropertiesListEXT`), `VUID-VkPhysicalDeviceImageFormatInfo2-tiling-02313`; `drm_fourcc.h` (libdrm) modifier codes.
+
+## Update 2026-10-15
+
+The two stock defects documented above are resolved by the shared FFmpeg fix
+series `v0.2.0` (pinned in `build-config.env`, [ADR-0185](0185-shared-ffmpeg-fix-series.md)):
+
+- Stock defect 1 (P010 to VAAPI) is fixed by series patch 0005 (which adds the
+  `GR1616` layer format to `vaapi_drm_format_map`) and patch 0006 (`VkImageFormatListCreateInfo`
+  query in `try_export_flags()`).
+- Stock defect 2 (AMD map synchronisation) is fixed by series patch 0007 (CPU
+  `vkWaitSemaphores()` path before DMA-BUF export on RADV).
+
+The AMD driver warning in `pel_vk_pool_warn_limits()` has been removed, and
+`p010-640x360` is now required by default in `test/vulkan-drm-map-smoke.sh`.
+Measurements and control verification are documented in the research digest
+[docs/research/0103-p010-amd-drm-map.md](../research/0103-p010-amd-drm-map.md).

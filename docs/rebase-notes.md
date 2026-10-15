@@ -132,16 +132,14 @@ shared FFmpeg fix series, number 0021 retired).
   `pel_vk_pool_matches()` fails the filter if a bump changes that. The
   `FFVulkanContext` fields `input_frames_ref`, `frames_ref`, `extensions`,
   `vkfn`, `hwctx`, `device` and the loader helpers `ff_vk_extensions_to_mask()`
-  and `ff_vk_load_functions()` are used directly.
-- **Stock defects to re-test on every bump** (not in this stack): P010/P012
-  Vulkan export `GR1616` against VAAPI's `RG1616`-only table and the
-  `try_export_flags()` format-list fix (`02313`), both queued in
-  VMAFx/ffmpeg-patches; the AMD sync_file in `vulkan_map_to_drm()`, which
-  needs a root cause first; the other export-path validation errors
-  ([research 0184](research/0184-vulkan-drm-modifier-pools.md)). Drop the
-  matching `KNOWN-STOCK` branch of `test/vulkan-drm-map-smoke.sh` when FFmpeg
-  carries the P010 fix, and the AMD warning in `pel_vk_pool_warn_limits()`
-  when the synchronisation is fixed.
+- **Stock defects resolved by shared series v0.2.0**: P010/P012
+  Vulkan export `GR1616` against VAAPI's table (0005), the `try_export_flags()`
+  format-list fix (`02313`, 0006), and the RADV CPU wait in `vulkan_map_to_drm()`
+  (0007) are carried by shared series v0.2.0. The AMD warning in
+  `pel_vk_pool_warn_limits()` has been removed and `p010-640x360` is required
+  by default in `test/vulkan-drm-map-smoke.sh` (opt-out under `STOCK_FFMPEG=1`).
+  Other export-path validation errors ([research 0184](research/0184-vulkan-drm-modifier-pools.md))
+  remain to be monitored on bumps.
 - **Interop**: none.
 - **Checks**: fast tests `drm-modifier` and `vulkan-drm-map-self-test`;
   `generate.sh` twice, byte-identical; `build-and-run.sh` (23 patches, now with

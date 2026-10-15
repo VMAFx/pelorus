@@ -27,12 +27,12 @@ Research: docs/research/0101-smart-deband.md
  libavfilter/allfilters.c                    |   1 +
  libavfilter/pelorus_drm_modifier.h          | 193 +++++++
  libavfilter/pelorus_sidedata.h              | 169 ++++++
- libavfilter/pelorus_vulkan_pool.h           | 585 ++++++++++++++++++++
+ libavfilter/pelorus_vulkan_pool.h           | 576 ++++++++++++++++++++
  libavfilter/pelorus_vulkan_sample.h         | 100 ++++
  libavfilter/vf_pelorus_deband_vulkan.c      | 473 ++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
  libavfilter/vulkan/pelorus_deband.comp.glsl | 177 ++++++
- 10 files changed, 1703 insertions(+)
+ 10 files changed, 1694 insertions(+)
 
 diff --git a/configure b/configure
 index 374bd5c1512943439480825f32e448e7871eb61c..00b13ed09edcf3fb2b44ff9d0bfbb4420f45c68e 100755
@@ -455,10 +455,10 @@ index 0000000000000000000000000000000000000000..93c45ad0d23039ee39336bcc2b93de94
 +#endif /* AVFILTER_PELORUS_SIDEDATA_H */
 diff --git a/libavfilter/pelorus_vulkan_pool.h b/libavfilter/pelorus_vulkan_pool.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..e7191c6055899b428ea7029335a5d338075b3cc1
+index 0000000000000000000000000000000000000000..a4a2a1abba4cfdb38d31865b7193c5ee4c7aacf0
 --- /dev/null
 +++ b/libavfilter/pelorus_vulkan_pool.h
-@@ -0,0 +1,585 @@
+@@ -0,0 +1,576 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -993,24 +993,15 @@ index 0000000000000000000000000000000000000000..e7191c6055899b428ea7029335a5d338
 +}
 +
 +/* Known limits of a working DRM-modifier pool, named instead of silent. */
-+static inline void pel_vk_pool_warn_limits(AVFilterContext *avctx, const FFVulkanContext *s)
++static inline void pel_vk_pool_warn_limits(AVFilterContext *avctx)
 +{
-+    const VkDriverId driver = s->driver_props.driverID;
-+
 +#if !CONFIG_LIBDRM
 +    av_log(avctx, AV_LOG_WARNING,
 +           "tiling=drm: this FFmpeg is built without libdrm, so hwmap cannot map the pool to "
 +           "DRM PRIME or VAAPI\n");
++#else
++    (void)avctx;
 +#endif
-+    /* research 0184: on RADV with radeonsi the sync_file attached by
-+     * vulkan_map_to_drm() did not hold VAAPI reads back in 14-17 of 20 frames. */
-+    if (driver == VK_DRIVER_ID_MESA_RADV || driver == VK_DRIVER_ID_AMD_OPEN_SOURCE ||
-+        driver == VK_DRIVER_ID_AMD_PROPRIETARY)
-+        av_log(avctx, AV_LOG_WARNING,
-+               "tiling=drm on an AMD Vulkan driver (%s): a frame mapped to VAAPI can be read "
-+               "before the filter finished writing it (silently wrong pixels) until FFmpeg's "
-+               "map synchronisation is fixed; see docs/backends/vulkan-drm-modifiers.md\n",
-+               s->driver_props.driverName);
 +}
 +
 +/* config_props of the output pad of every Pelorus filter that writes new
@@ -1034,7 +1025,7 @@ index 0000000000000000000000000000000000000000..e7191c6055899b428ea7029335a5d338
 +        err = pel_vk_pool_report(avctx, s, &choice);
 +    if (err < 0)
 +        return err;
-+    pel_vk_pool_warn_limits(avctx, s);
++    pel_vk_pool_warn_limits(avctx);
 +    l->hw_frames_ctx = av_buffer_ref(s->frames_ref);
 +    if (!l->hw_frames_ctx)
 +        return AVERROR(ENOMEM);

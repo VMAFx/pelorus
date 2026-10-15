@@ -14,6 +14,10 @@ All notable changes to Pelorus are documented here. The format is
 
 - `scripts/release/tag-release.sh` makes the signed release tag only after the candidate legs of the tagged commit are green (a dispatched `Tester publish` run among them), the tag shape is valid, the tag is new and `meson.build` names the same version; `make docs-check` runs its planted-defect self-test, and the fast suite proves that self-test leaves an invoking repository untouched when Git hook variables are set. The rc.4 tag was pushed before its `Tester publish` run, which made the first release build fail.
 
+### Fixed
+
+- Zero-copy mapping of Pelorus `tiling=drm` output pools to VAAPI now supports 10-bit P010 and AMD Radeon (RADV/radeonsi) bit-exact without `hwdownload` (#103). Shared FFmpeg fix series `v0.2.0` carries the P010 `GR1616` VAAPI row (patch 0005), the export format-list query (0006) and the RADV CPU wait before DRM map (0007); the AMD driver warning in `pel_vk_pool_warn_limits()` is removed and `ffmpeg-patches/test/vulkan-drm-map-smoke.sh` requires P010 by default with `EXPECT_VAAPI` driver validation. ([ADR-0184](docs/adr/0184-vulkan-drm-modifier-output-pools.md#update-2026-10-15), [research 0103](docs/research/0103-p010-amd-drm-map.md))
+
 <!-- END UNRELEASED -->
 
 ## [0.4.0] - 2026-10-15

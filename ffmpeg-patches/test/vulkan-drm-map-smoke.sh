@@ -20,17 +20,20 @@
 # Cases:
 #   nv12-640x360   tiling=drm, h264_vaapi constant QP
 #   nv12-641x361   odd frame size
-#   p010-640x360   10-bit, hevc_vaapi Main10 (see P010 below)
+#   p010-640x360   10-bit, hevc_vaapi Main10 (required by default)
 #   p010-drm       10-bit pool exported as DRM PRIME (no VAAPI import)
 #   negative       drm_modifiers names only NEGATIVE_MODIFIER, which the GPU
 #                  does not offer: the filter logs the substitution of
 #                  DRM_FORMAT_MOD_LINEAR by name, and the LINEAR pool maps
 #   bad-list       a malformed drm_modifiers list fails the filter
 #   qsv-nv12       (QSV=1) hevc_qsv constant QP through hwmap vaapi -> qsv
-# Stock FFmpeg n9.0.2 exports a P010 pool as layers R16 + GR1616 and its VAAPI
-# import accepts only R16 + RG1616 (hwcontext_vaapi.c vaapi_drm_format_map):
-# p010-640x360 then reports KNOWN-STOCK and does not fail, unless P010=1
-# demands it (FFmpeg carrying the GR1616 rows).
+# Shared FFmpeg series v0.2.0 patch 0005 adds the GR1616 VAAPI row, so
+# p010-640x360 is required to pass by default. On an unpatched stock FFmpeg
+# lacking that fix, STOCK_FFMPEG=1 allows reporting KNOWN-STOCK instead of
+# failing.
+#
+# Note: LIBVA_DRIVER_NAME in the environment can load another GPU's VAAPI
+# driver (seen: nvidia), set it per GPU.
 #
 # Env:
 #   FFMPEG_BIN         patched ffmpeg with Vulkan, VAAPI and libdrm (required)
@@ -38,8 +41,9 @@
 #                      /dev/dri/renderD128); Vulkan is derived from its VAAPI
 #                      device, so both run on the same GPU
 #   EXPECT_DEVICE      extended regex the selected Vulkan device must match
+#   EXPECT_VAAPI       extended regex the selected VAAPI driver must match
 #   QSV                1: run the hevc_qsv case (Intel)
-#   P010               1: p010-640x360 must pass
+#   STOCK_FFMPEG       1: opt-out allowing p010-640x360 KNOWN-STOCK on unpatched FFmpeg
 #   NEGATIVE_MODIFIER  modifier the GPU does not offer for nv12 (default
 #                      0x0c00000000000001, DRM_FORMAT_MOD_APPLE_GPU_TILED)
 #   MIN_PSNR           encode check floor in dB when not bit-exact (default 50)
@@ -85,6 +89,12 @@ pel_first_error()
 pel_device()
 {
     awk '/Device [0-9]+ selected: / { sub(/.*selected: /, ""); print; exit }' "$1"
+}
+
+# The VAAPI driver FFmpeg selected, from a verbose log.
+pel_vaapi_driver()
+{
+    awk '/VAAPI driver: / { sub(/.*VAAPI driver: /, ""); print; exit }' "$1"
 }
 
 # check_frames NAME ZERO_COPY HOST FRAMES: two framemd5 files list FRAMES
@@ -137,6 +147,25 @@ pel_check_device()
         { echo "Vulkan device '$dev' does not match '$EXPECT_DEVICE'"; return 1; }
 }
 
+# check_vaapi LOG: a VAAPI driver was selected and matches EXPECT_VAAPI.
+pel_check_vaapi()
+{
+    local drv
+
+    drv="$(pel_vaapi_driver "$1")"
+    [[ -n "$drv" ]] || { echo "no VAAPI driver line in $1"; return 1; }
+    [[ -z "${EXPECT_VAAPI:-}" || "$drv" =~ $EXPECT_VAAPI ]] ||
+        { echo "VAAPI driver '$drv' does not match '$EXPECT_VAAPI'"; return 1; }
+}
+
+# check_p010_stock LOG: returns 0 if the failure is permitted as KNOWN-STOCK under
+# STOCK_FFMPEG=1, 1 if it must fail the run.
+pel_check_p010_stock()
+{
+    local log="$1"
+    [[ "${STOCK_FFMPEG:-0}" == 1 && "$(pel_count "$log" "DRM format not supported by VAAPI")" -ge 1 ]]
+}
+
 pel_self_test()
 {
     local dir
@@ -146,12 +175,18 @@ pel_self_test()
     printf '#format\n0, 0, 0, 1, 1, aaa\n0, 1, 1, 1, 1, ccc\n' >"$dir/f2"
     printf '#format\n0, 0, 0, 1, 1, aaa\n' >"$dir/short"
     printf '%s\n' '[Vulkan] Device 1 selected: Intel(R) Arc(tm) A380 Graphics (DG2)' \
+        'VAAPI driver: Intel iHD driver for Intel(R) Gen Graphics - 26.3.5 ()' \
         '[f] tiling=drm: nv12 64x64 pool uses DRM format modifier 0x0100000000000009 (I915_FORMAT_MOD_4_TILED), chosen by the driver from 3' \
         >"$dir/ok.log"
-    printf '%s\n' '[Vulkan] Device 0 selected: llvmpipe (LLVM 21.1.0, 256 bits)' >"$dir/cpu.log"
+    printf '%s\n' '[Vulkan] Device 0 selected: llvmpipe (LLVM 21.1.0, 256 bits)' \
+        'VAAPI driver: Mesa Gallium driver 26.2.4 for llvmpipe (LLVM 21.1.0, 256 bits)' \
+        >"$dir/cpu.log"
+    printf '%s\n' 'VAAPI driver: Mesa Gallium driver 26.2.4 for AMD Radeon Graphics (radeonsi, ...)' \
+        >"$dir/amd.log"
     printf '%s\n' '[f] tiling=drm: no modifier in drm_modifiers supports storage images and DMA-BUF export for nv12; substituting DRM_FORMAT_MOD_LINEAR (0x0000000000000000)' \
         '[f] tiling=drm: nv12 64x64 pool uses DRM format modifier 0x0000000000000000 (DRM_FORMAT_MOD_LINEAR), chosen by the driver from 1' \
         >"$dir/fallback.log"
+    printf '%s\n' '[f] DRM format not supported by VAAPI.' >"$dir/p010-stock.log"
     pel_check_frames t "$dir/f1" "$dir/f1same" 2 >/dev/null || pel_fail "self-test: equal frames rejected"
     ! pel_check_frames t "$dir/f2" "$dir/f1" 2 >/dev/null || pel_fail "self-test: different frame accepted"
     ! pel_check_frames t "$dir/short" "$dir/short" 2 >/dev/null || pel_fail "self-test: lost frame accepted"
@@ -169,8 +204,18 @@ pel_self_test()
     ! EXPECT_DEVICE='Arc' pel_check_device "$dir/cpu.log" >/dev/null ||
         pel_fail "self-test: wrong device accepted"
     ! pel_check_device "$dir/fallback.log" >/dev/null || pel_fail "self-test: missing device line accepted"
+    EXPECT_VAAPI='Intel iHD' pel_check_vaapi "$dir/ok.log" >/dev/null ||
+        pel_fail "self-test: right VAAPI driver rejected"
+    ! EXPECT_VAAPI='Intel iHD' pel_check_vaapi "$dir/amd.log" >/dev/null ||
+        pel_fail "self-test: wrong VAAPI driver accepted"
+    ! pel_check_vaapi "$dir/fallback.log" >/dev/null ||
+        pel_fail "self-test: missing VAAPI driver line accepted"
+    STOCK_FFMPEG=1 pel_check_p010_stock "$dir/p010-stock.log" >/dev/null ||
+        pel_fail "self-test: stock P010 failure with opt-out rejected"
+    ! pel_check_p010_stock "$dir/p010-stock.log" >/dev/null ||
+        pel_fail "self-test: stock P010 failure without opt-out accepted"
     rm -rf -- "$dir"
-    echo "PASS: self-test (8 planted defects rejected, 6 controls accepted)"
+    echo "PASS: self-test (11 planted defects rejected, 8 controls accepted)"
 }
 
 if [[ "${1:-}" == "--self-test" ]]; then
@@ -196,9 +241,15 @@ if ! "$FFMPEG_BIN" -hide_banner -v verbose "${PEL_DEVS[@]}" -f lavfi -i testsrc2
     -frames:v 1 -vf format=nv12,hwupload -f null - >"$PEL_OUT/probe.log" 2>&1; then
     pel_skip "no VAAPI + Vulkan pair on $PEL_NODE: $(pel_first_error "$PEL_OUT/probe.log")"
 fi
-pel_check_device "$PEL_OUT/probe.log" || pel_fail "device check failed"
-echo "Vulkan device: $(pel_device "$PEL_OUT/probe.log")"
-echo "VAAPI driver: $(awk '/VAAPI driver: / { sub(/.*VAAPI driver: /, ""); print; exit }' "$PEL_OUT/probe.log")"
+pel_dev="$(pel_device "$PEL_OUT/probe.log")"
+pel_check_device "$PEL_OUT/probe.log" ||
+    pel_fail "Vulkan device '$pel_dev' does not match '$EXPECT_DEVICE'"
+echo "Vulkan device: $pel_dev"
+
+pel_drv="$(pel_vaapi_driver "$PEL_OUT/probe.log")"
+echo "VAAPI driver: $pel_drv"
+pel_check_vaapi "$PEL_OUT/probe.log" ||
+    pel_fail "VAAPI driver '$pel_drv' does not match '$EXPECT_VAAPI'"
 
 # run NAME SIZE SWFMT TAIL OUTPUT_ARGS...: testsrc2 -> SWFMT -> hwupload -> TAIL
 # into NAME.out; the log is NAME.log.
@@ -269,7 +320,7 @@ if pel_readback p010-640x360 640x360 p010le tiling=drm; then
     psnr="$(pel_encode p010-640x360 640x360 p010le tiling=drm "$PEL_VA_ZC" "$PEL_VA_HOST" \
         -c:v hevc_vaapi -profile:v main10 -rc_mode CQP -qp 24 -f hevc)"
     echo "PASS: p010-640x360 (readback bit-exact; hevc_vaapi PSNR $psnr dB vs hwdownload)"
-elif [[ "${P010:-0}" != 1 && "$(pel_count "$PEL_OUT/p010-640x360-rb.log" "DRM format not supported by VAAPI")" -ge 1 ]]; then
+elif pel_check_p010_stock "$PEL_OUT/p010-640x360-rb.log"; then
     echo "KNOWN-STOCK: p010-640x360: VAAPI does not import the R16 + GR1616 layers stock FFmpeg exports"
 else
     pel_fail "p010-640x360: $(pel_first_error "$PEL_OUT/p010-640x360-rb.log")"
