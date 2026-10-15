@@ -227,6 +227,73 @@ downloads the release, so it needs the network, `cosign` and `gh` too),
 regenerate twice and replay. Number 0021 of the Pelorus stack is retired: that
 fix is series patch 0001 now.
 
+### Apply order with the vmafx series
+
+The sibling vmafx project (the VMAF extension and orchestration layer,
+pronounced “vee-maf-ex”) ships another FFmpeg patch series. Check it against
+the Pelorus stack before combining the projects:
+
+```bash
+FFMPEG_REPO=/absolute/path/to/ffmpeg \
+VMAFX_SERIES_DIR=/absolute/path/to/vmafx/ffmpeg-patches \
+ffmpeg-patches/test/series-coexistence.sh
+```
+
+The input is the `ffmpeg-patches/` directory inside a full vmafx checkout: the
+checker reads patch names and numbers from its `series.txt` and compiles the
+vendored interop header and source under the sibling `core/` directory. A
+series-only extraction is insufficient. `VMAFX_SERIES_DIR` is an unverified,
+unpinned input (unlike the pinned, checksum-verified shared series); the
+checker records its commit and dirty state in its output. The checker creates
+detached worktrees at the FFmpeg tag pinned by `build-config.env`, fetches and
+verifies the shared series, then measures both cumulative orders:
+
+1. shared fixes → vmafx → Pelorus (preferred candidate);
+2. shared fixes → Pelorus → vmafx (reverse measurement).
+
+`SHARED_SERIES_DIR` may name a Git checkout containing the pinned shared-series
+commit to avoid fetching it again; the checker compares `base.env`,
+`series.txt`, and every applied patch body against `FFMPEG_SERIES_COMMIT` before
+use. `BUILD` accepts `0` (the default) or `1`. With `BUILD=1`, the checker
+builds and installs a private libpelorus, configures Vulkan, all ten Pelorus
+filters, and the `pelorus_fgs` bitstream filter, links FFmpeg, then checks every
+registration by its exact name. `JOBS` defaults to 4 and cannot exceed 4. When
+`pkg-config` cannot resolve `libvmaf`, that optional reader build is disabled
+with a named `SKIP:` reason checked by `test/named-skip.sh`. ABI probes use
+`CC`, which defaults to `cc`.
+
+Every patch first passes `git apply --check` against the cumulative tree. The
+checker is an overlap detector using `git apply --check` (no three-way merge); it
+reports textual hunk collisions across patch series and does not replace
+`test/build-and-run.sh`, which performs full three-way `git am` replay,
+configure, build, link, and runtime smoke testing of the Pelorus stack. A
+failure prints the current patch and its conflicting patch or cumulative-tree
+predecessor, plus the file and unified-diff hunk headers, before the worktree is
+removed. `--self-test`, wired into the Meson fast suite, plants a same-line
+collision and a non-overlap context failure, guards the side-data call flow,
+verifies that planted failing `CC=false` probes and bad `JOBS` inputs are
+rejected, and also proves two non-overlapping controls.
+
+The measurement on 2026-10-15 found neither order supported: both stop at the
+`configure` hunk shared by vmafx's `vmaf_pre` registration and Pelorus's first
+filter registration. Do not combine these revisions by relying on a three-way
+auto-resolution. Re-run the command after either series changes; the full
+fingerprints and five commonly touched files are in
+[research 0160](../research/0160-series-coexistence.md).
+
+The checker also verifies the reader contract without depending on a numbered
+vmafx patch. It retains the final shared-plus-vmafx cumulative tree when the
+combined order is blocked and requires that tree's applied `vf_libvmaf.c` to
+pass `AV_FRAME_DATA_SEI_UNREGISTERED` to `vmaf_set_perceptual_sidedata`. Two
+compiled probes compare
+`PelorusSideData`, every header and directory offset, the three section layouts
+the reader consumes, the magic, ABI major, UUID length, and reader-visible
+section identifiers between Pelorus and vmafx. The vmafx reader's ABI minor may
+be older because those raw in-filtergraph blob fields are append-only; it may
+not be newer than the producer. This does not validate ABI 1.5's zero-free COBS
+carrier: the ABI 1.3 vmafx reader recognizes only the raw Pelorus UUID, so the
+encoded carrier path is outside this coexistence check.
+
 ## Repository verification entry points
 
 ```bash
