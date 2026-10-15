@@ -2,12 +2,12 @@
 # Encoder telemetry (interop ABI 1.4)
 
 > [!IMPORTANT]
-> **Status: the layout, input contract, checks, x265 CSV adapter and SVT-AV1
-> stat-file adapter are implemented.** The section arrived with `PELORUS_ABI_MINOR` 4 in
+> **Status: the layout, input contract, checks, x265 CSV adapter, SVT-AV1
+> stat-file adapter and VVenC log adapter are implemented.** The section arrived with `PELORUS_ABI_MINOR` 4 in
 > [`interop.h`](../../libpelorus/include/pelorus/interop.h)
 > ([ADR-0174](../adr/0174-encoder-telemetry-abi-1-4.md), issue #86). The
 > section, `pelorus/telemetry.h`, the registry and the parity check ship now.
-> FFmpeg quality stats, libaom, VVenC, hardware feedback, raw AV1/VP9 qindex
+> FFmpeg quality stats, libaom, hardware feedback, raw AV1/VP9 qindex
 > normalisation and `pel_enc_telemetry_to_json()` remain future work (#86).
 
 ## In one paragraph
@@ -339,13 +339,16 @@ pel_result pel_tlm_parse_x265_csv(const char *text, size_t len, uint8_t coded_bi
 pel_result pel_tlm_parse_svtav1_stat(const char *text, size_t len, uint8_t coded_bit_depth,
                                      PelorusEncTelemetryInput *out_frames, size_t cap,
                                      size_t *out_count);
+pel_result pel_tlm_parse_vvenc_log(const char *text, size_t len, uint8_t coded_bit_depth,
+                                   PelorusEncTelemetryInput *out_frames, size_t cap,
+                                   size_t *out_count);
 ```
 
 **Stability:** these functions are stable public libpelorus API. They were
 appended to `telemetry.h`; their signatures do not change incompatibly. They
 touch no wire layout, so adding them does not change `PELORUS_ABI_MINOR`.
 
-The two parsers consume one complete encoder-stat text buffer and perform no
+The three parsers consume one complete encoder-stat text buffer and perform no
 file I/O or allocation in their record loops. They create and release one
 call-local C numeric-locale handle, so the encoders' dot-decimal
 fields do not depend on the process locale. `text` is borrowed and read only
@@ -367,7 +370,7 @@ builds also require libm, which the generated pkg-config metadata carries in
 
 ### Input grammar and field mapping
 
-Both adapters ignore blank lines. Their recorded inputs are fixtures under
+The adapters ignore blank lines. Their recorded inputs are fixtures under
 [`libpelorus/test/fixtures/telemetry/`](../../libpelorus/test/fixtures/telemetry/).
 
 | Input | Accepted grammar | Output mapping | Failure |
@@ -378,6 +381,8 @@ Both adapters ignore blank lines. Their recorded inputs are fixtures under
 | x265 `Scenecut` | `0` or `1` | `0` clears scene-cut; `1` sets scene-cut | Any unsigned value above `1`: `PEL_ERR_RANGE` |
 | SVT-AV1 record | `Picture Number: <u32> TL: <u32> QP: <u32> Average QP: <u32> [ PSNR-Y: <float> dB, PSNR-U: <float> dB, PSNR-V: <float> dB, MSE-Y: <float>, MSE-U: <float>, MSE-V: <float>, SSIM-Y: <float>, SSIM-U: <float>, SSIM-V: <float> ] <u32> bytes VBV delay: <float> s`; the full line must match, all floats must be finite, and ranges are `TL <= 5`, `QP <= 63`, `Average QP <= 64`, non-negative PSNR/MSE/VBV delay and `0 <= SSIM <= 1` | `Picture Number` -> `display_index`; inverse-mapped `Average QP` -> `avg_qp` and `avg_qp_norm`; PSNR planes -> `psnr_y/u/v`; `SSIM-Y` -> `ssim_y`; byte count -> `frame_bytes`; `TL`, `QP`, MSE, chroma SSIM and VBV delay are syntax/range checks only | Missing token: `PEL_ERR_TRUNCATED`; shifted or trailing token: `PEL_ERR_INVALID`; value outside a stated range: `PEL_ERR_RANGE` |
 | SVT-AV1 stream control | A line beginning `SUMMARY` terminates successfully. Before the first record or summary, any other non-empty text is not a stat file | Records before `SUMMARY` are returned; summary fields are not parsed | Non-stat text before recognition: `PEL_ERR_ABSENT`; non-stat text after a record: `PEL_ERR_INVALID` |
+| VVenC log record | Line beginning `POC <u32> TId: <u32> (<NAL>, <slice>-SLICE, QP <int>[, ...]) <u32> bits [Y <float or inf> dB U <float or inf> dB V <float or inf> dB]`; `TId` is `0..6` (`VVENC_MAX_TLAYER 7` in `include/vvenc/vvencCfg.h:81`); slice is `I`, `P`, `B` or `b` (`i`, `p`, `b` accepted); PSNR metrics are finite floats or the exact token `inf` (lossless MSE 0 in `EncGOP.cpp:2972-2974`); `bits` must be divisible by eight (`EncGOP.cpp:2884`) | `POC` -> `display_index`; emission order -> `decode_index`; `bits / 8` -> `frame_bytes`; `QP` -> `avg_qp` and `avg_qp_norm`; slice char -> `picture_type` (reference flag is not reported, `EncGOP.cpp:2932`); NAL type (`IDR_*`, `CRA`, `GDR`) -> `key_frame`; PSNR planes -> `psnr_y/u/v` (`inf` maps to 100.0 dB) | Malformed line, non-exact inf word (e.g. `nan`), or unknown slice: `PEL_ERR_INVALID`; line ends before bits or metrics: `PEL_ERR_TRUNCATED`; value outside valid range (`TId > 6`, QP outside valid range, or invalid bit depth): `PEL_ERR_RANGE` |
+| VVenC stream control | Non-POC lines (headers, notices, summaries) are ignored; lines containing `-SLICE` or starting with `TId:` without `POC` are treated as malformed | Non-POC lines produce no record; parsing stops on error | Non-POC lines without error tokens: ignored (`PEL_OK`); inverted/corrupt frame tokens: `PEL_ERR_INVALID` |
 
 An x265 header must contain each required column name exactly once. A repeated
 required name is ambiguous and returns `PEL_ERR_INVALID`, whether the repeat
@@ -391,6 +396,11 @@ computes a finite capped PSNR before the
 [stat-file writer formats it with `%.2f`](https://gitlab.com/AOMediaCodec/SVT-AV1/-/blob/v4.2.0/Source/App/app_process_cmd.c#L1010-1031).
 Consequently the adapter accepts finite decimal metrics only and rejects
 `inf` and `nan` tokens as `PEL_ERR_INVALID`.
+
+VVenC v1.14.0 emits `inf` when MSE is 0 (lossless encoding, `EncGOP.cpp:2972-2974`
+formats `[Y %7s dB ...]` with `"inf"`). The adapter maps the exact token `inf` to
+`100.0f` dB, matching the cap in FFmpeg quality stats telemetry. Any other
+non-numeric token (such as `nan`) returns `PEL_ERR_INVALID`.
 
 Validation completes before the output pass, so an error writes no frame.
 When `out_count` is non-NULL it is set to zero before argument and content
@@ -538,3 +548,4 @@ python3 -I scripts/check-telemetry-field-parity.py --vmafx FILE  # any VMAFx lis
 | #86 item 4 and #218: layout lock and fixture | `_Static_assert` sizes 104, 48, 36 plus every member offset in `interop.h`; `libpelorus/test/interop_test.c` packs and parses every new section and reads a 1.3-sized motion section as absent by size; `ffmpeg-patches/test/mc_stats_test.c` (`bsize` 8, 16, 32 write 3, 4, 5; other edges write 0); `ffmpeg-patches/test/pelorus_sidedata_test.c` (the named edge wins, also on a 1x1 frame and on grids that inference cannot resolve) |
 | #221 | `libpelorus/test/telemetry_test.c` includes `pelorus/telemetry.h` first and builds without FFmpeg include paths; a hand-filled `external` input packs and parses; an out-of-range enum and an oversized grid return `PEL_ERR_INVALID`/`PEL_ERR_RANGE` |
 | #220 | the Meson tests `telemetry-field-parity` (against the pinned VMAFx list) and `telemetry-field-parity-self-test` |
+| #111 (VVenC adapter) | `telemetry_adapter_test.c` parses the real 10-frame VVenC v1.14.0 log fixture, rejects planted syntax/metrics corruptions, enforces divisible-by-8 bits, maps slice picture type, validates TId 0..6, and maps lossless PSNR inf to 100.0 dB |

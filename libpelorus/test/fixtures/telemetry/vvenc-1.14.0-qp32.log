@@ -1,0 +1,61 @@
+vvencapp: VVenC, the Fraunhofer H.266/VVC Encoder, version 1.14.0 [Linux][GCC 16.2.1][64 bit][SIMD=AVX2]
+vvenc [notice]: Input File                             : .workingdir/synth.y4m
+vvenc [notice]: Bitstream File                         : /dev/null
+vvenc [notice]: Real Format                            : 176x144  yuv420p  10 Hz  SDR  10 frames
+vvenc [notice]: Frames                                 : encode 10 frames 
+vvenc [notice]: Internal format                        : 176x144  10 Hz  SDR
+vvenc [notice]: Threads                                : 1  (parallel frames: 1)
+vvenc [notice]: Rate control                           : QP 32
+vvenc [notice]: Perceptual optimization                : Enabled
+vvenc [notice]: Intra period (keyframe)                : 8
+vvenc [notice]: Decoding refresh type                  : CRA
+vvenc [notice]: Sequence PSNR output                   : Linear average only
+vvenc [notice]: Hexadecimal PSNR output                : Disabled
+vvenc [notice]: Sequence MSE output                    : Disabled
+vvenc [notice]: Frame MSE output                       : Disabled
+vvenc [notice]: Cabac-zero-word-padding                : Enabled
+vvenc [notice]: Frame index                            : all frames
+vvenc [notice]: Profile                                : main_10
+vvenc [notice]: Level                                  : 1
+vvenc [notice]: CU size                                : 64
+vvenc [notice]: Max TB size                            : 64
+vvenc [notice]: Min CB size                            : 4
+vvenc [notice]: Motion search range                    : 128
+vvenc [notice]: QP                                     : 32
+vvenc [notice]: Max dQP signaling subdiv               : 2
+vvenc [notice]: Cb QP Offset (dual tree)               : 0 (0)
+vvenc [notice]: Cr QP Offset (dual tree)               : 0 (0)
+vvenc [notice]: GOP size                               : 32
+vvenc [notice]: PicReordering                          : 1
+vvenc [notice]: Input bit depth                        : (Y:8, C:8)
+vvenc [notice]: MSB-extended bit depth                 : (Y:8, C:8)
+vvenc [notice]: Internal bit depth                     : (Y:10, C:10)
+vvenc [notice]: cu_chroma_qp_offset_subdiv             : -1
+vvenc [notice]: log2_sao_offset_scale_luma             : 0
+vvenc [notice]: log2_sao_offset_scale_chroma           : 0
+vvenc [notice]: Cost function                          : Lossy coding
+vvenc [notice]: Film grain analysis                    : 0
+
+vvencapp [notice]: started @ Thu Oct 15 21:55:44 2026
+POC     7 TId: 0 (IDR_W_RADL, I-SLICE, QP 23, TF 2)      14736 bits [Y 45.3714 dB    U 40.9255 dB    V 40.3762 dB] [ET     0 ] [L0 ] [L1 ]
+POC     3 TId: 3 (      RADL, B-SLICE, QP 31)             3536 bits [Y 40.1352 dB    U 35.4781 dB    V 35.1209 dB] [ET     0 ] [L0 7 ] [L1 7 ]
+POC     1 TId: 4 (      RADL, B-SLICE, QP 33)             2880 bits [Y 38.4480 dB    U 34.9469 dB    V 33.1236 dB] [ET     0 ] [L0 3 7 ] [L1 3 7 ]
+POC     0 TId: 5 (      RADL, B-SLICE, QP 33)             2160 bits [Y 38.2510 dB    U 35.1495 dB    V 32.7674 dB] [ET     0 ] [L0 1 3 ] [L1 1 3 ]
+POC     2 TId: 5 (      RADL, B-SLICE, QP 34)             2000 bits [Y 37.7859 dB    U 33.9823 dB    V 31.7554 dB] [ET     0 ] [L0 1 3 ] [L1 3 7 ]
+POC     5 TId: 4 (      RADL, B-SLICE, QP 33)             2552 bits [Y 38.9690 dB    U 35.0033 dB    V 33.7151 dB] [ET     0 ] [L0 3 7 ] [L1 7 3 ]
+POC     4 TId: 5 (      RADL, B-SLICE, QP 34)             1512 bits [Y 37.4232 dB    U 33.8351 dB    V 32.0753 dB] [ET     0 ] [L0 3 5 ] [L1 5 7 ]
+POC     6 TId: 5 (      RADL, B-SLICE, QP 35)             1328 bits [Y 37.6866 dB    U 34.3038 dB    V 32.9739 dB] [ET     0 ] [L0 5 3 ] [L1 7 5 ]
+POC     9 TId: 4 (      STSA, B-SLICE, QP 35)             3504 bits [Y 39.4145 dB    U 33.4872 dB    V 33.2946 dB] [ET     0 ] [L0 7 ] [L1 7 ]
+POC     8 TId: 5 (      STSA, B-SLICE, QP 35)             1904 bits [Y 38.3830 dB    U 34.9002 dB    V 33.8100 dB] [ET     0 ] [L0 7 9 ] [L1 9 7 ]
+vvenc [info]: stats: 100.0% frame= 10/10 fps=  20.2 avg_fps=  20.2 bitrate=    36.11 kbps avg_bitrate=    36.11 kbps elapsed= 00h:00m:01s left= 00h:00m:00s    
+
+vvenc [info]: stats summary: frame= 10/10 avg_fps= 20.2 avg_bitrate= 36.11 kbps
+vvenc [info]: stats summary: frame I:  1, kbps: 147.36, AvgQP: 23.00
+vvenc [info]: stats summary: frame P:  0, kbps:    nan, AvgQP: nan
+vvenc [info]: stats summary: frame B:  9, kbps:  23.75, AvgQP: 33.67
+
+
+vvenc [info]:	Total Frames |   Bitrate     Y-PSNR    U-PSNR    V-PSNR    YUV-PSNR   
+vvenc [info]:	       10    a      36.1120   39.1868   35.2012   33.9012   36.6191
+vvencapp [notice]: finished @ Thu Oct 15 21:55:44 2026
+vvencapp [info]: Total Time: 0.494 sec. Fps(avg): 20.243 encoded Frames 10

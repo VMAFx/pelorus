@@ -33,6 +33,8 @@ static const char svt_qp63_row[] =
     "PSNR-U: 39.10 dB, PSNR-V: 36.73 dB, MSE-Y: 2.96, MSE-U: 8.00, "
     "MSE-V: 13.81, SSIM-Y: 0.99230, SSIM-U: 0.98908, SSIM-V: 0.99024 ] "
     "1364 bytes VBV delay: 0.000 s\n";
+static const char vvenc_row[] =
+    "POC     7 TId: 0 (IDR_W_RADL, I-SLICE, QP 23, TF 2)      14736 bits [Y 45.3714 dB    U 40.9255 dB    V 40.3762 dB] [ET     0 ] [L0 ] [L1 ]\n";
 
 #define CHECK(expr)                                                                                \
     do {                                                                                           \
@@ -142,6 +144,81 @@ static int test_svt_fixture(const char *path, PelorusEncTelemetryInput *first)
     return failures;
 }
 
+static int check_vvenc_frame_metrics(const PelorusEncTelemetryInput *frame)
+{
+    int failures = 0;
+
+    CHECK(fabsf(frame->frame.psnr_y - 45.3714f) < 0.001f);
+    CHECK(fabsf(frame->frame.psnr_u - 40.9255f) < 0.001f);
+    CHECK(fabsf(frame->frame.psnr_v - 40.3762f) < 0.001f);
+    CHECK(frame->frame.codec == PEL_TLM_CODEC_VVC);
+    CHECK(frame->frame.qp_scale == PEL_QP_SCALE_SLICE_QP);
+    CHECK(frame->frame.granularity == PEL_TLM_GRAN_FRAME);
+    CHECK(frame->frame.coded_bit_depth == 10u);
+    CHECK(frame->frame.metric_source == PEL_TLM_METRIC_ENCODER);
+    CHECK(frame->frame.adapter == PEL_TLM_ADAPTER_VVENC_LOG);
+    return failures;
+}
+
+static int check_vvenc_frame(const PelorusEncTelemetryInput *frame)
+{
+    int failures = 0;
+
+    CHECK(frame->frame.display_index == 7u && frame->frame.decode_index == 0u);
+    CHECK(frame->frame.frame_bytes == 1842u);
+    CHECK(frame->frame.avg_qp == 23.0f && frame->frame.avg_qp_norm == 23.0f);
+    CHECK(frame->frame.picture_type == PEL_PICTURE_I);
+    CHECK(frame->frame.frame_flags == (PEL_TLM_FRAME_KEY | PEL_TLM_FRAME_SHOWN));
+    CHECK((frame->frame.present_mask & PEL_TLM_F_REFERENCE) == 0u);
+    failures += check_vvenc_frame_metrics(frame);
+    return failures;
+}
+
+static int check_vvenc_stream_frames(const PelorusEncTelemetryInput *frames, size_t count,
+                                     uint64_t caps)
+{
+    size_t i;
+    int failures = 0;
+
+    for (i = 0; i < count; i++) {
+        CHECK(frames[i].frame.present_mask == caps);
+        CHECK(frames[i].frame.codec == PEL_TLM_CODEC_VVC);
+        CHECK(frames[i].frame.decode_index == (uint32_t)i);
+        CHECK(frames[i].frame.avg_qp >= 23.0f && frames[i].frame.avg_qp <= 35.0f);
+        CHECK(frames[i].frame.avg_qp_norm == frames[i].frame.avg_qp);
+        CHECK((frames[i].frame.frame_flags & PEL_TLM_FRAME_SHOWN) != 0u);
+    }
+    return failures;
+}
+
+/*
+ * VVenC v1.14.0 log fixture generated via:
+ *   vvencapp --threads 1 -v 4 -q 32 --preset fast -i synth.y4m -o /dev/null > vvenc-1.14.0-qp32.log
+ */
+static int test_vvenc_fixture(const char *path, PelorusEncTelemetryInput *first)
+{
+    char text[FIXTURE_CAP];
+    PelorusEncTelemetryInput frames[FRAME_CAP];
+    size_t len = 0;
+    size_t count = 0;
+    uint64_t caps = 0;
+    int failures = 0;
+
+    (void)memset(frames, 0, sizeof(frames));
+    CHECK(read_fixture(path, text, sizeof(text), &len) == 0);
+    CHECK(pel_tlm_parse_vvenc_log(text, len, 10u, frames, FRAME_CAP, &count) == PEL_OK);
+    CHECK(count == RECORDED_FRAME_COUNT);
+    failures += check_vvenc_frame(&frames[0]);
+    CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_VVENC_LOG, PEL_TLM_CODEC_VVC, &caps) == PEL_OK);
+    failures += check_vvenc_stream_frames(frames, count, caps);
+    CHECK(frames[1].frame.display_index == 3u && frames[1].frame.picture_type == PEL_PICTURE_B);
+    CHECK(frames[1].frame.frame_bytes == 442u && frames[1].frame.avg_qp == 31.0f);
+    CHECK(frames[2].frame.display_index == 1u);
+    CHECK(frames[3].frame.display_index == 0u);
+    *first = frames[0];
+    return failures;
+}
+
 static int test_matched_qp(const PelorusEncTelemetryInput *x265,
                            const PelorusEncTelemetryInput *svt)
 {
@@ -217,6 +294,27 @@ static int expect_svt_error(const char *text, pel_result want)
     return failures;
 }
 
+static int expect_vvenc_error(const char *text, size_t len, uint8_t depth, pel_result want)
+{
+    PelorusEncTelemetryInput frame;
+    unsigned char before[sizeof(frame)];
+    size_t count = 99u;
+    pel_result got;
+    int failures = 0;
+
+    (void)memset(&frame, 0xa5, sizeof(frame));
+    (void)memcpy(before, &frame, sizeof(frame));
+    got = pel_tlm_parse_vvenc_log(text, len, depth, &frame, 1u, &count);
+    if (got != want) {
+        (void)fprintf(stderr, "vvenc error mismatch: got %d, want %d, text %.80s\n", got, want,
+                      text);
+    }
+    CHECK(got == want);
+    CHECK(count == 0u);
+    CHECK(bytes_equal(&frame, before, sizeof(frame)));
+    return failures;
+}
+
 static int test_negative_rows(void)
 {
     static const char xhdr[] = "Layer, Encode Order, Type, POC, QP, Bits, Scenecut\n";
@@ -248,6 +346,119 @@ static int test_negative_rows(void)
     CHECK(count == 0u);
     CHECK(pel_tlm_parse_svtav1_stat("SUMMARY ---\n", 12u, 8u, &frame, 1u, &count) == PEL_OK);
     CHECK(count == 0u);
+    return failures;
+}
+
+static int test_vvenc_negative_rows(void)
+{
+    static const char vvenc_trunc_bits[] =
+        "POC     7 TId: 0 (IDR_W_RADL, I-SLICE, QP 23, TF 2)      14736\n";
+    static const char vvenc_trunc_psnr[] =
+        "POC     7 TId: 0 (IDR_W_RADL, I-SLICE, QP 23, TF 2)      14736 bits [Y 45.3714 dB\n";
+    static const char vvenc_trunc_bracket[] =
+        "POC     7 TId: 0 (IDR_W_RADL, I-SLICE, QP 23, TF 2)      14736 bits [Y 45.3714 dB    U 40.9255 dB    V 40.3762 dB\n";
+    static const char vvenc_bad_slice[] =
+        "POC     7 TId: 0 (IDR_W_RADL, X-SLICE, QP 23, TF 2)      14736 bits [Y 45.3714 dB    U 40.9255 dB    V 40.3762 dB]\n";
+    static const char vvenc_inverted[] =
+        "TId: 0 POC 7 (IDR_W_RADL, I-SLICE, QP 23, TF 2) 14736 bits [Y 45.3714 dB U 40.9255 dB V 40.3762 dB]\n";
+    static const char vvenc_bad_poc[] =
+        "POC    ab TId: 0 (IDR_W_RADL, I-SLICE, QP 23, TF 2)      14736 bits [Y 45.3714 dB    U 40.9255 dB    V 40.3762 dB]\n";
+    static const char vvenc_bad_bits[] =
+        "POC     7 TId: 0 (IDR_W_RADL, I-SLICE, QP 23, TF 2)      14735 bits [Y 45.3714 dB    U 40.9255 dB    V 40.3762 dB]\n";
+    static const char vvenc_qp_high[] =
+        "POC     7 TId: 0 (IDR_W_RADL, I-SLICE, QP 64, TF 2)      14736 bits [Y 45.3714 dB    U 40.9255 dB    V 40.3762 dB]\n";
+    static const char vvenc_qp_neg8[] =
+        "POC     7 TId: 0 (IDR_W_RADL, I-SLICE, QP -1, TF 2)      14736 bits [Y 45.3714 dB    U 40.9255 dB    V 40.3762 dB]\n";
+    static const char vvenc_bad_qp[] =
+        "POC     7 TId: 0 (IDR_W_RADL, I-SLICE, QP ab, TF 2)      14736 bits [Y 45.3714 dB    U 40.9255 dB    V 40.3762 dB]\n";
+    static const char vvenc_tid7[] =
+        "POC     7 TId: 7 (IDR_W_RADL, I-SLICE, QP 23, TF 2)      14736 bits [Y 45.3714 dB    U 40.9255 dB    V 40.3762 dB]\n";
+    static const char vvenc_nan_psnr[] =
+        "POC     7 TId: 0 (IDR_W_RADL, I-SLICE, QP 23, TF 2)      14736 bits [Y nan dB    U 40.9255 dB    V 40.3762 dB]\n";
+    int failures = 0;
+
+    failures +=
+        expect_vvenc_error(vvenc_trunc_bits, sizeof(vvenc_trunc_bits) - 1u, 10u, PEL_ERR_TRUNCATED);
+    failures +=
+        expect_vvenc_error(vvenc_trunc_psnr, sizeof(vvenc_trunc_psnr) - 1u, 10u, PEL_ERR_TRUNCATED);
+    failures += expect_vvenc_error(vvenc_trunc_bracket, sizeof(vvenc_trunc_bracket) - 1u, 10u,
+                                   PEL_ERR_TRUNCATED);
+    failures +=
+        expect_vvenc_error(vvenc_bad_slice, sizeof(vvenc_bad_slice) - 1u, 10u, PEL_ERR_INVALID);
+    failures +=
+        expect_vvenc_error(vvenc_inverted, sizeof(vvenc_inverted) - 1u, 10u, PEL_ERR_INVALID);
+    failures += expect_vvenc_error(vvenc_bad_poc, sizeof(vvenc_bad_poc) - 1u, 10u, PEL_ERR_INVALID);
+    failures +=
+        expect_vvenc_error(vvenc_bad_bits, sizeof(vvenc_bad_bits) - 1u, 10u, PEL_ERR_INVALID);
+    failures += expect_vvenc_error(vvenc_qp_high, sizeof(vvenc_qp_high) - 1u, 10u, PEL_ERR_RANGE);
+    failures += expect_vvenc_error(vvenc_qp_neg8, sizeof(vvenc_qp_neg8) - 1u, 8u, PEL_ERR_RANGE);
+    failures += expect_vvenc_error(vvenc_bad_qp, sizeof(vvenc_bad_qp) - 1u, 10u, PEL_ERR_INVALID);
+    failures += expect_vvenc_error(vvenc_tid7, sizeof(vvenc_tid7) - 1u, 10u, PEL_ERR_RANGE);
+    failures +=
+        expect_vvenc_error(vvenc_nan_psnr, sizeof(vvenc_nan_psnr) - 1u, 10u, PEL_ERR_INVALID);
+    return failures;
+}
+
+static int test_vvenc_non_poc_lines(void)
+{
+    static const char vvenc_notices[] = "vvencapp: VVenC, the Fraunhofer H.266/VVC Encoder\n"
+                                        "vvenc [notice]: Rate control: QP 32\n"
+                                        "vvenc [info]: stats summary\n";
+    PelorusEncTelemetryInput frame;
+    size_t count = 99u;
+    int failures = 0;
+
+    CHECK(pel_tlm_parse_vvenc_log(vvenc_notices, sizeof(vvenc_notices) - 1u, 10u, &frame, 1u,
+                                  &count) == PEL_OK);
+    CHECK(count == 0u);
+    CHECK(pel_tlm_parse_vvenc_log("", 0u, 10u, &frame, 1u, &count) == PEL_OK);
+    CHECK(count == 0u);
+    return failures;
+}
+
+static int test_vvenc_positive_variants(void)
+{
+    static const char vvenc_crlf[] =
+        "POC     7 TId: 0 (IDR_W_RADL, I-SLICE, QP 23, TF 2)      14736 bits [Y 45.3714 dB    U 40.9255 dB    V 40.3762 dB] [ET     0 ] [L0 ] [L1 ]\r\n";
+    static const char vvenc_no_tf[] =
+        "POC     3 TId: 3 (      RADL, B-SLICE, QP 31)             3536 bits [Y 40.1352 dB    U 35.4781 dB    V 35.1209 dB] [ET     0 ] [L0 7 ] [L1 7 ]\n";
+    PelorusEncTelemetryInput frame;
+    size_t count = 99u;
+    int failures = 0;
+
+    CHECK(pel_tlm_parse_vvenc_log(vvenc_crlf, sizeof(vvenc_crlf) - 1u, 10u, &frame, 1u, &count) ==
+          PEL_OK);
+    CHECK(count == 1u && frame.frame.display_index == 7u);
+    CHECK(pel_tlm_parse_vvenc_log(vvenc_no_tf, sizeof(vvenc_no_tf) - 1u, 10u, &frame, 1u, &count) ==
+          PEL_OK);
+    CHECK(count == 1u && frame.frame.avg_qp == 31.0f);
+    failures += test_vvenc_non_poc_lines();
+    return failures;
+}
+
+static int test_vvenc_boundary_variants(void)
+{
+    static const char vvenc_tid6[] =
+        "POC     7 TId: 6 (IDR_W_RADL, I-SLICE, QP 23, TF 2)      14736 bits [Y 45.3714 dB    U 40.9255 dB    V 40.3762 dB]\n";
+    static const char vvenc_unref[] =
+        "POC     7 TId: 0 (IDR_W_RADL, b-SLICE, QP 23, TF 2)      14736 bits [Y 45.3714 dB    U 40.9255 dB    V 40.3762 dB]\n";
+    static const char vvenc_psnr_inf[] =
+        "POC     7 TId: 0 (IDR_W_RADL, I-SLICE, QP 23, TF 2)      14736 bits [Y     inf dB    U 40.9255 dB    V 40.3762 dB]\n";
+    PelorusEncTelemetryInput frame;
+    size_t count = 99u;
+    int failures = 0;
+
+    CHECK(pel_tlm_parse_vvenc_log(vvenc_tid6, sizeof(vvenc_tid6) - 1u, 10u, &frame, 1u, &count) ==
+          PEL_OK);
+    CHECK(count == 1u);
+    CHECK(pel_tlm_parse_vvenc_log(vvenc_unref, sizeof(vvenc_unref) - 1u, 10u, &frame, 1u, &count) ==
+          PEL_OK);
+    CHECK(count == 1u && frame.frame.picture_type == PEL_PICTURE_B);
+    CHECK((frame.frame.present_mask & PEL_TLM_F_REFERENCE) == 0u);
+    CHECK((frame.frame.frame_flags & PEL_TLM_FRAME_REFERENCE) == 0u);
+    CHECK(pel_tlm_parse_vvenc_log(vvenc_psnr_inf, sizeof(vvenc_psnr_inf) - 1u, 10u, &frame, 1u,
+                                  &count) == PEL_OK);
+    CHECK(count == 1u && frame.frame.psnr_y == 100.0f);
     return failures;
 }
 
@@ -326,6 +537,26 @@ static int test_x265_terminator_and_scenecut(void)
     return failures;
 }
 
+static int test_vvenc_depths(void)
+{
+    PelorusEncTelemetryInput frame;
+    size_t count = 0;
+    int failures = 0;
+
+    CHECK(pel_tlm_parse_vvenc_log(vvenc_row, sizeof(vvenc_row) - 1u, 8u, &frame, 1u, &count) ==
+          PEL_OK);
+    CHECK(count == 1u && frame.frame.coded_bit_depth == 8u);
+    CHECK(pel_tlm_parse_vvenc_log(vvenc_row, sizeof(vvenc_row) - 1u, 10u, &frame, 1u, &count) ==
+          PEL_OK);
+    CHECK(count == 1u && frame.frame.coded_bit_depth == 10u);
+    CHECK(pel_tlm_parse_vvenc_log(vvenc_row, sizeof(vvenc_row) - 1u, 12u, &frame, 1u, &count) ==
+          PEL_OK);
+    CHECK(count == 1u && frame.frame.coded_bit_depth == 12u);
+    CHECK(pel_tlm_parse_vvenc_log(vvenc_row, sizeof(vvenc_row) - 1u, 9u, &frame, 1u, &count) ==
+          PEL_ERR_RANGE);
+    return failures;
+}
+
 static int test_depths(void)
 {
     static const char xrow[] = X265_HEADER_TEXT "0,0,I-SLICE,0,32,15040,0\n";
@@ -346,6 +577,7 @@ static int test_depths(void)
     CHECK(pel_tlm_parse_x265_csv(xrow, sizeof(xrow) - 1u, 9u, &frame, 1u, &count) == PEL_ERR_RANGE);
     CHECK(pel_tlm_parse_svtav1_stat(svt_row, sizeof(svt_row) - 1u, 9u, &frame, 1u, &count) ==
           PEL_ERR_RANGE);
+    failures += test_vvenc_depths();
     return failures;
 }
 
@@ -416,6 +648,25 @@ static int test_svt_null_arguments(void)
     return failures;
 }
 
+static int test_vvenc_null_arguments(void)
+{
+    PelorusEncTelemetryInput frame;
+    size_t count = 99u;
+    int failures = 0;
+
+    CHECK(pel_tlm_parse_vvenc_log(NULL, 0u, 10u, &frame, 1u, &count) == PEL_ERR_INVALID);
+    CHECK(count == 0u);
+    CHECK(pel_tlm_parse_vvenc_log(vvenc_row, sizeof(vvenc_row) - 1u, 10u, NULL, 1u, &count) ==
+          PEL_ERR_INVALID);
+    CHECK(count == 0u);
+    CHECK(pel_tlm_parse_vvenc_log(vvenc_row, sizeof(vvenc_row) - 1u, 10u, &frame, 1u, NULL) ==
+          PEL_ERR_INVALID);
+    CHECK(pel_tlm_parse_vvenc_log(vvenc_row, sizeof(vvenc_row) - 1u, 10u, &frame, 0u, &count) ==
+          PEL_ERR_INVALID);
+    CHECK(count == 0u);
+    return failures;
+}
+
 static int test_line_and_field_bounds(void)
 {
     char fields[TEST_CSV_FIELDS_OVER_MAX * 2u];
@@ -434,12 +685,29 @@ static int test_line_and_field_bounds(void)
     CHECK(pel_tlm_parse_svtav1_stat(line, TEST_TEXT_LINE_OVER_MAX, 8u, &frame, 1u, &count) ==
           PEL_ERR_RANGE);
     CHECK(count == 0u);
+    CHECK(pel_tlm_parse_vvenc_log(line, TEST_TEXT_LINE_OVER_MAX, 10u, &frame, 1u, &count) ==
+          PEL_ERR_RANGE);
+    CHECK(count == 0u);
     free(line);
     for (i = 0u; i < TEST_CSV_FIELDS_OVER_MAX; i++) {
         fields[i * 2u] = 'x';
         fields[i * 2u + 1u] = i + 1u == TEST_CSV_FIELDS_OVER_MAX ? '\n' : ',';
     }
     failures += expect_x265_error(fields, sizeof(fields), PEL_ERR_RANGE);
+    return failures;
+}
+
+static int check_vvenc_total_text_bound(const char *text)
+{
+    PelorusEncTelemetryInput frame;
+    size_t count = 99u;
+    int failures = 0;
+
+    CHECK(pel_tlm_parse_vvenc_log(text, TEST_TEXT_TOTAL_MAX, 10u, &frame, 1u, &count) == PEL_OK);
+    CHECK(count == 0u);
+    CHECK(pel_tlm_parse_vvenc_log(text, TEST_TEXT_TOTAL_MAX + 1u, 10u, &frame, 1u, &count) ==
+          PEL_ERR_RANGE);
+    CHECK(count == 0u);
     return failures;
 }
 
@@ -467,6 +735,7 @@ static int test_total_text_bound(void)
     CHECK(pel_tlm_parse_svtav1_stat(text, TEST_TEXT_TOTAL_MAX + 1u, 8u, &frame, 1u, &count) ==
           PEL_ERR_RANGE);
     CHECK(count == 0u);
+    failures += check_vvenc_total_text_bound(text);
     free(text);
     return failures;
 }
@@ -515,6 +784,29 @@ static int test_svt_capacity(const char *path)
     return failures;
 }
 
+static int test_vvenc_capacity(const char *path)
+{
+    char text[FIXTURE_CAP];
+    PelorusEncTelemetryInput frames[RECORDED_FRAME_COUNT];
+    unsigned char before[sizeof(frames)];
+    size_t len = 0;
+    size_t count = 0;
+    int failures = 0;
+
+    CHECK(read_fixture(path, text, sizeof(text), &len) == 0);
+    CHECK(pel_tlm_parse_vvenc_log(text, len, 10u, frames, RECORDED_FRAME_COUNT, &count) == PEL_OK);
+    CHECK(count == RECORDED_FRAME_COUNT);
+    (void)memset(frames, 0xa5, sizeof(frames));
+    (void)memcpy(before, frames, sizeof(frames));
+    CHECK(pel_tlm_parse_vvenc_log(text, len, 10u, frames, RECORDED_FRAME_COUNT - 1u, &count) ==
+          PEL_ERR_RANGE);
+    CHECK(count == RECORDED_FRAME_COUNT);
+    CHECK(bytes_equal(frames, before, sizeof(frames)));
+    CHECK(pel_tlm_parse_vvenc_log(text, len, 10u, frames, 0u, &count) == PEL_ERR_INVALID);
+    CHECK(count == 0u);
+    return failures;
+}
+
 static int test_non_c_numeric_locale(void)
 {
     static const char xrow[] = X265_HEADER_TEXT "0,0,I-SLICE,0,32.50,15040,0\n";
@@ -554,22 +846,28 @@ int main(int argc, char **argv)
 {
     PelorusEncTelemetryInput x265;
     PelorusEncTelemetryInput svt;
+    PelorusEncTelemetryInput vvenc;
     int failures = 0;
 
     if (argc == 2 && strcmp(argv[1], "--locale-only") == 0) {
         return test_non_c_numeric_locale();
     }
-    if (argc != 3) {
-        (void)fprintf(stderr, "usage: %s X265.csv SVT.stat\n", argv[0]);
+    if (argc != 4) {
+        (void)fprintf(stderr, "usage: %s X265.csv SVT.stat VVENC.log\n", argv[0]);
         return EXIT_FAILURE;
     }
     (void)memset(&x265, 0, sizeof(x265));
     (void)memset(&svt, 0, sizeof(svt));
+    (void)memset(&vvenc, 0, sizeof(vvenc));
     failures += test_x265_fixture(argv[1], &x265);
     failures += test_svt_fixture(argv[2], &svt);
+    failures += test_vvenc_fixture(argv[3], &vvenc);
     failures += test_matched_qp(&x265, &svt);
     failures += test_qp_normalize_anchors();
     failures += test_negative_rows();
+    failures += test_vvenc_negative_rows();
+    failures += test_vvenc_positive_variants();
+    failures += test_vvenc_boundary_variants();
     failures += test_x265_duplicate_headers();
     failures += test_number_allow_list();
     failures += test_svt_nonfinite_psnr();
@@ -578,10 +876,12 @@ int main(int argc, char **argv)
     failures += test_svt_average_qp_domain();
     failures += test_x265_null_arguments();
     failures += test_svt_null_arguments();
+    failures += test_vvenc_null_arguments();
     failures += test_line_and_field_bounds();
     failures += test_total_text_bound();
     failures += test_capacity(argv[1]);
     failures += test_svt_capacity(argv[2]);
+    failures += test_vvenc_capacity(argv[3]);
     if (failures != 0) {
         (void)fprintf(stderr, "%d check(s) failed\n", failures);
         return EXIT_FAILURE;

@@ -82,7 +82,7 @@ green · the deband shader compiles.**
 | Module | Purpose | Key dep |
 |---|---|---|
 | `include/pelorus/interop.h` + `src/interop.c` | The Pelorus⇄vmafx side-data ABI (pack/parse, append-only, vendored by vmafx) | — |
-| `include/pelorus/telemetry.h` + `src/telemetry*.c` | FFmpeg-free encoder telemetry records, validation, normalisation, and x265/SVT-AV1 text adapters | libm |
+| `include/pelorus/telemetry.h` + `src/telemetry*.c` | FFmpeg-free encoder telemetry records, validation, normalisation, and x265/SVT-AV1/VVenC text adapters | libm |
 | `include/pelorus/deband.h` + `src/deband_params.c` | Smart-deband parameter contract (shared by filter + autotune) | — |
 | `shaders/pelorus_deband.comp` | Standalone reference deband shader (f3kdb) | glslang |
 | `test/interop_test.c` | Shared ABI conformance fixture | — |
