@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "stability": "pre-1.0",
+  "filter": "pelorus_mc_vulkan",
+  "kind": "vf",
+  "source": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c",
+  "options": [
+    {
+      "name": "bsize",
+      "type": "int",
+      "min": 8,
+      "max": 32,
+      "default": 16,
+      "unit": null,
+      "constants": [],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "motion-estimation block edge in luma pixels"
+    },
+    {
+      "name": "search",
+      "type": "int",
+      "min": 1,
+      "max": 256,
+      "default": 24,
+      "unit": null,
+      "constants": [],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "max search radius per axis in luma pixels"
+    },
+    {
+      "name": "meta",
+      "type": "bool",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": null,
+      "constants": [],
+      "effect_class": "reporting",
+      "tunable": false,
+      "help": "attach the PEL_SEC_MOTION interop section (the MV field)"
+    }
+  ]
+}

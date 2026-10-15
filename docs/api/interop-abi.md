@@ -542,7 +542,10 @@ truncated SEI it replaces on flat content.
 Separately versioned. Pelorus exposes filter strengths as `AVOption`s and the
 banding/variance sections as perceptual-weighting input; vmafx's `libvmaf_tune`
 / `vmafx-server` `/v1/score` / `vmaf-mcp` drive the VMAF-in-the-loop search. The
-autotune-relevant deband `AVOption`s are frozen as a stable contract in
-[control-plane.md](control-plane.md) ([ADR-0110](../adr/0110-avoption-control-plane-contract.md)).
+autotune-relevant deband `AVOption`s and the per-filter JSON knob contracts
+(`docs/api/knobs/<filter>.json` for all ten filters and `pelorus_fgs`) are
+documented in [control-plane.md](control-plane.md)
+([ADR-0110](../adr/0110-avoption-control-plane-contract.md),
+[ADR-0196](../adr/0196-filter-knob-contracts.md)).
 See [ADR-0106](../adr/0106-autotune-control-plane.md) and
 [docs/usage/ffmpeg.md](../usage/ffmpeg.md).

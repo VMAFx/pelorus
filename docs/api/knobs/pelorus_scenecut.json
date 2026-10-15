@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "stability": "pre-1.0",
+  "filter": "pelorus_scenecut",
+  "kind": "vf",
+  "source": "ffmpeg-patches/files/vf_pelorus_scenecut.c",
+  "options": [
+    {
+      "name": "force_idr",
+      "type": "bool",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": null,
+      "constants": [],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "force a keyframe (pict_type=I) on Pelorus scene-cut frames"
+    }
+  ]
+}
