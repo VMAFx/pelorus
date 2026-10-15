@@ -20,3 +20,18 @@ cp <build-dir>/fixture-recording/svt-av1-qp34.stat libpelorus/test/fixtures/tele
 ```
 
 The parser test reads the recorded text directly; the encoded bitstreams and raw input are not fixtures.
+
+## libaom C-value fixture
+
+`libaom-3.15.2-cq32.txt` was recorded by `libaom-record.c` from ten synthetic
+64x64 8-bit I420 frames with libaom 3.15.2, AOM_Q, CQ level 32 (min/max
+quantizer 32), lag zero, no altref or AQ, and one thread. The recorder is
+intentionally outside Meson. Its header gives the exact
+build and run commands. Columns in `libaom-3.15.2-cq32.txt` are display index,
+decode index, flags (decimal), bytes, quantizer_64, then overall/Y/U/V PSNR.
+The recorder checks packet counts and PTS before associating values and queries
+QP before submitting another frame. `telemetry_adapter_test.c` replays the
+recorded rows directly; libaom is required only to regenerate this fixture.
+Frame 0 has flags `2031633` (`0x1F0011`): public KEY and INTRAONLY plus
+encoder-private upper bits. Replay checks I + KEY for frame 0, P without KEY
+for frames 1-9, QP 32, and each row's bytes and per-plane PSNR.

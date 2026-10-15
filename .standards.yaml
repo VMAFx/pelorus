@@ -40,6 +40,10 @@ clang_tidy:
       files: ".config/clang-tidy/lane-files.txt"
 exceptions:
   - rule: clang-tidy-coverage
+    path: libpelorus/test/fixtures/telemetry/libaom-record.c
+    reason: "category D, capped at the engine maximum of 90 days: fixture recorder built by hand against libaom, which Meson does not depend on, so no compile database entry exists; follow-up: an optional Meson target once a libaom build dependency has an ADR (VMAFx/pelorus#111)"
+    expires: "2027-01-13"
+  - rule: clang-tidy-coverage
     path: ffmpeg-patches/files/h265_pelorus_fgs_bsf.c
     reason: builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)
     expires: "2027-01-06"

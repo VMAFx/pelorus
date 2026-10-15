@@ -8,6 +8,7 @@
 
 #include "pelorus/telemetry.h"
 
+#include <inttypes.h>
 #include <locale.h>
 #include <math.h>
 #include <stdio.h>
@@ -1158,6 +1159,215 @@ static int test_ffmpeg_quality_stats(void)
     return failures;
 }
 
+static PelTlmLibaomFrame libaom_frame(void)
+{
+    const PelTlmLibaomFrame in = {0x1u, 123u, 32, 1u, {40.0, 41.0, 42.0, 43.0}, 7u, 3u};
+    return in;
+}
+
+static int expect_libaom_error(const char *label, const PelTlmLibaomFrame *in, uint8_t depth,
+                               int null_out, pel_result want)
+{
+    PelorusEncTelemetryInput out = {0};
+    unsigned char before[sizeof(out)];
+    int failures = 0;
+    pel_result got;
+
+    (void)memset(&out, 0xa5, sizeof(out));
+    (void)memcpy(before, &out, sizeof(out));
+    got = pel_tlm_from_libaom(in, depth, null_out ? NULL : &out);
+    if (got != want) {
+        (void)fprintf(stderr, "libaom %s: got %d, want %d\n", label, got, want);
+    }
+    CHECK(got == want);
+    CHECK(bytes_equal(&out, before, sizeof(out)));
+    return failures;
+}
+
+static int test_libaom_negative(void)
+{
+    PelTlmLibaomFrame in = libaom_frame();
+    int failures = 0;
+
+    in.frame_flags = 0x100u;
+    failures += expect_libaom_error("unknown flag", &in, 8u, 0, PEL_ERR_INVALID);
+    in.frame_flags |= 0x1f0011u;
+    failures +=
+        expect_libaom_error("unknown public flag with private bits", &in, 8u, 0, PEL_ERR_INVALID);
+    in = libaom_frame();
+    in.quantizer_64 = 64;
+    failures += expect_libaom_error("quantizer 64", &in, 8u, 0, PEL_ERR_RANGE);
+    in.quantizer_64 = -2;
+    failures += expect_libaom_error("quantizer -2", &in, 8u, 0, PEL_ERR_RANGE);
+    in = libaom_frame();
+    in.frame_bytes = (uint64_t)UINT32_MAX + 1u;
+    failures += expect_libaom_error("bytes overflow", &in, 8u, 0, PEL_ERR_RANGE);
+    in = libaom_frame();
+    in.has_psnr = 2u;
+    failures += expect_libaom_error("has_psnr 2", &in, 8u, 0, PEL_ERR_INVALID);
+    in = libaom_frame();
+    for (unsigned i = 0u; i < 4u; i++) {
+        in.psnr[i] = NAN;
+        failures += expect_libaom_error("NaN PSNR", &in, 8u, 0, PEL_ERR_RANGE);
+        in.psnr[i] = -1.0;
+        failures += expect_libaom_error("negative PSNR", &in, 8u, 0, PEL_ERR_RANGE);
+        in.psnr[i] = -INFINITY;
+        failures += expect_libaom_error("-inf PSNR", &in, 8u, 0, PEL_ERR_RANGE);
+        in = libaom_frame();
+    }
+    failures += expect_libaom_error("NULL input", NULL, 8u, 0, PEL_ERR_INVALID);
+    failures += expect_libaom_error("NULL output", &in, 8u, 1, PEL_ERR_INVALID);
+    failures += expect_libaom_error("bad depth", &in, 9u, 0, PEL_ERR_RANGE);
+    in.quantizer_64 = -1;
+    in.has_psnr = 0u;
+    failures += expect_libaom_error("bad depth without QP", &in, 0u, 0, PEL_ERR_RANGE);
+    return failures;
+}
+
+static int test_libaom_boundaries(void)
+{
+    PelTlmLibaomFrame in = libaom_frame();
+    PelorusEncTelemetryInput out = {0};
+    const uint8_t depths[] = {8u, 10u, 12u};
+    const uint64_t qp_bits = PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM;
+    int failures = 0;
+
+    for (unsigned i = 0u; i < 3u; i++) {
+        float norm = 0.0f;
+        for (unsigned j = 0u; j < 2u; j++) {
+            in.quantizer_64 = j == 0u ? 0 : 63;
+            CHECK(pel_tlm_from_libaom(&in, depths[i], &out) == PEL_OK);
+            CHECK(out.frame.avg_qp == (float)in.quantizer_64);
+            CHECK((out.frame.present_mask & qp_bits) == qp_bits);
+            CHECK(pel_qp_normalize(PEL_QP_SCALE_AV1_ENCODER_QP, depths[i], (float)in.quantizer_64,
+                                   &norm) == PEL_OK);
+            CHECK(fabsf(out.frame.avg_qp_norm - norm) < 0.0001f);
+        }
+    }
+    in.quantizer_64 = -1;
+    in.psnr[0] = in.psnr[1] = INFINITY;
+    in.psnr[2] = 101.0;
+    in.psnr[3] = 100.0;
+    in.frame_bytes = UINT32_MAX;
+    CHECK(pel_tlm_from_libaom(&in, 8u, &out) == PEL_OK);
+    CHECK((out.frame.present_mask & qp_bits) == 0u && out.frame.qp_scale == 0u);
+    CHECK(out.frame.avg_qp == 0.0f && out.frame.avg_qp_norm == 0.0f);
+    CHECK(out.frame.frame_bytes == UINT32_MAX);
+    CHECK(out.frame.psnr_y == 100.0f && out.frame.psnr_u == 100.0f && out.frame.psnr_v == 100.0f);
+    in.has_psnr = 0u;
+    in.psnr[1] = NAN; /* ignored when absent */
+    in.frame_flags = 0u;
+    in.frame_bytes = 0u;
+    in.display_index = in.decode_index = UINT32_MAX;
+    CHECK(pel_tlm_from_libaom(&in, 8u, &out) == PEL_OK);
+    CHECK(out.frame.frame_bytes == 0u && out.frame.metric_source == 0u);
+    CHECK(out.frame.display_index == UINT32_MAX && out.frame.decode_index == UINT32_MAX);
+    CHECK((out.frame.present_mask & (PEL_TLM_F_PSNR_Y | PEL_TLM_F_PSNR_U | PEL_TLM_F_PSNR_V)) ==
+          0u);
+    CHECK(out.frame.psnr_y == 0.0f && out.frame.psnr_u == 0.0f && out.frame.psnr_v == 0.0f);
+    return failures;
+}
+
+static int test_libaom_flags_caps(void)
+{
+    const uint32_t flags[] = {0u,    1u,    2u,        0x10u,       0x20u,      0x40u,
+                              0x80u, 0xf3u, 0x1f0011u, 0xffff0000u, 0xffff0011u};
+    const uint64_t expected =
+        PEL_TLM_F_DISPLAY_INDEX | PEL_TLM_F_DECODE_INDEX | PEL_TLM_F_FRAME_BYTES |
+        PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM | PEL_TLM_F_PSNR_Y | PEL_TLM_F_PSNR_U |
+        PEL_TLM_F_PSNR_V | PEL_TLM_F_PICTURE_TYPE | PEL_TLM_F_KEY_FRAME | PEL_TLM_F_CODED_BIT_DEPTH;
+    PelTlmLibaomFrame in = libaom_frame();
+    PelorusEncTelemetryInput out = {0};
+    uint64_t caps = 0u;
+    int failures = 0;
+
+    CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_LIBAOM_STATS, PEL_TLM_CODEC_AV1, &caps) == PEL_OK);
+    CHECK(caps == expected);
+    for (unsigned i = 0u; i < sizeof(flags) / sizeof(flags[0]); i++) {
+        in.frame_flags = flags[i];
+        CHECK(pel_tlm_from_libaom(&in, 8u, &out) == PEL_OK);
+        CHECK(out.frame.picture_type == ((flags[i] & 0x11u) ? PEL_PICTURE_I : PEL_PICTURE_P));
+        CHECK(out.frame.frame_flags == ((flags[i] & 1u) ? PEL_TLM_FRAME_KEY : 0u));
+        CHECK(out.frame.present_mask == expected);
+        CHECK(out.frame.adapter == PEL_TLM_ADAPTER_LIBAOM_STATS);
+        CHECK(out.frame.codec == PEL_TLM_CODEC_AV1 && out.frame.granularity == PEL_TLM_GRAN_FRAME);
+        CHECK(out.frame.display_index == 7u && out.frame.decode_index == 3u);
+        CHECK(out.frame.psnr_y == 41.0f && out.frame.psnr_u == 42.0f && out.frame.psnr_v == 43.0f);
+        CHECK(out.frame.metric_source == PEL_TLM_METRIC_ENCODER);
+        CHECK(out.qp_map == NULL && out.bits_map == NULL && out.mode_map == NULL);
+        CHECK(pel_enc_telemetry_validate(&out) == PEL_OK);
+    }
+    for (uint8_t codec = PEL_TLM_CODEC_H264; codec <= PEL_TLM_CODEC_VP9; codec++) {
+        if (codec != PEL_TLM_CODEC_AV1) {
+            CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_LIBAOM_STATS, codec, &caps) ==
+                  PEL_ERR_UNSUPPORTED);
+            CHECK(caps == 0u);
+        }
+    }
+    return failures;
+}
+
+/* Replay libaom-3.15.2-cq32.txt unchanged, including encoder-private flags. */
+static int test_libaom_fixture(const char *path)
+{
+    FILE *fp = fopen(path, "rb");
+    int failures = 0;
+
+    CHECK(fp != NULL);
+    if (fp == NULL) {
+        return failures;
+    }
+    for (unsigned i = 0u; i < RECORDED_FRAME_COUNT; i++) {
+        PelTlmLibaomFrame in = {0};
+        PelorusEncTelemetryInput out = {0};
+        char line[256];
+        uint64_t caps = 0u;
+        float norm = 0.0f;
+        if (fgets(line, sizeof(line), fp) == NULL) {
+            CHECK(0);
+            break;
+        }
+        const int fields = sscanf(
+            line, "%" SCNu32 " %" SCNu32 " %" SCNu32 " %" SCNu64 " %" SCNd32 " %lf %lf %lf %lf",
+            &in.display_index, &in.decode_index, &in.frame_flags, &in.frame_bytes, &in.quantizer_64,
+            &in.psnr[0], &in.psnr[1], &in.psnr[2], &in.psnr[3]);
+        CHECK(fields == 9);
+        if (fields != 9) {
+            break;
+        }
+        in.has_psnr = 1u;
+        const pel_result rc = pel_tlm_from_libaom(&in, 8u, &out);
+        if (rc != PEL_OK) {
+            (void)fprintf(stderr,
+                          "libaom fixture frame %u: flags 0x%08" PRIx32 ": got %d, want PEL_OK\n",
+                          i, in.frame_flags, rc);
+        }
+        CHECK(rc == PEL_OK);
+        if (rc != PEL_OK) {
+            break;
+        }
+        CHECK(in.display_index == i && in.decode_index == i);
+        CHECK(out.frame.display_index == i && out.frame.decode_index == i);
+        CHECK(out.frame.frame_bytes == in.frame_bytes && in.frame_bytes > 0u);
+        CHECK(in.quantizer_64 == 32 && out.frame.avg_qp == 32.0f);
+        CHECK(pel_qp_normalize(PEL_QP_SCALE_AV1_ENCODER_QP, 8u, (float)in.quantizer_64, &norm) ==
+              PEL_OK);
+        CHECK(fabsf(out.frame.avg_qp_norm - norm) < 0.0001f);
+        CHECK(out.frame.psnr_y == (float)in.psnr[1]);
+        CHECK(out.frame.psnr_u == (float)in.psnr[2]);
+        CHECK(out.frame.psnr_v == (float)in.psnr[3]);
+        CHECK(out.frame.picture_type == (i == 0u ? PEL_PICTURE_I : PEL_PICTURE_P));
+        CHECK(out.frame.frame_flags == (i == 0u ? PEL_TLM_FRAME_KEY : 0u));
+        CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_LIBAOM_STATS, PEL_TLM_CODEC_AV1, &caps) ==
+              PEL_OK);
+        CHECK(out.frame.present_mask == caps);
+        CHECK(pel_enc_telemetry_validate(&out) == PEL_OK);
+    }
+    CHECK(fgetc(fp) == EOF && !ferror(fp));
+    CHECK(fclose(fp) == 0);
+    return failures;
+}
+
 int main(int argc, char **argv)
 {
     PelorusEncTelemetryInput x265;
@@ -1167,8 +1377,11 @@ int main(int argc, char **argv)
     if (argc == 2 && strcmp(argv[1], "--locale-only") == 0) {
         return test_non_c_numeric_locale();
     }
-    if (argc != 3) {
-        (void)fprintf(stderr, "usage: %s X265.csv SVT.stat\n", argv[0]);
+    if (argc == 2 && strcmp(argv[1], "--libaom-negative-only") == 0) {
+        return test_libaom_negative() == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+    if (argc != 4) {
+        (void)fprintf(stderr, "usage: %s X265.csv SVT.stat LIBAOM.txt\n", argv[0]);
         return EXIT_FAILURE;
     }
     (void)memset(&x265, 0, sizeof(x265));
@@ -1191,6 +1404,10 @@ int main(int argc, char **argv)
     failures += test_capacity(argv[1]);
     failures += test_svt_capacity(argv[2]);
     failures += test_ffmpeg_quality_stats();
+    failures += test_libaom_negative();
+    failures += test_libaom_boundaries();
+    failures += test_libaom_flags_caps();
+    failures += test_libaom_fixture(argv[3]);
     if (failures != 0) {
         (void)fprintf(stderr, "%d check(s) failed\n", failures);
         return EXIT_FAILURE;

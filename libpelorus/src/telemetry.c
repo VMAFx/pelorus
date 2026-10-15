@@ -70,6 +70,10 @@ static const uint16_t av1_encoder_ac_qtx[3][64] = {
     (PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM | PEL_TLM_F_PICTURE_TYPE | PEL_TLM_F_PSNR_Y |        \
      PEL_TLM_F_PSNR_U | PEL_TLM_F_PSNR_V | PEL_TLM_F_CODED_BIT_DEPTH)
 
+#define TLM_LIBAOM_CAPS                                                                            \
+    (TLM_FFMPEG_QUALITY_STATS_CAPS | PEL_TLM_F_DISPLAY_INDEX | PEL_TLM_F_DECODE_INDEX |            \
+     PEL_TLM_F_FRAME_BYTES | PEL_TLM_F_KEY_FRAME)
+
 enum tlm_kind { TLM_U32 = 0, TLM_F32 = 1, TLM_U8 = 2 };
 
 /* One optional scalar: its presence bit and where it lives in the section. */
@@ -619,6 +623,10 @@ pel_result pel_tlm_adapter_caps(uint8_t adapter, uint8_t codec, uint64_t *out_ma
     }
     if (adapter == PEL_TLM_ADAPTER_SVTAV1_STAT_FILE && codec == PEL_TLM_CODEC_AV1) {
         *out_mask = TLM_SVTAV1_CAPS;
+        return PEL_OK;
+    }
+    if (adapter == PEL_TLM_ADAPTER_LIBAOM_STATS && codec == PEL_TLM_CODEC_AV1) {
+        *out_mask = TLM_LIBAOM_CAPS;
         return PEL_OK;
     }
     if (adapter != PEL_TLM_ADAPTER_EXTERNAL) {

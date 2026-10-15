@@ -152,7 +152,7 @@ POC     9 TId: 4 (      STSA, B-SLICE, QP 35)             3192 bits [Y 40.3191 d
 
 | Telemetry field | Presence bit | VVenC log line (`-v 4`) | libaom C API (`libaom_stats`) | aomenc CLI (`--psnr=1`) |
 |---|---|---|---|---|
-| `display_index` | 0 | `POC %5d` | `pkt->data.frame.pts` | Not reported |
+| `display_index` | 0 | `POC %5d` | Caller-derived display order (PTS is timebase units) | Not reported |
 | `decode_index` | 1 | Emission order (0, 1, 2, ...) | Packet sequence (0, 1, 2, ...) | Not reported |
 | `frame_bytes` | 2 | `bits / 8` (integer division) | `pkt->data.frame.sz` | `<size>F` token |
 | `header_bits` | 3 | Not reported | Not reported | Not reported |
@@ -168,8 +168,8 @@ POC     9 TId: 4 (      STSA, B-SLICE, QP 35)             3192 bits [Y 40.3191 d
 | `skip_fraction` | 13 | Not reported | Not reported | Not reported |
 | `picture_type` | 14 | `I`/`i` -> `PEL_PICTURE_I`<br>`P`/`p` -> `PEL_PICTURE_P`<br>`B`/`b` -> `PEL_PICTURE_B` | Key/Intra -> `PEL_PICTURE_I`<br>All others -> `PEL_PICTURE_P` | Not reported |
 | `key_frame` (flag) | 15 | True if NAL is `IDR_*`, `CRA`, `GDR` | `flags & AOM_FRAME_IS_KEY` | Not reported |
-| `reference` (flag) | 16 | True if slice char is uppercase (`I`,`P`,`B`) | `!(flags & AOM_FRAME_IS_DROPPABLE)` | Not reported |
-| `shown` (flag) | 17 | True for all logged frames | Non-altref or `SHOW_EXISTING` | Not reported |
+| `reference` (flag) | 16 | True if slice char is uppercase (`I`,`P`,`B`) | Not reported (inverse not established for all packets) | Not reported |
+| `shown` (flag) | 17 | True for all logged frames | Not reported by the mirrored flags | Not reported |
 | `scene_cut` (flag) | 18 | Not reported | Not reported | Not reported |
 | `qp_map` | 19 | Not reported | Not reported | Not reported |
 | `bits_map` | 20 | Not reported | Not reported | Not reported |
@@ -249,3 +249,21 @@ Because `aomenc` CLI does not offer structured per-frame telemetry output:
    - **Option A (In-process C adapter):** Use `libaom` C API (`aom_codec_encode` + `AOME_GET_LAST_QUANTIZER_64` + `AOM_CODEC_PSNR_PKT`) to build `PelorusEncTelemetryInput` records directly.
    - **Option B (FFmpeg quality stats filter):** Use FFmpeg's `libaom-av1` wrapper combined with `AV_PKT_DATA_QUALITY_STATS` export.
    - **Option C (CLI patch / CMake flag):** If CLI file parsing is required, enable `-DCONFIG_OUTPUT_FRAME_SIZE=1` to produce `frame_sizes.csv` (`<bits>,<base_qindex>`), or propose an upstream/local `--stat-file` patch to `apps/aomenc.c`.
+
+### 4.4 Implemented libaom input contract
+
+`pel_tlm_from_libaom` implements option A without linking libaom. Its plain-C
+input contains caller-associated flags, 64-bit bytes, last quantizer, optional
+PSNR and explicit display/decode indices. PTS remains blob metadata, not an
+unscaled display index. The frozen telemetry picture enum defines `p` as every
+AV1 frame that is neither KEY nor INTRAONLY (`interop.h`), so no P/B inference
+is needed. The earlier reference/shown proposals in the crosswalk are not
+implemented: the installed flag declarations alone do not establish the inverse
+DROPPABLE semantics across all packets. Those presence bits stay clear.
+
+Zero bytes is retained as a reported zero without inferring decodability or
+DROPPABLE status. Counts above the section's `uint32_t` limit are rejected.
+The API page specifies optional-QP, PSNR capping and error atomicity; the
+standalone `libaom-record.c` fixture recorder deliberately enforces a lag-zero,
+no-altref single-frame association. Its source is not part of Meson, keeping
+the core dependency-free.
