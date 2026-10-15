@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "stability": "pre-1.0",
+  "filter": "pelorus_aa_vulkan",
+  "kind": "vf",
+  "source": "ffmpeg-patches/files/vf_pelorus_aa_vulkan.c",
+  "options": [
+    {
+      "name": "blur",
+      "type": "int",
+      "min": 0,
+      "max": 8,
+      "default": 2,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "edge-map blur radius in pixels"
+    },
+    {
+      "name": "depth",
+      "type": "float",
+      "min": 0.0,
+      "max": 64.0,
+      "default": 8.0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "warp displacement scale (pixels per unit gradient)"
+    },
+    {
+      "name": "thresh",
+      "type": "float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "edge-map clamp ceiling (normalized)"
+    },
+    {
+      "name": "darkstr",
+      "type": "float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "line-darkening strength (0 = off)"
+    },
+    {
+      "name": "edge",
+      "type": "float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.08,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "Sobel magnitude that counts as a line (for darkening)"
+    },
+    {
+      "name": "planes",
+      "type": "int",
+      "min": 0,
+      "max": 15,
+      "default": 1,
+      "unit": null,
+      "constants": [],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "planes to process (bitmask; default luma only)"
+    },
+    {
+      "name": "fast",
+      "type": "bool",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "hoist the redundant sobel-mag into shared memory \u2014 bit-identical, a large ALU-bound speedup (ADR-0140); opt-in, default off"
+    },
+    {
+      "name": "tiling",
+      "type": "const-enum",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": "pel_tiling",
+      "constants": [
+        {
+          "name": "optimal",
+          "value": 0,
+          "help": "FFmpeg default: reuse the input pool or allocate OPTIMAL tiling"
+        },
+        {
+          "name": "drm",
+          "value": 1,
+          "help": "DRM format modifier tiling with DMA-BUF export (hwmap to VAAPI, QSV)"
+        }
+      ],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "output pool tiling: optimal (default, FFmpeg's pool) or drm (DRM-format-modifier pool that maps to VAAPI/QSV)"
+    },
+    {
+      "name": "drm_modifiers",
+      "type": "string",
+      "min": null,
+      "max": null,
+      "default": null,
+      "unit": null,
+      "constants": [],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "with tiling=drm: DRM format modifiers the consumer imports, 0x hex separated by '|'; empty (default) = any usable modifier; 0x0 = LINEAR"
+    }
+  ]
+}

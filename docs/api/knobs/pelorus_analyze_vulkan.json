@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "stability": "pre-1.0",
+  "filter": "pelorus_analyze_vulkan",
+  "kind": "vf",
+  "source": "ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c",
+  "options": [
+    {
+      "name": "flat",
+      "type": "double",
+      "min": 0.0,
+      "max": 0.25,
+      "default": 0.0015,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "per-tile variance below which a tile is banding-prone"
+    },
+    {
+      "name": "roi",
+      "type": "bool",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": null,
+      "constants": [],
+      "effect_class": "reporting",
+      "tunable": false,
+      "help": "auto-detect banding-prone tiles and emit ROI side data"
+    },
+    {
+      "name": "roi_strength",
+      "type": "double",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.333,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "max |qoffset| for a fully banding tile (frac of QP range)"
+    },
+    {
+      "name": "grad_lo",
+      "type": "double",
+      "min": 0.0,
+      "max": 0.5,
+      "default": 0.002,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "min per-tile gradient counted as a real (banding) slope"
+    },
+    {
+      "name": "grad_hi",
+      "type": "double",
+      "min": 0.0,
+      "max": 0.5,
+      "default": 0.01,
+      "unit": null,
+      "constants": [],
+      "effect_class": "strength",
+      "tunable": true,
+      "help": "tile gradient at which banding risk peaks before texturing"
+    },
+    {
+      "name": "cell",
+      "type": "int",
+      "min": 8,
+      "max": 64,
+      "default": 32,
+      "unit": null,
+      "constants": [],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "cell edge of the analysis grid and its maps, luma pixels (8, 16, 32 or 64)"
+    },
+    {
+      "name": "maps",
+      "type": "bool",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": null,
+      "constants": [],
+      "effect_class": "reporting",
+      "tunable": false,
+      "help": "attach the per-cell banding, variance and edge maps to the side data"
+    }
+  ]
+}
