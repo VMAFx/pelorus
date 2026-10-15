@@ -532,24 +532,15 @@ static inline int pel_vk_pool_drm(AVFilterContext *avctx, FFVulkanContext *s,
 }
 
 /* Known limits of a working DRM-modifier pool, named instead of silent. */
-static inline void pel_vk_pool_warn_limits(AVFilterContext *avctx, const FFVulkanContext *s)
+static inline void pel_vk_pool_warn_limits(AVFilterContext *avctx)
 {
-    const VkDriverId driver = s->driver_props.driverID;
-
 #if !CONFIG_LIBDRM
     av_log(avctx, AV_LOG_WARNING,
            "tiling=drm: this FFmpeg is built without libdrm, so hwmap cannot map the pool to "
            "DRM PRIME or VAAPI\n");
+#else
+    (void)avctx;
 #endif
-    /* research 0184: on RADV with radeonsi the sync_file attached by
-     * vulkan_map_to_drm() did not hold VAAPI reads back in 14-17 of 20 frames. */
-    if (driver == VK_DRIVER_ID_MESA_RADV || driver == VK_DRIVER_ID_AMD_OPEN_SOURCE ||
-        driver == VK_DRIVER_ID_AMD_PROPRIETARY)
-        av_log(avctx, AV_LOG_WARNING,
-               "tiling=drm on an AMD Vulkan driver (%s): a frame mapped to VAAPI can be read "
-               "before the filter finished writing it (silently wrong pixels) until FFmpeg's "
-               "map synchronisation is fixed; see docs/backends/vulkan-drm-modifiers.md\n",
-               s->driver_props.driverName);
 }
 
 /* config_props of the output pad of every Pelorus filter that writes new
@@ -573,7 +564,7 @@ static inline int pel_vk_pool_config_output(AVFilterLink *outlink, const PelVkPo
         err = pel_vk_pool_report(avctx, s, &choice);
     if (err < 0)
         return err;
-    pel_vk_pool_warn_limits(avctx, s);
+    pel_vk_pool_warn_limits(avctx);
     l->hw_frames_ctx = av_buffer_ref(s->frames_ref);
     if (!l->hw_frames_ctx)
         return AVERROR(ENOMEM);

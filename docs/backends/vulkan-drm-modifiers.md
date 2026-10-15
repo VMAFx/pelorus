@@ -72,30 +72,33 @@ Implemented in `ffmpeg-patches/files/pelorus_drm_modifier.h` and
 ## What works today
 
 Measured on an Arc A380 and a Radeon 610M
-([research 0184](../research/0184-vulkan-drm-modifier-pools.md)):
+([research 0184](../research/0184-vulkan-drm-modifier-pools.md),
+[research 0103](../research/0103-p010-amd-drm-map.md)):
 
 | Path | Arc A380 (ANV, iHD) | Radeon 610M (RADV, radeonsi) |
 |---|---|---|
-| NV12 to VAAPI, odd sizes included | bit-exact | maps, but 14-17 of 20 frames read back with unfinished pixels (below) |
+| NV12 to VAAPI, odd sizes included | bit-exact | bit-exact |
 | NV12 to QSV | bit-exact | not applicable |
-| P010 to VAAPI | refused by stock FFmpeg (below) | refused by stock FFmpeg |
+| P010 to VAAPI | bit-exact | bit-exact |
 | P010 to DRM PRIME | exports | exports |
 
-Two stock FFmpeg `n9.0.2` defects remain; they are not fixed in the Pelorus
-patch stack:
+Both stock FFmpeg `n9.0.2` defects are resolved by the shared FFmpeg fix
+series `v0.2.0` (pinned in `build-config.env`, [ADR-0185](../adr/0185-shared-ffmpeg-fix-series.md)):
 
-- **P010 to VAAPI.** FFmpeg exports a P010 Vulkan frame as layers `R16` +
-  `GR1616`, and its VAAPI import accepts P010 only as `R16` + `RG1616`
-  (`libavutil/hwcontext_vaapi.c`, `vaapi_drm_format_map`). The import row is
-  queued in VMAFx/ffmpeg-patches, together with the format-list fix for the
-  validation error the export-capability query raises.
+- **P010 to VAAPI.** Stock FFmpeg exported a P010 Vulkan frame as layers `R16` +
+  `GR1616`, whereas VAAPI import accepted P010 only as `R16` + `RG1616`
+  (`libavutil/hwcontext_vaapi.c`, `vaapi_drm_format_map`). Shared series patch
+  0005 adds the `GR1616` row to `vaapi_drm_format_map`, and patch 0006 fixes
+  the image format list in the Vulkan export query (`try_export_flags()`).
+  P010 maps bit-exact on both Intel and AMD.
 - **AMD synchronisation.** On a Radeon 610M (RADV, radeonsi) a VAAPI readback
-  of the mapped frame showed unfinished Vulkan writes in 14-17 of 20 frames,
-  with no error: the pixels are silently wrong. FFmpeg's CPU-wait branch in
-  `vulkan_map_to_drm()` removes it; the sync_file branch it uses by default
-  does not. It needs a root cause before a fix. The filter warns on RADV,
-  AMDVLK and the AMD proprietary driver; do not rely on AMD `tiling=drm`
-  output until the fix lands.
+  of the mapped frame previously showed unfinished Vulkan writes in 14-17 of 20
+  frames when relying on the sync_file export branch of `vulkan_map_to_drm()`.
+  Shared series patch 0007 resolves this by taking the CPU `vkWaitSemaphores()`
+  path before DMA-BUF export on RADV. Measured control: B1 (series 0001-0006,
+  no RADV wait) fails `nv12-640x360` readback, while B2 and the current series
+  pass all cases (including 3 repetitions of 20 frames with bit-exact readback).
+  The AMD warning in `pelorus_vulkan_pool.h` was removed.
 
 ## Failure modes
 
@@ -107,8 +110,7 @@ patch stack:
 | Filter fails at start | `drm_modifiers: cannot parse "zz" in "0x9\|zz": want at most 64 modifiers, 0x hex or decimal, separated by '\|', not DRM_FORMAT_MOD_INVALID` | Malformed `drm_modifiers`; the first quoted value is the bad entry. |
 | Warning only | `drm_modifiers is ignored without tiling=drm` | `drm_modifiers` set while `tiling=optimal`. |
 | Warning, then `hwmap` fails with `Failed to map frame: -38` | `tiling=drm: this FFmpeg is built without libdrm, so hwmap cannot map the pool to DRM PRIME or VAAPI` | FFmpeg configured without `--enable-libdrm`. |
-| No error; 14-17 of 20 frames carry unfinished pixels (Radeon 610M) | `tiling=drm on an AMD Vulkan driver (radv): a frame mapped to VAAPI can be read before the filter finished writing it (silently wrong pixels) until FFmpeg's map synchronisation is fixed; ...` | Stock FFmpeg map synchronisation on AMD (above). |
-| `hwmap` to VAAPI fails for P010 | `DRM format not supported by VAAPI.` then `Failed to map frame` | Stock FFmpeg P010 layer format mismatch (above). |
+| `hwmap` to VAAPI fails for P010 | `DRM format not supported by VAAPI.` then `Failed to map frame` | Stock FFmpeg P010 layer format mismatch (applies only to FFmpeg builds without shared series v0.2.0 patch 0005). |
 | `hwmap` fails with `Unable to export the image as a FD!` | (from FFmpeg) | The filter before `hwmap` runs with `tiling=optimal`, or is a pass-through filter (`analyze`, `grain_estimate`, `mc`). |
 
 A device created with `disable_multiplane=1` (the CUDA interop setting) puts
@@ -116,9 +118,35 @@ each plane in its own image; VAAPI refuses such two-object frames.
 
 ## Verify on your GPU
 
+The smoke script checks the zero-copy pipeline against readback and encode.
+Explicitly set `LIBVA_DRIVER_NAME` and `VK_DRIVER_FILES` per GPU so multi-GPU
+hosts or environment overrides (such as `LIBVA_DRIVER_NAME=nvidia`) do not load
+the wrong driver. The render nodes and ICD paths below are the test host's;
+list yours with `ls /dev/dri` and `ls /usr/share/vulkan/icd.d`:
+
+Intel Arc A380 (`renderD130`, `iHD`, `intel_icd.json`, `QSV=1`):
+
 ```bash
-FFMPEG_BIN=/path/to/ffmpeg RENDER_NODE=/dev/dri/renderD130 EXPECT_DEVICE=Arc QSV=1 \
-    LIBVA_DRIVER_NAME=iHD ffmpeg-patches/test/vulkan-drm-map-smoke.sh
+LIBVA_DRIVER_NAME=iHD \
+VK_DRIVER_FILES=/usr/share/vulkan/icd.d/intel_icd.json \
+RENDER_NODE=/dev/dri/renderD130 \
+EXPECT_DEVICE="Arc" \
+EXPECT_VAAPI="Intel iHD" \
+QSV=1 \
+FFMPEG_BIN=/path/to/ffmpeg \
+ffmpeg-patches/test/vulkan-drm-map-smoke.sh
+```
+
+AMD Radeon 610M (`renderD129`, `radeonsi`, `radeon_icd.json`):
+
+```bash
+LIBVA_DRIVER_NAME=radeonsi \
+VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json \
+RENDER_NODE=/dev/dri/renderD129 \
+EXPECT_DEVICE="RADV" \
+EXPECT_VAAPI="radeonsi" \
+FFMPEG_BIN=/path/to/ffmpeg \
+ffmpeg-patches/test/vulkan-drm-map-smoke.sh
 ```
 
 The script needs an FFmpeg built with `--enable-libdrm` (as

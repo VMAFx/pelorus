@@ -169,10 +169,10 @@ ffmpeg-patches/
    `files/pelorus_vulkan_pool.h`; `tiling=drm` = DRM-modifier pool, modifier
    rule in `files/pelorus_drm_modifier.h` (fast test `drm-modifier`). Both
    headers enter with 0001. Never patch stock `vulkan_filter.c` or
-   `hwcontext_*.c` for this: P010 `GR1616` import row and export-capability
-   format-list fix queued in VMAFx/ffmpeg-patches; AMD sync_file needs root
-   cause, filter warns on AMD drivers until then. Never fall back to OPTIMAL
-   when `drm` requested. New frame-writing filter: same option and pad.
+   `hwcontext_*.c` for this: P010 `GR1616` import row (0005), format list (0006)
+   and RADV CPU wait before map (0007) are in shared series v0.2.0; AMD driver
+   warning removed. Never fall back to OPTIMAL when `drm` requested. New
+   frame-writing filter: same option and pad.
    GPU proof = `test/vulkan-drm-map-smoke.sh` (exit 77 = no binary/GPU).
 
 ## Required checks
