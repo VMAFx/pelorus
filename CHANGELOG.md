@@ -23,9 +23,21 @@ All notable changes to Pelorus are documented here. The format is
 
 - Zero-copy mapping of Pelorus `tiling=drm` output pools to VAAPI now supports 10-bit P010 and AMD Radeon (RADV/radeonsi) bit-exact without `hwdownload` (#103). Shared FFmpeg fix series `v0.2.0` carries the P010 `GR1616` VAAPI row (patch 0005), the export format-list query (0006) and the RADV CPU wait before DRM map (0007); the AMD driver warning in `pel_vk_pool_warn_limits()` is removed and `ffmpeg-patches/test/vulkan-drm-map-smoke.sh` requires P010 by default with `EXPECT_VAAPI` driver validation. ([ADR-0184](docs/adr/0184-vulkan-drm-modifier-output-pools.md#update-2026-10-15), [research 0103](docs/research/0103-p010-amd-drm-map.md))
 
+### Maintenance
+
+- `scripts/release/extract-release-notes.sh` (`scripts/release/release_notes.py`) unwraps hard-wrapped paragraphs and list items onto single lines while preserving code fences, tables, headings, HTML comments, blank lines, and nested list indentation, requires a `### Highlights` section with 3 to 6 bullets first, and orders `### Maintenance` last; `scripts/release/concat-changelog-fragments.sh` adds the `maintenance/` fragment directory ([ADR-0176](docs/adr/0176-rc-process-and-tester-publish.md), `docs/development/release.md`).
+
 <!-- END UNRELEASED -->
 
 ## [0.4.0] - 2026-10-15
+
+### Highlights
+
+- Append-only interop ABI 1.4 and 1.5 add normalised encoder telemetry (`PEL_SEC_ENC_TELEMETRY`), canonical encode provenance records (`PEL_SEC_ENCODE_RECORD`), motion `block_size_log2`, and the zero-free COBS carrier (`pel_blob_carrier_encode()`, `pel_blob_unwrap()`) so `PelorusSideData` survives NVENC emulation-prevention limits intact ([ADR-0174](docs/adr/0174-encoder-telemetry-abi-1-4.md), [ADR-0175](docs/adr/0175-encode-provenance-record.md), [ADR-0183](docs/adr/0183-sidedata-zero-free-carrier.md)).
+- `pelorus_analyze_vulkan` writes per-cell banding risk, luma variance, and edge density maps (`cell`, `maps`), while `hevc_nvenc`, `h264_qsv`, and `hevc_qsv` bound SEI header budgets and strip per-cell maps when needed ([ADR-0177](docs/adr/0177-analyze-per-cell-maps.md), [ADR-0181](docs/adr/0181-hevc-nvenc-sei-header-budget.md), #286).
+- Zero-copy hardware encode pipelines add `tiling=drm` with DMA-BUF export for VAAPI and QSV (`hwmap=derive_device=vaapi`), derived Vulkan devices for NVDEC-to-NVENC hops (`vulkan=vk@cu`), and `-udu_sei` side-data pass-through on QSV and Vulkan encoders ([#103](https://github.com/VMAFx/pelorus/issues/103), [ADR-0173](docs/adr/0173-tester-programme.md), ADR-0184, [ADR-0191](docs/adr/0191-nvenc-hop-derived-vulkan-device.md)).
+- `-pelorus_roi 1` on `h264_vulkan` and `hevc_vulkan` steers on Mesa RADV via host-mapped `LINEAR` quantization maps, and the 22-patch stack builds on the shared `VMAFx/ffmpeg-patches` `v0.2.0` fix series including the `hevc_vulkan` forced-keyframe hang fix (#278, #309, [ADR-0182](docs/adr/0182-vulkan-qpmap-fill-paths.md), ADR-0185, [ADR-0192](docs/adr/0192-series-v0.2.0-forced-keyframe-smoke.md)).
+- Hardware tester kit (`tools/tester/`), vendor container images (`generic`, `nvidia`, `intel`), and tracked hardware report intake (`docs/hardware-reports/`) validate format matrices, encoder steering, side-data round trips, and zero-copy chains ([ADR-0173](docs/adr/0173-tester-programme.md), [ADR-0180](docs/adr/0180-tester-vendor-images.md)).
 
 ### Added
 
@@ -73,7 +85,6 @@ All notable changes to Pelorus are documented here. The format is
 - Release candidates: a `vX.Y.Z-rc.N` tag (narrow shape, no skipped number, no final `vX.Y.0` from 0.4.0 without one) publishes a prerelease that is never `latest`, after the candidate legs in `scripts/release/candidate-legs.json` are green on the exact commit; the candidate version string keeps the suffix while the shared object and `.pc` file carry the numeric core ([ADR-0176](docs/adr/0176-rc-process-and-tester-publish.md), `docs/development/release.md`).
 - Tester image publish workflow `tester-publish.yml` (dispatch only, environment `tester-publish`): builds `tools/tester/Containerfile`, gates the FFmpeg on GPL-3.0-or-later without nonfree, pushes the image and its `-source` companion, and attaches an SPDX SBOM, SLSA provenance and a cosign signature; `check-build-config.py` pins its shape (`docs/development/tester-image.md`).
 - Tester image licence record `tools/tester/licensing.json` and gate `tools/tester/licensing.py`: a `licence` stage of the Containerfile fails the build on a file no component owns, an unknown or non-redistributable licence, a Debian package without its copyright file or outside `main`, a missing licence text or stale notices, and writes `THIRD_PARTY_NOTICES.txt` naming the repository and exact commit into the image; the patch archive ships a generated `NOTICE`; the licence audit of the tester image, the patch archive and `pelorus-dev` is in `docs/research/0236-tester-artifact-licence-audit.md` ([ADR-0178](docs/adr/0178-tester-artifact-licence-record.md), `docs/development/tester-image.md`).
-- Tester CI cost control: the workflow runs on pull requests only when an image input changes, builds nightly without publishing (the linter keeps `validate` and `publish` off the schedule), and every job has a capped timeout; the runbook records the expectations ([ADR-0178](docs/adr/0178-tester-artifact-licence-record.md)).
 - The tester's `steering_smoke` stage adds two bitrate-control legs per QSV encoder, marked `rate_control` in the report: `cbr_extbrc` (CBR with `-extbrc 1`, oneVPL's software bitrate control) and `cbr_hw` (the GPU's own). A leg passes when 400 frames of the new `synth-motion` fixture decode within 15 % of 1 Mb/s; hardware bitrate control without HuC firmware on a DG2 under the `xe` kernel driver is a named `not_run`, never a pass, and `av1_qsv` `cbr_extbrc` is a named `not_run`. New self-test rules `brc_bitrate`, `brc_decode`, `brc_extbrc_engaged`, `brc_no_huc`, `brc_hw_refused` (tool 0.4.5, [ADR-0180](docs/adr/0180-tester-vendor-images.md) decision 8). `docs/usage/ffmpeg.md` documents `-extbrc 1` for CBR and VBR on Arc A-series under `xe`, the two QSV device options and `LIBVA_DRIVER_NAME=iHD`.
 - CI runs all ten Pelorus filters, the Vulkan format matrix and the tester report on Mesa lavapipe with Vulkan validation on, in the new `lavapipe` job of `ci.yml`. A guard refuses any device but a single llvmpipe CPU device and names every missing device extension; the result is functional evidence on software Vulkan, never GPU evidence ([research 0228](docs/research/0228-lavapipe-spike.md), #228). `build-and-run.sh` gains `KEEP_DIR` to keep the linked binary.
 - NVIDIA and Intel tester images: `tools/tester/Containerfile` builds one image per kit (`final-generic`, `final-nvidia`, `final-intel`, each with a `source-<kit>` companion), published as `tester-<date>-<sha8>` (CPU, unchanged) and `tester-<kit>-<date>-<sha8>`; the NVIDIA image builds NVENC from the MIT `nv-codec-headers` only and ships no NVIDIA file (the host driver and Vulkan ICD come through the NVIDIA Container Toolkit), the Intel image carries Mesa ANV, oneVPL and `intel-media-va-driver-non-free`; the licence record gains kits and forbidden files and packages (an NVIDIA library fails the build); a report without its device names the missing docker option (`--gpus all`, `--device /dev/dri`), records the image `kit` and one `legs` entry per encoder, an AV1 encoder the GPU lacks is a `not_run` leg with the reason, a QSV leg that finds only the free media driver names the missing `intel-media-va-driver-non-free`, and the steering control runs without ROI side data ([ADR-0180](docs/adr/0180-tester-vendor-images.md), [research 0229](docs/research/0229-tester-vendor-images.md)).
@@ -85,25 +96,12 @@ All notable changes to Pelorus are documented here. The format is
 ### Changed
 
 - The published Intel tester image installs Debian's `intel-media-va-driver-non-free`, so `hevc_qsv` steering and side-data legs run on the Arc A380 (measured on the `xe` kernel driver without HuC). The package is Expat-licensed; Debian ships it in `non-free` only because Intel's GPU kernels come without source. `tools/tester/licensing.json` records it with that reason, and the licence gate admits a package from outside Debian `main` only when a component records it with a redistributable licence: any other `non-free` or `contrib` package still fails the build, and so do FFmpeg `--enable-nonfree` and the other nonfree components. The `-source` image carries the driver's Debian source package. The local-only `INTEL_MEDIA_DRIVER=nonfree` build, the `intel-nonfree-local` kit and the NOT-FOR-REDISTRIBUTION marker are removed; tester tool 0.4.4 ([ADR-0180](docs/adr/0180-tester-vendor-images.md), [research 0229](docs/research/0229-tester-vendor-images.md)).
-- The dev container bundle builds on `ghcr.io/vmafx/pelorus-dev@sha256:92599aa4…`, the first image on the plain Ubuntu base with a licence record ([#256](https://github.com/VMAFx/pelorus/issues/256), ADR-0179); its provenance attestation verifies to `devcontainer-image.yml` on `master` at `8e6a41e`.
 - The tester's `sidedata_roundtrip` stage reads the zero-free carrier form of interop ABI 1.5 (#284, ADR-0183): it decodes a carrier in the stream and at the decode tap as strictly as `pel_blob_unwrap()` and compares the result like a plain blob, requires the carrier on `hevc_nvenc` and `h264_nvenc` legs and the plain blob on every other carrier, and names the wrong form or the malformed carrier in the failure. New self-test rules `sd_carrier_form` and `sd_carrier_strict` (tool 0.4.7). Measured on an RTX 4090 (driver 615.78.08) with patch 0022: every case of both NVENC legs passes; the rc.2 build fails them.
 - The tester's `sidedata_roundtrip` stage accepts the maps-stripped blob from `hevc_qsv` and `h264_qsv` as well as `hevc_nvenc` (#286, patch 0023) and from no other carrier; new self-test rule `sd_strip_carriers` (tool 0.4.8). Measured on an Arc A380: all five cases of both QSV legs pass with patch 0023, and `hevc_qsv` `flat-1080p-maps1-cell32` fails on the 22-patch stack.
 - `ffmpeg-patches/test/build-and-run.sh` configures FFmpeg with `--enable-libdrm` when libdrm is installed, so the replayed build compiles the Vulkan to DRM PRIME and VAAPI map that `tiling=drm` pools are for; the new `vulkan-drm-map` fast-suite test runs that map on a GPU when `FFMPEG_BIN` and `RENDER_NODE` are set ([#103](https://github.com/VMAFx/pelorus/issues/103), ADR-0184).
-- Re-pinned the Praetor governance engine from `492a00f9` to `9615f1b9` (ADR-0168 keeps the pin rule). The engine now also renders `AGENTS.readonly.md`, the agent context for read-only agents; the documentation workflow gains a `merge_group` trigger, and `.gitignore` excludes the engine cache `/.standards/cache/`.
 - The FFmpeg patch stack applies on top of the shared FFmpeg fix series ([VMAFx/ffmpeg-patches](https://github.com/VMAFx/ffmpeg-patches) `v0.1.0-rc.1`, pinned in `build-config.env` by tag, commit and tarball sha256) instead of carrying its own copies of generic FFmpeg fixes: apply that series first, then `ffmpeg-patches/series.txt`. The stack is 22 patches. Number 0021 is retired, because its Vulkan queue family fix is patch 0001 of the series, and patches 0022 and 0023 keep their numbers. Patch 0022 is reduced to the Pelorus part of NVENC `udu_sei` (the zero-free carrier and the map stripping); the `hevc_nvenc` SEI budget is series patch 0003. `scripts/fetch-ffmpeg-series.sh` downloads the release and fails closed unless the sha256 pin, the cosign signature of `SHA256SUMS`, the build attestation and the FFmpeg base all check out; `generate.sh`, the replay scripts, the tester image build and the CI stack jobs call it, so they need network access, `cosign` and an authenticated `gh`. The NOTICE of the released patch archive names the series the stack needs (ADR-0185).
 - With series patch 0004, `h264_nvenc` and `hevc_nvenc` with `-udu_sei 1` no longer write a user data unregistered SEI from another producer that NVENC would truncate; they warn instead (`Not writing a N-byte user data unregistered SEI at pts ...`). Before, the truncated SEI reached the stream and the decoder discarded it. Pelorus side data is unaffected, because it is written in the zero-free carrier form. On `hevc_nvenc`, the log line for an SEI that exceeds the per-picture budget now comes from the series and reads `Not writing a N-byte user data unregistered SEI at pts ...: hevc_nvenc fails a picture whose parameter sets and SEI exceed 1024 bytes` (ADR-0185).
-- Re-pinned the Praetor governance engine from `9615f1b9` to `7cf9cbb2` (ADR-0187). The Lefthook jobs and the `Makefile` now run the pinned engine through the engine's own launcher, `.config/lefthook/engine.sh`, and its make fragment, `.config/praetor/engine.mk`; `scripts/praetor-engine.sh` is removed. The engine cache moves from `.workingdir/bin/<pin>/` to `${XDG_CACHE_HOME:-$HOME/.cache}/praetor/engine/<pin>/`, shared by all worktrees. `PRAETORCTL=<path>` still overrides `make`, but the Git hooks no longer read it. `AGENTS.md` takes the engine's harness block; what enforces each HISS rule in this repository is listed in the new section "Enforcement here".
 - Documented recipes for hardware encoders no longer use `hwdownload`: NVENC goes through a VRAM-to-VRAM `hwupload` to CUDA on a Vulkan device created with `disable_multiplane=1`, VAAPI and QSV through `tiling=drm` and `hwmap`, and the Vulkan Video encoders directly; software encoders keep `hwdownload`, labelled inherent. Each recipe states the GPU it ran on or that it was not run. The pipeline page documents `-extra_hw_frames` with the frames `pelorus_mc_vulkan` (1) and `pelorus_denoise_vulkan` (3 by default, 5 at most) keep. `pelorus_scenecut` runs on Vulkan frames (new ADR-0186, replacing the "after `hwdownload`" placement of ADR-0126). `scripts/check-doc-recipes.py` enforces the recipe rules and compares the frame counts with the filter sources; it runs in `make docs-check` and the CI docs job ([#102](https://github.com/VMAFx/pelorus/issues/102)).
-- The `telemetry-field-parity` fast test now compares the registry with the VMAFx field list pinned at VMAFx/vmafx@243904ab (VMAFx pull request 2773) and passes instead of skipping; its declared skip is removed (ADR-0174, ADR-0188).
-- The shared FFmpeg fix series pin moves from the release candidate `v0.1.0-rc.1` to the final release [VMAFx/ffmpeg-patches `v0.1.0`](https://github.com/VMAFx/ffmpeg-patches/releases/tag/v0.1.0) (ADR-0185). Both tags name commit `ea78aa5d` and both tarballs unpack to the same 16 files, so the four series patches and the 22 Pelorus patches are unchanged; only `FFMPEG_SERIES_TAG` and `FFMPEG_SERIES_SHA256` in `build-config.env` change.
-- Re-pinned the Praetor governance engine from `3bbde073` to `2d23b292` (ADR-0187 keeps the pin rule). The new engine refuses an agent persona without a model tier, so each persona in `.agents/agents/` now declares `model: pro` (the six reviewers and `repo-auditor`) or `model: flash` (`repo-gatekeeper`); `compile-context` projects the tier per client (`sonnet` and `haiku` for Claude Code, dropped for Copilot, Gemini CLI and Codex).
-- Re-pinned the Praetor governance engine from `66223619` to `3bbde073` (ADR-0187 keeps the pin rule and the launcher). The new engine's declared-linters gate fails the audit when a linter the policy declares runs in no workflow; re-adoption records dated exceptions (expiry 2027-01-11) for `cppcheck`, `semgrep` and `trivy`, each with its reason in `.standards.yaml` (ADR-0190).
-- Re-pinned the Praetor governance engine from `7cf9cbb2` to `66223619` (ADR-0187 keeps the pin rule and the launcher). The engine's re-adoption refreshes the documentation gate scripts (`tools/markdownlint/verify.mjs`, `tools/markdownlint/no-private-scratch-links.mjs`, `tools/figures/checks.mjs`: each file is read through one open descriptor, and regular-expression class escaping is corrected) and the agent interceptor `.config/agent/hooks/block_evasion.py` (chained exception).
-- Thirteen decision records whose work is merged and released in the `v0.4.0` candidates are now Accepted: ADR-0173 and ADR-0176 to ADR-0187. `docs/development/tester-image.md` records the verified end-to-end tester image publish for `v0.4.0-rc.3` and adds the SBOM attestation check to "Verify an image".
-- A skipped fast-suite test now passes only when `.config/test-skips.json` names it with its exact `SKIP:` reason (ADR-0188). `scripts/check-test-skips.py` runs after `make test` and every CI fast-suite run; before, `meson test` exited 0 for any skip, so a GPU smoke pointed at the wrong FFmpeg reported green.
-- `ffmpeg-patches/test/build-and-run.sh` passes the NVENC SEI smoke's skip only when `NVENC_SMOKE_SKIP` names its reason (ADR-0189); before, any exit 77 passed, so a GPU host whose driver or Vulkan device went missing reported green. Without an NVIDIA driver, set `NVENC_SMOKE_SKIP="Cannot load libcuda.so.1"`.
-- Defined policy and acceptance fixtures for licence provenance (#172, ADR-0195): AI coding tools are never named as copyright holders in headers or `REUSE.toml`, `Co-authored-by:` commit trailers are not copyright statements, a file header must agree with its `REUSE.toml` annotation (an `override` annotation may add co-holders), and fixtures under `scripts/fixtures/licence-provenance/` specify the upstream Praetor gate (cordanaLLM/praetor#907).
-- The ten files VMAFx mirrors (`libpelorus/mirror-paths.txt`) now hold an explicit `SPDX-FileCopyrightText: 2026 Lusoris` line above the licence identifier, enforced by rule 3 in `scripts/check-mirror-contract.py` (#247).
 
 ### Fixed
 
@@ -111,12 +109,10 @@ All notable changes to Pelorus are documented here. The format is
 - FFmpeg patch 0021 stops `ff_vk_frame_barrier()` from turning the first barrier on a frame into a queue family ownership transfer to `VK_QUEUE_FAMILY_IGNORED` on devices with one queue family (Mesa lavapipe), which the Vulkan spec forbids (`VUID-VkImageMemoryBarrier2-image-09118`). The validation layer no longer loses the image layout there and stops reporting `00344`, `09600`, `09059` and `09064`; devices with several queue families are unaffected (`docs/rebase-notes.md`, patch 0021). `09059` and `09064` leave the VUID allow-list, since no tested device (lavapipe, ANV, RADV, RTX 4090) reports them with the patch.
 - Bench results v0.6 and v0.8 no longer blame a "known Arc A-series low-power encode bug": re-measured on the A380 under `xe`, the 13.8 dB result reproduces in constant QP and comes from `hevc_vaapi` writing `cu_qp_delta_enabled_flag=0` while still sending the ROI (the whole stream is corrupt; fix filed as [FFmpeg #24977](https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/24977)), while QSV encodes on the same low-power encoder, with and without ROI, are clean ([research 0180](docs/research/0180-qsv-bitrate-control-dg2-xe.md)).
 - The tester report treats a user name as a whole-word literal and no longer treats a generic CI or container account (`runner`, `root`, `ubuntu`, `vscode`, ...) as private; on GitHub runners the program refused its own report because the fixed text "stage runner" contained the account name (tool 0.4.1).
-- The `ghcr.io/vmafx/pelorus-dev` image no longer redistributes a source-built GPL `git` without a source offer: it starts from plain `ubuntu:26.04` and uses Ubuntu's `git` package. Node.js, actionlint and Lefthook now ship their licence texts under `/usr/local/share/licenses/`, the misleading `EUPL-1.2` image label is replaced by a notices file, and a licence record plus gate (`.devcontainer/base/licensing.json`) fails the image build on any unrecorded file ([ADR-0179](docs/adr/0179-dev-image-licence-record.md), #256). The dev container bundle keeps the old digest until the new image is published and re-pinned.
 - `hevc_nvenc -udu_sei 1` no longer stops with `Cannot allocate memory` when `pelorus_analyze_vulkan` writes its maps (#267). NVENC's HEVC encoder refuses more than 1024 bytes of parameter sets and SEI per picture; new patch 0022 keeps the side data within 768 of them, writes a Pelorus blob that does not fit without its per-cell maps (the same bytes as `maps=0`), drops any other payload that does not fit, and logs both. ([ADR-0181](docs/adr/0181-hevc-nvenc-sei-header-budget.md), [research 0181](docs/research/0181-hevc-nvenc-sei-header-budget.md))
 - The tester's `sidedata_roundtrip` stage no longer reports a carrier as `not_run` when only the side-data encode fails: it encodes the same input without side data and records a `fail` leg with the encoder's error when that baseline encodes; `not_run` stays for a host that cannot encode at all. New self-test rule `sd_carrier_masking` (tool 0.4.2, #268).
 - `-pelorus_roi 1` on `h264_vulkan` and `hevc_vulkan` now steers on Mesa RADV (#278). Patch 0009 took only an `R8_SINT` delta map and asked the driver for the map usage alone, so RADV, which advertises `R32_SINT` with exactly the usages asked for, was always disabled. The probe now accepts the advertised `R8`/`R16`/`R32_SINT` delta or `R8`/`R16_UNORM` emphasis format and asks for the fill usages the encode queue family can record. A new host-mapped fill writes a `LINEAR` map image from the host, for encode queue families that can record neither a copy nor a dispatch (RADV's). NVIDIA keeps its staging copy and its streams. ([ADR-0182](docs/adr/0182-vulkan-qpmap-fill-paths.md))
 - The pinned bench compares the same `synth-banding` clip on every run: `fetch-corpus.sh` generates it from lavfi `gradients` with `seed=1` and refuses bytes that differ from the sha256 now pinned in `corpus.lock`. Before, `gradients` drew a new random pattern each run, so two candidates were benched on different input. `bench.sh` also passes `--cambi`, so its report shows CAMBI instead of nan.
-- `scripts/praetor-engine.sh` installs the pinned engine with an atomic rename: it stages the verified binary next to its target before `mv`. When `TMPDIR` is another filesystem (tmpfs), the old `mv` copied in place, and a parallel Lefthook job on a fresh worktree could run a half-written engine and fail with "no version output" (reproduced: 11 of 24 parallel first runs; after the fix 0 of 36).
 - Pelorus side data reaches the decoder intact through `h264_nvenc` and `hevc_nvenc` on flat content (#284). On an RTX 4090 with driver 615.78.08, NVENC writes a SEI payload truncated when it needs more emulation prevention bytes than about a third of its length, which the zero maps of `pelorus_analyze_vulkan` reach, and the decoder drops it without an error. Patch 0022 now writes every Pelorus blob in a zero-free carrier form (interop ABI 1.5), and `hevc_nvenc` charges its budget for the carrier, so small flat grids keep their maps. ([ADR-0183](docs/adr/0183-sidedata-zero-free-carrier.md), [research 0183](docs/research/0183-sidedata-zero-free-carrier.md))
 - The tester's `sidedata_roundtrip` stage now fails when Pelorus side data is lost or changed on its way through an encoder (#284). Each carrier runs five cases, including flat 320x180 and 1080p clips with `maps=1:cell=32` that NVENC truncates, and every blob in the stream and at the decode tap must equal the blob the analyze filter attached, byte for byte, or be the exact maps-stripped form `hevc_nvenc` writes by design ([ADR-0181](docs/adr/0181-hevc-nvenc-sei-header-budget.md)). A failure names the carrier, case, picture, both lengths and the first differing offset. Tool 0.4.6, schema 2 unchanged; three new self-test rules each go red when disabled.
 - `hevc_qsv` and `h264_qsv` with `-udu_sei 1` now keep large Pelorus side data within a per-picture SEI budget (#286, patch 0023). The QSV runtime accepts a limited amount of user data SEI per picture; the encoders now keep 4 040 and 40 960 bytes per picture, write a Pelorus blob that does not fit without its per-cell maps, and skip any other payload that does not fit, with a warning naming the frame and sizes. At 1080p the `cell=32` analyze blob reaches an `hevc_qsv` stream as its scalar sections ([research 0286](docs/research/0286-qsv-udu-sei-budget.md)).
@@ -132,17 +128,37 @@ All notable changes to Pelorus are documented here. The format is
 
 - VMAFx readers built on interop ABI 1.4 ignore the zero-free carrier that `h264_nvenc` and `hevc_nvenc` now write, so they read no Pelorus side data from NVENC streams until VMAFx re-pins to ABI 1.5 (VMAFx/vmafx#2708).
 
+### Maintenance
+
+- Tester CI cost control: the workflow runs on pull requests only when an image input changes, builds nightly without publishing (the linter keeps `validate` and `publish` off the schedule), and every job has a capped timeout; the runbook records the expectations ([ADR-0178](docs/adr/0178-tester-artifact-licence-record.md)).
+- The dev container bundle builds on `ghcr.io/vmafx/pelorus-dev@sha256:92599aa4…`, the first image on the plain Ubuntu base with a licence record ([#256](https://github.com/VMAFx/pelorus/issues/256), ADR-0179); its provenance attestation verifies to `devcontainer-image.yml` on `master` at `8e6a41e`.
+- Re-pinned the Praetor governance engine from `492a00f9` to `9615f1b9` (ADR-0168 keeps the pin rule). The engine now also renders `AGENTS.readonly.md`, the agent context for read-only agents; the documentation workflow gains a `merge_group` trigger, and `.gitignore` excludes the engine cache `/.standards/cache/`.
+- Re-pinned the Praetor governance engine from `9615f1b9` to `7cf9cbb2` (ADR-0187). The Lefthook jobs and the `Makefile` now run the pinned engine through the engine's own launcher, `.config/lefthook/engine.sh`, and its make fragment, `.config/praetor/engine.mk`; `scripts/praetor-engine.sh` is removed. The engine cache moves from `.workingdir/bin/<pin>/` to `${XDG_CACHE_HOME:-$HOME/.cache}/praetor/engine/<pin>/`, shared by all worktrees. `PRAETORCTL=<path>` still overrides `make`, but the Git hooks no longer read it. `AGENTS.md` takes the engine's harness block; what enforces each HISS rule in this repository is listed in the new section "Enforcement here".
+- The `telemetry-field-parity` fast test now compares the registry with the VMAFx field list pinned at VMAFx/vmafx@243904ab (VMAFx pull request 2773) and passes instead of skipping; its declared skip is removed (ADR-0174, ADR-0188).
+- The shared FFmpeg fix series pin moves from the release candidate `v0.1.0-rc.1` to the final release [VMAFx/ffmpeg-patches `v0.1.0`](https://github.com/VMAFx/ffmpeg-patches/releases/tag/v0.1.0) (ADR-0185). Both tags name commit `ea78aa5d` and both tarballs unpack to the same 16 files, so the four series patches and the 22 Pelorus patches are unchanged; only `FFMPEG_SERIES_TAG` and `FFMPEG_SERIES_SHA256` in `build-config.env` change.
+- Re-pinned the Praetor governance engine from `3bbde073` to `2d23b292` (ADR-0187 keeps the pin rule). The new engine refuses an agent persona without a model tier, so each persona in `.agents/agents/` now declares `model: pro` (the six reviewers and `repo-auditor`) or `model: flash` (`repo-gatekeeper`); `compile-context` projects the tier per client (`sonnet` and `haiku` for Claude Code, dropped for Copilot, Gemini CLI and Codex).
+- Re-pinned the Praetor governance engine from `66223619` to `3bbde073` (ADR-0187 keeps the pin rule and the launcher). The new engine's declared-linters gate fails the audit when a linter the policy declares runs in no workflow; re-adoption records dated exceptions (expiry 2027-01-11) for `cppcheck`, `semgrep` and `trivy`, each with its reason in `.standards.yaml` (ADR-0190).
+- Re-pinned the Praetor governance engine from `7cf9cbb2` to `66223619` (ADR-0187 keeps the pin rule and the launcher). The engine's re-adoption refreshes the documentation gate scripts (`tools/markdownlint/verify.mjs`, `tools/markdownlint/no-private-scratch-links.mjs`, `tools/figures/checks.mjs`: each file is read through one open descriptor, and regular-expression class escaping is corrected) and the agent interceptor `.config/agent/hooks/block_evasion.py` (chained exception).
+- Thirteen decision records whose work is merged and released in the `v0.4.0` candidates are now Accepted: ADR-0173 and ADR-0176 to ADR-0187. `docs/development/tester-image.md` records the verified end-to-end tester image publish for `v0.4.0-rc.3` and adds the SBOM attestation check to "Verify an image".
+- A skipped fast-suite test now passes only when `.config/test-skips.json` names it with its exact `SKIP:` reason (ADR-0188). `scripts/check-test-skips.py` runs after `make test` and every CI fast-suite run; before, `meson test` exited 0 for any skip, so a GPU smoke pointed at the wrong FFmpeg reported green.
+- `ffmpeg-patches/test/build-and-run.sh` passes the NVENC SEI smoke's skip only when `NVENC_SMOKE_SKIP` names its reason (ADR-0189); before, any exit 77 passed, so a GPU host whose driver or Vulkan device went missing reported green. Without an NVIDIA driver, set `NVENC_SMOKE_SKIP="Cannot load libcuda.so.1"`.
+- Defined policy and acceptance fixtures for licence provenance (#172, ADR-0195): AI coding tools are never named as copyright holders in headers or `REUSE.toml`, `Co-authored-by:` commit trailers are not copyright statements, a file header must agree with its `REUSE.toml` annotation (an `override` annotation may add co-holders), and fixtures under `scripts/fixtures/licence-provenance/` specify the upstream Praetor gate (cordanaLLM/praetor#907).
+- The ten files VMAFx mirrors (`libpelorus/mirror-paths.txt`) now hold an explicit `SPDX-FileCopyrightText: 2026 Lusoris` line above the licence identifier, enforced by rule 3 in `scripts/check-mirror-contract.py` (#247).
+- The `ghcr.io/vmafx/pelorus-dev` image no longer redistributes a source-built GPL `git` without a source offer: it starts from plain `ubuntu:26.04` and uses Ubuntu's `git` package. Node.js, actionlint and Lefthook now ship their licence texts under `/usr/local/share/licenses/`, the misleading `EUPL-1.2` image label is replaced by a notices file, and a licence record plus gate (`.devcontainer/base/licensing.json`) fails the image build on any unrecorded file ([ADR-0179](docs/adr/0179-dev-image-licence-record.md), #256). The dev container bundle keeps the old digest until the new image is published and re-pinned.
+- `scripts/praetor-engine.sh` installs the pinned engine with an atomic rename: it stages the verified binary next to its target before `mv`. When `TMPDIR` is another filesystem (tmpfs), the old `mv` copied in place, and a parallel Lefthook job on a fresh worktree could run a half-written engine and fail with "no version output" (reproduced: 11 of 24 parallel first runs; after the fix 0 of 36).
+
 ## [0.3.0] - 2026-10-09
+
+### Highlights
+
+- **Breaking: Pelorus is now licensed under the EUPL-1.2**; files added to the FFmpeg tree and the patch stack remain LGPL-2.1-or-later ([ADR-0171](docs/adr/0171-eupl-relicense.md), [licensing](docs/licensing.md)).
+- Updated the supported FFmpeg patch baseline to `n9.0.2` and added SLSA v1.0 build provenance, an SPDX SBOM, `SHA256SUMS`, and keyless cosign signatures to release archives ([ADR-0144](docs/adr/0144-ffmpeg-pin-and-ci-runner-policy.md), [ADR-0169](docs/adr/0169-release-provenance-slsa3.md)).
+- Fixed Vulkan filter sample-domain normalization across 8/10/12-bit planar and semi-planar formats, full-size alpha plane bounds on subsampled layouts (`deband`, `borderfix`, `deblock`, `aa`), dehalo line-art preservation, denoise `tile=0`/`tile=1` identity, and `pelorus_mc_vulkan` Q2 predictor rounding and O(n) radix selection ([ADR-0147](docs/adr/0147-vulkan-sample-domain-and-components.md), [ADR-0163](docs/adr/0163-dehalo-gate-and-pull.md)).
+- Fixed `pelorus_fgs` and `vf_pelorus_grain_estimate_vulkan` so H.274 film-grain SEI uses SMPTE RDD 5 defaults (`model_id=0`, `log2_scale=2`) with calibrated cutoffs and rounded lag-1 correlation accumulators ([ADR-0155](docs/adr/0155-fgs-bsf-rdd5-profile.md), [ADR-0161](docs/adr/0161-grain-estimate-rounding-and-h274-mapping.md)).
+- Activated `-pelorus_roi` quantization maps on `h264_vulkan`, `hevc_vulkan`, and `av1_vulkan`, fixed AV1 qindex ROI scaling and chroma film-grain biases on NVENC and Vulkan, kept QSV dense ROI maps frame-owned across asynchronous encode, and cleared sticky SVT-AV1 ROI events ([ADR-0146](docs/adr/0146-qsv-roi-frame-ownership.md), [ADR-0166](docs/adr/0166-vulkan-qpmap-activation.md)).
 
 ### Added
 
-- Added a Praetor/HISS governance baseline pinned to engine commit `25451d88`:
-  a 76-finding legacy debt ratchet, canonical cross-agent contexts and reviewer
-  personas, Pelorus-native local and CI entry points, Praetor's locked
-  Markdown documentation gate with the existing documentation brought into
-  conformance, and Praetor's pre-tool command hook in the Claude Code, Codex,
-  and Gemini CLI settings, which needs `praetorctl` on `PATH`
-  ([ADR-0145](docs/adr/0145-praetor-governance-adoption.md)).
 - Releases now carry SLSA v1.0 build provenance, an SPDX SBOM of the patch
   archive, `SHA256SUMS`, and a keyless cosign signature of it
   (`SHA256SUMS.sigstore.json`). A reusable workflow, `release-build.yml`,
@@ -155,10 +171,6 @@ All notable changes to Pelorus are documented here. The format is
   (`docs/research/0172-*.md`) and the 21 forge labels in
   `.config/labels.yaml`. `CONTRIBUTING.md` now states that the Standards
   workflow enforces the sign-off.
-- Added `scripts/adr/check-status.py`, a docs check that fails on a `Proposed`
-  ADR without an `Implementation: pending (#N)` header line, so a merged but
-  unflipped ADR cannot stay Proposed; it runs in `make docs-check` and the CI
-  `docs` job.
 
 ### Changed
 
@@ -173,76 +185,6 @@ All notable changes to Pelorus are documented here. The format is
   uses an SDK-neutral boolean assignment, preserving compilation with Ubuntu
   26.04's SVT-AV1 2.3 headers as well as newer SDKs
   ([ADR-0144](docs/adr/0144-ffmpeg-pin-and-ci-runner-policy.md)).
-- Lowered the HISS debt baseline from 76 to 62 findings. Splitting the
-  conformance fixture and the build-config checker retired 14 HISS-04 findings
-  (functions over 60 lines); the ratchet now forbids their return
-  ([ADR-0145](docs/adr/0145-praetor-governance-adoption.md),
-  [ADR-0148](docs/adr/0148-owner-only-exclusive-test-fixtures.md)).
-- Moved the docs job's actionlint toolchain to Go 1.27 (`1.27.x`, via the
-  pinned `actions/setup-go`). The build-config checker now reads the expected
-  version from one `ACTIONLINT_GO_VERSION` literal and requires exactly one
-  `go-version` in the docs job. It also checks that `renovate.json` has a regex
-  manager that bumps that literal as the same `go` dependency Renovate's
-  `actions/setup-go` handling proposes (`github-releases` of
-  `actions/go-versions`, `npm` versioning). Future Go bumps should therefore
-  land in one green `renovate/go-<major>.x` PR instead of failing
-  `build-config-sync`. The checker evaluates `managerFilePatterns` the way
-  Renovate does (`/re/`, `/re/i`, `!`, minimatch globs with `dot` and `nocase`)
-  and reports glob syntax it cannot model as an error instead of a traceback
-  ([ADR-0151](docs/adr/0151-renovate-mirrors-checker-toolchain-pins.md)).
-- Corrected the documented scope of the build-config checker's Renovate guard.
-  It validates the regex manager that mirrors the actionlint Go pin and the
-  `ACTIONLINT_GO_VERSION` literal. Other `renovate.json` settings that would
-  split the Go bump are not evaluated; such a split shows up as a red
-  `build-config-sync` on the Renovate PR
-  ([ADR-0152](docs/adr/0152-renovate-guard-enforcement-scope.md)).
-- Rendered the dev container bundle on the published toolchain base,
-  `ghcr.io/vmafx/pelorus-dev@sha256:33c934d3...` (built from `10e032a`, SLSA
-  provenance verified), so `postCreateCommand` finds Meson, Ninja, clang and
-  Node.js. The pin is a digest; the renderer rejects a tag-only reference.
-  `docs/development/build.md` lists the refresh steps for when the Containerfile
-  changes ([ADR-0153](docs/adr/0153-praetor-full-adoption.md), #132).
-- **The interop parser and the x265 CSV reader meet the HISS limits.**
-  `pel_blob_pack()`, `pel_blob_find_section()`, `pel_qp_report_from_blocks()` and
-  `pel_x265_csv_parse()` are split into helpers without a change in behaviour
-  (the conformance fixture passes unchanged), and the field splitter of the CSV
-  reader carries an explicit scalar bound. The HISS baseline loses 5
-  infractions (99 to 93, with one more from `scripts/check-build-config.py`, whose Renovate regression table is split into helpers).
-- Pelorus now adopts Praetor's Git hooks, dev container, and branch ruleset
-  instead of declining them. `make hooks-install` installs Lefthook hooks that
-  run the context check and two offline audits on commit and the audit, gate,
-  and `make verify-all` on push; `lefthook.yml` sets `no_auto_install`, so
-  rerun it after the file changes. `.github/rulesets/main.json` requires
-  signed commits, linear history, and the seven pull-request checks with zero
-  approving reviews; it takes effect once the maintainer applies it with
-  `praetorctl sync --remote`, and until then a local audit with a forge token
-  reports the live protection drift. `.devcontainer/` holds the rendered dev
-  container, and the new `Dev container image` workflow builds its toolchain
-  base on pull requests and publishes it, with build provenance, as
-  `ghcr.io/vmafx/pelorus-dev` from `master`
-  ([ADR-0153](docs/adr/0153-praetor-full-adoption.md)).
-- Re-pinned the Praetor governance engine from `25451d88` to `0af07a73`. The
-  engine now scans shell scripts, so the HISS baseline records 37 more findings
-  in unchanged scripts (62 → 99) until a follow-up retires them. The locked
-  documentation gate's npm dependencies now audit clean (previously eight
-  advisories, six high)
-  ([ADR-0154](docs/adr/0154-praetor-engine-repin.md)).
-- The release workflow now calls the full CI workflow (patch-stack replay and link, sanitizers, Windows, docs) and publishes only after it passes, and a tag push fails unless the tag equals the `meson.build` version; `scripts/check-build-config.py` enforces both (audit A14, A15).
-- Re-pinned the Praetor governance engine from `0af07a73` to `492a00f9`. Every
-  hosted `meson setup` now passes `--werror`, because the engine's audit reads
-  only the command line. clang-tidy now lints the libpelorus tests, the
-  `pelorus_qp_report` tool, and the two Meson-built FFmpeg-patch tests as well
-  as the library, from one list in `.config/clang-tidy/lane-files.txt`; the 13
-  units that build only inside an FFmpeg tree carry dated exceptions until
-  #94 adds a lane for them. A local `make audit` no longer fails on the
-  declined Git hooks, and the documentation gate needs Node.js 22.12 or newer
-  ([ADR-0168](docs/adr/0168-praetor-engine-492a00f.md)).
-- The build-config checker no longer holds a copy of the `actions/setup-go`
-  digest or the actionlint tag. It checks the shape of both pins in `ci.yml`
-  (full digest with a `# vX.Y.Z` comment; exact `@vX.Y.Z` tag), so Renovate
-  bumps of either stay green. A new `renovate.json` regex manager for `ci.yml`
-  makes Renovate track the actionlint release through the `go` datasource, and
-  the checker validates that manager. See ADR-0170.
 - **Breaking: Pelorus is now licensed under the EUPL-1.2**, a reciprocal
   licence, like its sibling vmafx. `libpelorus` was BSD-2-Clause-Patent up to
   `v0.2.2`; whoever distributes it from this release on, changed or not, keeps
@@ -254,27 +196,10 @@ All notable changes to Pelorus are documented here. The format is
   lint` CI check, and the release archive of the patch stack now carries the
   LGPL-2.1-or-later and EUPL-1.2 texts
   ([ADR-0171](docs/adr/0171-eupl-relicense.md), [licensing](docs/licensing.md)).
-- Enforced the commit message policy. A `commit-msg` Lefthook job runs
-  `forge check-message` and a `Signed-off-by` (DCO) check, and the `Standards`
-  workflow runs `forge check-commits` plus a DCO check over every pull request
-  commit, so a breaking change without a `Migration:` footer is refused. The
-  agent context lists all 21 HISS invariants and states which ones are review
-  only.
-- The interop sources and their conformance test now pass clang-tidy at the
-  VMAFx profile, which lints the vendored copies. The conformance test splits
-  its long checks into helpers and patches blob headers through `memcpy`
-  instead of casting the byte buffer through `void *`. Each interop translation
-  unit keeps the `NULL` macro inside one `NOLINT(modernize-use-nullptr)` block,
-  because MSVC's C mode has no `nullptr`. No behaviour or ABI change.
 
 ### Fixed
 
 - Documented that the `ffmpeg` command line needs `-force_key_frames source` for `pelorus_scenecut`'s forced keyframes to reach the encoder: `fftools` overwrites `frame->pict_type` before each encode (`fftools/ffmpeg_enc.c:798` at `n9.0.2`), and the `source` mode keys on the `AV_FRAME_FLAG_KEY` the filter sets ([ADR-0126](docs/adr/0126-scenecut-idr.md)).
-- Lefthook jobs and `make` now run the Praetor engine pinned at `PRAETOR_REF`
-  (`scripts/praetor-engine.sh`, cached in `.workingdir/bin/`), not whichever
-  `praetorctl` is first on `PATH`. A wrong-version engine, or no Go toolchain
-  with an empty cache, fails closed; `PRAETORCTL=<path>` overrides
-  ([#136](https://github.com/VMAFx/pelorus/issues/136)).
 - Fixed QSV dense ROI maps to remain frame-owned through asynchronous encode, bounded the path to progressive HEVC+CQP on runtime API 1.28 or newer, preserved stock ROI fallback elsewhere, and added checked aligned-layout regression coverage ([ADR-0146](docs/adr/0146-qsv-roi-frame-ownership.md)).
 - Corrected all arithmetic Vulkan filters to convert storage-image values into
   the logical sample domain before applying normalized thresholds, so planar
@@ -300,13 +225,6 @@ All notable changes to Pelorus are documented here. The format is
   runs natively under MSYS2 UCRT64 (with a Windows-safe SPIR-V discard target),
   and CI gains a pinned `windows-2025` job that runs it
   ([ADR-0149](docs/adr/0149-windows-utf8-paths.md)).
-- **`scripts/check-build-config.py --self-test` no longer runs its Git fixtures
-  against the repository being pushed.** Git exports `GIT_DIR` and
-  `GIT_WORK_TREE` to hooks, and the fixtures inherited them: a push hook that ran
-  the fast suite committed `fixture` commits onto the pushed branch, created
-  `base` and `n1.2.3` branches and wrote `core.hooksPath`, `commit.gpgsign` and
-  `user.name` into the repository's config. The checker now drops the
-  repository-selecting variables first, and a regression proves it.
 - Fixed `pelorus_fgs` so its default H.274 film-grain SEI is actually
   synthesized. The old defaults (`model_id=1`, `log2_scale=8`) were ignored by
   FFmpeg's HEVC decoder and, with model 0, attenuated the grain below one code
@@ -363,8 +281,6 @@ All notable changes to Pelorus are documented here. The format is
   element by element, and keeps its scratch across frames. On an RTX 4090 a
   1080p `bsize=16` frame drops from 30–42 ms to 3–4.5 ms of wall time, and a
   2160p `bsize=8` frame from 1.3–1.6 s to 46–56 ms.
-- Hardened the repository scripts: `scripts/bench/fetch-corpus.sh` now downloads with `--fail`, a bounded deadline and a bounded retry into a temporary file that is checksum-verified before it replaces the cache (BUG-022); `ffmpeg-patches/generate.sh` requires exactly one `format-patch` output per series index instead of swallowing a failed rename (BUG-023); the remaining `|| true` sites in the replay, matrix, changelog and agent-hook scripts use explicit status handling; the FFmpeg replay scripts ignore global and system Git configuration and `GIT_COMMITTER_*`, with a checker that anchors the canonical `git am` command to a non-comment line; and the interop fixture checks owner-only access on the open descriptor, reports distinct failure causes and loops over short writes (Closes #65).
-- The build-config self-test (`scripts/check-build-config.py --self-test`) now drops the repository-locating Git variables (`git rev-parse --local-env-vars`) before its fixtures run. Started from a Git hook, it had inherited `GIT_DIR` and rewritten the invoking repository's `.git/config` (`core.bare`, `core.hooksPath`, `gpg.program`, `user.*`), branch refs and worktree list; `scripts/test-selftest-git-isolation.py` proves an invoking repository stays untouched.
 - Fixed `vf_pelorus_grain_estimate_vulkan`'s lag-1 correlation, which was
   pinned at −1.0 for every input, so the AV1 parameters always carried
   `ar_coeffs_y[0] = −64` (BUG-010). The lag-1 sum used a bias of 1.0 at a scale
@@ -461,18 +377,6 @@ All notable changes to Pelorus are documented here. The format is
   sticky event pointer; the encoder now submits a neutral event on that frame
   (BUG-030). New fast-suite tests: `nvenc-me-hints`, `svtav1-roi-sticky`, and
   per-codec span checks in `vulkan-qpmap-contract`.
-- Fixed the GitHub release body: the release build now extracts the `## [X.Y.Z]` changelog section for the tagged version and fails when it is missing or empty, instead of reading the already-empty `[Unreleased]` block (v0.2.2 shipped "No unreleased changes").
-- Exempted Renovate's own commits in pull requests Renovate opened from the Standards gate's DCO sign-off check, as `CONTRIBUTING.md` already stated; every Renovate pull request failed the required gate after #184. The step now also fails when the commit range is empty or cannot be listed instead of passing on no commits.
-- The interop conformance test reads its fixtures back with `_fsopen(..., _SH_DENYNO)` on Windows instead of the deprecated `fopen()`: same sharing, no `-Wdeprecated-declarations` under clang-cl or icx-cl (C4996 under cl.exe) for a host that builds the test with warnings as errors.
-- **The x265 CSV reader initialises its column indices before the header row
-  sets them.** `x265_csv_read_rows()` left the column-index struct
-  uninitialised until the header was read, and gcc 16 at `-O2` reported seven
-  `-Wmaybe-uninitialized` warnings (`type`, `poc`, `qp`, `bits`, `psnr_y/u/v`).
-  Every index now starts at -1 ("absent"), which the readers already treat as a
-  missing column, so behaviour is unchanged. CI gains an optimised gcc build
-  with warnings as errors; the default debug build never ran the optimiser and
-  could not see this class of warning.
-- `qp_report_csv.c` opens its CSV on Windows with `_wfsopen(..., _SH_DENYNO)` instead of the deprecated `_wfopen()`: same sharing, no MSVC C4996 warning for a host that builds with warnings as errors.
 
 ### Security
 
@@ -485,6 +389,128 @@ All notable changes to Pelorus are documented here. The format is
 - Made FFmpeg patch replay independent of caller Git identity and configuration
   by pinning an ephemeral committer and neutralizing signing, hooks, and diff
   ordering for every `git am` (ADR-0144).
+
+### Maintenance
+
+- Added a Praetor/HISS governance baseline pinned to engine commit `25451d88`:
+  a 76-finding legacy debt ratchet, canonical cross-agent contexts and reviewer
+  personas, Pelorus-native local and CI entry points, Praetor's locked
+  Markdown documentation gate with the existing documentation brought into
+  conformance, and Praetor's pre-tool command hook in the Claude Code, Codex,
+  and Gemini CLI settings, which needs `praetorctl` on `PATH`
+  ([ADR-0145](docs/adr/0145-praetor-governance-adoption.md)).
+- Added `scripts/adr/check-status.py`, a docs check that fails on a `Proposed`
+  ADR without an `Implementation: pending (#N)` header line, so a merged but
+  unflipped ADR cannot stay Proposed; it runs in `make docs-check` and the CI
+  `docs` job.
+- Lowered the HISS debt baseline from 76 to 62 findings. Splitting the
+  conformance fixture and the build-config checker retired 14 HISS-04 findings
+  (functions over 60 lines); the ratchet now forbids their return
+  ([ADR-0145](docs/adr/0145-praetor-governance-adoption.md),
+  [ADR-0148](docs/adr/0148-owner-only-exclusive-test-fixtures.md)).
+- Moved the docs job's actionlint toolchain to Go 1.27 (`1.27.x`, via the
+  pinned `actions/setup-go`). The build-config checker now reads the expected
+  version from one `ACTIONLINT_GO_VERSION` literal and requires exactly one
+  `go-version` in the docs job. It also checks that `renovate.json` has a regex
+  manager that bumps that literal as the same `go` dependency Renovate's
+  `actions/setup-go` handling proposes (`github-releases` of
+  `actions/go-versions`, `npm` versioning). Future Go bumps should therefore
+  land in one green `renovate/go-<major>.x` PR instead of failing
+  `build-config-sync`. The checker evaluates `managerFilePatterns` the way
+  Renovate does (`/re/`, `/re/i`, `!`, minimatch globs with `dot` and `nocase`)
+  and reports glob syntax it cannot model as an error instead of a traceback
+  ([ADR-0151](docs/adr/0151-renovate-mirrors-checker-toolchain-pins.md)).
+- Corrected the documented scope of the build-config checker's Renovate guard.
+  It validates the regex manager that mirrors the actionlint Go pin and the
+  `ACTIONLINT_GO_VERSION` literal. Other `renovate.json` settings that would
+  split the Go bump are not evaluated; such a split shows up as a red
+  `build-config-sync` on the Renovate PR
+  ([ADR-0152](docs/adr/0152-renovate-guard-enforcement-scope.md)).
+- Rendered the dev container bundle on the published toolchain base,
+  `ghcr.io/vmafx/pelorus-dev@sha256:33c934d3...` (built from `10e032a`, SLSA
+  provenance verified), so `postCreateCommand` finds Meson, Ninja, clang and
+  Node.js. The pin is a digest; the renderer rejects a tag-only reference.
+  `docs/development/build.md` lists the refresh steps for when the Containerfile
+  changes ([ADR-0153](docs/adr/0153-praetor-full-adoption.md), #132).
+- **The interop parser and the x265 CSV reader meet the HISS limits.**
+  `pel_blob_pack()`, `pel_blob_find_section()`, `pel_qp_report_from_blocks()` and
+  `pel_x265_csv_parse()` are split into helpers without a change in behaviour
+  (the conformance fixture passes unchanged), and the field splitter of the CSV
+  reader carries an explicit scalar bound. The HISS baseline loses 5
+  infractions (99 to 93, with one more from `scripts/check-build-config.py`, whose Renovate regression table is split into helpers).
+- Pelorus now adopts Praetor's Git hooks, dev container, and branch ruleset
+  instead of declining them. `make hooks-install` installs Lefthook hooks that
+  run the context check and two offline audits on commit and the audit, gate,
+  and `make verify-all` on push; `lefthook.yml` sets `no_auto_install`, so
+  rerun it after the file changes. `.github/rulesets/main.json` requires
+  signed commits, linear history, and the seven pull-request checks with zero
+  approving reviews; it takes effect once the maintainer applies it with
+  `praetorctl sync --remote`, and until then a local audit with a forge token
+  reports the live protection drift. `.devcontainer/` holds the rendered dev
+  container, and the new `Dev container image` workflow builds its toolchain
+  base on pull requests and publishes it, with build provenance, as
+  `ghcr.io/vmafx/pelorus-dev` from `master`
+  ([ADR-0153](docs/adr/0153-praetor-full-adoption.md)).
+- Re-pinned the Praetor governance engine from `25451d88` to `0af07a73`. The
+  engine now scans shell scripts, so the HISS baseline records 37 more findings
+  in unchanged scripts (62 → 99) until a follow-up retires them. The locked
+  documentation gate's npm dependencies now audit clean (previously eight
+  advisories, six high)
+  ([ADR-0154](docs/adr/0154-praetor-engine-repin.md)).
+- The release workflow now calls the full CI workflow (patch-stack replay and link, sanitizers, Windows, docs) and publishes only after it passes, and a tag push fails unless the tag equals the `meson.build` version; `scripts/check-build-config.py` enforces both (audit A14, A15).
+- Re-pinned the Praetor governance engine from `0af07a73` to `492a00f9`. Every
+  hosted `meson setup` now passes `--werror`, because the engine's audit reads
+  only the command line. clang-tidy now lints the libpelorus tests, the
+  `pelorus_qp_report` tool, and the two Meson-built FFmpeg-patch tests as well
+  as the library, from one list in `.config/clang-tidy/lane-files.txt`; the 13
+  units that build only inside an FFmpeg tree carry dated exceptions until
+  #94 adds a lane for them. A local `make audit` no longer fails on the
+  declined Git hooks, and the documentation gate needs Node.js 22.12 or newer
+  ([ADR-0168](docs/adr/0168-praetor-engine-492a00f.md)).
+- The build-config checker no longer holds a copy of the `actions/setup-go`
+  digest or the actionlint tag. It checks the shape of both pins in `ci.yml`
+  (full digest with a `# vX.Y.Z` comment; exact `@vX.Y.Z` tag), so Renovate
+  bumps of either stay green. A new `renovate.json` regex manager for `ci.yml`
+  makes Renovate track the actionlint release through the `go` datasource, and
+  the checker validates that manager. See ADR-0170.
+- Enforced the commit message policy. A `commit-msg` Lefthook job runs
+  `forge check-message` and a `Signed-off-by` (DCO) check, and the `Standards`
+  workflow runs `forge check-commits` plus a DCO check over every pull request
+  commit, so a breaking change without a `Migration:` footer is refused. The
+  agent context lists all 21 HISS invariants and states which ones are review
+  only.
+- The interop sources and their conformance test now pass clang-tidy at the
+  VMAFx profile, which lints the vendored copies. The conformance test splits
+  its long checks into helpers and patches blob headers through `memcpy`
+  instead of casting the byte buffer through `void *`. Each interop translation
+  unit keeps the `NULL` macro inside one `NOLINT(modernize-use-nullptr)` block,
+  because MSVC's C mode has no `nullptr`. No behaviour or ABI change.
+- Lefthook jobs and `make` now run the Praetor engine pinned at `PRAETOR_REF`
+  (`scripts/praetor-engine.sh`, cached in `.workingdir/bin/`), not whichever
+  `praetorctl` is first on `PATH`. A wrong-version engine, or no Go toolchain
+  with an empty cache, fails closed; `PRAETORCTL=<path>` overrides
+  ([#136](https://github.com/VMAFx/pelorus/issues/136)).
+- **`scripts/check-build-config.py --self-test` no longer runs its Git fixtures
+  against the repository being pushed.** Git exports `GIT_DIR` and
+  `GIT_WORK_TREE` to hooks, and the fixtures inherited them: a push hook that ran
+  the fast suite committed `fixture` commits onto the pushed branch, created
+  `base` and `n1.2.3` branches and wrote `core.hooksPath`, `commit.gpgsign` and
+  `user.name` into the repository's config. The checker now drops the
+  repository-selecting variables first, and a regression proves it.
+- Hardened the repository scripts: `scripts/bench/fetch-corpus.sh` now downloads with `--fail`, a bounded deadline and a bounded retry into a temporary file that is checksum-verified before it replaces the cache (BUG-022); `ffmpeg-patches/generate.sh` requires exactly one `format-patch` output per series index instead of swallowing a failed rename (BUG-023); the remaining `|| true` sites in the replay, matrix, changelog and agent-hook scripts use explicit status handling; the FFmpeg replay scripts ignore global and system Git configuration and `GIT_COMMITTER_*`, with a checker that anchors the canonical `git am` command to a non-comment line; and the interop fixture checks owner-only access on the open descriptor, reports distinct failure causes and loops over short writes (Closes #65).
+- The build-config self-test (`scripts/check-build-config.py --self-test`) now drops the repository-locating Git variables (`git rev-parse --local-env-vars`) before its fixtures run. Started from a Git hook, it had inherited `GIT_DIR` and rewritten the invoking repository's `.git/config` (`core.bare`, `core.hooksPath`, `gpg.program`, `user.*`), branch refs and worktree list; `scripts/test-selftest-git-isolation.py` proves an invoking repository stays untouched.
+- Fixed the GitHub release body: the release build now extracts the `## [X.Y.Z]` changelog section for the tagged version and fails when it is missing or empty, instead of reading the already-empty `[Unreleased]` block (v0.2.2 shipped "No unreleased changes").
+- Exempted Renovate's own commits in pull requests Renovate opened from the Standards gate's DCO sign-off check, as `CONTRIBUTING.md` already stated; every Renovate pull request failed the required gate after #184. The step now also fails when the commit range is empty or cannot be listed instead of passing on no commits.
+- The interop conformance test reads its fixtures back with `_fsopen(..., _SH_DENYNO)` on Windows instead of the deprecated `fopen()`: same sharing, no `-Wdeprecated-declarations` under clang-cl or icx-cl (C4996 under cl.exe) for a host that builds the test with warnings as errors.
+- **The x265 CSV reader initialises its column indices before the header row
+  sets them.** `x265_csv_read_rows()` left the column-index struct
+  uninitialised until the header was read, and gcc 16 at `-O2` reported seven
+  `-Wmaybe-uninitialized` warnings (`type`, `poc`, `qp`, `bits`, `psnr_y/u/v`).
+  Every index now starts at -1 ("absent"), which the readers already treat as a
+  missing column, so behaviour is unchanged. CI gains an optimised gcc build
+  with warnings as errors; the default debug build never ran the optimiser and
+  could not see this class of warning.
+- `qp_report_csv.c` opens its CSV on Windows with `_wfsopen(..., _SH_DENYNO)` instead of the deprecated `_wfopen()`: same sharing, no MSVC C4996 warning for a host that builds with warnings as errors.
 
 ## [0.2.2] - 2026-08-30
 
