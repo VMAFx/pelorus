@@ -37,12 +37,30 @@ Options:
 EOF
 }
 
+# Git exports GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and related variables to
+# hooks. Started from the pre-push `make verify-all`, the fixture `git init`,
+# `config`, `commit` and `tag` calls below would follow them into the invoking
+# repository (core.bare=true, a fixture identity, fixture commits on the pushed
+# branch). Drop Git's own list of those variables, the same list
+# check-build-config.py and Git's sample hooks unset, and use no user config.
+isolate_from_invoking_repository() {
+    local names name
+    if ! names="$(git rev-parse --local-env-vars)"; then
+        echo "tag-release: self-test isolation: git rev-parse --local-env-vars failed" >&2
+        return 1
+    fi
+    for name in $names; do
+        unset "$name"
+    done
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+    export GIT_AUTHOR_NAME=self-test GIT_AUTHOR_EMAIL=self-test@pelorus.invalid
+    export GIT_COMMITTER_NAME=self-test GIT_COMMITTER_EMAIL=self-test@pelorus.invalid
+}
+
 init_fixture_repo() {
     local repo="$1"
     mkdir -p "$repo"
     git -C "$repo" init -q
-    git -C "$repo" config user.name "Test Committer"
-    git -C "$repo" config user.email "test@example.com"
     git -C "$repo" config commit.gpgSign false
     git -C "$repo" config tag.gpgSign false
 
@@ -112,6 +130,7 @@ run_green_case() {
 }
 
 self_test() {
+    isolate_from_invoking_repository || return 1
     SELF_TEST_TMP="$(mktemp -d)"
     local tmp="$SELF_TEST_TMP"
     local repo="$tmp/repo"
