@@ -1,0 +1,1 @@
+- `scripts/release/extract-release-notes.sh` (`release_notes.py`) rewrites relative documentation link targets and reference definitions to absolute blob URLs at the release tag, resolving against repository root and refusing targets that escape it ([ADR-0176](docs/adr/0176-rc-process-and-tester-publish.md)).
