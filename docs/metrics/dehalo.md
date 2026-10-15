@@ -1,6 +1,8 @@
 <!-- markdownlint-disable MD013 -->
 # vf_pelorus_dehalo_vulkan
 
+**Stance:** `experimental` — Available for anime/2D halo and ringing cleanup today; promotion requires pinned-corpus halo-energy and BD-rate evidence ([bench #201](https://github.com/VMAFx/pelorus/issues/201)).
+
 Anime / 2D **dehalo + dering**, run as a zero-copy pre-encode pass in VRAM. A
 single-pass Vulkan compute port of HAvsFunc's `DeHalo_alpha` + `FineDehalo`. It
 removes the bright/dark **ringing band** ("halos") that upstream compression and

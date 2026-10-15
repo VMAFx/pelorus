@@ -1,6 +1,8 @@
 <!-- markdownlint-disable MD013 -->
 # vf_pelorus_grain_estimate_vulkan
 
+**Stance:** `experimental` — Available to estimate film-grain parameters today; promotion requires pinned-corpus accuracy against noise_model and grav1synth ([bench #203](https://github.com/VMAFx/pelorus/issues/203)).
+
 A film-grain-synthesis (FGS) parameter **estimator**, run as a zero-copy
 pass-through pass in VRAM. It is the dual of the denoise lever
 ([ADR-0112](../adr/0112-temporal-denoise.md)): grain is temporally incoherent,
