@@ -275,17 +275,15 @@ def _find_relative_links(text: str) -> list[str]:
 def _resolve_blob_base(
     tag: str, repo: str | None = None, server: str | None = None
 ) -> tuple[str, str | None]:
-    if not repo:
-        repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
+    # The environment is read in _parse_cli_args only, so library calls and
+    # the self-test give the same result inside and outside GitHub Actions.
     if not repo:
         return "", (
             "repository not specified (pass --repo OWNER/NAME or set GITHUB_REPOSITORY)"
         )
     if not REPO_PATTERN.match(repo):
         return "", f"invalid repository {repo!r} (must be OWNER/NAME)"
-    if not server:
-        server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
-    server = server.rstrip("/")
+    server = (server or "https://github.com").rstrip("/")
     return f"{server}/{repo}/blob/{tag}", None
 
 
@@ -536,7 +534,36 @@ def self_test() -> list[str]:
         )
         if missing_tag.returncode == 0:
             failures.append("release-notes: --unwrap without --tag did not exit nonzero")
+        failures += _check_cli_repo_env(script, raw_file, expected_unwrap)
     return failures + _check_shipped_changelog()
+
+
+def _check_cli_repo_env(script: str, raw_file: Path, expected: str) -> list[str]:
+    """The CLI takes the repository from GITHUB_REPOSITORY and refuses without it."""
+    base_env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("GITHUB_REPOSITORY", "GITHUB_SERVER_URL")
+    }
+    cmd = [sys.executable, "-I", script, "--unwrap", str(raw_file), "--tag", "v1.2.3"]
+    failures: list[str] = []
+    with_env = subprocess.run(
+        cmd,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**base_env, "GITHUB_REPOSITORY": "VMAFx/pelorus"},
+    )
+    if with_env.returncode != 0 or with_env.stdout != expected:
+        failures.append(
+            f"release-notes: GITHUB_REPOSITORY fallback failed: rc={with_env.returncode}"
+        )
+    without = subprocess.run(
+        cmd, check=False, capture_output=True, text=True, env=base_env
+    )
+    if without.returncode == 0 or "repository not specified" not in without.stderr:
+        failures.append("release-notes: CLI without repository was not refused")
+    return failures
 
 
 def _parse_cli_args(
@@ -557,6 +584,9 @@ def _parse_cli_args(
         else:
             pos.append(arg)
             idx += 1
+    if not opts["repo"]:
+        opts["repo"] = os.environ.get("GITHUB_REPOSITORY", "").strip() or None
+    opts["server"] = os.environ.get("GITHUB_SERVER_URL") or None
     return opts, pos, None
 
 
@@ -581,7 +611,7 @@ def main(argv: list[str]) -> int:
         if not TAG_PATTERN.match(opts["tag"]):
             print(f"::error::invalid tag {opts['tag']!r} (must be vX.Y.Z or vX.Y.Z-rc.N)", file=sys.stderr)
             return 1
-        base_blob_url, repo_err = _resolve_blob_base(opts["tag"], opts["repo"])
+        base_blob_url, repo_err = _resolve_blob_base(opts["tag"], opts["repo"], opts["server"])
         if repo_err:
             print(f"::error::{repo_err}", file=sys.stderr)
             return 1
@@ -597,7 +627,7 @@ def main(argv: list[str]) -> int:
     if 1 <= len(positional) <= 2:
         ver, ch_path = positional[0], (positional[1] if len(positional) == 2 else "CHANGELOG.md")
         notes, errs = extract_version_notes(
-            Path(ch_path).read_text(encoding="utf-8"), ver, ch_path, repo=opts["repo"], tag=opts["tag"]
+            Path(ch_path).read_text(encoding="utf-8"), ver, ch_path, repo=opts["repo"], tag=opts["tag"], server=opts["server"]
         )
         for err in errs:
             print(f"::error::{err}", file=sys.stderr)
