@@ -8,6 +8,7 @@ These are unedited stat files recorded from the distribution binaries below on 2
 | `x265-4.3-qp32.csv` | x265 4.3, GCC 16.1.1, 8/10/12-bit build |
 | `svt-av1-4.2.0-qp34.stat` | SVT-AV1 v4.2.0 (release), library v4.2.0 |
 | `vvenc-1.14.0-qp32.log` | VVenC v1.14.0, release-static |
+| `x264-0.165-qp32.stats` | x264 0.165.3222 b35605a, GCC 16.2.1, recorded 2026-10-16; 30 frames, 320x240, 8-bit |
 
 The files were recorded from the repository root with these commands. The output paths were absent before the encoder commands because x265 appends to an existing CSV.
 
@@ -23,6 +24,15 @@ cp <build-dir>/fixture-recording/vvenc-1.14.0-qp32.log libpelorus/test/fixtures/
 ```
 
 The parser test reads the recorded text directly; the encoded bitstreams and raw input are not fixtures.
+
+The x264 fixture uses a separate 30-frame clip and the unmodified CQP pass-1 output. Its `#options:` line records the encoder configuration; the tests also plant distinct pre/post-AQ QPs because CQP disables AQ. Reproduce it from the repository root (temporary output paths must be absent):
+
+```console
+ffmpeg -loglevel error -f lavfi -i testsrc2=size=320x240:rate=25 -frames:v 30 -pix_fmt yuv420p /tmp/x.y4m
+x264 --qp 32 --pass 1 --stats libpelorus/test/fixtures/telemetry/x264-0.165-qp32.stats -o /tmp/x.264 /tmp/x.y4m
+```
+
+No `.mbtree` sidecar is retained; this command disables mbtree (`mbtree=0`). The fixture's copyright and EUPL-1.2 coverage are recorded in `REUSE.toml`, as for the other recorded telemetry data.
 
 ## libaom C-value fixture
 

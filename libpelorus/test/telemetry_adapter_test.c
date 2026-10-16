@@ -16,7 +16,7 @@
 #include <string.h>
 
 #define FIXTURE_CAP 8192u
-#define FRAME_CAP 16u
+#define FRAME_CAP 32u
 #define RECORDED_FRAME_COUNT 10u
 #define TEST_CSV_FIELDS_OVER_MAX 257u
 #define TEST_TEXT_LINE_OVER_MAX 4097u
@@ -1599,6 +1599,63 @@ static int test_libaom_flags_caps(void)
     return failures;
 }
 
+#define X264_ROW                                                                                   \
+    "in:0 out:0 type:I dur:2 cpbdur:2 q:32.00 aq:29.50 tex:800 mv:80 misc:80 imb:1 pmb:0 smb:0 d:- ref:;\n"
+
+static int expect_x264_error(const char *text, size_t len, uint8_t depth, pel_result want)
+{
+    PelorusEncTelemetryInput frames[2];
+    unsigned char before[sizeof(frames)];
+    size_t count = 99u;
+    int failures = 0;
+
+    (void)memset(frames, 0xa5, sizeof(frames));
+    (void)memcpy(before, frames, sizeof(frames));
+    CHECK(pel_tlm_parse_x264_stats(text, len, depth, frames, 2u, &count) == want);
+    CHECK(count == 0u);
+    CHECK(bytes_equal(frames, before, sizeof(frames)));
+    return failures;
+}
+
+static int check_x264_stream_frame(const PelorusEncTelemetryInput *frame, size_t i)
+{
+    int failures = 0;
+
+    CHECK(frame->frame.codec == PEL_TLM_CODEC_H264);
+    CHECK(frame->frame.qp_scale == PEL_QP_SCALE_SLICE_QP);
+    CHECK(frame->frame.avg_qp_norm == frame->frame.avg_qp);
+    CHECK(frame->frame.decode_index == (uint32_t)i);
+    CHECK(pel_enc_telemetry_validate(frame) == PEL_OK);
+    CHECK((frame->frame.present_mask &
+           (PEL_TLM_F_PSNR_Y | PEL_TLM_F_SSIM_Y | PEL_TLM_F_QP_MAP | PEL_TLM_F_SCENE_CUT)) == 0u);
+    CHECK(frame->frame.psnr_y == 0.0f && frame->qp_map == NULL);
+    return failures;
+}
+
+static int test_x264_fixture(const char *path)
+{
+    char text[FIXTURE_CAP];
+    PelorusEncTelemetryInput frames[FRAME_CAP];
+    size_t len = 0;
+    size_t count = 0;
+    size_t i;
+    int failures = 0;
+
+    (void)memset(frames, 0, sizeof(frames));
+    CHECK(read_fixture(path, text, sizeof(text), &len) == 0);
+    CHECK(pel_tlm_parse_x264_stats(text, len, 8u, frames, FRAME_CAP, &count) == PEL_OK);
+    CHECK(count == 30u);
+    CHECK(frames[0].frame.frame_bytes == 4376u);
+    CHECK(frames[0].frame.avg_qp == 29.0f);
+    CHECK(frames[1].frame.display_index == 3u && frames[1].frame.decode_index == 1u);
+    CHECK(frames[3].frame.picture_type == PEL_PICTURE_B);
+    CHECK((frames[3].frame.frame_flags & PEL_TLM_FRAME_REFERENCE) == 0u);
+    for (i = 0u; i < count && i < FRAME_CAP; i++) {
+        failures += check_x264_stream_frame(&frames[i], i);
+    }
+    return failures;
+}
+
 /* Replay libaom-3.15.2-cq32.txt unchanged, including encoder-private flags. */
 static int test_libaom_fixture(const char *path)
 {
@@ -1660,6 +1717,214 @@ static int test_libaom_fixture(const char *path)
     return failures;
 }
 
+static int check_x264_type(const PelorusEncTelemetryInput *frame, char type, uint8_t picture)
+{
+    int failures = 0;
+
+    CHECK(frame->frame.picture_type == picture);
+    CHECK(frame->frame.avg_qp == 29.5f && frame->frame.avg_qp_norm == 29.5f);
+    CHECK(frame->frame.frame_bytes == 120u);
+    CHECK(frame->frame.header_bits == 160u && frame->frame.residual_bits == 800u);
+    CHECK(((frame->frame.frame_flags & PEL_TLM_FRAME_KEY) != 0u) == (type == 'I'));
+    CHECK(((frame->frame.frame_flags & PEL_TLM_FRAME_REFERENCE) != 0u) == (type != 'b'));
+    CHECK((frame->frame.frame_flags & PEL_TLM_FRAME_SHOWN) != 0u);
+    CHECK(frame->frame.metric_source == 0u);
+    return failures;
+}
+
+static int test_x264_types_and_qp(void)
+{
+    static const char types[] = "IiPBb";
+    static const uint8_t pictures[] = {PEL_PICTURE_I, PEL_PICTURE_I, PEL_PICTURE_P, PEL_PICTURE_B,
+                                       PEL_PICTURE_B};
+    char text[] = X264_ROW;
+    PelorusEncTelemetryInput frame;
+    size_t count = 0;
+    size_t i;
+    int failures = 0;
+
+    for (i = 0u; i < sizeof(types) - 1u; i++) {
+        text[16] = types[i];
+        CHECK(pel_tlm_parse_x264_stats(text, sizeof(text) - 1u, 8u, &frame, 1u, &count) == PEL_OK);
+        CHECK(count == 1u);
+        failures += check_x264_type(&frame, types[i], pictures[i]);
+    }
+    CHECK(pel_tlm_parse_x264_stats(text, sizeof(text) - 1u, 10u, &frame, 1u, &count) == PEL_OK);
+    CHECK(frame.frame.avg_qp == 17.5f);
+    CHECK(pel_tlm_parse_x264_stats(text, sizeof(text) - 1u, 12u, &frame, 1u, &count) == PEL_OK);
+    CHECK(frame.frame.avg_qp == 5.5f);
+    return failures;
+}
+
+static int test_x264_stream_control(void)
+{
+    static const char duplicate[] = "#options: test\n" X264_ROW X264_ROW;
+    PelorusEncTelemetryInput frames[2];
+    size_t count = 99u;
+    int failures = 0;
+
+    CHECK(pel_tlm_parse_x264_stats("", 0u, 8u, frames, 2u, &count) == PEL_OK);
+    CHECK(count == 0u);
+    CHECK(pel_tlm_parse_x264_stats("#options: test\n", 15u, 8u, frames, 2u, &count) == PEL_OK);
+    CHECK(count == 0u);
+    /* VVenC has no mandatory header or duplicate-index check; preserve that contract. */
+    CHECK(pel_tlm_parse_x264_stats(X264_ROW, sizeof(X264_ROW) - 1u, 8u, frames, 2u, &count) ==
+          PEL_OK);
+    CHECK(count == 1u);
+    CHECK(pel_tlm_parse_x264_stats(duplicate, sizeof(duplicate) - 1u, 8u, frames, 2u, &count) ==
+          PEL_OK);
+    CHECK(count == 2u);
+    CHECK(frames[0].frame.display_index == frames[1].frame.display_index);
+    return failures;
+}
+
+static int test_x264_corruptions(void)
+{
+    static const struct {
+        const char *text;
+        pel_result want;
+    } cases[] = {
+        {"in:0 out:0 type:I dur:2", PEL_ERR_TRUNCATED},
+        {"out:0 in:0 type:I dur:2", PEL_ERR_INVALID},
+        {"in:0 out:0 type:X dur:2", PEL_ERR_INVALID},
+        {"in:0 out:0 type:p dur:2", PEL_ERR_INVALID},
+        {"in:0 out:0 type:I dur:2 cpbdur:2 aq:32 q:32", PEL_ERR_INVALID},
+        {"in:4294967296 out:0 type:I", PEL_ERR_RANGE},
+        {"in:-1 out:0 type:I", PEL_ERR_INVALID},
+        {"in:0 out:0 type:I dur:2 cpbdur:2 q:64 aq:32", PEL_ERR_RANGE},
+        {"in:0 out:0 type:I dur:2 cpbdur:2 q:32 aq:nan", PEL_ERR_INVALID},
+        {X264_ROW "in:1 out:1 type:X", PEL_ERR_INVALID},
+        {"garbage", PEL_ERR_INVALID},
+    };
+    size_t i;
+    int failures = 0;
+
+    for (i = 0u; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        failures += expect_x264_error(cases[i].text, strlen(cases[i].text), 8u, cases[i].want);
+    }
+    failures += expect_x264_error(X264_ROW, sizeof(X264_ROW) - 3u, 8u, PEL_ERR_TRUNCATED);
+    failures += expect_x264_error(X264_ROW, sizeof(X264_ROW) - 1u, 9u, PEL_ERR_RANGE);
+    return failures;
+}
+
+static int test_x264_tail_errors(void)
+{
+    static const char prefix[] = "in:0 out:0 type:I dur:2 cpbdur:2 q:32 aq:31 ";
+    static const char *const tails[] = {
+        "tex:801 mv:80 misc:80 imb:1 pmb:0 smb:0 d:- ref:;",
+        "tex:800 mv:80 misc:80 imb:1 pmb:0 smb:0 d:z ref:;",
+        "tex:800 mv:80 misc:80 imb:1 smb:0 pmb:0 d:- ref:;",
+        "tex:800 mv:80 misc:80 imb:1 pmb:0 smb:0 d:- ref:no;",
+        "tex:800 mv:80 misc:80 imb:1 pmb:0 smb:0 d:- ref:; junk",
+        "tex:800 mv:80 misc:80 imb:1 pmb:0 smb:0 d:- ref:0 w:0,1;",
+        "tex:800 mv:80 misc:80 imb:1 pmb:0 smb:0 d:- ref:0 w:0,1,2,3;",
+        "tex:800 mv:80 misc:80 imb:1 pmb:0 smb:0 d:- ref:0 w:0,1,nan;",
+    };
+    char text[256];
+    size_t i;
+    int failures = 0;
+
+    for (i = 0u; i < sizeof(tails) / sizeof(tails[0]); i++) {
+        const int written = snprintf(text, sizeof(text), "%s%s", prefix, tails[i]);
+
+        CHECK(written > 0 && (size_t)written < sizeof(text));
+        failures += expect_x264_error(text, strlen(text), 8u, PEL_ERR_INVALID);
+    }
+    return failures;
+}
+
+static int test_x264_numeric_boundaries(void)
+{
+    static const char max_row[] =
+        "in:4294967295 out:4294967295 type:i "
+        "dur:9223372036854775807 cpbdur:4294967296 q:51 aq:51 "
+        "tex:4294967288 mv:0 misc:0 imb:4294967295 pmb:0 smb:0 d:t ref:0 4294967295;";
+    static const char overflow_bits[] = "in:0 out:0 type:I dur:2 cpbdur:2 q:32 aq:31 "
+                                        "tex:800 mv:4294967295 misc:1 imb:0 pmb:0 smb:0 d:s ref:;";
+    PelorusEncTelemetryInput frame = {0};
+    size_t count = 0;
+    int failures = 0;
+
+    CHECK(pel_tlm_parse_x264_stats(max_row, sizeof(max_row) - 1u, 8u, &frame, 1u, &count) ==
+          PEL_OK);
+    CHECK(count == 1u && frame.frame.display_index == UINT32_MAX);
+    CHECK(frame.frame.frame_bytes == 536870911u && frame.frame.avg_qp == 51.0f);
+    failures += expect_x264_error(overflow_bits, sizeof(overflow_bits) - 1u, 8u, PEL_ERR_RANGE);
+    failures += expect_x264_error("in:0 out:0 type:I dur:9223372036854775808",
+                                  sizeof("in:0 out:0 type:I dur:9223372036854775808") - 1u, 8u,
+                                  PEL_ERR_RANGE);
+    failures += expect_x264_error("in:0 out:0 type:I dur:2 cpbdur:2 q:32 aq:51.01",
+                                  sizeof("in:0 out:0 type:I dur:2 cpbdur:2 q:32 aq:51.01") - 1u, 8u,
+                                  PEL_ERR_RANGE);
+    failures += expect_x264_error("in:0 out:0 type:I dur:2 cpbdur:2 q:32 aq:-1",
+                                  sizeof("in:0 out:0 type:I dur:2 cpbdur:2 q:32 aq:-1") - 1u, 8u,
+                                  PEL_ERR_RANGE);
+    return failures;
+}
+
+static int test_x264_weighted_refs(void)
+{
+    static const char prefix[] = "in:1 out:1 type:P dur:2 cpbdur:2 q:32 aq:31 "
+                                 "tex:800 mv:80 misc:80 imb:1 pmb:0 smb:0 d:- ref:";
+    static const char *const tails[] = {"0 w:0,1,-2 ;", "1 2 w:0,1,-2,0,1,-3,1,4 ;"};
+    char text[256];
+    PelorusEncTelemetryInput frame = {0};
+    size_t count = 0;
+    size_t i;
+    int failures = 0;
+
+    for (i = 0u; i < sizeof(tails) / sizeof(tails[0]); i++) {
+        const int written = snprintf(text, sizeof(text), "%s%s", prefix, tails[i]);
+
+        CHECK(written > 0 && (size_t)written < sizeof(text));
+        CHECK(pel_tlm_parse_x264_stats(text, strlen(text), 8u, &frame, 1u, &count) == PEL_OK);
+        CHECK(count == 1u && frame.frame.avg_qp == 31.0f);
+    }
+    return failures;
+}
+
+static int test_x264_bounds_and_args(void)
+{
+    char line[TEST_TEXT_LINE_OVER_MAX + 1u];
+    PelorusEncTelemetryInput frame;
+    unsigned char before[sizeof(frame)];
+    size_t count = 99u;
+    int failures = 0;
+
+    (void)memset(&frame, 0xa5, sizeof(frame));
+    (void)memcpy(before, &frame, sizeof(frame));
+    CHECK(pel_tlm_parse_x264_stats(X264_ROW X264_ROW, sizeof(X264_ROW X264_ROW) - 1u, 8u, &frame,
+                                   1u, &count) == PEL_ERR_RANGE);
+    CHECK(count == 2u && bytes_equal(&frame, before, sizeof(frame)));
+    CHECK(pel_tlm_parse_x264_stats(NULL, 0u, 8u, &frame, 1u, &count) == PEL_ERR_INVALID);
+    CHECK(count == 0u);
+    CHECK(pel_tlm_parse_x264_stats("", 0u, 8u, NULL, 1u, &count) == PEL_ERR_INVALID);
+    CHECK(pel_tlm_parse_x264_stats("", 0u, 8u, &frame, 0u, &count) == PEL_ERR_INVALID);
+    CHECK(pel_tlm_parse_x264_stats("", 0u, 8u, &frame, 1u, NULL) == PEL_ERR_INVALID);
+    failures += expect_x264_error("", TEST_TEXT_TOTAL_MAX + 1u, 8u, PEL_ERR_RANGE);
+    (void)memset(line, ' ', sizeof(line));
+    failures += expect_x264_error(line, TEST_TEXT_LINE_OVER_MAX, 8u, PEL_ERR_RANGE);
+    CHECK(pel_tlm_parse_x264_stats(line, TEST_TEXT_LINE_OVER_MAX - 1u, 8u, &frame, 1u, &count) ==
+          PEL_OK);
+    CHECK(count == 0u);
+    return failures;
+}
+
+static int test_x264(const char *path)
+{
+    int failures = 0;
+
+    failures += test_x264_fixture(path);
+    failures += test_x264_types_and_qp();
+    failures += test_x264_stream_control();
+    failures += test_x264_corruptions();
+    failures += test_x264_bounds_and_args();
+    failures += test_x264_weighted_refs();
+    failures += test_x264_tail_errors();
+    failures += test_x264_numeric_boundaries();
+    return failures;
+}
+
 int main(int argc, char **argv)
 {
     PelorusEncTelemetryInput x265;
@@ -1673,8 +1938,9 @@ int main(int argc, char **argv)
     if (argc == 2 && strcmp(argv[1], "--libaom-negative-only") == 0) {
         return test_libaom_negative() == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
-    if (argc != 5) {
-        (void)fprintf(stderr, "usage: %s X265.csv SVT.stat VVENC.log LIBAOM.txt\n", argv[0]);
+    if (argc != 6) {
+        (void)fprintf(stderr, "usage: %s X265.csv SVT.stat VVENC.log LIBAOM.txt X264.stats\n",
+                      argv[0]);
         return EXIT_FAILURE;
     }
     (void)memset(&x265, 0, sizeof(x265));
@@ -1708,6 +1974,7 @@ int main(int argc, char **argv)
     failures += test_libaom_boundaries();
     failures += test_libaom_flags_caps();
     failures += test_libaom_fixture(argv[4]);
+    failures += test_x264(argv[5]);
     if (failures != 0) {
         (void)fprintf(stderr, "%d check(s) failed\n", failures);
         return EXIT_FAILURE;

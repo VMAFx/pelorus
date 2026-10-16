@@ -533,6 +533,30 @@ static void test_qp_normalize_refused(void)
     CHECK(pel_qp_normalize(PEL_QP_SCALE_SLICE_QP, 8, 30.0f, NULL) == PEL_ERR_INVALID);
 }
 
+static void test_x264_record_contract(void)
+{
+    static const char stats[] = "in:0 out:0 type:I dur:2 cpbdur:2 q:44 aq:40 "
+                                "tex:800 mv:80 misc:80 imb:1 pmb:0 smb:0 d:- ref:;";
+    PelorusEncTelemetryInput in = {0};
+    uint64_t caps = 0;
+    size_t count = 0;
+    const uint64_t expected = PEL_TLM_F_DISPLAY_INDEX | PEL_TLM_F_DECODE_INDEX |
+                              PEL_TLM_F_FRAME_BYTES | PEL_TLM_F_HEADER_BITS |
+                              PEL_TLM_F_RESIDUAL_BITS | PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM |
+                              PEL_TLM_F_PICTURE_TYPE | PEL_TLM_F_KEY_FRAME | PEL_TLM_F_REFERENCE |
+                              PEL_TLM_F_SHOWN | PEL_TLM_F_CODED_BIT_DEPTH;
+
+    CHECK(pel_tlm_parse_x264_stats(stats, sizeof(stats) - 1u, 10u, &in, 1u, &count) == PEL_OK);
+    CHECK(count == 1u && in.frame.present_mask == expected);
+    CHECK(in.frame.adapter == PEL_TLM_ADAPTER_EXTERNAL);
+    CHECK(pel_tlm_adapter_caps(in.frame.adapter, in.frame.codec, &caps) == PEL_OK);
+    CHECK((in.frame.present_mask & ~caps) == 0u);
+    CHECK(in.frame.avg_qp == 28.0f && in.frame.avg_qp_norm == 28.0f);
+    CHECK(pel_enc_telemetry_validate(&in) == PEL_OK);
+    in.frame.psnr_y = 1.0f;
+    CHECK(pel_enc_telemetry_validate(&in) == PEL_ERR_INVALID);
+}
+
 int main(void)
 {
     test_validate_frame();
@@ -543,6 +567,7 @@ int main(void)
     test_pack_rejects();
     test_map_reader_checks();
     test_adapter_caps_supported();
+    test_x264_record_contract();
     test_adapter_caps_errors();
     test_qp_normalize_slice_qp();
     test_qp_normalize_av1_encoder();

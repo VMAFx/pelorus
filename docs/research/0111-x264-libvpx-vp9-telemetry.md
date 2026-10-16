@@ -90,6 +90,7 @@ Field breakdown from [`encoder/ratecontrol.c:1857-1901`](https://code.videolan.o
   - Total macroblocks: `imb + pmb + smb` (`h->mb.i_mb_count`).
 - `d:%c`: direct mode selection (`'s'` for spatial, `'t'` for temporal, `'-'` for none/disabled).
 - `ref:`: space-delimited list of reference usage counts per reference frame index.
+- Optional `w:` after the reference counts: 3 signed weight values (luma) or 8 (luma plus chroma), comma-separated. Verified 2026-10-16 against [`x264_ratecontrol_end` at b35605a](https://code.videolan.org/videolan/x264/-/blob/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/encoder/ratecontrol.c#L1884-1897); these are syntax-checked, not telemetry fields.
 - `;`: statement terminator at the end of each frame line.
 
 #### 1.3.2 x264 CLI `-v --psnr --ssim`

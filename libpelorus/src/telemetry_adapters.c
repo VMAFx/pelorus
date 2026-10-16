@@ -1067,6 +1067,372 @@ pel_result pel_tlm_parse_vvenc_log(const char *text, size_t len, uint8_t coded_b
     return rc;
 }
 
+typedef struct X264Values {
+    uint32_t display;
+    uint32_t decode;
+    uint32_t tex;
+    uint32_t mv;
+    uint32_t misc;
+    float aq;
+    uint8_t picture_type;
+    uint8_t flags;
+} X264Values;
+
+static pel_result x264_u32(TlmCursor *c, const char *name, uint32_t *out)
+{
+    pel_result rc = cursor_expect(c, name);
+
+    return rc == PEL_OK ? cursor_u32(c, out) : rc;
+}
+
+static pel_result x264_char(TlmCursor *c, const char *name, char *out)
+{
+    pel_result rc = cursor_expect(c, name);
+
+    if (rc != PEL_OK) {
+        return rc;
+    }
+    if (c->pos == c->line.len) {
+        return PEL_ERR_TRUNCATED;
+    }
+    *out = c->line.ptr[c->pos++];
+    if (c->pos < c->line.len && !ascii_space(c->line.ptr[c->pos])) {
+        return PEL_ERR_INVALID;
+    }
+    return PEL_OK;
+}
+
+static pel_result x264_type(TlmCursor *c, X264Values *v)
+{
+    char type = '\0';
+    pel_result rc = x264_char(c, "type:", &type);
+
+    if (rc != PEL_OK) {
+        return rc;
+    }
+    switch (type) {
+    case 'I':
+    case 'i':
+        v->picture_type = PEL_PICTURE_I;
+        break;
+    case 'P':
+        v->picture_type = PEL_PICTURE_P;
+        break;
+    case 'B':
+    case 'b':
+        v->picture_type = PEL_PICTURE_B;
+        break;
+    default:
+        return PEL_ERR_INVALID;
+    }
+    v->flags = PEL_TLM_FRAME_SHOWN | (type == 'I' ? PEL_TLM_FRAME_KEY : 0u) |
+               (type != 'b' ? PEL_TLM_FRAME_REFERENCE : 0u);
+    return PEL_OK;
+}
+
+/* x264 writes nonnegative int64_t timebase durations, not frame indices. */
+static pel_result x264_duration(TlmCursor *c, const char *name)
+{
+    TlmSpan token;
+    char buf[TLM_NUMBER_MAX];
+    char *end = NULL;
+    size_t len = 0;
+    unsigned long long value;
+    pel_result rc = cursor_expect(c, name);
+
+    if (rc == PEL_OK) {
+        rc = cursor_number(c, &token);
+    }
+    if (rc == PEL_OK) {
+        rc = span_number_copy(token, buf, &len);
+    }
+    if (rc != PEL_OK) {
+        return rc;
+    }
+    if (!span_u32_chars(buf, len)) {
+        return PEL_ERR_INVALID;
+    }
+    errno = 0;
+    value = strtoull(buf, &end, 10);
+    if (end != buf + len) {
+        return PEL_ERR_INVALID;
+    }
+    return errno == ERANGE || value > INT64_MAX ? PEL_ERR_RANGE : PEL_OK;
+}
+
+static pel_result x264_qp(TlmCursor *c, const char *name, uint8_t depth, float *out)
+{
+    const float offset = 6.0f * (float)(depth - 8u);
+    float qp = 0.0f;
+    pel_result rc = cursor_expect(c, name);
+
+    if (rc == PEL_OK) {
+        rc = cursor_float(c, &qp);
+    }
+    if (rc != PEL_OK) {
+        return rc;
+    }
+    if (qp < 0.0f || qp > 51.0f + offset) {
+        return PEL_ERR_RANGE;
+    }
+    *out = qp - offset;
+    return PEL_OK;
+}
+
+static pel_result x264_prefix(TlmCursor *c, uint8_t depth, X264Values *v)
+{
+    float rc_qp = 0.0f;
+    pel_result rc = x264_u32(c, "in:", &v->display);
+
+    if (rc == PEL_OK) {
+        rc = x264_u32(c, "out:", &v->decode);
+    }
+    if (rc == PEL_OK) {
+        rc = x264_type(c, v);
+    }
+    if (rc == PEL_OK) {
+        rc = x264_duration(c, "dur:");
+    }
+    if (rc == PEL_OK) {
+        rc = x264_duration(c, "cpbdur:");
+    }
+    if (rc == PEL_OK) {
+        rc = x264_qp(c, "q:", depth, &rc_qp);
+    }
+    if (rc == PEL_OK) {
+        rc = x264_qp(c, "aq:", depth, &v->aq);
+    }
+    return rc;
+}
+
+static pel_result x264_finish(TlmCursor *c)
+{
+    pel_result rc = cursor_expect(c, ";");
+
+    cursor_space(c);
+    return rc == PEL_OK && c->pos != c->line.len ? PEL_ERR_INVALID : rc;
+}
+
+static pel_result x264_weight_number(TlmCursor *c)
+{
+    const size_t start = c->pos;
+    TlmSpan token;
+    char buf[TLM_NUMBER_MAX];
+    char *end = NULL;
+    size_t len = 0;
+    size_t sign;
+    long long value;
+    pel_result rc;
+
+    while (c->pos < c->line.len && !ascii_space(c->line.ptr[c->pos]) &&
+           c->line.ptr[c->pos] != ',' && c->line.ptr[c->pos] != ';') {
+        c->pos++;
+    }
+    token.ptr = c->line.ptr + start;
+    token.len = c->pos - start;
+    if (token.len == 0u && c->pos == c->line.len) {
+        return PEL_ERR_TRUNCATED;
+    }
+    rc = span_number_copy(token, buf, &len);
+    if (rc != PEL_OK) {
+        return rc;
+    }
+    sign = buf[0] == '-' ? 1u : 0u;
+    if (len == sign || !span_u32_chars(buf + sign, len - sign)) {
+        return PEL_ERR_INVALID;
+    }
+    errno = 0;
+    value = strtoll(buf, &end, 10);
+    if (end != buf + len) {
+        return PEL_ERR_INVALID;
+    }
+    return errno == ERANGE || value < INT16_MIN || value > INT16_MAX ? PEL_ERR_RANGE : PEL_OK;
+}
+
+/* x264 b35605a ratecontrol.c: optional luma (3) or luma/chroma (8) weights. */
+static pel_result x264_weights(TlmCursor *c)
+{
+    size_t i;
+    pel_result rc = cursor_expect(c, "w:");
+
+    for (i = 0u; rc == PEL_OK && i < 8u; i++) {
+        rc = x264_weight_number(c);
+        if (rc != PEL_OK) {
+            return rc;
+        }
+        if ((i == 2u || i == 7u) && (c->pos == c->line.len || c->line.ptr[c->pos] != ',')) {
+            return x264_finish(c);
+        }
+        rc = cursor_expect(c, ",");
+    }
+    return rc == PEL_OK ? PEL_ERR_INVALID : rc;
+}
+
+static pel_result x264_refs(TlmCursor *c)
+{
+    pel_result rc = cursor_expect(c, "ref:");
+    size_t iteration;
+
+    /* At most one token per byte; line is capped at TLM_TEXT_LINE_MAX. */
+    for (iteration = 0u; rc == PEL_OK && iteration <= TLM_TEXT_LINE_MAX; iteration++) {
+        size_t start;
+        uint32_t ignored = 0;
+        TlmSpan token;
+
+        cursor_space(c);
+        if (c->pos == c->line.len) {
+            return PEL_ERR_TRUNCATED;
+        }
+        if (c->line.ptr[c->pos] == ';') {
+            return x264_finish(c);
+        }
+        if (span_starts((TlmSpan){c->line.ptr + c->pos, c->line.len - c->pos}, "w:")) {
+            return x264_weights(c);
+        }
+        start = c->pos;
+        while (c->pos < c->line.len && !ascii_space(c->line.ptr[c->pos]) &&
+               c->line.ptr[c->pos] != ';') {
+            c->pos++;
+        }
+        token.ptr = c->line.ptr + start;
+        token.len = c->pos - start;
+        rc = span_u32(token, &ignored);
+    }
+    return rc == PEL_OK ? PEL_ERR_RANGE : rc;
+}
+
+static pel_result x264_tail(TlmCursor *c, X264Values *v)
+{
+    static const char *const counts[] = {"imb:", "pmb:", "smb:"};
+    char direct = '\0';
+    size_t i;
+    pel_result rc = x264_u32(c, "tex:", &v->tex);
+
+    if (rc == PEL_OK) {
+        rc = x264_u32(c, "mv:", &v->mv);
+    }
+    if (rc == PEL_OK) {
+        rc = x264_u32(c, "misc:", &v->misc);
+    }
+    for (i = 0u; rc == PEL_OK && i < 3u; i++) {
+        uint32_t ignored = 0;
+
+        rc = x264_u32(c, counts[i], &ignored);
+    }
+    if (rc == PEL_OK) {
+        rc = x264_char(c, "d:", &direct);
+    }
+    if (rc == PEL_OK && direct != '-' && direct != 's' && direct != 't') {
+        rc = PEL_ERR_INVALID;
+    }
+    return rc == PEL_OK ? x264_refs(c) : rc;
+}
+
+static pel_result x264_record(TlmSpan line, uint8_t depth, TlmLocale locale,
+                              PelorusEncTelemetryInput *out)
+{
+    X264Values v = {0};
+    TlmCursor cursor = {line, 0u, locale};
+    uint64_t bits;
+    uint64_t headers;
+    pel_result rc = x264_prefix(&cursor, depth, &v);
+
+    if (rc == PEL_OK) {
+        rc = x264_tail(&cursor, &v);
+    }
+    if (rc != PEL_OK) {
+        return rc;
+    }
+    headers = (uint64_t)v.mv + v.misc;
+    bits = (uint64_t)v.tex + headers;
+    if (headers > UINT32_MAX) {
+        return PEL_ERR_RANGE;
+    }
+    if (bits % 8u != 0u) {
+        return PEL_ERR_INVALID;
+    }
+    (void)memset(out, 0, sizeof(*out));
+    out->frame.present_mask = PEL_TLM_F_DISPLAY_INDEX | PEL_TLM_F_DECODE_INDEX |
+                              PEL_TLM_F_FRAME_BYTES | PEL_TLM_F_HEADER_BITS |
+                              PEL_TLM_F_RESIDUAL_BITS | PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM |
+                              PEL_TLM_F_PICTURE_TYPE | PEL_TLM_F_KEY_FRAME | PEL_TLM_F_REFERENCE |
+                              PEL_TLM_F_SHOWN | PEL_TLM_F_CODED_BIT_DEPTH;
+    out->frame.display_index = v.display;
+    out->frame.decode_index = v.decode;
+    out->frame.frame_bytes = (uint32_t)(bits / 8u);
+    out->frame.header_bits = (uint32_t)headers;
+    out->frame.residual_bits = v.tex;
+    out->frame.avg_qp = v.aq;
+    out->frame.picture_type = v.picture_type;
+    out->frame.frame_flags = v.flags;
+    out->frame.codec = PEL_TLM_CODEC_H264;
+    out->frame.qp_scale = PEL_QP_SCALE_SLICE_QP;
+    out->frame.granularity = PEL_TLM_GRAN_FRAME;
+    out->frame.coded_bit_depth = depth;
+    out->frame.adapter = PEL_TLM_ADAPTER_EXTERNAL;
+    rc = pel_qp_normalize(out->frame.qp_scale, depth, v.aq, &out->frame.avg_qp_norm);
+    return rc == PEL_OK ? pel_enc_telemetry_validate(out) : rc;
+}
+
+static pel_result x264_walk(const char *text, size_t len, uint8_t depth, TlmLocale locale,
+                            PelorusEncTelemetryInput *out, size_t *out_count)
+{
+    size_t offset = 0;
+    size_t count = 0;
+    size_t iteration;
+    int have_line = 0;
+    pel_result rc = PEL_OK;
+
+    for (iteration = 0u; rc == PEL_OK && iteration <= len && iteration <= TLM_TEXT_TOTAL_MAX;
+         iteration++) {
+        TlmSpan line;
+        PelorusEncTelemetryInput record;
+
+        rc = next_line(text, len, &offset, &line, &have_line);
+        if (rc != PEL_OK || !have_line) {
+            break;
+        }
+        if (line.len == 0u || span_starts(line, "#options:")) {
+            continue;
+        }
+        rc = x264_record(line, depth, locale, &record);
+        if (rc == PEL_OK && out != NULL) {
+            out[count] = record;
+        }
+        if (rc == PEL_OK) {
+            count++;
+        }
+    }
+    *out_count = count;
+    return rc;
+}
+
+pel_result pel_tlm_parse_x264_stats(const char *text, size_t len, uint8_t coded_bit_depth,
+                                    PelorusEncTelemetryInput *out_frames, size_t cap,
+                                    size_t *out_count)
+{
+    size_t count = 0;
+    TlmLocale locale;
+    pel_result rc = adapter_args(text, len, coded_bit_depth, out_frames, cap, out_count);
+
+    if (rc != PEL_OK) {
+        return rc;
+    }
+    locale = tlm_locale_create();
+    if (locale == (TlmLocale)0) {
+        return PEL_ERR_NOMEM;
+    }
+    rc = x264_walk(text, len, coded_bit_depth, locale, NULL, &count);
+    if (rc == PEL_OK && count > cap) {
+        *out_count = count;
+        rc = PEL_ERR_RANGE;
+    } else if (rc == PEL_OK) {
+        rc = x264_walk(text, len, coded_bit_depth, locale, out_frames, out_count);
+    }
+    tlm_locale_free(locale);
+    return rc;
+}
+
 static uint32_t ffmpeg_read_u32le(const uint8_t *p)
 {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8u) | ((uint32_t)p[2] << 16u) |

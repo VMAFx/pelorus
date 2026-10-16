@@ -184,6 +184,20 @@ pel_result pel_tlm_parse_x265_csv(const char *text, size_t len, uint8_t coded_bi
                                   size_t *out_count);
 
 /*
+ * Parse x264 pass-1 .stats text. Buffer ownership, locale, limits and atomic
+ * error semantics match pel_tlm_parse_x265_csv(). Empty or header-only input
+ * succeeds with zero records; #options: is optional, as for VVenC startup text.
+ * Duplicate indices are retained in input order, as in pel_tlm_parse_vvenc_log().
+ * aq (post-AQ mean), minus 6 * (coded_bit_depth - 8), supplies avg_qp on
+ * PEL_QP_SCALE_SLICE_QP; q is validated but has no separate output field.
+ * tex + mv + misc must be byte-aligned; tex supplies residual_bits and mv +
+ * misc supplies header_bits. I/i/P/B/b are the only accepted picture types.
+ */
+pel_result pel_tlm_parse_x264_stats(const char *text, size_t len, uint8_t coded_bit_depth,
+                                    PelorusEncTelemetryInput *out_frames, size_t cap,
+                                    size_t *out_count);
+
+/*
  * Parse an SVT-AV1 `--enable-stat-report 1 --stat-file` text buffer. Argument,
  * allocation, error and output semantics match pel_tlm_parse_x265_csv().
  */
