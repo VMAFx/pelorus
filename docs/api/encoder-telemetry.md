@@ -652,7 +652,7 @@ FFmpeg encoders write to `AV_PKT_DATA_QUALITY_STATS` with specific semantics:
 | `libx265` | `PEL_QP_SCALE_SLICE_QP` | `qp * 118` | `I`, `P`, `B` | 0 | `avg_qp`, `avg_qp_norm`, `picture_type` |
 | `libsvtav1` | `PEL_QP_SCALE_AV1_ENCODER_QP` | `headerPtr->qp * 118` (SVT picture qp, 0..63 -> `AV1_ENCODER_QP`) | `I`, `P`, `B` | 0 | `avg_qp`, `avg_qp_norm`, `picture_type` |
 | `libaomenc` | `PEL_QP_SCALE_AV1_ENCODER_QP` | `0` (not reported) | `I`, `P` | 3 when `have_sse` | `picture_type`, `psnr_y/u/v` (`avg_qp` clear) |
-| `libvpxenc` | `PEL_QP_SCALE_VP9_QINDEX` | `VP8E_GET_LAST_QUANTIZER_64 * 118` (QP ignored; 0..63 quantizer has no PEL scale) | `I`, `P` | 3 when `have_sse` | `picture_type`, `psnr_y/u/v` (`avg_qp` clear) |
+| `libvpxenc` | `PEL_QP_SCALE_VP9_QINDEX` | `VP8E_GET_LAST_QUANTIZER_64 * 118` (0..63 quantizer, mapped to qindex) | `I`, `P` | 3 when `have_sse` | `avg_qp` (qindex), `picture_type`, `psnr_y/u/v` (`avg_qp_norm` clear) |
 | `nvenc` | `PEL_QP_SCALE_SLICE_QP` | `(frameAvgQP - 1) * 118`; parsed QP is one below NVENC `frameAvgQP` | `I`, `P`, `B` | 0 | `avg_qp`, `avg_qp_norm`, `picture_type` |
 | `qsvenc` | `PEL_QP_SCALE_SLICE_QP` | `QP * 118` (H.264 only) | `I`, `P`, `B` | 0 | `avg_qp`, `avg_qp_norm`, `picture_type` |
 
@@ -664,11 +664,14 @@ Callers supply `qp_scale` for the target codec (FFmpeg side-data carries raw byt
 without codec or scale tags). For AV1, callers pass `PEL_QP_SCALE_AV1_ENCODER_QP`;
 `PEL_QP_SCALE_AV1_QINDEX` is refused with `PEL_ERR_INVALID` because raw AV1 qindex
 cannot be normalized. For VP9, `libvpxenc` writes a 0..63 user quantizer rather
-than a standard VP9 qindex; because this user quantizer has no defined Pelorus
-scale, the adapter ignores quality entirely for VP9 (`avg_qp` and `avg_qp_norm`
-remain clear and `qp_scale` is set to 0). Callers still pass
-`PEL_QP_SCALE_VP9_QINDEX`; `pel_tlm_adapter_caps(PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS, PEL_TLM_CODEC_VP9)`
-excludes `PEL_TLM_F_AVG_QP` and `PEL_TLM_F_AVG_QP_NORM`.
+than a standard VP9 qindex. The adapter maps it to qindex with libvpx's own
+table (`4 * q` up to 60, then 244, 249 and 255 for 61..63; `quantizer_to_qindex[]`
+in `vp9/encoder/vp9_quantize.c`, libvpx v1.17.0) and reports it as `avg_qp` on
+`PEL_QP_SCALE_VP9_QINDEX`. VP9 qindex has no normalisation, so `avg_qp_norm`
+stays clear. A VP9 `quality` that is not a multiple of 118 returns
+`PEL_ERR_INVALID`, and a quantizer above 63 returns `PEL_ERR_RANGE`.
+`pel_tlm_adapter_caps(PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS, PEL_TLM_CODEC_VP9)`
+includes `PEL_TLM_F_AVG_QP` and excludes `PEL_TLM_F_AVG_QP_NORM`.
 
 When `quality` is 0 (`libaomenc`), QP is considered not reported: `avg_qp` and
 `avg_qp_norm` bits remain clear and their values stay 0.0f, with `qp_scale` set to 0.

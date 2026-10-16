@@ -1509,6 +1509,39 @@ static pel_result ffmpeg_qstats_parse_qp(uint32_t quality, uint8_t qp_scale, uin
     return PEL_OK;
 }
 
+/* SPDX-SnippetBegin
+ * SPDX-SnippetCopyrightText: 2010 The WebM project authors
+ * SPDX-License-Identifier: BSD-3-Clause
+ * The quantizer-to-qindex values below come from libvpx; see LICENSES/BSD-3-Clause.txt.
+ */
+/*
+ * libvpxenc writes VP8E_GET_LAST_QUANTIZER_64 (0..63) * 118. libvpx maps that
+ * quantizer to qindex as 4 * q up to 60, then 244, 249, 255 for 61..63
+ * (quantizer_to_qindex[], vp9/encoder/vp9_quantize.c, libvpx v1.17.0).
+ * VP9 qindex has no normalisation, so AVG_QP_NORM stays clear.
+ */
+static pel_result ffmpeg_qstats_parse_vp9_qp(uint32_t quality, PelorusEncTelemetryInput *rec)
+{
+    static const uint8_t top[3] = {244u, 249u, 255u};
+    uint32_t quantizer;
+
+    if (quality == 0u) {
+        return PEL_OK;
+    }
+    if (quality % 118u != 0u) {
+        return PEL_ERR_INVALID;
+    }
+    quantizer = quality / 118u;
+    if (quantizer > 63u) {
+        return PEL_ERR_RANGE;
+    }
+    rec->frame.avg_qp = quantizer <= 60u ? (float)(quantizer * 4u) : (float)top[quantizer - 61u];
+    rec->frame.qp_scale = PEL_QP_SCALE_VP9_QINDEX;
+    rec->frame.present_mask |= PEL_TLM_F_AVG_QP;
+    return PEL_OK;
+}
+/* SPDX-SnippetEnd */
+
 static pel_result ffmpeg_qstats_parse_sse(const uint8_t *buf, uint8_t count, uint8_t depth,
                                           const uint64_t plane_samples[3],
                                           PelorusEncTelemetryInput *rec)
@@ -1584,9 +1617,10 @@ pel_result pel_tlm_parse_ffmpeg_quality_stats(const uint8_t *buf, size_t len, ui
         rec.frame.picture_type = pict_type;
         rec.frame.present_mask |= PEL_TLM_F_PICTURE_TYPE;
     }
-    if (codec != PEL_TLM_CODEC_VP9) {
-        const uint32_t quality = ffmpeg_read_u32le(buf);
-        rc = ffmpeg_qstats_parse_qp(quality, qp_scale, coded_bit_depth, &rec);
+    if (codec == PEL_TLM_CODEC_VP9) {
+        rc = ffmpeg_qstats_parse_vp9_qp(ffmpeg_read_u32le(buf), &rec);
+    } else {
+        rc = ffmpeg_qstats_parse_qp(ffmpeg_read_u32le(buf), qp_scale, coded_bit_depth, &rec);
     }
     if (rc == PEL_OK) {
         rc = ffmpeg_qstats_parse_sse(buf, buf[5], coded_bit_depth, plane_samples, &rec);

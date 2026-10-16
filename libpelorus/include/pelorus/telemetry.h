@@ -218,9 +218,11 @@ pel_result pel_tlm_parse_svtav1_stat(const char *text, size_t len, uint8_t coded
  *
  * `codec` and `qp_scale` specify the encoded stream format; `coded_bit_depth`
  * must be 8, 10 or 12. AV1 accepts only PEL_QP_SCALE_AV1_ENCODER_QP (qindex scale
- * cannot normalise). For VP9, the FFmpeg value is a libvpx 0..63 quantizer with no
- * PEL scale: quality is ignored entirely (AVG_QP bits clear), while picture type and
- * SSE are parsed; caller passes PEL_QP_SCALE_VP9_QINDEX.
+ * cannot normalise). For VP9, the FFmpeg value is a libvpx 0..63 quantizer; it is
+ * mapped to qindex (0..255) with libvpx's table and reported as AVG_QP on
+ * PEL_QP_SCALE_VP9_QINDEX, with AVG_QP_NORM clear (qindex has no normalisation).
+ * A VP9 quality that is not a multiple of 118 returns PEL_ERR_INVALID; a quantizer
+ * above 63 returns PEL_ERR_RANGE. Caller passes PEL_QP_SCALE_VP9_QINDEX.
  *
  * If `plane_samples` is non-NULL, nonzero elements supply the sample count for each
  * plane (0=Y, 1=U, 2=V) to convert SSE into PSNR (dB). PSNR capped at 100 dB (SSE 0
