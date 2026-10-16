@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TOOL_NAME = "pelorus-tester-report"
-TOOL_VERSION = "0.4.10"
+TOOL_VERSION = "0.4.11"
 SCHEMA_VERSION = 2
 SCHEMA_PATH = Path(__file__).with_name("report.schema.json")
 
@@ -958,6 +958,9 @@ def self_test(disabled=frozenset()):
     expect("cpu_only_exit_0", rep["exit_code"] == 0)
     expect("cpu_only_gpu_stage_no_device",
            rep["stages"][3]["status"] == "no_device" and rep["stages"][3]["reason"])
+    zero_copy = next(s for s in rep["stages"] if s["id"] == "zero_copy_chain")
+    expect("zero_copy_no_device_nonfailure", zero_copy["status"] == "no_device"
+           and bool(zero_copy["reason"]) and rep["exit_code"] == 0)
     expect("cpu_only_valid", not validate_report(rep, schema, disabled=disabled))
     rep, _ = good_report(None, cpu_only, require_device=True, disabled=disabled)
     expect("require_device_100", rep["exit_code"] == 100)

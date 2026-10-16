@@ -34,7 +34,7 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent
 
 RULES = (
-    "zc_hwdownload", "zc_hwupload", "zc_scale", "zc_graph_nonempty",
+    "zc_hwdownload", "zc_hwupload", "zc_scale", "zc_graph_nonempty", "zc_host_transfer",
     "validate_fail_closed", "validation_absent_not_run", "encoder_absent_not_run",
     "vuid_unlisted", "vuid_expiry", "vuid_reference", "vuid_gate_every_stage",
     "steering_effect", "steering_decode", "steering_control", "steering_selfreport",
@@ -73,6 +73,12 @@ FILTER_RE = re.compile(r"^Filter '([^']+)' formats:\s*$", re.M)
 INSERT_RE = re.compile(r"auto-inserting filter '([^']+)' between")
 TRANSFER_TYPES = ("hwdownload", "hwupload", "hwupload_cuda")
 NATIVE_FILTERS = ("pelorus_deband_vulkan", "pelorus_denoise_vulkan", "pelorus_mc_vulkan")
+MAX_GRAPH_LINES = 262144  # At most one line per byte of the report runner's log cap.
+# Software formats used by the tester's chains and format matrix. Unknown hwmap
+# destinations are not evidence of a host transfer; CUDA/VAAPI maps can stay on GPU.
+HOST_FORMATS = frozenset(("yuv420p", "yuv420p10le", "yuv422p", "yuv444p", "nv12",
+                          "p010le", "p016le", "rgba", "bgra", "rgb24", "gray"))
+HWMAP_RE = re.compile(r"Configure hwmap (\w+) -> (\w+)\.")
 
 CODECS = {"h264": "h264", "hevc": "hevc", "av1": "obu"}
 # Steering and zero-copy streams go into bitexact Matroska: the container keeps
@@ -265,8 +271,47 @@ def filter_type(name):
 
 def graph_filter_types(log):
     """Types of every filter in an ffmpeg -loglevel debug graph dump."""
-    names = FILTER_RE.findall(log) + INSERT_RE.findall(log)
+    names = dict.fromkeys(FILTER_RE.findall(log) + INSERT_RE.findall(log))
     return [filter_type(n) for n in names]
+
+
+def transfer_problems(log, sw_source, sw_encoder, disabled=frozenset()):
+    """Classify transfers from nodes, automatic insertion and format diagnostics.
+
+    Only explicit software hwmap destinations prove host access. A Vulkan
+    filter's pixel-format list must retain vulkan; sw_format metadata and
+    software formats on source/encoder edges do not describe a host round trip.
+    """
+    types = graph_filter_types(log)
+    errs = []
+    limits = {"hwdownload": ("zc_hwdownload", int(sw_encoder)),
+              "hwupload": ("zc_hwupload", int(sw_source)),
+              "hwupload_cuda": ("zc_hwupload", 0), "scale": ("zc_scale", 0)}
+    for ftype, (rule, allowed) in limits.items():
+        count = types.count(ftype)
+        if count > allowed and rule not in disabled:
+            errs.append("graph has %d %s (allowed %d)" % (count, ftype, allowed))
+    if "zc_host_transfer" in disabled:
+        return errs
+    lines = log.splitlines()
+    if len(lines) > MAX_GRAPH_LINES:
+        return errs + ["graph log exceeds transfer classifier line bound"]
+    current = ""
+    for line in lines[:MAX_GRAPH_LINES]:
+        text = re.sub(r"^\[[^\]]+\] ?", "", line)
+        node = FILTER_RE.fullmatch(text)
+        if node:
+            current = node.group(1)
+        formats = re.fullmatch(r"\s+Pixel formats: (.+)", text)
+        if formats and filter_type(current).endswith("_vulkan"):
+            pixels = formats.group(1).split()
+            if pixels and "vulkan" not in pixels:
+                errs.append("%s has non-Vulkan Pixel formats: %s (host transfer)" %
+                            (current, " ".join(pixels)))
+        mapping = HWMAP_RE.search(text)
+        if mapping and mapping.group(2) in HOST_FORMATS:
+            errs.append("hwmap to system memory: " + mapping.group(0))
+    return errs
 
 
 def graph_problems(log, sw_source, sw_encoder, expect=(), disabled=frozenset()):
@@ -279,14 +324,7 @@ def graph_problems(log, sw_source, sw_encoder, expect=(), disabled=frozenset()):
         return ["no filter graph in the debug log; the assertion has nothing to check"]
     errs = ["graph lacks expected filter %s" % e for e in expect
             if types and e not in types and "zc_graph_nonempty" not in disabled]
-    limits = {"hwdownload": ("zc_hwdownload", int(sw_encoder)),
-              "hwupload": ("zc_hwupload", int(sw_source)),
-              "hwupload_cuda": ("zc_hwupload", 0), "scale": ("zc_scale", 0)}
-    for ftype, (rule, allowed) in limits.items():
-        count = types.count(ftype)
-        if count > allowed and rule not in disabled:
-            errs.append("graph has %d %s (allowed %d)" % (count, ftype, allowed))
-    return errs
+    return errs + transfer_problems(log, sw_source, sw_encoder, disabled)
 
 
 def frames_from_size(size, width, height):
@@ -1592,6 +1630,21 @@ PLANTED_SCALE = CLEAN_GRAPH + (
     "'Parsed_pelorus_mc_vulkan_2' and the filter 'format'\n")
 SW_GRAPH = ("Filter 'Parsed_format_0' formats:\nFilter 'Parsed_hwupload_1' formats:\n"
             + CLEAN_GRAPH + "Filter 'Parsed_hwdownload_3' formats:\n")
+# Same graph-dump grammar as CLEAN_GRAPH; Pixel formats is the merger label in
+# FFmpeg libavfilter/{avfiltergraph,formats}.c (print_filter_formats/PRINT_NAME).
+NATIVE_FORMAT_GRAPH = CLEAN_GRAPH.replace(
+    "Filter 'Parsed_pelorus_denoise_vulkan_1' formats:\n",
+    "Filter 'Parsed_pelorus_denoise_vulkan_1' formats:\n"
+    "  in[0] 'default':\n    Pixel formats: vulkan\n"
+    "  out[0] 'default':\n    Pixel formats: vulkan\n")
+PLANTED_HOST_FORMAT = NATIVE_FORMAT_GRAPH.replace("Pixel formats: vulkan",
+                                                "Pixel formats: yuv420p")
+PLANTED_AUTO_TRANSFER = CLEAN_GRAPH + PLANTED_SCALE[len(CLEAN_GRAPH):].replace(
+    "'Parsed_pelorus_mc_vulkan_2'", "'Parsed_pelorus_deband_vulkan_0'").replace(
+    "'format'", "'Parsed_pelorus_denoise_vulkan_1'")
+# vf_hwmap.c:hwmap_config_output prints this even without a Filter block.
+PLANTED_HOST_MAP = CLEAN_GRAPH + (
+    "[Parsed_hwmap_3 @ 0x1] Configure hwmap vulkan -> nv12.\n")
 
 
 def pack_blob(mask=3, pts=0, total=None, major=1):
@@ -1617,6 +1670,32 @@ def self_test_graph(expect, disabled):
         return not graph_problems(log, sw[0], sw[1], NATIVE_FILTERS, disabled)
 
     expect("zc_clean_graph_passes", ok(CLEAN_GRAPH))
+    expect("zc_clean_native_formats_pass", ok(NATIVE_FORMAT_GRAPH))
+    reasons = graph_problems(PLANTED_DOWNLOAD, False, False, NATIVE_FILTERS, disabled)
+    expect("zc_hwdownload_named_reason", any("hwdownload" in e for e in reasons))
+    expect("zc_rejects_midchain_host_transfer", not ok(PLANTED_HOST_FORMAT))
+    expect("zc_rejects_system_memory_transfer", not ok(PLANTED_AUTO_TRANSFER))
+    expect("zc_rejects_hwmap_to_host", not ok(PLANTED_HOST_MAP))
+    expect("zc_rejects_auto_hwdownload", not ok(CLEAN_GRAPH +
+           PLANTED_AUTO_TRANSFER[len(CLEAN_GRAPH):].replace("auto_scale_1", "auto_hwdownload_1")))
+    expect("zc_sw_leg_rejects_midchain_host_transfer",
+           not ok(PLANTED_HOST_FORMAT, (True, True)))
+    expect("zc_hardware_map_passes", ok(CLEAN_GRAPH +
+           "[Parsed_hwmap_3 @ 0x1] Configure hwmap vulkan -> cuda.\n"))
+    expect("zc_vulkan_sw_format_metadata_passes", ok(NATIVE_FORMAT_GRAPH +
+           "[AVHWFramesContext @ 0x1] sw_format: nv12\n"))
+    prefixed = "\n".join("[AVFilterGraph @ 0x1] " + line
+                         for line in PLANTED_HOST_FORMAT.splitlines())
+    expect("zc_prefixed_host_formats_rejected", bool(transfer_problems(
+        prefixed, False, False, disabled)))
+    expect("zc_software_edge_formats_pass", ok(SW_GRAPH +
+           "Filter 'format' formats:\n  in[0] 'default':\n    Pixel formats: yuv420p\n",
+           (True, True)))
+    expect("zc_format_candidates_with_vulkan_pass", ok(NATIVE_FORMAT_GRAPH.replace(
+        "Pixel formats: vulkan", "Pixel formats: yuv420p vulkan")))
+    expect("zc_transfer_node_counted_once", ok(SW_GRAPH +
+           PLANTED_AUTO_TRANSFER[len(CLEAN_GRAPH):].replace("auto_scale_1", "Parsed_hwdownload_3"),
+           (True, True)))
     expect("zc_sw_legs_pass", ok(SW_GRAPH, (True, True)))
     expect("zc_rejects_hwdownload", not ok(PLANTED_DOWNLOAD))
     expect("zc_rejects_hwupload", not ok(PLANTED_UPLOAD))
