@@ -1,0 +1,1 @@
+- Tester publish can publish a commit of a maintained `lts-*` patch branch (dispatched from master, commit given by full SHA), and the release guard accepts that run as the commit's tester evidence, so a patch release of an older minor keeps every candidate leg ([ADR-0199](docs/adr/0199-patch-branch-tester-evidence.md)).
