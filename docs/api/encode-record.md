@@ -281,6 +281,19 @@ key-value pairs by `=`:
   values exceeding 1024 bytes, integers with $|v| > \text{INT32\_MAX}$, more
   than 256 parameters, or arena exhaustion.
 
+These syntax rules are the same for all four dialects, because every dialect
+uses the one tokenizer in `libpelorus/src/encode_options.c`. An escaped `:` stays
+inside its value: x265 `sar=16\:9:crf=20` gives two parameters, `sar` = `16:9`
+and `crf`, where a split on every `:` would give three. A string with a 64-byte
+key and a 1024-byte value builds a record that verifies; one more value byte
+returns `PEL_ERR_RANGE`. `libpelorus/test/encode_options_test.c` checks these
+cases and that a record built from a string with one key dropped fails
+`pel_encode_record_verify` against the digest of the full string.
+
+FFmpeg encoder AVOptions (`-preset`, `-crf` and the hardware encoders'
+rate-control options) are not parsed yet; see
+[#352](https://github.com/VMAFx/pelorus/issues/352).
+
 ### Normalisation rules per dialect
 
 The rules below describe x264 and x265. SVT-AV1 and libaom differ where their
