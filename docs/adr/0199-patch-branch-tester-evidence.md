@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0199: Tester images may publish a commit of a maintained `lts-*` patch branch
 
-- **Status**: Proposed
-- **Implementation**: pending (#342)
+- **Status**: Accepted
 - **Date**: 2026-10-17
 - **Deciders**: Lusoris
 - **Tags**: release, tester, ci, supply-chain
