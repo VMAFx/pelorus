@@ -8,6 +8,14 @@ the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
 ranges in older entries predate the first entry below (22 patches on the
 shared FFmpeg fix series, number 0021 retired).
 
+## Unreleased — scenecut placement comment (#311; regenerates 0016)
+
+- **Patches**: the file comment of `vf_pelorus_scenecut.c` now says to run
+  the filter after `pelorus_mc_vulkan`, which writes `PEL_SEC_MOTION`, and
+  before the encoder, instead of after the last Pelorus stage. Comment only;
+  the other 21 patches are byte-identical.
+- **Behaviour**, **interop**: none.
+
 ## Unreleased — Vulkan input format allow list (#188, ADR-0201; regenerates 0001, 0002, 0003, 0006, 0007, 0014, 0015, 0017, 0018)
 
 - **New file**: `libavfilter/pelorus_vulkan_input.h`
