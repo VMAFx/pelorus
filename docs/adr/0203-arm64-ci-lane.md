@@ -30,7 +30,7 @@ Key architectural and validation invariants require explicit arm64 proof:
 5. **Patch stack replay and lavapipe validation**: Fetch and verify the pinned FFmpeg release and shared fix series via `scripts/fetch-ffmpeg-series.sh`, replay all patches via `ffmpeg-patches/test/build-and-run.sh`, select the lavapipe ICD, run the device guard self-tests, verify all ten filters under Khronos validation, execute the format matrix, and produce the functional software Vulkan tester report.
 6. **Negative missing-device verification**: Run `tools/tester/pelorus_tester_report.py run` with `VK_DRIVER_FILES=/nonexistent.json` and assert that all GPU stages report `no_device` with exit code 0.
 7. **Endianness scope**: Explicitly document that big-endian architectures are unsupported. Pelorus interop ABI wire format is strictly little-endian (ADR-0183; interop ABI rule R5).
-8. **Committed ruleset lists the check**: The new job runs on every push and pull request, and its context is added to the committed `.github/rulesets/main.json` (10 checks), as the lavapipe job did in #269; the engine audit refuses a CI context the committed ruleset lacks. The live ruleset changes only when the maintainer runs `praetorctl sync --remote`.
+8. **Committed ruleset lists the check**: The new job runs on every push and pull request, and its context is added to the committed `.github/rulesets/main.json` (10 checks), as the lavapipe job did in #269; the engine audit refuses a CI context the committed ruleset lacks. The live ruleset changes only when the maintainer runs `praetorctl sync --remote`. Implementation note (2026-10-17): the live `master` ruleset received the check through the forge rulesets API instead, keeping every other live rule unchanged; the read-back lists the same 10 checks as the committed file.
 
 ## Alternatives considered
 
@@ -45,7 +45,7 @@ Key architectural and validation invariants require explicit arm64 proof:
 
 - **Positive**: Proves libpelorus and FFmpeg patch stack compatibility on aarch64; validates little-endian wire serialization against x86-64 KAT byte vectors; confirms Mesa lavapipe functional behavior on native arm64 Linux.
 - **Negative**: Consumes GitHub-hosted arm64 runner quota.
-- **Neutral**: Does not provide GPU performance or hardware encoder evidence (no physical GPU present on hosted runner). The live branch ruleset requires the new check only after maintainer sync.
+- **Neutral**: Does not provide GPU performance or hardware encoder evidence (no physical GPU present on hosted runner). The live branch ruleset requires the new check only after it is applied to the forge; that happened on 2026-10-17 (see item 8).
 
 ## References
 
