@@ -37,7 +37,7 @@ ADR: docs/adr/0123-anime-dehalo.md
  6 files changed, 662 insertions(+)
 
 diff --git a/configure b/configure
-index 3283718ba10ab831a499f230e165d15201c9a29c..f052412ba00f78d88734beaa51c4a4e82a5ebea6 100755
+index 1e4c70006243bfc9a6df7e6918259ae6c0d4cae8..b06c3c615c996382da4f5ed209bb6bb15c43a0bc 100755
 --- a/configure
 +++ b/configure
 @@ -4245,6 +4245,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"

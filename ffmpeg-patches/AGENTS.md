@@ -154,6 +154,11 @@ ffmpeg-patches/
    fail; `--self-test` = unfixed binary must hang; no `INPUT` -> generates clip
    with binary under test, missing component -> skip with name): skip named by
    `KEYFRAME_SMOKE_SKIP` (ADR-0192).
+   Grain smoke `test/fgs-sidedata-smoke.sh` (#82: estimator -> `hevc_nvenc`,
+   else probed libx265 (4.3 drops UDU SEI), `-udu_sei 1` ->
+   `pelorus_fgs=source=sidedata`; FGC per AU,
+   cancel, no-section planted zero, 10-bit refusal, options pass-through):
+   skip named by `FGS_SMOKE_SKIP` (ADR-0206).
 11. Every ephemeral `git am` replay supplies `Pelorus-Replay` committer
    identity, neutralizes signing, hooks, and diff ordering, and passes
    `--no-gpg-sign --no-verify`. Do not rely on workstation's global Git

@@ -44,14 +44,14 @@ and registration targets bitstream_filters.c / bsf/Makefile / configure.
 
 ADR: docs/adr/0117-grain-fgs-bsf.md, docs/adr/0155-fgs-bsf-rdd5-profile.md
 ---
- configure                      |   1 +
+ configure                      |   3 +
  libavcodec/bitstream_filters.c |   1 +
  libavcodec/bsf/Makefile        |   1 +
- libavcodec/bsf/pelorus_fgs.c   | 602 ++++++++++++++++++++
- 4 files changed, 605 insertions(+)
+ libavcodec/bsf/pelorus_fgs.c   | 883 ++++++++++++++++++++
+ 4 files changed, 888 insertions(+)
 
 diff --git a/configure b/configure
-index 966285c2eb68a38202adeb5d2795e685031ab67e..3283718ba10ab831a499f230e165d15201c9a29c 100755
+index 966285c2eb68a38202adeb5d2795e685031ab67e..1e4c70006243bfc9a6df7e6918259ae6c0d4cae8 100755
 --- a/configure
 +++ b/configure
 @@ -3772,6 +3772,7 @@ hevc_metadata_bsf_select="cbs_h265"
@@ -62,6 +62,15 @@ index 966285c2eb68a38202adeb5d2795e685031ab67e..3283718ba10ab831a499f230e165d152
  smpte436m_to_eia608_bsf_select="smpte_436m"
  trace_headers_bsf_select="cbs cbs_vp8"
  vp9_metadata_bsf_select="cbs_vp9"
+@@ -7478,6 +7479,8 @@ pelorus_grain_estimate_vulkan_filter_extralibs="libpelorus_extralibs"
+ enabled pelorus_grain_estimate_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
+ pelorus_mc_vulkan_filter_extralibs="libpelorus_extralibs"
+ enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
++pelorus_fgs_bsf_extralibs="libpelorus_extralibs"
++enabled pelorus_fgs_bsf && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/grain_convert.h pel_grain_aom_to_h274
+ enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||
+                                require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
+ enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
 diff --git a/libavcodec/bitstream_filters.c b/libavcodec/bitstream_filters.c
 index 9c9443e5b15444641d688c884d3fd996dc328f87..ce9976edd7d86eab0cd68da8ba937e48b6280ef4 100644
 --- a/libavcodec/bitstream_filters.c
@@ -88,10 +97,10 @@ index 981bb8276bfa0855be085e0c8d64a1528795b623..8f8afddb98af584d8af7f02795eb6505
  OBJS-$(CONFIG_REMOVE_EXTRADATA_BSF)       += bsf/remove_extradata.o
 diff --git a/libavcodec/bsf/pelorus_fgs.c b/libavcodec/bsf/pelorus_fgs.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..eee74549bfec57a090b71ceb56c66f02942ce050
+index 0000000000000000000000000000000000000000..543c0b4f1a8c297f7597310e3c141ffe43f1bfb3
 --- /dev/null
 +++ b/libavcodec/bsf/pelorus_fgs.c
-@@ -0,0 +1,602 @@
+@@ -0,0 +1,883 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -125,30 +134,39 @@ index 0000000000000000000000000000000000000000..eee74549bfec57a090b71ceb56c66f02
 + * HEVC bitstream — so this BSF carries the parameters into the elementary stream
 + * itself. See docs/usage/grain-fgs-bsf.md and ADR-0117.
 + *
-+ * SCOPE / honesty: this BSF inserts a STATIC FGC model that the user supplies
-+ * via AVOptions (the canonical FFmpeg metadata-BSF contract — hevc_metadata,
-+ * h264_metadata, av1_metadata all set static parameters this way). A BSF
-+ * operates on AVPackets, and no stock encoder forwards the estimator's per-frame
-+ * film-grain frame side data onto the coded packet, so per-frame estimate ->
-+ * SEI plumbing through an arbitrary HEVC encoder is not expressible in the
-+ * pinned stock FFmpeg baseline;
-+ * the static-model path is the honest, fully general one. The defaults follow
-+ * the SMPTE RDD 5 profile that FFmpeg's H.274 synthesizer (libavcodec/h274.c)
-+ * implements: model 0 (frequency filtering), additive blending, a
-+ * log2_scale_factor in [2,7] and explicit cutoff frequencies (ADR-0155). The
-+ * estimator's per-band RMS maps onto scale_y; docs/usage/grain-fgs-bsf.md gives
-+ * the derivation recipe.
++ * SCOPE / honesty: this BSF supports two parameter sources:
++ *
++ * 1. STATIC model via AVOptions (source=options, the default): the user
++ *    supplies static parameters via AVOptions (the canonical FFmpeg
++ *    metadata-BSF contract — hevc_metadata, h264_metadata, av1_metadata all set
++ *    static parameters this way). The defaults follow the SMPTE RDD 5 profile
++ *    that FFmpeg's H.274 synthesizer (libavcodec/h274.c) implements: model 0
++ *    (frequency filtering), additive blending, a log2_scale_factor in [2,7] and
++ *    explicit cutoff frequencies (ADR-0155). The estimator's per-band RMS maps
++ *    onto scale_y; docs/usage/grain-fgs-bsf.md gives the derivation recipe.
++ *
++ * 2. PER-FRAME model from side data (source=sidedata, ADR-0206): reads the
++ *    Pelorus user-data-unregistered SEI (PEL_SEC_FILMGRAIN) forwarded through
++ *    the HEVC encoder (e.g. libx265 -udu_sei 1) in each coded access unit,
++ *    converts the AV1 film grain parameters to H.274 model 0 via libpelorus
++ *    pel_grain_aom_to_h274, and inserts the resulting FGC SEI. Links libpelorus
++ *    for parameter conversion (ADR-0206 supersedes the static-only clause).
++ *    The converter domain is 8-bit; non-8-bit streams return
++ *    AVERROR_PATCHWELCOME. If grain is absent or apply==0 following a
++ *    persisting SEI, a cancel SEI is emitted once.
 + *
 + * Built on the coded-bitstream (CBS) generic BSF framework (cbs_bsf.c), exactly
 + * like hevc_metadata: each access unit is parsed into a CodedBitstreamFragment,
 + * we add one FGC SEI message via ff_cbs_sei_add_message(), and CBS reassembles
-+ * the AU. Opt-in and no-op by construction: the filter does nothing unless the
-+ * comp_model_present mask selects at least one colour component.
++ * the AU. In options mode, the filter does nothing unless the comp_model_present
++ * mask selects at least one colour component; in sidedata mode, it inspects
++ * each coded AU's SEI messages.
 + */
 +
 +#include <string.h>
 +
 +#include "libavutil/common.h"
++#include "libavutil/mem.h"
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
 +
@@ -164,6 +182,9 @@ index 0000000000000000000000000000000000000000..eee74549bfec57a090b71ceb56c66f02
 +
 +#include "libavcodec/hevc/hevc.h"
 +
++#include <pelorus/grain_convert.h>
++#include <pelorus/interop.h>
++
 +/* Comp-model component bitmask for the `components` option. */
 +#define PEL_FGS_COMP_Y (1 << 0)
 +#define PEL_FGS_COMP_CB (1 << 1)
@@ -178,8 +199,17 @@ index 0000000000000000000000000000000000000000..eee74549bfec57a090b71ceb56c66f02
 +#define PEL_FGS_RDD5_LOG2_MIN 2
 +#define PEL_FGS_RDD5_LOG2_MAX 7
 +
++/* Parameter source for the `source` option. */
++enum PelFgsSource {
++    PEL_FGS_SOURCE_OPTIONS = 0,
++    PEL_FGS_SOURCE_SIDEDATA = 1,
++};
++
 +typedef struct PelorusFGSContext {
 +    CBSBSFContext common;
++
++    /* Parameter source: 0 = options (static), 1 = sidedata (per-AU). */
++    int source;
 +
 +    /* H.274 FGC model parameters (the static model inserted into every AU). */
 +    int model_id;      /* 0 = frequency filtering, 1 = auto-regression       */
@@ -212,6 +242,18 @@ index 0000000000000000000000000000000000000000..eee74549bfec57a090b71ceb56c66f02
 +    int warned_no_components;
 +    int logged_range_error;
 +    int logged_drop;
++    int logged_bit_depth_error;
++    int logged_convert_error;
++
++    /* Persistence tracking for sidedata mode: 1 if previous AU emitted an FGC
++     * with persistence=1, so an absent/apply==0 AU can emit a cancel SEI once. */
++    int prev_emitted_persistent;
++
++    /* Scratch buffers for sidedata unwrap. */
++    uint8_t *raw_buf;
++    unsigned int raw_buf_size;
++    uint8_t *scratch;
++    unsigned int scratch_size;
 +
 +    /* Colour description cached from the active SPS. When the FGC SEI omits its
 +     * own colour description (separate_colour_description_present_flag = 0), the
@@ -380,14 +422,221 @@ index 0000000000000000000000000000000000000000..eee74549bfec57a090b71ceb56c66f02
 +    }
 +}
 +
++/* Read user-data-unregistered SEI messages from this AU, unwrap any Pelorus
++ * blob/carrier, and extract the film-grain section. The last valid Pelorus
++ * blob in the AU wins. */
++static int pel_fgs_read_sidedata(AVBSFContext *bsf, CodedBitstreamFragment *au,
++                                 PelorusFilmGrainSection *out_sec, int *have_sec)
++{
++    PelorusFGSContext *ctx = bsf->priv_data;
++    SEIRawMessage *iter = NULL;
++    int count;
++
++    *have_sec = 0;
++    for (count = 0;
++         count < 1024 && ff_cbs_sei_find_message(ctx->common.output, au,
++                                                 SEI_TYPE_USER_DATA_UNREGISTERED, &iter) == 0;
++         count++) {
++        const SEIRawUserDataUnregistered *udu = iter->payload;
++        const uint8_t *blob = NULL;
++        const void *sec_ptr = NULL;
++        size_t payload_len, blob_len = 0, sec_size = 0;
++        pel_result pr;
++
++        if (!udu || (memcmp(udu->uuid_iso_iec_11578, pelorus_sidedata_uuid, 16) != 0 &&
++                     memcmp(udu->uuid_iso_iec_11578, pelorus_carrier_uuid, 16) != 0))
++            continue;
++        if (udu->data_length > SIZE_MAX - 16)
++            continue;
++
++        payload_len = 16 + udu->data_length;
++        av_fast_malloc(&ctx->raw_buf, &ctx->raw_buf_size, payload_len);
++        if (!ctx->raw_buf)
++            return AVERROR(ENOMEM);
++        av_fast_malloc(&ctx->scratch, &ctx->scratch_size, payload_len);
++        if (!ctx->scratch)
++            return AVERROR(ENOMEM);
++
++        memcpy(ctx->raw_buf, udu->uuid_iso_iec_11578, 16);
++        if (udu->data && udu->data_length > 0)
++            memcpy(ctx->raw_buf + 16, udu->data, udu->data_length);
++
++        pr = pel_blob_unwrap(ctx->raw_buf, payload_len, ctx->scratch, ctx->scratch_size, &blob,
++                             &blob_len);
++        if (pr != PEL_OK || !blob)
++            continue;
++
++        *have_sec = 0;
++        pr = pel_blob_find_section(blob, blob_len, PEL_SEC_FILMGRAIN,
++                                   sizeof(PelorusFilmGrainSection), &sec_ptr, &sec_size);
++        if (pr == PEL_OK && sec_ptr && sec_size >= sizeof(PelorusFilmGrainSection)) {
++            memcpy(out_sec, sec_ptr, sizeof(PelorusFilmGrainSection));
++            *have_sec = 1;
++        }
++    }
++    return 0;
++}
++
++/* Fill the H.274 FGC raw payload from converted H.274 grain parameters. */
++static void pel_fgs_fill_from_h274(PelorusFGSContext *ctx, const PelorusH274GrainParams *h274)
++{
++    H265RawFilmGrainCharacteristics *fgc = &ctx->fgc;
++    int c, i;
++
++    memset(fgc, 0, sizeof(*fgc));
++    fgc->film_grain_characteristics_cancel_flag = 0;
++    fgc->film_grain_model_id = 0;
++    fgc->blending_mode_id = 0;
++    fgc->log2_scale_factor = (uint8_t)h274->log2_scale_factor;
++
++    fgc->separate_colour_description_present_flag = 0;
++    fgc->film_grain_bit_depth_luma_minus8 = ctx->cd_bit_depth_luma_minus8;
++    fgc->film_grain_bit_depth_chroma_minus8 = ctx->cd_bit_depth_chroma_minus8;
++    fgc->film_grain_full_range_flag = ctx->cd_full_range_flag;
++    fgc->film_grain_colour_primaries = ctx->cd_colour_primaries;
++    fgc->film_grain_transfer_characteristics = ctx->cd_transfer_characteristics;
++    fgc->film_grain_matrix_coeffs = ctx->cd_matrix_coeffs;
++
++    for (c = 0; c < 3; c++) {
++        int n;
++        if (!h274->component_model_present[c] || h274->num_intensity_intervals[c] == 0)
++            continue;
++        n = FFMIN(h274->num_intensity_intervals[c], 256);
++        fgc->comp_model_present_flag[c] = 1;
++        fgc->num_intensity_intervals_minus1[c] = (uint8_t)(n - 1);
++        fgc->num_model_values_minus1[c] = (uint8_t)2;
++
++        for (i = 0; i < n && i < 256; i++) {
++            fgc->intensity_interval_lower_bound[c][i] = h274->intensity_interval_lower_bound[c][i];
++            fgc->intensity_interval_upper_bound[c][i] = h274->intensity_interval_upper_bound[c][i];
++            fgc->comp_model_value[c][i][0] = h274->comp_model_value[c][i][0];
++            fgc->comp_model_value[c][i][1] =
++                (h274->num_model_values[c] > 1) ? h274->comp_model_value[c][i][1] : 8;
++            fgc->comp_model_value[c][i][2] =
++                (h274->num_model_values[c] > 2) ? h274->comp_model_value[c][i][2] : 8;
++        }
++    }
++
++    fgc->film_grain_characteristics_persistence_flag = (uint8_t)ctx->persistence;
++}
++
++/* Emit an FGC SEI with cancel_flag=1 to clear previous persistent grain model. */
++static int pel_fgs_emit_cancel(AVBSFContext *bsf, CodedBitstreamFragment *au)
++{
++    PelorusFGSContext *ctx = bsf->priv_data;
++    int err;
++
++    memset(&ctx->fgc, 0, sizeof(ctx->fgc));
++    ctx->fgc.film_grain_characteristics_cancel_flag = 1;
++
++    err = ff_cbs_sei_add_message(ctx->common.output, au, 1 /* prefix */,
++                                 SEI_TYPE_FILM_GRAIN_CHARACTERISTICS, &ctx->fgc, NULL);
++    if (err < 0) {
++        av_log(bsf, AV_LOG_ERROR,
++               "pelorus_fgs: failed to add cancel Film Grain Characteristics SEI.\n");
++        return err;
++    }
++    ctx->prev_emitted_persistent = 0;
++    return 0;
++}
++
++/* Insert ctx->fgc as a prefix FGC SEI unless skip_existing finds one already.
++ * Returns 1 when inserted, 0 when skipped, a negative AVERROR on failure. */
++static int pel_fgs_insert_fgc(AVBSFContext *bsf, CodedBitstreamFragment *au)
++{
++    PelorusFGSContext *ctx = bsf->priv_data;
++    int err;
++
++    if (ctx->skip_existing) {
++        SEIRawMessage *existing = NULL;
++        err = ff_cbs_sei_find_message(ctx->common.output, au, SEI_TYPE_FILM_GRAIN_CHARACTERISTICS,
++                                      &existing);
++        if (err == 0 && existing)
++            return 0; /* already marked; leave the stream untouched */
++    }
++    err = ff_cbs_sei_add_message(ctx->common.output, au, 1 /* prefix */,
++                                 SEI_TYPE_FILM_GRAIN_CHARACTERISTICS, &ctx->fgc, NULL);
++    if (err < 0) {
++        av_log(bsf, AV_LOG_ERROR, "pelorus_fgs: failed to add Film Grain Characteristics SEI.\n");
++        return err;
++    }
++    return 1;
++}
++
++/* Update fragment in sidedata mode: read Pelorus blob, convert to H.274, insert FGC SEI. */
++static int pel_fgs_update_sidedata(AVBSFContext *bsf, CodedBitstreamFragment *au)
++{
++    PelorusFGSContext *ctx = bsf->priv_data;
++    PelorusFilmGrainSection fg_sec;
++    PelorusH274GrainParams h274;
++    PelorusGrainFidelity fid;
++    int have_sec = 0;
++    int err;
++    pel_result pr;
++
++    err = pel_fgs_read_sidedata(bsf, au, &fg_sec, &have_sec);
++    if (err < 0)
++        return err;
++
++    /* The estimator fills the AV1 fields under both model tags (map_aom). */
++    if (!have_sec || fg_sec.apply == 0 ||
++        (fg_sec.grain_model != PEL_GRAIN_AOM && fg_sec.grain_model != PEL_GRAIN_H274)) {
++        if (ctx->prev_emitted_persistent)
++            return pel_fgs_emit_cancel(bsf, au);
++        return 0;
++    }
++
++    pr = pel_grain_aom_to_h274(&fg_sec, &h274, &fid);
++    if (pr != PEL_OK) {
++        if (!ctx->logged_convert_error) {
++            ctx->logged_convert_error = 1;
++            av_log(bsf, AV_LOG_ERROR, "pelorus_fgs: pel_grain_aom_to_h274 failed: pel_result %d\n",
++                   (int)pr);
++        }
++        return AVERROR(EINVAL);
++    }
++
++    if (!h274.component_model_present[0] && !h274.component_model_present[1] &&
++        !h274.component_model_present[2]) {
++        if (ctx->prev_emitted_persistent)
++            return pel_fgs_emit_cancel(bsf, au);
++        return 0;
++    }
++
++    pel_fgs_fill_from_h274(ctx, &h274);
++    err = pel_fgs_insert_fgc(bsf, au);
++    if (err <= 0)
++        return err;
++    ctx->prev_emitted_persistent = ctx->persistence;
++    return 0;
++}
++
++/* Sidedata mode converts in the 8-bit domain only (ADR-0206): refuse any other
++ * SPS bit depth once the colour description is known. */
++static int pel_fgs_check_sidedata_depth(AVBSFContext *bsf)
++{
++    PelorusFGSContext *ctx = bsf->priv_data;
++
++    if (!ctx->have_colour_desc ||
++        (ctx->cd_bit_depth_luma_minus8 == 0 && ctx->cd_bit_depth_chroma_minus8 == 0))
++        return 0;
++    if (!ctx->logged_bit_depth_error) {
++        ctx->logged_bit_depth_error = 1;
++        av_log(
++            bsf, AV_LOG_ERROR,
++            "pelorus_fgs: sidedata mode supports 8-bit only (SPS bit depth luma=%d chroma=%d).\n",
++            ctx->cd_bit_depth_luma_minus8 + 8, ctx->cd_bit_depth_chroma_minus8 + 8);
++    }
++    return AVERROR_PATCHWELCOME;
++}
++
 +static int pel_fgs_update_fragment(AVBSFContext *bsf, AVPacket *pkt, CodedBitstreamFragment *au)
 +{
 +    PelorusFGSContext *ctx = bsf->priv_data;
-+    SEIRawMessage *existing = NULL;
 +    int err;
 +
-+    /* No-op when no component carries a model: a pure pass-through BSF. */
-+    if (!ctx->components) {
++    /* In options mode, no-op when no component carries a model: a pure pass-through BSF. */
++    if (ctx->source == PEL_FGS_SOURCE_OPTIONS && !ctx->components) {
 +        if (!ctx->warned_no_components) {
 +            ctx->warned_no_components = 1;
 +            av_log(bsf, AV_LOG_WARNING,
@@ -402,9 +651,12 @@ index 0000000000000000000000000000000000000000..eee74549bfec57a090b71ceb56c66f02
 +     * bit depth cannot carry. Extradata (pkt == NULL) carries no picture; only
 +     * coded access units get the SEI. */
 +    pel_fgs_cache_colour_desc(ctx, au);
-+    err = pel_fgs_check_stream(bsf);
-+    if (err < 0 || !pkt)
++    err = ctx->source == PEL_FGS_SOURCE_OPTIONS ? pel_fgs_check_stream(bsf) :
++                                                  pel_fgs_check_sidedata_depth(bsf);
++    if (err < 0)
 +        return err;
++    if (!pkt)
++        return 0;
 +
 +    /* Cannot write a colour-description-omitting FGC SEI before the first SPS
 +     * is seen; pass the AU through until one establishes the inferred values. */
@@ -418,23 +670,12 @@ index 0000000000000000000000000000000000000000..eee74549bfec57a090b71ceb56c66f02
 +        return 0;
 +    }
 +
-+    if (ctx->skip_existing) {
-+        err = ff_cbs_sei_find_message(ctx->common.output, au, SEI_TYPE_FILM_GRAIN_CHARACTERISTICS,
-+                                      &existing);
-+        if (err == 0 && existing)
-+            return 0; /* already marked; leave the stream untouched */
-+    }
++    if (ctx->source == PEL_FGS_SOURCE_SIDEDATA)
++        return pel_fgs_update_sidedata(bsf, au);
 +
 +    pel_fgs_fill(ctx);
-+
-+    err = ff_cbs_sei_add_message(ctx->common.output, au, 1 /* prefix */,
-+                                 SEI_TYPE_FILM_GRAIN_CHARACTERISTICS, &ctx->fgc, NULL);
-+    if (err < 0) {
-+        av_log(bsf, AV_LOG_ERROR, "pelorus_fgs: failed to add Film Grain Characteristics SEI.\n");
-+        return err;
-+    }
-+
-+    return 0;
++    err = pel_fgs_insert_fgc(bsf, au);
++    return err < 0 ? err : 0;
 +}
 +
 +static const CBSBSFType pel_fgs_type = {
@@ -497,26 +738,48 @@ index 0000000000000000000000000000000000000000..eee74549bfec57a090b71ceb56c66f02
 +    int bd_luma = 0, bd_chroma = 0;
 +    int err;
 +
-+    if (ctx->intensity_low > ctx->intensity_high || ctx->intensity_low_c > ctx->intensity_high_c) {
-+        av_log(bsf, AV_LOG_ERROR,
-+               "pelorus_fgs: empty intensity interval (luma %d..%d, chroma %d..%d): a lower "
-+               "bound above its upper bound matches no sample, so no grain is synthesized.\n",
-+               ctx->intensity_low, ctx->intensity_high, ctx->intensity_low_c,
-+               ctx->intensity_high_c);
-+        return AVERROR(EINVAL);
-+    }
++    if (ctx->source == PEL_FGS_SOURCE_OPTIONS) {
++        if (ctx->intensity_low > ctx->intensity_high ||
++            ctx->intensity_low_c > ctx->intensity_high_c) {
++            av_log(bsf, AV_LOG_ERROR,
++                   "pelorus_fgs: empty intensity interval (luma %d..%d, chroma %d..%d): a lower "
++                   "bound above its upper bound matches no sample, so no grain is synthesized.\n",
++                   ctx->intensity_low, ctx->intensity_high, ctx->intensity_low_c,
++                   ctx->intensity_high_c);
++            return AVERROR(EINVAL);
++        }
 +
-+    if (ctx->components) {
-+        pel_fgs_warn_profile(bsf);
++        if (ctx->components) {
++            pel_fgs_warn_profile(bsf);
++            if (pel_fgs_par_bit_depth(bsf->par_in, &bd_luma, &bd_chroma)) {
++                err = pel_fgs_check_scales(bsf, bd_luma, bd_chroma, "from the codec parameters",
++                                           AV_LOG_ERROR);
++                if (err < 0)
++                    return err;
++            }
++        }
++    } else {
 +        if (pel_fgs_par_bit_depth(bsf->par_in, &bd_luma, &bd_chroma)) {
-+            err = pel_fgs_check_scales(bsf, bd_luma, bd_chroma, "from the codec parameters",
-+                                       AV_LOG_ERROR);
-+            if (err < 0)
-+                return err;
++            if (bd_luma != 8 || bd_chroma != 8) {
++                av_log(
++                    bsf, AV_LOG_ERROR,
++                    "pelorus_fgs: sidedata mode supports 8-bit only (codec parameters luma=%d chroma=%d).\n",
++                    bd_luma, bd_chroma);
++                return AVERROR_PATCHWELCOME;
++            }
 +        }
 +    }
 +
 +    return ff_cbs_bsf_generic_init(bsf, &pel_fgs_type);
++}
++
++static void pel_fgs_close(AVBSFContext *bsf)
++{
++    PelorusFGSContext *ctx = bsf->priv_data;
++
++    av_freep(&ctx->raw_buf);
++    av_freep(&ctx->scratch);
++    ff_cbs_bsf_generic_close(bsf);
 +}
 +
 +/* The ffmpeg CLI logs a failed packet and keeps going unless -xerror is set, so
@@ -539,6 +802,33 @@ index 0000000000000000000000000000000000000000..eee74549bfec57a090b71ceb56c66f02
 +#define OFFSET(x) offsetof(PelorusFGSContext, x)
 +#define FLAGS (AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_BSF_PARAM)
 +static const AVOption pel_fgs_options[] = {
++    {"source",
++     "grain parameter source (0=options, 1=sidedata)",
++     OFFSET(source),
++     AV_OPT_TYPE_INT,
++     {.i64 = PEL_FGS_SOURCE_OPTIONS},
++     0,
++     1,
++     FLAGS,
++     .unit = "source"},
++    {"options",
++     "use static parameters from AVOptions",
++     0,
++     AV_OPT_TYPE_CONST,
++     {.i64 = PEL_FGS_SOURCE_OPTIONS},
++     0,
++     0,
++     FLAGS,
++     .unit = "source"},
++    {"sidedata",
++     "read parameters from Pelorus user-data-unregistered SEI",
++     0,
++     AV_OPT_TYPE_CONST,
++     {.i64 = PEL_FGS_SOURCE_SIDEDATA},
++     0,
++     0,
++     FLAGS,
++     .unit = "source"},
 +    {"model_id",
 +     "H.274 film_grain_model_id (0=frequency filtering, 1=auto-regression)",
 +     OFFSET(model_id),
@@ -691,6 +981,6 @@ index 0000000000000000000000000000000000000000..eee74549bfec57a090b71ceb56c66f02
 +    .p.priv_class = &pel_fgs_class,
 +    .priv_data_size = sizeof(PelorusFGSContext),
 +    .init = &pel_fgs_init,
-+    .close = &ff_cbs_bsf_generic_close,
++    .close = &pel_fgs_close,
 +    .filter = &pel_fgs_filter,
 +};

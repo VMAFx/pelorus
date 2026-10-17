@@ -32,7 +32,7 @@ ADR: docs/adr/0128-borderfix.md
  6 files changed, 349 insertions(+)
 
 diff --git a/configure b/configure
-index b890fae94423562137ed098673ca7a24cee3bacc..ab6d0d9ac09d93a7cee643e596120c2401b9ff85 100755
+index ce0fc60c540fb5d7b76744ba2d86b621a40bd229..2412caded930e3bda0cdd21c61d67bb2cdbbe8db 100755
 --- a/configure
 +++ b/configure
 @@ -4245,6 +4245,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"

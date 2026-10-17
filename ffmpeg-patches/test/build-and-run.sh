@@ -33,6 +33,10 @@
 #                line must contain for its skip (exit 77) to pass, e.g.
 #                "no Vulkan device with HEVC video"; unset, a skip fails the
 #                replay (optional, ADR-0189)
+#   FGS_SMOKE_SKIP  fixed text the pelorus_fgs sidedata smoke's SKIP line must
+#                contain for its skip (exit 77) to pass, e.g. "no HEVC encoder"
+#                on a host with neither libx265 nor NVENC; unset, a skip fails
+#                the replay (optional, ADR-0189, ADR-0206)
 set -euo pipefail
 
 # Hermetic Git: neither global/system configuration (apply.whitespace,
@@ -472,6 +476,23 @@ if ! "$HERE/named-skip.sh" "vulkan forced keyframe smoke" "$kf_smoke_status" \
         "test/vulkan-forced-keyframe-smoke.sh with FFMPEG_BIN and OUTPUT_ROOT to" \
         "keep them; on a host that cannot run the smoke, set KEYFRAME_SMOKE_SKIP" \
         "to the reason it prints" >&2
+    exit 1
+fi
+
+# GPU smoke: grain estimator -> HEVC encoder -udu_sei 1 ->
+# pelorus_fgs=source=sidedata (issue #82, ADR-0206). Exit 77 names why this
+# host cannot run it; it passes only when FGS_SMOKE_SKIP names that reason
+# (ADR-0189). Any other failure fails the replay.
+echo "== pelorus_fgs sidedata smoke =="
+fgs_smoke_status=0
+FFMPEG_BIN="$WORKTREE/ffmpeg" OUTPUT_ROOT="$LOG_DIR/fgs-sidedata" \
+    "$HERE/fgs-sidedata-smoke.sh" 2>&1 | tee "$LOG_DIR/fgs-sidedata.log" ||
+    fgs_smoke_status=$? # pipefail: the smoke's status, tee exits 0
+if ! "$HERE/named-skip.sh" "pelorus_fgs sidedata smoke" "$fgs_smoke_status" \
+    "$LOG_DIR/fgs-sidedata.log" "${FGS_SMOKE_SKIP:-}"; then
+    echo "ERROR: this run removes its logs, so rerun test/fgs-sidedata-smoke.sh" \
+        "with FFMPEG_BIN and OUTPUT_ROOT to keep them; on a host that cannot run" \
+        "the smoke, set FGS_SMOKE_SKIP to the reason it prints" >&2
     exit 1
 fi
 

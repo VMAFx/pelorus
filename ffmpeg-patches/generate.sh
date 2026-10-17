@@ -440,8 +440,7 @@ commit_patch "$HERE/.commit-msg-vulkan.txt"
 # A BSF is NOT an AVFilter: the source drops into libavcodec/bsf/ and the
 # registration edits target bitstream_filters.c / bsf/Makefile / configure
 # (not allfilters.c / libavfilter/Makefile). It is built on CBS (cbs_h265) and
-# does NOT link libpelorus — it consumes the H.274 model via AVOptions, so no
-# require_pkg_config hunk.
+# links libpelorus for pel_grain_aom_to_h274 in sidedata mode (ADR-0206).
 cp "$FILES_DIR/h265_pelorus_fgs_bsf.c" "$WORKTREE/libavcodec/bsf/pelorus_fgs.c"
 python3 - "$WORKTREE" <<'PY'
 import sys, pathlib
@@ -451,6 +450,11 @@ def ins_before(path, anchor, line):
     assert anchor in t, f"anchor missing in {path}: {anchor!r}"
     assert line.strip() not in t, f"already present in {path}: {line!r}"
     p.write_text(t.replace(anchor, line + anchor, 1))
+def ins_after(path, anchor, line):
+    p = root / path; t = p.read_text()
+    assert anchor in t, f"anchor missing in {path}: {anchor!r}"
+    assert line.strip() not in t, f"already present in {path}: {line!r}"
+    p.write_text(t.replace(anchor, anchor + line, 1))
 # bitstream_filters.c: alphabetical extern list (pcm < pelorus < pgs).
 ins_before("libavcodec/bitstream_filters.c",
            "extern const FFBitStreamFilter ff_pgs_frame_merge_bsf;\n",
@@ -464,6 +468,13 @@ ins_before("libavcodec/bsf/Makefile",
 ins_before("configure",
            'smpte436m_to_eia608_bsf_select="smpte_436m"\n',
            'pelorus_fgs_bsf_select="cbs_h265"\n')
+mc_link = ('pelorus_mc_vulkan_filter_extralibs="libpelorus_extralibs"\n'
+           'enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus '
+           '"libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack\n')
+fgs_link = ('pelorus_fgs_bsf_extralibs="libpelorus_extralibs"\n'
+            'enabled pelorus_fgs_bsf && require_pkg_config libpelorus '
+            '"libpelorus >= 0.2.0" pelorus/grain_convert.h pel_grain_aom_to_h274\n')
+ins_after("configure", mc_link, fgs_link)
 print("registration applied: pelorus_fgs (bsf)")
 PY
 git -C "$WORKTREE" add -A
@@ -603,7 +614,10 @@ ins_after("libavfilter/Makefile",
           "OBJS-$(CONFIG_PELORUS_SCENECUT_FILTER)       += vf_pelorus_scenecut.o\n")
 # configure: no _deps (not a Vulkan filter); use the guarded pkg-config probe and
 # per-filter extralibs entry for libpelorus.
-ins_after("configure", libpelorus_link("pelorus_mc_vulkan"),
+fgs_link = ('pelorus_fgs_bsf_extralibs="libpelorus_extralibs"\n'
+            'enabled pelorus_fgs_bsf && require_pkg_config libpelorus '
+            '"libpelorus >= 0.2.0" pelorus/grain_convert.h pel_grain_aom_to_h274\n')
+ins_after("configure", fgs_link,
           libpelorus_link("pelorus_scenecut"))
 print("registration applied: scenecut")
 PY
