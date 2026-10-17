@@ -14,7 +14,8 @@ typedef enum pel_opt_val_type {
     PEL_OPT_TYPE_BOOL = 1,
     PEL_OPT_TYPE_INT = 2,
     PEL_OPT_TYPE_FLOAT = 3,
-    PEL_OPT_TYPE_STRING = 4
+    PEL_OPT_TYPE_STRING = 4,
+    PEL_OPT_TYPE_UINT = 5
 } pel_opt_val_type;
 
 typedef struct PelEncodeOptDef {
@@ -25,7 +26,11 @@ typedef struct PelEncodeOptDef {
 
 const PelEncodeOptDef *pel_encode_options_x264_lookup(const char *name);
 const PelEncodeOptDef *pel_encode_options_x265_lookup(const char *name);
+const PelEncodeOptDef *pel_encode_options_svtav1_lookup(const char *name);
+const PelEncodeOptDef *pel_encode_options_aom_lookup(const char *name);
 const PelEncodeOptDef *pel_encode_options_x264_table(size_t *out_count);
 const PelEncodeOptDef *pel_encode_options_x265_table(size_t *out_count);
+const PelEncodeOptDef *pel_encode_options_svtav1_table(size_t *out_count);
+const PelEncodeOptDef *pel_encode_options_aom_table(size_t *out_count);
 
 #endif /* PELORUS_ENCODE_OPTIONS_INTERNAL_H */
