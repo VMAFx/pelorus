@@ -207,7 +207,7 @@ created when a milestone becomes the next one.
 | 1.1 Content-adaptive tuning | `tune=auto` router, luma mask, demosquito, fade compensation, denoise motion taps, learned pre-processor study, per-shot autotune with vmafx | [#112](https://github.com/VMAFx/pelorus/issues/112) |
 | 1.2 Integrations and packaging | GStreamer element, HandBrake recipe, VapourSynth and OBS feasibility, package channels, filter metrics export | [#113](https://github.com/VMAFx/pelorus/issues/113) |
 | 2.0 Breaking changes | ABI 2 consolidation, soversion 2, removal of deprecated options and names | [#114](https://github.com/VMAFx/pelorus/issues/114) |
-| 2.1 Rust interop crate | Dependency-free crate for the interop ABI with conformance vectors shared with the C fixture, so vmafx can drop the C mirror | [#115](https://github.com/VMAFx/pelorus/issues/115) |
+| 2.1 Rust interop crate | Dependency-free crate for the interop ABI with conformance vectors shared with the C fixture, so vmafx can drop the C mirror ([ADR-0197](adr/0197-vmafx-interop-mirror-host-c-exception.md)) | [#115](https://github.com/VMAFx/pelorus/issues/115) |
 | 2.2 Rust host runtime | Host dispatch on `libgpudispatch-rs` and libpelorus host code in Rust behind the C ABI; FFmpeg-tree files stay C | [#116](https://github.com/VMAFx/pelorus/issues/116) |
 | 3.0 Host C removed | Host C deleted outside a named FFmpeg-tree exception list | [#118](https://github.com/VMAFx/pelorus/issues/118) |
 
