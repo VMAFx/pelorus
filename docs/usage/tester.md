@@ -135,7 +135,7 @@ published under version 1, so the version was bumped instead of keeping the
 fields optional with defaults. A later change that removes a field or changes
 its meaning bumps the version again; an added field stays in the same version
 only when it is optional with a default. Tool 0.4.5 adds the optional leg field
-`rate_control` (`cbr_extbrc`, `cbr_hw`) under that rule; tools 0.4.6 to 0.4.10
+`rate_control` (`cbr_extbrc`, `cbr_hw`) under that rule; tools 0.4.6 to 0.4.11
 change no field; a leg without it is
 the stage's own leg.
 
@@ -237,6 +237,17 @@ lines):
 
 Any `scale` (including `auto_scale_N`), any further `hwupload` or `hwdownload`,
 an empty graph, or a graph without the three Pelorus filters fails the leg. The
+transfer classifier also checks automatic insertion diagnostics without a
+`Filter` block, software-only `Pixel formats:` lists on Vulkan filters, and
+`Configure hwmap` diagnostics targeting known software formats such as `nv12`.
+The diagnostic names the transfer or filter that failed. A Vulkan frame's
+`sw_format` metadata alone does not fail the check. The CPU-only self-test
+plants these cases; it also checks that `zero_copy_chain` reports `no_device`
+with exit code 0 when the device probe finds no GPU.
+The classifier and fixtures live in
+[`pelorus_tester_stages.py`](../../tools/tester/pelorus_tester_stages.py), with
+the report-level check in
+[`pelorus_tester_report.py`](../../tools/tester/pelorus_tester_report.py). The
 background and hop rules are in [research 0172](../research/0172-zero-copy-audit.md).
 When the native leg cannot run (no device with both Vulkan Video decode and
 encode), the stage is `not_run` and its reason states the result of the

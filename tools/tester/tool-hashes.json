@@ -14,6 +14,7 @@
     {"sha256": "b4af62ea1b6c5ede44ccead56ceead0ada5c02ed607542fa950b63e6863f2b21", "tool_version": "0.4.8", "note": "sidedata_roundtrip accepts the maps-stripped blob from hevc_qsv and h264_qsv as well as hevc_nvenc (patch 0023, #286) and from no other carrier; new rule sd_strip_carriers; schema 2 unchanged"},
     {"sha256": "18728a137a25dd3fd9195e04a770a9de479389fcde0508a930a99273fc2cb6ec", "tool_version": "0.4.8", "note": "same behaviour as the previous 0.4.8 digest; a comment rewrapped"},
     {"sha256": "850334c2cbd745c9c1956e79b2493456b270fa2763b7b590b8679916939ee0db", "tool_version": "0.4.9", "note": "sidedata_roundtrip reads its reference blobs with -nostats, checks each against its own total_size and the picture count, re-reads a bad reference once and reports a second failure as a harness error (incomplete), never as a carrier fail (#290)"},
-    {"sha256": "5f38d8654d46b337cda3ff31a339b351b084cd3dacf6d67e7d4fa0f82029fd3e", "tool_version": "0.4.10", "note": "built-in stage runners for registration (filters and BSF derived from ffmpeg-patches/files) and libpelorus_suite (fast suite via Meson or test binaries; not_run when absent) (#302)"}
+    {"sha256": "5f38d8654d46b337cda3ff31a339b351b084cd3dacf6d67e7d4fa0f82029fd3e", "tool_version": "0.4.10", "note": "built-in stage runners for registration (filters and BSF derived from ffmpeg-patches/files) and libpelorus_suite (fast suite via Meson or test binaries; not_run when absent) (#302)"},
+    {"sha256": "fd8ef3a3089f19cd88fd34300dd5c5edd0a78d5eaeacbea315e056f939918a21", "tool_version": "0.4.11", "note": "zero_copy_chain also rejects host transfers without a transfer node: software pixel formats on a Vulkan filter and hwmap to a system-memory format (#105)"}
   ]
 }
