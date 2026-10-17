@@ -288,6 +288,7 @@
       "paths": [
         "usr/lib/locale/locale-archive",
         "etc/locale.gen",
+        "etc/locale.conf",
         "etc/default/locale"
       ],
       "licence_files": [
@@ -295,7 +296,7 @@
       ],
       "source": "https://tracker.debian.org/pkg/glibc",
       "notes": [
-        "localedef generates locale-archive for the comma-decimal native test; generated files need their own ownership record. Debian's locales copyright file carries the locale data terms; the glibc source package is in each kit's -source image."
+        "localedef generates locale-archive for the comma-decimal native test, and the locales postinst writes etc/locale.conf (etc/default/locale links to it); generated files need their own ownership record. Debian's locales copyright file carries the locale data terms; the glibc source package is in each kit's -source image."
       ],
       "redistributable": true
     },
