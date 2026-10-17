@@ -40,6 +40,25 @@ layout (constant_id = 0) const uint planes     = 0;
 layout (constant_id = 1) const uint plane_mask = 0xf;
 layout (constant_id = 2) const uint sample_code_max = 0;
 
+/* Frame size from the host (#358): imageSize() of a plane view of a
+ * multi-planar image may report the driver's padded allocation (NVIDIA pads
+ * nv12/nv24 widths to a multiple of 64), so bounds and edge clamps use these.
+ * IDs 16-19 are the same in every Pelorus shader. */
+layout (constant_id = 16) const int pel_frame_w        = 1;
+layout (constant_id = 17) const int pel_frame_h        = 1;
+layout (constant_id = 18) const int pel_chroma_shift_w = 0;
+layout (constant_id = 19) const int pel_chroma_shift_h = 0;
+
+/* Planes 1 and 2 are chroma (one interleaved plane when semi-planar), rounded
+ * up as AV_CEIL_RSHIFT does; luma, alpha and packed RGBA are full size. */
+ivec2 pel_plane_size(uint plane)
+{
+    if (plane == 1u || plane == 2u)
+        return ivec2((pel_frame_w + (1 << pel_chroma_shift_w) - 1) >> pel_chroma_shift_w,
+                     (pel_frame_h + (1 << pel_chroma_shift_h) - 1) >> pel_chroma_shift_h);
+    return ivec2(pel_frame_w, pel_frame_h);
+}
+
 layout (push_constant, std430) uniform pushConstants {
     vec4  thr;
     vec4  grain;
@@ -98,7 +117,7 @@ vec4 pel_fetch(int idx, ivec2 p, ivec2 sz) {
 void deband(const ivec2 pos, const int idx, float thr_p, float grain_p) {
     const float TWO_PI = 6.28318530718;
     const float GOLDEN = 2.39996322973;
-    ivec2 sz = imageSize(output_images[idx]);
+    ivec2 sz = pel_plane_size(uint(idx));
     vec4 S = pel_to_sample(imageLoad(input_images[idx], pos));
     bool dynG = (flags & 1) != 0;
     bool protectD = (flags & 2) != 0;
@@ -165,7 +184,7 @@ void main()
      * chroma plane must not end the invocation, because a later full-size plane
      * (yuva420p alpha) still has to be written or copied (BUG-007/BUG-008). */
     for (uint i = 0; i < planes; i++) {
-        const ivec2 size = imageSize(output_images[i]);
+        const ivec2 size = pel_plane_size(i);
         if (!all(lessThan(pos, size)))
             continue;
 

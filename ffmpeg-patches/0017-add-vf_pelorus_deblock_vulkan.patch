@@ -27,10 +27,10 @@ ADR: docs/adr/0127-deblock.md
  configure                                    |   1 +
  libavfilter/Makefile                         |   1 +
  libavfilter/allfilters.c                     |   1 +
- libavfilter/vf_pelorus_deblock_vulkan.c      | 286 ++++++++++++++++++++
+ libavfilter/vf_pelorus_deblock_vulkan.c      | 288 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |   1 +
- libavfilter/vulkan/pelorus_deblock.comp.glsl | 131 +++++++++
- 6 files changed, 421 insertions(+)
+ libavfilter/vulkan/pelorus_deblock.comp.glsl | 150 ++++++++++
+ 6 files changed, 442 insertions(+)
 
 diff --git a/configure b/configure
 index 5f48b12e31eb76d3cae37489068aa5eac5f0dccb..b890fae94423562137ed098673ca7a24cee3bacc 100755
@@ -70,10 +70,10 @@ index d6632cc826123b6f1b3bbc93db698e8023ca8591..9985efd56d8026261a43cba1283408ac
  extern const FFFilter ff_vf_pelorus_grain_estimate_vulkan;
 diff --git a/libavfilter/vf_pelorus_deblock_vulkan.c b/libavfilter/vf_pelorus_deblock_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..218d26d7c05373df7f5894dc0bf6376ad24af11f
+index 0000000000000000000000000000000000000000..e1267e93b8ce6555a878d1f45f429b4b6062c4ba
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_deblock_vulkan.c
-@@ -0,0 +1,286 @@
+@@ -0,0 +1,288 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -182,11 +182,13 @@ index 0000000000000000000000000000000000000000..218d26d7c05373df7f5894dc0bf6376a
 +    /* Plane count and the plane bitmask were const-folded into the generated
 +     * GLSL before FFmpeg 9 unrolled the per-plane loop in C. With precompiled
 +     * SPIR-V they become specialization constants instead. */
-+    SPEC_LIST_CREATE(sl, 4, 4 * sizeof(uint32_t))
++    SPEC_LIST_CREATE(sl, 4 + PEL_VK_SPEC_FRAME_SIZE_COUNT,
++                     (4 + PEL_VK_SPEC_FRAME_SIZE_COUNT) * sizeof(uint32_t))
 +    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
 +    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
 +    SPEC_LIST_ADD(sl, 2, 32, (uint32_t)semi_planar);
 +    SPEC_LIST_ADD(sl, 3, 32, sample_code_max);
++    pel_vk_spec_add_frame_size(sl, vkctx);
 +
 +    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 +
@@ -371,10 +373,10 @@ index d3ff362cfa612b53ee51d812a1df844c6e2d3dc1..8e75e876856feb0a34b5188010c0f01a
 +OBJS-$(CONFIG_PELORUS_DEBLOCK_VULKAN_FILTER) += vulkan/pelorus_deblock.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_deblock.comp.glsl b/libavfilter/vulkan/pelorus_deblock.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..7a8d63b7db2c25bb74763ffd70ab4512012e280f
+index 0000000000000000000000000000000000000000..4d29d8c6b7492cb94828ddf19f4360e4fe039dee
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_deblock.comp.glsl
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,150 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -427,6 +429,25 @@ index 0000000000000000000000000000000000000000..7a8d63b7db2c25bb74763ffd70ab4512
 +layout (constant_id = 2) const uint semi_planar = 0;
 +layout (constant_id = 3) const uint sample_code_max = 0;
 +
++/* Frame size from the host (#358): imageSize() of a plane view of a
++ * multi-planar image may report the driver's padded allocation (NVIDIA pads
++ * nv12/nv24 widths to a multiple of 64), so bounds and edge clamps use these.
++ * IDs 16-19 are the same in every Pelorus shader. */
++layout (constant_id = 16) const int pel_frame_w        = 1;
++layout (constant_id = 17) const int pel_frame_h        = 1;
++layout (constant_id = 18) const int pel_chroma_shift_w = 0;
++layout (constant_id = 19) const int pel_chroma_shift_h = 0;
++
++/* Planes 1 and 2 are chroma (one interleaved plane when semi-planar), rounded
++ * up as AV_CEIL_RSHIFT does; luma, alpha and packed RGBA are full size. */
++ivec2 pel_plane_size(uint plane)
++{
++    if (plane == 1u || plane == 2u)
++        return ivec2((pel_frame_w + (1 << pel_chroma_shift_w) - 1) >> pel_chroma_shift_w,
++                     (pel_frame_h + (1 << pel_chroma_shift_h) - 1) >> pel_chroma_shift_h);
++    return ivec2(pel_frame_w, pel_frame_h);
++}
++
 +layout (push_constant, std430) uniform pushConstants {
 +    int   bsize;
 +    int   edge;
@@ -456,7 +477,7 @@ index 0000000000000000000000000000000000000000..7a8d63b7db2c25bb74763ffd70ab4512
 +}
 +
 +float deblock(ivec2 pos, int idx, int comp) {
-+    ivec2 sz = imageSize(output_images[idx]);
++    ivec2 sz = pel_plane_size(uint(idx));
 +    int bs = max(bsize, 2);
 +    float c = pel_component(idx, comp, pos, sz);
 +    float result = c;
@@ -489,7 +510,7 @@ index 0000000000000000000000000000000000000000..7a8d63b7db2c25bb74763ffd70ab4512
 +     * `pos` (subsampled chroma) is skipped with `continue`, so a later
 +     * full-size plane (yuva420p alpha) is still written. */
 +    for (uint i = 0; i < planes; i++) {
-+        const ivec2 size = imageSize(output_images[i]);
++        const ivec2 size = pel_plane_size(i);
 +        if (!all(lessThan(pos, size)))
 +            continue;
 +

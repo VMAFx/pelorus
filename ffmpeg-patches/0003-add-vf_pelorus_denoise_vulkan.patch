@@ -40,10 +40,10 @@ ADR: docs/adr/0112-temporal-denoise.md
  configure                                    |    3 +
  libavfilter/Makefile                         |    1 +
  libavfilter/allfilters.c                     |    1 +
- libavfilter/vf_pelorus_denoise_vulkan.c      | 1150 ++++++++++++++++++++
+ libavfilter/vf_pelorus_denoise_vulkan.c      | 1152 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |    1 +
- libavfilter/vulkan/pelorus_denoise.comp.glsl |  499 +++++++++
- 6 files changed, 1655 insertions(+)
+ libavfilter/vulkan/pelorus_denoise.comp.glsl |  518 +++++++++
+ 6 files changed, 1676 insertions(+)
 
 diff --git a/configure b/configure
 index aec9b3ae17deb53929fc15870fdaeb58db717c8f..c18161349c774eea0347f47effa8aa611e6b8771 100755
@@ -92,10 +92,10 @@ index c781df8365397465a0f8cb2c25ac450585938b01..a21da384818d0b64f4b5af635ae53e9a
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_denoise_vulkan.c b/libavfilter/vf_pelorus_denoise_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..967efc81dda0357594f8e07a9d3da42b75ef5f7b
+index 0000000000000000000000000000000000000000..88e7be335e6933f95bc4ea89faf34e81f67e2510
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_denoise_vulkan.c
-@@ -0,0 +1,1150 @@
+@@ -0,0 +1,1152 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -354,12 +354,14 @@ index 0000000000000000000000000000000000000000..967efc81dda0357594f8e07a9d3da42b
 +     * constants, resolved at pipeline creation — the same const-folding, one step
 +     * later. `semi_planar` joins them so the shader knows plane 1 carries two
 +     * components. The push-constant block itself now lives in the .comp.glsl. */
-+    SPEC_LIST_CREATE(sl, 5, 5 * sizeof(uint32_t))
++    SPEC_LIST_CREATE(sl, 5 + PEL_VK_SPEC_FRAME_SIZE_COUNT,
++                     (5 + PEL_VK_SPEC_FRAME_SIZE_COUNT) * sizeof(uint32_t))
 +    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
 +    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
 +    SPEC_LIST_ADD(sl, 2, 32, (uint32_t)(s->tile ? 1 : 0));
 +    SPEC_LIST_ADD(sl, 3, 32, (uint32_t)semi_planar);
 +    SPEC_LIST_ADD(sl, 4, 32, sample_code_max);
++    pel_vk_spec_add_frame_size(sl, vkctx);
 +
 +    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){16, 16, 1}, 0);
 +
@@ -1257,10 +1259,10 @@ index 578953efb422d850e60c82c891364c763a2141aa..a4a7ea0ea998fa805376991447a54769
 +OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vulkan/pelorus_denoise.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_denoise.comp.glsl b/libavfilter/vulkan/pelorus_denoise.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..fd90d595b183a93311d0b479534f50f00cd9dbeb
+index 0000000000000000000000000000000000000000..d603a31a3efdc8bd5438ea81dbb5fdf914daa648
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_denoise.comp.glsl
-@@ -0,0 +1,499 @@
+@@ -0,0 +1,518 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -1317,6 +1319,25 @@ index 0000000000000000000000000000000000000000..fd90d595b183a93311d0b479534f50f0
 +layout (constant_id = 2) const uint use_tile    = 0;
 +layout (constant_id = 3) const uint semi_planar = 0;
 +layout (constant_id = 4) const uint sample_code_max = 0;
++
++/* Frame size from the host (#358): imageSize() of a plane view of a
++ * multi-planar image may report the driver's padded allocation (NVIDIA pads
++ * nv12/nv24 widths to a multiple of 64), so bounds and edge clamps use these.
++ * IDs 16-19 are the same in every Pelorus shader. */
++layout (constant_id = 16) const int pel_frame_w        = 1;
++layout (constant_id = 17) const int pel_frame_h        = 1;
++layout (constant_id = 18) const int pel_chroma_shift_w = 0;
++layout (constant_id = 19) const int pel_chroma_shift_h = 0;
++
++/* Planes 1 and 2 are chroma (one interleaved plane when semi-planar), rounded
++ * up as AV_CEIL_RSHIFT does; luma, alpha and packed RGBA are full size. */
++ivec2 pel_plane_size(uint plane)
++{
++    if (plane == 1u || plane == 2u)
++        return ivec2((pel_frame_w + (1 << pel_chroma_shift_w) - 1) >> pel_chroma_shift_w,
++                     (pel_frame_h + (1 << pel_chroma_shift_h) - 1) >> pel_chroma_shift_h);
++    return ivec2(pel_frame_w, pel_frame_h);
++}
 +
 +/* PEL_HALO = max patch_radius (3) + the 1-px patch ring.
 + * PEL_TILE = 16 (the workgroup dim, see ff_vk_shader_load) + 2 * PEL_HALO. */
@@ -1556,7 +1577,7 @@ index 0000000000000000000000000000000000000000..fd90d595b183a93311d0b479534f50f0
 + * accumulations; and mix()/smoothstep() are spelled out (see pel_lerp()). */
 +float denoise(const ivec2 pos, const int idx, const int comp,
 +              float sigmaS, float sigmaT, float strength_p) {
-+    ivec2 sz = imageSize(output_images[idx]);
++    ivec2 sz = pel_plane_size(uint(idx));
 +    precise float C = PEL_SPATIAL(ivec2(0, 0));
 +    /* --- spatial NLM-lite joint bilateral over the current frame --- */
 +    precise float numS = C;
@@ -1686,7 +1707,7 @@ index 0000000000000000000000000000000000000000..fd90d595b183a93311d0b479534f50f0
 +     * skips that plane and the loop continues to the next one. */
 +    for (uint i = 0; i < planes; i++) {
 +        const int idx = int(i);
-+        size = imageSize(output_images[idx]);
++        size = pel_plane_size(uint(idx));
 +        /* A semi-planar chroma plane (NV12/P010/NV16/NV24/P016) is a TWO-
 +         * component image holding U in .x and V in .y — both components are
 +         * real picture data and both get denoised. sigma_s/sigma_t/strength are

@@ -44,6 +44,25 @@ layout (local_size_x_id = 253, local_size_y_id = 254, local_size_z_id = 255) in;
 layout (constant_id = 0) const uint planes     = 0;
 layout (constant_id = 1) const uint plane_mask = 0xf;
 
+/* Frame size from the host (#358): imageSize() of a plane view of a
+ * multi-planar image may report the driver's padded allocation (NVIDIA pads
+ * nv12/nv24 widths to a multiple of 64), so bounds and edge clamps use these.
+ * IDs 16-19 are the same in every Pelorus shader. */
+layout (constant_id = 16) const int pel_frame_w        = 1;
+layout (constant_id = 17) const int pel_frame_h        = 1;
+layout (constant_id = 18) const int pel_chroma_shift_w = 0;
+layout (constant_id = 19) const int pel_chroma_shift_h = 0;
+
+/* Planes 1 and 2 are chroma (one interleaved plane when semi-planar), rounded
+ * up as AV_CEIL_RSHIFT does; luma, alpha and packed RGBA are full size. */
+ivec2 pel_plane_size(uint plane)
+{
+    if (plane == 1u || plane == 2u)
+        return ivec2((pel_frame_w + (1 << pel_chroma_shift_w) - 1) >> pel_chroma_shift_w,
+                     (pel_frame_h + (1 << pel_chroma_shift_h) - 1) >> pel_chroma_shift_h);
+    return ivec2(pel_frame_w, pel_frame_h);
+}
+
 layout (push_constant, std430) uniform pushConstants {
     int left;
     int right;
@@ -55,7 +74,7 @@ layout (set = 0, binding = 0) uniform readonly  image2D input_images[];
 layout (set = 0, binding = 1) uniform writeonly image2D output_images[];
 
 void borderfix(ivec2 pos, int idx) {
-    ivec2 sz = imageSize(output_images[idx]);
+    ivec2 sz = pel_plane_size(uint(idx));
     /* hi is the last clean index; lo is capped at hi so lo <= hi always holds
      * (clamp() is undefined for lo > hi, e.g. left + right >= size). */
     int hx = max(sz.x - 1 - right, 0);
@@ -74,7 +93,7 @@ void main()
      * chroma plane must not end the invocation, because a later full-size plane
      * (yuva420p alpha) still has to be written or copied (BUG-007/BUG-008). */
     for (uint i = 0; i < planes; i++) {
-        const ivec2 size = imageSize(output_images[i]);
+        const ivec2 size = pel_plane_size(i);
         if (!all(lessThan(pos, size)))
             continue;
 

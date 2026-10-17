@@ -31,10 +31,10 @@ ADR: docs/adr/0123-anime-dehalo.md
  configure                                   |   1 +
  libavfilter/Makefile                        |   1 +
  libavfilter/allfilters.c                    |   1 +
- libavfilter/vf_pelorus_dehalo_vulkan.c      | 321 ++++++++++++++++++++
+ libavfilter/vf_pelorus_dehalo_vulkan.c      | 323 +++++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
- libavfilter/vulkan/pelorus_dehalo.comp.glsl | 315 +++++++++++++++++++
- 6 files changed, 640 insertions(+)
+ libavfilter/vulkan/pelorus_dehalo.comp.glsl | 335 ++++++++++++++++++++
+ 6 files changed, 662 insertions(+)
 
 diff --git a/configure b/configure
 index 3283718ba10ab831a499f230e165d15201c9a29c..f052412ba00f78d88734beaa51c4a4e82a5ebea6 100755
@@ -74,10 +74,10 @@ index 8ecaf738be23d70633dc7e84a35a37729ffe9de4..2ac2a6540fb0f9b500bfbd6137278ca1
  extern const FFFilter ff_vf_pelorus_mc_vulkan;
 diff --git a/libavfilter/vf_pelorus_dehalo_vulkan.c b/libavfilter/vf_pelorus_dehalo_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..767fbae0da0dca0fa0a8faea2b8c13c4d34cbaaf
+index 0000000000000000000000000000000000000000..c88745a93b546fe37475d38ec311224b714cef0e
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_dehalo_vulkan.c
-@@ -0,0 +1,321 @@
+@@ -0,0 +1,323 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -188,12 +188,14 @@ index 0000000000000000000000000000000000000000..767fbae0da0dca0fa0a8faea2b8c13c4
 +     * driver still folds them at pipeline-creation time — including the shared
 +     * tile array, which is sized from `tile` and therefore costs nothing at
 +     * the default tile=0. */
-+    SPEC_LIST_CREATE(sl, 5, 5 * sizeof(uint32_t))
++    SPEC_LIST_CREATE(sl, 5 + PEL_VK_SPEC_FRAME_SIZE_COUNT,
++                     (5 + PEL_VK_SPEC_FRAME_SIZE_COUNT) * sizeof(uint32_t))
 +    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
 +    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
 +    SPEC_LIST_ADD(sl, 2, 32, (uint32_t)s->tile);
 +    SPEC_LIST_ADD(sl, 3, 32, (uint32_t)semi_planar);
 +    SPEC_LIST_ADD(sl, 4, 32, sample_code_max);
++    pel_vk_spec_add_frame_size(sl, vkctx);
 +
 +    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 +
@@ -410,10 +412,10 @@ index 113d7aa7cf599983aaa7a391919d014b18b245fd..77187fe29c5fe23f84b61b45cf3a2825
 +OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER) += vulkan/pelorus_dehalo.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_dehalo.comp.glsl b/libavfilter/vulkan/pelorus_dehalo.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..815e373417187913fe38879b3fa3a0738c8ea53f
+index 0000000000000000000000000000000000000000..e871cd54eb9d6f8129492653cb7f96a9d7babdb4
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_dehalo.comp.glsl
-@@ -0,0 +1,315 @@
+@@ -0,0 +1,335 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -464,6 +466,25 @@ index 0000000000000000000000000000000000000000..815e373417187913fe38879b3fa3a073
 +layout (constant_id = 2) const uint tile       = 0;
 +layout (constant_id = 3) const uint semi_planar = 0;
 +layout (constant_id = 4) const uint sample_code_max = 0;
++
++/* Frame size from the host (#358): imageSize() of a plane view of a
++ * multi-planar image may report the driver's padded allocation (NVIDIA pads
++ * nv12/nv24 widths to a multiple of 64), so bounds and edge clamps use these.
++ * IDs 16-19 are the same in every Pelorus shader. */
++layout (constant_id = 16) const int pel_frame_w        = 1;
++layout (constant_id = 17) const int pel_frame_h        = 1;
++layout (constant_id = 18) const int pel_chroma_shift_w = 0;
++layout (constant_id = 19) const int pel_chroma_shift_h = 0;
++
++/* Planes 1 and 2 are chroma (one interleaved plane when semi-planar), rounded
++ * up as AV_CEIL_RSHIFT does; luma, alpha and packed RGBA are full size. */
++ivec2 pel_plane_size(uint plane)
++{
++    if (plane == 1u || plane == 2u)
++        return ivec2((pel_frame_w + (1 << pel_chroma_shift_w) - 1) >> pel_chroma_shift_w,
++                     (pel_frame_h + (1 << pel_chroma_shift_h) - 1) >> pel_chroma_shift_h);
++    return ivec2(pel_frame_w, pel_frame_h);
++}
 +
 +layout (push_constant, std430) uniform pushConstants {
 +    int   blur_r;
@@ -617,7 +638,7 @@ index 0000000000000000000000000000000000000000..815e373417187913fe38879b3fa3a073
 +
 +float dehalo(ivec2 pos, int idx, int comp)
 +{
-+    ivec2 sz = imageSize(output_images[idx]);
++    ivec2 sz = pel_plane_size(uint(idx));
 +    float c = pel_luma(idx, comp, pos, sz);
 +
 +    /* FineDehalo gate. A pixel whose own edge step exceeds `edge` is line-art
@@ -696,7 +717,8 @@ index 0000000000000000000000000000000000000000..815e373417187913fe38879b3fa3a073
 +    const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
 +
 +    /* Preserves the pre-FFmpeg-9 unrolled semantics exactly: the C generator
-+     * emitted, per plane, `size = imageSize(...)`, then the cooperative tile
++     * emitted, per plane, `size = imageSize(...)` (now pel_plane_size(),
++     * #358), then the cooperative tile
 +     * load in uniform control flow, then `if (IS_WITHIN(pos, size)) { ... }`.
 +     * The guard was a positive block, NOT an early return — an invocation
 +     * outside a subsampled chroma plane still falls through to the next
@@ -704,7 +726,7 @@ index 0000000000000000000000000000000000000000..815e373417187913fe38879b3fa3a073
 +    for (uint i = 0; i < planes; i++) {
 +        const bool sel = (plane_mask & (1u << i)) != 0u;
 +
-+        size = imageSize(output_images[i]);
++        size = pel_plane_size(i);
 +        const bool inb = all(lessThan(pos, size));
 +
 +        if (sel) {

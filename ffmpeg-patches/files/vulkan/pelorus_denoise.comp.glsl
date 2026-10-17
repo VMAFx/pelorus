@@ -55,6 +55,25 @@ layout (constant_id = 2) const uint use_tile    = 0;
 layout (constant_id = 3) const uint semi_planar = 0;
 layout (constant_id = 4) const uint sample_code_max = 0;
 
+/* Frame size from the host (#358): imageSize() of a plane view of a
+ * multi-planar image may report the driver's padded allocation (NVIDIA pads
+ * nv12/nv24 widths to a multiple of 64), so bounds and edge clamps use these.
+ * IDs 16-19 are the same in every Pelorus shader. */
+layout (constant_id = 16) const int pel_frame_w        = 1;
+layout (constant_id = 17) const int pel_frame_h        = 1;
+layout (constant_id = 18) const int pel_chroma_shift_w = 0;
+layout (constant_id = 19) const int pel_chroma_shift_h = 0;
+
+/* Planes 1 and 2 are chroma (one interleaved plane when semi-planar), rounded
+ * up as AV_CEIL_RSHIFT does; luma, alpha and packed RGBA are full size. */
+ivec2 pel_plane_size(uint plane)
+{
+    if (plane == 1u || plane == 2u)
+        return ivec2((pel_frame_w + (1 << pel_chroma_shift_w) - 1) >> pel_chroma_shift_w,
+                     (pel_frame_h + (1 << pel_chroma_shift_h) - 1) >> pel_chroma_shift_h);
+    return ivec2(pel_frame_w, pel_frame_h);
+}
+
 /* PEL_HALO = max patch_radius (3) + the 1-px patch ring.
  * PEL_TILE = 16 (the workgroup dim, see ff_vk_shader_load) + 2 * PEL_HALO. */
 #define PEL_HALO 4
@@ -293,7 +312,7 @@ float pel_spatial(int idx, int comp, ivec2 pos, ivec2 sz, ivec2 o) {
  * accumulations; and mix()/smoothstep() are spelled out (see pel_lerp()). */
 float denoise(const ivec2 pos, const int idx, const int comp,
               float sigmaS, float sigmaT, float strength_p) {
-    ivec2 sz = imageSize(output_images[idx]);
+    ivec2 sz = pel_plane_size(uint(idx));
     precise float C = PEL_SPATIAL(ivec2(0, 0));
     /* --- spatial NLM-lite joint bilateral over the current frame --- */
     precise float numS = C;
@@ -423,7 +442,7 @@ void main()
      * skips that plane and the loop continues to the next one. */
     for (uint i = 0; i < planes; i++) {
         const int idx = int(i);
-        size = imageSize(output_images[idx]);
+        size = pel_plane_size(uint(idx));
         /* A semi-planar chroma plane (NV12/P010/NV16/NV24/P016) is a TWO-
          * component image holding U in .x and V in .y — both components are
          * real picture data and both get denoised. sigma_s/sigma_t/strength are
