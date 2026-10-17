@@ -176,9 +176,11 @@ static av_cold int init_filter(AVFilterContext *ctx)
      * specialization constant so the runtime descriptor-array contract is
      * retained. Constant 1 is the per-invocation span: one wg x wg workgroup
      * covers one cell x cell cell. */
-    SPEC_LIST_CREATE(sl, 2, 2 * sizeof(uint32_t))
+    SPEC_LIST_CREATE(sl, 2 + PEL_VK_SPEC_FRAME_SIZE_COUNT,
+                     (2 + PEL_VK_SPEC_FRAME_SIZE_COUNT) * sizeof(uint32_t))
     SPEC_LIST_ADD(sl, 0, 32, 0u);
     SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->cell / wg);
+    pel_vk_spec_add_frame_size(sl, vkctx);
     ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){wg, wg, 1}, 0);
     analyze_shader_layout(vkctx, shd, planes);
 

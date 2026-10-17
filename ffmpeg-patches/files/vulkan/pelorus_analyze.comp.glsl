@@ -71,6 +71,25 @@ layout (constant_id = 0) const uint luma_plane = 0u;
  * specialization list sets it once at pipeline creation (SPEC_LIST_ADD id 1). */
 layout (constant_id = 1) const uint cell_span = 1u;
 
+/* Frame size from the host (#358): imageSize() of a plane view of a
+ * multi-planar image may report the driver's padded allocation (NVIDIA pads
+ * nv12/nv24 widths to a multiple of 64), so bounds and edge clamps use these.
+ * IDs 16-19 are the same in every Pelorus shader. */
+layout (constant_id = 16) const int pel_frame_w        = 1;
+layout (constant_id = 17) const int pel_frame_h        = 1;
+layout (constant_id = 18) const int pel_chroma_shift_w = 0;
+layout (constant_id = 19) const int pel_chroma_shift_h = 0;
+
+/* Planes 1 and 2 are chroma (one interleaved plane when semi-planar), rounded
+ * up as AV_CEIL_RSHIFT does; luma, alpha and packed RGBA are full size. */
+ivec2 pel_plane_size(uint plane)
+{
+    if (plane == 1u || plane == 2u)
+        return ivec2((pel_frame_w + (1 << pel_chroma_shift_w) - 1) >> pel_chroma_shift_w,
+                     (pel_frame_h + (1 << pel_chroma_shift_h) - 1) >> pel_chroma_shift_h);
+    return ivec2(pel_frame_w, pel_frame_h);
+}
+
 shared uint s_sum;
 shared uint s_sumsq;
 shared uint s_edge;
@@ -114,7 +133,7 @@ void main()
         s_grad = 0u; s_cnt = 0u;
     }
     barrier();
-    ivec2 size = imageSize(input_images[luma_plane]);
+    ivec2 size = pel_plane_size(luma_plane);
     ivec2 wg = ivec2(gl_WorkGroupSize.xy);
     ivec2 origin = ivec2(gl_WorkGroupID.xy) * wg * int(cell_span)
                    + ivec2(gl_LocalInvocationID.xy);

@@ -27,13 +27,13 @@ Research: docs/research/0101-smart-deband.md
  libavfilter/allfilters.c                    |   1 +
  libavfilter/pelorus_drm_modifier.h          | 193 +++++++
  libavfilter/pelorus_sidedata.h              | 169 ++++++
- libavfilter/pelorus_vulkan_input.h          | 113 ++++
+ libavfilter/pelorus_vulkan_input.h          | 131 +++++
  libavfilter/pelorus_vulkan_pool.h           | 576 ++++++++++++++++++++
  libavfilter/pelorus_vulkan_sample.h         | 100 ++++
- libavfilter/vf_pelorus_deband_vulkan.c      | 479 ++++++++++++++++
+ libavfilter/vf_pelorus_deband_vulkan.c      | 481 ++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
- libavfilter/vulkan/pelorus_deband.comp.glsl | 177 ++++++
- 11 files changed, 1813 insertions(+)
+ libavfilter/vulkan/pelorus_deband.comp.glsl | 196 +++++++
+ 11 files changed, 1852 insertions(+)
 
 diff --git a/configure b/configure
 index 374bd5c1512943439480825f32e448e7871eb61c..00b13ed09edcf3fb2b44ff9d0bfbb4420f45c68e 100755
@@ -456,10 +456,10 @@ index 0000000000000000000000000000000000000000..93c45ad0d23039ee39336bcc2b93de94
 +#endif /* AVFILTER_PELORUS_SIDEDATA_H */
 diff --git a/libavfilter/pelorus_vulkan_input.h b/libavfilter/pelorus_vulkan_input.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..eb2c77fc5d9ae846692ff689b3fd0cd3a70180cb
+index 0000000000000000000000000000000000000000..193d6665a1792fb49a83a56beb9a561c7b8383de
 --- /dev/null
 +++ b/libavfilter/pelorus_vulkan_input.h
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,131 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -570,6 +570,24 @@ index 0000000000000000000000000000000000000000..eb2c77fc5d9ae846692ff689b3fd0cd3
 +    int err = pel_vk_check_input_format(inlink, allowed);
 +
 +    return err < 0 ? err : ff_vk_filter_config_input(inlink);
++}
++
++/* Specialization constants 16-19: frame width, frame height and the chroma
++ * shifts of the frame format (#358). The shaders size each plane from these
++ * instead of imageSize(), which reports the driver's padded allocation for a
++ * plane view of a multi-planar image (NVIDIA pads nv12/nv24 widths to a
++ * multiple of 64). Callers reserve PEL_VK_SPEC_FRAME_SIZE_COUNT entries. */
++#define PEL_VK_SPEC_FRAME_SIZE_COUNT 4
++
++static inline void pel_vk_spec_add_frame_size(VkSpecializationInfo *sl,
++                                              const FFVulkanContext *vkctx)
++{
++    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(vkctx->output_format);
++
++    SPEC_LIST_ADD(sl, 16, 32, (uint32_t)vkctx->output_width);
++    SPEC_LIST_ADD(sl, 17, 32, (uint32_t)vkctx->output_height);
++    SPEC_LIST_ADD(sl, 18, 32, (uint32_t)desc->log2_chroma_w);
++    SPEC_LIST_ADD(sl, 19, 32, (uint32_t)desc->log2_chroma_h);
 +}
 +
 +#endif /* AVFILTER_PELORUS_VULKAN_INPUT_H */
@@ -1263,10 +1281,10 @@ index 0000000000000000000000000000000000000000..c8a8912daf5325e0d8792ae201f4bbfe
 +#endif /* AVFILTER_PELORUS_VULKAN_SAMPLE_H */
 diff --git a/libavfilter/vf_pelorus_deband_vulkan.c b/libavfilter/vf_pelorus_deband_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..f8985720511f10e1af32cb6cea7bf1f167f5237e
+index 0000000000000000000000000000000000000000..e95c6b7f56ae71d09ee79e9c24702b5eec841fb9
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_deband_vulkan.c
-@@ -0,0 +1,479 @@
+@@ -0,0 +1,481 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -1393,10 +1411,12 @@ index 0000000000000000000000000000000000000000..f8985720511f10e1af32cb6cea7bf1f1
 +    /* Plane count and the plane bitmask were const-folded into the generated
 +     * GLSL before FFmpeg 9 unrolled the per-plane loop in C. With precompiled
 +     * SPIR-V they become specialization constants instead. */
-+    SPEC_LIST_CREATE(sl, 3, 3 * sizeof(uint32_t))
++    SPEC_LIST_CREATE(sl, 3 + PEL_VK_SPEC_FRAME_SIZE_COUNT,
++                     (3 + PEL_VK_SPEC_FRAME_SIZE_COUNT) * sizeof(uint32_t))
 +    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
 +    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
 +    SPEC_LIST_ADD(sl, 2, 32, sample_code_max);
++    pel_vk_spec_add_frame_size(sl, vkctx);
 +
 +    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 +
@@ -1757,10 +1777,10 @@ index 8a0912b4dfc4969cb7b4eb06c7565e93ba6b8cf7..e62ab231cb50888e10c829ad66e15e4c
 +OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER) += vulkan/pelorus_deband.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_deband.comp.glsl b/libavfilter/vulkan/pelorus_deband.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..8987612f6789242f25fa8ef4773032b68fd629d4
+index 0000000000000000000000000000000000000000..519b4fc851247e10c6746118b652140f0b17a2b8
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_deband.comp.glsl
-@@ -0,0 +1,177 @@
+@@ -0,0 +1,196 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -1802,6 +1822,25 @@ index 0000000000000000000000000000000000000000..8987612f6789242f25fa8ef4773032b6
 +layout (constant_id = 0) const uint planes     = 0;
 +layout (constant_id = 1) const uint plane_mask = 0xf;
 +layout (constant_id = 2) const uint sample_code_max = 0;
++
++/* Frame size from the host (#358): imageSize() of a plane view of a
++ * multi-planar image may report the driver's padded allocation (NVIDIA pads
++ * nv12/nv24 widths to a multiple of 64), so bounds and edge clamps use these.
++ * IDs 16-19 are the same in every Pelorus shader. */
++layout (constant_id = 16) const int pel_frame_w        = 1;
++layout (constant_id = 17) const int pel_frame_h        = 1;
++layout (constant_id = 18) const int pel_chroma_shift_w = 0;
++layout (constant_id = 19) const int pel_chroma_shift_h = 0;
++
++/* Planes 1 and 2 are chroma (one interleaved plane when semi-planar), rounded
++ * up as AV_CEIL_RSHIFT does; luma, alpha and packed RGBA are full size. */
++ivec2 pel_plane_size(uint plane)
++{
++    if (plane == 1u || plane == 2u)
++        return ivec2((pel_frame_w + (1 << pel_chroma_shift_w) - 1) >> pel_chroma_shift_w,
++                     (pel_frame_h + (1 << pel_chroma_shift_h) - 1) >> pel_chroma_shift_h);
++    return ivec2(pel_frame_w, pel_frame_h);
++}
 +
 +layout (push_constant, std430) uniform pushConstants {
 +    vec4  thr;
@@ -1861,7 +1900,7 @@ index 0000000000000000000000000000000000000000..8987612f6789242f25fa8ef4773032b6
 +void deband(const ivec2 pos, const int idx, float thr_p, float grain_p) {
 +    const float TWO_PI = 6.28318530718;
 +    const float GOLDEN = 2.39996322973;
-+    ivec2 sz = imageSize(output_images[idx]);
++    ivec2 sz = pel_plane_size(uint(idx));
 +    vec4 S = pel_to_sample(imageLoad(input_images[idx], pos));
 +    bool dynG = (flags & 1) != 0;
 +    bool protectD = (flags & 2) != 0;
@@ -1928,7 +1967,7 @@ index 0000000000000000000000000000000000000000..8987612f6789242f25fa8ef4773032b6
 +     * chroma plane must not end the invocation, because a later full-size plane
 +     * (yuva420p alpha) still has to be written or copied (BUG-007/BUG-008). */
 +    for (uint i = 0; i < planes; i++) {
-+        const ivec2 size = imageSize(output_images[i]);
++        const ivec2 size = pel_plane_size(i);
 +        if (!all(lessThan(pos, size)))
 +            continue;
 +

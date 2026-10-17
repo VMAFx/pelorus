@@ -8,6 +8,26 @@ the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
 ranges in older entries predate the first entry below (22 patches on the
 shared FFmpeg fix series, number 0021 retired).
 
+## Unreleased — plane size from specialization constants (#358, ADR-0202; regenerates 0001, 0002, 0003, 0014, 0015, 0017, 0018)
+
+- **Header**: `pelorus_vulkan_input.h` (added by 0001) gains
+  `pel_vk_spec_add_frame_size()` and `PEL_VK_SPEC_FRAME_SIZE_COUNT`.
+- **Patches**: the deband, analyze, denoise, dehalo, aa, deblock and borderfix
+  hosts reserve four more specialization entries and call the helper before
+  `ff_vk_shader_load`. Their shaders declare constants 16-19 and replace every
+  `imageSize()` with `pel_plane_size()`. Push-constant layouts are unchanged.
+  The other 15 patches are byte-identical.
+- **Behaviour**: on NVIDIA, nv12 and nv24 frames whose width is not a multiple
+  of 64 now give the yuv420p luma at the right edge.
+- **Rebase-sensitive**: the helper reads `FFVulkanContext.output_width`,
+  `output_height` and `output_format`, and uses `SPEC_LIST_ADD` on a
+  `VkSpecializationInfo *`. A base bump that renames these or changes the
+  macro needs the helper updated. Specialization IDs 16-19 must stay free of
+  per-filter constants.
+- **Interop**: none.
+- **Checks**: `test/vulkan-format-matrix.sh` on a GPU host (exact rows at
+  widths 1918 and 1920); `test/build-and-run.sh` replay of the full series.
+
 ## Unreleased — Vulkan input format allow list (#188, ADR-0201; regenerates 0001, 0002, 0003, 0006, 0007, 0014, 0015, 0017, 0018)
 
 - **New file**: `libavfilter/pelorus_vulkan_input.h`

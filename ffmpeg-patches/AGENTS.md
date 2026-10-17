@@ -195,6 +195,11 @@ ffmpeg-patches/
     `pel_vk_refuse_interlaced` per frame; measuring filters keep flag. New
     layout = list entry + `test/vulkan-format-matrix.sh` row in same PR;
     never deny list.
+16. Plane size (#358, ADR-0202): shaders never call `imageSize()`; NVIDIA
+    reports padded nv12/nv24 plane widths. Size planes with
+    `pel_plane_size()` (spec IDs 16-19, same in every shader); host adds
+    `PEL_VK_SPEC_FRAME_SIZE_COUNT` entries via `pel_vk_spec_add_frame_size`.
+    New spatial filter = row in matrix edge block (widths 1918, 1920).
 
 ## Required checks
 

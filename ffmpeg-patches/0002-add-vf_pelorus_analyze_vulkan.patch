@@ -53,10 +53,10 @@ docs/adr/0133-analyze-coarse-banding-cambi.md, docs/adr/0177-analyze-per-cell-ma
  libavfilter/Makefile                         |   1 +
  libavfilter/allfilters.c                     |   1 +
  libavfilter/pelorus_analyze_maps.h           | 473 +++++++++++
- libavfilter/vf_pelorus_analyze_vulkan.c      | 862 ++++++++++++++++++++
+ libavfilter/vf_pelorus_analyze_vulkan.c      | 864 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |   1 +
- libavfilter/vulkan/pelorus_analyze.comp.glsl | 167 ++++
- 7 files changed, 1508 insertions(+)
+ libavfilter/vulkan/pelorus_analyze.comp.glsl | 186 +++++
+ 7 files changed, 1529 insertions(+)
 
 diff --git a/configure b/configure
 index 00b13ed09edcf3fb2b44ff9d0bfbb4420f45c68e..aec9b3ae17deb53929fc15870fdaeb58db717c8f 100755
@@ -584,10 +584,10 @@ index 0000000000000000000000000000000000000000..7cad81149ad9daa95f4dae3fe9169878
 +#endif /* AVFILTER_PELORUS_ANALYZE_MAPS_H */
 diff --git a/libavfilter/vf_pelorus_analyze_vulkan.c b/libavfilter/vf_pelorus_analyze_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..f98059ffa2f8995c6d690d19ca416ecbedc2418d
+index 0000000000000000000000000000000000000000..74abfac2d63b70b4b5df17b4dd9f8e903de9754a
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_analyze_vulkan.c
-@@ -0,0 +1,862 @@
+@@ -0,0 +1,864 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -766,9 +766,11 @@ index 0000000000000000000000000000000000000000..f98059ffa2f8995c6d690d19ca416ecb
 +     * specialization constant so the runtime descriptor-array contract is
 +     * retained. Constant 1 is the per-invocation span: one wg x wg workgroup
 +     * covers one cell x cell cell. */
-+    SPEC_LIST_CREATE(sl, 2, 2 * sizeof(uint32_t))
++    SPEC_LIST_CREATE(sl, 2 + PEL_VK_SPEC_FRAME_SIZE_COUNT,
++                     (2 + PEL_VK_SPEC_FRAME_SIZE_COUNT) * sizeof(uint32_t))
 +    SPEC_LIST_ADD(sl, 0, 32, 0u);
 +    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->cell / wg);
++    pel_vk_spec_add_frame_size(sl, vkctx);
 +    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){wg, wg, 1}, 0);
 +    analyze_shader_layout(vkctx, shd, planes);
 +
@@ -1461,10 +1463,10 @@ index e62ab231cb50888e10c829ad66e15e4cb8d66670..578953efb422d850e60c82c891364c76
 +OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vulkan/pelorus_analyze.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_analyze.comp.glsl b/libavfilter/vulkan/pelorus_analyze.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..e3bbb492295fc69865d5af0f607c88274f00eedd
+index 0000000000000000000000000000000000000000..df190550d85c9737b4a2862023cd7907f6fc05e7
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_analyze.comp.glsl
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,186 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -1538,6 +1540,25 @@ index 0000000000000000000000000000000000000000..e3bbb492295fc69865d5af0f607c8827
 + * specialization list sets it once at pipeline creation (SPEC_LIST_ADD id 1). */
 +layout (constant_id = 1) const uint cell_span = 1u;
 +
++/* Frame size from the host (#358): imageSize() of a plane view of a
++ * multi-planar image may report the driver's padded allocation (NVIDIA pads
++ * nv12/nv24 widths to a multiple of 64), so bounds and edge clamps use these.
++ * IDs 16-19 are the same in every Pelorus shader. */
++layout (constant_id = 16) const int pel_frame_w        = 1;
++layout (constant_id = 17) const int pel_frame_h        = 1;
++layout (constant_id = 18) const int pel_chroma_shift_w = 0;
++layout (constant_id = 19) const int pel_chroma_shift_h = 0;
++
++/* Planes 1 and 2 are chroma (one interleaved plane when semi-planar), rounded
++ * up as AV_CEIL_RSHIFT does; luma, alpha and packed RGBA are full size. */
++ivec2 pel_plane_size(uint plane)
++{
++    if (plane == 1u || plane == 2u)
++        return ivec2((pel_frame_w + (1 << pel_chroma_shift_w) - 1) >> pel_chroma_shift_w,
++                     (pel_frame_h + (1 << pel_chroma_shift_h) - 1) >> pel_chroma_shift_h);
++    return ivec2(pel_frame_w, pel_frame_h);
++}
++
 +shared uint s_sum;
 +shared uint s_sumsq;
 +shared uint s_edge;
@@ -1581,7 +1602,7 @@ index 0000000000000000000000000000000000000000..e3bbb492295fc69865d5af0f607c8827
 +        s_grad = 0u; s_cnt = 0u;
 +    }
 +    barrier();
-+    ivec2 size = imageSize(input_images[luma_plane]);
++    ivec2 size = pel_plane_size(luma_plane);
 +    ivec2 wg = ivec2(gl_WorkGroupSize.xy);
 +    ivec2 origin = ivec2(gl_WorkGroupID.xy) * wg * int(cell_span)
 +                   + ivec2(gl_LocalInvocationID.xy);

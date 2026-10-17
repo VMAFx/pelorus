@@ -125,9 +125,14 @@ Failed to configure input pad on Parsed_pelorus_deband_vulkan_2
 
 Replacing `format=yuyv422` with `format=nv12` on both sides runs the same graph.
 
-Known defect: on NVIDIA, aa and dehalo write wrong luma in the last 3-4 columns
-of nv12 and nv24 frames whose width is not a multiple of 64
-([#358](https://github.com/VMAFx/pelorus/issues/358)).
+Frame size: the shaders size each plane from specialization constants 16-19
+(frame width, height and chroma shifts, set by `pel_vk_spec_add_frame_size()`),
+not from `imageSize()`. On NVIDIA, `imageSize()` of an nv12 or nv24 plane view
+reports a padded width when the frame width is not a multiple of 64, and edge
+reads clamped to it took samples past the frame
+([ADR-0202](../adr/0202-vulkan-plane-size-spec-constants.md),
+[#358](https://github.com/VMAFx/pelorus/issues/358)). A new shader that reads
+its plane size uses `pel_plane_size()`.
 
 Interlaced frames (`AV_FRAME_FLAG_INTERLACED`): deband, denoise, mc, dehalo, aa
 and deblock read neighbouring rows, which belong to the other field, so they
@@ -137,8 +142,9 @@ progressive with `setfield=prog`. analyze, grain_estimate, borderfix and
 scenecut accept interlaced frames and keep the flag.
 
 Proof: `ffmpeg-patches/test/vulkan-format-matrix.sh` compares every accepted
-layout with the yuv420p result, checks yuva420p alpha pass-through, and runs
-each refusal and interlace row.
+layout with the yuv420p result, requires byte-exact 8-bit luma at widths 1918
+and 1920, checks yuva420p alpha pass-through, and runs each refusal and
+interlace row.
 
 ## Devices with one queue family
 
