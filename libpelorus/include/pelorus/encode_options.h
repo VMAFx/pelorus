@@ -6,20 +6,21 @@
  */
 
 /*
- * encode_options.h — option-string parsers for x264 and x265 that fill
- * PelorusEncodeParam arrays for pel_encode_record_build (ADR-0198,
- * docs/api/encode-record.md).
+ * encode_options.h — option-string parsers for x264, x265, SVT-AV1 and
+ * libaom that fill PelorusEncodeParam arrays for pel_encode_record_build
+ * (ADR-0198, docs/api/encode-record.md).
  *
- * Input strings use FFmpeg dict syntax (-x264-params, -x265-params):
- * key-value pairs split by ':', keys and values separated by '=', with
- * av_get_token escaping ('\' escapes next char, '...' literal).
+ * Input strings use FFmpeg dict syntax (-x264-params, -x265-params,
+ * -svtav1-params, -aom-params): key-value pairs split by ':', keys and values
+ * separated by '=', with av_get_token escaping ('\' escapes next char, '...'
+ * literal).
  *
- * Parsed parameters are normalised per dialect (underscores to hyphens, alias
- * canonicalisation, boolean negation unfolding) and typed (bool, int, float,
- * verbatim string/enum). Duplicate options resolve to last-wins. Unknown
- * options keep their value verbatim in unknown_params under the normalised
- * key; a known key with a rejected value is kept there under its canonical
- * key.
+ * Parsed parameters are normalised per dialect (x264 and x265: underscores to
+ * hyphens and boolean negation unfolding; all: alias canonicalisation) and
+ * typed (bool, int, float, verbatim string/enum). Duplicate options resolve
+ * to last-wins. Unknown options keep their value verbatim in unknown_params
+ * under the normalised key; a known key with a rejected value is kept there
+ * under its canonical key.
  * Output arrays are sorted by key bytes.
  *
  * PelorusEncodeOptions is ~272 KiB (measured sizeof(PelorusEncodeOptions) =
@@ -40,7 +41,9 @@ extern "C" {
 
 typedef enum pel_encode_options_dialect {
     PEL_ENCODE_OPTIONS_X264 = 1,
-    PEL_ENCODE_OPTIONS_X265 = 2
+    PEL_ENCODE_OPTIONS_X265 = 2,
+    PEL_ENCODE_OPTIONS_SVTAV1 = 3,
+    PEL_ENCODE_OPTIONS_AOM = 4
 } pel_encode_options_dialect;
 
 #define PEL_ENCODE_OPTIONS_ARENA_SIZE 262144u

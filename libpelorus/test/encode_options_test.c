@@ -662,6 +662,26 @@ static void test_repeated_duplicates(void)
     free(opts);
 }
 
+/* Sorted, the expected size, and every alias names a canonical row of the
+ * same type. */
+static void check_av1_table(const PelEncodeOptDef *(*table)(size_t *),
+                            const PelEncodeOptDef *(*lookup)(const char *), size_t want)
+{
+    size_t count = 0;
+    const PelEncodeOptDef *t = table(&count);
+    size_t i;
+
+    CHECK(t != NULL && count == want);
+    if (t == NULL) {
+        return;
+    }
+    for (i = 0; i < count; i++) {
+        const PelEncodeOptDef *c = lookup(t[i].canonical);
+        CHECK(i == 0 || strcmp(t[i - 1].name, t[i].name) < 0);
+        CHECK(c != NULL && c->type == t[i].type && strcmp(c->canonical, t[i].canonical) == 0);
+    }
+}
+
 static void test_table_sorting(void)
 {
     size_t count_x264 = 0;
@@ -683,6 +703,8 @@ static void test_table_sorting(void)
             CHECK(strcmp(t265[i - 1].name, t265[i].name) < 0);
         }
     }
+    check_av1_table(pel_encode_options_svtav1_table, pel_encode_options_svtav1_lookup, 121);
+    check_av1_table(pel_encode_options_aom_table, pel_encode_options_aom_lookup, 122);
 }
 
 static void test_x265_types(void)
@@ -715,6 +737,127 @@ static void test_x265_types(void)
     free(opts);
 }
 
+static void check_one(const PelorusEncodeParam *arr, uint32_t n, const char *key, const char *val)
+{
+    uint32_t i;
+    for (i = 0; i < n; i++) {
+        if (strcmp(arr[i].key, key) == 0) {
+            CHECK(strcmp(arr[i].values[0], val) == 0);
+            return;
+        }
+    }
+    (void)fprintf(stderr, "FAIL missing key %s\n", key);
+    g_fail++;
+}
+
+static pel_result parse_str(pel_encode_options_dialect d, const char *s, PelorusEncodeOptions *o)
+{
+    return pel_encode_options_parse(d, s, strlen(s), o);
+}
+
+static void test_svtav1_ordering_and_types(void)
+{
+    PelorusEncodeOptions *o1 = alloc_opts();
+    PelorusEncodeOptions *o2 = alloc_opts();
+    char d1[72];
+    char d2[72];
+
+    CHECK(parse_str(PEL_ENCODE_OPTIONS_SVTAV1, "preset=8:crf=30:tune=0:keyint=5s", o1) == PEL_OK);
+    CHECK(parse_str(PEL_ENCODE_OPTIONS_SVTAV1, "keyint=5s:tune=0:crf=30:preset=8", o2) == PEL_OK);
+    CHECK(o1->nb_params == 4 && o1->nb_unknown_params == 0);
+    check_one(o1->params, o1->nb_params, "preset", "8");
+    check_one(o1->params, o1->nb_params, "crf", "f64:403e000000000000");
+    check_one(o1->params, o1->nb_params, "tune", "0");
+    check_one(o1->params, o1->nb_params, "keyint", "5s");
+    CHECK(build_digest(o1, d1) == PEL_OK);
+    CHECK(build_digest(o2, d2) == PEL_OK);
+    CHECK(strcmp(d1, d2) == 0);
+
+    /* aliases share one field upstream: w/width, h/height, q/qp */
+    CHECK(parse_str(PEL_ENCODE_OPTIONS_SVTAV1, "w=1920:h=1080:q=30:width=1280", o1) == PEL_OK);
+    CHECK(o1->nb_params == 3 && o1->nb_unknown_params == 0);
+    check_one(o1->params, o1->nb_params, "width", "1280");
+    check_one(o1->params, o1->nb_params, "height", "1080");
+    check_one(o1->params, o1->nb_params, "qp", "30");
+
+    /* base-0 integers and case-insensitive booleans (str_to_uint, str_to_bool) */
+    CHECK(parse_str(PEL_ENCODE_OPTIONS_SVTAV1, "lp=0x10:enable-overlays=True", o1) == PEL_OK);
+    check_one(o1->params, o1->nb_params, "lp", "16");
+    check_one(o1->params, o1->nb_params, "enable-overlays", "true");
+
+    /* boundary: empty string and duplicates */
+    CHECK(parse_str(PEL_ENCODE_OPTIONS_SVTAV1, "", o1) == PEL_OK);
+    CHECK(o1->nb_params == 0 && o1->nb_unknown_params == 0);
+    CHECK(parse_str(PEL_ENCODE_OPTIONS_SVTAV1, "preset=4:preset=8", o1) == PEL_OK);
+    CHECK(o1->nb_params == 1);
+    check_one(o1->params, o1->nb_params, "preset", "8");
+    free(o1);
+    free(o2);
+}
+
+static void test_svtav1_rejects(void)
+{
+    PelorusEncodeOptions *o = alloc_opts();
+
+    /* no underscore folding and no negation: SVT-AV1 compares names exactly */
+    CHECK(parse_str(PEL_ENCODE_OPTIONS_SVTAV1,
+                    "enable_overlays=1:no-enable-overlays=1:enable-overlays=0", o) == PEL_OK);
+    CHECK(o->nb_params == 1 && o->nb_unknown_params == 2);
+    check_one(o->params, o->nb_params, "enable-overlays", "false");
+    check_one(o->unknown_params, o->nb_unknown_params, "enable_overlays", "1");
+    check_one(o->unknown_params, o->nb_unknown_params, "no-enable-overlays", "1");
+
+    /* unsigned option: a negative value is rejected and kept by name */
+    CHECK(parse_str(PEL_ENCODE_OPTIONS_SVTAV1, "lookahead=-1:bogus=7", o) == PEL_OK);
+    CHECK(o->nb_params == 0 && o->nb_unknown_params == 2);
+    check_one(o->unknown_params, o->nb_unknown_params, "lookahead", "-1");
+    check_one(o->unknown_params, o->nb_unknown_params, "bogus", "7");
+
+    /* unsigned bounds: UINT32_MAX fits, one more is a range error */
+    CHECK(parse_str(PEL_ENCODE_OPTIONS_SVTAV1, "fps-num=4294967295", o) == PEL_OK);
+    check_one(o->params, o->nb_params, "fps-num", "4294967295");
+    CHECK(parse_str(PEL_ENCODE_OPTIONS_SVTAV1, "fps-num=4294967296", o) == PEL_ERR_RANGE);
+    CHECK(o->nb_params == 0 && o->nb_unknown_params == 0 && o->arena_used == 0);
+    free(o);
+}
+
+static void test_aom_dialect(void)
+{
+    PelorusEncodeOptions *o1 = alloc_opts();
+    PelorusEncodeOptions *o2 = alloc_opts();
+    char d1[72];
+    char d2[72];
+
+    CHECK(parse_str(PEL_ENCODE_OPTIONS_AOM, "cpu-used=4:tune=ssim:enable-tpl-model=0", o1) ==
+          PEL_OK);
+    CHECK(parse_str(PEL_ENCODE_OPTIONS_AOM, "enable-tpl-model=0:cpu-used=4:tune=ssim", o2) ==
+          PEL_OK);
+    CHECK(o1->nb_params == 3 && o1->nb_unknown_params == 0);
+    check_one(o1->params, o1->nb_params, "cpu-used", "4");
+    check_one(o1->params, o1->nb_params, "tune", "ssim");
+    CHECK(build_digest(o1, d1) == PEL_OK);
+    CHECK(build_digest(o2, d2) == PEL_OK);
+    CHECK(strcmp(d1, d2) == 0);
+
+    /* base-10 integers (args_helper.c strtoul/strtol base 10); signed int keeps sign */
+    CHECK(parse_str(PEL_ENCODE_OPTIONS_AOM, "cpu-used=010:enable-adaptive-sharpness=-1", o1) ==
+          PEL_OK);
+    check_one(o1->params, o1->nb_params, "cpu-used", "10");
+    check_one(o1->params, o1->nb_params, "enable-adaptive-sharpness", "-1");
+    CHECK(parse_str(PEL_ENCODE_OPTIONS_AOM, "cpu-used=0x4", o1) == PEL_OK);
+    CHECK(o1->nb_params == 0 && o1->nb_unknown_params == 1);
+    check_one(o1->unknown_params, o1->nb_unknown_params, "cpu-used", "0x4");
+
+    /* unsigned rejects a sign; no "--" strip, no underscore folding */
+    CHECK(parse_str(PEL_ENCODE_OPTIONS_AOM, "cpu-used=-1:--row-mt=1:enable_cdef=0", o1) == PEL_OK);
+    CHECK(o1->nb_params == 0 && o1->nb_unknown_params == 3);
+    check_one(o1->unknown_params, o1->nb_unknown_params, "cpu-used", "-1");
+    check_one(o1->unknown_params, o1->nb_unknown_params, "--row-mt", "1");
+    check_one(o1->unknown_params, o1->nb_unknown_params, "enable_cdef", "0");
+    free(o1);
+    free(o2);
+}
+
 int main(void)
 {
     test_sizeof_options();
@@ -737,6 +880,9 @@ int main(void)
     test_repeated_duplicates();
     test_table_sorting();
     test_x265_types();
+    test_svtav1_ordering_and_types();
+    test_svtav1_rejects();
+    test_aom_dialect();
 
     if (g_fail > 0) {
         (void)fprintf(stderr, "encode_options_test: %d failure(s)\n", g_fail);

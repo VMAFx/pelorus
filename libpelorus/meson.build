@@ -41,6 +41,8 @@ libpelorus_sources = files(
   'src/encode_options.c',
   'src/encode_options_x264.c',
   'src/encode_options_x265.c',
+  'src/encode_options_svtav1.c',
+  'src/encode_options_aom.c',
   'src/sha256.c',
   'src/deband_params.c',
   'src/denoise_params.c',
