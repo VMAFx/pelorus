@@ -35,6 +35,7 @@ REPO_ROOT = HERE.parent.parent
 
 RULES = (
     "zc_hwdownload", "zc_hwupload", "zc_scale", "zc_graph_nonempty", "zc_host_transfer",
+    "zc_encoder_frames",
     "validate_fail_closed", "validation_absent_not_run", "encoder_absent_not_run",
     "vuid_unlisted", "vuid_expiry", "vuid_reference", "vuid_gate_every_stage",
     "steering_effect", "steering_decode", "steering_control", "steering_selfreport",
@@ -79,6 +80,8 @@ MAX_GRAPH_LINES = 262144  # At most one line per byte of the report runner's log
 HOST_FORMATS = frozenset(("yuv420p", "yuv420p10le", "yuv422p", "yuv444p", "nv12",
                           "p010le", "p016le", "rgba", "bgra", "rgb24", "gray"))
 HWMAP_RE = re.compile(r"Configure hwmap (\w+) -> (\w+)\.")
+SURFACE_RE = re.compile(r"\[hwupload @ (0x[0-9a-fA-F]+)\] Surface format is (\w+)\.")
+HW_SURFACE_FORMATS = frozenset(("vulkan", "cuda", "vaapi", "qsv", "drm_prime"))
 
 CODECS = {"h264": "h264", "hevc": "hevc", "av1": "obu"}
 # Steering and zero-copy streams go into bitexact Matroska: the container keeps
@@ -276,16 +279,19 @@ def graph_filter_types(log):
 
 
 def transfer_problems(log, sw_source, sw_encoder, disabled=frozenset()):
-    """Classify transfers from nodes, automatic insertion and format diagnostics.
+    """Classify transfers from nodes, surface formats, and format diagnostics.
 
-    Only explicit software hwmap destinations prove host access. A Vulkan
-    filter's pixel-format list must retain vulkan; sw_format metadata and
-    software formats on source/encoder edges do not describe a host round trip.
+    Hardware hops (hwupload instances, by address, with a hardware surface
+    format) receive credit against the upload limit. A node without a surface
+    diagnostic is counted as a host upload. Only explicit software hwmap
+    destinations prove host access.
     """
     types = graph_filter_types(log)
     errs = []
+    hops = {addr for addr, fmt in SURFACE_RE.findall(log) if fmt in HW_SURFACE_FORMATS}
+    allowed_upload = int(sw_source) + len(hops)
     limits = {"hwdownload": ("zc_hwdownload", int(sw_encoder)),
-              "hwupload": ("zc_hwupload", int(sw_source)),
+              "hwupload": ("zc_hwupload", allowed_upload),
               "hwupload_cuda": ("zc_hwupload", 0), "scale": ("zc_scale", 0)}
     for ftype, (rule, allowed) in limits.items():
         count = types.count(ftype)
@@ -312,6 +318,16 @@ def transfer_problems(log, sw_source, sw_encoder, disabled=frozenset()):
         if mapping and mapping.group(2) in HOST_FORMATS:
             errs.append("hwmap to system memory: " + mapping.group(0))
     return errs
+
+
+def encoder_frames_problems(log, encoder, hw_format, disabled=frozenset()):
+    """Stage 7: require hardware frames context at the encoder."""
+    if "zc_encoder_frames" in disabled:
+        return []
+    target = "Using input frames context (format %s) with %s encoder." % (hw_format, encoder)
+    if target in log:
+        return []
+    return ["encoder %s did not receive %s frames (host frames)" % (encoder, hw_format)]
 
 
 def graph_problems(log, sw_source, sw_encoder, expect=(), disabled=frozenset()):
@@ -801,28 +817,41 @@ def encoder_problem_line(text, name):
     return ("%s: %s" % (name, own[0]))[:200] if own else first_line(text)
 
 
+def render_nodes(dev_root="/dev", sys_root="/sys"):
+    """Bounded list of (node_name, vendor_hex) for render nodes under dev_root/dri."""
+    try:
+        dri = Path(dev_root, "dri")
+        nodes = sorted(p.name for p in dri.iterdir() if p.name.startswith("renderD"))
+    except OSError:
+        return []
+    result = []
+    for node in nodes[:MAX_RENDER_NODES]:
+        base = Path(sys_root, "class", "drm", node, "device")
+        try:
+            vendor = (base / "vendor").read_text(encoding="ascii").strip().lower()
+            result.append((node, vendor))
+        except OSError:
+            continue
+    return result
+
+
 def intel_render_host(dev_root="/dev", sys_root="/sys"):
     """'xe-dg2' when an Intel DG2 render node (PCI id 0x56xx, linux
     include/drm/intel/pciids.h) under dev_root/dri is bound to xe; 'unknown' when no
     Intel render node can be read from sys_root; else 'other'."""
-    try:
-        nodes = sorted(p.name for p in Path(dev_root, "dri").iterdir() if p.name.startswith("renderD"))
-    except OSError:
+    intel_nodes = [node for node, vendor in render_nodes(dev_root, sys_root) if vendor == "0x8086"]
+    if not intel_nodes:
         return "unknown"
-    seen = False
-    for node in nodes[:MAX_RENDER_NODES]:
+    for node in intel_nodes:
         base = Path(sys_root, "class", "drm", node, "device")
         try:
-            vendor = (base / "vendor").read_text(encoding="ascii").strip()
             device = (base / "device").read_text(encoding="ascii").strip().lower()
+            driver = (base / "driver").resolve().name
         except OSError:
             continue
-        if vendor != "0x8086":
-            continue
-        seen = True
-        if device.startswith(DG2_PCI_PREFIX) and (base / "driver").resolve().name == "xe":
+        if device.startswith(DG2_PCI_PREFIX) and driver == "xe":
             return "xe-dg2"
-    return "other" if seen else "unknown"
+    return "other"
 
 
 def unusable(enc, text, why):
@@ -925,13 +954,15 @@ def device_indices(ctx):
     return hw[:MAX_DEVICES]
 
 
-def ffrun(ctx, argv, timeout_s=ENC_TIMEOUT_S):
+def ffrun(ctx, argv, timeout_s=ENC_TIMEOUT_S, env=None):
     """Run FFmpeg. With PELORUS_VALIDATE=1 the layer is on and every VUID is gated."""
-    env = dict(ctx["env"])
-    validating = env.get("PELORUS_VALIDATE") == "1"
+    merged_env = dict(ctx["env"])
+    if env:
+        merged_env.update(env)
+    validating = merged_env.get("PELORUS_VALIDATE") == "1"
     if validating:
-        env["VK_INSTANCE_LAYERS"] = VK_LAYER
-    code, text, err = ctx["run"]([ffmpeg_info(ctx)["bin"]] + argv, timeout_s, env)
+        merged_env["VK_INSTANCE_LAYERS"] = VK_LAYER
+    code, text, err = ctx["run"]([ffmpeg_info(ctx)["bin"]] + argv, timeout_s, merged_env)
     if validating:
         bad, ok = vuid_gate(text, load_allowlist(ctx), ctx["disabled"])
         ctx.setdefault("vuids", set()).update(bad)
@@ -1536,6 +1567,120 @@ def sw_leg(ctx, dev, entry, src, work):
     return ("fail", "; ".join(errs)) if errs else ("pass", "one hwupload, one hwdownload only")
 
 
+def first_error_line(text, err=""):
+    """First error line FFmpeg logged, else last line of output."""
+    if err:
+        return err[:200]
+    for line in text.splitlines():
+        if re.search(r"\[(?:error|fatal)\]|\bError\b", line):
+            return line.strip()[:200]
+    return first_line(text)
+
+
+VENDOR_LEGS = (
+    {
+        "name": "h264_nvenc", "codec": "h264", "vendor": "0x10de", "enc": "h264_nvenc",
+        "hw_fmt": "cuda", "device_kind": "vulkan", "env": {},
+        "filters": "format=nv12,hwupload,pelorus_deband_vulkan,pelorus_denoise_vulkan,"
+                   "pelorus_mc_vulkan,hwupload=derive_device=cuda",
+        "args": ["-rc", "constqp", "-qp", "30"],
+    },
+    {
+        "name": "h264_vaapi-intel", "codec": "h264", "vendor": "0x8086", "enc": "h264_vaapi",
+        "hw_fmt": "vaapi", "device_kind": "render_node", "env": {"LIBVA_DRIVER_NAME": "iHD"},
+        "filters": "format=nv12,hwupload,pelorus_denoise_vulkan,pelorus_mc_vulkan,"
+                   "pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi,format=vaapi",
+        "args": ["-rc_mode", "CQP", "-qp", "30"],
+    },
+    {
+        "name": "h264_qsv-intel", "codec": "h264", "vendor": "0x8086", "enc": "h264_qsv",
+        "hw_fmt": "qsv", "device_kind": "render_node", "env": {"LIBVA_DRIVER_NAME": "iHD"},
+        "filters": "format=nv12,hwupload,pelorus_denoise_vulkan,pelorus_mc_vulkan,"
+                   "pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi,format=vaapi,"
+                   "hwmap=derive_device=qsv,format=qsv",
+        "args": ["-q:v", "30"],
+    },
+    {
+        "name": "h264_vaapi-amd", "codec": "h264", "vendor": "0x1002", "enc": "h264_vaapi",
+        "hw_fmt": "vaapi", "device_kind": "render_node", "env": {"LIBVA_DRIVER_NAME": "radeonsi"},
+        "filters": "format=nv12,hwupload,pelorus_denoise_vulkan,pelorus_mc_vulkan,"
+                   "pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi,format=vaapi",
+        "args": ["-rc_mode", "CQP", "-qp", "30"],
+    },
+)
+
+
+def nv12_input_args(entry, path):
+    return ["-f", "rawvideo", "-pix_fmt", "nv12", "-s",
+            "%dx%d" % (entry["width"], entry["height"]), "-framerate",
+            str(entry["fps"]), "-i", str(path)]
+
+
+def ensure_nv12_fixture(ctx, entry, src, nv12_file):
+    if nv12_file.is_file():
+        return True, ""
+    argv = ["-hide_banner", "-y"] + input_args(entry, src) + [
+        "-frames:v", "4", "-pix_fmt", "nv12", "-f", "rawvideo", str(nv12_file)]
+    code, text, err = ffrun(ctx, argv)
+    if code != 0 or not nv12_file.is_file():
+        return False, "failed to prepare raw nv12 fixture: " + (err or first_line(text))
+    return True, ""
+
+
+def vendor_leg_device(ctx, vcfg):
+    """(device_args, skip_reason) for a vendor leg."""
+    if vcfg["device_kind"] == "vulkan":
+        idx = next((i for i, d in enumerate(ctx["devices"])
+                    if d.get("vendor_id", "").lower() == vcfg["vendor"]
+                    and ctx.get("is_hardware", lambda _: True)(d)), None)
+        if idx is None:
+            return None, "no_device: no Vulkan device with vendor %s" % vcfg["vendor"]
+        return ["-init_hw_device", "vulkan=vk:%d,disable_multiplane=1" % idx,
+                "-filter_hw_device", "vk"], None
+    node = next((n for n, v in render_nodes() if v == vcfg["vendor"]), None)
+    if node is None:
+        return None, "no_device: no render node with vendor %s" % vcfg["vendor"]
+    return ["-init_hw_device", "vaapi=va:/dev/dri/%s" % node,
+            "-init_hw_device", "vulkan=vk@va", "-filter_hw_device", "vk"], None
+
+
+def run_vendor_leg(ctx, vcfg, entry, src, nv12_file, work):
+    """Run one vendor zero-copy leg. Returns (status, reason)."""
+    dev_argv, no_dev = vendor_leg_device(ctx, vcfg)
+    if no_dev:
+        return "not_run", no_dev
+    if vcfg["enc"] not in ffmpeg_info(ctx)["encoders"]:
+        return "not_run", "encoder_absent: %s not in this FFmpeg's encoders" % vcfg["enc"]
+    ok, err_msg = ensure_nv12_fixture(ctx, entry, src, nv12_file)
+    if not ok:
+        return "fail", err_msg
+    argv = ["-hide_banner", "-loglevel", "debug", "-y"] + dev_argv
+    argv += nv12_input_args(entry, nv12_file) + ["-frames:v", "2", "-vf", vcfg["filters"]]
+    argv += ["-c:v", vcfg["enc"]] + vcfg["args"] + MUX_ARGS + [str(work / ("zc-%s.mkv" % vcfg["name"]))]
+    code, text, err = ffrun(ctx, argv, env=vcfg["env"])
+    if code != 0:
+        return "fail", first_error_line(text, err)
+    errs = graph_problems(text, True, False, NATIVE_FILTERS, ctx["disabled"])
+    errs += encoder_frames_problems(text, vcfg["enc"], vcfg["hw_fmt"], ctx["disabled"])
+    return ("fail", "; ".join(errs)) if errs else ("pass", "")
+
+
+def zero_copy_verdict(legs):
+    """(status, reason) aggregated across all zero_copy_chain legs."""
+    parts = {"pass": [], "fail": [], "not_run": []}
+    for leg in legs:
+        label = "%s (%s)" % (leg["encoder"], leg["reason"]) if leg["status"] != "pass" and leg["reason"] else leg["encoder"]
+        parts[leg["status"]].append(label)
+    reason = "; ".join("%s: %s" % (k, ", ".join(v)) for k, v in parts.items() if v)
+    if parts["fail"]:
+        return "fail", reason
+    native_passed = bool(legs) and legs[0]["status"] == "pass"
+    vendor_passed = any(l["status"] == "pass" for l in legs[2:])
+    if native_passed or vendor_passed:
+        return "pass", reason
+    return "not_run", reason
+
+
 def run_zero_copy(ctx, spec):
     stop = gpu_prologue(ctx)
     if stop:
@@ -1547,22 +1692,39 @@ def run_zero_copy(ctx, spec):
     if not devs:
         return outcome("no_device", "no hardware Vulkan device index known; " +
                        ctx.get("no_device_reason", "start the container with a GPU device"))
-    sw_state, sw_why = sw_leg(ctx, devs[0], entry, src, work)
+    legs = []
     pair = find_native_pair(ctx, entry, src, work)
     if pair is None:
-        status = "fail" if sw_state == "fail" else "not_run"
-        return finish(ctx, outcome(status, "native leg (Vulkan decode -> Pelorus -> Vulkan "
-                                   "encode) not run: no device with both; software-encoder "
-                                   "leg %s: %s" % (sw_state, sw_why)))
-    dev, enc, stream = pair
-    code, text = native_run(ctx, enc, dev, stream, work, 4)
-    errs = graph_problems(text, False, False, NATIVE_FILTERS, ctx["disabled"]) if code == 0 \
-        else ["native leg exit code %s" % code]
-    if errs or sw_state == "fail":
-        return finish(ctx, outcome("fail", "native: %s; software-encoder leg %s: %s" % (
-            "; ".join(errs) or "ok", sw_state, sw_why)))
-    return finish(ctx, outcome("pass", "native %s on device %d has no hwupload, hwdownload "
-                               "or scale; software-encoder leg %s" % (enc["name"], dev, sw_state)))
+        legs.append({"encoder": "native", "codec": "h264", "status": "not_run",
+                     "reason": "no device with Vulkan Video decode and encode"})
+    else:
+        dev, enc, stream = pair
+        code, text = native_run(ctx, enc, dev, stream, work, 4)
+        nerrs = graph_problems(text, False, False, NATIVE_FILTERS, ctx["disabled"]) if code == 0 \
+            else ["native leg exit code %s" % code]
+        if code == 0:
+            nerrs += encoder_frames_problems(text, enc["name"], "vulkan", ctx["disabled"])
+        nstatus = "fail" if nerrs else "pass"
+        legs.append({"encoder": enc["name"], "codec": enc["codec"], "status": nstatus,
+                     "reason": "; ".join(nerrs) if nerrs else ""})
+
+    have = ffmpeg_info(ctx)["encoders"]
+    sw_enc = next((e for e in ENCODERS if e["kind"] == "sw" and e["name"] in have), None)
+    sw_state, sw_why = sw_leg(ctx, devs[0], entry, src, work)
+    sw_status = "not_run" if sw_state == "skip" else sw_state
+    sw_name = sw_enc["name"] if sw_enc else "software"
+    sw_codec = sw_enc["codec"] if sw_enc else "av1"
+    legs.append({"encoder": sw_name, "codec": sw_codec, "status": sw_status,
+                 "reason": "" if sw_status == "pass" else sw_why})
+
+    nv12_file = work / "synth-nv12.raw"
+    for vcfg in VENDOR_LEGS:
+        vstate, vwhy = run_vendor_leg(ctx, vcfg, entry, src, nv12_file, work)
+        legs.append({"encoder": vcfg["name"], "codec": vcfg["codec"], "status": vstate,
+                     "reason": "" if vstate == "pass" else vwhy})
+
+    status, reason = zero_copy_verdict(legs)
+    return finish(ctx, outcome(status, reason, legs=legs))
 
 
 # ------------------------------------------------------------------- bench
@@ -1645,6 +1807,50 @@ PLANTED_AUTO_TRANSFER = CLEAN_GRAPH + PLANTED_SCALE[len(CLEAN_GRAPH):].replace(
 # vf_hwmap.c:hwmap_config_output prints this even without a Filter block.
 PLANTED_HOST_MAP = CLEAN_GRAPH + (
     "[Parsed_hwmap_3 @ 0x1] Configure hwmap vulkan -> nv12.\n")
+NV_CLEAN_LOG = """\
+Filter 'Parsed_format_0' formats:
+Filter 'Parsed_hwupload_1' formats:
+Filter 'Parsed_pelorus_deband_vulkan_2' formats:
+Filter 'Parsed_pelorus_denoise_vulkan_3' formats:
+Filter 'Parsed_pelorus_mc_vulkan_4' formats:
+Filter 'Parsed_hwupload_5' formats:
+[hwupload @ 0x7f329c003d80] Surface format is nv12.
+[hwupload @ 0x7f329c00f080] Surface format is vulkan.
+[vost#0:0/h264_nvenc @ 0x1] [enc:h264_nvenc @ 0x2] Using input frames context (format cuda) with h264_nvenc encoder.
+"""
+NV_PLANTED_REUPLOAD_LOG = """\
+Filter 'Parsed_format_0' formats:
+Filter 'Parsed_hwupload_1' formats:
+Filter 'Parsed_pelorus_deband_vulkan_2' formats:
+Filter 'Parsed_pelorus_denoise_vulkan_3' formats:
+Filter 'Parsed_pelorus_mc_vulkan_4' formats:
+Filter 'Parsed_hwdownload_5' formats:
+Filter 'Parsed_format_6' formats:
+Filter 'Parsed_hwupload_7' formats:
+[hwupload @ 0x7fc708003f00] Surface format is nv12.
+[hwupload @ 0x7fc70800f6c0] Surface format is nv12.
+[vost#0:0/h264_nvenc @ 0x1] [enc:h264_nvenc @ 0x2] Using input frames context (format cuda) with h264_nvenc encoder.
+"""
+NV_PLANTED_SWENC_LOG = """\
+Filter 'Parsed_format_0' formats:
+Filter 'Parsed_hwupload_1' formats:
+Filter 'Parsed_pelorus_deband_vulkan_2' formats:
+Filter 'Parsed_pelorus_denoise_vulkan_3' formats:
+Filter 'Parsed_pelorus_mc_vulkan_4' formats:
+[hwupload @ 0x7f0680003dc0] Surface format is nv12.
+"""
+INTEL_CLEAN_LOG = """\
+Filter 'Parsed_format_0' formats:
+Filter 'Parsed_hwupload_1' formats:
+Filter 'Parsed_pelorus_denoise_vulkan_2' formats:
+Filter 'Parsed_pelorus_mc_vulkan_3' formats:
+Filter 'Parsed_pelorus_deband_vulkan_4' formats:
+Filter 'Parsed_hwmap_5' formats:
+Filter 'Parsed_format_6' formats:
+[hwupload @ 0x7f9778003f00] Surface format is nv12.
+[Parsed_hwmap_5 @ 0x7f977800f100] Configure hwmap vulkan -> vaapi.
+[vost#0:0/h264_vaapi @ 0x1] [enc:h264_vaapi @ 0x2] Using input frames context (format vaapi) with h264_vaapi encoder.
+"""
 
 
 def pack_blob(mask=3, pts=0, total=None, major=1):
@@ -2313,6 +2519,92 @@ sys.exit(1)
         expect("suite_absent_artefact_not_run", status == "not_run" and "absent" in reason)
 
 
+def self_test_vendor_graph(expect, disabled):
+    """Clean and planted vendor log fixtures and transfer boundaries."""
+    expect("zc_nv_clean_passes",
+           not graph_problems(NV_CLEAN_LOG, True, False, NATIVE_FILTERS, disabled)
+           and not encoder_frames_problems(NV_CLEAN_LOG, "h264_nvenc", "cuda", disabled))
+    reupload_errs = graph_problems(NV_PLANTED_REUPLOAD_LOG, True, False, NATIVE_FILTERS, disabled)
+    expect("zc_nv_reupload_download", any("hwdownload" in e for e in reupload_errs))
+    expect("zc_nv_reupload_upload", any("hwupload" in e for e in reupload_errs))
+    swenc_errs = encoder_frames_problems(NV_PLANTED_SWENC_LOG, "h264_nvenc", "cuda", disabled)
+    expect("zc_rejects_swenc_frames", bool(swenc_errs))
+    expect("zc_intel_clean_passes",
+           not graph_problems(INTEL_CLEAN_LOG, True, False, NATIVE_FILTERS, disabled)
+           and not encoder_frames_problems(INTEL_CLEAN_LOG, "h264_vaapi", "vaapi", disabled))
+    two_nodes_one_surface = ("Filter 'Parsed_hwupload_1' formats:\nFilter 'Parsed_hwupload_2' formats:\n"
+                             "[hwupload @ 0x1] Surface format is vulkan.\n")
+    expect("zc_two_upload_one_surface_fails",
+           bool(transfer_problems(two_nodes_one_surface, False, False, disabled)))
+    same_addr_twice = ("Filter 'Parsed_hwupload_1' formats:\nFilter 'Parsed_hwupload_2' formats:\n"
+                       "[hwupload @ 0x1] Surface format is vulkan.\n"
+                       "[hwupload @ 0x1] Surface format is vulkan.\n")
+    expect("zc_same_addr_twice_one_hop",
+           bool(transfer_problems(same_addr_twice, False, False, disabled)))
+
+
+def self_test_vendor_nodes(expect):
+    """render_nodes discovery on synthetic sysfs tree."""
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="pelorus-rnodes-") as tmp:
+        dev_dir, sys_dir = Path(tmp, "dev"), Path(tmp, "sys")
+        dri = dev_dir / "dri"
+        dri.mkdir(parents=True)
+        (dri / "renderD100").write_text("")
+        base100 = sys_dir / "class" / "drm" / "renderD100" / "device"
+        base100.mkdir(parents=True)
+        (base100 / "vendor").write_text("0x8086\n")
+        (dri / "renderD101").write_text("")
+        for i in range(70):
+            node = "renderD%03d" % (200 + i)
+            (dri / node).write_text("")
+            base = sys_dir / "class" / "drm" / node / "device"
+            base.mkdir(parents=True)
+            (base / "vendor").write_text("0x1002\n")
+        nodes = render_nodes(str(dev_dir), str(sys_dir))
+        expect("render_nodes_has_good_node", ("renderD100", "0x8086") in nodes)
+        expect("render_nodes_skips_bad_vendor", not any(n == "renderD101" for n, _ in nodes))
+        expect("render_nodes_bounded", len(nodes) <= MAX_RENDER_NODES)
+
+
+def self_test_vendor_execution(expect, disabled):
+    """Vendor leg selection, stated skip reasons, and stage aggregation."""
+    import tempfile
+    entry = {"pixfmt": "nv12", "width": 16, "height": 16, "fps": 25, "frames": 2}
+    with tempfile.TemporaryDirectory(prefix="pelorus-vlegs-") as tmp:
+        work = Path(tmp)
+        nv12_file = work / "synth-nv12.raw"
+        nv12_file.write_bytes(b"\x00" * 384)
+        no_dev_ctx = {"devices": [], "is_hardware": lambda _: True, "env": {},
+                      "disabled": disabled, "ff": {"encoders": {"h264_nvenc"}}}
+        status, reason = run_vendor_leg(no_dev_ctx, VENDOR_LEGS[0], entry, "src", nv12_file, work)
+        expect("vendor_leg_no_device_nvenc",
+               status == "not_run" and "no_device: no Vulkan device with vendor 0x10de" in reason)
+        mock_vcfg = dict(VENDOR_LEGS[1], vendor="0x9999")
+        status, reason = run_vendor_leg(no_dev_ctx, mock_vcfg, entry, "src", nv12_file, work)
+        expect("vendor_leg_no_render_node",
+               status == "not_run" and "no_device: no render node with vendor 0x9999" in reason)
+        no_enc_ctx = {"devices": [{"vendor_id": "0x10de"}], "is_hardware": lambda _: True,
+                      "env": {}, "disabled": disabled, "ff": {"encoders": set()}}
+        status, reason = run_vendor_leg(no_enc_ctx, VENDOR_LEGS[0], entry, "src", nv12_file, work)
+        expect("vendor_leg_encoder_absent",
+               status == "not_run" and "encoder_absent: h264_nvenc not in this FFmpeg's encoders" in reason)
+        sw_pass_legs = [
+            {"encoder": "native", "codec": "h264", "status": "not_run", "reason": "no device"},
+            {"encoder": "libsvtav1", "codec": "av1", "status": "pass", "reason": ""},
+            {"encoder": "h264_nvenc", "codec": "h264", "status": "not_run", "reason": "no_device"},
+        ]
+        expect("zero_copy_sw_pass_alone_is_not_run",
+               zero_copy_verdict(sw_pass_legs)[0] == "not_run")
+        vendor_fail_legs = [
+            {"encoder": "native", "codec": "h264", "status": "not_run", "reason": "no device"},
+            {"encoder": "libsvtav1", "codec": "av1", "status": "pass", "reason": ""},
+            {"encoder": "h264_nvenc", "codec": "h264", "status": "fail", "reason": "graph has 2 hwupload"},
+        ]
+        expect("zero_copy_vendor_fail_fails_stage",
+               zero_copy_verdict(vendor_fail_legs)[0] == "fail")
+
+
 def self_test(disabled=frozenset()):
     """Return failing check names; every rule has a planted bad case."""
     failures = []
@@ -2336,5 +2628,7 @@ def self_test(disabled=frozenset()):
     self_test_brc_legs(expect, disabled)
     self_test_registration(expect, disabled)
     self_test_suite(expect, disabled)
+    self_test_vendor_graph(expect, disabled)
+    self_test_vendor_nodes(expect)
+    self_test_vendor_execution(expect, disabled)
     return failures
-

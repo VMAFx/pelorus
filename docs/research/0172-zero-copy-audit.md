@@ -112,6 +112,18 @@ Today = origin/master + n9.0.2 + current Pelorus patches. RC4 = vmafx drafts lis
 | H | macOS: VideoToolbox dec -> Pelorus (MoltenVK) -> VT enc -> vmafx Metal | X (no VT<->Vulkan map) -> H | Z (Pelorus Vulkan filters on MoltenVK: untested, PLT-03 "macOS/MoltenVK not addressed") | X -> H | Metal import = CPU memcpy today | n/a | H | needs Metal compute filters (G9) or upstream VT<->Vulkan interop (G5) |
 | I | Software encoders (libx264/x265/aom/SVT) | Z or V | Z | I: hwdownload unavoidable | I: sw frames -> context upload | n/a | inherent | inherent; keep scenecut/ROI as side-data consumers |
 | J | Any path with mc + denoise MC taps | n/a | GPU->CPU->GPU MV loop (small, 33-130 KB/frame) | n/a | n/a | n/a | not a frame copy, but a host sync that serialises the pipeline | G7 |
+| K | Linux NVIDIA (RTX 4090, 2026-10-18): Pelorus -> NVENC (derive cuda) | V (host upload) | Z | V (VRAM-only `hwupload=derive_device=cuda` Vulkan->CUDA) | blocked on #160 | n/a | Z (no host copy in filter->encoder chain) | Z |
+| L | Linux Intel (Arc A380, xe, iHD, 2026-10-18): Pelorus (tiling=drm) -> VAAPI enc | V (host upload) | Z | Z (hwmap vulkan->vaapi modifier I915_FORMAT_MOD_4_TILED) | blocked on #160 | n/a | Z (in-place DRM modifier map) | Z |
+| M | Linux AMD (Radeon 610M, radeonsi, 2026-10-18): Pelorus (tiling=drm) -> VAAPI enc | V (host upload) | Z | Z (hwmap vulkan->vaapi AMD tile 27 modifier) | blocked on #160 | n/a | Z (in-place DRM modifier map) | Z |
+| N | Linux Intel (Arc A380, 2026-10-18): Pelorus -> QSV enc (vaapi+qsv hwmap) | V (host upload) | Z | not measured (h264_qsv not built locally) | blocked on #160 | n/a | not_run (encoder_absent) | Z |
+
+Measured on 2026-10-18 with FFmpeg n9.0.2 + Pelorus stack under tester stage `zero_copy_chain` (#105):
+
+- **RTX 4090** (`h264_nvenc`): device hop via `hwupload=derive_device=cuda` logged `[hwupload @ ...] Surface format is vulkan.`, executing a VRAM-to-VRAM copy (V) without host memory round trip; encoder confirmed receiving device frames with `Using input frames context (format cuda) with h264_nvenc encoder.`.
+- **Arc A380** (`h264_vaapi-intel`, driver `xe`, `LIBVA_DRIVER_NAME=iHD`): `pelorus_deband_vulkan=tiling=drm` exports DRM modifier `I915_FORMAT_MOD_4_TILED`; `hwmap=derive_device=vaapi,format=vaapi` succeeds in-place (Z) with `Configure hwmap vulkan -> vaapi.` and `Using input frames context (format vaapi) with h264_vaapi encoder.`.
+- **Radeon 610M** (`h264_vaapi-amd`, driver `amdgpu`, `LIBVA_DRIVER_NAME=radeonsi`): DRM modifier export (AMD tile 27) succeeds in-place (Z) with identical VAAPI hwmap markers.
+- **QSV Intel** (`h264_qsv-intel`): `h264_qsv` not built into the local FFmpeg binary; reports `not_run: encoder_absent: h264_qsv not in this FFmpeg's encoders`.
+- **vmafx evaluation**: Hardware frame scoring into vmafx is not part of this tester stage and is blocked on #160.
 
 ## 6. Gap list (ordered by impact)
 

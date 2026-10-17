@@ -149,7 +149,7 @@ the stage's own leg.
 | 4 | `format_matrix` (GPU) | [`vulkan-format-matrix.sh`](../../ffmpeg-patches/test/vulkan-format-matrix.sh) exits 0 with the validation layer on; every Vulkan diagnostic is on the [allow-list](#validation-gate) | layer absent: `not_run`; script exit 77: `no_device`; no `ffmpeg`: `not_run` |
 | 5 | `steering_smoke` (GPU) | for each usable encoder, 8- and 16-frame encodes both decode to 8 and 16 frames, and the steered bitstream differs from the unsteered one at both lengths; for each QSV encoder, the [bitrate-control legs](#qsv-bitrate-control-legs) decode to every frame within 15 % of the target bitrate or are a named `not_run` | encoder not built, not usable on this host, or without `-pelorus_roi`: a `not_run` leg with the reason; none usable: `not_run` (a bitrate-control leg cannot pass the stage alone) |
 | 6 | `sidedata_roundtrip` (GPU) | `pelorus_analyze_vulkan` + `pelorus_deband_vulkan`, then each usable carrier with `-udu_sei 1` (`hevc_nvenc`, `h264_nvenc`, `hevc_qsv`, `h264_qsv`, `hevc_vulkan`, `h264_vulkan`): every coded picture carries a well-formed `PelorusSideData` blob with the banding and variance sections and distinct `frame_pts` echoes, the decoder returns the blob as frame side data on every picture, and in both places each blob equals the one the analyze filter attached, byte for byte (or, on `hevc_nvenc`, `hevc_qsv` and `h264_qsv` only, its [maps-stripped form](#stage-6-side-data-round-trip)); `hevc_nvenc` and `h264_nvenc` carry it as the [zero-free carrier](#stage-6-side-data-round-trip), every other carrier as the plain blob; five cases per carrier | carrier not built, or its encode fails and the same encode without the side data fails too: a `not_run` leg with the encoder's error; none usable: `not_run`; AV1 has no carrier. A carrier whose encode fails only with the side data (baseline encodes) is a `fail` leg, never `not_run` ([ADR-0173](../adr/0173-tester-programme.md)) |
-| 7 | `zero_copy_chain` (GPU) | the `-loglevel debug` graph holds no `hwdownload`, `hwupload` or `scale` beyond the allowed edges (below) and contains the Pelorus filters | no device with Vulkan Video decode and encode: `not_run` (the software-encoder leg still runs and can fail) |
+| 7 | `zero_copy_chain` (GPU) | the `-loglevel debug` graph holds no `hwdownload`, `hwupload` or `scale` beyond the allowed edges (below), verifies hardware frame hand-off to encoders, and contains the Pelorus filters across native and vendor legs | no device with Vulkan Video or vendor hardware encoding: `not_run` (the software-encoder leg still runs and can fail) |
 | 8 | `bench` (GPU, opt-in) | non-gating: `scripts/bench/run-bench.py` writes `result.json` for a 4-point CQ ladder; a failure is recorded but never changes the verdict | needs `--bench`, a `vmaf` binary, `hevc_nvenc` or `av1_nvenc`: otherwise `not_run` |
 
 ### Stage 5: steering smoke
@@ -226,32 +226,52 @@ must also log `ExtBRC: ON`. On the Arc A380 under `xe` the image measured
 
 ### Stage 7: zero-copy chain
 
-The stage runs two legs and reads the filter graph that FFmpeg prints at
-`-loglevel debug` (`Filter '...' formats:` blocks and `auto-inserting filter`
+The stage runs native, software-encoder, and vendor hardware legs, inspecting the
+filter graph and frame contexts that FFmpeg prints at `-loglevel debug`
+(`Filter '...' formats:` blocks, `Surface format is ...`, and `Using input frames context`
 lines):
 
 | Leg | Chain | Allowed transfers |
 | --- | --- | --- |
-| native | Vulkan decode, `pelorus_deband_vulkan`, `pelorus_denoise_vulkan`, `pelorus_mc_vulkan`, Vulkan encode | none |
-| software encoder | raw source, `hwupload`, the same three filters, `hwdownload`, `libsvtav1` or `libaom-av1` | one `hwupload`, one `hwdownload` |
+| `native` (`h264_vulkan`) | Vulkan decode, `pelorus_deband_vulkan`, `pelorus_denoise_vulkan`, `pelorus_mc_vulkan`, Vulkan encode | none |
+| `software` | raw source, `hwupload`, the same three filters, `hwdownload`, `libsvtav1` or `libaom-av1` | one `hwupload`, one `hwdownload` |
+| `h264_nvenc` | raw NV12, `hwupload`, filters, `hwupload=derive_device=cuda`, NVENC encode | one host `hwupload`, one device-to-device `hwupload` (Vulkan->CUDA) |
+| `h264_vaapi-intel` | raw NV12, `hwupload`, filters (`pelorus_deband_vulkan=tiling=drm`), `hwmap=derive_device=vaapi,format=vaapi`, VAAPI encode (`LIBVA_DRIVER_NAME=iHD`) | one host `hwupload`, DRM PRIME map |
+| `h264_qsv-intel` | raw NV12, `hwupload`, filters, VAAPI mapping tail plus `hwmap=derive_device=qsv,format=qsv`, QSV encode | one host `hwupload`, VAAPI and QSV maps |
+| `h264_vaapi-amd` | raw NV12, `hwupload`, filters (`tiling=drm`), VAAPI map, VAAPI encode (`LIBVA_DRIVER_NAME=radeonsi`) | one host `hwupload`, DRM PRIME map |
 
-Any `scale` (including `auto_scale_N`), any further `hwupload` or `hwdownload`,
+Hardware hops between devices (such as Vulkan to CUDA or VAAPI) are recognized by
+inspecting `[hwupload @ ADDR] Surface format is <fmt>.` lines. Hardware formats
+(`vulkan`, `cuda`, `vaapi`, `qsv`, `drm_prime`) credit hardware hops; unclassified
+`hwupload` nodes count as host uploads. Rule `zc_encoder_frames` asserts that the
+hardware encoder receives device frames via `Using input frames context (format <hw_format>) with <encoder> encoder.`.
+If the encoder receives host frames or the line is missing, the leg fails.
+
+Any unexpected `scale` (including `auto_scale_N`), extraneous `hwupload` or `hwdownload`,
 an empty graph, or a graph without the three Pelorus filters fails the leg. The
 transfer classifier also checks automatic insertion diagnostics without a
 `Filter` block, software-only `Pixel formats:` lists on Vulkan filters, and
 `Configure hwmap` diagnostics targeting known software formats such as `nv12`.
-The diagnostic names the transfer or filter that failed. A Vulkan frame's
-`sw_format` metadata alone does not fail the check. The CPU-only self-test
-plants these cases; it also checks that `zero_copy_chain` reports `no_device`
-with exit code 0 when the device probe finds no GPU.
+Planted copies (such as an inserted `hwdownload` before a vendor encoder) fail the
+classifier, verifying that exit code 0 alone is not accepted as proof.
+
+Each vendor leg is reported with its status: `pass`, `fail`, or `not_run`. Stated
+skip reasons use explicit prefixes:
+
+- `no_device:` when no device or render node matching the vendor ID is available;
+- `encoder_absent:` when the encoder is not configured in the FFmpeg binary.
+
+The stage verdict is `fail` if any executed leg fails. It is `pass` if the native
+leg or at least one vendor leg passes (proving device residency). If only the
+software-encoder leg passes or all legs are skipped, the stage verdict is `not_run`.
+The `vmafx` hardware frame scoring leg is not in this stage and is blocked on #160.
+
 The classifier and fixtures live in
 [`pelorus_tester_stages.py`](../../tools/tester/pelorus_tester_stages.py), with
 the report-level check in
 [`pelorus_tester_report.py`](../../tools/tester/pelorus_tester_report.py). The
-background and hop rules are in [research 0172](../research/0172-zero-copy-audit.md).
-When the native leg cannot run (no device with both Vulkan Video decode and
-encode), the stage is `not_run` and its reason states the result of the
-software-encoder leg.
+background and hop rules are in [research 0172](../research/0172-zero-copy-audit.md)
+and [ADR-0209](../adr/0209-zero-copy-vendor-legs.md).
 
 ## Environment
 

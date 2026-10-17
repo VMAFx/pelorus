@@ -102,9 +102,14 @@ Tool version and tool digest, schema version, `execution_class` and
 `PELORUS_TESTER_KIT`: `generic`, `nvidia`, `intel`, or `source` outside an
 image), OS, architecture, CPU count, Python version, per device name, driver,
 Vulkan API version, vendor id and device type, per stage status, reason,
-duration, exit code and the last 4000 characters of its output. The steering
-and side-data stages add `legs`: one entry per encoder with its codec, `pass`,
-`fail` or `not_run`, and a reason for anything but `pass`.
+duration, exit code and the last 4000 characters of its output. The steering,
+side-data and zero-copy stages add `legs`: one entry per encoder with its codec,
+`pass`, `fail` or `not_run`, and a reason for anything but `pass`. In
+`zero_copy_chain`, legs cover native Vulkan (`h264_vulkan`), software encoding,
+and vendor legs (`h264_nvenc`, `h264_vaapi-intel`, `h264_qsv-intel`, `h264_vaapi-amd`).
+Missing devices or absent encoders emit explicit `not_run` records with stated
+prefixes (`no_device:`, `encoder_absent:`). Planted copies in the chain turn
+the leg `fail`. The `vmafx` hardware frame scoring leg is blocked on #160.
 
 ### What it excludes
 
