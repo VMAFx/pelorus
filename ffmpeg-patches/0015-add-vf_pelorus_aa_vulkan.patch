@@ -31,10 +31,10 @@ ADR: docs/adr/0124-anime-aa.md
  configure                               |   1 +
  libavfilter/Makefile                    |   1 +
  libavfilter/allfilters.c                |   1 +
- libavfilter/vf_pelorus_aa_vulkan.c      | 302 ++++++++++++++++++++
+ libavfilter/vf_pelorus_aa_vulkan.c      | 304 ++++++++++++++++++++
  libavfilter/vulkan/Makefile             |   1 +
- libavfilter/vulkan/pelorus_aa.comp.glsl | 265 +++++++++++++++++
- 6 files changed, 571 insertions(+)
+ libavfilter/vulkan/pelorus_aa.comp.glsl | 284 ++++++++++++++++++
+ 6 files changed, 592 insertions(+)
 
 diff --git a/configure b/configure
 index f052412ba00f78d88734beaa51c4a4e82a5ebea6..021915e788bf3f971443131919f665036148b3b6 100755
@@ -74,10 +74,10 @@ index 2ac2a6540fb0f9b500bfbd6137278ca1ddc56b4a..0ee727c8c38cefe87c4d23504c0e43dd
  extern const FFFilter ff_vf_pelorus_dehalo_vulkan;
 diff --git a/libavfilter/vf_pelorus_aa_vulkan.c b/libavfilter/vf_pelorus_aa_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..34ffb56900a09c8c6b225804023c25d7a85ff679
+index 0000000000000000000000000000000000000000..01124779bff8e329a8dd5f39a6f7d29a9e845047
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_aa_vulkan.c
-@@ -0,0 +1,302 @@
+@@ -0,0 +1,304 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -184,12 +184,14 @@ index 0000000000000000000000000000000000000000..34ffb56900a09c8c6b225804023c25d7
 +     * const-folded into the generated GLSL before FFmpeg 9 unrolled the
 +     * per-plane loop in C. With precompiled SPIR-V they become specialization
 +     * constants, folded at pipeline-compile time to the same single variant. */
-+    SPEC_LIST_CREATE(sl, 5, 5 * sizeof(uint32_t))
++    SPEC_LIST_CREATE(sl, 5 + PEL_VK_SPEC_FRAME_SIZE_COUNT,
++                     (5 + PEL_VK_SPEC_FRAME_SIZE_COUNT) * sizeof(uint32_t))
 +    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
 +    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
 +    SPEC_LIST_ADD(sl, 2, 32, (uint32_t)(s->fast != 0));
 +    SPEC_LIST_ADD(sl, 3, 32, (uint32_t)semi_planar);
 +    SPEC_LIST_ADD(sl, 4, 32, sample_code_max);
++    pel_vk_spec_add_frame_size(sl, vkctx);
 +
 +    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 +
@@ -391,10 +393,10 @@ index 77187fe29c5fe23f84b61b45cf3a28257140bbc3..d3ff362cfa612b53ee51d812a1df844c
 +OBJS-$(CONFIG_PELORUS_AA_VULKAN_FILTER) += vulkan/pelorus_aa.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_aa.comp.glsl b/libavfilter/vulkan/pelorus_aa.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..1bc5305454b89531b3602638f03d6f29e33fcd28
+index 0000000000000000000000000000000000000000..45b7a2248383a2f2248a8d26313cfa37f8819dde
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_aa.comp.glsl
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,284 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -448,6 +450,25 @@ index 0000000000000000000000000000000000000000..1bc5305454b89531b3602638f03d6f29
 +layout (constant_id = 2) const uint fast       = 0;
 +layout (constant_id = 3) const uint semi_planar = 0;
 +layout (constant_id = 4) const uint sample_code_max = 0;
++
++/* Frame size from the host (#358): imageSize() of a plane view of a
++ * multi-planar image may report the driver's padded allocation (NVIDIA pads
++ * nv12/nv24 widths to a multiple of 64), so bounds and edge clamps use these.
++ * IDs 16-19 are the same in every Pelorus shader. */
++layout (constant_id = 16) const int pel_frame_w        = 1;
++layout (constant_id = 17) const int pel_frame_h        = 1;
++layout (constant_id = 18) const int pel_chroma_shift_w = 0;
++layout (constant_id = 19) const int pel_chroma_shift_h = 0;
++
++/* Planes 1 and 2 are chroma (one interleaved plane when semi-planar), rounded
++ * up as AV_CEIL_RSHIFT does; luma, alpha and packed RGBA are full size. */
++ivec2 pel_plane_size(uint plane)
++{
++    if (plane == 1u || plane == 2u)
++        return ivec2((pel_frame_w + (1 << pel_chroma_shift_w) - 1) >> pel_chroma_shift_w,
++                     (pel_frame_h + (1 << pel_chroma_shift_h) - 1) >> pel_chroma_shift_h);
++    return ivec2(pel_frame_w, pel_frame_h);
++}
 +
 +layout (push_constant, std430) uniform pushConstants {
 +    int   blur;
@@ -574,7 +595,7 @@ index 0000000000000000000000000000000000000000..1bc5305454b89531b3602638f03d6f29
 +}
 +
 +float aa(ivec2 pos, int idx, int comp) {
-+    ivec2 sz = imageSize(output_images[idx]);
++    ivec2 sz = pel_plane_size(uint(idx));
 +    int r = clamp(blur, 0, MAX_R);
 +    float thr = max(thresh, 0.0001);
 +    float gx = (emask(idx, comp, pos, ivec2(1, 0), sz, r, thr)
@@ -618,7 +639,7 @@ index 0000000000000000000000000000000000000000..1bc5305454b89531b3602638f03d6f29
 +     * folds down to the single generated variant, as before. */
 +    if (fast != 0u) {
 +        for (uint i = 0; i < planes; i++) {
-+            size = imageSize(output_images[i]);
++            size = pel_plane_size(i);
 +            if ((plane_mask & (1u << i)) != 0u) {
 +                const bool inb = all(lessThan(pos, size));
 +                const uint ncomp = pel_component_count(i);
@@ -641,7 +662,7 @@ index 0000000000000000000000000000000000000000..1bc5305454b89531b3602638f03d6f29
 +        }
 +    } else {
 +        for (uint i = 0; i < planes; i++) {
-+            size = imageSize(output_images[i]);
++            size = pel_plane_size(i);
 +            if (!all(lessThan(pos, size)))
 +                continue;
 +

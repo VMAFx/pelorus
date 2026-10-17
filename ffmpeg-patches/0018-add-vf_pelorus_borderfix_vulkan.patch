@@ -26,10 +26,10 @@ ADR: docs/adr/0128-borderfix.md
  configure                                      |   1 +
  libavfilter/Makefile                           |   1 +
  libavfilter/allfilters.c                       |   1 +
- libavfilter/vf_pelorus_borderfix_vulkan.c      | 238 ++++++++++++++++++++
+ libavfilter/vf_pelorus_borderfix_vulkan.c      | 240 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                    |   1 +
- libavfilter/vulkan/pelorus_borderfix.comp.glsl |  86 +++++++
- 6 files changed, 328 insertions(+)
+ libavfilter/vulkan/pelorus_borderfix.comp.glsl | 105 +++++++++
+ 6 files changed, 349 insertions(+)
 
 diff --git a/configure b/configure
 index b890fae94423562137ed098673ca7a24cee3bacc..ab6d0d9ac09d93a7cee643e596120c2401b9ff85 100755
@@ -69,10 +69,10 @@ index 9985efd56d8026261a43cba1283408ac3409ba25..570b308238750a84ce432a4e3484241d
  extern const FFFilter ff_vf_pelorus_dehalo_vulkan;
 diff --git a/libavfilter/vf_pelorus_borderfix_vulkan.c b/libavfilter/vf_pelorus_borderfix_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..065f76579606eebf435ad9acfc52c8de7a67ede3
+index 0000000000000000000000000000000000000000..6fb4f2a92505d9a771ae7549d5b3cec9e8836031
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_borderfix_vulkan.c
-@@ -0,0 +1,238 @@
+@@ -0,0 +1,240 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -164,9 +164,11 @@ index 0000000000000000000000000000000000000000..065f76579606eebf435ad9acfc52c8de
 +    /* Plane count and the plane bitmask were const-folded into the generated
 +     * GLSL before FFmpeg 9 unrolled the per-plane loop in C. With precompiled
 +     * SPIR-V they become specialization constants instead. */
-+    SPEC_LIST_CREATE(sl, 2, 2 * sizeof(uint32_t))
++    SPEC_LIST_CREATE(sl, 2 + PEL_VK_SPEC_FRAME_SIZE_COUNT,
++                     (2 + PEL_VK_SPEC_FRAME_SIZE_COUNT) * sizeof(uint32_t))
 +    SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
 +    SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
++    pel_vk_spec_add_frame_size(sl, vkctx);
 +
 +    ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl,
 +                      (uint32_t []) { 32, 32, 1 }, 0);
@@ -322,10 +324,10 @@ index 8e75e876856feb0a34b5188010c0f01a1a2644d8..f324fac9bff249e5da86cddf2426ab08
 +OBJS-$(CONFIG_PELORUS_BORDERFIX_VULKAN_FILTER) += vulkan/pelorus_borderfix.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_borderfix.comp.glsl b/libavfilter/vulkan/pelorus_borderfix.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..8084d6073f5a0112de8aaf58f42139e6f8af6bc4
+index 0000000000000000000000000000000000000000..1a5944a4e4e40942db1e499c08c9fe5bd824c86a
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_borderfix.comp.glsl
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,105 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -372,6 +374,25 @@ index 0000000000000000000000000000000000000000..8084d6073f5a0112de8aaf58f42139e6
 +layout (constant_id = 0) const uint planes     = 0;
 +layout (constant_id = 1) const uint plane_mask = 0xf;
 +
++/* Frame size from the host (#358): imageSize() of a plane view of a
++ * multi-planar image may report the driver's padded allocation (NVIDIA pads
++ * nv12/nv24 widths to a multiple of 64), so bounds and edge clamps use these.
++ * IDs 16-19 are the same in every Pelorus shader. */
++layout (constant_id = 16) const int pel_frame_w        = 1;
++layout (constant_id = 17) const int pel_frame_h        = 1;
++layout (constant_id = 18) const int pel_chroma_shift_w = 0;
++layout (constant_id = 19) const int pel_chroma_shift_h = 0;
++
++/* Planes 1 and 2 are chroma (one interleaved plane when semi-planar), rounded
++ * up as AV_CEIL_RSHIFT does; luma, alpha and packed RGBA are full size. */
++ivec2 pel_plane_size(uint plane)
++{
++    if (plane == 1u || plane == 2u)
++        return ivec2((pel_frame_w + (1 << pel_chroma_shift_w) - 1) >> pel_chroma_shift_w,
++                     (pel_frame_h + (1 << pel_chroma_shift_h) - 1) >> pel_chroma_shift_h);
++    return ivec2(pel_frame_w, pel_frame_h);
++}
++
 +layout (push_constant, std430) uniform pushConstants {
 +    int left;
 +    int right;
@@ -383,7 +404,7 @@ index 0000000000000000000000000000000000000000..8084d6073f5a0112de8aaf58f42139e6
 +layout (set = 0, binding = 1) uniform writeonly image2D output_images[];
 +
 +void borderfix(ivec2 pos, int idx) {
-+    ivec2 sz = imageSize(output_images[idx]);
++    ivec2 sz = pel_plane_size(uint(idx));
 +    /* hi is the last clean index; lo is capped at hi so lo <= hi always holds
 +     * (clamp() is undefined for lo > hi, e.g. left + right >= size). */
 +    int hx = max(sz.x - 1 - right, 0);
@@ -402,7 +423,7 @@ index 0000000000000000000000000000000000000000..8084d6073f5a0112de8aaf58f42139e6
 +     * chroma plane must not end the invocation, because a later full-size plane
 +     * (yuva420p alpha) still has to be written or copied (BUG-007/BUG-008). */
 +    for (uint i = 0; i < planes; i++) {
-+        const ivec2 size = imageSize(output_images[i]);
++        const ivec2 size = pel_plane_size(i);
 +        if (!all(lessThan(pos, size)))
 +            continue;
 +

@@ -104,12 +104,14 @@ static av_cold int init_filter(AVFilterContext *ctx)
      * const-folded into the generated GLSL before FFmpeg 9 unrolled the
      * per-plane loop in C. With precompiled SPIR-V they become specialization
      * constants, folded at pipeline-compile time to the same single variant. */
-    SPEC_LIST_CREATE(sl, 5, 5 * sizeof(uint32_t))
+    SPEC_LIST_CREATE(sl, 5 + PEL_VK_SPEC_FRAME_SIZE_COUNT,
+                     (5 + PEL_VK_SPEC_FRAME_SIZE_COUNT) * sizeof(uint32_t))
     SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
     SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
     SPEC_LIST_ADD(sl, 2, 32, (uint32_t)(s->fast != 0));
     SPEC_LIST_ADD(sl, 3, 32, (uint32_t)semi_planar);
     SPEC_LIST_ADD(sl, 4, 32, sample_code_max);
+    pel_vk_spec_add_frame_size(sl, vkctx);
 
     ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){32, 32, 1}, 0);
 

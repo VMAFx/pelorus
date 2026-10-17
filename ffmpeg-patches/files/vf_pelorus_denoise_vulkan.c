@@ -256,12 +256,14 @@ static av_cold int init_filter(AVFilterContext *ctx)
      * constants, resolved at pipeline creation — the same const-folding, one step
      * later. `semi_planar` joins them so the shader knows plane 1 carries two
      * components. The push-constant block itself now lives in the .comp.glsl. */
-    SPEC_LIST_CREATE(sl, 5, 5 * sizeof(uint32_t))
+    SPEC_LIST_CREATE(sl, 5 + PEL_VK_SPEC_FRAME_SIZE_COUNT,
+                     (5 + PEL_VK_SPEC_FRAME_SIZE_COUNT) * sizeof(uint32_t))
     SPEC_LIST_ADD(sl, 0, 32, (uint32_t)planes);
     SPEC_LIST_ADD(sl, 1, 32, (uint32_t)s->planes);
     SPEC_LIST_ADD(sl, 2, 32, (uint32_t)(s->tile ? 1 : 0));
     SPEC_LIST_ADD(sl, 3, 32, (uint32_t)semi_planar);
     SPEC_LIST_ADD(sl, 4, 32, sample_code_max);
+    pel_vk_spec_add_frame_size(sl, vkctx);
 
     ff_vk_shader_load(shd, VK_SHADER_STAGE_COMPUTE_BIT, sl, (uint32_t[]){16, 16, 1}, 0);
 

@@ -110,4 +110,22 @@ static inline int pel_vk_config_input_yuv_rgba(AVFilterLink *inlink)
     return err < 0 ? err : ff_vk_filter_config_input(inlink);
 }
 
+/* Specialization constants 16-19: frame width, frame height and the chroma
+ * shifts of the frame format (#358). The shaders size each plane from these
+ * instead of imageSize(), which reports the driver's padded allocation for a
+ * plane view of a multi-planar image (NVIDIA pads nv12/nv24 widths to a
+ * multiple of 64). Callers reserve PEL_VK_SPEC_FRAME_SIZE_COUNT entries. */
+#define PEL_VK_SPEC_FRAME_SIZE_COUNT 4
+
+static inline void pel_vk_spec_add_frame_size(VkSpecializationInfo *sl,
+                                              const FFVulkanContext *vkctx)
+{
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(vkctx->output_format);
+
+    SPEC_LIST_ADD(sl, 16, 32, (uint32_t)vkctx->output_width);
+    SPEC_LIST_ADD(sl, 17, 32, (uint32_t)vkctx->output_height);
+    SPEC_LIST_ADD(sl, 18, 32, (uint32_t)desc->log2_chroma_w);
+    SPEC_LIST_ADD(sl, 19, 32, (uint32_t)desc->log2_chroma_h);
+}
+
 #endif /* AVFILTER_PELORUS_VULKAN_INPUT_H */

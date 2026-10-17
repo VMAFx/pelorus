@@ -49,6 +49,25 @@ layout (constant_id = 2) const uint tile       = 0;
 layout (constant_id = 3) const uint semi_planar = 0;
 layout (constant_id = 4) const uint sample_code_max = 0;
 
+/* Frame size from the host (#358): imageSize() of a plane view of a
+ * multi-planar image may report the driver's padded allocation (NVIDIA pads
+ * nv12/nv24 widths to a multiple of 64), so bounds and edge clamps use these.
+ * IDs 16-19 are the same in every Pelorus shader. */
+layout (constant_id = 16) const int pel_frame_w        = 1;
+layout (constant_id = 17) const int pel_frame_h        = 1;
+layout (constant_id = 18) const int pel_chroma_shift_w = 0;
+layout (constant_id = 19) const int pel_chroma_shift_h = 0;
+
+/* Planes 1 and 2 are chroma (one interleaved plane when semi-planar), rounded
+ * up as AV_CEIL_RSHIFT does; luma, alpha and packed RGBA are full size. */
+ivec2 pel_plane_size(uint plane)
+{
+    if (plane == 1u || plane == 2u)
+        return ivec2((pel_frame_w + (1 << pel_chroma_shift_w) - 1) >> pel_chroma_shift_w,
+                     (pel_frame_h + (1 << pel_chroma_shift_h) - 1) >> pel_chroma_shift_h);
+    return ivec2(pel_frame_w, pel_frame_h);
+}
+
 layout (push_constant, std430) uniform pushConstants {
     int   blur_r;
     float darkstr;
@@ -201,7 +220,7 @@ float edge_step(int idx, int comp, ivec2 p, ivec2 sz)
 
 float dehalo(ivec2 pos, int idx, int comp)
 {
-    ivec2 sz = imageSize(output_images[idx]);
+    ivec2 sz = pel_plane_size(uint(idx));
     float c = pel_luma(idx, comp, pos, sz);
 
     /* FineDehalo gate. A pixel whose own edge step exceeds `edge` is line-art
@@ -280,7 +299,8 @@ void main()
     const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
 
     /* Preserves the pre-FFmpeg-9 unrolled semantics exactly: the C generator
-     * emitted, per plane, `size = imageSize(...)`, then the cooperative tile
+     * emitted, per plane, `size = imageSize(...)` (now pel_plane_size(),
+     * #358), then the cooperative tile
      * load in uniform control flow, then `if (IS_WITHIN(pos, size)) { ... }`.
      * The guard was a positive block, NOT an early return — an invocation
      * outside a subsampled chroma plane still falls through to the next
@@ -288,7 +308,7 @@ void main()
     for (uint i = 0; i < planes; i++) {
         const bool sel = (plane_mask & (1u << i)) != 0u;
 
-        size = imageSize(output_images[i]);
+        size = pel_plane_size(i);
         const bool inb = all(lessThan(pos, size));
 
         if (sel) {

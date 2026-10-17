@@ -359,8 +359,6 @@ echo 'PASS: interlaced input refused by spatial filters, kept by measuring filte
 # semi-planar; 8 to 16 bits) must give the yuv420p result: normalized luma for
 # the transforms, frame metadata for the measuring filters. 8 and 16 bits are
 # the depth boundaries; the Vulkan hwcontext has no 9- or 14-bit YUV layout.
-# The fixture is 128 wide: on NVIDIA, aa and dehalo read wrong right-edge luma
-# on nv12/nv24 when the width is not a multiple of 64 (issue #358).
 PEL_FORMAT_SRC='testsrc2=size=128x64:rate=4:duration=1,noise=alls=12:allf=t+u:all_seed=123'
 PEL_YUV_FORMATS=(
     yuv420p yuv420p10le yuv420p12le yuv420p16le
@@ -470,6 +468,83 @@ for name in keys:
                     raise SystemExit(f"format {name} {fmt}: {key}={got} against yuv420p {want}")
 print(f"PASS: {len(formats)} YUV layouts match yuv420p")
 PY_FORMATS
+
+# Issue #358: imageSize() of a plane view of a multi-planar image may report
+# the driver's padded allocation (NVIDIA pads nv12/nv24 widths to a multiple of
+# 64), and edge clamps against it read padding instead of the last column. The
+# 8-bit layouts share yuv420p's luma samples, so luma and metadata must match
+# exactly; the tolerance above hides a 7-code error in four columns. 1918 is
+# not a multiple of 64 and 1920 is. mc never read imageSize() and is a control
+# row.
+PEL_EDGE_FORMATS=(yuv420p nv12 nv16 nv24)
+PEL_EDGE_FILTERS=(
+    'deband=pelorus_deband_vulkan'
+    'denoise=pelorus_denoise_vulkan'
+    'dehalo=pelorus_dehalo_vulkan'
+    'aa=pelorus_aa_vulkan'
+    'deblock=pelorus_deblock_vulkan'
+    'mc=pelorus_mc_vulkan'
+    'borderfix=pelorus_borderfix_vulkan=right=3:left=2'
+)
+for PEL_WIDTH in 1918 1920; do
+    PEL_EDGE_SRC="testsrc2=size=${PEL_WIDTH}x64:rate=25,noise=alls=12:allf=t+u:all_seed=123"
+    for PEL_FORMAT in "${PEL_EDGE_FORMATS[@]}"; do
+        for PEL_ENTRY in "${PEL_EDGE_FILTERS[@]}"; do
+            pel_emit_raw "edge-${PEL_WIDTH}-${PEL_ENTRY%%=*}-${PEL_FORMAT}" \
+                "$PEL_FORMAT" "$PEL_EDGE_SRC" "${PEL_ENTRY#*=}" 1
+        done
+        pel_run "edge-${PEL_WIDTH}-analyze-${PEL_FORMAT}" \
+            -f lavfi -i "$PEL_EDGE_SRC" -frames:v 1 \
+            -vf "trim=end_frame=1,format=${PEL_FORMAT},hwupload,pelorus_analyze_vulkan=maps=0,hwdownload,format=${PEL_FORMAT},metadata=mode=print:file=${PEL_OUTPUT_ROOT}/edge-${PEL_WIDTH}-analyze-${PEL_FORMAT}.meta" \
+            -f null -
+    done
+done
+
+python3 - "$PEL_OUTPUT_ROOT" "${PEL_EDGE_FORMATS[@]}" <<'PY_EDGE'
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+formats = sys.argv[2:]
+height = 64
+
+for width in (1918, 1920):
+    count = width * height
+    half = (width + 1) // 2
+    # bytes per chroma component: nv* interleaves the same samples as the planar layout
+    chroma = {"yuv420p": half * height // 2, "nv12": half * height // 2,
+              "nv16": half * height, "nv24": count}
+    for name in ("deband", "denoise", "dehalo", "aa", "deblock", "mc", "borderfix"):
+        def luma(fmt):
+            raw = (root / f"edge-{width}-{name}-{fmt}.raw").read_bytes()
+            want = count + 2 * chroma[fmt]
+            if len(raw) != want:
+                raise SystemExit(f"edge {width} {name} {fmt}: {len(raw)} bytes, want {want}")
+            return raw[:count]
+        reference = luma(formats[0])
+        for fmt in formats[1:]:
+            actual = luma(fmt)
+            columns = sorted({i % width for i in range(count) if actual[i] != reference[i]})
+            if columns:
+                worst = max(abs(a - b) for a, b in zip(actual, reference))
+                raise SystemExit(
+                    f"edge {width} {name} {fmt}: luma differs from yuv420p by up to "
+                    f"{worst} codes in columns {columns[:8]}"
+                )
+
+    def metadata(fmt):
+        text = (root / f"edge-{width}-analyze-{fmt}.meta").read_text()
+        found = re.findall(r"lavfi\.pelorus\.(variance|edge|complexity|banding)=(\S+)", text)
+        if not found:
+            raise SystemExit(f"edge {width} analyze {fmt}: no metadata")
+        return found
+    reference = metadata(formats[0])
+    for fmt in formats[1:]:
+        if metadata(fmt) != reference:
+            raise SystemExit(f"edge {width} analyze {fmt}: metadata differs from yuv420p")
+print("PASS: 8-bit layouts match yuv420p exactly at widths 1918 and 1920")
+PY_EDGE
 
 # yuva420p: luma must match yuv420p and the alpha plane (after the half-size
 # chroma planes, BUG-007/008) must pass through bit-exact when the planes mask

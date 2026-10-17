@@ -52,6 +52,25 @@ layout (constant_id = 2) const uint fast       = 0;
 layout (constant_id = 3) const uint semi_planar = 0;
 layout (constant_id = 4) const uint sample_code_max = 0;
 
+/* Frame size from the host (#358): imageSize() of a plane view of a
+ * multi-planar image may report the driver's padded allocation (NVIDIA pads
+ * nv12/nv24 widths to a multiple of 64), so bounds and edge clamps use these.
+ * IDs 16-19 are the same in every Pelorus shader. */
+layout (constant_id = 16) const int pel_frame_w        = 1;
+layout (constant_id = 17) const int pel_frame_h        = 1;
+layout (constant_id = 18) const int pel_chroma_shift_w = 0;
+layout (constant_id = 19) const int pel_chroma_shift_h = 0;
+
+/* Planes 1 and 2 are chroma (one interleaved plane when semi-planar), rounded
+ * up as AV_CEIL_RSHIFT does; luma, alpha and packed RGBA are full size. */
+ivec2 pel_plane_size(uint plane)
+{
+    if (plane == 1u || plane == 2u)
+        return ivec2((pel_frame_w + (1 << pel_chroma_shift_w) - 1) >> pel_chroma_shift_w,
+                     (pel_frame_h + (1 << pel_chroma_shift_h) - 1) >> pel_chroma_shift_h);
+    return ivec2(pel_frame_w, pel_frame_h);
+}
+
 layout (push_constant, std430) uniform pushConstants {
     int   blur;
     float depth;
@@ -177,7 +196,7 @@ float bilinear(int idx, int comp, float fx, float fy, ivec2 sz) {
 }
 
 float aa(ivec2 pos, int idx, int comp) {
-    ivec2 sz = imageSize(output_images[idx]);
+    ivec2 sz = pel_plane_size(uint(idx));
     int r = clamp(blur, 0, MAX_R);
     float thr = max(thresh, 0.0001);
     float gx = (emask(idx, comp, pos, ivec2(1, 0), sz, r, thr)
@@ -221,7 +240,7 @@ void main()
      * folds down to the single generated variant, as before. */
     if (fast != 0u) {
         for (uint i = 0; i < planes; i++) {
-            size = imageSize(output_images[i]);
+            size = pel_plane_size(i);
             if ((plane_mask & (1u << i)) != 0u) {
                 const bool inb = all(lessThan(pos, size));
                 const uint ncomp = pel_component_count(i);
@@ -244,7 +263,7 @@ void main()
         }
     } else {
         for (uint i = 0; i < planes; i++) {
-            size = imageSize(output_images[i]);
+            size = pel_plane_size(i);
             if (!all(lessThan(pos, size)))
                 continue;
 
