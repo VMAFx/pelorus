@@ -119,13 +119,15 @@ announces the release.
 ## Host-C exception status under VMAFx Rust migration
 
 Under VMAFx ADR-2478 (Rust core migration), host C and C++ in VMAFx is deleted by
-VMAFx 3.0 outside an exception list. Under [ADR-0197](../adr/0197-vmafx-interop-mirror-host-c-exception.md)
+the VMAFx host-C removal release outside an exception list. That release is VMAFx
+milestone 1.2.0; ADR-2478 and the exception entries call it 3.0, its number before
+VMAFx restarted its version line at 0.x. Under [ADR-0197](../adr/0197-vmafx-interop-mirror-host-c-exception.md)
 (issue [#164](https://github.com/VMAFx/pelorus/issues/164)), the ten mirrored Pelorus interop
 files are registered on VMAFx's ADR-2478 host-C exception list with owner `pelorus`,
-reason byte-identical ABI mirror (VMAFx ADR-1113), category A, and expiry at VMAFx 3.0.
+reason byte-identical ABI mirror (VMAFx ADR-1113), category A, and expiry at that release.
 The re-evaluation trigger is the release of Pelorus's dependency-free Rust interop crate
-in milestone 2.1 ([#115](https://github.com/VMAFx/pelorus/issues/115)), aligning with
-VMAFx Rust Phase 2 (vmafx 2.3). The `_Static_assert` pins in the mirrored `interop.h` and the shared conformance fixture
+in milestone 0.13.0 ([#115](https://github.com/VMAFx/pelorus/issues/115)), aligning with
+VMAFx Rust Phase 2 (VMAFx milestone 0.6.0). The `_Static_assert` pins in the mirrored `interop.h` and the shared conformance fixture
 ([`libpelorus/test/interop_test.c`](../../libpelorus/test/interop_test.c) and VMAFx
 `core/test/test_pelorus_interop.c`) remain the layout gate.
 

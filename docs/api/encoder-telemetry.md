@@ -773,7 +773,7 @@ python3 -I scripts/check-telemetry-field-parity.py --vmafx FILE  # any VMAFx lis
    VMAFx schedules together with ABI 1.4 updates that check. Every file this
    specification adds uses the EUPL header and exactly one
    `#include "pelorus/..."`.
-5. With VMAFx/vmafx#2271 (VMAFx 1.1), VMAFx adds a verbatim manifest row for
+5. With VMAFx/vmafx#2271 (VMAFx 0.10.0), VMAFx adds a verbatim manifest row for
    `libpelorus/schema/telemetry-fields.json`. JSON has no comment syntax for
    the banner.
 
