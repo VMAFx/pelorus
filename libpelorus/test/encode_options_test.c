@@ -31,15 +31,10 @@ static PelorusEncodeOptions *alloc_opts(void)
     return opts;
 }
 
-static pel_result build_digest(const PelorusEncodeOptions *opts, char digest[72])
+static pel_result build_record(const PelorusEncodeOptions *opts, char *json, size_t cap,
+                               size_t *out_len)
 {
     PelorusEncodeRecordInput in;
-    char json[PEL_ENCODE_RECORD_MAX_BYTES];
-    size_t out_len = 0;
-    pel_result r;
-    uint8_t raw_hash[32];
-    size_t i;
-    static const char hex[] = "0123456789abcdef";
 
     (void)memset(&in, 0, sizeof(in));
     in.encoder_name = "libx264";
@@ -50,8 +45,19 @@ static pel_result build_digest(const PelorusEncodeOptions *opts, char digest[72]
     in.encoder_unknown_params = opts->unknown_params;
     in.nb_encoder_unknown_params = opts->nb_unknown_params;
     in.input_digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    return pel_encode_record_build(&in, json, cap, out_len);
+}
 
-    r = pel_encode_record_build(&in, json, sizeof(json), &out_len);
+static pel_result build_digest(const PelorusEncodeOptions *opts, char digest[72])
+{
+    char json[PEL_ENCODE_RECORD_MAX_BYTES];
+    size_t out_len = 0;
+    pel_result r;
+    uint8_t raw_hash[32];
+    size_t i;
+    static const char hex[] = "0123456789abcdef";
+
+    r = build_record(opts, json, sizeof(json), &out_len);
     if (r != PEL_OK) {
         return r;
     }
@@ -858,6 +864,111 @@ static void test_aom_dialect(void)
     free(o2);
 }
 
+/* #265 failing first: a naive split on every ':' breaks "sar=16\:9" into three fields. */
+static void test_x265_escaped_colon(void)
+{
+    PelorusEncodeOptions *opts = alloc_opts();
+    const char s[] = "sar=16\\:9:crf=20";
+    size_t naive_fields = 1;
+    size_t i;
+
+    for (i = 0; s[i] != '\0'; i++) {
+        naive_fields += s[i] == ':' ? 1u : 0u;
+    }
+    CHECK(naive_fields == 3);
+    CHECK(pel_encode_options_parse(PEL_ENCODE_OPTIONS_X265, s, strlen(s), opts) == PEL_OK);
+    CHECK(opts->nb_params == 2 && opts->nb_unknown_params == 0);
+    check_one(opts->params, opts->nb_params, "sar", "16:9");
+    check_one(opts->params, opts->nb_params, "crf", "f64:4034000000000000");
+    free(opts);
+}
+
+static void test_one_value_changes_digest(void)
+{
+    PelorusEncodeOptions *o1 = alloc_opts();
+    PelorusEncodeOptions *o2 = alloc_opts();
+    char d1[72];
+    char d2[72];
+    const char s1[] = "crf=23:ref=3:bframes=2";
+    const char s2[] = "crf=23:ref=4:bframes=2";
+
+    CHECK(pel_encode_options_parse(PEL_ENCODE_OPTIONS_X264, s1, strlen(s1), o1) == PEL_OK);
+    CHECK(pel_encode_options_parse(PEL_ENCODE_OPTIONS_X264, s2, strlen(s2), o2) == PEL_OK);
+    CHECK(build_digest(o1, d1) == PEL_OK);
+    CHECK(build_digest(o2, d2) == PEL_OK);
+    CHECK(strcmp(d1, d2) != 0);
+    free(o1);
+    free(o2);
+}
+
+/* Build, hash and verify the record of `s`; its digest goes to `hash`. */
+static pel_result roundtrip(pel_encode_options_dialect d, const char *s, size_t len,
+                            uint8_t hash[PEL_ENCODE_RECORD_DIGEST_SIZE])
+{
+    PelorusEncodeOptions *opts = alloc_opts();
+    char json[PEL_ENCODE_RECORD_MAX_BYTES];
+    size_t json_len = 0;
+    pel_result r = PEL_ERR_NOMEM;
+
+    if (opts != NULL) {
+        r = pel_encode_options_parse(d, s, len, opts);
+        if (r == PEL_OK) {
+            r = build_record(opts, json, sizeof(json), &json_len);
+        }
+        if (r == PEL_OK) {
+            r = pel_encode_record_hash(json, json_len, hash);
+        }
+        if (r == PEL_OK) {
+            r = pel_encode_record_verify(json, json_len, hash);
+        }
+        free(opts);
+    }
+    return r;
+}
+
+static void test_dropped_key_fails_verify(void)
+{
+    PelorusEncodeOptions *opts = alloc_opts();
+    char json[PEL_ENCODE_RECORD_MAX_BYTES];
+    size_t json_len = 0;
+    uint8_t full[PEL_ENCODE_RECORD_DIGEST_SIZE];
+    const char s_full[] = "crf=23:ref=3:x-future=on";
+    const char s_dropped[] = "crf=23:x-future=on";
+
+    CHECK(roundtrip(PEL_ENCODE_OPTIONS_X264, s_full, strlen(s_full), full) == PEL_OK);
+    CHECK(pel_encode_options_parse(PEL_ENCODE_OPTIONS_X264, s_dropped, strlen(s_dropped), opts) ==
+          PEL_OK);
+    check_one(opts->unknown_params, opts->nb_unknown_params, "x-future", "on");
+    CHECK(build_record(opts, json, sizeof(json), &json_len) == PEL_OK);
+    CHECK(pel_encode_record_verify(json, json_len, NULL) == PEL_OK);
+    CHECK(pel_encode_record_verify(json, json_len, full) == PEL_ERR_MISMATCH);
+    free(opts);
+}
+
+static void test_roundtrip_boundaries(void)
+{
+    char buf[(size_t)PEL_ENCODE_RECORD_MAX_KEY + 2u + PEL_ENCODE_RECORD_MAX_VALUE];
+    uint8_t hash[PEL_ENCODE_RECORD_DIGEST_SIZE];
+    size_t pos = 0;
+    size_t i;
+    int d;
+
+    for (d = (int)PEL_ENCODE_OPTIONS_X264; d <= (int)PEL_ENCODE_OPTIONS_AOM; d++) {
+        CHECK(roundtrip((pel_encode_options_dialect)d, "", 0, hash) == PEL_OK);
+    }
+    for (i = 0; i < PEL_ENCODE_RECORD_MAX_KEY; i++) {
+        buf[pos++] = 'k';
+    }
+    buf[pos++] = '=';
+    for (i = 0; i < PEL_ENCODE_RECORD_MAX_VALUE; i++) {
+        buf[pos++] = 'v';
+    }
+    CHECK(roundtrip(PEL_ENCODE_OPTIONS_X264, buf, pos, hash) == PEL_OK);
+    CHECK(roundtrip(PEL_ENCODE_OPTIONS_X265, buf, pos, hash) == PEL_OK);
+    buf[pos] = 'v';
+    CHECK(roundtrip(PEL_ENCODE_OPTIONS_X264, buf, pos + 1u, hash) == PEL_ERR_RANGE);
+}
+
 int main(void)
 {
     test_sizeof_options();
@@ -883,6 +994,10 @@ int main(void)
     test_svtav1_ordering_and_types();
     test_svtav1_rejects();
     test_aom_dialect();
+    test_x265_escaped_colon();
+    test_one_value_changes_digest();
+    test_dropped_key_fails_verify();
+    test_roundtrip_boundaries();
 
     if (g_fail > 0) {
         (void)fprintf(stderr, "encode_options_test: %d failure(s)\n", g_fail);
