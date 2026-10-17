@@ -116,7 +116,10 @@ SPDX-License-Identifier = "EUPL-1.2"
 
 # Recorded x264 telemetry output; keep encoder syntax unmodified for replay.
 [[annotations]]
-path = ["libpelorus/test/fixtures/telemetry/x264-0.165-qp32.stats"]
+path = [
+    "libpelorus/test/fixtures/telemetry/x264-0.165-qp32.stats",
+    "libpelorus/test/fixtures/telemetry/x264-0.165-qp32-matched.stats",
+]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Lusoris"
 SPDX-License-Identifier = "EUPL-1.2"
