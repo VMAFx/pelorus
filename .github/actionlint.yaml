@@ -1,9 +1,11 @@
-# actionlint v1.7.12 predates GitHub's public-preview ubuntu-26.04 label.
+# actionlint v1.7.12 predates GitHub's ubuntu-26.04 and ubuntu-26.04-arm labels.
 # Keep the exception exact so all other runner-label validation remains active.
 paths:
   .github/workflows/**/*.{yml,yaml}:
     ignore:
       - 'label "ubuntu-26\.04" is unknown'
+      - 'label "ubuntu-26\.04-arm" is unknown'
 self-hosted-runner:
   labels:
     - ubuntu-26.04
+    - ubuntu-26.04-arm

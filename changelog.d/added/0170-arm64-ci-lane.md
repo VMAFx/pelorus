@@ -1,0 +1,1 @@
+- Native arm64 CI lane on `ubuntu-26.04-arm`: fast suite validation against x86-64 known-answer test byte vectors, FFmpeg patch stack replay, Mesa lavapipe software Vulkan filter and format matrix validation, and tester report missing-device non-failure assertion ([#170](https://github.com/VMAFx/pelorus/issues/170), [ADR-0203](docs/adr/0203-arm64-ci-lane.md)).
