@@ -969,6 +969,261 @@ static void test_roundtrip_boundaries(void)
     CHECK(roundtrip(PEL_ENCODE_OPTIONS_X264, buf, pos + 1u, hash) == PEL_ERR_RANGE);
 }
 
+/* AVOption digest for `encoder` with options `o` (ADR-0200); "" on error. */
+static pel_result avopt_digest(const char *encoder, const PelorusEncodeOption *o, uint32_t n,
+                               char digest[72])
+{
+    PelorusEncodeOptions *opts = alloc_opts();
+    pel_result r = PEL_ERR_NOMEM;
+
+    digest[0] = '\0';
+    if (opts != NULL) {
+        r = pel_encode_options_from_ffmpeg(encoder, o, n, opts);
+        if (r == PEL_OK) {
+            r = build_digest(opts, digest);
+        }
+        free(opts);
+    }
+    return r;
+}
+
+static const char *find_value(const PelorusEncodeParam *p, uint32_t count, const char *key)
+{
+    uint32_t i;
+    for (i = 0; i < count; i++) {
+        if (strcmp(p[i].key, key) == 0) {
+            return p[i].values[0];
+        }
+    }
+    return NULL;
+}
+
+static void test_avopt_tables(void)
+{
+    size_t count = 0;
+    const PelAvoptEncoder *encs = pel_encode_avoptions_encoders(&count);
+    size_t i;
+    uint32_t j;
+
+    CHECK(count == 16);
+    for (i = 0; i < count; i++) {
+        for (j = 1; j < encs[i].nb_names; j++) {
+            CHECK(strcmp(encs[i].names[j - 1], encs[i].names[j]) < 0);
+        }
+        for (j = 0; j < encs[i].nb_names; j++) {
+            CHECK(strlen(encs[i].names[j]) + 7 <= PEL_ENCODE_RECORD_MAX_KEY);
+            CHECK(strchr(encs[i].names[j], ':') == NULL);
+        }
+        CHECK((encs[i].params_key == NULL) == ((int)encs[i].dialect == 0));
+    }
+}
+
+/* Positive: one bitstream-affecting AVOption changes the digest, for an
+ * encoder with an option string and for one without. */
+static void test_avopt_one_option_changes_digest(void)
+{
+    const PelorusEncodeOption a[] = {{"preset", "medium"}, {"b", "4M"}};
+    const PelorusEncodeOption b[] = {{"preset", "slow"}, {"b", "4M"}};
+    const PelorusEncodeOption c[] = {{"cq", "20"}, {"rc", "vbr"}};
+    const PelorusEncodeOption d[] = {{"cq", "21"}, {"rc", "vbr"}};
+    char d1[72];
+    char d2[72];
+
+    CHECK(avopt_digest("libx264", a, 2, d1) == PEL_OK);
+    CHECK(avopt_digest("libx264", b, 2, d2) == PEL_OK);
+    CHECK(strcmp(d1, d2) != 0);
+    CHECK(avopt_digest("hevc_nvenc", c, 2, d1) == PEL_OK);
+    CHECK(avopt_digest("hevc_nvenc", d, 2, d2) == PEL_OK);
+    CHECK(strcmp(d1, d2) != 0);
+}
+
+/* Negative: host settings leave the digest unchanged, on every encoder. */
+static void test_avopt_threads_ignored(void)
+{
+    const PelorusEncodeOption plain[] = {{"g", "120"}};
+    const PelorusEncodeOption host[] = {{"threads", "8"},
+                                        {"g", "120"},
+                                        {"thread_type", "slice"},
+                                        {"gpu", "1"},
+                                        {"passlogfile", "/tmp/x"}};
+    size_t count = 0;
+    const PelAvoptEncoder *encs = pel_encode_avoptions_encoders(&count);
+    char d1[72];
+    char d2[72];
+    size_t i;
+
+    for (i = 0; i < count; i++) {
+        CHECK(avopt_digest(encs[i].encoder, plain, 1, d1) == PEL_OK);
+        CHECK(avopt_digest(encs[i].encoder, host, 5, d2) == PEL_OK);
+        CHECK(strcmp(d1, d2) == 0);
+    }
+}
+
+typedef struct AvoptClashCase {
+    const char *encoder;
+    const char *avoption;
+    const char *params_key;
+    const char *string;  /* option string with a valid value */
+    const char *invalid; /* option string with a rejected value */
+} AvoptClashCase;
+
+/* Boundary: an AVOption and the option-string key the encoder applies after
+ * it resolve to the string value; a rejected string value keeps the AVOption.
+ */
+static void test_avopt_clash_pairs(void)
+{
+    static const AvoptClashCase cases[] = {
+        {"libx264", "crf", "x264-params", "crf=20", "crf=abc"},
+        {"libx264", "qp", "x264-params", "qp=20", "qp=abc"},
+        {"libx265", "crf", "x265-params", "crf=20", "crf=abc"},
+        {"libx265", "qp", "x265-params", "qp=20", "qp=abc"},
+        {"libsvtav1", "crf", "svtav1-params", "crf=20", "crf=abc"},
+        {"libaom-av1", "cpu-used", "aom-params", "cpu-used=4", "cpu-used=-1"},
+    };
+    PelorusEncodeOptions *opts = alloc_opts();
+    char key[32];
+    char d1[72];
+    char d2[72];
+    size_t i;
+
+    if (!opts) {
+        return;
+    }
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        const AvoptClashCase *c = &cases[i];
+        const PelorusEncodeOption both[] = {{c->avoption, "30"}, {c->params_key, c->string}};
+        const PelorusEncodeOption str[] = {{c->params_key, c->string}};
+        const PelorusEncodeOption bad[] = {{c->avoption, "30"}, {c->params_key, c->invalid}};
+
+        (void)snprintf(key, sizeof(key), "ffmpeg:%s", c->avoption);
+        CHECK(avopt_digest(c->encoder, both, 2, d1) == PEL_OK);
+        CHECK(avopt_digest(c->encoder, str, 1, d2) == PEL_OK);
+        CHECK(strcmp(d1, d2) == 0);
+        CHECK(pel_encode_options_from_ffmpeg(c->encoder, bad, 2, opts) == PEL_OK);
+        CHECK(find_value(opts->params, opts->nb_params, key) != NULL);
+        CHECK(find_value(opts->unknown_params, opts->nb_unknown_params, c->avoption) != NULL);
+    }
+    free(opts);
+}
+
+/* Boundary: a same-named AVOption outside the clash pairs stays in the record.
+ */
+static void test_avopt_unproven_pair_kept(void)
+{
+    const PelorusEncodeOption o[] = {{"aq-mode", "2"}, {"x264-params", "aq-mode=1"}};
+    PelorusEncodeOptions *opts = alloc_opts();
+
+    if (!opts) {
+        return;
+    }
+    CHECK(pel_encode_options_from_ffmpeg("libx264", o, 2, opts) == PEL_OK);
+    CHECK(opts->nb_params == 2);
+    CHECK(strcmp(opts->params[0].key, "aq-mode") == 0);
+    CHECK(strcmp(opts->params[0].values[0], "1") == 0);
+    CHECK(strcmp(opts->params[1].key, "ffmpeg:aq-mode") == 0);
+    CHECK(strcmp(opts->params[1].values[0], "2") == 0);
+    free(opts);
+}
+
+static void test_avopt_known_unknown_verbatim(void)
+{
+    const PelorusEncodeOption o[] = {
+        {"b", "4M"}, {"trellis", "2"}, {"future-option", "on"}, {"rc", "vbr"}, {"b", "5M"}};
+    PelorusEncodeOptions *opts = alloc_opts();
+
+    if (!opts) {
+        return;
+    }
+    CHECK(pel_encode_options_from_ffmpeg("h264_nvenc", o, 5, opts) == PEL_OK);
+    CHECK(opts->nb_params == 2);
+    CHECK(strcmp(opts->params[0].key, "ffmpeg:b") == 0);
+    CHECK(strcmp(opts->params[0].values[0], "5M") == 0);
+    CHECK(strcmp(opts->params[1].key, "ffmpeg:rc") == 0);
+    CHECK(opts->nb_unknown_params == 2);
+    CHECK(strcmp(opts->unknown_params[0].key, "ffmpeg:future-option") == 0);
+    /* nvenc does not read avctx->trellis */
+    CHECK(strcmp(opts->unknown_params[1].key, "ffmpeg:trellis") == 0);
+    free(opts);
+}
+
+static void test_avopt_rejects(void)
+{
+    const PelorusEncodeOption ok[] = {{"g", "60"}};
+    const PelorusEncodeOption spec[] = {{"b:v", "4M"}};
+    const PelorusEncodeOption empty_val[] = {{"g", ""}};
+    const PelorusEncodeOption empty_key[] = {{"", "1"}};
+    const PelorusEncodeOption null_val[] = {{"g", NULL}};
+    const PelorusEncodeOption guard[] = {{"g", "60"}, {"x264-params", "ffmpeg\\:g=1"}};
+    const PelorusEncodeOption bad_str[] = {{"g", "60"}, {"x264-params", "crf"}};
+    PelorusEncodeOptions *opts = alloc_opts();
+
+    if (!opts) {
+        return;
+    }
+    CHECK(pel_encode_options_from_ffmpeg("libx264", ok, 1, NULL) == PEL_ERR_INVALID);
+    CHECK(pel_encode_options_from_ffmpeg(NULL, ok, 1, opts) == PEL_ERR_INVALID);
+    CHECK(pel_encode_options_from_ffmpeg("libx264", NULL, 1, opts) == PEL_ERR_INVALID);
+    CHECK(pel_encode_options_from_ffmpeg("libvpx-vp9", ok, 1, opts) == PEL_ERR_UNSUPPORTED);
+    CHECK(pel_encode_options_from_ffmpeg("libx264", spec, 1, opts) == PEL_ERR_INVALID);
+    CHECK(pel_encode_options_from_ffmpeg("libx264", empty_val, 1, opts) == PEL_ERR_INVALID);
+    CHECK(pel_encode_options_from_ffmpeg("libx264", empty_key, 1, opts) == PEL_ERR_INVALID);
+    CHECK(pel_encode_options_from_ffmpeg("libx264", null_val, 1, opts) == PEL_ERR_INVALID);
+    CHECK(pel_encode_options_from_ffmpeg("libx264", guard, 2, opts) == PEL_ERR_INVALID);
+    CHECK(opts->nb_params == 0 && opts->nb_unknown_params == 0 && opts->arena_used == 0);
+    CHECK(pel_encode_options_from_ffmpeg("libx264", bad_str, 2, opts) == PEL_ERR_INVALID);
+    CHECK(opts->nb_params == 0 && opts->nb_unknown_params == 0 && opts->arena_used == 0);
+    free(opts);
+}
+
+static void test_avopt_boundaries(void)
+{
+    char name[PEL_ENCODE_RECORD_MAX_KEY + 2];
+    char value[PEL_ENCODE_RECORD_MAX_VALUE + 2];
+    PelorusEncodeOption o[1];
+    char d1[72];
+    char d2[72];
+    const PelorusEncodeOption two_strings[] = {{"x264-params", "crf=18"},
+                                               {"x264-params", "crf=20"}};
+    PelorusEncodeOptions *opts = alloc_opts();
+
+    if (!opts) {
+        return;
+    }
+    CHECK(pel_encode_options_from_ffmpeg("libx264", NULL, 0, opts) == PEL_OK);
+    CHECK(opts->nb_params == 0 && opts->nb_unknown_params == 0);
+
+    (void)memset(name, 'n', sizeof(name));
+    name[PEL_ENCODE_RECORD_MAX_KEY - 7] = '\0';
+    o[0].key = name;
+    o[0].value = "1";
+    CHECK(pel_encode_options_from_ffmpeg("libx264", o, 1, opts) == PEL_OK);
+    CHECK(opts->nb_unknown_params == 1);
+    CHECK(strlen(opts->unknown_params[0].key) == PEL_ENCODE_RECORD_MAX_KEY);
+    name[PEL_ENCODE_RECORD_MAX_KEY - 7] = 'n';
+    name[PEL_ENCODE_RECORD_MAX_KEY - 6] = '\0';
+    CHECK(pel_encode_options_from_ffmpeg("libx264", o, 1, opts) == PEL_ERR_RANGE);
+
+    (void)memset(value, 'v', sizeof(value));
+    value[PEL_ENCODE_RECORD_MAX_VALUE] = '\0';
+    o[0].key = "x264opts";
+    o[0].value = value;
+    CHECK(pel_encode_options_from_ffmpeg("libx264", o, 1, opts) == PEL_OK);
+    CHECK(opts->nb_params == 1);
+    value[PEL_ENCODE_RECORD_MAX_VALUE] = 'v';
+    value[PEL_ENCODE_RECORD_MAX_VALUE + 1] = '\0';
+    CHECK(pel_encode_options_from_ffmpeg("libx264", o, 1, opts) == PEL_ERR_RANGE);
+
+    /* FFmpeg's dictionary keeps the last option-string entry */
+    CHECK(pel_encode_options_from_ffmpeg("libx264", two_strings, 2, opts) == PEL_OK);
+    CHECK(opts->nb_params == 1);
+    CHECK(avopt_digest("libx264", two_strings, 2, d1) == PEL_OK);
+    CHECK(avopt_digest("libx264", &two_strings[1], 1, d2) == PEL_OK);
+    CHECK(strcmp(d1, d2) == 0);
+    CHECK(avopt_digest("libx264", two_strings, 1, d2) == PEL_OK);
+    CHECK(strcmp(d1, d2) != 0);
+    free(opts);
+}
+
 int main(void)
 {
     test_sizeof_options();
@@ -998,6 +1253,14 @@ int main(void)
     test_one_value_changes_digest();
     test_dropped_key_fails_verify();
     test_roundtrip_boundaries();
+    test_avopt_tables();
+    test_avopt_one_option_changes_digest();
+    test_avopt_threads_ignored();
+    test_avopt_clash_pairs();
+    test_avopt_unproven_pair_kept();
+    test_avopt_known_unknown_verbatim();
+    test_avopt_rejects();
+    test_avopt_boundaries();
 
     if (g_fail > 0) {
         (void)fprintf(stderr, "encode_options_test: %d failure(s)\n", g_fail);

@@ -4,13 +4,13 @@
 > [!IMPORTANT]
 > **Status: the record, its digest, the API, the `PEL_SEC_ENCODE_RECORD`
 > section (interop ABI 1.4), and option-string parsers for x264, x265,
-> SVT-AV1 and libaom are implemented**
+> SVT-AV1 and libaom, and FFmpeg encoder AVOptions for 16 encoders are
+> implemented**
 > ([ADR-0175](../adr/0175-encode-provenance-record.md),
-> [ADR-0198](../adr/0198-encoder-option-string-parsers.md), issues #81, #156).
-> NVENC has no option string: NVENC settings map directly to discrete FFmpeg
-> AVOptions on the encoder wrapper (`h264_nvenc` / `hevc_nvenc`), without a
-> pass-through colon-separated option string parameter like `-x264-params` or
-> `-x265-params`.
+> [ADR-0198](../adr/0198-encoder-option-string-parsers.md),
+> [ADR-0200](../adr/0200-ffmpeg-avoptions-in-encode-record.md), issues #81,
+> #156, #352). NVENC, QSV, VAAPI and Vulkan encoders have no option string:
+> their settings are discrete FFmpeg AVOptions, recorded as `ffmpeg:<name>`.
 
 ## In one paragraph
 
@@ -291,8 +291,8 @@ cases and that a record built from a string with one key dropped fails
 `pel_encode_record_verify` against the digest of the full string.
 
 FFmpeg encoder AVOptions (`-preset`, `-crf` and the hardware encoders'
-rate-control options) are not parsed yet; see
-[#352](https://github.com/VMAFx/pelorus/issues/352).
+rate-control options) go through `pel_encode_options_from_ffmpeg`; see
+[FFmpeg encoder AVOptions](#ffmpeg-encoder-avoptions).
 
 ### Normalisation rules per dialect
 
@@ -379,6 +379,119 @@ are not in the table and land in `unknown_params`.
 | SVT-AV1 (`PEL_ENCODE_OPTIONS_SVTAV1`) | 121 (118 base + 3 aliases) | SVT-AV1 `v4.2.0` / `9292ec8e32bce26f781f277ec8739b53426c4300` | `Source/Lib/Globals/enc_settings.c: svt_av1_enc_parse_parameter` |
 | libaom (`PEL_ENCODE_OPTIONS_AOM`) | 122 | libaom `v3.15.2` / `af3dc9aadc793c1b00edc003e3fc19a44fdeb574` | `av1/av1_cx_iface.c: encoder_set_option` |
 
+## FFmpeg encoder AVOptions
+
+Implementation `libpelorus/src/encode_avoptions.c` with generated name tables
+in `libpelorus/src/encode_avoptions_tables.c`
+([ADR-0200](../adr/0200-ffmpeg-avoptions-in-encode-record.md), issue #352).
+
+```c
+typedef struct PelorusEncodeOption {
+    const char *key;   /* AVOption name, no stream specifier: "b", not "b:v" */
+    const char *value; /* as passed to the encoder */
+} PelorusEncodeOption;
+
+pel_result pel_encode_options_from_ffmpeg(const char *encoder,
+                                          const PelorusEncodeOption *opts,
+                                          uint32_t nb_opts,
+                                          PelorusEncodeOptions *out);
+```
+
+The host passes the encoder name and the options it gave the encoder. Example
+(link with `-lpelorus`):
+
+```c
+#include <pelorus/encode_options.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(void)
+{
+    static const PelorusEncodeOption x264[] = {
+        {"preset", "slow"}, {"crf", "30"}, {"x264-params", "crf=20:ref=4"}, {"threads", "8"},
+    };
+    static const PelorusEncodeOption nvenc[] = {{"rc", "vbr"}, {"cq", "21"}, {"b", "5M"}};
+    PelorusEncodeOptions *out = malloc(sizeof(*out));
+    uint32_t i;
+
+    if (!out || pel_encode_options_from_ffmpeg("libx264", x264, 4, out) != PEL_OK) {
+        return 1;
+    }
+    for (i = 0; i < out->nb_params; i++) { /* crf=f64:4034000000000000 (20.0), ffmpeg:preset=slow, ref=4 */
+        printf("%s=%s\n", out->params[i].key, out->params[i].values[0]);
+    }
+    if (pel_encode_options_from_ffmpeg("hevc_nvenc", nvenc, 3, out) != PEL_OK) {
+        return 1;
+    }
+    for (i = 0; i < out->nb_params; i++) { /* ffmpeg:b=5M, ffmpeg:cq=21, ffmpeg:rc=vbr */
+        printf("%s=%s\n", out->params[i].key, out->params[i].values[0]);
+    }
+    free(out);
+    return 0;
+}
+```
+
+`libsvtav1` with `svtav1-params` and `libaom-av1` with `aom-params` work the
+same way as `libx264` with `x264-params`.
+
+The result fills the same `PelorusEncodeOptions` as the option-string parser,
+with the same storage rules: the caller allocates `out` (on the heap, about
+272 KiB); every key and value is copied into `out`'s own arena, so `opts` and
+its strings need to live only for the call and `out` stays valid after the
+caller frees them. The function allocates nothing, uses no global state and
+logs nothing; calls on distinct `out` instances are reentrant and thread-safe.
+Both arrays are sorted by key:
+
+| Input | Destination | Key | Value |
+|---|---|---|---|
+| option-string entry (`x264-params`, `x265-params`, `svtav1-params`, `aom-params`) | per the [field table](#field-table) | bare, normalised by the dialect | normalised by the dialect |
+| AVOption in the encoder's table | `params` | `ffmpeg:<name>` | verbatim, no unit conversion (`5M` stays `5M`) |
+| AVOption not in the table | `unknown_params` | `ffmpeg:<name>` | verbatim |
+| host setting: `threads`, `thread_type`, `gpu`, `passlogfile`, `stats`, `x265-stats`, `debug`, `dump_separator`, `err_detect`, `export_side_data`, `max_pixels` | not recorded | | |
+| AVOption of a clash pair, string holds a valid value for its key | not recorded; the string value encodes | | |
+
+Clash pairs, where the encoder applies the option string after the AVOption to
+the same fields: libx264 `crf` and `qp`, libx265 `crf` and `qp`, libsvtav1
+`crf`, libaom-av1 `cpu-used`. ADR-0200 lists the source lines. So
+`-crf 30 -x264-params crf=20` and `-x264-params crf=20` give the same record.
+SVT-AV1 `qp` is not a pair: the AVOption also turns adaptive quantisation off.
+When the string value is invalid (`crf=abc`), the AVOption stays in `params`.
+libx264's older option string `x264opts` is not parsed: it is stored verbatim
+as `ffmpeg:x264opts`, and an AVOption it overrides stays in the record. The
+digest still changes with its content.
+
+A repeated name keeps its last value, as FFmpeg's dictionary does. Errors leave
+both arrays empty:
+
+| Return | Cause |
+|---|---|
+| `PEL_ERR_UNSUPPORTED` | encoder not in the table list |
+| `PEL_ERR_INVALID` | NULL argument; empty name or value; a name with `:`; an option-string key starting with `ffmpeg:` |
+| any code of `pel_encode_options_parse` | the option-string entry failed to parse (for example `x264-params` = `crf` without `=`); passed through unchanged |
+| `PEL_ERR_RANGE` | key above 64 bytes (name above 57 bytes), value above 1024 bytes, or the record bounds |
+
+Encoders and table sizes (FFmpeg n9.0.2): libx264 79, libx265 35, libsvtav1
+20, libaom-av1 76; `h264_nvenc` 67, `hevc_nvenc` 69, `av1_nvenc` 65;
+`h264_qsv` 73, `hevc_qsv` 72, `av1_qsv` 44; `h264_vaapi` 38, `hevc_vaapi` 38,
+`av1_vaapi` 34; `h264_vulkan` 35, `hevc_vulkan` 35, `av1_vulkan` 32. A table
+holds each private option of the encoder and each `AVCodecContext` option the
+encoder's source reads. Regenerate after an FFmpeg pin bump:
+
+```sh
+cc -o avoption-probe scripts/encode-options/avoption-probe.c -lavcodec -lavutil
+./avoption-probe libx264 libx265 libsvtav1 libaom-av1 h264_nvenc hevc_nvenc \
+    av1_nvenc h264_qsv hevc_qsv av1_qsv h264_vaapi hevc_vaapi av1_vaapi \
+    h264_vulkan hevc_vulkan av1_vulkan > avoptions.tsv
+python3 -I scripts/encode-options/gen-avoption-tables.py avoptions.tsv \
+    /path/to/ffmpeg n9.0.2 libpelorus/src/encode_avoptions_tables.c
+```
+
+`pel_encode_options_from_ffmpeg` and `PelorusEncodeOption` are an additive
+public API in `pelorus/encode_options.h`: library symbols follow the 0.x
+library version, the interop ABI (`PELORUS_ABI_MINOR`) and the
+`PEL_SEC_ENCODE_RECORD` section do not change. New fields of
+`PelorusEncodeOption` would only be appended.
+
 ## Tests
 
 `libpelorus/test/encode_record_test.c` (Meson test `encode-record`; it reads
@@ -392,6 +505,7 @@ test `encode-options`):
 | unknown key kept and flagged; a dropped key fails | the unknown option sits in `unknown_params`; removing a known key, the unknown key or the `digest` member fails verification (`PEL_ERR_MISMATCH`, `PEL_ERR_ABSENT`) |
 | round trip; a tampered field fails | build, verify, canonicalize again (a fixed point) pass; one changed character in a value fails |
 | independent reproduction | the C digest of this page's JSON block, and of an embedded copy, equals the Python digest above; so does the `range` mutation; an escape and key-order case matches Python's bytes |
+| FFmpeg AVOptions (#352) | `test_avopt_*` in `encode_options_test.c`: tables sorted, unique and within key bounds; one changed AVOption changes the digest; host settings ignored for every encoder; each clash pair gives the string-only digest, an invalid string value keeps the AVOption; an unproven pair keeps both; known and unknown names verbatim, last wins; every error code with zeroed output; key 64/65 and value 1024/1025 bytes; last option-string entry wins |
 
 The same file checks SHA-256 against the FIPS 180-4 examples, one million
 `a`, the padding boundaries 55 to 120 bytes and streamed chunks, and every
