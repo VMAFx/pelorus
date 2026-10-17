@@ -2,12 +2,16 @@
 # Encode provenance record
 
 > [!IMPORTANT]
-> **Status: the record, its digest, the API and the `PEL_SEC_ENCODE_RECORD`
-> section (interop ABI 1.4) are implemented**
-> ([ADR-0175](../adr/0175-encode-provenance-record.md), issue #81). The
-> option-string parsers that fill `encoder.params` from x264, x265 and FFmpeg
-> argument lists, and a producer that attaches the section, are follow-ups
-> (#81 item 2).
+> **Status: the record, its digest, the API, the `PEL_SEC_ENCODE_RECORD`
+> section (interop ABI 1.4), and option-string parsers for x264 and x265
+> are implemented**
+> ([ADR-0175](../adr/0175-encode-provenance-record.md),
+> [ADR-0198](../adr/0198-encoder-option-string-parsers.md), issues #81, #156).
+> Option-string parsers for SVT-AV1 and libaom follow in issue #156 part 2.
+> NVENC has no option string: NVENC settings map directly to discrete FFmpeg
+> AVOptions on the encoder wrapper (`h264_nvenc` / `hevc_nvenc`), without a
+> pass-through colon-separated option string parameter like `-x264-params` or
+> `-x265-params`.
 
 ## In one paragraph
 
@@ -32,7 +36,7 @@ members are marked.
 | `encoder.version` (required) | the encoder's own version string |
 | `encoder.codec` (required) | FFmpeg codec name: `h264`, `hevc`, `vvc`, `av1`, `vp9` |
 | `encoder.params` (required, may be empty) | known options, normalised: one spelling per option, typed values |
-| `encoder.unknown_params` (required, may be empty) | options the encoder's table does not know, verbatim (key and value text) |
+| `encoder.unknown_params` (required, may be empty) | options the encoder's table does not know: normalised key, verbatim value text |
 | `input.digest` | `sha256:` and 64 hex digits of the input file bytes |
 | `input.id` | an opaque caller identifier, when hashing the input is not possible |
 | `filters[]` (required, may be empty) | the pre-encode chain in order; each entry has `name` (for example `pelorus_deband_vulkan`), `library` (`libpelorus` or the host library), `version`, `params`, `unknown_params` |
@@ -216,10 +220,126 @@ above), `hardware_device`, `hardware_driver`, and `elapsed_ns` with
 It checks what the canonicaliser cannot know: required members, the
 `input.digest` form and the `hardware.path` name.
 
+## Option-string parsers
+
+Header [`pelorus/encode_options.h`](../../libpelorus/include/pelorus/encode_options.h);
+implementation `libpelorus/src/encode_options.c` with dialect tables in
+`libpelorus/src/encode_options_x264.c` and `libpelorus/src/encode_options_x265.c`
+([ADR-0198](../adr/0198-encoder-option-string-parsers.md), issue #156).
+
+The option-string parser parses and normalises CLI and FFmpeg pass-through
+parameter strings (such as `-x264-params` and `-x265-params`) into arrays of
+`PelorusEncodeParam` ready for `pel_encode_record_build()`.
+
+### Parser API
+
+```c
+typedef enum pel_encode_options_dialect {
+    PEL_ENCODE_OPTIONS_X264 = 1,
+    PEL_ENCODE_OPTIONS_X265 = 2,
+} pel_encode_options_dialect;
+
+typedef struct PelorusEncodeOptions {
+    PelorusEncodeParam params[PEL_ENCODE_RECORD_MAX_MEMBERS];
+    uint32_t nb_params;
+    PelorusEncodeParam unknown_params[PEL_ENCODE_RECORD_MAX_MEMBERS];
+    uint32_t nb_unknown_params;
+    /* private value pointer slots and character arena */
+} PelorusEncodeOptions;
+
+pel_result pel_encode_options_parse(pel_encode_options_dialect d,
+                                    const char *text, size_t len,
+                                    PelorusEncodeOptions *out);
+```
+
+The caller allocates `out` (allocate on heap; ~272 KiB, measured `sizeof(PelorusEncodeOptions)` = 278552). All pointers in
+`out->params` and `out->unknown_params` reference memory within `out`'s own
+storage buffer. The function performs zero heap allocation, uses no global
+state, and produces no standard library logging. Concurrent calls on distinct
+`PelorusEncodeOptions` instances are reentrant and thread-safe.
+
+Outputs in both `out->params` and `out->unknown_params` are sorted in ascending
+byte order by key (deterministic across all calls).
+
+### Input syntax
+
+The parser accepts FFmpeg key-value lists where options are separated by `:` and
+key-value pairs by `=`:
+
+- Quoting: single quotes (`'...'`) treat enclosed characters literally.
+  Backslash (`\`) escapes the next character (for instance `\:`, `\=`, `\\`).
+- Leading and trailing whitespace around keys and values is stripped.
+- An empty input string or `len == 0` returns `PEL_OK` with zero parameters.
+- Malformed inputs return `PEL_ERR_INVALID`: empty keys (e.g. `=3`), missing
+  `=` (e.g. `crf`), or empty values (e.g. `crf=`). Unterminated quotes have the
+  remainder copied literally, and trailing backslashes are kept literally,
+  matching FFmpeg's `av_dict_parse_string` and `av_get_token` behavior.
+- Out-of-bounds parameters return `PEL_ERR_RANGE`: keys exceeding 64 bytes,
+  values exceeding 1024 bytes, integers with $|v| > \text{INT32\_MAX}$, more
+  than 256 parameters, or arena exhaustion.
+
+### Normalisation rules per dialect
+
+1. **Key normalisation**:
+   - Underscores (`_`) are translated to hyphens (`-`).
+   - x265: leading `--` prefixes are stripped.
+   - Keys are matched case-sensitively against upstream option tables.
+   - Known aliases are mapped to canonical keys (for example, x264 `frameref`
+     becomes `ref`, `bframe` becomes `bframes`; x265 `ip-factor` becomes
+     `ipratio`, `pb-factor` becomes `pbratio`).
+   - Negation prefixes: a `no-` or `no` prefix on a known boolean option maps
+     to the base canonical key with the inverted boolean value, as upstream
+     strips the prefix before the name lookup (x265 `no-tskip-fast=1` gives
+     `tskip-fast=false`). Both encoders also accept the
+     prefix on non-boolean options and pass them `"true"` or `"false"`
+     (x264 `common/base.c:913-919`, x265 `source/common/param.cpp:937-946`);
+     the record does not type those, so `no-b-adapt=1` lands in
+     `unknown_params` as `no-b-adapt`.
+2. **Value normalisation**:
+   - **Boolean**: x264 accepts `1`/`0`, `true`/`false`, `yes`/`no` (case-insensitive words);
+     x265 accepts `1`/`0`, `true`/`false`, `yes`/`no` (case-sensitive, matching upstream `atobool`).
+     Normalised to `"true"` or `"false"`.
+   - **Integer**: parsed via base-0 `strtoll` (accepts decimal, hex `0x`, octal `0`),
+     as both encoders do (`strtol(str, &end, 0)` in x264 `common/base.c:856` and
+     x265 `source/common/param.cpp:1551`).
+     Parsing assumes the C locale (ASCII digits). Values with $|v| > \text{INT32\_MAX}$
+     return `PEL_ERR_RANGE`. Strings beginning with `0` followed by non-octal digits
+     (such as `08`) fail conversion matching upstream `strtol` and are rejected as malformed for that type.
+     Valid integers are formatted as plain decimal canonical strings via `pel_encode_record_int()`.
+   - **Float / Real**: parsed via `strtod` in the C locale (period decimal point)
+     and formatted as canonical `"f64:<16 lower-case hex>"` via `pel_encode_record_f64()`.
+   - **Other types** (enums, filenames, lists, ratios, "auto"): preserved verbatim as unescaped text.
+3. **Duplicate keys**:
+   - When a key appears multiple times (including across aliases or negation prefixes),
+     the last occurrence wins (e.g. `b_adapt=2:b-adapt=1` yields `b-adapt=1`).
+4. **Unknown and rejected parameters**:
+   - Keys not recognized in the dialect table land in `unknown_params` under the normalised key
+     (`_` → `-`, x265 leading `--` stripped) with the value verbatim, so `foo_bar=1:foo-bar=2`
+     yields one entry `foo-bar=2`.
+   - Known keys whose values fail validation for their declared type also land in `unknown_params`
+     under their canonical key with the value verbatim (because the underlying encoder rejects
+     them, meaning they did not take effect); a later valid value for that key replaces the entry.
+
+### Field table
+
+| Input | Destination | Key normalisation | Value normalisation |
+|---|---|---|---|
+| Known key, valid value | `params` | canonical key (`_` → `-`, alias mapped, `no-` stripped) | typed canonical form (`true`/`false`, plain decimal, `f64:<hex>`, or unescaped string) |
+| Unknown key | `unknown_params` | normalised key (`_` → `-`, x265 `--` stripped) | verbatim unescaped value |
+| Known key, invalid value | `unknown_params` | canonical key | verbatim unescaped value |
+
+### Coverage table
+
+| Dialect | Key count | Upstream source pin | Source file & function |
+|---|---|---|---|
+| x264 (`PEL_ENCODE_OPTIONS_X264`) | 142 (123 base + 19 aliases) | VideoLAN x264 `b35605ace3ddf7c1a5d67a2eb553f034aef41d55` | `common/base.c: x264_param_parse` |
+| x265 (`PEL_ENCODE_OPTIONS_X265`) | 233 (225 base + 8 aliases) | MulticoreWare x265 `e444744c03978c1fb4e037168967020cf2648427` | `source/common/param.cpp: x265_param_parse` |
+
 ## Tests
 
 `libpelorus/test/encode_record_test.c` (Meson test `encode-record`; it reads
-this page as its argument):
+this page as its argument) and `libpelorus/test/encode_options_test.c` (Meson
+test `encode-options`):
 
 | Acceptance (#81) | Test |
 |---|---|
