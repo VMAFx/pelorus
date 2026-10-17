@@ -90,8 +90,25 @@ error, 8-bit input: the filters of every chain in the table below, 120 frames ea
 and `pelorus_mc_vulkan=meta=1,pelorus_denoise_vulkan=prev=3:mc=1` also at 3000
 frames. The separate device needs `disable_multiplane=1`; without it the command
 fails with `Cannot map a multiplane Vulkan image (1 image(s) for 2 plane(s)) to
-CUDA` (exit code 218). Not measured: software decode on the derived device, and
-10-bit input on either form.
+CUDA` (exit code 218).
+
+10-bit input works with the same separate-device form when the upload format is
+`p010le` and the encoder runs a 10-bit profile:
+
+```bash
+ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk -i input-10bit.mkv \
+       -vf "format=p010le,hwupload,<filters>,hwupload=derive_device=cuda" \
+       -c:v hevc_nvenc -profile:v main10 -cq 28 out.mkv
+```
+
+Verified on an RTX 4090 (driver 615.78.08) with a 1280x720 HEVC Main 10
+(`yuv420p10le`) clip decoded in software: every chain in the table below ran
+120 frames with exit code 0, no CUDA error, no `hwdownload` in the log and
+`Using input frames context (format cuda) with hevc_nvenc encoder`; deband twice
+and `pelorus_mc_vulkan=meta=1,pelorus_denoise_vulkan=prev=3:mc=1` also ran 3000
+frames. Every output is HEVC Main 10, `yuv420p10le`
+([#310](https://github.com/VMAFx/pelorus/issues/310)). Not measured: software
+decode on the derived device, and 10-bit input behind NVDEC.
 
 Behind NVDEC on an RTX 4090 with a 120-frame 8-bit HEVC clip into `hevc_nvenc`
 (driver 615.78.08, stack build `a17dfa4`), the separate device setup fails while
