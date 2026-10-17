@@ -38,6 +38,9 @@ libpelorus_sources = files(
   'src/telemetry_adapters.c',
   'src/telemetry.c',
   'src/encode_record.c',
+  'src/encode_options.c',
+  'src/encode_options_x264.c',
+  'src/encode_options_x265.c',
   'src/sha256.c',
   'src/deband_params.c',
   'src/denoise_params.c',
@@ -49,6 +52,7 @@ libpelorus_headers = files(
   'include/pelorus/interop.h',
   'include/pelorus/telemetry.h',
   'include/pelorus/encode_record.h',
+  'include/pelorus/encode_options.h',
   'include/pelorus/deband.h',
   'include/pelorus/denoise.h',
 )

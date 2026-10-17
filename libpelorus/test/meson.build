@@ -74,3 +74,12 @@ encode_record_test = executable(
 test('encode-record', encode_record_test,
      args: [meson.project_source_root() / 'docs' / 'api' / 'encode-record.md'],
      suite: 'fast')
+
+encode_options_test = executable(
+  'pelorus_encode_options_test',
+  files('encode_options_test.c'),
+  include_directories: include_directories('../src'),
+  dependencies: libpelorus_dep,
+)
+test('encode-options', encode_options_test, suite: 'fast')
+
