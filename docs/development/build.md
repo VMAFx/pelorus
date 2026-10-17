@@ -72,6 +72,17 @@ every missing device extension from
 `ffmpeg-patches/test/vulkan-required-extensions.txt`; FFmpeg 9 itself treats
 them as optional and would fall back silently.
 
+## Native arm64 lane (Linux aarch64)
+
+The `arm64` job of `.github/workflows/ci.yml` runs on native `ubuntu-26.04-arm`
+GitHub-hosted runners ([ADR-0203](../adr/0203-arm64-ci-lane.md), issue #170).
+
+| Scope | Platform coverage |
+| --- | --- |
+| What runs | Native `meson setup --werror build && ninja -C build`, fast suite (including side-data round-trip serialization against the x86-64 known-answer test byte vectors in `libpelorus/test/interop_test.c`), FFmpeg patch stack replay, Mesa lavapipe software Vulkan validation of all ten filters, format matrix, and missing-device `no_device` non-failure tester report assertion |
+| What does not run | No NEON SIMD kernels exist in Pelorus; no arm64 GPU evidence (lavapipe provides software functional evidence only) |
+| Architecture endianness | Big-endian architectures are unsupported. The Pelorus interop ABI wire format is strictly little-endian ([interop ABI](../api/interop-abi.md#stability-rules-normative--see-interoph), [ADR-0183](../adr/0183-sidedata-zero-free-carrier.md)) |
+
 ## Windows (MSYS2 UCRT64)
 
 libpelorus and its fast suite build natively on Windows with the MSYS2 UCRT64

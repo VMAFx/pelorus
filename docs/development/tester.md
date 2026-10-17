@@ -8,9 +8,16 @@ rules are in [tester kit stages](../usage/tester.md). The images that bundle
 the kit are described under [tester images](../usage/tester.md#tester-images):
 `generic` (CPU), `nvidia` and `intel` ([ADR-0180](../adr/0180-tester-vendor-images.md));
 AMD and arm64 are later children of
-[#108](https://github.com/VMAFx/pelorus/issues/108). `libpelorus_suite` and
+[#108](https://github.com/VMAFx/pelorus/issues/108) (native arm64 lane in
+CI: [#170](https://github.com/VMAFx/pelorus/issues/170),
+[ADR-0203](../adr/0203-arm64-ci-lane.md)). `libpelorus_suite` and
 `registration` have built-in runners in tool 0.4.10
 ([#302](https://github.com/VMAFx/pelorus/issues/302)).
+
+| Platform | What runs | What does not run | Notes |
+| --- | --- | --- | --- |
+| Linux arm64 (`aarch64`, `ubuntu-26.04-arm`) | Fast suite (including round-trip vs x86-64 KAT fixtures), patch replay, lavapipe functional validation, format matrix | No NEON kernels exist in Pelorus; no arm64 GPU evidence | Issue #170, [ADR-0203](../adr/0203-arm64-ci-lane.md). Big-endian is unsupported: interop ABI wire format is strictly little-endian ([interop ABI](../api/interop-abi.md#stability-rules-normative--see-interoph)) |
+
 All three images set `PELORUS_SUITE_CMD=/opt/pelorus/tests/run-fast-suite.sh` and ship the native fast-test binaries, telemetry fixtures, encode-record example and comma-decimal locale; `tools/tester/install-fast-suite.py` generates their arguments, environment and workdir from `meson introspect --tests`, while repository scripts and shader compiler checks remain build-host gates.
 
 A tester package is evidence for one `master` commit, named

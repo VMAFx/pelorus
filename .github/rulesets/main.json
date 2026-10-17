@@ -44,6 +44,9 @@
       "parameters": {
         "required_status_checks": [
           {
+            "context": "arm64 (native · fast suite · patch replay · lavapipe)"
+          },
+          {
             "context": "libpelorus (build · test · format · tidy)"
           },
           {
