@@ -40,6 +40,9 @@ Prefer these (and the in-tree reference implementations) over recall.
 - VMAF: <https://github.com/Netflix/vmaf> and the vmafx fork (`VMAFx/vmafx`).
 - BD-rate (Bjøntegaard delta): G. Bjøntegaard, "Calculation of average PSNR
   differences between RD-curves", VCEG-M33.
+- Grain scoring recipe: [grain-scoring.md](metrics/grain-scoring.md)
+  (evaluating decoded synthesis vs reconstruction; VMAFx issue
+  [#2144](https://github.com/VMAFx/vmafx/issues/2144)).
 
 ## Hardware encoders
 

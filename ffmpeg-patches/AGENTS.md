@@ -159,6 +159,10 @@ ffmpeg-patches/
    `pelorus_fgs=source=sidedata`; FGC per AU,
    cancel, no-section planted zero, 10-bit refusal, options pass-through):
    skip named by `FGS_SMOKE_SKIP` (ADR-0206).
+   Grain score smoke `test/grain-score-smoke.sh` (#82: verifies
+   `scripts/grain-score.sh` scores decoded grain synthesis, rejects
+   grain-free reconstruction, strips FGC SEI, rejects missing filters):
+   skip named by `GRAIN_SCORE_SMOKE_SKIP` (ADR-0207).
 11. Every ephemeral `git am` replay supplies `Pelorus-Replay` committer
    identity, neutralizes signing, hooks, and diff ordering, and passes
    `--no-gpg-sign --no-verify`. Do not rely on workstation's global Git
