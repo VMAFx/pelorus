@@ -60,6 +60,10 @@ WORKFLOWS = (
 # shape, so a Renovate digest bump changes ci.yml alone and stays green.
 WINDOWS_JOB = "windows"
 WINDOWS_RUNNER = "windows-2025"
+# Issue #170, ADR-0203: native arm64 CI lane on ubuntu-26.04-arm.
+ARM64_JOB = "arm64"
+ARM64_RUNNER = "ubuntu-26.04-arm"
+CI_JOB_RUNNERS = {WINDOWS_JOB: WINDOWS_RUNNER, ARM64_JOB: ARM64_RUNNER}
 SETUP_MSYS2_PIN = re.compile(
     r"^[ ]+(?:- )?uses: msys2/setup-msys2@[0-9a-f]{40} # v\d+\.\d+\.\d+$", re.MULTILINE
 )
@@ -2818,7 +2822,7 @@ def _validate_workflow_structure_and_jobs(
     for name, block in jobs.items():
         if is_job_call(block):
             continue  # a reusable-workflow call has no runner or steps of its own
-        runner = WINDOWS_RUNNER if is_ci and name == WINDOWS_JOB else "ubuntu-26.04"
+        runner = CI_JOB_RUNNERS.get(name, "ubuntu-26.04") if is_ci else "ubuntu-26.04"
         runners = re.findall(r"^\s+runs-on:\s*([^\s#]+)", block, re.MULTILINE)
         if runners != [runner]:
             errors.append(f"{relative}: job {name} must run exactly on {runner}")

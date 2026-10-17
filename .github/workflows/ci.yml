@@ -285,6 +285,183 @@ jobs:
         if: github.event.pull_request.draft != true
         run: ffmpeg-patches/test/vulkan-lavapipe-report.sh
 
+  arm64:
+    # Issue #170, ADR-0203: native arm64 CI lane on ubuntu-26.04-arm.
+    # Verifies libpelorus fast suite (including x86-64 KAT byte vectors),
+    # FFmpeg patch stack replay, lavapipe software Vulkan validation,
+    # and tester report missing-device non-failure behavior.
+    name: arm64 (native · fast suite · patch replay · lavapipe)
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 45
+    env:
+      # scripts/fetch-ffmpeg-series.sh verifies the shared FFmpeg fix series'
+      # build provenance with gh attestation verify (ADR-0185).
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Stop on a draft pull request
+        if: github.event.pull_request.draft == true
+        env:
+          TITLE: Gate not run on a draft
+          MESSAGE: >-
+            The gate did not run because the pull request is a draft.
+            It runs when the pull request is marked ready for review.
+        run: |
+          echo "::error title=$TITLE::$MESSAGE"
+          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event.pull_request.draft != true
+        with:
+          persist-credentials: false
+      - name: Load build configuration
+        if: github.event.pull_request.draft != true
+        run: |
+          while IFS= read -r entry; do
+            case "$entry" in
+              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
+                printf '%s\n' "$entry" >> "$GITHUB_ENV"
+                ;;
+            esac
+          done < build-config.env
+      - name: Install native build toolchain and lavapipe
+        if: github.event.pull_request.draft != true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential meson ninja-build pkg-config git ca-certificates \
+            libvulkan-dev glslc glslang-tools \
+            mesa-vulkan-drivers vulkan-tools vulkan-validationlayers \
+            clang clang-format clang-tidy locales
+      - name: Generate comma-decimal locale
+        if: github.event.pull_request.draft != true
+        run: |
+          sudo locale-gen de_DE.UTF-8
+          locale -a | grep -E '^de_DE\.(UTF-8|utf8)$'
+      - name: Install cosign
+        if: github.event.pull_request.draft != true
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Runner and toolchain receipt
+        if: github.event.pull_request.draft != true
+        run: |
+          echo "ImageOS=${ImageOS:-unset}"
+          echo "ImageVersion=${ImageVersion:-unset}"
+          cat /etc/os-release
+          arch=$(uname -m)
+          echo "uname -m: $arch"
+          test "$arch" = "aarch64" || {
+            echo "::error::expected aarch64 runner, got $arch"
+            exit 1
+          }
+          dpkg-query -W -f='${Package}=${Version}\n' \
+            mesa-vulkan-drivers vulkan-tools vulkan-validationlayers libvulkan-dev
+          glslc --version
+          glslangValidator --version
+          cosign version
+      - name: Configure + build libpelorus
+        if: github.event.pull_request.draft != true
+        run: meson setup --werror build && ninja -C build
+      - name: Test (fast suite — interop ABI + shader compile)
+        if: github.event.pull_request.draft != true
+        run: |
+          meson test -C build --suite=fast --print-errorlogs
+          python3 -I scripts/check-test-skips.py build/meson-logs/testlog.json
+      - name: Fetch and verify pinned FFmpeg source
+        if: github.event.pull_request.draft != true
+        run: |
+          git init ffmpeg
+          git -C ffmpeg remote add origin "$FFMPEG_REMOTE"
+          git -C ffmpeg fetch --depth=1 origin \
+            "refs/tags/${FFMPEG_TAG}:refs/tags/${FFMPEG_TAG}"
+          actual=$(git -C ffmpeg rev-parse --verify \
+            "refs/tags/${FFMPEG_TAG}^{commit}")
+          test "$actual" = "$FFMPEG_COMMIT" || {
+            echo "::error::${FFMPEG_TAG} peels to ${actual}, expected ${FFMPEG_COMMIT}"
+            exit 1
+          }
+      - name: Replay all patches, link FFmpeg, keep the binary
+        if: github.event.pull_request.draft != true
+        # This lane installs no ffnvcodec: the NVENC smokes may skip for that
+        # reason only (ADR-0189, ADR-0191). lavapipe has no HEVC video, so the
+        # forced-keyframe smoke (#309) skips too.
+        env:
+          NVENC_SMOKE_SKIP: hevc_nvenc is not built into
+          NVENC_HOP_SMOKE_SKIP: hevc_nvenc is not built into
+          KEYFRAME_SMOKE_SKIP: no Vulkan device with HEVC video
+        run: |
+          echo "LANE_DIR=$RUNNER_TEMP/pelorus-lane" >> "$GITHUB_ENV"
+          FFMPEG_REPO="$GITHUB_WORKSPACE/ffmpeg" KEEP_DIR="$RUNNER_TEMP/pelorus-lane" \
+            ffmpeg-patches/test/build-and-run.sh
+      - name: Select the lavapipe ICD
+        if: github.event.pull_request.draft != true
+        run: |
+          shopt -s nullglob
+          icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          if [ "${#icds[@]}" -ne 1 ]; then
+            echo "::error::expected one lavapipe ICD in /usr/share/vulkan/icd.d, found ${#icds[@]}"
+            ls -l /usr/share/vulkan/icd.d
+            exit 1
+          fi
+          {
+            echo "VK_DRIVER_FILES=${icds[0]}"
+            echo "LD_LIBRARY_PATH=$LANE_DIR/lib"
+            echo "FFMPEG_BIN=$LANE_DIR/ffmpeg"
+            echo "PELORUS_VALIDATE=1"
+          } >> "$GITHUB_ENV"
+          echo "lavapipe ICD: ${icds[0]}"
+      - name: Device guard refuses planted defects
+        if: github.event.pull_request.draft != true
+        run: |
+          ffmpeg-patches/test/vulkan-lavapipe-guard.sh --self-test
+          for rule in device_count device_type driver extensions feature subgroup layer; do
+            if ffmpeg-patches/test/vulkan-lavapipe-guard.sh --self-test --disable "$rule" \
+              >/dev/null 2>&1; then
+              echo "::error::guard self-test stays green with rule $rule switched off"
+              exit 1
+            fi
+          done
+          ffmpeg-patches/test/vulkan-lavapipe-filters.sh --self-test
+          ffmpeg-patches/test/vulkan-lavapipe-report.sh --self-test
+      - name: Device is lavapipe with the required extensions (never a GPU)
+        if: github.event.pull_request.draft != true
+        run: |
+          vulkaninfo --summary
+          ffmpeg-patches/test/vulkan-lavapipe-guard.sh
+      - name: All ten filters run clean under validation
+        if: github.event.pull_request.draft != true
+        run: ffmpeg-patches/test/vulkan-lavapipe-filters.sh
+      - name: Format matrix under validation
+        if: github.event.pull_request.draft != true
+        run: |
+          # Exit 77 is the matrix's skip code (no usable device). A skip is no
+          # evidence, so the lane fails on it like on any other non-zero exit.
+          ffmpeg-patches/test/vulkan-format-matrix.sh
+      - name: Tester report says software_vulkan and functional
+        if: github.event.pull_request.draft != true
+        run: ffmpeg-patches/test/vulkan-lavapipe-report.sh
+      - name: "Negative test: missing Vulkan device reports no_device non-failure"
+        if: github.event.pull_request.draft != true
+        run: |
+          out="$RUNNER_TEMP/pelorus-no-device-report"
+          code=0
+          VK_DRIVER_FILES=/nonexistent.json python3 -I tools/tester/pelorus_tester_report.py run --out "$out" || code=$?
+          test "$code" -eq 0 || {
+            echo "::error::expected non-failure exit code 0, got $code"
+            exit 1
+          }
+          python3 -I tools/tester/pelorus_tester_report.py validate "$out/report.json"
+          python3 -I -c '
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              report = json.load(f)
+          gpu_stages = [s for s in report.get("stages", []) if s.get("needs_device") and s.get("id") != "bench"]
+          if not gpu_stages:
+              sys.exit("no GPU stages found in report")
+          for s in gpu_stages:
+              if s.get("status") != "no_device":
+                  sys.exit("stage %s status is %s, expected no_device" % (s.get("id"), s.get("status")))
+          print("verified: %d GPU stages reported no_device, exit code 0" % len(gpu_stages))
+          ' "$out/report.json"
+
   sanitizers:
     name: libpelorus (ASan + UBSan — the interop conformance fixture)
     runs-on: ubuntu-26.04
