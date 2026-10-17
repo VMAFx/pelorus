@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # pelorus_fgs — H.274 film-grain SEI bitstream filter (HEVC)
 
-**Stance:** `experimental` — Available to insert static H.274 film-grain metadata today; promotion requires pinned-corpus grain-synthesis BD-rate evidence ([bench #197](https://github.com/VMAFx/pelorus/issues/197)).
+**Stance:** `experimental` — Available to insert static or per-frame H.274 film-grain metadata today; promotion requires pinned-corpus grain-synthesis BD-rate evidence ([bench #197](https://github.com/VMAFx/pelorus/issues/197)).
 
 `pelorus_fgs` is a libavcodec **bitstream filter** (BSF) that inserts an ITU-T
 H.274 **Film Grain Characteristics (FGC) SEI** message into an HEVC elementary
@@ -10,10 +10,11 @@ before encode. It is the HEVC/H.274 leg of the film-grain round-trip that
 `vf_pelorus_grain_estimate_vulkan` ([ADR-0115](../adr/0115-grain-estimate.md))
 started; the design is [ADR-0117](../adr/0117-grain-fgs-bsf.md).
 
-**No inline side-data bridge exists.** The BSF never reads
-`PEL_SEC_FILMGRAIN` or `AV_FRAME_DATA_FILM_GRAIN_PARAMS`; it always writes the
-static values supplied through its own AVOptions. Putting the estimator and BSF
-in one transcode command does not connect them automatically.
+**Modes.** By default (`source=options`), the BSF writes static values supplied
+through its own AVOptions ([ADR-0117](../adr/0117-grain-fgs-bsf.md)). With
+`source=sidedata`, it reads `PEL_SEC_FILMGRAIN` from Pelorus user-data-unregistered
+SEI messages carried through the encoder and converts the AV1 parameters to H.274
+per frame ([ADR-0206](../adr/0206-fgs-bsf-per-frame-bridge.md)).
 
 ## Why a BSF (and why HEVC specifically)
 
@@ -31,29 +32,29 @@ measures those parameters. Getting them into the bitstream then differs by codec
   inserting the H.274 FGC SEI (HEVC SEI payload type 19) as a prefix NAL on each
   access unit. The same SEI covers VVC/H.266; this BSF targets HEVC.
 
-## Honest scope — a static model via AVOptions
+## Honest scope — static AVOptions vs per-frame sidedata
 
-A BSF operates on `AVPacket`s, and no stock encoder forwards the estimator's
-**per-frame** grain frame side data onto the coded packet, so per-frame
-estimate→SEI plumbing through an arbitrary HEVC encoder is not expressible in
-the pinned stock FFmpeg baseline. `pelorus_fgs` therefore inserts a **static**
-FGC model the user supplies
-via AVOptions — the canonical FFmpeg metadata-BSF contract (`hevc_metadata`,
-`h264_metadata`, `av1_metadata` all set static parameters this way). It is
-opt-in and a no-op by construction: it passes the stream through unchanged unless
-at least one colour component is selected.
+`pelorus_fgs` supports two operational modes:
 
-The estimator's per-band grain measurement maps onto the options (see the recipe
-below), so the intended workflow is: run the estimator once, read its per-band
-scaling with suitable analysis tooling, manually derive the static values, and
-pass them to `pelorus_fgs`.
-Per-frame, time-varying grain models are a follow-up that would need a side-data
-channel that does not exist in stock FFmpeg.
+1. **Static mode (`source=options`, default):** Inserts a static FGC model supplied
+   via AVOptions — the canonical FFmpeg metadata-BSF contract (`hevc_metadata`,
+   `h264_metadata`, `av1_metadata` all set static parameters this way). It is
+   opt-in and a no-op by construction: it passes the stream through unchanged unless
+   at least one colour component is selected.
+   The estimator's per-band grain measurement maps onto the options (see the recipe
+   below), so the intended workflow is: run the estimator once, read its per-band
+   scaling with suitable analysis tooling, manually derive the static values, and
+   pass them to `pelorus_fgs`.
+2. **Per-frame mode (`source=sidedata`):** Reads the Pelorus side-data blob from
+   each access unit's user-data-unregistered SEI (written by encoders with `-udu_sei 1`),
+   converts `PEL_SEC_FILMGRAIN` AV1 parameters to H.274 via `pel_grain_aom_to_h274`,
+   and inserts an active or cancellation FGC SEI per frame ([ADR-0206](../adr/0206-fgs-bsf-per-frame-bridge.md)).
 
 ## Options
 
 | Option | Default | Range | Meaning |
 | --- | --- | --- | --- |
+| `source` | `options` | `options`, `sidedata` | grain parameter source: `options` (0, static values from AVOptions), `sidedata` (1, per-frame Pelorus UDU SEI) |
 | `model_id` | 0 | 0–1 | H.274 `film_grain_model_id`: 0 = frequency filtering, 1 = auto-regression (see [Decoder compatibility](#decoder-compatibility)) |
 | `blending_mode` | 0 | 0–1 | H.274 `blending_mode_id`: 0 = additive, 1 = multiplicative |
 | `log2_scale` | 2 | 0–15 | H.274 `log2_scale_factor`; each step up halves the grain amplitude. SMPTE RDD 5 allows 2–7 |
@@ -143,6 +144,32 @@ This is an offline/manual mapping, not code the BSF performs. The values
 reproduce the measured grain, not a BD-rate-optimal model; tune against the
 vmafx encoded-VMAF oracle ([ADR-0106](../adr/0106-autotune-control-plane.md)).
 
+## Per-frame mode (source=sidedata)
+
+With `source=sidedata`, `pelorus_fgs` operates on per-frame grain parameters rather than static options. During encode, the encoder passes Pelorus side-data sections in user-data-unregistered (UDU) SEI messages (via `-udu_sei 1`). The BSF parses each access unit's prefix UDU SEI messages, unwraps the Pelorus blob, extracts `PEL_SEC_FILMGRAIN`, and converts the AV1-model grain parameters to ITU-T H.274 via `pel_grain_aom_to_h274` ([ADR-0206](../adr/0206-fgs-bsf-per-frame-bridge.md)).
+
+### Pipeline example
+
+```bash
+# Estimator only; add the denoiser after it. Frames stay in VRAM (Vulkan
+# derived from CUDA, ADR-0191).
+ffmpeg -init_hw_device cuda=cu:0 -init_hw_device vulkan=vk@cu -filter_hw_device vk -i in.mkv \
+  -vf "format=nv12,hwupload,pelorus_grain_estimate_vulkan,hwupload=derive_device=cuda" \
+  -c:v hevc_nvenc -bf 0 -udu_sei 1 -bsf:v "pelorus_fgs=source=sidedata" out.hevc
+```
+
+Measured on an RTX 4090 on 2026-10-17 with 8 noisy 320x192 pictures: exit code 0, the `-v verbose` log shows `Using input frames context (format cuda) with hevc_nvenc encoder`, `trace_headers` counts 8 active FGC SEI, and the decoder exports film grain parameters for all 8 pictures. `test/fgs-sidedata-smoke.sh` runs the same estimator and filter through system memory so that one graph also serves libx265.
+
+hevc_nvenc writes the Pelorus carrier SEI ([ADR-0183](../adr/0183-sidedata-zero-free-carrier.md)) on every picture. libx265 4.3 (`X265_BUILD` 217) did not: with `-udu_sei 1` it wrote no foreign user data SEI on 2026-10-17, neither from the estimator nor from a decoded stream that carried one, so the filter found no section and wrote no FGC SEI. The smoke probes libx265 for this before it uses it and skips by name when the SEI is missing.
+
+### Constraints and behavior
+
+- **8-bit limit:** The converter domain is strictly 8-bit YUV420P. If the SPS luma or chroma bit depth is not 8, the BSF logs an error (`pelorus_fgs: sidedata mode supports 8-bit only (SPS bit depth != 8)`) and returns `AVERROR_PATCHWELCOME`.
+- **Cancel behavior:** If `PEL_SEC_FILMGRAIN` is absent, has `apply == 0`, or carries `grain_model == PEL_GRAIN_NONE` (both `aom` and `h274` tags are converted, since the estimator fills the AV1 fields under either tag), no FGC SEI is emitted for that access unit. If a preceding access unit in the stream emitted an active FGC SEI with `persistence=1`, the BSF emits a cancellation SEI (`film_grain_characteristics_cancel_flag = 1`) once to terminate grain synthesis.
+- **Option precedence:** In `source=sidedata` mode, component selections and model coefficients (`components`, `scale_*`, `intensity_*`, `cutoff_*`, `model_id`) are derived dynamically per frame from the side-data blob; the static AVOption values are ignored. The `components=0` passthrough rule does not apply in sidedata mode. The `persistence` and `skip_existing` options remain active.
+- **Pelorus UDU SEI preserved:** The Pelorus UDU SEI messages remain in the bitstream so downstream quality oracles (such as VMAFx) can continue reading the side-data stream.
+- **Fidelity loss:** The AV1-to-H.274 parameter conversion is an approximation because AV1 piecewise-linear scaling and AR-filter representations do not map losslessly to H.274 frequency-filtering parameters. See [grain-convert.md](../api/grain-convert.md) for details on conversion mathematics and fidelity bounds.
+
 ## Usage
 
 ```bash
@@ -173,6 +200,8 @@ packet placement only: its model still comes exclusively from those static
 AVOptions, not from the filtergraph's frame side data.
 
 ## Verification
+
+`ffmpeg-patches/test/fgs-sidedata-smoke.sh` runs in every stack replay ([build.md](../development/build.md)): one active FGC SEI per access unit with the Pelorus SEI kept (for an AOM-tagged and an H.274-tagged section), one cancel after the grain stops, no FGC SEI without the estimator, the 10-bit refusal, and the byte-identical `source=options` pass-through. Planted mutations (8-bit refusal removed, cancel removed, carrier UUID refused, H.274 tag refused, FGC insert skipped) each make it fail.
 
 The fast suite's `fgs-bsf-contract` test (`scripts/test-fgs-bsf-contract.py
 --self-test`) checks the source statically: RDD 5 defaults, a default grain
@@ -205,6 +234,7 @@ No BD-rate / visual-match proof is shipped; that must be measured under the
 
 - Per-band → multi-interval FGC mapping (the estimator measures eight bands; v0.x
   collapses them to one interval).
-- A side-data channel that carries the per-frame estimate onto the coded packet,
-  enabling a time-varying model instead of a static one.
+- A side-data channel that carries the per-frame estimate onto the coded packet:
+  landed for HEVC UDU SEI (`source=sidedata`, [ADR-0206](../adr/0206-fgs-bsf-per-frame-bridge.md));
+  inline packet side-data remains a follow-up.
 - The H.264 leg (the FGC SEI is also defined for AVC) and the VVC/H.266 leg.

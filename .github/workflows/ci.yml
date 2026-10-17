@@ -146,6 +146,7 @@ jobs:
           NVENC_SMOKE_SKIP: Cannot load libcuda.so.1
           NVENC_HOP_SMOKE_SKIP: Cannot load libcuda.so.1
           KEYFRAME_SMOKE_SKIP: no Vulkan device with HEVC video
+          FGS_SMOKE_SKIP: no HEVC encoder
         run: |
           FFMPEG_REPO="$GITHUB_WORKSPACE/ffmpeg" \
             ffmpeg-patches/test/build-and-run.sh
@@ -233,6 +234,7 @@ jobs:
           NVENC_SMOKE_SKIP: hevc_nvenc is not built into
           NVENC_HOP_SMOKE_SKIP: hevc_nvenc is not built into
           KEYFRAME_SMOKE_SKIP: no Vulkan device with HEVC video
+          FGS_SMOKE_SKIP: no HEVC encoder
         run: |
           echo "LANE_DIR=$RUNNER_TEMP/pelorus-lane" >> "$GITHUB_ENV"
           FFMPEG_REPO="$GITHUB_WORKSPACE/ffmpeg" KEEP_DIR="$RUNNER_TEMP/pelorus-lane" \
@@ -387,6 +389,7 @@ jobs:
           NVENC_SMOKE_SKIP: hevc_nvenc is not built into
           NVENC_HOP_SMOKE_SKIP: hevc_nvenc is not built into
           KEYFRAME_SMOKE_SKIP: no Vulkan device with HEVC video
+          FGS_SMOKE_SKIP: no HEVC encoder
         run: |
           echo "LANE_DIR=$RUNNER_TEMP/pelorus-lane" >> "$GITHUB_ENV"
           FFMPEG_REPO="$GITHUB_WORKSPACE/ffmpeg" KEEP_DIR="$RUNNER_TEMP/pelorus-lane" \

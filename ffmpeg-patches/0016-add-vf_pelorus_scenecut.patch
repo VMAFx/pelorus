@@ -30,13 +30,13 @@ ADR: docs/adr/0126-scenecut-idr.md
  4 files changed, 116 insertions(+)
 
 diff --git a/configure b/configure
-index 021915e788bf3f971443131919f665036148b3b6..5f48b12e31eb76d3cae37489068aa5eac5f0dccb 100755
+index 68256adb2425f459bfc89fb11b410c19f9a39498..7ff55835cd28509abe48ac3eb69cabd101582590 100755
 --- a/configure
 +++ b/configure
-@@ -7481,6 +7481,8 @@ pelorus_grain_estimate_vulkan_filter_extralibs="libpelorus_extralibs"
- enabled pelorus_grain_estimate_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
- pelorus_mc_vulkan_filter_extralibs="libpelorus_extralibs"
+@@ -7483,6 +7483,8 @@ pelorus_mc_vulkan_filter_extralibs="libpelorus_extralibs"
  enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
+ pelorus_fgs_bsf_extralibs="libpelorus_extralibs"
+ enabled pelorus_fgs_bsf && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/grain_convert.h pel_grain_aom_to_h274
 +pelorus_scenecut_filter_extralibs="libpelorus_extralibs"
 +enabled pelorus_scenecut_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
  enabled libvo_amrwbenc    && { check_pkg_config libvo_amrwbenc vo-amrwbenc vo-amrwbenc/enc_if.h E_IF_init ||

@@ -6,6 +6,29 @@
   "source": "ffmpeg-patches/files/h265_pelorus_fgs_bsf.c",
   "options": [
     {
+      "name": "source",
+      "type": "const-enum",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": "source",
+      "constants": [
+        {
+          "name": "options",
+          "value": 0,
+          "help": "use static parameters from AVOptions"
+        },
+        {
+          "name": "sidedata",
+          "value": 1,
+          "help": "read parameters from Pelorus user-data-unregistered SEI"
+        }
+      ],
+      "effect_class": "topology",
+      "tunable": false,
+      "help": "grain parameter source (0=options, 1=sidedata)"
+    },
+    {
       "name": "model_id",
       "type": "int",
       "min": 0,

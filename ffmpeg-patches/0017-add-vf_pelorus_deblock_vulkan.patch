@@ -33,7 +33,7 @@ ADR: docs/adr/0127-deblock.md
  6 files changed, 442 insertions(+)
 
 diff --git a/configure b/configure
-index 5f48b12e31eb76d3cae37489068aa5eac5f0dccb..b890fae94423562137ed098673ca7a24cee3bacc 100755
+index 7ff55835cd28509abe48ac3eb69cabd101582590..ce0fc60c540fb5d7b76744ba2d86b621a40bd229 100755
 --- a/configure
 +++ b/configure
 @@ -4246,6 +4246,7 @@ overlay_vulkan_filter_deps="vulkan spirv_compiler"

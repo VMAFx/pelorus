@@ -161,7 +161,7 @@ MUTATIONS = {
         "ctx->intensity_low",
     ),
     "inverted interval accepted": ("ctx->intensity_low > ctx->intensity_high", "0"),
-    "no per-AU range check": ("err = pel_fgs_check_stream(bsf);", "err = 0;"),
+    "no per-AU range check": ("? pel_fgs_check_stream(bsf) :", "? 0 :"),
     "model 1 range unchecked": ("(1 << (bit_depth - 1)) - 1", "(1 << bit_depth) - 1"),
 }
 

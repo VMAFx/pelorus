@@ -37,7 +37,7 @@ ADR: docs/adr/0124-anime-aa.md
  6 files changed, 592 insertions(+)
 
 diff --git a/configure b/configure
-index f052412ba00f78d88734beaa51c4a4e82a5ebea6..021915e788bf3f971443131919f665036148b3b6 100755
+index b06c3c615c996382da4f5ed209bb6bb15c43a0bc..68256adb2425f459bfc89fb11b410c19f9a39498 100755
 --- a/configure
 +++ b/configure
 @@ -4243,6 +4243,7 @@ overlay_qsv_filter_deps="libmfx"

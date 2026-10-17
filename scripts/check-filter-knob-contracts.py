@@ -183,6 +183,7 @@ EFFECT_CLASS_MAP: dict[str, dict[str, str]] = {
         "cutoff_v": "strength",
         "persistence": "topology",
         "skip_existing": "topology",
+        "source": "topology",
     },
 }
 
