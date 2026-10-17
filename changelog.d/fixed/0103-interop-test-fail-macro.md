@@ -1,0 +1,1 @@
+- The interop conformance fixture reports its three unconditional failures through a `FAIL(msg)` macro instead of `CHECK(!"...")`, so cppcheck no longer flags a string literal used as a condition (`incorrectStringBooleanError`) in the copy that VMAFx mirrors from `libpelorus/test/interop_test.c` ([ADR-0103](docs/adr/0103-interop-sidedata-abi.md)).
