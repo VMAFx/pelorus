@@ -21,7 +21,7 @@ Pelorus is the pre-encode half of a pair. The sibling
 [VMAFx/vmafx](https://github.com/VMAFx/vmafx) is the quality oracle and
 autotune control plane, and the two meet in the `PelorusSideData` interop ABI
 ([ADR-0103](adr/0103-interop-sidedata-abi.md)). Milestones that vmafx depends on
-say which vmafx phase they serve.
+say which vmafx milestone they serve.
 
 ## Where to start
 
@@ -35,21 +35,21 @@ say which vmafx phase they serve.
 
 ## Releases
 
-| Milestone | Theme | vmafx phase | Epics |
+| Milestone | Theme | vmafx milestone | Epics |
 | --- | --- | --- | --- |
 | [0.3](https://github.com/VMAFx/pelorus/milestone/1) | Hardened release | none | [#92](https://github.com/VMAFx/pelorus/issues/92) |
 | [0.4](https://github.com/VMAFx/pelorus/milestone/2) | Telemetry schemas and tester kit | `1.0.0-rc.4` | [#93](https://github.com/VMAFx/pelorus/issues/93), [#108](https://github.com/VMAFx/pelorus/issues/108) |
-| [0.5](https://github.com/VMAFx/pelorus/milestone/3) | Zero-copy and live integration | 1.1 | [#193](https://github.com/VMAFx/pelorus/issues/193), [#195](https://github.com/VMAFx/pelorus/issues/195) |
-| [0.6](https://github.com/VMAFx/pelorus/milestone/4) | Conformance and encoder feedback | 1.2 | [#196](https://github.com/VMAFx/pelorus/issues/196) |
-| [0.7](https://github.com/VMAFx/pelorus/milestone/5) | Multi-backend compute | `libgpudispatch` | [#176](https://github.com/VMAFx/pelorus/issues/176) |
+| [0.5](https://github.com/VMAFx/pelorus/milestone/3) | Zero-copy and live integration | 0.10.0 | [#193](https://github.com/VMAFx/pelorus/issues/193), [#195](https://github.com/VMAFx/pelorus/issues/195) |
+| [0.6](https://github.com/VMAFx/pelorus/milestone/4) | Conformance and encoder feedback | 0.4.0 | [#196](https://github.com/VMAFx/pelorus/issues/196) |
+| [0.7](https://github.com/VMAFx/pelorus/milestone/5) | Multi-backend compute | 0.2.0 (`libgpudispatch`) | [#176](https://github.com/VMAFx/pelorus/issues/176) |
 | [0.8](https://github.com/VMAFx/pelorus/milestone/6) | Codec and encoder breadth | codec adapters | [#177](https://github.com/VMAFx/pelorus/issues/177) |
-| [1.0](https://github.com/VMAFx/pelorus/milestone/7) | Stable contract | 1.0.0 | [#182](https://github.com/VMAFx/pelorus/issues/182), [#189](https://github.com/VMAFx/pelorus/issues/189), [#194](https://github.com/VMAFx/pelorus/issues/194) |
-| [1.1](https://github.com/VMAFx/pelorus/milestone/8) | Content-adaptive tuning | none | [#112](https://github.com/VMAFx/pelorus/issues/112) |
-| [1.2](https://github.com/VMAFx/pelorus/milestone/9) | Integrations and packaging | none | [#113](https://github.com/VMAFx/pelorus/issues/113) |
-| [2.0](https://github.com/VMAFx/pelorus/milestone/10) | Breaking changes | none | [#114](https://github.com/VMAFx/pelorus/issues/114) |
-| [2.1](https://github.com/VMAFx/pelorus/milestone/11) | Rust interop crate | 2.3 (Rust P2) | [#115](https://github.com/VMAFx/pelorus/issues/115) |
-| [2.2](https://github.com/VMAFx/pelorus/milestone/12) | Rust host runtime | 2.5 (Rust P4) | [#116](https://github.com/VMAFx/pelorus/issues/116) |
-| [3.0](https://github.com/VMAFx/pelorus/milestone/13) | Host C removed | 3.0 (Rust P6) | [#118](https://github.com/VMAFx/pelorus/issues/118) |
+| [0.9](https://github.com/VMAFx/pelorus/milestone/7) | Stable contract | 1.0.0 | [#182](https://github.com/VMAFx/pelorus/issues/182), [#189](https://github.com/VMAFx/pelorus/issues/189), [#194](https://github.com/VMAFx/pelorus/issues/194) |
+| [0.10](https://github.com/VMAFx/pelorus/milestone/8) | Content-adaptive tuning | none | [#112](https://github.com/VMAFx/pelorus/issues/112) |
+| [0.11](https://github.com/VMAFx/pelorus/milestone/9) | Integrations and packaging | none | [#113](https://github.com/VMAFx/pelorus/issues/113) |
+| [0.12](https://github.com/VMAFx/pelorus/milestone/10) | Breaking changes | none | [#114](https://github.com/VMAFx/pelorus/issues/114) |
+| [0.13](https://github.com/VMAFx/pelorus/milestone/11) | Rust interop crate | 0.6.0 (Rust P2) | [#115](https://github.com/VMAFx/pelorus/issues/115) |
+| [0.14](https://github.com/VMAFx/pelorus/milestone/12) | Rust host runtime | 1.1.0 (Rust P4 and P5) | [#116](https://github.com/VMAFx/pelorus/issues/116) |
+| [0.15](https://github.com/VMAFx/pelorus/milestone/13) | Host C removed | 1.2.0 (host C and C++ removed) | [#118](https://github.com/VMAFx/pelorus/issues/118) |
 
 Release candidates (`vX.Y.Z-rc.N`, from 0.4) are published as prereleases and
 are never `latest` ([#108](https://github.com/VMAFx/pelorus/issues/108)).
@@ -104,7 +104,7 @@ candidates, 13 children. Design:
 ## 0.5 Zero-copy and live integration
 
 Outcome: decode, Pelorus, encoder and vmafx scoring stay on the GPU on every
-supported Linux path, and the interchange pieces vmafx 1.1 consumes exist.
+supported Linux path, and the interchange pieces vmafx 0.10.0 consumes exist.
 
 Exit criteria:
 
@@ -144,7 +144,7 @@ Exit criteria:
   Video adapters ([#264](https://github.com/VMAFx/pelorus/issues/264)), and
   encode-record option-string parsers
   ([#265](https://github.com/VMAFx/pelorus/issues/265)). They moved here from
-  0.4 to follow VMAFx's 1.1 and 1.2 adapter phase.
+  0.4 to follow the VMAFx 0.4.0 and 0.10.0 adapter work.
 
 Epic [#196](https://github.com/VMAFx/pelorus/issues/196), 18 children.
 
@@ -174,7 +174,7 @@ VAAPI and VideoToolbox steering each ship with conformance numbers.
 
 Epic [#177](https://github.com/VMAFx/pelorus/issues/177), 10 children.
 
-## 1.0 Stable contract
+## 0.9 Stable contract
 
 Outcome: what adopters depend on is frozen. The contract is the public headers,
 AVOption and filter names (including per-backend names), `lavfi.pelorus.*` keys,
@@ -185,7 +185,7 @@ complete. macOS is listed only if the 0.5 spike passes.
 
 Exit criteria:
 
-- The 1.0 contract ADR is Accepted and `soversion` is 1.
+- The stable-contract ADR ([#152](https://github.com/VMAFx/pelorus/issues/152)) is Accepted and `soversion` is 1.
 - Every filter carries a proven or experimental label with its stance.
 - A CI job proves each supported platform.
 - Licence provenance, credits and notices are in every artifact, and the patent
@@ -197,21 +197,21 @@ distribution and docs, 6 children;
 [#194](https://github.com/VMAFx/pelorus/issues/194) licensing and notices, 4
 children (1 closed).
 
-## After 1.0
+## After 0.9
 
-The post-1.0 milestones are epics with candidate checklists. Children are
+The milestones after the stable contract are epics with candidate checklists. Children are
 created when a milestone becomes the next one.
 
 | Milestone | Outcome | Epic |
 | --- | --- | --- |
-| 1.1 Content-adaptive tuning | `tune=auto` router, luma mask, demosquito, fade compensation, denoise motion taps, learned pre-processor study, per-shot autotune with vmafx | [#112](https://github.com/VMAFx/pelorus/issues/112) |
-| 1.2 Integrations and packaging | GStreamer element, HandBrake recipe, VapourSynth and OBS feasibility, package channels, filter metrics export | [#113](https://github.com/VMAFx/pelorus/issues/113) |
-| 2.0 Breaking changes | ABI 2 consolidation, soversion 2, removal of deprecated options and names | [#114](https://github.com/VMAFx/pelorus/issues/114) |
-| 2.1 Rust interop crate | Dependency-free crate for the interop ABI with conformance vectors shared with the C fixture, so vmafx can drop the C mirror ([ADR-0197](adr/0197-vmafx-interop-mirror-host-c-exception.md)) | [#115](https://github.com/VMAFx/pelorus/issues/115) |
-| 2.2 Rust host runtime | Host dispatch on `libgpudispatch-rs` and libpelorus host code in Rust behind the C ABI; FFmpeg-tree files stay C | [#116](https://github.com/VMAFx/pelorus/issues/116) |
-| 3.0 Host C removed | Host C deleted outside a named FFmpeg-tree exception list | [#118](https://github.com/VMAFx/pelorus/issues/118) |
+| 0.10 Content-adaptive tuning | `tune=auto` router, luma mask, demosquito, fade compensation, denoise motion taps, learned pre-processor study, per-shot autotune with vmafx | [#112](https://github.com/VMAFx/pelorus/issues/112) |
+| 0.11 Integrations and packaging | GStreamer element, HandBrake recipe, VapourSynth and OBS feasibility, package channels, filter metrics export | [#113](https://github.com/VMAFx/pelorus/issues/113) |
+| 0.12 Breaking changes | ABI 2 consolidation, soversion 2, removal of deprecated options and names | [#114](https://github.com/VMAFx/pelorus/issues/114) |
+| 0.13 Rust interop crate | Dependency-free crate for the interop ABI with conformance vectors shared with the C fixture, so vmafx can drop the C mirror ([ADR-0197](adr/0197-vmafx-interop-mirror-host-c-exception.md)) | [#115](https://github.com/VMAFx/pelorus/issues/115) |
+| 0.14 Rust host runtime | Host dispatch on `libgpudispatch-rs` and libpelorus host code in Rust behind the C ABI; FFmpeg-tree files stay C | [#116](https://github.com/VMAFx/pelorus/issues/116) |
+| 0.15 Host C removed | Host C deleted outside a named FFmpeg-tree exception list | [#118](https://github.com/VMAFx/pelorus/issues/118) |
 
-2.1 to 3.0 follow vmafx's Rust phases; see
+0.13 to 0.15 follow vmafx's Rust phases; see
 [post-1.0 and Rust coupling](research/0172-post-1-0-rust-coupling.md).
 
 ## Ongoing buckets

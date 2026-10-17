@@ -61,6 +61,17 @@ We choose **Option C: the ten VMAFx mirror files are placed on the VMAFx ADR-247
   - At Pelorus milestone 2.1 ([#115](https://github.com/VMAFx/pelorus/issues/115)), re-evaluate shipping a dependency-free Rust interop crate versus generated bindings to retire the host-C exception before VMAFx 3.0.
   - VMAFx records the exception list row in its repository tracking ADR-2478.
 
+## Update 2026-10-17
+
+Pelorus and VMAFx renumbered their milestones onto the 0.x version line; the
+decision is unchanged. The numbers above map as follows:
+
+- Pelorus milestone 2.1 (Rust interop crate, [#115](https://github.com/VMAFx/pelorus/issues/115)) is now 0.13.0; "before 1.0" means before 0.9.0 (stable contract).
+- VMAFx 2.3 (Rust P2) is now VMAFx milestone 0.6.0.
+- VMAFx 3.0 (phase P6, host C removed) is now VMAFx milestone 1.2.0. The exception entries on VMAFx's list still name 3.0.
+
+[docs/roadmap.md](../roadmap.md) carries the current numbers.
+
 ## References
 
 - Issue: [#164](https://github.com/VMAFx/pelorus/issues/164) — VMAFx interop mirror host-C exception under ADR-2478 Rust migration.
