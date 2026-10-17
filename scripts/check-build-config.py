@@ -3321,12 +3321,22 @@ TESTER_BUILD_TOKENS = (
     'pelorus_tester_report.py validate "${RUNNER_TEMP}/report/report.json" --kit "${KIT}"',
     *SERIES_WORKFLOW_TOKENS,
 )
+# Issue #170, ADR-0208: native arm64 generic tester image build on PR and nightly.
+TESTER_ARM64_TOKENS = (
+    "      KIT: generic\n",
+    '--target "final-${KIT}"',
+    "docker image inspect --format '{{.Os}}/{{.Architecture}}'",
+    'test "$platform" = "linux/arm64"',
+    'pelorus_tester_report.py validate "${RUNNER_TEMP}/report/report.json" --kit "${KIT}"',
+    '"aarch64"',
+    *SERIES_WORKFLOW_TOKENS,
+)
 # ADR-0185: the runner fetches and verifies the shared series into the build
 # context; the Containerfile checks the sha256 pin again and applies it first.
 TESTER_SERIES_FETCH = "run: scripts/fetch-ffmpeg-series.sh .ffmpeg-series\n"
 # ADR-0178 (#235): hosted-minute bounds. A job's timeout is a number no larger
 # than its cap, so a stuck build fails instead of running for six hours.
-TESTER_TIMEOUT_CAPS = {"build": 90, "validate": 10, "publish": 150}
+TESTER_TIMEOUT_CAPS = {"build": 90, "build-arm64": 90, "validate": 10, "publish": 150}
 TESTER_TIMEOUT_DEFAULT_CAP = 150
 TESTER_TRIGGERS = ["pull_request", "schedule", "workflow_dispatch"]
 TESTER_BUILD_IF = (
@@ -3423,13 +3433,13 @@ def _tester_timeouts(relative: str, jobs: dict[str, str]) -> list[str]:
 
 
 def _tester_nightly(relative: str, text: str, jobs: dict[str, str]) -> list[str]:
-    """The nightly schedule builds and never publishes (#235): only `build` can run on it."""
+    """The nightly schedule builds and never publishes (#235): only `build` and `build-arm64` can run on it."""
     errors: list[str] = []
     if len(re.findall(r"^    - cron:", text, re.MULTILINE)) != 1:
         errors.append(f"{relative}: schedule needs exactly one cron entry")
     for name, block in jobs.items():
         mentions = "schedule" in block or "always()" in block
-        if name != "build" and mentions:
+        if name not in ("build", "build-arm64") and mentions:
             errors.append(f"{relative}: job {name} must not run on schedule or use always()")
     for name in ("validate", "publish"):
         if "github.event_name != 'workflow_dispatch'" in jobs.get(name, ""):
@@ -3458,8 +3468,9 @@ def _tester_job_hygiene(relative: str, jobs: dict[str, str]) -> list[str]:
     """Runner, timeout, checkout credentials and publish-only privileges per job."""
     errors: list[str] = []
     for name, block in jobs.items():
-        if re.findall(r"^\s+runs-on:\s*([^\s#]+)", block, re.MULTILINE) != ["ubuntu-26.04"]:
-            errors.append(f"{relative}: job {name} must run exactly on ubuntu-26.04")
+        expected_runner = ARM64_RUNNER if name == "build-arm64" else "ubuntu-26.04"
+        if re.findall(r"^\s+runs-on:\s*([^\s#]+)", block, re.MULTILINE) != [expected_runner]:
+            errors.append(f"{relative}: job {name} must run exactly on {expected_runner}")
         if "timeout-minutes:" not in block:
             errors.append(f"{relative}: job {name} needs timeout-minutes")
         for checkout in re.finditer(
@@ -3477,20 +3488,46 @@ def _tester_job_hygiene(relative: str, jobs: dict[str, str]) -> list[str]:
     return errors
 
 
+def _tester_arm64_job(relative: str, arm64: str) -> list[str]:
+    """ADR-0208: the arm64 generic build keeps both receipts, platform first."""
+    errors = [
+        f"{relative}: build-arm64 job is missing {t.strip()}" for t in TESTER_ARM64_TOKENS if t not in arm64
+    ]
+    inspect = arm64.find("docker image inspect --format '{{.Os}}/{{.Architecture}}'")
+    report = arm64.find('pelorus_tester_report.py validate "${RUNNER_TEMP}/report/report.json" --kit "${KIT}"')
+    if inspect < 0 or report < 0 or inspect > report:
+        errors.append(
+            f"{relative}: build-arm64 job must check the image platform before it runs the report"
+        )
+    return errors
+
+
 def _tester_jobs(relative: str, jobs: dict[str, str]) -> list[str]:
-    errors = [f"{relative}: missing job {n}" for n in ("build", "validate", "publish") if n not in jobs]
+    errors = [
+        f"{relative}: missing job {n}"
+        for n in ("build", "build-arm64", "validate", "publish")
+        if n not in jobs
+    ]
     if errors:
         return errors
-    build, validate, publish = jobs["build"], jobs["validate"], jobs["publish"]
+    build, arm64, validate, publish = (
+        jobs["build"],
+        jobs["build-arm64"],
+        jobs["validate"],
+        jobs["publish"],
+    )
     errors.extend(_tester_job_hygiene(relative, jobs))
     errors.extend(_tester_timeouts(relative, jobs))
-    if TESTER_BUILD_IF not in build:
-        errors.append(
-            f"{relative}: build job must run only on pull_request or the schedule of VMAFx/pelorus"
-        )
+    for job_name, block in (("build", build), ("build-arm64", arm64)):
+        if TESTER_BUILD_IF not in block:
+            errors.append(
+                f"{relative}: {job_name} job must run only on pull_request or the schedule of VMAFx/pelorus"
+            )
     errors.extend(f"{relative}: build job is missing {t.strip()}" for t in TESTER_BUILD_TOKENS if t not in build)
+    errors.extend(_tester_arm64_job(relative, arm64))
     for job_name, block, image_build in (
         ("build", build, "name: Build (the Containerfile runs the licence gates)"),
+        ("build-arm64", arm64, "name: Build (the Containerfile runs the licence gates)"),
         ("publish", publish, "name: Build the tester image"),
     ):
         fetch = block.find(TESTER_SERIES_FETCH)
@@ -3499,12 +3536,13 @@ def _tester_jobs(relative: str, jobs: dict[str, str]) -> list[str]:
                 f"{relative}: {job_name} job must fetch and verify the shared FFmpeg fix "
                 "series into .ffmpeg-series before the image build"
             )
-    draft = build.find("name: Stop on a draft pull request")
-    first_checkout = build.find("uses: actions/checkout@")
-    if draft < 0 or first_checkout < 0 or draft > first_checkout:
-        errors.append(
-            f"{relative}: build job must stop on a draft pull request before it checks out (HISS-18)"
-        )
+    for job_name, block in (("build", build), ("build-arm64", arm64)):
+        draft = block.find("name: Stop on a draft pull request")
+        first_checkout = block.find("uses: actions/checkout@")
+        if draft < 0 or first_checkout < 0 or draft > first_checkout:
+            errors.append(
+                f"{relative}: {job_name} job must stop on a draft pull request before it checks out (HISS-18)"
+            )
     for job_name, block in (("validate", validate), ("publish", publish)):
         if "    if: github.event_name == 'workflow_dispatch'\n" not in block:
             errors.append(f"{relative}: {job_name} job must run only on workflow_dispatch")
@@ -4120,6 +4158,37 @@ def _tester_publish_cases(text: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def _tester_arm64_cases(text: str) -> dict[str, tuple[str, str]]:
+    """ADR-0208, #170: generic kit tester image built natively on arm64."""
+    arm64_block = workflow_job_blocks(text).get("build-arm64", "")
+    return {
+        "build-arm64 runner is not arm64": (
+            replace_in_job(text, "build-arm64", f"runs-on: {ARM64_RUNNER}", "runs-on: ubuntu-26.04"),
+            f"job build-arm64 must run exactly on {ARM64_RUNNER}",
+        ),
+        "build-arm64 job dropped": (
+            text.replace(arm64_block, "", 1) if arm64_block else text,
+            "missing job build-arm64",
+        ),
+        "build-arm64 platform check removed": (
+            replace_in_job(text, "build-arm64", "docker image inspect --format '{{.Os}}/{{.Architecture}}'", "true"),
+            "build-arm64 job is missing docker image inspect",
+        ),
+        "build-arm64 aarch64 report check removed": (
+            replace_in_job(text, "build-arm64", '"aarch64"', '"other"'),
+            'build-arm64 job is missing "aarch64"',
+        ),
+        "build-arm64 without the repository guard": (
+            replace_in_job(text, "build-arm64", " && github.repository == 'VMAFx/pelorus'", ""),
+            "build-arm64 job must run only on pull_request or the schedule of VMAFx/pelorus",
+        ),
+        "build-arm64 pushes": (
+            replace_in_job(text, "build-arm64", "          docker build \\\n", "          docker push x\n          docker build \\\n"),
+            "job build-arm64 must not use docker push",
+        ),
+    }
+
+
 def _tester_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
     return {
         **_tester_trigger_job_cases(text),
@@ -4130,6 +4199,7 @@ def _tester_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
         **_tester_publish_cases(text),
         **_tester_kit_cases(text),
         **_tester_build_kit_cases(text),
+        **_tester_arm64_cases(text),
     }
 
 

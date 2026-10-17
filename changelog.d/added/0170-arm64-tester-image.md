@@ -1,0 +1,1 @@
+- Native arm64 generic tester image build on `ubuntu-26.04-arm` on pull requests and nightly schedule with container platform and host architecture receipts, deferring multi-arch image publishing to a follow-up ([#170](https://github.com/VMAFx/pelorus/issues/170), [ADR-0208](docs/adr/0208-arm64-tester-image.md)).
