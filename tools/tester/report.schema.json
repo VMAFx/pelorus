@@ -69,7 +69,7 @@
           "log_tail": {"type": "string", "maxLength": 4000},
           "legs": {
             "type": "array",
-            "description": "Optional, added in tool 0.4.0: one entry per encoder the stage tried (steering_smoke, sidedata_roundtrip), and from tool 0.4.5 two QSV bitrate-control legs per QSV encoder in steering_smoke (rate_control set). A stage cannot pass with a failed leg or without a passing one; a leg that is not pass carries a reason.",
+            "description": "Optional, added in tool 0.4.0: one entry per encoder the stage tried (steering_smoke, sidedata_roundtrip, zero_copy_chain), and from tool 0.4.5 two QSV bitrate-control legs per QSV encoder in steering_smoke (rate_control set). A stage cannot pass with a failed leg or without a passing one; a leg that is not pass carries a reason.",
             "items": {
               "type": "object",
               "additionalProperties": false,
