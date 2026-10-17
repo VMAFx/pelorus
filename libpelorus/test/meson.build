@@ -92,3 +92,12 @@ grain_table_test = executable(
 test('grain-table', grain_table_test,
      args: [meson.current_source_dir() / 'fixtures' / 'grain' / 'two-entries.tbl'],
      suite: 'fast')
+
+grain_convert_test = executable(
+  'pelorus_grain_convert_test',
+  files('grain_convert_test.c'),
+  include_directories: include_directories('../src'),
+  dependencies: libpelorus_dep,
+)
+test('grain-convert', grain_convert_test, suite: 'fast')
+

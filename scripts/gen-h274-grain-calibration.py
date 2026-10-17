@@ -48,6 +48,10 @@ RES_CLAMP = 0.08
 DEBLOCK = (64, 71, 77, 84, 90, 96, 103, 109, 116, 122, 128, 128, 128)
 RHO_TOL = 0.002
 GAIN_TOL = 0.0005
+STATS_TABLE = ROOT / "libpelorus" / "src" / "grain_convert_tables.c"
+STAT_CUTOFFS = range(2, 15)
+STAT_SCALE = 64
+STAT_SIZE = 512
 
 
 def ffmpeg_h274_source(repo: str) -> str:
@@ -111,15 +115,21 @@ class H274Model0:
         return out
 
     def render(self, scale: int, cutoff: int, seed: int) -> np.ndarray:
+        grain = self.grain(scale, cutoff, cutoff, seed, WIDTH, HEIGHT)
+        return np.clip(LEVEL + grain, 0, 255)
+
+    def grain(self, scale: int, cut_h: int, cut_v: int, seed: int, width: int, height: int):
+        """Luma grain field for one cutoff pair, before it is added to the image."""
+
         def int8(a: np.ndarray) -> np.ndarray:
             return ((a + 128) & 0xFF) - 128
 
-        db = self.pattern(cutoff - 2, cutoff - 2)
+        db = self.pattern(cut_h - 2, cut_v - 2)
         shift = LOG2_SCALE + 6
-        grain = np.zeros((HEIGHT, WIDTH), dtype=np.int64)
+        grain = np.zeros((height, width), dtype=np.int64)
         state = self.seeds[seed % 256]
-        for y in range(0, HEIGHT, 16):
-            for x in range(0, WIDTH, 16):
+        for y in range(0, height, 16):
+            for x in range(0, width, 16):
                 x_off = ((state >> 16) % 52) & 0xFFFC
                 y_off = ((state & 0xFFFF) % 56) & 0xFFF8
                 signed = -scale if state & 1 else scale
@@ -137,7 +147,7 @@ class H274Model0:
                             r1 = grain[rows, col + 1].copy()
                             grain[rows, col] = int8((l0 + r0 * 2 + r1) >> 2)
                             grain[rows, col - 1] = int8((r0 + l0 * 2 + l1) >> 2)
-        return np.clip(LEVEL + grain, 0, 255)
+        return grain
 
 
 def estimator_stats(luma8: np.ndarray) -> tuple[float, float]:
@@ -154,6 +164,73 @@ def estimator_stats(luma8: np.ndarray) -> tuple[float, float]:
     var = float((resid[:, :w] ** 2).mean())
     lag = float((resid[:, :w] * resid[:, 1:]).mean()) / var
     return float(np.sqrt(var)) * 255.0, lag
+
+
+def grain_stats(model: H274Model0) -> list[tuple[int, int, float, float, float]]:
+    """Raw model-0 grain per cutoff pair: RMS per unit scale and lag-1 correlations.
+
+    These are the statistics libpelorus's AV1 <-> H.274 conversion compares
+    (ADR-0205). Grain is measured before it is added to the image, so no
+    clipping and no high-pass filter applies.
+    """
+    rows = []
+    for cut_v in STAT_CUTOFFS:
+        for cut_h in STAT_CUTOFFS:
+            gains, rho_h, rho_v = [], [], []
+            for seed in SEEDS:
+                g = model.grain(STAT_SCALE, cut_h, cut_v, seed, STAT_SIZE, STAT_SIZE).astype(
+                    np.float64
+                )
+                g -= g.mean()
+                var = float((g * g).mean())
+                gains.append(np.sqrt(var) / STAT_SCALE)
+                rho_h.append(float((g[:, :-1] * g[:, 1:]).mean()) / var)
+                rho_v.append(float((g[:-1, :] * g[1:, :]).mean()) / var)
+            rows.append(
+                (cut_h, cut_v, float(np.mean(gains)), float(np.mean(rho_h)), float(np.mean(rho_v)))
+            )
+    return rows
+
+
+def format_stats(rows: list[tuple[int, int, float, float, float]]) -> list[str]:
+    return [
+        f"    {{{h:2d}, {v:2d}, {g:.5f}f, {rh:+.4f}f, {rv:+.4f}f}},".replace("+", " ")
+        for h, v, g, rh, rv in rows
+    ]
+
+
+def parse_stats_table() -> list[tuple[int, int, float, float, float]]:
+    text = STATS_TABLE.read_text()
+    match = re.search(r"pel_h274_grain_stats\[\]\s*=\s*\{(.*?)\n\};", text, re.S)
+    if match is None:
+        raise SystemExit(f"{STATS_TABLE.name}: pel_h274_grain_stats table not found")
+    return [
+        (int(h), int(v), float(g), float(rh), float(rv))
+        for h, v, g, rh, rv in re.findall(
+            r"\{\s*(\d+),\s*(\d+),\s*([0-9.]+)f,\s*(-?[0-9.]+)f,\s*(-?[0-9.]+)f\s*\}",
+            match.group(1),
+        )
+    ]
+
+
+def check_stats(rows: list[tuple[int, int, float, float, float]]) -> int:
+    committed = parse_stats_table()
+    if [(h, v) for h, v, *_ in committed] != [(h, v) for h, v, *_ in rows]:
+        print("grain statistics cutoff pairs drifted", file=sys.stderr)
+        return 1
+    drift = [
+        (new, old)
+        for new, old in zip(rows, committed)
+        if abs(new[2] - old[2]) > GAIN_TOL
+        or abs(new[3] - old[3]) > RHO_TOL
+        or abs(new[4] - old[4]) > RHO_TOL
+    ]
+    for new, old in drift:
+        print(f"cutoff {new[0]},{new[1]}: {old[2:]} -> {new[2:]}", file=sys.stderr)
+    if drift:
+        return 1
+    print("H.274 grain statistics table matches the pinned FFmpeg synthesizer")
+    return 0
 
 
 def calibrate(model: H274Model0) -> list[tuple[int, float, float]]:
@@ -185,13 +262,22 @@ def parse_filter_table() -> list[tuple[int, float, float]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--check", action="store_true", help="compare with the filter table")
+    parser.add_argument(
+        "--stats", action="store_true", help="raw grain statistics table for libpelorus instead"
+    )
     parser.add_argument("--ffmpeg-repo", default=os.environ.get("FFMPEG_REPO"))
     args = parser.parse_args()
     if not args.ffmpeg_repo:
         print("set FFMPEG_REPO or pass --ffmpeg-repo", file=sys.stderr)
         return 2
 
-    rows = calibrate(H274Model0(ffmpeg_h274_source(args.ffmpeg_repo)))
+    model = H274Model0(ffmpeg_h274_source(args.ffmpeg_repo))
+    if args.stats:
+        stats = grain_stats(model)
+        print("\n".join(format_stats(stats)))
+        return check_stats(stats) if args.check else 0
+
+    rows = calibrate(model)
     for cutoff, rho, gain in rows:
         print(f"    {{{cutoff:2d}, {rho:+.4f}f, {gain:.5f}f}},".replace("+", " "))
     if not args.check:
