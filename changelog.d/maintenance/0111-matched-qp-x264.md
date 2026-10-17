@@ -1,0 +1,1 @@
+- Telemetry adapter tests: a matched x264 QP 32 fixture recorded on the same clip as the x265 and SVT-AV1 fixtures, and `test_matched_qp` now checks the normalised QP of x264, x265 and SVT-AV1 within one step of each other (#111).

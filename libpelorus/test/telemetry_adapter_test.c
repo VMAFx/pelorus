@@ -220,14 +220,19 @@ static int test_vvenc_fixture(const char *path, PelorusEncTelemetryInput *first)
     return failures;
 }
 
-static int test_matched_qp(const PelorusEncTelemetryInput *x265,
+/* One clip, matched QP: x264 32, x265 32, SVT-AV1 34 land within one step (#111). */
+static int test_matched_qp(const PelorusEncTelemetryInput *x264,
+                           const PelorusEncTelemetryInput *x265,
                            const PelorusEncTelemetryInput *svt)
 {
     float direct = -1.0f;
     int failures = 0;
 
     CHECK(fabsf(x265->frame.avg_qp - svt->frame.avg_qp) > 1.0f);
+    CHECK(fabsf(x264->frame.avg_qp - svt->frame.avg_qp) > 1.0f);
     CHECK(fabsf(x265->frame.avg_qp_norm - svt->frame.avg_qp_norm) <= 1.0f);
+    CHECK(fabsf(x264->frame.avg_qp_norm - svt->frame.avg_qp_norm) <= 1.0f);
+    CHECK(fabsf(x264->frame.avg_qp_norm - x265->frame.avg_qp_norm) <= 1.0f);
     CHECK(pel_qp_normalize(PEL_QP_SCALE_AV1_ENCODER_QP, 8u, 34.0f, &direct) == PEL_OK);
     CHECK(fabsf(direct - 32.0f) <= 1.0f);
     return failures;
@@ -1710,6 +1715,28 @@ static int test_x264_fixture(const char *path)
     return failures;
 }
 
+/* Same clip and options as the x265 and SVT-AV1 fixtures: every frame at QP 32. */
+static int test_x264_matched_fixture(const char *path, PelorusEncTelemetryInput *first)
+{
+    char text[FIXTURE_CAP];
+    PelorusEncTelemetryInput frames[FRAME_CAP];
+    size_t len = 0;
+    size_t count = 0;
+    size_t i;
+    int failures = 0;
+
+    (void)memset(frames, 0, sizeof(frames));
+    CHECK(read_fixture(path, text, sizeof(text), &len) == 0);
+    CHECK(pel_tlm_parse_x264_stats(text, len, 8u, frames, FRAME_CAP, &count) == PEL_OK);
+    CHECK(count == RECORDED_FRAME_COUNT);
+    CHECK(frames[0].frame.display_index == 0u && frames[0].frame.picture_type == PEL_PICTURE_I);
+    for (i = 0u; i < count && i < FRAME_CAP; i++) {
+        CHECK(frames[i].frame.avg_qp == 32.0f);
+    }
+    *first = frames[0];
+    return failures;
+}
+
 /* Replay libaom-3.15.2-cq32.txt unchanged, including encoder-private flags. */
 static int test_libaom_fixture(const char *path)
 {
@@ -1979,11 +2006,29 @@ static int test_x264(const char *path)
     return failures;
 }
 
-int main(int argc, char **argv)
+/* Recorded fixtures in main's argument order, then the matched-QP check across them. */
+static int test_recorded_fixtures(char **argv)
 {
     PelorusEncTelemetryInput x265;
     PelorusEncTelemetryInput svt;
     PelorusEncTelemetryInput vvenc;
+    PelorusEncTelemetryInput x264;
+    int failures = 0;
+
+    (void)memset(&x265, 0, sizeof(x265));
+    (void)memset(&svt, 0, sizeof(svt));
+    (void)memset(&vvenc, 0, sizeof(vvenc));
+    (void)memset(&x264, 0, sizeof(x264));
+    failures += test_x265_fixture(argv[1], &x265);
+    failures += test_svt_fixture(argv[2], &svt);
+    failures += test_vvenc_fixture(argv[3], &vvenc);
+    failures += test_x264_matched_fixture(argv[6], &x264);
+    failures += test_matched_qp(&x264, &x265, &svt);
+    return failures;
+}
+
+int main(int argc, char **argv)
+{
     int failures = 0;
 
     if (argc == 2 && strcmp(argv[1], "--locale-only") == 0) {
@@ -1992,18 +2037,14 @@ int main(int argc, char **argv)
     if (argc == 2 && strcmp(argv[1], "--libaom-negative-only") == 0) {
         return test_libaom_negative() == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
-    if (argc != 6) {
-        (void)fprintf(stderr, "usage: %s X265.csv SVT.stat VVENC.log LIBAOM.txt X264.stats\n",
+    if (argc != 7) {
+        (void)fprintf(stderr,
+                      "usage: %s X265.csv SVT.stat VVENC.log LIBAOM.txt X264.stats "
+                      "X264-MATCHED.stats\n",
                       argv[0]);
         return EXIT_FAILURE;
     }
-    (void)memset(&x265, 0, sizeof(x265));
-    (void)memset(&svt, 0, sizeof(svt));
-    (void)memset(&vvenc, 0, sizeof(vvenc));
-    failures += test_x265_fixture(argv[1], &x265);
-    failures += test_svt_fixture(argv[2], &svt);
-    failures += test_vvenc_fixture(argv[3], &vvenc);
-    failures += test_matched_qp(&x265, &svt);
+    failures += test_recorded_fixtures(argv);
     failures += test_qp_normalize_anchors();
     failures += test_negative_rows();
     failures += test_vvenc_negative_rows();
