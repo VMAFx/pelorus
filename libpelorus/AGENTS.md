@@ -17,10 +17,12 @@ libpelorus/
 │   ├── interop.h      PelorusSideData blob + pack/parse (the cross-repo contract)
 │   ├── telemetry.h    encoder-telemetry input, no FFmpeg types (ABI 1.4)
 │   ├── encode_record.h canonical encode record + digest (ADR-0175)
+│   ├── grain_table.h  libaom film-grain table text read/write (ADR-0204)
 │   └── deband.h       smart-deband parameter contract
 ├── schema/            telemetry-fields.json — normative telemetry field names
 ├── src/               interop.c, qp_report_csv.c, telemetry_adapters.c,
-│                      telemetry.c, encode_record.c, sha256.c, parameter units
+│                      telemetry.c, encode_record.c, sha256.c, grain_table.c,
+│                      parameter units
 ├── shaders/           standalone reference .comp shaders (CI-compiled)
 └── test/              interop_test.c — the shared ABI conformance fixture
                        path_utf8_test.c — the UTF-8 path contract (ADR-0149)
