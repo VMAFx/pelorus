@@ -70,6 +70,17 @@ docker build -f tools/tester/Containerfile --target final-nvidia \
   --tag pelorus-tester:nvidia .
 ```
 
+## arm64
+
+The `generic` kit image is built natively on `ubuntu-26.04-arm` on every qualifying pull request and on the nightly schedule ([ADR-0208](../adr/0208-arm64-tester-image.md), issue [#170](https://github.com/VMAFx/pelorus/issues/170)). It pushes nothing.
+
+Two receipts verify the execution:
+
+1. `docker image inspect --format '{{.Os}}/{{.Architecture}}'` verifies that the built container image is `linux/arm64`.
+2. The `pelorus_tester_report.py` execution without a device produces `report.json` with `host.arch` reporting `aarch64`.
+
+The vendor kits (`nvidia`, `intel`) remain amd64 only because they rely on vendor driver stacks and hardware. Publishing a multi-arch container index for the generic kit (linking amd64 and arm64 image digests under one signed tag) is out of scope here and is tracked as a follow-up under #170.
+
 ## One-time setup (maintainer)
 
 1. Make the package `ghcr.io/vmafx/pelorus` public after the first publish.
@@ -118,9 +129,9 @@ image and never publishes by itself.
 
 | Trigger | Runs | Pushes |
 | --- | --- | --- |
-| pull request that changes `tools/tester/`, `ffmpeg-patches/`, `libpelorus/`, `meson.build`, `meson_options.txt`, `build-config.env`, `scripts/fetch-ffmpeg-series.sh`, `LICENSES/`, `REUSE.toml` or the workflow | `build`, one amd64 image build per kit (three) with both licence gates and the no-device report | nothing |
+| pull request that changes `tools/tester/`, `ffmpeg-patches/`, `libpelorus/`, `meson.build`, `meson_options.txt`, `build-config.env`, `scripts/fetch-ffmpeg-series.sh`, `LICENSES/`, `REUSE.toml` or the workflow | `build` (three amd64 kit images) and `build-arm64` (generic kit image natively on arm64), with licence gates and no-device reports | nothing |
 | pull request that changes only other paths (docs, ADRs, changelog fragments, scripts) | nothing | nothing |
-| nightly schedule (02:17 UTC, this repository only) | `build` on the default branch | nothing |
+| nightly schedule (02:17 UTC, this repository only) | `build` and `build-arm64` on the default branch | nothing |
 | `workflow_dispatch` | `validate`, then `publish` after environment approval | the image and its `-source` image |
 
 - `scripts/check-build-config.py` evaluates the pull request path filter
@@ -128,8 +139,8 @@ image and never publishes by itself.
   docs change (or misses an image input) fails the build-config check.
 - The nightly cannot reach `publish`: `validate` and `publish` run on
   `workflow_dispatch` alone, the linter refuses `schedule` or `always()` in
-  either, and `build` holds no registry login or secret.
-- Timeouts: `build` 90 minutes, `validate` 10, `publish` 150, each per kit. A
+  either, and `build` and `build-arm64` hold no registry login or secret.
+- Timeouts: `build` 90 minutes, `build-arm64` 90, `validate` 10, `publish` 150, each per kit. A
   run past its timeout fails instead of hanging; the linter requires a numeric
   value no larger than the cap.
 - Expected duration: the pull request build of #252 took about 9 minutes on a

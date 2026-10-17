@@ -7,7 +7,9 @@ name: Tester publish
 # runs once per kit and a kit never cancels another. Pull requests build the images and push nothing,
 # only when they touch what the image is built from (a docs-only pull request
 # does not start it). A nightly schedule builds master once and publishes
-# nothing: only the `build` job can run on it (ADR-0178, #235).
+# nothing: only `build` and `build-arm64` can run on it (ADR-0178, #235).
+# `build-arm64` builds the generic kit natively on arm64 and is never
+# published yet (ADR-0208).
 # A manual dispatch is the only way to publish: `validate` refuses a commit that
 # neither master nor a maintained patch branch lts-* contains (a patch-branch
 # commit only by its full SHA, so the run name names it; ADR-0199), then `publish` waits for the `tester-publish`
@@ -128,6 +130,90 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/report"
           docker run --rm --volume "${RUNNER_TEMP}/report:/report" "tester-pr-${KIT}:${GITHUB_SHA}" run --out /report
           python3 -I tools/tester/pelorus_tester_report.py validate "${RUNNER_TEMP}/report/report.json" --kit "${KIT}"
+
+  build-arm64:
+    # Pull requests and the nightly schedule: build the generic kit image
+    # natively on arm64 and run the no-device report, push nothing (ADR-0208, #170).
+    name: Build tester image generic on arm64 (no push)
+    if: github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VMAFx/pelorus')
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 90
+    env:
+      KIT: generic
+    steps:
+      - name: Stop on a draft pull request
+        if: github.event.pull_request.draft == true
+        env:
+          TITLE: Gate not run on a draft
+          MESSAGE: >-
+            The gate did not run because the pull request is a draft.
+            It runs when the pull request is marked ready for review.
+        run: |
+          echo "::error title=$TITLE::$MESSAGE"
+          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event.pull_request.draft != true
+        with:
+          persist-credentials: false
+      - name: Load build configuration
+        if: github.event.pull_request.draft != true
+        run: |
+          while IFS= read -r entry; do
+            case "$entry" in
+              FFMPEG_REMOTE=*|FFMPEG_COMMIT=*)
+                printf '%s\n' "$entry" >> "$GITHUB_ENV"
+                ;;
+            esac
+          done < build-config.env
+      # Licence self-test steps are arch-independent: do NOT duplicate (build job runs them; ADR-0208).
+      - name: Install cosign
+        if: github.event.pull_request.draft != true
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Fetch and verify the shared FFmpeg fix series
+        if: github.event.pull_request.draft != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # The Containerfile checks the tarball against the sha256 pin once more
+        # and applies the series before ffmpeg-patches/series.txt (ADR-0185).
+        run: scripts/fetch-ffmpeg-series.sh .ffmpeg-series
+      - name: Build (the Containerfile runs the licence gates)
+        if: github.event.pull_request.draft != true
+        run: |
+          docker build \
+            --file tools/tester/Containerfile \
+            --target "final-${KIT}" \
+            --build-arg "FFMPEG_REMOTE=${FFMPEG_REMOTE}" \
+            --build-arg "FFMPEG_COMMIT=${FFMPEG_COMMIT}" \
+            --build-arg "PELORUS_COMMIT=${GITHUB_SHA}" \
+            --tag "tester-pr-${KIT}-arm64:${GITHUB_SHA}" \
+            .
+      - name: The image is linux/arm64
+        if: github.event.pull_request.draft != true
+        run: |
+          platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "tester-pr-${KIT}-arm64:${GITHUB_SHA}")"
+          test "$platform" = "linux/arm64" || {
+            echo "::error::expected linux/arm64 image, got $platform"
+            exit 1
+          }
+      - name: Without a device the report says no_device and names the kit's docker option
+        if: github.event.pull_request.draft != true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/report"
+          docker run --rm --volume "${RUNNER_TEMP}/report:/report" "tester-pr-${KIT}-arm64:${GITHUB_SHA}" run --out /report
+          python3 -I tools/tester/pelorus_tester_report.py validate "${RUNNER_TEMP}/report/report.json" --kit "${KIT}"
+      - name: The report ran on aarch64
+        if: github.event.pull_request.draft != true
+        run: |
+          python3 -I -c '
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              report = json.load(f)
+          arch = report.get("host", {}).get("arch")
+          if arch != "aarch64":
+              print(f"::error::expected host.arch aarch64, got {arch!r}", file=sys.stderr)
+              sys.exit(1)
+          ' "${RUNNER_TEMP}/report/report.json"
 
   validate:
     # Dispatch only: the commit that runs this workflow must be reachable from
