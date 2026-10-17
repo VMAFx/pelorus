@@ -615,7 +615,7 @@ pel_result pel_tlm_adapter_caps(uint8_t adapter, uint8_t codec, uint64_t *out_ma
     }
     if (adapter == PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS) {
         if (codec == PEL_TLM_CODEC_VP9) {
-            *out_mask = TLM_FFMPEG_QUALITY_STATS_CAPS & ~(PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM);
+            *out_mask = TLM_FFMPEG_QUALITY_STATS_CAPS & ~PEL_TLM_F_AVG_QP_NORM;
         } else {
             *out_mask = TLM_FFMPEG_QUALITY_STATS_CAPS;
         }

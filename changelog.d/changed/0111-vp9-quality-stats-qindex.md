@@ -1,0 +1,1 @@
+- `pel_tlm_parse_ffmpeg_quality_stats` now reports VP9 QP: the libvpx 0..63 quantizer that FFmpeg writes is mapped to qindex with libvpx's table and set as `avg_qp` on `PEL_QP_SCALE_VP9_QINDEX`; `avg_qp_norm` stays clear. Before, VP9 QP was ignored (#111).

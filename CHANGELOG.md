@@ -28,6 +28,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 ### Changed
 
+- `pel_tlm_parse_ffmpeg_quality_stats` now reports VP9 QP: the libvpx 0..63 quantizer that FFmpeg writes is mapped to qindex with libvpx's table and set as `avg_qp` on `PEL_QP_SCALE_VP9_QINDEX`; `avg_qp_norm` stays clear. Before, VP9 QP was ignored (#111).
 - `renovate.json` extends the family preset `github>plurano/horistes` instead of `config:recommended` and keeps only the Pelorus custom managers and package rules. The preset adds a three-day wait after each release, a sign-off line on bot commits, no bot merges and no runner-image proposals ([ADR-0151](docs/adr/0151-renovate-mirrors-checker-toolchain-pins.md)).
 - The ten VMAFx interop mirror files go on VMAFx's ADR-2478 host-C exception list ([ADR-0197](docs/adr/0197-vmafx-interop-mirror-host-c-exception.md), [#164](https://github.com/VMAFx/pelorus/issues/164)) (category A, owner pelorus, reason byte-identical ABI mirror under ADR-1113, expiry VMAFx 3.0) with re-evaluation triggered by Pelorus's milestone 2.1 Rust interop crate release ([#115](https://github.com/VMAFx/pelorus/issues/115)); the interop layout gate is unchanged.
 - Tester publish can publish a commit of a maintained `lts-*` patch branch (dispatched from master, commit given by full SHA), and the release guard accepts that run as the commit's tester evidence, so a patch release of an older minor keeps every candidate leg ([ADR-0199](docs/adr/0199-patch-branch-tester-evidence.md)).

@@ -975,10 +975,12 @@ static int check_ffmpeg_qstats_vp9_qp(const PelorusEncTelemetryInput *frame)
     int failures = 0;
 
     CHECK(frame->frame.codec == PEL_TLM_CODEC_VP9);
-    CHECK((frame->frame.present_mask & (PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM)) == 0u);
-    CHECK(frame->frame.avg_qp == 0.0f);
+    /* libvpx's encoder quantizer maps to qindex; normalization remains unsupported. */
+    CHECK((frame->frame.present_mask & PEL_TLM_F_AVG_QP) != 0u);
+    CHECK((frame->frame.present_mask & PEL_TLM_F_AVG_QP_NORM) == 0u);
+    CHECK(frame->frame.avg_qp == 128.0f);
     CHECK(frame->frame.avg_qp_norm == 0.0f);
-    CHECK(frame->frame.qp_scale == 0u);
+    CHECK(frame->frame.qp_scale == PEL_QP_SCALE_VP9_QINDEX);
     return failures;
 }
 
@@ -1004,8 +1006,8 @@ static int test_ffmpeg_qstats_positive_vp9(void)
     int failures = 0;
 
     (void)memset(buf, 0, sizeof(buf));
-    /* libvpxenc writes VP8E_GET_LAST_QUANTIZER_64 * 118; ignored by adapter */
-    write_u32le(buf, 35u * 118u);
+    /* libvpxenc writes VP8E_GET_LAST_QUANTIZER_64 * 118, not native qindex. */
+    write_u32le(buf, 32u * 118u);
     buf[4] = 2u; /* P-frame */
     buf[5] = 3u;
     write_u64le(buf + 8, 1000u);
@@ -1018,6 +1020,55 @@ static int test_ffmpeg_qstats_positive_vp9(void)
                                              &frame) == PEL_OK);
     failures += check_ffmpeg_qstats_vp9_qp(&frame);
     failures += check_ffmpeg_qstats_vp9_metrics(&frame);
+    return failures;
+}
+
+static int test_ffmpeg_qstats_vp9_boundaries(void)
+{
+    const uint32_t quantizers[] = {1u, 60u, 61u, 62u, 63u};
+    const float qindices[] = {4.0f, 240.0f, 244.0f, 249.0f, 255.0f};
+    uint8_t buf[8] = {0};
+    PelorusEncTelemetryInput frame;
+    int failures = 0;
+
+    for (size_t i = 0; i < sizeof(quantizers) / sizeof(quantizers[0]); i++) {
+        write_u32le(buf, quantizers[i] * 118u);
+        CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_VP9,
+                                                 PEL_QP_SCALE_VP9_QINDEX, 8u, NULL,
+                                                 &frame) == PEL_OK);
+        CHECK(frame.frame.avg_qp == qindices[i]);
+        CHECK(frame.frame.qp_scale == PEL_QP_SCALE_VP9_QINDEX);
+        CHECK((frame.frame.present_mask & PEL_TLM_F_AVG_QP) != 0u);
+        CHECK((frame.frame.present_mask & PEL_TLM_F_AVG_QP_NORM) == 0u);
+        CHECK(frame.frame.avg_qp_norm == 0.0f);
+        CHECK(pel_enc_telemetry_validate(&frame) == PEL_OK);
+    }
+    /* quality 0 means no QP reported (FFmpeg also writes 0 for a lossless frame) */
+    write_u32le(buf, 0u);
+    CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_VP9,
+                                             PEL_QP_SCALE_VP9_QINDEX, 8u, NULL, &frame) == PEL_OK);
+    CHECK((frame.frame.present_mask & PEL_TLM_F_AVG_QP) == 0u);
+    return failures;
+}
+
+static int test_ffmpeg_qstats_vp9_invalid_quality(void)
+{
+    const uint32_t qualities[] = {32u * 118u + 1u, 64u * 118u};
+    const pel_result errors[] = {PEL_ERR_INVALID, PEL_ERR_RANGE};
+    uint8_t buf[8] = {0};
+    PelorusEncTelemetryInput untouched;
+    PelorusEncTelemetryInput frame;
+    int failures = 0;
+
+    (void)memset(&untouched, 0x5a, sizeof(untouched));
+    for (size_t i = 0; i < sizeof(qualities) / sizeof(qualities[0]); i++) {
+        write_u32le(buf, qualities[i]);
+        frame = untouched;
+        CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_VP9,
+                                                 PEL_QP_SCALE_VP9_QINDEX, 8u, NULL,
+                                                 &frame) == errors[i]);
+        CHECK(bytes_equal(&frame, &untouched, sizeof(frame)));
+    }
     return failures;
 }
 
@@ -1411,8 +1462,8 @@ static int test_ffmpeg_qstats_caps(void)
     const uint64_t exp_caps =
         (PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM | PEL_TLM_F_PICTURE_TYPE | PEL_TLM_F_PSNR_Y |
          PEL_TLM_F_PSNR_U | PEL_TLM_F_PSNR_V | PEL_TLM_F_CODED_BIT_DEPTH);
-    const uint64_t exp_vp9_caps = (PEL_TLM_F_PICTURE_TYPE | PEL_TLM_F_PSNR_Y | PEL_TLM_F_PSNR_U |
-                                   PEL_TLM_F_PSNR_V | PEL_TLM_F_CODED_BIT_DEPTH);
+    const uint64_t exp_vp9_caps = (PEL_TLM_F_AVG_QP | PEL_TLM_F_PICTURE_TYPE | PEL_TLM_F_PSNR_Y |
+                                   PEL_TLM_F_PSNR_U | PEL_TLM_F_PSNR_V | PEL_TLM_F_CODED_BIT_DEPTH);
     int failures = 0;
 
     failures += check_ffmpeg_qstats_codec_caps(PEL_TLM_CODEC_H264, exp_caps);
@@ -1421,7 +1472,8 @@ static int test_ffmpeg_qstats_caps(void)
     failures += check_ffmpeg_qstats_codec_caps(PEL_TLM_CODEC_VP9, exp_vp9_caps);
     CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS, PEL_TLM_CODEC_VP9, &caps) ==
           PEL_OK);
-    CHECK((caps & (PEL_TLM_F_AVG_QP | PEL_TLM_F_AVG_QP_NORM)) == 0u);
+    CHECK((caps & PEL_TLM_F_AVG_QP) != 0u);
+    CHECK((caps & PEL_TLM_F_AVG_QP_NORM) == 0u);
     CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS, 0u, &caps) == PEL_ERR_INVALID);
     CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_FFMPEG_QUALITY_STATS, 6u, &caps) == PEL_ERR_INVALID);
     return failures;
@@ -1435,6 +1487,8 @@ static int test_ffmpeg_quality_stats(void)
     failures += test_ffmpeg_qstats_positive_x265();
     failures += test_ffmpeg_qstats_positive_aom();
     failures += test_ffmpeg_qstats_positive_vp9();
+    failures += test_ffmpeg_qstats_vp9_boundaries();
+    failures += test_ffmpeg_qstats_vp9_invalid_quality();
     failures += test_ffmpeg_qstats_positive_av1_encoder_qp();
     failures += test_ffmpeg_qstats_plane_selection_y_only();
     failures += test_ffmpeg_qstats_plane_selection_count1();
