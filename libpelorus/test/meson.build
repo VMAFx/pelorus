@@ -84,3 +84,11 @@ encode_options_test = executable(
 )
 test('encode-options', encode_options_test, suite: 'fast')
 
+grain_table_test = executable(
+  'pelorus_grain_table_test',
+  files('grain_table_test.c'),
+  dependencies: libpelorus_dep,
+)
+test('grain-table', grain_table_test,
+     args: [meson.current_source_dir() / 'fixtures' / 'grain' / 'two-entries.tbl'],
+     suite: 'fast')
