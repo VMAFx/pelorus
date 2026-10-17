@@ -44,6 +44,10 @@ exceptions:
     reason: "category D, capped at the engine maximum of 90 days: fixture recorder built by hand against libaom, which Meson does not depend on, so no compile database entry exists; follow-up: an optional Meson target once a libaom build dependency has an ADR (VMAFx/pelorus#111)"
     expires: "2027-01-13"
   - rule: clang-tidy-coverage
+    path: scripts/encode-options/avoption-probe.c
+    reason: "category D, capped at the engine maximum of 90 days: table generator probe built by hand against the installed libavcodec, which Meson does not depend on, so no compile database entry exists; follow-up: an optional Meson target behind an FFmpeg dependency option (VMAFx/pelorus#352, ADR-0200)"
+    expires: "2027-01-15"
+  - rule: clang-tidy-coverage
     path: ffmpeg-patches/files/h265_pelorus_fgs_bsf.c
     reason: builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)
     expires: "2027-01-06"

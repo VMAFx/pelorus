@@ -536,6 +536,23 @@ static pel_result parse_one_pair(const PelOptDialect *dl, const char *text, size
     return PEL_OK;
 }
 
+pel_result pel_encode_options_store(PelorusEncodeOptions *out, int unknown, const char *key,
+                                    size_t klen, const char *val, size_t vlen)
+{
+    if (unknown) {
+        return store_entry(out, out->unknown_params, out->unknown_val_ptrs, &out->nb_unknown_params,
+                           key, val, klen, vlen);
+    }
+    return store_entry(out, out->params, out->param_val_ptrs, &out->nb_params, key, val, klen,
+                       vlen);
+}
+
+void pel_encode_options_sort(PelorusEncodeOptions *out)
+{
+    sort_params(out->params, out->param_val_ptrs, out->nb_params);
+    sort_params(out->unknown_params, out->unknown_val_ptrs, out->nb_unknown_params);
+}
+
 pel_result pel_encode_options_parse(pel_encode_options_dialect d, const char *text, size_t len,
                                     PelorusEncodeOptions *out)
 {
@@ -568,7 +585,6 @@ pel_result pel_encode_options_parse(pel_encode_options_dialect d, const char *te
         }
     }
 
-    sort_params(out->params, out->param_val_ptrs, out->nb_params);
-    sort_params(out->unknown_params, out->unknown_val_ptrs, out->nb_unknown_params);
+    pel_encode_options_sort(out);
     return PEL_OK;
 }
