@@ -231,6 +231,8 @@ for filter in deband analyze denoise; do
     # the same private libavfilter header.
     if [[ "$filter" == "deband" ]]; then
         cp "$FILES_DIR/pelorus_vulkan_sample.h" "$WORKTREE/libavfilter/"
+        # Shared input refusals: interlaced frames, unsupported formats (#188).
+        cp "$FILES_DIR/pelorus_vulkan_input.h" "$WORKTREE/libavfilter/"
         # Shared output-pool option of the filters that write new frames:
         # tiling=drm, DRM format modifier selection (ADR-0184).
         cp "$FILES_DIR/pelorus_drm_modifier.h" "$WORKTREE/libavfilter/"

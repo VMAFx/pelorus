@@ -81,6 +81,12 @@ adds **no side data** — it is a pure pixel transform, so it does not link
 happy path; errors surface as a non-zero ffmpeg exit with a `[pelorus_aa_vulkan]`
 message.
 
+## Input formats
+
+Accepts planar and semi-planar YUV at 4:2:0, 4:2:2 and 4:4:4 with 8, 10, 12 or 16 bits, plus `yuva420p`, and 8-bit `rgba` (G, B and A pass through). Any other software layout stops the graph at configuration with `pelorus_aa_vulkan: input format <name> is not supported; supported: <list>`; convert first, for example with `scale_vulkan=format=nv12` ([Input formats and interlacing](../backends/vulkan.md#input-formats-and-interlacing), [ADR-0201](../adr/0201-vulkan-input-format-allow-list.md)).
+
+Interlaced frames (`AV_FRAME_FLAG_INTERLACED`) are refused with `EINVAL`, because the filter reads neighbouring rows, which belong to the other field. Deinterlace first (`bwdif_vulkan`), or mark frames that are progressive with `setfield=prog`.
+
 ## Pipeline placement
 
 aa is a stage of the anime `tune` chain. It runs **after** dehalo

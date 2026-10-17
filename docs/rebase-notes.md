@@ -8,6 +8,30 @@ the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
 ranges in older entries predate the first entry below (22 patches on the
 shared FFmpeg fix series, number 0021 retired).
 
+## Unreleased — Vulkan input format allow list (#188, ADR-0201; regenerates 0001, 0002, 0003, 0006, 0007, 0014, 0015, 0017, 0018)
+
+- **New file**: `libavfilter/pelorus_vulkan_input.h`
+  (`ffmpeg-patches/files/pelorus_vulkan_input.h`), added by 0001 and included
+  by the nine Pelorus Vulkan filters. `generate.sh` copies it with the deband
+  sources.
+- **Patches**: each filter's input `config_props` moves from
+  `ff_vk_filter_config_input` to `pel_vk_config_input_yuv` (deband, mc,
+  analyze, grain_estimate, borderfix) or `pel_vk_config_input_yuv_rgba` (aa,
+  dehalo, deblock, denoise); deband, denoise, mc, dehalo, aa and deblock call
+  `pel_vk_refuse_interlaced` on each input frame before dispatch. The other 13
+  patches are byte-identical.
+- **Behaviour**: an unlisted software layout fails at graph configuration with
+  `AVERROR(EINVAL)` and a message naming it; an interlaced frame fails in the
+  six spatial filters.
+- **Rebase-sensitive**: the header calls `ff_vk_filter_config_input`,
+  `ff_filter_link` and reads `AVHWFramesContext.sw_format`. A base bump that
+  adds YUV layouts to `hwcontext_vulkan.c` (9 or 14 bit) adds nothing here
+  until the layout has a matrix row and a list entry.
+- **Interop**: none.
+- **Checks**: `test/vulkan-format-matrix.sh` on a GPU host (every accepted
+  layout against yuv420p, yuva420p alpha pass-through, refusal rows,
+  interlace rows); `test/build-and-run.sh` replay of the full series.
+
 ## Unreleased — shared FFmpeg fix series pinned at `v0.2.0` (#309, ADR-0192; regenerates 0009)
 
 - **Base**: `FFMPEG_SERIES_TAG` moves from `v0.1.0` to `v0.2.0`,

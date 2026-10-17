@@ -704,6 +704,12 @@ NVENC chooses itself. No grain-match or BD-rate number ships yet. See
 - Prefer **10-bit** intermediate/output even for 8-bit delivery — it preserves
   the dithered gradient through quantization (research 0101).
 - List options: `ffmpeg -h filter=pelorus_deband_vulkan`.
+- Input layouts: the filters take planar and semi-planar YUV (4:2:0, 4:2:2,
+  4:4:4 at 8, 10, 12, 16 bit) and refuse anything else by name, for example
+  packed `yuyv422` from a webcam; put `format=nv12` before `hwupload`. The
+  spatial filters also refuse interlaced frames: add `bwdif_vulkan`, or
+  `setfield=prog` when the frames are progressive but flagged interlaced. See
+  [Input formats and interlacing](../backends/vulkan.md#input-formats-and-interlacing).
 
 ## Carrying the side-data blob into the bitstream (`udu_sei`)
 

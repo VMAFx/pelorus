@@ -91,6 +91,55 @@ writeback; a storage-image load is not assumed to be logical already. Standalone
 `libpelorus/shaders/*.comp` files use their documented integer reference domain
 and exist to compile-check/read the algorithm, not as a second shipped shader.
 
+## Input formats and interlacing
+
+Every Pelorus Vulkan filter checks the software layout of its input frames when
+the graph is configured and refuses a layout outside the measured set with
+`<filter>: input format <name> is not supported; supported: <list>`
+([ADR-0201](../adr/0201-vulkan-input-format-allow-list.md)). The set lives in
+`ffmpeg-patches/files/pelorus_vulkan_input.h`.
+
+| Layout | deband, mc, analyze, grain_estimate, borderfix | aa, dehalo, deblock, denoise |
+| --- | --- | --- |
+| `yuv420p`, `yuv422p`, `yuv444p` at 8, 10, 12, 16 bit | accepted | accepted |
+| `nv12`/`p010`/`p012`/`p016`, `nv16`/`p210`/`p212`/`p216`, `nv24`/`p410`/`p412`/`p416` | accepted | accepted |
+| `yuva420p` (alpha passes through unless `planes` selects it) | accepted | accepted |
+| `rgba` (G, B, A preserved) | refused | accepted |
+| anything else (`yuyv422`, `gbrp`, `gray`, `yuva444p`, ...) | refused | refused |
+
+- The Vulkan hwcontext has no 9-bit or 14-bit YUV layout, so 8 and 16 bit are
+  the depth boundaries the matrix tests.
+- Convert other layouts in the graph first, for example
+  `scale_vulkan=format=nv12` or `format=nv12` before `hwupload`.
+
+A refused layout stops the graph at configuration with `EINVAL` (output from
+the v0.4.0 stack plus this change, list shortened):
+
+```console
+$ ffmpeg -init_hw_device vulkan -f lavfi -i testsrc2=s=128x64:d=0.1 \
+    -vf format=yuyv422,hwupload,pelorus_deband_vulkan,hwdownload,format=yuyv422 \
+    -f null -
+pelorus_deband_vulkan: input format yuyv422 is not supported; supported: yuv420p yuv420p10le ... yuva420p
+Failed to configure input pad on Parsed_pelorus_deband_vulkan_2
+```
+
+Replacing `format=yuyv422` with `format=nv12` on both sides runs the same graph.
+
+Known defect: on NVIDIA, aa and dehalo write wrong luma in the last 3-4 columns
+of nv12 and nv24 frames whose width is not a multiple of 64
+([#358](https://github.com/VMAFx/pelorus/issues/358)).
+
+Interlaced frames (`AV_FRAME_FLAG_INTERLACED`): deband, denoise, mc, dehalo, aa
+and deblock read neighbouring rows, which belong to the other field, so they
+refuse such a frame with `<filter>: interlaced input (AV_FRAME_FLAG_INTERLACED)
+is not supported`. Deinterlace first (`bwdif_vulkan`), or mark frames that are
+progressive with `setfield=prog`. analyze, grain_estimate, borderfix and
+scenecut accept interlaced frames and keep the flag.
+
+Proof: `ffmpeg-patches/test/vulkan-format-matrix.sh` compares every accepted
+layout with the yuv420p result, checks yuva420p alpha pass-through, and runs
+each refusal and interlace row.
+
 ## Devices with one queue family
 
 On a device with a single queue family, such as Mesa lavapipe, FFmpeg creates

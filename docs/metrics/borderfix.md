@@ -98,6 +98,12 @@ all non-luma physical planes and removes the corresponding 2-pixel band from
 4:2:0 chroma. A single all-plane pass is sufficient when every selected plane
 really has the same plane-local band width.
 
+## Input formats
+
+Accepts planar and semi-planar YUV at 4:2:0, 4:2:2 and 4:4:4 with 8, 10, 12 or 16 bits, plus `yuva420p`. Any other software layout stops the graph at configuration with `pelorus_borderfix_vulkan: input format <name> is not supported; supported: <list>`; convert first, for example with `scale_vulkan=format=nv12` ([Input formats and interlacing](../backends/vulkan.md#input-formats-and-interlacing), [ADR-0201](../adr/0201-vulkan-input-format-allow-list.md)).
+
+Interlaced frames are accepted and keep their interlaced flag.
+
 ## Pipeline placement
 
 Borderfix runs **first** — before any other Pelorus stage. The dirty edge band

@@ -60,6 +60,7 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "pelorus_mc_stats.h"
+#include "pelorus_vulkan_input.h"
 #include "pelorus_vulkan_sample.h"
 #include "vulkan_filter.h"
 
@@ -688,6 +689,11 @@ static int mc_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     PelorusMcPush pc;
     int nblocks;
 
+    if ((err = pel_vk_refuse_interlaced(ctx, in)) < 0) {
+        av_frame_free(&in);
+        return err;
+    }
+
     if (!s->initialized)
         RET(init_filter(ctx));
 
@@ -845,7 +851,7 @@ static const AVFilterPad pelorus_mc_vulkan_inputs[] = {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
         .filter_frame = &mc_vulkan_filter_frame,
-        .config_props = &ff_vk_filter_config_input,
+        .config_props = &pel_vk_config_input_yuv,
     },
 };
 

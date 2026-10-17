@@ -97,6 +97,12 @@ counting scan (BUG-014).
 size (the workgroup is `32 × 32`; lanes past `bsize` contribute 0), so the filter
 is a product for any Vulkan GPU, not tuned to one device.
 
+## Input formats
+
+Accepts planar and semi-planar YUV at 4:2:0, 4:2:2 and 4:4:4 with 8, 10, 12 or 16 bits, plus `yuva420p`. Any other software layout stops the graph at configuration with `pelorus_mc_vulkan: input format <name> is not supported; supported: <list>`; convert first, for example with `scale_vulkan=format=nv12` ([Input formats and interlacing](../backends/vulkan.md#input-formats-and-interlacing), [ADR-0201](../adr/0201-vulkan-input-format-allow-list.md)).
+
+Interlaced frames (`AV_FRAME_FLAG_INTERLACED`) are refused with `EINVAL`, because the filter reads neighbouring rows, which belong to the other field. Deinterlace first (`bwdif_vulkan`), or mark frames that are progressive with `setfield=prog`.
+
 ## Pipeline placement
 
 The estimator reads the source luma; place it after `hwupload` and before any

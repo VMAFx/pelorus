@@ -60,6 +60,7 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "pelorus_sidedata.h"
+#include "pelorus_vulkan_input.h"
 #include "pelorus_vulkan_sample.h"
 #include "pelorus_vulkan_pool.h"
 #include "vulkan_filter.h"
@@ -907,6 +908,10 @@ static int denoise_vulkan_activate(AVFilterContext *ctx)
     if (ret < 0)
         return ret;
     if (ret > 0) {
+        if ((ret = pel_vk_refuse_interlaced(ctx, in)) < 0) {
+            av_frame_free(&in);
+            return ret;
+        }
         if (!s->lookahead)
             return denoise_process_one(ctx, in, NULL); /* causal: emit now */
 
@@ -1117,7 +1122,7 @@ static const AVFilterPad pelorus_denoise_vulkan_inputs[] = {
          * the .activate callback below (ADR-0137). */
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
-        .config_props = &ff_vk_filter_config_input,
+        .config_props = &pel_vk_config_input_yuv_rgba,
     },
 };
 

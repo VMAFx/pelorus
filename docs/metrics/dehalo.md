@@ -99,6 +99,12 @@ Verified on an RTX 4090 (exit code 0, 120 frames, no `hwdownload` in the graph).
 The NVENC hop derives Vulkan from CUDA (`vulkan=vk@cu`) and copies within VRAM; see
 [the zero-copy pipeline](../usage/ffmpeg.md#nvenc-nvdec--vulkan-filters--nvenc) ([#296](https://github.com/VMAFx/pelorus/issues/296), [ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md)).
 
+## Input formats
+
+Accepts planar and semi-planar YUV at 4:2:0, 4:2:2 and 4:4:4 with 8, 10, 12 or 16 bits, plus `yuva420p`, and 8-bit `rgba` (G, B and A pass through). Any other software layout stops the graph at configuration with `pelorus_dehalo_vulkan: input format <name> is not supported; supported: <list>`; convert first, for example with `scale_vulkan=format=nv12` ([Input formats and interlacing](../backends/vulkan.md#input-formats-and-interlacing), [ADR-0201](../adr/0201-vulkan-input-format-allow-list.md)).
+
+Interlaced frames (`AV_FRAME_FLAG_INTERLACED`) are refused with `EINVAL`, because the filter reads neighbouring rows, which belong to the other field. Deinterlace first (`bwdif_vulkan`), or mark frames that are progressive with `setfield=prog`.
+
 ## Pipeline placement
 
 Dehalo runs on the **source** ring before any flattening stage, so it runs

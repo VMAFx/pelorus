@@ -49,10 +49,10 @@ ADR: docs/adr/0116-pelorus-mc.md
  libavfilter/Makefile                    |   1 +
  libavfilter/allfilters.c                |   1 +
  libavfilter/pelorus_mc_stats.h          | 163 ++++
- libavfilter/vf_pelorus_mc_vulkan.c      | 872 ++++++++++++++++++++
+ libavfilter/vf_pelorus_mc_vulkan.c      | 878 ++++++++++++++++++++
  libavfilter/vulkan/Makefile             |   1 +
  libavfilter/vulkan/pelorus_mc.comp.glsl | 237 ++++++
- 7 files changed, 1278 insertions(+)
+ 7 files changed, 1284 insertions(+)
 
 diff --git a/configure b/configure
 index 0571e96aa7a4f64c2eb951c9c842462225deb3ac..839033a423604cbfaf45a7fffd984bc587d44839 100755
@@ -270,10 +270,10 @@ index 0000000000000000000000000000000000000000..64afbf6a8544040ef672640fdf1dd0cc
 +#endif /* AVFILTER_PELORUS_MC_STATS_H */
 diff --git a/libavfilter/vf_pelorus_mc_vulkan.c b/libavfilter/vf_pelorus_mc_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..eef56b726618cb562bd8f19220ffbd8e9c2851d7
+index 0000000000000000000000000000000000000000..0aba46bea74b1685dfa37a4c12761c9c8be4c771
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_mc_vulkan.c
-@@ -0,0 +1,872 @@
+@@ -0,0 +1,878 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -336,6 +336,7 @@ index 0000000000000000000000000000000000000000..eef56b726618cb562bd8f19220ffbd8e
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
 +#include "pelorus_mc_stats.h"
++#include "pelorus_vulkan_input.h"
 +#include "pelorus_vulkan_sample.h"
 +#include "vulkan_filter.h"
 +
@@ -964,6 +965,11 @@ index 0000000000000000000000000000000000000000..eef56b726618cb562bd8f19220ffbd8e
 +    PelorusMcPush pc;
 +    int nblocks;
 +
++    if ((err = pel_vk_refuse_interlaced(ctx, in)) < 0) {
++        av_frame_free(&in);
++        return err;
++    }
++
 +    if (!s->initialized)
 +        RET(init_filter(ctx));
 +
@@ -1121,7 +1127,7 @@ index 0000000000000000000000000000000000000000..eef56b726618cb562bd8f19220ffbd8e
 +        .name = "default",
 +        .type = AVMEDIA_TYPE_VIDEO,
 +        .filter_frame = &mc_vulkan_filter_frame,
-+        .config_props = &ff_vk_filter_config_input,
++        .config_props = &pel_vk_config_input_yuv,
 +    },
 +};
 +
