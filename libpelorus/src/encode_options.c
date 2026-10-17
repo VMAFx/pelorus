@@ -17,6 +17,36 @@ static int is_ws(char c)
     return c == ' ' || c == '\n' || c == '\t' || c == '\r';
 }
 
+typedef const PelEncodeOptDef *(*pel_opt_lookup_fn)(const char *name);
+
+/* Parsing rules per dialect, each read from the encoder's own parser:
+ * x264 common/base.c:856,913-919; x265 source/common/param.cpp:937-946,1551;
+ * SVT-AV1 Source/Lib/Globals/enc_settings.c:1282-1350,1485-1497;
+ * libaom common/args_helper.c:33-117 (long name only, base-10 integers). */
+typedef struct PelOptDialect {
+    pel_opt_lookup_fn lookup;
+    int int_base;        /* strtoll base */
+    int bool_nocase;     /* true/false/yes/no match case-insensitively */
+    int fold_underscore; /* '_' in a key reads as '-' */
+    int strip_dashes;    /* a leading "--" is dropped */
+    int negation;        /* "no"/"no-" prefix inverts a BOOL option */
+} PelOptDialect;
+
+static const PelOptDialect k_dialects[] = {
+    {pel_encode_options_x264_lookup, 0, 1, 1, 0, 1},
+    {pel_encode_options_x265_lookup, 0, 0, 1, 1, 1},
+    {pel_encode_options_svtav1_lookup, 0, 1, 0, 0, 0},
+    {pel_encode_options_aom_lookup, 10, 1, 0, 0, 0},
+};
+
+static const PelOptDialect *dialect_rules(pel_encode_options_dialect d)
+{
+    if ((int)d < (int)PEL_ENCODE_OPTIONS_X264 || (int)d > (int)PEL_ENCODE_OPTIONS_AOM) {
+        return NULL;
+    }
+    return &k_dialects[(int)d - (int)PEL_ENCODE_OPTIONS_X264];
+}
+
 static pel_result get_token(const char *text, size_t len, size_t *pos, char term, char *out,
                             size_t max_out, size_t *out_len)
 {
@@ -62,9 +92,9 @@ static pel_result get_token(const char *text, size_t len, size_t *pos, char term
     return PEL_OK;
 }
 
-static int parse_bool_val(pel_encode_options_dialect d, const char *val, int *out_bool)
+static int parse_bool_val(const PelOptDialect *dl, const char *val, int *out_bool)
 {
-    if (d == PEL_ENCODE_OPTIONS_X264) {
+    if (dl->bool_nocase) {
         if (strcmp(val, "1") == 0 || strcasecmp(val, "true") == 0 || strcasecmp(val, "yes") == 0) {
             *out_bool = 1;
             return 1;
@@ -86,7 +116,8 @@ static int parse_bool_val(pel_encode_options_dialect d, const char *val, int *ou
     return 0;
 }
 
-static int parse_int_val(const char *val, char out[PEL_ENCODE_RECORD_SCALAR_SIZE], int *range_err)
+static int parse_int_val(const char *val, int base, int is_unsigned,
+                         char out[PEL_ENCODE_RECORD_SCALAR_SIZE], int *range_err)
 {
     char *end = NULL;
     long long v;
@@ -96,9 +127,12 @@ static int parse_int_val(const char *val, char out[PEL_ENCODE_RECORD_SCALAR_SIZE
         return 0;
     }
     errno = 0;
-    /* base 0 as upstream: x264 common/base.c:856, x265 source/common/param.cpp:1551 */
-    v = strtoll(val, &end, 0);
-    if (errno == ERANGE || v > 2147483647LL || v < -2147483647LL) {
+    v = strtoll(val, &end, base);
+    if (errno == 0 && end != val && *end == '\0' && is_unsigned && v < 0) {
+        /* SVT-AV1 str_to_uint and libaom strtoul refuse a negative value */
+        return 0;
+    }
+    if (errno == ERANGE || v > (is_unsigned ? 4294967295LL : 2147483647LL) || v < -2147483647LL) {
         *range_err = 1;
         return 0;
     }
@@ -130,9 +164,7 @@ static int parse_float_val(const char *val, char out[PEL_ENCODE_RECORD_SCALAR_SI
     return 1;
 }
 
-typedef const PelEncodeOptDef *(*pel_opt_lookup_fn)(const char *name);
-
-/* Both encoders strip a "no" or "no-" prefix from any name and invert the
+/* x264 and x265 strip a "no" or "no-" prefix from any name and invert the
  * value (x264 common/base.c:913-919, x265 common/param.cpp:937-946). The
  * record keeps the inversion only for BOOL entries: a non-BOOL option would
  * receive "true"/"false" under its INT, FLOAT or STRING key, so a negated
@@ -157,9 +189,10 @@ static void lookup_negatable(pel_opt_lookup_fn lookup, const char *buf,
     *def_out = lookup(buf);
 }
 
-/* Writes the normalised key (x265 "--" stripped, '_' -> '-') to norm, which
- * holds PEL_ENCODE_RECORD_MAX_KEY + 1 bytes; raw_key is at most that long. */
-static void normalize_and_lookup(pel_encode_options_dialect d, const char *raw_key, char *norm,
+/* Writes the normalised key (x265 "--" stripped, x264/x265 '_' -> '-') to
+ * norm, which holds PEL_ENCODE_RECORD_MAX_KEY + 1 bytes; raw_key is at most
+ * that long. */
+static void normalize_and_lookup(const PelOptDialect *dl, const char *raw_key, char *norm,
                                  const PelEncodeOptDef **def_out, int *is_neg_out)
 {
     const char *src = raw_key;
@@ -168,20 +201,22 @@ static void normalize_and_lookup(pel_encode_options_dialect d, const char *raw_k
 
     *def_out = NULL;
     *is_neg_out = 0;
-    if (d == PEL_ENCODE_OPTIONS_X265 && src[0] == '-' && src[1] == '-') {
+    if (dl->strip_dashes && src[0] == '-' && src[1] == '-') {
         src += 2;
     }
     len = strlen(src);
     for (i = 0; i < len; i++) {
-        norm[i] = src[i] == '_' ? '-' : src[i];
+        norm[i] = (dl->fold_underscore && src[i] == '_') ? '-' : src[i];
     }
     norm[len] = '\0';
     if (len == 0) {
         return;
     }
-    lookup_negatable(d == PEL_ENCODE_OPTIONS_X264 ? pel_encode_options_x264_lookup :
-                                                    pel_encode_options_x265_lookup,
-                     norm, def_out, is_neg_out);
+    if (dl->negation) {
+        lookup_negatable(dl->lookup, norm, def_out, is_neg_out);
+    } else {
+        *def_out = dl->lookup(norm);
+    }
 }
 
 static void remove_unknown_key(PelorusEncodeOptions *out, const char *k1, const char *k2)
@@ -362,15 +397,17 @@ static void sort_params(PelorusEncodeParam *p, const char **vptrs, uint32_t coun
     }
 }
 
-/* Drops every unknown entry a known key can sit under: its canonical name and
- * the negated spellings "no-<key>" and "no<key>", so the last value wins. */
-static void drop_unknown_spellings(PelorusEncodeOptions *out, const char *canonical)
+/* Drops every unknown entry a known key can sit under: its canonical name and,
+ * where the dialect negates, the spellings "no-<key>" and "no<key>", so the
+ * last value wins. */
+static void drop_unknown_spellings(const PelOptDialect *dl, PelorusEncodeOptions *out,
+                                   const char *canonical)
 {
     char neg[PEL_ENCODE_RECORD_MAX_KEY + 4];
     size_t clen = strlen(canonical);
 
     remove_unknown_key(out, canonical, NULL);
-    if (clen + 3 >= sizeof(neg)) {
+    if (!dl->negation || clen + 3 >= sizeof(neg)) {
         return;
     }
     neg[0] = 'n';
@@ -384,7 +421,7 @@ static void drop_unknown_spellings(PelorusEncodeOptions *out, const char *canoni
 
 /* Checks raw_val against def's type; on success *final_val points at the
  * canonical value text (raw_val, a literal, or scalar_buf). */
-static pel_result validate_known_value(pel_encode_options_dialect d, const PelEncodeOptDef *def,
+static pel_result validate_known_value(const PelOptDialect *dl, const PelEncodeOptDef *def,
                                        int is_neg, const char *raw_val,
                                        char scalar_buf[PEL_ENCODE_RECORD_SCALAR_SIZE],
                                        const char **final_val, int *valid)
@@ -395,12 +432,13 @@ static pel_result validate_known_value(pel_encode_options_dialect d, const PelEn
     *valid = 0;
     *final_val = raw_val;
     if (def->type == PEL_OPT_TYPE_BOOL) {
-        if (parse_bool_val(d, raw_val, &bval)) {
+        if (parse_bool_val(dl, raw_val, &bval)) {
             *final_val = (bval != is_neg) ? "true" : "false";
             *valid = 1;
         }
-    } else if (def->type == PEL_OPT_TYPE_INT) {
-        if (parse_int_val(raw_val, scalar_buf, &range_err)) {
+    } else if (def->type == PEL_OPT_TYPE_INT || def->type == PEL_OPT_TYPE_UINT) {
+        if (parse_int_val(raw_val, dl->int_base, def->type == PEL_OPT_TYPE_UINT, scalar_buf,
+                          &range_err)) {
             *final_val = scalar_buf;
             *valid = 1;
         } else if (range_err) {
@@ -417,8 +455,8 @@ static pel_result validate_known_value(pel_encode_options_dialect d, const PelEn
     return PEL_OK;
 }
 
-static pel_result process_pair(pel_encode_options_dialect d, const char *raw_key,
-                               const char *raw_val, size_t vlen, PelorusEncodeOptions *out)
+static pel_result process_pair(const PelOptDialect *dl, const char *raw_key, const char *raw_val,
+                               size_t vlen, PelorusEncodeOptions *out)
 {
     const PelEncodeOptDef *def = NULL;
     int is_neg = 0;
@@ -429,13 +467,13 @@ static pel_result process_pair(pel_encode_options_dialect d, const char *raw_key
     const char *unknown_key;
     pel_result r;
 
-    normalize_and_lookup(d, raw_key, norm, &def, &is_neg);
+    normalize_and_lookup(dl, raw_key, norm, &def, &is_neg);
     if (def != NULL) {
-        r = validate_known_value(d, def, is_neg, raw_val, scalar_buf, &final_val, &valid);
+        r = validate_known_value(dl, def, is_neg, raw_val, scalar_buf, &final_val, &valid);
         if (r != PEL_OK) {
             return r;
         }
-        drop_unknown_spellings(out, def->canonical);
+        drop_unknown_spellings(dl, out, def->canonical);
     }
     if (def != NULL && valid) {
         return store_entry(out, out->params, out->param_val_ptrs, &out->nb_params, def->canonical,
@@ -459,8 +497,8 @@ static pel_result process_pair(pel_encode_options_dialect d, const char *raw_key
                        unknown_key, raw_val, strlen(unknown_key), vlen);
 }
 
-static pel_result parse_one_pair(pel_encode_options_dialect d, const char *text, size_t len,
-                                 size_t *pos, PelorusEncodeOptions *out)
+static pel_result parse_one_pair(const PelOptDialect *dl, const char *text, size_t len, size_t *pos,
+                                 PelorusEncodeOptions *out)
 {
     char raw_key[PEL_ENCODE_RECORD_MAX_KEY + 2];
     char raw_val[PEL_ENCODE_RECORD_MAX_VALUE + 2];
@@ -488,7 +526,7 @@ static pel_result parse_one_pair(pel_encode_options_dialect d, const char *text,
         return vlen > PEL_ENCODE_RECORD_MAX_VALUE ? PEL_ERR_RANGE : PEL_ERR_INVALID;
     }
 
-    r = process_pair(d, raw_key, raw_val, vlen, out);
+    r = process_pair(dl, raw_key, raw_val, vlen, out);
     if (r != PEL_OK) {
         return r;
     }
@@ -502,6 +540,7 @@ pel_result pel_encode_options_parse(pel_encode_options_dialect d, const char *te
                                     PelorusEncodeOptions *out)
 {
     size_t pos = 0;
+    const PelOptDialect *dl;
 
     if (!out || !text) {
         return PEL_ERR_INVALID;
@@ -510,7 +549,8 @@ pel_result pel_encode_options_parse(pel_encode_options_dialect d, const char *te
     out->nb_unknown_params = 0;
     out->arena_used = 0;
 
-    if (d != PEL_ENCODE_OPTIONS_X264 && d != PEL_ENCODE_OPTIONS_X265) {
+    dl = dialect_rules(d);
+    if (!dl) {
         return PEL_ERR_INVALID;
     }
 
@@ -519,7 +559,7 @@ pel_result pel_encode_options_parse(pel_encode_options_dialect d, const char *te
     }
 
     while (pos < len && text[pos] != '\0') {
-        pel_result r = parse_one_pair(d, text, len, &pos, out);
+        pel_result r = parse_one_pair(dl, text, len, &pos, out);
         if (r != PEL_OK) {
             out->nb_params = 0;
             out->nb_unknown_params = 0;

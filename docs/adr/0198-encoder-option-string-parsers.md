@@ -1,11 +1,11 @@
 <!-- markdownlint-disable MD013 MD060 -->
-# ADR-0198: Option-string parsers for x264 and x265 normalize pass-through CLI and FFmpeg parameters into canonical encode record parameters
+# ADR-0198: Option-string parsers for x264, x265, SVT-AV1 and libaom normalize pass-through CLI and FFmpeg parameters into canonical encode record parameters
 
-- **Status**: Proposed
-- **Implementation**: pending (#156)
+- **Status**: Accepted
+- **Implementation**: landed (#156: x264 and x265 in part 1, SVT-AV1 and libaom in part 2)
 - **Date**: 2026-10-17
 - **Deciders**: Lusoris
-- **Tags**: provenance, encode-record, parsers, x264, x265
+- **Tags**: provenance, encode-record, parsers, x264, x265, svt-av1, libaom
 - **Related**: [ADR-0175](0175-encode-provenance-record.md)
 
 ## Context
@@ -51,6 +51,20 @@ We will implement dedicated option-string parsers for x264 and x265 in libpeloru
    - Duplicates: last occurrence wins across aliases and negation.
    - Unknown options and rejected values: unknown keys (under the normalised key) or known keys with values invalid for their type (under the canonical key) keep their value verbatim in `unknown_params`; the last occurrence wins.
 
+### Part 2: SVT-AV1 and libaom
+
+FFmpeg n9.0.2 hands both option strings straight to the encoder library: `libavcodec/libsvtav1.c:349` calls `svt_av1_enc_parse_parameter` for each `-svtav1-params` entry, and `libavcodec/libaomenc.c:1036` calls `aom_codec_set_option` for each `-aom-params` entry. The record follows those two functions, not the encoders' command-line front ends.
+
+1. **Pinned sources**:
+   - SVT-AV1 `v4.2.0` (`9292ec8e32bce26f781f277ec8739b53426c4300`): `Source/Lib/Globals/enc_settings.c: svt_av1_enc_parse_parameter` (lines 2125-2456); 121 entries in `libpelorus/src/encode_options_svtav1.c`.
+   - libaom `v3.15.2` (`af3dc9aadc793c1b00edc003e3fc19a44fdeb574`): `av1/av1_cx_iface.c: encoder_set_option` (lines 4437-4937) with names from `av1/arg_defs.c` and parse helpers from `common/args_helper.c`; 122 entries in `libpelorus/src/encode_options_aom.c`.
+2. **A dialect rules row per encoder** (`k_dialects` in `libpelorus/src/encode_options.c`): integer base, boolean case rule, underscore folding, `--` stripping and negation. x264 and x265 keep the part 1 behaviour.
+   - SVT-AV1: names compare exactly (no `_` folding, no `--` stripping, no `no-` negation); aliases `w` → `width`, `h` → `height`, `q` → `qp`; integers base 0 (`strtol`/`strtoul`); booleans `1`/`0`, `true`/`false`, `yes`/`no` without regard to case; `crf`, `cqp` and `ac-bias` are reals.
+   - libaom: the long name compares exactly (no aliases, no short names, no folding, no negation); integers base 10, as `arg_parse_uint_helper` and `arg_parse_int_helper` call `strtoul`/`strtol` with base 10; enum, rational, list and string options stay verbatim, because the enum helper accepts names and numbers and the record does not map one to the other.
+3. **Unsigned type** (`PEL_OPT_TYPE_UINT`): both libraries reject a negative value for unsigned options (SVT-AV1 `str_to_uint`, libaom `arg_parse_uint_helper` through the `strtoul` sign check), so a negative value lands in `unknown_params`. Unsigned values up to 4294967295 are accepted; a larger value returns `PEL_ERR_RANGE`. The record does not check the narrower `uint8_t` and `int8_t` widths SVT-AV1 clamps to.
+4. **Build-configuration gates**: options compiled in by default upstream are included (SVT-AV1 `enable-qm` under `CONFIG_ENABLE_QUANT_MATRIX`, libaom denoise options under `CONFIG_DENOISE`). libaom options behind `CONFIG_TUNE_VMAF` and `CONFIG_TUNE_BUTTERAUGLI`, both off by default, are left out; on such a build they land in `unknown_params` with their values intact.
+5. **Dialect values**: `PEL_ENCODE_OPTIONS_SVTAV1` = 3 and `PEL_ENCODE_OPTIONS_AOM` = 4 append to the public enum; existing values do not move.
+
 ## Alternatives considered
 
 ### Implementation approach
@@ -69,10 +83,9 @@ We will implement dedicated option-string parsers for x264 and x265 in libpeloru
   - Zero heap allocation and reentrant execution ensure safety in real-time filter pipelines.
   - Unknown options are never lost: they are preserved in `unknown_params` for downstream inspection.
 - **Negative**:
-  - Option tables must be periodically updated when upstream x264 or x265 adds new options.
+  - Option tables must be periodically updated when upstream x264, x265, SVT-AV1 or libaom adds new options.
   - `PelorusEncodeOptions` is ~272 KiB (measured `sizeof(PelorusEncodeOptions)` = 278552), so callers should allocate it on the heap.
 - **Neutral / follow-ups**:
-  - Issue #156 part 2 will add option-string parsers for SVT-AV1 and libaom.
   - NVENC requires no option string parser because its options are mapped directly via FFmpeg `AVOption`s.
 
 ## References
@@ -80,4 +93,7 @@ We will implement dedicated option-string parsers for x264 and x265 in libpeloru
 - Issue #81; Issue #156; [ADR-0175](0175-encode-provenance-record.md).
 - Upstream x264 repository at `b35605ace3ddf7c1a5d67a2eb553f034aef41d55`: `common/base.c` (`x264_param_parse`).
 - Upstream x265 repository at `e444744c03978c1fb4e037168967020cf2648427`: `source/common/param.cpp` (`x265_param_parse`).
+- Upstream SVT-AV1 `v4.2.0` at `9292ec8e32bce26f781f277ec8739b53426c4300`: `Source/Lib/Globals/enc_settings.c` (`svt_av1_enc_parse_parameter`).
+- Upstream libaom `v3.15.2` at `af3dc9aadc793c1b00edc003e3fc19a44fdeb574`: `av1/av1_cx_iface.c` (`encoder_set_option`), `av1/arg_defs.c`, `common/args_helper.c`.
+- FFmpeg n9.0.2: `libavcodec/libsvtav1.c` and `libavcodec/libaomenc.c` (option pass-through).
 - FFmpeg n9.0.2: `libavutil/dict.c` (`av_dict_parse_string`) and `libavutil/avstring.c` (`av_get_token`).

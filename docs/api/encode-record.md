@@ -3,11 +3,10 @@
 
 > [!IMPORTANT]
 > **Status: the record, its digest, the API, the `PEL_SEC_ENCODE_RECORD`
-> section (interop ABI 1.4), and option-string parsers for x264 and x265
-> are implemented**
+> section (interop ABI 1.4), and option-string parsers for x264, x265,
+> SVT-AV1 and libaom are implemented**
 > ([ADR-0175](../adr/0175-encode-provenance-record.md),
 > [ADR-0198](../adr/0198-encoder-option-string-parsers.md), issues #81, #156).
-> Option-string parsers for SVT-AV1 and libaom follow in issue #156 part 2.
 > NVENC has no option string: NVENC settings map directly to discrete FFmpeg
 > AVOptions on the encoder wrapper (`h264_nvenc` / `hevc_nvenc`), without a
 > pass-through colon-separated option string parameter like `-x264-params` or
@@ -224,11 +223,13 @@ It checks what the canonicaliser cannot know: required members, the
 
 Header [`pelorus/encode_options.h`](../../libpelorus/include/pelorus/encode_options.h);
 implementation `libpelorus/src/encode_options.c` with dialect tables in
-`libpelorus/src/encode_options_x264.c` and `libpelorus/src/encode_options_x265.c`
+`libpelorus/src/encode_options_x264.c`, `libpelorus/src/encode_options_x265.c`,
+`libpelorus/src/encode_options_svtav1.c` and `libpelorus/src/encode_options_aom.c`
 ([ADR-0198](../adr/0198-encoder-option-string-parsers.md), issue #156).
 
 The option-string parser parses and normalises CLI and FFmpeg pass-through
-parameter strings (such as `-x264-params` and `-x265-params`) into arrays of
+parameter strings (`-x264-params`, `-x265-params`, `-svtav1-params`,
+`-aom-params`) into arrays of
 `PelorusEncodeParam` ready for `pel_encode_record_build()`.
 
 ### Parser API
@@ -237,6 +238,8 @@ parameter strings (such as `-x264-params` and `-x265-params`) into arrays of
 typedef enum pel_encode_options_dialect {
     PEL_ENCODE_OPTIONS_X264 = 1,
     PEL_ENCODE_OPTIONS_X265 = 2,
+    PEL_ENCODE_OPTIONS_SVTAV1 = 3,
+    PEL_ENCODE_OPTIONS_AOM = 4,
 } pel_encode_options_dialect;
 
 typedef struct PelorusEncodeOptions {
@@ -280,6 +283,9 @@ key-value pairs by `=`:
 
 ### Normalisation rules per dialect
 
+The rules below describe x264 and x265. SVT-AV1 and libaom differ where their
+libraries differ; see [SVT-AV1 and libaom](#svt-av1-and-libaom).
+
 1. **Key normalisation**:
    - Underscores (`_`) are translated to hyphens (`-`).
    - x265: leading `--` prefixes are stripped.
@@ -320,6 +326,29 @@ key-value pairs by `=`:
      under their canonical key with the value verbatim (because the underlying encoder rejects
      them, meaning they did not take effect); a later valid value for that key replaces the entry.
 
+### SVT-AV1 and libaom
+
+FFmpeg passes each `-svtav1-params` entry to `svt_av1_enc_parse_parameter`
+(`libavcodec/libsvtav1.c:349`) and each `-aom-params` entry to
+`aom_codec_set_option` (`libavcodec/libaomenc.c:1036`); the parsers follow
+those functions.
+
+| Rule | SVT-AV1 | libaom |
+|---|---|---|
+| Key match | exact; no `_` folding, no `--` strip | exact long name; no `_` folding, no `--` strip |
+| Aliases | `w` → `width`, `h` → `height`, `q` → `qp` | none |
+| Negation prefix | none (`no-enable-overlays` is unknown) | none |
+| Booleans | `1`/`0`, `true`/`false`, `yes`/`no`, any case | no boolean options; flags are unsigned integers |
+| Integers | base 0 (`lp=0x10` gives `16`) | base 10 (`cpu-used=010` gives `10`; `0x4` is rejected) |
+| Unsigned options | negative value rejected to `unknown_params` | negative value rejected to `unknown_params` |
+| Reals | `crf`, `cqp`, `ac-bias` as `f64:<hex>` | none |
+| Verbatim | `keyint`, `tbr`, `mbr`, `rc`, `profile`, enums, colour options, lists, file names | enums (`tune=ssim`), rationals, lists, file names |
+
+Unsigned values accept 0 to 4294967295; a larger value returns `PEL_ERR_RANGE`.
+The record does not check the narrower 8-bit widths SVT-AV1 clamps to. libaom
+options behind `CONFIG_TUNE_VMAF` and `CONFIG_TUNE_BUTTERAUGLI` (off by default)
+are not in the table and land in `unknown_params`.
+
 ### Field table
 
 | Input | Destination | Key normalisation | Value normalisation |
@@ -334,6 +363,8 @@ key-value pairs by `=`:
 |---|---|---|---|
 | x264 (`PEL_ENCODE_OPTIONS_X264`) | 142 (123 base + 19 aliases) | VideoLAN x264 `b35605ace3ddf7c1a5d67a2eb553f034aef41d55` | `common/base.c: x264_param_parse` |
 | x265 (`PEL_ENCODE_OPTIONS_X265`) | 233 (225 base + 8 aliases) | MulticoreWare x265 `e444744c03978c1fb4e037168967020cf2648427` | `source/common/param.cpp: x265_param_parse` |
+| SVT-AV1 (`PEL_ENCODE_OPTIONS_SVTAV1`) | 121 (118 base + 3 aliases) | SVT-AV1 `v4.2.0` / `9292ec8e32bce26f781f277ec8739b53426c4300` | `Source/Lib/Globals/enc_settings.c: svt_av1_enc_parse_parameter` |
+| libaom (`PEL_ENCODE_OPTIONS_AOM`) | 122 | libaom `v3.15.2` / `af3dc9aadc793c1b00edc003e3fc19a44fdeb574` | `av1/av1_cx_iface.c: encoder_set_option` |
 
 ## Tests
 
