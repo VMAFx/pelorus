@@ -184,6 +184,20 @@ pel_result pel_tlm_parse_x265_csv(const char *text, size_t len, uint8_t coded_bi
                                   size_t *out_count);
 
 /*
+ * Parse x264 pass-1 .stats text. Buffer ownership, locale, limits and atomic
+ * error semantics match pel_tlm_parse_x265_csv(). Empty or header-only input
+ * succeeds with zero records; #options: is optional, as for VVenC startup text.
+ * Duplicate indices are retained in input order, as in pel_tlm_parse_vvenc_log().
+ * aq (post-AQ mean), minus 6 * (coded_bit_depth - 8), supplies avg_qp on
+ * PEL_QP_SCALE_SLICE_QP; q is validated but has no separate output field.
+ * tex + mv + misc must be byte-aligned; tex supplies residual_bits and mv +
+ * misc supplies header_bits. I/i/P/B/b are the only accepted picture types.
+ */
+pel_result pel_tlm_parse_x264_stats(const char *text, size_t len, uint8_t coded_bit_depth,
+                                    PelorusEncTelemetryInput *out_frames, size_t cap,
+                                    size_t *out_count);
+
+/*
  * Parse an SVT-AV1 `--enable-stat-report 1 --stat-file` text buffer. Argument,
  * allocation, error and output semantics match pel_tlm_parse_x265_csv().
  */
@@ -204,9 +218,11 @@ pel_result pel_tlm_parse_svtav1_stat(const char *text, size_t len, uint8_t coded
  *
  * `codec` and `qp_scale` specify the encoded stream format; `coded_bit_depth`
  * must be 8, 10 or 12. AV1 accepts only PEL_QP_SCALE_AV1_ENCODER_QP (qindex scale
- * cannot normalise). For VP9, the FFmpeg value is a libvpx 0..63 quantizer with no
- * PEL scale: quality is ignored entirely (AVG_QP bits clear), while picture type and
- * SSE are parsed; caller passes PEL_QP_SCALE_VP9_QINDEX.
+ * cannot normalise). For VP9, the FFmpeg value is a libvpx 0..63 quantizer; it is
+ * mapped to qindex (0..255) with libvpx's table and reported as AVG_QP on
+ * PEL_QP_SCALE_VP9_QINDEX, with AVG_QP_NORM clear (qindex has no normalisation).
+ * A VP9 quality that is not a multiple of 118 returns PEL_ERR_INVALID; a quantizer
+ * above 63 returns PEL_ERR_RANGE. Caller passes PEL_QP_SCALE_VP9_QINDEX.
  *
  * If `plane_samples` is non-NULL, nonzero elements supply the sample count for each
  * plane (0=Y, 1=U, 2=V) to convert SSE into PSNR (dB). PSNR capped at 100 dB (SSE 0

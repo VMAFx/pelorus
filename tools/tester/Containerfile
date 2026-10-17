@@ -59,9 +59,14 @@ COPY ffmpeg-patches /src/pelorus/ffmpeg-patches
 # the sha256 pin once more and unpacks it.
 COPY build-config.env /src/pelorus/
 COPY scripts/fetch-ffmpeg-series.sh /src/pelorus/scripts/
+COPY docs/api/encode-record.md /src/pelorus/docs/api/
+COPY tools/tester/install-fast-suite.py tools/tester/run-fast-suite.sh.in /src/pelorus/tools/tester/
 COPY .ffmpeg-series/*.tar.gz /src/ffmpeg-series-release/
-RUN meson setup --werror -Dtests=false -Dtools=false -Dshaders=false --prefix=/opt/pelorus --libdir=lib /src/pelorus-build /src/pelorus \
-    && ninja -C /src/pelorus-build install
+RUN meson setup --werror -Dtests=true -Dtools=false -Dshaders=false --prefix=/opt/pelorus --libdir=lib /src/pelorus-build /src/pelorus \
+    && ninja -C /src/pelorus-build -j"${MAKE_JOBS}" install \
+    && meson introspect --tests /src/pelorus-build > /src/native-fast-tests.json \
+    && python3 -I /src/pelorus/tools/tester/install-fast-suite.py \
+        /src/native-fast-tests.json /src/pelorus-build /src/pelorus /opt/pelorus/tests
 
 # The pinned FFmpeg commit, the shared FFmpeg fix series and then the whole
 # Pelorus series, each applied in order (a per-patch check is not enough,
@@ -147,10 +152,12 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # hadolint ignore=DL3008
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates libvulkan1 python3 vulkan-tools \
+        ca-certificates libvulkan1 locales python3 vulkan-tools \
+    && localedef -i de_DE -f UTF-8 de_DE.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
 # HOME=/tmp: a run with --user (any uid) still has a writable fixture cache.
 ENV FFMPEG_BIN=/opt/ffmpeg/bin/ffmpeg \
+    PELORUS_SUITE_CMD=/opt/pelorus/tests/run-fast-suite.sh \
     PATH=/opt/ffmpeg/bin:${PATH} \
     LD_LIBRARY_PATH=/opt/ffmpeg/lib:/opt/pelorus/lib \
     HOME=/tmp

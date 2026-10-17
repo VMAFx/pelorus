@@ -116,6 +116,19 @@ in the earlier mirror), VMAFx also updates, in the same re-pin:
 Pelorus does not edit VMAFx files; it lists these duties in the issue that
 announces the release.
 
+## Host-C exception status under VMAFx Rust migration
+
+Under VMAFx ADR-2478 (Rust core migration), host C and C++ in VMAFx is deleted by
+VMAFx 3.0 outside an exception list. Under [ADR-0197](../adr/0197-vmafx-interop-mirror-host-c-exception.md)
+(issue [#164](https://github.com/VMAFx/pelorus/issues/164)), the ten mirrored Pelorus interop
+files are registered on VMAFx's ADR-2478 host-C exception list with owner `pelorus`,
+reason byte-identical ABI mirror (VMAFx ADR-1113), category A, and expiry at VMAFx 3.0.
+The re-evaluation trigger is the release of Pelorus's dependency-free Rust interop crate
+in milestone 2.1 ([#115](https://github.com/VMAFx/pelorus/issues/115)), aligning with
+VMAFx Rust Phase 2 (vmafx 2.3). The `_Static_assert` pins in the mirrored `interop.h` and the shared conformance fixture
+([`libpelorus/test/interop_test.c`](../../libpelorus/test/interop_test.c) and VMAFx
+`core/test/test_pelorus_interop.c`) remain the layout gate.
+
 ## When the pinned SHA is not on master
 
 A change to a mirrored file must be in a release before VMAFx pins it. No

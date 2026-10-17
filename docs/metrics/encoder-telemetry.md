@@ -9,48 +9,51 @@ validation rule are on the API page,
 operational questions: where the field names live, how the VMAFx name check
 runs, and what a caller outside FFmpeg fills in.
 
-Five adapters ship: x265 CSV, SVT-AV1 stat files and VVenC verbose log
-buffers read text, FFmpeg `AV_PKT_DATA_QUALITY_STATS` packet side data
+Six adapters ship: x264 stats, x265 CSV, SVT-AV1 stat files and VVenC verbose
+log buffers read text, FFmpeg `AV_PKT_DATA_QUALITY_STATS` packet side data
 reads one binary packet, and the libaom adapter reads in-process C values.
 All read caller-provided values and write caller-provided frame records; the
 library performs no file I/O or allocation in its record loops. One transient
 C numeric-locale handle per call makes text adapters process-locale
 independent. Callers supply the coded bit depth because none of these formats
-records it.
+records it in a form the adapters read; the x264 options header is not used to
+infer depth.
 
 ## Adapter coverage
 
 `yes` means the parser fills the field and sets its presence bit. `caller`
 means the adapter fills the field from caller-supplied bit depth or frame indices. `-`
 means the bit stays clear and its value stays zero: not reported, not a
-reported zero. These rows are the exact masks returned by
-`pel_tlm_adapter_caps()`.
+reported zero. These rows describe parser output. Named adapters return these exact masks from
+`pel_tlm_adapter_caps()`; x264 uses `external`, whose capability mask permits all fields.
 
-| Field | x265 CSV level 1 | SVT-AV1 stat file | VVenC log (-v 4) | FFmpeg quality stats | libaom C values |
-|---|---:|---:|---:|---:|---:|
-| `display_index` | yes | yes | yes | - | caller |
-| `decode_index` | yes | - | yes | - | caller |
-| `frame_bytes` | yes | yes | yes | - | yes |
-| `header_bits` | - | - | - | - | - |
-| `residual_bits` | - | - | - | - | - |
-| `avg_qp` | yes | yes | yes | yes | yes |
-| `avg_qp_norm` | yes | yes | yes | yes | yes |
-| `psnr_y` | - | yes | yes | yes | yes |
-| `psnr_u` | - | yes | yes | yes | yes |
-| `psnr_v` | - | yes | yes | yes | yes |
-| `ssim_y` | - | yes | - | - | - |
-| `intra_fraction` | - | - | - | - | - |
-| `inter_fraction` | - | - | - | - | - |
-| `skip_fraction` | - | - | - | - | - |
-| `picture_type` | yes | - | yes | yes | yes |
-| `key_frame` | yes | - | yes | - | yes |
-| `reference` | yes | - | - | - | - |
-| `shown` | yes | - | yes | - | - |
-| `scene_cut` | yes | - | - | - | - |
-| `qp_map` | - | - | - | - | - |
-| `bits_map` | - | - | - | - | - |
-| `mode_map` | - | - | - | - | - |
-| `coded_bit_depth` | caller | caller | caller | caller | caller |
+| Field | x265 CSV level 1 | SVT-AV1 stat file | VVenC log (-v 4) | FFmpeg quality stats | libaom C values | x264 stats |
+|---|---:|---:|---:|---:|---:|---:|
+| `display_index` | yes | yes | yes | - | caller | yes |
+| `decode_index` | yes | - | yes | - | caller | yes |
+| `frame_bytes` | yes | yes | yes | - | yes | yes |
+| `header_bits` | - | - | - | - | - | yes |
+| `residual_bits` | - | - | - | - | - | yes |
+| `avg_qp` | yes | yes | yes | yes | yes | yes |
+| `avg_qp_norm` | yes | yes | yes | yes | yes | yes |
+| `psnr_y` | - | yes | yes | yes | yes | - |
+| `psnr_u` | - | yes | yes | yes | yes | - |
+| `psnr_v` | - | yes | yes | yes | yes | - |
+| `ssim_y` | - | yes | - | - | - | - |
+| `intra_fraction` | - | - | - | - | - | - |
+| `inter_fraction` | - | - | - | - | - | - |
+| `skip_fraction` | - | - | - | - | - | - |
+| `picture_type` | yes | - | yes | yes | yes | yes |
+| `key_frame` | yes | - | yes | - | yes | yes |
+| `reference` | yes | - | - | - | - | yes |
+| `shown` | yes | - | yes | - | - | yes |
+| `scene_cut` | yes | - | - | - | - | - |
+| `qp_map` | - | - | - | - | - | - |
+| `bits_map` | - | - | - | - | - | - |
+| `mode_map` | - | - | - | - | - | - |
+| `coded_bit_depth` | caller | caller | caller | caller | caller | caller |
+
+x264's pass-1 `.stats` parser reports H.264 `slice_qp` from post-AQ `aq`, subtracting the high-bit-depth offset `6 * (coded_bit_depth - 8)`; pre-AQ `q` is validated only. `in`/`out` supply display/decode order. The coded size is `(tex + mv + misc) / 8`, residual bits are `tex`, and non-residual bits are `mv + misc`. Only `I` is key; `I`, `i`, `P`, `B` are references and `b` is not; all are shown. Distortion metrics, maps, scene-cut and area fractions remain not reported. The existing `external` adapter identifier avoids changing the wire ABI; see the [API grammar and errors](../api/encoder-telemetry.md#x264-pass-1-stats) and [recorded fixture](../../libpelorus/test/fixtures/telemetry/README.md).
 
 x265's `POC`, `Encode Order`, `Bits`, `QP`, `Type` and `Scenecut` columns
 supply its fields. SVT-AV1's `Picture Number`, `Average QP`, per-plane PSNR,

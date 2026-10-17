@@ -11,6 +11,7 @@ AMD and arm64 are later children of
 [#108](https://github.com/VMAFx/pelorus/issues/108). `libpelorus_suite` and
 `registration` have built-in runners in tool 0.4.10
 ([#302](https://github.com/VMAFx/pelorus/issues/302)).
+All three images set `PELORUS_SUITE_CMD=/opt/pelorus/tests/run-fast-suite.sh` and ship the native fast-test binaries, telemetry fixtures, encode-record example and comma-decimal locale; `tools/tester/install-fast-suite.py` generates their arguments, environment and workdir from `meson introspect --tests`, while repository scripts and shader compiler checks remain build-host gates.
 
 A tester package is evidence for one `master` commit, named
 `tester-<YYYYMMDD>-<sha8>` (CPU image) or `tester-<kit>-<YYYYMMDD>-<sha8>`

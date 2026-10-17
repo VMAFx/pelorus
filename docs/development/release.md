@@ -48,7 +48,7 @@ release build checks them on the exact tagged commit
 | Leg | Kind | Needs |
 | --- | --- | --- |
 | `ci` | needs | the full CI call in `release.yml`, which already gates the build |
-| `tester-publish` | workflow_run | the newest `workflow_dispatch` run of `tester-publish.yml` with `head_sha` equal to the tag commit concluded `success` |
+| `tester-publish` | workflow_run | the newest `workflow_dispatch` run of `tester-publish.yml` for the tag commit concluded `success`: its `head_sha` is the tag commit, or it ran on master and its run name is `tester-publish workflow_dispatch <full sha>` ([ADR-0199](../adr/0199-patch-branch-tester-evidence.md)) |
 | `hardware-coverage`, `bench-smoke` | manual | recorded as `manual`; the maintainer confirms them in the release pull request. Not machine-verified |
 
 The result is `CANDIDATE_LEGS.json`: it is covered by the signed `SHA256SUMS`
@@ -91,11 +91,36 @@ subsection, and remove the candidate headings (the prereleases keep their own
 notes). The release build refuses the tag when no candidate of that version
 exists (from 0.4.0).
 
+## Patch release from a patch branch
+
+A patch of an older minor whose fixes master cannot carry alone (master already
+holds the next minor) comes from a patch branch `lts-X.Y`
+([ADR-0199](../adr/0199-patch-branch-tester-evidence.md)). The ruleset that
+protects master covers `lts-*` too, so every change reaches it through a pull
+request with signed commits and the required checks.
+
+1. Branch `lts-X.Y` from the tag `vX.Y.Z` (Z = the last patch) and pick the
+   fixes in pull requests against it (`git cherry-pick -x -S -s`). The
+   ruleset refuses to create the branch until the tag commit carries the
+   required checks under their pull-request names (the runs prefixed `ci /` of the
+   release workflow do not count): open a ready pull request whose head is a
+   temporary branch at the tag commit and whose base is a temporary branch at
+   its parent, wait for every required check, push the branch, then close the
+   pull request and delete both temporary branches.
+2. Bump the version and changelog in a `chore(release): vX.Y.Z+1` pull request
+   against `lts-X.Y`.
+3. Dispatch `Tester publish` **from master** with `ref` set to the full 40-hex
+   SHA of the patch-branch tip; a branch name or short SHA is refused, so the
+   run name names the commit.
+4. Tag with `bash scripts/release/tag-release.sh --sha <full sha> vX.Y.Z+1` and
+   push the tag; `release.yml` runs CI on the tag and builds the release.
+
 ## Rehearse
 
 A manual dispatch of `Release` runs `ci` and `build` without the tag steps and
 never publishes. To rehearse the tag steps, push `vX.Y.Z-rc.N` in a fork, or
 test the rules directly: `python3 -I scripts/release/verify-release.py --self-test`,
 `python3 -I scripts/release/check-candidate-legs.py --self-test`,
-`bash scripts/release/tag-release.sh --self-test` and
+`bash scripts/release/tag-release.sh --self-test`,
+`bash scripts/release/check-publish-ref.sh --self-test` and
 `bash scripts/release/extract-release-notes.sh --self-test`.

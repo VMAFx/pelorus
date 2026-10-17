@@ -264,6 +264,14 @@ if build_machine.system() != 'windows'
        workdir: meson.project_source_root(),
        timeout: 600,
        suite: 'fast')
+  test('check-publish-ref-selftest-isolation',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-selftest-git-isolation.py',
+              'bash', meson.project_source_root() / 'scripts' / 'release' / 'check-publish-ref.sh',
+              '--self-test'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
 endif
 
 # BUG-007/008/013/025: shader plane loops must `continue` (yuva420p alpha), bayer8 must be

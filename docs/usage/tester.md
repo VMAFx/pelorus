@@ -144,7 +144,7 @@ the stage's own leg.
 | # | Stage | Pass rule | Not run / no device |
 | --- | --- | --- | --- |
 | 1 | `probe` | `vulkaninfo --summary` exits 0 | no hardware device: `no_device` for every stage marked "GPU" below |
-| 2 | `libpelorus_suite` | fast test suite (`meson test --suite=fast` or installed test binaries) passes | fast suite artefact absent: `not_run` |
+| 2 | `libpelorus_suite` | kit images run `/opt/pelorus/tests/run-fast-suite.sh`: every native fast-test entry passes with its Meson arguments and fixtures; first non-zero exit fails the stage | images bundle the suite; checkout without a suite artefact: `not_run` |
 | 3 | `registration` | all Pelorus filters and bitstream filters derived from `ffmpeg-patches/files` are registered in kit FFmpeg (`-filters`, `-bsfs`) | no `ffmpeg`: `not_run` |
 | 4 | `format_matrix` (GPU) | [`vulkan-format-matrix.sh`](../../ffmpeg-patches/test/vulkan-format-matrix.sh) exits 0 with the validation layer on; every Vulkan diagnostic is on the [allow-list](#validation-gate) | layer absent: `not_run`; script exit 77: `no_device`; no `ffmpeg`: `not_run` |
 | 5 | `steering_smoke` (GPU) | for each usable encoder, 8- and 16-frame encodes both decode to 8 and 16 frames, and the steered bitstream differs from the unsteered one at both lengths; for each QSV encoder, the [bitrate-control legs](#qsv-bitrate-control-legs) decode to every frame within 15 % of the target bitrate or are a named `not_run` | encoder not built, not usable on this host, or without `-pelorus_roi`: a `not_run` leg with the reason; none usable: `not_run` (a bitrate-control leg cannot pass the stage alone) |

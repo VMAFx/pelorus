@@ -1,0 +1,10 @@
+#!/bin/sh
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
+# Native fast tests; commands appended from Meson introspection at image build time.
+set -eu
+suite_root=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+export LD_LIBRARY_PATH="$suite_root/../lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/pelorus-fast.XXXXXXXX")
+trap 'rm -rf -- "$scratch"' EXIT
+trap 'exit 1' HUP INT TERM
