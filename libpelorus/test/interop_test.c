@@ -70,6 +70,21 @@ static int g_fail;
     } while (0)
 
 /*
+ * Exact float comparison through the bit pattern (vmafx core/test/test_cambi.c
+ * float_bits_equal): the fixtures write known values and read back the same
+ * bits, and comparing representations keeps CodeQL cpp/equality-on-floats
+ * quiet where vmafx vendors this file.
+ */
+static int float_bits_equal(float a, float b)
+{
+    uint32_t a_bits = 0;
+    uint32_t b_bits = 0;
+    memcpy(&a_bits, &a, sizeof(a_bits));
+    memcpy(&b_bits, &b, sizeof(b_bits));
+    return a_bits == b_bits;
+}
+
+/*
  * Fixture files (Pelorus issues #60 and #62, Pelorus ADR-0148). The fixture
  * writes files into the working directory, so it must never widen access or
  * write through a path it did not create:
@@ -501,8 +516,8 @@ static void check_roundtrip_banding(const uint8_t *blob, size_t len)
     CHECK(got == sizeof(PelorusBandingSection));
     {
         const PelorusBandingSection *b = p;
-        CHECK(b->global_banding_risk == 0.42f);
-        CHECK(b->flat_area_fraction == 0.61f);
+        CHECK(float_bits_equal(b->global_banding_risk, 0.42f));
+        CHECK(float_bits_equal(b->flat_area_fraction, 0.61f));
     }
 }
 
@@ -515,7 +530,7 @@ static void check_roundtrip_variance(const uint8_t *blob, size_t len)
                                 &got) == PEL_OK);
     {
         const PelorusVarianceSection *v = p;
-        CHECK(v->texture_energy == 0.33f);
+        CHECK(float_bits_equal(v->texture_energy, 0.33f));
     }
 }
 
@@ -788,11 +803,11 @@ static void test_pack_size_overflow(void)
 
 static void check_qp_report_scalars(const PelorusQpReportSection *r)
 {
-    CHECK(r->avg_qp == 27.5f);
-    CHECK(r->psnr_y == 41.2f);
+    CHECK(float_bits_equal(r->avg_qp, 27.5f));
+    CHECK(float_bits_equal(r->psnr_y, 41.2f));
     CHECK(r->total_bits == 1234567ULL);
     CHECK(r->num_inter_blocks == 200);
-    CHECK(r->honored_fraction == 0.75f);
+    CHECK(float_bits_equal(r->honored_fraction, 0.75f));
     CHECK(r->report_source == PEL_QPSRC_QSV);
     CHECK(r->block_size_log2 == 4);
 }
@@ -804,8 +819,8 @@ static void check_qp_report_fields(const PelorusQpReportSection *r, uint16_t cel
     CHECK(r->qp_cell_size == cells);
     CHECK(r->num_intra_blocks == 40);
     CHECK(r->num_skipped_blocks == 16);
-    CHECK(r->psnr_u == 0.0f);
-    CHECK(r->psnr_v == 0.0f);
+    CHECK(float_bits_equal(r->psnr_u, 0.0f));
+    CHECK(float_bits_equal(r->psnr_v, 0.0f));
 }
 
 static void check_qp_report_section(const uint8_t *blob, size_t len, uint16_t cells)
@@ -958,9 +973,9 @@ static void test_motion_conf_roundtrip(void)
 
 static void check_complexity_values(const PelorusComplexitySection *r)
 {
-    CHECK(r->complexity == 0.625f);
-    CHECK(r->texture_energy == 0.5f);
-    CHECK(r->motion_component == 0.25f);
+    CHECK(float_bits_equal(r->complexity, 0.625f));
+    CHECK(float_bits_equal(r->texture_energy, 0.5f));
+    CHECK(float_bits_equal(r->motion_component, 0.25f));
     CHECK(r->has_scene_cut == 1);
 }
 
@@ -1013,7 +1028,7 @@ static void check_fold_uniform(const PelorusQpReportSection *out, const int8_t *
     CHECK(out->qp_valid == 1);
     CHECK(out->qp_cell_size == 4u * 2u);
     CHECK(out->report_source == PEL_QPSRC_QSV);
-    CHECK(out->avg_qp == 30.0f);
+    CHECK(float_bits_equal(out->avg_qp, 30.0f));
     for (i = 0; i < n; i++) {
         CHECK(cells[i] == 30); /* uniform block QP -> uniform cell QP */
     }
@@ -1026,7 +1041,7 @@ static void check_fold_stats_only(const PelorusQpReportInput *in)
     CHECK(pel_qp_report_from_blocks(in, 4, 2, &out, NULL, 0) == PEL_OK);
     CHECK(out.qp_valid == 0);
     CHECK(out.qp_cell_size == 0u);
-    CHECK(out.avg_qp == 30.0f);
+    CHECK(float_bits_equal(out.avg_qp, 30.0f));
 }
 
 /* The reader stub: fold a per-block QP grid onto the cell grid. With a block
@@ -1075,8 +1090,8 @@ static void check_x265_fold_scalars(const PelorusQpReportSection *qp)
     CHECK(qp->total_bits == 35000ULL);
     /* bit-weighted: (26*24000 + 30*8000 + 34*3000)/35000 = 27.6 exactly. */
     CHECK(qp->avg_qp > 27.55f && qp->avg_qp < 27.65f);
-    CHECK(qp->psnr_y > 41.0f && qp->psnr_y < 43.2f); /* I-frame-dominated */
-    CHECK(qp->honored_fraction == 0.0f);             /* no request to compare */
+    CHECK(qp->psnr_y > 41.0f && qp->psnr_y < 43.2f);     /* I-frame-dominated */
+    CHECK(float_bits_equal(qp->honored_fraction, 0.0f)); /* no request to compare */
 }
 
 static void check_x265_fold(const PelorusX265Frame *frames, size_t count)
@@ -1094,17 +1109,17 @@ static void check_x265_fold(const PelorusX265Frame *frames, size_t count)
 
     /* A requested shape matching achieved low/flat/high QP agrees everywhere. */
     CHECK(pel_qp_report_from_x265_frames(frames, count, requested_shaped, &qp) == PEL_OK);
-    CHECK(qp.honored_fraction == 1.0f);
+    CHECK(float_bits_equal(qp.honored_fraction, 1.0f));
 }
 
 static void check_x265_frames(const PelorusX265Frame *frames)
 {
     CHECK(frames[0].slice_type == 'I');
-    CHECK(frames[0].qp == 26.0f);
+    CHECK(float_bits_equal(frames[0].qp, 26.0f));
     CHECK(frames[0].bits == 24000ULL);
     CHECK(frames[1].slice_type == 'P');
-    CHECK(frames[2].qp == 34.0f);
-    CHECK(frames[2].psnr_v == 35.5f);
+    CHECK(float_bits_equal(frames[2].qp, 34.0f));
+    CHECK(float_bits_equal(frames[2].psnr_v, 35.5f));
 }
 
 /* The x265 CSV reader (ADR-0122): write a minimal x265-shaped CSV to a temp
@@ -1523,9 +1538,10 @@ static void test_enc_telemetry_roundtrip(void)
         PelorusEncTelemetrySection r;
         memcpy(&r, p, sizeof(r));
         CHECK(r.present_mask == t.present_mask && r.frame_bytes == 12034u);
-        CHECK(r.avg_qp == 30.0f && r.codec == PEL_TLM_CODEC_HEVC && r.adapter == 10u);
+        CHECK(float_bits_equal(r.avg_qp, 30.0f) && r.codec == PEL_TLM_CODEC_HEVC &&
+              r.adapter == 10u);
         /* present_mask: psnr_y not reported (bit clear) is not a reported 0 dB. */
-        CHECK((r.present_mask & PEL_TLM_F_PSNR_Y) == 0u && r.psnr_y == 0.0f);
+        CHECK((r.present_mask & PEL_TLM_F_PSNR_Y) == 0u && float_bits_equal(r.psnr_y, 0.0f));
         CHECK((r.present_mask & PEL_TLM_F_KEY_FRAME) != 0u && r.frame_flags == 0u);
         check_enc_telemetry_maps(fx.bytes, len, &r);
     }
@@ -1762,7 +1778,7 @@ static void check_analysis_maps(const FixtureBlob *fx, size_t len, uint32_t cell
     for (i = 0; m != NULL && i < cells; i++) {
         float got_var;
         memcpy(&got_var, (const uint8_t *)m + (size_t)i * sizeof(got_var), sizeof(got_var));
-        CHECK(got_var == var[i]); /* values, not object representations */
+        CHECK(float_bits_equal(got_var, var[i])); /* the bits the fixture wrote */
     }
     CHECK(pel_blob_map(fx->bytes, len, v->edge_cell_offset, v->edge_cell_size, cells, 1u, &m) ==
           PEL_OK);
