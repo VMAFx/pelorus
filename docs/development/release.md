@@ -100,7 +100,13 @@ protects master covers `lts-*` too, so every change reaches it through a pull
 request with signed commits and the required checks.
 
 1. Branch `lts-X.Y` from the tag `vX.Y.Z` (Z = the last patch) and pick the
-   fixes in pull requests against it (`git cherry-pick -x -S -s`).
+   fixes in pull requests against it (`git cherry-pick -x -S -s`). The
+   ruleset refuses to create the branch until the tag commit carries the
+   required checks under their pull-request names (the runs prefixed `ci /` of the
+   release workflow do not count): open a ready pull request whose head is a
+   temporary branch at the tag commit and whose base is a temporary branch at
+   its parent, wait for every required check, push the branch, then close the
+   pull request and delete both temporary branches.
 2. Bump the version and changelog in a `chore(release): vX.Y.Z+1` pull request
    against `lts-X.Y`.
 3. Dispatch `Tester publish` **from master** with `ref` set to the full 40-hex
