@@ -238,3 +238,7 @@ No BD-rate / visual-match proof is shipped; that must be measured under the
   landed for HEVC UDU SEI (`source=sidedata`, [ADR-0206](../adr/0206-fgs-bsf-per-frame-bridge.md));
   inline packet side-data remains a follow-up.
 - The H.264 leg (the FGC SEI is also defined for AVC) and the VVC/H.266 leg.
+- Quality scoring: see [grain-scoring.md](../metrics/grain-scoring.md) for
+  the scoring recipe and refusal rules for decoded grain synthesis vs
+  reconstruction ([#82](https://github.com/VMAFx/pelorus/issues/82),
+  [ADR-0207](../adr/0207-grain-scoring-decoded-output.md)).

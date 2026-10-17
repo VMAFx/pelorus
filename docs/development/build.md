@@ -151,26 +151,31 @@ ephemeral committer identity and neutralizes caller signing, hooks, and diff
 ordering, so the same command works on a clean CI runner and a configured
 developer workstation.
 
-`build-and-run.sh` ends with three GPU smokes: the `hevc_nvenc` SEI smoke,
-the NVDEC → Vulkan → NVENC hop smoke (`test/nvenc-cuda-hop-smoke.sh`, nine
-filter chains on the derived Vulkan device,
-[ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md)) and the Vulkan
+`build-and-run.sh` ends with four GPU smokes and one CPU smoke: the
+`hevc_nvenc` SEI smoke, the NVDEC → Vulkan → NVENC hop smoke
+(`test/nvenc-cuda-hop-smoke.sh`, nine filter chains on the derived Vulkan device,
+[ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md)), the Vulkan
 forced-keyframe smoke (`test/vulkan-forced-keyframe-smoke.sh`, 60 Vulkan HEVC
 encodes with `-force_key_frames 2`, a hang fails it,
 [ADR-0192](../adr/0192-series-v0.2.0-forced-keyframe-smoke.md); its header
-lists `INPUT`, `RUNS`, `OUTPUT_ROOT` and `--self-test`), and the
+lists `INPUT`, `RUNS`, `OUTPUT_ROOT` and `--self-test`), the
 `pelorus_fgs` sidedata smoke (`test/fgs-sidedata-smoke.sh`: grain estimator,
 HEVC encoder with `-udu_sei 1`, then `pelorus_fgs=source=sidedata`; one FGC SEI
 per access unit, the cancel after grain stops, the 10-bit refusal and the
 options-mode pass-through,
-[ADR-0206](../adr/0206-fgs-bsf-per-frame-bridge.md)). The first
+[ADR-0206](../adr/0206-fgs-bsf-per-frame-bridge.md)), and the grain score smoke
+(`test/grain-score-smoke.sh`: grain scoring recipe verifies decoded
+grain-synthesised output vs grain-free reconstruction and strips FGC SEI,
+[ADR-0207](../adr/0207-grain-scoring-decoded-output.md)). The first
 two need an NVIDIA driver and a Vulkan device; the third needs a Vulkan device
 with HEVC video decode and encode; the fourth needs a Vulkan device plus
 a working `hevc_nvenc`, or libx265 (GPL builds only) that keeps the user data
-SEI (libx265 4.3 dropped it, [grain-fgs-bsf.md](../usage/grain-fgs-bsf.md#pipeline-example)). A host that lacks one makes a smoke skip,
+SEI (libx265 4.3 dropped it, [grain-fgs-bsf.md](../usage/grain-fgs-bsf.md#pipeline-example));
+the fifth needs an HEVC decoder and the `psnr` filter. A host that lacks one makes a smoke skip,
 and the replay then fails unless `NVENC_SMOKE_SKIP` (SEI smoke),
-`NVENC_HOP_SMOKE_SKIP` (hop smoke), `KEYFRAME_SMOKE_SKIP` (keyframe smoke) and
-`FGS_SMOKE_SKIP` (grain smoke) name the reason each smoke prints, so a GPU host whose driver or device went
+`NVENC_HOP_SMOKE_SKIP` (hop smoke), `KEYFRAME_SMOKE_SKIP` (keyframe smoke),
+`FGS_SMOKE_SKIP` (grain smoke) and `GRAIN_SCORE_SMOKE_SKIP` (grain score smoke)
+name the reason each smoke prints, so a GPU host whose driver or device went
 missing cannot pass by accident
 ([ADR-0189](../adr/0189-named-nvenc-smoke-skip.md)). On a machine without an
 NVIDIA driver or Vulkan video:
@@ -180,6 +185,7 @@ NVENC_SMOKE_SKIP="Cannot load libcuda.so.1" \
   NVENC_HOP_SMOKE_SKIP="Cannot load libcuda.so.1" \
   KEYFRAME_SMOKE_SKIP="no Vulkan device with HEVC video" \
   FGS_SMOKE_SKIP="no HEVC encoder" \
+  GRAIN_SCORE_SMOKE_SKIP="no HEVC decoder" \
   FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh
 ```
 

@@ -1,0 +1,1 @@
+- Grain scoring recipe and smoke test (`scripts/grain-score.sh`, `ffmpeg-patches/test/grain-score-smoke.sh`, `docs/metrics/grain-scoring.md`): scores decoded grain-synthesised HEVC video against reference, refuses grain-free reconstruction and streams without film grain ([#82](https://github.com/VMAFx/pelorus/issues/82), [ADR-0207](docs/adr/0207-grain-scoring-decoded-output.md)).

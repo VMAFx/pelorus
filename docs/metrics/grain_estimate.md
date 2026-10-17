@@ -290,3 +290,9 @@ because the gate drops its largest residuals. RDD 5 cannot represent fully
 white grain, so white sources come back as cutoff-14 grain with a lag-1
 correlation of about +0.16 instead of 0. At a small scale one step is a large
 fraction: scale 5 moves the strength by 20% per step.
+
+## Scoring
+
+For quality scoring of decoded synthesised grain vs the encoder's reconstruction,
+see [grain-scoring.md](grain-scoring.md) ([#82](https://github.com/VMAFx/pelorus/issues/82),
+[ADR-0207](../adr/0207-grain-scoring-decoded-output.md)).

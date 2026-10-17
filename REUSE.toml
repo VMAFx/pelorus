@@ -123,3 +123,10 @@ path = [
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Lusoris"
 SPDX-License-Identifier = "EUPL-1.2"
+
+# Recorded HEVC test fixture carrying H.274 film grain characteristics SEI.
+[[annotations]]
+path = ["ffmpeg-patches/test/fixtures/grain-h274-fgc.hevc"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Lusoris"
+SPDX-License-Identifier = "EUPL-1.2"
