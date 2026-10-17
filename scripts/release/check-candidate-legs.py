@@ -12,7 +12,10 @@ The legs live in scripts/release/candidate-legs.json (ADR-0176). A leg is one of
   needs        a job of release.yml that gates the release build; the build-config
                checker proves release.yml lists it, so it is recorded as gated;
   workflow_run the newest run of a workflow file for exactly SHA and event must
-               have concluded `success`; none, or a newer red one, refuses;
+               have concluded `success`; none, or a newer red one, refuses. A
+               run for SHA is one whose head_sha is SHA, or a run on master
+               whose run name is `<workflow stem> <event> SHA` (a master
+               dispatch that publishes an lts-* commit, ADR-0199);
   manual       a maintainer confirmation; recorded as `manual`, never as green.
 
 The result (per leg: id, kind, state, evidence) is written to --output and
@@ -78,11 +81,15 @@ def evaluate(doc: dict, sha: str, runs: list[dict]) -> list[dict]:
         elif leg["kind"] == "manual":
             row["state"] = "manual"
         else:
+            title = f"{Path(leg['workflow']).stem} {leg['event']} {sha}"
             matching = sorted(
                 (
                     r
                     for r in runs
-                    if r.get("head_sha") == sha
+                    if (
+                        r.get("head_sha") == sha
+                        or (r.get("display_title") == title and r.get("head_branch") == "master")
+                    )
                     and r.get("event") == leg["event"]
                     and str(r.get("path", "")).rsplit("/", 1)[-1] == leg["workflow"]
                 ),
@@ -102,14 +109,47 @@ def failed(rows: list[dict]) -> list[str]:
     return [f"leg {r['id']} is {r['state']}" for r in rows if r["state"] in ("red", "missing")]
 
 
-def fetch_runs(repo: str, sha: str) -> list[dict]:
-    done = subprocess.run(
-        ["gh", "api", "--paginate", "--slurp", f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return [run for page in json.loads(done.stdout) for run in page.get("workflow_runs", [])]
+def fetch_runs(repo: str, sha: str, doc: dict) -> list[dict]:
+    """Runs of SHA itself, plus each workflow_run leg's master runs of its event."""
+    queries = [f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100"]
+    for leg in doc["legs"]:
+        if leg["kind"] == "workflow_run":
+            queries.append(
+                f"repos/{repo}/actions/workflows/{leg['workflow']}/runs"
+                f"?event={leg['event']}&branch=master&per_page=100"
+            )
+    runs: dict[object, dict] = {}
+    for query in queries:
+        done = subprocess.run(
+            ["gh", "api", "--paginate", "--slurp", query],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        for page in json.loads(done.stdout):
+            for run in page.get("workflow_runs", []):
+                runs[run.get("id")] = run
+    return list(runs.values())
+
+
+def _schema_failures(good: dict) -> list[str]:
+    failures: list[str] = []
+    schema_cases = {
+        "wrong schema": {**good, "schema": 2},
+        "no legs": {**good, "legs": []},
+        "unknown kind": {**good, "legs": [{"id": "x", "kind": "magic", "proves": "p"}]},
+        "duplicate id": {**good, "legs": good["legs"] + [good["legs"][0]]},
+        "workflow_run without event": {
+            **good,
+            "legs": [{"id": "t", "kind": "workflow_run", "workflow": "w.yml", "proves": "p"}],
+        },
+        "no tester leg": {**good, "legs": [l for l in good["legs"] if l["kind"] != "workflow_run"]},
+        "leg without proves": {**good, "legs": [{"id": "m", "kind": "manual"}] + good["legs"]},
+    }
+    for name, doc in schema_cases.items():
+        if not validate_legs(doc):
+            failures.append(f"candidate legs: {name} was accepted")
+    return failures
 
 
 def self_test() -> list[str]:
@@ -130,6 +170,11 @@ def self_test() -> list[str]:
         }
         return {**base, **over}
 
+    def titled(conclusion: str, when: str, named: str, **over: str) -> dict:
+        title = f"tester-publish workflow_dispatch {named}"
+        fields = {"head_sha": "d" * 40, "display_title": title, "head_branch": "master", **over}
+        return run(conclusion, when, **fields)
+
     run_cases = [
         ("green run", [run("success", "1")], sha, False),
         ("red run", [run("failure", "1")], sha, True),
@@ -140,6 +185,11 @@ def self_test() -> list[str]:
         ("green run of another commit", [run("success", "1", head_sha="b" * 40)], sha, True),
         ("green pull_request run only", [run("success", "1", event="pull_request")], sha, True),
         ("green run of another workflow", [run("success", "1", path=".github/workflows/ci.yml")], sha, True),
+        ("green master dispatch naming the commit", [titled("success", "1", sha)], sha, False),
+        ("green master dispatch naming another commit", [titled("success", "1", "c" * 40)], sha, True),
+        ("green dispatch naming the commit off master", [titled("success", "1", sha, head_branch="lts-0.4")], sha, True),
+        ("red master dispatch naming the commit", [titled("failure", "1", sha)], sha, True),
+        ("named green then newer named red", [titled("success", "1", sha), titled("failure", "2", sha)], sha, True),
     ]
     for name, runs, want_sha, refused in run_cases:
         rows = evaluate(good, want_sha, runs)
@@ -148,21 +198,7 @@ def self_test() -> list[str]:
     rows = evaluate(good, sha, [run("success", "1")])
     if [r["state"] for r in rows if r["kind"] == "manual"] != ["manual", "manual"]:
         failures.append("candidate legs: a manual leg was recorded as something else")
-    schema_cases = {
-        "wrong schema": {**good, "schema": 2},
-        "no legs": {**good, "legs": []},
-        "unknown kind": {**good, "legs": [{"id": "x", "kind": "magic", "proves": "p"}]},
-        "duplicate id": {**good, "legs": good["legs"] + [good["legs"][0]]},
-        "workflow_run without event": {
-            **good,
-            "legs": [{"id": "t", "kind": "workflow_run", "workflow": "w.yml", "proves": "p"}],
-        },
-        "no tester leg": {**good, "legs": [l for l in good["legs"] if l["kind"] != "workflow_run"]},
-        "leg without proves": {**good, "legs": [{"id": "m", "kind": "manual"}] + good["legs"]},
-    }
-    for name, doc in schema_cases.items():
-        if not validate_legs(doc):
-            failures.append(f"candidate legs: {name} was accepted")
+    failures.extend(_schema_failures(good))
     return failures
 
 
@@ -190,7 +226,7 @@ def main(argv: list[str]) -> int:
     if args.runs_file:
         runs = json.loads(Path(args.runs_file).read_text(encoding="utf-8")).get("workflow_runs", [])
     else:
-        runs = fetch_runs(args.repo, args.sha)
+        runs = fetch_runs(args.repo, args.sha, doc)
     rows = evaluate(doc, args.sha, runs)
     result = json.dumps({"sha": args.sha, "legs": rows}, indent=2) + "\n"
     if args.output:

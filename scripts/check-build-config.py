@@ -3506,14 +3506,15 @@ def _tester_jobs(relative: str, jobs: dict[str, str]) -> list[str]:
             errors.append(f"{relative}: {job_name} job must run only on workflow_dispatch")
     if "validate" not in job_needs(publish):
         errors.append(f"{relative}: publish job must need validate")
-    for token in (
-        "git merge-base --is-ancestor",
-        "origin/master",
-        "fetch-depth: 0",
-        'for commit in "$sha" "$GITHUB_SHA"',
-    ):
+    # The ref rules live in check-publish-ref.sh (ADR-0199); validate must run
+    # its planted-ref self-test before the check, and pass the runner commit.
+    self_test = "bash scripts/release/check-publish-ref.sh --self-test"
+    ref_check = 'bash scripts/release/check-publish-ref.sh "$INPUT_REF" "$GITHUB_SHA"'
+    for token in ("fetch-depth: 0", self_test, ref_check):
         if token not in validate:
             errors.append(f"{relative}: validate job is missing {token}")
+    if self_test in validate and ref_check in validate and validate.index(self_test) > validate.index(ref_check):
+        errors.append(f"{relative}: validate job must run the ref check self-test before the ref check")
     return errors
 
 
@@ -3559,6 +3560,9 @@ def validate_tester_publish_text(relative: str, text: str) -> list[str]:
         if token in text:
             errors.append(f"{relative}: forbidden workflow token {token}")
     errors.extend(_tester_pins(relative, text))
+    # check-candidate-legs.py matches a master dispatch by this run name (ADR-0199).
+    if "run-name: tester-publish ${{ github.event_name }} ${{ inputs.ref || github.sha }}\n" not in text:
+        errors.append(f"{relative}: run-name must be tester-publish <event> <inputs.ref or github.sha>")
     errors.extend(_tester_jobs(relative, jobs))
     errors.extend(_tester_publish_steps(relative, jobs.get("publish", "")))
     return errors
@@ -3820,9 +3824,37 @@ def _tester_trigger_job_cases(text: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def _tester_ref_cases(text: str) -> dict[str, tuple[str, str]]:
+    """ADR-0199: the validate job resolves the ref through the planted-ref checked script."""
+    return {
+        "validate without the ref check": (
+            text.replace('check-publish-ref.sh "$INPUT_REF" "$GITHUB_SHA"', 'check-publish-ref.sh "$INPUT_REF"', 1),
+            "validate job is missing bash scripts/release/check-publish-ref.sh",
+        ),
+        "validate without the ref check self-test": (
+            text.replace("bash scripts/release/check-publish-ref.sh --self-test", "true", 1),
+            "validate job is missing bash scripts/release/check-publish-ref.sh --self-test",
+        ),
+        "validate runs the ref check self-test after the check": (
+            text.replace("bash scripts/release/check-publish-ref.sh --self-test", "true", 1).replace(
+                'check-publish-ref.sh "$INPUT_REF" "$GITHUB_SHA")"',
+                'check-publish-ref.sh "$INPUT_REF" "$GITHUB_SHA")"\n'
+                "          bash scripts/release/check-publish-ref.sh --self-test",
+                1,
+            ),
+            "self-test before the ref check",
+        ),
+        "run name without the input ref": (
+            text.replace("${{ inputs.ref || github.sha }}", "${{ github.sha }}", 1),
+            "run-name must be tester-publish",
+        ),
+    }
+
+
 def _tester_job_cases(text: str) -> dict[str, tuple[str, str]]:
     draft = "      - name: Stop on a draft pull request"
     return {
+        **_tester_ref_cases(text),
         "publish without environment": (
             text.replace("    environment: tester-publish\n", "", 1),
             "publish job is missing environment: tester-publish",
@@ -3834,14 +3866,6 @@ def _tester_job_cases(text: str) -> dict[str, tuple[str, str]]:
                 1,
             ),
             "publish job must run only on workflow_dispatch",
-        ),
-        "validate without master ancestry": (
-            text.replace("git merge-base --is-ancestor", "git merge-base", 1),
-            "validate job is missing git merge-base --is-ancestor",
-        ),
-        "validate skips the workflow commit": (
-            text.replace('for commit in "$sha" "$GITHUB_SHA"', 'for commit in "$sha"', 1),
-            "validate job is missing for commit",
         ),
         "build job pushes": (
             replace_in_job(text, "build", "          docker build \\\n", "          docker push x\n          docker build \\\n"),
