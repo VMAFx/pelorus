@@ -6,6 +6,7 @@ libpelorus provides a pure C parser and serializer for the libaom film-grain tab
 - Header: [`pelorus/grain_table.h`](../../libpelorus/include/pelorus/grain_table.h)
 - Implementation: [`libpelorus/src/grain_table.c`](../../libpelorus/src/grain_table.c)
 - Decision: [ADR-0204](../adr/0204-libaom-grain-table-io.md)
+- Conversion: [Film Grain Parameter Conversion API](grain-convert.md) ([ADR-0205](../adr/0205-aom-h274-grain-conversion.md))
 - Upstream reference: [libaom `grain_table.c`](https://aomedia.googlesource.com/aom/+/refs/heads/main/aom_dsp/grain_table.c)
 
 ## Format overview

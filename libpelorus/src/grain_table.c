@@ -7,6 +7,7 @@
  */
 
 #include "pelorus/grain_table.h"
+#include "grain_aom_internal.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -377,18 +378,12 @@ static void gw_put_i64(GrainWriter *w, int64_t v)
     }
 }
 
-static pel_result validate_entry(const PelorusGrainTableEntry *entry)
+pel_result pel_grain_aom_validate(const PelorusFilmGrainSection *p)
 {
-    if (entry->end_time < entry->start_time)
+    if (p == NULL)
+        return PEL_ERR_INVALID;
+    if (p->apply > 1 || p->seed > 65535)
         return PEL_ERR_RANGE;
-    if (entry->params.apply > 1 || entry->update_parameters > 1)
-        return PEL_ERR_RANGE;
-    if (entry->params.seed > 65535)
-        return PEL_ERR_RANGE;
-    if (!entry->update_parameters)
-        return PEL_OK;
-
-    const PelorusFilmGrainSection *p = &entry->params;
     if (p->ar_coeff_lag < 0 || p->ar_coeff_lag > 3)
         return PEL_ERR_RANGE;
     if (p->ar_coeff_shift < 6 || p->ar_coeff_shift > 9)
@@ -421,6 +416,20 @@ static pel_result validate_entry(const PelorusGrainTableEntry *entry)
         }
     }
     return PEL_OK;
+}
+
+static pel_result validate_entry(const PelorusGrainTableEntry *entry)
+{
+    if (entry->end_time < entry->start_time)
+        return PEL_ERR_RANGE;
+    if (entry->params.apply > 1 || entry->update_parameters > 1)
+        return PEL_ERR_RANGE;
+    if (entry->params.seed > 65535)
+        return PEL_ERR_RANGE;
+    if (!entry->update_parameters)
+        return PEL_OK;
+
+    return pel_grain_aom_validate(&entry->params);
 }
 
 static void write_entry_header(GrainWriter *w, const PelorusGrainTableEntry *entry)

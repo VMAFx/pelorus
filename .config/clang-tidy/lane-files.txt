@@ -20,6 +20,8 @@ libpelorus/src/encode_options_svtav1.c
 libpelorus/src/encode_options_x264.c
 libpelorus/src/encode_options_x265.c
 libpelorus/src/encode_record.c
+libpelorus/src/grain_convert.c
+libpelorus/src/grain_convert_tables.c
 libpelorus/src/grain_table.c
 libpelorus/src/interop.c
 libpelorus/src/qp_report_csv.c
@@ -29,6 +31,7 @@ libpelorus/src/telemetry_adapters.c
 libpelorus/src/version.c
 libpelorus/test/encode_options_test.c
 libpelorus/test/encode_record_test.c
+libpelorus/test/grain_convert_test.c
 libpelorus/test/grain_table_test.c
 libpelorus/test/interop_test.c
 libpelorus/test/path_utf8_test.c

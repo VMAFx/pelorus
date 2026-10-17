@@ -46,6 +46,8 @@ libpelorus_sources = files(
   'src/encode_avoptions.c',
   'src/encode_avoptions_tables.c',
   'src/grain_table.c',
+  'src/grain_convert.c',
+  'src/grain_convert_tables.c',
   'src/sha256.c',
   'src/deband_params.c',
   'src/denoise_params.c',
@@ -59,6 +61,7 @@ libpelorus_headers = files(
   'include/pelorus/encode_record.h',
   'include/pelorus/encode_options.h',
   'include/pelorus/grain_table.h',
+  'include/pelorus/grain_convert.h',
   'include/pelorus/deband.h',
   'include/pelorus/denoise.h',
 )
