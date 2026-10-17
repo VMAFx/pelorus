@@ -1,0 +1,1 @@
+- `docs/roadmap.md`, `docs/api/mirror-contract.md` and `docs/api/encoder-telemetry.md` use the renumbered 0.x milestones of Pelorus (0.9.0 to 0.15.0, formerly 1.0 to 3.0) and VMAFx (for example 0.10.0, formerly 1.1); [ADR-0197](docs/adr/0197-vmafx-interop-mirror-host-c-exception.md) gains a dated note mapping its old numbers ([ADR-0172](docs/adr/0172-roadmap-milestone-map.md)).
