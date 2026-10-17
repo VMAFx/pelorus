@@ -60,6 +60,12 @@ a Pelorus side-data blob (`PEL_SEC_BANDING`) a downstream `vf_libvmaf*` can read
 path; errors surface as a non-zero ffmpeg exit with an `[pelorus_deband_vulkan]`
 message.
 
+## Input formats
+
+Accepts planar and semi-planar YUV at 4:2:0, 4:2:2 and 4:4:4 with 8, 10, 12 or 16 bits, plus `yuva420p`. Any other software layout stops the graph at configuration with `pelorus_deband_vulkan: input format <name> is not supported; supported: <list>`; convert first, for example with `scale_vulkan=format=nv12` ([Input formats and interlacing](../backends/vulkan.md#input-formats-and-interlacing), [ADR-0201](../adr/0201-vulkan-input-format-allow-list.md)).
+
+Interlaced frames (`AV_FRAME_FLAG_INTERLACED`) are refused with `EINVAL`, because the filter reads neighbouring rows, which belong to the other field. Deinterlace first (`bwdif_vulkan`), or mark frames that are progressive with `setfield=prog`.
+
 ## Interactions & limitations
 
 - **Requires a Vulkan hwframes context** (`AV_PIX_FMT_VULKAN` input). Pair with

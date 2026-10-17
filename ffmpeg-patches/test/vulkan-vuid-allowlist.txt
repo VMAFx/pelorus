@@ -22,3 +22,8 @@ vkCmdDecodeVideoKHR-pDecodeInfo-07142 | #214 | 2027-03-31
 VkVideoBeginCodingInfoKHR-pPictureResource-07240 | #214 | 2027-03-31
 VkImageCreateInfo-pNext-06811 | #214 | 2027-03-31
 VkImageViewCreateInfo-image-08334 | #214 | 2027-03-31
+# lavapipe (Mesa, LLVM 21.1.8): hwupload of yuyv422 creates an image whose
+# format properties the driver leaves undefined. Reproduces with a plain FFmpeg
+# command and no Pelorus filter: lavfi testsrc2 | format=yuyv422 | hwupload |
+# hwdownload. Hit by the format-matrix refusal rows (#188).
+VkImageCreateInfo-imageCreateMaxMipLevels-02251 | #214 | 2027-03-31

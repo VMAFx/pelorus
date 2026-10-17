@@ -53,10 +53,10 @@ docs/adr/0133-analyze-coarse-banding-cambi.md, docs/adr/0177-analyze-per-cell-ma
  libavfilter/Makefile                         |   1 +
  libavfilter/allfilters.c                     |   1 +
  libavfilter/pelorus_analyze_maps.h           | 473 +++++++++++
- libavfilter/vf_pelorus_analyze_vulkan.c      | 861 ++++++++++++++++++++
+ libavfilter/vf_pelorus_analyze_vulkan.c      | 862 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |   1 +
  libavfilter/vulkan/pelorus_analyze.comp.glsl | 167 ++++
- 7 files changed, 1507 insertions(+)
+ 7 files changed, 1508 insertions(+)
 
 diff --git a/configure b/configure
 index 00b13ed09edcf3fb2b44ff9d0bfbb4420f45c68e..aec9b3ae17deb53929fc15870fdaeb58db717c8f 100755
@@ -584,10 +584,10 @@ index 0000000000000000000000000000000000000000..7cad81149ad9daa95f4dae3fe9169878
 +#endif /* AVFILTER_PELORUS_ANALYZE_MAPS_H */
 diff --git a/libavfilter/vf_pelorus_analyze_vulkan.c b/libavfilter/vf_pelorus_analyze_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..dd8a962c33b69e966fbea22ee7290051ceb5bf74
+index 0000000000000000000000000000000000000000..f98059ffa2f8995c6d690d19ca416ecbedc2418d
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_analyze_vulkan.c
-@@ -0,0 +1,861 @@
+@@ -0,0 +1,862 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -640,6 +640,7 @@ index 0000000000000000000000000000000000000000..dd8a962c33b69e966fbea22ee7290051
 +#include "libavutil/rational.h"
 +#include "pelorus_analyze_maps.h"
 +#include "pelorus_sidedata.h"
++#include "pelorus_vulkan_input.h"
 +#include "pelorus_vulkan_sample.h"
 +#include "vulkan_filter.h"
 +
@@ -854,7 +855,7 @@ index 0000000000000000000000000000000000000000..dd8a962c33b69e966fbea22ee7290051
 +
 +static int analyze_vulkan_config_input(AVFilterLink *inlink)
 +{
-+    int err = ff_vk_filter_config_input(inlink);
++    int err = pel_vk_config_input_yuv(inlink);
 +
 +    if (err < 0)
 +        return err;

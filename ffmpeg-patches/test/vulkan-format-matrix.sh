@@ -175,7 +175,8 @@ if ! "$PEL_FFMPEG_BIN" -hide_banner -filters \
 fi
 for PEL_FILTER in pelorus_analyze_vulkan pelorus_deblock_vulkan \
     pelorus_denoise_vulkan pelorus_aa_vulkan pelorus_dehalo_vulkan \
-    pelorus_mc_vulkan; do
+    pelorus_mc_vulkan pelorus_deband_vulkan pelorus_grain_estimate_vulkan \
+    pelorus_borderfix_vulkan pelorus_scenecut; do
     grep "[[:space:]]${PEL_FILTER}[[:space:]]" "$PEL_OUTPUT_ROOT/filters.txt" \
         >/dev/null || \
         pel_fail "patched filter is missing: $PEL_FILTER"
@@ -325,6 +326,230 @@ pel_maps_check maps "$PEL_OUTPUT_ROOT/maps-one-cell.stderr" --grid 1x1 --band-mi
 pel_maps_check maps "$PEL_OUTPUT_ROOT/maps-partial.stderr" --grid 4x3 --band-min 0.5
 pel_maps_check maps "$PEL_OUTPUT_ROOT/maps-max-grid.stderr" --grid 1024x1024
 echo 'PASS: analyzer per-cell maps'
+
+# Issue #188: spatial filters read neighbouring rows, which in an interlaced
+# frame belong to the other field, so they refuse an interlaced frame by name.
+# Filters that only measure or copy accept it and keep the flag (showinfo
+# prints i:T for a top-field-first frame).
+PEL_INTERLACED_SRC='testsrc2=size=96x64:rate=1:duration=1'
+for PEL_FILTER in pelorus_deband_vulkan pelorus_denoise_vulkan \
+    pelorus_mc_vulkan pelorus_dehalo_vulkan pelorus_aa_vulkan \
+    pelorus_deblock_vulkan; do
+    pel_run_refused "interlaced-${PEL_FILTER}" \
+        "${PEL_FILTER}: interlaced input (AV_FRAME_FLAG_INTERLACED) is not supported" \
+        -f lavfi -i "$PEL_INTERLACED_SRC" -frames:v 1 \
+        -vf "format=yuv420p,setfield=tff,hwupload,${PEL_FILTER},hwdownload,format=yuv420p" \
+        -f null -
+done
+for PEL_FILTER in pelorus_analyze_vulkan pelorus_grain_estimate_vulkan \
+    pelorus_borderfix_vulkan pelorus_scenecut; do
+    if [[ "$PEL_FILTER" == *_vulkan ]]; then
+        PEL_CHAIN="format=yuv420p,setfield=tff,hwupload,${PEL_FILTER},hwdownload,format=yuv420p,showinfo"
+    else
+        PEL_CHAIN="format=yuv420p,setfield=tff,${PEL_FILTER},showinfo"
+    fi
+    pel_run "interlaced-${PEL_FILTER}" -loglevel info \
+        -f lavfi -i "$PEL_INTERLACED_SRC" -frames:v 1 -vf "$PEL_CHAIN" -f null -
+    grep -F ' i:T ' "$PEL_OUTPUT_ROOT/interlaced-${PEL_FILTER}.stderr" >/dev/null || \
+        pel_fail "interlaced-${PEL_FILTER}: interlaced flag lost"
+done
+echo 'PASS: interlaced input refused by spatial filters, kept by measuring filters'
+
+# Issue #188: every accepted YUV layout (4:2:0, 4:2:2, 4:4:4; planar and
+# semi-planar; 8 to 16 bits) must give the yuv420p result: normalized luma for
+# the transforms, frame metadata for the measuring filters. 8 and 16 bits are
+# the depth boundaries; the Vulkan hwcontext has no 9- or 14-bit YUV layout.
+# The fixture is 128 wide: on NVIDIA, aa and dehalo read wrong right-edge luma
+# on nv12/nv24 when the width is not a multiple of 64 (issue #358).
+PEL_FORMAT_SRC='testsrc2=size=128x64:rate=4:duration=1,noise=alls=12:allf=t+u:all_seed=123'
+PEL_YUV_FORMATS=(
+    yuv420p yuv420p10le yuv420p12le yuv420p16le
+    yuv422p yuv422p10le yuv422p12le yuv422p16le
+    yuv444p yuv444p10le yuv444p12le yuv444p16le
+    nv12 p010le p012le p016le
+    nv16 p210le p212le p216le
+    nv24 p410le p412le p416le
+)
+PEL_FORMAT_FILTERS=(
+    'deband=pelorus_deband_vulkan'
+    'denoise=pelorus_denoise_vulkan=prev=1:strength=1:planes=7'
+    'dehalo=pelorus_dehalo_vulkan=darkstr=1:brightstr=1'
+    'aa=pelorus_aa_vulkan=darkstr=0.5:edge=0.02'
+    'deblock=pelorus_deblock_vulkan=bsize=8:edge=2:thr=0.10:str=0.8:planes=7'
+    'mc=pelorus_mc_vulkan=meta=1'
+    'borderfix=pelorus_borderfix_vulkan=left=4:top=4'
+)
+for PEL_ENTRY in "${PEL_FORMAT_FILTERS[@]}"; do
+    for PEL_FORMAT in "${PEL_YUV_FORMATS[@]}"; do
+        pel_emit_raw "format-${PEL_ENTRY%%=*}-${PEL_FORMAT}" "$PEL_FORMAT" \
+            "$PEL_FORMAT_SRC" "${PEL_ENTRY#*=}" 3
+    done
+done
+# trim bounds the graph: -frames:v only stops the output, so the metadata
+# filter can print a frame more than the 3 the comparison reads.
+for PEL_FILTER in pelorus_analyze_vulkan pelorus_grain_estimate_vulkan; do
+    for PEL_FORMAT in "${PEL_YUV_FORMATS[@]}"; do
+        pel_run "format-${PEL_FILTER}-${PEL_FORMAT}" \
+            -f lavfi -i "$PEL_FORMAT_SRC" -frames:v 3 \
+            -vf "trim=end_frame=3,format=${PEL_FORMAT},hwupload,${PEL_FILTER},hwdownload,format=${PEL_FORMAT},metadata=mode=print:file=${PEL_OUTPUT_ROOT}/format-${PEL_FILTER}-${PEL_FORMAT}.meta" \
+            -f null -
+    done
+done
+
+python3 - "$PEL_OUTPUT_ROOT" "${PEL_YUV_FORMATS[@]}" <<'PY_FORMATS'
+import array
+import math
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+formats = sys.argv[2:]
+width, height, frames = 128, 64, 3
+
+def layout(fmt):
+    """(bytes per sample, depth, low padding bits) of the luma plane."""
+    if fmt in ("yuv420p", "yuv422p", "yuv444p", "nv12", "nv16", "nv24"):
+        return 1, 8, 0
+    depth = int(re.search(r"(\d+)le$", fmt).group(1)[-2:])
+    shift = 16 - depth if fmt.startswith("p") else 0
+    return 2, depth, shift
+
+def luma(name, fmt):
+    size, depth, shift = layout(fmt)
+    raw = (root / f"format-{name}-{fmt}.raw").read_bytes()
+    frame = len(raw) // frames
+    count = width * height
+    values = []
+    for k in range(frames):
+        chunk = raw[k * frame: k * frame + count * size]
+        if size == 1:
+            words = list(chunk)
+        else:
+            words = array.array("H")
+            words.frombytes(chunk)
+            if sys.byteorder != "little":
+                words.byteswap()
+        scale = (1 << depth) - 1
+        values += [(v >> shift) / scale for v in words]
+    return values
+
+for name in ("deband", "denoise", "dehalo", "aa", "deblock", "mc", "borderfix"):
+    reference = luma(name, "yuv420p")
+    for fmt in formats[1:]:
+        errors = [abs(a - b) for a, b in zip(reference, luma(name, fmt))]
+        mae = sum(errors) / len(errors)
+        maximum = max(errors)
+        if not (math.isfinite(mae) and mae <= 0.010 and maximum <= 0.055):
+            raise SystemExit(
+                f"format {name} {fmt}: mae={mae:.6f} max={maximum:.6f} against yuv420p"
+            )
+
+keys = {
+    "pelorus_analyze_vulkan": ("variance", "edge", "complexity"),
+    "pelorus_grain_estimate_vulkan": ("grain_sigma", "grain_flat"),
+}
+
+def metadata(name, fmt):
+    text = (root / f"format-{name}-{fmt}.meta").read_text()
+    found = {}
+    for key in keys[name]:
+        hits = re.findall(rf"lavfi\.pelorus\.{key}=([0-9.eE+-]+)", text)
+        if len(hits) != frames:
+            raise SystemExit(f"format {name} {fmt}: {len(hits)} {key} values, want {frames}")
+        found[key] = [float(v) for v in hits]
+    return found
+
+for name in keys:
+    reference = metadata(name, "yuv420p")
+    for fmt in formats[1:]:
+        actual = metadata(name, fmt)
+        for key, values in actual.items():
+            for want, got in zip(reference[key], values):
+                if not abs(got - want) <= max(0.002, abs(want) * 0.05):
+                    raise SystemExit(f"format {name} {fmt}: {key}={got} against yuv420p {want}")
+print(f"PASS: {len(formats)} YUV layouts match yuv420p")
+PY_FORMATS
+
+# yuva420p: luma must match yuv420p and the alpha plane (after the half-size
+# chroma planes, BUG-007/008) must pass through bit-exact when the planes mask
+# leaves it out. planes=7 keeps Y, U and V selected as in the yuv420p rows and
+# only drops alpha, which deband and borderfix select by default (0xF).
+PEL_ALPHA_SRC="${PEL_FORMAT_SRC},format=yuva420p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='mod(X*7+Y*3,256)'"
+pel_emit_raw 'alpha-base' yuva420p "$PEL_ALPHA_SRC" '' 3
+PEL_ALPHA_FILTERS=(
+    'deband=pelorus_deband_vulkan=planes=7'
+    'denoise=pelorus_denoise_vulkan=prev=1:strength=1:planes=7'
+    'dehalo=pelorus_dehalo_vulkan=darkstr=1:brightstr=1'
+    'aa=pelorus_aa_vulkan=darkstr=0.5:edge=0.02'
+    'deblock=pelorus_deblock_vulkan=bsize=8:edge=2:thr=0.10:str=0.8:planes=7'
+    'mc=pelorus_mc_vulkan=meta=1'
+    'borderfix=pelorus_borderfix_vulkan=left=4:top=4:planes=7'
+    'analyze=pelorus_analyze_vulkan'
+    'grain_estimate=pelorus_grain_estimate_vulkan'
+)
+for PEL_ENTRY in "${PEL_ALPHA_FILTERS[@]}"; do
+    pel_emit_raw "alpha-${PEL_ENTRY%%=*}" yuva420p "$PEL_ALPHA_SRC" \
+        "${PEL_ENTRY#*=}" 3
+done
+python3 - "$PEL_OUTPUT_ROOT" "${PEL_ALPHA_FILTERS[@]%%=*}" <<'PY_ALPHA'
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+width, height, frames = 128, 64, 3
+luma = width * height
+alpha_offset = luma + 2 * (width // 2) * (height // 2)
+frame = alpha_offset + luma
+base = (root / "alpha-base.raw").read_bytes()
+if len(base) != frames * frame:
+    raise SystemExit(f"alpha base: {len(base)} bytes, want {frames * frame}")
+for name in sys.argv[2:]:
+    actual = (root / f"alpha-{name}.raw").read_bytes()
+    if len(actual) != len(base):
+        raise SystemExit(f"alpha {name}: {len(actual)} bytes, want {len(base)}")
+    for k in range(frames):
+        a = slice(k * frame + alpha_offset, (k + 1) * frame)
+        if actual[a] != base[a]:
+            raise SystemExit(f"alpha {name}: alpha plane changed in frame {k}")
+    reference_path = root / f"format-{name}-yuv420p.raw"
+    if not reference_path.exists():
+        continue  # measuring filters: no transformed luma to compare
+    reference = reference_path.read_bytes()
+    reference_frame = luma * 3 // 2
+    errors = []
+    for k in range(frames):
+        want = reference[k * reference_frame: k * reference_frame + luma]
+        got = actual[k * frame: k * frame + luma]
+        errors += [abs(x - y) / 255 for x, y in zip(want, got)]
+    mae = sum(errors) / len(errors)
+    if not (mae <= 0.010 and max(errors) <= 0.055):
+        raise SystemExit(f"alpha {name}: luma mae={mae:.6f} max={max(errors):.6f} against yuv420p")
+print("PASS: yuva420p luma matches yuv420p, alpha passes through")
+PY_ALPHA
+
+# Layouts outside the checked set are refused by name at configuration time:
+# packed YUV (the filters time out or read the wrong samples), planar RGB and
+# gray (wrong sample domain), alpha other than yuva420p (unchecked). RGBA is
+# refused only by filters without the scalar lane-preservation rows above.
+for PEL_FILTER in pelorus_deband_vulkan pelorus_denoise_vulkan \
+    pelorus_mc_vulkan pelorus_dehalo_vulkan pelorus_aa_vulkan \
+    pelorus_deblock_vulkan pelorus_analyze_vulkan \
+    pelorus_grain_estimate_vulkan pelorus_borderfix_vulkan; do
+    PEL_REFUSED=(yuyv422 gbrp yuva444p gray)
+    case "$PEL_FILTER" in
+        pelorus_aa_vulkan|pelorus_dehalo_vulkan|pelorus_deblock_vulkan|pelorus_denoise_vulkan) ;;
+        *) PEL_REFUSED+=(rgba) ;;
+    esac
+    for PEL_FORMAT in "${PEL_REFUSED[@]}"; do
+        pel_run_refused "format-refused-${PEL_FILTER}-${PEL_FORMAT}" \
+            "${PEL_FILTER}: input format ${PEL_FORMAT} is not supported; supported: yuv420p" \
+            -f lavfi -i 'testsrc2=size=64x48:rate=1:duration=1' -frames:v 1 \
+            -vf "format=${PEL_FORMAT},hwupload,${PEL_FILTER},hwdownload,format=${PEL_FORMAT}" \
+            -f null -
+    done
+done
+echo 'PASS: unchecked layouts refused by name'
 
 # A representative active transform must produce equivalent normalized luma
 # across the same layouts. The static family checker covers every arithmetic

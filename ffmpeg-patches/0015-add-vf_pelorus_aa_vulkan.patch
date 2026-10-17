@@ -31,10 +31,10 @@ ADR: docs/adr/0124-anime-aa.md
  configure                               |   1 +
  libavfilter/Makefile                    |   1 +
  libavfilter/allfilters.c                |   1 +
- libavfilter/vf_pelorus_aa_vulkan.c      | 296 ++++++++++++++++++++
+ libavfilter/vf_pelorus_aa_vulkan.c      | 302 ++++++++++++++++++++
  libavfilter/vulkan/Makefile             |   1 +
- libavfilter/vulkan/pelorus_aa.comp.glsl | 265 ++++++++++++++++++
- 6 files changed, 565 insertions(+)
+ libavfilter/vulkan/pelorus_aa.comp.glsl | 265 +++++++++++++++++
+ 6 files changed, 571 insertions(+)
 
 diff --git a/configure b/configure
 index f052412ba00f78d88734beaa51c4a4e82a5ebea6..021915e788bf3f971443131919f665036148b3b6 100755
@@ -74,10 +74,10 @@ index 2ac2a6540fb0f9b500bfbd6137278ca1ddc56b4a..0ee727c8c38cefe87c4d23504c0e43dd
  extern const FFFilter ff_vf_pelorus_dehalo_vulkan;
 diff --git a/libavfilter/vf_pelorus_aa_vulkan.c b/libavfilter/vf_pelorus_aa_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..b82383dee4541170d7a9b8634c59964c8286e63c
+index 0000000000000000000000000000000000000000..34ffb56900a09c8c6b225804023c25d7a85ff679
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_aa_vulkan.c
-@@ -0,0 +1,296 @@
+@@ -0,0 +1,302 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -115,6 +115,7 @@ index 0000000000000000000000000000000000000000..b82383dee4541170d7a9b8634c59964c
 +
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
++#include "pelorus_vulkan_input.h"
 +#include "pelorus_vulkan_sample.h"
 +#include "pelorus_vulkan_pool.h"
 +#include "vulkan_filter.h"
@@ -236,6 +237,11 @@ index 0000000000000000000000000000000000000000..b82383dee4541170d7a9b8634c59964c
 +    PelorusAaVulkanContext *s = ctx->priv;
 +    AVFilterLink *outlink = ctx->outputs[0];
 +
++    if ((err = pel_vk_refuse_interlaced(ctx, in)) < 0) {
++        av_frame_free(&in);
++        return err;
++    }
++
 +    out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
 +    if (!out) {
 +        err = AVERROR(ENOMEM);
@@ -349,7 +355,7 @@ index 0000000000000000000000000000000000000000..b82383dee4541170d7a9b8634c59964c
 +        .name = "default",
 +        .type = AVMEDIA_TYPE_VIDEO,
 +        .filter_frame = &pelorus_aa_vulkan_filter_frame,
-+        .config_props = &ff_vk_filter_config_input,
++        .config_props = &pel_vk_config_input_yuv_rgba,
 +    },
 +};
 +

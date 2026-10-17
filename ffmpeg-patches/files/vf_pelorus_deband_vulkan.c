@@ -35,6 +35,7 @@
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
+#include "pelorus_vulkan_input.h"
 #include "pelorus_vulkan_sample.h"
 #include "pelorus_vulkan_pool.h"
 #include "vulkan_filter.h"
@@ -225,6 +226,11 @@ static int pelorus_deband_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
     AVFilterContext *ctx = link->dst;
     PelorusDebandVulkanContext *s = ctx->priv;
     AVFilterLink *outlink = ctx->outputs[0];
+
+    if ((err = pel_vk_refuse_interlaced(ctx, in)) < 0) {
+        av_frame_free(&in);
+        return err;
+    }
 
     out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
     if (!out) {
@@ -446,7 +452,7 @@ static const AVFilterPad pelorus_deband_vulkan_inputs[] = {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
         .filter_frame = &pelorus_deband_vulkan_filter_frame,
-        .config_props = &ff_vk_filter_config_input,
+        .config_props = &pel_vk_config_input_yuv,
     },
 };
 

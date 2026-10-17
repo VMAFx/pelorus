@@ -60,6 +60,7 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "pelorus_vulkan_sample.h"
+#include "pelorus_vulkan_input.h"
 #include "vulkan_filter.h"
 
 #include "filters.h"
@@ -717,7 +718,7 @@ static const AVFilterPad pelorus_grain_estimate_vulkan_inputs[] = {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
         .filter_frame = &grain_estimate_vulkan_filter_frame,
-        .config_props = &ff_vk_filter_config_input,
+        .config_props = &pel_vk_config_input_yuv,
     },
 };
 

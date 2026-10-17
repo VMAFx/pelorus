@@ -50,6 +50,7 @@
 #include "libavutil/rational.h"
 #include "pelorus_analyze_maps.h"
 #include "pelorus_sidedata.h"
+#include "pelorus_vulkan_input.h"
 #include "pelorus_vulkan_sample.h"
 #include "vulkan_filter.h"
 
@@ -264,7 +265,7 @@ static int analyze_size_grid(AVFilterContext *ctx, int width, int height)
 
 static int analyze_vulkan_config_input(AVFilterLink *inlink)
 {
-    int err = ff_vk_filter_config_input(inlink);
+    int err = pel_vk_config_input_yuv(inlink);
 
     if (err < 0)
         return err;

@@ -31,10 +31,10 @@ ADR: docs/adr/0123-anime-dehalo.md
  configure                                   |   1 +
  libavfilter/Makefile                        |   1 +
  libavfilter/allfilters.c                    |   1 +
- libavfilter/vf_pelorus_dehalo_vulkan.c      | 315 ++++++++++++++++++++
+ libavfilter/vf_pelorus_dehalo_vulkan.c      | 321 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
- libavfilter/vulkan/pelorus_dehalo.comp.glsl | 315 ++++++++++++++++++++
- 6 files changed, 634 insertions(+)
+ libavfilter/vulkan/pelorus_dehalo.comp.glsl | 315 +++++++++++++++++++
+ 6 files changed, 640 insertions(+)
 
 diff --git a/configure b/configure
 index 3283718ba10ab831a499f230e165d15201c9a29c..f052412ba00f78d88734beaa51c4a4e82a5ebea6 100755
@@ -74,10 +74,10 @@ index 8ecaf738be23d70633dc7e84a35a37729ffe9de4..2ac2a6540fb0f9b500bfbd6137278ca1
  extern const FFFilter ff_vf_pelorus_mc_vulkan;
 diff --git a/libavfilter/vf_pelorus_dehalo_vulkan.c b/libavfilter/vf_pelorus_dehalo_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..adcb0887ceeed59a77b668fda36a871110d342f1
+index 0000000000000000000000000000000000000000..767fbae0da0dca0fa0a8faea2b8c13c4d34cbaaf
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_dehalo_vulkan.c
-@@ -0,0 +1,315 @@
+@@ -0,0 +1,321 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -116,6 +116,7 @@ index 0000000000000000000000000000000000000000..adcb0887ceeed59a77b668fda36a8711
 +
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
++#include "pelorus_vulkan_input.h"
 +#include "pelorus_vulkan_sample.h"
 +#include "pelorus_vulkan_pool.h"
 +#include "vulkan_filter.h"
@@ -239,6 +240,11 @@ index 0000000000000000000000000000000000000000..adcb0887ceeed59a77b668fda36a8711
 +    AVFilterContext *ctx = link->dst;
 +    PelorusDehaloVulkanContext *s = ctx->priv;
 +    AVFilterLink *outlink = ctx->outputs[0];
++
++    if ((err = pel_vk_refuse_interlaced(ctx, in)) < 0) {
++        av_frame_free(&in);
++        return err;
++    }
 +
 +    out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
 +    if (!out) {
@@ -368,7 +374,7 @@ index 0000000000000000000000000000000000000000..adcb0887ceeed59a77b668fda36a8711
 +        .name = "default",
 +        .type = AVMEDIA_TYPE_VIDEO,
 +        .filter_frame = &pelorus_dehalo_vulkan_filter_frame,
-+        .config_props = &ff_vk_filter_config_input,
++        .config_props = &pel_vk_config_input_yuv_rgba,
 +    },
 +};
 +

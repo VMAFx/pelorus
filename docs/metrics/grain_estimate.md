@@ -88,6 +88,12 @@ Two side-data channels are attached to each frame:
   "emit a standard side-data channel the encoder already reads" strategy the
   analyze filter uses for ROI, [ADR-0114](../adr/0114-encoder-steering.md)).
 
+## Input formats
+
+Accepts planar and semi-planar YUV at 4:2:0, 4:2:2 and 4:4:4 with 8, 10, 12 or 16 bits, plus `yuva420p`. Any other software layout stops the graph at configuration with `pelorus_grain_estimate_vulkan: input format <name> is not supported; supported: <list>`; convert first, for example with `scale_vulkan=format=nv12` ([Input formats and interlacing](../backends/vulkan.md#input-formats-and-interlacing), [ADR-0201](../adr/0201-vulkan-input-format-allow-list.md)).
+
+Interlaced frames are accepted and keep their interlaced flag.
+
 ## Pipeline placement
 
 Grain estimation reads the **source** grain, so it runs *before* denoise (which

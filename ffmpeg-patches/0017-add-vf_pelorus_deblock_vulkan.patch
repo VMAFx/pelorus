@@ -27,10 +27,10 @@ ADR: docs/adr/0127-deblock.md
  configure                                    |   1 +
  libavfilter/Makefile                         |   1 +
  libavfilter/allfilters.c                     |   1 +
- libavfilter/vf_pelorus_deblock_vulkan.c      | 280 ++++++++++++++++++++
+ libavfilter/vf_pelorus_deblock_vulkan.c      | 286 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |   1 +
  libavfilter/vulkan/pelorus_deblock.comp.glsl | 131 +++++++++
- 6 files changed, 415 insertions(+)
+ 6 files changed, 421 insertions(+)
 
 diff --git a/configure b/configure
 index 5f48b12e31eb76d3cae37489068aa5eac5f0dccb..b890fae94423562137ed098673ca7a24cee3bacc 100755
@@ -70,10 +70,10 @@ index d6632cc826123b6f1b3bbc93db698e8023ca8591..9985efd56d8026261a43cba1283408ac
  extern const FFFilter ff_vf_pelorus_grain_estimate_vulkan;
 diff --git a/libavfilter/vf_pelorus_deblock_vulkan.c b/libavfilter/vf_pelorus_deblock_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..4fbf4cac8562c672edf3665c979bccf3798e7d95
+index 0000000000000000000000000000000000000000..218d26d7c05373df7f5894dc0bf6376ad24af11f
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_deblock_vulkan.c
-@@ -0,0 +1,280 @@
+@@ -0,0 +1,286 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -109,6 +109,7 @@ index 0000000000000000000000000000000000000000..4fbf4cac8562c672edf3665c979bccf3
 +
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
++#include "pelorus_vulkan_input.h"
 +#include "pelorus_vulkan_sample.h"
 +#include "pelorus_vulkan_pool.h"
 +#include "vulkan_filter.h"
@@ -233,6 +234,11 @@ index 0000000000000000000000000000000000000000..4fbf4cac8562c672edf3665c979bccf3
 +    PelorusDeblockVulkanContext *s = ctx->priv;
 +    AVFilterLink *outlink = ctx->outputs[0];
 +
++    if ((err = pel_vk_refuse_interlaced(ctx, in)) < 0) {
++        av_frame_free(&in);
++        return err;
++    }
++
 +    out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
 +    if (!out) {
 +        err = AVERROR(ENOMEM);
@@ -329,7 +335,7 @@ index 0000000000000000000000000000000000000000..4fbf4cac8562c672edf3665c979bccf3
 +        .name = "default",
 +        .type = AVMEDIA_TYPE_VIDEO,
 +        .filter_frame = &pelorus_deblock_vulkan_filter_frame,
-+        .config_props = &ff_vk_filter_config_input,
++        .config_props = &pel_vk_config_input_yuv_rgba,
 +    },
 +};
 +

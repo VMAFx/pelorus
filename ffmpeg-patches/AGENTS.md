@@ -14,6 +14,7 @@ there (`FFMPEG_SERIES_*`, ADR-0185). Current baseline: FFmpeg n9.0.2, series
 ffmpeg-patches/
 ├── files/                   canonical C and hand-maintained encoder diffs
 │   ├── pelorus_vulkan_sample.h
+│   ├── pelorus_vulkan_input.h   input layout allow list + interlace refusal
 │   └── vulkan/*.comp.glsl   canonical shipped shader sources
 ├── .commit-msg-*.txt        synthetic commit messages
 ├── 0001-*.patch … 0023-*    generated cumulative patch series (22; 0021 retired)
@@ -186,6 +187,14 @@ ffmpeg-patches/
     distorted-frame buffer flow, raw `PelorusSideData` identity/major/layout,
     and reader minor <= producer minor. ABI 1.5 COBS carrier = separate,
     unsupported by vmafx ABI 1.3 reader, not part of raw filtergraph check.
+15. Input layouts (#188, ADR-0201): every Vulkan filter's input
+    `config_props` goes through `pel_vk_config_input_yuv` or
+    `pel_vk_config_input_yuv_rgba` (`pelorus_vulkan_input.h`); unlisted
+    software layout -> `AVERROR(EINVAL)` naming layout + supported list.
+    Spatial filters (deband, denoise, mc, dehalo, aa, deblock) call
+    `pel_vk_refuse_interlaced` per frame; measuring filters keep flag. New
+    layout = list entry + `test/vulkan-format-matrix.sh` row in same PR;
+    never deny list.
 
 ## Required checks
 
