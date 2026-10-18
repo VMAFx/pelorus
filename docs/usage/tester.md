@@ -109,6 +109,50 @@ docker run --rm --device /dev/dri -v "$PWD/report:/report" ghcr.io/vmafx/pelorus
   under `/usr/lib/wsl/lib`, which this image does not use; the Linux render
   node path above is the supported one ([research 0229](../research/0229-tester-vendor-images.md)).
 
+## Windows zip (x64)
+
+The standalone tester zip `pelorus-tester-windows-x64-<sha8>.zip` provides an x64 Windows build of FFmpeg with the Pelorus filter and bitstream filter stack ([ADR-0213](../adr/0213-windows-replay-tester-zip.md), [#168](https://github.com/VMAFx/pelorus/issues/168)).
+
+### Download and extract
+
+1. In the GitHub Actions tab, select a run of the **windows tester zip** workflow (`.github/workflows/windows-tester.yml`).
+2. Download the `pelorus-tester-windows-x64` artifact.
+3. Extract the archive into a directory of your choice.
+
+The bundle contains `ffmpeg.exe`, the `pelorus.dll` runtime library, required MinGW-w64 UCRT runtime DLLs, the `run.cmd` launcher, `README.txt`, `buildconf.txt` (the output of `ffmpeg -buildconf`), and complete license documentation under `licenses/`.
+
+### Running via run.cmd
+
+Always invoke FFmpeg through the included `run.cmd` script:
+
+```cmd
+run.cmd -hide_banner -filters | findstr pelorus
+run.cmd -hide_banner -i input.mp4 -vf "pelorus_deband_vulkan" -c:v libx264 out.mp4
+```
+
+`run.cmd` forwards all parameters to `ffmpeg.exe` and verifies runtime prerequisites before execution:
+
+- **64-bit architecture**: refuses execution unless running on an AMD64/x86-64 host (`PROCESSOR_ARCHITECTURE` or `PROCESSOR_ARCHITEW6432` equals `AMD64`). Exits with code 2 if launched on an incompatible architecture.
+- **Vulkan loader**: requires `vulkan-1.dll` from the host GPU vendor's graphics driver. If `where.exe /q vulkan-1.dll` fails, `run.cmd` exits with code 3:
+
+  ```text
+  vulkan-1.dll not found: install the GPU vendor's Vulkan driver; this zip does not ship the Vulkan loader
+  ```
+
+  The zip bundle deliberately does not ship `vulkan-1.dll` to prevent shadowing the host GPU driver's Vulkan ICD loader.
+
+### Licence notices
+
+The bundle contains complete license notices in the `licenses/` directory:
+
+- FFmpeg LGPL licenses: `licenses/ffmpeg/COPYING.LGPLv2.1` and `licenses/ffmpeg/LICENSE.md`.
+- Pelorus library license: `licenses/libpelorus/EUPL-1.2.txt`.
+- MinGW-w64 runtime licenses: `licenses/mingw-w64-ucrt-x86_64-*/` for each bundled DLL (GCC runtime exception, winpthread MIT/BSD, and zlib).
+
+### SmartScreen warning
+
+Because this zip is a CI workflow artifact and not an official code-signed release, Windows Defender SmartScreen may display an "Unknown Publisher" prompt when running `run.cmd` or `ffmpeg.exe`. Click **More info** and select **Run anyway**. Formal code signing and attestations apply only to tagged releases.
+
 ## Execution class and evidence claim
 
 Every report states what kind of device it ran on and what it may claim
