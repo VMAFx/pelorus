@@ -1,98 +1,10 @@
 {
   "version": 1,
-  "generated_at": "2026-10-18T13:57:22Z",
+  "generated_at": "2026-10-18T14:20:03Z",
   "repository": "VMAFx/pelorus",
-  "commit_sha": "b1c535ac8e5864f2d44257cb4174961e3517685f",
-  "total_infractions": 27,
+  "commit_sha": "cc4933de66f530d2039c08d64e32df48aa1a9643",
+  "total_infractions": 16,
   "infractions": [
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_aa_vulkan.c",
-      "line_number": 172,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:pelorus_aa_vulkan_filter_frame",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_aa_vulkan.c:HISS-01:fn:pelorus_aa_vulkan_filter_frame#1"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_aa_vulkan.c",
-      "line_number": 183,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:pelorus_aa_vulkan_filter_frame",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_aa_vulkan.c:HISS-01:fn:pelorus_aa_vulkan_filter_frame#2"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c",
-      "line_number": 154,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:pelorus_borderfix_vulkan_filter_frame",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c:HISS-01:fn:pelorus_borderfix_vulkan_filter_frame#1"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c",
-      "line_number": 165,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:pelorus_borderfix_vulkan_filter_frame",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c:HISS-01:fn:pelorus_borderfix_vulkan_filter_frame#2"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c",
-      "line_number": 242,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:pelorus_deband_vulkan_filter_frame",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c:HISS-01:fn:pelorus_deband_vulkan_filter_frame#1"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c",
-      "line_number": 255,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:pelorus_deband_vulkan_filter_frame",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c:HISS-01:fn:pelorus_deband_vulkan_filter_frame#2"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c",
-      "line_number": 260,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:pelorus_deband_vulkan_filter_frame",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c:HISS-01:fn:pelorus_deband_vulkan_filter_frame#3"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c",
-      "line_number": 173,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:pelorus_deblock_vulkan_filter_frame",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c:HISS-01:fn:pelorus_deblock_vulkan_filter_frame#1"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c",
-      "line_number": 184,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:pelorus_deblock_vulkan_filter_frame",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c:HISS-01:fn:pelorus_deblock_vulkan_filter_frame#2"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c",
-      "line_number": 176,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:pelorus_dehalo_vulkan_filter_frame",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c:HISS-01:fn:pelorus_dehalo_vulkan_filter_frame#1"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c",
-      "line_number": 187,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:pelorus_dehalo_vulkan_filter_frame",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c:HISS-01:fn:pelorus_dehalo_vulkan_filter_frame#2"
-    },
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c",

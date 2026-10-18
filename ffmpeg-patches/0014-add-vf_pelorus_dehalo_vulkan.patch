@@ -31,10 +31,10 @@ ADR: docs/adr/0123-anime-dehalo.md
  configure                                   |   1 +
  libavfilter/Makefile                        |   1 +
  libavfilter/allfilters.c                    |   1 +
- libavfilter/vf_pelorus_dehalo_vulkan.c      | 325 +++++++++++++++++++
+ libavfilter/vf_pelorus_dehalo_vulkan.c      | 339 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
- libavfilter/vulkan/pelorus_dehalo.comp.glsl | 335 ++++++++++++++++++++
- 6 files changed, 664 insertions(+)
+ libavfilter/vulkan/pelorus_dehalo.comp.glsl | 335 +++++++++++++++++++
+ 6 files changed, 678 insertions(+)
 
 diff --git a/configure b/configure
 index 33f22c3e0ac5128fdb07aabfe5c27d93115c4a15..79961fadcbbec56084671d9258438885ecc85b97 100755
@@ -74,10 +74,10 @@ index 57ae3e5957109d935b11f196afc1c0664c70b073..3feedf2185ebf5ebdc6eb537aa7e6c78
  extern const FFFilter ff_vf_pelorus_mc_vulkan;
 diff --git a/libavfilter/vf_pelorus_dehalo_vulkan.c b/libavfilter/vf_pelorus_dehalo_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..e0a0fe7b21e3f7fbdc52069d742d0ef3137ee78c
+index 0000000000000000000000000000000000000000..aa942e05f917a56b1df74122cd866a466b07c503
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_dehalo_vulkan.c
-@@ -0,0 +1,325 @@
+@@ -0,0 +1,339 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -237,12 +237,34 @@ index 0000000000000000000000000000000000000000..e0a0fe7b21e3f7fbdc52069d742d0ef3
 +    return err;
 +}
 +
++static int dehalo_run(AVFilterContext *ctx, AVFrame *out, AVFrame *in)
++{
++    int err;
++    PelorusDehaloVulkanContext *s = ctx->priv;
++
++    if (!s->initialized) {
++        err = init_filter(ctx);
++        if (err < 0)
++            return err;
++    }
++
++    err = ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in, VK_NULL_HANDLE, 1,
++                                      &s->opts, sizeof(s->opts));
++    if (err < 0)
++        return err;
++
++    err = av_frame_copy_props(out, in);
++    if (err < 0)
++        return err;
++
++    return 0;
++}
++
 +static int pelorus_dehalo_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
 +{
 +    int err;
 +    AVFrame *out = NULL;
 +    AVFilterContext *ctx = link->dst;
-+    PelorusDehaloVulkanContext *s = ctx->priv;
 +    AVFilterLink *outlink = ctx->outputs[0];
 +
 +    if ((err = pel_vk_refuse_interlaced(ctx, in)) < 0) {
@@ -252,27 +274,19 @@ index 0000000000000000000000000000000000000000..e0a0fe7b21e3f7fbdc52069d742d0ef3
 +
 +    out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
 +    if (!out) {
-+        err = AVERROR(ENOMEM);
-+        goto fail;
++        av_frame_free(&in);
++        return AVERROR(ENOMEM);
 +    }
 +
-+    if (!s->initialized)
-+        RET(init_filter(ctx));
-+
-+    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in, VK_NULL_HANDLE, 1, &s->opts,
-+                                    sizeof(s->opts)));
-+
-+    err = av_frame_copy_props(out, in);
-+    if (err < 0)
-+        goto fail;
++    err = dehalo_run(ctx, out, in);
++    if (err < 0) {
++        av_frame_free(&in);
++        av_frame_free(&out);
++        return err;
++    }
 +
 +    av_frame_free(&in);
 +    return ff_filter_frame(outlink, out);
-+
-+fail:
-+    av_frame_free(&in);
-+    av_frame_free(&out);
-+    return err;
 +}
 +
 +static void pelorus_dehalo_vulkan_uninit(AVFilterContext *avctx)

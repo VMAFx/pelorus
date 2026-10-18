@@ -27,10 +27,10 @@ ADR: docs/adr/0127-deblock.md
  configure                                    |   1 +
  libavfilter/Makefile                         |   1 +
  libavfilter/allfilters.c                     |   1 +
- libavfilter/vf_pelorus_deblock_vulkan.c      | 290 ++++++++++++++++++++
+ libavfilter/vf_pelorus_deblock_vulkan.c      | 304 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |   1 +
  libavfilter/vulkan/pelorus_deblock.comp.glsl | 150 ++++++++++
- 6 files changed, 444 insertions(+)
+ 6 files changed, 458 insertions(+)
 
 diff --git a/configure b/configure
 index f4660fabd8f58f83404f0b71b32975d6d88ee824..136e4685a2f032832c819655deff7e8f8620ef1b 100755
@@ -70,10 +70,10 @@ index 77a978bfff534a1e182f3d03a527470f8d0c4f63..ebc6b0a4187fc4a21e5672a2d9a2a4cf
  extern const FFFilter ff_vf_pelorus_grain_estimate_vulkan;
 diff --git a/libavfilter/vf_pelorus_deblock_vulkan.c b/libavfilter/vf_pelorus_deblock_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..42e8ed3ae2e9b0e391230765bda83a8b72ecd9a9
+index 0000000000000000000000000000000000000000..e92637c068f73c1419a64d2eccb2ce4072c46ba2
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_deblock_vulkan.c
-@@ -0,0 +1,290 @@
+@@ -0,0 +1,304 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -230,12 +230,34 @@ index 0000000000000000000000000000000000000000..42e8ed3ae2e9b0e391230765bda83a8b
 +    return err;
 +}
 +
++static int deblock_run(AVFilterContext *ctx, AVFrame *out, AVFrame *in)
++{
++    int err;
++    PelorusDeblockVulkanContext *s = ctx->priv;
++
++    if (!s->initialized) {
++        err = init_filter(ctx);
++        if (err < 0)
++            return err;
++    }
++
++    err = ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in, VK_NULL_HANDLE, 1,
++                                      &s->opts, sizeof(s->opts));
++    if (err < 0)
++        return err;
++
++    err = av_frame_copy_props(out, in);
++    if (err < 0)
++        return err;
++
++    return 0;
++}
++
 +static int pelorus_deblock_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
 +{
 +    int err;
 +    AVFrame *out = NULL;
 +    AVFilterContext *ctx = link->dst;
-+    PelorusDeblockVulkanContext *s = ctx->priv;
 +    AVFilterLink *outlink = ctx->outputs[0];
 +
 +    if ((err = pel_vk_refuse_interlaced(ctx, in)) < 0) {
@@ -245,27 +267,19 @@ index 0000000000000000000000000000000000000000..42e8ed3ae2e9b0e391230765bda83a8b
 +
 +    out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
 +    if (!out) {
-+        err = AVERROR(ENOMEM);
-+        goto fail;
++        av_frame_free(&in);
++        return AVERROR(ENOMEM);
 +    }
 +
-+    if (!s->initialized)
-+        RET(init_filter(ctx));
-+
-+    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in, VK_NULL_HANDLE, 1, &s->opts,
-+                                    sizeof(s->opts)));
-+
-+    err = av_frame_copy_props(out, in);
-+    if (err < 0)
-+        goto fail;
++    err = deblock_run(ctx, out, in);
++    if (err < 0) {
++        av_frame_free(&in);
++        av_frame_free(&out);
++        return err;
++    }
 +
 +    av_frame_free(&in);
 +    return ff_filter_frame(outlink, out);
-+
-+fail:
-+    av_frame_free(&in);
-+    av_frame_free(&out);
-+    return err;
 +}
 +
 +static void pelorus_deblock_vulkan_uninit(AVFilterContext *avctx)
