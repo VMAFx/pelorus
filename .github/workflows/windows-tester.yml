@@ -51,6 +51,7 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Install MSYS2 UCRT64 toolchain
+        id: msys2
         uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
         with:
           msystem: UCRT64
@@ -178,12 +179,14 @@ jobs:
           }
       - name: Verify run.cmd and UTF-8 path support with vulkan-1.dll
         shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
         run: |
           $target = "$env:RUNNER_TEMP\pelorus-tëst-目录"
           $bundle = Get-ChildItem -Directory -LiteralPath $target | Select-Object -First 1
           $bundleDir = $bundle.FullName
 
-          $vulkanDir = (& C:\msys64\usr\bin\cygpath.exe -w /ucrt64/bin).Trim()
+          $vulkanDir = Join-Path $env:MSYS2_LOCATION 'ucrt64\bin'
           if (-not (Test-Path -LiteralPath "$vulkanDir\vulkan-1.dll")) {
             throw "could not find vulkan-1.dll in $vulkanDir"
           }
