@@ -491,6 +491,21 @@ the `Makefile`, and the managed block at the end of `.gitattributes` byte for
 byte with the pinned engine's assets. Refresh them only with the adoption
 command in the ADR, never by hand.
 
+### CodeQL code scanning
+
+The repository scans C/C++, Python, and GitHub Actions workflows with CodeQL
+([ADR-0220](../adr/0220-codeql-code-scanning.md)). The workflow
+[`.github/workflows/codeql.yml`](../../.github/workflows/codeql.yml) runs on pull
+requests, pushes to `master`, and a weekly cron schedule. For C/C++, it
+configures Meson (`meson setup --werror`) before initialization so that compiler
+probe checks are excluded from the database, then builds with Ninja after
+initialization.
+
+`scripts/check-codeql-workflow.py` verifies the workflow contract (exact action
+SHA pinning with `# v` comments, draft PR gates, trigger matrix, and
+least-privilege permissions). The fast test suite runs its `--self-test`
+battery on all platforms.
+
 Since [ADR-0153](../adr/0153-praetor-full-adoption.md) the manifest declines
 no adoption step. A local audit therefore also needs two things CI does not
 check:

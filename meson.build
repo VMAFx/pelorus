@@ -85,6 +85,13 @@ test('build-config-sync',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# ADR-0220: CodeQL workflow structure, language matrix, pinned actions and permissions.
+test('codeql-workflow',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-codeql-workflow.py', '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 # ADR-0176: release tag shape and rc numbering, the candidate legs check and the
 # tester image licence gate. Each --self-test plants a defect per rule and must
 # see it rejected.
