@@ -395,17 +395,16 @@ locked `markdownlint-cli2` 0.23.2 dependency tree into a temporary directory.
 | --- | --- |
 | `make compile-context` | Regenerate cross-tool context and persona projections from their canonical sources |
 | `make compile-context-verify` | Fail if a generated projection has drifted |
-| `make audit` | Verify the pinned manifest/lock, enforce the 51-finding HISS baseline ratchet in the hosted Standards mode (`--base`, touched-debt delta; `AUDIT_BASE` overrides the base), and run the engine's policy checks (build warnings, clang-tidy coverage, supply chain, Paperclip pair, hooks, dev container, ruleset). `AUDIT_FLAGS=--offline` skips the forge reads, as the pre-commit hook does |
+| `make audit` | Verify the pinned manifest/lock, enforce the 39-finding HISS baseline ratchet in the hosted Standards mode (`--base`, touched-debt delta; `AUDIT_BASE` overrides the base), and run the engine's policy checks (build warnings, clang-tidy coverage, supply chain, Paperclip pair, hooks, dev container, ruleset). `AUDIT_FLAGS=--offline` skips the forge reads, as the pre-commit hook does |
 | `make docs-lint` | Lint public Markdown with the locked Praetor configuration and reject links into private scratch directories |
 | `make docs-figures` | Check figure specs and sources; skips with a reason while `docs/figures/` has none |
 | `make verify-all` | Run context verification, the audit, `verify-native`, then `docs-lint` and `docs-figures` |
 | `make hooks-install` | Install the tracked Lefthook hooks into the shared Git hooks directory; see [Git hooks](#git-hooks-opt-in-per-clone) |
 
-The baseline accepts 51 existing findings in the scanner's supported-file scope
+The baseline accepts 39 existing findings in the scanner's supported-file scope
 (C, headers, Python, shell, JavaScript/TypeScript, and workflow files):
-HISS-01=28 (`goto` cleanup jumps), HISS-04=21 (functions over 60 lines: 19 in
-C, two in Python), and HISS-07=2 (`sys.exit` calls outside a `__main__` entry
-point). It is a non-regression ceiling, not a claim of zero debt or whole-tree
+HISS-01=25 (`goto` cleanup jumps) and HISS-04=14 (C functions over 60 lines).
+No Python or HISS-07 finding remains. It is a non-regression ceiling, not a claim of zero debt or whole-tree
 source coverage. Fingerprints are keyed by file and line
 ([Praetor issue 29](https://github.com/cordanaLLM/praetor/issues/29)), so
 moving a legacy function can surface it as new.
