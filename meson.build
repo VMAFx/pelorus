@@ -393,7 +393,7 @@ if get_option('tests')
   test(
     'udu-wrap',
     udu_wrap_test,
-    args: [files('ffmpeg-patches/test/fixtures/udu-wrap-vectors.txt')],
+    args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'fixtures' / 'udu-wrap-vectors.txt'],
     suite: 'fast',
   )
 endif
