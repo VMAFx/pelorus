@@ -10,9 +10,10 @@
 #
 # GPU test (the estimator runs on Vulkan). Cases:
 # The encoder is hevc_nvenc when it can encode on this host, else libx265
-# (GPL builds) after a probe shows it keeps the Pelorus SEI: libx265 4.3
-# (X265_BUILD 217) wrote no foreign user data SEI with -udu_sei 1 when
-# measured on 2026-10-17, so a libx265 that drops it skips by name.
+# (GPL builds) after a probe shows it keeps the Pelorus SEI: every libx265
+# since 2.1 writes its own UUID in front of the caller's payload (measured
+# 2026-10-18 on builds 2.1, 3.0, master b81f650e2 and 4.3), so a libx265 that
+# wraps or drops the SEI skips by name.
 #   grain        noisy 8-bit source -> estimator -> encoder -udu_sei 1 ->
 #                pelorus_fgs=source=sidedata: every access unit carries an
 #                active FGC SEI, the Pelorus SEI stays, and the decoder exports
@@ -32,6 +33,10 @@
 #                above when hevc_nvenc is the encoder, run on its own when
 #                libx265 is.
 #
+# Usage: fgs-sidedata-smoke.sh [--self-test] [--disable RULE]
+#   RULE is one of: kept wrapped
+#   (--disable switches one rule off; the self-test must then fail).
+#
 # Env:
 #   FFMPEG_BIN     patched ffmpeg binary (required)
 #   VULKAN_DEVICE  FFmpeg Vulkan device index for the estimator (optional)
@@ -39,6 +44,180 @@
 #   FRAMES         pictures per case (default 8, 4..64)
 # Exit: 0 pass, 1 fail, 77 skip (the reason is printed on stdout).
 set -euo pipefail
+
+DISABLED=" "
+SELF_TEST=0
+while (($#)); do
+    case "$1" in
+        --self-test) SELF_TEST=1 ;;
+        --disable)
+            shift
+            DISABLED+="${1:?--disable needs a rule} "
+            ;;
+        *)
+            echo "usage: $0 [--self-test] [--disable RULE]" >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+rule_on()
+{
+    [[ "$DISABLED" != *" $1 "* ]]
+}
+
+PEL_UUID="e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64"
+PEL_CARRIER_UUID="3f9b37b8-fd9a-4621-920e-9b78b55cf9b5"
+PEL_X265_UUID="2ca2de09-b517-47db-bb55-a4fe7fc2fc4e"
+PEL_HEX="${PEL_UUID//-/}"
+PEL_CARRIER_HEX="${PEL_CARRIER_UUID//-/}"
+
+pel_x265_sei_state()
+{
+    local log="$1"
+    local r_kept=0 r_wrapped=0
+    if rule_on kept; then
+        r_kept=1
+    fi
+    if rule_on wrapped; then
+        r_wrapped=1
+    fi
+
+    awk -v r_kept="$r_kept" \
+        -v r_wrapped="$r_wrapped" \
+        -v u_pel="UUID=$PEL_UUID" \
+        -v u_carrier="UUID=$PEL_CARRIER_UUID" \
+        -v u_x265="UUID=$PEL_X265_UUID" \
+        -v h_pel="$PEL_HEX" \
+        -v h_carrier="$PEL_CARRIER_HEX" '
+        BEGIN {
+            state = "missing"
+            saw_x265 = 0
+        }
+        {
+            if (r_kept && (index($0, u_pel) || index($0, u_carrier))) {
+                state = "kept"
+                exit
+            }
+            if (r_wrapped && saw_x265) {
+                pos = index($0, "User Data=")
+                if (pos > 0) {
+                    val = tolower(substr($0, pos + 10))
+                    sub(/^[[:space:]]+/, "", val)
+                    if (index(val, h_pel) == 1 || index(val, h_carrier) == 1) {
+                        state = "wrapped"
+                    }
+                }
+            }
+            saw_x265 = (index($0, u_x265) > 0) ? 1 : 0
+        }
+        END {
+            print state
+        }' "$log"
+}
+
+fixture_kept_raw()
+{
+    cat <<'EOT'
+[Parsed_showinfo_0 @ 0x1] side data - User Data Unregistered SEI message: UUID=e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64
+[Parsed_showinfo_0 @ 0x1] User Data=000102030405
+EOT
+}
+
+fixture_kept_carrier()
+{
+    cat <<'EOT'
+[Parsed_showinfo_0 @ 0x1] side data - User Data Unregistered SEI message: UUID=3f9b37b8-fd9a-4621-920e-9b78b55cf9b5
+[Parsed_showinfo_0 @ 0x1] User Data=000102030405
+EOT
+}
+
+fixture_wrapped_raw()
+{
+    cat <<'EOT'
+[Parsed_showinfo_0 @ 0x1] side data - User Data Unregistered SEI message: UUID=2ca2de09-b517-47db-bb55-a4fe7fc2fc4e
+[Parsed_showinfo_0 @ 0x1] User Data=7832363520286275696c642032313729202d20342e33
+[Parsed_showinfo_0 @ 0x1] side data - User Data Unregistered SEI message: UUID=2ca2de09-b517-47db-bb55-a4fe7fc2fc4e
+[Parsed_showinfo_0 @ 0x1] User Data=e1d7c4a26b934f089a550f3c2db17e6400010203
+[Parsed_showinfo_0 @ 0x1] side data - User Data Unregistered SEI message: UUID=2ca2de09-b517-47db-bb55-a4fe7fc2fc4e
+[Parsed_showinfo_0 @ 0x1] User Data=e1d7c4a26b934f089a550f3c2db17e6400010203
+EOT
+}
+
+fixture_wrapped_carrier()
+{
+    cat <<'EOT'
+[Parsed_showinfo_0 @ 0x1] side data - User Data Unregistered SEI message: UUID=2ca2de09-b517-47db-bb55-a4fe7fc2fc4e
+[Parsed_showinfo_0 @ 0x1] User Data=7832363520286275696c642032313729202d20342e33
+[Parsed_showinfo_0 @ 0x1] side data - User Data Unregistered SEI message: UUID=2ca2de09-b517-47db-bb55-a4fe7fc2fc4e
+[Parsed_showinfo_0 @ 0x1] User Data=3f9b37b8fd9a4621920e9b78b55cf9b500010203
+[Parsed_showinfo_0 @ 0x1] side data - User Data Unregistered SEI message: UUID=2ca2de09-b517-47db-bb55-a4fe7fc2fc4e
+[Parsed_showinfo_0 @ 0x1] User Data=3f9b37b8fd9a4621920e9b78b55cf9b500010203
+EOT
+}
+
+fixture_x265_info_only()
+{
+    cat <<'EOT'
+[Parsed_showinfo_0 @ 0x1] side data - User Data Unregistered SEI message: UUID=2ca2de09-b517-47db-bb55-a4fe7fc2fc4e
+[Parsed_showinfo_0 @ 0x1] User Data=7832363520286275696c642032313729202d20342e33
+EOT
+}
+
+fixture_unpreceded_pelorus_hex()
+{
+    cat <<'EOT'
+[Parsed_showinfo_0 @ 0x1] side data - User Data Unregistered SEI message: UUID=11111111-2222-3333-4444-555555555555
+[Parsed_showinfo_0 @ 0x1] User Data=e1d7c4a26b934f089a550f3c2db17e6400010203
+EOT
+}
+
+fixture_empty()
+{
+    :
+}
+
+self_test()
+{
+    local work failures=0
+
+    work="$(mktemp -d "${TMPDIR:-/tmp}/pelorus-fgs-self-test.XXXXXX")"
+    trap 'rm -rf -- "$work"' EXIT
+
+    expect_state()
+    {
+        local name="$1" fn="$2" want="$3" state
+        "$fn" >"$work/log"
+        state="$(pel_x265_sei_state "$work/log")"
+        if [[ "$state" != "$want" ]]; then
+            echo "SELF-TEST FAIL: $name: expected $want, got $state" >&2
+            failures=$((failures + 1))
+        fi
+    }
+
+    expect_state "kept raw" fixture_kept_raw "kept"
+    expect_state "kept carrier" fixture_kept_carrier "kept"
+    expect_state "wrapped raw" fixture_wrapped_raw "wrapped"
+    expect_state "wrapped carrier" fixture_wrapped_carrier "wrapped"
+    expect_state "x265 info SEI only" fixture_x265_info_only "missing"
+    expect_state "unpreceded pelorus hex" fixture_unpreceded_pelorus_hex "missing"
+    expect_state "empty log" fixture_empty "missing"
+
+    rm -rf -- "$work"
+    trap - EXIT
+
+    if ((failures)); then
+        echo "self-test: FAILED ($failures)" >&2
+        return 1
+    fi
+    echo "self-test: ok"
+}
+
+if ((SELF_TEST)); then
+    self_test || exit 1
+    exit 0
+fi
 
 PEL_FFMPEG="${FFMPEG_BIN:?FFMPEG_BIN must name the patched ffmpeg binary}"
 PEL_FRAMES="${FRAMES:-8}"
@@ -48,8 +227,6 @@ if [[ -n "${VULKAN_DEVICE:-}" ]]; then
 fi
 PEL_OUT="${OUTPUT_ROOT:-$(mktemp -d "${TMPDIR:-/tmp}/pelorus-fgs-sidedata.XXXXXX")}"
 mkdir -p "$PEL_OUT"
-PEL_UUID="e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64"
-PEL_CARRIER_UUID="3f9b37b8-fd9a-4621-920e-9b78b55cf9b5"
 
 pel_skip()
 {
@@ -159,8 +336,15 @@ if [[ "${PEL_ENC[1]}" == libx265 ]]; then
     pel_encode x265-probe "$PEL_NOISY,$PEL_EST" null "${PEL_ENC[@]}" ||
         pel_fail "x265-probe: encode failed: $(pel_first_error "$PEL_OUT/x265-probe-encode.log")"
     pel_trace x265-probe
-    [[ "$(pel_count "$PEL_OUT/x265-probe-tap.log" "UUID=$PEL_UUID")" != 0 ]] ||
-        pel_skip "libx265 drops the Pelorus user data SEI (-udu_sei 1) and hevc_nvenc cannot encode here"
+    case "$(pel_x265_sei_state "$PEL_OUT/x265-probe-tap.log")" in
+        kept) ;;
+        wrapped)
+            pel_skip "libx265 writes its own user data UUID ($PEL_X265_UUID) in front of the Pelorus SEI (every x265 since 2.1), so pelorus_fgs finds no section, and hevc_nvenc cannot encode here"
+            ;;
+        *)
+            pel_skip "libx265 drops the Pelorus user data SEI (-udu_sei 1) and hevc_nvenc cannot encode here"
+            ;;
+    esac
 fi
 
 # grain: every access unit carries an active FGC, the Pelorus SEI stays.

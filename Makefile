@@ -55,6 +55,9 @@ docs-check:
 	python3 -I scripts/check-filter-knob-contracts.py --self-test
 	python3 -I scripts/check-filter-knob-contracts.py
 	python3 -I tools/tester/pelorus_tester_report.py --self-test
+	bash ffmpeg-patches/test/fgs-sidedata-smoke.sh --self-test
+	! bash ffmpeg-patches/test/fgs-sidedata-smoke.sh --self-test --disable wrapped >/dev/null 2>&1
+	! bash ffmpeg-patches/test/fgs-sidedata-smoke.sh --self-test --disable kept >/dev/null 2>&1
 	python3 -I scripts/hardware-reports/check-reports.py --self-test
 	python3 -I scripts/hardware-reports/check-reports.py
 	python3 -I scripts/hardware-reports/generate-index.py --self-test
