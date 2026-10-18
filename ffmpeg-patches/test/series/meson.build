@@ -7,7 +7,7 @@ nvenc_sei_h = custom_target(
   output: 'nvenc_sei.h',
   command: [python_prog, '-I', extract_series_file, ffmpeg_series_dir,
             'libavcodec/nvenc_sei.h', '@OUTPUT@'],
-  depend_files: [ffmpeg_series_dir / 'series.txt'],
+  depend_files: ffmpeg_series_files,
 )
 nvenc_sei_inc = include_directories('.')
 

@@ -403,6 +403,18 @@ test('extract-series-file',
      args: ['-I', extract_series_file, '--self-test'],
      suite: 'fast')
 if get_option('tests') and ffmpeg_series_dir != ''
+  if not fs.is_absolute(ffmpeg_series_dir)
+    error('ffmpeg_series_dir must be an absolute path: ' + ffmpeg_series_dir)
+  endif
+  # The header is regenerated when any patch series.txt lists changes;
+  # fs.read() also makes series.txt itself a reconfigure dependency.
+  ffmpeg_series_files = [ffmpeg_series_dir / 'series.txt']
+  foreach line : fs.read(ffmpeg_series_dir / 'series.txt').split('\n')
+    name = line.strip()
+    if name != '' and not name.startswith('#')
+      ffmpeg_series_files += ffmpeg_series_dir / 'patches' / name
+    endif
+  endforeach
   subdir('ffmpeg-patches/test/series')
   sei_fit_test = executable(
     'pelorus_sei_fit_test',

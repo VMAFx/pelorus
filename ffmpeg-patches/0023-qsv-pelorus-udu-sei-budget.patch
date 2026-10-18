@@ -36,17 +36,17 @@ Measured on an Arc A380 (iHD 26.3.5, vpl-gpu-rt 26.3.5, libvpl 2.17.0),
 at 640x360, 1920x1080 and 3840x2160 alike. Depends on patches 0019 and
 0022.
 ---
- libavcodec/pelorus_sei_fit_qsv.h | 128 ++++++++++++++++++++
- libavcodec/qsvenc.c              |  89 ++++++++++++--
+ libavcodec/pelorus_sei_fit_qsv.h | 133 ++++++++++++++++++++
+ libavcodec/qsvenc.c              |  89 +++++++++++--
  libavcodec/qsvenc.h              |   2 +
- 3 files changed, 207 insertions(+), 12 deletions(-)
+ 3 files changed, 212 insertions(+), 12 deletions(-)
 
 diff --git a/libavcodec/pelorus_sei_fit_qsv.h b/libavcodec/pelorus_sei_fit_qsv.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..4617694ee5d905c8f621175e22fd5900ff42df75
+index 0000000000000000000000000000000000000000..d2a0f0c4c7528d7d99a4c21325e7665973788da6
 --- /dev/null
 +++ b/libavcodec/pelorus_sei_fit_qsv.h
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,133 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -114,14 +114,19 @@ index 0000000000000000000000000000000000000000..4617694ee5d905c8f621175e22fd5900
 +
 +/* Budget bytes the `n`-byte payload `p` costs. `escaped` is 1 for H.264, whose
 + * runtime counts the emulation prevention bytes. Only a payload that can fit
-+ * `limit` is scanned; a larger one returns more than `limit`. */
++ * `limit` is scanned; a larger one returns more than `limit`, and one beyond
++ * nvenc_sei.h's 32-bit size returns SIZE_MAX. */
 +static inline size_t pel_sei_qsv_cost(const uint8_t *p, size_t n, int escaped, size_t limit)
 +{
 +    const size_t msg = pel_sei_qsv_msg_len(n);
 +
 +    if (!escaped || n > limit || !p)
 +        return msg;
-+    return msg + nvenc_sei_epb_count(p, n > UINT32_MAX ? UINT32_MAX : (uint32_t)n, 0);
++#if SIZE_MAX > UINT32_MAX
++    if (n > UINT32_MAX)
++        return SIZE_MAX;
++#endif
++    return msg + nvenc_sei_epb_count(p, (uint32_t)n, 0);
 +}
 +
 +/* Upper bound on the emulation prevention bytes the zeroed map fields of a

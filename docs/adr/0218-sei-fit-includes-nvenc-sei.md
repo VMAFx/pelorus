@@ -41,6 +41,8 @@ The header exists only inside an FFmpeg tree with the series applied. The fast s
 
 - A local build without `FFMPEG_SERIES_DIR` no longer runs the SEI fit checks; it prints the named skip. `make FFMPEG_SERIES_DIR=<dir> verify-native` runs them, with `<dir>` from `scripts/fetch-ffmpeg-series.sh`.
 - The `core`, `sanitizers` and `windows` CI jobs now need network access, `gh` with a token and `cosign`, as the `ffmpeg-stack` job already did.
+- The release build (`.github/workflows/release-build.yml`) runs the fast suite without the series, so `sei-fit` is the named skip there; the `core` CI job runs it on every pull request into `master`. Running it in the release build is follow-up [#388](https://github.com/VMAFx/pelorus/issues/388).
+- A rebuilt header follows every patch that `series.txt` lists, and a relative `ffmpeg_series_dir` fails at configure time.
 - A series release that edits `nvenc_sei.h` in a later patch makes the extractor refuse until it reads the final state; that change comes with this repository's next series bump.
 
 ## References

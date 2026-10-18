@@ -123,13 +123,16 @@ static inline void pel_sei_wr32(uint8_t *p, uint32_t v)
 /*
  * Annex B bytes of the SEI NAL unit NVENC writes for one user data
  * unregistered payload (type 5) of `n` bytes: nvenc_sei_nal_size(). Only a
- * payload of at most `limit` bytes is scanned; a larger one, a NULL `p`, or
- * one beyond nvenc_sei.h's 32-bit size returns more than `limit`.
+ * payload of at most `limit` bytes is scanned; a larger one or a NULL `p`
+ * returns more than `limit`, and one beyond nvenc_sei.h's 32-bit size
+ * returns SIZE_MAX, which no budget below SIZE_MAX admits.
  */
 static inline size_t pel_sei_nal_bytes(const uint8_t *p, size_t n, size_t limit)
 {
+#if SIZE_MAX > UINT32_MAX
     if (n > UINT32_MAX)
-        return n;
+        return SIZE_MAX;
+#endif
     return nvenc_sei_nal_size(p, 5u, (uint32_t)n, p ? limit : 0u);
 }
 

@@ -298,6 +298,12 @@ static void test_nal_bytes(TestCtx *t)
     /* Above the limit nothing is scanned and the result exceeds the limit. */
     CHECK(pel_sei_nal_bytes(NULL, 5000, 768) > 768u);
     CHECK(PEL_SEI_HEVC_USER_BUDGET == 768u);
+#if SIZE_MAX > UINT32_MAX
+    /* Beyond nvenc_sei.h's 32-bit size: never scanned, never fits. */
+    CHECK(pel_sei_nal_bytes(buf, (size_t)UINT32_MAX + 1u, SIZE_MAX) == SIZE_MAX);
+    CHECK(pel_sei_qsv_cost(buf, (size_t)UINT32_MAX + 1u, 1, SIZE_MAX) == SIZE_MAX);
+    CHECK(pel_sei_nal_bytes(NULL, UINT32_MAX, SIZE_MAX) < SIZE_MAX);
+#endif
 }
 
 static void check_1080p(TestCtx *t, const Blob *maps, const Blob *scal)
