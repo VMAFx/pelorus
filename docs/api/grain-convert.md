@@ -5,7 +5,7 @@ libpelorus provides a pure C conversion engine between AV1 (AOM) and H.274 (SEI 
 
 - Header: [`pelorus/grain_convert.h`](../../libpelorus/include/pelorus/grain_convert.h)
 - Implementation: [`libpelorus/src/grain_convert.c`](../../libpelorus/src/grain_convert.c), [`libpelorus/src/grain_convert_tables.c`](../../libpelorus/src/grain_convert_tables.c)
-- Decision: [ADR-0205](../adr/0205-aom-h274-grain-conversion.md), [ADR-0211](../adr/0211-grain-synth-conformance.md), [ADR-0216](../adr/0216-h274-grain-quantization.md)
+- Decision: [ADR-0205](../adr/0205-aom-h274-grain-conversion.md), [ADR-0211](../adr/0211-grain-synth-conformance.md), [ADR-0216](../adr/0216-h274-grain-quantization.md), [ADR-0217](../adr/0217-av1-grain-round-quantization.md)
 - Related: [Film Grain Table I/O API](grain-table.md), [ADR-0161](../adr/0161-grain-estimate-rounding-and-h274-mapping.md)
 
 ## Usage example
@@ -80,7 +80,8 @@ To enable comparison and conversion, both representations map onto `PelorusGrain
    - Energy gain: $g_{\text{ar}} = \sqrt{\sum_{y,x} h[y][x]^2}$ ($g_{\text{ar}} = 1.0$ for lag 0).
    - Spatial correlations: $\rho_h = \sum_{y,x} h[y][x] h[y][x+1] / \sum h^2$ and $\rho_v = \sum_{y,x} h[y][x] h[y+1][x] / \sum h^2$ ($\rho = 0$ for lag 0).
 6. **Effective RMS**:
-   - $\sigma[c][i] = scaling[index(i)] \cdot \sigma_w \cdot g_{\text{ar}} / 2^{\text{scaling\_shift}}$.
+   - Linear standard deviation: $\sigma_{\text{lin}}[c][i] = scaling[index(i)] \cdot \sigma_w \cdot g_{\text{ar}} / 2^{\text{scaling\_shift}}$.
+   - Quantized standard deviation: $\sigma[c][i] = R(\sigma_{\text{lin}})$ evaluating the exact Gaussian round model with bin offset 0.5 matching AV1 `round2` synthesis (`round2(scaling[val] * grain, scaling_shift)` in FFmpeg `libavcodec/aom_film_grain_template.c`, [ADR-0217](../adr/0217-av1-grain-round-quantization.md)).
 
 ### H.274 Model 0 description
 
@@ -111,6 +112,10 @@ The standard deviation of a quantized zero-mean Gaussian variable $X \sim \mathc
 
 For $s > 0.65$, floor and round models converge within 0.1%. For $s < 0.65$ (chroma grain), the floor model possesses a theoretical minimum non-zero standard deviation $\lim_{s \to 0^+} V_q(s, 0.0) = 0.5000$. Both converge to $\sqrt{s^2 + 1/12}$ for $s \ge 5.0$.
 
+#### Synthesis validation
+
+Against `ff_aom_apply_film_grain` on Fixture A, the rounded AV1 descriptor matches the 100-seed mean of the measured $\sigma$ within 0.9% in 15 cases (scale factors 1, 2 and 6); the linear descriptor was up to 13.5% low (chroma 1). Method and full table: [research digest](../research/0384-av1-grain-rounding.md). The 32-seed checks `fixture_a_<case>_aom_sigma_seedmean_vs_desc` in `ffmpeg-patches/test/grain_conformance.c` reproduce the scale-1 rows.
+
 ### Fidelity metric (`pel_grain_compare`)
 
 - Relative RMS error per component:
@@ -125,13 +130,13 @@ For $s > 0.65$, floor and round models converge within 0.1%. For $s < 0.65$ (chr
 
 ### AV1 to H.274 (`pel_grain_aom_to_h274`)
 
-1. Describe the AV1 parameters with `pel_grain_describe_aom()`.
+1. Describe the AV1 parameters with the linear AOM descriptor ($\sigma_{\text{lin}}$, evaluated without round quantization, keeping master H.274 conversion output bit-identical).
 2. For each present component $c$:
    - Find $(cut_h, cut_v)$ minimizing $(stat.rho\_h - \rho_h[c])^2 + (stat.rho\_v - \rho_v[c])^2$ across calibration table rows.
    - For chroma ($c > 0$), search only the 36 rows reachable after 4:2:0 cutoff doubling and store the pre-adaptation cutoff ($2 \dots 7$).
 3. Select `log2_scale_factor` as the largest integer in $2 \dots 7$ where all needed interval scales are $\le 255$.
 4. Walk intensity $i = 0 \dots 255$, merging maximal runs of equal scale into intervals. Discard intervals where scale is 0. If all runs have scale 0, set `component_model_present[c] = 0`.
-5. If `fidelity` is non-NULL, describe the generated H.274 parameters and evaluate `pel_grain_compare()`.
+5. If `fidelity` is non-NULL, describe both parameter sets with their public realised descriptors (rounded AV1 vs floor H.274) and evaluate `pel_grain_compare()`.
 
 ### H.274 to AV1 (`pel_grain_h274_to_aom`)
 
@@ -144,7 +149,7 @@ For $s > 0.65$, floor and round models converge within 0.1%. For $s < 0.65$ (chr
 4. Select the largest `scaling_shift` in $8 \dots 11$ keeping all point values $y_k \le 255$.
 5. Set `uv_mult = 64`, `uv_mult_luma = 0`, `uv_offset = 0` (identity index), `overlap_flag = 1`, and `seed` from caller (0..65535; larger values return `PEL_ERR_RANGE`).
 6. If luma is absent but chroma is present, emit a flat zero luma curve (two points, scale 0): AV1 4:2:0 codes no chroma points when `num_y_points` is 0, and the zero curve adds no luma grain.
-7. If `fidelity` is non-NULL, describe the generated AV1 parameters and evaluate `pel_grain_compare()`.
+7. If `fidelity` is non-NULL, describe both parameter sets with their public realised descriptors (floor H.274 vs rounded AV1) and evaluate `pel_grain_compare()`.
 
 ## Approximations and limits
 
@@ -188,16 +193,19 @@ The test synthesizes grain on flat 512x512 8-bit YUV420P frames across luma inte
 
 | Metric | Fixture A Measured | Fixture A Bound | Fixture B Measured | Fixture B Bound |
 | :--- | :--- | :--- | :--- | :--- |
-| Luma $\sigma$ vs AV1 descriptor | 0.0944 (9.4%) | 0.120 (12.0%) | 0.0249 (2.5%) | 0.030 (3.0%) |
+| Luma $\sigma$ vs AV1 descriptor (seed 42) | 0.0246 (2.5%) | 0.030 (3.0%) | 0.0173 (1.7%) | 0.021 (2.1%) |
 | Luma $\sigma$ vs H.274 descriptor | 0.0217 (2.2%) | 0.026 (2.6%) | 0.0037 (0.4%) | 0.005 (0.5%) |
 | Luma $\sigma$ AV1 vs H.274 synth | 0.0299 (3.0%) | 0.036 (3.6%) | 0.0130 (1.3%) | 0.016 (1.6%) |
 | Luma $\|\Delta \rho_h\|$ AV1 vs H.274 | 0.0455 | 0.055 | 0.0315 | 0.038 |
 | Luma $\|\Delta \rho_v\|$ AV1 vs H.274 | 0.0607 | 0.075 | 0.0288 | 0.035 |
-| Chroma $\sigma$ vs AV1 descriptor | 0.0712 (7.1%) | 0.090 (9.0%) | - | - |
+| Luma $\sigma$ vs AV1 descriptor, 32-seed mean | 0.0074 (0.7%) | 0.010 (1.0%) | - | - |
+| Chroma $\sigma$ vs AV1 descriptor, 32-seed mean | 0.0077 (0.8%) | 0.010 (1.0%) | - | - |
 | Chroma $\sigma$ vs H.274 descriptor | 0.0392 (3.9%) | 0.048 (4.8%) | - | - |
 | Chroma $\sigma$ AV1 vs H.274 synth | 0.1837 (18.4%) | 0.230 (23.0%) | - | - |
 | Chroma $\|\Delta \rho_h\|$ AV1 vs H.274 | 0.0690 | 0.085 | - | - |
 | Chroma $\|\Delta \rho_v\|$ AV1 vs H.274 | 0.1312 | 0.160 | - | - |
+
+The AV1 descriptor rows use the rounded descriptor of [ADR-0217](../adr/0217-av1-grain-round-quantization.md). Chroma has no seed-42 AV1 descriptor row: one seed spreads up to 3.7% around the mean, so the 32-seed mean (seeds `(42 + i * 7919) % 65536`) gates it.
 
 Run locally against a built FFmpeg tree:
 

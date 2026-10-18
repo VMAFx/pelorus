@@ -15,10 +15,6 @@
 #include <stdint.h>
 #include <string.h>
 
-/* Population RMS of FFmpeg's 2048-entry gaussian_sequence in
- * libavcodec/aom_film_grain_template.c (pinned n9.0.2). */
-#define PEL_AOM_GAUSSIAN_SEQUENCE_RMS 511.5251f
-
 /* Impulse position on the 64x64 AR grid: row = maximum lag, column centred so
  * the up-right taps (dy < 0, dx > 0) spread left without hitting the edge. */
 #define PEL_AR_IMPULSE_ROW 3
@@ -240,7 +236,7 @@ static void drop_silent_components(PelorusGrainDescriptor *desc)
     }
 }
 
-float pel_quantized_sigma(float sigma_lin)
+float pel_quantized_sigma(float sigma_lin, float bin_offset)
 {
     if (sigma_lin <= 0.0f) {
         return 0.0f;
@@ -252,8 +248,11 @@ float pel_quantized_sigma(float sigma_lin)
     double inv_s_sqrt2 = 1.0 / (s * 1.41421356237309504880);
     double m = 0.0;
     double m2 = 0.0;
+    double bo = (double)bin_offset;
     for (int k = -64; k < 64; k++) {
-        double p = 0.5 * (erf(((double)k + 1.0) * inv_s_sqrt2) - erf((double)k * inv_s_sqrt2));
+        double lower = ((double)k - bo) * inv_s_sqrt2;
+        double upper = ((double)k + 1.0 - bo) * inv_s_sqrt2;
+        double p = 0.5 * (erf(upper) - erf(lower));
         m += (double)k * p;
         m2 += (double)(k * k) * p;
     }
@@ -264,7 +263,8 @@ float pel_quantized_sigma(float sigma_lin)
     return (float)sqrt(var);
 }
 
-pel_result pel_grain_describe_aom(const PelorusFilmGrainSection *aom, PelorusGrainDescriptor *out)
+static pel_result describe_aom_internal(const PelorusFilmGrainSection *aom,
+                                        PelorusGrainDescriptor *out, int quantized)
 {
     if (aom == NULL || out == NULL) {
         return PEL_ERR_INVALID;
@@ -302,12 +302,19 @@ pel_result pel_grain_describe_aom(const PelorusFilmGrainSection *aom, PelorusGra
         }
         for (int i = 0; i < 256; i++) {
             int idx = get_aom_intensity_index(aom, c, i);
-            desc.sigma[c][i] = (float)scaling[idx] * sigma_w * g_ar * inv_scaling_shift;
+            float sig_lin = (float)scaling[idx] * sigma_w * g_ar * inv_scaling_shift;
+            desc.sigma[c][i] =
+                quantized ? pel_quantized_sigma(sig_lin, PEL_QUANT_ROUND_OFFSET) : sig_lin;
         }
     }
     drop_silent_components(&desc);
     memcpy(out, &desc, sizeof(*out));
     return PEL_OK;
+}
+
+pel_result pel_grain_describe_aom(const PelorusFilmGrainSection *aom, PelorusGrainDescriptor *out)
+{
+    return describe_aom_internal(aom, out, 1);
 }
 
 static void describe_h274_component(const PelorusH274GrainParams *h274, int c, float factor,
@@ -343,7 +350,7 @@ static void describe_h274_component(const PelorusH274GrainParams *h274, int c, f
         int row = (cut_v - 2) * 13 + (cut_h - 2);
         const PelH274GrainStat *stat = &pel_h274_grain_stats[row];
         float sig_lin = (float)scale * stat->gain * factor;
-        float sig = quantized ? pel_quantized_sigma(sig_lin) : sig_lin;
+        float sig = quantized ? pel_quantized_sigma(sig_lin, PEL_QUANT_FLOOR_OFFSET) : sig_lin;
         desc->sigma[c][i] = sig;
 
         double w = (double)sig * (double)sig;
@@ -570,6 +577,28 @@ static void build_h274_intervals(const PelorusGrainDescriptor *desc, int c, int 
     }
 }
 
+static pel_result compute_fidelity_aom_to_h274(const PelorusFilmGrainSection *aom,
+                                               const PelorusH274GrainParams *h274,
+                                               PelorusGrainFidelity *fidelity)
+{
+    if (fidelity == NULL) {
+        return PEL_OK;
+    }
+    PelorusGrainDescriptor aom_pub;
+    PelorusGrainDescriptor h274_pub;
+    memset(&aom_pub, 0, sizeof(aom_pub));
+    memset(&h274_pub, 0, sizeof(h274_pub));
+    pel_result r = pel_grain_describe_aom(aom, &aom_pub);
+    if (r != PEL_OK) {
+        return r;
+    }
+    r = pel_grain_describe_h274(h274, &h274_pub);
+    if (r != PEL_OK) {
+        return r;
+    }
+    return pel_grain_compare(&aom_pub, &h274_pub, fidelity);
+}
+
 pel_result pel_grain_aom_to_h274(const PelorusFilmGrainSection *aom, PelorusH274GrainParams *out,
                                  PelorusGrainFidelity *fidelity)
 {
@@ -578,7 +607,7 @@ pel_result pel_grain_aom_to_h274(const PelorusFilmGrainSection *aom, PelorusH274
     }
     PelorusGrainDescriptor aom_desc;
     memset(&aom_desc, 0, sizeof(aom_desc));
-    pel_result r = pel_grain_describe_aom(aom, &aom_desc);
+    pel_result r = describe_aom_internal(aom, &aom_desc, 0);
     if (r != PEL_OK) {
         return r;
     }
@@ -610,17 +639,9 @@ pel_result pel_grain_aom_to_h274(const PelorusFilmGrainSection *aom, PelorusH274
         }
     }
 
-    if (fidelity != NULL) {
-        PelorusGrainDescriptor h274_desc;
-        memset(&h274_desc, 0, sizeof(h274_desc));
-        r = pel_grain_describe_h274(&local_h274, &h274_desc);
-        if (r != PEL_OK) {
-            return r;
-        }
-        r = pel_grain_compare(&aom_desc, &h274_desc, fidelity);
-        if (r != PEL_OK) {
-            return r;
-        }
+    r = compute_fidelity_aom_to_h274(aom, &local_h274, fidelity);
+    if (r != PEL_OK) {
+        return r;
     }
     memcpy(out, &local_h274, sizeof(*out));
     return PEL_OK;
@@ -795,20 +816,26 @@ static void init_absent_aom(uint64_t seed, PelorusFilmGrainSection *aom)
     aom->uv_mult[1] = 64;
 }
 
-static pel_result compute_fidelity_h274_to_aom(const PelorusGrainDescriptor *h274_desc,
+static pel_result compute_fidelity_h274_to_aom(const PelorusH274GrainParams *h274,
                                                const PelorusFilmGrainSection *aom,
                                                PelorusGrainFidelity *fidelity)
 {
     if (fidelity == NULL) {
         return PEL_OK;
     }
-    PelorusGrainDescriptor aom_desc;
-    memset(&aom_desc, 0, sizeof(aom_desc));
-    pel_result r = pel_grain_describe_aom(aom, &aom_desc);
+    PelorusGrainDescriptor h274_pub;
+    PelorusGrainDescriptor aom_pub;
+    memset(&h274_pub, 0, sizeof(h274_pub));
+    memset(&aom_pub, 0, sizeof(aom_pub));
+    pel_result r = pel_grain_describe_h274(h274, &h274_pub);
     if (r != PEL_OK) {
         return r;
     }
-    return pel_grain_compare(h274_desc, &aom_desc, fidelity);
+    r = pel_grain_describe_aom(aom, &aom_pub);
+    if (r != PEL_OK) {
+        return r;
+    }
+    return pel_grain_compare(&h274_pub, &aom_pub, fidelity);
 }
 
 pel_result pel_grain_h274_to_aom(const PelorusH274GrainParams *h274, uint64_t seed,
@@ -831,7 +858,7 @@ pel_result pel_grain_h274_to_aom(const PelorusH274GrainParams *h274, uint64_t se
     int any_present = h274_desc.present[0] || h274_desc.present[1] || h274_desc.present[2];
     if (!any_present) {
         init_absent_aom(seed, &local_aom);
-        r = compute_fidelity_h274_to_aom(&h274_desc, &local_aom, fidelity);
+        r = compute_fidelity_h274_to_aom(h274, &local_aom, fidelity);
         if (r != PEL_OK) {
             return r;
         }
@@ -858,7 +885,7 @@ pel_result pel_grain_h274_to_aom(const PelorusH274GrainParams *h274, uint64_t se
         local_aom.y_points[1][0] = 255;
     }
 
-    r = compute_fidelity_h274_to_aom(&h274_desc, &local_aom, fidelity);
+    r = compute_fidelity_h274_to_aom(h274, &local_aom, fidelity);
     if (r != PEL_OK) {
         return r;
     }
