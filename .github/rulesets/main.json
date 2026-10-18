@@ -66,6 +66,15 @@
             "context": "libpelorus (Windows · MSYS2 UCRT64 · fast suite)"
           },
           {
+            "context": "CodeQL (c-cpp)"
+          },
+          {
+            "context": "CodeQL (python)"
+          },
+          {
+            "context": "CodeQL (actions)"
+          },
+          {
             "context": "Documentation Governance"
           },
           {

@@ -1,0 +1,1 @@
+- In-repo pinned CodeQL code scanning workflow (`.github/workflows/codeql.yml`) covering C/C++, Python, and GitHub Actions with manual Meson build mode, draft PR gating, and `scripts/check-codeql-workflow.py` verification in the fast test suite ([ADR-0220](docs/adr/0220-codeql-code-scanning.md)).
