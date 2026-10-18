@@ -46,12 +46,11 @@ ucrtbase.dll
 
 [bundle]
 # DLL name                 MSYS2 package name                     SPDX licence
-libgcc_s_seh-1.dll         mingw-w64-ucrt-x86_64-gcc-libs         GPL-3.0-or-later WITH GCC-exception-3.1
-libstdc++-6.dll            mingw-w64-ucrt-x86_64-gcc-libs         GPL-3.0-or-later WITH GCC-exception-3.1
+libgcc_s_seh-1.dll         mingw-w64-ucrt-x86_64-libgcc           GPL-3.0-or-later WITH GCC-exception-3.1
+libstdc++-6.dll            mingw-w64-ucrt-x86_64-libstdc++        GPL-3.0-or-later WITH GCC-exception-3.1
 libwinpthread-1.dll        mingw-w64-ucrt-x86_64-libwinpthread     MIT AND BSD-3-Clause
 zlib1.dll                  mingw-w64-ucrt-x86_64-zlib             Zlib
-libgomp-1.dll              mingw-w64-ucrt-x86_64-gcc-libs         GPL-3.0-or-later WITH GCC-exception-3.1
-libssp-0.dll               mingw-w64-ucrt-x86_64-gcc-libs         GPL-3.0-or-later WITH GCC-exception-3.1
+libgomp-1.dll              mingw-w64-ucrt-x86_64-libgomp          GPL-3.0-or-later WITH GCC-exception-3.1
 libiconv-2.dll             mingw-w64-ucrt-x86_64-libiconv         LGPL-2.0-or-later AND GPL-3.0-or-later
 libintl-8.dll              mingw-w64-ucrt-x86_64-gettext-runtime  LGPL-2.1-or-later
 liblzma-5.dll              mingw-w64-ucrt-x86_64-xz               0BSD
