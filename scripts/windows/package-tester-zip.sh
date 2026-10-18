@@ -74,14 +74,24 @@ _copy_binaries() {
     done
 }
 
+# Reads one DLL name per line from stdin into the named array.
+_read_closure_names() {
+    local -n names_out="$1"
+    local line
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Native MinGW Python writes CRLF to a pipe; drop the CR before using the name.
+        line="${line%$'\r'}"
+        [[ -n "$line" ]] || continue
+        names_out+=("$line")
+    done
+}
+
 _resolve_and_copy_closure() {
     local stage_dir="$1"
     local -n out_closure="$2"
 
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        [[ -n "$line" ]] || continue
-        out_closure+=("$line")
-    done < <(python3 -I "$CHECK_PE" --resolve "$UCRT64_BIN" --dll-list "$DLL_LIST" --objdump "$OBJDUMP" "$stage_dir")
+    _read_closure_names out_closure < <(python3 -I "$CHECK_PE" --resolve "$UCRT64_BIN" --dll-list "$DLL_LIST" --objdump "$OBJDUMP" "$stage_dir")
 
     for dll in "${out_closure[@]}"; do
         if [[ ! -f "$UCRT64_BIN/$dll" ]]; then
@@ -330,6 +340,13 @@ _run_self_test_cases() {
     local fake_out="$test_root/out"
     mkdir -p "$fake_out"
 
+    local crlf_names=()
+    _read_closure_names crlf_names < <(printf 'libbz2-1.dll\r\nliblzma-5.dll\r\n')
+    if [[ "${#crlf_names[@]}" -ne 2 || "${crlf_names[0]}" != libbz2-1.dll || "${crlf_names[1]}" != liblzma-5.dll ]]; then
+        echo "ERROR: self-test did not strip CR from resolved DLL names" >&2
+        return 1
+    fi
+
     _package_fixture "$test_root"
 
     shopt -s nullglob
@@ -375,7 +392,7 @@ run_self_tests() {
     _setup_self_test_fixtures "$test_root"
     _run_self_test_cases "$test_root"
 
-    echo "package-tester-zip: self-test passed (4 cases)"
+    echo "package-tester-zip: self-test passed (5 cases)"
     return 0
 }
 
