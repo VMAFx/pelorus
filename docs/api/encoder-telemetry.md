@@ -777,6 +777,42 @@ python3 -I scripts/check-telemetry-field-parity.py --vmafx FILE  # any VMAFx lis
    `libpelorus/schema/telemetry-fields.json`. JSON has no comment syntax for
    the banner.
 
+## Per-encoder coverage matrix (issue #263)
+
+Each adapter parses external or engine-generated encoder logs and side data into the canonical `PelorusEncTelemetryInput` representation. A field's presence bit in `present_mask` is set only when the underlying encoder source reports that metric; absent fields remain zero with their bit clear.
+
+| Field | x264 stats | x265 CSV | SVT-AV1 stat file |
+|---|---|---|---|
+| Adapter ID | `PEL_TLM_ADAPTER_EXTERNAL` | `PEL_TLM_ADAPTER_X265_CSV` | `PEL_TLM_ADAPTER_SVTAV1_STAT_FILE` |
+| Native QP scale | `PEL_QP_SCALE_SLICE_QP` | `PEL_QP_SCALE_SLICE_QP` | `PEL_QP_SCALE_AV1_ENCODER_QP` |
+| `display_index` | yes | yes | yes |
+| `decode_index` | yes | yes | no |
+| `frame_bytes` | yes | yes | yes |
+| `header_bits` | yes | no | no |
+| `residual_bits` | yes | no | no |
+| `avg_qp` | yes | yes | yes |
+| `avg_qp_norm` | yes | yes | yes |
+| `psnr_y/u/v` | no | no | yes |
+| `ssim_y` | no | no | yes |
+| `intra/inter/skip_fraction` | no | no | no |
+| `picture_type` | yes | yes | no |
+| `key_frame` | yes | yes | no |
+| `reference` | yes | yes | no |
+| `shown` | yes | yes | no |
+| `scene_cut` | no | yes | no |
+| `qp_map` | no | no | no |
+| `bits_map` | no | no | no |
+| `mode_map` | no | no | no |
+| `coded_bit_depth` | yes | yes | yes |
+
+### Native QP scales and normalisation paths
+
+Every adapter normalises its reported native QP to an H.264-equivalent value via `pel_qp_normalize()`:
+
+- **x264 stats**: uses `PEL_QP_SCALE_SLICE_QP` (H.264 slice QP, valid range `-6 * (coded_bit_depth - 8)` to 51). The parser reads adaptive-quantization average QP (`aq:`) from pass-1 stats. Because H.264 slice QP is the canonical reference scale, `pel_qp_normalize()` applies identity mapping (`*out_norm = qp`).
+- **x265 CSV**: uses `PEL_QP_SCALE_SLICE_QP` (HEVC slice QP, valid range `-6 * (coded_bit_depth - 8)` to 51). The parser reads the mandatory `QP` column. Because HEVC slice QP uses the same 6 dB / double-step logarithmic progression as H.264, `pel_qp_normalize()` applies identity mapping (`*out_norm = qp`).
+- **SVT-AV1 stat file**: uses `PEL_QP_SCALE_AV1_ENCODER_QP` (valid range 0..63). The parser reads `Average QP:` (which SVT logs as `round(mean qindex / 4)`) and inverts SVT's `av1_encoder_qindex` mapping table to reconstruct floating-point encoder QP. `pel_qp_normalize()` maps the encoder QP through the `av1_encoder_ac_qtx` AC quantiser step lookup table with the logarithmic formula `6.0f * log2f((qtx / scale) / 0.625f)` and linear interpolation between adjacent integer points.
+
 ## Tests
 
 | Acceptance (issue) | Test |
@@ -789,3 +825,4 @@ python3 -I scripts/check-telemetry-field-parity.py --vmafx FILE  # any VMAFx lis
 | #220 | the Meson tests `telemetry-field-parity` (against the pinned VMAFx list) and `telemetry-field-parity-self-test` |
 | #111 (x264 adapter) | `telemetry_adapter_test.c` parses the real 30-frame x264 0.165 stats fixture, checks pre/post-AQ mapping and high-bit-depth offsets, all five frame types, empty/headerless input, capacity/bounds and atomic rejection of truncated or shifted records |
 | #111 (VVenC adapter) | `telemetry_adapter_test.c` parses the real 10-frame VVenC v1.14.0 log fixture, rejects planted syntax/metrics corruptions, enforces divisible-by-8 bits, maps slice picture type, validates TId 0..6, and maps lossless PSNR inf to 100.0 dB |
+| #263 (telemetry coverage) | `telemetry_adapter_test.c` covers truncated and shifted rows, `test_matched_qp` cross-adapter agreement, and absent-bit checks per adapter; `telemetry_test.c` `test_pack_map_cap` verifies the `PEL_TLM_MAP_MAX_ELEMS` boundary pack and rejection; documented in the per-encoder coverage matrix above |
