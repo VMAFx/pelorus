@@ -67,7 +67,7 @@ Numerical evaluation of $V_q(s, \text{off})$ shows:
 3. **Conversions Unchanged**:
    `pel_grain_aom_to_h274()` and `pel_grain_h274_to_aom()` retain their exact master conversion behavior. When `pel_grain_h274_to_aom()` converts parameters, it reads the linear H.274 sigma descriptor so that its generated AV1 parameters, scaling shift, and fidelity output remain bit-for-bit identical to master.
 
-## Measured Follow-Up Facts
+## Measured findings after acceptance
 
 > [!NOTE]
 > Systematic multi-seed evaluation in [ADR-0217](0217-av1-grain-round-quantization.md) demonstrated that the chroma_1 linear bias and 6% round overprediction below were single-seed 42 artifacts; the round model $R(s)$ matches the 100-seed measured mean within 0.9% across all scales without linear bias.

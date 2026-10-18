@@ -75,7 +75,7 @@ the cheap scalar masking proxy (`coh = e/(0.5+8v)` from per-tile `t_edge`/`t_var
 no structure tensor) cannot reliably distinguish a maskable stochastic texture
 from perceptible detail, so it starves visible detail and SSIMULACRA2 punishes it.
 
-## Alternatives considered / follow-up condition
+## Alternatives considered / revival condition
 
 - **`roi=1` banding-only (the incumbent).** Protects banding tiles, never starves
   texture, keeps the encoder's AQ on — captures the banding win with no fidelity
