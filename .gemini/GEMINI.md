@@ -196,8 +196,8 @@ Engine: pin = `PRAETOR_REF` in `.github/workflows/standards-gate.yml`. Make (`.c
 | `.claude/agents/`, `.codex/agents/`, `.github/agents/`, `.gemini/agents/` | generated persona projections |
 | `.claude/skills/`, `.claude/hooks/`, `.codex/hooks/`, `.gemini/settings.json` | agent skills + hooks; see below |
 | `.vscode/`, `.zed/`, `.idea/`, `.helix/`, `.fleet/`, `.nvim.lua`, `lua/`, `.dir-locals.el`, `standards.sublime-project` | reconciled editor settings |
-| `.github/workflows/` | `ci.yml` product jobs, `standards-gate.yml`, locked `praetor-docs.yml`, `release.yml` (`ci` -> `build` -> tag-only `publish`), reusable `release-build.yml`: build, SBOM, SLSA L3 attestation, cosign; no artefact download or cache before attestation (ADR-0169); `devcontainer-image.yml` builds base image on PR, pushes + attests `ghcr.io/vmafx/pelorus-dev` from `master`; `windows-tester.yml` (path-filtered MSYS2 replay + tester zip artifact, no release); Praetor-rendered `reuse.yml` runs `reuse lint` |
-| `.github/rulesets/main.json` | rendered `master` ruleset (0 reviews, signed commits, linear history, 10 checks); committed, applied only by maintainer `praetorctl sync --remote` |
+| `.github/workflows/` | `ci.yml` product jobs, `standards-gate.yml`, locked `praetor-docs.yml`, `release.yml` (`ci` -> `build` -> tag-only `publish`), reusable `release-build.yml`: build, SBOM, SLSA L3 attestation, cosign; no artefact download or cache before attestation (ADR-0169); `devcontainer-image.yml` builds base image on PR, pushes + attests `ghcr.io/vmafx/pelorus-dev` from `master`; `windows-tester.yml` (path-filtered MSYS2 replay + tester zip artifact, no release); Praetor-rendered `reuse.yml` runs `reuse lint`; `codeql.yml` c-cpp, python, actions code scanning, contract `scripts/check-codeql-workflow.py` (ADR-0220) |
+| `.github/rulesets/main.json` | rendered `master` ruleset (0 reviews, signed commits, linear history, 13 checks); committed, applied only by maintainer `praetorctl sync --remote` |
 
 New top-level package: add row here. New module: scoped `AGENTS.md`.
 
