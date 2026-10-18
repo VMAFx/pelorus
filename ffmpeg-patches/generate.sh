@@ -442,6 +442,8 @@ commit_patch "$HERE/.commit-msg-vulkan.txt"
 # (not allfilters.c / libavfilter/Makefile). It is built on CBS (cbs_h265) and
 # links libpelorus for pel_grain_aom_to_h274 in sidedata mode (ADR-0206).
 cp "$FILES_DIR/h265_pelorus_fgs_bsf.c" "$WORKTREE/libavcodec/bsf/pelorus_fgs.c"
+# pelorus_udu_wrap.h is included as "libavcodec/pelorus_udu_wrap.h" by pelorus_fgs.c (ADR-0210).
+cp "$FILES_DIR/pelorus_udu_wrap.h" "$WORKTREE/libavcodec/"
 python3 - "$WORKTREE" <<'PY'
 import sys, pathlib
 root = pathlib.Path(sys.argv[1])

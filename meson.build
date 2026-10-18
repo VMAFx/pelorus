@@ -381,6 +381,23 @@ if get_option('tests')
   test('sei-fit', sei_fit_test, suite: 'fast')
 endif
 
+# Issue #82 / ADR-0210: classification of direct and x265-wrapped user data
+# unregistered SEI payloads for pelorus_fgs (ffmpeg-patches/files/pelorus_udu_wrap.h).
+if get_option('tests')
+  udu_wrap_test = executable(
+    'pelorus_udu_wrap_test',
+    files('ffmpeg-patches/test/udu_wrap_test.c'),
+    include_directories: include_directories('ffmpeg-patches/files'),
+    dependencies: [libpelorus_dep, cc.find_library('m', required: false)],
+  )
+  test(
+    'udu-wrap',
+    udu_wrap_test,
+    args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'fixtures' / 'udu-wrap-vectors.txt'],
+    suite: 'fast',
+  )
+endif
+
 # Issue #103 / ADR-0184: the DRM format modifier rule of the tiling=drm output
 # pools (ffmpeg-patches/files/pelorus_drm_modifier.h): storage-capable modifiers
 # without auxiliary planes, intersected with drm_modifiers, and the logged
