@@ -19,7 +19,6 @@ import argparse
 import importlib.util
 import json
 import math
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -96,22 +95,24 @@ def resolve_device_name(device_name_arg=None):
     """Query device name from nvidia-smi if not supplied; never invent a name."""
     if device_name_arg and device_name_arg.strip():
         return device_name_arg.strip()
+    message = (
+        "device name could not be queried via nvidia-smi and no --device-name was supplied; "
+        "device identity must not be invented (ADR-0223, #131)"
+    )
     try:
         proc = subprocess.run(
             ["nvidia-smi", "--query-gpu=gpu_name", "--format=csv,noheader"],
             capture_output=True,
             text=True,
             check=True,
+            timeout=30,
         )
-        first_line = proc.stdout.strip().splitlines()[0].strip()
-        if first_line:
-            return first_line
-    except Exception:
-        pass
-    raise RuntimeError(
-        "device name could not be queried via nvidia-smi and no --device-name was supplied; "
-        "device identity must not be invented (ADR-0223, #131)"
-    )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(message) from exc
+    lines = proc.stdout.strip().splitlines()
+    if lines and lines[0].strip():
+        return lines[0].strip()
+    raise RuntimeError(message)
 
 
 def make_record(result_data, device=None, clip=None, encoder=None, filter_name=None, note=None):
