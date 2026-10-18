@@ -1,0 +1,1 @@
+- The HISS baseline drops from 27 to 16 findings across five Vulkan filters (`aa`, `borderfix`, `deband`, `deblock`, and `dehalo`). Every literal `goto` is removed from `filter_frame()` by extracting frame execution into dedicated `<filter>_run()` helpers ([#206](https://github.com/VMAFx/pelorus/issues/206)).

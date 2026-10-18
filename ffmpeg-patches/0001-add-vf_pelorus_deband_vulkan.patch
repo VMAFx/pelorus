@@ -30,10 +30,10 @@ Research: docs/research/0101-smart-deband.md
  libavfilter/pelorus_vulkan_input.h          | 131 +++++
  libavfilter/pelorus_vulkan_pool.h           | 576 ++++++++++++++++++++
  libavfilter/pelorus_vulkan_sample.h         | 100 ++++
- libavfilter/vf_pelorus_deband_vulkan.c      | 483 ++++++++++++++++
+ libavfilter/vf_pelorus_deband_vulkan.c      | 497 +++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
  libavfilter/vulkan/pelorus_deband.comp.glsl | 196 +++++++
- 11 files changed, 1854 insertions(+)
+ 11 files changed, 1868 insertions(+)
 
 diff --git a/configure b/configure
 index 0ebe83a5ae70d894b284b8715cc9862870e2c909..f1c896727d1690d5dba37435ab185464d1d7324f 100755
@@ -1281,10 +1281,10 @@ index 0000000000000000000000000000000000000000..c8a8912daf5325e0d8792ae201f4bbfe
 +#endif /* AVFILTER_PELORUS_VULKAN_SAMPLE_H */
 diff --git a/libavfilter/vf_pelorus_deband_vulkan.c b/libavfilter/vf_pelorus_deband_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..770068c85657da225260c034807a3adb963bd2c2
+index 0000000000000000000000000000000000000000..816eb3c8dec41adf5ad51aa2a408e3a90ed5e404
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_deband_vulkan.c
-@@ -0,0 +1,483 @@
+@@ -0,0 +1,497 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -1510,12 +1510,42 @@ index 0000000000000000000000000000000000000000..770068c85657da225260c034807a3adb
 +    return 0;
 +}
 +
++static int deband_run(AVFilterContext *ctx, AVFrame *out, AVFrame *in)
++{
++    int err;
++    PelorusDebandVulkanContext *s = ctx->priv;
++
++    if (!s->initialized) {
++        err = init_filter(ctx);
++        if (err < 0)
++            return err;
++    }
++
++    s->opts.frame_seed = (uint32_t)(s->frame_idx++);
++
++    err = ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in, VK_NULL_HANDLE, 1,
++                                      &s->opts, sizeof(s->opts));
++    if (err < 0)
++        return err;
++
++    err = av_frame_copy_props(out, in);
++    if (err < 0)
++        return err;
++
++    if (s->meta) {
++        err = attach_interop(s, out);
++        if (err < 0)
++            return err;
++    }
++
++    return 0;
++}
++
 +static int pelorus_deband_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
 +{
 +    int err;
 +    AVFrame *out = NULL;
 +    AVFilterContext *ctx = link->dst;
-+    PelorusDebandVulkanContext *s = ctx->priv;
 +    AVFilterLink *outlink = ctx->outputs[0];
 +
 +    if ((err = pel_vk_refuse_interlaced(ctx, in)) < 0) {
@@ -1525,35 +1555,19 @@ index 0000000000000000000000000000000000000000..770068c85657da225260c034807a3adb
 +
 +    out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
 +    if (!out) {
-+        err = AVERROR(ENOMEM);
-+        goto fail;
++        av_frame_free(&in);
++        return AVERROR(ENOMEM);
 +    }
 +
-+    if (!s->initialized)
-+        RET(init_filter(ctx));
-+
-+    s->opts.frame_seed = (uint32_t)(s->frame_idx++);
-+
-+    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in, VK_NULL_HANDLE, 1, &s->opts,
-+                                    sizeof(s->opts)));
-+
-+    err = av_frame_copy_props(out, in);
-+    if (err < 0)
-+        goto fail;
-+
-+    if (s->meta) {
-+        err = attach_interop(s, out);
-+        if (err < 0)
-+            goto fail;
++    err = deband_run(ctx, out, in);
++    if (err < 0) {
++        av_frame_free(&in);
++        av_frame_free(&out);
++        return err;
 +    }
 +
 +    av_frame_free(&in);
 +    return ff_filter_frame(outlink, out);
-+
-+fail:
-+    av_frame_free(&in);
-+    av_frame_free(&out);
-+    return err;
 +}
 +
 +static void pelorus_deband_vulkan_uninit(AVFilterContext *avctx)

@@ -223,12 +223,42 @@ static int attach_interop(PelorusDebandVulkanContext *s, AVFrame *out)
     return 0;
 }
 
+static int deband_run(AVFilterContext *ctx, AVFrame *out, AVFrame *in)
+{
+    int err;
+    PelorusDebandVulkanContext *s = ctx->priv;
+
+    if (!s->initialized) {
+        err = init_filter(ctx);
+        if (err < 0)
+            return err;
+    }
+
+    s->opts.frame_seed = (uint32_t)(s->frame_idx++);
+
+    err = ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in, VK_NULL_HANDLE, 1,
+                                      &s->opts, sizeof(s->opts));
+    if (err < 0)
+        return err;
+
+    err = av_frame_copy_props(out, in);
+    if (err < 0)
+        return err;
+
+    if (s->meta) {
+        err = attach_interop(s, out);
+        if (err < 0)
+            return err;
+    }
+
+    return 0;
+}
+
 static int pelorus_deband_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
 {
     int err;
     AVFrame *out = NULL;
     AVFilterContext *ctx = link->dst;
-    PelorusDebandVulkanContext *s = ctx->priv;
     AVFilterLink *outlink = ctx->outputs[0];
 
     if ((err = pel_vk_refuse_interlaced(ctx, in)) < 0) {
@@ -238,35 +268,19 @@ static int pelorus_deband_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
 
     out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
     if (!out) {
-        err = AVERROR(ENOMEM);
-        goto fail;
+        av_frame_free(&in);
+        return AVERROR(ENOMEM);
     }
 
-    if (!s->initialized)
-        RET(init_filter(ctx));
-
-    s->opts.frame_seed = (uint32_t)(s->frame_idx++);
-
-    RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd, out, in, VK_NULL_HANDLE, 1, &s->opts,
-                                    sizeof(s->opts)));
-
-    err = av_frame_copy_props(out, in);
-    if (err < 0)
-        goto fail;
-
-    if (s->meta) {
-        err = attach_interop(s, out);
-        if (err < 0)
-            goto fail;
+    err = deband_run(ctx, out, in);
+    if (err < 0) {
+        av_frame_free(&in);
+        av_frame_free(&out);
+        return err;
     }
 
     av_frame_free(&in);
     return ff_filter_frame(outlink, out);
-
-fail:
-    av_frame_free(&in);
-    av_frame_free(&out);
-    return err;
 }
 
 static void pelorus_deband_vulkan_uninit(AVFilterContext *avctx)
