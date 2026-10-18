@@ -208,6 +208,8 @@ def report(args, rows, curves):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from bd_rate import bd_rate
     bd = bd_rate(curves["baseline"], curves["pelorus"])
+    if "error" in bd:
+        print(bd["error"], file=sys.stderr)
     # CAMBI delta at matched cq (lower CAMBI = less banding = better)
     cambi_base = sum(r["cambi"] for r in rows if r["variant"] == "baseline") / len(args.cq)
     cambi_pel = sum(r["cambi"] for r in rows if r["variant"] == "pelorus") / len(args.cq)
@@ -219,7 +221,10 @@ def report(args, rows, curves):
               "cambi_pelorus_mean": round(cambi_pel, 4),
               "cambi_reduction_pct": round((cambi_base - cambi_pel) / cambi_base * 100, 1)
               if cambi_base else 0.0}
-    json.dump(result, open(os.path.join(args.out, "result.json"), "w"), indent=2)
+    if "error" in bd:
+        result["bd_error"] = bd["error"]
+    with open(os.path.join(args.out, "result.json"), "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2)
     print(f"\n== {args.encoder} ==")
     print(f"BD-rate (VMAF): {bd['bd_rate_pct']:+.2f}%   BD-VMAF: {bd['bd_quality']:+.3f}")
     print(f"CAMBI banding: {cambi_base:.4f} -> {cambi_pel:.4f} "

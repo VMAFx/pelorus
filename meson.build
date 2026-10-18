@@ -220,6 +220,15 @@ test('grain-accumulator-bounds',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# ADR-0111: bd_rate.py must enforce a monotonic guard on RD curves (strictly
+# increasing bitrate and score, >= 2 points) and fail closed on invalid or
+# disjoint inputs instead of returning an undefined metric.
+test('bd-rate',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'test-bd-rate.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 # BUG-022: the corpus fetch must fail closed (HTTP error, corrupt body, stalled
 # server) and never leave a file at the cached-download path.
 # The harness passes native-Windows temp paths (CORPUS, CORPUS_LOCK and an
