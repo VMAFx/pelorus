@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # Grain scoring: score the decoded picture, never the reconstruction
 
-**Stance:** `experimental` — Available for HEVC streams with H.274 film grain characteristics SEI today; AV1 support requires an AV1 fixture and a libdav1d leg in the replay ([#82](https://github.com/VMAFx/pelorus/issues/82), [ADR-0207](../adr/0207-grain-scoring-decoded-output.md)).
+**Stance:** `experimental` — Available for HEVC (H.274 FGC SEI) and AV1 (film grain parameters, decoded with libdav1d) ([#82](https://github.com/VMAFx/pelorus/issues/82), [#368](https://github.com/VMAFx/pelorus/issues/368), [ADR-0207](../adr/0207-grain-scoring-decoded-output.md), [ADR-0212](../adr/0212-grain-scoring-av1-libdav1d.md)).
 
 A stream with film grain synthesis carries grain as parameters, not as coded pixels. The decoder adds the grain to the picture it outputs. The encoder's reconstruction (recon) never contains that grain, so a score taken on the recon measures a picture no viewer sees. `scripts/grain-score.sh` scores the decoded, grain-synthesised picture and refuses a recon.
 
@@ -29,10 +29,10 @@ scripts/grain-score.sh \
 | --- | --- | --- |
 | `--ffmpeg BIN` | yes | FFmpeg binary that decodes and scores |
 | `--reference SRC` | yes | reference file, or `lavfi:<graph>` for a generated source |
-| `--stream ENC.hevc` | yes | encoded stream carrying film grain SEI |
+| `--stream ENC.hevc\|ENC.ivf\|ENC.obu` | yes | encoded stream carrying film grain metadata (.hevc, .ivf, .obu) |
 | `--distorted FILE` | no | an already decoded file to score instead of decoding the stream; checked as below |
 | `--metric psnr\|ssim\|vmaf` | yes | metric filter: `psnr`, `ssim` or `libvmaf` |
-| `--out DIR` | yes | evidence directory; `score.txt` holds metric, value and `decode_path: grain-applied` |
+| `--out DIR` | yes | evidence directory; `score.txt` holds metric, value, `decode_path: grain-applied`, `codec:` and `decoder:` |
 
 ## What the script checks
 
@@ -44,7 +44,7 @@ scripts/grain-score.sh \
 FFmpeg n9.0.2 source behind step 1:
 
 - HEVC: `libavcodec/hevc/hevcdec.c:3337-3340` sets `needs_fg` only when the export flag is unset; `hevcdec.c:3488` and `:3491` apply H.274 or AOM grain.
-- AV1 with libdav1d: `libavcodec/libdav1d.c:222` turns off `apply_grain` when the export flag is set. The script does not cover AV1 yet, see the stance line.
+- AV1 with libdav1d: `libavcodec/libdav1d.c:222` turns off `apply_grain` when the export flag is set. The script forces `-c:v libdav1d` and refuses without it; the native `av1` decoder without a hwaccel outputs no frames (measured with n9.0.2, ADR-0212).
 
 ## Verification
 
@@ -58,8 +58,19 @@ FFmpeg n9.0.2 source behind step 1:
 | stream with prefix SEI removed | exit 1, no film grain |
 | `--metric vmaf` without libvmaf | exit 1, names `libvmaf` |
 
+`ffmpeg-patches/test/grain-score-av1-smoke.sh` verifies the AV1 leg via `libdav1d` (ADR-0212). It uses the fixtures `ffmpeg-patches/test/fixtures/grain-av1-fgs.ivf` (192x128, 4 frames, libaom film-grain-test=1) and `grain-av1-nograin.ivf` (same encode, no grain) and checks:
+
+| Case | Expected |
+| --- | --- |
+| a1 stream scored | exit 0, `decoder: libdav1d`, PSNR differs from the PSNR of the grain-free decode |
+| a2 `--distorted` = grain-applied decode | exit 0 |
+| a3 `--distorted` = grain-free decode (planted recon) | exit 1, names `grain-free reconstruction` |
+| a4 `--stream grain-av1-nograin.ivf` | exit 1, no film grain |
+| a5 ffmpeg without libdav1d | exit 1, names `libdav1d` |
+
 ## References
 
 - [`pelorus_fgs`](../usage/grain-fgs-bsf.md): inserts H.274 FGC SEI into HEVC streams.
 - [`pelorus_grain_estimate_vulkan`](grain_estimate.md): grain parameter estimator.
 - [ADR-0207](../adr/0207-grain-scoring-decoded-output.md): decision record for this recipe.
+- [ADR-0212](../adr/0212-grain-scoring-av1-libdav1d.md): AV1 scoring covers libdav1d only.
