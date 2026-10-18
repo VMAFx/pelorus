@@ -74,6 +74,8 @@ Both functions share the contract `int f(AVFrame *out, const AVFrame *in, const 
 > Superseded in part by [ADR-0216](0216-h274-grain-quantization.md).
 >
 > The chroma $\sigma$ gap of the H.274 synthesizer against the descriptor (23.0%) came from floor quantization in `libavcodec/h274.c` (`(scale * db) >> shift`), which the descriptor did not model. With the floor model of [ADR-0216](0216-h274-grain-quantization.md) the measured gap is 3.9% (issue #82). The chroma $\sigma$ gap between the AV1 and H.274 synthesizers (18.4%) is unchanged and remains open.
+>
+> The AV1 descriptor gap (chroma 7.1%, luma 9.4% on seed 42) came from `round2` quantization in `libavcodec/aom_film_grain_template.c`; [ADR-0217](0217-av1-grain-round-quantization.md) models it.
 
 ## References
 

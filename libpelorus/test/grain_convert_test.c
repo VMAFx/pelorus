@@ -200,14 +200,17 @@ static void test_h274_single_interval_to_aom(void)
     pel_result r = pel_grain_h274_to_aom(&h274, 999, &aom, &fid);
     CHECK(r == PEL_OK);
 
-    PelorusGrainDescriptor desc_h;
     PelorusGrainDescriptor desc_a;
-    CHECK(pel_grain_describe_h274(&h274, &desc_h) == PEL_OK);
     CHECK(pel_grain_describe_aom(&aom, &desc_a) == PEL_OK);
 
-    float s_h = desc_h.sigma[0][128];
-    float s_a = pel_quantized_sigma(desc_a.sigma[0][128]);
-    double rel_diff = fabs((double)s_a - (double)s_h) / (double)s_h;
+    /* Conversion preserves linear sigma: comp_model_value[0] = 40, cutoffs 8/8,
+     * log2_scale_factor 3 (factor = 2^(2-3) = 0.5f).
+     * desc_a.sigma[0][128] is R(lin_a) where lin_a == lin_h. */
+    const PelH274GrainStat *st = &pel_h274_grain_stats[(8 - 2) * PEL_H274_CUTOFF_COUNT + (8 - 2)];
+    float lin_h = 40.0f * st->gain * 0.5f;
+    float expected_a = pel_quantized_sigma(lin_h, PEL_QUANT_ROUND_OFFSET);
+    float s_a = desc_a.sigma[0][128];
+    double rel_diff = fabs((double)s_a - (double)expected_a) / (double)expected_a;
     /* Measured diff is 0.00031 (0.031%); tightened to 0.0005 (0.05%) */
     CHECK(rel_diff < 0.0005);
 }
@@ -516,7 +519,7 @@ static void test_h274_chroma_only_to_aom(void)
     CHECK(st->cut_h == 8 && st->cut_v == 8);
     /* Pinned value moved: master linear 1.76475f (30.0f * st->gain * 0.5f) -> quantized floor 1.788205f (ADR-0216) */
     float sig_linear = 30.0f * st->gain * 0.5f;
-    float expected_sig = pel_quantized_sigma(sig_linear);
+    float expected_sig = pel_quantized_sigma(sig_linear, PEL_QUANT_FLOOR_OFFSET);
     CHECK(fabs((double)dh.sigma[1][128] - (double)expected_sig) < 1e-5);
     CHECK(dh.rho_h[1] == st->rho_h);
 }
@@ -543,11 +546,11 @@ static void test_ar_mirror_symmetry(void)
 static void test_floor_vq_minimum(void)
 {
     /* Floor Vq has theoretical minimum 0.5 as s -> 0+. */
-    float sig_near_zero = pel_quantized_sigma(1e-4f);
+    float sig_near_zero = pel_quantized_sigma(1e-4f, PEL_QUANT_FLOOR_OFFSET);
     CHECK(fabs((double)sig_near_zero - 0.5) < 1e-3);
-    float sig_small = pel_quantized_sigma(0.10f);
+    float sig_small = pel_quantized_sigma(0.10f, PEL_QUANT_FLOOR_OFFSET);
     CHECK(fabs((double)sig_small - 0.5000) < 1e-3);
-    float sig_point3 = pel_quantized_sigma(0.30f);
+    float sig_point3 = pel_quantized_sigma(0.30f, PEL_QUANT_FLOOR_OFFSET);
     CHECK(fabs((double)sig_point3 - 0.5017) < 1e-3);
 }
 
@@ -558,7 +561,7 @@ static void test_large_sigma_asymptotic(void)
     for (int i = 0; i < 4; i++) {
         float s = test_sigmas[i];
         float asymp = (float)sqrt((double)s * (double)s + (1.0 / 12.0));
-        float val_floor = pel_quantized_sigma(s);
+        float val_floor = pel_quantized_sigma(s, PEL_QUANT_FLOOR_OFFSET);
         CHECK(fabs((double)val_floor - (double)asymp) / (double)asymp < 0.01);
     }
 }
@@ -569,12 +572,102 @@ static void test_quantized_sigma_monotonicity(void)
     float prev_floor = 0.0f;
     for (int step = 0; step < 100; step++) {
         float s = 0.01f + (float)step * 0.05f;
-        float cur_floor = pel_quantized_sigma(s);
+        float cur_floor = pel_quantized_sigma(s, PEL_QUANT_FLOOR_OFFSET);
         CHECK(cur_floor >= prev_floor);
         prev_floor = cur_floor;
     }
-    float cur_5 = pel_quantized_sigma(5.0f);
+    float cur_5 = pel_quantized_sigma(5.0f, PEL_QUANT_FLOOR_OFFSET);
     CHECK(cur_5 >= prev_floor);
+}
+
+static void test_round_quantized_sigma(void)
+{
+    /* R(s->0+) -> 0 (sd of round of tiny Gaussian). */
+    float sig_near_zero = pel_quantized_sigma(1e-4f, PEL_QUANT_ROUND_OFFSET);
+    CHECK(sig_near_zero < 1e-3f);
+
+    /* Pinned value for s = 0.30: R(0.3) = 0.3092. */
+    float sig_point3 = pel_quantized_sigma(0.30f, PEL_QUANT_ROUND_OFFSET);
+    CHECK(fabs((double)sig_point3 - 0.3092) < 1e-3);
+
+    /* For s in {1.5, 2.5, 4.0, 6.0}, R is within 1% of sqrt(s^2 + 1/12). */
+    const float test_sigmas[4] = {1.5f, 2.5f, 4.0f, 6.0f};
+    for (int i = 0; i < 4; i++) {
+        float s = test_sigmas[i];
+        float asymp = (float)sqrt((double)s * (double)s + (1.0 / 12.0));
+        float val_round = pel_quantized_sigma(s, PEL_QUANT_ROUND_OFFSET);
+        CHECK(fabs((double)val_round - (double)asymp) / (double)asymp < 0.01);
+    }
+
+    /* R is non-decreasing on (0, 5]. */
+    float prev_round = 0.0f;
+    for (int step = 0; step < 100; step++) {
+        float s = 0.01f + (float)step * 0.05f;
+        float cur_round = pel_quantized_sigma(s, PEL_QUANT_ROUND_OFFSET);
+        CHECK(cur_round >= prev_round);
+        prev_round = cur_round;
+    }
+    float cur_5 = pel_quantized_sigma(5.0f, PEL_QUANT_ROUND_OFFSET);
+    CHECK(cur_5 >= prev_round);
+
+    /* describe_aom sigma == R(linear) for a fixture (ar_coeff_lag = 0, g_ar = 1.0f). */
+    PelorusFilmGrainSection aom;
+    memset(&aom, 0, sizeof(aom));
+    aom.grain_model = PEL_GRAIN_AOM;
+    aom.apply = 1;
+    aom.ar_coeff_lag = 0;
+    aom.ar_coeff_shift = 7;
+    aom.grain_scale_shift = 0;
+    aom.scaling_shift = 10;
+    aom.num_y_points = 2;
+    aom.y_points[0][0] = 0;
+    aom.y_points[0][1] = 20;
+    aom.y_points[1][0] = 255;
+    aom.y_points[1][1] = 20;
+    PelorusGrainDescriptor desc;
+    CHECK(pel_grain_describe_aom(&aom, &desc) == PEL_OK);
+
+    float sigma_w = PEL_AOM_GAUSSIAN_SEQUENCE_RMS / (float)(1 << (4 + aom.grain_scale_shift));
+    float inv_scaling_shift = 1.0f / (float)(1 << aom.scaling_shift);
+    float g_ar = 1.0f;
+    float lin_sigma = 20.0f * sigma_w * g_ar * inv_scaling_shift;
+    float expected_r = pel_quantized_sigma(lin_sigma, PEL_QUANT_ROUND_OFFSET);
+    CHECK(fabs((double)desc.sigma[0][128] - (double)expected_r) < 1e-5);
+}
+
+static void test_conversions_bit_identical_to_master(void)
+{
+    PelorusFilmGrainSection aom_in;
+    setup_realistic_aom(&aom_in);
+
+    PelorusH274GrainParams h_out;
+    PelorusGrainFidelity fid1;
+    pel_result r1 = pel_grain_aom_to_h274(&aom_in, &h_out, &fid1);
+    CHECK(r1 == PEL_OK);
+
+    PelorusFilmGrainSection aom_rt;
+    PelorusGrainFidelity fid2;
+    pel_result r2 = pel_grain_h274_to_aom(&h_out, 42, &aom_rt, &fid2);
+    CHECK(r2 == PEL_OK);
+
+    /* Conversions must stay bit-identical to the linear model (ADR-0217).
+     * Pinned from master 18e3914 (before the round descriptor) with this same
+     * hash over the output structs: h_out 0x072327d05dac43fbULL, aom_rt
+     * 0x705301032ab9d4ddULL. The hash covers padding bytes; it is stable
+     * because both converters memset their local struct before memcpy. */
+    uint64_t h_crc = 0;
+    const uint8_t *p_h = (const uint8_t *)&h_out;
+    for (size_t i = 0; i < sizeof(h_out); i++) {
+        h_crc = h_crc * 31ULL + (uint64_t)p_h[i];
+    }
+    CHECK(h_crc == 0x072327d05dac43fbULL);
+
+    uint64_t a_crc = 0;
+    const uint8_t *p_a = (const uint8_t *)&aom_rt;
+    for (size_t i = 0; i < sizeof(aom_rt); i++) {
+        a_crc = a_crc * 31ULL + (uint64_t)p_a[i];
+    }
+    CHECK(a_crc == 0x705301032ab9d4ddULL);
 }
 
 int main(void)
@@ -594,6 +687,8 @@ int main(void)
     test_floor_vq_minimum();
     test_large_sigma_asymptotic();
     test_quantized_sigma_monotonicity();
+    test_round_quantized_sigma();
+    test_conversions_bit_identical_to_master();
 
     if (g_fail != 0) {
         (void)fprintf(stderr, "grain_convert_test: %d failures\n", g_fail);

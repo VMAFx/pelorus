@@ -62,11 +62,15 @@ Numerical evaluation of $V_q(s, \text{off})$ shows:
 
 2. **AOM Descriptor Remains Linear**:
    `pel_grain_describe_aom()` remains linear in this PR, matching master behavior.
+   Superseded by [ADR-0217](0217-av1-grain-round-quantization.md): the AV1 descriptor now models `round2` quantization.
 
 3. **Conversions Unchanged**:
    `pel_grain_aom_to_h274()` and `pel_grain_h274_to_aom()` retain their exact master conversion behavior. When `pel_grain_h274_to_aom()` converts parameters, it reads the linear H.274 sigma descriptor so that its generated AV1 parameters, scaling shift, and fidelity output remain bit-for-bit identical to master.
 
 ## Measured Follow-Up Facts
+
+> [!NOTE]
+> Systematic multi-seed evaluation in [ADR-0217](0217-av1-grain-round-quantization.md) demonstrated that the chroma_1 linear bias and 6% round overprediction below were single-seed 42 artifacts; the round model $R(s)$ matches the 100-seed measured mean within 0.9% across all scales without linear bias.
 
 Investigation of reference synthesizer behavior in `.workingdir/evidence/82-chroma/uvmul.log` established the following facts:
 

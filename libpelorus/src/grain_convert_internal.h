@@ -31,6 +31,13 @@ typedef struct PelH274GrainStat {
 /* Row (cut_v - 2) * 13 + (cut_h - 2). */
 extern const PelH274GrainStat pel_h274_grain_stats[PEL_H274_CUTOFF_COUNT * PEL_H274_CUTOFF_COUNT];
 
-float pel_quantized_sigma(float sigma_lin);
+#define PEL_QUANT_FLOOR_OFFSET 0.0f
+#define PEL_QUANT_ROUND_OFFSET 0.5f
+
+/* Population RMS of FFmpeg's 2048-entry gaussian_sequence in
+ * libavcodec/aom_film_grain_template.c (pinned n9.0.2). */
+#define PEL_AOM_GAUSSIAN_SEQUENCE_RMS 511.5251f
+
+float pel_quantized_sigma(float sigma_lin, float bin_offset);
 
 #endif /* PELORUS_GRAIN_CONVERT_INTERNAL_H */

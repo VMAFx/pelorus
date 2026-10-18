@@ -347,8 +347,8 @@ static int test_fixture_a_luma(Context *ctx, const PelorusGrainDescriptor *desc_
 
         char label[128];
         (void)snprintf(label, sizeof(label), "fixture_a_luma_%d_aom_sigma_vs_desc", lvl);
-        /* Measured worst luma rel_err is ~0.0944; bound set to 0.120 (0.0944 * 1.2 rounded up) */
-        check_assert(ctx, label, fabs(s_aom.sigma - pred_a) / pred_a, 0.120);
+        /* Measured worst luma rel_err is ~0.0246; tightened to 0.030 (0.02462 * 1.2 rounded up, issue #384) */
+        check_assert(ctx, label, fabs(s_aom.sigma - pred_a) / pred_a, 0.030);
 
         (void)snprintf(label, sizeof(label), "fixture_a_luma_%d_h274_sigma_vs_desc", lvl);
         /* Measured worst luma rel_err is ~0.0217; tightened to 0.026 (0.0217 * 1.2 rounded up, ADR-0216) */
@@ -369,22 +369,20 @@ static int test_fixture_a_luma(Context *ctx, const PelorusGrainDescriptor *desc_
     return 0;
 }
 
-static void test_fixture_a_chroma(Context *ctx, const PelorusGrainDescriptor *desc_a,
-                                  const PelorusGrainDescriptor *desc_h)
+static void test_fixture_a_chroma(Context *ctx, const PelorusGrainDescriptor *desc_h)
 {
     for (int p = 1; p <= 2; p++) {
         Stats s_aom;
         Stats s_h274;
         measure_plane(ctx->out_aom, ctx->in, p, &s_aom);
         measure_plane(ctx->out_h274, ctx->in, p, &s_h274);
-        const double pred_a = (double)desc_a->sigma[p][128];
         const double pred_h = (double)desc_h->sigma[p][128];
 
         char label[128];
-        (void)snprintf(label, sizeof(label), "fixture_a_chroma_%d_aom_sigma_vs_desc", p);
-        /* Measured worst chroma aom rel_err is ~0.0712; bound set to 0.090 */
-        check_assert(ctx, label, fabs(s_aom.sigma - pred_a) / pred_a, 0.090);
-
+        /* No seed-42 chroma aom_sigma_vs_desc line: one seed spreads 3.7%
+         * (chroma 1) around the mean, so the 32-seed check
+         * fixture_a_chroma_<p>_aom_sigma_seedmean_vs_desc gates this case at
+         * 0.010 instead of 0.090 (issue #384, ADR-0217). */
         (void)snprintf(label, sizeof(label), "fixture_a_chroma_%d_h274_sigma_vs_desc", p);
         /* Measured worst chroma h274 rel_err is ~0.0392; tightened to 0.048 (0.03919 * 1.2 rounded up, ADR-0216) */
         check_assert(ctx, label, fabs(s_h274.sigma - pred_h) / pred_h, 0.048);
@@ -401,6 +399,62 @@ static void test_fixture_a_chroma(Context *ctx, const PelorusGrainDescriptor *de
         /* Measured worst chroma |rho_v delta| is ~0.1312; bound set to 0.160 */
         check_assert(ctx, label, fabs(s_aom.rho_v - s_h274.rho_v), 0.160);
     }
+}
+
+/* Seed sweep for the multi-seed mean checks (issue #384): AV1 seeds are
+ * 16-bit, so the stride wraps modulo 65536. */
+#define SEEDMEAN_COUNT 32
+#define SEEDMEAN_BASE 42U
+#define SEEDMEAN_STRIDE 7919U
+#define SEEDMEAN_MODULUS 65536U
+
+static int measure_aom_seedmean(Context *ctx, int plane, int lvl, double desc, double *out_mean)
+{
+    if (!(desc > 0.0)) {
+        return 2;
+    }
+    const uint64_t saved_seed = ctx->params_aom->seed;
+    double sum_err = 0.0;
+    int rc = 0;
+    fill_frame(ctx->in, (uint8_t)lvl, 128, 128);
+    for (int i = 0; i < SEEDMEAN_COUNT; i++) {
+        ctx->params_aom->seed =
+            (uint64_t)((SEEDMEAN_BASE + (uint32_t)i * SEEDMEAN_STRIDE) % SEEDMEAN_MODULUS);
+        if (ff_aom_apply_film_grain(ctx->out_aom, ctx->in, ctx->params_aom) < 0) {
+            rc = 2;
+            break;
+        }
+        Stats s;
+        measure_plane(ctx->out_aom, ctx->in, plane, &s);
+        sum_err += (s.sigma - desc) / desc;
+    }
+    ctx->params_aom->seed = saved_seed;
+    *out_mean = fabs(sum_err / (double)SEEDMEAN_COUNT);
+    return rc;
+}
+
+static int test_fixture_a_seedmean(Context *ctx, const PelorusGrainDescriptor *desc_a)
+{
+    const char *names[5] = {
+        "fixture_a_luma_64_aom_sigma_seedmean_vs_desc",
+        "fixture_a_luma_128_aom_sigma_seedmean_vs_desc",
+        "fixture_a_luma_192_aom_sigma_seedmean_vs_desc",
+        "fixture_a_chroma_1_aom_sigma_seedmean_vs_desc",
+        "fixture_a_chroma_2_aom_sigma_seedmean_vs_desc",
+    };
+    const int cases[5][2] = {{0, 64}, {0, 128}, {0, 192}, {1, 128}, {2, 128}};
+    for (int c = 0; c < 5; c++) {
+        int plane = cases[c][0];
+        int lvl = cases[c][1];
+        double desc = (double)desc_a->sigma[plane][lvl];
+        double mean_err = 0.0;
+        int rc = measure_aom_seedmean(ctx, plane, lvl, desc, &mean_err);
+        if (rc != 0) {
+            return rc;
+        }
+        check_assert(ctx, names[c], mean_err, 0.010);
+    }
+    return 0;
 }
 
 static int test_fixture_a(Context *ctx)
@@ -431,8 +485,8 @@ static int test_fixture_a(Context *ctx)
     if (rc != 0) {
         return rc;
     }
-    test_fixture_a_chroma(ctx, &desc_aom, &desc_h274);
-    return 0;
+    test_fixture_a_chroma(ctx, &desc_h274);
+    return test_fixture_a_seedmean(ctx, &desc_aom);
 }
 
 static int test_fixture_b_levels(Context *ctx, const PelorusGrainDescriptor *desc_a,
@@ -459,8 +513,8 @@ static int test_fixture_b_levels(Context *ctx, const PelorusGrainDescriptor *des
 
         char label[128];
         (void)snprintf(label, sizeof(label), "fixture_b_luma_%d_aom_sigma_vs_desc", lvl);
-        /* Coinciding: measured rel_err is ~0.0249; tightened bound set to 0.030 (0.0249 * 1.2) */
-        check_assert(ctx, label, fabs(s_aom.sigma - pred_a) / pred_a, 0.030);
+        /* Coinciding: measured rel_err is ~0.0173; tightened to 0.021 (0.01728 * 1.2 rounded up, issue #384) */
+        check_assert(ctx, label, fabs(s_aom.sigma - pred_a) / pred_a, 0.021);
 
         (void)snprintf(label, sizeof(label), "fixture_b_luma_%d_h274_sigma_vs_desc", lvl);
         /* Coinciding: measured rel_err is ~0.0037; tightened to 0.005 (0.0037 * 1.2 rounded up, ADR-0216) */
