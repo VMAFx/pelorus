@@ -89,7 +89,7 @@ input → wider post-encode bands. This is the v0.1.0 finding ("the encoder
 quantizes the dither away and re-bands") sharpened: not only does the spatial
 gain not survive, **over**-reaching makes the durable result worse.
 
-## Alternatives considered / follow-up condition
+## Alternatives considered / revival condition
 
 - **Dilated multi-ring (built, reverted)** — erratic pre-encode, dominated by
   raised range; doubly refuted by the durability result.
