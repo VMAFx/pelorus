@@ -135,3 +135,5 @@ The quality window section and zone emitters respect this boundary:
 ## Reference loop integration
 
 The quality window section provides the wire format and emitter infrastructure for the closed-loop autotune control plane ([#166](https://github.com/VMAFx/pelorus/issues/166)). In this loop, VMAFx reads encoded stream telemetry, scores decoded windows against pristine reference frames, and adjusts filter parameters and encoder shot targets dynamically.
+
+The reference closed loop is driven by the pure stateless quality loop controller declared in [`pelorus/qloop.h`](../../libpelorus/include/pelorus/qloop.h) (`PelQloopConfig`, `pel_qloop_next()`) and documented in [ADR-0215](../adr/0215-quality-threshold-loop.md). See the [Quality-threshold loop usage recipe](../usage/quality-loop.md) for step-by-step CLI usage and measured cross-encode drift results.

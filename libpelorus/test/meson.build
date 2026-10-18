@@ -108,3 +108,10 @@ quality_test = executable(
 )
 test('quality', quality_test, suite: 'fast')
 
+quality_loop_test = executable(
+  'pelorus_quality_loop_test',
+  files('quality_loop_test.c'),
+  dependencies: libpelorus_dep,
+)
+test('quality-loop', quality_loop_test, suite: 'fast')
+
