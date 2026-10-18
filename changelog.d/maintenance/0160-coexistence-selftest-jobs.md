@@ -1,0 +1,1 @@
+- The `ffmpeg-patches/test/series-coexistence.sh --self-test` bad-input cases now pin the input they do not test (`BUILD=0` for the bad `JOBS` case, `JOBS=4` for the bad `BUILD` case), so an ambient `JOBS` above 4 no longer turns the bad-`BUILD` case red with the `JOBS` error ([#160](https://github.com/VMAFx/pelorus/issues/160)).

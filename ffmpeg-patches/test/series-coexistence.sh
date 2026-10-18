@@ -625,7 +625,7 @@ self_test_bad_jobs()
     local log="$RUN_ROOT/bad-jobs.log" rc=0
 
     (
-        JOBS=5 prepare_run
+        BUILD=0 JOBS=5 prepare_run
     ) >"$log" 2>&1 || rc=$?
     [[ "$rc" == 1 ]] || { fail "bad JOBS=5 returned $rc, expected 1"; return 1; }
     grep -Fq "JOBS must be an integer from 1 to 4" "$log" || {
@@ -634,7 +634,7 @@ self_test_bad_jobs()
     }
     rc=0
     (
-        BUILD=2 prepare_run
+        JOBS=4 BUILD=2 prepare_run
     ) >"$log" 2>&1 || rc=$?
     [[ "$rc" == 1 ]] || { fail "bad BUILD=2 returned $rc, expected 1"; return 1; }
     grep -Fq "BUILD must be 0 or 1" "$log" || {
