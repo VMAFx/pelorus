@@ -72,9 +72,10 @@ WINDOWS_PACKAGES = tuple(
     for name in ("gcc", "meson", "ninja", "python", "glslang", "shaderc")
 )
 # HISS-10 (Praetor 492a00f9 audit): every hosted Meson lane passes --werror on
-# the meson setup command line; the gate does not read default_options.
+# the meson setup command line; the gate does not read default_options. The
+# fetched shared series feeds the sei-fit tests (ADR-0218).
 WINDOWS_COMMANDS = (
-    "meson setup --werror build && ninja -C build",
+    'meson setup --werror build -Dffmpeg_series_dir="$FFMPEG_SERIES_DIR" && ninja -C build',
     "meson test -C build --suite=fast --print-errorlogs",
     "meson test -C build path-utf8 --verbose",
 )
@@ -3028,11 +3029,11 @@ def windows_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
             "is missing meson test -C build --suite=fast --print-errorlogs",
         ),
         "Windows build without warnings as errors": (
-            mutate(
-                "meson setup --werror build && ninja -C build",
-                "meson setup build && ninja -C build",
-            ),
+            mutate("meson setup --werror build", "meson setup build"),
             f"is missing {WINDOWS_COMMANDS[0]}",
+        ),
+        "Windows build without the shared series": (
+            mutate(' -Dffmpeg_series_dir="$FFMPEG_SERIES_DIR"', ""), f"is missing {WINDOWS_COMMANDS[0]}"
         ),
     }
 

@@ -60,11 +60,11 @@ h264_nvenc as written before, none as carriers, up to 49 145 bytes.
 ---
  libavcodec/nvenc.c           |  72 +++++
  libavcodec/nvenc.h           |   8 +
- libavcodec/pelorus_sei_fit.h | 342 ++++++++++++++++++++
- 3 files changed, 422 insertions(+)
+ libavcodec/pelorus_sei_fit.h | 324 ++++++++++++++++++++
+ 3 files changed, 404 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index 4932034eb712015be3a1e21881c2ace65696ac7e..af59c37de146b0b31191bf451aa0bfdff976a6ad 100644
+index 9ea9bc94c6e297f38922a4ab0036ff09db1958c3..86c27e5c8bdcd5fe90bc483302bf5b04550dcd1a 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
 @@ -24,6 +24,7 @@
@@ -75,19 +75,19 @@ index 4932034eb712015be3a1e21881c2ace65696ac7e..af59c37de146b0b31191bf451aa0bfdf
  #if CONFIG_AV1_NVENC_ENCODER
  #include "av1.h"
  #endif
-@@ -2205,6 +2206,11 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
+@@ -2197,6 +2198,11 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
      av_frame_free(&ctx->frame);
  
      av_freep(&ctx->sei_data);
 +    if (ctx->pelorus_udu_stripped)
 +        av_log(avctx, AV_LOG_WARNING, "udu_sei: %"PRId64" Pelorus side data "
 +               "payload(s) were written without their per-cell maps, to stay "
-+               "within hevc_nvenc's %u bytes of parameter sets and SEI per "
-+               "picture.\n", ctx->pelorus_udu_stripped, PEL_SEI_HEVC_NVENC_CAP);
++               "within hevc_nvenc's %d bytes of parameter sets and SEI per "
++               "picture.\n", ctx->pelorus_udu_stripped, NVENC_HEVC_NON_VCL_LIMIT);
      av_freep(&ctx->qp_delta_map);
      av_freep(&ctx->me_hints);
  
-@@ -2929,6 +2935,64 @@ static int nvenc_drop_truncated_udu_sei(AVCodecContext *avctx, const AVFrame *fr
+@@ -2878,6 +2884,64 @@ static int nvenc_drop_truncated_udu_sei(AVCodecContext *avctx, const AVFrame *fr
      return count;
  }
  
@@ -135,8 +135,8 @@ index 4932034eb712015be3a1e21881c2ace65696ac7e..af59c37de146b0b31191bf451aa0bfdf
 +        av_log(avctx, ctx->pelorus_udu_stripped ? AV_LOG_VERBOSE : AV_LOG_WARNING,
 +               "udu_sei: frame pts %"PRId64": the %zu-byte Pelorus side data is "
 +               "written without its per-cell maps (%zu bytes): hevc_nvenc writes "
-+               "at most %u bytes of parameter sets and SEI per picture.\n",
-+               frame->pts, size, keep, PEL_SEI_HEVC_NVENC_CAP);
++               "at most %d bytes of parameter sets and SEI per picture.\n",
++               frame->pts, size, keep, NVENC_HEVC_NON_VCL_LIMIT);
 +        ctx->pelorus_udu_stripped++;
 +    }
 +    if (!ctx->pelorus_udu_carrier_logged) {
@@ -152,7 +152,7 @@ index 4932034eb712015be3a1e21881c2ace65696ac7e..af59c37de146b0b31191bf451aa0bfdf
  static int prepare_sei_data_array(AVCodecContext *avctx, const AVFrame *frame)
  {
      NvencContext *ctx = avctx->priv_data;
-@@ -3038,6 +3102,14 @@ static int prepare_sei_data_array(AVCodecContext *avctx, const AVFrame *frame)
+@@ -2987,6 +3051,14 @@ static int prepare_sei_data_array(AVCodecContext *avctx, const AVFrame *frame)
                  goto error;
              }
  
@@ -188,10 +188,10 @@ index 00edb5dce7f4ec5dcc564a44dfb9138cfc3f066f..a984048d4388a3c12d3afce131b1dccc
  int ff_nvenc_encode_init(AVCodecContext *avctx);
 diff --git a/libavcodec/pelorus_sei_fit.h b/libavcodec/pelorus_sei_fit.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..00ec239b404e3340317d8936335edf1d353f9e08
+index 0000000000000000000000000000000000000000..fbfb1bd290e53198eb3da5dd525c7a0a5d25645c
 --- /dev/null
 +++ b/libavcodec/pelorus_sei_fit.h
-@@ -0,0 +1,342 @@
+@@ -0,0 +1,324 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -231,9 +231,9 @@ index 0000000000000000000000000000000000000000..00ec239b404e3340317d8936335edf1d
 + * fit (nvenc_hevc_sei_fits()). The reserve keeps room for the NAL units NVENC
 + * writes on its own: at most 128 bytes measured (8K Main10, VUI, AUD), plus
 + * the HDR10 and 3D reference display SEI it builds from picture parameters.
-+ * PEL_SEI_HEVC_USER_BUDGET and pel_sei_nal_bytes() mirror that budget and
-+ * that size, so this file can decide on the stripping and the fast suite can
-+ * test it without libavcodec.
++ * Series patch 0027 (v0.3.0) moved those rules into libavcodec/nvenc_sei.h,
++ * plain C like this file; it is included here, so the budget and the size
++ * formula exist once (ADR-0218).
 + *
 + * A Pelorus blob (interop.h) that does not fit is carried without the
 + * per-cell maps appended after its sections: the sections, which hold every
@@ -260,12 +260,11 @@ index 0000000000000000000000000000000000000000..00ec239b404e3340317d8936335edf1d
 +#include <stdint.h>
 +#include <string.h>
 +
-+/* Non-VCL bytes per picture hevc_nvenc accepts, and the share left for SEI
-+ * passed in seiPayloadArray: NVENC_HEVC_NON_VCL_LIMIT and NVENC_HEVC_SEI_BUDGET
-+ * of shared series patch 0003, mirrored. */
-+#define PEL_SEI_HEVC_NVENC_CAP 1024u
-+#define PEL_SEI_HEVC_NVENC_RESERVE 256u
-+#define PEL_SEI_HEVC_USER_BUDGET (PEL_SEI_HEVC_NVENC_CAP - PEL_SEI_HEVC_NVENC_RESERVE)
++#include "nvenc_sei.h"
++
++/* The share of hevc_nvenc's per-picture non-VCL bytes left for SEI passed in
++ * seiPayloadArray (nvenc_sei.h). */
++#define PEL_SEI_HEVC_USER_BUDGET ((size_t)NVENC_HEVC_SEI_BUDGET)
 +
 +/* Mirrored interop.h ABI 1.x layout; R1 (append-only) keeps these offsets
 + * fixed, and sei_fit_test.c checks each against offsetof(). */
@@ -315,37 +314,20 @@ index 0000000000000000000000000000000000000000..00ec239b404e3340317d8936335edf1d
 +    p[3] = (uint8_t)(v >> 24u);
 +}
 +
-+/* Emulation prevention bytes an H.265 NAL unit needs for these `n` bytes. */
-+static inline size_t pel_sei_epb(const uint8_t *p, size_t n)
-+{
-+    size_t zeros = 0;
-+    size_t extra = 0;
-+
-+    for (size_t i = 0; i < n; i++) {
-+        if (zeros >= 2u && p[i] <= 3u) {
-+            extra++;
-+            zeros = 0;
-+        }
-+        zeros = p[i] == 0u ? zeros + 1u : 0u;
-+    }
-+    return extra;
-+}
-+
 +/*
 + * Annex B bytes of the SEI NAL unit NVENC writes for one user data
-+ * unregistered payload of `n` bytes: 4-byte start code, 2-byte NAL header,
-+ * payload type, payload size (n / 255 + 1 bytes), the payload with its
-+ * emulation prevention bytes and the trailing-bits byte, plus one byte for
-+ * emulation prevention across the size and payload boundary. Only a payload
-+ * of at most `limit` bytes is scanned; a larger one returns more than `limit`.
++ * unregistered payload (type 5) of `n` bytes: nvenc_sei_nal_size(). Only a
++ * payload of at most `limit` bytes is scanned; a larger one or a NULL `p`
++ * returns more than `limit`, and one beyond nvenc_sei.h's 32-bit size
++ * returns SIZE_MAX, which no budget below SIZE_MAX admits.
 + */
 +static inline size_t pel_sei_nal_bytes(const uint8_t *p, size_t n, size_t limit)
 +{
-+    const size_t fixed = n + n / 255u + 10u;
-+
-+    if (n > limit || !p)
-+        return fixed;
-+    return fixed + pel_sei_epb(p, n);
++#if SIZE_MAX > UINT32_MAX
++    if (n > UINT32_MAX)
++        return SIZE_MAX;
++#endif
++    return nvenc_sei_nal_size(p, 5u, (uint32_t)n, p ? limit : 0u);
 +}
 +
 +/* interop.h pelorus_sidedata_uuid and pelorus_carrier_uuid (ABI 1.5). */

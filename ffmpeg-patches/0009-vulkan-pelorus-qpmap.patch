@@ -83,7 +83,7 @@ R32_SINT map without a fillable usage, so the probe disables steering there.
  9 files changed, 1766 insertions(+)
 
 diff --git a/configure b/configure
-index 839033a423604cbfaf45a7fffd984bc587d44839..966285c2eb68a38202adeb5d2795e685031ab67e 100755
+index 33f7c8f665cd7a52b4d4c83e62cf4f70a6f91a4d..3f94bdbb73e9b661c3293bb35206d2b9a274b232 100755
 --- a/configure
 +++ b/configure
 @@ -2822,6 +2822,7 @@ CONFIG_EXTRA="
@@ -1990,7 +1990,7 @@ index 1218017555b7d1bf51601f71d1fae6bb70ac8430..98e0d7bc327b4f3decc90ad27cb1800a
      unit_opts->nb_slices = 1;
  
 diff --git a/libavutil/hwcontext_vulkan.c b/libavutil/hwcontext_vulkan.c
-index d92a6a586208bd68c4849eead1e980f51164e9b3..6ad1193c90fb501e2f50a4fc06cce524815b5e60 100644
+index c136677750ae7ad634e16e6a810088275fd979b4..afda5089898e37bb5015546608ec96ee183f8ad2 100644
 --- a/libavutil/hwcontext_vulkan.c
 +++ b/libavutil/hwcontext_vulkan.c
 @@ -109,6 +109,11 @@ typedef struct VulkanDeviceFeatures {

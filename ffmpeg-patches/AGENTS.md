@@ -4,7 +4,7 @@
 Pelorus ships ordered patch stack against exact FFmpeg tag and peeled commit
 in root `build-config.env`, applied on top of shared FFmpeg fix series pinned
 there (`FFMPEG_SERIES_*`, ADR-0185). Current baseline: FFmpeg n9.0.2, series
-`v0.2.0`. Parent rules in
+`v0.3.0`. Parent rules in
 [`../AGENTS.md`](../AGENTS.md) also apply;
 [ADR-0104](../docs/adr/0104-ffmpeg-patch-stack.md) governs delivery model.
 
@@ -138,8 +138,9 @@ ffmpeg-patches/
    truncated SEI (0004: `epb > ceil(P/3)+3`), their log lines. Never
    re-add budget or drop code here; never edit series lines. Rebase-sensitive:
    hook position, `sei_budget` name, `NV_ENC_SEI_PAYLOAD` copy owned by loop.
-   `files/pelorus_sei_fit.h` = size arithmetic (mirror of series
-   `nvenc_sei_nal_size()`), map stripping, COBS carrier encoder; mirrors
+   `files/pelorus_sei_fit.h` = includes series `nvenc_sei.h` (0027) for
+   budget + `nvenc_sei_nal_size()`, never copies them (ADR-0218); map
+   stripping, COBS carrier encoder; mirrors
    interop offsets and `interop.c` encoder; fast test `sei-fit` checks offsets
    with `offsetof()` and carrier bytes against `pel_blob_carrier_encode()`.
    Budget charges carrier, never blob. New section with maps -> add its fields

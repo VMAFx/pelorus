@@ -23,6 +23,10 @@ jobs:
     name: libpelorus (build · test · format · tidy)
     runs-on: ubuntu-26.04
     timeout-minutes: 45
+    env:
+      # scripts/fetch-ffmpeg-series.sh verifies the shared FFmpeg fix series'
+      # build provenance with gh attestation verify (ADR-0185, ADR-0218).
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -42,6 +46,15 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build glslc glslang-tools clang clang-format clang-tidy \
             locales pkg-config
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Fetch and verify the shared FFmpeg fix series
+        # The sei-fit test reads libavcodec/nvenc_sei.h from the series patches
+        # (ADR-0218); fetch-ffmpeg-series.sh verifies sha256 pin, cosign and
+        # build provenance and fails closed.
+        run: |
+          series="$(scripts/fetch-ffmpeg-series.sh "$RUNNER_TEMP/ffmpeg-series")"
+          printf 'FFMPEG_SERIES_DIR=%s\n' "$series" >> "$GITHUB_ENV"
       - name: Generate comma-decimal locale
         run: |
           sudo locale-gen de_DE.UTF-8
@@ -54,15 +67,19 @@ jobs:
           glslc --version
           glslangValidator --version
       - name: Configure + build
-        run: meson setup --werror build && ninja -C build
+        run: meson setup --werror build -Dffmpeg_series_dir="$FFMPEG_SERIES_DIR" && ninja -C build
       - name: Optimised gcc build (-O2, warnings are errors)
         # gcc raises -Wmaybe-uninitialized only with the optimiser on, which the
         # default debug build above does not run.
-        run: CC=gcc meson setup --werror build-o2 --buildtype=debugoptimized && ninja -C build-o2
+        run: |
+          CC=gcc meson setup --werror build-o2 --buildtype=debugoptimized \
+            -Dffmpeg_series_dir="$FFMPEG_SERIES_DIR"
+          ninja -C build-o2
       - name: Test (fast suite — interop ABI + shader compile)
         run: |
           meson test -C build --suite=fast --print-errorlogs
-          python3 -I scripts/check-test-skips.py build/meson-logs/testlog.json
+          python3 -I scripts/check-test-skips.py --require pelorus:sei-fit \
+            --require pelorus:sei-fit-planted build/meson-logs/testlog.json
       - name: clang-format (touched-tree clean)
         run: find libpelorus \( -name '*.c' -o -name '*.h' \) -exec clang-format --dry-run --Werror {} +
       - name: clang-tidy
@@ -469,6 +486,10 @@ jobs:
     name: libpelorus (ASan + UBSan — the interop conformance fixture)
     runs-on: ubuntu-26.04
     timeout-minutes: 45
+    env:
+      # scripts/fetch-ffmpeg-series.sh verifies the shared FFmpeg fix series'
+      # build provenance with gh attestation verify (ADR-0185, ADR-0218).
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -487,6 +508,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build clang pkg-config glslc glslang-tools
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Fetch and verify the shared FFmpeg fix series
+        # The sei-fit test reads libavcodec/nvenc_sei.h from the series patches
+        # (ADR-0218); fetch-ffmpeg-series.sh verifies sha256 pin, cosign and
+        # build provenance and fails closed.
+        run: |
+          series="$(scripts/fetch-ffmpeg-series.sh "$RUNNER_TEMP/ffmpeg-series")"
+          printf 'FFMPEG_SERIES_DIR=%s\n' "$series" >> "$GITHUB_ENV"
       - name: Runner and toolchain receipt
         run: |
           echo "ImageOS=${ImageOS:-unset}"
@@ -501,9 +531,10 @@ jobs:
           # Meson's sanitizer option adds the runtime to every shared-library
           # link. Make alignment UB fatal: issue #44 otherwise logged and passed.
           meson setup --werror build-san -Db_sanitize=address,undefined -Db_lundef=false \
-            -Dc_args=-fno-sanitize-recover=alignment
+            -Dc_args=-fno-sanitize-recover=alignment -Dffmpeg_series_dir="$FFMPEG_SERIES_DIR"
           meson test -C build-san --suite=fast --print-errorlogs
-          python3 -I scripts/check-test-skips.py build-san/meson-logs/testlog.json
+          python3 -I scripts/check-test-skips.py --require pelorus:sei-fit \
+            --require pelorus:sei-fit-planted build-san/meson-logs/testlog.json
 
   windows:
     # ADR-0149: the native Windows leg. It exists for the Windows-only halves of
@@ -512,6 +543,10 @@ jobs:
     name: libpelorus (Windows · MSYS2 UCRT64 · fast suite)
     runs-on: windows-2025
     timeout-minutes: 45
+    env:
+      # scripts/fetch-ffmpeg-series.sh verifies the shared FFmpeg fix series'
+      # build provenance with gh attestation verify (ADR-0185, ADR-0218).
+      GH_TOKEN: ${{ github.token }}
     defaults:
       run:
         shell: msys2 {0}
@@ -522,11 +557,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Install MSYS2 UCRT64 toolchain
         uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
         with:
           msystem: UCRT64
           update: false
+          # cosign and gh come from the runner's PATH for the series fetch.
+          path-type: inherit
           install: >-
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-meson
@@ -555,13 +594,23 @@ jobs:
           python3 --version
           glslc --version
           glslangValidator --version
+      - name: Fetch and verify the shared FFmpeg fix series
+        # The sei-fit test reads libavcodec/nvenc_sei.h from the series patches
+        # (ADR-0218); fetch-ffmpeg-series.sh verifies sha256 pin, cosign and
+        # build provenance and fails closed.
+        run: |
+          # GNU tar reads C:/... as a remote host, so fetch on the MSYS path
+          # and hand the native Python under Meson the mixed form.
+          series="$(scripts/fetch-ffmpeg-series.sh "$(cygpath -u "$RUNNER_TEMP")/ffmpeg-series")" || exit 1
+          printf 'FFMPEG_SERIES_DIR=%s\n' "$(cygpath -m "$series")" >> "$GITHUB_ENV"
       - name: Configure + build
-        run: meson setup --werror build && ninja -C build
+        run: meson setup --werror build -Dffmpeg_series_dir="$FFMPEG_SERIES_DIR" && ninja -C build
       - name: Test (fast suite, including the UTF-8 path contract)
         run: |
           # && keeps a failing suite failing whatever flags the msys2 shell sets.
           meson test -C build --suite=fast --print-errorlogs &&
-            python3 -I scripts/check-test-skips.py build/meson-logs/testlog.json
+            python3 -I scripts/check-test-skips.py --require pelorus:sei-fit \
+              --require pelorus:sei-fit-planted build/meson-logs/testlog.json
       - name: UTF-8 path contract transcript
         run: meson test -C build path-utf8 --verbose
 

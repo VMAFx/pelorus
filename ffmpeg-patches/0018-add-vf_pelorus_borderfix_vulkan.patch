@@ -32,10 +32,10 @@ ADR: docs/adr/0128-borderfix.md
  6 files changed, 349 insertions(+)
 
 diff --git a/configure b/configure
-index ce0fc60c540fb5d7b76744ba2d86b621a40bd229..2412caded930e3bda0cdd21c61d67bb2cdbbe8db 100755
+index 136e4685a2f032832c819655deff7e8f8620ef1b..39481f9bd82b5a8710f046fdf9e6da69e3b3ce33 100755
 --- a/configure
 +++ b/configure
-@@ -4245,6 +4245,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
+@@ -4250,6 +4250,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
  overlay_vulkan_filter_deps="vulkan spirv_compiler"
  pelorus_aa_vulkan_filter_deps="vulkan spirv_compiler"
  pelorus_analyze_vulkan_filter_deps="vulkan spirv_compiler"
@@ -44,10 +44,10 @@ index ce0fc60c540fb5d7b76744ba2d86b621a40bd229..2412caded930e3bda0cdd21c61d67bb2
  pelorus_deblock_vulkan_filter_deps="vulkan spirv_compiler"
  pelorus_dehalo_vulkan_filter_deps="vulkan spirv_compiler"
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index 7431a8cbbcbae200cfc742480020ca36944ddf32..40e41f3d7b7e3eca2a5c2cc5850ecc5baaefb878 100644
+index 77ea5d71235a9d7fe5f4994f382a93bc5e0adf25..d05ac846b6c5e329f062e506fa2fe1e4da2c59fb 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
-@@ -435,6 +435,7 @@ OBJS-$(CONFIG_PALETTEGEN_FILTER)             += vf_palettegen.o palette.o
+@@ -443,6 +443,7 @@ OBJS-$(CONFIG_PALETTEGEN_FILTER)             += vf_palettegen.o palette.o
  OBJS-$(CONFIG_PALETTEUSE_FILTER)             += vf_paletteuse.o framesync.o palette.o
  OBJS-$(CONFIG_PELORUS_AA_VULKAN_FILTER)      += vf_pelorus_aa_vulkan.o vulkan.o vulkan_filter.o
  OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vf_pelorus_analyze_vulkan.o vulkan.o vulkan_filter.o
@@ -56,10 +56,10 @@ index 7431a8cbbcbae200cfc742480020ca36944ddf32..40e41f3d7b7e3eca2a5c2cc5850ecc5b
  OBJS-$(CONFIG_PELORUS_DEBLOCK_VULKAN_FILTER) += vf_pelorus_deblock_vulkan.o vulkan.o vulkan_filter.o
  OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER)  += vf_pelorus_dehalo_vulkan.o vulkan.o vulkan_filter.o
 diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
-index 9985efd56d8026261a43cba1283408ac3409ba25..570b308238750a84ce432a4e3484241dcf725841 100644
+index ebc6b0a4187fc4a21e5672a2d9a2a4cf2408dbda..4bd150e3632607a30233301b07ff6253bcde2d21 100644
 --- a/libavfilter/allfilters.c
 +++ b/libavfilter/allfilters.c
-@@ -407,6 +407,7 @@ extern const FFFilter ff_vf_palettegen;
+@@ -412,6 +412,7 @@ extern const FFFilter ff_vf_palettegen;
  extern const FFFilter ff_vf_paletteuse;
  extern const FFFilter ff_vf_pelorus_aa_vulkan;
  extern const FFFilter ff_vf_pelorus_analyze_vulkan;
@@ -314,10 +314,10 @@ index 0000000000000000000000000000000000000000..6fb4f2a92505d9a771ae7549d5b3cec9
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
 diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
-index 8e75e876856feb0a34b5188010c0f01a1a2644d8..f324fac9bff249e5da86cddf2426ab08b8b8368d 100644
+index 4e781e0398e8dfe93336ab3d4c128efe96e5dde7..f08a6eaebec999404e86638eadb3685a3d8a204b 100644
 --- a/libavfilter/vulkan/Makefile
 +++ b/libavfilter/vulkan/Makefile
-@@ -29,3 +29,4 @@ OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER) += vulkan/pelorus_mc.comp.spv.o
+@@ -33,3 +33,4 @@ OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER) += vulkan/pelorus_mc.comp.spv.o
  OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER) += vulkan/pelorus_dehalo.comp.spv.o
  OBJS-$(CONFIG_PELORUS_AA_VULKAN_FILTER) += vulkan/pelorus_aa.comp.spv.o
  OBJS-$(CONFIG_PELORUS_DEBLOCK_VULKAN_FILTER) += vulkan/pelorus_deblock.comp.spv.o

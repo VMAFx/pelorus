@@ -52,7 +52,7 @@ ADR: docs/adr/0117-grain-fgs-bsf.md, docs/adr/0155-fgs-bsf-rdd5-profile.md
  5 files changed, 986 insertions(+)
 
 diff --git a/configure b/configure
-index 966285c2eb68a38202adeb5d2795e685031ab67e..1e4c70006243bfc9a6df7e6918259ae6c0d4cae8 100755
+index 3f94bdbb73e9b661c3293bb35206d2b9a274b232..33f22c3e0ac5128fdb07aabfe5c27d93115c4a15 100755
 --- a/configure
 +++ b/configure
 @@ -3772,6 +3772,7 @@ hevc_metadata_bsf_select="cbs_h265"
@@ -63,7 +63,7 @@ index 966285c2eb68a38202adeb5d2795e685031ab67e..1e4c70006243bfc9a6df7e6918259ae6
  smpte436m_to_eia608_bsf_select="smpte_436m"
  trace_headers_bsf_select="cbs cbs_vp8"
  vp9_metadata_bsf_select="cbs_vp9"
-@@ -7478,6 +7479,8 @@ pelorus_grain_estimate_vulkan_filter_extralibs="libpelorus_extralibs"
+@@ -7484,6 +7485,8 @@ pelorus_grain_estimate_vulkan_filter_extralibs="libpelorus_extralibs"
  enabled pelorus_grain_estimate_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
  pelorus_mc_vulkan_filter_extralibs="libpelorus_extralibs"
  enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack

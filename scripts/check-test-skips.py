@@ -13,10 +13,15 @@ test name ("pelorus:<name>"), "reason" the test's last stdout line that starts
 with "SKIP: ", "issue" the issue or ADR that keeps the skip. A listed test that
 skips for another reason fails like an unlisted one.
 
-Exit status: 0 every skip is listed; 1 an unlisted skip; 2 the log or the
-allow-list is missing, empty or malformed (never a pass).
+--require NAME (repeatable) names a test that must have run and passed
+(result OK, or EXPECTEDFAIL for a should_fail test): a CI job that sets up
+what the test needs uses it, so a listed skip there still fails (ADR-0218).
 
-    python3 -I scripts/check-test-skips.py build/meson-logs/testlog.json
+Exit status: 0 every skip is listed and every required test passed; 1 an
+unlisted skip or a required test that skipped, failed or is absent; 2 the log
+or the allow-list is missing, empty or malformed (never a pass).
+
+    python3 -I scripts/check-test-skips.py [--require NAME]... build/meson-logs/testlog.json
     python3 -I scripts/check-test-skips.py --self-test
 """
 
@@ -28,6 +33,8 @@ from pathlib import Path
 ALLOW_LIST = Path(__file__).resolve().parent.parent / ".config" / "test-skips.json"
 SKIP_PREFIX = "SKIP: "
 MAX_RECORDS = 10000
+MAX_REQUIRED = 64
+PASSED = ("OK", "EXPECTEDFAIL")
 
 
 class Malformed(Exception):
@@ -91,8 +98,8 @@ def skip_reason(record):
     return found[-1] if found else ""
 
 
-def check(log_path, allow_path):
-    """Return the exit status; prints every unlisted skip."""
+def check(log_path, allow_path, required=()):
+    """Return the exit status; prints every unlisted skip and missed requirement."""
     try:
         allowed = load_allow_list(allow_path)
         records = load_records(log_path)
@@ -110,6 +117,14 @@ def check(log_path, allow_path):
         print("check-test-skips: %s skipped and is not listed with this reason"
               " in %s: %r" % (name, allow_path.name, reason or "(no SKIP line)"))
         status = 1
+    results = {test_name(record): record.get("result") for record in records}
+    for name in required:
+        if results.get(name) in PASSED:
+            print("check-test-skips: %s ran as required: %s" % (name, results[name]))
+            continue
+        print("check-test-skips: %s is required to run and pass, result %s"
+              % (name, results.get(name, "absent")))
+        status = 1
     return status
 
 
@@ -119,7 +134,7 @@ def record_line(name, result, stdout):
 
 SELF_TEST_ALLOW = [{"test": "pelorus:a", "reason": "SKIP: no device", "issue": "#1"}]
 SELF_TEST_CASES = [
-    # (label, testlog lines, allow-list, expected status)
+    # (label, testlog lines, allow-list, expected status[, required tests])
     ("listed skip", [record_line("pelorus:a", "SKIP", "x\nSKIP: no device\n")],
      SELF_TEST_ALLOW, 0),
     ("no skip", [record_line("pelorus:b", "OK", "")], SELF_TEST_ALLOW, 0),
@@ -133,6 +148,18 @@ SELF_TEST_CASES = [
     ("malformed log", ["{not json"], SELF_TEST_ALLOW, 2),
     ("allow-list entry without issue",
      [record_line("pelorus:a", "OK", "")], [{"test": "pelorus:a", "reason": "SKIP: x"}], 2),
+    ("required test ran", [record_line("pelorus:a", "OK", "")], SELF_TEST_ALLOW, 0,
+     ["pelorus:a"]),
+    ("required should_fail test failed as expected",
+     [record_line("pelorus:a", "EXPECTEDFAIL", "")], SELF_TEST_ALLOW, 0, ["pelorus:a"]),
+    ("required test skipped as listed",
+     [record_line("pelorus:a", "SKIP", "SKIP: no device\n")], SELF_TEST_ALLOW, 1, ["pelorus:a"]),
+    ("required test absent", [record_line("pelorus:b", "OK", "")], SELF_TEST_ALLOW, 1,
+     ["pelorus:a"]),
+    ("required test failed", [record_line("pelorus:a", "FAIL", "")], SELF_TEST_ALLOW, 1,
+     ["pelorus:a"]),
+    ("required should_fail test passed",
+     [record_line("pelorus:a", "UNEXPECTEDPASS", "")], SELF_TEST_ALLOW, 1, ["pelorus:a"]),
     ("allow-list reason without prefix",
      [record_line("pelorus:a", "OK", "")],
      [{"test": "pelorus:a", "reason": "no device", "issue": "#1"}], 2),
@@ -144,10 +171,10 @@ def self_test():
     failures = 0
     with tempfile.TemporaryDirectory() as tmp:
         log_path, allow_path = Path(tmp) / "testlog.json", Path(tmp) / "test-skips.json"
-        for label, lines, allow, expected in SELF_TEST_CASES:
+        for label, lines, allow, expected, *required in SELF_TEST_CASES:
             log_path.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
             allow_path.write_text(json.dumps(allow), encoding="utf-8")
-            got = check(log_path, allow_path)
+            got = check(log_path, allow_path, required[0] if required else ())
             if got != expected:
                 print("self-test FAIL: %s: status %d, want %d" % (label, got, expected))
                 failures += 1
@@ -161,10 +188,14 @@ def self_test():
 def main(argv):
     if argv == ["--self-test"]:
         return self_test()
-    if len(argv) != 1:
+    required = []
+    while len(argv) > 2 and argv[0] == "--require" and len(required) < MAX_REQUIRED:
+        required.append(argv[1])
+        argv = argv[2:]
+    if len(argv) != 1 or argv[0].startswith("--"):
         print(__doc__.strip().splitlines()[-2].strip())
         return 2
-    return check(Path(argv[0]), ALLOW_LIST)
+    return check(Path(argv[0]), ALLOW_LIST, required)
 
 
 if __name__ == "__main__":

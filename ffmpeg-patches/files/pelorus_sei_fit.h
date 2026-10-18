@@ -37,9 +37,9 @@
  * fit (nvenc_hevc_sei_fits()). The reserve keeps room for the NAL units NVENC
  * writes on its own: at most 128 bytes measured (8K Main10, VUI, AUD), plus
  * the HDR10 and 3D reference display SEI it builds from picture parameters.
- * PEL_SEI_HEVC_USER_BUDGET and pel_sei_nal_bytes() mirror that budget and
- * that size, so this file can decide on the stripping and the fast suite can
- * test it without libavcodec.
+ * Series patch 0027 (v0.3.0) moved those rules into libavcodec/nvenc_sei.h,
+ * plain C like this file; it is included here, so the budget and the size
+ * formula exist once (ADR-0218).
  *
  * A Pelorus blob (interop.h) that does not fit is carried without the
  * per-cell maps appended after its sections: the sections, which hold every
@@ -66,12 +66,11 @@
 #include <stdint.h>
 #include <string.h>
 
-/* Non-VCL bytes per picture hevc_nvenc accepts, and the share left for SEI
- * passed in seiPayloadArray: NVENC_HEVC_NON_VCL_LIMIT and NVENC_HEVC_SEI_BUDGET
- * of shared series patch 0003, mirrored. */
-#define PEL_SEI_HEVC_NVENC_CAP 1024u
-#define PEL_SEI_HEVC_NVENC_RESERVE 256u
-#define PEL_SEI_HEVC_USER_BUDGET (PEL_SEI_HEVC_NVENC_CAP - PEL_SEI_HEVC_NVENC_RESERVE)
+#include "nvenc_sei.h"
+
+/* The share of hevc_nvenc's per-picture non-VCL bytes left for SEI passed in
+ * seiPayloadArray (nvenc_sei.h). */
+#define PEL_SEI_HEVC_USER_BUDGET ((size_t)NVENC_HEVC_SEI_BUDGET)
 
 /* Mirrored interop.h ABI 1.x layout; R1 (append-only) keeps these offsets
  * fixed, and sei_fit_test.c checks each against offsetof(). */
@@ -121,37 +120,20 @@ static inline void pel_sei_wr32(uint8_t *p, uint32_t v)
     p[3] = (uint8_t)(v >> 24u);
 }
 
-/* Emulation prevention bytes an H.265 NAL unit needs for these `n` bytes. */
-static inline size_t pel_sei_epb(const uint8_t *p, size_t n)
-{
-    size_t zeros = 0;
-    size_t extra = 0;
-
-    for (size_t i = 0; i < n; i++) {
-        if (zeros >= 2u && p[i] <= 3u) {
-            extra++;
-            zeros = 0;
-        }
-        zeros = p[i] == 0u ? zeros + 1u : 0u;
-    }
-    return extra;
-}
-
 /*
  * Annex B bytes of the SEI NAL unit NVENC writes for one user data
- * unregistered payload of `n` bytes: 4-byte start code, 2-byte NAL header,
- * payload type, payload size (n / 255 + 1 bytes), the payload with its
- * emulation prevention bytes and the trailing-bits byte, plus one byte for
- * emulation prevention across the size and payload boundary. Only a payload
- * of at most `limit` bytes is scanned; a larger one returns more than `limit`.
+ * unregistered payload (type 5) of `n` bytes: nvenc_sei_nal_size(). Only a
+ * payload of at most `limit` bytes is scanned; a larger one or a NULL `p`
+ * returns more than `limit`, and one beyond nvenc_sei.h's 32-bit size
+ * returns SIZE_MAX, which no budget below SIZE_MAX admits.
  */
 static inline size_t pel_sei_nal_bytes(const uint8_t *p, size_t n, size_t limit)
 {
-    const size_t fixed = n + n / 255u + 10u;
-
-    if (n > limit || !p)
-        return fixed;
-    return fixed + pel_sei_epb(p, n);
+#if SIZE_MAX > UINT32_MAX
+    if (n > UINT32_MAX)
+        return SIZE_MAX;
+#endif
+    return nvenc_sei_nal_size(p, 5u, (uint32_t)n, p ? limit : 0u);
 }
 
 /* interop.h pelorus_sidedata_uuid and pelorus_carrier_uuid (ABI 1.5). */

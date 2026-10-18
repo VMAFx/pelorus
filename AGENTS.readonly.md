@@ -109,7 +109,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 
 ## Project state
 
-- Inventory: 10 filters (deband, analyze, denoise, grain_estimate, mc, dehalo, aa, deblock, borderfix, scenecut) plus `pelorus_fgs` BSF; 22-patch stack (number 0021 retired) on shared FFmpeg fix series `v0.2.0` (VMAFx/ffmpeg-patches, ADR-0185; 0008 = #309 queue de-phase, ADR-0192).
+- Inventory: 10 filters (deband, analyze, denoise, grain_estimate, mc, dehalo, aa, deblock, borderfix, scenecut) plus `pelorus_fgs` BSF; 22-patch stack (number 0021 retired) on shared FFmpeg fix series `v0.3.0` (VMAFx/ffmpeg-patches, ADR-0185; 0008 = #309 queue de-phase, ADR-0192; 0027 `nvenc_sei.h` = SEI size rules 0022 includes, ADR-0218).
 - Encoder steering: NVENC, QSV, Vulkan, libaom, SVT-AV1 patches; QP-feedback path. README "Modules" table: current inventory, no stubs.
 - FFmpeg 9 base: build-time SPIR-V, no runtime GLSL API (ADR-0143).
 - Forge: `VMAFx/pelorus`. Run `gh repo set-default vmafx/pelorus` before any `gh` command.
@@ -172,7 +172,7 @@ Engine: pin = `PRAETOR_REF` in `.github/workflows/standards-gate.yml`. Make (`.c
 | `ffmpeg-patches/files/` | canonical FFmpeg host/filter sources |
 | `ffmpeg-patches/files/vulkan/` | canonical shipped shader sources |
 | `ffmpeg-patches/0001-*.patch` | generated artifacts; never hand-edit |
-| `ffmpeg-patches/{generate.sh,series.txt,test/}` | regeneration, apply order (after shared series), replay + smoke gate |
+| `ffmpeg-patches/{generate.sh,series.txt,test/}` | regeneration, apply order (after shared series), replay + smoke gate; `test/series/` = Meson targets writing series `nvenc_sei.h` + planted twin (ADR-0218) |
 | `docs/adr/` | decisions; reserve via `scripts/adr/next-free.sh --claim <slug>` |
 | `docs/{architecture,api,metrics,usage,backends,development}/` | human-readable surface docs |
 | `docs/research/` | measured deep-dive evidence |
@@ -180,7 +180,7 @@ Engine: pin = `PRAETOR_REF` in `.github/workflows/standards-gate.yml`. Make (`.c
 | `tools/pelorus_qp_report.c`, `tools/pelorus_zones.c`, `tools/pelorus_qloop.c` | libpelorus CLI demonstrators; not installed |
 | `tools/tester/` | tester report program (stdlib Python, `python3 -I`), JSON schema, `--self-test` (ADR-0173) |
 | `tools/markdownlint/`, `tools/figures/` | Praetor-managed docs gate; refresh via `adopt` only |
-| `scripts/` | ADR claim, bench, release, build-config + shader checks, shared-series fetch + verify (`fetch-ffmpeg-series.sh`, ADR-0185), secret scan (`check-gitleaks.sh`, ADR-0190), Windows tester zip packaging + PE import check (`windows/`, ADR-0213) |
+| `scripts/` | ADR claim, bench, release, build-config + shader checks, shared-series fetch + verify (`fetch-ffmpeg-series.sh`, ADR-0185), series file extract for fast suite (`extract-series-file.py`, ADR-0218), secret scan (`check-gitleaks.sh`, ADR-0190), Windows tester zip packaging + PE import check (`windows/`, ADR-0213) |
 | `Makefile`, `lefthook.yml` | native + governance entry points; Git hooks opt-in (`make hooks-install`; `no_auto_install`) |
 | `.standards.yaml`, `.standards.lock`, `.standards-baseline.json`, `.config/` | Praetor policy, lock, catalog, labels, HISS baseline, clang-tidy lane list, named test skips (`test-skips.json`, ADR-0188), Lefthook checkpoint scripts + policy, engine launcher (`lefthook/engine.sh`) + make fragment (`praetor/engine.mk`), agent interceptor |
 | `.devcontainer/` | Praetor-rendered dev container bundle (audit: byte-exact; regenerate, never hand-edit); `base/Containerfile` toolchain base image (ADR-0153) |
@@ -233,6 +233,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | governance + native gate | verification gate |
 | install | `ninja -C build install` |
 | fetch + verify shared series | `scripts/fetch-ffmpeg-series.sh /absolute/new-dir` (`--self-test`: planted defects) |
+| fast suite with sei-fit | `make FFMPEG_SERIES_DIR=<dir printed by fetch> verify-native` (`-Dffmpeg_series_dir`; unset = named skip, ADR-0218) |
 | regenerate patches | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh` |
 | replay stack | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh` |
 | compile contexts | `make compile-context` |
@@ -258,7 +259,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | Component | Pin |
 | --- | --- |
 | FFmpeg patch base | `n9.0.2` / `946fcce07b6dcd0331c8cc609192aeff5e1924f8` from `build-config.env` |
-| Shared FFmpeg fix series | VMAFx/ffmpeg-patches `v0.2.0` / `d958384a13297fc009c74f4eb5080b9d83db3a74`, tarball sha256 `1f16f72e77bbe4ca14f9dc8712ae98165bfd1e45694e4c0d608fef02bac1db05`, from `build-config.env`; hand bump, no Renovate ([ADR-0185](docs/adr/0185-shared-ffmpeg-fix-series.md)) |
+| Shared FFmpeg fix series | VMAFx/ffmpeg-patches `v0.3.0` / `9ff13ad7faa182e9db62b66c9f60d1b288c53a03`, tarball sha256 `0e7c14fb6ec0bc61289e61eeb45c3caf2b4bf87b987727a761e8b93ff3907c21`, from `build-config.env`; hand bump, no Renovate ([ADR-0185](docs/adr/0185-shared-ffmpeg-fix-series.md)) |
 | FFmpeg Vulkan models | `vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c`, `vf_scdet_vulkan.c` |
 | AV1 grain ABI mirror | `libavutil/film_grain_params.h` |
 | vmafx control plane | `libvmaf_tune`, `/v1/score`, `vmaf-mcp` |
