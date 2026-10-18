@@ -1,6 +1,7 @@
 <!-- markdownlint-disable MD013 MD041 -->
-> **Allocator**: run `scripts/adr/next-free.sh --claim <your-topic-slug>` to
-> reserve a number before creating this file. It writes a
+> **Allocator**: run `git fetch origin` and `scripts/adr/next-free.sh --claim <your-topic-slug>`
+> to reserve a number before creating this file (the allocator scans every local
+> worktree and every local branch tip offline). It writes a
 > `docs/adr/NNNN-<slug>.md.stub`; rename to `.md` when you commit. Release an
 > abandoned slot with `scripts/adr/next-free.sh --release <NNNN>`.
 
