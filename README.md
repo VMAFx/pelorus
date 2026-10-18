@@ -83,6 +83,7 @@ green · the deband shader compiles.**
 |---|---|---|
 | `include/pelorus/interop.h` + `src/interop.c` | The Pelorus⇄vmafx side-data ABI (pack/parse, append-only, vendored by vmafx) | — |
 | `include/pelorus/telemetry.h` + `src/telemetry*.c` | FFmpeg-free encoder telemetry records, validation, normalisation, and x264/x265/SVT-AV1/VVenC/FFmpeg/libaom adapters | libm |
+| `include/pelorus/quality.h` + `src/quality.c` | Time-aligned quality window section (ABI 1.6), rational PTS alignment, and x265/SVT-AV1/libaom zone emitters | libm |
 | `include/pelorus/deband.h` + `src/deband_params.c` | Smart-deband parameter contract (shared by filter + autotune) | — |
 | `shaders/pelorus_deband.comp` | Standalone reference deband shader (f3kdb) | glslang |
 | `test/interop_test.c` | Shared ABI conformance fixture | — |
@@ -203,6 +204,11 @@ encoder. A documented, retunable composition, not a new meta-filter. See
   call `pel_blob_unwrap()`. Across 48 analyze cases on an RTX 4090 no picture
   loses its side data on either NVENC encoder (`hevc_nvenc` still strips
   maps over its budget, ADR-0181).
+- Interop ABI 1.6 (ADR-0214): `PEL_SEC_QUALITY` carries time-aligned quality
+  window scores from external oracles (VMAFx); `pel_quality_align` provides exact
+  rational PTS matching via 64-bit integer cross-multiplication with nearest-neighbour
+  joins strictly forbidden; zone emitters format contiguous shot targets into x265
+  zonefile, x265 `--zones b=`, and SVT-AV1/libaom chunked segment plans (#83).
 - [x] Step 10 — Anime `tune` chain: `vf_pelorus_aa_vulkan` (patch 0015) — warp
       anti-aliasing (awarpsharp2) plus optional line-darkening (FastLineDarken).
       De-jaggies line-art by warping along the gradient of a blurred edge map,

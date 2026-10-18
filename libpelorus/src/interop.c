@@ -64,6 +64,7 @@ static int section_bit_valid(uint32_t id)
     case PEL_SEC_COMPLEXITY:
     case PEL_SEC_ENC_TELEMETRY:
     case PEL_SEC_ENCODE_RECORD:
+    case PEL_SEC_QUALITY:
         return 1;
     default:
         return 0;

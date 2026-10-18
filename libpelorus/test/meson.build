@@ -101,3 +101,10 @@ grain_convert_test = executable(
 )
 test('grain-convert', grain_convert_test, suite: 'fast')
 
+quality_test = executable(
+  'pelorus_quality_test',
+  files('quality_test.c'),
+  dependencies: libpelorus_dep,
+)
+test('quality', quality_test, suite: 'fast')
+

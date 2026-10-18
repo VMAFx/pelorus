@@ -15,3 +15,18 @@ pelorus_qp_report = executable(
   dependencies: tool_deps,
   install: false,
 )
+
+pelorus_zones = executable(
+  'pelorus_zones',
+  files('pelorus_zones.c'),
+  dependencies: tool_deps,
+  install: false,
+)
+
+bash_prog = find_program('bash', required: false)
+if bash_prog.found()
+  test('x265-zone-honour',
+       bash_prog,
+       args: [meson.project_source_root() / 'scripts' / 'quality' / 'x265-zone-honour.sh', pelorus_zones],
+       suite: ['slow', 'encoder'])
+endif
