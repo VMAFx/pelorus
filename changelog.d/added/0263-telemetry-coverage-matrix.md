@@ -1,0 +1,1 @@
+- Per-encoder telemetry coverage matrix documenting x264 stats, x265 CSV, and SVT-AV1 stat-file parser capabilities, alongside a boundary test packing maximum map dimensions at PEL_TLM_MAP_MAX_ELEMS ([#263](https://github.com/VMAFx/pelorus/issues/263)).
