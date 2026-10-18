@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "clip": "synthetic_noisy_barscene_1080p",
+  "reference": "noisy-source",
+  "is_fixture": true,
+  "note": "FIXTURE: Synthetic four-arm bench record for validator testing. Numbers are synthetic model values, not real hardware measurements (#131).",
+  "arms": {
+    "nvenc-tuned": {
+      "device": "NVIDIA GeForce RTX 4090",
+      "encoder": "hevc_nvenc",
+      "parameters": {
+        "preset": "p7",
+        "tune": "hq",
+        "spatial-aq": 1,
+        "temporal-aq": 1,
+        "aq-strength": 8,
+        "rc-lookahead": 32,
+        "multipass": "fullres",
+        "b_ref_mode": "middle"
+      },
+      "points": [
+        {"cq": 22, "bitrate_kbps": 2450.0, "ssimulacra2": 78.50, "vmaf": 86.80, "cambi": 2.100},
+        {"cq": 26, "bitrate_kbps": 1320.0, "ssimulacra2": 72.10, "vmaf": 82.50, "cambi": 2.400},
+        {"cq": 30, "bitrate_kbps": 680.0, "ssimulacra2": 64.30, "vmaf": 77.10, "cambi": 2.800},
+        {"cq": 34, "bitrate_kbps": 340.0, "ssimulacra2": 55.00, "vmaf": 70.00, "cambi": 3.200}
+      ]
+    },
+    "nvenc-tflevel": {
+      "device": "NVIDIA GeForce RTX 4090",
+      "encoder": "hevc_nvenc",
+      "parameters": {
+        "preset": "p7",
+        "tune": "hq",
+        "tf_level": 4,
+        "spatial-aq": 1,
+        "temporal-aq": 1,
+        "aq-strength": 8,
+        "rc-lookahead": 32,
+        "multipass": "fullres",
+        "b_ref_mode": "middle"
+      },
+      "points": [
+        {"cq": 22, "bitrate_kbps": 2320.0, "ssimulacra2": 79.10, "vmaf": 87.20, "cambi": 2.050},
+        {"cq": 26, "bitrate_kbps": 1240.0, "ssimulacra2": 72.90, "vmaf": 83.10, "cambi": 2.350},
+        {"cq": 30, "bitrate_kbps": 635.0, "ssimulacra2": 65.20, "vmaf": 77.80, "cambi": 2.720},
+        {"cq": 34, "bitrate_kbps": 315.0, "ssimulacra2": 56.10, "vmaf": 70.80, "cambi": 3.100}
+      ]
+    },
+    "nvenc-uhq": {
+      "device": "NVIDIA GeForce RTX 4090",
+      "encoder": "hevc_nvenc",
+      "parameters": {
+        "preset": "p7",
+        "tune": "uhq",
+        "spatial-aq": 1,
+        "temporal-aq": 1,
+        "aq-strength": 8,
+        "rc-lookahead": 32,
+        "multipass": "fullres",
+        "b_ref_mode": "middle"
+      },
+      "points": [
+        {"cq": 22, "bitrate_kbps": 2180.0, "ssimulacra2": 80.20, "vmaf": 88.00, "cambi": 1.980},
+        {"cq": 26, "bitrate_kbps": 1160.0, "ssimulacra2": 74.00, "vmaf": 84.00, "cambi": 2.250},
+        {"cq": 30, "bitrate_kbps": 590.0, "ssimulacra2": 66.50, "vmaf": 78.90, "cambi": 2.600},
+        {"cq": 34, "bitrate_kbps": 290.0, "ssimulacra2": 57.50, "vmaf": 72.00, "cambi": 2.950}
+      ]
+    },
+    "pelorus-denoise+nvenc-tuned": {
+      "device": "NVIDIA GeForce RTX 4090",
+      "encoder": "hevc_nvenc",
+      "filter": "pelorus_denoise_vulkan",
+      "parameters": {
+        "preset": "p7",
+        "tune": "hq",
+        "spatial-aq": 1,
+        "temporal-aq": 1,
+        "aq-strength": 8,
+        "rc-lookahead": 32,
+        "multipass": "fullres",
+        "b_ref_mode": "middle"
+      },
+      "points": [
+        {"cq": 22, "bitrate_kbps": 2050.0, "ssimulacra2": 81.00, "vmaf": 88.90, "cambi": 1.850},
+        {"cq": 26, "bitrate_kbps": 1080.0, "ssimulacra2": 75.20, "vmaf": 85.10, "cambi": 2.100},
+        {"cq": 30, "bitrate_kbps": 545.0, "ssimulacra2": 68.00, "vmaf": 80.20, "cambi": 2.450},
+        {"cq": 34, "bitrate_kbps": 265.0, "ssimulacra2": 59.20, "vmaf": 73.50, "cambi": 2.800}
+      ]
+    }
+  }
+}

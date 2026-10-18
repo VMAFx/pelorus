@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/VMAFx/pelorus/scripts/bench/record.schema.json",
+  "title": "Pelorus benchmark result record, schema version 1",
+  "description": "Schema for noisy-source four-arm benchmark result records (ADR-0223, #131). Validated by scripts/bench/check-record.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "clip",
+    "reference",
+    "arms"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version number."
+    },
+    "clip": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Identifier or name of the benchmark clip."
+    },
+    "reference": {
+      "type": "string",
+      "const": "noisy-source",
+      "description": "Scoring reference type; must be 'noisy-source' (source-referenced scoring, ADR-0223)."
+    },
+    "is_fixture": {
+      "type": "boolean",
+      "description": "True when the record is a synthetic test fixture rather than measured hardware data."
+    },
+    "note": {
+      "type": "string",
+      "maxLength": 2048,
+      "description": "Human-readable context, fixture notices, or test configuration notes."
+    },
+    "arms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nvenc-tuned",
+        "nvenc-tflevel",
+        "nvenc-uhq",
+        "pelorus-denoise+nvenc-tuned"
+      ],
+      "properties": {
+        "nvenc-tuned": {
+          "$ref": "#/$defs/arm"
+        },
+        "nvenc-tflevel": {
+          "$ref": "#/$defs/arm"
+        },
+        "nvenc-uhq": {
+          "$ref": "#/$defs/arm"
+        },
+        "pelorus-denoise+nvenc-tuned": {
+          "$ref": "#/$defs/arm"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "arm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device",
+        "points"
+      ],
+      "properties": {
+        "device": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "GPU or host device name executing the encode arm."
+        },
+        "encoder": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Encoder name, e.g. hevc_nvenc or av1_nvenc."
+        },
+        "filter": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "Filter configuration if applied."
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Encoder parameters and AVOptions applied for this arm."
+        },
+        "points": {
+          "type": "array",
+          "minItems": 4,
+          "items": {
+            "$ref": "#/$defs/rate_point"
+          },
+          "description": "Rate-distortion curve points; minimum 4 rate points required for cubic BD-rate fit."
+        }
+      }
+    },
+    "rate_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bitrate_kbps",
+        "ssimulacra2"
+      ],
+      "properties": {
+        "cq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63,
+          "description": "Constant quality / quantization level parameter."
+        },
+        "bitrate_kbps": {
+          "type": "number",
+          "minimum": 0.001,
+          "description": "Measured bitrate in kbps."
+        },
+        "ssimulacra2": {
+          "type": "number",
+          "description": "Primary quality metric score (SSIMULACRA2)."
+        },
+        "vmaf": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Secondary quality metric score (standard VMAF)."
+        },
+        "cambi": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Secondary banding index (CAMBI)."
+        }
+      }
+    }
+  }
+}
