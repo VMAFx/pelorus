@@ -71,7 +71,9 @@ Both functions share the contract `int f(AVFrame *out, const AVFrame *in, const 
 | Chroma $\|\Delta \rho_v\|$ AV1 vs H.274 | 0.1312 | 0.160 | - | - |
 
 > [!NOTE]
-> The chroma $\sigma$ gap of the H.274 synthesizer against the descriptor (23.0%) is not explained by the ADR-0205 limit list: the descriptor already applies the 4:2:0 adaptation of `libavcodec/h274.c` (scale `>> 1`, cutoffs doubled). Integer rounding of low-amplitude grain, which the descriptor does not model, would account for part of it (hypothesis, not isolated by a test): $\sqrt{\sigma_{pred}^2 + 1/12}$ gives Cb 0.562 against 0.593 measured and Cr 1.315 against 1.459. The remainder is open and is tracked on issue #82. The bound records the measured gap, it does not claim to explain it.
+> Superseded in part by [ADR-0216](0216-h274-grain-quantization.md).
+>
+> The chroma $\sigma$ gap of the H.274 synthesizer against the descriptor (23.0%) came from floor quantization in `libavcodec/h274.c` (`(scale * db) >> shift`), which the descriptor did not model. With the floor model of [ADR-0216](0216-h274-grain-quantization.md) the measured gap is 3.9% (issue #82). The chroma $\sigma$ gap between the AV1 and H.274 synthesizers (18.4%) is unchanged and remains open.
 
 ## References
 

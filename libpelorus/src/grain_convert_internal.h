@@ -31,4 +31,6 @@ typedef struct PelH274GrainStat {
 /* Row (cut_v - 2) * 13 + (cut_h - 2). */
 extern const PelH274GrainStat pel_h274_grain_stats[PEL_H274_CUTOFF_COUNT * PEL_H274_CUTOFF_COUNT];
 
+float pel_quantized_sigma(float sigma_lin);
+
 #endif /* PELORUS_GRAIN_CONVERT_INTERNAL_H */
