@@ -96,7 +96,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential meson ninja-build pkg-config nasm yasm git ca-certificates \
             libvulkan-dev glslc glslang-tools libvpl-dev libaom-dev \
-            libsvtav1enc-dev libffmpeg-nvenc-dev
+            libsvtav1enc-dev libffmpeg-nvenc-dev libdav1d-dev
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Runner and toolchain receipt
@@ -196,7 +196,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential meson ninja-build pkg-config nasm yasm git ca-certificates \
-            libvulkan-dev glslc glslang-tools \
+            libvulkan-dev glslc glslang-tools libdav1d-dev \
             mesa-vulkan-drivers vulkan-tools vulkan-validationlayers
       - name: Install cosign
         if: github.event.pull_request.draft != true
@@ -331,7 +331,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential meson ninja-build pkg-config git ca-certificates \
-            libvulkan-dev glslc glslang-tools \
+            libvulkan-dev glslc glslang-tools libdav1d-dev \
             mesa-vulkan-drivers vulkan-tools vulkan-validationlayers \
             clang clang-format clang-tidy locales
       - name: Generate comma-decimal locale

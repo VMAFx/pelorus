@@ -289,6 +289,10 @@ configure_ffmpeg() (
         echo "enabling SVT-AV1 $(pkg-config --modversion SvtAv1Enc)"
         configure_extra+=(--enable-libsvtav1)
     fi
+    if pkg-config --exists dav1d; then
+        echo "enabling libdav1d $(pkg-config --modversion dav1d)"
+        configure_extra+=(--enable-libdav1d)
+    fi
     exec ./configure \
         --prefix="$FFMPEG_PREFIX" \
         --libdir="$FFMPEG_PREFIX/lib" \
@@ -514,6 +518,19 @@ if ! "$HERE/named-skip.sh" "grain score smoke" "$grain_smoke_status" \
     echo "ERROR: this run removes its logs, so rerun test/grain-score-smoke.sh" \
         "with FFMPEG_BIN and OUTPUT_ROOT to keep them; on a host that cannot run" \
         "the smoke, set GRAIN_SCORE_SMOKE_SKIP to the reason it prints" >&2
+    exit 1
+fi
+
+echo "== grain score AV1 smoke =="
+grain_av1_smoke_status=0
+FFMPEG_BIN="$WORKTREE/ffmpeg" OUTPUT_ROOT="$LOG_DIR/grain-score-av1" \
+    "$HERE/grain-score-av1-smoke.sh" 2>&1 | tee "$LOG_DIR/grain-score-av1.log" ||
+    grain_av1_smoke_status=$? # pipefail: the smoke's status, tee exits 0
+if ! "$HERE/named-skip.sh" "grain score AV1 smoke" "$grain_av1_smoke_status" \
+    "$LOG_DIR/grain-score-av1.log" "${GRAIN_SCORE_AV1_SMOKE_SKIP:-}"; then
+    echo "ERROR: this run removes its logs, so rerun test/grain-score-av1-smoke.sh" \
+        "with FFMPEG_BIN and OUTPUT_ROOT to keep them; on a host that cannot run" \
+        "the smoke, set GRAIN_SCORE_AV1_SMOKE_SKIP to the reason it prints" >&2
     exit 1
 fi
 

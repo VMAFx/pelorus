@@ -163,20 +163,23 @@ lists `INPUT`, `RUNS`, `OUTPUT_ROOT` and `--self-test`), the
 HEVC encoder with `-udu_sei 1`, then `pelorus_fgs=source=sidedata`; one FGC SEI
 per access unit, the cancel after grain stops, the 10-bit refusal and the
 options-mode pass-through,
-[ADR-0206](../adr/0206-fgs-bsf-per-frame-bridge.md)), and the grain score smoke
+[ADR-0206](../adr/0206-fgs-bsf-per-frame-bridge.md)), the grain score smoke
 (`test/grain-score-smoke.sh`: grain scoring recipe verifies decoded
 grain-synthesised output vs grain-free reconstruction and strips FGC SEI,
-[ADR-0207](../adr/0207-grain-scoring-decoded-output.md)). The first
+[ADR-0207](../adr/0207-grain-scoring-decoded-output.md)), and the grain score AV1 smoke
+(`test/grain-score-av1-smoke.sh`: AV1 via libdav1d,
+[ADR-0212](../adr/0212-grain-scoring-av1-libdav1d.md)). The first
 two need an NVIDIA driver and a Vulkan device; the third needs a Vulkan device
 with HEVC video decode and encode; the fourth needs a Vulkan device plus
 a working `hevc_nvenc` or libx265 (GPL builds only; the filter unwraps the UUID
 every libx265 since 2.1 writes in front of the user data SEI,
 [ADR-0210](../adr/0210-fgs-x265-udu-wrap.md)), and it also runs a libx265 case
 when the build has libx265 (`ENCODER=libx265` runs every case on it);
-the fifth needs an HEVC decoder and the `psnr` filter. A host that lacks one makes a smoke skip,
+the fifth needs an HEVC decoder and the `psnr` filter; the sixth needs the `libdav1d` decoder and the `psnr` filter. A host that lacks one makes a smoke skip,
 and the replay then fails unless `NVENC_SMOKE_SKIP` (SEI smoke),
 `NVENC_HOP_SMOKE_SKIP` (hop smoke), `KEYFRAME_SMOKE_SKIP` (keyframe smoke),
-`FGS_SMOKE_SKIP` (grain smoke) and `GRAIN_SCORE_SMOKE_SKIP` (grain score smoke)
+`FGS_SMOKE_SKIP` (grain smoke), `GRAIN_SCORE_SMOKE_SKIP` (grain score smoke)
+and `GRAIN_SCORE_AV1_SMOKE_SKIP` (grain score AV1 smoke)
 name the reason each smoke prints, so a GPU host whose driver or device went
 missing cannot pass by accident
 ([ADR-0189](../adr/0189-named-nvenc-smoke-skip.md)). On a machine without an
