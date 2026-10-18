@@ -158,12 +158,14 @@ jobs:
       - name: Replay all patches, link FFmpeg, and verify registrations
         # The hosted runner has no NVIDIA driver: the NVENC smokes may skip for
         # that reason only (ADR-0189, ADR-0191). It has no Vulkan device with
-        # HEVC video either, so the forced-keyframe smoke (#309) skips too.
+        # HEVC video either, so the forced-keyframe smoke (#309) skips too, and
+        # no Vulkan device at all, so the export contract test (#104) skips.
         env:
           NVENC_SMOKE_SKIP: Cannot load libcuda.so.1
           NVENC_HOP_SMOKE_SKIP: Cannot load libcuda.so.1
           KEYFRAME_SMOKE_SKIP: no Vulkan device with HEVC video
           FGS_SMOKE_SKIP: no HEVC encoder
+          EXPORT_CONTRACT_SKIP: no Vulkan device
         run: |
           FFMPEG_REPO="$GITHUB_WORKSPACE/ffmpeg" \
             ffmpeg-patches/test/build-and-run.sh
@@ -252,6 +254,7 @@ jobs:
           NVENC_HOP_SMOKE_SKIP: hevc_nvenc is not built into
           KEYFRAME_SMOKE_SKIP: no Vulkan device with HEVC video
           FGS_SMOKE_SKIP: no HEVC encoder
+          EXPORT_CONTRACT_SKIP: the device did not enable VK_EXT_image_drm_format_modifier
         run: |
           echo "LANE_DIR=$RUNNER_TEMP/pelorus-lane" >> "$GITHUB_ENV"
           FFMPEG_REPO="$GITHUB_WORKSPACE/ffmpeg" KEEP_DIR="$RUNNER_TEMP/pelorus-lane" \
@@ -407,6 +410,7 @@ jobs:
           NVENC_HOP_SMOKE_SKIP: hevc_nvenc is not built into
           KEYFRAME_SMOKE_SKIP: no Vulkan device with HEVC video
           FGS_SMOKE_SKIP: no HEVC encoder
+          EXPORT_CONTRACT_SKIP: the device did not enable VK_EXT_image_drm_format_modifier
         run: |
           echo "LANE_DIR=$RUNNER_TEMP/pelorus-lane" >> "$GITHUB_ENV"
           FFMPEG_REPO="$GITHUB_WORKSPACE/ffmpeg" KEEP_DIR="$RUNNER_TEMP/pelorus-lane" \

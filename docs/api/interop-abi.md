@@ -561,3 +561,8 @@ documented in [control-plane.md](control-plane.md)
 [ADR-0196](../adr/0196-filter-knob-contracts.md)).
 See [ADR-0106](../adr/0106-autotune-control-plane.md) and
 [docs/usage/ffmpeg.md](../usage/ffmpeg.md).
+
+Frames are not side data: a consumer that imports a Pelorus Vulkan frame in
+place reads tiling, image count and export handle type from FFmpeg's frames
+and device contexts, as [vulkan-export-contract.md](vulkan-export-contract.md)
+describes ([ADR-0221](../adr/0221-vulkan-export-contract.md)).
