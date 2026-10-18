@@ -1415,10 +1415,10 @@ static void test_pack_into(void)
     CHECK(pel_blob_pack_into(&meta, &sec, 1, NULL, 8, &out_len) == PEL_ERR_INVALID);
     CHECK(pel_blob_pack_into(&meta, &sec, 1, buf, sizeof(buf), NULL) == PEL_ERR_INVALID);
     CHECK(pel_blob_pack_into(NULL, &sec, 1, buf, sizeof(buf), &out_len) == PEL_ERR_INVALID);
-    /* Bit 10 is not minted: still rejected after the two 1.4 bits joined. The value is
+    /* Bit 11 is not minted: still rejected after the ABI 1.6 quality bit joined. The value is
      * copied in because it is no enumerator of pel_section. */
     {
-        const uint32_t unminted = 0x400u; /* 1 << 10 */
+        const uint32_t unminted = 0x800u; /* 1 << 11 */
         memcpy(&sec.id, &unminted,
                sizeof(sec.id) < sizeof(unminted) ? sizeof(sec.id) : sizeof(unminted));
     }
@@ -1702,6 +1702,179 @@ static void test_encode_record_section(void)
         CHECK(loc != NULL && memcmp(loc, locator, sizeof(locator) - 1u) == 0);
         check_digest_text_guards(&r);
     }
+}
+
+static void verify_quality_unpacked(const PelorusQualitySection *r, const PelorusQualitySection *q)
+{
+    CHECK(r->window_id == q->window_id);
+    CHECK(r->pts_start == q->pts_start);
+    CHECK(r->pts_end == q->pts_end);
+    CHECK(r->tb_num == q->tb_num);
+    CHECK(r->tb_den == q->tb_den);
+    CHECK(memcmp(r->model_hash, q->model_hash, sizeof(q->model_hash)) == 0);
+    CHECK(r->provenance_id == q->provenance_id);
+    CHECK(r->score == q->score);
+    CHECK(r->metric_id == q->metric_id);
+    CHECK(r->latency_frames == q->latency_frames);
+    CHECK(r->frame_count == q->frame_count);
+    CHECK(r->_pad == q->_pad);
+}
+
+/* PEL_SEC_QUALITY (k): pack the quality window score (ABI 1.6, ADR-0214), parse it back,
+ * verify all fields round-trip; older consumer with smaller known size still parses (R4);
+ * unwritten sections are absent (R3). */
+static void test_quality_section_roundtrip(void)
+{
+    PelorusSideData meta;
+    PelorusQualitySection q;
+    PelorusPackSection sec;
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    const void *p = NULL;
+    size_t got = 0;
+
+    CHECK(PELORUS_ABI_MINOR == 6u);
+
+    fill_meta(&meta);
+    memset(&q, 0, sizeof(q));
+    q.window_id = 42u;
+    q.pts_start = 1000;
+    q.pts_end = 2000;
+    q.tb_num = 1;
+    q.tb_den = 1000;
+    memset(q.model_hash, 0xab, sizeof(q.model_hash));
+    q.provenance_id = 9999u;
+    q.score = 94.5;
+    q.metric_id = (uint32_t)PEL_QM_VMAF;
+    q.latency_frames = 8;
+    q.frame_count = 60;
+    q._pad = 0;
+
+    sec.id = PEL_SEC_QUALITY;
+    sec.data = &q;
+    sec.size = (uint32_t)sizeof(q);
+
+    CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
+    CHECK(blob != NULL && len > 0);
+
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_QUALITY, sizeof(PelorusQualitySection), &p,
+                                &got) == PEL_OK);
+    CHECK(got == sizeof(PelorusQualitySection));
+    CHECK(got == 96u);
+    if (p != NULL && got == sizeof(q)) {
+        PelorusQualitySection r;
+        memcpy(&r, p, sizeof(r));
+        verify_quality_unpacked(&r, &q);
+    }
+
+    /* R3: unwritten sections are absent. */
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_COMPLEXITY, sizeof(PelorusComplexitySection), &p,
+                                &got) == PEL_ERR_ABSENT);
+
+    pel_blob_free(blob);
+}
+
+static void test_quality_section_consumer_sizes(void)
+{
+    PelorusSideData meta;
+    PelorusQualitySection q;
+    PelorusPackSection sec;
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    const void *p = NULL;
+    size_t got = 0;
+
+    fill_meta(&meta);
+    memset(&q, 0, sizeof(q));
+    q.window_id = 42u;
+    q.pts_start = 1000;
+    q.pts_end = 2000;
+    q.tb_num = 1;
+    q.tb_den = 1000;
+    q.score = 94.5;
+    q.metric_id = (uint32_t)PEL_QM_VMAF;
+    q.frame_count = 60;
+
+    sec.id = PEL_SEC_QUALITY;
+    sec.data = &q;
+    sec.size = (uint32_t)sizeof(q);
+    CHECK(pel_blob_pack(&meta, &sec, 1, &blob, &len) == PEL_OK);
+
+    /* Consumer size 128 > producer 96 -> got == 96 */
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_QUALITY, 128u, &p, &got) == PEL_OK);
+    CHECK(got == 96u);
+
+    /* 24-byte read asserts first 24 bytes == window_id, pts_start, pts_end */
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_QUALITY, 24u, &p, &got) == PEL_OK);
+    CHECK(got == 24u && p != NULL);
+    if (p != NULL) {
+        uint64_t win_id = 0;
+        int64_t p_start = 0;
+        int64_t p_end = 0;
+        memcpy(&win_id, (const uint8_t *)p + 0, sizeof(win_id));
+        memcpy(&p_start, (const uint8_t *)p + 8, sizeof(p_start));
+        memcpy(&p_end, (const uint8_t *)p + 16, sizeof(p_end));
+        CHECK(win_id == q.window_id);
+        CHECK(p_start == q.pts_start);
+        CHECK(p_end == q.pts_end);
+    }
+    pel_blob_free(blob);
+}
+
+static void test_quality_section_compat(void)
+{
+    PelorusSideData meta;
+    PelorusBandingSection b;
+    PelorusQualitySection q;
+    PelorusPackSection secs[2];
+    uint8_t *blob = NULL;
+    size_t len = 0;
+    const void *p = NULL;
+    size_t got = 0;
+
+    fill_meta(&meta);
+    memset(&b, 0, sizeof(b));
+    b.flat_area_fraction = 0.5f;
+
+    memset(&q, 0, sizeof(q));
+    q.window_id = 77u;
+    q.pts_start = 0;
+    q.pts_end = 100;
+    q.tb_num = 1;
+    q.tb_den = 1000;
+    q.score = 80.0;
+    q.metric_id = (uint32_t)PEL_QM_VMAF;
+    q.frame_count = 10;
+
+    /* 1. Blob without PEL_SEC_QUALITY -> new consumer gets PEL_ERR_ABSENT */
+    secs[0].id = PEL_SEC_BANDING;
+    secs[0].data = &b;
+    secs[0].size = (uint32_t)sizeof(b);
+    CHECK(pel_blob_pack(&meta, &secs[0], 1, &blob, &len) == PEL_OK);
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_QUALITY, sizeof(PelorusQualitySection), &p,
+                                &got) == PEL_ERR_ABSENT);
+
+    /* 2. Blob with abi_minor 5 header parses */
+    {
+        PelorusSideData *hdr = (PelorusSideData *)(blob + PELORUS_SIDEDATA_UUID_LEN);
+        hdr->abi_minor = 5u;
+        CHECK(pel_blob_find_section(blob, len, PEL_SEC_BANDING, sizeof(b), &p, &got) == PEL_OK);
+        CHECK(got == sizeof(b));
+    }
+    pel_blob_free(blob);
+    blob = NULL;
+
+    /* 3. Unknown-to-old-consumer section does not break lookup of another section in same blob */
+    secs[0].id = PEL_SEC_BANDING;
+    secs[0].data = &b;
+    secs[0].size = (uint32_t)sizeof(b);
+    secs[1].id = PEL_SEC_QUALITY;
+    secs[1].data = &q;
+    secs[1].size = (uint32_t)sizeof(q);
+    CHECK(pel_blob_pack(&meta, secs, 2, &blob, &len) == PEL_OK);
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_BANDING, sizeof(b), &p, &got) == PEL_OK);
+    CHECK(got == sizeof(b));
+    pel_blob_free(blob);
 }
 
 /* vf_pelorus_analyze maps (issue #219, Pelorus ADR-0177): the per-cell banding (uint8),
@@ -2151,6 +2324,9 @@ int main(void)
     test_enc_telemetry_roundtrip();
     test_blob_map_bounds();
     test_encode_record_section();
+    test_quality_section_roundtrip();
+    test_quality_section_consumer_sizes();
+    test_quality_section_compat();
     test_analysis_maps_layout();
     test_carrier_roundtrip();
     test_carrier_boundaries();

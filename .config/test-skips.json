@@ -8,5 +8,10 @@
     "test": "pelorus:enc-telemetry-adapters-locale",
     "reason": "SKIP: comma-decimal LC_NUMERIC locale unavailable",
     "issue": "#111: locale-independence check needs an installed comma-decimal locale; all other adapter checks run in pelorus:enc-telemetry-adapters. Revisit: remove this entry when every supported local test environment guarantees de_DE.UTF-8, de_DE.utf8, or fr_FR.UTF-8"
+  },
+  {
+    "test": "pelorus:x265-zone-honour",
+    "reason": "SKIP: x265 or ffmpeg not found",
+    "issue": "issue #83: x265 zone honour test requires x265 and ffmpeg on PATH"
   }
 ]
