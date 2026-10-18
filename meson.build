@@ -281,6 +281,16 @@ if build_machine.system() != 'windows'
        workdir: meson.project_source_root(),
        timeout: 600,
        suite: 'fast')
+  # ADR-0219: the ADR allocator discovers numbers across all local worktrees and
+  # branch tips without network. The test drives throwaway Git repositories and
+  # worktrees; MSYS2 path translation and POSIX bash fixtures stay Linux-first
+  # (bash + git worktree fixtures; ADR-0149 split).
+  test('adr-next-free',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'test-adr-next-free.py'],
+       workdir: meson.project_source_root(),
+       timeout: 60,
+       suite: 'fast')
 endif
 
 # BUG-007/008/013/025: shader plane loops must `continue` (yuva420p alpha), bayer8 must be

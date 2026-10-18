@@ -4,8 +4,9 @@
 Nygard-format ADRs for Pelorus. One file per decision,
 `NNNN-kebab-case.md`, following [0000-template.md](0000-template.md). Reserve a
 number atomically with `scripts/adr/next-free.sh --claim <slug>` before creating
-the file. Land the ADR **before** the implementing commit; cite the user request
-(`req`) or popup answer (`Q<r>.<q>`) in `## References`. Decisions are immutable
+the file; run `git fetch origin` first to see remote branches, as the allocator
+scans every local worktree and every local branch tip offline. Land the ADR
+**before** the implementing commit; cite the user request (`req`) or popup answer (`Q<r>.<q>`) in `## References`. Decisions are immutable
 once Accepted — supersede with a new ADR rather than editing the body.
 
 Status follows the merge: an ADR is `Proposed` until its implementing PR
@@ -126,3 +127,4 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0215](0215-quality-threshold-loop.md) | Quality-threshold closed-loop controller (`PelQloopConfig`, `pel_qloop_next()`) and reference harness: pure stateless bracketed regula falsi with Illinois modification, encoder rate-control or filter knob steering without source-side QP maps, demonstrator CLI `pelorus_qloop`, and verified 2-shot reference loop on x265 and libvmaf ([#166](https://github.com/VMAFx/pelorus/issues/166)) | Accepted |
 | [0216](0216-h274-grain-quantization.md) | H.274 grain descriptor models the synthesis floor quantization (`(scale * db) >> shift`) with the exact Gaussian model $V_q(s)$; chroma descriptor gap 23.0% to 3.9%, conversions unchanged ([#82](https://github.com/VMAFx/pelorus/issues/82)) | Accepted |
 | [0217](0217-av1-grain-round-quantization.md) | AV1 film grain descriptor models round2 synthesis quantization with exact Gaussian round model $R(s)$; unified bin-offset helper, conversions unchanged ([#384](https://github.com/VMAFx/pelorus/issues/384)) | Accepted |
+| [0219](0219-adr-allocator-sees-worktrees-and-branches.md) | ADR allocator discovers numbers across all local worktrees and branch tips without network ([#387](https://github.com/VMAFx/pelorus/issues/387)) | Accepted |
