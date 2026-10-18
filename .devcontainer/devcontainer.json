@@ -19,10 +19,10 @@
         "state": "source-bundle",
         "builderImage": "docker.io/library/golang@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d",
         "baseImage": "ghcr.io/vmafx/pelorus-dev@sha256:92599aa475c90ef9609d28979f6ee56d85fd995f52ca0af94c27dd4205040498",
-        "sourceSHA256": "sha256:df7d30b94dfa0dec3dd1cafdd59de58a3549c7d9b2e5dce08124ade9e4922bc8",
-        "archiveSHA256": "sha256:18890a20a25f9c936ecd499cab360370ff4631bd60f54d677b99c21b9fb7ccd1",
-        "archiveParts": 6,
-        "dockerfileSHA256": "sha256:5adf7cd652255d17e2571718ef248710b0785e9b527606874f466791b339937d"
+        "sourceSHA256": "sha256:b002769b6ea67780b1a0512feb5369eb41870576741c276a1da08063098b6af6",
+        "archiveSHA256": "sha256:62ce1f8d326171528b77ccacae1812e838a0fbfb466c63dfd8149aef851dbd75",
+        "archiveParts": 7,
+        "dockerfileSHA256": "sha256:03e03e2af09d41c52f1db9a1f46b1a39c335b48aeaa72aa028f4c3370977f340"
       }
     },
     "vscode": {
