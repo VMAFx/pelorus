@@ -179,6 +179,16 @@ test('vulkan-storage-domain',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# ADR-0222 (#109): a storage buffer the shader reads must be device-local, or a
+# discrete GPU reads it over PCIe during the dispatch. --self-test plants a
+# host-only storage buffer per source shape and requires a refusal.
+test('vulkan-buffer-domain',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-vulkan-buffer-domain.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 # ADR-0166: patch 0009's Vulkan-Video QP map needs the extension AND its feature
 # enabled in hwcontext_vulkan, a driver-range dQP clamp, and the valid-usage
 # repairs found on hardware. None of those fail a compile; --self-test proves

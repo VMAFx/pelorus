@@ -533,14 +533,16 @@ static int denoise_alloc_motion_buffers(PelorusDenoiseVulkanContext *s, const ui
     err = ff_vk_get_pooled_buffer(
         &s->vkctx, &s->mv_buf_pool, mvbuf_out, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
         (size_t)ncells * sizeof(uint32_t),
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     if (err < 0)
         return err;
 
     err = ff_vk_get_pooled_buffer(
         &s->vkctx, &s->conf_buf_pool, confbuf_out, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
         (size_t)ncells * sizeof(uint32_t),
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     if (err < 0)
         return err;
 

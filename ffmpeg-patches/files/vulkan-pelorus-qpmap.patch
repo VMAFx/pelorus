@@ -174,7 +174,7 @@ diff --git a/libavcodec/vulkan_encode.c b/libavcodec/vulkan_encode.c
 index 39c43300c4..e46cf613b9 100644
 --- a/libavcodec/vulkan_encode.c
 +++ b/libavcodec/vulkan_encode.c
-@@ -28,6 +28,1394 @@ const AVCodecHWConfigInternal *const ff_vulkan_encode_hw_configs[] = {
+@@ -28,6 +28,1395 @@ const AVCodecHWConfigInternal *const ff_vulkan_encode_hw_configs[] = {
      NULL,
  };
  
@@ -1194,6 +1194,7 @@ index 39c43300c4..e46cf613b9 100644
 +    err = ff_vk_get_pooled_buffer(s, &ctx->qpmap_roi_pool, &roi_ref,
 +                                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
 +                                  roi_bytes,
++                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
 +                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
 +                                  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 +    if (err < 0)
