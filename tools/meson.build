@@ -23,10 +23,21 @@ pelorus_zones = executable(
   install: false,
 )
 
+pelorus_qloop = executable(
+  'pelorus_qloop',
+  files('pelorus_qloop.c'),
+  dependencies: tool_deps,
+  install: false,
+)
+
 bash_prog = find_program('bash', required: false)
 if bash_prog.found()
   test('x265-zone-honour',
        bash_prog,
        args: [meson.project_source_root() / 'scripts' / 'quality' / 'x265-zone-honour.sh', pelorus_zones],
+       suite: ['slow', 'encoder'])
+  test('qloop-x265-reference',
+       bash_prog,
+       args: [meson.project_source_root() / 'scripts' / 'quality' / 'qloop-x265-reference.sh', pelorus_qloop, pelorus_zones],
        suite: ['slow', 'encoder'])
 endif
