@@ -126,6 +126,11 @@ void deband(const ivec2 pos, const int idx, float thr_p, float grain_p) {
     if (sample_mode == 4) dir += float(frame_seed) * GOLDEN;
     float dist = r * float(range);
     ivec2 off = ivec2(round(cos(dir) * dist), round(sin(dir) * dist));
+    /* Keep each mirrored tap pair inside the plane. A clamped tap repeats the
+     * edge row, which shifts the average of a gradient towards the interior
+     * and flattens the border band (issue #283). */
+    ivec2 edge = min(pos, sz - ivec2(1) - pos);
+    off = sign(off) * min(abs(off), edge);
     vec4 r0; vec4 r1; vec4 r2; vec4 r3; vec4 avg; int N;
     if (sample_mode == 1) {
         r0 = pel_fetch(idx, pos + ivec2(0, off.y), sz);
@@ -170,7 +175,10 @@ void deband(const ivec2 pos, const int idx, float thr_p, float grain_p) {
     if (dither_mode != 0 && grain_p > 0.0) {
         float n = (dither_mode == 1) ? (bayer8(pos) - 0.5) * 2.0
                                      : tpdf(pos, dynG ? frame_seed : 0u, idx);
-        base += vec4(n * grain_p) * mix(vec4(0.25), vec4(1.0), w);
+        /* Dither only where a tap sees a code step: noise on a flat area
+         * hides no band and costs the encoder bits (issue #283). */
+        vec4 stepped = vec4(greaterThan(maxd, vec4(0.0)));
+        base += vec4(n * grain_p) * mix(vec4(0.25), vec4(1.0), w) * stepped;
     }
     imageStore(output_images[idx], pos,
                pel_to_storage(clamp(base, vec4(0.0), vec4(1.0))));

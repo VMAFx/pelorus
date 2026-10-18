@@ -24,7 +24,7 @@ read -r -a CLIPS <<< "${CLIPS:-bbb synth-banding}"
 read -r -a ENCODERS <<< "${ENCODERS:-hevc_nvenc av1_nvenc}"
 PRESET="${PRESET:-p5}"
 CQ="${CQ:-28 34 40 46}"
-DEBAND_FILTER="pelorus_deband_vulkan=range=15:thry=0.012:dither=bluenoise:dynamic=1:protect=1"
+DEBAND_FILTER="pelorus_deband_vulkan=range=15:thry=0.012:dither=bayer8:grainy=0.012:dynamic=0:protect=1"
 # -------------------------------------------------------------------------
 
 mkdir -p "$OUT"
