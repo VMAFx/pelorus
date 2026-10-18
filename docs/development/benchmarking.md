@@ -99,7 +99,9 @@ encoder, same preset, same CQ**:
 For each CQ in a **CQ-locked** ladder (never `-b:v` VBR — the tuned-NVENC
 multipass config overshoots a VBR target by ~50%, breaking iso-bitrate) we record
 (bitrate, **SSIMULACRA2**) → two RD curves → **BD-rate** (`scripts/bench/bd_rate.py`,
-Bjøntegaard): negative % = fewer bits for equal quality = a win.
+Bjøntegaard): negative % = fewer bits for equal quality = a win. Curves must be
+strictly monotonic in bitrate and quality with at least two points and an
+overlapping range, or the metric fails closed with NaN.
 
 **SSIMULACRA2 is the primary metric** (vmafx `--feature ssimulacra2`): it does not
 saturate on clean content and is robust to sharpening-gaming, so it both *credits*
