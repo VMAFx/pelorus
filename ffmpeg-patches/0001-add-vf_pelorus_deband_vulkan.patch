@@ -30,10 +30,10 @@ Research: docs/research/0101-smart-deband.md
  libavfilter/pelorus_vulkan_input.h          | 131 +++++
  libavfilter/pelorus_vulkan_pool.h           | 576 ++++++++++++++++++++
  libavfilter/pelorus_vulkan_sample.h         | 100 ++++
- libavfilter/vf_pelorus_deband_vulkan.c      | 481 ++++++++++++++++
+ libavfilter/vf_pelorus_deband_vulkan.c      | 483 ++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
  libavfilter/vulkan/pelorus_deband.comp.glsl | 196 +++++++
- 11 files changed, 1852 insertions(+)
+ 11 files changed, 1854 insertions(+)
 
 diff --git a/configure b/configure
 index 0ebe83a5ae70d894b284b8715cc9862870e2c909..f1c896727d1690d5dba37435ab185464d1d7324f 100755
@@ -1281,10 +1281,10 @@ index 0000000000000000000000000000000000000000..c8a8912daf5325e0d8792ae201f4bbfe
 +#endif /* AVFILTER_PELORUS_VULKAN_SAMPLE_H */
 diff --git a/libavfilter/vf_pelorus_deband_vulkan.c b/libavfilter/vf_pelorus_deband_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..e95c6b7f56ae71d09ee79e9c24702b5eec841fb9
+index 0000000000000000000000000000000000000000..770068c85657da225260c034807a3adb963bd2c2
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_deband_vulkan.c
-@@ -0,0 +1,481 @@
+@@ -0,0 +1,483 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -1376,6 +1376,31 @@ index 0000000000000000000000000000000000000000..e95c6b7f56ae71d09ee79e9c24702b5e
 +extern const unsigned char ff_pelorus_deband_comp_spv_data[];
 +extern const unsigned int ff_pelorus_deband_comp_spv_len;
 +
++static void deband_add_descriptors(FFVulkanContext *vkctx, FFVulkanShader *shd, int planes)
++{
++    FFVulkanDescriptorSetBinding desc_set[] = {
++        {
++            .name = "input_images",
++            .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++            .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
++            .mem_quali = "readonly",
++            .dimensions = 2,
++            .elems = planes,
++            .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++        },
++        {
++            .name = "output_images",
++            .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++            .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format, FF_VK_REP_FLOAT),
++            .mem_quali = "writeonly",
++            .dimensions = 2,
++            .elems = planes,
++            .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++        },
++    };
++    ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
++}
++
 +static av_cold int init_filter(AVFilterContext *ctx)
 +{
 +    int err = 0;
@@ -1403,8 +1428,7 @@ index 0000000000000000000000000000000000000000..e95c6b7f56ae71d09ee79e9c24702b5e
 +    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
 +    if (!s->qf) {
 +        av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
-+        err = AVERROR(ENOTSUP);
-+        goto fail;
++        return AVERROR(ENOTSUP);
 +    }
 +
 +    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
@@ -1422,29 +1446,7 @@ index 0000000000000000000000000000000000000000..e95c6b7f56ae71d09ee79e9c24702b5e
 +
 +    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts), VK_SHADER_STAGE_COMPUTE_BIT);
 +
-+    {
-+        FFVulkanDescriptorSetBinding desc_set[] = {
-+            {
-+                .name = "input_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "readonly",
-+                .dimensions = 2,
-+                .elems = planes,
-+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-+            },
-+            {
-+                .name = "output_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "writeonly",
-+                .dimensions = 2,
-+                .elems = planes,
-+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-+            },
-+        };
-+        ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
-+    }
++    deband_add_descriptors(vkctx, shd, planes);
 +
 +    RET(ff_vk_shader_link(vkctx, shd, ff_pelorus_deband_comp_spv_data,
 +                          ff_pelorus_deband_comp_spv_len, "main"));

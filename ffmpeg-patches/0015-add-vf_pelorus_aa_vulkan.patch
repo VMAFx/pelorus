@@ -31,10 +31,10 @@ ADR: docs/adr/0124-anime-aa.md
  configure                               |   1 +
  libavfilter/Makefile                    |   1 +
  libavfilter/allfilters.c                |   1 +
- libavfilter/vf_pelorus_aa_vulkan.c      | 304 ++++++++++++++++++++
+ libavfilter/vf_pelorus_aa_vulkan.c      | 306 ++++++++++++++++++++
  libavfilter/vulkan/Makefile             |   1 +
  libavfilter/vulkan/pelorus_aa.comp.glsl | 284 ++++++++++++++++++
- 6 files changed, 592 insertions(+)
+ 6 files changed, 594 insertions(+)
 
 diff --git a/configure b/configure
 index 79961fadcbbec56084671d9258438885ecc85b97..35ac38596875faecebea454197863fc5caac891f 100755
@@ -74,10 +74,10 @@ index 3feedf2185ebf5ebdc6eb537aa7e6c7811e94247..fc509e21001369d317888124767888b7
  extern const FFFilter ff_vf_pelorus_dehalo_vulkan;
 diff --git a/libavfilter/vf_pelorus_aa_vulkan.c b/libavfilter/vf_pelorus_aa_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..01124779bff8e329a8dd5f39a6f7d29a9e845047
+index 0000000000000000000000000000000000000000..91845e7c66989abfc25f4919d7d3768fb5fd219d
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_aa_vulkan.c
-@@ -0,0 +1,304 @@
+@@ -0,0 +1,306 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -158,6 +158,31 @@ index 0000000000000000000000000000000000000000..01124779bff8e329a8dd5f39a6f7d29a
 +extern const unsigned char ff_pelorus_aa_comp_spv_data[];
 +extern const unsigned int ff_pelorus_aa_comp_spv_len;
 +
++static void aa_add_descriptors(FFVulkanContext *vkctx, FFVulkanShader *shd, int planes)
++{
++    FFVulkanDescriptorSetBinding desc_set[] = {
++        {
++            .name = "input_images",
++            .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++            .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
++            .mem_quali = "readonly",
++            .dimensions = 2,
++            .elems = planes,
++            .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++        },
++        {
++            .name = "output_images",
++            .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++            .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format, FF_VK_REP_FLOAT),
++            .mem_quali = "writeonly",
++            .dimensions = 2,
++            .elems = planes,
++            .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++        },
++    };
++    ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
++}
++
 +static av_cold int init_filter(AVFilterContext *ctx)
 +{
 +    int err = 0;
@@ -174,8 +199,7 @@ index 0000000000000000000000000000000000000000..01124779bff8e329a8dd5f39a6f7d29a
 +    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
 +    if (!s->qf) {
 +        av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
-+        err = AVERROR(ENOTSUP);
-+        goto fail;
++        return AVERROR(ENOTSUP);
 +    }
 +
 +    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
@@ -197,29 +221,7 @@ index 0000000000000000000000000000000000000000..01124779bff8e329a8dd5f39a6f7d29a
 +
 +    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts), VK_SHADER_STAGE_COMPUTE_BIT);
 +
-+    {
-+        FFVulkanDescriptorSetBinding desc_set[] = {
-+            {
-+                .name = "input_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "readonly",
-+                .dimensions = 2,
-+                .elems = planes,
-+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-+            },
-+            {
-+                .name = "output_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "writeonly",
-+                .dimensions = 2,
-+                .elems = planes,
-+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-+            },
-+        };
-+        ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
-+    }
++    aa_add_descriptors(vkctx, shd, planes);
 +
 +    RET(ff_vk_shader_link(vkctx, shd, ff_pelorus_aa_comp_spv_data, ff_pelorus_aa_comp_spv_len,
 +                          "main"));
