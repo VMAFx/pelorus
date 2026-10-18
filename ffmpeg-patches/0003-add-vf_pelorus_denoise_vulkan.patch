@@ -40,10 +40,10 @@ ADR: docs/adr/0112-temporal-denoise.md
  configure                                    |    3 +
  libavfilter/Makefile                         |    1 +
  libavfilter/allfilters.c                     |    1 +
- libavfilter/vf_pelorus_denoise_vulkan.c      | 1152 ++++++++++++++++++++
+ libavfilter/vf_pelorus_denoise_vulkan.c      | 1284 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |    1 +
- libavfilter/vulkan/pelorus_denoise.comp.glsl |  518 +++++++++
- 6 files changed, 1676 insertions(+)
+ libavfilter/vulkan/pelorus_denoise.comp.glsl |  518 ++++++++
+ 6 files changed, 1808 insertions(+)
 
 diff --git a/configure b/configure
 index 974c5e3e75051a61c81fec15d264b9627a5933ec..d26ae6933549cc65a8a1852f2de02ff2980902a1 100755
@@ -92,10 +92,10 @@ index 796756c874547d1bb9ccba79c99350e5214e31c2..2efa0d5f6850fdd7b62e228caaba41db
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_denoise_vulkan.c b/libavfilter/vf_pelorus_denoise_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..88e7be335e6933f95bc4ea89faf34e81f67e2510
+index 0000000000000000000000000000000000000000..16f1858766886f72c72db87e6431a0fa92f562ec
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_denoise_vulkan.c
-@@ -0,0 +1,1152 @@
+@@ -0,0 +1,1284 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -288,16 +288,11 @@ index 0000000000000000000000000000000000000000..88e7be335e6933f95bc4ea89faf34e81
 +extern const unsigned char ff_pelorus_denoise_comp_spv_data[];
 +extern const unsigned int ff_pelorus_denoise_comp_spv_len;
 +
-+static av_cold int init_filter(AVFilterContext *ctx)
++static void denoise_init_opts(PelorusDenoiseVulkanContext *s, int planes, int *semi_planar)
 +{
-+    int err = 0;
-+    int i;
-+    PelorusDenoiseVulkanContext *s = ctx->priv;
 +    FFVulkanContext *vkctx = &s->vkctx;
-+    FFVulkanShader *shd = &s->shd;
-+    const int planes = av_pix_fmt_count_planes(vkctx->output_format);
-+    const uint32_t sample_code_max = pel_vk_sample_code_max(vkctx->output_format);
-+    int semi_planar = 0;
++    int i;
++    const AVPixFmtDescriptor *pd;
 +
 +    /* Broadcast luma/chroma scalars into the per-plane vec4s ({Y,Cb,Cr,A}). */
 +    s->opts.sigma_s[0] = (float)s->opt_sigma_y;
@@ -320,17 +315,17 @@ index 0000000000000000000000000000000000000000..88e7be335e6933f95bc4ea89faf34e81
 +        s->opts.flags |= PEL_DENOISE_FLAG_PROTECT_DETAIL;
 +    if (s->mc)
 +        s->opts.flags |= PEL_DENOISE_FLAG_MOTION_COMP;
-+    {
-+        const AVPixFmtDescriptor *pd = av_pix_fmt_desc_get(vkctx->output_format);
-+        s->opts.chroma_shift_w = pd ? pd->log2_chroma_w : 1;
-+        s->opts.chroma_shift_h = pd ? pd->log2_chroma_h : 1;
-+        /* Semi-planar (NV12/P010/NV16/NV24/P016): U and V share plane 1, so
-+         * that plane's image has TWO components and both carry picture data.
-+         * The shader must filter both and must never synthesise the stored
-+         * texel, or the second component (V) is written as a constant. */
-+        semi_planar =
-+            (pd && pd->nb_components >= 3 && pd->comp[1].plane == pd->comp[2].plane) ? 1 : 0;
-+    }
++
++    pd = av_pix_fmt_desc_get(vkctx->output_format);
++    s->opts.chroma_shift_w = pd ? pd->log2_chroma_w : 1;
++    s->opts.chroma_shift_h = pd ? pd->log2_chroma_h : 1;
++    /* Semi-planar (NV12/P010/NV16/NV24/P016): U and V share plane 1, so
++     * that plane's image has TWO components and both carry picture data.
++     * The shader must filter both and must never synthesise the stored
++     * texel, or the second component (V) is written as a constant. */
++    *semi_planar =
++        (pd && pd->nb_components >= 3 && pd->comp[1].plane == pd->comp[2].plane) ? 1 : 0;
++
 +    /* MV/conf grid dims are set per-frame in the dispatch; 0 => no MC. */
 +    s->opts.grid_cols = 0;
 +    s->opts.grid_rows = 0;
@@ -339,12 +334,75 @@ index 0000000000000000000000000000000000000000..88e7be335e6933f95bc4ea89faf34e81
 +    s->opts.mv_scale = 0.25f; /* mc emits quarter-pel (Q2) */
 +    s->opts.actual_next = 0;  /* set per-dispatch; 0 => forward tap never fires */
 +    s->opts.sample_scale = pel_vk_sample_scale(vkctx->input_format);
++}
++
++static void denoise_add_descriptors(FFVulkanContext *vkctx, FFVulkanShader *shd, int planes)
++{
++    const char *rep_in = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT);
++    const char *rep_out = ff_vk_shader_rep_fmt(vkctx->output_format, FF_VK_REP_FLOAT);
++
++    /* Descriptor set 0. Inputs FIRST, output then the forward tap LAST (the Nin /
++     * bwdif binding-order contract): binding 0 = current frame, 1..MAX_PREV =
++     * previous frames, then the residual SSBO, then the MV/conf SSBOs, then the
++     * output image, then the forward-lookahead next0 image (ADR-0137). Each image
++     * binding is a per-plane array (.elems = planes), float representation,
++     * storage image (sampler = VK_NULL_HANDLE, GENERAL layout, imageLoad). Final
++     * binding map: cur=0, prev0-3=1-4, stat=5, mv=6, conf=7, output=8, next0=9. */
++    FFVulkanDescriptorSetBinding desc_set[] = {
++        {.name = "cur_images", .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++         .mem_layout = rep_in, .mem_quali = "readonly", .dimensions = 2,
++         .elems = planes, .stages = VK_SHADER_STAGE_COMPUTE_BIT},
++        {.name = "prev0_images", .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++         .mem_layout = rep_in, .mem_quali = "readonly", .dimensions = 2,
++         .elems = planes, .stages = VK_SHADER_STAGE_COMPUTE_BIT},
++        {.name = "prev1_images", .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++         .mem_layout = rep_in, .mem_quali = "readonly", .dimensions = 2,
++         .elems = planes, .stages = VK_SHADER_STAGE_COMPUTE_BIT},
++        {.name = "prev2_images", .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++         .mem_layout = rep_in, .mem_quali = "readonly", .dimensions = 2,
++         .elems = planes, .stages = VK_SHADER_STAGE_COMPUTE_BIT},
++        {.name = "prev3_images", .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++         .mem_layout = rep_in, .mem_quali = "readonly", .dimensions = 2,
++         .elems = planes, .stages = VK_SHADER_STAGE_COMPUTE_BIT},
++        {.name = "stat_buffer", .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
++         .mem_layout = "std430", .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++         .buf_content = "uint sum_lo[64]; uint sum_hi[64]; uint cnt_y[16]; uint cnt_c[16];"},
++        {/* Per-cell quarter-pel MV grid: (uint16 dx)|(uint16 dy<<16). */
++         .name = "mv_grid", .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
++         .mem_layout = "std430", .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++         .buf_content = "uint mv_packed[];"},
++        {/* Per-cell motion confidence (0..255), one uint per cell. */
++         .name = "conf_grid", .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
++         .mem_layout = "std430", .stages = VK_SHADER_STAGE_COMPUTE_BIT,
++         .buf_content = "uint conf_packed[];"},
++        {.name = "output_images", .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++         .mem_layout = rep_out, .mem_quali = "writeonly", .dimensions = 2,
++         .elems = planes, .stages = VK_SHADER_STAGE_COMPUTE_BIT},
++        {/* Forward-lookahead tap (ADR-0137): the NEXT frame, mirrors
++          * prev0_images exactly. Read same-coordinate, tcut-gated. */
++         .name = "next0_images", .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
++         .mem_layout = rep_in, .mem_quali = "readonly", .dimensions = 2,
++         .elems = planes, .stages = VK_SHADER_STAGE_COMPUTE_BIT},
++    };
++    ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 10, 0);
++}
++
++static av_cold int init_filter(AVFilterContext *ctx)
++{
++    int err = 0;
++    PelorusDenoiseVulkanContext *s = ctx->priv;
++    FFVulkanContext *vkctx = &s->vkctx;
++    FFVulkanShader *shd = &s->shd;
++    const int planes = av_pix_fmt_count_planes(vkctx->output_format);
++    const uint32_t sample_code_max = pel_vk_sample_code_max(vkctx->output_format);
++    int semi_planar = 0;
++
++    denoise_init_opts(s, planes, &semi_planar);
 +
 +    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
 +    if (!s->qf) {
 +        av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
-+        err = AVERROR(ENOTSUP);
-+        goto fail;
++        return AVERROR(ENOTSUP);
 +    }
 +
 +    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
@@ -367,107 +425,7 @@ index 0000000000000000000000000000000000000000..88e7be335e6933f95bc4ea89faf34e81
 +
 +    ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts), VK_SHADER_STAGE_COMPUTE_BIT);
 +
-+    /* Descriptor set 0. Inputs FIRST, output then the forward tap LAST (the Nin /
-+     * bwdif binding-order contract): binding 0 = current frame, 1..MAX_PREV =
-+     * previous frames, then the residual SSBO, then the MV/conf SSBOs, then the
-+     * output image, then the forward-lookahead next0 image (ADR-0137). Each image
-+     * binding is a per-plane array (.elems = planes), float representation,
-+     * storage image (sampler = VK_NULL_HANDLE, GENERAL layout, imageLoad). Final
-+     * binding map: cur=0, prev0-3=1-4, stat=5, mv=6, conf=7, output=8, next0=9. */
-+    {
-+        FFVulkanDescriptorSetBinding desc_set[] = {
-+            {
-+                .name = "cur_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "readonly",
-+                .dimensions = 2,
-+                .elems = planes,
-+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-+            },
-+            {
-+                .name = "prev0_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "readonly",
-+                .dimensions = 2,
-+                .elems = planes,
-+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-+            },
-+            {
-+                .name = "prev1_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "readonly",
-+                .dimensions = 2,
-+                .elems = planes,
-+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-+            },
-+            {
-+                .name = "prev2_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "readonly",
-+                .dimensions = 2,
-+                .elems = planes,
-+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-+            },
-+            {
-+                .name = "prev3_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "readonly",
-+                .dimensions = 2,
-+                .elems = planes,
-+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-+            },
-+            {
-+                .name = "stat_buffer",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-+                .mem_layout = "std430",
-+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-+                .buf_content = "uint sum_lo[64]; uint sum_hi[64]; "
-+                               "uint cnt_y[16]; uint cnt_c[16];",
-+            },
-+            {
-+                /* Per-cell quarter-pel MV grid: (uint16 dx)|(uint16 dy<<16). */
-+                .name = "mv_grid",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-+                .mem_layout = "std430",
-+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-+                .buf_content = "uint mv_packed[];",
-+            },
-+            {
-+                /* Per-cell motion confidence (0..255), one uint per cell. */
-+                .name = "conf_grid",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-+                .mem_layout = "std430",
-+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-+                .buf_content = "uint conf_packed[];",
-+            },
-+            {
-+                .name = "output_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "writeonly",
-+                .dimensions = 2,
-+                .elems = planes,
-+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-+            },
-+            {
-+                /* Forward-lookahead tap (ADR-0137): the NEXT frame, mirrors
-+                 * prev0_images exactly. Read same-coordinate, tcut-gated. */
-+                .name = "next0_images",
-+                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-+                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-+                .mem_quali = "readonly",
-+                .dimensions = 2,
-+                .elems = planes,
-+                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-+            },
-+        };
-+        ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 10, 0);
-+    }
++    denoise_add_descriptors(vkctx, shd, planes);
 +
 +    RET(ff_vk_shader_link(vkctx, shd, ff_pelorus_denoise_comp_spv_data,
 +                          ff_pelorus_denoise_comp_spv_len, "main"));
@@ -498,18 +456,9 @@ index 0000000000000000000000000000000000000000..88e7be335e6933f95bc4ea89faf34e81
 +    return (double)total / PEL_DENOISE_RES_GS;
 +}
 +
-+/* Derive the denoise residual summaries from the read-back accumulators and
-+ * attach a measured PEL_SEC_DENOISE section to the output frame. */
-+static int attach_interop(PelorusDenoiseVulkanContext *s, AVFrame *out,
-+                          const PelorusDenoiseBuf *acc)
++static void denoise_fill_section(const PelorusDenoiseVulkanContext *s, const PelorusDenoiseBuf *acc,
++                                 PelorusDenoiseSection *den)
 +{
-+    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
-+    PelorusSideData meta;
-+    PelorusDenoiseSection den;
-+    PelorusPackSection sec;
-+    uint8_t *blob = NULL;
-+    size_t len = 0;
-+    AVBufferRef *buf;
 +    const double abs_y = pel_denoise_stat(acc, PEL_DENOISE_STAT_ABS_Y);
 +    const double abs_u = pel_denoise_stat(acc, PEL_DENOISE_STAT_ABS_U);
 +    const double abs_v = pel_denoise_stat(acc, PEL_DENOISE_STAT_ABS_V);
@@ -536,6 +485,32 @@ index 0000000000000000000000000000000000000000..88e7be335e6933f95bc4ea89faf34e81
 +        res_v = (float)(abs_v / (double)cnt_c);
 +    }
 +
++    memset(den, 0, sizeof(*den));
++    den->residual_energy_y = res_y;
++    den->residual_energy_u = res_u;
++    den->residual_energy_v = res_v;
++    den->applied_strength = s->opts.strength[0];
++    den->noise_sigma_estimate = sigma_est;
++    den->psnr_vs_input = psnr;
++    den->denoiser_id = PEL_DENOISER_BILATERAL_TEMPORAL;
++    /* den._pad already zeroed by memset */
++}
++
++/* Derive the denoise residual summaries from the read-back accumulators and
++ * attach a measured PEL_SEC_DENOISE section to the output frame. */
++static int attach_interop(PelorusDenoiseVulkanContext *s, AVFrame *out,
++                          const PelorusDenoiseBuf *acc)
++{
++    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
++    PelorusSideData meta;
++    PelorusDenoiseSection den;
++    PelorusPackSection sec;
++    uint8_t *blob = NULL;
++    size_t len = 0;
++    AVBufferRef *buf;
++
++    denoise_fill_section(s, acc, &den);
++
 +    memset(&meta, 0, sizeof(meta));
 +    meta.frame_pts = (uint64_t)out->pts;
 +    meta.bit_depth = d ? (uint8_t)d->comp[0].depth : 0;
@@ -543,16 +518,6 @@ index 0000000000000000000000000000000000000000..88e7be335e6933f95bc4ea89faf34e81
 +                            PEL_LAYOUT_444 :
 +                            ((d && d->log2_chroma_h == 0) ? PEL_LAYOUT_422 : PEL_LAYOUT_420);
 +    meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'D');
-+
-+    memset(&den, 0, sizeof(den));
-+    den.residual_energy_y = res_y;
-+    den.residual_energy_u = res_u;
-+    den.residual_energy_v = res_v;
-+    den.applied_strength = s->opts.strength[0];
-+    den.noise_sigma_estimate = sigma_est;
-+    den.psnr_vs_input = psnr;
-+    den.denoiser_id = PEL_DENOISER_BILATERAL_TEMPORAL;
-+    /* den._pad already zeroed by memset */
 +
 +    sec.id = PEL_SEC_DENOISE;
 +    sec.data = &den;
@@ -573,52 +538,143 @@ index 0000000000000000000000000000000000000000..88e7be335e6933f95bc4ea89faf34e81
 +    return 0;
 +}
 +
-+/* Bind the current frame, the actual_prev valid previous frames, the (optional)
-+ * residual SSBO, the output and the (optional) forward-lookahead next frame via
-+ * the hand-rolled explicit exec path, dispatch, and (when meta) submit+wait
-+ * reading the residual back. Inputs first, output then next0 LAST. Unused prev
-+ * slots are bound to the current frame as harmless filler so every array
-+ * descriptor is populated; the shader only reads 1..actual_prev. `next` is NULL
-+ * when there is no forward frame (lookahead==0 or EOF flush) — then next0 is
-+ * bound to cur as filler and actual_next is 0 (the forward tap never fires). */
-+static int denoise_dispatch(PelorusDenoiseVulkanContext *s, AVFrame *out, AVFrame *cur,
-+                            AVFrame *const prev[], int actual_prev, AVFrame *next,
-+                            const PelorusDenoiseBuf **acc_out, AVBufferRef **buf_out)
++typedef struct DenoiseViews {
++    VkImageView cur[AV_NUM_DATA_POINTERS];
++    VkImageView prev[PEL_DENOISE_MAX_PREV][AV_NUM_DATA_POINTERS];
++    VkImageView next[AV_NUM_DATA_POINTERS];
++    VkImageView out[AV_NUM_DATA_POINTERS];
++} DenoiseViews;
++
++static int denoise_check_motion_fit(PelorusDenoiseVulkanContext *s, const PelorusMotionSection *mo,
++                                   size_t msz, int width, int height, int gc, int gr, int *pitch)
 +{
-+    int err = 0;
-+    int i;
-+    FFVulkanContext *vkctx = &s->vkctx;
-+    FFVulkanFunctions *vk = &vkctx->vkfn;
-+    FFVkExecContext *exec = NULL;
-+    AVFrame *bound_prev[PEL_DENOISE_MAX_PREV];
-+    AVFrame *bound_next;
-+    VkImageView cur_views[AV_NUM_DATA_POINTERS];
-+    VkImageView prev_views[PEL_DENOISE_MAX_PREV][AV_NUM_DATA_POINTERS];
-+    VkImageView next_views[AV_NUM_DATA_POINTERS];
-+    VkImageView out_views[AV_NUM_DATA_POINTERS];
-+    VkImageMemoryBarrier2 img_bar[64];
-+    int nb_img_bar = 0;
-+    AVBufferRef *buf = NULL;
-+    FFVkBuffer *buf_vk = NULL;
-+    AVBufferRef *mvbuf = NULL, *confbuf = NULL;
-+    FFVkBuffer *mvbuf_vk = NULL, *confbuf_vk = NULL;
-+    int want_meta = s->meta;
++    /* The producer's block edge (named since ABI 1.4), not ceil(W/gc). */
++    int fit = pelorus_mc_block_pitch(mo, msz, width, height, gc, gr, pitch);
++    if (fit == 2 && !s->mc_grid_assumed_warned) {
++        s->mc_grid_assumed_warned = 1;
++        av_log(&s->vkctx, AV_LOG_WARNING,
++               "motion grid %dx%d fits several block sizes for a %dx%d frame; "
++               "assuming the mc default bsize=%d\n",
++               gc, gr, width, height, PEL_SD_MC_BSIZE_DEFAULT);
++    }
++    if (!fit && !s->mc_grid_warned) {
++        s->mc_grid_warned = 1;
++        av_log(&s->vkctx, AV_LOG_WARNING,
++               "motion grid %dx%d does not map to a unique block size for a %dx%d "
++               "frame; motion compensation disabled for such frames\n",
++               gc, gr, width, height);
++    }
++    return fit;
++}
 +
-+    *acc_out = NULL;
-+    *buf_out = NULL;
++static void denoise_parse_motion_grid(PelorusDenoiseVulkanContext *s, const AVFrame *cur,
++                                      int width, int height, const uint8_t **mv_field_out,
++                                      const uint8_t **conf_field_out, int *gc_out, int *gr_out,
++                                      int *pitch_out, uint64_t *cells_out)
++{
++    const AVFrameSideData *sd = NULL;
++    const void *mp = NULL, *cp = NULL;
++    size_t msz = 0, csz = 0;
++    const uint8_t *mv_field = NULL, *conf_field = NULL;
++    int gc = 0, gr = 0, pitch = 0;
++    uint64_t cells = 0;
 +
-+    /* Every prev array descriptor must be populated; fill the slots past
-+     * actual_prev with the current frame (never read by the shader). */
-+    for (i = 0; i < PEL_DENOISE_MAX_PREV; i++)
-+        bound_prev[i] = (i < actual_prev) ? prev[i] : cur;
++    /* Newest Pelorus blob carrying PEL_SEC_MOTION (every producer appends its
++     * own SEI_UNREGISTERED entry, so av_frame_get_side_data's first entry can
++     * be another producer's). The confidence section and the grid dimensions
++     * must come from that same blob: the grid belongs to its header. */
++    if (s->mc)
++        sd = pelorus_sd_find_section(cur, PEL_SEC_MOTION, sizeof(PelorusMotionSection), &mp, &msz);
++    if (sd &&
++        pel_blob_find_section(sd->data, sd->size, PEL_SEC_MOTION_CONF,
++                              sizeof(PelorusMotionConfSection), &cp, &csz) == PEL_OK &&
++        cp && PEL_SD_FIELD_OK(msz, PelorusMotionSection, mv_field_size) &&
++        PEL_SD_FIELD_OK(csz, PelorusMotionConfSection, conf_field_size)) {
++        const PelorusMotionSection *mo = mp;
++        const PelorusMotionConfSection *mcs = cp;
++        const PelorusSideData *bh = (const PelorusSideData *)(sd->data + PELORUS_SIDEDATA_UUID_LEN);
++        gc = bh->grid_cols;
++        gr = bh->grid_rows;
++        /* grid dims are untrusted uint16; the product can exceed INT_MAX, so
++         * compute in 64-bit and bound it before any sizing/loop use. */
++        cells = (uint64_t)gc * (uint64_t)gr;
++        /* Validate against the untrusted side-data length before deref. */
++        if (gc > 0 && gr > 0 && cells <= PEL_DENOISE_MAX_CELLS &&
++            mo->mv_field_size == cells * 4 && mcs->conf_field_size == cells &&
++            (size_t)PELORUS_SIDEDATA_UUID_LEN + mo->mv_field_offset + mo->mv_field_size <= sd->size &&
++            (size_t)PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset + mcs->conf_field_size <= sd->size) {
++            if (denoise_check_motion_fit(s, mo, msz, width, height, gc, gr, &pitch)) {
++                mv_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mo->mv_field_offset;
++                conf_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset;
++            }
++        }
++    }
 +
-+    /* Forward-lookahead next0: bind the next frame when present, else cur as
-+     * harmless filler (never read; actual_next == 0 gates the forward tap). */
-+    bound_next = next ? next : cur;
++    *mv_field_out = mv_field;
++    *conf_field_out = conf_field;
++    *gc_out = gc;
++    *gr_out = gr;
++    *pitch_out = pitch;
++    *cells_out = cells;
++}
 +
-+    s->opts.actual_prev = actual_prev;
-+    s->opts.actual_next = (next != NULL) ? 1 : 0;
-+    s->opts.want_meta = want_meta;
++static int denoise_alloc_motion_buffers(PelorusDenoiseVulkanContext *s, const uint8_t *mv_field,
++                                       const uint8_t *conf_field, int gc, int gr, int pitch,
++                                       uint64_t cells, AVBufferRef **mvbuf_out,
++                                       AVBufferRef **confbuf_out)
++{
++    int err;
++    uint64_t ncells = mv_field ? cells : 1;
++    uint64_t j;
++    FFVkBuffer *mvbuf_vk, *confbuf_vk;
++
++    err = ff_vk_get_pooled_buffer(
++        &s->vkctx, &s->mv_buf_pool, mvbuf_out, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
++        (size_t)ncells * sizeof(uint32_t),
++        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
++    if (err < 0)
++        return err;
++
++    err = ff_vk_get_pooled_buffer(
++        &s->vkctx, &s->conf_buf_pool, confbuf_out, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
++        (size_t)ncells * sizeof(uint32_t),
++        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
++    if (err < 0)
++        return err;
++
++    mvbuf_vk = (FFVkBuffer *)(*mvbuf_out)->data;
++    confbuf_vk = (FFVkBuffer *)(*confbuf_out)->data;
++
++    if (mv_field) {
++        uint32_t *md = (uint32_t *)mvbuf_vk->mapped_mem;
++        uint32_t *cd = (uint32_t *)confbuf_vk->mapped_mem;
++        for (j = 0; j < cells; j++) {
++            int16_t dx, dy;
++            memcpy(&dx, mv_field + (size_t)j * 4 + 0, sizeof(int16_t));
++            memcpy(&dy, mv_field + (size_t)j * 4 + 2, sizeof(int16_t));
++            md[j] = (uint32_t)(uint16_t)dx | ((uint32_t)(uint16_t)dy << 16);
++            cd[j] = conf_field[j];
++        }
++        s->opts.grid_cols = gc;
++        s->opts.grid_rows = gr;
++        s->opts.cell_w = pitch;
++        s->opts.cell_h = pitch;
++    } else {
++        ((uint32_t *)mvbuf_vk->mapped_mem)[0] = 0;
++        ((uint32_t *)confbuf_vk->mapped_mem)[0] = 0;
++    }
++
++    return 0;
++}
++
++static int denoise_setup_buffers(PelorusDenoiseVulkanContext *s, const AVFrame *cur,
++                                int width, int height, AVBufferRef **buf,
++                                AVBufferRef **mvbuf, AVBufferRef **confbuf)
++{
++    int err;
++    const uint8_t *mv_field = NULL, *conf_field = NULL;
++    int gc = 0, gr = 0, pitch = 0;
++    uint64_t cells = 0;
 +
 +    /* The shader statically references the binding-5 stat SSBO regardless of
 +     * want_meta (the meta accumulators are gated by a runtime push-const branch,
@@ -627,185 +683,161 @@ index 0000000000000000000000000000000000000000..88e7be335e6933f95bc4ea89faf34e81
 +     * unconditionally; the zero-fill + host readback below stay gated on
 +     * want_meta (when meta=0 the SSBO is never written, so its contents are
 +     * don't-care — it only has to be a live, bound descriptor). */
-+    RET(ff_vk_get_pooled_buffer(
-+        vkctx, &s->stat_buf_pool, &buf,
++    err = ff_vk_get_pooled_buffer(
++        &s->vkctx, &s->stat_buf_pool, buf,
 +        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
 +        sizeof(PelorusDenoiseBuf),
 +        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
-+    buf_vk = (FFVkBuffer *)buf->data;
++            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
++    if (err < 0)
++        return err;
 +
 +    /* --- motion-compensated taps: parse the MV + confidence grids from cur's
 +     * Pelorus side data and stage them into host-visible SSBOs. Something must
 +     * be bound at 6/7 every dispatch (Vulkan forbids an unbound used
 +     * descriptor); grid_cols == 0 makes the shader take the same-coord path. */
 +    s->opts.grid_cols = 0;
-+    {
-+        const AVFrameSideData *sd = NULL;
-+        const void *mp = NULL, *cp = NULL;
-+        size_t msz = 0, csz = 0;
-+        const uint8_t *mv_field = NULL, *conf_field = NULL;
-+        int gc = 0, gr = 0, pitch = 0;
-+        uint64_t cells = 0, ncells;
-+        uint64_t j;
++    denoise_parse_motion_grid(s, cur, width, height, &mv_field, &conf_field, &gc, &gr,
++                             &pitch, &cells);
++    return denoise_alloc_motion_buffers(s, mv_field, conf_field, gc, gr, pitch, cells,
++                                        mvbuf, confbuf);
++}
 +
-+        /* Newest Pelorus blob carrying PEL_SEC_MOTION (every producer appends its
-+         * own SEI_UNREGISTERED entry, so av_frame_get_side_data's first entry can
-+         * be another producer's). The confidence section and the grid dimensions
-+         * must come from that same blob: the grid belongs to its header. */
-+        if (s->mc)
-+            sd = pelorus_sd_find_section(cur, PEL_SEC_MOTION, sizeof(PelorusMotionSection), &mp,
-+                                         &msz);
-+        if (sd &&
-+            pel_blob_find_section(sd->data, sd->size, PEL_SEC_MOTION_CONF,
-+                                  sizeof(PelorusMotionConfSection), &cp, &csz) == PEL_OK &&
-+            cp != NULL &&
-+            /* A shorter (older) producer section must still cover every field read. */
-+            PEL_SD_FIELD_OK(msz, PelorusMotionSection, mv_field_size) &&
-+            PEL_SD_FIELD_OK(csz, PelorusMotionConfSection, conf_field_size)) {
-+            const PelorusMotionSection *mo = mp;
-+            const PelorusMotionConfSection *mcs = cp;
-+            const PelorusSideData *bh =
-+                (const PelorusSideData *)(sd->data + PELORUS_SIDEDATA_UUID_LEN);
-+            gc = bh->grid_cols;
-+            gr = bh->grid_rows;
-+            /* grid dims are untrusted uint16; the product can exceed INT_MAX, so
-+             * compute in 64-bit and bound it before any sizing/loop use. */
-+            cells = (uint64_t)gc * (uint64_t)gr;
-+            /* Validate against the untrusted side-data length before deref. */
-+            if (gc > 0 && gr > 0 && cells <= PEL_DENOISE_MAX_CELLS &&
-+                mo->mv_field_size == cells * 4 && mcs->conf_field_size == cells &&
-+                (size_t)PELORUS_SIDEDATA_UUID_LEN + mo->mv_field_offset + mo->mv_field_size <=
-+                    sd->size &&
-+                (size_t)PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset + mcs->conf_field_size <=
-+                    sd->size) {
-+                /* The producer's block edge (named since ABI 1.4), not ceil(W/gc). */
-+                int fit = pelorus_mc_block_pitch(mo, msz, out->width, out->height, gc, gr, &pitch);
-+                if (fit == 2 && !s->mc_grid_assumed_warned) {
-+                    s->mc_grid_assumed_warned = 1;
-+                    av_log(vkctx, AV_LOG_WARNING,
-+                           "motion grid %dx%d fits several block sizes for a %dx%d frame; "
-+                           "assuming the mc default bsize=%d\n",
-+                           gc, gr, out->width, out->height, PEL_SD_MC_BSIZE_DEFAULT);
-+                }
-+                if (fit) {
-+                    mv_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mo->mv_field_offset;
-+                    conf_field = sd->data + PELORUS_SIDEDATA_UUID_LEN + mcs->conf_field_offset;
-+                } else if (!s->mc_grid_warned) {
-+                    s->mc_grid_warned = 1;
-+                    av_log(vkctx, AV_LOG_WARNING,
-+                           "motion grid %dx%d does not map to a unique block size for a %dx%d "
-+                           "frame; motion compensation disabled for such frames\n",
-+                           gc, gr, out->width, out->height);
-+                }
-+            }
-+        }
-+
-+        ncells = mv_field ? cells : 1;
-+        RET(ff_vk_get_pooled_buffer(
-+            vkctx, &s->mv_buf_pool, &mvbuf, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
-+            (size_t)ncells * sizeof(uint32_t),
-+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
-+        RET(ff_vk_get_pooled_buffer(
-+            vkctx, &s->conf_buf_pool, &confbuf, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
-+            (size_t)ncells * sizeof(uint32_t),
-+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
-+        mvbuf_vk = (FFVkBuffer *)mvbuf->data;
-+        confbuf_vk = (FFVkBuffer *)confbuf->data;
-+
-+        if (mv_field) {
-+            uint32_t *md = (uint32_t *)mvbuf_vk->mapped_mem;
-+            uint32_t *cd = (uint32_t *)confbuf_vk->mapped_mem;
-+            for (j = 0; j < cells; j++) {
-+                int16_t dx, dy;
-+                memcpy(&dx, mv_field + (size_t)j * 4 + 0, sizeof(int16_t));
-+                memcpy(&dy, mv_field + (size_t)j * 4 + 2, sizeof(int16_t));
-+                md[j] = (uint32_t)(uint16_t)dx | ((uint32_t)(uint16_t)dy << 16);
-+                cd[j] = conf_field[j];
-+            }
-+            s->opts.grid_cols = gc;
-+            s->opts.grid_rows = gr;
-+            s->opts.cell_w = pitch;
-+            s->opts.cell_h = pitch;
-+        } else {
-+            ((uint32_t *)mvbuf_vk->mapped_mem)[0] = 0;
-+            ((uint32_t *)confbuf_vk->mapped_mem)[0] = 0;
-+        }
-+    }
-+
-+    exec = ff_vk_exec_get(vkctx, &s->e);
-+    ff_vk_exec_start(vkctx, exec);
++static int denoise_add_dep_frames(FFVulkanContext *vkctx, FFVkExecContext *exec, AVFrame *out,
++                                  AVFrame *cur, AVFrame *const bound_prev[], int actual_prev,
++                                  AVFrame *next, AVFrame *bound_next, DenoiseViews *views)
++{
++    int err, i;
 +
 +    /* Dependencies: output, current frame, every bound previous frame. */
-+    RET(ff_vk_exec_add_dep_frame(vkctx, exec, out, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-+                                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
-+    RET(ff_vk_create_imageviews(vkctx, exec, out_views, out, FF_VK_REP_FLOAT));
-+    RET(ff_vk_exec_add_dep_frame(vkctx, exec, cur, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-+                                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
-+    RET(ff_vk_create_imageviews(vkctx, exec, cur_views, cur, FF_VK_REP_FLOAT));
++    err = ff_vk_exec_add_dep_frame(vkctx, exec, out, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                                  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
++    if (err < 0)
++        return err;
++    err = ff_vk_create_imageviews(vkctx, exec, views->out, out, FF_VK_REP_FLOAT);
++    if (err < 0)
++        return err;
++
++    err = ff_vk_exec_add_dep_frame(vkctx, exec, cur, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                                  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
++    if (err < 0)
++        return err;
++    err = ff_vk_create_imageviews(vkctx, exec, views->cur, cur, FF_VK_REP_FLOAT);
++    if (err < 0)
++        return err;
++
 +    for (i = 0; i < PEL_DENOISE_MAX_PREV; i++) {
 +        /* The filler current-frame slots are already a dependency; only add the
 +         * real previous frames once each (clones share the underlying frame). */
-+        if (i < actual_prev)
-+            RET(ff_vk_exec_add_dep_frame(vkctx, exec, bound_prev[i],
-+                                         VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-+                                         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
-+        RET(ff_vk_create_imageviews(vkctx, exec, prev_views[i], bound_prev[i], FF_VK_REP_FLOAT));
++        if (i < actual_prev) {
++            err = ff_vk_exec_add_dep_frame(vkctx, exec, bound_prev[i],
++                                          VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
++            if (err < 0)
++                return err;
++        }
++        err = ff_vk_create_imageviews(vkctx, exec, views->prev[i], bound_prev[i], FF_VK_REP_FLOAT);
++        if (err < 0)
++            return err;
 +    }
++
 +    /* Forward-lookahead next frame: add as a dep only when it is a real frame
 +     * (the cur filler is already a dependency); always build its image views. */
-+    if (next)
-+        RET(ff_vk_exec_add_dep_frame(vkctx, exec, bound_next, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-+                                     VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
-+    RET(ff_vk_create_imageviews(vkctx, exec, next_views, bound_next, FF_VK_REP_FLOAT));
++    if (next) {
++        err = ff_vk_exec_add_dep_frame(vkctx, exec, bound_next,
++                                      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
++        if (err < 0)
++            return err;
++    }
++    err = ff_vk_create_imageviews(vkctx, exec, views->next, bound_next, FF_VK_REP_FLOAT);
++    if (err < 0)
++        return err;
++
++    return 0;
++}
++
++static int denoise_bind_descriptors(PelorusDenoiseVulkanContext *s, FFVkExecContext *exec,
++                                    AVFrame *out, AVFrame *cur, AVFrame *const bound_prev[],
++                                    AVFrame *bound_next, const DenoiseViews *views,
++                                    FFVkBuffer *buf_vk, AVBufferRef **mvbuf, AVBufferRef **confbuf)
++{
++    int err, i;
++    FFVulkanContext *vkctx = &s->vkctx;
++    FFVkBuffer *mvbuf_vk = (FFVkBuffer *)(*mvbuf)->data;
++    FFVkBuffer *confbuf_vk = (FFVkBuffer *)(*confbuf)->data;
 +
 +    /* Bind: cur=0, prev0..prev3 = 1..4, stat_buffer=5, mv_grid=6, conf_grid=7,
 +     * output=8, next0=9 (forward-lookahead, LAST). The MV/conf buffers are handed
 +     * to the exec as deps so they outlive an async (meta=0) submit. */
-+    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, cur, cur_views, 0, 0,
++    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, cur, views->cur, 0, 0,
 +                                  VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
 +    for (i = 0; i < PEL_DENOISE_MAX_PREV; i++)
-+        ff_vk_shader_update_img_array(vkctx, exec, &s->shd, bound_prev[i], prev_views[i], 0, 1 + i,
++        ff_vk_shader_update_img_array(vkctx, exec, &s->shd, bound_prev[i], views->prev[i], 0, 1 + i,
 +                                      VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
 +    /* Bind the stat SSBO at 5 on EVERY dispatch (the shader statically uses it);
 +     * the zero-fill + readback stay gated on want_meta below. */
-+    RET(ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 5, 0, buf_vk, 0, buf_vk->size,
-+                                        VK_FORMAT_UNDEFINED));
-+    RET(ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 6, 0, mvbuf_vk, 0, mvbuf_vk->size,
-+                                        VK_FORMAT_UNDEFINED));
-+    RET(ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 7, 0, confbuf_vk, 0,
-+                                        confbuf_vk->size, VK_FORMAT_UNDEFINED));
-+    RET(ff_vk_exec_add_dep_buf(vkctx, exec, &mvbuf, 1, 0));
-+    mvbuf = NULL;
-+    RET(ff_vk_exec_add_dep_buf(vkctx, exec, &confbuf, 1, 0));
-+    confbuf = NULL;
-+    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, out, out_views, 0, 8,
++    err = ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 5, 0, buf_vk, 0, buf_vk->size,
++                                         VK_FORMAT_UNDEFINED);
++    if (err < 0)
++        return err;
++    err = ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 6, 0, mvbuf_vk, 0, mvbuf_vk->size,
++                                         VK_FORMAT_UNDEFINED);
++    if (err < 0)
++        return err;
++    err = ff_vk_shader_update_desc_buffer(vkctx, exec, &s->shd, 0, 7, 0, confbuf_vk, 0,
++                                         confbuf_vk->size, VK_FORMAT_UNDEFINED);
++    if (err < 0)
++        return err;
++    err = ff_vk_exec_add_dep_buf(vkctx, exec, mvbuf, 1, 0);
++    if (err < 0)
++        return err;
++    *mvbuf = NULL;
++    err = ff_vk_exec_add_dep_buf(vkctx, exec, confbuf, 1, 0);
++    if (err < 0)
++        return err;
++    *confbuf = NULL;
++    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, out, views->out, 0, 8,
 +                                  VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
-+    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, bound_next, next_views, 0, 9,
++    ff_vk_shader_update_img_array(vkctx, exec, &s->shd, bound_next, views->next, 0, 9,
 +                                  VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE);
++    return 0;
++}
++
++static void denoise_collect_barriers(FFVulkanContext *vkctx, FFVkExecContext *exec, AVFrame *out,
++                                     AVFrame *cur, AVFrame *const bound_prev[], int actual_prev,
++                                     AVFrame *next, AVFrame *bound_next,
++                                     VkImageMemoryBarrier2 *img_bar, int *nb_img_bar)
++{
++    int i;
 +
 +    /* Image barriers: output writable, all inputs readable. */
-+    ff_vk_frame_barrier(vkctx, exec, out, img_bar, &nb_img_bar,
++    ff_vk_frame_barrier(vkctx, exec, out, img_bar, nb_img_bar,
 +                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
 +                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
 +                        VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED);
-+    ff_vk_frame_barrier(vkctx, exec, cur, img_bar, &nb_img_bar,
++    ff_vk_frame_barrier(vkctx, exec, cur, img_bar, nb_img_bar,
 +                        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
 +                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
 +                        VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED);
 +    for (i = 0; i < actual_prev; i++)
-+        ff_vk_frame_barrier(vkctx, exec, bound_prev[i], img_bar, &nb_img_bar,
++        ff_vk_frame_barrier(vkctx, exec, bound_prev[i], img_bar, nb_img_bar,
 +                            VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
 +                            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
 +                            VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED);
 +    /* Only a real next frame needs its own read barrier; the cur filler already
 +     * has one above (a duplicate barrier on the same image would be redundant). */
 +    if (next)
-+        ff_vk_frame_barrier(vkctx, exec, bound_next, img_bar, &nb_img_bar,
++        ff_vk_frame_barrier(vkctx, exec, bound_next, img_bar, nb_img_bar,
 +                            VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
 +                            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
 +                            VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED);
++}
 +
++static void denoise_pre_dispatch_barrier(FFVulkanFunctions *vk, FFVkExecContext *exec,
++                                        FFVkBuffer *buf_vk, VkImageMemoryBarrier2 *img_bar,
++                                        int nb_img_bar, int want_meta)
++{
 +    if (want_meta) {
 +        /* Zero the accumulators, then sync TRANSFER->COMPUTE before the dispatch
 +         * reads/writes the SSBO; also flush the image barriers in the same call. */
@@ -855,49 +887,124 @@ index 0000000000000000000000000000000000000000..88e7be335e6933f95bc4ea89faf34e81
 +                                               .imageMemoryBarrierCount = nb_img_bar,
 +                                           });
 +    }
++}
++
++static void denoise_cmd_dispatch(PelorusDenoiseVulkanContext *s, FFVkExecContext *exec,
++                                int width, int height)
++{
++    FFVulkanContext *vkctx = &s->vkctx;
++    FFVulkanFunctions *vk = &vkctx->vkfn;
 +
 +    ff_vk_exec_bind_shader(vkctx, exec, &s->shd);
 +    ff_vk_shader_update_push_const(vkctx, exec, &s->shd, VK_SHADER_STAGE_COMPUTE_BIT, 0,
 +                                   sizeof(s->opts), &s->opts);
++    vk->CmdDispatch(exec->buf, FFALIGN(width, s->shd.lg_size[0]) / s->shd.lg_size[0],
++                    FFALIGN(height, s->shd.lg_size[1]) / s->shd.lg_size[1], s->shd.lg_size[2]);
++}
 +
-+    vk->CmdDispatch(exec->buf, FFALIGN(out->width, s->shd.lg_size[0]) / s->shd.lg_size[0],
-+                    FFALIGN(out->height, s->shd.lg_size[1]) / s->shd.lg_size[1], s->shd.lg_size[2]);
++static void denoise_post_dispatch_barrier(FFVulkanFunctions *vk, FFVkExecContext *exec,
++                                         FFVkBuffer *buf_vk)
++{
++    vk->CmdPipelineBarrier2(exec->buf,
++                            &(VkDependencyInfo){
++                                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++                                .pBufferMemoryBarriers =
++                                    &(VkBufferMemoryBarrier2){
++                                        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
++                                        .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
++                                        .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
++                                        .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
++                                                         VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
++                                        .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
++                                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++                                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++                                        .buffer = buf_vk->buf,
++                                        .size = buf_vk->size,
++                                        .offset = 0,
++                                    },
++                                .bufferMemoryBarrierCount = 1,
++                            });
++}
 +
-+    if (want_meta) {
-+        vk->CmdPipelineBarrier2(exec->buf,
-+                                &(VkDependencyInfo){
-+                                    .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-+                                    .pBufferMemoryBarriers =
-+                                        &(VkBufferMemoryBarrier2){
-+                                            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-+                                            .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-+                                            .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
-+                                            .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
-+                                                             VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-+                                            .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
-+                                            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-+                                            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-+                                            .buffer = buf_vk->buf,
-+                                            .size = buf_vk->size,
-+                                            .offset = 0,
-+                                        },
-+                                    .bufferMemoryBarrierCount = 1,
-+                                });
++static int denoise_finish_exec(PelorusDenoiseVulkanContext *s, FFVkExecContext *exec,
++                               FFVkBuffer *buf_vk, AVBufferRef **buf,
++                               const PelorusDenoiseBuf **acc_out, AVBufferRef **buf_out)
++{
++    int err;
++    FFVulkanContext *vkctx = &s->vkctx;
 +
-+        RET(ff_vk_exec_submit(vkctx, exec));
++    if (s->meta) {
++        denoise_post_dispatch_barrier(&vkctx->vkfn, exec, buf_vk);
++        err = ff_vk_exec_submit(vkctx, exec);
++        if (err < 0)
++            return err;
 +        ff_vk_exec_wait(vkctx, exec);
-+
 +        *acc_out = (const PelorusDenoiseBuf *)buf_vk->mapped_mem;
-+        *buf_out = buf;
++        *buf_out = *buf;
 +        return 0;
 +    }
 +
 +    /* meta=0: no readback, no sync point — just submit and return. The stat
 +     * buffer bound at 5 is never read back, but it must outlive the async submit
 +     * (same treatment as the mv/conf buffers above). */
-+    RET(ff_vk_exec_add_dep_buf(vkctx, exec, &buf, 1, 0));
-+    buf = NULL;
-+    RET(ff_vk_exec_submit(vkctx, exec));
++    err = ff_vk_exec_add_dep_buf(vkctx, exec, buf, 1, 0);
++    if (err < 0)
++        return err;
++    *buf = NULL;
++    return ff_vk_exec_submit(vkctx, exec);
++}
++
++/* Bind the current frame, the actual_prev valid previous frames, the (optional)
++ * residual SSBO, the output and the (optional) forward-lookahead next frame via
++ * the hand-rolled explicit exec path, dispatch, and (when meta) submit+wait
++ * reading the residual back. Inputs first, output then next0 LAST. Unused prev
++ * slots are bound to the current frame as harmless filler so every array
++ * descriptor is populated; the shader only reads 1..actual_prev. `next` is NULL
++ * when there is no forward frame (lookahead==0 or EOF flush) — then next0 is
++ * bound to cur as filler and actual_next is 0 (the forward tap never fires). */
++static int denoise_dispatch(PelorusDenoiseVulkanContext *s, AVFrame *out, AVFrame *cur,
++                            AVFrame *const prev[], int actual_prev, AVFrame *next,
++                            const PelorusDenoiseBuf **acc_out, AVBufferRef **buf_out)
++{
++    int err = 0, i;
++    FFVulkanContext *vkctx = &s->vkctx;
++    FFVkExecContext *exec = NULL;
++    AVFrame *bound_prev[PEL_DENOISE_MAX_PREV], *bound_next = next ? next : cur;
++    DenoiseViews views;
++    VkImageMemoryBarrier2 img_bar[64];
++    int nb_img_bar = 0;
++    AVBufferRef *buf = NULL, *mvbuf = NULL, *confbuf = NULL;
++    FFVkBuffer *buf_vk;
++
++    *acc_out = NULL;
++    *buf_out = NULL;
++
++    /* Every prev array descriptor must be populated; fill the slots past
++     * actual_prev with the current frame (never read by the shader). */
++    for (i = 0; i < PEL_DENOISE_MAX_PREV; i++)
++        bound_prev[i] = (i < actual_prev) ? prev[i] : cur;
++
++    s->opts.actual_prev = actual_prev;
++    s->opts.actual_next = (next != NULL) ? 1 : 0;
++    s->opts.want_meta = s->meta;
++
++    RET(denoise_setup_buffers(s, cur, out->width, out->height, &buf, &mvbuf, &confbuf));
++    buf_vk = (FFVkBuffer *)buf->data;
++
++    exec = ff_vk_exec_get(vkctx, &s->e);
++    ff_vk_exec_start(vkctx, exec);
++
++    RET(denoise_add_dep_frames(vkctx, exec, out, cur, bound_prev, actual_prev, next, bound_next,
++                               &views));
++    RET(denoise_bind_descriptors(s, exec, out, cur, bound_prev, bound_next, &views, buf_vk, &mvbuf,
++                                 &confbuf));
++
++    denoise_collect_barriers(vkctx, exec, out, cur, bound_prev, actual_prev, next, bound_next,
++                             img_bar, &nb_img_bar);
++    denoise_pre_dispatch_barrier(&vkctx->vkfn, exec, buf_vk, img_bar, nb_img_bar, s->meta);
++    denoise_cmd_dispatch(s, exec, out->width, out->height);
++
++    RET(denoise_finish_exec(s, exec, buf_vk, &buf, acc_out, buf_out));
 +    return 0;
 +
 +fail:
@@ -909,6 +1016,73 @@ index 0000000000000000000000000000000000000000..88e7be335e6933f95bc4ea89faf34e81
 +    return err;
 +}
 +
++static int denoise_run(AVFilterContext *ctx, AVFrame *out, AVFrame *cur, AVFrame *next)
++{
++    int err;
++    PelorusDenoiseVulkanContext *s = ctx->priv;
++    AVFrame *const *prev = (AVFrame *const *)s->ring;
++    const PelorusDenoiseBuf *acc = NULL;
++    AVBufferRef *buf = NULL;
++    int actual_prev;
++
++    if (!s->initialized) {
++        err = init_filter(ctx);
++        if (err < 0)
++            return err;
++    }
++
++    s->opts.frame_idx = (uint32_t)(s->frame_idx++);
++
++    /* Causal window: only the frames already seen, capped at the configured
++     * depth. ring[0] is the most recent previous frame. */
++    actual_prev = FFMIN(s->n_prev, s->ring_count);
++
++    err = denoise_dispatch(s, out, cur, prev, actual_prev, next, &acc, &buf);
++    if (err < 0)
++        return err;
++
++    err = av_frame_copy_props(out, cur);
++    if (err < 0) {
++        av_buffer_unref(&buf);
++        return err;
++    }
++
++    if (s->meta && acc) {
++        err = attach_interop(s, out, acc);
++        if (err < 0) {
++            av_buffer_unref(&buf);
++            return err;
++        }
++    }
++    av_buffer_unref(&buf);
++    return 0;
++}
++
++static int denoise_ring_push(PelorusDenoiseVulkanContext *s, AVFrame *cur)
++{
++    /* Push the processed frame into the ring (cheap clone — refcount bump on the
++     * hwframe images, no pixel copy), evicting the oldest. */
++    AVFrame *clone = av_frame_clone(cur);
++    int i;
++
++    if (!clone)
++        return AVERROR(ENOMEM);
++
++    if (s->ring_count == s->n_prev && s->n_prev > 0)
++        av_frame_free(&s->ring[s->n_prev - 1]);
++    for (i = FFMIN(s->ring_count, s->n_prev - 1); i > 0; i--)
++        s->ring[i] = s->ring[i - 1];
++    if (s->n_prev > 0) {
++        s->ring[0] = clone;
++        if (s->ring_count < s->n_prev)
++            s->ring_count++;
++    } else {
++        av_frame_free(&clone); /* depth 0: temporal disabled, keep no ring */
++    }
++
++    return 0;
++}
++
 +/* Denoise one frame and emit it. Takes ownership of `cur` (consumed: cloned into
 + * the causal ring, then freed). `next` is the optional forward-lookahead tap and
 + * is only borrowed (the caller keeps owning it — typically as the new held
@@ -918,73 +1092,31 @@ index 0000000000000000000000000000000000000000..88e7be335e6933f95bc4ea89faf34e81
 +static int denoise_process_one(AVFilterContext *ctx, AVFrame *cur, AVFrame *next)
 +{
 +    int err;
-+    int i;
 +    AVFrame *out = NULL;
-+    AVFrame *clone = NULL;
-+    PelorusDenoiseVulkanContext *s = ctx->priv;
 +    AVFilterLink *outlink = ctx->outputs[0];
-+    AVFrame *const *prev = (AVFrame *const *)s->ring;
-+    const PelorusDenoiseBuf *acc = NULL;
-+    AVBufferRef *buf = NULL;
-+    int actual_prev;
 +
 +    out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
 +    if (!out) {
-+        err = AVERROR(ENOMEM);
-+        goto fail;
++        av_frame_free(&cur);
++        return AVERROR(ENOMEM);
 +    }
 +
-+    if (!s->initialized)
-+        RET(init_filter(ctx));
-+
-+    s->opts.frame_idx = (uint32_t)(s->frame_idx++);
-+
-+    /* Causal window: only the frames already seen, capped at the configured
-+     * depth. ring[0] is the most recent previous frame. */
-+    actual_prev = FFMIN(s->n_prev, s->ring_count);
-+
-+    RET(denoise_dispatch(s, out, cur, prev, actual_prev, next, &acc, &buf));
-+
-+    err = av_frame_copy_props(out, cur);
-+    if (err < 0)
-+        goto fail;
-+
-+    if (s->meta && acc) {
-+        err = attach_interop(s, out, acc);
-+        if (err < 0)
-+            goto fail;
++    err = denoise_run(ctx, out, cur, next);
++    if (err < 0) {
++        av_frame_free(&cur);
++        av_frame_free(&out);
++        return err;
 +    }
-+    av_buffer_unref(&buf);
 +
-+    /* Push the processed frame into the ring (cheap clone — refcount bump on the
-+     * hwframe images, no pixel copy), evicting the oldest. */
-+    clone = av_frame_clone(cur);
-+    if (!clone) {
-+        err = AVERROR(ENOMEM);
-+        goto fail;
-+    }
-+    if (s->ring_count == s->n_prev && s->n_prev > 0)
-+        av_frame_free(&s->ring[s->n_prev - 1]);
-+    for (i = FFMIN(s->ring_count, s->n_prev - 1); i > 0; i--)
-+        s->ring[i] = s->ring[i - 1];
-+    if (s->n_prev > 0) {
-+        s->ring[0] = clone;
-+        clone = NULL;
-+        if (s->ring_count < s->n_prev)
-+            s->ring_count++;
-+    } else {
-+        av_frame_free(&clone); /* depth 0: temporal disabled, keep no ring */
++    err = denoise_ring_push(ctx->priv, cur);
++    if (err < 0) {
++        av_frame_free(&cur);
++        av_frame_free(&out);
++        return err;
 +    }
 +
 +    av_frame_free(&cur);
 +    return ff_filter_frame(outlink, out);
-+
-+fail:
-+    av_buffer_unref(&buf);
-+    av_frame_free(&clone);
-+    av_frame_free(&cur);
-+    av_frame_free(&out);
-+    return err;
 +}
 +
 +/* Buffered-filter lifecycle (ADR-0137). lookahead==0 processes each frame
