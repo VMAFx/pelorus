@@ -125,7 +125,7 @@ def bitrate_kbps(args, mkv):
     dur = args.frames / args.fps
     return bytes_ * 8 / 1000.0 / dur
 
-def main():
+def parse_args(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--ffmpeg", required=True); ap.add_argument("--vmaf", required=True)
     ap.add_argument("--src"); ap.add_argument("--synth", choices=["banding", "noise"])
@@ -155,9 +155,11 @@ def main():
     ap.add_argument("--pelorus-src-file", dest="pelorus_src_file", default=None,
                     help="use an already-prefiltered YUV (skip the Vulkan pass; lets the "
                          "encode ladder run on a plain ffmpeg with no Vulkan/libpelorus dep)")
-    args = ap.parse_args()
-    os.makedirs(args.out, exist_ok=True)
+    return ap.parse_args(argv)
 
+
+def prepare_source_and_reference(args):
+    """Resolve the source YUV, prefilter setup, and reference YUV for scoring."""
     src = args.src or synth_source(args)
     # The VMAF reference is decoupled from the encoder input: when --clean-reference is
     # given, BOTH arms are scored against the clean ground truth while the (noisy) src
@@ -179,6 +181,11 @@ def main():
         args.pelorus_src = prefilter_once(args, src)
     else:
         args.pelorus_src = None
+    return src, ref
+
+
+def run_ladder(args, src, ref):
+    """Run encode, decode, and score for every CQ and variant."""
     rows, curves = [], {"baseline": [], "pelorus": []}
     for cq in args.cq:
         for variant in ("baseline", "pelorus"):
@@ -193,7 +200,11 @@ def main():
                          "vmaf": round(vmaf, 3), "cambi": round(cambi, 4)})
             curves[variant].append({"bitrate_kbps": br, "score": vmaf})
             print(f"  {variant:8s} cq{cq:<3d} {br:8.1f} kbps  VMAF {vmaf:6.2f}  CAMBI {cambi:.4f}")
+    return rows, curves
 
+
+def report(args, rows, curves):
+    """Compute BD-rate, write result.json, and print summary report."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from bd_rate import bd_rate
     bd = bd_rate(curves["baseline"], curves["pelorus"])
@@ -213,6 +224,15 @@ def main():
     print(f"BD-rate (VMAF): {bd['bd_rate_pct']:+.2f}%   BD-VMAF: {bd['bd_quality']:+.3f}")
     print(f"CAMBI banding: {cambi_base:.4f} -> {cambi_pel:.4f} "
           f"({result['cambi_reduction_pct']:+.1f}% banding)")
+
+
+def main():
+    args = parse_args()
+    os.makedirs(args.out, exist_ok=True)
+    src, ref = prepare_source_and_reference(args)
+    rows, curves = run_ladder(args, src, ref)
+    report(args, rows, curves)
+
 
 if __name__ == "__main__":
     main()

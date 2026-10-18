@@ -37,22 +37,31 @@ def glsl_bindings(text):
         r"\s*[^;{]*?([A-Za-z0-9_]+)\s*(?:\[\s*\]\s*;|\{|;)", text)
     return [d[2] for d in sorted(decls, key=lambda d: (int(d[0]), int(d[1])))]
 
-bad = 0
-for n in FILTERS:
-    c = FILES / f"vf_pelorus_{n}_vulkan.c"
-    g = FILES / "vulkan" / f"pelorus_{n}.comp.glsl"
-    if not c.exists() or not g.exists():
-        print(f"  MISSING  {n}"); bad += 1; continue
-    cn, gn = c_bindings(c.read_text()), glsl_bindings(g.read_text())
-    if cn == gn:
-        print(f"  ok       {n:<16} {len(cn)} bindings: {', '.join(cn)}")
-    else:
-        bad += 1
-        print(f"  MISMATCH {n}")
-        print(f"      C   : {cn}")
-        print(f"      GLSL: {gn}")
 
-if bad:
-    print(f"\n{bad} filter(s) disagree — a swapped binding silently reads the wrong resource.")
-    sys.exit(1)
-print(f"\nall {len(FILTERS)} filters: GLSL binding order matches the C descriptor array")
+def main() -> int:
+    bad = 0
+    for n in FILTERS:
+        c = FILES / f"vf_pelorus_{n}_vulkan.c"
+        g = FILES / "vulkan" / f"pelorus_{n}.comp.glsl"
+        if not c.exists() or not g.exists():
+            print(f"  MISSING  {n}")
+            bad += 1
+            continue
+        cn, gn = c_bindings(c.read_text()), glsl_bindings(g.read_text())
+        if cn == gn:
+            print(f"  ok       {n:<16} {len(cn)} bindings: {', '.join(cn)}")
+        else:
+            bad += 1
+            print(f"  MISMATCH {n}")
+            print(f"      C   : {cn}")
+            print(f"      GLSL: {gn}")
+
+    if bad:
+        print(f"\n{bad} filter(s) disagree — a swapped binding silently reads the wrong resource.")
+        return 1
+    print(f"\nall {len(FILTERS)} filters: GLSL binding order matches the C descriptor array")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

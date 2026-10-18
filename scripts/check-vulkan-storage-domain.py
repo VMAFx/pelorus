@@ -71,13 +71,14 @@ def is_preserving_read_modify_write(statement: str, full_text: str) -> bool:
     return bool(re.search(assignment, full_text) and re.search(store, full_text))
 
 
-def check() -> list[str]:
-    errors: list[str] = []
+def _require(
+    errors: list[str], path: pathlib.Path, text: str, pattern: str, reason: str
+) -> None:
+    if not re.search(pattern, text, flags=re.DOTALL):
+        errors.append(f"{path.relative_to(ROOT)}: {reason}")
 
-    def require(path: pathlib.Path, text: str, pattern: str, reason: str) -> None:
-        if not re.search(pattern, text, flags=re.DOTALL):
-            errors.append(f"{path.relative_to(ROOT)}: {reason}")
 
+def _check_shared_header_and_generator(errors: list[str]) -> None:
     header = FILES / "pelorus_vulkan_sample.h"
     if not header.is_file():
         errors.append(
@@ -86,19 +87,22 @@ def check() -> list[str]:
         )
     else:
         source = strip_comments(header.read_text())
-        require(
+        _require(
+            errors,
             header,
             source,
             r"\bpel_vk_sample_scale\s*\(",
             "must define pel_vk_sample_scale()",
         )
-        require(
+        _require(
+            errors,
             header,
             source,
             r"\bpel_vk_sample_code_max\s*\(",
             "must define pel_vk_sample_code_max() for shifted writeback",
         )
-        require(
+        _require(
+            errors,
             header,
             source,
             r"av_pix_fmt_desc_get\s*\(",
@@ -107,168 +111,231 @@ def check() -> list[str]:
 
     generator = ROOT / "ffmpeg-patches" / "generate.sh"
     generator_text = strip_comments(generator.read_text())
-    require(
+    _require(
+        errors,
         generator,
         generator_text,
         r'cp\s+"\$FILES_DIR/pelorus_vulkan_sample\.h"\s+' r'"\$WORKTREE/libavfilter/"',
         "must install the shared private header into the generated FFmpeg tree",
     )
 
-    for name in ARITHMETIC:
-        c_path = FILES / f"vf_pelorus_{name}_vulkan.c"
-        shader_path = SHADERS / f"pelorus_{name}.comp.glsl"
-        if not c_path.is_file() or not shader_path.is_file():
-            errors.append(f"{name}: missing canonical C or GLSL source")
+
+def _check_shader_image_loads(
+    errors: list[str], shader_path: pathlib.Path, shader_text: str, name: str
+) -> None:
+    for statement in image_load_statements(shader_text):
+        if "pel_to_sample(" in statement:
             continue
-
-        c_text = strip_comments(c_path.read_text())
-        shader_text = strip_comments(shader_path.read_text())
-
-        require(
-            c_path,
-            c_text,
-            r'#include\s+"pelorus_vulkan_sample\.h"',
-            "must consume the shared sample-scale helper",
-        )
-        require(
-            c_path,
-            c_text,
-            r"\bpel_vk_sample_scale\s*\(\s*vkctx->input_format\s*\)",
-            "must derive sample_scale from the input pixel descriptor",
-        )
-        require(
-            c_path,
-            c_text,
-            r"\bsample_scale\b",
-            "must pass sample_scale to the shader",
-        )
-        require(
-            shader_path,
-            shader_text,
-            r"\bfloat\s+sample_scale\s*;",
-            "push constants must expose float sample_scale",
-        )
-        require(
-            shader_path,
-            shader_text,
-            r"\bpel_to_sample\s*\(",
-            "must convert storage values before arithmetic",
-        )
-
-        for statement in image_load_statements(shader_text):
-            if "pel_to_sample(" in statement:
-                continue
-            if name in TRANSFORMS and (
-                is_raw_copy(statement)
-                or is_preserving_read_modify_write(statement, shader_text)
-            ):
-                continue
-            errors.append(
-                f"{shader_path.relative_to(ROOT)}: imageLoad reaches arithmetic "
-                "without pel_to_sample()"
-            )
-
-    for name in TRANSFORMS:
-        c_path = FILES / f"vf_pelorus_{name}_vulkan.c"
-        shader_path = SHADERS / f"pelorus_{name}.comp.glsl"
-        if not c_path.is_file() or not shader_path.is_file():
-            continue
-        c_text = strip_comments(c_path.read_text())
-        shader_text = strip_comments(shader_path.read_text())
-        require(
-            c_path,
-            c_text,
-            r"\bpel_vk_sample_code_max\s*\(\s*vkctx->output_format\s*\)",
-            "must derive writeback code_max from the output pixel descriptor",
-        )
-        require(
-            shader_path,
-            shader_text,
-            r"constant_id\s*=\s*\d+\)\s*const\s+uint\s+sample_code_max",
-            "a specialization constant must expose the logical code maximum",
-        )
-        require(
-            c_path,
-            c_text,
-            r"SPEC_LIST_ADD\s*\([^;]*sample_code_max",
-            "must specialize the shader with the descriptor-derived code maximum",
-        )
-        require(
-            shader_path,
-            shader_text,
-            r"\bpel_to_storage\s*\(",
-            "pixel transforms must convert results back to storage units",
-        )
-        require(
-            shader_path,
-            shader_text,
-            r"\bfloat\s+code_max\s*=\s*float\s*\(\s*sample_code_max\s*\)"
-            r"[^}]*\bround\s*\([^;]*code_max[^;]*\)",
-            "writeback must quantize in logical code space before inverse scaling",
-        )
-        if re.search(
-            r"imageStore\s*\([^;]*,\s*vec4\s*\(\s*[A-Za-z_]\w*\s*\)\s*\)",
-            shader_text,
-            flags=re.DOTALL,
+        if name in TRANSFORMS and (
+            is_raw_copy(statement)
+            or is_preserving_read_modify_write(statement, shader_text)
         ):
-            errors.append(
-                f"{shader_path.relative_to(ROOT)}: scalar-splat imageStore "
-                "destroys unrelated components"
-            )
+            continue
+        errors.append(
+            f"{shader_path.relative_to(ROOT)}: imageLoad reaches arithmetic "
+            "without pel_to_sample()"
+        )
 
+
+def _check_shader_sample_scale(
+    errors: list[str], shader_path: pathlib.Path, shader_text: str
+) -> None:
+    _require(
+        errors,
+        shader_path,
+        shader_text,
+        r"\bfloat\s+sample_scale\s*;",
+        "push constants must expose float sample_scale",
+    )
+    _require(
+        errors,
+        shader_path,
+        shader_text,
+        r"\bpel_to_sample\s*\(",
+        "must convert storage values before arithmetic",
+    )
+
+
+def _check_one_arithmetic_filter(errors: list[str], name: str) -> None:
+    c_path = FILES / f"vf_pelorus_{name}_vulkan.c"
+    shader_path = SHADERS / f"pelorus_{name}.comp.glsl"
+    if not c_path.is_file() or not shader_path.is_file():
+        errors.append(f"{name}: missing canonical C or GLSL source")
+        return
+
+    c_text = strip_comments(c_path.read_text())
+    shader_text = strip_comments(shader_path.read_text())
+
+    _require(
+        errors,
+        c_path,
+        c_text,
+        r'#include\s+"pelorus_vulkan_sample\.h"',
+        "must consume the shared sample-scale helper",
+    )
+    _require(
+        errors,
+        c_path,
+        c_text,
+        r"\bpel_vk_sample_scale\s*\(\s*vkctx->input_format\s*\)",
+        "must derive sample_scale from the input pixel descriptor",
+    )
+    _require(
+        errors,
+        c_path,
+        c_text,
+        r"\bsample_scale\b",
+        "must pass sample_scale to the shader",
+    )
+    _check_shader_sample_scale(errors, shader_path, shader_text)
+    _check_shader_image_loads(errors, shader_path, shader_text, name)
+
+
+def _check_arithmetic_filters(errors: list[str]) -> None:
+    for name in ARITHMETIC:
+        _check_one_arithmetic_filter(errors, name)
+
+
+def _check_scalar_splat(
+    errors: list[str], shader_path: pathlib.Path, shader_text: str
+) -> None:
+    if re.search(
+        r"imageStore\s*\([^;]*,\s*vec4\s*\(\s*[A-Za-z_]\w*\s*\)\s*\)",
+        shader_text,
+        flags=re.DOTALL,
+    ):
+        errors.append(
+            f"{shader_path.relative_to(ROOT)}: scalar-splat imageStore "
+            "destroys unrelated components"
+        )
+
+
+def _check_one_transform(errors: list[str], name: str) -> None:
+    c_path = FILES / f"vf_pelorus_{name}_vulkan.c"
+    shader_path = SHADERS / f"pelorus_{name}.comp.glsl"
+    if not c_path.is_file() or not shader_path.is_file():
+        return
+    c_text = strip_comments(c_path.read_text())
+    shader_text = strip_comments(shader_path.read_text())
+    _require(
+        errors,
+        c_path,
+        c_text,
+        r"\bpel_vk_sample_code_max\s*\(\s*vkctx->output_format\s*\)",
+        "must derive writeback code_max from the output pixel descriptor",
+    )
+    _require(
+        errors,
+        shader_path,
+        shader_text,
+        r"constant_id\s*=\s*\d+\)\s*const\s+uint\s+sample_code_max",
+        "a specialization constant must expose the logical code maximum",
+    )
+    _require(
+        errors,
+        c_path,
+        c_text,
+        r"SPEC_LIST_ADD\s*\([^;]*sample_code_max",
+        "must specialize the shader with the descriptor-derived code maximum",
+    )
+    _require(
+        errors,
+        shader_path,
+        shader_text,
+        r"\bpel_to_storage\s*\(",
+        "pixel transforms must convert results back to storage units",
+    )
+    _require(
+        errors,
+        shader_path,
+        shader_text,
+        r"\bfloat\s+code_max\s*=\s*float\s*\(\s*sample_code_max\s*\)"
+        r"[^}]*\bround\s*\([^;]*code_max[^;]*\)",
+        "writeback must quantize in logical code space before inverse scaling",
+    )
+    _check_scalar_splat(errors, shader_path, shader_text)
+
+
+def _check_transforms(errors: list[str]) -> None:
+    for name in TRANSFORMS:
+        _check_one_transform(errors, name)
+
+
+def _check_denoise_push_constant_size(errors: list[str]) -> None:
     denoise_c = FILES / "vf_pelorus_denoise_vulkan.c"
     if denoise_c.is_file():
-        require(
+        _require(
+            errors,
             denoise_c,
             strip_comments(denoise_c.read_text()),
             r"static_assert\s*\(\s*sizeof\s*\([^;]*opts[^;]*\)\s*<=\s*128",
             "must retain the Vulkan baseline push-constant size guard",
         )
 
-    for name in COMPONENT_FILTERS:
-        c_path = FILES / f"vf_pelorus_{name}_vulkan.c"
-        shader_path = SHADERS / f"pelorus_{name}.comp.glsl"
-        if not c_path.is_file() or not shader_path.is_file():
-            continue
-        c_text = strip_comments(c_path.read_text())
-        shader_text = strip_comments(shader_path.read_text())
-        require(
-            c_path,
-            c_text,
-            r"comp\[1\]\.plane\s*==\s*[^;]*comp\[2\]\.plane",
-            "must detect semi-planar U/V from the pixel descriptor",
-        )
-        require(
-            c_path,
-            c_text,
-            r"SPEC_LIST_ADD\s*\([^;]*semi_planar",
-            "must specialize the shader for semi-planar physical planes",
-        )
-        require(
-            shader_path,
-            shader_text,
-            r"constant_id\s*=\s*\d+\)\s*const\s+uint\s+semi_planar",
-            "must declare the semi_planar specialization constant",
-        )
-        require(
-            shader_path,
-            shader_text,
-            r"\bpel_component_count\s*\(",
-            "must use a specialization-time per-plane component count",
-        )
-        require(
-            shader_path,
-            shader_text,
-            r"\[\s*comp\s*\]",
-            "must address the selected component instead of hard-coding .x",
-        )
-        require(
-            shader_path,
-            shader_text,
-            r"\[\s*comp\s*\]\s*=\s*pel_to_storage\s*\(",
-            "must replace only each computed component in a raw texel",
-        )
 
+def _check_component_indexing(
+    errors: list[str], shader_path: pathlib.Path, shader_text: str
+) -> None:
+    _require(
+        errors,
+        shader_path,
+        shader_text,
+        r"\[\s*comp\s*\]",
+        "must address the selected component instead of hard-coding .x",
+    )
+    _require(
+        errors,
+        shader_path,
+        shader_text,
+        r"\[\s*comp\s*\]\s*=\s*pel_to_storage\s*\(",
+        "must replace only each computed component in a raw texel",
+    )
+
+
+def _check_one_component_filter(errors: list[str], name: str) -> None:
+    c_path = FILES / f"vf_pelorus_{name}_vulkan.c"
+    shader_path = SHADERS / f"pelorus_{name}.comp.glsl"
+    if not c_path.is_file() or not shader_path.is_file():
+        return
+    c_text = strip_comments(c_path.read_text())
+    shader_text = strip_comments(shader_path.read_text())
+    _require(
+        errors,
+        c_path,
+        c_text,
+        r"comp\[1\]\.plane\s*==\s*[^;]*comp\[2\]\.plane",
+        "must detect semi-planar U/V from the pixel descriptor",
+    )
+    _require(
+        errors,
+        c_path,
+        c_text,
+        r"SPEC_LIST_ADD\s*\([^;]*semi_planar",
+        "must specialize the shader for semi-planar physical planes",
+    )
+    _require(
+        errors,
+        shader_path,
+        shader_text,
+        r"constant_id\s*=\s*\d+\)\s*const\s+uint\s+semi_planar",
+        "must declare the semi_planar specialization constant",
+    )
+    _require(
+        errors,
+        shader_path,
+        shader_text,
+        r"\bpel_component_count\s*\(",
+        "must use a specialization-time per-plane component count",
+    )
+    _check_component_indexing(errors, shader_path, shader_text)
+
+
+def _check_component_filters(errors: list[str]) -> None:
+    for name in COMPONENT_FILTERS:
+        _check_one_component_filter(errors, name)
+
+
+def _check_mc_readback_scaling(errors: list[str]) -> None:
     mc_c = FILES / "vf_pelorus_mc_vulkan.c"
     if mc_c.is_file():
         mc_text = strip_comments(mc_c.read_text())
@@ -278,6 +345,8 @@ def check() -> list[str]:
                 "must happen before shader SAD/candidate selection, not after readback"
             )
 
+
+def _check_luma_descriptor_arrays(errors: list[str]) -> None:
     for name, constant_id, bindings in (
         ("analyze", 0, ("input_images",)),
         ("mc", 1, ("cur_image", "ref_image")),
@@ -288,20 +357,23 @@ def check() -> list[str]:
             continue
         c_text = strip_comments(c_path.read_text())
         shader_text = strip_comments(shader_path.read_text())
-        require(
+        _require(
+            errors,
             shader_path,
             shader_text,
             rf"constant_id\s*=\s*{constant_id}\)\s*const\s+uint\s+luma_plane",
             "must preserve luma image bindings as runtime descriptor arrays",
         )
-        require(
+        _require(
+            errors,
             c_path,
             c_text,
             rf"SPEC_LIST_ADD\s*\(\s*sl\s*,\s*{constant_id}\s*,\s*32\s*,\s*0u\s*\)",
             "must specialize the luma descriptor-array index to zero",
         )
         for binding in bindings:
-            require(
+            _require(
+                errors,
                 shader_path,
                 shader_text,
                 rf"\b{binding}\s*\[\s*luma_plane\s*\]",
@@ -313,6 +385,8 @@ def check() -> list[str]:
                     "contracts the per-plane descriptor array"
                 )
 
+
+def _check_raw_exemptions(errors: list[str]) -> None:
     for name in RAW_EXEMPTIONS:
         for path in (
             FILES / f"vf_pelorus_{name}_vulkan.c",
@@ -327,6 +401,17 @@ def check() -> list[str]:
                     "acquire arithmetic sample-domain conversion"
                 )
 
+
+def check() -> list[str]:
+    errors: list[str] = []
+    _check_shared_header_and_generator(errors)
+    _check_arithmetic_filters(errors)
+    _check_transforms(errors)
+    _check_denoise_push_constant_size(errors)
+    _check_component_filters(errors)
+    _check_mc_readback_scaling(errors)
+    _check_luma_descriptor_arrays(errors)
+    _check_raw_exemptions(errors)
     return errors
 
 
