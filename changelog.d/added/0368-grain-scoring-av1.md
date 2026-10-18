@@ -1,0 +1,1 @@
+- Grain scoring AV1 leg (`scripts/grain-score.sh`, `ffmpeg-patches/test/grain-score-av1-smoke.sh`): scores decoded grain-synthesised AV1 video via libdav1d, refuses grain-free reconstruction, streams without film grain and builds lacking libdav1d ([#368](https://github.com/VMAFx/pelorus/issues/368), [ADR-0212](docs/adr/0212-grain-scoring-av1-libdav1d.md)).

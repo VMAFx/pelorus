@@ -130,3 +130,13 @@ path = ["ffmpeg-patches/test/fixtures/grain-h274-fgc.hevc"]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Lusoris"
 SPDX-License-Identifier = "EUPL-1.2"
+
+# Recorded AV1 test fixtures, with and without film grain parameters.
+[[annotations]]
+path = [
+    "ffmpeg-patches/test/fixtures/grain-av1-fgs.ivf",
+    "ffmpeg-patches/test/fixtures/grain-av1-nograin.ivf",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Lusoris"
+SPDX-License-Identifier = "EUPL-1.2"
