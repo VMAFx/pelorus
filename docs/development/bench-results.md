@@ -85,9 +85,9 @@ the prefiltered raw in one layout and reading it as the other corrupts both
 magnitude (a 64× shift) and chroma-plane positions → the encoder saw heavy noise
 far from the source. The 8-bit arm was immune because `yuv420p` has one
 unambiguous layout. The committed `run-bench.py` uses a single `args.pixfmt`
-end-to-end and is internally consistent — it was never the culprit. To re-prove
-10-bit, pin **one** `yuv420p10le` end-to-end (nvenc converts to p010 internally
-and losslessly; never hand it raw p010 bytes).
+end-to-end and is internally consistent — it was never the culprit, except
+that `--synth` wrote 8-bit bytes whatever `--pixfmt` said (fixed in v0.20).
+The single-pipeline re-run is v0.20.
 
 ## Why deband looked like a wash — it's the *metric*, not the filter
 
@@ -850,6 +850,50 @@ slowest filter; the broader "free throughput" framing overstated it — the
 bottleneck is memory traffic, and the high-value perf work is reference caching,
 not reductions. `scripts/bench/plot_rd.py` regenerates the graph.
 
+## v0.20 — 10-bit deband re-proved on one `yuv420p10le` pipeline: filter works, gain does not survive NVENC (honest negative)
+
+Issue [#300](https://github.com/VMAFx/pelorus/issues/300). FFmpeg `n9.0.2` plus
+shared series `v0.3.0` plus the Pelorus stack, `hevc_nvenc` preset `p5` on an
+NVIDIA GeForce RTX 4090 (driver 615.78.08), scored with vmaf 3.2.0
+(`vmaf_v1.0.16`, `--feature cambi`, `--bitdepth 10`).
+
+Clip: the pinned `synth-banding` entry of `scripts/bench/corpus.lock`
+(640×360, 24 frames, sha256 `aa1ec0f0…`), widened losslessly with
+`format=yuv420p10le` (sha256 `bbdfab0a…`; 36 distinct luma codes, all
+multiples of 4; the round trip back to 8-bit gives the pinned bytes).
+
+Pixel format at every stage: raw source `yuv420p10le` → `format=yuv420p10le,
+hwupload,pelorus_deband_vulkan,hwdownload,format=yuv420p10le` → `hevc_nvenc`
+(stream probes as HEVC Main 10, `yuv420p10le`, both arms) → decode to
+`yuv420p10le` → vmaf at 10 bits.
+
+| Run | Arm | CQ 22 kbps / CAMBI | CQ 26 | CQ 30 | CQ 34 | Mean CAMBI |
+| --- | --- | --- | --- | --- | --- | --- |
+| 10-bit, defaults | baseline | 32.3 / 0.430 | 31.5 / 0.151 | 25.4 / 0.177 | 22.0 / 0.265 | 0.256 |
+| 10-bit, defaults | deband | 54.7 / 0.397 | 30.6 / 0.382 | 23.8 / 0.303 | 21.2 / 0.357 | 0.360 |
+| 10-bit, `grainy=0.02` | deband | 1204.7 / 0.148 | 364.5 / 0.260 | 57.4 / 0.664 | 35.2 / 0.486 | 0.389 |
+| 8-bit, defaults | baseline | 42.6 / 1.916 | 35.4 / 2.431 | 32.1 / 2.569 | 27.2 / 2.513 | 2.357 |
+| 8-bit, defaults | deband | 71.4 / 2.753 | 39.1 / 2.983 | 27.9 / 3.213 | 24.1 / 3.375 | 3.081 |
+
+Without the encoder the filter does its job at 10 bits: CAMBI of the source
+is 6.45 and of the debanded source 0.00, and the luma goes from 36 to 153
+distinct codes, most no longer multiples of 4.
+
+Verdict: negative. Through `hevc_nvenc` the deband arm has more banding than
+the baseline at both depths (mean CAMBI +41 % at 10 bits, +31 % at 8 bits) and
+a lower VMAF at every point. The encoder re-quantises the near-static
+gradient and the dither does not survive; a stronger grain buys the CAMBI
+back only at 37× the bitrate (CQ 22). No VMAF BD-rate is defined: both curves
+are non-monotonic on this clip. The earlier 10-bit artefact (VMAF 77 at about
+4000 kbps) does not reproduce: 10-bit is now consistent with 8-bit, and the
+remaining gap is the encoder, not the sample domain.
+
+Found while re-proving: `run-bench.py --synth` wrote `yuv420p` bytes whatever
+`--pixfmt` said, so a 10-bit synthetic run read 8-bit data as 10-bit (half the
+expected size). It now generates in `--pixfmt`, with the same seed and rate as
+`fetch-corpus.sh`. The summary line now labels the CAMBI figure as a reduction,
+so a negative value reads as more banding.
+
 ## Open / next
 
 1. **SVT-AV1 ROI on real content**: the v0.10 synthetic gain is modest; re-run
@@ -858,9 +902,10 @@ not reductions. `scripts/bench/plot_rd.py` regenerates the graph.
 2. **Per-vendor iso-bitrate BD-rate** for the cross-vendor ROI (v0.6 is a
    same-QP mechanism demo); and the analyze→VAAPI dual-device auto pipeline
    (ROI side data surviving `hwupload` to a second GPU).
-3. Re-prove 10-bit deband with a single consistent `yuv420p10le` pipeline
-   (correctness confirmation; deband's gain is banding, scored by CAMBI):
-   [#300](https://github.com/VMAFx/pelorus/issues/300).
+3. 10-bit deband on one `yuv420p10le` pipeline: done in v0.20 (negative
+   through `hevc_nvenc`). A deband claim needs a real banding-prone 10-bit
+   clip in `corpus.lock` and an encoder arm that keeps the dither
+   ([#300](https://github.com/VMAFx/pelorus/issues/300)).
 4. Harness fixes shipped: `--clean-reference` (decouple scoring ref from encoder
    input) and `--vmaf-timeout` (vmaf hangs at 0% CPU *after* writing its JSON;
    the harness bounds it and reads the already-flushed result).

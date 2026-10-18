@@ -25,12 +25,14 @@ def synth_source(args):
     src = os.path.join(args.out, f"src_{args.synth}.yuv")
     if args.synth == "banding":
         # smooth dark vertical gradient — the classic deband torture clip
+        # Same generator as the synth-banding entry of fetch-corpus.sh (fixed seed),
+        # written in the run's own pixfmt so the file matches what later stages read.
         vf = (f"gradients=size={args.width}x{args.height}:x0=0:y0=0:x1=0:"
-              f"y1={args.height}:c0=0x060608:c1=0x2a3038:nb_colors=2,"
-              f"format=yuv420p")
+              f"y1={args.height}:c0=0x060608:c1=0x2a3038:nb_colors=2:"
+              f"rate={args.fps}:seed=1,format={args.pixfmt}")
     else:  # noise
         vf = (f"color=c=0x404048:size={args.width}x{args.height},"
-              f"noise=alls=18:allf=t+u,format=yuv420p")
+              f"noise=alls=18:allf=t+u,format={args.pixfmt}")
     run([args.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
          "-f", "lavfi", "-i", f"{vf.split(',')[0]}",
          "-vf", ",".join(vf.split(",")[1:]) or "null",
@@ -228,7 +230,7 @@ def report(args, rows, curves):
     print(f"\n== {args.encoder} ==")
     print(f"BD-rate (VMAF): {bd['bd_rate_pct']:+.2f}%   BD-VMAF: {bd['bd_quality']:+.3f}")
     print(f"CAMBI banding: {cambi_base:.4f} -> {cambi_pel:.4f} "
-          f"({result['cambi_reduction_pct']:+.1f}% banding)")
+          f"({result['cambi_reduction_pct']:+.1f}% CAMBI reduction; negative = more banding)")
 
 
 def main():

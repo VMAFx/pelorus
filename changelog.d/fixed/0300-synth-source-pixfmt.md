@@ -1,0 +1,1 @@
+- `scripts/bench/run-bench.py --synth` now writes the clip in `--pixfmt`; a 10-bit synthetic run used to read 8-bit bytes as 10-bit. The 10-bit deband re-run on one `yuv420p10le` pipeline is recorded as a negative result in `docs/development/bench-results.md` (v0.20, [#300](https://github.com/VMAFx/pelorus/issues/300)).
