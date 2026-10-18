@@ -54,18 +54,6 @@ index 337a6adf27348fd8b742d9ab2f1dec0be1b51cd1..b7e22da8206561608e5e83822b3de7d9
  OBJS-$(CONFIG_PERMS_FILTER)                  += f_perms.o
  OBJS-$(CONFIG_PERSPECTIVE_FILTER)            += vf_perspective.o
  OBJS-$(CONFIG_PHASE_FILTER)                  += vf_phase.o
-diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
-index 0ee727c8c38cefe87c4d23504c0e43ddd6f82554..d6632cc826123b6f1b3bbc93db698e8023ca8591 100644
---- a/libavfilter/allfilters.c
-+++ b/libavfilter/allfilters.c
-@@ -412,6 +412,7 @@ extern const FFFilter ff_vf_pelorus_dehalo_vulkan;
- extern const FFFilter ff_vf_pelorus_denoise_vulkan;
- extern const FFFilter ff_vf_pelorus_grain_estimate_vulkan;
- extern const FFFilter ff_vf_pelorus_mc_vulkan;
-+extern const FFFilter ff_vf_pelorus_scenecut;
- extern const FFFilter ff_vf_perms;
- extern const FFFilter ff_vf_perspective;
- extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_scenecut.c b/libavfilter/vf_pelorus_scenecut.c
 new file mode 100644
 index 0000000000000000000000000000000000000000..dcb26bc8e7e7955d965a067bd8580ebca8c8a1c2
