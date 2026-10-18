@@ -7,6 +7,8 @@ Rule: an ADR whose Status is Proposed carries the header line
 `- **Implementation**: pending (#<issue>)`. A Proposed ADR without it describes
 merged work that was never flipped to Accepted. Accepted, Rejected, Deprecated
 and Superseded ADRs are ignored. A missing or unknown Status fails loudly.
+A row of the index (README.md) whose status cell starts with a different word
+than the ADR's own Status line fails too.
 
     python3 -I scripts/adr/check-status.py [--root DIR] | --self-test
 """
@@ -18,6 +20,7 @@ from pathlib import Path
 
 STATUS_RE = re.compile(r"^- \*\*Status\*\*:\s*([A-Za-z]+)")
 IMPL_RE = re.compile(r"^- \*\*Implementation\*\*: pending \(#[0-9]+\)\s*$")
+ROW_RE = re.compile(r"^\| *\[([0-9]{4})\]\(([^)]+)\) *\|.*\| *([A-Za-z]+)[^|]*\| *$")
 KNOWN = {"Proposed", "Accepted", "Rejected", "Deprecated", "Superseded"}
 HEADER_LINES = 12
 
@@ -43,8 +46,34 @@ def check_file(path):
             "flip to Accepted if its PR merged")
 
 
-def scan(root):
+def file_status(path):
+    """Return the first word of the ADR's Status line, or None."""
+    for line in path.read_text(encoding="utf-8").splitlines()[:HEADER_LINES]:
+        m = STATUS_RE.match(line)
+        if m:
+            return m.group(1)
+    return None
+
+
+def scan_index(root):
+    """Return index rows whose status word differs from the ADR's own."""
+    index = root / "README.md"
+    if not index.is_file():
+        return []
     offenders = []
+    for no, line in enumerate(index.read_text(encoding="utf-8").splitlines(), 1):
+        m = ROW_RE.match(line)
+        if not m or not (root / m.group(2)).is_file():
+            continue
+        own = file_status(root / m.group(2))
+        if own != m.group(3):
+            offenders.append((index, no, "index row ADR-%s says '%s', the ADR says '%s'"
+                              % (m.group(1), m.group(3), own)))
+    return offenders
+
+
+def scan(root):
+    offenders = scan_index(root)
     for path in sorted(root.glob("[0-9][0-9][0-9][0-9]-*.md")):
         if path.name.startswith("0000-"):
             continue
@@ -56,7 +85,8 @@ def scan(root):
 
 def report(offenders):
     for path, line, msg in offenders:
-        print("ADR-%s %s:%d %s" % (path.name[:4], path, line, msg))
+        label = "index" if path.name == "README.md" else "ADR-" + path.name[:4]
+        print("%s %s:%d %s" % (label, path, line, msg))
     return 1 if offenders else 0
 
 
@@ -68,13 +98,19 @@ def self_test():
         "0003-c.md": ("- **Status**: Accepted; amended by x\n", 0),
         "0004-d.md": ("- **Status**: Maybe\n", 1),
         "0005-e.md": ("# no status line\n", 1),
+        "0006-f.md": ("- **Status**: Accepted\n", 1,
+                      "| [0006](0006-f.md) | f | Proposed |\n"),
+        "0007-g.md": ("- **Status**: Accepted\n", 0,
+                      "| [0007](0007-g.md) | g | Accepted; amended by x |\n"),
     }
     failed = 0
     with tempfile.TemporaryDirectory() as tmp:
-        for name, (body, want) in cases.items():
+        for name, (body, want, *index) in cases.items():
             d = Path(tmp) / name[:4]
             d.mkdir()
             (d / name).write_text("# ADR\n\n" + body, encoding="utf-8")
+            if index:
+                (d / "README.md").write_text(index[0], encoding="utf-8")
             got = 1 if scan(d) else 0
             if got != want:
                 print("self-test FAIL %s: want exit %d, got %d" % (name, want, got))
