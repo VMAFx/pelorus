@@ -83,6 +83,7 @@ SPDX-License-Identifier: EUPL-1.2
 - The HISS baseline drops from 39 to 37 findings. `ffmpeg-patches/test/qsv-roi-regression.c` no longer jumps to a cleanup label from its `CHECK` macro, and its 233-line `main` is split into one helper per scenario, each under 60 lines; the same 74 checks run in the same order and every frame and encoder control is still freed ([#206](https://github.com/VMAFx/pelorus/issues/206)).
 - The HISS baseline drops from 37 to 27 findings across five Vulkan filters (`aa`, `borderfix`, `deband`, `deblock`, and `dehalo`). `init_filter()` now returns directly when no compute queue is found instead of jumping with `goto`, and descriptor set creation is extracted to helper functions so each `init_filter()` function stays under 60 lines ([#206](https://github.com/VMAFx/pelorus/issues/206)).
 - The HISS baseline drops from 27 to 16 findings across five Vulkan filters (`aa`, `borderfix`, `deband`, `deblock`, and `dehalo`). Every literal `goto` is removed from `filter_frame()` by extracting frame execution into dedicated `<filter>_run()` helpers ([#206](https://github.com/VMAFx/pelorus/issues/206)).
+- The HISS baseline drops from 16 to 0 findings. `vf_pelorus_denoise_vulkan.c` and `vf_pelorus_mc_vulkan.c` no longer use `goto`, and `init_filter()`, the dispatch, side-data attach and per-frame functions are split into static helpers of at most 55 lines that run the same Vulkan calls in the same order and free every buffer and frame on the same paths ([#206](https://github.com/VMAFx/pelorus/issues/206)).
 
 <!-- END UNRELEASED -->
 
