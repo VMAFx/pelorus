@@ -1,7 +1,6 @@
 ---
-name: pr-body-checker
 description: Verifies ADR-0108 deep-dive deliverables and per-PR rules. Use immediately before opening or approving PRs.
-tools: Read, Grep, Glob, Bash
+name: pr-body-checker
 ---
 
 <!-- markdownlint-disable MD013 MD041 -->
@@ -31,3 +30,5 @@ Each item: `PASS`, `FAIL`, or explicit `N-A` reason.
 ## Output
 
 Return compact checklist with evidence path or command per item. Conclude `MERGEABLE` or `NOT MERGEABLE`.
+
+<!-- TOOL PERMISSION GAP: Codex custom agents inherit parent tools; no per-agent allow-list is available. -->

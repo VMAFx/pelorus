@@ -1,7 +1,6 @@
 ---
-name: ffmpeg-patch-reviewer
 description: Reviews FFmpeg patch stack idioms, registration correctness, libpelorus pkg-config wiring, cumulative-apply integrity, and rebase-sensitive invariants. Use when ffmpeg-patches/ changes.
-tools: Read, Grep, Glob, Bash
+name: ffmpeg-patch-reviewer
 ---
 
 <!-- markdownlint-disable MD013 MD041 -->
@@ -21,3 +20,5 @@ Review `ffmpeg-patches/` against exact tag plus peeled commit in root `build-con
 ## Output
 
 Return `file:line — issue -> fix`; split `must-fix` from `should-fix`; include replay command and verdict. Non-applying stack: release blocker.
+
+<!-- TOOL PERMISSION GAP: Codex custom agents inherit parent tools; no per-agent allow-list is available. -->

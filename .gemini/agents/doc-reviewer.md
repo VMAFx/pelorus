@@ -1,7 +1,13 @@
 ---
-name: doc-reviewer
 description: Verifies human-readable documentation for each user-discoverable surface under ADR-0100. Use for filters, AVOptions, public APIs, interop sections, or build flags.
-tools: Read, Grep, Glob, Bash
+name: doc-reviewer
+tools:
+  - read_file
+  - read_many_files
+  - grep_search
+  - glob
+  - list_directory
+  - run_shell_command
 ---
 
 <!-- markdownlint-disable MD013 MD041 -->

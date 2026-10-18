@@ -1,17 +1,19 @@
 {
-  "format_on_save": "on",
   "buffer_font_size": 14,
-  "tab_size": 4,
+  "format_on_save": "on",
   "hard_tabs": false,
-  "preferred_line_length": 120,
   "languages": {
     "C": {
-      "tab_size": 4,
-      "preferred_line_length": 100
+      "preferred_line_length": 100,
+      "tab_size": 4
     },
     "C++": {
-      "tab_size": 4,
-      "preferred_line_length": 100
+      "preferred_line_length": 100,
+      "tab_size": 4
+    },
+    "Go": {
+      "hard_tabs": true,
+      "tab_size": 4
     },
     "Python": {
       "tab_size": 4
@@ -23,5 +25,7 @@
         "path_lookup": true
       }
     }
-  }
+  },
+  "preferred_line_length": 120,
+  "tab_size": 4
 }

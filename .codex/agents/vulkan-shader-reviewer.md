@@ -1,7 +1,6 @@
 ---
-name: vulkan-shader-reviewer
 description: Reviews Pelorus Vulkan compute shaders and FFmpeg Vulkan host code for correctness, sample-domain handling, component preservation, zero-copy lifecycle, descriptors, and push constants. Use when a .comp, .comp.glsl, or vf_pelorus_*_vulkan.c changes.
-tools: Read, Grep, Glob, Bash
+name: vulkan-shader-reviewer
 ---
 
 <!-- markdownlint-disable MD013 MD041 -->
@@ -23,3 +22,5 @@ Review shipped shaders (`ffmpeg-patches/files/vulkan/*.comp.glsl`), standalone r
 ## Output
 
 Return `file:line — issue -> fix`; split `must-fix` from `should-fix`; include glslang compile and hardware-matrix verdicts. Clean review: state PASS plus commands run.
+
+<!-- TOOL PERMISSION GAP: Codex custom agents inherit parent tools; no per-agent allow-list is available. -->

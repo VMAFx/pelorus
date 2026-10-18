@@ -1,7 +1,6 @@
 ---
-name: doc-reviewer
 description: Verifies human-readable documentation for each user-discoverable surface under ADR-0100. Use for filters, AVOptions, public APIs, interop sections, or build flags.
-tools: Read, Grep, Glob, Bash
+name: doc-reviewer
 ---
 
 <!-- markdownlint-disable MD013 MD041 -->
@@ -28,3 +27,5 @@ Enforce ADR-0100: missing docs block merge. Inventory each changed user surface;
 ## Output
 
 Per surface: `PASS`, `FAIL`, or `N-A`; name every missing item and destination file.
+
+<!-- TOOL PERMISSION GAP: Codex custom agents inherit parent tools; no per-agent allow-list is available. -->
