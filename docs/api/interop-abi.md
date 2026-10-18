@@ -48,6 +48,7 @@ consumer can cast the returned pointer to the struct without an unaligned access
 | `PEL_SEC_COMPLEXITY` | `PelorusComplexitySection` | `vf_pelorus_analyze` | per-shot CRF steering (ADR-0132), autotune | per-frame complexity scalar `[0,1]` (texture + edge, folds in motion when `PEL_SEC_MOTION` is upstream), EMA-smoothed + scene-cut reset; `texture_energy`/`motion_component`/`has_scene_cut` |
 | `PEL_SEC_ENC_TELEMETRY` (ABI 1.4) | `PelorusEncTelemetrySection` | encoder adapters through `pelorus/telemetry.h` (ADR-0174) | vmafx, a later pass | one record per coded frame: QP in its native scale plus an H.264-equivalent value, bits, picture type, flags, PSNR/SSIM, area shares, optional row or block maps on the encoder's grid; a `present_mask` bit per optional field ([encoder-telemetry.md](encoder-telemetry.md)) |
 | `PEL_SEC_ENCODE_RECORD` (ABI 1.4) | `PelorusEncodeRecordSection` | an encode producer (ADR-0175) | vmafx provenance (`encode_record`) | raw SHA-256 of the canonical encode record plus a locator of the record file ([encode-record.md](encode-record.md)) |
+| `PEL_SEC_QUALITY` (ABI 1.6) | `PelorusQualitySection` | external quality oracle / vmafx (ADR-0214) | encoder zone emitters, autotune | time-aligned quality window score: monotonic window id, PTS interval [start, end) with timebase, model SHA-256 hash, provenance id, metric id, score scalar, latency and frame counts ([quality-window.md](quality-window.md)) |
 
 `PEL_SEC_QPREPORT` (ABI 1.1) is the **read-back** half of encoder steering: unlike
 sections (a)–(e), which carry *pre-encode* GPU measurements pushed *to* the encoder,
@@ -523,6 +524,17 @@ it (R3). It never misreads a carrier. VMAFx re-pins to the release that ships
 ABI 1.5 and adds the call ([mirror contract](mirror-contract.md)); until then
 it scores frames from NVENC streams unweighted, the same result as the
 truncated SEI it replaces on flat content.
+
+## Quality window section (ABI 1.6)
+
+`PELORUS_ABI_MINOR` is 6 ([ADR-0214](../adr/0214-quality-window-section.md)).
+
+ABI 1.6 adds:
+
+- `PEL_SEC_QUALITY` (bit 10, section k): 96-byte flat POD `PelorusQualitySection` carrying time-aligned quality window scores from an external quality oracle (VMAFx).
+- `enum pel_quality_metric`: append-only metric identifiers (`PEL_QM_VMAF` through `PEL_QM_CAMBI`).
+
+For rational PTS alignment (`pel_quality_align`) and encoder zone emitters (`pel_zones_*`), see [quality-window.md](quality-window.md).
 
 ## Stability rules (normative — see interop.h)
 

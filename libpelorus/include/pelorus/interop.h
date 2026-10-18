@@ -76,9 +76,10 @@ extern "C" {
  *        + PelorusMotionSection.block_size_log2 at the tail (32 -> 36 bytes).
  *   1.5  + the zero-free carrier form of a blob (pelorus_carrier_uuid, COBS),
  *          pel_blob_carrier_encode() and pel_blob_unwrap() (ADR-0183). No
- *          section or field changes. */
+ *          section or field changes.
+ *   1.6  + PEL_SEC_QUALITY (k): time-aligned quality window score (ADR-0214). */
 #define PELORUS_ABI_MAJOR 1u
-#define PELORUS_ABI_MINOR 5u
+#define PELORUS_ABI_MINOR 6u
 
 /* The 16-byte UUID prefixing the AV_FRAME_DATA_SEI_UNREGISTERED payload (the
  * leading uuid_iso_iec_11578 mandated by the user-data-unregistered SEI
@@ -120,8 +121,9 @@ enum pel_section {
     PEL_SEC_MOTION_CONF = 1u << 6,   /* (g) per-block MV confidence map (ADR-0113)*/
     PEL_SEC_COMPLEXITY = 1u << 7,    /* (h) per-frame complexity scalar (ADR-0132) */
     PEL_SEC_ENC_TELEMETRY = 1u << 8, /* (i) per-frame encoder telemetry (ADR-0174) */
-    PEL_SEC_ENCODE_RECORD = 1u << 9  /* (j) encode-record digest (ADR-0175)        */
-    /* bits 10..31 reserved — a retired bit is NEVER reused (R2). */
+    PEL_SEC_ENCODE_RECORD = 1u << 9, /* (j) encode-record digest (ADR-0175)        */
+    PEL_SEC_QUALITY = 1u << 10       /* (k) quality window (ADR-0214)              */
+    /* bits 11..31 reserved — a retired bit is NEVER reused (R2). */
 };
 
 /* ---- Plane layout / producer identity ----------------------------------- */
@@ -535,6 +537,37 @@ typedef struct PelorusEncodeRecordSection {
     /* --- APPEND-ONLY below this line --- */
 } PelorusEncodeRecordSection;
 
+/* Metric identifier for PEL_SEC_QUALITY (ADR-0214). Append-only; 0 is invalid. */
+enum pel_quality_metric {
+    PEL_QM_NONE = 0,     /* invalid / unset                                  */
+    PEL_QM_VMAF = 1,     /* Netflix VMAF v0.6.1 / default model              */
+    PEL_QM_VMAF_NEG = 2, /* VMAF NEG (no enhancement gain)                  */
+    PEL_QM_PSNR_Y = 3,   /* Peak signal-to-noise ratio, luma                 */
+    PEL_QM_SSIM_Y = 4,   /* Structural similarity, luma                      */
+    PEL_QM_MS_SSIM = 5,  /* Multi-scale structural similarity                */
+    PEL_QM_XPSNR = 6,    /* Extended perceptual PSNR                         */
+    PEL_QM_CAMBI = 7     /* Contrast-aware multiscale banding index          */
+};
+
+/* (k) Time-aligned quality window score (ABI 1.6, ADR-0214).
+ * Carries one window-level quality score from an external oracle (vmafx)
+ * aligned to stream PTS. Flat POD, 8-aligned, no embedded pointers. */
+typedef struct PelorusQualitySection {
+    uint64_t window_id;      /*   0: producer-unique, monotonic per stream */
+    int64_t pts_start;       /*   8: first pts of window, inclusive, in time_base */
+    int64_t pts_end;         /*  16: exclusive; > pts_start */
+    uint32_t tb_num;         /*  24: time base of pts_*; both > 0 */
+    uint32_t tb_den;         /*  28 */
+    uint8_t model_hash[32];  /*  32: raw SHA-256 of metric model; 0 = unmodelled (PSNR) */
+    uint64_t provenance_id;  /*  64: id of the scoring run/record (vmafx side), 0 = unknown */
+    double score;            /*  72: finite */
+    uint32_t metric_id;      /*  80: enum pel_quality_metric, != 0 */
+    uint32_t latency_frames; /*  84: frames between window end and score availability */
+    uint32_t frame_count;    /*  88: frames scored in window, >= 1 */
+    uint32_t _pad;           /*  92: reserved zero */
+    /* --- APPEND-ONLY below this line --- */
+} PelorusQualitySection;
+
 /* ---- Layout locks (ABI is frozen byte-for-byte; see R1/R2) -------------- */
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(sizeof(PelorusSectionDir) == 16, "PelorusSectionDir ABI");
@@ -588,6 +621,19 @@ _Static_assert(offsetof(PelorusEncodeRecordSection, digest_alg) == 40, "encode-r
 _Static_assert(offsetof(PelorusEncodeRecordSection, locator_kind) == 41, "encode-record ABI");
 _Static_assert(offsetof(PelorusEncodeRecordSection, record_major) == 42, "encode-record ABI");
 _Static_assert(offsetof(PelorusEncodeRecordSection, _pad) == 43, "encode-record ABI");
+_Static_assert(sizeof(PelorusQualitySection) == 96, "quality section ABI");
+_Static_assert(offsetof(PelorusQualitySection, window_id) == 0, "quality ABI");
+_Static_assert(offsetof(PelorusQualitySection, pts_start) == 8, "quality ABI");
+_Static_assert(offsetof(PelorusQualitySection, pts_end) == 16, "quality ABI");
+_Static_assert(offsetof(PelorusQualitySection, tb_num) == 24, "quality ABI");
+_Static_assert(offsetof(PelorusQualitySection, tb_den) == 28, "quality ABI");
+_Static_assert(offsetof(PelorusQualitySection, model_hash) == 32, "quality ABI");
+_Static_assert(offsetof(PelorusQualitySection, provenance_id) == 64, "quality ABI");
+_Static_assert(offsetof(PelorusQualitySection, score) == 72, "quality ABI");
+_Static_assert(offsetof(PelorusQualitySection, metric_id) == 80, "quality ABI");
+_Static_assert(offsetof(PelorusQualitySection, latency_frames) == 84, "quality ABI");
+_Static_assert(offsetof(PelorusQualitySection, frame_count) == 88, "quality ABI");
+_Static_assert(offsetof(PelorusQualitySection, _pad) == 92, "quality ABI");
 #endif
 
 /* ---- Pack / parse API (implemented in interop.c; vendored by both repos) - */
