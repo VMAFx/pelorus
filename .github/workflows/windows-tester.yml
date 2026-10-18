@@ -115,8 +115,8 @@ jobs:
           }
       - name: Replay all patches, link FFmpeg, keep the binary
         env:
-          NVENC_SMOKE_SKIP: Cannot load nvEncodeAPI64.dll
-          NVENC_HOP_SMOKE_SKIP: Cannot load nvEncodeAPI64.dll
+          NVENC_SMOKE_SKIP: Cannot load nvcuda.dll
+          NVENC_HOP_SMOKE_SKIP: Cannot load nvcuda.dll
           KEYFRAME_SMOKE_SKIP: no Vulkan device with HEVC video
           FGS_SMOKE_SKIP: no HEVC encoder
           GRAIN_SCORE_AV1_SMOKE_SKIP: no libdav1d decoder
