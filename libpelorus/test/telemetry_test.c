@@ -406,6 +406,104 @@ static void test_pack_rejects(void)
     CHECK(pel_enc_telemetry_blob_size(NULL, &need) == PEL_ERR_INVALID);
 }
 
+/* Read a packed cap record back through the public readers. */
+static void check_packed_cap_maps(const uint8_t *blob, size_t len, int16_t qp_val,
+                                  uint32_t bits_val, uint8_t mode_val)
+{
+    PelorusEncTelemetrySection t;
+    const void *p = NULL;
+    const void *map = NULL;
+    size_t got = 0;
+    uint32_t elems = 0;
+
+    CHECK(pel_blob_find_section(blob, len, PEL_SEC_ENC_TELEMETRY, sizeof(t), &p, &got) == PEL_OK);
+    CHECK(got == sizeof(t) && p != NULL);
+    if (p == NULL || got != sizeof(t)) {
+        return;
+    }
+    memcpy(&t, p, sizeof(t));
+    CHECK(pel_enc_telemetry_map(blob, len, &t, got, PEL_TLM_F_QP_MAP, &map, &elems) == PEL_OK);
+    CHECK(elems == PEL_TLM_MAP_MAX_ELEMS && map != NULL);
+    if (map != NULL && elems == PEL_TLM_MAP_MAX_ELEMS) {
+        const int16_t *q = (const int16_t *)map;
+        CHECK(q[0] == qp_val && q[elems - 1u] == qp_val);
+    }
+    CHECK(pel_enc_telemetry_map(blob, len, &t, got, PEL_TLM_F_BITS_MAP, &map, &elems) == PEL_OK);
+    CHECK(elems == PEL_TLM_MAP_MAX_ELEMS && map != NULL);
+    if (map != NULL && elems == PEL_TLM_MAP_MAX_ELEMS) {
+        const uint32_t *b = (const uint32_t *)map;
+        CHECK(b[0] == bits_val && b[elems - 1u] == bits_val);
+    }
+    CHECK(pel_enc_telemetry_map(blob, len, &t, got, PEL_TLM_F_MODE_MAP, &map, &elems) == PEL_OK);
+    CHECK(elems == PEL_TLM_MAP_MAX_ELEMS && map != NULL);
+    if (map != NULL && elems == PEL_TLM_MAP_MAX_ELEMS) {
+        const uint8_t *m = (const uint8_t *)map;
+        CHECK(m[0] == mode_val && m[elems - 1u] == mode_val);
+    }
+}
+
+/* Boundary: pack at exactly PEL_TLM_MAP_MAX_ELEMS (1024x1024), reject 1025 rows. */
+static void test_pack_map_cap(void)
+{
+    PelorusEncTelemetryInput in;
+    PelorusSideData meta;
+    uint8_t *mode_map = malloc(PEL_TLM_MAP_MAX_ELEMS);
+    int16_t *qp_map = malloc(PEL_TLM_MAP_MAX_ELEMS * sizeof(int16_t));
+    uint32_t *bits_map = malloc(PEL_TLM_MAP_MAX_ELEMS * sizeof(uint32_t));
+    uint8_t *blob = NULL;
+    size_t need = 0;
+    size_t len = 0;
+    size_t i;
+
+    CHECK(mode_map != NULL && qp_map != NULL && bits_map != NULL);
+    if (mode_map == NULL || qp_map == NULL || bits_map == NULL) {
+        free(mode_map);
+        free(qp_map);
+        free(bits_map);
+        return;
+    }
+    for (i = 0; i < PEL_TLM_MAP_MAX_ELEMS; i++) {
+        qp_map[i] = 120;
+        bits_map[i] = 500u;
+        mode_map[i] = PEL_BLOCK_MODE_INTER;
+    }
+    memset(&meta, 0, sizeof(meta));
+    base_frame(&in);
+    in.frame.present_mask |= PEL_TLM_F_QP_MAP | PEL_TLM_F_BITS_MAP | PEL_TLM_F_MODE_MAP;
+    in.frame.granularity = PEL_TLM_GRAN_BLOCK;
+    in.frame.map_cols = 1024;
+    in.frame.map_rows = 1024;
+    in.frame.block_size_log2 = 3;
+    in.qp_map = qp_map;
+    in.bits_map = bits_map;
+    in.mode_map = mode_map;
+
+    CHECK(pel_enc_telemetry_blob_size(&in, &need) == PEL_OK);
+    blob = malloc(need);
+    CHECK(blob != NULL);
+    if (blob == NULL) {
+        free(mode_map);
+        free(qp_map);
+        free(bits_map);
+        return;
+    }
+    CHECK(pel_enc_telemetry_pack(&meta, &in, blob, need, &len) == PEL_OK && len == need);
+    check_packed_cap_maps(blob, len, 120, 500u, PEL_BLOCK_MODE_INTER);
+
+    /* map_rows = 1025: blob_size and pack fail, buffer untouched. */
+    const size_t cap = need;
+    in.frame.map_rows = 1025;
+    CHECK(pel_enc_telemetry_blob_size(&in, &need) == PEL_ERR_RANGE);
+    memset(blob, 0xA5, cap);
+    CHECK(pel_enc_telemetry_pack(&meta, &in, blob, cap, &len) == PEL_ERR_RANGE);
+    CHECK(blob[0] == 0xA5);
+
+    free(blob);
+    free(mode_map);
+    free(qp_map);
+    free(bits_map);
+}
+
 /* The reader's checks 1 and 2 on a well-formed blob with a doctored section copy. */
 static void test_map_reader_checks(void)
 {
@@ -565,6 +663,7 @@ int main(void)
     test_validate_map_values();
     test_pack_roundtrip();
     test_pack_rejects();
+    test_pack_map_cap();
     test_map_reader_checks();
     test_adapter_caps_supported();
     test_x264_record_contract();
