@@ -81,6 +81,31 @@ extern const unsigned int ff_pelorus_deblock_comp_spv_len;
  * documented meaning, then converts results back only at the store boundary.
  * The same descriptor-derived path handles shifted P010/P012 accurately; they
  * are slightly above 1.0 because their maxima do not fill the UNORM container. */
+static void deblock_add_descriptors(FFVulkanContext *vkctx, FFVulkanShader *shd, int planes)
+{
+    FFVulkanDescriptorSetBinding desc_set[] = {
+        {
+            .name = "input_images",
+            .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
+            .mem_quali = "readonly",
+            .dimensions = 2,
+            .elems = planes,
+            .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+        {
+            .name = "output_images",
+            .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format, FF_VK_REP_FLOAT),
+            .mem_quali = "writeonly",
+            .dimensions = 2,
+            .elems = planes,
+            .stages = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+    };
+    ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
+}
+
 static av_cold int init_filter(AVFilterContext *ctx)
 {
     int err = 0;
@@ -98,8 +123,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
     s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
     if (!s->qf) {
         av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
-        err = AVERROR(ENOTSUP);
-        goto fail;
+        return AVERROR(ENOTSUP);
     }
 
     RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
@@ -118,29 +142,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
 
     ff_vk_shader_add_push_const(shd, 0, sizeof(s->opts), VK_SHADER_STAGE_COMPUTE_BIT);
 
-    {
-        FFVulkanDescriptorSetBinding desc_set[] = {
-            {
-                .name = "input_images",
-                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->input_format, FF_VK_REP_FLOAT),
-                .mem_quali = "readonly",
-                .dimensions = 2,
-                .elems = planes,
-                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-            },
-            {
-                .name = "output_images",
-                .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .mem_layout = ff_vk_shader_rep_fmt(vkctx->output_format, FF_VK_REP_FLOAT),
-                .mem_quali = "writeonly",
-                .dimensions = 2,
-                .elems = planes,
-                .stages = VK_SHADER_STAGE_COMPUTE_BIT,
-            },
-        };
-        ff_vk_shader_add_descriptor_set(vkctx, shd, desc_set, 2, 0);
-    }
+    deblock_add_descriptors(vkctx, shd, planes);
 
     RET(ff_vk_shader_link(vkctx, shd, ff_pelorus_deblock_comp_spv_data,
                           ff_pelorus_deblock_comp_spv_len, "main"));
