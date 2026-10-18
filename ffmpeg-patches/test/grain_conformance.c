@@ -351,8 +351,8 @@ static int test_fixture_a_luma(Context *ctx, const PelorusGrainDescriptor *desc_
         check_assert(ctx, label, fabs(s_aom.sigma - pred_a) / pred_a, 0.120);
 
         (void)snprintf(label, sizeof(label), "fixture_a_luma_%d_h274_sigma_vs_desc", lvl);
-        /* Measured worst luma rel_err is ~0.0921; bound set to 0.115 (0.0921 * 1.2 rounded up) */
-        check_assert(ctx, label, fabs(s_h274.sigma - pred_h) / pred_h, 0.115);
+        /* Measured worst luma rel_err is ~0.0217; tightened to 0.026 (0.0217 * 1.2 rounded up, ADR-0216) */
+        check_assert(ctx, label, fabs(s_h274.sigma - pred_h) / pred_h, 0.026);
 
         (void)snprintf(label, sizeof(label), "fixture_a_luma_%d_aom_vs_h274_sigma", lvl);
         /* Measured worst luma rel_diff is ~0.0299; bound set to 0.036 (0.0299 * 1.2 rounded up) */
@@ -386,9 +386,8 @@ static void test_fixture_a_chroma(Context *ctx, const PelorusGrainDescriptor *de
         check_assert(ctx, label, fabs(s_aom.sigma - pred_a) / pred_a, 0.090);
 
         (void)snprintf(label, sizeof(label), "fixture_a_chroma_%d_h274_sigma_vs_desc", p);
-        /* Measured ~0.2297, not explained by ADR-0205 (see ADR-0211 note); bound 0.280 */
-        /* Bound set to 0.280 (0.2297 * 1.2 rounded up) */
-        check_assert(ctx, label, fabs(s_h274.sigma - pred_h) / pred_h, 0.280);
+        /* Measured worst chroma h274 rel_err is ~0.0392; tightened to 0.048 (0.03919 * 1.2 rounded up, ADR-0216) */
+        check_assert(ctx, label, fabs(s_h274.sigma - pred_h) / pred_h, 0.048);
 
         (void)snprintf(label, sizeof(label), "fixture_a_chroma_%d_aom_vs_h274_sigma", p);
         /* Measured ~0.1837, same open chroma gap (ADR-0211 note); bound 0.230 */
@@ -464,8 +463,8 @@ static int test_fixture_b_levels(Context *ctx, const PelorusGrainDescriptor *des
         check_assert(ctx, label, fabs(s_aom.sigma - pred_a) / pred_a, 0.030);
 
         (void)snprintf(label, sizeof(label), "fixture_b_luma_%d_h274_sigma_vs_desc", lvl);
-        /* Coinciding: measured rel_err is ~0.0113; tightened bound set to 0.015 (0.0113 * 1.2) */
-        check_assert(ctx, label, fabs(s_h274.sigma - pred_h) / pred_h, 0.015);
+        /* Coinciding: measured rel_err is ~0.0037; tightened to 0.005 (0.0037 * 1.2 rounded up, ADR-0216) */
+        check_assert(ctx, label, fabs(s_h274.sigma - pred_h) / pred_h, 0.005);
 
         (void)snprintf(label, sizeof(label), "fixture_b_luma_%d_aom_vs_h274_sigma", lvl);
         /* Coinciding: measured rel_diff is ~0.0130; tightened bound set to 0.016 (0.0130 * 1.2) */
