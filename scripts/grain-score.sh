@@ -6,7 +6,7 @@
 # SPDX-License-Identifier: EUPL-1.2
 #
 # Usage:
-#   grain-score.sh --ffmpeg BIN --reference SRC --stream ENC.hevc [--distorted FILE] --metric psnr|ssim|vmaf --out DIR
+#   grain-score.sh --ffmpeg BIN --reference SRC --stream ENC.hevc|ENC.ivf|ENC.obu [--distorted FILE] --metric psnr|ssim|vmaf --out DIR
 #
 # Scores the decoded, grain-synthesised video output of a stream against a
 # reference, explicitly rejecting the encoder's grain-free reconstruction.
@@ -29,16 +29,16 @@ set -euo pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  grain-score.sh --ffmpeg BIN --reference SRC --stream ENC.hevc [--distorted FILE] --metric psnr|ssim|vmaf --out DIR
+  grain-score.sh --ffmpeg BIN --reference SRC --stream ENC.hevc|ENC.ivf|ENC.obu [--distorted FILE] --metric psnr|ssim|vmaf --out DIR
 
 Options:
-  --ffmpeg BIN        Path to ffmpeg executable
-  --reference SRC     Reference source: file path or lavfi:<filtergraph>
-  --stream ENC.hevc   Encoded video stream carrying film grain metadata
-  --distorted FILE    Pre-decoded distorted file (optional; validated against decode)
-  --metric METRIC     Quality metric: psnr, ssim, or vmaf
-  --out DIR           Output directory for evidence and score.txt
-  -h, --help          Show this help message
+  --ffmpeg BIN                          Path to ffmpeg executable
+  --reference SRC                       Reference source: file path or lavfi:<filtergraph>
+  --stream ENC.hevc|ENC.ivf|ENC.obu     Encoded video stream carrying film grain metadata
+  --distorted FILE                      Pre-decoded distorted file (optional; validated against decode)
+  --metric METRIC                       Quality metric: psnr, ssim, or vmaf
+  --out DIR                             Output directory for evidence and score.txt
+  -h, --help                            Show this help message
 EOF
 }
 
@@ -151,6 +151,31 @@ if ! "${filters_cmd[@]}" 2>&1 | awk -v name="$filter_name" '$2 == name { found=1
     exit 1
 fi
 
+# Probe stream codec
+probe_cmd=("$FFMPEG" -nostdin -hide_banner -i "$STREAM" -map 0:v:0 -frames:v 0 -f null -)
+if ! "${probe_cmd[@]}" >/dev/null 2>"$OUT/probe.log"; then
+    echo "ERROR: failed to probe stream: $STREAM (see $OUT/probe.log)" >&2
+    exit 1
+fi
+
+stream_codec="$(awk -F'Video: ' '/Video: / { split($2, a, "[, ]"); print a[1]; exit }' "$OUT/probe.log")"
+if [[ -z "$stream_codec" ]]; then
+    echo "ERROR: failed to detect video codec from stream: $STREAM" >&2
+    exit 1
+fi
+
+decoder_args=()
+decoder_name="ffmpeg default for $stream_codec"
+if [[ "$stream_codec" == "av1" ]]; then
+    decoders_cmd=("$FFMPEG" -nostdin -hide_banner -decoders)
+    if ! "${decoders_cmd[@]}" 2>"$OUT/decoders.log" | awk '$2 == "libdav1d" { found=1 } END { exit !found }'; then
+        echo "ERROR: AV1 stream needs the libdav1d decoder; the native av1 decoder applies grain only through a hwaccel" >&2
+        exit 1
+    fi
+    decoder_args=(-c:v libdav1d)
+    decoder_name="libdav1d"
+fi
+
 # Helper to extract raw frame hashes from framemd5 output
 pel_extract_hashes() {
     awk -F',' '!/^#/ { gsub(/[ \t]/, "", $NF); print $NF }' "$1"
@@ -159,6 +184,7 @@ pel_extract_hashes() {
 # 1a. Decode stream twice to framemd5: grain-applied and grain-free
 decode_applied_cmd=(
     "$FFMPEG" -nostdin -hide_banner
+    "${decoder_args[@]}"
     -i "$STREAM"
     -f framemd5
     -y "$OUT/grain-applied.framemd5"
@@ -171,6 +197,7 @@ decode_applied_cmd=(
 decode_free_cmd=(
     "$FFMPEG" -nostdin -hide_banner
     -export_side_data film_grain
+    "${decoder_args[@]}"
     -i "$STREAM"
     -f framemd5
     -y "$OUT/grain-free.framemd5"
@@ -199,6 +226,7 @@ if [[ -z "$DISTORTED" ]]; then
     DISTORTED="$OUT/decoded.y4m"
     decode_y4m_cmd=(
         "$FFMPEG" -nostdin -hide_banner
+        "${decoder_args[@]}"
         -i "$STREAM"
         -y "$DISTORTED"
     )
@@ -284,6 +312,8 @@ cat >"$OUT/score.txt" <<EOF
 metric: $METRIC
 value: $score_val
 decode_path: grain-applied
+codec: $stream_codec
+decoder: $decoder_name
 EOF
 
 cat "$OUT/score.txt"

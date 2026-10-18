@@ -163,6 +163,8 @@ ffmpeg-patches/
    `scripts/grain-score.sh` scores decoded grain synthesis, rejects
    grain-free reconstruction, strips FGC SEI, rejects missing filters):
    skip named by `GRAIN_SCORE_SMOKE_SKIP` (ADR-0207).
+   Grain score AV1 smoke `test/grain-score-av1-smoke.sh` (#368: AV1
+   via libdav1d, ADR-0212): skip named by `GRAIN_SCORE_AV1_SMOKE_SKIP`.
 11. Every ephemeral `git am` replay supplies `Pelorus-Replay` committer
    identity, neutralizes signing, hooks, and diff ordering, and passes
    `--no-gpg-sign --no-verify`. Do not rely on workstation's global Git
