@@ -99,6 +99,10 @@ exceptions:
     path: ffmpeg-patches/test/static-libavfilter-consumer.c
     reason: builds only inside an FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168)
     expires: "2027-01-06"
+  - rule: clang-tidy-coverage
+    path: ffmpeg-patches/test/grain_conformance.c
+    reason: "category D, capped at the engine maximum of 90 days: links FFmpeg's static libavcodec and libavutil and builds only against a built FFmpeg tree, which no clang-tidy lane configures yet; follow-up VMAFx/pelorus#94 adds an FFmpeg-tree lane to the replay build (ADR-0168, ADR-0211)"
+    expires: "2027-01-16"
   - rule: declared-linters
     tool: cppcheck
     reason: no workflow runs cppcheck yet; C static analysis runs through clang-tidy on every Meson-built unit (make verify-native, CI core job, ADR-0168), and a cppcheck lane first needs a recorded baseline of its current findings (ADR-0190)

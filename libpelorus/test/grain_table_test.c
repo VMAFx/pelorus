@@ -107,14 +107,25 @@ static void test_positive_write(void)
 
 static void test_file_fixture(const char *path)
 {
-    if (path == NULL)
+    if (path == NULL) {
         return;
+    }
     FILE *f = fopen(path, "rb");
-    if (!f)
+    CHECK(f != NULL);
+    if (!f) {
         return;
+    }
     char text[4096];
     size_t n = fread(text, 1, sizeof(text) - 1, f);
+    int read_err = ferror(f);
+    int extra = fgetc(f);
     (void)fclose(f);
+    CHECK(!read_err);
+    CHECK(extra == EOF);
+    CHECK(n > 0);
+    if (read_err || extra != EOF || n == 0) {
+        return;
+    }
     text[n] = '\0';
 
     PelorusGrainTableEntry entries[4];
