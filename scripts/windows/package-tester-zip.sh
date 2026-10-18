@@ -236,6 +236,8 @@ run_package() {
         exit 1
     fi
     mkdir -p "$out_dir"
+    # zip runs from the staging directory, so a relative output path would resolve there.
+    out_dir="$(cd "$out_dir" && pwd)"
 
     # shellcheck source=build-config.env
     source "$ROOT/build-config.env"
@@ -325,11 +327,13 @@ EOF
 
 _package_fixture() {
     local test_root="$1"
+    local out_dir="${2:-$test_root/out}"
     (
+        cd "$test_root"
         UCRT64_BIN="$test_root/ucrt64/bin" \
         UCRT64_SHARE="$test_root/ucrt64/share" \
         OBJDUMP="$test_root/tools/fake-objdump" \
-            run_package "$test_root/keep" "$test_root/ffmpeg-src" "$test_root/out"
+            run_package "$test_root/keep" "$test_root/ffmpeg-src" "$out_dir"
     )
 }
 
@@ -344,6 +348,15 @@ _run_self_test_cases() {
     _read_closure_names crlf_names < <(printf 'libbz2-1.dll\r\nliblzma-5.dll\r\n')
     if [[ "${#crlf_names[@]}" -ne 2 || "${crlf_names[0]}" != libbz2-1.dll || "${crlf_names[1]}" != liblzma-5.dll ]]; then
         echo "ERROR: self-test did not strip CR from resolved DLL names" >&2
+        return 1
+    fi
+
+    _package_fixture "$test_root" out-rel
+    shopt -s nullglob
+    local rel_zips=("$test_root"/out-rel/*.zip)
+    shopt -u nullglob
+    if [[ "${#rel_zips[@]}" -ne 1 ]]; then
+        echo "ERROR: self-test did not create zip for a relative output directory" >&2
         return 1
     fi
 
@@ -392,7 +405,7 @@ run_self_tests() {
     _setup_self_test_fixtures "$test_root"
     _run_self_test_cases "$test_root"
 
-    echo "package-tester-zip: self-test passed (5 cases)"
+    echo "package-tester-zip: self-test passed (6 cases)"
     return 0
 }
 
