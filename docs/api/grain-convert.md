@@ -5,7 +5,7 @@ libpelorus provides a pure C conversion engine between AV1 (AOM) and H.274 (SEI 
 
 - Header: [`pelorus/grain_convert.h`](../../libpelorus/include/pelorus/grain_convert.h)
 - Implementation: [`libpelorus/src/grain_convert.c`](../../libpelorus/src/grain_convert.c), [`libpelorus/src/grain_convert_tables.c`](../../libpelorus/src/grain_convert_tables.c)
-- Decision: [ADR-0205](../adr/0205-aom-h274-grain-conversion.md)
+- Decision: [ADR-0205](../adr/0205-aom-h274-grain-conversion.md), [ADR-0211](../adr/0211-grain-synth-conformance.md)
 - Related: [Film Grain Table I/O API](grain-table.md), [ADR-0161](../adr/0161-grain-estimate-rounding-and-h274-mapping.md)
 
 ## Usage example
@@ -163,3 +163,29 @@ The test suite in `libpelorus/test/grain_convert_test.c` runs in the fast suite 
 - **Chroma-only H.274**: converts to a valid AV1 set with a flat zero luma curve; the 4:2:0 chroma adaptation (scale halved, cutoffs doubled) is checked exactly against the statistics table row.
 - **AR mirror symmetry**: an up-left and an up-right lag-1 tap of the same weight give the same $\sigma$, $\rho_h$ and $\rho_v$.
 - **Statistics table**: `scripts/gen-h274-grain-calibration.py --stats --check` (needs `FFMPEG_REPO`) regenerates `pel_h274_grain_stats` from the pinned FFmpeg synthesizer and fails on any drift beyond 0.0005 gain or 0.002 correlation.
+
+## Conformance against the reference synthesisers
+
+While `libpelorus/test/grain_convert_test.c` validates conversion mathematics and descriptor models within `libpelorus`, pixel-domain ground truth is proven by `ffmpeg-patches/test/grain_conformance.c` running against FFmpeg's pinned reference synthesisers (`ff_aom_apply_film_grain` in `libavcodec/aom_film_grain.h` and `ff_h274_apply_film_grain` in `libavcodec/h274.h`, [ADR-0211](../adr/0211-grain-synth-conformance.md)).
+
+The test synthesizes grain on flat 512x512 8-bit YUV420P frames across luma intensities 64, 128, and 192 (chroma 128) on converted parameters, measures RMS $\sigma$ and lag-1 spatial autocorrelation ($\rho_h$, $\rho_v$) excluding a 16-pixel border, and verifies bounds set at $1.2\times$ worst measured value:
+
+| Metric | Fixture A Measured | Fixture A Bound | Fixture B Measured | Fixture B Bound |
+| :--- | :--- | :--- | :--- | :--- |
+| Luma $\sigma$ vs AV1 descriptor | 0.0944 (9.4%) | 0.120 (12.0%) | 0.0249 (2.5%) | 0.030 (3.0%) |
+| Luma $\sigma$ vs H.274 descriptor | 0.0921 (9.2%) | 0.115 (11.5%) | 0.0113 (1.1%) | 0.015 (1.5%) |
+| Luma $\sigma$ AV1 vs H.274 synth | 0.0299 (3.0%) | 0.036 (3.6%) | 0.0130 (1.3%) | 0.016 (1.6%) |
+| Luma $\|\Delta \rho_h\|$ AV1 vs H.274 | 0.0455 | 0.055 | 0.0315 | 0.038 |
+| Luma $\|\Delta \rho_v\|$ AV1 vs H.274 | 0.0607 | 0.075 | 0.0288 | 0.035 |
+| Chroma $\sigma$ vs AV1 descriptor | 0.0712 (7.1%) | 0.090 (9.0%) | - | - |
+| Chroma $\sigma$ vs H.274 descriptor | 0.2297 (23.0%) | 0.280 (28.0%) | - | - |
+| Chroma $\sigma$ AV1 vs H.274 synth | 0.1837 (18.4%) | 0.230 (23.0%) | - | - |
+| Chroma $\|\Delta \rho_h\|$ AV1 vs H.274 | 0.0690 | 0.085 | - | - |
+| Chroma $\|\Delta \rho_v\|$ AV1 vs H.274 | 0.1312 | 0.160 | - | - |
+
+Run locally against a built FFmpeg tree:
+
+```bash
+FFMPEG_TREE=/path/to/ffmpeg PELORUS_BUILD=/path/to/build OUTPUT_ROOT=/tmp/gc-out \
+    bash ffmpeg-patches/test/grain-conformance.sh
+```

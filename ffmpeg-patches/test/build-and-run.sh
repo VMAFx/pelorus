@@ -517,6 +517,24 @@ if ! "$HERE/named-skip.sh" "grain score smoke" "$grain_smoke_status" \
     exit 1
 fi
 
+# CPU test: conformance against reference synthesizers (AV1 and H.274 model 0)
+# on converted parameters (issue #82, ADR-0211). Exit 77 names why this host
+# cannot run it; it passes only when GRAIN_CONFORMANCE_SKIP names that reason
+# (ADR-0189). Any other failure fails the replay.
+echo "== grain synth conformance =="
+grain_conf_status=0
+FFMPEG_TREE="$WORKTREE" PELORUS_BUILD="$PELORUS_BUILD" \
+    OUTPUT_ROOT="$LOG_DIR/grain-conformance" \
+    "$HERE/grain-conformance.sh" 2>&1 | tee "$LOG_DIR/grain-conformance.log" ||
+    grain_conf_status=$? # pipefail: the smoke's status, tee exits 0
+if ! "$HERE/named-skip.sh" "grain synth conformance" "$grain_conf_status" \
+    "$LOG_DIR/grain-conformance.log" "${GRAIN_CONFORMANCE_SKIP:-}"; then
+    echo "ERROR: this run removes its logs, so rerun test/grain-conformance.sh" \
+        "with FFMPEG_TREE, PELORUS_BUILD and OUTPUT_ROOT to keep them; on a host" \
+        "that cannot run the test, set GRAIN_CONFORMANCE_SKIP to the reason it prints" >&2
+    exit 1
+fi
+
 keep_binary() {
     if [[ "$KEEP_DIR" != /* ]]; then
         echo "ERROR: KEEP_DIR must be an absolute path: $KEEP_DIR" >&2
