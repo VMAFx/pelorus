@@ -1,7 +1,13 @@
 ---
-name: pr-body-checker
 description: Verifies ADR-0108 deep-dive deliverables and per-PR rules. Use immediately before opening or approving PRs.
-tools: Read, Grep, Glob, Bash
+name: pr-body-checker
+tools:
+  - read_file
+  - read_many_files
+  - grep_search
+  - glob
+  - list_directory
+  - run_shell_command
 ---
 
 <!-- markdownlint-disable MD013 MD041 -->

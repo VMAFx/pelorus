@@ -7,31 +7,31 @@ Run read-only: file edits, state mutations, commits prohibited. Mutating steps d
 
 ## Core Directives & Invariants
 
-Adopted check = check adoption generated here (none: no generated verification gate, no praetor `lefthook.yml`), as written at adoption; later edits to those files not reflected. `not enforced` = rule binds, no generated check decides it for repository languages.
+Adopted check = coverage state + mechanism; else audit scanner; else `unknown`. Gates = (none: no generated verification gate, no praetor `lefthook.yml`); edits not reflected.
 
 | Invariant | Rule | Adopted check | On fail |
 | :--- | :--- | :--- | :--- |
-| **HISS-01** control flow | recursion prohibited; call graph = DAG; C/C++: zero `goto` | not enforced | advisory |
-| **HISS-02** loops, I/O | scalar upper bound on every loop; explicit deadline on every I/O call | not enforced | advisory |
-| **HISS-03** memory | C/C++: zero heap allocation in hot simulation/tick loops | not enforced | advisory |
-| **HISS-04** complexity | McCabe cyclomatic <= 10, cognitive <= 12, statements <= 40; func LOC <= 60 (audit ceiling) | not enforced | advisory |
-| **HISS-05** scoping | declare every identifier in smallest lexical scope serving it | not enforced | advisory |
-| **HISS-06** concurrency | explicit scalar upper bound on every worker pool + concurrent fan-out | not enforced | advisory |
-| **HISS-07** errors | every error handled or wrapped with context | not enforced | advisory |
-| **HISS-08** determinism | zero dynamic code execution (`eval` / `exec`); C/C++: zero banned libc (`gets` / `strcpy` / `sprintf`) | not enforced | advisory |
-| **HISS-09** reference safety | n/a: no such construct in repository languages; advisory | not enforced | advisory |
-| **HISS-10** warnings | zero warnings: compiler, linter, format sweeps | not enforced | advisory |
-| **HISS-11** supply chain | pinned lockfiles; zero floating tags; signed provenance | not enforced | advisory |
-| **HISS-12** secrets | zero credentials in Git history | not enforced | advisory |
-| **HISS-13** debt ratchet | recorded infractions never grow vs committed baseline | not enforced | advisory |
-| **HISS-14** append-only ABI | public API append-only; breaking change = `!` subject + `Migration:` footer | not enforced | advisory |
-| **HISS-15** 3D testing | positive + negative + boundary tests, every public interface | not enforced | advisory |
-| **HISS-16** context integrity | single canonical `AGENTS.md`; vendor files compiled via `praetorctl compile-context` | not enforced | advisory |
-| **HISS-17** state ledger | turn start `praetorctl state status` | not enforced | advisory |
-| **HISS-18** CI efficiency | diff-aware gating via `praetorctl ci filter` | not enforced | advisory |
-| **HISS-19** reuse before writing | one behavior = one implementation; extend or call existing code | not enforced | advisory |
-| **HISS-20** replayable evidence | every enforcement claim backed by fixtures replayed both directions | not enforced | advisory |
-| **HISS-21** platform neutrality | gates, hooks, emitted templates run on Linux, macOS, Windows, or skip with stated reason | not enforced | advisory |
+| **HISS-01** control flow | recursion prohibited; call graph = DAG; C/C++: zero `goto` | `praetorctl audit` HISS scan: Go `goto`, recursion + plain-function call cycles; Rust, Python direct recursion; C `goto` | advisory |
+| **HISS-02** loops, I/O | scalar upper bound on every loop; explicit deadline on every I/O call | `praetorctl audit` HISS scan: unbounded loop shapes in Go, C, Rust, Python; I/O deadlines unchecked | advisory |
+| **HISS-03** memory | C/C++: zero heap allocation in hot simulation/tick loops | unknown | advisory |
+| **HISS-04** complexity | McCabe cyclomatic <= 10, cognitive <= 12, statements <= 40; func LOC <= 60 (audit ceiling) | `praetorctl audit` HISS scan: function length only; other caps need repository linter | advisory |
+| **HISS-05** scoping | declare every identifier in smallest lexical scope serving it | unknown | advisory |
+| **HISS-06** concurrency | explicit scalar upper bound on every worker pool + concurrent fan-out | unknown | advisory |
+| **HISS-07** errors | every error handled or wrapped with context | unknown | advisory |
+| **HISS-08** determinism | zero dynamic code execution (`eval` / `exec`); C/C++: zero banned libc (`gets` / `strcpy` / `sprintf`); a process signal's target is bounded above 1 (`killpg`, `kill(-pid)`, Go `syscall.Kill`) | `praetorctl audit` HISS scan: C banned calls, Python `eval` / `exec`, Go `syscall.Kill` / `unix.Kill` | advisory |
+| **HISS-09** reference safety | n/a: no such construct in repository languages; advisory | unknown | advisory |
+| **HISS-10** warnings | zero warnings: compiler, linter, format sweeps | unknown | advisory |
+| **HISS-11** supply chain | pinned lockfiles; zero floating tags; signed provenance | unknown | advisory |
+| **HISS-12** secrets | zero credentials in Git history | unknown | advisory |
+| **HISS-13** debt ratchet | recorded infractions never grow vs committed baseline | `praetorctl audit` ratchet vs `.standards-baseline.json` | advisory |
+| **HISS-14** append-only ABI | public API append-only; breaking change = `!` subject + `Migration:` footer | unknown | advisory |
+| **HISS-15** 3D testing | positive + negative + boundary tests, every public interface | unknown | advisory |
+| **HISS-16** context integrity | single canonical `AGENTS.md`; vendor files compiled via `praetorctl compile-context` | unknown | advisory |
+| **HISS-17** state ledger | turn start `praetorctl state status` | unknown | advisory |
+| **HISS-18** CI efficiency | diff-aware gating via `praetorctl ci filter` | unknown | advisory |
+| **HISS-19** reuse before writing | one behavior = one implementation; extend or call existing code | unknown | advisory |
+| **HISS-20** replayable evidence | every enforcement claim backed by fixtures replayed both directions | unknown | advisory |
+| **HISS-21** platform neutrality | gates, hooks, emitted templates run on Linux, macOS, Windows, or skip with stated reason | unknown | advisory |
 
 ## Operational Rules
 

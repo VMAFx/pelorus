@@ -1,7 +1,10 @@
 ---
-name: interop-abi-reviewer
 description: Guards Pelorus-vmafx side-data ABI; enforces append-only contract plus shared conformance fixture. Use whenever libpelorus/include/pelorus/interop.h or libpelorus/src/interop.c changes.
-tools: Read, Grep, Glob, Bash
+name: interop-abi-reviewer
+tools:
+  - read
+  - search
+  - execute
 ---
 
 <!-- markdownlint-disable MD013 MD041 -->

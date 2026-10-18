@@ -1,7 +1,6 @@
 ---
-name: interop-abi-reviewer
 description: Guards Pelorus-vmafx side-data ABI; enforces append-only contract plus shared conformance fixture. Use whenever libpelorus/include/pelorus/interop.h or libpelorus/src/interop.c changes.
-tools: Read, Grep, Glob, Bash
+name: interop-abi-reviewer
 ---
 
 <!-- markdownlint-disable MD013 MD041 -->
@@ -20,3 +19,5 @@ Gate `PelorusSideData` wire ABI under ADR-0103; vmafx shares it verbatim. Silent
 ## Output
 
 List must-fix findings as `file:line`. Non-append-only verdict: STOP, release blocker. Otherwise report fixture command plus PASS/FAIL.
+
+<!-- TOOL PERMISSION GAP: Codex custom agents inherit parent tools; no per-agent allow-list is available. -->

@@ -17,7 +17,6 @@
 
 # Claude Code: agent scratch worktrees + local-only settings overrides.
 /.claude/worktrees/
-/.claude/settings.local.json
 
 # pkg-config / install staging
 /dist/
@@ -55,9 +54,11 @@ build-san/
 x265_2pass.log*
 
 # BEGIN praetor private artifacts (praetorctl adopt)
-/.workingdir/
-/.workingdir2/
+.workingdir/
+.workingdir2/
 /.standards/worktrees/
 /.agents/mcp_config.json
 /.standards/cache/
+/.claude/settings.local.json
+/.standards-receipt.json
 # END praetor private artifacts
