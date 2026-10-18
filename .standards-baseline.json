@@ -1,9 +1,9 @@
 {
   "version": 1,
-  "generated_at": "2026-10-18T01:59:30Z",
+  "generated_at": "2026-10-18T13:37:15Z",
   "repository": "VMAFx/pelorus",
-  "commit_sha": "7f6bd7065e9a90bcfbe622e47ecab9ae5204364f",
-  "total_infractions": 39,
+  "commit_sha": "ede8a1139107b17a0b07bfd86a669fc3e1311a53",
+  "total_infractions": 37,
   "infractions": [
     {
       "rule_id": "HISS-01",
@@ -313,23 +313,6 @@
       "message": "Function 'mc_vulkan_filter_frame' (116 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
       "anchor": "fn:mc_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_mc_vulkan.c:HISS-04:fn:mc_vulkan_filter_frame#1"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/test/qsv-roi-regression.c",
-      "line_number": 31,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "text:2f19686cfc27",
-      "fingerprint": "ffmpeg-patches/test/qsv-roi-regression.c:HISS-01:text:2f19686cfc27#1"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "ffmpeg-patches/test/qsv-roi-regression.c",
-      "line_number": 98,
-      "symbol": "main",
-      "message": "Function 'main' (233 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "anchor": "fn:main",
-      "fingerprint": "ffmpeg-patches/test/qsv-roi-regression.c:HISS-04:fn:main#1"
     }
   ]
 }

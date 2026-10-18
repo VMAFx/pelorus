@@ -1,0 +1,1 @@
+- The HISS baseline drops from 39 to 37 findings. `ffmpeg-patches/test/qsv-roi-regression.c` no longer jumps to a cleanup label from its `CHECK` macro, and its 233-line `main` is split into one helper per scenario, each under 60 lines; the same 74 checks run in the same order and every frame and encoder control is still freed ([#206](https://github.com/VMAFx/pelorus/issues/206)).
