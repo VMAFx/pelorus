@@ -1,0 +1,221 @@
+name: windows tester zip
+
+on:
+  pull_request:
+    paths:
+      - 'ffmpeg-patches/**'
+      - 'libpelorus/**'
+      - 'meson.build'
+      - 'meson_options.txt'
+      - 'build-config.env'
+      - 'scripts/fetch-ffmpeg-series.sh'
+      - 'scripts/windows/**'
+      - '.github/workflows/windows-tester.yml'
+  push:
+    branches:
+      - master
+    paths:
+      - 'ffmpeg-patches/**'
+      - 'libpelorus/**'
+      - 'meson.build'
+      - 'meson_options.txt'
+      - 'build-config.env'
+      - 'scripts/fetch-ffmpeg-series.sh'
+      - 'scripts/windows/**'
+      - '.github/workflows/windows-tester.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-replay:
+    runs-on: windows-2025
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Check out without CRLF conversion
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Install MSYS2 UCRT64 toolchain
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: UCRT64
+          update: false
+          path-type: inherit
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-meson
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-glslang
+            mingw-w64-ucrt-x86_64-shaderc
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-nasm
+            mingw-w64-ucrt-x86_64-vulkan-headers
+            mingw-w64-ucrt-x86_64-vulkan-loader
+            mingw-w64-ucrt-x86_64-ffnvcodec-headers
+            make
+            diffutils
+            git
+            zip
+      - name: Load build configuration
+        run: |
+          while IFS= read -r entry; do
+            case "$entry" in
+              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
+                printf '%s\n' "$entry" >> "$GITHUB_ENV"
+                ;;
+            esac
+          done < build-config.env
+      - name: Runner and toolchain receipt
+        run: |
+          echo "ImageOS=${ImageOS:-unset}"
+          echo "ImageVersion=${ImageVersion:-unset}"
+          echo "MSYSTEM=${MSYSTEM}"
+          uname -a
+          pacman -Q mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-meson \
+            mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-python \
+            mingw-w64-ucrt-x86_64-glslang mingw-w64-ucrt-x86_64-shaderc \
+            mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-nasm \
+            mingw-w64-ucrt-x86_64-vulkan-headers mingw-w64-ucrt-x86_64-vulkan-loader \
+            mingw-w64-ucrt-x86_64-ffnvcodec-headers make diffutils git zip
+          gcc --version
+          meson --version
+          glslc --version
+          glslangValidator --version
+          cosign version
+          gh --version
+      - name: Self-test the shared series fetcher
+        run: scripts/fetch-ffmpeg-series.sh --self-test
+      - name: Fetch and verify pinned FFmpeg source
+        run: |
+          git init ffmpeg
+          git -C ffmpeg remote add origin "$FFMPEG_REMOTE"
+          git -C ffmpeg fetch --depth=1 origin \
+            "refs/tags/${FFMPEG_TAG}:refs/tags/${FFMPEG_TAG}"
+          actual=$(git -C ffmpeg rev-parse --verify \
+            "refs/tags/${FFMPEG_TAG}^{commit}")
+          test "$actual" = "$FFMPEG_COMMIT" || {
+            echo "::error::${FFMPEG_TAG} peels to ${actual}, expected ${FFMPEG_COMMIT}"
+            exit 1
+          }
+      - name: Replay all patches, link FFmpeg, keep the binary
+        env:
+          NVENC_SMOKE_SKIP: Cannot load nvEncodeAPI64.dll
+          NVENC_HOP_SMOKE_SKIP: Cannot load nvEncodeAPI64.dll
+          KEYFRAME_SMOKE_SKIP: no Vulkan device with HEVC video
+          FGS_SMOKE_SKIP: no HEVC encoder
+          GRAIN_SCORE_AV1_SMOKE_SKIP: no libdav1d decoder
+        run: |
+          FFMPEG_REPO="$GITHUB_WORKSPACE/ffmpeg" \
+            KEEP_DIR="$(cygpath -u "$RUNNER_TEMP")/pelorus-keep" \
+            JOBS=4 \
+            ffmpeg-patches/test/build-and-run.sh
+      - name: Package tester zip
+        run: |
+          scripts/windows/package-tester-zip.sh \
+            "$(cygpath -u "$RUNNER_TEMP")/pelorus-keep" \
+            "$GITHUB_WORKSPACE/ffmpeg" \
+            "dist"
+      - name: Verify run.cmd refusal without vulkan-1.dll
+        shell: pwsh
+        run: |
+          $zip = Get-Item dist/pelorus-tester-windows-x64-*.zip
+          $target = "$env:RUNNER_TEMP\pelorus-tëst-目录"
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath $target
+          $bundle = Get-ChildItem -Directory -LiteralPath $target | Select-Object -First 1
+          $bundleDir = $bundle.FullName
+
+          $proc = Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" `
+            -ArgumentList "/c", "`"$bundleDir\run.cmd`"" `
+            -Environment @{ PATH = $bundleDir; SystemRoot = $env:SystemRoot; PROCESSOR_ARCHITECTURE = $env:PROCESSOR_ARCHITECTURE } `
+            -NoNewWindow -Wait -PassThru `
+            -RedirectStandardError "$env:RUNNER_TEMP\refusal-stderr.txt" `
+            -RedirectStandardOutput "$env:RUNNER_TEMP\refusal-stdout.txt"
+
+          $code = $proc.ExitCode
+          $stderr = Get-Content -Raw "$env:RUNNER_TEMP\refusal-stderr.txt"
+          Write-Host "Refusal exit code: $code"
+          Write-Host "Refusal stderr: $stderr"
+          if ($code -ne 3) {
+            throw "expected exit code 3 from run.cmd without vulkan-1.dll, got $code"
+          }
+          if ($stderr -notmatch "vulkan-1\.dll not found: install the GPU vendor's Vulkan driver; this zip does not ship the Vulkan loader") {
+            throw "stderr missing expected refusal message: $stderr"
+          }
+      - name: Verify run.cmd and UTF-8 path support with vulkan-1.dll
+        shell: pwsh
+        run: |
+          $target = "$env:RUNNER_TEMP\pelorus-tëst-目录"
+          $bundle = Get-ChildItem -Directory -LiteralPath $target | Select-Object -First 1
+          $bundleDir = $bundle.FullName
+
+          $vulkanDir = (& C:\msys64\usr\bin\cygpath.exe -w /ucrt64/bin).Trim()
+          if (-not (Test-Path -LiteralPath "$vulkanDir\vulkan-1.dll")) {
+            throw "could not find vulkan-1.dll in $vulkanDir"
+          }
+          Write-Host "Found vulkan-1.dll in $vulkanDir"
+
+          $env:PATH = "$bundleDir;$vulkanDir;$env:SystemRoot\System32;$env:PATH"
+
+          $filtersOutput = (& "$bundleDir\run.cmd" -hide_banner -filters) -join "`n"
+          if ($LASTEXITCODE -ne 0) {
+            throw "run.cmd -filters exited $LASTEXITCODE"
+          }
+          $pelorusFilters = @(
+            "pelorus_aa_vulkan",
+            "pelorus_analyze_vulkan",
+            "pelorus_borderfix_vulkan",
+            "pelorus_deband_vulkan",
+            "pelorus_deblock_vulkan",
+            "pelorus_dehalo_vulkan",
+            "pelorus_denoise_vulkan",
+            "pelorus_grain_estimate_vulkan",
+            "pelorus_mc_vulkan",
+            "pelorus_scenecut"
+          )
+          foreach ($filter in $pelorusFilters) {
+            if ($filtersOutput -notmatch "(?m)^\s*\S+\s+$filter\s") {
+              throw "filter not registered in output: $filter"
+            }
+            Write-Host "registered filter verified: $filter"
+          }
+
+          $outFile = "$bundleDir\out-é.mkv"
+          if (Test-Path -LiteralPath $outFile) {
+            Remove-Item -LiteralPath $outFile
+          }
+          & "$bundleDir\run.cmd" -hide_banner -f lavfi -i "testsrc2=size=64x64:duration=0.2" -frames:v 3 "$outFile"
+          if ($LASTEXITCODE -ne 0) {
+            throw "run.cmd encode exited $LASTEXITCODE"
+          }
+          if (-not (Test-Path -LiteralPath $outFile)) {
+            throw "output file was not created: $outFile"
+          }
+          $outItem = Get-Item -LiteralPath $outFile
+          if ($outItem.Length -le 0) {
+            throw "output file is empty: $outFile"
+          }
+          Write-Host "Successfully encoded to $outFile (size: $($outItem.Length) bytes)"
+      - name: Upload tester zip artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pelorus-tester-windows-x64
+          path: dist/*.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 14

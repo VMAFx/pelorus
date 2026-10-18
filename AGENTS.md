@@ -190,7 +190,7 @@ Engine: pin = `PRAETOR_REF` in `.github/workflows/standards-gate.yml`. Make (`.c
 | `tools/pelorus_qp_report.c` | libpelorus CLI demonstrator; not installed |
 | `tools/tester/` | tester report program (stdlib Python, `python3 -I`), JSON schema, `--self-test` (ADR-0173) |
 | `tools/markdownlint/`, `tools/figures/` | Praetor-managed docs gate; refresh via `adopt` only |
-| `scripts/` | ADR claim, bench, release, build-config + shader checks, shared-series fetch + verify (`fetch-ffmpeg-series.sh`, ADR-0185), secret scan (`check-gitleaks.sh`, ADR-0190) |
+| `scripts/` | ADR claim, bench, release, build-config + shader checks, shared-series fetch + verify (`fetch-ffmpeg-series.sh`, ADR-0185), secret scan (`check-gitleaks.sh`, ADR-0190), Windows tester zip packaging + PE import check (`windows/`, ADR-0213) |
 | `Makefile`, `lefthook.yml` | native + governance entry points; Git hooks opt-in (`make hooks-install`; `no_auto_install`) |
 | `.standards.yaml`, `.standards.lock`, `.standards-baseline.json`, `.config/` | Praetor policy, lock, catalog, labels, HISS baseline, clang-tidy lane list, named test skips (`test-skips.json`, ADR-0188), Lefthook checkpoint scripts + policy, engine launcher (`lefthook/engine.sh`) + make fragment (`praetor/engine.mk`), agent interceptor |
 | `.devcontainer/` | Praetor-rendered dev container bundle (audit: byte-exact; regenerate, never hand-edit); `base/Containerfile` toolchain base image (ADR-0153) |
@@ -199,7 +199,7 @@ Engine: pin = `PRAETOR_REF` in `.github/workflows/standards-gate.yml`. Make (`.c
 | `.claude/agents/`, `.codex/agents/`, `.github/agents/`, `.gemini/agents/` | generated persona projections |
 | `.claude/skills/`, `.claude/hooks/`, `.codex/hooks/`, `.gemini/settings.json` | agent skills + hooks; see below |
 | `.vscode/`, `.zed/`, `.idea/`, `.helix/`, `.fleet/`, `.nvim.lua`, `lua/`, `.dir-locals.el`, `standards.sublime-project` | reconciled editor settings |
-| `.github/workflows/` | `ci.yml` product jobs, `standards-gate.yml`, locked `praetor-docs.yml`, `release.yml` (`ci` -> `build` -> tag-only `publish`), reusable `release-build.yml`: build, SBOM, SLSA L3 attestation, cosign; no artefact download or cache before attestation (ADR-0169); `devcontainer-image.yml` builds base image on PR, pushes + attests `ghcr.io/vmafx/pelorus-dev` from `master`; Praetor-rendered `reuse.yml` runs `reuse lint` |
+| `.github/workflows/` | `ci.yml` product jobs, `standards-gate.yml`, locked `praetor-docs.yml`, `release.yml` (`ci` -> `build` -> tag-only `publish`), reusable `release-build.yml`: build, SBOM, SLSA L3 attestation, cosign; no artefact download or cache before attestation (ADR-0169); `devcontainer-image.yml` builds base image on PR, pushes + attests `ghcr.io/vmafx/pelorus-dev` from `master`; `windows-tester.yml` (path-filtered MSYS2 replay + tester zip artifact, no release); Praetor-rendered `reuse.yml` runs `reuse lint` |
 | `.github/rulesets/main.json` | rendered `master` ruleset (0 reviews, signed commits, linear history, 10 checks); committed, applied only by maintainer `praetorctl sync --remote` |
 
 New top-level package: add row here. New module: scoped `AGENTS.md`.

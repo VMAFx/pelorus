@@ -1,0 +1,56 @@
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
+#
+# Reviewed allow-list of DLLs for the Pelorus Windows tester zip (ADR-0213).
+# System DLLs are provided by the Windows operating system (case-insensitive).
+# Bundle DLLs are MinGW runtime DLLs that may be packaged into the zip.
+
+[system]
+ADVAPI32.dll
+AVICAP32.dll
+AVIFIL32.dll
+BCRYPT.dll
+CRYPT32.dll
+D3D11.dll
+D3D9.dll
+DXGI.dll
+DXVA2.dll
+GDI32.dll
+IMM32.dll
+IPHLPAPI.dll
+KERNEL32.dll
+MFPLAT.dll
+MFUUID.dll
+MSACM32.dll
+MSVCRT.dll
+NCRYPT.dll
+NTDLL.dll
+OLE32.dll
+OLEAUT32.dll
+POWRPROF.dll
+PSAPI.dll
+SECUR32.dll
+SETUPAPI.dll
+SHELL32.dll
+SHLWAPI.dll
+STRMIIDS.dll
+USER32.dll
+USERENV.dll
+VERSION.dll
+WINMM.dll
+WS2_32.dll
+api-ms-win-core-*.dll
+api-ms-win-crt-*.dll
+msvcrt.dll
+ucrtbase.dll
+
+[bundle]
+# DLL name                 MSYS2 package name                     SPDX licence
+libgcc_s_seh-1.dll         mingw-w64-ucrt-x86_64-gcc-libs         GPL-3.0-or-later WITH GCC-exception-3.1
+libstdc++-6.dll            mingw-w64-ucrt-x86_64-gcc-libs         GPL-3.0-or-later WITH GCC-exception-3.1
+libwinpthread-1.dll        mingw-w64-ucrt-x86_64-libwinpthread     MIT AND BSD-3-Clause
+zlib1.dll                  mingw-w64-ucrt-x86_64-zlib             Zlib
+libgomp-1.dll              mingw-w64-ucrt-x86_64-gcc-libs         GPL-3.0-or-later WITH GCC-exception-3.1
+libssp-0.dll               mingw-w64-ucrt-x86_64-gcc-libs         GPL-3.0-or-later WITH GCC-exception-3.1
+libiconv-2.dll             mingw-w64-ucrt-x86_64-libiconv         LGPL-2.0-or-later AND GPL-3.0-or-later
+libintl-8.dll              mingw-w64-ucrt-x86_64-gettext-runtime  LGPL-2.1-or-later

@@ -11,6 +11,9 @@
 # Shell scripts must stay LF or they will not execute.
 *.sh       text eol=lf
 
+# Windows batch files must stay CRLF.
+*.cmd      text eol=crlf
+
 # BEGIN praetor managed attributes (praetorctl adopt)
 # praetorctl audit hashes these files; keep their checkout bytes the same on every platform.
 .devcontainer/Dockerfile.praetor text eol=lf

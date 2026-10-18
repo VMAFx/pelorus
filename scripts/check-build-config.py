@@ -5466,6 +5466,147 @@ def dev_image_regressions() -> list[str]:
     return failures
 
 
+WINDOWS_TESTER_WORKFLOW = ROOT / ".github" / "workflows" / "windows-tester.yml"
+FORBIDDEN_WINDOWS_TESTER_TOKENS = (
+    "gh release",
+    "softprops/",
+    "actions/create-release",
+    "git tag",
+    "attest-build-provenance",
+    "cosign sign",
+    "packages: write",
+    "contents: write",
+)
+
+
+def validate_windows_tester_workflow(relative: str, text: str) -> list[str]:
+    """Validate windows-tester.yml (ADR-0213)."""
+    errors: list[str] = []
+    errors.extend(_tester_pins(relative, text))
+
+    crlf_pos = text.find("core.autocrlf false")
+    checkout_pos = text.find("uses: actions/checkout@")
+    if crlf_pos < 0:
+        errors.append(f"{relative}: missing git config --global core.autocrlf false step")
+    elif checkout_pos < 0:
+        errors.append(f"{relative}: missing actions/checkout step")
+    elif crlf_pos > checkout_pos:
+        errors.append(f"{relative}: core.autocrlf false must be configured before actions/checkout")
+
+    runners = re.findall(r"^\s+runs-on:\s*([^\s#]+)", text, re.MULTILINE)
+    if runners != ["windows-2025"]:
+        errors.append(f"{relative}: workflow must run on windows-2025 only (found: {runners})")
+
+    paths = tester_pull_request_paths(text)
+    if not paths:
+        errors.append(f"{relative}: pull_request needs a paths filter")
+    else:
+        globs = [_path_glob(p) for p in paths]
+        if any(g.match("docs/usage/tester.md") for g in globs):
+            errors.append(f"{relative}: pull_request paths match docs-only path docs/usage/tester.md")
+        if not any(g.match("ffmpeg-patches/0001-x.patch") for g in globs):
+            errors.append(f"{relative}: pull_request paths miss required input ffmpeg-patches/0001-x.patch")
+        if not any(g.match("scripts/windows/run.cmd") for g in globs):
+            errors.append(f"{relative}: pull_request paths miss required input scripts/windows/run.cmd")
+
+    if "uses: actions/upload-artifact@" not in text:
+        errors.append(f"{relative}: missing upload-artifact step")
+    elif "archive: false" not in text:
+        errors.append(f"{relative}: upload-artifact must set archive: false")
+
+    for token in FORBIDDEN_WINDOWS_TESTER_TOKENS:
+        if token in text:
+            errors.append(f"{relative}: forbidden token '{token}' found")
+
+    return errors
+
+
+def validate_windows_tester() -> list[str]:
+    relative = WINDOWS_TESTER_WORKFLOW.relative_to(ROOT).as_posix()
+    if not WINDOWS_TESTER_WORKFLOW.is_file():
+        return [f"{relative}: missing"]
+    return validate_windows_tester_workflow(relative, WINDOWS_TESTER_WORKFLOW.read_text(encoding="utf-8"))
+
+
+def windows_tester_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
+    cases: dict[str, tuple[str, str]] = {
+        "floating action pin": (
+            re.sub(r"actions/checkout@[0-9a-f]{40} # v\d+\.\d+\.\d+", "actions/checkout@v7.0.1", text, count=1),
+            "must be pinned by full commit digest",
+        ),
+        "pin without release comment": (
+            re.sub(r"(actions/checkout@[0-9a-f]{40}) # v\d+\.\d+\.\d+", r"\1", text, count=1),
+            "must be pinned by full commit digest",
+        ),
+        "missing core.autocrlf false": (
+            text.replace("git config --global core.autocrlf false", "true", 1),
+            "missing git config --global core.autocrlf false step",
+        ),
+        "autocrlf after checkout": (
+            text.replace(
+                "      - name: Check out without CRLF conversion\n        shell: pwsh\n        run: git config --global core.autocrlf false\n",
+                "",
+                1,
+            ).replace(
+                "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n",
+                "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Check out without CRLF conversion\n        shell: pwsh\n        run: git config --global core.autocrlf false\n",
+                1,
+            ),
+            "core.autocrlf false must be configured before actions/checkout",
+        ),
+        "wrong runner": (
+            text.replace("runs-on: windows-2025", "runs-on: windows-latest", 1),
+            "workflow must run on windows-2025 only",
+        ),
+        "missing paths filter": (
+            re.sub(r"    paths:\n(?:      - .*\n)+", "", text, count=1),
+            "pull_request needs a paths filter",
+        ),
+        "paths match docs-only": (
+            text.replace("      - 'scripts/windows/**'\n", "      - 'scripts/windows/**'\n      - 'docs/**'\n", 1),
+            "pull_request paths match docs-only path docs/usage/tester.md",
+        ),
+        "paths miss patch input": (
+            text.replace("      - 'ffmpeg-patches/**'\n", "", 1),
+            "pull_request paths miss required input ffmpeg-patches/0001-x.patch",
+        ),
+        "paths miss windows script input": (
+            text.replace("      - 'scripts/windows/**'\n", "", 1),
+            "pull_request paths miss required input scripts/windows/run.cmd",
+        ),
+        "missing archive false": (
+            text.replace("archive: false", "# archive: omitted", 1),
+            "upload-artifact must set archive: false",
+        ),
+    }
+    for token in FORBIDDEN_WINDOWS_TESTER_TOKENS:
+        cases[f"forbidden token {token}"] = (
+            text + f"\n# test forbidden token\n      - run: {token}\n",
+            f"forbidden token '{token}' found",
+        )
+    return cases
+
+
+def windows_tester_regressions() -> list[str]:
+    """Prove each Windows tester workflow rule rejects its planted defect."""
+    failures: list[str] = []
+    relative = WINDOWS_TESTER_WORKFLOW.relative_to(ROOT).as_posix()
+    if not WINDOWS_TESTER_WORKFLOW.is_file():
+        return [f"windows tester regression: {relative} is missing"]
+    source = WINDOWS_TESTER_WORKFLOW.read_text(encoding="utf-8")
+    if validate_windows_tester_workflow(relative, source):
+        failures.append("windows tester regression: the current workflow is rejected")
+    cases = windows_tester_workflow_cases(source)
+    for name, (mutated, expected) in cases.items():
+        if mutated == source:
+            failures.append(f"windows tester regression: {name} mutation changed nothing")
+            continue
+        errors = validate_windows_tester_workflow(relative, mutated)
+        if not any(expected in error for error in errors):
+            failures.append(f"windows tester regression: {name} was accepted")
+    return failures
+
+
 def main() -> int:
     scrub_git_repository_env()
     if not CONFIG.is_file():
@@ -5479,6 +5620,7 @@ def main() -> int:
     errors.extend(validate_renovate())
     errors.extend(validate_tester_publish())
     errors.extend(validate_dev_image())
+    errors.extend(validate_windows_tester())
     if not parse_errors:
         errors.extend(validate_current_surfaces(values))
     if "--self-test" in sys.argv[1:]:
@@ -5502,6 +5644,7 @@ def main() -> int:
         errors.extend(workflow_validator_regressions())
         errors.extend(tester_publish_regressions())
         errors.extend(dev_image_regressions())
+        errors.extend(windows_tester_regressions())
         errors.extend(renovate_pattern_regressions())
         errors.extend(renovate_validator_regressions())
 
