@@ -137,6 +137,24 @@ def check_validation(text: str) -> list[str]:
     return errors
 
 
+def check_udu_wrap(text: str) -> list[str]:
+    errors = []
+    body = function_body(text, "pel_fgs_read_sidedata")
+    if not body:
+        return ["pel_fgs_read_sidedata function not found"]
+    if "pel_udu_classify(" not in body:
+        errors.append("pel_fgs_read_sidedata does not call pel_udu_classify")
+    if re.search(r"memcmp\s*\([^)]*uuid_iso_iec_11578", body) or re.search(
+        r"memcmp\s*\([^)]*(?:pelorus_sidedata_uuid|pelorus_carrier_uuid)", body
+    ):
+        errors.append("pel_fgs_read_sidedata contains memcmp against an outer UUID")
+    if re.search(r"memcmp\s*\([^)]*udu->data", body) or re.search(
+        r"udu->data\s*\+\s*16", body
+    ):
+        errors.append("pel_fgs_read_sidedata contains generic offset-16 retry")
+    return errors
+
+
 def check(text: str) -> list[str]:
     options = parse_options(text)
     if not options:
@@ -145,6 +163,7 @@ def check(text: str) -> list[str]:
         check_defaults(options)
         + check_model_values(options, text)
         + check_validation(text)
+        + check_udu_wrap(text)
     )
 
 
@@ -163,6 +182,13 @@ MUTATIONS = {
     "inverted interval accepted": ("ctx->intensity_low > ctx->intensity_high", "0"),
     "no per-AU range check": ("? pel_fgs_check_stream(bsf) :", "? 0 :"),
     "model 1 range unchecked": ("(1 << (bit_depth - 1)) - 1", "(1 << bit_depth) - 1"),
+    "old two-memcmp plus generic offset-16 retry": (
+        "form = pel_udu_classify(udu->uuid_iso_iec_11578, udu->data, udu->data_length);",
+        "if (memcmp(udu->uuid_iso_iec_11578, pelorus_sidedata_uuid, 16) != 0 && "
+        "memcmp(udu->uuid_iso_iec_11578, pelorus_carrier_uuid, 16) != 0 && "
+        "!(udu->data_length > 16 && memcmp(udu->data, pelorus_sidedata_uuid, 16) == 0)) continue; "
+        "form = PEL_UDU_DIRECT;",
+    ),
 }
 
 

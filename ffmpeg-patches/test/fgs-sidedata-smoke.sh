@@ -10,10 +10,11 @@
 #
 # GPU test (the estimator runs on Vulkan). Cases:
 # The encoder is hevc_nvenc when it can encode on this host, else libx265
-# (GPL builds) after a probe shows it keeps the Pelorus SEI: every libx265
+# (GPL builds) after a probe shows it carries the Pelorus SEI. Every libx265
 # since 2.1 writes its own UUID in front of the caller's payload (measured
-# 2026-10-18 on builds 2.1, 3.0, master b81f650e2 and 4.3), so a libx265 that
-# wraps or drops the SEI skips by name.
+# 2026-10-18 on builds 2.1, 3.0, master b81f650e2 and 4.3); pelorus_fgs
+# unwraps exactly that form (ADR-0210). A libx265 that drops the SEI skips by
+# name.
 #   grain        noisy 8-bit source -> estimator -> encoder -udu_sei 1 ->
 #                pelorus_fgs=source=sidedata: every access unit carries an
 #                active FGC SEI, the Pelorus SEI stays, and the decoder exports
@@ -32,6 +33,9 @@
 #                every access unit still gets an FGC SEI; covered by the cases
 #                above when hevc_nvenc is the encoder, run on its own when
 #                libx265 is.
+#   x265         libx265 writes the x265-wrapped form (ADR-0210) and every
+#                access unit still gets an FGC SEI; covered by the cases above
+#                when libx265 is the encoder, run on its own when hevc_nvenc is.
 #
 # Usage: fgs-sidedata-smoke.sh [--self-test] [--disable RULE]
 #   RULE is one of: kept wrapped
@@ -42,6 +46,8 @@
 #   VULKAN_DEVICE  FFmpeg Vulkan device index for the estimator (optional)
 #   OUTPUT_ROOT    evidence directory (default: new directory under TMPDIR)
 #   FRAMES         pictures per case (default 8, 4..64)
+#   ENCODER        auto (default) or libx265: libx265 runs every case even
+#                  where hevc_nvenc can encode
 # Exit: 0 pass, 1 fail, 77 skip (the reason is printed on stdout).
 set -euo pipefail
 
@@ -115,6 +121,27 @@ pel_x265_sei_state()
         END {
             print state
         }' "$log"
+}
+
+# pel_wrapped_count LOG: user data SEI messages whose payload starts with the
+# Pelorus or carrier UUID directly behind libx265's own UUID (0 when the
+# wrapped rule is disabled).
+pel_wrapped_count()
+{
+    if ! rule_on wrapped; then
+        echo 0
+        return
+    fi
+    awk -v u_x265="UUID=$PEL_X265_UUID" -v h_pel="$PEL_HEX" -v h_carrier="$PEL_CARRIER_HEX" '
+        saw_x265 && (pos = index($0, "User Data=")) {
+            val = tolower(substr($0, pos + 10))
+            sub(/^[[:space:]]+/, "", val)
+            if (index(val, h_pel) == 1 || index(val, h_carrier) == 1) {
+                n++
+            }
+        }
+        { saw_x265 = (index($0, u_x265) > 0) }
+        END { print n + 0 }' "$1"
 }
 
 fixture_kept_raw()
@@ -204,6 +231,18 @@ self_test()
     expect_state "unpreceded pelorus hex" fixture_unpreceded_pelorus_hex "missing"
     expect_state "empty log" fixture_empty "missing"
 
+    # Two wrapped messages in each wrapped fixture; the others add none.
+    {
+        fixture_wrapped_raw
+        fixture_wrapped_carrier
+        fixture_unpreceded_pelorus_hex
+        fixture_x265_info_only
+    } >"$work/log"
+    if [[ "$(pel_wrapped_count "$work/log")" != 4 ]]; then
+        echo "SELF-TEST FAIL: wrapped count: expected 4, got $(pel_wrapped_count "$work/log")" >&2
+        failures=$((failures + 1))
+    fi
+
     rm -rf -- "$work"
     trap - EXIT
 
@@ -221,6 +260,7 @@ fi
 
 PEL_FFMPEG="${FFMPEG_BIN:?FFMPEG_BIN must name the patched ffmpeg binary}"
 PEL_FRAMES="${FRAMES:-8}"
+PEL_ENCODER="${ENCODER:-auto}"
 PEL_DEVICE="vulkan=pel_vk"
 if [[ -n "${VULKAN_DEVICE:-}" ]]; then
     PEL_DEVICE+=":${VULKAN_DEVICE}"
@@ -254,6 +294,8 @@ pel_count()
 }
 
 [[ -x "$PEL_FFMPEG" ]] || pel_fail "FFMPEG_BIN is not executable: $PEL_FFMPEG"
+[[ "$PEL_ENCODER" == auto || "$PEL_ENCODER" == libx265 ]] ||
+    pel_fail "ENCODER must be auto or libx265, not $PEL_ENCODER"
 if ! [[ "$PEL_FRAMES" =~ ^[0-9]+$ ]] || ((PEL_FRAMES < 4 || PEL_FRAMES > 64)); then
     pel_fail "FRAMES must be 4..64 (the cancel case needs two halves of two pictures)"
 fi
@@ -275,7 +317,11 @@ if grep -Eq '^ V[^ ]* hevc_nvenc ' "$PEL_OUT/encoders.txt" &&
         -frames:v 1 -c:v hevc_nvenc -f null - >"$PEL_OUT/probe-nvenc.log" 2>&1; then
     pel_nvenc_ok=1
 fi
-if ((pel_nvenc_ok)); then
+if [[ "$PEL_ENCODER" == libx265 ]]; then
+    grep -Eq '^ V[^ ]* libx265 ' "$PEL_OUT/encoders.txt" ||
+        pel_fail "ENCODER=libx265, but libx265 is not built into $PEL_FFMPEG"
+    PEL_ENC=("${PEL_X265[@]}")
+elif ((pel_nvenc_ok)); then
     PEL_ENC=("${PEL_NVENC[@]}")
 elif grep -Eq '^ V[^ ]* libx265 ' "$PEL_OUT/encoders.txt"; then
     PEL_ENC=("${PEL_X265[@]}")
@@ -331,16 +377,14 @@ pel_active() { pel_flag "$1" 0; }
 pel_cancel() { pel_flag "$1" 1; }
 pel_grain_frames() { pel_count "$PEL_OUT/$1-tap.log" "side data - Film grain parameters"; }
 
-# libx265 must keep the estimator's user data SEI, or no case can pass.
+# libx265 must carry the estimator's user data SEI, kept or x265-wrapped
+# (ADR-0210), or no case can pass.
 if [[ "${PEL_ENC[1]}" == libx265 ]]; then
     pel_encode x265-probe "$PEL_NOISY,$PEL_EST" null "${PEL_ENC[@]}" ||
         pel_fail "x265-probe: encode failed: $(pel_first_error "$PEL_OUT/x265-probe-encode.log")"
     pel_trace x265-probe
     case "$(pel_x265_sei_state "$PEL_OUT/x265-probe-tap.log")" in
-        kept) ;;
-        wrapped)
-            pel_skip "libx265 writes its own user data UUID ($PEL_X265_UUID) in front of the Pelorus SEI (every x265 since 2.1), so pelorus_fgs finds no section, and hevc_nvenc cannot encode here"
-            ;;
+        kept | wrapped) ;;
         *)
             pel_skip "libx265 drops the Pelorus user data SEI (-udu_sei 1) and hevc_nvenc cannot encode here"
             ;;
@@ -357,10 +401,11 @@ pel_trace grain
 [[ "$(pel_grain_frames grain)" == "$PEL_FRAMES" ]] ||
     pel_fail "grain: decoder exported grain for $(pel_grain_frames grain) of $PEL_FRAMES pictures"
 pel_pelorus_sei=$(($(pel_count "$PEL_OUT/grain-tap.log" "UUID=$PEL_UUID") + \
-    $(pel_count "$PEL_OUT/grain-tap.log" "UUID=$PEL_CARRIER_UUID")))
+    $(pel_count "$PEL_OUT/grain-tap.log" "UUID=$PEL_CARRIER_UUID") + \
+    $(pel_wrapped_count "$PEL_OUT/grain-tap.log")))
 [[ "$pel_pelorus_sei" == "$PEL_FRAMES" ]] ||
     pel_fail "grain: the Pelorus SEI did not stay in every access unit"
-echo "PASS grain: $PEL_FRAMES access units, one active FGC SEI each, Pelorus SEI kept"
+echo "PASS grain: $PEL_FRAMES access units, one active FGC SEI each, Pelorus SEI on every access unit"
 
 # h274: the estimator tags its section with the H.274 model; the filter converts
 # that tag the same way, so every access unit still carries an active FGC SEI.
@@ -432,6 +477,25 @@ elif ((pel_nvenc_ok)); then
     echo "PASS nvenc: carrier form, one active FGC SEI per access unit"
 else
     echo "SKIP nvenc: hevc_nvenc cannot encode on this host"
+fi
+
+# x265: the x265-wrapped form reaches the filter too (already covered above
+# when libx265 is the encoder).
+if [[ "${PEL_ENC[1]}" == libx265 ]]; then
+    echo "PASS x265: libx265 was the encoder of every case above"
+elif grep -Eq '^ V[^ ]* libx265 ' "$PEL_OUT/encoders.txt"; then
+    pel_encode x265 "$PEL_NOISY,$PEL_EST" pelorus_fgs=source=sidedata "${PEL_X265[@]}" ||
+        pel_fail "x265: encode failed: $(pel_first_error "$PEL_OUT/x265-encode.log")"
+    pel_trace x265
+    [[ "$(pel_wrapped_count "$PEL_OUT/x265-tap.log")" == "$PEL_FRAMES" ]] ||
+        pel_fail "x265: the stream does not carry the x265-wrapped Pelorus SEI on every picture"
+    [[ "$(pel_active x265)" == "$PEL_FRAMES" ]] ||
+        pel_fail "x265: $(pel_active x265) active FGC SEI for $PEL_FRAMES access units"
+    [[ "$(pel_grain_frames x265)" == "$PEL_FRAMES" ]] ||
+        pel_fail "x265: decoder exported grain for $(pel_grain_frames x265) of $PEL_FRAMES pictures"
+    echo "PASS x265: x265-wrapped form, one active FGC SEI per access unit"
+else
+    echo "SKIP x265: libx265 is not built into $PEL_FFMPEG"
 fi
 
 echo "fgs-sidedata smoke: PASS (evidence $PEL_OUT)"

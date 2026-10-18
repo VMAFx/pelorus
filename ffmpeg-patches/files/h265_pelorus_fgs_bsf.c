@@ -75,6 +75,7 @@
 #include "libavcodec/cbs_bsf.h"
 #include "libavcodec/cbs_h265.h"
 #include "libavcodec/cbs_sei.h"
+#include "libavcodec/pelorus_udu_wrap.h"
 #include "libavcodec/sei.h"
 
 #include "libavcodec/hevc/hevc.h"
@@ -319,9 +320,9 @@ static void pel_fgs_cache_colour_desc(PelorusFGSContext *ctx, const CodedBitstre
     }
 }
 
-/* Read user-data-unregistered SEI messages from this AU, unwrap any Pelorus
- * blob/carrier, and extract the film-grain section. The last valid Pelorus
- * blob in the AU wins. */
+/* Read user-data-unregistered SEI messages from this AU, unwrap any direct or
+ * x265-wrapped Pelorus blob/carrier, and extract the film-grain section. The
+ * last valid Pelorus blob in the AU wins (ADR-0210). */
 static int pel_fgs_read_sidedata(AVBSFContext *bsf, CodedBitstreamFragment *au,
                                  PelorusFilmGrainSection *out_sec, int *have_sec)
 {
@@ -338,15 +339,16 @@ static int pel_fgs_read_sidedata(AVBSFContext *bsf, CodedBitstreamFragment *au,
         const uint8_t *blob = NULL;
         const void *sec_ptr = NULL;
         size_t payload_len, blob_len = 0, sec_size = 0;
+        int form;
         pel_result pr;
 
-        if (!udu || (memcmp(udu->uuid_iso_iec_11578, pelorus_sidedata_uuid, 16) != 0 &&
-                     memcmp(udu->uuid_iso_iec_11578, pelorus_carrier_uuid, 16) != 0))
+        if (!udu)
             continue;
-        if (udu->data_length > SIZE_MAX - 16)
+        form = pel_udu_classify(udu->uuid_iso_iec_11578, udu->data, udu->data_length);
+        if (form == PEL_UDU_NONE || udu->data_length > SIZE_MAX - 16)
             continue;
 
-        payload_len = 16 + udu->data_length;
+        payload_len = (form == PEL_UDU_X265_WRAPPED) ? udu->data_length : 16 + udu->data_length;
         av_fast_malloc(&ctx->raw_buf, &ctx->raw_buf_size, payload_len);
         if (!ctx->raw_buf)
             return AVERROR(ENOMEM);
@@ -354,9 +356,13 @@ static int pel_fgs_read_sidedata(AVBSFContext *bsf, CodedBitstreamFragment *au,
         if (!ctx->scratch)
             return AVERROR(ENOMEM);
 
-        memcpy(ctx->raw_buf, udu->uuid_iso_iec_11578, 16);
-        if (udu->data && udu->data_length > 0)
-            memcpy(ctx->raw_buf + 16, udu->data, udu->data_length);
+        if (form == PEL_UDU_X265_WRAPPED) {
+            memcpy(ctx->raw_buf, udu->data, udu->data_length);
+        } else {
+            memcpy(ctx->raw_buf, udu->uuid_iso_iec_11578, 16);
+            if (udu->data && udu->data_length > 0)
+                memcpy(ctx->raw_buf + 16, udu->data, udu->data_length);
+        }
 
         pr = pel_blob_unwrap(ctx->raw_buf, payload_len, ctx->scratch, ctx->scratch_size, &blob,
                              &blob_len);

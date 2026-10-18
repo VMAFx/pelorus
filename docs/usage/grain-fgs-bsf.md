@@ -160,7 +160,19 @@ ffmpeg -init_hw_device cuda=cu:0 -init_hw_device vulkan=vk@cu -filter_hw_device 
 
 Measured on an RTX 4090 on 2026-10-17 with 8 noisy 320x192 pictures: exit code 0, the `-v verbose` log shows `Using input frames context (format cuda) with hevc_nvenc encoder`, `trace_headers` counts 8 active FGC SEI, and the decoder exports film grain parameters for all 8 pictures. `test/fgs-sidedata-smoke.sh` runs the same estimator and filter through system memory so that one graph also serves libx265.
 
-hevc_nvenc writes the Pelorus carrier SEI ([ADR-0183](../adr/0183-sidedata-zero-free-carrier.md)) on every picture. libx265 does not drop the SEI, but it changes it: x265 writes its own UUID (`2ca2de09-b517-47db-bb55-a4fe7fc2fc4e`) in front of every user data unregistered payload it receives, so the stream carries that UUID, then the Pelorus UUID, then the blob. Decoders report the x265 UUID and the filter finds no section, so it writes no FGC SEI. Every x265 release since 2.1 does this; it was measured on 2026-10-18 with source builds of 2.1, 3.0 and master and with the 4.3 package ([research digest](../research/0082-x265-udu-uuid-wrap.md)). The smoke probes libx265 before it uses it and skips by name: one reason for the wrapped SEI, another for a SEI that is missing.
+hevc_nvenc writes the Pelorus carrier SEI ([ADR-0183](../adr/0183-sidedata-zero-free-carrier.md)) on every picture. libx265 does not drop the SEI, but it changes it: x265 writes its own UUID (`2ca2de09-b517-47db-bb55-a4fe7fc2fc4e`) in front of every user data unregistered payload it receives, so the stream carries that UUID, then the Pelorus UUID, then the blob. Every x265 release since 2.1 does this; it was measured on 2026-10-18 with source builds of 2.1, 3.0 and master and with the 4.3 package ([research digest](../research/0082-x265-udu-uuid-wrap.md)). `pelorus_fgs` classifies and unwraps exactly this form ([ADR-0210](../adr/0210-fgs-x265-udu-wrap.md)), so a libx265 encode with `-udu_sei 1` carries per-frame grain like an NVENC one.
+
+### Accepted SEI forms
+
+In `source=sidedata` mode, `pelorus_fgs` parses prefix user-data-unregistered SEI messages using a strict allow-list (`pel_udu_classify` in `pelorus_udu_wrap.h`, [ADR-0210](../adr/0210-fgs-x265-udu-wrap.md)):
+
+1. **Direct Pelorus blob (`PEL_UDU_DIRECT`):** Outer `uuid_iso_iec_11578` matches `pelorus_sidedata_uuid` (`e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64`). The payload contains the canonical 48-byte header and directory.
+2. **Direct zero-free carrier (`PEL_UDU_DIRECT`):** Outer `uuid_iso_iec_11578` matches `pelorus_carrier_uuid` (`3f9b37b8-fd9a-4621-920e-9b78b55cf9b5`, [ADR-0183](../adr/0183-sidedata-zero-free-carrier.md)). Written by `hevc_nvenc` to prevent NVENC SEI truncation on zero runs; unwrapped via `pel_blob_unwrap()`.
+3. **libx265 wrapped payload (`PEL_UDU_X265_WRAPPED`):** Outer `uuid_iso_iec_11578` matches libx265's UUID (`2ca2de09-b517-47db-bb55-a4fe7fc2fc4e`), payload length > 16, and the payload's leading 16 bytes match either `pelorus_sidedata_uuid` or `pelorus_carrier_uuid`. The payload data is unwrapped as the Pelorus blob.
+
+**Refusal of other wraps:** Any other outer UUID (including foreign UUIDs containing a nested Pelorus payload), x265 outer UUIDs with unknown inner payloads, truncated wraps (`data_len <= 16`), or unverified UUID prefixes are strictly rejected (`PEL_UDU_NONE`). Generic offset-16 skipping is explicitly forbidden to prevent arbitrary foreign SEI messages from injecting grain parameters.
+
+The accepted and refused forms are listed as test vectors in `ffmpeg-patches/test/fixtures/udu-wrap-vectors.txt`; `meson test -C build udu-wrap` replays them, and the vmafx reader replays the same file.
 
 ### Constraints and behavior
 
@@ -201,7 +213,9 @@ AVOptions, not from the filtergraph's frame side data.
 
 ## Verification
 
-`ffmpeg-patches/test/fgs-sidedata-smoke.sh` runs in every stack replay ([build.md](../development/build.md)): one active FGC SEI per access unit with the Pelorus SEI kept (for an AOM-tagged and an H.274-tagged section), one cancel after the grain stops, no FGC SEI without the estimator, the 10-bit refusal, and the byte-identical `source=options` pass-through. Planted mutations (8-bit refusal removed, cancel removed, carrier UUID refused, H.274 tag refused, FGC insert skipped) each make it fail.
+`ffmpeg-patches/test/fgs-sidedata-smoke.sh` runs in every stack replay ([build.md](../development/build.md)): one active FGC SEI per access unit with the Pelorus SEI on every access unit (for an AOM-tagged and an H.274-tagged section), one cancel after the grain stops, no FGC SEI without the estimator, the 10-bit refusal, and the byte-identical `source=options` pass-through. Planted mutations (8-bit refusal removed, cancel removed, carrier UUID refused, H.274 tag refused, FGC insert skipped) each make it fail. When the build has libx265, an `x265` case encodes with it and requires the x265-wrapped Pelorus SEI and an active FGC SEI on every access unit; `ENCODER=libx265` runs every case with libx265. Measured on 2026-10-18 with a GPL build (libx265 4.3): every case passes in both modes, and with the `pelorus_fgs` source from before ADR-0210 the `x265` case and, under `ENCODER=libx265`, the `grain` case fail with 0 active FGC SEI for 8 access units.
+
+The fast test `udu-wrap` replays `ffmpeg-patches/test/fixtures/udu-wrap-vectors.txt` against `pel_udu_classify`, plus a packed blob and carrier wrapped in the x265 UUID. A vector file with one expectation flipped, an emptied vector file, a missing file, and a classifier that accepts any outer UUID each make it fail.
 
 The fast suite's `fgs-bsf-contract` test (`scripts/test-fgs-bsf-contract.py
 --self-test`) checks the source statically: RDD 5 defaults, a default grain

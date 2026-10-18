@@ -169,8 +169,10 @@ grain-synthesised output vs grain-free reconstruction and strips FGC SEI,
 [ADR-0207](../adr/0207-grain-scoring-decoded-output.md)). The first
 two need an NVIDIA driver and a Vulkan device; the third needs a Vulkan device
 with HEVC video decode and encode; the fourth needs a Vulkan device plus
-a working `hevc_nvenc`, or libx265 (GPL builds only) that keeps the user data
-SEI where the filter finds it (every libx265 since 2.1 writes its own UUID in front of it, [grain-fgs-bsf.md](../usage/grain-fgs-bsf.md#pipeline-example));
+a working `hevc_nvenc` or libx265 (GPL builds only; the filter unwraps the UUID
+every libx265 since 2.1 writes in front of the user data SEI,
+[ADR-0210](../adr/0210-fgs-x265-udu-wrap.md)), and it also runs a libx265 case
+when the build has libx265 (`ENCODER=libx265` runs every case on it);
 the fifth needs an HEVC decoder and the `psnr` filter. A host that lacks one makes a smoke skip,
 and the replay then fails unless `NVENC_SMOKE_SKIP` (SEI smoke),
 `NVENC_HOP_SMOKE_SKIP` (hop smoke), `KEYFRAME_SMOKE_SKIP` (keyframe smoke),
