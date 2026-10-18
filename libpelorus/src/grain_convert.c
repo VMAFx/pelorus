@@ -240,6 +240,30 @@ static void drop_silent_components(PelorusGrainDescriptor *desc)
     }
 }
 
+float pel_quantized_sigma(float sigma_lin)
+{
+    if (sigma_lin <= 0.0f) {
+        return 0.0f;
+    }
+    if (sigma_lin >= 5.0f) {
+        return (float)sqrt((double)sigma_lin * (double)sigma_lin + (1.0 / 12.0));
+    }
+    double s = (double)sigma_lin;
+    double inv_s_sqrt2 = 1.0 / (s * 1.41421356237309504880);
+    double m = 0.0;
+    double m2 = 0.0;
+    for (int k = -64; k < 64; k++) {
+        double p = 0.5 * (erf(((double)k + 1.0) * inv_s_sqrt2) - erf((double)k * inv_s_sqrt2));
+        m += (double)k * p;
+        m2 += (double)(k * k) * p;
+    }
+    double var = m2 - m * m;
+    if (var <= 0.0) {
+        return 0.0f;
+    }
+    return (float)sqrt(var);
+}
+
 pel_result pel_grain_describe_aom(const PelorusFilmGrainSection *aom, PelorusGrainDescriptor *out)
 {
     if (aom == NULL || out == NULL) {
@@ -287,7 +311,7 @@ pel_result pel_grain_describe_aom(const PelorusFilmGrainSection *aom, PelorusGra
 }
 
 static void describe_h274_component(const PelorusH274GrainParams *h274, int c, float factor,
-                                    PelorusGrainDescriptor *desc)
+                                    PelorusGrainDescriptor *desc, int quantized)
 {
     desc->present[c] = 1;
     double sum_w = 0.0;
@@ -318,7 +342,8 @@ static void describe_h274_component(const PelorusH274GrainParams *h274, int c, f
         }
         int row = (cut_v - 2) * 13 + (cut_h - 2);
         const PelH274GrainStat *stat = &pel_h274_grain_stats[row];
-        float sig = (float)scale * stat->gain * factor;
+        float sig_lin = (float)scale * stat->gain * factor;
+        float sig = quantized ? pel_quantized_sigma(sig_lin) : sig_lin;
         desc->sigma[c][i] = sig;
 
         double w = (double)sig * (double)sig;
@@ -332,7 +357,8 @@ static void describe_h274_component(const PelorusH274GrainParams *h274, int c, f
     }
 }
 
-pel_result pel_grain_describe_h274(const PelorusH274GrainParams *h274, PelorusGrainDescriptor *out)
+static pel_result describe_h274_internal(const PelorusH274GrainParams *h274,
+                                         PelorusGrainDescriptor *out, int quantized)
 {
     if (h274 == NULL || out == NULL) {
         return PEL_ERR_INVALID;
@@ -349,11 +375,16 @@ pel_result pel_grain_describe_h274(const PelorusH274GrainParams *h274, PelorusGr
         if (!h274->component_model_present[c]) {
             continue;
         }
-        describe_h274_component(h274, c, factor, &desc);
+        describe_h274_component(h274, c, factor, &desc, quantized);
     }
     drop_silent_components(&desc);
     memcpy(out, &desc, sizeof(*out));
     return PEL_OK;
+}
+
+pel_result pel_grain_describe_h274(const PelorusH274GrainParams *h274, PelorusGrainDescriptor *out)
+{
+    return describe_h274_internal(h274, out, 1);
 }
 
 pel_result pel_grain_compare(const PelorusGrainDescriptor *a, const PelorusGrainDescriptor *b,
@@ -791,7 +822,7 @@ pel_result pel_grain_h274_to_aom(const PelorusH274GrainParams *h274, uint64_t se
     }
     PelorusGrainDescriptor h274_desc;
     memset(&h274_desc, 0, sizeof(h274_desc));
-    pel_result r = pel_grain_describe_h274(h274, &h274_desc);
+    pel_result r = describe_h274_internal(h274, &h274_desc, 0);
     if (r != PEL_OK) {
         return r;
     }

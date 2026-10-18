@@ -206,7 +206,7 @@ static void test_h274_single_interval_to_aom(void)
     CHECK(pel_grain_describe_aom(&aom, &desc_a) == PEL_OK);
 
     float s_h = desc_h.sigma[0][128];
-    float s_a = desc_a.sigma[0][128];
+    float s_a = pel_quantized_sigma(desc_a.sigma[0][128]);
     double rel_diff = fabs((double)s_a - (double)s_h) / (double)s_h;
     /* Measured diff is 0.00031 (0.031%); tightened to 0.0005 (0.05%) */
     CHECK(rel_diff < 0.0005);
@@ -514,7 +514,10 @@ static void test_h274_chroma_only_to_aom(void)
     CHECK(pel_grain_describe_h274(&h274, &dh) == PEL_OK);
     const PelH274GrainStat *st = &pel_h274_grain_stats[(8 - 2) * PEL_H274_CUTOFF_COUNT + (8 - 2)];
     CHECK(st->cut_h == 8 && st->cut_v == 8);
-    CHECK(dh.sigma[1][128] == 30.0f * st->gain * 0.5f);
+    /* Pinned value moved: master linear 1.76475f (30.0f * st->gain * 0.5f) -> quantized floor 1.788205f (ADR-0216) */
+    float sig_linear = 30.0f * st->gain * 0.5f;
+    float expected_sig = pel_quantized_sigma(sig_linear);
+    CHECK(fabs((double)dh.sigma[1][128] - (double)expected_sig) < 1e-5);
     CHECK(dh.rho_h[1] == st->rho_h);
 }
 
@@ -537,6 +540,43 @@ static void test_ar_mirror_symmetry(void)
     CHECK(fabs((double)dl.rho_v[0] - (double)dr.rho_v[0]) < 1e-4);
 }
 
+static void test_floor_vq_minimum(void)
+{
+    /* Floor Vq has theoretical minimum 0.5 as s -> 0+. */
+    float sig_near_zero = pel_quantized_sigma(1e-4f);
+    CHECK(fabs((double)sig_near_zero - 0.5) < 1e-3);
+    float sig_small = pel_quantized_sigma(0.10f);
+    CHECK(fabs((double)sig_small - 0.5000) < 1e-3);
+    float sig_point3 = pel_quantized_sigma(0.30f);
+    CHECK(fabs((double)sig_point3 - 0.5017) < 1e-3);
+}
+
+static void test_large_sigma_asymptotic(void)
+{
+    /* For s >= 1.5, floor converges within 1% of sqrt(s^2 + 1/12). */
+    const float test_sigmas[4] = {1.5f, 2.5f, 4.0f, 6.0f};
+    for (int i = 0; i < 4; i++) {
+        float s = test_sigmas[i];
+        float asymp = (float)sqrt((double)s * (double)s + (1.0 / 12.0));
+        float val_floor = pel_quantized_sigma(s);
+        CHECK(fabs((double)val_floor - (double)asymp) / (double)asymp < 0.01);
+    }
+}
+
+static void test_quantized_sigma_monotonicity(void)
+{
+    /* Floor Vq is non-decreasing on (0, 5]. */
+    float prev_floor = 0.0f;
+    for (int step = 0; step < 100; step++) {
+        float s = 0.01f + (float)step * 0.05f;
+        float cur_floor = pel_quantized_sigma(s);
+        CHECK(cur_floor >= prev_floor);
+        prev_floor = cur_floor;
+    }
+    float cur_5 = pel_quantized_sigma(5.0f);
+    CHECK(cur_5 >= prev_floor);
+}
+
 int main(void)
 {
     test_compare_identical_and_absent();
@@ -551,6 +591,9 @@ int main(void)
     test_seed_range();
     test_h274_chroma_only_to_aom();
     test_ar_mirror_symmetry();
+    test_floor_vq_minimum();
+    test_large_sigma_asymptotic();
+    test_quantized_sigma_monotonicity();
 
     if (g_fail != 0) {
         (void)fprintf(stderr, "grain_convert_test: %d failures\n", g_fail);

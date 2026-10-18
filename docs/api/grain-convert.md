@@ -5,7 +5,7 @@ libpelorus provides a pure C conversion engine between AV1 (AOM) and H.274 (SEI 
 
 - Header: [`pelorus/grain_convert.h`](../../libpelorus/include/pelorus/grain_convert.h)
 - Implementation: [`libpelorus/src/grain_convert.c`](../../libpelorus/src/grain_convert.c), [`libpelorus/src/grain_convert_tables.c`](../../libpelorus/src/grain_convert_tables.c)
-- Decision: [ADR-0205](../adr/0205-aom-h274-grain-conversion.md), [ADR-0211](../adr/0211-grain-synth-conformance.md)
+- Decision: [ADR-0205](../adr/0205-aom-h274-grain-conversion.md), [ADR-0211](../adr/0211-grain-synth-conformance.md), [ADR-0216](../adr/0216-h274-grain-quantization.md)
 - Related: [Film Grain Table I/O API](grain-table.md), [ADR-0161](../adr/0161-grain-estimate-rounding-and-h274-mapping.md)
 
 ## Usage example
@@ -89,11 +89,27 @@ To enable comparison and conversion, both representations map onto `PelorusGrain
 3. **Parameter lookup and chroma adaptation**:
    - Raw parameters: $scale = comp\_model\_value[c][s][0]$, $cut_h = comp\_model\_value[c][s][1]$ (default 8 if $< 2$ values), $cut_v = comp\_model\_value[c][s][2]$ (default 8 if $< 3$ values).
    - 4:2:0 chroma adaptation: $scale \gg= 1$, $cut_h = \min(cut_h \cdot 2, 14)$, $cut_v = \min(cut_v \cdot 2, 14)$.
-4. **Calibration table lookup**:
+4. **Calibration table lookup and floor quantization**:
    - Row $r = (cut_v - 2) \cdot 13 + (cut_h - 2)$ in `pel_h274_grain_stats[169]`.
-   - $\sigma[c][i] = scale \cdot stat.gain \cdot 2^{2 - \text{log2\_scale\_factor}}$.
+   - Linear standard deviation: $\sigma_{\text{lin}} = scale \cdot stat.gain \cdot 2^{2 - \text{log2\_scale\_factor}}$.
+   - Quantized standard deviation: $\sigma[c][i] = V_q(\sigma_{\text{lin}})$ evaluating the exact Gaussian floor model $\sqrt{\text{Var}(\lfloor X \rfloor)}$ for $X \sim \mathcal{N}(0, \sigma_{\text{lin}}^2)$, matching H.274 arithmetic right-shift floor synthesis (`(scale * db) >> shift` in FFmpeg `libavcodec/h274.c`, [ADR-0216](../adr/0216-h274-grain-quantization.md)).
 5. **Autocorrelation averaging**:
    - $\rho_h[c]$ and $\rho_v[c]$ are the $\sigma[c][i]^2$-weighted averages of $stat.rho\_h$ and $stat.rho\_v$ over all matching intensities ($0$ if all $\sigma = 0$).
+
+### Synthesis quantization model ($V_q$)
+
+The standard deviation of a quantized zero-mean Gaussian variable $X \sim \mathcal{N}(0, s^2)$ is $V_q(s, \text{off}) = \text{sd}(\lfloor X + \text{off} \rfloor)$:
+
+| Linear $\sigma$ ($s$) | Floor ($\text{off} = 0.0$, H.274) | Round ($\text{off} = 0.5$, AOM) | Ratio (Floor / Round) |
+| :--- | :--- | :--- | :--- |
+| 0.10 | 0.5000 | 0.0008 | 625.0 |
+| 0.30 | 0.5017 | 0.3092 | 1.623 |
+| 0.48 | 0.5697 | 0.5504 | 1.035 |
+| 0.65 | 0.7115 | 0.7109 | 1.001 |
+| 1.00 | 1.0408 | 1.0408 | 1.000 |
+| 1.39 | 1.4197 | 1.4197 | 1.000 |
+
+For $s > 0.65$, floor and round models converge within 0.1%. For $s < 0.65$ (chroma grain), the floor model possesses a theoretical minimum non-zero standard deviation $\lim_{s \to 0^+} V_q(s, 0.0) = 0.5000$. Both converge to $\sqrt{s^2 + 1/12}$ for $s \ge 5.0$.
 
 ### Fidelity metric (`pel_grain_compare`)
 
@@ -119,12 +135,12 @@ To enable comparison and conversion, both representations map onto `PelorusGrain
 
 ### H.274 to AV1 (`pel_grain_h274_to_aom`)
 
-1. Describe the H.274 parameters with `pel_grain_describe_h274()`.
+1. Describe the H.274 parameters with the linear H.274 descriptor ($\sigma_{\text{lin}}$, evaluated without floor quantization, matching master conversion behavior).
 2. For each present component $c$:
    - Select cutoffs from the dominant interval maximizing $\sum_{i} \sigma[c][i]^2$.
    - Configure a lag-1 causal AR model with shift 7 using separable coefficients: $[-ab, b, 0, a]$ where $a = \rho_h$ and $b = \rho_v$, clamped to $[-128, 127]$.
    - Compute AR energy gain $g_{\text{ar}}$ from the resulting AR filter impulse response.
-3. Compute 14 luma and 10 chroma scaling points uniformly spaced across intensity ($x_k = \text{round}(k \cdot 255 / (N-1))$).
+3. Compute 14 luma and 10 chroma scaling points uniformly spaced across intensity ($x_k = \text{round}(k \cdot 255 / (N-1))$). Point values $y_k$ are derived directly from the linear H.274 descriptor sigma.
 4. Select the largest `scaling_shift` in $8 \dots 11$ keeping all point values $y_k \le 255$.
 5. Set `uv_mult = 64`, `uv_mult_luma = 0`, `uv_offset = 0` (identity index), `overlap_flag = 1`, and `seed` from caller (0..65535; larger values return `PEL_ERR_RANGE`).
 6. If luma is absent but chroma is present, emit a flat zero luma curve (two points, scale 0): AV1 4:2:0 codes no chroma points when `num_y_points` is 0, and the zero curve adds no luma grain.
@@ -166,19 +182,19 @@ The test suite in `libpelorus/test/grain_convert_test.c` runs in the fast suite 
 
 ## Conformance against the reference synthesisers
 
-While `libpelorus/test/grain_convert_test.c` validates conversion mathematics and descriptor models within `libpelorus`, pixel-domain ground truth is proven by `ffmpeg-patches/test/grain_conformance.c` running against FFmpeg's pinned reference synthesisers (`ff_aom_apply_film_grain` in `libavcodec/aom_film_grain.h` and `ff_h274_apply_film_grain` in `libavcodec/h274.h`, [ADR-0211](../adr/0211-grain-synth-conformance.md)).
+While `libpelorus/test/grain_convert_test.c` validates conversion mathematics and descriptor models within `libpelorus`, pixel-domain ground truth is proven by `ffmpeg-patches/test/grain_conformance.c` running against FFmpeg's pinned reference synthesisers (`ff_aom_apply_film_grain` in `libavcodec/aom_film_grain.h` and `ff_h274_apply_film_grain` in `libavcodec/h274.h`, [ADR-0211](../adr/0211-grain-synth-conformance.md), [ADR-0216](../adr/0216-h274-grain-quantization.md)).
 
 The test synthesizes grain on flat 512x512 8-bit YUV420P frames across luma intensities 64, 128, and 192 (chroma 128) on converted parameters, measures RMS $\sigma$ and lag-1 spatial autocorrelation ($\rho_h$, $\rho_v$) excluding a 16-pixel border, and verifies bounds set at $1.2\times$ worst measured value:
 
 | Metric | Fixture A Measured | Fixture A Bound | Fixture B Measured | Fixture B Bound |
 | :--- | :--- | :--- | :--- | :--- |
 | Luma $\sigma$ vs AV1 descriptor | 0.0944 (9.4%) | 0.120 (12.0%) | 0.0249 (2.5%) | 0.030 (3.0%) |
-| Luma $\sigma$ vs H.274 descriptor | 0.0921 (9.2%) | 0.115 (11.5%) | 0.0113 (1.1%) | 0.015 (1.5%) |
+| Luma $\sigma$ vs H.274 descriptor | 0.0217 (2.2%) | 0.026 (2.6%) | 0.0037 (0.4%) | 0.005 (0.5%) |
 | Luma $\sigma$ AV1 vs H.274 synth | 0.0299 (3.0%) | 0.036 (3.6%) | 0.0130 (1.3%) | 0.016 (1.6%) |
 | Luma $\|\Delta \rho_h\|$ AV1 vs H.274 | 0.0455 | 0.055 | 0.0315 | 0.038 |
 | Luma $\|\Delta \rho_v\|$ AV1 vs H.274 | 0.0607 | 0.075 | 0.0288 | 0.035 |
 | Chroma $\sigma$ vs AV1 descriptor | 0.0712 (7.1%) | 0.090 (9.0%) | - | - |
-| Chroma $\sigma$ vs H.274 descriptor | 0.2297 (23.0%) | 0.280 (28.0%) | - | - |
+| Chroma $\sigma$ vs H.274 descriptor | 0.0392 (3.9%) | 0.048 (4.8%) | - | - |
 | Chroma $\sigma$ AV1 vs H.274 synth | 0.1837 (18.4%) | 0.230 (23.0%) | - | - |
 | Chroma $\|\Delta \rho_h\|$ AV1 vs H.274 | 0.0690 | 0.085 | - | - |
 | Chroma $\|\Delta \rho_v\|$ AV1 vs H.274 | 0.1312 | 0.160 | - | - |
