@@ -48,6 +48,10 @@
 #                contain for its skip (exit 77) to pass, e.g. "no HEVC decoder"
 #                on a host without an HEVC decoder; unset, a skip fails the
 #                replay (optional, ADR-0189, ADR-0207)
+#   FFMPEG_TIDY_SKIP  fixed text the FFmpeg-tree clang-tidy lane's SKIP line
+#                must contain for its skip (exit 77) to pass; on Windows
+#                defaults to "Windows MSYS2 UCRT64 replay"; unset on Linux, a
+#                skip fails the replay (optional, ADR-0189)
 set -euo pipefail
 
 # Hermetic Git: neither global/system configuration (apply.whitespace,
@@ -67,6 +71,7 @@ JOBS="${JOBS:-$(nproc)}"
 IS_WINDOWS=0
 if [[ "${MSYSTEM:-}" == "UCRT64" ]] || [[ "$(uname -o 2>/dev/null)" == "Msys" ]]; then
     IS_WINDOWS=1
+    : "${FFMPEG_TIDY_SKIP:=Windows MSYS2 UCRT64 replay}"
 fi
 
 RUN_ROOT=""
@@ -371,6 +376,27 @@ run_logged "install static FFmpeg libraries" "$LOG_DIR/ffmpeg-install.log" \
     make -C "$WORKTREE" -j"$JOBS" install
 run_logged "link and run external static libavfilter consumer" \
     "$LOG_DIR/ffmpeg-static-consumer.log" verify_static_avfilter_consumer
+
+# Static analysis: run clang-tidy over every FFmpeg-tree Pelorus unit with the
+# compile commands from the configured FFmpeg worktree and installed static
+# prefix (issue #94). Exit 77 names why this host cannot run it; it passes only
+# when FFMPEG_TIDY_SKIP names that reason (ADR-0189). Any other failure fails
+# the replay.
+echo "== FFmpeg-tree clang-tidy lane =="
+tidy_status=0
+FFMPEG_TREE="$WORKTREE" FFMPEG_PREFIX="$FFMPEG_PREFIX" \
+    PRIVATE_PREFIX="$PRIVATE_PREFIX" \
+    LIST_FILE="$ROOT/.config/clang-tidy/ffmpeg-tree-files.txt" \
+    OUTPUT_ROOT="$LOG_DIR/ffmpeg-tidy" \
+    "$HERE/tidy-ffmpeg-tree.sh" 2>&1 | tee "$LOG_DIR/ffmpeg-tidy.log" ||
+    tidy_status=$? # pipefail: the lane's status, tee exits 0
+if ! "$HERE/named-skip.sh" "FFmpeg-tree clang-tidy lane" "$tidy_status" \
+    "$LOG_DIR/ffmpeg-tidy.log" "${FFMPEG_TIDY_SKIP:-}"; then
+    echo "ERROR: this run removes its logs, so rerun test/tidy-ffmpeg-tree.sh" \
+        "with FFMPEG_TREE, FFMPEG_PREFIX and OUTPUT_ROOT to keep them; on a host" \
+        "that cannot run the lane, set FFMPEG_TIDY_SKIP to the reason it prints" >&2
+    exit 1
+fi
 
 FILTERS=(
     pelorus_aa_vulkan

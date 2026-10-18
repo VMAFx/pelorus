@@ -40,10 +40,10 @@ ADR: docs/adr/0112-temporal-denoise.md
  configure                                    |    3 +
  libavfilter/Makefile                         |    1 +
  libavfilter/allfilters.c                     |    1 +
- libavfilter/vf_pelorus_denoise_vulkan.c      | 1286 ++++++++++++++++++++
+ libavfilter/vf_pelorus_denoise_vulkan.c      | 1287 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |    1 +
  libavfilter/vulkan/pelorus_denoise.comp.glsl |  518 ++++++++
- 6 files changed, 1810 insertions(+)
+ 6 files changed, 1811 insertions(+)
 
 diff --git a/configure b/configure
 index 974c5e3e75051a61c81fec15d264b9627a5933ec..d26ae6933549cc65a8a1852f2de02ff2980902a1 100755
@@ -92,10 +92,10 @@ index 796756c874547d1bb9ccba79c99350e5214e31c2..2efa0d5f6850fdd7b62e228caaba41db
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_denoise_vulkan.c b/libavfilter/vf_pelorus_denoise_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..8373586d5067ca276234e7d8ed9671826da6049f
+index 0000000000000000000000000000000000000000..e598553f3b937512131907ab43db2d13cbff3423
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_denoise_vulkan.c
-@@ -0,0 +1,1286 @@
+@@ -0,0 +1,1287 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -179,7 +179,7 @@ index 0000000000000000000000000000000000000000..8373586d5067ca276234e7d8ed967182
 + * product can reach ~4.29e9 — past INT_MAX and a multi-GB allocation. Cap it to a
 + * value that still covers any realistic frame grid (8K at a small block edge)
 + * while rejecting absurd dimensions before the cell count is used for sizing. */
-+#define PEL_DENOISE_MAX_CELLS (8192u * 8192u)
++#define PEL_DENOISE_MAX_CELLS ((uint64_t)8192u * 8192u)
 +
 +/* meta=1 residual statistics, in the shader's RES_GS fixed point. 2^23 resolves
 + * a one-code 10-bit residual squared as 8 units, while a full 16x16 workgroup
@@ -439,6 +439,7 @@ index 0000000000000000000000000000000000000000..8373586d5067ca276234e7d8ed967182
 +
 +static void pel_sd_free(void *opaque, uint8_t *data)
 +{
++    (void)opaque;
 +    pel_blob_free(data);
 +}
 +

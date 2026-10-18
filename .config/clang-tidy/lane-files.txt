@@ -3,8 +3,8 @@
 # so the lane the audit judges is the lane that runs. One path per line; these
 # are every C unit the Meson build compiles (libpelorus/src, libpelorus/test,
 # tools, and the ffmpeg-patches tests Meson builds without an FFmpeg tree).
-# The other ffmpeg-patches units build only inside FFmpeg's tree; each has a
-# dated exception in .standards.yaml (VMAFx/pelorus#94).
+# The FFmpeg-tree filter, BSF, and replay consumer units live in the sibling
+# "ffmpeg-tree" lane (.config/clang-tidy/ffmpeg-tree-files.txt).
 ffmpeg-patches/test/analyze_maps_test.c
 ffmpeg-patches/test/drm_modifier_test.c
 ffmpeg-patches/test/mc_stats_test.c

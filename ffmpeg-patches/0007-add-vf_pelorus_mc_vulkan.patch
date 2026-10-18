@@ -49,10 +49,10 @@ ADR: docs/adr/0116-pelorus-mc.md
  libavfilter/Makefile                    |   1 +
  libavfilter/allfilters.c                |   1 +
  libavfilter/pelorus_mc_stats.h          | 163 ++++
- libavfilter/vf_pelorus_mc_vulkan.c      | 970 ++++++++++++++++++++
+ libavfilter/vf_pelorus_mc_vulkan.c      | 971 ++++++++++++++++++++
  libavfilter/vulkan/Makefile             |   1 +
  libavfilter/vulkan/pelorus_mc.comp.glsl | 237 +++++
- 7 files changed, 1376 insertions(+)
+ 7 files changed, 1377 insertions(+)
 
 diff --git a/configure b/configure
 index ca410e098775c7ba9b7cd7e5774796f071c48511..33f7c8f665cd7a52b4d4c83e62cf4f70a6f91a4d 100755
@@ -270,10 +270,10 @@ index 0000000000000000000000000000000000000000..64afbf6a8544040ef672640fdf1dd0cc
 +#endif /* AVFILTER_PELORUS_MC_STATS_H */
 diff --git a/libavfilter/vf_pelorus_mc_vulkan.c b/libavfilter/vf_pelorus_mc_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..f77123fbc45c4182668d799f6077eb470e13b7a3
+index 0000000000000000000000000000000000000000..0e4f2e3ba9a3ceea81a9b5f1f158f0d69a2689c5
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_mc_vulkan.c
-@@ -0,0 +1,970 @@
+@@ -0,0 +1,971 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -510,6 +510,7 @@ index 0000000000000000000000000000000000000000..f77123fbc45c4182668d799f6077eb47
 +
 +static void pel_sd_free(void *opaque, uint8_t *data)
 +{
++    (void)opaque;
 +    pel_blob_free(data);
 +}
 +

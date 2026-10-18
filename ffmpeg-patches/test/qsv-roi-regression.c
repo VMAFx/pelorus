@@ -26,7 +26,7 @@
 #define CHECK(condition)                                                                           \
     do {                                                                                           \
         if (!(condition)) {                                                                        \
-            fprintf(stderr, "check failed at %s:%d: %s\n", __FILE__, __LINE__, #condition);        \
+            (void)fprintf(stderr, "check failed at %s:%d: %s\n", __FILE__, __LINE__, #condition);  \
             return 1;                                                                              \
         }                                                                                          \
     } while (0)
@@ -41,7 +41,7 @@ static void count_warning_cb(void *avcl, int level, const char *fmt, va_list vl)
     (void)avcl;
     if (level != AV_LOG_WARNING)
         return;
-    vsnprintf(line, sizeof(line), fmt, vl);
+    (void)vsnprintf(line, sizeof(line), fmt, vl);
     if (strstr(line, "EnableMBQP is off after encoder initialization") &&
         strstr(line, "falling back to per-region mfxExtEncoderROI rectangles"))
         mbqp_cleared_warnings++;
@@ -229,6 +229,20 @@ static int test_fallback_warning(RegressionContext *ctx)
     return 0;
 }
 
+static int test_mbqp_version_downgrade(RegressionContext *ctx)
+{
+    ctx->q.ver.Minor = 27;
+    CHECK(!qsvenc_pelorus_roi_frame_uses_mbqp(&ctx->avctx, &ctx->q, ctx->frame_a));
+    CHECK(qsvenc_setup_roi(&ctx->avctx, &ctx->q, ctx->frame_a, &ctx->ctrl_a) == 0);
+    CHECK(ctx->ctrl_a.NumExtParam == 0);
+    CHECK(set_roi_encode_ctrl(&ctx->avctx, ctx->frame_a, &ctx->ctrl_a) == 0);
+    CHECK(ctx->ctrl_a.NumExtParam == 1);
+    CHECK(ctx->ctrl_a.ExtParam[0]->BufferId == MFX_EXTBUFF_ENCODER_ROI);
+    free_encoder_ctrl(&ctx->ctrl_a);
+    ctx->q.ver.Minor = 28;
+    return 0;
+}
+
 static int test_mbqp_enable(RegressionContext *ctx)
 {
     QSVEncContext q_idle = {0};
@@ -248,34 +262,13 @@ static int test_mbqp_enable(RegressionContext *ctx)
     ctx->q.param.ExtParam = NULL;
     ctx->q.param.NumExtParam = 0;
     CHECK(qsvenc_pelorus_roi_frame_uses_mbqp(&ctx->avctx, &ctx->q, ctx->frame_a));
-    ctx->q.ver.Minor = 27;
-    CHECK(!qsvenc_pelorus_roi_frame_uses_mbqp(&ctx->avctx, &ctx->q, ctx->frame_a));
-    CHECK(qsvenc_setup_roi(&ctx->avctx, &ctx->q, ctx->frame_a, &ctx->ctrl_a) == 0);
-    CHECK(ctx->ctrl_a.NumExtParam == 0);
-    CHECK(set_roi_encode_ctrl(&ctx->avctx, ctx->frame_a, &ctx->ctrl_a) == 0);
-    CHECK(ctx->ctrl_a.NumExtParam == 1);
-    CHECK(ctx->ctrl_a.ExtParam[0]->BufferId == MFX_EXTBUFF_ENCODER_ROI);
-    free_encoder_ctrl(&ctx->ctrl_a);
-    ctx->q.ver.Minor = 28;
-    return 0;
+    return test_mbqp_version_downgrade(ctx);
 }
 
-static int test_mbqp_raster(RegressionContext *ctx)
+static int test_mbqp_raster_isolation(RegressionContext *ctx, const mfxExtMBQP *mbqp_a)
 {
-    mfxExtMBQP *mbqp_a;
     mfxExtMBQP *mbqp_b;
 
-    CHECK(qsvenc_pelorus_roi_frame_uses_mbqp(&ctx->avctx, &ctx->q, ctx->frame_a));
-    CHECK(qsvenc_setup_roi(&ctx->avctx, &ctx->q, ctx->frame_a, &ctx->ctrl_a) == 0);
-    CHECK(ctx->ctrl_a.NumExtParam == 1);
-    mbqp_a = (mfxExtMBQP *)ctx->ctrl_a.ExtParam[0];
-    CHECK(mbqp_a->Header.BufferId == MFX_EXTBUFF_MBQP);
-    CHECK(mbqp_a->Header.BufferSz == sizeof(*mbqp_a));
-    CHECK(mbqp_a->Mode == MFX_MBQP_MODE_QP_DELTA);
-    CHECK(mbqp_a->BlockSize == 16);
-    CHECK(mbqp_a->Pitch == 3);
-    CHECK(mbqp_a->NumQPAlloc == 12);
-    CHECK(mbqp_a->DeltaQP == (mfxI8 *)(mbqp_a + 1));
     CHECK(mbqp_a->DeltaQP[0] == -5);
     CHECK(mbqp_a->DeltaQP[8] == -5);
     CHECK(mbqp_a->DeltaQP[9] == 0);
@@ -289,6 +282,24 @@ static int test_mbqp_raster(RegressionContext *ctx)
     CHECK(mbqp_a->DeltaQP[0] == -5);
     CHECK(mbqp_b->DeltaQP[0] == 5);
     return 0;
+}
+
+static int test_mbqp_raster(RegressionContext *ctx)
+{
+    mfxExtMBQP *mbqp_a;
+
+    CHECK(qsvenc_pelorus_roi_frame_uses_mbqp(&ctx->avctx, &ctx->q, ctx->frame_a));
+    CHECK(qsvenc_setup_roi(&ctx->avctx, &ctx->q, ctx->frame_a, &ctx->ctrl_a) == 0);
+    CHECK(ctx->ctrl_a.NumExtParam == 1);
+    mbqp_a = (mfxExtMBQP *)ctx->ctrl_a.ExtParam[0];
+    CHECK(mbqp_a->Header.BufferId == MFX_EXTBUFF_MBQP);
+    CHECK(mbqp_a->Header.BufferSz == sizeof(*mbqp_a));
+    CHECK(mbqp_a->Mode == MFX_MBQP_MODE_QP_DELTA);
+    CHECK(mbqp_a->BlockSize == 16);
+    CHECK(mbqp_a->Pitch == 3);
+    CHECK(mbqp_a->NumQPAlloc == 12);
+    CHECK(mbqp_a->DeltaQP == (mfxI8 *)(mbqp_a + 1));
+    return test_mbqp_raster_isolation(ctx, mbqp_a);
 }
 
 static int test_overlap(RegressionContext *ctx)
@@ -330,6 +341,25 @@ static int test_extended_roi(RegressionContext *ctx)
     return 0;
 }
 
+static int test_invalid_roi_fields(RegressionContext *ctx)
+{
+    ctx->frame_bad_den = make_roi_frame(33, 33, 1);
+    CHECK(ctx->frame_bad_den);
+    set_roi(frame_rois(ctx->frame_bad_den), 0, 0, 16, 16, (AVRational){-1, 0});
+    CHECK(qsvenc_setup_roi(&ctx->avctx, &ctx->q, ctx->frame_bad_den, &ctx->ctrl_bad_den) ==
+          AVERROR(EINVAL));
+    CHECK(ctx->ctrl_bad_den.NumExtParam == 0);
+
+    ctx->frame_bad_dims = make_roi_frame(49, 33, 1);
+    CHECK(ctx->frame_bad_dims);
+    set_roi(frame_rois(ctx->frame_bad_dims), 0, 0, 49, 33, (AVRational){-1, 10});
+    CHECK(qsvenc_setup_roi(&ctx->avctx, &ctx->q, ctx->frame_bad_dims, &ctx->ctrl_bad_dims) ==
+          AVERROR(EINVAL));
+    CHECK(ctx->ctrl_bad_dims.NumExtParam == 0);
+
+    return 0;
+}
+
 static int test_invalid_inputs(RegressionContext *ctx)
 {
     AVFrameSideData *sd;
@@ -353,21 +383,7 @@ static int test_invalid_inputs(RegressionContext *ctx)
           AVERROR(EINVAL));
     CHECK(ctx->ctrl_bad_entry.NumExtParam == 0);
 
-    ctx->frame_bad_den = make_roi_frame(33, 33, 1);
-    CHECK(ctx->frame_bad_den);
-    set_roi(frame_rois(ctx->frame_bad_den), 0, 0, 16, 16, (AVRational){-1, 0});
-    CHECK(qsvenc_setup_roi(&ctx->avctx, &ctx->q, ctx->frame_bad_den, &ctx->ctrl_bad_den) ==
-          AVERROR(EINVAL));
-    CHECK(ctx->ctrl_bad_den.NumExtParam == 0);
-
-    ctx->frame_bad_dims = make_roi_frame(49, 33, 1);
-    CHECK(ctx->frame_bad_dims);
-    set_roi(frame_rois(ctx->frame_bad_dims), 0, 0, 49, 33, (AVRational){-1, 10});
-    CHECK(qsvenc_setup_roi(&ctx->avctx, &ctx->q, ctx->frame_bad_dims, &ctx->ctrl_bad_dims) ==
-          AVERROR(EINVAL));
-    CHECK(ctx->ctrl_bad_dims.NumExtParam == 0);
-
-    return 0;
+    return test_invalid_roi_fields(ctx);
 }
 
 static int test_interlaced(RegressionContext *ctx)
@@ -399,6 +415,6 @@ int main(void)
 
     if (failed)
         return 1;
-    puts("qsv roi regression: ok");
+    (void)puts("qsv roi regression: ok");
     return 0;
 }
