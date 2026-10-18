@@ -59,10 +59,10 @@ docs/adr/0133-analyze-coarse-banding-cambi.md, docs/adr/0177-analyze-per-cell-ma
  7 files changed, 1529 insertions(+)
 
 diff --git a/configure b/configure
-index 00b13ed09edcf3fb2b44ff9d0bfbb4420f45c68e..aec9b3ae17deb53929fc15870fdaeb58db717c8f 100755
+index f1c896727d1690d5dba37435ab185464d1d7324f..974c5e3e75051a61c81fec15d264b9627a5933ec 100755
 --- a/configure
 +++ b/configure
-@@ -4236,6 +4236,7 @@ overlay_qsv_filter_deps="libmfx"
+@@ -4241,6 +4241,7 @@ overlay_qsv_filter_deps="libmfx"
  overlay_qsv_filter_select="qsvvpp"
  overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
  overlay_vulkan_filter_deps="vulkan spirv_compiler"
@@ -70,7 +70,7 @@ index 00b13ed09edcf3fb2b44ff9d0bfbb4420f45c68e..aec9b3ae17deb53929fc15870fdaeb58
  pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"
  owdenoise_filter_deps="gpl"
  pad_opencl_filter_deps="opencl"
-@@ -7460,6 +7461,8 @@ enabled libvmaf           && require_pkg_config libvmaf "libvmaf >= 2.0.0" libvm
+@@ -7466,6 +7467,8 @@ enabled libvmaf           && require_pkg_config libvmaf "libvmaf >= 2.0.0" libvm
  enabled libvmaf           && check_pkg_config libvmaf_cuda "libvmaf >= 2.0.0" libvmaf_cuda.h vmaf_cuda_state_init
  pelorus_deband_vulkan_filter_extralibs="libpelorus_extralibs"
  enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
@@ -80,10 +80,10 @@ index 00b13ed09edcf3fb2b44ff9d0bfbb4420f45c68e..aec9b3ae17deb53929fc15870fdaeb58
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index e7c6774d0707f6080d7660eb3f724b914afc99bd..1a54fe61619c92b033d5fe55cd8639df933ceda7 100644
+index 70de1350c6d15ed3d5f125e70e5985bcae01dae4..b6fd48e653c5b06e5f7785f1eb28e6c07fa0f3f2 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
-@@ -433,6 +433,7 @@ OBJS-$(CONFIG_PAD_CUDA_FILTER)               += vf_pad_cuda.o vf_pad_cuda.ptx.o
+@@ -441,6 +441,7 @@ OBJS-$(CONFIG_PAD_CUDA_FILTER)               += vf_pad_cuda.o vf_pad_cuda.ptx.o
  OBJS-$(CONFIG_PAD_OPENCL_FILTER)             += vf_pad_opencl.o opencl.o opencl/pad.o
  OBJS-$(CONFIG_PALETTEGEN_FILTER)             += vf_palettegen.o palette.o
  OBJS-$(CONFIG_PALETTEUSE_FILTER)             += vf_paletteuse.o framesync.o palette.o
@@ -92,10 +92,10 @@ index e7c6774d0707f6080d7660eb3f724b914afc99bd..1a54fe61619c92b033d5fe55cd8639df
  OBJS-$(CONFIG_PERMS_FILTER)                  += f_perms.o
  OBJS-$(CONFIG_PERSPECTIVE_FILTER)            += vf_perspective.o
 diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
-index 78a01c74a326700f3c6c4799906c5ae17b613830..c781df8365397465a0f8cb2c25ac450585938b01 100644
+index d1b243518acce10749e65a85385fdd1f8ac1cafb..796756c874547d1bb9ccba79c99350e5214e31c2 100644
 --- a/libavfilter/allfilters.c
 +++ b/libavfilter/allfilters.c
-@@ -405,6 +405,7 @@ extern const FFFilter ff_vf_pad_cuda;
+@@ -410,6 +410,7 @@ extern const FFFilter ff_vf_pad_cuda;
  extern const FFFilter ff_vf_pad_opencl;
  extern const FFFilter ff_vf_palettegen;
  extern const FFFilter ff_vf_paletteuse;
@@ -1453,10 +1453,10 @@ index 0000000000000000000000000000000000000000..74abfac2d63b70b4b5df17b4dd9f8e90
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
 diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
-index e62ab231cb50888e10c829ad66e15e4cb8d66670..578953efb422d850e60c82c891364c763a2141aa 100644
+index f9d7c32e3a4e2e16c39ab7e65980595affe6bb49..c6b84464ce16684337c3153c4a2b825338293922 100644
 --- a/libavfilter/vulkan/Makefile
 +++ b/libavfilter/vulkan/Makefile
-@@ -22,3 +22,4 @@ OBJS-$(CONFIG_NLMEANS_VULKAN_FILTER) += vulkan/nlmeans_horizontal.comp.spv.o \
+@@ -26,3 +26,4 @@ OBJS-$(CONFIG_NLMEANS_VULKAN_FILTER) += vulkan/nlmeans_horizontal.comp.spv.o \
                                          vulkan/nlmeans_weights.comp.spv.o \
                                          vulkan/nlmeans_denoise.comp.spv.o
  OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER) += vulkan/pelorus_deband.comp.spv.o

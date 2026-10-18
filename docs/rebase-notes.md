@@ -8,6 +8,42 @@ the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
 ranges in older entries predate the first entry below (22 patches on the
 shared FFmpeg fix series, number 0021 retired).
 
+## Unreleased — shared FFmpeg fix series pinned at `v0.3.0` (#386, ADR-0218; regenerates 0001–0004, 0006–0011, 0014–0018, 0022, 0023)
+
+- **Base**: `FFMPEG_SERIES_TAG` moves from `v0.2.0` to `v0.3.0`,
+  `FFMPEG_SERIES_COMMIT` from `d958384a` to `9ff13ad7` and
+  `FFMPEG_SERIES_SHA256` to `0e7c14fb`, the sha256 of the `v0.3.0` tarball as
+  listed in its signed `SHA256SUMS`. The FFmpeg base stays `n9.0.2`.
+- **Patches**: the series grows from eight to 34 patches (CUDA re-import,
+  `qsvdec` edit lists, Dolby Vision reshaping, `bt2408_hable` tone mapping,
+  `hqdn3d` on Vulkan, CUDA, OpenCL and VideoToolbox, `swscale` and `vf_scale`
+  IPT-C2 repack, and 0027, which moves the NVENC SEI size rules into the new
+  `libavcodec/nvenc_sei.h`). The new series patches edit `configure`,
+  `libavfilter/Makefile`, `libavfilter/allfilters.c` and
+  `libavcodec/nvenc.c`, so 0001–0004,
+  0006–0008, 0010, 0011 and 0014–0018 regenerate with shifted hunk offsets and
+  new `index` lines only; 0009 changes its `index` line only. 0022 includes
+  `nvenc_sei.h` through `pelorus_sei_fit.h` and logs the limit as
+  `NVENC_HEVC_NON_VCL_LIMIT`; 0023 counts emulation prevention bytes with
+  `nvenc_sei_epb_count()`. The other patches are byte-identical.
+- **Behaviour**: unchanged for Pelorus side data. `sei_fit_test.c` compares
+  the new `pel_sei_nal_bytes()` with a frozen copy of the old one for every
+  payload up to 1100 bytes: same fit decision everywhere, same byte count for
+  every payload that fits.
+- **Rebase-sensitive**: `scripts/extract-series-file.py` reads
+  `nvenc_sei.h` from the one series patch that creates it and refuses when a
+  later series patch also touches the file; such a series bump must teach the
+  extractor the final text first. The `reserve` plant rewrites the line
+  `#define NVENC_HEVC_SEI_RESERVE   256` and refuses when it is not there
+  exactly once.
+- **Interop**: none.
+- **Checks**: `scripts/fetch-ffmpeg-series.sh` on the new pin;
+  `scripts/check-build-config.py`; `generate.sh` with the stack above;
+  `meson test --suite=fast` with `-Dffmpeg_series_dir`: `sei-fit` OK and
+  `sei-fit-planted` an expected failure, and without the option the named
+  skip; the replay and link over the series and the 22 patches
+  (`test/build-and-run.sh`).
+
 ## Unreleased — scenecut placement comment (#311; regenerates 0016)
 
 - **Patches**: the file comment of `vf_pelorus_scenecut.c` now says to run
@@ -152,9 +188,9 @@ shared FFmpeg fix series, number 0021 retired).
   empty entries. `NvencContext` keeps `pelorus_udu_stripped` and
   `pelorus_udu_carrier_logged`.
 - **Rebase-sensitive**: the hook position and the name `sei_budget` in
-  `prepare_sei_data_array()`; `pel_sei_nal_bytes()` must keep matching the
-  series' `nvenc_sei_nal_size()` (the "stripped" log line predicts the fit
-  with it); the series' base must equal the FFmpeg pin, which the fetch script
+  `prepare_sei_data_array()`; `pel_sei_nal_bytes()` calls the series'
+  `nvenc_sei_nal_size()` since series `v0.3.0` (ADR-0218; the "stripped" log
+  line predicts the fit with it); the series' base must equal the FFmpeg pin, which the fetch script
   checks. On an FFmpeg bump, wait for a series release on the new base, move
   the four `FFMPEG_SERIES_*` values together, then regenerate.
 - **Interop**: none. Streams are as before for Pelorus side data. A payload

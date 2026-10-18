@@ -46,10 +46,10 @@ ADR: docs/adr/0112-temporal-denoise.md
  6 files changed, 1676 insertions(+)
 
 diff --git a/configure b/configure
-index aec9b3ae17deb53929fc15870fdaeb58db717c8f..c18161349c774eea0347f47effa8aa611e6b8771 100755
+index 974c5e3e75051a61c81fec15d264b9627a5933ec..d26ae6933549cc65a8a1852f2de02ff2980902a1 100755
 --- a/configure
 +++ b/configure
-@@ -4238,6 +4238,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
+@@ -4243,6 +4243,7 @@ overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
  overlay_vulkan_filter_deps="vulkan spirv_compiler"
  pelorus_analyze_vulkan_filter_deps="vulkan spirv_compiler"
  pelorus_deband_vulkan_filter_deps="vulkan spirv_compiler"
@@ -57,7 +57,7 @@ index aec9b3ae17deb53929fc15870fdaeb58db717c8f..c18161349c774eea0347f47effa8aa61
  owdenoise_filter_deps="gpl"
  pad_opencl_filter_deps="opencl"
  pan_filter_deps="swresample"
-@@ -7463,6 +7464,8 @@ pelorus_deband_vulkan_filter_extralibs="libpelorus_extralibs"
+@@ -7469,6 +7470,8 @@ pelorus_deband_vulkan_filter_extralibs="libpelorus_extralibs"
  enabled pelorus_deband_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
  pelorus_analyze_vulkan_filter_extralibs="libpelorus_extralibs"
  enabled pelorus_analyze_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
@@ -67,10 +67,10 @@ index aec9b3ae17deb53929fc15870fdaeb58db717c8f..c18161349c774eea0347f47effa8aa61
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index 1a54fe61619c92b033d5fe55cd8639df933ceda7..982a06df777ee583f9d829023bb7bbe7d0148a40 100644
+index b6fd48e653c5b06e5f7785f1eb28e6c07fa0f3f2..d27f5ed83645717ab35254413b81fa30677db14d 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
-@@ -435,6 +435,7 @@ OBJS-$(CONFIG_PALETTEGEN_FILTER)             += vf_palettegen.o palette.o
+@@ -443,6 +443,7 @@ OBJS-$(CONFIG_PALETTEGEN_FILTER)             += vf_palettegen.o palette.o
  OBJS-$(CONFIG_PALETTEUSE_FILTER)             += vf_paletteuse.o framesync.o palette.o
  OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vf_pelorus_analyze_vulkan.o vulkan.o vulkan_filter.o
  OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER)  += vf_pelorus_deband_vulkan.o vulkan.o vulkan_filter.o
@@ -79,10 +79,10 @@ index 1a54fe61619c92b033d5fe55cd8639df933ceda7..982a06df777ee583f9d829023bb7bbe7
  OBJS-$(CONFIG_PERSPECTIVE_FILTER)            += vf_perspective.o
  OBJS-$(CONFIG_PHASE_FILTER)                  += vf_phase.o
 diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
-index c781df8365397465a0f8cb2c25ac450585938b01..a21da384818d0b64f4b5af635ae53e9a5e9f5ec4 100644
+index 796756c874547d1bb9ccba79c99350e5214e31c2..2efa0d5f6850fdd7b62e228caaba41db95711770 100644
 --- a/libavfilter/allfilters.c
 +++ b/libavfilter/allfilters.c
-@@ -407,6 +407,7 @@ extern const FFFilter ff_vf_palettegen;
+@@ -412,6 +412,7 @@ extern const FFFilter ff_vf_palettegen;
  extern const FFFilter ff_vf_paletteuse;
  extern const FFFilter ff_vf_pelorus_analyze_vulkan;
  extern const FFFilter ff_vf_pelorus_deband_vulkan;
@@ -1249,10 +1249,10 @@ index 0000000000000000000000000000000000000000..88e7be335e6933f95bc4ea89faf34e81
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
 diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
-index 578953efb422d850e60c82c891364c763a2141aa..a4a7ea0ea998fa805376991447a54769fbdfa6ed 100644
+index c6b84464ce16684337c3153c4a2b825338293922..68273b221a24d429d28095e1b4cd09b83c33da89 100644
 --- a/libavfilter/vulkan/Makefile
 +++ b/libavfilter/vulkan/Makefile
-@@ -23,3 +23,4 @@ OBJS-$(CONFIG_NLMEANS_VULKAN_FILTER) += vulkan/nlmeans_horizontal.comp.spv.o \
+@@ -27,3 +27,4 @@ OBJS-$(CONFIG_NLMEANS_VULKAN_FILTER) += vulkan/nlmeans_horizontal.comp.spv.o \
                                          vulkan/nlmeans_denoise.comp.spv.o
  OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER) += vulkan/pelorus_deband.comp.spv.o
  OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vulkan/pelorus_analyze.comp.spv.o

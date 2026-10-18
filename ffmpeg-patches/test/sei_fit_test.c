@@ -17,6 +17,11 @@
  * Boundary: the largest grid (2^20 cells, 6 MiB) is stripped without a scan,
  * a payload exactly at the budget fits and one byte more does not.
  *
+ * Series header (ADR-0218): pel_sei_nal_bytes() calls nvenc_sei_nal_size()
+ * of shared series patch 0027 and makes the fit decision the pre-0218 copy
+ * made, with the same byte count for every payload that fits, for every
+ * length up to 1100 bytes, four byte patterns and three limits.
+ *
  * Zero-free carrier (issue #284, ADR-0183): every Pelorus blob leaves the
  * encoder as pel_sei_carrier_write() writes it, byte-identical to libpelorus's
  * pel_blob_carrier_encode() and turned back into the blob by pel_blob_unwrap();
@@ -168,10 +173,12 @@ static size_t to_carrier(uint8_t **copy, size_t n, size_t budget)
 /* The encoder's steps for one payload: the series' copy, the Pelorus hook,
  * then the series' charge against the picture's budget (nvenc_hevc_sei_fits(),
  * the size pel_sei_nal_bytes() mirrors). 0 when the payload is dropped; else
- * the written length, copied into *out (a Pelorus blob as its carrier). */
+ * the written length, copied into *out (a Pelorus blob as its carrier). A
+ * payload over UINT32_MAX bytes, beyond nvenc_sei.h's 32-bit sizes, is
+ * dropped. */
 static size_t carry(const uint8_t *p, size_t n, size_t *budget, uint8_t **out)
 {
-    uint8_t *copy = n != 0u ? malloc(n) : NULL;
+    uint8_t *copy = n != 0u && n <= UINT32_MAX ? malloc(n) : NULL;
     size_t len;
     size_t need;
 
@@ -206,6 +213,76 @@ static int unwraps_to(const uint8_t *w, size_t wn, const uint8_t *want, size_t w
     return ok;
 }
 
+/*
+ * pel_sei_nal_bytes() as it stood before it called nvenc_sei_nal_size()
+ * (ADR-0218), frozen as the oracle the series header must keep matching:
+ * start code, NAL header, type, n / 255 + 1 size bytes, payload, trailing
+ * bits, one boundary byte, plus the emulation prevention bytes of a payload of
+ * at most `limit` bytes.
+ */
+static size_t frozen_nal_bytes(const uint8_t *p, size_t n, size_t limit)
+{
+    size_t zeros = 0;
+    size_t extra = 0;
+
+    if (n > limit || !p)
+        return n + n / 255u + 10u;
+    for (size_t i = 0; i < n; i++) {
+        if (zeros >= 2u && p[i] <= 3u) {
+            extra++;
+            zeros = 0;
+        }
+        zeros = p[i] == 0u ? zeros + 1u : 0u;
+    }
+    return n + n / 255u + 10u + extra;
+}
+
+/* Fill `buf` with pattern `k`: letters, zeros, 00 00 0x runs, or an LCG. */
+static void fill_pattern(uint8_t *buf, size_t n, int k)
+{
+    uint32_t x = 0x9E3779B9u;
+
+    for (size_t i = 0; i < n; i++) {
+        x = x * 1664525u + 1013904223u;
+        buf[i] = k == 0   ? (uint8_t)'a'
+                 : k == 1 ? 0u
+                 : k == 2 ? (uint8_t)(i % 3u == 2u ? i % 5u : 0u)
+                          : (uint8_t)(x >> 29u); /* 0..7: many zeros and 0..3 */
+    }
+}
+
+/* 1 when the series result and the frozen one make the same fit decision and
+ * agree exactly on a payload that fits. Over the limit both only promise more
+ * than `limit`: the series compares the NAL size, the frozen copy the payload
+ * size, with the limit before it scans (36 such cases below, none fits). */
+static int same_fit(size_t series, size_t frozen, size_t limit)
+{
+    if (series <= limit || frozen <= limit)
+        return series == frozen;
+    return 1;
+}
+
+/* The series formula and the frozen one agree on every length up to two size
+ * byte steps past the budget, four patterns, three limits. */
+static void test_nal_bytes_match_series(TestCtx *t)
+{
+    static uint8_t buf[1100];
+    static const size_t limits[] = {0u, PEL_SEI_HEVC_USER_BUDGET, SIZE_MAX};
+    int mismatches = 0;
+
+    for (int k = 0; k < 4; k++) {
+        fill_pattern(buf, sizeof(buf), k);
+        for (size_t n = 0; n <= sizeof(buf); n++) {
+            for (size_t l = 0; l < sizeof(limits) / sizeof(limits[0]); l++)
+                mismatches += !same_fit(pel_sei_nal_bytes(buf, n, limits[l]),
+                                        frozen_nal_bytes(buf, n, limits[l]), limits[l]);
+        }
+    }
+    CHECK(mismatches == 0);
+    CHECK(pel_sei_nal_bytes(NULL, 100, SIZE_MAX) == frozen_nal_bytes(NULL, 100, SIZE_MAX));
+    CHECK(NVENC_HEVC_NON_VCL_LIMIT == 1024 && NVENC_HEVC_SEI_RESERVE == 256);
+}
+
 static void test_nal_bytes(TestCtx *t)
 {
     uint8_t buf[1000];
@@ -216,7 +293,7 @@ static void test_nal_bytes(TestCtx *t)
     memset(buf, 'a', sizeof(buf));
     CHECK(pel_sei_nal_bytes(buf, 999, 2000) == 1012u);
     /* 00 00 00 00 00 00 is coded 00 00 03 00 00 03 00 00. */
-    CHECK(pel_sei_epb(zeros, sizeof(zeros)) == 2u);
+    CHECK(nvenc_sei_epb_count(zeros, sizeof(zeros), 0) == 2u);
     CHECK(pel_sei_nal_bytes(zeros, sizeof(zeros), 100) == 6u + 0u + 10u + 2u);
     /* Above the limit nothing is scanned and the result exceeds the limit. */
     CHECK(pel_sei_nal_bytes(NULL, 5000, 768) > 768u);
@@ -372,7 +449,7 @@ static void check_carrier_twin(TestCtx *t, const uint8_t *p, size_t n)
         pel_sei_carrier_write(p, n, mine);
         CHECK(pel_blob_carrier_encode(p, n, ref, PEL_CARRIER_MAX_LEN(n), &rlen) == PEL_OK);
         CHECK(rlen == clen && memcmp(mine, ref, clen) == 0);
-        CHECK(memchr(mine, 0, clen) == NULL && pel_sei_epb(mine, clen) == 0u);
+        CHECK(memchr(mine, 0, clen) == NULL && nvenc_sei_epb_count(mine, (uint32_t)clen, 0) == 0u);
         CHECK(pel_sei_carrier_nal_bytes(p, n, SIZE_MAX) == pel_sei_nal_bytes(mine, clen, SIZE_MAX));
         CHECK(unwraps_to(mine, clen, p, n));
     }
@@ -647,6 +724,7 @@ int main(void)
     TestCtx *t = &ctx;
 
     test_nal_bytes(t);
+    test_nal_bytes_match_series(t);
     test_1080p_strips_to_scalars(t);
     test_small_grid_keeps_maps(t);
     test_largest_grid(t);

@@ -17,8 +17,8 @@ index 4932034eb7..af59c37de1 100644
 +    if (ctx->pelorus_udu_stripped)
 +        av_log(avctx, AV_LOG_WARNING, "udu_sei: %"PRId64" Pelorus side data "
 +               "payload(s) were written without their per-cell maps, to stay "
-+               "within hevc_nvenc's %u bytes of parameter sets and SEI per "
-+               "picture.\n", ctx->pelorus_udu_stripped, PEL_SEI_HEVC_NVENC_CAP);
++               "within hevc_nvenc's %d bytes of parameter sets and SEI per "
++               "picture.\n", ctx->pelorus_udu_stripped, NVENC_HEVC_NON_VCL_LIMIT);
      av_freep(&ctx->qp_delta_map);
      av_freep(&ctx->me_hints);
  
@@ -70,8 +70,8 @@ index 4932034eb7..af59c37de1 100644
 +        av_log(avctx, ctx->pelorus_udu_stripped ? AV_LOG_VERBOSE : AV_LOG_WARNING,
 +               "udu_sei: frame pts %"PRId64": the %zu-byte Pelorus side data is "
 +               "written without its per-cell maps (%zu bytes): hevc_nvenc writes "
-+               "at most %u bytes of parameter sets and SEI per picture.\n",
-+               frame->pts, size, keep, PEL_SEI_HEVC_NVENC_CAP);
++               "at most %d bytes of parameter sets and SEI per picture.\n",
++               frame->pts, size, keep, NVENC_HEVC_NON_VCL_LIMIT);
 +        ctx->pelorus_udu_stripped++;
 +    }
 +    if (!ctx->pelorus_udu_carrier_logged) {

@@ -43,7 +43,7 @@ at 640x360, 1920x1080 and 3840x2160 alike. Depends on patches 0019 and
 
 diff --git a/libavcodec/pelorus_sei_fit_qsv.h b/libavcodec/pelorus_sei_fit_qsv.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..cd1f944b8ec2b4e4172cb59c14af4768fb5defc1
+index 0000000000000000000000000000000000000000..4617694ee5d905c8f621175e22fd5900ff42df75
 --- /dev/null
 +++ b/libavcodec/pelorus_sei_fit_qsv.h
 @@ -0,0 +1,128 @@
@@ -121,7 +121,7 @@ index 0000000000000000000000000000000000000000..cd1f944b8ec2b4e4172cb59c14af4768
 +
 +    if (!escaped || n > limit || !p)
 +        return msg;
-+    return msg + pel_sei_epb(p, n);
++    return msg + nvenc_sei_epb_count(p, n > UINT32_MAX ? UINT32_MAX : (uint32_t)n, 0);
 +}
 +
 +/* Upper bound on the emulation prevention bytes the zeroed map fields of a

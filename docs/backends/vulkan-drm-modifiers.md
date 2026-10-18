@@ -83,7 +83,7 @@ Measured on an Arc A380 and a Radeon 610M
 | P010 to DRM PRIME | exports | exports |
 
 Both stock FFmpeg `n9.0.2` defects are resolved by the shared FFmpeg fix
-series `v0.2.0` (pinned in `build-config.env`, [ADR-0185](../adr/0185-shared-ffmpeg-fix-series.md)):
+series since `v0.2.0` (pinned in `build-config.env`, [ADR-0185](../adr/0185-shared-ffmpeg-fix-series.md)):
 
 - **P010 to VAAPI.** Stock FFmpeg exported a P010 Vulkan frame as layers `R16` +
   `GR1616`, whereas VAAPI import accepted P010 only as `R16` + `RG1616`

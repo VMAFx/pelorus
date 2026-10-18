@@ -18,5 +18,10 @@
     "test": "pelorus:qloop-x265-reference",
     "reason": "SKIP: x265, ffmpeg or vmaf not found",
     "issue": "issue #166: reference closed-loop quality-threshold encode test requires x265, ffmpeg, and vmaf on PATH"
+  },
+  {
+    "test": "pelorus:sei-fit",
+    "reason": "SKIP: ffmpeg_series_dir unset (sei-fit needs the shared series nvenc_sei.h)",
+    "issue": "ADR-0218: the header comes only from the shared FFmpeg fix series; set -Dffmpeg_series_dir (or FFMPEG_SERIES_DIR for make) to the directory scripts/fetch-ffmpeg-series.sh prints. The core, sanitizers and windows CI jobs set it and pass --require pelorus:sei-fit, so the skip never passes there"
   }
 ]

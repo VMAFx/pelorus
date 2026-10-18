@@ -72,7 +72,7 @@ static inline size_t pel_sei_qsv_cost(const uint8_t *p, size_t n, int escaped, s
 
     if (!escaped || n > limit || !p)
         return msg;
-    return msg + pel_sei_epb(p, n);
+    return msg + nvenc_sei_epb_count(p, n > UINT32_MAX ? UINT32_MAX : (uint32_t)n, 0);
 }
 
 /* Upper bound on the emulation prevention bytes the zeroed map fields of a

@@ -57,10 +57,10 @@ ADR: docs/adr/0118-nvenc-av1-filmgrain.md, docs/adr/0115-grain-estimate.md (prod
  3 files changed, 313 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index e76be245e0dfe6f949a6cc3943ada80aca90170b..4932034eb712015be3a1e21881c2ace65696ac7e 100644
+index 322fb7a41c6e99432dd5d72c7b7fbb2325abb252..9ea9bc94c6e297f38922a4ab0036ff09db1958c3 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
-@@ -1698,6 +1698,31 @@ static av_cold int nvenc_setup_av1_config(AVCodecContext *avctx)
+@@ -1690,6 +1690,31 @@ static av_cold int nvenc_setup_av1_config(AVCodecContext *avctx)
      av1->numFwdRefs = avctx->refs;
      av1->numBwdRefs = avctx->refs;
  
@@ -92,7 +92,7 @@ index e76be245e0dfe6f949a6cc3943ada80aca90170b..4932034eb712015be3a1e21881c2ace6
  #ifdef NVENC_HAVE_H264_AND_AV1_TEMPORAL_FILTER
      if (ctx->tf_level >= 0) {
          av1->tfLevel = ctx->tf_level;
-@@ -3124,6 +3149,266 @@ static void reconfig_encoder(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3073,6 +3098,266 @@ static void reconfig_encoder(AVCodecContext *avctx, const AVFrame *frame)
      }
  }
  
@@ -359,7 +359,7 @@ index e76be245e0dfe6f949a6cc3943ada80aca90170b..4932034eb712015be3a1e21881c2ace6
  #ifdef NVENC_HAVE_HEVC_AND_AV1_MASTERING_METADATA
  static int nvenc_set_mastering_display_data(AVCodecContext *avctx, const AVFrame *frame, NV_ENC_PIC_PARAMS *pic_params,
                                              MASTERING_DISPLAY_INFO *mastering_disp_info, CONTENT_LIGHT_LEVEL *content_light_level)
-@@ -3648,6 +3933,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3597,6 +3882,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
          }
  #endif
  

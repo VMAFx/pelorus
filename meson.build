@@ -390,14 +390,41 @@ endif
 # pelorus_sei_fit_qsv.h): a Pelorus blob that does not fit
 # is carried as its scalar sections, byte-identical to the maps=0 blob, and
 # anything else that does not fit is dropped, never cut short.
-if get_option('tests')
+#
+# pelorus_sei_fit.h includes libavcodec/nvenc_sei.h, which only the shared
+# FFmpeg fix series creates (ADR-0218): -Dffmpeg_series_dir names the
+# directory scripts/fetch-ffmpeg-series.sh printed. Without it the test is the
+# named skip in .config/test-skips.json (ADR-0188); the core, sanitizers and
+# windows CI jobs set it and require both tests to run.
+ffmpeg_series_dir = get_option('ffmpeg_series_dir')
+extract_series_file = meson.project_source_root() / 'scripts' / 'extract-series-file.py'
+test('extract-series-file',
+     python_prog,
+     args: ['-I', extract_series_file, '--self-test'],
+     suite: 'fast')
+if get_option('tests') and ffmpeg_series_dir != ''
+  subdir('ffmpeg-patches/test/series')
   sei_fit_test = executable(
     'pelorus_sei_fit_test',
-    files('ffmpeg-patches/test/sei_fit_test.c'),
-    include_directories: include_directories('ffmpeg-patches/files'),
+    files('ffmpeg-patches/test/sei_fit_test.c'), nvenc_sei_h,
+    include_directories: [include_directories('ffmpeg-patches/files'), nvenc_sei_inc],
     dependencies: [libpelorus_dep, cc.find_library('m', required: false)],
   )
   test('sei-fit', sei_fit_test, suite: 'fast')
+  sei_fit_planted_test = executable(
+    'pelorus_sei_fit_planted_test',
+    files('ffmpeg-patches/test/sei_fit_test.c'), nvenc_sei_planted_h,
+    include_directories: [include_directories('ffmpeg-patches/files'),
+                          nvenc_sei_planted_inc],
+    dependencies: [libpelorus_dep, cc.find_library('m', required: false)],
+  )
+  test('sei-fit-planted', sei_fit_planted_test, suite: 'fast', should_fail: true)
+elif get_option('tests')
+  test('sei-fit',
+       python_prog,
+       args: ['-I', '-c', 'print("SKIP: ffmpeg_series_dir unset (sei-fit needs the'
+              + ' shared series nvenc_sei.h)"); raise SystemExit(77)'],
+       suite: 'fast')
 endif
 
 # Issue #82 / ADR-0210: classification of direct and x265-wrapped user data

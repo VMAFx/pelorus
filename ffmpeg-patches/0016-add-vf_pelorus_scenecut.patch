@@ -30,10 +30,10 @@ ADR: docs/adr/0126-scenecut-idr.md
  4 files changed, 116 insertions(+)
 
 diff --git a/configure b/configure
-index 68256adb2425f459bfc89fb11b410c19f9a39498..7ff55835cd28509abe48ac3eb69cabd101582590 100755
+index 35ac38596875faecebea454197863fc5caac891f..f4660fabd8f58f83404f0b71b32975d6d88ee824 100755
 --- a/configure
 +++ b/configure
-@@ -7483,6 +7483,8 @@ pelorus_mc_vulkan_filter_extralibs="libpelorus_extralibs"
+@@ -7489,6 +7489,8 @@ pelorus_mc_vulkan_filter_extralibs="libpelorus_extralibs"
  enabled pelorus_mc_vulkan_filter && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/interop.h pel_blob_pack
  pelorus_fgs_bsf_extralibs="libpelorus_extralibs"
  enabled pelorus_fgs_bsf && require_pkg_config libpelorus "libpelorus >= 0.2.0" pelorus/grain_convert.h pel_grain_aom_to_h274
@@ -43,10 +43,10 @@ index 68256adb2425f459bfc89fb11b410c19f9a39498..7ff55835cd28509abe48ac3eb69cabd1
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index 337a6adf27348fd8b742d9ab2f1dec0be1b51cd1..b7e22da8206561608e5e83822b3de7d93e3105a5 100644
+index 82f64f2caf0e8e37653b10f720b790433774e0b4..5187250e887937318fd43e5572109a4a6c85879f 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
-@@ -440,6 +440,7 @@ OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER)  += vf_pelorus_dehalo_vulkan.o vulka
+@@ -448,6 +448,7 @@ OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER)  += vf_pelorus_dehalo_vulkan.o vulka
  OBJS-$(CONFIG_PELORUS_DENOISE_VULKAN_FILTER) += vf_pelorus_denoise_vulkan.o vulkan.o vulkan_filter.o
  OBJS-$(CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vf_pelorus_grain_estimate_vulkan.o vulkan.o vulkan_filter.o
  OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER)      += vf_pelorus_mc_vulkan.o vulkan.o vulkan_filter.o
@@ -55,10 +55,10 @@ index 337a6adf27348fd8b742d9ab2f1dec0be1b51cd1..b7e22da8206561608e5e83822b3de7d9
  OBJS-$(CONFIG_PERSPECTIVE_FILTER)            += vf_perspective.o
  OBJS-$(CONFIG_PHASE_FILTER)                  += vf_phase.o
 diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
-index 0ee727c8c38cefe87c4d23504c0e43ddd6f82554..d6632cc826123b6f1b3bbc93db698e8023ca8591 100644
+index fc509e21001369d317888124767888b798bec693..77a978bfff534a1e182f3d03a527470f8d0c4f63 100644
 --- a/libavfilter/allfilters.c
 +++ b/libavfilter/allfilters.c
-@@ -412,6 +412,7 @@ extern const FFFilter ff_vf_pelorus_dehalo_vulkan;
+@@ -417,6 +417,7 @@ extern const FFFilter ff_vf_pelorus_dehalo_vulkan;
  extern const FFFilter ff_vf_pelorus_denoise_vulkan;
  extern const FFFilter ff_vf_pelorus_grain_estimate_vulkan;
  extern const FFFilter ff_vf_pelorus_mc_vulkan;
