@@ -25,6 +25,7 @@ libpelorus/src/grain_convert.c
 libpelorus/src/grain_convert_tables.c
 libpelorus/src/grain_table.c
 libpelorus/src/interop.c
+libpelorus/src/qloop.c
 libpelorus/src/qp_report_csv.c
 libpelorus/src/quality.c
 libpelorus/src/sha256.c
@@ -37,8 +38,10 @@ libpelorus/test/grain_convert_test.c
 libpelorus/test/grain_table_test.c
 libpelorus/test/interop_test.c
 libpelorus/test/path_utf8_test.c
+libpelorus/test/quality_loop_test.c
 libpelorus/test/quality_test.c
 libpelorus/test/telemetry_test.c
 libpelorus/test/telemetry_adapter_test.c
+tools/pelorus_qloop.c
 tools/pelorus_qp_report.c
 tools/pelorus_zones.c

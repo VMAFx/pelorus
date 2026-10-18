@@ -13,5 +13,10 @@
     "test": "pelorus:x265-zone-honour",
     "reason": "SKIP: x265 or ffmpeg not found",
     "issue": "issue #83: x265 zone honour test requires x265 and ffmpeg on PATH"
+  },
+  {
+    "test": "pelorus:qloop-x265-reference",
+    "reason": "SKIP: x265, ffmpeg or vmaf not found",
+    "issue": "issue #166: reference closed-loop quality-threshold encode test requires x265, ffmpeg, and vmaf on PATH"
   }
 ]
