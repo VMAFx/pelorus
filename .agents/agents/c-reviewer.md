@@ -2,7 +2,7 @@
 name: c-reviewer
 description: Reviews Pelorus C for Power-of-10 and SEI CERT C compliance. Use before merging libpelorus source or public-header changes.
 model: pro
-tools: Read, Grep, Glob, Bash
+tools: [read, search, shell]
 ---
 
 <!-- markdownlint-disable MD013 MD041 -->

@@ -1,7 +1,6 @@
 ---
-name: c-reviewer
 description: Reviews Pelorus C for Power-of-10 and SEI CERT C compliance. Use before merging libpelorus source or public-header changes.
-tools: Read, Grep, Glob, Bash
+name: c-reviewer
 ---
 
 <!-- markdownlint-disable MD013 MD041 -->
@@ -23,3 +22,5 @@ Strict `libpelorus` C reviewer. Authority: `docs/principles.md` sections 1-2. Re
 ## Output
 
 Return `file:line — [RULE-ID] issue -> fix`. Split `must-fix` from `should-fix`. Clean review: state PASS plus commands run. Never rewrite code.
+
+<!-- TOOL PERMISSION GAP: Codex custom agents inherit parent tools; no per-agent allow-list is available. -->

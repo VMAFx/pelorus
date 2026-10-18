@@ -1,7 +1,10 @@
 ---
-name: ffmpeg-patch-reviewer
 description: Reviews FFmpeg patch stack idioms, registration correctness, libpelorus pkg-config wiring, cumulative-apply integrity, and rebase-sensitive invariants. Use when ffmpeg-patches/ changes.
-tools: Read, Grep, Glob, Bash
+name: ffmpeg-patch-reviewer
+tools:
+  - read
+  - search
+  - execute
 ---
 
 <!-- markdownlint-disable MD013 MD041 -->

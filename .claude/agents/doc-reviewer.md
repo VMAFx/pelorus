@@ -1,8 +1,12 @@
 ---
-name: doc-reviewer
 description: Verifies human-readable documentation for each user-discoverable surface under ADR-0100. Use for filters, AVOptions, public APIs, interop sections, or build flags.
 model: sonnet
-tools: Read, Grep, Glob, Bash
+name: doc-reviewer
+tools:
+  - Read
+  - Grep
+  - Glob
+  - Bash
 ---
 
 <!-- markdownlint-disable MD013 MD041 -->
