@@ -160,7 +160,7 @@ ffmpeg -init_hw_device cuda=cu:0 -init_hw_device vulkan=vk@cu -filter_hw_device 
 
 Measured on an RTX 4090 on 2026-10-17 with 8 noisy 320x192 pictures: exit code 0, the `-v verbose` log shows `Using input frames context (format cuda) with hevc_nvenc encoder`, `trace_headers` counts 8 active FGC SEI, and the decoder exports film grain parameters for all 8 pictures. `test/fgs-sidedata-smoke.sh` runs the same estimator and filter through system memory so that one graph also serves libx265.
 
-hevc_nvenc writes the Pelorus carrier SEI ([ADR-0183](../adr/0183-sidedata-zero-free-carrier.md)) on every picture. libx265 4.3 (`X265_BUILD` 217) did not: with `-udu_sei 1` it wrote no foreign user data SEI on 2026-10-17, neither from the estimator nor from a decoded stream that carried one, so the filter found no section and wrote no FGC SEI. The smoke probes libx265 for this before it uses it and skips by name when the SEI is missing.
+hevc_nvenc writes the Pelorus carrier SEI ([ADR-0183](../adr/0183-sidedata-zero-free-carrier.md)) on every picture. libx265 does not drop the SEI, but it changes it: x265 writes its own UUID (`2ca2de09-b517-47db-bb55-a4fe7fc2fc4e`) in front of every user data unregistered payload it receives, so the stream carries that UUID, then the Pelorus UUID, then the blob. Decoders report the x265 UUID and the filter finds no section, so it writes no FGC SEI. Every x265 release since 2.1 does this; it was measured on 2026-10-18 with source builds of 2.1, 3.0 and master and with the 4.3 package ([research digest](../research/0082-x265-udu-uuid-wrap.md)). The smoke probes libx265 before it uses it and skips by name: one reason for the wrapped SEI, another for a SEI that is missing.
 
 ### Constraints and behavior
 
