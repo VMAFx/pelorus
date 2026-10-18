@@ -127,6 +127,7 @@ jobs:
             ffmpeg-patches/test/build-and-run.sh
       - name: Package tester zip
         run: |
+          git -C ffmpeg checkout "$FFMPEG_COMMIT" -- COPYING.LGPLv2.1 LICENSE.md
           scripts/windows/package-tester-zip.sh \
             "$(cygpath -u "$RUNNER_TEMP")/pelorus-keep" \
             "$GITHUB_WORKSPACE/ffmpeg" \

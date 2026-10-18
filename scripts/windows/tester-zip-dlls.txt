@@ -54,3 +54,5 @@ libgomp-1.dll              mingw-w64-ucrt-x86_64-gcc-libs         GPL-3.0-or-lat
 libssp-0.dll               mingw-w64-ucrt-x86_64-gcc-libs         GPL-3.0-or-later WITH GCC-exception-3.1
 libiconv-2.dll             mingw-w64-ucrt-x86_64-libiconv         LGPL-2.0-or-later AND GPL-3.0-or-later
 libintl-8.dll              mingw-w64-ucrt-x86_64-gettext-runtime  LGPL-2.1-or-later
+liblzma-5.dll              mingw-w64-ucrt-x86_64-xz               0BSD
+libbz2-1.dll               mingw-w64-ucrt-x86_64-bzip2            bzip2-1.0.6
