@@ -141,15 +141,33 @@ jobs:
           $bundle = Get-ChildItem -Directory -LiteralPath $target | Select-Object -First 1
           $bundleDir = $bundle.FullName
 
-          $proc = Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" `
-            -ArgumentList "/c", "`"$bundleDir\run.cmd`"" `
-            -Environment @{ PATH = $bundleDir; SystemRoot = $env:SystemRoot; PROCESSOR_ARCHITECTURE = $env:PROCESSOR_ARCHITECTURE } `
-            -NoNewWindow -Wait -PassThru `
-            -RedirectStandardError "$env:RUNNER_TEMP\refusal-stderr.txt" `
-            -RedirectStandardOutput "$env:RUNNER_TEMP\refusal-stdout.txt"
+          if (Test-Path -LiteralPath "$bundleDir\vulkan-1.dll") {
+            throw "bundle ships vulkan-1.dll: $bundleDir"
+          }
+          # Start-Process -Environment appends the Machine and User PATH to a
+          # given PATH (PowerShell 7.4+), which puts System32 and its Vulkan
+          # loader back in reach. ProcessStartInfo takes the environment as set.
+          $psi = [System.Diagnostics.ProcessStartInfo]::new("$env:SystemRoot\System32\cmd.exe")
+          $psi.ArgumentList.Add("/c")
+          $psi.ArgumentList.Add("$bundleDir\run.cmd")
+          $psi.WorkingDirectory = $bundleDir
+          $psi.UseShellExecute = $false
+          $psi.RedirectStandardError = $true
+          $psi.RedirectStandardOutput = $true
+          $psi.Environment.Clear()
+          $psi.Environment["PATH"] = $bundleDir
+          $psi.Environment["SystemRoot"] = $env:SystemRoot
+          $psi.Environment["PROCESSOR_ARCHITECTURE"] = $env:PROCESSOR_ARCHITECTURE
+          $proc = [System.Diagnostics.Process]::Start($psi)
+          $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+          $stderr = $proc.StandardError.ReadToEnd()
+          $null = $stdoutTask.Result
+          if (-not $proc.WaitForExit(120000)) {
+            $proc.Kill()
+            throw "run.cmd refusal check timed out"
+          }
 
           $code = $proc.ExitCode
-          $stderr = Get-Content -Raw "$env:RUNNER_TEMP\refusal-stderr.txt"
           Write-Host "Refusal exit code: $code"
           Write-Host "Refusal stderr: $stderr"
           if ($code -ne 3) {
