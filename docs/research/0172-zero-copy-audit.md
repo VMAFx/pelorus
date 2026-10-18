@@ -24,7 +24,7 @@ All filters: `FILTER_SINGLE_PIXFMT(AV_PIX_FMT_VULKAN)` + `FF_FILTER_FLAG_HWFRAME
 | analyze | VULKAN->VULKAN (pass-through frame) | 5 x ntiles x 4 B, tile 32: 40.8 KB / 163 KB | yes: `ff_vk_exec_submit` + `ff_vk_exec_wait` per frame | analyze:61,647,654-657,749-750 |
 | mc | VULKAN->VULKAN (pass-through) | mvx, mvy (+sad if meta=1, default 1), nblocks x 4 B each, bsize 16: 8160 blocks = 32.6 KB each / 32400 = 130 KB each; then `memcpy` to host scratch | yes: submit+wait per frame; next frame's predictors computed on CPU (`pel_mc_build_predictors`) and written back into a host-visible SSBO: GPU->CPU->GPU loop that serialises frame N+1 behind frame N | mc:489-500,623,660-663,749-751,804-826 |
 | denoise | VULKAN->VULKAN (new pooled frame) | meta=0 (default): none, no wait. meta=1: PelorusDenoiseBuf about 640 B (assumes PEL_DENOISE_STATS=4) | meta=1 only | denoise:98-125,523-531,783-786,791-796,1060 |
-| denoise MV input | consumes mc side data | CPU parses side data and fills two HOST_VISIBLE-only SSBOs (cells x 4 B each); GPU reads system memory over PCIe | none (async) | denoise:546-630 |
+| denoise MV input | consumes mc side data | CPU parses side data and fills two SSBOs (cells x 4 B each); HOST_VISIBLE-only until ADR-0222, now DEVICE_LOCAL\|HOST_VISIBLE, so the GPU no longer reads system memory over PCIe | none (async) | denoise:546-630 |
 | grain_estimate | VULKAN->VULKAN (pass-through) | PelorusGrainBuf 2304 B | yes: `ff_vk_exec_wait` per frame | grain_estimate:120-126,540-558,628-634 |
 | dehalo, aa, deblock, borderfix | VULKAN->VULKAN | none | none | no mapped_mem / exec_wait in files (grep) |
 | scenecut | any format, metadata only, no GPU work | none | none | vf_pelorus_scenecut.c:92-107 |

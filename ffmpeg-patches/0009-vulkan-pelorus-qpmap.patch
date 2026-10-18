@@ -74,13 +74,13 @@ R32_SINT map without a fillable usage, so the probe disables steering there.
  configure                                 |    6 +
  libavcodec/vulkan/Makefile                |    6 +
  libavcodec/vulkan/pelorus_qpmap.comp.glsl |  125 ++
- libavcodec/vulkan_encode.c                | 1514 ++++++++++++++++++++
+ libavcodec/vulkan_encode.c                | 1515 ++++++++++++++++++++
  libavcodec/vulkan_encode.h                |   87 ++
  libavcodec/vulkan_encode_h265.c           |    7 +
  libavutil/hwcontext_vulkan.c              |   17 +
  libavutil/vulkan_functions.h              |    1 +
  libavutil/vulkan_loader.h                 |    3 +
- 9 files changed, 1766 insertions(+)
+ 9 files changed, 1767 insertions(+)
 
 diff --git a/configure b/configure
 index 33f7c8f665cd7a52b4d4c83e62cf4f70a6f91a4d..3f94bdbb73e9b661c3293bb35206d2b9a274b232 100755
@@ -255,10 +255,10 @@ index 0000000000000000000000000000000000000000..97e545732f2ab340de649f46904e3bf7
 +    }
 +}
 diff --git a/libavcodec/vulkan_encode.c b/libavcodec/vulkan_encode.c
-index 39c43300c40ee6ce8fdad669028dda9c315a00a4..e46cf613b9bacf71dd0929844c6493332d8d1a94 100644
+index 39c43300c40ee6ce8fdad669028dda9c315a00a4..c40bf373be7ffc794dfe6f422c79af87c44ce48f 100644
 --- a/libavcodec/vulkan_encode.c
 +++ b/libavcodec/vulkan_encode.c
-@@ -28,6 +28,1394 @@ const AVCodecHWConfigInternal *const ff_vulkan_encode_hw_configs[] = {
+@@ -28,6 +28,1395 @@ const AVCodecHWConfigInternal *const ff_vulkan_encode_hw_configs[] = {
      NULL,
  };
  
@@ -1278,6 +1278,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..e46cf613b9bacf71dd0929844c649333
 +    err = ff_vk_get_pooled_buffer(s, &ctx->qpmap_roi_pool, &roi_ref,
 +                                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
 +                                  roi_bytes,
++                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
 +                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
 +                                  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 +    if (err < 0)
@@ -1653,7 +1654,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..e46cf613b9bacf71dd0929844c649333
  av_cold void ff_vulkan_encode_uninit(FFVulkanEncodeContext *ctx)
  {
      FFVulkanContext *s = &ctx->s;
-@@ -36,6 +1424,10 @@ av_cold void ff_vulkan_encode_uninit(FFVulkanEncodeContext *ctx)
+@@ -36,6 +1425,10 @@ av_cold void ff_vulkan_encode_uninit(FFVulkanEncodeContext *ctx)
      /* Wait on and free execution pool */
      ff_vk_exec_pool_free(s, &ctx->enc_pool);
  
@@ -1664,7 +1665,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..e46cf613b9bacf71dd0929844c649333
      /* Destroy the session params */
      if (ctx->session_params)
          vk->DestroyVideoSessionParametersKHR(s->hwctx->act_dev,
-@@ -173,6 +1565,10 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
+@@ -173,6 +1566,10 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
  
      VkVideoReferenceSlotInfoKHR ref_slot[37];
      VkVideoEncodeInfoKHR encode_info;
@@ -1675,7 +1676,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..e46cf613b9bacf71dd0929844c649333
  
      /* Create packet data buffer */
      max_pkt_size = FFALIGN(3 * ctx->base.surface_width * ctx->base.surface_height + (1 << 16),
-@@ -412,6 +1808,71 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
+@@ -412,6 +1809,71 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
              .imageMemoryBarrierCount = nb_img_bar,
          });
  
@@ -1747,7 +1748,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..e46cf613b9bacf71dd0929844c649333
      /* Start, use parameters */
      vk->CmdBeginVideoCodingKHR(cmd_buf, &encode_start);
  
-@@ -429,11 +1890,23 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
+@@ -429,11 +1891,23 @@ static int vulkan_encode_issue(AVCodecContext *avctx,
      /* End encoding */
      vk->CmdEndVideoCodingKHR(cmd_buf, &encode_end);
  
@@ -1771,7 +1772,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..e46cf613b9bacf71dd0929844c649333
      /* We don't need to keep the input image any longer, its already ref'd */
      av_frame_free(&base_pic->input_image);
  
-@@ -885,6 +2358,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -885,6 +2359,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      if (err < 0)
          return err;
  
@@ -1784,7 +1785,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..e46cf613b9bacf71dd0929844c649333
      /* Create command and query pool */
      query_create = (VkQueryPoolVideoEncodeFeedbackCreateInfoKHR) {
          .sType = VK_STRUCTURE_TYPE_QUERY_POOL_VIDEO_ENCODE_FEEDBACK_CREATE_INFO_KHR,
-@@ -897,6 +2376,14 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -897,6 +2377,14 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      if (err < 0)
          return err;
  
@@ -1799,7 +1800,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..e46cf613b9bacf71dd0929844c649333
      if (ctx->opts.quality > ctx->enc_caps.maxQualityLevels) {
          av_log(avctx, AV_LOG_ERROR, "Invalid quality level %i: allowed range is "
                                      "0 to %i\n",
-@@ -1038,6 +2525,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
+@@ -1038,6 +2526,12 @@ av_cold int ff_vulkan_encode_init(AVCodecContext *avctx, FFVulkanEncodeContext *
      /* Create session */
      session_create.pVideoProfile = &ctx->profile;
      session_create.flags = 0x0;
@@ -1812,7 +1813,7 @@ index 39c43300c40ee6ce8fdad669028dda9c315a00a4..e46cf613b9bacf71dd0929844c649333
      session_create.queueFamilyIndex = ctx->qf_enc->idx;
      session_create.maxCodedExtent = ctx->caps.maxCodedExtent;
      session_create.maxDpbSlots = ctx->caps.maxDpbSlots;
-@@ -1076,18 +2569,39 @@ int ff_vulkan_encode_create_session_params(AVCodecContext *avctx, FFVulkanEncode
+@@ -1076,18 +2570,39 @@ int ff_vulkan_encode_create_session_params(AVCodecContext *avctx, FFVulkanEncode
  
      VkVideoEncodeQualityLevelInfoKHR q_info;
      VkVideoSessionParametersCreateInfoKHR session_params_create;

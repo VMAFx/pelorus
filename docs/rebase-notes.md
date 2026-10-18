@@ -8,6 +8,26 @@ the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
 ranges in older entries predate the first entry below (22 patches on the
 shared FFmpeg fix series, number 0021 retired).
 
+## Unreleased — device-local storage buffers (#109, ADR-0222; regenerates 0003, 0009)
+
+- **Patches**: `0003` (denoise) and `0009` (Vulkan QP map); no registration,
+  option, numbering or ABI change. Sources:
+  `files/vf_pelorus_denoise_vulkan.c` (the `mv_buf_pool` and `conf_buf_pool`
+  allocations) and `files/vulkan-pelorus-qpmap.patch` (the ROI pool; hunk
+  header `+28,1395`).
+- **Rule**: every `ff_vk_get_pooled_buffer()` or `ff_vk_create_buf()` call
+  with `VK_BUFFER_USAGE_STORAGE_BUFFER_BIT` usage requests
+  `VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT`, kept next to `HOST_VISIBLE` and
+  `HOST_COHERENT` where the host writes the buffer.
+  `scripts/check-vulkan-buffer-domain.py` (fast test `vulkan-buffer-domain`)
+  refuses a storage buffer without it. A pure `TRANSFER_SRC` staging buffer
+  may stay host-only.
+- **Re-test after rebase**: `meson test --suite=fast` (`vulkan-buffer-domain`).
+  Then confirm that `ff_vk_get_pooled_buffer()` and `ff_vk_create_buf()` keep
+  their argument order in `libavutil/vulkan.h`, since the checker reads
+  arguments by position. Finally run the format matrix row
+  `pelorus_mc_vulkan=meta=1,...,pelorus_denoise_vulkan=...:mc=1`.
+
 ## Unreleased — shared FFmpeg fix series pinned at `v0.3.0` (#386, ADR-0218; regenerates 0001–0004, 0006–0011, 0014–0018, 0022, 0023)
 
 - **Base**: `FFMPEG_SERIES_TAG` moves from `v0.2.0` to `v0.3.0`,

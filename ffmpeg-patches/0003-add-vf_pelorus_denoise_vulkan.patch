@@ -40,10 +40,10 @@ ADR: docs/adr/0112-temporal-denoise.md
  configure                                    |    3 +
  libavfilter/Makefile                         |    1 +
  libavfilter/allfilters.c                     |    1 +
- libavfilter/vf_pelorus_denoise_vulkan.c      | 1284 ++++++++++++++++++++
+ libavfilter/vf_pelorus_denoise_vulkan.c      | 1286 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |    1 +
  libavfilter/vulkan/pelorus_denoise.comp.glsl |  518 ++++++++
- 6 files changed, 1808 insertions(+)
+ 6 files changed, 1810 insertions(+)
 
 diff --git a/configure b/configure
 index 974c5e3e75051a61c81fec15d264b9627a5933ec..d26ae6933549cc65a8a1852f2de02ff2980902a1 100755
@@ -92,10 +92,10 @@ index 796756c874547d1bb9ccba79c99350e5214e31c2..2efa0d5f6850fdd7b62e228caaba41db
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_denoise_vulkan.c b/libavfilter/vf_pelorus_denoise_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..16f1858766886f72c72db87e6431a0fa92f562ec
+index 0000000000000000000000000000000000000000..8373586d5067ca276234e7d8ed9671826da6049f
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_denoise_vulkan.c
-@@ -0,0 +1,1284 @@
+@@ -0,0 +1,1286 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -631,14 +631,16 @@ index 0000000000000000000000000000000000000000..16f1858766886f72c72db87e6431a0fa
 +    err = ff_vk_get_pooled_buffer(
 +        &s->vkctx, &s->mv_buf_pool, mvbuf_out, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
 +        (size_t)ncells * sizeof(uint32_t),
-+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
++        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 +    if (err < 0)
 +        return err;
 +
 +    err = ff_vk_get_pooled_buffer(
 +        &s->vkctx, &s->conf_buf_pool, confbuf_out, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, NULL,
 +        (size_t)ncells * sizeof(uint32_t),
-+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
++        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 +    if (err < 0)
 +        return err;
 +
