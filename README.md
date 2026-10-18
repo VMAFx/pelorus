@@ -290,7 +290,7 @@ users also need a copy named `praetorctl` on `PATH`
 | :--- | :--- | :--- |
 | **Native verification** | `make verify-native` | Builds, tests, formats, lints, and checks changelog rendering |
 | **Full verification** | `make verify-all` | Adds context, HISS, and documentation checks |
-| **HISS audit** | `make audit` | Applies the pinned 37-finding baseline ratchet |
+| **HISS audit** | `make audit` | Applies the pinned 27-finding baseline ratchet |
 | **Documentation** | `make docs-lint docs-figures` | Runs the locked Markdown and figure checks (Node.js 22.12 or newer) |
 | **Context sync** | `make compile-context` | Compiles canonical agent guidance to vendor targets |
 | **Licensing** | `reuse lint` | Checks every file's copyright and licence against `REUSE.toml` (reuse 6.x) |
@@ -315,9 +315,9 @@ generated agent context against `AGENTS.md`.
 private scratch-link policy.
 
 **Debt Baseline**: `.standards-baseline.json` anchors the debt ratchet at
-37 recorded infractions; audit forbids growth.
+27 recorded infractions; audit forbids growth.
 
-[praetor-hiss-badge]: https://img.shields.io/badge/Standards-HISS%20Adopted%20(37%20baselined)-yellow
+[praetor-hiss-badge]: https://img.shields.io/badge/Standards-HISS%20Adopted%20(27%20baselined)-yellow
 [praetor-hiss-agents]: https://github.com/VMAFx/pelorus/blob/HEAD/AGENTS.md
 [praetor-docs-badge]: https://github.com/VMAFx/pelorus/actions/workflows/praetor-docs.yml/badge.svg
 [praetor-docs-runs]: https://github.com/VMAFx/pelorus/actions/workflows/praetor-docs.yml

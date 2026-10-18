@@ -1,31 +1,14 @@
 {
   "version": 1,
-  "generated_at": "2026-10-18T13:37:15Z",
+  "generated_at": "2026-10-18T13:57:22Z",
   "repository": "VMAFx/pelorus",
-  "commit_sha": "ede8a1139107b17a0b07bfd86a669fc3e1311a53",
-  "total_infractions": 37,
+  "commit_sha": "b1c535ac8e5864f2d44257cb4174961e3517685f",
+  "total_infractions": 27,
   "infractions": [
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_aa_vulkan.c",
-      "line_number": 98,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:init_filter",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_aa_vulkan.c:HISS-01:fn:init_filter#1"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_aa_vulkan.c",
-      "line_number": 82,
-      "symbol": "init_filter",
-      "message": "Function 'init_filter' (71 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "anchor": "fn:init_filter",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_aa_vulkan.c:HISS-04:fn:init_filter#1"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_aa_vulkan.c",
-      "line_number": 170,
+      "line_number": 172,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:pelorus_aa_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_aa_vulkan.c:HISS-01:fn:pelorus_aa_vulkan_filter_frame#1"
@@ -33,7 +16,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_aa_vulkan.c",
-      "line_number": 181,
+      "line_number": 183,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:pelorus_aa_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_aa_vulkan.c:HISS-01:fn:pelorus_aa_vulkan_filter_frame#2"
@@ -41,24 +24,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c",
-      "line_number": 85,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:init_filter",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c:HISS-01:fn:init_filter#1"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c",
-      "line_number": 74,
-      "symbol": "init_filter",
-      "message": "Function 'init_filter' (66 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "anchor": "fn:init_filter",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c:HISS-04:fn:init_filter#1"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c",
-      "line_number": 152,
+      "line_number": 154,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:pelorus_borderfix_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c:HISS-01:fn:pelorus_borderfix_vulkan_filter_frame#1"
@@ -66,7 +32,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c",
-      "line_number": 163,
+      "line_number": 165,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:pelorus_borderfix_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c:HISS-01:fn:pelorus_borderfix_vulkan_filter_frame#2"
@@ -74,24 +40,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c",
-      "line_number": 120,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:init_filter",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c:HISS-01:fn:init_filter#1"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c",
-      "line_number": 93,
-      "symbol": "init_filter",
-      "message": "Function 'init_filter' (78 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "anchor": "fn:init_filter",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c:HISS-04:fn:init_filter#1"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c",
-      "line_number": 240,
+      "line_number": 242,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:pelorus_deband_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c:HISS-01:fn:pelorus_deband_vulkan_filter_frame#1"
@@ -99,7 +48,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c",
-      "line_number": 253,
+      "line_number": 255,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:pelorus_deband_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c:HISS-01:fn:pelorus_deband_vulkan_filter_frame#2"
@@ -107,7 +56,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c",
-      "line_number": 258,
+      "line_number": 260,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:pelorus_deband_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_deband_vulkan.c:HISS-01:fn:pelorus_deband_vulkan_filter_frame#3"
@@ -115,24 +64,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c",
-      "line_number": 102,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:init_filter",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c:HISS-01:fn:init_filter#1"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c",
-      "line_number": 85,
-      "symbol": "init_filter",
-      "message": "Function 'init_filter' (69 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "anchor": "fn:init_filter",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c:HISS-04:fn:init_filter#1"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c",
-      "line_number": 171,
+      "line_number": 173,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:pelorus_deblock_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c:HISS-01:fn:pelorus_deblock_vulkan_filter_frame#1"
@@ -140,7 +72,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c",
-      "line_number": 182,
+      "line_number": 184,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:pelorus_deblock_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c:HISS-01:fn:pelorus_deblock_vulkan_filter_frame#2"
@@ -148,24 +80,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c",
-      "line_number": 99,
-      "message": "Legacy non-DAG control flow jump (goto)",
-      "anchor": "fn:init_filter",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c:HISS-01:fn:init_filter#1"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c",
-      "line_number": 83,
-      "symbol": "init_filter",
-      "message": "Function 'init_filter' (74 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "anchor": "fn:init_filter",
-      "fingerprint": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c:HISS-04:fn:init_filter#1"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c",
-      "line_number": 174,
+      "line_number": 176,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:pelorus_dehalo_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c:HISS-01:fn:pelorus_dehalo_vulkan_filter_frame#1"
@@ -173,7 +88,7 @@
     {
       "rule_id": "HISS-01",
       "file_path": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c",
-      "line_number": 185,
+      "line_number": 187,
       "message": "Legacy non-DAG control flow jump (goto)",
       "anchor": "fn:pelorus_dehalo_vulkan_filter_frame",
       "fingerprint": "ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c:HISS-01:fn:pelorus_dehalo_vulkan_filter_frame#2"
