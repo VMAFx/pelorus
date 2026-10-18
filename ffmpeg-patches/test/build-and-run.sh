@@ -19,8 +19,10 @@
 #   WORKTREE     new path for the FFmpeg worktree   (optional)
 #   JOBS         parallel build jobs                (default nproc)
 #   KEEP_DIR     absolute path of a new directory that receives the linked
-#                ffmpeg and libpelorus.so* (lib/) after every check passed;
-#                run it with LD_LIBRARY_PATH=$KEEP_DIR/lib (optional)
+#                ffmpeg and libpelorus after every check passed; on Linux
+#                receives ffmpeg and lib/libpelorus.so* (run with
+#                LD_LIBRARY_PATH=$KEEP_DIR/lib); on Windows receives ffmpeg.exe
+#                and the libpelorus DLL in $KEEP_DIR (optional)
 #   NVENC_SMOKE_SKIP  fixed text the NVENC smoke's SKIP line must contain for
 #                its skip (exit 77) to pass, e.g. "Cannot load libcuda.so.1"
 #                on a host without an NVIDIA driver; unset, a skip fails the
@@ -57,6 +59,10 @@ ROOT="$(cd "$PATCHDIR/.." && pwd)"
 source "$ROOT/build-config.env"
 : "${FFMPEG_REPO:?FFMPEG_REPO must name a local FFmpeg checkout}"
 JOBS="${JOBS:-$(nproc)}"
+IS_WINDOWS=0
+if [[ "${MSYSTEM:-}" == "UCRT64" ]] || [[ "$(uname -o 2>/dev/null)" == "Msys" ]]; then
+    IS_WINDOWS=1
+fi
 
 RUN_ROOT=""
 PELORUS_BUILD=""
@@ -178,6 +184,11 @@ mkdir "$LOG_DIR"
 if (( ! CALLER_WORKTREE )); then
     WORKTREE="$RUN_ROOT/ffmpeg"
 fi
+if (( IS_WINDOWS )); then
+    FFMPEG_EXE="$WORKTREE/ffmpeg.exe"
+else
+    FFMPEG_EXE="$WORKTREE/ffmpeg"
+fi
 
 if ! git -C "$FFMPEG_REPO" rev-parse --git-dir >/dev/null 2>&1; then
     echo "ERROR: FFMPEG_REPO is not a git checkout: $FFMPEG_REPO" >&2
@@ -207,8 +218,19 @@ run_logged "install libpelorus" "$LOG_DIR/pelorus-install.log" \
 # Do not inherit a developer's libpelorus search paths. The installed prefix is
 # first for pkg-config and the only non-system runtime library path.
 export PKG_CONFIG_PATH="$PRIVATE_PREFIX/lib/pkgconfig"
-export LD_LIBRARY_PATH="$PRIVATE_PREFIX/lib"
-if [[ "$(pkg-config --variable=prefix libpelorus)" != "$PRIVATE_PREFIX" ]]; then
+if (( IS_WINDOWS )); then
+    export PATH="$PRIVATE_PREFIX/bin:$PATH"
+else
+    export LD_LIBRARY_PATH="$PRIVATE_PREFIX/lib"
+fi
+resolved_prefix="$(pkg-config --variable=prefix libpelorus)"
+if (( IS_WINDOWS )); then
+    resolved_prefix="$(cygpath -u "$resolved_prefix")"
+    expected_prefix="$(cygpath -u "$PRIVATE_PREFIX")"
+else
+    expected_prefix="$PRIVATE_PREFIX"
+fi
+if [[ "$resolved_prefix" != "$expected_prefix" ]]; then
     echo "ERROR: pkg-config did not resolve private libpelorus" >&2
     exit 1
 fi
@@ -301,6 +323,9 @@ configure_ffmpeg() (
 
 verify_static_avfilter_consumer() {
     local consumer="$FFMPEG_PREFIX/static-libavfilter-consumer"
+    if (( IS_WINDOWS )); then
+        consumer="${consumer}.exe"
+    fi
     local pkg_config_path="$FFMPEG_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
     local static_cflags_output
     local static_libs_output
@@ -333,7 +358,7 @@ run_logged "apply the shared series and the Pelorus stack" \
 run_logged "configure FFmpeg" "$LOG_DIR/ffmpeg-configure.log" \
     configure_ffmpeg
 run_logged "link ffmpeg" "$LOG_DIR/ffmpeg-build.log" \
-    make -C "$WORKTREE" -j"$JOBS" ffmpeg
+    make -C "$WORKTREE" -j"$JOBS" "${FFMPEG_EXE##*/}"
 run_logged "install static FFmpeg libraries" "$LOG_DIR/ffmpeg-install.log" \
     make -C "$WORKTREE" -j"$JOBS" install
 run_logged "link and run external static libavfilter consumer" \
@@ -353,12 +378,16 @@ FILTERS=(
 )
 
 echo "== verify Pelorus registrations =="
-if ! "$WORKTREE/ffmpeg" -hide_banner -filters \
+if ! "$FFMPEG_EXE" -hide_banner -filters \
     >"$LOG_DIR/ffmpeg-filters.log" 2>&1; then
     if [[ -f "$LOG_DIR/ffmpeg-filters.log" ]]; then
         tail -80 "$LOG_DIR/ffmpeg-filters.log" >&2
     fi
     exit 1
+fi
+if (( IS_WINDOWS )); then
+    tr -d '\r' < "$LOG_DIR/ffmpeg-filters.log" > "$LOG_DIR/ffmpeg-filters.log.tmp" &&
+        mv "$LOG_DIR/ffmpeg-filters.log.tmp" "$LOG_DIR/ffmpeg-filters.log"
 fi
 for filter in "${FILTERS[@]}"; do
     if ! awk -v name="$filter" '$2 == name { found = 1 } END { exit !found }' \
@@ -372,12 +401,16 @@ for filter in "${FILTERS[@]}"; do
     echo "registered filter: $filter"
 done
 
-if ! "$WORKTREE/ffmpeg" -hide_banner -bsfs \
+if ! "$FFMPEG_EXE" -hide_banner -bsfs \
     >"$LOG_DIR/ffmpeg-bsfs.log" 2>&1; then
     if [[ -f "$LOG_DIR/ffmpeg-bsfs.log" ]]; then
         tail -80 "$LOG_DIR/ffmpeg-bsfs.log" >&2
     fi
     exit 1
+fi
+if (( IS_WINDOWS )); then
+    tr -d '\r' < "$LOG_DIR/ffmpeg-bsfs.log" > "$LOG_DIR/ffmpeg-bsfs.log.tmp" &&
+        mv "$LOG_DIR/ffmpeg-bsfs.log.tmp" "$LOG_DIR/ffmpeg-bsfs.log"
 fi
 if ! awk '$1 == "pelorus_fgs" { found = 1 } END { exit !found }' \
     "$LOG_DIR/ffmpeg-bsfs.log"; then
@@ -395,13 +428,17 @@ verify_encoder_options() {
     local help_log="$LOG_DIR/ffmpeg-encoder-${encoder}.log"
     shift
 
-    if ! "$WORKTREE/ffmpeg" -hide_banner -h "encoder=$encoder" \
+    if ! "$FFMPEG_EXE" -hide_banner -h "encoder=$encoder" \
         >"$help_log" 2>&1; then
         echo "ERROR: could not inspect encoder: $encoder" >&2
         if [[ -f "$help_log" ]]; then
             tail -80 "$help_log" >&2
         fi
         return 1
+    fi
+    if (( IS_WINDOWS )); then
+        tr -d '\r' < "$help_log" > "${help_log}.tmp" &&
+            mv "${help_log}.tmp" "$help_log"
     fi
     for option in "$@"; do
         if ! grep -Eq "(^|[[:space:]])-${option}([[:space:]]|$)" "$help_log"; then
@@ -440,7 +477,7 @@ verify_encoder_options av1_vulkan pelorus_roi
 # (ADR-0189). Any other failure fails the replay.
 echo "== hevc_nvenc udu_sei smoke =="
 smoke_status=0
-FFMPEG_BIN="$WORKTREE/ffmpeg" OUTPUT_ROOT="$LOG_DIR/nvenc-udu-sei" \
+FFMPEG_BIN="$FFMPEG_EXE" OUTPUT_ROOT="$LOG_DIR/nvenc-udu-sei" \
     "$HERE/nvenc-udu-sei-smoke.sh" 2>&1 | tee "$LOG_DIR/nvenc-udu-sei.log" ||
     smoke_status=$? # pipefail: the smoke's status, tee exits 0
 if ! "$HERE/named-skip.sh" "hevc_nvenc udu_sei smoke" "$smoke_status" \
@@ -457,7 +494,7 @@ fi
 # fails the replay.
 echo "== nvenc cuda hop smoke =="
 hop_smoke_status=0
-FFMPEG_BIN="$WORKTREE/ffmpeg" OUTPUT_ROOT="$LOG_DIR/nvenc-cuda-hop" \
+FFMPEG_BIN="$FFMPEG_EXE" OUTPUT_ROOT="$LOG_DIR/nvenc-cuda-hop" \
     "$HERE/nvenc-cuda-hop-smoke.sh" 2>&1 | tee "$LOG_DIR/nvenc-cuda-hop.log" ||
     hop_smoke_status=$? # pipefail: the smoke's status, tee exits 0
 if ! "$HERE/named-skip.sh" "nvenc cuda hop smoke" "$hop_smoke_status" \
@@ -474,7 +511,7 @@ fi
 # hang or any other failure fails the replay.
 echo "== vulkan forced keyframe smoke =="
 kf_smoke_status=0
-FFMPEG_BIN="$WORKTREE/ffmpeg" OUTPUT_ROOT="$LOG_DIR/vulkan-forced-keyframe" \
+FFMPEG_BIN="$FFMPEG_EXE" OUTPUT_ROOT="$LOG_DIR/vulkan-forced-keyframe" \
     "$HERE/vulkan-forced-keyframe-smoke.sh" 2>&1 |
     tee "$LOG_DIR/vulkan-forced-keyframe.log" ||
     kf_smoke_status=$? # pipefail: the smoke's status, tee exits 0
@@ -493,7 +530,7 @@ fi
 # (ADR-0189). Any other failure fails the replay.
 echo "== pelorus_fgs sidedata smoke =="
 fgs_smoke_status=0
-FFMPEG_BIN="$WORKTREE/ffmpeg" OUTPUT_ROOT="$LOG_DIR/fgs-sidedata" \
+FFMPEG_BIN="$FFMPEG_EXE" OUTPUT_ROOT="$LOG_DIR/fgs-sidedata" \
     "$HERE/fgs-sidedata-smoke.sh" 2>&1 | tee "$LOG_DIR/fgs-sidedata.log" ||
     fgs_smoke_status=$? # pipefail: the smoke's status, tee exits 0
 if ! "$HERE/named-skip.sh" "pelorus_fgs sidedata smoke" "$fgs_smoke_status" \
@@ -510,7 +547,7 @@ fi
 # names that reason (ADR-0189). Any other failure fails the replay.
 echo "== grain score smoke =="
 grain_smoke_status=0
-FFMPEG_BIN="$WORKTREE/ffmpeg" OUTPUT_ROOT="$LOG_DIR/grain-score" \
+FFMPEG_BIN="$FFMPEG_EXE" OUTPUT_ROOT="$LOG_DIR/grain-score" \
     "$HERE/grain-score-smoke.sh" 2>&1 | tee "$LOG_DIR/grain-score.log" ||
     grain_smoke_status=$? # pipefail: the smoke's status, tee exits 0
 if ! "$HERE/named-skip.sh" "grain score smoke" "$grain_smoke_status" \
@@ -523,7 +560,7 @@ fi
 
 echo "== grain score AV1 smoke =="
 grain_av1_smoke_status=0
-FFMPEG_BIN="$WORKTREE/ffmpeg" OUTPUT_ROOT="$LOG_DIR/grain-score-av1" \
+FFMPEG_BIN="$FFMPEG_EXE" OUTPUT_ROOT="$LOG_DIR/grain-score-av1" \
     "$HERE/grain-score-av1-smoke.sh" 2>&1 | tee "$LOG_DIR/grain-score-av1.log" ||
     grain_av1_smoke_status=$? # pipefail: the smoke's status, tee exits 0
 if ! "$HERE/named-skip.sh" "grain score AV1 smoke" "$grain_av1_smoke_status" \
@@ -561,10 +598,17 @@ keep_binary() {
         echo "ERROR: refusing existing KEEP_DIR: $KEEP_DIR" >&2
         return 1
     fi
-    mkdir -p -- "$KEEP_DIR/lib"
-    cp -- "$WORKTREE/ffmpeg" "$KEEP_DIR/ffmpeg"
-    cp -P -- "$PRIVATE_PREFIX"/lib/libpelorus.so* "$KEEP_DIR/lib/"
-    echo "kept ffmpeg and libpelorus in $KEEP_DIR"
+    if (( IS_WINDOWS )); then
+        mkdir -p -- "$KEEP_DIR"
+        cp -- "$FFMPEG_EXE" "$KEEP_DIR/ffmpeg.exe"
+        cp -- "$PRIVATE_PREFIX"/bin/*.dll "$KEEP_DIR/"
+        echo "kept ffmpeg and libpelorus in $KEEP_DIR"
+    else
+        mkdir -p -- "$KEEP_DIR/lib"
+        cp -- "$FFMPEG_EXE" "$KEEP_DIR/ffmpeg"
+        cp -P -- "$PRIVATE_PREFIX"/lib/libpelorus.so* "$KEEP_DIR/lib/"
+        echo "kept ffmpeg and libpelorus in $KEEP_DIR"
+    fi
 }
 
 if [[ -n "${KEEP_DIR:-}" ]]; then

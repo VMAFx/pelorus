@@ -194,6 +194,10 @@ NVENC_SMOKE_SKIP="Cannot load libcuda.so.1" \
   FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh
 ```
 
+### Windows replay (MSYS2 UCRT64)
+
+`ffmpeg-patches/test/build-and-run.sh` also runs under MSYS2 UCRT64 bash ([ADR-0213](../adr/0213-windows-replay-tester-zip.md)). Under MSYS2, the script automatically detects the environment (`$MSYSTEM == "UCRT64"`), sets `FFMPEG_EXE="$WORKTREE/ffmpeg.exe"`, prepends `$PRIVATE_PREFIX/bin` to `PATH` (for runtime resolution of `pelorus.dll`), and strips carriage returns (`\r`) from filter and BSF registration stdout checks. When `KEEP_DIR` is set on Windows, `build-and-run.sh` copies `ffmpeg.exe` and `$PRIVATE_PREFIX/bin/*.dll` directly into `$KEEP_DIR`. The dedicated path-filtered workflow `.github/workflows/windows-tester.yml` uses this mode on `windows-2025` runners to replay the patch stack and package the `pelorus-tester-windows-x64` artifact.
+
 ### The shared FFmpeg fix series comes first
 
 Pelorus's 22 patches do not apply to stock FFmpeg. They apply on top of the
