@@ -1,0 +1,1 @@
+- `docs/development/bench-results.md`: the 10-bit deband re-proof (v0.20) records the command line of each arm, with the pixel format at every stage ([#300](https://github.com/VMAFx/pelorus/issues/300)).
