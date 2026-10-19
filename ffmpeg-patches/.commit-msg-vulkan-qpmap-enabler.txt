@@ -1,0 +1,8 @@
+avutil/hwcontext_vulkan: enable VK_KHR_video_encode_quantization_map
+
+Add the extension to the optional device extensions and chain, copy and
+enable its videoEncodeQuantizationMap feature, so a device FFmpeg
+creates turns both on when the driver supports them. An encode session
+created with a VK_VIDEO_SESSION_CREATE_ALLOW_ENCODE_*_MAP flag needs the
+feature as well as the extension
+(VUID-VkVideoSessionCreateInfoKHR-flags-10264).

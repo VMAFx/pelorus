@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 # Copyright 2026 Lusoris
 # SPDX-License-Identifier: EUPL-1.2
-"""Enforce the Vulkan-Video QP-map contract of the hand-maintained patch 0009.
+"""Enforce the Vulkan-Video QP-map contract of the hand-maintained patches 0009a/0009b.
 
-``ffmpeg-patches/files/vulkan-pelorus-qpmap.patch`` makes h264/hevc/av1_vulkan
-honor ROI side data through VK_KHR_video_encode_quantization_map.  Hardware
+``ffmpeg-patches/files/vulkan-qpmap-enabler.patch`` (0009a) enables the
+extension and its feature in libavutil; ``vulkan-pelorus-qpmap.patch`` (0009b)
+makes h264/hevc/av1_vulkan honor ROI side data through
+VK_KHR_video_encode_quantization_map.  The split (#308) is checked too: 0009a
+touches only libavutil and names nothing of Pelorus, 0009b touches no
+libavutil file.  Hardware
 validation on an RTX 4090 (ADR-0166) showed the path never activated and, once
 forced on, broke several Vulkan valid-usage rules.  None of these defects is
 visible to a compiler, so this check pins each repair in the canonical diff:
@@ -49,6 +53,7 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+ENABLER = ROOT / "ffmpeg-patches" / "files" / "vulkan-qpmap-enabler.patch"
 PATCH = ROOT / "ffmpeg-patches" / "files" / "vulkan-pelorus-qpmap.patch"
 
 HWCTX = "libavutil/hwcontext_vulkan.c"
@@ -429,6 +434,31 @@ MUTATIONS = (
 )
 
 
+def check_split(enabler: str, qpmap: str) -> list[str]:
+    """0009a: libavutil only, no Pelorus name; 0009b: no libavutil file."""
+
+    errors: list[str] = []
+    for path in split_files(enabler):
+        if not path.startswith("libavutil/"):
+            errors.append(f"0009a (enabler) touches {path}; it must touch libavutil only")
+    if re.search(r"pelorus", enabler, re.IGNORECASE):
+        errors.append("0009a (enabler) names Pelorus; it must stay upstream-ready")
+    for path in split_files(qpmap):
+        if path.startswith("libavutil/"):
+            errors.append(f"0009b (encode path) touches {path}; libavutil belongs in 0009a")
+    return errors
+
+
+SPLIT_MUTATIONS = (
+    ("libavutil block back in 0009b",
+     lambda e, q: (e, q + e)),
+    ("Pelorus comment in 0009a",
+     lambda e, q: (e.replace("+    /* An encode session", "+    /* Pelorus: an encode session"), q)),
+    ("libavcodec block in 0009a",
+     lambda e, q: (e + q, q)),
+)
+
+
 def self_test(patch: str) -> list[str]:
     """Every mutation must change the text and be rejected by check()."""
 
@@ -442,22 +472,38 @@ def self_test(patch: str) -> list[str]:
     return failures
 
 
+def split_self_test(enabler: str, qpmap: str) -> list[str]:
+    """Every split mutation must change the text and be rejected by check_split()."""
+
+    failures: list[str] = []
+    for name, mutate in SPLIT_MUTATIONS:
+        mutated = mutate(enabler, qpmap)
+        if mutated == (enabler, qpmap):
+            failures.append(f"split mutation '{name}' did not apply (stale self-test)")
+        elif not check_split(*mutated):
+            failures.append(f"split mutation '{name}' was not detected")
+    return failures
+
+
 def main(argv: list[str]) -> int:
-    patch = PATCH.read_text()
-    errors = check(patch)
+    enabler = ENABLER.read_text()
+    qpmap = PATCH.read_text()
+    patch = enabler + qpmap
+    errors = check_split(enabler, qpmap) + check(patch)
     if errors:
         print("Vulkan QP-map contract violations:")
         for error in errors:
             print(f"  - {error}")
         return 1
     if "--self-test" in argv:
-        failures = self_test(patch)
+        failures = split_self_test(enabler, qpmap) + self_test(patch)
         if failures:
             print("Vulkan QP-map contract self-test failures:")
             for failure in failures:
                 print(f"  - {failure}")
             return 1
-        print(f"Vulkan QP-map contract self-test: {len(MUTATIONS)} mutations rejected")
+        print("Vulkan QP-map contract self-test: "
+              f"{len(SPLIT_MUTATIONS) + len(MUTATIONS)} mutations rejected")
     print("Vulkan QP-map contract: extension/feature enablement, driver dQP range, "
           "per-codec ROI span, valid-usage repairs, and advertised-format fill paths present")
     return 0

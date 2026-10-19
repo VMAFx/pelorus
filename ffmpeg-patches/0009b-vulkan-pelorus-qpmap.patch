@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lusoris <lusoris@pm.me>
 Date: Thu, 1 Jan 2026 00:00:00 +0000
-Subject: [PATCH 09/22] feat(vulkan): cross-vendor "via Vulkan" QP-map steering
+Subject: [PATCH 10/23] feat(vulkan): cross-vendor "via Vulkan" QP-map steering
  (ADR-0114 Tier 2)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -36,11 +36,9 @@ and the session parameters carry the probed quantizationMapTexelSize.
 
 Device enablement: stock FFmpeg enables neither the extension nor its
 videoEncodeQuantizationMap feature, and both are required
-(VUID-VkVideoSessionCreateInfoKHR-flags-10264). This patch therefore adds the
-extension to libavutil/hwcontext_vulkan.c's optional device-extension table
-(new FF_VK_EXT_VIDEO_ENCODE_QUANTIZATION_MAP flag + loader mapping) and chains,
-copies and enables the feature struct, so an FFmpeg-created device turns both
-on whenever the driver supports them. The probe requires both.
+(VUID-VkVideoSessionCreateInfoKHR-flags-10264). The patch before this one
+(0009a) adds both to libavutil/hwcontext_vulkan.c, so an FFmpeg-created device
+turns them on whenever the driver supports them. The probe requires both.
 
 Valid usage: the map image is created with the advertised tiling of a format
 entry whose usages cover the fill path (NVIDIA advertises R8_SINT in LINEAR
@@ -77,10 +75,7 @@ R32_SINT map without a fillable usage, so the probe disables steering there.
  libavcodec/vulkan_encode.c                | 1515 ++++++++++++++++++++
  libavcodec/vulkan_encode.h                |   87 ++
  libavcodec/vulkan_encode_h265.c           |    7 +
- libavutil/hwcontext_vulkan.c              |   17 +
- libavutil/vulkan_functions.h              |    1 +
- libavutil/vulkan_loader.h                 |    3 +
- 9 files changed, 1767 insertions(+)
+ 6 files changed, 1746 insertions(+)
 
 diff --git a/configure b/configure
 index 33f7c8f665cd7a52b4d4c83e62cf4f70a6f91a4d..3f94bdbb73e9b661c3293bb35206d2b9a274b232 100755
@@ -1990,78 +1985,3 @@ index 1218017555b7d1bf51601f71d1fae6bb70ac8430..98e0d7bc327b4f3decc90ad27cb1800a
  
      unit_opts->nb_slices = 1;
  
-diff --git a/libavutil/hwcontext_vulkan.c b/libavutil/hwcontext_vulkan.c
-index c136677750ae7ad634e16e6a810088275fd979b4..afda5089898e37bb5015546608ec96ee183f8ad2 100644
---- a/libavutil/hwcontext_vulkan.c
-+++ b/libavutil/hwcontext_vulkan.c
-@@ -109,6 +109,11 @@ typedef struct VulkanDeviceFeatures {
- #ifdef VK_KHR_video_encode_av1
-     VkPhysicalDeviceVideoEncodeAV1FeaturesKHR av1_encode;
- #endif
-+#ifdef VK_KHR_video_encode_quantization_map
-+    /* Pelorus: QP-map steering in vulkan_encode.c needs this feature as well
-+     * as the extension (VUID-VkVideoSessionCreateInfoKHR-flags-10264). */
-+    VkPhysicalDeviceVideoEncodeQuantizationMapFeaturesKHR video_encode_qpmap;
-+#endif
- 
-     VkPhysicalDeviceShaderObjectFeaturesEXT shader_object;
-     VkPhysicalDeviceCooperativeMatrixFeaturesKHR cooperative_matrix;
-@@ -279,6 +284,11 @@ static void device_features_init(AVHWDeviceContext *ctx, VulkanDeviceFeatures *f
-     FF_VK_STRUCT_EXT(s, &feats->device, &feats->av1_encode, FF_VK_EXT_VIDEO_ENCODE_AV1,
-                      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_ENCODE_AV1_FEATURES_KHR);
- #endif
-+#ifdef VK_KHR_video_encode_quantization_map
-+    FF_VK_STRUCT_EXT(s, &feats->device, &feats->video_encode_qpmap,
-+                     FF_VK_EXT_VIDEO_ENCODE_QUANTIZATION_MAP,
-+                     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_ENCODE_QUANTIZATION_MAP_FEATURES_KHR);
-+#endif
- 
-     FF_VK_STRUCT_EXT(s, &feats->device, &feats->shader_object, FF_VK_EXT_SHADER_OBJECT,
-                      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT);
-@@ -382,6 +392,9 @@ static void device_features_copy_needed(VulkanDeviceFeatures *dst, VulkanDeviceF
- #ifdef VK_KHR_video_encode_av1
-     COPY_VAL(av1_encode.videoEncodeAV1);
- #endif
-+#ifdef VK_KHR_video_encode_quantization_map
-+    COPY_VAL(video_encode_qpmap.videoEncodeQuantizationMap);
-+#endif
- 
-     COPY_VAL(shader_object.shaderObject);
- 
-@@ -755,6 +768,10 @@ static const VulkanOptExtension optional_device_exts[] = {
- #endif
- #ifdef VK_KHR_video_encode_av1
-     { VK_KHR_VIDEO_ENCODE_AV1_EXTENSION_NAME,                 FF_VK_EXT_VIDEO_ENCODE_AV1       },
-+#endif
-+#ifdef VK_KHR_video_encode_quantization_map
-+    /* Pelorus: QP-map steering ("pelorus_roi") in vulkan_encode.c. */
-+    { VK_KHR_VIDEO_ENCODE_QUANTIZATION_MAP_EXTENSION_NAME,    FF_VK_EXT_VIDEO_ENCODE_QUANTIZATION_MAP },
- #endif
-     { VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME,                 FF_VK_EXT_VIDEO_DECODE_AV1       },
- };
-diff --git a/libavutil/vulkan_functions.h b/libavutil/vulkan_functions.h
-index 86dff046b2a17efaa19876d8364d7733af3f6808..04b8aeb97bc613adc732dc7830c6aef3f8fc4ea4 100644
---- a/libavutil/vulkan_functions.h
-+++ b/libavutil/vulkan_functions.h
-@@ -70,6 +70,7 @@ typedef uint64_t FFVulkanExtensions;
- #define FF_VK_EXT_VIDEO_ENCODE_H264      (1ULL << 51) /* VK_KHR_video_encode_h264 */
- #define FF_VK_EXT_VIDEO_ENCODE_H265      (1ULL << 52) /* VK_KHR_video_encode_h265 */
- #define FF_VK_EXT_VIDEO_ENCODE_AV1       (1ULL << 53) /* VK_KHR_video_encode_av1 */
-+#define FF_VK_EXT_VIDEO_ENCODE_QUANTIZATION_MAP (1ULL << 54) /* VK_KHR_video_encode_quantization_map */
- 
- #define FF_VK_EXT_PORTABILITY_SUBSET     (1ULL << 62)
- #define FF_VK_EXT_NO_FLAG                (1ULL << 63)
-diff --git a/libavutil/vulkan_loader.h b/libavutil/vulkan_loader.h
-index 7ea359b6cdca6db2e18139c3e13f4efc71360be3..4b6cd3a672bd6a23415399f4111357e306d4a2e2 100644
---- a/libavutil/vulkan_loader.h
-+++ b/libavutil/vulkan_loader.h
-@@ -96,6 +96,9 @@ static inline uint64_t ff_vk_extensions_to_mask(const char * const *extensions,
- #ifdef VK_KHR_video_encode_av1
-         { VK_KHR_VIDEO_ENCODE_AV1_EXTENSION_NAME,          FF_VK_EXT_VIDEO_ENCODE_AV1       },
- #endif
-+#ifdef VK_KHR_video_encode_quantization_map
-+        { VK_KHR_VIDEO_ENCODE_QUANTIZATION_MAP_EXTENSION_NAME, FF_VK_EXT_VIDEO_ENCODE_QUANTIZATION_MAP },
-+#endif
- #ifdef VK_KHR_internally_synchronized_queues
-         { VK_KHR_INTERNALLY_SYNCHRONIZED_QUEUES_EXTENSION_NAME, FF_VK_EXT_INTERNAL_QUEUE_SYNC   },
- #endif

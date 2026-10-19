@@ -270,8 +270,8 @@ while IFS= read -r patch || [[ -n "$patch" ]]; do
     PATCHES+=("$PATCHDIR/$patch")
     PELORUS_COUNT=$((PELORUS_COUNT + 1))
 done < "$PATCHDIR/series.txt"
-if (( SERIES_COUNT < 1 || PELORUS_COUNT != 22 )); then
-    echo "ERROR: expected the shared series and 22 Pelorus patches," \
+if (( SERIES_COUNT < 1 || PELORUS_COUNT != 23 )); then
+    echo "ERROR: expected the shared series and 23 Pelorus patches," \
         "found $SERIES_COUNT and $PELORUS_COUNT" >&2
     exit 1
 fi

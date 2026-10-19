@@ -116,7 +116,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 
 ## Project state
 
-- Inventory: 10 filters (deband, analyze, denoise, grain_estimate, mc, dehalo, aa, deblock, borderfix, scenecut) plus `pelorus_fgs` BSF; 22-patch stack (number 0021 retired) on shared FFmpeg fix series `v0.3.0` (VMAFx/ffmpeg-patches, ADR-0185; 0008 = #309 queue de-phase, ADR-0192; 0027 `nvenc_sei.h` = SEI size rules 0022 includes, ADR-0218).
+- Inventory: 10 filters (deband, analyze, denoise, grain_estimate, mc, dehalo, aa, deblock, borderfix, scenecut) plus `pelorus_fgs` BSF; 23-patch stack (number 0021 retired; 0009 split into 0009a/0009b, #308) on shared FFmpeg fix series `v0.3.0` (VMAFx/ffmpeg-patches, ADR-0185; 0008 = #309 queue de-phase, ADR-0192; 0027 `nvenc_sei.h` = SEI size rules 0022 includes, ADR-0218).
 - Encoder steering: NVENC, QSV, Vulkan, libaom, SVT-AV1 patches; QP-feedback path. README "Modules" table: current inventory, no stubs.
 - FFmpeg 9 base: build-time SPIR-V, no runtime GLSL API (ADR-0143).
 - Forge: `VMAFx/pelorus`. Run `gh repo set-default vmafx/pelorus` before any `gh` command.

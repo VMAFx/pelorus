@@ -227,7 +227,7 @@ NVENC_SMOKE_SKIP="Cannot load libcuda.so.1" \
 
 ### The shared FFmpeg fix series comes first
 
-Pelorus's 22 patches do not apply to stock FFmpeg. They apply on top of the
+Pelorus's 23 patches do not apply to stock FFmpeg. They apply on top of the
 shared FFmpeg fix series, a separate release of
 [VMAFx/ffmpeg-patches](https://github.com/VMAFx/ffmpeg-patches) that holds the
 FFmpeg fixes every VMAFx project needs

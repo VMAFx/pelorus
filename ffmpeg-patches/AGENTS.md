@@ -17,7 +17,7 @@ ffmpeg-patches/
 │   ├── pelorus_vulkan_input.h   input layout allow list + interlace refusal
 │   └── vulkan/*.comp.glsl   canonical shipped shader sources
 ├── .commit-msg-*.txt        synthetic commit messages
-├── 0001-*.patch … 0023-*    generated cumulative patch series (22; 0021 retired)
+├── 0001-*.patch … 0023-*    generated cumulative patch series (23; 0021 retired, 0009a/0009b)
 ├── series.txt               apply order, after shared series
 ├── generate.sh              deterministic isolated regeneration
 ├── test/build-and-run.sh    pinned replay, build, link, and smoke gate

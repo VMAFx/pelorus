@@ -21,7 +21,7 @@ in root `build-config.env`), not on stock FFmpeg: see
 | --- | --- |
 | `files/` | Canonical filter sources — the source of truth a maintainer edits. |
 | `0001-*.patch` … | Generated artifacts (`git format-patch`), the applied form. |
-| `series.txt` | Ordered apply list (cumulative stack, 22 patches; number 0021 is retired). |
+| `series.txt` | Ordered apply list (cumulative stack, 23 patches; number 0021 is retired, 0009 is split into 0009a and 0009b). |
 | `generate.sh` | Regenerate the patches from `files/` on the shared series tip. |
 | `test/build-and-run.sh` | Shared series + stack apply, configure, build, smoke-test gate. |
 | `test/series-coexistence.sh` | Shared + external vmafx + Pelorus cumulative apply and overlap gate. |
