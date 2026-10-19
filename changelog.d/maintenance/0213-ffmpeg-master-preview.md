@@ -1,0 +1,1 @@
+- FFmpeg `master` rebase preview for #213: the shared series and Pelorus stack were trial-applied to `master` `ec447c56e354`; 6 shared patches and `0009b` need a rebase, and no upstream filter supersedes a Pelorus filter ([research 0213](docs/research/0213-ffmpeg-master-rebase-preview.md), [rebase notes](docs/rebase-notes.md)).
