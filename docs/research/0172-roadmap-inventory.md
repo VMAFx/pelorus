@@ -27,7 +27,7 @@ Item inventory behind [ADR-0172](../adr/0172-roadmap-milestone-map.md): every op
 | id | item | source | size | dependency | vmafx-phase | issue |
 | --- | --- | --- | --- | --- | --- | --- |
 | QE-01 | Scenecut BD-rate A/B: cut-aligned GOPs vs periodic IDR on multi-shot content, RD ladder, ADR-0111 method. Also tune mc SAD threshold; optional min-GOP guard | ADR-0126:75-86; README.md:90,140; docs/metrics/scenecut.md:102 | M | QE-12 corpus | - | none |
-| QE-02 | Deadzone-survival detail preconditioning: iso-bitrate net-win gate (VMAF-NEG + SSIMULACRA2) before any build | maintainer notes | M (gate), L (build) | decision D5 (contradicts ADR-0142:19-21, additive = wash) | - | none |
+| QE-02 | Deadzone-survival detail preconditioning: iso-bitrate net-win gate (VMAF-NEG + SSIMULACRA2) before any build. Closed 2026-10-19: gate failed, no build ([ADR-0234](../adr/0234-qe02-gated-hf-rejected.md), [research 0234](0234-qe02-deadzone-gate.md)) | maintainer notes | M (gate), L (build) | decision D5 (contradicts ADR-0142:19-21, additive = wash) | - | none |
 | QE-03 | Anime composed-chain proof (analyze roi + dehalo + aa + deband) vs clean anime ground truth; SSIMULACRA2 + CAMBI + edge-region VMAF-NEG | ADR-0125:118-132; docs/usage/anime.md:115 | L | QE-12 corpus (clean anime), FLT-01 | - | none |
 | QE-04 | Dehalo quality proof + content tuning of `edge` | ADR-0123:91-95; ADR-0163:137-139; docs/metrics/dehalo.md:121-124 | M | FLT-01, QE-12 | - | none |
 | QE-05 | aa perceptual tuning + SSIMULACRA2/edge VMAF-NEG proof | ADR-0124:100-104; docs/metrics/aa.md:98 | M | QE-12 | - | none |
