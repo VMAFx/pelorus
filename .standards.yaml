@@ -47,10 +47,6 @@ exceptions:
     path: libpelorus/test/fixtures/telemetry/libaom-record.c
     reason: "category D, capped at the engine maximum of 90 days: fixture recorder built by hand against libaom, which Meson does not depend on, so no compile database entry exists; follow-up: an optional Meson target once a libaom build dependency has an ADR (VMAFx/pelorus#111)"
     expires: "2027-01-13"
-  - rule: clang-tidy-coverage
-    path: scripts/encode-options/avoption-probe.c
-    reason: "category D, capped at the engine maximum of 90 days: table generator probe built by hand against the installed libavcodec, which Meson does not depend on, so no compile database entry exists; follow-up: an optional Meson target behind an FFmpeg dependency option (VMAFx/pelorus#352, ADR-0200)"
-    expires: "2027-01-15"
   - rule: declared-linters
     tool: cppcheck
     reason: "category D, capped at the engine maximum of 90 days: no workflow runs cppcheck yet; C static analysis runs through clang-tidy on every Meson-built unit (make verify-native, CI core job, ADR-0168), and a cppcheck lane first needs a recorded baseline of its current findings (ADR-0190)"

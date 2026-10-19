@@ -486,6 +486,10 @@ python3 -I scripts/encode-options/gen-avoption-tables.py avoptions.tsv \
     /path/to/ffmpeg n9.0.2 libpelorus/src/encode_avoptions_tables.c
 ```
 
+The FFmpeg patch-stack replay lints `avoption-probe.c` under the `ffmpeg-tree`
+`clang-tidy` lane against the pinned static n9.0.2 prefix
+([ADR-0233](../adr/0233-probe-ffmpeg-tree-tidy-lane.md)).
+
 `pel_encode_options_from_ffmpeg` and `PelorusEncodeOption` are an additive
 public API in `pelorus/encode_options.h`: library symbols follow the 0.x
 library version, the interop ABI (`PELORUS_ABI_MINOR`) and the
