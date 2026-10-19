@@ -805,6 +805,19 @@ def _consumer_replay_sdk_and_query_regressions(replay: str) -> list[str]:
         failures.append(
             "consumer regression: non-static libavfilter query was accepted"
         )
+
+    missing_export_contract = replay.replace("vulkan-export-contract.c", "")
+    if missing_export_contract == replay:
+        failures.append(
+            "consumer regression: export contract mutation did not change fixture"
+        )
+    elif not any(
+        "must run the Vulkan export contract test" in error
+        for error in validate_replay_text(missing_export_contract)
+    ):
+        failures.append(
+            "consumer regression: replay without the export contract test was accepted"
+        )
     return failures
 
 
@@ -2234,6 +2247,9 @@ def _validate_replay_tokens_and_filters(replay: str) -> list[str]:
             "must query libavfilter's static link closure"
         ),
         "-lpelorus": "must assert libavfilter's static closure contains -lpelorus",
+        "vulkan-export-contract.c": (
+            "must run the Vulkan export contract test (#104, ADR-0221)"
+        ),
     }
     for token, message in replay_required.items():
         if token not in replay:

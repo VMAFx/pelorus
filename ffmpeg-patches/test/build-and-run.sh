@@ -20,9 +20,14 @@
 #   JOBS         parallel build jobs                (default nproc)
 #   KEEP_DIR     absolute path of a new directory that receives the linked
 #                ffmpeg and libpelorus after every check passed; on Linux
-#                receives ffmpeg and lib/libpelorus.so* (run with
-#                LD_LIBRARY_PATH=$KEEP_DIR/lib); on Windows receives ffmpeg.exe
+#                receives ffmpeg, vulkan-export-contract and
+#                lib/libpelorus.so* (run with LD_LIBRARY_PATH=$KEEP_DIR/lib;
+#                VULKAN_DEVICE picks the test's device); on Windows receives ffmpeg.exe
 #                and the libpelorus DLL in $KEEP_DIR (optional)
+#   EXPORT_CONTRACT_SKIP  fixed text the Vulkan export contract test's SKIP
+#                line must contain for its skip (exit 77) to pass, e.g. "no
+#                Vulkan device"; unset, a skip fails the replay (optional,
+#                ADR-0189)
 #   NVENC_SMOKE_SKIP  fixed text the NVENC smoke's SKIP line must contain for
 #                its skip (exit 77) to pass, e.g. "Cannot load libcuda.so.1"
 #                on a host without an NVIDIA driver; unset, a skip fails the
@@ -321,20 +326,15 @@ configure_ffmpeg() (
         --enable-vulkan "${configure_extra[@]}" --disable-doc
 )
 
-verify_static_avfilter_consumer() {
-    local consumer="$FFMPEG_PREFIX/static-libavfilter-consumer"
-    if (( IS_WINDOWS )); then
-        consumer="${consumer}.exe"
-    fi
+# build_static_consumer SOURCE OUTPUT: links SOURCE against the installed
+# static FFmpeg libraries, the way an external program would; the static link
+# closure of libavfilter must carry -lpelorus.
+build_static_consumer() {
     local pkg_config_path="$FFMPEG_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
-    local static_cflags_output
     local static_libs_output
     local -a static_cflags
     local -a static_libs
 
-    static_cflags_output="$(
-        PKG_CONFIG_PATH="$pkg_config_path" pkg-config --cflags libavfilter
-    )"
     static_libs_output="$(
         PKG_CONFIG_PATH="$pkg_config_path" \
             pkg-config --static --libs libavfilter
@@ -344,12 +344,20 @@ verify_static_avfilter_consumer() {
         echo "static libs: $static_libs_output" >&2
         return 1
     fi
-
-    read -r -a static_cflags <<< "$static_cflags_output"
+    read -r -a static_cflags <<< "$(
+        PKG_CONFIG_PATH="$pkg_config_path" pkg-config --cflags libavfilter
+    )"
     read -r -a static_libs <<< "$static_libs_output"
-    "${CC:-cc}" "${static_cflags[@]}" \
-        "$HERE/static-libavfilter-consumer.c" \
-        -o "$consumer" "${static_libs[@]}"
+    "${CC:-cc}" "${static_cflags[@]}" "$1" -o "$2" "${static_libs[@]}"
+}
+
+verify_static_avfilter_consumer() {
+    local consumer="$FFMPEG_PREFIX/static-libavfilter-consumer"
+    if (( IS_WINDOWS )); then
+        consumer="${consumer}.exe"
+    fi
+
+    build_static_consumer "$HERE/static-libavfilter-consumer.c" "$consumer"
     "$consumer"
 }
 
@@ -470,6 +478,31 @@ fi
 verify_encoder_options h264_vulkan pelorus_roi udu_sei
 verify_encoder_options hevc_vulkan pelorus_roi udu_sei
 verify_encoder_options av1_vulkan pelorus_roi
+
+# GPU test: the export contract of the Pelorus Vulkan output pools (issue
+# #104, docs/api/vulkan-export-contract.md): tiling, image count, device
+# external-memory extensions and an fd export per image. Exit 77 names why
+# this host cannot run all of it; it passes only when EXPORT_CONTRACT_SKIP
+# names that reason (ADR-0189). Windows exports OPAQUE_WIN32 handles, which
+# this POSIX fd test does not cover.
+echo "== vulkan export contract =="
+if (( IS_WINDOWS )); then
+    echo "SKIP: vulkan export contract: Windows exports OPAQUE_WIN32 handles, not fds"
+else
+    export_status=0
+    export_bin="$FFMPEG_PREFIX/vulkan-export-contract"
+    run_logged "build vulkan export contract test" \
+        "$LOG_DIR/vulkan-export-contract-build.log" \
+        build_static_consumer "$HERE/vulkan-export-contract.c" "$export_bin"
+    "$export_bin" 2>&1 | tee "$LOG_DIR/vulkan-export-contract.log" ||
+        export_status=$? # pipefail: the test's status, tee exits 0
+    if ! "$HERE/named-skip.sh" "vulkan export contract" "$export_status" \
+        "$LOG_DIR/vulkan-export-contract.log" "${EXPORT_CONTRACT_SKIP:-}"; then
+        echo "ERROR: on a host that cannot run the export contract test, set" \
+            "EXPORT_CONTRACT_SKIP to the reason it prints" >&2
+        exit 1
+    fi
+fi
 
 # GPU smoke: hevc_nvenc -udu_sei 1 with the analyze maps (issue #267,
 # ADR-0181). Exit 77 names why this host cannot run it (no NVENC device, no
@@ -607,7 +640,8 @@ keep_binary() {
         mkdir -p -- "$KEEP_DIR/lib"
         cp -- "$FFMPEG_EXE" "$KEEP_DIR/ffmpeg"
         cp -P -- "$PRIVATE_PREFIX"/lib/libpelorus.so* "$KEEP_DIR/lib/"
-        echo "kept ffmpeg and libpelorus in $KEEP_DIR"
+        cp -- "$FFMPEG_PREFIX/vulkan-export-contract" "$KEEP_DIR/"
+        echo "kept ffmpeg, libpelorus and vulkan-export-contract in $KEEP_DIR"
     fi
 }
 

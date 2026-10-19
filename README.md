@@ -102,7 +102,7 @@ verifies it ([ADR-0185](docs/adr/0185-shared-ffmpeg-fix-series.md),
 |---|---|---|---|
 | `pelorus_deband_vulkan` | Smart deband (f3kdb): flatten banding + TPDF/blue-noise dither, detail-protected, zero-copy | `experimental` | Available for smart debanding today; promotion requires pinned-corpus BD-rate evidence that survives encoding ([bench #200](https://github.com/VMAFx/pelorus/issues/200)). |
 | `pelorus_dehalo_vulkan` | Anime/2D dehalo + dering: single-pass GPU port of DeHalo_alpha + FineDehalo, removes the ring next to line-art (luma by default; optional selected chroma); foundation of `tune=anime` | `experimental` | Available for anime/2D halo and ringing cleanup today; promotion requires pinned-corpus halo-energy and BD-rate evidence ([bench #201](https://github.com/VMAFx/pelorus/issues/201)). |
-| `pelorus_denoise_vulkan` | Edge-preserving spatio-temporal denoise (the biggest BD-rate lever): NLM-lite joint bilateral + gated temporal averaging over a causal window, with optional motion-compensated warp | `experimental` | Available for edge-preserving temporal denoise today; promotion requires a pinned-corpus four-arm comparison against encoder temporal filtering ([bench #198](https://github.com/VMAFx/pelorus/issues/198)). |
+| `pelorus_denoise_vulkan` | Edge-preserving spatio-temporal denoise (the biggest BD-rate lever): NLM-lite joint bilateral + gated temporal averaging over a causal window, with optional motion-compensated warp | `experimental` | Available for edge-preserving temporal denoise today; promotion requires a pinned-corpus four-arm comparison against encoder temporal filtering ([bench #198](https://github.com/VMAFx/pelorus/issues/198); historical claims not comparable (ADR-0223, #131)). |
 | `pelorus_analyze_vulkan` | Measured banding/variance/edge stats and per-cell maps → interop side data (GPU reduction + readback) | `experimental` | Available for banding, variance, edge, and ROI measurement today; promotion requires pinned-corpus ROI gains across every capable encoder ([bench #204](https://github.com/VMAFx/pelorus/issues/204)). |
 | `pelorus_grain_estimate_vulkan` | Film-grain param estimation (GPU per-band HF-residual) → PEL_SEC_FILMGRAIN + native AV1 side data | `experimental` | Available to estimate film-grain parameters today; promotion requires pinned-corpus accuracy against noise_model and grav1synth ([bench #203](https://github.com/VMAFx/pelorus/issues/203)). |
 | `pelorus_mc_vulkan` | Block-matching motion estimator → per-block motion + confidence side data for denoise warping and encoder hints | `experimental` | Available for motion side data and denoise warping today; promotion requires pinned-corpus MC-denoise evidence ([bench #202](https://github.com/VMAFx/pelorus/issues/202)). |
@@ -126,7 +126,7 @@ encoder. A documented, retunable composition, not a new meta-filter. See
       patch stack against n9.0.2.
 - [x] Step 3 — `vf_pelorus_analyze_vulkan`: measured banding/variance/edge stats
       (GPU reduction + readback) → interop side data.
-- [x] Step 4 — Temporal denoise (`vf_pelorus_denoise_vulkan`).
+- [x] Step 4 — Temporal denoise (`vf_pelorus_denoise_vulkan`; historical clean-reference claims not comparable ([ADR-0223](docs/adr/0223-noisy-source-bench-method.md), #131)).
 - [x] Step 5 — FGS param estimation (`vf_pelorus_grain_estimate_vulkan`): GPU
       per-band HF-residual estimate → PEL_SEC_FILMGRAIN + native AV1 side data.
 - [x] Step 6 — Motion-vector hints: `vf_pelorus_mc_vulkan` producer (0007 →

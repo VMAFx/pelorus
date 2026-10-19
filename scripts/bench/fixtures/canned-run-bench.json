@@ -1,0 +1,137 @@
+{
+  "clip": "canned_noisy_barscene_1080p",
+  "reference": "noisy-source",
+  "device": "NVIDIA GeForce RTX 4090",
+  "encoder": "hevc_nvenc",
+  "filter": "pelorus_denoise_vulkan",
+  "rows": [
+    {
+      "cq": 22,
+      "variant": "nvenc-tuned",
+      "bitrate_kbps": 2450.0,
+      "ssimulacra2": 78.5,
+      "vmaf": 86.8,
+      "cambi": 2.1
+    },
+    {
+      "cq": 26,
+      "variant": "nvenc-tuned",
+      "bitrate_kbps": 1320.0,
+      "ssimulacra2": 72.1,
+      "vmaf": 82.5,
+      "cambi": 2.4
+    },
+    {
+      "cq": 30,
+      "variant": "nvenc-tuned",
+      "bitrate_kbps": 680.0,
+      "ssimulacra2": 64.3,
+      "vmaf": 77.1,
+      "cambi": 2.8
+    },
+    {
+      "cq": 34,
+      "variant": "nvenc-tuned",
+      "bitrate_kbps": 340.0,
+      "ssimulacra2": 55.0,
+      "vmaf": 70.0,
+      "cambi": 3.2
+    },
+    {
+      "cq": 22,
+      "variant": "nvenc-tflevel",
+      "bitrate_kbps": 2320.0,
+      "ssimulacra2": 79.1,
+      "vmaf": 87.2,
+      "cambi": 2.05
+    },
+    {
+      "cq": 26,
+      "variant": "nvenc-tflevel",
+      "bitrate_kbps": 1240.0,
+      "ssimulacra2": 72.9,
+      "vmaf": 83.1,
+      "cambi": 2.35
+    },
+    {
+      "cq": 30,
+      "variant": "nvenc-tflevel",
+      "bitrate_kbps": 635.0,
+      "ssimulacra2": 65.2,
+      "vmaf": 77.8,
+      "cambi": 2.72
+    },
+    {
+      "cq": 34,
+      "variant": "nvenc-tflevel",
+      "bitrate_kbps": 315.0,
+      "ssimulacra2": 56.1,
+      "vmaf": 70.8,
+      "cambi": 3.1
+    },
+    {
+      "cq": 22,
+      "variant": "nvenc-uhq",
+      "bitrate_kbps": 2180.0,
+      "ssimulacra2": 80.2,
+      "vmaf": 88.0,
+      "cambi": 1.98
+    },
+    {
+      "cq": 26,
+      "variant": "nvenc-uhq",
+      "bitrate_kbps": 1160.0,
+      "ssimulacra2": 74.0,
+      "vmaf": 84.0,
+      "cambi": 2.25
+    },
+    {
+      "cq": 30,
+      "variant": "nvenc-uhq",
+      "bitrate_kbps": 590.0,
+      "ssimulacra2": 66.5,
+      "vmaf": 78.9,
+      "cambi": 2.6
+    },
+    {
+      "cq": 34,
+      "variant": "nvenc-uhq",
+      "bitrate_kbps": 290.0,
+      "ssimulacra2": 57.5,
+      "vmaf": 72.0,
+      "cambi": 2.95
+    },
+    {
+      "cq": 22,
+      "variant": "pelorus-denoise+nvenc-tuned",
+      "bitrate_kbps": 2050.0,
+      "ssimulacra2": 81.0,
+      "vmaf": 88.9,
+      "cambi": 1.85
+    },
+    {
+      "cq": 26,
+      "variant": "pelorus-denoise+nvenc-tuned",
+      "bitrate_kbps": 1080.0,
+      "ssimulacra2": 75.2,
+      "vmaf": 85.1,
+      "cambi": 2.1
+    },
+    {
+      "cq": 30,
+      "variant": "pelorus-denoise+nvenc-tuned",
+      "bitrate_kbps": 545.0,
+      "ssimulacra2": 68.0,
+      "vmaf": 80.2,
+      "cambi": 2.45
+    },
+    {
+      "cq": 34,
+      "variant": "pelorus-denoise+nvenc-tuned",
+      "bitrate_kbps": 265.0,
+      "ssimulacra2": 59.2,
+      "vmaf": 73.5,
+      "cambi": 2.8
+    }
+  ]
+}
