@@ -47,6 +47,9 @@ EXCEPTIONS = (
      "Accepted ADR, body frozen; docs/usage/anime.md carries the current recipe"),
     ("docs/research/0229-tester-vendor-images.md", "hw-hwdownload", datetime.date(2027, 4, 10),
      "reproduces a measured failure of that exact command; changing it would falsify the record"),
+    ("docs/development/bench-results.md", "hw-hwdownload", datetime.date(2027, 2, 16),
+     "category D: v0.20 records the commands scripts/bench/run-bench.py ran for #300; the measured"
+     " deband arm downloads before hevc_nvenc, and changing it would falsify the record"),
 )
 
 RULES = ("hw-hwdownload", "sw-label", "unknown-encoder", "retained-table", "extra-hw-frames")

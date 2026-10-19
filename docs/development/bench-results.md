@@ -867,6 +867,34 @@ hwupload,pelorus_deband_vulkan,hwdownload,format=yuv420p10le` → `hevc_nvenc`
 (stream probes as HEVC Main 10, `yuv420p10le`, both arms) → decode to
 `yuv420p10le` → vmaf at 10 bits.
 
+Commands per arm at one CQ point (`scripts/bench/run-bench.py` runs both arms
+for each of CQ 22, 26, 30 and 34, preset `p5`, device `vk:0`):
+
+```bash
+# Measurement record, not a recipe: the harness downloads the filtered
+# frame before the encoder (zero-copy recipes: docs/usage/).
+# baseline arm
+ffmpeg -f rawvideo -pix_fmt yuv420p10le -s 640x360 -r 25 -i synth-banding-10.yuv \
+  -c:v hevc_nvenc -preset p5 -cq 26 -b:v 0 baseline_cq26.mkv
+# deband arm
+ffmpeg -f rawvideo -pix_fmt yuv420p10le -s 640x360 -r 25 -i synth-banding-10.yuv \
+  -init_hw_device vulkan=vk:0 \
+  -vf format=yuv420p10le,hwupload,pelorus_deband_vulkan,hwdownload,format=yuv420p10le \
+  -c:v hevc_nvenc -preset p5 -cq 26 -b:v 0 pelorus_cq26.mkv
+# both arms: decode and score against the source
+ffmpeg -i <arm>_cq26.mkv -f rawvideo -pix_fmt yuv420p10le <arm>_cq26.dec.yuv
+vmaf --reference synth-banding-10.yuv --distorted <arm>_cq26.dec.yuv \
+  --width 640 --height 360 --pixel_format 420 --bitdepth 10 \
+  --output <arm>_cq26.vmaf.json --json --feature ssimulacra2 --feature cambi
+```
+
+The whole run is one harness call:
+`run-bench.py --src synth-banding-10.yuv --width 640 --height 360 --frames 24
+--fps 25 --pixfmt yuv420p10le --bitdepth 10 --encoder hevc_nvenc --filter
+pelorus_deband_vulkan --cq 22 26 30 34 --cambi`. The 8-bit row uses
+`synth-banding.yuv` with `--pixfmt yuv420p --bitdepth 8`, and the grain row
+`--filter pelorus_deband_vulkan=grainy=0.02`.
+
 | Run | Arm | CQ 22 kbps / CAMBI | CQ 26 | CQ 30 | CQ 34 | Mean CAMBI |
 | --- | --- | --- | --- | --- | --- | --- |
 | 10-bit, defaults | baseline | 32.3 / 0.430 | 31.5 / 0.151 | 25.4 / 0.177 | 22.0 / 0.265 | 0.256 |
