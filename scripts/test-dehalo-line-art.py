@@ -56,6 +56,20 @@ def features(text: str) -> dict[str, bool]:
     }
 
 
+def feathered(text: str) -> bool:
+    """#201: the gate is evaluated at the eight neighbours and the flank pixel
+    moves toward the range of their pulls with weight min(1, 2 n / 9). Pixels
+    in the close-edge exclusion zone and strict local extrema (a thin line
+    core, an isolated texture dot) keep the source."""
+    code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
+    return bool(
+        re.search(r"min\(\s*1\.0\s*,\s*2\.0\s*\*\s*float\(\s*n\s*\)\s*/\s*9\.0\s*\)", code)
+        and re.search(r"mix\(\s*c\s*,\s*clamp\(\s*c\s*,\s*lo\s*,\s*hi\s*\)\s*,\s*m\s*\)", code)
+        and re.search(r"c\s*>\s*nhi\s*\|\|\s*c\s*<\s*nlo|c\s*<=\s*nhi\s*&&\s*c\s*>=\s*nlo", code)
+        and re.search(r"(cls|gate_class\([^;]*\))\s*==\s*2", code)
+    )
+
+
 def box(img, x, r):
     n = len(img)
     return sum(img[min(max(x + d, 0), n - 1)] for d in range(-r, r + 1)) / (2 * r + 1)
@@ -71,7 +85,42 @@ def sobel_mag(img, x):
     return abs(gx)
 
 
-def model(img, new: bool):
+def gate_class(img, x):
+    """ADR-0163 ring gate at column x (rows identical, so only the row axis):
+    0 = no halo band, 1 = halo band, 2 = close-edge exclusion zone."""
+    step = lambda i: 0.25 * sobel_mag(img, min(max(i, 0), len(img) - 1))
+    rr = max(1, min(MAX_R, int(RING + 0.5)))
+    if step(x) > EDGE:
+        return 0
+    left = any(step(x - d) > EDGE for d in range(1, rr + 1))
+    right = any(step(x + d) > EDGE for d in range(1, rr + 1))
+    if left and right:
+        return 2
+    return 1 if left or right else 0
+
+
+def gate(img, x):
+    return gate_class(img, x) == 1
+
+
+def feather(img, x):
+    """#201 flank pixel: neighbours (clamped to the row) in a 3x3 window of
+    identical rows are the columns x-1, x, x+1, three rows each minus the centre."""
+    if gate_class(img, x) == 2:
+        return img[x]
+    cols = [min(max(x + d, 0), len(img) - 1) for d in (-1, 0, 1)]
+    n = sum((3 if d != 0 else 2) * gate(img, q) for d, q in zip((-1, 0, 1), cols))
+    # The two vertical neighbours equal the centre, so the strict-extremum
+    # guard never fires on identical rows; the format matrix covers it in 2-D.
+    if n == 0:
+        return img[x]
+    pulls = [pull(img, q, True) for q in cols]
+    m = min(1.0, 2.0 * n / 9.0)
+    target = min(max(img[x], min(pulls)), max(pulls))
+    return min(max(img[x] + (target - img[x]) * m, 0.0), 1.0)
+
+
+def model(img, new: bool, feathered_mask: bool = False):
     """One image row (all rows identical); returns the filtered row."""
     scale = 0.25 if new else 1.0
     step = lambda x: scale * sobel_mag(img, x)
@@ -80,13 +129,8 @@ def model(img, new: bool):
     for x in range(len(img)):
         c = img[x]
         if new:
-            if step(x) > EDGE:
-                out.append(c)
-                continue
-            left = any(step(x - d) > EDGE for d in range(1, rr + 1))
-            right = any(step(x + d) > EDGE for d in range(1, rr + 1))
-            if not (left or right) or (left and right):
-                out.append(c)
+            if not gate(img, x):
+                out.append(feather(img, x) if feathered_mask else c)
                 continue
         else:
             # Old gate: raw Sobel vs edge, one-sided scan on the pixel value,
@@ -149,13 +193,17 @@ def main() -> int:
 
     text = paths[0].read_text(encoding="utf-8")
     new = all(features(text).values())
+    feath = feathered(text)
+    if not feath:
+        print(f"FAIL: {paths[0].name}: missing the feathered flank mask (#201)")
+        return 1
     fill, width = 191, 96
     row = [fill] * width
     row[20] = 30
     ringed = [189, 195, 196, 181, 148, 105, 78, 104, 166, 203, 198, 188, 190]
     row[44:44 + len(ringed)] = ringed
     src = [v / 255 for v in row]
-    got = codes(model(src, new))
+    got = codes(model(src, new, feath))
     line_art = [20] + list(range(47, 53))
     flat = list(range(0, 16)) + list(range(62, width))
     for x in line_art:
@@ -166,9 +214,15 @@ def main() -> int:
         if got[x] != row[x]:
             print(f"FAIL: model changed a flat pixel at x={x}: {row[x]} -> {got[x]}")
             failed = True
+    # #201: the steep flank next to the line core (x=53, 203 above the 191
+    # fill, own step above `edge`) is outside the ADR-0163 band; the feathered
+    # mask must pull at least half of its overshoot back.
+    if (got[53] - fill) * 2 > row[53] - fill:
+        print(f"FAIL: model left the steep-flank overshoot at x=53: {row[53]} -> {got[53]}")
+        failed = True
     if failed:
         return 1
-    print("PASS: dehalo shader keeps line-art and flats unchanged")
+    print("PASS: dehalo shader keeps line-art and flats unchanged and pulls the steep flank")
     return 0
 
 

@@ -206,7 +206,9 @@ FFMPEG=/path/to/ffmpeg+pelorus VMAF=$(command -v vmaf) DEVICE=vk:0 \
 ```
 
 Pinned knobs (in `bench.sh`): encoders `hevc_nvenc`, `av1_nvenc`; preset `p5`;
-CQ ladder `28 34 40 46`; deband `range=15:thry=0.012:dither=bluenoise:dynamic=1:protect=1`.
+CQ ladder `28 34 40 46`; deband `range=15:thry=0.012:dither=bayer8:grainy=0.012:dynamic=0:protect=1`
+(static ordered dither; the hashed per-frame dither does not survive NVENC at these
+rates, [ADR-0225](../adr/0225-deband-step-gated-dither.md)).
 GPU encoders are not bit-exact across drivers, so the *methodology* is pinned;
 the report records the ffmpeg/vmaf/GPU versions used.
 

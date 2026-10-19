@@ -15,7 +15,10 @@ For each pixel it samples reference taps within `range` pixels at a
 pseudo-random angle, decides whether the neighborhood is "flat" (per-plane
 threshold), and if so blends toward the tap average — gated by a
 local-variance detail mask so real texture/edges are left alone — then adds
-zero-mean TPDF/blue-noise grain. Output is clamped to the logical `[0,1]` sample
+zero-mean TPDF/blue-noise or ordered grain. Grain is added only where at least
+one tap differs from the centre sample, so flat areas stay clean; taps near the
+plane edge are pulled in so both taps of a pair stay inside the plane
+([ADR-0225](../adr/0225-deband-step-gated-dither.md)). Output is clamped to the logical `[0,1]` sample
 domain and converted back to the storage-image domain. The descriptor-derived
 conversion is required because an `R16_UNORM` storage view does not by itself
 normalize LSB-aligned planar 10/12-bit samples.
@@ -78,6 +81,10 @@ Interlaced frames (`AV_FRAME_FLAG_INTERLACED`) are refused with `EINVAL`, becaus
 - **VMAF caveat**: a per-frame deband-vs-source score may drop slightly (added
   dither reads as "error"); the win is on the encode round-trip. Tune amplitude
   with VMAF-in-the-loop (below), not against per-frame scores.
+- **Dither and the encoder**: at low rates NVENC quantises the hashed
+  `bluenoise` dither away, more so with `dynamic=1`. The pinned bench uses
+  `dither=bayer8:grainy=0.012:dynamic=0`, which survives `hevc_nvenc` and
+  `av1_nvenc` on `synth-banding` ([research 0283](../research/0283-deband-step-gated-dither.md)).
 
 ## VMAF-measured tuning loop
 
