@@ -6,10 +6,6 @@
 # over every path listed here during the FFmpeg patch-stack replay
 # (`ffmpeg-patches/test/build-and-run.sh`), using compile commands extracted
 # from the configured FFmpeg tree and installed static prefix.
-#
-# Hook for pending FFmpeg-tree consumer tests (uncomment here and remove the
-# matching clang-tidy-coverage exception in .standards.yaml when the unit lands):
-# ffmpeg-patches/test/vulkan-export-contract.c
 ffmpeg-patches/files/h265_pelorus_fgs_bsf.c
 ffmpeg-patches/files/vf_pelorus_aa_vulkan.c
 ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c
@@ -24,3 +20,4 @@ ffmpeg-patches/files/vf_pelorus_scenecut.c
 ffmpeg-patches/test/grain_conformance.c
 ffmpeg-patches/test/qsv-roi-regression.c
 ffmpeg-patches/test/static-libavfilter-consumer.c
+ffmpeg-patches/test/vulkan-export-contract.c

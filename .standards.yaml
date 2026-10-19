@@ -51,10 +51,6 @@ exceptions:
     path: scripts/encode-options/avoption-probe.c
     reason: "category D, capped at the engine maximum of 90 days: table generator probe built by hand against the installed libavcodec, which Meson does not depend on, so no compile database entry exists; follow-up: an optional Meson target behind an FFmpeg dependency option (VMAFx/pelorus#352, ADR-0200)"
     expires: "2027-01-15"
-  - rule: clang-tidy-coverage
-    path: ffmpeg-patches/test/vulkan-export-contract.c
-    reason: "category D, capped at the engine maximum of 90 days: links FFmpeg's static libavfilter and builds only against a built FFmpeg tree; the ffmpeg-tree lane (VMAFx/pelorus#94, ADR-0224) holds it as a pending entry in .config/clang-tidy/ffmpeg-tree-files.txt until a replay shows it clang-tidy clean (ADR-0168)"
-    expires: "2027-01-16"
   - rule: declared-linters
     tool: cppcheck
     reason: "category D, capped at the engine maximum of 90 days: no workflow runs cppcheck yet; C static analysis runs through clang-tidy on every Meson-built unit (make verify-native, CI core job, ADR-0168), and a cppcheck lane first needs a recorded baseline of its current findings (ADR-0190)"
