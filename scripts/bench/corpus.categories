@@ -1,0 +1,14 @@
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
+#
+# Pinned benchmark corpus category coverage (VMAFx/pelorus#135).
+# Format: category | clips (comma-separated lock names, may be empty) | used by (issue/filter)
+
+noisy | | #198, denoise
+banding | synth-banding | deband
+real-banding | bluesky | #200, deband
+anime | glasshalf | dehalo, aa
+clean-animation | bbb | baseline
+retranscode | news-mixedcoding | deblock #202
+multishot | sintel-trailer | scenecut #202
+highmotion | svt-waterfall | mc #301
