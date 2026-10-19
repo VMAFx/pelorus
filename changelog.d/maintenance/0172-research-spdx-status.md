@@ -1,0 +1,1 @@
+- Research 0172 records that vmafx retired the nine Pelorus SPDX-header exceptions on 2026-10-09, so the digest no longer reports a 2026-12-31 expiry that has no entry behind it ([ADR-0172](docs/adr/0172-roadmap-milestone-map.md)).

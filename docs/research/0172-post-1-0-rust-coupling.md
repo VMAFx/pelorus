@@ -6,6 +6,8 @@ Evidence behind the post-1.0 milestones (1.1, 1.2, 2.0, 2.1, 2.2, 3.0) and the l
 
 **Sources.** vmafx `origin/master` (`git show`, `grep`), `gh` read calls on `VMAFx/vmafx` and `cordanaLLM/praetor`, Praetor `origin/main` `3a766f2d5`, Pelorus `origin/master` `420c19a`. All read 2026-10-08.
 
+**Status 2026-10-19.** The nine SPDX-header exceptions in A.5 are gone: vmafx `6489c3910` (VMAFx/vmafx#2649, vmafx ADR-2817) re-vendored Pelorus v0.3.0 with the SPDX lines of the originals and retired them. `git grep SPDX-License-Identifier` over vmafx `core/src/interop` and `core/include/libvmaf/pelorus` finds the `EUPL-1.2` line in all nine files, and `.config/lint-exceptions.d/spdx.toml` lists none of them. The rest of this digest stays the 2026-10-08 snapshot.
+
 ## A. vmafx licensing pointers (paths on vmafx origin/master)
 
 1. EUPL-1.2 switch
@@ -28,10 +30,10 @@ Evidence behind the post-1.0 milestones (1.1, 1.2, 2.0, 2.1, 2.2, 3.0) and the l
    - docs/adr/1513-production-artifact-licensing.md, 1503, 1517 (notices + `<tag>-source` images), 1578 (withdrawn rc images)
 5. Vendored Pelorus interop files in vmafx today
    - REUSE.toml:327-331: path ["core/src/interop/pelorus*"], precedence closest, SPDX-FileCopyrightText "2026 Lusoris", SPDX-License-Identifier BSD-2-Clause-Patent (note: glob does not cover core/include/libvmaf/pelorus/*.h or core/test/test_pelorus_interop.c; those rely on in-file header prose "BSD+Patent" which is a deprecated spelling, not an SPDX tag)
-   - .config/lint-exceptions.d/spdx.toml:7-55: 9 per-file SPDX-header exceptions (4 headers, 4 .c under core/src/interop, core/test/test_pelorus_interop.c), reason "add the line in pelorus and re-vendor", all `expires = 2026-12-31`
+   - .config/lint-exceptions.d/spdx.toml:7-55: 9 per-file SPDX-header exceptions (4 headers, 4 .c under core/src/interop, core/test/test_pelorus_interop.c), reason "add the line in pelorus and re-vendor", all set to lapse on 2026-12-31 (retired 2026-10-09, see the status note)
    - docs/credits.yaml:1140-1150: id pelorus, relation vendored, license BSD-2-Clause-Patent, paths core/src/interop/
    - docs/adr/1113-vendor-pelorus-interop-abi.md (pinned read-only mirror, banner + include rewrite only), 1120, 1276 (pin by full commit), .github/AGENTS.d/pelorus-mirror.md, scripts/sync-pelorus-interop.sh
-   - IMPACT of Pelorus -> EUPL: vmafx REUSE.toml:327-331, credits.yaml:1140, spdx.toml exceptions, ADR-1250 veto 4 table row ("terms decided in VMAFx/pelorus") all need the same-day re-vendor/update; mirror header string embedded in sync script (ADR-1474:58). Mirrored headers currently carry prose "BSD+Patent": Pelorus should ship SPDX lines in the originals (vmafx exceptions expire 2026-12-31).
+   - IMPACT of Pelorus -> EUPL: vmafx REUSE.toml:327-331, credits.yaml:1140, spdx.toml exceptions, ADR-1250 veto 4 table row ("terms decided in VMAFx/pelorus") all need the same-day re-vendor/update; mirror header string embedded in sync script (ADR-1474:58). Mirrored headers currently carry prose "BSD+Patent": Pelorus should ship SPDX lines in the originals (done; vmafx retired the exceptions 2026-10-09).
    - Related: #1455 libgpudispatch is EUPL-1.2 and "sibling repositories adopt it as EUPL-1.2" (plan comment 2026-10-07, Q-144): Pelorus FFmpeg filter .c files stay LGPL-2.1+ (FFmpeg compat); a shared GPU dispatch lib under EUPL cannot be linked into FFmpeg-tree LGPL files without a licence-compat decision. Flag for ADR.
    - Precedent for FFmpeg patch licence in vmafx: REUSE.toml:47-95 patches 0001-0018 override LGPL-2.1-or-later ("2000-2026 the FFmpeg developers" + Lusoris), 0019 `LGPL-2.1-or-later AND GPL-2.0-or-later`.
 6. Prebuilt FFmpeg licence-flavour stance
@@ -88,7 +90,7 @@ vmafx items needing Pelorus deliverables (issue, milestone, ask):
 | #1455 libgpudispatch | 1.0.0 | consumer migration after lib lands; EUPL licence seam | INT-15 |
 | #2569 Rust emitter, #2572 oracle fixtures | 1.2 | DERIVED: ask Pelorus to expose conformance fixture as data (hashed vectors) rather than C test | derived |
 | #2575 Rust P2 (2.3) | 2.3 | DERIVED: decision on mirror form (see above) | derived |
-| #2580 REUSE compliance | Ongoing | mirror files need SPDX in Pelorus originals (spdx.toml exceptions expire 2026-12-31) | ENG-13 |
+| #2580 REUSE compliance | Ongoing | mirror files need SPDX in Pelorus originals (done: spdx.toml exceptions retired 2026-10-09) | ENG-13 |
 
 ## C. Praetor milestones (cordanaLLM/praetor; titles + numbers)
 
