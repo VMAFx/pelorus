@@ -20,17 +20,18 @@ Video Codec SDK 13.1.
 
 from __future__ import annotations
 
-import argparse
-import os
+import importlib.util
 import pathlib
-import re
 import shutil
 import subprocess
 import sys
-import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FILES = ROOT / "ffmpeg-patches" / "files"
+# python3 -I drops the script directory from sys.path: load the sibling by path.
+_SPEC = importlib.util.spec_from_file_location("patch_harness", pathlib.Path(__file__).with_name("patch_harness.py"))
+harness = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(harness)
 
 SHIMS = r"""
 #include <math.h>
@@ -105,17 +106,7 @@ typedef struct _NV_ENC_FILM_GRAIN_PARAMS_AV1 {
 } NV_ENC_FILM_GRAIN_PARAMS_AV1;
 """
 
-MAIN = r"""
-static int failures;
-
-static void expect(const char *what, long got, long want)
-{
-    if (got != want) {
-        fprintf(stderr, "FAIL %s: got %ld, want %ld\n", what, got, want);
-        failures++;
-    }
-}
-
+MAIN = harness.EXPECT_C + r"""
 static void check_chroma(const char *label, int mult, int luma_mult, int offset,
                          long want_mult, long want_luma, long want_offset)
 {
@@ -198,27 +189,6 @@ int main(void)
 """
 
 
-def added_lines(patch: pathlib.Path) -> list[str]:
-    """Return the '+' lines of a unified diff without the marker."""
-    out = []
-    for line in patch.read_text().splitlines():
-        if line.startswith("+") and not line.startswith("+++"):
-            out.append(line[1:])
-    return out
-
-
-def extract_function(lines: list[str], signature: str, label: str) -> str:
-    """Extract a top-level C function from added diff lines by its signature."""
-    pattern = re.compile(r"^static\s+[a-z_ ]+\b" + re.escape(signature) + r"\s*\(")
-    for start, line in enumerate(lines):
-        if pattern.match(line):
-            for end in range(start + 1, len(lines)):
-                if lines[end] == "}":
-                    return "\n".join(lines[start : end + 1]) + "\n"
-            break
-    raise ValueError(f"{label}: function {signature} not found")
-
-
 def nvenc_header_source() -> str:
     """Prefer the installed SDK header; fall back to the 13.1 layout mirror."""
     pkg_config = shutil.which("pkg-config")
@@ -239,58 +209,32 @@ def nvenc_header_source() -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--film-grain-patch",
-        type=pathlib.Path,
-        default=FILES / "nvenc-pelorus-film-grain.patch",
-    )
-    parser.add_argument(
-        "--roi-patch", type=pathlib.Path, default=FILES / "nvenc-pelorus-roi.patch"
-    )
-    parser.add_argument(
-        "--cc",
-        nargs="+",
-        default=[os.environ.get("CC", "cc")],
-        help="C compiler command (must be the last option)",
+    parser = harness.make_parser(
+        __doc__.splitlines()[0],
+        patches={
+            "--film-grain-patch": FILES / "nvenc-pelorus-film-grain.patch",
+            "--roi-patch": FILES / "nvenc-pelorus-roi.patch",
+        },
     )
     args = parser.parse_args()
 
     try:
-        fg = extract_function(
-            added_lines(args.film_grain_patch), "pel_fg_from_aom", "film grain"
+        fg = harness.extract_function(
+            harness.added_lines(args.film_grain_patch.read_text()), "pel_fg_from_aom", "film grain"
         )
-        roi = extract_function(
-            added_lines(args.roi_patch), "pelorus_roi_qp_range", "ROI"
+        roi = harness.extract_function(
+            harness.added_lines(args.roi_patch.read_text()), "pelorus_roi_qp_range", "ROI"
         )
     except (OSError, ValueError) as err:
         print(f"ERROR: {err}", file=sys.stderr)
         return 1
 
     source = SHIMS + nvenc_header_source() + fg + roi + MAIN
-    with tempfile.TemporaryDirectory(prefix="pelorus-nvenc-map-") as tmp:
-        tmp_path = pathlib.Path(tmp)
-        c_file = tmp_path / "harness.c"
-        exe = tmp_path / ("harness.exe" if os.name == "nt" else "harness")
-        c_file.write_text(source)
-        build = subprocess.run(
-            [*args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror",
-             "-Wno-unused-function", str(c_file), "-o", str(exe)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if build.returncode != 0:
-            print("ERROR: harness failed to compile", file=sys.stderr)
-            print(build.stdout + build.stderr, file=sys.stderr)
-            return 1
-        run = subprocess.run([str(exe)], capture_output=True, text=True, check=False)
-        sys.stdout.write(run.stdout)
-        sys.stderr.write(run.stderr)
-        if run.returncode != 0:
-            print(f"ERROR: harness exited {run.returncode}", file=sys.stderr)
-            return 1
-    return 0
+    return harness.compile_and_run(
+        source,
+        args.cc,
+        prefix="pelorus-nvenc-map-",
+    )
 
 
 if __name__ == "__main__":

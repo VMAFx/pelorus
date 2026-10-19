@@ -107,6 +107,7 @@ SPDX-License-Identifier: EUPL-1.2
 - The HISS baseline drops from 16 to 0 findings. `vf_pelorus_denoise_vulkan.c` and `vf_pelorus_mc_vulkan.c` no longer use `goto`, and `init_filter()`, the dispatch, side-data attach and per-frame functions are split into static helpers of at most 55 lines that run the same Vulkan calls in the same order and free every buffer and frame on the same paths ([#206](https://github.com/VMAFx/pelorus/issues/206)).
 - `.github/workflows/devcontainer-image.yml` replaces hand-rolled Docker CLI login, build, and push commands with pinned upstream Docker actions (`docker/setup-buildx-action`, `docker/login-action`, `docker/build-push-action`) matching `VMAFx/vmafx` pins ([ADR-0235](docs/adr/0235-docker-build-push-actions.md)).
 - `scripts/adr/check-status.py` now also fails when a row of the ADR index (`docs/adr/README.md`) names a different status than the ADR file itself; a planted mismatch is in its self-test. The index row of [ADR-0198](docs/adr/0198-encoder-option-string-parsers.md) said Proposed after the ADR was accepted and is corrected.
+- The four FFmpeg patch harness tests (`scripts/test-nvenc-me-hints.py`, `test-nvenc-pelorus-mapping.py`, `test-svtav1-roi-sticky.py`, `test-vulkan-qpmap-fill.py`) share one diff-extraction and strict build-and-run module, `scripts/patch_harness.py`, loaded by path so the tests keep running under `python3 -I`; the jscpd clone groups between them are gone.
 
 <!-- END UNRELEASED -->
 
