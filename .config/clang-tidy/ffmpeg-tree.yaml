@@ -1,0 +1,85 @@
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
+#
+# clang-tidy profile for the "ffmpeg-tree" lane
+# (`ffmpeg-patches/test/tidy-ffmpeg-tree.sh`, VMAFx/pelorus#94).
+#
+# Mirrors the root `.clang-tidy` Power-of-10 / CERT-C / clang-analyzer families
+# while disabling checks that conflict with upstream FFmpeg C idioms (`av_*`
+# allocation helpers, `RET(x)` / `goto fail` error cleanup, `AVOption` sentinel
+# tables, signed flag macros, and white-box `libavcodec/tests/*.c` includes).
+# Uses a YAML list so every disabled check carries its rationale comment inline
+# without YAML folded-scalar (`>`) comment concatenation.
+
+Checks:
+  - '-*'
+  - 'bugprone-*'
+  - 'cert-*'
+  - 'clang-analyzer-*'
+  - 'concurrency-*'
+  - 'misc-*'
+  - 'performance-*'
+  - 'portability-*'
+  - 'readability-function-size'
+  - 'readability-misleading-indentation'
+  - 'readability-non-const-parameter'
+  - 'readability-redundant-control-flow'
+  # FFmpeg K&R C style omits braces around single-line `if`/`for` statements
+  # (`if (err < 0) return err;`).
+  - '-readability-braces-around-statements'
+  # FFmpeg K&R C style groups local declarations at the top of a block (`int err, i;`).
+  - '-readability-isolate-declaration'
+  # Disabled in root .clang-tidy: adjacent scalar parameters in C filter helpers
+  # (width/height, cols/rows, planes) share types by domain convention.
+  - '-bugprone-easily-swappable-parameters'
+  # Disabled in root .clang-tidy: FFmpeg internal headers rely on umbrella
+  # inclusion order rather than direct include-what-you-use headers.
+  - '-misc-include-cleaner'
+  # Disabled in root .clang-tidy: HISS-01 recursion is enforced by `praetorctl audit`
+  # and c-reviewer across the whole call graph.
+  - '-misc-no-recursion'
+  # Disabled in root .clang-tidy: C11 Annex K `memcpy_s`/`snprintf_s` are not
+  # portable across glibc/musl/MSVCRT toolchains.
+  - '-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling'
+  # FFmpeg's `RET(x)` macro in `libavutil/vulkan.h` (`if ((err = (x)) < 0) goto fail`)
+  # and standard FFmpeg error-propagation idioms assign `err` inside `if` conditions.
+  - '-bugprone-assignment-in-if-condition'
+  # FFmpeg `AVOption` tables terminate with a `{NULL}` sentinel that zero-initializes
+  # `enum AVOptionType`, whose `0` value is not a named enumerator in `libavutil/opt.h`.
+  - '-bugprone-invalid-enum-default-initialization'
+  # FFmpeg's `av_freep(void *)`, `av_buffer_unref()`, and `av_fast_malloc(void *, ...)`
+  # allocation idioms pass a `T **` address through a `void *` parameter.
+  - '-bugprone-multi-level-implicit-pointer-conversion'
+  # FFmpeg's `AV_OPT_FLAG_*`, `AVFILTER_FLAG_*`, `FF_FILTER_FLAG_*`, `AV_FRAME_FLAG_*`,
+  # `AVERROR()`, `FFERROR_NOT_READY`, `SPEC_LIST_ADD()`, and Vulkan C enum bitmasks
+  # define flags as signed integer constants or signed enums combined with `|` and `&`.
+  - '-bugprone-signed-bitwise'
+  # FFmpeg's `libavcodec/tests/` white-box unit test convention (`qsv-roi-regression.c`)
+  # includes `../qsvenc.c` directly to exercise `static` encoder helpers without hardware.
+  - '-bugprone-suspicious-include'
+  # FFmpeg's `FFVulkanContext` and `ff_vk_get_pooled_buffer()` pass bitwise-ORed Vulkan
+  # flag masks through `enum VkImageUsageFlagBits` and `enum VkMemoryPropertyFlagBits`.
+  - '-clang-analyzer-optin.core.EnumCastOutOfRange'
+  # FFmpeg filter (`ff_vf_pelorus_*`) and BSF (`ff_pelorus_fgs_bsf`) registration structs
+  # are defined with external linkage in their translation unit and referenced via `extern`
+  # declarations in `libavfilter/allfilters.c` and `libavcodec/bsf_list.c`.
+  - '-misc-use-internal-linkage'
+  # Keep the misaligned-pointer-cast guard from issue #44 active on FFmpeg-tree units.
+  - 'bugprone-casting-through-void'
+
+WarningsAsErrors: '*'
+
+HeaderFilterRegex: '^ffmpeg-patches/(files|test)/.*\.(h|hpp)$'
+
+FormatStyle: file
+
+CheckOptions:
+  # Power-of-10 rule 4 — a function fits a printed page (matches root .clang-tidy).
+  - key: readability-function-size.LineThreshold
+    value: '75'
+  - key: readability-function-size.StatementThreshold
+    value: '120'
+  - key: readability-function-size.BranchThreshold
+    value: '20'
+  - key: readability-function-size.NestingThreshold
+    value: '5'

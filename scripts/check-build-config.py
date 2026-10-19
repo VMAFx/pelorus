@@ -961,6 +961,18 @@ def _consumer_replay_keep_regressions(replay: str) -> list[str]:
         for error in validate_replay_text(mutated)
     ):
         return ["consumer regression: replay without KEEP_DIR was accepted"]
+    untidied = replay.replace("tidy-ffmpeg-tree.sh", "tidy-removed.sh")
+    if untidied == replay:
+        return [
+            "consumer regression: tidy-ffmpeg-tree.sh mutation did not change fixture"
+        ]
+    if not any(
+        "must run the FFmpeg-tree clang-tidy lane" in error
+        for error in validate_replay_text(untidied)
+    ):
+        return [
+            "consumer regression: replay without tidy-ffmpeg-tree.sh was accepted"
+        ]
     return []
 
 
@@ -2250,6 +2262,7 @@ def _validate_replay_tokens_and_filters(replay: str) -> list[str]:
         "vulkan-export-contract.c": (
             "must run the Vulkan export contract test (#104, ADR-0221)"
         ),
+        "tidy-ffmpeg-tree.sh": "must run the FFmpeg-tree clang-tidy lane",
     }
     for token, message in replay_required.items():
         if token not in replay:

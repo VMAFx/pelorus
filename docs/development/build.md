@@ -533,18 +533,21 @@ Two audit checks read lists that ordinary code changes can break:
   the flag fails even though Meson would build it with warnings as errors.
   `scripts/check-build-config.py` also pins the Windows job's
   `meson setup --werror build && ninja -C build`.
-- **clang-tidy coverage.** `.standards.yaml` declares one clang-tidy lane,
-  `libpelorus`, whose units are listed in `.config/clang-tidy/lane-files.txt`:
-  every C file the Meson build compiles (`libpelorus/src`, `libpelorus/test`,
-  `tools`, and the two `ffmpeg-patches/test` programs Meson builds against a
-  stub header). `make tidy` and the `core` job's clang-tidy step read that same
-  list, so the lane the audit judges is the lane that runs. A tracked C unit
-  that no lane reads fails the audit unless the top-level `exceptions` list
-  names it with a reason and an expiry at most 90 days ahead. Add a new Meson
-  unit to the list in the same change. The 13 `ffmpeg-patches` units that
-  build only inside an FFmpeg tree have one `clang-tidy-coverage` exception
-  each, expiring 2027-01-06; VMAFx/pelorus#94 tracks the FFmpeg-tree lane that
-  replaces them.
+- **clang-tidy coverage.** `.standards.yaml` declares two clang-tidy lanes:
+  `libpelorus` (`.config/clang-tidy/lane-files.txt`), covering every C file the
+  Meson build compiles (`libpelorus/src`, `libpelorus/test`, `tools`, and the
+  `ffmpeg-patches/test` programs Meson builds against stub headers), and
+  `ffmpeg-tree` (`.config/clang-tidy/ffmpeg-tree-files.txt`), covering the 14 C
+  units under `ffmpeg-patches/files` and `ffmpeg-patches/test` that build
+  against a configured FFmpeg tree ([ADR-0224](../adr/0224-ffmpeg-tree-tidy-lane.md)).
+  `make tidy` and the `core` job's clang-tidy step read `lane-files.txt`, while
+  `ffmpeg-patches/test/build-and-run.sh` runs `ffmpeg-patches/test/tidy-ffmpeg-tree.sh`
+  over `ffmpeg-tree-files.txt` with `.config/clang-tidy/ffmpeg-tree.yaml`, so
+  the lanes the audit judges are the lanes that run. A tracked C unit that no
+  lane reads fails the audit unless the top-level `exceptions` list names it
+  with a reason and an expiry at most 90 days ahead. Add a new Meson unit to
+  `lane-files.txt` or a new FFmpeg-tree unit to `ffmpeg-tree-files.txt` in the
+  same change.
 
 Triage failures by boundary:
 

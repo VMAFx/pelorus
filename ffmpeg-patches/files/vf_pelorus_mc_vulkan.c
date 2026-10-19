@@ -234,6 +234,7 @@ fail:
 
 static void pel_sd_free(void *opaque, uint8_t *data)
 {
+    (void)opaque;
     pel_blob_free(data);
 }
 

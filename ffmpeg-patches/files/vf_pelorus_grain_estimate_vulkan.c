@@ -219,6 +219,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
 
 static void pel_sd_free(void *opaque, uint8_t *data)
 {
+    (void)opaque;
     pel_blob_free(data);
 }
 
@@ -244,7 +245,7 @@ typedef struct PelorusH274Model {
 static void pel_set_meta_f(AVFrame *frame, const char *key, float v)
 {
     char buf[32];
-    snprintf(buf, sizeof(buf), "%.6f", v);
+    (void)snprintf(buf, sizeof(buf), "%.6f", v);
     av_dict_set(&frame->metadata, key, buf, 0);
 }
 

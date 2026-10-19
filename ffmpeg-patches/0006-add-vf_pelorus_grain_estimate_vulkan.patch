@@ -53,10 +53,10 @@ ADR: docs/adr/0161-grain-estimate-rounding-and-h274-mapping.md
  configure                                           |   3 +
  libavfilter/Makefile                                |   1 +
  libavfilter/allfilters.c                            |   1 +
- libavfilter/vf_pelorus_grain_estimate_vulkan.c      | 745 ++++++++++++++++++++
+ libavfilter/vf_pelorus_grain_estimate_vulkan.c      | 746 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                         |   1 +
  libavfilter/vulkan/pelorus_grain_estimate.comp.glsl | 132 ++++
- 6 files changed, 883 insertions(+)
+ 6 files changed, 884 insertions(+)
 
 diff --git a/configure b/configure
 index d26ae6933549cc65a8a1852f2de02ff2980902a1..ca410e098775c7ba9b7cd7e5774796f071c48511 100755
@@ -105,10 +105,10 @@ index 2efa0d5f6850fdd7b62e228caaba41db95711770..0cd4d5daabfabe7837cf9b76590f78dd
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_grain_estimate_vulkan.c b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..ad08f425857dea8e979bac19765283b921d01145
+index 0000000000000000000000000000000000000000..f1335219f9278f6563e281c6ea15089b5fc4e8fd
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
-@@ -0,0 +1,745 @@
+@@ -0,0 +1,746 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -330,6 +330,7 @@ index 0000000000000000000000000000000000000000..ad08f425857dea8e979bac19765283b9
 +
 +static void pel_sd_free(void *opaque, uint8_t *data)
 +{
++    (void)opaque;
 +    pel_blob_free(data);
 +}
 +
@@ -355,7 +356,7 @@ index 0000000000000000000000000000000000000000..ad08f425857dea8e979bac19765283b9
 +static void pel_set_meta_f(AVFrame *frame, const char *key, float v)
 +{
 +    char buf[32];
-+    snprintf(buf, sizeof(buf), "%.6f", v);
++    (void)snprintf(buf, sizeof(buf), "%.6f", v);
 +    av_dict_set(&frame->metadata, key, buf, 0);
 +}
 +

@@ -30,10 +30,10 @@ Research: docs/research/0101-smart-deband.md
  libavfilter/pelorus_vulkan_input.h          | 131 +++++
  libavfilter/pelorus_vulkan_pool.h           | 576 ++++++++++++++++++++
  libavfilter/pelorus_vulkan_sample.h         | 100 ++++
- libavfilter/vf_pelorus_deband_vulkan.c      | 497 +++++++++++++++++
+ libavfilter/vf_pelorus_deband_vulkan.c      | 498 +++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
  libavfilter/vulkan/pelorus_deband.comp.glsl | 196 +++++++
- 11 files changed, 1868 insertions(+)
+ 11 files changed, 1869 insertions(+)
 
 diff --git a/configure b/configure
 index 0ebe83a5ae70d894b284b8715cc9862870e2c909..f1c896727d1690d5dba37435ab185464d1d7324f 100755
@@ -1281,10 +1281,10 @@ index 0000000000000000000000000000000000000000..c8a8912daf5325e0d8792ae201f4bbfe
 +#endif /* AVFILTER_PELORUS_VULKAN_SAMPLE_H */
 diff --git a/libavfilter/vf_pelorus_deband_vulkan.c b/libavfilter/vf_pelorus_deband_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..816eb3c8dec41adf5ad51aa2a408e3a90ed5e404
+index 0000000000000000000000000000000000000000..f9e019512baa830fa0c7a93ac085beaa8b0cf095
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_deband_vulkan.c
-@@ -0,0 +1,497 @@
+@@ -0,0 +1,498 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -1464,6 +1464,7 @@ index 0000000000000000000000000000000000000000..816eb3c8dec41adf5ad51aa2a408e3a9
 + * a downstream vmafx scorer can react. */
 +static void pel_sd_free(void *opaque, uint8_t *data)
 +{
++    (void)opaque;
 +    pel_blob_free(data);
 +}
 +

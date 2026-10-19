@@ -81,7 +81,7 @@
  * product can reach ~4.29e9 — past INT_MAX and a multi-GB allocation. Cap it to a
  * value that still covers any realistic frame grid (8K at a small block edge)
  * while rejecting absurd dimensions before the cell count is used for sizing. */
-#define PEL_DENOISE_MAX_CELLS (8192u * 8192u)
+#define PEL_DENOISE_MAX_CELLS ((uint64_t)8192u * 8192u)
 
 /* meta=1 residual statistics, in the shader's RES_GS fixed point. 2^23 resolves
  * a one-code 10-bit residual squared as 8 units, while a full 16x16 workgroup
@@ -341,6 +341,7 @@ fail:
 
 static void pel_sd_free(void *opaque, uint8_t *data)
 {
+    (void)opaque;
     pel_blob_free(data);
 }
 

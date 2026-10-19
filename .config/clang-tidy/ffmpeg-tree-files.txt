@@ -1,0 +1,26 @@
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
+#
+# clang-tidy lane "ffmpeg-tree" (.standards.yaml clang_tidy.lanes,
+# VMAFx/pelorus#94). `ffmpeg-patches/test/tidy-ffmpeg-tree.sh` runs clang-tidy
+# over every path listed here during the FFmpeg patch-stack replay
+# (`ffmpeg-patches/test/build-and-run.sh`), using compile commands extracted
+# from the configured FFmpeg tree and installed static prefix.
+#
+# Hook for pending FFmpeg-tree consumer tests (uncomment here and remove the
+# matching clang-tidy-coverage exception in .standards.yaml when the unit lands):
+# ffmpeg-patches/test/vulkan-export-contract.c
+ffmpeg-patches/files/h265_pelorus_fgs_bsf.c
+ffmpeg-patches/files/vf_pelorus_aa_vulkan.c
+ffmpeg-patches/files/vf_pelorus_analyze_vulkan.c
+ffmpeg-patches/files/vf_pelorus_borderfix_vulkan.c
+ffmpeg-patches/files/vf_pelorus_deband_vulkan.c
+ffmpeg-patches/files/vf_pelorus_deblock_vulkan.c
+ffmpeg-patches/files/vf_pelorus_dehalo_vulkan.c
+ffmpeg-patches/files/vf_pelorus_denoise_vulkan.c
+ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c
+ffmpeg-patches/files/vf_pelorus_mc_vulkan.c
+ffmpeg-patches/files/vf_pelorus_scenecut.c
+ffmpeg-patches/test/grain_conformance.c
+ffmpeg-patches/test/qsv-roi-regression.c
+ffmpeg-patches/test/static-libavfilter-consumer.c

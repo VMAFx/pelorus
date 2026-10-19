@@ -380,9 +380,10 @@ static int attach_roi(PelorusAnalyzeVulkanContext *s, AVFrame *frame)
     if (sd_old) {
         const AVRegionOfInterest *o = (const AVRegionOfInterest *)sd_old->data;
         old_size = o->self_size;
-        if (!old_size || sd_old->size % old_size != 0)
+        if (!old_size || sd_old->size % old_size != 0 ||
+            sd_old->size / old_size > (size_t)(INT_MAX - ndet))
             return AVERROR(EINVAL);
-        nb_old = sd_old->size / old_size;
+        nb_old = (int)(sd_old->size / old_size);
     }
 
     nb_total = nb_old + ndet;
@@ -426,7 +427,7 @@ static int attach_roi(PelorusAnalyzeVulkanContext *s, AVFrame *frame)
 static void pel_set_meta_f(AVFrame *frame, const char *key, float v)
 {
     char buf[32];
-    snprintf(buf, sizeof(buf), "%.6f", (double)v);
+    (void)snprintf(buf, sizeof(buf), "%.6f", (double)v);
     av_dict_set(&frame->metadata, key, buf, 0);
 }
 
@@ -714,10 +715,10 @@ static int analyze_reduce(PelorusAnalyzeVulkanContext *s, AVFrame *in, AVBufferR
 
     base = (const uint32_t *)buf_vk->mapped_mem;
     tv->var = base;
-    tv->edge = base + ntiles;
-    tv->grad = base + 2 * ntiles;
-    tv->valid = base + 3 * ntiles;
-    tv->mean = base + 4 * ntiles;
+    tv->edge = base + (size_t)ntiles;
+    tv->grad = base + (size_t)ntiles * 2;
+    tv->valid = base + (size_t)ntiles * 3;
+    tv->mean = base + (size_t)ntiles * 4;
     tv->cols = s->grid_cols;
     tv->rows = s->grid_rows;
     return 0;
