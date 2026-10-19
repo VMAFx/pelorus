@@ -30,13 +30,9 @@ build to refuse it.
 
 from __future__ import annotations
 
-import argparse
-import os
+import importlib.util
 import pathlib
-import re
-import subprocess
 import sys
-import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PATCH = ROOT / "ffmpeg-patches" / "files" / "vulkan-pelorus-qpmap.patch"
@@ -44,6 +40,10 @@ ENC = "libavcodec/vulkan_encode.c"
 FUNCTIONS = ("pelorus_qpmap_texel_bytes", "pelorus_qpmap_entry_fill",
              "pelorus_qpmap_texel_range", "pelorus_qpmap_store_texel",
              "pelorus_qpmap_raster")
+# python3 -I drops the script directory from sys.path: load the sibling by path.
+_SPEC = importlib.util.spec_from_file_location("patch_harness", pathlib.Path(__file__).with_name("patch_harness.py"))
+harness = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(harness)
 
 SHIMS = r"""
 #include <limits.h>
@@ -96,17 +96,7 @@ typedef struct FFVulkanEncodeContext {
 static int av_clip(int a, int lo, int hi) { return a < lo ? lo : (a > hi ? hi : a); }
 """
 
-MAIN = r"""
-static int failures;
-
-static void expect(const char *what, long got, long want)
-{
-    if (got != want) {
-        fprintf(stderr, "FAIL %s: got %ld, want %ld\n", what, got, want);
-        failures++;
-    }
-}
-
+MAIN = harness.EXPECT_C + r"""
 static int fill(VkFormat f, VkImageTiling t, VkImageUsageFlags u, unsigned texel,
                 int emphasis, int can_copy, int want_gpu)
 {
@@ -282,69 +272,35 @@ MUTATIONS = (
 )
 
 
-def added_lines(patch: str, path: str) -> list[str]:
-    """Post-image added lines of one file section of the hand diff."""
-    out: list[str] = []
-    current = None
-    for line in patch.splitlines():
-        match = re.match(r"^diff --git a/(\S+) b/\S+$", line)
-        if match:
-            current = match.group(1)
-            continue
-        if current == path and line.startswith("+") and not line.startswith("+++"):
-            out.append(line[1:])
-    return out
-
-
-def extract_function(text: str, name: str) -> str:
-    """Definition of the static function `name`, from its return type to its closing brace."""
-    match = re.search(r"^static [^\n;]*\b" + re.escape(name) + r"\(", text, re.M)
-    if not match:
-        raise ValueError(f"{name}() not found in {ENC} of the patch")
-    open_brace = text.index("{", match.end())
-    depth = 0
-    for index in range(open_brace, len(text)):
-        if text[index] == "{":
-            depth += 1
-        elif text[index] == "}":
-            depth -= 1
-            if depth == 0:
-                return text[match.start():index + 1] + "\n"
-    raise ValueError(f"{name}() has no closing brace")
-
-
 def extract_chunk(patch: str) -> str:
-    text = "\n".join(added_lines(patch, ENC))
-    return "\n".join(extract_function(text, name) for name in FUNCTIONS)
+    lines = harness.added_lines(patch, ENC)
+    text = "\n".join(lines)
+    return "\n".join(
+        harness.extract_function(text, name, label=f"{ENC} of the patch")
+        for name in FUNCTIONS
+    )
 
 
 def build_and_run(cc: list[str], chunk: str, extra: tuple[str, ...] = ()) -> tuple[int, str]:
-    with tempfile.TemporaryDirectory(prefix="pelorus-qpmap-fill-") as tmp:
-        tmp_path = pathlib.Path(tmp)
-        c_file = tmp_path / "harness.c"
-        exe = tmp_path / ("harness.exe" if os.name == "nt" else "harness")
-        c_file.write_text(SHIMS + chunk + MAIN)
-        build = subprocess.run(
-            [*cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function",
-             *extra, str(c_file), "-o", str(exe), "-lm"],
-            capture_output=True, text=True, check=False)
-        if build.returncode != 0:
-            return 2, "harness failed to compile:\n" + build.stdout + build.stderr
-        run = subprocess.run([str(exe)], capture_output=True, text=True, check=False)
-        return (0 if run.returncode == 0 else 1), run.stdout + run.stderr
+    return harness.build_and_run(
+        SHIMS + chunk + MAIN,
+        cc,
+        prefix="pelorus-qpmap-fill-",
+        cflags=extra,
+        libs=("-lm",),
+    )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--patch", type=pathlib.Path, default=PATCH)
-    parser.add_argument("--self-test", action="store_true",
-                        help="also require every planted defect to be rejected")
-    parser.add_argument("--cc", nargs="+", default=[os.environ.get("CC", "cc")],
-                        help="C compiler command (must be the last option)")
+    parser = harness.make_parser(
+        __doc__.splitlines()[0],
+        default_patch=PATCH,
+        self_test=True,
+    )
     args = parser.parse_args()
 
     try:
-        chunk = extract_chunk(args.patch.read_text())
+        chunk = extract_chunk(args.patch.read_text(encoding="utf-8"))
     except (OSError, ValueError) as err:
         print(f"ERROR: {err}", file=sys.stderr)
         return 1

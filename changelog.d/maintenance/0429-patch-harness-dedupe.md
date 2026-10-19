@@ -1,0 +1,1 @@
+- The four FFmpeg patch harness tests (`scripts/test-nvenc-me-hints.py`, `test-nvenc-pelorus-mapping.py`, `test-svtav1-roi-sticky.py`, `test-vulkan-qpmap-fill.py`) share one diff-extraction and strict build-and-run module, `scripts/patch_harness.py`, loaded by path so the tests keep running under `python3 -I`; the jscpd clone groups between them are gone.
