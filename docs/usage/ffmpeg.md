@@ -491,7 +491,7 @@ warning plus pass-through:
 
 - **Device enablement.** The device must enable both the
   `VK_KHR_video_encode_quantization_map` extension and its
-  `videoEncodeQuantizationMap` feature. Patch 0009 adds both to FFmpeg's
+  `videoEncodeQuantizationMap` feature. Patch 0009a adds both to FFmpeg's
   optional Vulkan device extensions and features, so a device created by FFmpeg
   (`-init_hw_device vulkan=…`, or one derived from another hardware device)
   enables them automatically whenever the driver supports them; check the

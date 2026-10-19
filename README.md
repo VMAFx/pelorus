@@ -90,7 +90,7 @@ green · the deband shader compiles.**
 
 ### FFmpeg filters — `ffmpeg-patches/`
 
-The stack is 22 patches against FFmpeg n9.0.2. It applies on top of the shared
+The stack is 23 patches against FFmpeg n9.0.2. It applies on top of the shared
 FFmpeg fix series ([VMAFx/ffmpeg-patches](https://github.com/VMAFx/ffmpeg-patches),
 release pinned in `build-config.env`), which carries the generic FFmpeg fixes
 every VMAFx project needs; `scripts/fetch-ffmpeg-series.sh` fetches and

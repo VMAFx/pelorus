@@ -10,7 +10,8 @@
 # with a full series replay, never per-patch `git apply --check`.
 #
 # Number 0021 is retired: its queue family fix is patch 0001 of the shared
-# series. The other numbers stay as shipped.
+# series. Patch 0009 is split into 0009a (libavutil enabler) and 0009b (the
+# Pelorus encode path, #308). The other numbers stay as shipped.
 #
 # Interop-consuming patches require libpelorus >= 0.2.0 through a separate
 # pkg-config probe. Compute filters are gated by `vulkan spirv_compiler` so they
@@ -28,7 +29,8 @@
 0006-add-vf_pelorus_grain_estimate_vulkan.patch
 0007-add-vf_pelorus_mc_vulkan.patch
 0008-nvenc-pelorus-me-hints.patch
-0009-vulkan-pelorus-qpmap.patch
+0009a-avutil-vulkan-enable-qpmap.patch
+0009b-vulkan-pelorus-qpmap.patch
 0010-add-pelorus_fgs_bsf.patch
 0011-nvenc-pelorus-film-grain.patch
 0012-libaom-pelorus-roi.patch

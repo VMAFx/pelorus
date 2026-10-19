@@ -29,11 +29,9 @@ and the session parameters carry the probed quantizationMapTexelSize.
 
 Device enablement: stock FFmpeg enables neither the extension nor its
 videoEncodeQuantizationMap feature, and both are required
-(VUID-VkVideoSessionCreateInfoKHR-flags-10264). This patch therefore adds the
-extension to libavutil/hwcontext_vulkan.c's optional device-extension table
-(new FF_VK_EXT_VIDEO_ENCODE_QUANTIZATION_MAP flag + loader mapping) and chains,
-copies and enables the feature struct, so an FFmpeg-created device turns both
-on whenever the driver supports them. The probe requires both.
+(VUID-VkVideoSessionCreateInfoKHR-flags-10264). The patch before this one
+(0009a) adds both to libavutil/hwcontext_vulkan.c, so an FFmpeg-created device
+turns them on whenever the driver supports them. The probe requires both.
 
 Valid usage: the map image is created with the advertised tiling of a format
 entry whose usages cover the fill path (NVIDIA advertises R8_SINT in LINEAR

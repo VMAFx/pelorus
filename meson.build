@@ -189,8 +189,8 @@ test('vulkan-buffer-domain',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
-# ADR-0166: patch 0009's Vulkan-Video QP map needs the extension AND its feature
-# enabled in hwcontext_vulkan, a driver-range dQP clamp, and the valid-usage
+# ADR-0166: patch 0009b's Vulkan-Video QP map needs the extension AND its feature
+# enabled in hwcontext_vulkan (patch 0009a), a driver-range dQP clamp, and the valid-usage
 # repairs found on hardware. None of those fail a compile; --self-test proves
 # the check rejects each defect.
 test('vulkan-qpmap-contract',
@@ -200,7 +200,7 @@ test('vulkan-qpmap-contract',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
-# #278 / ADR-0182: patch 0009 takes the map format the driver advertises (RADV:
+# #278 / ADR-0182: patch 0009b takes the map format the driver advertises (RADV:
 # R32_SINT) and fills it by a path the encode queue family can record (RADV's
 # family has VIDEO_ENCODE only: host-mapped LINEAR image). The entry classifier
 # and the host raster run in a C harness; --self-test plants a defect per rule.

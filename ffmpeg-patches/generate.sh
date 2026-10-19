@@ -38,6 +38,7 @@ source "$ROOT/build-config.env"
 FILES_DIR="$HERE/files"
 RUN_ROOT=""
 SERIES_ROOT=""
+OUT_ROOT=""
 OWNED_WORKTREE=""
 
 canonicalize_existing_dir() {
@@ -80,6 +81,10 @@ cleanup() {
     fi
     if [[ -n "$RUN_ROOT" ]] && ! rmdir "$RUN_ROOT" 2>/dev/null; then
         echo "WARNING: owned scratch directory is not empty: $RUN_ROOT" >&2
+        cleanup_failed=1
+    fi
+    if [[ -n "$OUT_ROOT" ]] && ! rm -rf -- "$OUT_ROOT"; then
+        echo "WARNING: could not remove patch staging directory: $OUT_ROOT" >&2
         cleanup_failed=1
     fi
     if [[ -n "$SERIES_ROOT" ]] && ! rm -rf -- "$SERIES_ROOT"; then
@@ -426,11 +431,22 @@ git -C "$WORKTREE" apply "$FILES_DIR/nvenc-pelorus-me-hints.patch"
 git -C "$WORKTREE" add -A
 commit_patch "$HERE/.commit-msg-nvenc-me-hints.txt"
 
+# libavutil enabler (NOT Pelorus code): FFmpeg's Vulkan hwcontext turns on
+# VK_KHR_video_encode_quantization_map and its videoEncodeQuantizationMap
+# feature when the driver offers both. It names nothing of Pelorus, so it can go
+# upstream as the first commit of the ROI-to-quantization-map pull request; it
+# stays in this stack because only the patch after it uses it (#308).
+# Applied as its own commit (-> patch 0009a below).
+git -C "$WORKTREE" apply "$FILES_DIR/vulkan-qpmap-enabler.patch"
+git -C "$WORKTREE" add -A
+commit_patch "$HERE/.commit-msg-vulkan-qpmap-enabler.txt"
+
 # Pelorus libavcodec edit (NOT a filter): make the native Vulkan-video encoders
 # (h264_vulkan/hevc_vulkan/av1_vulkan) honor ROI side data via the cross-vendor
 # VK_KHR_video_encode_quantization_map (delta map for CQP, emphasis map for
 # CBR/VBR). Same hand-maintained-diff model as the NVENC/QSV patches above;
-# applied as its own commit (-> patch 0009 below). ADR-0114 Tier 2.
+# applied as its own commit (-> patch 0009b below), after the enabler it needs.
+# ADR-0114 Tier 2.
 git -C "$WORKTREE" apply "$FILES_DIR/vulkan-pelorus-qpmap.patch"
 git -C "$WORKTREE" add -A
 commit_patch "$HERE/.commit-msg-vulkan.txt"
@@ -734,8 +750,10 @@ git -C "$WORKTREE" apply "$FILES_DIR/qsv-pelorus-udu-sei-budget.patch"
 git -C "$WORKTREE" add -A
 commit_patch "$HERE/.commit-msg-qsv-udu-sei-budget.txt"
 
-# Clean stale patches, regenerate the whole range.
+# Clean stale patches, regenerate the whole range. format-patch writes into a
+# staging directory; the named patches move into $HERE below.
 rm -f "$HERE"/0*.patch
+OUT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/pelorus-ffmpeg-out.XXXXXX")"
 # Every byte-affecting format choice is explicit. Besides full blob hashes, this
 # prevents repository/global format.*, diff.*, signature, threading, prefix, and
 # filename policy from changing the shipped artifacts.
@@ -753,7 +771,7 @@ git -C "$WORKTREE" \
     --no-cover-letter --numbered --suffix=.patch --subject-prefix=PATCH \
     --no-signoff --no-base --no-attach --no-to --no-cc --no-add-header \
     --no-from --no-force-in-body-from --no-notes --filename-max-length=64 \
-    --start-number=1 --quiet -o "$HERE" "${SERIES_TIP}..HEAD"
+    --start-number=1 --quiet -o "$OUT_ROOT" "${SERIES_TIP}..HEAD"
 
 # Normalize auto-generated filenames to the series.txt names. format-patch
 # numbers its output by position; the shipped names keep their numbers, so the
@@ -767,7 +785,8 @@ pelorus_patch_names=(
     "0006-add-vf_pelorus_grain_estimate_vulkan.patch"
     "0007-add-vf_pelorus_mc_vulkan.patch"
     "0008-nvenc-pelorus-me-hints.patch"
-    "0009-vulkan-pelorus-qpmap.patch"
+    "0009a-avutil-vulkan-enable-qpmap.patch"
+    "0009b-vulkan-pelorus-qpmap.patch"
     "0010-add-pelorus_fgs_bsf.patch"
     "0011-nvenc-pelorus-film-grain.patch"
     "0012-libaom-pelorus-roi.patch"
@@ -782,29 +801,27 @@ pelorus_patch_names=(
     "0022-nvenc-pelorus-udu-sei.patch"
     "0023-qsv-pelorus-udu-sei-budget.patch"
 )
-pelorus_generated=("$HERE"/0*.patch)
+pelorus_generated=("$OUT_ROOT"/0*.patch)
 if [[ ${#pelorus_generated[@]} -ne ${#pelorus_patch_names[@]} ||
       ! -f "${pelorus_generated[0]}" ]]; then
-    echo "ERROR: expected ${#pelorus_patch_names[@]} generated patches in $HERE," \
+    echo "ERROR: expected ${#pelorus_patch_names[@]} generated patches in $OUT_ROOT," \
         "found: ${pelorus_generated[*]}" >&2
     exit 1
 fi
-# Last to first: a name only ever moves to an equal or higher number, so no
-# rename lands on an output that has not moved yet.
-for (( pelorus_index = ${#pelorus_patch_names[@]} - 1; pelorus_index >= 0; pelorus_index-- )); do
+# Generated and shipped names live in different directories, so the move order
+# does not matter; a split patch (0009a/0009b) shifts later positions down.
+for (( pelorus_index = 0; pelorus_index < ${#pelorus_patch_names[@]}; pelorus_index++ )); do
     pelorus_from="${pelorus_generated[pelorus_index]}"
     pelorus_to="$HERE/${pelorus_patch_names[pelorus_index]}"
     if [[ "$(basename -- "$pelorus_from")" != "$(printf '%04d' $((pelorus_index + 1)))"-* ]]; then
         echo "ERROR: generated patch out of order: $pelorus_from" >&2
         exit 1
     fi
-    if [[ "$pelorus_from" != "$pelorus_to" ]]; then
-        if [[ -e "$pelorus_to" ]]; then
-            echo "ERROR: refusing to overwrite $pelorus_to" >&2
-            exit 1
-        fi
-        mv -- "$pelorus_from" "$pelorus_to"
+    if [[ -e "$pelorus_to" ]]; then
+        echo "ERROR: refusing to overwrite $pelorus_to" >&2
+        exit 1
     fi
+    mv -- "$pelorus_from" "$pelorus_to"
 done
 
 echo "patch(es) regenerated in $HERE:"

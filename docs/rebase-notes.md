@@ -8,6 +8,19 @@ the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
 ranges in older entries predate the first entry below (22 patches on the
 shared FFmpeg fix series, number 0021 retired).
 
+## Unreleased — 0009 split (#308, ADR-0231; 0009 becomes 0009a and 0009b)
+
+- **Patches**: `0009-vulkan-pelorus-qpmap.patch` is replaced by
+  `0009a-avutil-vulkan-enable-qpmap.patch` (libavutil: feature struct,
+  extension flag, loader entry) and `0009b-vulkan-pelorus-qpmap.patch` (the
+  encode path). The stack has 23 patches; `[PATCH n/23]` subjects from 0009b
+  on are one higher than the file number. Sources:
+  `files/vulkan-qpmap-enabler.patch` and `files/vulkan-pelorus-qpmap.patch`.
+- **Re-test after rebase**: `scripts/check-vulkan-qpmap-contract.py
+  --self-test` (contract and split), then the full replay. When FFmpeg
+  merges the enabler, drop 0009a and its `generate.sh` block; 0009b keeps
+  applying on top.
+
 ## Unreleased — grain gate chain (#414, ADR-0230; regenerates 0006)
 
 - **Patch**: `0006` (grain estimate) only; no registration, option, numbering
