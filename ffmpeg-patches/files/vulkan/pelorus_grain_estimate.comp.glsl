@@ -29,7 +29,10 @@
  * intensity-dependent by design):
  *   1. high-pass:  resid = luma - mean3x3   (box low-pass removes structure)
  *   2. edge gate:  skip pixels whose 3x3 range exceeds edge_thr (that residual
- *                  is an edge / texture, not grain)
+ *                  is an edge / texture, not grain); a second, wide gate
+ *                  (WIDE_GATE x edge_thr) and the band pixel total let the
+ *                  host recover heavy grain the default gate truncates
+ *                  (ADR-0229)
  *   3. bin:        accumulate resid^2 into one of BANDS luma bins with a
  *                  per-bin pixel count -> per-band grain stddev
  *   4. AR proxy:   accumulate the lag-1 product resid*resid_right (a
@@ -70,6 +73,9 @@ layout (set = 0, binding = 1, std430) buffer grain_buffer {
     uint cnt[256];      /* flat-pixel count,       [BANDS * SLICES] */
     uint corr[32];      /* Σ (resid*resid_right + CORR_BIAS) * CORR_GS */
     uint corr_cnt[32];  /* lag-1 sample count                       */
+    uint sumsq_w[256];  /* Σ resid^2 * SUMSQ_GS at the wide gate    */
+    uint cnt_w[256];    /* pixel count at the wide gate             */
+    uint total[256];    /* every pixel of the band, gate or not     */
 };
 
 float pel_to_sample(float value)
@@ -85,6 +91,8 @@ void main()
     const float CORR_GS = 150000.0;
     const float CORR_BIAS = 0.0064;
     const float RES_CLAMP = 0.08;
+    /* Wide gate = WIDE_GATE * edge_thr; matches PEL_GRAIN_WIDE_GATE. */
+    const float WIDE_GATE = 2.0;
     const int BANDS = 8;
     const uint SLICES = 32u;
     ivec2 size = ivec2(width, height);
@@ -102,12 +110,19 @@ void main()
         }
     }
     mean /= 9.0;
-    if ((hi - lo) > edge_thr)
-        return;
-    float resid = clamp(c - mean, -RES_CLAMP, RES_CLAMP);
     int band = clamp(int(mean * float(BANDS)), 0, BANDS - 1);
     uint slice = (uint(y) * uint(size.x) + uint(x)) % SLICES;
     uint bidx = uint(band) * SLICES + slice;
+    /* The band total and the wide gate let the host tell heavy grain, which
+     * the default gate truncates, from texture (ADR-0229). */
+    atomicAdd(total[bidx], 1u);
+    if ((hi - lo) > WIDE_GATE * edge_thr)
+        return;
+    float resid = clamp(c - mean, -RES_CLAMP, RES_CLAMP);
+    atomicAdd(sumsq_w[bidx], uint(resid * resid * SUMSQ_GS + 0.5));
+    atomicAdd(cnt_w[bidx], 1u);
+    if ((hi - lo) > edge_thr)
+        return;
     atomicAdd(sumsq[bidx], uint(resid * resid * SUMSQ_GS + 0.5));
     atomicAdd(cnt[bidx], 1u);
     /* lag-1 spatial correlation (AR proxy): only when the right neighbour is

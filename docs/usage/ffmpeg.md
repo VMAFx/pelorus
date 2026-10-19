@@ -672,6 +672,11 @@ instead of megabits of structureless residual, and the viewer still sees grain.
 Pair it with `pelorus_denoise_vulkan` upstream (remove the grain before encode,
 re-synthesize it at decode) for the full noise-tax recovery.
 
+Heavy grain (above about 3.5 code values) is measured at a wider gate by
+default (`adapt=1`); `lavfi.pelorus.grain_wide_bands` shows which luma bands
+took it, and `adapt=0` restores the single gate (see
+[Dual gate](../metrics/grain_estimate.md#dual-gate)).
+
 How it works: at init the patch sets `NV_ENC_CONFIG_AV1::enableFilmGrainParams`
 and points `filmGrainParams` at a persistent `NV_ENC_FILM_GRAIN_PARAMS_AV1`; per
 frame it refills that struct from the estimate (native channel preferred, the
