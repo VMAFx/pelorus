@@ -36,8 +36,9 @@
  * seed. The reduction is sliced (PEL_GRAIN_SLICES) to cut atomic contention.
  *
  * Host mapping: per-band RMS residual -> the AV1 AOM piecewise scaling function
- * y_points[value, scaling]; conservative AV1-legal shifts; ar_coeffs_y seeded
- * from the lag-1 proxy. The filter emits BOTH the Pelorus PEL_SEC_FILMGRAIN
+ * y_points[value, scaling] and the lag-1 correlation -> a symmetric lag-1 AR
+ * model, both through a table calibrated against FFmpeg's AV1 synthesizer
+ * (ADR-0227); AV1-legal shifts. The filter emits BOTH the Pelorus PEL_SEC_FILMGRAIN
  * interop section (codec-neutral intent + AV1 params + H.274 mode scalars) AND a
  * native AV_FRAME_DATA_FILM_GRAIN_PARAMS (AV_FILM_GRAIN_PARAMS_AV1) so a
  * downstream FFmpeg AV1 encoder honours it with no Pelorus-specific BSF. The
@@ -92,6 +93,11 @@
 #define PEL_GRAIN_CORR_BIAS 0.0064
 /* Residual clamp (lossless for real grain); matches the shader RES_CLAMP. */
 #define PEL_GRAIN_RES_CLAMP 0.08
+/* Frame-size guard: the accumulator bounds above hold up to the DCI 8K pixel
+ * count (8192 x 4320 = 35389440 pixels, 1105920 per slice). Larger frames are
+ * refused at link configuration instead of wrapping a slice sum
+ * (scripts/test-grain-accumulator-bounds.py reads this value). */
+#define PEL_GRAIN_MAX_PIXELS (8192LL * 4320LL)
 
 /* H.274 model 0 as synthesized by FFmpeg's SMPTE RDD 5 implementation
  * (libavcodec/h274.c). log2_scale_factor 2 lies in the RDD 5 range 2..7 and is
@@ -116,6 +122,22 @@ static const struct {
     {6, 0.5043f, 0.04239f},  {7, 0.4302f, 0.05699f},  {8, 0.3536f, 0.06905f},
     {9, 0.2563f, 0.09227f},  {10, 0.1914f, 0.10847f}, {11, 0.1431f, 0.13099f},
     {12, 0.0728f, 0.14908f}, {13, 0.0513f, 0.16799f}, {14, -0.0115f, 0.18554f},
+};
+
+/* Calibration of FFmpeg's AV1 luma grain (8-bit, ar_coeff_lag 1, ar_coeff_shift
+ * 6, ar_coeffs_y {0, a, 0, a}, scaling_shift 8, overlap on) through this
+ * estimator's arithmetic with the edge gate open: rho_r is the residual lag-1
+ * correlation, gain_r the residual RMS in 8-bit code values per unit of the
+ * scaling function. rho_r rises with a, so the table inverts by interpolation.
+ * Regenerate with scripts/gen-av1-grain-calibration.py (ADR-0227). */
+static const struct {
+    uint8_t a;
+    float rho_r;
+    float gain_r;
+} pel_aom_calib[] = {
+    {0, -0.1547f, 0.11946f},  {4, -0.1212f, 0.11737f}, {8, -0.0915f, 0.11548f},
+    {12, -0.0640f, 0.11406f}, {16, -0.0345f, 0.11284f}, {20, -0.0083f, 0.11173f},
+    {24, 0.0190f, 0.11102f},  {28, 0.0474f, 0.11052f},
 };
 
 /* Host-readback accumulator. Matches the GLSL std430 GrainBuf layout exactly. */
@@ -296,22 +318,42 @@ static void reduce_stats(const PelorusGrainBuf *acc, PelorusGrainStats *st)
     }
 }
 
-/* Map the measured per-band stats to AV1 AOM film-grain params. The piecewise
- * scaling function y_points[value, scaling]: each populated band contributes a
- * (value, scaling) point — value = band centre on [0,255], scaling = band RMS
- * scaled by `strength`. Points must be strictly increasing in value (AV1), so
- * we emit one per band centre (already increasing) and skip empty bands. */
+/* Invert pel_aom_calib: the AR coefficient a whose calibrated residual lag-1
+ * correlation equals the measured one (linear between rows, clamped to the
+ * table ends) and the residual gain of that model. */
+static void pel_aom_invert(float rho, float *a, float *gain)
+{
+    size_t i = 1;
+    float t;
+
+    while (i < FF_ARRAY_ELEMS(pel_aom_calib) - 1 && rho > pel_aom_calib[i].rho_r)
+        i++;
+    t = (rho - pel_aom_calib[i - 1].rho_r) / (pel_aom_calib[i].rho_r - pel_aom_calib[i - 1].rho_r);
+    t = av_clipf(t, 0.0f, 1.0f);
+    *a = (float)pel_aom_calib[i - 1].a + t * (float)(pel_aom_calib[i].a - pel_aom_calib[i - 1].a);
+    *gain = pel_aom_calib[i - 1].gain_r + t * (pel_aom_calib[i].gain_r - pel_aom_calib[i - 1].gain_r);
+}
+
+/* Map the measured per-band stats to AV1 AOM film-grain params (ADR-0227). The
+ * measured lag-1 correlation selects a symmetric lag-1 AR model (up and left
+ * taps equal: the estimator measures horizontal correlation only, so the grain
+ * is taken as isotropic). The piecewise scaling function y_points[value,
+ * scaling]: each populated band contributes a (value, scaling) point — value =
+ * band centre on [0,255], scaling = band RMS over that model's calibrated gain,
+ * times `strength` (1 = reproduce the measured grain). Points must be strictly
+ * increasing in value (AV1), so we emit one per band centre (already
+ * increasing) and skip empty bands. */
 static void map_aom(const PelorusGrainEstimateVulkanContext *s, const PelorusGrainStats *st,
                     PelorusFilmGrainSection *g)
 {
     int b, np = 0;
-    int ar_n;
-    int8_t ar0;
+    int8_t ar;
+    float a, gain;
 
     g->seed = 0;           /* deterministic; a real seed is set by the synth stage */
     g->scaling_shift = 8;  /* AV1 [8,11] */
-    g->ar_coeff_lag = 1;   /* lag-1 proxy */
-    g->ar_coeff_shift = 6; /* AV1 [6,9] -> range [-2,2) */
+    g->ar_coeff_lag = 1;   /* the lag-1 measurement fits a lag-1 model */
+    g->ar_coeff_shift = 6; /* AV1 [6,9]; pel_aom_calib is calibrated at 6 */
     g->grain_scale_shift = 0;
     g->chroma_scaling_from_luma = 1; /* derive chroma from luma (v0.x) */
     g->overlap_flag = 1;
@@ -325,14 +367,16 @@ static void map_aom(const PelorusGrainEstimateVulkanContext *s, const PelorusGra
     g->h274_blending_mode = 0; /* additive */
     g->h274_log2_scale = PEL_GRAIN_H274_LOG2_SCALE;
 
+    pel_aom_invert(st->lag1, &a, &gain);
     for (b = 0; b < PEL_GRAIN_BANDS && np < 14; b++) {
         int value, scaling;
         if (st->band_cnt[b] == 0)
             continue;
         /* band centre on [0,255] */
         value = av_clip((b * 255 + 128) / PEL_GRAIN_BANDS, 0, 255);
-        /* RMS residual ([0,~0.1] for typical grain) -> [0,255] via strength */
-        scaling = av_clip((int)lrintf(st->band_rms[b] * (float)s->strength * 255.0f), 0, 255);
+        /* RMS residual in 8-bit codes over the model's gain -> [0,255] */
+        scaling = av_clip(
+            (int)lrintf(st->band_rms[b] * 255.0f / gain * (float)s->strength), 0, 255);
         if (scaling == 0)
             continue; /* no measurable grain in this band */
         g->y_points[np][0] = (uint8_t)value;
@@ -342,14 +386,12 @@ static void map_aom(const PelorusGrainEstimateVulkanContext *s, const PelorusGra
     g->num_y_points = np;
     g->apply = np > 0 ? 1 : 0;
 
-    /* Conservative lag-1 AR seed: ar_coeffs are in units of 1/(1<<ar_coeff_shift)
-     * = 1/64; clamp the measured coefficient into the legal [-2,2) range. The
-     * remaining coefficients stay zero (a fuller AR fit is a follow-up). */
-    ar_n = 2 * g->ar_coeff_lag * (g->ar_coeff_lag + 1); /* = 4 for lag 1 */
+    /* AV1 lag-1 order (generate_grain_y_c, libavcodec/aom_film_grain_template.c):
+     * [0] up-left, [1] up, [2] up-right, [3] left. The calibrated model sets the up and left taps to a / 64. */
     memset(g->ar_coeffs_y, 0, sizeof(g->ar_coeffs_y));
-    ar0 = (int8_t)av_clip((int)lrintf(st->lag1 * 64.0f), -128, 127);
-    if (ar_n > 0)
-        g->ar_coeffs_y[0] = ar0;
+    ar = (int8_t)av_clip((int)lrintf(a), 0, 127);
+    g->ar_coeffs_y[1] = ar;
+    g->ar_coeffs_y[3] = ar;
 }
 
 /* Map the measurement to H.274 model 0 (ADR-0161). The cutoff is the one whose
@@ -667,11 +709,11 @@ static const AVOption pelorus_grain_estimate_vulkan_options[] = {
      1.0,
      FLAGS},
     {"strength",
-     "scales the measured per-band RMS residual to the AV1 [0,255] "
-     "scaling function (synthesis intensity)",
+     "multiplies the calibrated AV1 scaling function (1 = reproduce the "
+     "measured grain)",
      OFFSET(strength),
      AV_OPT_TYPE_DOUBLE,
-     {.dbl = 2.0},
+     {.dbl = 1.0},
      0.0,
      64.0,
      FLAGS},
@@ -714,12 +756,28 @@ static const AVOption pelorus_grain_estimate_vulkan_options[] = {
 
 AVFILTER_DEFINE_CLASS(pelorus_grain_estimate_vulkan);
 
+/* config_props: refuse frames above the proven accumulator bound, then the
+ * shared YUV format check. */
+static int grain_estimate_vulkan_config_input(AVFilterLink *inlink)
+{
+    const long long pixels = (long long)inlink->w * (long long)inlink->h;
+
+    if (pixels > PEL_GRAIN_MAX_PIXELS) {
+        av_log(inlink->dst, AV_LOG_ERROR,
+               "%dx%d (%lld pixels) exceeds the DCI 8K limit of %lld pixels; the "
+               "estimator's 32-bit accumulators are only proven up to it\n",
+               inlink->w, inlink->h, pixels, PEL_GRAIN_MAX_PIXELS);
+        return AVERROR(EINVAL);
+    }
+    return pel_vk_config_input_yuv(inlink);
+}
+
 static const AVFilterPad pelorus_grain_estimate_vulkan_inputs[] = {
     {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
         .filter_frame = &grain_estimate_vulkan_filter_frame,
-        .config_props = &pel_vk_config_input_yuv,
+        .config_props = &grain_estimate_vulkan_config_input,
     },
 };
 

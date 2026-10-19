@@ -189,7 +189,7 @@ The accepted and refused forms are listed as test vectors in `ffmpeg-patches/tes
 # hwdownload is inherent: libx265 takes system-memory frames.
 # Not run on hardware: the test binary has no libx265.
 ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
-  -vf "hwupload,pelorus_grain_estimate_vulkan=model=h274:strength=2.0,pelorus_denoise_vulkan=strength=0.4,hwdownload,format=yuv420p" \
+  -vf "hwupload,pelorus_grain_estimate_vulkan=model=h274,pelorus_denoise_vulkan=strength=0.4,hwdownload,format=yuv420p" \
   -c:v libx265 -crf 28 grainless.hevc
 
 # 2. Insert the H.274 FGC SEI so a decoder re-synthesizes the grain.

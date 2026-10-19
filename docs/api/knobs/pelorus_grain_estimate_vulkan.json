@@ -22,12 +22,12 @@
       "type": "double",
       "min": 0.0,
       "max": 64.0,
-      "default": 2.0,
+      "default": 1.0,
       "unit": null,
       "constants": [],
       "effect_class": "strength",
       "tunable": true,
-      "help": "scales the measured per-band RMS residual to the AV1 [0,255] scaling function (synthesis intensity)"
+      "help": "multiplies the calibrated AV1 scaling function (1 = reproduce the measured grain)"
     },
     {
       "name": "model",
