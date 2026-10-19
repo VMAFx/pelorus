@@ -37,26 +37,35 @@ the sums are unbiased and bounded through DCI 8K. With model=h274 the filter
 also emits lavfi.pelorus.h274_* frame metadata: SMPTE RDD 5 model-0 values
 (model 0, log2_scale_factor 2, a cutoff and a scale) derived through a table
 calibrated against libavcodec/h274.c, named after the pelorus_fgs options they
-feed (ADR-0161).
+feed (ADR-0161). The AV1 mapping is calibrated against FFmpeg's AV1
+synthesizer (ADR-0227). Every band is measured at a chain of edge gates
+(1, 2 and 4 x edge, sums and lag-1 product alike) and climbs to a wider
+gate while its statistics match white grain; bands above the default
+gate map to AV1 through a calibration measured through the same gates
+(ADR-0229, ADR-0230). lavfi.pelorus.grain_wide_bands and
+lavfi.pelorus.grain_gate_steps report the gates taken.
 
 The shipped shader is the canonical
 libavfilter/vulkan/pelorus_grain_estimate.comp.glsl, compiled to SPIR-V at
 FFmpeg build time; Pelorus also compile-checks a standalone reference shader.
 
-AVOptions: edge, strength, model (aom/h274), native.
+AVOptions: edge, strength, model (aom/h274), native, adapt.
 
 Requires libpelorus >= 0.2.0 (pkg-config) when the filter is enabled.
 
 ADR: docs/adr/0115-grain-estimate.md
 ADR: docs/adr/0161-grain-estimate-rounding-and-h274-mapping.md
+ADR: docs/adr/0227-av1-grain-calibration.md
+ADR: docs/adr/0229-grain-dual-gate.md
+ADR: docs/adr/0230-grain-gate-chain.md
 ---
- configure                                           |   3 +
- libavfilter/Makefile                                |   1 +
- libavfilter/allfilters.c                            |   1 +
- libavfilter/vf_pelorus_grain_estimate_vulkan.c      | 896 ++++++++++++++++++++
- libavfilter/vulkan/Makefile                         |   1 +
- libavfilter/vulkan/pelorus_grain_estimate.comp.glsl | 147 ++++
- 6 files changed, 1049 insertions(+)
+ configure                                          |    3 +
+ libavfilter/Makefile                               |    1 +
+ libavfilter/allfilters.c                           |    1 +
+ libavfilter/vf_pelorus_grain_estimate_vulkan.c     | 1074 ++++++++++++++++++++
+ libavfilter/vulkan/Makefile                        |    1 +
+ .../vulkan/pelorus_grain_estimate.comp.glsl        |  156 +++
+ 6 files changed, 1236 insertions(+)
 
 diff --git a/configure b/configure
 index d26ae6933549cc65a8a1852f2de02ff2980902a1..ca410e098775c7ba9b7cd7e5774796f071c48511 100755
@@ -105,10 +114,10 @@ index 2efa0d5f6850fdd7b62e228caaba41db95711770..0cd4d5daabfabe7837cf9b76590f78dd
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_grain_estimate_vulkan.c b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..c6cfe84c97ef6c024dc682243f290f8b88f59aee
+index 0000000000000000000000000000000000000000..9cfab139b78e007a11a6e6c597cdc7a4700b38b5
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
-@@ -0,0 +1,896 @@
+@@ -0,0 +1,1074 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -142,9 +151,11 @@ index 0000000000000000000000000000000000000000..c6cfe84c97ef6c024dc682243f290f8b
 + * intensity-dependent by design): high-pass each pixel against a 3x3 box mean
 + * (resid = luma - mean3x3), gate out pixels whose 3x3 range is large (an edge /
 + * texture, not grain), and accumulate resid^2 into one of PEL_GRAIN_BANDS luma
-+ * bins with a per-bin pixel count -> per-band grain stddev. A global lag-1
-+ * correlation accumulator (resid*resid_right over flat pixels) gives a coarse AR
-+ * seed. The reduction is sliced (PEL_GRAIN_SLICES) to cut atomic contention.
++ * bins with a per-bin pixel count -> per-band grain stddev. A per-band lag-1
++ * correlation accumulator (resid*resid_right over flat pixel pairs) gives a
++ * coarse AR seed. Every gated sum is kept at a chain of edge gates so heavy
++ * grain can be measured at a wider one (ADR-0229, ADR-0230). The reduction is
++ * sliced (PEL_GRAIN_SLICES) to cut atomic contention.
 + *
 + * Host mapping: per-band RMS residual -> the AV1 AOM piecewise scaling function
 + * y_points[value, scaling] and the lag-1 correlation -> a symmetric lag-1 AR
@@ -210,17 +221,22 @@ index 0000000000000000000000000000000000000000..c6cfe84c97ef6c024dc682243f290f8b
 + * (scripts/test-grain-accumulator-bounds.py reads this value). */
 +#define PEL_GRAIN_MAX_PIXELS (8192LL * 4320LL)
 +
-+/* Dual gate (ADR-0229). The shader also measures every band at a wide gate,
-+ * WIDE_GATE x edge_thr, and counts every band pixel. A band takes the wide
-+ * statistics when the default gate binds (kept fraction below GATE_FMAX), the
-+ * band holds at least GATE_MINCNT gated pixels, and its gated RMS over edge_thr
-+ * reaches GATE_RATIO of the white Gaussian grain curve at its kept fraction.
-+ * Texture sits at 0.79 of the curve or below, grain at 0.96 or above
-+ * (docs/research/0411-grain-dual-gate.md). */
-+#define PEL_GRAIN_WIDE_GATE 2.0
++/* Gate chain (ADR-0229, ADR-0230). The shader measures every band at
++ * PEL_GRAIN_GATES nested gates, pel_grain_gate_step[g] x edge_thr, and counts
++ * every band pixel. A band moves from gate g to gate g + 1 while gate g binds
++ * (kept fraction below GATE_FMAX), the band holds at least GATE_MINCNT pixels
++ * within gate g, and its gated RMS over that gate reaches GATE_RATIO of the
++ * white Gaussian grain curve of gate g at its kept fraction. Texture sits at
++ * 0.79 of the curve or below, grain at 0.96 or above
++ * (docs/research/0411-grain-dual-gate.md, docs/research/0414-grain-gate-chain.md). */
++#define PEL_GRAIN_GATES 3
++#define PEL_GRAIN_BAND_SLOTS (PEL_GRAIN_BANDS * PEL_GRAIN_SLICES)
 +#define PEL_GRAIN_GATE_FMAX 0.95
 +#define PEL_GRAIN_GATE_MINCNT 1024
 +#define PEL_GRAIN_GATE_RATIO 0.875
++
++/* Gate g = pel_grain_gate_step[g] x edge_thr; MUST match the shader GATE_STEP. */
++static const double pel_grain_gate_step[PEL_GRAIN_GATES] = {1.0, 2.0, 4.0};
 +
 +/* H.274 model 0 as synthesized by FFmpeg's SMPTE RDD 5 implementation
 + * (libavcodec/h274.c). log2_scale_factor 2 lies in the RDD 5 range 2..7 and is
@@ -263,28 +279,107 @@ index 0000000000000000000000000000000000000000..c6cfe84c97ef6c024dc682243f290f8b
 +    {24, 0.0190f, 0.11102f},  {28, 0.0474f, 0.11052f},
 +};
 +
-+/* White Gaussian grain through this estimator's arithmetic at the default
-+ * gate: f is the kept fraction of the band, q the gated RMS over edge_thr.
-+ * Sorted by f. Regenerate with scripts/gen-grain-gate-curve.py (ADR-0229). */
++/* The same model measured through each gate wider than the default (gate g =
++ * pel_grain_gate_step[g] x edge_thr, ADR-0230): a band at a wider gate still
++ * loses its largest excursions, which lowers its RMS and shifts its lag-1
++ * correlation by an amount that depends on a. Rows hold (g, a, q, rho_r,
++ * gain_r), q the gated residual RMS over the gate. Each (g, a) block holds
++ * PEL_AOM_GATE_ROWS rows sorted by q; blocks run g = 1 first, a in the order of
++ * pel_aom_calib. Regenerate with scripts/gen-av1-grain-calibration.py. */
++#define PEL_AOM_GATE_ROWS 7
++static const struct {
++    uint8_t g;
++    uint8_t a;
++    float q;
++    float rho_r;
++    float gain_r;
++} pel_aom_gate_calib[] = {
++    {1,  0, 0.1246f, -0.1536f, 0.11919f}, {1,  0, 0.1558f, -0.1547f, 0.11917f},
++    {1,  0, 0.1860f, -0.1543f, 0.11856f}, {1,  0, 0.2114f, -0.1600f, 0.11550f},
++    {1,  0, 0.2313f, -0.1729f, 0.11058f}, {1,  0, 0.2470f, -0.1740f, 0.10498f},
++    {1,  0, 0.2566f, -0.1566f, 0.09815f}, {1,  4, 0.1225f, -0.1262f, 0.11718f},
++    {1,  4, 0.1529f, -0.1206f, 0.11700f}, {1,  4, 0.1823f, -0.1209f, 0.11619f},
++    {1,  4, 0.2085f, -0.1294f, 0.11392f}, {1,  4, 0.2282f, -0.1475f, 0.10910f},
++    {1,  4, 0.2437f, -0.1451f, 0.10356f}, {1,  4, 0.2548f, -0.1428f, 0.09746f},
++    {1,  8, 0.1206f, -0.0923f, 0.11536f}, {1,  8, 0.1504f, -0.0912f, 0.11503f},
++    {1,  8, 0.1793f, -0.0926f, 0.11430f}, {1,  8, 0.2051f, -0.0978f, 0.11207f},
++    {1,  8, 0.2243f, -0.1192f, 0.10725f}, {1,  8, 0.2409f, -0.1200f, 0.10239f},
++    {1,  8, 0.2516f, -0.1178f, 0.09625f}, {1, 12, 0.1190f, -0.0632f, 0.11379f},
++    {1, 12, 0.1486f, -0.0626f, 0.11365f}, {1, 12, 0.1766f, -0.0661f, 0.11261f},
++    {1, 12, 0.2019f, -0.0748f, 0.11035f}, {1, 12, 0.2220f, -0.0924f, 0.10612f},
++    {1, 12, 0.2384f, -0.0939f, 0.10132f}, {1, 12, 0.2516f, -0.0923f, 0.09624f},
++    {1, 16, 0.1176f, -0.0350f, 0.11248f}, {1, 16, 0.1470f, -0.0347f, 0.11244f},
++    {1, 16, 0.1744f, -0.0377f, 0.11120f}, {1, 16, 0.1992f, -0.0490f, 0.10885f},
++    {1, 16, 0.2197f, -0.0659f, 0.10506f}, {1, 16, 0.2362f, -0.0692f, 0.10039f},
++    {1, 16, 0.2473f, -0.0722f, 0.09460f}, {1, 20, 0.1164f, -0.0054f, 0.11132f},
++    {1, 20, 0.1453f, -0.0078f, 0.11114f}, {1, 20, 0.1729f, -0.0177f, 0.11019f},
++    {1, 20, 0.1975f, -0.0244f, 0.10790f}, {1, 20, 0.2179f, -0.0476f, 0.10419f},
++    {1, 20, 0.2337f, -0.0562f, 0.09934f}, {1, 20, 0.2462f, -0.0602f, 0.09418f},
++    {1, 24, 0.1156f, 0.0201f, 0.11058f}, {1, 24, 0.1443f, 0.0172f, 0.11036f},
++    {1, 24, 0.1715f, 0.0125f, 0.10930f}, {1, 24, 0.1954f, -0.0030f, 0.10676f},
++    {1, 24, 0.2165f, -0.0228f, 0.10351f}, {1, 24, 0.2303f, -0.0289f, 0.09787f},
++    {1, 24, 0.2436f, -0.0538f, 0.09316f}, {1, 28, 0.1151f, 0.0498f, 0.11006f},
++    {1, 28, 0.1435f, 0.0448f, 0.10980f}, {1, 28, 0.1708f, 0.0407f, 0.10887f},
++    {1, 28, 0.1933f, 0.0183f, 0.10561f}, {1, 28, 0.2135f, -0.0009f, 0.10207f},
++    {1, 28, 0.2286f, -0.0286f, 0.09716f}, {1, 28, 0.2419f, -0.0483f, 0.09255f},
++    {2,  0, 0.1240f, -0.1548f, 0.11857f}, {2,  0, 0.1519f, -0.1580f, 0.11619f},
++    {2,  0, 0.1748f, -0.1581f, 0.11142f}, {2,  0, 0.1925f, -0.1623f, 0.10517f},
++    {2,  0, 0.2056f, -0.1662f, 0.09832f}, {2,  0, 0.2146f, -0.1626f, 0.09120f},
++    {2,  0, 0.2221f, -0.1597f, 0.08494f}, {2,  4, 0.1218f, -0.1217f, 0.11650f},
++    {2,  4, 0.1494f, -0.1245f, 0.11432f}, {2,  4, 0.1724f, -0.1251f, 0.10994f},
++    {2,  4, 0.1902f, -0.1292f, 0.10392f}, {2,  4, 0.2031f, -0.1443f, 0.09711f},
++    {2,  4, 0.2128f, -0.1423f, 0.09044f}, {2,  4, 0.2204f, -0.1363f, 0.08428f},
++    {2,  8, 0.1199f, -0.0915f, 0.11469f}, {2,  8, 0.1473f, -0.0946f, 0.11265f},
++    {2,  8, 0.1704f, -0.0950f, 0.10864f}, {2,  8, 0.1881f, -0.1003f, 0.10280f},
++    {2,  8, 0.2013f, -0.1181f, 0.09623f}, {2,  8, 0.2113f, -0.1188f, 0.08978f},
++    {2,  8, 0.2184f, -0.1132f, 0.08354f}, {2, 12, 0.1183f, -0.0618f, 0.11312f},
++    {2, 12, 0.1454f, -0.0648f, 0.11124f}, {2, 12, 0.1687f, -0.0675f, 0.10752f},
++    {2, 12, 0.1864f, -0.0780f, 0.10184f}, {2, 12, 0.1994f, -0.0897f, 0.09532f},
++    {2, 12, 0.2095f, -0.0928f, 0.08903f}, {2, 12, 0.2172f, -0.0872f, 0.08309f},
++    {2, 16, 0.1168f, -0.0333f, 0.11173f}, {2, 16, 0.1438f, -0.0350f, 0.11002f},
++    {2, 16, 0.1670f, -0.0406f, 0.10644f}, {2, 16, 0.1848f, -0.0487f, 0.10100f},
++    {2, 16, 0.1981f, -0.0676f, 0.09473f}, {2, 16, 0.2085f, -0.0698f, 0.08862f},
++    {2, 16, 0.2151f, -0.0665f, 0.08229f}, {2, 20, 0.1158f, -0.0060f, 0.11076f},
++    {2, 20, 0.1427f, -0.0080f, 0.10916f}, {2, 20, 0.1658f, -0.0148f, 0.10570f},
++    {2, 20, 0.1837f, -0.0232f, 0.10036f}, {2, 20, 0.1972f, -0.0429f, 0.09427f},
++    {2, 20, 0.2069f, -0.0534f, 0.08794f}, {2, 20, 0.2151f, -0.0558f, 0.08226f},
++    {2, 24, 0.1152f, 0.0211f, 0.11012f}, {2, 24, 0.1418f, 0.0187f, 0.10846f},
++    {2, 24, 0.1649f, 0.0106f, 0.10510f}, {2, 24, 0.1825f, -0.0009f, 0.09974f},
++    {2, 24, 0.1961f, -0.0185f, 0.09375f}, {2, 24, 0.2052f, -0.0284f, 0.08720f},
++    {2, 24, 0.2137f, -0.0453f, 0.08174f}, {2, 28, 0.1146f, 0.0491f, 0.10955f},
++    {2, 28, 0.1413f, 0.0465f, 0.10810f}, {2, 28, 0.1644f, 0.0392f, 0.10477f},
++    {2, 28, 0.1813f, 0.0222f, 0.09907f}, {2, 28, 0.1950f, 0.0060f, 0.09323f},
++    {2, 28, 0.2044f, -0.0186f, 0.08686f}, {2, 28, 0.2132f, -0.0507f, 0.08156f},
++};
++
++/* White Gaussian grain through this estimator's arithmetic, one curve of
++ * PEL_GRAIN_CURVE_ROWS rows per gate below the widest (the widest is never
++ * left), gate 0 first: f is the kept fraction of the band at that gate, q the
++ * gated RMS over the gate. Each curve is sorted by f. Regenerate with
++ * scripts/gen-grain-gate-curve.py (ADR-0229, ADR-0230). */
++#define PEL_GRAIN_CURVE_ROWS 16
 +static const struct {
 +    float f;
 +    float q;
-+} pel_gate_curve[] = {
++} pel_gate_curve[(PEL_GRAIN_GATES - 1) * PEL_GRAIN_CURVE_ROWS] = {
 +    {0.0029f, 0.3009f}, {0.0083f, 0.2987f}, {0.0252f, 0.2932f}, {0.0487f, 0.2920f},
 +    {0.0931f, 0.2874f}, {0.1797f, 0.2806f}, {0.2469f, 0.2762f}, {0.3361f, 0.2717f},
 +    {0.4519f, 0.2645f}, {0.5867f, 0.2570f}, {0.7366f, 0.2451f}, {0.8677f, 0.2303f},
 +    {0.9164f, 0.2212f}, {0.9549f, 0.2099f}, {0.9787f, 0.1976f}, {0.9920f, 0.1842f},
++    {0.0027f, 0.2966f}, {0.0071f, 0.2990f}, {0.0245f, 0.2835f}, {0.0440f, 0.2871f},
++    {0.0860f, 0.2811f}, {0.1653f, 0.2760f}, {0.2297f, 0.2722f}, {0.3153f, 0.2675f},
++    {0.4332f, 0.2607f}, {0.5675f, 0.2534f}, {0.7144f, 0.2430f}, {0.8526f, 0.2287f},
++    {0.9065f, 0.2195f}, {0.9462f, 0.2090f}, {0.9747f, 0.1971f}, {0.9901f, 0.1838f},
 +};
 +
-+/* Host-readback accumulator. Matches the GLSL std430 GrainBuf layout exactly. */
++/* Host-readback accumulator. Matches the GLSL std430 GrainBuf layout exactly.
++ * The gated members hold one PEL_GRAIN_BAND_SLOTS block per gate, gate 0 first. */
 +typedef struct PelorusGrainBuf {
-+    uint32_t sumsq[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES]; /* Σ resid^2 * GS       */
-+    uint32_t cnt[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES];   /* flat-pixel count     */
-+    uint32_t corr[PEL_GRAIN_SLICES];                    /* Σ (resid*resid_right + BIAS) * GS   */
-+    uint32_t corr_cnt[PEL_GRAIN_SLICES];                /* lag-1 sample count                  */
-+    uint32_t sumsq_w[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES]; /* Σ resid^2 * GS, wide gate */
-+    uint32_t cnt_w[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES];   /* pixel count, wide gate    */
-+    uint32_t total[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES];   /* every band pixel          */
++    uint32_t sumsq[PEL_GRAIN_GATES * PEL_GRAIN_BAND_SLOTS];    /* Σ resid^2 * GS       */
++    uint32_t cnt[PEL_GRAIN_GATES * PEL_GRAIN_BAND_SLOTS];      /* gated-pixel count    */
++    uint32_t corr[PEL_GRAIN_GATES * PEL_GRAIN_BAND_SLOTS];     /* Σ (prod + BIAS) * GS */
++    uint32_t corr_cnt[PEL_GRAIN_GATES * PEL_GRAIN_BAND_SLOTS]; /* lag-1 sample count   */
++    uint32_t total[PEL_GRAIN_BAND_SLOTS];                      /* every band pixel     */
 +} PelorusGrainBuf;
 +
 +typedef struct PelorusGrainEstimateVulkanContext {
@@ -300,7 +395,7 @@ index 0000000000000000000000000000000000000000..c6cfe84c97ef6c024dc682243f290f8b
 +    double strength;   /* maps per-band RMS residual to the AV1 scaling [0,255]  */
 +    int grain_model;   /* enum pel_grain_model: 1=AOM (default), 2=H274          */
 +    int attach_native; /* also attach native AV_FRAME_DATA_FILM_GRAIN_PARAMS    */
-+    int adapt;         /* take wide-gate statistics on grain-consistent bands    */
++    int adapt;         /* take wider-gate statistics on grain-consistent bands   */
 +} PelorusGrainEstimateVulkanContext;
 +
 +/* The estimator now lives in vulkan/pelorus_grain_estimate.comp.glsl, compiled
@@ -329,9 +424,8 @@ index 0000000000000000000000000000000000000000..c6cfe84c97ef6c024dc682243f290f8b
 +            .mem_layout = "std430",
 +            .stages = VK_SHADER_STAGE_COMPUTE_BIT,
 +            /* Mirrors PelorusGrainBuf / the .comp.glsl grain_buffer block. */
-+            .buf_content = "uint sumsq[256]; uint cnt[256]; "
-+                           "uint corr[32]; uint corr_cnt[32]; "
-+                           "uint sumsq_w[256]; uint cnt_w[256]; uint total[256];",
++            .buf_content = "uint sumsq[768]; uint cnt[768]; "
++                           "uint corr[768]; uint corr_cnt[768]; uint total[256];",
 +        },
 +    };
 +    ff_vk_shader_add_descriptor_set(vkctx, shd, desc, 2, 0);
@@ -394,7 +488,11 @@ index 0000000000000000000000000000000000000000..c6cfe84c97ef6c024dc682243f290f8b
 +    float rms_all;       /* RMS residual pooled over all flat pixels, [0,1]     */
 +    float lag1;          /* lag-1 autocorrelation coefficient, [-1,1]           */
 +    uint64_t flat_total; /* total flat pixels measured                          */
-+    int wide_mask;       /* bit b set: band b took the wide-gate statistics     */
++    int wide_mask;       /* bit b set: band b took a gate wider than the default */
++    int gate_steps;      /* bits 2b..2b+1: the gate index band b took           */
++    int band_gate[PEL_GRAIN_BANDS];       /* gate index band b took              */
++    float band_q[PEL_GRAIN_BANDS];        /* band RMS over the width of its gate */
++    uint64_t band_pairs[PEL_GRAIN_BANDS]; /* lag-1 pairs band b contributed      */
 +} PelorusGrainStats;
 +
 +/* H.274 model-0 parameters for one full-range luma interval. */
@@ -418,98 +516,109 @@ index 0000000000000000000000000000000000000000..c6cfe84c97ef6c024dc682243f290f8b
 +    av_dict_set_int(&frame->metadata, key, v, 0);
 +}
 +
-+/* Gated RMS over edge_thr that white Gaussian grain gives at kept fraction f
-+ * (linear between rows, clamped to the table ends). */
-+static double pel_gate_curve_q(double f)
++/* Gated RMS over gate g that white Gaussian grain gives at kept fraction f
++ * (linear between rows, clamped to the curve ends). */
++static double pel_gate_curve_q(int g, double f)
 +{
-+    int n = (int)FF_ARRAY_ELEMS(pel_gate_curve), i;
++    const int n = PEL_GRAIN_CURVE_ROWS;
++    const int o = g * PEL_GRAIN_CURVE_ROWS;
++    int i;
 +
-+    if (f <= pel_gate_curve[0].f)
-+        return pel_gate_curve[0].q;
-+    for (i = 1; i < n; i++) {
++    if (f <= pel_gate_curve[o].f)
++        return pel_gate_curve[o].q;
++    for (i = o + 1; i < o + n; i++) {
 +        if (f <= pel_gate_curve[i].f) {
 +            double t = (f - pel_gate_curve[i - 1].f) / (pel_gate_curve[i].f - pel_gate_curve[i - 1].f);
 +            return pel_gate_curve[i - 1].q + t * (pel_gate_curve[i].q - pel_gate_curve[i - 1].q);
 +        }
 +    }
-+    return pel_gate_curve[n - 1].q;
++    return pel_gate_curve[o + n - 1].q;
 +}
 +
-+/* Sum one band's slices of a per-band accumulator. */
-+static uint64_t pel_band_sum(const uint32_t *v, int b)
++/* Sum band b's slices of gate g of a gated accumulator (g = 0 for total). */
++static uint64_t pel_band_sum(const uint32_t *v, int g, int b)
 +{
++    const uint32_t *row = v + (size_t)(g * PEL_GRAIN_BANDS + b) * PEL_GRAIN_SLICES;
 +    uint64_t sum = 0;
 +    int sl;
 +
 +    for (sl = 0; sl < PEL_GRAIN_SLICES; sl++)
-+        sum += v[b * PEL_GRAIN_SLICES + sl];
++        sum += row[sl];
 +    return sum;
 +}
 +
-+/* Dual gate (ADR-0229): does band b's default-gate measurement lie on the
-+ * white Gaussian grain curve while the gate drops part of the band? */
-+static int pel_band_takes_wide(const PelorusGrainBuf *acc, int b, double edge_thr)
++/* Gate chain (ADR-0230): the gate band b's statistics come from. A band climbs
++ * from gate g to g + 1 while its measurement at gate g lies on the white
++ * Gaussian grain curve of that gate and the gate drops part of the band. */
++static int pel_band_gate(const PelorusGrainBuf *acc, int b, double edge_thr)
 +{
-+    uint64_t n = pel_band_sum(acc->cnt, b), total = pel_band_sum(acc->total, b);
-+    double f, q;
++    uint64_t total = pel_band_sum(acc->total, 0, b);
++    int g;
 +
-+    if (n < PEL_GRAIN_GATE_MINCNT || total == 0 || edge_thr <= 0.0)
++    if (total == 0 || edge_thr <= 0.0)
 +        return 0;
-+    f = (double)n / (double)total;
-+    if (f >= PEL_GRAIN_GATE_FMAX)
-+        return 0;
-+    q = sqrt((double)pel_band_sum(acc->sumsq, b) / PEL_GRAIN_SUMSQ_GS / (double)n) / edge_thr;
-+    return q >= PEL_GRAIN_GATE_RATIO * pel_gate_curve_q(f);
++    for (g = 0; g < PEL_GRAIN_GATES - 1; g++) {
++        uint64_t n = pel_band_sum(acc->cnt, g, b);
++        double f, q, gate = pel_grain_gate_step[g] * edge_thr;
++
++        if (n < PEL_GRAIN_GATE_MINCNT)
++            break;
++        f = (double)n / (double)total;
++        if (f >= PEL_GRAIN_GATE_FMAX)
++            break;
++        q = sqrt((double)pel_band_sum(acc->sumsq, g, b) / PEL_GRAIN_SUMSQ_GS / (double)n) / gate;
++        if (q < PEL_GRAIN_GATE_RATIO * pel_gate_curve_q(g, f))
++            break;
++    }
++    return g;
 +}
 +
-+/* Lag-1 coefficient: the mean product over the default-gate pixels, normalized
-+ * by the default-gate residual variance it was measured against. */
-+static float pel_lag1(const PelorusGrainBuf *acc, double var_def)
++/* Lag-1 coefficient: the mean product over the chosen gates' pixel pairs,
++ * normalized by the residual variance of the same gates. */
++static float pel_lag1(double corr_sum, uint64_t corr_n, double var)
 +{
-+    double corr_sum = 0.0;
-+    uint64_t corr_n = 0;
-+    int sl;
-+
-+    for (sl = 0; sl < PEL_GRAIN_SLICES; sl++) {
-+        corr_sum += acc->corr[sl];
-+        corr_n += acc->corr_cnt[sl];
-+    }
-+    if (corr_n == 0 || var_def <= 0.0)
++    if (corr_n == 0 || var <= 0.0)
 +        return 0.0f;
 +    /* mean lag-1 product = (Σ biased / CORR_GS - n*BIAS) / n */
 +    return (float)av_clipd(
-+        (corr_sum / PEL_GRAIN_CORR_GS - (double)corr_n * PEL_GRAIN_CORR_BIAS) / (double)corr_n / var_def,
++        (corr_sum / PEL_GRAIN_CORR_GS - (double)corr_n * PEL_GRAIN_CORR_BIAS) / (double)corr_n / var,
 +        -1.0, 1.0);
 +}
 +
 +static void reduce_stats(const PelorusGrainEstimateVulkanContext *s, const PelorusGrainBuf *acc,
 +                         PelorusGrainStats *st)
 +{
-+    double var_sum = 0.0, def_sum = 0.0;
-+    uint64_t def_n = 0;
++    double var_sum = 0.0, corr_sum = 0.0;
++    uint64_t corr_n = 0;
 +    int b;
 +
 +    memset(st, 0, sizeof(*st));
 +
 +    for (b = 0; b < PEL_GRAIN_BANDS; b++) {
-+        int wide = s->adapt && pel_band_takes_wide(acc, b, s->edge_thr);
-+        uint64_t n = pel_band_sum(wide ? acc->cnt_w : acc->cnt, b);
-+        double sq = (double)pel_band_sum(wide ? acc->sumsq_w : acc->sumsq, b) / PEL_GRAIN_SUMSQ_GS;
++        int g = s->adapt ? pel_band_gate(acc, b, s->edge_thr) : 0;
++        uint64_t n = pel_band_sum(acc->cnt, g, b);
++        double sq = (double)pel_band_sum(acc->sumsq, g, b) / PEL_GRAIN_SUMSQ_GS;
 +
-+        def_sum += (double)pel_band_sum(acc->sumsq, b) / PEL_GRAIN_SUMSQ_GS;
-+        def_n += pel_band_sum(acc->cnt, b);
-+        st->wide_mask |= wide << b;
++        corr_sum += (double)pel_band_sum(acc->corr, g, b);
++        st->band_pairs[b] = pel_band_sum(acc->corr_cnt, g, b);
++        corr_n += st->band_pairs[b];
++        st->band_gate[b] = g;
++        st->wide_mask |= (g > 0) << b;
++        st->gate_steps |= g << (2 * b);
 +        st->band_cnt[b] = n;
 +        st->flat_total += n;
 +        if (n > 0) {
 +            st->band_rms[b] = (float)sqrt(sq / (double)n);
++            if (s->edge_thr > 0.0)
++                st->band_q[b] = (float)(st->band_rms[b] / (pel_grain_gate_step[g] * s->edge_thr));
 +            var_sum += sq;
 +        }
 +    }
 +
 +    if (st->flat_total > 0)
 +        st->rms_all = (float)sqrt(var_sum / (double)st->flat_total);
-+    st->lag1 = pel_lag1(acc, def_n > 0 ? def_sum / (double)def_n : 0.0);
++    st->lag1 =
++        pel_lag1(corr_sum, corr_n, st->flat_total > 0 ? var_sum / (double)st->flat_total : 0.0);
 +}
 +
 +/* Invert pel_aom_calib: the AR coefficient a whose calibrated residual lag-1
@@ -528,6 +637,76 @@ index 0000000000000000000000000000000000000000..c6cfe84c97ef6c024dc682243f290f8b
 +    *gain = pel_aom_calib[i - 1].gain_r + t * (pel_aom_calib[i].gain_r - pel_aom_calib[i - 1].gain_r);
 +}
 +
++/* Residual lag-1 correlation and gain of model row ai of pel_aom_calib as band
++ * b of st measures it: the open-gate row at gate 0, otherwise that row's gated
++ * block interpolated in q (linear between rows, clamped to the block ends). */
++static void pel_aom_band_model(const PelorusGrainStats *st, int b, size_t ai, double *rho,
++                               double *gain)
++{
++    size_t o, i;
++    double t, q = st->band_q[b];
++
++    if (st->band_gate[b] == 0) {
++        *rho = pel_aom_calib[ai].rho_r;
++        *gain = pel_aom_calib[ai].gain_r;
++        return;
++    }
++    o = ((size_t)(st->band_gate[b] - 1) * FF_ARRAY_ELEMS(pel_aom_calib) + ai) * PEL_AOM_GATE_ROWS;
++    i = o + 1;
++    while (i < o + PEL_AOM_GATE_ROWS - 1 && q > pel_aom_gate_calib[i].q)
++        i++;
++    t = pel_aom_gate_calib[i].q > pel_aom_gate_calib[i - 1].q
++            ? (q - pel_aom_gate_calib[i - 1].q) / (pel_aom_gate_calib[i].q - pel_aom_gate_calib[i - 1].q)
++            : 0.0;
++    t = av_clipd(t, 0.0, 1.0);
++    *rho = pel_aom_gate_calib[i - 1].rho_r + t * (pel_aom_gate_calib[i].rho_r - pel_aom_gate_calib[i - 1].rho_r);
++    *gain = pel_aom_gate_calib[i - 1].gain_r +
++            t * (pel_aom_gate_calib[i].gain_r - pel_aom_gate_calib[i - 1].gain_r);
++}
++
++/* Pooled lag-1 correlation model row ai predicts for st, pooled the way
++ * reduce_stats pools the measurement: the pair-weighted mean product of the
++ * bands over the pixel-weighted variance. gain[b] receives each band's gain. */
++static double pel_aom_pred(const PelorusGrainStats *st, size_t ai, double gain[PEL_GRAIN_BANDS])
++{
++    double prod = 0.0, var = (double)st->rms_all * st->rms_all;
++    uint64_t pairs = 0;
++    int b;
++
++    for (b = 0; b < PEL_GRAIN_BANDS; b++) {
++        double rho, vb = (double)st->band_rms[b] * st->band_rms[b];
++
++        pel_aom_band_model(st, b, ai, &rho, &gain[b]);
++        prod += (double)st->band_pairs[b] * rho * vb;
++        pairs += st->band_pairs[b];
++    }
++    if (pairs == 0 || var <= 0.0)
++        return pel_aom_calib[ai].rho_r;
++    return prod / (double)pairs / var;
++}
++
++/* AR coefficient and per-band gain when a band took a wider gate (ADR-0230):
++ * invert the measured pooled lag-1 against each model row's predicted pooled
++ * lag-1 (linear between rows, clamped to the grid ends). */
++static void pel_aom_invert_gated(const PelorusGrainStats *st, float *a, float gain[PEL_GRAIN_BANDS])
++{
++    double pred[FF_ARRAY_ELEMS(pel_aom_calib)];
++    double g[FF_ARRAY_ELEMS(pel_aom_calib)][PEL_GRAIN_BANDS];
++    size_t i = 1, r;
++    double t;
++    int b;
++
++    for (r = 0; r < FF_ARRAY_ELEMS(pel_aom_calib); r++)
++        pred[r] = pel_aom_pred(st, r, g[r]);
++    while (i < FF_ARRAY_ELEMS(pel_aom_calib) - 1 && st->lag1 > pred[i])
++        i++;
++    t = pred[i] > pred[i - 1] ? (st->lag1 - pred[i - 1]) / (pred[i] - pred[i - 1]) : 0.0;
++    t = av_clipd(t, 0.0, 1.0);
++    *a = (float)(pel_aom_calib[i - 1].a + t * (pel_aom_calib[i].a - pel_aom_calib[i - 1].a));
++    for (b = 0; b < PEL_GRAIN_BANDS; b++)
++        gain[b] = (float)(g[i - 1][b] + t * (g[i][b] - g[i - 1][b]));
++}
++
 +/* Map the measured per-band stats to AV1 AOM film-grain params (ADR-0227). The
 + * measured lag-1 correlation selects a symmetric lag-1 AR model (up and left
 + * taps equal: the estimator measures horizontal correlation only, so the grain
@@ -542,7 +721,7 @@ index 0000000000000000000000000000000000000000..c6cfe84c97ef6c024dc682243f290f8b
 +{
 +    int b, np = 0;
 +    int8_t ar;
-+    float a, gain;
++    float a, gain[PEL_GRAIN_BANDS];
 +
 +    g->seed = 0;           /* deterministic; a real seed is set by the synth stage */
 +    g->scaling_shift = 8;  /* AV1 [8,11] */
@@ -561,7 +740,14 @@ index 0000000000000000000000000000000000000000..c6cfe84c97ef6c024dc682243f290f8b
 +    g->h274_blending_mode = 0; /* additive */
 +    g->h274_log2_scale = PEL_GRAIN_H274_LOG2_SCALE;
 +
-+    pel_aom_invert(st->lag1, &a, &gain);
++    /* No band left the default gate: the open-gate calibration (ADR-0227). */
++    if (st->wide_mask == 0) {
++        pel_aom_invert(st->lag1, &a, &gain[0]);
++        for (b = 1; b < PEL_GRAIN_BANDS; b++)
++            gain[b] = gain[0];
++    } else {
++        pel_aom_invert_gated(st, &a, gain);
++    }
 +    for (b = 0; b < PEL_GRAIN_BANDS && np < 14; b++) {
 +        int value, scaling;
 +        if (st->band_cnt[b] == 0)
@@ -570,7 +756,7 @@ index 0000000000000000000000000000000000000000..c6cfe84c97ef6c024dc682243f290f8b
 +        value = av_clip((b * 255 + 128) / PEL_GRAIN_BANDS, 0, 255);
 +        /* RMS residual in 8-bit codes over the model's gain -> [0,255] */
 +        scaling = av_clip(
-+            (int)lrintf(st->band_rms[b] * 255.0f / gain * (float)s->strength), 0, 255);
++            (int)lrintf(st->band_rms[b] * 255.0f / gain[b] * (float)s->strength), 0, 255);
 +        if (scaling == 0)
 +            continue; /* no measurable grain in this band */
 +        g->y_points[np][0] = (uint8_t)value;
@@ -818,6 +1004,7 @@ index 0000000000000000000000000000000000000000..c6cfe84c97ef6c024dc682243f290f8b
 +                   (float)((double)st->flat_total / ((double)in->width * (double)in->height)));
 +    pel_set_meta_f(in, "lavfi.pelorus.grain_lag1", st->lag1);
 +    pel_set_meta_i(in, "lavfi.pelorus.grain_wide_bands", st->wide_mask);
++    pel_set_meta_i(in, "lavfi.pelorus.grain_gate_steps", st->gate_steps);
 +
 +    if (s->grain_model == PEL_GRAIN_H274) {
 +        PelorusH274Model hm;
@@ -948,7 +1135,7 @@ index 0000000000000000000000000000000000000000..c6cfe84c97ef6c024dc682243f290f8b
 +     1,
 +     FLAGS},
 +    {"adapt",
-+     "measure grain-consistent bands at the wide gate (2 x edge) to recover heavy grain",
++     "measure grain-consistent bands at a wider gate (2 or 4 x edge) to recover heavy grain",
 +     OFFSET(adapt),
 +     AV_OPT_TYPE_BOOL,
 +     {.i64 = 1},
@@ -1016,10 +1203,10 @@ index 68273b221a24d429d28095e1b4cd09b83c33da89..599f717a9696021e9d51baa105bda04c
 +OBJS-$(CONFIG_PELORUS_GRAIN_ESTIMATE_VULKAN_FILTER) += vulkan/pelorus_grain_estimate.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_grain_estimate.comp.glsl b/libavfilter/vulkan/pelorus_grain_estimate.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..944890a6d85b363d7923d749fefc007d04451c02
+index 0000000000000000000000000000000000000000..df62743c64e562ef23778a84b82c8e1141d82d2a
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_grain_estimate.comp.glsl
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,156 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -1051,14 +1238,15 @@ index 0000000000000000000000000000000000000000..944890a6d85b363d7923d749fefc007d
 + * intensity-dependent by design):
 + *   1. high-pass:  resid = luma - mean3x3   (box low-pass removes structure)
 + *   2. edge gate:  skip pixels whose 3x3 range exceeds edge_thr (that residual
-+ *                  is an edge / texture, not grain); a second, wide gate
-+ *                  (WIDE_GATE x edge_thr) and the band pixel total let the
++ *                  is an edge / texture, not grain); a chain of wider gates
++ *                  (GATE_STEP[g] x edge_thr) and the band pixel total let the
 + *                  host recover heavy grain the default gate truncates
-+ *                  (ADR-0229)
++ *                  (ADR-0229, ADR-0230)
 + *   3. bin:        accumulate resid^2 into one of BANDS luma bins with a
 + *                  per-bin pixel count -> per-band grain stddev
-+ *   4. AR proxy:   accumulate the lag-1 product resid*resid_right (a
-+ *                  spatial-correlation scalar -> AR seed / H.274 cutoff)
++ *   4. AR proxy:   accumulate the lag-1 product resid*resid_right per band
++ *                  and gate (a spatial-correlation scalar -> AR seed / H.274
++ *                  cutoff)
 + * The reduction is sliced (SLICES) to cut atomic contention; the host sums the
 + * slices and fits the AV1 piecewise scaling function + AR seed (ADR-0115) and
 + * the H.274 model-0 parameters (ADR-0161).
@@ -1089,15 +1277,14 @@ index 0000000000000000000000000000000000000000..944890a6d85b363d7923d749fefc007d
 +
 +layout (set = 0, binding = 0) uniform readonly image2D input_images[];
 +
-+/* Mirrors PelorusGrainBuf in the filter, byte-for-byte (std430). */
++/* Mirrors PelorusGrainBuf in the filter, byte-for-byte (std430). The gated
++ * members hold one [BANDS * SLICES] block per gate, gate 0 first. */
 +layout (set = 0, binding = 1, std430) buffer grain_buffer {
-+    uint sumsq[256];    /* Σ resid^2 * SUMSQ_GS,   [BANDS * SLICES] */
-+    uint cnt[256];      /* flat-pixel count,       [BANDS * SLICES] */
-+    uint corr[32];      /* Σ (resid*resid_right + CORR_BIAS) * CORR_GS */
-+    uint corr_cnt[32];  /* lag-1 sample count                       */
-+    uint sumsq_w[256];  /* Σ resid^2 * SUMSQ_GS at the wide gate    */
-+    uint cnt_w[256];    /* pixel count at the wide gate             */
-+    uint total[256];    /* every pixel of the band, gate or not     */
++    uint sumsq[768];    /* Σ resid^2 * SUMSQ_GS,   [GATES * BANDS * SLICES] */
++    uint cnt[768];      /* gated-pixel count,      [GATES * BANDS * SLICES] */
++    uint corr[768];     /* Σ (resid*resid_right + CORR_BIAS) * CORR_GS      */
++    uint corr_cnt[768]; /* lag-1 sample count,     [GATES * BANDS * SLICES] */
++    uint total[256];    /* every pixel of the band, gate or not             */
 +};
 +
 +float pel_to_sample(float value)
@@ -1113,8 +1300,9 @@ index 0000000000000000000000000000000000000000..944890a6d85b363d7923d749fefc007d
 +    const float CORR_GS = 150000.0;
 +    const float CORR_BIAS = 0.0064;
 +    const float RES_CLAMP = 0.08;
-+    /* Wide gate = WIDE_GATE * edge_thr; matches PEL_GRAIN_WIDE_GATE. */
-+    const float WIDE_GATE = 2.0;
++    /* Gate g = GATE_STEP[g] * edge_thr; matches pel_grain_gate_step. */
++    const int GATES = 3;
++    const float GATE_STEP[3] = float[3](1.0, 2.0, 4.0);
 +    const int BANDS = 8;
 +    const uint SLICES = 32u;
 +    ivec2 size = ivec2(width, height);
@@ -1135,20 +1323,24 @@ index 0000000000000000000000000000000000000000..944890a6d85b363d7923d749fefc007d
 +    int band = clamp(int(mean * float(BANDS)), 0, BANDS - 1);
 +    uint slice = (uint(y) * uint(size.x) + uint(x)) % SLICES;
 +    uint bidx = uint(band) * SLICES + slice;
-+    /* The band total and the wide gate let the host tell heavy grain, which
-+     * the default gate truncates, from texture (ADR-0229). */
++    /* The band total and the gate chain let the host tell heavy grain, which
++     * the default gate truncates, from texture (ADR-0229, ADR-0230). Each
++     * gate counts every pixel within it, so the gates nest. */
 +    atomicAdd(total[bidx], 1u);
-+    if ((hi - lo) > WIDE_GATE * edge_thr)
++    float range = hi - lo;
++    if (range > GATE_STEP[GATES - 1] * edge_thr)
 +        return;
 +    float resid = clamp(c - mean, -RES_CLAMP, RES_CLAMP);
-+    atomicAdd(sumsq_w[bidx], uint(resid * resid * SUMSQ_GS + 0.5));
-+    atomicAdd(cnt_w[bidx], 1u);
-+    if ((hi - lo) > edge_thr)
-+        return;
-+    atomicAdd(sumsq[bidx], uint(resid * resid * SUMSQ_GS + 0.5));
-+    atomicAdd(cnt[bidx], 1u);
-+    /* lag-1 spatial correlation (AR proxy): only when the right neighbour is
-+     * also flat, so the product reflects grain, not an edge transition. */
++    for (int g = 0; g < GATES; g++) {
++        if (range <= GATE_STEP[g] * edge_thr) {
++            uint gidx = uint(g * BANDS) * SLICES + bidx;
++            atomicAdd(sumsq[gidx], uint(resid * resid * SUMSQ_GS + 0.5));
++            atomicAdd(cnt[gidx], 1u);
++        }
++    }
++    /* lag-1 spatial correlation (AR proxy), banded by this pixel: a pair
++     * counts at a gate only when the right neighbour is within it too, so the
++     * product reflects grain, not an edge transition. */
 +    ivec2 rp = clamp(ivec2(x + 1, y), ivec2(0), size - ivec2(1));
 +    float cr = pel_to_sample(imageLoad(input_images[0], rp).x);
 +    float meanR = 0.0; float loR = 1.0; float hiR = 0.0;
@@ -1160,10 +1352,14 @@ index 0000000000000000000000000000000000000000..944890a6d85b363d7923d749fefc007d
 +        }
 +    }
 +    meanR /= 9.0;
-+    if ((hiR - loR) <= edge_thr) {
-+        float residR = clamp(cr - meanR, -RES_CLAMP, RES_CLAMP);
-+        float prod = resid * residR;
-+        atomicAdd(corr[slice], uint(max(prod + CORR_BIAS, 0.0) * CORR_GS + 0.5));
-+        atomicAdd(corr_cnt[slice], 1u);
++    float pair = max(range, hiR - loR);
++    float residR = clamp(cr - meanR, -RES_CLAMP, RES_CLAMP);
++    float prod = resid * residR;
++    for (int g = 0; g < GATES; g++) {
++        if (pair <= GATE_STEP[g] * edge_thr) {
++            uint gidx = uint(g * BANDS) * SLICES + bidx;
++            atomicAdd(corr[gidx], uint(max(prod + CORR_BIAS, 0.0) * CORR_GS + 0.5));
++            atomicAdd(corr_cnt[gidx], 1u);
++        }
 +    }
 +}

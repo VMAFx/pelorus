@@ -15,6 +15,17 @@ residual clamp, edge gate open). It reports, per a, the residual lag-1
 correlation (rho_r) and the residual RMS in 8-bit code values per unit of the
 scaling function (gain_r).
 
+A second table, pel_aom_gate_calib, holds the same statistics measured through
+each gate wider than the default (gate k x EDGE, ADR-0230), with the shader's
+gate arithmetic: a pixel counts when its 3x3 range is within the gate, a
+lag-1 pair when both windows are. A wider gate is chosen for heavy grain, and
+it still drops the largest excursions, which lowers the residual RMS and
+shifts the residual lag-1 correlation by an amount that depends on a. Each row
+is (gate, a, q, rho_r, gain_r) with q the gated residual RMS over the gate, the
+quantity a band measures; the scales span the range of q the host meets at
+that gate. q, not the kept fraction, keys the rows: the kept fraction reaches 1
+while the residual clamp still lowers the RMS.
+
 gaussian_sequence is read from FFmpeg's source at the commit pinned in
 build-config.env, so nothing is vendored. The shared FFmpeg fix series applied
 on that commit (FFMPEG_SERIES_*, ADR-0185) does not change the AV1 grain files,
@@ -23,7 +34,7 @@ so the pinned files are the ones a build compiles.
     FFMPEG_REPO=/path/to/ffmpeg scripts/gen-av1-grain-calibration.py
     FFMPEG_REPO=/path/to/ffmpeg scripts/gen-av1-grain-calibration.py --check
 
---check compares the regenerated table with the one in the filter source and
+--check compares the regenerated tables with the ones in the filter source and
 exits 1 on drift. This is a development tool: it needs numpy and an FFmpeg
 checkout, so it is not part of the fast suite. Rerun it after an FFmpeg bump
 or a shared series bump that touches libavcodec/aom_film_grain*.
@@ -53,6 +64,12 @@ AR_GRID = range(0, 29, 4)
 SCALES = (16, 24, 32)
 SEEDS = (7391, 0x1234, 0xBEEF)
 OVERLAP_W = ((27, 17), (17, 27))
+EDGE = 0.06  # the filter's default `edge`
+# Gates above the default, (gate index, step k); match pel_grain_gate_step.
+WIDE_GATES = ((1, 2.0), (2, 4.0))
+# Scaling values at gate step 2; gate step k uses them times k / 2, so the kept
+# fraction runs from about 1 down to about 0.5 at every gate.
+GATE_SCALES = (32, 40, 48, 56, 64, 72, 80)
 
 
 def round2(x, shift: int):
@@ -143,18 +160,88 @@ def render(field: np.ndarray, scale: int) -> np.ndarray:
     return np.clip(LEVEL + round2(scale * field, 8), 0, 255)
 
 
-def calibrate(model: AV1Luma) -> list[tuple[int, float, float]]:
+def gated_sums(luma8: np.ndarray, gate: float) -> np.ndarray:
+    """Shader arithmetic at one gate: kept count, total, residual square sum,
+    lag-1 pair count and product sum (right neighbour clamped at the edge)."""
+    img = luma8.astype(np.float64) / 255.0
+    h, w = img.shape
+    pad = np.pad(img, ((1, 1), (1, 2)), mode="edge")
+    win = [pad[dy : dy + h, dx : dx + w + 1] for dy in range(3) for dx in range(3)]
+    rng = np.max(win, axis=0) - np.min(win, axis=0)
+    resid = np.clip(pad[1 : 1 + h, 1 : 2 + w] - sum(win) / 9.0, -h274.RES_CLAMP, h274.RES_CLAMP)
+    resid[:, w], rng[:, w] = resid[:, w - 1], rng[:, w - 1]
+    flat = rng[:, :w] <= gate
+    pair = np.maximum(rng[:, :w], rng[:, 1:]) <= gate
+    prod = resid[:, :w] * resid[:, 1:]
+    return np.array(
+        [flat.sum(), flat.size, (resid[:, :w][flat] ** 2).sum(), pair.sum(), prod[pair].sum()]
+    )
+
+
+def gate_rows(field_sets: dict) -> list[tuple[int, int, float, float, float]]:
     rows = []
+    for g, k in WIDE_GATES:
+        for a in AR_GRID:
+            block = []
+            for base in GATE_SCALES:
+                scale = int(base * k / 2)
+                s = sum(gated_sums(render(f, scale), k * EDGE) for f in field_sets[a])
+                var = s[2] / s[0]
+                rho = s[4] / s[3] / var
+                q = float(np.sqrt(var)) / (k * EDGE)
+                block.append((g, a, q, float(rho), float(np.sqrt(var)) * 255.0 / scale))
+            rows.extend(sorted(block, key=lambda r: r[2]))
+    return rows
+
+
+def calibrate(model: AV1Luma) -> tuple[list[tuple[int, float, float]], list]:
+    rows, fields = [], {}
     for a in AR_GRID:
         gains, rhos = [], []
-        for seed in SEEDS:
-            field = model.field(seed, a, WIDTH, HEIGHT)
+        fields[a] = [model.field(seed, a, WIDTH, HEIGHT) for seed in SEEDS]
+        for field in fields[a]:
             for scale in SCALES:
                 rms, rho = h274.estimator_stats(render(field, scale))
                 gains.append(rms / scale)
                 rhos.append(rho)
         rows.append((a, float(np.mean(rhos)), float(np.mean(gains))))
-    return rows
+    return rows, gate_rows(fields)
+
+
+def format_gate_rows(rows: list) -> list[str]:
+    cells = [f"{{{g}, {a:2d}, {f:.4f}f, {r:+.4f}f, {gn:.5f}f}},".replace("+", "") for g, a, f, r, gn in rows]
+    return ["    " + " ".join(cells[i : i + 2]) for i in range(0, len(cells), 2)]
+
+
+def parse_gate_table() -> list[tuple[int, int, float, float, float]]:
+    text = h274.FILTER.read_text()
+    match = re.search(r"pel_aom_gate_calib\[\]\s*=\s*\{(.*?)\n\};", text, re.S)
+    if match is None:
+        raise SystemExit(f"{h274.FILTER.name}: pel_aom_gate_calib table not found")
+    return [
+        (int(g), int(a), float(f), float(r), float(gn))
+        for g, a, f, r, gn in re.findall(
+            r"\{\s*(\d+),\s*(\d+),\s*([0-9.]+)f,\s*(-?[0-9.]+)f,\s*([0-9.]+)f\s*\}",
+            match.group(1),
+        )
+    ]
+
+
+def check_gate_rows(rows: list) -> int:
+    committed = parse_gate_table()
+    if [(g, a) for g, a, *_ in committed] != [(g, a) for g, a, *_ in rows]:
+        print("gate calibration grid drifted", file=sys.stderr)
+        return 1
+    drift = [
+        (old, new)
+        for old, new in zip(committed, rows)
+        if abs(old[2] - new[2]) > h274.RHO_TOL
+        or abs(old[3] - new[3]) > h274.RHO_TOL
+        or abs(old[4] - new[4]) > h274.GAIN_TOL
+    ]
+    for old, new in drift:
+        print(f"gate {old[0]} a {old[1]}: {old[2:]} -> {tuple(round(v, 5) for v in new[2:])}", file=sys.stderr)
+    return 1 if drift else 0
 
 
 def parse_filter_table() -> list[tuple[int, float, float]]:
@@ -180,9 +267,10 @@ def main() -> int:
         return 2
 
     model = AV1Luma(h274.ffmpeg_source(args.ffmpeg_repo, "libavcodec/aom_film_grain.c"))
-    rows = calibrate(model)
+    rows, gated = calibrate(model)
     for a, rho, gain in rows:
         print(f"    {{{a:2d}, {rho:+.4f}f, {gain:.5f}f}},".replace("+", " "))
+    print("\n".join(format_gate_rows(gated)))
     if not args.check:
         return 0
 
@@ -197,9 +285,9 @@ def main() -> int:
     ]
     for a, r0, r1, g0, g1 in drift:
         print(f"a {a}: rho {r0:+.4f} -> {r1:+.4f}, gain {g0:.5f} -> {g1:.5f}", file=sys.stderr)
-    if drift:
+    if drift or check_gate_rows(gated):
         return 1
-    print("AV1 calibration table matches the pinned FFmpeg synthesizer")
+    print("AV1 calibration tables match the pinned FFmpeg synthesizer")
     return 0
 
 
