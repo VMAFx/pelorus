@@ -67,8 +67,6 @@ SHADER_PATTERNS = {
     "corr_bias": r"const float CORR_BIAS\s*=\s*([0-9.]+)",
     "res_clamp": r"const float RES_CLAMP\s*=\s*([0-9.]+)",
     "wide_gate": r"const float WIDE_GATE\s*=\s*([0-9.]+)",
-    "sumsq_slots": r"uint sumsq\[(\d+)\]",
-    "corr_slots": r"uint corr\[(\d+)\]",
 }
 REFERENCE_PATTERNS = {
     "slices": r"#define PEL_GRAIN_SLICES\s+(\d+)",
@@ -82,8 +80,50 @@ SHARED = ("slices", "sumsq_gs", "corr_gs", "corr_bias", "res_clamp", "wide_gate"
 ADD_PATTERNS = {
     "sumsq": r"atomicAdd\(sumsq\[bidx\],\s*uint\((.+)\)\);",
     "sumsq_w": r"atomicAdd\(sumsq_w\[bidx\],\s*uint\((.+)\)\);",
-    "corr":r"atomicAdd\(corr\[slice\],\s*uint\((.+)\)\);",
+    "corr": r"atomicAdd\(corr\[slice\],\s*uint\((.+)\)\);",
 }
+
+
+# Accumulator buffer members in order, and the slot count each must have.
+LAYOUT = (
+    ("sumsq", "band"), ("cnt", "band"), ("corr", "slice"), ("corr_cnt", "slice"),
+    ("sumsq_w", "band"), ("cnt_w", "band"), ("total", "band"),
+)
+MEMBER = re.compile(r"\buint(?:32_t)?\s+(\w+)\[([^\]]+)\];")
+
+
+def layout(text: str, label: str, consts: dict[str, float]) -> list[tuple[str, int]]:
+    """Members of the accumulator block (from `sumsq[` to the closing brace) with
+    their evaluated slot counts."""
+    start = re.search(r"\buint(?:32_t)?\s+sumsq\[", text)
+    if start is None:
+        raise ValueError(f"missing {label} accumulator block")
+    block = text[start.start():text.index("}", start.start())]
+    names = {"PEL_GRAIN_BANDS": consts["bands"], "PEL_GRAIN_SLICES": consts["slices"]}
+    members = []
+    for name, size in MEMBER.findall(block):
+        expr = size
+        for key, value in names.items():
+            expr = expr.replace(key, str(int(value)))
+        if not re.fullmatch(r"[0-9 *]+", expr):
+            raise ValueError(f"{label} {name} size {size!r} is not a bands/slices product")
+        members.append((name, math.prod(int(x) for x in expr.split("*"))))
+    return members
+
+
+def layout_errors(texts: dict[str, str], host: dict[str, float]) -> list[str]:
+    want = [(name, int(host["bands"] * host["slices"]) if kind == "band" else int(host["slices"]))
+            for name, kind in LAYOUT]
+    errors = []
+    for label, text in texts.items():
+        try:
+            got = layout(text, label, host)
+        except ValueError as error:
+            errors.append(f"grain accumulator layout: {error}")
+            continue
+        if got != want:
+            errors.append(f"grain accumulator layout of the {label} differs from {want}: {got}")
+    return errors
 
 
 def parse(text: str, patterns: dict[str, str], label: str) -> dict[str, float]:
@@ -195,10 +235,8 @@ def validate(c_text: str, shader_text: str, reference_text: str) -> list[str]:
                 f"({host[name]:g}), shipped shader ({shader[name]:g}), and reference "
                 f"shader ({reference[name]:g})"
             )
-    if shader["sumsq_slots"] != host["bands"] * host["slices"] or (
-        shader["corr_slots"] != host["slices"]
-    ):
-        errors.append("grain accumulator array sizes do not match bands/slices")
+    errors.extend(layout_errors(
+        {"host struct": c_text, "shipped shader": shader_text, "reference shader": reference_text}, host))
 
     clamp_sq = host["res_clamp"] ** 2
     if host["corr_bias"] < clamp_sq * (1.0 - 1e-9):
@@ -215,6 +253,7 @@ def validate(c_text: str, shader_text: str, reference_text: str) -> list[str]:
     # rounding of the product before the round-to-nearest conversion.
     max_sumsq_add = math.ceil(clamp_sq * host["sumsq_gs"]) + 1
     max_corr_add = math.ceil((host["corr_bias"] + clamp_sq) * host["corr_gs"]) + 1
+    # sumsq_w adds the same clamped residual^2 as sumsq, so one bound covers both.
     bounds = {
         "sumsq": pixels_per_slice * max_sumsq_add,
         "corr": pixels_per_slice * max_corr_add,
@@ -305,6 +344,18 @@ def planted_sources(texts: tuple[str, str, str]) -> dict[str, tuple[tuple[str, s
         "shipped wide gate drifts from host": (
             (c_text, _sub(shader_text, r"(const float WIDE_GATE\s*=\s*)[0-9.]+", r"\g<1>3.0"), reference_text),
             "drifted",
+        ),
+        "reference shader total shrinks": (
+            (c_text, shader_text, _sub(reference_text, r"uint total\[[^\]]+\]", "uint total[PEL_GRAIN_SLICES]")),
+            "layout of the reference shader",
+        ),
+        "shipped shader drops cnt_w": (
+            (c_text, _sub(shader_text, r"\n\s*uint cnt_w\[256\];[^\n]*", ""), reference_text),
+            "layout of the shipped shader",
+        ),
+        "host struct reorders wide sums": (
+            (_sub(c_text, r"uint32_t sumsq_w\[", "uint32_t sumsq_x["), shader_text, reference_text),
+            "layout of the host struct",
         ),
         "guard raised to 16K": (
             (

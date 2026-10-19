@@ -69,7 +69,7 @@ Bands that took the wide statistics (`grain_wide_bands`): 255 for white 48 and A
 | Sintel trailer | 0.168 | 0.252 |
 | SVT waterfall | 0.521 | 0.756 |
 
-The white 8, white 24 and AR 24 truths have no band below a kept fraction of 0.95. 0.875 sits between texture's highest 0.79 and grain's lowest 0.96. In the CPU model a threshold of 0.7 selects bands of Big Buck Bunny, Netflix bar scene, news mixed coding and SVT waterfall; 0.97 selects the AR 48 bands in only 25% to 46% of frames, which costs 6% to 12% on that truth.
+The white 8, white 24 and AR 24 truths have no band below a kept fraction of 0.95. 0.875 sits between texture's highest 0.79 and grain's lowest, about 0.96. In the CPU model a threshold of 0.7 selects bands of Big Buck Bunny, Netflix bar scene, news mixed coding and SVT waterfall; 0.97 selects the AR 48 bands in only 25% to 46% of frames, which costs 6% to 12% on that truth.
 
 **Throughput** (wall time of the whole process, 48 frames):
 
