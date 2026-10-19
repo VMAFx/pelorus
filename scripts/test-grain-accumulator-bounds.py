@@ -2,9 +2,10 @@
 """Prove the grain-estimator uint32 reductions are overflow-safe and unbiased.
 
 Checks the fixed-point contract that the host filter, the shipped shader, and
-the reference shader share (ADR-0147, ADR-0161):
+the reference shader share (ADR-0147, ADR-0161, ADR-0230):
 
-- the constants agree across all three sources;
+- the constants, the gate chain steps and the accumulator layout agree across
+  all three sources;
 - the lag-1 bias makes every biased product non-negative;
 - the largest per-slice sum fits uint32 at the host's frame-size guard
   (PEL_GRAIN_MAX_PIXELS), which must be the DCI 8K pixel count and must be
@@ -58,7 +59,7 @@ C_PATTERNS = {
     "corr_gs": r"#define PEL_GRAIN_CORR_GS\s+([0-9.]+)",
     "corr_bias": r"#define PEL_GRAIN_CORR_BIAS\s+([0-9.]+)",
     "res_clamp": r"#define PEL_GRAIN_RES_CLAMP\s+([0-9.]+)",
-    "wide_gate": r"#define PEL_GRAIN_WIDE_GATE\s+([0-9.]+)",
+    "gates": r"#define PEL_GRAIN_GATES\s+(\d+)",
 }
 SHADER_PATTERNS = {
     "slices": r"const uint SLICES\s*=\s*(\d+)u",
@@ -66,7 +67,7 @@ SHADER_PATTERNS = {
     "corr_gs": r"const float CORR_GS\s*=\s*([0-9.]+)",
     "corr_bias": r"const float CORR_BIAS\s*=\s*([0-9.]+)",
     "res_clamp": r"const float RES_CLAMP\s*=\s*([0-9.]+)",
-    "wide_gate": r"const float WIDE_GATE\s*=\s*([0-9.]+)",
+    "gates": r"const int GATES\s*=\s*(\d+)",
 }
 REFERENCE_PATTERNS = {
     "slices": r"#define PEL_GRAIN_SLICES\s+(\d+)",
@@ -74,20 +75,26 @@ REFERENCE_PATTERNS = {
     "corr_gs": r"const float CORR_GS\s*=\s*([0-9.]+)",
     "corr_bias": r"const float CORR_BIAS\s*=\s*([0-9.]+)",
     "res_clamp": r"const float RES_CLAMP\s*=\s*([0-9.]+)",
-    "wide_gate": r"const float WIDE_GATE\s*=\s*([0-9.]+)",
+    "gates": r"#define PEL_GRAIN_GATES\s+(\d+)",
 }
-SHARED = ("slices", "sumsq_gs", "corr_gs", "corr_bias", "res_clamp", "wide_gate")
+SHARED = ("slices", "sumsq_gs", "corr_gs", "corr_bias", "res_clamp", "gates")
+# Gate chain steps, gate g = step[g] x edge_thr (ADR-0230).
+STEP_PATTERNS = {
+    "host": r"pel_grain_gate_step\[PEL_GRAIN_GATES\]\s*=\s*\{([^}]*)\}",
+    "shipped shader": r"GATE_STEP\[\d+\]\s*=\s*float\[\d+\]\(([^)]*)\)",
+    "reference shader": r"GATE_STEP\[\d+\]\s*=\s*float\[\d+\]\(([^)]*)\)",
+}
 ADD_PATTERNS = {
-    "sumsq": r"atomicAdd\(sumsq\[bidx\],\s*uint\((.+)\)\);",
-    "sumsq_w": r"atomicAdd\(sumsq_w\[bidx\],\s*uint\((.+)\)\);",
-    "corr": r"atomicAdd\(corr\[slice\],\s*uint\((.+)\)\);",
+    "sumsq": r"atomicAdd\(sumsq\[gidx\],\s*uint\((.+)\)\);",
+    "corr": r"atomicAdd\(corr\[gidx\],\s*uint\((.+)\)\);",
 }
 
 
-# Accumulator buffer members in order, and the slot count each must have.
+# Accumulator buffer members in order, and the slot count each must have:
+# "gate" = one bands x slices block per gate, "band" = one block.
 LAYOUT = (
-    ("sumsq", "band"), ("cnt", "band"), ("corr", "slice"), ("corr_cnt", "slice"),
-    ("sumsq_w", "band"), ("cnt_w", "band"), ("total", "band"),
+    ("sumsq", "gate"), ("cnt", "gate"), ("corr", "gate"), ("corr_cnt", "gate"),
+    ("total", "band"),
 )
 MEMBER = re.compile(r"\buint(?:32_t)?\s+(\w+)\[([^\]]+)\];")
 
@@ -99,21 +106,26 @@ def layout(text: str, label: str, consts: dict[str, float]) -> list[tuple[str, i
     if start is None:
         raise ValueError(f"missing {label} accumulator block")
     block = text[start.start():text.index("}", start.start())]
-    names = {"PEL_GRAIN_BANDS": consts["bands"], "PEL_GRAIN_SLICES": consts["slices"]}
+    names = {
+        "PEL_GRAIN_BAND_SLOTS": consts["bands"] * consts["slices"],
+        "PEL_GRAIN_GATES": consts["gates"],
+        "PEL_GRAIN_BANDS": consts["bands"],
+        "PEL_GRAIN_SLICES": consts["slices"],
+    }
     members = []
     for name, size in MEMBER.findall(block):
         expr = size
         for key, value in names.items():
             expr = expr.replace(key, str(int(value)))
         if not re.fullmatch(r"[0-9 *]+", expr):
-            raise ValueError(f"{label} {name} size {size!r} is not a bands/slices product")
+            raise ValueError(f"{label} {name} size {size!r} is not a gates/bands/slices product")
         members.append((name, math.prod(int(x) for x in expr.split("*"))))
     return members
 
 
 def layout_errors(texts: dict[str, str], host: dict[str, float]) -> list[str]:
-    want = [(name, int(host["bands"] * host["slices"]) if kind == "band" else int(host["slices"]))
-            for name, kind in LAYOUT]
+    block = int(host["bands"] * host["slices"])
+    want = [(name, block * int(host["gates"]) if kind == "gate" else block) for name, kind in LAYOUT]
     errors = []
     for label, text in texts.items():
         try:
@@ -134,6 +146,24 @@ def parse(text: str, patterns: dict[str, str], label: str) -> dict[str, float]:
             raise ValueError(f"missing {label} {name}")
         values[name] = float(match.group(1))
     return values
+
+
+def step_errors(texts: dict[str, str], gates: int) -> list[str]:
+    """The gate chain steps must agree, count `gates`, and widen strictly."""
+    steps = {}
+    for label, pattern in STEP_PATTERNS.items():
+        match = re.search(pattern, texts[label])
+        if match is None:
+            return [f"grain gate chain: {label} gate steps not found"]
+        steps[label] = [float(x) for x in match.group(1).split(",")]
+    errors = []
+    host = steps["host"]
+    for label, value in steps.items():
+        if value != host:
+            errors.append(f"grain gate chain steps drifted: host {host}, {label} {value}")
+    if len(host) != gates or host[0] != 1.0 or any(b <= a for a, b in zip(host, host[1:])):
+        errors.append(f"grain gate chain steps {host}: want {gates} strictly widening steps from 1.0")
+    return errors
 
 
 def rounds_adds(text: str, label: str) -> list[str]:
@@ -237,6 +267,8 @@ def validate(c_text: str, shader_text: str, reference_text: str) -> list[str]:
             )
     errors.extend(layout_errors(
         {"host struct": c_text, "shipped shader": shader_text, "reference shader": reference_text}, host))
+    errors.extend(step_errors(
+        {"host": c_text, "shipped shader": shader_text, "reference shader": reference_text}, int(host["gates"])))
 
     clamp_sq = host["res_clamp"] ** 2
     if host["corr_bias"] < clamp_sq * (1.0 - 1e-9):
@@ -253,7 +285,8 @@ def validate(c_text: str, shader_text: str, reference_text: str) -> list[str]:
     # rounding of the product before the round-to-nearest conversion.
     max_sumsq_add = math.ceil(clamp_sq * host["sumsq_gs"]) + 1
     max_corr_add = math.ceil((host["corr_bias"] + clamp_sq) * host["corr_gs"]) + 1
-    # sumsq_w adds the same clamped residual^2 as sumsq, so one bound covers both.
+    # Each gate's block takes at most the pixels of one slice, so one bound
+    # covers every gate.
     bounds = {
         "sumsq": pixels_per_slice * max_sumsq_add,
         "corr": pixels_per_slice * max_corr_add,
@@ -341,21 +374,49 @@ def planted_sources(texts: tuple[str, str, str]) -> dict[str, tuple[tuple[str, s
             "corr bound overflows",
         ),
         "host drifts from shaders": ((drifted, shader_text, reference_text), "drifted"),
-        "shipped wide gate drifts from host": (
-            (c_text, _sub(shader_text, r"(const float WIDE_GATE\s*=\s*)[0-9.]+", r"\g<1>3.0"), reference_text),
+    }
+
+
+def planted_gate_sources(texts: tuple[str, str, str]) -> dict[str, tuple[tuple[str, str, str], str]]:
+    """Defective copies of the gate chain, layout and guard, with their error text."""
+    c_text, shader_text, reference_text = texts
+    return {
+        "shipped gate step drifts from host": (
+            (c_text, _sub(shader_text, r"float\[3\]\(1\.0, 2\.0, 4\.0\)", "float[3](1.0, 2.0, 3.0)"),
+             reference_text),
+            "steps drifted",
+        ),
+        "gate chain stops widening": (
+            (
+                _sub(c_text, r"\{1\.0, 2\.0, 4\.0\}", "{1.0, 2.0, 2.0}"),
+                _sub(shader_text, r"float\[3\]\(1\.0, 2\.0, 4\.0\)", "float[3](1.0, 2.0, 2.0)"),
+                _sub(reference_text, r"float\[3\]\(1\.0, 2\.0, 4\.0\)", "float[3](1.0, 2.0, 2.0)"),
+            ),
+            "strictly widening",
+        ),
+        "reference gate count drifts": (
+            (c_text, shader_text, _sub(reference_text, r"#define PEL_GRAIN_GATES\s+3", "#define PEL_GRAIN_GATES 2")),
             "drifted",
         ),
         "reference shader total shrinks": (
             (c_text, shader_text, _sub(reference_text, r"uint total\[[^\]]+\]", "uint total[PEL_GRAIN_SLICES]")),
             "layout of the reference shader",
         ),
-        "shipped shader drops cnt_w": (
-            (c_text, _sub(shader_text, r"\n\s*uint cnt_w\[256\];[^\n]*", ""), reference_text),
+        "shipped shader drops corr_cnt": (
+            (c_text, _sub(shader_text, r"\n\s*uint corr_cnt\[768\];[^\n]*", ""), reference_text),
             "layout of the shipped shader",
         ),
-        "host struct reorders wide sums": (
-            (_sub(c_text, r"uint32_t sumsq_w\[", "uint32_t sumsq_x["), shader_text, reference_text),
+        "shipped shader keeps one corr gate": (
+            (c_text, _sub(shader_text, r"uint corr\[768\]", "uint corr[256]"), reference_text),
+            "layout of the shipped shader",
+        ),
+        "host struct renames a gated sum": (
+            (_sub(c_text, r"uint32_t corr\[", "uint32_t corr_x["), shader_text, reference_text),
             "layout of the host struct",
+        ),
+        "shipped shader adds sumsq per band": (
+            (c_text, _sub(shader_text, r"atomicAdd\(sumsq\[gidx\]", "atomicAdd(sumsq[bidx]"), reference_text),
+            "sumsq atomicAdd not found",
         ),
         "guard raised to 16K": (
             (
@@ -379,7 +440,8 @@ def planted_sources(texts: tuple[str, str, str]) -> dict[str, tuple[tuple[str, s
 def self_test(c_text: str, shader_text: str, reference_text: str) -> list[str]:
     """Plant defects and require each to be rejected."""
     failures = []
-    cases = planted_sources((c_text, shader_text, reference_text))
+    texts = (c_text, shader_text, reference_text)
+    cases = planted_sources(texts) | planted_gate_sources(texts)
     for name, (texts, needle) in cases.items():
         errors = validate(*texts)
         if not any(needle in error for error in errors):

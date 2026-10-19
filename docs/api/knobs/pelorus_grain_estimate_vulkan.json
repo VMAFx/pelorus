@@ -74,7 +74,7 @@
       "constants": [],
       "effect_class": "shape",
       "tunable": false,
-      "help": "measure grain-consistent bands at the wide gate (2 x edge) to recover heavy grain"
+      "help": "measure grain-consistent bands at a wider gate (2 or 4 x edge) to recover heavy grain"
     }
   ]
 }

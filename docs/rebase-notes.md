@@ -8,6 +8,20 @@ the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
 ranges in older entries predate the first entry below (22 patches on the
 shared FFmpeg fix series, number 0021 retired).
 
+## Unreleased — grain gate chain (#414, ADR-0230; regenerates 0006)
+
+- **Patch**: `0006` (grain estimate) only; no registration, option, numbering
+  or ABI change. Sources: `files/vf_pelorus_grain_estimate_vulkan.c` and
+  `files/vulkan/pelorus_grain_estimate.comp.glsl`. The accumulator block is
+  now `uint sumsq[768]; uint cnt[768]; uint corr[768]; uint corr_cnt[768];
+  uint total[256];` (three gates per band and slice); new frame metadata
+  `lavfi.pelorus.grain_gate_steps`.
+- **Re-test after rebase**: `scripts/test-grain-accumulator-bounds.py`
+  (layout and DCI 8K bound), `scripts/gen-grain-gate-curve.py --check`, and
+  `FFMPEG_REPO=<new tree> scripts/gen-av1-grain-calibration.py --check`, which
+  re-reads `gaussian_sequence` from `libavcodec/aom_film_grain.c`; a drift
+  there regenerates both AV1 tables.
+
 ## Unreleased — device-local storage buffers (#109, ADR-0222; regenerates 0003, 0009)
 
 - **Patches**: `0003` (denoise) and `0009` (Vulkan QP map); no registration,

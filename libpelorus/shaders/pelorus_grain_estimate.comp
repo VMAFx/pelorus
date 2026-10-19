@@ -18,12 +18,13 @@
  *   1. high-pass:   resid = luma - mean3x3   (box low-pass removes structure)
  *   2. edge gate:   skip pixels whose 3x3 range is large (that residual is an
  *                   edge / texture, not grain) — estimate only on flat fields;
- *                   a second, wide gate (2 x edge_thr) and the band pixel total
- *                   let the host recover heavy grain (ADR-0229)
+ *                   a chain of wider gates (2 and 4 x edge_thr) and the band
+ *                   pixel total let the host recover heavy grain (ADR-0229,
+ *                   ADR-0230)
  *   3. bin:         accumulate resid^2 into one of PEL_GRAIN_BANDS luma bins
  *                   with a per-bin pixel count -> per-band grain stddev
- *   4. AR proxy:    accumulate the lag-1 product resid*resid_right (a coarse
- *                   spatial-correlation scalar -> conservative AR seed)
+ *   4. AR proxy:    accumulate the lag-1 product resid*resid_right per band
+ *                   and gate (a coarse spatial-correlation scalar -> AR seed)
  * The reduction is sliced (PEL_GRAIN_SLICES) to cut atomic contention; the host
  * sums the slices and fits the AV1 piecewise scaling function + AR seed.
  *
@@ -42,6 +43,7 @@ layout(binding = 0, r16ui) uniform readonly uimage2D srcImg;
 
 #define PEL_GRAIN_BANDS  8
 #define PEL_GRAIN_SLICES 32
+#define PEL_GRAIN_GATES  3
 
 /* Signed lag-1 products are bias-encoded into uint atomics: each add stores
  * (prod + CORR_BIAS) so the unsigned accumulator never underflows; the host
@@ -56,14 +58,13 @@ layout(binding = 0, r16ui) uniform readonly uimage2D srcImg;
  * count (1105920 at DCI 8K) stays under 2^32. Each add is rounded to the
  * nearest unit; truncation would bias every add by half a unit and swamp the
  * small lag-1 products of real grain (ADR-0161). */
+/* The gated members hold one [BANDS * SLICES] block per gate, gate 0 first. */
 layout(binding = 1, std430) buffer GrainBuf {
-    uint sumsq[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES]; /* Σ resid^2 * SUMSQ_GS     */
-    uint cnt[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES];   /* flat-pixel count per bin */
-    uint corr[PEL_GRAIN_SLICES];      /* Σ (resid*resid_right + BIAS) * CORR_GS */
-    uint corr_cnt[PEL_GRAIN_SLICES];  /* lag-1 sample count                     */
-    uint sumsq_w[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES]; /* Σ resid^2 at wide gate */
-    uint cnt_w[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES];   /* count at wide gate     */
-    uint total[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES];   /* every band pixel       */
+    uint sumsq[PEL_GRAIN_GATES * PEL_GRAIN_BANDS * PEL_GRAIN_SLICES];    /* Σ resid^2 * SUMSQ_GS */
+    uint cnt[PEL_GRAIN_GATES * PEL_GRAIN_BANDS * PEL_GRAIN_SLICES];      /* gated-pixel count    */
+    uint corr[PEL_GRAIN_GATES * PEL_GRAIN_BANDS * PEL_GRAIN_SLICES];     /* Σ (prod + BIAS) * CORR_GS */
+    uint corr_cnt[PEL_GRAIN_GATES * PEL_GRAIN_BANDS * PEL_GRAIN_SLICES]; /* lag-1 sample count   */
+    uint total[PEL_GRAIN_BANDS * PEL_GRAIN_SLICES];                      /* every band pixel     */
 };
 
 layout(push_constant, std430) uniform Params {
@@ -76,7 +77,8 @@ const float SUMSQ_GS = 300000.0; /* resid^2 fixed point (overflow-safe to 8K)  *
 const float CORR_GS = 150000.0;  /* lag-1 product fixed point (overflow-safe)  */
 const float CORR_BIAS = 0.0064;  /* lag-1 product bias = RES_CLAMP^2           */
 const float RES_CLAMP = 0.08;    /* residual clamp (lossless for real grain)   */
-const float WIDE_GATE = 2.0;     /* wide gate = WIDE_GATE * edge_thr (ADR-0229) */
+/* gate g = GATE_STEP[g] * edge_thr (ADR-0230) */
+const float GATE_STEP[3] = float[3](1.0, 2.0, 4.0);
 
 float load_norm(int x, int y) {
     x = clamp(x, 0, pc.width - 1);
@@ -111,25 +113,26 @@ void main() {
     uint slice = (uint(y) * uint(pc.width) + uint(x)) % uint(PEL_GRAIN_SLICES);
     uint bidx = uint(band) * uint(PEL_GRAIN_SLICES) + slice;
 
-    /* Band total and wide gate: the host tells heavy grain, which the default
-     * gate truncates, from texture (ADR-0229). */
+    /* Band total and gate chain: the host tells heavy grain, which the default
+     * gate truncates, from texture (ADR-0229, ADR-0230). Edge gate: a large
+     * neighbourhood range is structure, not grain. The gates nest. */
     atomicAdd(total[bidx], 1u);
-    if ((hi - lo) > WIDE_GATE * pc.edge_thr)
+    float range = hi - lo;
+    if (range > GATE_STEP[PEL_GRAIN_GATES - 1] * pc.edge_thr)
         return;
 
     float resid = clamp(c - mean, -RES_CLAMP, RES_CLAMP);
-    atomicAdd(sumsq_w[bidx], uint(resid * resid * SUMSQ_GS + 0.5));
-    atomicAdd(cnt_w[bidx], 1u);
+    for (int g = 0; g < PEL_GRAIN_GATES; g++) {
+        if (range <= GATE_STEP[g] * pc.edge_thr) {
+            uint gidx = uint(g * PEL_GRAIN_BANDS * PEL_GRAIN_SLICES) + bidx;
+            atomicAdd(sumsq[gidx], uint(resid * resid * SUMSQ_GS + 0.5));
+            atomicAdd(cnt[gidx], 1u);
+        }
+    }
 
-    /* Edge gate: a large neighbourhood range is structure, not grain. */
-    if ((hi - lo) > pc.edge_thr)
-        return;
-
-    atomicAdd(sumsq[bidx], uint(resid * resid * SUMSQ_GS + 0.5));
-    atomicAdd(cnt[bidx], 1u);
-
-    /* lag-1 spatial correlation (AR proxy): only when the right neighbour is
-     * also flat, so the product reflects grain, not an edge transition. */
+    /* lag-1 spatial correlation (AR proxy), banded by this pixel: a pair
+     * counts at a gate only when the right neighbour is within it too, so the
+     * product reflects grain, not an edge transition. */
     float cr = load_norm(x + 1, y);
     float meanR = 0.0, loR = 1.0, hiR = 0.0;
     for (int dy = -1; dy <= 1; dy++) {
@@ -141,10 +144,14 @@ void main() {
         }
     }
     meanR /= 9.0;
-    if ((hiR - loR) <= pc.edge_thr) {
-        float residR = clamp(cr - meanR, -RES_CLAMP, RES_CLAMP);
-        float prod = resid * residR;
-        atomicAdd(corr[slice], uint(max(prod + CORR_BIAS, 0.0) * CORR_GS + 0.5));
-        atomicAdd(corr_cnt[slice], 1u);
+    float pair = max(range, hiR - loR);
+    float residR = clamp(cr - meanR, -RES_CLAMP, RES_CLAMP);
+    float prod = resid * residR;
+    for (int g = 0; g < PEL_GRAIN_GATES; g++) {
+        if (pair <= GATE_STEP[g] * pc.edge_thr) {
+            uint gidx = uint(g * PEL_GRAIN_BANDS * PEL_GRAIN_SLICES) + bidx;
+            atomicAdd(corr[gidx], uint(max(prod + CORR_BIAS, 0.0) * CORR_GS + 0.5));
+            atomicAdd(corr_cnt[gidx], 1u);
+        }
     }
 }
