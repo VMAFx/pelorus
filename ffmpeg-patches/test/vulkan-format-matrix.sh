@@ -833,7 +833,8 @@ PY_CADENCE
 # reads a zero Sobel) and a Lanczos-ringed 3-px dark line whose outer overshoot
 # lobes sit above the 191 fill. The pre-ADR-0163 gate rewrote both line cores
 # (stroke 30 -> 159) and never reached the overshoot. Direct and tiled output
-# must also stay bit-identical (ADR-0139).
+# must also stay bit-identical (ADR-0139). The feathered mask (#201) must pull
+# the steep flank at x=53 that the ring gate leaves out.
 python3 - "$PEL_OUTPUT_ROOT/dehalo-src.yuv" <<'PY_DEHALO_SRC'
 import sys
 
@@ -884,8 +885,55 @@ for y in range(4, height - 4):
     after = sum(max(0, o[x] - fill) for x in halo)
     if after * 2 > before:
         raise SystemExit(f"dehalo left the ring overshoot at row {y}: {before} -> {after}")
-print("PASS: dehalo ring gate removes overshoot and keeps line-art")
+    # #201: x=53 (203) is the steep flank next to the line core; its own edge
+    # step keeps it out of the ring, so only the feathered mask reaches it.
+    if (o[53] - fill) * 2 > s[53] - fill:
+        raise SystemExit(f"dehalo left the steep-flank overshoot at (53,{y}): {s[53]} -> {o[53]}")
+print("PASS: dehalo ring gate removes overshoot, pulls the steep flank and keeps line-art")
 PY_DEHALO
+
+# #201: the feathered mask must not flatten isolated texture dots. A 64x64
+# texture of codes 88..104 carries a grid of 1-px dots (140 and 50); each dot
+# is a strict local extremum, which the feather leaves alone. The feather
+# without that guard moved 42 of the 49 dots by up to 42 codes.
+python3 - "$PEL_OUTPUT_ROOT/dehalo-dot-src.yuv" <<'PY_DOT_SRC'
+import sys
+
+width = height = 64
+lum = bytearray(width * height)
+state = 201
+for i in range(width * height):
+    state = (state * 1103515245 + 12345) & 0x7FFFFFFF
+    lum[i] = 88 + (state >> 16) % 17
+for k, y in enumerate(range(4, height - 4, 8)):
+    for j, x in enumerate(range(4, width - 4, 8)):
+        lum[y * width + x] = 140 if (k * 7 + j) % 2 == 0 else 50
+with open(sys.argv[1], "wb") as out:
+    out.write(lum)
+    out.write(bytes([128]) * (width * height // 2))
+PY_DOT_SRC
+pel_run dehalo-dot \
+    -f rawvideo -pix_fmt yuv420p -s 64x64 \
+    -i "$PEL_OUTPUT_ROOT/dehalo-dot-src.yuv" -frames:v 1 \
+    -vf "format=yuv420p,hwupload,pelorus_dehalo_vulkan,hwdownload,format=yuv420p" \
+    -f rawvideo "$PEL_OUTPUT_ROOT/dehalo-dot.raw"
+python3 - "$PEL_OUTPUT_ROOT" <<'PY_DOT'
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+width = height = 64
+src = (root / "dehalo-dot-src.yuv").read_bytes()
+out = (root / "dehalo-dot.raw").read_bytes()
+if len(out) != len(src):
+    raise SystemExit(f"dehalo dot output size {len(out)} != {len(src)}")
+for y in range(4, height - 4, 8):
+    for x in range(4, width - 4, 8):
+        i = y * width + x
+        if abs(out[i] - src[i]) > 1:
+            raise SystemExit(f"dehalo flattened a texture dot at ({x},{y}): {src[i]} -> {out[i]}")
+print("PASS: dehalo keeps isolated texture dots")
+PY_DOT
 
 if [[ -f "$PEL_OUTPUT_ROOT/validation-known-upstream.txt" ]]; then
     sort -u "$PEL_OUTPUT_ROOT/validation-known-upstream.txt" \

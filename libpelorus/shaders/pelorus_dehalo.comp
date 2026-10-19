@@ -26,6 +26,10 @@
  * ring (either polarity); a pixel with line on both sides of an axis is between
  * two close edges (a thin line's core) and is excluded like FineDehalo's
  * exclusion zone. Open flats and gradients have no line nearby and pass through.
+ * FineDehalo also feathers that mask (3x3 mean, doubled, #201): a pixel outside
+ * the ring with n of its eight neighbours inside it moves with weight
+ * min(1, 2n/9) toward the range of the neighbours' pulls, which reaches the
+ * steep flank pixels next to the line whose own edge step keeps them out.
  *
  * Reference form: one dispatch on the luma plane against r16ui storage images
  * (chroma passes through). The shader FFmpeg actually executes is
@@ -61,13 +65,14 @@ const int MAX_R = 8; /* provably-bounded blur radius (loop unroll cap) */
  * scan — goes through load_norm against the SAME source plane, re-reading a
  * heavily overlapping window, so the workgroup cooperatively loads its output
  * region + a PEL_HALO ring into shared memory once and every read hits shared.
- * PEL_HALO = MAX_R (8, max box reach) + 2 (the Repair window's 5x5 grid) = 10,
- * covering the box-mean grid AND the edge scan (ring + 1 <= 9). The tile
+ * PEL_HALO = MAX_R (8, max box reach) + 2 (the Repair window's 5x5 grid) + 1
+ * (the feathered mask pulls at the eight neighbours) = 11, covering the box-mean
+ * grid AND the edge scan (1 + ring + 1 <= MAX_R + 2). The tile
  * mirrors the image-edge clamp exactly, so it is bit-identical to a direct read.
  * This reference models — and CI compile-checks — the in-tree filter's opt-in
  * tile=1 path; with the default tile=0 the filter reads the image directly. */
-#define PEL_HALO 10
-#define PEL_TILE 36  // 16 (workgroup dim) + 2 * PEL_HALO
+#define PEL_HALO 11
+#define PEL_TILE 38  // 16 (workgroup dim) + 2 * PEL_HALO
 #define PEL_GRID 5
 shared float s_tile[PEL_TILE * PEL_TILE];
 void pel_load_tile() {
@@ -146,6 +151,80 @@ float edge_step(int x, int y) {
     return 0.25 * mag;
 }
 
+/* FineDehalo gate: line-art (own edge step above edge_thr) is never touched;
+ * the ring is a line within `ring` px along the cross, tested on the edge mask
+ * so both halo polarities qualify; a line on both sides of an axis marks a
+ * close-edge exclusion zone (a thin line's core). Returns 1 for the ring, 2
+ * for the exclusion zone and 0 for line-art or no line nearby. */
+int gate_class(int x, int y) {
+    if (edge_step(x, y) > pc.edge_thr)
+        return 0;
+    int rr = clamp(int(pc.ring + 0.5), 1, MAX_R);
+    bool el = false, er = false, eu = false, ed = false;
+    for (int d = 1; d <= MAX_R; d++) {
+        if (d > rr)
+            break;
+        er = er || edge_step(x + d, y) > pc.edge_thr;
+        el = el || edge_step(x - d, y) > pc.edge_thr;
+        ed = ed || edge_step(x, y + d) > pc.edge_thr;
+        eu = eu || edge_step(x, y - d) > pc.edge_thr;
+    }
+    if ((el && er) || (eu && ed))
+        return 2;
+    return (el || er || eu || ed) ? 1 : 0;
+}
+
+bool ring_gate(int x, int y) {
+    return gate_class(x, y) == 1;
+}
+
+/* DeHalo_alpha over the 3x3 Repair window at (x, y): per pixel, so from are /
+ * ugly, lets = mix(halos, original, so); remove = the original clamped into the
+ * window's lets range (Repair mode 1); then the remove-only, asymmetric pull. */
+float pull(int x, int y) {
+    float c = load_norm(x, y);
+    int r = clamp(pc.blur_r, 1, MAX_R);
+    float hg[PEL_GRID * PEL_GRID];
+    float cg[PEL_GRID * PEL_GRID];
+    box_grid(x, y, r, hg);
+    for (int j = 0; j < PEL_GRID; j++)
+        for (int i = 0; i < PEL_GRID; i++)
+            cg[j * PEL_GRID + i] = load_norm(x + i - 2, y + j - 2);
+    const float EPS = 0.0039; /* ~1/255 */
+    float lo = 1.0e30, hi = -1.0e30;
+    for (int dj = -1; dj <= 1; dj++) {
+        for (int di = -1; di <= 1; di++) {
+            int g = (dj + 2) * PEL_GRID + (di + 2);
+            float oMax = cg[g], oMin = cg[g];
+            for (int b = -1; b <= 1; b++) {
+                for (int a = -1; a <= 1; a++) {
+                    float v = cg[g + b * PEL_GRID + a];
+                    oMax = max(oMax, v);
+                    oMin = min(oMin, v);
+                }
+            }
+            precise float are = oMax - oMin;
+            float hc = hg[g];
+            precise float ugly = max(max(hc, max(hg[g - 1], hg[g + 1])),
+                                     max(hg[g - PEL_GRID], hg[g + PEL_GRID]))
+                               - min(min(hc, min(hg[g - 1], hg[g + 1])),
+                                     min(hg[g - PEL_GRID], hg[g + PEL_GRID]));
+            precise float frac = (are - ugly) / (are + EPS);
+            precise float so = clamp((frac - pc.lowsens) * (1.0 + pc.highsens), 0.0, 1.0);
+            precise float lets = mix(hc, cg[g], so);
+            lo = min(lo, lets);
+            hi = max(hi, lets);
+        }
+    }
+    float remove = clamp(c, lo, hi);
+    precise float out_v;
+    if (remove < c)             /* bright halo: pull down */
+        out_v = c - (c - remove) * pc.brightstr;
+    else                        /* dark halo: pull up */
+        out_v = c - (c - remove) * pc.darkstr;
+    return out_v;
+}
+
 void main() {
     ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
     int x = gid.x, y = gid.y;
@@ -157,70 +236,45 @@ void main() {
     float c = load_norm(x, y);
     float result = c;
 
-    /* 1. FineDehalo gate: line-art (own edge step above edge_thr) is never
-     *    touched; the ring is a line within `ring` px along the cross, tested on
-     *    the edge mask so both halo polarities qualify; a line on both sides of
-     *    an axis marks a close-edge exclusion zone (a thin line's core). */
-    bool ring_px = false;
-    if (edge_step(x, y) <= pc.edge_thr) {
-        int rr = clamp(int(pc.ring + 0.5), 1, MAX_R);
-        bool el = false, er = false, eu = false, ed = false;
-        for (int d = 1; d <= MAX_R; d++) {
-            if (d > rr)
-                break;
-            er = er || edge_step(x + d, y) > pc.edge_thr;
-            el = el || edge_step(x - d, y) > pc.edge_thr;
-            ed = ed || edge_step(x, y + d) > pc.edge_thr;
-            eu = eu || edge_step(x, y - d) > pc.edge_thr;
-        }
-        ring_px = (el || er || eu || ed) && !(el && er) && !(eu && ed);
-    }
-
-    if (ring_px) {
-        /* 2. DeHalo_alpha over the 3x3 Repair window: per pixel, so from are /
-         *    ugly, lets = mix(halos, original, so); remove = the original
-         *    clamped into the window's lets range (Repair mode 1). */
-        int r = clamp(pc.blur_r, 1, MAX_R);
-        float hg[PEL_GRID * PEL_GRID];
-        float cg[PEL_GRID * PEL_GRID];
-        box_grid(x, y, r, hg);
-        for (int j = 0; j < PEL_GRID; j++)
-            for (int i = 0; i < PEL_GRID; i++)
-                cg[j * PEL_GRID + i] = load_norm(x + i - 2, y + j - 2);
-        const float EPS = 0.0039; /* ~1/255 */
+    int cls = gate_class(x, y);
+    if (cls == 1) {
+        result = pull(x, y);
+    } else if (cls == 0) {
+        /* Feathered mask (#201): n ring neighbours of eight, weight
+         * min(1, 2n/9), target = c clamped into the neighbours' pull range.
+         * A neighbour outside the plane is the clamped edge pixel. A thin
+         * line's core (class 2) and an isolated dot (above or below all
+         * eight neighbours) keep the source. */
+        int n = 0;
         float lo = 1.0e30, hi = -1.0e30;
+        float nlo = 1.0e30, nhi = -1.0e30;
         for (int dj = -1; dj <= 1; dj++) {
             for (int di = -1; di <= 1; di++) {
-                int g = (dj + 2) * PEL_GRID + (di + 2);
-                float oMax = cg[g], oMin = cg[g];
-                for (int b = -1; b <= 1; b++) {
-                    for (int a = -1; a <= 1; a++) {
-                        float v = cg[g + b * PEL_GRID + a];
-                        oMax = max(oMax, v);
-                        oMin = min(oMin, v);
-                    }
-                }
-                precise float are = oMax - oMin;
-                float hc = hg[g];
-                precise float ugly = max(max(hc, max(hg[g - 1], hg[g + 1])),
-                                         max(hg[g - PEL_GRID], hg[g + PEL_GRID]))
-                                   - min(min(hc, min(hg[g - 1], hg[g + 1])),
-                                         min(hg[g - PEL_GRID], hg[g + PEL_GRID]));
-                precise float frac = (are - ugly) / (are + EPS);
-                precise float so = clamp((frac - pc.lowsens) * (1.0 + pc.highsens), 0.0, 1.0);
-                precise float lets = mix(hc, cg[g], so);
-                lo = min(lo, lets);
-                hi = max(hi, lets);
+                if (di == 0 && dj == 0)
+                    continue;
+                int qx = clamp(x + di, 0, pc.width - 1);
+                int qy = clamp(y + dj, 0, pc.height - 1);
+                float v = load_norm(qx, qy);
+                nlo = min(nlo, v);
+                nhi = max(nhi, v);
+                if (ring_gate(qx, qy))
+                    n++;
             }
         }
-        float remove = clamp(c, lo, hi);
-        /* 3. remove-only, asymmetric pull toward the clamped value. */
-        precise float out_v;
-        if (remove < c)             /* bright halo: pull down */
-            out_v = c - (c - remove) * pc.brightstr;
-        else                        /* dark halo: pull up */
-            out_v = c - (c - remove) * pc.darkstr;
-        result = out_v;
+        if (n > 0 && c <= nhi && c >= nlo) {
+            for (int dj = -1; dj <= 1; dj++) {
+                for (int di = -1; di <= 1; di++) {
+                    if (di == 0 && dj == 0)
+                        continue;
+                    float v = pull(clamp(x + di, 0, pc.width - 1),
+                                   clamp(y + dj, 0, pc.height - 1));
+                    lo = min(lo, v);
+                    hi = max(hi, v);
+                }
+            }
+            precise float m = min(1.0, 2.0 * float(n) / 9.0);
+            result = mix(c, clamp(c, lo, hi), m);
+        }
     }
 
     /* Component-preserving store (the uint-domain twin of the in-tree shader's
