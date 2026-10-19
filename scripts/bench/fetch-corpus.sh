@@ -14,6 +14,8 @@
 #   CORPUS_LOCK=<file> and CURL_MAX_TIME=<seconds, default 600> override the pin list and deadline.
 #   CORPUS_CATEGORIES=<file> overrides the category list (default: scripts/bench/corpus.categories).
 #   --check-categories verifies category coverage against the lock and exits without downloading.
+#   A category whose clips column reads 'parked #<issue>' has no set by recorded decision: it
+#   prints PARKED and does not fail the check.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -46,6 +48,8 @@ if [ "${1:-}" = "--check-categories" ]; then
         if [ -z "$clips" ]; then
             echo "  MISSING $cat: no pinned set (used by $used_by)"
             missing=1
+        elif [[ "$clips" =~ ^parked\ \#[0-9]+$ ]]; then
+            echo "  PARKED $cat: no pinned set, ${clips#parked } (used by $used_by)"
         else
             IFS=',' read -r -a clip_list <<< "$clips"
             for c in "${clip_list[@]}"; do
@@ -170,6 +174,8 @@ if [ ${#want[@]} -eq 0 ] && [ -f "$CATEGORIES" ]; then
         used_by="$(echo "$used_by" | xargs)"
         if [ -z "$clips" ]; then
             echo "  MISSING $cat: no pinned set (used by $used_by)" >&2
+        elif [[ "$clips" =~ ^parked\ \#[0-9]+$ ]]; then
+            echo "  PARKED $cat: no pinned set, ${clips#parked } (used by $used_by)" >&2
         fi
     done < "$CATEGORIES"
 fi

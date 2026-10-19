@@ -4,7 +4,7 @@
 # Pinned benchmark corpus category coverage (VMAFx/pelorus#135).
 # Format: category | clips (comma-separated lock names, may be empty) | used by (issue/filter)
 
-noisy | | #198, denoise
+noisy | parked #413 | #198, denoise
 banding | synth-banding | deband
 real-banding | bluesky | #200, deband
 anime | glasshalf | dehalo, aa

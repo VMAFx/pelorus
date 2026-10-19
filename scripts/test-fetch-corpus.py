@@ -260,6 +260,25 @@ def check_categories(failures: list[str]) -> None:
     if left:
         failures.append(f"check-categories covered: files downloaded/left behind: {left}")
 
+    # 4. Positive: a category parked by issue -> exits 0, output has PARKED <cat> with the issue
+    rc, out, _err, left = run_check_categories(
+        "cat1 | clip | #200\ncat2 | parked #413 | #198, denoise\n"
+    )
+    if rc != 0:
+        failures.append(f"check-categories parked: expected exit 0, got {rc}")
+    if "PARKED cat2: no pinned set, #413 (used by #198, denoise)" not in out:
+        failures.append(f"check-categories parked: PARKED line not in output: {out!r}")
+    if left:
+        failures.append(f"check-categories parked: files downloaded/left behind: {left}")
+
+    # 5. Negative: 'parked' without an issue number is no decision -> exits 1 as an unknown clip
+    for bare in ("parked", "parked #", "parked #413x"):
+        rc, _out, err, _left = run_check_categories(f"cat1 | {bare} | #198\n")
+        if rc != 1:
+            failures.append(f"check-categories {bare!r}: expected exit 1, got {rc}")
+        if "UNKNOWN CLIP" not in err:
+            failures.append(f"check-categories {bare!r}: not reported as unknown clip: {err!r}")
+
 
 def main() -> int:
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
