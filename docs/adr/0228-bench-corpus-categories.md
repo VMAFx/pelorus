@@ -39,6 +39,12 @@ Each new set must be downloadable by anyone who runs the bench, pinned by sha256
 - **Negative**: a cold full fetch downloads about 1 GB (`glasshalf` y4m alone is 404 MB). Category sets can still disappear upstream; the sha256 pin makes that a named `DOWNLOAD FAILED` or `SHA MISMATCH`, not silent drift.
 - **Neutral / follow-ups**: a `noisy` set needs either a permissive native-resolution noisy source or a crop path in `fetch-corpus.sh`; until then the #198 denoise proof on real noise has no pinned clip and ADR-0223 stays partially implemented. Backups found during the search: Noise_Animation (CC BY-SA, paper texture) for `anime`, FourPeople (public domain) for `retranscode`.
 
+## Update 2026-10-19
+
+Decision 5 is settled: `netflix-bar` stays pinned by URL and sha256 only. Its copyright file (`media.xiph.org/video/derf/Chimera/Netflix_BarScene_Copyright.txt`, read 2026-10-19) states CC BY-NC-ND 4.0, so it is measured locally and nothing derived from it (extracted frames, crops, encodes) is committed or published. The same rule holds for every set, CC BY-SA ones included.
+
+`corpus.lock` gains a ninth column, `licence`: an SPDX identifier, `no-copyright` or `generated`. `fetch-corpus.sh` reads it from an allow-list (`CC-BY-3.0`, `CC-BY-4.0`, `CC-BY-SA-4.0`, `CC-BY-NC-ND-4.0`, `no-copyright`, `generated`) and stops with `NO LICENCE PINNED` or `UNKNOWN LICENCE` before any download, so a new set cannot enter the lock without a recorded licence. `scripts/test-fetch-corpus.py` covers a missing, an empty and an unknown licence, and requires an allowed licence on every line of the shipped lock.
+
 ## References
 
 - Issue: VMAFx/pelorus#135.

@@ -78,7 +78,7 @@ mkdir -p "$CORPUS"
 want=("$@")
 want_clip() { [ ${#want[@]} -eq 0 ] && return 0; for w in "${want[@]}"; do [ "$w" = "$1" ] && return 0; done; return 1; }
 
-while IFS='|' read -r name url sha seek scale pixfmt frames fps; do
+while IFS='|' read -r name url sha seek scale pixfmt frames fps licence; do
     # Skip blanks/comments BEFORE xargs: xargs treats quotes as syntax and dies on
     # an apostrophe in a comment ("unmatched single quote"), which made a prose
     # comment in corpus.lock able to break the whole fetch.
@@ -87,11 +87,18 @@ while IFS='|' read -r name url sha seek scale pixfmt frames fps; do
     want_clip "$name" || continue
     url="$(echo "$url" | xargs)"; sha="$(echo "$sha" | xargs)"; seek="$(echo "$seek" | xargs)"
     scale="$(echo "$scale" | xargs)"; pixfmt="$(echo "$pixfmt" | xargs)"
-    frames="$(echo "$frames" | xargs)"; fps="$(echo "$fps" | xargs)"
+    frames="$(echo "$frames" | xargs)"; fps="$(echo "$fps" | xargs)"; licence="$(echo "${licence:-}" | xargs)"
+    # Allow-list: every set names its licence, and only licences that permit
+    # local measurement are pinned (ADR-0228). Checked before any download.
+    case "$licence" in
+        CC-BY-3.0|CC-BY-4.0|CC-BY-SA-4.0|CC-BY-NC-ND-4.0|no-copyright|generated) ;;
+        '') echo "  NO LICENCE PINNED: $name (corpus.lock needs a licence column)" >&2; exit 1;;
+        *) echo "  UNKNOWN LICENCE: $name ($licence)" >&2; exit 1;;
+    esac
     w="${scale%x*}"; h="${scale#*x}"
     yuv="$CORPUS/$name.yuv"
 
-    echo "== $name (${scale} ${pixfmt} ${frames}f@${fps}) =="
+    echo "== $name (${scale} ${pixfmt} ${frames}f@${fps}, ${licence}; local measurement only, never redistributed) =="
     if [ "$url" = "lavfi:gradients" ]; then
         # Synthetic dark gradient (banding torture). gradients draws a random
         # pattern unless seeded (its seed defaults to -1), so the seed is fixed
