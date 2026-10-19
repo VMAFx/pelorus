@@ -43,14 +43,24 @@ domain to logical `[0,1]` before arithmetic:
    `brightstr` (bright halos) strengths. A pixel inside the blurred envelope,
    which includes every line transition, does not move: the filter can only
    reduce the ring.
+5. **Feathered mask** — a pixel next to the halo band but outside it, usually
+   the steep halo flank right beside a line, moves with weight
+   `min(1, 2 n / 9)` for `n` of its eight neighbours in the band, towards the
+   range of the neighbours' pulls. A thin line's core (the exclusion zone) and
+   a pixel above or below all eight neighbours (an isolated dot) keep the
+   source. [ADR-0226](../adr/0226-dehalo-feathered-mask.md) records the
+   measurements: Lanczos overshoot removed rises from 24.3% to 35.0% on the
+   synthetic set, while BBB PSNR against the source moves from 55.09 to
+   54.89 dB.
 
 [ADR-0163](../adr/0163-dehalo-gate-and-pull.md) records why the gate and the
 pull take this form and the measurements behind it. That change is a harm-fix:
 it stops the filter rewriting line-art (the earlier gate changed stroke pixels
 by up to 129 codes) and leaves clean sources intact. It does **not** remove
 halos: halo RMS at the defaults drops by at most 1.3% on the ADR-0163 synthetic
-set. Real halo removal (a feathered `FineDehalo`-style mask) is a tracked
-follow-up.
+set. The feathered mask (step 5,
+[ADR-0226](../adr/0226-dehalo-feathered-mask.md)) reaches part of the steep
+flank that gate leaves.
 
 The shipped shader is
 `ffmpeg-patches/files/vulkan/pelorus_dehalo.comp.glsl`; the similarly named
@@ -122,17 +132,23 @@ hwupload → pelorus_dehalo → pelorus_deband → (hwdownload) → encoder
   NV12/P010/P012 that selection processes both U and V.
 - **Runs before deband** in the anime chain (see above), so deband's flat-test
   is not fooled by the residual ring.
-- **Steep halo flanks count as line-art.** The halo pixel right next to a line
-  usually has its own step above `edge`, so the gate protects it with the line.
-  At the defaults the filter clears the outer ring band and leaves that flank;
-  on the ADR-0163 synthetic set the flank pixels carry 93–97% of the remaining
-  halo energy, so overall halo RMS drops by at most a few percent. Raising
-  `edge` releases more flank pixels; the measurements are in
-  [ADR-0163](../adr/0163-dehalo-gate-and-pull.md).
+- **Steep halo flanks get the feathered share only.** The halo pixel right
+  next to a line usually has its own step above `edge`, so the ring gate
+  protects it with the line and only the feathered mask reaches it. Unsharp-mask
+  halos stay mostly in place (2.5% of their overshoot removed on the synthetic
+  set), because their overshoot lies inside the range of the neighbours'
+  pulls. Raising `edge` releases more flank pixels; the measurements are in
+  [ADR-0163](../adr/0163-dehalo-gate-and-pull.md) and
+  [ADR-0226](../adr/0226-dehalo-feathered-mask.md).
+- **Thin dark lines next to texture.** The ring gate can class a real
+  one-pixel line as halo where its pixels' own step sits just below `edge`, and
+  the feather spreads that change to neighbouring line pixels just above it
+  (BarScene, research
+  [0201](../research/0201-dehalo-feathered-mask.md)).
 - **On-device check** — `ffmpeg-patches/test/vulkan-format-matrix.sh` asserts
-  that the gate clears a ringed line's outer overshoot, leaves line cores and a
-  1-px stroke within one code, and that `tile=0` and `tile=1` match byte for
-  byte.
+  that the gate clears a ringed line's outer overshoot, pulls the steep flank,
+  leaves line cores, a 1-px stroke and isolated texture dots within one code,
+  and that `tile=0` and `tile=1` match byte for byte.
 - **Honest caveat — defaults are not yet content-tuned.** The algorithm port is
   compile-verified and glslang-clean, but the perceptual tuning of the defaults
   against real anime and the quality proof against a clean ground truth are the

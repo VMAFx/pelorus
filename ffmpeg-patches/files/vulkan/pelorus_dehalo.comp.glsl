@@ -85,11 +85,13 @@ layout (set = 0, binding = 1) uniform writeonly image2D output_images[];
 const int MAX_R = 8;
 
 /* The DeHalo_alpha Repair window needs the box means and the 3x3 contrast on a
- * 5x5 grid around the pixel (3x3 window x 3x3 / cross neighbourhood), so the
- * deepest read is MAX_R + 2. The edge-mask scan reaches ring + 1 <= MAX_R + 1.
- * PEL_HALO = MAX_R + 2 = 10; PEL_TILE = 32 (workgroup dim) + 2 * PEL_HALO. */
-#define PEL_HALO 10
-#define PEL_TILE 52
+ * 5x5 grid around the pixel (3x3 window x 3x3 / cross neighbourhood), so one
+ * pull reads MAX_R + 2 deep. The feathered mask (#201) evaluates the gate and
+ * the pull at the eight neighbours too: the edge-mask scan reaches
+ * 1 + ring + 1 <= MAX_R + 2 and the neighbour pull 1 + MAX_R + 2.
+ * PEL_HALO = MAX_R + 3 = 11; PEL_TILE = 32 (workgroup dim) + 2 * PEL_HALO. */
+#define PEL_HALO 11
+#define PEL_TILE 54
 #define PEL_GRID 5
 
 /* Sized by a specialization constant so tile=0 pipelines allocate no shared
@@ -218,19 +220,17 @@ float edge_step(int idx, int comp, ivec2 p, ivec2 sz)
     return 0.25 * mag;
 }
 
-float dehalo(ivec2 pos, int idx, int comp)
+/* FineDehalo gate. A pixel whose own edge step exceeds `edge` is line-art and
+ * is not in the halo band. The band is every other pixel with a line within
+ * `ring` px along the cross; the scan tests the edge mask itself, so dark and
+ * bright halos qualify alike. A pixel with line on both sides of an axis sits
+ * between two close edges (a thin line's core, a gap between parallel lines):
+ * FineDehalo's exclusion zone, also outside the band. Returns 1 for the halo
+ * band, 2 for the exclusion zone and 0 for line-art or no line nearby. */
+int gate_class(int idx, int comp, ivec2 pos, ivec2 sz)
 {
-    ivec2 sz = pel_plane_size(uint(idx));
-    float c = pel_luma(idx, comp, pos, sz);
-
-    /* FineDehalo gate. A pixel whose own edge step exceeds `edge` is line-art
-     * and is never touched. The halo band is every other pixel with a line
-     * within `ring` px along the cross; the scan tests the edge mask itself, so
-     * dark and bright halos qualify alike. A pixel with line on both sides of
-     * an axis sits between two close edges (a thin line's core, a gap between
-     * parallel lines): FineDehalo's exclusion zone, also left alone. */
     if (edge_step(idx, comp, pos, sz) > edge_thr)
-        return clamp(c, 0.0, 1.0);
+        return 0;
     int rr = clamp(int(ring + 0.5), 1, MAX_R);
     bool el = false; bool er = false; bool eu = false; bool ed = false;
     for (int d = 1; d <= MAX_R; d++) {
@@ -241,9 +241,19 @@ float dehalo(ivec2 pos, int idx, int comp)
         ed = ed || edge_step(idx, comp, pos + ivec2(0,  d), sz) > edge_thr;
         eu = eu || edge_step(idx, comp, pos + ivec2(0, -d), sz) > edge_thr;
     }
-    if (!(el || er || eu || ed) || (el && er) || (eu && ed))
-        return clamp(c, 0.0, 1.0);
+    if ((el && er) || (eu && ed))
+        return 2;
+    return (el || er || eu || ed) ? 1 : 0;
+}
 
+bool ring_gate(int idx, int comp, ivec2 pos, ivec2 sz)
+{
+    return gate_class(idx, comp, pos, sz) == 1;
+}
+
+float pull(int idx, int comp, ivec2 pos, ivec2 sz)
+{
+    float c = pel_luma(idx, comp, pos, sz);
     /* DeHalo_alpha, ss <= 1 form. For each pixel of the 3x3 Repair window:
      * are = 3x3 contrast of the source, ugly = cross contrast of the box mean,
      * so = lowsens/highsens-shaped (are - ugly) / are, and
@@ -290,6 +300,56 @@ float dehalo(ivec2 pos, int idx, int comp)
     precise float out_v;
     if (remove < c) out_v = c - (c - remove) * brightstr;
     else            out_v = c - (c - remove) * darkstr;
+    return clamp(out_v, 0.0, 1.0);
+}
+
+float dehalo(ivec2 pos, int idx, int comp)
+{
+    ivec2 sz = pel_plane_size(uint(idx));
+    float c = pel_luma(idx, comp, pos, sz);
+    int cls = gate_class(idx, comp, pos, sz);
+    if (cls == 1)
+        return pull(idx, comp, pos, sz);
+    if (cls == 2)
+        return clamp(c, 0.0, 1.0);
+
+    /* Feathered mask (FineDehalo's 3x3 mean x 2 of the ring mask, #201): a
+     * pixel outside the band but next to it, the steep halo flank beside the
+     * line, moves with weight min(1, 2 n / 9) for n admitted neighbours. Its
+     * target is the source clamped into the range of the neighbours' pulls,
+     * so only an excursion beyond the dehaloed surroundings moves; a clean
+     * step edge lies inside that range and stays. A neighbour outside the
+     * plane is the clamped edge pixel, as every read here is. Two kinds of
+     * line-art keep the source: a thin line's core (the exclusion zone) and a
+     * pixel above or below all eight neighbours (an isolated dot); a flank
+     * along an edge shares its value with the pixels along that edge. */
+    int n = 0;
+    float lo = 1.0e30; float hi = -1.0e30;
+    float nlo = 1.0e30; float nhi = -1.0e30;
+    for (int dj = -1; dj <= 1; dj++) {
+        for (int di = -1; di <= 1; di++) {
+            if (di == 0 && dj == 0)
+                continue;
+            ivec2 q = clamp(pos + ivec2(di, dj), ivec2(0), sz - ivec2(1));
+            float v = pel_luma(idx, comp, q, sz);
+            nlo = min(nlo, v); nhi = max(nhi, v);
+            if (ring_gate(idx, comp, q, sz))
+                n++;
+        }
+    }
+    if (n == 0 || c > nhi || c < nlo)
+        return clamp(c, 0.0, 1.0);
+    for (int dj = -1; dj <= 1; dj++) {
+        for (int di = -1; di <= 1; di++) {
+            if (di == 0 && dj == 0)
+                continue;
+            ivec2 q = clamp(pos + ivec2(di, dj), ivec2(0), sz - ivec2(1));
+            float v = pull(idx, comp, q, sz);
+            lo = min(lo, v); hi = max(hi, v);
+        }
+    }
+    precise float m = min(1.0, 2.0 * float(n) / 9.0);
+    precise float out_v = mix(c, clamp(c, lo, hi), m);
     return clamp(out_v, 0.0, 1.0);
 }
 
