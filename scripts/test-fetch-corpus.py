@@ -18,6 +18,10 @@ the clip with EXTRACT FAILED: <name>, and exit 1.
 --check-categories verifies category coverage against the lock file: an empty
 category or an unknown clip exits 1; fully covered categories exit 0 with
 nothing downloaded.
+
+Every lock line names its licence (ninth column, ADR-0228): a missing or an
+unknown licence fails before any download, and every line of the shipped
+corpus.lock carries one.
 """
 
 from __future__ import annotations
@@ -77,7 +81,8 @@ NAMED = ": clip ("
 
 
 def run_fetch(
-    port: int, name: str, sha: str, url: str = "", stub_text: str = STUB_OK
+    port: int, name: str, sha: str, url: str = "", stub_text: str = STUB_OK,
+    licence: str = " | CC-BY-4.0",
 ) -> tuple[int, float, list[str], str]:
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = pathlib.Path(tmp)
@@ -87,7 +92,7 @@ def run_fetch(
         stub.write_text(stub_text)
         stub.chmod(0o755)
         url = url or f"http://127.0.0.1:{port}/{name}"
-        lock.write_text(f"clip | {url} | {sha} | -ss 0 | 16x16 | yuv420p | 1 | 30\n")
+        lock.write_text(f"clip | {url} | {sha} | -ss 0 | 16x16 | yuv420p | 1 | 30{licence}\n")
         env = dict(
             os.environ,
             FFMPEG=str(stub),
@@ -111,7 +116,7 @@ def run_fetch(
 
 def run_check_categories(
     categories_text: str,
-    lock_text: str = "clip | http://127.0.0.1/clip.bin | 00 | -ss 0 | 16x16 | yuv420p | 1 | 30\n",
+    lock_text: str = "clip | http://127.0.0.1/clip.bin | 00 | -ss 0 | 16x16 | yuv420p | 1 | 30 | CC-BY-4.0\n",
 ) -> tuple[int, str, str, list[str]]:
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = pathlib.Path(tmp)
@@ -198,6 +203,31 @@ def check_generated(port: int, failures: list[str]) -> None:
         failures.append(f"generated clip positive control: expected clip.meta and clip.yuv, got {left}")
 
 
+LICENCES = {"CC-BY-3.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC-BY-NC-ND-4.0", "no-copyright", "generated"}
+
+
+def check_licences(port: int, failures: list[str]) -> None:
+    for licence, needle, label in (
+        ("", "NO LICENCE PINNED: clip", "no licence column"),
+        (" | ", "NO LICENCE PINNED: clip", "empty licence"),
+        (" | proprietary", "UNKNOWN LICENCE: clip", "unknown licence"),
+    ):
+        rc, _elapsed, left, err = run_fetch(port, "good.bin", GOOD_SHA, licence=licence)
+        if rc != 1:
+            failures.append(f"{label}: expected exit 1, got {rc}")
+        if needle not in err:
+            failures.append(f"{label}: {needle!r} not in stderr: {err!r}")
+        if left:
+            failures.append(f"{label}: downloaded before the licence check: {left}")
+    lock = ROOT / "scripts" / "bench" / "corpus.lock"
+    for line in lock.read_text().splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        fields = [f.strip() for f in line.split("|")]
+        if len(fields) != 9 or fields[8] not in LICENCES:
+            failures.append(f"shipped corpus.lock: line without an allowed licence: {fields[0]}")
+
+
 def check_categories(failures: list[str]) -> None:
     # Category checks (--check-categories)
     # 1. Boundary: categories file with one empty category -> exits 1, output has MISSING <cat>
@@ -239,13 +269,14 @@ def main() -> int:
     failures: list[str] = []
     check_downloads(port, failures)
     check_generated(port, failures)
+    check_licences(port, failures)
     check_categories(failures)
     server.shutdown()
     for failure in failures:
         print(f"FAIL: {failure}", file=sys.stderr)
     if not failures:
         print("fetch-corpus.sh: 404, corrupt body, stalled server, extract failures, "
-              "unpinned/mismatched generated clips, and category coverage all verified")
+              "unpinned/mismatched generated clips, licence column, and category coverage all verified")
     return 1 if failures else 0
 
 

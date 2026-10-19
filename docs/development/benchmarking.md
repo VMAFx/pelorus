@@ -103,8 +103,17 @@ read on 2026-10-19.
 | `highmotion` | `svt-waterfall` | CC BY 4.0, Sveriges Television (SVT Open Content Video Test Suite 2022 PDF) | mc #301 |
 
 `netflix-bar` belongs to no category. Its copyright file
-(`media.xiph.org/video/derf/Chimera/Netflix_BarScene_Copyright.txt`) states CC BY-NC-ND 4.0;
-it is used as a local download only.
+(`media.xiph.org/video/derf/Chimera/Netflix_BarScene_Copyright.txt`, read 2026-10-19) states
+CC BY-NC-ND 4.0, (C) Netflix Inc. 2015. It is measured locally only: the lock pins its URL and
+sha256, and nothing derived from it (extracted frames, crops, encodes, figures made of its
+pixels) is committed or published. Numbers measured on it may be reported. The same rule holds
+for every set, the CC BY-SA `news-mixedcoding` included.
+
+Each line of `corpus.lock` ends in a `licence` column: an SPDX identifier, `no-copyright`
+(the copyright file disclaims copyright, `bluesky`) or `generated` (`synth-banding`).
+`fetch-corpus.sh` accepts only `CC-BY-3.0`, `CC-BY-4.0`, `CC-BY-SA-4.0`, `CC-BY-NC-ND-4.0`,
+`no-copyright` and `generated`, and stops before the download on any other value. A new set
+with another licence extends that list in the same change, after its terms are read.
 
 `noisy` has no pinned set yet. The permissive candidates found (SVT 2022 proxies) are
 AV1 previews at about 3 to 6 Mbit/s for 4K, and the bench scales every clip to 640x360;
@@ -118,8 +127,8 @@ category is missing or names a clip that is not in `corpus.lock`. It downloads n
 A full fetch (no clip names) prints the same `MISSING` lines on stderr after the fetch
 and keeps its exit status, so the bench still runs with partial coverage; a fetch by
 name prints none. Every fetch failure names the entry:
-`DOWNLOAD FAILED`, `SHA MISMATCH`, `NO SHA PINNED`, `GENERATION FAILED` or
-`EXTRACT FAILED`, followed by `: <name> (<detail>)`.
+`DOWNLOAD FAILED`, `SHA MISMATCH`, `NO SHA PINNED`, `NO LICENCE PINNED`, `UNKNOWN LICENCE`,
+`GENERATION FAILED` or `EXTRACT FAILED`, followed by `: <name> (<detail>)`.
 
 Pelorus's whole premise is a **claim** until measured: that pre-filtering in
 VRAM makes a *hardware* encode better. The bench proves (or disproves) it
