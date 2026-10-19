@@ -1,0 +1,1 @@
+- `.github/workflows/devcontainer-image.yml` replaces hand-rolled Docker CLI login, build, and push commands with pinned upstream Docker actions (`docker/setup-buildx-action`, `docker/login-action`, `docker/build-push-action`) matching `VMAFx/vmafx` pins ([ADR-0235](docs/adr/0235-docker-build-push-actions.md)).
