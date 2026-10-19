@@ -249,8 +249,31 @@ for rel in units:
                 "command": shlex.join(tokens),
             }
         )
+    elif rel == "scripts/encode-options/avoption-probe.c":
+        stem = pathlib.Path(rel).stem
+        tokens = (
+            shlex.split(cc_bin)
+            + static_cflags
+            + [
+                "-c",
+                str(unit_path),
+                "-o",
+                str(output_root / f"{stem}.o"),
+                "-Wno-unknown-warning-option",
+            ]
+        )
+        entries.append(
+            {
+                "directory": str(source_root),
+                "file": str(unit_path),
+                "command": shlex.join(tokens),
+            }
+        )
     else:
-        fail(f"unit outside ffmpeg-patches/{{files,test}}/: {rel}")
+        fail(
+            "unit outside ffmpeg-patches/{files,test}/ or "
+            f"scripts/encode-options/avoption-probe.c: {rel}"
+        )
 
 compile_db_path.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
 PY

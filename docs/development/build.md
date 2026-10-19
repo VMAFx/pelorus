@@ -537,9 +537,12 @@ Two audit checks read lists that ordinary code changes can break:
   `libpelorus` (`.config/clang-tidy/lane-files.txt`), covering every C file the
   Meson build compiles (`libpelorus/src`, `libpelorus/test`, `tools`, and the
   `ffmpeg-patches/test` programs Meson builds against stub headers), and
-  `ffmpeg-tree` (`.config/clang-tidy/ffmpeg-tree-files.txt`), covering the 14 C
-  units under `ffmpeg-patches/files` and `ffmpeg-patches/test` that build
-  against a configured FFmpeg tree ([ADR-0224](../adr/0224-ffmpeg-tree-tidy-lane.md)).
+  `ffmpeg-tree` (`.config/clang-tidy/ffmpeg-tree-files.txt`), covering the 16 C
+  units under `ffmpeg-patches/files`, `ffmpeg-patches/test`, and the
+  `scripts/encode-options/avoption-probe.c` table generator probe that build
+  against a configured FFmpeg tree or installed static prefix
+  ([ADR-0224](../adr/0224-ffmpeg-tree-tidy-lane.md),
+  [ADR-0233](../adr/0233-probe-ffmpeg-tree-tidy-lane.md)).
   `make tidy` and the `core` job's clang-tidy step read `lane-files.txt`, while
   `ffmpeg-patches/test/build-and-run.sh` runs `ffmpeg-patches/test/tidy-ffmpeg-tree.sh`
   over `ffmpeg-tree-files.txt` with `.config/clang-tidy/ffmpeg-tree.yaml`, so
