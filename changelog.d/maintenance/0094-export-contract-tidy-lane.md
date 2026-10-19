@@ -1,0 +1,1 @@
+- The FFmpeg-tree clang-tidy lane now checks `ffmpeg-patches/test/vulkan-export-contract.c` as its 15th unit, so the `clang-tidy-coverage` exception for that file is gone from `.standards.yaml`. The unit was already clean; a planted `atoi` call fails the replay ([#94](https://github.com/VMAFx/pelorus/issues/94), [ADR-0224](docs/adr/0224-ffmpeg-tree-tidy-lane.md)).
