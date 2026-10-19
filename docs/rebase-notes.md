@@ -8,6 +8,19 @@ the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
 ranges in older entries predate the first entry below (22 patches on the
 shared FFmpeg fix series, number 0021 retired).
 
+## Unreleased — FFmpeg master preview (#213; no patch change)
+
+- **Base**: still `n9.0.2`; no later FFmpeg release exists. A trial apply on
+  FFmpeg `master` `ec447c56e354` (2026-10-19) is recorded in
+  [research 0213](research/0213-ffmpeg-master-rebase-preview.md).
+- **Checklist for the next release base**: rebase the shared series first
+  (0001, 0002, 0008, 0019, 0021 and 0034 fail on `master`); then rebase
+  `0009b` onto the reworked Vulkan encode code (`configure`,
+  `libavcodec/vulkan/Makefile`, `libavcodec/vulkan_encode.c`); `0009a` and
+  the other 21 Pelorus patches apply unchanged. Re-check the filter overlap
+  table in the research note (`scdet_vulkan`, `fruc_vulkan`, `vqe_amf`)
+  before the full replay.
+
 ## Unreleased — 0009 split (#308, ADR-0231; 0009 becomes 0009a and 0009b)
 
 - **Patches**: `0009-vulkan-pelorus-qpmap.patch` is replaced by
