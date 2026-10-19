@@ -932,6 +932,21 @@ the v0.20 10-bit pipeline the new pin gives mean CAMBI 0.053 against 0.256 at
 37.5 kbps against 27.8. The filter defaults are unchanged and still lose to the
 baseline through NVENC at these rates.
 
+## v0.22 — grain estimator against noise_model and grav1synth: calibrated AV1 mapping (ADR-0227)
+
+Issue [#203](https://github.com/VMAFx/pelorus/issues/203). FFmpeg `n9.0.2` plus shared series `v0.3.0` plus the Pelorus stack; `pelorus_grain_estimate_vulkan` on an NVIDIA GeForce RTX 4090 (driver 615.78.08); libaom 3.15.2 `noise_model`; grav1synth 0.2.0 `diff`. Known AV1 grain tables rendered with `aomenc` on 640×360 flat luma stripes (24 frames), estimated by each tool, and the estimate rendered again. Method and lag-1 figures: [research digest 0203](../research/0203-grain-estimate-accuracy.md).
+
+| Truth | noise_model | grav1synth | Pelorus before | Pelorus | Pelorus `edge=0.12` |
+| --- | --- | --- | --- | --- | --- |
+| white, scaling 8 | +4.7% | +3.7% | −78.6% | 0.0% | 0.0% |
+| white, scaling 24 | +1.2% | +0.1% | −73.0% | 0.0% | 0.0% |
+| ramp 8→40 (mean abs, worst stripe) | 3.3% (+11.7%) | 3.0% (+10.2%) | 76.7% (−82.7%) | 3.5% (−15.4%) | 0.1% (+0.2%) |
+| scaling 24, AR a = 20 | −1.3% | −1.4% | −80.0% | −2.8% | −1.5% |
+
+Error of the rendered grain standard deviation against the truth. Grain-free clip: Pelorus attaches no AV1 grain parameters; both peers emit a zero scaling function. Throughput at 1080p, 48 frames, whole process: Pelorus 97 fps, `noise_model` 1.8 fps and grav1synth 1.7 fps, both given the grain-free reference. An 8193×4320 input now fails at configuration (DCI 8K guard).
+
+Verdict: positive on synthetic grain. The old mapping was 73% to 80% too weak and wrote its AR coefficient to the diagonal tap. Limits: flat content only, and the default edge gate loses heavy grain. Real film grain BD-rate is the milestone 14 promotion evidence and is not covered here.
+
 ## Open / next
 
 1. **SVT-AV1 ROI on real content**: the v0.10 synthetic gain is modest; re-run

@@ -6,7 +6,9 @@ the reference shader share (ADR-0147, ADR-0161):
 
 - the constants agree across all three sources;
 - the lag-1 bias makes every biased product non-negative;
-- the largest per-slice sum fits uint32 at DCI 8K;
+- the largest per-slice sum fits uint32 at the host's frame-size guard
+  (PEL_GRAIN_MAX_PIXELS), which must be the DCI 8K pixel count and must be
+  checked in the input config_props;
 - both shaders round each per-pixel add to the nearest fixed-point unit;
 - the fixed-point path reproduces a float reference on one-code-value grain.
 
@@ -35,6 +37,8 @@ SHADER = (
 REFERENCE = ROOT / "libpelorus" / "shaders" / "pelorus_grain_estimate.comp"
 WIDTH = 8192
 HEIGHT = 4320
+GUARD_PATTERN = r"#define PEL_GRAIN_MAX_PIXELS\s+\((\d+)LL\s*\*\s*(\d+)LL\)"
+GUARD_CHECK = r"if \(pixels > PEL_GRAIN_MAX_PIXELS\)\s*\{[^}]*return AVERROR\(EINVAL\);"
 UINT32_LIMIT = 1 << 32
 
 # Precision fixture: deterministic white grain on a flat 8-bit field.
@@ -154,6 +158,23 @@ def simulate(consts: dict[str, float]) -> tuple[float, float, float, float]:
     return math.sqrt(var_ref), lag_ref, math.sqrt(var_fix), lag_fix
 
 
+def guard_pixels(c_text: str) -> tuple[int, list[str]]:
+    """Return the host's frame-size guard in pixels and any guard errors."""
+    match = re.search(GUARD_PATTERN, c_text)
+    if match is None:
+        return WIDTH * HEIGHT, ["frame-size guard PEL_GRAIN_MAX_PIXELS not found"]
+    pixels = int(match.group(1)) * int(match.group(2))
+    errors = []
+    if pixels != WIDTH * HEIGHT:
+        errors.append(
+            f"frame-size guard PEL_GRAIN_MAX_PIXELS is {pixels} pixels, not the "
+            f"DCI 8K count {WIDTH * HEIGHT}"
+        )
+    if re.search(GUARD_CHECK, c_text) is None:
+        errors.append("frame-size guard: config_props does not refuse pixels > PEL_GRAIN_MAX_PIXELS")
+    return pixels, errors
+
+
 def validate(c_text: str, shader_text: str, reference_text: str) -> list[str]:
     try:
         host = parse(c_text, C_PATTERNS, "C")
@@ -162,7 +183,7 @@ def validate(c_text: str, shader_text: str, reference_text: str) -> list[str]:
     except ValueError as error:
         return [f"grain accumulator contract: {error}"]
 
-    errors = []
+    guard, errors = guard_pixels(c_text)
     for name in SHARED:
         if not host[name] == shader[name] == reference[name]:
             errors.append(
@@ -185,7 +206,7 @@ def validate(c_text: str, shader_text: str, reference_text: str) -> list[str]:
     errors.extend(rounds_adds(shader_text, "shipped shader"))
     errors.extend(rounds_adds(reference_text, "reference shader"))
 
-    pixels_per_slice = math.ceil(WIDTH * HEIGHT / host["slices"])
+    pixels_per_slice = math.ceil(guard / host["slices"])
     # One fixed-point unit beyond the real-number ceiling covers float32
     # rounding of the product before the round-to-nearest conversion.
     max_sumsq_add = math.ceil(clamp_sq * host["sumsq_gs"]) + 1
@@ -197,14 +218,17 @@ def validate(c_text: str, shader_text: str, reference_text: str) -> list[str]:
     }
     for name, value in bounds.items():
         if value >= UINT32_LIMIT:
-            errors.append(f"DCI 8K {name} bound overflows uint32: {value} >= {UINT32_LIMIT}")
+            errors.append(
+                f"guard {name} bound overflows uint32 at {guard} pixels: "
+                f"{value} >= {UINT32_LIMIT}"
+            )
     if errors:
         return errors
 
     errors, summary = precision_errors(dict(host, rounds=True))
     if not errors:
         print(
-            f"grain accumulator DCI 8K bounds: {int(host['slices'])} slices, "
+            f"grain accumulator bounds at the {guard}-pixel guard: {int(host['slices'])} slices, "
             f"sumsq={bounds['sumsq']}, corr={bounds['corr']}, count={bounds['count']}; "
             f"{summary}"
         )
@@ -274,6 +298,22 @@ def planted_sources(texts: tuple[str, str, str]) -> dict[str, tuple[tuple[str, s
             "corr bound overflows",
         ),
         "host drifts from shaders": ((drifted, shader_text, reference_text), "drifted"),
+        "guard raised to 16K": (
+            (
+                _sub(c_text, r"\(8192LL \* 4320LL\)", "(16384LL * 8640LL)"),
+                shader_text,
+                reference_text,
+            ),
+            "corr bound overflows",
+        ),
+        "guard define removed": (
+            (_sub(c_text, r"#define PEL_GRAIN_MAX_PIXELS", "#define PEL_GRAIN_MAX_PX"), shader_text, reference_text),
+            "PEL_GRAIN_MAX_PIXELS not found",
+        ),
+        "guard check removed": (
+            (_sub(c_text, r"if \(pixels > PEL_GRAIN_MAX_PIXELS\)", "if (0)"), shader_text, reference_text),
+            "does not refuse",
+        ),
     }
 
 

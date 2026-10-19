@@ -258,7 +258,7 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i input.mkv \
 
 ```bash
 -vf "pelorus_analyze_vulkan,
-     pelorus_grain_estimate_vulkan=strength=2.0,
+     pelorus_grain_estimate_vulkan,
      pelorus_mc_vulkan=bsize=16:search=24:meta=1,
      pelorus_denoise_vulkan=sigma=0.03:mc=1,
      pelorus_deband_vulkan=range=15"

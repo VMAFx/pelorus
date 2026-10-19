@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # vf_pelorus_grain_estimate_vulkan
 
-**Stance:** `experimental` — Available to estimate film-grain parameters today; promotion requires pinned-corpus accuracy against noise_model and grav1synth ([bench #203](https://github.com/VMAFx/pelorus/issues/203)).
+**Stance:** `experimental` — Available to estimate film-grain parameters today; on synthetic AV1 grain its error is within that of noise_model and grav1synth at about 50 times their speed ([bench #203](https://github.com/VMAFx/pelorus/issues/203)); promotion requires pinned-corpus BD-rate evidence on real film grain ([milestone 14](https://github.com/VMAFx/pelorus/milestone/14)).
 
 A film-grain-synthesis (FGS) parameter **estimator**, run as a zero-copy
 pass-through pass in VRAM. It is the dual of the denoise lever
@@ -43,11 +43,11 @@ sums are unbiased and every uint32 accumulator stays bounded through DCI 8K
 `grain-accumulator-bounds` fast test proves the bound and checks the rounded
 path against a float reference.
 
-The host maps the per-band RMS to the AV1 AOM piecewise scaling function
-`y_points[value, scaling]` (band centre → `value`, RMS·`strength` → `scaling`),
-takes AV1-legal defaults for the shifts, and seeds `ar_coeffs_y[0]` from the
-lag-1 coefficient. With `model=h274` it also derives H.274 model-0 values; see
-[H.274 model-0 mapping](#h274-model-0-mapping).
+The host maps the lag-1 coefficient to a symmetric lag-1 AV1 AR model and the
+per-band RMS to the AV1 AOM piecewise scaling function `y_points[value,
+scaling]`, both through a table calibrated against FFmpeg's AV1 synthesizer;
+see [AV1 mapping](#av1-mapping). With `model=h274` it also derives H.274
+model-0 values; see [H.274 model-0 mapping](#h274-model-0-mapping).
 
 The shipped shader is
 `ffmpeg-patches/files/vulkan/pelorus_grain_estimate.comp.glsl`; the similarly
@@ -62,12 +62,14 @@ All thresholds are normalized in `[0,1]`, independent of bit depth.
 | Option | Default | Range | Meaning |
 | --- | --- | --- | --- |
 | `edge` | 0.06 | 0–1 | 3×3 neighbourhood range above which a pixel is an edge and is excluded from the grain estimate |
-| `strength` | 2.0 | 0–64 | scales the measured per-band RMS residual to the AV1 `[0,255]` scaling-function value (synthesis intensity); does not affect the H.274 values |
+| `strength` | 1.0 | 0–64 | multiplies the calibrated AV1 scaling function: 1 reproduces the measured grain, 2 doubles its standard deviation; does not affect the H.274 values |
 | `model` | `aom` | `aom`/`h274` | FGS model the estimate targets (`aom` = AV1; `h274` = HEVC/VVC: also emits the `lavfi.pelorus.h274_*` model-0 values) |
 | `native` | on | bool | also attach a native `AV_FRAME_DATA_FILM_GRAIN_PARAMS` (AV1) so a downstream FFmpeg AV1 encoder honours it with no Pelorus BSF |
 
-`strength` is the main knob: raise it if the synthesized grain looks too subtle,
-lower it if too heavy. The vmafx `vmaf-tune` autotune
+`strength` is the main knob: the default reproduces the source grain; raise it
+if the synthesized grain looks too subtle, lower it if too heavy. Before
+ADR-0227 the default was 2.0 on an uncalibrated mapping; a graph that set
+`strength=2.0` now gets twice the measured grain. The vmafx `vmaf-tune` autotune
 ([ADR-0106](../adr/0106-autotune-control-plane.md)) can sweep it against the
 encoded-VMAF oracle.
 
@@ -118,7 +120,7 @@ FGC SEI model supplied through BSF AVOptions
 estimator's frame side data or metadata inline; copy the
 `lavfi.pelorus.h274_*` values (see
 [H.274 model-0 mapping](#h274-model-0-mapping)) into the BSF options yourself.
-The full per-lag AR coefficient fit, explicit chroma-grain estimation, a
+An AR fit beyond the symmetric lag-1 model, explicit chroma-grain estimation, a
 multi-interval H.274 model, and automatic per-frame / H.264 / VVC legs remain
 deferred (ADR-0115). No BD-rate / visual-match proof is
 shipped with this filter; it must be measured under the
@@ -132,7 +134,7 @@ shipped with this filter; it must be measured under the
 # hwdownload is inherent: libaom-av1 takes system-memory frames.
 # Not run on hardware: the test binary has no libaom.
 ffmpeg -init_hw_device vulkan=vk:0 -i in.mkv \
-  -vf "hwupload,pelorus_grain_estimate_vulkan=strength=2.0,pelorus_denoise_vulkan=strength=0.4,hwdownload,format=yuv420p" \
+  -vf "hwupload,pelorus_grain_estimate_vulkan,pelorus_denoise_vulkan=strength=0.4,hwdownload,format=yuv420p" \
   -c:v libaom-av1 -crf 30 out.mkv
 
 # Inspect the estimate (model only; no encode):
@@ -238,6 +240,72 @@ noised — essentially no neighbourhood stays under `edge_thr`, `grain_flat` col
 grain-detection input: keyed on sigma alone, a starved estimate reads as "clean" and would
 route heavy-grain content *away* from the denoise leg — the exact case where the largest
 measured BD-rate win lives. Gate on `grain_flat` before trusting a low sigma.
+
+## AV1 mapping
+
+The AV1 parameters are derived through a table calibrated against FFmpeg's AV1
+synthesizer ([ADR-0227](../adr/0227-av1-grain-calibration.md)):
+
+1. **AR model** — the measured residual lag-1 correlation (`grain_lag1`) selects
+   a symmetric lag-1 model: `ar_coeff_lag` 1, `ar_coeff_shift` 6, and the up and
+   left taps (`ar_coeffs_y[1]`, `ar_coeffs_y[3]`) both set to `a`, 0–28. The
+   estimator measures horizontal correlation only, so the grain is taken as
+   isotropic. `a` is interpolated between the calibrated rows.
+2. **Scaling function** — one `y_points` entry per populated band: the band RMS
+   residual in 8-bit code values divided by that model's calibrated residual
+   gain, times `strength`, rounded and clipped to 0–255, with `scaling_shift` 8.
+
+The table in `ffmpeg-patches/files/vf_pelorus_grain_estimate_vulkan.c` is
+generated by `scripts/gen-av1-grain-calibration.py`. The script ports FFmpeg's
+AV1 luma synthesis (Gaussian template, lag-1 AR filter, 32×32 block placement
+with overlap) bit for bit, reads `gaussian_sequence` from
+`libavcodec/aom_film_grain.c` at the pinned commit, and measures the result with
+the estimator's own arithmetic. Check it after an FFmpeg bump:
+
+```bash
+FFMPEG_REPO=/path/to/ffmpeg scripts/gen-av1-grain-calibration.py --check
+```
+
+### Accuracy against noise_model and grav1synth
+
+Measured round trip ([research 0203](../research/0203-grain-estimate-accuracy.md)).
+Each truth is an AV1 film grain table with known parameters, rendered by libaom
+3.15.2 (`aomenc --film-grain-table`, then `aomdec` with and without
+`--skip-film-grain`) onto 24 frames of 640×360 flat luma stripes at the eight
+band centres. Each estimator gets the grainy clip. libaom's `noise_model` and
+`grav1synth diff` also get the grain-free clip as their denoised reference.
+Each output table is rendered back the same way. The error is the rendered grain
+standard deviation per stripe against the truth. Pelorus ran on an RTX 4090
+(FFmpeg's default Vulkan device on the test host).
+
+| Truth (scaling, AR) | Truth σ | noise_model | grav1synth | Pelorus before | Pelorus | Pelorus `edge=0.12` |
+| --- | --- | --- | --- | --- | --- | --- |
+| white, 8 | 1.04 | +4.7% | +3.7% | −78.6% | 0.0% | 0.0% |
+| white, 24 | 3.02 | +1.2% | +0.1% | −73.0% | 0.0% | 0.0% |
+| ramp 8→40 | 1.28–4.75 | 3.3% (worst +11.7%) | 3.0% (worst +10.2%) | 76.7% (worst −82.7%) | 3.5% (worst −15.4%) | 0.1% (worst +0.2%) |
+| 24, lag-1 a = 20 | 3.42 | −1.3% | −1.4% | −80.0% | −2.8% | −1.5% |
+
+Cells are the mean error over the eight stripes; the ramp row gives the mean
+absolute error and the worst stripe. Lag-1 correlation of the rendered grain
+for the AR truth (0.344 horizontal, 0.345 vertical): noise_model 0.337/0.340,
+grav1synth 0.339/0.344, Pelorus 0.301/0.303 (`a` = 18), with `edge=0.12`
+0.322/0.323 (`a` = 19), before the fix 0.025/0.001. Pelorus emits the truth
+parameters exactly for the white rows and the lower six ramp bands. On the
+grain-free clip it attaches no AV1 grain parameters, and both peers emit a zero
+scaling function.
+
+**Heavy grain needs a wider `edge` gate.** The default gate (0.06) drops flat
+pixels whose 3×3 range exceeds it, and grain above about 3.5 code values pushes
+its largest residuals past that range: the ramp's top two stripes (4.27 and 4.75
+code values) come back 9% and 15% weak, and the AR truth's correlation reads
+low. `edge=0.12` recovers both on flat content, at the cost of letting more
+texture into the estimate on real content.
+
+Throughput, 48 frames of 1920×1080 white grain, wall time of the whole process:
+Pelorus 97 fps (RTX 4090; `hwupload,hwdownload` alone runs at 127 fps),
+noise_model 1.8 fps, grav1synth 1.7 fps (CPU, given the denoised reference, so
+the time of the denoiser they need is not included; grav1synth includes a
+container start).
 
 ## H.274 model-0 mapping
 

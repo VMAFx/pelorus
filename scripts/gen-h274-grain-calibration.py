@@ -55,11 +55,16 @@ STAT_SIZE = 512
 
 
 def ffmpeg_h274_source(repo: str) -> str:
+    return ffmpeg_source(repo, "libavcodec/h274.c")
+
+
+def ffmpeg_source(repo: str, path: str) -> str:
+    """One FFmpeg source file at the commit pinned in build-config.env."""
     match = re.search(r"^FFMPEG_COMMIT=([0-9a-f]{40})$", BUILD_CONFIG.read_text(), re.M)
     if match is None:
         raise SystemExit("build-config.env: FFMPEG_COMMIT missing")
     return subprocess.run(
-        ["git", "-C", repo, "show", f"{match.group(1)}:libavcodec/h274.c"],
+        ["git", "-C", repo, "show", f"{match.group(1)}:{path}"],
         check=True,
         capture_output=True,
         text=True,
@@ -69,7 +74,7 @@ def ffmpeg_h274_source(repo: str) -> str:
 def parse_table(text: str, name: str) -> list[int]:
     match = re.search(r"static const \w+ " + name + r"\[[^=]*=\s*\{(.*?)\n\};", text, re.S)
     if match is None:
-        raise SystemExit(f"h274.c: table {name} not found")
+        raise SystemExit(f"FFmpeg source: table {name} not found")
     body = re.sub(r"/\*.*?\*/", "", match.group(1), flags=re.S)
     return [int(n, 0) for n in re.findall(r"-?(?:0x[0-9A-Fa-f]+|\d+)", body)]
 
