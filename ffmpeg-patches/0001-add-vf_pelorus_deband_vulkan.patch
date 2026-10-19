@@ -32,8 +32,8 @@ Research: docs/research/0101-smart-deband.md
  libavfilter/pelorus_vulkan_sample.h         | 100 ++++
  libavfilter/vf_pelorus_deband_vulkan.c      | 498 +++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
- libavfilter/vulkan/pelorus_deband.comp.glsl | 196 +++++++
- 11 files changed, 1869 insertions(+)
+ libavfilter/vulkan/pelorus_deband.comp.glsl | 204 +++++++
+ 11 files changed, 1877 insertions(+)
 
 diff --git a/configure b/configure
 index 0ebe83a5ae70d894b284b8715cc9862870e2c909..f1c896727d1690d5dba37435ab185464d1d7324f 100755
@@ -1794,10 +1794,10 @@ index 524ec8cf065c1e1745d3dd7ad7b3d2267bb019fd..f9d7c32e3a4e2e16c39ab7e65980595a
 +OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER) += vulkan/pelorus_deband.comp.spv.o
 diff --git a/libavfilter/vulkan/pelorus_deband.comp.glsl b/libavfilter/vulkan/pelorus_deband.comp.glsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..519b4fc851247e10c6746118b652140f0b17a2b8
+index 0000000000000000000000000000000000000000..ec0ba9993dd5bb4164e778b6fc2b55c77cf1cc71
 --- /dev/null
 +++ b/libavfilter/vulkan/pelorus_deband.comp.glsl
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,204 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -1926,6 +1926,11 @@ index 0000000000000000000000000000000000000000..519b4fc851247e10c6746118b652140f
 +    if (sample_mode == 4) dir += float(frame_seed) * GOLDEN;
 +    float dist = r * float(range);
 +    ivec2 off = ivec2(round(cos(dir) * dist), round(sin(dir) * dist));
++    /* Keep each mirrored tap pair inside the plane. A clamped tap repeats the
++     * edge row, which shifts the average of a gradient towards the interior
++     * and flattens the border band (issue #283). */
++    ivec2 edge = min(pos, sz - ivec2(1) - pos);
++    off = sign(off) * min(abs(off), edge);
 +    vec4 r0; vec4 r1; vec4 r2; vec4 r3; vec4 avg; int N;
 +    if (sample_mode == 1) {
 +        r0 = pel_fetch(idx, pos + ivec2(0, off.y), sz);
@@ -1970,7 +1975,10 @@ index 0000000000000000000000000000000000000000..519b4fc851247e10c6746118b652140f
 +    if (dither_mode != 0 && grain_p > 0.0) {
 +        float n = (dither_mode == 1) ? (bayer8(pos) - 0.5) * 2.0
 +                                     : tpdf(pos, dynG ? frame_seed : 0u, idx);
-+        base += vec4(n * grain_p) * mix(vec4(0.25), vec4(1.0), w);
++        /* Dither only where a tap sees a code step: noise on a flat area
++         * hides no band and costs the encoder bits (issue #283). */
++        vec4 stepped = vec4(greaterThan(maxd, vec4(0.0)));
++        base += vec4(n * grain_p) * mix(vec4(0.25), vec4(1.0), w) * stepped;
 +    }
 +    imageStore(output_images[idx], pos,
 +               pel_to_storage(clamp(base, vec4(0.0), vec4(1.0))));

@@ -894,6 +894,44 @@ expected size). It now generates in `--pixfmt`, with the same seed and rate as
 `fetch-corpus.sh`. The summary line now labels the CAMBI figure as a reduction,
 so a negative value reads as more banding.
 
+## v0.21 — deband on synth-banding: step-gated dither, in-plane taps, ordered-dither bench pin (ADR-0225)
+
+Issue [#283](https://github.com/VMAFx/pelorus/issues/283). FFmpeg `n9.0.2` plus
+shared series `v0.3.0` plus the Pelorus stack, `hevc_nvenc` and `av1_nvenc`
+preset `p5` on an NVIDIA GeForce RTX 4090 (driver 615.78.08), vmaf 3.2.0
+(`vmaf_v1.0.16`, `--feature cambi`), `scripts/bench/bench.sh` on fresh corpus
+directories. Method and sweeps:
+[research 0283](../research/0283-deband-step-gated-dither.md).
+
+Cause: NVENC quantises the hashed per-frame dither away at the pinned rates; a
+tap clamped to the plane edge biased the tap average and flattened the border
+band; flat areas got grain they did not need. Fix: taps stay inside the plane,
+dither only where a tap sees a code step, and the bench pin moves to
+`dither=bayer8:grainy=0.012:dynamic=0`.
+
+`synth-banding`, mean over CQ 28, 34, 40, 46:
+
+| Arm | hevc kbps | hevc CAMBI | av1 kbps | av1 CAMBI |
+| --- | --- | --- | --- | --- |
+| baseline | 25.8 | 2.974 | 25.1 | 2.457 |
+| before (old shader, old pin) | 24.5 | 3.610 | 25.6 | 3.027 |
+| pin only | 34.6 | 2.241 | 76.2 | 3.020 |
+| shader only | 23.9 | 3.542 | 23.8 | 2.816 |
+| after | 28.3 | 1.764 | 33.4 | 1.024 |
+
+`bbb`, VMAF BD-rate before → after: `hevc_nvenc` −0.67 % → +0.07 % (CAMBI
+0.1014 → 0.0699, baseline 0.0810); `av1_nvenc` +0.11 % → +1.13 % (CAMBI
+0.0050 → 0.0095, baseline 0.0068).
+
+Verdict: positive on `synth-banding` for both encoders, with costs. CAMBI is
+below the baseline at CQ 28, 34 and 40 and above it at CQ 46; the arm spends
+more bits at matched CQ (+10 % hevc, +33 % av1), but at matched bitrate it is
+lower (hevc CQ 34: 30.7 kbps / 0.82 against the baseline's 33.8 kbps / 2.37 at
+CQ 28). `bbb` with `av1_nvenc` costs 1.0 percentage point of VMAF BD-rate. On
+the v0.20 10-bit pipeline the new pin gives mean CAMBI 0.053 against 0.256 at
+37.5 kbps against 27.8. The filter defaults are unchanged and still lose to the
+baseline through NVENC at these rates.
+
 ## Open / next
 
 1. **SVT-AV1 ROI on real content**: the v0.10 synthetic gain is modest; re-run
@@ -903,9 +941,12 @@ so a negative value reads as more banding.
    same-QP mechanism demo); and the analyze→VAAPI dual-device auto pipeline
    (ROI side data surviving `hwupload` to a second GPU).
 3. 10-bit deband on one `yuv420p10le` pipeline: done in v0.20 (negative
-   through `hevc_nvenc`). A deband claim needs a real banding-prone 10-bit
-   clip in `corpus.lock` and an encoder arm that keeps the dither
-   ([#300](https://github.com/VMAFx/pelorus/issues/300)).
+   with the defaults through `hevc_nvenc`); v0.21 found a dither that
+   survives the encoder (static `bayer8`, step-gated). A deband claim, and a
+   change of the filter defaults, still needs a real banding-prone 10-bit
+   clip in `corpus.lock`
+   ([#300](https://github.com/VMAFx/pelorus/issues/300),
+   [#283](https://github.com/VMAFx/pelorus/issues/283)).
 4. Harness fixes shipped: `--clean-reference` (decouple scoring ref from encoder
    input) and `--vmaf-timeout` (vmaf hangs at 0% CPU *after* writing its JSON;
    the harness bounds it and reads the already-flushed result).
