@@ -98,7 +98,7 @@ index 981bb8276bfa0855be085e0c8d64a1528795b623..8f8afddb98af584d8af7f02795eb6505
  OBJS-$(CONFIG_REMOVE_EXTRADATA_BSF)       += bsf/remove_extradata.o
 diff --git a/libavcodec/bsf/pelorus_fgs.c b/libavcodec/bsf/pelorus_fgs.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..ef338df4a38b4f949fe1290c7a32cb5306b467f3
+index 0000000000000000000000000000000000000000..30ca896de98eaf6354aebb867207bd3850404417
 --- /dev/null
 +++ b/libavcodec/bsf/pelorus_fgs.c
 @@ -0,0 +1,889 @@
@@ -518,9 +518,9 @@ index 0000000000000000000000000000000000000000..ef338df4a38b4f949fe1290c7a32cb53
 +            fgc->intensity_interval_upper_bound[c][i] = h274->intensity_interval_upper_bound[c][i];
 +            fgc->comp_model_value[c][i][0] = h274->comp_model_value[c][i][0];
 +            fgc->comp_model_value[c][i][1] =
-+                (h274->num_model_values[c] > 1) ? h274->comp_model_value[c][i][1] : 8;
++                (int16_t)((h274->num_model_values[c] > 1) ? h274->comp_model_value[c][i][1] : 8);
 +            fgc->comp_model_value[c][i][2] =
-+                (h274->num_model_values[c] > 2) ? h274->comp_model_value[c][i][2] : 8;
++                (int16_t)((h274->num_model_values[c] > 2) ? h274->comp_model_value[c][i][2] : 8);
 +        }
 +    }
 +

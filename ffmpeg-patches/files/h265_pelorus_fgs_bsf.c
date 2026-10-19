@@ -414,9 +414,9 @@ static void pel_fgs_fill_from_h274(PelorusFGSContext *ctx, const PelorusH274Grai
             fgc->intensity_interval_upper_bound[c][i] = h274->intensity_interval_upper_bound[c][i];
             fgc->comp_model_value[c][i][0] = h274->comp_model_value[c][i][0];
             fgc->comp_model_value[c][i][1] =
-                (h274->num_model_values[c] > 1) ? h274->comp_model_value[c][i][1] : 8;
+                (int16_t)((h274->num_model_values[c] > 1) ? h274->comp_model_value[c][i][1] : 8);
             fgc->comp_model_value[c][i][2] =
-                (h274->num_model_values[c] > 2) ? h274->comp_model_value[c][i][2] : 8;
+                (int16_t)((h274->num_model_values[c] > 2) ? h274->comp_model_value[c][i][2] : 8);
         }
     }
 
