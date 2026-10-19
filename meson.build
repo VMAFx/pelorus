@@ -429,6 +429,18 @@ test('extract-series-file',
      python_prog,
      args: ['-I', extract_series_file, '--self-test'],
      suite: 'fast')
+
+bench_record_script = meson.project_source_root() / 'scripts' / 'bench' / 'check-record.py'
+test('bench-record',
+     python_prog,
+     args: ['-I', bench_record_script, '--self-test'],
+     suite: 'fast')
+
+bench_make_record_script = meson.project_source_root() / 'scripts' / 'bench' / 'make-record.py'
+test('bench-make-record',
+     python_prog,
+     args: ['-I', bench_make_record_script, '--self-test'],
+     suite: 'fast')
 if get_option('tests') and ffmpeg_series_dir != ''
   if not fs.is_absolute(ffmpeg_series_dir)
     error('ffmpeg_series_dir must be an absolute path: ' + ffmpeg_series_dir)

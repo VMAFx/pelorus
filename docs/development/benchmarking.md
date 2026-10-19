@@ -113,6 +113,64 @@ v0.17). For deband also record **CAMBI** (lower = less banding). A CPU encode
 (`x265 -preset slow` / `SVT-AV1 -preset 4`) is the gold-standard reference for the
 GPU↔CPU gap — Pelorus' job is to close it **while staying faster than CPU**.
 
+## Noisy-source reference method (ADR-0223, #131)
+
+- **Implementation**: partial: reference run done on an unpinned local clip (research [0131](../research/0131-noisy-source-reference-run.md)); a pinned noisy corpus clip is pending
+
+For competitive claims comparing Pelorus against fixed-function hardware encoders
+on noisy or grainy content, the benchmarking methodology enforces **source-referenced
+scoring against the noisy source itself**:
+
+1. **Source-referenced scoring**: The noisy source is the reference for quality
+   scoring. Clean-referenced scoring (`--clean-reference` against synthetic noise)
+   penalizes real capture grain and measures synthetic impairment removal rather than
+   rate-distortion efficiency on real footage.
+2. **Metric hierarchy**: **SSIMULACRA2 is the primary metric**, with standard **VMAF**
+   and **CAMBI** as secondary cross-checks.
+3. **CQ-locked iso-bitrate ladders**: Ladders must use constant quality (CQ) locked
+   steps with **$\ge 4$ rate points per arm**. Single rate points and identical bitrates
+   across arms are unusable for cubic Bjøntegaard delta (BD-rate) fitting and are
+   rejected.
+4. **Device attribution**: Hardware device identity (GPU model and driver) must be
+   explicitly named per record and per arm.
+5. **Four mandatory comparison arms**: Comparative hardware claims must evaluate all
+   four arms under matching resolution, rate points, and clip conditions:
+   - `nvenc-tuned` — tuned baseline (`-preset p7 -tune hq -spatial-aq 1 -temporal-aq 1 -aq-strength 8 -rc-lookahead 32 -multipass fullres -b_ref_mode middle -bf 4`; FFmpeg n9.0.2 refuses `-tf_level` with fewer than 4 B-frames, so every arm keeps the same GOP shape);
+   - `nvenc-tflevel` — tuned baseline with hardware temporal filtering (`-tf_level 4`);
+   - `nvenc-uhq` — tuned baseline with ultra-high-quality tuning (`-tune uhq`);
+   - `pelorus-denoise+nvenc-tuned` — Pelorus pre-denoise Vulkan filter feeding the tuned baseline.
+6. **Comparability rule**: Any benchmark claim that omits any of the baseline arms
+   (`tfLevel` or `UHQ`), or that scores against a synthetic-clean reference, is marked
+   **"not comparable (#131)"**.
+7. **Validator & schema**: Benchmark records must validate against JSON Schema
+   `scripts/bench/record.schema.json` via `python3 -I scripts/bench/check-record.py`
+   and emitter `scripts/bench/make-record.py` (gated by `meson test --suite=fast`).
+   Synthetic fixtures live in `scripts/bench/fixtures/record-four-arm.json` and
+   `scripts/bench/fixtures/canned-run-bench.json`.
+
+### Reference run command
+
+The four-arm reference run on a noisy clip (`hevc_nvenc`, 4 CQ points: 22, 26, 30, 34) is executed with:
+
+```bash
+python3 -I scripts/bench/run-bench.py \
+  --ffmpeg /tmp/pel-ff-run/ffmpeg \
+  --vmaf vmaf \
+  --synth noise \
+  --width 1280 \
+  --height 720 \
+  --frames 48 \
+  --encoder hevc_nvenc \
+  --filter "pelorus_denoise_vulkan" \
+  --four-arm \
+  --cambi \
+  --device-name "NVIDIA GeForce RTX 4090" \
+  --cq 22 26 30 34 \
+  --out /tmp/bench/noisy_ref_hevc
+```
+
+This runs all four mandatory comparison arms, measures bitrate, SSIMULACRA2, VMAF, and CAMBI against the noisy source, writes `result.json` and `record.json`, and validates the record against `scripts/bench/record.schema.json`.
+
 ## Pinned corpus
 
 `scripts/bench/corpus.lock` pins each input by URL + **sha256** + segment +

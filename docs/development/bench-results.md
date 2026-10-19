@@ -104,7 +104,7 @@ Two compounding reasons, both methodological:
    VMAF BD-rate. On these clips CAMBI moved only marginally because at 8-bit and
    low bitrate the encoder quantizes the dither away and re-bands.
 
-## v0.2 — temporal denoise (the real BD-rate lever), clean-referenced
+## v0.2 — temporal denoise (the real BD-rate lever), clean-referenced — not comparable under ADR-0223 (#131)
 
 Methodology fix in action. Real-world capture arrives carrying sensor/film
 grain that is (a) perceptually unimportant and (b) expensive to encode (the
@@ -177,7 +177,7 @@ inverting both BD-rate and BD-VMAF (a 50% saving read as ~+75%). Fixed to
 `integ(pelorus) − integ(baseline)` with a self-test (half-bitrate ⇒ −50%,
 identical ⇒ 0%, double ⇒ +100%). All numbers above use the corrected function.
 
-## v0.3 — **real `vf_pelorus_denoise_vulkan` on GPU** (not a stand-in)
+## v0.3 — **real `vf_pelorus_denoise_vulkan` on GPU** (not a stand-in) — not comparable under ADR-0223 (#131)
 
 The actual Vulkan filter, built into ffmpeg n8.1 + libpelorus and run on the
 RTX 4090 (`hwupload,pelorus_denoise_vulkan,hwdownload`), then encoded with
@@ -562,7 +562,7 @@ mbtree. ADR-0132 stays *Proposed*; the lever now depends on the autotune
 The durable result is the ADR-0136 metadata extraction path (shipped), which
 makes this — and any future per-shot/autotune work — measurable from the shell.
 
-## v0.14 — forward-lookahead (cadence-aware) temporal denoise (ADR-0137): a small, real preprocessing win
+## v0.14 — forward-lookahead (cadence-aware) temporal denoise (ADR-0137): a small, real preprocessing win — not comparable under ADR-0223 (#131)
 
 The first positive direction after the v0.11-v0.13 encoder-RC negatives — and it's
 PREPROCESSING (Pelorus's lane), validated in premise before the build. The causal
@@ -694,7 +694,7 @@ before it shipped. The only thing that could revive it is a measured post-encode
 BD-rate win on real 10-bit banding-prone content (the corpus gap) — which the
 mechanism above predicts against.
 
-## v0.17 — the metric was wrong + the tuned-settings lever: GPU→CPU gap is small and closeable (SSIMULACRA2)
+## v0.17 — the metric was wrong + the tuned-settings lever: GPU→CPU gap is small and closeable (SSIMULACRA2) — not comparable under ADR-0223 (#131)
 
 The session's payoff, and a methodology correction. Pelorus's goal is **smaller +
 higher-quality GPU (hardware) encodes approaching CPU (software) at GPU speed.**
@@ -746,7 +746,7 @@ than CPU (the whole point).
 > renumbered here to the next free labels. The numbers are report-insertion order,
 > not chronology: this work landed with ADR-0131 (PR #25/#26) and ADR-0133 (PR #27).
 
-## v0.18 — MC→denoise motion-compensated warp (ADR-0131), real high-motion
+## v0.18 — MC→denoise motion-compensated warp (ADR-0131), real high-motion — not comparable under ADR-0223 (#131)
 
 The denoise warp (ADR-0131) consumes `vf_pelorus_mc`'s quarter-pel MV field to
 warp its temporal taps instead of averaging the same-coordinate sample. The win
