@@ -44,3 +44,28 @@ bbb | https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_36
 netflix-bar | https://media.xiph.org/video/derf/webm/Netflix_BarScene_4096x2160_60fps_10bit_420.webm | 15b3a0cafbf68f48bc2e7db9785f539cb6fe3e1db5c90608df4dbcc96c69d85c | -ss 6 -t 2 | 640x360 | yuv420p | 48 | 60
 
 synth-banding | lavfi:gradients | aa1ec0f0a18e45abf5e8aea68a4d6a141ece361744a4dd222557a81b6b7efdba | - | 640x360 | yuv420p | 24 | 25
+
+# Category sets (#135, ADR-0228). Licence read from the file named on each line
+# on 2026-10-19; every set is downloaded by the user who runs the bench and the
+# extracted YUV is never redistributed. Licence and provenance table:
+# docs/development/benchmarking.md "Categories".
+#
+# real-banding: TUM/Taurus Media Technik "Blue sky", AOM CTC a4_360p, native 640x360.
+# BlueSky_360p25_Copyright.txt: "Restrictions of use: No restrictions / Copyright: No Copyright".
+bluesky | https://media.xiph.org/video/aomctc/test_set/a4_360p/BlueSky_360p25_v2.y4m | 443b20308b31fe53a479b832557b090ca7dce32a66d9105cac04dc78839d9607 | -ss 1 -t 2 | 640x360 | yuv420p | 48 | 25
+
+# retranscode: AOM CTC class E (non-pristine) broadcast excerpt with prior coding artifacts.
+# MixedCoding_NewsIntroAnchor_1280x720_2997fps_Copyright.txt: CC BY-SA 4.0, (C) Enlacetelevision.
+news-mixedcoding | https://media.xiph.org/video/aomctc/test_set/e_nonpristine/MixedCoding_NewsIntroAnchor_1280x720_2997fps.y4m | 5f9c8fce693c5646fab925acc0d35b6f62083bd80b2c158163c87038643ecebf | -ss 1 -t 2 | 640x360 | yuv420p | 48 | 30
+
+# anime: "Glass Half", flat fills and line art, AOM CTC b1_syn (385 MiB y4m).
+# GlassHalf_1920x1080p_24p_8bit_420_Copyright.txt: CC BY 4.0, (C) Blender Cloud, author Ton Roosendaal.
+glasshalf | https://media.xiph.org/video/aomctc/test_set/b1_syn/GlassHalf_1920x1080p_24p_8bit_420.y4m | c3cb8a98956968ce69a58d210a7d2aea85b5dabefa3f22da31f7923a5dd4e658 | -ss 1 -t 2 | 640x360 | yuv420p | 48 | 24
+
+# multishot: Sintel trailer (Blender Foundation, CC BY 3.0, durian.blender.org/sharing).
+# The window holds two hard cuts (scdet at 27.42 s and 28.00 s).
+sintel-trailer | https://download.blender.org/durian/trailer/sintel_trailer-480p.mp4 | b670602fa00934ca27c4351bb0efe7ea7a07fae57284e44226025eeed7c51254 | -ss 26.5 -t 2 | 640x360 | yuv420p | 48 | 24
+
+# highmotion: SVT Open Content 2022 "waterfall" proxy (AV1, 2.6 s, 50 fps).
+# SVT_Open_Content_Video_Test_Suite_2022_Natural_Complexity_v1-2-reduced.pdf: CC BY 4.0, SVT.
+svt-waterfall | https://media.xiph.org/svt/2022/ctc/proxy/svt_waterfall_3840x2160_50_10bit_420p.y4m-proxy.mp4 | 760e9df6e8f52c634ce3b4990a8998a5e68736b0040cf78559c00923c172c7fa | -ss 0.3 -t 2 | 640x360 | yuv420p | 48 | 50
