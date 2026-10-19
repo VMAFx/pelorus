@@ -1,0 +1,1 @@
+- `scripts/adr/check-status.py` now also fails when a row of the ADR index (`docs/adr/README.md`) names a different status than the ADR file itself; a planted mismatch is in its self-test. The index row of [ADR-0198](docs/adr/0198-encoder-option-string-parsers.md) said Proposed after the ADR was accepted and is corrected.
