@@ -63,6 +63,18 @@
       "effect_class": "reporting",
       "tunable": false,
       "help": "also attach native AV_FRAME_DATA_FILM_GRAIN_PARAMS (AV1)"
+    },
+    {
+      "name": "adapt",
+      "type": "bool",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": null,
+      "constants": [],
+      "effect_class": "shape",
+      "tunable": false,
+      "help": "measure grain-consistent bands at the wide gate (2 x edge) to recover heavy grain"
     }
   ]
 }

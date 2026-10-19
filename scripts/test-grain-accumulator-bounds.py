@@ -58,6 +58,7 @@ C_PATTERNS = {
     "corr_gs": r"#define PEL_GRAIN_CORR_GS\s+([0-9.]+)",
     "corr_bias": r"#define PEL_GRAIN_CORR_BIAS\s+([0-9.]+)",
     "res_clamp": r"#define PEL_GRAIN_RES_CLAMP\s+([0-9.]+)",
+    "wide_gate": r"#define PEL_GRAIN_WIDE_GATE\s+([0-9.]+)",
 }
 SHADER_PATTERNS = {
     "slices": r"const uint SLICES\s*=\s*(\d+)u",
@@ -65,6 +66,7 @@ SHADER_PATTERNS = {
     "corr_gs": r"const float CORR_GS\s*=\s*([0-9.]+)",
     "corr_bias": r"const float CORR_BIAS\s*=\s*([0-9.]+)",
     "res_clamp": r"const float RES_CLAMP\s*=\s*([0-9.]+)",
+    "wide_gate": r"const float WIDE_GATE\s*=\s*([0-9.]+)",
     "sumsq_slots": r"uint sumsq\[(\d+)\]",
     "corr_slots": r"uint corr\[(\d+)\]",
 }
@@ -74,11 +76,13 @@ REFERENCE_PATTERNS = {
     "corr_gs": r"const float CORR_GS\s*=\s*([0-9.]+)",
     "corr_bias": r"const float CORR_BIAS\s*=\s*([0-9.]+)",
     "res_clamp": r"const float RES_CLAMP\s*=\s*([0-9.]+)",
+    "wide_gate": r"const float WIDE_GATE\s*=\s*([0-9.]+)",
 }
-SHARED = ("slices", "sumsq_gs", "corr_gs", "corr_bias", "res_clamp")
+SHARED = ("slices", "sumsq_gs", "corr_gs", "corr_bias", "res_clamp", "wide_gate")
 ADD_PATTERNS = {
     "sumsq": r"atomicAdd\(sumsq\[bidx\],\s*uint\((.+)\)\);",
-    "corr": r"atomicAdd\(corr\[slice\],\s*uint\((.+)\)\);",
+    "sumsq_w": r"atomicAdd\(sumsq_w\[bidx\],\s*uint\((.+)\)\);",
+    "corr":r"atomicAdd\(corr\[slice\],\s*uint\((.+)\)\);",
 }
 
 
@@ -298,6 +302,10 @@ def planted_sources(texts: tuple[str, str, str]) -> dict[str, tuple[tuple[str, s
             "corr bound overflows",
         ),
         "host drifts from shaders": ((drifted, shader_text, reference_text), "drifted"),
+        "shipped wide gate drifts from host": (
+            (c_text, _sub(shader_text, r"(const float WIDE_GATE\s*=\s*)[0-9.]+", r"\g<1>3.0"), reference_text),
+            "drifted",
+        ),
         "guard raised to 16K": (
             (
                 _sub(c_text, r"\(8192LL \* 4320LL\)", "(16384LL * 8640LL)"),

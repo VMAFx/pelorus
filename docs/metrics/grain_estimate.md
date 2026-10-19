@@ -27,7 +27,9 @@ function** models. A single Vulkan compute pass measures it, per intensity band:
    structural content; the residual is grain).
 2. **Edge gate** — a pixel whose 3×3 neighbourhood range exceeds `edge` is an
    edge / texture and is **excluded**; the estimate is taken only over
-   locally-flat fields, where the residual is grain.
+   locally-flat fields, where the residual is grain. Every band is measured
+   twice, at `edge` and at a wide gate of 2 × `edge`; see
+   [Dual gate](#dual-gate).
 3. **Bin by intensity** — each surviving pixel's `resid²` is accumulated into
    one of 8 luma-intensity bins with a per-bin pixel count → per-band RMS
    residual = grain standard deviation at that intensity.
@@ -65,6 +67,7 @@ All thresholds are normalized in `[0,1]`, independent of bit depth.
 | `strength` | 1.0 | 0–64 | multiplies the calibrated AV1 scaling function: 1 reproduces the measured grain, 2 doubles its standard deviation; does not affect the H.274 values |
 | `model` | `aom` | `aom`/`h274` | FGS model the estimate targets (`aom` = AV1; `h274` = HEVC/VVC: also emits the `lavfi.pelorus.h274_*` model-0 values) |
 | `native` | on | bool | also attach a native `AV_FRAME_DATA_FILM_GRAIN_PARAMS` (AV1) so a downstream FFmpeg AV1 encoder honours it with no Pelorus BSF |
+| `adapt` | on | bool | let a band whose measurement matches white grain take its statistics at the wide gate (2 × `edge`), so heavy grain is not read weak; off reproduces the single gate ([Dual gate](#dual-gate)) |
 
 `strength` is the main knob: the default reproduces the source grain; raise it
 if the synthesized grain looks too subtle, lower it if too heavy. Before
@@ -191,7 +194,8 @@ copied into `pelorus_fgs`:
 | key | meaning |
 | --- | --- |
 | `lavfi.pelorus.grain_sigma` | peak per-band RMS residual (grain stddev) over the populated intensity bands, normalized `[0,1]`. Measured **only** on edge-gated locally-flat pixels, so real structure is excluded by construction — what survives is grain. The router's grain discriminator (≈ `<0.004` clean · `0.012–0.05` moderate · `>0.05` heavy). |
-| `lavfi.pelorus.grain_flat` | fraction of the frame the estimate was measured over (flat pixels / total). The estimate's confidence — heavy-edge frames give a small flat fraction and an unreliable sigma. |
+| `lavfi.pelorus.grain_flat` | fraction of the frame the estimate was measured over (flat pixels / total; a band that took the wide gate counts its wide-gate pixels). The estimate's confidence — heavy-edge frames give a small flat fraction and an unreliable sigma. |
+| `lavfi.pelorus.grain_wide_bands` | bitmask, bit b set when luma band b took its statistics at the wide gate ([Dual gate](#dual-gate)); 0 on clean and textured content and with `adapt=0` |
 | `lavfi.pelorus.grain_lag1` | lag-1 correlation of the high-pass residual, `[-1,1]`. It is not the grain's own correlation: white grain reads about −0.167, because the 3×3 box mean is subtracted from both neighbours. |
 | `lavfi.pelorus.h274_model_id` | `model=h274` only: H.274 `film_grain_model_id`, always 0 (frequency filtering) → `pelorus_fgs` `model_id` |
 | `lavfi.pelorus.h274_log2_scale` | `model=h274` only: `log2_scale_factor`, always 2 → `log2_scale` |
@@ -294,18 +298,62 @@ parameters exactly for the white rows and the lower six ramp bands. On the
 grain-free clip it attaches no AV1 grain parameters, and both peers emit a zero
 scaling function.
 
-**Heavy grain needs a wider `edge` gate.** The default gate (0.06) drops flat
-pixels whose 3×3 range exceeds it, and grain above about 3.5 code values pushes
-its largest residuals past that range: the ramp's top two stripes (4.27 and 4.75
-code values) come back 9% and 15% weak, and the AR truth's correlation reads
-low. `edge=0.12` recovers both on flat content, at the cost of letting more
-texture into the estimate on real content.
+The Pelorus column predates the dual gate and equals `adapt=0`. With the dual
+gate the ramp row comes back within 0.23% on every stripe; the other rows are
+unchanged ([Dual gate](#dual-gate)).
 
 Throughput, 48 frames of 1920×1080 white grain, wall time of the whole process:
 Pelorus 97 fps (RTX 4090; `hwupload,hwdownload` alone runs at 127 fps),
 noise_model 1.8 fps, grav1synth 1.7 fps (CPU, given the denoised reference, so
 the time of the denoiser they need is not included; grav1synth includes a
 container start).
+
+### Dual gate
+
+The default gate (0.06) drops flat pixels whose residual exceeds it, and grain
+above about 3.5 code values pushes its largest residuals past that bound, so a
+single gate reads heavy grain weak. A wider gate fixes that on flat content but
+lets texture into the estimate on real content. The filter therefore measures
+every band at `edge` and at 2 × `edge`, and takes the wide statistics only for a
+band that behaves like grain
+([ADR-0229](../adr/0229-grain-dual-gate.md)):
+
+- the default gate binds: it keeps less than 0.95 of the band's pixels;
+- the band holds at least 1024 gated pixels;
+- the gated RMS over `edge` reaches 0.875 of what white Gaussian grain gives at
+  the same kept fraction.
+
+White grain's kept fraction and gated RMS both depend only on σ / `edge`, so
+they lie on one curve, `pel_gate_curve` in the filter, generated by
+`scripts/gen-grain-gate-curve.py` (`--check` fails on drift; rerun it when the
+high-pass, the residual clamp or the default `edge` changes). Texture fails the
+gate by structure, not by the tail of a distribution, and sits at 0.79 of the
+curve or below on the textured clips measured; heavy grain sits at 0.96 or
+above. The lag-1 correlation stays at the default gate. The pooled RMS that the
+H.274 scale reads uses the same per-band choice; the H.274 table above predates
+the dual gate.
+
+Measured round trip on an RTX 4090 (driver 615.78.08), same method as above
+([research 0411](../research/0411-grain-dual-gate.md)):
+
+| Truth (scaling, AR) | Truth σ | `adapt=0` | `adapt=1` (default) |
+| --- | --- | --- | --- |
+| ramp 8→40 | 1.28–4.75 | 3.52% (worst −15.44%) | 0.14% (worst +0.23%) |
+| white, 48 | 6.00 | −26.79% | −0.44% (worst −2.06%) |
+| 48, lag-1 a = 20 | 6.77 | −33.20% | −12.50% |
+| ramp 8→64 | 1.53–7.42 | 14.30% (worst −37.47%) | 0.89% (worst −4.81%) |
+
+White 8, white 24 and AR 24 come back as before. On 48 frames each of seven
+textured clips (Big Buck Bunny, Netflix bar scene, glass half, blue sky, news
+mixed coding, Sintel trailer, SVT waterfall) no band took the wide gate and
+`grain_sigma` is identical with `adapt` on and off. Throughput at 1080p is
+within run-to-run noise of the single gate.
+
+Open ([#414](https://github.com/VMAFx/pelorus/issues/414)): heavy AR grain reads
+12.5% weak, because its lag-1 correlation is still measured at the default gate
+(0.177 against 0.346); grain above about 7 code values clips at the wide gate as
+well (top ramp stripe −4.8%); and a band that mixes grain with texture keeps the
+default gate.
 
 ## H.274 model-0 mapping
 

@@ -159,6 +159,7 @@ EFFECT_CLASS_MAP: dict[str, dict[str, str]] = {
         "strength": "strength",
         "model": "shape",
         "native": "reporting",
+        "adapt": "shape",
     },
     "pelorus_mc_vulkan": {
         "bsize": "shape",
