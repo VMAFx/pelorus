@@ -989,6 +989,17 @@ int main(void)
     test_qsv_blob(t);
     test_qsv_foreign(t);
     test_qsv_plan_matches_fit(t);
+#ifdef PEL_SEI_FIT_PLANTED
+    /* A planted build passes only when a check caught the planted rule, so
+     * it needs no should_fail, which meson introspect does not report and
+     * the tester kit could not honour; a crash still fails it. */
+    if (t->failures == 0) {
+        (void)fprintf(stderr, "planted rule %s not caught\n", PEL_SEI_FIT_PLANTED);
+        return EXIT_FAILURE;
+    }
+    (void)printf("planted rule %s caught: %d check(s) failed\n", PEL_SEI_FIT_PLANTED, t->failures);
+    return EXIT_SUCCESS;
+#endif
     if (t->failures != 0) {
         (void)fprintf(stderr, "%d check(s) failed\n", t->failures);
         return EXIT_FAILURE;

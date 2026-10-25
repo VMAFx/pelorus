@@ -33,7 +33,9 @@ truncation rule ([ADR-0236](../adr/0236-sei-fit-merged-form.md)). The fast
 suite checks them without an FFmpeg tree or the shared series. `sei-fit` must
 pass. `sei-fit-planted-reserve`, `-payload`, `-epb`, `-truncated` and
 `-charge` build the same test against a copy of the header with that one rule
-changed (`scripts/plant-header.py`) and must fail. The `core`, `sanitizers`
+changed (`scripts/plant-header.py`); their checks must fail, and such a
+planted build exits 0 only then (1 when nothing caught the plant), so the
+tester kit runs them like any fast test. The `core`, `sanitizers`
 and `windows` CI jobs pass `--require` for all six to
 `scripts/check-test-skips.py`, so a skip or a missing test fails the job.
 

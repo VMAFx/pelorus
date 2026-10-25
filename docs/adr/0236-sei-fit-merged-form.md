@@ -26,7 +26,7 @@ Two limits then apply on `hevc_nvenc`: the 1024-byte non-VCL limit of the encode
 
 4. **The fast suite runs without the series.** `sei_fit_test.c` checks the header against frozen copies of the `v0.3.0` rules, pins the room arithmetic, models a picture with the FFmpeg size check, and checks the hook's keep, strip and drop decisions. `meson_options.txt` loses `ffmpeg_series_dir`, `scripts/extract-series-file.py` and `ffmpeg-patches/test/series/` go, and `sei-fit` is no named skip any more.
 
-5. **Each rule has a planted twin that must fail.** `scripts/plant-header.py` writes the header with one rule changed (reserve, payload limit, emulation-prevention scan, truncation rule, payload charge). Meson builds `sei-fit-planted-<rule>` against each copy, registered `should_fail`. CI requires `sei-fit` and all five planted tests through `check-test-skips.py --require`.
+5. **Each rule has a planted twin that must fail.** `scripts/plant-header.py` writes the header with one rule changed (reserve, payload limit, emulation-prevention scan, truncation rule, payload charge). Meson builds `sei-fit-planted-<rule>` against each copy. Built with `PEL_SEI_FIT_PLANTED`, the test exits 0 only when a check failed, and 1 when every check passed or it crashed; it is no `should_fail` test, because `meson introspect --tests` does not report that flag and the tester kit (`tools/tester/install-fast-suite.py`) would run the twin as a test that must pass. CI requires `sei-fit` and all five planted tests through `check-test-skips.py --require`.
 
 ## Alternatives considered
 

@@ -434,7 +434,8 @@ test('bench-make-record',
 # 512-byte payload check of its own, and nothing is read from the shared
 # FFmpeg fix series. Each sei-fit-planted-<rule> test builds the same test
 # against a copy of pelorus_sei_fit.h with one rule changed
-# (scripts/plant-header.py) and must fail.
+# (scripts/plant-header.py); its checks must fail, and the planted build
+# exits 0 only then, so the tester kit runs it like any fast test.
 plant_header = meson.project_source_root() / 'scripts' / 'plant-header.py'
 test('plant-header',
      python_prog,
@@ -463,7 +464,7 @@ if get_option('tests')
                             include_directories('ffmpeg-patches/files')],
       dependencies: [libpelorus_dep, cc.find_library('m', required: false)],
     )
-    test('sei-fit-planted-' + rule, planted_exe, suite: 'fast', should_fail: true)
+    test('sei-fit-planted-' + rule, planted_exe, suite: 'fast')
   endforeach
 endif
 
