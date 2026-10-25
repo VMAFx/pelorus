@@ -6,7 +6,15 @@
  * SPDX-License-Identifier: EUPL-1.2
  */
 
+#ifndef _WIN32
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif
+#endif
+
 #include "pelorus/telemetry.h"
+#include "test_float_bits.h"
+#include "test_path_safety.h"
 
 #include <inttypes.h>
 #include <locale.h>
@@ -47,7 +55,7 @@ static const char vvenc_row[] =
 
 static int read_fixture(const char *path, char *buf, size_t cap, size_t *out_len)
 {
-    FILE *fp = fopen(path, "rb");
+    FILE *fp = test_fopen_safe(path, "rb");
     size_t got;
 
     if (fp == NULL) {
@@ -186,7 +194,7 @@ static int check_vvenc_stream_frames(const PelorusEncTelemetryInput *frames, siz
         CHECK(frames[i].frame.codec == PEL_TLM_CODEC_VVC);
         CHECK(frames[i].frame.decode_index == (uint32_t)i);
         CHECK(frames[i].frame.avg_qp >= 23.0f && frames[i].frame.avg_qp <= 35.0f);
-        CHECK(frames[i].frame.avg_qp_norm == frames[i].frame.avg_qp);
+        CHECK(float_bits_equal(frames[i].frame.avg_qp_norm, frames[i].frame.avg_qp));
         CHECK((frames[i].frame.frame_flags & PEL_TLM_FRAME_SHOWN) != 0u);
     }
     return failures;
@@ -1041,7 +1049,7 @@ static int test_ffmpeg_qstats_vp9_boundaries(void)
         CHECK(pel_tlm_parse_ffmpeg_quality_stats(buf, sizeof(buf), PEL_TLM_CODEC_VP9,
                                                  PEL_QP_SCALE_VP9_QINDEX, 8u, NULL,
                                                  &frame) == PEL_OK);
-        CHECK(frame.frame.avg_qp == qindices[i]);
+        CHECK(float_bits_equal(frame.frame.avg_qp, qindices[i]));
         CHECK(frame.frame.qp_scale == PEL_QP_SCALE_VP9_QINDEX);
         CHECK((frame.frame.present_mask & PEL_TLM_F_AVG_QP) != 0u);
         CHECK((frame.frame.present_mask & PEL_TLM_F_AVG_QP_NORM) == 0u);
@@ -1588,7 +1596,7 @@ static int test_libaom_boundaries(void)
         for (unsigned j = 0u; j < 2u; j++) {
             in.quantizer_64 = j == 0u ? 0 : 63;
             CHECK(pel_tlm_from_libaom(&in, depths[i], &out) == PEL_OK);
-            CHECK(out.frame.avg_qp == (float)in.quantizer_64);
+            CHECK(float_bits_equal(out.frame.avg_qp, (float)in.quantizer_64));
             CHECK((out.frame.present_mask & qp_bits) == qp_bits);
             CHECK(pel_qp_normalize(PEL_QP_SCALE_AV1_ENCODER_QP, depths[i], (float)in.quantizer_64,
                                    &norm) == PEL_OK);
@@ -1682,7 +1690,7 @@ static int check_x264_stream_frame(const PelorusEncTelemetryInput *frame, size_t
 
     CHECK(frame->frame.codec == PEL_TLM_CODEC_H264);
     CHECK(frame->frame.qp_scale == PEL_QP_SCALE_SLICE_QP);
-    CHECK(frame->frame.avg_qp_norm == frame->frame.avg_qp);
+    CHECK(float_bits_equal(frame->frame.avg_qp_norm, frame->frame.avg_qp));
     CHECK(frame->frame.decode_index == (uint32_t)i);
     CHECK(pel_enc_telemetry_validate(frame) == PEL_OK);
     CHECK((frame->frame.present_mask &
@@ -1740,7 +1748,7 @@ static int test_x264_matched_fixture(const char *path, PelorusEncTelemetryInput 
 /* Replay libaom-3.15.2-cq32.txt unchanged, including encoder-private flags. */
 static int test_libaom_fixture(const char *path)
 {
-    FILE *fp = fopen(path, "rb");
+    FILE *fp = test_fopen_safe(path, "rb");
     int failures = 0;
 
     CHECK(fp != NULL);
@@ -1783,9 +1791,9 @@ static int test_libaom_fixture(const char *path)
         CHECK(pel_qp_normalize(PEL_QP_SCALE_AV1_ENCODER_QP, 8u, (float)in.quantizer_64, &norm) ==
               PEL_OK);
         CHECK(fabsf(out.frame.avg_qp_norm - norm) < 0.0001f);
-        CHECK(out.frame.psnr_y == (float)in.psnr[1]);
-        CHECK(out.frame.psnr_u == (float)in.psnr[2]);
-        CHECK(out.frame.psnr_v == (float)in.psnr[3]);
+        CHECK(float_bits_equal(out.frame.psnr_y, (float)in.psnr[1]));
+        CHECK(float_bits_equal(out.frame.psnr_u, (float)in.psnr[2]));
+        CHECK(float_bits_equal(out.frame.psnr_v, (float)in.psnr[3]));
         CHECK(out.frame.picture_type == (i == 0u ? PEL_PICTURE_I : PEL_PICTURE_P));
         CHECK(out.frame.frame_flags == (i == 0u ? PEL_TLM_FRAME_KEY : 0u));
         CHECK(pel_tlm_adapter_caps(PEL_TLM_ADAPTER_LIBAOM_STATS, PEL_TLM_CODEC_AV1, &caps) ==

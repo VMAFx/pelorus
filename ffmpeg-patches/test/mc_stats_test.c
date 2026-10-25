@@ -26,6 +26,7 @@
 #include <string.h>
 
 #include "pelorus_mc_stats.h"
+#include "test_float_bits.h"
 
 /* All mutable test state lives here and is passed explicitly (no globals). */
 typedef struct TestCtx {
@@ -70,7 +71,7 @@ static float ref_p95_quadratic(const float *mags, int nblocks)
         int below = 0;
         int j;
         for (j = 0; j < nblocks; j++) {
-            if (mags[j] < mags[k] || (mags[j] == mags[k] && j < k)) {
+            if (mags[j] < mags[k] || (j < k && float_bits_equal(mags[j], mags[k]))) {
                 below++;
             }
         }
@@ -82,17 +83,9 @@ static float ref_p95_quadratic(const float *mags, int nblocks)
     return p95;
 }
 
-static uint32_t float_bits(float f)
-{
-    uint32_t bits;
-
-    memcpy(&bits, &f, sizeof(bits));
-    return bits;
-}
-
 static int same_bits(float a, float b)
 {
-    return float_bits(a) == float_bits(b);
+    return float_bits_equal(a, b);
 }
 
 static void check_p95(TestCtx *t, const char *what, const float *v, int n)

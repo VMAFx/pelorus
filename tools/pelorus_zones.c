@@ -210,7 +210,8 @@ static int run(int argc, char **argv)
     size_t n_shots = 0;
     int i;
 
-    for (i = 1; i < argc; i++) {
+    i = 1;
+    while (i < argc) {
         if (strcmp(argv[i], "--format") == 0 && i + 1 < argc) {
             i++;
             if (strcmp(argv[i], "zonefile") == 0) {
@@ -223,6 +224,7 @@ static int run(int argc, char **argv)
                 (void)fprintf(stderr, "pelorus_zones: unknown format: %s\n", argv[i]);
                 return EXIT_FAILURE;
             }
+            i++;
         } else if (strcmp(argv[i], "--base-crf") == 0 && i + 1 < argc) {
             char *end = NULL;
             i++;
@@ -230,6 +232,7 @@ static int run(int argc, char **argv)
                 (void)fprintf(stderr, "pelorus_zones: invalid base-crf: %s\n", argv[i]);
                 return EXIT_FAILURE;
             }
+            i++;
         } else {
             (void)fprintf(stderr, "Usage: pelorus_zones --format <zonefile|zones|segment-plan> "
                                   "[--base-crf <float>]\n");

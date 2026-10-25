@@ -8,6 +8,7 @@
 
 #include "pelorus/grain_convert.h"
 #include "grain_convert_internal.h"
+#include "test_float_bits.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -521,7 +522,7 @@ static void test_h274_chroma_only_to_aom(void)
     float sig_linear = 30.0f * st->gain * 0.5f;
     float expected_sig = pel_quantized_sigma(sig_linear, PEL_QUANT_FLOOR_OFFSET);
     CHECK(fabs((double)dh.sigma[1][128] - (double)expected_sig) < 1e-5);
-    CHECK(dh.rho_h[1] == st->rho_h);
+    CHECK(float_bits_equal(dh.rho_h[1], st->rho_h));
 }
 
 static void test_ar_mirror_symmetry(void)

@@ -23,6 +23,10 @@
  * created exclusively, and is removed again. Exit non-zero on any failure.
  */
 
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "pelorus/interop.h"
 #include "pelorus/pelorus.h"
 
@@ -43,6 +47,7 @@
 #include <wchar.h>
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -144,7 +149,17 @@ static int remove_file(const pchar *p)
 }
 static FILE *create_file(const pchar *p)
 {
-    return fopen(p, "wx"); /* C11 exclusive create: never follows or reuses a file */
+    const int fd = open(p, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    FILE *fp;
+
+    if (fd < 0) {
+        return NULL;
+    }
+    fp = fdopen(fd, "w");
+    if (fp == NULL) {
+        (void)close(fd);
+    }
+    return fp;
 }
 static long process_id(void)
 {

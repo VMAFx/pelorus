@@ -110,7 +110,8 @@ static int parse_args(int argc, char **argv, const char **csv_path, double *requ
 {
     int i;
 
-    for (i = 1; i < argc; i++) {
+    i = 1;
+    while (i < argc) {
         if (strcmp(argv[i], "--requested-qp") == 0 && i + 1 < argc) {
             char *endp = NULL;
             *requested_qp = strtod(argv[i + 1], &endp);
@@ -118,9 +119,12 @@ static int parse_args(int argc, char **argv, const char **csv_path, double *requ
                 (void)fprintf(stderr, "bad --requested-qp value\n");
                 return -1;
             }
-            i++;
+            i += 2;
         } else if (*csv_path == NULL) {
             *csv_path = argv[i];
+            i++;
+        } else {
+            i++;
         }
     }
     if (*csv_path == NULL) {

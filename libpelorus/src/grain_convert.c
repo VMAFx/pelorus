@@ -194,9 +194,7 @@ static void generate_scaling_8bit(const uint8_t points[][2], int num, uint8_t sc
             }
         }
     }
-    if (max_val < 256) {
-        memset(&scaling[max_val], points[num - 1][1], (size_t)(256 - max_val));
-    }
+    memset(&scaling[max_val], points[num - 1][1], (size_t)(256 - max_val));
 }
 
 static int get_aom_intensity_index(const PelorusFilmGrainSection *aom, int c, int i)
@@ -472,14 +470,8 @@ static void find_best_cutoff_chroma(float rho_h, float rho_v, int *pre_h_out, in
 
     for (int pre_v = 2; pre_v <= 7; pre_v++) {
         int eff_v = pre_v * 2;
-        if (eff_v > 14) {
-            eff_v = 14;
-        }
         for (int pre_h = 2; pre_h <= 7; pre_h++) {
             int eff_h = pre_h * 2;
-            if (eff_h > 14) {
-                eff_h = 14;
-            }
             int r = (eff_v - 2) * 13 + (eff_h - 2);
             double dh = (double)pel_h274_grain_stats[r].rho_h - (double)rho_h;
             double dv = (double)pel_h274_grain_stats[r].rho_v - (double)rho_v;

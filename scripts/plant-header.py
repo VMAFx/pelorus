@@ -48,7 +48,21 @@ def planted(text, name):
     if text.count(old) != 1:
         raise Refused("plant %s: %r occurs %d times, want 1"
                       % (name, old.strip(), text.count(old)))
-    return text.replace(old, new)
+    text = text.replace(old, new)
+    guard = "AVCODEC_PELORUS_SEI_FIT_H"
+    old_guard_block = "#ifndef " + guard + "\n#define " + guard + "\n"
+    if old_guard_block in text:
+        planted_guard = "AVCODEC_PELORUS_SEI_FIT_%s_H" % name.upper()
+        new_guard_block = (
+            "#ifndef " + planted_guard + "\n#define " + planted_guard + "\n"
+            "#ifndef " + guard + "\n#define " + guard + "\n#endif\n"
+        )
+        text = text.replace(old_guard_block, new_guard_block)
+        text = text.replace(
+            "#endif /* " + guard + " */\n",
+            "#endif /* " + planted_guard + " */\n",
+        )
+    return text
 
 
 def run(src, out, name):
@@ -66,6 +80,21 @@ def run(src, out, name):
 
 
 GOOD = "/* x */\n" + "".join(old for old, _ in PLANTS.values()) + "int y;\n"
+GUARD_GOOD = (
+    "#ifndef AVCODEC_PELORUS_SEI_FIT_H\n"
+    "#define AVCODEC_PELORUS_SEI_FIT_H\n"
+    + GOOD
+    + "#endif /* AVCODEC_PELORUS_SEI_FIT_H */\n"
+)
+GUARD_WANT = (
+    "#ifndef AVCODEC_PELORUS_SEI_FIT_RESERVE_H\n"
+    "#define AVCODEC_PELORUS_SEI_FIT_RESERVE_H\n"
+    "#ifndef AVCODEC_PELORUS_SEI_FIT_H\n"
+    "#define AVCODEC_PELORUS_SEI_FIT_H\n"
+    "#endif\n"
+    + GOOD.replace("256u", "255u")
+    + "#endif /* AVCODEC_PELORUS_SEI_FIT_RESERVE_H */\n"
+)
 SELF_TEST_CASES = [
     # (label, source text or None for a missing file, plant, expected text or None)
     ("reserve rewrites one line", GOOD, "reserve", GOOD.replace("256u", "255u")),
@@ -73,6 +102,7 @@ SELF_TEST_CASES = [
     ("epb rewrites one line", GOOD, "epb", GOOD.replace("<= 3u", "<= 2u")),
     ("truncated rewrites one line", GOOD, "truncated", GOOD.replace("+ 5u)", "+ 6u)")),
     ("charge rewrites one line", GOOD, "charge", GOOD.replace("n <= room", "n < room")),
+    ("guard rewritten", GUARD_GOOD, "reserve", GUARD_WANT),
     ("line absent", "int y;\n", "reserve", None),
     ("line twice", GOOD + PLANTS["reserve"][0], "reserve", None),
     ("source missing", None, "reserve", None),
