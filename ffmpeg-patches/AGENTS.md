@@ -4,7 +4,7 @@
 Pelorus ships ordered patch stack against exact FFmpeg tag and peeled commit
 in root `build-config.env`, applied on top of shared FFmpeg fix series pinned
 there (`FFMPEG_SERIES_*`, ADR-0185). Current baseline: FFmpeg n9.0.2, series
-`v0.3.0`. Parent rules in
+`v0.4.0`. Parent rules in
 [`../AGENTS.md`](../AGENTS.md) also apply;
 [ADR-0104](../docs/adr/0104-ffmpeg-patch-stack.md) governs delivery model.
 

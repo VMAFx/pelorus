@@ -43,7 +43,7 @@ index 35ac38596875faecebea454197863fc5caac891f..f4660fabd8f58f83404f0b71b32975d6
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index 82f64f2caf0e8e37653b10f720b790433774e0b4..5187250e887937318fd43e5572109a4a6c85879f 100644
+index b649f4da42c102e572e9088ea37dd704e6e6f3c6..dfebed7feaadd8e149e692a65a4c188907a356e4 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
 @@ -448,6 +448,7 @@ OBJS-$(CONFIG_PELORUS_DEHALO_VULKAN_FILTER)  += vf_pelorus_dehalo_vulkan.o vulka

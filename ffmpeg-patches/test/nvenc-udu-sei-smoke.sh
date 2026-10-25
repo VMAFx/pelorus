@@ -205,8 +205,9 @@ pel_text="$(printf '%2000s' '' | tr ' ' 'x')"
 "$PEL_FFMPEG" -hide_banner -loglevel info -y -i "$PEL_OUT/foreign-src.h264" -c:v hevc_nvenc \
     -udu_sei 1 -f hevc "$PEL_OUT/foreign.hevc" >"$PEL_OUT/foreign-encode.log" 2>&1 ||
     pel_fail "foreign: hevc_nvenc -udu_sei 1 failed: $(pel_first_error "$PEL_OUT/foreign-encode.log")"
-# The drop and its message are FFmpeg's: shared series v0.3.0 patch 0003
-# (ADR-0185) or the merged size check of FFmpeg 96b7f8281a (ADR-0236).
+# The drop and its message are FFmpeg's: shared series v0.4.0 patch 0003, the
+# backport of the merged size check of FFmpeg 96b7f8281a (ADR-0185, ADR-0236);
+# the first pattern is the message of series v0.3.0.
 grep -Eq 'byte user data unregistered SEI at pts .*: hevc_nvenc fails a picture|Not writing a [0-9]+-byte SEI of type 5: hevc_nvenc fails' \
     "$PEL_OUT/foreign-encode.log" ||
     pel_fail "foreign: the encoder log does not name the dropped SEI"

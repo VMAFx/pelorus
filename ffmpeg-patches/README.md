@@ -41,20 +41,22 @@ verifies it (sha256 pin, signed `SHA256SUMS` with `cosign`, build provenance
 with `gh attestation verify`, FFmpeg base) and unpacks it to `<new-dir>/series`.
 It needs network access, `cosign` and an authenticated `gh`, and it fails
 closed. `generate.sh` and both replay scripts call it themselves. Release
-`v0.3.0` holds 34 patches. The first eight are those of `v0.2.0`: the Vulkan
-queue family fix that was Pelorus patch 0021, GCC 14 and 16 diagnostics, the
-`hevc_nvenc` user data SEI budget, the drop of SEI that NVENC would write
-truncated, VAAPI GR1616 chroma for P010 and P012 DRM import, the image format
-list for the Vulkan export query, a CPU wait before mapping RADV frames to DRM,
-and the Vulkan queue de-phase that ends the `hevc_vulkan` hang under
-`-force_key_frames` (#309, ADR-0192). 0009 to 0034 add the CUDA re-import in
+`v0.4.0` holds 35 patches. 0001 to 0007 carry the fixes of `v0.2.0`: the
+Vulkan queue family fix that was Pelorus patch 0021, GCC 14 and 16
+diagnostics, 0003, the backport of FFmpeg `96b7f8281a`, which drops a
+`hevc_nvenc` user data SEI that would take the SEI payload of a picture above
+512 bytes and replaces the earlier SEI budget and truncation drop, VAAPI
+GR1616 chroma for P010 and P012 DRM import, the image format list for the
+Vulkan export query, a CPU wait before mapping RADV frames to DRM, and the
+Vulkan queue de-phase that ends the `hevc_vulkan` hang under
+`-force_key_frames` (#309, ADR-0192). 0008 to 0035 add the CUDA re-import in
 `hwcontext_vulkan`, a QSV decoder edit-list fix, the `dovi_reshape` filter and
 `bt2408_hable` tone mapping with peak detection, hqdn3d on Vulkan, CUDA,
-OpenCL and VideoToolbox, a same-colour YUV repack in swscale, and 0027, which
-moves the NVENC SEI size rules into `libavcodec/nvenc_sei.h`. Pelorus patch
-0022 builds on the NVENC patches but calls none of their names:
-`files/pelorus_sei_fit.h` keeps its own SEI rules, so the patch applies with
-the series rules and with FFmpeg's merged form (`96b7f8281a`, ADR-0236).
+OpenCL and VideoToolbox, a same-colour YUV repack in swscale, and the
+backports of FFmpeg `fd9a8f25a0` (tone-map peak buffer) and `63d0237033`
+(Vulkan export query). Pelorus patch 0022 builds on series patch 0003 but
+calls none of its names: `files/pelorus_sei_fit.h` keeps its own SEI rules
+(ADR-0236).
 
 ## Prerequisites
 

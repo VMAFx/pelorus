@@ -45,10 +45,10 @@ ADR: docs/adr/0116-pelorus-mc.md (consumer section), docs/adr/0114-encoder-steer
  4 files changed, 302 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index 5417ddeffbb440c66c7729b13565e4f26f522164..322fb7a41c6e99432dd5d72c7b7fbb2325abb252 100644
+index 606b40b2226385d158c391d6aea01fd92f038f0a..f906f2afcd507dcf2d35a6806570dfb43df8e5dc 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
-@@ -1121,6 +1121,49 @@ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
+@@ -1120,6 +1120,49 @@ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
                 ctx->qp_delta_map_w, ctx->qp_delta_map_h, blk);
      }
  
@@ -98,7 +98,7 @@ index 5417ddeffbb440c66c7729b13565e4f26f522164..322fb7a41c6e99432dd5d72c7b7fbb23
      if (ctx->rc_lookahead > 0) {
          int lkd_bound = FFMIN(ctx->nb_surfaces, ctx->async_depth) -
                          ctx->encode_config.frameIntervalP - 4;
-@@ -2130,6 +2173,7 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
+@@ -2118,6 +2161,7 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
  
      av_freep(&ctx->sei_data);
      av_freep(&ctx->qp_delta_map);
@@ -106,7 +106,7 @@ index 5417ddeffbb440c66c7729b13565e4f26f522164..322fb7a41c6e99432dd5d72c7b7fbb23
  
      if (ctx->nvencoder) {
          p_nvenc->nvEncDestroyEncoder(ctx->nvencoder);
-@@ -3190,6 +3234,238 @@ static int nvenc_setup_roi(AVCodecContext *avctx, const AVFrame *frame,
+@@ -3133,6 +3177,238 @@ static int nvenc_setup_roi(AVCodecContext *avctx, const AVFrame *frame,
      return 0;
  }
  
@@ -345,7 +345,7 @@ index 5417ddeffbb440c66c7729b13565e4f26f522164..322fb7a41c6e99432dd5d72c7b7fbb23
  static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
  {
      NVENCSTATUS nv_status;
-@@ -3329,6 +3605,10 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3272,6 +3548,10 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
          if (res < 0)
              return res;
  
@@ -357,10 +357,10 @@ index 5417ddeffbb440c66c7729b13565e4f26f522164..322fb7a41c6e99432dd5d72c7b7fbb23
      } else {
          pic_params.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
 diff --git a/libavcodec/nvenc.h b/libavcodec/nvenc.h
-index b95075faa0d03f0b8b7b0add29e5ee6c392adbea..84606443da38ad358bacdf81c9204b5079750e9f 100644
+index 212e1fda7e8229130bf05976b399609faf1b88b4..044d7c7892398ff8cd4239c233ce6a349f93f614 100644
 --- a/libavcodec/nvenc.h
 +++ b/libavcodec/nvenc.h
-@@ -292,6 +292,24 @@ typedef struct NvencContext
+@@ -291,6 +291,24 @@ typedef struct NvencContext
      int     qp_delta_map_w;  ///< blocks across = ceil(width  / block size)
      int     qp_delta_map_h;  ///< blocks down  = ceil(height / block size)
      int     roi_warned;      ///< rate-limit incompatibility warnings to once

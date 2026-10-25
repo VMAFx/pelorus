@@ -44,7 +44,7 @@ index 136e4685a2f032832c819655deff7e8f8620ef1b..39481f9bd82b5a8710f046fdf9e6da69
  pelorus_deblock_vulkan_filter_deps="vulkan spirv_compiler"
  pelorus_dehalo_vulkan_filter_deps="vulkan spirv_compiler"
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index 77ea5d71235a9d7fe5f4994f382a93bc5e0adf25..d05ac846b6c5e329f062e506fa2fe1e4da2c59fb 100644
+index 1a6e56adbda4c608ec39190ae1259cdb15d9419b..fea618d1eedb13617fb8dfffc91381fcfd7163c1 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
 @@ -443,6 +443,7 @@ OBJS-$(CONFIG_PALETTEGEN_FILTER)             += vf_palettegen.o palette.o
@@ -330,7 +330,7 @@ index 0000000000000000000000000000000000000000..93ad1dcc9202a1260e789ec54dd48736
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
 diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
-index 4e781e0398e8dfe93336ab3d4c128efe96e5dde7..f08a6eaebec999404e86638eadb3685a3d8a204b 100644
+index b30518a9660379e1b408929b03411f3abaad8384..63d2d07bb2b04e3aff729ec65a8073ee22f20107 100644
 --- a/libavfilter/vulkan/Makefile
 +++ b/libavfilter/vulkan/Makefile
 @@ -33,3 +33,4 @@ OBJS-$(CONFIG_PELORUS_MC_VULKAN_FILTER) += vulkan/pelorus_mc.comp.spv.o

@@ -89,7 +89,7 @@ index d26ae6933549cc65a8a1852f2de02ff2980902a1..ca410e098775c7ba9b7cd7e5774796f0
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index d27f5ed83645717ab35254413b81fa30677db14d..515c5373f1514861da5c102d541d1e5c9e57c0b9 100644
+index e2a00c966324229d7cb99936f8f8babe8002e6ed..9bd0ed6dc01a54eb1bff7c77173d20987cf305e6 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
 @@ -444,6 +444,7 @@ OBJS-$(CONFIG_PALETTEUSE_FILTER)             += vf_paletteuse.o framesync.o pale
@@ -1193,7 +1193,7 @@ index 0000000000000000000000000000000000000000..9cfab139b78e007a11a6e6c597cdc7a4
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
 diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
-index 68273b221a24d429d28095e1b4cd09b83c33da89..599f717a9696021e9d51baa105bda04ce733fa70 100644
+index 4edf6b7564f347281c198aeb2323752eb80ffc35..9eaef32a8450e81824559a0b2e7ce7cf34cd926e 100644
 --- a/libavfilter/vulkan/Makefile
 +++ b/libavfilter/vulkan/Makefile
 @@ -28,3 +28,4 @@ OBJS-$(CONFIG_NLMEANS_VULKAN_FILTER) += vulkan/nlmeans_horizontal.comp.spv.o \

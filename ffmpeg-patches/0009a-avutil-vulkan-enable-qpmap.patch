@@ -17,7 +17,7 @@ feature as well as the extension
  3 files changed, 20 insertions(+)
 
 diff --git a/libavutil/hwcontext_vulkan.c b/libavutil/hwcontext_vulkan.c
-index c136677750ae7ad634e16e6a810088275fd979b4..25ccbdc3df53ca41ef2a63b10790178b99c1930d 100644
+index f1c55773fec03fb62ff49329bdba288d6b57ffd4..aa17dbcc87e9652fa37d08461ccc8831c073b5b3 100644
 --- a/libavutil/hwcontext_vulkan.c
 +++ b/libavutil/hwcontext_vulkan.c
 @@ -109,6 +109,11 @@ typedef struct VulkanDeviceFeatures {
