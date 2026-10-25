@@ -129,7 +129,7 @@ image and never publishes by itself.
 
 | Trigger | Runs | Pushes |
 | --- | --- | --- |
-| pull request that changes `tools/tester/`, `ffmpeg-patches/`, `libpelorus/`, `meson.build`, `meson_options.txt`, `build-config.env`, `scripts/fetch-ffmpeg-series.sh`, `LICENSES/`, `REUSE.toml` or the workflow | `build` (three amd64 kit images) and `build-arm64` (generic kit image natively on arm64), with licence gates and no-device reports | nothing |
+| pull request that changes `tools/tester/`, `ffmpeg-patches/`, `libpelorus/`, `meson.build`, `meson_options.txt`, `build-config.env`, `scripts/fetch-ffmpeg-series.sh`, `scripts/plant-header.py`, `LICENSES/`, `REUSE.toml` or the workflow | `build` (three amd64 kit images) and `build-arm64` (generic kit image natively on arm64), with licence gates and no-device reports | nothing |
 | pull request that changes only other paths (docs, ADRs, changelog fragments, scripts) | nothing | nothing |
 | nightly schedule (02:17 UTC, this repository only) | `build` and `build-arm64` on the default branch | nothing |
 | `workflow_dispatch` | `validate`, then `publish` after environment approval | the image and its `-source` image |

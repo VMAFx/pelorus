@@ -8,6 +8,31 @@ the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
 ranges in older entries predate the first entry below (22 patches on the
 shared FFmpeg fix series, number 0021 retired).
 
+## Unreleased — SEI fit on FFmpeg's merged form (ADR-0236; regenerates 0022, 0023)
+
+- **Base**: unchanged (`n9.0.2`, shared series `v0.3.0`). FFmpeg commit
+  `96b7f8281a` merges the NVENC user-data SEI rules in another form
+  (`nvenc_hevc_sei_size_check()`, `NVENC_HEVC_SEI_MAX_PAYLOAD` 512, no
+  `nvenc_sei.h`); the series replaces its patches 0003, 0004 and 0028 with
+  that backport in a later release.
+- **Patches**: `files/pelorus_sei_fit.h` keeps its own copy of the `v0.3.0`
+  rules and adds the 512-byte payload room; it no longer includes
+  `nvenc_sei.h`. 0022 calls `pelorus_udu_carrier()` right after
+  `av_memdup()` and skips a carrier that does not fit, so it applies on both
+  forms; 0023 counts emulation prevention bytes with `pel_sei_epb_count()`.
+- **Behaviour**: on `hevc_nvenc` a Pelorus blob gets at most 524 bytes of NAL
+  room on an empty picture instead of 768; a blob that still does not fit
+  after the map strip is dropped by Pelorus with a warning instead of being
+  freed by FFmpeg without one. `h264_nvenc` and QSV are unchanged.
+- **Rebase-sensitive**: the hook position after `av_memdup()` in
+  `prepare_sei_data_array()`; the plants in `scripts/plant-header.py` match
+  exact header lines and refuse when one is not there exactly once.
+- **Interop**: none.
+- **Checks**: `meson test --suite=fast`: `sei-fit` OK and the five
+  `sei-fit-planted-<rule>` tests expected failures; `generate.sh`; the replay
+  over series `v0.3.0` (`test/build-and-run.sh`); the series `consumer_stacks`
+  replay on the drop branch.
+
 ## Unreleased — FFmpeg master preview (#213; no patch change)
 
 - **Base**: still `n9.0.2`; no later FFmpeg release exists. A trial apply on

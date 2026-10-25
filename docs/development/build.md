@@ -23,33 +23,21 @@ Options (`meson_options.txt`):
 | `tests` | true | build + register the libpelorus test suite |
 | `shaders` | true | compile the standalone reference `.comp` shaders to SPIR-V (needs glslang) |
 | `tools` | true | build the libpelorus CLI demonstrators (`pelorus_qp_report`; not installed) |
-| `ffmpeg_series_dir` | empty | directory `scripts/fetch-ffmpeg-series.sh` printed; the `sei-fit` tests read `libavcodec/nvenc_sei.h` from its patches. Empty: `sei-fit` is a named skip |
 
-### Fast suite against the shared series header
+### SEI fit tests
 
-`ffmpeg-patches/files/pelorus_sei_fit.h` includes `libavcodec/nvenc_sei.h`,
-which only the shared FFmpeg fix series creates
-([ADR-0218](../adr/0218-sei-fit-includes-nvenc-sei.md)). The repository keeps
-no copy. To run the SEI fit checks locally, fetch the series and pass the
-directory the fetch script prints:
-
-```sh
-series=$(scripts/fetch-ffmpeg-series.sh "$PWD/../ffmpeg-series")
-meson setup build -Dffmpeg_series_dir="$series"
-meson test -C build --suite=fast --print-errorlogs
-```
-
-`make` takes the same directory as `FFMPEG_SERIES_DIR`
-(`make FFMPEG_SERIES_DIR="$series" verify-native`); without it, `make tidy`
-names the one clang-tidy unit it leaves out. `scripts/extract-series-file.py`
-writes the header into the build directory from the series patch that creates
-it and refuses an ambiguous or malformed patch. Two tests use it: `sei-fit`
-must pass, and `sei-fit-planted`, built against the header with
-`NVENC_HEVC_SEI_RESERVE` changed from 256 to 255, must fail. Without the
-option, `sei-fit` prints `SKIP: ffmpeg_series_dir unset ...`, a skip listed in
-`.config/test-skips.json`. The `core`, `sanitizers` and `windows` CI jobs fetch
-the series and pass `--require pelorus:sei-fit --require pelorus:sei-fit-planted`
-to `scripts/check-test-skips.py`, so a skip there fails the job.
+`ffmpeg-patches/files/pelorus_sei_fit.h` keeps the `hevc_nvenc` SEI rules
+Pelorus decides with: the 1024-byte non-VCL limit with its 256-byte reserve,
+FFmpeg's 512-byte payload limit, the emulation-prevention count and the
+truncation rule ([ADR-0236](../adr/0236-sei-fit-merged-form.md)). The fast
+suite checks them without an FFmpeg tree or the shared series. `sei-fit` must
+pass. `sei-fit-planted-reserve`, `-payload`, `-epb`, `-truncated` and
+`-charge` build the same test against a copy of the header with that one rule
+changed (`scripts/plant-header.py`); their checks must fail, and such a
+planted build exits 0 only then (1 when nothing caught the plant), so the
+tester kit runs them like any fast test. The `core`, `sanitizers`
+and `windows` CI jobs pass `--require` for all six to
+`scripts/check-test-skips.py`, so a skip or a missing test fails the job.
 
 ### Telemetry-adapter locale probes
 

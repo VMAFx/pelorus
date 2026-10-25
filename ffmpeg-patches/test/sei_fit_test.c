@@ -17,10 +17,14 @@
  * Boundary: the largest grid (2^20 cells, 6 MiB) is stripped without a scan,
  * a payload exactly at the budget fits and one byte more does not.
  *
- * Series header (ADR-0218): pel_sei_nal_bytes() calls nvenc_sei_nal_size()
- * of shared series patch 0027 and makes the fit decision the pre-0218 copy
- * made, with the same byte count for every payload that fits, for every
- * length up to 1100 bytes, four byte patterns and three limits.
+ * Own rules (ADR-0236): the NAL size, emulation prevention count and
+ * truncation rule match frozen copies of the rules the shared FFmpeg fix
+ * series carried until FFmpeg 96b7f8281a, for every length up to 1100 bytes,
+ * four byte patterns and three limits. The hook of patch 0022 runs on a model
+ * of one picture's SEI array, followed by a model of FFmpeg's own 512-byte
+ * check: the room it gives a Pelorus blob is the room both limits leave, for
+ * every earlier payload of up to 600 bytes, so FFmpeg never drops a blob the
+ * hook kept. Each sei-fit-planted-<rule> build changes one rule and must fail.
  *
  * Zero-free carrier (issue #284, ADR-0183): every Pelorus blob leaves the
  * encoder as pel_sei_carrier_write() writes it, byte-identical to libpelorus's
@@ -44,6 +48,11 @@
 #include <string.h>
 
 #include "pelorus_analyze_maps.h"
+/* A sei-fit-planted-<rule> build includes its planted copy first; the include
+ * guard then skips the real header. */
+#ifdef PEL_SEI_FIT_PLANTED
+#include PEL_SEI_FIT_PLANTED
+#endif
 #include "pelorus_sei_fit.h"
 #include "pelorus_sei_fit_qsv.h"
 
@@ -136,73 +145,181 @@ static Blob pack_analyze(uint16_t cols, uint16_t rows, int with_maps)
     return pack_analyze_fill(cols, rows, with_maps, 0);
 }
 
-/* nvenc.c's pelorus_udu_carrier() (patch 0022) on the `n`-byte payload copy the
- * shared series made (ADR-0185): any other payload stays as it is; with a
- * budget (hevc_nvenc; SIZE_MAX means none), a blob whose carrier does not fit
- * loses its maps in the copy; then the blob is replaced by its carrier. A blob
- * that cannot be stripped is converted whole, and the series' charge drops it.
- * Returns the written length. */
-static size_t to_carrier(uint8_t **copy, size_t n, size_t budget)
+/*
+ * The rules of the shared FFmpeg fix series v0.3.0 (nvenc_sei.h of patch
+ * 0027) as Pelorus took them over, frozen as the oracle pelorus_sei_fit.h
+ * must keep matching (ADR-0236): one emulation prevention byte before every
+ * byte <= 3 that follows two zeros; a NAL of start code, NAL header, type,
+ * n / 255 + 1 size bytes, payload, trailing bits and one boundary byte, plus
+ * the emulation prevention bytes of a payload of at most `limit` bytes; and
+ * the truncation of a payload whose emulation prevention bytes exceed the
+ * escape buffer of 4/3 of the largest payload plus 5.
+ */
+static size_t frozen_epb(const uint8_t *p, size_t n, size_t zeros)
 {
-    uint8_t *carrier;
-    size_t keep = n;
-    size_t clen;
+    size_t extra = 0;
 
-    if (!pel_sei_is_blob(*copy, n))
-        return n;
-    if (budget != SIZE_MAX) {
-        keep = pel_sei_fit_len(*copy, n, budget);
-        if (keep != 0u && keep < n)
-            pel_sei_strip_maps(*copy, keep);
-        else
-            keep = n;
+    for (size_t i = 0; i < n; i++) {
+        if (zeros >= 2u && p[i] <= 3u) {
+            extra++;
+            zeros = 0;
+        }
+        zeros = p[i] == 0u ? zeros + 1u : 0u;
     }
-    clen = pel_sei_carrier_len(*copy, keep);
-    carrier = malloc(clen);
-    if (!carrier) {
-        free(*copy);
-        *copy = NULL;
-        return 0;
-    }
-    pel_sei_carrier_write(*copy, keep, carrier);
-    free(*copy);
-    *copy = carrier;
-    return clen;
+    return extra;
 }
 
-/* The encoder's steps for one payload: the series' copy, the Pelorus hook,
- * then the series' charge against the picture's budget (nvenc_hevc_sei_fits(),
- * the size pel_sei_nal_bytes() mirrors). 0 when the payload is dropped; else
- * the written length, copied into *out (a Pelorus blob as its carrier). A
- * payload over UINT32_MAX bytes, beyond nvenc_sei.h's 32-bit sizes, is
- * dropped. */
-static size_t carry(const uint8_t *p, size_t n, size_t *budget, uint8_t **out)
+static size_t frozen_nal_bytes(const uint8_t *p, size_t n, size_t limit)
 {
-    uint8_t *copy = n != 0u && n <= UINT32_MAX ? malloc(n) : NULL;
-    size_t len;
-    size_t need;
+    if (n > limit || !p)
+        return n + n / 255u + 10u;
+    return n + n / 255u + 10u + frozen_epb(p, n, 0);
+}
 
-    *out = NULL;
-    if (!copy)
+static int frozen_truncated(const uint8_t *p, size_t n, size_t pmax)
+{
+    return n + 3u + frozen_epb(p, n, n % 255u == 0u ? 1u : 0u) > 4u * (pmax + 5u) / 3u;
+}
+
+/* One SEI payload as prepare_sei_data_array() holds it. */
+typedef struct Sei {
+    uint8_t *payload;
+    size_t size;
+    uint32_t type;
+} Sei;
+
+#define PIC_MAX_SEI 64
+
+/* One picture's SEI array; hevc 0 is h264_nvenc. */
+typedef struct Picture {
+    Sei sei[PIC_MAX_SEI];
+    int count;
+    int hevc;
+} Picture;
+
+static void pic_init(Picture *pic, int hevc)
+{
+    memset(pic, 0, sizeof(*pic));
+    pic->hevc = hevc;
+}
+
+static void pic_free(Picture *pic)
+{
+    for (int i = 0; i < pic->count; i++)
+        free(pic->sei[i].payload);
+    pic->count = 0;
+}
+
+/* nvenc.c's pelorus_udu_carrier() (patch 0022, ADR-0236) on sei[count], the
+ * copy av_memdup() just made. Any other payload stays as it is. On hevc_nvenc
+ * the SEI before it are charged into the picture's room, a blob whose carrier
+ * does not fit loses its maps, and a carrier that still does not fit is
+ * dropped. 0 keeps the payload (a Pelorus blob as its carrier), 1 drops it, -1
+ * is an allocation failure. */
+static int hook(Picture *pic)
+{
+    Sei *cur = &pic->sei[pic->count];
+    size_t budget = SIZE_MAX;
+    size_t keep = cur->size;
+    size_t len;
+    uint8_t *carrier;
+
+    if (!pel_sei_is_blob(cur->payload, cur->size))
         return 0;
-    memcpy(copy, p, n);
-    len = to_carrier(&copy, n, *budget);
-    if (!copy)
-        return 0;
-    need = pel_sei_nal_bytes(copy, len, *budget);
-    if (need > *budget) {
-        free(copy);
-        return 0;
+    if (pic->hevc) {
+        PelSeiHevcRoom room = PEL_SEI_HEVC_ROOM_INIT;
+
+        for (int i = 0; i < pic->count; i++) {
+            pel_sei_hevc_charge(&room, pic->sei[i].payload, pic->sei[i].type, pic->sei[i].size);
+        }
+        budget = pel_sei_hevc_budget(&room);
+        keep = pel_sei_fit_len(cur->payload, cur->size, budget);
+        if (keep != 0u && keep < cur->size) {
+            pel_sei_strip_maps(cur->payload, keep);
+        } else {
+            keep = cur->size;
+        }
     }
-    *budget -= need;
-    *out = copy;
-    return len;
+    len = pel_sei_carrier_len(cur->payload, keep);
+    carrier = (uint64_t)len > UINT32_MAX ? NULL : malloc(len);
+    if (!carrier) {
+        free(cur->payload);
+        cur->payload = NULL;
+        return -1;
+    }
+    pel_sei_carrier_write(cur->payload, keep, carrier);
+    free(cur->payload);
+    cur->payload = carrier;
+    cur->size = len;
+    if (budget != SIZE_MAX && pel_sei_nal_bytes(carrier, len, budget) > budget) {
+        free(cur->payload);
+        cur->payload = NULL;
+        return 1;
+    }
+    return 0;
+}
+
+/* Append a copy of the `n`-byte payload `p` of `type` as the encoder does,
+ * through the hook for user data unregistered. Returns the written length, 0
+ * when the payload is dropped. */
+static size_t pic_add(Picture *pic, const uint8_t *p, size_t n, uint32_t type)
+{
+    Sei *cur = &pic->sei[pic->count];
+    int res;
+
+    if (pic->count >= PIC_MAX_SEI || n == 0u)
+        return 0;
+    cur->payload = malloc(n);
+    if (!cur->payload)
+        return 0;
+    memcpy(cur->payload, p, n);
+    cur->size = n;
+    cur->type = type;
+    res = type == 5u ? hook(pic) : 0;
+    if (res != 0)
+        return 0;
+    pic->count++;
+    return cur->size;
+}
+
+/* FFmpeg's nvenc_hevc_sei_size_check() (96b7f8281a) at the end of
+ * prepare_sei_data_array(): in array order, a SEI that would take the
+ * picture's payload bytes above NVENC_HEVC_SEI_MAX_PAYLOAD (512, written here
+ * as FFmpeg has it) is dropped. Returns the number dropped. */
+static int pic_finish(Picture *pic)
+{
+    size_t total = 0;
+    int kept = 0;
+    const int count = pic->count;
+
+    if (!pic->hevc)
+        return 0;
+    for (int i = 0; i < count; i++) {
+        if (total + pic->sei[i].size <= 512u) {
+            total += pic->sei[i].size;
+            pic->sei[kept++] = pic->sei[i];
+            continue;
+        }
+        free(pic->sei[i].payload);
+    }
+    pic->count = kept;
+    return count - kept;
+}
+
+/* Annex B bytes of the picture's SEI by the frozen rules. */
+static size_t pic_nal(const Picture *pic)
+{
+    size_t sum = 0;
+
+    for (int i = 0; i < pic->count; i++)
+        sum += frozen_nal_bytes(pic->sei[i].payload, pic->sei[i].size, SIZE_MAX);
+    return sum;
 }
 
 /* 1 when the written payload `w` of `wn` bytes unwraps to exactly `want`. */
 static int unwraps_to(const uint8_t *w, size_t wn, const uint8_t *want, size_t want_n)
 {
-    uint8_t *scratch = w ? malloc(wn) : NULL;
+    uint8_t *scratch = w && wn != 0u ? malloc(wn) : NULL;
     const uint8_t *blob = NULL;
     size_t len = 0;
     int ok;
@@ -213,30 +330,6 @@ static int unwraps_to(const uint8_t *w, size_t wn, const uint8_t *want, size_t w
     return ok;
 }
 
-/*
- * pel_sei_nal_bytes() as it stood before it called nvenc_sei_nal_size()
- * (ADR-0218), frozen as the oracle the series header must keep matching:
- * start code, NAL header, type, n / 255 + 1 size bytes, payload, trailing
- * bits, one boundary byte, plus the emulation prevention bytes of a payload of
- * at most `limit` bytes.
- */
-static size_t frozen_nal_bytes(const uint8_t *p, size_t n, size_t limit)
-{
-    size_t zeros = 0;
-    size_t extra = 0;
-
-    if (n > limit || !p)
-        return n + n / 255u + 10u;
-    for (size_t i = 0; i < n; i++) {
-        if (zeros >= 2u && p[i] <= 3u) {
-            extra++;
-            zeros = 0;
-        }
-        zeros = p[i] == 0u ? zeros + 1u : 0u;
-    }
-    return n + n / 255u + 10u + extra;
-}
-
 /* Fill `buf` with pattern `k`: letters, zeros, 00 00 0x runs, or an LCG. */
 static void fill_pattern(uint8_t *buf, size_t n, int k)
 {
@@ -244,27 +337,29 @@ static void fill_pattern(uint8_t *buf, size_t n, int k)
 
     for (size_t i = 0; i < n; i++) {
         x = x * 1664525u + 1013904223u;
-        buf[i] = k == 0   ? (uint8_t)'a'
-                 : k == 1 ? 0u
-                 : k == 2 ? (uint8_t)(i % 3u == 2u ? i % 5u : 0u)
-                          : (uint8_t)(x >> 29u); /* 0..7: many zeros and 0..3 */
+        buf[i] = k == 0 ? (uint8_t)'a' :
+                 k == 1 ? 0u :
+                 k == 2 ? (uint8_t)(i % 3u == 2u ? i % 5u : 0u) :
+                          (uint8_t)(x >> 29u); /* 0..7: many zeros and 0..3 */
     }
 }
 
-/* 1 when the series result and the frozen one make the same fit decision and
- * agree exactly on a payload that fits. Over the limit both only promise more
- * than `limit`: the series compares the NAL size, the frozen copy the payload
- * size, with the limit before it scans (36 such cases below, none fits). */
-static int same_fit(size_t series, size_t frozen, size_t limit)
+/* 1 when the header's result and the frozen one make the same fit decision
+ * and agree exactly on a payload that fits. Over the limit both only promise
+ * more than `limit`: the header compares the NAL size, the frozen copy the
+ * payload size, with the limit before it scans (36 such cases below, none
+ * fits). */
+static int same_fit(size_t mine, size_t frozen, size_t limit)
 {
-    if (series <= limit || frozen <= limit)
-        return series == frozen;
+    if (mine <= limit || frozen <= limit)
+        return mine == frozen;
     return 1;
 }
 
-/* The series formula and the frozen one agree on every length up to two size
- * byte steps past the budget, four patterns, three limits. */
-static void test_nal_bytes_match_series(TestCtx *t)
+/* The header's rules and the frozen ones agree on every length up to two
+ * size byte steps past the budget, four patterns, three limits, and for the
+ * truncation rule three largest-payload sizes. */
+static void test_rules_match_frozen(TestCtx *t)
 {
     static uint8_t buf[1100];
     static const size_t limits[] = {0u, PEL_SEI_HEVC_USER_BUDGET, SIZE_MAX};
@@ -273,14 +368,21 @@ static void test_nal_bytes_match_series(TestCtx *t)
     for (int k = 0; k < 4; k++) {
         fill_pattern(buf, sizeof(buf), k);
         for (size_t n = 0; n <= sizeof(buf); n++) {
-            for (size_t l = 0; l < sizeof(limits) / sizeof(limits[0]); l++)
+            for (size_t l = 0; l < sizeof(limits) / sizeof(limits[0]); l++) {
                 mismatches += !same_fit(pel_sei_nal_bytes(buf, n, limits[l]),
                                         frozen_nal_bytes(buf, n, limits[l]), limits[l]);
+            }
+            mismatches += pel_sei_epb_count(buf, n, 0) != frozen_epb(buf, n, 0);
+            mismatches += pel_sei_epb_count(buf, n, 2) != frozen_epb(buf, n, 2);
+            mismatches += pel_sei_udu_truncated(buf, n, n) != frozen_truncated(buf, n, n);
+            mismatches += pel_sei_udu_truncated(buf, n, n / 2u) != frozen_truncated(buf, n, n / 2u);
+            mismatches += pel_sei_udu_truncated(buf, n, 2000u) != frozen_truncated(buf, n, 2000u);
         }
     }
     CHECK(mismatches == 0);
     CHECK(pel_sei_nal_bytes(NULL, 100, SIZE_MAX) == frozen_nal_bytes(NULL, 100, SIZE_MAX));
-    CHECK(NVENC_HEVC_NON_VCL_LIMIT == 1024 && NVENC_HEVC_SEI_RESERVE == 256);
+    CHECK(PEL_SEI_HEVC_NON_VCL_LIMIT == 1024u && PEL_SEI_HEVC_RESERVE == 256u);
+    CHECK(PEL_SEI_HEVC_USER_BUDGET == 768u && PEL_SEI_HEVC_PAYLOAD_LIMIT == 512u);
 }
 
 static void test_nal_bytes(TestCtx *t)
@@ -293,13 +395,13 @@ static void test_nal_bytes(TestCtx *t)
     memset(buf, 'a', sizeof(buf));
     CHECK(pel_sei_nal_bytes(buf, 999, 2000) == 1012u);
     /* 00 00 00 00 00 00 is coded 00 00 03 00 00 03 00 00. */
-    CHECK(nvenc_sei_epb_count(zeros, sizeof(zeros), 0) == 2u);
+    CHECK(pel_sei_epb_count(zeros, sizeof(zeros), 0) == 2u);
     CHECK(pel_sei_nal_bytes(zeros, sizeof(zeros), 100) == 6u + 0u + 10u + 2u);
     /* Above the limit nothing is scanned and the result exceeds the limit. */
     CHECK(pel_sei_nal_bytes(NULL, 5000, 768) > 768u);
     CHECK(PEL_SEI_HEVC_USER_BUDGET == 768u);
 #if SIZE_MAX > UINT32_MAX
-    /* Beyond nvenc_sei.h's 32-bit size: never scanned, never fits. */
+    /* Beyond NVENC's 32-bit payloadSize: never scanned, never fits. */
     CHECK(pel_sei_nal_bytes(buf, (size_t)UINT32_MAX + 1u, SIZE_MAX) == SIZE_MAX);
     CHECK(pel_sei_qsv_cost(buf, (size_t)UINT32_MAX + 1u, 1, SIZE_MAX) == SIZE_MAX);
     CHECK(pel_sei_nal_bytes(NULL, UINT32_MAX, SIZE_MAX) < SIZE_MAX);
@@ -308,18 +410,17 @@ static void test_nal_bytes(TestCtx *t)
 
 static void check_1080p(TestCtx *t, const Blob *maps, const Blob *scal)
 {
-    size_t budget = PEL_SEI_HEVC_USER_BUDGET;
-    uint8_t *out = NULL;
+    Picture pic;
     size_t len;
 
+    pic_init(&pic, 1);
     CHECK(maps->len == 12424u && scal->len == 184u);
     CHECK(pel_sei_scalar_len(maps->bytes, maps->len) == scal->len);
-    len = carry(maps->bytes, maps->len, &budget, &out);
-    CHECK(len == pel_sei_carrier_len(scal->bytes, scal->len) && out != NULL);
-    CHECK(unwraps_to(out, len, scal->bytes, scal->len));
-    free(out);
-    CHECK(budget ==
-          PEL_SEI_HEVC_USER_BUDGET - pel_sei_carrier_nal_bytes(scal->bytes, scal->len, 1000));
+    len = pic_add(&pic, maps->bytes, maps->len, 5u);
+    CHECK(len == pel_sei_carrier_len(scal->bytes, scal->len) && pic.count == 1);
+    CHECK(pic.count == 1 && unwraps_to(pic.sei[0].payload, len, scal->bytes, scal->len));
+    CHECK(pic_finish(&pic) == 0 && pic.count == 1);
+    pic_free(&pic);
     /* A maps=0 blob has nothing to strip and fits whole. */
     CHECK(pel_sei_scalar_len(scal->bytes, scal->len) == 0u);
     CHECK(pel_sei_fit_len(scal->bytes, scal->len, PEL_SEI_HEVC_USER_BUDGET) == scal->len);
@@ -340,17 +441,17 @@ static void test_1080p_strips_to_scalars(TestCtx *t)
 static void test_small_grid_keeps_maps(TestCtx *t)
 {
     Blob one = pack_analyze(1, 1, 1);
-    size_t budget = PEL_SEI_HEVC_USER_BUDGET;
-    uint8_t *out = NULL;
+    Picture pic;
 
+    pic_init(&pic, 1);
     CHECK(one.bytes != NULL);
     if (one.bytes) {
         const size_t clen = pel_sei_carrier_len(one.bytes, one.len);
 
-        CHECK(carry(one.bytes, one.len, &budget, &out) == clen);
-        CHECK(unwraps_to(out, clen, one.bytes, one.len));
+        CHECK(pic_add(&pic, one.bytes, one.len, 5u) == clen);
+        CHECK(pic.count == 1 && unwraps_to(pic.sei[0].payload, clen, one.bytes, one.len));
     }
-    free(out);
+    pic_free(&pic);
     free(one.bytes);
 }
 
@@ -358,44 +459,175 @@ static void test_largest_grid(TestCtx *t)
 {
     Blob big = pack_analyze(1024, 1024, 1);
     Blob scal = pack_analyze(1024, 1024, 0);
-    size_t budget = PEL_SEI_HEVC_USER_BUDGET;
-    uint8_t *out = NULL;
+    Picture pic;
 
+    pic_init(&pic, 1);
     CHECK(big.bytes && scal.bytes);
     if (big.bytes && scal.bytes) {
         const size_t clen = pel_sei_carrier_len(scal.bytes, scal.len);
 
         CHECK(big.len > (size_t)6u * PEL_AN_MAX_CELLS);
-        CHECK(carry(big.bytes, big.len, &budget, &out) == clen);
-        CHECK(unwraps_to(out, clen, scal.bytes, scal.len));
+        CHECK(pic_add(&pic, big.bytes, big.len, 5u) == clen);
+        CHECK(pic.count == 1 && unwraps_to(pic.sei[0].payload, clen, scal.bytes, scal.len));
     }
-    free(out);
+    pic_free(&pic);
     free(big.bytes);
     free(scal.bytes);
 }
 
-static void test_budget_edge(TestCtx *t)
+/* What one 300-byte payload of type 4 without zeros leaves: 212 payload bytes,
+ * 768 - 311 = 457 NAL bytes, so a carrier gets 212 + 0 + 10 = 222. */
+static void test_room_pinned(TestCtx *t)
 {
-    uint8_t buf[800];
-    size_t budget;
-    uint8_t *out = NULL;
-    /* n + n / 255 + 10 == 768 at n == 756 for a payload without zeros. */
-    const size_t fits = 756;
+    uint8_t buf[600];
+    PelSeiHevcRoom room = PEL_SEI_HEVC_ROOM_INIT;
 
     memset(buf, 'a', sizeof(buf));
-    budget = PEL_SEI_HEVC_USER_BUDGET;
-    CHECK(carry(buf, fits, &budget, &out) == fits && budget == 0u);
-    free(out);
-    budget = PEL_SEI_HEVC_USER_BUDGET;
-    CHECK(carry(buf, fits + 1u, &budget, &out) == 0u && out == NULL);
-    free(out);
-    CHECK(budget == PEL_SEI_HEVC_USER_BUDGET);
-    /* The budget is per picture: a second payload sees what the first left. */
-    budget = PEL_SEI_HEVC_USER_BUDGET;
-    CHECK(carry(buf, 400, &budget, &out) == 400u);
-    free(out);
-    CHECK(carry(buf, 400, &budget, &out) == 0u);
-    free(out);
+    CHECK(pel_sei_hevc_budget(&room) == 524u);
+    pel_sei_hevc_charge(&room, buf, 4u, 300u);
+    CHECK(room.payload == 212u && room.nal == 457u && pel_sei_hevc_budget(&room) == 222u);
+    /* A payload FFmpeg drops (over the payload left) costs NAL bytes only. */
+    pel_sei_hevc_charge(&room, buf, 4u, 213u);
+    CHECK(room.payload == 212u && room.nal == 457u - 223u);
+    /* One exactly at the payload left is charged and leaves nothing. */
+    pel_sei_hevc_charge(&room, buf, 4u, 212u);
+    CHECK(room.payload == 0u && room.nal == 12u && pel_sei_hevc_budget(&room) == 10u);
+    pel_sei_hevc_charge(&room, buf, 4u, 600u);
+    CHECK(room.payload == 0u && room.nal == 0u && pel_sei_hevc_budget(&room) == 0u);
+}
+
+/* A carrier of c bytes takes c + c / 255 + 10 NAL bytes and fits the budget
+ * exactly when it fits both limits, for every carrier and payload room. */
+static void test_budget_equivalence(TestCtx *t)
+{
+    static uint8_t carrier[1100];
+    int mismatches = 0;
+
+    memset(carrier, 0x61, sizeof(carrier));
+    for (size_t pay = 0; pay <= PEL_SEI_HEVC_PAYLOAD_LIMIT; pay += 7u) {
+        for (size_t nal = 0; nal <= PEL_SEI_HEVC_USER_BUDGET; nal += 13u) {
+            const PelSeiHevcRoom room = {nal, pay};
+            const size_t budget = pel_sei_hevc_budget(&room);
+
+            for (size_t c = 1; c <= sizeof(carrier); c++) {
+                const size_t need = pel_sei_nal_bytes(carrier, c, budget);
+                const int both = c <= pay && frozen_nal_bytes(carrier, c, SIZE_MAX) <= nal;
+
+                mismatches += (need <= budget) != both;
+            }
+        }
+    }
+    CHECK(mismatches == 0);
+}
+
+/* One SEI of `n` bytes of pattern `k` before a maps=0 blob: the hook keeps the
+ * blob exactly when its carrier fits what the frozen rules and FFmpeg's
+ * 512-byte check leave, and FFmpeg's check then keeps every blob the hook
+ * kept, inside 768 NAL bytes. */
+static int check_room_case(TestCtx *t, const Blob *scal, const uint8_t *pre, size_t n)
+{
+    const size_t clen = pel_sei_carrier_len(scal->bytes, scal->len);
+    const size_t pre_nal = frozen_nal_bytes(pre, n, SIZE_MAX);
+    const size_t nal_left = pre_nal < 768u ? 768u - pre_nal : 0u;
+    const size_t pay_left = n <= 512u ? 512u - n : 512u;
+    const int want = clen <= pay_left && clen + clen / 255u + 10u <= nal_left;
+    Picture pic;
+    int got;
+    int bad = 0;
+
+    pic_init(&pic, 1);
+    CHECK(pic_add(&pic, pre, n, 4u) == n);
+    got = pic_add(&pic, scal->bytes, scal->len, 5u) != 0u;
+    bad += got != want;
+    (void)pic_finish(&pic);
+    if (got && pic.count < 1) {
+        bad++;
+    } else if (got) {
+        bad += pic.sei[pic.count - 1].size != clen;
+        bad += pic_nal(&pic) > 768u && pic.count > 1;
+    }
+    pic_free(&pic);
+    return bad;
+}
+
+static void test_room_matches_oracle(TestCtx *t)
+{
+    static uint8_t pre[600];
+    Blob scal = pack_analyze(60, 34, 0);
+    int bad = 0;
+
+    CHECK(scal.bytes != NULL);
+    for (int k = 0; k < 4 && scal.bytes; k++) {
+        fill_pattern(pre, sizeof(pre), k);
+        for (size_t n = 1; n <= sizeof(pre); n++)
+            bad += check_room_case(t, &scal, pre, n);
+    }
+    CHECK(bad == 0);
+    free(scal.bytes);
+}
+
+/* The blob after an earlier user data unregistered payload of another
+ * producer: 300 bytes leave a 222-byte budget and the 1080p blob goes out as
+ * its scalar carrier; 400 bytes leave 122 and it is dropped, never cut. */
+static void test_after_earlier_udu(TestCtx *t)
+{
+    Blob maps = pack_analyze(60, 34, 1);
+    Blob scal = pack_analyze(60, 34, 0);
+    uint8_t other[400];
+    Picture pic;
+
+    memset(other, 0x5A, sizeof(other));
+    CHECK(maps.bytes && scal.bytes);
+    if (maps.bytes && scal.bytes) {
+        const size_t clen = pel_sei_carrier_len(scal.bytes, scal.len);
+
+        CHECK(clen <= 212u && clen > 112u);
+        pic_init(&pic, 1);
+        CHECK(pic_add(&pic, other, 300u, 5u) == 300u);
+        CHECK(pic_add(&pic, maps.bytes, maps.len, 5u) == clen);
+        CHECK(pic.count == 2 && unwraps_to(pic.sei[1].payload, clen, scal.bytes, scal.len));
+        CHECK(pic_finish(&pic) == 0 && pic.count == 2);
+        pic_free(&pic);
+        pic_init(&pic, 1);
+        CHECK(pic_add(&pic, other, 400u, 5u) == 400u);
+        CHECK(pic_add(&pic, maps.bytes, maps.len, 5u) == 0u && pic.count == 1);
+        pic_free(&pic);
+    }
+    free(maps.bytes);
+    free(scal.bytes);
+}
+
+/* FFmpeg's check on the arrays the hook leaves: a later payload that does not
+ * fit is FFmpeg's to drop, the blob stays; an earlier one FFmpeg drops is not
+ * charged as payload, so the blob after it stays too; one that takes exactly
+ * the 512 payload bytes leaves the blob no room, and the hook drops it. */
+static void test_ffmpeg_check_keeps_blob(TestCtx *t)
+{
+    Blob scal = pack_analyze(60, 34, 0);
+    uint8_t other[520];
+    Picture pic;
+
+    memset(other, 0x61, sizeof(other));
+    CHECK(scal.bytes != NULL);
+    if (scal.bytes) {
+        const size_t clen = pel_sei_carrier_len(scal.bytes, scal.len);
+
+        pic_init(&pic, 1);
+        CHECK(pic_add(&pic, scal.bytes, scal.len, 5u) == clen);
+        CHECK(pic_add(&pic, other, 400u, 4u) == 400u);
+        CHECK(pic_finish(&pic) == 1 && pic.count == 1 && pic.sei[0].size == clen);
+        pic_free(&pic);
+        pic_init(&pic, 1);
+        CHECK(pic_add(&pic, other, 520u, 4u) == 520u);
+        CHECK(pic_add(&pic, scal.bytes, scal.len, 5u) == clen);
+        CHECK(pic_finish(&pic) == 1 && pic.count == 1 && pic.sei[0].size == clen);
+        pic_free(&pic);
+        pic_init(&pic, 1);
+        CHECK(pic_add(&pic, other, 512u, 4u) == 512u);
+        CHECK(pic_add(&pic, scal.bytes, scal.len, 5u) == 0u && pic.count == 1);
+        pic_free(&pic);
+    }
+    free(scal.bytes);
 }
 
 /* Each case must be dropped (0), never cut short. */
@@ -455,7 +687,8 @@ static void check_carrier_twin(TestCtx *t, const uint8_t *p, size_t n)
         pel_sei_carrier_write(p, n, mine);
         CHECK(pel_blob_carrier_encode(p, n, ref, PEL_CARRIER_MAX_LEN(n), &rlen) == PEL_OK);
         CHECK(rlen == clen && memcmp(mine, ref, clen) == 0);
-        CHECK(memchr(mine, 0, clen) == NULL && nvenc_sei_epb_count(mine, (uint32_t)clen, 0) == 0u);
+        CHECK(memchr(mine, 0, clen) == NULL && pel_sei_epb_count(mine, clen, 0) == 0u);
+        CHECK(!pel_sei_udu_truncated(mine, clen, clen));
         CHECK(pel_sei_carrier_nal_bytes(p, n, SIZE_MAX) == pel_sei_nal_bytes(mine, clen, SIZE_MAX));
         CHECK(unwraps_to(mine, clen, p, n));
     }
@@ -490,24 +723,29 @@ static void test_carrier_twin(TestCtx *t)
     free(scal.bytes);
 }
 
-/* Flat content, 10x8 cells of zero maps: written whole as a carrier with its
- * maps, although the blob's own emulation prevention would not fit. */
+/* Flat content, 7x7 cells of zero maps: written whole as a carrier with its
+ * maps, although the blob's own emulation prevention would not fit and NVENC
+ * would write the blob itself truncated. */
 static void test_flat_maps_fit_as_carrier(TestCtx *t)
 {
-    Blob flat = pack_analyze_fill(10, 8, 1, 1);
-    size_t budget = PEL_SEI_HEVC_USER_BUDGET;
-    uint8_t *out = NULL;
+    Blob flat = pack_analyze_fill(7, 7, 1, 1);
+    const PelSeiHevcRoom room = PEL_SEI_HEVC_ROOM_INIT;
+    const size_t budget = pel_sei_hevc_budget(&room);
+    Picture pic;
 
+    pic_init(&pic, 1);
     CHECK(flat.bytes != NULL);
     if (flat.bytes) {
         const size_t clen = pel_sei_carrier_len(flat.bytes, flat.len);
 
-        CHECK(pel_sei_nal_bytes(flat.bytes, flat.len, SIZE_MAX) > PEL_SEI_HEVC_USER_BUDGET);
+        CHECK(pel_sei_nal_bytes(flat.bytes, flat.len, SIZE_MAX) > budget);
+        CHECK(pel_sei_udu_truncated(flat.bytes, flat.len, flat.len));
         CHECK(pel_sei_carrier_nal_bytes(flat.bytes, flat.len, budget) <= budget);
-        CHECK(carry(flat.bytes, flat.len, &budget, &out) == clen);
-        CHECK(unwraps_to(out, clen, flat.bytes, flat.len));
+        CHECK(pic_add(&pic, flat.bytes, flat.len, 5u) == clen);
+        CHECK(pic.count == 1 && unwraps_to(pic.sei[0].payload, clen, flat.bytes, flat.len));
+        CHECK(pic_finish(&pic) == 0);
     }
-    free(out);
+    pic_free(&pic);
     free(flat.bytes);
 }
 
@@ -516,15 +754,14 @@ static void test_carrier_only_for_blobs(TestCtx *t)
 {
     Blob b = pack_analyze(1, 1, 0);
     uint8_t other[300];
-    uint8_t *out = NULL;
-    size_t budget = PEL_SEI_HEVC_USER_BUDGET;
+    Picture pic;
 
+    pic_init(&pic, 1);
     memset(other, 0x5A, sizeof(other));
     CHECK(!pel_sei_is_blob(other, sizeof(other)) && !pel_sei_is_blob(NULL, 100));
-    CHECK(carry(other, sizeof(other), &budget, &out) == sizeof(other));
-    if (out)
-        CHECK(memcmp(out, other, sizeof(other)) == 0);
-    free(out);
+    CHECK(pic_add(&pic, other, sizeof(other), 5u) == sizeof(other));
+    CHECK(pic.count == 1 && memcmp(pic.sei[0].payload, other, sizeof(other)) == 0);
+    pic_free(&pic);
     CHECK(b.bytes != NULL);
     if (b.bytes) {
         CHECK(pel_sei_is_blob(b.bytes, b.len) && !pel_sei_is_blob(b.bytes, 63u));
@@ -639,9 +876,10 @@ static void test_qsv_blob(TestCtx *t)
 
         CHECK(out != NULL);
         /* A 4K blob is over h264_qsv's budget as well: it loses its maps there too. */
-        if (out)
+        if (out) {
             CHECK(pel_sei_qsv_fit(big.bytes, big.len, 1, PEL_SEI_QSV_H264_BUDGET, out) ==
                   pel_sei_scalar_len(big.bytes, big.len));
+        }
         free(out);
     }
     free(maps.bytes);
@@ -693,34 +931,33 @@ static void test_qsv_plan_matches_fit(TestCtx *t)
 
 /* The hook of patch 0022 on the paths the GPU smoke cannot reach from a filter
  * graph. A blob with a section this file cannot strip and a carrier over the
- * budget goes out whole, so the series' charge drops it and the picture's
- * budget is untouched; it is never cut. Without a budget (h264_nvenc) the same
- * blob and the 1080p blob go out whole as carriers, maps included. */
+ * budget is dropped by the hook, never cut. Without a budget (h264_nvenc) the
+ * same blob and the 1080p blob go out whole as carriers, maps included. */
 static void test_hook_unstrippable_and_no_budget(TestCtx *t)
 {
     Blob maps = pack_analyze(60, 34, 1);
-    size_t budget = PEL_SEI_HEVC_USER_BUDGET;
-    size_t none = SIZE_MAX;
-    uint8_t *out = NULL;
+    Picture pic;
     size_t len;
 
     CHECK(maps.bytes != NULL);
     if (!maps.bytes)
         return;
-    len = carry(maps.bytes, maps.len, &none, &out);
+    pic_init(&pic, 0);
+    len = pic_add(&pic, maps.bytes, maps.len, 5u);
     CHECK(len == pel_sei_carrier_len(maps.bytes, maps.len));
-    CHECK(unwraps_to(out, len, maps.bytes, maps.len));
-    free(out);
+    CHECK(pic.count == 1 && unwraps_to(pic.sei[0].payload, len, maps.bytes, maps.len));
+    pic_free(&pic);
     maps.bytes[PEL_SEI_UUID_LEN + 16u] |= (uint8_t)PEL_SEC_QPREPORT;
     CHECK(pel_sei_is_blob(maps.bytes, maps.len));
-    CHECK(pel_sei_fit_len(maps.bytes, maps.len, budget) == 0u);
-    CHECK(carry(maps.bytes, maps.len, &budget, &out) == 0u && out == NULL);
-    CHECK(budget == PEL_SEI_HEVC_USER_BUDGET);
-    none = SIZE_MAX;
-    len = carry(maps.bytes, maps.len, &none, &out);
+    CHECK(pel_sei_fit_len(maps.bytes, maps.len, PEL_SEI_HEVC_USER_BUDGET) == 0u);
+    pic_init(&pic, 1);
+    CHECK(pic_add(&pic, maps.bytes, maps.len, 5u) == 0u && pic.count == 0);
+    pic_free(&pic);
+    pic_init(&pic, 0);
+    len = pic_add(&pic, maps.bytes, maps.len, 5u);
     CHECK(len == pel_sei_carrier_len(maps.bytes, maps.len));
-    CHECK(unwraps_to(out, len, maps.bytes, maps.len));
-    free(out);
+    CHECK(pic.count == 1 && unwraps_to(pic.sei[0].payload, len, maps.bytes, maps.len));
+    pic_free(&pic);
     free(maps.bytes);
 }
 
@@ -730,11 +967,15 @@ int main(void)
     TestCtx *t = &ctx;
 
     test_nal_bytes(t);
-    test_nal_bytes_match_series(t);
+    test_rules_match_frozen(t);
     test_1080p_strips_to_scalars(t);
     test_small_grid_keeps_maps(t);
     test_largest_grid(t);
-    test_budget_edge(t);
+    test_room_pinned(t);
+    test_budget_equivalence(t);
+    test_room_matches_oracle(t);
+    test_after_earlier_udu(t);
+    test_ffmpeg_check_keeps_blob(t);
     test_rejects_foreign(t);
     test_rejects_corrupt(t);
     test_carrier_twin(t);
@@ -748,6 +989,17 @@ int main(void)
     test_qsv_blob(t);
     test_qsv_foreign(t);
     test_qsv_plan_matches_fit(t);
+#ifdef PEL_SEI_FIT_PLANTED
+    /* A planted build passes only when a check caught the planted rule, so
+     * it needs no should_fail, which meson introspect does not report and
+     * the tester kit could not honour; a crash still fails it. */
+    if (t->failures == 0) {
+        (void)fprintf(stderr, "planted rule %s not caught\n", PEL_SEI_FIT_PLANTED);
+        return EXIT_FAILURE;
+    }
+    (void)printf("planted rule %s caught: %d check(s) failed\n", PEL_SEI_FIT_PLANTED, t->failures);
+    return EXIT_SUCCESS;
+#endif
     if (t->failures != 0) {
         (void)fprintf(stderr, "%d check(s) failed\n", t->failures);
         return EXIT_FAILURE;

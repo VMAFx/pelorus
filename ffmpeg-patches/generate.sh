@@ -727,9 +727,11 @@ commit_patch "$HERE/.commit-msg-vulkan-udu-sei.txt"
 # Pelorus libavcodec fix (NOT a filter): with udu_sei, NVENC writes every
 # Pelorus blob in its zero-free carrier form (issue #284, ADR-0183) and
 # hevc_nvenc strips the analyze maps from a blob that does not fit the picture's
-# 1024-byte header limit (issue #267, ADR-0181). The limit itself and the drop
-# of truncated payloads are shared series patches 0003 and 0004; this edit is
-# one call between their av_memdup() and nvenc_hevc_sei_fits(). The size
+# SEI room (issue #267, ADR-0181) and drops one that still does not fit
+# (ADR-0236). The room covers the 1024-byte header limit and FFmpeg's 512-byte
+# payload limit; this edit is one call right after av_memdup() and calls no
+# series or nvenc.c name, so it applies with shared series patches 0003, 0004
+# and 0028 and with FFmpeg's merged form (96b7f8281a). The size
 # arithmetic is a private header Pelorus's fast suite unit-tests directly
 # (ffmpeg-patches/test/sei_fit_test.c); the nvenc.c/nvenc.h edit is a
 # hand-maintained diff like the other encoder patches (-> patch 0022).

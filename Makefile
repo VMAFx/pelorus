@@ -4,11 +4,6 @@
 # PRAETORCTL=/path/to/engine on the command line or in the environment overrides it.
 include .config/praetor/engine.mk
 BUILD_DIR ?= build
-# The directory scripts/fetch-ffmpeg-series.sh printed; the sei-fit test and its
-# clang-tidy unit need the series' nvenc_sei.h (ADR-0218). Empty: sei-fit is the
-# named skip of .config/test-skips.json and tidy names the unit it leaves out.
-FFMPEG_SERIES_DIR ?=
-SERIES_TIDY_UNIT := ffmpeg-patches/test/sei_fit_test.c
 
 .PHONY: all verify-all verify-native configure build test format-check tidy \
 	docs-check compile-context compile-context-verify audit hooks-install
@@ -19,14 +14,11 @@ verify-all: compile-context-verify audit verify-native
 
 verify-native: build test format-check tidy docs-check
 
-# Meson 1.12 refuses -D on --reconfigure for an option the build directory
-# predates, so the option is set after the reconfigure has read it.
 configure:
 	@if test -f "$(BUILD_DIR)/meson-private/coredata.dat"; then \
-		meson setup "$(BUILD_DIR)" --reconfigure && \
-		meson configure "$(BUILD_DIR)" -Dffmpeg_series_dir="$(FFMPEG_SERIES_DIR)"; \
+		meson setup "$(BUILD_DIR)" --reconfigure; \
 	else \
-		meson setup "$(BUILD_DIR)" -Dffmpeg_series_dir="$(FFMPEG_SERIES_DIR)"; \
+		meson setup "$(BUILD_DIR)"; \
 	fi
 
 build: configure
@@ -44,12 +36,7 @@ format-check:
 TIDY_FILES := .config/clang-tidy/lane-files.txt
 
 tidy: build
-ifeq ($(FFMPEG_SERIES_DIR),)
-	@echo "tidy: SKIP $(SERIES_TIDY_UNIT): FFMPEG_SERIES_DIR unset (ADR-0218)"
-	grep -Ev '^(#|$$)' $(TIDY_FILES) | grep -Fxv '$(SERIES_TIDY_UNIT)' | xargs clang-tidy -p "$(BUILD_DIR)"
-else
 	grep -Ev '^(#|$$)' $(TIDY_FILES) | xargs clang-tidy -p "$(BUILD_DIR)"
-endif
 
 docs-check:
 	bash scripts/release/concat-changelog-fragments.sh --check

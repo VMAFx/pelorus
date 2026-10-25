@@ -130,16 +130,19 @@ ffmpeg-patches/
    tester, `v0.4.0-rc.2` cite them). New patches append after 0023. Proof of
    fix = lavapipe validation run, unchanged.
 10. Patch 0022 = Pelorus half of NVENC `udu_sei`, one call
-   (`pelorus_udu_carrier()`) between series 0003's `av_memdup()` and
-   `nvenc_hevc_sei_fits()` in `prepare_sei_data_array()`: blob -> zero-free
-   carrier on `h264_nvenc` and `hevc_nvenc` (ADR-0183); on `hevc_nvenc` blob
-   whose carrier misses series' `sei_budget` loses maps first (ADR-0181).
-   Series owns budget (0003: 1024 non-VCL bytes, 768 for SEI), drop of
-   truncated SEI (0004: `epb > ceil(P/3)+3`), their log lines. Never
-   re-add budget or drop code here; never edit series lines. Rebase-sensitive:
-   hook position, `sei_budget` name, `NV_ENC_SEI_PAYLOAD` copy owned by loop.
-   `files/pelorus_sei_fit.h` = includes series `nvenc_sei.h` (0027) for
-   budget + `nvenc_sei_nal_size()`, never copies them (ADR-0218); map
+   (`pelorus_udu_carrier()`) right after `av_memdup()` in
+   `prepare_sei_data_array()`: blob -> zero-free carrier on `h264_nvenc` and
+   `hevc_nvenc` (ADR-0183); on `hevc_nvenc` blob whose carrier misses
+   `pel_sei_hevc_budget()` loses maps first (ADR-0181), still missing ->
+   dropped, `continue` (ADR-0236). Calls no series or `nvenc.c` name: applies
+   with series 0003/0004/0028 and with FFmpeg's merged form (`96b7f8281a`,
+   `nvenc_hevc_sei_size_check()`, 512-byte payload cap). Never edit series or
+   upstream lines. Rebase-sensitive: hook position after `av_memdup()`,
+   `NV_ENC_SEI_PAYLOAD` copy owned by loop.
+   `files/pelorus_sei_fit.h` = own frozen `v0.3.0` rules (1024 limit, 256
+   reserve, epb count, nal size, truncation) + `PelSeiHevcRoom` (768 nal,
+   512 payload; payload charged only when it fits, as upstream check frees
+   the rest); planted twin per rule (`scripts/plant-header.py`); map
    stripping, COBS carrier encoder; mirrors
    interop offsets and `interop.c` encoder; fast test `sei-fit` checks offsets
    with `offsetof()` and carrier bytes against `pel_blob_carrier_encode()`.
