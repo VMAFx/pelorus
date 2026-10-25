@@ -22,7 +22,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 
 def rows_for(path, variant, metric):
-    data = json.load(open(path))
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
     pts = [(r["bitrate_kbps"], r[metric]) for r in data["rows"] if r["variant"] == variant]
     pts.sort()
     return [p[0] for p in pts], [p[1] for p in pts]

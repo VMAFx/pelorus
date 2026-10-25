@@ -480,6 +480,7 @@ def self_test_constants():
                 failures += 1
                 print("self-test FAIL: %s was not refused" % label)
             except GateError:
+                # Expected: invalid recipe constants must be refused.
                 pass
             (root / rel).write_text(saved, encoding="utf-8")
         (root / MC_SRC).unlink()
@@ -488,6 +489,7 @@ def self_test_constants():
             failures += 1
             print("self-test FAIL: a missing source was not refused")
         except GateError:
+            # Expected: missing source file must raise GateError.
             pass
     return failures
 

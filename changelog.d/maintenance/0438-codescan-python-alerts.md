@@ -1,0 +1,1 @@
+- The open Python code-scanning alerts are fixed: bench scripts close the JSON files they read, `bd_rate.py` tests for NaN with `math.isnan`, the deliberate empty `except` blocks say why they ignore the error, two unused imports and an unused loop variable are gone, and tester fixture cache files are published owner-only (`0600`).

@@ -136,13 +136,14 @@ def score(args, ref, dec):
     cmd += ["--feature", "ssimulacra2"]
     if args.cambi:                      # CAMBI is the banding metric but slow
         cmd += ["--feature", "cambi"]
-    # vmaf hangs at 0% CPU AFTER flushing its JSON -> bound it and ignore the kill;
-    # the result is already on disk by then.
     try:
         subprocess.run(cmd, timeout=args.vmaf_timeout, capture_output=True, text=True)
     except subprocess.TimeoutExpired:
+        # vmaf hangs at 0% CPU AFTER flushing its JSON -> bound it and ignore the kill;
+        # the result is already on disk by then.
         pass
-    m = json.load(open(j))["pooled_metrics"]
+    with open(j, "r", encoding="utf-8") as f:
+        m = json.load(f)["pooled_metrics"]
     ssim2 = m.get("ssimulacra2", {}).get("mean", float("nan"))
     vmaf_val = m.get("vmaf", {}).get("mean", float("nan"))
     # vmafx names the CAMBI feature with its options (cambi_hrs_1080_...).

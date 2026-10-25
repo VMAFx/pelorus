@@ -134,7 +134,7 @@ if __name__ == "__main__":
 
     print(json.dumps(r, indent=2))
     bd = r["bd_rate_pct"]
-    if bd == bd:  # not NaN
+    if not math.isnan(bd):
         verdict = "WIN" if bd < 0 else "loss"
         print(f"\nBD-rate: {bd:+.2f}%  ({verdict}: "
               f"{'fewer' if bd < 0 else 'more'} bits for equal quality)")
