@@ -10,6 +10,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -3829,18 +3830,27 @@ def validate_candidate_legs_text(
     return errors
 
 
-def validate_tester_publish() -> list[str]:
+def _validate_checked_files(
+    pairs: Iterable[tuple[Path, Callable[[str, str], list[str]]]],
+) -> list[str]:
     errors: list[str] = []
-    for path, check in (
-        (TESTER_PUBLISH, validate_tester_publish_text),
-        (TESTER_CONTAINERFILE, validate_tester_containerfile_text),
-        (TESTER_BUILD_SCRIPT, validate_tester_build_script_text),
-    ):
+    for path, check in pairs:
         relative = path.relative_to(ROOT).as_posix()
         if not path.is_file():
             errors.append(f"{relative}: missing")
             continue
         errors.extend(check(relative, path.read_text(encoding="utf-8")))
+    return errors
+
+
+def validate_tester_publish() -> list[str]:
+    errors = _validate_checked_files(
+        (
+            (TESTER_PUBLISH, validate_tester_publish_text),
+            (TESTER_CONTAINERFILE, validate_tester_containerfile_text),
+            (TESTER_BUILD_SCRIPT, validate_tester_build_script_text),
+        )
+    )
     if CANDIDATE_LEGS.is_file():
         names = {p.name for p in (ROOT / ".github" / "workflows").glob("*.yml")}
         errors.extend(
@@ -4940,13 +4950,10 @@ def python_regex(renovate_regex: str) -> str:
     return re.sub(r"\(\?<(?=[A-Za-z_])", "(?P<", renovate_regex)
 
 
-def _validate_go_manager_text(text: str, checker_source: str) -> list[str]:
-    """Require one regex manager that bumps ACTIONLINT_GO_VERSION as `go`."""
-    try:
-        config = json.loads(text)
-    except json.JSONDecodeError as exc:
-        return [f"renovate.json: invalid JSON: {exc}"]
-    managers = config.get("customManagers") if isinstance(config, dict) else None
+def _single_regex_manager(
+    managers: object, target_relative: str
+) -> tuple[dict | None, list[str]]:
+    """Return the unique regex customManager matching target_relative, or errors."""
     try:
         covering = [
             manager
@@ -4955,18 +4962,30 @@ def _validate_go_manager_text(text: str, checker_source: str) -> list[str]:
             and manager.get("customType") == "regex"
             and isinstance(manager.get("managerFilePatterns"), list)
             and any(
-                renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
+                renovate_file_pattern_matches(pattern, target_relative)
                 for pattern in manager["managerFilePatterns"]
             )
         ]
     except RenovatePatternError as exc:
-        return [f"renovate.json: {exc}"]
+        return None, [f"renovate.json: {exc}"]
     if len(covering) != 1:
-        return [
+        return None, [
             f"renovate.json: expected exactly one regex customManager for "
-            f"{CHECKER_RELATIVE} (found {len(covering)})"
+            f"{target_relative} (found {len(covering)})"
         ]
-    manager = covering[0]
+    return covering[0], []
+
+
+def _validate_go_manager_text(text: str, checker_source: str) -> list[str]:
+    """Require one regex manager that bumps ACTIONLINT_GO_VERSION as `go`."""
+    try:
+        config = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return [f"renovate.json: invalid JSON: {exc}"]
+    managers = config.get("customManagers") if isinstance(config, dict) else None
+    manager, errors = _single_regex_manager(managers, CHECKER_RELATIVE)
+    if manager is None:
+        return errors
     errors = [
         f"renovate.json: {CHECKER_RELATIVE} manager needs {key} {value!r}"
         for key, value in GO_RENOVATE_TEMPLATES.items()
@@ -4998,28 +5017,9 @@ def _validate_go_manager_text(text: str, checker_source: str) -> list[str]:
 def _validate_actionlint_manager(managers: object, ci_source: str) -> list[str]:
     """Require one ci.yml regex manager that bumps the actionlint tag (ADR-0170)."""
     prefix = f"renovate.json: {CI_RELATIVE} manager"
-    try:
-        covering = [
-            manager
-            for manager in (managers if isinstance(managers, list) else [])
-            if isinstance(manager, dict)
-            and manager.get("customType") == "regex"
-            and isinstance(manager.get("managerFilePatterns"), list)
-            and any(
-                renovate_file_pattern_matches(pattern, CI_RELATIVE)
-                for pattern in manager["managerFilePatterns"]
-            )
-        ]
-    except RenovatePatternError as exc:
-        return [f"renovate.json: {exc}"]
-    if len(covering) != 1:
-        return [
-            (
-                f"renovate.json: expected exactly one regex customManager for "
-                f"{CI_RELATIVE} (found {len(covering)})"
-            )
-        ]
-    manager = covering[0]
+    manager, errors = _single_regex_manager(managers, CI_RELATIVE)
+    if manager is None:
+        return errors
     errors = [
         f"{prefix} needs {key} {value!r}"
         for key, value in ACTIONLINT_RENOVATE_TEMPLATES.items()
@@ -5407,21 +5407,16 @@ def validate_dev_image_workflow_text(relative: str, text: str) -> list[str]:
 
 
 def validate_dev_image() -> list[str]:
-    errors: list[str] = []
     try:
         record = json.loads(DEV_IMAGE_RECORD.read_text(encoding="utf-8"))
     except (OSError, ValueError) as err:
         return [f"{DEV_IMAGE_RECORD.relative_to(ROOT).as_posix()}: {err}"]
-    for path, check in (
-        (DEV_IMAGE_CONTAINERFILE, lambda rel, text: validate_dev_image_text(rel, text, record)),
-        (DEV_IMAGE_WORKFLOW, validate_dev_image_workflow_text),
-    ):
-        relative = path.relative_to(ROOT).as_posix()
-        if not path.is_file():
-            errors.append(f"{relative}: missing")
-            continue
-        errors.extend(check(relative, path.read_text(encoding="utf-8")))
-    return errors
+    return _validate_checked_files(
+        (
+            (DEV_IMAGE_CONTAINERFILE, lambda rel, text: validate_dev_image_text(rel, text, record)),
+            (DEV_IMAGE_WORKFLOW, validate_dev_image_workflow_text),
+        )
+    )
 
 
 def _dev_image_cases(text: str) -> dict[str, tuple[str, str]]:

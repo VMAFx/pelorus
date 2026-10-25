@@ -156,15 +156,19 @@ def _check_shader_sample_scale(
     )
 
 
+def _filter_sources(name: str) -> tuple[Path, str, Path, str] | None:
+    c = FILES / f"vf_pelorus_{name}_vulkan.c"
+    s = SHADERS / f"pelorus_{name}.comp.glsl"
+    if not c.is_file() or not s.is_file():
+        return None
+    return c, strip_comments(c.read_text()), s, strip_comments(s.read_text())
+
+
 def _check_one_arithmetic_filter(errors: list[str], name: str) -> None:
-    c_path = FILES / f"vf_pelorus_{name}_vulkan.c"
-    shader_path = SHADERS / f"pelorus_{name}.comp.glsl"
-    if not c_path.is_file() or not shader_path.is_file():
+    if not (srcs := _filter_sources(name)):
         errors.append(f"{name}: missing canonical C or GLSL source")
         return
-
-    c_text = strip_comments(c_path.read_text())
-    shader_text = strip_comments(shader_path.read_text())
+    c_path, c_text, shader_path, shader_text = srcs
 
     _require(
         errors,
@@ -211,12 +215,9 @@ def _check_scalar_splat(
 
 
 def _check_one_transform(errors: list[str], name: str) -> None:
-    c_path = FILES / f"vf_pelorus_{name}_vulkan.c"
-    shader_path = SHADERS / f"pelorus_{name}.comp.glsl"
-    if not c_path.is_file() or not shader_path.is_file():
+    if not (srcs := _filter_sources(name)):
         return
-    c_text = strip_comments(c_path.read_text())
-    shader_text = strip_comments(shader_path.read_text())
+    c_path, c_text, shader_path, shader_text = srcs
     _require(
         errors,
         c_path,
@@ -293,12 +294,9 @@ def _check_component_indexing(
 
 
 def _check_one_component_filter(errors: list[str], name: str) -> None:
-    c_path = FILES / f"vf_pelorus_{name}_vulkan.c"
-    shader_path = SHADERS / f"pelorus_{name}.comp.glsl"
-    if not c_path.is_file() or not shader_path.is_file():
+    if not (srcs := _filter_sources(name)):
         return
-    c_text = strip_comments(c_path.read_text())
-    shader_text = strip_comments(shader_path.read_text())
+    c_path, c_text, shader_path, shader_text = srcs
     _require(
         errors,
         c_path,
@@ -351,12 +349,9 @@ def _check_luma_descriptor_arrays(errors: list[str]) -> None:
         ("analyze", 0, ("input_images",)),
         ("mc", 1, ("cur_image", "ref_image")),
     ):
-        c_path = FILES / f"vf_pelorus_{name}_vulkan.c"
-        shader_path = SHADERS / f"pelorus_{name}.comp.glsl"
-        if not c_path.is_file() or not shader_path.is_file():
+        if not (srcs := _filter_sources(name)):
             continue
-        c_text = strip_comments(c_path.read_text())
-        shader_text = strip_comments(shader_path.read_text())
+        c_path, c_text, shader_path, shader_text = srcs
         _require(
             errors,
             shader_path,

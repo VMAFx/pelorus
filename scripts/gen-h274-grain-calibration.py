@@ -251,11 +251,12 @@ def calibrate(model: H274Model0) -> list[tuple[int, float, float]]:
     return rows
 
 
-def parse_filter_table() -> list[tuple[int, float, float]]:
+def parse_filter_table(table: str = "pel_h274_calib") -> list[tuple[int, float, float]]:
+    """Read the committed `table` rows from the grain filter source."""
     text = FILTER.read_text()
-    match = re.search(r"pel_h274_calib\[\]\s*=\s*\{(.*?)\n\};", text, re.S)
+    match = re.search(table + r"\[\]\s*=\s*\{(.*?)\n\};", text, re.S)
     if match is None:
-        raise SystemExit(f"{FILTER.name}: pel_h274_calib table not found")
+        raise SystemExit(f"{FILTER.name}: {table} table not found")
     return [
         (int(c), float(r), float(g))
         for c, r, g in re.findall(

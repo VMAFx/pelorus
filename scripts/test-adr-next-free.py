@@ -108,8 +108,12 @@ def snapshot(repo: pathlib.Path, env: dict[str, str]) -> tuple[str, str, str]:
 
 
 def init_fixture_repo(
-    repo_path: pathlib.Path, env: dict[str, str], script_src: pathlib.Path
+    repo_path: pathlib.Path,
+    env: dict[str, str],
+    script_src: pathlib.Path,
+    adrs: tuple[str, ...] = ("0001-init.md", "0002-second.md"),
 ) -> tuple[pathlib.Path, pathlib.Path]:
+    repo_path.mkdir(parents=True, exist_ok=True)
     git(repo_path, env, "init", "-q", "-b", "master")
     sdir = repo_path / "scripts" / "adr"
     sdir.mkdir(parents=True)
@@ -118,8 +122,8 @@ def init_fixture_repo(
     fscript.chmod(fscript.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     docs_adr = repo_path / "docs" / "adr"
     docs_adr.mkdir(parents=True)
-    (docs_adr / "0001-init.md").write_text("# ADR 1\n", encoding="utf-8")
-    (docs_adr / "0002-second.md").write_text("# ADR 2\n", encoding="utf-8")
+    for i, name in enumerate(adrs, 1):
+        (docs_adr / name).write_text(f"# ADR {i}\n", encoding="utf-8")
     git(repo_path, env, "add", "scripts/adr/next-free.sh", "docs/adr")
     git(repo_path, env, "commit", "-q", "-m", "base commit with adrs")
     return fscript, docs_adr
@@ -271,19 +275,7 @@ def test_ref_cap(
 ) -> list[str]:
     failures: list[str] = []
     repo = tmp_path / "ref_cap_repo"
-    repo.mkdir()
-    git(repo, env, "init", "-q", "-b", "master")
-    sdir = repo / "scripts" / "adr"
-    sdir.mkdir(parents=True)
-    fscript = sdir / "next-free.sh"
-    shutil.copy2(script_src, fscript)
-    fscript.chmod(fscript.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-    docs_adr = repo / "docs" / "adr"
-    docs_adr.mkdir(parents=True)
-    (docs_adr / "0001-init.md").write_text("# 1\n", encoding="utf-8")
-    git(repo, env, "add", ".")
-    git(repo, env, "commit", "-q", "-m", "init")
+    fscript, docs_adr = init_fixture_repo(repo, env, script_src, ("0001-init.md",))
 
     head = git(repo, env, "rev-parse", "HEAD").stdout.strip()
     commands = "\n".join(f"create refs/heads/b{i:04d} {head}" for i in range(2001)) + "\n"
@@ -320,19 +312,7 @@ def test_git_failure(
 ) -> list[str]:
     failures: list[str] = []
     repo = tmp_path / "git_fail_repo"
-    repo.mkdir()
-    git(repo, env, "init", "-q", "-b", "master")
-    sdir = repo / "scripts" / "adr"
-    sdir.mkdir(parents=True)
-    fscript = sdir / "next-free.sh"
-    shutil.copy2(script_src, fscript)
-    fscript.chmod(fscript.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-    docs_adr = repo / "docs" / "adr"
-    docs_adr.mkdir(parents=True)
-    (docs_adr / "0001-init.md").write_text("# 1\n", encoding="utf-8")
-    git(repo, env, "add", ".")
-    git(repo, env, "commit", "-q", "-m", "init")
+    fscript, _ = init_fixture_repo(repo, env, script_src, ("0001-init.md",))
 
     bin_dir = tmp_path / "fake_bin"
     bin_dir.mkdir()
