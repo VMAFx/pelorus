@@ -27,6 +27,16 @@ CATEGORIES="${CORPUS_CATEGORIES:-$HERE/corpus.categories}"
 # Per-attempt transfer deadline in seconds (clips are tens of MB).
 CURL_MAX_TIME="${CURL_MAX_TIME:-600}"
 
+# Print each non-comment row of the categories file as trimmed cat|clips|used_by.
+category_rows() {
+    local cat clips used_by
+    while IFS='|' read -r cat clips used_by; do
+        case "$(printf '%s' "$cat" | tr -d '[:space:]')" in ''|\#*) continue;; esac
+        printf '%s|%s|%s\n' "$(echo "$cat" | xargs)" "$(echo "$clips" | xargs)" \
+            "$(echo "$used_by" | xargs)"
+    done < "$CATEGORIES"
+}
+
 if [ "${1:-}" = "--check-categories" ]; then
     [ -f "$CATEGORIES" ] || { echo "  CATEGORIES FILE NOT FOUND: $CATEGORIES" >&2; exit 1; }
     lock_clips=()
@@ -41,10 +51,6 @@ if [ "${1:-}" = "--check-categories" ]; then
     missing=0
     invalid_clips=0
     while IFS='|' read -r cat clips used_by; do
-        case "$(printf '%s' "$cat" | tr -d '[:space:]')" in ''|\#*) continue;; esac
-        cat="$(echo "$cat" | xargs)"
-        clips="$(echo "$clips" | xargs)"
-        used_by="$(echo "$used_by" | xargs)"
         if [ -z "$clips" ]; then
             echo "  MISSING $cat: no pinned set (used by $used_by)"
             missing=1
@@ -69,7 +75,7 @@ if [ "${1:-}" = "--check-categories" ]; then
             done
             echo "  $cat: $clips"
         fi
-    done < "$CATEGORIES"
+    done < <(category_rows)
 
     if [ "$missing" -ne 0 ] || [ "$invalid_clips" -ne 0 ]; then
         exit 1
@@ -168,14 +174,10 @@ done < "$LOCK"
 
 if [ ${#want[@]} -eq 0 ] && [ -f "$CATEGORIES" ]; then
     while IFS='|' read -r cat clips used_by; do
-        case "$(printf '%s' "$cat" | tr -d '[:space:]')" in ''|\#*) continue;; esac
-        cat="$(echo "$cat" | xargs)"
-        clips="$(echo "$clips" | xargs)"
-        used_by="$(echo "$used_by" | xargs)"
         if [ -z "$clips" ]; then
             echo "  MISSING $cat: no pinned set (used by $used_by)" >&2
         elif [[ "$clips" =~ ^parked\ \#[0-9]+$ ]]; then
             echo "  PARKED $cat: no pinned set, ${clips#parked } (used by $used_by)" >&2
         fi
-    done < "$CATEGORIES"
+    done < <(category_rows)
 fi

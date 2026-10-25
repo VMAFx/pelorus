@@ -1,0 +1,1 @@
+- `scripts/bench/fetch-corpus.sh` reads the categories file through one `category_rows` helper for both the `--check-categories` run and the warning after a fetch; output and exit status are unchanged.
