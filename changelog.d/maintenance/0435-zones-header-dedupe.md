@@ -1,0 +1,1 @@
+- The doc comments of `pel_zones_x265_param()` and `pel_zones_segment_plan()` in `libpelorus/include/pelorus/quality.h` point to `pel_zones_x265_zonefile()` for the shot-sequence rules and buffer conventions instead of repeating them; the jscpd clone group in the header is gone.

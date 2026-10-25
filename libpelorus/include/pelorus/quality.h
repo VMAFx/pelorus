@@ -119,13 +119,7 @@ pel_result pel_zones_x265_zonefile(const PelShotTarget *shots, size_t n, char *b
  * Because `--zones` evaluates frames in encode order, when B-frames are enabled
  * display frames near a boundary can land on the wrong side by up to one mini-GOP.
  *
- * Shots must start at frame 0 (shots[0].first_frame == 0) and be contiguous
- * (first_frame == prev.last_frame + 1). Gaps, overlaps, or first_frame != 0
- * return PEL_ERR_INVALID. Decimal formatting is locale-independent.
- *
- * Follows the standard buffer conventions: NULL buf + cap 0 -> PEL_OK + need;
- * buf NULL + cap > 0 -> PEL_ERR_INVALID; cap < need -> PEL_ERR_RANGE + need;
- * validation failure -> PEL_ERR_INVALID, need 0.
+ * Shot-sequence rules and buffer conventions: as pel_zones_x265_zonefile().
  */
 pel_result pel_zones_x265_param(const PelShotTarget *shots, size_t n, float base_crf, char *buf,
                                 size_t cap, size_t *need);
@@ -135,13 +129,8 @@ pel_result pel_zones_x265_param(const PelShotTarget *shots, size_t n, float base
  *   first_frame,last_frame,crf\n
  *   <first_frame>,<last_frame>,<crf %u.%02u>\n
  * For chunked encoding with encoders lacking CLI zone controls (SVT-AV1, libaom).
- * Shots must start at frame 0 (shots[0].first_frame == 0) and be contiguous
- * (first_frame == prev.last_frame + 1). Gaps, overlaps, or first_frame != 0
- * return PEL_ERR_INVALID. Decimal formatting is locale-independent.
  *
- * Follows the standard buffer conventions: NULL buf + cap 0 -> PEL_OK + need;
- * buf NULL + cap > 0 -> PEL_ERR_INVALID; cap < need -> PEL_ERR_RANGE + need;
- * validation failure -> PEL_ERR_INVALID, need 0.
+ * Shot-sequence rules and buffer conventions: as pel_zones_x265_zonefile().
  */
 pel_result pel_zones_segment_plan(const PelShotTarget *shots, size_t n, char *buf, size_t cap,
                                   size_t *need);
