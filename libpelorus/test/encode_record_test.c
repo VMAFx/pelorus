@@ -19,9 +19,16 @@
  *     a dropped key, a tampered value, and the bounds of the canonical form.
  */
 
+#ifndef _WIN32
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif
+#endif
+
 #include "pelorus/encode_record.h"
 
 #include "sha256.h"
+#include "test_path_safety.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -358,7 +365,7 @@ static void test_worked_example_from_doc(const char *doc_path)
 {
     char *doc = malloc(DOC_CAP);
     size_t n;
-    FILE *fp = fopen(doc_path, "rb");
+    FILE *fp = test_fopen_safe(doc_path, "rb");
 
     CHECK(fp != NULL && doc != NULL);
     if (fp == NULL || doc == NULL) {

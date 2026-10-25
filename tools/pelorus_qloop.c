@@ -228,12 +228,13 @@ static int parse_cli_args(int argc, char **argv, PelQloopConfig *cfg)
     int i;
 
     memset(cfg, 0, sizeof(*cfg));
-    for (i = 1; i < argc; i++) {
+    i = 1;
+    while (i < argc) {
         if (i + 1 >= argc)
             return -1;
         if (parse_arg_item(argv[i], argv[i + 1], cfg, &mask) != 0)
             return -1;
-        i++;
+        i += 2;
     }
     if (mask != 0xffu)
         return -1;

@@ -91,10 +91,16 @@ static void test_parse_invalid(TestCtx *t)
     CHECK(pel_drm_mod_parse_list("-1", out, PEL_DRM_MOD_MAX, NULL) == -1);
     CHECK(pel_drm_mod_parse_list("0x1ffffffffffffffff", out, PEL_DRM_MOD_MAX, NULL) == -1);
     CHECK(pel_drm_mod_parse_list("0x00ffffffffffffff", out, PEL_DRM_MOD_MAX, NULL) == -1);
-    for (int i = 0; i < PEL_DRM_MOD_MAX; i++)
-        pos += (size_t)snprintf(list + pos, sizeof(list) - pos, "%d|", i % 10);
+    for (int i = 0; i < PEL_DRM_MOD_MAX; i++) {
+        if (pos < sizeof(list)) {
+            int n = snprintf(list + pos, sizeof(list) - pos, "%d|", i % 10);
+            if (n >= 0 && (size_t)n < sizeof(list) - pos)
+                pos += (size_t)n;
+        }
+    }
     CHECK(pel_drm_mod_parse_list(list, out, PEL_DRM_MOD_MAX, NULL) == PEL_DRM_MOD_MAX);
-    (void)snprintf(list + pos, sizeof(list) - pos, "7");
+    if (pos < sizeof(list))
+        (void)snprintf(list + pos, sizeof(list) - pos, "7");
     CHECK(pel_drm_mod_parse_list(list, out, PEL_DRM_MOD_MAX, NULL) == -1);
 }
 

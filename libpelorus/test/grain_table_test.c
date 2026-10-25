@@ -6,7 +6,14 @@
  * SPDX-License-Identifier: EUPL-1.2
  */
 
+#ifndef _WIN32
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif
+#endif
+
 #include "pelorus/grain_table.h"
+#include "test_path_safety.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -110,7 +117,7 @@ static void test_file_fixture(const char *path)
     if (path == NULL) {
         return;
     }
-    FILE *f = fopen(path, "rb");
+    FILE *f = test_fopen_safe(path, "rb");
     CHECK(f != NULL);
     if (!f) {
         return;

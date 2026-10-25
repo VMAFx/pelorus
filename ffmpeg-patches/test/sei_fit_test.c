@@ -48,12 +48,13 @@
 #include <string.h>
 
 #include "pelorus_analyze_maps.h"
-/* A sei-fit-planted-<rule> build includes its planted copy first; the include
- * guard then skips the real header. */
+/* A sei-fit-planted-<rule> build includes its planted copy instead of the real
+ * header. */
 #ifdef PEL_SEI_FIT_PLANTED
 #include PEL_SEI_FIT_PLANTED
-#endif
+#else
 #include "pelorus_sei_fit.h"
+#endif
 #include "pelorus_sei_fit_qsv.h"
 
 /* NOLINTBEGIN(modernize-use-nullptr): C translation unit kept buildable by MSVC's

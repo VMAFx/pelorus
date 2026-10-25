@@ -256,6 +256,24 @@ static double compute_bracketed_probe(const PelQloopConfig *c, const PelQloopObs
     return k_probe;
 }
 
+static int slope_is_positive(double k1, double f1, double k2, double f2)
+{
+    return (k2 > k1 && f2 > f1) || (k2 < k1 && f2 < f1);
+}
+
+static int slope_is_negative(double k1, double f1, double k2, double f2)
+{
+    return (k2 > k1 && f2 < f1) || (k2 < k1 && f2 > f1);
+}
+
+static int is_wrong_slope(int direction, double k1, double f1, double k2, double f2)
+{
+    if (direction == -1) {
+        return slope_is_positive(k1, f1, k2, f2);
+    }
+    return slope_is_negative(k1, f1, k2, f2);
+}
+
 static double compute_unbracketed_probe(const PelQloopConfig *c, const PelQloopObs *hist,
                                         size_t n_hist)
 {
@@ -281,8 +299,7 @@ static double compute_unbracketed_probe(const PelQloopConfig *c, const PelQloopO
     double k2 = hist[n_hist - 1u].knob;
     double f2 = hist[n_hist - 1u].score - c->target;
     double df = f2 - f1;
-    int wrong_slope = (c->direction == -1) ? ((k2 > k1 && f2 > f1) || (k2 < k1 && f2 < f1)) :
-                                             ((k2 > k1 && f2 < f1) || (k2 < k1 && f2 > f1));
+    int wrong_slope = is_wrong_slope(c->direction, k1, f1, k2, f2);
 
     if (fabs(df) < 1e-9 || wrong_slope) {
         double dir_step = -(double)c->direction * ((f2 < 0.0) ? -1.0 : 1.0) * step;

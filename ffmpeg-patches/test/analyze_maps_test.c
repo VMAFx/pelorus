@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include "pelorus_analyze_maps.h"
+#include "test_float_bits.h"
 
 /* NOLINTBEGIN(modernize-use-nullptr): C translation unit kept buildable by MSVC's
  * C mode, which has no `nullptr` (same decision as interop_test.c). */
@@ -308,7 +309,7 @@ static int floats_equal(const void *map, const float *want, size_t n)
     for (i = 0; i < n; i++) {
         float v;
         memcpy(&v, (const uint8_t *)map + i * sizeof(v), sizeof(v));
-        if (v != want[i])
+        if (!float_bits_equal(v, want[i]))
             return 0;
     }
     return 1;

@@ -10,6 +10,12 @@
  * pelorus_fgs (ADR-0210).
  */
 
+#ifndef _WIN32
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -18,6 +24,7 @@
 
 #include "pelorus/interop.h"
 #include "pelorus_udu_wrap.h"
+#include "test_path_safety.h"
 
 _Static_assert(PEL_UDU_UUID_LEN == PELORUS_SIDEDATA_UUID_LEN, "uuid length mirror");
 
@@ -120,7 +127,7 @@ static int replay_vectors(const char *path)
     int failures = 0;
     int count = 0;
     int seen[3] = {0, 0, 0};
-    FILE *f = path ? fopen(path, "r") : NULL;
+    FILE *f = path ? test_fopen_safe(path, "r") : NULL;
 
     if (!f) {
         (void)fprintf(stderr, "FAIL: vector file %s not readable\n", path ? path : "(none)");
@@ -154,6 +161,10 @@ static int pointer_cases(void)
                          pel_udu_classify(pel_udu_x265_uuid, NULL, 32) == PEL_UDU_NONE);
     failures += run_case("negative: NULL outer UUID",
                          pel_udu_classify(NULL, payload64, 64) == PEL_UDU_NONE);
+    failures +=
+        run_case("negative: safe fopen refuses NULL path", test_fopen_safe(NULL, "r") == NULL);
+    failures +=
+        run_case("negative: safe fopen refuses directory", test_fopen_safe(".", "r") == NULL);
     return failures;
 }
 

@@ -5,6 +5,7 @@
  */
 
 #include "pelorus/qloop.h"
+#include "test_float_bits.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -180,7 +181,7 @@ static void test_planted_unreachable(void)
     }
 
     CHECK(step.state == PEL_QLOOP_UNREACHABLE);
-    CHECK(step.knob == cfg.knob_min);
+    CHECK(double_bits_equal(step.knob, cfg.knob_min));
     CHECK(loop_count <= cfg.max_iter + 1u);
 }
 

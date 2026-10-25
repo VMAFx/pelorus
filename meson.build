@@ -382,7 +382,7 @@ if get_option('tests')
   mc_stats_test = executable(
     'pelorus_mc_stats_test',
     files('ffmpeg-patches/test/mc_stats_test.c'),
-    include_directories: include_directories('ffmpeg-patches/files'),
+    include_directories: include_directories('ffmpeg-patches/files', 'libpelorus/test'),
     dependencies: cc.find_library('m', required: false),
   )
   test('mc-stats', mc_stats_test, suite: 'fast')
@@ -396,7 +396,7 @@ if get_option('tests')
   analyze_maps_test = executable(
     'pelorus_analyze_maps_test',
     files('ffmpeg-patches/test/analyze_maps_test.c'),
-    include_directories: include_directories('ffmpeg-patches/files'),
+    include_directories: include_directories('ffmpeg-patches/files', 'libpelorus/test'),
     dependencies: [libpelorus_dep, cc.find_library('m', required: false)],
   )
   test('analyze-maps', analyze_maps_test, suite: 'fast')
@@ -405,7 +405,7 @@ if get_option('tests')
     'pelorus_analyze_maps_legacy_test',
     files('ffmpeg-patches/test/analyze_maps_test.c'),
     c_args: ['-DPEL_AN_FORCE_LEGACY_PACK'],
-    include_directories: include_directories('ffmpeg-patches/files'),
+    include_directories: include_directories('ffmpeg-patches/files', 'libpelorus/test'),
     dependencies: [libpelorus_dep, cc.find_library('m', required: false)],
   )
   test('analyze-maps-legacy-pack', analyze_maps_legacy_test, suite: 'fast')
@@ -474,7 +474,7 @@ if get_option('tests')
   udu_wrap_test = executable(
     'pelorus_udu_wrap_test',
     files('ffmpeg-patches/test/udu_wrap_test.c'),
-    include_directories: include_directories('ffmpeg-patches/files'),
+    include_directories: include_directories('ffmpeg-patches/files', 'libpelorus/test'),
     dependencies: [libpelorus_dep, cc.find_library('m', required: false)],
   )
   test(
