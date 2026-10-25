@@ -44,4 +44,5 @@ libpelorus/test/telemetry_test.c
 libpelorus/test/telemetry_adapter_test.c
 tools/pelorus_qloop.c
 tools/pelorus_qp_report.c
+tools/pelorus_tool_common.c
 tools/pelorus_zones.c

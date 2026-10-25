@@ -1,0 +1,1 @@
+- The three CLI demonstrators (`tools/pelorus_qloop.c`, `pelorus_qp_report.c`, `pelorus_zones.c`) share one helper unit, `tools/pelorus_tool_common.{c,h}`, for the strict `uint32_t` parser, the bounded stdin line reader and the Windows UTF-8 argv rebuild (ADR-0149); their output and messages are unchanged and the jscpd clone groups between them are gone.

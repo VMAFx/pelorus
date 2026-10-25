@@ -6,20 +6,13 @@
 
 #include "pelorus/pelorus.h"
 #include "pelorus/qloop.h"
+#include "pelorus_tool_common.h"
 
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#include <shellapi.h>
-#endif
 
 #define MAX_INPUT_LINES (PEL_QLOOP_MAX_ITER + 2u)
 
@@ -32,18 +25,6 @@ static int parse_double_strict(const char *str, char **endptr, double *out)
         return -1;
     }
     *out = val;
-    return 0;
-}
-
-static int parse_u32_strict(const char *str, char **endptr, uint32_t *out)
-{
-    unsigned long long val;
-    errno = 0;
-    val = strtoull(str, endptr, 10);
-    if (errno == ERANGE || *endptr == str || val > UINT32_MAX) {
-        return -1;
-    }
-    *out = (uint32_t)val;
     return 0;
 }
 
@@ -104,25 +85,21 @@ static int parse_history_line(const char *line, size_t line_num, PelQloopObs *ob
 
 static int read_history_stdin(PelQloopObs *hist, size_t max_obs, size_t *out_n)
 {
-    char line[256];
     size_t count = 0;
-    size_t line_num = 0;
-    size_t iter = 0;
+    size_t line_no = 0;
+    char line[256];
 
-    while (iter < MAX_INPUT_LINES && fgets(line, sizeof(line), stdin) != NULL) {
-        size_t slen = strlen(line);
-        int has_newline = (slen > 0 && line[slen - 1] == '\n');
-        PelQloopObs temp_obs;
-        int rc;
+    for (size_t iter = 0; iter < MAX_INPUT_LINES; iter++) {
+        PelQloopObs obs;
+        int rc = pelorus_tool_read_line(stdin, line, sizeof(line), &line_no, "pelorus_qloop");
 
-        iter++;
-        line_num++;
-        if (!has_newline && !feof(stdin)) {
-            (void)fprintf(stderr, "pelorus_qloop: line %zu: line exceeds buffer limit\n", line_num);
+        if (rc == 0) {
+            break;
+        }
+        if (rc < 0) {
             return -1;
         }
-
-        rc = parse_history_line(line, line_num, &temp_obs);
+        rc = parse_history_line(line, line_no, &obs);
         if (rc < 0) {
             return -1;
         }
@@ -132,15 +109,11 @@ static int read_history_stdin(PelQloopObs *hist, size_t max_obs, size_t *out_n)
                               (unsigned)max_obs);
                 return -1;
             }
-            hist[count] = temp_obs;
+            hist[count] = obs;
             count++;
         }
     }
 
-    if (ferror(stdin)) {
-        (void)fprintf(stderr, "pelorus_qloop: error reading stdin\n");
-        return -1;
-    }
     *out_n = count;
     return 0;
 }
@@ -235,7 +208,7 @@ static int parse_arg_item(const char *key, const char *val, PelQloopConfig *cfg,
         return 0;
     }
     if (strcmp(key, "--max-iter") == 0) {
-        if (parse_u32_strict(val, &end, &cfg->max_iter) != 0 || *end != '\0')
+        if (pelorus_tool_parse_u32(val, &end, &cfg->max_iter) != 0 || *end != '\0')
             return -1;
         *mask |= 1u << 6u;
         return 0;
@@ -299,64 +272,7 @@ static int run(int argc, char **argv)
     return emit_step(&step);
 }
 
-#ifdef _WIN32
-static void free_argv(char **argv, int argc)
-{
-    int i;
-    if (argv == NULL) {
-        return;
-    }
-    for (i = 0; i < argc; i++) {
-        free(argv[i]);
-    }
-    free((void *)argv);
-}
-
-static char **utf8_argv(int *argc)
-{
-    int wargc = 0;
-    wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
-    char **argv = NULL;
-    int i;
-
-    if (wargv != NULL && wargc > 0) {
-        argv = (char **)calloc((size_t)wargc + 1u, sizeof(*argv));
-    }
-    for (i = 0; argv != NULL && i < wargc; i++) {
-        const int n =
-            WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wargv[i], -1, NULL, 0, NULL, NULL);
-        argv[i] = (n > 0) ? malloc((size_t)n) : NULL;
-        if (argv[i] == NULL || WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wargv[i], -1,
-                                                   argv[i], n, NULL, NULL) != n) {
-            free_argv(argv, i + 1);
-            argv = NULL;
-        }
-    }
-    if (wargv != NULL) {
-        (void)LocalFree((HLOCAL)wargv);
-    }
-    if (argv != NULL) {
-        *argc = wargc;
-    }
-    return argv;
-}
-#endif
-
 int main(int argc, char **argv)
 {
-#ifdef _WIN32
-    char **utf8 = utf8_argv(&argc);
-    int rc;
-
-    (void)argv;
-    if (utf8 == NULL) {
-        (void)fprintf(stderr, "pelorus_qloop: cannot read command line as UTF-8\n");
-        return EXIT_FAILURE;
-    }
-    rc = run(argc, utf8);
-    free_argv(utf8, argc);
-    return rc;
-#else
-    return run(argc, argv);
-#endif
+    return pelorus_tool_main(argc, argv, "pelorus_qloop: cannot read command line as UTF-8", run);
 }
