@@ -111,6 +111,7 @@ SPDX-License-Identifier: EUPL-1.2
 - `scripts/adr/check-status.py` now also fails when a row of the ADR index (`docs/adr/README.md`) names a different status than the ADR file itself; a planted mismatch is in its self-test. The index row of [ADR-0198](docs/adr/0198-encoder-option-string-parsers.md) said Proposed after the ADR was accepted and is corrected.
 - The four FFmpeg patch harness tests (`scripts/test-nvenc-me-hints.py`, `test-nvenc-pelorus-mapping.py`, `test-svtav1-roi-sticky.py`, `test-vulkan-qpmap-fill.py`) share one diff-extraction and strict build-and-run module, `scripts/patch_harness.py`, loaded by path so the tests keep running under `python3 -I`; the jscpd clone groups between them are gone.
 - The three CLI demonstrators (`tools/pelorus_qloop.c`, `pelorus_qp_report.c`, `pelorus_zones.c`) share one helper unit, `tools/pelorus_tool_common.{c,h}`, for the strict `uint32_t` parser, the bounded stdin line reader and the Windows UTF-8 argv rebuild (ADR-0149); their output and messages are unchanged and the jscpd clone groups between them are gone.
+- Repository check scripts drop their copy-paste: `check-build-config.py` reads its checked files and finds the single Renovate regex manager through one helper each, `check-vulkan-storage-domain.py` loads a filter's C and GLSL sources once, `test-adr-next-free.py` builds every fixture repository with `init_fixture_repo()`, and the AV1 grain calibration generator reads its committed table through the H.274 generator's parser.
 
 <!-- END UNRELEASED -->
 

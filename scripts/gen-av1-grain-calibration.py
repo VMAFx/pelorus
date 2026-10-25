@@ -244,19 +244,6 @@ def check_gate_rows(rows: list) -> int:
     return 1 if drift else 0
 
 
-def parse_filter_table() -> list[tuple[int, float, float]]:
-    text = h274.FILTER.read_text()
-    match = re.search(r"pel_aom_calib\[\]\s*=\s*\{(.*?)\n\};", text, re.S)
-    if match is None:
-        raise SystemExit(f"{h274.FILTER.name}: pel_aom_calib table not found")
-    return [
-        (int(a), float(r), float(g))
-        for a, r, g in re.findall(
-            r"\{\s*(\d+),\s*(-?[0-9.]+)f,\s*([0-9.]+)f\s*\}", match.group(1)
-        )
-    ]
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--check", action="store_true", help="compare with the filter table")
@@ -274,7 +261,7 @@ def main() -> int:
     if not args.check:
         return 0
 
-    committed = parse_filter_table()
+    committed = h274.parse_filter_table("pel_aom_calib")
     if [a for a, _, _ in committed] != [a for a, _, _ in rows]:
         print("calibration AR grid drifted", file=sys.stderr)
         return 1
