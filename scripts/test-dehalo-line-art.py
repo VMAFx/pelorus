@@ -159,7 +159,7 @@ def pull(img, x, new: bool):
         strength = BRIGHT if lets < c else DARK
         return min(max(c - (c - lets) * strength, 0.0), 1.0)
     lo, hi = math.inf, -math.inf
-    for dj in (-1, 0, 1):  # rows are identical: only dx varies the window
+    for _ in (-1, 0, 1):  # rows are identical: only dx varies the window
         for dx in (-1, 0, 1):
             g = x + dx
             win = [px(img, g + b) for b in (-1, 0, 1)]

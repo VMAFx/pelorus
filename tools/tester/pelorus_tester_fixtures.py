@@ -183,7 +183,7 @@ def publish(tmp_path, entry, cache, disabled=frozenset()):
         Path(tmp_path).unlink(missing_ok=True)
         return errs
     try:
-        os.chmod(tmp_path, 0o644)
+        os.chmod(tmp_path, 0o600)
         os.replace(tmp_path, Path(cache) / entry["file"])
     except OSError as exc:
         return ["%s: cannot publish into the cache: %s" % (entry["name"], exc.strerror)]

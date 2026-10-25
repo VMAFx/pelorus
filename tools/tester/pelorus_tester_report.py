@@ -236,6 +236,7 @@ def local_literals():
     try:
         found.append((socket.gethostname(), "<host>"))
     except OSError:
+        # No hostname available: nothing to redact.
         pass
     found.append((str(Path.home()), "<home>"))
     found.append((os.getcwd(), "<repo>"))
