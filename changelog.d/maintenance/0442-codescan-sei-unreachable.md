@@ -1,0 +1,1 @@
+- CodeQL no longer reports `check_1080p` and `check_corrupt_blob` in `sei_fit_test.c` as unreachable: helpers that one test calls stop expanding the fit header's macros, which gave CodeQL a separate copy of each helper per planted build.
