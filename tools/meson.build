@@ -9,9 +9,17 @@ if host_machine.system() == 'windows'
   tool_deps += cc.find_library('shell32')
 endif
 
+pelorus_tool_common = static_library(
+  'pelorus_tool_common',
+  files('pelorus_tool_common.c'),
+  dependencies: tool_deps,
+  install: false,
+)
+
 pelorus_qp_report = executable(
   'pelorus_qp_report',
   files('pelorus_qp_report.c'),
+  link_with: pelorus_tool_common,
   dependencies: tool_deps,
   install: false,
 )
@@ -19,6 +27,7 @@ pelorus_qp_report = executable(
 pelorus_zones = executable(
   'pelorus_zones',
   files('pelorus_zones.c'),
+  link_with: pelorus_tool_common,
   dependencies: tool_deps,
   install: false,
 )
@@ -26,6 +35,7 @@ pelorus_zones = executable(
 pelorus_qloop = executable(
   'pelorus_qloop',
   files('pelorus_qloop.c'),
+  link_with: pelorus_tool_common,
   dependencies: tool_deps,
   install: false,
 )

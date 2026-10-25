@@ -6,20 +6,13 @@
 
 #include "pelorus/pelorus.h"
 #include "pelorus/quality.h"
+#include "pelorus_tool_common.h"
 
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#include <shellapi.h>
-#endif
 
 #define MAX_INPUT_LINES ((size_t)PEL_SHOT_TARGET_MAX * 4u)
 
@@ -38,18 +31,6 @@ static int is_exact_header(const char *line)
         p++;
     }
     return (*p == '\0' || *p == '\r' || *p == '\n');
-}
-
-static int parse_u32(const char *str, char **endptr, uint32_t *out)
-{
-    unsigned long long val;
-    errno = 0;
-    val = strtoull(str, endptr, 10);
-    if (errno == ERANGE || *endptr == str || val > UINT32_MAX) {
-        return -1;
-    }
-    *out = (uint32_t)val;
-    return 0;
 }
 
 static int parse_crf(const char *str, char **endptr, float *out)
@@ -94,7 +75,7 @@ static int parse_line(const char *line, size_t line_num, PelShotTarget *shot)
         return -1;
     }
 
-    if (parse_u32(p, &end, &first) != 0 || *end != ',') {
+    if (pelorus_tool_parse_u32(p, &end, &first) != 0 || *end != ',') {
         (void)fprintf(stderr, "pelorus_zones: line %zu: malformed first_frame: %s", line_num, line);
         return -1;
     }
@@ -104,7 +85,7 @@ static int parse_line(const char *line, size_t line_num, PelShotTarget *shot)
                       line);
         return -1;
     }
-    if (parse_u32(p, &end, &last) != 0 || *end != ',') {
+    if (pelorus_tool_parse_u32(p, &end, &last) != 0 || *end != ',') {
         (void)fprintf(stderr, "pelorus_zones: line %zu: malformed last_frame: %s", line_num, line);
         return -1;
     }
@@ -126,20 +107,15 @@ static int read_shots_stdin(PelShotTarget *shots, size_t max_shots, size_t *out_
     size_t count = 0;
     size_t line_num = 0;
     size_t iter = 0;
+    int read_rc = 0;
 
-    while (iter < MAX_INPUT_LINES && fgets(line, sizeof(line), stdin) != NULL) {
-        size_t slen = strlen(line);
-        int has_newline = (slen > 0 && line[slen - 1] == '\n');
+    while (iter < MAX_INPUT_LINES &&
+           (read_rc = pelorus_tool_read_line(stdin, line, sizeof(line), &line_num,
+                                             "pelorus_zones")) == 1) {
         PelShotTarget temp_shot;
         int rc;
 
         iter++;
-        line_num++;
-
-        if (!has_newline && !feof(stdin)) {
-            (void)fprintf(stderr, "pelorus_zones: line %zu: line exceeds buffer limit\n", line_num);
-            return -1;
-        }
 
         rc = parse_line(line, line_num, &temp_shot);
         if (rc < 0) {
@@ -156,8 +132,7 @@ static int read_shots_stdin(PelShotTarget *shots, size_t max_shots, size_t *out_
         }
     }
 
-    if (ferror(stdin)) {
-        (void)fprintf(stderr, "pelorus_zones: error reading stdin\n");
+    if (read_rc < 0) {
         return -1;
     }
     if (iter >= MAX_INPUT_LINES && !feof(stdin)) {
@@ -274,64 +249,7 @@ static int run(int argc, char **argv)
     return emit_output(fmt, shots, n_shots, base_crf);
 }
 
-#ifdef _WIN32
-static void free_argv(char **argv, int argc)
-{
-    int i;
-    if (argv == NULL) {
-        return;
-    }
-    for (i = 0; i < argc; i++) {
-        free(argv[i]);
-    }
-    free((void *)argv);
-}
-
-static char **utf8_argv(int *argc)
-{
-    int wargc = 0;
-    wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
-    char **argv = NULL;
-    int i;
-
-    if (wargv != NULL && wargc > 0) {
-        argv = (char **)calloc((size_t)wargc + 1u, sizeof(*argv));
-    }
-    for (i = 0; argv != NULL && i < wargc; i++) {
-        const int n =
-            WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wargv[i], -1, NULL, 0, NULL, NULL);
-        argv[i] = (n > 0) ? malloc((size_t)n) : NULL;
-        if (argv[i] == NULL || WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wargv[i], -1,
-                                                   argv[i], n, NULL, NULL) != n) {
-            free_argv(argv, i + 1);
-            argv = NULL;
-        }
-    }
-    if (wargv != NULL) {
-        (void)LocalFree((HLOCAL)wargv);
-    }
-    if (argv != NULL) {
-        *argc = wargc;
-    }
-    return argv;
-}
-#endif
-
 int main(int argc, char **argv)
 {
-#ifdef _WIN32
-    char **utf8 = utf8_argv(&argc);
-    int rc;
-
-    (void)argv;
-    if (utf8 == NULL) {
-        (void)fprintf(stderr, "pelorus_zones: cannot read command line as UTF-8\n");
-        return EXIT_FAILURE;
-    }
-    rc = run(argc, utf8);
-    free_argv(utf8, argc);
-    return rc;
-#else
-    return run(argc, argv);
-#endif
+    return pelorus_tool_main(argc, argv, "pelorus_zones: cannot read command line as UTF-8", run);
 }

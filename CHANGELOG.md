@@ -110,6 +110,7 @@ SPDX-License-Identifier: EUPL-1.2
 - `.github/workflows/devcontainer-image.yml` replaces hand-rolled Docker CLI login, build, and push commands with pinned upstream Docker actions (`docker/setup-buildx-action`, `docker/login-action`, `docker/build-push-action`) matching `VMAFx/vmafx` pins ([ADR-0235](docs/adr/0235-docker-build-push-actions.md)).
 - `scripts/adr/check-status.py` now also fails when a row of the ADR index (`docs/adr/README.md`) names a different status than the ADR file itself; a planted mismatch is in its self-test. The index row of [ADR-0198](docs/adr/0198-encoder-option-string-parsers.md) said Proposed after the ADR was accepted and is corrected.
 - The four FFmpeg patch harness tests (`scripts/test-nvenc-me-hints.py`, `test-nvenc-pelorus-mapping.py`, `test-svtav1-roi-sticky.py`, `test-vulkan-qpmap-fill.py`) share one diff-extraction and strict build-and-run module, `scripts/patch_harness.py`, loaded by path so the tests keep running under `python3 -I`; the jscpd clone groups between them are gone.
+- The three CLI demonstrators (`tools/pelorus_qloop.c`, `pelorus_qp_report.c`, `pelorus_zones.c`) share one helper unit, `tools/pelorus_tool_common.{c,h}`, for the strict `uint32_t` parser, the bounded stdin line reader and the Windows UTF-8 argv rebuild (ADR-0149); their output and messages are unchanged and the jscpd clone groups between them are gone.
 
 <!-- END UNRELEASED -->
 
