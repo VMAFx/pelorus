@@ -109,7 +109,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 
 ## Project state
 
-- Inventory: 10 filters (deband, analyze, denoise, grain_estimate, mc, dehalo, aa, deblock, borderfix, scenecut) plus `pelorus_fgs` BSF; 23-patch stack (number 0021 retired; 0009 split into 0009a/0009b, #308) on shared FFmpeg fix series `v0.3.0` (VMAFx/ffmpeg-patches, ADR-0185; 0008 = #309 queue de-phase, ADR-0192; 0022 keeps own SEI rules on FFmpeg merged form `96b7f8281a`, ADR-0236).
+- Inventory: 10 filters (deband, analyze, denoise, grain_estimate, mc, dehalo, aa, deblock, borderfix, scenecut) plus `pelorus_fgs` BSF; 23-patch stack (number 0021 retired; 0009 split into 0009a/0009b, #308) on shared FFmpeg fix series `v0.4.0` (VMAFx/ffmpeg-patches, ADR-0185; 0008 = #309 queue de-phase, ADR-0192; 0022 keeps own SEI rules on FFmpeg merged form `96b7f8281a`, ADR-0236).
 - Encoder steering: NVENC, QSV, Vulkan, libaom, SVT-AV1 patches; QP-feedback path. README "Modules" table: current inventory, no stubs.
 - FFmpeg 9 base: build-time SPIR-V, no runtime GLSL API (ADR-0143).
 - Forge: `VMAFx/pelorus`. Run `gh repo set-default vmafx/pelorus` before any `gh` command.
@@ -258,7 +258,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | Component | Pin |
 | --- | --- |
 | FFmpeg patch base | `n9.0.2` / `946fcce07b6dcd0331c8cc609192aeff5e1924f8` from `build-config.env` |
-| Shared FFmpeg fix series | VMAFx/ffmpeg-patches `v0.3.0` / `9ff13ad7faa182e9db62b66c9f60d1b288c53a03`, tarball sha256 `0e7c14fb6ec0bc61289e61eeb45c3caf2b4bf87b987727a761e8b93ff3907c21`, from `build-config.env`; hand bump, no Renovate ([ADR-0185](docs/adr/0185-shared-ffmpeg-fix-series.md)) |
+| Shared FFmpeg fix series | VMAFx/ffmpeg-patches `v0.4.0` / `0dd73807f922c395ed238c129a9673f787a0d56e`, tarball sha256 `09801c5f797a4339fc89258c0fbfeb16c29c7fe9a07ce930c5e453c6fb3a623d`, from `build-config.env`; hand bump, no Renovate ([ADR-0185](docs/adr/0185-shared-ffmpeg-fix-series.md)) |
 | FFmpeg Vulkan models | `vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c`, `vf_scdet_vulkan.c` |
 | AV1 grain ABI mirror | `libavutil/film_grain_params.h` |
 | vmafx control plane | `libvmaf_tune`, `/v1/score`, `vmaf-mcp` |

@@ -35,10 +35,10 @@ Requires the ffnvcodec headers' qpDeltaMap support (guarded; no-ops without it).
  5 files changed, 170 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index 0e627457929c6c0286a882d74e09b02ec72acc61..5417ddeffbb440c66c7729b13565e4f26f522164 100644
+index d30b8645d3b37280be1d4bd757376835b1008f68..606b40b2226385d158c391d6aea01fd92f038f0a 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
-@@ -994,6 +994,39 @@ static av_cold int nvenc_recalc_surfaces(AVCodecContext *avctx)
+@@ -993,6 +993,39 @@ static av_cold int nvenc_recalc_surfaces(AVCodecContext *avctx)
      return 0;
  }
  
@@ -78,7 +78,7 @@ index 0e627457929c6c0286a882d74e09b02ec72acc61..5417ddeffbb440c66c7729b13565e4f2
  static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
  {
      NvencContext *ctx = avctx->priv_data;
-@@ -1066,6 +1099,28 @@ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
+@@ -1065,6 +1098,28 @@ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
          av_log(avctx, AV_LOG_VERBOSE, "Temporal AQ enabled.\n");
      }
  
@@ -107,7 +107,7 @@ index 0e627457929c6c0286a882d74e09b02ec72acc61..5417ddeffbb440c66c7729b13565e4f2
      if (ctx->rc_lookahead > 0) {
          int lkd_bound = FFMIN(ctx->nb_surfaces, ctx->async_depth) -
                          ctx->encode_config.frameIntervalP - 4;
-@@ -2074,6 +2129,7 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
+@@ -2062,6 +2117,7 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
      av_frame_free(&ctx->frame);
  
      av_freep(&ctx->sei_data);
@@ -115,7 +115,7 @@ index 0e627457929c6c0286a882d74e09b02ec72acc61..5417ddeffbb440c66c7729b13565e4f2
  
      if (ctx->nvencoder) {
          p_nvenc->nvEncDestroyEncoder(ctx->nvencoder);
-@@ -3045,6 +3101,95 @@ static int nvenc_set_mastering_display_data(AVCodecContext *avctx, const AVFrame
+@@ -2988,6 +3044,95 @@ static int nvenc_set_mastering_display_data(AVCodecContext *avctx, const AVFrame
  }
  #endif
  
@@ -211,7 +211,7 @@ index 0e627457929c6c0286a882d74e09b02ec72acc61..5417ddeffbb440c66c7729b13565e4f2
  static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
  {
      NVENCSTATUS nv_status;
-@@ -3180,6 +3325,10 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3123,6 +3268,10 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
          if (res < 0)
              return res;
  
@@ -223,10 +223,10 @@ index 0e627457929c6c0286a882d74e09b02ec72acc61..5417ddeffbb440c66c7729b13565e4f2
      } else {
          pic_params.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
 diff --git a/libavcodec/nvenc.h b/libavcodec/nvenc.h
-index 0af137e98333707d99c72d317cfcb19aa076fa0d..b95075faa0d03f0b8b7b0add29e5ee6c392adbea 100644
+index 738fc0e8c99d9fd52ac56ad42fc9273fbfa5f126..212e1fda7e8229130bf05976b399609faf1b88b4 100644
 --- a/libavcodec/nvenc.h
 +++ b/libavcodec/nvenc.h
-@@ -277,6 +277,21 @@ typedef struct NvencContext
+@@ -276,6 +276,21 @@ typedef struct NvencContext
      int cbr_padding;
      int multiview, multiview_supported;
      int display_sei_sent;

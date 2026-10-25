@@ -8,6 +8,29 @@ the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
 ranges in older entries predate the first entry below (22 patches on the
 shared FFmpeg fix series, number 0021 retired).
 
+## Unreleased — shared FFmpeg fix series pinned at `v0.4.0` (ADR-0185, ADR-0236; regenerates 0001–0004, 0006–0008, 0009a, 0011, 0014–0018, 0022)
+
+- **Base**: `FFMPEG_SERIES_TAG` moves from `v0.3.0` to `v0.4.0`,
+  `FFMPEG_SERIES_COMMIT` from `9ff13ad7` to `0dd73807` and
+  `FFMPEG_SERIES_SHA256` to `09801c5f`, the sha256 of the `v0.4.0` tarball as
+  listed in its signed `SHA256SUMS`. The FFmpeg base stays `n9.0.2`.
+- **Patches**: the series grows from 34 to 35 patches. Its 0003 is now the
+  backport of FFmpeg `96b7f8281a` and replaces the SEI budget, the truncation
+  drop and `nvenc_sei.h`; it adds the backports of FFmpeg `fd9a8f25a0` and
+  `63d0237033` and dynamic `bt2408_hable` peak detection in `tonemap_opencl`.
+  The changed series patches edit `libavcodec/nvenc.c`, `libavcodec/nvenc.h`,
+  `libavutil/hwcontext_vulkan.c`, `libavfilter/Makefile` and
+  `libavfilter/allfilters.c`, so 0001–0004, 0006–0008, 0009a, 0011, 0014–0018
+  and 0022 regenerate with shifted hunk offsets and new `index` lines only.
+  The other patches are byte-identical.
+- **Behaviour**: unchanged for Pelorus side data; `files/pelorus_sei_fit.h`
+  already keeps the rules of the merged form (entry below).
+- **Rebase-sensitive**: none new.
+- **Interop**: none.
+- **Checks**: `scripts/fetch-ffmpeg-series.sh --self-test` and a verified
+  fetch of `v0.4.0`; `generate.sh` twice, byte-identical; the replay over
+  series `v0.4.0` (`test/build-and-run.sh`).
+
 ## Unreleased — SEI fit on FFmpeg's merged form (ADR-0236; regenerates 0022, 0023)
 
 - **Base**: unchanged (`n9.0.2`, shared series `v0.3.0`). FFmpeg commit

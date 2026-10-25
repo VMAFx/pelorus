@@ -76,7 +76,7 @@ index ca410e098775c7ba9b7cd7e5774796f071c48511..33f7c8f665cd7a52b4d4c83e62cf4f70
                                 require libvo_amrwbenc vo-amrwbenc/enc_if.h E_IF_init -lvo-amrwbenc; }
  enabled libvorbis         && require_pkg_config libvorbis vorbis vorbis/codec.h vorbis_info_init &&
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index 515c5373f1514861da5c102d541d1e5c9e57c0b9..a17054bbd115ec328faccc8024512f1fdc0e2396 100644
+index 9bd0ed6dc01a54eb1bff7c77173d20987cf305e6..d02192e13c389dccb603f4a87f4fe7e2e7658e0a 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
 @@ -445,6 +445,7 @@ OBJS-$(CONFIG_PELORUS_ANALYZE_VULKAN_FILTER) += vf_pelorus_analyze_vulkan.o vulk
@@ -1246,7 +1246,7 @@ index 0000000000000000000000000000000000000000..0e4f2e3ba9a3ceea81a9b5f1f158f0d6
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 +};
 diff --git a/libavfilter/vulkan/Makefile b/libavfilter/vulkan/Makefile
-index 599f717a9696021e9d51baa105bda04ce733fa70..bc4c5942364abcb9e9a3f2a0bce5952edf08e926 100644
+index 9eaef32a8450e81824559a0b2e7ce7cf34cd926e..aba76a340244ed3ad8a8446ceef161e5c20eab7d 100644
 --- a/libavfilter/vulkan/Makefile
 +++ b/libavfilter/vulkan/Makefile
 @@ -29,3 +29,4 @@ OBJS-$(CONFIG_PELORUS_DEBAND_VULKAN_FILTER) += vulkan/pelorus_deband.comp.spv.o
