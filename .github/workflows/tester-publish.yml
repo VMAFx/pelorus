@@ -31,6 +31,7 @@ on:
       - 'meson_options.txt'
       - 'build-config.env'
       - 'scripts/fetch-ffmpeg-series.sh'
+      - 'scripts/plant-header.py'
       - 'LICENSES/**'
       - 'REUSE.toml'
       - '.github/workflows/tester-publish.yml'

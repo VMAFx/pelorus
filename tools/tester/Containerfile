@@ -59,6 +59,8 @@ COPY ffmpeg-patches /src/pelorus/ffmpeg-patches
 # the sha256 pin once more and unpacks it.
 COPY build-config.env /src/pelorus/
 COPY scripts/fetch-ffmpeg-series.sh /src/pelorus/scripts/
+# Meson writes the planted SEI fit headers with it (ADR-0236).
+COPY scripts/plant-header.py /src/pelorus/scripts/
 COPY docs/api/encode-record.md /src/pelorus/docs/api/
 COPY tools/tester/install-fast-suite.py tools/tester/run-fast-suite.sh.in /src/pelorus/tools/tester/
 COPY .ffmpeg-series/*.tar.gz /src/ffmpeg-series-release/

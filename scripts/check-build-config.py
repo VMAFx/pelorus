@@ -3389,6 +3389,7 @@ TESTER_PATHS_LOUD = (
     "libpelorus/src/pelorus.c",
     "build-config.env",
     "scripts/fetch-ffmpeg-series.sh",
+    "scripts/plant-header.py",
     "LICENSES/EUPL-1.2.txt",
     ".github/workflows/tester-publish.yml",
 )
