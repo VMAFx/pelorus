@@ -50,6 +50,7 @@
 #include "libavutil/rational.h"
 #include "pelorus_analyze_maps.h"
 #include "pelorus_sidedata.h"
+#include "pelorus_sidedata_attach.h"
 #include "pelorus_vulkan_input.h"
 #include "pelorus_vulkan_sample.h"
 #include "vulkan_filter.h"
@@ -515,7 +516,6 @@ static void complexity_section(PelorusAnalyzeVulkanContext *s, AVFrame *frame, f
 static int attach_stats(AVFilterContext *ctx, AVFrame *frame, const PelAnTiles *tv)
 {
     PelorusAnalyzeVulkanContext *s = ctx->priv;
-    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
     PelorusSideData meta;
     PelAnSections sec;
     AVBufferRef *buf;
@@ -526,15 +526,9 @@ static int attach_stats(AVFilterContext *ctx, AVFrame *frame, const PelAnTiles *
     if (frame_scalars(s, tv, &gvar, &gedge, &flat_frac) == 0)
         return 0; /* nothing to report (degenerate frame) */
 
-    memset(&meta, 0, sizeof(meta));
-    meta.frame_pts = (uint64_t)frame->pts;
-    meta.bit_depth = d ? (uint8_t)d->comp[0].depth : 0;
-    meta.plane_layout = (d && d->log2_chroma_w == 0 && d->log2_chroma_h == 0) ?
-                            PEL_LAYOUT_444 :
-                            ((d && d->log2_chroma_h == 0) ? PEL_LAYOUT_422 : PEL_LAYOUT_420);
+    pel_sidedata_init_meta(&meta, frame, s->vkctx.output_format, PEL_FOURCC('P', 'L', 'R', 'A'));
     meta.grid_cols = (uint16_t)s->grid_cols;
     meta.grid_rows = (uint16_t)s->grid_rows;
-    meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'A');
 
     memset(&sec, 0, sizeof(sec));
     sec.var.global_variance = gvar;

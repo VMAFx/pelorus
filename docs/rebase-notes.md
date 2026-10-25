@@ -766,6 +766,22 @@ shared FFmpeg fix series, number 0021 retired).
   stack; libpelorus's public API and ABI are unchanged. Fast-suite regression:
   `meson test -C build ffmpeg-sidedata-consumers`.
 
+- **Shared producer header (DC-VMAFx-pelorus-ffmpeg-patches-files-1)**:
+  `ffmpeg-patches/files/pelorus_sidedata_attach.h` is installed into
+  `libavfilter/` by patch 0001 and included by the five blob producers:
+  deband (0001), analyze (0002), denoise (0003), grain_estimate (0006) and mc
+  (0007). It packs a Pelorus blob and attaches it as `SEI_UNREGISTERED` side
+  data, and fills the common `PelorusSideData` meta fields from the frame. It is
+  kept apart from `pelorus_sidedata.h` so that the consumer fast-suite test
+  still builds against its stub `libavutil/frame.h` without an FFmpeg tree. The
+  same change moves the compute exec-pool setup of dehalo (0014), denoise,
+  grain_estimate and mc into `pel_vk_init_compute_exec()` in
+  `pelorus_vulkan_input.h`. On a rebase, keep the second `cp` line in
+  `generate.sh`'s first loop iteration and the five
+  `#include "pelorus_sidedata_attach.h"` lines. Re-test: the full replay
+  (`ffmpeg-patches/test/build-and-run.sh`); its `udu_sei`, CUDA-hop
+  (mc into denoise) and `pelorus_fgs` sidedata smokes read the attached blobs.
+
 The older sections below preserve the release and benchmark environment in
 which each change landed. Their unqualified gate names are historical
 shorthand; use the pinned commands above for all current rebases.

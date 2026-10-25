@@ -31,10 +31,10 @@ ADR: docs/adr/0123-anime-dehalo.md
  configure                                   |   1 +
  libavfilter/Makefile                        |   1 +
  libavfilter/allfilters.c                    |   1 +
- libavfilter/vf_pelorus_dehalo_vulkan.c      | 339 +++++++++++++++++
+ libavfilter/vf_pelorus_dehalo_vulkan.c      | 333 +++++++++++++++++
  libavfilter/vulkan/Makefile                 |   1 +
  libavfilter/vulkan/pelorus_dehalo.comp.glsl | 395 ++++++++++++++++++++
- 6 files changed, 738 insertions(+)
+ 6 files changed, 732 insertions(+)
 
 diff --git a/configure b/configure
 index 33f22c3e0ac5128fdb07aabfe5c27d93115c4a15..79961fadcbbec56084671d9258438885ecc85b97 100755
@@ -74,10 +74,10 @@ index 57ae3e5957109d935b11f196afc1c0664c70b073..3feedf2185ebf5ebdc6eb537aa7e6c78
  extern const FFFilter ff_vf_pelorus_mc_vulkan;
 diff --git a/libavfilter/vf_pelorus_dehalo_vulkan.c b/libavfilter/vf_pelorus_dehalo_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..aa942e05f917a56b1df74122cd866a466b07c503
+index 0000000000000000000000000000000000000000..5eb56da104eb753e107a054af6a74e80af3873bb
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_dehalo_vulkan.c
-@@ -0,0 +1,339 @@
+@@ -0,0 +1,333 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -197,13 +197,7 @@ index 0000000000000000000000000000000000000000..aa942e05f917a56b1df74122cd866a46
 +
 +    s->opts.sample_scale = pel_vk_sample_scale(vkctx->input_format);
 +
-+    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
-+    if (!s->qf) {
-+        av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
-+        return AVERROR(ENOTSUP);
-+    }
-+
-+    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
++    RET(pel_vk_init_compute_exec(ctx, vkctx, &s->qf, &s->e));
 +
 +    /* The plane count, the plane bitmask and the tile switch were const-folded
 +     * into the generated GLSL before FFmpeg 9 (the C side unrolled the

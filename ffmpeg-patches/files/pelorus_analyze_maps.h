@@ -342,6 +342,25 @@ static inline pel_result pel_an_sections_write(const PelorusSideData *meta,
 #endif
 }
 
+/* Calculate section length and memory layout for the analyze blob. */
+static inline pel_result pel_an_calc_layout(const PelorusSideData *meta, const PelAnSections *sec,
+                                            PelorusPackSection list[3], int with_maps,
+                                            size_t *out_len, PelAnLayout *lay)
+{
+    size_t len = 0;
+    pel_result rc;
+
+    pel_an_section_list(sec, list);
+    rc = pel_an_sections_len(meta, list, &len);
+    if (rc != PEL_OK)
+        return rc;
+    pel_an_layout((uint32_t)(len - PELORUS_SIDEDATA_UUID_LEN),
+                  (uint32_t)meta->grid_cols * (uint32_t)meta->grid_rows, with_maps, lay);
+    if (out_len)
+        *out_len = len;
+    return PEL_OK;
+}
+
 /* Blob length for this grid, with or without maps. */
 static inline pel_result pel_an_blob_size(const PelorusSideData *meta, int with_maps,
                                           size_t *out_len)
@@ -349,7 +368,6 @@ static inline pel_result pel_an_blob_size(const PelorusSideData *meta, int with_
     PelAnSections sec;
     PelorusPackSection list[3];
     PelAnLayout lay;
-    size_t len = 0;
     pel_result rc;
 
     if (!out_len)
@@ -359,12 +377,9 @@ static inline pel_result pel_an_blob_size(const PelorusSideData *meta, int with_
     if (rc != PEL_OK)
         return rc;
     memset(&sec, 0, sizeof(sec));
-    pel_an_section_list(&sec, list);
-    rc = pel_an_sections_len(meta, list, &len);
+    rc = pel_an_calc_layout(meta, &sec, list, with_maps, NULL, &lay);
     if (rc != PEL_OK)
         return rc;
-    pel_an_layout((uint32_t)(len - PELORUS_SIDEDATA_UUID_LEN),
-                  (uint32_t)meta->grid_cols * (uint32_t)meta->grid_rows, with_maps, &lay);
     *out_len = (size_t)PELORUS_SIDEDATA_UUID_LEN + lay.end;
     return PEL_OK;
 }
@@ -451,12 +466,9 @@ static inline pel_result pel_an_pack(const PelorusSideData *meta, const PelAnSec
     rc = pel_an_check(meta, maps);
     if (rc != PEL_OK)
         return rc;
-    pel_an_section_list(sec, list);
-    rc = pel_an_sections_len(meta, list, &len);
+    rc = pel_an_calc_layout(meta, sec, list, maps != NULL, &len, &lay);
     if (rc != PEL_OK)
         return rc;
-    pel_an_layout((uint32_t)(len - PELORUS_SIDEDATA_UUID_LEN),
-                  (uint32_t)meta->grid_cols * (uint32_t)meta->grid_rows, maps != NULL, &lay);
     if (cap < (size_t)PELORUS_SIDEDATA_UUID_LEN + lay.end) {
         *out_len = (size_t)PELORUS_SIDEDATA_UUID_LEN + lay.end;
         return PEL_ERR_RANGE; /* never a partial blob: buf is untouched */

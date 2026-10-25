@@ -62,6 +62,7 @@
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
+#include "pelorus_sidedata_attach.h"
 #include "pelorus_vulkan_sample.h"
 #include "pelorus_vulkan_input.h"
 #include "vulkan_filter.h"
@@ -318,13 +319,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
     FFVulkanContext *vkctx = &s->vkctx;
     FFVulkanShader *shd = &s->shd;
 
-    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
-    if (!s->qf) {
-        av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
-        return AVERROR(ENOTSUP);
-    }
-
-    err = ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL);
+    err = pel_vk_init_compute_exec(ctx, vkctx, &s->qf, &s->e);
     if (err < 0)
         return err;
 
@@ -352,12 +347,6 @@ static av_cold int init_filter(AVFilterContext *ctx)
 
     s->initialized = 1;
     return 0;
-}
-
-static void pel_sd_free(void *opaque, uint8_t *data)
-{
-    (void)opaque;
-    pel_blob_free(data);
 }
 
 /* Per-band RMS residual (grain stddev at that intensity), in [0,1], plus the
@@ -723,38 +712,16 @@ static int attach_native_aom(PelorusGrainEstimateVulkanContext *s, AVFrame *fram
 static int attach_interop(PelorusGrainEstimateVulkanContext *s, AVFrame *frame,
                           const PelorusFilmGrainSection *g)
 {
-    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
     PelorusSideData meta;
     PelorusPackSection sec;
-    uint8_t *blob = NULL;
-    size_t len = 0;
-    AVBufferRef *buf;
 
-    memset(&meta, 0, sizeof(meta));
-    meta.frame_pts = (uint64_t)frame->pts;
-    meta.bit_depth = d ? (uint8_t)d->comp[0].depth : 0;
-    meta.plane_layout = (d && d->log2_chroma_w == 0 && d->log2_chroma_h == 0) ?
-                            PEL_LAYOUT_444 :
-                            ((d && d->log2_chroma_h == 0) ? PEL_LAYOUT_422 : PEL_LAYOUT_420);
-    meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'G');
+    pel_sidedata_init_meta(&meta, frame, s->vkctx.output_format, PEL_FOURCC('P', 'L', 'R', 'G'));
 
     sec.id = PEL_SEC_FILMGRAIN;
     sec.data = g;
     sec.size = (uint32_t)sizeof(*g);
 
-    if (pel_blob_pack(&meta, &sec, 1, &blob, &len) != PEL_OK || !blob)
-        return AVERROR(ENOMEM);
-
-    buf = av_buffer_create(blob, len, pel_sd_free, NULL, 0);
-    if (!buf) {
-        pel_blob_free(blob);
-        return AVERROR(ENOMEM);
-    }
-    if (!av_frame_new_side_data_from_buf(frame, AV_FRAME_DATA_SEI_UNREGISTERED, buf)) {
-        av_buffer_unref(&buf);
-        return AVERROR(ENOMEM);
-    }
-    return 0;
+    return pel_sidedata_pack_and_attach(frame, &meta, &sec, 1);
 }
 
 /* Record one buffer barrier on the accumulator SSBO, optionally together with

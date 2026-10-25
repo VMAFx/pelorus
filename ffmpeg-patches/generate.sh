@@ -244,6 +244,8 @@ for filter in deband analyze denoise; do
         cp "$FILES_DIR/pelorus_vulkan_pool.h" "$WORKTREE/libavfilter/"
         # Shared consumer-side side-data lookup (analyze, denoise, scenecut).
         cp "$FILES_DIR/pelorus_sidedata.h" "$WORKTREE/libavfilter/"
+        # Shared producer-side blob attach (deband, analyze, denoise, grain_estimate, mc).
+        cp "$FILES_DIR/pelorus_sidedata_attach.h" "$WORKTREE/libavfilter/"
     fi
     if [[ "$filter" == "analyze" ]]; then
         # Host-side cell grid, per-cell scores and map packing (ADR-0177), a
