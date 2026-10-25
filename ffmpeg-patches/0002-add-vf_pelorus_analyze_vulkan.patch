@@ -52,11 +52,11 @@ docs/adr/0133-analyze-coarse-banding-cambi.md, docs/adr/0177-analyze-per-cell-ma
  configure                                    |   3 +
  libavfilter/Makefile                         |   1 +
  libavfilter/allfilters.c                     |   1 +
- libavfilter/pelorus_analyze_maps.h           | 473 +++++++++++
- libavfilter/vf_pelorus_analyze_vulkan.c      | 865 ++++++++++++++++++++
+ libavfilter/pelorus_analyze_maps.h           | 485 +++++++++++
+ libavfilter/vf_pelorus_analyze_vulkan.c      | 859 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |   1 +
  libavfilter/vulkan/pelorus_analyze.comp.glsl | 186 +++++
- 7 files changed, 1530 insertions(+)
+ 7 files changed, 1536 insertions(+)
 
 diff --git a/configure b/configure
 index f1c896727d1690d5dba37435ab185464d1d7324f..974c5e3e75051a61c81fec15d264b9627a5933ec 100755
@@ -105,10 +105,10 @@ index d1b243518acce10749e65a85385fdd1f8ac1cafb..796756c874547d1bb9ccba79c99350e5
  extern const FFFilter ff_vf_perspective;
 diff --git a/libavfilter/pelorus_analyze_maps.h b/libavfilter/pelorus_analyze_maps.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..7cad81149ad9daa95f4dae3fe9169878bc608b11
+index 0000000000000000000000000000000000000000..4d4927179bb424152046a04333b2957bf502cdd1
 --- /dev/null
 +++ b/libavfilter/pelorus_analyze_maps.h
-@@ -0,0 +1,473 @@
+@@ -0,0 +1,485 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -453,6 +453,25 @@ index 0000000000000000000000000000000000000000..7cad81149ad9daa95f4dae3fe9169878
 +#endif
 +}
 +
++/* Calculate section length and memory layout for the analyze blob. */
++static inline pel_result pel_an_calc_layout(const PelorusSideData *meta, const PelAnSections *sec,
++                                            PelorusPackSection list[3], int with_maps,
++                                            size_t *out_len, PelAnLayout *lay)
++{
++    size_t len = 0;
++    pel_result rc;
++
++    pel_an_section_list(sec, list);
++    rc = pel_an_sections_len(meta, list, &len);
++    if (rc != PEL_OK)
++        return rc;
++    pel_an_layout((uint32_t)(len - PELORUS_SIDEDATA_UUID_LEN),
++                  (uint32_t)meta->grid_cols * (uint32_t)meta->grid_rows, with_maps, lay);
++    if (out_len)
++        *out_len = len;
++    return PEL_OK;
++}
++
 +/* Blob length for this grid, with or without maps. */
 +static inline pel_result pel_an_blob_size(const PelorusSideData *meta, int with_maps,
 +                                          size_t *out_len)
@@ -460,7 +479,6 @@ index 0000000000000000000000000000000000000000..7cad81149ad9daa95f4dae3fe9169878
 +    PelAnSections sec;
 +    PelorusPackSection list[3];
 +    PelAnLayout lay;
-+    size_t len = 0;
 +    pel_result rc;
 +
 +    if (!out_len)
@@ -470,12 +488,9 @@ index 0000000000000000000000000000000000000000..7cad81149ad9daa95f4dae3fe9169878
 +    if (rc != PEL_OK)
 +        return rc;
 +    memset(&sec, 0, sizeof(sec));
-+    pel_an_section_list(&sec, list);
-+    rc = pel_an_sections_len(meta, list, &len);
++    rc = pel_an_calc_layout(meta, &sec, list, with_maps, NULL, &lay);
 +    if (rc != PEL_OK)
 +        return rc;
-+    pel_an_layout((uint32_t)(len - PELORUS_SIDEDATA_UUID_LEN),
-+                  (uint32_t)meta->grid_cols * (uint32_t)meta->grid_rows, with_maps, &lay);
 +    *out_len = (size_t)PELORUS_SIDEDATA_UUID_LEN + lay.end;
 +    return PEL_OK;
 +}
@@ -562,12 +577,9 @@ index 0000000000000000000000000000000000000000..7cad81149ad9daa95f4dae3fe9169878
 +    rc = pel_an_check(meta, maps);
 +    if (rc != PEL_OK)
 +        return rc;
-+    pel_an_section_list(sec, list);
-+    rc = pel_an_sections_len(meta, list, &len);
++    rc = pel_an_calc_layout(meta, sec, list, maps != NULL, &len, &lay);
 +    if (rc != PEL_OK)
 +        return rc;
-+    pel_an_layout((uint32_t)(len - PELORUS_SIDEDATA_UUID_LEN),
-+                  (uint32_t)meta->grid_cols * (uint32_t)meta->grid_rows, maps != NULL, &lay);
 +    if (cap < (size_t)PELORUS_SIDEDATA_UUID_LEN + lay.end) {
 +        *out_len = (size_t)PELORUS_SIDEDATA_UUID_LEN + lay.end;
 +        return PEL_ERR_RANGE; /* never a partial blob: buf is untouched */
@@ -584,10 +596,10 @@ index 0000000000000000000000000000000000000000..7cad81149ad9daa95f4dae3fe9169878
 +#endif /* AVFILTER_PELORUS_ANALYZE_MAPS_H */
 diff --git a/libavfilter/vf_pelorus_analyze_vulkan.c b/libavfilter/vf_pelorus_analyze_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..bec0c0d9f9c8c38c63a3aa6152f2c422381eaaad
+index 0000000000000000000000000000000000000000..33d93a280c7f5e9230560d5b95d8f55f25955e34
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_analyze_vulkan.c
-@@ -0,0 +1,865 @@
+@@ -0,0 +1,859 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -640,6 +652,7 @@ index 0000000000000000000000000000000000000000..bec0c0d9f9c8c38c63a3aa6152f2c422
 +#include "libavutil/rational.h"
 +#include "pelorus_analyze_maps.h"
 +#include "pelorus_sidedata.h"
++#include "pelorus_sidedata_attach.h"
 +#include "pelorus_vulkan_input.h"
 +#include "pelorus_vulkan_sample.h"
 +#include "vulkan_filter.h"
@@ -1105,7 +1118,6 @@ index 0000000000000000000000000000000000000000..bec0c0d9f9c8c38c63a3aa6152f2c422
 +static int attach_stats(AVFilterContext *ctx, AVFrame *frame, const PelAnTiles *tv)
 +{
 +    PelorusAnalyzeVulkanContext *s = ctx->priv;
-+    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
 +    PelorusSideData meta;
 +    PelAnSections sec;
 +    AVBufferRef *buf;
@@ -1116,15 +1128,9 @@ index 0000000000000000000000000000000000000000..bec0c0d9f9c8c38c63a3aa6152f2c422
 +    if (frame_scalars(s, tv, &gvar, &gedge, &flat_frac) == 0)
 +        return 0; /* nothing to report (degenerate frame) */
 +
-+    memset(&meta, 0, sizeof(meta));
-+    meta.frame_pts = (uint64_t)frame->pts;
-+    meta.bit_depth = d ? (uint8_t)d->comp[0].depth : 0;
-+    meta.plane_layout = (d && d->log2_chroma_w == 0 && d->log2_chroma_h == 0) ?
-+                            PEL_LAYOUT_444 :
-+                            ((d && d->log2_chroma_h == 0) ? PEL_LAYOUT_422 : PEL_LAYOUT_420);
++    pel_sidedata_init_meta(&meta, frame, s->vkctx.output_format, PEL_FOURCC('P', 'L', 'R', 'A'));
 +    meta.grid_cols = (uint16_t)s->grid_cols;
 +    meta.grid_rows = (uint16_t)s->grid_rows;
-+    meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'A');
 +
 +    memset(&sec, 0, sizeof(sec));
 +    sec.var.global_variance = gvar;

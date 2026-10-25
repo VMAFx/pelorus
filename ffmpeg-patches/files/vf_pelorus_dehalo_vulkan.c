@@ -117,13 +117,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
 
     s->opts.sample_scale = pel_vk_sample_scale(vkctx->input_format);
 
-    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
-    if (!s->qf) {
-        av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
-        return AVERROR(ENOTSUP);
-    }
-
-    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
+    RET(pel_vk_init_compute_exec(ctx, vkctx, &s->qf, &s->e));
 
     /* The plane count, the plane bitmask and the tile switch were const-folded
      * into the generated GLSL before FFmpeg 9 (the C side unrolled the

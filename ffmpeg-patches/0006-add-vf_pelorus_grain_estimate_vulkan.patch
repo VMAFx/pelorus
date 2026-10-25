@@ -62,10 +62,10 @@ ADR: docs/adr/0230-grain-gate-chain.md
  configure                                          |    3 +
  libavfilter/Makefile                               |    1 +
  libavfilter/allfilters.c                           |    1 +
- libavfilter/vf_pelorus_grain_estimate_vulkan.c     | 1074 ++++++++++++++++++++
+ libavfilter/vf_pelorus_grain_estimate_vulkan.c     | 1041 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                        |    1 +
  .../vulkan/pelorus_grain_estimate.comp.glsl        |  156 +++
- 6 files changed, 1236 insertions(+)
+ 6 files changed, 1203 insertions(+)
 
 diff --git a/configure b/configure
 index d26ae6933549cc65a8a1852f2de02ff2980902a1..ca410e098775c7ba9b7cd7e5774796f071c48511 100755
@@ -114,10 +114,10 @@ index 2efa0d5f6850fdd7b62e228caaba41db95711770..0cd4d5daabfabe7837cf9b76590f78dd
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_grain_estimate_vulkan.c b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..9cfab139b78e007a11a6e6c597cdc7a4700b38b5
+index 0000000000000000000000000000000000000000..16a43168cee9572dade80b646dcf9ad6766309f7
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_grain_estimate_vulkan.c
-@@ -0,0 +1,1074 @@
+@@ -0,0 +1,1041 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -182,6 +182,7 @@ index 0000000000000000000000000000000000000000..9cfab139b78e007a11a6e6c597cdc7a4
 +#include "libavutil/mem.h"
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
++#include "pelorus_sidedata_attach.h"
 +#include "pelorus_vulkan_sample.h"
 +#include "pelorus_vulkan_input.h"
 +#include "vulkan_filter.h"
@@ -438,13 +439,7 @@ index 0000000000000000000000000000000000000000..9cfab139b78e007a11a6e6c597cdc7a4
 +    FFVulkanContext *vkctx = &s->vkctx;
 +    FFVulkanShader *shd = &s->shd;
 +
-+    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
-+    if (!s->qf) {
-+        av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
-+        return AVERROR(ENOTSUP);
-+    }
-+
-+    err = ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL);
++    err = pel_vk_init_compute_exec(ctx, vkctx, &s->qf, &s->e);
 +    if (err < 0)
 +        return err;
 +
@@ -472,12 +467,6 @@ index 0000000000000000000000000000000000000000..9cfab139b78e007a11a6e6c597cdc7a4
 +
 +    s->initialized = 1;
 +    return 0;
-+}
-+
-+static void pel_sd_free(void *opaque, uint8_t *data)
-+{
-+    (void)opaque;
-+    pel_blob_free(data);
 +}
 +
 +/* Per-band RMS residual (grain stddev at that intensity), in [0,1], plus the
@@ -843,38 +832,16 @@ index 0000000000000000000000000000000000000000..9cfab139b78e007a11a6e6c597cdc7a4
 +static int attach_interop(PelorusGrainEstimateVulkanContext *s, AVFrame *frame,
 +                          const PelorusFilmGrainSection *g)
 +{
-+    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
 +    PelorusSideData meta;
 +    PelorusPackSection sec;
-+    uint8_t *blob = NULL;
-+    size_t len = 0;
-+    AVBufferRef *buf;
 +
-+    memset(&meta, 0, sizeof(meta));
-+    meta.frame_pts = (uint64_t)frame->pts;
-+    meta.bit_depth = d ? (uint8_t)d->comp[0].depth : 0;
-+    meta.plane_layout = (d && d->log2_chroma_w == 0 && d->log2_chroma_h == 0) ?
-+                            PEL_LAYOUT_444 :
-+                            ((d && d->log2_chroma_h == 0) ? PEL_LAYOUT_422 : PEL_LAYOUT_420);
-+    meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'G');
++    pel_sidedata_init_meta(&meta, frame, s->vkctx.output_format, PEL_FOURCC('P', 'L', 'R', 'G'));
 +
 +    sec.id = PEL_SEC_FILMGRAIN;
 +    sec.data = g;
 +    sec.size = (uint32_t)sizeof(*g);
 +
-+    if (pel_blob_pack(&meta, &sec, 1, &blob, &len) != PEL_OK || !blob)
-+        return AVERROR(ENOMEM);
-+
-+    buf = av_buffer_create(blob, len, pel_sd_free, NULL, 0);
-+    if (!buf) {
-+        pel_blob_free(blob);
-+        return AVERROR(ENOMEM);
-+    }
-+    if (!av_frame_new_side_data_from_buf(frame, AV_FRAME_DATA_SEI_UNREGISTERED, buf)) {
-+        av_buffer_unref(&buf);
-+        return AVERROR(ENOMEM);
-+    }
-+    return 0;
++    return pel_sidedata_pack_and_attach(frame, &meta, &sec, 1);
 +}
 +
 +/* Record one buffer barrier on the accumulator SSBO, optionally together with

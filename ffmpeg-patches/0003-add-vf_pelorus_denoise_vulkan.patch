@@ -40,10 +40,10 @@ ADR: docs/adr/0112-temporal-denoise.md
  configure                                    |    3 +
  libavfilter/Makefile                         |    1 +
  libavfilter/allfilters.c                     |    1 +
- libavfilter/vf_pelorus_denoise_vulkan.c      | 1287 ++++++++++++++++++++
+ libavfilter/vf_pelorus_denoise_vulkan.c      | 1254 ++++++++++++++++++++
  libavfilter/vulkan/Makefile                  |    1 +
  libavfilter/vulkan/pelorus_denoise.comp.glsl |  518 ++++++++
- 6 files changed, 1811 insertions(+)
+ 6 files changed, 1778 insertions(+)
 
 diff --git a/configure b/configure
 index 974c5e3e75051a61c81fec15d264b9627a5933ec..d26ae6933549cc65a8a1852f2de02ff2980902a1 100755
@@ -92,10 +92,10 @@ index 796756c874547d1bb9ccba79c99350e5214e31c2..2efa0d5f6850fdd7b62e228caaba41db
  extern const FFFilter ff_vf_phase;
 diff --git a/libavfilter/vf_pelorus_denoise_vulkan.c b/libavfilter/vf_pelorus_denoise_vulkan.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..e598553f3b937512131907ab43db2d13cbff3423
+index 0000000000000000000000000000000000000000..e7c95140cf448c53b3b73ac6402d9f59c123211f
 --- /dev/null
 +++ b/libavfilter/vf_pelorus_denoise_vulkan.c
-@@ -0,0 +1,1287 @@
+@@ -0,0 +1,1254 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -158,6 +158,7 @@ index 0000000000000000000000000000000000000000..e598553f3b937512131907ab43db2d13
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
 +#include "pelorus_sidedata.h"
++#include "pelorus_sidedata_attach.h"
 +#include "pelorus_vulkan_input.h"
 +#include "pelorus_vulkan_sample.h"
 +#include "pelorus_vulkan_pool.h"
@@ -399,13 +400,7 @@ index 0000000000000000000000000000000000000000..e598553f3b937512131907ab43db2d13
 +
 +    denoise_init_opts(s, planes, &semi_planar);
 +
-+    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
-+    if (!s->qf) {
-+        av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
-+        return AVERROR(ENOTSUP);
-+    }
-+
-+    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
++    RET(pel_vk_init_compute_exec(ctx, vkctx, &s->qf, &s->e));
 +    /* The plane count, the `planes` bitmask and the ADR-0134 `tile` switch were
 +     * const-folded into the generated GLSL before FFmpeg 9 (the per-plane main()
 +     * was unrolled in C). With precompiled SPIR-V they become specialization
@@ -435,12 +430,6 @@ index 0000000000000000000000000000000000000000..e598553f3b937512131907ab43db2d13
 +
 +fail:
 +    return err;
-+}
-+
-+static void pel_sd_free(void *opaque, uint8_t *data)
-+{
-+    (void)opaque;
-+    pel_blob_free(data);
 +}
 +
 +/* Sum one statistic's 64-bit slices and return it in sample units. A slice is
@@ -502,41 +491,19 @@ index 0000000000000000000000000000000000000000..e598553f3b937512131907ab43db2d13
 +static int attach_interop(PelorusDenoiseVulkanContext *s, AVFrame *out,
 +                          const PelorusDenoiseBuf *acc)
 +{
-+    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
 +    PelorusSideData meta;
 +    PelorusDenoiseSection den;
 +    PelorusPackSection sec;
-+    uint8_t *blob = NULL;
-+    size_t len = 0;
-+    AVBufferRef *buf;
 +
 +    denoise_fill_section(s, acc, &den);
 +
-+    memset(&meta, 0, sizeof(meta));
-+    meta.frame_pts = (uint64_t)out->pts;
-+    meta.bit_depth = d ? (uint8_t)d->comp[0].depth : 0;
-+    meta.plane_layout = (d && d->log2_chroma_w == 0 && d->log2_chroma_h == 0) ?
-+                            PEL_LAYOUT_444 :
-+                            ((d && d->log2_chroma_h == 0) ? PEL_LAYOUT_422 : PEL_LAYOUT_420);
-+    meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'D');
++    pel_sidedata_init_meta(&meta, out, s->vkctx.output_format, PEL_FOURCC('P', 'L', 'R', 'D'));
 +
 +    sec.id = PEL_SEC_DENOISE;
 +    sec.data = &den;
 +    sec.size = (uint32_t)sizeof(den);
 +
-+    if (pel_blob_pack(&meta, &sec, 1, &blob, &len) != PEL_OK || !blob)
-+        return AVERROR(ENOMEM);
-+
-+    buf = av_buffer_create(blob, len, pel_sd_free, NULL, 0);
-+    if (!buf) {
-+        pel_blob_free(blob);
-+        return AVERROR(ENOMEM);
-+    }
-+    if (!av_frame_new_side_data_from_buf(out, AV_FRAME_DATA_SEI_UNREGISTERED, buf)) {
-+        av_buffer_unref(&buf);
-+        return AVERROR(ENOMEM);
-+    }
-+    return 0;
++    return pel_sidedata_pack_and_attach(out, &meta, &sec, 1);
 +}
 +
 +typedef struct DenoiseViews {

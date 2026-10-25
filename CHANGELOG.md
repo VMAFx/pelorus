@@ -115,6 +115,7 @@ SPDX-License-Identifier: EUPL-1.2
 - `scripts/bench/fetch-corpus.sh` reads the categories file through one `category_rows` helper for both the `--check-categories` run and the warning after a fetch; output and exit status are unchanged.
 - The open Python code-scanning alerts are fixed: bench scripts close the JSON files they read, `bd_rate.py` tests for NaN with `math.isnan`, the deliberate empty `except` blocks say why they ignore the error, two unused imports and an unused loop variable are gone, and tester fixture cache files are published owner-only (`0600`).
 - Repository check scripts drop their copy-paste: `check-build-config.py` reads its checked files and finds the single Renovate regex manager through one helper each, `check-vulkan-storage-domain.py` loads a filter's C and GLSL sources once, `test-adr-next-free.py` builds every fixture repository with `init_fixture_repo()`, and the AV1 grain calibration generator reads its committed table through the H.274 generator's parser.
+- The FFmpeg filter sources share their repeated host code: the five side-data producers (deband, analyze, denoise, grain_estimate, mc) pack and attach their blob through the new private header `pelorus_sidedata_attach.h`, dehalo, denoise, grain_estimate and mc set up their compute exec pool with `pel_vk_init_compute_exec()`, and the analyze map layout comes from one `pel_an_calc_layout()`; filter output is unchanged.
 
 <!-- END UNRELEASED -->
 

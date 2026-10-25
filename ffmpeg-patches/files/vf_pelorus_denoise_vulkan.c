@@ -60,6 +60,7 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "pelorus_sidedata.h"
+#include "pelorus_sidedata_attach.h"
 #include "pelorus_vulkan_input.h"
 #include "pelorus_vulkan_sample.h"
 #include "pelorus_vulkan_pool.h"
@@ -301,13 +302,7 @@ static av_cold int init_filter(AVFilterContext *ctx)
 
     denoise_init_opts(s, planes, &semi_planar);
 
-    s->qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
-    if (!s->qf) {
-        av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
-        return AVERROR(ENOTSUP);
-    }
-
-    RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num * 4, 0, 0, 0, NULL));
+    RET(pel_vk_init_compute_exec(ctx, vkctx, &s->qf, &s->e));
     /* The plane count, the `planes` bitmask and the ADR-0134 `tile` switch were
      * const-folded into the generated GLSL before FFmpeg 9 (the per-plane main()
      * was unrolled in C). With precompiled SPIR-V they become specialization
@@ -337,12 +332,6 @@ static av_cold int init_filter(AVFilterContext *ctx)
 
 fail:
     return err;
-}
-
-static void pel_sd_free(void *opaque, uint8_t *data)
-{
-    (void)opaque;
-    pel_blob_free(data);
 }
 
 /* Sum one statistic's 64-bit slices and return it in sample units. A slice is
@@ -404,41 +393,19 @@ static void denoise_fill_section(const PelorusDenoiseVulkanContext *s, const Pel
 static int attach_interop(PelorusDenoiseVulkanContext *s, AVFrame *out,
                           const PelorusDenoiseBuf *acc)
 {
-    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(s->vkctx.output_format);
     PelorusSideData meta;
     PelorusDenoiseSection den;
     PelorusPackSection sec;
-    uint8_t *blob = NULL;
-    size_t len = 0;
-    AVBufferRef *buf;
 
     denoise_fill_section(s, acc, &den);
 
-    memset(&meta, 0, sizeof(meta));
-    meta.frame_pts = (uint64_t)out->pts;
-    meta.bit_depth = d ? (uint8_t)d->comp[0].depth : 0;
-    meta.plane_layout = (d && d->log2_chroma_w == 0 && d->log2_chroma_h == 0) ?
-                            PEL_LAYOUT_444 :
-                            ((d && d->log2_chroma_h == 0) ? PEL_LAYOUT_422 : PEL_LAYOUT_420);
-    meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'D');
+    pel_sidedata_init_meta(&meta, out, s->vkctx.output_format, PEL_FOURCC('P', 'L', 'R', 'D'));
 
     sec.id = PEL_SEC_DENOISE;
     sec.data = &den;
     sec.size = (uint32_t)sizeof(den);
 
-    if (pel_blob_pack(&meta, &sec, 1, &blob, &len) != PEL_OK || !blob)
-        return AVERROR(ENOMEM);
-
-    buf = av_buffer_create(blob, len, pel_sd_free, NULL, 0);
-    if (!buf) {
-        pel_blob_free(blob);
-        return AVERROR(ENOMEM);
-    }
-    if (!av_frame_new_side_data_from_buf(out, AV_FRAME_DATA_SEI_UNREGISTERED, buf)) {
-        av_buffer_unref(&buf);
-        return AVERROR(ENOMEM);
-    }
-    return 0;
+    return pel_sidedata_pack_and_attach(out, &meta, &sec, 1);
 }
 
 typedef struct DenoiseViews {

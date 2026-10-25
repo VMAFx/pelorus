@@ -35,6 +35,7 @@
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
+#include "pelorus_sidedata_attach.h"
 #include "pelorus_vulkan_input.h"
 #include "pelorus_vulkan_sample.h"
 #include "pelorus_vulkan_pool.h"
@@ -175,21 +176,11 @@ fail:
  * Measured per-cell banding maps are produced by vf_pelorus_analyze (a future
  * pass); this v0.1 emission marks the section present with summary scalars so
  * a downstream vmafx scorer can react. */
-static void pel_sd_free(void *opaque, uint8_t *data)
-{
-    (void)opaque;
-    pel_blob_free(data);
-}
-
 static int attach_interop(PelorusDebandVulkanContext *s, AVFrame *out)
 {
     PelorusSideData meta;
     PelorusBandingSection band;
     PelorusPackSection sec;
-    uint8_t *blob = NULL;
-    size_t len = 0;
-    AVBufferRef *buf;
-    AVFrameSideData *sd;
 
     memset(&meta, 0, sizeof(meta));
     meta.frame_pts = (uint64_t)out->pts;
@@ -208,20 +199,7 @@ static int attach_interop(PelorusDebandVulkanContext *s, AVFrame *out)
     sec.data = &band;
     sec.size = (uint32_t)sizeof(band);
 
-    if (pel_blob_pack(&meta, &sec, 1, &blob, &len) != PEL_OK || !blob)
-        return AVERROR(ENOMEM);
-
-    buf = av_buffer_create(blob, len, pel_sd_free, NULL, 0);
-    if (!buf) {
-        pel_blob_free(blob);
-        return AVERROR(ENOMEM);
-    }
-    sd = av_frame_new_side_data_from_buf(out, AV_FRAME_DATA_SEI_UNREGISTERED, buf);
-    if (!sd) {
-        av_buffer_unref(&buf);
-        return AVERROR(ENOMEM);
-    }
-    return 0;
+    return pel_sidedata_pack_and_attach(out, &meta, &sec, 1);
 }
 
 static int deband_run(AVFilterContext *ctx, AVFrame *out, AVFrame *in)

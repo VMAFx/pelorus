@@ -128,4 +128,17 @@ static inline void pel_vk_spec_add_frame_size(VkSpecializationInfo *sl,
     SPEC_LIST_ADD(sl, 19, 32, (uint32_t)desc->log2_chroma_h);
 }
 
+/* Find a compute queue family and initialize an execution pool with 4 command
+ * buffers per queue. Returns 0 or a negative AVERROR. */
+static inline int pel_vk_init_compute_exec(AVFilterContext *ctx, FFVulkanContext *vkctx,
+                                           AVVulkanDeviceQueueFamily **qf, FFVkExecPool *e)
+{
+    *qf = ff_vk_qf_find(vkctx, VK_QUEUE_COMPUTE_BIT, 0);
+    if (!*qf) {
+        av_log(ctx, AV_LOG_ERROR, "Device has no compute queues!\n");
+        return AVERROR(ENOTSUP);
+    }
+    return ff_vk_exec_pool_init(vkctx, *qf, e, (*qf)->num * 4, 0, 0, 0, NULL);
+}
+
 #endif /* AVFILTER_PELORUS_VULKAN_INPUT_H */
