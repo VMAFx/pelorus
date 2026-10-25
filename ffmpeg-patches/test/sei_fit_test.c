@@ -211,6 +211,12 @@ static void pic_free(Picture *pic)
     pic->count = 0;
 }
 
+/* The empty picture room. Helpers that a single test calls read the fit
+ * header's macros through constants such as this one or through their caller:
+ * every planted build expands the macros from its own header, and CodeQL
+ * would keep a copy of such a helper per build, five of them never called. */
+static const PelSeiHevcRoom room_init = PEL_SEI_HEVC_ROOM_INIT;
+
 /* nvenc.c's pelorus_udu_carrier() (patch 0022, ADR-0236) on sei[count], the
  * copy av_memdup() just made. Any other payload stays as it is. On hevc_nvenc
  * the SEI before it are charged into the picture's room, a blob whose carrier
@@ -228,7 +234,7 @@ static int hook(Picture *pic)
     if (!pel_sei_is_blob(cur->payload, cur->size))
         return 0;
     if (pic->hevc) {
-        PelSeiHevcRoom room = PEL_SEI_HEVC_ROOM_INIT;
+        PelSeiHevcRoom room = room_init;
 
         for (int i = 0; i < pic->count; i++) {
             pel_sei_hevc_charge(&room, pic->sei[i].payload, pic->sei[i].type, pic->sei[i].size);
@@ -424,7 +430,6 @@ static void check_1080p(TestCtx *t, const Blob *maps, const Blob *scal)
     pic_free(&pic);
     /* A maps=0 blob has nothing to strip and fits whole. */
     CHECK(pel_sei_scalar_len(scal->bytes, scal->len) == 0u);
-    CHECK(pel_sei_fit_len(scal->bytes, scal->len, PEL_SEI_HEVC_USER_BUDGET) == scal->len);
 }
 
 static void test_1080p_strips_to_scalars(TestCtx *t)
@@ -433,8 +438,11 @@ static void test_1080p_strips_to_scalars(TestCtx *t)
     Blob scal = pack_analyze(60, 34, 0);
 
     CHECK(maps.bytes && scal.bytes);
-    if (maps.bytes && scal.bytes)
+    if (maps.bytes && scal.bytes) {
         check_1080p(t, &maps, &scal);
+        /* The maps=0 blob fits the HEVC user data budget whole. */
+        CHECK(pel_sei_fit_len(scal.bytes, scal.len, PEL_SEI_HEVC_USER_BUDGET) == scal.len);
+    }
     free(maps.bytes);
     free(scal.bytes);
 }
@@ -645,7 +653,7 @@ static void test_rejects_foreign(TestCtx *t)
 /* Corrupt one header or directory field at a time; restore it after. */
 static void check_corrupt_blob(TestCtx *t, uint8_t *blob, size_t len)
 {
-    uint8_t *img = blob + PEL_SEI_UUID_LEN;
+    uint8_t *img = blob + PELORUS_SIDEDATA_UUID_LEN;
     const uint8_t qp_report = (uint8_t)PEL_SEC_QPREPORT;
 
     img[16] |= qp_report; /* a section with maps this file does not know */
