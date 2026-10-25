@@ -66,7 +66,7 @@ static inline size_t pel_sei_qsv_msg_len(size_t n)
 /* Budget bytes the `n`-byte payload `p` costs. `escaped` is 1 for H.264, whose
  * runtime counts the emulation prevention bytes. Only a payload that can fit
  * `limit` is scanned; a larger one returns more than `limit`, and one beyond
- * nvenc_sei.h's 32-bit size returns SIZE_MAX. */
+ * a 32-bit size returns SIZE_MAX. */
 static inline size_t pel_sei_qsv_cost(const uint8_t *p, size_t n, int escaped, size_t limit)
 {
     const size_t msg = pel_sei_qsv_msg_len(n);
@@ -77,7 +77,7 @@ static inline size_t pel_sei_qsv_cost(const uint8_t *p, size_t n, int escaped, s
     if (n > UINT32_MAX)
         return SIZE_MAX;
 #endif
-    return msg + nvenc_sei_epb_count(p, (uint32_t)n, 0);
+    return msg + pel_sei_epb_count(p, n, 0);
 }
 
 /* Upper bound on the emulation prevention bytes the zeroed map fields of a
@@ -101,9 +101,9 @@ static inline size_t pel_sei_qsv_plan(const uint8_t *p, size_t n, int escaped, s
     if (!keep)
         return 0;
     return pel_sei_qsv_cost(p, keep, escaped, budget) + (escaped ? PEL_SEI_QSV_STRIP_SLACK : 0u) <=
-                   budget
-               ? keep
-               : 0;
+                   budget ?
+               keep :
+               0;
 }
 
 /*

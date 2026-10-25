@@ -4,50 +4,55 @@ Date: Thu, 1 Jan 2026 00:00:00 +0000
 Subject: [PATCH 22/23] fix(nvenc): write Pelorus side data zero-free and
  within NVENC's header limit
 
-Builds on patches 0003 and 0004 of the shared FFmpeg fix series
-(VMAFx/ffmpeg-patches, applied before this stack, ADR-0185). They handle
-two NVENC defects for every user data unregistered SEI with udu_sei=1:
+NVENC has two defects that hit every user data unregistered SEI with
+udu_sei=1:
 
-1. 0003: hevc_nvenc fails a picture whose non-VCL NAL units (VPS, SPS,
-PPS, access unit delimiter and every SEI NAL unit, in Annex B form)
-exceed 1024 bytes. The SEI passed in seiPayloadArray get 768 bytes per
-picture, less the A/53 and timecode SEI, and a payload that does not fit
-is not written.
+1. hevc_nvenc fails a picture whose non-VCL NAL units (VPS, SPS, PPS,
+access unit delimiter and every SEI NAL unit, in Annex B form) exceed
+1024 bytes. FFmpeg drops a SEI that takes the payload bytes of a picture
+above 512 (NVENC_HEVC_SEI_MAX_PAYLOAD); the shared FFmpeg fix series
+(VMAFx/ffmpeg-patches, ADR-0185) carried a NAL size budget of 768 bytes
+for the same defect before that.
 
-2. 0004: h264_nvenc and hevc_nvenc write a SEI payload truncated, without
-its trailing bits, when its emulation prevention bytes exceed
-ceil(P / 3) + 3 for a P-byte payload (rule pinned on an RTX 4090, driver
-615.78.08), and FFmpeg's decoders then drop it. Such a payload is not
-written.
+2. h264_nvenc and hevc_nvenc write a SEI payload truncated, without its
+trailing bits, when its emulation prevention bytes exceed ceil(P / 3) + 3
+for a P-byte payload (rule pinned on an RTX 4090, driver 615.78.08), and
+FFmpeg's decoders then drop it.
 
 Both would lose Pelorus side data. The zero runs of a
 pelorus_analyze_vulkan blob on flat content reach rule 2: at 1080p with
 32-pixel cells (12 424 bytes) no picture kept its side data. At real
-frame sizes the analyze maps do not fit the 768 bytes of rule 1.
+frame sizes the analyze maps do not fit rule 1.
 
-This patch adds one call between the series' av_memdup() of each
-SEI_UNREGISTERED entry and nvenc_hevc_sei_fits():
+This patch adds one call right after the av_memdup() of each
+SEI_UNREGISTERED entry. It needs nothing from the series and applies
+with or without it:
 
 - Every Pelorus blob (UUID e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64, magic
   PELOR1, ABI major 1) is replaced by its zero-free carrier form of the
   Pelorus interop ABI 1.5: UUID 3f9b37b8-fd9a-4621-920e-9b78b55cf9b5,
   then the COBS encoding of the blob image. It holds no zero byte, so
-  its NAL unit needs no emulation prevention and 0004 never drops it;
+  its NAL unit needs no emulation prevention and is never truncated;
   it costs one byte plus one per 254 bytes. libpelorus's
   pel_blob_unwrap() turns it back into the blob. Any other payload is
   left as copied.
-- On hevc_nvenc, a blob whose carrier does not fit the budget left in
-  the picture first loses the per-cell maps appended after its sections.
+- On hevc_nvenc, the SEI before the blob in the picture are charged
+  against two limits Pelorus keeps itself: 768 NAL bytes (1024 less a
+  256-byte reserve for the NAL units NVENC writes on its own) and 512
+  payload bytes, FFmpeg's limit. A blob whose carrier does not fit what
+  is left first loses the per-cell maps appended after its sections.
   Every scalar stays, and each map offset and size is zero, which the
   Pelorus ABI defines as an absent map. The blob is byte-identical to the
-  analyze filter's maps=0 blob before it becomes a carrier.
-  nvenc_hevc_sei_fits() then charges the carrier or drops it.
+  analyze filter's maps=0 blob before it becomes a carrier. A carrier
+  that still does not fit is dropped here, so FFmpeg's own check never
+  drops a Pelorus blob.
 
 The maps are stripped in the copy, and the carrier is written into one
-new allocation that replaces it. The first stripped blob is a warning,
-later ones verbose, and the total is a warning when the encoder closes;
-the first carrier is noted in the verbose log. The size arithmetic, the
-stripper and the carrier encoder live in libavcodec/pelorus_sei_fit.h,
+new allocation that replaces it. The first stripped or dropped blob is a
+warning, later ones verbose, and the totals are a warning when the
+encoder closes; the first carrier is noted in the verbose log. The size
+arithmetic, the stripper and the carrier encoder live in
+libavcodec/pelorus_sei_fit.h,
 which the Pelorus fast suite tests against the libpelorus packer and
 carrier encoder.
 
@@ -58,13 +63,13 @@ picture at 1080p, which is 1024 bytes of non-VCL NAL units in both cases.
 content, maps on and off): 11 of 48 lost every picture's side data on
 h264_nvenc as written before, none as carriers, up to 49 145 bytes.
 ---
- libavcodec/nvenc.c           |  72 +++++
- libavcodec/nvenc.h           |   8 +
- libavcodec/pelorus_sei_fit.h | 324 ++++++++++++++++++++
- 3 files changed, 404 insertions(+)
+ libavcodec/nvenc.c           |  95 +++++
+ libavcodec/nvenc.h           |  10 +
+ libavcodec/pelorus_sei_fit.h | 405 ++++++++++++++++++++
+ 3 files changed, 510 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index 9ea9bc94c6e297f38922a4ab0036ff09db1958c3..86c27e5c8bdcd5fe90bc483302bf5b04550dcd1a 100644
+index 9ea9bc94c6e297f38922a4ab0036ff09db1958c3..3519378a63e1c9470181b696244247247a33197a 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
 @@ -24,6 +24,7 @@
@@ -75,68 +80,93 @@ index 9ea9bc94c6e297f38922a4ab0036ff09db1958c3..86c27e5c8bdcd5fe90bc483302bf5b04
  #if CONFIG_AV1_NVENC_ENCODER
  #include "av1.h"
  #endif
-@@ -2197,6 +2198,11 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
+@@ -2197,6 +2198,16 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
      av_frame_free(&ctx->frame);
  
      av_freep(&ctx->sei_data);
 +    if (ctx->pelorus_udu_stripped)
 +        av_log(avctx, AV_LOG_WARNING, "udu_sei: %"PRId64" Pelorus side data "
 +               "payload(s) were written without their per-cell maps, to stay "
-+               "within hevc_nvenc's %d bytes of parameter sets and SEI per "
-+               "picture.\n", ctx->pelorus_udu_stripped, NVENC_HEVC_NON_VCL_LIMIT);
++               "within hevc_nvenc's %u bytes of parameter sets and SEI per "
++               "picture.\n", ctx->pelorus_udu_stripped, PEL_SEI_HEVC_NON_VCL_LIMIT);
++    if (ctx->pelorus_udu_dropped)
++        av_log(avctx, AV_LOG_WARNING, "udu_sei: %"PRId64" Pelorus side data "
++               "payload(s) were dropped: even without their per-cell maps they "
++               "did not fit the SEI room of their picture.\n",
++               ctx->pelorus_udu_dropped);
      av_freep(&ctx->qp_delta_map);
      av_freep(&ctx->me_hints);
  
-@@ -2878,6 +2884,64 @@ static int nvenc_drop_truncated_udu_sei(AVCodecContext *avctx, const AVFrame *fr
-     return count;
+@@ -2800,6 +2811,84 @@ error2:
+     return res;
  }
  
 +/* Pelorus: NVENC writes a SEI payload truncated once its emulation prevention
 + * bytes exceed about a third of its size (issue #284), which the zero runs of
-+ * flat analyze maps reach, and nvenc_drop_truncated_udu_sei() then leaves it
-+ * out. Every Pelorus blob is therefore written in its zero-free carrier form
-+ * (interop ABI 1.5, ADR-0183, pelorus_sei_fit.h): it holds no zero byte, needs
-+ * no emulation prevention and is never truncated. Any other payload stays as
-+ * copied. `sei` holds the av_memdup() copy of one side data entry. With a
-+ * `budget` (hevc_nvenc: what is left of the picture's SEI share), a blob whose
-+ * carrier does not fit first loses the per-cell maps appended after its
-+ * sections, in that copy (ADR-0181); nvenc_hevc_sei_fits() then charges the
-+ * carrier or drops it. SIZE_MAX means no budget (h264_nvenc). */
++ * flat analyze maps reach. Every Pelorus blob is therefore written in its
++ * zero-free carrier form (interop ABI 1.5, ADR-0183, pelorus_sei_fit.h): it
++ * holds no zero byte, needs no emulation prevention and is never truncated.
++ * Any other payload stays as copied. sei[count] holds the av_memdup() copy of
++ * one side data entry, sei[0] to sei[count - 1] the SEI before it in the
++ * picture. On hevc_nvenc a blob whose carrier does not fit what those leave
++ * (pel_sei_hevc_budget(): the SEI share of the picture's non-VCL bytes and
++ * FFmpeg's payload limit) first loses the per-cell maps appended after its
++ * sections (ADR-0181); one that still does not fit is dropped (ADR-0236).
++ * Returns 0 when the payload stays, 1 when it was dropped and a negative
++ * error code on failure; the last two free it. A NULL payload (failed copy)
++ * returns 0. */
 +static int pelorus_udu_carrier(AVCodecContext *avctx, const AVFrame *frame,
-+                               NV_ENC_SEI_PAYLOAD *sei, size_t budget)
++                               NV_ENC_SEI_PAYLOAD *sei, int count)
 +{
 +    NvencContext *ctx = avctx->priv_data;
-+    const size_t size = sei->payloadSize;
++    NV_ENC_SEI_PAYLOAD *cur = &sei[count];
++    const size_t size = cur->payloadSize;
++    size_t budget = SIZE_MAX;
 +    size_t keep = size;
 +    size_t len;
 +    uint8_t *carrier;
 +
-+    if (!pel_sei_is_blob(sei->payload, size))
++    if (!pel_sei_is_blob(cur->payload, size))
 +        return 0;
-+    if (budget != SIZE_MAX) {
-+        keep = pel_sei_fit_len(sei->payload, size, budget);
++    if (avctx->codec->id == AV_CODEC_ID_HEVC) {
++        PelSeiHevcRoom room = PEL_SEI_HEVC_ROOM_INIT;
++
++        for (int i = 0; i < count; i++)
++            pel_sei_hevc_charge(&room, sei[i].payload, sei[i].payloadType,
++                                sei[i].payloadSize);
++        budget = pel_sei_hevc_budget(&room);
++        keep = pel_sei_fit_len(cur->payload, size, budget);
 +        if (keep && keep < size)
-+            pel_sei_strip_maps(sei->payload, keep);
++            pel_sei_strip_maps(cur->payload, keep);
 +        else
 +            keep = size;
 +    }
-+    len = pel_sei_carrier_len(sei->payload, keep);
-+    if ((uint64_t)len > UINT32_MAX)
-+        return AVERROR(EINVAL);
-+    carrier = av_malloc(len);
-+    if (!carrier)
-+        return AVERROR(ENOMEM);
-+    pel_sei_carrier_write(sei->payload, keep, carrier);
-+    av_free(sei->payload);
-+    sei->payload     = carrier;
-+    sei->payloadSize = (uint32_t)len;
++    len = pel_sei_carrier_len(cur->payload, keep);
++    carrier = (uint64_t)len > UINT32_MAX ? NULL : av_malloc(len);
++    if (!carrier) {
++        av_freep(&cur->payload);
++        return (uint64_t)len > UINT32_MAX ? AVERROR(EINVAL) : AVERROR(ENOMEM);
++    }
++    pel_sei_carrier_write(cur->payload, keep, carrier);
++    av_free(cur->payload);
++    cur->payload     = carrier;
++    cur->payloadSize = (uint32_t)len;
 +
-+    if (keep < size && pel_sei_nal_bytes(carrier, len, budget) <= budget) {
++    if (budget != SIZE_MAX && pel_sei_nal_bytes(carrier, len, budget) > budget) {
++        av_log(avctx, ctx->pelorus_udu_dropped ? AV_LOG_VERBOSE : AV_LOG_WARNING,
++               "udu_sei: frame pts %"PRId64": the %zu-byte Pelorus side data is "
++               "dropped: its carrier takes %zu bytes and the SEI before it leave "
++               "%zu of the picture's room.\n", frame->pts, size, len, budget);
++        ctx->pelorus_udu_dropped++;
++        av_freep(&cur->payload);
++        return 1;
++    }
++    if (keep < size) {
 +        av_log(avctx, ctx->pelorus_udu_stripped ? AV_LOG_VERBOSE : AV_LOG_WARNING,
 +               "udu_sei: frame pts %"PRId64": the %zu-byte Pelorus side data is "
 +               "written without its per-cell maps (%zu bytes): hevc_nvenc writes "
-+               "at most %d bytes of parameter sets and SEI per picture.\n",
-+               frame->pts, size, keep, NVENC_HEVC_NON_VCL_LIMIT);
++               "at most %u bytes of parameter sets and SEI per picture.\n",
++               frame->pts, size, keep, PEL_SEI_HEVC_NON_VCL_LIMIT);
 +        ctx->pelorus_udu_stripped++;
 +    }
 +    if (!ctx->pelorus_udu_carrier_logged) {
@@ -149,49 +179,49 @@ index 9ea9bc94c6e297f38922a4ab0036ff09db1958c3..86c27e5c8bdcd5fe90bc483302bf5b04
 +    return 0;
 +}
 +
- static int prepare_sei_data_array(AVCodecContext *avctx, const AVFrame *frame)
+ static int output_ready(AVCodecContext *avctx, int flush)
  {
      NvencContext *ctx = avctx->priv_data;
-@@ -2987,6 +3051,14 @@ static int prepare_sei_data_array(AVCodecContext *avctx, const AVFrame *frame)
-                 goto error;
-             }
+@@ -2982,6 +3071,12 @@ static int prepare_sei_data_array(AVCodecContext *avctx, const AVFrame *frame)
+             ctx->sei_data[sei_count].payloadType = SEI_TYPE_USER_DATA_UNREGISTERED;
+             ctx->sei_data[sei_count].payload = av_memdup(side_data->data, side_data->size);
  
-+            res = pelorus_udu_carrier(avctx, frame, &ctx->sei_data[sei_count],
-+                                      avctx->codec->id == AV_CODEC_ID_HEVC ?
-+                                      sei_budget : SIZE_MAX);
-+            if (res < 0) {
-+                av_freep(&ctx->sei_data[sei_count].payload);
++            res = pelorus_udu_carrier(avctx, frame, ctx->sei_data, sei_count);
++            if (res < 0)
 +                goto error;
-+            }
++            if (res > 0)
++                continue;
 +
-             if (avctx->codec->id == AV_CODEC_ID_HEVC &&
-                 !nvenc_hevc_sei_fits(avctx, frame, &ctx->sei_data[sei_count], &sei_budget)) {
-                 av_freep(&ctx->sei_data[sei_count].payload);
+             if (!ctx->sei_data[sei_count].payload) {
+                 res = AVERROR(ENOMEM);
+                 goto error;
 diff --git a/libavcodec/nvenc.h b/libavcodec/nvenc.h
-index 00edb5dce7f4ec5dcc564a44dfb9138cfc3f066f..a984048d4388a3c12d3afce131b1dccc61865ea3 100644
+index 00edb5dce7f4ec5dcc564a44dfb9138cfc3f066f..aec1bf4a8c511c9845b6157dd1f97279f66ef862 100644
 --- a/libavcodec/nvenc.h
 +++ b/libavcodec/nvenc.h
-@@ -330,6 +330,14 @@ typedef struct NvencContext
+@@ -330,6 +330,16 @@ typedef struct NvencContext
      int     me_hints_h;      ///< 16x16 blocks down  = ceil(height / 16)
      int     me_hints_warned; ///< rate-limit the AQ/lookahead note to once
      int     me_hints_absent_warned; ///< rate-limit the "frame had no motion data" warning
 +
 +    /* Pelorus: with udu_sei, h264_nvenc and hevc_nvenc write Pelorus blobs
 +     * in the zero-free carrier form (ADR-0183); on hevc_nvenc one that does not
-+     * fit the per-picture SEI budget of prepare_sei_data_array() loses its
-+     * per-cell maps first (pelorus_sei_fit.h, ADR-0181). The first stripped
-+     * blob is a warning, later ones verbose, the total a warning at close. */
++     * fit the SEI room of its picture loses its per-cell maps first, and is
++     * dropped when it still does not fit (pelorus_sei_fit.h, ADR-0181,
++     * ADR-0236). The first stripped or dropped blob is a warning, later ones
++     * verbose, the totals a warning at close. */
 +    int64_t pelorus_udu_stripped;       ///< Pelorus blobs written without their maps
++    int64_t pelorus_udu_dropped;        ///< Pelorus blobs dropped for lack of room
 +    int     pelorus_udu_carrier_logged; ///< the zero-free carrier note was given (ADR-0183)
  } NvencContext;
  
  int ff_nvenc_encode_init(AVCodecContext *avctx);
 diff --git a/libavcodec/pelorus_sei_fit.h b/libavcodec/pelorus_sei_fit.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..fbfb1bd290e53198eb3da5dd525c7a0a5d25645c
+index 0000000000000000000000000000000000000000..8c779464cc43b8b5e69fe82dcf9f929f54e87bd3
 --- /dev/null
 +++ b/libavcodec/pelorus_sei_fit.h
-@@ -0,0 +1,324 @@
+@@ -0,0 +1,405 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -224,33 +254,34 @@ index 0000000000000000000000000000000000000000..fbfb1bd290e53198eb3da5dd525c7a0a
 + * header-budget.md); neither nvEncodeAPI.h 13.1 nor the NVENC programming
 + * guide 13.1 states the limit. h264_nvenc carries 64 KiB payloads.
 + *
-+ * The budget itself is stock-side since the shared FFmpeg fix series
-+ * (VMAFx/ffmpeg-patches, ADR-0185): its patch 0003 gives the SEI a caller
-+ * passes in seiPayloadArray 768 of the 1024 bytes (NVENC_HEVC_SEI_BUDGET),
-+ * charges each payload with nvenc_sei_nal_size() and drops one that does not
-+ * fit (nvenc_hevc_sei_fits()). The reserve keeps room for the NAL units NVENC
++ * The SEI a caller passes in seiPayloadArray get 768 of the 1024 bytes
++ * (PEL_SEI_HEVC_USER_BUDGET); the reserve keeps room for the NAL units NVENC
 + * writes on its own: at most 128 bytes measured (8K Main10, VUI, AUD), plus
 + * the HDR10 and 3D reference display SEI it builds from picture parameters.
-+ * Series patch 0027 (v0.3.0) moved those rules into libavcodec/nvenc_sei.h,
-+ * plain C like this file; it is included here, so the budget and the size
-+ * formula exist once (ADR-0218).
++ * FFmpeg itself (96b7f8281a, "avcodec/nvenc: drop hevc_nvenc SEI above a
++ * fixed size") drops any SEI that takes the payload bytes of a picture above
++ * 512 (PEL_SEI_HEVC_PAYLOAD_LIMIT). pel_sei_hevc_budget() gives a Pelorus
++ * blob what both rules leave, so the blob is never written whole only to be
++ * dropped by FFmpeg. These rules are Pelorus's own and frozen in this file
++ * (ADR-0236): FFmpeg's check counts payload bytes only, and the NAL size
++ * rules of the shared FFmpeg fix series (ADR-0185, ADR-0218) left with the
++ * merged form.
 + *
 + * A Pelorus blob (interop.h) that does not fit is carried without the
 + * per-cell maps appended after its sections: the sections, which hold every
 + * scalar, stay, and each map offset and size becomes zero, which interop.h
-+ * defines as an absent map. Patch 0022 strips the payload right before
-+ * nvenc_hevc_sei_fits(), which then charges or drops it and logs a drop.
++ * defines as an absent map. Patch 0022 strips the payload right after its
++ * copy and drops a blob whose scalars still do not fit.
 + *
 + * NVENC (h264_nvenc and hevc_nvenc) also writes a SEI payload truncated when
 + * its emulation prevention bytes exceed ceil(P / 3) + 3 for a P-byte payload
-+ * (issue #284), which the zero runs of flat per-cell maps reach; series patch
-+ * 0004 drops such a payload instead. Every Pelorus blob therefore goes into
-+ * an NVENC stream in the zero-free carrier form of interop ABI 1.5
-+ * (ADR-0183): pelorus_carrier_uuid, then the COBS encoding of the blob image,
-+ * with no 0x00 byte and so no emulation prevention at all.
-+ * pel_sei_carrier_write() produces the bytes pel_blob_carrier_encode() does;
-+ * sei_fit_test.c checks the two against each other. The budget is charged for
-+ * the carrier, after any stripping.
++ * (issue #284, pel_sei_udu_truncated()), which the zero runs of flat per-cell
++ * maps reach. Every Pelorus blob therefore goes into an NVENC stream in the
++ * zero-free carrier form of interop ABI 1.5 (ADR-0183): pelorus_carrier_uuid,
++ * then the COBS encoding of the blob image, with no 0x00 byte and so no
++ * emulation prevention at all. pel_sei_carrier_write() produces the bytes
++ * pel_blob_carrier_encode() does; sei_fit_test.c checks the two against each
++ * other. The budget is charged for the carrier, after any stripping.
 + */
 +
 +#ifndef AVCODEC_PELORUS_SEI_FIT_H
@@ -260,11 +291,15 @@ index 0000000000000000000000000000000000000000..fbfb1bd290e53198eb3da5dd525c7a0a
 +#include <stdint.h>
 +#include <string.h>
 +
-+#include "nvenc_sei.h"
++/* hevc_nvenc's per-picture non-VCL limit, the reserve for the NAL units NVENC
++ * writes on its own, and the share left for SEI passed in seiPayloadArray. */
++#define PEL_SEI_HEVC_NON_VCL_LIMIT 1024u
++#define PEL_SEI_HEVC_RESERVE 256u
++#define PEL_SEI_HEVC_USER_BUDGET ((size_t)(PEL_SEI_HEVC_NON_VCL_LIMIT - PEL_SEI_HEVC_RESERVE))
 +
-+/* The share of hevc_nvenc's per-picture non-VCL bytes left for SEI passed in
-+ * seiPayloadArray (nvenc_sei.h). */
-+#define PEL_SEI_HEVC_USER_BUDGET ((size_t)NVENC_HEVC_SEI_BUDGET)
++/* FFmpeg's NVENC_HEVC_SEI_MAX_PAYLOAD (96b7f8281a): hevc_nvenc drops the SEI
++ * that takes the payload bytes of a picture above it, in array order. */
++#define PEL_SEI_HEVC_PAYLOAD_LIMIT 512u
 +
 +/* Mirrored interop.h ABI 1.x layout; R1 (append-only) keeps these offsets
 + * fixed, and sei_fit_test.c checks each against offsetof(). */
@@ -314,20 +349,96 @@ index 0000000000000000000000000000000000000000..fbfb1bd290e53198eb3da5dd525c7a0a
 +    p[3] = (uint8_t)(v >> 24u);
 +}
 +
-+/*
-+ * Annex B bytes of the SEI NAL unit NVENC writes for one user data
-+ * unregistered payload (type 5) of `n` bytes: nvenc_sei_nal_size(). Only a
-+ * payload of at most `limit` bytes is scanned; a larger one or a NULL `p`
-+ * returns more than `limit`, and one beyond nvenc_sei.h's 32-bit size
-+ * returns SIZE_MAX, which no budget below SIZE_MAX admits.
-+ */
-+static inline size_t pel_sei_nal_bytes(const uint8_t *p, size_t n, size_t limit)
++/* Emulation prevention bytes the `n` bytes of `p` need when `zeros` zero bytes
++ * precede them: one before every byte <= 3 that follows two zeros. */
++static inline size_t pel_sei_epb_count(const uint8_t *p, size_t n, size_t zeros)
 +{
++    size_t epb = 0;
++
++    for (size_t i = 0; i < n; i++) {
++        if (zeros >= 2u && p[i] <= 3u) {
++            epb++;
++            zeros = 0;
++        }
++        zeros = p[i] ? 0u : zeros + 1u;
++    }
++    return epb;
++}
++
++/*
++ * Annex B bytes of the SEI NAL unit NVENC writes for one payload of `type`
++ * and `n` bytes: start code, NAL unit header, type and size bytes, the
++ * payload with its emulation prevention bytes, the trailing bits, and one
++ * byte for emulation prevention across the size and payload boundary. Only a
++ * payload whose other bytes fit `limit` is scanned; a larger one or a NULL
++ * `p` returns that size without the scan, and one beyond NVENC's 32-bit
++ * payloadSize returns SIZE_MAX, which no budget below SIZE_MAX admits.
++ */
++static inline size_t pel_sei_nal_size(const uint8_t *p, uint32_t type, size_t n, size_t limit)
++{
++    size_t nal;
++
 +#if SIZE_MAX > UINT32_MAX
 +    if (n > UINT32_MAX)
 +        return SIZE_MAX;
 +#endif
-+    return nvenc_sei_nal_size(p, 5u, (uint32_t)n, p ? limit : 0u);
++    nal = 4u + 2u + type / 255u + 1u + n / 255u + 1u + n + 1u + 1u;
++    if (!p || nal > limit)
++        return nal;
++    return nal + pel_sei_epb_count(p, n, 0);
++}
++
++/* pel_sei_nal_size() of a user data unregistered payload (type 5). */
++static inline size_t pel_sei_nal_bytes(const uint8_t *p, size_t n, size_t limit)
++{
++    return pel_sei_nal_size(p, 5u, n, limit);
++}
++
++/* 1 when NVENC writes the user data unregistered payload `p` of `n` bytes
++ * truncated: it escapes the payloads of a picture into a buffer of 4/3 of the
++ * largest one, `pmax` bytes, plus 5, and a payload whose emulation prevention
++ * bytes overflow it loses its end and trailing bits (issue #284; driver
++ * 615.78.08, h264_nvenc and hevc_nvenc). The last size byte is zero when `n`
++ * is a multiple of 255. A carrier never qualifies: it holds no zero byte. */
++static inline int pel_sei_udu_truncated(const uint8_t *p, size_t n, size_t pmax)
++{
++    const size_t epb = pel_sei_epb_count(p, n, n % 255u ? 0u : 1u);
++
++    return n + 3u + epb > 4u * (pmax + 5u) / 3u;
++}
++
++/* What the SEI already in one hevc_nvenc picture leave of the two limits:
++ * NAL bytes of PEL_SEI_HEVC_USER_BUDGET, payload bytes of
++ * PEL_SEI_HEVC_PAYLOAD_LIMIT. */
++typedef struct PelSeiHevcRoom {
++    size_t nal;
++    size_t payload;
++} PelSeiHevcRoom;
++
++#define PEL_SEI_HEVC_ROOM_INIT {PEL_SEI_HEVC_USER_BUDGET, PEL_SEI_HEVC_PAYLOAD_LIMIT}
++
++/* Charge one SEI of `type` and `n` bytes that precedes the Pelorus blob in
++ * the picture's array. Its NAL bytes are charged in any case, stopping at
++ * zero; its payload bytes only when they fit, since FFmpeg drops a SEI that
++ * does not and keeps counting from the total of those it kept. */
++static inline void pel_sei_hevc_charge(PelSeiHevcRoom *room, const uint8_t *p, uint32_t type,
++                                       size_t n)
++{
++    const size_t nal = pel_sei_nal_size(p, type, n, room->nal);
++
++    room->nal -= nal < room->nal ? nal : room->nal;
++    if (n <= room->payload)
++        room->payload -= n;
++}
++
++/* The NAL budget a carrier gets from `room`: a carrier of c bytes takes
++ * c + c / 255 + 10 NAL bytes (pel_sei_carrier_nal_bytes()), which grows with
++ * c, so the payload limit L becomes L + L / 255 + 10 NAL bytes. */
++static inline size_t pel_sei_hevc_budget(const PelSeiHevcRoom *room)
++{
++    const size_t pay = room->payload + room->payload / 255u + 10u;
++
++    return pay < room->nal ? pay : room->nal;
 +}
 +
 +/* interop.h pelorus_sidedata_uuid and pelorus_carrier_uuid (ABI 1.5). */
@@ -507,8 +618,8 @@ index 0000000000000000000000000000000000000000..fbfb1bd290e53198eb3da5dd525c7a0a
 + */
 +static inline size_t pel_sei_fit_len(const uint8_t *p, size_t n, size_t budget)
 +{
-+    const size_t need = pel_sei_is_blob(p, n) ? pel_sei_carrier_nal_bytes(p, n, budget)
-+                                              : pel_sei_nal_bytes(p, n, budget);
++    const size_t need = pel_sei_is_blob(p, n) ? pel_sei_carrier_nal_bytes(p, n, budget) :
++                                                pel_sei_nal_bytes(p, n, budget);
 +
 +    if (need <= budget)
 +        return n;

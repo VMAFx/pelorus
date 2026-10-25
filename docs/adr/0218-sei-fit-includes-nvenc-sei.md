@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 MD060 -->
 # ADR-0218: The SEI Fit Helper Includes the Series nvenc_sei.h
 
-- **Status**: Accepted
+- **Status**: Superseded by [ADR-0236](0236-sei-fit-merged-form.md)
 - **Implementation**: landed (#386)
 - **Date**: 2026-10-18
 - **Deciders**: Lusoris

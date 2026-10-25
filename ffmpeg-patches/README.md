@@ -52,8 +52,9 @@ and the Vulkan queue de-phase that ends the `hevc_vulkan` hang under
 `bt2408_hable` tone mapping with peak detection, hqdn3d on Vulkan, CUDA,
 OpenCL and VideoToolbox, a same-colour YUV repack in swscale, and 0027, which
 moves the NVENC SEI size rules into `libavcodec/nvenc_sei.h`. Pelorus patch
-0022 builds on the NVENC patches and includes `nvenc_sei.h` through
-`files/pelorus_sei_fit.h` (ADR-0218).
+0022 builds on the NVENC patches but calls none of their names:
+`files/pelorus_sei_fit.h` keeps its own SEI rules, so the patch applies with
+the series rules and with FFmpeg's merged form (`96b7f8281a`, ADR-0236).
 
 ## Prerequisites
 

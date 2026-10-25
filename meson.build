@@ -411,25 +411,6 @@ if get_option('tests')
   test('analyze-maps-legacy-pack', analyze_maps_legacy_test, suite: 'fast')
 endif
 
-# Issue #267 / ADR-0181: hevc_nvenc's udu_sei path keeps each picture's
-# parameter sets and SEI within NVENC's 1024-byte limit
-# (ffmpeg-patches/files/pelorus_sei_fit.h; the QSV budget of issue #286 is
-# pelorus_sei_fit_qsv.h): a Pelorus blob that does not fit
-# is carried as its scalar sections, byte-identical to the maps=0 blob, and
-# anything else that does not fit is dropped, never cut short.
-#
-# pelorus_sei_fit.h includes libavcodec/nvenc_sei.h, which only the shared
-# FFmpeg fix series creates (ADR-0218): -Dffmpeg_series_dir names the
-# directory scripts/fetch-ffmpeg-series.sh printed. Without it the test is the
-# named skip in .config/test-skips.json (ADR-0188); the core, sanitizers and
-# windows CI jobs set it and require both tests to run.
-ffmpeg_series_dir = get_option('ffmpeg_series_dir')
-extract_series_file = meson.project_source_root() / 'scripts' / 'extract-series-file.py'
-test('extract-series-file',
-     python_prog,
-     args: ['-I', extract_series_file, '--self-test'],
-     suite: 'fast')
-
 bench_record_script = meson.project_source_root() / 'scripts' / 'bench' / 'check-record.py'
 test('bench-record',
      python_prog,
@@ -441,41 +422,49 @@ test('bench-make-record',
      python_prog,
      args: ['-I', bench_make_record_script, '--self-test'],
      suite: 'fast')
-if get_option('tests') and ffmpeg_series_dir != ''
-  if not fs.is_absolute(ffmpeg_series_dir)
-    error('ffmpeg_series_dir must be an absolute path: ' + ffmpeg_series_dir)
-  endif
-  # The header is regenerated when any patch series.txt lists changes;
-  # fs.read() also makes series.txt itself a reconfigure dependency.
-  ffmpeg_series_files = [ffmpeg_series_dir / 'series.txt']
-  foreach line : fs.read(ffmpeg_series_dir / 'series.txt').split('\n')
-    name = line.strip()
-    if name != '' and not name.startswith('#')
-      ffmpeg_series_files += ffmpeg_series_dir / 'patches' / name
-    endif
-  endforeach
-  subdir('ffmpeg-patches/test/series')
+
+# Issue #267 / ADR-0181: hevc_nvenc's udu_sei path keeps each picture's
+# parameter sets and SEI within NVENC's 1024-byte limit
+# (ffmpeg-patches/files/pelorus_sei_fit.h; the QSV budget of issue #286 is
+# pelorus_sei_fit_qsv.h): a Pelorus blob that does not fit
+# is carried as its scalar sections, byte-identical to the maps=0 blob, and
+# anything else that does not fit is dropped, never cut short.
+#
+# The fit rules are Pelorus's own (ADR-0236): FFmpeg 96b7f8281a merged a
+# 512-byte payload check of its own, and nothing is read from the shared
+# FFmpeg fix series. Each sei-fit-planted-<rule> test builds the same test
+# against a copy of pelorus_sei_fit.h with one rule changed
+# (scripts/plant-header.py) and must fail.
+plant_header = meson.project_source_root() / 'scripts' / 'plant-header.py'
+test('plant-header',
+     python_prog,
+     args: ['-I', plant_header, '--self-test'],
+     suite: 'fast')
+if get_option('tests')
   sei_fit_test = executable(
     'pelorus_sei_fit_test',
-    files('ffmpeg-patches/test/sei_fit_test.c'), nvenc_sei_h,
-    include_directories: [include_directories('ffmpeg-patches/files'), nvenc_sei_inc],
+    files('ffmpeg-patches/test/sei_fit_test.c'),
+    include_directories: include_directories('ffmpeg-patches/files'),
     dependencies: [libpelorus_dep, cc.find_library('m', required: false)],
   )
   test('sei-fit', sei_fit_test, suite: 'fast')
-  sei_fit_planted_test = executable(
-    'pelorus_sei_fit_planted_test',
-    files('ffmpeg-patches/test/sei_fit_test.c'), nvenc_sei_planted_h,
-    include_directories: [include_directories('ffmpeg-patches/files'),
-                          nvenc_sei_planted_inc],
-    dependencies: [libpelorus_dep, cc.find_library('m', required: false)],
-  )
-  test('sei-fit-planted', sei_fit_planted_test, suite: 'fast', should_fail: true)
-elif get_option('tests')
-  test('sei-fit',
-       python_prog,
-       args: ['-I', '-c', 'print("SKIP: ffmpeg_series_dir unset (sei-fit needs the'
-              + ' shared series nvenc_sei.h)"); raise SystemExit(77)'],
-       suite: 'fast')
+  foreach rule : ['reserve', 'payload', 'epb', 'truncated', 'charge']
+    planted_h = custom_target(
+      'pelorus_sei_fit_' + rule + '.h',
+      input: 'ffmpeg-patches/files/pelorus_sei_fit.h',
+      output: 'pelorus_sei_fit_' + rule + '.h',
+      command: [python_prog, '-I', plant_header, '@INPUT@', '@OUTPUT@', rule],
+    )
+    planted_exe = executable(
+      'pelorus_sei_fit_planted_' + rule + '_test',
+      files('ffmpeg-patches/test/sei_fit_test.c'), planted_h,
+      c_args: ['-DPEL_SEI_FIT_PLANTED="pelorus_sei_fit_' + rule + '.h"'],
+      include_directories: [include_directories('.'),
+                            include_directories('ffmpeg-patches/files')],
+      dependencies: [libpelorus_dep, cc.find_library('m', required: false)],
+    )
+    test('sei-fit-planted-' + rule, planted_exe, suite: 'fast', should_fail: true)
+  endforeach
 endif
 
 # Issue #82 / ADR-0210: classification of direct and x265-wrapped user data

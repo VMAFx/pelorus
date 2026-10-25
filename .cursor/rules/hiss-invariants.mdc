@@ -122,7 +122,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Human ration
 
 ## Project state
 
-- Inventory: 10 filters (deband, analyze, denoise, grain_estimate, mc, dehalo, aa, deblock, borderfix, scenecut) plus `pelorus_fgs` BSF; 23-patch stack (number 0021 retired; 0009 split into 0009a/0009b, #308) on shared FFmpeg fix series `v0.3.0` (VMAFx/ffmpeg-patches, ADR-0185; 0008 = #309 queue de-phase, ADR-0192; 0027 `nvenc_sei.h` = SEI size rules 0022 includes, ADR-0218).
+- Inventory: 10 filters (deband, analyze, denoise, grain_estimate, mc, dehalo, aa, deblock, borderfix, scenecut) plus `pelorus_fgs` BSF; 23-patch stack (number 0021 retired; 0009 split into 0009a/0009b, #308) on shared FFmpeg fix series `v0.3.0` (VMAFx/ffmpeg-patches, ADR-0185; 0008 = #309 queue de-phase, ADR-0192; 0022 keeps own SEI rules on FFmpeg merged form `96b7f8281a`, ADR-0236).
 - Encoder steering: NVENC, QSV, Vulkan, libaom, SVT-AV1 patches; QP-feedback path. README "Modules" table: current inventory, no stubs.
 - FFmpeg 9 base: build-time SPIR-V, no runtime GLSL API (ADR-0143).
 - Forge: `VMAFx/pelorus`. Run `gh repo set-default vmafx/pelorus` before any `gh` command.
@@ -185,7 +185,7 @@ Engine: pin = `PRAETOR_REF` in `.github/workflows/standards-gate.yml`. Make (`.c
 | `ffmpeg-patches/files/` | canonical FFmpeg host/filter sources |
 | `ffmpeg-patches/files/vulkan/` | canonical shipped shader sources |
 | `ffmpeg-patches/0001-*.patch` | generated artifacts; never hand-edit |
-| `ffmpeg-patches/{generate.sh,series.txt,test/}` | regeneration, apply order (after shared series), replay + smoke gate; `test/series/` = Meson targets writing series `nvenc_sei.h` + planted twin (ADR-0218) |
+| `ffmpeg-patches/{generate.sh,series.txt,test/}` | regeneration, apply order (after shared series), replay + smoke gate; `test/sei_fit_test.c` + planted twin per rule via `scripts/plant-header.py` (ADR-0236) |
 | `docs/adr/` | decisions; reserve via `scripts/adr/next-free.sh --claim <slug>` |
 | `docs/{architecture,api,metrics,usage,backends,development}/` | human-readable surface docs |
 | `docs/research/` | measured deep-dive evidence |
@@ -193,7 +193,7 @@ Engine: pin = `PRAETOR_REF` in `.github/workflows/standards-gate.yml`. Make (`.c
 | `tools/pelorus_qp_report.c`, `tools/pelorus_zones.c`, `tools/pelorus_qloop.c` | libpelorus CLI demonstrators; not installed |
 | `tools/tester/` | tester report program (stdlib Python, `python3 -I`), JSON schema, `--self-test` (ADR-0173) |
 | `tools/markdownlint/`, `tools/figures/` | Praetor-managed docs gate; refresh via `adopt` only |
-| `scripts/` | ADR claim, bench, release, build-config + shader checks, shared-series fetch + verify (`fetch-ffmpeg-series.sh`, ADR-0185), series file extract for fast suite (`extract-series-file.py`, ADR-0218), secret scan (`check-gitleaks.sh`, ADR-0190), Windows tester zip packaging + PE import check (`windows/`, ADR-0213) |
+| `scripts/` | ADR claim, bench, release, build-config + shader checks, shared-series fetch + verify (`fetch-ffmpeg-series.sh`, ADR-0185), header plant for fast-suite twins (`plant-header.py`, ADR-0236), secret scan (`check-gitleaks.sh`, ADR-0190), Windows tester zip packaging + PE import check (`windows/`, ADR-0213) |
 | `Makefile`, `lefthook.yml` | native + governance entry points; Git hooks opt-in (`make hooks-install`; `no_auto_install`) |
 | `.standards.yaml`, `.standards.lock`, `.standards-baseline.json`, `.config/` | Praetor policy, lock, catalog, labels, HISS baseline, clang-tidy lane list, named test skips (`test-skips.json`, ADR-0188), Lefthook checkpoint scripts + policy, engine launcher (`lefthook/engine.sh`) + make fragment (`praetor/engine.mk`), agent interceptor |
 | `.devcontainer/` | Praetor-rendered dev container bundle (audit: byte-exact; regenerate, never hand-edit); `base/Containerfile` toolchain base image (ADR-0153) |
@@ -246,7 +246,6 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | governance + native gate | `make verify-all` |
 | install | `ninja -C build install` |
 | fetch + verify shared series | `scripts/fetch-ffmpeg-series.sh /absolute/new-dir` (`--self-test`: planted defects) |
-| fast suite with sei-fit | `make FFMPEG_SERIES_DIR=<dir printed by fetch> verify-native` (`-Dffmpeg_series_dir`; unset = named skip, ADR-0218) |
 | regenerate patches | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh` |
 | replay stack | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh` |
 | compile contexts | `make compile-context` |

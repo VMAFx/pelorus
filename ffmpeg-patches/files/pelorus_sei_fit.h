@@ -30,33 +30,34 @@
  * header-budget.md); neither nvEncodeAPI.h 13.1 nor the NVENC programming
  * guide 13.1 states the limit. h264_nvenc carries 64 KiB payloads.
  *
- * The budget itself is stock-side since the shared FFmpeg fix series
- * (VMAFx/ffmpeg-patches, ADR-0185): its patch 0003 gives the SEI a caller
- * passes in seiPayloadArray 768 of the 1024 bytes (NVENC_HEVC_SEI_BUDGET),
- * charges each payload with nvenc_sei_nal_size() and drops one that does not
- * fit (nvenc_hevc_sei_fits()). The reserve keeps room for the NAL units NVENC
+ * The SEI a caller passes in seiPayloadArray get 768 of the 1024 bytes
+ * (PEL_SEI_HEVC_USER_BUDGET); the reserve keeps room for the NAL units NVENC
  * writes on its own: at most 128 bytes measured (8K Main10, VUI, AUD), plus
  * the HDR10 and 3D reference display SEI it builds from picture parameters.
- * Series patch 0027 (v0.3.0) moved those rules into libavcodec/nvenc_sei.h,
- * plain C like this file; it is included here, so the budget and the size
- * formula exist once (ADR-0218).
+ * FFmpeg itself (96b7f8281a, "avcodec/nvenc: drop hevc_nvenc SEI above a
+ * fixed size") drops any SEI that takes the payload bytes of a picture above
+ * 512 (PEL_SEI_HEVC_PAYLOAD_LIMIT). pel_sei_hevc_budget() gives a Pelorus
+ * blob what both rules leave, so the blob is never written whole only to be
+ * dropped by FFmpeg. These rules are Pelorus's own and frozen in this file
+ * (ADR-0236): FFmpeg's check counts payload bytes only, and the NAL size
+ * rules of the shared FFmpeg fix series (ADR-0185, ADR-0218) left with the
+ * merged form.
  *
  * A Pelorus blob (interop.h) that does not fit is carried without the
  * per-cell maps appended after its sections: the sections, which hold every
  * scalar, stay, and each map offset and size becomes zero, which interop.h
- * defines as an absent map. Patch 0022 strips the payload right before
- * nvenc_hevc_sei_fits(), which then charges or drops it and logs a drop.
+ * defines as an absent map. Patch 0022 strips the payload right after its
+ * copy and drops a blob whose scalars still do not fit.
  *
  * NVENC (h264_nvenc and hevc_nvenc) also writes a SEI payload truncated when
  * its emulation prevention bytes exceed ceil(P / 3) + 3 for a P-byte payload
- * (issue #284), which the zero runs of flat per-cell maps reach; series patch
- * 0004 drops such a payload instead. Every Pelorus blob therefore goes into
- * an NVENC stream in the zero-free carrier form of interop ABI 1.5
- * (ADR-0183): pelorus_carrier_uuid, then the COBS encoding of the blob image,
- * with no 0x00 byte and so no emulation prevention at all.
- * pel_sei_carrier_write() produces the bytes pel_blob_carrier_encode() does;
- * sei_fit_test.c checks the two against each other. The budget is charged for
- * the carrier, after any stripping.
+ * (issue #284, pel_sei_udu_truncated()), which the zero runs of flat per-cell
+ * maps reach. Every Pelorus blob therefore goes into an NVENC stream in the
+ * zero-free carrier form of interop ABI 1.5 (ADR-0183): pelorus_carrier_uuid,
+ * then the COBS encoding of the blob image, with no 0x00 byte and so no
+ * emulation prevention at all. pel_sei_carrier_write() produces the bytes
+ * pel_blob_carrier_encode() does; sei_fit_test.c checks the two against each
+ * other. The budget is charged for the carrier, after any stripping.
  */
 
 #ifndef AVCODEC_PELORUS_SEI_FIT_H
@@ -66,11 +67,15 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "nvenc_sei.h"
+/* hevc_nvenc's per-picture non-VCL limit, the reserve for the NAL units NVENC
+ * writes on its own, and the share left for SEI passed in seiPayloadArray. */
+#define PEL_SEI_HEVC_NON_VCL_LIMIT 1024u
+#define PEL_SEI_HEVC_RESERVE 256u
+#define PEL_SEI_HEVC_USER_BUDGET ((size_t)(PEL_SEI_HEVC_NON_VCL_LIMIT - PEL_SEI_HEVC_RESERVE))
 
-/* The share of hevc_nvenc's per-picture non-VCL bytes left for SEI passed in
- * seiPayloadArray (nvenc_sei.h). */
-#define PEL_SEI_HEVC_USER_BUDGET ((size_t)NVENC_HEVC_SEI_BUDGET)
+/* FFmpeg's NVENC_HEVC_SEI_MAX_PAYLOAD (96b7f8281a): hevc_nvenc drops the SEI
+ * that takes the payload bytes of a picture above it, in array order. */
+#define PEL_SEI_HEVC_PAYLOAD_LIMIT 512u
 
 /* Mirrored interop.h ABI 1.x layout; R1 (append-only) keeps these offsets
  * fixed, and sei_fit_test.c checks each against offsetof(). */
@@ -120,20 +125,96 @@ static inline void pel_sei_wr32(uint8_t *p, uint32_t v)
     p[3] = (uint8_t)(v >> 24u);
 }
 
-/*
- * Annex B bytes of the SEI NAL unit NVENC writes for one user data
- * unregistered payload (type 5) of `n` bytes: nvenc_sei_nal_size(). Only a
- * payload of at most `limit` bytes is scanned; a larger one or a NULL `p`
- * returns more than `limit`, and one beyond nvenc_sei.h's 32-bit size
- * returns SIZE_MAX, which no budget below SIZE_MAX admits.
- */
-static inline size_t pel_sei_nal_bytes(const uint8_t *p, size_t n, size_t limit)
+/* Emulation prevention bytes the `n` bytes of `p` need when `zeros` zero bytes
+ * precede them: one before every byte <= 3 that follows two zeros. */
+static inline size_t pel_sei_epb_count(const uint8_t *p, size_t n, size_t zeros)
 {
+    size_t epb = 0;
+
+    for (size_t i = 0; i < n; i++) {
+        if (zeros >= 2u && p[i] <= 3u) {
+            epb++;
+            zeros = 0;
+        }
+        zeros = p[i] ? 0u : zeros + 1u;
+    }
+    return epb;
+}
+
+/*
+ * Annex B bytes of the SEI NAL unit NVENC writes for one payload of `type`
+ * and `n` bytes: start code, NAL unit header, type and size bytes, the
+ * payload with its emulation prevention bytes, the trailing bits, and one
+ * byte for emulation prevention across the size and payload boundary. Only a
+ * payload whose other bytes fit `limit` is scanned; a larger one or a NULL
+ * `p` returns that size without the scan, and one beyond NVENC's 32-bit
+ * payloadSize returns SIZE_MAX, which no budget below SIZE_MAX admits.
+ */
+static inline size_t pel_sei_nal_size(const uint8_t *p, uint32_t type, size_t n, size_t limit)
+{
+    size_t nal;
+
 #if SIZE_MAX > UINT32_MAX
     if (n > UINT32_MAX)
         return SIZE_MAX;
 #endif
-    return nvenc_sei_nal_size(p, 5u, (uint32_t)n, p ? limit : 0u);
+    nal = 4u + 2u + type / 255u + 1u + n / 255u + 1u + n + 1u + 1u;
+    if (!p || nal > limit)
+        return nal;
+    return nal + pel_sei_epb_count(p, n, 0);
+}
+
+/* pel_sei_nal_size() of a user data unregistered payload (type 5). */
+static inline size_t pel_sei_nal_bytes(const uint8_t *p, size_t n, size_t limit)
+{
+    return pel_sei_nal_size(p, 5u, n, limit);
+}
+
+/* 1 when NVENC writes the user data unregistered payload `p` of `n` bytes
+ * truncated: it escapes the payloads of a picture into a buffer of 4/3 of the
+ * largest one, `pmax` bytes, plus 5, and a payload whose emulation prevention
+ * bytes overflow it loses its end and trailing bits (issue #284; driver
+ * 615.78.08, h264_nvenc and hevc_nvenc). The last size byte is zero when `n`
+ * is a multiple of 255. A carrier never qualifies: it holds no zero byte. */
+static inline int pel_sei_udu_truncated(const uint8_t *p, size_t n, size_t pmax)
+{
+    const size_t epb = pel_sei_epb_count(p, n, n % 255u ? 0u : 1u);
+
+    return n + 3u + epb > 4u * (pmax + 5u) / 3u;
+}
+
+/* What the SEI already in one hevc_nvenc picture leave of the two limits:
+ * NAL bytes of PEL_SEI_HEVC_USER_BUDGET, payload bytes of
+ * PEL_SEI_HEVC_PAYLOAD_LIMIT. */
+typedef struct PelSeiHevcRoom {
+    size_t nal;
+    size_t payload;
+} PelSeiHevcRoom;
+
+#define PEL_SEI_HEVC_ROOM_INIT {PEL_SEI_HEVC_USER_BUDGET, PEL_SEI_HEVC_PAYLOAD_LIMIT}
+
+/* Charge one SEI of `type` and `n` bytes that precedes the Pelorus blob in
+ * the picture's array. Its NAL bytes are charged in any case, stopping at
+ * zero; its payload bytes only when they fit, since FFmpeg drops a SEI that
+ * does not and keeps counting from the total of those it kept. */
+static inline void pel_sei_hevc_charge(PelSeiHevcRoom *room, const uint8_t *p, uint32_t type,
+                                       size_t n)
+{
+    const size_t nal = pel_sei_nal_size(p, type, n, room->nal);
+
+    room->nal -= nal < room->nal ? nal : room->nal;
+    if (n <= room->payload)
+        room->payload -= n;
+}
+
+/* The NAL budget a carrier gets from `room`: a carrier of c bytes takes
+ * c + c / 255 + 10 NAL bytes (pel_sei_carrier_nal_bytes()), which grows with
+ * c, so the payload limit L becomes L + L / 255 + 10 NAL bytes. */
+static inline size_t pel_sei_hevc_budget(const PelSeiHevcRoom *room)
+{
+    const size_t pay = room->payload + room->payload / 255u + 10u;
+
+    return pay < room->nal ? pay : room->nal;
 }
 
 /* interop.h pelorus_sidedata_uuid and pelorus_carrier_uuid (ABI 1.5). */
@@ -313,8 +394,8 @@ static inline void pel_sei_strip_maps(uint8_t *p, size_t len)
  */
 static inline size_t pel_sei_fit_len(const uint8_t *p, size_t n, size_t budget)
 {
-    const size_t need = pel_sei_is_blob(p, n) ? pel_sei_carrier_nal_bytes(p, n, budget)
-                                              : pel_sei_nal_bytes(p, n, budget);
+    const size_t need = pel_sei_is_blob(p, n) ? pel_sei_carrier_nal_bytes(p, n, budget) :
+                                                pel_sei_nal_bytes(p, n, budget);
 
     if (need <= budget)
         return n;

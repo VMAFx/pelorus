@@ -4,5 +4,3 @@ option('shaders', type: 'boolean', value: true,
        description: 'Compile the standalone reference shaders to SPIR-V (needs glslang)')
 option('tools', type: 'boolean', value: true,
        description: 'Build the libpelorus command-line demonstrators (pelorus_qp_report)')
-option('ffmpeg_series_dir', type: 'string', value: '',
-       description: 'Directory printed by scripts/fetch-ffmpeg-series.sh; the sei-fit test reads libavcodec/nvenc_sei.h from its patches (ADR-0218). Empty: sei-fit is a named skip')

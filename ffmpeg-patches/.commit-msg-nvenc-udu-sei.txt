@@ -1,49 +1,54 @@
 fix(nvenc): write Pelorus side data zero-free and within NVENC's header limit
 
-Builds on patches 0003 and 0004 of the shared FFmpeg fix series
-(VMAFx/ffmpeg-patches, applied before this stack, ADR-0185). They handle
-two NVENC defects for every user data unregistered SEI with udu_sei=1:
+NVENC has two defects that hit every user data unregistered SEI with
+udu_sei=1:
 
-1. 0003: hevc_nvenc fails a picture whose non-VCL NAL units (VPS, SPS,
-PPS, access unit delimiter and every SEI NAL unit, in Annex B form)
-exceed 1024 bytes. The SEI passed in seiPayloadArray get 768 bytes per
-picture, less the A/53 and timecode SEI, and a payload that does not fit
-is not written.
+1. hevc_nvenc fails a picture whose non-VCL NAL units (VPS, SPS, PPS,
+access unit delimiter and every SEI NAL unit, in Annex B form) exceed
+1024 bytes. FFmpeg drops a SEI that takes the payload bytes of a picture
+above 512 (NVENC_HEVC_SEI_MAX_PAYLOAD); the shared FFmpeg fix series
+(VMAFx/ffmpeg-patches, ADR-0185) carried a NAL size budget of 768 bytes
+for the same defect before that.
 
-2. 0004: h264_nvenc and hevc_nvenc write a SEI payload truncated, without
-its trailing bits, when its emulation prevention bytes exceed
-ceil(P / 3) + 3 for a P-byte payload (rule pinned on an RTX 4090, driver
-615.78.08), and FFmpeg's decoders then drop it. Such a payload is not
-written.
+2. h264_nvenc and hevc_nvenc write a SEI payload truncated, without its
+trailing bits, when its emulation prevention bytes exceed ceil(P / 3) + 3
+for a P-byte payload (rule pinned on an RTX 4090, driver 615.78.08), and
+FFmpeg's decoders then drop it.
 
 Both would lose Pelorus side data. The zero runs of a
 pelorus_analyze_vulkan blob on flat content reach rule 2: at 1080p with
 32-pixel cells (12 424 bytes) no picture kept its side data. At real
-frame sizes the analyze maps do not fit the 768 bytes of rule 1.
+frame sizes the analyze maps do not fit rule 1.
 
-This patch adds one call between the series' av_memdup() of each
-SEI_UNREGISTERED entry and nvenc_hevc_sei_fits():
+This patch adds one call right after the av_memdup() of each
+SEI_UNREGISTERED entry. It needs nothing from the series and applies
+with or without it:
 
 - Every Pelorus blob (UUID e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64, magic
   PELOR1, ABI major 1) is replaced by its zero-free carrier form of the
   Pelorus interop ABI 1.5: UUID 3f9b37b8-fd9a-4621-920e-9b78b55cf9b5,
   then the COBS encoding of the blob image. It holds no zero byte, so
-  its NAL unit needs no emulation prevention and 0004 never drops it;
+  its NAL unit needs no emulation prevention and is never truncated;
   it costs one byte plus one per 254 bytes. libpelorus's
   pel_blob_unwrap() turns it back into the blob. Any other payload is
   left as copied.
-- On hevc_nvenc, a blob whose carrier does not fit the budget left in
-  the picture first loses the per-cell maps appended after its sections.
+- On hevc_nvenc, the SEI before the blob in the picture are charged
+  against two limits Pelorus keeps itself: 768 NAL bytes (1024 less a
+  256-byte reserve for the NAL units NVENC writes on its own) and 512
+  payload bytes, FFmpeg's limit. A blob whose carrier does not fit what
+  is left first loses the per-cell maps appended after its sections.
   Every scalar stays, and each map offset and size is zero, which the
   Pelorus ABI defines as an absent map. The blob is byte-identical to the
-  analyze filter's maps=0 blob before it becomes a carrier.
-  nvenc_hevc_sei_fits() then charges the carrier or drops it.
+  analyze filter's maps=0 blob before it becomes a carrier. A carrier
+  that still does not fit is dropped here, so FFmpeg's own check never
+  drops a Pelorus blob.
 
 The maps are stripped in the copy, and the carrier is written into one
-new allocation that replaces it. The first stripped blob is a warning,
-later ones verbose, and the total is a warning when the encoder closes;
-the first carrier is noted in the verbose log. The size arithmetic, the
-stripper and the carrier encoder live in libavcodec/pelorus_sei_fit.h,
+new allocation that replaces it. The first stripped or dropped blob is a
+warning, later ones verbose, and the totals are a warning when the
+encoder closes; the first carrier is noted in the verbose log. The size
+arithmetic, the stripper and the carrier encoder live in
+libavcodec/pelorus_sei_fit.h,
 which the Pelorus fast suite tests against the libpelorus packer and
 carrier encoder.
 
