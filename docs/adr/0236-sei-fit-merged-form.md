@@ -41,7 +41,7 @@ Two limits then apply on `hevc_nvenc`: the 1024-byte non-VCL limit of the encode
 
 - The fast suite runs the SEI fit checks everywhere, offline. The `core`, `sanitizers` and `windows` CI jobs no longer fetch the series, so they need no token and no `cosign` for this.
 - The release build (`.github/workflows/release-build.yml`) now runs `sei-fit` instead of a named skip, which closes follow-up [#388](https://github.com/VMAFx/pelorus/issues/388).
-- On `hevc_nvenc` a Pelorus blob gets at most 524 bytes of NAL room on an empty picture instead of 768. Maps are stripped earlier; `sei_fit_test.c` checks which blobs keep, lose their maps or drop.
+- On `hevc_nvenc` a Pelorus blob gets at most 524 bytes of NAL room on an empty picture instead of 768. Maps are stripped earlier; `sei_fit_test.c` checks which blobs keep, lose their maps or drop. The `flat-hevc` case of `ffmpeg-patches/test/nvenc-udu-sei-smoke.sh` (320x180 flat, cell 32, a 560-byte carrier) now loses its maps, and its `foreign` case accepts the drop message of either form.
 - Pelorus now carries the `v0.3.0` rules itself. A future encoder or FFmpeg change to those limits needs a Pelorus change; the frozen-oracle and planted tests mark the place.
 - The `consumer_stacks` job of the series replays this stack on the drop branch; the pin bump to the series release without 0003, 0004 and 0028 is a separate unit.
 

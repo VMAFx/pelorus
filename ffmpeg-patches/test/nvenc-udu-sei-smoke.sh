@@ -25,7 +25,9 @@
 #                wrote every SEI truncated and the decoder dropped it; now each
 #                picture carries the blob, maps included, as a carrier.
 #   flat-hevc    issue #284: flat 320x180, maps=1, cell 32 into hevc_nvenc: the
-#                10x6 zero maps fit the budget as a carrier and stay.
+#                560-byte carrier fits the 768-byte NAL budget but not FFmpeg's
+#                512-byte payload limit (ADR-0236), so the maps go and the
+#                scalar sections stay.
 # Every Pelorus payload in an NVENC stream must be in the carrier form (no
 # blob UUID); analyze-maps-check.py decodes it as pel_blob_unwrap() does.
 #
@@ -182,15 +184,15 @@ pel_tap flat-h264 "$PEL_FRAMES" h264
 pel_maps_check flat-h264 maps "$PEL_OUT/flat-h264-tap.log" --grid 60x34
 echo "PASS flat-h264: $PEL_FRAMES pictures, the zero maps reach the decoder whole"
 
-# flat-hevc: 10x6 zero maps fit hevc_nvenc's budget as a carrier and stay.
+# flat-hevc: the 10x6 zero maps exceed FFmpeg's payload limit as a carrier
+# (ADR-0236); the maps go before FFmpeg would drop the whole carrier.
 pel_encode flat-hevc "color=c=gray:size=320x180:rate=25" "$PEL_FRAMES" \
     "$PEL_HEAD,pelorus_analyze_vulkan=maps=1:cell=32,$PEL_TAIL"
-if grep -q 'written without its per-cell maps' "$PEL_OUT/flat-hevc-encode.log"; then
-    pel_fail "flat-hevc: maps removed although the carrier fits"
-fi
+grep -q 'written without its per-cell maps' "$PEL_OUT/flat-hevc-encode.log" ||
+    pel_fail "flat-hevc: the encoder log does not name the removed maps"
 pel_tap flat-hevc "$PEL_FRAMES"
-pel_maps_check flat-hevc maps "$PEL_OUT/flat-hevc-tap.log" --grid 10x6
-echo "PASS flat-hevc: $PEL_FRAMES pictures, the 10x6 zero maps stay in the stream"
+pel_maps_check flat-hevc no-maps "$PEL_OUT/flat-hevc-tap.log" --grid 10x6
+echo "PASS flat-hevc: $PEL_FRAMES pictures, scalar sections in the stream, maps removal logged"
 
 # foreign: h264_metadata adds a 2 017-byte SEI (UUID + 2 000 bytes + NUL) to the
 # first picture, the decoder exports it as frame side data.
@@ -203,8 +205,9 @@ pel_text="$(printf '%2000s' '' | tr ' ' 'x')"
 "$PEL_FFMPEG" -hide_banner -loglevel info -y -i "$PEL_OUT/foreign-src.h264" -c:v hevc_nvenc \
     -udu_sei 1 -f hevc "$PEL_OUT/foreign.hevc" >"$PEL_OUT/foreign-encode.log" 2>&1 ||
     pel_fail "foreign: hevc_nvenc -udu_sei 1 failed: $(pel_first_error "$PEL_OUT/foreign-encode.log")"
-# The drop and its message are the shared series' (patch 0003, ADR-0185).
-grep -q 'byte user data unregistered SEI at pts .*: hevc_nvenc fails a picture' \
+# The drop and its message are FFmpeg's: shared series v0.3.0 patch 0003
+# (ADR-0185) or the merged size check of FFmpeg 96b7f8281a (ADR-0236).
+grep -Eq 'byte user data unregistered SEI at pts .*: hevc_nvenc fails a picture|Not writing a [0-9]+-byte SEI of type 5: hevc_nvenc fails' \
     "$PEL_OUT/foreign-encode.log" ||
     pel_fail "foreign: the encoder log does not name the dropped SEI"
 "$PEL_FFMPEG" -hide_banner -loglevel info -i "$PEL_OUT/foreign.hevc" -vf showinfo -f null - \
