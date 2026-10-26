@@ -19,7 +19,7 @@
 # .github/workflows/devcontainer-image.yml builds it on pull requests and
 # publishes ghcr.io/vmafx/pelorus-dev from master. The bundle names the
 # published digest only after a separate re-render (docs/development/build.md#dev-container).
-FROM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7 AS assembled
+FROM ubuntu:26.04@sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944 AS assembled
 
 ARG ACTIONLINT_VERSION=1.7.12
 ARG ACTIONLINT_SHA256=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
