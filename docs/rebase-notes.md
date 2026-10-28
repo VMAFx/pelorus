@@ -8,6 +8,26 @@ the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
 ranges in older entries predate the first entry below (22 patches on the
 shared FFmpeg fix series, number 0021 retired).
 
+## Unreleased — shared FFmpeg fix series pinned at `v0.5.0` (ADR-0185; no patch regenerates)
+
+- **Base**: `FFMPEG_SERIES_TAG` moves from `v0.4.0` to `v0.5.0`,
+  `FFMPEG_SERIES_COMMIT` from `0dd73807` to `7641804b` and
+  `FFMPEG_SERIES_SHA256` to `ddd254a7`, the sha256 of the `v0.5.0` tarball as
+  listed in its signed `SHA256SUMS`. The FFmpeg base stays `n9.0.2`.
+- **Patches**: the series grows from 35 to 39 patches. 0036 to 0039 fix
+  `tests/checkasm/snowdsp.c`, `libavcodec/aom_film_grain.c`,
+  `libavcodec/vvc/intra_template.c` and `libavcodec/wmalosslessdec.c`, which
+  no Pelorus patch touches; series patches 0001 to 0035 are byte-identical to
+  `v0.4.0`. `generate.sh` writes the 23 Pelorus patches byte-identical.
+- **Behaviour**: unchanged for Pelorus. The release carries the Dolby Vision
+  profile 5 reshape and `bt2408_hable` tone-map series (0010 to 0034) that the
+  tone-map stage of #356 builds on.
+- **Rebase-sensitive**: none new.
+- **Interop**: none.
+- **Checks**: a verified fetch of `v0.5.0`
+  (`scripts/fetch-ffmpeg-series.sh`); `generate.sh` with no diff; the replay
+  over series `v0.5.0` (`test/build-and-run.sh`).
+
 ## Unreleased — shared FFmpeg fix series pinned at `v0.4.0` (ADR-0185, ADR-0236; regenerates 0001–0004, 0006–0008, 0009a, 0011, 0014–0018, 0022)
 
 - **Base**: `FFMPEG_SERIES_TAG` moves from `v0.3.0` to `v0.4.0`,

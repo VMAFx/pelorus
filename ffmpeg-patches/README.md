@@ -41,7 +41,7 @@ verifies it (sha256 pin, signed `SHA256SUMS` with `cosign`, build provenance
 with `gh attestation verify`, FFmpeg base) and unpacks it to `<new-dir>/series`.
 It needs network access, `cosign` and an authenticated `gh`, and it fails
 closed. `generate.sh` and both replay scripts call it themselves. Release
-`v0.4.0` holds 35 patches. 0001 to 0007 carry the fixes of `v0.2.0`: the
+`v0.5.0` holds 39 patches. 0001 to 0007 carry the fixes of `v0.2.0`: the
 Vulkan queue family fix that was Pelorus patch 0021, GCC 14 and 16
 diagnostics, 0003, the backport of FFmpeg `96b7f8281a`, which drops a
 `hevc_nvenc` user data SEI that would take the SEI payload of a picture above
@@ -54,7 +54,9 @@ Vulkan queue de-phase that ends the `hevc_vulkan` hang under
 `bt2408_hable` tone mapping with peak detection, hqdn3d on Vulkan, CUDA,
 OpenCL and VideoToolbox, a same-colour YUV repack in swscale, and the
 backports of FFmpeg `fd9a8f25a0` (tone-map peak buffer) and `63d0237033`
-(Vulkan export query). Pelorus patch 0022 builds on series patch 0003 but
+(Vulkan export query). 0036 to 0039 are vmafx
+fixes in checkasm, `aom_film_grain`, VVC intra prediction and the WMA
+lossless decoder that no Pelorus patch touches. Pelorus patch 0022 builds on series patch 0003 but
 calls none of its names: `files/pelorus_sei_fit.h` keeps its own SEI rules
 (ADR-0236).
 

@@ -1,0 +1,1 @@
+- The shared FFmpeg fix series is pinned at `v0.5.0` (39 patches on FFmpeg `n9.0.2`). It adds four vmafx fixes outside the files the Pelorus patches touch and keeps the Dolby Vision profile 5 reshape and `bt2408_hable` tone-map series that the tone-map stage (#356) builds on; the Pelorus patches are unchanged ([ADR-0185](docs/adr/0185-shared-ffmpeg-fix-series.md)).
