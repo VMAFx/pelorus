@@ -110,3 +110,4 @@ second image and break the single-pass design.
 - Source: `req` — port the HAvsFunc `DeHalo_alpha` + `FineDehalo` anime
   dehalo/dering to a single-pass zero-copy Vulkan compute filter as the
   foundation of a future `tune=anime` pre-encode pipeline.
+- Revisit trigger re-checked 2026-10-28 ([#444](https://github.com/VMAFx/pelorus/issues/444)): not fired; recheck when the pinned-corpus halo-energy and BD-rate proof lands; [research 0444](../research/0444-adr-trigger-recheck.md).

@@ -119,3 +119,4 @@ filter's inline GLSL implements the same algorithm and is kept in lockstep
 - Source: `req` — add an anime warp anti-aliasing + line-darkening filter that
   ports awarpsharp2 + FastLineDarken to a single zero-copy Vulkan compute pass,
   as the second stage of the anime `tune` pipeline after dehalo.
+- Revisit trigger re-checked 2026-10-28 ([#444](https://github.com/VMAFx/pelorus/issues/444)): not fired; recheck with [#202](https://github.com/VMAFx/pelorus/issues/202); [research 0444](../research/0444-adr-trigger-recheck.md).

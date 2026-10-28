@@ -1,0 +1,1 @@
+- Re-check revisit triggers across seven early ADRs (0110, 0123, 0124, 0127, 0131, 0182, 0184): ADR-0110 fired and was re-decided by ADR-0196, ADR-0184 fired in part with DRM tiling remaining opt-in, and the remaining five triggers have not fired ([#444](https://github.com/VMAFx/pelorus/issues/444), [research 0444](docs/research/0444-adr-trigger-recheck.md)).

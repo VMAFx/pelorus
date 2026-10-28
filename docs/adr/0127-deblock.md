@@ -108,3 +108,4 @@ aligned to the grid survive while only the small artefactual steps are softened.
 - Source: `req` — add a re-encode deblock/dering Vulkan filter that smooths the
   prior codec's DCT block-edge discontinuities, gated by cross-boundary step, so
   the new encoder does not waste bits coding them as false residual.
+- Revisit trigger re-checked 2026-10-28 ([#444](https://github.com/VMAFx/pelorus/issues/444)): not fired; recheck with [#202](https://github.com/VMAFx/pelorus/issues/202); [research 0444](../research/0444-adr-trigger-recheck.md).
