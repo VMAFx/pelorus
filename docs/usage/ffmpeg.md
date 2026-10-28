@@ -278,6 +278,32 @@ hint. AVOptions: `bsize` (block edge, default 16), `search` (radius, default 24)
 Each stage runs in VRAM; the Pelorus side-data blob accumulates sections and
 rides every frame to the encoder.
 
+## HDR sources: tone-map first
+
+When encoding HDR content (HDR10 or Dolby Vision profile 5) for SDR distribution, tone-mapping must run **before** the Pelorus filters. Pelorus thresholds (deband `thry`, denoise `sigma`, the grain estimate) act on the code values of the frame they read, and the encoder receives the tone-mapped SDR frame. Furthermore, running `pelorus_deband_vulkan` after `tonemap_vulkan` catches banding introduced across smooth gradients by the non-linear tone curve, while `pelorus_grain_estimate_vulkan` measures the exact SDR signal that feeds the encoder.
+
+Tone-mapping is provided by `tonemap_vulkan` and `dovi_reshape` from the shared FFmpeg fix series (`VMAFx/ffmpeg-patches`, [ADR-0185](../adr/0185-shared-ffmpeg-fix-series.md)), which is required at version `v0.4.0` or later (`build-config.env` pins `v0.5.0`). Pelorus Vulkan filters accept NV12 and P010 software formats (`ffmpeg-patches/files/pelorus_vulkan_input.h`), matching `tonemap_vulkan` output directly in VRAM.
+
+### HDR10 to Vulkan hardware encode
+
+HDR10 frames are uploaded to Vulkan VRAM once, tone-mapped via `tonemap_vulkan`, processed through the Pelorus filter chain, and encoded with `hevc_vulkan` with no download between upload and encoder. (With Vulkan hardware decode `-hwaccel vulkan`, the initial upload is also eliminated, though not measured here.)
+
+```bash
+# Verified on an RTX 4090 (60 frames, frames stay in GPU memory from hwupload to the encoder).
+ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk -i hdr10.mkv -vf "format=p010,hwupload,tonemap_vulkan=tonemap=bt2408_hable:peak_detect=1,pelorus_analyze_vulkan,pelorus_grain_estimate_vulkan,pelorus_mc_vulkan=meta=1,pelorus_denoise_vulkan=mc=1,pelorus_deband_vulkan" -c:v hevc_vulkan -qp 28 out.mkv
+```
+
+### Dolby Vision profile 5 to NVENC
+
+Because no GLSL implementation of Dolby Vision reshape exists, Dolby Vision profile 5 sources use software decoding followed by `dovi_reshape` on the CPU. The reshaped BT.2020 PQ signal is converted to P010, uploaded to Vulkan VRAM once, tone-mapped via `tonemap_vulkan`, processed through the Pelorus Vulkan filters, and exported to CUDA for `hevc_nvenc` encoding using a Vulkan device derived from CUDA (`vulkan=vk@cu`). There is one upload and zero downloads; only the reshape runs on CPU.
+
+```bash
+# Verified on an RTX 4090 (60 frames, frames stay in GPU memory from hwupload to the encoder).
+ffmpeg -init_hw_device cuda=cu:0 -init_hw_device vulkan=vk@cu -filter_hw_device vk -i dv5.mp4 -vf "dovi_reshape,scale=out_color_matrix=bt2020:out_range=tv,format=p010,hwupload,tonemap_vulkan=tonemap=bt2408_hable:peak_detect=1,pelorus_analyze_vulkan,pelorus_grain_estimate_vulkan,pelorus_mc_vulkan=meta=1,pelorus_denoise_vulkan=mc=1,pelorus_deband_vulkan,hwupload=derive_device=cuda" -c:v hevc_nvenc -rc constqp -qp 28 out.mkv
+```
+
+See [ADR-0237](../adr/0237-tonemap-stage-placement.md) for the pipeline architecture decision and [docs/research/0356-tonemap-stage-parity.md](../research/0356-tonemap-stage-parity.md) for measured CIEDE2000 parity, wall time, and VRAM consumption.
+
 ## VMAF-in-the-loop (autotune with vmafx)
 
 Score the processed-then-encoded output against the source, in the same graph:
