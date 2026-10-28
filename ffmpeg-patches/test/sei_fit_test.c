@@ -970,6 +970,26 @@ static void test_hook_unstrippable_and_no_budget(TestCtx *t)
     free(maps.bytes);
 }
 
+/* Arithmetic near SIZE_MAX saturates instead of wrapping (#389). */
+static void test_size_wrap(TestCtx *t)
+{
+    uint8_t buf[64] = {0};
+
+    CHECK(pel_sei_size_add(0u, 0u) == 0u);
+    CHECK(pel_sei_size_add(SIZE_MAX - 2u, 1u) == SIZE_MAX - 1u);
+    CHECK(pel_sei_size_add(SIZE_MAX - 1u, 1u) == SIZE_MAX);
+    CHECK(pel_sei_size_add(SIZE_MAX, 1u) == SIZE_MAX);
+    CHECK(pel_sei_size_add(1u, SIZE_MAX) == SIZE_MAX);
+    CHECK(pel_sei_qsv_msg_len(SIZE_MAX) == SIZE_MAX);
+    CHECK(pel_sei_qsv_msg_len(255u) == 258u);
+    CHECK(pel_sei_qsv_cost(NULL, SIZE_MAX, 0, PEL_SEI_QSV_HEVC_BUDGET) == SIZE_MAX);
+    CHECK(pel_sei_carrier_nal_bytes(buf, SIZE_MAX, PEL_SEI_HEVC_USER_BUDGET) == SIZE_MAX);
+    CHECK(pel_sei_carrier_nal_bytes(buf, SIZE_MAX - 1u, SIZE_MAX - 1u) == SIZE_MAX);
+#if SIZE_MAX <= UINT32_MAX
+    CHECK(pel_sei_nal_bytes(NULL, SIZE_MAX, 0u) == SIZE_MAX);
+#endif
+}
+
 int main(void)
 {
     TestCtx ctx = {0};
@@ -998,6 +1018,7 @@ int main(void)
     test_qsv_blob(t);
     test_qsv_foreign(t);
     test_qsv_plan_matches_fit(t);
+    test_size_wrap(t);
 #ifdef PEL_SEI_FIT_PLANTED
     /* A planted build passes only when a check caught the planted rule, so
      * it needs no should_fail, which meson introspect does not report and

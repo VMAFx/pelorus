@@ -57,10 +57,11 @@
 #define PEL_SEI_QSV_H264_BUDGET 40960u
 
 /* Bytes of the SEI message the encoder is handed for an `n`-byte payload:
- * type byte, n / 255 + 1 size bytes, the payload (mfxPayload.BufSize). */
+ * type byte, n / 255 + 1 size bytes, the payload (mfxPayload.BufSize);
+ * saturates at SIZE_MAX (#389). */
 static inline size_t pel_sei_qsv_msg_len(size_t n)
 {
-    return n + n / 255u + 2u;
+    return pel_sei_size_add(n, n / 255u + 2u);
 }
 
 /* Budget bytes the `n`-byte payload `p` costs. `escaped` is 1 for H.264, whose
@@ -77,7 +78,7 @@ static inline size_t pel_sei_qsv_cost(const uint8_t *p, size_t n, int escaped, s
     if (n > UINT32_MAX)
         return SIZE_MAX;
 #endif
-    return msg + pel_sei_epb_count(p, n, 0);
+    return pel_sei_size_add(msg, pel_sei_epb_count(p, n, 0));
 }
 
 /* Upper bound on the emulation prevention bytes the zeroed map fields of a

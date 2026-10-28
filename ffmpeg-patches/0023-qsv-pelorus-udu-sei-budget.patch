@@ -36,17 +36,17 @@ Measured on an Arc A380 (iHD 26.3.5, vpl-gpu-rt 26.3.5, libvpl 2.17.0),
 at 640x360, 1920x1080 and 3840x2160 alike. Depends on patches 0019 and
 0022.
 ---
- libavcodec/pelorus_sei_fit_qsv.h | 133 ++++++++++++++++++++
+ libavcodec/pelorus_sei_fit_qsv.h | 134 ++++++++++++++++++++
  libavcodec/qsvenc.c              |  89 +++++++++++--
  libavcodec/qsvenc.h              |   2 +
- 3 files changed, 212 insertions(+), 12 deletions(-)
+ 3 files changed, 213 insertions(+), 12 deletions(-)
 
 diff --git a/libavcodec/pelorus_sei_fit_qsv.h b/libavcodec/pelorus_sei_fit_qsv.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..20552225de8eae08b370ab3c6adb0ab22be8f81f
+index 0000000000000000000000000000000000000000..a943decd0d8fe3b81ef4e53d4dee7ce2322c6863
 --- /dev/null
 +++ b/libavcodec/pelorus_sei_fit_qsv.h
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,134 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -106,10 +106,11 @@ index 0000000000000000000000000000000000000000..20552225de8eae08b370ab3c6adb0ab2
 +#define PEL_SEI_QSV_H264_BUDGET 40960u
 +
 +/* Bytes of the SEI message the encoder is handed for an `n`-byte payload:
-+ * type byte, n / 255 + 1 size bytes, the payload (mfxPayload.BufSize). */
++ * type byte, n / 255 + 1 size bytes, the payload (mfxPayload.BufSize);
++ * saturates at SIZE_MAX (#389). */
 +static inline size_t pel_sei_qsv_msg_len(size_t n)
 +{
-+    return n + n / 255u + 2u;
++    return pel_sei_size_add(n, n / 255u + 2u);
 +}
 +
 +/* Budget bytes the `n`-byte payload `p` costs. `escaped` is 1 for H.264, whose
@@ -126,7 +127,7 @@ index 0000000000000000000000000000000000000000..20552225de8eae08b370ab3c6adb0ab2
 +    if (n > UINT32_MAX)
 +        return SIZE_MAX;
 +#endif
-+    return msg + pel_sei_epb_count(p, n, 0);
++    return pel_sei_size_add(msg, pel_sei_epb_count(p, n, 0));
 +}
 +
 +/* Upper bound on the emulation prevention bytes the zeroed map fields of a
