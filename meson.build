@@ -449,7 +449,7 @@ if get_option('tests')
     dependencies: [libpelorus_dep, cc.find_library('m', required: false)],
   )
   test('sei-fit', sei_fit_test, suite: 'fast')
-  foreach rule : ['reserve', 'payload', 'epb', 'truncated', 'charge']
+  foreach rule : ['reserve', 'payload', 'epb', 'truncated', 'charge', 'wrap']
     planted_h = custom_target(
       'pelorus_sei_fit_' + rule + '.h',
       input: 'ffmpeg-patches/files/pelorus_sei_fit.h',

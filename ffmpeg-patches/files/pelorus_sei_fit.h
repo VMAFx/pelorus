@@ -67,6 +67,12 @@
 #include <stdint.h>
 #include <string.h>
 
+/* a + b, or SIZE_MAX when the sum does not fit a size_t (#389). */
+static inline size_t pel_sei_size_add(size_t a, size_t b)
+{
+    return a > SIZE_MAX - b ? SIZE_MAX : a + b;
+}
+
 /* hevc_nvenc's per-picture non-VCL limit, the reserve for the NAL units NVENC
  * writes on its own, and the share left for SEI passed in seiPayloadArray. */
 #define PEL_SEI_HEVC_NON_VCL_LIMIT 1024u
@@ -158,10 +164,10 @@ static inline size_t pel_sei_nal_size(const uint8_t *p, uint32_t type, size_t n,
     if (n > UINT32_MAX)
         return SIZE_MAX;
 #endif
-    nal = 4u + 2u + type / 255u + 1u + n / 255u + 1u + n + 1u + 1u;
+    nal = pel_sei_size_add(n, 4u + 2u + type / 255u + 1u + n / 255u + 1u + 1u + 1u);
     if (!p || nal > limit)
         return nal;
-    return nal + pel_sei_epb_count(p, n, 0);
+    return pel_sei_size_add(nal, pel_sei_epb_count(p, n, 0));
 }
 
 /* pel_sei_nal_size() of a user data unregistered payload (type 5). */
@@ -283,12 +289,13 @@ static inline void pel_sei_carrier_write(const uint8_t *p, size_t n, uint8_t *ou
 
 /* SEI NAL bytes of the carrier of the blob `p` (no emulation prevention: it
  * holds no zero byte). Only a blob whose carrier can fit `limit` is scanned:
- * a carrier is at least one byte longer than its blob. */
+ * a carrier is at least one byte longer than its blob (so n >= limit cannot
+ * fit, #389). */
 static inline size_t pel_sei_carrier_nal_bytes(const uint8_t *p, size_t n, size_t limit)
 {
-    const size_t c = n + 1u > limit ? n + 1u : pel_sei_carrier_len(p, n);
+    const size_t c = n >= limit ? pel_sei_size_add(n, 1u) : pel_sei_carrier_len(p, n);
 
-    return c + c / 255u + 10u;
+    return pel_sei_size_add(c, c / 255u + 10u);
 }
 
 /* The header fields of a Pelorus blob the stripper needs. */

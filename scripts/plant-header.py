@@ -36,6 +36,8 @@ PLANTS = {
                   "    return n + 3u + epb > 4u * (pmax + 6u) / 3u;\n"),
     "charge": ("    if (n <= room->payload)\n",
                "    if (n < room->payload)\n"),
+    "wrap": ("    return a > SIZE_MAX - b ? SIZE_MAX : a + b;\n",
+             "    return a + b;\n"),
 }
 
 
@@ -102,6 +104,8 @@ SELF_TEST_CASES = [
     ("epb rewrites one line", GOOD, "epb", GOOD.replace("<= 3u", "<= 2u")),
     ("truncated rewrites one line", GOOD, "truncated", GOOD.replace("+ 5u)", "+ 6u)")),
     ("charge rewrites one line", GOOD, "charge", GOOD.replace("n <= room", "n < room")),
+    ("wrap rewrites one line", GOOD, "wrap",
+     GOOD.replace("a > SIZE_MAX - b ? SIZE_MAX : a + b", "a + b")),
     ("guard rewritten", GUARD_GOOD, "reserve", GUARD_WANT),
     ("line absent", "int y;\n", "reserve", None),
     ("line twice", GOOD + PLANTS["reserve"][0], "reserve", None),
