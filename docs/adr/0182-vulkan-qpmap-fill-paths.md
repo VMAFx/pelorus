@@ -167,3 +167,4 @@ stream equalled its control (research 0231, reproduced on this build).
 - `vulkaninfo` on 2026-10-09: RADV encode family `QUEUE_VIDEO_ENCODE_BIT_KHR`
   only; NVIDIA 615.78.08 encode family `TRANSFER | SPARSE_BINDING |
   VIDEO_ENCODE`.
+- Revisit trigger re-checked 2026-10-28 ([#444](https://github.com/VMAFx/pelorus/issues/444)): neither fired on the tested drivers; [research 0444](../research/0444-adr-trigger-recheck.md).

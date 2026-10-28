@@ -86,3 +86,4 @@ drag a tap onto the wrong pixel.
 - `/bump-abi` (append-only section process); ADR-0103 / ADR-0109 (ABI rules).
 - Validation: noisy fast-scroll A/B (`pelorus_mc_vulkan=meta=1,
   pelorus_denoise_vulkan=mc={0,1}`) vs a clean reference, lossless ffv1.
+- Revisit trigger re-checked 2026-10-28 ([#444](https://github.com/VMAFx/pelorus/issues/444)): not fired; recheck with [#202](https://github.com/VMAFx/pelorus/issues/202); [research 0444](../research/0444-adr-trigger-recheck.md).
