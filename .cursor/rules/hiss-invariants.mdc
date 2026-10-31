@@ -108,7 +108,7 @@ make verify-all
 
 # Pelorus project contract
 
-Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Rationale: `docs/`. Client files: generated projections; never hand-edit. Reference tables (enforcement per HISS rule, layout + ownership, skills, hooks, commands, pinned upstreams): `docs/development/agent-reference.md`; read before touching an unfamiliar path.
+Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Rationale: `docs/`. Client files: generated projections; never hand-edit. Reference tables (HISS enforcement, layout, skills, hooks, commands, pins): `docs/development/agent-reference.md`.
 
 ## Mission
 
@@ -125,7 +125,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Rationale: `
 2. Public non-void APIs return `pel_result`; check each non-void call or cast `(void)`; no bare `return -1` across API.
 3. No mutable globals, no static-init side effects. Banned: `gets`, `strcpy`, `strcat`, `sprintf`, `strtok`, `atoi`, `atof`, `rand`, `system`.
 4. Shader source once: `ffmpeg-patches/files/vulkan/pelorus_<name>.comp.glsl`; no runtime or inline GLSL. `libpelorus/shaders/*.comp` = fast-gate references. Spec IDs `253`-`255` reserved (workgroup). Descriptor order + push layout match C.
-5. Consumer change -> `ffmpeg-patches/files/` + regenerated stack, same PR; full `series.txt` replay. Shared series applies first via `scripts/fetch-ffmpeg-series.sh` (fail closed). Generic FFmpeg fix -> VMAFx/ffmpeg-patches.
+5. Consumer change -> `ffmpeg-patches/files/` + regenerated stack, same PR; full `series.txt` replay; per-patch apply check insufficient. Shared series applies first via `scripts/fetch-ffmpeg-series.sh` (fail closed). Generic FFmpeg fix -> VMAFx/ffmpeg-patches.
 6. Touched files: `-Wall -Wextra -Werror`, clang-format, clang-tidy clean; `// NOLINT` cites reason. New Meson C unit -> `.config/clang-tidy/lane-files.txt` (ADR-0168).
 7. Every commit: zero warnings, fast suite green, deband shader compiles (glslang).
 8. Library code: no `printf`/`fprintf(stderr)`; return `pel_result`, host logs.
@@ -135,7 +135,7 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Rationale: `
 
 ## Commands
 
-`meson setup build`; `ninja -C build`; `meson test -C build --suite=fast --print-errorlogs`; `make verify-native`; `make verify-all`; `make compile-context`; `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh`; full table in the reference.
+`meson setup build`; `ninja -C build`; `meson test -C build --suite=fast --print-errorlogs`; `make verify-native`; `make verify-all`; `make compile-context`; rest: reference table.
 
 ## Reviewer routing
 
@@ -152,4 +152,5 @@ Canonical cross-tool context. Read scoped `AGENTS.md` before edits. Rationale: `
 
 - Non-trivial PR: ADR, surface docs, changelog fragment, research digest, runnable verification. FFmpeg-impacting PR: rebase note + regenerated stack.
 - New module: scoped `AGENTS.md`; new top-level package: layout row in the reference.
-- Every commit: `.workingdir/STATE.md` log entry. Truth: `docs/adr/`, `docs/roadmap.md`, `.workingdir/OPEN.md`.
+- Every commit: `.workingdir/STATE.md` log entry; README "Landed so far" row per landed build-order step. Truth: `docs/adr/`, `docs/roadmap.md`, `.workingdir/OPEN.md`.
+- Unsure: verify `docs/principles.md`, scoped `AGENTS.md`, current source, executable help.
