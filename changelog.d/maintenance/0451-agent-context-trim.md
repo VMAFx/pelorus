@@ -1,0 +1,1 @@
+- The always-loaded agent context (`AGENTS.md` and its client projections) drops from 24 KB to 11 KB (ADR-0238), under the Antigravity and Windsurf instruction-file caps; the enforcement, layout, skills, hooks, command and pin tables move to `docs/development/agent-reference.md`.
