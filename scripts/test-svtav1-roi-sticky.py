@@ -71,12 +71,12 @@ struct PelorusSvtRoiSlot {
 
 typedef struct SvtContext {
     int pelorus_roi;
-    struct PelorusSvtRoiSlot *roi_evts;
-    int roi_nevts;
-    uint64_t roi_nframes, roi_npackets, roi_nbuilt;
-    int roi_peak;
-    int roi_sticky;
-    unsigned roi_b64_cols, roi_b64_rows;
+    struct PelorusSvtRoiSlot *pelorus_roi_evts;
+    int pelorus_roi_nevts;
+    uint64_t pelorus_roi_nframes, pelorus_roi_npackets, pelorus_roi_nbuilt;
+    int pelorus_roi_peak;
+    int pelorus_roi_sticky;
+    unsigned pelorus_roi_b64_cols, pelorus_roi_b64_rows;
 } SvtContext;
 
 static void av_log(void *avcl, int level, const char *fmt, ...) { (void)avcl; (void)level; (void)fmt; }
@@ -142,21 +142,21 @@ int main(void)
     memset(&svt, 0, sizeof(svt));
     memset(&f, 0, sizeof(f));
     svt.pelorus_roi = 1;
-    svt.roi_b64_cols = svt.roi_b64_rows = 2;
+    svt.pelorus_roi_b64_cols = svt.pelorus_roi_b64_rows = 2;
     avctx.priv_data = &svt;
     avctx.pix_fmt = 0;
 
     /* 1. No ROI yet and none on the frame: nothing to do. */
     expect("idle rc", build(&avctx, &f, &sd, NULL, 0, &evt), 0);
     expect("idle no event", evt == NULL, 1);
-    expect("idle not sticky", svt.roi_sticky, 0);
+    expect("idle not sticky", svt.pelorus_roi_sticky, 0);
 
     /* 2. A real ROI becomes the sticky event. */
     f.pts = 1;
     expect("roi rc", build(&avctx, &f, &sd, &roi, -5, &evt), 0);
     expect("roi event built", evt != NULL, 1);
-    expect("roi sticky", svt.roi_sticky, 1);
-    svt.roi_nframes++;
+    expect("roi sticky", svt.pelorus_roi_sticky, 1);
+    svt.pelorus_roi_nframes++;
 
     /* 3. First frame without ROI data: a neutral event must replace it. */
     f.pts = 2;
@@ -167,8 +167,8 @@ int main(void)
         expect("neutral max_seg_id", evt->max_seg_id, 0);
         expect("neutral next unlinked", evt->next == NULL, 1);
     }
-    expect("neutral clears sticky", svt.roi_sticky, 0);
-    svt.roi_nframes++;
+    expect("neutral clears sticky", svt.pelorus_roi_sticky, 0);
+    svt.pelorus_roi_nframes++;
 
     /* 4. Further frames inherit the neutral event: no new event. */
     f.pts = 3;
@@ -178,16 +178,16 @@ int main(void)
     /* 5. ROI returns, then an all-zero-delta ROI must also reset. */
     expect("roi again rc", build(&avctx, &f, &sd, &roi, -5, &evt), 0);
     expect("roi again event", evt != NULL, 1);
-    expect("roi again sticky", svt.roi_sticky, 1);
+    expect("roi again sticky", svt.pelorus_roi_sticky, 1);
     expect("zero-delta rc", build(&avctx, &f, &sd, &roi, 0, &evt), 0);
     expect("zero-delta sends neutral event", evt != NULL, 1);
     if (evt)
         expect("zero-delta neutral map", all_zero(evt, sbs), 1);
-    expect("zero-delta clears sticky", svt.roi_sticky, 0);
+    expect("zero-delta clears sticky", svt.pelorus_roi_sticky, 0);
 
-    for (i = 0; i < svt.roi_nevts; i++)
-        svtav1_free_roi_evt(svt.roi_evts[i].evt);
-    free(svt.roi_evts);
+    for (i = 0; i < svt.pelorus_roi_nevts; i++)
+        svtav1_free_roi_evt(svt.pelorus_roi_evts[i].evt);
+    free(svt.pelorus_roi_evts);
 
     if (failures)
         return 1;
@@ -198,8 +198,12 @@ int main(void)
 
 
 def extract_chunk(patch: pathlib.Path) -> str:
-    """The ROI helpers: from the segment-count define to the closing #endif."""
-    lines = harness.added_lines(patch.read_text())
+    """The ROI helpers: from the segment-count define to the closing #endif.
+
+    Read from the post-image, not the '+' lines: diff can match the last
+    helper's closing lines to the tail of the function before it.
+    """
+    lines = harness.new_side_lines(patch.read_text())
     start = next((i for i, l in enumerate(lines)
                   if l.startswith("#define PELORUS_SVTAV1_MAX_SEGMENTS")), None)
     if start is None:

@@ -123,6 +123,7 @@ SPDX-License-Identifier: EUPL-1.2
 - The open C code-scanning alerts are fixed: tests compare floats by bit pattern through one shared test header, tests open fixture paths from the command line only after resolving them and refuse any handle that is not a regular file, loops no longer change their counter in the body, `qloop.c` names the parts of its slope test, dead clamps in `grain_convert.c` are gone, `drm_modifier_test` checks each `snprintf` return, the UTF-8 path test creates its file owner-only, and planted SEI fit twins get their own include guard.
 - CodeQL no longer reports `check_1080p` and `check_corrupt_blob` in `sei_fit_test.c` as unreachable: helpers that one test calls stop expanding the fit header's macros, which gave CodeQL a separate copy of each helper per planted build.
 - The always-loaded agent context (`AGENTS.md` and its client projections) drops from 24 KB to 11 KB (ADR-0238), under the Antigravity and Windsurf instruction-file caps; the enforcement, layout, skills, hooks, command and pin tables move to `docs/development/agent-reference.md`.
+- The `libaom-av1` and `libsvtav1` ROI patches (0012, 0013) name their locals and context fields with a `pelorus_roi_` prefix, so the stack builds on top of the shared FFmpeg series' unified `-qpfile` patch, which uses the bare `roi_` names. Encoder behaviour is unchanged.
 
 <!-- END UNRELEASED -->
 
