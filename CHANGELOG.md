@@ -122,6 +122,7 @@ SPDX-License-Identifier: EUPL-1.2
 - The FFmpeg filter sources share their repeated host code: the five side-data producers (deband, analyze, denoise, grain_estimate, mc) pack and attach their blob through the new private header `pelorus_sidedata_attach.h`, dehalo, denoise, grain_estimate and mc set up their compute exec pool with `pel_vk_init_compute_exec()`, and the analyze map layout comes from one `pel_an_calc_layout()`; filter output is unchanged.
 - The open C code-scanning alerts are fixed: tests compare floats by bit pattern through one shared test header, tests open fixture paths from the command line only after resolving them and refuse any handle that is not a regular file, loops no longer change their counter in the body, `qloop.c` names the parts of its slope test, dead clamps in `grain_convert.c` are gone, `drm_modifier_test` checks each `snprintf` return, the UTF-8 path test creates its file owner-only, and planted SEI fit twins get their own include guard.
 - CodeQL no longer reports `check_1080p` and `check_corrupt_blob` in `sei_fit_test.c` as unreachable: helpers that one test calls stop expanding the fit header's macros, which gave CodeQL a separate copy of each helper per planted build.
+- The `libaom-av1` and `libsvtav1` ROI patches (0012, 0013) name their locals and context fields with a `pelorus_roi_` prefix, so the stack builds on top of the shared FFmpeg series' unified `-qpfile` patch, which uses the bare `roi_` names. Encoder behaviour is unchanged.
 
 <!-- END UNRELEASED -->
 

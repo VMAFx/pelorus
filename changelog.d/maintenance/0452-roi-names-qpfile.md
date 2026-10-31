@@ -1,0 +1,1 @@
+- The `libaom-av1` and `libsvtav1` ROI patches (0012, 0013) name their locals and context fields with a `pelorus_roi_` prefix, so the stack builds on top of the shared FFmpeg series' unified `-qpfile` patch, which uses the bare `roi_` names. Encoder behaviour is unchanged.

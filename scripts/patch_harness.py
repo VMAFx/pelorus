@@ -55,6 +55,38 @@ def added_lines(text: str, subpath: str | None = None) -> list[str]:
     return out
 
 
+def new_side_lines(text: str, subpath: str | None = None) -> list[str]:
+    """Return the post-image of a unified diff: its '+' and context lines.
+
+    A block added between two existing functions can end on a line that diff
+    matches to the original code (a shared ``return 0;`` and ``}``); the '+'
+    lines alone then lose that tail. The post-image keeps it. Lines of
+    different hunks are joined, so callers slice within one hunk.
+    With ``subpath``, only the lines of that file's section count.
+    """
+    out: list[str] = []
+    current: str | None = None
+    in_hunk = False
+    for line in text.splitlines():
+        match = re.match(r"^diff --git a/(\S+) b/\S+$", line)
+        if match:
+            current = match.group(1)
+            in_hunk = False
+            continue
+        if subpath is not None and current != subpath:
+            continue
+        if line.startswith("@@"):
+            in_hunk = True
+            continue
+        if not in_hunk or line.startswith(("+++", "---")):
+            continue
+        if line.startswith(("+", " ")):
+            out.append(line[1:])
+        elif line == "":
+            out.append("")
+    return out
+
+
 def extract_function(
     source: str | list[str],
     name: str,

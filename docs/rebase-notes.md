@@ -8,6 +8,14 @@ the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
 ranges in older entries predate the first entry below (22 patches on the
 shared FFmpeg fix series, number 0021 retired).
 
+## Unreleased — ROI names clear of the shared `-qpfile` series (regenerates 0012, 0013)
+
+- **Base**: unchanged (`n9.0.2`, shared series `v0.5.0`). The refresh targets the next shared series, which adds patch 0040 (one `-qpfile` parser across `libx264`, `libsvtav1` and `libaomenc`, VMAFx/ffmpeg-patches pull request 141, head `11c1515d5a59` at test time).
+- **Patches**: 0040 declares its own `roi_node`, `roi_evt_ptr`, `roi_seg_map`, `roi_mi_rows` and `roi_mi_cols` in `libsvtav1.c` and `libaomenc.c`, so the Pelorus names clashed (`redeclaration of 'roi_node'` in `eb_send_frame`). The Pelorus locals and context members now carry the `pelorus_roi_` prefix: `pelorus_roi_node` and `pelorus_roi_evt` in 0013, `pelorus_roi_seg_map`, `pelorus_roi_mi_rows`, `pelorus_roi_mi_cols`, `pelorus_roi_warned_coarse` and `pelorus_roi_warned_fail` in 0012. Behaviour is unchanged.
+- **Rebase-sensitive**: Pelorus identifiers in `libsvtav1.c` and `libaomenc.c` keep the `pelorus_roi_` prefix; the bare `roi_` names belong to the shared series.
+- **Interop**: none.
+- **Checks**: the replay over series `v0.5.0` and over pull request 141 both apply, build and pass the FFmpeg-tree clang-tidy lane and the registration check; `scripts/test-svtav1-roi-sticky.py` follows the new names.
+
 ## Unreleased — shared FFmpeg fix series pinned at `v0.5.0` (ADR-0185; no patch regenerates)
 
 - **Base**: `FFMPEG_SERIES_TAG` moves from `v0.4.0` to `v0.5.0`,
