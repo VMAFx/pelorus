@@ -43,6 +43,7 @@ The target is below 95% of the smallest cap, so that the survey's near-cap warni
 
 ## References
 
+- [Research digest 0451](../research/0451-agent-context-size.md): the measured sizes and limits.
 - [ADR-0187](0187-praetor-engine-7cf9cbb-engine-launcher.md): the placement this record supersedes.
 - Fleet context-hygiene rule, ledger id `fleet-context-hygiene-all-clients-20261029` (paraphrased): instruction files import no bulk and stay under each client's cap.
 - Windsurf rule-file limit: <https://docs.windsurf.com/llms-full.txt> (read 2026-10-29 by the survey's authors).
