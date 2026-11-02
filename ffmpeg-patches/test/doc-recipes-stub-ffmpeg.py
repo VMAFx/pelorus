@@ -52,7 +52,10 @@ def plant():
     return os.environ.get("STUB_PLANT", "")
 
 
-def decode_check():
+def decode_check(argv):
+    if not Path(argv[argv.index("-i") + 1]).is_file():
+        sys.stderr.write("Error: No such file or directory\n")
+        return 1
     frames = 119 if plant() == "119frames" else 120
     sys.stderr.write(
         f"frame=  {frames} fps=0.0 q=0.0 size=N/A time=00:00:05.00 bitrate=N/A\n"
@@ -60,13 +63,25 @@ def decode_check():
     return 0
 
 
+def stdin_is_devnull():
+    """True when fd 0 is the null device; ffmpeg must never wait on a prompt."""
+    if os.name == "nt":
+        return True
+    st, null = os.fstat(0), os.stat(os.devnull)
+    return (st.st_dev, st.st_ino) == (null.st_dev, null.st_ino)
+
+
 def recipe_run(argv):
+    if not stdin_is_devnull():
+        sys.stderr.write("Error: stdin is not the null device\n")
+        return 1
     if plant() == "rc":
         sys.stderr.write("Error: simulated ffmpeg failure\n")
         return 1
     if plant() == "hang":
         time.sleep(30)
-    Path(argv[-1]).touch()
+    if plant() != "no_output":
+        Path(argv[-1]).touch()
     if plant() == "missing_needle":
         print(NEEDLES[0])
         return 0
@@ -82,6 +97,9 @@ def main(argv):
     if not argv:
         return 0
     if "-encoders" in argv:
+        if plant() == "encoders_rc":
+            sys.stderr.write("Error: simulated broken binary\n")
+            return 1
         print(" V..... libx265              libx265 H.265 / HEVC (codec hevc)")
         print(" V..... hevc_nvenc           NVIDIA NVENC hevc encoder (codec hevc)")
         return 0
@@ -95,7 +113,7 @@ def main(argv):
         Path(argv[-1]).touch()
         return 0
     if argv[-3:] == ["-f", "null", "-"]:
-        return decode_check()
+        return decode_check(argv)
     return recipe_run(argv)
 
 

@@ -23,6 +23,7 @@ import importlib
 import os
 import re
 import shlex
+import shutil
 import subprocess  # nosec B404 - fixed ffmpeg argv, no shell, explicit deadline
 import sys
 import tempfile
@@ -79,6 +80,7 @@ def run_ffmpeg(argv, timeout_s, env=None, merge_stderr=True):
             argv,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - argv is a recipe from the tracked docs, split without a shell; argv[0] is the operator's FFMPEG_BIN
             check=False,
             env=env,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE,
             text=True,
@@ -88,6 +90,15 @@ def run_ffmpeg(argv, timeout_s, env=None, merge_stderr=True):
         msg = f"timed out after {timeout_s} s"
         return RunResult(124, msg, "" if merge_stderr else msg)
     return RunResult(proc.returncode, proc.stdout, proc.stderr or "")
+
+
+def resolve_ffmpeg_bin(value):
+    """Resolve FFMPEG_BIN (a path or a bare name on PATH). Return a Path or None."""
+    path = Path(value)
+    if path.is_absolute():
+        return path if path.is_file() else None
+    resolved = shutil.which(value)
+    return Path(resolved) if resolved else None
 
 
 _doc = importlib.import_module("doc-recipes-doc")
@@ -364,6 +375,9 @@ CLIP_NAMES = {"8bit": "input.mkv", "10bit": "input-10bit.mkv"}
 def generate_clips(ffmpeg_bin, tmp_dir, kinds):
     """Generate a 120-frame 1280x720 clip per input kind. Return ({kind: path}, reason)."""
     proc = run_ffmpeg(ffmpeg_argv(ffmpeg_bin) + ["-encoders"], PROBE_TIMEOUT_S)
+    if proc.returncode != 0:
+        tail = proc.stdout.strip()[-200:]
+        return None, f"FAIL: ffmpeg -encoders exited {proc.returncode}: {tail}"
     clips = {}
     for kind in sorted(kinds):
         clip = tmp_dir / CLIP_NAMES[kind]
@@ -444,6 +458,9 @@ def _run_variant(ctx, recipe_id, var):
     stem = run_tag.replace(":", "_")
     out_clip = ctx["out_dir"] / f"{stem}.mkv"
     log_path = ctx["out_dir"] / f"{stem}.log"
+    # a reused output root keeps the last run's clip; the decode check
+    # must only ever see what this run wrote
+    out_clip.unlink(missing_ok=True)
     argv, child_env = prepare_argv_and_env(
         ctx["marked"][recipe_id][2],
         spec,
@@ -479,6 +496,9 @@ def _run_smoke_in(ffmpeg_bin, tmp_dir, marked, selected_ids, output_root):
             return 1
     kinds = {SPEC[recipe_id]["input_kind"] for recipe_id in selected_ids}
     clips, err = generate_clips(ffmpeg_bin, tmp_dir, kinds)
+    if clips is None and err.startswith("FAIL: "):
+        print(err)
+        return 1
     if clips is None:
         print(f"SKIP: no recipe device: cannot generate input clips: {err}")
         return 77
@@ -521,11 +541,13 @@ def main(argv):
         print("SKIP: FFMPEG_BIN unset: doc recipes smoke needs a patched ffmpeg binary")
         return 77
 
+    resolved = resolve_ffmpeg_bin(ffmpeg_bin)
+    if resolved is None:
+        print(f"FAIL: FFMPEG_BIN not found as a file or on PATH: {ffmpeg_bin}")
+        return 1
     out_root = os.environ.get("OUTPUT_ROOT")
     recipes_filter = os.environ.get("RECIPES")
-    return run_smoke(
-        Path(ffmpeg_bin), output_root=out_root, recipes_filter=recipes_filter
-    )
+    return run_smoke(resolved, output_root=out_root, recipes_filter=recipes_filter)
 
 
 if __name__ == "__main__":

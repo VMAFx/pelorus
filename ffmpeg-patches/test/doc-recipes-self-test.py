@@ -35,6 +35,19 @@ def _quiet_deadline(fn, *args, **kwargs):
         R.RUN_TIMEOUT_S = saved
 
 
+def _with_pipe_stdin(fn, *args, **kwargs):
+    """_quiet with a pipe on fd 0, so a child that inherits stdin is seen."""
+    read_fd, write_fd = os.pipe()
+    saved = os.dup(0)
+    os.dup2(read_fd, 0)
+    try:
+        return _quiet(fn, *args, **kwargs)
+    finally:
+        os.dup2(saved, 0)
+        for fd in (saved, read_fd, write_fd):
+            os.close(fd)
+
+
 def _self_test_doc(clean_doc):
     """Doc plants for --check-doc. Return the failure count."""
     failures = 0
@@ -82,6 +95,49 @@ def _self_test_doc(clean_doc):
     return failures
 
 
+def _self_test_exec_runs(stub_path, stub_dir):
+    """Runs through the stub that must pass. Return the failure count."""
+    failures = 0
+    print("--- self-test: 8-bit recipe without a 10-bit clip ---")
+    os.environ["STUB_PLANT"] = "no10bit"
+    rc = _quiet(
+        R.run_smoke,
+        stub_path,
+        output_root=Path(stub_dir) / "out-no10bit",
+        recipes_filter="nvenc-nvdec-derived",
+    )
+    if rc != 0:
+        print(
+            f"self-test FAIL: 8-bit recipe did not run without a 10-bit clip (rc {rc})"
+        )
+        failures += 1
+    else:
+        print("self-test: 8-bit recipe ran without a 10-bit clip")
+    if os.name != "nt":
+        print("--- self-test: recipe run with a pipe on stdin ---")
+        os.environ["STUB_PLANT"] = "clean"
+        rc = _with_pipe_stdin(
+            R.run_smoke,
+            stub_path,
+            output_root=Path(stub_dir) / "out-stdin",
+            recipes_filter="nvenc-nvdec-derived",
+        )
+        if rc != 0:
+            print(f"self-test FAIL: recipe run inherited stdin (rc {rc})")
+            failures += 1
+        else:
+            print("self-test: recipe run got the null device on stdin")
+    print("--- self-test: clean stub run ---")
+    os.environ["STUB_PLANT"] = "clean"
+    rc = _quiet(R.run_smoke, stub_path, output_root=Path(stub_dir) / "out-clean")
+    if rc != 0:
+        print(f"self-test FAIL: clean stub run failed with rc {rc}")
+        failures += 1
+    else:
+        print("self-test: clean stub run passed")
+    return failures
+
+
 def _self_test_exec():
     """Execution plants through a stub ffmpeg. Return the failure count."""
     failures = 0
@@ -97,10 +153,15 @@ def _self_test_exec():
             ("hung recipe run", "hang"),
             ("missing needle", "missing_needle"),
             ("119 frames", "119frames"),
+            ("failed encoder probe", "encoders_rc"),
+            ("stale output clip", "no_output"),
         ]
         for name, plant_env in exec_plants:
             os.environ["STUB_PLANT"] = plant_env
             out = Path(stub_dir) / f"out-{plant_env}"
+            # a clip left by an earlier run must not pass for this run's output
+            out.mkdir()
+            (out / "nvenc-nvdec-derived.mkv").touch()
             rc = _quiet_deadline(
                 R.run_smoke,
                 stub_path,
@@ -118,29 +179,37 @@ def _self_test_exec():
                 print(
                     f"self-test: execution plant '{name}' correctly refused (rc {rc})"
                 )
-        print("--- self-test: 8-bit recipe without a 10-bit clip ---")
-        os.environ["STUB_PLANT"] = "no10bit"
-        rc = _quiet(
-            R.run_smoke,
-            stub_path,
-            output_root=Path(stub_dir) / "out-no10bit",
-            recipes_filter="nvenc-nvdec-derived",
-        )
-        if rc != 0:
-            print(
-                f"self-test FAIL: 8-bit recipe did not run without a 10-bit clip (rc {rc})"
-            )
-            failures += 1
-        else:
-            print("self-test: 8-bit recipe ran without a 10-bit clip")
-        print("--- self-test: clean stub run ---")
-        os.environ["STUB_PLANT"] = "clean"
-        rc = _quiet(R.run_smoke, stub_path, output_root=Path(stub_dir) / "out-clean")
-        if rc != 0:
-            print(f"self-test FAIL: clean stub run failed with rc {rc}")
-            failures += 1
-        else:
-            print("self-test: clean stub run passed")
+        failures += _self_test_exec_runs(stub_path, stub_dir)
+    return failures
+
+
+def _self_test_resolve():
+    """FFMPEG_BIN resolution: path, bare name on PATH, missing name."""
+    print("--- self-test: FFMPEG_BIN resolution ---")
+    failures = 0
+    with tempfile.TemporaryDirectory(prefix="pelorus-bin.") as bin_dir:
+        exe = Path(bin_dir) / "pelorus-probe-ffmpeg"
+        exe.write_text("#!/bin/sh\n", encoding="utf-8")
+        exe.chmod(0o755)
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = bin_dir
+        try:
+            cases = [
+                ("absolute path", str(exe), exe),
+                ("missing absolute path", str(exe) + "-gone", None),
+                ("missing bare name", "pelorus-no-such-ffmpeg", None),
+            ]
+            if os.name != "nt":  # Windows which() needs a PATHEXT suffix
+                cases.append(("bare name on PATH", exe.name, exe))
+            for name, value, want in cases:
+                got = R.resolve_ffmpeg_bin(value)
+                if (got and got.resolve()) != (want and want.resolve()):
+                    print(f"self-test FAIL: resolve '{name}' gave {got}, want {want}")
+                    failures += 1
+                else:
+                    print(f"self-test: resolve '{name}' ok")
+        finally:
+            os.environ["PATH"] = old_path
     return failures
 
 
@@ -150,6 +219,7 @@ def self_test(runner):
     R = runner
     failures = _self_test_doc(R.DOC_PATH.read_text(encoding="utf-8"))
     failures += _self_test_exec()
+    failures += _self_test_resolve()
     if failures:
         print(f"doc-recipes-smoke self-test: {failures} failure(s)")
         return 1
