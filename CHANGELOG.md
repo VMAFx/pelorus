@@ -50,6 +50,7 @@ SPDX-License-Identifier: EUPL-1.2
 - Grain scoring AV1 leg (`scripts/grain-score.sh`, `ffmpeg-patches/test/grain-score-av1-smoke.sh`): scores decoded grain-synthesised AV1 video via libdav1d, refuses grain-free reconstruction, streams without film grain and builds lacking libdav1d ([#368](https://github.com/VMAFx/pelorus/issues/368), [ADR-0212](docs/adr/0212-grain-scoring-av1-libdav1d.md)).
 - Documented zero-copy recipes smoke (`ffmpeg-patches/test/doc-recipes-smoke.py`, `docs/usage/ffmpeg.md`): runs documented zero-copy boundary recipes verbatim on hardware devices, asserting zero `hwdownload`, no auto-inserted scale on hardware frames (software-only conversions before `hwupload` pass), claimed log needles, exact 120-frame output decode, and static gate `--check-doc` enforcing recipe coverage ([ADR-0240](docs/adr/0240-doc-recipes-run-verbatim.md)).
 - Adopt VMAFx float-identity Semgrep rule (`.semgrep.yml`), fast-suite planted-defect test (`scripts/test-semgrep-float-identity.py`), and CI job refusing direct `==` and `!=` comparisons on computed floats in test suites ([ADR-0239](docs/adr/0239-semgrep-float-identity-rule.md)).
+- Suppression marker check (`scripts/check-suppression-markers.py`, fast-suite tests `suppression-markers` and `suppression-markers-self-test`): every `nosemgrep` and `nosec` marker in tracked Python must sit on the start line of a statement or expression and name its rule ids plus a reason; misplaced, bare and reasonless markers fail ([ADR-0241](docs/adr/0241-suppression-marker-binding.md)).
 
 ### Changed
 

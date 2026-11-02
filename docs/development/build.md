@@ -143,6 +143,9 @@ Windows-specific behavior of the suite:
   `--self-test` on Windows. The self-test's Git fixtures model the Linux-only
   FFmpeg replay; MSYS2 argument globbing and Python's CRLF text mode break them,
   and the Linux jobs run the full self-test on every PR.
+- **`suppression-markers`** (the tree scan) is not registered on Windows: it
+  lists files with `git ls-files`, and the MSYS2 leg has no git on `PATH`.
+  `suppression-markers-self-test` runs the planted cases there.
 
 The FFmpeg patch-stack scripts below remain Linux-only.
 
@@ -366,6 +369,17 @@ keeps it ([ADR-0188](../adr/0188-named-test-skips.md)).
 `scripts/check-test-skips.py <build>/meson-logs/testlog.json` checks this after
 `make test` and in every CI fast-suite run. A new skip, or a changed skip message,
 fails until the list names it.
+
+A `# nosemgrep` or `# nosec` marker in tracked Python must sit on the start line
+of the statement or expression it answers and name its rules plus a reason:
+`# nosemgrep: <full rule id>[, <id>] - <reason>` and `# nosec <Bxxx> - <reason>`
+([ADR-0241](../adr/0241-suppression-marker-binding.md)). The fast-suite test
+`suppression-markers` runs `scripts/check-suppression-markers.py --self-test`,
+which refuses a misplaced, bare or reasonless marker and then scans the tree;
+`suppression-markers-self-test` runs the planted cases alone
+(`--self-test-only`) on every platform, Windows included. Each Python file is
+read in its declared encoding (PEP 263), and one that does not decode is a
+finding.
 
 No branch or tag may hold a credential (HISS-12,
 [ADR-0190](../adr/0190-gitleaks-every-ref.md)). The CI `docs` job installs the
