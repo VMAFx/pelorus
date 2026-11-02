@@ -194,7 +194,7 @@ jobs:
 
           $env:PATH = "$bundleDir;$vulkanDir;$env:SystemRoot\System32;$env:PATH"
 
-          $filtersOutput = (& "$bundleDir\run.cmd" -hide_banner -filters) -join "`n"
+          $filtersOutput = (& "$bundleDir\run.cmd" -hide_banner -filters) -join [char]10
           if ($LASTEXITCODE -ne 0) {
             throw "run.cmd -filters exited $LASTEXITCODE"
           }
