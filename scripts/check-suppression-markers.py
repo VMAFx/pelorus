@@ -287,6 +287,15 @@ def unreadable_self_test(root: Path, local_ids: frozenset[str]) -> list[str]:
     failures: list[str] = []
     try:
         try:
+            with locked.open("rb"):
+                pass
+        except OSError:
+            pass
+        else:
+            # Windows keeps a mode-0 file readable, so there is no plant.
+            print("skipped (unreadable file): mode 0 leaves the file readable here")
+            return failures
+        try:
             got = file_findings(root, locked, local_ids)
         except OSError as exc:
             failures.append(f"planted 'unreadable file' raised {exc!r}")
