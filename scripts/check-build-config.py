@@ -2865,6 +2865,14 @@ def _validate_load_step(relative: str, name: str, block: str) -> list[str]:
 def _validate_workflow_structure_and_jobs(
     relative: str, text: str, jobs: dict[str, str]
 ) -> list[str]:
+    """Validate workflow tokens, job runner pins, load steps, and receipts.
+
+    Checks workflow text for forbidden tokens and copied FFmpeg release
+    tags, requires each job to run on exactly its pinned runner and to load
+    build-config.env (reusable-workflow calls and the release publish job
+    are skipped), and requires non-release workflows to record the
+    environment receipt tokens. Returns the list of error strings.
+    """
     errors: list[str] = []
     forbidden = (
         "ubuntu-latest",
