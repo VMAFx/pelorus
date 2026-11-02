@@ -48,6 +48,7 @@ REGISTRY_MIN_DOTS = 2
 
 
 def local_rule_ids(root: Path) -> frozenset[str]:
+    """Rule ids declared in the local .semgrep.yml, empty when it is absent."""
     config = root / ".semgrep.yml"
     if not config.is_file():
         return frozenset()
@@ -73,6 +74,7 @@ def segment_findings(segment: str, local_ids: frozenset[str]) -> list[str]:
 
 
 def comment_findings(comment: str, local_ids: frozenset[str]) -> list[str]:
+    """Check one comment token: each marker word must follow a `#` and parse."""
     found: list[str] = []
     for word in MARKER_WORD.finditer(comment):
         prefix = comment[: word.start()].rstrip(" \t")
@@ -86,6 +88,7 @@ def comment_findings(comment: str, local_ids: frozenset[str]) -> list[str]:
 
 
 def python_findings(name: str, text: str, local_ids: frozenset[str]) -> list[str]:
+    """Check every marker comment in Python source against its AST start lines."""
     try:
         tree = ast.parse(text, filename=name)
     except SyntaxError as exc:
@@ -106,6 +109,7 @@ def python_findings(name: str, text: str, local_ids: frozenset[str]) -> list[str
 
 
 def is_python(path: Path) -> bool:
+    """True for a .py file or a file whose shebang names python."""
     if path.suffix == ".py":
         return True
     try:
@@ -117,6 +121,7 @@ def is_python(path: Path) -> bool:
 
 
 def tracked_files(root: Path) -> list[Path]:
+    """Every file git tracks under root."""
     proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
         ["git", "-C", str(root), "ls-files", "-z"],
         capture_output=True,
@@ -128,6 +133,7 @@ def tracked_files(root: Path) -> list[Path]:
 
 
 def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str]:
+    """Check one tracked file; Markdown and non-regular files are not read."""
     name = path.relative_to(root).as_posix()
     if path.suffix == ".md" or not path.is_file():
         return []
@@ -148,6 +154,7 @@ def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str
 
 
 def other_findings(name: str, text: str) -> list[str]:
+    """Refuse every marker comment in a non-Python file."""
     return [
         f"{name}:{text.count(chr(10), 0, m.start()) + 1}: marker outside Python; "
         "this check binds Python only"
@@ -156,6 +163,7 @@ def other_findings(name: str, text: str) -> list[str]:
 
 
 def scan(root: Path) -> list[str]:
+    """Check every tracked file under root."""
     local_ids = local_rule_ids(root)
     found: list[str] = []
     for path in tracked_files(root):
@@ -217,6 +225,7 @@ def encoding_self_test(local_ids: frozenset[str]) -> list[str]:
 
 
 def self_test() -> int:
+    """Plant each refused shape and the valid sources; 0 when all behave."""
     local_ids = frozenset({"local-rule"})
     failures: list[str] = []
     valid = python_findings("valid.py", VALID, local_ids)
@@ -239,6 +248,7 @@ def self_test() -> int:
 
 
 def main(argv: list[str]) -> int:
+    """Run the self-test and/or the tree scan; exit 1 on a finding."""
     if argv[1:] == ["--self-test-only"]:
         return self_test()
     if argv[1:] == ["--self-test"]:
