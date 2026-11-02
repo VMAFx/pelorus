@@ -102,7 +102,8 @@ bool planted(double x, float p, float q, int i, int k, double u, double v,
 EXPECTED_HITS = tuple(
     n for n, line in enumerate(PLANTED_C.splitlines(), 1) if "/* reported" in line
 )
-SEMGREP_TIMEOUT_S = 300
+# Three scans at this bound stay under the 600 s Meson timeout in meson.build.
+SEMGREP_TIMEOUT_S = 180
 
 # A non-const float named like a macro or k-constant would pass the rule's
 # literal exemption while holding a computed value.

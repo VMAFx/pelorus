@@ -607,8 +607,12 @@ test('dehalo-line-art',
 
 # ADR-0239: planted-defect recall for the float-identity Semgrep rule.
 # Refuses == and != between computed floating-point values in test code.
+# Three sequential Semgrep scans at SEMGREP_TIMEOUT_S (180 s) each stay under
+# the 600 s Meson bound, so a hung scan is named by the script, not killed by
+# Meson's 30 s default (a local run takes about 4 s).
 test('semgrep-float-identity',
      python_prog,
      args: [meson.project_source_root() / 'scripts' / 'test-semgrep-float-identity.py'],
      workdir: meson.project_source_root(),
+     timeout: 600,
      suite: 'fast')
