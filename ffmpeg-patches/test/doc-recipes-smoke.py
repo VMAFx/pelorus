@@ -39,6 +39,18 @@ parse_block = _cdr.parse_block
 strip_comment = _cdr.strip_comment
 is_ffmpeg_start = _cdr.is_ffmpeg_start
 
+
+def ffmpeg_argv(ffmpeg_bin):
+    """Command prefix that starts ffmpeg_bin.
+
+    A .py file (the self-test stub) runs through this interpreter, because
+    Windows cannot start a script by its shebang (WinError 193).
+    """
+    if str(ffmpeg_bin).endswith(".py"):
+        return [sys.executable, str(ffmpeg_bin)]
+    return [str(ffmpeg_bin)]
+
+
 DOC_PATH = REPO_ROOT / "docs" / "usage" / "ffmpeg.md"
 
 MARKER_RE = re.compile(r"<!--\s*recipe-run:\s*([^\s>]+)(?:\s+(.*?))?\s*-->")
@@ -277,6 +289,7 @@ def prepare_argv_and_env(
     """Shlex-split, strip comments, extract VAR=val, apply substitutions."""
     words = shlex.split(cmd_str)
     child_env = os.environ.copy()
+    prefix = ffmpeg_argv(ffmpeg_bin)
 
     # Move leading VAR=value into child env
     while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
@@ -291,7 +304,7 @@ def prepare_argv_and_env(
     new_words = []
     for idx, w in enumerate(words):
         if idx == 0 and w == "ffmpeg":
-            new_words.append(str(ffmpeg_bin))
+            new_words.extend(prefix)
             continue
         if w == "input.mkv" or w == "input-10bit.mkv":
             new_words.append(str(input_clip))
@@ -307,7 +320,7 @@ def prepare_argv_and_env(
 
     # Insert -v verbose if not present
     if "-v" not in new_words and "-loglevel" not in new_words:
-        new_words[1:1] = ["-v", "verbose"]
+        new_words[len(prefix) : len(prefix)] = ["-v", "verbose"]
 
     return new_words, child_env
 
@@ -359,7 +372,7 @@ def probe_device(ffmpeg_bin, device_class, chosen_node=None, variant_driver=None
     env = os.environ.copy()
     if variant_driver:
         env["LIBVA_DRIVER_NAME"] = variant_driver
-    cmd = [str(ffmpeg_bin), "-nostdin", "-hide_banner", "-loglevel", "error"]
+    cmd = ffmpeg_argv(ffmpeg_bin) + ["-nostdin", "-hide_banner", "-loglevel", "error"]
     cmd += args + ["-f", "null", "-"]
     proc = subprocess.run(
         cmd,
@@ -464,8 +477,7 @@ def encode_clip(ffmpeg_bin, encoders_text, kind, clip):
     for name, args, extra_env in clip_encoder_attempts():
         if kind not in args or not re.search(r"\b" + name + r"\b", encoders_text):
             continue
-        cmd = [
-            str(ffmpeg_bin),
+        cmd = ffmpeg_argv(ffmpeg_bin) + [
             "-y",
             "-nostdin",
             "-hide_banner",
@@ -530,7 +542,7 @@ def hardware_auto_scale(log_text):
 def generate_clips(ffmpeg_bin, tmp_dir):
     """Generate 120-frame 1280x720 8-bit and 10-bit test clips. Return (c8, c10) or None."""
     proc = subprocess.run(
-        [str(ffmpeg_bin), "-encoders"],
+        ffmpeg_argv(ffmpeg_bin) + ["-encoders"],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -565,7 +577,12 @@ def run_smoke(ffmpeg_bin, output_root=None, recipes_filter=None):
 
 def _decoded_frames(ffmpeg_bin, out_clip):
     """Decode out_clip to null. Return (rc, last frame= count or -1)."""
-    dec_cmd = [str(ffmpeg_bin), "-nostdin", "-hide_banner", "-i", str(out_clip)]
+    dec_cmd = ffmpeg_argv(ffmpeg_bin) + [
+        "-nostdin",
+        "-hide_banner",
+        "-i",
+        str(out_clip),
+    ]
     dec_cmd += ["-f", "null", "-"]
     proc = subprocess.run(
         dec_cmd,
@@ -828,9 +845,8 @@ def _self_test_exec():
     failures = 0
     print("--- self-test: execution plants ---")
     with tempfile.TemporaryDirectory(prefix="pelorus-stub-bin.") as stub_dir:
-        stub_path = Path(stub_dir) / "ffmpeg"
+        stub_path = Path(stub_dir) / "ffmpeg.py"
         stub_path.write_text(STUB_FFMPEG_SCRIPT, encoding="utf-8")
-        stub_path.chmod(0o755)
         exec_plants = [
             ("rc!=0", "rc"),
             ("hwdownload in log", "hwdownload"),

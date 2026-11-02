@@ -196,7 +196,9 @@ the fifth needs an HEVC decoder and the `psnr` filter; the sixth needs the `libd
 and the replay then fails unless `NVENC_SMOKE_SKIP` (SEI smoke),
 `NVENC_HOP_SMOKE_SKIP` (hop smoke), `KEYFRAME_SMOKE_SKIP` (keyframe smoke),
 `FGS_SMOKE_SKIP` (grain smoke), `GRAIN_SCORE_SMOKE_SKIP` (grain score smoke)
-and `GRAIN_SCORE_AV1_SMOKE_SKIP` (grain score AV1 smoke)
+`GRAIN_SCORE_AV1_SMOKE_SKIP` (grain score AV1 smoke)
+and `DOC_RECIPES_SKIP` (documented zero-copy recipes,
+[ADR-0240](../adr/0240-doc-recipes-run-verbatim.md))
 name the reason each smoke prints, so a GPU host whose driver or device went
 missing cannot pass by accident
 ([ADR-0189](../adr/0189-named-nvenc-smoke-skip.md)). On a machine without an
@@ -208,6 +210,7 @@ NVENC_SMOKE_SKIP="Cannot load libcuda.so.1" \
   KEYFRAME_SMOKE_SKIP="no Vulkan device with HEVC video" \
   FGS_SMOKE_SKIP="no HEVC encoder" \
   GRAIN_SCORE_SMOKE_SKIP="no HEVC decoder" \
+  DOC_RECIPES_SKIP="no recipe device: cannot generate input clips" \
   FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh
 ```
 

@@ -149,6 +149,7 @@ jobs:
         env:
           NVENC_SMOKE_SKIP: Cannot load libcuda.so.1
           NVENC_HOP_SMOKE_SKIP: Cannot load libcuda.so.1
+          DOC_RECIPES_SKIP: "no recipe device: cannot generate input clips"
           KEYFRAME_SMOKE_SKIP: no Vulkan device with HEVC video
           FGS_SMOKE_SKIP: no HEVC encoder
           EXPORT_CONTRACT_SKIP: no Vulkan device
@@ -238,6 +239,7 @@ jobs:
         env:
           NVENC_SMOKE_SKIP: hevc_nvenc is not built into
           NVENC_HOP_SMOKE_SKIP: hevc_nvenc is not built into
+          DOC_RECIPES_SKIP: "no recipe device: cannot generate input clips"
           KEYFRAME_SMOKE_SKIP: no Vulkan device with HEVC video
           FGS_SMOKE_SKIP: no HEVC encoder
           EXPORT_CONTRACT_SKIP: the device did not enable VK_EXT_image_drm_format_modifier
@@ -395,6 +397,7 @@ jobs:
         env:
           NVENC_SMOKE_SKIP: hevc_nvenc is not built into
           NVENC_HOP_SMOKE_SKIP: hevc_nvenc is not built into
+          DOC_RECIPES_SKIP: "no recipe device: cannot generate input clips"
           KEYFRAME_SMOKE_SKIP: no Vulkan device with HEVC video
           FGS_SMOKE_SKIP: no HEVC encoder
           EXPORT_CONTRACT_SKIP: the device did not enable VK_EXT_image_drm_format_modifier
