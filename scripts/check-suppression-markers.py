@@ -136,39 +136,26 @@ def tracked_files(root: Path) -> list[Path]:
     return [root / name for name in names if name]
 
 
-def decode_other(data: bytes) -> str:
-    """Decode non-Python file bytes, detecting UTF-16 with or without a BOM.
+def readings(data: bytes) -> list[str]:
+    """Return UTF-8 and UTF-16 text readings of non-Python bytes.
 
-    A trailing odd byte is dropped before a UTF-16 decode, so one stray byte
-    cannot push the file back to the UTF-8 path, where its marker is hidden.
+    No heuristic is used: UTF-8 and little-endian UTF-16 at byte offsets 0
+    and 1 are all scanned, so neither the NUL count nor a stray byte can hide
+    a marker. Marker words are ASCII, and big-endian UTF-16 read from offset
+    1 is the little-endian text, so it needs no reading of its own.
     """
-    data_even = data[: len(data) - len(data) % 2]
-    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
-        try:
-            return data_even.decode("utf-16", "surrogatepass")
-        except UnicodeDecodeError:
-            return data.decode("utf-8", "surrogateescape")
-    sample = data[:4096]
-    if b"\x00" in sample:
-        pairs = len(sample) // 2
-        if pairs > 0:
-            encoding = ""
-            if sample[1::2].count(b"\x00") * 2 > pairs:
-                encoding = "utf-16-le"
-            elif sample[0::2].count(b"\x00") * 2 > pairs:
-                encoding = "utf-16-be"
-            if encoding:
-                try:
-                    return data_even.decode(encoding, "surrogatepass")
-                except UnicodeDecodeError:
-                    pass
-    return data.decode("utf-8", "surrogateescape")
+    texts = [data.decode("utf-8", "surrogateescape")]
+    for offset in (0, 1):
+        chunk = data[offset:]
+        chunk = chunk[: len(chunk) - len(chunk) % 2]
+        texts.append(chunk.decode("utf-16-le", "replace"))
+    return texts
 
 
 def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str]:
     """Check one tracked file; Markdown and non-regular files are not read.
 
-    Non-Python files are scanned under both raw UTF-8 and detected UTF-16.
+    Non-Python files are scanned across UTF-8 and UTF-16 readings.
     Unreadable files are findings.
     """
     name = path.relative_to(root).as_posix()
@@ -185,18 +172,14 @@ def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str
         except (SyntaxError, UnicodeDecodeError) as exc:
             return [f"{name}: not decodable as declared: {exc}"]
         return python_findings(name, text, local_ids)
-    # Marker words are ASCII; surrogateescape keeps every other byte, so a
-    # file that is not UTF-8 is still scanned instead of skipped.
     try:
         raw = path.read_bytes()
     except OSError as exc:
         return [f"{name}: not readable: {exc}"]
-    utf8_text = raw.decode("utf-8", "surrogateescape")
-    findings = other_findings(name, utf8_text)
-    decoded = decode_other(raw)
-    if decoded != utf8_text:
-        seen = set(findings)
-        for item in other_findings(name, decoded):
+    findings: list[str] = []
+    seen: set[str] = set()
+    for text in readings(raw):
+        for item in other_findings(name, text):
             if item not in seen:
                 seen.add(item)
                 findings.append(item)
@@ -274,6 +257,21 @@ def utf16_self_test(root: Path, local_ids: frozenset[str]) -> list[str]:
             "mixed.sh",
             "utf-16-looking file with an ASCII marker",
             b"A\x00" * 64 + b"  # nosemgrep: a.b.c - why\n",
+        ),
+        (
+            "cjk.ps1",
+            "BOM-less UTF-16 with few NUL bytes",
+            ("# " + "漢" * 2048 + "\n# nosemgrep: a.b.c - why\n").encode("utf-16-le"),
+        ),
+        (
+            "shifted.ps1",
+            "UTF-16 after one stray byte",
+            b"\x01" + "# nosemgrep: a.b.c - why\n".encode("utf-16-le"),
+        ),
+        (
+            "be.ps1",
+            "BOM-less UTF-16 big-endian",
+            "# nosemgrep: a.b.c - why\n".encode("utf-16-be"),
         ),
     )
     for name, label, payload in plants:
