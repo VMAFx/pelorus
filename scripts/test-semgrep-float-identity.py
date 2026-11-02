@@ -107,7 +107,7 @@ SEMGREP_TIMEOUT_S = 300
 # A non-const float named like a macro or k-constant would pass the rule's
 # literal exemption while holding a computed value.
 CONSTANT_NAME_DECL = re.compile(
-    r"\b(?:double|float)\s+\*?\s*(?:k[A-Z]\w*|[A-Z][A-Z0-9_]*)\s*[=;,\[]"
+    r"\b(?:double|float)\s+\*?\s*(?:k[A-Z]\w*|[A-Z][A-Z0-9_]*)\s*[=;,\[)]"
 )
 # Comments and literal contents are blanked before the qualifier check, so
 # `double kX = f(); // const` still counts as mutable and a "//" inside a
@@ -148,7 +148,7 @@ def run_semgrep(
         ".",
     ]
     try:
-        proc = subprocess.run(  # nosec B603 - semgrep resolved from PATH to a file; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+        proc = subprocess.run(  # nosec B603 - semgrep resolved from PATH to a file; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - semgrep resolved to an executable file, fixed list argv, no shell, explicit deadline
             cmd,
             cwd=str(target_dir),
             capture_output=True,
@@ -235,18 +235,37 @@ def _blank_lexeme(match: re.Match[str]) -> str:
     return re.sub(r"[^\n]", " ", lexeme)
 
 
+def declaration_start(code: str, pos: int) -> int:
+    """Offset where the declaration holding `pos` starts.
+
+    Outside parentheses that is the previous statement boundary.
+    Inside a parameter list it is the last `(` or `,` at the same depth, so an
+    earlier parameter's `const` does not count for a later one.
+    """
+    stmt = max(code.rfind(sep, 0, pos) for sep in ";{}") + 1
+    opens = []
+    for offset, char in enumerate(code[stmt:pos], start=stmt):
+        if char == "(":
+            opens.append(offset + 1)
+        elif char == ")" and opens:
+            opens.pop()
+        elif char == "," and opens:
+            opens[-1] = offset + 1
+    return opens[-1] if opens else stmt
+
+
 def constant_name_findings(text: str, name: str) -> list[str]:
     """Declarations of a non-const float or double with a constant-style name.
 
     The match runs over the whole blanked text, so a declaration split over
-    lines counts; the qualifier check starts at the previous statement
-    boundary and the finding names the line the declaration starts on.
+    lines counts; the qualifier check reads only the declaration itself
+    (declaration_start) and the finding names the line it starts on.
     """
     code = C_LEXEME.sub(_blank_lexeme, text)
     lines = text.splitlines()
     found = []
     for decl in CONSTANT_NAME_DECL.finditer(code):
-        start = max(code.rfind(sep, 0, decl.start()) for sep in ";{}") + 1
+        start = declaration_start(code, decl.start())
         if CONST_QUALIFIER.search(code[start : decl.end()]):
             continue
         n = code.count("\n", 0, decl.start()) + 1
@@ -273,9 +292,13 @@ def step_constant_names(_semgrep_bin: str, _tmp: pathlib.Path) -> str | None:
         "*/ double kBlock = computed();\n"
         "static const double\n"
         "kSplitOk = 1.0;\n"
+        "void f(const char *label,\n"
+        "       double kParam, double actual);\n"
+        "void g(double x, const double kParamOk, int n);\n"
+        "void h(int n, double kLast);\n"
     )
     got = constant_name_findings(planted, "planted.c")
-    want = [f"planted.c:{n}:" for n in (1, 2, 3, 4, 7, 8, 9, 11, 14)]
+    want = [f"planted.c:{n}:" for n in (1, 2, 3, 4, 7, 8, 9, 11, 14, 18, 20)]
     if [g.split(" ", 1)[0] for g in got] != want:
         return f"step (d): constant-style name findings {got}, want lines {want}"
     found = []
