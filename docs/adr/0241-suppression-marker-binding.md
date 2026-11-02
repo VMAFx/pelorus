@@ -18,17 +18,17 @@ VMAFx/ffmpeg-patches `tests/test_subprocess_nosec.py` (2026-11-01) checks the sa
 
 ## Decision
 
-`scripts/check-suppression-markers.py` reads every tracked Python file (`git ls-files`, `.py` or a Python shebang) in its declared encoding (`tokenize.open`; a file that does not decode is a finding) and refuses a marker comment unless:
+`scripts/check-suppression-markers.py` reads every tracked Python file (`git ls-files`, `.py`, `.pyi` or a Python shebang) in its declared encoding (`tokenize.open`; a file that does not decode is a finding) and refuses a marker comment unless:
 
 1. it sits on the start line of a statement or expression in the file's AST, which rules out comment-only lines, argument continuations that start no node, and closing-bracket lines;
 2. a Semgrep marker reads `nosemgrep: <id>[, <id>...] - <reason>`, each id being a rule of the local `.semgrep.yml` or a full registry id with at least two dots (`python.lang.security.audit.<rule>.<rule>`);
 3. a Bandit marker reads `nosec <Bxxx>[, <Bxxx>...] - <reason>`.
 
-The `nosem` alias and a marker word in the middle of a comment are refused as well, since Semgrep may read either as a suppression. A marker in a tracked file that is neither Python nor Markdown fails closed, because the check binds Python only. Both marker kinds may share one comment line (`# nosec B603 - ...  # nosemgrep: <id> - ...`); Semgrep 1.182.1 honours that form and a comma-separated id list with a reason (measured 2026-11-02).
+The `nosem` alias and a marker word in the middle of a comment are refused as well, since Semgrep may read either as a suppression. A marker in a tracked file that is neither Python nor Markdown fails closed, because the check binds Python only; such a file is read with undecodable bytes kept, so a non-UTF-8 file is scanned, not skipped. A marker after prose in the same comment counts when it follows its own `#`, since Semgrep honours it ([research digest](../research/0482-suppression-marker-placement.md)). Both marker kinds may share one comment line (`# nosec B603 - ...  # nosemgrep: <id> - ...`); Semgrep 1.182.1 honours that form and a comma-separated id list with a reason (measured 2026-11-02).
 
 The rule is stricter than Semgrep on one point: a marker on the line before the start line suppresses in Semgrep but fails here, so each marker has one place, beside the code it answers.
 
-`--self-test` plants a marker on the line before, on a closing bracket, a bare `nosemgrep`, a `nosemgrep` without a reason, a short id, the `nosem` alias, a bare `nosec`, a `nosec` without a reason, a marker word mid-comment, a marker in a shell file and an undecodable source; each must be refused, and a valid source with marker text in a string literal and a declared latin-1 source must pass. The meson fast-suite test `suppression-markers-self-test` runs the planted cases on every platform (`--self-test-only`); `suppression-markers` runs them and then the tree scan, on every platform except Windows, whose MSYS2 leg has no git on `PATH`.
+`--self-test` plants a marker on the line before, on a closing bracket, a bare `nosemgrep`, a `nosemgrep` without a reason, a short id, the `nosem` alias, a bare `nosec`, a `nosec` without a reason, a marker word mid-comment, a marker in a shell file, a marker in a non-UTF-8 shell file, a bare marker in a `.pyi` stub and an undecodable source; each must be refused, and a valid source with marker text in a string literal and a declared latin-1 source must pass. The meson fast-suite test `suppression-markers-self-test` runs the planted cases on every platform (`--self-test-only`); `suppression-markers` runs them and then the tree scan, on every platform except Windows, whose MSYS2 leg has no git on `PATH`.
 
 ## Alternatives considered
 
@@ -42,10 +42,11 @@ The rule is stricter than Semgrep on one point: a marker on the line before the 
 
 - `ffmpeg-patches/test/doc-recipes-smoke.py:79` gains the missing reason.
 - A new marker in a C, shell or YAML file fails until the check learns that language.
-- Mutation evidence: eight mutants of the check (no start-line binding, optional `nosemgrep` reason, bare `nosemgrep` accepted, short id accepted, optional `nosec` reason, mid-comment word accepted, string literals counted, UTF-8 with replacement instead of the declared encoding) each fail the self-test.
+- Mutation evidence: eight mutants of the check (no start-line binding, optional `nosemgrep` reason, bare `nosemgrep` accepted, short id accepted, optional `nosec` reason, mid-comment word accepted, string literals counted, UTF-8 with replacement instead of the declared encoding) each fail the self-test; two more (`.pyi` read as non-Python, non-UTF-8 non-Python file skipped) fail it after the review follow-up.
 
 ## References
 
+- [Research digest 0482](../research/0482-suppression-marker-placement.md): where Semgrep 1.182.1 honours a marker.
 - VMAFx/ffmpeg-patches `tests/test_subprocess_nosec.py` at aa70570.
 - [ADR-0188](0188-named-test-skips.md): named fast-suite skips.
 - Fleet order `pelorus-nosemgrep-binding-check-20261102`, 2026-11-02 (paraphrased): port a mechanical check that every nosemgrep and nosec marker binds to the flagged start line and names the full rule id and a reason, modelled on the VMAFx subprocess test, with planted cases for a misplaced line, a bare marker and a missing reason.

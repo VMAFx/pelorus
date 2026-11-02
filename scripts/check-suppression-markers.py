@@ -108,9 +108,12 @@ def python_findings(name: str, text: str, local_ids: frozenset[str]) -> list[str
     return found
 
 
+PYTHON_SUFFIXES = frozenset({".py", ".pyi"})
+
+
 def is_python(path: Path) -> bool:
-    """True for a .py file or a file whose shebang names python."""
-    if path.suffix == ".py":
+    """True for a .py or .pyi file or a file whose shebang names python."""
+    if path.suffix in PYTHON_SUFFIXES:
         return True
     try:
         with path.open("rb") as handle:
@@ -146,10 +149,9 @@ def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str
         except (SyntaxError, UnicodeDecodeError) as exc:
             return [f"{name}: not decodable as declared: {exc}"]
         return python_findings(name, text, local_ids)
-    try:
-        text = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return []
+    # Marker words are ASCII; surrogateescape keeps every other byte, so a
+    # file that is not UTF-8 is still scanned instead of skipped.
+    text = path.read_bytes().decode("utf-8", "surrogateescape")
     return other_findings(name, text)
 
 
@@ -202,7 +204,7 @@ PLANTED = {
 
 
 def encoding_self_test(local_ids: frozenset[str]) -> list[str]:
-    """A declared latin-1 file is read as declared; an undecodable one is a finding."""
+    """Plant files on disk: declared encodings, undecodable bytes, stubs."""
     failures: list[str] = []
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -221,6 +223,26 @@ def encoding_self_test(local_ids: frozenset[str]) -> list[str]:
             failures.append(f"planted 'undecodable source' not refused: {got}")
         else:
             print(f"refused as expected (undecodable source): {got[0]}")
+        latin = root / "notes.sh"
+        latin.write_bytes(b"echo \xff  # nosemgrep: python.lang.a.b - why\n")
+        got = file_findings(root, latin, local_ids)
+        if not got or "outside Python" not in got[0]:
+            failures.append(f"planted 'non-UTF-8 non-Python marker' not refused: {got}")
+        else:
+            print(f"refused as expected (non-UTF-8 non-Python marker): {got[0]}")
+        stub = root / "stub.pyi"
+        stub.write_text("def f() -> int: ...  # nosemgrep\n", encoding="utf-8")
+        got = file_findings(root, stub, local_ids)
+        if not got or "nosemgrep needs" not in got[0]:
+            failures.append(f"planted 'bare marker in a .pyi stub' not read as Python: {got}")
+        else:
+            print(f"refused as expected (bare marker in a .pyi stub): {got[0]}")
+        stub.write_text(
+            "def f() -> int: ...  # nosemgrep: python.lang.a.b - why\n", encoding="utf-8"
+        )
+        got = file_findings(root, stub, local_ids)
+        if got:
+            failures.append(f"valid .pyi stub refused: {got}")
     return failures
 
 
