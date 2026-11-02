@@ -166,11 +166,13 @@ ephemeral committer identity and neutralizes caller signing, hooks, and diff
 ordering, so the same command works on a clean CI runner and a configured
 developer workstation.
 
-`build-and-run.sh` ends with four GPU smokes and one CPU smoke: the
+`build-and-run.sh` ends with five GPU smokes and one CPU smoke: the
 `hevc_nvenc` SEI smoke, the NVDEC → Vulkan → NVENC hop smoke
 (`test/nvenc-cuda-hop-smoke.sh`, nine filter chains on the derived Vulkan device,
-[ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md)), the Vulkan
-forced-keyframe smoke (`test/vulkan-forced-keyframe-smoke.sh`, 60 Vulkan HEVC
+[ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md)), the documented
+zero-copy recipes smoke (`test/doc-recipes-smoke.py`, runs the verbatim boundary-table
+recipes across CUDA, Vulkan, VAAPI and QSV, [ADR-0240](../adr/0240-doc-recipes-run-verbatim.md)),
+the Vulkan forced-keyframe smoke (`test/vulkan-forced-keyframe-smoke.sh`, 60 Vulkan HEVC
 encodes with `-force_key_frames 2`, a hang fails it,
 [ADR-0192](../adr/0192-series-v0.2.0-forced-keyframe-smoke.md); its header
 lists `INPUT`, `RUNS`, `OUTPUT_ROOT` and `--self-test`), the

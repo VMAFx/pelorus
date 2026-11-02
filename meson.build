@@ -553,6 +553,30 @@ if build_machine.system() != 'windows'
        suite: 'fast')
 endif
 
+# Documented zero-copy recipes run verbatim against hardware devices (ADR-0240):
+# --check-doc enforces section and marker coverage, --self-test plants defects
+# into all assertions, and the smoke skips by default when FFMPEG_BIN is unset.
+test('doc-recipes-self-test',
+     python_prog,
+     args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'doc-recipes-smoke.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+test('doc-recipes-check-doc',
+     python_prog,
+     args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'doc-recipes-smoke.py',
+            '--check-doc'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+if build_machine.system() != 'windows'
+  test('doc-recipes',
+       python_prog,
+       args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'doc-recipes-smoke.py'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
+endif
+
 # The hardware rows of vulkan-format-matrix.sh decode the analyze maps with
 # analyze-maps-check.py; --self-test plants one defect per reader rule and
 # requires each to be rejected.

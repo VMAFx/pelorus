@@ -36,6 +36,10 @@
 #                contain for its skip (exit 77) to pass, e.g.
 #                "no usable CUDA or Vulkan device"; unset, a skip fails the
 #                replay (optional, ADR-0189, ADR-0191)
+#   DOC_RECIPES_SKIP  fixed text the doc recipes smoke's SKIP line must
+#                contain for its skip (exit 77) to pass, e.g.
+#                "no recipe device"; unset, a skip fails the
+#                replay (optional, ADR-0189, ADR-0240)
 #   KEYFRAME_SMOKE_SKIP  fixed text the Vulkan forced-keyframe smoke's SKIP
 #                line must contain for its skip (exit 77) to pass, e.g.
 #                "no Vulkan device with HEVC video"; unset, a skip fails the
@@ -561,6 +565,23 @@ if ! "$HERE/named-skip.sh" "nvenc cuda hop smoke" "$hop_smoke_status" \
     echo "ERROR: this run removes its logs, so rerun test/nvenc-cuda-hop-smoke.sh" \
         "with FFMPEG_BIN and OUTPUT_ROOT to keep them; on a host that cannot run" \
         "the smoke, set NVENC_HOP_SMOKE_SKIP to the reason it prints" >&2
+    exit 1
+fi
+
+# GPU smoke: documented zero-copy recipes run verbatim (ADR-0240).
+# Exit 77 names why this host cannot run it; it passes only when
+# DOC_RECIPES_SKIP names that reason (ADR-0189). Any other failure
+# fails the replay.
+echo "== doc zero-copy recipes =="
+doc_recipes_status=0
+FFMPEG_BIN="$FFMPEG_EXE" OUTPUT_ROOT="$LOG_DIR/doc-recipes" \
+    "$HERE/doc-recipes-smoke.py" 2>&1 | tee "$LOG_DIR/doc-recipes.log" ||
+    doc_recipes_status=$? # pipefail: the smoke's status, tee exits 0
+if ! "$HERE/named-skip.sh" "doc zero-copy recipes smoke" "$doc_recipes_status" \
+    "$LOG_DIR/doc-recipes.log" "${DOC_RECIPES_SKIP:-}"; then
+    echo "ERROR: this run removes its logs, so rerun test/doc-recipes-smoke.py" \
+        "with FFMPEG_BIN and OUTPUT_ROOT to keep them; on a host that cannot run" \
+        "the smoke, set DOC_RECIPES_SKIP to the reason it prints" >&2
     exit 1
 fi
 
