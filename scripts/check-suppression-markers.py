@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ast
 import io
+import os
 import re
 import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
@@ -136,7 +137,10 @@ def tracked_files(root: Path) -> list[Path]:
 
 
 def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str]:
-    """Check one tracked file; Markdown and non-regular files are not read."""
+    """Check one tracked file; Markdown and non-regular files are not read.
+
+    Unreadable files are findings.
+    """
     name = path.relative_to(root).as_posix()
     if path.suffix == ".md" or not path.is_file():
         return []
@@ -146,12 +150,17 @@ def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str
         try:
             with tokenize.open(path) as handle:
                 text = handle.read()
+        except OSError as exc:
+            return [f"{name}: not readable: {exc}"]
         except (SyntaxError, UnicodeDecodeError) as exc:
             return [f"{name}: not decodable as declared: {exc}"]
         return python_findings(name, text, local_ids)
     # Marker words are ASCII; surrogateescape keeps every other byte, so a
     # file that is not UTF-8 is still scanned instead of skipped.
-    text = path.read_bytes().decode("utf-8", "surrogateescape")
+    try:
+        text = path.read_bytes().decode("utf-8", "surrogateescape")
+    except OSError as exc:
+        return [f"{name}: not readable: {exc}"]
     return other_findings(name, text)
 
 
@@ -243,6 +252,20 @@ def encoding_self_test(local_ids: frozenset[str]) -> list[str]:
         got = file_findings(root, stub, local_ids)
         if got:
             failures.append(f"valid .pyi stub refused: {got}")
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            print("skipped (unreadable file): running as root")
+        else:
+            locked = root / "locked.sh"
+            locked.write_text("echo 1  # nosemgrep: a.b.c - why\n", encoding="utf-8")
+            locked.chmod(0)
+            try:
+                got = file_findings(root, locked, local_ids)
+                if len(got) != 1 or "not readable" not in got[0]:
+                    failures.append(f"planted 'unreadable file' not refused: {got}")
+                else:
+                    print(f"refused as expected (unreadable file): {got[0]}")
+            finally:
+                locked.chmod(0o600)
     return failures
 
 
