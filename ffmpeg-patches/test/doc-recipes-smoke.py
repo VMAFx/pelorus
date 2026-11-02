@@ -40,6 +40,12 @@ strip_comment = _cdr.strip_comment
 is_ffmpeg_start = _cdr.is_ffmpeg_start
 
 
+# Every ffmpeg call carries a deadline, so a hung driver or encoder fails the
+# run instead of blocking the lane (HISS-02).
+PROBE_TIMEOUT_S = 60
+RUN_TIMEOUT_S = 600
+
+
 def ffmpeg_argv(ffmpeg_bin):
     """Command prefix that starts ffmpeg_bin.
 
@@ -51,12 +57,36 @@ def ffmpeg_argv(ffmpeg_bin):
     return [str(ffmpeg_bin)]
 
 
+def run_ffmpeg(argv, timeout_s, env=None, merge_stderr=True):
+    """Run one ffmpeg command without a shell. Return a CompletedProcess.
+
+    argv[0] must name an existing file. A run past timeout_s returns exit code
+    124 with the deadline in its output, so every caller treats it as a failure.
+    """
+    if not Path(argv[0]).is_file():
+        raise FileNotFoundError(f"ffmpeg binary not found: {argv[0]}")
+    try:
+        return subprocess.run(
+            argv,
+            check=False,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE,
+            text=True,
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired:
+        msg = f"timed out after {timeout_s} s"
+        return subprocess.CompletedProcess(argv, 124, msg, "" if merge_stderr else msg)
+
+
 DOC_PATH = REPO_ROOT / "docs" / "usage" / "ffmpeg.md"
 
 MARKER_RE = re.compile(r"<!--\s*recipe-run:\s*([^\s>]+)(?:\s+(.*?))?\s*-->")
 
 SPEC = {
     "nvenc-nvdec-derived": {
+        "section": "nvenc-nvdec--vulkan-filters--nvenc",
         "device_class": "cuda",
         "input_kind": "8bit",
         "filters_default": "pelorus_deband_vulkan",
@@ -70,6 +100,7 @@ SPEC = {
         "variants": None,
     },
     "nvenc-swdec-separate": {
+        "section": "nvenc-nvdec--vulkan-filters--nvenc",
         "device_class": "cuda",
         "input_kind": "8bit",
         "filters_default": "pelorus_deband_vulkan",
@@ -80,6 +111,7 @@ SPEC = {
         "variants": None,
     },
     "nvenc-swdec-p010": {
+        "section": "nvenc-nvdec--vulkan-filters--nvenc",
         "device_class": "cuda",
         "input_kind": "10bit",
         "filters_default": "pelorus_deband_vulkan",
@@ -90,6 +122,7 @@ SPEC = {
         "variants": None,
     },
     "vulkan-hevc": {
+        "section": "full-zero-copy-vulkan-decode--filters--vulkan-hw-encode",
         "device_class": "vulkan-hevc-encode",
         "input_kind": "8bit",
         "filters_default": "pelorus_deband_vulkan=range=15:thry=0.012",
@@ -100,6 +133,7 @@ SPEC = {
         "variants": None,
     },
     "vaapi-h264": {
+        "section": "zero-copy-into-vaapi-and-qsv-encoders-linux",
         "device_class": "vaapi",
         "input_kind": "8bit",
         "filters_default": "pelorus_deband_vulkan=tiling=drm",
@@ -124,6 +158,7 @@ SPEC = {
         ],
     },
     "qsv-hevc": {
+        "section": "zero-copy-into-vaapi-and-qsv-encoders-linux",
         "device_class": "qsv",
         "input_kind": "8bit",
         "filters_default": "pelorus_deband_vulkan=tiling=drm",
@@ -193,7 +228,8 @@ def collect_marked_recipes(text):
         _comments, commands = parse_block(lines, k + 1, end)
         if commands:
             _first_no, cmd, nos = commands[0]
-            recipes[raw_id] = (idx + 1, k + 1, cmd, nos)
+            # keep the first: check_doc refuses a duplicate id
+            recipes.setdefault(raw_id, (idx + 1, k + 1, cmd, nos))
     return recipes
 
 
@@ -205,8 +241,8 @@ def _fence_end(lines, start):
     return end
 
 
-def _marker_findings(path, lines, i, marker_id, seen_markers):
-    """Findings for one recipe-run marker at line index i."""
+def _marker_findings(path, lines, i, marker_id, seen_markers, anchor=None):
+    """Findings for one recipe-run marker at line index i under section anchor."""
     findings = []
     k = i + 1
     while k < len(lines) and not lines[k].strip():
@@ -220,8 +256,16 @@ def _marker_findings(path, lines, i, marker_id, seen_markers):
             (path, i + 1, "recipe-run marker fence contains no ffmpeg command")
         )
     if marker_id != "none" and not marker_id.startswith("none:"):
+        if marker_id in seen_markers:
+            findings.append((path, i + 1, f"duplicate recipe-run id '{marker_id}'"))
         if marker_id in SPEC:
             seen_markers.add(marker_id)
+            if anchor != SPEC[marker_id]["section"]:
+                msg = (
+                    f"recipe-run id '{marker_id}' sits in section '{anchor}', "
+                    f"its boundary-table section is '{SPEC[marker_id]['section']}'"
+                )
+                findings.append((path, i + 1, msg))
         else:
             findings.append((path, i + 1, f"unknown recipe-run id '{marker_id}'"))
     return findings
@@ -254,7 +298,9 @@ def check_doc(path, text):
             continue
         m = MARKER_RE.match(line.strip())
         if m:
-            findings += _marker_findings(path, lines, i, m.group(1), seen_markers)
+            findings += _marker_findings(
+                path, lines, i, m.group(1), seen_markers, cur_anchor
+            )
         # Track fence state so a closing fence is never read as an opening one
         opening = False
         if line.startswith("```"):
@@ -265,6 +311,9 @@ def check_doc(path, text):
             if finding:
                 findings.append(finding)
     for spec_id in sorted(SPEC):
+        if SPEC[spec_id]["section"] not in boundary_anchors:
+            msg = f"SPEC id '{spec_id}' section is not linked by the boundary table"
+            findings.append((path, 1, msg))
         if spec_id not in seen_markers:
             findings.append((path, 1, f"SPEC id '{spec_id}' has no marker in doc"))
     for p, line_no, msg in findings:
@@ -374,14 +423,7 @@ def probe_device(ffmpeg_bin, device_class, chosen_node=None, variant_driver=None
         env["LIBVA_DRIVER_NAME"] = variant_driver
     cmd = ffmpeg_argv(ffmpeg_bin) + ["-nostdin", "-hide_banner", "-loglevel", "error"]
     cmd += args + ["-f", "null", "-"]
-    proc = subprocess.run(
-        cmd,
-        check=False,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
+    proc = run_ffmpeg(cmd, PROBE_TIMEOUT_S, env=env)
     if proc.returncode != 0:
         lines = [
             ln
@@ -493,7 +535,7 @@ def encode_clip(ffmpeg_bin, encoders_text, kind, clip):
         cmd += args[kind] + [str(clip)]
         env = os.environ.copy()
         env.update(extra_env)
-        proc = subprocess.run(cmd, check=False, capture_output=True, text=True, env=env)
+        proc = run_ffmpeg(cmd, RUN_TIMEOUT_S, env=env, merge_stderr=False)
         if proc.returncode == 0:
             print(f"input clip {clip.name}: {name} {extra_env or ''}".rstrip())
             return name, errors
@@ -517,8 +559,9 @@ HW_PIXFMTS = frozenset(
     }
 )
 AUTO_SCALE_CONVERSION = re.compile(
-    r"\[auto_scale_\d+ @ [^\]]+\] .*?\bfmt:(\S+).*?->.*?\bfmt:(\S+)"
+    r"\[(auto_scale_\d+) @ [^\]]+\] .*?\bfmt:(\S+).*?->.*?\bfmt:(\S+)"
 )
+AUTO_SCALE_INSERT = re.compile(r"auto[-_ ]?inserting filter '(auto_scale_\d+)'")
 
 
 def hardware_auto_scale(log_text):
@@ -527,36 +570,37 @@ def hardware_auto_scale(log_text):
     FFmpeg logs each auto scale as `fmt:<in> ... -> ... fmt:<out>`. A conversion
     between two software formats is the CPU step a software-decode recipe asks
     for with format= before hwupload; one with a hardware format on either side
-    means frames left or entered VRAM through the scaler. An auto insert whose
-    conversion line is missing fails closed.
+    means frames left or entered VRAM through the scaler. Every inserted scale
+    needs its own conversion line; one without it fails closed.
     """
     conversions = AUTO_SCALE_CONVERSION.findall(log_text)
-    for src, dst in conversions:
+    for _name, src, dst in conversions:
         if src in HW_PIXFMTS or dst in HW_PIXFMTS:
             return f"auto scale on hardware frames ({src} -> {dst})"
+    parsed = {name for name, _src, _dst in conversions}
+    unparsed = sorted(set(AUTO_SCALE_INSERT.findall(log_text)) - parsed)
+    if unparsed:
+        return f"auto scale inserted but its formats are not in the log ({', '.join(unparsed)})"
     if not conversions and re.search(r"auto[-_ ]?inserting", log_text, re.IGNORECASE):
         return "auto scale inserted but its formats are not in the log"
     return None
 
 
-def generate_clips(ffmpeg_bin, tmp_dir):
-    """Generate 120-frame 1280x720 8-bit and 10-bit test clips. Return (c8, c10) or None."""
-    proc = subprocess.run(
-        ffmpeg_argv(ffmpeg_bin) + ["-encoders"],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    clips = []
-    for kind, name in (("8bit", "input.mkv"), ("10bit", "input-10bit.mkv")):
-        clip = tmp_dir / name
+CLIP_NAMES = {"8bit": "input.mkv", "10bit": "input-10bit.mkv"}
+
+
+def generate_clips(ffmpeg_bin, tmp_dir, kinds):
+    """Generate a 120-frame 1280x720 clip per input kind. Return ({kind: path}, reason)."""
+    proc = run_ffmpeg(ffmpeg_argv(ffmpeg_bin) + ["-encoders"], PROBE_TIMEOUT_S)
+    clips = {}
+    for kind in sorted(kinds):
+        clip = tmp_dir / CLIP_NAMES[kind]
         chosen, errors = encode_clip(ffmpeg_bin, proc.stdout, kind, clip)
         if chosen is None:
             detail = "; ".join(errors) if errors else "no suitable encoder found"
             return None, f"failed to encode {kind} input clip: {detail}"
-        clips.append(clip)
-    return (clips[0], clips[1]), "ok"
+        clips[kind] = clip
+    return clips, "ok"
 
 
 def run_smoke(ffmpeg_bin, output_root=None, recipes_filter=None):
@@ -584,13 +628,7 @@ def _decoded_frames(ffmpeg_bin, out_clip):
         str(out_clip),
     ]
     dec_cmd += ["-f", "null", "-"]
-    proc = subprocess.run(
-        dec_cmd,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
+    proc = run_ffmpeg(dec_cmd, RUN_TIMEOUT_S)
     matches = re.findall(r"frame=\s*(\d+)", proc.stdout)
     return proc.returncode, int(matches[-1]) if matches else -1
 
@@ -638,21 +676,14 @@ def _run_variant(ctx, recipe_id, var):
         ctx["marked"][recipe_id][2],
         spec,
         ctx["ffmpeg_bin"],
-        ctx["clip8"],
-        ctx["clip10"],
+        ctx["clips"].get("8bit"),
+        ctx["clips"].get("10bit"),
         out_clip,
         chosen_node=chosen_node,
         variant_driver=var["driver"],
     )
     print(f"[{run_tag}] argv: " + " ".join(shlex.quote(a) for a in argv))
-    proc = subprocess.run(
-        argv,
-        check=False,
-        env=child_env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
+    proc = run_ffmpeg(argv, RUN_TIMEOUT_S, env=child_env)
     log_path.write_text(proc.stdout, encoding="utf-8")
     failure = _run_failure(proc, spec, ctx["ffmpeg_bin"], out_clip)
     if failure:
@@ -674,12 +705,13 @@ def _run_smoke_in(ffmpeg_bin, tmp_dir, marked, selected_ids, output_root):
         if recipe_id not in marked:
             print(f"FAIL: recipe id '{recipe_id}' marked in SPEC but not found in doc")
             return 1
-    clips, err = generate_clips(ffmpeg_bin, tmp_dir)
+    kinds = {SPEC[recipe_id]["input_kind"] for recipe_id in selected_ids}
+    clips, err = generate_clips(ffmpeg_bin, tmp_dir, kinds)
     if clips is None:
         print(f"SKIP: no recipe device: cannot generate input clips: {err}")
         return 77
     ctx = {"ffmpeg_bin": ffmpeg_bin, "out_dir": out_dir, "marked": marked}
-    ctx["clip8"], ctx["clip10"] = clips
+    ctx["clips"] = clips
     default = [{"name": "default", "driver": None, "vendor": None, "node_env": None}]
     results = []
     for recipe_id in selected_ids:
@@ -705,94 +737,7 @@ def _run_smoke_in(ffmpeg_bin, tmp_dir, marked, selected_ids, output_root):
 
 # --- Self-test ---------------------------------------------------------------
 
-STUB_FFMPEG_SCRIPT = """#!/usr/bin/env python3
-import os, sys
-from pathlib import Path
-
-argv = sys.argv[1:]
-if not argv:
-    sys.exit(0)
-
-# Encoders probe
-if "-encoders" in argv:
-    print(" V..... libx265              libx265 H.265 / HEVC (codec hevc)")
-    print(" V..... hevc_nvenc           NVIDIA NVENC hevc encoder (codec hevc)")
-    sys.exit(0)
-
-# Device probe
-if "-f" in argv and "null" in argv and ("testsrc2=size=256x256" in " ".join(argv) or ("-frames:v" in argv and argv[argv.index("-frames:v")+1] == "1")):
-    sys.exit(0)
-
-# Input clip generation
-if "testsrc2=size=1280x720:rate=24" in " ".join(argv):
-    out_file = Path(argv[-1])
-    out_file.touch()
-    sys.exit(0)
-
-# Verification decode check
-if argv[-2:] == ["-f", "null", "-"] or ("-f" in argv and "null" in argv and argv[-1] == "-"):
-    plant = os.environ.get("STUB_PLANT", "")
-    if plant == "119frames":
-        sys.stderr.write("frame=  119 fps=0.0 q=0.0 size=N/A time=00:00:05.00 bitrate=N/A speed=100x\\n")
-    else:
-        sys.stderr.write("frame=  120 fps=0.0 q=0.0 size=N/A time=00:00:05.00 bitrate=N/A speed=100x\\n")
-    sys.exit(0)
-
-# Recipe run
-plant = os.environ.get("STUB_PLANT", "")
-if plant == "rc":
-    sys.stderr.write("Error: simulated ffmpeg failure\\n")
-    sys.exit(1)
-
-try:
-    out_path = Path(argv[-1])
-    out_path.touch()
-except Exception:
-    pass
-
-if plant == "hwdownload":
-    print("pixfmt:cuda")
-    print("Transferred CUDA image to Vulkan!")
-    print("Transferred Vulkan image to CUDA!")
-    print("Using input frames context (format cuda) with hevc_nvenc encoder")
-    print("Parsed_hwdownload_1 @ 0x5555: hwdownload")
-    sys.exit(0)
-
-if plant == "autoscale":
-    print("pixfmt:cuda")
-    print("Transferred CUDA image to Vulkan!")
-    print("Transferred Vulkan image to CUDA!")
-    print("Using input frames context (format cuda) with hevc_nvenc encoder")
-    print("[auto_scale_0 @ 0x1] w:1280 h:720 fmt:vulkan csp:unknown range:tv sar:1/1 "
-          "-> w:1280 h:720 fmt:nv12 csp:unknown range:tv sar:1/1 flags:0x00000004")
-    sys.exit(0)
-
-if plant == "autoscale_unparsed":
-    print("pixfmt:cuda")
-    print("Transferred CUDA image to Vulkan!")
-    print("Transferred Vulkan image to CUDA!")
-    print("Using input frames context (format cuda) with hevc_nvenc encoder")
-    print("[Parsed_format_0 @ 0x1] auto-inserting filter 'auto_scale_0'")
-    sys.exit(0)
-
-if plant == "missing_needle":
-    print("pixfmt:cuda")
-    sys.exit(0)
-
-# Clean: output needles for all recipes, plus the CPU conversion a
-# software-decode recipe's format= produces before hwupload (allowed)
-print("[auto_scale_0 @ 0x1] w:1280 h:720 fmt:yuv420p csp:unknown range:tv sar:1/1 "
-      "-> w:1280 h:720 fmt:nv12 csp:unknown range:tv sar:1/1 flags:0x00000004")
-print("pixfmt:cuda")
-print("Transferred CUDA image to Vulkan!")
-print("Transferred Vulkan image to CUDA!")
-print("Using input frames context (format cuda) with hevc_nvenc encoder")
-print("Using input frames context (format vulkan) with hevc_vulkan encoder")
-print("tiling=drm")
-print("Using input frames context (format vaapi) with h264_vaapi encoder")
-print("Using input frames context (format qsv) with hevc_qsv encoder")
-sys.exit(0)
-"""
+STUB_FFMPEG = Path(__file__).resolve().with_name("doc-recipes-stub-ffmpeg.py")
 
 
 def _quiet(fn, *args, **kwargs):
@@ -804,6 +749,16 @@ def _quiet(fn, *args, **kwargs):
         return fn(*args, **kwargs)
 
 
+def _quiet_deadline(fn, *args, **kwargs):
+    """_quiet with a 3 s recipe deadline, so the hang plant ends fast."""
+    global RUN_TIMEOUT_S
+    saved, RUN_TIMEOUT_S = RUN_TIMEOUT_S, 3
+    try:
+        return _quiet(fn, *args, **kwargs)
+    finally:
+        RUN_TIMEOUT_S = saved
+
+
 def _self_test_doc(clean_doc):
     """Doc plants for --check-doc. Return the failure count."""
     failures = 0
@@ -813,12 +768,23 @@ def _self_test_doc(clean_doc):
         failures += 1
     print("--- self-test: doc plants ---")
     derived = "<!-- recipe-run: nvenc-nvdec-derived -->"
+    vulkan = "<!-- recipe-run: vulkan-hevc -->"
+    fence = "```sh\nffmpeg -i input.mkv out.mkv\n```\n"
     plants_doc = [
         ("fence without marker", clean_doc.replace(derived + "\n\n", "")),
         ("marker without fence", clean_doc + f"\n{derived}\n\nNo fence here.\n"),
         (
             "id without SPEC",
             clean_doc.replace(derived, "<!-- recipe-run: unknown-recipe -->"),
+        ),
+        (
+            "duplicate id",
+            clean_doc.replace(derived, f"{derived}\n\n{fence}\n{derived}", 1),
+        ),
+        (
+            "id outside its section",
+            clean_doc.replace(vulkan + "\n\n", "<!-- recipe-run: none: moved -->\n\n")
+            + f"\n## Notes on Vulkan\n\n{vulkan}\n\n{fence}",
         ),
         (
             "SPEC without marker",
@@ -845,20 +811,21 @@ def _self_test_exec():
     failures = 0
     print("--- self-test: execution plants ---")
     with tempfile.TemporaryDirectory(prefix="pelorus-stub-bin.") as stub_dir:
-        stub_path = Path(stub_dir) / "ffmpeg.py"
-        stub_path.write_text(STUB_FFMPEG_SCRIPT, encoding="utf-8")
+        stub_path = STUB_FFMPEG
         exec_plants = [
             ("rc!=0", "rc"),
             ("hwdownload in log", "hwdownload"),
             ("auto scale", "autoscale"),
             ("auto scale without formats", "autoscale_unparsed"),
+            ("second auto scale without formats", "autoscale_mixed"),
+            ("hung recipe run", "hang"),
             ("missing needle", "missing_needle"),
             ("119 frames", "119frames"),
         ]
         for name, plant_env in exec_plants:
             os.environ["STUB_PLANT"] = plant_env
             out = Path(stub_dir) / f"out-{plant_env}"
-            rc = _quiet(
+            rc = _quiet_deadline(
                 run_smoke,
                 stub_path,
                 output_root=out,
@@ -875,6 +842,21 @@ def _self_test_exec():
                 print(
                     f"self-test: execution plant '{name}' correctly refused (rc {rc})"
                 )
+        print("--- self-test: 8-bit recipe without a 10-bit clip ---")
+        os.environ["STUB_PLANT"] = "no10bit"
+        rc = _quiet(
+            run_smoke,
+            stub_path,
+            output_root=Path(stub_dir) / "out-no10bit",
+            recipes_filter="nvenc-nvdec-derived",
+        )
+        if rc != 0:
+            print(
+                f"self-test FAIL: 8-bit recipe did not run without a 10-bit clip (rc {rc})"
+            )
+            failures += 1
+        else:
+            print("self-test: 8-bit recipe ran without a 10-bit clip")
         print("--- self-test: clean stub run ---")
         os.environ["STUB_PLANT"] = "clean"
         rc = _quiet(run_smoke, stub_path, output_root=Path(stub_dir) / "out-clean")
