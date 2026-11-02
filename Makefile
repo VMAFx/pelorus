@@ -50,6 +50,8 @@ docs-check:
 	python3 -I scripts/check-mirror-contract.py
 	python3 -I scripts/check-doc-recipes.py --self-test
 	python3 -I scripts/check-doc-recipes.py
+	python3 -I ffmpeg-patches/test/doc-recipes-smoke.py --self-test
+	python3 -I ffmpeg-patches/test/doc-recipes-smoke.py --check-doc
 	python3 -I scripts/check-filter-stance.py --self-test
 	python3 -I scripts/check-filter-stance.py
 	python3 -I scripts/check-filter-knob-contracts.py --self-test

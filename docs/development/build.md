@@ -166,11 +166,13 @@ ephemeral committer identity and neutralizes caller signing, hooks, and diff
 ordering, so the same command works on a clean CI runner and a configured
 developer workstation.
 
-`build-and-run.sh` ends with four GPU smokes and one CPU smoke: the
+`build-and-run.sh` ends with five GPU smokes and one CPU smoke: the
 `hevc_nvenc` SEI smoke, the NVDEC → Vulkan → NVENC hop smoke
 (`test/nvenc-cuda-hop-smoke.sh`, nine filter chains on the derived Vulkan device,
-[ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md)), the Vulkan
-forced-keyframe smoke (`test/vulkan-forced-keyframe-smoke.sh`, 60 Vulkan HEVC
+[ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md)), the documented
+zero-copy recipes smoke (`test/doc-recipes-smoke.py`, runs the verbatim boundary-table
+recipes across CUDA, Vulkan, VAAPI and QSV, [ADR-0240](../adr/0240-doc-recipes-run-verbatim.md)),
+the Vulkan forced-keyframe smoke (`test/vulkan-forced-keyframe-smoke.sh`, 60 Vulkan HEVC
 encodes with `-force_key_frames 2`, a hang fails it,
 [ADR-0192](../adr/0192-series-v0.2.0-forced-keyframe-smoke.md); its header
 lists `INPUT`, `RUNS`, `OUTPUT_ROOT` and `--self-test`), the
@@ -194,7 +196,9 @@ the fifth needs an HEVC decoder and the `psnr` filter; the sixth needs the `libd
 and the replay then fails unless `NVENC_SMOKE_SKIP` (SEI smoke),
 `NVENC_HOP_SMOKE_SKIP` (hop smoke), `KEYFRAME_SMOKE_SKIP` (keyframe smoke),
 `FGS_SMOKE_SKIP` (grain smoke), `GRAIN_SCORE_SMOKE_SKIP` (grain score smoke)
-and `GRAIN_SCORE_AV1_SMOKE_SKIP` (grain score AV1 smoke)
+`GRAIN_SCORE_AV1_SMOKE_SKIP` (grain score AV1 smoke)
+and `DOC_RECIPES_SKIP` (documented zero-copy recipes,
+[ADR-0240](../adr/0240-doc-recipes-run-verbatim.md))
 name the reason each smoke prints, so a GPU host whose driver or device went
 missing cannot pass by accident
 ([ADR-0189](../adr/0189-named-nvenc-smoke-skip.md)). On a machine without an
@@ -206,6 +210,7 @@ NVENC_SMOKE_SKIP="Cannot load libcuda.so.1" \
   KEYFRAME_SMOKE_SKIP="no Vulkan device with HEVC video" \
   FGS_SMOKE_SKIP="no HEVC encoder" \
   GRAIN_SCORE_SMOKE_SKIP="no HEVC decoder" \
+  DOC_RECIPES_SKIP="no recipe device: cannot generate input clips" \
   FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh
 ```
 

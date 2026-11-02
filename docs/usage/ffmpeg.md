@@ -27,6 +27,19 @@ Every recipe on this page is one of three kinds. "Verified" means it ran on
 the named GPU with the named binary, ended with exit code 0 and the log shows
 the claimed path (no `hwdownload`, no auto-inserted scale, the encoder taking
 a hardware frames context). Anything else says so next to the recipe.
+The marked zero-copy recipes run verbatim through `ffmpeg-patches/test/doc-recipes-smoke.py`
+on a GPU host, and the static gate `--check-doc` keeps every boundary-table section
+covered against drift. Its last full run (2026-11-02, FFmpeg n9.0.2 with the
+Pelorus stack) passed all seven runs: the three NVENC recipes and Vulkan to
+`hevc_vulkan` on an RTX 4090 (driver 615.78.08), the VAAPI recipe on an Arc A380
+(iHD 26.3.5) and on a Radeon iGPU (radeonsi, Mesa 26.2.5), and the QSV recipe on
+the Arc A380. Each run exited 0, decoded to 120 frames, and its log held the
+expected encoder line with no `hwdownload` and no scale on hardware frames.
+
+Render node numbers follow the kernel's probe order and can change between
+boots, so `/dev/dri/renderD130` in the recipes below is an example; the runner
+picks the Intel and the AMD node by PCI vendor, and `INTEL_RENDER_NODE` or
+`AMD_RENDER_NODE` overrides that choice.
 
 | Recipe | GPU | Status |
 | --- | --- | --- |
@@ -64,6 +77,8 @@ With the Vulkan device derived from `cu`, `hwupload=derive_device=cuda` returns
 below). A Vulkan device derived from CUDA is always created with multiplane
 disabled (`hwcontext_vulkan.c`), so this form needs no `disable_multiplane=1`:
 
+<!-- recipe-run: nvenc-nvdec-derived -->
+
 ```bash
 ffmpeg -init_hw_device cuda=cu:0 -init_hw_device vulkan=vk@cu -filter_hw_device vk \
        -hwaccel cuda -hwaccel_device cu -hwaccel_output_format cuda -i input.mkv \
@@ -78,6 +93,8 @@ encoder`.
 
 A software decoder works with the separate Vulkan device, because the decoded
 frames never enter a CUDA context before the second hop:
+
+<!-- recipe-run: nvenc-swdec-separate -->
 
 ```bash
 ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk -i input.mkv \
@@ -94,6 +111,8 @@ CUDA` (exit code 218).
 
 10-bit input works with the same separate-device form when the upload format is
 `p010le` and the encoder runs a 10-bit profile:
+
+<!-- recipe-run: nvenc-swdec-p010 -->
 
 ```bash
 ffmpeg -init_hw_device vulkan=vk:0,disable_multiplane=1 -filter_hw_device vk -i input-10bit.mkv \
@@ -134,6 +153,8 @@ unpatched `n9.0.2` and FFmpeg master `ebfc9497f7` ([#296](https://github.com/VMA
 
 ## Full zero-copy: Vulkan decode → filters → Vulkan HW encode
 
+<!-- recipe-run: vulkan-hevc -->
+
 ```bash
 ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
        -hwaccel vulkan -hwaccel_device vk -hwaccel_output_format vulkan \
@@ -143,7 +164,8 @@ ffmpeg -init_hw_device vulkan=vk:0 -filter_hw_device vk \
 ```
 
 When the decoder, filter, and encoder all speak Vulkan/VRAM, no frame touches
-system RAM. The deband graph above was not run for this page. These ran on
+system RAM. The recipe runner runs the deband graph above (see the hardware
+status section for the last result). These also ran on
 the RTX 4090 with `hevc_vulkan -qp 28` and exit code 0 (120 frames): borderfix twice,
 `pelorus_mc_vulkan=meta=1` with `pelorus_denoise_vulkan=mc=1` (with
 `-extra_hw_frames 4`), and `pelorus_grain_estimate_vulkan` with
@@ -158,6 +180,8 @@ needs, see [Vulkan output pools](../backends/vulkan-drm-modifiers.md)). Derive V
 the VAAPI device so both run on the same GPU, and decode with VAAPI so the
 decoder output maps into Vulkan too. VAAPI encoder, verified on an Arc A380
 (exit code 0, 120 frames):
+
+<!-- recipe-run: vaapi-h264 -->
 
 ```bash
 LIBVA_DRIVER_NAME=iHD ffmpeg -v verbose -init_hw_device vaapi=va:/dev/dri/renderD130 \
@@ -180,6 +204,8 @@ The log has no `hwdownload` and no scale filter, and the encoder reports
 QSV encoder, mapped on from VAAPI; each hardware format is named so that format
 negotiation cannot pick another. Verified on the same card (exit code 0,
 120 frames):
+
+<!-- recipe-run: qsv-hevc -->
 
 ```bash
 LIBVA_DRIVER_NAME=iHD ffmpeg -init_hw_device vaapi=va:/dev/dri/renderD130 \
@@ -245,6 +271,8 @@ without an AMF runtime.
 
 libaom, SVT-AV1 and x265 read frames from system memory, so the Pelorus output
 must be downloaded. Keep Pelorus stages in VRAM and download once, last:
+
+<!-- recipe-run: none: software encoders need libaom/SVT/x265 and copy through system memory -->
 
 ```bash
 # hwdownload is inherent: libsvtav1 takes system-memory frames.
