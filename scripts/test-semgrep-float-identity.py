@@ -107,9 +107,11 @@ SEMGREP_TIMEOUT_S = 180
 
 # A non-const float named like a macro or k-constant would pass the rule's
 # literal exemption while holding a computed value.
-CONSTANT_NAME_DECL = re.compile(
-    r"\b(?:double|float)\s+\*?\s*(?:k[A-Z]\w*|[A-Z][A-Z0-9_]*)\s*[=;,\[)]"
-)
+FLOAT_TYPE = re.compile(r"\b(?:double|float)\b")
+CONSTANT_NAME = re.compile(r"k[A-Z]\w*|[A-Z][A-Z0-9_]*")
+# The declared name: pointer stars and spaces, then the identifier, unless a
+# `(` follows it (a function, not a variable).
+DECLARED_NAME = re.compile(r"[\s*]*(\w+)\b(?!\s*\()")
 # Comments and literal contents are blanked before the qualifier check, so
 # `double kX = f(); // const` still counts as mutable and a "//" inside a
 # string does not hide the code after it. Blanking keeps every offset and
@@ -227,6 +229,13 @@ def step_real_tree(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
     scanned = data.get("paths", {}).get("scanned", [])
     if not any(p.endswith("libpelorus/test/interop_test.c") for p in scanned):
         return "step (c): the real-tree scan did not read libpelorus/test/interop_test.c; check .semgrepignore"
+    if not any(
+        p.endswith("ffmpeg-patches/test/pelorus_sidedata_test.c") for p in scanned
+    ):
+        return (
+            "step (c): the real-tree scan did not read "
+            "ffmpeg-patches/test/pelorus_sidedata_test.c; check .semgrepignore"
+        )
     results = data.get("results", [])
     if results:
         return f"step (c): real tree has {len(results)} findings: {results}"
@@ -260,22 +269,60 @@ def declaration_start(code: str, pos: int) -> int:
     return opens[-1] if opens else stmt
 
 
+def declarators(code: str, start: int, in_params: bool) -> list[tuple[int, int]]:
+    """Spans of the declarators that follow a type keyword at `start`.
+
+    Commas at bracket depth 0 split declarators. A statement ends at `;` or
+    `{`; a parameter ends at its comma or at the `)` that closes its list,
+    so one parameter never reads the next.
+    """
+    spans: list[tuple[int, int]] = []
+    depth = 0
+    begin = start
+    for offset in range(start, len(code)):
+        char = code[offset]
+        if char in "([":
+            depth += 1
+        elif char in ")]" and depth:
+            depth -= 1
+        elif depth == 0 and (
+            char in ");{}" or (char == "," and in_params)
+        ):
+            break
+        elif depth == 0 and char == ",":
+            spans.append((begin, offset))
+            begin = offset + 1
+    else:
+        offset = len(code)
+    spans.append((begin, offset))
+    return spans
+
+
 def constant_name_findings(text: str, name: str) -> list[str]:
     """Declarations of a non-const float or double with a constant-style name.
 
     The match runs over the whole blanked text, so a declaration split over
-    lines counts; the qualifier check reads only the declaration itself
-    (declaration_start) and the finding names the line it starts on.
+    lines counts. Every declarator of a declaration is read
+    (`double a, kB = f();` names kB), but only its declared name, not the
+    words in its initialiser or its array bound; the qualifier check reads
+    the declaration from its start (declaration_start) to its end, and the
+    finding names the line where the type keyword sits.
     """
     code = C_LEXEME.sub(_blank_lexeme, text)
     lines = text.splitlines()
     found = []
-    for decl in CONSTANT_NAME_DECL.finditer(code):
-        start = declaration_start(code, decl.start())
-        if CONST_QUALIFIER.search(code[start : decl.end()]):
+    for kind in FLOAT_TYPE.finditer(code):
+        start = declaration_start(code, kind.start())
+        in_params = start > 0 and code[start - 1] in "(,"
+        spans = declarators(code, kind.end(), in_params)
+        if CONST_QUALIFIER.search(code[start : spans[-1][1]]):
             continue
-        n = code.count("\n", 0, decl.start()) + 1
-        found.append(f"{name}:{n}: {lines[n - 1].strip()}")
+        for begin, end in spans:
+            decl = DECLARED_NAME.match(code, begin, end)
+            if decl and CONSTANT_NAME.fullmatch(decl.group(1)):
+                n = code.count("\n", 0, kind.start()) + 1
+                found.append(f"{name}:{n}: {lines[n - 1].strip()}")
+                break
     return found
 
 
@@ -302,9 +349,12 @@ def step_constant_names(_semgrep_bin: str, _tmp: pathlib.Path) -> str | None:
         "       double kParam, double actual);\n"
         "void g(double x, const double kParamOk, int n);\n"
         "void h(int n, double kLast);\n"
+        "double ordinary, kComputed = computed();\n"
+        "const double a, kB = 1.0;\n"
+        "double scaled(UINT32 n);\n"
     )
     got = constant_name_findings(planted, "planted.c")
-    want = [f"planted.c:{n}:" for n in (1, 2, 3, 4, 7, 8, 9, 11, 14, 18, 20)]
+    want = [f"planted.c:{n}:" for n in (1, 2, 3, 4, 7, 8, 9, 11, 14, 18, 20, 21)]
     if [g.split(" ", 1)[0] for g in got] != want:
         return f"step (d): constant-style name findings {got}, want lines {want}"
     found = []

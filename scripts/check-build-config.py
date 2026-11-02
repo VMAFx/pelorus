@@ -2826,6 +2826,8 @@ def _validate_release_build(relative: str, text: str, jobs: dict[str, str]) -> l
 # has no scalar bound (HISS-02).
 LOAD_STEP_LOOP = re.compile(r"^\s*(?:while|until|for)\s", re.MULTILINE)
 NEXT_STEP = re.compile(r"^\s*- (?:name|uses):", re.MULTILINE)
+LOAD_STEP_APPEND = re.compile(r'>>\s*"?\$GITHUB_ENV"?')
+LOAD_STEP_GREP = re.compile(r"\bgrep\b")
 
 
 def _step_text(block: str, start: int) -> str:
@@ -2851,10 +2853,18 @@ def _validate_load_step(relative: str, name: str, block: str) -> list[str]:
     load = block.find("name: Load build configuration")
     if checkout < 0 or load < checkout:
         errors.append(f"{relative}: job {name} must load build-config.env after checkout")
+    if load < 0:
+        return errors
+    # Tokens elsewhere in the job prove nothing; only the load step counts.
+    step = _step_text(block, load)
     for token in LOAD_STEP_TOKENS:
-        if token not in block:
+        if token not in step:
             errors.append(f"{relative}: job {name} build-config step is missing {token}")
-    if load >= 0 and LOAD_STEP_LOOP.search(_step_text(block, load)):
+    if not LOAD_STEP_APPEND.search(step):
+        errors.append(f'{relative}: job {name} build-config step is missing >> "$GITHUB_ENV"')
+    if not LOAD_STEP_GREP.search(step):
+        errors.append(f"{relative}: job {name} build-config step is missing grep")
+    if LOAD_STEP_LOOP.search(step):
         errors.append(
             f"{relative}: job {name} build-config step must not loop; "
             "select the keys with one grep"
@@ -4760,16 +4770,39 @@ def series_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
 
 
 def _load_step_cases(source: str) -> dict[str, tuple[str, str]]:
-    """The build-config load step stays one grep, never a shell loop."""
+    """The build-config load step is one grep appended to GITHUB_ENV, no loop.
+
+    The keys and the append must sit in the load step itself; the same words
+    in another step of the job do not count.
+    """
     grep = "grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env"
     loop = (
         "while IFS= read -r entry; do printf '%s\\n' \"$entry\"; done"
         " < build-config.env | grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)='"
     )
+    step_with_append = f'{grep} >> "$GITHUB_ENV"'
+    tokens_elsewhere = (
+        "grep -E '^(OTHER)=' other.env >> \"$GITHUB_ENV\"\n"
+        "      - name: Leaked tokens\n"
+        "        run: echo build-config.env FFMPEG_REMOTE FFMPEG_TAG FFMPEG_COMMIT GITHUB_ENV"
+    )
+    echo_load = "echo build-config.env FFMPEG_REMOTE FFMPEG_TAG FFMPEG_COMMIT GITHUB_ENV"
     return {
         "looping build-config load": (
             source.replace(grep, loop, 1),
             "build-config step must not loop",
+        ),
+        "build-config tokens elsewhere": (
+            source.replace(step_with_append, tokens_elsewhere, 1),
+            "build-config step is missing build-config.env",
+        ),
+        "echo build-config load": (
+            source.replace(step_with_append, echo_load, 1),
+            "build-config step is missing grep",
+        ),
+        "build-config load missing append": (
+            source.replace(step_with_append, grep, 1),
+            'build-config step is missing >> "$GITHUB_ENV"',
         ),
     }
 
