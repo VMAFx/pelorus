@@ -89,13 +89,7 @@ jobs:
       - name: Load build configuration
         if: github.event.pull_request.draft != true
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Licence gate refuses a planted flag
         if: github.event.pull_request.draft != true
         run: bash tools/tester/check-ffmpeg-licence-self-test.sh
@@ -160,13 +154,7 @@ jobs:
       - name: Load build configuration
         if: github.event.pull_request.draft != true
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       # Licence self-test steps are arch-independent: do NOT duplicate (build job runs them; ADR-0208).
       - name: Install cosign
         if: github.event.pull_request.draft != true
@@ -275,13 +263,7 @@ jobs:
           persist-credentials: false
       - name: Load build configuration
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Name the image tags of this kit
         run: |
           if [ "$KIT" = generic ]; then

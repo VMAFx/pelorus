@@ -11,7 +11,9 @@ Checks that `pelorus-test-float-identity` in `.semgrep.yml`:
     allowing literals, macros, k-constants, NaN idioms, integer casts, and calls;
 (b) catches a planted regression in libpelorus/test/interop_test.c when
     float_bits_equal() is reverted to ==;
-(c) produces zero findings across the real repository tree.
+(c) produces zero findings across the real repository tree;
+(d) keeps its macro and k-constant exemption sound: no test source declares a
+    non-const float or double with such a name.
 """
 
 from __future__ import annotations
@@ -19,8 +21,9 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 - fixed semgrep argv, no shell, explicit deadline
 import sys
 import tempfile
 
@@ -38,7 +41,8 @@ static unsigned bits(double value);
 struct opaque;
 extern struct opaque *o;
 
-bool planted(double x, float p, float q, int i, int k, double u, double v)
+bool planted(double x, float p, float q, int i, int k, double u, double v,
+             long long ll, short s, unsigned char c)
 {
     double y = computed();
     bool hits = x != y;          /* reported: computed double != */
@@ -57,6 +61,8 @@ bool planted(double x, float p, float q, int i, int k, double u, double v)
     hits = hits || p != q * 2.0f; /* reported: float, computed on the right */
     hits = hits || 1.0f + q == p; /* reported: float, computed on the left */
     hits = hits || 2.0f * q != p; /* reported: float, computed on the left */
+    hits = hits || computed() == computed(); /* reported: two call results */
+    hits = hits || computed() + 1.0 != computed() + 1.0; /* reported: call inside */
     hits = hits || x == o->d; /* reported: one side typed, field type unknown */
     hits = hits || o->d == x; /* reported: one side typed, field type unknown */
     hits = hits || x != o->d; /* reported: one side typed, field type unknown */
@@ -79,11 +85,31 @@ bool planted(double x, float p, float q, int i, int k, double u, double v)
     quiet = quiet || p != -0x1.8p-3f; /* signed hexadecimal float literal */
     quiet = quiet || (i + (int)x) == k; /* integer arithmetic */
     quiet = quiet || bits(x + y) == bits(u + v); /* calls return integers */
+    quiet = quiet || x == 0x10;  /* hexadecimal integer literal */
+    quiet = quiet || y != 1U;    /* suffixed integer literal */
+    quiet = quiet || x == 10ul;  /* suffixed integer literal */
+    quiet = quiet || ll == (long long)y; /* long long cast */
+    quiet = quiet || s == (short)x; /* short cast */
+    quiet = quiet || c == (unsigned char)x; /* unsigned char cast */
+    quiet = quiet || i == (unsigned long long)y; /* unsigned long long cast */
+    quiet = quiet || o->d != o->d; /* NaN idiom on a field */
     return hits || quiet;
 }
 """
 
-EXPECTED_HITS = tuple(range(13, 37))
+# The hit lines follow the `/* reported` comments, so a planted line added or
+# moved keeps its expectation.
+EXPECTED_HITS = tuple(
+    n for n, line in enumerate(PLANTED_C.splitlines(), 1) if "/* reported" in line
+)
+SEMGREP_TIMEOUT_S = 300
+
+# A non-const float named like a macro or k-constant would pass the rule's
+# literal exemption while holding a computed value.
+CONSTANT_NAME_DECL = re.compile(
+    r"\b(?:double|float)\s+\*?\s*(?:k[A-Z]\w*|[A-Z][A-Z0-9_]*)\s*[=;,\[]"
+)
+TEST_DIRS = (ROOT / "libpelorus" / "test", ROOT / "ffmpeg-patches" / "test")
 
 
 class ScanError(Exception):
@@ -112,9 +138,20 @@ def run_semgrep(
         "--disable-version-check",
         ".",
     ]
-    proc = subprocess.run(
-        cmd, cwd=str(target_dir), capture_output=True, text=True, env=env, check=False
-    )
+    try:
+        proc = subprocess.run(  # nosec B603 - semgrep resolved from PATH to a file; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+            cmd,
+            cwd=str(target_dir),
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+            timeout=SEMGREP_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as err:
+        raise ScanError(
+            f"semgrep scan in {target_dir}: no result after {SEMGREP_TIMEOUT_S} s"
+        ) from err
     if proc.returncode != expected_rc:
         raise ScanError(
             f"semgrep scan in {target_dir}: expected rc={expected_rc}, "
@@ -181,8 +218,52 @@ def step_real_tree(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
     return None
 
 
+def constant_name_findings(text: str, name: str) -> list[str]:
+    """Lines declaring a non-const float or double with a constant-style name."""
+    return [
+        f"{name}:{n}: {line.strip()}"
+        for n, line in enumerate(text.splitlines(), 1)
+        if CONSTANT_NAME_DECL.search(line) and "const" not in line
+    ]
+
+
+def step_constant_names(_semgrep_bin: str, _tmp: pathlib.Path) -> str | None:
+    """(d) The planted computed k-name is refused; the real test trees have none."""
+    planted = (
+        "double kScale = computed();\nfloat GAIN;\nstatic const double kOk = 1.0;\n"
+    )
+    if len(constant_name_findings(planted, "planted.c")) != 2:
+        return "step (d): planted non-const constant-style names not both refused"
+    found = []
+    for test_dir in TEST_DIRS:
+        for path in sorted(test_dir.rglob("*")):
+            if path.suffix in (".c", ".h", ".cpp", ".hpp") and path.is_file():
+                text = path.read_text(encoding="utf-8", errors="replace")
+                found += constant_name_findings(text, str(path.relative_to(ROOT)))
+    if found:
+        return "step (d): non-const float with a constant-style name:\n" + "\n".join(
+            found
+        )
+    return None
+
+
+def resolve_semgrep() -> str | None:
+    """PATH lookup of semgrep, kept only when it is an executable regular file.
+
+    The test runs the binary with a fixed argument list and no shell; the PATH
+    the build or CI job sets is the trust boundary.
+    """
+    found = shutil.which("semgrep")
+    if not found:
+        return None
+    path = pathlib.Path(found).resolve()
+    if not path.is_file() or not os.access(path, os.X_OK):
+        return None
+    return str(path)
+
+
 def main() -> int:
-    semgrep_bin = shutil.which("semgrep")
+    semgrep_bin = resolve_semgrep()
     if not semgrep_bin:
         print("SKIP: semgrep not found")
         return 77
@@ -194,7 +275,12 @@ def main() -> int:
         tmp = pathlib.Path(td)
         (tmp / "cfg").mkdir()
         try:
-            for step in (step_planted_cases, step_planted_revert, step_real_tree):
+            for step in (
+                step_planted_cases,
+                step_planted_revert,
+                step_real_tree,
+                step_constant_names,
+            ):
                 problem = step(semgrep_bin, tmp)
                 if problem:
                     sys.stderr.write(problem + "\n")
@@ -202,7 +288,9 @@ def main() -> int:
         except ScanError as err:
             sys.stderr.write(f"{err}\n")
             return 1
-    print("semgrep float identity: planted cases, planted revert and real tree ok")
+    print(
+        "semgrep float identity: planted cases, planted revert, real tree and constant names ok"
+    )
     return 0
 
 

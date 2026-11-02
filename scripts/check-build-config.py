@@ -2822,6 +2822,46 @@ def _validate_release_build(relative: str, text: str, jobs: dict[str, str]) -> l
     return errors
 
 
+# The load step selects its keys with one grep; a shell loop over the file
+# has no scalar bound (HISS-02).
+LOAD_STEP_LOOP = re.compile(r"^\s*(?:while|until|for)\s", re.MULTILINE)
+NEXT_STEP = re.compile(r"^\s*- (?:name|uses):", re.MULTILINE)
+
+
+def _step_text(block: str, start: int) -> str:
+    """The text of the step whose name starts at `start`, up to the next step."""
+    following = NEXT_STEP.search(block, start + 1)
+    return block[start : following.start() if following else len(block)]
+
+
+LOAD_STEP_TOKENS = (
+    "name: Load build configuration",
+    "build-config.env",
+    "FFMPEG_REMOTE",
+    "FFMPEG_TAG",
+    "FFMPEG_COMMIT",
+    "GITHUB_ENV",
+)
+
+
+def _validate_load_step(relative: str, name: str, block: str) -> list[str]:
+    """A job loads build-config.env after checkout, with one bounded grep."""
+    errors: list[str] = []
+    checkout = block.find("uses: actions/checkout@")
+    load = block.find("name: Load build configuration")
+    if checkout < 0 or load < checkout:
+        errors.append(f"{relative}: job {name} must load build-config.env after checkout")
+    for token in LOAD_STEP_TOKENS:
+        if token not in block:
+            errors.append(f"{relative}: job {name} build-config step is missing {token}")
+    if load >= 0 and LOAD_STEP_LOOP.search(_step_text(block, load)):
+        errors.append(
+            f"{relative}: job {name} build-config step must not loop; "
+            "select the keys with one grep"
+        )
+    return errors
+
+
 def _validate_workflow_structure_and_jobs(
     relative: str, text: str, jobs: dict[str, str]
 ) -> list[str]:
@@ -2839,14 +2879,6 @@ def _validate_workflow_structure_and_jobs(
     if RELEASE_TAG.search(text):
         errors.append(f"{relative}: contains a copied FFmpeg release tag")
 
-    load_tokens = (
-        "name: Load build configuration",
-        "build-config.env",
-        "FFMPEG_REMOTE",
-        "FFMPEG_TAG",
-        "FFMPEG_COMMIT",
-        "GITHUB_ENV",
-    )
     is_ci = Path(relative).name == "ci.yml"
     is_release = Path(relative).name == "release.yml"
     for name, block in jobs.items():
@@ -2858,17 +2890,7 @@ def _validate_workflow_structure_and_jobs(
             errors.append(f"{relative}: job {name} must run exactly on {runner}")
         if is_release and name == PUBLISH_JOB:
             continue  # publishes the release build's files; no checkout, no build
-        checkout = block.find("uses: actions/checkout@")
-        load = block.find("name: Load build configuration")
-        if checkout < 0 or load < checkout:
-            errors.append(
-                f"{relative}: job {name} must load build-config.env after checkout"
-            )
-        for token in load_tokens:
-            if token not in block:
-                errors.append(
-                    f"{relative}: job {name} build-config step is missing {token}"
-                )
+        errors.extend(_validate_load_step(relative, name, block))
     for token in (
         "ImageOS",
         "ImageVersion",
@@ -4729,6 +4751,21 @@ def series_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def _load_step_cases(source: str) -> dict[str, tuple[str, str]]:
+    """The build-config load step stays one grep, never a shell loop."""
+    grep = "grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env"
+    loop = (
+        "while IFS= read -r entry; do printf '%s\\n' \"$entry\"; done"
+        " < build-config.env | grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)='"
+    )
+    return {
+        "looping build-config load": (
+            source.replace(grep, loop, 1),
+            "build-config step must not loop",
+        ),
+    }
+
+
 def workflow_validator_regressions() -> list[str]:
     """Prove runner and native-toolchain regressions are rejected."""
     failures: list[str] = []
@@ -4776,7 +4813,7 @@ def workflow_validator_regressions() -> list[str]:
             f"docs job is missing {ACTIONLINT_GO_STEP}",
         ),
     }
-    cases.update(_docs_pin_shape_cases(source))
+    cases |= _docs_pin_shape_cases(source) | _load_step_cases(source)
     relative = ci_path.relative_to(ROOT).as_posix()
     failures.extend(windows_pin_bump_regression(source, relative))
     for name, (mutated, expected) in cases.items():

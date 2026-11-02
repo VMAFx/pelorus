@@ -29,13 +29,7 @@ jobs:
           persist-credentials: false
       - name: Load build configuration
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Install toolchain
         run: |
           sudo apt-get update
@@ -86,13 +80,7 @@ jobs:
           persist-credentials: false
       - name: Load build configuration
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Install native build and Vulkan toolchain
         run: |
           sudo apt-get update
@@ -188,13 +176,7 @@ jobs:
       - name: Load build configuration
         if: github.event.pull_request.draft != true
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Install native build toolchain and lavapipe
         if: github.event.pull_request.draft != true
         run: |
@@ -325,13 +307,7 @@ jobs:
       - name: Load build configuration
         if: github.event.pull_request.draft != true
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Install native build toolchain and lavapipe
         if: github.event.pull_request.draft != true
         run: |
@@ -484,13 +460,7 @@ jobs:
           persist-credentials: false
       - name: Load build configuration
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Install toolchain
         run: |
           sudo apt-get update
@@ -548,13 +518,7 @@ jobs:
             mingw-w64-ucrt-x86_64-shaderc
       - name: Load build configuration
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Runner and toolchain receipt
         run: |
           echo "ImageOS=${ImageOS:-unset}"
@@ -600,13 +564,7 @@ jobs:
           scripts/check-gitleaks.sh
       - name: Load build configuration
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Changelog fragments render cleanly
         run: bash scripts/release/concat-changelog-fragments.sh --check
       - name: Every ADR has an index row
@@ -658,13 +616,7 @@ jobs:
           persist-credentials: false
       - name: Load build configuration
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Scan test code for direct float identity comparisons
         run: semgrep scan --config .semgrep.yml --error --metrics=off --disable-version-check
       - name: Verify planted-defect test passes

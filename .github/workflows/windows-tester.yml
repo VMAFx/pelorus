@@ -75,13 +75,7 @@ jobs:
             zip
       - name: Load build configuration
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Runner and toolchain receipt
         run: |
           echo "ImageOS=${ImageOS:-unset}"
