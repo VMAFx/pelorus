@@ -63,6 +63,9 @@
             "context": "libpelorus (ASan + UBSan — the interop conformance fixture)"
           },
           {
+            "context": "semgrep (test float identity · planted defect test)"
+          },
+          {
             "context": "libpelorus (Windows · MSYS2 UCRT64 · fast suite)"
           },
           {
