@@ -167,12 +167,23 @@ test('exception-categories',
 # of a statement or expression and names its rule ids plus a reason. --self-test
 # plants each refused shape (misplaced line, bare marker, missing reason, ...) and
 # then scans the tree.
-test('suppression-markers',
+test('suppression-markers-self-test',
      python_prog,
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-suppression-markers.py',
-            '--self-test'],
+            '--self-test-only'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+# The tree scan lists files with git, which the MSYS2 UCRT64 leg does not put
+# on PATH (CI run 41408892182: FileNotFoundError for git). The planted cases
+# above run there; the Linux jobs scan the tree on every PR.
+if build_machine.system() != 'windows'
+  test('suppression-markers',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-suppression-markers.py',
+              '--self-test'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
 test('telemetry-field-parity-self-test',
      python_prog,
      args: [meson.project_source_root() / 'scripts' / 'check-telemetry-field-parity.py',

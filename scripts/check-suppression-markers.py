@@ -19,7 +19,9 @@ Markers inside string literals are text, not comments, and do not count.
 A marker in a tracked non-Python, non-Markdown file is refused, since this
 check reads Python only.
 
-``--self-test`` plants each refused shape and requires every one to fail.
+``--self-test`` plants each refused shape and requires every one to fail,
+then scans the tree; ``--self-test-only`` stops after the planted cases, for
+hosts without git (the tree scan lists files with ``git ls-files``).
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ import io
 import re
 import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
+import tempfile
 import tokenize
 from pathlib import Path
 
@@ -129,7 +132,14 @@ def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str
     if path.suffix == ".md" or not path.is_file():
         return []
     if is_python(path):
-        return python_findings(name, path.read_text(encoding="utf-8"), local_ids)
+        # tokenize.open honours a PEP 263 coding cookie and the UTF-8 BOM; a
+        # file that does not decode is a finding, not a crash or a skip.
+        try:
+            with tokenize.open(path) as handle:
+                text = handle.read()
+        except (SyntaxError, UnicodeDecodeError) as exc:
+            return [f"{name}: not decodable as declared: {exc}"]
+        return python_findings(name, text, local_ids)
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
@@ -183,6 +193,29 @@ PLANTED = {
 }
 
 
+def encoding_self_test(local_ids: frozenset[str]) -> list[str]:
+    """A declared latin-1 file is read as declared; an undecodable one is a finding."""
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        declared = root / "declared.py"
+        declared.write_bytes(
+            b"# -*- coding: latin-1 -*-\n"
+            b'x = "\xe9"  # nosec B603 - fixed argv\n'
+        )
+        broken = root / "broken.py"
+        broken.write_bytes(b'x = "\xe9"  # nosec B603 - fixed argv\n')
+        got = file_findings(root, declared, local_ids)
+        if got:
+            failures.append(f"declared latin-1 source refused: {got}")
+        got = file_findings(root, broken, local_ids)
+        if not got or "not decodable" not in got[0]:
+            failures.append(f"planted 'undecodable source' not refused: {got}")
+        else:
+            print(f"refused as expected (undecodable source): {got[0]}")
+    return failures
+
+
 def self_test() -> int:
     local_ids = frozenset({"local-rule"})
     failures: list[str] = []
@@ -199,18 +232,24 @@ def self_test() -> int:
         failures.append("planted 'marker in a shell file' not refused")
     else:
         print("refused as expected (marker in a shell file)")
+    failures.extend(encoding_self_test(local_ids))
     for failure in failures:
         print(f"SELF-TEST FAIL: {failure}", file=sys.stderr)
     return 1 if failures else 0
 
 
 def main(argv: list[str]) -> int:
+    if argv[1:] == ["--self-test-only"]:
+        return self_test()
     if argv[1:] == ["--self-test"]:
         status = self_test()
         if status:
             return status
     elif argv[1:]:
-        print("usage: check-suppression-markers.py [--self-test]", file=sys.stderr)
+        print(
+            "usage: check-suppression-markers.py [--self-test | --self-test-only]",
+            file=sys.stderr,
+        )
         return 2
     found = scan(ROOT)
     for finding in found:

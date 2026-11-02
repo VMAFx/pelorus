@@ -18,7 +18,7 @@ VMAFx/ffmpeg-patches `tests/test_subprocess_nosec.py` (2026-11-01) checks the sa
 
 ## Decision
 
-`scripts/check-suppression-markers.py` reads every tracked Python file (`git ls-files`, `.py` or a Python shebang) and refuses a marker comment unless:
+`scripts/check-suppression-markers.py` reads every tracked Python file (`git ls-files`, `.py` or a Python shebang) in its declared encoding (`tokenize.open`; a file that does not decode is a finding) and refuses a marker comment unless:
 
 1. it sits on the start line of a statement or expression in the file's AST, which rules out comment-only lines, argument continuations that start no node, and closing-bracket lines;
 2. a Semgrep marker reads `nosemgrep: <id>[, <id>...] - <reason>`, each id being a rule of the local `.semgrep.yml` or a full registry id with at least two dots (`python.lang.security.audit.<rule>.<rule>`);
@@ -28,7 +28,7 @@ The `nosem` alias and a marker word in the middle of a comment are refused as we
 
 The rule is stricter than Semgrep on one point: a marker on the line before the start line suppresses in Semgrep but fails here, so each marker has one place, beside the code it answers.
 
-`--self-test` plants a marker on the line before, on a closing bracket, a bare `nosemgrep`, a `nosemgrep` without a reason, a short id, the `nosem` alias, a bare `nosec`, a `nosec` without a reason, a marker word mid-comment and a marker in a shell file; each must be refused, and a valid source with marker text in a string literal must pass. The meson fast-suite test `suppression-markers` runs the self-test and then the tree scan.
+`--self-test` plants a marker on the line before, on a closing bracket, a bare `nosemgrep`, a `nosemgrep` without a reason, a short id, the `nosem` alias, a bare `nosec`, a `nosec` without a reason, a marker word mid-comment, a marker in a shell file and an undecodable source; each must be refused, and a valid source with marker text in a string literal and a declared latin-1 source must pass. The meson fast-suite test `suppression-markers-self-test` runs the planted cases on every platform (`--self-test-only`); `suppression-markers` runs them and then the tree scan, on every platform except Windows, whose MSYS2 leg has no git on `PATH`.
 
 ## Alternatives considered
 
@@ -42,7 +42,7 @@ The rule is stricter than Semgrep on one point: a marker on the line before the 
 
 - `ffmpeg-patches/test/doc-recipes-smoke.py:79` gains the missing reason.
 - A new marker in a C, shell or YAML file fails until the check learns that language.
-- Mutation evidence: seven mutants of the check (no start-line binding, optional `nosemgrep` reason, bare `nosemgrep` accepted, short id accepted, optional `nosec` reason, mid-comment word accepted, string literals counted) each fail the self-test.
+- Mutation evidence: eight mutants of the check (no start-line binding, optional `nosemgrep` reason, bare `nosemgrep` accepted, short id accepted, optional `nosec` reason, mid-comment word accepted, string literals counted, UTF-8 with replacement instead of the declared encoding) each fail the self-test.
 
 ## References
 
