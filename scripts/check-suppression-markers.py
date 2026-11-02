@@ -17,7 +17,7 @@ A bare ``nosemgrep`` suppresses every rule on the line, and the ``nosem``
 alias or a marker word in the middle of a comment is refused as well.
 Markers inside string literals are text, not comments, and do not count.
 A marker in a tracked non-Python, non-Markdown file is refused, since this
-check reads Python only.
+check reads Python only. UTF-16 non-Python files are decoded before scanning.
 
 ``--self-test`` plants each refused shape and requires every one to fail,
 then scans the tree; ``--self-test-only`` stops after the planted cases, for
@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ast
 import io
+import os
 import re
 import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
@@ -48,6 +49,7 @@ REGISTRY_MIN_DOTS = 2
 
 
 def local_rule_ids(root: Path) -> frozenset[str]:
+    """Rule ids declared in the local .semgrep.yml, empty when it is absent."""
     config = root / ".semgrep.yml"
     if not config.is_file():
         return frozenset()
@@ -73,6 +75,7 @@ def segment_findings(segment: str, local_ids: frozenset[str]) -> list[str]:
 
 
 def comment_findings(comment: str, local_ids: frozenset[str]) -> list[str]:
+    """Check one comment token: each marker word must follow a `#` and parse."""
     found: list[str] = []
     for word in MARKER_WORD.finditer(comment):
         prefix = comment[: word.start()].rstrip(" \t")
@@ -86,6 +89,7 @@ def comment_findings(comment: str, local_ids: frozenset[str]) -> list[str]:
 
 
 def python_findings(name: str, text: str, local_ids: frozenset[str]) -> list[str]:
+    """Check every marker comment in Python source against its AST start lines."""
     try:
         tree = ast.parse(text, filename=name)
     except SyntaxError as exc:
@@ -105,8 +109,12 @@ def python_findings(name: str, text: str, local_ids: frozenset[str]) -> list[str
     return found
 
 
+PYTHON_SUFFIXES = frozenset({".py", ".pyi"})
+
+
 def is_python(path: Path) -> bool:
-    if path.suffix == ".py":
+    """True for a .py or .pyi file or a file whose shebang names python."""
+    if path.suffix in PYTHON_SUFFIXES:
         return True
     try:
         with path.open("rb") as handle:
@@ -117,6 +125,7 @@ def is_python(path: Path) -> bool:
 
 
 def tracked_files(root: Path) -> list[Path]:
+    """Every file git tracks under root."""
     proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
         ["git", "-C", str(root), "ls-files", "-z"],
         capture_output=True,
@@ -127,7 +136,30 @@ def tracked_files(root: Path) -> list[Path]:
     return [root / name for name in names if name]
 
 
+def readings(data: bytes) -> list[str]:
+    """Return UTF-8 and UTF-16 text readings of non-Python bytes.
+
+    No heuristic is used: UTF-8 and both little-endian and big-endian UTF-16
+    at byte offsets 0 and 1 are all scanned, so neither the NUL count nor a
+    stray byte can hide a marker. Both orders are needed because a trimmed
+    odd tail drops the last character of the other order, so a marker at the
+    end of a file needs its own byte order.
+    """
+    texts = [data.decode("utf-8", "surrogateescape")]
+    for enc in ("utf-16-le", "utf-16-be"):
+        for offset in (0, 1):
+            chunk = data[offset:]
+            chunk = chunk[: len(chunk) - len(chunk) % 2]
+            texts.append(chunk.decode(enc, "replace"))
+    return texts
+
+
 def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str]:
+    """Check one tracked file; Markdown and non-regular files are not read.
+
+    Non-Python files are scanned across UTF-8 and UTF-16 readings.
+    Unreadable files are findings.
+    """
     name = path.relative_to(root).as_posix()
     if path.suffix == ".md" or not path.is_file():
         return []
@@ -137,17 +169,27 @@ def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str
         try:
             with tokenize.open(path) as handle:
                 text = handle.read()
+        except OSError as exc:
+            return [f"{name}: not readable: {exc}"]
         except (SyntaxError, UnicodeDecodeError) as exc:
             return [f"{name}: not decodable as declared: {exc}"]
         return python_findings(name, text, local_ids)
     try:
-        text = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return []
-    return other_findings(name, text)
+        raw = path.read_bytes()
+    except OSError as exc:
+        return [f"{name}: not readable: {exc}"]
+    findings: list[str] = []
+    seen: set[str] = set()
+    for text in readings(raw):
+        for item in other_findings(name, text):
+            if item not in seen:
+                seen.add(item)
+                findings.append(item)
+    return findings
 
 
 def other_findings(name: str, text: str) -> list[str]:
+    """Refuse every marker comment in a non-Python file."""
     return [
         f"{name}:{text.count(chr(10), 0, m.start()) + 1}: marker outside Python; "
         "this check binds Python only"
@@ -156,6 +198,7 @@ def other_findings(name: str, text: str) -> list[str]:
 
 
 def scan(root: Path) -> list[str]:
+    """Check every tracked file under root."""
     local_ids = local_rule_ids(root)
     found: list[str] = []
     for path in tracked_files(root):
@@ -193,8 +236,133 @@ PLANTED = {
 }
 
 
+# UTF-16 shapes that must be refused: byte-order mark or none, odd length,
+# a stray leading byte, both byte orders, and a marker at the last byte.
+UTF16_PLANTS = (
+    (
+        "ps.ps1",
+        "utf-16 file",
+        "x  # nosemgrep: python.lang.a.b - why\n".encode("utf-16"),
+    ),
+    (
+        "ps_nobom.ps1",
+        "utf-16 file, no BOM",
+        "x  # nosemgrep: python.lang.a.b - why\n".encode("utf-16-le"),
+    ),
+    (
+        "ps_odd.ps1",
+        "utf-16 file, odd length",
+        "x  # nosemgrep: python.lang.a.b - why\n".encode("utf-16") + b"\x00",
+    ),
+    (
+        "mixed.sh",
+        "utf-16-looking file with an ASCII marker",
+        b"A\x00" * 64 + b"  # nosemgrep: a.b.c - why\n",
+    ),
+    (
+        "cjk.ps1",
+        "BOM-less UTF-16 with few NUL bytes",
+        ("# " + "漢" * 2048 + "\n# nosemgrep: a.b.c - why\n").encode("utf-16-le"),
+    ),
+    (
+        "shifted.ps1",
+        "UTF-16 after one stray byte",
+        b"\x01" + "# nosemgrep: a.b.c - why\n".encode("utf-16-le"),
+    ),
+    (
+        "be.ps1",
+        "BOM-less UTF-16 big-endian",
+        "# nosemgrep: a.b.c - why\n".encode("utf-16-be"),
+    ),
+    (
+        "be_eof.ps1",
+        "big-endian UTF-16 ending at the marker",
+        "# nosemgrep".encode("utf-16-be"),
+    ),
+    (
+        "be_shift_eof.ps1",
+        "big-endian UTF-16 after a stray byte, ending at the marker",
+        b"\x01" + "# nosemgrep".encode("utf-16-be"),
+    ),
+    (
+        "le_eof.ps1",
+        "little-endian UTF-16 ending at the marker",
+        "# nosemgrep".encode("utf-16-le"),
+    ),
+    (
+        "le_shift_eof.ps1",
+        "little-endian UTF-16 after a stray byte, ending at the marker",
+        b"\x01" + "# nosemgrep".encode("utf-16-le"),
+    ),
+)
+
+
+# Files without a marker; no reading may report one.
+UTF16_CLEAN = (
+    ("clean.sh", b"echo 1\n"),
+    ("clean.ps1", "Write-Output 1\n".encode("utf-16")),
+    ("clean_cjk.ps1", ("# " + "漢" * 100 + "\n").encode("utf-16")),
+)
+
+
+def utf16_self_test(root: Path, local_ids: frozenset[str]) -> list[str]:
+    """Plant UTF16_PLANTS (each must be refused) and UTF16_CLEAN (none may be)."""
+    failures: list[str] = []
+    for name, label, payload in UTF16_PLANTS:
+        path = root / name
+        path.write_bytes(payload)
+        try:
+            got = file_findings(root, path, local_ids)
+        except (UnicodeError, OSError) as exc:
+            failures.append(f"planted '{label}' raised {exc!r}")
+        else:
+            if not got or "outside Python" not in got[0]:
+                failures.append(f"planted '{label}' not refused: {got}")
+            else:
+                print(f"refused as expected ({label}): {got[0]}")
+    for name, payload in UTF16_CLEAN:
+        path = root / name
+        path.write_bytes(payload)
+        if got := file_findings(root, path, local_ids):
+            failures.append(f"clean '{name}' unexpectedly refused: {got}")
+    return failures
+
+
+def unreadable_self_test(root: Path, local_ids: frozenset[str]) -> list[str]:
+    """Plant an unreadable file; reading it must be reported as a finding."""
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        print("skipped (unreadable file): running as root")
+        return []
+    locked = root / "locked.sh"
+    locked.write_text("echo 1  # nosemgrep: a.b.c - why\n", encoding="utf-8")
+    locked.chmod(0)
+    failures: list[str] = []
+    try:
+        try:
+            with locked.open("rb"):
+                pass
+        except OSError:
+            pass
+        else:
+            # Windows keeps a mode-0 file readable, so there is no plant.
+            print("skipped (unreadable file): mode 0 leaves the file readable here")
+            return failures
+        try:
+            got = file_findings(root, locked, local_ids)
+        except OSError as exc:
+            failures.append(f"planted 'unreadable file' raised {exc!r}")
+        else:
+            if len(got) != 1 or "not readable" not in got[0]:
+                failures.append(f"planted 'unreadable file' not refused: {got}")
+            else:
+                print(f"refused as expected (unreadable file): {got[0]}")
+    finally:
+        locked.chmod(0o600)
+    return failures
+
+
 def encoding_self_test(local_ids: frozenset[str]) -> list[str]:
-    """A declared latin-1 file is read as declared; an undecodable one is a finding."""
+    """Plant files on disk: declared encodings, undecodable bytes, stubs."""
     failures: list[str] = []
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -213,10 +381,33 @@ def encoding_self_test(local_ids: frozenset[str]) -> list[str]:
             failures.append(f"planted 'undecodable source' not refused: {got}")
         else:
             print(f"refused as expected (undecodable source): {got[0]}")
+        latin = root / "notes.sh"
+        latin.write_bytes(b"echo \xff  # nosemgrep: python.lang.a.b - why\n")
+        got = file_findings(root, latin, local_ids)
+        if not got or "outside Python" not in got[0]:
+            failures.append(f"planted 'non-UTF-8 non-Python marker' not refused: {got}")
+        else:
+            print(f"refused as expected (non-UTF-8 non-Python marker): {got[0]}")
+        stub = root / "stub.pyi"
+        stub.write_text("def f() -> int: ...  # nosemgrep\n", encoding="utf-8")
+        got = file_findings(root, stub, local_ids)
+        if not got or "nosemgrep needs" not in got[0]:
+            failures.append(f"planted 'bare marker in a .pyi stub' not read as Python: {got}")
+        else:
+            print(f"refused as expected (bare marker in a .pyi stub): {got[0]}")
+        stub.write_text(
+            "def f() -> int: ...  # nosemgrep: python.lang.a.b - why\n", encoding="utf-8"
+        )
+        got = file_findings(root, stub, local_ids)
+        if got:
+            failures.append(f"valid .pyi stub refused: {got}")
+        failures.extend(utf16_self_test(root, local_ids))
+        failures.extend(unreadable_self_test(root, local_ids))
     return failures
 
 
 def self_test() -> int:
+    """Plant each refused shape and the valid sources; 0 when all behave."""
     local_ids = frozenset({"local-rule"})
     failures: list[str] = []
     valid = python_findings("valid.py", VALID, local_ids)
@@ -239,6 +430,7 @@ def self_test() -> int:
 
 
 def main(argv: list[str]) -> int:
+    """Run the self-test and/or the tree scan; exit 1 on a finding."""
     if argv[1:] == ["--self-test-only"]:
         return self_test()
     if argv[1:] == ["--self-test"]:
