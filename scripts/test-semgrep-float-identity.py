@@ -109,9 +109,14 @@ SEMGREP_TIMEOUT_S = 300
 CONSTANT_NAME_DECL = re.compile(
     r"\b(?:double|float)\s+\*?\s*(?:k[A-Z]\w*|[A-Z][A-Z0-9_]*)\s*[=;,\[]"
 )
-# Comments go before the qualifier check, so `double kX = f(); // const`
-# still counts as mutable.
-LINE_COMMENT = re.compile(r"//.*|/\*.*?\*/")
+# Comments and literal contents are blanked before the qualifier check, so
+# `double kX = f(); // const` still counts as mutable and a "//" inside a
+# string does not hide the code after it. Blanking keeps every offset and
+# newline, so a match maps back to its line.
+C_LEXEME = re.compile(
+    r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|//[^\n]*|/\*.*?(?:\*/|\Z)',
+    re.DOTALL,
+)
 CONST_QUALIFIER = re.compile(r"\b(?:const|constexpr)\b")
 TEST_DIRS = (ROOT / "libpelorus" / "test", ROOT / "ffmpeg-patches" / "test")
 
@@ -222,14 +227,30 @@ def step_real_tree(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
     return None
 
 
+def _blank_lexeme(match: re.Match[str]) -> str:
+    """A comment becomes spaces; a literal keeps its quotes, its body spaces."""
+    lexeme = match.group(0)
+    if lexeme[0] in "\"'":
+        return lexeme[0] + re.sub(r"[^\n]", " ", lexeme[1:-1]) + lexeme[-1]
+    return re.sub(r"[^\n]", " ", lexeme)
+
+
 def constant_name_findings(text: str, name: str) -> list[str]:
-    """Lines declaring a non-const float or double with a constant-style name."""
+    """Declarations of a non-const float or double with a constant-style name.
+
+    The match runs over the whole blanked text, so a declaration split over
+    lines counts; the qualifier check starts at the previous statement
+    boundary and the finding names the line the declaration starts on.
+    """
+    code = C_LEXEME.sub(_blank_lexeme, text)
+    lines = text.splitlines()
     found = []
-    for n, line in enumerate(text.splitlines(), 1):
-        code = LINE_COMMENT.sub(" ", line)
-        decl = CONSTANT_NAME_DECL.search(code)
-        if decl and not CONST_QUALIFIER.search(code[: decl.end()]):
-            found.append(f"{name}:{n}: {line.strip()}")
+    for decl in CONSTANT_NAME_DECL.finditer(code):
+        start = max(code.rfind(sep, 0, decl.start()) for sep in ";{}") + 1
+        if CONST_QUALIFIER.search(code[start : decl.end()]):
+            continue
+        n = code.count("\n", 0, decl.start()) + 1
+        found.append(f"{name}:{n}: {lines[n - 1].strip()}")
     return found
 
 
@@ -244,11 +265,19 @@ def step_constant_names(_semgrep_bin: str, _tmp: pathlib.Path) -> str | None:
         "double const kEast = 1.0;\n"
         "double kTail = 1.0; const int n = 2;\n"
         "/* const */ double kLead = computed();\n"
+        'printf("https://example"); double kResult = computed();\n'
+        'puts("double kInString = 1.0;");\n'
+        "double\n"
+        "kMulti = computed();\n"
+        "/* const\n"
+        "*/ double kBlock = computed();\n"
+        "static const double\n"
+        "kSplitOk = 1.0;\n"
     )
     got = constant_name_findings(planted, "planted.c")
-    want = [f"planted.c:{n}:" for n in (1, 2, 3, 4, 7, 8)]
+    want = [f"planted.c:{n}:" for n in (1, 2, 3, 4, 7, 8, 9, 11, 14)]
     if [g.split(" ", 1)[0] for g in got] != want:
-        return f"step (d): constant-style name findings {got}, want lines 1-4, 7 and 8"
+        return f"step (d): constant-style name findings {got}, want lines {want}"
     found = []
     for test_dir in TEST_DIRS:
         for path in sorted(test_dir.rglob("*")):
