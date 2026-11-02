@@ -139,16 +139,18 @@ def tracked_files(root: Path) -> list[Path]:
 def readings(data: bytes) -> list[str]:
     """Return UTF-8 and UTF-16 text readings of non-Python bytes.
 
-    No heuristic is used: UTF-8 and little-endian UTF-16 at byte offsets 0
-    and 1 are all scanned, so neither the NUL count nor a stray byte can hide
-    a marker. Marker words are ASCII, and big-endian UTF-16 read from offset
-    1 is the little-endian text, so it needs no reading of its own.
+    No heuristic is used: UTF-8 and both little-endian and big-endian UTF-16
+    at byte offsets 0 and 1 are all scanned, so neither the NUL count nor a
+    stray byte can hide a marker. Both orders are needed because a trimmed
+    odd tail drops the last character of the other order, so a marker at the
+    end of a file needs its own byte order.
     """
     texts = [data.decode("utf-8", "surrogateescape")]
-    for offset in (0, 1):
-        chunk = data[offset:]
-        chunk = chunk[: len(chunk) - len(chunk) % 2]
-        texts.append(chunk.decode("utf-16-le", "replace"))
+    for enc in ("utf-16-le", "utf-16-be"):
+        for offset in (0, 1):
+            chunk = data[offset:]
+            chunk = chunk[: len(chunk) - len(chunk) % 2]
+            texts.append(chunk.decode(enc, "replace"))
     return texts
 
 
@@ -234,47 +236,79 @@ PLANTED = {
 }
 
 
+# UTF-16 shapes that must be refused: byte-order mark or none, odd length,
+# a stray leading byte, both byte orders, and a marker at the last byte.
+UTF16_PLANTS = (
+    (
+        "ps.ps1",
+        "utf-16 file",
+        "x  # nosemgrep: python.lang.a.b - why\n".encode("utf-16"),
+    ),
+    (
+        "ps_nobom.ps1",
+        "utf-16 file, no BOM",
+        "x  # nosemgrep: python.lang.a.b - why\n".encode("utf-16-le"),
+    ),
+    (
+        "ps_odd.ps1",
+        "utf-16 file, odd length",
+        "x  # nosemgrep: python.lang.a.b - why\n".encode("utf-16") + b"\x00",
+    ),
+    (
+        "mixed.sh",
+        "utf-16-looking file with an ASCII marker",
+        b"A\x00" * 64 + b"  # nosemgrep: a.b.c - why\n",
+    ),
+    (
+        "cjk.ps1",
+        "BOM-less UTF-16 with few NUL bytes",
+        ("# " + "漢" * 2048 + "\n# nosemgrep: a.b.c - why\n").encode("utf-16-le"),
+    ),
+    (
+        "shifted.ps1",
+        "UTF-16 after one stray byte",
+        b"\x01" + "# nosemgrep: a.b.c - why\n".encode("utf-16-le"),
+    ),
+    (
+        "be.ps1",
+        "BOM-less UTF-16 big-endian",
+        "# nosemgrep: a.b.c - why\n".encode("utf-16-be"),
+    ),
+    (
+        "be_eof.ps1",
+        "big-endian UTF-16 ending at the marker",
+        "# nosemgrep".encode("utf-16-be"),
+    ),
+    (
+        "be_shift_eof.ps1",
+        "big-endian UTF-16 after a stray byte, ending at the marker",
+        b"\x01" + "# nosemgrep".encode("utf-16-be"),
+    ),
+    (
+        "le_eof.ps1",
+        "little-endian UTF-16 ending at the marker",
+        "# nosemgrep".encode("utf-16-le"),
+    ),
+    (
+        "le_shift_eof.ps1",
+        "little-endian UTF-16 after a stray byte, ending at the marker",
+        b"\x01" + "# nosemgrep".encode("utf-16-le"),
+    ),
+)
+
+
+# Files without a marker; no reading may report one.
+UTF16_CLEAN = (
+    ("clean.sh", b"echo 1\n"),
+    ("clean.ps1", "Write-Output 1\n".encode("utf-16")),
+    ("clean_cjk.ps1", ("# " + "漢" * 100 + "\n").encode("utf-16")),
+)
+
+
 def utf16_self_test(root: Path, local_ids: frozenset[str]) -> list[str]:
-    """Plant UTF-16 files with and without a BOM; markers must be refused."""
+    """Plant UTF16_PLANTS (each must be refused) and UTF16_CLEAN (none may be)."""
     failures: list[str] = []
-    plants = (
-        (
-            "ps.ps1",
-            "utf-16 file",
-            "x  # nosemgrep: python.lang.a.b - why\n".encode("utf-16"),
-        ),
-        (
-            "ps_nobom.ps1",
-            "utf-16 file, no BOM",
-            "x  # nosemgrep: python.lang.a.b - why\n".encode("utf-16-le"),
-        ),
-        (
-            "ps_odd.ps1",
-            "utf-16 file, odd length",
-            "x  # nosemgrep: python.lang.a.b - why\n".encode("utf-16") + b"\x00",
-        ),
-        (
-            "mixed.sh",
-            "utf-16-looking file with an ASCII marker",
-            b"A\x00" * 64 + b"  # nosemgrep: a.b.c - why\n",
-        ),
-        (
-            "cjk.ps1",
-            "BOM-less UTF-16 with few NUL bytes",
-            ("# " + "漢" * 2048 + "\n# nosemgrep: a.b.c - why\n").encode("utf-16-le"),
-        ),
-        (
-            "shifted.ps1",
-            "UTF-16 after one stray byte",
-            b"\x01" + "# nosemgrep: a.b.c - why\n".encode("utf-16-le"),
-        ),
-        (
-            "be.ps1",
-            "BOM-less UTF-16 big-endian",
-            "# nosemgrep: a.b.c - why\n".encode("utf-16-be"),
-        ),
-    )
-    for name, label, payload in plants:
+    for name, label, payload in UTF16_PLANTS:
         path = root / name
         path.write_bytes(payload)
         try:
@@ -286,6 +320,11 @@ def utf16_self_test(root: Path, local_ids: frozenset[str]) -> list[str]:
                 failures.append(f"planted '{label}' not refused: {got}")
             else:
                 print(f"refused as expected ({label}): {got[0]}")
+    for name, payload in UTF16_CLEAN:
+        path = root / name
+        path.write_bytes(payload)
+        if got := file_findings(root, path, local_ids):
+            failures.append(f"clean '{name}' unexpectedly refused: {got}")
     return failures
 
 
