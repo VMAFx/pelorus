@@ -17,7 +17,7 @@ A bare ``nosemgrep`` suppresses every rule on the line, and the ``nosem``
 alias or a marker word in the middle of a comment is refused as well.
 Markers inside string literals are text, not comments, and do not count.
 A marker in a tracked non-Python, non-Markdown file is refused, since this
-check reads Python only.
+check reads Python only. UTF-16 non-Python files are decoded before scanning.
 
 ``--self-test`` plants each refused shape and requires every one to fail,
 then scans the tree; ``--self-test-only`` stops after the planted cases, for
@@ -136,6 +136,35 @@ def tracked_files(root: Path) -> list[Path]:
     return [root / name for name in names if name]
 
 
+def decode_other(data: bytes) -> str:
+    """Decode non-Python file bytes, detecting UTF-16 with or without a BOM.
+
+    A trailing odd byte is dropped before a UTF-16 decode, so one stray byte
+    cannot push the file back to the UTF-8 path, where its marker is hidden.
+    """
+    data_even = data[: len(data) - len(data) % 2]
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        try:
+            return data_even.decode("utf-16", "surrogatepass")
+        except UnicodeDecodeError:
+            return data.decode("utf-8", "surrogateescape")
+    sample = data[:4096]
+    if b"\x00" in sample:
+        pairs = len(sample) // 2
+        if pairs > 0:
+            encoding = ""
+            if sample[1::2].count(b"\x00") * 2 > pairs:
+                encoding = "utf-16-le"
+            elif sample[0::2].count(b"\x00") * 2 > pairs:
+                encoding = "utf-16-be"
+            if encoding:
+                try:
+                    return data_even.decode(encoding, "surrogatepass")
+                except UnicodeDecodeError:
+                    pass
+    return data.decode("utf-8", "surrogateescape")
+
+
 def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str]:
     """Check one tracked file; Markdown and non-regular files are not read.
 
@@ -158,7 +187,7 @@ def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str
     # Marker words are ASCII; surrogateescape keeps every other byte, so a
     # file that is not UTF-8 is still scanned instead of skipped.
     try:
-        text = path.read_bytes().decode("utf-8", "surrogateescape")
+        text = decode_other(path.read_bytes())
     except OSError as exc:
         return [f"{name}: not readable: {exc}"]
     return other_findings(name, text)
@@ -212,6 +241,65 @@ PLANTED = {
 }
 
 
+def utf16_self_test(root: Path, local_ids: frozenset[str]) -> list[str]:
+    """Plant UTF-16 files with and without a BOM; markers must be refused."""
+    failures: list[str] = []
+    plants = (
+        (
+            "ps.ps1",
+            "utf-16 file",
+            "x  # nosemgrep: python.lang.a.b - why\n".encode("utf-16"),
+        ),
+        (
+            "ps_nobom.ps1",
+            "utf-16 file, no BOM",
+            "x  # nosemgrep: python.lang.a.b - why\n".encode("utf-16-le"),
+        ),
+        (
+            "ps_odd.ps1",
+            "utf-16 file, odd length",
+            "x  # nosemgrep: python.lang.a.b - why\n".encode("utf-16") + b"\x00",
+        ),
+    )
+    for name, label, payload in plants:
+        path = root / name
+        path.write_bytes(payload)
+        try:
+            got = file_findings(root, path, local_ids)
+        except (UnicodeError, OSError) as exc:
+            failures.append(f"planted '{label}' raised {exc!r}")
+        else:
+            if not got or "outside Python" not in got[0]:
+                failures.append(f"planted '{label}' not refused: {got}")
+            else:
+                print(f"refused as expected ({label}): {got[0]}")
+    return failures
+
+
+def unreadable_self_test(root: Path, local_ids: frozenset[str]) -> list[str]:
+    """Plant an unreadable file; reading it must be reported as a finding."""
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        print("skipped (unreadable file): running as root")
+        return []
+    locked = root / "locked.sh"
+    locked.write_text("echo 1  # nosemgrep: a.b.c - why\n", encoding="utf-8")
+    locked.chmod(0)
+    failures: list[str] = []
+    try:
+        try:
+            got = file_findings(root, locked, local_ids)
+        except OSError as exc:
+            failures.append(f"planted 'unreadable file' raised {exc!r}")
+        else:
+            if len(got) != 1 or "not readable" not in got[0]:
+                failures.append(f"planted 'unreadable file' not refused: {got}")
+            else:
+                print(f"refused as expected (unreadable file): {got[0]}")
+    finally:
+        locked.chmod(0o600)
+    return failures
+
+
 def encoding_self_test(local_ids: frozenset[str]) -> list[str]:
     """Plant files on disk: declared encodings, undecodable bytes, stubs."""
     failures: list[str] = []
@@ -252,20 +340,8 @@ def encoding_self_test(local_ids: frozenset[str]) -> list[str]:
         got = file_findings(root, stub, local_ids)
         if got:
             failures.append(f"valid .pyi stub refused: {got}")
-        if hasattr(os, "geteuid") and os.geteuid() == 0:
-            print("skipped (unreadable file): running as root")
-        else:
-            locked = root / "locked.sh"
-            locked.write_text("echo 1  # nosemgrep: a.b.c - why\n", encoding="utf-8")
-            locked.chmod(0)
-            try:
-                got = file_findings(root, locked, local_ids)
-                if len(got) != 1 or "not readable" not in got[0]:
-                    failures.append(f"planted 'unreadable file' not refused: {got}")
-                else:
-                    print(f"refused as expected (unreadable file): {got[0]}")
-            finally:
-                locked.chmod(0o600)
+        failures.extend(utf16_self_test(root, local_ids))
+        failures.extend(unreadable_self_test(root, local_ids))
     return failures
 
 

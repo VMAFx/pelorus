@@ -1,1 +1,1 @@
-- Suppression marker check: `.pyi` stubs are read as Python, and a non-UTF-8 non-Python file is scanned instead of skipped; the research digest records where Semgrep 1.182.1 honours a marker ([ADR-0241](docs/adr/0241-suppression-marker-binding.md)).
+- Suppression marker check: `.pyi` stubs are read as Python, a non-UTF-8 or UTF-16 non-Python file is scanned instead of skipped, and an unreadable file is reported instead of aborting the scan; the research digest records where Semgrep 1.182.1 honours a marker ([ADR-0241](docs/adr/0241-suppression-marker-binding.md)).
