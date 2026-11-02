@@ -109,6 +109,10 @@ SEMGREP_TIMEOUT_S = 300
 CONSTANT_NAME_DECL = re.compile(
     r"\b(?:double|float)\s+\*?\s*(?:k[A-Z]\w*|[A-Z][A-Z0-9_]*)\s*[=;,\[]"
 )
+# Comments go before the qualifier check, so `double kX = f(); // const`
+# still counts as mutable.
+LINE_COMMENT = re.compile(r"//.*|/\*.*?\*/")
+CONST_QUALIFIER = re.compile(r"\b(?:const|constexpr)\b")
 TEST_DIRS = (ROOT / "libpelorus" / "test", ROOT / "ffmpeg-patches" / "test")
 
 
@@ -220,20 +224,31 @@ def step_real_tree(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
 
 def constant_name_findings(text: str, name: str) -> list[str]:
     """Lines declaring a non-const float or double with a constant-style name."""
-    return [
-        f"{name}:{n}: {line.strip()}"
-        for n, line in enumerate(text.splitlines(), 1)
-        if CONSTANT_NAME_DECL.search(line) and "const" not in line
-    ]
+    found = []
+    for n, line in enumerate(text.splitlines(), 1):
+        code = LINE_COMMENT.sub(" ", line)
+        decl = CONSTANT_NAME_DECL.search(code)
+        if decl and not CONST_QUALIFIER.search(code[: decl.end()]):
+            found.append(f"{name}:{n}: {line.strip()}")
+    return found
 
 
 def step_constant_names(_semgrep_bin: str, _tmp: pathlib.Path) -> str | None:
     """(d) The planted computed k-name is refused; the real test trees have none."""
     planted = (
-        "double kScale = computed();\nfloat GAIN;\nstatic const double kOk = 1.0;\n"
+        "double kScale = computed();\n"
+        "float GAIN;\n"
+        "double kNoted = computed(); // const\n"
+        "float LIMIT; /* const */\n"
+        "static const double kOk = 1.0;\n"
+        "double const kEast = 1.0;\n"
+        "double kTail = 1.0; const int n = 2;\n"
+        "/* const */ double kLead = computed();\n"
     )
-    if len(constant_name_findings(planted, "planted.c")) != 2:
-        return "step (d): planted non-const constant-style names not both refused"
+    got = constant_name_findings(planted, "planted.c")
+    want = [f"planted.c:{n}:" for n in (1, 2, 3, 4, 7, 8)]
+    if [g.split(" ", 1)[0] for g in got] != want:
+        return f"step (d): constant-style name findings {got}, want lines 1-4, 7 and 8"
     found = []
     for test_dir in TEST_DIRS:
         for path in sorted(test_dir.rglob("*")):
