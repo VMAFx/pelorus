@@ -595,14 +595,15 @@ controls below, and no workflow implements them; they are declared only
 
 | Declared by | Control | Current state |
 | --- | --- | --- |
-| `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, stale-review dismissal, review-thread resolution, nine required checks | Committed in `.github/rulesets/main.json`, not applied yet; live `master` protection requires linear history and four checks, no signatures. Approving reviews: zero under `review_mode: single_maintainer` ([Branch ruleset](#branch-ruleset)) |
-| `native-gpu-systems` | `semgrep`, `cppcheck`, `clippy` | Not run; Pelorus has no Rust for `clippy` |
+| `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, stale-review dismissal, review-thread resolution, 14 required checks | Committed in `.github/rulesets/main.json`, not applied yet; live `master` protection requires linear history and four checks, no signatures. Approving reviews: zero under `review_mode: single_maintainer` ([Branch ruleset](#branch-ruleset)) |
+| `native-gpu-systems` | `semgrep`, `cppcheck`, `clippy` | `semgrep` runs in CI (`semgrep` job) and via the fast suite (`scripts/test-semgrep-float-identity.py`, ADR-0239); `cppcheck` not run; Pelorus has no Rust for `clippy` |
 | `security:high` | `gitleaks`, `trivy` | Not run; `.gitleaks.toml` only configures a manual `gitleaks` run |
 | `api:public-contract` | `buf`, `spectral`, OpenAPI drift, `Migration:` footer check | Not run; Pelorus has no protobuf or OpenAPI surface. The append-only C ABI is guarded by the interop conformance fixture and review |
 | `docs:seo-portal` | Schema.org JSON-LD, sitemap, `robots.txt`, Core Web Vitals | Not applicable; Pelorus builds no documentation site. The facet's locked Markdown and figure gate does run |
 | `native-gpu-systems` | No per-frame dynamic allocation | HISS-03, by C review only |
 
-The declared linters that do run are `clang-tidy` (the `core` job and
+The declared linters that do run are `semgrep` (the `semgrep` CI job and
+`semgrep-float-identity` test, ADR-0239), `clang-tidy` (the `core` job and
 `make verify-native`, over the units in `.config/clang-tidy/lane-files.txt`)
 and `markdownlint` (the documentation gate). HISS-04
 complexity is split the same way. For C the audit ratchets only the 60-line
@@ -741,7 +742,7 @@ engine renders for `master` and `lts-*`. `.standards.yaml` declares
 | Rule | Value |
 | --- | --- |
 | Pull request | 0 approving reviews, no code-owner review, stale reviews dismissed, review threads resolved |
-| Required status checks (strict) | the five `ci.yml` jobs, `Documentation Governance`, `REUSE lint`, `Standards & Invariant Verification Gate` |
+| Required status checks (strict) | the eight `ci.yml` jobs (the `semgrep` job included), the three `CodeQL` legs, `Documentation Governance`, `REUSE lint`, `Standards & Invariant Verification Gate` |
 | History | signed commits, linear history, no force push, no deletion |
 | Bypass | repository admin role, pull requests only |
 

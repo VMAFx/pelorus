@@ -1,0 +1,1 @@
+- Adopt VMAFx float-identity Semgrep rule (`.semgrep.yml`), fast-suite planted-defect test (`scripts/test-semgrep-float-identity.py`), and CI job refusing direct `==` and `!=` comparisons on computed floats in test suites ([ADR-0239](docs/adr/0239-semgrep-float-identity-rule.md)).

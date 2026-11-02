@@ -580,3 +580,11 @@ test('dehalo-line-art',
      args: [meson.project_source_root() / 'scripts' / 'test-dehalo-line-art.py'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+
+# ADR-0239: planted-defect recall for the float-identity Semgrep rule.
+# Refuses == and != between computed floating-point values in test code.
+test('semgrep-float-identity',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-semgrep-float-identity.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')

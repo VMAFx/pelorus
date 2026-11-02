@@ -643,3 +643,29 @@ jobs:
           cache: false
       - name: Validate workflow syntax
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+  semgrep:
+    name: semgrep (test float identity · planted defect test)
+    runs-on: ubuntu-26.04
+    container:
+      image: mirror.gcr.io/semgrep/semgrep:1.182.1@sha256:451b3d875c00dac7ed5db5293e584a07de11449a409c10b3c2d2652f429630b6
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Load build configuration
+        run: |
+          while IFS= read -r entry; do
+            case "$entry" in
+              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
+                printf '%s\n' "$entry" >> "$GITHUB_ENV"
+                ;;
+            esac
+          done < build-config.env
+      - name: Scan test code for direct float identity comparisons
+        run: semgrep scan --config .semgrep.yml --error --metrics=off --disable-version-check
+      - name: Verify planted-defect test passes
+        run: python3 -I scripts/test-semgrep-float-identity.py
