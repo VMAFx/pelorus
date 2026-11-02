@@ -367,6 +367,13 @@ keeps it ([ADR-0188](../adr/0188-named-test-skips.md)).
 `make test` and in every CI fast-suite run. A new skip, or a changed skip message,
 fails until the list names it.
 
+A `# nosemgrep` or `# nosec` marker in tracked Python must sit on the start line
+of the statement or expression it answers and name its rules plus a reason:
+`# nosemgrep: <full rule id>[, <id>] - <reason>` and `# nosec <Bxxx> - <reason>`
+([ADR-0241](../adr/0241-suppression-marker-binding.md)). The fast-suite test
+`suppression-markers` runs `scripts/check-suppression-markers.py --self-test`,
+which refuses a misplaced, bare or reasonless marker and then scans the tree.
+
 No branch or tag may hold a credential (HISS-12,
 [ADR-0190](../adr/0190-gitleaks-every-ref.md)). The CI `docs` job installs the
 gitleaks release pinned by version and sha256 in `scripts/check-gitleaks.sh`,

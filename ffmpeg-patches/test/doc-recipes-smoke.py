@@ -76,7 +76,7 @@ def run_ffmpeg(argv, timeout_s, env=None, merge_stderr=True):
     if not Path(argv[0]).is_file():
         raise FileNotFoundError(f"ffmpeg binary not found: {argv[0]}")
     try:
-        proc = subprocess.run(  # nosec B603 - argv[0] is a checked file; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        proc = subprocess.run(  # nosec B603 - argv[0] is a checked file; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - list argv from the tracked docs, no shell, explicit deadline
             argv,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - argv is a recipe from the tracked docs, split without a shell; argv[0] is the operator's FFMPEG_BIN
             check=False,
             env=env,
