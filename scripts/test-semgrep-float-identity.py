@@ -133,6 +133,11 @@ def run_semgrep(
     expected_rc: int,
     env_dir: pathlib.Path,
 ) -> dict:
+    """Scan target_dir with one rule file; return the parsed JSON report.
+
+    Semgrep's settings live under env_dir so no user configuration leaks in,
+    and an exit code other than expected_rc raises.
+    """
     env = dict(os.environ)
     env["XDG_CONFIG_HOME"] = str(env_dir)
     env["SEMGREP_SETTINGS_FILE"] = str(env_dir / "semgrep-settings.yaml")
@@ -331,6 +336,7 @@ def resolve_semgrep() -> str | None:
 
 
 def main() -> int:
+    """Run steps (a) to (d); exit 77 (skip) when semgrep is not installed."""
     semgrep_bin = resolve_semgrep()
     if not semgrep_bin:
         print("SKIP: semgrep not found")
