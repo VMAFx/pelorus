@@ -168,6 +168,7 @@ def decode_other(data: bytes) -> str:
 def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str]:
     """Check one tracked file; Markdown and non-regular files are not read.
 
+    Non-Python files are scanned under both raw UTF-8 and detected UTF-16.
     Unreadable files are findings.
     """
     name = path.relative_to(root).as_posix()
@@ -187,10 +188,19 @@ def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str
     # Marker words are ASCII; surrogateescape keeps every other byte, so a
     # file that is not UTF-8 is still scanned instead of skipped.
     try:
-        text = decode_other(path.read_bytes())
+        raw = path.read_bytes()
     except OSError as exc:
         return [f"{name}: not readable: {exc}"]
-    return other_findings(name, text)
+    utf8_text = raw.decode("utf-8", "surrogateescape")
+    findings = other_findings(name, utf8_text)
+    decoded = decode_other(raw)
+    if decoded != utf8_text:
+        seen = set(findings)
+        for item in other_findings(name, decoded):
+            if item not in seen:
+                seen.add(item)
+                findings.append(item)
+    return findings
 
 
 def other_findings(name: str, text: str) -> list[str]:
@@ -259,6 +269,11 @@ def utf16_self_test(root: Path, local_ids: frozenset[str]) -> list[str]:
             "ps_odd.ps1",
             "utf-16 file, odd length",
             "x  # nosemgrep: python.lang.a.b - why\n".encode("utf-16") + b"\x00",
+        ),
+        (
+            "mixed.sh",
+            "utf-16-looking file with an ASCII marker",
+            b"A\x00" * 64 + b"  # nosemgrep: a.b.c - why\n",
         ),
     )
     for name, label, payload in plants:
