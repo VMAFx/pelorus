@@ -19,19 +19,20 @@ Static checking and self-test:
   doc-recipes-smoke.py --self-test
 """
 
-import contextlib
 import importlib
 import os
 import re
 import shlex
-import subprocess
+import subprocess  # nosec B404 - fixed ffmpeg argv, no shell, explicit deadline
 import sys
 import tempfile
 from pathlib import Path
+from typing import NamedTuple
 
 # Reuse check-doc-recipes parsing helpers (HISS-19)
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 _cdr = importlib.import_module("check-doc-recipes")
 
 split_blocks = _cdr.split_blocks
@@ -57,8 +58,16 @@ def ffmpeg_argv(ffmpeg_bin):
     return [str(ffmpeg_bin)]
 
 
+class RunResult(NamedTuple):
+    """Exit code and output of one ffmpeg run."""
+
+    returncode: int
+    stdout: str
+    stderr: str
+
+
 def run_ffmpeg(argv, timeout_s, env=None, merge_stderr=True):
-    """Run one ffmpeg command without a shell. Return a CompletedProcess.
+    """Run one ffmpeg command without a shell. Return a RunResult.
 
     argv[0] must name an existing file. A run past timeout_s returns exit code
     124 with the deadline in its output, so every caller treats it as a failure.
@@ -66,7 +75,7 @@ def run_ffmpeg(argv, timeout_s, env=None, merge_stderr=True):
     if not Path(argv[0]).is_file():
         raise FileNotFoundError(f"ffmpeg binary not found: {argv[0]}")
     try:
-        return subprocess.run(
+        proc = subprocess.run(  # nosec B603 - argv[0] is a checked file; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
             argv,
             check=False,
             env=env,
@@ -77,252 +86,15 @@ def run_ffmpeg(argv, timeout_s, env=None, merge_stderr=True):
         )
     except subprocess.TimeoutExpired:
         msg = f"timed out after {timeout_s} s"
-        return subprocess.CompletedProcess(argv, 124, msg, "" if merge_stderr else msg)
+        return RunResult(124, msg, "" if merge_stderr else msg)
+    return RunResult(proc.returncode, proc.stdout, proc.stderr or "")
 
 
-DOC_PATH = REPO_ROOT / "docs" / "usage" / "ffmpeg.md"
-
-MARKER_RE = re.compile(r"<!--\s*recipe-run:\s*([^\s>]+)(?:\s+(.*?))?\s*-->")
-
-SPEC = {
-    "nvenc-nvdec-derived": {
-        "section": "nvenc-nvdec--vulkan-filters--nvenc",
-        "device_class": "cuda",
-        "input_kind": "8bit",
-        "filters_default": "pelorus_deband_vulkan",
-        "expected_encoder": "hevc_nvenc",
-        "needles": [
-            "pixfmt:cuda",
-            "Transferred CUDA image to Vulkan!",
-            "Transferred Vulkan image to CUDA!",
-            "Using input frames context (format cuda) with hevc_nvenc encoder",
-        ],
-        "variants": None,
-    },
-    "nvenc-swdec-separate": {
-        "section": "nvenc-nvdec--vulkan-filters--nvenc",
-        "device_class": "cuda",
-        "input_kind": "8bit",
-        "filters_default": "pelorus_deband_vulkan",
-        "expected_encoder": "hevc_nvenc",
-        "needles": [
-            "Using input frames context (format cuda) with hevc_nvenc encoder",
-        ],
-        "variants": None,
-    },
-    "nvenc-swdec-p010": {
-        "section": "nvenc-nvdec--vulkan-filters--nvenc",
-        "device_class": "cuda",
-        "input_kind": "10bit",
-        "filters_default": "pelorus_deband_vulkan",
-        "expected_encoder": "hevc_nvenc",
-        "needles": [
-            "Using input frames context (format cuda) with hevc_nvenc encoder",
-        ],
-        "variants": None,
-    },
-    "vulkan-hevc": {
-        "section": "full-zero-copy-vulkan-decode--filters--vulkan-hw-encode",
-        "device_class": "vulkan-hevc-encode",
-        "input_kind": "8bit",
-        "filters_default": "pelorus_deband_vulkan=range=15:thry=0.012",
-        "expected_encoder": "hevc_vulkan",
-        "needles": [
-            "Using input frames context (format vulkan) with hevc_vulkan encoder",
-        ],
-        "variants": None,
-    },
-    "vaapi-h264": {
-        "section": "zero-copy-into-vaapi-and-qsv-encoders-linux",
-        "device_class": "vaapi",
-        "input_kind": "8bit",
-        "filters_default": "pelorus_deband_vulkan=tiling=drm",
-        "expected_encoder": "h264_vaapi",
-        "needles": [
-            "tiling=drm",
-            "Using input frames context (format vaapi) with h264_vaapi encoder",
-        ],
-        "variants": [
-            {
-                "name": "intel",
-                "driver": "iHD",
-                "vendor": "0x8086",
-                "node_env": "INTEL_RENDER_NODE",
-            },
-            {
-                "name": "amd",
-                "driver": "radeonsi",
-                "vendor": "0x1002",
-                "node_env": "AMD_RENDER_NODE",
-            },
-        ],
-    },
-    "qsv-hevc": {
-        "section": "zero-copy-into-vaapi-and-qsv-encoders-linux",
-        "device_class": "qsv",
-        "input_kind": "8bit",
-        "filters_default": "pelorus_deband_vulkan=tiling=drm",
-        "expected_encoder": "hevc_qsv",
-        "needles": [
-            "tiling=drm",
-            "Using input frames context (format qsv) with hevc_qsv encoder",
-        ],
-        "variants": [
-            {
-                "name": "intel",
-                "driver": "iHD",
-                "vendor": "0x8086",
-                "node_env": "INTEL_RENDER_NODE",
-            },
-        ],
-    },
-}
-
-
-def heading_to_anchor(title):
-    title = title.replace("`", "")
-    title = "".join(c for c in title if c.isascii())
-    cleaned = "".join(
-        c if (c.isalnum() or c in (" ", "-", "_")) else "" for c in title.lower()
-    )
-    return cleaned.replace(" ", "-")
-
-
-def extract_boundary_anchors(text):
-    """Return anchor set linked by the Section column in the zero-copy boundary table."""
-    anchors = set()
-    in_table = False
-    for line in text.splitlines():
-        if "| Encoder |" in line:
-            in_table = True
-            continue
-        if in_table:
-            if not line.strip().startswith("|"):
-                break
-            m = re.search(r"\[.*?\]\(#([^)]+)\)", line)
-            if m:
-                anchors.add(m.group(1))
-    return anchors
-
-
-def collect_marked_recipes(text):
-    """Return dict of {recipe_id: (marker_line_no, fence_line_no, command_str, nos)}."""
-    lines = text.splitlines()
-    recipes = {}
-    for idx, line in enumerate(lines):
-        m = MARKER_RE.match(line.strip())
-        if not m:
-            continue
-        raw_id = m.group(1)
-        if raw_id.startswith("none:") or raw_id == "none":
-            continue
-        # Find next non-blank line
-        k = idx + 1
-        while k < len(lines) and not lines[k].strip():
-            k += 1
-        if k >= len(lines) or not lines[k].startswith("```"):
-            continue
-        end = k + 1
-        while end < len(lines) and not lines[end].startswith("```"):
-            end += 1
-        _comments, commands = parse_block(lines, k + 1, end)
-        if commands:
-            _first_no, cmd, nos = commands[0]
-            # keep the first: check_doc refuses a duplicate id
-            recipes.setdefault(raw_id, (idx + 1, k + 1, cmd, nos))
-    return recipes
-
-
-def _fence_end(lines, start):
-    """Index of the closing fence line for a fence opened before `start`."""
-    end = start
-    while end < len(lines) and not lines[end].startswith("```"):
-        end += 1
-    return end
-
-
-def _marker_findings(path, lines, i, marker_id, seen_markers, anchor=None):
-    """Findings for one recipe-run marker at line index i under section anchor."""
-    findings = []
-    k = i + 1
-    while k < len(lines) and not lines[k].strip():
-        k += 1
-    if k >= len(lines) or not lines[k].startswith("```"):
-        findings.append(
-            (path, i + 1, "recipe-run marker is not followed by a code fence")
-        )
-    elif not parse_block(lines, k + 1, _fence_end(lines, k + 1))[1]:
-        findings.append(
-            (path, i + 1, "recipe-run marker fence contains no ffmpeg command")
-        )
-    if marker_id != "none" and not marker_id.startswith("none:"):
-        if marker_id in seen_markers:
-            findings.append((path, i + 1, f"duplicate recipe-run id '{marker_id}'"))
-        if marker_id in SPEC:
-            seen_markers.add(marker_id)
-            if anchor != SPEC[marker_id]["section"]:
-                msg = (
-                    f"recipe-run id '{marker_id}' sits in section '{anchor}', "
-                    f"its boundary-table section is '{SPEC[marker_id]['section']}'"
-                )
-                findings.append((path, i + 1, msg))
-        else:
-            findings.append((path, i + 1, f"unknown recipe-run id '{marker_id}'"))
-    return findings
-
-
-def _unmarked_fence_finding(path, lines, fence_start, anchor):
-    """Finding when an ffmpeg fence in a boundary section lacks a marker, else None."""
-    if not parse_block(lines, fence_start + 1, _fence_end(lines, fence_start + 1))[1]:
-        return None
-    prev = fence_start - 1
-    while prev >= 0 and not lines[prev].strip():
-        prev -= 1
-    if prev >= 0 and MARKER_RE.match(lines[prev].strip()):
-        return None
-    msg = f"ffmpeg fence in boundary section '{anchor}' has no preceding recipe-run marker"
-    return (path, fence_start + 1, msg)
-
-
-def check_doc(path, text):
-    """Static gate for docs/usage/ffmpeg.md: exit 0 clean, 1 findings."""
-    lines = text.splitlines()
-    findings = []
-    boundary_anchors = extract_boundary_anchors(text)
-    cur_anchor = None
-    in_fence = False
-    seen_markers = set()
-    for i, line in enumerate(lines):
-        if line.startswith("## ") and not in_fence:
-            cur_anchor = heading_to_anchor(line[3:].strip())
-            continue
-        m = MARKER_RE.match(line.strip())
-        if m:
-            findings += _marker_findings(
-                path, lines, i, m.group(1), seen_markers, cur_anchor
-            )
-        # Track fence state so a closing fence is never read as an opening one
-        opening = False
-        if line.startswith("```"):
-            in_fence = not in_fence
-            opening = in_fence
-        if opening and cur_anchor in boundary_anchors:
-            finding = _unmarked_fence_finding(path, lines, i, cur_anchor)
-            if finding:
-                findings.append(finding)
-    for spec_id in sorted(SPEC):
-        if SPEC[spec_id]["section"] not in boundary_anchors:
-            msg = f"SPEC id '{spec_id}' section is not linked by the boundary table"
-            findings.append((path, 1, msg))
-        if spec_id not in seen_markers:
-            findings.append((path, 1, f"SPEC id '{spec_id}' has no marker in doc"))
-    for p, line_no, msg in findings:
-        print(f"{p}:{line_no}: [check-doc] {msg}")
-    if findings:
-        print(f"doc-recipes-smoke --check-doc: {len(findings)} finding(s)")
-        return 1
-    print("doc-recipes-smoke --check-doc: ok")
-    return 0
+_doc = importlib.import_module("doc-recipes-doc")
+DOC_PATH = _doc.DOC_PATH
+SPEC = _doc.SPEC
+check_doc = _doc.check_doc
+collect_marked_recipes = _doc.collect_marked_recipes
 
 
 def prepare_argv_and_env(
@@ -735,157 +507,14 @@ def _run_smoke_in(ffmpeg_bin, tmp_dir, marked, selected_ids, output_root):
     return 0
 
 
-# --- Self-test ---------------------------------------------------------------
-
-STUB_FFMPEG = Path(__file__).resolve().with_name("doc-recipes-stub-ffmpeg.py")
-
-
-def _quiet(fn, *args, **kwargs):
-    """Call fn with stdout discarded; return its result."""
-    with (
-        open(os.devnull, "w", encoding="utf-8") as devnull,
-        contextlib.redirect_stdout(devnull),
-    ):
-        return fn(*args, **kwargs)
-
-
-def _quiet_deadline(fn, *args, **kwargs):
-    """_quiet with a 3 s recipe deadline, so the hang plant ends fast."""
-    global RUN_TIMEOUT_S
-    saved, RUN_TIMEOUT_S = RUN_TIMEOUT_S, 3
-    try:
-        return _quiet(fn, *args, **kwargs)
-    finally:
-        RUN_TIMEOUT_S = saved
-
-
-def _self_test_doc(clean_doc):
-    """Doc plants for --check-doc. Return the failure count."""
-    failures = 0
-    print("--- self-test: clean doc check ---")
-    if check_doc(str(DOC_PATH), clean_doc) != 0:
-        print("self-test FAIL: clean doc failed check-doc")
-        failures += 1
-    print("--- self-test: doc plants ---")
-    derived = "<!-- recipe-run: nvenc-nvdec-derived -->"
-    vulkan = "<!-- recipe-run: vulkan-hevc -->"
-    fence = "```sh\nffmpeg -i input.mkv out.mkv\n```\n"
-    plants_doc = [
-        ("fence without marker", clean_doc.replace(derived + "\n\n", "")),
-        ("marker without fence", clean_doc + f"\n{derived}\n\nNo fence here.\n"),
-        (
-            "id without SPEC",
-            clean_doc.replace(derived, "<!-- recipe-run: unknown-recipe -->"),
-        ),
-        (
-            "duplicate id",
-            clean_doc.replace(derived, f"{derived}\n\n{fence}\n{derived}", 1),
-        ),
-        (
-            "id outside its section",
-            clean_doc.replace(vulkan + "\n\n", "<!-- recipe-run: none: moved -->\n\n")
-            + f"\n## Notes on Vulkan\n\n{vulkan}\n\n{fence}",
-        ),
-        (
-            "SPEC without marker",
-            clean_doc.replace(
-                "<!-- recipe-run: vulkan-hevc -->\n\n",
-                "<!-- recipe-run: none: skip -->\n\n",
-            ),
-        ),
-    ]
-    for name, ptext in plants_doc:
-        rc = _quiet(check_doc, "test.md", ptext)
-        if rc != 1:
-            print(
-                f"self-test FAIL: doc plant '{name}' was not refused by check-doc (rc {rc}, want 1)"
-            )
-            failures += 1
-        else:
-            print(f"self-test: doc plant '{name}' correctly refused (rc {rc})")
-    return failures
-
-
-def _self_test_exec():
-    """Execution plants through a stub ffmpeg. Return the failure count."""
-    failures = 0
-    print("--- self-test: execution plants ---")
-    with tempfile.TemporaryDirectory(prefix="pelorus-stub-bin.") as stub_dir:
-        stub_path = STUB_FFMPEG
-        exec_plants = [
-            ("rc!=0", "rc"),
-            ("hwdownload in log", "hwdownload"),
-            ("auto scale", "autoscale"),
-            ("auto scale without formats", "autoscale_unparsed"),
-            ("second auto scale without formats", "autoscale_mixed"),
-            ("hung recipe run", "hang"),
-            ("missing needle", "missing_needle"),
-            ("119 frames", "119frames"),
-        ]
-        for name, plant_env in exec_plants:
-            os.environ["STUB_PLANT"] = plant_env
-            out = Path(stub_dir) / f"out-{plant_env}"
-            rc = _quiet_deadline(
-                run_smoke,
-                stub_path,
-                output_root=out,
-                recipes_filter="nvenc-nvdec-derived",
-            )
-            # a refusal is rc 1; a 77 means every variant skipped and the
-            # plant never reached the check it targets
-            if rc != 1:
-                print(
-                    f"self-test FAIL: execution plant '{name}' was not refused (rc {rc}, want 1)"
-                )
-                failures += 1
-            else:
-                print(
-                    f"self-test: execution plant '{name}' correctly refused (rc {rc})"
-                )
-        print("--- self-test: 8-bit recipe without a 10-bit clip ---")
-        os.environ["STUB_PLANT"] = "no10bit"
-        rc = _quiet(
-            run_smoke,
-            stub_path,
-            output_root=Path(stub_dir) / "out-no10bit",
-            recipes_filter="nvenc-nvdec-derived",
-        )
-        if rc != 0:
-            print(
-                f"self-test FAIL: 8-bit recipe did not run without a 10-bit clip (rc {rc})"
-            )
-            failures += 1
-        else:
-            print("self-test: 8-bit recipe ran without a 10-bit clip")
-        print("--- self-test: clean stub run ---")
-        os.environ["STUB_PLANT"] = "clean"
-        rc = _quiet(run_smoke, stub_path, output_root=Path(stub_dir) / "out-clean")
-        if rc != 0:
-            print(f"self-test FAIL: clean stub run failed with rc {rc}")
-            failures += 1
-        else:
-            print("self-test: clean stub run passed")
-    return failures
-
-
-def self_test():
-    """Plant every defect class and require each refused; the clean cases must pass."""
-    failures = _self_test_doc(DOC_PATH.read_text(encoding="utf-8"))
-    failures += _self_test_exec()
-    if failures:
-        print(f"doc-recipes-smoke self-test: {failures} failure(s)")
-        return 1
-    print("doc-recipes-smoke self-test: ok")
-    return 0
-
-
 def main(argv):
     args = list(argv)
     if "--check-doc" in args:
         text = DOC_PATH.read_text(encoding="utf-8")
         return check_doc(str(DOC_PATH), text)
     if "--self-test" in args:
-        return self_test()
+        selftest = importlib.import_module("doc-recipes-self-test")
+        return selftest.self_test(sys.modules[__name__])
 
     ffmpeg_bin = os.environ.get("FFMPEG_BIN")
     if not ffmpeg_bin:
