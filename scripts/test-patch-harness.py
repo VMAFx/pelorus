@@ -48,6 +48,7 @@ def _is_pid_gone(pid: int) -> bool:
             if parts and parts[0] == "Z":
                 return True
         except OSError:
+            # /proc entry vanished or inaccessible: fall through to os.kill(pid, 0) probe.
             pass
     try:
         os.kill(pid, 0)
@@ -136,6 +137,7 @@ def test_stalled_compiler_child() -> bool:
                 try:
                     os.kill(grandchild_pid, signal.SIGKILL)
                 except (ProcessLookupError, PermissionError):
+                    # Grandchild process already terminated or inaccessible during cleanup.
                     pass
 
 

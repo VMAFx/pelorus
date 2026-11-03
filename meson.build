@@ -406,6 +406,21 @@ test('harness-test-timeouts-self-test',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# Every Python except clause with bare pass must carry an explanatory comment;
+# the self-test exercises bare passes, comments, and strings with hash symbols.
+test('python-empty-except',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-empty-except.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
+test('python-empty-except-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-empty-except.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 # Per-frame external-ME-hint setup of patch 0008 (BUG-031): a frame without
 # Pelorus motion data must still submit one zero-MV candidate per block, or the
 # NVENC session fails the whole encode.

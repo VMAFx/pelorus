@@ -179,12 +179,14 @@ def _run_with_deadline(
                     timeout=30,
                 )
             except (OSError, subprocess.TimeoutExpired):
+                # taskkill missing or hung: proc.kill() below still ends the driver.
                 pass
             proc.kill()
         elif proc.pid > 1:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except ProcessLookupError:
+                # Process group already terminated or reaped before SIGKILL.
                 pass
         try:
             proc.communicate(timeout=5)
@@ -196,6 +198,7 @@ def _run_with_deadline(
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
+                # Driver unresponsive to SIGKILL; abandon wait to report deadline timeout.
                 pass
         return None
 
