@@ -1,0 +1,1 @@
+- The `nvenc-me-hints` fast test (`scripts/test-nvenc-me-hints.py`) checks that patch 0008 sets the signed one-bit `lastofPart` and `lastOfMB` flags with -1 on both hint paths. A second build widens the two flags to two bits, where a stored 1 reads back as 1, so the old `= 1` assignment now fails under gcc too, not only under clang's bit-field warning (audit gap C11.1).

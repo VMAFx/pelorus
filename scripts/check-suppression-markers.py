@@ -342,6 +342,7 @@ def unreadable_self_test(root: Path, local_ids: frozenset[str]) -> list[str]:
             with locked.open("rb"):
                 pass
         except OSError:
+            # Mode-0 file is unreadable as expected; proceed to verify checker detection.
             pass
         else:
             # Windows keeps a mode-0 file readable, so there is no plant.

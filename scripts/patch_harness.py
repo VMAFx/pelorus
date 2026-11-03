@@ -13,12 +13,17 @@ import argparse
 import os
 import pathlib
 import re
-import subprocess
+import signal
+import subprocess  # nosec B404 - compiler and harness argv, no shell, explicit deadline
 import sys
 import tempfile
 from typing import Sequence
 
 DEFAULT_CFLAGS = ("-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function")
+# Deadlines for the harness compiler and the harness binary (HISS-02). A
+# harness is a few hundred lines and runs in milliseconds; a stall is a failure.
+BUILD_TIMEOUT_S = 120.0
+RUN_TIMEOUT_S = 30.0
 
 
 # C failure counter + expect() every harness MAIN starts with.
@@ -144,33 +149,92 @@ def make_parser(
     return parser
 
 
+def _run_with_deadline(
+    argv: Sequence[str],
+    timeout: float,
+) -> subprocess.CompletedProcess[str] | None:
+    """Run argv with tree kill on deadline (HISS-02, HISS-08)."""
+    kwargs: dict[str, object] = (
+        {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)}
+        if os.name == "nt"
+        else {"start_new_session": True}
+    )
+    proc = subprocess.Popen(  # nosec B603 - configured compiler or harness binary; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - configured compiler or harness binary, list argv, no shell, timeout
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        **kwargs,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - result record only, executes nothing
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            try:
+                subprocess.run(  # nosec B603, B607 - taskkill process tree on deadline; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - taskkill process tree on deadline, list argv, no shell, timeout
+                    ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    check=False,
+                    timeout=30,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                # taskkill missing or hung: proc.kill() below still ends the driver.
+                pass
+            proc.kill()
+        elif proc.pid > 1:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                # Process group already terminated or reaped before SIGKILL.
+                pass
+        try:
+            proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            if proc.stdout is not None:
+                proc.stdout.close()
+            if proc.stderr is not None:
+                proc.stderr.close()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                # Driver unresponsive to SIGKILL; abandon wait to report deadline timeout.
+                pass
+        return None
+
+
 def build_and_run(
     source: str,
     cc: Sequence[str],
     prefix: str = "pelorus-harness-",
     cflags: Sequence[str] = (),
     libs: Sequence[str] = (),
+    build_timeout: float = BUILD_TIMEOUT_S,
+    run_timeout: float = RUN_TIMEOUT_S,
 ) -> tuple[int, str]:
     """Build ``source`` strictly in a tempdir and run it.
 
-    Returns (status, output): 0 = ran and exited 0, 1 = ran and failed,
-    2 = did not compile. ``libs`` follow the source file so the linker
-    resolves them under --as-needed.
+    Returns (status, output): 0 = ran and exited 0, 1 = ran and failed or
+    passed ``run_timeout``, 2 = did not compile or passed ``build_timeout``.
+    ``libs`` follow the source file so the linker resolves them under
+    --as-needed.
     """
     with tempfile.TemporaryDirectory(prefix=prefix) as tmp:
         tmp_path = pathlib.Path(tmp)
         c_file = tmp_path / "harness.c"
         exe = tmp_path / ("harness.exe" if os.name == "nt" else "harness")
         c_file.write_text(source, encoding="utf-8")
-        build = subprocess.run(
+        build = _run_with_deadline(
             [*cc, *DEFAULT_CFLAGS, *cflags, str(c_file), "-o", str(exe), *libs],
-            capture_output=True,
-            text=True,
-            check=False,
+            build_timeout,
         )
+        if build is None:
+            return 2, f"harness build exceeded {build_timeout:g} s\n"
         if build.returncode != 0:
             return 2, "harness failed to compile:\n" + build.stdout + build.stderr
-        run = subprocess.run([str(exe)], capture_output=True, text=True, check=False)
+        run = _run_with_deadline([str(exe)], run_timeout)
+        if run is None:
+            return 1, f"harness run exceeded {run_timeout:g} s\n"
         return (0 if run.returncode == 0 else 1), run.stdout + run.stderr
 
 
@@ -179,9 +243,10 @@ def compile_and_run(
     cc: Sequence[str],
     prefix: str = "pelorus-harness-",
     libs: Sequence[str] = (),
+    cflags: Sequence[str] = (),
 ) -> int:
     """build_and_run plus reporting; returns the script exit code (0 or 1)."""
-    status, output = build_and_run(source, cc, prefix, libs=libs)
+    status, output = build_and_run(source, cc, prefix, cflags=cflags, libs=libs)
     if status == 2:
         print("ERROR: " + output, file=sys.stderr)
         return 1
