@@ -13,6 +13,7 @@ import argparse
 import os
 import pathlib
 import re
+import signal
 import subprocess  # nosec B404 - compiler and harness argv, no shell, explicit deadline
 import sys
 import tempfile
@@ -148,6 +149,54 @@ def make_parser(
     return parser
 
 
+def _run_with_deadline(
+    argv: Sequence[str],
+    timeout: float,
+) -> subprocess.CompletedProcess[str] | None:
+    """Run argv with tree kill on deadline (HISS-02, HISS-08)."""
+    kwargs: dict[str, object] = (
+        {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)}
+        if os.name == "nt"
+        else {"start_new_session": True}
+    )
+    proc = subprocess.Popen(  # nosec B603 - configured compiler or harness binary; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - configured compiler or harness binary, list argv, no shell, timeout
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        **kwargs,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            subprocess.run(  # nosec B603, B607 - taskkill process tree on deadline; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - taskkill process tree on deadline, list argv, no shell, timeout
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                capture_output=True,
+                check=False,
+                timeout=30,
+            )
+            proc.kill()
+        elif proc.pid > 1:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        try:
+            proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            if proc.stdout is not None:
+                proc.stdout.close()
+            if proc.stderr is not None:
+                proc.stderr.close()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+        return None
+
+
 def build_and_run(
     source: str,
     cc: Sequence[str],
@@ -169,27 +218,16 @@ def build_and_run(
         c_file = tmp_path / "harness.c"
         exe = tmp_path / ("harness.exe" if os.name == "nt" else "harness")
         c_file.write_text(source, encoding="utf-8")
-        try:
-            build = subprocess.run(  # nosec B603 - configured compiler with fixed flags and temp paths; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - configured compiler with fixed flags and temp paths, list argv, no shell, timeout
-                [*cc, *DEFAULT_CFLAGS, *cflags, str(c_file), "-o", str(exe), *libs],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=build_timeout,
-            )
-        except subprocess.TimeoutExpired:
+        build = _run_with_deadline(
+            [*cc, *DEFAULT_CFLAGS, *cflags, str(c_file), "-o", str(exe), *libs],
+            build_timeout,
+        )
+        if build is None:
             return 2, f"harness build exceeded {build_timeout:g} s\n"
         if build.returncode != 0:
             return 2, "harness failed to compile:\n" + build.stdout + build.stderr
-        try:
-            run = subprocess.run(  # nosec B603 - harness exe path built in own TemporaryDirectory; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - harness exe path built in own TemporaryDirectory, list argv, no shell, timeout
-                [str(exe)],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=run_timeout,
-            )
-        except subprocess.TimeoutExpired:
+        run = _run_with_deadline([str(exe)], run_timeout)
+        if run is None:
             return 1, f"harness run exceeded {run_timeout:g} s\n"
         return (0 if run.returncode == 0 else 1), run.stdout + run.stderr
 
