@@ -2592,6 +2592,31 @@ def sei_fit_planted_rules(meson_text: str) -> list[str]:
     return re.findall(r"['\"]([A-Za-z0-9_-]+)['\"]", match.group(1))
 
 
+def check_test_skips_requires(executed: str) -> list[set[str]]:
+    """Extract --require values per check-test-skips.py invocation in executed commands."""
+    invocations: list[set[str]] = []
+    for line in executed.splitlines():
+        if "check-test-skips.py" not in line:
+            continue
+        try:
+            tokens = shlex.split(line, comments=True)
+        except ValueError:
+            continue
+        requires: set[str] = set()
+        i = 0
+        while i < len(tokens):
+            token = tokens[i]
+            if token == "--require":
+                if i + 1 < len(tokens):
+                    requires.add(tokens[i + 1])
+                    i += 1
+            elif token.startswith("--require="):
+                requires.add(token[len("--require=") :])
+            i += 1
+        invocations.append(requires)
+    return invocations
+
+
 def validate_ci_check_test_skips(
     relative: str, jobs: dict[str, str], meson_text: str | None = None
 ) -> list[str]:
@@ -2609,12 +2634,21 @@ def validate_ci_check_test_skips(
     errors: list[str] = []
     for name, block in jobs.items():
         executed = job_executed_run_commands(block)
-        if "check-test-skips.py" not in executed or "--require pelorus:sei-fit" not in executed:
+        invocations = check_test_skips_requires(executed)
+        relevant = [
+            inv
+            for inv in invocations
+            if any(v.startswith("pelorus:sei-fit") for v in inv)
+        ]
+        if not relevant:
             continue
-        for rule in rules:
-            token = f"--require pelorus:sei-fit-planted-{rule}"
-            if token not in executed:
-                errors.append(f"{relative}: job {name} is missing {token}")
+        for inv in relevant:
+            for rule in rules:
+                expected = f"pelorus:sei-fit-planted-{rule}"
+                if expected not in inv:
+                    errors.append(
+                        f"{relative}: job {name} is missing --require {expected}"
+                    )
     return errors
 
 
@@ -5057,6 +5091,7 @@ def _ci_toolchain_cases(source: str) -> dict[str, tuple[str, str]]:
 
 def sei_fit_planted_rule_regression(source: str, relative: str) -> list[str]:
     """Prove a new rule in meson.build without a ci.yml require is refused."""
+    failures: list[str] = []
     meson, meson_errors = read_tracked_text(ROOT / "meson.build")
     if meson_errors:
         return meson_errors
@@ -5071,8 +5106,64 @@ def sei_fit_planted_rule_regression(source: str, relative: str) -> list[str]:
     errors = validate_workflow_text(relative, source, meson_text=mutated_meson)
     expected = "pelorus:sei-fit-planted-extra_check_rule"
     if not any(expected in error for error in errors):
-        return ["workflow regression: new meson rule without ci require was accepted"]
-    return []
+        failures.append(
+            "workflow regression: new meson rule without ci require was accepted"
+        )
+    return failures + sei_fit_require_form_regression(source, relative)
+
+
+def sei_fit_require_form_regression(source: str, relative: str) -> list[str]:
+    """Prove a prefix or a separate-command require is refused and `--require=` accepted."""
+    failures: list[str] = []
+    expected_wrap = (
+        f"{relative}: job core is missing --require pelorus:sei-fit-planted-wrap"
+    )
+
+    mutated_wrapper = source.replace(
+        "--require pelorus:sei-fit-planted-wrap",
+        "--require pelorus:sei-fit-planted-wrapper",
+        1,
+    )
+    if mutated_wrapper == source:
+        failures.append("workflow regression: wrapper mutation changed nothing")
+    elif not any(
+        expected_wrap in error
+        for error in validate_workflow_text(relative, mutated_wrapper)
+    ):
+        failures.append("workflow regression: prefix wrapper require was accepted")
+
+    mutated_echo = source.replace(
+        " --require pelorus:sei-fit-planted-wrap",
+        "",
+        1,
+    ).replace(
+        "build/meson-logs/testlog.json",
+        "build/meson-logs/testlog.json\n          echo --require pelorus:sei-fit-planted-wrap",
+        1,
+    )
+    if mutated_echo == source:
+        failures.append("workflow regression: echo mutation changed nothing")
+    elif not any(
+        expected_wrap in error
+        for error in validate_workflow_text(relative, mutated_echo)
+    ):
+        failures.append(
+            "workflow regression: echo require in separate command was accepted"
+        )
+
+    mutated_equals = source.replace(
+        "--require pelorus:sei-fit-planted-wrap",
+        "--require=pelorus:sei-fit-planted-wrap",
+        1,
+    )
+    if mutated_equals == source:
+        failures.append("workflow regression: equals mutation changed nothing")
+    else:
+        equals_errors = validate_workflow_text(relative, mutated_equals)
+        if any(expected_wrap in error for error in equals_errors):
+            failures.append("workflow regression: --require= form was rejected")
+
+    return failures
 
 
 def workflow_validator_regressions() -> list[str]:
