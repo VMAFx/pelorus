@@ -85,18 +85,21 @@ WINDOWS_COMMANDS = (
     "meson test -C build --suite=fast --print-errorlogs",
     "meson test -C build path-utf8 --verbose",
 )
-WINDOWS_MSVC_TOKENS = (
+WINDOWS_MSVC_BLOCK_TOKENS = (
     "include:\n          - cc: cl\n          - cc: clang-cl\n",
     "CC: ${{ matrix.cc }}",
+    "ImageOS",
+    "ImageVersion",
+)
+WINDOWS_MSVC_COMMANDS = (
     "python -m pip install --require-hashes -r .config/msvc-ci/requirements.txt",
     "meson setup --vsenv --werror build",
     'grep -E "^C compiler for the host machine: ${CC} \\\\(" build/meson-logs/meson-log.txt',
     "meson compile -C build",
     "meson test -C build --suite=fast --print-errorlogs",
     "--require pelorus:path-utf8",
-    "ImageOS",
-    "ImageVersion",
 )
+WINDOWS_MSVC_TOKENS = WINDOWS_MSVC_BLOCK_TOKENS + WINDOWS_MSVC_COMMANDS
 PIN_PROJECTIONS = (
     ROOT / "README.md",
     ROOT / "AGENTS.md",
@@ -2529,6 +2532,92 @@ def validate_windows_job(relative: str, block: str | None) -> list[str]:
     return errors
 
 
+def _join_command_continuations(raw_lines: list[str]) -> list[str]:
+    """Join shell backslash continuations after dropping comment lines."""
+    result: list[str] = []
+    current: list[str] = []
+    for line in (line.strip() for line in raw_lines if not line.lstrip().startswith("#")):
+        if not line:
+            continue
+        if line.endswith("\\"):
+            current.append(line[:-1].rstrip())
+        else:
+            current.append(line)
+            result.append(" ".join(current))
+            current = []
+    if current:
+        result.append(" ".join(current))
+    return result
+
+
+def job_executed_run_commands(block: str) -> str:
+    """Extract executed run commands from steps; comments dropped, continuations joined."""
+    lines = block.splitlines()
+    try:
+        start = next(i + 1 for i, line in enumerate(lines) if line.strip() == "steps:")
+    except StopIteration:
+        return ""
+    commands: list[str] = []
+    i = start
+    while i < len(lines):
+        match = re.match(r"^([ ]+)(?:-\s+)?run:\s*(.*)$", lines[i])
+        if not match:
+            i += 1
+            continue
+        indent, first = len(match.group(1)), match.group(2).strip()
+        body: list[str] = []
+        i += 1
+        if first and not first.startswith(("|", ">")):
+            body.append(first)
+        else:
+            while i < len(lines):
+                sub = lines[i]
+                if sub.strip() and len(sub) - len(sub.lstrip(" ")) <= indent:
+                    break
+                if sub.strip():
+                    body.append(sub.strip())
+                i += 1
+        commands.extend(_join_command_continuations(body))
+    return "\n".join(commands)
+
+
+def sei_fit_planted_rules(meson_text: str) -> list[str]:
+    """Extract planted rules from meson.build foreach rule : [...] after test('sei-fit')."""
+    pos = meson_text.find("test('sei-fit'")
+    if pos < 0:
+        return []
+    match = re.search(r"foreach\s+rule\s*:\s*\[([^\]]+)\]", meson_text[pos:])
+    if not match:
+        return []
+    return re.findall(r"['\"]([A-Za-z0-9_-]+)['\"]", match.group(1))
+
+
+def validate_ci_check_test_skips(
+    relative: str, jobs: dict[str, str], meson_text: str | None = None
+) -> list[str]:
+    """Require every planted rule from meson.build in check-test-skips invocations."""
+    if Path(relative).name != "ci.yml":
+        return []
+    if meson_text is None:
+        meson, meson_errors = read_tracked_text(ROOT / "meson.build")
+        if meson_errors:
+            return meson_errors
+        meson_text = meson
+    rules = sei_fit_planted_rules(meson_text)
+    if not rules:
+        return [f"{relative}: no sei-fit planted rules found in meson.build"]
+    errors: list[str] = []
+    for name, block in jobs.items():
+        executed = job_executed_run_commands(block)
+        if "check-test-skips.py" not in executed or "--require pelorus:sei-fit" not in executed:
+            continue
+        for rule in rules:
+            token = f"--require pelorus:sei-fit-planted-{rule}"
+            if token not in executed:
+                errors.append(f"{relative}: job {name} is missing {token}")
+    return errors
+
+
 def validate_windows_msvc_job(relative: str, block: str | None) -> list[str]:
     """ADR-0242: cl.exe and clang-cl build libpelorus under --werror and run the suite."""
     if block is None:
@@ -2542,9 +2631,13 @@ def validate_windows_msvc_job(relative: str, block: str | None) -> list[str]:
     for action in USES_LINE.findall(block):
         if not re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", action):
             errors.append(f"{prefix} must pin {action} by full commit digest")
-    for token in WINDOWS_MSVC_TOKENS:
+    for token in WINDOWS_MSVC_BLOCK_TOKENS:
         if token not in block:
             errors.append(f"{prefix} is missing {token}")
+    executed = job_executed_run_commands(block)
+    for command in WINDOWS_MSVC_COMMANDS:
+        if command not in executed:
+            errors.append(f"{prefix} is missing {command}")
     return errors
 
 
@@ -2989,57 +3082,73 @@ def _validate_workflow_native_packages(
     return errors
 
 
+def _validate_ci_ffmpeg_job(relative: str, ffmpeg: str) -> list[str]:
+    """Validate tokens required in the ffmpeg-stack workflow job."""
+    errors: list[str] = []
+    for token in (
+        "libvulkan-dev",
+        "libvpl-dev",
+        "libaom-dev",
+        "libsvtav1enc-dev",
+        "libffmpeg-nvenc-dev",
+        "refs/tags/${FFMPEG_TAG}^{commit}",
+        '"$FFMPEG_COMMIT"',
+        "ffmpeg-patches/generate.sh",
+        "ffmpeg-patches/test/build-and-run.sh",
+        *SERIES_WORKFLOW_TOKENS,
+        "scripts/fetch-ffmpeg-series.sh --self-test",
+    ):
+        if token not in ffmpeg:
+            errors.append(f"{relative}: FFmpeg job is missing {token}")
+    return errors
+
+
+def _validate_ci_docs_job(relative: str, docs: str) -> list[str]:
+    """Validate actionlint and go toolchain pins in the docs workflow job."""
+    errors: list[str] = []
+    for token in (
+        ACTIONLINT_GO_STEP,
+        f"go-version: '{ACTIONLINT_GO_VERSION}'",
+    ):
+        if token not in docs:
+            errors.append(f"{relative}: docs job is missing {token}")
+    if docs.count("actions/setup-go@") != 1 or SETUP_GO_PIN.search(docs) is None:
+        errors.append(
+            f"{relative}: docs job must pin actions/setup-go once by full commit "
+            "digest with its `# vX.Y.Z` release comment"
+        )
+    if docs.count("actionlint/cmd/actionlint@") != 1 or ACTIONLINT_RUN.search(docs) is None:
+        errors.append(
+            f"{relative}: docs job must run actionlint once as "
+            "`go run github.com/rhysd/actionlint/cmd/actionlint@vX.Y.Z` "
+            "(exact release tag)"
+        )
+    go_versions = re.findall(r"go-version:\s*(\S+)", docs)
+    if go_versions != [f"'{ACTIONLINT_GO_VERSION}'"]:
+        errors.append(
+            f"{relative}: docs job must set exactly one go-version, "
+            f"'{ACTIONLINT_GO_VERSION}' (found {go_versions})"
+        )
+    return errors
+
+
 def _validate_workflow_specialized_jobs(
-    relative: str, text: str, jobs: dict[str, str]
+    relative: str, text: str, jobs: dict[str, str], meson_text: str | None = None
 ) -> list[str]:
+    """Validate specialized workflow jobs in ci.yml and release workflows; returns errors."""
     errors: list[str] = []
     rel_name = Path(relative).name
     if rel_name == "ci.yml":
         if not re.search(r"^  workflow_call:", text, re.MULTILINE):
             errors.append(f"{relative}: ci.yml must declare workflow_call for release")
-        ffmpeg = jobs.get("ffmpeg-stack", "")
-        for token in (
-            "libvulkan-dev",
-            "libvpl-dev",
-            "libaom-dev",
-            "libsvtav1enc-dev",
-            "libffmpeg-nvenc-dev",
-            "refs/tags/${FFMPEG_TAG}^{commit}",
-            '"$FFMPEG_COMMIT"',
-            "ffmpeg-patches/generate.sh",
-            "ffmpeg-patches/test/build-and-run.sh",
-            *SERIES_WORKFLOW_TOKENS,
-            "scripts/fetch-ffmpeg-series.sh --self-test",
-        ):
-            if token not in ffmpeg:
-                errors.append(f"{relative}: FFmpeg job is missing {token}")
-        docs = jobs.get("docs", "")
-        for token in (
-            ACTIONLINT_GO_STEP,
-            f"go-version: '{ACTIONLINT_GO_VERSION}'",
-        ):
-            if token not in docs:
-                errors.append(f"{relative}: docs job is missing {token}")
-        if docs.count("actions/setup-go@") != 1 or SETUP_GO_PIN.search(docs) is None:
-            errors.append(
-                f"{relative}: docs job must pin actions/setup-go once by full commit "
-                "digest with its `# vX.Y.Z` release comment"
-            )
-        if docs.count("actionlint/cmd/actionlint@") != 1 or ACTIONLINT_RUN.search(docs) is None:
-            errors.append(
-                f"{relative}: docs job must run actionlint once as "
-                "`go run github.com/rhysd/actionlint/cmd/actionlint@vX.Y.Z` "
-                "(exact release tag)"
-            )
-        go_versions = re.findall(r"go-version:\s*(\S+)", docs)
-        if go_versions != [f"'{ACTIONLINT_GO_VERSION}'"]:
-            errors.append(
-                f"{relative}: docs job must set exactly one go-version, "
-                f"'{ACTIONLINT_GO_VERSION}' (found {go_versions})"
-            )
+        errors.extend(_validate_ci_ffmpeg_job(relative, jobs.get("ffmpeg-stack", "")))
+        errors.extend(_validate_ci_docs_job(relative, jobs.get("docs", "")))
         errors.extend(validate_windows_job(relative, jobs.get(WINDOWS_JOB)))
         errors.extend(validate_windows_msvc_job(relative, jobs.get(WINDOWS_MSVC_JOB)))
         errors.extend(validate_lavapipe_job(relative, jobs.get(LAVAPIPE_JOB)))
+        errors.extend(
+            validate_ci_check_test_skips(relative, jobs, meson_text=meson_text)
+        )
     elif rel_name == "release.yml":
         if "workflow_dispatch:" not in text:
             errors.append(f"{relative}: release gate needs workflow_dispatch")
@@ -3049,7 +3158,9 @@ def _validate_workflow_specialized_jobs(
     return errors
 
 
-def validate_workflow_text(relative: str, text: str) -> list[str]:
+def validate_workflow_text(
+    relative: str, text: str, meson_text: str | None = None
+) -> list[str]:
     """Validate the pinned runner, toolchain, and shared FFmpeg workflow contract."""
     jobs = workflow_job_blocks(text)
     if not jobs:
@@ -3057,7 +3168,7 @@ def validate_workflow_text(relative: str, text: str) -> list[str]:
     return (
         _validate_workflow_structure_and_jobs(relative, text, jobs)
         + _validate_workflow_native_packages(relative, jobs)
-        + _validate_workflow_specialized_jobs(relative, text, jobs)
+        + _validate_workflow_specialized_jobs(relative, text, jobs, meson_text=meson_text)
     )
 
 
@@ -3182,6 +3293,14 @@ def windows_msvc_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
         "MSVC setup-python by tag": (
             source.replace(msvc, unpinned, 1) if msvc else source,
             "must pin actions/setup-python@v7 by full commit digest",
+        ),
+        "MSVC command present only in comment": (
+            mutate("meson compile -C build", "# meson compile -C build"),
+            "is missing meson compile -C build",
+        ),
+        "MSVC planted-wrap require dropped": (
+            mutate("--require pelorus:sei-fit-planted-wrap", ""),
+            "is missing --require pelorus:sei-fit-planted-wrap",
         ),
     }
 
@@ -4936,6 +5055,26 @@ def _ci_toolchain_cases(source: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def sei_fit_planted_rule_regression(source: str, relative: str) -> list[str]:
+    """Prove a new rule in meson.build without a ci.yml require is refused."""
+    meson, meson_errors = read_tracked_text(ROOT / "meson.build")
+    if meson_errors:
+        return meson_errors
+    mutated_meson = re.sub(
+        r"(foreach\s+rule\s*:\s*\[[^\]]+)\]",
+        r"\1, 'extra_check_rule']",
+        meson,
+        count=1,
+    )
+    if mutated_meson == meson:
+        return ["workflow regression: new meson rule mutation changed nothing"]
+    errors = validate_workflow_text(relative, source, meson_text=mutated_meson)
+    expected = "pelorus:sei-fit-planted-extra_check_rule"
+    if not any(expected in error for error in errors):
+        return ["workflow regression: new meson rule without ci require was accepted"]
+    return []
+
+
 def workflow_validator_regressions() -> list[str]:
     """Prove runner and native-toolchain regressions are rejected."""
     failures: list[str] = []
@@ -4945,6 +5084,7 @@ def workflow_validator_regressions() -> list[str]:
     cases |= _docs_pin_shape_cases(source) | _load_step_cases(source)
     relative = ci_path.relative_to(ROOT).as_posix()
     failures.extend(windows_pin_bump_regression(source, relative))
+    failures.extend(sei_fit_planted_rule_regression(source, relative))
     for name, (mutated, expected) in cases.items():
         if mutated == source:
             failures.append(f"workflow regression: {name} mutation changed nothing")

@@ -193,6 +193,7 @@ def test_driver_argv() -> bool:
 
 
 def main() -> int:
+    """Run patch harness tests across compiler cases; returns 0 on success, 1 on failure."""
     parser = harness.make_parser(DESCRIPTION)
     args = parser.parse_args()
     cases = (

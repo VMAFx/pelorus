@@ -429,6 +429,7 @@ static pel_result x265_record(TlmSpan line, const X265Cols *cols, uint8_t depth,
     return rc == PEL_OK ? pel_enc_telemetry_validate(out) : rc;
 }
 
+/* Walk x265 telemetry lines; returns PEL_OK on success, error code on parse failure. */
 static pel_result x265_walk(const char *text, size_t len, uint8_t depth, TlmLocale locale,
                             PelorusEncTelemetryInput *out, size_t *out_count)
 {
@@ -512,6 +513,7 @@ static pel_result cursor_number(TlmCursor *c, TlmSpan *out)
     return out->len == 0u ? PEL_ERR_TRUNCATED : PEL_OK;
 }
 
+/* Parse unsigned 32-bit integer token; returns PEL_OK on success, error on failure. */
 static pel_result cursor_u32(TlmCursor *c, uint32_t *out)
 {
     TlmSpan token = {NULL, 0};
@@ -520,6 +522,7 @@ static pel_result cursor_u32(TlmCursor *c, uint32_t *out)
     return rc == PEL_OK ? span_u32(token, out) : rc;
 }
 
+/* Parse floating-point token; returns PEL_OK on success, error on failure. */
 static pel_result cursor_float(TlmCursor *c, float *out)
 {
     TlmSpan token = {NULL, 0};
@@ -704,6 +707,7 @@ static pel_result svt_record(TlmSpan line, uint8_t depth, TlmLocale locale,
     return rc == PEL_OK ? pel_enc_telemetry_validate(out) : rc;
 }
 
+/* Walk SVT-AV1 telemetry lines; returns PEL_OK on success, error code on parse failure. */
 static pel_result svt_walk(const char *text, size_t len, uint8_t depth, TlmLocale locale,
                            PelorusEncTelemetryInput *out, size_t *out_count)
 {
@@ -863,6 +867,7 @@ static pel_result vvenc_slice_type(TlmCursor *c, uint8_t *picture_type)
     return PEL_OK;
 }
 
+/* Parse vvenc slice information; returns PEL_OK on success, error on parse failure. */
 static pel_result vvenc_slice_info(TlmCursor *c, VvencValues *v)
 {
     size_t start;
@@ -909,6 +914,7 @@ static pel_result vvenc_slice_info(TlmCursor *c, VvencValues *v)
     return rc;
 }
 
+/* Parse named vvenc PSNR metric; returns PEL_OK on success, error on parse failure. */
 static pel_result vvenc_psnr_metric(TlmCursor *c, const char *name, const char *unit, float *out)
 {
     pel_result rc = cursor_expect(c, name);
@@ -1002,6 +1008,7 @@ static pel_result vvenc_record(TlmSpan line, uint8_t depth, size_t decode_order,
     return rc == PEL_OK ? pel_enc_telemetry_validate(out) : rc;
 }
 
+/* Walk vvenc telemetry lines; returns PEL_OK on success, error code on parse failure. */
 static pel_result vvenc_walk(const char *text, size_t len, uint8_t depth, TlmLocale locale,
                              PelorusEncTelemetryInput *out, size_t *out_count)
 {
@@ -1213,6 +1220,7 @@ static pel_result x264_finish(TlmCursor *c)
     return rc == PEL_OK && c->pos != c->line.len ? PEL_ERR_INVALID : rc;
 }
 
+/* Parse x264 weight number; returns PEL_OK on success, error on parse failure. */
 static pel_result x264_weight_number(TlmCursor *c)
 {
     const size_t start = c->pos;
@@ -1268,6 +1276,7 @@ static pel_result x264_weights(TlmCursor *c)
     return rc == PEL_OK ? PEL_ERR_INVALID : rc;
 }
 
+/* Parse x264 reference frame list; returns PEL_OK on success, error on parse failure. */
 static pel_result x264_refs(TlmCursor *c)
 {
     pel_result rc = cursor_expect(c, "ref:");
@@ -1374,6 +1383,7 @@ static pel_result x264_record(TlmSpan line, uint8_t depth, TlmLocale locale,
     return rc == PEL_OK ? pel_enc_telemetry_validate(out) : rc;
 }
 
+/* Walk x264 telemetry lines; returns PEL_OK on success, error code on parse failure. */
 static pel_result x264_walk(const char *text, size_t len, uint8_t depth, TlmLocale locale,
                             PelorusEncTelemetryInput *out, size_t *out_count)
 {

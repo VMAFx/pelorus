@@ -990,6 +990,7 @@ static void test_size_wrap(TestCtx *t)
 #endif
 }
 
+/* Run SEI fit tests; returns EXIT_SUCCESS on pass, EXIT_FAILURE on failure. */
 int main(void)
 {
     TestCtx ctx = {0};

@@ -587,6 +587,7 @@ static void test_257_known_params(void)
     free(opts);
 }
 
+/* Test x265 and x264 boolean parsing case-sensitivity and ASCII folding boundaries. */
 static void test_x265_case_sensitive_bool(void)
 {
     PelorusEncodeOptions *opts = alloc_opts();

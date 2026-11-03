@@ -115,6 +115,7 @@ static pel_result get_token(const char *text, size_t len, size_t *pos, char term
     return PEL_OK;
 }
 
+/* Parse boolean value for dialect; returns 1 on match and sets *out_bool, 0 otherwise. */
 static int parse_bool_val(const PelOptDialect *dl, const char *val, int *out_bool)
 {
     if (dl->bool_nocase) {
