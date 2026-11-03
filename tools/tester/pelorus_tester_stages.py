@@ -2028,12 +2028,23 @@ NO_AV1_LOG = ("[av1_nvenc @ 0x1] Codec not supported\n"
               "[vost#0:0/av1_nvenc @ 0x2] Error while opening encoder\nConversion failed!\n")
 
 
+def standin_output(argv, size):
+    """Write `size` bytes to the output path a stand-in FFmpeg was given (argv[-1]).
+
+    Refuses a relative path: a stand-in that answers a non-encode call (dpkg-query, a probe)
+    would otherwise create a file named after its last argument in the working directory."""
+    out = Path(argv[-1])
+    if not out.is_absolute():
+        raise ValueError("stand-in output path is not absolute: %r" % argv[-1])
+    out.write_bytes(b"\x00" * size)
+
+
 def fake_encode_ctx(disabled, work):
     """FFmpeg stand-in: av1_nvenc fails as on a GPU without AV1 NVENC; the rest encode."""
     def run(argv, timeout_s, env=None):
         if "av1_nvenc" in argv:
             return 1, NO_AV1_LOG, ""
-        Path(argv[-1]).write_bytes(b"\x00" * 64)
+        standin_output(argv, 64)
         return 0, "", ""
     ctx = stage_ctx({"PELORUS_VALIDATE": "0"}, run)
     ctx.update(disabled=disabled, work=str(work))
@@ -2049,7 +2060,7 @@ def fake_qsv_ctx(work, dpkg_text):
             return 1, dpkg_text, ""
         if "hevc_qsv" in argv:
             return 183, "[hevc_qsv @ 0x1] Invalid FrameType:0.\n", ""
-        Path(argv[-1]).write_bytes(b"\x00" * 64)
+        standin_output(argv, 64)
         return 0, "", ""
     ctx = stage_ctx({"PELORUS_VALIDATE": "0"}, run)
     ctx.update(work=str(work))
@@ -2265,7 +2276,7 @@ def self_test_reference(expect, disabled):
             if "-f" in argv and argv[-2:] == ["null", "-"] and "-vf" in argv:
                 runs.append(1)
                 return 0, logs[min(len(runs), len(logs)) - 1], ""
-            Path(argv[-1]).write_bytes(b"\x00" * 64)
+            standin_output(argv, 64)
             return 0, "", ""
         return run, runs
 
@@ -2292,7 +2303,7 @@ def self_test_carrier(expect, disabled):
         def run(argv, timeout_s, env=None):
             if fail_when(argv):
                 return 1, enomem, ""
-            Path(argv[-1]).write_bytes(b"\x00" * 64)
+            standin_output(argv, 64)
             return 0, "", ""
         return run
 
@@ -2377,7 +2388,7 @@ def fake_brc_ctx(work, disabled, extbrc_rate, extbrc_state="ON"):
         if "-b:v" in argv and "-extbrc" not in argv:
             return 183, "[hevc_qsv @ 0x1] ExtBRC: OFF\n[hevc_qsv @ 0x1] Invalid FrameType:0.\n", ""
         size = int(extbrc_rate * 0.64 / 8) if "-extbrc" in argv else 64
-        Path(argv[-1]).write_bytes(b"\x00" * size)
+        standin_output(argv, size)
         return 0, "[hevc_qsv @ 0x1] BitrateLimit: unknown; MBBRC: OFF; ExtBRC: %s\n" % extbrc_state, ""
     ctx = stage_ctx({"PELORUS_VALIDATE": "0"}, run)
     ctx.update(disabled=disabled, work=str(work), intel_host="xe-dg2")
@@ -2452,11 +2463,11 @@ def brc_stage_run(recorded):
         if "framecrc" in argv:
             return 0, "".join("0, %d, %d, 1, 384, 0x0\n" % (i, i) for i in range(frames)), ""
         if "-b:v" in argv:
-            Path(argv[-1]).write_bytes(b"\x00" * int(1000000 * 0.64 / 8))
+            standin_output(argv, int(1000000 * 0.64 / 8))
             ext = "ON" if "-extbrc" in argv else "OFF"
             return 0, "[hevc_qsv @ 0x1] BitrateLimit: unknown; MBBRC: OFF; ExtBRC: %s\n" % ext, ""
         if "-c:v" in argv:
-            Path(argv[-1]).write_bytes(b"\x00" * 64)
+            standin_output(argv, 64)
         return 0, "", ""
     return run
 
@@ -2555,6 +2566,20 @@ def self_test_brc_stage(expect, disabled):
         self_test_brc_stage_argv(expect, disabled, tmp)
         self_test_brc_stage_fixture(expect, disabled, tmp)
         self_test_brc_stage_wired(expect, disabled, tmp)
+        self_test_standin_output(expect, tmp)
+
+
+def self_test_standin_output(expect, tmp):
+    """standin_output writes an absolute output path and refuses a dpkg-query package name."""
+    standin_output(["ffmpeg", str(Path(tmp) / "out.bin")], 4)
+    try:
+        standin_output(["dpkg-query", "-W", MEDIA_DRIVER_NONFREE], 4)
+        refused = False
+    except ValueError:
+        refused = True
+    expect("standin_refuses_relative_output",
+           refused and (Path(tmp) / "out.bin").stat().st_size == 4
+           and not Path(MEDIA_DRIVER_NONFREE).exists())
 
 
 def subproc_run(argv, timeout_s, env=None):
