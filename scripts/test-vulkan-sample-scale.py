@@ -3,13 +3,18 @@
 
 from __future__ import annotations
 
-import os
+import importlib.util
 import pathlib
-import shutil
-import subprocess
 import sys
 import tempfile
 import textwrap
+
+# python3 -I drops the script directory from sys.path: load the sibling by path.
+_SPEC = importlib.util.spec_from_file_location("patch_harness", pathlib.Path(__file__).with_name("patch_harness.py"))
+if _SPEC is None or _SPEC.loader is None:
+    raise ImportError("scripts/patch_harness.py not found next to this test")
+harness = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(harness)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 HEADER_DIR = ROOT / "ffmpeg-patches" / "files"
@@ -138,11 +143,7 @@ int main(void)
 
 
 def main() -> int:
-    compiler = shutil.which(os.environ.get("CC", "cc"))
-    if compiler is None:
-        print("C compiler not found", file=sys.stderr)
-        return 1
-
+    args = harness.make_parser(__doc__.splitlines()[0]).parse_args()
     if not (HEADER_DIR / "pelorus_vulkan_sample.h").is_file():
         print("pelorus_vulkan_sample.h is missing", file=sys.stderr)
         return 1
@@ -152,28 +153,13 @@ def main() -> int:
         stub_dir = tmp / "libavutil"
         stub_dir.mkdir()
         (stub_dir / "pixdesc.h").write_text(textwrap.dedent(PIXDESC_STUB))
-        source = tmp / "test.c"
-        binary = tmp / "test-vulkan-sample-scale"
-        source.write_text(textwrap.dedent(TEST_SOURCE))
-        compile_result = subprocess.run(
-            [
-                compiler,
-                "-std=c11",
-                "-Wall",
-                "-Wextra",
-                "-Werror",
-                f"-I{tmp}",
-                f"-I{HEADER_DIR}",
-                str(source),
-                "-lm",
-                "-o",
-                str(binary),
-            ],
-            check=False,
+        return harness.compile_and_run(
+            textwrap.dedent(TEST_SOURCE),
+            args.cc,
+            prefix="pelorus-sample-scale-",
+            cflags=(f"-I{tmp}", f"-I{HEADER_DIR}"),
+            libs=("-lm",),
         )
-        if compile_result.returncode != 0:
-            return compile_result.returncode
-        return subprocess.run([str(binary)], check=False).returncode
 
 
 if __name__ == "__main__":

@@ -25,6 +25,23 @@ DEFAULT_CFLAGS = ("-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-functi
 BUILD_TIMEOUT_S = 120.0
 RUN_TIMEOUT_S = 30.0
 
+# cl.exe-style drivers take MSVC options. The GNU warning set maps the way
+# FFmpeg's configure maps it (msvc_flags: -Wall, -Wextra, -Werror), and the
+# CRT defines are the ones its msvcrt branch adds, so a harness of FFmpeg code
+# sees the warnings an FFmpeg build under that driver would see.
+MSVC_DRIVERS = frozenset({"cl", "clang-cl", "icx-cl"})
+MSVC_DEFINES = ("-D_USE_MATH_DEFINES", "-D_CRT_SECURE_NO_WARNINGS", "-D_CRT_NONSTDC_NO_WARNINGS")
+_MSVC_WARNINGS = {
+    "-Wall": ("-W3", "-wd4018", "-wd4146", "-wd4244", "-wd4305", "-wd4554", "-wd4267"),
+    "-Wextra": (
+        "-W4", "-wd4244", "-wd4127", "-wd4018", "-wd4389", "-wd4146", "-wd4057",
+        "-wd4204", "-wd4706", "-wd4305", "-wd4152", "-wd4324", "-we4013", "-wd4100",
+        "-wd4214", "-wd4307", "-wd4273", "-wd4554", "-wd4701", "-wd4703",
+    ),
+    "-Werror": ("-WX",),
+    "-Wno-unused-function": ("-wd4505",),
+}
+
 
 # C failure counter + expect() every harness MAIN starts with.
 EXPECT_C = r"""
@@ -203,6 +220,39 @@ def _run_with_deadline(
         return None
 
 
+def is_msvc_driver(cc: Sequence[str]) -> bool:
+    """True when the compiler command is a cl.exe-style driver."""
+    return bool(cc) and pathlib.PureWindowsPath(cc[0]).stem.lower() in MSVC_DRIVERS
+
+
+def msvc_flag(flag: str) -> tuple[str, ...]:
+    """Map one GNU-style harness flag to its MSVC form; refuse any other flag."""
+    if flag in _MSVC_WARNINGS:
+        return _MSVC_WARNINGS[flag]
+    if flag.startswith("-std=c"):
+        return ("/std:" + flag[len("-std="):],)
+    if flag.startswith(("-I", "-D")):
+        return (flag,)
+    if flag == "-lm":
+        return ()  # the UCRT holds the math library
+    raise ValueError(f"no MSVC form for harness flag {flag!r}")
+
+
+def driver_argv(
+    cc: Sequence[str],
+    flags: Sequence[str],
+    c_file: pathlib.Path,
+    exe: pathlib.Path,
+    libs: Sequence[str] = (),
+) -> list[str]:
+    """Compile-and-link argv for ``cc``, in GNU or MSVC driver syntax."""
+    if not is_msvc_driver(cc):
+        return [*cc, *flags, str(c_file), "-o", str(exe), *libs]
+    mapped = [out for flag in (*flags, *libs) for out in msvc_flag(flag)]
+    obj = exe.with_suffix(".obj")
+    return [*cc, "-nologo", *MSVC_DEFINES, *mapped, str(c_file), f"-Fo{obj}", f"-Fe{exe}"]
+
+
 def build_and_run(
     source: str,
     cc: Sequence[str],
@@ -224,10 +274,11 @@ def build_and_run(
         c_file = tmp_path / "harness.c"
         exe = tmp_path / ("harness.exe" if os.name == "nt" else "harness")
         c_file.write_text(source, encoding="utf-8")
-        build = _run_with_deadline(
-            [*cc, *DEFAULT_CFLAGS, *cflags, str(c_file), "-o", str(exe), *libs],
-            build_timeout,
-        )
+        try:
+            argv = driver_argv(cc, (*DEFAULT_CFLAGS, *cflags), c_file, exe, libs)
+        except ValueError as err:
+            return 2, f"harness failed to compile: {err}\n"
+        build = _run_with_deadline(argv, build_timeout)
         if build is None:
             return 2, f"harness build exceeded {build_timeout:g} s\n"
         if build.returncode != 0:
