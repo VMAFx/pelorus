@@ -159,6 +159,9 @@ def test_driver_argv() -> bool:
         ("clang-cl keeps -Wno-", "-Wno-unused-function" in clang_cl and "-wd4505" not in clang_cl),
         ("cl takes -wd4100", harness.msvc_flag("-Wno-unused-parameter") == ("-wd4100",)),
         ("clang is GNU", not harness.is_msvc_driver(("clang",))),
+        ("one msvc warning level", [f for f in msvc if f in ("-W3", "-W4")] == ["-W4"]),
+        ("--cc keeps option tokens",
+         harness.make_parser("t").parse_args(["--cc", "cc", "-pipe"]).cc == ["cc", "-pipe"]),
     )
     ok = True
     for name, passed in checks:
@@ -171,6 +174,20 @@ def test_driver_argv() -> bool:
         ok = False
     except ValueError:
         # Expected: a flag without an MSVC form is refused, never passed through.
+        pass
+    try:
+        harness.driver_argv((), flags, src, exe)
+        print("FAIL empty compiler command accepted")
+        ok = False
+    except ValueError:
+        # Expected: "--cc" with no tokens is refused before anything runs.
+        pass
+    try:
+        harness._MSVC_WARNINGS["-Wall"] = ()  # type: ignore[index]
+        print("FAIL warning map is mutable")
+        ok = False
+    except TypeError:
+        # Expected: the flag maps are read-only views.
         pass
     return ok
 

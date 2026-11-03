@@ -151,18 +151,32 @@ Windows-specific behavior of the suite:
 
 The `windows-msvc` job of `.github/workflows/ci.yml` builds libpelorus, the
 tools and the tests with cl.exe and with clang-cl under `--werror`, then runs
-the fast suite ([ADR-0242](../adr/0242-msvc-clang-cl-ci-leg.md)). From a Git Bash
-or PowerShell prompt on a machine with Visual Studio 2022 (C++ workload; the
-clang-cl leg also needs LLVM on `PATH`):
+the fast suite ([ADR-0242](../adr/0242-msvc-clang-cl-ci-leg.md)). You need
+Visual Studio 2022 with the C++ workload, LLVM on `PATH` for the clang-cl leg,
+and `bash` on `PATH`: `meson.build` requires it at setup (Git for Windows
+provides it). Give each compiler its own build directory, since Meson fixes the
+compiler of a directory at its first setup.
+
+From Git Bash:
 
 ```bash
 python -m pip install --require-hashes -r .config/msvc-ci/requirements.txt
-CC=cl meson setup --vsenv --werror build -Ddefault_library=static -Dshaders=false
-meson compile -C build
-meson test -C build --suite=fast --print-errorlogs
+CC=cl meson setup --vsenv --werror build-cl -Ddefault_library=static -Dshaders=false
+meson compile -C build-cl
+meson test -C build-cl --suite=fast --print-errorlogs
 ```
 
-Use `CC=clang-cl` for the other leg. The library is static here: libpelorus
+From PowerShell:
+
+```powershell
+python -m pip install --require-hashes -r .config/msvc-ci/requirements.txt
+$env:CC = 'cl'
+meson setup --vsenv --werror build-cl -Ddefault_library=static -Dshaders=false
+meson compile -C build-cl
+meson test -C build-cl --suite=fast --print-errorlogs
+```
+
+For the other leg, set the compiler to `clang-cl` and use `build-clang-cl`. The library is static here: libpelorus
 carries no `__declspec(dllexport)` annotations, and cl.exe and clang-cl export
 no symbol from a DLL without them. The reference shaders compile in the Linux
 and MSYS2 jobs. icx-cl is not in CI.

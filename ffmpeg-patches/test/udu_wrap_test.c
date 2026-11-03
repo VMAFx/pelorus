@@ -40,6 +40,7 @@ static int run_case(const char *name, int condition)
 
 #define VEC_MAX_LINES 256
 #define VEC_MAX_BYTES 128
+#define VEC_LINE_CAP 512 /* fgets buffer: bounds every scan of one line */
 #define VEC_MIN_COUNT 17 /* vectors in fixtures/udu-wrap-vectors.txt today */
 
 /* Value of one hex digit, or -1. */
@@ -92,21 +93,31 @@ static int expected_class(const char *word)
 static int next_field(const char **cursor, char *dst, size_t cap)
 {
     const char *p = *cursor;
+    size_t skip = 0;
     size_t n = 0;
 
-    while (*p == ' ' || *p == '\t') {
-        p++;
+    /* Both scans stay inside one fgets line: VEC_LINE_CAP bounds the skip and
+     * cap bounds the copy (HISS-02). */
+    while (skip < VEC_LINE_CAP && (p[skip] == ' ' || p[skip] == '\t')) {
+        skip++;
     }
-    while (p[n] != '\0' && p[n] != ' ' && p[n] != '\t' && p[n] != '\n' && p[n] != '\r') {
+    p += skip;
+    for (; n < cap; n++) {
+        char c = p[n];
+        if (c == '\0' || c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            break;
+        }
         if (n + 1 >= cap) {
             return -1;
         }
-        dst[n] = p[n];
-        n++;
+        dst[n] = c;
+    }
+    if (n == 0 || n >= cap) {
+        return -1;
     }
     dst[n] = '\0';
     *cursor = p + n;
-    return n > 0 ? 0 : -1;
+    return 0;
 }
 
 static int replay_line(const char *line, int *seen)
@@ -151,7 +162,7 @@ static int replay_line(const char *line, int *seen)
  * class with no vector fails, so an emptied file cannot pass. */
 static int replay_vectors(const char *path)
 {
-    char line[512];
+    char line[VEC_LINE_CAP];
     int failures = 0;
     int count = 0;
     int seen[3] = {0, 0, 0};
