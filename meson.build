@@ -376,6 +376,16 @@ test('nvenc-pelorus-mapping',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# The shared C harness of the patch tests reports pass, fail and compile error
+# apart and ends a stalled compiler or harness at its deadline (HISS-02).
+test('patch-harness',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'test-patch-harness.py',
+            '--cc'] + meson.get_compiler('c').cmd_array(),
+     workdir: meson.project_source_root(),
+     timeout: 60,
+     suite: 'fast')
+
 # Per-frame external-ME-hint setup of patch 0008 (BUG-031): a frame without
 # Pelorus motion data must still submit one zero-MV candidate per block, or the
 # NVENC session fails the whole encode.

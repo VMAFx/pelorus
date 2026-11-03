@@ -19,6 +19,10 @@ import tempfile
 from typing import Sequence
 
 DEFAULT_CFLAGS = ("-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function")
+# Deadlines for the harness compiler and the harness binary (HISS-02). A
+# harness is a few hundred lines and runs in milliseconds; a stall is a failure.
+BUILD_TIMEOUT_S = 120.0
+RUN_TIMEOUT_S = 30.0
 
 
 # C failure counter + expect() every harness MAIN starts with.
@@ -150,27 +154,39 @@ def build_and_run(
     prefix: str = "pelorus-harness-",
     cflags: Sequence[str] = (),
     libs: Sequence[str] = (),
+    build_timeout: float = BUILD_TIMEOUT_S,
+    run_timeout: float = RUN_TIMEOUT_S,
 ) -> tuple[int, str]:
     """Build ``source`` strictly in a tempdir and run it.
 
-    Returns (status, output): 0 = ran and exited 0, 1 = ran and failed,
-    2 = did not compile. ``libs`` follow the source file so the linker
-    resolves them under --as-needed.
+    Returns (status, output): 0 = ran and exited 0, 1 = ran and failed or
+    passed ``run_timeout``, 2 = did not compile or passed ``build_timeout``.
+    ``libs`` follow the source file so the linker resolves them under
+    --as-needed.
     """
     with tempfile.TemporaryDirectory(prefix=prefix) as tmp:
         tmp_path = pathlib.Path(tmp)
         c_file = tmp_path / "harness.c"
         exe = tmp_path / ("harness.exe" if os.name == "nt" else "harness")
         c_file.write_text(source, encoding="utf-8")
-        build = subprocess.run(
-            [*cc, *DEFAULT_CFLAGS, *cflags, str(c_file), "-o", str(exe), *libs],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            build = subprocess.run(
+                [*cc, *DEFAULT_CFLAGS, *cflags, str(c_file), "-o", str(exe), *libs],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=build_timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return 2, f"harness build exceeded {build_timeout:g} s\n"
         if build.returncode != 0:
             return 2, "harness failed to compile:\n" + build.stdout + build.stderr
-        run = subprocess.run([str(exe)], capture_output=True, text=True, check=False)
+        try:
+            run = subprocess.run(
+                [str(exe)], capture_output=True, text=True, check=False, timeout=run_timeout
+            )
+        except subprocess.TimeoutExpired:
+            return 1, f"harness run exceeded {run_timeout:g} s\n"
         return (0 if run.returncode == 0 else 1), run.stdout + run.stderr
 
 
