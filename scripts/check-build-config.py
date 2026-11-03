@@ -2550,33 +2550,58 @@ def _join_command_continuations(raw_lines: list[str]) -> list[str]:
     return result
 
 
+def _extract_run_body(
+    lines: list[str], index: int, key_indent: int, first: str
+) -> tuple[list[str], int]:
+    """Read the scalar or block body of a step-level `run:` key starting at `index`."""
+    if first and not first.startswith(("|", ">")):
+        return [first], index
+    body: list[str] = []
+    while index < len(lines):
+        sub = lines[index]
+        if sub.strip() and len(sub) - len(sub.lstrip(" ")) <= key_indent:
+            break
+        if sub.strip():
+            body.append(sub.strip())
+        index += 1
+    return body, index
+
+
 def job_executed_run_commands(block: str) -> str:
     """Extract executed run commands from steps; comments dropped, continuations joined."""
     lines = block.splitlines()
     try:
-        start = next(i + 1 for i, line in enumerate(lines) if line.strip() == "steps:")
+        steps_idx = next(i for i, line in enumerate(lines) if line.strip() == "steps:")
     except StopIteration:
         return ""
+    steps_indent = len(lines[steps_idx]) - len(lines[steps_idx].lstrip(" "))
     commands: list[str] = []
-    i = start
+    step_indent: int | None = None
+    i = steps_idx + 1
     while i < len(lines):
-        match = re.match(r"^([ ]+)(?:-\s+)?run:\s*(.*)$", lines[i])
-        if not match:
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
             i += 1
             continue
-        indent, first = len(match.group(1)), match.group(2).strip()
-        body: list[str] = []
-        i += 1
-        if first and not first.startswith(("|", ">")):
-            body.append(first)
+        indent = len(line) - len(line.lstrip(" "))
+        if indent <= steps_indent and not stripped.startswith("-"):
+            break
+        item = re.match(r"^(\s*)-\s+(.*)$", line)
+        if item and (step_indent is None or len(item.group(1)) == step_indent):
+            step_indent = len(item.group(1))
+            run_match = re.match(r"^run:\s*(.*)$", item.group(2))
+            key_indent = step_indent + 2
+        elif step_indent is not None and indent == step_indent + 2:
+            run_match = re.match(r"^run:\s*(.*)$", stripped)
+            key_indent = indent
         else:
-            while i < len(lines):
-                sub = lines[i]
-                if sub.strip() and len(sub) - len(sub.lstrip(" ")) <= indent:
-                    break
-                if sub.strip():
-                    body.append(sub.strip())
-                i += 1
+            run_match = None
+            key_indent = 0
+        if not run_match:
+            i += 1
+            continue
+        body, i = _extract_run_body(lines, i + 1, key_indent, run_match.group(1).strip())
         commands.extend(_join_command_continuations(body))
     return "\n".join(commands)
 
@@ -3321,13 +3346,10 @@ def _windows_msvc_command_cases(
         return replace_in_job(source, WINDOWS_MSVC_JOB, old, new)
 
     compile_line = next(
-        (
-            line.strip()
-            for line in msvc.splitlines()
-            if "meson compile -C build" in line
-        ),
+        (line.strip() for line in msvc.splitlines() if "meson compile -C build" in line),
         "meson compile -C build",
     )
+    env_run = "echo done\n        env:\n          run: meson compile -C build"
     return {
         "MSVC build without warnings as errors": (
             mutate("meson setup --vsenv --werror build", "meson setup --vsenv build"),
@@ -3359,6 +3381,10 @@ def _windows_msvc_command_cases(
         ),
         "MSVC command prefix of longer command": (
             mutate(compile_line, "meson compile -C build2"),
+            "is missing meson compile -C build",
+        ),
+        "MSVC command nested under env": (
+            mutate(compile_line, env_run),
             "is missing meson compile -C build",
         ),
         "MSVC planted-wrap require dropped": (
@@ -5148,6 +5174,19 @@ def _ci_toolchain_cases(source: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def run_key_scope_regression() -> list[str]:
+    """Prove only step-level `run:` keys count: siblings after a block and nested keys do not."""
+    planted = (
+        "    steps:\n"
+        "      - run: |\n          make x\n        env:\n          K: v\n"
+        "      - name: nested\n        run: echo done\n        env:\n          run: make y\n"
+    )
+    got = job_executed_run_commands(planted)
+    if got != "make x\necho done":
+        return [f"workflow regression: run-key scope read {got!r}"]
+    return []
+
+
 def sei_fit_qualifying_jobs(source: str) -> list[str]:
     """Return CI job names whose check-test-skips invocation carries pelorus:sei-fit requires."""
     jobs = workflow_job_blocks(source)
@@ -5247,6 +5286,7 @@ def workflow_validator_regressions() -> list[str]:
         if not any(expected in error for error in errors):
             failures.append(f"workflow regression: {name} was accepted")
 
+    failures.extend(run_key_scope_regression())
     msvc_errors = [
         err
         for err in validate_workflow_text(relative, source)
