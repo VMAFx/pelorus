@@ -66,6 +66,7 @@ ARM64_JOB = "arm64"
 ARM64_RUNNER = "ubuntu-26.04-arm"
 # Issue #455, ADR-0242: the MSVC-ABI compiler leg (cl.exe and clang-cl).
 WINDOWS_MSVC_JOB = "windows-msvc"
+SEI_FIT_CI_JOBS = ("core", "sanitizers", WINDOWS_JOB, WINDOWS_MSVC_JOB)
 CI_JOB_RUNNERS = {
     WINDOWS_JOB: WINDOWS_RUNNER,
     WINDOWS_MSVC_JOB: WINDOWS_RUNNER,
@@ -2639,11 +2640,37 @@ def executed_command_tokens(executed: str) -> list[list[str]]:
     return commands
 
 
+PYTHON_INTERPRETER = re.compile(r"^(python(3(\.\d+)?)?|py)$")
+ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _is_check_test_skips_command(cmd: list[str]) -> bool:
+    """True when cmd invokes check-test-skips.py directly or under a Python interpreter."""
+    idx = 0
+    while idx < len(cmd) and ENV_ASSIGNMENT.match(cmd[idx]):
+        idx += 1
+    if idx >= len(cmd):
+        return False
+    first = Path(cmd[idx]).name
+    if PYTHON_INTERPRETER.match(first):
+        idx += 1
+        while idx < len(cmd) and cmd[idx].startswith("-"):
+            if cmd[idx] == "-m" or cmd[idx].startswith("-m"):
+                return False
+            idx += 1
+        if idx >= len(cmd):
+            return False
+        script = cmd[idx]
+    else:
+        script = cmd[idx]
+    return Path(script).name == "check-test-skips.py"
+
+
 def check_test_skips_requires(executed: str) -> list[set[str]]:
     """Extract --require values per check-test-skips.py invocation in executed commands."""
     invocations: list[set[str]] = []
     for cmd in executed_command_tokens(executed):
-        if not any("check-test-skips.py" in token for token in cmd):
+        if not _is_check_test_skips_command(cmd):
             continue
         requires: set[str] = set()
         i = 0
@@ -2675,6 +2702,11 @@ def validate_ci_check_test_skips(
     if not rules:
         return [f"{relative}: no sei-fit planted rules found in meson.build"]
     errors: list[str] = []
+    for name in SEI_FIT_CI_JOBS:
+        if name not in jobs:
+            errors.append(
+                f"{relative}: job {name} must run check-test-skips.py with --require pelorus:sei-fit"
+            )
     for name, block in jobs.items():
         executed = job_executed_run_commands(block)
         invocations = check_test_skips_requires(executed)
@@ -2684,6 +2716,10 @@ def validate_ci_check_test_skips(
             if any(v.startswith("pelorus:sei-fit") for v in inv)
         ]
         if not relevant:
+            if name in SEI_FIT_CI_JOBS:
+                errors.append(
+                    f"{relative}: job {name} must run check-test-skips.py with --require pelorus:sei-fit"
+                )
             continue
         for inv in relevant:
             for rule in rules:
@@ -5198,13 +5234,68 @@ def sei_fit_qualifying_jobs(source: str) -> list[str]:
     return qualifying
 
 
+def _check_test_skips_command_regression() -> list[str]:
+    """Unit-check _is_check_test_skips_command token shapes."""
+    failures: list[str] = []
+    cases: tuple[tuple[list[str], bool], ...] = (
+        (["python3", "-I", "scripts/check-test-skips.py", "testlog.json"], True),
+        (["scripts/check-test-skips.py", "--require", "pelorus:sei-fit"], True),
+        (["FOO=1", "BAR=baz", "python3.12", "-I", "-u", "scripts/check-test-skips.py"], True),
+        (["echo", "scripts/check-test-skips.py", "--require", "pelorus:sei-fit"], False),
+        (["cat", "scripts/check-test-skips.py", "--require", "pelorus:sei-fit"], False),
+        (["python", "-I", "scripts/check-test-skips.py.bak", "testlog.json"], False),
+        (["python", "-m", "scripts/check-test-skips.py"], False),
+    )
+    for tokens, expected in cases:
+        if _is_check_test_skips_command(tokens) != expected:
+            failures.append(
+                f"workflow regression: _is_check_test_skips_command({tokens!r}) != {expected}"
+            )
+    return failures
+
+
+def _sei_fit_must_run_regression(source: str, relative: str) -> list[str]:
+    """Prove disguised or dropped check-test-skips invocations fail per SEI_FIT_CI_JOBS."""
+    failures = _check_test_skips_command_regression()
+    must_run = "must run check-test-skips.py with --require pelorus:sei-fit"
+    bak = source.replace("check-test-skips.py", "check-test-skips.py.bak")
+    echo_pref = re.sub(
+        r"(python3?\s+-I\s+scripts/check-test-skips\.py)", r"echo \1", source
+    )
+    for label, mutated in (("bak script", bak), ("echo prefix", echo_pref)):
+        if mutated == source:
+            failures.append(f"workflow regression: {label} mutation changed nothing")
+            continue
+        errors = validate_workflow_text(relative, mutated)
+        for name in SEI_FIT_CI_JOBS:
+            if not any(f"job {name} {must_run}" in e for e in errors):
+                failures.append(f"workflow regression: job {name} accepted {label}")
+    msvc_block = workflow_job_blocks(source).get(WINDOWS_MSVC_JOB, "")
+    msvc_stripped = re.sub(
+        r"\s*--require\s+pelorus:sei-fit(?:-planted-[A-Za-z0-9_-]+)?", "", msvc_block
+    )
+    msvc_mut = source.replace(msvc_block, msvc_stripped, 1) if msvc_block else source
+    if msvc_mut == source:
+        failures.append("workflow regression: windows-msvc sei-fit strip changed nothing")
+    else:
+        errors = validate_workflow_text(relative, msvc_mut)
+        if not any(f"job {WINDOWS_MSVC_JOB} {must_run}" in e for e in errors):
+            failures.append(
+                f"workflow regression: job {WINDOWS_MSVC_JOB} accepted stripped sei-fit requires"
+            )
+    return failures
+
+
 def sei_fit_planted_rule_regression(source: str, relative: str) -> list[str]:
     """Prove a new rule in meson.build without a ci.yml require is refused."""
     failures: list[str] = []
     qualifying = sei_fit_qualifying_jobs(source)
-    if len(qualifying) < 1:
+    want_jobs = set(SEI_FIT_CI_JOBS)
+    got_jobs = set(qualifying)
+    if got_jobs != want_jobs:
+        diff = sorted(got_jobs ^ want_jobs)
         failures.append(
-            f"workflow regression: expected >= 1 qualifying sei-fit jobs, found {len(qualifying)}"
+            f"workflow regression: sei_fit_qualifying_jobs {sorted(got_jobs)} != {sorted(want_jobs)} (diff: {diff})"
         )
     meson, meson_errors = read_tracked_text(ROOT / "meson.build")
     if meson_errors:
@@ -5219,12 +5310,16 @@ def sei_fit_planted_rule_regression(source: str, relative: str) -> list[str]:
         return ["workflow regression: new meson rule mutation changed nothing"]
     errors = validate_workflow_text(relative, source, meson_text=mutated_meson)
     expected = "pelorus:sei-fit-planted-extra_check_rule"
-    for name in qualifying:
+    for name in SEI_FIT_CI_JOBS:
         if not any(f"job {name} is missing --require {expected}" in error for error in errors):
             failures.append(
                 f"workflow regression: job {name} missing {expected} was accepted"
             )
-    return failures + sei_fit_require_form_regression(source, relative, qualifying)
+    return (
+        failures
+        + sei_fit_require_form_regression(source, relative, qualifying)
+        + _sei_fit_must_run_regression(source, relative)
+    )
 
 
 def sei_fit_require_form_regression(
