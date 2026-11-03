@@ -2272,11 +2272,11 @@ def self_test_reference(expect, disabled):
     cases = [(SIDEDATA_CASES[0], "src", entry)]
 
     def stub(logs):
-        """Build a stand-in that returns the given reference logs, one per reference read."""
+        """Build a stand-in that answers reference reads with `logs` in order, repeating the last one after that."""
         runs = []
 
         def run(argv, timeout_s, env=None):
-            """Stand-in FFmpeg: answer each reference read with the next log, write every other output."""
+            """Stand-in FFmpeg: answer reference reads with the logs in order, repeating the last log once they run out; write every other output."""
             if "-f" in argv and argv[-2:] == ["null", "-"] and "-vf" in argv:
                 runs.append(1)
                 return 0, logs[min(len(runs), len(logs)) - 1], ""
