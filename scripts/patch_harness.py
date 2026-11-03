@@ -13,7 +13,7 @@ import argparse
 import os
 import pathlib
 import re
-import subprocess
+import subprocess  # nosec B404 - compiler and harness argv, no shell, explicit deadline
 import sys
 import tempfile
 from typing import Sequence
@@ -170,7 +170,7 @@ def build_and_run(
         exe = tmp_path / ("harness.exe" if os.name == "nt" else "harness")
         c_file.write_text(source, encoding="utf-8")
         try:
-            build = subprocess.run(
+            build = subprocess.run(  # nosec B603 - configured compiler with fixed flags and temp paths; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - configured compiler with fixed flags and temp paths, list argv, no shell, timeout
                 [*cc, *DEFAULT_CFLAGS, *cflags, str(c_file), "-o", str(exe), *libs],
                 capture_output=True,
                 text=True,
@@ -182,8 +182,12 @@ def build_and_run(
         if build.returncode != 0:
             return 2, "harness failed to compile:\n" + build.stdout + build.stderr
         try:
-            run = subprocess.run(
-                [str(exe)], capture_output=True, text=True, check=False, timeout=run_timeout
+            run = subprocess.run(  # nosec B603 - harness exe path built in own TemporaryDirectory; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - harness exe path built in own TemporaryDirectory, list argv, no shell, timeout
+                [str(exe)],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=run_timeout,
             )
         except subprocess.TimeoutExpired:
             return 1, f"harness run exceeded {run_timeout:g} s\n"

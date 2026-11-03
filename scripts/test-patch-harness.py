@@ -24,7 +24,7 @@ _SPEC.loader.exec_module(harness)
 
 DESCRIPTION = "Check the status contract and the deadlines of scripts/patch_harness.py."
 
-PASS_C = "int main(void) { return 0; }\n"
+OK_C = "int main(void) { return 0; }\n"
 FAIL_C = "int main(void) { return 3; }\n"
 BROKEN_C = "int main(void) { return }\n"
 # volatile keeps the loop: an empty infinite loop without side effects is
@@ -38,11 +38,11 @@ def main() -> int:
     parser = harness.make_parser(DESCRIPTION)
     args = parser.parse_args()
     cases = (
-        ("pass", PASS_C, args.cc, {}, 0, ""),
+        ("pass", OK_C, args.cc, {}, 0, ""),
         ("fail", FAIL_C, args.cc, {}, 1, ""),
         ("compile error", BROKEN_C, args.cc, {}, 2, "failed to compile"),
         ("run deadline", HANG_C, args.cc, {"run_timeout": 1.0}, 1, "run exceeded 1 s"),
-        ("build deadline", PASS_C, STALL_CC, {"build_timeout": 1.0}, 2, "build exceeded 1 s"),
+        ("build deadline", OK_C, STALL_CC, {"build_timeout": 1.0}, 2, "build exceeded 1 s"),
     )
     failures = 0
     for name, source, cc, deadlines, want, needle in cases:
