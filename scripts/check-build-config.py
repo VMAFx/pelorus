@@ -2592,23 +2592,41 @@ def sei_fit_planted_rules(meson_text: str) -> list[str]:
     return re.findall(r"['\"]([A-Za-z0-9_-]+)['\"]", match.group(1))
 
 
-def check_test_skips_requires(executed: str) -> list[set[str]]:
-    """Extract --require values per check-test-skips.py invocation in executed commands."""
-    invocations: list[set[str]] = []
+def executed_command_tokens(executed: str) -> list[list[str]]:
+    """Split executed run command lines into simple command token sequences."""
+    commands: list[list[str]] = []
+    delimiters = {"&&", "||", ";", "|"}
     for line in executed.splitlines():
-        if "check-test-skips.py" not in line:
-            continue
         try:
             tokens = shlex.split(line, comments=True)
         except ValueError:
             continue
+        current: list[str] = []
+        for token in tokens:
+            if token in delimiters:
+                if current:
+                    commands.append(current)
+                    current = []
+            else:
+                current.append(token)
+        if current:
+            commands.append(current)
+    return commands
+
+
+def check_test_skips_requires(executed: str) -> list[set[str]]:
+    """Extract --require values per check-test-skips.py invocation in executed commands."""
+    invocations: list[set[str]] = []
+    for cmd in executed_command_tokens(executed):
+        if not any("check-test-skips.py" in token for token in cmd):
+            continue
         requires: set[str] = set()
         i = 0
-        while i < len(tokens):
-            token = tokens[i]
+        while i < len(cmd):
+            token = cmd[i]
             if token == "--require":
-                if i + 1 < len(tokens):
-                    requires.add(tokens[i + 1])
+                if i + 1 < len(cmd):
+                    requires.add(cmd[i + 1])
                     i += 1
             elif token.startswith("--require="):
                 requires.add(token[len("--require=") :])
@@ -2669,9 +2687,17 @@ def validate_windows_msvc_job(relative: str, block: str | None) -> list[str]:
         if token not in block:
             errors.append(f"{prefix} is missing {token}")
     executed = job_executed_run_commands(block)
+    commands = executed_command_tokens(executed)
+    requires = check_test_skips_requires(executed)
     for command in WINDOWS_MSVC_COMMANDS:
-        if command not in executed:
-            errors.append(f"{prefix} is missing {command}")
+        if command.startswith("--require "):
+            val = command[len("--require ") :].strip()
+            if not any(val in reqs for reqs in requires):
+                errors.append(f"{prefix} is missing {command}")
+        else:
+            want = shlex.split(command)
+            if not any(cmd[: len(want)] == want for cmd in commands):
+                errors.append(f"{prefix} is missing {command}")
     return errors
 
 
@@ -3287,27 +3313,22 @@ def windows_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
     }
 
 
-def windows_msvc_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
-    """Mutations of the ADR-0242 MSVC Windows job that the validator must reject."""
-    msvc = workflow_job_blocks(source).get(WINDOWS_MSVC_JOB, "")
-
+def _windows_msvc_command_cases(
+    source: str, msvc: str
+) -> dict[str, tuple[str, str]]:
+    """Command-level mutations of the ADR-0242 MSVC Windows job."""
     def mutate(old: str, new: str) -> str:
         return replace_in_job(source, WINDOWS_MSVC_JOB, old, new)
 
-    unpinned = re.sub(r"setup-python@[0-9a-f]{40}", "setup-python@v7", msvc, count=1)
+    compile_line = next(
+        (
+            line.strip()
+            for line in msvc.splitlines()
+            if "meson compile -C build" in line
+        ),
+        "meson compile -C build",
+    )
     return {
-        "missing MSVC Windows job": (
-            source.replace(msvc, "", 1) if msvc else source,
-            f"missing MSVC Windows job {WINDOWS_MSVC_JOB}",
-        ),
-        "MSVC job on another image": (
-            mutate(WINDOWS_RUNNER, "windows-2022"),
-            f"job {WINDOWS_MSVC_JOB} must run exactly on {WINDOWS_RUNNER}",
-        ),
-        "clang-cl dropped from the matrix": (
-            mutate("          - cc: clang-cl\n", ""),
-            "is missing include:",
-        ),
         "MSVC build without warnings as errors": (
             mutate("meson setup --vsenv --werror build", "meson setup --vsenv build"),
             "is missing meson setup --vsenv --werror build",
@@ -3324,12 +3345,20 @@ def windows_msvc_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
             mutate("--require-hashes ", ""),
             "is missing python -m pip install --require-hashes",
         ),
-        "MSVC setup-python by tag": (
-            source.replace(msvc, unpinned, 1) if msvc else source,
-            "must pin actions/setup-python@v7 by full commit digest",
-        ),
         "MSVC command present only in comment": (
             mutate("meson compile -C build", "# meson compile -C build"),
+            "is missing meson compile -C build",
+        ),
+        "MSVC command disguised with echo": (
+            mutate(compile_line, "echo meson compile -C build"),
+            "is missing meson compile -C build",
+        ),
+        "MSVC command in trailing comment": (
+            mutate(compile_line, "true # meson compile -C build"),
+            "is missing meson compile -C build",
+        ),
+        "MSVC command prefix of longer command": (
+            mutate(compile_line, "meson compile -C build2"),
             "is missing meson compile -C build",
         ),
         "MSVC planted-wrap require dropped": (
@@ -3337,6 +3366,36 @@ def windows_msvc_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
             "is missing --require pelorus:sei-fit-planted-wrap",
         ),
     }
+
+
+def windows_msvc_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Mutations of the ADR-0242 MSVC Windows job that the validator must reject."""
+    msvc = workflow_job_blocks(source).get(WINDOWS_MSVC_JOB, "")
+
+    def mutate(old: str, new: str) -> str:
+        return replace_in_job(source, WINDOWS_MSVC_JOB, old, new)
+
+    unpinned = re.sub(r"setup-python@[0-9a-f]{40}", "setup-python@v7", msvc, count=1)
+    cases = {
+        "missing MSVC Windows job": (
+            source.replace(msvc, "", 1) if msvc else source,
+            f"missing MSVC Windows job {WINDOWS_MSVC_JOB}",
+        ),
+        "MSVC job on another image": (
+            mutate(WINDOWS_RUNNER, "windows-2022"),
+            f"job {WINDOWS_MSVC_JOB} must run exactly on {WINDOWS_RUNNER}",
+        ),
+        "clang-cl dropped from the matrix": (
+            mutate("          - cc: clang-cl\n", ""),
+            "is missing include:",
+        ),
+        "MSVC setup-python by tag": (
+            source.replace(msvc, unpinned, 1) if msvc else source,
+            "must pin actions/setup-python@v7 by full commit digest",
+        ),
+    }
+    cases.update(_windows_msvc_command_cases(source, msvc))
+    return cases
 
 
 def windows_pin_bump_regression(source: str, relative: str) -> list[str]:
@@ -5089,9 +5148,25 @@ def _ci_toolchain_cases(source: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def sei_fit_qualifying_jobs(source: str) -> list[str]:
+    """Return CI job names whose check-test-skips invocation carries pelorus:sei-fit requires."""
+    jobs = workflow_job_blocks(source)
+    qualifying: list[str] = []
+    for name, block in jobs.items():
+        invocations = check_test_skips_requires(job_executed_run_commands(block))
+        if any(any(r.startswith("pelorus:sei-fit") for r in inv) for inv in invocations):
+            qualifying.append(name)
+    return qualifying
+
+
 def sei_fit_planted_rule_regression(source: str, relative: str) -> list[str]:
     """Prove a new rule in meson.build without a ci.yml require is refused."""
     failures: list[str] = []
+    qualifying = sei_fit_qualifying_jobs(source)
+    if len(qualifying) < 1:
+        failures.append(
+            f"workflow regression: expected >= 1 qualifying sei-fit jobs, found {len(qualifying)}"
+        )
     meson, meson_errors = read_tracked_text(ROOT / "meson.build")
     if meson_errors:
         return meson_errors
@@ -5105,63 +5180,51 @@ def sei_fit_planted_rule_regression(source: str, relative: str) -> list[str]:
         return ["workflow regression: new meson rule mutation changed nothing"]
     errors = validate_workflow_text(relative, source, meson_text=mutated_meson)
     expected = "pelorus:sei-fit-planted-extra_check_rule"
-    if not any(expected in error for error in errors):
-        failures.append(
-            "workflow regression: new meson rule without ci require was accepted"
-        )
-    return failures + sei_fit_require_form_regression(source, relative)
+    for name in qualifying:
+        if not any(f"job {name} is missing --require {expected}" in error for error in errors):
+            failures.append(
+                f"workflow regression: job {name} missing {expected} was accepted"
+            )
+    return failures + sei_fit_require_form_regression(source, relative, qualifying)
 
 
-def sei_fit_require_form_regression(source: str, relative: str) -> list[str]:
+def sei_fit_require_form_regression(
+    source: str, relative: str, qualifying: list[str] | None = None
+) -> list[str]:
     """Prove a prefix or a separate-command require is refused and `--require=` accepted."""
     failures: list[str] = []
-    expected_wrap = (
-        f"{relative}: job core is missing --require pelorus:sei-fit-planted-wrap"
-    )
-
-    mutated_wrapper = source.replace(
-        "--require pelorus:sei-fit-planted-wrap",
-        "--require pelorus:sei-fit-planted-wrapper",
-        1,
-    )
-    if mutated_wrapper == source:
-        failures.append("workflow regression: wrapper mutation changed nothing")
-    elif not any(
-        expected_wrap in error
-        for error in validate_workflow_text(relative, mutated_wrapper)
-    ):
-        failures.append("workflow regression: prefix wrapper require was accepted")
-
-    mutated_echo = source.replace(
-        " --require pelorus:sei-fit-planted-wrap",
-        "",
-        1,
-    ).replace(
-        "build/meson-logs/testlog.json",
-        "build/meson-logs/testlog.json\n          echo --require pelorus:sei-fit-planted-wrap",
-        1,
-    )
-    if mutated_echo == source:
-        failures.append("workflow regression: echo mutation changed nothing")
-    elif not any(
-        expected_wrap in error
-        for error in validate_workflow_text(relative, mutated_echo)
-    ):
+    if qualifying is None:
+        qualifying = sei_fit_qualifying_jobs(source)
+    if len(qualifying) < 1:
         failures.append(
-            "workflow regression: echo require in separate command was accepted"
+            f"workflow regression: expected >= 1 qualifying sei-fit jobs, found {len(qualifying)}"
         )
 
-    mutated_equals = source.replace(
-        "--require pelorus:sei-fit-planted-wrap",
-        "--require=pelorus:sei-fit-planted-wrap",
-        1,
+    target = "pelorus:sei-fit-planted-wrap"
+    mut_wrap = source.replace(f"--require {target}", f"--require {target}per")
+    mut_echo = re.sub(
+        r"(\s+build(?:-san)?/meson-logs/testlog\.json)",
+        rf"\1\n          echo --require {target}",
+        source.replace(f" --require {target}", ""),
     )
-    if mutated_equals == source:
+    mut_eq = source.replace(f"--require {target}", f"--require={target}")
+
+    for mutated, kind in [(mut_wrap, "prefix wrapper"), (mut_echo, "echo require")]:
+        if mutated == source:
+            failures.append(f"workflow regression: {kind} mutation changed nothing")
+            continue
+        errors = validate_workflow_text(relative, mutated)
+        for name in qualifying:
+            if not any(f"job {name} is missing --require {target}" in e for e in errors):
+                failures.append(f"workflow regression: job {name} accepted {kind}")
+
+    if mut_eq == source:
         failures.append("workflow regression: equals mutation changed nothing")
     else:
-        equals_errors = validate_workflow_text(relative, mutated_equals)
-        if any(expected_wrap in error for error in equals_errors):
-            failures.append("workflow regression: --require= form was rejected")
+        eq_errors = validate_workflow_text(relative, mut_eq)
+        for name in qualifying:
+            if any(f"job {name} is missing --require {target}" in e for e in eq_errors):
+                failures.append(f"workflow regression: job {name} rejected --require= form")
 
     return failures
 
@@ -5183,6 +5246,16 @@ def workflow_validator_regressions() -> list[str]:
         errors = validate_workflow_text(relative, mutated)
         if not any(expected in error for error in errors):
             failures.append(f"workflow regression: {name} was accepted")
+
+    msvc_errors = [
+        err
+        for err in validate_workflow_text(relative, source)
+        if "MSVC Windows job" in err
+    ]
+    if msvc_errors:
+        failures.append(
+            f"workflow regression: unchanged workflow yields MSVC errors: {msvc_errors}"
+        )
 
     failures.extend(release_gate_regressions(source, relative))
     return failures
