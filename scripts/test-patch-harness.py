@@ -147,6 +147,7 @@ def test_driver_argv() -> bool:
     flags = (*harness.DEFAULT_CFLAGS, "-DX=1", "-Iinc")
     gnu = harness.driver_argv(("cc",), flags, src, exe, ("-lm",))
     msvc = harness.driver_argv(("C:\\VS\\bin\\cl.exe",), flags, src, exe, ("-lm",))
+    clang_cl = harness.driver_argv(("clang-cl.exe",), flags, src, exe)
     gnu_stray = {"-nologo", "-WX"} & set(gnu)
     msvc_stray = {"-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", "-lm", "-o"}
     checks = (
@@ -155,6 +156,8 @@ def test_driver_argv() -> bool:
                               "-Feh.exe", "-Foh.obj"} <= set(msvc)),
         ("msvc argv has no GNU flag", not msvc_stray & set(msvc)),
         ("clang-cl by path", harness.is_msvc_driver(("/usr/bin/clang-cl",))),
+        ("clang-cl keeps -Wno-", "-Wno-unused-function" in clang_cl and "-wd4505" not in clang_cl),
+        ("cl takes -wd4100", harness.msvc_flag("-Wno-unused-parameter") == ("-wd4100",)),
         ("clang is GNU", not harness.is_msvc_driver(("clang",))),
     )
     ok = True

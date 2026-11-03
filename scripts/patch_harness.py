@@ -39,7 +39,13 @@ _MSVC_WARNINGS = {
         "-wd4214", "-wd4307", "-wd4273", "-wd4554", "-wd4701", "-wd4703",
     ),
     "-Werror": ("-WX",),
-    "-Wno-unused-function": ("-wd4505",),
+}
+# A GNU -Wno-<name> stays as it is for the clang-based drivers (clang-cl,
+# icx-cl), which read it natively; cl.exe takes the matching warning number.
+# clang-cl does not map -wd4505 onto -Wno-unused-function.
+_CL_WARNING_OFF = {
+    "-Wno-unused-function": "-wd4505",
+    "-Wno-unused-parameter": "-wd4100",
 }
 
 
@@ -225,10 +231,12 @@ def is_msvc_driver(cc: Sequence[str]) -> bool:
     return bool(cc) and pathlib.PureWindowsPath(cc[0]).stem.lower() in MSVC_DRIVERS
 
 
-def msvc_flag(flag: str) -> tuple[str, ...]:
+def msvc_flag(flag: str, clang_based: bool = False) -> tuple[str, ...]:
     """Map one GNU-style harness flag to its MSVC form; refuse any other flag."""
     if flag in _MSVC_WARNINGS:
         return _MSVC_WARNINGS[flag]
+    if flag in _CL_WARNING_OFF:
+        return (flag,) if clang_based else (_CL_WARNING_OFF[flag],)
     if flag.startswith("-std=c"):
         return ("/std:" + flag[len("-std="):],)
     if flag.startswith(("-I", "-D")):
@@ -248,7 +256,8 @@ def driver_argv(
     """Compile-and-link argv for ``cc``, in GNU or MSVC driver syntax."""
     if not is_msvc_driver(cc):
         return [*cc, *flags, str(c_file), "-o", str(exe), *libs]
-    mapped = [out for flag in (*flags, *libs) for out in msvc_flag(flag)]
+    clang_based = pathlib.PureWindowsPath(cc[0]).stem.lower() != "cl"
+    mapped = [out for flag in (*flags, *libs) for out in msvc_flag(flag, clang_based)]
     obj = exe.with_suffix(".obj")
     return [*cc, "-nologo", *MSVC_DEFINES, *mapped, str(c_file), f"-Fo{obj}", f"-Fe{exe}"]
 
