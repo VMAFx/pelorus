@@ -547,6 +547,69 @@ jobs:
       - name: UTF-8 path contract transcript
         run: meson test -C build path-utf8 --verbose
 
+  windows-msvc:
+    # ADR-0242: the MSVC-ABI compilers. The MSYS2 leg above uses GCC; fixes for
+    # cl.exe C4996 (#88) and clang-cl -Wdeprecated-declarations (#90) had no
+    # compiler in CI to keep them fixed. This leg builds libpelorus, the tools
+    # and the tests with each compiler under --werror (/W4 /WX for cl, -Wall
+    # -Wextra -Werror semantics for clang-cl) and runs the fast suite.
+    # libpelorus carries no __declspec(dllexport) annotations, so the library is
+    # built static here; a DLL with an import library is a separate feature.
+    name: libpelorus (Windows · ${{ matrix.cc }} · fast suite)
+    runs-on: windows-2025
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # include form: the ruleset lists one context per leg.
+        include:
+          - cc: cl
+          - cc: clang-cl
+    defaults:
+      run:
+        # Git for Windows bash: the fast suite finds bash on PATH. Meson's
+        # --vsenv puts the Visual Studio tools ahead of Git's /usr/bin/link.
+        shell: bash
+    env:
+      CC: ${{ matrix.cc }}
+    steps:
+      - name: Check out without CRLF conversion
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Install Meson and Ninja (hash-pinned)
+        run: python -m pip install --require-hashes -r .config/msvc-ci/requirements.txt
+      - name: Load build configuration
+        run: |
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+      - name: Runner and toolchain receipt
+        run: |
+          echo "ImageOS=${ImageOS:-unset}"
+          echo "ImageVersion=${ImageVersion:-unset}"
+          python --version
+          meson --version
+          ninja --version
+          command -v bash
+      - name: Configure + build
+        run: |
+          meson setup --vsenv --werror build -Ddefault_library=static -Dshaders=false
+          # No silent fallback: fail unless Meson picked the requested compiler.
+          grep -E "^C compiler for the host machine: ${CC} \\(" build/meson-logs/meson-log.txt
+          meson compile -C build
+      - name: Test (fast suite, including the UTF-8 path contract)
+        run: |
+          meson test -C build --suite=fast --print-errorlogs
+          python -I scripts/check-test-skips.py --require pelorus:sei-fit \
+            --require pelorus:sei-fit-planted-reserve --require pelorus:sei-fit-planted-payload \
+            --require pelorus:sei-fit-planted-epb --require pelorus:sei-fit-planted-truncated \
+            --require pelorus:sei-fit-planted-charge --require pelorus:path-utf8 \
+            build/meson-logs/testlog.json
+
   docs:
     name: docs + changelog + workflow hygiene
     runs-on: ubuntu-26.04

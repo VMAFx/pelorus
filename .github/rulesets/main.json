@@ -69,6 +69,12 @@
             "context": "libpelorus (Windows · MSYS2 UCRT64 · fast suite)"
           },
           {
+            "context": "libpelorus (Windows · cl · fast suite)"
+          },
+          {
+            "context": "libpelorus (Windows · clang-cl · fast suite)"
+          },
+          {
             "context": "CodeQL (c-cpp)"
           },
           {

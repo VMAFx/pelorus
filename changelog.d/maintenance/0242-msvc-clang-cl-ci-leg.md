@@ -1,0 +1,1 @@
+- CI builds libpelorus, the tools and the tests with cl.exe and clang-cl under `--werror` and runs the fast suite in a new `windows-msvc` job, so the cl.exe and clang-cl warning fixes of #88 and #90 stay fixed (ADR-0242, #455).
