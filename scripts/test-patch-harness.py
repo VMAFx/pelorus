@@ -39,16 +39,60 @@ HANG_C = "int main(void) { volatile int spin = 1; while (spin) { } return 0; }\n
 STALL_CC = (sys.executable, "-I", "-c", "import time; time.sleep(30)")
 
 
+def _is_pid_gone(pid: int) -> bool:
+    """Return True if pid is gone or a zombie on Linux (HISS-02, HISS-08)."""
+    if sys.platform.startswith("linux"):
+        try:
+            stat_text = pathlib.Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+            parts = stat_text.rpartition(")")[2].split()
+            if parts and parts[0] == "Z":
+                return True
+        except OSError:
+            pass
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
 def _poll_pid_gone(pid: int, timeout: float = 5.0) -> bool:
     """Return True if pid exits within timeout (HISS-02, HISS-08)."""
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
+    limit = int(timeout / 0.05) + 1
+    for _ in range(limit):
+        if _is_pid_gone(pid):
             return True
+        if time.monotonic() >= deadline:
+            break
         time.sleep(0.05)
     return False
+
+
+def _write_stub(path: pathlib.Path) -> None:
+    """Write stand-in compiler that spawns long-lived grandchild (HISS-02)."""
+    path.write_text(
+        "import os, subprocess, sys, time\n"
+        "pid_file = os.environ.get('PELORUS_TEST_GRANDCHILD_PID_FILE')\n"
+        "proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        "if pid_file:\n"
+        "    with open(pid_file + '.tmp', 'w') as f:\n"
+        "        f.write(str(proc.pid))\n"
+        "    os.replace(pid_file + '.tmp', pid_file)\n"
+        "time.sleep(60)\n",
+        encoding="utf-8",
+    )
+
+
+def _read_pid(path: pathlib.Path) -> int | None:
+    """Read PID from file if present and valid (HISS-02, HISS-07)."""
+    if not path.is_file():
+        return None
+    try:
+        content = path.read_text(encoding="utf-8").strip()
+        return int(content) if content else None
+    except (OSError, ValueError):
+        return None
 
 
 def test_stalled_compiler_child() -> bool:
@@ -57,30 +101,17 @@ def test_stalled_compiler_child() -> bool:
         tmp_dir = pathlib.Path(tmp)
         stub_py = tmp_dir / "stub_cc.py"
         pid_file = tmp_dir / "grandchild.pid"
-        stub_py.write_text(
-            "import os, subprocess, sys, time\n"
-            "pid_file = os.environ.get('PELORUS_TEST_GRANDCHILD_PID_FILE')\n"
-            "proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
-            "if pid_file:\n"
-            "    with open(pid_file, 'w') as f:\n"
-            "        f.write(str(proc.pid))\n"
-            "time.sleep(60)\n",
-            encoding="utf-8",
-        )
+        _write_stub(stub_py)
         old_env = os.environ.get("PELORUS_TEST_GRANDCHILD_PID_FILE")
         os.environ["PELORUS_TEST_GRANDCHILD_PID_FILE"] = str(pid_file)
         grandchild_pid: int | None = None
         try:
             start = time.monotonic()
             status, output = harness.build_and_run(
-                OK_C, cc=[sys.executable, str(stub_py)], prefix="pelorus-harness-child-", build_timeout=1.0
+                OK_C, cc=[sys.executable, str(stub_py)], prefix="pelorus-harness-child-", build_timeout=3.0
             )
             wall_time = time.monotonic() - start
-            if pid_file.is_file():
-                try:
-                    grandchild_pid = int(pid_file.read_text(encoding="utf-8").strip())
-                except ValueError:
-                    pass
+            grandchild_pid = _read_pid(pid_file)
             if status != 2 or "harness build exceeded" not in output or wall_time >= 15.0:
                 print(f"FAIL stalled child: status {status}, wall {wall_time:.2f} s, out: {output.strip()!r}")
                 return False
@@ -89,7 +120,10 @@ def test_stalled_compiler_child() -> bool:
                 # process tree and wall_time < 15 s proves communicate() did not hang on child pipes.
                 pass
             else:
-                if grandchild_pid is None or not _poll_pid_gone(grandchild_pid):
+                if grandchild_pid is None:
+                    print("FAIL stalled child: setup, no grandchild pid")
+                    return False
+                if not _poll_pid_gone(grandchild_pid):
                     print(f"FAIL stalled child: grandchild {grandchild_pid} still alive after deadline")
                     return False
             return True
