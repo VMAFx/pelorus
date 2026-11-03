@@ -18,13 +18,12 @@ static int is_ws(char c)
 
 /* ASCII case-insensitive match against a lowercase literal. strcasecmp is
  * POSIX (<strings.h>, absent on MSVC) and follows the locale; this does not.
- * Both strings are read only up to the literal's terminator, within
- * ASCII_IEQ_LIT_MAX bytes, so neither is scanned for its length first. */
-#define ASCII_IEQ_LIT_MAX 8 /* longest literal ("false") plus terminator, rounded up */
-
-static int ascii_ieq(const char *s, const char *lower_lit)
+ * lit_size is sizeof the literal (terminator included): the loop is bounded
+ * by the literal's own size and neither string is scanned for its length
+ * first. Call it through ASCII_IEQ so the size always matches the literal. */
+static int ascii_ieq(const char *s, const char *lower_lit, size_t lit_size)
 {
-    for (size_t i = 0; i < ASCII_IEQ_LIT_MAX; i++) {
+    for (size_t i = 0; i < lit_size; i++) {
         char c = s[i];
         if (lower_lit[i] == '\0') {
             return c == '\0';
@@ -36,8 +35,10 @@ static int ascii_ieq(const char *s, const char *lower_lit)
             return 0; /* also stops at the end of a shorter s */
         }
     }
-    return 0; /* literal longer than the bound: never a match */
+    return 0; /* lit_size without a terminator: never a match */
 }
+
+#define ASCII_IEQ(s, lit) ascii_ieq((s), (lit), sizeof(lit))
 
 typedef const PelEncodeOptDef *(*pel_opt_lookup_fn)(const char *name);
 
@@ -117,11 +118,11 @@ static pel_result get_token(const char *text, size_t len, size_t *pos, char term
 static int parse_bool_val(const PelOptDialect *dl, const char *val, int *out_bool)
 {
     if (dl->bool_nocase) {
-        if (strcmp(val, "1") == 0 || ascii_ieq(val, "true") || ascii_ieq(val, "yes")) {
+        if (strcmp(val, "1") == 0 || ASCII_IEQ(val, "true") || ASCII_IEQ(val, "yes")) {
             *out_bool = 1;
             return 1;
         }
-        if (strcmp(val, "0") == 0 || ascii_ieq(val, "false") || ascii_ieq(val, "no")) {
+        if (strcmp(val, "0") == 0 || ASCII_IEQ(val, "false") || ASCII_IEQ(val, "no")) {
             *out_bool = 0;
             return 1;
         }
