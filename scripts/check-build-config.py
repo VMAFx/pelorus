@@ -2722,8 +2722,8 @@ def validate_ci_check_test_skips(
                 )
             continue
         for inv in relevant:
-            for rule in rules:
-                expected = f"pelorus:sei-fit-planted-{rule}"
+            for target in ("sei-fit", *(f"sei-fit-planted-{r}" for r in rules)):
+                expected = f"pelorus:{target}"
                 if expected not in inv:
                     errors.append(
                         f"{relative}: job {name} is missing --require {expected}"
@@ -5229,7 +5229,7 @@ def sei_fit_qualifying_jobs(source: str) -> list[str]:
     qualifying: list[str] = []
     for name, block in jobs.items():
         invocations = check_test_skips_requires(job_executed_run_commands(block))
-        if any(any(r.startswith("pelorus:sei-fit") for r in inv) for inv in invocations):
+        if any("pelorus:sei-fit" in inv for inv in invocations):
             qualifying.append(name)
     return qualifying
 
@@ -5286,6 +5286,22 @@ def _sei_fit_must_run_regression(source: str, relative: str) -> list[str]:
     return failures
 
 
+def _sei_fit_base_require_regression(source: str, relative: str) -> list[str]:
+    """Prove dropping base --require pelorus:sei-fit while keeping planted requires fails."""
+    failures: list[str] = []
+    mutated = re.sub(r"--require pelorus:sei-fit(?=\s)", "", source)
+    if mutated == source:
+        return ["workflow regression: base sei-fit require strip changed nothing"]
+    errors = validate_workflow_text(relative, mutated)
+    for name in SEI_FIT_CI_JOBS:
+        expected = f"job {name} is missing --require pelorus:sei-fit"
+        if not any(e.endswith(expected) for e in errors):
+            failures.append(
+                f"workflow regression: job {name} missing base sei-fit was accepted"
+            )
+    return failures
+
+
 def sei_fit_planted_rule_regression(source: str, relative: str) -> list[str]:
     """Prove a new rule in meson.build without a ci.yml require is refused."""
     failures: list[str] = []
@@ -5319,6 +5335,7 @@ def sei_fit_planted_rule_regression(source: str, relative: str) -> list[str]:
         failures
         + sei_fit_require_form_regression(source, relative, qualifying)
         + _sei_fit_must_run_regression(source, relative)
+        + _sei_fit_base_require_regression(source, relative)
     )
 
 
