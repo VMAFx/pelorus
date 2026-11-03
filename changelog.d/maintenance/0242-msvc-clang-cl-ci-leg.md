@@ -1,1 +1,2 @@
 - CI builds libpelorus, the tools and the tests with cl.exe and clang-cl under `--werror` and runs the fast suite in a new `windows-msvc` job, so the cl.exe and clang-cl warning fixes of #88 and #90 stay fixed (ADR-0242, #455).
+- The encoder option parser no longer includes the POSIX-only `<strings.h>`: boolean spellings fold ASCII case without the locale, so the parser builds with cl.exe (ADR-0242).

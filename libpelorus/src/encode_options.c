@@ -10,11 +10,28 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 
 static int is_ws(char c)
 {
     return c == ' ' || c == '\n' || c == '\t' || c == '\r';
+}
+
+/* ASCII case-insensitive match against a lowercase literal. strcasecmp is
+ * POSIX (<strings.h>, absent on MSVC) and follows the locale; this does not. */
+static int ascii_ieq(const char *s, const char *lower_lit)
+{
+    const size_t n = strlen(lower_lit);
+
+    for (size_t i = 0; i < n; i++) {
+        char c = s[i];
+        if (c >= 'A' && c <= 'Z') {
+            c = (char)(c - 'A' + 'a');
+        }
+        if (c != lower_lit[i]) {
+            return 0; /* also stops at the end of a shorter s */
+        }
+    }
+    return s[n] == '\0';
 }
 
 typedef const PelEncodeOptDef *(*pel_opt_lookup_fn)(const char *name);
@@ -95,11 +112,11 @@ static pel_result get_token(const char *text, size_t len, size_t *pos, char term
 static int parse_bool_val(const PelOptDialect *dl, const char *val, int *out_bool)
 {
     if (dl->bool_nocase) {
-        if (strcmp(val, "1") == 0 || strcasecmp(val, "true") == 0 || strcasecmp(val, "yes") == 0) {
+        if (strcmp(val, "1") == 0 || ascii_ieq(val, "true") || ascii_ieq(val, "yes")) {
             *out_bool = 1;
             return 1;
         }
-        if (strcmp(val, "0") == 0 || strcasecmp(val, "false") == 0 || strcasecmp(val, "no") == 0) {
+        if (strcmp(val, "0") == 0 || ascii_ieq(val, "false") || ascii_ieq(val, "no")) {
             *out_bool = 0;
             return 1;
         }

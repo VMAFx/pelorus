@@ -41,6 +41,8 @@ The matrix uses the `include` form so the Praetor engine expands one check conte
 
 - A change that adds a cl.exe or clang-cl warning fails CI on pull requests, the same way GCC and Clang warnings already do.
 - The MSVC-ABI build is static only until libpelorus gains export annotations.
+- The first run found two defects the MinGW leg could not see, both fixed with this change: `encode_options.c` included the POSIX `<strings.h>` for `strcasecmp`, which MSVC does not ship (an ASCII-only `ascii_ieq` replaces it and also drops locale-dependent folding), and cl.exe reported C4701 (potentially uninitialized) for a `TlmSpan` local in `telemetry_adapters.c` that is only read after a successful parse; every `TlmSpan` local now starts as `{NULL, 0}`.
+- The compile step passes `-k 0` to Ninja, so one run reports every failing unit rather than the first.
 - icx-cl remains outside CI; issue #90's fix is covered through clang-cl, which reports the same `-Wdeprecated-declarations` diagnostic.
 
 ## References

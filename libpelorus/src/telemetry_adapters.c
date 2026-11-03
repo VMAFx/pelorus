@@ -443,7 +443,7 @@ static pel_result x265_walk(const char *text, size_t len, uint8_t depth, TlmLoca
     /* len is capped by adapter_args(); one-byte lines give at most len + 1 calls. */
     for (iteration = 0u; rc == PEL_OK && iteration <= len && iteration <= TLM_TEXT_TOTAL_MAX;
          iteration++) {
-        TlmSpan line;
+        TlmSpan line = {NULL, 0};
         PelorusEncTelemetryInput record;
 
         rc = next_line(text, len, &offset, &line, &have_line);
@@ -514,7 +514,7 @@ static pel_result cursor_number(TlmCursor *c, TlmSpan *out)
 
 static pel_result cursor_u32(TlmCursor *c, uint32_t *out)
 {
-    TlmSpan token;
+    TlmSpan token = {NULL, 0};
     pel_result rc = cursor_number(c, &token);
 
     return rc == PEL_OK ? span_u32(token, out) : rc;
@@ -522,7 +522,7 @@ static pel_result cursor_u32(TlmCursor *c, uint32_t *out)
 
 static pel_result cursor_float(TlmCursor *c, float *out)
 {
-    TlmSpan token;
+    TlmSpan token = {NULL, 0};
     pel_result rc = cursor_number(c, &token);
 
     return rc == PEL_OK ? span_float(token, out, c->locale) : rc;
@@ -717,7 +717,7 @@ static pel_result svt_walk(const char *text, size_t len, uint8_t depth, TlmLocal
     /* len is capped by adapter_args(); one-byte lines give at most len + 1 calls. */
     for (iteration = 0u; rc == PEL_OK && iteration <= len && iteration <= TLM_TEXT_TOTAL_MAX;
          iteration++) {
-        TlmSpan line;
+        TlmSpan line = {NULL, 0};
         PelorusEncTelemetryInput record;
 
         rc = next_line(text, len, &offset, &line, &have_line);
@@ -866,7 +866,7 @@ static pel_result vvenc_slice_type(TlmCursor *c, uint8_t *picture_type)
 static pel_result vvenc_slice_info(TlmCursor *c, VvencValues *v)
 {
     size_t start;
-    TlmSpan nal;
+    TlmSpan nal = {NULL, 0};
     int is_key;
     pel_result rc;
 
@@ -914,7 +914,7 @@ static pel_result vvenc_psnr_metric(TlmCursor *c, const char *name, const char *
     pel_result rc = cursor_expect(c, name);
 
     if (rc == PEL_OK) {
-        TlmSpan token;
+        TlmSpan token = {NULL, 0};
 
         rc = cursor_number(c, &token);
         if (rc == PEL_OK) {
@@ -1014,7 +1014,7 @@ static pel_result vvenc_walk(const char *text, size_t len, uint8_t depth, TlmLoc
     /* len is capped by adapter_args(); one-byte lines give at most len + 1 calls. */
     for (iteration = 0u; rc == PEL_OK && iteration <= len && iteration <= TLM_TEXT_TOTAL_MAX;
          iteration++) {
-        TlmSpan line;
+        TlmSpan line = {NULL, 0};
         PelorusEncTelemetryInput record;
 
         rc = next_line(text, len, &offset, &line, &have_line);
@@ -1133,7 +1133,7 @@ static pel_result x264_type(TlmCursor *c, X264Values *v)
 /* x264 writes nonnegative int64_t timebase durations, not frame indices. */
 static pel_result x264_duration(TlmCursor *c, const char *name)
 {
-    TlmSpan token;
+    TlmSpan token = {NULL, 0};
     char buf[TLM_NUMBER_MAX];
     char *end = NULL;
     size_t len = 0;
@@ -1216,7 +1216,7 @@ static pel_result x264_finish(TlmCursor *c)
 static pel_result x264_weight_number(TlmCursor *c)
 {
     const size_t start = c->pos;
-    TlmSpan token;
+    TlmSpan token = {NULL, 0};
     char buf[TLM_NUMBER_MAX];
     char *end = NULL;
     size_t len = 0;
@@ -1277,7 +1277,7 @@ static pel_result x264_refs(TlmCursor *c)
     for (iteration = 0u; rc == PEL_OK && iteration <= TLM_TEXT_LINE_MAX; iteration++) {
         size_t start;
         uint32_t ignored = 0;
-        TlmSpan token;
+        TlmSpan token = {NULL, 0};
 
         cursor_space(c);
         if (c->pos == c->line.len) {
@@ -1385,7 +1385,7 @@ static pel_result x264_walk(const char *text, size_t len, uint8_t depth, TlmLoca
 
     for (iteration = 0u; rc == PEL_OK && iteration <= len && iteration <= TLM_TEXT_TOTAL_MAX;
          iteration++) {
-        TlmSpan line;
+        TlmSpan line = {NULL, 0};
         PelorusEncTelemetryInput record;
 
         rc = next_line(text, len, &offset, &line, &have_line);

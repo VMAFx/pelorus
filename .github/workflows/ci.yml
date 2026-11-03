@@ -600,7 +600,7 @@ jobs:
           meson setup --vsenv --werror build -Ddefault_library=static -Dshaders=false
           # No silent fallback: fail unless Meson picked the requested compiler.
           grep -E "^C compiler for the host machine: ${CC} \\(" build/meson-logs/meson-log.txt
-          meson compile -C build
+          meson compile -C build --ninja-args=-k,0
       - name: Test (fast suite, including the UTF-8 path contract)
         run: |
           meson test -C build --suite=fast --print-errorlogs
