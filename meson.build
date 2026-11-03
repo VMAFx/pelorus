@@ -225,11 +225,13 @@ test('vulkan-qpmap-contract',
 # R32_SINT) and fills it by a path the encode queue family can record (RADV's
 # family has VIDEO_ENCODE only: host-mapped LINEAR image). The entry classifier
 # and the host raster run in a C harness; --self-test plants a defect per rule.
+# 12 harness builds x 150 s deadline + margin (scripts/patch_harness.py).
 test('vulkan-qpmap-fill',
      python_prog,
      args: ['-I', meson.project_source_root() / 'scripts' / 'test-vulkan-qpmap-fill.py',
             '--self-test', '--cc'] + meson.get_compiler('c').cmd_array(),
      workdir: meson.project_source_root(),
+     timeout: 1830,
      suite: 'fast')
 
 test('vulkan-validation-streams',
@@ -369,40 +371,62 @@ test('fgs-bsf-contract',
 # The NVENC hand diffs only compile inside an ffnvcodec-enabled FFmpeg build.
 # Compile their pure value mappings here: AV1 film-grain chroma biases (BUG-019)
 # and the per-codec ROI delta-QP span (BUG-020).
+# 1 harness build x 150 s deadline + margin (scripts/patch_harness.py).
 test('nvenc-pelorus-mapping',
      python_prog,
      args: [meson.project_source_root() / 'scripts' / 'test-nvenc-pelorus-mapping.py',
             '--cc'] + meson.get_compiler('c').cmd_array(),
      workdir: meson.project_source_root(),
+     timeout: 180,
      suite: 'fast')
 
 # The shared C harness of the patch tests reports pass, fail and compile error
 # apart and ends a stalled compiler or harness at its deadline (HISS-02).
+# 3 cases at the default deadlines (2 x 150 s + 120 s) + 2 at 1 s + margin.
 test('patch-harness',
      python_prog,
      args: ['-I', meson.project_source_root() / 'scripts' / 'test-patch-harness.py',
             '--cc'] + meson.get_compiler('c').cmd_array(),
      workdir: meson.project_source_root(),
-     timeout: 60,
+     timeout: 480,
+     suite: 'fast')
+
+# Every harness test above declares a Meson timeout above its harness deadlines;
+# the self-test plants a missing and a short timeout.
+test('harness-test-timeouts',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-harness-test-timeouts.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
+test('harness-test-timeouts-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-harness-test-timeouts.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
      suite: 'fast')
 
 # Per-frame external-ME-hint setup of patch 0008 (BUG-031): a frame without
 # Pelorus motion data must still submit one zero-MV candidate per block, or the
 # NVENC session fails the whole encode.
+# 2 harness builds x 150 s deadline + margin (scripts/patch_harness.py).
 test('nvenc-me-hints',
      python_prog,
      args: [meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py',
             '--cc'] + meson.get_compiler('c').cmd_array(),
      workdir: meson.project_source_root(),
+     timeout: 330,
      suite: 'fast')
 
 # SVT-AV1 keeps the last ROI event as a sticky pointer (BUG-030); the event
 # builder of patch 0013 must replace it with a neutral event when ROI data ends.
+# 1 harness build x 150 s deadline + margin (scripts/patch_harness.py).
 test('svtav1-roi-sticky',
      python_prog,
      args: [meson.project_source_root() / 'scripts' / 'test-svtav1-roi-sticky.py',
             '--cc'] + meson.get_compiler('c').cmd_array(),
      workdir: meson.project_source_root(),
+     timeout: 180,
      suite: 'fast')
 
 # vf_pelorus_mc_vulkan keeps its host-side MV arithmetic in a plain-C header
