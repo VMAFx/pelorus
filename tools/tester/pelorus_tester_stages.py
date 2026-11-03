@@ -2429,6 +2429,7 @@ class _StandinFixtures:
         return self.cache
 
     def ensure_offline(self, entry, cache, binary, run):
+        """The configured stop result, else the cached fixture path with no notes."""
         if self.offline_result is not None:
             return self.offline_result
         return Path(cache) / entry["file"], [], False
@@ -2441,17 +2442,19 @@ BRC_STAGE_ENTRIES = tuple(
 
 
 def brc_stage_run(recorded):
-    """FFmpeg stand-in that records every argv: decodes yield every looped frame, -extbrc
-    encodes land near 1000 kb/s with ExtBRC ON, other encodes write a small file."""
+    """FFmpeg stand-in that records every argv: decodes yield every looped frame, CBR
+    encodes land near 1000 kb/s (ExtBRC ON with -extbrc), other encodes write a small file."""
     frames = BRC_STAGE_ENTRIES[1]["frames"] * (BRC_LOOPS + 1)
 
     def run(argv, timeout_s, env=None):
+        """Record argv and answer like FFmpeg for decode, CBR and constant-QP calls."""
         recorded.append(list(argv))
         if "framecrc" in argv:
             return 0, "".join("0, %d, %d, 1, 384, 0x0\n" % (i, i) for i in range(frames)), ""
-        if "-extbrc" in argv:
+        if "-b:v" in argv:
             Path(argv[-1]).write_bytes(b"\x00" * int(1000000 * 0.64 / 8))
-            return 0, "[hevc_qsv @ 0x1] BitrateLimit: unknown; MBBRC: OFF; ExtBRC: ON\n", ""
+            ext = "ON" if "-extbrc" in argv else "OFF"
+            return 0, "[hevc_qsv @ 0x1] BitrateLimit: unknown; MBBRC: OFF; ExtBRC: %s\n" % ext, ""
         if "-c:v" in argv:
             Path(argv[-1]).write_bytes(b"\x00" * 64)
         return 0, "", ""
@@ -2474,53 +2477,74 @@ def argv_value(argv, flag):
     return argv[argv.index(flag) + 1] if flag in argv[:-1] else None
 
 
+def brc_argv(recorded, extbrc):
+    """The recorded CBR encode with (extbrc=True) or without -extbrc, or []."""
+    return next((a for a in recorded if "-b:v" in a and ("-extbrc" in a) == extbrc), [])
+
+
+def brc_rate_ok(argv):
+    """Every BRC_RATE flag carries its own value in argv."""
+    return all(argv_value(argv, f) == v for f, v in zip(BRC_RATE[::2], BRC_RATE[1::2]))
+
+
+def brc_modes(legs):
+    """(encoder, rate-control mode) pairs of brc_legs results, in order."""
+    return [(r[0], r[4]) for r in legs]
+
+
 def self_test_brc_stage_discovery(expect, disabled, tmp):
     """brc_legs picks the QSV encoders of the build, two legs each, and nothing else."""
-    ctx, _ = brc_stage_ctx(tmp, disabled, ("hevc_qsv", "h264_qsv", "hevc_nvenc"))
+    ctx, _ = brc_stage_ctx(tmp, disabled, ("hevc_qsv", "av1_qsv", "h264_qsv", "hevc_nvenc"))
     legs = brc_legs(ctx, 0, Path(tmp))
     expect("brc_stage_legs_per_qsv_encoder",
-           [(r[0], r[4]) for r in legs] == [("h264_qsv", "cbr_extbrc"), ("h264_qsv", "cbr_hw"),
-                                            ("hevc_qsv", "cbr_extbrc"), ("hevc_qsv", "cbr_hw")])
+           brc_modes(legs) == [(e, m) for e in ("h264_qsv", "hevc_qsv", "av1_qsv")
+                               for m in ("cbr_extbrc", "cbr_hw")]
+           and [r[2:4] for r in legs if r[0] == "av1_qsv"][:1] == [("not_run", AV1_EXTBRC_REASON)])
     ctx, recorded = brc_stage_ctx(tmp, disabled, ("hevc_nvenc", "h264_nvenc"))
     legs = brc_legs(ctx, 0, Path(tmp))
     expect("brc_stage_no_qsv_no_legs", legs == [] and not [a for a in recorded if "-c:v" in a])
 
 
 def self_test_brc_stage_argv(expect, disabled, tmp):
-    """The -extbrc encode loops the fixture, sets the rate and runs on the device it was given."""
+    """Both CBR encodes loop the bitrate fixture, set each rate and run on the given device."""
     ctx, recorded = brc_stage_ctx(tmp, disabled, ("hevc_qsv",))
     brc_legs(ctx, 3, Path(tmp))
-    argv = next((a for a in recorded if "-extbrc" in a), [])
     frames = BRC_STAGE_ENTRIES[1]["frames"] * (BRC_LOOPS + 1)
+    src = str(Path(tmp) / (BRC_FIXTURE + ".yuv"))
+    ext, hw = brc_argv(recorded, True), brc_argv(recorded, False)
     expect("brc_stage_encode_argv",
-           argv_value(argv, "-stream_loop") == str(BRC_LOOPS)
-           and argv_value(argv, "-frames:v") == str(frames)
-           and argv_value(argv, "-c:v") == "hevc_qsv" and argv_value(argv, "-extbrc") == "1"
-           and all(item in argv for item in BRC_RATE) and "vulkan=vk:3" in argv)
+           argv_value(ext, "-extbrc") == "1" and bool(hw)
+           and all(argv_value(a, "-stream_loop") == str(BRC_LOOPS)
+                   and argv_value(a, "-frames:v") == str(frames) and argv_value(a, "-i") == src
+                   and argv_value(a, "-c:v") == "hevc_qsv" and brc_rate_ok(a)
+                   and argv_value(a, "-init_hw_device") == "vulkan=vk:3" for a in (ext, hw)))
 
 
 def self_test_brc_stage_fixture(expect, disabled, tmp):
     """A fixture that is absent stops every leg as not_run; a damaged one fails every leg."""
     ctx, recorded = brc_stage_ctx(tmp, disabled, ("hevc_qsv",), (None, ["absent reason"], True))
     legs = brc_legs(ctx, 0, Path(tmp))
+    pairs = [("hevc_qsv", "cbr_extbrc"), ("hevc_qsv", "cbr_hw")]
     expect("brc_stage_fixture_absent_not_run",
-           bool(legs) and all(r[2] == "not_run" and "absent reason" in r[3] for r in legs)
+           brc_modes(legs) == pairs and all(r[2] == "not_run" and "absent reason" in r[3] for r in legs)
            and not [a for a in recorded if "-c:v" in a])
     ctx, _ = brc_stage_ctx(tmp, disabled, ("hevc_qsv",), (None, ["hash mismatch"], False))
     legs = brc_legs(ctx, 0, Path(tmp))
     expect("brc_stage_fixture_error_fails",
-           bool(legs) and all(r[2] == "fail" and "hash mismatch" in r[3] for r in legs))
+           brc_modes(legs) == pairs and all(r[2] == "fail" and "hash mismatch" in r[3] for r in legs))
 
 
 def self_test_brc_stage_wired(expect, disabled, tmp):
-    """run_steering reports both bitrate-control legs, run on the forced Vulkan device."""
+    """run_steering reports both bitrate-control legs as passing, run on the forced device."""
     ctx, recorded = brc_stage_ctx(tmp, disabled, ("hevc_qsv",), env={"VULKAN_DEVICE": "2"})
     outcome = run_steering(ctx, {})
     legs = outcome[3] if len(outcome) > 3 and outcome[3] else []
-    modes = {leg.get("rate_control") for leg in legs if leg.get("encoder") == "hevc_qsv"}
-    argv = next((a for a in recorded if "-extbrc" in a), [])
+    got = {leg.get("rate_control"): leg.get("status") for leg in legs
+           if leg.get("encoder") == "hevc_qsv" and leg.get("rate_control")}
     expect("brc_stage_wired_into_steering",
-           {"cbr_extbrc", "cbr_hw"} <= modes and "vulkan=vk:2" in argv)
+           got == {"cbr_extbrc": "pass", "cbr_hw": "pass"}
+           and all(argv_value(brc_argv(recorded, x), "-init_hw_device") == "vulkan=vk:2"
+                   for x in (True, False)))
 
 
 def self_test_brc_stage(expect, disabled):
