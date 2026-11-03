@@ -257,6 +257,19 @@ through `pelorus_deband_vulkan`, with `-b:v 1000k -maxrate 1000k -bufsize
 must also log `ExtBRC: ON`. On the Arc A380 under `xe` the image measured
 +1.8 % (`h264_qsv`) and +1.0 % (`hevc_qsv`).
 
+No CI runner has an Intel GPU, so CI never runs these encodes. Instead,
+`python3 -I tools/tester/pelorus_tester_report.py --self-test` (the docs CI job
+and `make verify-all`) runs the legs and the steering stage against a stand-in
+FFmpeg. It checks that each QSV encoder in the build gets exactly the two
+legs, that the CBR encode loops the fixture and passes the rate and device
+options, that a missing fixture makes every leg `not_run` and a damaged one
+`fail`, and that `steering_smoke` reports the legs. Real device results come
+from the Intel image or a checkout on an Intel host. On 2026-11-03 a checkout
+run on an Arc A380 under `xe` (`LIBVA_DRIVER_NAME=iHD`, see
+[Environment](#environment)) gave the outcomes in the table below:
+`cbr_extbrc` passed on `h264_qsv` and `hevc_qsv`, and every `cbr_hw` leg was
+the no-HuC `not_run`.
+
 | Outcome | Leg |
 | --- | --- |
 | bitrate more than 15 % off, a frame missing, or `ExtBRC` not on | `fail` |

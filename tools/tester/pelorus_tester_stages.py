@@ -2414,6 +2414,125 @@ def self_test_brc_legs(expect, disabled):
     expect("brc_pass_alone_is_not_a_steering_pass", status == "not_run")
 
 
+class _StandinFixtures:
+    """Fixtures stand-in with the fixture_for contract: load_lock, default_cache, ensure_offline."""
+
+    def __init__(self, entries, cache, offline_result=None):
+        self.entries = entries
+        self.cache = cache
+        self.offline_result = offline_result
+
+    def load_lock(self):
+        return self.entries, ""
+
+    def default_cache(self):
+        return self.cache
+
+    def ensure_offline(self, entry, cache, binary, run):
+        if self.offline_result is not None:
+            return self.offline_result
+        return Path(cache) / entry["file"], [], False
+
+
+BRC_STAGE_HELP = "  -extbrc            <int>        E..V....... Extended bitrate control"
+BRC_STAGE_ENTRIES = tuple(
+    {"name": name, "file": name + ".yuv", "pixfmt": "yuv420p", "width": 16, "height": 16,
+     "fps": 25, "frames": 2} for name in ("synth-banding", BRC_FIXTURE))
+
+
+def brc_stage_run(recorded):
+    """FFmpeg stand-in that records every argv: decodes yield every looped frame, -extbrc
+    encodes land near 1000 kb/s with ExtBRC ON, other encodes write a small file."""
+    frames = BRC_STAGE_ENTRIES[1]["frames"] * (BRC_LOOPS + 1)
+
+    def run(argv, timeout_s, env=None):
+        recorded.append(list(argv))
+        if "framecrc" in argv:
+            return 0, "".join("0, %d, %d, 1, 384, 0x0\n" % (i, i) for i in range(frames)), ""
+        if "-extbrc" in argv:
+            Path(argv[-1]).write_bytes(b"\x00" * int(1000000 * 0.64 / 8))
+            return 0, "[hevc_qsv @ 0x1] BitrateLimit: unknown; MBBRC: OFF; ExtBRC: ON\n", ""
+        if "-c:v" in argv:
+            Path(argv[-1]).write_bytes(b"\x00" * 64)
+        return 0, "", ""
+    return run
+
+
+def brc_stage_ctx(tmp, disabled, encoders, offline_result=None, env=None):
+    """Stage context on the stand-in; returns (ctx, recorded argv list)."""
+    recorded = []
+    ctx = stage_ctx(dict({"PELORUS_VALIDATE": "0"}, **(env or {})), brc_stage_run(recorded))
+    fixtures = _StandinFixtures(list(BRC_STAGE_ENTRIES), tmp, offline_result)
+    ctx.update(work=tmp, fixtures=fixtures, disabled=disabled, intel_host="xe-dg2", devices=[{}])
+    ctx["ff"] = {"bin": "ffmpeg", "filters": {"pelorus_analyze_vulkan"}, "encoders": set(encoders),
+                 "help": {e: BRC_STAGE_HELP for e in encoders if e.endswith("_qsv")}}
+    return ctx, recorded
+
+
+def argv_value(argv, flag):
+    """Value after `flag` in an argv list, or None."""
+    return argv[argv.index(flag) + 1] if flag in argv[:-1] else None
+
+
+def self_test_brc_stage_discovery(expect, disabled, tmp):
+    """brc_legs picks the QSV encoders of the build, two legs each, and nothing else."""
+    ctx, _ = brc_stage_ctx(tmp, disabled, ("hevc_qsv", "h264_qsv", "hevc_nvenc"))
+    legs = brc_legs(ctx, 0, Path(tmp))
+    expect("brc_stage_legs_per_qsv_encoder",
+           [(r[0], r[4]) for r in legs] == [("h264_qsv", "cbr_extbrc"), ("h264_qsv", "cbr_hw"),
+                                            ("hevc_qsv", "cbr_extbrc"), ("hevc_qsv", "cbr_hw")])
+    ctx, recorded = brc_stage_ctx(tmp, disabled, ("hevc_nvenc", "h264_nvenc"))
+    legs = brc_legs(ctx, 0, Path(tmp))
+    expect("brc_stage_no_qsv_no_legs", legs == [] and not [a for a in recorded if "-c:v" in a])
+
+
+def self_test_brc_stage_argv(expect, disabled, tmp):
+    """The -extbrc encode loops the fixture, sets the rate and runs on the device it was given."""
+    ctx, recorded = brc_stage_ctx(tmp, disabled, ("hevc_qsv",))
+    brc_legs(ctx, 3, Path(tmp))
+    argv = next((a for a in recorded if "-extbrc" in a), [])
+    frames = BRC_STAGE_ENTRIES[1]["frames"] * (BRC_LOOPS + 1)
+    expect("brc_stage_encode_argv",
+           argv_value(argv, "-stream_loop") == str(BRC_LOOPS)
+           and argv_value(argv, "-frames:v") == str(frames)
+           and argv_value(argv, "-c:v") == "hevc_qsv" and argv_value(argv, "-extbrc") == "1"
+           and all(item in argv for item in BRC_RATE) and "vulkan=vk:3" in argv)
+
+
+def self_test_brc_stage_fixture(expect, disabled, tmp):
+    """A fixture that is absent stops every leg as not_run; a damaged one fails every leg."""
+    ctx, recorded = brc_stage_ctx(tmp, disabled, ("hevc_qsv",), (None, ["absent reason"], True))
+    legs = brc_legs(ctx, 0, Path(tmp))
+    expect("brc_stage_fixture_absent_not_run",
+           bool(legs) and all(r[2] == "not_run" and "absent reason" in r[3] for r in legs)
+           and not [a for a in recorded if "-c:v" in a])
+    ctx, _ = brc_stage_ctx(tmp, disabled, ("hevc_qsv",), (None, ["hash mismatch"], False))
+    legs = brc_legs(ctx, 0, Path(tmp))
+    expect("brc_stage_fixture_error_fails",
+           bool(legs) and all(r[2] == "fail" and "hash mismatch" in r[3] for r in legs))
+
+
+def self_test_brc_stage_wired(expect, disabled, tmp):
+    """run_steering reports both bitrate-control legs, run on the forced Vulkan device."""
+    ctx, recorded = brc_stage_ctx(tmp, disabled, ("hevc_qsv",), env={"VULKAN_DEVICE": "2"})
+    outcome = run_steering(ctx, {})
+    legs = outcome[3] if len(outcome) > 3 and outcome[3] else []
+    modes = {leg.get("rate_control") for leg in legs if leg.get("encoder") == "hevc_qsv"}
+    argv = next((a for a in recorded if "-extbrc" in a), [])
+    expect("brc_stage_wired_into_steering",
+           {"cbr_extbrc", "cbr_hw"} <= modes and "vulkan=vk:2" in argv)
+
+
+def self_test_brc_stage(expect, disabled):
+    """brc_legs and its wiring into steering_smoke, on a stand-in FFmpeg (no Intel GPU in CI)."""
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="pelorus-brc-stage-") as tmp:
+        self_test_brc_stage_discovery(expect, disabled, tmp)
+        self_test_brc_stage_argv(expect, disabled, tmp)
+        self_test_brc_stage_fixture(expect, disabled, tmp)
+        self_test_brc_stage_wired(expect, disabled, tmp)
+
+
 def subproc_run(argv, timeout_s, env=None):
     try:
         proc = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -2626,6 +2745,7 @@ def self_test(disabled=frozenset()):
     self_test_brc_failures(expect, disabled)
     self_test_render_host(expect)
     self_test_brc_legs(expect, disabled)
+    self_test_brc_stage(expect, disabled)
     self_test_registration(expect, disabled)
     self_test_suite(expect, disabled)
     self_test_vendor_graph(expect, disabled)
