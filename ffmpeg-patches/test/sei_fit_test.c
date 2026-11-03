@@ -1029,13 +1029,14 @@ int main(void)
     }
     (void)printf("planted rule %s caught: %d check(s) failed\n", PEL_SEI_FIT_PLANTED, t->failures);
     return EXIT_SUCCESS;
-#endif
+#else
     if (t->failures != 0) {
         (void)fprintf(stderr, "%d check(s) failed\n", t->failures);
         return EXIT_FAILURE;
     }
     (void)printf("sei fit: all checks passed\n");
     return EXIT_SUCCESS;
+#endif
 }
 
 /* NOLINTEND(modernize-use-nullptr) */

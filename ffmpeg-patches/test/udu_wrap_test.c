@@ -98,7 +98,16 @@ static int replay_line(const char *line, int *seen)
     int want;
     int got;
 
-    if (sscanf(line, "%95s %63s %257s %23s", name, outer_hex, data_hex, want_word) != 4) {
+    /* cl.exe and clang-cl declare sscanf deprecated; sscanf_s takes each
+     * %s buffer size. */
+#ifdef _MSC_VER
+    const int fields = sscanf_s(line, "%95s %63s %257s %23s", name, (unsigned)sizeof(name),
+                                outer_hex, (unsigned)sizeof(outer_hex), data_hex,
+                                (unsigned)sizeof(data_hex), want_word, (unsigned)sizeof(want_word));
+#else
+    const int fields = sscanf(line, "%95s %63s %257s %23s", name, outer_hex, data_hex, want_word);
+#endif
+    if (fields != 4) {
         (void)fprintf(stderr, "FAIL: vector line malformed: %s", line);
         return 1;
     }

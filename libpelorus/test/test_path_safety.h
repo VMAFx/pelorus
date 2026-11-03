@@ -11,12 +11,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <share.h>
+#endif
 
 /*
  * Opens a fixture path after resolving it, then refuses the handle unless it
  * is a regular file. The type check runs on the open handle, so nothing can
  * swap the file between check and use.
  * Callers define _XOPEN_SOURCE before their first include (realpath).
+ * Windows opens through _fsopen() with _SH_DENYNO, the sharing fopen() gives;
+ * the CRT declares fopen() deprecated (C4996 under cl.exe,
+ * -Wdeprecated-declarations under clang-cl).
  */
 static inline FILE *test_fopen_safe(const char *path, const char *mode)
 {
@@ -32,7 +38,7 @@ static inline FILE *test_fopen_safe(const char *path, const char *mode)
     if (_fullpath(resolved, path, sizeof(resolved)) == NULL) {
         return NULL;
     }
-    fp = fopen(resolved, mode);
+    fp = _fsopen(resolved, mode, _SH_DENYNO);
     if (fp != NULL && (_fstat(_fileno(fp), &st) != 0 || (st.st_mode & _S_IFMT) != _S_IFREG)) {
         (void)fclose(fp);
         fp = NULL;
