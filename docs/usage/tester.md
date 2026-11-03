@@ -342,7 +342,7 @@ and [ADR-0209](../adr/0209-zero-copy-vendor-legs.md).
 | `VULKAN_DEVICE` | FFmpeg Vulkan device index; default is the hardware devices in `vulkaninfo` order |
 | `PELORUS_VALIDATE` | `auto` (default), `1` or `0`. `format_matrix` needs `VK_LAYER_KHRONOS_validation`: with `auto` and the layer absent it is `not_run`; with `0` it runs without validation and says so. `1` with the layer absent is a `fail` in every GPU stage (fail closed); with the layer present every GPU stage runs with it on and [gates its messages](#validation-gate) |
 | `PELORUS_VUID_ALLOWLIST` | path of the VUID allow-list (default `ffmpeg-patches/test/vulkan-vuid-allowlist.txt`) |
-| `LIBVA_DRIVER_NAME` | passed through to FFmpeg. A run from a checkout on a host that sets it for another GPU (for example `nvidia`) must set `iHD`: otherwise QSV fails with `Error creating a MFX session: -9` and every QSV leg is `not_run`. The images do not set it; libva then picks the driver of the render node |
+| `LIBVA_DRIVER_NAME` | the tester sets `iHD` itself for every QSV encode (steer, bitrate-control and carrier legs) and for the Intel `zero_copy_chain` legs, so a host that sets it for another GPU (for example `nvidia`) no longer turns the QSV legs `not_run` with `Error creating a MFX session: -9`. The AMD `zero_copy_chain` leg sets `radeonsi`. Every other FFmpeg call (other encodes, probes, decodes, scoring) inherits the host value; the images do not set it, and libva then picks the driver of the render node |
 | `PELORUS_TESTER_CACHE` | fixture cache directory (default `$XDG_CACHE_HOME/pelorus-tester`) |
 | `PELORUS_FORMAT_MATRIX` | path of the format matrix script, for images that install it elsewhere |
 | `VMAF_BIN` | `vmaf` binary for the bench stage |
