@@ -179,9 +179,10 @@ def compile_and_run(
     cc: Sequence[str],
     prefix: str = "pelorus-harness-",
     libs: Sequence[str] = (),
+    cflags: Sequence[str] = (),
 ) -> int:
     """build_and_run plus reporting; returns the script exit code (0 or 1)."""
-    status, output = build_and_run(source, cc, prefix, libs=libs)
+    status, output = build_and_run(source, cc, prefix, cflags=cflags, libs=libs)
     if status == 2:
         print("ERROR: " + output, file=sys.stderr)
         return 1

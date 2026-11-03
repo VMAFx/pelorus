@@ -129,6 +129,7 @@ SPDX-License-Identifier: EUPL-1.2
 - The always-loaded agent context (`AGENTS.md` and its client projections) drops from 24 KB to 11 KB (ADR-0238), under the Antigravity and Windsurf instruction-file caps; the enforcement, layout, skills, hooks, command and pin tables move to `docs/development/agent-reference.md`.
 - The `libaom-av1` and `libsvtav1` ROI patches (0012, 0013) name their locals and context fields with a `pelorus_roi_` prefix, so the stack builds on top of the shared FFmpeg series' unified `-qpfile` patch, which uses the bare `roi_` names. Encoder behaviour is unchanged.
 - Tester self-test drives the QSV bitrate-control legs through `brc_legs` and the steering stage with a stand-in FFmpeg (`tools/tester/pelorus_tester_stages.py`, `docs/usage/tester.md`): CI now checks which encoders get the two legs, the looped CBR encode command, fixture stop handling and the wiring into `steering_smoke`, without an Intel GPU. A run on an Arc A380 under `xe` gave the documented outcomes (`cbr_extbrc` pass on `h264_qsv` and `hevc_qsv`, the no-HuC `not_run` on every hardware CBR leg).
+- The `nvenc-me-hints` fast test (`scripts/test-nvenc-me-hints.py`) checks that patch 0008 sets the signed one-bit `lastofPart` and `lastOfMB` flags with -1 on both hint paths. A second build widens the two flags to two bits, where a stored 1 reads back as 1, so the old `= 1` assignment now fails under gcc too, not only under clang's bit-field warning (audit gap C11.1).
 
 <!-- END UNRELEASED -->
 
