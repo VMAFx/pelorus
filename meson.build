@@ -408,11 +408,16 @@ test('harness-test-timeouts-self-test',
 
 # Every Python except clause with bare pass must carry an explanatory comment;
 # the self-test exercises bare passes, comments, and strings with hash symbols.
-test('python-empty-except',
-     python_prog,
-     args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-empty-except.py'],
-     workdir: meson.project_source_root(),
-     suite: 'fast')
+# The tree scan lists files with git, which the MSYS2 UCRT64 leg does not put
+# on PATH (CI run 41645525072: FileNotFoundError for git). The self-test
+# runs there; the Linux jobs scan the tree on every PR.
+if build_machine.system() != 'windows'
+  test('python-empty-except',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-empty-except.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
 
 test('python-empty-except-self-test',
      python_prog,

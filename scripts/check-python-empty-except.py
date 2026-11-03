@@ -20,7 +20,8 @@ import argparse
 import ast
 import io
 import pathlib
-import subprocess
+import shutil
+import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
 import tokenize
 
@@ -74,17 +75,20 @@ def check_source_content(
     violations: list[str] = []
 
     for node in ast.walk(tree):
-        if isinstance(node, ast.ExceptHandler):
-            if len(node.body) == 1 and isinstance(node.body[0], ast.Pass):
-                pass_node = node.body[0]
-                has_comment = any(
-                    line in comment_lines
-                    for line in range(node.lineno, pass_node.lineno + 1)
+        if (
+            isinstance(node, ast.ExceptHandler)
+            and len(node.body) == 1
+            and isinstance(node.body[0], ast.Pass)
+        ):
+            pass_node = node.body[0]
+            has_comment = any(
+                line in comment_lines
+                for line in range(node.lineno, pass_node.lineno + 1)
+            )
+            if not has_comment:
+                violations.append(
+                    f"{display_path}:{node.lineno}: empty except without explanatory comment"
                 )
-                if not has_comment:
-                    violations.append(
-                        f"{display_path}:{node.lineno}: empty except without explanatory comment"
-                    )
 
     violations.sort()
     return violations
@@ -163,6 +167,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.paths:
         files = args.paths
     else:
+        if shutil.which("git") is None:
+            print(
+                "python-empty-except: git not on PATH; pass files or use --self-test",
+                file=sys.stderr,
+            )
+            return 2
         files = get_tracked_python_files(repo_root)
 
     all_violations: list[str] = []
