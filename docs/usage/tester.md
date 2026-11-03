@@ -264,7 +264,10 @@ FFmpeg. It checks that each QSV encoder in the build (`h264_qsv`, `hevc_qsv`,
 `av1_qsv`) gets exactly the two legs, that both CBR encodes loop the bitrate
 fixture and pass each rate value and the device, that a missing fixture makes
 both legs `not_run` and a damaged one `fail`, and that `steering_smoke` reports
-both legs as passing on the forced device. Real device results come
+both legs as passing on the forced device. Every stand-in FFmpeg writes its
+output only to an absolute path and refuses a relative one, so a call it does
+not expect fails the self-test instead of leaving a file in the working
+directory. Real device results come
 from the Intel image or a checkout on an Intel host. On 2026-11-03 a checkout
 run on an Arc A380 under `xe` (`LIBVA_DRIVER_NAME=iHD`, see
 [Environment](#environment)) gave the outcomes in the table below:
