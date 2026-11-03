@@ -17,13 +17,18 @@ static int is_ws(char c)
 }
 
 /* ASCII case-insensitive match against a lowercase literal. strcasecmp is
- * POSIX (<strings.h>, absent on MSVC) and follows the locale; this does not. */
+ * POSIX (<strings.h>, absent on MSVC) and follows the locale; this does not.
+ * Both strings are read only up to the literal's terminator, within
+ * ASCII_IEQ_LIT_MAX bytes, so neither is scanned for its length first. */
+#define ASCII_IEQ_LIT_MAX 8 /* longest literal ("false") plus terminator, rounded up */
+
 static int ascii_ieq(const char *s, const char *lower_lit)
 {
-    const size_t n = strlen(lower_lit);
-
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < ASCII_IEQ_LIT_MAX; i++) {
         char c = s[i];
+        if (lower_lit[i] == '\0') {
+            return c == '\0';
+        }
         if (c >= 'A' && c <= 'Z') {
             c = (char)(c - 'A' + 'a');
         }
@@ -31,7 +36,7 @@ static int ascii_ieq(const char *s, const char *lower_lit)
             return 0; /* also stops at the end of a shorter s */
         }
     }
-    return s[n] == '\0';
+    return 0; /* literal longer than the bound: never a match */
 }
 
 typedef const PelEncodeOptDef *(*pel_opt_lookup_fn)(const char *name);

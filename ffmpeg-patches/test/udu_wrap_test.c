@@ -86,6 +86,29 @@ static int expected_class(const char *word)
 }
 
 /* Classify one vector line; 0 pass, 1 fail (a malformed line fails). */
+/* Copy the next whitespace-separated field of *cursor into dst and advance
+ * *cursor past it. Returns 0, or -1 when no field is left or it does not fit
+ * in cap bytes with its terminator (no truncation, unlike %Ns). */
+static int next_field(const char **cursor, char *dst, size_t cap)
+{
+    const char *p = *cursor;
+    size_t n = 0;
+
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+    while (p[n] != '\0' && p[n] != ' ' && p[n] != '\t' && p[n] != '\n' && p[n] != '\r') {
+        if (n + 1 >= cap) {
+            return -1;
+        }
+        dst[n] = p[n];
+        n++;
+    }
+    dst[n] = '\0';
+    *cursor = p + n;
+    return n > 0 ? 0 : -1;
+}
+
 static int replay_line(const char *line, int *seen)
 {
     char name[96];
@@ -98,16 +121,12 @@ static int replay_line(const char *line, int *seen)
     int want;
     int got;
 
-    /* cl.exe and clang-cl declare sscanf deprecated; sscanf_s takes each
-     * %s buffer size. */
-#ifdef _MSC_VER
-    const int fields = sscanf_s(line, "%95s %63s %257s %23s", name, (unsigned)sizeof(name),
-                                outer_hex, (unsigned)sizeof(outer_hex), data_hex,
-                                (unsigned)sizeof(data_hex), want_word, (unsigned)sizeof(want_word));
-#else
-    const int fields = sscanf(line, "%95s %63s %257s %23s", name, outer_hex, data_hex, want_word);
-#endif
-    if (fields != 4) {
+    const char *cursor = line;
+
+    if (next_field(&cursor, name, sizeof(name)) != 0 ||
+        next_field(&cursor, outer_hex, sizeof(outer_hex)) != 0 ||
+        next_field(&cursor, data_hex, sizeof(data_hex)) != 0 ||
+        next_field(&cursor, want_word, sizeof(want_word)) != 0) {
         (void)fprintf(stderr, "FAIL: vector line malformed: %s", line);
         return 1;
     }
