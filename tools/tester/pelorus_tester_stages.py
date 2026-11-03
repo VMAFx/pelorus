@@ -2042,6 +2042,7 @@ def standin_output(argv, size):
 def fake_encode_ctx(disabled, work):
     """FFmpeg stand-in: av1_nvenc fails as on a GPU without AV1 NVENC; the rest encode."""
     def run(argv, timeout_s, env=None):
+        """Stand-in FFmpeg: fail av1_nvenc, write every other output."""
         if "av1_nvenc" in argv:
             return 1, NO_AV1_LOG, ""
         standin_output(argv, 64)
@@ -2056,6 +2057,7 @@ def fake_encode_ctx(disabled, work):
 def fake_qsv_ctx(work, dpkg_text):
     """FFmpeg stand-in where hevc_qsv fails as with the free driver on an A380 under xe without HuC."""
     def run(argv, timeout_s, env=None):
+        """Stand-in FFmpeg for QSV: answer dpkg-query with the given text, fail hevc_qsv, write every other output."""
         if argv[0] == "dpkg-query":
             return 1, dpkg_text, ""
         if "hevc_qsv" in argv:
@@ -2270,9 +2272,11 @@ def self_test_reference(expect, disabled):
     cases = [(SIDEDATA_CASES[0], "src", entry)]
 
     def stub(logs):
+        """Build a stand-in that returns the given reference logs, one per reference read."""
         runs = []
 
         def run(argv, timeout_s, env=None):
+            """Stand-in FFmpeg: answer each reference read with the next log, write every other output."""
             if "-f" in argv and argv[-2:] == ["null", "-"] and "-vf" in argv:
                 runs.append(1)
                 return 0, logs[min(len(runs), len(logs)) - 1], ""
@@ -2300,7 +2304,9 @@ def self_test_carrier(expect, disabled):
     cases = [(SIDEDATA_CASES[0], "src", entry)]
 
     def stub(fail_when):
+        """Build a stand-in that fails with ENOMEM whenever fail_when(argv) is true."""
         def run(argv, timeout_s, env=None):
+            """Stand-in FFmpeg: fail the selected calls, write every other output."""
             if fail_when(argv):
                 return 1, enomem, ""
             standin_output(argv, 64)
@@ -2383,6 +2389,7 @@ def fake_brc_ctx(work, disabled, extbrc_rate, extbrc_state="ON"):
     """FFmpeg stand-in for hevc_qsv on a DG2 under xe: CQP and -extbrc 1 encode (the latter at
     `extbrc_rate` bit/s), hardware CBR fails as without HuC, decodes yield every frame."""
     def run(argv, timeout_s, env=None):
+        """Stand-in FFmpeg for the bitrate legs: framecrc, the hw-BRC failure and the encodes."""
         if "framecrc" in argv:
             return 0, "".join("0, %d, %d, 1, 384, 0x0\n" % (i, i) for i in range(16)), ""
         if "-b:v" in argv and "-extbrc" not in argv:
@@ -2429,14 +2436,17 @@ class _StandinFixtures:
     """Fixtures stand-in with the fixture_for contract: load_lock, default_cache, ensure_offline."""
 
     def __init__(self, entries, cache, offline_result=None):
+        """Keep the lock entries, the cache folder and an optional stop result for ensure_offline."""
         self.entries = entries
         self.cache = cache
         self.offline_result = offline_result
 
     def load_lock(self):
+        """The lock entries with no read error."""
         return self.entries, ""
 
     def default_cache(self):
+        """The cache folder given at construction."""
         return self.cache
 
     def ensure_offline(self, entry, cache, binary, run):
