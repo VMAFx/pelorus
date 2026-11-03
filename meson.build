@@ -243,8 +243,10 @@ test('vulkan-validation-streams',
 
 test('vulkan-sample-scale',
      python_prog,
-     args: [meson.project_source_root() / 'scripts' / 'test-vulkan-sample-scale.py'],
+     args: [meson.project_source_root() / 'scripts' / 'test-vulkan-sample-scale.py',
+            '--cc'] + meson.get_compiler('c').cmd_array(),
      workdir: meson.project_source_root(),
+     timeout: 180,
      suite: 'fast')
 
 # BUG-003/004/005/015: the FFmpeg-side consumers scan every appended

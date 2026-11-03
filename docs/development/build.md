@@ -147,6 +147,40 @@ Windows-specific behavior of the suite:
   lists files with `git ls-files`, and the MSYS2 leg has no git on `PATH`.
   `suppression-markers-self-test` runs the planted cases there.
 
+## Windows (cl.exe and clang-cl)
+
+The `windows-msvc` job of `.github/workflows/ci.yml` builds libpelorus, the
+tools and the tests with cl.exe and with clang-cl under `--werror`, then runs
+the fast suite ([ADR-0242](../adr/0242-msvc-clang-cl-ci-leg.md)). You need
+Visual Studio 2022 with the C++ workload, LLVM on `PATH` for the clang-cl leg,
+and `bash` on `PATH`: `meson.build` requires it at setup (Git for Windows
+provides it). Give each compiler its own build directory, since Meson fixes the
+compiler of a directory at its first setup.
+
+From Git Bash:
+
+```bash
+python -m pip install --require-hashes -r .config/msvc-ci/requirements.txt
+CC=cl meson setup --vsenv --werror build-cl -Ddefault_library=static -Dshaders=false
+meson compile -C build-cl
+meson test -C build-cl --suite=fast --print-errorlogs
+```
+
+From PowerShell:
+
+```powershell
+python -m pip install --require-hashes -r .config/msvc-ci/requirements.txt
+$env:CC = 'cl'
+meson setup --vsenv --werror build-cl -Ddefault_library=static -Dshaders=false
+meson compile -C build-cl
+meson test -C build-cl --suite=fast --print-errorlogs
+```
+
+For the other leg, set the compiler to `clang-cl` and use `build-clang-cl`. The library is static here: libpelorus
+carries no `__declspec(dllexport)` annotations, and cl.exe and clang-cl export
+no symbol from a DLL without them. The reference shaders compile in the Linux
+and MSYS2 jobs. icx-cl is not in CI.
+
 The FFmpeg patch-stack scripts below remain Linux-only.
 
 ## FFmpeg filters (the patch stack)
@@ -614,7 +648,7 @@ controls below, and no workflow implements them; they are declared only
 
 | Declared by | Control | Current state |
 | --- | --- | --- |
-| `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, stale-review dismissal, review-thread resolution, 14 required checks | Committed in `.github/rulesets/main.json`, not applied yet; live `master` protection requires linear history and four checks, no signatures. Approving reviews: zero under `review_mode: single_maintainer` ([Branch ruleset](#branch-ruleset)) |
+| `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, stale-review dismissal, review-thread resolution, 16 required checks | Committed in `.github/rulesets/main.json`, not applied yet; live `master` protection requires linear history and four checks, no signatures. Approving reviews: zero under `review_mode: single_maintainer` ([Branch ruleset](#branch-ruleset)) |
 | `native-gpu-systems` | `semgrep`, `cppcheck`, `clippy` | `semgrep` runs in CI (`semgrep` job) and via the fast suite (`scripts/test-semgrep-float-identity.py`, ADR-0239); `cppcheck` not run; Pelorus has no Rust for `clippy` |
 | `security:high` | `gitleaks`, `trivy` | Not run; `.gitleaks.toml` only configures a manual `gitleaks` run |
 | `api:public-contract` | `buf`, `spectral`, OpenAPI drift, `Migration:` footer check | Not run; Pelorus has no protobuf or OpenAPI surface. The append-only C ABI is guarded by the interop conformance fixture and review |
@@ -761,7 +795,7 @@ engine renders for `master` and `lts-*`. `.standards.yaml` declares
 | Rule | Value |
 | --- | --- |
 | Pull request | 0 approving reviews, no code-owner review, stale reviews dismissed, review threads resolved |
-| Required status checks (strict) | the eight `ci.yml` jobs (the `semgrep` job included), the three `CodeQL` legs, `Documentation Governance`, `REUSE lint`, `Standards & Invariant Verification Gate` |
+| Required status checks (strict) | the nine `ci.yml` jobs (the `semgrep` job included; `windows-msvc` reports one check per compiler, so ten contexts), the three `CodeQL` legs, `Documentation Governance`, `REUSE lint`, `Standards & Invariant Verification Gate` |
 | History | signed commits, linear history, no force push, no deletion |
 | Bypass | repository admin role, pull requests only |
 

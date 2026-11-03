@@ -141,6 +141,57 @@ def test_stalled_compiler_child() -> bool:
                     pass
 
 
+def test_driver_argv() -> bool:
+    """GNU drivers keep their argv; cl.exe-style drivers get the MSVC forms."""
+    src, exe = pathlib.Path("h.c"), pathlib.Path("h.exe")
+    flags = (*harness.DEFAULT_CFLAGS, "-DX=1", "-Iinc")
+    gnu = harness.driver_argv(("cc",), flags, src, exe, ("-lm",))
+    msvc = harness.driver_argv(("C:\\VS\\bin\\cl.exe",), flags, src, exe, ("-lm",))
+    clang_cl = harness.driver_argv(("clang-cl.exe",), flags, src, exe)
+    gnu_stray = {"-nologo", "-WX"} & set(gnu)
+    msvc_stray = {"-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", "-lm", "-o"}
+    checks = (
+        ("gnu argv unchanged", gnu == ["cc", *flags, "h.c", "-o", "h.exe", "-lm"] and not gnu_stray),
+        ("msvc argv mapped", {"-nologo", "/std:c11", "-W4", "-WX", "-wd4505", "-DX=1", "-Iinc",
+                              "-Feh.exe", "-Foh.obj"} <= set(msvc)),
+        ("msvc argv has no GNU flag", not msvc_stray & set(msvc)),
+        ("clang-cl by path", harness.is_msvc_driver(("/usr/bin/clang-cl",))),
+        ("clang-cl keeps -Wno-", "-Wno-unused-function" in clang_cl and "-wd4505" not in clang_cl),
+        ("cl takes -wd4100", harness.msvc_flag("-Wno-unused-parameter") == ("-wd4100",)),
+        ("clang is GNU", not harness.is_msvc_driver(("clang",))),
+        ("one msvc warning level", [f for f in msvc if f in ("-W3", "-W4")] == ["-W4"]),
+        ("--cc keeps option tokens",
+         harness.make_parser("t").parse_args(["--cc", "cc", "-pipe"]).cc == ["cc", "-pipe"]),
+    )
+    ok = True
+    for name, passed in checks:
+        if not passed:
+            print(f"FAIL {name}")
+            ok = False
+    try:
+        harness.msvc_flag("-fsanitize=address")
+        print("FAIL unmapped flag accepted")
+        ok = False
+    except ValueError:
+        # Expected: a flag without an MSVC form is refused, never passed through.
+        pass
+    try:
+        harness.driver_argv((), flags, src, exe)
+        print("FAIL empty compiler command accepted")
+        ok = False
+    except ValueError:
+        # Expected: "--cc" with no tokens is refused before anything runs.
+        pass
+    try:
+        harness._MSVC_WARNINGS["-Wall"] = ()  # type: ignore[index]
+        print("FAIL warning map is mutable")
+        ok = False
+    except TypeError:
+        # Expected: the flag maps are read-only views.
+        pass
+    return ok
+
+
 def main() -> int:
     parser = harness.make_parser(DESCRIPTION)
     args = parser.parse_args()
@@ -159,9 +210,11 @@ def main() -> int:
             failures += 1
     if not test_stalled_compiler_child():
         failures += 1
+    if not test_driver_argv():
+        failures += 1
     if failures:
         return 1
-    print(f"patch-harness: {len(cases) + 1} cases ok")
+    print(f"patch-harness: {len(cases) + 2} cases ok")
     return 0
 
 

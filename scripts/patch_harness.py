@@ -17,6 +17,7 @@ import signal
 import subprocess  # nosec B404 - compiler and harness argv, no shell, explicit deadline
 import sys
 import tempfile
+from types import MappingProxyType
 from typing import Sequence
 
 DEFAULT_CFLAGS = ("-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function")
@@ -24,6 +25,32 @@ DEFAULT_CFLAGS = ("-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-functi
 # harness is a few hundred lines and runs in milliseconds; a stall is a failure.
 BUILD_TIMEOUT_S = 120.0
 RUN_TIMEOUT_S = 30.0
+
+# cl.exe-style drivers take MSVC options. The GNU warning set maps the way
+# FFmpeg's configure maps it (msvc_flags: -Wall, -Wextra, -Werror), and the
+# CRT defines are the ones its msvcrt branch adds, so a harness of FFmpeg code
+# sees the warnings an FFmpeg build under that driver would see.
+MSVC_DRIVERS = frozenset({"cl", "clang-cl", "icx-cl"})
+MSVC_DEFINES = ("-D_USE_MATH_DEFINES", "-D_CRT_SECURE_NO_WARNINGS", "-D_CRT_NONSTDC_NO_WARNINGS")
+_MSVC_WARNINGS = MappingProxyType({
+    "-Wall": ("-W3", "-wd4018", "-wd4146", "-wd4244", "-wd4305", "-wd4554", "-wd4267"),
+    "-Wextra": (
+        "-W4", "-wd4244", "-wd4127", "-wd4018", "-wd4389", "-wd4146", "-wd4057",
+        "-wd4204", "-wd4706", "-wd4305", "-wd4152", "-wd4324", "-we4013", "-wd4100",
+        "-wd4214", "-wd4307", "-wd4273", "-wd4554", "-wd4701", "-wd4703",
+    ),
+    "-Werror": ("-WX",),
+})
+# -Wall maps to -W3 and -Wextra to -W4; cl.exe warns D9025 when a later level
+# overrides an earlier one, so driver_argv keeps one level, the highest.
+_MSVC_LEVELS = frozenset({"-W1", "-W2", "-W3", "-W4"})
+# A GNU -Wno-<name> stays as it is for the clang-based drivers (clang-cl,
+# icx-cl), which read it natively; cl.exe takes the matching warning number.
+# clang-cl does not map -wd4505 onto -Wno-unused-function.
+_CL_WARNING_OFF = MappingProxyType({
+    "-Wno-unused-function": "-wd4505",
+    "-Wno-unused-parameter": "-wd4100",
+})
 
 
 # C failure counter + expect() every harness MAIN starts with.
@@ -142,7 +169,9 @@ def make_parser(
         )
     parser.add_argument(
         "--cc",
-        nargs="+",
+        # REMAINDER, not "+": a Meson compiler command can carry option
+        # tokens (["cc", "-pipe"]) that "+" would read as unknown options.
+        nargs=argparse.REMAINDER,
         default=[os.environ.get("CC", "cc")],
         help="C compiler command (must be the last option)",
     )
@@ -203,6 +232,61 @@ def _run_with_deadline(
         return None
 
 
+def is_msvc_driver(cc: Sequence[str]) -> bool:
+    """True when the compiler command is a cl.exe-style driver."""
+    return bool(cc) and pathlib.PureWindowsPath(cc[0]).stem.lower() in MSVC_DRIVERS
+
+
+def msvc_flag(flag: str, clang_based: bool = False) -> tuple[str, ...]:
+    """Map one GNU-style harness flag to its MSVC form; refuse any other flag."""
+    if flag in _MSVC_WARNINGS:
+        return _MSVC_WARNINGS[flag]
+    if flag in _CL_WARNING_OFF:
+        return (flag,) if clang_based else (_CL_WARNING_OFF[flag],)
+    if flag.startswith("-std=c"):
+        return ("/std:" + flag[len("-std="):],)
+    if flag.startswith(("-I", "-D")):
+        return (flag,)
+    if flag == "-lm":
+        return ()  # the UCRT holds the math library
+    raise ValueError(f"no MSVC form for harness flag {flag!r}")
+
+
+def _one_warning_level(mapped: list[str]) -> list[str]:
+    """Keep one MSVC warning level, the highest, at the first level's place."""
+    levels = [flag for flag in mapped if flag in _MSVC_LEVELS]
+    if len(levels) < 2:
+        return mapped
+    top = max(levels)
+    out: list[str] = []
+    for flag in mapped:
+        if flag not in _MSVC_LEVELS:
+            out.append(flag)
+        elif top not in out:
+            out.append(top)
+    return out
+
+
+def driver_argv(
+    cc: Sequence[str],
+    flags: Sequence[str],
+    c_file: pathlib.Path,
+    exe: pathlib.Path,
+    libs: Sequence[str] = (),
+) -> list[str]:
+    """Compile-and-link argv for ``cc``, in GNU or MSVC driver syntax."""
+    if not cc:
+        raise ValueError("empty C compiler command")
+    if not is_msvc_driver(cc):
+        return [*cc, *flags, str(c_file), "-o", str(exe), *libs]
+    clang_based = pathlib.PureWindowsPath(cc[0]).stem.lower() != "cl"
+    mapped = _one_warning_level(
+        [out for flag in (*flags, *libs) for out in msvc_flag(flag, clang_based)]
+    )
+    obj = exe.with_suffix(".obj")
+    return [*cc, "-nologo", *MSVC_DEFINES, *mapped, str(c_file), f"-Fo{obj}", f"-Fe{exe}"]
+
+
 def build_and_run(
     source: str,
     cc: Sequence[str],
@@ -224,10 +308,11 @@ def build_and_run(
         c_file = tmp_path / "harness.c"
         exe = tmp_path / ("harness.exe" if os.name == "nt" else "harness")
         c_file.write_text(source, encoding="utf-8")
-        build = _run_with_deadline(
-            [*cc, *DEFAULT_CFLAGS, *cflags, str(c_file), "-o", str(exe), *libs],
-            build_timeout,
-        )
+        try:
+            argv = driver_argv(cc, (*DEFAULT_CFLAGS, *cflags), c_file, exe, libs)
+        except ValueError as err:
+            return 2, f"harness failed to compile: {err}\n"
+        build = _run_with_deadline(argv, build_timeout)
         if build is None:
             return 2, f"harness build exceeded {build_timeout:g} s\n"
         if build.returncode != 0:

@@ -43,6 +43,7 @@
 #include <fcntl.h>
 #include <io.h>
 #include <process.h>
+#include <share.h>
 #include <sys/stat.h>
 #include <wchar.h>
 #include <windows.h>
@@ -104,10 +105,20 @@ static int remove_file(const pchar *p)
 }
 /* Exclusive create, never reusing a file. Through _wopen + _O_EXCL rather than
  * the C11 "wx" fopen mode, which the legacy msvcrt.dll runtime (non-UCRT
- * mingw-w64 toolchains) rejects with EINVAL. */
+ * mingw-w64 toolchains) rejects with EINVAL. cl.exe and clang-cl declare
+ * _wopen deprecated, so they take _wsopen_s with the same flags. */
 static FILE *create_file(const pchar *p)
 {
-    const int fd = _wopen(p, _O_WRONLY | _O_CREAT | _O_EXCL | _O_TEXT, _S_IREAD | _S_IWRITE);
+    const int flags = _O_WRONLY | _O_CREAT | _O_EXCL | _O_TEXT;
+#ifdef _MSC_VER
+    int fd = -1;
+
+    if (_wsopen_s(&fd, p, flags, _SH_DENYNO, _S_IREAD | _S_IWRITE) != 0) {
+        fd = -1;
+    }
+#else
+    const int fd = _wopen(p, flags, _S_IREAD | _S_IWRITE);
+#endif
     FILE *fp;
 
     if (fd < 0) {
@@ -303,7 +314,7 @@ static int build_paths(fixture_paths *fx, const char *base_u8, const pchar *base
 static void report_narrow_open(const char *path_u8)
 {
 #ifdef _WIN32
-    FILE *narrow = fopen(path_u8, "r");
+    FILE *narrow = _fsopen(path_u8, "r", _SH_DENYNO);
 
     (void)printf("info: narrow fopen of the UTF-8 name under ANSI code page %u: %s\n", GetACP(),
                  narrow != NULL ? "opened" : "failed (the defect ADR-0149 fixes)");

@@ -609,6 +609,21 @@ static void test_x265_case_sensitive_bool(void)
     CHECK(strcmp(opts->params[0].key, "annexb") == 0);
     CHECK(strcmp(opts->params[0].values[0], "true") == 0);
 
+    /* Boundaries of the ASCII fold: all caps matches, a prefix or an
+     * extension of a word does not. */
+    CHECK(pel_encode_options_parse(PEL_ENCODE_OPTIONS_X264, "annexb=NO", 9, opts) == PEL_OK);
+    CHECK(opts->nb_params == 1 && opts->nb_unknown_params == 0);
+    CHECK(strcmp(opts->params[0].values[0], "false") == 0);
+    CHECK(pel_encode_options_parse(PEL_ENCODE_OPTIONS_X264, "annexb=Ye", 9, opts) == PEL_OK);
+    CHECK(opts->nb_params == 0 && opts->nb_unknown_params == 1);
+    CHECK(pel_encode_options_parse(PEL_ENCODE_OPTIONS_X264, "annexb=yess", 11, opts) == PEL_OK);
+    CHECK(opts->nb_params == 0 && opts->nb_unknown_params == 1);
+    /* A non-ASCII byte never matches: "n" + U+0130 (UTF-8 C4 B0) is not
+     * a boolean spelling, whatever the locale. */
+    CHECK(pel_encode_options_parse(PEL_ENCODE_OPTIONS_X264, "annexb=n\xC4\xB0", 10, opts) ==
+          PEL_OK);
+    CHECK(opts->nb_params == 0 && opts->nb_unknown_params == 1);
+
     free(opts);
 }
 

@@ -64,7 +64,13 @@ WINDOWS_RUNNER = "windows-2025"
 # Issue #170, ADR-0203: native arm64 CI lane on ubuntu-26.04-arm.
 ARM64_JOB = "arm64"
 ARM64_RUNNER = "ubuntu-26.04-arm"
-CI_JOB_RUNNERS = {WINDOWS_JOB: WINDOWS_RUNNER, ARM64_JOB: ARM64_RUNNER}
+# Issue #455, ADR-0242: the MSVC-ABI compiler leg (cl.exe and clang-cl).
+WINDOWS_MSVC_JOB = "windows-msvc"
+CI_JOB_RUNNERS = {
+    WINDOWS_JOB: WINDOWS_RUNNER,
+    WINDOWS_MSVC_JOB: WINDOWS_RUNNER,
+    ARM64_JOB: ARM64_RUNNER,
+}
 SETUP_MSYS2_PIN = re.compile(
     r"^[ ]+(?:- )?uses: msys2/setup-msys2@[0-9a-f]{40} # v\d+\.\d+\.\d+$", re.MULTILINE
 )
@@ -78,6 +84,18 @@ WINDOWS_COMMANDS = (
     "meson setup --werror build && ninja -C build",
     "meson test -C build --suite=fast --print-errorlogs",
     "meson test -C build path-utf8 --verbose",
+)
+WINDOWS_MSVC_TOKENS = (
+    "include:\n          - cc: cl\n          - cc: clang-cl\n",
+    "CC: ${{ matrix.cc }}",
+    "python -m pip install --require-hashes -r .config/msvc-ci/requirements.txt",
+    "meson setup --vsenv --werror build",
+    'grep -E "^C compiler for the host machine: ${CC} \\\\(" build/meson-logs/meson-log.txt',
+    "meson compile -C build",
+    "meson test -C build --suite=fast --print-errorlogs",
+    "--require pelorus:path-utf8",
+    "ImageOS",
+    "ImageVersion",
 )
 PIN_PROJECTIONS = (
     ROOT / "README.md",
@@ -2511,6 +2529,25 @@ def validate_windows_job(relative: str, block: str | None) -> list[str]:
     return errors
 
 
+def validate_windows_msvc_job(relative: str, block: str | None) -> list[str]:
+    """ADR-0242: cl.exe and clang-cl build libpelorus under --werror and run the suite."""
+    if block is None:
+        return [f"{relative}: missing MSVC Windows job {WINDOWS_MSVC_JOB}"]
+    prefix = f"{relative}: MSVC Windows job"
+    errors: list[str] = []
+    autocrlf = block.find("git config --global core.autocrlf false")
+    checkout = block.find("uses: actions/checkout@")
+    if autocrlf < 0 or autocrlf > checkout:
+        errors.append(f"{prefix} must disable core.autocrlf before checkout")
+    for action in USES_LINE.findall(block):
+        if not re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", action):
+            errors.append(f"{prefix} must pin {action} by full commit digest")
+    for token in WINDOWS_MSVC_TOKENS:
+        if token not in block:
+            errors.append(f"{prefix} is missing {token}")
+    return errors
+
+
 def validate_lavapipe_job(relative: str, block: str | None) -> list[str]:
     """Validate the lavapipe lane: draft stop first, bounded, pinned, guarded."""
     if block is None:
@@ -3001,6 +3038,7 @@ def _validate_workflow_specialized_jobs(
                 f"'{ACTIONLINT_GO_VERSION}' (found {go_versions})"
             )
         errors.extend(validate_windows_job(relative, jobs.get(WINDOWS_JOB)))
+        errors.extend(validate_windows_msvc_job(relative, jobs.get(WINDOWS_MSVC_JOB)))
         errors.extend(validate_lavapipe_job(relative, jobs.get(LAVAPIPE_JOB)))
     elif rel_name == "release.yml":
         if "workflow_dispatch:" not in text:
@@ -3100,6 +3138,50 @@ def windows_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
         "Windows build without warnings as errors": (
             mutate("meson setup --werror build", "meson setup build"),
             f"is missing {WINDOWS_COMMANDS[0]}",
+        ),
+    }
+
+
+def windows_msvc_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Mutations of the ADR-0242 MSVC Windows job that the validator must reject."""
+    msvc = workflow_job_blocks(source).get(WINDOWS_MSVC_JOB, "")
+
+    def mutate(old: str, new: str) -> str:
+        return replace_in_job(source, WINDOWS_MSVC_JOB, old, new)
+
+    unpinned = re.sub(r"setup-python@[0-9a-f]{40}", "setup-python@v7", msvc, count=1)
+    return {
+        "missing MSVC Windows job": (
+            source.replace(msvc, "", 1) if msvc else source,
+            f"missing MSVC Windows job {WINDOWS_MSVC_JOB}",
+        ),
+        "MSVC job on another image": (
+            mutate(WINDOWS_RUNNER, "windows-2022"),
+            f"job {WINDOWS_MSVC_JOB} must run exactly on {WINDOWS_RUNNER}",
+        ),
+        "clang-cl dropped from the matrix": (
+            mutate("          - cc: clang-cl\n", ""),
+            "is missing include:",
+        ),
+        "MSVC build without warnings as errors": (
+            mutate("meson setup --vsenv --werror build", "meson setup --vsenv build"),
+            "is missing meson setup --vsenv --werror build",
+        ),
+        "MSVC compiler not asserted": (
+            mutate("C compiler for the host machine: ${CC}", "C compiler for the host machine"),
+            "is missing grep -E",
+        ),
+        "MSVC fast suite dropped": (
+            mutate("--suite=fast", "--suite=slow"),
+            "is missing meson test -C build --suite=fast --print-errorlogs",
+        ),
+        "MSVC tools without hashes": (
+            mutate("--require-hashes ", ""),
+            "is missing python -m pip install --require-hashes",
+        ),
+        "MSVC setup-python by tag": (
+            source.replace(msvc, unpinned, 1) if msvc else source,
+            "must pin actions/setup-python@v7 by full commit digest",
         ),
     }
 
@@ -4807,13 +4889,11 @@ def _load_step_cases(source: str) -> dict[str, tuple[str, str]]:
     }
 
 
-def workflow_validator_regressions() -> list[str]:
-    """Prove runner and native-toolchain regressions are rejected."""
-    failures: list[str] = []
-    ci_path = WORKFLOWS[0]
-    source = ci_path.read_text(encoding="utf-8")
-    cases = {
+def _ci_toolchain_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Mutations of the ci.yml jobs, runners and toolchain pins."""
+    return {
         **windows_workflow_cases(source),
+        **windows_msvc_workflow_cases(source),
         **lavapipe_workflow_cases(source),
         **lavapipe_step_cases(source),
         **series_workflow_cases(source),
@@ -4854,6 +4934,14 @@ def workflow_validator_regressions() -> list[str]:
             f"docs job is missing {ACTIONLINT_GO_STEP}",
         ),
     }
+
+
+def workflow_validator_regressions() -> list[str]:
+    """Prove runner and native-toolchain regressions are rejected."""
+    failures: list[str] = []
+    ci_path = WORKFLOWS[0]
+    source = ci_path.read_text(encoding="utf-8")
+    cases = _ci_toolchain_cases(source)
     cases |= _docs_pin_shape_cases(source) | _load_step_cases(source)
     relative = ci_path.relative_to(ROOT).as_posix()
     failures.extend(windows_pin_bump_regression(source, relative))
