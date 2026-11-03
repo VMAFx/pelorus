@@ -1,0 +1,1 @@
+- `scripts/check-cochange.py` fails a change that touches the tester stages, fixtures or report schema without the documents that belong to them (`docs/usage/tester.md`, `docs/development/tester.md`). `make docs-check` and the CI docs job run it; a commit trailer `Co-change-exempt: <rule_id> <reason>` exempts a change with no user-visible effect.
