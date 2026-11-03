@@ -86,7 +86,6 @@ static int expected_class(const char *word)
     return -1;
 }
 
-/* Classify one vector line; 0 pass, 1 fail (a malformed line fails). */
 /* Copy the next whitespace-separated field of *cursor into dst and advance
  * *cursor past it. Returns 0, or -1 when no field is left or it does not fit
  * in cap bytes with its terminator (no truncation, unlike %Ns). */
@@ -120,6 +119,7 @@ static int next_field(const char **cursor, char *dst, size_t cap)
     return 0;
 }
 
+/* Classify one vector line; returns 0 on pass, 1 on failure. */
 static int replay_line(const char *line, int *seen)
 {
     char name[96];

@@ -59,7 +59,8 @@ jobs:
           python3 -I scripts/check-test-skips.py --require pelorus:sei-fit \
             --require pelorus:sei-fit-planted-reserve --require pelorus:sei-fit-planted-payload \
             --require pelorus:sei-fit-planted-epb --require pelorus:sei-fit-planted-truncated \
-            --require pelorus:sei-fit-planted-charge build/meson-logs/testlog.json
+            --require pelorus:sei-fit-planted-charge --require pelorus:sei-fit-planted-wrap \
+            build/meson-logs/testlog.json
       - name: clang-format (touched-tree clean)
         run: find libpelorus \( -name '*.c' -o -name '*.h' \) -exec clang-format --dry-run --Werror {} +
       - name: clang-tidy
@@ -488,7 +489,8 @@ jobs:
           python3 -I scripts/check-test-skips.py --require pelorus:sei-fit \
             --require pelorus:sei-fit-planted-reserve --require pelorus:sei-fit-planted-payload \
             --require pelorus:sei-fit-planted-epb --require pelorus:sei-fit-planted-truncated \
-            --require pelorus:sei-fit-planted-charge build-san/meson-logs/testlog.json
+            --require pelorus:sei-fit-planted-charge --require pelorus:sei-fit-planted-wrap \
+            build-san/meson-logs/testlog.json
 
   windows:
     # ADR-0149: the native Windows leg. It exists for the Windows-only halves of
@@ -543,7 +545,8 @@ jobs:
             python3 -I scripts/check-test-skips.py --require pelorus:sei-fit \
               --require pelorus:sei-fit-planted-reserve --require pelorus:sei-fit-planted-payload \
               --require pelorus:sei-fit-planted-epb --require pelorus:sei-fit-planted-truncated \
-              --require pelorus:sei-fit-planted-charge build/meson-logs/testlog.json
+              --require pelorus:sei-fit-planted-charge --require pelorus:sei-fit-planted-wrap \
+              build/meson-logs/testlog.json
       - name: UTF-8 path contract transcript
         run: meson test -C build path-utf8 --verbose
 
@@ -607,7 +610,8 @@ jobs:
           python -I scripts/check-test-skips.py --require pelorus:sei-fit \
             --require pelorus:sei-fit-planted-reserve --require pelorus:sei-fit-planted-payload \
             --require pelorus:sei-fit-planted-epb --require pelorus:sei-fit-planted-truncated \
-            --require pelorus:sei-fit-planted-charge --require pelorus:path-utf8 \
+            --require pelorus:sei-fit-planted-charge --require pelorus:sei-fit-planted-wrap \
+            --require pelorus:path-utf8 \
             build/meson-logs/testlog.json
 
   docs:

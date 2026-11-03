@@ -143,6 +143,7 @@ int main(void)
 
 
 def main() -> int:
+    """Build and run Vulkan sample scale test; returns process exit code."""
     args = harness.make_parser(__doc__.splitlines()[0]).parse_args()
     if not (HEADER_DIR / "pelorus_vulkan_sample.h").is_file():
         print("pelorus_vulkan_sample.h is missing", file=sys.stderr)
