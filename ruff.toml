@@ -34,6 +34,6 @@ select = [
     "PGH004",
 ]
 # S101 (assert), S603 and S607 (subprocess argv, partial executable path) stay
-# with Bandit, which Codacy runs with the reviewed `# nosec` markers of
-# ADR-0241; Ruff does not read `# nosec`, so enabling them here would duplicate
+# with Bandit, which Codacy runs with the reviewed Bandit markers of ADR-0241;
+# Ruff does not read Bandit markers, so enabling them here would duplicate
 # every reviewed suppression as a second marker.

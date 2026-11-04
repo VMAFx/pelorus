@@ -1,0 +1,295 @@
+#!/usr/bin/env bash
+#
+# check-python-lint.sh — lint Python code with pinned Ruff and audit GitHub
+# Actions workflows with pinned zizmor (ADR-0243).
+#
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
+#
+# Usage:
+#   scripts/check-python-lint.sh --install DIR
+#       Create a virtualenv at DIR (which must not exist) and install the
+#       tools pinned in .config/python-lint/requirements.txt with hash
+#       checking. Prints DIR/bin on stdout.
+#   scripts/check-python-lint.sh
+#       Run Ruff on the repository and zizmor on the workflows.
+#   scripts/check-python-lint.sh --self-test
+#       Run the self-test mutation battery against planted defects and clean
+#       fixtures, verifying version refusal and rule codes.
+#
+# Env:
+#   PYTHON_LINT_BIN   Directory containing ruff and zizmor binaries
+#   RUFF              Ruff binary path (default: $PYTHON_LINT_BIN/ruff or ruff)
+#   ZIZMOR            zizmor binary path (default: $PYTHON_LINT_BIN/zizmor or zizmor)
+#   PIP_TIMEOUT       pip installation deadline in seconds (default 300)
+#   LINT_TIMEOUT      lint run deadline in seconds (default 300)
+set -euo pipefail
+# A failing command inside $(...) must fail the assignment that reads it.
+shopt -s inherit_errexit
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# The hashed lock is the one pin source: Renovate bumps it, --install reads it.
+LOCK="$ROOT/.config/python-lint/requirements.txt"
+[ -f "$LOCK" ] || { echo "check-python-lint: missing $LOCK" >&2; exit 1; }
+
+RUFF_VERSION="$(sed -n 's/^ruff==\([^ ]*\) .*$/\1/p' "$LOCK")"
+ZIZMOR_VERSION="$(sed -n 's/^zizmor==\([^ ]*\) .*$/\1/p' "$LOCK")"
+
+[ -n "$RUFF_VERSION" ] || { echo "check-python-lint: missing ruff== line in $LOCK" >&2; exit 1; }
+[ -n "$ZIZMOR_VERSION" ] || { echo "check-python-lint: missing zizmor== line in $LOCK" >&2; exit 1; }
+
+PIP_TIMEOUT="${PIP_TIMEOUT:-300}"
+LINT_TIMEOUT="${LINT_TIMEOUT:-300}"
+
+if [ -n "${PYTHON_LINT_BIN:-}" ]; then
+    RUFF="${RUFF:-$PYTHON_LINT_BIN/ruff}"
+    ZIZMOR="${ZIZMOR:-$PYTHON_LINT_BIN/zizmor}"
+else
+    RUFF="${RUFF:-ruff}"
+    ZIZMOR="${ZIZMOR:-zizmor}"
+fi
+
+fail() {
+    echo "check-python-lint: $*" >&2
+    exit 1
+}
+
+install_tools() {
+    local dir="$1"
+    [ ! -e "$dir" ] || fail "--install: '$dir' already exists"
+    python3 -m venv "$dir" || fail "--install: python3 -m venv failed for '$dir'"
+    timeout "$PIP_TIMEOUT" "$dir/bin/python" -m pip install \
+        --quiet --require-hashes --no-deps --only-binary=:all: \
+        -r "$LOCK" \
+        || fail "--install: pip install failed"
+    echo "$dir/bin"
+}
+
+check_binaries() {
+    local ruff_ver zizmor_ver
+    command -v "$RUFF" > /dev/null 2>&1 \
+        || fail "ruff binary '$RUFF' not found (run scripts/check-python-lint.sh --install DIR)"
+    command -v "$ZIZMOR" > /dev/null 2>&1 \
+        || fail "zizmor binary '$ZIZMOR' not found (run scripts/check-python-lint.sh --install DIR)"
+    ruff_ver="$(timeout "$LINT_TIMEOUT" "$RUFF" --version 2>&1)" || fail "failed to get ruff version"
+    [ "$ruff_ver" = "ruff $RUFF_VERSION" ] \
+        || fail "ruff '$ruff_ver' found, expected 'ruff $RUFF_VERSION'"
+    zizmor_ver="$(timeout "$LINT_TIMEOUT" "$ZIZMOR" --version 2>&1)" || fail "failed to get zizmor version"
+    [ "$zizmor_ver" = "zizmor $ZIZMOR_VERSION" ] \
+        || fail "zizmor '$zizmor_ver' found, expected 'zizmor $ZIZMOR_VERSION'"
+}
+
+# zizmor 1.32.0 exits 2 when a token variable is set but empty ("GitHub token
+# cannot be empty"), even with --offline; drop the empty ones only.
+drop_empty_tokens() {
+    [ -n "${GH_TOKEN:-}" ] || unset GH_TOKEN
+    [ -n "${GITHUB_TOKEN:-}" ] || unset GITHUB_TOKEN
+    [ -n "${ZIZMOR_GITHUB_TOKEN:-}" ] || unset ZIZMOR_GITHUB_TOKEN
+}
+
+run_lint() {
+    check_binaries
+    local ruff_rc=0 zizmor_rc=0
+
+    drop_empty_tokens
+    timeout "$LINT_TIMEOUT" "$RUFF" check --no-cache --output-format concise --config "$ROOT/ruff.toml" "$ROOT" || ruff_rc=$?
+    timeout "$LINT_TIMEOUT" "$ZIZMOR" --offline --no-progress --format plain "$ROOT" || zizmor_rc=$?
+
+    if [ "$ruff_rc" -ne 0 ] || [ "$zizmor_rc" -ne 0 ]; then
+        if [ "$ruff_rc" -ne 0 ] && [ "$zizmor_rc" -ne 0 ]; then
+            fail "both ruff (exit $ruff_rc) and zizmor (exit $zizmor_rc) failed"
+        elif [ "$ruff_rc" -ne 0 ]; then
+            fail "ruff failed (exit $ruff_rc)"
+        else
+            fail "zizmor failed (exit $zizmor_rc)"
+        fi
+    fi
+}
+
+check_planted_ruff() {
+    local name="$1" code="$2" file="$3" tmp="$4"
+    local log="$tmp/ruff_${code}.log" rc=0
+    timeout "$LINT_TIMEOUT" "$RUFF" check --no-cache --output-format concise --config "$tmp/ruff.toml" "$file" > "$log" 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ] && grep -q -- "$code" "$log"; then
+        echo "PASS $name"
+        return 0
+    fi
+    echo "FAIL $name" >&2
+    return 1
+}
+
+self_test_ruff() {
+    local tmp="$1" failed=0
+
+    cat << 'EOF' > "$tmp/case_s110.py"
+def test():
+    try:
+        f()
+    except Exception:
+        pass
+EOF
+    check_planted_ruff "ruff S110" "S110" "$tmp/case_s110.py" "$tmp" || failed=1
+
+    cat << 'EOF' > "$tmp/case_sim103.py"
+def test(x):
+    if x:
+        return True
+    return False
+EOF
+    check_planted_ruff "ruff SIM103" "SIM103" "$tmp/case_sim103.py" "$tmp" || failed=1
+
+    cat << 'EOF' > "$tmp/case_e721.py"
+def test(a, b):
+    return type(a) == type(b)
+EOF
+    check_planted_ruff "ruff E721" "E721" "$tmp/case_e721.py" "$tmp" || failed=1
+
+    cat << 'EOF' > "$tmp/case_pgh004.py"
+x = 1  # noqa
+EOF
+    check_planted_ruff "ruff PGH004" "PGH004" "$tmp/case_pgh004.py" "$tmp" || failed=1
+
+    cat << 'EOF' > "$tmp/clean.py"
+def test_s110():
+    try:
+        pass
+    except OSError as exc:
+        print(exc)
+
+
+def test_sim103(x):
+    return bool(x)
+
+
+def test_e721(a, b):
+    return isinstance(a, type(b))
+
+
+x = 1  # noqa: E501
+EOF
+    local clean_log="$tmp/ruff_clean.log" clean_rc=0
+    timeout "$LINT_TIMEOUT" "$RUFF" check --no-cache --output-format concise --config "$tmp/ruff.toml" "$tmp/clean.py" > "$clean_log" 2>&1 || clean_rc=$?
+    if [ "$clean_rc" -eq 0 ]; then
+        echo "PASS ruff clean"
+    else
+        echo "FAIL ruff clean" >&2
+        failed=1
+    fi
+
+    return "$failed"
+}
+
+self_test_zizmor() {
+    local tmp="$1" failed=0
+    local wf_dir="$tmp/.github/workflows"
+    mkdir -p "$wf_dir"
+
+    drop_empty_tokens
+
+    cat << 'EOF' > "$wf_dir/bad.yml"
+name: Bad
+on: issues
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ github.event.issue.title }}"
+EOF
+    local bad_log="$tmp/zizmor_bad.log" bad_rc=0
+    timeout "$LINT_TIMEOUT" "$ZIZMOR" --offline --no-progress --format plain "$tmp" > "$bad_log" 2>&1 || bad_rc=$?
+    if [ "$bad_rc" -ne 0 ] && grep -q -- "template-injection" "$bad_log"; then
+        echo "PASS zizmor template-injection"
+    else
+        echo "FAIL zizmor template-injection" >&2
+        failed=1
+    fi
+
+    rm -f "$wf_dir/bad.yml"
+    cat << 'EOF' > "$wf_dir/clean.yml"
+name: Clean
+on: push
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "hello"
+EOF
+    local clean_log="$tmp/zizmor_clean.log" clean_rc=0
+    timeout "$LINT_TIMEOUT" "$ZIZMOR" --offline --no-progress --format plain "$tmp" > "$clean_log" 2>&1 || clean_rc=$?
+    if [ "$clean_rc" -eq 0 ]; then
+        echo "PASS zizmor clean"
+    else
+        echo "FAIL zizmor clean" >&2
+        failed=1
+    fi
+
+    return "$failed"
+}
+
+self_test_version() {
+    local tmp="$1" failed=0
+    local stub="$tmp/stub-ruff"
+    printf '#!/bin/sh\necho "ruff 0.0.1"\n' > "$stub"
+    chmod +x "$stub"
+
+    local stub_log="$tmp/stub.log"
+    if ( RUFF="$stub" check_binaries ) > "$stub_log" 2>&1; then
+        echo "FAIL version refusal" >&2
+        failed=1
+    else
+        if grep -q -- "expected 'ruff $RUFF_VERSION'" "$stub_log"; then
+            echo "PASS version refusal"
+        else
+            echo "FAIL version refusal" >&2
+            failed=1
+        fi
+    fi
+
+    return "$failed"
+}
+
+# Global, not local: the EXIT trap runs after self_test has returned.
+SELF_TEST_DIR=""
+
+self_test() {
+    check_binaries
+    local tmp failed=0
+    SELF_TEST_DIR="$(mktemp -d)"
+    trap 'rm -rf "$SELF_TEST_DIR"' EXIT
+    tmp="$SELF_TEST_DIR"
+
+    cp "$ROOT/ruff.toml" "$tmp/ruff.toml"
+
+    self_test_ruff "$tmp" || failed=1
+    self_test_zizmor "$tmp" || failed=1
+    self_test_version "$tmp" || failed=1
+
+    [ "$failed" -eq 0 ] || exit 1
+}
+
+case "${1:-}" in
+    --install)
+        if [ $# -ne 2 ]; then
+            echo "usage: $0 --install DIR" >&2
+            exit 2
+        fi
+        install_tools "$2"
+        ;;
+    --self-test)
+        if [ $# -ne 1 ]; then
+            echo "usage: $0 --self-test" >&2
+            exit 2
+        fi
+        self_test
+        ;;
+    "")
+        run_lint
+        ;;
+    *)
+        echo "usage: $0 [--install DIR | --self-test]" >&2
+        exit 2
+        ;;
+esac

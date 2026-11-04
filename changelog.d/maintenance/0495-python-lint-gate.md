@@ -1,0 +1,1 @@
+- `make verify-native` and the CI `docs` job run Ruff 0.17.3 and zizmor 1.32.0, pinned by hash in `.config/python-lint/requirements.txt`, through `scripts/check-python-lint.sh`; the Ruff rule set mirrors Codacy's, so a Python or workflow finding fails before push (ADR-0243).

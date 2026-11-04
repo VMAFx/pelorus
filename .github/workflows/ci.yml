@@ -632,6 +632,14 @@ jobs:
         run: |
           scripts/check-gitleaks.sh --self-test
           scripts/check-gitleaks.sh
+      - name: Install the pinned Python lint tools
+        run: |
+          bin=$(scripts/check-python-lint.sh --install "$RUNNER_TEMP/python-lint")
+          printf 'PYTHON_LINT_BIN=%s\n' "$bin" >> "$GITHUB_ENV"
+      - name: Python lint and workflow audit (Ruff, zizmor)
+        run: |
+          scripts/check-python-lint.sh --self-test
+          scripts/check-python-lint.sh
       - name: Load build configuration
         run: |
           grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
