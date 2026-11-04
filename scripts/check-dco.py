@@ -84,12 +84,12 @@ def run_git(
         return GitResult(127, "", "git executable not found")
     argv = [git, "-C", str(repo_root), *args]
     try:
-        proc = subprocess.run(  # nosec B603 - argv is the resolved git binary plus checked revisions, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - argv is the absolute git path plus constants and allow-listed revisions, no shell, explicit deadline
+        proc = subprocess.run(  # nosec B603 - argv is the resolved git binary plus checked revisions, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is the absolute git path plus constants and allow-listed revisions, no shell, explicit deadline
             argv,
             capture_output=True,
             timeout=GIT_TIMEOUT,
             check=False,
-            env=env,
+            env=env,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - env is None in CI or the self-test's isolated copy of os.environ; it only selects the git found on PATH, run by absolute path without a shell
         )
     except subprocess.TimeoutExpired:
         return GitResult(124, "", "git command timed out")
