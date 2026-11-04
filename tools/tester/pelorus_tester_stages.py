@@ -106,6 +106,7 @@ CONTROL_CHAIN = "pelorus_analyze_vulkan=roi=0"
 # free driver failed on an A380 under xe without HuC (research 0229).
 MEDIA_DRIVER_FREE = "intel-media-va-driver"
 MEDIA_DRIVER_NONFREE = "intel-media-va-driver-non-free"
+INTEL_LIBVA_DRIVER = "iHD"
 # kind: vulkan = frames stay in VRAM to the encoder; hw = hwdownload to a
 # hardware encoder; sw = hwdownload to a software encoder.
 ENCODERS = (
@@ -1013,6 +1014,11 @@ def chain_for(enc, steered=True):
     return "%s,hwdownload,format=%s" % (head, enc["pix"])
 
 
+def encoder_env(enc):
+    """Environment overrides needed by `enc` (QSV requires Intel iHD under libva)."""
+    return {"LIBVA_DRIVER_NAME": INTEL_LIBVA_DRIVER} if enc["name"].endswith("_qsv") else {}
+
+
 def encode(ctx, enc, dev, entry, src, frames, steered, out):
     """One encode; returns (ok, error line, log text)."""
     argv = ["-hide_banner", "-loglevel", "verbose" if steered else "error", "-y",
@@ -1021,7 +1027,7 @@ def encode(ctx, enc, dev, entry, src, frames, steered, out):
     argv += ["-c:v", enc["name"]] + enc["args"]
     argv += ["-pelorus_roi", "1"] if steered else []
     argv += MUX_ARGS + [str(out)]
-    code, text, err = ffrun(ctx, argv)
+    code, text, err = ffrun(ctx, argv, env=encoder_env(enc))
     ok = code == 0 and Path(out).is_file() and Path(out).stat().st_size > 0
     return ok, err or first_line(text), text
 
@@ -1275,7 +1281,7 @@ def brc_encode(ctx, enc, dev, entry, src, out, rate_args):
             "-filter_hw_device", "vk", "-stream_loop", str(BRC_LOOPS)] + input_args(entry, src)
     argv += ["-frames:v", str(frames), "-vf", BRC_CHAIN, "-c:v", enc["name"]] + rate_args
     argv += ["-f", CODECS[enc["codec"]], str(out)]
-    code, text, err = ffrun(ctx, argv)
+    code, text, err = ffrun(ctx, argv, env=encoder_env(enc))
     ok = code == 0 and Path(out).is_file() and Path(out).stat().st_size > 0
     return ok, err or (encoder_problem_line(text, enc["name"]) if text else "no output"), text
 
@@ -1396,7 +1402,7 @@ def carrier_encode(ctx, car, devs, entry, src, out, sidedata=True, opts=""):
         argv += input_args(entry, src) + ["-frames:v", str(SIDEDATA_FRAMES), "-vf", chain]
         argv += ["-c:v", car["name"]] + car["args"] + (["-udu_sei", "1"] if sidedata else [])
         argv += ["-f", car["codec"], str(out)]
-        code, text, err = ffrun(ctx, argv)
+        code, text, err = ffrun(ctx, argv, env=encoder_env(car))
         if code == 0 and Path(out).is_file() and Path(out).stat().st_size > 0:
             return dev, ""
         why = (encoder_error_line(text, car["name"]) if text else err)[:160] or first_line(text)[:160]
@@ -1587,14 +1593,14 @@ VENDOR_LEGS = (
     },
     {
         "name": "h264_vaapi-intel", "codec": "h264", "vendor": "0x8086", "enc": "h264_vaapi",
-        "hw_fmt": "vaapi", "device_kind": "render_node", "env": {"LIBVA_DRIVER_NAME": "iHD"},
+        "hw_fmt": "vaapi", "device_kind": "render_node", "env": {"LIBVA_DRIVER_NAME": INTEL_LIBVA_DRIVER},
         "filters": "format=nv12,hwupload,pelorus_denoise_vulkan,pelorus_mc_vulkan,"
                    "pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi,format=vaapi",
         "args": ["-rc_mode", "CQP", "-qp", "30"],
     },
     {
         "name": "h264_qsv-intel", "codec": "h264", "vendor": "0x8086", "enc": "h264_qsv",
-        "hw_fmt": "qsv", "device_kind": "render_node", "env": {"LIBVA_DRIVER_NAME": "iHD"},
+        "hw_fmt": "qsv", "device_kind": "render_node", "env": {"LIBVA_DRIVER_NAME": INTEL_LIBVA_DRIVER},
         "filters": "format=nv12,hwupload,pelorus_denoise_vulkan,pelorus_mc_vulkan,"
                    "pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi,format=vaapi,"
                    "hwmap=derive_device=qsv,format=qsv",
@@ -2089,6 +2095,49 @@ def self_test_free_driver(expect, disabled, entry):
         expect("no_dpkg_no_driver_claim", got[0] == "not_run" and "free" not in got[1])
 
 
+def self_test_qsv_libva_pin(expect, entry):
+    """QSV steering, BRC and side-data carrier encodes pin LIBVA_DRIVER_NAME=iHD over a host nvidia setting."""
+    import tempfile
+    seen = []
+
+    def run(argv, timeout_s, env=None):
+        """Stand-in FFmpeg recording argv and env, writing 64 bytes of output."""
+        seen.append((list(argv), dict(env or {})))
+        standin_output(argv, 64)
+        return 0, "", ""
+
+    with tempfile.TemporaryDirectory(prefix="pelorus-qsv-env-") as tmp:
+        work = Path(tmp)
+        ctx = stage_ctx({"PELORUS_VALIDATE": "0", "LIBVA_DRIVER_NAME": "nvidia"}, run)
+        ctx.update(work=str(work))
+        ctx["ff"] = {"bin": "ffmpeg", "filters": set(), "encoders": {"hevc_qsv", "h264_nvenc"}, "help": {}}
+        enc_qsv = next(e for e in ENCODERS if e["name"] == "hevc_qsv")
+        enc_nv = next(e for e in ENCODERS if e["name"] == "h264_nvenc")
+        fe = dict(entry, frames=2)
+
+        seen.clear()
+        encode(ctx, enc_qsv, 0, fe, "src", 8, True, work / "qsv-steer.mkv")
+        steer_qsv_driver = seen[-1][1].get("LIBVA_DRIVER_NAME") if seen else None
+
+        seen.clear()
+        encode(ctx, enc_nv, 0, fe, "src", 8, True, work / "nv-steer.mkv")
+        steer_nv_driver = seen[-1][1].get("LIBVA_DRIVER_NAME") if seen else None
+
+        seen.clear()
+        brc_encode(ctx, enc_qsv, 0, fe, "src", work / "qsv-brc.mkv", ["-b:v", "1000k"])
+        brc_qsv_driver = seen[-1][1].get("LIBVA_DRIVER_NAME") if seen else None
+
+        seen.clear()
+        car_qsv = dict(enc_qsv, kind="hw", args=[])
+        carrier_encode(ctx, car_qsv, [0], fe, "src", work / "qsv-sei.hevc")
+        carrier_qsv_driver = seen[-1][1].get("LIBVA_DRIVER_NAME") if seen else None
+
+        expect("qsv_steer_encode_pins_ihd", steer_qsv_driver == INTEL_LIBVA_DRIVER)
+        expect("qsv_carrier_encode_pins_ihd", carrier_qsv_driver == INTEL_LIBVA_DRIVER)
+        expect("non_qsv_encode_inherits_env", steer_nv_driver == "nvidia")
+        expect("qsv_brc_encode_pins_ihd", brc_qsv_driver == INTEL_LIBVA_DRIVER)
+
+
 def self_test_legs(expect, disabled):
     """AV1 without hardware support, and an encoder without the steering option, are named not_run legs."""
     import tempfile
@@ -2109,6 +2158,7 @@ def self_test_legs(expect, disabled):
     expect("control_arm_has_no_roi", all(
         "roi=0" in chain_for(e, False) and "roi=1" in chain_for(e, True) for e in ENCODERS))
     self_test_free_driver(expect, disabled, entry)
+    self_test_qsv_libva_pin(expect, entry)
     status, _, _, legs = aggregate_legs([("hevc_nvenc", "hevc", "pass", ""),
                                          ("av1_nvenc", "av1", "not_run", "no AV1 encode")], disabled)
     expect("legs_recorded", status == "pass" and [l["status"] for l in legs] == ["pass", "not_run"])
