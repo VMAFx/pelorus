@@ -202,7 +202,7 @@ python3 -I scripts/hardware-reports/check-reports.py --self-test
 python3 -I scripts/hardware-reports/generate-index.py --self-test
 ```
 
-`scripts/check-cochange.py` checks that a pull request changes the documents that belong to the tester files it touches. Rule `tester-usage-guide`: a change to `tools/tester/pelorus_tester_stages.py`, `tools/tester/pelorus_tester_fixtures.py` or `tools/tester/fixtures.lock.json` also changes `docs/usage/tester.md`. Rule `tester-report-schema`: a change to `tools/tester/report.schema.json` also changes `tools/tester/pelorus_tester_report.py` and this page. A change with no user-visible effect, such as a refactor or a self-test case, exempts one rule with a commit trailer of the form `Co-change-exempt: <rule_id> <reason>`. `make docs-check` runs the check against `origin/master`, and the CI docs job runs it against the pull request base:
+`scripts/check-cochange.py` checks that a pull request changes the documents that belong to the tester files it touches. Rule `tester-usage-guide`: a change to `tools/tester/pelorus_tester_stages.py`, `tools/tester/pelorus_tester_fixtures.py` or `tools/tester/fixtures.lock.json` also changes `docs/usage/tester.md`. Rule `tester-report-schema`: a change to `tools/tester/report.schema.json` also changes `tools/tester/pelorus_tester_report.py` and this page. A change with no user-visible effect, such as a refactor or a self-test case, exempts one rule with a commit trailer of the form `Co-change-exempt: <rule_id> <reason>`; a trailer covers only its own commit and must sit in the commit's trailer block. `make docs-check` runs the check against `origin/master`, and the CI docs job runs it against the pull request base:
 
 ```bash
 python3 -I scripts/check-cochange.py --self-test

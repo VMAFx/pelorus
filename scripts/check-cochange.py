@@ -30,6 +30,9 @@ import sys
 DESCRIPTION = "Check co-change invariants across commits and pull requests."
 
 Rule = tuple[str, tuple[str, ...], tuple[str, ...]]
+Commit = tuple[set[str], list[str]]
+SelfTestCase = tuple[str, set[str], list[Commit], int]
+TrailerParserCase = tuple[str, str, list[str]]
 
 RULES: tuple[Rule, ...] = (
     (
@@ -50,8 +53,6 @@ RULES: tuple[Rule, ...] = (
         ),
     ),
 )
-
-SelfTestCase = tuple[str, set[str], list[str], int]
 
 SELF_TEST_CASES: list[SelfTestCase] = [
     (
@@ -75,25 +76,40 @@ SELF_TEST_CASES: list[SelfTestCase] = [
     (
         "stages_changed_valid_trailer",
         {"tools/tester/pelorus_tester_stages.py"},
-        ["refactor: stages update\n\nCo-change-exempt: tester-usage-guide refactor only"],
+        [
+            (
+                {"tools/tester/pelorus_tester_stages.py"},
+                ["tester-usage-guide refactor only"],
+            )
+        ],
         0,
     ),
     (
         "trailer_with_empty_reason",
         {"tools/tester/pelorus_tester_stages.py"},
-        ["refactor: stages update\n\nCo-change-exempt: tester-usage-guide"],
-        1,
+        [
+            (
+                {"tools/tester/pelorus_tester_stages.py"},
+                ["tester-usage-guide"],
+            )
+        ],
+        2,
     ),
     (
         "trailer_naming_unknown_rule",
         {"tools/tester/pelorus_tester_stages.py"},
-        ["refactor: stages update\n\nCo-change-exempt: unknown-rule refactor only"],
+        [
+            (
+                {"tools/tester/pelorus_tester_stages.py"},
+                ["unknown-rule refactor only"],
+            )
+        ],
         2,
     ),
     (
         "unknown_rule_trailer_alone",
         set(),
-        ["chore: something\n\nCo-change-exempt: unknown-rule refactor only"],
+        [(set(), ["unknown-rule refactor only"])],
         1,
     ),
     (
@@ -130,107 +146,257 @@ SELF_TEST_CASES: list[SelfTestCase] = [
     (
         "trailer_text_mid_line",
         {"tools/tester/pelorus_tester_stages.py"},
-        ["note: Co-change-exempt: tester-usage-guide refactor only"],
+        [({"tools/tester/pelorus_tester_stages.py"}, [])],
+        1,
+    ),
+    (
+        "empty_reason_guide_also_changed",
+        {"tools/tester/pelorus_tester_stages.py", "docs/usage/tester.md"},
+        [
+            (
+                {
+                    "tools/tester/pelorus_tester_stages.py",
+                    "docs/usage/tester.md",
+                },
+                ["tester-usage-guide"],
+            )
+        ],
+        1,
+    ),
+    (
+        "empty_reason_no_trigger_changed",
+        set(),
+        [(set(), ["tester-usage-guide"])],
+        1,
+    ),
+    (
+        "two_commits_one_missing_trailer",
+        {"tools/tester/pelorus_tester_stages.py"},
+        [
+            (
+                {"tools/tester/pelorus_tester_stages.py"},
+                ["tester-usage-guide refactor only"],
+            ),
+            ({"tools/tester/pelorus_tester_stages.py"}, []),
+        ],
+        1,
+    ),
+    (
+        "two_commits_both_valid_trailer",
+        {"tools/tester/pelorus_tester_stages.py"},
+        [
+            (
+                {"tools/tester/pelorus_tester_stages.py"},
+                ["tester-usage-guide refactor A"],
+            ),
+            (
+                {"tools/tester/pelorus_tester_stages.py"},
+                ["tester-usage-guide refactor B"],
+            ),
+        ],
+        0,
+    ),
+    (
+        "trailer_in_non_trigger_commit",
+        {"tools/tester/pelorus_tester_stages.py"},
+        [
+            (
+                {"docs/principles.md"},
+                ["tester-usage-guide refactor only"],
+            ),
+            ({"tools/tester/pelorus_tester_stages.py"}, []),
+        ],
         1,
     ),
 ]
 
-
-def parse_trailers(
-    messages: list[str],
-    known_rules: set[str],
-) -> tuple[set[str], list[str]]:
-    """Parse co-change exemption trailers and unknown-rule violations from messages."""
-    exemptions: set[str] = set()
-    violations: list[str] = []
-    for message in messages[:10000]:
-        for line in message.splitlines()[:5000]:
-            match = re.match(r"^Co-change-exempt:\s+(\S+)(?:\s+(.*))?$", line)
-            if not match:
-                continue
-            rule_id = match.group(1)
-            reason = (match.group(2) or "").strip()
-            if rule_id not in known_rules:
-                violations.append(f"unknown co-change rule {rule_id} in trailer")
-            elif reason:
-                exemptions.add(rule_id)
-    return exemptions, violations
+TRAILER_PARSER_CASES: list[TrailerParserCase] = [
+    (
+        "trailer_in_final_block",
+        "feat: test subject\n\nSome body text.\n\nCo-change-exempt: tester-usage-guide refactor only\n",
+        ["tester-usage-guide refactor only"],
+    ),
+    (
+        "same_line_in_body_paragraph",
+        "feat: test subject\n\nCo-change-exempt: tester-usage-guide refactor only\n\nFollowed by non-trailer paragraph.\n",
+        [],
+    ),
+    (
+        "mid_line_text",
+        "feat: test subject\n\nSome note: Co-change-exempt: tester-usage-guide refactor only\n",
+        [],
+    ),
+]
 
 
-def evaluate(changed: set[str], messages: list[str]) -> list[str]:
-    """Evaluate changed files and commit messages against co-change rules."""
-    known_rules = {rule[0] for rule in RULES}
-    exemptions, violations = parse_trailers(messages, known_rules)
-
-    for rule_id, triggers, required in RULES:
-        if rule_id in exemptions:
-            continue
-        matched_trigger = next((t for t in triggers if t in changed), None)
-        if matched_trigger is not None:
-            for req in required:
-                if req not in changed:
-                    violations.append(
-                        f"{rule_id}: {matched_trigger} changed without {req}"
-                    )
-
-    return violations
+def run_git(
+    args: list[str],
+    repo_root: pathlib.Path,
+    stdin: str | None = None,
+) -> str | None:
+    """Execute a git command and return its stdout, or None on failure."""
+    proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
+        ["git", *args],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        input=stdin,
+    )
+    if proc.returncode != 0:
+        if proc.stderr:
+            print(proc.stderr.strip(), file=sys.stderr)
+        return None
+    return proc.stdout
 
 
 def check_base_ref(base: str, repo_root: pathlib.Path) -> bool:
     """Check whether the git base ref exists as a commit."""
-    proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
-        ["git", "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
+    return (
+        run_git(["rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"], repo_root)
+        is not None
     )
-    return proc.returncode == 0
 
 
-def get_changed_files(base: str, head: str, repo_root: pathlib.Path) -> set[str] | None:
+def get_changed_files(
+    base: str, head: str, repo_root: pathlib.Path
+) -> set[str] | None:
     """Retrieve set of changed files between base and head via git diff."""
-    proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
-        ["git", "diff", "--name-only", "-z", f"{base}...{head}"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
+    stdout = run_git(
+        ["diff", "--name-only", "-z", "--no-renames", f"{base}...{head}"],
+        repo_root,
     )
-    if proc.returncode != 0:
-        if proc.stderr:
-            print(proc.stderr.strip(), file=sys.stderr)
+    if stdout is None:
         return None
-    return {f for f in proc.stdout.split("\0") if f}
+    return {f for f in stdout.split("\0") if f}
 
 
-def get_commit_messages(base: str, head: str, repo_root: pathlib.Path) -> list[str] | None:
-    """Retrieve commit messages between base and head via git log."""
-    proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
-        ["git", "log", "--format=%B%x00", f"{base}..{head}"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
+def parse_exempt_trailers(
+    message: str, repo_root: pathlib.Path
+) -> list[str] | None:
+    """Return the Co-change-exempt values from the message's trailer block, or None if git fails."""
+    stdout = run_git(["interpret-trailers", "--parse"], repo_root, stdin=message)
+    if stdout is None:
+        return None
+    values: list[str] = []
+    for line in stdout.splitlines()[:5000]:
+        match = re.match(r"^Co-change-exempt:\s*(.*)$", line)
+        if match:
+            values.append(match.group(1))
+    return values
+
+
+def get_commits(
+    base: str, head: str, repo_root: pathlib.Path
+) -> list[Commit] | None:
+    """Retrieve commits between base and head with touched files and trailers."""
+    rev_list_stdout = run_git(
+        ["rev-list", "--no-merges", f"{base}..{head}"], repo_root
     )
-    if proc.returncode != 0:
-        if proc.stderr:
-            print(proc.stderr.strip(), file=sys.stderr)
+    if rev_list_stdout is None:
         return None
-    return [m for m in proc.stdout.split("\0") if m]
+    shas = [sha.strip() for sha in rev_list_stdout.splitlines() if sha.strip()]
+    commits: list[Commit] = []
+    for sha in shas[:2000]:
+        diff_stdout = run_git(
+            [
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                "-z",
+                "--no-renames",
+                sha,
+            ],
+            repo_root,
+        )
+        if diff_stdout is None:
+            return None
+        files = {f for f in diff_stdout.split("\0") if f}
+
+        msg_stdout = run_git(["log", "-1", "--format=%B", sha], repo_root)
+        if msg_stdout is None:
+            return None
+        values = parse_exempt_trailers(msg_stdout, repo_root)
+        if values is None:
+            return None
+        commits.append((files, values))
+    return commits
 
 
-def run_self_test() -> int:
-    """Run self-test suite covering planted test cases."""
+def has_valid_exemption(
+    trailers: list[str], rule_id: str, known_rules: set[str]
+) -> bool:
+    """Check whether trailers contain a valid exemption for a rule."""
+    for val in trailers[:1000]:
+        parts = val.strip().split(maxsplit=1)
+        if (
+            len(parts) > 1
+            and parts[0] == rule_id
+            and parts[0] in known_rules
+            and parts[1].strip()
+        ):
+            return True
+    return False
+
+
+def evaluate(changed: set[str], commits: list[Commit]) -> list[str]:
+    """Evaluate changed files and commits against co-change rules."""
+    known_rules = {rule[0] for rule in RULES}
+    violations: list[str] = []
+
+    for _commit_files, trailers in commits[:2000]:
+        for val in trailers[:1000]:
+            parts = val.strip().split(maxsplit=1)
+            rule_id = parts[0] if parts else ""
+            reason = parts[1].strip() if len(parts) > 1 else ""
+            if rule_id not in known_rules:
+                violations.append(f"unknown co-change rule {rule_id} in trailer")
+            elif not reason:
+                violations.append(f"co-change trailer for {rule_id} has no reason")
+
+    for rule_id, triggers, required in RULES[:100]:
+        matched_trigger = next((t for t in triggers if t in changed), None)
+        if matched_trigger is None:
+            continue
+        missing = [req for req in required[:100] if req not in changed]
+        if not missing:
+            continue
+
+        touching_commits = [
+            c for c in commits[:2000] if any(t in c[0] for t in triggers)
+        ]
+        is_exempt = bool(touching_commits) and all(
+            has_valid_exemption(c[1], rule_id, known_rules)
+            for c in touching_commits[:2000]
+        )
+        if not is_exempt:
+            for req in missing[:100]:
+                violations.append(
+                    f"{rule_id}: {matched_trigger} changed without {req}"
+                )
+
+    return violations
+
+
+def run_self_test(repo_root: pathlib.Path) -> int:
+    """Run self-test suite covering evaluate logic and trailer parsing."""
     failures = 0
-    for name, changed, messages, expected in SELF_TEST_CASES:
-        violations = evaluate(changed, messages)
+    for name, changed, commits, expected in SELF_TEST_CASES[:100]:
+        violations = evaluate(changed, commits)
         if len(violations) != expected:
             print(
-                f"FAIL self-test '{name}': expected {expected} violations, got {len(violations)}: {violations}",
+                f"FAIL self-test evaluate '{name}': expected {expected} violations, got {len(violations)}: {violations}",
+                file=sys.stderr,
+            )
+            failures += 1
+
+    for name, message, expected_values in TRAILER_PARSER_CASES[:100]:
+        actual_values = parse_exempt_trailers(message, repo_root)
+        if actual_values != expected_values:
+            print(
+                f"FAIL self-test parse_exempt_trailers '{name}': expected {expected_values}, got {actual_values}",
                 file=sys.stderr,
             )
             failures += 1
@@ -239,12 +405,13 @@ def run_self_test() -> int:
         print(f"co-change self-test: {failures} failures", file=sys.stderr)
         return 1
 
-    print(f"co-change self-test: {len(SELF_TEST_CASES)} cases ok")
+    total_cases = len(SELF_TEST_CASES) + len(TRAILER_PARSER_CASES)
+    print(f"co-change self-test: {total_cases} cases ok")
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Parse CLI arguments and run co-change check or self-test."""
+def build_parser() -> argparse.ArgumentParser:
+    """Return the command-line parser for the check and its self-test."""
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument(
         "--base",
@@ -266,10 +433,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Run self-test on planted cases and exit",
     )
-    args = parser.parse_args(argv)
+    return parser
 
-    if args.self_test:
-        return run_self_test()
+
+def main(argv: list[str] | None = None) -> int:
+    """Parse CLI arguments and run co-change check or self-test."""
+    args = build_parser().parse_args(argv)
 
     repo_root = pathlib.Path(__file__).resolve().parent.parent
 
@@ -277,9 +446,15 @@ def main(argv: list[str] | None = None) -> int:
         print("co-change: git not on PATH", file=sys.stderr)
         return 2
 
+    if args.self_test:
+        return run_self_test(repo_root)
+
     if not check_base_ref(args.base, repo_root):
         if args.require_base:
-            print(f"co-change: required base ref '{args.base}' not found", file=sys.stderr)
+            print(
+                f"co-change: required base ref '{args.base}' not found",
+                file=sys.stderr,
+            )
             return 2
         print(f"co-change: skipped: base ref {args.base} not found")
         return 0
@@ -288,13 +463,13 @@ def main(argv: list[str] | None = None) -> int:
     if changed is None:
         return 2
 
-    messages = get_commit_messages(args.base, args.head, repo_root)
-    if messages is None:
+    commits = get_commits(args.base, args.head, repo_root)
+    if commits is None:
         return 2
 
-    violations = evaluate(changed, messages)
+    violations = evaluate(changed, commits)
     if violations:
-        for violation in violations:
+        for violation in violations[:1000]:
             print(violation)
         print("exempt a rule with a commit trailer: Co-change-exempt: <rule_id> <reason>")
         return 1

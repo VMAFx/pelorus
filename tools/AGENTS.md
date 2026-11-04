@@ -50,7 +50,7 @@ tools/
   each with planted case. Fixtures = `pelorus_tester_fixtures.py` +
   `fixtures.lock.json`; every entry pinned by SHA-256 + licence record.
   Stage or fixture change -> `docs/usage/tester.md` same change.
-  Both co-change rules = `scripts/check-cochange.py` (`make docs-check`, CI docs job); no user-visible effect -> trailer `Co-change-exempt: <rule_id> <reason>`.
+  Both co-change rules = `scripts/check-cochange.py` (`make docs-check`, CI docs job); no user-visible effect -> trailer `Co-change-exempt: <rule_id> <reason>` (commit trailer block only, covers own commit).
   Device, encoder or layer missing -> `not_run`/`no_device` + reason;
   `PELORUS_VALIDATE=1` + layer missing -> `fail`. No silent fallback.
 - Siblings load by path (`importlib`): `python3 -I` drops script dir from `sys.path`.
