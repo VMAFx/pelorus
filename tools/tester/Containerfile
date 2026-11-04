@@ -267,11 +267,12 @@ RUN python3 -I -B /opt/pelorus/tester/licensing.py self-test \
 # --- final-<kit>: the tester images ------------------------------------------
 FROM assembled-generic AS final-generic
 ARG PELORUS_COMMIT
+ARG PELORUS_SOURCE=https://github.com/VMAFx/pelorus
 COPY --from=licence-generic /usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt /usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt
 ENV PELORUS_TESTER_KIT=generic \
     PELORUS_TESTER_PACKAGE=tester-generic \
     PELORUS_TESTER_COMMIT=${PELORUS_COMMIT}
-LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
+LABEL org.opencontainers.image.source="${PELORUS_SOURCE}" \
       org.opencontainers.image.title="pelorus-tester-generic" \
       org.opencontainers.image.description="Pelorus tester image, CPU kit: evidence for one master commit, not a release (ADR-0173)" \
       org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2" \
@@ -283,13 +284,14 @@ LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
 # documentation). A CDI specification mounts them whatever this says.
 FROM assembled-nvidia AS final-nvidia
 ARG PELORUS_COMMIT
+ARG PELORUS_SOURCE=https://github.com/VMAFx/pelorus
 COPY --from=licence-nvidia /usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt /usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,video,graphics \
     LD_LIBRARY_PATH=/opt/ffmpeg/lib:/opt/pelorus/lib:/usr/lib/wsl/lib \
     PELORUS_TESTER_KIT=nvidia \
     PELORUS_TESTER_PACKAGE=tester-nvidia \
     PELORUS_TESTER_COMMIT=${PELORUS_COMMIT}
-LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
+LABEL org.opencontainers.image.source="${PELORUS_SOURCE}" \
       org.opencontainers.image.title="pelorus-tester-nvidia" \
       org.opencontainers.image.description="Pelorus tester image, NVIDIA kit (run with --gpus all; no NVIDIA file inside): evidence for one master commit, not a release (ADR-0173, ADR-0180)" \
       org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2" \
@@ -297,11 +299,12 @@ LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
 
 FROM assembled-intel AS final-intel
 ARG PELORUS_COMMIT
+ARG PELORUS_SOURCE=https://github.com/VMAFx/pelorus
 COPY --from=licence-intel /usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt /usr/share/licenses/pelorus-tester/THIRD_PARTY_NOTICES.txt
 ENV PELORUS_TESTER_KIT=intel \
     PELORUS_TESTER_PACKAGE=tester-intel \
     PELORUS_TESTER_COMMIT=${PELORUS_COMMIT}
-LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
+LABEL org.opencontainers.image.source="${PELORUS_SOURCE}" \
       org.opencontainers.image.title="pelorus-tester-intel" \
       org.opencontainers.image.description="Pelorus tester image, Intel kit (run with --device /dev/dri; media driver intel-media-va-driver-non-free, Expat): evidence for one master commit, not a release (ADR-0173, ADR-0180)" \
       org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2" \
@@ -341,31 +344,34 @@ RUN xargs -a /installed-sources.txt apt-get source --download-only \
     && rm -rf /var/lib/apt/lists/*
 
 FROM scratch AS source-generic
+ARG PELORUS_SOURCE=https://github.com/VMAFx/pelorus
 COPY --from=build-generic /opt/source /source/ffmpeg
 COPY --from=build-generic /opt/kit-source /source/kit
 COPY --from=debian-sources-generic /debian-source /source/debian
 COPY --from=debian-sources-generic /installed-sources.txt /source/installed-sources.txt
 COPY LICENSES /source/LICENSES
-LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
+LABEL org.opencontainers.image.source="${PELORUS_SOURCE}" \
       org.opencontainers.image.description="Corresponding source of the Pelorus tester image, CPU kit (GPL-3.0-or-later)" \
       org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2"
 
 FROM scratch AS source-nvidia
+ARG PELORUS_SOURCE=https://github.com/VMAFx/pelorus
 COPY --from=build-nvidia /opt/source /source/ffmpeg
 COPY --from=build-nvidia /opt/kit-source /source/kit
 COPY --from=debian-sources-nvidia /debian-source /source/debian
 COPY --from=debian-sources-nvidia /installed-sources.txt /source/installed-sources.txt
 COPY LICENSES /source/LICENSES
-LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
+LABEL org.opencontainers.image.source="${PELORUS_SOURCE}" \
       org.opencontainers.image.description="Corresponding source of the Pelorus tester image, NVIDIA kit (GPL-3.0-or-later; nv-codec-headers under /source/kit)" \
       org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2"
 
 FROM scratch AS source-intel
+ARG PELORUS_SOURCE=https://github.com/VMAFx/pelorus
 COPY --from=build-intel /opt/source /source/ffmpeg
 COPY --from=build-intel /opt/kit-source /source/kit
 COPY --from=debian-sources-intel /debian-source /source/debian
 COPY --from=debian-sources-intel /installed-sources.txt /source/installed-sources.txt
 COPY LICENSES /source/LICENSES
-LABEL org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
+LABEL org.opencontainers.image.source="${PELORUS_SOURCE}" \
       org.opencontainers.image.description="Corresponding source of the Pelorus tester image, Intel kit (GPL-3.0-or-later; the media driver source package is under /source/debian)" \
       org.opencontainers.image.licenses="GPL-3.0-or-later AND EUPL-1.2"

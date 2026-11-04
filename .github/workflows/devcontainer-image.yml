@@ -5,7 +5,7 @@ name: Dev container image
 # Containerfile, its licence record or the licence gate it runs, or this
 # workflow builds the image and pushes nothing. A push to
 # master that touches them, or a manual run, builds it, pushes
-# ghcr.io/vmafx/pelorus-dev tagged with the commit SHA and latest, and attests
+# the dev container image tagged with the commit SHA and latest, and attests
 # SLSA build provenance for the pushed digest.
 on:
   pull_request:
@@ -31,9 +31,6 @@ concurrency:
   group: devcontainer-image-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  IMAGE: ghcr.io/vmafx/pelorus-dev
-
 jobs:
   build:
     # Pull requests only: build the image, push nothing. The first step is the
@@ -58,6 +55,9 @@ jobs:
         if: github.event.pull_request.draft != true
         with:
           persist-credentials: false
+      - name: Compute image name
+        if: github.event.pull_request.draft != true
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}-dev" >> "$GITHUB_ENV"
       - name: Set up Docker Buildx
         if: github.event.pull_request.draft != true
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -67,7 +67,9 @@ jobs:
         with:
           context: .
           file: .devcontainer/base/Containerfile
-          build-args: PELORUS_COMMIT=${{ github.sha }}
+          build-args: |
+            PELORUS_COMMIT=${{ github.sha }}
+            PELORUS_SOURCE=${{ github.server_url }}/${{ github.repository }}
           tags: ${{ env.IMAGE }}:pr-${{ github.sha }}
           push: false
 
@@ -86,6 +88,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Compute image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}-dev" >> "$GITHUB_ENV"
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Log in to ghcr.io
@@ -100,7 +104,9 @@ jobs:
         with:
           context: .
           file: .devcontainer/base/Containerfile
-          build-args: PELORUS_COMMIT=${{ github.sha }}
+          build-args: |
+            PELORUS_COMMIT=${{ github.sha }}
+            PELORUS_SOURCE=${{ github.server_url }}/${{ github.repository }}
           tags: |
             ${{ env.IMAGE }}:${{ github.sha }}
             ${{ env.IMAGE }}:latest

@@ -51,9 +51,6 @@ concurrency:
   group: tester-publish-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  IMAGE: ghcr.io/vmafx/pelorus
-
 jobs:
   build:
     # Pull requests and the nightly schedule: build each kit's image and run the
@@ -117,6 +114,7 @@ jobs:
             --build-arg "FFMPEG_REMOTE=${FFMPEG_REMOTE}" \
             --build-arg "FFMPEG_COMMIT=${FFMPEG_COMMIT}" \
             --build-arg "PELORUS_COMMIT=${GITHUB_SHA}" \
+            --build-arg "PELORUS_SOURCE=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --tag "tester-pr-${KIT}:${GITHUB_SHA}" \
             .
       - name: Without a device the report says no_device and names the kit's docker option
@@ -175,6 +173,7 @@ jobs:
             --build-arg "FFMPEG_REMOTE=${FFMPEG_REMOTE}" \
             --build-arg "FFMPEG_COMMIT=${FFMPEG_COMMIT}" \
             --build-arg "PELORUS_COMMIT=${GITHUB_SHA}" \
+            --build-arg "PELORUS_SOURCE=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --tag "tester-pr-${KIT}-arm64:${GITHUB_SHA}" \
             .
       - name: The image is linux/arm64
@@ -261,6 +260,8 @@ jobs:
         with:
           ref: ${{ needs.validate.outputs.sha }}
           persist-credentials: false
+      - name: Compute image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
       - name: Load build configuration
         run: |
           grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
@@ -294,6 +295,7 @@ jobs:
             --build-arg "FFMPEG_REMOTE=${FFMPEG_REMOTE}" \
             --build-arg "FFMPEG_COMMIT=${FFMPEG_COMMIT}" \
             --build-arg "PELORUS_COMMIT=${SHA}" \
+            --build-arg "PELORUS_SOURCE=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --tag "${IMAGE}:${TAG}" \
             .
       - name: Licence gate on the built image
@@ -320,6 +322,7 @@ jobs:
             --build-arg "FFMPEG_REMOTE=${FFMPEG_REMOTE}" \
             --build-arg "FFMPEG_COMMIT=${FFMPEG_COMMIT}" \
             --build-arg "PELORUS_COMMIT=${SHA}" \
+            --build-arg "PELORUS_SOURCE=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --tag "${IMAGE}:${TAG}-source" \
             .
       - name: Log in to ghcr.io
@@ -383,16 +386,18 @@ jobs:
           IMAGE_DIGEST: ${{ steps.push.outputs.image-digest }}
           SOURCE_DIGEST: ${{ steps.push.outputs.source-digest }}
         run: |
+          signer="${GITHUB_REPOSITORY}/.github/workflows/tester-publish.yml"
+          identity="^${GITHUB_SERVER_URL//./\\.}/${GITHUB_REPOSITORY//./\\.}/\.github/workflows/tester-publish\.yml@"
           for digest in "$IMAGE_DIGEST" "$SOURCE_DIGEST"; do
             cosign verify \
-              --certificate-identity-regexp '^https://github\.com/VMAFx/pelorus/\.github/workflows/tester-publish\.yml@' \
+              --certificate-identity-regexp "$identity" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               "${IMAGE}@${digest}" > /dev/null
-            gh attestation verify "oci://${IMAGE}@${digest}" -R VMAFx/pelorus \
-              --signer-workflow VMAFx/pelorus/.github/workflows/tester-publish.yml
+            gh attestation verify "oci://${IMAGE}@${digest}" -R "$GITHUB_REPOSITORY" \
+              --signer-workflow "$signer"
           done
-          gh attestation verify "oci://${IMAGE}@${IMAGE_DIGEST}" -R VMAFx/pelorus \
-            --signer-workflow VMAFx/pelorus/.github/workflows/tester-publish.yml \
+          gh attestation verify "oci://${IMAGE}@${IMAGE_DIGEST}" -R "$GITHUB_REPOSITORY" \
+            --signer-workflow "$signer" \
             --predicate-type https://spdx.dev/Document/v2.3
       # Last on purpose: GHCR creates a package on its first push, private, and
       # only the maintainer can make it public. A first run therefore proves
@@ -404,11 +409,12 @@ jobs:
           SOURCE_DIGEST: ${{ steps.push.outputs.source-digest }}
         run: |
           accept='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'
+          repo="${IMAGE#ghcr.io/}"
           for digest in "$IMAGE_DIGEST" "$SOURCE_DIGEST"; do
-            if ! token="$(curl -fsS --max-time 30 "https://ghcr.io/token?service=ghcr.io&scope=repository:vmafx/pelorus:pull" \
+            if ! token="$(curl -fsS --max-time 30 "https://ghcr.io/token?service=ghcr.io&scope=repository:${repo}:pull" \
                  | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])')" \
                || ! curl -fsS --max-time 30 -o /dev/null -H "Authorization: Bearer ${token}" -H "Accept: ${accept}" \
-                 "https://ghcr.io/v2/vmafx/pelorus/manifests/${digest}"; then
+                 "https://ghcr.io/v2/${repo}/manifests/${digest}"; then
               echo "::error::${IMAGE}@${digest} is not pullable anonymously. A first publish creates the package private: the maintainer makes it public once and re-runs this workflow (docs/development/tester-image.md)."
               exit 1
             fi
