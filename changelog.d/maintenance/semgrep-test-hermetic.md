@@ -1,0 +1,1 @@
+- The Semgrep float-identity test (`scripts/test-semgrep-float-identity.py`) now passes `--project-root .` and `--no-git-ignore` to every scan, drops `GIT_*` variables from the scan environment and runs `git init` on its temporary root, so a temporary directory inside any git repository no longer makes Semgrep scan zero files and fail the planted step.
