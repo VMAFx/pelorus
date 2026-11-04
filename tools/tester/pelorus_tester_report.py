@@ -48,7 +48,8 @@ STAGE_IDS = (
 )
 # Files whose bytes make up the tool digest recorded in every report.
 TOOL_FILES = ("pelorus_tester_report.py", "pelorus_tester_stages.py",
-              "pelorus_tester_fixtures.py", "report.schema.json")
+              "pelorus_tester_fixtures.py", "pelorus_interop_consts.py",
+              "pelorus_json_shape.py", "report.schema.json")
 EXIT_BY_VERDICT = {"pass": 0, "fail": 1, "incomplete": 2, "unavailable": 100}
 HERE = Path(__file__).resolve().parent
 
@@ -64,6 +65,7 @@ def load_sibling(name):
 FIXTURES = load_sibling("pelorus_tester_fixtures")
 STAGES = load_sibling("pelorus_tester_stages")
 JSON_SHAPE = load_sibling("pelorus_json_shape")
+CONSTS = load_sibling("pelorus_interop_consts")
 RULES = (("no_device_nonfailure", "redaction", "exit_mapping", "truncation",
           "schema_version", "reason_required", "stage_failure", "bench_nongating",
           "execution_class_derived", "claim_gpu_needs_hardware",
@@ -134,12 +136,32 @@ def report_hash(report):
 
 
 def tool_digest():
-    """Digest of the program files: sha256 over `<sha256>  <name>` lines, in TOOL_FILES order.
+    """Digest of the program files and interop.h: sha256 over `<sha256>  <name>` lines,
+    in TOOL_FILES order, followed by `<sha256>  interop.h`.
 
     Recorded as tool.sha256; report intake looks it up in tools/tester/tool-hashes.json."""
     lines = ["%s  %s\n" % (sha256_bytes((HERE / name).read_bytes()), name)
              for name in TOOL_FILES]
+    interop_h = CONSTS.find_interop_h(HERE)
+    lines.append("%s  interop.h\n" % sha256_bytes(interop_h.read_bytes()))
     return sha256_bytes("".join(lines).encode())
+
+
+def untracked_tool_modules(texts, present=None):
+    """Return sorted tool module filenames (.py) referenced in texts not in TOOL_FILES."""
+    if present is None:
+        present = {p.name for p in HERE.glob("*.py")}
+    found = set()
+    for text in texts.values():
+        for m in re.finditer(r"""load_sibling\(\s*["']([^"']+)["']\s*\)""", text):
+            name = f"{m.group(1)}.py"
+            if name in present:
+                found.add(name)
+        for m in re.finditer(r"""["']([a-zA-Z0-9_]+\.py)["']""", text):
+            name = m.group(1)
+            if name in present:
+                found.add(name)
+    return sorted(f for f in found if f not in TOOL_FILES)
 
 
 # ------------------------------------------------------- execution class
@@ -901,6 +923,12 @@ def self_test(disabled=frozenset()):
             failures.append(name)
 
     self_test_user_literal(expect, disabled)
+
+    tester_texts = {p.name: p.read_text(encoding="utf-8") for p in HERE.glob("*.py")}
+    expect("tool_files_cover_loaded_modules", not untracked_tool_modules(tester_texts))
+    expect("tool_files_planted_module",
+           untracked_tool_modules({"x.py": 'load_sibling("pelorus_new_mod")'},
+                                  present={"pelorus_new_mod.py"}) == ["pelorus_new_mod.py"])
 
     cpu_only = {"probe": py_stage("import sys; sys.exit(1)")}
     rep, lit = good_report(None, cpu_only, disabled=disabled)

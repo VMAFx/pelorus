@@ -34,7 +34,7 @@ index 9203fb65c0..9ed598c4bd 100644
  #ifdef NVENC_HAVE_H264_AND_AV1_TEMPORAL_FILTER
      if (ctx->tf_level >= 0) {
          av1->tfLevel = ctx->tf_level;
-@@ -2881,6 +2906,266 @@ static void reconfig_encoder(AVCodecContext *avctx, const AVFrame *frame)
+@@ -2881,6 +2906,272 @@ static void reconfig_encoder(AVCodecContext *avctx, const AVFrame *frame)
      }
  }
  
@@ -58,6 +58,12 @@ index 9203fb65c0..9ed598c4bd 100644
 +
 +#define PEL_FG_UUID_LEN        16
 +#define PEL_FG_SEC_FILMGRAIN   (1u << 3)
++
++/* Header constants mirrored from libpelorus interop.h (ABI 1.x). */
++#define PEL_FG_MAGIC           "PELOR1\0\0"
++#define PEL_FG_MAGIC_LEN       8
++#define PEL_FG_ABI_MAJOR       1u
++#define PEL_FG_HDR_BYTES       48
 +
 +static const uint8_t pel_fg_uuid[PEL_FG_UUID_LEN] = {
 +    0xe1, 0xd7, 0xc4, 0xa2, 0x6b, 0x93, 0x4f, 0x08,
@@ -160,7 +166,7 @@ index 9203fb65c0..9ed598c4bd 100644
 +    uint16_t header_size, section_count, abi_major, i;
 +    uint32_t total_size, section_mask;
 +
-+    if (!buf || len < (size_t)PEL_FG_UUID_LEN + 48)
++    if (!buf || len < (size_t)PEL_FG_UUID_LEN + PEL_FG_HDR_BYTES)
 +        return 0;
 +    if (memcmp(buf, pel_fg_uuid, PEL_FG_UUID_LEN) != 0)
 +        return 0;
@@ -168,17 +174,17 @@ index 9203fb65c0..9ed598c4bd 100644
 +    image     = buf + PEL_FG_UUID_LEN;
 +    image_len = len - PEL_FG_UUID_LEN;
 +
-+    if (memcmp(image, "PELOR1\0\0", 8) != 0)
++    if (memcmp(image, PEL_FG_MAGIC, PEL_FG_MAGIC_LEN) != 0)
 +        return 0;
 +    abi_major = pel_fg_rd16(image + 8);
-+    if (abi_major != 1)
++    if (abi_major != PEL_FG_ABI_MAJOR)
 +        return 0;
 +    total_size    = pel_fg_rd32(image + 12);
 +    section_mask  = pel_fg_rd32(image + 16);
 +    section_count = pel_fg_rd16(image + 20);
 +    header_size   = pel_fg_rd16(image + 22);
 +
-+    if (total_size > image_len || header_size < 48)
++    if (total_size > image_len || header_size < PEL_FG_HDR_BYTES)
 +        return -1;
 +    if ((section_mask & PEL_FG_SEC_FILMGRAIN) == 0)
 +        return 0;
