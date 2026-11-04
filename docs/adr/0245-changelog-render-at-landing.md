@@ -13,7 +13,7 @@ Per-PR changelog rendering makes every pull request touching `changelog.d/` also
 
 ## Decision
 
-We will require fragments only per pull request and move changelog rendering to landing and release cut. A render-only pull request lands per landing batch and at release cut (`release-build.yml` keeps `--check`). A push to the default branch runs the staleness check (`scripts/release/check-changelog-staleness.py`) with a 24 h limit, warning when fragments remain unrendered within 24 h and failing when unrendered fragments exceed 24 h. A hand-edited `CHANGELOG.md` is red at any age.
+We will require fragments only per pull request and move changelog rendering to landing and release cut. A render-only pull request lands per landing batch and at release cut (`release-build.yml` keeps `--check`). A push to the default branch runs the staleness check (`scripts/release/check-changelog-staleness.py`) with a 24 h limit, warning when fragments remain unrendered within 24 h and failing when unrendered fragments exceed 24 h. A hand-edited `CHANGELOG.md` is red at any age. A scheduled workflow (`changelog-staleness.yml`) runs every 6 hours to enforce the 24 h staleness bound on the default branch during quiet periods. Pull requests modifying `CHANGELOG.md` are validated in CI against the fragments via `scripts/release/concat-changelog-fragments.sh --check`.
 
 ## Alternatives considered
 
@@ -27,7 +27,7 @@ We will require fragments only per pull request and move changelog rendering to 
 
 - **Positive**: pull requests no longer conflict with each other on `CHANGELOG.md`; contributors add only fragment files under `changelog.d/`; sequence landings do not trigger merge-and-rerender cycles.
 - **Negative**: `CHANGELOG.md` on the default branch can lag fragment additions by up to 24 h until a render-only pull request is landed.
-- **Neutral / follow-ups**: `scripts/release/check-changelog-staleness.py` enforces the 24 h staleness bound on the default branch and runs its self-test in pull request CI; documentation and templates updated to guide contributors.
+- **Neutral / follow-ups**: `scripts/release/check-changelog-staleness.py` enforces the 24 h staleness bound on the default branch and runs its self-test in pull request CI; documentation and templates updated to guide contributors. A periodic scheduled workflow runs every 6 hours on the default branch to prevent silent staleness when push activity pauses. Pull request CI validates that any touched `CHANGELOG.md` matches its fragments.
 
 ## References
 

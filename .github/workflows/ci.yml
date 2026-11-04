@@ -652,6 +652,11 @@ jobs:
       - name: Changelog staleness check self-test
         if: github.event_name == 'pull_request'
         run: python3 -I scripts/release/check-changelog-staleness.py --self-test
+      - name: A changed CHANGELOG.md matches its fragments
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: if git diff --quiet "origin/${BASE_REF}...HEAD" -- CHANGELOG.md; then echo "CHANGELOG.md unchanged"; else bash scripts/release/concat-changelog-fragments.sh --check; fi
       - name: Co-change rules hold over the pull request
         if: github.event_name == 'pull_request'
         env:

@@ -134,7 +134,14 @@ def judge_owed_render(
     """Judge how long a render has been owed since the last rendered CHANGELOG.md."""
     log_output = run_git_log(
         repo,
-        ["--first-parent", "--reverse", "--format=%H %ct", f"{sha}..{ref}", "--", "changelog.d/"],
+        [
+            "--first-parent",
+            "--reverse",
+            "--format=%H %ct",
+            f"{sha}..{ref}",
+            "--",
+            ":(glob)changelog.d/*/*.md",
+        ],
         env=env,
     )
     lines = [line for line in log_output.splitlines() if line.strip()]
@@ -150,18 +157,18 @@ def judge_owed_render(
     committer_time = int(committer_time_str)
     now = int(time.time())
     age_seconds = max(0, now - committer_time)
-    age_hours = age_seconds // 3600
+    age_hours = f"{age_seconds / 3600:.1f}"
 
-    if age_hours <= max_age_hours:
-        print(f"warning: render owed since {first_sha} ({age_hours} h)")
-        return 0
+    if age_seconds > max_age_hours * 3600:
+        print(
+            f"render owed for {age_hours} h since {first_sha} (limit {max_age_hours} h): "
+            "land a render-only pull request",
+            file=sys.stderr,
+        )
+        return 1
 
-    print(
-        f"render owed for {age_hours} h since {first_sha} (limit {max_age_hours} h): "
-        "land a render-only pull request",
-        file=sys.stderr,
-    )
-    return 1
+    print(f"warning: render owed since {first_sha} ({age_hours} h)")
+    return 0
 
 
 def check_staleness(
@@ -339,6 +346,50 @@ def _test_cases_b_c_d(
     return failed
 
 
+def _test_cases_readme_boundary(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    now: int,
+) -> int:
+    """Test README pathspec exclusion and exact-hour staleness boundary."""
+    # README-only edit 30 h ago: not a fragment, so render is not owed -> 0
+    subprocess.run(  # nosec B603 - fixed git argv
+        ["git", "-C", str(repo), "checkout", "-q", "-b", "branch-readme", "master"],
+        env=env,
+        check=True,
+        timeout=SUBPROCESS_TIMEOUT_S,
+    )
+    (repo / "changelog.d/README.md").write_text("# Updated README\n", encoding="utf-8")
+    commit_in_fixture(repo, env, "Update changelog README 30h ago", now - 30 * 3600)
+    if check_staleness(repo, "branch-readme", 24, env=env) != 0:
+        print("self-test FAIL: README-only commit returned non-zero, want 0", file=sys.stderr)
+        return 1
+
+    # Add fragment 1 h ago on top of README edit: only fragment counts -> 0
+    (repo / "changelog.d/added/0003-frag.md").write_text("- Add 3.\n", encoding="utf-8")
+    commit_in_fixture(repo, env, "Add fragment 1h ago", now - 3600)
+    if check_staleness(repo, "branch-readme", 24, env=env) != 0:
+        print("self-test FAIL: fragment after README returned non-zero, want 0", file=sys.stderr)
+        return 1
+
+    # Boundary case: fragment at 24 h + 30 min (limit*3600 + 1800 s) -> 1
+    subprocess.run(  # nosec B603 - fixed git argv
+        ["git", "-C", str(repo), "checkout", "-q", "-b", "branch-boundary", "master"],
+        env=env,
+        check=True,
+        timeout=SUBPROCESS_TIMEOUT_S,
+    )
+    (repo / "changelog.d/added/0004-boundary.md").write_text(
+        "- Add boundary.\n", encoding="utf-8"
+    )
+    commit_in_fixture(repo, env, "Add fragment 24h30m ago", now - (24 * 3600 + 1800))
+    if check_staleness(repo, "branch-boundary", 24, env=env) != 1:
+        print("self-test FAIL: boundary case returned non-one, want 1", file=sys.stderr)
+        return 1
+
+    return 0
+
+
 def _test_case_f(repo: pathlib.Path, env: dict[str, str]) -> int:
     """Case f: extract_tree_at_ref leaves the repository index unchanged."""
     tree_before = subprocess.run(  # nosec B603 - fixed git argv
@@ -378,7 +429,7 @@ def _test_case_f(repo: pathlib.Path, env: dict[str, str]) -> int:
 
 
 def run_self_test(repo_root: pathlib.Path) -> int:
-    """Run 6-case self-test in an isolated temporary git repository."""
+    """Run self-test suite in an isolated temporary git repository."""
     script_source = repo_root / "scripts/release/concat-changelog-fragments.sh"
     if not script_source.is_file():
         print(f"self-test: missing render script at {script_source}", file=sys.stderr)
@@ -397,6 +448,9 @@ def run_self_test(repo_root: pathlib.Path) -> int:
             return 1
 
         if _test_cases_b_c_d(repo, env, now) != 0:
+            return 1
+
+        if _test_cases_readme_boundary(repo, env, now) != 0:
             return 1
 
         # case e: after (c), render-only commit -> 0
