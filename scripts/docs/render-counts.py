@@ -36,11 +36,13 @@ from pathlib import Path
 
 def _pair_re(name: str) -> re.Pattern[str]:
     """Compile pair regex for a generated marker span."""
+    n = re.escape(name)
     return re.compile(
-        rf"<!--\s*gen:{re.escape(name)}\s*-->.*?<!--\s*/gen:{re.escape(name)}\s*-->"
+        rf"<!--\s*gen:{n}\s*-->(?:(?!<!--\s*/?gen:{n}\s*-->).)*?<!--\s*/gen:{n}\s*-->"
     )
 
 
+GEN_MARKER_NAMES = ("baseline-count", "engine-pin")
 BASELINE_MARKER_RE = _pair_re("baseline-count")
 ENGINE_PIN_MARKER_RE = _pair_re("engine-pin")
 WORKFLOW_PIN_RE = re.compile(r"^\s*PRAETOR_REF:\s*([0-9a-fA-F]{7,40})\s*$")
@@ -49,6 +51,19 @@ REQUIRED_MARKERS = (
     ("docs/development/agent-reference.md", "engine-pin", 1),
     ("docs/development/build.md", "baseline-count", 2),
 )
+
+
+def marker_errors(path: Path | str, content: str) -> list[str]:
+    """Check for unmatched opening and closing generated markers."""
+    errors: list[str] = []
+    for name in GEN_MARKER_NAMES:
+        openings = len(re.findall(rf"<!--\s*gen:{re.escape(name)}\s*-->", content))
+        closings = len(re.findall(rf"<!--\s*/gen:{re.escape(name)}\s*-->", content))
+        if openings != closings:
+            errors.append(
+                f"{path}: unmatched gen:{name} markers: {openings} opening, {closings} closing"
+            )
+    return errors
 
 
 def _load_baseline_json(baseline_path: Path) -> dict:
@@ -92,13 +107,8 @@ def check_required_markers(root: Path) -> list[str]:
         except (OSError, UnicodeError) as exc:
             findings.append(f"{file_path}: cannot read: {exc}")
             continue
-        openings = len(re.findall(rf"<!--\s*gen:{re.escape(name)}\s*-->", content))
-        closings = len(re.findall(rf"<!--\s*/gen:{re.escape(name)}\s*-->", content))
+        findings.extend(marker_errors(file_path, content))
         pairs = len(_pair_re(name).findall(content))
-        if openings != closings:
-            findings.append(
-                f"{file_path}: unmatched gen:{name} markers: {openings} opening, {closings} closing"
-            )
         if pairs != expected:
             findings.append(
                 f"{file_path}: expected {expected} gen:{name} marker pair(s), found {pairs}"
@@ -165,6 +175,9 @@ def check_or_write_file(
         content = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         return [f"{path}: cannot read: {exc}"]
+    errors = marker_errors(path, content)
+    if errors:
+        return errors
     if not BASELINE_MARKER_RE.search(content) and not ENGINE_PIN_MARKER_RE.search(content):
         return []
 
@@ -313,10 +326,40 @@ def _case_required_markers(tmppath: Path) -> str | None:
     return None
 
 
+def _case_unmatched_write(tmppath: Path) -> str | None:
+    """An unmatched marker halts --write without modifying the file; render preserves preceding text."""
+    p = tmppath / "unmatched.md"
+    text = "A <!-- gen:baseline-count -->1 keep me <!-- gen:baseline-count -->2<!-- /gen:baseline-count --> B\n"
+    p.write_text(text, encoding="utf-8")
+    orig_bytes = p.read_bytes()
+
+    findings = check_or_write_file(p, 0, _PIN, write=True)
+    if not any("unmatched gen:baseline-count" in f for f in findings):
+        return f"expected finding containing 'unmatched gen:baseline-count', got {findings}"
+    if p.read_bytes() != orig_bytes:
+        return "file bytes changed despite unmatched marker error"
+
+    rendered = render_content(text, 0, _PIN)
+    if " keep me " not in rendered:
+        return f"expected ' keep me ' in rendered content, got: {rendered!r}"
+    if "<!-- gen:baseline-count -->0<!-- /gen:baseline-count -->" not in rendered:
+        return f"expected second span replaced with baseline count 0, got: {rendered!r}"
+
+    print("self-test PASS: unmatched write refused and tempered regex preserves preceding text")
+    return None
+
+
 def self_test() -> int:
     """Execute planted positive and negative tests."""
     with tempfile.TemporaryDirectory() as tmp:
-        for case in (_case_drift, _case_bad_inputs, _case_unreadable, _case_required_markers, _case_argparse):
+        for case in (
+            _case_drift,
+            _case_bad_inputs,
+            _case_unreadable,
+            _case_required_markers,
+            _case_argparse,
+            _case_unmatched_write,
+        ):
             failure = case(Path(tmp))
             if failure:
                 print(f"self-test FAIL: {failure}", file=sys.stderr)
@@ -375,6 +418,8 @@ def main(argv: list[str] | None = None) -> int:
         all_drifts.extend(check_required_markers(Path(".")))
     for file_path in target_files:
         all_drifts.extend(check_or_write_file(file_path, baseline_count, engine_pin, write=args.write))
+    if not args.files:
+        all_drifts = list(dict.fromkeys(all_drifts))
 
     if all_drifts:
         for drift in all_drifts:
