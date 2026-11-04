@@ -67,6 +67,8 @@ static char **tool_utf8_argv(int *argc)
 }
 #endif
 
+/* Parse a decimal uint32_t from str into out, updating endptr if non-NULL.
+ * Returns 0 on success, or -1 on invalid input, negative values, or overflow past UINT32_MAX. */
 int pelorus_tool_parse_u32(const char *str, char **endptr, uint32_t *out)
 {
     unsigned long long val;
@@ -95,6 +97,8 @@ int pelorus_tool_parse_u32(const char *str, char **endptr, uint32_t *out)
     return 0;
 }
 
+/* Parse a decimal int32_t from str into out, updating endptr if non-NULL.
+ * Returns 0 on success, or -1 on invalid input, missing digits, or range overflow. */
 int pelorus_tool_parse_i32(const char *str, char **endptr, int32_t *out)
 {
     long long val;
@@ -115,6 +119,8 @@ int pelorus_tool_parse_i32(const char *str, char **endptr, int32_t *out)
     return 0;
 }
 
+/* Parse a finite double precision floating-point number from str into out, updating endptr if non-NULL.
+ * Returns 0 on success, or -1 on invalid input, range error, or non-finite values. */
 int pelorus_tool_parse_double(const char *str, char **endptr, double *out)
 {
     double val;
@@ -135,6 +141,8 @@ int pelorus_tool_parse_double(const char *str, char **endptr, double *out)
     return 0;
 }
 
+/* Parse a finite single-precision float from str into out, updating endptr if non-NULL.
+ * Returns 0 on success, or -1 on invalid input, range error, or non-finite values. */
 int pelorus_tool_parse_float(const char *str, char **endptr, float *out)
 {
     float val;
@@ -155,6 +163,8 @@ int pelorus_tool_parse_float(const char *str, char **endptr, float *out)
     return 0;
 }
 
+/* Parse a CRF value in the range [0.0, 63.0] from str into out, ensuring no trailing non-whitespace characters.
+ * Returns 0 on success, or -1 on invalid format, range violation, or trailing garbage. */
 int pelorus_tool_parse_crf(const char *str, char **endptr, float *out)
 {
     float val = 0.0f;
@@ -178,6 +188,8 @@ int pelorus_tool_parse_crf(const char *str, char **endptr, float *out)
     return 0;
 }
 
+/* Search opts for an option matching name arg and record the matching index in out_idx.
+ * Returns 0 on a match or -1 if no matching option name is found. */
 static int tool_match_opt(const PelorusOpt *opts, size_t n_opts, const char *arg, size_t *out_idx)
 {
     size_t i;
@@ -191,6 +203,8 @@ static int tool_match_opt(const PelorusOpt *opts, size_t n_opts, const char *arg
     return -1;
 }
 
+/* Match string val against the choices allowed by opt and write the choice integer to its destination.
+ * Returns 0 on match or -1 if val is not in the allowed choices list. */
 static int tool_parse_choice(const PelorusOpt *opt, const char *val)
 {
     size_t c;
@@ -210,6 +224,8 @@ static int tool_parse_choice(const PelorusOpt *opt, const char *val)
     return -1;
 }
 
+/* Parse a double from string val without trailing characters and store it in dest if non-NULL.
+ * Returns 0 on success or -1 on conversion failure or trailing characters. */
 static int tool_store_double(void *dest, const char *val)
 {
     char *end = NULL;
@@ -224,6 +240,8 @@ static int tool_store_double(void *dest, const char *val)
     return 0;
 }
 
+/* Parse a float from string val without trailing characters and store it in dest if non-NULL.
+ * Returns 0 on success or -1 on conversion failure or trailing characters. */
 static int tool_store_float(void *dest, const char *val)
 {
     char *end = NULL;
@@ -238,6 +256,8 @@ static int tool_store_float(void *dest, const char *val)
     return 0;
 }
 
+/* Parse a uint32_t from string val without trailing characters and store it in dest if non-NULL.
+ * Returns 0 on success or -1 on conversion failure or trailing characters. */
 static int tool_store_u32(void *dest, const char *val)
 {
     char *end = NULL;
@@ -252,6 +272,8 @@ static int tool_store_u32(void *dest, const char *val)
     return 0;
 }
 
+/* Parse an int32_t from string val without trailing characters and store it in dest if non-NULL.
+ * Returns 0 on success or -1 on conversion failure or trailing characters. */
 static int tool_store_i32(void *dest, const char *val)
 {
     char *end = NULL;
@@ -266,6 +288,8 @@ static int tool_store_i32(void *dest, const char *val)
     return 0;
 }
 
+/* Parse value string val according to opt->kind and store the parsed result into opt->dest.
+ * Returns 0 on success or -1 on conversion failure, empty non-string value, or unsupported type. */
 static int tool_parse_val(const PelorusOpt *opt, const char *val)
 {
     if (val == NULL) {

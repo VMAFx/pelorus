@@ -19,6 +19,8 @@
         }                                                                                          \
     } while (0)
 
+/* Test parsing of PELORUS_OPT_U32 options for valid numbers, overflow, negative values, and trailing garbage.
+ * Increments *fails for each assertion that fails. */
 static void test_u32_kind(int *fails)
 {
     uint32_t val = 0;
@@ -39,6 +41,8 @@ static void test_u32_kind(int *fails)
     CHECK(pelorus_tool_parse_args("tool", 3, argv_empty, opts, 1, NULL) == -1, fails);
 }
 
+/* Test parsing of PELORUS_OPT_I32 options for boundary values, overflow, underflow, and malformed strings.
+ * Increments *fails for each assertion that fails. */
 static void test_i32_kind(int *fails)
 {
     int32_t val = 0;
@@ -62,6 +66,8 @@ static void test_i32_kind(int *fails)
     CHECK(pelorus_tool_parse_args("tool", 3, argv_empty, opts, 1, NULL) == -1, fails);
 }
 
+/* Test parsing of PELORUS_OPT_DOUBLE options for valid floats, empty values, trailing garbage, and non-finite inputs.
+ * Increments *fails for each assertion that fails. */
 static void test_double_kind(int *fails)
 {
     double val = 0.0;
@@ -84,6 +90,8 @@ static void test_double_kind(int *fails)
     CHECK(pelorus_tool_parse_args("tool", 3, argv_ninf, opts, 1, NULL) == -1, fails);
 }
 
+/* Test parsing of PELORUS_OPT_FLOAT options for valid floats, trailing garbage, empty values, and non-finite inputs.
+ * Increments *fails for each assertion that fails. */
 static void test_float_kind(int *fails)
 {
     float val = 0.0f;
@@ -104,6 +112,8 @@ static void test_float_kind(int *fails)
     CHECK(pelorus_tool_parse_args("tool", 3, argv_inf, opts, 1, NULL) == -1, fails);
 }
 
+/* Test parsing of PELORUS_OPT_CHOICE and PELORUS_OPT_STRING options, verifying mapped values and invalid choices.
+ * Increments *fails for each assertion that fails. */
 static void test_choice_and_string_kind(int *fails)
 {
     int cval = -1;
@@ -123,6 +133,8 @@ static void test_choice_and_string_kind(int *fails)
     CHECK(pelorus_tool_parse_args("tool", 5, argv_miss, opts, 2, NULL) == -1, fails);
 }
 
+/* Test general argument parser rules including missing option values, duplicates, unknown options, and required arguments.
+ * Increments *fails for each assertion that fails. */
 static void test_parser_rules(int *fails)
 {
     const char *pos_val = NULL;
@@ -146,6 +158,8 @@ static void test_parser_rules(int *fails)
     CHECK(pelorus_tool_parse_args("tool", 3, argv_no_req_pos, opts, 1, &pos) == -1, fails);
 }
 
+/* Test pelorus_tool_parse_crf validation across boundaries [0.0, 63.0], invalid numbers, and trailing characters.
+ * Increments *fails for each assertion that fails. */
 static void test_crf_helper(int *fails)
 {
     float val = 0.0f;
@@ -160,6 +174,8 @@ static void test_crf_helper(int *fails)
     CHECK(pelorus_tool_parse_crf("nan", &end, &val) == -1, fails);
 }
 
+/* Execute all unit test suites for the CLI tool argument parsing helpers.
+ * Returns EXIT_SUCCESS if all checks pass, or EXIT_FAILURE if any failure occurred. */
 int main(void)
 {
     int fails = 0;

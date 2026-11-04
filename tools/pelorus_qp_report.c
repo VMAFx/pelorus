@@ -120,6 +120,8 @@ static float *requested_qp_buffer(double requested_qp, size_t count)
     return buf;
 }
 
+/* Run pelorus_qp_report: parse the x265 CSV named in argv, fold it into a QP report, then round-trip and print the report blob.
+ * Returns EXIT_SUCCESS on success or EXIT_FAILURE on error. */
 static int run(int argc, char **argv)
 {
     const char *csv_path = NULL;

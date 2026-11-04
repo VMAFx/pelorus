@@ -31,6 +31,8 @@ static int is_exact_header(const char *line)
     return (*p == '\0' || *p == '\r' || *p == '\n');
 }
 
+/* Parse a CSV line into shot first_frame, last_frame, and crf, skipping comment lines and headers.
+ * Returns 1 on success, 0 for header or comment lines, or -1 on syntax error. */
 static int parse_line(const char *line, size_t line_num, PelShotTarget *shot)
 {
     const char *p = line;
@@ -123,6 +125,8 @@ static int read_shots_stdin(PelShotTarget *shots, size_t max_shots, size_t *out_
     return 0;
 }
 
+/* Format shot targets into the requested zone format and write the resulting string to stdout.
+ * Returns EXIT_SUCCESS on success or EXIT_FAILURE on format or write errors. */
 static int emit_output(enum zone_format fmt, const PelShotTarget *shots, size_t n, float base_crf)
 {
     size_t need = 0;
@@ -185,6 +189,8 @@ static int emit_output(enum zone_format fmt, const PelShotTarget *shots, size_t 
     return EXIT_SUCCESS;
 }
 
+/* Run the pelorus_zones CLI tool with argv to parse options, read shots from stdin, and emit formatted zones.
+ * Returns EXIT_SUCCESS on success or EXIT_FAILURE on error. */
 static int run(int argc, char **argv)
 {
     enum zone_format fmt = FMT_NONE;

@@ -15,6 +15,8 @@
 
 #define MAX_INPUT_LINES (PEL_QLOOP_MAX_ITER + 2u)
 
+/* Parse a history line from line into knob and score observations for obs, skipping blank and comment lines.
+ * Returns 1 on success, 0 for empty or comment lines, or -1 on syntax error. */
 static int parse_history_line(const char *line, size_t line_num, PelQloopObs *obs)
 {
     const char *p = line;
@@ -142,6 +144,8 @@ static int emit_step(const PelQloopStep *step)
     return EXIT_SUCCESS;
 }
 
+/* Run the pelorus_qloop CLI tool using the arguments in argv to read history from stdin and emit the next step.
+ * Returns EXIT_SUCCESS on success or EXIT_FAILURE on error. */
 static int run(int argc, char **argv)
 {
     PelQloopConfig cfg;
