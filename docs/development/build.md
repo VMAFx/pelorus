@@ -837,11 +837,14 @@ the Developer Certificate of Origin 1.1 format (`Signed-off-by: Full Name <email
 The message is split into lines on LF only, as git does, so a trailer
 after a carriage return or another Unicode line separator does not count.
 Renovate bot commits are exempt when authored by Renovate in a
-Renovate-opened pull request. The base and head may hold any printable ASCII
-character git allows in a ref name or revision (not a space or any of
-`\ : ? * [`), must not start with `-` and must not contain `..`; anything
-else exits 2 before git runs, and git itself is resolved to an absolute path on
-`PATH`. Run its self-test battery with
+Renovate-opened pull request. CI passes the pull request author with
+`--pr-author`; to check a Renovate branch locally, add
+`--pr-author 'renovate[bot]'`, since without it Renovate's unsigned commits fail.
+Before git runs, the script exits 2 for a base or head with a space or any of
+`\ : ? * [` or another character outside printable ASCII, a leading `-`, or a
+`..`. It does not check the rest of git's ref-name rules: a revision such as
+`origin/master/` passes this check, reaches git and fails as an unusable range.
+git itself is resolved to an absolute path on `PATH`. Run its self-test battery with
 `python3 -I scripts/check-dco.py --self-test`.
 
 `lefthook.yml` sets `no_auto_install: true`. Without it, `lefthook run`
