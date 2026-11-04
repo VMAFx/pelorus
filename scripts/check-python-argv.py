@@ -149,6 +149,14 @@ SELF_TEST_CASES: list[tuple[str, str, int]] = [
 ]
 
 
+# Undecodable sources: each must give one finding, never a traceback.
+SELF_TEST_BYTES_CASES: list[tuple[str, bytes]] = [
+    ("invalid_utf8_source", b"x = '\xe9'\n"),
+    ("null_byte_source", b"x = 1\x00\n"),
+    ("unknown_coding_source", b"# -*- coding: bogus -*-\nx = 1\n"),
+]
+
+
 def is_sys_argv_0(node: ast.Subscript) -> bool:
     """Return True if node is sys.argv[0]."""
     return (
@@ -294,6 +302,9 @@ def check_source_content(
         tree = ast.parse(source_bytes, filename=display_path)
     except SyntaxError as exc:
         return [f"{display_path}:{exc.lineno or 1}: syntax error during parse: {exc.msg}"]
+    except (ValueError, UnicodeDecodeError) as exc:
+        # Python < 3.12 raises ValueError for a null byte; report the file instead of aborting.
+        return [f"{display_path}:1: cannot decode source: {exc}"]
 
     imports_argparse = imports_argparse_module(tree)
     parent_map: dict[ast.AST, ast.AST] = {}
@@ -333,27 +344,62 @@ def check_file(path: pathlib.Path, repo_root: pathlib.Path | None = None) -> lis
     return check_source_content(source_bytes, display_path)
 
 
-def get_tracked_python_files(repo_root: pathlib.Path) -> list[pathlib.Path]:
-    """Retrieve git-tracked Python files via git ls-files."""
-    proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
-        ["git", "ls-files", "*.py"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=30,
-    )
-    lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
-    return [repo_root / line for line in lines]
+class GitListError(RuntimeError):
+    """git ls-files could not list the tracked Python files."""
+
+
+def get_tracked_python_files(repo_root: pathlib.Path, git: str) -> list[pathlib.Path]:
+    """Retrieve git-tracked Python files via git ls-files; raise GitListError on failure."""
+    try:
+        proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is the resolved git binary plus constants, no shell, explicit deadline
+            [git, "ls-files", "-z", "*.py"],
+            cwd=repo_root,
+            capture_output=True,
+            check=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise GitListError(f"git ls-files failed: {exc}") from exc
+    try:
+        names = proc.stdout.decode("utf-8").split("\0")
+    except UnicodeDecodeError as exc:
+        raise GitListError(f"git ls-files output is not UTF-8: {exc}") from exc
+    return [repo_root / name for name in names if name]
+
+
+def mirror_cli_failure(repo_root: pathlib.Path) -> str | None:
+    """Run check-mirror-contract.py --list; return why it failed the #496 regression, else None."""
+    mirror_script = repo_root / "scripts" / "check-mirror-contract.py"
+    if not mirror_script.is_file():
+        return f"{mirror_script} is missing; the --list regression cannot run"
+    python = sys.executable
+    if not python or not pathlib.Path(python).is_file():
+        return f"interpreter path {python!r} is not a file"
+    try:
+        proc = subprocess.run(  # nosec B603 - fixed python argv, no shell, explicit deadline
+            [python, "-I", str(mirror_script), "--list"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"could not run {mirror_script}: {exc}"
+    if proc.returncode != 2:
+        return f"expected exit 2, got {proc.returncode}"
+    if "Traceback" in proc.stderr:
+        return f"unexpected Traceback in stderr: {proc.stderr}"
+    return None
 
 
 def run_self_test(repo_root: pathlib.Path | None = None) -> int:
     """Run self-test suite covering planted cases and report outcome."""
     failures = 0
-    for name, source, expect_violations in SELF_TEST_CASES:
-        violations = check_source_content(
-            source.encode("utf-8"), f"<self-test:{name}>"
-        )
+    cases = [(name, src.encode("utf-8"), want) for name, src, want in SELF_TEST_CASES]
+    cases += [(name, raw, 1) for name, raw in SELF_TEST_BYTES_CASES]
+    for name, source, expect_violations in cases:
+        violations = check_source_content(source, f"<self-test:{name}>")
         if len(violations) != expect_violations:
             print(
                 f"FAIL self-test '{name}': expected {expect_violations} violations, got {len(violations)}: {violations}",
@@ -361,37 +407,19 @@ def run_self_test(repo_root: pathlib.Path | None = None) -> int:
             )
             failures += 1
 
-    # Mirror-contract subprocess test: python3 -I scripts/check-mirror-contract.py --list
     if repo_root is None:
         repo_root = pathlib.Path(__file__).resolve().parent.parent
-    mirror_script = repo_root / "scripts" / "check-mirror-contract.py"
-    if mirror_script.is_file():
-        proc = subprocess.run(  # nosec B603 - fixed python argv, no shell, explicit deadline
-            [sys.executable, "-I", str(mirror_script), "--list"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        if proc.returncode != 2:
-            print(
-                f"FAIL self-test 'mirror_contract_cli': expected exit 2, got {proc.returncode}",
-                file=sys.stderr,
-            )
-            failures += 1
-        if "Traceback" in proc.stderr:
-            print(
-                f"FAIL self-test 'mirror_contract_cli': unexpected Traceback in stderr: {proc.stderr}",
-                file=sys.stderr,
-            )
-            failures += 1
+    failure = mirror_cli_failure(repo_root)
+    if failure:
+        print(f"FAIL self-test 'mirror_contract_cli': {failure}", file=sys.stderr)
+        failures += 1
 
     if failures:
         print(f"python-argv self-test: {failures} failures", file=sys.stderr)
         return 1
 
     print(
-        f"python-argv self-test: {len(SELF_TEST_CASES)} synthetic cases + mirror-contract CLI ok"
+        f"python-argv self-test: {len(cases)} synthetic cases + mirror-contract CLI ok"
     )
     return 0
 
@@ -419,13 +447,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.paths:
         files = args.paths
     else:
-        if shutil.which("git") is None:
+        git = shutil.which("git")
+        if git is None or not pathlib.Path(git).is_file():
             print(
                 "python-argv: git not on PATH; pass files or use --self-test",
                 file=sys.stderr,
             )
             return 2
-        files = get_tracked_python_files(repo_root)
+        try:
+            files = get_tracked_python_files(repo_root, git)
+        except GitListError as exc:
+            print(f"python-argv: {exc}", file=sys.stderr)
+            return 2
 
     all_violations: list[str] = []
     for file_path in files:

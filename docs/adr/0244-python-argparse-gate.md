@@ -20,7 +20,7 @@ We will parse every Python command line in the tree with stdlib `argparse` and r
 - **Exceptions.** Two files are listed with a reason in the checker: `.config/agent/hooks/block_evasion.py` (a Praetor-managed hook this repository does not edit) and `ffmpeg-patches/test/doc-recipes-stub-ffmpeg.py` (a stand-in that mimics FFmpeg's own option syntax, which `argparse` cannot express).
 - **INI.** `check-pe-imports.py` reads the DLL allow-list with `configparser` (its default strict mode) and refuses unknown or duplicate sections and duplicate bundle DLLs; its self-test plants each refusal.
 - **Defaults.** Parsers keep `argparse`'s default `allow_abbrev=True`; a unique prefix of a long option is accepted as it is in every other stdlib-based tool.
-- **Wiring.** Meson fast tests `python-argv` (tree scan) and `python-argv-self-test` (18 planted cases) run in the fast suite; the tree scan is skipped on Windows, where the runner has no `git` on `PATH`, and the Linux jobs run it on every pull request.
+- **Wiring.** Meson fast tests `python-argv` (tree scan) and `python-argv-self-test` (21 planted cases, three of them undecodable sources) run in the fast suite; the tree scan is skipped on Windows, where the runner has no `git` on `PATH`, and the Linux jobs run it on every pull request.
 
 Scope is part 1 of #496. The shared C argv helper for `tools/pelorus_*.c`, the CSV helper merge and the shared JSON shape validator follow in their own pull requests.
 
@@ -29,7 +29,7 @@ Scope is part 1 of #496. The shared C argv helper for `tools/pelorus_*.c`, the C
 | Option | Pros | Cons | Why not chosen |
 | --- | --- | --- | --- |
 | Keep hand parsing, add bounds checks per script (runner-up) | Smallest diff; no behaviour change for existing calls | Each script re-implements usage errors; nothing stops the next hand parser; the bug class stays open | Fixes the reported crash only; the class recurs |
-| Ruff or Pylint rule instead of an own AST checker | No extra script to maintain | No Ruff 0.17.3 rule covers hand-parsed argv; a custom Pylint plugin is more code than the checker and adds a dependency | Nothing to enable; a plugin costs more than the 445-line stdlib checker |
+| Ruff or Pylint rule instead of an own AST checker | No extra script to maintain | No Ruff 0.17.3 rule covers hand-parsed argv; a custom Pylint plugin is more code than the checker and adds a dependency | Nothing to enable; a plugin costs more than a stdlib checker of under 500 lines |
 | Third-party parser (click, typer) | Richer help output, subcommands | New dependency for every script; breaks the stdlib-only `python3 -I` contract of the gate scripts | Rule 9 of the project contract asks for a reason a new dependency wins; none here |
 
 ## Consequences
