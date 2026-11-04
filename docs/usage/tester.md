@@ -491,7 +491,7 @@ bad case per rule below, and `--self-test --disable <rule>` must exit 1 for each
 | `steering_decode` | a steered stream that decodes to 15 of 16 frames |
 | `steering_control` | two unsteered encodes that differ |
 | `sd_present` | a coded picture without a Pelorus blob |
-| `sd_structure` | wrong total size or ABI major in the blob |
+| `sd_structure` | wrong total size, magic, ABI major or header size in the blob; the expected magic, ABI major and header size are parsed from `libpelorus/include/pelorus/interop.h` by `tools/tester/pelorus_interop_consts.py`, so an ABI bump needs no tester edit |
 | `sd_pts` | identical `frame_pts` echoes on all pictures |
 | `sd_decode_tap` | decoder output without the Pelorus UUID |
 | `sd_integrity_count` | a dropped blob, a missing picture, an extra blob |

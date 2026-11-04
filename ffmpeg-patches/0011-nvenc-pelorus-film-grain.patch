@@ -51,13 +51,13 @@ unchanged.
 
 ADR: docs/adr/0118-nvenc-av1-filmgrain.md, docs/adr/0115-grain-estimate.md (producer), docs/adr/0114-encoder-steering.md
 ---
- libavcodec/nvenc.c     | 291 ++++++++++++++++++++
+ libavcodec/nvenc.c     | 297 ++++++++++++++++++++
  libavcodec/nvenc.h     |  20 ++
  libavcodec/nvenc_av1.c |   2 +
- 3 files changed, 313 insertions(+)
+ 3 files changed, 319 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index f906f2afcd507dcf2d35a6806570dfb43df8e5dc..22b526761e1ef32e9fe3206e6f8018ea38988196 100644
+index 87f4b5cbc9e248c491bd6a86d3ad064aa4cc1cf1..3ee9e62145679b03c7bfedc3e99e43efc4e69488 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
 @@ -1689,6 +1689,31 @@ static av_cold int nvenc_setup_av1_config(AVCodecContext *avctx)
@@ -92,7 +92,7 @@ index f906f2afcd507dcf2d35a6806570dfb43df8e5dc..22b526761e1ef32e9fe3206e6f8018ea
  #ifdef NVENC_HAVE_H264_AND_AV1_TEMPORAL_FILTER
      if (ctx->tf_level >= 0) {
          av1->tfLevel = ctx->tf_level;
-@@ -3016,6 +3041,266 @@ static void reconfig_encoder(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3016,6 +3041,272 @@ static void reconfig_encoder(AVCodecContext *avctx, const AVFrame *frame)
      }
  }
  
@@ -116,6 +116,12 @@ index f906f2afcd507dcf2d35a6806570dfb43df8e5dc..22b526761e1ef32e9fe3206e6f8018ea
 +
 +#define PEL_FG_UUID_LEN        16
 +#define PEL_FG_SEC_FILMGRAIN   (1u << 3)
++
++/* Header constants mirrored from libpelorus interop.h (ABI 1.x). */
++#define PEL_FG_MAGIC           "PELOR1\0\0"
++#define PEL_FG_MAGIC_LEN       8
++#define PEL_FG_ABI_MAJOR       1u
++#define PEL_FG_HDR_BYTES       48
 +
 +static const uint8_t pel_fg_uuid[PEL_FG_UUID_LEN] = {
 +    0xe1, 0xd7, 0xc4, 0xa2, 0x6b, 0x93, 0x4f, 0x08,
@@ -218,7 +224,7 @@ index f906f2afcd507dcf2d35a6806570dfb43df8e5dc..22b526761e1ef32e9fe3206e6f8018ea
 +    uint16_t header_size, section_count, abi_major, i;
 +    uint32_t total_size, section_mask;
 +
-+    if (!buf || len < (size_t)PEL_FG_UUID_LEN + 48)
++    if (!buf || len < (size_t)PEL_FG_UUID_LEN + PEL_FG_HDR_BYTES)
 +        return 0;
 +    if (memcmp(buf, pel_fg_uuid, PEL_FG_UUID_LEN) != 0)
 +        return 0;
@@ -226,17 +232,17 @@ index f906f2afcd507dcf2d35a6806570dfb43df8e5dc..22b526761e1ef32e9fe3206e6f8018ea
 +    image     = buf + PEL_FG_UUID_LEN;
 +    image_len = len - PEL_FG_UUID_LEN;
 +
-+    if (memcmp(image, "PELOR1\0\0", 8) != 0)
++    if (memcmp(image, PEL_FG_MAGIC, PEL_FG_MAGIC_LEN) != 0)
 +        return 0;
 +    abi_major = pel_fg_rd16(image + 8);
-+    if (abi_major != 1)
++    if (abi_major != PEL_FG_ABI_MAJOR)
 +        return 0;
 +    total_size    = pel_fg_rd32(image + 12);
 +    section_mask  = pel_fg_rd32(image + 16);
 +    section_count = pel_fg_rd16(image + 20);
 +    header_size   = pel_fg_rd16(image + 22);
 +
-+    if (total_size > image_len || header_size < 48)
++    if (total_size > image_len || header_size < PEL_FG_HDR_BYTES)
 +        return -1;
 +    if ((section_mask & PEL_FG_SEC_FILMGRAIN) == 0)
 +        return 0;
@@ -359,7 +365,7 @@ index f906f2afcd507dcf2d35a6806570dfb43df8e5dc..22b526761e1ef32e9fe3206e6f8018ea
  #ifdef NVENC_HAVE_HEVC_AND_AV1_MASTERING_METADATA
  static int nvenc_set_mastering_display_data(AVCodecContext *avctx, const AVFrame *frame, NV_ENC_PIC_PARAMS *pic_params,
                                              MASTERING_DISPLAY_INFO *mastering_disp_info, CONTENT_LIGHT_LEVEL *content_light_level)
-@@ -3540,6 +3825,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
+@@ -3546,6 +3837,12 @@ static int nvenc_send_frame(AVCodecContext *avctx, const AVFrame *frame)
          }
  #endif
  

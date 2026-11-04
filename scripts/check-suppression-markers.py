@@ -37,6 +37,7 @@ import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
 import tempfile
 import tokenize
+from typing import TextIO
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -96,12 +97,21 @@ def comment_findings(comment: str, local_ids: frozenset[str]) -> list[str]:
     return found
 
 
+def parse_error(name: str, text: str) -> str | None:
+    """Return the parse diagnostic for Python source, or None when it parses."""
+    try:
+        ast.parse(text, filename=name)
+    except SyntaxError as exc:
+        return f"{name}:{exc.lineno}: not parseable Python: {exc.msg}"
+    return None
+
+
 def python_findings(name: str, text: str, local_ids: frozenset[str]) -> list[str]:
     """Check every marker comment in Python source against its AST start lines."""
-    try:
-        tree = ast.parse(text, filename=name)
-    except SyntaxError as exc:
-        return [f"{name}:{exc.lineno}: not parseable Python: {exc.msg}"]
+    error = parse_error(name, text)
+    if error is not None:
+        return [error]
+    tree = ast.parse(text, filename=name)
     starts = {
         node.lineno for node in ast.walk(tree) if isinstance(node, (ast.stmt, ast.expr))
     }
@@ -162,15 +172,15 @@ def readings(data: bytes) -> list[str]:
     return texts
 
 
-def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str]:
+def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> tuple[list[str], list[str]]:
     """Check one tracked file; Markdown and non-regular files are not read.
 
     Non-Python files are scanned across UTF-8 and UTF-16 readings.
-    Unreadable files are findings.
+    Unreadable files are findings. Returns (diagnostics, rule_findings).
     """
     name = path.relative_to(root).as_posix()
     if path.suffix == ".md" or not path.is_file():
-        return []
+        return [], []
     if is_python(path):
         # tokenize.open honours a PEP 263 coding cookie and the UTF-8 BOM; a
         # file that does not decode is a finding, not a crash or a skip.
@@ -178,14 +188,18 @@ def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str
             with tokenize.open(path) as handle:
                 text = handle.read()
         except OSError as exc:
-            return [f"{name}: not readable: {exc}"]
+            return [f"{name}: not readable: {exc}"], []
         except (SyntaxError, UnicodeDecodeError) as exc:
-            return [f"{name}: not decodable as declared: {exc}"]
-        return python_findings(name, text, local_ids)
+            return [f"{name}: not decodable as declared: {exc}"], []
+        # A parse error is a diagnostic: exceptions never excuse it.
+        error = parse_error(name, text)
+        if error is not None:
+            return [error], []
+        return [], python_findings(name, text, local_ids)
     try:
         raw = path.read_bytes()
     except OSError as exc:
-        return [f"{name}: not readable: {exc}"]
+        return [f"{name}: not readable: {exc}"], []
     findings: list[str] = []
     seen: set[str] = set()
     for text in readings(raw):
@@ -193,7 +207,7 @@ def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> list[str
             if item not in seen:
                 seen.add(item)
                 findings.append(item)
-    return findings
+    return [], findings
 
 
 def other_findings(name: str, text: str) -> list[str]:
@@ -210,17 +224,22 @@ def scan(
     root: Path,
     entries: list[dict[str, str]] | None = None,
     today: date | None = None,
+    paths: list[Path] | None = None,
+    out: TextIO = sys.stdout,
 ) -> list[str]:
     """Check every tracked file under root, dropping excused findings."""
     local_ids = local_rule_ids(root)
-    found: list[str] = []
-    for path in tracked_files(root):
-        found.extend(file_findings(root, path, local_ids))
+    diagnostics: list[str] = []
+    findings: list[str] = []
+    for path in (paths if paths is not None else tracked_files(root)):
+        file_diags, file_issues = file_findings(root, path, local_ids)
+        diagnostics.extend(file_diags)
+        findings.extend(file_issues)
     if entries is None:
         entries = load_entries(root)
     if today is None:
         today = date.today()
-    return filter_excused(found, entries, "HISS-08", today)
+    return diagnostics + filter_excused(findings, entries, "HISS-08", today, out=out)
 
 
 VALID = '''\
@@ -329,19 +348,21 @@ def utf16_self_test(root: Path, local_ids: frozenset[str]) -> list[str]:
         path = root / name
         path.write_bytes(payload)
         try:
-            got = file_findings(root, path, local_ids)
+            diags, got = file_findings(root, path, local_ids)
         except (UnicodeError, OSError) as exc:
             failures.append(f"planted '{label}' raised {exc!r}")
         else:
-            if not got or "outside Python" not in got[0]:
-                failures.append(f"planted '{label}' not refused: {got}")
+            all_findings = diags + got
+            if not all_findings or "outside Python" not in all_findings[0]:
+                failures.append(f"planted '{label}' not refused: {all_findings}")
             else:
-                print(f"refused as expected ({label}): {got[0]}")
+                print(f"refused as expected ({label}): {all_findings[0]}")
     for name, payload in UTF16_CLEAN:
         path = root / name
         path.write_bytes(payload)
-        if got := file_findings(root, path, local_ids):
-            failures.append(f"clean '{name}' unexpectedly refused: {got}")
+        diags, got = file_findings(root, path, local_ids)
+        if all_findings := (diags + got):
+            failures.append(f"clean '{name}' unexpectedly refused: {all_findings}")
     return failures
 
 
@@ -366,14 +387,15 @@ def unreadable_self_test(root: Path, local_ids: frozenset[str]) -> list[str]:
             print("skipped (unreadable file): mode 0 leaves the file readable here")
             return failures
         try:
-            got = file_findings(root, locked, local_ids)
+            diags, got = file_findings(root, locked, local_ids)
         except OSError as exc:
             failures.append(f"planted 'unreadable file' raised {exc!r}")
         else:
-            if len(got) != 1 or "not readable" not in got[0]:
-                failures.append(f"planted 'unreadable file' not refused: {got}")
+            all_findings = diags + got
+            if len(all_findings) != 1 or "not readable" not in all_findings[0]:
+                failures.append(f"planted 'unreadable file' not refused: {all_findings}")
             else:
-                print(f"refused as expected (unreadable file): {got[0]}")
+                print(f"refused as expected (unreadable file): {all_findings[0]}")
     finally:
         locked.chmod(0o600)
     return failures
@@ -391,37 +413,51 @@ def encoding_self_test(local_ids: frozenset[str]) -> list[str]:
         )
         broken = root / "broken.py"
         broken.write_bytes(b'x = "\xe9"  # nosec B603 - fixed argv\n')
-        got = file_findings(root, declared, local_ids)
-        if got:
-            failures.append(f"declared latin-1 source refused: {got}")
-        got = file_findings(root, broken, local_ids)
-        if not got or "not decodable" not in got[0]:
-            failures.append(f"planted 'undecodable source' not refused: {got}")
+        diags, got = file_findings(root, declared, local_ids)
+        if diags or got:
+            failures.append(f"declared latin-1 source refused: {diags + got}")
+        diags, got = file_findings(root, broken, local_ids)
+        all_findings = diags + got
+        if not all_findings or "not decodable" not in all_findings[0]:
+            failures.append(f"planted 'undecodable source' not refused: {all_findings}")
         else:
-            print(f"refused as expected (undecodable source): {got[0]}")
+            print(f"refused as expected (undecodable source): {all_findings[0]}")
         latin = root / "notes.sh"
         latin.write_bytes(b"echo \xff  # nosemgrep: python.lang.a.b - why\n")
-        got = file_findings(root, latin, local_ids)
-        if not got or "outside Python" not in got[0]:
-            failures.append(f"planted 'non-UTF-8 non-Python marker' not refused: {got}")
+        diags, got = file_findings(root, latin, local_ids)
+        all_findings = diags + got
+        if not all_findings or "outside Python" not in all_findings[0]:
+            failures.append(f"planted 'non-UTF-8 non-Python marker' not refused: {all_findings}")
         else:
-            print(f"refused as expected (non-UTF-8 non-Python marker): {got[0]}")
+            print(f"refused as expected (non-UTF-8 non-Python marker): {all_findings[0]}")
         stub = root / "stub.pyi"
         stub.write_text("def f() -> int: ...  # nosemgrep\n", encoding="utf-8")
-        got = file_findings(root, stub, local_ids)
-        if not got or "nosemgrep needs" not in got[0]:
-            failures.append(f"planted 'bare marker in a .pyi stub' not read as Python: {got}")
+        diags, got = file_findings(root, stub, local_ids)
+        all_findings = diags + got
+        if not all_findings or "nosemgrep needs" not in all_findings[0]:
+            failures.append(f"planted 'bare marker in a .pyi stub' not read as Python: {all_findings}")
         else:
-            print(f"refused as expected (bare marker in a .pyi stub): {got[0]}")
+            print(f"refused as expected (bare marker in a .pyi stub): {all_findings[0]}")
         stub.write_text(
             "def f() -> int: ...  # nosemgrep: python.lang.a.b - why\n", encoding="utf-8"
         )
-        got = file_findings(root, stub, local_ids)
-        if got:
-            failures.append(f"valid .pyi stub refused: {got}")
+        diags, got = file_findings(root, stub, local_ids)
+        if diags or got:
+            failures.append(f"valid .pyi stub refused: {diags + got}")
         failures.extend(utf16_self_test(root, local_ids))
         failures.extend(unreadable_self_test(root, local_ids))
     return failures
+
+
+def diagnostic_retained(file_name: str, content: bytes, expect: str, today: date, expires: str) -> bool:
+    """Scan one planted file under a live HISS-08 exception; True when the diagnostic survives."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_root = Path(tmp)
+        planted = tmp_root / file_name
+        planted.write_bytes(content)
+        entries = [{"rule": "HISS-08", "path": file_name, "reason": "category B, 3 days: test", "expires": expires}]
+        retained = scan(tmp_root, entries=entries, today=today, paths=[planted], out=io.StringIO())
+    return any(expect in item for item in retained)
 
 
 def exceptions_self_test() -> list[str]:
@@ -461,6 +497,14 @@ def exceptions_self_test() -> list[str]:
     ]
     if filter_excused([finding], other_entries, "HISS-08", ref_today, out=io.StringIO()) != [finding]:
         failures.append("mismatched rule exception was not refused")
+
+    # Cases 5 and 6: a read or parse diagnostic outlives a live exception
+    for file_name, content, expect in (
+        ("undecodable.py", b"\xff\xfe\x00bad", "not decodable"),
+        ("broken.py", b"def f(:\n    pass\n", "not parseable"),
+    ):
+        if not diagnostic_retained(file_name, content, expect, ref_today, future):
+            failures.append(f"'{expect}' diagnostic of {file_name} with live exception was silently excused")
 
     return failures
 
