@@ -637,6 +637,13 @@ jobs:
           grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Changelog fragments render cleanly
         run: bash scripts/release/concat-changelog-fragments.sh --check
+      - name: Co-change rules hold over the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          python3 -I scripts/check-cochange.py --self-test
+          python3 -I scripts/check-cochange.py --require-base --base "origin/${BASE_REF}" --head HEAD
       - name: Every ADR has an index row
         run: |
           missing=0

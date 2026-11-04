@@ -48,6 +48,8 @@ docs-check:
 	python3 -I scripts/adr/check-status.py
 	python3 -I scripts/check-mirror-contract.py --self-test
 	python3 -I scripts/check-mirror-contract.py
+	python3 -I scripts/check-cochange.py --self-test
+	python3 -I scripts/check-cochange.py
 	python3 -I scripts/check-doc-recipes.py --self-test
 	python3 -I scripts/check-doc-recipes.py
 	python3 -I ffmpeg-patches/test/doc-recipes-smoke.py --self-test
