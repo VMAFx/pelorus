@@ -52,7 +52,7 @@
  
      if (ctx->nvencoder) {
          p_nvenc->nvEncDestroyEncoder(ctx->nvencoder);
-@@ -2956,3 +3000,235 @@
+@@ -2956,3 +3000,241 @@
 +/* Pelorus external ME hints -------------------------------------------------
 + *
 + * A vf_pelorus_mc_vulkan stage emits a per-block integer-pel motion-vector
@@ -64,9 +64,9 @@
 + *
 + * The blob layout is the frozen append-only Pelorus interop ABI (see
 + * libpelorus/include/pelorus/interop.h, contract R1..R6). We replicate ONLY the
-+ * minimum needed to (a) authenticate the blob (16-byte UUID + 8-byte
-+ * "PELOR1\0\0" magic + abi_major == 1), (b) confirm PEL_SEC_MOTION (bit 1<<4)
-+ * is present, and (c) read the MotionSection's mv_field offset/size + the
++ * minimum needed to (a) authenticate the blob (16-byte UUID + PEL_MAGIC +
++ * abi_major == PEL_ABI_MAJOR), (b) confirm PEL_SEC_MOTION (bit 1<<4) is
++ * present, and (c) read the MotionSection's mv_field offset/size + the
 + * appended int16 (dx,dy) grid. All multi-byte reads go through helpers that
 + * assume little-endian (ABI R5; v1 hosts are LE). The byte offsets below track
 + * the frozen PelorusSideData / PelorusSectionDir / PelorusMotionSection layouts
@@ -74,6 +74,12 @@
 +
 +#define PEL_UUID_LEN        16
 +#define PEL_SEC_MOTION_BIT  (1u << 4)
++
++/* Header constants mirrored from libpelorus interop.h (ABI 1.x). */
++#define PEL_MAGIC           "PELOR1\0\0"
++#define PEL_MAGIC_LEN       8
++#define PEL_ABI_MAJOR       1u
++#define PEL_HDR_BYTES       48
 +
 +static const uint8_t pel_uuid[PEL_UUID_LEN] = {
 +    0xe1, 0xd7, 0xc4, 0xa2, 0x6b, 0x93, 0x4f, 0x08,
@@ -106,7 +112,7 @@
 +    const uint8_t *dir;
 +
 +    /* uuid + 48-byte PelorusSideData header is the minimum a blob can be. */
-+    if (!buf || len < (size_t)PEL_UUID_LEN + 48)
++    if (!buf || len < (size_t)PEL_UUID_LEN + PEL_HDR_BYTES)
 +        return -1;
 +    if (memcmp(buf, pel_uuid, PEL_UUID_LEN) != 0)
 +        return -1;
@@ -114,10 +120,10 @@
 +    image     = buf + PEL_UUID_LEN;
 +    image_len = len - PEL_UUID_LEN;
 +
-+    if (memcmp(image, "PELOR1\0\0", 8) != 0)        /* magic[8]     @ 0  */
++    if (memcmp(image, PEL_MAGIC, PEL_MAGIC_LEN) != 0) /* magic[8]     @ 0  */
 +        return -1;
 +    abi_major = pel_rd16(image + 8);                /* abi_major    @ 8  */
-+    if (abi_major != 1)
++    if (abi_major != PEL_ABI_MAJOR)
 +        return -1;
 +    total_size    = pel_rd32(image + 12);           /* total_size   @ 12 */
 +    section_mask  = pel_rd32(image + 16);           /* section_mask @ 16 */
@@ -126,7 +132,7 @@
 +    gc            = pel_rd16(image + 34);           /* grid_cols    @ 34 */
 +    gr            = pel_rd16(image + 36);           /* grid_rows    @ 36 */
 +
-+    if (total_size > image_len || header_size < 48)
++    if (total_size > image_len || header_size < PEL_HDR_BYTES)
 +        return -1;
 +    if ((section_mask & PEL_SEC_MOTION_BIT) == 0)
 +        return -1;

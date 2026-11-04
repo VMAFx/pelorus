@@ -100,19 +100,19 @@ MAIN = harness.EXPECT_C + r"""
 static void put16(uint8_t *p, unsigned v) { p[0] = v & 255; p[1] = v >> 8; }
 static void put32(uint8_t *p, unsigned v) { put16(p, v & 0xffff); put16(p + 2, v >> 16); }
 
-/* Pelorus blob: uuid + 48-byte header + one 16-byte directory entry + a 28-byte
+/* Pelorus blob: uuid + PEL_HDR_BYTES header + one 16-byte directory entry + a 28-byte
  * motion section + the (dx,dy) quarter-pel grid. Layout per interop.h. */
 static size_t build_blob(uint8_t *b, int gc, int gr, const int16_t *mv)
 {
-    const size_t hdr = 48, dir = 16, sec = 28, nmv = (size_t)gc * gr * 2;
+    const size_t hdr = PEL_HDR_BYTES, dir = 16, sec = 28, nmv = (size_t)gc * gr * 2;
     const size_t img = hdr + dir + sec + nmv * 2;
     uint8_t *im = b + 16;
     size_t i;
 
     memset(b, 0, 16 + img);
     memcpy(b, pel_uuid, 16);
-    memcpy(im, "PELOR1\0\0", 8);
-    put16(im + 8, 1);
+    memcpy(im, PEL_MAGIC, PEL_MAGIC_LEN);
+    put16(im + 8, PEL_ABI_MAJOR);
     put32(im + 12, (unsigned)img);
     put32(im + 16, 1u << 4);
     put16(im + 20, 1);

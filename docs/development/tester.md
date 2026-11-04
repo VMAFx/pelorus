@@ -189,7 +189,9 @@ program, a planted case and this page in one change.
 
 Any edit under `tools/tester/` changes the tool digest. Append the new digest to
 `tools/tester/tool-hashes.json` in the same change (never edit or remove an
-entry); `make docs-check` fails until you do:
+entry); `make docs-check` fails until you do. The digest covers every sibling
+module the tester loads; the self-test case `tool_files_cover_loaded_modules`
+fails when `TOOL_FILES` in `pelorus_tester_report.py` leaves one out:
 
 ```bash
 python3 -I tools/tester/pelorus_tester_report.py tool-hash
