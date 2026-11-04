@@ -14,10 +14,11 @@ bytes escapes as a traceback instead. This checker flags such blocks.
 A ``try`` block without an ``OSError`` handler is not a guarded read and is
 not checked. A ``read_text`` call does not count when its decode error cannot
 reach the block's handlers: it passes a constant non-raising ``errors`` mode
-(``"replace"``, ``"ignore"``, ``"surrogateescape"``, ``"backslashreplace"``),
-it sits in the body of a nested ``try`` that catches the decode error, or it
-sits in the body of a function or lambda defined inside the block. Any other
-``errors`` value, such as ``"strict"``, ``None`` or a variable, still counts.
+(``"replace"``, ``"ignore"``, ``"backslashreplace"``), it sits in the body
+of a nested ``try`` that catches the decode error, or it sits in the body of
+a function or lambda defined inside the block. Any other ``errors`` value,
+such as ``"strict"``, ``"surrogateescape"``, ``None`` or a variable, still
+counts.
 
 Usage:
     python3 -I scripts/check-python-decode-errors.py
@@ -39,8 +40,13 @@ DESCRIPTION = "Check that a try block guarding read_text() also catches UnicodeD
 OS_ERRORS = frozenset({"OSError", "IOError", "FileNotFoundError", "PermissionError"})
 DECODE_ERRORS = frozenset({"UnicodeDecodeError", "UnicodeError", "ValueError",
                            "Exception", "BaseException", "*"})
-NON_RAISING_MODES = frozenset({"replace", "ignore", "surrogateescape", "backslashreplace"})
-TRY_NODES = (ast.Try, ast.TryStar)
+# surrogateescape is not listed: it re-raises for bytes below 128, which a
+# UTF-16 or UTF-32 decode can reject.
+NON_RAISING_MODES = frozenset({"replace", "ignore", "backslashreplace"})
+# ast.TryStar exists from Python 3.11; the hooks still run on 3.10
+# (docs/development/build.md).
+TRY_NODES: tuple[type[ast.Try] | type[ast.TryStar], ...] = (ast.Try,) + (
+    (ast.TryStar,) if hasattr(ast, "TryStar") else ())
 
 SELF_TEST_CASES: list[tuple[str, str, int]] = [
     ("oserror_only",
@@ -75,6 +81,9 @@ SELF_TEST_CASES: list[tuple[str, str, int]] = [
      "try:\n    t = p.read_text(errors=mode)\nexcept OSError:\n    t = ''\n", 1),
     ("errors_positional_replace",
      "try:\n    t = p.read_text('utf-8', 'replace')\nexcept OSError:\n    t = ''\n", 0),
+    ("errors_surrogateescape_can_raise",
+     "try:\n    t = p.read_text(encoding='utf-16-le', errors='surrogateescape')\n"
+     "except OSError:\n    t = ''\n", 1),
     ("errors_positional_strict",
      "try:\n    t = p.read_text('utf-8', 'strict')\nexcept OSError:\n    t = ''\n", 1),
     ("nested_try_catches_decode",
