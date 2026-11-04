@@ -118,8 +118,14 @@ def check_or_write_file(
     engine_pin: str,
     write: bool = False,
 ) -> list[str]:
-    """Check or rewrite a file; return list of drift messages."""
-    content = path.read_text(encoding="utf-8")
+    """Check or rewrite a file; return list of drift messages.
+
+    An unreadable file is reported as a finding instead of aborting the scan.
+    """
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        return [f"{path}: cannot read: {exc}"]
     if not BASELINE_MARKER_RE.search(content) and not ENGINE_PIN_MARKER_RE.search(content):
         return []
 
@@ -206,10 +212,22 @@ def _case_argparse(_tmppath: Path) -> str | None:
     return "missing --baseline value did not exit"
 
 
+def _case_unreadable(tmppath: Path) -> str | None:
+    """A missing or non-UTF-8 doc file is a finding, and the scan goes on."""
+    bad = tmppath / "latin1.md"
+    bad.write_bytes(b"caf\xe9 <!-- gen:baseline-count -->0<!-- /gen:baseline-count -->\n")
+    for path in (tmppath / "missing.md", bad):
+        found = check_or_write_file(path, 0, "v0")
+        if len(found) != 1 or "cannot read" not in found[0]:
+            return f"unreadable {path.name} gave {found}"
+        print(f"self-test PASS: unreadable {path.name} reported")
+    return None
+
+
 def self_test() -> int:
     """Execute planted positive and negative tests."""
     with tempfile.TemporaryDirectory() as tmp:
-        for case in (_case_drift, _case_bad_inputs, _case_argparse):
+        for case in (_case_drift, _case_bad_inputs, _case_unreadable, _case_argparse):
             failure = case(Path(tmp))
             if failure:
                 print(f"self-test FAIL: {failure}", file=sys.stderr)
@@ -264,17 +282,8 @@ def main(argv: list[str] | None = None) -> int:
 
     target_files = args.files if args.files else find_default_files(Path("."))
     all_drifts: list[str] = []
-    updated_files: list[Path] = []
-
     for file_path in target_files:
-        if not file_path.is_file():
-            continue
-        drifts = check_or_write_file(file_path, baseline_count, engine_pin, write=args.write)
-        if drifts:
-            all_drifts.extend(drifts)
-        elif args.write:
-            # Check if file was updated
-            pass
+        all_drifts.extend(check_or_write_file(file_path, baseline_count, engine_pin, write=args.write))
 
     if all_drifts:
         for drift in all_drifts:
