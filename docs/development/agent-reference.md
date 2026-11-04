@@ -125,5 +125,5 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | FFmpeg Vulkan models | `vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c`, `vf_scdet_vulkan.c` |
 | AV1 grain ABI mirror | `libavutil/film_grain_params.h` |
 | vmafx control plane | `libvmaf_tune`, `/v1/score`, `vmaf-mcp` |
-| Praetor engine | `2d23b292417386fe8259da29690266ce331062c6` from `.github/workflows/standards-gate.yml` |
+| Praetor engine | `<!-- gen:engine-pin -->c565cba50b57a6d6cfa628a0f424d6c9f9a9e569<!-- /gen:engine-pin -->` from `.github/workflows/standards-gate.yml` |
 | Go for actionlint (`ci.yml` docs job) | `1.27.x`; change with `ACTIONLINT_GO_VERSION` in `scripts/check-build-config.py`; checker's Renovate manager keeps setup-go's `go` identity ([ADR-0151](../adr/0151-renovate-mirrors-checker-toolchain-pins.md)) |

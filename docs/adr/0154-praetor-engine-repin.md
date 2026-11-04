@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0154: Re-pin the Praetor engine to `0af07a73`
 
-- **Status**: Accepted
+- **Status**: Accepted; engine pin superseded by [ADR-0168](0168-praetor-engine-492a00f.md)
 - **Date**: 2026-10-03
 - **Deciders**: Lusoris
 - **Tags**: governance, ci, standards
