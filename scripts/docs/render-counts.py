@@ -33,12 +33,16 @@ import sys
 import tempfile
 from pathlib import Path
 
-BASELINE_MARKER_RE = re.compile(
-    r"<!--\s*gen:baseline-count\s*-->.*?<!--\s*/gen:baseline-count\s*-->"
-)
-ENGINE_PIN_MARKER_RE = re.compile(
-    r"<!--\s*gen:engine-pin\s*-->.*?<!--\s*/gen:engine-pin\s*-->"
-)
+
+def _pair_re(name: str) -> re.Pattern[str]:
+    """Compile pair regex for a generated marker span."""
+    return re.compile(
+        rf"<!--\s*gen:{re.escape(name)}\s*-->.*?<!--\s*/gen:{re.escape(name)}\s*-->"
+    )
+
+
+BASELINE_MARKER_RE = _pair_re("baseline-count")
+ENGINE_PIN_MARKER_RE = _pair_re("engine-pin")
 WORKFLOW_PIN_RE = re.compile(r"^\s*PRAETOR_REF:\s*([0-9a-fA-F]{7,40})\s*$")
 REQUIRED_MARKERS = (
     ("README.md", "baseline-count", 2),
@@ -88,11 +92,16 @@ def check_required_markers(root: Path) -> list[str]:
         except (OSError, UnicodeError) as exc:
             findings.append(f"{file_path}: cannot read: {exc}")
             continue
-        pattern = rf"<!--\s*gen:{re.escape(name)}\s*-->"
-        actual = len(re.findall(pattern, content))
-        if actual != expected:
+        openings = len(re.findall(rf"<!--\s*gen:{re.escape(name)}\s*-->", content))
+        closings = len(re.findall(rf"<!--\s*/gen:{re.escape(name)}\s*-->", content))
+        pairs = len(_pair_re(name).findall(content))
+        if openings != closings:
             findings.append(
-                f"{file_path}: expected {expected} gen:{name} marker pair(s), found {actual}"
+                f"{file_path}: unmatched gen:{name} markers: {openings} opening, {closings} closing"
+            )
+        if pairs != expected:
+            findings.append(
+                f"{file_path}: expected {expected} gen:{name} marker pair(s), found {pairs}"
             )
     return findings
 
@@ -281,6 +290,16 @@ def _case_required_markers(tmppath: Path) -> str | None:
     if len(findings) != 1:
         return f"expected 1 finding for 1 baseline-count pair in README.md, got {len(findings)}: {findings}"
     print(f"self-test PASS: 1 marker pair in README.md gave 1 finding: {findings[0]}")
+
+    readme.write_text(
+        "Count 1: <!-- gen:baseline-count -->0<!-- /gen:baseline-count -->\n"
+        "Count 2: <!-- gen:baseline-count -->0\n",
+        encoding="utf-8",
+    )
+    findings = check_required_markers(root)
+    if not any("unmatched gen:baseline-count" in f for f in findings):
+        return f"expected finding naming unmatched gen:baseline-count, got {findings}"
+    print(f"self-test PASS: unmatched marker gave finding: {findings}")
 
     readme.write_text(
         "Count 1: <!-- gen:baseline-count -->0<!-- /gen:baseline-count -->\n"
