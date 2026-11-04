@@ -244,51 +244,57 @@ def _is_str_list(val: object) -> bool:
     """Return True if value is a list containing only strings."""
     if not isinstance(val, list):
         return False
-    return all(type(item) is str for item in val[:10000])
+    return all(isinstance(item, str) for item in val[:10000])
 
 
 def _parse_commit(raw: object) -> Commit:
     """Validate a commit dictionary and return a Commit tuple."""
-    if not isinstance(raw, dict) or set(raw.keys()) != {"files", "trailers"}:
+    if not isinstance(raw, dict):
+        raise TypeError("commit must be an object")
+    if set(raw.keys()) != {"files", "trailers"}:
         raise ValueError("commit must be dict with files and trailers")
     files = raw["files"]
     trailers = raw["trailers"]
     if not _is_str_list(files) or not _is_str_list(trailers):
-        raise ValueError("commit files and trailers must be string lists")
+        raise TypeError("commit files and trailers must be string lists")
     return (set(files), list(trailers))
 
 
 def _parse_evaluate_case(raw: object) -> SelfTestCase:
     """Validate an evaluate case dictionary and return a SelfTestCase tuple."""
-    if not isinstance(raw, dict) or set(raw.keys()) != {
+    if not isinstance(raw, dict):
+        raise TypeError("evaluate case must be an object")
+    if set(raw.keys()) != {
         "name",
         "changed",
         "commits",
         "expected",
     }:
         raise ValueError("evaluate case keys mismatch")
-    if type(raw["name"]) is not str or not _is_str_list(raw["changed"]):
-        raise ValueError("evaluate name must be str and changed list of str")
+    if not isinstance(raw["name"], str) or not _is_str_list(raw["changed"]):
+        raise TypeError("evaluate name must be str and changed list of str")
     if not isinstance(raw["commits"], list):
-        raise ValueError("evaluate commits must be list")
-    if type(raw["expected"]) is not int:
-        raise ValueError("evaluate expected must be int")
+        raise TypeError("evaluate commits must be list")
+    if not isinstance(raw["expected"], int) or isinstance(raw["expected"], bool):
+        raise TypeError("evaluate expected must be int")
     commits = [_parse_commit(c) for c in raw["commits"][:1000]]
     return (raw["name"], set(raw["changed"]), commits, raw["expected"])
 
 
 def _parse_trailer_case(raw: object) -> TrailerParserCase:
     """Validate a trailer parser case dictionary and return a TrailerParserCase."""
-    if not isinstance(raw, dict) or set(raw.keys()) != {
+    if not isinstance(raw, dict):
+        raise TypeError("trailer parser case must be an object")
+    if set(raw.keys()) != {
         "name",
         "message",
         "expected",
     }:
         raise ValueError("trailer parser case keys mismatch")
-    if type(raw["name"]) is not str or type(raw["message"]) is not str:
-        raise ValueError("trailer parser name and message must be str")
+    if not isinstance(raw["name"], str) or not isinstance(raw["message"], str):
+        raise TypeError("trailer parser name and message must be str")
     if not _is_str_list(raw["expected"]):
-        raise ValueError("trailer parser expected must be list of str")
+        raise TypeError("trailer parser expected must be list of str")
     return (raw["name"], raw["message"], list(raw["expected"]))
 
 
@@ -300,21 +306,25 @@ def load_self_test_cases(
         content = path.read_text(encoding="utf-8")
         data = json.loads(content)
         if not isinstance(data, dict):
-            raise ValueError("root must be a JSON object")
+            raise TypeError("root must be a JSON object")
         if set(data.keys()) != {"schema", "evaluate", "trailer_parser"}:
             raise ValueError("keys must be schema, evaluate, trailer_parser")
-        if type(data["schema"]) is not int or data["schema"] != 1:
+        if not isinstance(data["schema"], int) or isinstance(
+            data["schema"], bool
+        ):
+            raise TypeError("schema must be integer 1")
+        if data["schema"] != 1:
             raise ValueError("schema must be integer 1")
         if not isinstance(data["evaluate"], list) or not isinstance(
             data["trailer_parser"], list
         ):
-            raise ValueError("evaluate and trailer_parser must be lists")
+            raise TypeError("evaluate and trailer_parser must be lists")
         eval_cases = [_parse_evaluate_case(c) for c in data["evaluate"][:5000]]
         trailer_cases = [
             _parse_trailer_case(c) for c in data["trailer_parser"][:5000]
         ]
         return (eval_cases, trailer_cases)
-    except (OSError, ValueError) as exc:
+    except (OSError, TypeError, ValueError) as exc:
         print(f"co-change: self-test cases {path}: {exc}", file=sys.stderr)
         return None
 
