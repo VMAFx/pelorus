@@ -98,7 +98,10 @@ static FILE *create_exclusive(const char *path)
     }
     return fp;
 #else
-    const int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+    /* O_EXCL fails on any existing name, links included (POSIX open());
+     * O_NOFOLLOW states the same intent for the final component. */
+    const int fd =
+        open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR);
     FILE *fp;
 
     if (fd < 0) {
