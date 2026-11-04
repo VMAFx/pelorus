@@ -333,6 +333,15 @@ if build_machine.system() != 'windows'
        workdir: meson.project_source_root(),
        timeout: 600,
        suite: 'fast')
+  test('interop-constants-guard-selftest-isolation',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-selftest-git-isolation.py',
+              python_prog.full_path(), '-I',
+              meson.project_source_root() / 'scripts' / 'check-interop-constants.py',
+              '--self-test'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
   test('check-cochange-selftest-isolation',
        python_prog,
        args: [meson.project_source_root() / 'scripts' / 'test-selftest-git-isolation.py',

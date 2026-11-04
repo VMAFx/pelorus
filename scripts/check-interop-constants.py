@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import codecs
 import importlib.util
+import os
 import re
 import subprocess  # nosec B404 - fixed git argv, no shell, explicit timeout
 import sys
@@ -97,6 +98,25 @@ def scan_literals(rel_path: str, text: str) -> list[str]:
     ]
 
 
+def repo_discovery_env() -> dict[str, str]:
+    """Return the environment without Git's repository-selecting variables.
+
+    Git exports GIT_DIR and its siblings to hooks; inherited, they make
+    `git -C <dir>` list the invoking repository instead of <dir>, so the
+    pre-push self-test accepted a non-git directory. The list is Git's own
+    (`git rev-parse --local-env-vars`).
+    """
+    names = subprocess.run(  # nosec B603 - fixed git argv, explicit timeout
+        ["git", "rev-parse", "--local-env-vars"],
+        capture_output=True,
+        timeout=30.0,
+        check=True,
+    ).stdout.decode("utf-8").split()
+    if "GIT_DIR" not in names:
+        raise RuntimeError("git rev-parse --local-env-vars did not list GIT_DIR")
+    return {key: value for key, value in os.environ.items() if key not in names}
+
+
 def tracked_files(repo_root: Path) -> list[str]:
     """List tracked files; a git failure raises instead of passing an empty tree."""
     proc = subprocess.run(  # nosec B603 - fixed git argv, explicit timeout
@@ -104,6 +124,7 @@ def tracked_files(repo_root: Path) -> list[str]:
         capture_output=True,
         timeout=30.0,
         check=True,
+        env=repo_discovery_env(),
     )
     files = [name for name in proc.stdout.decode("utf-8").split("\0") if name]
     if not files:
