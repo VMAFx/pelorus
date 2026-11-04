@@ -6,6 +6,10 @@
 Ported from VMAFx/vmafx test_semgrep_float_identity.py
 (sha 25ee5f3a25aebc97ee453fc3a70f676c68da2a81).
 
+The temporary root is always a git repository, and every scan passes
+`--project-root .` and `--no-git-ignore`: inside an enclosing repository semgrep
+otherwise scans only tracked files, finds none in the planted tree and exits 0.
+
 Checks that `pelorus-test-float-identity` in `.semgrep.yml`:
 (a) reports computed float/double equality comparisons in test sources, while
     allowing literals, macros, k-constants, NaN idioms, integer casts, and calls;
@@ -128,6 +132,11 @@ class ScanError(Exception):
     """A semgrep run ended with an unexpected status or unreadable output."""
 
 
+def scrubbed_env() -> dict[str, str]:
+    """Copy os.environ with all GIT_* keys dropped to prevent repo steering."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def run_semgrep(
     semgrep_bin: str,
     target_dir: pathlib.Path,
@@ -140,7 +149,7 @@ def run_semgrep(
     Semgrep's settings live under env_dir so no user configuration leaks in,
     and an exit code other than expected_rc raises.
     """
-    env = dict(os.environ)
+    env = scrubbed_env()
     env["XDG_CONFIG_HOME"] = str(env_dir)
     env["SEMGREP_SETTINGS_FILE"] = str(env_dir / "semgrep-settings.yaml")
     env["SEMGREP_LOG_FILE"] = str(env_dir / "semgrep.log")
@@ -153,6 +162,9 @@ def run_semgrep(
         "--json",
         "--metrics=off",
         "--disable-version-check",
+        "--no-git-ignore",
+        "--project-root",
+        ".",
         ".",
     ]
     try:
@@ -398,6 +410,26 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         (tmp / "cfg").mkdir()
+        git_bin = shutil.which("git")
+        if git_bin:
+            try:
+                proc = subprocess.run(  # nosec B603 - git resolved from PATH to a file; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - git resolved to an executable file, fixed list argv, no shell, explicit deadline
+                    [git_bin, "init", "-q", str(tmp)],
+                    capture_output=True,
+                    text=True,
+                    env=scrubbed_env(),
+                    check=False,
+                    timeout=30,
+                )
+            except subprocess.TimeoutExpired:
+                sys.stderr.write(f"git init -q in {tmp}: no result after 30 s\n")
+                return 1
+            if proc.returncode != 0:
+                sys.stderr.write(
+                    f"git init -q in {tmp}: expected rc=0, got rc={proc.returncode}\n"
+                    f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}\n"
+                )
+                return 1
         try:
             for step in (
                 step_planted_cases,
