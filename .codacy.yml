@@ -13,10 +13,11 @@
 engines:
   bandit:
     exclude_paths:
-      # B310 (urlopen with a permitted scheme) at tools/figures/mkdocs_hook.py:269. The
-      # engine-managed download_player_archive refuses every URL that is not https at :265
-      # before the call, so the scheme the rule warns about cannot reach urlopen. The file is
-      # engine-managed; the fix belongs upstream in cordanaLLM/praetor#1802.
+      # B310 (urlopen with a permitted scheme). The engine adoption in pull request 479
+      # renders this file with download_player_archive, whose urlopen call (:269 there) sits
+      # behind a guard that refuses every URL that is not https (:265 there), so the scheme
+      # the rule warns about cannot reach it. The file is engine-managed; the fix belongs
+      # upstream in cordanaLLM/praetor#1802. Remove this entry once that fix is adopted.
       # exception: category B, entered 2026-11-04, expires 2026-11-07
       - "tools/figures/mkdocs_hook.py"
   opengrep:

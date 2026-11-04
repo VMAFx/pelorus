@@ -103,6 +103,18 @@ SELF_TEST_CASES: list[tuple[str, str, str | None, date | None]] = [
         None,
     ),
     (
+        "flow engines mapping",
+        '---\nengines: {bandit: {exclude_paths: ["c.py"]}}\n',
+        "block mapping only",
+        None,
+    ),
+    (
+        "file over MAX_LINES",
+        VALID_TEMPLATE + "#\n" * MAX_LINES,
+        "longer than",
+        None,
+    ),
+    (
         'bad date "2026-13-01"',
         VALID_TEMPLATE.replace("expires 2026-11-07", "expires 2026-13-01"),
         "2026-13-01",
@@ -242,7 +254,11 @@ def check_text(
     if not text.startswith("---\n"):
         findings.append(".codacy.yml:1: file must start with '---\\n'")
 
-    lines = text.splitlines()[:MAX_LINES]
+    all_lines = text.splitlines()
+    if len(all_lines) > MAX_LINES:
+        findings.append(f".codacy.yml:{MAX_LINES + 1}: file longer than {MAX_LINES} lines; not checked")
+        return findings
+    lines = all_lines
     in_engines = False
     in_exclude_paths = False
     comments: list[tuple[int, str]] = []
@@ -256,6 +272,8 @@ def check_text(
         if not in_engines:
             if line.rstrip() == "engines:":
                 in_engines = True
+            elif line.startswith("engines:"):
+                findings.append(f".codacy.yml:{line_idx}: unrecognised line (block mapping only): {line.strip()}")
             continue
 
         if line and not line.startswith(" ") and not line.startswith("\t") and not line.startswith("#"):
