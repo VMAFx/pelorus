@@ -13,18 +13,24 @@ import argparse
 import os
 import pathlib
 import re
+import shutil
 import signal
 import subprocess  # nosec B404 - compiler and harness argv, no shell, explicit deadline
 import sys
 import tempfile
+import time
 from types import MappingProxyType
-from typing import Sequence
+from typing import Callable, Sequence
 
 DEFAULT_CFLAGS = ("-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function")
 # Deadlines for the harness compiler and the harness binary (HISS-02). A
 # harness is a few hundred lines and runs in milliseconds; a stall is a failure.
 BUILD_TIMEOUT_S = 120.0
 RUN_TIMEOUT_S = 30.0
+# Windows releases the image of a killed process with delay; cleanup retries
+# a denied delete this many times (HISS-02 bound).
+CLEANUP_TRIES = 10
+CLEANUP_DELAY_S = 0.2
 
 # cl.exe-style drivers take MSVC options. The GNU warning set maps the way
 # FFmpeg's configure maps it (msvc_flags: -Wall, -Wextra, -Werror), and the
@@ -287,6 +293,29 @@ def driver_argv(
     return [*cc, "-nologo", *MSVC_DEFINES, *mapped, str(c_file), f"-Fo{obj}", f"-Fe{exe}"]
 
 
+def remove_tree(
+    path: str | pathlib.Path,
+    rmtree: Callable[[str | pathlib.Path], object] = shutil.rmtree,
+    sleep: Callable[[float], object] = time.sleep,
+    is_windows: bool | None = None,
+) -> None:
+    """Remove a directory tree; on Windows retry a denied delete CLEANUP_TRIES times.
+
+    Raises the last error when the tree stays locked; any other error, and every
+    error off Windows, propagates at once.
+    """
+    windows = os.name == "nt" if is_windows is None else is_windows
+    tries = CLEANUP_TRIES if windows else 1
+    for attempt in range(tries):
+        try:
+            rmtree(path)
+            return
+        except PermissionError:
+            if attempt == tries - 1:
+                raise
+            sleep(CLEANUP_DELAY_S)
+
+
 def build_and_run(
     source: str,
     cc: Sequence[str],
@@ -303,7 +332,8 @@ def build_and_run(
     ``libs`` follow the source file so the linker resolves them under
     --as-needed.
     """
-    with tempfile.TemporaryDirectory(prefix=prefix) as tmp:
+    tmp = tempfile.mkdtemp(prefix=prefix)
+    try:
         tmp_path = pathlib.Path(tmp)
         c_file = tmp_path / "harness.c"
         exe = tmp_path / ("harness.exe" if os.name == "nt" else "harness")
@@ -321,6 +351,8 @@ def build_and_run(
         if run is None:
             return 1, f"harness run exceeded {run_timeout:g} s\n"
         return (0 if run.returncode == 0 else 1), run.stdout + run.stderr
+    finally:
+        remove_tree(tmp)
 
 
 def compile_and_run(

@@ -19,6 +19,7 @@ import signal
 import sys
 import tempfile
 import time
+from typing import Sequence
 
 # python3 -I drops the script directory from sys.path: load the sibling by path.
 _SPEC = importlib.util.spec_from_file_location("patch_harness", pathlib.Path(__file__).with_name("patch_harness.py"))
@@ -192,6 +193,73 @@ def test_driver_argv() -> bool:
     return ok
 
 
+def _remove_tree_calls(
+    errors: Sequence[BaseException | None], is_windows: bool
+) -> tuple[int, str, list[float]]:
+    """Run remove_tree over a fake rmtree that raises ``errors`` in turn.
+
+    Returns (rmtree calls, name of the exception remove_tree raised or "",
+    delays passed to sleep). The last entry repeats once the sequence runs out.
+    """
+    calls = 0
+    delays: list[float] = []
+
+    def fake_rmtree(_: object) -> None:
+        nonlocal calls
+        err = errors[min(calls, len(errors) - 1)]
+        calls += 1
+        if err is not None:
+            raise err
+
+    try:
+        harness.remove_tree("unused", rmtree=fake_rmtree, sleep=delays.append, is_windows=is_windows)
+    except OSError as err:
+        return calls, type(err).__name__, delays
+    return calls, "", delays
+
+
+def test_remove_tree() -> bool:
+    """Check remove_tree: bounded retry on a locked file on Windows, no retry elsewhere."""
+    denied = PermissionError("Access is denied")
+    tries = harness.CLEANUP_TRIES
+    cases = (
+        ("unlocks after 3 denials", [denied, denied, denied, None], True, 4, "", 3),
+        ("stays locked", [denied], True, tries, "PermissionError", tries - 1),
+        ("off Windows", [denied], False, 1, "PermissionError", 0),
+        ("other error", [FileNotFoundError("gone")], True, 1, "FileNotFoundError", 0),
+    )
+    ok = True
+    for name, errors, is_windows, want_calls, want_raised, want_sleeps in cases:
+        got = _remove_tree_calls(errors, is_windows)
+        want = (want_calls, want_raised, [harness.CLEANUP_DELAY_S] * want_sleeps)
+        if got != want:
+            print(f"FAIL remove_tree {name}: calls, raised, delays {got!r}; want {want!r}")
+            ok = False
+    return ok
+
+
+def test_build_and_run_cleanup() -> bool:
+    """Check build_and_run removes its folder through remove_tree, also when the build fails."""
+    removed: list[str] = []
+    original = harness.remove_tree
+
+    def spy(path: str, *args: object, **kwargs: object) -> None:
+        removed.append(str(path))
+        original(path, *args, **kwargs)
+
+    failing_cc = (sys.executable, "-I", "-c", "import sys; sys.exit(1)")
+    harness.remove_tree = spy
+    try:
+        status, _ = harness.build_and_run(OK_C, failing_cc, prefix="pelorus-cleanup-probe-")
+    finally:
+        harness.remove_tree = original
+    folder = pathlib.Path(removed[0]) if len(removed) == 1 else None
+    if status != 2 or folder is None or not folder.name.startswith("pelorus-cleanup-probe-") or folder.exists():
+        print(f"FAIL build_and_run cleanup: status {status}, remove_tree calls {removed!r}")
+        return False
+    return True
+
+
 def main() -> int:
     """Run patch harness tests across compiler cases; returns 0 on success, 1 on failure."""
     parser = harness.make_parser(DESCRIPTION)
@@ -213,9 +281,13 @@ def main() -> int:
         failures += 1
     if not test_driver_argv():
         failures += 1
+    if not test_remove_tree():
+        failures += 1
+    if not test_build_and_run_cleanup():
+        failures += 1
     if failures:
         return 1
-    print(f"patch-harness: {len(cases) + 2} cases ok")
+    print(f"patch-harness: {len(cases) + 4} cases ok")
     return 0
 
 
