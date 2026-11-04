@@ -262,9 +262,10 @@ def check_table(path, text, consts, off):
 
 
 def read(root, rel):
+    """Return the UTF-8 text of ``root / rel``; raise GateError when it cannot be read."""
     try:
         return (root / rel).read_text(encoding="utf-8")
-    except OSError as err:
+    except (OSError, UnicodeDecodeError) as err:
         raise GateError("cannot read %s: %s" % (rel, err)) from err
 
 
@@ -278,6 +279,7 @@ def option_row(src, name, rel):
 
 
 def load_constants(root):
+    """Return the denoise prev/lookahead defaults and maxima and the mc previous-frame count from the C sources."""
     header = read(root, DENOISE_HEADER)
     denoise = read(root, DENOISE_SRC)
     mc = re.sub(r"/\*.*?\*/|//[^\n]*", "", read(root, MC_SRC), flags=re.S)

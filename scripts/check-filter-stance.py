@@ -86,9 +86,10 @@ def run(root):
 
 
 def read(root, rel):
+    """Return the UTF-8 text of ``root / rel``; raise GateError when it cannot be read."""
     try:
         return (root / rel).read_text(encoding="utf-8")
-    except OSError as err:
+    except (OSError, UnicodeDecodeError) as err:
         raise GateError("cannot read %s: %s" % (rel, err)) from err
 
 
@@ -97,6 +98,7 @@ def line_number(text, offset):
 
 
 def load_inventory(root):
+    """Map each registered Pelorus filter or BSF name to its source path and registration line."""
     source_dir = root / "ffmpeg-patches/files"
     if not source_dir.is_dir():
         raise GateError("cannot read source directory ffmpeg-patches/files")
@@ -108,7 +110,7 @@ def load_inventory(root):
     for path in sources:
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError as err:
+        except (OSError, UnicodeDecodeError) as err:
             raise GateError("cannot read %s: %s" % (path.relative_to(root), err)) from err
         matches = list(re.finditer(r'\.p\.name\s*=\s*"(pelorus_[^"]+)"', text))
         rel = str(path.relative_to(root))
@@ -171,6 +173,7 @@ def has_evidence(root, cell):
 
 
 def load_pages(root):
+    """Return the metric pages and the grain usage page whose stance sentences are checked."""
     metrics = root / "docs/metrics"
     usage = root / "docs/usage/grain-fgs-bsf.md"
     if not metrics.is_dir():
@@ -182,7 +185,7 @@ def load_pages(root):
     for path in paths:
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError as err:
+        except (OSError, UnicodeDecodeError) as err:
             raise GateError("cannot read %s: %s" % (path.relative_to(root), err)) from err
         heading = next((line for line in text.splitlines() if line.startswith("# ")), "")
         names = re.findall(r"(?:vf_)?(pelorus_[a-z0-9_]+)", heading)
