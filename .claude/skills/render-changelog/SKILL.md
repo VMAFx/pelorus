@@ -1,27 +1,29 @@
 ---
 name: render-changelog
-description: Use when adding a changelog entry or before a release — render CHANGELOG.md's [Unreleased] block from the changelog.d/ fragments. Never hand-edit the block.
+description: Use when landing a changelog render batch or before a release — render CHANGELOG.md's [Unreleased] block from changelog.d/ fragments in a render-only PR. Feature PRs carry fragments only.
 ---
 
 # /render-changelog
 
 `CHANGELOG.md`'s `[Unreleased]` block (between the `BEGIN/END UNRELEASED`
-markers) is generated from `changelog.d/<section>/*.md`. To add an entry, drop a
-fragment, then render:
+markers) is generated from `changelog.d/<section>/*.md`. Feature PRs add fragments
+only without rendering. Rendering runs in a dedicated render-only PR per landing
+batch and at release cut (ADR-0245):
 
 ```sh
-# 1. add a fragment (one per PR): changelog.d/<section>/<num>-<topic>.md
-#    sections = added | changed | deprecated | removed | fixed | security
-# 2. render
+# 1. Feature PRs add a fragment only: changelog.d/<section>/<num>-<topic>.md
+#    sections = added | changed | deprecated | removed | fixed | security | maintenance
+# 2. Render-only PR lands per landing batch and at release cut:
 bash scripts/release/concat-changelog-fragments.sh --write
-# 3. CI enforces it's up to date:
-bash scripts/release/concat-changelog-fragments.sh --check
+# 3. Check staleness on default branch:
+python3 -I scripts/release/check-changelog-staleness.py
 ```
 
 ## Rules
 
+- Feature PRs add fragments only; render in a render-only PR, not inside feature PRs (ADR-0245).
 - One fragment file per PR (avoids the CHANGELOG merge conflict two PRs would hit).
 - Number-prefix the filename to order entries within a section.
 - Reference the governing ADR by number in the bullet.
 - Performance items live in `changed/` with a `perf-` filename prefix.
-- See [changelog.d/README.md](../../../changelog.d/README.md) and ADR-0108.
+- See [changelog.d/README.md](../../../changelog.d/README.md), ADR-0108, and ADR-0245.

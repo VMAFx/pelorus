@@ -67,7 +67,8 @@ exist.
    a section without `### Highlights` or outside 3 to 6 bullets, unwraps hard
    line breaks, rewrites relative documentation links to absolute blob URLs
    at the release tag, and places `### Maintenance` last), and run
-   `bash scripts/release/concat-changelog-fragments.sh --write`. The section
+   `bash scripts/release/concat-changelog-fragments.sh --write`
+   ([ADR-0245](../adr/0245-changelog-render-at-landing.md)). The section
    holds the changes since the previous candidate, or since the previous
    release for `rc.1`.
 2. Merge. Dispatch `Tester publish` from the default branch with an empty `ref`
@@ -121,6 +122,7 @@ A manual dispatch of `Release` runs `ci` and `build` without the tag steps and
 never publishes. To rehearse the tag steps, push `vX.Y.Z-rc.N` in a fork, or
 test the rules directly: `python3 -I scripts/release/verify-release.py --self-test`,
 `python3 -I scripts/release/check-candidate-legs.py --self-test`,
+`python3 -I scripts/release/check-changelog-staleness.py --self-test`,
 `bash scripts/release/tag-release.sh --self-test`,
 `bash scripts/release/check-publish-ref.sh --self-test` and
 `bash scripts/release/extract-release-notes.sh --self-test`.

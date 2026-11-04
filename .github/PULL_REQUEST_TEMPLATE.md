@@ -20,7 +20,7 @@
 - [ ] **Research digest** `docs/research/NNNN-*.md` (or "no digest needed: trivial")
 - [ ] **Decision matrix** = the ADR's Alternatives table (or "no alternatives: only-one-way fix")
 - [ ] **AGENTS.md invariant note** in the touched package (or "no rebase-sensitive invariants")
-- [ ] **Changelog fragment** `changelog.d/<section>/*.md`; `concat-changelog-fragments.sh --check` passes
+- [ ] **Changelog fragment** `changelog.d/<section>/*.md` added (render runs at landing, ADR-0245)
 - [ ] **Rebase note** `docs/rebase-notes.md` if the FFmpeg patch stack is affected (or "no rebase impact: REASON")
 - [ ] **Patch-stack sync**: a libpelorus surface the patches consume changed ⇒ regenerated patch is included (`/ffmpeg-build-patches`)
 - [ ] **Interop ABI** (if touched) is **append-only**, `PELORUS_ABI_MINOR` bumped, conformance fixture extended (`/bump-abi`)
