@@ -61,7 +61,7 @@ class GitListError(RuntimeError):
 def get_tracked_files(repo_root: pathlib.Path, git: str) -> list[pathlib.Path]:
     """Retrieve git-tracked files via git ls-files -z; raise GitListError on failure."""
     try:
-        proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell
+        proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is the resolved git binary plus constants, no shell, explicit deadline
             [git, "ls-files", "-z"],
             cwd=repo_root,
             capture_output=True,
