@@ -18,12 +18,19 @@ from __future__ import annotations
 
 import argparse
 import ast
+from datetime import date, timedelta
 import io
 import pathlib
 import shutil
 import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
 import tokenize
+
+_SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from standards_exceptions import filter_excused, load_entries
 
 DESCRIPTION = "Check that Python except clauses with bare pass include explanatory comments."
 
@@ -124,6 +131,48 @@ def get_tracked_python_files(repo_root: pathlib.Path) -> list[pathlib.Path]:
     return [repo_root / line for line in lines]
 
 
+
+def exceptions_self_test() -> list[str]:
+    """Verify live, missing, expired, and mismatched exceptions on planted violations."""
+    failures: list[str] = []
+    fixture_path = "fixture/target.py"
+    violation = f"{fixture_path}:10: empty except without explanatory comment"
+    ref_today = date(2026, 11, 4)
+    yesterday = (ref_today - timedelta(days=1)).isoformat()
+    future = (ref_today + timedelta(days=3)).isoformat()
+
+    # Case 1: live fixture entry -> excused
+    live_entries = [
+        {"rule": "HISS-07", "path": fixture_path, "reason": "category B, 3 days: test", "expires": future}
+    ]
+    buf = io.StringIO()
+    if filter_excused([violation], live_entries, "HISS-07", ref_today, out=buf):
+        failures.append("live exception was not excused")
+    expected_msg = f"{fixture_path}: excused by .standards.yaml exception HISS-07 until {future}\n"
+    if buf.getvalue() != expected_msg:
+        failures.append(f"live exception output mismatch: {buf.getvalue()!r} != {expected_msg!r}")
+
+    # Case 2: same finding, no entry -> refused
+    if filter_excused([violation], [], "HISS-07", ref_today, out=io.StringIO()) != [violation]:
+        failures.append("violation without exception was not refused")
+
+    # Case 3: same finding, entry expired -> refused
+    expired_entries = [
+        {"rule": "HISS-07", "path": fixture_path, "reason": "category B, 3 days: test", "expires": yesterday}
+    ]
+    if filter_excused([violation], expired_entries, "HISS-07", ref_today, out=io.StringIO()) != [violation]:
+        failures.append("expired exception was not refused")
+
+    # Case 4: entry for the other rule id -> refused
+    other_entries = [
+        {"rule": "HISS-10", "path": fixture_path, "reason": "category B, 3 days: test", "expires": future}
+    ]
+    if filter_excused([violation], other_entries, "HISS-07", ref_today, out=io.StringIO()) != [violation]:
+        failures.append("mismatched rule exception was not refused")
+
+    return failures
+
+
 def run_self_test() -> int:
     """Run self-test suite covering planted cases and report outcome."""
     failures = 0
@@ -136,11 +185,15 @@ def run_self_test() -> int:
             )
             failures += 1
 
+    for failure in exceptions_self_test():
+        print(f"FAIL self-test (exceptions): {failure}", file=sys.stderr)
+        failures += 1
+
     if failures:
         print(f"python-empty-except self-test: {failures} failures", file=sys.stderr)
         return 1
 
-    print(f"python-empty-except self-test: {len(SELF_TEST_CASES)} cases ok")
+    print(f"python-empty-except self-test: {len(SELF_TEST_CASES) + 4} cases ok")
     return 0
 
 
@@ -179,6 +232,9 @@ def main(argv: list[str] | None = None) -> int:
     for file_path in files:
         violations = check_file(file_path, repo_root)
         all_violations.extend(violations)
+
+    entries = load_entries(repo_root)
+    all_violations = filter_excused(all_violations, entries, "HISS-07", date.today())
 
     if all_violations:
         for violation in all_violations:

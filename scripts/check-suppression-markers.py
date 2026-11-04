@@ -28,14 +28,21 @@ from __future__ import annotations
 
 import argparse
 import ast
+from datetime import date, timedelta
 import io
 import os
+from pathlib import Path
 import re
 import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
 import tempfile
 import tokenize
-from pathlib import Path
+
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from standards_exceptions import filter_excused, load_entries
 
 ROOT = Path(__file__).resolve().parents[1]
 GIT_DEADLINE_S = 60
@@ -198,13 +205,22 @@ def other_findings(name: str, text: str) -> list[str]:
     ]
 
 
-def scan(root: Path) -> list[str]:
-    """Check every tracked file under root."""
+
+def scan(
+    root: Path,
+    entries: list[dict[str, str]] | None = None,
+    today: date | None = None,
+) -> list[str]:
+    """Check every tracked file under root, dropping excused findings."""
     local_ids = local_rule_ids(root)
     found: list[str] = []
     for path in tracked_files(root):
         found.extend(file_findings(root, path, local_ids))
-    return found
+    if entries is None:
+        entries = load_entries(root)
+    if today is None:
+        today = date.today()
+    return filter_excused(found, entries, "HISS-08", today)
 
 
 VALID = '''\
@@ -408,6 +424,47 @@ def encoding_self_test(local_ids: frozenset[str]) -> list[str]:
     return failures
 
 
+def exceptions_self_test() -> list[str]:
+    """Verify live, missing, expired, and mismatched exceptions on planted findings."""
+    failures: list[str] = []
+    fixture_path = "fixture/target.py"
+    finding = f"{fixture_path}:10: marker is not on the start line of a statement or expression"
+    ref_today = date(2026, 11, 4)
+    yesterday = (ref_today - timedelta(days=1)).isoformat()
+    future = (ref_today + timedelta(days=3)).isoformat()
+
+    # Case 1: live fixture entry -> excused
+    live_entries = [
+        {"rule": "HISS-08", "path": fixture_path, "reason": "category B, 3 days: test", "expires": future}
+    ]
+    buf = io.StringIO()
+    if filter_excused([finding], live_entries, "HISS-08", ref_today, out=buf):
+        failures.append("live exception was not excused")
+    expected_msg = f"{fixture_path}: excused by .standards.yaml exception HISS-08 until {future}\n"
+    if buf.getvalue() != expected_msg:
+        failures.append(f"live exception output mismatch: {buf.getvalue()!r} != {expected_msg!r}")
+
+    # Case 2: same finding, no entry -> refused
+    if filter_excused([finding], [], "HISS-08", ref_today, out=io.StringIO()) != [finding]:
+        failures.append("finding without exception was not refused")
+
+    # Case 3: same finding, entry expired -> refused
+    expired_entries = [
+        {"rule": "HISS-08", "path": fixture_path, "reason": "category B, 3 days: test", "expires": yesterday}
+    ]
+    if filter_excused([finding], expired_entries, "HISS-08", ref_today, out=io.StringIO()) != [finding]:
+        failures.append("expired exception was not refused")
+
+    # Case 4: entry for the other rule id -> refused
+    other_entries = [
+        {"rule": "HISS-07", "path": fixture_path, "reason": "category B, 3 days: test", "expires": future}
+    ]
+    if filter_excused([finding], other_entries, "HISS-08", ref_today, out=io.StringIO()) != [finding]:
+        failures.append("mismatched rule exception was not refused")
+
+    return failures
+
+
 def self_test() -> int:
     """Plant each refused shape and the valid sources; 0 when all behave."""
     local_ids = frozenset({"local-rule"})
@@ -426,6 +483,7 @@ def self_test() -> int:
     else:
         print("refused as expected (marker in a shell file)")
     failures.extend(encoding_self_test(local_ids))
+    failures.extend(exceptions_self_test())
     for failure in failures:
         print(f"SELF-TEST FAIL: {failure}", file=sys.stderr)
     return 1 if failures else 0

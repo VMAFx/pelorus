@@ -55,6 +55,14 @@ exceptions:
     tool: trivy
     reason: "category D, capped at the engine maximum of 90 days: no workflow runs trivy yet; it needs a pinned vulnerability database, because trivy downloads its database at run time and two runs of one commit can disagree (ADR-0190)"
     expires: "2027-01-11"
+  - rule: HISS-08
+    path: tools/figures/mkdocs_hook.py
+    reason: "category B, 3 days: engine-shipped nosemgrep marker on the comment line before the statement and without a reason fails scripts/check-suppression-markers.py (ADR-0241); engine finding engine-adopted-hook-bot-findings-20261102, fix tracked in cordanaLLM/praetor#1768"
+    expires: "2026-11-07"
+  - rule: HISS-07
+    path: .config/lefthook/scripts/common.py
+    reason: "category B, 3 days: engine-shipped empty excepts at lines 837 and 860 fail scripts/check-python-empty-except.py; engine finding engine-adopted-hook-bot-findings-20261102, fix tracked in cordanaLLM/praetor#1768"
+    expires: "2026-11-07"
 release:
   e2e:
     since: e79218aec5daf2bc096973c88c3c68c6834cbb80

@@ -155,11 +155,17 @@ test('test-skips-self-test',
      suite: 'fast')
 # Fleet exception category rule: every .standards.yaml exception entry must name
 # its category (A = stated in entry, B <= 3d, C <= 10d, D <= 120d, engine cap 90d).
-# scripts/check-exception-categories.py --self-test runs against the real file and
-# in-memory mutations with a fixed reference date, verifying each defect is rejected.
+# scripts/check-exception-categories.py --self-test judges the live file against
+# today and runs in-memory mutations on an embedded fixture, verifying each defect is rejected.
 test('exception-categories',
      python_prog,
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-exception-categories.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+test('standards-exceptions',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'standards_exceptions.py',
             '--self-test'],
      workdir: meson.project_source_root(),
      suite: 'fast')

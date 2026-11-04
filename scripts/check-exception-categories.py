@@ -29,6 +29,13 @@ MAX_ENTRIES = 1000
 MAX_FINDINGS = 1000
 FIXED_SELF_TEST_TODAY = "2026-10-18"
 
+FIXTURE_TEXT = """\
+exceptions:
+  - rule: fixture-rule
+    reason: "category D, capped at the engine maximum of 90 days: fixture"
+    expires: "2026-12-17"
+"""
+
 
 def strip_quotes(val: str) -> str:
     """Strip matching leading and trailing single or double quotes."""
@@ -126,6 +133,17 @@ def check_text(text: str, today: date) -> list[tuple[str, str]]:
     return findings
 
 
+def check_mutation(mutated: str, ref_date: date, num: int, fail_desc: str) -> int:
+    """Verify that a mutation applied and was rejected by check_text."""
+    if mutated == FIXTURE_TEXT:
+        print(f"self-test FAIL: mutation {num} did not apply")
+        return 1
+    if not check_text(mutated, ref_date):
+        print(f"self-test FAIL: {fail_desc}")
+        return 1
+    return 0
+
+
 def self_test(root_dir: Path) -> int:
     """Run self-test on real .standards.yaml and in-memory mutations."""
     standards_path = root_dir / ".standards.yaml"
@@ -135,42 +153,50 @@ def self_test(root_dir: Path) -> int:
         print(f"self-test FAIL: cannot read {standards_path}: {err}")
         return 1
 
+    today = date.today()
     ref_date = date.fromisoformat(FIXED_SELF_TEST_TODAY)
     failures = 0
 
-    real_findings = check_text(real_text, ref_date)
+    real_findings = check_text(real_text, today)
     if real_findings:
-        print(f"self-test FAIL: real file failed with fixed date: {real_findings!r}")
+        print(f"self-test FAIL: real file failed today: {real_findings!r}")
         failures += 1
 
-    # Mutation 1: drop "category D" from one reason
-    mut1 = real_text.replace("category D, capped at the engine maximum of 90 days: ", "", 1)
-    if not check_text(mut1, ref_date):
-        print("self-test FAIL: drop category D was not rejected")
-        failures += 1
+    # Mutation 1: drop "category D" from reason
+    mut1 = FIXTURE_TEXT.replace("category D, capped at the engine maximum of 90 days: ", "", 1)
+    failures += check_mutation(mut1, ref_date, 1, "drop category D was not rejected")
 
     # Mutation 2: category B with expiry 30 days out
     exp_30 = (ref_date + timedelta(days=30)).isoformat()
-    mut2 = real_text.replace("category D", "category B", 1).replace(
-        'expires: "2027-01-13"', f'expires: "{exp_30}"', 1
+    mut2 = FIXTURE_TEXT.replace("category D", "category B", 1).replace(
+        'expires: "2026-12-17"', f'expires: "{exp_30}"', 1
     )
-    if not check_text(mut2, ref_date):
-        print("self-test FAIL: category B with 30-day expiry was not rejected")
-        failures += 1
+    failures += check_mutation(mut2, ref_date, 2, "category B with 30-day expiry was not rejected")
 
     # Mutation 3: expiry 2027-06-01 with category D
-    mut3 = real_text.replace('expires: "2027-01-13"', 'expires: "2027-06-01"', 1)
-    if not check_text(mut3, ref_date):
-        print("self-test FAIL: category D with expiry 2027-06-01 was not rejected")
-        failures += 1
+    mut3 = FIXTURE_TEXT.replace('expires: "2026-12-17"', 'expires: "2027-06-01"', 1)
+    failures += check_mutation(mut3, ref_date, 3, "category D with expiry 2027-06-01 was not rejected")
 
     # Mutation 4: expires "soon"
-    mut4 = real_text.replace('expires: "2027-01-13"', 'expires: "soon"', 1)
-    if not check_text(mut4, ref_date):
-        print("self-test FAIL: expires soon was not rejected")
-        failures += 1
+    mut4 = FIXTURE_TEXT.replace('expires: "2026-12-17"', 'expires: "soon"', 1)
+    failures += check_mutation(mut4, ref_date, 4, "expires soon was not rejected")
 
-    print(f"self-test: 5 cases, {failures} failures")
+    # Case 5: planted class defence — fixture entry expiring in today+89 days
+    exp_89 = (today + timedelta(days=89)).isoformat()
+    mut5 = FIXTURE_TEXT.replace('expires: "2026-12-17"', f'expires: "{exp_89}"', 1)
+    if mut5 == FIXTURE_TEXT:
+        print("self-test FAIL: mutation 5 did not apply")
+        failures += 1
+    elif check_text(mut5, today):
+        print(f"self-test FAIL: entry expiring in 89 days rejected against today: {check_text(mut5, today)!r}")
+        failures += 1
+    else:
+        fixed_findings = check_text(mut5, ref_date)
+        if (today - ref_date).days > 1 and not fixed_findings:
+            print("self-test FAIL: entry expiring in 89 days not rejected against fixed date")
+            failures += 1
+
+    print(f"self-test: 6 cases, {failures} failures")
     return 1 if failures else 0
 
 
