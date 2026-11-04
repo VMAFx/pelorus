@@ -56,7 +56,6 @@ def literal_patterns(magic: bytes) -> tuple[re.Pattern[str], re.Pattern[str]]:
 
 # the default patterns match the canonical PELOR1 magic
 DEFAULT_PATTERNS = literal_patterns(b"PELOR1\0\0")
-LITERAL, MIRROR_DEF = DEFAULT_PATTERNS
 _NOT_PLAIN = object()
 
 # path -> reason; every entry must still hold the literal (stale entries fail)
