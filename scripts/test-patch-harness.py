@@ -19,6 +19,7 @@ import signal
 import sys
 import tempfile
 import time
+from typing import Sequence
 
 # python3 -I drops the script directory from sys.path: load the sibling by path.
 _SPEC = importlib.util.spec_from_file_location("patch_harness", pathlib.Path(__file__).with_name("patch_harness.py"))
@@ -192,6 +193,47 @@ def test_driver_argv() -> bool:
     return ok
 
 
+def _remove_tree_calls(errors: Sequence[BaseException | None], is_windows: bool) -> tuple[int, str]:
+    """Run remove_tree over a fake rmtree that raises ``errors`` in turn.
+
+    Returns (rmtree calls, name of the exception remove_tree raised or "").
+    The last entry repeats once the sequence runs out.
+    """
+    calls = 0
+
+    def fake_rmtree(_: object) -> None:
+        nonlocal calls
+        err = errors[min(calls, len(errors) - 1)]
+        calls += 1
+        if err is not None:
+            raise err
+
+    try:
+        harness.remove_tree("unused", rmtree=fake_rmtree, sleep=lambda _: None, is_windows=is_windows)
+    except OSError as err:
+        return calls, type(err).__name__
+    return calls, ""
+
+
+def test_remove_tree() -> bool:
+    """Check remove_tree: bounded retry on a locked file on Windows, no retry elsewhere."""
+    denied = PermissionError("Access is denied")
+    tries = harness.CLEANUP_TRIES
+    cases = (
+        ("unlocks after 3 denials", [denied, denied, denied, None], True, 4, ""),
+        ("stays locked", [denied], True, tries, "PermissionError"),
+        ("off Windows", [denied], False, 1, "PermissionError"),
+        ("other error", [FileNotFoundError("gone")], True, 1, "FileNotFoundError"),
+    )
+    ok = True
+    for name, errors, is_windows, want_calls, want_raised in cases:
+        calls, raised = _remove_tree_calls(errors, is_windows)
+        if (calls, raised) != (want_calls, want_raised):
+            print(f"FAIL remove_tree {name}: calls {calls}, raised {raised!r}; want {want_calls}, {want_raised!r}")
+            ok = False
+    return ok
+
+
 def main() -> int:
     """Run patch harness tests across compiler cases; returns 0 on success, 1 on failure."""
     parser = harness.make_parser(DESCRIPTION)
@@ -213,9 +255,11 @@ def main() -> int:
         failures += 1
     if not test_driver_argv():
         failures += 1
+    if not test_remove_tree():
+        failures += 1
     if failures:
         return 1
-    print(f"patch-harness: {len(cases) + 2} cases ok")
+    print(f"patch-harness: {len(cases) + 3} cases ok")
     return 0
 
 
