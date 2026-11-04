@@ -11,17 +11,32 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import io
 import os
 import pathlib
 import shutil
 import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
-import tarfile
 import tempfile
 import time
 
 SUBPROCESS_TIMEOUT_S = 120
+
+
+def _run_git_step(cmd: list[str], env: dict[str, str], what: str) -> None:
+    """Run one git command; raise RuntimeError with context on failure or timeout."""
+    try:
+        subprocess.run(  # nosec B603 - fixed git argv, no shell
+            cmd,
+            env=env,
+            capture_output=True,
+            timeout=SUBPROCESS_TIMEOUT_S,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        err = exc.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"{what} failed: {err}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"{what} timed out after {SUBPROCESS_TIMEOUT_S}s") from exc
 
 
 def extract_tree_at_ref(
@@ -30,30 +45,30 @@ def extract_tree_at_ref(
     dest_dir: pathlib.Path,
     env: dict[str, str] | None = None,
 ) -> None:
-    """Extract archive of ref from repo into dest_dir."""
-    cmd = ["git", "-C", str(repo), "archive", "--format=tar", ref]
-    try:
-        proc = subprocess.run(  # nosec B603 - fixed git argv, no shell
-            cmd,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=SUBPROCESS_TIMEOUT_S,
-            check=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        err = exc.stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"git archive failed for {ref} in {repo}: {err}") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(
-            f"git archive timed out for {ref} in {repo} after {SUBPROCESS_TIMEOUT_S}s"
-        ) from exc
+    """Write the tree of ref into dest_dir through a private git index.
 
-    with tarfile.open(fileobj=io.BytesIO(proc.stdout)) as tar:
-        if hasattr(tarfile, "data_filter"):
-            tar.extractall(path=dest_dir, filter="data")  # noqa: S202 - git archive of local ref
-        else:
-            tar.extractall(path=dest_dir)  # noqa: S202 - git archive of local ref
+    git itself writes the files (read-tree plus checkout-index), so no archive
+    is unpacked, and GIT_INDEX_FILE keeps the repository's own index untouched.
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    index_file = dest_dir / ".git-index"
+    env2 = dict(env or os.environ)
+    env2["GIT_INDEX_FILE"] = str(index_file.resolve())
+    prefix = f"{dest_dir.resolve()}/"
+    try:
+        _run_git_step(
+            ["git", "-C", str(repo), "read-tree", ref],
+            env2,
+            f"git read-tree of {ref} in {repo}",
+        )
+        _run_git_step(
+            ["git", "-C", str(repo), "checkout-index", "-a", "-f", f"--prefix={prefix}"],
+            env2,
+            f"git checkout-index of {ref} in {repo}",
+        )
+    finally:
+        if index_file.exists():
+            index_file.unlink()
 
 
 def run_fragment_check(
@@ -324,8 +339,46 @@ def _test_cases_b_c_d(
     return failed
 
 
+def _test_case_f(repo: pathlib.Path, env: dict[str, str]) -> int:
+    """Case f: extract_tree_at_ref leaves the repository index unchanged."""
+    tree_before = subprocess.run(  # nosec B603 - fixed git argv
+        ["git", "-C", str(repo), "write-tree"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=SUBPROCESS_TIMEOUT_S,
+    ).stdout.strip()
+    index_bytes_before = (repo / ".git/index").read_bytes()
+    with tempfile.TemporaryDirectory() as tmp_f:
+        extract_tree_at_ref(repo, "master", pathlib.Path(tmp_f), env=env)
+        if not (pathlib.Path(tmp_f) / "CHANGELOG.md").is_file():
+            print(
+                "self-test FAIL: case f extracted tree missing CHANGELOG.md",
+                file=sys.stderr,
+            )
+            return 1
+    tree_after = subprocess.run(  # nosec B603 - fixed git argv
+        ["git", "-C", str(repo), "write-tree"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=SUBPROCESS_TIMEOUT_S,
+    ).stdout.strip()
+    index_bytes_after = (repo / ".git/index").read_bytes()
+    if tree_before != tree_after or index_bytes_before != index_bytes_after:
+        print(
+            f"self-test FAIL: case f repo index modified by extract_tree_at_ref "
+            f"({tree_before} != {tree_after})",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def run_self_test(repo_root: pathlib.Path) -> int:
-    """Run 5-case self-test in an isolated temporary git repository."""
+    """Run 6-case self-test in an isolated temporary git repository."""
     script_source = repo_root / "scripts/release/concat-changelog-fragments.sh"
     if not script_source.is_file():
         print(f"self-test: missing render script at {script_source}", file=sys.stderr)
@@ -358,6 +411,9 @@ def run_self_test(repo_root: pathlib.Path) -> int:
         commit_in_fixture(repo, env, "Render changelog", now)
         if check_staleness(repo, "branch-c", 24, env=env) != 0:
             print("self-test FAIL: case e returned non-zero, want 0", file=sys.stderr)
+            return 1
+
+        if _test_case_f(repo, env) != 0:
             return 1
 
     print("self-test passed")
