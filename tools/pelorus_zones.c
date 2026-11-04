@@ -8,8 +8,6 @@
 #include "pelorus/quality.h"
 #include "pelorus_tool_common.h"
 
-#include <errno.h>
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,26 +29,6 @@ static int is_exact_header(const char *line)
         p++;
     }
     return (*p == '\0' || *p == '\r' || *p == '\n');
-}
-
-static int parse_crf(const char *str, char **endptr, float *out)
-{
-    double val;
-    const char *p;
-    errno = 0;
-    val = strtod(str, endptr);
-    if (errno == ERANGE || *endptr == str || !isfinite(val) || val < 0.0 || val > 63.0) {
-        return -1;
-    }
-    p = *endptr;
-    while (*p == ' ' || *p == '\t') {
-        p++;
-    }
-    if (*p != '\0' && *p != '\r' && *p != '\n') {
-        return -1;
-    }
-    *out = (float)val;
-    return 0;
 }
 
 static int parse_line(const char *line, size_t line_num, PelShotTarget *shot)
@@ -90,7 +68,7 @@ static int parse_line(const char *line, size_t line_num, PelShotTarget *shot)
         return -1;
     }
     p = end + 1;
-    if (parse_crf(p, &end, &crf) != 0) {
+    if (pelorus_tool_parse_crf(p, &end, &crf) != 0) {
         (void)fprintf(stderr, "pelorus_zones: line %zu: malformed crf: %s", line_num, line);
         return -1;
     }
@@ -157,6 +135,8 @@ static int emit_output(enum zone_format fmt, const PelShotTarget *shots, size_t 
         res = pel_zones_x265_param(shots, n, base_crf, NULL, 0, &need);
     } else if (fmt == FMT_SEGMENT_PLAN) {
         res = pel_zones_segment_plan(shots, n, NULL, 0, &need);
+    } else {
+        return EXIT_FAILURE;
     }
     if (res != PEL_OK) {
         (void)fprintf(stderr, "pelorus_zones: format query failed: %s\n", pel_result_str(res));
@@ -175,6 +155,9 @@ static int emit_output(enum zone_format fmt, const PelShotTarget *shots, size_t 
         res = pel_zones_x265_param(shots, n, base_crf, buf, need, &need);
     } else if (fmt == FMT_SEGMENT_PLAN) {
         res = pel_zones_segment_plan(shots, n, buf, need, &need);
+    } else {
+        free(buf);
+        return EXIT_FAILURE;
     }
     if (res != PEL_OK) {
         (void)fprintf(stderr, "pelorus_zones: format failed: %s\n", pel_result_str(res));
@@ -205,44 +188,28 @@ static int emit_output(enum zone_format fmt, const PelShotTarget *shots, size_t 
 static int run(int argc, char **argv)
 {
     enum zone_format fmt = FMT_NONE;
+    int fmt_val = FMT_NONE;
     float base_crf = 23.0f;
     PelShotTarget shots[PEL_SHOT_TARGET_MAX];
     size_t n_shots = 0;
-    int i;
+    static const char *const s_formats[] = {"zonefile", "zones", "segment-plan", NULL};
+    static const int s_format_vals[] = {FMT_ZONEFILE, FMT_ZONES, FMT_SEGMENT_PLAN};
+    const PelorusOpt opts[] = {
+        {"--format", PELORUS_OPT_CHOICE, &fmt_val, 1, s_formats, s_format_vals},
+        {"--base-crf", PELORUS_OPT_FLOAT, &base_crf, 0, NULL, NULL},
+    };
 
-    i = 1;
-    while (i < argc) {
-        if (strcmp(argv[i], "--format") == 0 && i + 1 < argc) {
-            i++;
-            if (strcmp(argv[i], "zonefile") == 0) {
-                fmt = FMT_ZONEFILE;
-            } else if (strcmp(argv[i], "zones") == 0) {
-                fmt = FMT_ZONES;
-            } else if (strcmp(argv[i], "segment-plan") == 0) {
-                fmt = FMT_SEGMENT_PLAN;
-            } else {
-                (void)fprintf(stderr, "pelorus_zones: unknown format: %s\n", argv[i]);
-                return EXIT_FAILURE;
-            }
-            i++;
-        } else if (strcmp(argv[i], "--base-crf") == 0 && i + 1 < argc) {
-            char *end = NULL;
-            i++;
-            if (parse_crf(argv[i], &end, &base_crf) != 0) {
-                (void)fprintf(stderr, "pelorus_zones: invalid base-crf: %s\n", argv[i]);
-                return EXIT_FAILURE;
-            }
-            i++;
-        } else {
-            (void)fprintf(stderr, "Usage: pelorus_zones --format <zonefile|zones|segment-plan> "
-                                  "[--base-crf <float>]\n");
-            return EXIT_FAILURE;
-        }
-    }
-    if (fmt == FMT_NONE) {
-        (void)fprintf(stderr, "pelorus_zones: --format is required\n");
+    if (pelorus_tool_parse_args("pelorus_zones", argc, argv, opts, sizeof(opts) / sizeof(opts[0]),
+                                NULL) != 0) {
+        (void)fprintf(stderr, "Usage: pelorus_zones --format <zonefile|zones|segment-plan> "
+                              "[--base-crf <float>]\n");
         return EXIT_FAILURE;
     }
+    if (base_crf < 0.0f || base_crf > 63.0f) {
+        (void)fprintf(stderr, "pelorus_zones: invalid base-crf: %g\n", (double)base_crf);
+        return EXIT_FAILURE;
+    }
+    fmt = (enum zone_format)fmt_val;
 
     if (read_shots_stdin(shots, PEL_SHOT_TARGET_MAX, &n_shots) != 0 || n_shots == 0) {
         (void)fprintf(stderr, "pelorus_zones: no valid shots read on stdin\n");
