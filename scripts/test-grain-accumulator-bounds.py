@@ -182,7 +182,7 @@ def rounds_adds(text: str, label: str) -> list[str]:
 
 def simulate(consts: dict[str, float]) -> tuple[float, float, float, float]:
     """Return (rms_ref, lag1_ref, rms_fixed, lag1_fixed) for the fixture."""
-    rng = random.Random(SIM_SEED)
+    rng = random.Random(SIM_SEED)  # noqa: S311 - seeded PRNG for a reproducible simulation, not cryptography
     w, h = SIM_WIDTH, SIM_HEIGHT
     img = [
         [min(255, max(0, round(SIM_LEVEL + rng.gauss(0.0, SIM_SIGMA)))) / 255.0 for _ in range(w)]

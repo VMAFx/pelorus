@@ -23,6 +23,7 @@
     {"sha256": "3e2fc6e9e71a07ada9489d8825b24ca554fbe14685b7c718329d923b6370ace0", "tool_version": "0.4.12", "note": "self-test only: every stand-in FFmpeg writes through standin_output, which refuses a relative output path (a dpkg-query package name had created a file in the working directory)"},
     {"sha256": "a8dbb7873d5783e029f58c8ff25ac624871439ea867469cdd71c578ea486379d", "tool_version": "0.4.12", "note": "docstrings only: the nested self-test stand-ins and the fixture stand-in methods (#485 review)"},
     {"sha256": "b53796ca34e0ca46e40af606ed544c72e9ff30aae16981e2ab0f9f3382194a10", "tool_version": "0.4.12", "note": "docstrings only: the reference-read stand-in says it repeats the last log once the logs run out (#486 review)"},
-    {"sha256": "c5239c9230a168951e90217dfcdf15e30420d679d5b93b46e787a392d11a27ec", "tool_version": "0.4.12", "note": "QSV encodes in the steer, bitrate-control and carrier legs pin LIBVA_DRIVER_NAME=iHD; other encoders inherit the environment"}
+    {"sha256": "c5239c9230a168951e90217dfcdf15e30420d679d5b93b46e787a392d11a27ec", "tool_version": "0.4.12", "note": "QSV encodes in the steer, bitrate-control and carrier legs pin LIBVA_DRIVER_NAME=iHD; other encoders inherit the environment"},
+    {"sha256": "88fe00bc7109c42fb68bf599f30341b707d4406c3fcd4189b49ff101bfb42dc7", "tool_version": "0.4.12", "note": "comment only: a Ruff S310 marker on the fixture download request, whose https-only scheme check sits above it (#495)"}
   ]
 }

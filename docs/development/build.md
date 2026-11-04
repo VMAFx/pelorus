@@ -432,6 +432,33 @@ A false positive is exempted by adding its fingerprint
 `.gitleaks.toml` may only extend the default rules and add rules; an allowlist
 there is refused.
 
+Python sources and the workflow files are linted before push
+([ADR-0243](../adr/0243-ruff-zizmor-local-gate.md)). `make verify-native` runs
+`scripts/check-python-lint.sh --self-test` and then the scan: Ruff 0.17.3 over
+the tree with the rule set in `ruff.toml` (Codacy's Ruff patterns plus
+`SIM103`, `E721` and `PGH004`), and zizmor 1.32.0 `--offline
+--strict-collection` over the workflows, actions and Dependabot files with
+`.github/zizmor.yml`, so a file zizmor cannot parse fails the scan instead of
+being skipped. Both tools are pinned by hash in
+`.config/python-lint/requirements.txt`; the target keeps them in
+`.cache/python-lint` (`PYTHON_LINT_ENV`, outside the Meson build directory; a path with spaces works)
+through `--ensure`, which reuses that environment while its tool versions match
+the lock and rebuilds it after a lock bump or a half-finished install. The
+first run in a new checkout, and the first after a bump, needs PyPI. The
+pre-commit hook runs `make python-lint` when a Python file, a workflow or the
+lint configuration is staged, and the CI `docs` job runs the same commands on
+Linux. To run them by hand:
+
+```bash
+scripts/check-python-lint.sh --install /absolute/new-dir
+PYTHON_LINT_BIN=/absolute/new-dir/bin scripts/check-python-lint.sh --self-test
+PYTHON_LINT_BIN=/absolute/new-dir/bin scripts/check-python-lint.sh
+```
+
+A Ruff finding the code answers on purpose carries
+`# noqa: <code> - <reason>`; a bare `# noqa` fails (`PGH004`). `S101`, `S603`
+and `S607` are left to Bandit and its reviewed `# nosec` markers.
+
 The governance targets and the Lefthook jobs run the Praetor engine pinned at
 `PRAETOR_REF` in `.github/workflows/standards-gate.yml`, whatever `praetorctl`
 or `standardsctl` is first on `PATH`. The engine's own launcher,

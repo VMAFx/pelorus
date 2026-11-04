@@ -1,6 +1,8 @@
 # Lefthook Configuration (HISS Governance)
 # Pelorus additions to the generated jobs: pre-commit pelorus-audit (make audit
-# in the hosted debt-delta mode, offline like hiss-audit), commit-msg
+# in the hosted debt-delta mode, offline like hiss-audit), pre-commit
+# python-lint (make python-lint: pinned Ruff and zizmor when a Python file,
+# a workflow or the lint configuration is staged; ADR-0243), commit-msg
 # message-policy and dco-signoff (commit message policy and the Signed-off-by
 # trailer; CI re-checks both over every pull request commit), and pre-push
 # verify-all (make verify-all). no_auto_install keeps hook installation
@@ -52,6 +54,14 @@ pre-commit:
       run: sh .config/lefthook/engine.sh audit --offline
     pelorus-audit:
       run: make audit AUDIT_FLAGS=--offline
+    python-lint:
+      glob:
+        - "*.py"
+        - ".github/*.yml"
+        - ".github/*.yaml"
+        - "ruff.toml"
+        - ".config/python-lint/*"
+      run: make python-lint
 
 commit-msg:
   commands:

@@ -68,6 +68,17 @@
       "pinDigests": true
     },
     {
+      "description": "Ruff and zizmor (ADR-0243): one pull request bumps both pins in the hashed lock",
+      "matchFileNames": [
+        ".config/python-lint/requirements.txt"
+      ],
+      "matchPackageNames": [
+        "ruff",
+        "zizmor"
+      ],
+      "groupName": "python lint tools"
+    },
+    {
       "description": "praetor-managed files: praetorctl adopt ships their updates and praetorctl audit locks them byte for byte",
       "matchFileNames": [
         ".github/workflows/praetor-docs.yml",

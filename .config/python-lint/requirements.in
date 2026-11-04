@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
+# Python lint tools for the local gate and CI (ADR-0243). The pins live only in
+# requirements.txt (the hashed lock Renovate bumps); scripts/check-python-lint.sh
+# reads them from there. Regenerate with the command in its header.
+ruff
+zizmor

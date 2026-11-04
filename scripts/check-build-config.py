@@ -2676,7 +2676,7 @@ def check_test_skips_requires(executed: str) -> list[set[str]]:
         i = 0
         while i < len(cmd):
             token = cmd[i]
-            if token == "--require":
+            if token == "--require":  # noqa: S105 - argv token, not a credential
                 if i + 1 < len(cmd):
                     requires.add(cmd[i + 1])
                     i += 1

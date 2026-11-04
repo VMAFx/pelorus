@@ -632,6 +632,17 @@ jobs:
         run: |
           scripts/check-gitleaks.sh --self-test
           scripts/check-gitleaks.sh
+      # Linux only (HISS-21 skip reason): Ruff and zizmor read source text, so
+      # their findings do not depend on the host; the windows-msvc job builds
+      # and tests C code. The script also runs on Windows (venv Scripts layout).
+      - name: Install the pinned Python lint tools
+        run: |
+          bin=$(scripts/check-python-lint.sh --install "$RUNNER_TEMP/python-lint")
+          printf 'PYTHON_LINT_BIN=%s\n' "$bin" >> "$GITHUB_ENV"
+      - name: Python lint and workflow audit (Ruff, zizmor)
+        run: |
+          scripts/check-python-lint.sh --self-test
+          scripts/check-python-lint.sh
       - name: Load build configuration
         run: |
           grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"

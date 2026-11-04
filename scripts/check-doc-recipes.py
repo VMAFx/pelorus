@@ -264,8 +264,8 @@ def check_table(path, text, consts, off):
 def read(root, rel):
     try:
         return (root / rel).read_text(encoding="utf-8")
-    except OSError as exc:
-        raise GateError("cannot read %s: %s" % (rel, exc))
+    except OSError as err:
+        raise GateError("cannot read %s: %s" % (rel, err)) from err
 
 
 def option_row(src, name, rel):
@@ -291,8 +291,8 @@ def load_constants(root):
         raise GateError("the prev option maximum is %s, not PEL_DENOISE_MAX_PREV" % prev_max)
     try:
         look_max = int(look_max)
-    except ValueError:
-        raise GateError("the lookahead option maximum %r is not a number" % look_max)
+    except ValueError as err:
+        raise GateError("the lookahead option maximum %r is not a number" % look_max) from err
     # mc keeps one cloned previous frame; any ring or second clone field changes it.
     if len(re.findall(r"^\s*AVFrame \*prev;", mc, re.M)) != 1 or re.search(r"\bring\b", mc) \
             or len(re.findall(r"\bav_frame_clone\(", mc)) != 1:
