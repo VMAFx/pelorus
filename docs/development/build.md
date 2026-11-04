@@ -837,9 +837,10 @@ the Developer Certificate of Origin 1.1 format (`Signed-off-by: Full Name <email
 The message is split into lines on LF only, as git does, so a trailer
 after a carriage return or another Unicode line separator does not count.
 Renovate bot commits are exempt when authored by Renovate in a
-Renovate-opened pull request. The base and head must be plain revisions
-(letters, digits and `._/@{}~^+-`, no leading `-`, no `..`); anything else
-exits 2 before git runs, and git itself is resolved to an absolute path on
+Renovate-opened pull request. The base and head may hold any printable ASCII
+character git allows in a ref name or revision (not a space or any of
+`\ : ? * [`), must not start with `-` and must not contain `..`; anything
+else exits 2 before git runs, and git itself is resolved to an absolute path on
 `PATH`. Run its self-test battery with
 `python3 -I scripts/check-dco.py --self-test`.
 

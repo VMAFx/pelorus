@@ -55,7 +55,10 @@ class GitResult(NamedTuple):
     stderr: str
 
 
-REVISION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/@{}~^+-]{0,255}")
+# Printable ASCII that git allows in a ref name or revision: no space, control
+# character, backslash, colon, question mark, asterisk or open bracket.
+_REV_CHARS = r"""A-Za-z0-9!"#$%&'()+,./;<=>@\]^_`{|}~"""
+REVISION = re.compile(f"[{_REV_CHARS}][{_REV_CHARS}-]{{0,255}}")
 
 
 def find_git(env: dict[str, str] | None = None) -> str | None:
@@ -68,7 +71,7 @@ def find_git(env: dict[str, str] | None = None) -> str | None:
 
 
 def valid_revision(rev: str) -> bool:
-    """Return True for a plain revision that git cannot read as an option."""
+    """Return True for a revision that cannot start an option or hold a range."""
     return REVISION.fullmatch(rev) is not None and ".." not in rev
 
 
@@ -271,6 +274,8 @@ CASES = (
     ("10 merge without trailer skipped", "base", "c10", "", 0, None, None),
     ("11 two unsigned of three", "base", "c11_3", "", 1, None, "2 commit(s)"),
     ("13 base read as option", "ref:--all", "c1", "", 2, None, "invalid revision"),
+    ("13b base branch with a dollar sign", "ref:release$2026", "c1", "", 0, None, None),
+    ("13c base with a question mark", "ref:release?2026", "c1", "", 2, None, "invalid"),
     ("14 head holds a range", "base", "ref:main..main", "", 2, None, "invalid"),
     ("15 head with a space", "base", "ref:HEAD x", "", 2, None, "invalid"),
 )
@@ -319,6 +324,9 @@ def build_fixture(tmp: pathlib.Path, env: dict[str, str]) -> dict[str, str]:
         if proc.returncode != 0:
             raise RuntimeError(f"commit {name}: {proc.stderr.strip()}")
         shas[name] = proc.stdout.strip()
+    proc = run_git(["update-ref", "refs/heads/release$2026", shas["base"]], tmp, env)
+    if proc.returncode != 0:
+        raise RuntimeError(f"update-ref: {proc.stderr.strip()}")
     return shas
 
 
