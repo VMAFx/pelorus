@@ -63,6 +63,7 @@ def load_sibling(name):
 
 FIXTURES = load_sibling("pelorus_tester_fixtures")
 STAGES = load_sibling("pelorus_tester_stages")
+JSON_SHAPE = load_sibling("pelorus_json_shape")
 RULES = (("no_device_nonfailure", "redaction", "exit_mapping", "truncation",
           "schema_version", "reason_required", "stage_failure", "bench_nongating",
           "execution_class_derived", "claim_gpu_needs_hardware",
@@ -306,63 +307,10 @@ def find_leaks(report, forbid=()):
 
 # ------------------------------------------------------------- JSON schema
 
-def type_ok(value, name):
-    if name == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
-    if name == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    py = {"object": dict, "array": list, "string": str, "boolean": bool,
-          "null": type(None)}[name]
-    return isinstance(value, py)
-
-
-def check_scalar(value, sch, path, errs):
-    if "type" in sch:
-        names = sch["type"] if isinstance(sch["type"], list) else [sch["type"]]
-        if not any(type_ok(value, n) for n in names):
-            errs.append("%s: expected type %s" % (path, "|".join(names)))
-            return
-    if "const" in sch and value != sch["const"]:
-        errs.append("%s: must equal %r" % (path, sch["const"]))
-    if "enum" in sch and value not in sch["enum"]:
-        errs.append("%s: %r not in enum" % (path, value))
-    if isinstance(value, str):
-        if "pattern" in sch and not re.search(sch["pattern"], value):
-            errs.append("%s: does not match %s" % (path, sch["pattern"]))
-        if len(value) > sch.get("maxLength", len(value)):
-            errs.append("%s: longer than %d" % (path, sch["maxLength"]))
-    if type_ok(value, "number") and value < sch.get("minimum", value):
-        errs.append("%s: below minimum %s" % (path, sch["minimum"]))
-
-
-def expand_node(value, sch, path, errs, stack):
-    if isinstance(value, dict) and "properties" in sch:
-        for req in sch.get("required", []):
-            if req not in value:
-                errs.append("%s: missing required '%s'" % (path, req))
-        for key, val in value.items():
-            if key in sch["properties"]:
-                stack.append((val, sch["properties"][key], path + "." + key))
-            elif sch.get("additionalProperties") is False:
-                errs.append("%s: unexpected property '%s'" % (path, key))
-    if isinstance(value, list) and "items" in sch:
-        if len(value) < sch.get("minItems", 0):
-            errs.append("%s: fewer than %d items" % (path, sch["minItems"]))
-        for idx, val in enumerate(value):
-            stack.append((val, sch["items"], "%s[%d]" % (path, idx)))
-
-
-def validate_schema(instance, schema):
-    """Check `instance` against the JSON Schema subset the schema file uses."""
-    errs = []
-    stack = [(instance, schema, "$")]
-    for _ in range(MAX_NODES):
-        if not stack:
-            return errs
-        value, sch, path = stack.pop()
-        check_scalar(value, sch, path, errs)
-        expand_node(value, sch, path, errs, stack)
-    return errs + ["schema walk exceeded %d nodes" % MAX_NODES]
+type_ok = JSON_SHAPE.type_ok
+check_scalar = JSON_SHAPE.check_scalar
+expand_node = JSON_SHAPE.expand_node
+validate_schema = JSON_SHAPE.validate_schema
 
 
 # ------------------------------------------------------------- verdict rules

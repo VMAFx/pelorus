@@ -26,6 +26,7 @@ or the allow-list is missing, empty or malformed (never a pass).
 """
 
 import argparse
+import importlib.util
 import json
 import sys
 import tempfile
@@ -42,20 +43,45 @@ class Malformed(Exception):
     """An input file that cannot be judged."""
 
 
+def _load_json_shape():
+    """Import the shared JSON shape validator from tools/tester by file path."""
+    path = Path(__file__).resolve().parent.parent / "tools" / "tester" / "pelorus_json_shape.py"
+    spec = importlib.util.spec_from_file_location("pelorus_json_shape", path)
+    if spec is None or spec.loader is None:
+        raise ImportError("%s: cannot load pelorus_json_shape" % path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_JSON_SHAPE = _load_json_shape()
+validate_schema = _JSON_SHAPE.validate_schema
+
+ALLOW_LIST_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "required": ["test", "reason", "issue"],
+        "properties": {
+            "test": {"type": "string", "minLength": 1},
+            "reason": {"type": "string", "minLength": 1},
+            "issue": {"type": "string", "minLength": 1},
+        },
+    },
+}
+
+
 def load_allow_list(path):
     """Return {test name: reason line} from the allow-list file."""
     try:
         entries = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as err:
         raise Malformed("%s: %s" % (path, err)) from err
-    if not isinstance(entries, list):
-        raise Malformed("%s: top level is not a list" % path)
+    errs = validate_schema(entries, ALLOW_LIST_SCHEMA)
+    if errs:
+        raise Malformed("%s: %s" % (path, "; ".join(errs)))
     allowed = {}
     for entry in entries[:MAX_RECORDS]:
-        if not isinstance(entry, dict) or not all(
-                isinstance(entry.get(key), str) and entry.get(key)
-                for key in ("test", "reason", "issue")):
-            raise Malformed("%s: entry needs test, reason and issue: %r" % (path, entry))
         if not entry["reason"].startswith(SKIP_PREFIX):
             raise Malformed("%s: reason must start with %r: %r"
                             % (path, SKIP_PREFIX, entry["reason"]))

@@ -26,6 +26,7 @@ or the legs file is malformed, 2 usage.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import subprocess
 import sys
@@ -39,32 +40,65 @@ KINDS = {
 DEFAULT_LEGS = Path(__file__).with_name("candidate-legs.json")
 
 
+def _load_json_shape():
+    """Import the shared JSON shape validator from tools/tester by file path."""
+    path = Path(__file__).resolve().parents[2] / "tools/tester/pelorus_json_shape.py"
+    spec = importlib.util.spec_from_file_location("pelorus_json_shape", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load pelorus_json_shape from {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_JSON_SHAPE = _load_json_shape()
+validate_schema = _JSON_SHAPE.validate_schema
+
+LEGS_SCHEMA = {
+    "type": "object",
+    "required": ["schema", "legs"],
+    "properties": {
+        "schema": {"const": 1},
+        "legs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "required": ["id", "kind", "proves"],
+                "properties": {
+                    "id": {"type": "string", "minLength": 1},
+                    "kind": {"type": "string", "enum": sorted(KINDS)},
+                    "proves": {"type": "string", "minLength": 1},
+                },
+            },
+        },
+    },
+}
+
+
 def validate_legs(doc: object) -> list[str]:
+    """Return every schema and leg error in a parsed legs file; empty when it is valid."""
+    errors = validate_schema(doc, LEGS_SCHEMA)
     if not isinstance(doc, dict) or doc.get("schema") != 1:
         return ["legs file: schema must be 1"]
     legs = doc.get("legs")
     if not isinstance(legs, list) or not legs:
         return ["legs file: legs must be a non-empty list"]
-    errors: list[str] = []
     seen: set[str] = set()
     for index, leg in enumerate(legs):
         if not isinstance(leg, dict):
-            errors.append(f"leg {index}: not an object")
             continue
         leg_id = leg.get("id")
         kind = leg.get("kind")
-        if not isinstance(leg_id, str) or not leg_id:
-            errors.append(f"leg {index}: id missing")
-        elif leg_id in seen:
-            errors.append(f"leg {leg_id}: duplicate id")
-        else:
-            seen.add(leg_id)
-        if kind not in KINDS:
-            errors.append(f"leg {leg_id}: unknown kind {kind!r}")
-            continue
-        for field in sorted(KINDS[kind] | {"proves"}):
-            if not isinstance(leg.get(field), str) or not leg[field]:
-                errors.append(f"leg {leg_id}: {field} missing")
+        if isinstance(leg_id, str) and leg_id:
+            if leg_id in seen:
+                errors.append(f"leg {leg_id}: duplicate id")
+            else:
+                seen.add(leg_id)
+        if isinstance(kind, str) and kind in KINDS:
+            for field in sorted(KINDS[kind]):
+                if not isinstance(leg.get(field), str) or not leg[field]:
+                    errors.append(f"leg {leg_id or index}: {field} missing")
     if not any(isinstance(l, dict) and l.get("kind") == "workflow_run" for l in legs):
         errors.append("legs file: no workflow_run leg; a candidate would need no tester evidence")
     return errors
@@ -138,6 +172,7 @@ def _schema_failures(good: dict) -> list[str]:
         "wrong schema": {**good, "schema": 2},
         "no legs": {**good, "legs": []},
         "unknown kind": {**good, "legs": [{"id": "x", "kind": "magic", "proves": "p"}]},
+        "list kind": {**good, "legs": [{"id": "x", "kind": ["magic"], "proves": "p"}]},
         "duplicate id": {**good, "legs": good["legs"] + [good["legs"][0]]},
         "workflow_run without event": {
             **good,
