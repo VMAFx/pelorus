@@ -22,12 +22,18 @@
 #include <string.h>
 
 #ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
 #include <process.h>
+#include <share.h>
+#include <sys/stat.h>
 static long get_proc_id(void)
 {
     return (long)_getpid();
 }
 #else
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 static long get_proc_id(void)
 {
@@ -67,9 +73,48 @@ static int read_fixture_file(const char *path, char *buf, size_t cap, size_t *ou
     return 0;
 }
 
+static FILE *create_exclusive(const char *path)
+{
+    (void)remove(path);
+#ifdef _WIN32
+    const int flags = _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY;
+#ifdef _MSC_VER
+    int fd = -1;
+
+    if (_sopen_s(&fd, path, flags, _SH_DENYNO, _S_IREAD | _S_IWRITE) != 0) {
+        fd = -1;
+    }
+#else
+    const int fd = _open(path, flags, _S_IREAD | _S_IWRITE);
+#endif
+    FILE *fp;
+
+    if (fd < 0) {
+        return NULL;
+    }
+    fp = _fdopen(fd, "wb");
+    if (fp == NULL) {
+        (void)_close(fd);
+    }
+    return fp;
+#else
+    const int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+    FILE *fp;
+
+    if (fd < 0) {
+        return NULL;
+    }
+    fp = fdopen(fd, "wb");
+    if (fp == NULL) {
+        (void)close(fd);
+    }
+    return fp;
+#endif
+}
+
 static int write_temp_file(const char *path, const char *data, size_t len)
 {
-    FILE *fp = fopen(path, "wb");
+    FILE *fp = create_exclusive(path);
 
     if (fp == NULL) {
         return -1;
