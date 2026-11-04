@@ -40,6 +40,42 @@ pelorus_qloop = executable(
   install: false,
 )
 
+pelorus_tool_test = executable(
+  'pelorus_tool_test',
+  files('pelorus_tool_test.c'),
+  link_with: pelorus_tool_common,
+  dependencies: tool_deps,
+  install: false,
+)
+test('tool-argv', pelorus_tool_test, suite: 'fast')
+
+# Fast-suite CLI argument validation per tool (#496).
+_telemetry_csv = meson.project_source_root() / 'libpelorus' / 'test' / 'fixtures' / 'telemetry' / 'x265-4.3-qp32.csv'
+test('tool-qp-report-no-args', pelorus_qp_report, args: [], should_fail: true, suite: 'fast')
+test('tool-qp-report-bad-qp', pelorus_qp_report, args: [_telemetry_csv, '--requested-qp', '1x'], should_fail: true, suite: 'fast')
+test('tool-qp-report-extra-pos', pelorus_qp_report, args: [_telemetry_csv, 'extra.csv'], should_fail: true, suite: 'fast')
+test('tool-qp-report-missing-val', pelorus_qp_report, args: [_telemetry_csv, '--requested-qp'], should_fail: true, suite: 'fast')
+test('tool-qp-report-ok', pelorus_qp_report, args: [_telemetry_csv, '--requested-qp', '32.0'], suite: 'fast')
+
+test('tool-zones-no-args', pelorus_zones, args: [], should_fail: true, suite: 'fast')
+test('tool-zones-unknown-format', pelorus_zones, args: ['--format', 'invalid'], should_fail: true, suite: 'fast')
+test('tool-zones-bad-crf', pelorus_zones, args: ['--format', 'zonefile', '--base-crf', '1x'], should_fail: true, suite: 'fast')
+test('tool-zones-extra-pos', pelorus_zones, args: ['--format', 'zonefile', 'extra'], should_fail: true, suite: 'fast')
+
+test('tool-qloop-no-args', pelorus_qloop, args: [], should_fail: true, suite: 'fast')
+test('tool-qloop-bad-arg', pelorus_qloop,
+     args: ['--target', '1x', '--tolerance', '1.0', '--min', '10.0', '--max', '45.0',
+            '--start', '20.0', '--resolution', '0.5', '--max-iter', '10', '--direction', '1'],
+     should_fail: true, suite: 'fast')
+test('tool-qloop-dup-arg', pelorus_qloop,
+     args: ['--target', '90.0', '--target', '90.0', '--tolerance', '1.0', '--min', '10.0', '--max', '45.0',
+            '--start', '20.0', '--resolution', '0.5', '--max-iter', '10', '--direction', '1'],
+     should_fail: true, suite: 'fast')
+test('tool-qloop-missing-val', pelorus_qloop,
+     args: ['--target', '90.0', '--tolerance', '1.0', '--min', '10.0', '--max', '45.0',
+            '--start', '20.0', '--resolution', '0.5', '--max-iter', '10', '--direction'],
+     should_fail: true, suite: 'fast')
+
 bash_prog = find_program('bash', required: false)
 if bash_prog.found()
   test('x265-zone-honour',
