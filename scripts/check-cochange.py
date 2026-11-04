@@ -21,11 +21,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
 import re
 import shutil
 import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
+import tempfile
 
 DESCRIPTION = "Check co-change invariants across commits and pull requests."
 
@@ -339,7 +341,9 @@ def get_commits(
             return None
         files = {f for f in diff_stdout.split("\0") if f}
 
-        msg_stdout = run_git(["log", "-1", "--format=%B", sha], repo_root)
+        msg_stdout = run_git(
+            ["log", "-1", "--encoding=UTF-8", "--format=%B", sha], repo_root
+        )
         if msg_stdout is None:
             return None
         values = parse_exempt_trailers(msg_stdout, repo_root)
@@ -449,6 +453,62 @@ def self_test_run_git(repo_root: pathlib.Path) -> int:
     return failures
 
 
+def self_test_log_encoding(repo_root: pathlib.Path) -> int:
+    """Verify get_commits forces UTF-8 log output despite logOutputEncoding."""
+    local_env_vars = run_git(["rev-parse", "--local-env-vars"], repo_root)
+    if local_env_vars is None:
+        print("FAIL self-test log_encoding 'fixture'", file=sys.stderr)
+        return 1
+    saved_env = dict(os.environ)
+    try:
+        for name in local_env_vars.split():
+            os.environ.pop(name, None)
+        os.environ.update(
+            {
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_AUTHOR_NAME": "self-test",
+                "GIT_AUTHOR_EMAIL": "self-test@pelorus.invalid",
+                "GIT_COMMITTER_NAME": "self-test",
+                "GIT_COMMITTER_EMAIL": "self-test@pelorus.invalid",
+            }
+        )
+        with tempfile.TemporaryDirectory(prefix="pelorus-cochange-") as tmp:
+            tmp_path = pathlib.Path(tmp)
+            if (
+                run_git(["init", "-q"], tmp_path) is None
+                or run_git(
+                    ["config", "i18n.logOutputEncoding", "ISO-8859-1"], tmp_path
+                )
+                is None
+            ):
+                print("FAIL self-test log_encoding 'fixture'", file=sys.stderr)
+                return 1
+            tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+            base_out = run_git(["commit-tree", tree, "-m", "base"], tmp_path)
+            if base_out is None:
+                print("FAIL self-test log_encoding 'fixture'", file=sys.stderr)
+                return 1
+            base = base_out.strip()
+            head_out = run_git(
+                ["commit-tree", tree, "-p", base],
+                tmp_path,
+                stdin="co-change \u00e4\n",
+            )
+            if head_out is None:
+                print("FAIL self-test log_encoding 'fixture'", file=sys.stderr)
+                return 1
+            head = head_out.strip()
+            commits = get_commits(base, head, tmp_path)
+            if commits is None or len(commits) != 1:
+                print("FAIL self-test log_encoding 'utf8'", file=sys.stderr)
+                return 1
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_env)
+    return 0
+
+
 def run_self_test(repo_root: pathlib.Path) -> int:
     """Run self-test suite covering evaluate logic and trailer parsing."""
     failures = 0
@@ -477,12 +537,13 @@ def run_self_test(repo_root: pathlib.Path) -> int:
             failures += 1
 
     failures += self_test_run_git(repo_root)
+    failures += self_test_log_encoding(repo_root)
 
     if failures:
         print(f"co-change self-test: {failures} failures", file=sys.stderr)
         return 1
 
-    total_cases = len(SELF_TEST_CASES) + len(TRAILER_PARSER_CASES) + 5
+    total_cases = len(SELF_TEST_CASES) + len(TRAILER_PARSER_CASES) + 6
     print(f"co-change self-test: {total_cases} cases ok")
     return 0
 
