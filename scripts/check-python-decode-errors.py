@@ -16,9 +16,9 @@ not checked. A ``read_text`` call does not count when its decode error cannot
 reach the block's handlers: it passes a constant non-raising ``errors`` mode
 (``"replace"``, ``"ignore"``, ``"backslashreplace"``), it sits in the body
 of a nested ``try`` that catches the decode error, or it sits in the body of
-a function or lambda defined inside the block. Any other ``errors`` value,
-such as ``"strict"``, ``"surrogateescape"``, ``None`` or a variable, still
-counts.
+a function or lambda defined inside the block and never called there. Any
+other ``errors`` value, such as ``"strict"``, ``"surrogateescape"``,
+``None`` or a variable, still counts.
 
 Usage:
     python3 -I scripts/check-python-decode-errors.py
@@ -102,6 +102,12 @@ SELF_TEST_CASES: list[tuple[str, str, int]] = [
      "try:\n    def g():\n        return p.read_text()\nexcept OSError:\n    g = None\n", 0),
     ("read_in_nested_lambda_body",
      "try:\n    g = lambda: p.read_text()\nexcept OSError:\n    g = None\n", 0),
+    ("read_in_nested_def_called_in_block",
+     "try:\n    def g():\n        return p.read_text()\n    t = g()\nexcept OSError:\n    t = ''\n", 1),
+    ("read_in_lambda_called_in_place",
+     "try:\n    t = (lambda: p.read_text())()\nexcept OSError:\n    t = ''\n", 1),
+    ("read_in_named_lambda_called_in_block",
+     "try:\n    g = lambda: p.read_text()\n    t = g()\nexcept OSError:\n    t = ''\n", 1),
     ("read_in_nested_def_default_runs",
      "try:\n    def g(t=p.read_text()):\n        return t\nexcept OSError:\n    g = None\n", 1),
 ]
@@ -138,24 +144,62 @@ def read_can_raise_decode(node: ast.AST) -> bool:
                    for m in modes)
 
 
+def called_in(body: list[ast.stmt]) -> tuple[set[str], set[int]]:
+    """Return the names called by plain name and the ids of lambdas called in place in ``body``."""
+    names: set[str] = set()
+    lambdas: set[int] = set()
+    for stmt in body:
+        for node in ast.walk(stmt):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Name):
+                names.add(node.func.id)
+            elif isinstance(node.func, ast.Lambda):
+                lambdas.add(id(node.func))
+    return names, lambdas
+
+
+def lambda_bindings(body: list[ast.stmt]) -> dict[int, set[str]]:
+    """Map each lambda assigned to plain names in ``body`` to those names."""
+    bound: dict[int, set[str]] = {}
+    for stmt in body:
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Lambda):
+                bound[id(node.value)] = {t.id for t in node.targets if isinstance(t, ast.Name)}
+    return bound
+
+
+def deferred_body(node: ast.AST, called: tuple[set[str], set[int]],
+                  bound: dict[int, set[str]]) -> list[ast.AST]:
+    """Return the body of a nested function or lambda the try block never calls, else []."""
+    names, lambdas = called
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return [] if node.name in names else list(node.body)
+    if isinstance(node, ast.Lambda):
+        if id(node) in lambdas or bound.get(id(node), set()) & names:
+            return []
+        return [node.body]
+    return []
+
+
 def shielded_nodes(body: list[ast.stmt]) -> set[int]:
     """Return ids of nodes whose decode error cannot reach the handlers of the enclosing try.
 
     Covers the body of a nested try that catches the decode error, and the body of a
-    nested function or lambda (it runs later, outside the block). Decorators and default
-    arguments run inline and are not shielded.
+    nested function or lambda that the block never calls (it runs later, outside the
+    block). A function called by name in the block, a lambda called in place, or a
+    lambda assigned to a name the block calls is not shielded. Decorators and default
+    arguments run inline and are not shielded either.
     """
+    called = called_in(body)
+    bound = lambda_bindings(body)
     shielded: set[int] = set()
     for stmt in body:
         for node in ast.walk(stmt):
             if isinstance(node, TRY_NODES) and catches_decode(node):
-                inner = node.body
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                inner = node.body
-            elif isinstance(node, ast.Lambda):
-                inner = [node.body]
+                inner: list[ast.AST] = list(node.body)
             else:
-                continue
+                inner = deferred_body(node, called, bound)
             for sub in inner:
                 shielded.update(id(n) for n in ast.walk(sub))
     return shielded
