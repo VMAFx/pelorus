@@ -835,7 +835,10 @@ The DCO check (`scripts/check-dco.py`) verifies that every non-merge commit
 in the pull request range carries a valid `Signed-off-by` trailer matching
 the Developer Certificate of Origin 1.1 format (`Signed-off-by: Full Name <email@example.org>`).
 Renovate bot commits are exempt when authored by Renovate in a
-Renovate-opened pull request. Run its self-test battery with
+Renovate-opened pull request. The base and head must be plain revisions
+(letters, digits and `._/@{}~^+-`, no leading `-`, no `..`); anything else
+exits 2 before git runs, and git itself is resolved to an absolute path on
+`PATH`. Run its self-test battery with
 `python3 -I scripts/check-dco.py --self-test`.
 
 `lefthook.yml` sets `no_auto_install: true`. Without it, `lefthook run`

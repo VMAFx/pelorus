@@ -15,8 +15,12 @@ Rules:
 - A range that cannot be listed or holds no commits fails, so the check
   never passes on nothing.
 
+- BASE and HEAD must be plain revisions (letters, digits and
+  `._/@{}~^+-`, not starting with `-`, no `..`); anything else is a
+  usage error, so a value can never reach git as an option.
+
 Exit codes: 0 every commit signed or exempt, 1 a commit lacks the
-trailer or the range is unusable, 2 usage error.
+trailer or the range is unusable, 2 usage error or invalid revision.
 
 Usage:
     python3 -I scripts/check-dco.py --base origin/master --head HEAD
@@ -30,10 +34,11 @@ import io
 import os
 import pathlib
 import re
-import subprocess
+import shutil
+import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
 import tempfile
-from typing import TextIO
+from typing import NamedTuple, TextIO
 
 RENOVATE_PR_AUTHOR = "renovate[bot]"
 RENOVATE_COMMIT_AUTHOR = "29139614+renovate[bot]@users.noreply.github.com"
@@ -42,13 +47,41 @@ MAX_COMMITS = 10000
 GIT_TIMEOUT = 60.0
 
 
+class GitResult(NamedTuple):
+    """Exit code and decoded output of one git call."""
+
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+REVISION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/@{}~^+-]{0,255}")
+
+
+def find_git(env: dict[str, str] | None = None) -> str | None:
+    """Return the absolute path of an executable git file on PATH, or None."""
+    search = (env if env is not None else os.environ).get("PATH", "")
+    git = shutil.which("git", path=search)
+    if git is None or not pathlib.Path(git).is_file():
+        return None
+    return str(pathlib.Path(git).resolve())
+
+
+def valid_revision(rev: str) -> bool:
+    """Return True for a plain revision that git cannot read as an option."""
+    return REVISION.fullmatch(rev) is not None and ".." not in rev
+
+
 def run_git(
     args: list[str], repo_root: pathlib.Path, env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
+) -> GitResult:
     """Run git in repo_root without a shell; a timeout returns exit code 124."""
-    argv = ["git", "-C", str(repo_root), *args]
+    git = find_git(env)
+    if git is None:
+        return GitResult(127, "", "git executable not found")
+    argv = [git, "-C", str(repo_root), *args]
     try:
-        return subprocess.run(
+        proc = subprocess.run(  # nosec B603 - argv is the resolved git binary plus checked revisions, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is the absolute git path plus constants and allow-listed revisions, no shell, explicit deadline
             argv,
             capture_output=True,
             text=True,
@@ -59,7 +92,8 @@ def run_git(
             env=env,
         )
     except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(argv, 124, "", f"git {args[0]} timed out")
+        return GitResult(124, "", "git command timed out")
+    return GitResult(proc.returncode, proc.stdout, proc.stderr)
 
 
 def has_dco_trailer(body: str) -> bool:
@@ -71,7 +105,11 @@ def list_range(
     base: str, head: str, repo_root: pathlib.Path, env: dict[str, str] | None
 ) -> tuple[list[str], str | None]:
     """List non-merge commits in base..head; return (shas, error message)."""
-    proc = run_git(["rev-list", "--no-merges", f"{base}..{head}"], repo_root, env)
+    proc = run_git(
+        ["rev-list", "--no-merges", "--end-of-options", f"{base}..{head}"],
+        repo_root,
+        env,
+    )
     shas = proc.stdout.split()
     if proc.returncode != 0 or not shas:
         return [], f"::error::no commits between {base} and {head}; cannot verify DCO"
@@ -125,6 +163,10 @@ def check_dco(
     err: TextIO = sys.stderr,
 ) -> int:
     """Check every non-merge commit in base..head; return the exit code."""
+    bad = [rev for rev in (base, head) if not valid_revision(rev)]
+    if bad:
+        print(f"::error::invalid revision {bad[0]!r}", file=err)
+        return 2
     root = repo_root if repo_root is not None else pathlib.Path.cwd()
     shas, error = list_range(base, head, root, env)
     if error is not None:
@@ -211,18 +253,15 @@ CASES = (
     ),
     ("10 merge without trailer skipped", "base", "c10", "", 0, None, None),
     ("11 two unsigned of three", "base", "c11_3", "", 1, None, "2 commit(s)"),
+    ("13 base read as option", "ref:--all", "c1", "", 2, None, "invalid revision"),
+    ("14 head holds a range", "base", "ref:main..main", "", 2, None, "invalid"),
+    ("15 head with a space", "base", "ref:HEAD x", "", 2, None, "invalid"),
 )
 
 
 def fixture_env() -> dict[str, str] | None:
     """Return a git environment detached from the invoking repository, or None."""
-    probe = subprocess.run(
-        ["git", "rev-parse", "--local-env-vars"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=GIT_TIMEOUT,
-    )
+    probe = run_git(["rev-parse", "--local-env-vars"], pathlib.Path.cwd())
     if probe.returncode != 0:
         return None
     drop = set(probe.stdout.split())
@@ -303,11 +342,14 @@ def run_self_test() -> int:
             print(f"FAIL self-test fixture: {exc}", file=sys.stderr)
             return 1
         failures = [f for f in (run_case(c, shas, tmp, env) for c in CASES) if f]
+        missing = run_git(["status"], tmp, {**env, "PATH": str(tmp)})
+        if missing.returncode != 127:
+            failures.append(f"16 git missing from PATH: exit {missing.returncode}")
     for failure in failures:
         print(f"FAIL self-test {failure}", file=sys.stderr)
     if failures:
         return 1
-    print(f"{len(CASES)} planted cases ok")
+    print(f"{len(CASES) + 1} planted cases ok")
     return 0
 
 
