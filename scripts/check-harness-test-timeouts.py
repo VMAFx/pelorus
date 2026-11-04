@@ -30,9 +30,7 @@ import tempfile
 DEFAULT_MESON_BUILD = pathlib.Path(__file__).resolve().parent.parent / "meson.build"
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 MIN_HARNESS_TIMEOUT_S = 150
-TIMEOUT_CONST_RE = re.compile(
-    r"^([A-Z][A-Z0-9_]*TIMEOUT[A-Z0-9_]*)\s*=\s*([0-9.]+)", re.MULTILINE
-)
+TIMEOUT_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*TIMEOUT[A-Z0-9_]*$")
 DESCRIPTION = "Check that script tests in meson.build declare sufficient timeouts."
 
 
@@ -137,14 +135,33 @@ def script_deadline_s(script_path: pathlib.Path) -> float | None:
         raise SystemExit(
             f"check-harness-test-timeouts: {script_path} is not UTF-8: {err}"
         ) from err
+    try:
+        tree = ast.parse(text, filename=str(script_path))
+    except SyntaxError as err:
+        raise SystemExit(
+            f"check-harness-test-timeouts: {script_path} does not parse: {err}"
+        ) from err
 
     deadlines: list[float] = []
-    for m in TIMEOUT_CONST_RE.finditer(text):
-        name = m.group(1)
-        if "MIN_" in name or "CAP" in name or "MAX_" in name:
+    for node in tree.body:
+        target_name: str | None = None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            if isinstance(node.targets[0], ast.Name):
+                target_name = node.targets[0].id
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name):
+                target_name = node.target.id
+
+        if not target_name or not TIMEOUT_NAME_RE.match(target_name):
             continue
-        val = float(m.group(2))
-        if name.endswith("_MINUTES"):
+        if "MIN_" in target_name or "CAP" in target_name or "MAX_" in target_name:
+            continue
+        if node.value is None or not isinstance(node.value, ast.Constant):
+            continue
+        if type(node.value.value) not in (int, float):
+            continue
+        val = float(node.value.value)
+        if target_name.endswith("_MINUTES"):
             val *= 60.0
         deadlines.append(val)
     return max(deadlines) if deadlines else None
@@ -159,7 +176,7 @@ def _validate_script_timeout(
     required: float,
 ) -> str | None:
     """Return error message if timeout declaration is insufficient, else None."""
-    if required <= 30:
+    if timeout is None and required <= 30:
         return None
 
     if is_harness and (deadline is None or deadline <= MIN_HARNESS_TIMEOUT_S):
@@ -328,6 +345,41 @@ SELF_TEST_CASES = [
         """,
         False,
     ),
+    (
+        "deadline in docstring without timeout (valid: string literal not constant)",
+        """
+        test('planted-docstring-timeout-no-timeout',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-docstring-timeout.py'],
+             workdir: meson.project_source_root(),
+             suite: 'fast')
+        """,
+        True,
+    ),
+    (
+        "deadline script boundary 30 s with timeout: 1 < 30 (fails)",
+        """
+        test('planted-deadline-30-under-timeout',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-deadline-30.py'],
+             workdir: meson.project_source_root(),
+             timeout: 1,
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "deadline script boundary 30 s with timeout: 30 == 30 (valid)",
+        """
+        test('planted-deadline-30-exact-timeout',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-deadline-30.py'],
+             workdir: meson.project_source_root(),
+             timeout: 30,
+             suite: 'fast')
+        """,
+        True,
+    ),
 ]
 
 
@@ -340,6 +392,10 @@ def run_self_test(scripts_dir: pathlib.Path) -> int:
         )
         (tmp_dir / "test-deadline-30.py").write_text(
             "FOO_TIMEOUT_S = 30\n", encoding="utf-8"
+        )
+        (tmp_dir / "test-docstring-timeout.py").write_text(
+            '"""Module docstring holding deadline string.\nFOO_TIMEOUT_S = 360\n"""\n',
+            encoding="utf-8",
         )
 
         cases = SELF_TEST_CASES
