@@ -145,7 +145,7 @@ static int check_frame_match(const PelorusX265Frame *p_frame,
     return failures;
 }
 
-static int test_case_a_fixture(const char *fixture_path)
+static int test_case_a_fixture(const char *fixture_path, const char *tmp_path)
 {
     char buf[FIXTURE_CAP];
     PelorusX265Frame p_frames[FRAME_CAP];
@@ -159,13 +159,16 @@ static int test_case_a_fixture(const char *fixture_path)
     (void)memset(p_frames, 0, sizeof(p_frames));
     (void)memset(t_frames, 0, sizeof(t_frames));
     CHECK(read_fixture_file(fixture_path, buf, sizeof(buf), &len) == 0);
-    CHECK(pel_x265_csv_parse(fixture_path, p_frames, FRAME_CAP, &p_count) == PEL_OK);
+    CHECK(write_temp_file(tmp_path, buf, len) == 0);
+    /* The library parses a temp copy, so no command-line path reaches its fopen. */
+    CHECK(pel_x265_csv_parse(tmp_path, p_frames, FRAME_CAP, &p_count) == PEL_OK);
     CHECK(pel_tlm_parse_x265_csv(buf, len, 8u, t_frames, FRAME_CAP, &t_count) == PEL_OK);
     CHECK(p_count == FIXTURE_FRAME_COUNT);
     CHECK(t_count == FIXTURE_FRAME_COUNT);
     for (i = 0; i < FIXTURE_FRAME_COUNT && i < p_count && i < t_count; i++) {
         failures += check_frame_match(&p_frames[i], &t_frames[i]);
     }
+    (void)remove(tmp_path);
     return failures;
 }
 
@@ -390,7 +393,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    failures += test_case_a_fixture(argv[1]);
+    failures += test_case_a_fixture(argv[1], tmp_path);
     failures += test_case_b_header_only(tmp_path);
     failures += test_case_c_empty_file(tmp_path);
     failures += test_case_d_crlf(tmp_path);
