@@ -6,8 +6,8 @@
 Rule:
 1. Every sys.argv reference must be sys.argv[0] or sys.argv[1:] passed directly
    as a call argument (e.g. main(sys.argv[1:])).
-2. Any Subscript, .index() call, or "in", "not in", "==" or "!=" comparison on a variable named
-   argv is prohibited in any module that has a command line (it reads sys.argv or
+2. Any Subscript, .index() or .pop() call, or "in", "not in", "==" or "!=" comparison on a variable named
+   argv, or a name bound to argv or a list/tuple/deque copy of it, is prohibited in any module that has a command line (it reads sys.argv or
    defines main or parse_args) and does not import argparse, and inside a
    function named main or parse_args in every module (argparse owns the command
    line there; a hand check next to it bypasses the parser). A module without a
@@ -38,12 +38,35 @@ EXCEPTIONS: dict[str, str] = {
 }
 
 CLI_FUNCTIONS = frozenset({"main", "parse_args"})
+# Methods that read the command line by hand when called on argv or a copy of it.
+ARGV_READ_METHODS = frozenset({"index", "pop"})
+# Calls that copy argv into a new name the checker then follows (args = list(argv)).
+ARGV_COPY_CALLS = frozenset({"list", "tuple", "deque"})
+MAX_ALIAS_PASSES = 8
 # Comparisons that read the command line by hand; `argv is None` stays allowed.
 ARGV_COMPARE_OPS: dict[type[ast.cmpop], str] = {
     ast.In: "in", ast.NotIn: "not in", ast.Eq: "==", ast.NotEq: "!=",
 }
 
 SELF_TEST_CASES: list[tuple[str, str, int]] = [
+    (
+        "argv_copy_pop_loop",
+        "import sys\ndef main(argv):\n    args = list(argv)\n    while args:\n        arg = args.pop(0)\n"
+        "        if arg == '--root' and args:\n            return args.pop(0)\n    return None\n"
+        "if __name__ == '__main__':\n    sys.exit(main(sys.argv[1:]))\n",
+        2,
+    ),
+    (
+        "argv_alias_chain_subscript",
+        "def main(argv):\n    rest = argv\n    more: list = tuple(rest)\n    return more[0]\n",
+        1,
+    ),
+    (
+        "argparse_result_not_alias",
+        "import argparse\ndef main(argv):\n    args = argparse.ArgumentParser().parse_args(argv)\n"
+        "    return args.items[0]\n",
+        0,
+    ),
     (
         "argparse_module_main_equality_bypass",
         "import argparse\ndef main(argv=None):\n    if argv == ['--self-test']:\n        return 0\n"
@@ -201,28 +224,57 @@ def sys_argv_violation(node: ast.AST, parent_map: dict[ast.AST, ast.AST], path: 
     return f"{path}:{parent.lineno}: sys.argv[1:] used outside call argument"
 
 
-def is_argv_name(node: ast.AST) -> bool:
-    """Return True if node is a Name called argv."""
-    return isinstance(node, ast.Name) and node.id == "argv"
+def is_argv_name(node: ast.AST, names: frozenset[str] = frozenset({"argv"})) -> bool:
+    """Return True if node is a Name called argv or bound to a copy of it."""
+    return isinstance(node, ast.Name) and node.id in names
 
 
-def argv_violations(node: ast.AST, path: str) -> list[str]:
+def copies_argv(value: ast.AST | None, names: set[str]) -> bool:
+    """Return True if value is an argv name or a list/tuple/deque copy of one."""
+    if isinstance(value, ast.Name):
+        return value.id in names
+    return (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id in ARGV_COPY_CALLS
+        and len(value.args) == 1
+        and isinstance(value.args[0], ast.Name)
+        and value.args[0].id in names
+    )
+
+
+def argv_aliases(tree: ast.AST) -> frozenset[str]:
+    """Return argv plus every name bound to argv or a copy of it (args = list(argv))."""
+    names = {"argv"}
+    assigns = [n for n in ast.walk(tree) if isinstance(n, (ast.Assign, ast.AnnAssign))]
+    for _ in range(MAX_ALIAS_PASSES):
+        before = len(names)
+        for node in assigns:
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if copies_argv(node.value, names):
+                names.update(t.id for t in targets if isinstance(t, ast.Name))
+        if len(names) == before:
+            break
+    return frozenset(names)
+
+
+def argv_violations(node: ast.AST, path: str, names: frozenset[str] = frozenset({"argv"})) -> list[str]:
     """Rule 2: return findings for hand-parsed argv at node."""
     line = getattr(node, "lineno", 1)
-    if isinstance(node, ast.Subscript) and is_argv_name(node.value):
+    if isinstance(node, ast.Subscript) and is_argv_name(node.value, names):
         return [f"{path}:{line}: subscript on argv (hand-parsed argv)"]
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "index"
-        and is_argv_name(node.func.value)
+        and node.func.attr in ARGV_READ_METHODS
+        and is_argv_name(node.func.value, names)
     ):
-        return [f"{path}:{line}: argv.index() call (hand-parsed argv)"]
+        return [f"{path}:{line}: argv.{node.func.attr}() call (hand-parsed argv)"]
     if not isinstance(node, ast.Compare):
         return []
     found: list[str] = []
     for name in [node.left] + node.comparators:
-        if is_argv_name(name):
+        if is_argv_name(name, names):
             found.extend(
                 f"{path}:{line}: '{ARGV_COMPARE_OPS[type(op)]}' comparison on argv (hand-parsed argv)"
                 for op in node.ops
@@ -249,6 +301,7 @@ def check_source_content(
         for child in ast.iter_child_nodes(parent):
             parent_map[child] = parent
     cli_scope, has_cli = cli_scope_of(tree)
+    aliases = argv_aliases(tree)
 
     violations: list[str] = []
     for node in ast.walk(tree):
@@ -259,7 +312,7 @@ def check_source_content(
         # Rule 2: hand-parsed argv in a command-line module without argparse,
         # or inside main()/parse_args() anywhere.
         if (has_cli and not imports_argparse) or id(node) in cli_scope:
-            violations.extend(argv_violations(node, display_path))
+            violations.extend(argv_violations(node, display_path, aliases))
     violations.sort()
     return violations
 

@@ -432,9 +432,10 @@ and refuses:
 
 - any `sys.argv` use other than `sys.argv[0]` or `sys.argv[1:]` passed straight
   to a call, such as `main(sys.argv[1:])`;
-- a subscript, an `.index()` call or an `in` / `not in` test on a variable named
-  `argv` inside a function named `main` or `parse_args`, where `argparse` owns the
-  command line;
+- a subscript, an `.index()` or `.pop()` call, or an `in`, `not in`, `==` or `!=`
+  test on `argv` inside a function named `main` or `parse_args`, where `argparse`
+  owns the command line. A name bound to `argv` or to a `list`, `tuple` or `deque`
+  copy of it (`args = list(argv)`) counts as `argv`; `argv is None` stays allowed;
 - the same `argv` operations anywhere in a module that has a command line (it
   reads `sys.argv` or defines `main` or `parse_args`) but does not import
   `argparse`.
