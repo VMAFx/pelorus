@@ -12,8 +12,12 @@ catches ``UnicodeDecodeError`` (or ``UnicodeError``, ``ValueError``,
 bytes escapes as a traceback instead. This checker flags such blocks.
 
 A ``try`` block without an ``OSError`` handler is not a guarded read and is
-not checked, nor is a ``read_text`` call that passes ``errors=`` (a decode
-error handler such as ``"replace"`` means the call cannot raise one).
+not checked. A ``read_text`` call does not count when its decode error cannot
+reach the block's handlers: it passes a constant non-raising ``errors`` mode
+(``"replace"``, ``"ignore"``, ``"surrogateescape"``, ``"backslashreplace"``),
+it sits in the body of a nested ``try`` that catches the decode error, or it
+sits in the body of a function or lambda defined inside the block. Any other
+``errors`` value, such as ``"strict"``, ``None`` or a variable, still counts.
 
 Usage:
     python3 -I scripts/check-python-decode-errors.py
@@ -34,7 +38,9 @@ DESCRIPTION = "Check that a try block guarding read_text() also catches UnicodeD
 
 OS_ERRORS = frozenset({"OSError", "IOError", "FileNotFoundError", "PermissionError"})
 DECODE_ERRORS = frozenset({"UnicodeDecodeError", "UnicodeError", "ValueError",
-                           "Exception", "BaseException"})
+                           "Exception", "BaseException", "*"})
+NON_RAISING_MODES = frozenset({"replace", "ignore", "surrogateescape", "backslashreplace"})
+TRY_NODES = (ast.Try, ast.TryStar)
 
 SELF_TEST_CASES: list[tuple[str, str, int]] = [
     ("oserror_only",
@@ -61,6 +67,34 @@ SELF_TEST_CASES: list[tuple[str, str, int]] = [
      "try:\n    t = p.read_text(encoding='utf-8', errors='replace')\nexcept OSError:\n    t = None\n", 0),
     ("read_text_in_handler_only",
      "try:\n    t = f()\nexcept OSError:\n    t = p.read_text()\n", 0),
+    ("errors_strict_can_raise",
+     "try:\n    t = p.read_text(errors='strict')\nexcept OSError:\n    t = ''\n", 1),
+    ("errors_none_can_raise",
+     "try:\n    t = p.read_text(errors=None)\nexcept OSError:\n    t = ''\n", 1),
+    ("errors_variable_can_raise",
+     "try:\n    t = p.read_text(errors=mode)\nexcept OSError:\n    t = ''\n", 1),
+    ("errors_positional_replace",
+     "try:\n    t = p.read_text('utf-8', 'replace')\nexcept OSError:\n    t = ''\n", 0),
+    ("errors_positional_strict",
+     "try:\n    t = p.read_text('utf-8', 'strict')\nexcept OSError:\n    t = ''\n", 1),
+    ("nested_try_catches_decode",
+     "try:\n    try:\n        t = p.read_text()\n    except UnicodeDecodeError:\n        t = ''\n"
+     "except OSError:\n    t = ''\n", 0),
+    ("nested_try_oserror_only_both_flagged",
+     "try:\n    try:\n        t = p.read_text()\n    except OSError:\n        t = ''\n"
+     "except OSError:\n    t = ''\n", 2),
+    ("read_after_nested_try_still_flagged",
+     "try:\n    try:\n        t = p.read_text()\n    except UnicodeDecodeError:\n        t = ''\n"
+     "    u = q.read_text()\nexcept OSError:\n    u = ''\n", 1),
+    ("read_in_nested_handler_reaches_outer",
+     "try:\n    try:\n        t = f()\n    except UnicodeDecodeError:\n        t = p.read_text()\n"
+     "except OSError:\n    t = ''\n", 1),
+    ("read_in_nested_def_body",
+     "try:\n    def g():\n        return p.read_text()\nexcept OSError:\n    g = None\n", 0),
+    ("read_in_nested_lambda_body",
+     "try:\n    g = lambda: p.read_text()\nexcept OSError:\n    g = None\n", 0),
+    ("read_in_nested_def_default_runs",
+     "try:\n    def g(t=p.read_text()):\n        return t\nexcept OSError:\n    g = None\n", 1),
 ]
 
 
@@ -78,13 +112,52 @@ def handler_names(handler: ast.ExceptHandler) -> set[str]:
     return names
 
 
-def body_reads_text(body: list[ast.stmt]) -> bool:
-    """Report whether any statement of a try body calls ``.read_text(...)``."""
+def catches_decode(node: ast.Try | ast.TryStar) -> bool:
+    """Report whether a try node has a handler that catches the decode error."""
+    return any(handler_names(h) & DECODE_ERRORS for h in node.handlers)
+
+
+def read_can_raise_decode(node: ast.AST) -> bool:
+    """Report whether a node is a ``.read_text(...)`` call that can raise a decode error."""
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "read_text"):
+        return False
+    modes = [kw.value for kw in node.keywords if kw.arg == "errors"]
+    if len(node.args) >= 2:
+        modes.append(node.args[1])
+    return not any(isinstance(m, ast.Constant) and m.value in NON_RAISING_MODES
+                   for m in modes)
+
+
+def shielded_nodes(body: list[ast.stmt]) -> set[int]:
+    """Return ids of nodes whose decode error cannot reach the handlers of the enclosing try.
+
+    Covers the body of a nested try that catches the decode error, and the body of a
+    nested function or lambda (it runs later, outside the block). Decorators and default
+    arguments run inline and are not shielded.
+    """
+    shielded: set[int] = set()
     for stmt in body:
         for node in ast.walk(stmt):
-            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "read_text"
-                    and not any(kw.arg == "errors" for kw in node.keywords)):
+            if isinstance(node, TRY_NODES) and catches_decode(node):
+                inner = node.body
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                inner = node.body
+            elif isinstance(node, ast.Lambda):
+                inner = [node.body]
+            else:
+                continue
+            for sub in inner:
+                shielded.update(id(n) for n in ast.walk(sub))
+    return shielded
+
+
+def body_reads_text(body: list[ast.stmt]) -> bool:
+    """Report whether a try body calls ``.read_text(...)`` whose decode error reaches its handlers."""
+    shielded = shielded_nodes(body)
+    for stmt in body:
+        for node in ast.walk(stmt):
+            if id(node) not in shielded and read_can_raise_decode(node):
                 return True
     return False
 
@@ -97,12 +170,12 @@ def check_source_content(source_bytes: bytes, display_path: str) -> list[str]:
         return [f"{display_path}:{exc.lineno or 1}: syntax error during parse: {exc.msg}"]
     violations = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Try) or not body_reads_text(node.body):
+        if not isinstance(node, TRY_NODES) or not body_reads_text(node.body):
             continue
         caught = set()
         for handler in node.handlers:
             caught |= handler_names(handler)
-        if not caught & OS_ERRORS or "*" in caught or caught & DECODE_ERRORS:
+        if not caught & OS_ERRORS or catches_decode(node):
             continue
         violations.append(f"{display_path}:{node.lineno}: read_text() guarded against "
                           "OSError but not UnicodeDecodeError")
