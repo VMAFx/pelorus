@@ -234,6 +234,7 @@ def run_git(
     repo_root: pathlib.Path,
     stdin: str | None = None,
     timeout: float = 60.0,
+    quiet_rc: int | None = None,
 ) -> str | None:
     """Execute a git command and return its stdout, or None on failure."""
     try:
@@ -242,6 +243,7 @@ def run_git(
             cwd=repo_root,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=timeout,
             check=False,
             input=stdin,
@@ -259,18 +261,26 @@ def run_git(
         )
         return None
     if proc.returncode != 0:
+        if quiet_rc is not None and proc.returncode == quiet_rc:
+            return ""
         if proc.stderr:
             print(proc.stderr.strip(), file=sys.stderr)
         return None
     return proc.stdout
 
 
-def check_base_ref(base: str, repo_root: pathlib.Path) -> bool:
-    """Check whether the git base ref exists as a commit."""
-    return (
-        run_git(["rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"], repo_root)
-        is not None
+def check_base_ref(base: str, repo_root: pathlib.Path) -> bool | None:
+    """Return True if base ref exists as a commit, False if missing, or None on tool error."""
+    out = run_git(
+        ["rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"],
+        repo_root,
+        quiet_rc=1,
     )
+    if out is None:
+        return None
+    if out == "":
+        return False
+    return True
 
 
 def get_changed_files(
@@ -395,7 +405,7 @@ def evaluate(changed: set[str], commits: list[Commit]) -> list[str]:
 
 
 def self_test_run_git(repo_root: pathlib.Path) -> int:
-    """Run self-test cases verifying run_git timeout and decode error handling."""
+    """Run self-test cases verifying run_git and base ref checking."""
     failures = 0
     if (
         run_git(
@@ -416,6 +426,24 @@ def self_test_run_git(repo_root: pathlib.Path) -> int:
         is not None
     ):
         print("FAIL self-test run_git 'decode'", file=sys.stderr)
+        failures += 1
+
+    if (
+        run_git(
+            ["-c", "alias.pelutf8=!printf '\\303\\244'", "pelutf8"],
+            repo_root,
+        )
+        != "\u00e4"
+    ):
+        print("FAIL self-test run_git 'utf8'", file=sys.stderr)
+        failures += 1
+
+    if check_base_ref("refs/heads/pelorus-no-such-ref-xyz", repo_root) is not False:
+        print("FAIL self-test check_base_ref 'missing'", file=sys.stderr)
+        failures += 1
+
+    if check_base_ref("HEAD", repo_root) is not True:
+        print("FAIL self-test check_base_ref 'HEAD'", file=sys.stderr)
         failures += 1
 
     return failures
@@ -454,7 +482,7 @@ def run_self_test(repo_root: pathlib.Path) -> int:
         print(f"co-change self-test: {failures} failures", file=sys.stderr)
         return 1
 
-    total_cases = len(SELF_TEST_CASES) + len(TRAILER_PARSER_CASES) + 2
+    total_cases = len(SELF_TEST_CASES) + len(TRAILER_PARSER_CASES) + 5
     print(f"co-change self-test: {total_cases} cases ok")
     return 0
 
@@ -498,7 +526,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_test:
         return run_self_test(repo_root)
 
-    if not check_base_ref(args.base, repo_root):
+    found = check_base_ref(args.base, repo_root)
+    if found is None:
+        return 2
+
+    if not found:
         if args.require_base:
             print(
                 f"co-change: required base ref '{args.base}' not found",
