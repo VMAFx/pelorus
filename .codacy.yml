@@ -21,8 +21,21 @@ engines:
       # upstream in cordanaLLM/praetor#1802. Remove this entry once that fix is adopted.
       # exception: category B, entered 2026-11-04, expires 2026-11-07
       - "tools/figures/mkdocs_hook.py"
+  flawfinder:
+    exclude_paths:
+      # flawfinder_open (CWE-362) fires on every open() call. The one call here, in
+      # create_exclusive (:104), opens a test temp file with O_CREAT | O_EXCL | O_NOFOLLOW,
+      # which fails on any existing name or link, so the race the rule warns about cannot
+      # occur. Inline markers in C are refused by scripts/check-suppression-markers.py
+      # (ADR-0241); remove this entry once that check accepts a reasoned C marker.
+      # exception: category D, entered 2026-11-04, expires 2027-03-04
+      - "libpelorus/test/x265_csv_characterization_test.c"
   opengrep:
     exclude_paths:
       # python urllib urlopen rule, same call and same https-only guard as the bandit entry.
       # exception: category B, entered 2026-11-04, expires 2026-11-07
       - "tools/figures/mkdocs_hook.py"
+      # Semgrep_c_misc_rule-fopen-open, same call and same O_EXCL | O_NOFOLLOW reasoning
+      # as the flawfinder entry.
+      # exception: category D, entered 2026-11-04, expires 2027-03-04
+      - "libpelorus/test/x265_csv_characterization_test.c"
