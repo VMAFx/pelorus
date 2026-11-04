@@ -89,6 +89,16 @@ install_tools() {
     echo "$bin"
 }
 
+# Reads make -n output on stdin; fails when a line names the path (argv[1])
+# without it surviving shell word splitting as a whole word or NAME=path.
+MAKE_QUOTING_CHECK='import shlex, sys
+path = sys.argv[1]
+head = path.split(" ")[0]
+bad = [ln for ln in sys.stdin if head in ln
+       and not any(w == path or w.endswith("=" + path) for w in shlex.split(ln))]
+sys.stderr.writelines(bad)
+sys.exit(1 if bad else 0)'
+
 check_binaries() {
     local ruff_ver zizmor_ver
     command -v "$RUFF" > /dev/null 2>&1 \
@@ -396,6 +406,28 @@ self_test_ensure() {
     return "$failed"
 }
 
+# The python-lint make recipe must pass PYTHON_LINT_ENV as one shell word:
+# dry-run it with a path that holds a space and check every line naming it.
+self_test_make_quoting() {
+    local tmp="$1" env lines
+    env="$tmp/space dir/env"
+    if ! command -v make > /dev/null 2>&1; then
+        echo "SKIP make recipe quoting (make not installed)"
+        return 0
+    fi
+    lines="$(timeout "$LINT_TIMEOUT" make -s -n -C "$ROOT" python-lint \
+        PYTHON_LINT_ENV="$env" 2>&1)" || {
+        echo "FAIL make recipe quoting (make -n failed)" >&2
+        return 1
+    }
+    if printf '%s\n' "$lines" | python3 -I -c "$MAKE_QUOTING_CHECK" "$env"; then
+        echo "PASS make recipe quoting"
+    else
+        echo "FAIL make recipe quoting" >&2
+        return 1
+    fi
+}
+
 # Global, not local: the EXIT trap runs after self_test has returned.
 SELF_TEST_DIR=""
 
@@ -414,6 +446,7 @@ self_test() {
     self_test_version "$tmp" || failed=1
     self_test_layout "$tmp" || failed=1
     self_test_ensure "$tmp" || failed=1
+    self_test_make_quoting "$tmp" || failed=1
 
     [ "$failed" -eq 0 ] || exit 1
 }

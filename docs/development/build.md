@@ -441,7 +441,7 @@ the tree with the rule set in `ruff.toml` (Codacy's Ruff patterns plus
 `.github/zizmor.yml`, so a file zizmor cannot parse fails the scan instead of
 being skipped. Both tools are pinned by hash in
 `.config/python-lint/requirements.txt`; the target keeps them in
-`.cache/python-lint` (`PYTHON_LINT_ENV`, outside the Meson build directory)
+`.cache/python-lint` (`PYTHON_LINT_ENV`, outside the Meson build directory; a path with spaces works)
 through `--ensure`, which reuses that environment while its tool versions match
 the lock and rebuilds it after a lock bump or a half-finished install. The
 first run in a new checkout, and the first after a bump, needs PyPI. The
