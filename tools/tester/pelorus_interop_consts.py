@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # Copyright 2026 Lusoris
 # SPDX-License-Identifier: EUPL-1.2
-"""Interop constants parsed from libpelorus/include/pelorus/interop.h (issue #500).
+"""Interop constants parsed from interop.h (issue #500, #515).
 
 The one Python source for PELORUS_MAGIC_STR, PELORUS_ABI_MAJOR and
 sizeof(PelorusSideData): tools import MAGIC, ABI_MAJOR and HEADER_BYTES from
-here instead of typing the values. A missing or inconsistent definition fails
-at import, so a consumer never runs on a guessed value.
+here instead of typing the values. The header is discovered from
+INTEROP_H_CANDIDATES (repository checkout or installed tester image layout).
+A missing or inconsistent definition fails at import, so a consumer never runs
+on a guessed value.
 """
 
 from __future__ import annotations
@@ -15,9 +17,28 @@ import argparse
 import codecs
 import re
 import sys
+import tempfile
 from pathlib import Path
 
-DEFAULT_INTEROP_H = Path(__file__).resolve().parents[2] / "libpelorus" / "include" / "pelorus" / "interop.h"
+
+def _candidates(here: Path) -> tuple[Path, ...]:
+    """Candidate locations for interop.h: repository checkout or installed image."""
+    return (
+        here.parents[1] / "libpelorus" / "include" / "pelorus" / "interop.h",
+        here.parent / "include" / "pelorus" / "interop.h",
+    )
+
+
+INTEROP_H_CANDIDATES = _candidates(Path(__file__).resolve().parent)
+
+
+def find_interop_h(here: Path) -> Path:
+    """Return the first candidate header that exists as a file, or raise ValueError."""
+    for candidate in _candidates(here):
+        if candidate.is_file():
+            return candidate
+    tried = ", ".join(str(c) for c in _candidates(here))
+    raise ValueError(f"no interop.h found; tried: {tried}")
 
 _MAGIC_RE = re.compile(r'#define\s+PELORUS_MAGIC_STR\s+"((?:[^"\\]|\\.)*)"')
 _MAGIC_LEN_RE = re.compile(r"#define\s+PELORUS_MAGIC_LEN\s+(\d+)[uU]?\b")
@@ -61,7 +82,7 @@ def parse_interop_text(text: str) -> tuple[bytes, int, int]:
 
 def load_interop_constants(path: Path | str | None = None) -> tuple[bytes, int, int]:
     """Read interop.h from disk and parse its constants."""
-    target = Path(path) if path is not None else DEFAULT_INTEROP_H
+    target = Path(path) if path is not None else find_interop_h(Path(__file__).resolve().parent)
     try:
         text = target.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
@@ -99,6 +120,37 @@ _ACCEPTED = (
 )
 
 
+def _self_test_candidate_search() -> str | None:
+    """Planted cases for candidate search: installed image layout and missing header."""
+    here = Path(__file__).resolve().parent
+    real_h = find_interop_h(here)
+    real_consts = load_interop_constants(real_h)
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        tester_dir = tmp_path / "tester"
+        tester_dir.mkdir()
+        header_dir = tmp_path / "include" / "pelorus"
+        header_dir.mkdir(parents=True)
+        planted_h = header_dir / "interop.h"
+        planted_h.write_bytes(real_h.read_bytes())
+        found_h = find_interop_h(tester_dir)
+        if found_h != planted_h:
+            return f"installed layout found {found_h}, want {planted_h}"
+        if load_interop_constants(found_h) != real_consts:
+            return "constants from installed layout do not match real header"
+        print("planted case 'installed image layout': ok")
+    with tempfile.TemporaryDirectory() as tmp:
+        empty_dir = Path(tmp) / "tester"
+        empty_dir.mkdir()
+        try:
+            find_interop_h(empty_dir)
+        except ValueError as exc:
+            print(f"planted case 'no candidate headers' refused: {exc}")
+        else:
+            return "find_interop_h accepted empty directory"
+    return None
+
+
 def run_self_test() -> int:
     """Refuse each planted defect, follow each planted change, then parse the real header."""
     for label, text in _REFUSED:
@@ -114,8 +166,12 @@ def run_self_test() -> int:
         if got != want:
             print(f"self-test FAIL: {label}: want {want!r}, got {got!r}", file=sys.stderr)
             return 1
-    load_interop_constants(DEFAULT_INTEROP_H)
-    print(f"pelorus_interop_consts self-test: ok ({len(_REFUSED) + len(_ACCEPTED)} planted cases, real header)")
+    err = _self_test_candidate_search()
+    if err is not None:
+        print(f"self-test FAIL: {err}", file=sys.stderr)
+        return 1
+    load_interop_constants()
+    print(f"pelorus_interop_consts self-test: ok ({len(_REFUSED) + len(_ACCEPTED) + 2} planted cases, real header)")
     return 0
 
 

@@ -24,9 +24,40 @@ import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-# the magic as C or Python escapes, also doubled inside a non-raw Python string
-LITERAL = re.compile(r"PELOR1(?:\\{1,2}(?:0|x00)){2}")
-MIRROR_DEF = re.compile(r"""^[+\- ]?#define\s+\w+_MAGIC\s+"PELOR1\\0\\0"\s*(?:/\*[^*]*\*/\s*)?$""")
+
+
+def literal_patterns(magic: bytes) -> tuple[re.Pattern[str], re.Pattern[str]]:
+    """Build (literal_re, mirror_def_re) from magic bytes."""
+    nul_idx = magic.find(b"\0")
+    if nul_idx == -1:
+        prefix_bytes, suffix = magic, b""
+    else:
+        prefix_bytes, suffix = magic[:nul_idx], magic[nul_idx:]
+    if not prefix_bytes or any(b != 0 for b in suffix):
+        raise ValueError(f"magic must be printable ASCII then NULs only: {magic!r}")
+    try:
+        prefix = prefix_bytes.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"magic prefix is not ASCII: {magic!r}") from exc
+    if not all(32 <= ord(c) <= 126 for c in prefix):
+        raise ValueError(f"magic prefix is not printable ASCII: {magic!r}")
+
+    esc_prefix = re.escape(prefix)
+    nul_count = len(suffix)
+    nul_shape = rf"(?:\\{{1,2}}(?:0|x00)){{{nul_count}}}" if nul_count else ""
+    literal_pat = re.compile(rf"{esc_prefix}{nul_shape}")
+
+    mirror_nuls = r"\\0" * nul_count
+    mirror_pat = re.compile(
+        rf"""^[+\- ]?#define\s+\w+_MAGIC\s+"{esc_prefix}{mirror_nuls}"\s*(?:/\*[^*]*\*/\s*)?$"""
+    )
+    return literal_pat, mirror_pat
+
+
+# the default patterns match the canonical PELOR1 magic
+DEFAULT_PATTERNS = literal_patterns(b"PELOR1\0\0")
+LITERAL, MIRROR_DEF = DEFAULT_PATTERNS
+_NOT_PLAIN = object()
 
 # path -> reason; every entry must still hold the literal (stale entries fail)
 ALLOWLIST: dict[str, str] = {
@@ -52,18 +83,32 @@ def load_interop_consts() -> tuple[bytes, int, int]:
     return consts["MAGIC"], consts["ABI_MAJOR"], consts["HEADER_BYTES"]
 
 
-def _define(text: str, name: str, value: str) -> str | None:
-    """Return the value text of `#define <name> <value>`, or None when absent."""
-    match = re.search(rf"#define\s+{name}\s+({value})", text)
-    return match.group(1) if match else None
+def _define(text: str, name: str, value: str) -> str | object | None:
+    """Return the value text of `#define <name> <value>`, _NOT_PLAIN for non-plain value, or None when absent."""
+    pattern = re.compile(
+        rf"^[+\- ]?#define\s+{name}\s+({value})[uU]?\s*(?:/\*[^*]*\*/\s*|//.*)?$",
+        re.MULTILINE,
+    )
+    match = pattern.search(text)
+    if match is not None:
+        return match.group(1)
+    if re.search(rf"^[+\- ]?#define\s+{name}\b", text, re.MULTILINE):
+        return _NOT_PLAIN
+    return None
 
 
 def check_mirrors(text: str, label: str, prefix: str, consts: tuple[bytes, int, int]) -> list[str]:
     """Compare the four <prefix>_* mirrors in text with the canonical values."""
     magic, abi_major, header_bytes = consts
     raw = _define(text, f"{prefix}_MAGIC", r'"(?:[^"\\]|\\.)*"')
+    if raw is _NOT_PLAIN:
+        magic_val: bytes | object | None = _NOT_PLAIN
+    elif raw is None:
+        magic_val = None
+    else:
+        magic_val = codecs.escape_decode(raw[1:-1].encode("latin-1"))[0]
     found = {
-        "MAGIC": None if raw is None else codecs.escape_decode(raw[1:-1].encode("latin-1"))[0],
+        "MAGIC": magic_val,
         "MAGIC_LEN": _define(text, f"{prefix}_MAGIC_LEN", r"\d+"),
         "ABI_MAJOR": _define(text, f"{prefix}_ABI_MAJOR", r"\d+"),
         "HDR_BYTES": _define(text, f"{prefix}_HDR_BYTES", r"\d+"),
@@ -72,7 +117,9 @@ def check_mirrors(text: str, label: str, prefix: str, consts: tuple[bytes, int, 
     errors = []
     for key, expected in want.items():
         got = found[key]
-        if got is None:
+        if got is _NOT_PLAIN:
+            errors.append(f"{label}: {prefix}_{key} is not a plain value")
+        elif got is None:
             errors.append(f"{label}: missing #define {prefix}_{key}")
         elif (got if key == "MAGIC" else int(got)) != expected:
             errors.append(f"{label}: {prefix}_{key} is {got!r}, interop.h says {expected!r}")
@@ -84,14 +131,19 @@ def is_allowed(rel_path: str) -> bool:
     return rel_path in ALLOWLIST or rel_path.startswith(ALLOW_PREFIXES)
 
 
-def scan_literals(rel_path: str, text: str) -> list[str]:
+def scan_literals(
+    rel_path: str,
+    text: str,
+    patterns: tuple[re.Pattern[str], re.Pattern[str]] | None = None,
+) -> list[str]:
     """Report every magic literal in text that is not a *_MAGIC mirror definition."""
     if is_allowed(rel_path):
         return []
+    literal_re, mirror_def_re = patterns if patterns is not None else DEFAULT_PATTERNS
     return [
         f"{rel_path}:{line_no}: magic literal outside interop.h; use the interop constant: {line.strip()}"
         for line_no, line in enumerate(text.splitlines(), start=1)
-        if LITERAL.search(line) and not MIRROR_DEF.match(line)
+        if literal_re.search(line) and not mirror_def_re.match(line)
     ]
 
 
@@ -129,7 +181,11 @@ def tracked_files(repo_root: Path) -> list[str]:
     return files
 
 
-def scan_tracked_file(repo_root: Path, rel_path: str) -> list[str]:
+def scan_tracked_file(
+    repo_root: Path,
+    rel_path: str,
+    patterns: tuple[re.Pattern[str], re.Pattern[str]] | None = None,
+) -> list[str]:
     """Scan one tracked file for stray magic literals and stale allow-list entries."""
     path = repo_root / rel_path
     if not path.is_file():
@@ -139,8 +195,9 @@ def scan_tracked_file(repo_root: Path, rel_path: str) -> list[str]:
     except OSError as exc:
         return [f"{rel_path}: cannot read: {exc}"]
     text = raw.decode("utf-8", errors="replace")
-    errors = scan_literals(rel_path, text)
-    if rel_path in ALLOWLIST and not LITERAL.search(text):
+    errors = scan_literals(rel_path, text, patterns)
+    literal_re, _ = patterns if patterns is not None else DEFAULT_PATTERNS
+    if rel_path in ALLOWLIST and not literal_re.search(text):
         errors.append(f"{rel_path}: stale allow-list entry, the file holds no magic literal")
     return errors
 
@@ -148,6 +205,7 @@ def scan_tracked_file(repo_root: Path, rel_path: str) -> list[str]:
 def run_checks(repo_root: Path) -> list[str]:
     """Check the mirrors, scan every tracked file, and refuse stale allow-list entries."""
     consts = load_interop_consts()
+    patterns = literal_patterns(consts[0])
     errors: list[str] = []
     for rel_path, prefix in MIRRORS:
         try:
@@ -157,7 +215,7 @@ def run_checks(repo_root: Path) -> list[str]:
             continue
         errors.extend(check_mirrors(text, rel_path, prefix, consts))
     for rel_path in tracked_files(repo_root):
-        errors.extend(scan_tracked_file(repo_root, rel_path))
+        errors.extend(scan_tracked_file(repo_root, rel_path, patterns))
     return errors
 
 
@@ -179,6 +237,7 @@ _CASES = (
     ("drifted mirrors", "mirror", "bad.h", _MIRRORS_OK.replace("PELOR1", "BAD__1").replace("8\n", "7\n")
      .replace("1u", "2u").replace("48", "40"), 4),
     ("missing mirrors", "mirror", "empty.h", "/* none */\n", 4),
+    ("trailing expression", "mirror", "expr.h", _MIRRORS_OK.replace("1u", "1u + 1"), 1),
 )
 
 
@@ -210,6 +269,26 @@ def _case_unreadable() -> str | None:
             os.chmod(locked, 0o600)
 
 
+def _case_changed_magic() -> str | None:
+    """Planted case: regexes follow changed magic and ignore old magic."""
+    for bad_magic in (b"", b"\0\0", b"PEL\0\x01", b"\xff\0"):
+        try:
+            literal_patterns(bad_magic)
+        except ValueError:
+            pass
+        else:
+            return f"literal_patterns accepted invalid magic {bad_magic!r}"
+    new_pats = literal_patterns(b"NEWMAG\0\0")
+    new_found = scan_literals("tools/x.py", 'M = b"NEWMAG\\0\\0"\n', new_pats)
+    if len(new_found) != 1:
+        return f"changed magic new: want 1 finding, got {new_found}"
+    pelor_found = scan_literals("tools/x.py", 'M = b"PELOR1\\0\\0"\n', new_pats)
+    if len(pelor_found) != 0:
+        return f"changed magic old: want 0 findings, got {pelor_found}"
+    print("planted case 'changed magic': 1 finding(s) on new magic, 0 on old magic")
+    return None
+
+
 def run_self_test() -> int:
     """Run the planted cases, then refuse a failing git listing."""
     for label, kind, rel_path, text, want in _CASES:
@@ -218,6 +297,10 @@ def run_self_test() -> int:
             print(f"self-test FAIL: {label}: want {want} findings, got {found}", file=sys.stderr)
             return 1
         print(f"planted case '{label}': {len(found)} finding(s)")
+    magic_err = _case_changed_magic()
+    if magic_err is not None:
+        print(f"self-test FAIL: {magic_err}", file=sys.stderr)
+        return 1
     unreadable_err = _case_unreadable()
     if unreadable_err is not None:
         print(f"self-test FAIL: {unreadable_err}", file=sys.stderr)
@@ -230,7 +313,7 @@ def run_self_test() -> int:
         else:
             print("self-test FAIL: a failing git listing was accepted", file=sys.stderr)
             return 1
-    print(f"check-interop-constants self-test: ok ({len(_CASES) + 2} planted cases)")
+    print(f"check-interop-constants self-test: ok ({len(_CASES) + 3} planted cases)")
     return 0
 
 
