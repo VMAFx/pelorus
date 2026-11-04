@@ -17,6 +17,7 @@ Usage:
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -40,96 +41,18 @@ MANDATORY_ARMS = (
 
 # ------------------------------------------------------------- schema walker
 
-def _type_ok(value, name):
-    if name == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
-    if name == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    py = {
-        "object": dict,
-        "array": list,
-        "string": str,
-        "boolean": bool,
-        "null": type(None),
-    }[name]
-    return isinstance(value, py)
+def _load_json_shape():
+    path = Path(__file__).resolve().parents[2] / "tools/tester/pelorus_json_shape.py"
+    spec = importlib.util.spec_from_file_location("pelorus_json_shape", path)
+    if spec is None or spec.loader is None:
+        raise ImportError("cannot load pelorus_json_shape from %s" % path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
-def _resolve_ref(root_schema, ref):
-    if not ref.startswith("#/"):
-        return None
-    parts = ref[2:].split("/")
-    cur = root_schema
-    for part in parts:
-        if isinstance(cur, dict) and part in cur:
-            cur = cur[part]
-        else:
-            return None
-    return cur
-
-
-def check_scalar(value, sch, path, errs):
-    if "type" in sch:
-        names = sch["type"] if isinstance(sch["type"], list) else [sch["type"]]
-        if not any(_type_ok(value, n) for n in names):
-            errs.append("%s: expected type %s" % (path, "|".join(names)))
-            return
-    if "const" in sch and value != sch["const"]:
-        errs.append("%s: must equal %r (got %r)" % (path, sch["const"], value))
-    if "enum" in sch and value not in sch["enum"]:
-        errs.append("%s: %r not in enum %r" % (path, value, sch["enum"]))
-    if isinstance(value, str):
-        if "pattern" in sch and not re.search(sch["pattern"], value):
-            errs.append("%s: does not match pattern %s" % (path, sch["pattern"]))
-        if "minLength" in sch and len(value) < sch["minLength"]:
-            errs.append("%s: length %d below minLength %d" % (path, len(value), sch["minLength"]))
-        if "maxLength" in sch and len(value) > sch["maxLength"]:
-            errs.append("%s: length %d exceeds maxLength %d" % (path, len(value), sch["maxLength"]))
-    if _type_ok(value, "number"):
-        if "minimum" in sch and value < sch["minimum"]:
-            errs.append("%s: value %r below minimum %r" % (path, value, sch["minimum"]))
-        if "maximum" in sch and value > sch["maximum"]:
-            errs.append("%s: value %r exceeds maximum %r" % (path, value, sch["maximum"]))
-
-
-def expand_node(value, sch, path, errs, stack, root_schema):
-    if "$ref" in sch:
-        target = _resolve_ref(root_schema, sch["$ref"])
-        if target is None:
-            errs.append("%s: unresolved $ref %s" % (path, sch["$ref"]))
-            return
-        stack.append((value, target, path))
-        return
-
-    if isinstance(value, dict) and "properties" in sch:
-        for req in sch.get("required", []):
-            if req not in value:
-                errs.append("%s: missing required property %r" % (path, req))
-        for key, val in value.items():
-            if key in sch["properties"]:
-                stack.append((val, sch["properties"][key], path + "." + key))
-            elif sch.get("additionalProperties") is False:
-                errs.append("%s: unexpected property %r" % (path, key))
-
-    if isinstance(value, list) and "items" in sch:
-        if "minItems" in sch and len(value) < sch["minItems"]:
-            errs.append("%s: fewer than %d items (got %d)" % (path, sch["minItems"], len(value)))
-        for idx, val in enumerate(value):
-            stack.append((val, sch["items"], "%s[%d]" % (path, idx)))
-
-
-def validate_schema(instance, schema):
-    """Validate JSON instance against the JSON Schema subset used in record.schema.json."""
-    errs = []
-    stack = [(instance, schema, "$")]
-    max_nodes = 50000
-    for _ in range(max_nodes):
-        if not stack:
-            return errs
-        value, sch, path = stack.pop()
-        check_scalar(value, sch, path, errs)
-        expand_node(value, sch, path, errs, stack, schema)
-    return errs + ["schema walk exceeded node budget (%d)" % max_nodes]
+_JSON_SHAPE = _load_json_shape()
+validate_schema = _JSON_SHAPE.validate_schema
 
 
 # ----------------------------------------------------------- domain rules

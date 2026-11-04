@@ -548,6 +548,12 @@ test('bench-make-record',
      args: ['-I', bench_make_record_script, '--self-test'],
      suite: 'fast')
 
+json_shape_script = meson.project_source_root() / 'tools' / 'tester' / 'pelorus_json_shape.py'
+test('json-shape',
+     python_prog,
+     args: ['-I', json_shape_script, '--self-test'],
+     suite: 'fast')
+
 # Issue #267 / ADR-0181: hevc_nvenc's udu_sei path keeps each picture's
 # parameter sets and SEI within NVENC's 1024-byte limit
 # (ffmpeg-patches/files/pelorus_sei_fit.h; the QSV budget of issue #286 is
