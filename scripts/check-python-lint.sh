@@ -12,6 +12,10 @@
 #       tools pinned in .config/python-lint/requirements.txt with hash
 #       checking. Prints the environment's executable directory on stdout
 #       (DIR/bin, or DIR/Scripts on Windows).
+#   scripts/check-python-lint.sh --ensure DIR
+#       Keep DIR usable: reuse it when its ruff and zizmor match the lock,
+#       otherwise remove it (only when it is a virtualenv) and --install
+#       afresh. Covers a lock bump and a half-finished install.
 #   scripts/check-python-lint.sh
 #       Run Ruff on the repository and zizmor on the workflows.
 #   scripts/check-python-lint.sh --self-test
@@ -99,6 +103,29 @@ check_binaries() {
         || fail "zizmor '$zizmor_ver' found, expected 'zizmor $ZIZMOR_VERSION'"
 }
 
+# An environment is current when both binaries in it report the locked
+# versions; a lock bump or an install that stopped half-way fails this.
+env_is_current() {
+    local bin
+    bin="$(venv_bin_dir "$1")"
+    ( RUFF="$bin/ruff" ZIZMOR="$bin/zizmor" check_binaries ) > /dev/null 2>&1
+}
+
+ensure_tools() {
+    local dir="$1"
+    if env_is_current "$dir"; then
+        venv_bin_dir "$dir"
+        return 0
+    fi
+    if [ -e "$dir" ]; then
+        # Remove only what --install made; never an arbitrary directory.
+        [ -f "$dir/pyvenv.cfg" ] \
+            || fail "--ensure: '$dir' exists but is no virtualenv; remove it by hand"
+        rm -rf -- "$dir"
+    fi
+    install_tools "$dir"
+}
+
 # zizmor 1.32.0 exits 2 when a token variable is set but empty ("GitHub token
 # cannot be empty"), even with --offline; drop the empty ones only.
 drop_empty_tokens() {
@@ -113,7 +140,7 @@ run_lint() {
 
     drop_empty_tokens
     timeout "$LINT_TIMEOUT" "$RUFF" check --no-cache --output-format concise --config "$ROOT/ruff.toml" "$ROOT" || ruff_rc=$?
-    timeout "$LINT_TIMEOUT" "$ZIZMOR" --offline --no-progress --format plain "$ROOT" || zizmor_rc=$?
+    timeout "$LINT_TIMEOUT" "$ZIZMOR" --offline --no-progress --strict-collection --format plain "$ROOT" || zizmor_rc=$?
 
     if [ "$ruff_rc" -ne 0 ] || [ "$zizmor_rc" -ne 0 ]; then
         if [ "$ruff_rc" -ne 0 ] && [ "$zizmor_rc" -ne 0 ]; then
@@ -216,7 +243,7 @@ jobs:
       - run: echo "${{ github.event.issue.title }}"
 EOF
     local bad_log="$tmp/zizmor_bad.log" bad_rc=0
-    timeout "$LINT_TIMEOUT" "$ZIZMOR" --offline --no-progress --format plain "$tmp" > "$bad_log" 2>&1 || bad_rc=$?
+    timeout "$LINT_TIMEOUT" "$ZIZMOR" --offline --no-progress --strict-collection --format plain "$tmp" > "$bad_log" 2>&1 || bad_rc=$?
     if [ "$bad_rc" -ne 0 ] && grep -q -- "template-injection" "$bad_log"; then
         echo "PASS zizmor template-injection"
     else
@@ -237,7 +264,7 @@ jobs:
       - run: echo "hello"
 EOF
     local clean_log="$tmp/zizmor_clean.log" clean_rc=0
-    timeout "$LINT_TIMEOUT" "$ZIZMOR" --offline --no-progress --format plain "$tmp" > "$clean_log" 2>&1 || clean_rc=$?
+    timeout "$LINT_TIMEOUT" "$ZIZMOR" --offline --no-progress --strict-collection --format plain "$tmp" > "$clean_log" 2>&1 || clean_rc=$?
     if [ "$clean_rc" -eq 0 ]; then
         echo "PASS zizmor clean"
     else
@@ -245,6 +272,37 @@ EOF
         failed=1
     fi
 
+    return "$failed"
+}
+
+# --strict-collection: a workflow zizmor cannot parse must fail the scan, not
+# be skipped with a warning while a valid neighbour passes.
+self_test_zizmor_strict() {
+    local tmp="$1" failed=0
+    local wf_dir="$tmp/.github/workflows"
+    mkdir -p "$wf_dir"
+    drop_empty_tokens
+    printf 'name: [unclosed\non: push\n' > "$wf_dir/broken.yml"
+    cat << 'EOF' > "$wf_dir/fine.yml"
+name: Fine
+on: push
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "hello"
+EOF
+    local broken_log="$tmp/zizmor_broken.log" broken_rc=0
+    timeout "$LINT_TIMEOUT" "$ZIZMOR" --offline --no-progress --strict-collection --format plain "$tmp" > "$broken_log" 2>&1 || broken_rc=$?
+    if [ "$broken_rc" -ne 0 ] && grep -q -- "broken.yml" "$broken_log"; then
+        echo "PASS zizmor unparseable workflow"
+    else
+        echo "FAIL zizmor unparseable workflow" >&2
+        failed=1
+    fi
+    rm -f "$wf_dir/broken.yml" "$wf_dir/fine.yml"
     return "$failed"
 }
 
@@ -290,6 +348,54 @@ self_test_layout() {
     return "$failed"
 }
 
+# Stub environment: pyvenv.cfg plus ruff and zizmor that print a version.
+make_stub_env() {
+    mkdir -p "$1/bin"
+    : > "$1/pyvenv.cfg"
+    printf '#!/bin/sh\necho "ruff %s"\n' "$2" > "$1/bin/ruff"
+    printf '#!/bin/sh\necho "zizmor %s"\n' "$3" > "$1/bin/zizmor"
+    chmod +x "$1/bin/ruff" "$1/bin/zizmor"
+}
+
+self_test_ensure() {
+    local tmp="$1" failed=0 env
+    env="$tmp/env-current"
+    make_stub_env "$env" "$RUFF_VERSION" "$ZIZMOR_VERSION"
+    if env_is_current "$env"; then
+        echo "PASS ensure keeps current env"
+    else
+        echo "FAIL ensure keeps current env" >&2
+        failed=1
+    fi
+    env="$tmp/env-stale"
+    make_stub_env "$env" "0.0.1" "$ZIZMOR_VERSION"
+    if env_is_current "$env"; then
+        echo "FAIL ensure replaces stale env" >&2
+        failed=1
+    else
+        echo "PASS ensure replaces stale env"
+    fi
+    env="$tmp/env-partial"
+    mkdir -p "$env/bin"
+    : > "$env/pyvenv.cfg"
+    if env_is_current "$env"; then
+        echo "FAIL ensure replaces partial env" >&2
+        failed=1
+    else
+        echo "PASS ensure replaces partial env"
+    fi
+    env="$tmp/not-a-venv"
+    mkdir -p "$env"
+    : > "$env/keep"
+    if ( ensure_tools "$env" ) > /dev/null 2>&1 || [ ! -f "$env/keep" ]; then
+        echo "FAIL ensure refuses non-venv dir" >&2
+        failed=1
+    else
+        echo "PASS ensure refuses non-venv dir"
+    fi
+    return "$failed"
+}
+
 # Global, not local: the EXIT trap runs after self_test has returned.
 SELF_TEST_DIR=""
 
@@ -304,8 +410,10 @@ self_test() {
 
     self_test_ruff "$tmp" || failed=1
     self_test_zizmor "$tmp" || failed=1
+    self_test_zizmor_strict "$tmp" || failed=1
     self_test_version "$tmp" || failed=1
     self_test_layout "$tmp" || failed=1
+    self_test_ensure "$tmp" || failed=1
 
     [ "$failed" -eq 0 ] || exit 1
 }
@@ -318,6 +426,13 @@ case "${1:-}" in
         fi
         install_tools "$2"
         ;;
+    --ensure)
+        if [ $# -ne 2 ]; then
+            echo "usage: $0 --ensure DIR" >&2
+            exit 2
+        fi
+        ensure_tools "$2"
+        ;;
     --self-test)
         if [ $# -ne 1 ]; then
             echo "usage: $0 --self-test" >&2
@@ -329,7 +444,7 @@ case "${1:-}" in
         run_lint
         ;;
     *)
-        echo "usage: $0 [--install DIR | --self-test]" >&2
+        echo "usage: $0 [--install DIR | --ensure DIR | --self-test]" >&2
         exit 2
         ;;
 esac

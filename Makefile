@@ -72,10 +72,8 @@ docs-check:
 PYTHON_LINT_ENV ?= .cache/python-lint
 
 python-lint:
-	@if [ ! -e "$(PYTHON_LINT_ENV)" ]; then \
-		mkdir -p "$(dir $(PYTHON_LINT_ENV))" && \
-		bash scripts/check-python-lint.sh --install "$(PYTHON_LINT_ENV)" >/dev/null; \
-	fi
+	@mkdir -p "$(dir $(PYTHON_LINT_ENV))"
+	@bash scripts/check-python-lint.sh --ensure "$(PYTHON_LINT_ENV)" >/dev/null
 	PYTHON_LINT_ENV=$(PYTHON_LINT_ENV) bash scripts/check-python-lint.sh --self-test
 	PYTHON_LINT_ENV=$(PYTHON_LINT_ENV) bash scripts/check-python-lint.sh
 
