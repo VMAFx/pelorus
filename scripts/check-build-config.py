@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -6254,7 +6255,16 @@ def windows_tester_regressions() -> list[str]:
     return failures
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for check-build-config."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test regressions")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking build configuration contract."""
+    args = parse_args(argv)
     scrub_git_repository_env()
     if not CONFIG.is_file():
         print("build-config.env: missing", file=sys.stderr)
@@ -6270,7 +6280,7 @@ def main() -> int:
     errors.extend(validate_windows_tester())
     if not parse_errors:
         errors.extend(validate_current_surfaces(values))
-    if "--self-test" in sys.argv[1:]:
+    if args.self_test:
         errors.extend(isolate_from_invoking_repository())
         errors.extend(validator_regressions())
         errors.extend(consumer_validator_regressions())

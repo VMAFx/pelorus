@@ -24,6 +24,7 @@ looking like isolation.
 
 from __future__ import annotations
 
+import argparse
 import os
 import pathlib
 import subprocess
@@ -65,8 +66,20 @@ def snapshot(repo: pathlib.Path) -> tuple[str, str, str]:
     return config, refs, worktrees
 
 
-def main(argv: list[str]) -> int:
-    command = tuple(argv) or (sys.executable, str(CHECKER), "--self-test")
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for test-selftest-git-isolation."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    # REMAINDER keeps the wrapped command's own options (--self-test, -I)
+    # out of this parser.
+    parser.add_argument("command", nargs=argparse.REMAINDER,
+                        help="Command to run under isolation test")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking self-test git isolation."""
+    args = parse_args(argv)
+    command = tuple(args.command) or (sys.executable, str(CHECKER), "--self-test")
     with tempfile.TemporaryDirectory(prefix="pelorus-isolation-") as tmp:
         repo = pathlib.Path(tmp) / "invoking"
         repo.mkdir()

@@ -16,6 +16,7 @@ input).
     python3 -I scripts/check-filter-stance.py --self-test
 """
 
+import argparse
 import re
 import sys
 import tempfile
@@ -278,6 +279,15 @@ def self_test():
             if got != [expected]:
                 failures += 1
                 print("self-test FAIL: %s: expected [%s], got %s" % (expected, expected, got))
+    try:
+        parse_args(["--root"])
+    except SystemExit as exc:
+        if exc.code != 2:
+            failures += 1
+            print("self-test FAIL: missing --root value: want exit 2, got %d" % exc.code)
+    else:
+        failures += 1
+        print("self-test FAIL: missing --root value: did not exit")
     if failures:
         print("check-filter-stance self-test: %d failure(s)" % failures)
         return 1
@@ -291,20 +301,26 @@ def report(findings):
     print("check-filter-stance: %d finding(s)" % len(findings))
 
 
-def main(argv):
-    root = Path(".")
-    args = list(argv)
-    while args:
-        arg = args.pop(0)
-        if arg == "--self-test" and not args:
-            return self_test()
-        if arg == "--root" and args:
-            root = Path(args.pop(0))
-        else:
-            print(__doc__, file=sys.stderr)
-            return 2
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for check-filter-stance."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
+    parser.add_argument("--root", type=Path, default=Path("."), help="root directory")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking filter evidence stances."""
     try:
-        findings = run(root)
+        args = parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    if args.self_test:
+        return self_test()
+
+    try:
+        findings = run(args.root)
     except GateError as exc:
         print("check-filter-stance: error: %s" % exc, file=sys.stderr)
         return 2

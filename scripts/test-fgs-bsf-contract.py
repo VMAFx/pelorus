@@ -15,6 +15,7 @@ Usage: test-fgs-bsf-contract.py [--self-test] [SOURCE]
 
 from __future__ import annotations
 
+import argparse
 import math
 import pathlib
 import re
@@ -207,9 +208,18 @@ def self_test(text: str) -> int:
     return 1 if failed else 0
 
 
-def main(argv: list[str]) -> int:
-    args = [arg for arg in argv if arg != "--self-test"]
-    path = pathlib.Path(args[0]) if args else SOURCE
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for test-fgs-bsf-contract."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
+    parser.add_argument("source", nargs="?", type=pathlib.Path, default=SOURCE, help="path to BSF source")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking FGS BSF contract."""
+    args = parse_args(argv)
+    path = args.source
     text = path.read_text(encoding="utf-8")
     errors = check(text)
     for error in errors:
@@ -219,7 +229,7 @@ def main(argv: list[str]) -> int:
     print(
         f"fgs-bsf contract: {path.name} OK (default sigma {default_sigma(parse_options(text)):.2f})"
     )
-    return self_test(text) if "--self-test" in argv else 0
+    return self_test(text) if args.self_test else 0
 
 
 if __name__ == "__main__":

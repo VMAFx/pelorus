@@ -19,6 +19,7 @@ Static checking and self-test:
   doc-recipes-smoke.py --self-test
 """
 
+import argparse
 import importlib
 import os
 import re
@@ -527,12 +528,21 @@ def _run_smoke_in(ffmpeg_bin, tmp_dir, marked, selected_ids, output_root):
     return 0
 
 
-def main(argv):
-    args = list(argv)
-    if "--check-doc" in args:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for doc recipes smoke."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check-doc", action="store_true", help="Check document recipe markup")
+    parser.add_argument("--self-test", action="store_true", help="Run self-test suite")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for doc recipes smoke."""
+    args = parse_args(argv)
+    if args.check_doc:
         text = DOC_PATH.read_text(encoding="utf-8")
         return check_doc(str(DOC_PATH), text)
-    if "--self-test" in args:
+    if args.self_test:
         selftest = importlib.import_module("doc-recipes-self-test")
         return selftest.self_test(sys.modules[__name__])
 
