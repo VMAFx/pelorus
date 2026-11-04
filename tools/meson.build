@@ -87,3 +87,16 @@ if bash_prog.found()
        args: [meson.project_source_root() / 'scripts' / 'quality' / 'qloop-x265-reference.sh', pelorus_qloop, pelorus_zones],
        suite: ['slow', 'encoder'])
 endif
+
+# Release upgrade probe (scripts/test-abi-upgrade.sh). Built here so the
+# clang-tidy lane sees it against the current headers; the script also builds
+# it against the previous release. Not on Windows: the script that drives it
+# is a bash release step and the probe opens paths with plain fopen.
+if host_machine.system() != 'windows'
+  abi_upgrade_probe = executable(
+    'abi_upgrade_probe',
+    files('abi-upgrade/abi_upgrade_probe.c'),
+    dependencies: [libpelorus_dep],
+    install: false,
+  )
+endif
