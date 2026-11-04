@@ -28,21 +28,33 @@ typedef enum PelorusOptKind {
     PELORUS_OPT_STRING,
 } PelorusOptKind;
 
+/* The members below are read in pelorus_tool_common.c. cppcheck checks a
+ * header on its own and reports every member as unused there
+ * (unusedStructMember); the translation unit check reports none. */
 /* Descriptor for a long option. */
 typedef struct PelorusOpt {
-    const char *name;           /* long option flag, e.g. "--target" */
-    PelorusOptKind kind;        /* argument value type */
-    void *dest;                 /* destination pointer for parsed value */
-    int required;               /* 1 if required, 0 if optional */
+    // cppcheck-suppress unusedStructMember
+    const char *name; /* long option flag, e.g. "--target" */
+    // cppcheck-suppress unusedStructMember
+    PelorusOptKind kind; /* argument value type */
+    // cppcheck-suppress unusedStructMember
+    void *dest; /* destination pointer for parsed value */
+    // cppcheck-suppress unusedStructMember
+    int required; /* 1 if required, 0 if optional */
+    // cppcheck-suppress unusedStructMember
     const char *const *choices; /* for PELORUS_OPT_CHOICE: NULL-terminated string list */
-    const int *choice_values;   /* optional: int values for choices, or NULL for 0..N-1 */
+    // cppcheck-suppress unusedStructMember
+    const int *choice_values; /* optional: int values for choices, or NULL for 0..N-1 */
 } PelorusOpt;
 
 /* Descriptor for a single positional argument slot. */
 typedef struct PelorusPositional {
-    const char *name;  /* descriptive name, e.g. "<x265.csv>" */
+    // cppcheck-suppress unusedStructMember
+    const char *name; /* descriptive name, e.g. "<x265.csv>" */
+    // cppcheck-suppress unusedStructMember
     const char **dest; /* destination pointer for positional string */
-    int required;      /* 1 if required, 0 if optional */
+    // cppcheck-suppress unusedStructMember
+    int required; /* 1 if required, 0 if optional */
 } PelorusPositional;
 
 /* Table-driven command-line argument parser for demonstration tools.
