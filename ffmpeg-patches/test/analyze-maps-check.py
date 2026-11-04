@@ -20,29 +20,19 @@ defect per rule and requires each to be rejected.
 """
 
 import argparse
-import importlib.util
 import math
 import re
+import runpy
 import struct
 import sys
 from pathlib import Path
 
-
-def _load_interop_consts():
-    """Import shared interop constants from tools/tester by file path (issue #500)."""
-    path = Path(__file__).resolve().parents[2] / "tools" / "tester" / "pelorus_interop_consts.py"
-    spec = importlib.util.spec_from_file_location("pelorus_interop_consts", path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load pelorus_interop_consts from {path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_CONSTS = _load_interop_consts()
-PELORUS_MAGIC = _CONSTS.MAGIC
-ABI_MAJOR = _CONSTS.ABI_MAJOR
-HEADER_BYTES = _CONSTS.HEADER_BYTES
+# Import shared interop constants from tools/tester by file path (issue #500).
+_CONSTS_PATH = Path(__file__).resolve().parents[2] / "tools" / "tester" / "pelorus_interop_consts.py"
+_CONSTS = runpy.run_path(str(_CONSTS_PATH))
+PELORUS_MAGIC = _CONSTS["MAGIC"]
+ABI_MAJOR = _CONSTS["ABI_MAJOR"]
+HEADER_BYTES = _CONSTS["HEADER_BYTES"]
 PELORUS_UUID = "e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64"
 CARRIER_UUID = "3f9b37b8-fd9a-4621-920e-9b78b55cf9b5"
 HEADER_FMT = "<8sHHIIHHQBBHHHII"

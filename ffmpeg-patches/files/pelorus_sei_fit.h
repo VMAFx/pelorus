@@ -90,7 +90,7 @@ static inline size_t pel_sei_size_add(size_t a, size_t b)
 #define PEL_SEI_ABI_MAJOR 1u       /* PELORUS_ABI_MAJOR */
 #define PEL_SEI_HDR_BYTES 48u      /* sizeof(PelorusSideData) */
 #define PEL_SEI_UUID_LEN 16u
-#define PEL_SEI_HDR_MIN PEL_SEI_HDR_BYTES
+#define PEL_SEI_HDR_MIN 48u /* smallest header the readers accept: the ABI 1.x base layout */
 #define PEL_SEI_DIR_ENTRY 16u    /* sizeof(PelorusSectionDir) */
 #define PEL_SEI_MAX_SECTIONS 32u /* one directory entry per section bit */
 

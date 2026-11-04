@@ -64,18 +64,19 @@ PELORUS_UUID = bytes.fromhex("e1d7c4a26b934f089a550f3c2db17e64")
 # Zero-free carrier form of the blob (interop ABI 1.5, ADR-0183): this UUID, then
 # the COBS-encoded blob image. NVENC writes every Pelorus blob this way.
 CARRIER_UUID = bytes.fromhex("3f9b37b8fd9a4621920e9b78b55cf9b5")
-def _load_interop_consts():
-    """Import shared interop constants from tools/tester by file path (issue #500)."""
-    path = HERE / "pelorus_interop_consts.py"
-    spec = importlib.util.spec_from_file_location("pelorus_interop_consts", path)
+def load_sibling(name):
+    """Import a sibling module from tools/tester by module name."""
+    path = HERE / (name + ".py")
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load pelorus_interop_consts from {path}")
+        raise ImportError(f"cannot load {name} from {path}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
-_CONSTS = _load_interop_consts()
+# Import shared interop constants from tools/tester by file path (issue #500).
+_CONSTS = load_sibling("pelorus_interop_consts")
 PELORUS_MAGIC = _CONSTS.MAGIC
 ABI_MAJOR = _CONSTS.ABI_MAJOR
 HEADER_BYTES = _CONSTS.HEADER_BYTES
@@ -202,13 +203,6 @@ MAX_RENDER_NODES = 64
 
 def outcome(status, reason, log="", legs=None):
     return status, reason, log, legs
-
-
-def load_sibling(name):
-    spec = importlib.util.spec_from_file_location(name, HERE / (name + ".py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
 
 
 # ------------------------------------------------------------ pure rules

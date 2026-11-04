@@ -61,7 +61,9 @@
  * C mode, which has no `nullptr` (same decision as interop_test.c). */
 
 _Static_assert(PEL_SEI_UUID_LEN == PELORUS_SIDEDATA_UUID_LEN, "uuid length mirror");
-_Static_assert(PEL_SEI_HDR_MIN == sizeof(PelorusSideData), "header size mirror");
+_Static_assert(PEL_SEI_HDR_BYTES == sizeof(PelorusSideData), "header size mirror");
+/* Readers keep accepting the 48-byte base header after the header grows. */
+_Static_assert(PEL_SEI_HDR_MIN == 48u && PEL_SEI_HDR_MIN <= sizeof(PelorusSideData), "base header floor");
 _Static_assert(PEL_SEI_DIR_ENTRY == sizeof(PelorusSectionDir), "directory entry mirror");
 _Static_assert(offsetof(PelorusSideData, total_size) == 12, "total_size mirror");
 _Static_assert(offsetof(PelorusSideData, section_mask) == 16, "section_mask mirror");

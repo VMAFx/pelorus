@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import argparse
 import codecs
-import importlib.util
 import os
 import re
+import runpy
 import subprocess  # nosec B404 - fixed git argv, no shell, explicit timeout
 import sys
 import tempfile
@@ -45,14 +45,11 @@ MIRRORS = (
 
 
 def load_interop_consts() -> tuple[bytes, int, int]:
-    """Load (magic, abi_major, header_bytes) from tools/tester/pelorus_interop_consts.py."""
+    """Load (magic, abi_major, header_bytes) from tools/tester/pelorus_interop_consts.py (issue #500)."""
+    # Import shared interop constants from tools/tester by file path (issue #500).
     path = REPO_ROOT / "tools" / "tester" / "pelorus_interop_consts.py"
-    spec = importlib.util.spec_from_file_location("pelorus_interop_consts", path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load {path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.MAGIC, mod.ABI_MAJOR, mod.HEADER_BYTES
+    consts = runpy.run_path(str(path))
+    return consts["MAGIC"], consts["ABI_MAJOR"], consts["HEADER_BYTES"]
 
 
 def _define(text: str, name: str, value: str) -> str | None:
@@ -132,21 +129,35 @@ def tracked_files(repo_root: Path) -> list[str]:
     return files
 
 
+def scan_tracked_file(repo_root: Path, rel_path: str) -> list[str]:
+    """Scan one tracked file for stray magic literals and stale allow-list entries."""
+    path = repo_root / rel_path
+    if not path.is_file():
+        return []
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        return [f"{rel_path}: cannot read: {exc}"]
+    text = raw.decode("utf-8", errors="replace")
+    errors = scan_literals(rel_path, text)
+    if rel_path in ALLOWLIST and not LITERAL.search(text):
+        errors.append(f"{rel_path}: stale allow-list entry, the file holds no magic literal")
+    return errors
+
+
 def run_checks(repo_root: Path) -> list[str]:
     """Check the mirrors, scan every tracked file, and refuse stale allow-list entries."""
     consts = load_interop_consts()
     errors: list[str] = []
     for rel_path, prefix in MIRRORS:
-        text = (repo_root / rel_path).read_text(encoding="utf-8")
+        try:
+            text = (repo_root / rel_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            errors.append(f"{rel_path}: cannot read: {exc}")
+            continue
         errors.extend(check_mirrors(text, rel_path, prefix, consts))
     for rel_path in tracked_files(repo_root):
-        path = repo_root / rel_path
-        if not path.is_file():
-            continue
-        text = path.read_bytes().decode("utf-8", errors="replace")
-        errors.extend(scan_literals(rel_path, text))
-        if rel_path in ALLOWLIST and not LITERAL.search(text):
-            errors.append(f"{rel_path}: stale allow-list entry, the file holds no magic literal")
+        errors.extend(scan_tracked_file(repo_root, rel_path))
     return errors
 
 
@@ -171,6 +182,34 @@ _CASES = (
 )
 
 
+def _case_unreadable() -> str | None:
+    """Planted case: an unreadable file produces an error and does not abort scanning."""
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        print("planted case 'unreadable file' skipped (root)")
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        locked = tmp_path / "locked.c"
+        ok = tmp_path / "ok.c"
+        locked.write_text("/* unreadable */\n", encoding="utf-8")
+        ok.write_text('memcpy(p, "PELOR1\\0\\0", 8);\n', encoding="utf-8")
+        os.chmod(locked, 0)
+        try:
+            errors: list[str] = []
+            for rel in ("locked.c", "ok.c"):
+                errors.extend(scan_tracked_file(tmp_path, rel))
+            if (
+                len(errors) != 2
+                or not any("locked.c: cannot read" in e for e in errors)
+                or not any("ok.c" in e for e in errors)
+            ):
+                return f"expected 2 errors (one locked.c cannot read, one ok.c), got {errors}"
+            print(f"planted case 'unreadable file': {len(errors)} finding(s)")
+            return None
+        finally:
+            os.chmod(locked, 0o600)
+
+
 def run_self_test() -> int:
     """Run the planted cases, then refuse a failing git listing."""
     for label, kind, rel_path, text, want in _CASES:
@@ -179,6 +218,10 @@ def run_self_test() -> int:
             print(f"self-test FAIL: {label}: want {want} findings, got {found}", file=sys.stderr)
             return 1
         print(f"planted case '{label}': {len(found)} finding(s)")
+    unreadable_err = _case_unreadable()
+    if unreadable_err is not None:
+        print(f"self-test FAIL: {unreadable_err}", file=sys.stderr)
+        return 1
     with tempfile.TemporaryDirectory() as tmp:
         try:
             tracked_files(Path(tmp))
@@ -187,7 +230,7 @@ def run_self_test() -> int:
         else:
             print("self-test FAIL: a failing git listing was accepted", file=sys.stderr)
             return 1
-    print(f"check-interop-constants self-test: ok ({len(_CASES) + 1} planted cases)")
+    print(f"check-interop-constants self-test: ok ({len(_CASES) + 2} planted cases)")
     return 0
 
 
