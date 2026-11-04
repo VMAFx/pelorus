@@ -36,6 +36,10 @@ HEADER_BYTES = _CONSTS["HEADER_BYTES"]
 PELORUS_UUID = "e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64"
 CARRIER_UUID = "3f9b37b8-fd9a-4621-920e-9b78b55cf9b5"
 HEADER_FMT = "<8sHHIIHHQBBHHHII"
+BASE_HEADER_BYTES = struct.calcsize(HEADER_FMT)
+if BASE_HEADER_BYTES > HEADER_BYTES:
+    raise SystemExit("reader format longer than interop.h header: %d > %d"
+                     % (BASE_HEADER_BYTES, HEADER_BYTES))
 SEC_BANDING, SEC_VARIANCE, SEC_COMPLEXITY = 1, 2, 128
 BANDING_FMT = "<ffIIff"
 VARIANCE_FMT = "<fffIIII"
@@ -119,11 +123,12 @@ def read_map(image, hdr, off, size, cells, elem):
 
 def decode(image):
     """Header, frame scalars and maps of one analyze blob (maps None when absent)."""
-    if len(image) < HEADER_BYTES:
+    if len(image) < BASE_HEADER_BYTES:
         raise MapError("blob shorter than the header")
-    f = struct.unpack(HEADER_FMT, image[:HEADER_BYTES])
+    f = struct.unpack(HEADER_FMT, image[:BASE_HEADER_BYTES])
     hdr = {"total": f[3], "count": f[5], "hsize": f[6], "cols": f[10], "rows": f[11]}
-    if f[0] != PELORUS_MAGIC or f[1] != ABI_MAJOR or hdr["hsize"] != HEADER_BYTES:
+    if (f[0] != PELORUS_MAGIC or f[1] != ABI_MAJOR
+            or hdr["hsize"] < BASE_HEADER_BYTES or hdr["hsize"] % 8 != 0):
         raise MapError("bad magic, ABI major or header size")
     if hdr["total"] != len(image):
         raise MapError("total_size %d != blob length %d" % (hdr["total"], len(image)))
@@ -248,10 +253,13 @@ def same_problems(a, b):
 
 # ------------------------------------------------------------------ self-test
 
-def pack_blob(cols, rows, band, var, edge, maps=True):
+def pack_blob(cols, rows, band, var, edge, maps=True, hsize=None):
     """A blob laid out the way pelorus_analyze_maps.h packs it."""
+    if hsize is None:
+        hsize = BASE_HEADER_BYTES
+    shift = hsize - BASE_HEADER_BYTES
     cells = cols * rows
-    end = 48 + 3 * 16 + 32 + 24 + 16
+    end = hsize + 3 * 16 + 32 + 24 + 16
     offs = [0] * 6
     if maps:
         b_off = end
@@ -262,15 +270,16 @@ def pack_blob(cols, rows, band, var, edge, maps=True):
     gvar = sum(var) / cells
     gedge = sum(edge) / cells / 255.0
     image = bytearray(end)
-    hdr = struct.pack(HEADER_FMT, PELORUS_MAGIC, ABI_MAJOR, 4, end, 131, 3, HEADER_BYTES, 0, 0, 8,
+    hdr = struct.pack(HEADER_FMT, PELORUS_MAGIC, ABI_MAJOR, 4, end, 131, 3, hsize, 0, 0, 8,
                       cols, rows, 0, 0x41524C50, 0)
-    image[0:HEADER_BYTES] = hdr
-    for i, (sid, off, size) in enumerate(((SEC_VARIANCE, 96, 28), (SEC_BANDING, 128, 24),
-                                          (SEC_COMPLEXITY, 152, 16))):
-        image[HEADER_BYTES + 16 * i:HEADER_BYTES + 16 + 16 * i] = struct.pack("<IIII", sid, off, size, 4)
-    image[96:124] = struct.pack(VARIANCE_FMT, gvar, gedge, gedge, offs[2], offs[3], offs[4],
-                                offs[5])
-    image[128:152] = struct.pack(BANDING_FMT, 0.5, 0.5, offs[0], offs[1], 0.0, 0.0)
+    image[0:BASE_HEADER_BYTES] = hdr
+    for i, (sid, off, size) in enumerate(((SEC_VARIANCE, 96 + shift, 28),
+                                          (SEC_BANDING, 128 + shift, 24),
+                                          (SEC_COMPLEXITY, 152 + shift, 16))):
+        image[hsize + 16 * i:hsize + 16 + 16 * i] = struct.pack("<IIII", sid, off, size, 4)
+    image[96 + shift:124 + shift] = struct.pack(VARIANCE_FMT, gvar, gedge, gedge,
+                                                offs[2], offs[3], offs[4], offs[5])
+    image[128 + shift:152 + shift] = struct.pack(BANDING_FMT, 0.5, 0.5, offs[0], offs[1], 0.0, 0.0)
     if maps:
         image[offs[0]:offs[0] + cells] = bytes(band)
         image[offs[2]:offs[2] + 4 * cells] = struct.pack("<%df" % cells, *var)
@@ -383,6 +392,16 @@ def self_test():
     bad = bytearray(good)
     bad[100:104] = struct.pack("<f", 0.9)
     rejected("edge map mean != edge_density", bytes(bad))
+    try:
+        grown_blob = decode(pack_blob(3, 2, band, var, edge, hsize=56))
+        if map_problems(grown_blob, (3, 2)):
+            failures.append("grown header rejected: %s" % map_problems(grown_blob, (3, 2)))
+        elif grown_blob["maps"] != ok["maps"]:
+            failures.append("grown header maps differ from default blob")
+    except MapError as exc:
+        failures.append("grown header rejected: %s" % exc)
+    rejected("short header hsize=40", pack_blob(3, 2, band, var, edge, hsize=40))
+    rejected("unaligned header hsize=52", pack_blob(3, 2, band, var, edge, hsize=52))
     if blobs_from_log("User Data=00ff\n"):
         failures.append("a foreign SEI was read as a Pelorus blob")
     failures += carrier_self_test(good)

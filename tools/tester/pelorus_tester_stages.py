@@ -594,7 +594,7 @@ def unwrap_payloads(frames, zero_free, label, disabled=frozenset()):
 def header_errors(fields, length):
     magic, major, _minor, total, _mask, _count, hsize, _pts = fields
     errs = []
-    if magic != PELORUS_MAGIC or major != ABI_MAJOR or hsize != HEADER_BYTES:
+    if magic != PELORUS_MAGIC or major != ABI_MAJOR or hsize < HEADER_BYTES or hsize % 8:
         errs.append("header magic/abi/size wrong (abi_major %d)" % major)
     if total != length:
         errs.append("total_size %d != blob length %d" % (total, length))
@@ -602,10 +602,10 @@ def header_errors(fields, length):
 
 
 def directory_errors(blob, fields):
-    _magic, _major, _minor, total, mask, count, _hsize, _pts = fields
-    ids, errs, dir_end = 0, [], HEADER_BYTES + 16 * count
+    _magic, _major, _minor, total, mask, count, hsize, _pts = fields
+    ids, errs, dir_end = 0, [], hsize + 16 * count
     for i in range(min(count, 32)):
-        raw = blob[HEADER_BYTES + 16 * i:HEADER_BYTES + 16 * i + 16]
+        raw = blob[hsize + 16 * i:hsize + 16 * i + 16]
         if len(raw) < 16:
             return errs + ["section directory truncated"]
         sid, off, size, _sm = struct.unpack(DIR_FMT, raw)
@@ -1866,13 +1866,17 @@ Filter 'Parsed_format_6' formats:
 """
 
 
-def pack_blob(mask=3, pts=0, total=None, major=1):
-    secs = ((1, 80, 8, 3), (2, 88, 8, 3))
-    size = 96 if total is None else total
+def pack_blob(mask=3, pts=0, total=None, major=1, hsize=None):
+    if hsize is None:
+        hsize = HEADER_BYTES
+    shift = hsize - HEADER_BYTES
+    secs = ((1, 80 + shift, 8, 3), (2, 88 + shift, 8, 3))
+    size = 96 + shift if total is None else total
     head = struct.pack(HEADER_FMT, PELORUS_MAGIC, major, 3, size, mask, len(secs),
-                       HEADER_BYTES, pts)
+                       hsize, pts)
     dirs = b"".join(struct.pack(DIR_FMT, *sec) for sec in secs)
-    return head + bytes(16) + dirs + bytes(16)
+    pad = bytes(max(0, hsize - struct.calcsize(HEADER_FMT)))
+    return head + pad + dirs + bytes(16)
 
 
 def stage_ctx(env, run):
@@ -1960,11 +1964,17 @@ def self_test_steering(expect, disabled):
 def self_test_sidedata(expect, disabled):
     good = [[pack_blob(pts=i)] for i in range(4)]
     expect("sd_good_passes", not sidedata_problems(good, 4, disabled))
+    expect("sd_grown_header_passes", not sidedata_problems(
+        [[pack_blob(pts=i, hsize=56)] for i in range(4)], 4, disabled))
     expect("sd_rejects_missing_blob", bool(sidedata_problems(good[:3] + [[]], 4, disabled)))
     expect("sd_rejects_bad_total", bool(sidedata_problems(
         [[pack_blob(pts=i, total=99)] for i in range(4)], 4, disabled)))
     expect("sd_rejects_bad_abi", bool(sidedata_problems(
         [[pack_blob(pts=i, major=2)] for i in range(4)], 4, disabled)))
+    expect("sd_rejects_short_header", bool(sidedata_problems(
+        [[pack_blob(pts=i, hsize=40)] for i in range(4)], 4, disabled)))
+    expect("sd_rejects_unaligned_header", bool(sidedata_problems(
+        [[pack_blob(pts=i, hsize=52)] for i in range(4)], 4, disabled)))
     expect("sd_rejects_dup_pts", bool(sidedata_problems(
         [[pack_blob(pts=1)] for _ in range(4)], 4, disabled)))
     tap = "\n".join("[Parsed_showinfo_0 @ 0x1] n:   %d pts:  %d side data - H.26[45] User "

@@ -28,6 +28,7 @@
     {"sha256": "da53064f02764ec51ebcc6a5fd271bc96dd4e1554aa6a8afb43355fa36f8c15e", "tool_version": "0.4.12", "note": "error handling only: the VUID allowlist and DRM sysfs reads treat invalid UTF-8 or ASCII like an unreadable file (#506 review)"},
     {"sha256": "d33a9a2644da8e7e9274920972db859d273dca3e86f0fbb5f9fed8863f0feb40", "tool_version": "0.4.12", "note": "refactor only: the report schema check uses the shared JSON shape validator in pelorus_json_shape.py, which also checks required keys on every object (#496)"},
     {"sha256": "6a117bc50110efc452e551e75fab7ec536728e00dc65b7871027233e59dd20ba", "tool_version": "0.4.12", "note": "refactor only: shared interop constants imported from pelorus_interop_consts.py (issue #500)"},
-    {"sha256": "d463c9da4441f527b10f301aadcd48ce764199c725ac9932d3a27beaa4bb13f0", "tool_version": "0.4.12", "note": "the tool digest covers pelorus_interop_consts.py and pelorus_json_shape.py; interop.h is found in the checkout or the installed image layout (#515, #500 review)"}
+    {"sha256": "d463c9da4441f527b10f301aadcd48ce764199c725ac9932d3a27beaa4bb13f0", "tool_version": "0.4.12", "note": "the tool digest covers pelorus_interop_consts.py and pelorus_json_shape.py; interop.h is found in the checkout or the installed image layout (#515, #500 review)"},
+    {"sha256": "259f72122f1766b11f0085938117c842c5dac33a395b2b1b37f5cee1eb0e18ed", "tool_version": "0.4.12", "note": "header check mirrors the C reader: a header_size above sizeof(PelorusSideData) that is a multiple of 8 is accepted and the directory starts at header_size (#517 review)"}
   ]
 }
