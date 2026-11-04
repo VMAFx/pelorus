@@ -9,7 +9,8 @@
 # Each exclusion names one tracked file for one engine, its verdict and an exception line
 # `exception: category <A-D>, entered <date>, expires <date>`. scripts/check-codacy-config.py
 # fails on a glob, a missing or untracked file, a missing exception line, an interval longer
-# than the category allows (B 3 days, C 10, D 120) and an expired entry.
+# than the category allows (B 3 days, C 10, D 120), an expired entry, and any line that is not
+# a comment, engines:, an unquoted engine key, exclude_paths: or a block list item.
 engines:
   bandit:
     exclude_paths:

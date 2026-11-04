@@ -46,6 +46,24 @@ EXCEPTION_PATTERN = re.compile(
     r"exception: category ([ABCD]), entered (\d{4}-\d{2}-\d{2}), expires (\d{4}-\d{2}-\d{2})"
 )
 
+# Allow-list of structural line shapes, in nesting order. A line of any other shape fails,
+# so YAML forms this reader does not parse (flow collections, quoted or other keys, anchors)
+# are refused instead of skipped.
+LINE_SHAPES = (
+    ("engines", re.compile(r"engines:")),
+    ("engine", re.compile(r"  [a-z][a-z0-9_-]*:")),
+    ("exclude", re.compile(r"    exclude_paths:")),
+    ("item", re.compile(r"      - \S.*")),
+)
+ALLOWED_AFTER = {
+    "start": frozenset({"engines"}),
+    "engines": frozenset({"engine"}),
+    "engine": frozenset({"exclude"}),
+    "exclude": frozenset({"item"}),
+    "item": frozenset({"item", "engine"}),
+}
+ALLOWED_SHAPES = "allowed: engines:, an unquoted engine key, exclude_paths:, block list items"
+
 VALID_TEMPLATE = """---
 engines:
   bandit:
@@ -99,13 +117,31 @@ SELF_TEST_CASES: list[tuple[str, str, str | None, date | None]] = [
     (
         "top-level exclude_paths",
         VALID_TEMPLATE + 'exclude_paths:\n  - "c.py"\n',
-        "top-level exclude_paths",
+        "unrecognised line",
         None,
     ),
     (
         "flow engines mapping",
         '---\nengines: {bandit: {exclude_paths: ["c.py"]}}\n',
-        "block mapping only",
+        "unrecognised line",
+        None,
+    ),
+    (
+        "quoted engines key",
+        VALID_TEMPLATE.replace("engines:", '"engines":'),
+        "unrecognised line",
+        None,
+    ),
+    (
+        "quoted engine name",
+        VALID_TEMPLATE.replace("  bandit:", '  "bandit":'),
+        "unrecognised line",
+        None,
+    ),
+    (
+        "no engines block",
+        "---\n# comment only\n",
+        "no engines block",
         None,
     ),
     (
@@ -219,28 +255,12 @@ def check_exception_block(
     return findings
 
 
-def check_exclude_line(
-    line: str,
-    line_idx: int,
-    comments: list[tuple[int, str]],
-    today: date,
-    root: Path,
-    tracked_fn: Callable[[str], bool] | None,
-) -> list[str]:
-    """Check one line inside an exclude_paths block; collects comments in place."""
-    if line.startswith("      #"):
-        if len(comments) < MAX_COMMENTS:
-            comments.append((line_idx, line))
-        return []
-    findings: list[str] = []
-    if line.startswith("      -"):
-        path = strip_quotes(line.strip().removeprefix("-").strip())
-        findings.extend(check_item_path(path, line_idx, root, tracked_fn))
-        findings.extend(check_exception_block(comments, line_idx, today))
-    elif line.strip():
-        findings.append(f".codacy.yml:{line_idx}: unrecognised line: {line.strip()}")
-    comments.clear()
-    return findings
+def classify_line(line: str) -> str | None:
+    """Return the allowed shape a structural line has, or None when it has none."""
+    for kind, pattern in LINE_SHAPES:
+        if pattern.fullmatch(line.rstrip()):
+            return kind
+    return None
 
 
 def check_text(
@@ -249,57 +269,40 @@ def check_text(
     root: Path,
     tracked_fn: Callable[[str], bool] | None = None,
 ) -> list[str]:
-    """Parse and check .codacy.yml text against exclusion and exception rules."""
+    """Check .codacy.yml text: every line must have an allowed shape in an allowed order."""
     findings: list[str] = []
     if not text.startswith("---\n"):
         findings.append(".codacy.yml:1: file must start with '---\\n'")
-
     all_lines = text.splitlines()
     if len(all_lines) > MAX_LINES:
         findings.append(f".codacy.yml:{MAX_LINES + 1}: file longer than {MAX_LINES} lines; not checked")
         return findings
-    lines = all_lines
-    in_engines = False
-    in_exclude_paths = False
+    state = "start"
     comments: list[tuple[int, str]] = []
-
-    for line_idx, line in enumerate(lines, start=1):
+    for line_idx, line in enumerate(all_lines, start=1):
         if len(findings) >= MAX_FINDINGS:
             break
-        if line.startswith("exclude_paths:"):
-            findings.append(f".codacy.yml:{line_idx}: top-level exclude_paths not allowed; exclude per engine")
-            continue
-        if not in_engines:
-            if line.rstrip() == "engines:":
-                in_engines = True
-            elif line.startswith("engines:"):
-                findings.append(f".codacy.yml:{line_idx}: unrecognised line (block mapping only): {line.strip()}")
-            continue
-
-        if line and not line.startswith(" ") and not line.startswith("\t") and not line.startswith("#"):
-            in_engines = in_exclude_paths = False
+        stripped = line.strip()
+        if (line_idx == 1 and line == "---") or not stripped:
             comments.clear()
             continue
-
-        if line.startswith("    exclude_paths:"):
-            if line.rstrip() != "    exclude_paths:":
-                findings.append(f".codacy.yml:{line_idx}: unrecognised line (block list only): {line.strip()}")
-            in_exclude_paths = True
+        if stripped.startswith("#"):
+            if state in ("exclude", "item") and line.startswith("      #") and len(comments) < MAX_COMMENTS:
+                comments.append((line_idx, line))
+            continue
+        kind = classify_line(line)
+        if kind is None or kind not in ALLOWED_AFTER[state]:
+            findings.append(f".codacy.yml:{line_idx}: unrecognised line ({ALLOWED_SHAPES}): {stripped}")
             comments.clear()
             continue
-
-        if (line.startswith("  ") and not line.startswith("   ")) or (
-            line.startswith("    ") and not line.startswith("     ")
-        ):
-            in_exclude_paths = False
-            comments.clear()
-            continue
-
-        if not in_exclude_paths:
-            continue
-
-        findings.extend(check_exclude_line(line, line_idx, comments, today, root, tracked_fn))
-
+        state = kind
+        if kind == "item":
+            path = strip_quotes(stripped.removeprefix("-").strip())
+            findings.extend(check_item_path(path, line_idx, root, tracked_fn))
+            findings.extend(check_exception_block(comments, line_idx, today))
+        comments.clear()
+    if state == "start" and not findings:
+        findings.append(".codacy.yml:1: no engines block; the file holds nothing to check")
     return findings[:MAX_FINDINGS]
 
 
