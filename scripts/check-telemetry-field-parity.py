@@ -26,6 +26,7 @@ reports as SKIP with the reason printed.
     python3 -I scripts/check-telemetry-field-parity.py --self-test
 """
 
+import argparse
 import json
 import re
 import sys
@@ -274,16 +275,34 @@ def self_test():
         if got != want:
             print("self-test FAIL %s: want exit %d, got %d" % (name, want, got))
             failed = 1
+    try:
+        parse_args(["--root"])
+    except SystemExit as exc:
+        if exc.code != 2:
+            print("self-test FAIL missing --root value: want exit 2, got %d" % exc.code)
+            failed = 1
+    else:
+        print("self-test FAIL missing --root value: did not exit")
+        failed = 1
     print("self-test %s" % ("FAILED" if failed else "passed"))
     return failed
 
 
-def main(argv):
-    if "--self-test" in argv:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for check-telemetry-field-parity."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
+    parser.add_argument("--root", type=Path, default=Path("."), help="root directory")
+    parser.add_argument("--vmafx", type=Path, default=None, help="path to VMAFx field list JSON")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking telemetry field parity."""
+    args = parse_args(argv)
+    if args.self_test:
         return self_test()
-    root = Path(argv[argv.index("--root") + 1]) if "--root" in argv else Path(".")
-    vmafx = Path(argv[argv.index("--vmafx") + 1]) if "--vmafx" in argv else None
-    return run(root, vmafx)
+    return run(args.root, args.vmafx)
 
 
 if __name__ == "__main__":

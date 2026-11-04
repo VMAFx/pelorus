@@ -19,6 +19,7 @@ defect per rule and requires each to be rejected.
   analyze-maps-check.py --self-test
 """
 
+import argparse
 import math
 import re
 import struct
@@ -311,6 +312,32 @@ def carrier_self_test(good):
     return failures
 
 
+def compare_self_test(ok, low):
+    """Plant contrast and sameness defects; return the failures."""
+    failures = []
+    if contrast_problems(ok, low, 0.25):
+        failures.append("valid contrast rejected")
+    for label, x, y in (("contrast inverted", low, ok), ("contrast equal", ok, ok)):
+        if not contrast_problems(x, y, 0.25):
+            failures.append("planted defect accepted: " + label)
+    if same_problems(ok, ok):
+        failures.append("identical maps reported as different")
+    if not same_problems(ok, low):
+        failures.append("planted defect accepted: different banding maps reported as same")
+    return failures
+
+
+def cli_self_test():
+    """Require a usage error for a flag without its value; return the failures."""
+    try:
+        parse_args(["maps", "dummy.log", "--grid"])
+    except SystemExit as exc:
+        if exc.code != 2:
+            return [f"missing flag value: expected exit 2, got {exc.code}"]
+        return []
+    return ["missing flag value accepted without error"]
+
+
 def self_test():
     band, var, edge = [200, 210, 220, 230, 240, 250], [1e-4] * 6, [10, 20, 30, 40, 50, 60]
     good = pack_blob(3, 2, band, var, edge)
@@ -352,43 +379,69 @@ def self_test():
     if blobs_from_log("User Data=00ff\n"):
         failures.append("a foreign SEI was read as a Pelorus blob")
     failures += carrier_self_test(good)
-    low = decode(pack_blob(3, 2, [10] * 6, var, edge))
-    if contrast_problems(ok, low, 0.25):
-        failures.append("valid contrast rejected")
-    for label, x, y in (("contrast inverted", low, ok), ("contrast equal", ok, ok)):
-        if not contrast_problems(x, y, 0.25):
-            failures.append("planted defect accepted: " + label)
-    if same_problems(ok, ok):
-        failures.append("identical maps reported as different")
-    if not same_problems(ok, low):
-        failures.append("planted defect accepted: different banding maps reported as same")
+    failures += compare_self_test(ok, decode(pack_blob(3, 2, [10] * 6, var, edge)))
+    failures += cli_self_test()
     for failure in failures:
         print("FAIL: " + failure, file=sys.stderr)
     print("analyze-maps-check self-test: %s" % ("FAIL" if failures else "PASS"))
     return 1 if failures else 0
 
 
-def main(argv):
-    if argv[:1] == ["--self-test"]:
-        return self_test()
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for analyze-maps-check."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
+    subparsers = parser.add_subparsers(dest="subcommand")
+
+    p_maps = subparsers.add_parser("maps", help="check maps against bounds")
+    p_maps.add_argument("log", help="path to showinfo log")
+    p_maps.add_argument("--grid", required=True, help="COLSxROWS grid")
+    p_maps.add_argument("--band-min", type=float, default=0.0, help="minimum banding threshold")
+    p_maps.add_argument("--band-max", type=float, default=1.0, help="maximum banding threshold")
+
+    p_nomaps = subparsers.add_parser("no-maps", help="assert no maps emitted")
+    p_nomaps.add_argument("log", help="path to showinfo log")
+    p_nomaps.add_argument("--grid", required=True, help="COLSxROWS grid")
+
+    p_contrast = subparsers.add_parser("contrast", help="assert contrast between high and low logs")
+    p_contrast.add_argument("high_log", help="path to high log")
+    p_contrast.add_argument("low_log", help="path to low log")
+    p_contrast.add_argument("--margin", type=float, required=True, help="contrast margin")
+
+    p_same = subparsers.add_parser("same", help="assert identical maps")
+    p_same.add_argument("log_a", help="path to log A")
+    p_same.add_argument("log_b", help="path to log B")
+
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking analyze maps."""
     try:
-        if len(argv) >= 4 and argv[0] in ("maps", "no-maps") and argv[2] == "--grid":
-            grid = parse_grid(argv[3])
-            opts = dict(zip(argv[4::2], argv[5::2]))
-            if argv[0] == "no-maps":
-                errs = cmd_no_maps(argv[1], grid)
-            else:
-                errs = cmd_maps(argv[1], grid, float(opts.get("--band-min", 0.0)),
-                                float(opts.get("--band-max", 1.0)))
-        elif len(argv) == 5 and argv[0] == "contrast" and argv[3] == "--margin":
-            errs = cmd_contrast(argv[1], argv[2], float(argv[4]))
-        elif len(argv) == 3 and argv[0] == "same":
-            errs = cmd_same(argv[1], argv[2])
+        args = parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    if args.self_test:
+        return self_test()
+
+    try:
+        if args.subcommand == "maps":
+            grid = parse_grid(args.grid)
+            errs = cmd_maps(args.log, grid, args.band_min, args.band_max)
+        elif args.subcommand == "no-maps":
+            grid = parse_grid(args.grid)
+            errs = cmd_no_maps(args.log, grid)
+        elif args.subcommand == "contrast":
+            errs = cmd_contrast(args.high_log, args.low_log, args.margin)
+        elif args.subcommand == "same":
+            errs = cmd_same(args.log_a, args.log_b)
         else:
             print(__doc__, file=sys.stderr)
             return 2
     except (MapError, OSError, ValueError, struct.error) as exc:
         errs = [str(exc)]
+
     for err in errs:
         print("FAIL: " + err, file=sys.stderr)
     return 1 if errs else 0

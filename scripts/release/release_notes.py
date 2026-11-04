@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import posixpath
 import re
@@ -563,78 +564,85 @@ def _check_cli_repo_env(script: str, raw_file: Path, expected: str) -> list[str]
     )
     if without.returncode == 0 or "repository not specified" not in without.stderr:
         failures.append("release-notes: CLI without repository was not refused")
+    if main(["--unwrap"]) != 2:
+        failures.append("release-notes: --unwrap without argument was not refused with 2")
     return failures
 
 
-def _parse_cli_args(
-    argv: list[str],
-) -> tuple[dict[str, str | None], list[str], str | None]:
-    opts: dict[str, str | None] = {"repo": None, "tag": None, "unwrap": None}
-    pos: list[str] = []
-    idx = 0
-    while idx < len(argv):
-        arg = argv[idx]
-        if arg in ("--repo", "--tag", "--unwrap"):
-            if idx + 1 >= len(argv):
-                return opts, pos, f"{arg} requires an argument"
-            opts[arg[2:]] = argv[idx + 1]
-            idx += 2
-        elif arg.startswith("-"):
-            return opts, pos, f"unknown option: {arg}"
-        else:
-            pos.append(arg)
-            idx += 1
-    if not opts["repo"]:
-        opts["repo"] = os.environ.get("GITHUB_REPOSITORY", "").strip() or None
-    opts["server"] = os.environ.get("GITHUB_SERVER_URL") or None
-    return opts, pos, None
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for release_notes."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
+    parser.add_argument("--repo", default=None, help="repository owner/name")
+    parser.add_argument("--tag", default=None, help="release tag vX.Y.Z[-rc.N]")
+    parser.add_argument("--unwrap", default=None, help="unwrap existing release body file")
+    parser.add_argument("positional", nargs="*", help="VERSION [CHANGELOG]")
+    return parser.parse_args(argv)
 
 
-def main(argv: list[str]) -> int:
-    if argv == ["--self-test"]:
-        failures = self_test()
-        if failures:
-            print("\n".join(failures), file=sys.stderr)
-            return 1
-        print("release-notes self-test: ok")
-        return 0
+def run_self_test() -> int:
+    """Run the self-test and report its result."""
+    failures = self_test()
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+        return 1
+    print("release-notes self-test: ok")
+    return 0
 
-    opts, positional, parse_err = _parse_cli_args(argv)
-    if parse_err:
-        print(f"usage error: {parse_err}", file=sys.stderr)
+
+def unwrap_release_body(path: str, tag: str | None, repo: str | None, server: str | None) -> int:
+    """Unwrap an existing release body and rewrite its links to the tag."""
+    if not tag:
+        print("usage: --unwrap FILE requires companion --tag vX.Y.Z[-rc.N]", file=sys.stderr)
         return 2
+    if not TAG_PATTERN.match(tag):
+        print(f"::error::invalid tag {tag!r} (must be vX.Y.Z or vX.Y.Z-rc.N)", file=sys.stderr)
+        return 1
+    base_blob_url, repo_err = _resolve_blob_base(tag, repo, server)
+    if repo_err:
+        print(f"::error::{repo_err}", file=sys.stderr)
+        return 1
+    unwrapped = unwrap_markdown(Path(path).read_text(encoding="utf-8"))
+    rewritten, errs = rewrite_markdown_links(unwrapped, base_blob_url)
+    for err in errs:
+        print(f"::error::{err}", file=sys.stderr)
+    if errs:
+        return 1
+    sys.stdout.write(rewritten)
+    return 0
 
-    if opts["unwrap"] is not None:
-        if not opts["tag"]:
-            print("usage: --unwrap FILE requires companion --tag vX.Y.Z[-rc.N]", file=sys.stderr)
-            return 2
-        if not TAG_PATTERN.match(opts["tag"]):
-            print(f"::error::invalid tag {opts['tag']!r} (must be vX.Y.Z or vX.Y.Z-rc.N)", file=sys.stderr)
-            return 1
-        base_blob_url, repo_err = _resolve_blob_base(opts["tag"], opts["repo"], opts["server"])
-        if repo_err:
-            print(f"::error::{repo_err}", file=sys.stderr)
-            return 1
-        unwrapped = unwrap_markdown(Path(opts["unwrap"]).read_text(encoding="utf-8"))
-        rewritten, errs = rewrite_markdown_links(unwrapped, base_blob_url)
-        for err in errs:
-            print(f"::error::{err}", file=sys.stderr)
-        if errs:
-            return 1
-        sys.stdout.write(rewritten)
-        return 0
 
-    if 1 <= len(positional) <= 2:
-        ver, ch_path = positional[0], (positional[1] if len(positional) == 2 else "CHANGELOG.md")
-        notes, errs = extract_version_notes(
-            Path(ch_path).read_text(encoding="utf-8"), ver, ch_path, repo=opts["repo"], tag=opts["tag"], server=opts["server"]
-        )
-        for err in errs:
-            print(f"::error::{err}", file=sys.stderr)
-        if errs:
-            return 1
-        sys.stdout.write(notes)
-        return 0
+def extract_notes(positional: list[str], tag: str | None, repo: str | None, server: str | None) -> int:
+    """Print the notes of one version from the changelog."""
+    ver = positional[0]
+    ch_path = positional[1] if len(positional) == 2 else "CHANGELOG.md"
+    notes, errs = extract_version_notes(
+        Path(ch_path).read_text(encoding="utf-8"), ver, ch_path, repo=repo, tag=tag, server=server
+    )
+    for err in errs:
+        print(f"::error::{err}", file=sys.stderr)
+    if errs:
+        return 1
+    sys.stdout.write(notes)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for extracting or unwrapping release notes."""
+    try:
+        args = parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    if args.self_test:
+        return run_self_test()
+
+    repo = args.repo or os.environ.get("GITHUB_REPOSITORY", "").strip() or None
+    server = os.environ.get("GITHUB_SERVER_URL") or None
+    if args.unwrap is not None:
+        return unwrap_release_body(args.unwrap, args.tag, repo, server)
+    if 1 <= len(args.positional) <= 2:
+        return extract_notes(args.positional, args.tag, repo, server)
 
     print(
         "usage: extract-release-notes.sh VERSION [CHANGELOG] [--repo OWNER/NAME]\n"

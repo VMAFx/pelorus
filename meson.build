@@ -456,6 +456,26 @@ test('python-decode-errors-self-test',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# Every tracked Python script must parse CLI arguments with stdlib argparse;
+# no hand-indexed argv. The self-test exercises AST shapes and planted bad cases.
+# The tree scan lists files with git, which the MSYS2 UCRT64 leg does not put
+# on PATH (CI run 41645525072: FileNotFoundError for git). The self-test
+# runs there; the Linux jobs scan the tree on every PR.
+if build_machine.system() != 'windows'
+  test('python-argv',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-argv.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
+
+test('python-argv-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-argv.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 # Per-frame external-ME-hint setup of patch 0008 (BUG-031): a frame without
 # Pelorus motion data must still submit one zero-MV candidate per block, or the
 # NVENC session fails the whole encode.

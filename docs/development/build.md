@@ -146,6 +146,10 @@ Windows-specific behavior of the suite:
 - **`suppression-markers`** (the tree scan) is not registered on Windows: it
   lists files with `git ls-files`, and the MSYS2 leg has no git on `PATH`.
   `suppression-markers-self-test` runs the planted cases there.
+- **`python-empty-except`** and **`python-argv`** (the tree scans) are not
+  registered on Windows for the same reason: they list tracked files with
+  `git ls-files`. `python-empty-except-self-test` and `python-argv-self-test`
+  run their planted cases there.
 
 ## Windows (cl.exe and clang-cl)
 
@@ -414,6 +418,35 @@ which refuses a misplaced, bare or reasonless marker and then scans the tree;
 (`--self-test-only`) on every platform, Windows included. Each Python file is
 read in its declared encoding (PEP 263), and one that does not decode is a
 finding.
+
+Every Python `except` clause with a bare `pass` body must carry an explanatory
+comment documenting why ignoring the exception is safe. The fast-suite test
+`python-empty-except` (`scripts/check-python-empty-except.py`) scans tracked
+Python files and fails when an except handler with a bare pass carries no comment;
+`python-empty-except-self-test` runs the planted cases.
+
+Every tracked Python script must parse its command line with stdlib `argparse`
+rather than by indexing `argv`. The fast-suite test `python-argv`
+(`scripts/check-python-argv.py`) scans tracked Python files with the stdlib AST
+and refuses:
+
+- any `sys.argv` use other than `sys.argv[0]` or `sys.argv[1:]` passed straight
+  to a call, such as `main(sys.argv[1:])`;
+- a subscript, an `.index()` or `.pop()` call, or an `in`, `not in`, `==` or `!=`
+  test on `argv` inside a function named `main` or `parse_args`, where `argparse`
+  owns the command line. A name bound to `argv` or to a `list`, `tuple` or `deque`
+  copy of it (`args = list(argv)`), and a parameter of a function in the same
+  module that receives `sys.argv[1:]` or such a name, counts as `argv`;
+  `argv is None` stays allowed;
+- the same `argv` operations anywhere in a module that has a command line (it
+  reads `sys.argv` or defines `main` or `parse_args`) but does not import
+  `argparse`.
+
+A module without a command line, such as a test helper whose `argv` is a
+recorded subprocess call, is out of scope. Two files are excepted in the script
+with a reason: the Praetor-managed `.config/agent/hooks/block_evasion.py` and the
+FFmpeg command-line stand-in `ffmpeg-patches/test/doc-recipes-stub-ffmpeg.py`.
+`python-argv-self-test` runs the planted cases.
 
 No branch or tag may hold a credential (HISS-12,
 [ADR-0190](../adr/0190-gitleaks-every-ref.md)). The CI `docs` job installs the

@@ -26,6 +26,7 @@ hosts without git (the tree scan lists files with ``git ls-files``).
 
 from __future__ import annotations
 
+import argparse
 import ast
 import io
 import os
@@ -430,20 +431,28 @@ def self_test() -> int:
     return 1 if failures else 0
 
 
-def main(argv: list[str]) -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for check-suppression-markers."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--self-test", action="store_true", help="run self-test before tree scan")
+    group.add_argument("--self-test-only", action="store_true", help="run self-test only")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
     """Run the self-test and/or the tree scan; exit 1 on a finding."""
-    if argv[1:] == ["--self-test-only"]:
+    try:
+        args = parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    if args.self_test_only:
         return self_test()
-    if argv[1:] == ["--self-test"]:
+    if args.self_test:
         status = self_test()
         if status:
             return status
-    elif argv[1:]:
-        print(
-            "usage: check-suppression-markers.py [--self-test | --self-test-only]",
-            file=sys.stderr,
-        )
-        return 2
     found = scan(ROOT)
     for finding in found:
         print(finding, file=sys.stderr)
@@ -455,4 +464,4 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    sys.exit(main(sys.argv[1:]))

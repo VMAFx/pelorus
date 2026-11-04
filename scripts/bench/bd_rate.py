@@ -14,8 +14,10 @@
 #   bd_rate.py baseline.json pelorus.json
 #     where each JSON is [{"bitrate_kbps": float, "score": float}, ...]
 
+import argparse
 import json
 import math
+import pathlib
 import sys
 
 
@@ -113,24 +115,34 @@ def bd_rate(baseline, pelorus):
     return res
 
 
-if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        sys.exit("usage: bd_rate.py baseline.json pelorus.json")
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for bd_rate."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("baseline", type=pathlib.Path, help="baseline record JSON")
+    parser.add_argument("pelorus", type=pathlib.Path, help="pelorus record JSON")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for computing BD-rate between baseline and pelorus curves."""
+    args = parse_args(argv)
     try:
-        with open(sys.argv[1], "r", encoding="utf-8") as f:
+        with open(args.baseline, "r", encoding="utf-8") as f:
             base = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
-        sys.exit(f"failed to load baseline {sys.argv[1]}: {exc}")
+        print(f"failed to load baseline {args.baseline}: {exc}", file=sys.stderr)
+        return 1
     try:
-        with open(sys.argv[2], "r", encoding="utf-8") as f:
+        with open(args.pelorus, "r", encoding="utf-8") as f:
             pel = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
-        sys.exit(f"failed to load pelorus {sys.argv[2]}: {exc}")
+        print(f"failed to load pelorus {args.pelorus}: {exc}", file=sys.stderr)
+        return 1
 
     r = bd_rate(base, pel)
     if "error" in r:
         print(r["error"], file=sys.stderr)
-        sys.exit(1)
+        return 1
 
     print(json.dumps(r, indent=2))
     bd = r["bd_rate_pct"]
@@ -139,3 +151,8 @@ if __name__ == "__main__":
         print(f"\nBD-rate: {bd:+.2f}%  ({verdict}: "
               f"{'fewer' if bd < 0 else 'more'} bits for equal quality)")
         print(f"BD-quality: {r['bd_quality']:+.3f} at equal bitrate")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

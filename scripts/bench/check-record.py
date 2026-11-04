@@ -16,6 +16,7 @@ Usage:
   python3 -I scripts/bench/check-record.py --self-test
 """
 
+import argparse
 import json
 import os
 import re
@@ -337,20 +338,36 @@ def run_self_test():
         if _run_single_test(name, data, expect_pass, match_error, schema):
             passed_count += 1
 
-    total = len(SELF_TEST_CASES)
+    # Negative case: usage error when record missing and not self-test
+    if main([]) != 2:
+        print("[FAIL] negative_missing_record_argument")
+    else:
+        print("[PASS] negative_missing_record_argument")
+        passed_count += 1
+    total = len(SELF_TEST_CASES) + 1
     print("\nself-test summary: %d/%d checks passed" % (passed_count, total))
     return 0 if passed_count == total else 1
 
 
-def main(argv):
-    if len(argv) == 2 and argv[1] == "--self-test":
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for check-record."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
+    parser.add_argument("record", nargs="?", type=Path, help="path to benchmark record JSON")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking benchmark record."""
+    args = parse_args(argv)
+    if args.self_test:
         return run_self_test()
 
-    if len(argv) != 2:
+    if not args.record:
         sys.stderr.write("usage: check-record.py RECORD.json | --self-test\n")
         return 2
 
-    path = Path(argv[1])
+    path = args.record
     if not path.is_file():
         sys.stderr.write("check-record: file not found: %s\n" % path)
         return 1
@@ -373,4 +390,4 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    sys.exit(main(sys.argv[1:]))

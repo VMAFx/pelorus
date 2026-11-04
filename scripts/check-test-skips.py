@@ -25,6 +25,7 @@ or the allow-list is missing, empty or malformed (never a pass).
     python3 -I scripts/check-test-skips.py --self-test
 """
 
+import argparse
 import json
 import sys
 import tempfile
@@ -181,21 +182,56 @@ def self_test():
     if check(Path(tmp) / "absent.json", ALLOW_LIST) != 2:
         print("self-test FAIL: missing log is not malformed")
         failures += 1
-    print("self-test: %d cases, %d failures" % (len(SELF_TEST_CASES) + 1, failures))
+    try:
+        parse_args(["--require"])
+    except SystemExit as exc:
+        if exc.code != 2:
+            print("self-test FAIL: missing --require value: want exit 2, got %d" % exc.code)
+            failures += 1
+    else:
+        print("self-test FAIL: missing --require value: did not exit")
+        failures += 1
+    too_many = []
+    for index in range(MAX_REQUIRED + 1):
+        too_many += ["--require", "t%d" % index]
+    try:
+        parse_args(too_many + ["log.json"])
+    except SystemExit as exc:
+        if exc.code != 2:
+            print("self-test FAIL: too many --require entries: want exit 2, got %s" % exc.code)
+            failures += 1
+    else:
+        print("self-test FAIL: more than %d --require entries not refused" % MAX_REQUIRED)
+        failures += 1
+    print("self-test: %d cases, %d failures" % (len(SELF_TEST_CASES) + 3, failures))
     return 1 if failures else 0
 
 
-def main(argv):
-    if argv == ["--self-test"]:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for check-test-skips."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
+    parser.add_argument("--require", action="append", default=[], help="require test to have run and passed")
+    parser.add_argument("log_path", nargs="?", type=Path, help="path to testlog.json")
+    args = parser.parse_args(argv)
+    if len(args.require) > MAX_REQUIRED:
+        parser.error("at most %d --require entries" % MAX_REQUIRED)
+    return args
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking test skips against allow-list."""
+    try:
+        args = parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    if args.self_test:
         return self_test()
-    required = []
-    while len(argv) > 2 and argv[0] == "--require" and len(required) < MAX_REQUIRED:
-        required.append(argv[1])
-        argv = argv[2:]
-    if len(argv) != 1 or argv[0].startswith("--"):
+    if not args.log_path:
         print(__doc__.strip().splitlines()[-2].strip())
         return 2
-    return check(Path(argv[0]), ALLOW_LIST, required)
+    return check(args.log_path, ALLOW_LIST, args.require)
 
 
 if __name__ == "__main__":

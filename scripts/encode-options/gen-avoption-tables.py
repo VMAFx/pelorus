@@ -23,6 +23,7 @@ Usage (FFmpeg source and library at the pin in build-config.env):
       /path/to/ffmpeg n9.0.2 libpelorus/src/encode_avoptions_tables.c
 """
 
+import argparse
 import hashlib
 import pathlib
 import re
@@ -148,11 +149,21 @@ def render(tables, ffmpeg_tag, digests):
     return "\n".join(lines)
 
 
-def main(argv):
-    if len(argv) != 5:
-        fail("usage: gen-avoption-tables.py PROBE.tsv FFMPEG_SRC FFMPEG_TAG OUT.c")
-    probe = pathlib.Path(argv[1])
-    src = pathlib.Path(argv[2]) / "libavcodec"
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for gen-avoption-tables."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("probe", type=pathlib.Path, help="path to PROBE.tsv")
+    parser.add_argument("ffmpeg_src", type=pathlib.Path, help="path to FFmpeg source directory")
+    parser.add_argument("ffmpeg_tag", type=str, help="FFmpeg release tag")
+    parser.add_argument("out", type=pathlib.Path, help="output C file path")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for generating AVOption tables."""
+    args = parse_args(argv)
+    probe = args.probe
+    src = args.ffmpeg_src / "libavcodec"
     owners = read_probe(probe)
     if "avctx" not in owners:
         fail("probe output has no avctx rows")
@@ -176,13 +187,13 @@ def main(argv):
     digests = [
         (p.name, hashlib.sha256(p.read_bytes()).hexdigest()) for p in inputs
     ]
-    pathlib.Path(argv[4]).write_text(render(tables, argv[3], digests), encoding="utf-8")
+    args.out.write_text(render(tables, args.ffmpeg_tag, digests), encoding="utf-8")
     return 0
 
 
 if __name__ == "__main__":
     try:
-        STATUS = main(sys.argv)
+        STATUS = main(sys.argv[1:])
     except GenError as err:
         sys.stderr.write(f"gen-avoption-tables: {err}\n")
         STATUS = 1

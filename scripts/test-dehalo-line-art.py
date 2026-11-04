@@ -18,6 +18,7 @@ The pre-ADR-0163 shader fails both halves (stroke 30 -> 159 in the model).
 
 from __future__ import annotations
 
+import argparse
 import math
 import pathlib
 import re
@@ -178,8 +179,17 @@ def codes(row):
     return [round(v * 255) for v in row]
 
 
-def main() -> int:
-    paths = [pathlib.Path(a) for a in sys.argv[1:]] or [SHIPPED, LIBREF]
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for test-dehalo-line-art."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("paths", nargs="*", type=pathlib.Path, help="Paths to shader files")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for dehalo line-art test."""
+    args = parse_args(argv)
+    paths = args.paths or [SHIPPED, LIBREF]
     failed = False
     for path in paths:
         text = path.read_text(encoding="utf-8")
@@ -227,4 +237,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

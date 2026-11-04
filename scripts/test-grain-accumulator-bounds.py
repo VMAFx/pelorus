@@ -24,6 +24,7 @@ requires each to be rejected.
 
 from __future__ import annotations
 
+import argparse
 import math
 import pathlib
 import random
@@ -466,12 +467,21 @@ def self_test(c_text: str, shader_text: str, reference_text: str) -> list[str]:
     return failures
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for test-grain-accumulator-bounds."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for proving grain accumulator bounds."""
+    args = parse_args(argv)
     c_text = C_SOURCE.read_text()
     shader_text = SHADER.read_text()
     reference_text = REFERENCE.read_text()
     errors = validate(c_text, shader_text, reference_text)
-    if "--self-test" in sys.argv[1:]:
+    if args.self_test:
         try:
             errors.extend(self_test(c_text, shader_text, reference_text))
         except ValueError as error:
@@ -483,4 +493,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))
