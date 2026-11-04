@@ -1,0 +1,1 @@
+- Codacy configuration: a root `.codacy.yml` excludes the engine-managed figure hook from Bandit and Opengrep as a dated exception, and `scripts/check-codacy-config.py` fails the gate on a glob, an untracked path, a missing or over-long exception and an expired one.

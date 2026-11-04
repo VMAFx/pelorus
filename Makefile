@@ -49,6 +49,8 @@ docs-check:
 	bash scripts/release/write-patch-notice.sh --self-test
 	python3 -I scripts/adr/check-status.py --self-test
 	python3 -I scripts/adr/check-status.py
+	python3 -I scripts/check-codacy-config.py --self-test
+	python3 -I scripts/check-codacy-config.py
 	python3 -I scripts/check-mirror-contract.py --self-test
 	python3 -I scripts/check-mirror-contract.py
 	python3 -I scripts/check-cochange.py --self-test

@@ -64,11 +64,29 @@ PELORUS_UUID = bytes.fromhex("e1d7c4a26b934f089a550f3c2db17e64")
 # Zero-free carrier form of the blob (interop ABI 1.5, ADR-0183): this UUID, then
 # the COBS-encoded blob image. NVENC writes every Pelorus blob this way.
 CARRIER_UUID = bytes.fromhex("3f9b37b8fd9a4621920e9b78b55cf9b5")
-PELORUS_MAGIC = b"PELOR1\0\0"
+def load_sibling(name):
+    """Import a sibling module from tools/tester by module name."""
+    path = HERE / (name + ".py")
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {name} from {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# Import shared interop constants from tools/tester by file path (issue #500).
+_CONSTS = load_sibling("pelorus_interop_consts")
+PELORUS_MAGIC = _CONSTS.MAGIC
+ABI_MAJOR = _CONSTS.ABI_MAJOR
+HEADER_BYTES = _CONSTS.HEADER_BYTES
 SEC_BANDING, SEC_VARIANCE = 1, 2
 REQUIRED_SECTIONS = SEC_BANDING | SEC_VARIANCE
 HEADER_FMT = "<8sHHIIHHQ"
-HEADER_BYTES = 48
+BASE_HEADER_BYTES = struct.calcsize(HEADER_FMT)
+if BASE_HEADER_BYTES > HEADER_BYTES:
+    raise SystemExit("reader format longer than interop.h header: %d > %d"
+                     % (BASE_HEADER_BYTES, HEADER_BYTES))
 DIR_FMT = "<IIII"
 FILTER_RE = re.compile(r"^Filter '([^']+)' formats:\s*$", re.M)
 INSERT_RE = re.compile(r"auto-inserting filter '([^']+)' between")
@@ -189,13 +207,6 @@ MAX_RENDER_NODES = 64
 
 def outcome(status, reason, log="", legs=None):
     return status, reason, log, legs
-
-
-def load_sibling(name):
-    spec = importlib.util.spec_from_file_location(name, HERE / (name + ".py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
 
 
 # ------------------------------------------------------------ pure rules
@@ -587,7 +598,7 @@ def unwrap_payloads(frames, zero_free, label, disabled=frozenset()):
 def header_errors(fields, length):
     magic, major, _minor, total, _mask, _count, hsize, _pts = fields
     errs = []
-    if magic != PELORUS_MAGIC or major != 1 or hsize != HEADER_BYTES:
+    if magic != PELORUS_MAGIC or major != ABI_MAJOR or hsize < HEADER_BYTES or hsize % 8:
         errs.append("header magic/abi/size wrong (abi_major %d)" % major)
     if total != length:
         errs.append("total_size %d != blob length %d" % (total, length))
@@ -595,10 +606,10 @@ def header_errors(fields, length):
 
 
 def directory_errors(blob, fields):
-    _magic, _major, _minor, total, mask, count, _hsize, _pts = fields
-    ids, errs, dir_end = 0, [], HEADER_BYTES + 16 * count
+    _magic, _major, _minor, total, mask, count, hsize, _pts = fields
+    ids, errs, dir_end = 0, [], hsize + 16 * count
     for i in range(min(count, 32)):
-        raw = blob[HEADER_BYTES + 16 * i:HEADER_BYTES + 16 * i + 16]
+        raw = blob[hsize + 16 * i:hsize + 16 * i + 16]
         if len(raw) < 16:
             return errs + ["section directory truncated"]
         sid, off, size, _sm = struct.unpack(DIR_FMT, raw)
@@ -616,7 +627,7 @@ def blob_problems(blob, disabled=frozenset()):
     """Structural check of one PelorusSideData blob; returns (problems, pts)."""
     if len(blob) < HEADER_BYTES:
         return ["blob shorter than the %d-byte header" % HEADER_BYTES], -1
-    fields = struct.unpack(HEADER_FMT, blob[:struct.calcsize(HEADER_FMT)])
+    fields = struct.unpack(HEADER_FMT, blob[:BASE_HEADER_BYTES])
     errs = header_errors(fields, len(blob)) + directory_errors(blob, fields)
     return ([] if "sd_structure" in disabled else errs), fields[7]
 
@@ -702,7 +713,7 @@ def stripped_form(blob):
     section, map offset and size fields zeroed, total_size set to the new end. None when
     the blob is not a strippable ABI 1.x blob or nothing follows its sections."""
     if len(blob) < HEADER_BYTES or blob[:8] != PELORUS_MAGIC \
-            or struct.unpack_from("<H", blob, 8)[0] != 1:
+            or struct.unpack_from("<H", blob, 8)[0] != ABI_MAJOR:
         return None
     total, mask, count, hsize = struct.unpack_from("<IIHH", blob, 12)
     dir_end = hsize + count * SEI_DIR_ENTRY
@@ -1440,7 +1451,7 @@ def reference_problems(frames, n_expected, disabled=frozenset()):
             if len(blob) < HEADER_BYTES:
                 errs.append("picture %d: %d bytes, shorter than the header" % (idx, len(blob)))
                 continue
-            total = struct.unpack(HEADER_FMT, blob[:struct.calcsize(HEADER_FMT)])[3]
+            total = struct.unpack(HEADER_FMT, blob[:BASE_HEADER_BYTES])[3]
             if total != len(blob):
                 errs.append("picture %d: parsed %d bytes, header total_size %d" % (idx, len(blob), total))
     return errs
@@ -1859,13 +1870,18 @@ Filter 'Parsed_format_6' formats:
 """
 
 
-def pack_blob(mask=3, pts=0, total=None, major=1):
-    secs = ((1, 80, 8, 3), (2, 88, 8, 3))
-    size = 96 if total is None else total
+def pack_blob(mask=3, pts=0, total=None, major=ABI_MAJOR, hsize=None):
+    if hsize is None:
+        hsize = HEADER_BYTES
+    shift = hsize - BASE_HEADER_BYTES
+    dir_end = hsize + 32
+    secs = ((1, dir_end, 8, 3), (2, dir_end + 8, 8, 3))
+    size = dir_end + 16 if total is None else total
     head = struct.pack(HEADER_FMT, PELORUS_MAGIC, major, 3, size, mask, len(secs),
-                       HEADER_BYTES, pts)
+                       hsize, pts)
     dirs = b"".join(struct.pack(DIR_FMT, *sec) for sec in secs)
-    return head + bytes(16) + dirs + bytes(16)
+    pad = bytes(max(0, shift))
+    return head + pad + dirs + bytes(16)
 
 
 def stage_ctx(env, run):
@@ -1953,13 +1969,28 @@ def self_test_steering(expect, disabled):
 def self_test_sidedata(expect, disabled):
     good = [[pack_blob(pts=i)] for i in range(4)]
     expect("sd_good_passes", not sidedata_problems(good, 4, disabled))
+    expect("sd_abi_header_passes", not sidedata_problems(
+        [[pack_blob(pts=i, hsize=HEADER_BYTES)] for i in range(4)], 4, disabled))
+    expect("sd_grown_header_passes", not sidedata_problems(
+        [[pack_blob(pts=i, hsize=56)] for i in range(4)], 4, disabled))
     expect("sd_rejects_missing_blob", bool(sidedata_problems(good[:3] + [[]], 4, disabled)))
     expect("sd_rejects_bad_total", bool(sidedata_problems(
         [[pack_blob(pts=i, total=99)] for i in range(4)], 4, disabled)))
     expect("sd_rejects_bad_abi", bool(sidedata_problems(
-        [[pack_blob(pts=i, major=2)] for i in range(4)], 4, disabled)))
+        [[pack_blob(pts=i, major=ABI_MAJOR + 1)] for i in range(4)], 4, disabled)))
+    expect("sd_rejects_short_header", bool(sidedata_problems(
+        [[pack_blob(pts=i, hsize=HEADER_BYTES - 8)] for i in range(4)], 4, disabled)))
+    if BASE_HEADER_BYTES < HEADER_BYTES:
+        expect("sd_rejects_prefix_header", bool(sidedata_problems(
+            [[pack_blob(pts=i, hsize=BASE_HEADER_BYTES)] for i in range(4)], 4, disabled)))
+    expect("sd_rejects_unaligned_header", bool(sidedata_problems(
+        [[pack_blob(pts=i, hsize=52)] for i in range(4)], 4, disabled)))
     expect("sd_rejects_dup_pts", bool(sidedata_problems(
         [[pack_blob(pts=1)] for _ in range(4)], 4, disabled)))
+    expect("sd_stripped_form_valid", stripped_form(pack_map_blob(0)) is not None)
+    bad_major = bytearray(pack_map_blob(0))
+    struct.pack_into("<H", bad_major, 8, ABI_MAJOR + 1)
+    expect("sd_stripped_form_rejects_bad_abi", stripped_form(bytes(bad_major)) is None)
     tap = "\n".join("[Parsed_showinfo_0 @ 0x1] n:   %d pts:  %d side data - H.26[45] User "
                     "Data Unregistered SEI message: UUID=e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64"
                     % (i, i) for i in range(4))
@@ -2164,20 +2195,28 @@ def self_test_legs(expect, disabled):
     expect("legs_recorded", status == "pass" and [l["status"] for l in legs] == ["pass", "not_run"])
 
 
+# The map fixture literals below are laid out for a directory that ends at byte 80
+# (48-byte header plus two 16-byte entries). MAP_SHIFT moves every section offset,
+# map value and mutation point by how far the directory of the current interop.h
+# header ends past that, so a grown header keeps the fixture consistent.
+MAP_SHIFT = HEADER_BYTES + 2 * struct.calcsize(DIR_FMT) - 80
+
+
 def pack_map_blob(pts=0, maps=True):
     """A blob with a banding map and a variance map behind its sections; with maps=False the
     form hevc_nvenc writes (pelorus_sei_fit.h): map fields zero, nothing after the sections."""
-    secs = ((1, 80, 16), (2, 96, 28))
+    k = MAP_SHIFT
+    secs = ((1, 80 + k, 16), (2, 96 + k, 28))
     tail = 40 if maps else 0
-    body = bytearray(124 + tail)
-    struct.pack_into(HEADER_FMT, body, 0, PELORUS_MAGIC, 1, 3, 124 + tail, 3, 2, HEADER_BYTES, pts)
+    body = bytearray(124 + k + tail)
+    struct.pack_into(HEADER_FMT, body, 0, PELORUS_MAGIC, ABI_MAJOR, 3, 124 + k + tail, 3, 2, HEADER_BYTES, pts)
     for i, (sid, off, size) in enumerate(secs):
         struct.pack_into(DIR_FMT, body, HEADER_BYTES + 16 * i, sid, off, size, 3)
     if maps:
-        struct.pack_into("<II", body, 80 + 8, 124, 16)      # banding cell_data
-        struct.pack_into("<II", body, 96 + 12, 140, 12)     # variance var_cell
-        struct.pack_into("<II", body, 96 + 20, 152, 12)     # variance edge_cell
-        body[124:] = bytes(range(1, 41))
+        struct.pack_into("<II", body, 80 + k + 8, 124 + k, 16)    # banding cell_data
+        struct.pack_into("<II", body, 96 + k + 12, 140 + k, 12)   # variance var_cell
+        struct.pack_into("<II", body, 96 + k + 20, 152 + k, 12)   # variance edge_cell
+        body[124 + k:] = bytes(range(1, 41))
     return bytes(body)
 
 
@@ -2186,10 +2225,10 @@ def self_test_integrity(expect, disabled):
     want = [[pack_map_blob(pts=i)] for i in range(4)]
     cut = lambda b, n: b[:len(b) - n]
     flip = bytearray(want[2][0])
-    flip[100] ^= 0x01
+    flip[100 + MAP_SHIFT] ^= 0x01
     wrong = bytearray(pack_map_blob(pts=1, maps=False))
-    wrong[100] ^= 0x01
-    short = lambda b: bytes(b[:124])
+    wrong[100 + MAP_SHIFT] ^= 0x01
+    short = lambda b: bytes(b[:124 + MAP_SHIFT])
     check = lambda got, strips=False: integrity_problems(want, got, "t", strips, disabled)[0]
     expect("sd_int_equal_passes", not check(want))
     expect("sd_int_stripped_form_matches_header_math", stripped_form(want[1][0]) == pack_map_blob(1, False))
@@ -2207,7 +2246,7 @@ def self_test_integrity(expect, disabled):
     expect("sd_int_rejects_stripped_with_flipped_scalar", bool(integrity_problems(
         want, want[:1] + [[bytes(wrong)]] + want[2:], "t", True, disabled)[0]))
     left = bytearray(pack_map_blob(pts=3, maps=False))
-    struct.pack_into("<II", left, 88, 124, 16)   # map offset and size left in place
+    struct.pack_into("<II", left, 88 + MAP_SHIFT, 124 + MAP_SHIFT, 16)   # map offset and size left in place
     expect("sd_int_rejects_stripped_with_map_fields_left", bool(integrity_problems(
         want, want[:3] + [[bytes(left)]], "t", True, disabled)[0]))
     strippers = {c["name"] for c in SEI_CARRIERS if strips_allowed(c, disabled)}
@@ -2220,7 +2259,8 @@ def self_test_integrity(expect, disabled):
     expect("sd_strip_accepts_stripped_blob_from_qsv", not got and n == 4)
     msg = integrity_problems(want, want[:2] + [[bytes(flip)]] + want[3:], "stream")[0]
     expect("sd_int_names_picture_size_and_offset", msg == [
-        "stream picture 2: blob 164 bytes, expected 164, first difference at offset 100"])
+        "stream picture 2: blob %d bytes, expected %d, first difference at offset %d"
+        % (164 + MAP_SHIFT, 164 + MAP_SHIFT, 100 + MAP_SHIFT)])
     expect("sd_int_not_strippable_blob_is_none", stripped_form(pack_map_blob(0, False)) is None
            and stripped_form(b"short") is None)
     order = pictures_by_pts([[pack_map_blob(pts=2)], [], [pack_map_blob(pts=0)], [pack_map_blob(pts=1)]])
@@ -2861,3 +2901,4 @@ def self_test(disabled=frozenset()):
     self_test_vendor_nodes(expect)
     self_test_vendor_execution(expect, disabled)
     return failures
+
