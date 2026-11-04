@@ -89,7 +89,7 @@ def run(list_path, page_path, root=Path(".")):
         paths = read_paths(list_path)
         page = page_path.read_text(encoding="utf-8")
         errors = layout_errors(root, paths)
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         print("check-mirror-contract: %s" % exc)
         return 2
     if not paths:

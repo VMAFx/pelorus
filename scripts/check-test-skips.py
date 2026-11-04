@@ -68,7 +68,7 @@ def load_records(path):
     """Return the testlog.json records; a log without one is malformed."""
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as err:
+    except (OSError, UnicodeDecodeError) as err:
         raise Malformed("%s: %s" % (path, err)) from err
     records = []
     for line in lines[:MAX_RECORDS]:

@@ -181,7 +181,8 @@ check_planted_ruff() {
     return 1
 }
 
-# Plant one source per enforced Ruff rule and a clean one; each must get its verdict.
+# Plant one source each for S110, SIM103, E721 and PGH004 and a clean one;
+# each must get its verdict.
 self_test_ruff() {
     local tmp="$1" failed=0
 

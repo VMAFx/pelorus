@@ -265,7 +265,7 @@ def read(root, rel):
     """Return the UTF-8 text of ``root / rel``; raise GateError when it cannot be read."""
     try:
         return (root / rel).read_text(encoding="utf-8")
-    except OSError as err:
+    except (OSError, UnicodeDecodeError) as err:
         raise GateError("cannot read %s: %s" % (rel, err)) from err
 
 

@@ -437,6 +437,25 @@ test('python-empty-except-self-test',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# A try block that guards Path.read_text() against OSError must also catch
+# UnicodeDecodeError, or a file with invalid bytes escapes as a traceback.
+# The tree scan lists files with git; see python-empty-except above for why
+# it skips the Windows leg.
+if build_machine.system() != 'windows'
+  test('python-decode-errors',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-decode-errors.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
+
+test('python-decode-errors-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-decode-errors.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 # Per-frame external-ME-hint setup of patch 0008 (BUG-031): a frame without
 # Pelorus motion data must still submit one zero-MV candidate per block, or the
 # NVENC session fails the whole encode.

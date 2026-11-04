@@ -71,6 +71,10 @@ def script_loads_patch_harness(script_path: pathlib.Path) -> bool:
         text = script_path.read_text(encoding="utf-8")
     except OSError:
         return False
+    except UnicodeDecodeError as err:
+        # A script the gate cannot read must fail it, not drop out of the check.
+        raise SystemExit("check-harness-test-timeouts: %s is not UTF-8: %s"
+                         % (script_path, err)) from err
     return "patch_harness" in text and (
         "import patch_harness" in text
         or "from patch_harness" in text

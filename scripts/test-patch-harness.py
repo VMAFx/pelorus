@@ -47,7 +47,7 @@ def _is_pid_gone(pid: int) -> bool:
             parts = stat_text.rpartition(")")[2].split()
             if parts and parts[0] == "Z":
                 return True
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             # /proc entry vanished or inaccessible: fall through to os.kill(pid, 0) probe.
             pass
     try:

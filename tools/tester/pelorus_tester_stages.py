@@ -260,7 +260,7 @@ def load_allowlist(ctx):
         path = Path(ctx["env"].get("PELORUS_VUID_ALLOWLIST") or ALLOWLIST_PATH)
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             text = ""
         today = ctx.get("today") or datetime.date.today()
         ctx["allowlist"] = parse_allowlist(text, today, ctx["disabled"])
@@ -831,7 +831,7 @@ def render_nodes(dev_root="/dev", sys_root="/sys"):
         try:
             vendor = (base / "vendor").read_text(encoding="ascii").strip().lower()
             result.append((node, vendor))
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
     return result
 
@@ -848,7 +848,7 @@ def intel_render_host(dev_root="/dev", sys_root="/sys"):
         try:
             device = (base / "device").read_text(encoding="ascii").strip().lower()
             driver = (base / "driver").resolve().name
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
         if device.startswith(DG2_PCI_PREFIX) and driver == "xe":
             return "xe-dg2"

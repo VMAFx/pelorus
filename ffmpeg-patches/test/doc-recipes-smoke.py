@@ -228,7 +228,7 @@ def discover_render_node(vendor, drm_root=Path("/sys/class/drm")):
     for entry in sorted(drm_root.glob("renderD*")):
         try:
             found = (entry / "device" / "vendor").read_text(encoding="ascii").strip()
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
         if found == vendor:
             return f"/dev/dri/{entry.name}"

@@ -89,7 +89,7 @@ def read(root, rel):
     """Return the UTF-8 text of ``root / rel``; raise GateError when it cannot be read."""
     try:
         return (root / rel).read_text(encoding="utf-8")
-    except OSError as err:
+    except (OSError, UnicodeDecodeError) as err:
         raise GateError("cannot read %s: %s" % (rel, err)) from err
 
 
@@ -110,7 +110,7 @@ def load_inventory(root):
     for path in sources:
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError as err:
+        except (OSError, UnicodeDecodeError) as err:
             raise GateError("cannot read %s: %s" % (path.relative_to(root), err)) from err
         matches = list(re.finditer(r'\.p\.name\s*=\s*"(pelorus_[^"]+)"', text))
         rel = str(path.relative_to(root))
@@ -185,7 +185,7 @@ def load_pages(root):
     for path in paths:
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError as err:
+        except (OSError, UnicodeDecodeError) as err:
             raise GateError("cannot read %s: %s" % (path.relative_to(root), err)) from err
         heading = next((line for line in text.splitlines() if line.startswith("# ")), "")
         names = re.findall(r"(?:vf_)?(pelorus_[a-z0-9_]+)", heading)
