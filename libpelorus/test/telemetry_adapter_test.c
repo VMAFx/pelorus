@@ -29,6 +29,14 @@
 #define TEST_CSV_FIELDS_OVER_MAX 257u
 #define TEST_TEXT_LINE_OVER_MAX 4097u
 #define TEST_TEXT_TOTAL_MAX 1048576u
+
+/* cl.exe and clang-cl declare sscanf deprecated; the fixture line has
+ * numeric conversions only, so sscanf_s takes the same arguments. */
+#ifdef _MSC_VER
+#define TEST_SSCANF sscanf_s
+#else
+#define TEST_SSCANF sscanf
+#endif
 #define TEST_SKIP 77
 #define X265_HEADER_TEXT "Layer, Encode Order, Type, POC, QP, Bits, Scenecut\n"
 
@@ -1765,7 +1773,7 @@ static int test_libaom_fixture(const char *path)
             CHECK(0);
             break;
         }
-        const int fields = sscanf(
+        const int fields = TEST_SSCANF(
             line, "%" SCNu32 " %" SCNu32 " %" SCNu32 " %" SCNu64 " %" SCNd32 " %lf %lf %lf %lf",
             &in.display_index, &in.decode_index, &in.frame_flags, &in.frame_bytes, &in.quantizer_64,
             &in.psnr[0], &in.psnr[1], &in.psnr[2], &in.psnr[3]);

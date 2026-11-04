@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import configparser
 import fnmatch
 import subprocess
 import sys
@@ -43,32 +44,65 @@ class DllAllowList:
         return self.bundle_dlls.get(name.lower())
 
 
+class _CaseKeepingParser(configparser.ConfigParser):
+    """ConfigParser that keeps entry case; DLL names compare case-insensitively later."""
+
+    def optionxform(self, optionstr: str) -> str:
+        """Return the entry unchanged instead of lower-casing it."""
+        return optionstr
+
+
+ALLOW_LIST_SECTIONS = frozenset({"system", "bundle"})
+
+
 def parse_dll_allow_list(path: Path) -> DllAllowList:
+    """Parse Windows DLL allow-list configuration file with configparser."""
     if not path.is_file():
         raise FileNotFoundError(f"DLL allow-list file missing: {path}")
 
-    system_patterns: list[str] = []
-    bundle_dlls: dict[str, tuple[str, str]] = {}
-    current_section: str | None = None
+    parser = _CaseKeepingParser(
+        allow_no_value=True,
+        delimiters=("\n",),
+        comment_prefixes=("#",),
+        inline_comment_prefixes=None,
+        empty_lines_in_values=False,
+    )
+    try:
+        parser.read(path, encoding="utf-8")
+    except configparser.MissingSectionHeaderError as exc:
+        raise ValueError(
+            f"Unexpected entry outside section in {path}: {exc.line.strip()}"
+        ) from exc
+    except (configparser.Error, UnicodeDecodeError) as exc:
+        raise ValueError(f"Malformed DLL allow-list {path}: {exc}") from exc
 
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            current_section = line[1:-1].strip().lower()
-            continue
-        if current_section == "system":
-            system_patterns.append(line)
-        elif current_section == "bundle":
-            parts = line.split(None, 2)
-            if len(parts) != 3:
-                raise ValueError(
-                    f"[bundle] entry needs DLL, package and SPDX licence in {path}: {line}"
-                )
-            bundle_dlls[parts[0].lower()] = (parts[1], parts[2])
-        else:
-            raise ValueError(f"Unexpected entry outside section in {path}: {line}")
+    # configparser copies [DEFAULT] entries into every section; refuse them so
+    # no DLL is allowed without being listed under [system] or [bundle].
+    if parser.defaults():
+        raise ValueError(f"Entries in [{parser.default_section}] are not allowed in {path}")
+    sections: dict[str, str] = {}
+    for name in parser.sections():
+        if name.lower() not in ALLOW_LIST_SECTIONS:
+            raise ValueError(f"Unknown section in {path}: [{name}]")
+        if name.lower() in sections:
+            raise ValueError(f"Duplicate section in {path}: [{name}]")
+        sections[name.lower()] = name
+    if "system" not in sections:
+        raise ValueError(f"No [system] entries found in {path}")
+    if "bundle" not in sections:
+        raise ValueError(f"No [bundle] entries found in {path}")
+
+    system_patterns = list(parser[sections["system"]].keys())
+    bundle_dlls: dict[str, tuple[str, str]] = {}
+    for entry in parser[sections["bundle"]].keys():
+        parts = entry.split(None, 2)
+        if len(parts) != 3:
+            raise ValueError(
+                f"[bundle] entry needs DLL, package and SPDX licence in {path}: {entry}"
+            )
+        if parts[0].lower() in bundle_dlls:
+            raise ValueError(f"Duplicate [bundle] DLL in {path}: {parts[0]}")
+        bundle_dlls[parts[0].lower()] = (parts[1], parts[2])
 
     if not system_patterns:
         raise ValueError(f"No [system] entries found in {path}")
@@ -305,6 +339,44 @@ def _run_resolve_tests(tmp: Path, allow: DllAllowList, fixtures: dict[str, list[
     assert any(VULKAN_LOADER_ERROR in e for e in r_errs3), f"Resolve vulkan-1.dll failed: {r_errs3}"
 
 
+# Allow-list texts the parser must refuse: (label, file text or None for a
+# missing file, expected exception type, expected message fragment).
+ALLOW_LIST_REFUSALS: tuple[tuple[str, str | None, type[Exception], str], ...] = (
+    ("bundle row without licence", "[system]\nKERNEL32.dll\n[bundle]\nzlib1.dll\n",
+     ValueError, "needs DLL, package and SPDX licence"),
+    ("unknown section", "[system]\nKERNEL32.dll\n[bundle]\nzlib1.dll pkg MIT\n[extra]\nfoo.dll\n",
+     ValueError, "Unknown section"),
+    ("duplicate entry", "[system]\nKERNEL32.dll\nKERNEL32.dll\n[bundle]\nzlib1.dll pkg MIT\n",
+     ValueError, "Malformed DLL allow-list"),
+    ("duplicate dll", "[system]\nKERNEL32.dll\n[bundle]\nzlib1.dll a MIT\nZLIB1.dll b MIT\n",
+     ValueError, "Duplicate [bundle] DLL"),
+    ("duplicate section", "[system]\nKERNEL32.dll\n[bundle]\nzlib1.dll a MIT\n[System]\nUSER32.dll\n",
+     ValueError, "Duplicate section"),
+    ("missing file", None, FileNotFoundError, "DLL allow-list file missing"),
+    ("entry outside section", "KERNEL32.dll\n[system]\nUSER32.dll\n",
+     ValueError, "Unexpected entry outside section"),
+    ("empty system", "[system]\n[bundle]\nzlib1.dll pkg MIT\n", ValueError, "No [system] entries found"),
+    ("empty bundle", "[system]\nKERNEL32.dll\n[bundle]\n", ValueError, "No [bundle] entries found"),
+    ("default section entries", "[DEFAULT]\nevil.dll\n[system]\nKERNEL32.dll\n[bundle]\nzlib1.dll pkg MIT\n",
+     ValueError, "Entries in [DEFAULT] are not allowed"),
+)
+
+
+def _run_allow_list_tests(tmp: Path) -> None:
+    """Check that every malformed allow-list is refused for the expected reason."""
+    for index, (label, text, exc_type, reason) in enumerate(ALLOW_LIST_REFUSALS):
+        case = tmp / f"allow-list-{index}.txt"
+        if text is not None:
+            case.write_text(text, encoding="utf-8")
+        try:
+            parse_dll_allow_list(case)
+        except exc_type as exc:
+            if reason not in str(exc):
+                raise AssertionError(f"{label} refused for the wrong reason: {exc}") from exc
+        else:
+            raise AssertionError(f"{label} was accepted")
+
+
 def run_self_tests() -> int:
     """Run regression tests against mock fixtures."""
     allow = parse_dll_allow_list(DEFAULT_DLL_LIST)
@@ -335,18 +407,9 @@ def run_self_tests() -> int:
         _run_bundle_tests(bundle, allow, fixtures, mock_runner)
         _run_resolve_tests(tmp, allow, fixtures, mock_runner)
 
-        # Case 9: a [bundle] row without its package and licence is refused
-        short_list = tmp / "short-list.txt"
-        short_list.write_text("[system]\nKERNEL32.dll\n[bundle]\nzlib1.dll\n", encoding="utf-8")
-        try:
-            parse_dll_allow_list(short_list)
-        except ValueError as exc:
-            if "needs DLL, package and SPDX licence" not in str(exc):
-                raise AssertionError(f"Case 9 refused for the wrong reason: {exc}") from exc
-        else:
-            raise AssertionError("Case 9 (bundle row without licence) was accepted")
+        _run_allow_list_tests(tmp)
 
-    print("check-pe-imports: self-test passed (9 cases)")
+    print("check-pe-imports: self-test passed (17 cases)")
     return 0
 
 

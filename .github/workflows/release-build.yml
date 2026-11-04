@@ -43,13 +43,7 @@ jobs:
           persist-credentials: false
       - name: Load build configuration
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Install toolchain
         run: |
           sudo apt-get update
@@ -166,8 +160,9 @@ jobs:
       - name: Verify the SHA256SUMS signature
         working-directory: dist
         run: |
+          identity="^${GITHUB_SERVER_URL//./\\.}/${GITHUB_REPOSITORY//./\\.}/\.github/workflows/release-build\.yml@"
           cosign verify-blob \
-            --certificate-identity-regexp '^https://github\.com/VMAFx/pelorus/\.github/workflows/release-build\.yml@' \
+            --certificate-identity-regexp "$identity" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             --bundle SHA256SUMS.sigstore.json \
             SHA256SUMS

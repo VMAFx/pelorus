@@ -8,7 +8,6 @@
 #include "pelorus/qloop.h"
 #include "pelorus_tool_common.h"
 
-#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,30 +15,8 @@
 
 #define MAX_INPUT_LINES (PEL_QLOOP_MAX_ITER + 2u)
 
-static int parse_double_strict(const char *str, char **endptr, double *out)
-{
-    double val;
-    errno = 0;
-    val = strtod(str, endptr);
-    if (errno == ERANGE || *endptr == str || !isfinite(val)) {
-        return -1;
-    }
-    *out = val;
-    return 0;
-}
-
-static int parse_i32_strict(const char *str, char **endptr, int32_t *out)
-{
-    long long val;
-    errno = 0;
-    val = strtoll(str, endptr, 10);
-    if (errno == ERANGE || *endptr == str || val < INT32_MIN || val > INT32_MAX) {
-        return -1;
-    }
-    *out = (int32_t)val;
-    return 0;
-}
-
+/* Parse a history line from line into knob and score observations for obs, skipping blank and comment lines.
+ * Returns 1 on success, 0 for empty or comment lines, or -1 on syntax error. */
 static int parse_history_line(const char *line, size_t line_num, PelQloopObs *obs)
 {
     const char *p = line;
@@ -53,7 +30,7 @@ static int parse_history_line(const char *line, size_t line_num, PelQloopObs *ob
     if (*p == '#' || *p == '\0' || *p == '\r' || *p == '\n') {
         return 0;
     }
-    if (parse_double_strict(p, &end, &knob) != 0) {
+    if (pelorus_tool_parse_double(p, &end, &knob) != 0) {
         (void)fprintf(stderr, "pelorus_qloop: line %zu: invalid knob value\n", line_num);
         return -1;
     }
@@ -66,7 +43,7 @@ static int parse_history_line(const char *line, size_t line_num, PelQloopObs *ob
     while (*p == ' ' || *p == '\t') {
         p++;
     }
-    if (parse_double_strict(p, &end, &score) != 0) {
+    if (pelorus_tool_parse_double(p, &end, &score) != 0) {
         (void)fprintf(stderr, "pelorus_qloop: line %zu: invalid score value\n", line_num);
         return -1;
     }
@@ -167,80 +144,8 @@ static int emit_step(const PelQloopStep *step)
     return EXIT_SUCCESS;
 }
 
-static int parse_arg_item(const char *key, const char *val, PelQloopConfig *cfg, unsigned int *mask)
-{
-    char *end = NULL;
-
-    if (strcmp(key, "--target") == 0) {
-        if (parse_double_strict(val, &end, &cfg->target) != 0 || *end != '\0')
-            return -1;
-        *mask |= 1u << 0u;
-        return 0;
-    }
-    if (strcmp(key, "--tolerance") == 0) {
-        if (parse_double_strict(val, &end, &cfg->tolerance) != 0 || *end != '\0')
-            return -1;
-        *mask |= 1u << 1u;
-        return 0;
-    }
-    if (strcmp(key, "--min") == 0) {
-        if (parse_double_strict(val, &end, &cfg->knob_min) != 0 || *end != '\0')
-            return -1;
-        *mask |= 1u << 2u;
-        return 0;
-    }
-    if (strcmp(key, "--max") == 0) {
-        if (parse_double_strict(val, &end, &cfg->knob_max) != 0 || *end != '\0')
-            return -1;
-        *mask |= 1u << 3u;
-        return 0;
-    }
-    if (strcmp(key, "--start") == 0) {
-        if (parse_double_strict(val, &end, &cfg->knob_start) != 0 || *end != '\0')
-            return -1;
-        *mask |= 1u << 4u;
-        return 0;
-    }
-    if (strcmp(key, "--resolution") == 0) {
-        if (parse_double_strict(val, &end, &cfg->resolution) != 0 || *end != '\0')
-            return -1;
-        *mask |= 1u << 5u;
-        return 0;
-    }
-    if (strcmp(key, "--max-iter") == 0) {
-        if (pelorus_tool_parse_u32(val, &end, &cfg->max_iter) != 0 || *end != '\0')
-            return -1;
-        *mask |= 1u << 6u;
-        return 0;
-    }
-    if (strcmp(key, "--direction") == 0) {
-        if (parse_i32_strict(val, &end, &cfg->direction) != 0 || *end != '\0')
-            return -1;
-        *mask |= 1u << 7u;
-        return 0;
-    }
-    return -1;
-}
-
-static int parse_cli_args(int argc, char **argv, PelQloopConfig *cfg)
-{
-    unsigned int mask = 0u;
-    int i;
-
-    memset(cfg, 0, sizeof(*cfg));
-    i = 1;
-    while (i < argc) {
-        if (i + 1 >= argc)
-            return -1;
-        if (parse_arg_item(argv[i], argv[i + 1], cfg, &mask) != 0)
-            return -1;
-        i += 2;
-    }
-    if (mask != 0xffu)
-        return -1;
-    return 0;
-}
-
+/* Run the pelorus_qloop CLI tool using the arguments in argv to read history from stdin and emit the next step.
+ * Returns EXIT_SUCCESS on success or EXIT_FAILURE on error. */
 static int run(int argc, char **argv)
 {
     PelQloopConfig cfg;
@@ -248,8 +153,20 @@ static int run(int argc, char **argv)
     PelQloopStep step;
     size_t n_hist = 0;
     pel_result res;
+    const PelorusOpt opts[] = {
+        {"--target", PELORUS_OPT_DOUBLE, &cfg.target, 1, NULL, NULL},
+        {"--tolerance", PELORUS_OPT_DOUBLE, &cfg.tolerance, 1, NULL, NULL},
+        {"--min", PELORUS_OPT_DOUBLE, &cfg.knob_min, 1, NULL, NULL},
+        {"--max", PELORUS_OPT_DOUBLE, &cfg.knob_max, 1, NULL, NULL},
+        {"--start", PELORUS_OPT_DOUBLE, &cfg.knob_start, 1, NULL, NULL},
+        {"--resolution", PELORUS_OPT_DOUBLE, &cfg.resolution, 1, NULL, NULL},
+        {"--max-iter", PELORUS_OPT_U32, &cfg.max_iter, 1, NULL, NULL},
+        {"--direction", PELORUS_OPT_I32, &cfg.direction, 1, NULL, NULL},
+    };
 
-    if (parse_cli_args(argc, argv, &cfg) != 0) {
+    memset(&cfg, 0, sizeof(cfg));
+    if (pelorus_tool_parse_args("pelorus_qloop", argc, argv, opts, sizeof(opts) / sizeof(opts[0]),
+                                NULL) != 0) {
         (void)fprintf(stderr, "Usage: pelorus_qloop --target T --tolerance D --min A --max B "
                               "--start S --resolution R --max-iter N --direction -1|1\n");
         return EXIT_FAILURE;

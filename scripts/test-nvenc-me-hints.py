@@ -15,6 +15,9 @@ checks the per-frame contract (BUG-031):
 * A frame with a motion section still translates its quarter-pel field to
   integer-pel hints (positive control).
 * A motion-less frame after a motion frame must not reuse the stale hints.
+* The signed one-bit ``lastofPart`` / ``lastOfMB`` flags are set with -1. A
+  stored 1 reads back as -1 from a one-bit field, so a second build widens
+  both flags to two bits, where a stored 1 reads 1 and fails the check.
 """
 
 from __future__ import annotations
@@ -45,15 +48,20 @@ typedef struct AVCodecContext { void *priv_data; int width, height; } AVCodecCon
 typedef struct AVFrameSideData { uint8_t *data; size_t size; } AVFrameSideData;
 typedef struct AVFrame { AVFrameSideData *sd; } AVFrame;
 
-/* Field subset of nvEncodeAPI.h (names and widths as in the installed SDK). */
+/* Field subset of nvEncodeAPI.h (names and widths as in the installed SDK).
+ * The flag width is 1 as in the SDK; the probe build widens it to 2 so that a
+ * stored 1 reads back as 1 instead of -1 on every compiler (C11.1). */
+#ifndef PEL_FLAG_BITS
+#define PEL_FLAG_BITS 1
+#endif
 typedef struct NVENC_EXTERNAL_ME_HINT {
     int32_t mvx : 12;
     int32_t mvy : 10;
     int32_t refidx : 5;
     int32_t dir : 1;
     int32_t partType : 2;
-    int32_t lastofPart : 1;
-    int32_t lastOfMB : 1;
+    int32_t lastofPart : PEL_FLAG_BITS;
+    int32_t lastOfMB : PEL_FLAG_BITS;
 } NVENC_EXTERNAL_ME_HINT;
 typedef struct { uint32_t numCandsPerBlk16x16 : 4; } NVENC_EXTERNAL_ME_HINT_COUNTS_PER_BLOCKTYPE;
 typedef struct NV_ENC_PIC_PARAMS {
@@ -154,7 +162,9 @@ int main(void)
         expect("no-data mvx", hints[i].mvx, 0);
         expect("no-data mvy", hints[i].mvy, 0);
         expect("no-data refidx", hints[i].refidx, 0);
-        expect("no-data lastOfMB set", hints[i].lastOfMB != 0, 1); /* signed 1-bit field reads -1 */
+        /* The SDK field is int32_t : 1, so set means -1; the probe build sees a stored 1. */
+        expect("no-data lastofPart", hints[i].lastofPart, -1);
+        expect("no-data lastOfMB", hints[i].lastOfMB, -1);
     }
     expect("no-data warned once", warnings, 1);
 
@@ -176,6 +186,8 @@ int main(void)
     for (i = 0; i < 4; i++) {
         expect("motion mvx", hints[i].mvx, 2);
         expect("motion mvy", hints[i].mvy, -2);
+        expect("motion lastofPart", hints[i].lastofPart, -1);
+        expect("motion lastOfMB", hints[i].lastOfMB, -1);
     }
 
     /* 4. Motion-less frame after a motion frame: stale vectors must not leak. */
@@ -223,11 +235,13 @@ def main() -> int:
         print(f"ERROR: {err}", file=sys.stderr)
         return 1
 
-    return harness.compile_and_run(
-        SHIMS + chunk + MAIN,
-        args.cc,
-        prefix="pelorus-me-hints-",
-    )
+    source = SHIMS + chunk + MAIN
+    # SDK widths first, then the probe build that tells a stored 1 from -1.
+    for cflags in ((), ("-DPEL_FLAG_BITS=2",)):
+        status = harness.compile_and_run(source, args.cc, prefix="pelorus-me-hints-", cflags=cflags)
+        if status != 0:
+            return status
+    return 0
 
 
 if __name__ == "__main__":

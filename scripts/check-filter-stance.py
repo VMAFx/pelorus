@@ -16,6 +16,7 @@ input).
     python3 -I scripts/check-filter-stance.py --self-test
 """
 
+import argparse
 import re
 import sys
 import tempfile
@@ -86,10 +87,11 @@ def run(root):
 
 
 def read(root, rel):
+    """Return the UTF-8 text of ``root / rel``; raise GateError when it cannot be read."""
     try:
         return (root / rel).read_text(encoding="utf-8")
-    except OSError as exc:
-        raise GateError("cannot read %s: %s" % (rel, exc))
+    except (OSError, UnicodeDecodeError) as err:
+        raise GateError("cannot read %s: %s" % (rel, err)) from err
 
 
 def line_number(text, offset):
@@ -97,6 +99,7 @@ def line_number(text, offset):
 
 
 def load_inventory(root):
+    """Map each registered Pelorus filter or BSF name to its source path and registration line."""
     source_dir = root / "ffmpeg-patches/files"
     if not source_dir.is_dir():
         raise GateError("cannot read source directory ffmpeg-patches/files")
@@ -108,8 +111,8 @@ def load_inventory(root):
     for path in sources:
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise GateError("cannot read %s: %s" % (path.relative_to(root), exc))
+        except (OSError, UnicodeDecodeError) as err:
+            raise GateError("cannot read %s: %s" % (path.relative_to(root), err)) from err
         matches = list(re.finditer(r'\.p\.name\s*=\s*"(pelorus_[^"]+)"', text))
         rel = str(path.relative_to(root))
         if len(matches) != 1:
@@ -171,6 +174,7 @@ def has_evidence(root, cell):
 
 
 def load_pages(root):
+    """Return the metric pages and the grain usage page whose stance sentences are checked."""
     metrics = root / "docs/metrics"
     usage = root / "docs/usage/grain-fgs-bsf.md"
     if not metrics.is_dir():
@@ -182,8 +186,8 @@ def load_pages(root):
     for path in paths:
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise GateError("cannot read %s: %s" % (path.relative_to(root), exc))
+        except (OSError, UnicodeDecodeError) as err:
+            raise GateError("cannot read %s: %s" % (path.relative_to(root), err)) from err
         heading = next((line for line in text.splitlines() if line.startswith("# ")), "")
         names = re.findall(r"(?:vf_)?(pelorus_[a-z0-9_]+)", heading)
         if not names:
@@ -278,6 +282,15 @@ def self_test():
             if got != [expected]:
                 failures += 1
                 print("self-test FAIL: %s: expected [%s], got %s" % (expected, expected, got))
+    try:
+        parse_args(["--root"])
+    except SystemExit as exc:
+        if exc.code != 2:
+            failures += 1
+            print("self-test FAIL: missing --root value: want exit 2, got %d" % exc.code)
+    else:
+        failures += 1
+        print("self-test FAIL: missing --root value: did not exit")
     if failures:
         print("check-filter-stance self-test: %d failure(s)" % failures)
         return 1
@@ -291,20 +304,26 @@ def report(findings):
     print("check-filter-stance: %d finding(s)" % len(findings))
 
 
-def main(argv):
-    root = Path(".")
-    args = list(argv)
-    while args:
-        arg = args.pop(0)
-        if arg == "--self-test" and not args:
-            return self_test()
-        if arg == "--root" and args:
-            root = Path(args.pop(0))
-        else:
-            print(__doc__, file=sys.stderr)
-            return 2
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for check-filter-stance."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
+    parser.add_argument("--root", type=Path, default=Path("."), help="root directory")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking filter evidence stances."""
     try:
-        findings = run(root)
+        args = parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    if args.self_test:
+        return self_test()
+
+    try:
+        findings = run(args.root)
     except GateError as exc:
         print("check-filter-stance: error: %s" % exc, file=sys.stderr)
         return 2

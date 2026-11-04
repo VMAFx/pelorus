@@ -17,6 +17,7 @@ Exit status: 0 written; 1 refused; 2 usage error.
     python3 -I scripts/plant-header.py --self-test
 """
 
+import argparse
 import os
 import sys
 import tempfile
@@ -132,17 +133,42 @@ def self_test():
         if got != want:
             print("self-test FAIL: %s: got %r, want %r" % (label, got, want))
             failures += 1
-    print("self-test: %d cases, %d failures" % (len(SELF_TEST_CASES), failures))
+    try:
+        parse_args(["in.h", "out.h", "invalid_plant_name"])
+    except SystemExit as exc:
+        if exc.code != 2:
+            print("self-test FAIL invalid plant name: want exit 2, got %d" % exc.code)
+            failures += 1
+    else:
+        print("self-test FAIL invalid plant name: did not exit")
+        failures += 1
+    print("self-test: %d cases, %d failures" % (len(SELF_TEST_CASES) + 1, failures))
     return 1 if failures else 0
 
 
-def main(argv):
-    if argv == ["--self-test"]:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for plant-header."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
+    parser.add_argument("src", nargs="?", type=Path, help="source header path")
+    parser.add_argument("out", nargs="?", type=Path, help="output header path")
+    parser.add_argument("name", nargs="?", choices=list(PLANTS.keys()), help="plant name")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for planting a defect into a header copy."""
+    try:
+        args = parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    if args.self_test:
         return self_test()
-    if len(argv) != 3 or argv[2] not in PLANTS:
+    if not (args.src and args.out and args.name):
         print((__doc__ or "").strip().splitlines()[-2].strip(), file=sys.stderr)
         return 2
-    return run(Path(argv[0]), Path(argv[1]), argv[2])
+    return run(args.src, args.out, args.name)
 
 
 if __name__ == "__main__":

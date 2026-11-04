@@ -29,13 +29,7 @@ jobs:
           persist-credentials: false
       - name: Load build configuration
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Install toolchain
         run: |
           sudo apt-get update
@@ -65,7 +59,8 @@ jobs:
           python3 -I scripts/check-test-skips.py --require pelorus:sei-fit \
             --require pelorus:sei-fit-planted-reserve --require pelorus:sei-fit-planted-payload \
             --require pelorus:sei-fit-planted-epb --require pelorus:sei-fit-planted-truncated \
-            --require pelorus:sei-fit-planted-charge build/meson-logs/testlog.json
+            --require pelorus:sei-fit-planted-charge --require pelorus:sei-fit-planted-wrap \
+            build/meson-logs/testlog.json
       - name: clang-format (touched-tree clean)
         run: find libpelorus \( -name '*.c' -o -name '*.h' \) -exec clang-format --dry-run --Werror {} +
       - name: clang-tidy
@@ -86,13 +81,7 @@ jobs:
           persist-credentials: false
       - name: Load build configuration
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Install native build and Vulkan toolchain
         run: |
           sudo apt-get update
@@ -149,6 +138,7 @@ jobs:
         env:
           NVENC_SMOKE_SKIP: Cannot load libcuda.so.1
           NVENC_HOP_SMOKE_SKIP: Cannot load libcuda.so.1
+          DOC_RECIPES_SKIP: "no recipe device: cannot generate input clips"
           KEYFRAME_SMOKE_SKIP: no Vulkan device with HEVC video
           FGS_SMOKE_SKIP: no HEVC encoder
           EXPORT_CONTRACT_SKIP: no Vulkan device
@@ -188,13 +178,7 @@ jobs:
       - name: Load build configuration
         if: github.event.pull_request.draft != true
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Install native build toolchain and lavapipe
         if: github.event.pull_request.draft != true
         run: |
@@ -238,6 +222,7 @@ jobs:
         env:
           NVENC_SMOKE_SKIP: hevc_nvenc is not built into
           NVENC_HOP_SMOKE_SKIP: hevc_nvenc is not built into
+          DOC_RECIPES_SKIP: "no recipe device: cannot generate input clips"
           KEYFRAME_SMOKE_SKIP: no Vulkan device with HEVC video
           FGS_SMOKE_SKIP: no HEVC encoder
           EXPORT_CONTRACT_SKIP: the device did not enable VK_EXT_image_drm_format_modifier
@@ -325,13 +310,7 @@ jobs:
       - name: Load build configuration
         if: github.event.pull_request.draft != true
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Install native build toolchain and lavapipe
         if: github.event.pull_request.draft != true
         run: |
@@ -395,6 +374,7 @@ jobs:
         env:
           NVENC_SMOKE_SKIP: hevc_nvenc is not built into
           NVENC_HOP_SMOKE_SKIP: hevc_nvenc is not built into
+          DOC_RECIPES_SKIP: "no recipe device: cannot generate input clips"
           KEYFRAME_SMOKE_SKIP: no Vulkan device with HEVC video
           FGS_SMOKE_SKIP: no HEVC encoder
           EXPORT_CONTRACT_SKIP: the device did not enable VK_EXT_image_drm_format_modifier
@@ -484,13 +464,7 @@ jobs:
           persist-credentials: false
       - name: Load build configuration
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Install toolchain
         run: |
           sudo apt-get update
@@ -515,7 +489,8 @@ jobs:
           python3 -I scripts/check-test-skips.py --require pelorus:sei-fit \
             --require pelorus:sei-fit-planted-reserve --require pelorus:sei-fit-planted-payload \
             --require pelorus:sei-fit-planted-epb --require pelorus:sei-fit-planted-truncated \
-            --require pelorus:sei-fit-planted-charge build-san/meson-logs/testlog.json
+            --require pelorus:sei-fit-planted-charge --require pelorus:sei-fit-planted-wrap \
+            build-san/meson-logs/testlog.json
 
   windows:
     # ADR-0149: the native Windows leg. It exists for the Windows-only halves of
@@ -548,13 +523,7 @@ jobs:
             mingw-w64-ucrt-x86_64-shaderc
       - name: Load build configuration
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Runner and toolchain receipt
         run: |
           echo "ImageOS=${ImageOS:-unset}"
@@ -576,9 +545,74 @@ jobs:
             python3 -I scripts/check-test-skips.py --require pelorus:sei-fit \
               --require pelorus:sei-fit-planted-reserve --require pelorus:sei-fit-planted-payload \
               --require pelorus:sei-fit-planted-epb --require pelorus:sei-fit-planted-truncated \
-              --require pelorus:sei-fit-planted-charge build/meson-logs/testlog.json
+              --require pelorus:sei-fit-planted-charge --require pelorus:sei-fit-planted-wrap \
+              build/meson-logs/testlog.json
       - name: UTF-8 path contract transcript
         run: meson test -C build path-utf8 --verbose
+
+  windows-msvc:
+    # ADR-0242: the MSVC-ABI compilers. The MSYS2 leg above uses GCC; fixes for
+    # cl.exe C4996 (#88) and clang-cl -Wdeprecated-declarations (#90) had no
+    # compiler in CI to keep them fixed. This leg builds libpelorus, the tools
+    # and the tests with each compiler under --werror (/W4 /WX for cl, -Wall
+    # -Wextra -Werror semantics for clang-cl) and runs the fast suite.
+    # libpelorus carries no __declspec(dllexport) annotations, so the library is
+    # built static here; a DLL with an import library is a separate feature.
+    name: libpelorus (Windows · ${{ matrix.cc }} · fast suite)
+    runs-on: windows-2025
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # include form: the ruleset lists one context per leg.
+        include:
+          - cc: cl
+          - cc: clang-cl
+    defaults:
+      run:
+        # Git for Windows bash: the fast suite finds bash on PATH. Meson's
+        # --vsenv puts the Visual Studio tools ahead of Git's /usr/bin/link.
+        shell: bash
+    env:
+      CC: ${{ matrix.cc }}
+    steps:
+      - name: Check out without CRLF conversion
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.15'
+      - name: Install Meson and Ninja (hash-pinned)
+        run: python -m pip install --require-hashes -r .config/msvc-ci/requirements.txt
+      - name: Load build configuration
+        run: |
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+      - name: Runner and toolchain receipt
+        run: |
+          echo "ImageOS=${ImageOS:-unset}"
+          echo "ImageVersion=${ImageVersion:-unset}"
+          python --version
+          meson --version
+          ninja --version
+          command -v bash
+      - name: Configure + build
+        run: |
+          meson setup --vsenv --werror build -Ddefault_library=static -Dshaders=false
+          # No silent fallback: fail unless Meson picked the requested compiler.
+          grep -E "^C compiler for the host machine: ${CC} \\(" build/meson-logs/meson-log.txt
+          meson compile -C build --ninja-args=-k,0
+      - name: Test (fast suite, including the UTF-8 path contract)
+        run: |
+          meson test -C build --suite=fast --print-errorlogs
+          python -I scripts/check-test-skips.py --require pelorus:sei-fit \
+            --require pelorus:sei-fit-planted-reserve --require pelorus:sei-fit-planted-payload \
+            --require pelorus:sei-fit-planted-epb --require pelorus:sei-fit-planted-truncated \
+            --require pelorus:sei-fit-planted-charge --require pelorus:sei-fit-planted-wrap \
+            --require pelorus:path-utf8 \
+            build/meson-logs/testlog.json
 
   docs:
     name: docs + changelog + workflow hygiene
@@ -598,17 +632,29 @@ jobs:
         run: |
           scripts/check-gitleaks.sh --self-test
           scripts/check-gitleaks.sh
+      # Linux only (HISS-21 skip reason): Ruff and zizmor read source text, so
+      # their findings do not depend on the host; the windows-msvc job builds
+      # and tests C code. The script also runs on Windows (venv Scripts layout).
+      - name: Install the pinned Python lint tools
+        run: |
+          bin=$(scripts/check-python-lint.sh --install "$RUNNER_TEMP/python-lint")
+          printf 'PYTHON_LINT_BIN=%s\n' "$bin" >> "$GITHUB_ENV"
+      - name: Python lint and workflow audit (Ruff, zizmor)
+        run: |
+          scripts/check-python-lint.sh --self-test
+          scripts/check-python-lint.sh
       - name: Load build configuration
         run: |
-          while IFS= read -r entry; do
-            case "$entry" in
-              FFMPEG_REMOTE=*|FFMPEG_TAG=*|FFMPEG_COMMIT=*)
-                printf '%s\n' "$entry" >> "$GITHUB_ENV"
-                ;;
-            esac
-          done < build-config.env
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
       - name: Changelog fragments render cleanly
         run: bash scripts/release/concat-changelog-fragments.sh --check
+      - name: Co-change rules hold over the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          python3 -I scripts/check-cochange.py --self-test
+          python3 -I scripts/check-cochange.py --require-base --base "origin/${BASE_REF}" --head HEAD
       - name: Every ADR has an index row
         run: |
           missing=0
@@ -621,14 +667,20 @@ jobs:
             }
           done
           exit $missing
-      - name: ADR status matches merge state
+      - name: Generated counts and ADR status match source
         run: |
+          python3 -I scripts/docs/render-counts.py --self-test
+          python3 -I scripts/docs/render-counts.py
           python3 -I scripts/adr/check-status.py --self-test
           python3 -I scripts/adr/check-status.py
       - name: Recipes keep hardware encoders free of hwdownload
         run: |
           python3 -I scripts/check-doc-recipes.py --self-test
           python3 -I scripts/check-doc-recipes.py
+      - name: Documented zero-copy recipes run verbatim
+        run: |
+          python3 -I ffmpeg-patches/test/doc-recipes-smoke.py --self-test
+          python3 -I ffmpeg-patches/test/doc-recipes-smoke.py --check-doc
       - name: Tracked hardware reports validate and the index is current
         run: |
           python3 -I tools/tester/pelorus_tester_report.py --self-test
@@ -643,3 +695,23 @@ jobs:
           cache: false
       - name: Validate workflow syntax
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+  semgrep:
+    name: semgrep (test float identity · planted defect test)
+    runs-on: ubuntu-26.04
+    container:
+      image: mirror.gcr.io/semgrep/semgrep:1.182.1@sha256:451b3d875c00dac7ed5db5293e584a07de11449a409c10b3c2d2652f429630b6
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Load build configuration
+        run: |
+          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+      - name: Scan test code for direct float identity comparisons
+        run: semgrep scan --config .semgrep.yml --error --metrics=off --disable-version-check
+      - name: Verify planted-defect test passes
+        run: python3 -I scripts/test-semgrep-float-identity.py

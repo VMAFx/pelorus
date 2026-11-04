@@ -163,6 +163,27 @@ test('exception-categories',
             '--self-test'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+# ADR-0241: every nosemgrep / nosec marker in tracked Python sits on the start line
+# of a statement or expression and names its rule ids plus a reason. --self-test
+# plants each refused shape (misplaced line, bare marker, missing reason, ...) and
+# then scans the tree.
+test('suppression-markers-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-suppression-markers.py',
+            '--self-test-only'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+# The tree scan lists files with git, which the MSYS2 UCRT64 leg does not put
+# on PATH (CI run 41408892182: FileNotFoundError for git). The planted cases
+# above run there; the Linux jobs scan the tree on every PR.
+if build_machine.system() != 'windows'
+  test('suppression-markers',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-suppression-markers.py',
+              '--self-test'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
 test('telemetry-field-parity-self-test',
      python_prog,
      args: [meson.project_source_root() / 'scripts' / 'check-telemetry-field-parity.py',
@@ -204,11 +225,13 @@ test('vulkan-qpmap-contract',
 # R32_SINT) and fills it by a path the encode queue family can record (RADV's
 # family has VIDEO_ENCODE only: host-mapped LINEAR image). The entry classifier
 # and the host raster run in a C harness; --self-test plants a defect per rule.
+# 12 harness builds x 150 s deadline + margin (scripts/patch_harness.py).
 test('vulkan-qpmap-fill',
      python_prog,
      args: ['-I', meson.project_source_root() / 'scripts' / 'test-vulkan-qpmap-fill.py',
             '--self-test', '--cc'] + meson.get_compiler('c').cmd_array(),
      workdir: meson.project_source_root(),
+     timeout: 1830,
      suite: 'fast')
 
 test('vulkan-validation-streams',
@@ -220,8 +243,10 @@ test('vulkan-validation-streams',
 
 test('vulkan-sample-scale',
      python_prog,
-     args: [meson.project_source_root() / 'scripts' / 'test-vulkan-sample-scale.py'],
+     args: [meson.project_source_root() / 'scripts' / 'test-vulkan-sample-scale.py',
+            '--cc'] + meson.get_compiler('c').cmd_array(),
      workdir: meson.project_source_root(),
+     timeout: 180,
      suite: 'fast')
 
 # BUG-003/004/005/015: the FFmpeg-side consumers scan every appended
@@ -308,6 +333,31 @@ if build_machine.system() != 'windows'
        workdir: meson.project_source_root(),
        timeout: 600,
        suite: 'fast')
+  test('check-cochange-selftest-isolation',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-selftest-git-isolation.py',
+              python_prog.full_path(), '-I',
+              meson.project_source_root() / 'scripts' / 'check-cochange.py',
+              '--self-test'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
+  test('dco-self-test',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-dco.py',
+              '--self-test'],
+       workdir: meson.project_source_root(),
+       timeout: 60,
+       suite: 'fast')
+  test('dco-selftest-isolation',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-selftest-git-isolation.py',
+              python_prog.full_path(), '-I',
+              meson.project_source_root() / 'scripts' / 'check-dco.py',
+              '--self-test'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
   # ADR-0219: the ADR allocator discovers numbers across all local worktrees and
   # branch tips without network. The test drives throwaway Git repositories and
   # worktrees; MSYS2 path translation and POSIX bash fixtures stay Linux-first
@@ -348,30 +398,139 @@ test('fgs-bsf-contract',
 # The NVENC hand diffs only compile inside an ffnvcodec-enabled FFmpeg build.
 # Compile their pure value mappings here: AV1 film-grain chroma biases (BUG-019)
 # and the per-codec ROI delta-QP span (BUG-020).
+# 1 harness build x 150 s deadline + margin (scripts/patch_harness.py).
 test('nvenc-pelorus-mapping',
      python_prog,
      args: [meson.project_source_root() / 'scripts' / 'test-nvenc-pelorus-mapping.py',
             '--cc'] + meson.get_compiler('c').cmd_array(),
+     workdir: meson.project_source_root(),
+     timeout: 180,
+     suite: 'fast')
+
+# The shared C harness of the patch tests reports pass, fail and compile error
+# apart and ends a stalled compiler or harness at its deadline (HISS-02).
+# 3 cases at the default deadlines (2 x 150 s + 120 s) + 2 at 1 s + margin.
+test('patch-harness',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'test-patch-harness.py',
+            '--cc'] + meson.get_compiler('c').cmd_array(),
+     workdir: meson.project_source_root(),
+     timeout: 480,
+     suite: 'fast')
+
+# Every harness test above declares a Meson timeout above its harness deadlines;
+# the self-test plants a missing and a short timeout.
+test('harness-test-timeouts',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-harness-test-timeouts.py'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
+test('harness-test-timeouts-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-harness-test-timeouts.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
+# Every Python except clause with bare pass must carry an explanatory comment;
+# the self-test exercises bare passes, comments, and strings with hash symbols.
+# The tree scan lists files with git, which the MSYS2 UCRT64 leg does not put
+# on PATH (CI run 41645525072: FileNotFoundError for git). The self-test
+# runs there; the Linux jobs scan the tree on every PR.
+if build_machine.system() != 'windows'
+  test('python-empty-except',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-empty-except.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
+
+test('python-empty-except-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-empty-except.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
+# A try block that guards Path.read_text() against OSError must also catch
+# UnicodeDecodeError, or a file with invalid bytes escapes as a traceback.
+# The tree scan lists files with git; see python-empty-except above for why
+# it skips the Windows leg.
+if build_machine.system() != 'windows'
+  test('python-decode-errors',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-decode-errors.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
+
+test('python-decode-errors-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-decode-errors.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
+# Every tracked Python script must parse CLI arguments with stdlib argparse;
+# no hand-indexed argv. The self-test exercises AST shapes and planted bad cases.
+# The tree scan lists files with git, which the MSYS2 UCRT64 leg does not put
+# on PATH (CI run 41645525072: FileNotFoundError for git). The self-test
+# runs there; the Linux jobs scan the tree on every PR.
+if build_machine.system() != 'windows'
+  test('python-argv',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-argv.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
+
+test('python-argv-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-argv.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
+# Every tracked file outside docs/ and an explicit allow-list must avoid hardcoded
+# upstream repository and container registry name literals (#499).
+# The tree scan lists files with git, which Windows CI does not guarantee on PATH.
+if build_machine.system() != 'windows'
+  test('repo-name-literals',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-repo-name-literals.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
+
+test('repo-name-literals-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-repo-name-literals.py',
+            '--self-test'],
      workdir: meson.project_source_root(),
      suite: 'fast')
 
 # Per-frame external-ME-hint setup of patch 0008 (BUG-031): a frame without
 # Pelorus motion data must still submit one zero-MV candidate per block, or the
 # NVENC session fails the whole encode.
+# 2 harness builds x 150 s deadline + margin (scripts/patch_harness.py).
 test('nvenc-me-hints',
      python_prog,
      args: [meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py',
             '--cc'] + meson.get_compiler('c').cmd_array(),
      workdir: meson.project_source_root(),
+     timeout: 330,
      suite: 'fast')
 
 # SVT-AV1 keeps the last ROI event as a sticky pointer (BUG-030); the event
 # builder of patch 0013 must replace it with a neutral event when ROI data ends.
+# 1 harness build x 150 s deadline + margin (scripts/patch_harness.py).
 test('svtav1-roi-sticky',
      python_prog,
      args: [meson.project_source_root() / 'scripts' / 'test-svtav1-roi-sticky.py',
             '--cc'] + meson.get_compiler('c').cmd_array(),
      workdir: meson.project_source_root(),
+     timeout: 180,
      suite: 'fast')
 
 # vf_pelorus_mc_vulkan keeps its host-side MV arithmetic in a plain-C header
@@ -421,6 +580,12 @@ bench_make_record_script = meson.project_source_root() / 'scripts' / 'bench' / '
 test('bench-make-record',
      python_prog,
      args: ['-I', bench_make_record_script, '--self-test'],
+     suite: 'fast')
+
+json_shape_script = meson.project_source_root() / 'tools' / 'tester' / 'pelorus_json_shape.py'
+test('json-shape',
+     python_prog,
+     args: ['-I', json_shape_script, '--self-test'],
      suite: 'fast')
 
 # Issue #267 / ADR-0181: hevc_nvenc's udu_sei path keeps each picture's
@@ -553,6 +718,30 @@ if build_machine.system() != 'windows'
        suite: 'fast')
 endif
 
+# Documented zero-copy recipes run verbatim against hardware devices (ADR-0240):
+# --check-doc enforces section and marker coverage, --self-test plants defects
+# into all assertions, and the smoke skips by default when FFMPEG_BIN is unset.
+test('doc-recipes-self-test',
+     python_prog,
+     args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'doc-recipes-smoke.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+test('doc-recipes-check-doc',
+     python_prog,
+     args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'doc-recipes-smoke.py',
+            '--check-doc'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+if build_machine.system() != 'windows'
+  test('doc-recipes',
+       python_prog,
+       args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'doc-recipes-smoke.py'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
+endif
+
 # The hardware rows of vulkan-format-matrix.sh decode the analyze maps with
 # analyze-maps-check.py; --self-test plants one defect per reader rule and
 # requires each to be rejected.
@@ -579,4 +768,16 @@ test('dehalo-line-art',
      python_prog,
      args: [meson.project_source_root() / 'scripts' / 'test-dehalo-line-art.py'],
      workdir: meson.project_source_root(),
+     suite: 'fast')
+
+# ADR-0239: planted-defect recall for the float-identity Semgrep rule.
+# Refuses == and != between computed floating-point values in test code.
+# Three sequential Semgrep scans at SEMGREP_TIMEOUT_S (180 s) each stay under
+# the 600 s Meson bound, so a hung scan is named by the script, not killed by
+# Meson's 30 s default (a local run takes about 4 s).
+test('semgrep-float-identity',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-semgrep-float-identity.py'],
+     workdir: meson.project_source_root(),
+     timeout: 600,
      suite: 'fast')

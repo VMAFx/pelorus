@@ -64,7 +64,7 @@ Engine: pin = `PRAETOR_REF` in `.github/workflows/standards-gate.yml`. Make (`.c
 | `.claude/skills/`, `.claude/hooks/`, `.codex/hooks/`, `.gemini/settings.json` | agent skills + hooks; see below |
 | `.vscode/`, `.zed/`, `.idea/`, `.helix/`, `.fleet/`, `.nvim.lua`, `lua/`, `.dir-locals.el`, `standards.sublime-project` | reconciled editor settings |
 | `.github/workflows/` | `ci.yml` product jobs, `standards-gate.yml`, locked `praetor-docs.yml`, `release.yml` (`ci` -> `build` -> tag-only `publish`), reusable `release-build.yml`: build, SBOM, SLSA L3 attestation, cosign; no artefact download or cache before attestation (ADR-0169); `devcontainer-image.yml` builds base image on PR, pushes + attests `ghcr.io/vmafx/pelorus-dev` from `master`; `windows-tester.yml` (path-filtered MSYS2 replay + tester zip artifact, no release); Praetor-rendered `reuse.yml` runs `reuse lint`; `codeql.yml` c-cpp, python, actions code scanning, contract `scripts/check-codeql-workflow.py` (ADR-0220) |
-| `.github/rulesets/main.json` | rendered `master` ruleset (0 reviews, signed commits, linear history, 13 checks); committed, applied only by maintainer `praetorctl sync --remote` |
+| `.github/rulesets/main.json` | rendered `master` ruleset (0 reviews, signed commits, linear history, 16 checks); committed, applied only by maintainer `praetorctl sync --remote` |
 
 New top-level package: add row here. New module: scoped `AGENTS.md`.
 
@@ -125,5 +125,5 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | FFmpeg Vulkan models | `vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c`, `vf_scdet_vulkan.c` |
 | AV1 grain ABI mirror | `libavutil/film_grain_params.h` |
 | vmafx control plane | `libvmaf_tune`, `/v1/score`, `vmaf-mcp` |
-| Praetor engine | `2d23b292417386fe8259da29690266ce331062c6` from `.github/workflows/standards-gate.yml` |
+| Praetor engine | `<!-- gen:engine-pin -->c565cba50b57a6d6cfa628a0f424d6c9f9a9e569<!-- /gen:engine-pin -->` from `.github/workflows/standards-gate.yml` |
 | Go for actionlint (`ci.yml` docs job) | `1.27.x`; change with `ACTIONLINT_GO_VERSION` in `scripts/check-build-config.py`; checker's Renovate manager keeps setup-go's `go` identity ([ADR-0151](../adr/0151-renovate-mirrors-checker-toolchain-pins.md)) |

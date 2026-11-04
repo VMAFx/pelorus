@@ -49,6 +49,7 @@ be rejected, so the check is proven to fail on the defects it guards.
 from __future__ import annotations
 
 import pathlib
+import argparse
 import re
 import sys
 
@@ -485,7 +486,16 @@ def split_self_test(enabler: str, qpmap: str) -> list[str]:
     return failures
 
 
-def main(argv: list[str]) -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for check-vulkan-qpmap-contract."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking Vulkan QP-map contract."""
+    args = parse_args(argv)
     enabler = ENABLER.read_text()
     qpmap = PATCH.read_text()
     patch = enabler + qpmap
@@ -495,7 +505,7 @@ def main(argv: list[str]) -> int:
         for error in errors:
             print(f"  - {error}")
         return 1
-    if "--self-test" in argv:
+    if args.self_test:
         failures = split_self_test(enabler, qpmap) + self_test(patch)
         if failures:
             print("Vulkan QP-map contract self-test failures:")

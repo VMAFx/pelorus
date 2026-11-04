@@ -26,6 +26,8 @@ reports as SKIP with the reason printed.
     python3 -I scripts/check-telemetry-field-parity.py --self-test
 """
 
+import argparse
+import importlib.util
 import json
 import re
 import sys
@@ -48,27 +50,59 @@ class Malformed(Exception):
     """A missing, empty or malformed input: exit 2, never a pass."""
 
 
+def _load_json_shape():
+    """Import the shared JSON shape validator from tools/tester by file path."""
+    path = Path(__file__).resolve().parent.parent / "tools" / "tester" / "pelorus_json_shape.py"
+    spec = importlib.util.spec_from_file_location("pelorus_json_shape", path)
+    if spec is None or spec.loader is None:
+        raise ImportError("%s: cannot load pelorus_json_shape" % path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_JSON_SHAPE = _load_json_shape()
+validate_schema = _JSON_SHAPE.validate_schema
+
+
+def _fields_schema(schema_const, side_prop, side_allowed):
+    """Build the schema of a field registry whose entries carry the side property side_prop."""
+    return {
+        "type": "object",
+        "required": ["schema", "fields"],
+        "properties": {
+            "schema": {"const": schema_const},
+            "fields": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "required": ["key", side_prop],
+                    "properties": {
+                        "key": {"type": "string", "minLength": 1},
+                        side_prop: {"enum": list(side_allowed)},
+                    },
+                },
+            },
+        },
+    }
+
+
 def load_fields(path, schema, side_values):
     """Rule 1: parse a field list and return ({key: field}, document)."""
     try:
         doc = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as err:
         raise Malformed("%s: %s" % (path, err)) from err
-    if not isinstance(doc, dict) or doc.get("schema") != schema:
-        raise Malformed("%s: schema is not %s" % (path, schema))
-    fields = doc.get("fields")
-    if not isinstance(fields, list) or not fields:
-        raise Malformed("%s: no fields" % path)
+    sch = _fields_schema(schema, side_values[0], side_values[1])
+    errs = validate_schema(doc, sch)
+    if errs:
+        raise Malformed("%s: %s" % (path, "; ".join(errs)))
     out = {}
-    for field in fields:
-        key = field.get("key") if isinstance(field, dict) else None
-        if not isinstance(key, str) or not key:
-            raise Malformed("%s: a field without a key" % path)
+    for field in doc["fields"]:
+        key = field["key"]
         if key in out:
             raise Malformed("%s: duplicate key %s" % (path, key))
-        if field.get(side_values[0]) not in side_values[1]:
-            raise Malformed("%s: %s has %s %r" % (path, key, side_values[0],
-                                                  field.get(side_values[0])))
         out[key] = field
     return out, doc
 
@@ -274,16 +308,34 @@ def self_test():
         if got != want:
             print("self-test FAIL %s: want exit %d, got %d" % (name, want, got))
             failed = 1
+    try:
+        parse_args(["--root"])
+    except SystemExit as exc:
+        if exc.code != 2:
+            print("self-test FAIL missing --root value: want exit 2, got %d" % exc.code)
+            failed = 1
+    else:
+        print("self-test FAIL missing --root value: did not exit")
+        failed = 1
     print("self-test %s" % ("FAILED" if failed else "passed"))
     return failed
 
 
-def main(argv):
-    if "--self-test" in argv:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for check-telemetry-field-parity."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
+    parser.add_argument("--root", type=Path, default=Path("."), help="root directory")
+    parser.add_argument("--vmafx", type=Path, default=None, help="path to VMAFx field list JSON")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking telemetry field parity."""
+    args = parse_args(argv)
+    if args.self_test:
         return self_test()
-    root = Path(argv[argv.index("--root") + 1]) if "--root" in argv else Path(".")
-    vmafx = Path(argv[argv.index("--vmafx") + 1]) if "--vmafx" in argv else None
-    return run(root, vmafx)
+    return run(args.root, args.vmafx)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,43 @@
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
+#
+# Ruff configuration for the local gate (scripts/check-python-lint.sh, #495).
+# The rule set mirrors the Ruff patterns Codacy runs on this repository, so a
+# finding fails `make verify-all` before it reaches a pull request, plus the
+# rules behind earlier Codacy recurrences (SIM103, E721). Ruff runs as a
+# pinned separate binary (.config/python-lint/requirements.txt); the gate
+# scripts themselves stay python3 -I stdlib-only.
+
+target-version = "py312"
+extend-exclude = ["subprojects", "build*"]
+
+[lint]
+select = [
+    # Codacy Ruff patterns (codacy_list_repository_tool_patterns, 2026-11-04).
+    "B002", "B003", "B006", "B008", "B011", "B012", "B016", "B017", "B019",
+    "B023", "B025", "B026", "B027", "B029", "B030", "B031", "B032", "B035",
+    "B039", "B904",
+    "E722", "E902", "FA102", "PLE2502", "PLW1509", "RUF001",
+    "S102", "S103", "S104", "S105", "S106", "S107", "S108", "S110", "S112",
+    "S113",
+    "S201", "S202",
+    "S301", "S302", "S303", "S304", "S305", "S306", "S307", "S308",
+    "S310", "S311", "S312", "S313", "S314", "S315", "S316", "S317", "S318",
+    "S319", "S321", "S323", "S324",
+    "S501", "S502", "S503", "S504", "S505", "S506", "S507", "S508", "S509",
+    "S601", "S602", "S604", "S605", "S606", "S608", "S609", "S610",
+    "S611", "S612",
+    "S701", "S702", "S704", "TID251", "W605",
+    # Earlier Codacy recurrences (#494): needless bool return, type comparison.
+    "SIM103", "E721",
+    # A blanket `# noqa` would silence every rule on its line.
+    "PGH004",
+    # CodeQL flags unused imports on pull requests (#496 part 4 recurrence).
+    "F401",
+    # Codacy flags unused local variables on pull requests (#498 recurrence).
+    "F841",
+]
+# S101 (assert), S603 and S607 (subprocess argv, partial executable path) stay
+# with Bandit, which Codacy runs with the reviewed Bandit markers of ADR-0241;
+# Ruff does not read Bandit markers, so enabling them here would duplicate
+# every reviewed suppression as a second marker.

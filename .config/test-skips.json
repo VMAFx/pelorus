@@ -5,6 +5,11 @@
     "issue": "ADR-0184: GPU smoke for workstations; CI and make verify-native set no FFMPEG_BIN. Any other skip reason, such as a missing device with FFMPEG_BIN set, fails"
   },
   {
+    "test": "pelorus:doc-recipes",
+    "reason": "SKIP: FFMPEG_BIN unset: doc recipes smoke needs a patched ffmpeg binary",
+    "issue": "ADR-0240: the zero-copy recipes of docs/usage/ffmpeg.md run on workstations with a patched ffmpeg and GPUs; CI and make verify-native set no FFMPEG_BIN, and pelorus:doc-recipes-check-doc and pelorus:doc-recipes-self-test guard the doc there. Any other skip reason, such as every variant skipped with FFMPEG_BIN set, fails"
+  },
+  {
     "test": "pelorus:enc-telemetry-adapters-locale",
     "reason": "SKIP: comma-decimal LC_NUMERIC locale unavailable",
     "issue": "#111: locale-independence check needs an installed comma-decimal locale; all other adapter checks run in pelorus:enc-telemetry-adapters. Revisit: remove this entry when every supported local test environment guarantees de_DE.UTF-8, de_DE.utf8, or fr_FR.UTF-8"
@@ -18,5 +23,10 @@
     "test": "pelorus:qloop-x265-reference",
     "reason": "SKIP: x265, ffmpeg or vmaf not found",
     "issue": "issue #166: reference closed-loop quality-threshold encode test requires x265, ffmpeg, and vmaf on PATH"
+  },
+  {
+    "test": "pelorus:semgrep-float-identity",
+    "reason": "SKIP: semgrep not found",
+    "issue": "ADR-0239: the semgrep CI job runs this test in the pinned semgrep container and fails on any skip there; build lanes without semgrep on PATH skip it"
   }
 ]

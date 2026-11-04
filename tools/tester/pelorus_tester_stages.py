@@ -106,6 +106,7 @@ CONTROL_CHAIN = "pelorus_analyze_vulkan=roi=0"
 # free driver failed on an A380 under xe without HuC (research 0229).
 MEDIA_DRIVER_FREE = "intel-media-va-driver"
 MEDIA_DRIVER_NONFREE = "intel-media-va-driver-non-free"
+INTEL_LIBVA_DRIVER = "iHD"
 # kind: vulkan = frames stay in VRAM to the encoder; hw = hwdownload to a
 # hardware encoder; sw = hwdownload to a software encoder.
 ENCODERS = (
@@ -259,7 +260,7 @@ def load_allowlist(ctx):
         path = Path(ctx["env"].get("PELORUS_VUID_ALLOWLIST") or ALLOWLIST_PATH)
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             text = ""
         today = ctx.get("today") or datetime.date.today()
         ctx["allowlist"] = parse_allowlist(text, today, ctx["disabled"])
@@ -830,7 +831,7 @@ def render_nodes(dev_root="/dev", sys_root="/sys"):
         try:
             vendor = (base / "vendor").read_text(encoding="ascii").strip().lower()
             result.append((node, vendor))
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
     return result
 
@@ -847,7 +848,7 @@ def intel_render_host(dev_root="/dev", sys_root="/sys"):
         try:
             device = (base / "device").read_text(encoding="ascii").strip().lower()
             driver = (base / "driver").resolve().name
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
         if device.startswith(DG2_PCI_PREFIX) and driver == "xe":
             return "xe-dg2"
@@ -1013,6 +1014,11 @@ def chain_for(enc, steered=True):
     return "%s,hwdownload,format=%s" % (head, enc["pix"])
 
 
+def encoder_env(enc):
+    """Environment overrides needed by `enc` (QSV requires Intel iHD under libva)."""
+    return {"LIBVA_DRIVER_NAME": INTEL_LIBVA_DRIVER} if enc["name"].endswith("_qsv") else {}
+
+
 def encode(ctx, enc, dev, entry, src, frames, steered, out):
     """One encode; returns (ok, error line, log text)."""
     argv = ["-hide_banner", "-loglevel", "verbose" if steered else "error", "-y",
@@ -1021,7 +1027,7 @@ def encode(ctx, enc, dev, entry, src, frames, steered, out):
     argv += ["-c:v", enc["name"]] + enc["args"]
     argv += ["-pelorus_roi", "1"] if steered else []
     argv += MUX_ARGS + [str(out)]
-    code, text, err = ffrun(ctx, argv)
+    code, text, err = ffrun(ctx, argv, env=encoder_env(enc))
     ok = code == 0 and Path(out).is_file() and Path(out).stat().st_size > 0
     return ok, err or first_line(text), text
 
@@ -1275,7 +1281,7 @@ def brc_encode(ctx, enc, dev, entry, src, out, rate_args):
             "-filter_hw_device", "vk", "-stream_loop", str(BRC_LOOPS)] + input_args(entry, src)
     argv += ["-frames:v", str(frames), "-vf", BRC_CHAIN, "-c:v", enc["name"]] + rate_args
     argv += ["-f", CODECS[enc["codec"]], str(out)]
-    code, text, err = ffrun(ctx, argv)
+    code, text, err = ffrun(ctx, argv, env=encoder_env(enc))
     ok = code == 0 and Path(out).is_file() and Path(out).stat().st_size > 0
     return ok, err or (encoder_problem_line(text, enc["name"]) if text else "no output"), text
 
@@ -1396,7 +1402,7 @@ def carrier_encode(ctx, car, devs, entry, src, out, sidedata=True, opts=""):
         argv += input_args(entry, src) + ["-frames:v", str(SIDEDATA_FRAMES), "-vf", chain]
         argv += ["-c:v", car["name"]] + car["args"] + (["-udu_sei", "1"] if sidedata else [])
         argv += ["-f", car["codec"], str(out)]
-        code, text, err = ffrun(ctx, argv)
+        code, text, err = ffrun(ctx, argv, env=encoder_env(car))
         if code == 0 and Path(out).is_file() and Path(out).stat().st_size > 0:
             return dev, ""
         why = (encoder_error_line(text, car["name"]) if text else err)[:160] or first_line(text)[:160]
@@ -1587,14 +1593,14 @@ VENDOR_LEGS = (
     },
     {
         "name": "h264_vaapi-intel", "codec": "h264", "vendor": "0x8086", "enc": "h264_vaapi",
-        "hw_fmt": "vaapi", "device_kind": "render_node", "env": {"LIBVA_DRIVER_NAME": "iHD"},
+        "hw_fmt": "vaapi", "device_kind": "render_node", "env": {"LIBVA_DRIVER_NAME": INTEL_LIBVA_DRIVER},
         "filters": "format=nv12,hwupload,pelorus_denoise_vulkan,pelorus_mc_vulkan,"
                    "pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi,format=vaapi",
         "args": ["-rc_mode", "CQP", "-qp", "30"],
     },
     {
         "name": "h264_qsv-intel", "codec": "h264", "vendor": "0x8086", "enc": "h264_qsv",
-        "hw_fmt": "qsv", "device_kind": "render_node", "env": {"LIBVA_DRIVER_NAME": "iHD"},
+        "hw_fmt": "qsv", "device_kind": "render_node", "env": {"LIBVA_DRIVER_NAME": INTEL_LIBVA_DRIVER},
         "filters": "format=nv12,hwupload,pelorus_denoise_vulkan,pelorus_mc_vulkan,"
                    "pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=vaapi,format=vaapi,"
                    "hwmap=derive_device=qsv,format=qsv",
@@ -2028,12 +2034,24 @@ NO_AV1_LOG = ("[av1_nvenc @ 0x1] Codec not supported\n"
               "[vost#0:0/av1_nvenc @ 0x2] Error while opening encoder\nConversion failed!\n")
 
 
+def standin_output(argv, size):
+    """Write `size` bytes to the output path a stand-in FFmpeg was given (argv[-1]).
+
+    Refuses a relative path: a stand-in that answers a non-encode call (dpkg-query, a probe)
+    would otherwise create a file named after its last argument in the working directory."""
+    out = Path(argv[-1])
+    if not out.is_absolute():
+        raise ValueError("stand-in output path is not absolute: %r" % argv[-1])
+    out.write_bytes(b"\x00" * size)
+
+
 def fake_encode_ctx(disabled, work):
     """FFmpeg stand-in: av1_nvenc fails as on a GPU without AV1 NVENC; the rest encode."""
     def run(argv, timeout_s, env=None):
+        """Stand-in FFmpeg: fail av1_nvenc, write every other output."""
         if "av1_nvenc" in argv:
             return 1, NO_AV1_LOG, ""
-        Path(argv[-1]).write_bytes(b"\x00" * 64)
+        standin_output(argv, 64)
         return 0, "", ""
     ctx = stage_ctx({"PELORUS_VALIDATE": "0"}, run)
     ctx.update(disabled=disabled, work=str(work))
@@ -2045,11 +2063,12 @@ def fake_encode_ctx(disabled, work):
 def fake_qsv_ctx(work, dpkg_text):
     """FFmpeg stand-in where hevc_qsv fails as with the free driver on an A380 under xe without HuC."""
     def run(argv, timeout_s, env=None):
+        """Stand-in FFmpeg for QSV: answer dpkg-query with the given text, fail hevc_qsv, write every other output."""
         if argv[0] == "dpkg-query":
             return 1, dpkg_text, ""
         if "hevc_qsv" in argv:
             return 183, "[hevc_qsv @ 0x1] Invalid FrameType:0.\n", ""
-        Path(argv[-1]).write_bytes(b"\x00" * 64)
+        standin_output(argv, 64)
         return 0, "", ""
     ctx = stage_ctx({"PELORUS_VALIDATE": "0"}, run)
     ctx.update(work=str(work))
@@ -2076,6 +2095,49 @@ def self_test_free_driver(expect, disabled, entry):
         expect("no_dpkg_no_driver_claim", got[0] == "not_run" and "free" not in got[1])
 
 
+def self_test_qsv_libva_pin(expect, entry):
+    """QSV steering, BRC and side-data carrier encodes pin LIBVA_DRIVER_NAME=iHD over a host nvidia setting."""
+    import tempfile
+    seen = []
+
+    def run(argv, timeout_s, env=None):
+        """Stand-in FFmpeg recording argv and env, writing 64 bytes of output."""
+        seen.append((list(argv), dict(env or {})))
+        standin_output(argv, 64)
+        return 0, "", ""
+
+    with tempfile.TemporaryDirectory(prefix="pelorus-qsv-env-") as tmp:
+        work = Path(tmp)
+        ctx = stage_ctx({"PELORUS_VALIDATE": "0", "LIBVA_DRIVER_NAME": "nvidia"}, run)
+        ctx.update(work=str(work))
+        ctx["ff"] = {"bin": "ffmpeg", "filters": set(), "encoders": {"hevc_qsv", "h264_nvenc"}, "help": {}}
+        enc_qsv = next(e for e in ENCODERS if e["name"] == "hevc_qsv")
+        enc_nv = next(e for e in ENCODERS if e["name"] == "h264_nvenc")
+        fe = dict(entry, frames=2)
+
+        seen.clear()
+        encode(ctx, enc_qsv, 0, fe, "src", 8, True, work / "qsv-steer.mkv")
+        steer_qsv_driver = seen[-1][1].get("LIBVA_DRIVER_NAME") if seen else None
+
+        seen.clear()
+        encode(ctx, enc_nv, 0, fe, "src", 8, True, work / "nv-steer.mkv")
+        steer_nv_driver = seen[-1][1].get("LIBVA_DRIVER_NAME") if seen else None
+
+        seen.clear()
+        brc_encode(ctx, enc_qsv, 0, fe, "src", work / "qsv-brc.mkv", ["-b:v", "1000k"])
+        brc_qsv_driver = seen[-1][1].get("LIBVA_DRIVER_NAME") if seen else None
+
+        seen.clear()
+        car_qsv = dict(enc_qsv, kind="hw", args=[])
+        carrier_encode(ctx, car_qsv, [0], fe, "src", work / "qsv-sei.hevc")
+        carrier_qsv_driver = seen[-1][1].get("LIBVA_DRIVER_NAME") if seen else None
+
+        expect("qsv_steer_encode_pins_ihd", steer_qsv_driver == INTEL_LIBVA_DRIVER)
+        expect("qsv_carrier_encode_pins_ihd", carrier_qsv_driver == INTEL_LIBVA_DRIVER)
+        expect("non_qsv_encode_inherits_env", steer_nv_driver == "nvidia")
+        expect("qsv_brc_encode_pins_ihd", brc_qsv_driver == INTEL_LIBVA_DRIVER)
+
+
 def self_test_legs(expect, disabled):
     """AV1 without hardware support, and an encoder without the steering option, are named not_run legs."""
     import tempfile
@@ -2096,6 +2158,7 @@ def self_test_legs(expect, disabled):
     expect("control_arm_has_no_roi", all(
         "roi=0" in chain_for(e, False) and "roi=1" in chain_for(e, True) for e in ENCODERS))
     self_test_free_driver(expect, disabled, entry)
+    self_test_qsv_libva_pin(expect, entry)
     status, _, _, legs = aggregate_legs([("hevc_nvenc", "hevc", "pass", ""),
                                          ("av1_nvenc", "av1", "not_run", "no AV1 encode")], disabled)
     expect("legs_recorded", status == "pass" and [l["status"] for l in legs] == ["pass", "not_run"])
@@ -2259,13 +2322,15 @@ def self_test_reference(expect, disabled):
     cases = [(SIDEDATA_CASES[0], "src", entry)]
 
     def stub(logs):
+        """Build a stand-in that answers reference reads with `logs` in order, repeating the last one after that."""
         runs = []
 
         def run(argv, timeout_s, env=None):
+            """Stand-in FFmpeg: answer reference reads with the logs in order, repeating the last log once they run out; write every other output."""
             if "-f" in argv and argv[-2:] == ["null", "-"] and "-vf" in argv:
                 runs.append(1)
                 return 0, logs[min(len(runs), len(logs)) - 1], ""
-            Path(argv[-1]).write_bytes(b"\x00" * 64)
+            standin_output(argv, 64)
             return 0, "", ""
         return run, runs
 
@@ -2289,10 +2354,12 @@ def self_test_carrier(expect, disabled):
     cases = [(SIDEDATA_CASES[0], "src", entry)]
 
     def stub(fail_when):
+        """Build a stand-in that fails with ENOMEM whenever fail_when(argv) is true."""
         def run(argv, timeout_s, env=None):
+            """Stand-in FFmpeg: fail the selected calls, write every other output."""
             if fail_when(argv):
                 return 1, enomem, ""
-            Path(argv[-1]).write_bytes(b"\x00" * 64)
+            standin_output(argv, 64)
             return 0, "", ""
         return run
 
@@ -2372,12 +2439,13 @@ def fake_brc_ctx(work, disabled, extbrc_rate, extbrc_state="ON"):
     """FFmpeg stand-in for hevc_qsv on a DG2 under xe: CQP and -extbrc 1 encode (the latter at
     `extbrc_rate` bit/s), hardware CBR fails as without HuC, decodes yield every frame."""
     def run(argv, timeout_s, env=None):
+        """Stand-in FFmpeg for the bitrate legs: framecrc, the hw-BRC failure and the encodes."""
         if "framecrc" in argv:
             return 0, "".join("0, %d, %d, 1, 384, 0x0\n" % (i, i) for i in range(16)), ""
         if "-b:v" in argv and "-extbrc" not in argv:
             return 183, "[hevc_qsv @ 0x1] ExtBRC: OFF\n[hevc_qsv @ 0x1] Invalid FrameType:0.\n", ""
         size = int(extbrc_rate * 0.64 / 8) if "-extbrc" in argv else 64
-        Path(argv[-1]).write_bytes(b"\x00" * size)
+        standin_output(argv, size)
         return 0, "[hevc_qsv @ 0x1] BitrateLimit: unknown; MBBRC: OFF; ExtBRC: %s\n" % extbrc_state, ""
     ctx = stage_ctx({"PELORUS_VALIDATE": "0"}, run)
     ctx.update(disabled=disabled, work=str(work), intel_host="xe-dg2")
@@ -2412,6 +2480,166 @@ def self_test_brc_legs(expect, disabled):
     status = aggregate_legs([("hevc_qsv", "hevc", "not_run", "no -pelorus_roi"),
                              ("hevc_qsv", "hevc") + good + ("cbr_extbrc",)], disabled)[0]
     expect("brc_pass_alone_is_not_a_steering_pass", status == "not_run")
+
+
+class _StandinFixtures:
+    """Fixtures stand-in with the fixture_for contract: load_lock, default_cache, ensure_offline."""
+
+    def __init__(self, entries, cache, offline_result=None):
+        """Keep the lock entries, the cache folder and an optional stop result for ensure_offline."""
+        self.entries = entries
+        self.cache = cache
+        self.offline_result = offline_result
+
+    def load_lock(self):
+        """The lock entries with no read error."""
+        return self.entries, ""
+
+    def default_cache(self):
+        """The cache folder given at construction."""
+        return self.cache
+
+    def ensure_offline(self, entry, cache, binary, run):
+        """The configured stop result, else the cached fixture path with no notes."""
+        if self.offline_result is not None:
+            return self.offline_result
+        return Path(cache) / entry["file"], [], False
+
+
+BRC_STAGE_HELP = "  -extbrc            <int>        E..V....... Extended bitrate control"
+BRC_STAGE_ENTRIES = tuple(
+    {"name": name, "file": name + ".yuv", "pixfmt": "yuv420p", "width": 16, "height": 16,
+     "fps": 25, "frames": 2} for name in ("synth-banding", BRC_FIXTURE))
+
+
+def brc_stage_run(recorded):
+    """FFmpeg stand-in that records every argv: decodes yield every looped frame, CBR
+    encodes land near 1000 kb/s (ExtBRC ON with -extbrc), other encodes write a small file."""
+    frames = BRC_STAGE_ENTRIES[1]["frames"] * (BRC_LOOPS + 1)
+
+    def run(argv, timeout_s, env=None):
+        """Record argv and answer like FFmpeg for decode, CBR and constant-QP calls."""
+        recorded.append(list(argv))
+        if "framecrc" in argv:
+            return 0, "".join("0, %d, %d, 1, 384, 0x0\n" % (i, i) for i in range(frames)), ""
+        if "-b:v" in argv:
+            standin_output(argv, int(1000000 * 0.64 / 8))
+            ext = "ON" if "-extbrc" in argv else "OFF"
+            return 0, "[hevc_qsv @ 0x1] BitrateLimit: unknown; MBBRC: OFF; ExtBRC: %s\n" % ext, ""
+        if "-c:v" in argv:
+            standin_output(argv, 64)
+        return 0, "", ""
+    return run
+
+
+def brc_stage_ctx(tmp, disabled, encoders, offline_result=None, env=None):
+    """Stage context on the stand-in; returns (ctx, recorded argv list)."""
+    recorded = []
+    ctx = stage_ctx(dict({"PELORUS_VALIDATE": "0"}, **(env or {})), brc_stage_run(recorded))
+    fixtures = _StandinFixtures(list(BRC_STAGE_ENTRIES), tmp, offline_result)
+    ctx.update(work=tmp, fixtures=fixtures, disabled=disabled, intel_host="xe-dg2", devices=[{}])
+    ctx["ff"] = {"bin": "ffmpeg", "filters": {"pelorus_analyze_vulkan"}, "encoders": set(encoders),
+                 "help": {e: BRC_STAGE_HELP for e in encoders if e.endswith("_qsv")}}
+    return ctx, recorded
+
+
+def argv_value(argv, flag):
+    """Value after `flag` in an argv list, or None."""
+    return argv[argv.index(flag) + 1] if flag in argv[:-1] else None
+
+
+def brc_argv(recorded, extbrc):
+    """The recorded CBR encode with (extbrc=True) or without -extbrc, or []."""
+    return next((a for a in recorded if "-b:v" in a and ("-extbrc" in a) == extbrc), [])
+
+
+def brc_rate_ok(argv):
+    """Every BRC_RATE flag carries its own value in argv."""
+    return all(argv_value(argv, f) == v for f, v in zip(BRC_RATE[::2], BRC_RATE[1::2]))
+
+
+def brc_modes(legs):
+    """(encoder, rate-control mode) pairs of brc_legs results, in order."""
+    return [(r[0], r[4]) for r in legs]
+
+
+def self_test_brc_stage_discovery(expect, disabled, tmp):
+    """brc_legs picks the QSV encoders of the build, two legs each, and nothing else."""
+    ctx, _ = brc_stage_ctx(tmp, disabled, ("hevc_qsv", "av1_qsv", "h264_qsv", "hevc_nvenc"))
+    legs = brc_legs(ctx, 0, Path(tmp))
+    expect("brc_stage_legs_per_qsv_encoder",
+           brc_modes(legs) == [(e, m) for e in ("h264_qsv", "hevc_qsv", "av1_qsv")
+                               for m in ("cbr_extbrc", "cbr_hw")]
+           and [r[2:4] for r in legs if r[0] == "av1_qsv"][:1] == [("not_run", AV1_EXTBRC_REASON)])
+    ctx, recorded = brc_stage_ctx(tmp, disabled, ("hevc_nvenc", "h264_nvenc"))
+    legs = brc_legs(ctx, 0, Path(tmp))
+    expect("brc_stage_no_qsv_no_legs", legs == [] and not [a for a in recorded if "-c:v" in a])
+
+
+def self_test_brc_stage_argv(expect, disabled, tmp):
+    """Both CBR encodes loop the bitrate fixture, set each rate and run on the given device."""
+    ctx, recorded = brc_stage_ctx(tmp, disabled, ("hevc_qsv",))
+    brc_legs(ctx, 3, Path(tmp))
+    frames = BRC_STAGE_ENTRIES[1]["frames"] * (BRC_LOOPS + 1)
+    src = str(Path(tmp) / (BRC_FIXTURE + ".yuv"))
+    ext, hw = brc_argv(recorded, True), brc_argv(recorded, False)
+    expect("brc_stage_encode_argv",
+           argv_value(ext, "-extbrc") == "1" and bool(hw)
+           and all(argv_value(a, "-stream_loop") == str(BRC_LOOPS)
+                   and argv_value(a, "-frames:v") == str(frames) and argv_value(a, "-i") == src
+                   and argv_value(a, "-c:v") == "hevc_qsv" and brc_rate_ok(a)
+                   and argv_value(a, "-init_hw_device") == "vulkan=vk:3" for a in (ext, hw)))
+
+
+def self_test_brc_stage_fixture(expect, disabled, tmp):
+    """A fixture that is absent stops every leg as not_run; a damaged one fails every leg."""
+    ctx, recorded = brc_stage_ctx(tmp, disabled, ("hevc_qsv",), (None, ["absent reason"], True))
+    legs = brc_legs(ctx, 0, Path(tmp))
+    pairs = [("hevc_qsv", "cbr_extbrc"), ("hevc_qsv", "cbr_hw")]
+    expect("brc_stage_fixture_absent_not_run",
+           brc_modes(legs) == pairs and all(r[2] == "not_run" and "absent reason" in r[3] for r in legs)
+           and not [a for a in recorded if "-c:v" in a])
+    ctx, _ = brc_stage_ctx(tmp, disabled, ("hevc_qsv",), (None, ["hash mismatch"], False))
+    legs = brc_legs(ctx, 0, Path(tmp))
+    expect("brc_stage_fixture_error_fails",
+           brc_modes(legs) == pairs and all(r[2] == "fail" and "hash mismatch" in r[3] for r in legs))
+
+
+def self_test_brc_stage_wired(expect, disabled, tmp):
+    """run_steering reports both bitrate-control legs as passing, run on the forced device."""
+    ctx, recorded = brc_stage_ctx(tmp, disabled, ("hevc_qsv",), env={"VULKAN_DEVICE": "2"})
+    outcome = run_steering(ctx, {})
+    legs = outcome[3] if len(outcome) > 3 and outcome[3] else []
+    got = {leg.get("rate_control"): leg.get("status") for leg in legs
+           if leg.get("encoder") == "hevc_qsv" and leg.get("rate_control")}
+    expect("brc_stage_wired_into_steering",
+           got == {"cbr_extbrc": "pass", "cbr_hw": "pass"}
+           and all(argv_value(brc_argv(recorded, x), "-init_hw_device") == "vulkan=vk:2"
+                   for x in (True, False)))
+
+
+def self_test_brc_stage(expect, disabled):
+    """brc_legs and its wiring into steering_smoke, on a stand-in FFmpeg (no Intel GPU in CI)."""
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="pelorus-brc-stage-") as tmp:
+        self_test_brc_stage_discovery(expect, disabled, tmp)
+        self_test_brc_stage_argv(expect, disabled, tmp)
+        self_test_brc_stage_fixture(expect, disabled, tmp)
+        self_test_brc_stage_wired(expect, disabled, tmp)
+        self_test_standin_output(expect, tmp)
+
+
+def self_test_standin_output(expect, tmp):
+    """standin_output writes an absolute output path and refuses a dpkg-query package name."""
+    standin_output(["ffmpeg", str(Path(tmp) / "out.bin")], 4)
+    try:
+        standin_output(["dpkg-query", "-W", MEDIA_DRIVER_NONFREE], 4)
+        refused = False
+    except ValueError:
+        refused = True
+    expect("standin_refuses_relative_output",
+           refused and (Path(tmp) / "out.bin").stat().st_size == 4
+           and not Path(MEDIA_DRIVER_NONFREE).exists())
 
 
 def subproc_run(argv, timeout_s, env=None):
@@ -2626,6 +2854,7 @@ def self_test(disabled=frozenset()):
     self_test_brc_failures(expect, disabled)
     self_test_render_host(expect)
     self_test_brc_legs(expect, disabled)
+    self_test_brc_stage(expect, disabled)
     self_test_registration(expect, disabled)
     self_test_suite(expect, disabled)
     self_test_vendor_graph(expect, disabled)

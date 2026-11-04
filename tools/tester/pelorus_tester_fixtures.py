@@ -217,7 +217,7 @@ def download(entry, cache, opener=urllib.request.urlopen):
     limit = int(spec.get("max_bytes", 1 << 26))
     fd, tmp = tempfile.mkstemp(dir=str(cache), suffix=".part")
     try:
-        req = urllib.request.Request(spec["url"], headers={"User-Agent": USER_AGENT})
+        req = urllib.request.Request(spec["url"], headers={"User-Agent": USER_AGENT})  # noqa: S310 - scheme checked https-only above
         with os.fdopen(fd, "wb") as out, opener(req, timeout=FETCH_TIMEOUT_S) as resp:
             body = resp.read(limit + 1)
             out.write(body[:limit])

@@ -28,6 +28,7 @@ host-only transfer buffer to pass.
 from __future__ import annotations
 
 import pathlib
+import argparse
 import re
 import sys
 
@@ -243,9 +244,18 @@ def self_test() -> list[str]:
     return failures
 
 
-def main(argv: list[str]) -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for check-vulkan-buffer-domain."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking Vulkan buffer domain contract."""
+    args = parse_args(argv)
     errors = check(source_texts())
-    if "--self-test" in argv:
+    if args.self_test:
         errors += self_test()
     for error in errors:
         print(error, file=sys.stderr)

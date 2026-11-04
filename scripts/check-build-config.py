@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -64,7 +65,14 @@ WINDOWS_RUNNER = "windows-2025"
 # Issue #170, ADR-0203: native arm64 CI lane on ubuntu-26.04-arm.
 ARM64_JOB = "arm64"
 ARM64_RUNNER = "ubuntu-26.04-arm"
-CI_JOB_RUNNERS = {WINDOWS_JOB: WINDOWS_RUNNER, ARM64_JOB: ARM64_RUNNER}
+# Issue #455, ADR-0242: the MSVC-ABI compiler leg (cl.exe and clang-cl).
+WINDOWS_MSVC_JOB = "windows-msvc"
+SEI_FIT_CI_JOBS = ("core", "sanitizers", WINDOWS_JOB, WINDOWS_MSVC_JOB)
+CI_JOB_RUNNERS = {
+    WINDOWS_JOB: WINDOWS_RUNNER,
+    WINDOWS_MSVC_JOB: WINDOWS_RUNNER,
+    ARM64_JOB: ARM64_RUNNER,
+}
 SETUP_MSYS2_PIN = re.compile(
     r"^[ ]+(?:- )?uses: msys2/setup-msys2@[0-9a-f]{40} # v\d+\.\d+\.\d+$", re.MULTILINE
 )
@@ -79,6 +87,21 @@ WINDOWS_COMMANDS = (
     "meson test -C build --suite=fast --print-errorlogs",
     "meson test -C build path-utf8 --verbose",
 )
+WINDOWS_MSVC_BLOCK_TOKENS = (
+    "include:\n          - cc: cl\n          - cc: clang-cl\n",
+    "CC: ${{ matrix.cc }}",
+    "ImageOS",
+    "ImageVersion",
+)
+WINDOWS_MSVC_COMMANDS = (
+    "python -m pip install --require-hashes -r .config/msvc-ci/requirements.txt",
+    "meson setup --vsenv --werror build",
+    'grep -E "^C compiler for the host machine: ${CC} \\\\(" build/meson-logs/meson-log.txt',
+    "meson compile -C build",
+    "meson test -C build --suite=fast --print-errorlogs",
+    "--require pelorus:path-utf8",
+)
+WINDOWS_MSVC_TOKENS = WINDOWS_MSVC_BLOCK_TOKENS + WINDOWS_MSVC_COMMANDS
 PIN_PROJECTIONS = (
     ROOT / "README.md",
     ROOT / "AGENTS.md",
@@ -307,7 +330,7 @@ def read_tracked_text(path: Path) -> tuple[str, list[str]]:
         return "", [f"{relative}: missing"]
     try:
         return path.read_text(encoding="utf-8"), []
-    except OSError as error:
+    except (OSError, UnicodeDecodeError) as error:
         return "", [f"{relative}: could not read: {error}"]
 
 
@@ -2511,6 +2534,235 @@ def validate_windows_job(relative: str, block: str | None) -> list[str]:
     return errors
 
 
+def _join_command_continuations(raw_lines: list[str]) -> list[str]:
+    """Join shell backslash continuations after dropping comment lines."""
+    result: list[str] = []
+    current: list[str] = []
+    for line in (line.strip() for line in raw_lines if not line.lstrip().startswith("#")):
+        if not line:
+            continue
+        if line.endswith("\\"):
+            current.append(line[:-1].rstrip())
+        else:
+            current.append(line)
+            result.append(" ".join(current))
+            current = []
+    if current:
+        result.append(" ".join(current))
+    return result
+
+
+def _extract_run_body(
+    lines: list[str], index: int, key_indent: int, first: str
+) -> tuple[list[str], int]:
+    """Read the scalar or block body of a step-level `run:` key starting at `index`."""
+    if first and not first.startswith(("|", ">")):
+        return [first], index
+    body: list[str] = []
+    while index < len(lines):
+        sub = lines[index]
+        if sub.strip() and len(sub) - len(sub.lstrip(" ")) <= key_indent:
+            break
+        if sub.strip():
+            body.append(sub.strip())
+        index += 1
+    return body, index
+
+
+def job_executed_run_commands(block: str) -> str:
+    """Extract executed run commands from steps; comments dropped, continuations joined."""
+    lines = block.splitlines()
+    try:
+        steps_idx = next(i for i, line in enumerate(lines) if line.strip() == "steps:")
+    except StopIteration:
+        return ""
+    steps_indent = len(lines[steps_idx]) - len(lines[steps_idx].lstrip(" "))
+    commands: list[str] = []
+    step_indent: int | None = None
+    i = steps_idx + 1
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            i += 1
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent <= steps_indent and not stripped.startswith("-"):
+            break
+        item = re.match(r"^(\s*)-\s+(.*)$", line)
+        if item and (step_indent is None or len(item.group(1)) == step_indent):
+            step_indent = len(item.group(1))
+            run_match = re.match(r"^run:\s*(.*)$", item.group(2))
+            key_indent = step_indent + 2
+        elif step_indent is not None and indent == step_indent + 2:
+            run_match = re.match(r"^run:\s*(.*)$", stripped)
+            key_indent = indent
+        else:
+            run_match = None
+            key_indent = 0
+        if not run_match:
+            i += 1
+            continue
+        body, i = _extract_run_body(lines, i + 1, key_indent, run_match.group(1).strip())
+        commands.extend(_join_command_continuations(body))
+    return "\n".join(commands)
+
+
+def sei_fit_planted_rules(meson_text: str) -> list[str]:
+    """Extract planted rules from meson.build foreach rule : [...] after test('sei-fit')."""
+    pos = meson_text.find("test('sei-fit'")
+    if pos < 0:
+        return []
+    match = re.search(r"foreach\s+rule\s*:\s*\[([^\]]+)\]", meson_text[pos:])
+    if not match:
+        return []
+    return re.findall(r"['\"]([A-Za-z0-9_-]+)['\"]", match.group(1))
+
+
+def executed_command_tokens(executed: str) -> list[list[str]]:
+    """Split executed run command lines into simple command token sequences."""
+    commands: list[list[str]] = []
+    delimiters = {"&&", "||", ";", "|"}
+    for line in executed.splitlines():
+        try:
+            tokens = shlex.split(line, comments=True)
+        except ValueError:
+            continue
+        current: list[str] = []
+        for token in tokens:
+            if token in delimiters:
+                if current:
+                    commands.append(current)
+                    current = []
+            else:
+                current.append(token)
+        if current:
+            commands.append(current)
+    return commands
+
+
+PYTHON_INTERPRETER = re.compile(r"^(python(3(\.\d+)?)?|py)$")
+ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _is_check_test_skips_command(cmd: list[str]) -> bool:
+    """True when cmd invokes check-test-skips.py directly or under a Python interpreter."""
+    idx = 0
+    while idx < len(cmd) and ENV_ASSIGNMENT.match(cmd[idx]):
+        idx += 1
+    if idx >= len(cmd):
+        return False
+    first = Path(cmd[idx]).name
+    if PYTHON_INTERPRETER.match(first):
+        idx += 1
+        while idx < len(cmd) and cmd[idx].startswith("-"):
+            if cmd[idx] == "-m" or cmd[idx].startswith("-m"):
+                return False
+            idx += 1
+        if idx >= len(cmd):
+            return False
+        script = cmd[idx]
+    else:
+        script = cmd[idx]
+    return Path(script).name == "check-test-skips.py"
+
+
+def check_test_skips_requires(executed: str) -> list[set[str]]:
+    """Extract --require values per check-test-skips.py invocation in executed commands."""
+    invocations: list[set[str]] = []
+    for cmd in executed_command_tokens(executed):
+        if not _is_check_test_skips_command(cmd):
+            continue
+        requires: set[str] = set()
+        i = 0
+        while i < len(cmd):
+            token = cmd[i]
+            if token == "--require":  # noqa: S105 - argv token, not a credential
+                if i + 1 < len(cmd):
+                    requires.add(cmd[i + 1])
+                    i += 1
+            elif token.startswith("--require="):
+                requires.add(token[len("--require=") :])
+            i += 1
+        invocations.append(requires)
+    return invocations
+
+
+def validate_ci_check_test_skips(
+    relative: str, jobs: dict[str, str], meson_text: str | None = None
+) -> list[str]:
+    """Require every planted rule from meson.build in check-test-skips invocations."""
+    if Path(relative).name != "ci.yml":
+        return []
+    if meson_text is None:
+        meson, meson_errors = read_tracked_text(ROOT / "meson.build")
+        if meson_errors:
+            return meson_errors
+        meson_text = meson
+    rules = sei_fit_planted_rules(meson_text)
+    if not rules:
+        return [f"{relative}: no sei-fit planted rules found in meson.build"]
+    errors: list[str] = []
+    for name in SEI_FIT_CI_JOBS:
+        if name not in jobs:
+            errors.append(
+                f"{relative}: job {name} must run check-test-skips.py with --require pelorus:sei-fit"
+            )
+    for name, block in jobs.items():
+        executed = job_executed_run_commands(block)
+        invocations = check_test_skips_requires(executed)
+        relevant = [
+            inv
+            for inv in invocations
+            if any(v.startswith("pelorus:sei-fit") for v in inv)
+        ]
+        if not relevant:
+            if name in SEI_FIT_CI_JOBS:
+                errors.append(
+                    f"{relative}: job {name} must run check-test-skips.py with --require pelorus:sei-fit"
+                )
+            continue
+        for inv in relevant:
+            for target in ("sei-fit", *(f"sei-fit-planted-{r}" for r in rules)):
+                expected = f"pelorus:{target}"
+                if expected not in inv:
+                    errors.append(
+                        f"{relative}: job {name} is missing --require {expected}"
+                    )
+    return errors
+
+
+def validate_windows_msvc_job(relative: str, block: str | None) -> list[str]:
+    """ADR-0242: cl.exe and clang-cl build libpelorus under --werror and run the suite."""
+    if block is None:
+        return [f"{relative}: missing MSVC Windows job {WINDOWS_MSVC_JOB}"]
+    prefix = f"{relative}: MSVC Windows job"
+    errors: list[str] = []
+    autocrlf = block.find("git config --global core.autocrlf false")
+    checkout = block.find("uses: actions/checkout@")
+    if autocrlf < 0 or autocrlf > checkout:
+        errors.append(f"{prefix} must disable core.autocrlf before checkout")
+    for action in USES_LINE.findall(block):
+        if not re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", action):
+            errors.append(f"{prefix} must pin {action} by full commit digest")
+    for token in WINDOWS_MSVC_BLOCK_TOKENS:
+        if token not in block:
+            errors.append(f"{prefix} is missing {token}")
+    executed = job_executed_run_commands(block)
+    commands = executed_command_tokens(executed)
+    requires = check_test_skips_requires(executed)
+    for command in WINDOWS_MSVC_COMMANDS:
+        if command.startswith("--require "):
+            val = command[len("--require ") :].strip()
+            if not any(val in reqs for reqs in requires):
+                errors.append(f"{prefix} is missing {command}")
+        else:
+            want = shlex.split(command)
+            if not any(cmd[: len(want)] == want for cmd in commands):
+                errors.append(f"{prefix} is missing {command}")
+    return errors
+
+
 def validate_lavapipe_job(relative: str, block: str | None) -> list[str]:
     """Validate the lavapipe lane: draft stop first, bounded, pinned, guarded."""
     if block is None:
@@ -2585,8 +2837,8 @@ RELEASE_BUILD_TOKENS = (
     "upload-artifact: false",
     "upload-release-assets: false",
     "format: spdx-json",
-    "--certificate-identity-regexp "
-    "'^https://github\\.com/VMAFx/pelorus/\\.github/workflows/release-build\\.yml@'",
+    '--certificate-identity-regexp "$identity"',
+    'identity="^${GITHUB_SERVER_URL//./\\\\.}/${GITHUB_REPOSITORY//./\\\\.}/\\.github/workflows/release-build\\.yml@"',
     "--certificate-oidc-issuer https://token.actions.githubusercontent.com",
     "GITHUB_REF_NAME//\\//-",
     "ARTIFACT_LABEL",
@@ -2822,9 +3074,67 @@ def _validate_release_build(relative: str, text: str, jobs: dict[str, str]) -> l
     return errors
 
 
+# The load step selects its keys with one grep; a shell loop over the file
+# has no scalar bound (HISS-02).
+LOAD_STEP_LOOP = re.compile(r"^\s*(?:while|until|for)\s", re.MULTILINE)
+NEXT_STEP = re.compile(r"^\s*- (?:name|uses):", re.MULTILINE)
+LOAD_STEP_APPEND = re.compile(r'>>\s*"?\$GITHUB_ENV"?')
+LOAD_STEP_GREP = re.compile(r"\bgrep\b")
+
+
+def _step_text(block: str, start: int) -> str:
+    """The text of the step whose name starts at `start`, up to the next step."""
+    following = NEXT_STEP.search(block, start + 1)
+    return block[start : following.start() if following else len(block)]
+
+
+LOAD_STEP_TOKENS = (
+    "name: Load build configuration",
+    "build-config.env",
+    "FFMPEG_REMOTE",
+    "FFMPEG_TAG",
+    "FFMPEG_COMMIT",
+    "GITHUB_ENV",
+)
+
+
+def _validate_load_step(relative: str, name: str, block: str) -> list[str]:
+    """A job loads build-config.env after checkout, with one bounded grep."""
+    errors: list[str] = []
+    checkout = block.find("uses: actions/checkout@")
+    load = block.find("name: Load build configuration")
+    if checkout < 0 or load < checkout:
+        errors.append(f"{relative}: job {name} must load build-config.env after checkout")
+    if load < 0:
+        return errors
+    # Tokens elsewhere in the job prove nothing; only the load step counts.
+    step = _step_text(block, load)
+    for token in LOAD_STEP_TOKENS:
+        if token not in step:
+            errors.append(f"{relative}: job {name} build-config step is missing {token}")
+    if not LOAD_STEP_APPEND.search(step):
+        errors.append(f'{relative}: job {name} build-config step is missing >> "$GITHUB_ENV"')
+    if not LOAD_STEP_GREP.search(step):
+        errors.append(f"{relative}: job {name} build-config step is missing grep")
+    if LOAD_STEP_LOOP.search(step):
+        errors.append(
+            f"{relative}: job {name} build-config step must not loop; "
+            "select the keys with one grep"
+        )
+    return errors
+
+
 def _validate_workflow_structure_and_jobs(
     relative: str, text: str, jobs: dict[str, str]
 ) -> list[str]:
+    """Validate workflow tokens, job runner pins, load steps, and receipts.
+
+    Checks workflow text for forbidden tokens and copied FFmpeg release
+    tags, requires each job to run on exactly its pinned runner and to load
+    build-config.env (reusable-workflow calls and the release publish job
+    are skipped), and requires non-release workflows to record the
+    environment receipt tokens. Returns the list of error strings.
+    """
     errors: list[str] = []
     forbidden = (
         "ubuntu-latest",
@@ -2839,14 +3149,6 @@ def _validate_workflow_structure_and_jobs(
     if RELEASE_TAG.search(text):
         errors.append(f"{relative}: contains a copied FFmpeg release tag")
 
-    load_tokens = (
-        "name: Load build configuration",
-        "build-config.env",
-        "FFMPEG_REMOTE",
-        "FFMPEG_TAG",
-        "FFMPEG_COMMIT",
-        "GITHUB_ENV",
-    )
     is_ci = Path(relative).name == "ci.yml"
     is_release = Path(relative).name == "release.yml"
     for name, block in jobs.items():
@@ -2858,17 +3160,7 @@ def _validate_workflow_structure_and_jobs(
             errors.append(f"{relative}: job {name} must run exactly on {runner}")
         if is_release and name == PUBLISH_JOB:
             continue  # publishes the release build's files; no checkout, no build
-        checkout = block.find("uses: actions/checkout@")
-        load = block.find("name: Load build configuration")
-        if checkout < 0 or load < checkout:
-            errors.append(
-                f"{relative}: job {name} must load build-config.env after checkout"
-            )
-        for token in load_tokens:
-            if token not in block:
-                errors.append(
-                    f"{relative}: job {name} build-config step is missing {token}"
-                )
+        errors.extend(_validate_load_step(relative, name, block))
     for token in (
         "ImageOS",
         "ImageVersion",
@@ -2912,56 +3204,73 @@ def _validate_workflow_native_packages(
     return errors
 
 
+def _validate_ci_ffmpeg_job(relative: str, ffmpeg: str) -> list[str]:
+    """Validate tokens required in the ffmpeg-stack workflow job."""
+    errors: list[str] = []
+    for token in (
+        "libvulkan-dev",
+        "libvpl-dev",
+        "libaom-dev",
+        "libsvtav1enc-dev",
+        "libffmpeg-nvenc-dev",
+        "refs/tags/${FFMPEG_TAG}^{commit}",
+        '"$FFMPEG_COMMIT"',
+        "ffmpeg-patches/generate.sh",
+        "ffmpeg-patches/test/build-and-run.sh",
+        *SERIES_WORKFLOW_TOKENS,
+        "scripts/fetch-ffmpeg-series.sh --self-test",
+    ):
+        if token not in ffmpeg:
+            errors.append(f"{relative}: FFmpeg job is missing {token}")
+    return errors
+
+
+def _validate_ci_docs_job(relative: str, docs: str) -> list[str]:
+    """Validate actionlint and go toolchain pins in the docs workflow job."""
+    errors: list[str] = []
+    for token in (
+        ACTIONLINT_GO_STEP,
+        f"go-version: '{ACTIONLINT_GO_VERSION}'",
+    ):
+        if token not in docs:
+            errors.append(f"{relative}: docs job is missing {token}")
+    if docs.count("actions/setup-go@") != 1 or SETUP_GO_PIN.search(docs) is None:
+        errors.append(
+            f"{relative}: docs job must pin actions/setup-go once by full commit "
+            "digest with its `# vX.Y.Z` release comment"
+        )
+    if docs.count("actionlint/cmd/actionlint@") != 1 or ACTIONLINT_RUN.search(docs) is None:
+        errors.append(
+            f"{relative}: docs job must run actionlint once as "
+            "`go run github.com/rhysd/actionlint/cmd/actionlint@vX.Y.Z` "
+            "(exact release tag)"
+        )
+    go_versions = re.findall(r"go-version:\s*(\S+)", docs)
+    if go_versions != [f"'{ACTIONLINT_GO_VERSION}'"]:
+        errors.append(
+            f"{relative}: docs job must set exactly one go-version, "
+            f"'{ACTIONLINT_GO_VERSION}' (found {go_versions})"
+        )
+    return errors
+
+
 def _validate_workflow_specialized_jobs(
-    relative: str, text: str, jobs: dict[str, str]
+    relative: str, text: str, jobs: dict[str, str], meson_text: str | None = None
 ) -> list[str]:
+    """Validate specialized workflow jobs in ci.yml and release workflows; returns errors."""
     errors: list[str] = []
     rel_name = Path(relative).name
     if rel_name == "ci.yml":
         if not re.search(r"^  workflow_call:", text, re.MULTILINE):
             errors.append(f"{relative}: ci.yml must declare workflow_call for release")
-        ffmpeg = jobs.get("ffmpeg-stack", "")
-        for token in (
-            "libvulkan-dev",
-            "libvpl-dev",
-            "libaom-dev",
-            "libsvtav1enc-dev",
-            "libffmpeg-nvenc-dev",
-            "refs/tags/${FFMPEG_TAG}^{commit}",
-            '"$FFMPEG_COMMIT"',
-            "ffmpeg-patches/generate.sh",
-            "ffmpeg-patches/test/build-and-run.sh",
-            *SERIES_WORKFLOW_TOKENS,
-            "scripts/fetch-ffmpeg-series.sh --self-test",
-        ):
-            if token not in ffmpeg:
-                errors.append(f"{relative}: FFmpeg job is missing {token}")
-        docs = jobs.get("docs", "")
-        for token in (
-            ACTIONLINT_GO_STEP,
-            f"go-version: '{ACTIONLINT_GO_VERSION}'",
-        ):
-            if token not in docs:
-                errors.append(f"{relative}: docs job is missing {token}")
-        if docs.count("actions/setup-go@") != 1 or SETUP_GO_PIN.search(docs) is None:
-            errors.append(
-                f"{relative}: docs job must pin actions/setup-go once by full commit "
-                "digest with its `# vX.Y.Z` release comment"
-            )
-        if docs.count("actionlint/cmd/actionlint@") != 1 or ACTIONLINT_RUN.search(docs) is None:
-            errors.append(
-                f"{relative}: docs job must run actionlint once as "
-                "`go run github.com/rhysd/actionlint/cmd/actionlint@vX.Y.Z` "
-                "(exact release tag)"
-            )
-        go_versions = re.findall(r"go-version:\s*(\S+)", docs)
-        if go_versions != [f"'{ACTIONLINT_GO_VERSION}'"]:
-            errors.append(
-                f"{relative}: docs job must set exactly one go-version, "
-                f"'{ACTIONLINT_GO_VERSION}' (found {go_versions})"
-            )
+        errors.extend(_validate_ci_ffmpeg_job(relative, jobs.get("ffmpeg-stack", "")))
+        errors.extend(_validate_ci_docs_job(relative, jobs.get("docs", "")))
         errors.extend(validate_windows_job(relative, jobs.get(WINDOWS_JOB)))
+        errors.extend(validate_windows_msvc_job(relative, jobs.get(WINDOWS_MSVC_JOB)))
         errors.extend(validate_lavapipe_job(relative, jobs.get(LAVAPIPE_JOB)))
+        errors.extend(
+            validate_ci_check_test_skips(relative, jobs, meson_text=meson_text)
+        )
     elif rel_name == "release.yml":
         if "workflow_dispatch:" not in text:
             errors.append(f"{relative}: release gate needs workflow_dispatch")
@@ -2971,7 +3280,9 @@ def _validate_workflow_specialized_jobs(
     return errors
 
 
-def validate_workflow_text(relative: str, text: str) -> list[str]:
+def validate_workflow_text(
+    relative: str, text: str, meson_text: str | None = None
+) -> list[str]:
     """Validate the pinned runner, toolchain, and shared FFmpeg workflow contract."""
     jobs = workflow_job_blocks(text)
     if not jobs:
@@ -2979,7 +3290,7 @@ def validate_workflow_text(relative: str, text: str) -> list[str]:
     return (
         _validate_workflow_structure_and_jobs(relative, text, jobs)
         + _validate_workflow_native_packages(relative, jobs)
-        + _validate_workflow_specialized_jobs(relative, text, jobs)
+        + _validate_workflow_specialized_jobs(relative, text, jobs, meson_text=meson_text)
     )
 
 
@@ -3062,6 +3373,92 @@ def windows_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
             f"is missing {WINDOWS_COMMANDS[0]}",
         ),
     }
+
+
+def _windows_msvc_command_cases(
+    source: str, msvc: str
+) -> dict[str, tuple[str, str]]:
+    """Command-level mutations of the ADR-0242 MSVC Windows job."""
+    def mutate(old: str, new: str) -> str:
+        return replace_in_job(source, WINDOWS_MSVC_JOB, old, new)
+
+    compile_line = next(
+        (line.strip() for line in msvc.splitlines() if "meson compile -C build" in line),
+        "meson compile -C build",
+    )
+    env_run = "echo done\n        env:\n          run: meson compile -C build"
+    return {
+        "MSVC build without warnings as errors": (
+            mutate("meson setup --vsenv --werror build", "meson setup --vsenv build"),
+            "is missing meson setup --vsenv --werror build",
+        ),
+        "MSVC compiler not asserted": (
+            mutate("C compiler for the host machine: ${CC}", "C compiler for the host machine"),
+            "is missing grep -E",
+        ),
+        "MSVC fast suite dropped": (
+            mutate("--suite=fast", "--suite=slow"),
+            "is missing meson test -C build --suite=fast --print-errorlogs",
+        ),
+        "MSVC tools without hashes": (
+            mutate("--require-hashes ", ""),
+            "is missing python -m pip install --require-hashes",
+        ),
+        "MSVC command present only in comment": (
+            mutate("meson compile -C build", "# meson compile -C build"),
+            "is missing meson compile -C build",
+        ),
+        "MSVC command disguised with echo": (
+            mutate(compile_line, "echo meson compile -C build"),
+            "is missing meson compile -C build",
+        ),
+        "MSVC command in trailing comment": (
+            mutate(compile_line, "true # meson compile -C build"),
+            "is missing meson compile -C build",
+        ),
+        "MSVC command prefix of longer command": (
+            mutate(compile_line, "meson compile -C build2"),
+            "is missing meson compile -C build",
+        ),
+        "MSVC command nested under env": (
+            mutate(compile_line, env_run),
+            "is missing meson compile -C build",
+        ),
+        "MSVC planted-wrap require dropped": (
+            mutate("--require pelorus:sei-fit-planted-wrap", ""),
+            "is missing --require pelorus:sei-fit-planted-wrap",
+        ),
+    }
+
+
+def windows_msvc_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Mutations of the ADR-0242 MSVC Windows job that the validator must reject."""
+    msvc = workflow_job_blocks(source).get(WINDOWS_MSVC_JOB, "")
+
+    def mutate(old: str, new: str) -> str:
+        return replace_in_job(source, WINDOWS_MSVC_JOB, old, new)
+
+    unpinned = re.sub(r"setup-python@[0-9a-f]{40}", "setup-python@v7", msvc, count=1)
+    cases = {
+        "missing MSVC Windows job": (
+            source.replace(msvc, "", 1) if msvc else source,
+            f"missing MSVC Windows job {WINDOWS_MSVC_JOB}",
+        ),
+        "MSVC job on another image": (
+            mutate(WINDOWS_RUNNER, "windows-2022"),
+            f"job {WINDOWS_MSVC_JOB} must run exactly on {WINDOWS_RUNNER}",
+        ),
+        "clang-cl dropped from the matrix": (
+            mutate("          - cc: clang-cl\n", ""),
+            "is missing include:",
+        ),
+        "MSVC setup-python by tag": (
+            source.replace(msvc, unpinned, 1) if msvc else source,
+            "must pin actions/setup-python@v7 by full commit digest",
+        ),
+    }
+    cases.update(_windows_msvc_command_cases(source, msvc))
+    return cases
 
 
 def windows_pin_bump_regression(source: str, relative: str) -> list[str]:
@@ -3318,9 +3715,11 @@ TESTER_PUBLISH_TOKENS = (
     "upload-artifact: false",
     "upload-release-assets: false",
     "sbom-path:",
-    "--signer-workflow VMAFx/pelorus/.github/workflows/tester-publish.yml",
-    "--certificate-identity-regexp "
-    "'^https://github\\.com/VMAFx/pelorus/\\.github/workflows/tester-publish\\.yml@'",
+    'signer="${GITHUB_REPOSITORY}/.github/workflows/tester-publish.yml"',
+    '--signer-workflow "$signer"',
+    '-R "$GITHUB_REPOSITORY"',
+    '--certificate-identity-regexp "$identity"',
+    'identity="^${GITHUB_SERVER_URL//./\\\\.}/${GITHUB_REPOSITORY//./\\\\.}/\\.github/workflows/tester-publish\\.yml@"',
     "--certificate-oidc-issuer https://token.actions.githubusercontent.com",
     '--target "final-${KIT}"',
     '--target "source-${KIT}"',
@@ -4729,13 +5128,49 @@ def series_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
     }
 
 
-def workflow_validator_regressions() -> list[str]:
-    """Prove runner and native-toolchain regressions are rejected."""
-    failures: list[str] = []
-    ci_path = WORKFLOWS[0]
-    source = ci_path.read_text(encoding="utf-8")
-    cases = {
+def _load_step_cases(source: str) -> dict[str, tuple[str, str]]:
+    """The build-config load step is one grep appended to GITHUB_ENV, no loop.
+
+    The keys and the append must sit in the load step itself; the same words
+    in another step of the job do not count.
+    """
+    grep = "grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env"
+    loop = (
+        "while IFS= read -r entry; do printf '%s\\n' \"$entry\"; done"
+        " < build-config.env | grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)='"
+    )
+    step_with_append = f'{grep} >> "$GITHUB_ENV"'
+    tokens_elsewhere = (
+        "grep -E '^(OTHER)=' other.env >> \"$GITHUB_ENV\"\n"
+        "      - name: Leaked tokens\n"
+        "        run: echo build-config.env FFMPEG_REMOTE FFMPEG_TAG FFMPEG_COMMIT GITHUB_ENV"
+    )
+    echo_load = "echo build-config.env FFMPEG_REMOTE FFMPEG_TAG FFMPEG_COMMIT GITHUB_ENV"
+    return {
+        "looping build-config load": (
+            source.replace(grep, loop, 1),
+            "build-config step must not loop",
+        ),
+        "build-config tokens elsewhere": (
+            source.replace(step_with_append, tokens_elsewhere, 1),
+            "build-config step is missing build-config.env",
+        ),
+        "echo build-config load": (
+            source.replace(step_with_append, echo_load, 1),
+            "build-config step is missing grep",
+        ),
+        "build-config load missing append": (
+            source.replace(step_with_append, grep, 1),
+            'build-config step is missing >> "$GITHUB_ENV"',
+        ),
+    }
+
+
+def _ci_toolchain_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Mutations of the ci.yml jobs, runners and toolchain pins."""
+    return {
         **windows_workflow_cases(source),
+        **windows_msvc_workflow_cases(source),
         **lavapipe_workflow_cases(source),
         **lavapipe_step_cases(source),
         **series_workflow_cases(source),
@@ -4776,9 +5211,188 @@ def workflow_validator_regressions() -> list[str]:
             f"docs job is missing {ACTIONLINT_GO_STEP}",
         ),
     }
-    cases.update(_docs_pin_shape_cases(source))
+
+
+def run_key_scope_regression() -> list[str]:
+    """Prove only step-level `run:` keys count: siblings after a block and nested keys do not."""
+    planted = (
+        "    steps:\n"
+        "      - run: |\n          make x\n        env:\n          K: v\n"
+        "      - name: nested\n        run: echo done\n        env:\n          run: make y\n"
+    )
+    got = job_executed_run_commands(planted)
+    if got != "make x\necho done":
+        return [f"workflow regression: run-key scope read {got!r}"]
+    return []
+
+
+def sei_fit_qualifying_jobs(source: str) -> list[str]:
+    """Return CI job names whose check-test-skips invocation carries pelorus:sei-fit requires."""
+    jobs = workflow_job_blocks(source)
+    qualifying: list[str] = []
+    for name, block in jobs.items():
+        invocations = check_test_skips_requires(job_executed_run_commands(block))
+        if any("pelorus:sei-fit" in inv for inv in invocations):
+            qualifying.append(name)
+    return qualifying
+
+
+def _check_test_skips_command_regression() -> list[str]:
+    """Unit-check _is_check_test_skips_command token shapes."""
+    failures: list[str] = []
+    cases: tuple[tuple[list[str], bool], ...] = (
+        (["python3", "-I", "scripts/check-test-skips.py", "testlog.json"], True),
+        (["scripts/check-test-skips.py", "--require", "pelorus:sei-fit"], True),
+        (["FOO=1", "BAR=baz", "python3.12", "-I", "-u", "scripts/check-test-skips.py"], True),
+        (["echo", "scripts/check-test-skips.py", "--require", "pelorus:sei-fit"], False),
+        (["cat", "scripts/check-test-skips.py", "--require", "pelorus:sei-fit"], False),
+        (["python", "-I", "scripts/check-test-skips.py.bak", "testlog.json"], False),
+        (["python", "-m", "scripts/check-test-skips.py"], False),
+    )
+    for tokens, expected in cases:
+        if _is_check_test_skips_command(tokens) != expected:
+            failures.append(
+                f"workflow regression: _is_check_test_skips_command({tokens!r}) != {expected}"
+            )
+    return failures
+
+
+def _sei_fit_must_run_regression(source: str, relative: str) -> list[str]:
+    """Prove disguised or dropped check-test-skips invocations fail per SEI_FIT_CI_JOBS."""
+    failures = _check_test_skips_command_regression()
+    must_run = "must run check-test-skips.py with --require pelorus:sei-fit"
+    bak = source.replace("check-test-skips.py", "check-test-skips.py.bak")
+    echo_pref = re.sub(
+        r"(python3?\s+-I\s+scripts/check-test-skips\.py)", r"echo \1", source
+    )
+    for label, mutated in (("bak script", bak), ("echo prefix", echo_pref)):
+        if mutated == source:
+            failures.append(f"workflow regression: {label} mutation changed nothing")
+            continue
+        errors = validate_workflow_text(relative, mutated)
+        for name in SEI_FIT_CI_JOBS:
+            if not any(f"job {name} {must_run}" in e for e in errors):
+                failures.append(f"workflow regression: job {name} accepted {label}")
+    msvc_block = workflow_job_blocks(source).get(WINDOWS_MSVC_JOB, "")
+    msvc_stripped = re.sub(
+        r"\s*--require\s+pelorus:sei-fit(?:-planted-[A-Za-z0-9_-]+)?", "", msvc_block
+    )
+    msvc_mut = source.replace(msvc_block, msvc_stripped, 1) if msvc_block else source
+    if msvc_mut == source:
+        failures.append("workflow regression: windows-msvc sei-fit strip changed nothing")
+    else:
+        errors = validate_workflow_text(relative, msvc_mut)
+        if not any(f"job {WINDOWS_MSVC_JOB} {must_run}" in e for e in errors):
+            failures.append(
+                f"workflow regression: job {WINDOWS_MSVC_JOB} accepted stripped sei-fit requires"
+            )
+    return failures
+
+
+def _sei_fit_base_require_regression(source: str, relative: str) -> list[str]:
+    """Prove dropping base --require pelorus:sei-fit while keeping planted requires fails."""
+    failures: list[str] = []
+    mutated = re.sub(r"--require pelorus:sei-fit(?=\s)", "", source)
+    if mutated == source:
+        return ["workflow regression: base sei-fit require strip changed nothing"]
+    errors = validate_workflow_text(relative, mutated)
+    for name in SEI_FIT_CI_JOBS:
+        expected = f"job {name} is missing --require pelorus:sei-fit"
+        if not any(e.endswith(expected) for e in errors):
+            failures.append(
+                f"workflow regression: job {name} missing base sei-fit was accepted"
+            )
+    return failures
+
+
+def sei_fit_planted_rule_regression(source: str, relative: str) -> list[str]:
+    """Prove a new rule in meson.build without a ci.yml require is refused."""
+    failures: list[str] = []
+    qualifying = sei_fit_qualifying_jobs(source)
+    want_jobs = set(SEI_FIT_CI_JOBS)
+    got_jobs = set(qualifying)
+    if got_jobs != want_jobs:
+        diff = sorted(got_jobs ^ want_jobs)
+        failures.append(
+            f"workflow regression: sei_fit_qualifying_jobs {sorted(got_jobs)} != {sorted(want_jobs)} (diff: {diff})"
+        )
+    meson, meson_errors = read_tracked_text(ROOT / "meson.build")
+    if meson_errors:
+        return meson_errors
+    mutated_meson = re.sub(
+        r"(foreach\s+rule\s*:\s*\[[^\]]+)\]",
+        r"\1, 'extra_check_rule']",
+        meson,
+        count=1,
+    )
+    if mutated_meson == meson:
+        return ["workflow regression: new meson rule mutation changed nothing"]
+    errors = validate_workflow_text(relative, source, meson_text=mutated_meson)
+    expected = "pelorus:sei-fit-planted-extra_check_rule"
+    for name in SEI_FIT_CI_JOBS:
+        if not any(f"job {name} is missing --require {expected}" in error for error in errors):
+            failures.append(
+                f"workflow regression: job {name} missing {expected} was accepted"
+            )
+    return (
+        failures
+        + sei_fit_require_form_regression(source, relative, qualifying)
+        + _sei_fit_must_run_regression(source, relative)
+        + _sei_fit_base_require_regression(source, relative)
+    )
+
+
+def sei_fit_require_form_regression(
+    source: str, relative: str, qualifying: list[str] | None = None
+) -> list[str]:
+    """Prove a prefix or a separate-command require is refused and `--require=` accepted."""
+    failures: list[str] = []
+    if qualifying is None:
+        qualifying = sei_fit_qualifying_jobs(source)
+    if len(qualifying) < 1:
+        failures.append(
+            f"workflow regression: expected >= 1 qualifying sei-fit jobs, found {len(qualifying)}"
+        )
+
+    target = "pelorus:sei-fit-planted-wrap"
+    mut_wrap = source.replace(f"--require {target}", f"--require {target}per")
+    mut_echo = re.sub(
+        r"(\s+build(?:-san)?/meson-logs/testlog\.json)",
+        rf"\1\n          echo --require {target}",
+        source.replace(f" --require {target}", ""),
+    )
+    mut_eq = source.replace(f"--require {target}", f"--require={target}")
+
+    for mutated, kind in [(mut_wrap, "prefix wrapper"), (mut_echo, "echo require")]:
+        if mutated == source:
+            failures.append(f"workflow regression: {kind} mutation changed nothing")
+            continue
+        errors = validate_workflow_text(relative, mutated)
+        for name in qualifying:
+            if not any(f"job {name} is missing --require {target}" in e for e in errors):
+                failures.append(f"workflow regression: job {name} accepted {kind}")
+
+    if mut_eq == source:
+        failures.append("workflow regression: equals mutation changed nothing")
+    else:
+        eq_errors = validate_workflow_text(relative, mut_eq)
+        for name in qualifying:
+            if any(f"job {name} is missing --require {target}" in e for e in eq_errors):
+                failures.append(f"workflow regression: job {name} rejected --require= form")
+
+    return failures
+
+
+def workflow_validator_regressions() -> list[str]:
+    """Prove runner and native-toolchain regressions are rejected."""
+    failures: list[str] = []
+    ci_path = WORKFLOWS[0]
+    source = ci_path.read_text(encoding="utf-8")
+    cases = _ci_toolchain_cases(source)
+    cases |= _docs_pin_shape_cases(source) | _load_step_cases(source)
     relative = ci_path.relative_to(ROOT).as_posix()
     failures.extend(windows_pin_bump_regression(source, relative))
+    failures.extend(sei_fit_planted_rule_regression(source, relative))
     for name, (mutated, expected) in cases.items():
         if mutated == source:
             failures.append(f"workflow regression: {name} mutation changed nothing")
@@ -4786,6 +5400,17 @@ def workflow_validator_regressions() -> list[str]:
         errors = validate_workflow_text(relative, mutated)
         if not any(expected in error for error in errors):
             failures.append(f"workflow regression: {name} was accepted")
+
+    failures.extend(run_key_scope_regression())
+    msvc_errors = [
+        err
+        for err in validate_workflow_text(relative, source)
+        if "MSVC Windows job" in err
+    ]
+    if msvc_errors:
+        failures.append(
+            f"workflow regression: unchanged workflow yields MSVC errors: {msvc_errors}"
+        )
 
     failures.extend(release_gate_regressions(source, relative))
     return failures
@@ -5355,7 +5980,7 @@ DEV_IMAGE_NOTICES_LABEL = "dev.vmafx.pelorus.notices"
 DEV_IMAGE_FROM = re.compile(r"^FROM ubuntu:26\.04@sha256:[0-9a-f]{64} AS assembled$", re.MULTILINE)
 DEV_IMAGE_GATE = ("licensing.py self-test", "licensing.py notices", "licensing.py check")
 DEV_IMAGE_WORKFLOW_TOKENS = (
-    "build-args: PELORUS_COMMIT=${{ github.sha }}",
+    "PELORUS_COMMIT=${{ github.sha }}",
     "file: .devcontainer/base/Containerfile",
     "'tools/tester/licensing.py'",
     "'LICENSES/EUPL-1.2.txt'",
@@ -5399,7 +6024,7 @@ def validate_dev_image_text(relative: str, text: str, record: dict) -> list[str]
 
 def validate_dev_image_workflow_text(relative: str, text: str) -> list[str]:
     errors = [f"{relative}: missing {token}" for token in DEV_IMAGE_WORKFLOW_TOKENS if token not in text]
-    if text.count("build-args: PELORUS_COMMIT=${{ github.sha }}") != 2:
+    if text.count("PELORUS_COMMIT=${{ github.sha }}") != 2:
         errors.append(f"{relative}: both docker build steps must pass PELORUS_COMMIT build-arg")
     if "context:.devcontainer/base" in text.replace(" ", ""):
         errors.append(f"{relative}: the build context must be the repository root, which holds the licence gate")
@@ -5451,7 +6076,7 @@ def _dev_image_cases(text: str) -> dict[str, tuple[str, str]]:
 def _dev_image_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
     return {
         "no commit argument": (
-            text.replace("build-args: PELORUS_COMMIT=${{ github.sha }}", "build-args: OTHER=${{ github.sha }}", 1),
+            text.replace("PELORUS_COMMIT=${{ github.sha }}", "OTHER=${{ github.sha }}", 1),
             "both docker build steps must pass",
         ),
         "gate not a trigger": (text.replace("      - 'tools/tester/licensing.py'\n", "", -1), "missing 'tools/tester/licensing.py'"),
@@ -5632,7 +6257,16 @@ def windows_tester_regressions() -> list[str]:
     return failures
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for check-build-config."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test regressions")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking build configuration contract."""
+    args = parse_args(argv)
     scrub_git_repository_env()
     if not CONFIG.is_file():
         print("build-config.env: missing", file=sys.stderr)
@@ -5648,7 +6282,7 @@ def main() -> int:
     errors.extend(validate_windows_tester())
     if not parse_errors:
         errors.extend(validate_current_surfaces(values))
-    if "--self-test" in sys.argv[1:]:
+    if args.self_test:
         errors.extend(isolate_from_invoking_repository())
         errors.extend(validator_regressions())
         errors.extend(consumer_validator_regressions())

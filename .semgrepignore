@@ -1,0 +1,10 @@
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
+#
+# Files excluded from semgrep scans (ADR-0239).
+# Semgrep default ignores skip test/ folders when no .semgrepignore exists;
+# this file overrides the built-in defaults while ignoring build artifacts.
+
+build*/
+subprojects/
+.cache/

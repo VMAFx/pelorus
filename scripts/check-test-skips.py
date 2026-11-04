@@ -25,6 +25,8 @@ or the allow-list is missing, empty or malformed (never a pass).
     python3 -I scripts/check-test-skips.py --self-test
 """
 
+import argparse
+import importlib.util
 import json
 import sys
 import tempfile
@@ -41,20 +43,45 @@ class Malformed(Exception):
     """An input file that cannot be judged."""
 
 
+def _load_json_shape():
+    """Import the shared JSON shape validator from tools/tester by file path."""
+    path = Path(__file__).resolve().parent.parent / "tools" / "tester" / "pelorus_json_shape.py"
+    spec = importlib.util.spec_from_file_location("pelorus_json_shape", path)
+    if spec is None or spec.loader is None:
+        raise ImportError("%s: cannot load pelorus_json_shape" % path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_JSON_SHAPE = _load_json_shape()
+validate_schema = _JSON_SHAPE.validate_schema
+
+ALLOW_LIST_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "required": ["test", "reason", "issue"],
+        "properties": {
+            "test": {"type": "string", "minLength": 1},
+            "reason": {"type": "string", "minLength": 1},
+            "issue": {"type": "string", "minLength": 1},
+        },
+    },
+}
+
+
 def load_allow_list(path):
     """Return {test name: reason line} from the allow-list file."""
     try:
         entries = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as err:
         raise Malformed("%s: %s" % (path, err)) from err
-    if not isinstance(entries, list):
-        raise Malformed("%s: top level is not a list" % path)
+    errs = validate_schema(entries, ALLOW_LIST_SCHEMA)
+    if errs:
+        raise Malformed("%s: %s" % (path, "; ".join(errs)))
     allowed = {}
     for entry in entries[:MAX_RECORDS]:
-        if not isinstance(entry, dict) or not all(
-                isinstance(entry.get(key), str) and entry.get(key)
-                for key in ("test", "reason", "issue")):
-            raise Malformed("%s: entry needs test, reason and issue: %r" % (path, entry))
         if not entry["reason"].startswith(SKIP_PREFIX):
             raise Malformed("%s: reason must start with %r: %r"
                             % (path, SKIP_PREFIX, entry["reason"]))
@@ -68,7 +95,7 @@ def load_records(path):
     """Return the testlog.json records; a log without one is malformed."""
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as err:
+    except (OSError, UnicodeDecodeError) as err:
         raise Malformed("%s: %s" % (path, err)) from err
     records = []
     for line in lines[:MAX_RECORDS]:
@@ -181,21 +208,56 @@ def self_test():
     if check(Path(tmp) / "absent.json", ALLOW_LIST) != 2:
         print("self-test FAIL: missing log is not malformed")
         failures += 1
-    print("self-test: %d cases, %d failures" % (len(SELF_TEST_CASES) + 1, failures))
+    try:
+        parse_args(["--require"])
+    except SystemExit as exc:
+        if exc.code != 2:
+            print("self-test FAIL: missing --require value: want exit 2, got %d" % exc.code)
+            failures += 1
+    else:
+        print("self-test FAIL: missing --require value: did not exit")
+        failures += 1
+    too_many = []
+    for index in range(MAX_REQUIRED + 1):
+        too_many += ["--require", "t%d" % index]
+    try:
+        parse_args(too_many + ["log.json"])
+    except SystemExit as exc:
+        if exc.code != 2:
+            print("self-test FAIL: too many --require entries: want exit 2, got %s" % exc.code)
+            failures += 1
+    else:
+        print("self-test FAIL: more than %d --require entries not refused" % MAX_REQUIRED)
+        failures += 1
+    print("self-test: %d cases, %d failures" % (len(SELF_TEST_CASES) + 3, failures))
     return 1 if failures else 0
 
 
-def main(argv):
-    if argv == ["--self-test"]:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for check-test-skips."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
+    parser.add_argument("--require", action="append", default=[], help="require test to have run and passed")
+    parser.add_argument("log_path", nargs="?", type=Path, help="path to testlog.json")
+    args = parser.parse_args(argv)
+    if len(args.require) > MAX_REQUIRED:
+        parser.error("at most %d --require entries" % MAX_REQUIRED)
+    return args
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking test skips against allow-list."""
+    try:
+        args = parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    if args.self_test:
         return self_test()
-    required = []
-    while len(argv) > 2 and argv[0] == "--require" and len(required) < MAX_REQUIRED:
-        required.append(argv[1])
-        argv = argv[2:]
-    if len(argv) != 1 or argv[0].startswith("--"):
+    if not args.log_path:
         print(__doc__.strip().splitlines()[-2].strip())
         return 2
-    return check(Path(argv[0]), ALLOW_LIST, required)
+    return check(args.log_path, ALLOW_LIST, args.require)
 
 
 if __name__ == "__main__":

@@ -6,13 +6,13 @@ include .config/praetor/engine.mk
 BUILD_DIR ?= build
 
 .PHONY: all verify-all verify-native configure build test format-check tidy \
-	docs-check compile-context compile-context-verify audit hooks-install
+	docs-check compile-context compile-context-verify audit hooks-install python-lint
 
 all: build
 
 verify-all: compile-context-verify audit verify-native
 
-verify-native: build test format-check tidy docs-check
+verify-native: build test format-check tidy docs-check python-lint
 
 configure:
 	@if test -f "$(BUILD_DIR)/meson-private/coredata.dat"; then \
@@ -44,12 +44,19 @@ docs-check:
 	bash scripts/release/tag-release.sh --self-test
 	bash scripts/release/check-publish-ref.sh --self-test
 	bash scripts/release/extract-release-notes.sh --self-test
+	python3 -I scripts/docs/render-counts.py --self-test
+	python3 -I scripts/docs/render-counts.py
+	bash scripts/release/write-patch-notice.sh --self-test
 	python3 -I scripts/adr/check-status.py --self-test
 	python3 -I scripts/adr/check-status.py
 	python3 -I scripts/check-mirror-contract.py --self-test
 	python3 -I scripts/check-mirror-contract.py
+	python3 -I scripts/check-cochange.py --self-test
+	python3 -I scripts/check-cochange.py
 	python3 -I scripts/check-doc-recipes.py --self-test
 	python3 -I scripts/check-doc-recipes.py
+	python3 -I ffmpeg-patches/test/doc-recipes-smoke.py --self-test
+	python3 -I ffmpeg-patches/test/doc-recipes-smoke.py --check-doc
 	python3 -I scripts/check-filter-stance.py --self-test
 	python3 -I scripts/check-filter-stance.py
 	python3 -I scripts/check-filter-knob-contracts.py --self-test
@@ -63,6 +70,15 @@ docs-check:
 	python3 -I scripts/hardware-reports/check-reports.py
 	python3 -I scripts/hardware-reports/generate-index.py --self-test
 	python3 -I scripts/hardware-reports/generate-index.py --check
+
+# Outside $(BUILD_DIR): a directory there before `meson setup` blocks setup.
+# Quoted in every recipe line; the self-test plants a path with a space.
+PYTHON_LINT_ENV ?= .cache/python-lint
+
+python-lint:
+	@bash scripts/check-python-lint.sh --ensure "$(PYTHON_LINT_ENV)" >/dev/null
+	PYTHON_LINT_ENV="$(PYTHON_LINT_ENV)" bash scripts/check-python-lint.sh --self-test
+	PYTHON_LINT_ENV="$(PYTHON_LINT_ENV)" bash scripts/check-python-lint.sh
 
 compile-context:
 	$(PRAETORCTL) compile-context

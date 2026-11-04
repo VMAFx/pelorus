@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -221,9 +222,17 @@ def run_self_test(path: Path) -> int:
     return 0
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for check-codeql-workflow."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="Run self-test regressions")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
     """Entry point for checking CodeQL workflow."""
-    if "--self-test" in sys.argv:
+    args = parse_args(argv)
+    if args.self_test:
         return run_self_test(WORKFLOW_PATH)
     errors = validate_workflow_file(WORKFLOW_PATH)
     if errors:
@@ -236,4 +245,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

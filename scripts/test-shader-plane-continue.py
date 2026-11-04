@@ -11,6 +11,7 @@ Usage: test-shader-plane-continue.py [shader-dir]
 
 from __future__ import annotations
 
+import argparse
 import pathlib
 import re
 import sys
@@ -30,8 +31,17 @@ def plane_loop_bodies(text: str) -> list[str]:
     return bodies
 
 
-def main() -> int:
-    shipped = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for test-shader-plane-continue."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("shader_dir", nargs="?", type=pathlib.Path, default=DEFAULT, help="path to shaders directory")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking deblock and aa plane loops."""
+    args = parse_args(argv)
+    shipped = args.shader_dir
     failures: list[str] = []
     for name, expected in (("pelorus_deblock", 1), ("pelorus_aa", 2)):
         bodies = plane_loop_bodies((shipped / f"{name}.comp.glsl").read_text())
@@ -48,4 +58,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

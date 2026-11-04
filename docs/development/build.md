@@ -143,6 +143,47 @@ Windows-specific behavior of the suite:
   `--self-test` on Windows. The self-test's Git fixtures model the Linux-only
   FFmpeg replay; MSYS2 argument globbing and Python's CRLF text mode break them,
   and the Linux jobs run the full self-test on every PR.
+- **`suppression-markers`** (the tree scan) is not registered on Windows: it
+  lists files with `git ls-files`, and the MSYS2 leg has no git on `PATH`.
+  `suppression-markers-self-test` runs the planted cases there.
+- **`python-empty-except`** and **`python-argv`** (the tree scans) are not
+  registered on Windows for the same reason: they list tracked files with
+  `git ls-files`. `python-empty-except-self-test` and `python-argv-self-test`
+  run their planted cases there.
+
+## Windows (cl.exe and clang-cl)
+
+The `windows-msvc` job of `.github/workflows/ci.yml` builds libpelorus, the
+tools and the tests with cl.exe and with clang-cl under `--werror`, then runs
+the fast suite ([ADR-0242](../adr/0242-msvc-clang-cl-ci-leg.md)). You need
+Visual Studio 2022 with the C++ workload, LLVM on `PATH` for the clang-cl leg,
+and `bash` on `PATH`: `meson.build` requires it at setup (Git for Windows
+provides it). Give each compiler its own build directory, since Meson fixes the
+compiler of a directory at its first setup.
+
+From Git Bash:
+
+```bash
+python -m pip install --require-hashes -r .config/msvc-ci/requirements.txt
+CC=cl meson setup --vsenv --werror build-cl -Ddefault_library=static -Dshaders=false
+meson compile -C build-cl
+meson test -C build-cl --suite=fast --print-errorlogs
+```
+
+From PowerShell:
+
+```powershell
+python -m pip install --require-hashes -r .config/msvc-ci/requirements.txt
+$env:CC = 'cl'
+meson setup --vsenv --werror build-cl -Ddefault_library=static -Dshaders=false
+meson compile -C build-cl
+meson test -C build-cl --suite=fast --print-errorlogs
+```
+
+For the other leg, set the compiler to `clang-cl` and use `build-clang-cl`. The library is static here: libpelorus
+carries no `__declspec(dllexport)` annotations, and cl.exe and clang-cl export
+no symbol from a DLL without them. The reference shaders compile in the Linux
+and MSYS2 jobs. icx-cl is not in CI.
 
 The FFmpeg patch-stack scripts below remain Linux-only.
 
@@ -166,11 +207,13 @@ ephemeral committer identity and neutralizes caller signing, hooks, and diff
 ordering, so the same command works on a clean CI runner and a configured
 developer workstation.
 
-`build-and-run.sh` ends with four GPU smokes and one CPU smoke: the
+`build-and-run.sh` ends with five GPU smokes and one CPU smoke: the
 `hevc_nvenc` SEI smoke, the NVDEC → Vulkan → NVENC hop smoke
 (`test/nvenc-cuda-hop-smoke.sh`, nine filter chains on the derived Vulkan device,
-[ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md)), the Vulkan
-forced-keyframe smoke (`test/vulkan-forced-keyframe-smoke.sh`, 60 Vulkan HEVC
+[ADR-0191](../adr/0191-nvenc-hop-derived-vulkan-device.md)), the documented
+zero-copy recipes smoke (`test/doc-recipes-smoke.py`, runs the verbatim boundary-table
+recipes across CUDA, Vulkan, VAAPI and QSV, [ADR-0240](../adr/0240-doc-recipes-run-verbatim.md)),
+the Vulkan forced-keyframe smoke (`test/vulkan-forced-keyframe-smoke.sh`, 60 Vulkan HEVC
 encodes with `-force_key_frames 2`, a hang fails it,
 [ADR-0192](../adr/0192-series-v0.2.0-forced-keyframe-smoke.md); its header
 lists `INPUT`, `RUNS`, `OUTPUT_ROOT` and `--self-test`), the
@@ -194,7 +237,9 @@ the fifth needs an HEVC decoder and the `psnr` filter; the sixth needs the `libd
 and the replay then fails unless `NVENC_SMOKE_SKIP` (SEI smoke),
 `NVENC_HOP_SMOKE_SKIP` (hop smoke), `KEYFRAME_SMOKE_SKIP` (keyframe smoke),
 `FGS_SMOKE_SKIP` (grain smoke), `GRAIN_SCORE_SMOKE_SKIP` (grain score smoke)
-and `GRAIN_SCORE_AV1_SMOKE_SKIP` (grain score AV1 smoke)
+`GRAIN_SCORE_AV1_SMOKE_SKIP` (grain score AV1 smoke)
+and `DOC_RECIPES_SKIP` (documented zero-copy recipes,
+[ADR-0240](../adr/0240-doc-recipes-run-verbatim.md))
 name the reason each smoke prints, so a GPU host whose driver or device went
 missing cannot pass by accident
 ([ADR-0189](../adr/0189-named-nvenc-smoke-skip.md)). On a machine without an
@@ -206,6 +251,7 @@ NVENC_SMOKE_SKIP="Cannot load libcuda.so.1" \
   KEYFRAME_SMOKE_SKIP="no Vulkan device with HEVC video" \
   FGS_SMOKE_SKIP="no HEVC encoder" \
   GRAIN_SCORE_SMOKE_SKIP="no HEVC decoder" \
+  DOC_RECIPES_SKIP="no recipe device: cannot generate input clips" \
   FFMPEG_REPO=/absolute/path/to/ffmpeg ./test/build-and-run.sh
 ```
 
@@ -362,6 +408,46 @@ keeps it ([ADR-0188](../adr/0188-named-test-skips.md)).
 `make test` and in every CI fast-suite run. A new skip, or a changed skip message,
 fails until the list names it.
 
+A `# nosemgrep` or `# nosec` marker in tracked Python must sit on the start line
+of the statement or expression it answers and name its rules plus a reason:
+`# nosemgrep: <full rule id>[, <id>] - <reason>` and `# nosec <Bxxx> - <reason>`
+([ADR-0241](../adr/0241-suppression-marker-binding.md)). The fast-suite test
+`suppression-markers` runs `scripts/check-suppression-markers.py --self-test`,
+which refuses a misplaced, bare or reasonless marker and then scans the tree;
+`suppression-markers-self-test` runs the planted cases alone
+(`--self-test-only`) on every platform, Windows included. Each Python file is
+read in its declared encoding (PEP 263), and one that does not decode is a
+finding.
+
+Every Python `except` clause with a bare `pass` body must carry an explanatory
+comment documenting why ignoring the exception is safe. The fast-suite test
+`python-empty-except` (`scripts/check-python-empty-except.py`) scans tracked
+Python files and fails when an except handler with a bare pass carries no comment;
+`python-empty-except-self-test` runs the planted cases.
+
+Every tracked Python script must parse its command line with stdlib `argparse`
+rather than by indexing `argv`. The fast-suite test `python-argv`
+(`scripts/check-python-argv.py`) scans tracked Python files with the stdlib AST
+and refuses:
+
+- any `sys.argv` use other than `sys.argv[0]` or `sys.argv[1:]` passed straight
+  to a call, such as `main(sys.argv[1:])`;
+- a subscript, an `.index()` or `.pop()` call, or an `in`, `not in`, `==` or `!=`
+  test on `argv` inside a function named `main` or `parse_args`, where `argparse`
+  owns the command line. A name bound to `argv` or to a `list`, `tuple` or `deque`
+  copy of it (`args = list(argv)`), and a parameter of a function in the same
+  module that receives `sys.argv[1:]` or such a name, counts as `argv`;
+  `argv is None` stays allowed;
+- the same `argv` operations anywhere in a module that has a command line (it
+  reads `sys.argv` or defines `main` or `parse_args`) but does not import
+  `argparse`.
+
+A module without a command line, such as a test helper whose `argv` is a
+recorded subprocess call, is out of scope. Two files are excepted in the script
+with a reason: the Praetor-managed `.config/agent/hooks/block_evasion.py` and the
+FFmpeg command-line stand-in `ffmpeg-patches/test/doc-recipes-stub-ffmpeg.py`.
+`python-argv-self-test` runs the planted cases.
+
 No branch or tag may hold a credential (HISS-12,
 [ADR-0190](../adr/0190-gitleaks-every-ref.md)). The CI `docs` job installs the
 gitleaks release pinned by version and sha256 in `scripts/check-gitleaks.sh`,
@@ -378,6 +464,33 @@ A false positive is exempted by adding its fingerprint
 (`commit:file:rule:line`, printed by the failing scan) to `.gitleaksignore`.
 `.gitleaks.toml` may only extend the default rules and add rules; an allowlist
 there is refused.
+
+Python sources and the workflow files are linted before push
+([ADR-0243](../adr/0243-ruff-zizmor-local-gate.md)). `make verify-native` runs
+`scripts/check-python-lint.sh --self-test` and then the scan: Ruff 0.17.3 over
+the tree with the rule set in `ruff.toml` (Codacy's Ruff patterns plus
+`SIM103`, `E721` and `PGH004`), and zizmor 1.32.0 `--offline
+--strict-collection` over the workflows, actions and Dependabot files with
+`.github/zizmor.yml`, so a file zizmor cannot parse fails the scan instead of
+being skipped. Both tools are pinned by hash in
+`.config/python-lint/requirements.txt`; the target keeps them in
+`.cache/python-lint` (`PYTHON_LINT_ENV`, outside the Meson build directory; a path with spaces works)
+through `--ensure`, which reuses that environment while its tool versions match
+the lock and rebuilds it after a lock bump or a half-finished install. The
+first run in a new checkout, and the first after a bump, needs PyPI. The
+pre-commit hook runs `make python-lint` when a Python file, a workflow or the
+lint configuration is staged, and the CI `docs` job runs the same commands on
+Linux. To run them by hand:
+
+```bash
+scripts/check-python-lint.sh --install /absolute/new-dir
+PYTHON_LINT_BIN=/absolute/new-dir/bin scripts/check-python-lint.sh --self-test
+PYTHON_LINT_BIN=/absolute/new-dir/bin scripts/check-python-lint.sh
+```
+
+A Ruff finding the code answers on purpose carries
+`# noqa: <code> - <reason>`; a bare `# noqa` fails (`PGH004`). `S101`, `S603`
+and `S607` are left to Bandit and its reviewed `# nosec` markers.
 
 The governance targets and the Lefthook jobs run the Praetor engine pinned at
 `PRAETOR_REF` in `.github/workflows/standards-gate.yml`, whatever `praetorctl`
@@ -417,16 +530,16 @@ locked `markdownlint-cli2` 0.23.2 dependency tree into a temporary directory.
 | --- | --- |
 | `make compile-context` | Regenerate cross-tool context and persona projections from their canonical sources |
 | `make compile-context-verify` | Fail if a generated projection has drifted |
-| `make audit` | Verify the pinned manifest/lock, enforce the 39-finding HISS baseline ratchet in the hosted Standards mode (`--base`, touched-debt delta; `AUDIT_BASE` overrides the base), and run the engine's policy checks (build warnings, clang-tidy coverage, supply chain, Paperclip pair, hooks, dev container, ruleset). `AUDIT_FLAGS=--offline` skips the forge reads, as the pre-commit hook does |
+| `make audit` | Verify the pinned manifest/lock, enforce the <!-- gen:baseline-count -->0<!-- /gen:baseline-count -->-finding HISS baseline ratchet in the hosted Standards mode (`--base`, touched-debt delta; `AUDIT_BASE` overrides the base), and run the engine's policy checks (build warnings, clang-tidy coverage, supply chain, Paperclip pair, hooks, dev container, ruleset). `AUDIT_FLAGS=--offline` skips the forge reads, as the pre-commit hook does |
 | `make docs-lint` | Lint public Markdown with the locked Praetor configuration and reject links into private scratch directories |
 | `make docs-figures` | Check figure specs and sources; skips with a reason while `docs/figures/` has none |
 | `make verify-all` | Run context verification, the audit, `verify-native`, then `docs-lint` and `docs-figures` |
 | `make hooks-install` | Install the tracked Lefthook hooks into the shared Git hooks directory; see [Git hooks](#git-hooks-opt-in-per-clone) |
 
-The baseline accepts 39 existing findings in the scanner's supported-file scope
-(C, headers, Python, shell, JavaScript/TypeScript, and workflow files):
-HISS-01=25 (`goto` cleanup jumps) and HISS-04=14 (C functions over 60 lines).
-No Python or HISS-07 finding remains. It is a non-regression ceiling, not a claim of zero debt or whole-tree
+The baseline accepts <!-- gen:baseline-count -->0<!-- /gen:baseline-count --> existing findings in the scanner's supported-file scope
+(C, headers, Python, shell, JavaScript/TypeScript, and workflow files);
+`scripts/docs/render-counts.py` renders that number from
+`.standards-baseline.json`. It is a non-regression ceiling, not a claim of zero debt or whole-tree
 source coverage. Fingerprints are keyed by file and line
 ([Praetor issue 29](https://github.com/cordanaLLM/praetor/issues/29)), so
 moving a legacy function can surface it as new.
@@ -595,14 +708,15 @@ controls below, and no workflow implements them; they are declared only
 
 | Declared by | Control | Current state |
 | --- | --- | --- |
-| `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, stale-review dismissal, review-thread resolution, nine required checks | Committed in `.github/rulesets/main.json`, not applied yet; live `master` protection requires linear history and four checks, no signatures. Approving reviews: zero under `review_mode: single_maintainer` ([Branch ruleset](#branch-ruleset)) |
-| `native-gpu-systems` | `semgrep`, `cppcheck`, `clippy` | Not run; Pelorus has no Rust for `clippy` |
+| `native-gpu-systems`, `security:high`, `api:public-contract` | Signed commits, stale-review dismissal, review-thread resolution, 16 required checks | Committed in `.github/rulesets/main.json`, not applied yet; live `master` protection requires linear history and four checks, no signatures. Approving reviews: zero under `review_mode: single_maintainer` ([Branch ruleset](#branch-ruleset)) |
+| `native-gpu-systems` | `semgrep`, `cppcheck`, `clippy` | `semgrep` runs in CI (`semgrep` job) and via the fast suite (`scripts/test-semgrep-float-identity.py`, ADR-0239); `cppcheck` not run; Pelorus has no Rust for `clippy` |
 | `security:high` | `gitleaks`, `trivy` | Not run; `.gitleaks.toml` only configures a manual `gitleaks` run |
 | `api:public-contract` | `buf`, `spectral`, OpenAPI drift, `Migration:` footer check | Not run; Pelorus has no protobuf or OpenAPI surface. The append-only C ABI is guarded by the interop conformance fixture and review |
 | `docs:seo-portal` | Schema.org JSON-LD, sitemap, `robots.txt`, Core Web Vitals | Not applicable; Pelorus builds no documentation site. The facet's locked Markdown and figure gate does run |
 | `native-gpu-systems` | No per-frame dynamic allocation | HISS-03, by C review only |
 
-The declared linters that do run are `clang-tidy` (the `core` job and
+The declared linters that do run are `semgrep` (the `semgrep` CI job and
+`semgrep-float-identity` test, ADR-0239), `clang-tidy` (the `core` job and
 `make verify-native`, over the units in `.config/clang-tidy/lane-files.txt`)
 and `markdownlint` (the documentation gate). HISS-04
 complexity is split the same way. For C the audit ratchets only the 60-line
@@ -637,12 +751,14 @@ the pinned commit lists every rule. The hook judges agent tool calls only;
 commands you type in your own terminal never pass through it.
 
 Everyone who runs Claude Code, Codex, or Gemini CLI in this repository needs
-an executable named `praetorctl` on `PATH`. The pinned `go install` builds
-`standardsctl`, so copy it under the name the hooks call, then check it with a
-sample payload from the repository root:
+an executable named `praetorctl` on `PATH`. The engine pin is `PRAETOR_REF` in
+`.github/workflows/standards-gate.yml`, which `.config/lefthook/engine.sh`
+also reads (ADR-0187). The pinned `go install` builds `standardsctl`, so copy it under the name the hooks call,
+then check it with a sample payload from the repository root:
 
 ```bash
-go install github.com/cordanaLLM/praetor/cmd/standardsctl@2d23b292417386fe8259da29690266ce331062c6
+ref=$(sed -n 's/^[[:space:]]*PRAETOR_REF:[[:space:]]*//p' .github/workflows/standards-gate.yml)
+go install "github.com/cordanaLLM/praetor/cmd/standardsctl@${ref}"
 cp "$(go env GOPATH)/bin/standardsctl" "$(go env GOPATH)/bin/praetorctl"   # Windows: standardsctl.exe to praetorctl.exe
 printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"hook_event_name":"PreToolUse"}' \
   | praetorctl hook claude pre-tool; echo "exit=$?"                          # expect exit=0, no output
@@ -712,9 +828,26 @@ the pull request head.
 | `commit-msg` hook | subject + `Migration:` footer | `praetorctl forge check-message <file>` |
 | `commit-msg` hook | DCO trailer | `grep` for `Signed-off-by: Name <email>` in the message |
 | `standards-gate.yml`, pull requests | subject + `Migration:` footer | `standardsctl forge check-commits --base origin/<base> --head <pr head>` |
-| `standards-gate.yml`, pull requests | DCO trailer | `git rev-list` loop over the same range |
+| `standards-gate.yml`, pull requests | DCO trailer | `python3 -I scripts/check-dco.py --base origin/<base> --head <pr head>` |
 
-Check a range locally with `praetorctl forge check-commits --base origin/master`.
+Check a range locally with `praetorctl forge check-commits --base origin/master`
+or `python3 -I scripts/check-dco.py --base origin/master --head HEAD`.
+
+The DCO check (`scripts/check-dco.py`) verifies that every non-merge commit
+in the pull request range carries a valid `Signed-off-by` trailer matching
+the Developer Certificate of Origin 1.1 format (`Signed-off-by: Full Name <email@example.org>`).
+The message is split into lines on LF only, as git does, so a trailer
+after a carriage return or another Unicode line separator does not count.
+Renovate bot commits are exempt when authored by Renovate in a
+Renovate-opened pull request. CI passes the pull request author with
+`--pr-author`; to check a Renovate branch locally, add
+`--pr-author 'renovate[bot]'`, since without it Renovate's unsigned commits fail.
+Before git runs, the script exits 2 for a base or head with a space or any of
+`\ : ? * [` or another character outside printable ASCII, a leading `-`, or a
+`..`. It does not check the rest of git's ref-name rules: a revision such as
+`origin/master/` passes this check, reaches git and fails as an unusable range.
+git itself is resolved to an absolute path on `PATH`. Run its self-test battery with
+`python3 -I scripts/check-dco.py --self-test`.
 
 `lefthook.yml` sets `no_auto_install: true`. Without it, `lefthook run`
 re-installs the hooks whenever the file differs from the one installed, from
@@ -741,7 +874,7 @@ engine renders for `master` and `lts-*`. `.standards.yaml` declares
 | Rule | Value |
 | --- | --- |
 | Pull request | 0 approving reviews, no code-owner review, stale reviews dismissed, review threads resolved |
-| Required status checks (strict) | the five `ci.yml` jobs, `Documentation Governance`, `REUSE lint`, `Standards & Invariant Verification Gate` |
+| Required status checks (strict) | the nine `ci.yml` jobs (the `semgrep` job included; `windows-msvc` reports one check per compiler, so ten contexts), the three `CodeQL` legs, `Documentation Governance`, `REUSE lint`, `Standards & Invariant Verification Gate` |
 | History | signed commits, linear history, no force push, no deletion |
 | Bypass | repository admin role, pull requests only |
 

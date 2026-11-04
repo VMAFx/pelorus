@@ -20,6 +20,7 @@ Rules:
     python3 -I scripts/check-mirror-contract.py --self-test
 """
 
+import argparse
 import sys
 import tempfile
 from pathlib import Path
@@ -89,7 +90,7 @@ def run(list_path, page_path, root=Path(".")):
         paths = read_paths(list_path)
         page = page_path.read_text(encoding="utf-8")
         errors = layout_errors(root, paths)
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         print("check-mirror-contract: %s" % exc)
         return 2
     if not paths:
@@ -158,19 +159,35 @@ def self_test():
         if run(Path(tmp) / "nope.txt", pg, Path(tmp)) != 2:
             print("self-test FAIL missing list: want exit 2")
             failed = 1
+        try:
+            main(["--list"])
+        except SystemExit as exc:
+            if exc.code != 2:
+                print("self-test FAIL --list without value: want exit 2, got %d" % exc.code)
+                failed = 1
+        else:
+            print("self-test FAIL --list without value: did not exit")
+            failed = 1
     print("self-test %s" % ("FAILED" if failed else "passed"))
     return failed
 
 
-def arg(argv, flag, default):
-    return Path(argv[argv.index(flag) + 1]) if flag in argv else default
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for mirror contract check."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="Run self-test suite")
+    parser.add_argument("--list", dest="list_path", type=Path, default=LIST, help="Path to mirror paths list")
+    parser.add_argument("--page", dest="page_path", type=Path, default=PAGE, help="Path to mirror contract page")
+    parser.add_argument("--root", dest="root_path", type=Path, default=Path("."), help="Repository root path")
+    return parser.parse_args(argv)
 
 
-def main(argv):
-    if "--self-test" in argv:
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking mirror contract."""
+    args = parse_args(argv)
+    if args.self_test:
         return self_test()
-    return run(arg(argv, "--list", LIST), arg(argv, "--page", PAGE),
-               arg(argv, "--root", Path(".")))
+    return run(args.list_path, args.page_path, args.root_path)
 
 
 if __name__ == "__main__":

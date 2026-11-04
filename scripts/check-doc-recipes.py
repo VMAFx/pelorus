@@ -34,6 +34,7 @@ constant).
     python3 -I scripts/check-doc-recipes.py --self-test
 """
 
+import argparse
 import datetime
 import re
 import sys
@@ -262,10 +263,11 @@ def check_table(path, text, consts, off):
 
 
 def read(root, rel):
+    """Return the UTF-8 text of ``root / rel``; raise GateError when it cannot be read."""
     try:
         return (root / rel).read_text(encoding="utf-8")
-    except OSError as exc:
-        raise GateError("cannot read %s: %s" % (rel, exc))
+    except (OSError, UnicodeDecodeError) as err:
+        raise GateError("cannot read %s: %s" % (rel, err)) from err
 
 
 def option_row(src, name, rel):
@@ -278,6 +280,7 @@ def option_row(src, name, rel):
 
 
 def load_constants(root):
+    """Return the denoise prev/lookahead defaults and maxima and the mc previous-frame count from the C sources."""
     header = read(root, DENOISE_HEADER)
     denoise = read(root, DENOISE_SRC)
     mc = re.sub(r"/\*.*?\*/|//[^\n]*", "", read(root, MC_SRC), flags=re.S)
@@ -291,8 +294,8 @@ def load_constants(root):
         raise GateError("the prev option maximum is %s, not PEL_DENOISE_MAX_PREV" % prev_max)
     try:
         look_max = int(look_max)
-    except ValueError:
-        raise GateError("the lookahead option maximum %r is not a number" % look_max)
+    except ValueError as err:
+        raise GateError("the lookahead option maximum %r is not a number" % look_max) from err
     # mc keeps one cloned previous frame; any ring or second clone field changes it.
     if len(re.findall(r"^\s*AVFrame \*prev;", mc, re.M)) != 1 or re.search(r"\bring\b", mc) \
             or len(re.findall(r"\bav_frame_clone\(", mc)) != 1:
@@ -491,30 +494,44 @@ def self_test_constants():
         except GateError:
             # Expected: missing source file must raise GateError.
             pass
+        try:
+            parse_args(["--disable"])
+        except SystemExit as exc:
+            if exc.code != 2:
+                failures += 1
+                print("self-test FAIL: missing --disable value: want exit 2, got %d" % exc.code)
+        else:
+            failures += 1
+            print("self-test FAIL: missing --disable value: did not exit")
     return failures
 
 
-def main(argv):
-    root = Path(".")
-    off = []
-    args = list(argv)
-    while args:
-        arg = args.pop(0)
-        if arg == "--self-test":
-            return self_test()
-        if arg == "--root" and args:
-            root = Path(args.pop(0))
-        elif arg == "--disable" and args:
-            rule = args.pop(0)
-            if rule not in RULES:
-                print("check-doc-recipes: unknown rule %r (rules: %s)" % (rule, ", ".join(RULES)), file=sys.stderr)
-                return 2
-            off.append(rule)
-        else:
-            print(__doc__, file=sys.stderr)
-            return 2
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for check-doc-recipes."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="run self-test suite")
+    parser.add_argument("--root", type=Path, default=Path("."), help="root directory")
+    parser.add_argument("--disable", action="append", default=[], help="disable a rule")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for checking doc recipes."""
     try:
-        findings = run(root, tuple(off))
+        args = parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    if args.self_test:
+        return self_test()
+
+    for rule in args.disable:
+        if rule not in RULES:
+            print("check-doc-recipes: unknown rule %r (rules: %s)" % (rule, ", ".join(RULES)), file=sys.stderr)
+            return 2
+
+    try:
+        findings = run(args.root, tuple(args.disable))
     except GateError as exc:
         print("check-doc-recipes: error: %s" % exc, file=sys.stderr)
         return 2

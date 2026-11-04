@@ -40,6 +40,7 @@ static int run_case(const char *name, int condition)
 
 #define VEC_MAX_LINES 256
 #define VEC_MAX_BYTES 128
+#define VEC_LINE_CAP 512 /* fgets buffer: bounds every scan of one line */
 #define VEC_MIN_COUNT 17 /* vectors in fixtures/udu-wrap-vectors.txt today */
 
 /* Value of one hex digit, or -1. */
@@ -85,7 +86,40 @@ static int expected_class(const char *word)
     return -1;
 }
 
-/* Classify one vector line; 0 pass, 1 fail (a malformed line fails). */
+/* Copy the next whitespace-separated field of *cursor into dst and advance
+ * *cursor past it. Returns 0, or -1 when no field is left or it does not fit
+ * in cap bytes with its terminator (no truncation, unlike %Ns). */
+static int next_field(const char **cursor, char *dst, size_t cap)
+{
+    const char *p = *cursor;
+    size_t skip = 0;
+    size_t n = 0;
+
+    /* Both scans stay inside one fgets line: VEC_LINE_CAP bounds the skip and
+     * cap bounds the copy (HISS-02). */
+    while (skip < VEC_LINE_CAP && (p[skip] == ' ' || p[skip] == '\t')) {
+        skip++;
+    }
+    p += skip;
+    for (; n < cap; n++) {
+        char c = p[n];
+        if (c == '\0' || c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            break;
+        }
+        if (n + 1 >= cap) {
+            return -1;
+        }
+        dst[n] = c;
+    }
+    if (n == 0 || n >= cap) {
+        return -1;
+    }
+    dst[n] = '\0';
+    *cursor = p + n;
+    return 0;
+}
+
+/* Classify one vector line; returns 0 on pass, 1 on failure. */
 static int replay_line(const char *line, int *seen)
 {
     char name[96];
@@ -98,7 +132,12 @@ static int replay_line(const char *line, int *seen)
     int want;
     int got;
 
-    if (sscanf(line, "%95s %63s %257s %23s", name, outer_hex, data_hex, want_word) != 4) {
+    const char *cursor = line;
+
+    if (next_field(&cursor, name, sizeof(name)) != 0 ||
+        next_field(&cursor, outer_hex, sizeof(outer_hex)) != 0 ||
+        next_field(&cursor, data_hex, sizeof(data_hex)) != 0 ||
+        next_field(&cursor, want_word, sizeof(want_word)) != 0) {
         (void)fprintf(stderr, "FAIL: vector line malformed: %s", line);
         return 1;
     }
@@ -123,7 +162,7 @@ static int replay_line(const char *line, int *seen)
  * class with no vector fails, so an emptied file cannot pass. */
 static int replay_vectors(const char *path)
 {
-    char line[512];
+    char line[VEC_LINE_CAP];
     int failures = 0;
     int count = 0;
     int seen[3] = {0, 0, 0};
