@@ -646,8 +646,17 @@ jobs:
       - name: Load build configuration
         run: |
           grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
-      - name: Changelog fragments render cleanly
-        run: bash scripts/release/concat-changelog-fragments.sh --check
+      - name: Changelog render owed at most 24 h
+        if: github.event_name != 'pull_request' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/'))
+        run: python3 -I scripts/release/check-changelog-staleness.py
+      - name: Changelog staleness check self-test
+        if: github.event_name == 'pull_request'
+        run: python3 -I scripts/release/check-changelog-staleness.py --self-test
+      - name: A changed CHANGELOG.md matches its fragments
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: if git diff --quiet "origin/${BASE_REF}...HEAD" -- CHANGELOG.md; then echo "CHANGELOG.md unchanged"; else bash scripts/release/concat-changelog-fragments.sh --check; fi
       - name: Co-change rules hold over the pull request
         if: github.event_name == 'pull_request'
         env:

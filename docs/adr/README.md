@@ -157,3 +157,4 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0242](0242-msvc-clang-cl-ci-leg.md) | Build and test libpelorus with cl.exe and clang-cl in CI | Accepted |
 | [0243](0243-ruff-zizmor-local-gate.md) | Run pinned Ruff and zizmor in the local gate | Accepted |
 | [0244](0244-python-argparse-gate.md) | Parse every Python command line with argparse | Accepted |
+| [0245](0245-changelog-render-at-landing.md) | Changelog render at landing | Proposed |

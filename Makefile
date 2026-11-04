@@ -39,7 +39,7 @@ tidy: build
 	grep -Ev '^(#|$$)' $(TIDY_FILES) | xargs clang-tidy -p "$(BUILD_DIR)"
 
 docs-check:
-	bash scripts/release/concat-changelog-fragments.sh --check
+	python3 -I scripts/release/check-changelog-staleness.py --self-test
 	python3 -I scripts/release/check-candidate-legs.py --self-test
 	bash scripts/release/tag-release.sh --self-test
 	bash scripts/release/check-publish-ref.sh --self-test
