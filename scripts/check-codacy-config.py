@@ -6,7 +6,7 @@
 Rules enforced:
   1. Text starts with leading '---\\n'.
   2. Exclusion item path contains no glob characters (* ? [ {).
-  3. Exclusion item path is a tracked file in git.
+  3. Exclusion item path names a regular file in the tree (CI: a tracked file).
   4. Preceding comment block contains an exception declaration with valid ISO dates.
   5. Category interval limits (expires - entered):
      - category A: any interval (expires >= entered)
@@ -28,8 +28,6 @@ from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 import re
-import shutil
-import subprocess
 import sys
 
 MAX_LINES = 10000
@@ -140,23 +138,15 @@ def is_tracked(
     root: Path,
     tracked_fn: Callable[[str], bool] | None = None,
 ) -> bool:
-    """Check if path is tracked in git via git ls-files or injected callable."""
+    """Check that path names a regular file in the tree, or ask an injected callable.
+
+    CI checks out tracked files only, so there a path git does not track is missing.
+    No git call: the check runs no subprocess.
+    """
     if tracked_fn is not None:
         return tracked_fn(path)
-    git = shutil.which("git")
-    if git is None:
-        return False
-    try:
-        proc = subprocess.run(
-            [git, "ls-files", "--error-unmatch", "--", path],
-            cwd=root,
-            capture_output=True,
-            timeout=30,
-            check=False,
-        )
-        return proc.returncode == 0
-    except (subprocess.TimeoutExpired, OSError):
-        return False
+    target = (root / path).resolve()
+    return target.is_relative_to(root.resolve()) and target.is_file()
 
 
 def check_item_path(
@@ -169,7 +159,7 @@ def check_item_path(
     if any(ch in path for ch in GLOB_CHARS):
         return [f".codacy.yml:{line_idx}: item path must not contain glob characters: {path}"]
     if not is_tracked(path, root=root, tracked_fn=tracked_fn):
-        return [f".codacy.yml:{line_idx}: item path is untracked: {path}"]
+        return [f".codacy.yml:{line_idx}: item path is untracked or missing: {path}"]
     return []
 
 
