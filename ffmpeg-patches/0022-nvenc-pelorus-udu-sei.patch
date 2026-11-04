@@ -218,7 +218,7 @@ index 206f529b28f690c5e640e94f87530dd6225b29c8..eab1a78b18beb13e7c284d29c4e2d2fd
  int ff_nvenc_encode_init(AVCodecContext *avctx);
 diff --git a/libavcodec/pelorus_sei_fit.h b/libavcodec/pelorus_sei_fit.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..a1ecdb19ebb42ffcd60f53005a2aa6feeccb7b7e
+index 0000000000000000000000000000000000000000..8a8adbdf06fc73d3470fede22150e87cf34d6b96
 --- /dev/null
 +++ b/libavcodec/pelorus_sei_fit.h
 @@ -0,0 +1,417 @@
@@ -314,7 +314,7 @@ index 0000000000000000000000000000000000000000..a1ecdb19ebb42ffcd60f53005a2aa6fe
 +#define PEL_SEI_ABI_MAJOR 1u       /* PELORUS_ABI_MAJOR */
 +#define PEL_SEI_HDR_BYTES 48u      /* sizeof(PelorusSideData) */
 +#define PEL_SEI_UUID_LEN 16u
-+#define PEL_SEI_HDR_MIN PEL_SEI_HDR_BYTES
++#define PEL_SEI_HDR_MIN 48u /* smallest header the readers accept: the ABI 1.x base layout */
 +#define PEL_SEI_DIR_ENTRY 16u    /* sizeof(PelorusSectionDir) */
 +#define PEL_SEI_MAX_SECTIONS 32u /* one directory entry per section bit */
 +

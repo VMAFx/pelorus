@@ -101,11 +101,8 @@ def check_mirrors(text: str, label: str, prefix: str, consts: tuple[bytes, int, 
     """Compare the four <prefix>_* mirrors in text with the canonical values."""
     magic, abi_major, header_bytes = consts
     raw = _define(text, f"{prefix}_MAGIC", r'"(?:[^"\\]|\\.)*"')
-    if raw is _NOT_PLAIN:
-        magic_val: bytes | object | None = _NOT_PLAIN
-    elif raw is None:
-        magic_val = None
-    else:
+    magic_val: bytes | object | None = raw
+    if isinstance(raw, str):
         magic_val = codecs.escape_decode(raw[1:-1].encode("latin-1"))[0]
     found = {
         "MAGIC": magic_val,
@@ -275,9 +272,8 @@ def _case_changed_magic() -> str | None:
         try:
             literal_patterns(bad_magic)
         except ValueError:
-            pass
-        else:
-            return f"literal_patterns accepted invalid magic {bad_magic!r}"
+            continue  # refused, as the planted case requires
+        return f"literal_patterns accepted invalid magic {bad_magic!r}"
     new_pats = literal_patterns(b"NEWMAG\0\0")
     new_found = scan_literals("tools/x.py", 'M = b"NEWMAG\\0\\0"\n', new_pats)
     if len(new_found) != 1:
