@@ -97,12 +97,21 @@ def comment_findings(comment: str, local_ids: frozenset[str]) -> list[str]:
     return found
 
 
+def parse_error(name: str, text: str) -> str | None:
+    """Return the parse diagnostic for Python source, or None when it parses."""
+    try:
+        ast.parse(text, filename=name)
+    except SyntaxError as exc:
+        return f"{name}:{exc.lineno}: not parseable Python: {exc.msg}"
+    return None
+
+
 def python_findings(name: str, text: str, local_ids: frozenset[str]) -> list[str]:
     """Check every marker comment in Python source against its AST start lines."""
-    try:
-        tree = ast.parse(text, filename=name)
-    except SyntaxError as exc:
-        return [f"{name}:{exc.lineno}: not parseable Python: {exc.msg}"]
+    error = parse_error(name, text)
+    if error is not None:
+        return [error]
+    tree = ast.parse(text, filename=name)
     starts = {
         node.lineno for node in ast.walk(tree) if isinstance(node, (ast.stmt, ast.expr))
     }
@@ -182,6 +191,10 @@ def file_findings(root: Path, path: Path, local_ids: frozenset[str]) -> tuple[li
             return [f"{name}: not readable: {exc}"], []
         except (SyntaxError, UnicodeDecodeError) as exc:
             return [f"{name}: not decodable as declared: {exc}"], []
+        # A parse error is a diagnostic: exceptions never excuse it.
+        error = parse_error(name, text)
+        if error is not None:
+            return [error], []
         return [], python_findings(name, text, local_ids)
     try:
         raw = path.read_bytes()
@@ -436,6 +449,17 @@ def encoding_self_test(local_ids: frozenset[str]) -> list[str]:
     return failures
 
 
+def diagnostic_retained(file_name: str, content: bytes, expect: str, today: date, expires: str) -> bool:
+    """Scan one planted file under a live HISS-08 exception; True when the diagnostic survives."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_root = Path(tmp)
+        planted = tmp_root / file_name
+        planted.write_bytes(content)
+        entries = [{"rule": "HISS-08", "path": file_name, "reason": "category B, 3 days: test", "expires": expires}]
+        retained = scan(tmp_root, entries=entries, today=today, paths=[planted], out=io.StringIO())
+    return any(expect in item for item in retained)
+
+
 def exceptions_self_test() -> list[str]:
     """Verify live, missing, expired, and mismatched exceptions on planted findings."""
     failures: list[str] = []
@@ -474,17 +498,13 @@ def exceptions_self_test() -> list[str]:
     if filter_excused([finding], other_entries, "HISS-08", ref_today, out=io.StringIO()) != [finding]:
         failures.append("mismatched rule exception was not refused")
 
-    # Case 5: undecodable file with live exception -> diagnostic retained
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_root = Path(tmp)
-        bad_file = tmp_root / "undecodable.py"
-        bad_file.write_bytes(b"\xff\xfe\x00bad")
-        bad_entries = [
-            {"rule": "HISS-08", "path": "undecodable.py", "reason": "category B, 3 days: test", "expires": future}
-        ]
-        retained = scan(tmp_root, entries=bad_entries, today=ref_today, paths=[bad_file], out=io.StringIO())
-        if not any("not decodable" in item for item in retained):
-            failures.append("undecodable file with live exception was silently excused")
+    # Cases 5 and 6: a read or parse diagnostic outlives a live exception
+    for file_name, content, expect in (
+        ("undecodable.py", b"\xff\xfe\x00bad", "not decodable"),
+        ("broken.py", b"def f(:\n    pass\n", "not parseable"),
+    ):
+        if not diagnostic_retained(file_name, content, expect, ref_today, future):
+            failures.append(f"'{expect}' diagnostic of {file_name} with live exception was silently excused")
 
     return failures
 
