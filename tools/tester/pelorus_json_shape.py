@@ -99,13 +99,20 @@ def _check_number(value: int | float, sch: dict, path: str, errs: list[str]) -> 
         errs.append("%s: value %r exceeds maximum %r" % (path, value, sch["maximum"]))
 
 
+def json_equal(left: object, right: object) -> bool:
+    """Compare two JSON scalars; a boolean never equals a number."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    return left == right
+
+
 def check_scalar(value: object, sch: dict, path: str, errs: list[str]) -> bool:
     """Check scalar constraints on value against schema sch."""
     if not _check_type(value, sch, path, errs):
         return False
-    if "const" in sch and value != sch["const"]:
+    if "const" in sch and not json_equal(value, sch["const"]):
         errs.append("%s: must equal %r" % (path, sch["const"]))
-    if "enum" in sch and value not in sch["enum"]:
+    if "enum" in sch and not any(json_equal(value, item) for item in sch["enum"]):
         errs.append("%s: %r not in enum" % (path, value))
     if isinstance(value, str):
         _check_string(value, sch, path, errs)
@@ -254,6 +261,11 @@ def _test_scalar_bounds(failures: list[str]) -> None:
         ("alpha", {"enum": ["alpha", "beta"]}, True),
         ("gamma", {"enum": ["alpha", "beta"]}, False),
         ("only", {"enum": ["only"]}, True),
+        (True, {"enum": [1]}, False),
+        (1, {"enum": [True]}, False),
+        (0, {"const": False}, False),
+        (True, {"const": True}, True),
+        (2, {"enum": [2.0]}, True),
         ("abc12", {"pattern": "^[a-z]+[0-9]+$"}, True),
         ("12abc", {"pattern": "^[a-z]+[0-9]+$"}, False),
         ("abc", {"minLength": 3}, True),
