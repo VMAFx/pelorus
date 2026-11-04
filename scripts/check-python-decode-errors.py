@@ -48,6 +48,9 @@ NON_RAISING_MODES = frozenset({"replace", "ignore", "backslashreplace"})
 TRY_NODES: tuple[type[ast.Try] | type[ast.TryStar], ...] = (ast.Try,) + (
     (ast.TryStar,) if hasattr(ast, "TryStar") else ())
 
+# Builtins that call their ``key`` argument before they return.
+SYNC_KEY_CALLERS = frozenset({"sorted", "min", "max"})
+
 SELF_TEST_CASES: list[tuple[str, str, int]] = [
     ("oserror_only",
      "try:\n    t = p.read_text(encoding='utf-8')\nexcept OSError as e:\n    raise X(e)\n", 1),
@@ -110,6 +113,16 @@ SELF_TEST_CASES: list[tuple[str, str, int]] = [
      "try:\n    g = lambda: p.read_text()\n    t = g()\nexcept OSError:\n    t = ''\n", 1),
     ("read_in_nested_def_default_runs",
      "try:\n    def g(t=p.read_text()):\n        return t\nexcept OSError:\n    g = None\n", 1),
+    ("read_in_sorted_key_lambda",
+     "try:\n    t = sorted(ps, key=lambda q: q.read_text())\nexcept OSError:\n    t = []\n", 1),
+    ("read_in_max_key_named_def",
+     "try:\n    def g(q):\n        return q.read_text()\n    t = max(ps, key=g)\nexcept OSError:\n    t = None\n", 1),
+    ("read_in_list_sort_key_lambda",
+     "try:\n    ps.sort(key=lambda q: q.read_text())\nexcept OSError:\n    ps = []\n", 1),
+    ("read_in_unconsumed_map_lambda",
+     "try:\n    t = map(lambda q: q.read_text(), ps)\nexcept OSError:\n    t = None\n", 0),
+    ("read_in_executor_submit_def",
+     "try:\n    def g():\n        return p.read_text()\n    f = pool.submit(g)\nexcept OSError:\n    f = None\n", 0),
 ]
 
 
@@ -144,18 +157,38 @@ def read_can_raise_decode(node: ast.AST) -> bool:
                    for m in modes)
 
 
+def sync_callbacks(call: ast.Call) -> list[ast.expr]:
+    """Return the callback arguments ``call`` invokes before it returns.
+
+    Only known synchronous positions count: the ``key`` of ``sorted``, ``min`` and
+    ``max``, and of a ``.sort()`` method. Lazy or deferred callers such as ``map``,
+    ``filter`` or ``executor.submit`` are left out, because their callback runs
+    when the result is consumed or awaited, which may be outside the block.
+    """
+    func = call.func
+    if not ((isinstance(func, ast.Name) and func.id in SYNC_KEY_CALLERS)
+            or (isinstance(func, ast.Attribute) and func.attr == "sort")):
+        return []
+    return [kw.value for kw in call.keywords if kw.arg == "key"]
+
+
 def called_in(body: list[ast.stmt]) -> tuple[set[str], set[int]]:
-    """Return the names called by plain name and the ids of lambdas called in place in ``body``."""
+    """Return the names and lambda ids that ``body`` invokes before the block exits.
+
+    A function called by plain name, a lambda called in place, and a function or
+    lambda passed as a synchronous callback (see ``sync_callbacks``) count as called.
+    """
     names: set[str] = set()
     lambdas: set[int] = set()
     for stmt in body:
         for node in ast.walk(stmt):
             if not isinstance(node, ast.Call):
                 continue
-            if isinstance(node.func, ast.Name):
-                names.add(node.func.id)
-            elif isinstance(node.func, ast.Lambda):
-                lambdas.add(id(node.func))
+            for target in [node.func, *sync_callbacks(node)]:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+                elif isinstance(target, ast.Lambda):
+                    lambdas.add(id(target))
     return names, lambdas
 
 
