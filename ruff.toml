@@ -34,6 +34,8 @@ select = [
     "PGH004",
     # CodeQL flags unused imports on pull requests (#496 part 4 recurrence).
     "F401",
+    # Codacy flags unused local variables on pull requests (#498 recurrence).
+    "F841",
 ]
 # S101 (assert), S603 and S607 (subprocess argv, partial executable path) stay
 # with Bandit, which Codacy runs with the reviewed Bandit markers of ADR-0241;

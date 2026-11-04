@@ -267,7 +267,7 @@ If Pelorus is useful to you: [GitHub Sponsors](https://github.com/sponsors/lusor
 Pelorus adopts the Praetor/HISS policy
 ([ADR-0145](docs/adr/0145-praetor-governance-adoption.md)) at engine commit
 `3bbde073` with a 51-finding legacy baseline (28 HISS-01, 21 HISS-04, two
-HISS-07).
+HISS-07; now <!-- gen:baseline-count -->0<!-- /gen:baseline-count --> findings).
 Canonical agent guidance lives in `AGENTS.md`; generated vendor contexts are
 checked for drift, and a locked Markdown gate lints the public documentation.
 The hosted Standards and Documentation Governance workflows run both on every
@@ -290,7 +290,7 @@ users also need a copy named `praetorctl` on `PATH`
 | :--- | :--- | :--- |
 | **Native verification** | `make verify-native` | Builds, tests, formats, lints, and checks changelog rendering |
 | **Full verification** | `make verify-all` | Adds context, HISS, and documentation checks |
-| **HISS audit** | `make audit` | Applies the pinned 0-finding baseline ratchet |
+| **HISS audit** | `make audit` | Applies the pinned <!-- gen:baseline-count -->0<!-- /gen:baseline-count -->-finding baseline ratchet |
 | **Documentation** | `make docs-lint docs-figures` | Runs the locked Markdown and figure checks (Node.js 22.12 or newer) |
 | **Context sync** | `make compile-context` | Compiles canonical agent guidance to vendor targets |
 | **Licensing** | `reuse lint` | Checks every file's copyright and licence against `REUSE.toml` (reuse 6.x) |
