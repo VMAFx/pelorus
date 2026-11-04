@@ -10,7 +10,8 @@ Rules:
    and Superseded ADRs are ignored. A missing or unknown Status fails loudly.
 2. The index table in docs/adr/README.md must match the rendered table generated
    from the ADR files (link, title from H1, status from header).
-3. --write updates docs/adr/README.md in place, preserving text outside the table.
+3. --write renders the index in docs/adr/README.md, preserving text outside the
+   table, and then checks every ADR status.
 4. --self-test runs planted cases verifying check and write operations.
 
 Usage:
@@ -106,6 +107,8 @@ def render_readme(root: Path) -> str:
                 break
             preamble.append(lines[idx])
             idx += 1
+        if idx == len(lines):
+            raise ValueError(f"{index}: no ADR index table header '| ADR | Title | Status |'")
         while idx < len(lines):
             if not lines[idx].startswith("|"):
                 break
@@ -145,7 +148,10 @@ def scan_index(root: Path) -> list[tuple[Path, int, str]]:
         return [(index, 1, "docs/adr/README.md missing")]
 
     current = index.read_text(encoding="utf-8")
-    expected = render_readme(root)
+    try:
+        expected = render_readme(root)
+    except ValueError as exc:
+        return [(index, 1, str(exc))]
     if current == expected:
         return []
 
@@ -261,6 +267,40 @@ def _case_statuses(tmppath: Path) -> str | None:
     return None
 
 
+def _case_bad_header(tmppath: Path) -> str | None:
+    """README without exact ADR table header is refused by --write and left unchanged."""
+    root = tmppath / "bad_header"
+    root.mkdir()
+    readme = root / "README.md"
+    original = (
+        "# Architecture Decision Records\n\n"
+        "Preamble text.\n\n"
+        "| ADR | Name | Status |\n"
+        "|---|---|---|\n"
+    )
+    readme.write_text(original, encoding="utf-8")
+    (root / "0001-first.md").write_text("# ADR-0001: First\n\n- **Status**: Accepted\n", encoding="utf-8")
+    rc = main(["--root", str(root), "--write"])
+    if rc == 0:
+        return "bad header: --write returned 0"
+    if readme.read_text(encoding="utf-8") != original:
+        return "bad header: --write modified README.md"
+    print("self-test PASS: bad header refused by --write and README unchanged")
+    return None
+
+
+def _case_write_checks(tmppath: Path) -> str | None:
+    """--write renders the index and still refuses a Proposed ADR without its Implementation line."""
+    root = tmppath / "write_checks"
+    root.mkdir()
+    (root / "README.md").write_text("# ADRs\n\n| ADR | Title | Status |\n|---|---|---|\n", encoding="utf-8")
+    (root / "0001-first.md").write_text("# ADR-0001: First\n\n- **Status**: Proposed\n", encoding="utf-8")
+    if main(["--root", str(root), "--write"]) == 0:
+        return "write checks: --write accepted a Proposed ADR without an Implementation line"
+    print("self-test PASS: --write still refuses a Proposed ADR without an Implementation line")
+    return None
+
+
 def _case_argparse(_tmppath: Path) -> str | None:
     """A flag without its value exits with status 2."""
     try:
@@ -277,7 +317,7 @@ def self_test() -> int:
     """Execute planted tests for status checking and index rendering."""
     failed = 0
     with tempfile.TemporaryDirectory() as tmp:
-        for case in (_case_missing_row, _case_statuses, _case_argparse):
+        for case in (_case_missing_row, _case_statuses, _case_bad_header, _case_write_checks, _case_argparse):
             failure = case(Path(tmp))
             if failure:
                 print(f"self-test FAIL {failure}", file=sys.stderr)
@@ -290,7 +330,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments for check-status."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true", help="run self-test suite")
-    parser.add_argument("--write", action="store_true", help="render index table in README.md")
+    parser.add_argument(
+        "--write",
+        action="store_true",
+        help="render the index and then check every status",
+    )
     parser.add_argument("--root", type=Path, default=Path("docs/adr"), help="root directory of ADRs")
     return parser.parse_args(argv)
 
@@ -305,10 +349,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.write:
-        updated = write_readme(args.root)
-        if updated:
-            print(f"updated {args.root / 'README.md'}")
-        return 0
+        try:
+            updated = write_readme(args.root)
+            if updated:
+                print(f"updated {args.root / 'README.md'}")
+        except ValueError as exc:
+            print(f"check-status: {exc}", file=sys.stderr)
+            return 1
 
     return report(scan(args.root))
 

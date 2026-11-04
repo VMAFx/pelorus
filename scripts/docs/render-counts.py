@@ -40,10 +40,15 @@ ENGINE_PIN_MARKER_RE = re.compile(
     r"<!--\s*gen:engine-pin\s*-->.*?<!--\s*/gen:engine-pin\s*-->"
 )
 WORKFLOW_PIN_RE = re.compile(r"^\s*PRAETOR_REF:\s*([0-9a-fA-F]{7,40})\s*$")
+REQUIRED_MARKERS = (
+    ("README.md", "baseline-count", 2),
+    ("docs/development/agent-reference.md", "engine-pin", 1),
+    ("docs/development/build.md", "baseline-count", 2),
+)
 
 
-def read_baseline_count(baseline_path: Path) -> int:
-    """Read and validate total_infractions from .standards-baseline.json."""
+def _load_baseline_json(baseline_path: Path) -> dict:
+    """Load and parse JSON from baseline_path, verifying it is a dict."""
     if not baseline_path.is_file():
         raise ValueError(f"baseline file does not exist: {baseline_path}")
     try:
@@ -52,10 +57,16 @@ def read_baseline_count(baseline_path: Path) -> int:
         raise ValueError(f"malformed baseline JSON in {baseline_path}: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError(f"malformed baseline in {baseline_path}: expected JSON object")
+    return data
+
+
+def read_baseline_count(baseline_path: Path) -> int:
+    """Read and validate total_infractions from .standards-baseline.json."""
+    data = _load_baseline_json(baseline_path)
     if "total_infractions" not in data:
         raise ValueError(f"malformed baseline in {baseline_path}: missing 'total_infractions' key")
     total = data["total_infractions"]
-    if not isinstance(total, int) or total < 0:
+    if not isinstance(total, int) or isinstance(total, bool) or total < 0:
         raise ValueError(f"malformed baseline in {baseline_path}: 'total_infractions' must be a non-negative int")
     if "infractions" not in data or not isinstance(data["infractions"], list):
         raise ValueError(f"malformed baseline in {baseline_path}: missing or invalid 'infractions' list")
@@ -65,6 +76,25 @@ def read_baseline_count(baseline_path: Path) -> int:
             f"baseline mismatch in {baseline_path}: len(infractions)={len(infractions)} != total_infractions={total}"
         )
     return total
+
+
+def check_required_markers(root: Path) -> list[str]:
+    """Verify required documentation files contain expected marker pair counts."""
+    findings: list[str] = []
+    for rel_path, name, expected in REQUIRED_MARKERS:
+        file_path = root / rel_path
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            findings.append(f"{file_path}: cannot read: {exc}")
+            continue
+        pattern = rf"<!--\s*gen:{re.escape(name)}\s*-->"
+        actual = len(re.findall(pattern, content))
+        if actual != expected:
+            findings.append(
+                f"{file_path}: expected {expected} gen:{name} marker pair(s), found {actual}"
+            )
+    return findings
 
 
 def read_engine_pin(workflow_path: Path) -> str:
@@ -159,6 +189,12 @@ _BAD_INPUTS = (
     ("malformed JSON", read_baseline_count, "bad.json", "{broken"),
     ("missing total_infractions", read_baseline_count, "no-key.json", json.dumps({"infractions": []})),
     (
+        "boolean total_infractions",
+        read_baseline_count,
+        "bool.json",
+        json.dumps({"total_infractions": True, "infractions": [{}]}),
+    ),
+    (
         "infractions count mismatch",
         read_baseline_count,
         "mismatch.json",
@@ -224,10 +260,44 @@ def _case_unreadable(tmppath: Path) -> str | None:
     return None
 
 
+def _case_required_markers(tmppath: Path) -> str | None:
+    """A missing marker pair is detected; full marker set produces no findings."""
+    root = tmppath / "req_markers"
+    root.mkdir()
+    docs_dev = root / "docs" / "development"
+    docs_dev.mkdir(parents=True)
+    ref = docs_dev / "agent-reference.md"
+    ref.write_text("Pin: <!-- gen:engine-pin -->c565cba<!-- /gen:engine-pin -->\n", encoding="utf-8")
+    build = docs_dev / "build.md"
+    build.write_text(
+        "A: <!-- gen:baseline-count -->0<!-- /gen:baseline-count -->\n"
+        "B: <!-- gen:baseline-count -->0<!-- /gen:baseline-count -->\n",
+        encoding="utf-8",
+    )
+    readme = root / "README.md"
+    readme.write_text("Count: <!-- gen:baseline-count -->0<!-- /gen:baseline-count -->\n", encoding="utf-8")
+
+    findings = check_required_markers(root)
+    if len(findings) != 1:
+        return f"expected 1 finding for 1 baseline-count pair in README.md, got {len(findings)}: {findings}"
+    print(f"self-test PASS: 1 marker pair in README.md gave 1 finding: {findings[0]}")
+
+    readme.write_text(
+        "Count 1: <!-- gen:baseline-count -->0<!-- /gen:baseline-count -->\n"
+        "Count 2: <!-- gen:baseline-count -->0<!-- /gen:baseline-count -->\n",
+        encoding="utf-8",
+    )
+    findings = check_required_markers(root)
+    if len(findings) != 0:
+        return f"expected 0 findings with correct marker counts, got {len(findings)}: {findings}"
+    print("self-test PASS: correct marker counts gave 0 findings")
+    return None
+
+
 def self_test() -> int:
     """Execute planted positive and negative tests."""
     with tempfile.TemporaryDirectory() as tmp:
-        for case in (_case_drift, _case_bad_inputs, _case_unreadable, _case_argparse):
+        for case in (_case_drift, _case_bad_inputs, _case_unreadable, _case_required_markers, _case_argparse):
             failure = case(Path(tmp))
             if failure:
                 print(f"self-test FAIL: {failure}", file=sys.stderr)
@@ -282,6 +352,8 @@ def main(argv: list[str] | None = None) -> int:
 
     target_files = args.files if args.files else find_default_files(Path("."))
     all_drifts: list[str] = []
+    if not args.files:
+        all_drifts.extend(check_required_markers(Path(".")))
     for file_path in target_files:
         all_drifts.extend(check_or_write_file(file_path, baseline_count, engine_pin, write=args.write))
 
