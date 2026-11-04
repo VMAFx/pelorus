@@ -435,7 +435,9 @@ and refuses:
 - a subscript, an `.index()` or `.pop()` call, or an `in`, `not in`, `==` or `!=`
   test on `argv` inside a function named `main` or `parse_args`, where `argparse`
   owns the command line. A name bound to `argv` or to a `list`, `tuple` or `deque`
-  copy of it (`args = list(argv)`) counts as `argv`; `argv is None` stays allowed;
+  copy of it (`args = list(argv)`), and a parameter of a function in the same
+  module that receives `sys.argv[1:]` or such a name, counts as `argv`;
+  `argv is None` stays allowed;
 - the same `argv` operations anywhere in a module that has a command line (it
   reads `sys.argv` or defines `main` or `parse_args`) but does not import
   `argparse`.

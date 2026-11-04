@@ -42,7 +42,8 @@ CLI_FUNCTIONS = frozenset({"main", "parse_args"})
 ARGV_READ_METHODS = frozenset({"index", "pop"})
 # Calls that copy argv into a new name the checker then follows (args = list(argv)).
 ARGV_COPY_CALLS = frozenset({"list", "tuple", "deque"})
-MAX_ALIAS_PASSES = 8
+# Sources above this size are reported, not parsed: bounds the AST walks (largest tracked file ~264 KB).
+MAX_SOURCE_BYTES = 1 << 20
 # Comparisons that read the command line by hand; `argv is None` stays allowed.
 ARGV_COMPARE_OPS: dict[type[ast.cmpop], str] = {
     ast.In: "in", ast.NotIn: "not in", ast.Eq: "==", ast.NotEq: "!=",
@@ -55,6 +56,23 @@ SELF_TEST_CASES: list[tuple[str, str, int]] = [
         "        if arg == '--root' and args:\n            return args.pop(0)\n    return None\n"
         "if __name__ == '__main__':\n    sys.exit(main(sys.argv[1:]))\n",
         2,
+    ),
+    (
+        "renamed_param_receives_argv",
+        "import sys\ndef run(args):\n    return args[0]\nif __name__ == '__main__':\n    sys.exit(run(sys.argv[1:]))\n",
+        1,
+    ),
+    (
+        "keyword_param_receives_argv_alias",
+        "import sys\ndef main(argv):\n    return run(opts=argv)\ndef run(opts):\n    return opts.pop()\n",
+        1,
+    ),
+    (
+        "long_alias_chain_subscript",
+        # Written last link first, so each alias pass resolves one more name.
+        "def main(argv):\n" + "".join(f"    a{i} = {'argv' if i == 0 else f'a{i - 1}'}\n" for i in reversed(range(12)))
+        + "    return a11[0]\n",
+        1,
     ),
     (
         "argv_alias_chain_subscript",
@@ -154,6 +172,7 @@ SELF_TEST_BYTES_CASES: list[tuple[str, bytes]] = [
     ("invalid_utf8_source", b"x = '\xe9'\n"),
     ("null_byte_source", b"x = 1\x00\n"),
     ("unknown_coding_source", b"# -*- coding: bogus -*-\nx = 1\n"),
+    ("oversized_source", b"#" * (MAX_SOURCE_BYTES + 1)),
 ]
 
 
@@ -251,13 +270,39 @@ def copies_argv(value: ast.AST | None, names: set[str]) -> bool:
     )
 
 
+def passes_argv(arg: ast.AST, names: set[str]) -> bool:
+    """Return True if a call argument is sys.argv[1:] or an argv name."""
+    if isinstance(arg, ast.Subscript) and is_sys_argv_1_slice(arg):
+        return True
+    return isinstance(arg, ast.Name) and arg.id in names
+
+
+def receiving_params(call: ast.Call, funcs: dict[str, ast.arguments], names: set[str]) -> set[str]:
+    """Return the parameters of a module function that receive argv at this call."""
+    if not isinstance(call.func, ast.Name) or call.func.id not in funcs:
+        return set()
+    spec = funcs[call.func.id]
+    positional = [a.arg for a in spec.posonlyargs + spec.args]
+    found = {positional[i] for i, arg in enumerate(call.args) if i < len(positional) and passes_argv(arg, names)}
+    found.update(kw.arg for kw in call.keywords if kw.arg and passes_argv(kw.value, names))
+    return found
+
+
 def argv_aliases(tree: ast.AST) -> frozenset[str]:
-    """Return argv plus every name bound to argv or a copy of it (args = list(argv))."""
+    """Return argv plus every name bound to argv: a copy (args = list(argv)) or a parameter
+    that receives sys.argv[1:] or an argv name (main(sys.argv[1:]) -> def main(args))."""
     names = {"argv"}
-    assigns = [n for n in ast.walk(tree) if isinstance(n, (ast.Assign, ast.AnnAssign))]
-    for _ in range(MAX_ALIAS_PASSES):
+    nodes = [n for n in ast.walk(tree) if isinstance(n, (ast.Assign, ast.AnnAssign, ast.Call))]
+    funcs = {
+        n.name: n.args for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    # Each productive pass adds at least one name, so len(nodes) + 1 passes reach the fixed point.
+    for _ in range(len(nodes) + 1):
         before = len(names)
-        for node in assigns:
+        for node in nodes:
+            if isinstance(node, ast.Call):
+                names.update(receiving_params(node, funcs, names))
+                continue
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             if copies_argv(node.value, names):
                 names.update(t.id for t in targets if isinstance(t, ast.Name))
@@ -298,6 +343,8 @@ def check_source_content(
     """Check Python source bytes for hand-parsed command-line argv."""
     if display_path in EXCEPTIONS:
         return []
+    if len(source_bytes) > MAX_SOURCE_BYTES:
+        return [f"{display_path}:1: source larger than {MAX_SOURCE_BYTES} bytes, not scanned"]
     try:
         tree = ast.parse(source_bytes, filename=display_path)
     except SyntaxError as exc:
@@ -376,7 +423,7 @@ def mirror_cli_failure(repo_root: pathlib.Path) -> str | None:
     if not python or not pathlib.Path(python).is_file():
         return f"interpreter path {python!r} is not a file"
     try:
-        proc = subprocess.run(  # nosec B603 - fixed python argv, no shell, explicit deadline
+        proc = subprocess.run(  # nosec B603 - fixed python argv, no shell, explicit deadline  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is sys.executable plus the checked mirror script and constants, no shell, explicit deadline
             [python, "-I", str(mirror_script), "--list"],
             capture_output=True,
             text=True,

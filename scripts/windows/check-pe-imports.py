@@ -76,6 +76,10 @@ def parse_dll_allow_list(path: Path) -> DllAllowList:
     except (configparser.Error, UnicodeDecodeError) as exc:
         raise ValueError(f"Malformed DLL allow-list {path}: {exc}") from exc
 
+    # configparser copies [DEFAULT] entries into every section; refuse them so
+    # no DLL is allowed without being listed under [system] or [bundle].
+    if parser.defaults():
+        raise ValueError(f"Entries in [{parser.default_section}] are not allowed in {path}")
     sections: dict[str, str] = {}
     for name in parser.sections():
         if name.lower() not in ALLOW_LIST_SECTIONS:
@@ -353,6 +357,8 @@ ALLOW_LIST_REFUSALS: tuple[tuple[str, str | None, type[Exception], str], ...] = 
      ValueError, "Unexpected entry outside section"),
     ("empty system", "[system]\n[bundle]\nzlib1.dll pkg MIT\n", ValueError, "No [system] entries found"),
     ("empty bundle", "[system]\nKERNEL32.dll\n[bundle]\n", ValueError, "No [bundle] entries found"),
+    ("default section entries", "[DEFAULT]\nevil.dll\n[system]\nKERNEL32.dll\n[bundle]\nzlib1.dll pkg MIT\n",
+     ValueError, "Entries in [DEFAULT] are not allowed"),
 )
 
 
