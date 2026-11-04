@@ -64,11 +64,24 @@ PELORUS_UUID = bytes.fromhex("e1d7c4a26b934f089a550f3c2db17e64")
 # Zero-free carrier form of the blob (interop ABI 1.5, ADR-0183): this UUID, then
 # the COBS-encoded blob image. NVENC writes every Pelorus blob this way.
 CARRIER_UUID = bytes.fromhex("3f9b37b8fd9a4621920e9b78b55cf9b5")
-PELORUS_MAGIC = b"PELOR1\0\0"
+def _load_interop_consts():
+    """Import shared interop constants from tools/tester by file path (issue #500)."""
+    path = HERE / "pelorus_interop_consts.py"
+    spec = importlib.util.spec_from_file_location("pelorus_interop_consts", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load pelorus_interop_consts from {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_CONSTS = _load_interop_consts()
+PELORUS_MAGIC = _CONSTS.MAGIC
+ABI_MAJOR = _CONSTS.ABI_MAJOR
+HEADER_BYTES = _CONSTS.HEADER_BYTES
 SEC_BANDING, SEC_VARIANCE = 1, 2
 REQUIRED_SECTIONS = SEC_BANDING | SEC_VARIANCE
 HEADER_FMT = "<8sHHIIHHQ"
-HEADER_BYTES = 48
 DIR_FMT = "<IIII"
 FILTER_RE = re.compile(r"^Filter '([^']+)' formats:\s*$", re.M)
 INSERT_RE = re.compile(r"auto-inserting filter '([^']+)' between")
@@ -587,7 +600,7 @@ def unwrap_payloads(frames, zero_free, label, disabled=frozenset()):
 def header_errors(fields, length):
     magic, major, _minor, total, _mask, _count, hsize, _pts = fields
     errs = []
-    if magic != PELORUS_MAGIC or major != 1 or hsize != HEADER_BYTES:
+    if magic != PELORUS_MAGIC or major != ABI_MAJOR or hsize != HEADER_BYTES:
         errs.append("header magic/abi/size wrong (abi_major %d)" % major)
     if total != length:
         errs.append("total_size %d != blob length %d" % (total, length))
@@ -2170,7 +2183,7 @@ def pack_map_blob(pts=0, maps=True):
     secs = ((1, 80, 16), (2, 96, 28))
     tail = 40 if maps else 0
     body = bytearray(124 + tail)
-    struct.pack_into(HEADER_FMT, body, 0, PELORUS_MAGIC, 1, 3, 124 + tail, 3, 2, HEADER_BYTES, pts)
+    struct.pack_into(HEADER_FMT, body, 0, PELORUS_MAGIC, ABI_MAJOR, 3, 124 + tail, 3, 2, HEADER_BYTES, pts)
     for i, (sid, off, size) in enumerate(secs):
         struct.pack_into(DIR_FMT, body, HEADER_BYTES + 16 * i, sid, off, size, 3)
     if maps:

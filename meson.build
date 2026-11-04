@@ -554,6 +554,25 @@ test('json-shape',
      args: ['-I', json_shape_script, '--self-test'],
      suite: 'fast')
 
+# Issue #500: interop constant parser self-test and repository guard check.
+interop_consts_script = meson.project_source_root() / 'tools' / 'tester' / 'pelorus_interop_consts.py'
+test('interop-consts',
+     python_prog,
+     args: ['-I', interop_consts_script, '--self-test'],
+     suite: 'fast')
+
+interop_guard_script = meson.project_source_root() / 'scripts' / 'check-interop-constants.py'
+test('interop-constants-guard',
+     python_prog,
+     args: ['-I', interop_guard_script],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+test('interop-constants-guard-self-test',
+     python_prog,
+     args: ['-I', interop_guard_script, '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 # Issue #267 / ADR-0181: hevc_nvenc's udu_sei path keeps each picture's
 # parameter sets and SEI within NVENC's 1024-byte limit
 # (ffmpeg-patches/files/pelorus_sei_fit.h; the QSV budget of issue #286 is
@@ -614,6 +633,18 @@ if get_option('tests')
     args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'fixtures' / 'udu-wrap-vectors.txt'],
     suite: 'fast',
   )
+endif
+
+# Issue #500: interop constant mirror equality between libpelorus interop.h
+# and FFmpeg-side pelorus_sei_fit.h.
+if get_option('tests')
+  interop_constants_test = executable(
+    'pelorus_interop_constants_test',
+    files('ffmpeg-patches/test/interop_constants_test.c'),
+    include_directories: include_directories('ffmpeg-patches/files'),
+    dependencies: libpelorus_dep,
+  )
+  test('interop-constants', interop_constants_test, suite: 'fast')
 endif
 
 # Issue #103 / ADR-0184: the DRM format modifier rule of the tiling=drm output

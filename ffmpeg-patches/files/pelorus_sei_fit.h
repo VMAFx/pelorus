@@ -85,10 +85,14 @@ static inline size_t pel_sei_size_add(size_t a, size_t b)
 
 /* Mirrored interop.h ABI 1.x layout; R1 (append-only) keeps these offsets
  * fixed, and sei_fit_test.c checks each against offsetof(). */
+#define PEL_SEI_MAGIC "PELOR1\0\0" /* PELORUS_MAGIC_STR */
+#define PEL_SEI_MAGIC_LEN 8u       /* PELORUS_MAGIC_LEN */
+#define PEL_SEI_ABI_MAJOR 1u       /* PELORUS_ABI_MAJOR */
+#define PEL_SEI_HDR_BYTES 48u      /* sizeof(PelorusSideData) */
 #define PEL_SEI_UUID_LEN 16u
-#define PEL_SEI_HDR_MIN 48u      /* sizeof(PelorusSideData)                  */
-#define PEL_SEI_DIR_ENTRY 16u    /* sizeof(PelorusSectionDir)                */
-#define PEL_SEI_MAX_SECTIONS 32u /* one directory entry per section bit    */
+#define PEL_SEI_HDR_MIN PEL_SEI_HDR_BYTES
+#define PEL_SEI_DIR_ENTRY 16u    /* sizeof(PelorusSectionDir) */
+#define PEL_SEI_MAX_SECTIONS 32u /* one directory entry per section bit */
 
 /* Sections this file can strip: those whose map fields pel_sei_map_fields
  * lists, plus those without maps (denoise, film grain, complexity). A blob
@@ -235,8 +239,8 @@ static inline int pel_sei_is_blob(const uint8_t *p, size_t n)
 {
     return p && n >= PEL_SEI_UUID_LEN + PEL_SEI_HDR_MIN &&
            !memcmp(p, pel_sei_blob_uuid, PEL_SEI_UUID_LEN) &&
-           !memcmp(p + PEL_SEI_UUID_LEN, "PELOR1\0\0", 8) &&
-           pel_sei_rd16(p + PEL_SEI_UUID_LEN + 8) == 1u;
+           !memcmp(p + PEL_SEI_UUID_LEN, PEL_SEI_MAGIC, PEL_SEI_MAGIC_LEN) &&
+           pel_sei_rd16(p + PEL_SEI_UUID_LEN + 8) == PEL_SEI_ABI_MAJOR;
 }
 
 /*
@@ -316,7 +320,8 @@ static inline int pel_sei_blob(const uint8_t *p, size_t n, PelSeiBlob *b)
     if (!p || n < PEL_SEI_UUID_LEN + PEL_SEI_HDR_MIN || memcmp(p, uuid, PEL_SEI_UUID_LEN) != 0)
         return -1;
     img = p + PEL_SEI_UUID_LEN;
-    if (memcmp(img, "PELOR1\0\0", 8) != 0 || pel_sei_rd16(img + 8) != 1u)
+    if (memcmp(img, PEL_SEI_MAGIC, PEL_SEI_MAGIC_LEN) != 0 ||
+        pel_sei_rd16(img + 8) != PEL_SEI_ABI_MAJOR)
         return -1;
     b->total = pel_sei_rd32(img + 12);
     b->count = pel_sei_rd16(img + 20);

@@ -65,11 +65,11 @@ h264_nvenc as written before, none as carriers, up to 49 145 bytes.
 ---
  libavcodec/nvenc.c           |  95 +++++
  libavcodec/nvenc.h           |  10 +
- libavcodec/pelorus_sei_fit.h | 412 ++++++++++++++++++++
- 3 files changed, 517 insertions(+)
+ libavcodec/pelorus_sei_fit.h | 417 ++++++++++++++++++++
+ 3 files changed, 522 insertions(+)
 
 diff --git a/libavcodec/nvenc.c b/libavcodec/nvenc.c
-index 22b526761e1ef32e9fe3206e6f8018ea38988196..b2e5dd99282e42da27e741cd3dbbf50132dbf383 100644
+index 3ee9e62145679b03c7bfedc3e99e43efc4e69488..b24dcb0c9a3628781edf48463c761fd6010f5362 100644
 --- a/libavcodec/nvenc.c
 +++ b/libavcodec/nvenc.c
 @@ -24,6 +24,7 @@
@@ -218,10 +218,10 @@ index 206f529b28f690c5e640e94f87530dd6225b29c8..eab1a78b18beb13e7c284d29c4e2d2fd
  int ff_nvenc_encode_init(AVCodecContext *avctx);
 diff --git a/libavcodec/pelorus_sei_fit.h b/libavcodec/pelorus_sei_fit.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..7766361461c8e5ef1c9e40ac7355ccc945bab8c9
+index 0000000000000000000000000000000000000000..a1ecdb19ebb42ffcd60f53005a2aa6feeccb7b7e
 --- /dev/null
 +++ b/libavcodec/pelorus_sei_fit.h
-@@ -0,0 +1,412 @@
+@@ -0,0 +1,417 @@
 +/*
 + * Copyright 2026 Lusoris
 + *
@@ -309,10 +309,14 @@ index 0000000000000000000000000000000000000000..7766361461c8e5ef1c9e40ac7355ccc9
 +
 +/* Mirrored interop.h ABI 1.x layout; R1 (append-only) keeps these offsets
 + * fixed, and sei_fit_test.c checks each against offsetof(). */
++#define PEL_SEI_MAGIC "PELOR1\0\0" /* PELORUS_MAGIC_STR */
++#define PEL_SEI_MAGIC_LEN 8u       /* PELORUS_MAGIC_LEN */
++#define PEL_SEI_ABI_MAJOR 1u       /* PELORUS_ABI_MAJOR */
++#define PEL_SEI_HDR_BYTES 48u      /* sizeof(PelorusSideData) */
 +#define PEL_SEI_UUID_LEN 16u
-+#define PEL_SEI_HDR_MIN 48u      /* sizeof(PelorusSideData)                  */
-+#define PEL_SEI_DIR_ENTRY 16u    /* sizeof(PelorusSectionDir)                */
-+#define PEL_SEI_MAX_SECTIONS 32u /* one directory entry per section bit    */
++#define PEL_SEI_HDR_MIN PEL_SEI_HDR_BYTES
++#define PEL_SEI_DIR_ENTRY 16u    /* sizeof(PelorusSectionDir) */
++#define PEL_SEI_MAX_SECTIONS 32u /* one directory entry per section bit */
 +
 +/* Sections this file can strip: those whose map fields pel_sei_map_fields
 + * lists, plus those without maps (denoise, film grain, complexity). A blob
@@ -459,8 +463,8 @@ index 0000000000000000000000000000000000000000..7766361461c8e5ef1c9e40ac7355ccc9
 +{
 +    return p && n >= PEL_SEI_UUID_LEN + PEL_SEI_HDR_MIN &&
 +           !memcmp(p, pel_sei_blob_uuid, PEL_SEI_UUID_LEN) &&
-+           !memcmp(p + PEL_SEI_UUID_LEN, "PELOR1\0\0", 8) &&
-+           pel_sei_rd16(p + PEL_SEI_UUID_LEN + 8) == 1u;
++           !memcmp(p + PEL_SEI_UUID_LEN, PEL_SEI_MAGIC, PEL_SEI_MAGIC_LEN) &&
++           pel_sei_rd16(p + PEL_SEI_UUID_LEN + 8) == PEL_SEI_ABI_MAJOR;
 +}
 +
 +/*
@@ -540,7 +544,8 @@ index 0000000000000000000000000000000000000000..7766361461c8e5ef1c9e40ac7355ccc9
 +    if (!p || n < PEL_SEI_UUID_LEN + PEL_SEI_HDR_MIN || memcmp(p, uuid, PEL_SEI_UUID_LEN) != 0)
 +        return -1;
 +    img = p + PEL_SEI_UUID_LEN;
-+    if (memcmp(img, "PELOR1\0\0", 8) != 0 || pel_sei_rd16(img + 8) != 1u)
++    if (memcmp(img, PEL_SEI_MAGIC, PEL_SEI_MAGIC_LEN) != 0 ||
++        pel_sei_rd16(img + 8) != PEL_SEI_ABI_MAJOR)
 +        return -1;
 +    b->total = pel_sei_rd32(img + 12);
 +    b->count = pel_sei_rd16(img + 20);

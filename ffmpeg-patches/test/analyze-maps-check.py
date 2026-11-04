@@ -20,15 +20,32 @@ defect per rule and requires each to be rejected.
 """
 
 import argparse
+import importlib.util
 import math
 import re
 import struct
 import sys
+from pathlib import Path
 
+
+def _load_interop_consts():
+    """Import shared interop constants from tools/tester by file path (issue #500)."""
+    path = Path(__file__).resolve().parents[2] / "tools" / "tester" / "pelorus_interop_consts.py"
+    spec = importlib.util.spec_from_file_location("pelorus_interop_consts", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load pelorus_interop_consts from {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_CONSTS = _load_interop_consts()
+PELORUS_MAGIC = _CONSTS.MAGIC
+ABI_MAJOR = _CONSTS.ABI_MAJOR
+HEADER_BYTES = _CONSTS.HEADER_BYTES
 PELORUS_UUID = "e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64"
 CARRIER_UUID = "3f9b37b8-fd9a-4621-920e-9b78b55cf9b5"
 HEADER_FMT = "<8sHHIIHHQBBHHHII"
-HEADER_BYTES = 48
 SEC_BANDING, SEC_VARIANCE, SEC_COMPLEXITY = 1, 2, 128
 BANDING_FMT = "<ffIIff"
 VARIANCE_FMT = "<fffIIII"
@@ -116,7 +133,7 @@ def decode(image):
         raise MapError("blob shorter than the header")
     f = struct.unpack(HEADER_FMT, image[:HEADER_BYTES])
     hdr = {"total": f[3], "count": f[5], "hsize": f[6], "cols": f[10], "rows": f[11]}
-    if f[0] != b"PELOR1\0\0" or f[1] != 1 or hdr["hsize"] != HEADER_BYTES:
+    if f[0] != PELORUS_MAGIC or f[1] != ABI_MAJOR or hdr["hsize"] != HEADER_BYTES:
         raise MapError("bad magic, ABI major or header size")
     if hdr["total"] != len(image):
         raise MapError("total_size %d != blob length %d" % (hdr["total"], len(image)))
@@ -255,12 +272,12 @@ def pack_blob(cols, rows, band, var, edge, maps=True):
     gvar = sum(var) / cells
     gedge = sum(edge) / cells / 255.0
     image = bytearray(end)
-    hdr = struct.pack(HEADER_FMT, b"PELOR1\0\0", 1, 4, end, 131, 3, 48, 0, 0, 8,
+    hdr = struct.pack(HEADER_FMT, PELORUS_MAGIC, ABI_MAJOR, 4, end, 131, 3, HEADER_BYTES, 0, 0, 8,
                       cols, rows, 0, 0x41524C50, 0)
-    image[0:48] = hdr
+    image[0:HEADER_BYTES] = hdr
     for i, (sid, off, size) in enumerate(((SEC_VARIANCE, 96, 28), (SEC_BANDING, 128, 24),
                                           (SEC_COMPLEXITY, 152, 16))):
-        image[48 + 16 * i:64 + 16 * i] = struct.pack("<IIII", sid, off, size, 4)
+        image[HEADER_BYTES + 16 * i:HEADER_BYTES + 16 + 16 * i] = struct.pack("<IIII", sid, off, size, 4)
     image[96:124] = struct.pack(VARIANCE_FMT, gvar, gedge, gedge, offs[2], offs[3], offs[4],
                                 offs[5])
     image[128:152] = struct.pack(BANDING_FMT, 0.5, 0.5, offs[0], offs[1], 0.0, 0.0)
