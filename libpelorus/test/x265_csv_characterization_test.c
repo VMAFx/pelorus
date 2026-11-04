@@ -41,10 +41,6 @@ static long get_proc_id(void)
 }
 #endif
 
-#ifndef PEL_X265_FIXTURE_PATH
-#error "PEL_X265_FIXTURE_PATH must be set by the build"
-#endif
-
 #define FIXTURE_CAP 8192u
 #define FRAME_CAP 32u
 #define FIXTURE_FRAME_COUNT 10u
@@ -377,11 +373,16 @@ static int test_case_i_cap_overflow(const char *tmp_path)
     return failures;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     char tmp_path[128];
     int failures = 0;
     int n;
+
+    if (argc < 2 || argv[1] == NULL) {
+        (void)fprintf(stderr, "usage: %s <x265-fixture-csv>\n", argv[0]);
+        return EXIT_FAILURE;
+    }
 
     n = snprintf(tmp_path, sizeof(tmp_path), "pelorus_x265_char_%ld.csv", get_proc_id());
     if (n < 0 || (size_t)n >= sizeof(tmp_path)) {
@@ -389,7 +390,7 @@ int main(void)
         return EXIT_FAILURE;
     }
 
-    failures += test_case_a_fixture(PEL_X265_FIXTURE_PATH);
+    failures += test_case_a_fixture(argv[1]);
     failures += test_case_b_header_only(tmp_path);
     failures += test_case_c_empty_file(tmp_path);
     failures += test_case_d_crlf(tmp_path);

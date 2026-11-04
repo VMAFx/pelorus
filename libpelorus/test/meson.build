@@ -66,12 +66,12 @@ test('enc-telemetry-adapters-locale', telemetry_adapter_test,
 x265_csv_characterization_test = executable(
   'pelorus_x265_csv_characterization_test',
   files('x265_csv_characterization_test.c'),
-  # Compile-time fixture path: no command-line path reaches fopen. Forward
-  # slashes keep a Windows source path free of C string escapes.
-  c_args: ['-DPEL_X265_FIXTURE_PATH="' + (meson.current_source_dir() / 'fixtures' / 'telemetry' / 'x265-4.3-qp32.csv').replace('\\', '/') + '"'],
   dependencies: libpelorus_dep,
 )
 test('x265-csv-characterization', x265_csv_characterization_test,
+     args: [
+       meson.current_source_dir() / 'fixtures' / 'telemetry' / 'x265-4.3-qp32.csv',
+     ],
      suite: 'fast')
 
 # ADR-0175 encode record: SHA-256 (FIPS 180-4 vectors), canonical JSON, the
