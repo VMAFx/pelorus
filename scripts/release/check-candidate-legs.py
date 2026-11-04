@@ -95,7 +95,7 @@ def validate_legs(doc: object) -> list[str]:
                 errors.append(f"leg {leg_id}: duplicate id")
             else:
                 seen.add(leg_id)
-        if kind in KINDS:
+        if isinstance(kind, str) and kind in KINDS:
             for field in sorted(KINDS[kind]):
                 if not isinstance(leg.get(field), str) or not leg[field]:
                     errors.append(f"leg {leg_id or index}: {field} missing")
@@ -172,6 +172,7 @@ def _schema_failures(good: dict) -> list[str]:
         "wrong schema": {**good, "schema": 2},
         "no legs": {**good, "legs": []},
         "unknown kind": {**good, "legs": [{"id": "x", "kind": "magic", "proves": "p"}]},
+        "list kind": {**good, "legs": [{"id": "x", "kind": ["magic"], "proves": "p"}]},
         "duplicate id": {**good, "legs": good["legs"] + [good["legs"][0]]},
         "workflow_run without event": {
             **good,
