@@ -1,0 +1,266 @@
+{
+  "schema": 1,
+  "evaluate": [
+    {
+      "name": "stages_changed_guide_changed",
+      "changed": [
+        "docs/usage/tester.md",
+        "tools/tester/pelorus_tester_stages.py"
+      ],
+      "commits": [],
+      "expected": 0
+    },
+    {
+      "name": "stages_changed_guide_not",
+      "changed": [
+        "tools/tester/pelorus_tester_stages.py"
+      ],
+      "commits": [],
+      "expected": 1
+    },
+    {
+      "name": "fixtures_lock_changed_alone",
+      "changed": [
+        "tools/tester/fixtures.lock.json"
+      ],
+      "commits": [],
+      "expected": 1
+    },
+    {
+      "name": "stages_changed_valid_trailer",
+      "changed": [
+        "tools/tester/pelorus_tester_stages.py"
+      ],
+      "commits": [
+        {
+          "files": [
+            "tools/tester/pelorus_tester_stages.py"
+          ],
+          "trailers": [
+            "tester-usage-guide refactor only"
+          ]
+        }
+      ],
+      "expected": 0
+    },
+    {
+      "name": "trailer_with_empty_reason",
+      "changed": [
+        "tools/tester/pelorus_tester_stages.py"
+      ],
+      "commits": [
+        {
+          "files": [
+            "tools/tester/pelorus_tester_stages.py"
+          ],
+          "trailers": [
+            "tester-usage-guide"
+          ]
+        }
+      ],
+      "expected": 2
+    },
+    {
+      "name": "trailer_naming_unknown_rule",
+      "changed": [
+        "tools/tester/pelorus_tester_stages.py"
+      ],
+      "commits": [
+        {
+          "files": [
+            "tools/tester/pelorus_tester_stages.py"
+          ],
+          "trailers": [
+            "unknown-rule refactor only"
+          ]
+        }
+      ],
+      "expected": 2
+    },
+    {
+      "name": "unknown_rule_trailer_alone",
+      "changed": [],
+      "commits": [
+        {
+          "files": [],
+          "trailers": [
+            "unknown-rule refactor only"
+          ]
+        }
+      ],
+      "expected": 1
+    },
+    {
+      "name": "schema_changed_program_and_dev_guide_changed",
+      "changed": [
+        "docs/development/tester.md",
+        "tools/tester/pelorus_tester_report.py",
+        "tools/tester/report.schema.json"
+      ],
+      "commits": [],
+      "expected": 0
+    },
+    {
+      "name": "schema_changed_only_program",
+      "changed": [
+        "tools/tester/pelorus_tester_report.py",
+        "tools/tester/report.schema.json"
+      ],
+      "commits": [],
+      "expected": 1
+    },
+    {
+      "name": "schema_changed_neither",
+      "changed": [
+        "tools/tester/report.schema.json"
+      ],
+      "commits": [],
+      "expected": 2
+    },
+    {
+      "name": "unrelated_file_only",
+      "changed": [
+        "docs/principles.md"
+      ],
+      "commits": [],
+      "expected": 0
+    },
+    {
+      "name": "trailer_text_mid_line",
+      "changed": [
+        "tools/tester/pelorus_tester_stages.py"
+      ],
+      "commits": [
+        {
+          "files": [
+            "tools/tester/pelorus_tester_stages.py"
+          ],
+          "trailers": []
+        }
+      ],
+      "expected": 1
+    },
+    {
+      "name": "empty_reason_guide_also_changed",
+      "changed": [
+        "docs/usage/tester.md",
+        "tools/tester/pelorus_tester_stages.py"
+      ],
+      "commits": [
+        {
+          "files": [
+            "docs/usage/tester.md",
+            "tools/tester/pelorus_tester_stages.py"
+          ],
+          "trailers": [
+            "tester-usage-guide"
+          ]
+        }
+      ],
+      "expected": 1
+    },
+    {
+      "name": "empty_reason_no_trigger_changed",
+      "changed": [],
+      "commits": [
+        {
+          "files": [],
+          "trailers": [
+            "tester-usage-guide"
+          ]
+        }
+      ],
+      "expected": 1
+    },
+    {
+      "name": "two_commits_one_missing_trailer",
+      "changed": [
+        "tools/tester/pelorus_tester_stages.py"
+      ],
+      "commits": [
+        {
+          "files": [
+            "tools/tester/pelorus_tester_stages.py"
+          ],
+          "trailers": [
+            "tester-usage-guide refactor only"
+          ]
+        },
+        {
+          "files": [
+            "tools/tester/pelorus_tester_stages.py"
+          ],
+          "trailers": []
+        }
+      ],
+      "expected": 1
+    },
+    {
+      "name": "two_commits_both_valid_trailer",
+      "changed": [
+        "tools/tester/pelorus_tester_stages.py"
+      ],
+      "commits": [
+        {
+          "files": [
+            "tools/tester/pelorus_tester_stages.py"
+          ],
+          "trailers": [
+            "tester-usage-guide refactor A"
+          ]
+        },
+        {
+          "files": [
+            "tools/tester/pelorus_tester_stages.py"
+          ],
+          "trailers": [
+            "tester-usage-guide refactor B"
+          ]
+        }
+      ],
+      "expected": 0
+    },
+    {
+      "name": "trailer_in_non_trigger_commit",
+      "changed": [
+        "tools/tester/pelorus_tester_stages.py"
+      ],
+      "commits": [
+        {
+          "files": [
+            "docs/principles.md"
+          ],
+          "trailers": [
+            "tester-usage-guide refactor only"
+          ]
+        },
+        {
+          "files": [
+            "tools/tester/pelorus_tester_stages.py"
+          ],
+          "trailers": []
+        }
+      ],
+      "expected": 1
+    }
+  ],
+  "trailer_parser": [
+    {
+      "name": "trailer_in_final_block",
+      "message": "feat: test subject\n\nSome body text.\n\nCo-change-exempt: tester-usage-guide refactor only\n",
+      "expected": [
+        "tester-usage-guide refactor only"
+      ]
+    },
+    {
+      "name": "same_line_in_body_paragraph",
+      "message": "feat: test subject\n\nCo-change-exempt: tester-usage-guide refactor only\n\nFollowed by non-trailer paragraph.\n",
+      "expected": []
+    },
+    {
+      "name": "mid_line_text",
+      "message": "feat: test subject\n\nSome note: Co-change-exempt: tester-usage-guide refactor only\n",
+      "expected": []
+    }
+  ]
+}

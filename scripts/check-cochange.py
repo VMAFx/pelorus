@@ -21,6 +21,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import pathlib
 import re
@@ -35,6 +36,13 @@ Rule = tuple[str, tuple[str, ...], tuple[str, ...]]
 Commit = tuple[set[str], list[str]]
 SelfTestCase = tuple[str, set[str], list[Commit], int]
 TrailerParserCase = tuple[str, str, list[str]]
+
+CASES_PATH = (
+    pathlib.Path(__file__).resolve().parent
+    / "fixtures"
+    / "check-cochange"
+    / "cases.json"
+)
 
 RULES: tuple[Rule, ...] = (
     (
@@ -55,180 +63,6 @@ RULES: tuple[Rule, ...] = (
         ),
     ),
 )
-
-SELF_TEST_CASES: list[SelfTestCase] = [
-    (
-        "stages_changed_guide_changed",
-        {"tools/tester/pelorus_tester_stages.py", "docs/usage/tester.md"},
-        [],
-        0,
-    ),
-    (
-        "stages_changed_guide_not",
-        {"tools/tester/pelorus_tester_stages.py"},
-        [],
-        1,
-    ),
-    (
-        "fixtures_lock_changed_alone",
-        {"tools/tester/fixtures.lock.json"},
-        [],
-        1,
-    ),
-    (
-        "stages_changed_valid_trailer",
-        {"tools/tester/pelorus_tester_stages.py"},
-        [
-            (
-                {"tools/tester/pelorus_tester_stages.py"},
-                ["tester-usage-guide refactor only"],
-            )
-        ],
-        0,
-    ),
-    (
-        "trailer_with_empty_reason",
-        {"tools/tester/pelorus_tester_stages.py"},
-        [
-            (
-                {"tools/tester/pelorus_tester_stages.py"},
-                ["tester-usage-guide"],
-            )
-        ],
-        2,
-    ),
-    (
-        "trailer_naming_unknown_rule",
-        {"tools/tester/pelorus_tester_stages.py"},
-        [
-            (
-                {"tools/tester/pelorus_tester_stages.py"},
-                ["unknown-rule refactor only"],
-            )
-        ],
-        2,
-    ),
-    (
-        "unknown_rule_trailer_alone",
-        set(),
-        [(set(), ["unknown-rule refactor only"])],
-        1,
-    ),
-    (
-        "schema_changed_program_and_dev_guide_changed",
-        {
-            "tools/tester/report.schema.json",
-            "tools/tester/pelorus_tester_report.py",
-            "docs/development/tester.md",
-        },
-        [],
-        0,
-    ),
-    (
-        "schema_changed_only_program",
-        {
-            "tools/tester/report.schema.json",
-            "tools/tester/pelorus_tester_report.py",
-        },
-        [],
-        1,
-    ),
-    (
-        "schema_changed_neither",
-        {"tools/tester/report.schema.json"},
-        [],
-        2,
-    ),
-    (
-        "unrelated_file_only",
-        {"docs/principles.md"},
-        [],
-        0,
-    ),
-    (
-        "trailer_text_mid_line",
-        {"tools/tester/pelorus_tester_stages.py"},
-        [({"tools/tester/pelorus_tester_stages.py"}, [])],
-        1,
-    ),
-    (
-        "empty_reason_guide_also_changed",
-        {"tools/tester/pelorus_tester_stages.py", "docs/usage/tester.md"},
-        [
-            (
-                {
-                    "tools/tester/pelorus_tester_stages.py",
-                    "docs/usage/tester.md",
-                },
-                ["tester-usage-guide"],
-            )
-        ],
-        1,
-    ),
-    (
-        "empty_reason_no_trigger_changed",
-        set(),
-        [(set(), ["tester-usage-guide"])],
-        1,
-    ),
-    (
-        "two_commits_one_missing_trailer",
-        {"tools/tester/pelorus_tester_stages.py"},
-        [
-            (
-                {"tools/tester/pelorus_tester_stages.py"},
-                ["tester-usage-guide refactor only"],
-            ),
-            ({"tools/tester/pelorus_tester_stages.py"}, []),
-        ],
-        1,
-    ),
-    (
-        "two_commits_both_valid_trailer",
-        {"tools/tester/pelorus_tester_stages.py"},
-        [
-            (
-                {"tools/tester/pelorus_tester_stages.py"},
-                ["tester-usage-guide refactor A"],
-            ),
-            (
-                {"tools/tester/pelorus_tester_stages.py"},
-                ["tester-usage-guide refactor B"],
-            ),
-        ],
-        0,
-    ),
-    (
-        "trailer_in_non_trigger_commit",
-        {"tools/tester/pelorus_tester_stages.py"},
-        [
-            (
-                {"docs/principles.md"},
-                ["tester-usage-guide refactor only"],
-            ),
-            ({"tools/tester/pelorus_tester_stages.py"}, []),
-        ],
-        1,
-    ),
-]
-
-TRAILER_PARSER_CASES: list[TrailerParserCase] = [
-    (
-        "trailer_in_final_block",
-        "feat: test subject\n\nSome body text.\n\nCo-change-exempt: tester-usage-guide refactor only\n",
-        ["tester-usage-guide refactor only"],
-    ),
-    (
-        "same_line_in_body_paragraph",
-        "feat: test subject\n\nCo-change-exempt: tester-usage-guide refactor only\n\nFollowed by non-trailer paragraph.\n",
-        [],
-    ),
-    (
-        "mid_line_text",
-        "feat: test subject\n\nSome note: Co-change-exempt: tester-usage-guide refactor only\n",
-        [],
-    ),
-]
 
 
 def run_git(
@@ -280,9 +114,7 @@ def check_base_ref(base: str, repo_root: pathlib.Path) -> bool | None:
     )
     if out is None:
         return None
-    if out == "":
-        return False
-    return True
+    return out != ""
 
 
 def get_changed_files(
@@ -408,6 +240,99 @@ def evaluate(changed: set[str], commits: list[Commit]) -> list[str]:
     return violations
 
 
+def _is_str_list(val: object) -> bool:
+    """Return True if value is a list containing only strings."""
+    if not isinstance(val, list):
+        return False
+    return all(type(item) is str for item in val[:10000])
+
+
+def _parse_commit(raw: object) -> Commit:
+    """Validate a commit dictionary and return a Commit tuple."""
+    if not isinstance(raw, dict) or set(raw.keys()) != {"files", "trailers"}:
+        raise ValueError("commit must be dict with files and trailers")
+    files = raw["files"]
+    trailers = raw["trailers"]
+    if not _is_str_list(files) or not _is_str_list(trailers):
+        raise ValueError("commit files and trailers must be string lists")
+    return (set(files), list(trailers))
+
+
+def _parse_evaluate_case(raw: object) -> SelfTestCase:
+    """Validate an evaluate case dictionary and return a SelfTestCase tuple."""
+    if not isinstance(raw, dict) or set(raw.keys()) != {
+        "name",
+        "changed",
+        "commits",
+        "expected",
+    }:
+        raise ValueError("evaluate case keys mismatch")
+    if type(raw["name"]) is not str or not _is_str_list(raw["changed"]):
+        raise ValueError("evaluate name must be str and changed list of str")
+    if not isinstance(raw["commits"], list):
+        raise ValueError("evaluate commits must be list")
+    if type(raw["expected"]) is not int:
+        raise ValueError("evaluate expected must be int")
+    commits = [_parse_commit(c) for c in raw["commits"][:1000]]
+    return (raw["name"], set(raw["changed"]), commits, raw["expected"])
+
+
+def _parse_trailer_case(raw: object) -> TrailerParserCase:
+    """Validate a trailer parser case dictionary and return a TrailerParserCase."""
+    if not isinstance(raw, dict) or set(raw.keys()) != {
+        "name",
+        "message",
+        "expected",
+    }:
+        raise ValueError("trailer parser case keys mismatch")
+    if type(raw["name"]) is not str or type(raw["message"]) is not str:
+        raise ValueError("trailer parser name and message must be str")
+    if not _is_str_list(raw["expected"]):
+        raise ValueError("trailer parser expected must be list of str")
+    return (raw["name"], raw["message"], list(raw["expected"]))
+
+
+def load_self_test_cases(
+    path: pathlib.Path,
+) -> tuple[list[SelfTestCase], list[TrailerParserCase]] | None:
+    """Load and validate self-test cases from a JSON fixture file."""
+    try:
+        content = path.read_text(encoding="utf-8")
+        data = json.loads(content)
+        if not isinstance(data, dict):
+            raise ValueError("root must be a JSON object")
+        if set(data.keys()) != {"schema", "evaluate", "trailer_parser"}:
+            raise ValueError("keys must be schema, evaluate, trailer_parser")
+        if type(data["schema"]) is not int or data["schema"] != 1:
+            raise ValueError("schema must be integer 1")
+        if not isinstance(data["evaluate"], list) or not isinstance(
+            data["trailer_parser"], list
+        ):
+            raise ValueError("evaluate and trailer_parser must be lists")
+        eval_cases = [_parse_evaluate_case(c) for c in data["evaluate"][:5000]]
+        trailer_cases = [
+            _parse_trailer_case(c) for c in data["trailer_parser"][:5000]
+        ]
+        return (eval_cases, trailer_cases)
+    except (OSError, ValueError) as exc:
+        print(f"co-change: self-test cases {path}: {exc}", file=sys.stderr)
+        return None
+
+
+def self_test_load_cases() -> int:
+    """Verify load_self_test_cases refuses invalid schema fixtures."""
+    with tempfile.TemporaryDirectory(prefix="pelorus-cochange-cases-") as tmp:
+        bad_file = pathlib.Path(tmp) / "bad.json"
+        bad_file.write_text(
+            '{"schema": 2, "evaluate": [], "trailer_parser": []}',
+            encoding="utf-8",
+        )
+        if load_self_test_cases(bad_file) is not None:
+            print("FAIL self-test load_cases 'refuse'", file=sys.stderr)
+            return 1
+    return 0
+
+
 def self_test_run_git(repo_root: pathlib.Path) -> int:
     """Run self-test cases verifying run_git and base ref checking."""
     failures = 0
@@ -511,8 +436,13 @@ def self_test_log_encoding(repo_root: pathlib.Path) -> int:
 
 def run_self_test(repo_root: pathlib.Path) -> int:
     """Run self-test suite covering evaluate logic and trailer parsing."""
+    loaded = load_self_test_cases(CASES_PATH)
+    if loaded is None:
+        return 2
+    eval_cases, trailer_cases = loaded
+
     failures = 0
-    for name, changed, commits, expected in SELF_TEST_CASES[:100]:
+    for name, changed, commits, expected in eval_cases[:100]:
         violations = evaluate(changed, commits)
         if len(violations) != expected:
             print(
@@ -521,7 +451,7 @@ def run_self_test(repo_root: pathlib.Path) -> int:
             )
             failures += 1
 
-    for name, message, expected_values in TRAILER_PARSER_CASES[:100]:
+    for name, message, expected_values in trailer_cases[:100]:
         actual_values = parse_exempt_trailers(message, repo_root)
         if actual_values is None:
             print(
@@ -536,6 +466,7 @@ def run_self_test(repo_root: pathlib.Path) -> int:
             )
             failures += 1
 
+    failures += self_test_load_cases()
     failures += self_test_run_git(repo_root)
     failures += self_test_log_encoding(repo_root)
 
@@ -543,7 +474,7 @@ def run_self_test(repo_root: pathlib.Path) -> int:
         print(f"co-change self-test: {failures} failures", file=sys.stderr)
         return 1
 
-    total_cases = len(SELF_TEST_CASES) + len(TRAILER_PARSER_CASES) + 6
+    total_cases = len(eval_cases) + len(trailer_cases) + 7
     print(f"co-change self-test: {total_cases} cases ok")
     return 0
 
