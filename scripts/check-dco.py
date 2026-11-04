@@ -15,9 +15,10 @@ Rules:
 - A range that cannot be listed or holds no commits fails, so the check
   never passes on nothing.
 
-- BASE and HEAD must be plain revisions (letters, digits and
-  `._/@{}~^+-`, not starting with `-`, no `..`); anything else is a
-  usage error, so a value can never reach git as an option.
+- BASE and HEAD must be plain revisions: printable ASCII that git allows
+  in a ref name or revision (no space, backslash, `:`, `?`, `*` or `[`),
+  not starting with `-`, no `..`. Anything else is a usage error, so a
+  value can never reach git as an option or hold a range.
 
 Exit codes: 0 every commit signed or exempt, 1 a commit lacks the
 trailer or the range is unusable, 2 usage error or invalid revision.
