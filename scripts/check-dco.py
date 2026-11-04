@@ -81,24 +81,27 @@ def run_git(
         return GitResult(127, "", "git executable not found")
     argv = [git, "-C", str(repo_root), *args]
     try:
-        proc = subprocess.run(  # nosec B603 - argv is the resolved git binary plus checked revisions, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is the absolute git path plus constants and allow-listed revisions, no shell, explicit deadline
+        proc = subprocess.run(  # nosec B603 - argv is the resolved git binary plus checked revisions, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - argv is the absolute git path plus constants and allow-listed revisions, no shell, explicit deadline
             argv,
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             timeout=GIT_TIMEOUT,
             check=False,
             env=env,
         )
     except subprocess.TimeoutExpired:
         return GitResult(124, "", "git command timed out")
-    return GitResult(proc.returncode, proc.stdout, proc.stderr)
+    # Decode by hand: text mode turns a lone CR into a line break (universal newlines).
+    return GitResult(
+        proc.returncode,
+        proc.stdout.decode("utf-8", "replace"),
+        proc.stderr.decode("utf-8", "replace"),
+    )
 
 
 def has_dco_trailer(body: str) -> bool:
-    """Return True when a line of the commit message is a valid DCO trailer."""
-    return any(DCO_TRAILER.match(line) for line in body.splitlines())
+    """Return True when an LF-delimited line of the message is a valid DCO trailer."""
+    # Split on LF only, as git does; splitlines() also breaks at CR, FF, U+2028 and more.
+    return any(DCO_TRAILER.match(line) for line in body.split("\n"))
 
 
 def list_range(
@@ -203,6 +206,18 @@ FIXTURE = (
         ("base",),
         None,
     ),
+    (
+        "c4b",
+        "case 4b CR\n\nprefix\rSigned-off-by: User <user@pelorus.invalid>",
+        ("base",),
+        None,
+    ),
+    (
+        "c4c",
+        "case 4c LS\n\nprefix\u2028Signed-off-by: User <user@pelorus.invalid>",
+        ("base",),
+        None,
+    ),
     ("c5", "case 5 renovate", ("base",), BOT),
     ("c6", "case 6 copied bot author", ("base",), BOT),
     ("c7", "case 7 human in bot pr", ("base",), HUMAN),
@@ -222,6 +237,8 @@ CASES = (
     ("3 trailer without email", "base", "c3", "", 1, "has no Signed-off-by", None),
     ("3b trailer without address", "base", "c3b", "", 1, "has no Signed-off-by", None),
     ("4 indented trailer", "base", "c4", "", 1, "has no Signed-off-by", None),
+    ("4b trailer after a CR", "base", "c4b", "", 1, "has no Signed-off-by", None),
+    ("4c trailer after U+2028", "base", "c4c", "", 1, "has no Signed-off-by", None),
     (
         "5 Renovate pr and author",
         "base",

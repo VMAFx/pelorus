@@ -834,6 +834,8 @@ or `python3 -I scripts/check-dco.py --base origin/master --head HEAD`.
 The DCO check (`scripts/check-dco.py`) verifies that every non-merge commit
 in the pull request range carries a valid `Signed-off-by` trailer matching
 the Developer Certificate of Origin 1.1 format (`Signed-off-by: Full Name <email@example.org>`).
+The message is split into lines on LF only, as git does, so a trailer
+after a carriage return or another Unicode line separator does not count.
 Renovate bot commits are exempt when authored by Renovate in a
 Renovate-opened pull request. The base and head must be plain revisions
 (letters, digits and `._/@{}~^+-`, no leading `-`, no `..`); anything else
