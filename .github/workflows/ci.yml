@@ -667,8 +667,10 @@ jobs:
             }
           done
           exit $missing
-      - name: ADR status matches merge state
+      - name: Generated counts and ADR status match source
         run: |
+          python3 -I scripts/docs/render-counts.py --self-test
+          python3 -I scripts/docs/render-counts.py
           python3 -I scripts/adr/check-status.py --self-test
           python3 -I scripts/adr/check-status.py
       - name: Recipes keep hardware encoders free of hwdownload
