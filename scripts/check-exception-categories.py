@@ -131,7 +131,7 @@ def self_test(root_dir: Path) -> int:
     standards_path = root_dir / ".standards.yaml"
     try:
         real_text = standards_path.read_text(encoding="utf-8")
-    except OSError as err:
+    except (OSError, UnicodeDecodeError) as err:
         print(f"self-test FAIL: cannot read {standards_path}: {err}")
         return 1
 
@@ -209,7 +209,7 @@ def main(argv: list[str]) -> int:
     standards_path = args.root / ".standards.yaml"
     try:
         text = standards_path.read_text(encoding="utf-8")
-    except OSError as err:
+    except (OSError, UnicodeDecodeError) as err:
         print(f"{standards_path}: {err}")
         return 1
 

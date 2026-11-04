@@ -437,6 +437,25 @@ test('python-empty-except-self-test',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# A try block that guards Path.read_text() against OSError must also catch
+# UnicodeDecodeError, or a file with invalid bytes escapes as a traceback.
+# The tree scan lists files with git; see python-empty-except above for why
+# it skips the Windows leg.
+if build_machine.system() != 'windows'
+  test('python-decode-errors',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-decode-errors.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
+
+test('python-decode-errors-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-decode-errors.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 # Every tracked Python script must parse CLI arguments with stdlib argparse;
 # no hand-indexed argv. The self-test exercises AST shapes and planted bad cases.
 # The tree scan lists files with git, which the MSYS2 UCRT64 leg does not put

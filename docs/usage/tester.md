@@ -426,6 +426,8 @@ read by `vulkan-format-matrix.sh` and by the stage runners:
   command and no Pelorus filter or patch;
 - an entry without a reference, with a bad expiry or past its expiry stops
   matching, so the message fails again;
+- the stage runners read an allow-list that is missing, unreadable or not valid
+  UTF-8 as empty, so every validation message fails the gate;
 - a stage that passes through a listed VUID names the entry (VUID, reference,
   expiry) in its reason.
 

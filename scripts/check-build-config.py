@@ -330,7 +330,7 @@ def read_tracked_text(path: Path) -> tuple[str, list[str]]:
         return "", [f"{relative}: missing"]
     try:
         return path.read_text(encoding="utf-8"), []
-    except OSError as error:
+    except (OSError, UnicodeDecodeError) as error:
         return "", [f"{relative}: could not read: {error}"]
 
 
