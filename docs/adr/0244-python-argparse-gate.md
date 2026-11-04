@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0244: Parse every Python command line with argparse
 
-- **Status**: Proposed
-- **Implementation**: pending (#496)
+- **Status**: Accepted
 - **Date**: 2026-11-04
 - **Deciders**: Lusoris
 - **Tags**: testing, static-analysis, scripts
