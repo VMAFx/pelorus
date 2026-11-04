@@ -2837,8 +2837,8 @@ RELEASE_BUILD_TOKENS = (
     "upload-artifact: false",
     "upload-release-assets: false",
     "format: spdx-json",
-    "--certificate-identity-regexp "
-    "'^https://github\\.com/VMAFx/pelorus/\\.github/workflows/release-build\\.yml@'",
+    '--certificate-identity-regexp "$identity"',
+    'identity="^${GITHUB_SERVER_URL//./\\\\.}/${GITHUB_REPOSITORY//./\\\\.}/\\.github/workflows/release-build\\.yml@"',
     "--certificate-oidc-issuer https://token.actions.githubusercontent.com",
     "GITHUB_REF_NAME//\\//-",
     "ARTIFACT_LABEL",
@@ -3715,9 +3715,11 @@ TESTER_PUBLISH_TOKENS = (
     "upload-artifact: false",
     "upload-release-assets: false",
     "sbom-path:",
-    "--signer-workflow VMAFx/pelorus/.github/workflows/tester-publish.yml",
-    "--certificate-identity-regexp "
-    "'^https://github\\.com/VMAFx/pelorus/\\.github/workflows/tester-publish\\.yml@'",
+    'signer="${GITHUB_REPOSITORY}/.github/workflows/tester-publish.yml"',
+    '--signer-workflow "$signer"',
+    '-R "$GITHUB_REPOSITORY"',
+    '--certificate-identity-regexp "$identity"',
+    'identity="^${GITHUB_SERVER_URL//./\\\\.}/${GITHUB_REPOSITORY//./\\\\.}/\\.github/workflows/tester-publish\\.yml@"',
     "--certificate-oidc-issuer https://token.actions.githubusercontent.com",
     '--target "final-${KIT}"',
     '--target "source-${KIT}"',
@@ -5978,7 +5980,7 @@ DEV_IMAGE_NOTICES_LABEL = "dev.vmafx.pelorus.notices"
 DEV_IMAGE_FROM = re.compile(r"^FROM ubuntu:26\.04@sha256:[0-9a-f]{64} AS assembled$", re.MULTILINE)
 DEV_IMAGE_GATE = ("licensing.py self-test", "licensing.py notices", "licensing.py check")
 DEV_IMAGE_WORKFLOW_TOKENS = (
-    "build-args: PELORUS_COMMIT=${{ github.sha }}",
+    "PELORUS_COMMIT=${{ github.sha }}",
     "file: .devcontainer/base/Containerfile",
     "'tools/tester/licensing.py'",
     "'LICENSES/EUPL-1.2.txt'",
@@ -6022,7 +6024,7 @@ def validate_dev_image_text(relative: str, text: str, record: dict) -> list[str]
 
 def validate_dev_image_workflow_text(relative: str, text: str) -> list[str]:
     errors = [f"{relative}: missing {token}" for token in DEV_IMAGE_WORKFLOW_TOKENS if token not in text]
-    if text.count("build-args: PELORUS_COMMIT=${{ github.sha }}") != 2:
+    if text.count("PELORUS_COMMIT=${{ github.sha }}") != 2:
         errors.append(f"{relative}: both docker build steps must pass PELORUS_COMMIT build-arg")
     if "context:.devcontainer/base" in text.replace(" ", ""):
         errors.append(f"{relative}: the build context must be the repository root, which holds the licence gate")
@@ -6074,7 +6076,7 @@ def _dev_image_cases(text: str) -> dict[str, tuple[str, str]]:
 def _dev_image_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
     return {
         "no commit argument": (
-            text.replace("build-args: PELORUS_COMMIT=${{ github.sha }}", "build-args: OTHER=${{ github.sha }}", 1),
+            text.replace("PELORUS_COMMIT=${{ github.sha }}", "OTHER=${{ github.sha }}", 1),
             "both docker build steps must pass",
         ),
         "gate not a trigger": (text.replace("      - 'tools/tester/licensing.py'\n", "", -1), "missing 'tools/tester/licensing.py'"),

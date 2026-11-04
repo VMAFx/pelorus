@@ -46,6 +46,7 @@ docs-check:
 	bash scripts/release/extract-release-notes.sh --self-test
 	python3 -I scripts/docs/render-counts.py --self-test
 	python3 -I scripts/docs/render-counts.py
+	bash scripts/release/write-patch-notice.sh --self-test
 	python3 -I scripts/adr/check-status.py --self-test
 	python3 -I scripts/adr/check-status.py
 	python3 -I scripts/check-mirror-contract.py --self-test
