@@ -70,35 +70,7 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-        run: |
-          set -euo pipefail
-          missing=0
-          # A failed or empty rev-list would let the loop pass on no commits.
-          shas="$(git rev-list --no-merges "origin/${BASE_REF}..${HEAD_SHA}")"
-          if [ -z "${shas}" ]; then
-            echo "::error::no commits between origin/${BASE_REF} and ${HEAD_SHA}; cannot verify DCO"
-            exit 1
-          fi
-          for sha in ${shas}; do
-            # Bot commits are exempt (CONTRIBUTING.md): only when the bot opened
-            # the pull request and authored the commit, so a person cannot opt
-            # out by copying the bot's author line.
-            author="$(git show -s --format=%ae "${sha}")"
-            case "${PR_AUTHOR}:${author}" in
-              'renovate[bot]:29139614+renovate[bot]@users.noreply.github.com')
-                echo "${sha}: Renovate commit in a Renovate pull request, DCO exempt"
-                continue
-                ;;
-            esac
-            if ! git show -s --format=%B "${sha}" | grep -Eq '^Signed-off-by: [^<>]+ <[^<>[:space:]]+@[^<>[:space:]]+>$'; then
-              echo "::error::${sha} has no Signed-off-by trailer (DCO); amend with git commit -s"
-              missing=$((missing + 1))
-            fi
-          done
-          if [ "${missing}" -ne 0 ]; then
-            echo "${missing} commit(s) lack a Signed-off-by trailer" >&2
-            exit 1
-          fi
+        run: python3 -I scripts/check-dco.py --base "origin/${BASE_REF}" --head "${HEAD_SHA}" --pr-author "${PR_AUTHOR}"
 
       # HISS-13 ratchet (ADR-0145), in two steps. `--base` turns on the engine's
       # growth guard: the committed baseline may not record more findings than

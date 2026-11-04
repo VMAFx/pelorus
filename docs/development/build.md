@@ -826,9 +826,17 @@ the pull request head.
 | `commit-msg` hook | subject + `Migration:` footer | `praetorctl forge check-message <file>` |
 | `commit-msg` hook | DCO trailer | `grep` for `Signed-off-by: Name <email>` in the message |
 | `standards-gate.yml`, pull requests | subject + `Migration:` footer | `standardsctl forge check-commits --base origin/<base> --head <pr head>` |
-| `standards-gate.yml`, pull requests | DCO trailer | `git rev-list` loop over the same range |
+| `standards-gate.yml`, pull requests | DCO trailer | `python3 -I scripts/check-dco.py --base origin/<base> --head <pr head>` |
 
-Check a range locally with `praetorctl forge check-commits --base origin/master`.
+Check a range locally with `praetorctl forge check-commits --base origin/master`
+or `python3 -I scripts/check-dco.py --base origin/master --head HEAD`.
+
+The DCO check (`scripts/check-dco.py`) verifies that every non-merge commit
+in the pull request range carries a valid `Signed-off-by` trailer matching
+the Developer Certificate of Origin 1.1 format (`Signed-off-by: Full Name <email@example.org>`).
+Renovate bot commits are exempt when authored by Renovate in a
+Renovate-opened pull request. Run its self-test battery with
+`python3 -I scripts/check-dco.py --self-test`.
 
 `lefthook.yml` sets `no_auto_install: true`. Without it, `lefthook run`
 re-installs the hooks whenever the file differs from the one installed, from
