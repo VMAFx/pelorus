@@ -439,9 +439,9 @@ the tree with the rule set in `ruff.toml` (Codacy's Ruff patterns plus
 `SIM103`, `E721` and `PGH004`), and zizmor 1.32.0 `--offline` over the
 workflows, actions and Dependabot files with `.github/zizmor.yml`. Both tools
 are pinned by hash in `.config/python-lint/requirements.txt`; the target
-installs them into `$(BUILD_DIR)/python-lint` on first use, so the first run in
-a new build tree needs PyPI. The CI `docs` job runs the same commands. To run
-them by hand:
+installs them into `.cache/python-lint` (`PYTHON_LINT_ENV`, outside the Meson
+build directory) on first use, so the first run in a new checkout needs PyPI.
+The CI `docs` job runs the same commands on Linux. To run them by hand:
 
 ```bash
 scripts/check-python-lint.sh --install /absolute/new-dir

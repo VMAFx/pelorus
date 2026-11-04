@@ -68,12 +68,16 @@ docs-check:
 	python3 -I scripts/hardware-reports/generate-index.py --self-test
 	python3 -I scripts/hardware-reports/generate-index.py --check
 
+# Outside $(BUILD_DIR): a directory there before `meson setup` blocks setup.
+PYTHON_LINT_ENV ?= .cache/python-lint
+
 python-lint:
-	@if [ ! -e "$(BUILD_DIR)/python-lint" ]; then \
-		bash scripts/check-python-lint.sh --install "$(BUILD_DIR)/python-lint"; \
+	@if [ ! -e "$(PYTHON_LINT_ENV)" ]; then \
+		mkdir -p "$(dir $(PYTHON_LINT_ENV))" && \
+		bash scripts/check-python-lint.sh --install "$(PYTHON_LINT_ENV)" >/dev/null; \
 	fi
-	PYTHON_LINT_BIN=$(BUILD_DIR)/python-lint/bin bash scripts/check-python-lint.sh --self-test
-	PYTHON_LINT_BIN=$(BUILD_DIR)/python-lint/bin bash scripts/check-python-lint.sh
+	PYTHON_LINT_ENV=$(PYTHON_LINT_ENV) bash scripts/check-python-lint.sh --self-test
+	PYTHON_LINT_ENV=$(PYTHON_LINT_ENV) bash scripts/check-python-lint.sh
 
 compile-context:
 	$(PRAETORCTL) compile-context

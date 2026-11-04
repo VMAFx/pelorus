@@ -10,7 +10,8 @@
 #   scripts/check-python-lint.sh --install DIR
 #       Create a virtualenv at DIR (which must not exist) and install the
 #       tools pinned in .config/python-lint/requirements.txt with hash
-#       checking. Prints DIR/bin on stdout.
+#       checking. Prints the environment's executable directory on stdout
+#       (DIR/bin, or DIR/Scripts on Windows).
 #   scripts/check-python-lint.sh
 #       Run Ruff on the repository and zizmor on the workflows.
 #   scripts/check-python-lint.sh --self-test
@@ -19,6 +20,8 @@
 #
 # Env:
 #   PYTHON_LINT_BIN   Directory containing ruff and zizmor binaries
+#   PYTHON_LINT_ENV   Virtual environment made by --install; used for
+#                     PYTHON_LINT_BIN when that is unset
 #   RUFF              Ruff binary path (default: $PYTHON_LINT_BIN/ruff or ruff)
 #   ZIZMOR            zizmor binary path (default: $PYTHON_LINT_BIN/zizmor or zizmor)
 #   PIP_TIMEOUT       pip installation deadline in seconds (default 300)
@@ -42,6 +45,20 @@ ZIZMOR_VERSION="$(sed -n 's/^zizmor==\([^ ]*\) .*$/\1/p' "$LOCK")"
 PIP_TIMEOUT="${PIP_TIMEOUT:-300}"
 LINT_TIMEOUT="${LINT_TIMEOUT:-300}"
 
+# A Windows virtual environment keeps its executables in Scripts, every
+# other platform in bin.
+venv_bin_dir() {
+    if [ -d "$1/Scripts" ] && [ ! -d "$1/bin" ]; then
+        echo "$1/Scripts"
+    else
+        echo "$1/bin"
+    fi
+}
+
+if [ -z "${PYTHON_LINT_BIN:-}" ] && [ -n "${PYTHON_LINT_ENV:-}" ]; then
+    PYTHON_LINT_BIN="$(venv_bin_dir "$PYTHON_LINT_ENV")"
+fi
+
 if [ -n "${PYTHON_LINT_BIN:-}" ]; then
     RUFF="${RUFF:-$PYTHON_LINT_BIN/ruff}"
     ZIZMOR="${ZIZMOR:-$PYTHON_LINT_BIN/zizmor}"
@@ -56,14 +73,16 @@ fail() {
 }
 
 install_tools() {
-    local dir="$1"
+    local dir="$1" bin
     [ ! -e "$dir" ] || fail "--install: '$dir' already exists"
-    python3 -m venv "$dir" || fail "--install: python3 -m venv failed for '$dir'"
-    timeout "$PIP_TIMEOUT" "$dir/bin/python" -m pip install \
+    timeout "$PIP_TIMEOUT" python3 -m venv "$dir" \
+        || fail "--install: python3 -m venv failed for '$dir'"
+    bin="$(venv_bin_dir "$dir")"
+    timeout "$PIP_TIMEOUT" "$bin/python" -m pip install \
         --quiet --require-hashes --no-deps --only-binary=:all: \
         -r "$LOCK" \
         || fail "--install: pip install failed"
-    echo "$dir/bin"
+    echo "$bin"
 }
 
 check_binaries() {
@@ -251,6 +270,26 @@ self_test_version() {
     return "$failed"
 }
 
+self_test_layout() {
+    local tmp="$1" failed=0 got
+    mkdir -p "$tmp/env-windows/Scripts" "$tmp/env-posix/bin"
+    got="$(venv_bin_dir "$tmp/env-windows")"
+    if [ "$got" = "$tmp/env-windows/Scripts" ]; then
+        echo "PASS venv layout Scripts"
+    else
+        echo "FAIL venv layout Scripts" >&2
+        failed=1
+    fi
+    got="$(venv_bin_dir "$tmp/env-posix")"
+    if [ "$got" = "$tmp/env-posix/bin" ]; then
+        echo "PASS venv layout bin"
+    else
+        echo "FAIL venv layout bin" >&2
+        failed=1
+    fi
+    return "$failed"
+}
+
 # Global, not local: the EXIT trap runs after self_test has returned.
 SELF_TEST_DIR=""
 
@@ -266,6 +305,7 @@ self_test() {
     self_test_ruff "$tmp" || failed=1
     self_test_zizmor "$tmp" || failed=1
     self_test_version "$tmp" || failed=1
+    self_test_layout "$tmp" || failed=1
 
     [ "$failed" -eq 0 ] || exit 1
 }
