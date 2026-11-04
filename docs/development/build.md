@@ -828,9 +828,26 @@ the pull request head.
 | `commit-msg` hook | subject + `Migration:` footer | `praetorctl forge check-message <file>` |
 | `commit-msg` hook | DCO trailer | `grep` for `Signed-off-by: Name <email>` in the message |
 | `standards-gate.yml`, pull requests | subject + `Migration:` footer | `standardsctl forge check-commits --base origin/<base> --head <pr head>` |
-| `standards-gate.yml`, pull requests | DCO trailer | `git rev-list` loop over the same range |
+| `standards-gate.yml`, pull requests | DCO trailer | `python3 -I scripts/check-dco.py --base origin/<base> --head <pr head>` |
 
-Check a range locally with `praetorctl forge check-commits --base origin/master`.
+Check a range locally with `praetorctl forge check-commits --base origin/master`
+or `python3 -I scripts/check-dco.py --base origin/master --head HEAD`.
+
+The DCO check (`scripts/check-dco.py`) verifies that every non-merge commit
+in the pull request range carries a valid `Signed-off-by` trailer matching
+the Developer Certificate of Origin 1.1 format (`Signed-off-by: Full Name <email@example.org>`).
+The message is split into lines on LF only, as git does, so a trailer
+after a carriage return or another Unicode line separator does not count.
+Renovate bot commits are exempt when authored by Renovate in a
+Renovate-opened pull request. CI passes the pull request author with
+`--pr-author`; to check a Renovate branch locally, add
+`--pr-author 'renovate[bot]'`, since without it Renovate's unsigned commits fail.
+Before git runs, the script exits 2 for a base or head with a space or any of
+`\ : ? * [` or another character outside printable ASCII, a leading `-`, or a
+`..`. It does not check the rest of git's ref-name rules: a revision such as
+`origin/master/` passes this check, reaches git and fails as an unusable range.
+git itself is resolved to an absolute path on `PATH`. Run its self-test battery with
+`python3 -I scripts/check-dco.py --self-test`.
 
 `lefthook.yml` sets `no_auto_install: true`. Without it, `lefthook run`
 re-installs the hooks whenever the file differs from the one installed, from
