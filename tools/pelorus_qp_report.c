@@ -105,35 +105,23 @@ static pel_result roundtrip_and_print(const PelorusQpReportSection *qp, size_t c
     return PEL_OK;
 }
 
-/* Parse argv into a CSV path + optional requested QP. Returns 0 on success. */
-static int parse_args(int argc, char **argv, const char **csv_path, double *requested_qp)
+/* Per-frame requested-QP array filled with one value; NULL on allocation failure. */
+static float *requested_qp_buffer(double requested_qp, size_t count)
 {
-    int i;
+    float *buf = malloc(count * sizeof(*buf));
+    size_t k;
 
-    i = 1;
-    while (i < argc) {
-        if (strcmp(argv[i], "--requested-qp") == 0 && i + 1 < argc) {
-            char *endp = NULL;
-            *requested_qp = strtod(argv[i + 1], &endp);
-            if (endp == argv[i + 1]) {
-                (void)fprintf(stderr, "bad --requested-qp value\n");
-                return -1;
-            }
-            i += 2;
-        } else if (*csv_path == NULL) {
-            *csv_path = argv[i];
-            i++;
-        } else {
-            i++;
-        }
+    if (buf == NULL) {
+        return NULL;
     }
-    if (*csv_path == NULL) {
-        (void)fprintf(stderr, "usage: %s <x265.csv> [--requested-qp N]\n", argv[0]);
-        return -1;
+    for (k = 0; k < count; k++) {
+        buf[k] = (float)requested_qp;
     }
-    return 0;
+    return buf;
 }
 
+/* Run pelorus_qp_report: parse the x265 CSV named in argv, fold it into a QP report, then round-trip and print the report blob.
+ * Returns EXIT_SUCCESS on success or EXIT_FAILURE on error. */
 static int run(int argc, char **argv)
 {
     const char *csv_path = NULL;
@@ -144,8 +132,14 @@ static int run(int argc, char **argv)
     size_t count = 0;
     PelorusQpReportSection qp;
     pel_result rc;
+    const PelorusOpt opts[] = {
+        {"--requested-qp", PELORUS_OPT_DOUBLE, &requested_qp, 0, NULL, NULL},
+    };
+    const PelorusPositional pos = {"<x265.csv>", &csv_path, 1};
 
-    if (parse_args(argc, argv, &csv_path, &requested_qp) != 0) {
+    if (pelorus_tool_parse_args("pelorus_qp_report", argc, argv, opts,
+                                sizeof(opts) / sizeof(opts[0]), &pos) != 0) {
+        (void)fprintf(stderr, "usage: %s <x265.csv> [--requested-qp N]\n", argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -166,14 +160,10 @@ static int run(int argc, char **argv)
     }
 
     if (requested_qp >= 0.0) {
-        size_t k;
-        req_buf = malloc(count * sizeof(*req_buf));
+        req_buf = requested_qp_buffer(requested_qp, count);
         if (req_buf == NULL) {
             free(frames);
             return fail("alloc req", PEL_ERR_NOMEM);
-        }
-        for (k = 0; k < count; k++) {
-            req_buf[k] = (float)requested_qp;
         }
         req_ptr = req_buf;
     }
