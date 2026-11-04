@@ -233,17 +233,31 @@ def run_git(
     args: list[str],
     repo_root: pathlib.Path,
     stdin: str | None = None,
+    timeout: float = 60.0,
 ) -> str | None:
     """Execute a git command and return its stdout, or None on failure."""
-    proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
-        ["git", *args],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-        input=stdin,
-    )
+    try:
+        proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
+            ["git", *args],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            input=stdin,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            f"co-change: git {args[0]} timed out after {timeout} s",
+            file=sys.stderr,
+        )
+        return None
+    except UnicodeDecodeError as exc:
+        print(
+            f"co-change: git {args[0]} output is not UTF-8: {exc}",
+            file=sys.stderr,
+        )
+        return None
     if proc.returncode != 0:
         if proc.stderr:
             print(proc.stderr.strip(), file=sys.stderr)
@@ -380,6 +394,33 @@ def evaluate(changed: set[str], commits: list[Commit]) -> list[str]:
     return violations
 
 
+def self_test_run_git(repo_root: pathlib.Path) -> int:
+    """Run self-test cases verifying run_git timeout and decode error handling."""
+    failures = 0
+    if (
+        run_git(
+            ["-c", "alias.pelsleep=!sleep 5", "pelsleep"],
+            repo_root,
+            timeout=0.5,
+        )
+        is not None
+    ):
+        print("FAIL self-test run_git 'timeout'", file=sys.stderr)
+        failures += 1
+
+    if (
+        run_git(
+            ["-c", "alias.pelbytes=!printf '\\377\\376'", "pelbytes"],
+            repo_root,
+        )
+        is not None
+    ):
+        print("FAIL self-test run_git 'decode'", file=sys.stderr)
+        failures += 1
+
+    return failures
+
+
 def run_self_test(repo_root: pathlib.Path) -> int:
     """Run self-test suite covering evaluate logic and trailer parsing."""
     failures = 0
@@ -394,6 +435,12 @@ def run_self_test(repo_root: pathlib.Path) -> int:
 
     for name, message, expected_values in TRAILER_PARSER_CASES[:100]:
         actual_values = parse_exempt_trailers(message, repo_root)
+        if actual_values is None:
+            print(
+                f"FAIL self-test parse_exempt_trailers '{name}': git tool error",
+                file=sys.stderr,
+            )
+            return 2
         if actual_values != expected_values:
             print(
                 f"FAIL self-test parse_exempt_trailers '{name}': expected {expected_values}, got {actual_values}",
@@ -401,11 +448,13 @@ def run_self_test(repo_root: pathlib.Path) -> int:
             )
             failures += 1
 
+    failures += self_test_run_git(repo_root)
+
     if failures:
         print(f"co-change self-test: {failures} failures", file=sys.stderr)
         return 1
 
-    total_cases = len(SELF_TEST_CASES) + len(TRAILER_PARSER_CASES)
+    total_cases = len(SELF_TEST_CASES) + len(TRAILER_PARSER_CASES) + 2
     print(f"co-change self-test: {total_cases} cases ok")
     return 0
 
