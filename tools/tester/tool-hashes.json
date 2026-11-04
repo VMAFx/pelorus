@@ -25,6 +25,7 @@
     {"sha256": "b53796ca34e0ca46e40af606ed544c72e9ff30aae16981e2ab0f9f3382194a10", "tool_version": "0.4.12", "note": "docstrings only: the reference-read stand-in says it repeats the last log once the logs run out (#486 review)"},
     {"sha256": "c5239c9230a168951e90217dfcdf15e30420d679d5b93b46e787a392d11a27ec", "tool_version": "0.4.12", "note": "QSV encodes in the steer, bitrate-control and carrier legs pin LIBVA_DRIVER_NAME=iHD; other encoders inherit the environment"},
     {"sha256": "88fe00bc7109c42fb68bf599f30341b707d4406c3fcd4189b49ff101bfb42dc7", "tool_version": "0.4.12", "note": "comment only: a Ruff S310 marker on the fixture download request, whose https-only scheme check sits above it (#495)"},
-    {"sha256": "da53064f02764ec51ebcc6a5fd271bc96dd4e1554aa6a8afb43355fa36f8c15e", "tool_version": "0.4.12", "note": "error handling only: the VUID allowlist and DRM sysfs reads treat invalid UTF-8 or ASCII like an unreadable file (#506 review)"}
+    {"sha256": "da53064f02764ec51ebcc6a5fd271bc96dd4e1554aa6a8afb43355fa36f8c15e", "tool_version": "0.4.12", "note": "error handling only: the VUID allowlist and DRM sysfs reads treat invalid UTF-8 or ASCII like an unreadable file (#506 review)"},
+    {"sha256": "d33a9a2644da8e7e9274920972db859d273dca3e86f0fbb5f9fed8863f0feb40", "tool_version": "0.4.12", "note": "refactor only: the report schema check uses the shared JSON shape validator in pelorus_json_shape.py, which also checks required keys on every object (#496)"}
   ]
 }

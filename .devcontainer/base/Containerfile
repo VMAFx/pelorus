@@ -117,12 +117,13 @@ RUN python3 -I -B /usr/local/share/pelorus-dev/licensing.py self-test \
 
 FROM assembled AS final
 ARG PELORUS_COMMIT
+ARG PELORUS_SOURCE=https://github.com/VMAFx/pelorus
 COPY --from=licence /usr/share/licenses/pelorus-dev/THIRD_PARTY_NOTICES.txt /usr/share/licenses/pelorus-dev/THIRD_PARTY_NOTICES.txt
 # No org.opencontainers.image.licenses label: the image holds software under
 # many licences, and one SPDX expression for all of it would be wrong or
 # unreadable. The notices file and the record name each component's licence.
 LABEL org.opencontainers.image.title="pelorus-dev" \
-      org.opencontainers.image.source="https://github.com/VMAFx/pelorus" \
+      org.opencontainers.image.source="${PELORUS_SOURCE}" \
       org.opencontainers.image.description="Pelorus dev container toolchain base (ADR-0153); licences in /usr/share/licenses/pelorus-dev/THIRD_PARTY_NOTICES.txt (ADR-0179)" \
       org.opencontainers.image.revision="${PELORUS_COMMIT}" \
       dev.vmafx.pelorus.notices="/usr/share/licenses/pelorus-dev/THIRD_PARTY_NOTICES.txt"

@@ -492,6 +492,24 @@ test('python-argv-self-test',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# Every tracked file outside docs/ and an explicit allow-list must avoid hardcoded
+# upstream repository and container registry name literals (#499).
+# The tree scan lists files with git, which Windows CI does not guarantee on PATH.
+if build_machine.system() != 'windows'
+  test('repo-name-literals',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-repo-name-literals.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
+
+test('repo-name-literals-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-repo-name-literals.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 # Per-frame external-ME-hint setup of patch 0008 (BUG-031): a frame without
 # Pelorus motion data must still submit one zero-MV candidate per block, or the
 # NVENC session fails the whole encode.
@@ -562,6 +580,12 @@ bench_make_record_script = meson.project_source_root() / 'scripts' / 'bench' / '
 test('bench-make-record',
      python_prog,
      args: ['-I', bench_make_record_script, '--self-test'],
+     suite: 'fast')
+
+json_shape_script = meson.project_source_root() / 'tools' / 'tester' / 'pelorus_json_shape.py'
+test('json-shape',
+     python_prog,
+     args: ['-I', json_shape_script, '--self-test'],
      suite: 'fast')
 
 # Issue #267 / ADR-0181: hevc_nvenc's udu_sei path keeps each picture's

@@ -32,6 +32,8 @@ select = [
     "SIM103", "E721",
     # A blanket `# noqa` would silence every rule on its line.
     "PGH004",
+    # CodeQL flags unused imports on pull requests (#496 part 4 recurrence).
+    "F401",
 ]
 # S101 (assert), S603 and S607 (subprocess argv, partial executable path) stay
 # with Bandit, which Codacy runs with the reviewed Bandit markers of ADR-0241;
