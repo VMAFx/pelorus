@@ -214,6 +214,7 @@ def validate_schema(
 
 
 def _test_types(failures: list[str]) -> None:
+    """Self-test the type keyword for every supported JSON type."""
     cases = [
         (42, {"type": "integer"}, True),
         ("hello", {"type": "string"}, True),
@@ -237,6 +238,7 @@ def _test_types(failures: list[str]) -> None:
 
 
 def _test_bool_int(failures: list[str]) -> None:
+    """Self-test that a boolean never passes as an integer or a number."""
     bool_cases = [
         (True, {"type": "integer"}),
         (False, {"type": "integer"}),
@@ -255,6 +257,7 @@ def _test_bool_int(failures: list[str]) -> None:
 
 
 def _test_scalar_bounds(failures: list[str]) -> None:
+    """Self-test const, enum, length, pattern and numeric bounds, including boundary values."""
     cases = [
         ("exact", {"const": "exact"}, True),
         ("wrong", {"const": "exact"}, False),
@@ -290,6 +293,7 @@ def _test_scalar_bounds(failures: list[str]) -> None:
 
 
 def _test_objects(failures: list[str]) -> None:
+    """Self-test required, properties and additionalProperties on objects."""
     req_sch = {"type": "object", "required": ["id", "kind"]}
     if validate_schema({"id": "x", "kind": "y"}, req_sch):
         failures.append("valid required properties rejected")
@@ -314,6 +318,7 @@ def _test_objects(failures: list[str]) -> None:
 
 
 def _test_arrays(failures: list[str]) -> None:
+    """Self-test minItems and items on arrays."""
     items_sch = {"type": "array", "minItems": 2, "items": {"type": "integer"}}
     if validate_schema([1, 2], items_sch):
         failures.append("boundary minItems 2 rejected for len 2")
@@ -326,6 +331,7 @@ def _test_arrays(failures: list[str]) -> None:
 
 
 def _test_refs_and_caps(failures: list[str]) -> None:
+    """Self-test $ref resolution and the depth and node caps."""
     schema = {
         "$defs": {
             "point": {

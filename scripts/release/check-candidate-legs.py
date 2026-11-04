@@ -41,6 +41,7 @@ DEFAULT_LEGS = Path(__file__).with_name("candidate-legs.json")
 
 
 def _load_json_shape():
+    """Import the shared JSON shape validator from tools/tester by file path."""
     path = Path(__file__).resolve().parents[2] / "tools/tester/pelorus_json_shape.py"
     spec = importlib.util.spec_from_file_location("pelorus_json_shape", path)
     if spec is None or spec.loader is None:
@@ -76,6 +77,7 @@ LEGS_SCHEMA = {
 
 
 def validate_legs(doc: object) -> list[str]:
+    """Return every schema and leg error in a parsed legs file; empty when it is valid."""
     errors = validate_schema(doc, LEGS_SCHEMA)
     if not isinstance(doc, dict) or doc.get("schema") != 1:
         return ["legs file: schema must be 1"]

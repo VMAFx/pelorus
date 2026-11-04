@@ -44,6 +44,7 @@ class Malformed(Exception):
 
 
 def _load_json_shape():
+    """Import the shared JSON shape validator from tools/tester by file path."""
     path = Path(__file__).resolve().parent.parent / "tools" / "tester" / "pelorus_json_shape.py"
     spec = importlib.util.spec_from_file_location("pelorus_json_shape", path)
     if spec is None or spec.loader is None:
