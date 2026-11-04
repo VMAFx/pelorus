@@ -2192,20 +2192,28 @@ def self_test_legs(expect, disabled):
     expect("legs_recorded", status == "pass" and [l["status"] for l in legs] == ["pass", "not_run"])
 
 
+# The map fixture literals below are laid out for a directory that ends at byte 80
+# (48-byte header plus two 16-byte entries). MAP_SHIFT moves every section offset,
+# map value and mutation point by how far the directory of the current interop.h
+# header ends past that, so a grown header keeps the fixture consistent.
+MAP_SHIFT = HEADER_BYTES + 2 * struct.calcsize(DIR_FMT) - 80
+
+
 def pack_map_blob(pts=0, maps=True):
     """A blob with a banding map and a variance map behind its sections; with maps=False the
     form hevc_nvenc writes (pelorus_sei_fit.h): map fields zero, nothing after the sections."""
-    secs = ((1, 80, 16), (2, 96, 28))
+    k = MAP_SHIFT
+    secs = ((1, 80 + k, 16), (2, 96 + k, 28))
     tail = 40 if maps else 0
-    body = bytearray(124 + tail)
-    struct.pack_into(HEADER_FMT, body, 0, PELORUS_MAGIC, ABI_MAJOR, 3, 124 + tail, 3, 2, HEADER_BYTES, pts)
+    body = bytearray(124 + k + tail)
+    struct.pack_into(HEADER_FMT, body, 0, PELORUS_MAGIC, ABI_MAJOR, 3, 124 + k + tail, 3, 2, HEADER_BYTES, pts)
     for i, (sid, off, size) in enumerate(secs):
         struct.pack_into(DIR_FMT, body, HEADER_BYTES + 16 * i, sid, off, size, 3)
     if maps:
-        struct.pack_into("<II", body, 80 + 8, 124, 16)      # banding cell_data
-        struct.pack_into("<II", body, 96 + 12, 140, 12)     # variance var_cell
-        struct.pack_into("<II", body, 96 + 20, 152, 12)     # variance edge_cell
-        body[124:] = bytes(range(1, 41))
+        struct.pack_into("<II", body, 80 + k + 8, 124 + k, 16)    # banding cell_data
+        struct.pack_into("<II", body, 96 + k + 12, 140 + k, 12)   # variance var_cell
+        struct.pack_into("<II", body, 96 + k + 20, 152 + k, 12)   # variance edge_cell
+        body[124 + k:] = bytes(range(1, 41))
     return bytes(body)
 
 
@@ -2214,10 +2222,10 @@ def self_test_integrity(expect, disabled):
     want = [[pack_map_blob(pts=i)] for i in range(4)]
     cut = lambda b, n: b[:len(b) - n]
     flip = bytearray(want[2][0])
-    flip[100] ^= 0x01
+    flip[100 + MAP_SHIFT] ^= 0x01
     wrong = bytearray(pack_map_blob(pts=1, maps=False))
-    wrong[100] ^= 0x01
-    short = lambda b: bytes(b[:124])
+    wrong[100 + MAP_SHIFT] ^= 0x01
+    short = lambda b: bytes(b[:124 + MAP_SHIFT])
     check = lambda got, strips=False: integrity_problems(want, got, "t", strips, disabled)[0]
     expect("sd_int_equal_passes", not check(want))
     expect("sd_int_stripped_form_matches_header_math", stripped_form(want[1][0]) == pack_map_blob(1, False))
@@ -2235,7 +2243,7 @@ def self_test_integrity(expect, disabled):
     expect("sd_int_rejects_stripped_with_flipped_scalar", bool(integrity_problems(
         want, want[:1] + [[bytes(wrong)]] + want[2:], "t", True, disabled)[0]))
     left = bytearray(pack_map_blob(pts=3, maps=False))
-    struct.pack_into("<II", left, 88, 124, 16)   # map offset and size left in place
+    struct.pack_into("<II", left, 88 + MAP_SHIFT, 124 + MAP_SHIFT, 16)   # map offset and size left in place
     expect("sd_int_rejects_stripped_with_map_fields_left", bool(integrity_problems(
         want, want[:3] + [[bytes(left)]], "t", True, disabled)[0]))
     strippers = {c["name"] for c in SEI_CARRIERS if strips_allowed(c, disabled)}
@@ -2248,7 +2256,8 @@ def self_test_integrity(expect, disabled):
     expect("sd_strip_accepts_stripped_blob_from_qsv", not got and n == 4)
     msg = integrity_problems(want, want[:2] + [[bytes(flip)]] + want[3:], "stream")[0]
     expect("sd_int_names_picture_size_and_offset", msg == [
-        "stream picture 2: blob 164 bytes, expected 164, first difference at offset 100"])
+        "stream picture 2: blob %d bytes, expected %d, first difference at offset %d"
+        % (164 + MAP_SHIFT, 164 + MAP_SHIFT, 100 + MAP_SHIFT)])
     expect("sd_int_not_strippable_blob_is_none", stripped_form(pack_map_blob(0, False)) is None
            and stripped_form(b"short") is None)
     order = pictures_by_pts([[pack_map_blob(pts=2)], [], [pack_map_blob(pts=0)], [pack_map_blob(pts=1)]])
