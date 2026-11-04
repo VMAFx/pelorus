@@ -86,6 +86,7 @@ def run(root):
 
 
 def read(root, rel):
+    """Return the UTF-8 text of ``root / rel``; raise GateError when it cannot be read."""
     try:
         return (root / rel).read_text(encoding="utf-8")
     except OSError as err:
@@ -97,6 +98,7 @@ def line_number(text, offset):
 
 
 def load_inventory(root):
+    """Map each registered Pelorus filter or BSF name to its source path and registration line."""
     source_dir = root / "ffmpeg-patches/files"
     if not source_dir.is_dir():
         raise GateError("cannot read source directory ffmpeg-patches/files")
@@ -171,6 +173,7 @@ def has_evidence(root, cell):
 
 
 def load_pages(root):
+    """Return the metric pages and the grain usage page whose stance sentences are checked."""
     metrics = root / "docs/metrics"
     usage = root / "docs/usage/grain-fgs-bsf.md"
     if not metrics.is_dir():

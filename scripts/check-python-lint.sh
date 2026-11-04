@@ -71,11 +71,13 @@ else
     ZIZMOR="${ZIZMOR:-zizmor}"
 fi
 
+# Print a check-python-lint error to stderr and exit 1.
 fail() {
     echo "check-python-lint: $*" >&2
     exit 1
 }
 
+# Create a virtualenv in DIR and pip-install the hashed lock; print its bin directory.
 install_tools() {
     local dir="$1" bin
     [ ! -e "$dir" ] || fail "--install: '$dir' already exists"
@@ -99,6 +101,7 @@ bad = [ln for ln in sys.stdin if head in ln
 sys.stderr.writelines(bad)
 sys.exit(1 if bad else 0)'
 
+# Fail unless $RUFF and $ZIZMOR exist and report the versions pinned in the lock.
 check_binaries() {
     local ruff_ver zizmor_ver
     command -v "$RUFF" > /dev/null 2>&1 \
@@ -121,6 +124,7 @@ env_is_current() {
     ( RUFF="$bin/ruff" ZIZMOR="$bin/zizmor" check_binaries ) > /dev/null 2>&1
 }
 
+# Reuse DIR when current, else remove it (virtualenvs only) and --install; print its bin directory.
 ensure_tools() {
     local dir="$1"
     if env_is_current "$dir"; then
@@ -144,6 +148,7 @@ drop_empty_tokens() {
     [ -n "${ZIZMOR_GITHUB_TOKEN:-}" ] || unset ZIZMOR_GITHUB_TOKEN
 }
 
+# Run Ruff over the tree and zizmor over the workflows; fail when either reports.
 run_lint() {
     check_binaries
     local ruff_rc=0 zizmor_rc=0
@@ -163,6 +168,7 @@ run_lint() {
     fi
 }
 
+# Pass when Ruff fails on FILE and its log names rule CODE; NAME labels the result.
 check_planted_ruff() {
     local name="$1" code="$2" file="$3" tmp="$4"
     local log="$tmp/ruff_${code}.log" rc=0
@@ -175,6 +181,7 @@ check_planted_ruff() {
     return 1
 }
 
+# Plant one source per enforced Ruff rule and a clean one; each must get its verdict.
 self_test_ruff() {
     local tmp="$1" failed=0
 
@@ -236,6 +243,7 @@ EOF
     return "$failed"
 }
 
+# Plant a template-injection workflow and a clean one; zizmor must flag only the first.
 self_test_zizmor() {
     local tmp="$1" failed=0
     local wf_dir="$tmp/.github/workflows"
@@ -316,6 +324,7 @@ EOF
     return "$failed"
 }
 
+# A binary that reports a version other than the lock must be refused.
 self_test_version() {
     local tmp="$1" failed=0
     local stub="$tmp/stub-ruff"
@@ -338,6 +347,7 @@ self_test_version() {
     return "$failed"
 }
 
+# venv_bin_dir must find the Windows Scripts and the POSIX bin layout.
 self_test_layout() {
     local tmp="$1" failed=0 got
     mkdir -p "$tmp/env-windows/Scripts" "$tmp/env-posix/bin"
@@ -367,6 +377,7 @@ make_stub_env() {
     chmod +x "$1/bin/ruff" "$1/bin/zizmor"
 }
 
+# env_is_current must keep a current env, reject stale and partial ones; ensure_tools must refuse a non-venv dir.
 self_test_ensure() {
     local tmp="$1" failed=0 env
     env="$tmp/env-current"
@@ -431,6 +442,7 @@ self_test_make_quoting() {
 # Global, not local: the EXIT trap runs after self_test has returned.
 SELF_TEST_DIR=""
 
+# Run every planted case in a temporary directory; exit 1 when any of them fails.
 self_test() {
     check_binaries
     local tmp failed=0
