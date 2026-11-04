@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0145: Adopt Praetor as a governance ratchet
 
-- **Status**: Accepted
+- **Status**: Accepted; engine pin and baseline superseded by [ADR-0154](0154-praetor-engine-repin.md)
 - **Date**: 2026-09-20 (revised 2026-09-30 for the engine re-pin and the
   agent-hook adoption; accepted 2026-09-30)
 - **Deciders**: lusoris

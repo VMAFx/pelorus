@@ -17,7 +17,7 @@ N=$(scripts/adr/next-free.sh --claim <kebab-slug>)
 # 2. author from the template
 cp docs/adr/0000-template.md "docs/adr/$N-<kebab-slug>.md"   # then rename the stub away
 mv "docs/adr/$N-<kebab-slug>.md.stub" /dev/null 2>/dev/null || rm -f "docs/adr/$N-<kebab-slug>.md.stub"
-# 3. add the index row to docs/adr/README.md
+# 3. run scripts/adr/check-status.py --write (--write renders the index and checks every ADR status; non-zero on a failure)
 # 4. if you abandon it: scripts/adr/next-free.sh --release $N
 ```
 

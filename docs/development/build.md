@@ -530,16 +530,16 @@ locked `markdownlint-cli2` 0.23.2 dependency tree into a temporary directory.
 | --- | --- |
 | `make compile-context` | Regenerate cross-tool context and persona projections from their canonical sources |
 | `make compile-context-verify` | Fail if a generated projection has drifted |
-| `make audit` | Verify the pinned manifest/lock, enforce the 39-finding HISS baseline ratchet in the hosted Standards mode (`--base`, touched-debt delta; `AUDIT_BASE` overrides the base), and run the engine's policy checks (build warnings, clang-tidy coverage, supply chain, Paperclip pair, hooks, dev container, ruleset). `AUDIT_FLAGS=--offline` skips the forge reads, as the pre-commit hook does |
+| `make audit` | Verify the pinned manifest/lock, enforce the <!-- gen:baseline-count -->0<!-- /gen:baseline-count -->-finding HISS baseline ratchet in the hosted Standards mode (`--base`, touched-debt delta; `AUDIT_BASE` overrides the base), and run the engine's policy checks (build warnings, clang-tidy coverage, supply chain, Paperclip pair, hooks, dev container, ruleset). `AUDIT_FLAGS=--offline` skips the forge reads, as the pre-commit hook does |
 | `make docs-lint` | Lint public Markdown with the locked Praetor configuration and reject links into private scratch directories |
 | `make docs-figures` | Check figure specs and sources; skips with a reason while `docs/figures/` has none |
 | `make verify-all` | Run context verification, the audit, `verify-native`, then `docs-lint` and `docs-figures` |
 | `make hooks-install` | Install the tracked Lefthook hooks into the shared Git hooks directory; see [Git hooks](#git-hooks-opt-in-per-clone) |
 
-The baseline accepts 39 existing findings in the scanner's supported-file scope
-(C, headers, Python, shell, JavaScript/TypeScript, and workflow files):
-HISS-01=25 (`goto` cleanup jumps) and HISS-04=14 (C functions over 60 lines).
-No Python or HISS-07 finding remains. It is a non-regression ceiling, not a claim of zero debt or whole-tree
+The baseline accepts <!-- gen:baseline-count -->0<!-- /gen:baseline-count --> existing findings in the scanner's supported-file scope
+(C, headers, Python, shell, JavaScript/TypeScript, and workflow files);
+`scripts/docs/render-counts.py` renders that number from
+`.standards-baseline.json`. It is a non-regression ceiling, not a claim of zero debt or whole-tree
 source coverage. Fingerprints are keyed by file and line
 ([Praetor issue 29](https://github.com/cordanaLLM/praetor/issues/29)), so
 moving a legacy function can surface it as new.
@@ -751,12 +751,14 @@ the pinned commit lists every rule. The hook judges agent tool calls only;
 commands you type in your own terminal never pass through it.
 
 Everyone who runs Claude Code, Codex, or Gemini CLI in this repository needs
-an executable named `praetorctl` on `PATH`. The pinned `go install` builds
-`standardsctl`, so copy it under the name the hooks call, then check it with a
-sample payload from the repository root:
+an executable named `praetorctl` on `PATH`. The engine pin is `PRAETOR_REF` in
+`.github/workflows/standards-gate.yml`, which `.config/lefthook/engine.sh`
+also reads (ADR-0187). The pinned `go install` builds `standardsctl`, so copy it under the name the hooks call,
+then check it with a sample payload from the repository root:
 
 ```bash
-go install github.com/cordanaLLM/praetor/cmd/standardsctl@2d23b292417386fe8259da29690266ce331062c6
+ref=$(sed -n 's/^[[:space:]]*PRAETOR_REF:[[:space:]]*//p' .github/workflows/standards-gate.yml)
+go install "github.com/cordanaLLM/praetor/cmd/standardsctl@${ref}"
 cp "$(go env GOPATH)/bin/standardsctl" "$(go env GOPATH)/bin/praetorctl"   # Windows: standardsctl.exe to praetorctl.exe
 printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"hook_event_name":"PreToolUse"}' \
   | praetorctl hook claude pre-tool; echo "exit=$?"                          # expect exit=0, no output
