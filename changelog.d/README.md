@@ -18,5 +18,4 @@ in-flight PRs would hit editing `CHANGELOG.md` directly.
   within a section.
 - **Content** = the Markdown bullet(s) you'd paste into `CHANGELOG.md`, each
   referencing the governing ADR by number.
-- **Render**: `scripts/release/concat-changelog-fragments.sh --write` (CI runs
-  `--check`).
+- **Render**: PRs add fragments only; a render-only pull request lands per landing batch and at release cut (`scripts/release/concat-changelog-fragments.sh --write`). Push to the default branch runs the 24 h staleness check (`scripts/release/check-changelog-staleness.py`, [ADR-0245](../docs/adr/0245-changelog-render-at-landing.md)).
