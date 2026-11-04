@@ -65,6 +65,7 @@ def load_sibling(name):
 FIXTURES = load_sibling("pelorus_tester_fixtures")
 STAGES = load_sibling("pelorus_tester_stages")
 JSON_SHAPE = load_sibling("pelorus_json_shape")
+CONSTS = load_sibling("pelorus_interop_consts")
 RULES = (("no_device_nonfailure", "redaction", "exit_mapping", "truncation",
           "schema_version", "reason_required", "stage_failure", "bench_nongating",
           "execution_class_derived", "claim_gpu_needs_hardware",
@@ -135,11 +136,14 @@ def report_hash(report):
 
 
 def tool_digest():
-    """Digest of the program files: sha256 over `<sha256>  <name>` lines, in TOOL_FILES order.
+    """Digest of the program files and interop.h: sha256 over `<sha256>  <name>` lines,
+    in TOOL_FILES order, followed by `<sha256>  interop.h`.
 
     Recorded as tool.sha256; report intake looks it up in tools/tester/tool-hashes.json."""
     lines = ["%s  %s\n" % (sha256_bytes((HERE / name).read_bytes()), name)
              for name in TOOL_FILES]
+    interop_h = CONSTS.find_interop_h(HERE)
+    lines.append("%s  interop.h\n" % sha256_bytes(interop_h.read_bytes()))
     return sha256_bytes("".join(lines).encode())
 
 

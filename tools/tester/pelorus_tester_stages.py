@@ -555,7 +555,7 @@ def uncobs(data, strict=True):
         if code != 0xFF and pos < len(data):
             out.append(0)
         prev = code
-    if strict and len(out) < BASE_HEADER_BYTES:
+    if strict and len(out) < HEADER_BYTES:
         return None, "decoded image of %d bytes is shorter than the header" % len(out)
     return bytes(out), None
 
@@ -598,7 +598,7 @@ def unwrap_payloads(frames, zero_free, label, disabled=frozenset()):
 def header_errors(fields, length):
     magic, major, _minor, total, _mask, _count, hsize, _pts = fields
     errs = []
-    if magic != PELORUS_MAGIC or major != ABI_MAJOR or hsize < BASE_HEADER_BYTES or hsize % 8:
+    if magic != PELORUS_MAGIC or major != ABI_MAJOR or hsize < HEADER_BYTES or hsize % 8:
         errs.append("header magic/abi/size wrong (abi_major %d)" % major)
     if total != length:
         errs.append("total_size %d != blob length %d" % (total, length))
@@ -625,8 +625,8 @@ def directory_errors(blob, fields):
 
 def blob_problems(blob, disabled=frozenset()):
     """Structural check of one PelorusSideData blob; returns (problems, pts)."""
-    if len(blob) < BASE_HEADER_BYTES:
-        return ["blob shorter than the %d-byte header" % BASE_HEADER_BYTES], -1
+    if len(blob) < HEADER_BYTES:
+        return ["blob shorter than the %d-byte header" % HEADER_BYTES], -1
     fields = struct.unpack(HEADER_FMT, blob[:BASE_HEADER_BYTES])
     errs = header_errors(fields, len(blob)) + directory_errors(blob, fields)
     return ([] if "sd_structure" in disabled else errs), fields[7]
@@ -712,12 +712,12 @@ def stripped_form(blob):
     and pel_sei_strip_maps in pelorus_sei_fit.h): everything up to the end of the last
     section, map offset and size fields zeroed, total_size set to the new end. None when
     the blob is not a strippable ABI 1.x blob or nothing follows its sections."""
-    if len(blob) < BASE_HEADER_BYTES or blob[:8] != PELORUS_MAGIC \
+    if len(blob) < HEADER_BYTES or blob[:8] != PELORUS_MAGIC \
             or struct.unpack_from("<H", blob, 8)[0] != ABI_MAJOR:
         return None
     total, mask, count, hsize = struct.unpack_from("<IIHH", blob, 12)
     dir_end = hsize + count * SEI_DIR_ENTRY
-    if mask & ~SEI_STRIPPABLE or total > len(blob) or hsize < BASE_HEADER_BYTES \
+    if mask & ~SEI_STRIPPABLE or total > len(blob) or hsize < HEADER_BYTES \
             or count > SEI_MAX_SECTIONS or dir_end > total:
         return None
     end, entries = dir_end, []
@@ -1448,7 +1448,7 @@ def reference_problems(frames, n_expected, disabled=frozenset()):
             [len(f) for f in frames], len(frames), n_expected))
     for idx, blobs in enumerate(frames):
         for blob in blobs[:1]:
-            if len(blob) < BASE_HEADER_BYTES:
+            if len(blob) < HEADER_BYTES:
                 errs.append("picture %d: %d bytes, shorter than the header" % (idx, len(blob)))
                 continue
             total = struct.unpack(HEADER_FMT, blob[:BASE_HEADER_BYTES])[3]
@@ -1969,8 +1969,8 @@ def self_test_steering(expect, disabled):
 def self_test_sidedata(expect, disabled):
     good = [[pack_blob(pts=i)] for i in range(4)]
     expect("sd_good_passes", not sidedata_problems(good, 4, disabled))
-    expect("sd_base_header_passes", not sidedata_problems(
-        [[pack_blob(pts=i, hsize=BASE_HEADER_BYTES)] for i in range(4)], 4, disabled))
+    expect("sd_abi_header_passes", not sidedata_problems(
+        [[pack_blob(pts=i, hsize=HEADER_BYTES)] for i in range(4)], 4, disabled))
     expect("sd_grown_header_passes", not sidedata_problems(
         [[pack_blob(pts=i, hsize=56)] for i in range(4)], 4, disabled))
     expect("sd_rejects_missing_blob", bool(sidedata_problems(good[:3] + [[]], 4, disabled)))
@@ -1979,7 +1979,10 @@ def self_test_sidedata(expect, disabled):
     expect("sd_rejects_bad_abi", bool(sidedata_problems(
         [[pack_blob(pts=i, major=ABI_MAJOR + 1)] for i in range(4)], 4, disabled)))
     expect("sd_rejects_short_header", bool(sidedata_problems(
-        [[pack_blob(pts=i, hsize=BASE_HEADER_BYTES - 8)] for i in range(4)], 4, disabled)))
+        [[pack_blob(pts=i, hsize=HEADER_BYTES - 8)] for i in range(4)], 4, disabled)))
+    if BASE_HEADER_BYTES < HEADER_BYTES:
+        expect("sd_rejects_prefix_header", bool(sidedata_problems(
+            [[pack_blob(pts=i, hsize=BASE_HEADER_BYTES)] for i in range(4)], 4, disabled)))
     expect("sd_rejects_unaligned_header", bool(sidedata_problems(
         [[pack_blob(pts=i, hsize=52)] for i in range(4)], 4, disabled)))
     expect("sd_rejects_dup_pts", bool(sidedata_problems(
