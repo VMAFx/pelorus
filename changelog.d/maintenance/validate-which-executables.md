@@ -1,0 +1,1 @@
+- Test scripts pass an executable found with `shutil.which` to `subprocess` only after resolving it and checking that it is an executable regular file. The Semgrep rule `pelorus-validate-which-executable` refuses the raw form, and `scripts/test-semgrep-which-executable.py` proves the rule on planted cases in the fast suite and the CI semgrep job.
