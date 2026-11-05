@@ -6,7 +6,7 @@ include .config/praetor/engine.mk
 BUILD_DIR ?= build
 
 .PHONY: all verify-all verify-native configure build test format-check tidy \
-	docs-check compile-context compile-context-verify audit hooks-install python-lint
+	docs-check compile-context compile-context-verify audit hooks-install python-lint patches
 
 all: build
 
@@ -98,6 +98,12 @@ AUDIT_FLAGS ?=
 
 audit:
 	$(PRAETORCTL) audit $(AUDIT_FLAGS) --base "$(AUDIT_BASE)" --touched-debt-delta-reason "$(AUDIT_DEBT_REASON)"
+
+# Regenerate the FFmpeg patch stack from ffmpeg-patches/files/ (mirrors generate.sh).
+# FFMPEG_REPO is required and must name a local FFmpeg checkout.
+patches:
+	$(if $(FFMPEG_REPO),,$(error FFMPEG_REPO is required (must name a local FFmpeg checkout)))
+	bash ffmpeg-patches/generate.sh
 
 # Explicit opt-in only. CI never installs hooks; adoption installs them only in
 # a checkout whose lefthook.yml is an unedited Praetor rendering, which this one
