@@ -4964,11 +4964,6 @@ def _tester_publish_load_cases(text: str) -> dict[str, tuple[str, str]]:
     )
     step_match = checkout_pat.search(text)
     step = step_match.group(0) if step_match else ""
-    target_pat = re.compile(
-        r"[ ]+- uses: actions/checkout@[^\n]*\n[ ]+with:\n[ ]+ref: \${{ needs\.validate\.outputs\.sha }}\n[ ]+persist-credentials: false\n"
-    )
-    target_match = target_pat.search(text)
-    target_step = target_match.group(0) if target_match else ""
     load_step = (
         "      - name: Load build configuration\n"
         "        uses: ./.actions/.github/actions/load-build-config\n"
@@ -4985,10 +4980,6 @@ def _tester_publish_load_cases(text: str) -> dict[str, tuple[str, str]]:
         "publish actions checkout after load step": (
             text.replace(step, "", 1).replace(load_step, load_step + step, 1),
             "actions checkout must precede Load build configuration",
-        ),
-        "publish target checkout after actions checkout": (
-            text.replace(target_step + step, step + target_step, 1),
-            "target checkout must precede the actions checkout",
         ),
         "publish actions checkout wrong ref": (
             text.replace(
@@ -5013,6 +5004,39 @@ def _tester_publish_load_cases(text: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def _move_block_after(text: str, moved: str, anchor: str) -> str:
+    """Remove `moved` and reinsert it after `anchor`; no-op when either is missing."""
+    if not moved or not anchor or moved not in text or anchor not in text:
+        return text
+    return text.replace(moved, "", 1).replace(anchor, anchor + moved, 1)
+
+
+def _tester_publish_checkout_order_cases(text: str) -> dict[str, tuple[str, str]]:
+    """Target checkout after the actions checkout, adjacent or not, must fail."""
+    checkout_pat = re.compile(
+        r"[ ]+- (?:name: [^\n]*\n[ ]+)?uses: actions/checkout@[^\n]*\n(?:[ ]+(?!- )\S[^\n]*\n)*?[ ]+path: \.actions\n"
+    )
+    target_pat = re.compile(
+        r"[ ]+- uses: actions/checkout@[^\n]*\n[ ]+with:\n[ ]+ref: \${{ needs\.validate\.outputs\.sha }}\n[ ]+persist-credentials: false\n"
+    )
+    step_match = checkout_pat.search(text)
+    target_match = target_pat.search(text)
+    step = step_match.group(0) if step_match else ""
+    target_step = target_match.group(0) if target_match else ""
+    spacer = "      # planted spacer between the two checkouts\n"
+    spaced = text.replace(target_step, target_step + spacer, 1) if target_step else text
+    return {
+        "publish target checkout after actions checkout": (
+            _move_block_after(text, target_step, step),
+            "target checkout must precede the actions checkout",
+        ),
+        "publish target checkout after non-adjacent actions checkout": (
+            _move_block_after(spaced, target_step, step),
+            "target checkout must precede the actions checkout",
+        ),
+    }
+
+
 def _tester_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
     return {
         **_tester_trigger_job_cases(text),
@@ -5022,6 +5046,7 @@ def _tester_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
         **_tester_gate_cases(text),
         **_tester_publish_cases(text),
         **_tester_publish_load_cases(text),
+        **_tester_publish_checkout_order_cases(text),
         **_tester_kit_cases(text),
         **_tester_build_kit_cases(text),
         **_tester_arm64_cases(text),
