@@ -287,6 +287,22 @@ test('bd-rate',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# Issue #300 / fixed/0300-synth-source-pixfmt: synth_source() must write raw
+# clips in the requested pixfmt so 10-bit runs do not ingest 8-bit bytes.
+test('synth-source-pixfmt',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'test-synth-source-pixfmt.py'],
+     workdir: meson.project_source_root(),
+     timeout: 150,
+     suite: 'fast')
+test('synth-source-pixfmt-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'test-synth-source-pixfmt.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     timeout: 150,
+     suite: 'fast')
+
 # BUG-022: the corpus fetch must fail closed (HTTP error, corrupt body, stalled
 # server) and never leave a file at the cached-download path.
 # The harness passes native-Windows temp paths (CORPUS, CORPUS_LOCK and an
