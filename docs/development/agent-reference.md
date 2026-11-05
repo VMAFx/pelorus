@@ -111,6 +111,8 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | replay stack | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh` |
 | compile contexts | `make compile-context` |
 | verify contexts | `make compile-context-verify` |
+| bump interop ABI minor | `python3 -I scripts/bump-abi.py --write --note "<text>" [--adr NNNN]` (`--check`, `--self-test`) |
+| prepare release version | `python3 -I scripts/prepare-release.py --write <version>` (`--check`, `--self-test`) |
 | audit baseline | `sh .config/lefthook/engine.sh audit` |
 | docs gate (Node 22.12+) | `make docs-lint docs-figures` |
 | licence check | `reuse lint` (reuse 6.x) |

@@ -18,9 +18,13 @@ creates the GitHub release with five assets: `pelorus-ffmpeg-patches-vX.Y.Z.tar.
 ## Steps
 
 1. **Gate green**: `meson test -C build --suite=fast` and `/lint-all`.
-2. **Bump the version** to `X.Y.Z` in:
-   - `libpelorus/include/pelorus/pelorus.h` (`PELORUS_VERSION_*` + `_STR`)
-   - `meson.build` (`version:`)
+2. **Bump the version** to `X.Y.Z` across all sites:
+
+   ```sh
+   python3 -I scripts/prepare-release.py --write X.Y.Z
+   ```
+
+   Verify consistency with `python3 -I scripts/prepare-release.py --check`, then run `praetorctl compile-context`.
    (If the interop ABI changed this cycle, confirm `PELORUS_ABI_MINOR` was
    bumped too — see `/bump-abi`.)
 3. **Render and rotate the changelog**: `/render-changelog` (`--write`), then
@@ -50,9 +54,10 @@ creates the GitHub release with five assets: `pelorus-ffmpeg-patches-vX.Y.Z.tar.
 From 0.4.0 every minor goes through `vX.Y.Z-rc.N` first; the full procedure is
 `docs/development/release.md` (ADR-0176). Differences from a final cut:
 
-- Version `X.Y.Z-rc.N` in `meson.build` and `PELORUS_VERSION_STR`; the
-  `PELORUS_VERSION_MAJOR/MINOR/PATCH` numbers stay `X`, `Y`, `Z`. The
-  `README.md` and `AGENTS.md` release line names `vX.Y.Z-rc.N`.
+- Bump version to `X.Y.Z-rc.N` via `python3 -I scripts/prepare-release.py --write X.Y.Z-rc.N`
+  (sets `meson.build` and `PELORUS_VERSION_STR`, keeps `PELORUS_VERSION_MAJOR/MINOR/PATCH`
+  numbers `X`, `Y`, `Z`, updates `README.md` and `AGENTS.md` to `vX.Y.Z-rc.N`, and runs `--check`;
+  then `praetorctl compile-context`).
 - Changelog section `## [X.Y.Z-rc.N]`; the final `## [X.Y.Z]` lists the whole release.
 - Before tagging, dispatch `Tester publish` from the default branch at the
   release commit and wait for it to go green (the candidate gate reads that run).
