@@ -3291,6 +3291,15 @@ def _extract_actions_checkout(block: str) -> tuple[str, list[str], int] | None:
     return None
 
 
+def _target_checkout_offsets(block: str, actions_start: int) -> list[int]:
+    """Find every uses: actions/checkout@ offset in block other than actions_start."""
+    return [
+        match.start()
+        for match in re.finditer(r"uses: actions/checkout@", block)
+        if match.start() != actions_start
+    ]
+
+
 def _validate_load_step(relative: str, name: str, block: str) -> list[str]:
     """A job loads build-config.env after checkout via the local composite action."""
     errors: list[str] = []
@@ -3321,6 +3330,13 @@ def _validate_load_step(relative: str, name: str, block: str) -> list[str]:
         else:
             actions_path, errs, actions_start = actions_checkout
             errors.extend(f"{relative}: job {name} {err}" for err in errs)
+            if any(
+                offset > actions_start
+                for offset in _target_checkout_offsets(block, actions_start)
+            ):
+                errors.append(
+                    f"{relative}: job {name} target checkout must precede the actions checkout"
+                )
             if actions_start > load and load >= 0:
                 errors.append(
                     f"{relative}: job {name} actions checkout must precede Load build configuration"
@@ -4948,6 +4964,11 @@ def _tester_publish_load_cases(text: str) -> dict[str, tuple[str, str]]:
     )
     step_match = checkout_pat.search(text)
     step = step_match.group(0) if step_match else ""
+    target_pat = re.compile(
+        r"[ ]+- uses: actions/checkout@[^\n]*\n[ ]+with:\n[ ]+ref: \${{ needs\.validate\.outputs\.sha }}\n[ ]+persist-credentials: false\n"
+    )
+    target_match = target_pat.search(text)
+    target_step = target_match.group(0) if target_match else ""
     load_step = (
         "      - name: Load build configuration\n"
         "        uses: ./.actions/.github/actions/load-build-config\n"
@@ -4964,6 +4985,10 @@ def _tester_publish_load_cases(text: str) -> dict[str, tuple[str, str]]:
         "publish actions checkout after load step": (
             text.replace(step, "", 1).replace(load_step, load_step + step, 1),
             "actions checkout must precede Load build configuration",
+        ),
+        "publish target checkout after actions checkout": (
+            text.replace(target_step + step, step + target_step, 1),
+            "target checkout must precede the actions checkout",
         ),
         "publish actions checkout wrong ref": (
             text.replace(
