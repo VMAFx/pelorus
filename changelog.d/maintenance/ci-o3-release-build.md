@@ -1,0 +1,1 @@
+- CI now runs a release gcc build (`-O3`, warnings are errors) next to the `-O2` build. The planted `wrap` twin of the SEI fit test turns off `-Warray-bounds` and `-Wstringop-overflow`, because GCC 16 at `-O3` proves the wrapped length that the twin plants on purpose; the real header and every other twin keep all warnings.
