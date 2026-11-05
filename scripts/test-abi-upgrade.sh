@@ -84,6 +84,31 @@ build_new_tree() {
         -o "$BUILD_DIR/probe_new"
 }
 
+# Run one probe binary from the build directory: the probe takes a blob name
+# from its fixed table, never a path.
+run_probe() {
+    local bin="$1"
+    shift
+    (cd "$BUILD_DIR" && timeout 600 "$BUILD_DIR/$bin" "$@")
+}
+
+# The probe refuses every name outside its table with rc=2: a relative
+# escape, an absolute path to a valid blob, and an unknown name.
+check_probe_refuses_paths() {
+    local refused
+    for refused in "../self_test_valid.bin" "$BUILD_DIR/self_test_valid.bin" "other.bin"; do
+        local refuse_rc=0
+        set +e
+        run_probe probe_new read "$refused" >/dev/null 2>&1
+        refuse_rc=$?
+        set -e
+        if [[ $refuse_rc -ne 2 ]]; then
+            echo "error: self-test failed: probe accepted blob name '$refused' (rc=$refuse_rc, expected 2)" >&2
+            exit 1
+        fi
+    done
+}
+
 run_self_test() {
     build_new_tree
     local st_valid="$BUILD_DIR/self_test_valid.bin"
@@ -91,7 +116,7 @@ run_self_test() {
     local st_trunc="$BUILD_DIR/self_test_trunc.bin"
 
     rm -f "$st_valid" "$st_corrupt" "$st_trunc"
-    timeout 600 "$BUILD_DIR/probe_new" pack "$st_valid"
+    run_probe probe_new pack self_test_valid.bin
 
     cp "$st_valid" "$st_corrupt"
     timeout 600 python3 -I -B -c '
@@ -105,7 +130,7 @@ with open(sys.argv[1], "r+b") as f:
     local corrupt_rc=0
     set +e
     local corrupt_out
-    corrupt_out="$(timeout 600 "$BUILD_DIR/probe_new" read "$st_corrupt" 2>/dev/null)"
+    corrupt_out="$(run_probe probe_new read self_test_corrupt.bin 2>/dev/null)"
     corrupt_rc=$?
     set -e
     if [[ $corrupt_rc -ne 1 || "$corrupt_out" != *"status=mismatch"* ]]; then
@@ -116,13 +141,15 @@ with open(sys.argv[1], "r+b") as f:
     timeout 600 head -c 32 "$st_valid" > "$st_trunc"
     local trunc_rc=0
     set +e
-    timeout 600 "$BUILD_DIR/probe_new" read "$st_trunc" >/dev/null 2>&1
+    run_probe probe_new read self_test_trunc.bin >/dev/null 2>&1
     trunc_rc=$?
     set -e
     if [[ $trunc_rc -ne 1 ]]; then
         echo "error: self-test failed: truncated header expected rc=1, got rc=$trunc_rc" >&2
         exit 1
     fi
+
+    check_probe_refuses_paths
 
     echo "self-test: ok"
 }
@@ -156,33 +183,33 @@ timeout 600 cc -O2 -Wall -Wextra -Werror \
 # 4 cross cases
 rm -f "$BUILD_DIR/blob_new.bin" "$BUILD_DIR/blob_old.bin"
 echo "case=new-pack->new-read"
-if ! timeout 600 "$BUILD_DIR/probe_new" pack "$BUILD_DIR/blob_new.bin"; then
+if ! run_probe probe_new pack blob_new.bin; then
     echo "error: case new-pack->new-read pack failed" >&2
     exit 1
 fi
-if ! timeout 600 "$BUILD_DIR/probe_new" read "$BUILD_DIR/blob_new.bin"; then
+if ! run_probe probe_new read blob_new.bin; then
     echo "error: case new-pack->new-read read failed" >&2
     exit 1
 fi
 
 echo "case=new-pack->old-read"
-if ! timeout 600 "$BUILD_DIR/probe_old" read "$BUILD_DIR/blob_new.bin"; then
+if ! run_probe probe_old read blob_new.bin; then
     echo "error: case new-pack->old-read read failed" >&2
     exit 1
 fi
 
 echo "case=old-pack->new-read"
-if ! timeout 600 "$BUILD_DIR/probe_old" pack "$BUILD_DIR/blob_old.bin"; then
+if ! run_probe probe_old pack blob_old.bin; then
     echo "error: case old-pack->new-read pack failed" >&2
     exit 1
 fi
-if ! timeout 600 "$BUILD_DIR/probe_new" read "$BUILD_DIR/blob_old.bin"; then
+if ! run_probe probe_new read blob_old.bin; then
     echo "error: case old-pack->new-read read failed" >&2
     exit 1
 fi
 
 echo "case=old-pack->old-read"
-if ! timeout 600 "$BUILD_DIR/probe_old" read "$BUILD_DIR/blob_old.bin"; then
+if ! run_probe probe_old read blob_old.bin; then
     echo "error: case old-pack->old-read read failed" >&2
     exit 1
 fi

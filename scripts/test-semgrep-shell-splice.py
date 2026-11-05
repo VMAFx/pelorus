@@ -71,6 +71,9 @@ python3 \\
 # Must-flag 10: quoted fallback inside a braced parameter expansion
 python3 -c 'print("'"${x:-"$fallback"}"'")'
 
+# Must-flag 11: perl runs every -e, so a splice in a later -e is source
+perl -e 'print 1;' -e 'print "'"$v"'";'
+
 # Must-pass 1: fixed form passing argv
 python3 -c 'import sys; print(sys.argv[1])' "$st"
 
@@ -93,6 +96,9 @@ python3 script.py; sh -c 'echo "'"$x"'"'
 
 # Must-pass 7: escaped literal dollar inside double-quoted splice
 python3 -c 'print("'"\\$HOME"'")'
+
+# Must-pass 8: python hands a second -c and its text to sys.argv
+python3 -c 'import sys; print(sys.argv[2])' -c '"prefix-'"$x"'-suffix'
 """
 
 # Each planted defect sits on the line after its "# Must-flag" marker, so the

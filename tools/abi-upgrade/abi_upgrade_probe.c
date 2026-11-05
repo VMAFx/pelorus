@@ -302,17 +302,44 @@ static int mode_read(const char *in_path)
     return failed != 0 ? 1 : 0;
 }
 
+/* Blob names the probe opens, relative to its working directory. The command
+ * line selects one by exact match and the probe opens the table's own string,
+ * so no command-line text reaches open(): a path, "..", or an unknown name is
+ * a usage error. scripts/test-abi-upgrade.sh runs the probe from its build
+ * directory and plants a relative escape and an absolute path. */
+static const char *const k_blob_names[] = {
+    "self_test_valid.bin", "self_test_corrupt.bin", "self_test_trunc.bin",
+    "blob_new.bin",        "blob_old.bin",
+};
+
+static const char *known_blob_name(const char *arg)
+{
+    for (size_t i = 0; i < sizeof(k_blob_names) / sizeof(k_blob_names[0]); i++) {
+        if (strcmp(arg, k_blob_names[i]) == 0) {
+            return k_blob_names[i];
+        }
+    }
+    return NULL;
+}
+
 int main(int argc, char **argv)
 {
+    const char *name;
+
     if (argc != 3) {
-        (void)fprintf(stderr, "usage: %s <pack|read> <file.bin>\n", argv[0]);
+        (void)fprintf(stderr, "usage: %s <pack|read> <blob name>\n", argv[0]);
+        return 2;
+    }
+    name = known_blob_name(argv[2]);
+    if (name == NULL) {
+        (void)fprintf(stderr, "unknown blob name (expected a name from k_blob_names)\n");
         return 2;
     }
     if (strcmp(argv[1], "pack") == 0) {
-        return mode_pack(argv[2]);
+        return mode_pack(name);
     }
     if (strcmp(argv[1], "read") == 0) {
-        return mode_read(argv[2]);
+        return mode_read(name);
     }
     (void)fprintf(stderr, "unknown mode '%s' (expected 'pack' or 'read')\n", argv[1]);
     return 2;
