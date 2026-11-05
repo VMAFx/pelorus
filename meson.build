@@ -883,6 +883,16 @@ test('semgrep-float-identity',
      timeout: 600,
      suite: 'fast')
 
+# Smoke skip reasons name the first error line, not a Mesa warning: the
+# rule pelorus-smoke-skip-reason-head refuses head -n 1 reasons and the
+# test runs pel_first_error from each smoke on planted log fixtures.
+test('semgrep-smoke-skip-reason',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-semgrep-smoke-skip-reason.py'],
+     workdir: meson.project_source_root(),
+     timeout: 600,
+     suite: 'fast')
+
 # Executables from shutil.which reach subprocess only after a resolve,
 # is_file and X_OK check: pelorus-validate-which-executable and its
 # planted cases; three Semgrep scans at 180 s each stay under 600 s.
