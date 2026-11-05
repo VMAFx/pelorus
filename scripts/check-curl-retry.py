@@ -31,6 +31,13 @@ from tracked_python import tracked_files  # noqa: E402
 DESCRIPTION = "Check that curl downloads specify retry >= 5 and retry-max-time."
 SHELL_SUFFIXES = frozenset({".sh", ".bash", ".mk"})
 WORKFLOW_SUFFIXES = frozenset({".yml", ".yaml"})
+# Argument-taking short options from curl 8.23.0's `curl --help all`.
+SHORT_OPTIONS_WITH_ARGS = frozenset(
+    {
+        "A", "C", "D", "E", "F", "H", "K", "P", "Q", "T", "U", "X", "Y",
+        "b", "c", "d", "e", "h", "m", "o", "r", "t", "u", "w", "x", "y", "z",
+    }
+)
 
 
 def is_curl_command_prefix(prefix: str) -> bool:
@@ -115,9 +122,16 @@ def is_download_flag(tok: str, next_tok: str | None) -> tuple[bool, int]:
     if tok.startswith("--output="):
         target = tok.split("=", 1)[1].strip("'\"")
         return target != "/dev/null", 1
-    if tok.startswith("-o=") or (tok.startswith("-o") and len(tok) > 2 and not tok.startswith("--")):
-        target = tok[2:].lstrip("=").strip("'\"")
-        return target != "/dev/null", 1
+    if tok.startswith("-") and not tok.startswith("--") and len(tok) > 1:
+        is_download = False
+        for index, option in enumerate(tok[1:], start=1):
+            if option == "O":
+                is_download = True
+            if option in SHORT_OPTIONS_WITH_ARGS:
+                rest = tok[index + 1 :]
+                target = (rest or next_tok or "").strip("'\"")
+                return is_download or (option == "o" and target != "/dev/null"), 1 if rest else 2
+        return is_download, 1
     return False, 1
 
 
@@ -181,11 +195,11 @@ def check_curl_args(arg_str: str) -> list[str]:
     violations: list[str] = []
     if is_download and not has_retry:
         violations.append("download without --retry")
-    if has_retry and retry_val is None:
+    if is_download and has_retry and retry_val is None:
         violations.append("--retry count is not a literal integer")
-    elif has_retry and retry_val is not None and retry_val < 5:
+    elif is_download and has_retry and retry_val is not None and retry_val < 5:
         violations.append(f"--retry count {retry_val} < 5")
-    if has_retry and not has_retry_max_time:
+    if is_download and has_retry and not has_retry_max_time:
         violations.append("--retry without --retry-max-time")
     return violations
 
@@ -285,6 +299,12 @@ def run_self_test() -> int:
         ("p6", "# curl --output x https://example.com/file\n", False),
         ("p7", 'curl --retry "$N" --retry-max-time 60 -o out https://example.com/file\n', True),
         ("p8", "curl --retry-max-time 60 -o out https://example.com/file --retry\n", True),
+        ("p9", "curl -fsSLo out https://example.com/file\n", True),
+        ("p10", "curl -OL https://example.com/file\n", True),
+        ("p11", "curl -fsSLo /dev/null https://example.com/file\n", False),
+        ("p12", "curl -sH 'X-o: 1' https://example.com/file\n", False),
+        ("p13", "curl -fsSL -o out --retry 6 --retry-max-time 60 https://example.com/file\n", False),
+        ("p14", "curl --retry 2 -o /dev/null https://example.com/file\n", False),
     ]
     failures = 0
     with tempfile.TemporaryDirectory() as tmp_dir:

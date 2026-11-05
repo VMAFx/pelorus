@@ -11,7 +11,10 @@
 # Makes the bench reproducible from a pinned source on any machine.
 #
 #   FFMPEG=/path/to/ffmpeg CORPUS=.bench-corpus ./fetch-corpus.sh [name...]
-#   CORPUS_LOCK=<file> and CURL_MAX_TIME=<seconds, default 600> override the pin list and deadline.
+#   CORPUS_LOCK=<file> overrides the pin list.
+#   CURL_MAX_TIME=<seconds, default 600> sets the per-attempt deadline;
+#   no new retry starts after CURL_MAX_TIME;
+#   worst case about twice CURL_MAX_TIME.
 #   CORPUS_CATEGORIES=<file> overrides the category list (default: scripts/bench/corpus.categories).
 #   --check-categories verifies category coverage against the lock and exits without downloading.
 #   A category whose clips column reads 'parked #<issue>' has no set by recorded decision: it
