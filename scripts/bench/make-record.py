@@ -101,6 +101,11 @@ def _md_text(value):
     text = text.replace("`", "\\`")
     text = text.replace("<", "&lt;")
     text = text.replace(">", "&gt;")
+    text = text.replace("[", "\\[")
+    text = text.replace("]", "\\]")
+    text = text.replace("(", "\\(")
+    text = text.replace(")", "\\)")
+    text = text.replace("!", "\\!")
     return text
 
 
@@ -606,9 +611,15 @@ def _run_escaping_cases():
     col_counts = [len(re.findall(r"(?<!\\)\|", l)) for l in tbl_lines]
     cols_ok = len(tbl_lines) >= 3 and len(set(col_counts)) == 1
     no_marker_ok = "<!--" not in rendered
+
+    rec2 = dict(rec, clip="![x](https://example.invalid/image)", reference="[y](https://example.invalid/)")
+    r2 = render_record_md(rec2, validator=lambda _: [])
+    link_ok = bool(r2 and not re.search(r"(?<!\\)\]\(", r2) and not re.search(r"(?<!\\)!\[", r2))
+
     return [
         _evaluate_check("cell_escaping_preserves_columns", cols_ok, f"cols: {col_counts}"),
         _evaluate_check("header_marker_injection_escaped", no_marker_ok, "found <!--"),
+        _evaluate_check("link_image_syntax_escaped", link_ok),
     ]
 
 
