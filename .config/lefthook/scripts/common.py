@@ -600,6 +600,14 @@ def _writable_retry(function, path, _exc):
     function(path)
 
 
+def rmtree_writable(path):
+    """Remove a snapshot with the writable retry on every supported Python version."""
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_writable_retry)
+    else:  # Python 3.10 and 3.11 (the hooks' floor) name the callback onerror
+        shutil.rmtree(path, onerror=_writable_retry)  # pylint: disable=deprecated-argument
+
+
 def sweep_stale_snapshots(root=None, now=None):
     """Remove leaked snapshot directories in root (the temporary directory); the count removed."""
     root = Path(root or tempfile.gettempdir())
@@ -614,12 +622,7 @@ def sweep_stale_snapshots(root=None, now=None):
                 or (hasattr(os, "getuid") and info.st_uid != os.getuid())
             ):
                 continue
-            if sys.version_info >= (3, 12):
-                shutil.rmtree(entry, onexc=_writable_retry)
-            else:  # Python 3.10 and 3.11 (the hooks' floor) name the callback onerror
-                shutil.rmtree(
-                    entry, onerror=_writable_retry
-                )  # pylint: disable=deprecated-argument
+            rmtree_writable(entry)
             removed += 1
     return removed
 

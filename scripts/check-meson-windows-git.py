@@ -84,7 +84,7 @@ def test_calls(statement: list[Token]) -> Iterator[list[Token]]:
             if item.kind == "operator":
                 depth += (item.value == "(") - (item.value == ")")
             if depth == 0:
-                yield statement[index:end + 1]
+                yield statement[index : end + 1]
                 break
 
 
@@ -109,20 +109,46 @@ def meson_tests(source: str) -> Iterator[tuple[list[Token], bool]]:
         raise ValueError("meson.build: unclosed if block")
 
 
-def script_refs(call: list[Token]) -> list[str]:
-    """Find literal 'scripts' / '<name>.py' references in a test call."""
+def script_refs(
+    call: list[Token], variables: dict[str, str] | None = None
+) -> list[str]:
+    """Find literal script paths and names bound to those paths in a test call."""
     refs: list[str] = []
     for index in range(len(call) - 2):
-        directory, slash, filename = call[index:index + 3]
+        directory, slash, filename = call[index : index + 3]
         if (
             directory.kind == filename.kind == "string"
             and directory.value.strip("'\"") == "scripts"
-            and slash.kind == "operator" and slash.value == "/"
+            and slash.kind == "operator"
+            and slash.value == "/"
         ):
             name = filename.value.strip("'\"")
             if name.endswith(".py"):
                 refs.append(name)
+    if variables:
+        refs.extend(
+            variables[token.value]
+            for token in call
+            if token.kind == "word" and token.value in variables
+        )
     return list(dict.fromkeys(refs))
+
+
+def script_variables(source: str) -> dict[str, str]:
+    """Resolve scalar script-path assignments through the literal path resolver."""
+    variables: dict[str, str] = {}
+    for statement in meson_statements(source):
+        if (
+            len(statement) >= 3
+            and statement[0].kind == "word"
+            and statement[1].kind == "operator"
+            and statement[1].value == "="
+            and statement[2].kind in {"word", "string"}
+        ):
+            refs = script_refs(statement[2:])
+            if refs:
+                variables[statement[0].value] = refs[-1]
+    return variables
 
 
 def command_literals(node: ast.AST) -> Iterator[ast.AST]:
@@ -143,7 +169,10 @@ def script_uses_git(path: Path) -> bool:
     """Detect actual tracked-file references or Git command literals via AST."""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id in {"tracked_python", "tracked_files"}:
+        if isinstance(node, ast.Name) and node.id in {
+            "tracked_python",
+            "tracked_files",
+        }:
             return True
         if isinstance(node, ast.Import) and any(
             alias.name == "tracked_python" for alias in node.names
@@ -163,12 +192,18 @@ def check(meson_build: Path, scripts_dir: Path) -> tuple[list[str], int]:
     """Return refusals and the number of guarded Git-scanning test calls."""
     findings: list[str] = []
     count = 0
-    for call, gated in meson_tests(meson_build.read_text(encoding="utf-8")):
+    source = meson_build.read_text(encoding="utf-8")
+    variables = script_variables(source)
+    for call, gated in meson_tests(source):
         options = {token.value.strip("'\"") for token in call if token.kind == "string"}
         if options & {"--self-test", "--self-test-only"}:
             continue
         name = call[2].value.strip("'\"")
-        git_scripts = [ref for ref in script_refs(call) if script_uses_git(scripts_dir / ref)]
+        git_scripts = [
+            ref
+            for ref in script_refs(call, variables)
+            if script_uses_git(scripts_dir / ref)
+        ]
         if gated:
             count += bool(git_scripts)
             continue
@@ -181,24 +216,52 @@ def check(meson_build: Path, scripts_dir: Path) -> tuple[list[str], int]:
     return findings, count
 
 
-def run_self_test() -> int:
-    """Plant Windows guards, unsafe branches, nested calls and false positives."""
+def self_test_cases() -> list[tuple[str, str, bool]]:
+    """Windows guards, unsafe branches, literal and variable-backed scripts."""
     git_test = "test('scan', python, args: ['scripts' / 'scan.py'])\n"
-    cases = [
+    variable_test = (
+        "scan_script = meson.project_source_root() / 'scripts' / 'scan.py'\n"
+        "test('scan', python, args: ['-I', scan_script])\n"
+    )
+    return [
         ("p1 ungated", git_test, True),
         ("p2 gated", f"{WINDOWS_GATE}\n{git_test}endif\n", False),
-        ("p3 self-test", git_test.replace("'scan.py'", "'scan.py', '--self-test'"), False),
+        (
+            "p3 self-test",
+            git_test.replace("'scan.py'", "'scan.py', '--self-test'"),
+            False,
+        ),
         ("p4 no git", git_test.replace("scan.py", "plain.py"), False),
         ("p5 else", f"{WINDOWS_GATE}\nelse\n{git_test}endif\n", True),
         ("p6 nested", f"{WINDOWS_GATE}\nif enabled\n{git_test}endif\nendif\n", False),
         ("p7 elif", f"{WINDOWS_GATE}\nelif enabled\n{git_test}endif\n", True),
-        ("p8 strings", "# test('comment', '(')\n" + git_test.replace(
-            "python,", "find_program('python'),"), True),
+        (
+            "p8 strings",
+            "# test('comment', '(')\n"
+            + git_test.replace("python,", "find_program('python'),"),
+            True,
+        ),
         ("p9 command", git_test.replace("scan.py", "command.py"), True),
         ("p10 which", git_test.replace("scan.py", "which.py"), True),
-        ("p11 self-test-only", git_test.replace(
-            "'scan.py'", "'scan.py', '--self-test-only'"), False),
+        (
+            "p11 self-test-only",
+            git_test.replace("'scan.py'", "'scan.py', '--self-test-only'"),
+            False,
+        ),
+        ("p12 variable ungated", variable_test, True),
+        (
+            "p13 variable gated",
+            variable_test.replace("test('scan'", f"{WINDOWS_GATE}\ntest('scan'")
+            + "endif\n",
+            False,
+        ),
+        ("p14 variable no git", variable_test.replace("scan.py", "plain.py"), False),
     ]
+
+
+def run_self_test() -> int:
+    """Plant Windows guards, unsafe branches, nested calls and false positives."""
+    cases = self_test_cases()
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         scripts = root / "scripts"
@@ -215,7 +278,9 @@ def run_self_test() -> int:
         for label, source, refused in cases:
             meson.write_text(source, encoding="utf-8")
             findings, count = check(meson, scripts)
-            expected_count = int(label in {"p2 gated", "p6 nested"})
+            expected_count = int(
+                label in {"p2 gated", "p6 nested", "p13 variable gated"}
+            )
             if bool(findings) != refused or count != expected_count:
                 print(f"FAIL: {label}: {findings}, gated={count}", file=sys.stderr)
                 return 1
