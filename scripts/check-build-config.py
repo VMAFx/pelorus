@@ -3395,20 +3395,25 @@ def validate_script_content_go_pins(rel: str, content: str, suffix: str) -> list
     return errors
 
 
-def validate_no_literal_go_pins() -> list[str]:
+# Script suffixes validate_script_content_go_pins understands; discovery walks all of them.
+GO_PIN_SCRIPT_SUFFIXES = (".py", ".sh", ".bash")
+
+
+def validate_no_literal_go_pins(scripts_dir: Path | None = None) -> list[str]:
     """Refuse literal Go version assignments outside build-config.env in scripts."""
     errors: list[str] = []
-    scripts_dir = ROOT / "scripts"
+    scripts_dir = ROOT / "scripts" if scripts_dir is None else scripts_dir
     if not scripts_dir.is_dir():
         return errors
-    for path in sorted(scripts_dir.rglob("*.py")):
-        if "__pycache__" in path.parts:
-            continue
-        rel = path.relative_to(ROOT).as_posix()
-        content = path.read_text(encoding="utf-8")
-        errors.extend(validate_script_content_go_pins(rel, content, path.suffix))
-    for path in sorted(scripts_dir.rglob("*.sh")):
-        rel = path.relative_to(ROOT).as_posix()
+    paths = sorted(
+        path
+        for path in scripts_dir.rglob("*")
+        if path.suffix in GO_PIN_SCRIPT_SUFFIXES
+        and path.is_file()
+        and "__pycache__" not in path.parts
+    )
+    for path in paths:
+        rel = path.relative_to(scripts_dir.parent).as_posix()
         content = path.read_text(encoding="utf-8")
         errors.extend(validate_script_content_go_pins(rel, content, path.suffix))
     return errors
@@ -5574,6 +5579,26 @@ def _go_pin_workflow_yaml_regressions() -> list[str]:
     return failures
 
 
+def _go_pin_script_discovery_regressions() -> list[str]:
+    """Prove the repository scan finds literal pins in .py, .sh and .bash scripts."""
+    failures: list[str] = []
+    planted = {
+        "pin.py": 'GO_VERSION = "1.24"\n',
+        "pin.sh": "GO_VERSION=1.24\n",
+        "pin.bash": "export GO_VERSION=1.24\n",
+    }
+    with tempfile.TemporaryDirectory() as tmp_str:
+        scripts_dir = Path(tmp_str) / "scripts"
+        (scripts_dir / "nested").mkdir(parents=True)
+        for name, text in planted.items():
+            (scripts_dir / "nested" / name).write_text(text, encoding="utf-8")
+        errs = validate_no_literal_go_pins(scripts_dir)
+    for name in planted:
+        if not any(f"scripts/nested/{name}:" in e for e in errs):
+            failures.append(f"go-pin regression: repository scan missed a literal pin in {name}")
+    return failures
+
+
 def _go_pin_script_literal_regressions() -> list[str]:
     """Prove literal Go version pins in scripts are rejected while non-literals are permitted."""
     failures: list[str] = []
@@ -5638,6 +5663,7 @@ def go_pin_regressions() -> list[str]:
     failures.extend(_go_pin_workflow_order_regressions(source, rel))
     failures.extend(_go_pin_workflow_yaml_regressions())
     failures.extend(_go_pin_script_literal_regressions())
+    failures.extend(_go_pin_script_discovery_regressions())
     return failures
 
 
