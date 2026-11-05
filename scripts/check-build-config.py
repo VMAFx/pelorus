@@ -39,6 +39,7 @@ CONSUMERS = (
     ROOT / "ffmpeg-patches" / "test" / "build-and-run.sh",
 )
 QSV_REPLAY = ROOT / "ffmpeg-patches" / "test" / "qsv-roi-regression.sh"
+ABI_UPGRADE_TEST = ROOT / "scripts" / "test-abi-upgrade.sh"
 STATIC_AVFILTER_CONSUMER = (
     ROOT / "ffmpeg-patches" / "test" / "static-libavfilter-consumer.c"
 )
@@ -897,6 +898,55 @@ def _consumer_generator_packaging_regressions(source: str) -> list[str]:
     return failures
 
 
+def _abi_upgrade_hermetic_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Planted mutations for scripts/test-abi-upgrade.sh hermetic Git checks."""
+    exports = "".join(line + "\n" for line in GIT_HERMETIC_ENV_LINES)
+    return {
+        "missing GIT_CONFIG_GLOBAL": (
+            source.replace("export GIT_CONFIG_GLOBAL=/dev/null\n", "", 1),
+            "must run git hermetically",
+        ),
+        "exports after worktree": (
+            source.replace(exports, "", 1) + "\n" + exports,
+            "must precede the first git worktree command",
+        ),
+        "unisolated worktree remove": (
+            re.sub(
+                r'env -u GIT_DIR[^\n]*(?:\\\n[^\n]*)*worktree remove --force "\$OLD_TREE"',
+                'git -C "$REPO_ROOT" worktree remove --force "$OLD_TREE"',
+                source,
+                count=1,
+            ),
+            "git worktree command must isolate GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE",
+        ),
+        "unisolated worktree add": (
+            re.sub(
+                r'env -u GIT_DIR[^\n]*(?:\\\n[^\n]*)*worktree add --detach "\$OLD_TREE" "\$OLD_REF"',
+                'git -C "$REPO_ROOT" worktree add --detach "$OLD_TREE" "$OLD_REF"',
+                source,
+                count=1,
+            ),
+            "git worktree command must isolate GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE",
+        ),
+    }
+
+
+def _abi_upgrade_hermetic_regressions() -> list[str]:
+    """Prove validate_abi_upgrade_text rejects non-hermetic worktree calls."""
+    if not ABI_UPGRADE_TEST.is_file():
+        return ["abi-upgrade regression: scripts/test-abi-upgrade.sh is missing"]
+    source = ABI_UPGRADE_TEST.read_text(encoding="utf-8")
+    failures: list[str] = []
+    if validate_abi_upgrade_text(source):
+        failures.append("abi-upgrade regression: shipped script was rejected")
+    for name, (mutated, expected) in _abi_upgrade_hermetic_cases(source).items():
+        if mutated == source:
+            failures.append(f"abi-upgrade regression: {name} mutation changed nothing")
+        elif not any(expected in err for err in validate_abi_upgrade_text(mutated)):
+            failures.append(f"abi-upgrade regression: {name} was accepted")
+    return failures
+
+
 def consumer_validator_regressions() -> list[str]:
     """Exercise unsafe consumer patterns that previously escaped the gate."""
     relative = "ffmpeg-patches/generate.sh"
@@ -917,6 +967,7 @@ def consumer_validator_regressions() -> list[str]:
     failures.extend(_hermetic_regressions("replay", replay, validate_replay_text))
     failures.extend(_hermetic_regressions("generator", source, validate_generator_text))
     failures.extend(_series_first_regressions(source, replay))
+    failures.extend(_abi_upgrade_hermetic_regressions())
     return failures
 
 
@@ -2338,10 +2389,39 @@ def _validate_replay_structure(replay: str, shell_replay: str) -> list[str]:
     return errors
 
 
+GIT_WORKTREE_COMMAND_PATTERN = re.compile(
+    r"(?m)^[ \t]*(?:if\s+!\s+)?(?:timeout\s+\S+\s+)?(?:env\s+(?:-\S+\s+\S+\s+)*)?"
+    r"git\s+-C\s+\S+(?:\s+-c\s+\S+)*\s+worktree\s+(?:add|remove)\b"
+)
+GIT_WORKTREE_ISOLATED_PATTERN = re.compile(
+    r"env\s+-u\s+GIT_DIR\s+-u\s+GIT_WORK_TREE\s+-u\s+GIT_INDEX_FILE\b"
+    r"[^\n]*\bgit\s+-C\s+\S+\s+-c\s+core\.hooksPath=/dev/null\s+worktree\s+(?:add|remove)\b"
+)
+
+
+def _validate_worktree_env_isolation(relative: str, shell_text: str) -> list[str]:
+    """Require worktree add/remove lines in non-am scripts to scrub repo env and hooks."""
+    worktree_lines = [
+        line
+        for line in shell_text.splitlines()
+        if not line.lstrip().startswith("#")
+        and re.search(r"\bworktree\s+(?:add|remove)\b", line)
+    ]
+    if len(worktree_lines) < 2:
+        return [f"{relative}: missing git worktree add/remove commands"]
+    if any(not GIT_WORKTREE_ISOLATED_PATTERN.search(line) for line in worktree_lines):
+        return [
+            f"{relative}: git worktree command must isolate "
+            "GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE and disable Git hooks"
+        ]
+    return []
+
+
 def validate_hermetic_git_env(relative: str, shell_text: str) -> list[str]:
-    """Require the hermetic Git environment on active lines before the first am."""
+    """Require the hermetic Git environment on active lines before git am or worktree."""
     errors: list[str] = []
     am_match = re.search(GIT_AM_COMMAND_PATTERN, shell_text)
+    wt_match = GIT_WORKTREE_COMMAND_PATTERN.search(shell_text)
     for line in GIT_HERMETIC_ENV_LINES:
         match = re.search(rf"(?m)^[ \t]*{re.escape(line)}[ \t]*$", shell_text)
         if match is None:
@@ -2350,7 +2430,19 @@ def validate_hermetic_git_env(relative: str, shell_text: str) -> list[str]:
             )
         elif am_match is not None and match.start() > am_match.start():
             errors.append(f"{relative}: `{line}` must precede the first git am")
+        elif wt_match is not None and match.start() > wt_match.start():
+            errors.append(
+                f"{relative}: `{line}` must precede the first git worktree command"
+            )
+    if am_match is None:
+        errors.extend(_validate_worktree_env_isolation(relative, shell_text))
     return errors
+
+
+def validate_abi_upgrade_text(source: str) -> list[str]:
+    """Validate that scripts/test-abi-upgrade.sh isolates its Git worktree calls."""
+    shell_text = source.replace("\\\n", " ")
+    return validate_hermetic_git_env("scripts/test-abi-upgrade.sh", shell_text)
 
 
 def validate_replay_text(replay: str) -> list[str]:
@@ -5900,6 +5992,10 @@ def validate_consumers() -> list[str]:
         errors.append("scripts/release/write-patch-notice.sh: missing")
     else:
         errors.extend(validate_patch_notice_text(PATCH_NOTICE.read_text(encoding="utf-8")))
+    if not ABI_UPGRADE_TEST.is_file():
+        errors.append("scripts/test-abi-upgrade.sh: missing")
+    else:
+        errors.extend(validate_abi_upgrade_text(ABI_UPGRADE_TEST.read_text(encoding="utf-8")))
     return errors
 
 

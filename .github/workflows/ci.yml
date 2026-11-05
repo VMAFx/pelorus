@@ -729,5 +729,7 @@ jobs:
         run: semgrep scan --config .semgrep.yml --error --metrics=off --disable-version-check
       - name: Verify planted-defect test passes
         run: python3 -I scripts/test-semgrep-float-identity.py
+      - name: Verify shell-splice planted-defect test passes
+        run: python3 -I scripts/test-semgrep-shell-splice.py
       - name: Verify the which-executable rule on planted cases
         run: python3 -I scripts/test-semgrep-which-executable.py

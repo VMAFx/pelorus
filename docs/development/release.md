@@ -71,12 +71,14 @@ exist.
    ([ADR-0245](../adr/0245-changelog-render-at-landing.md)). The section
    holds the changes since the previous candidate, or since the previous
    release for `rc.1`.
-2. Merge. Dispatch `Tester publish` from the default branch with an empty `ref`
+2. Run `bash scripts/test-abi-upgrade.sh --old-ref <previous tag> --build-dir build-upgrade`
+   and attach its output to the release pull request.
+3. Merge. Dispatch `Tester publish` from the default branch with an empty `ref`
    (the commit must be the merge commit), wait for the environment approval and a
    green run ([runbook](tester-image.md)).
-3. Tag that commit with the pre-tag guard and push the tag:
+4. Tag that commit with the pre-tag guard and push the tag:
    `bash scripts/release/tag-release.sh vX.Y.Z-rc.N && git push origin vX.Y.Z-rc.N`.
-4. Watch the run. The result is a prerelease with the same assets as a release
+5. Watch the run. The result is a prerelease with the same assets as a release
    plus `CANDIDATE_LEGS.json`. `gh release view vX.Y.Z-rc.N --json isPrerelease`
    must print `true`.
 
