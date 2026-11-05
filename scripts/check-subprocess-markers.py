@@ -36,7 +36,6 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import tracked_python  # noqa: E402
-from tracked_python import is_python, repo_discovery_env, tracked_files  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE_PATH = Path(__file__).resolve().parent / "subprocess-markers-baseline.json"
@@ -256,7 +255,11 @@ def save_baseline(
 
 def get_tracked_python_files(root: Path) -> list[Path]:
     """Every git-tracked regular Python file under root, sorted."""
-    return sorted(p for p in tracked_files(root) if p.is_file() and is_python(p))
+    return sorted(
+        p
+        for p in tracked_python.tracked_files(root)
+        if p.is_file() and tracked_python.is_python(p)
+    )
 
 
 def scan_all_files(
@@ -423,7 +426,9 @@ def check_planted_git_isolation() -> list[str]:
     if git is None:
         return ["git not found on PATH"]
     clean_env = {
-        k: v for k, v in repo_discovery_env().items() if not k.startswith("GIT_")
+        k: v
+        for k, v in tracked_python.repo_discovery_env().items()
+        if not k.startswith("GIT_")
     }
     with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as decoy_dir:
         tmp_path = Path(tmp_dir)
@@ -434,7 +439,7 @@ def check_planted_git_isolation() -> list[str]:
         try:
             os.environ["GIT_DIR"] = str(Path(decoy_dir) / ".git")
             os.environ["GIT_INDEX_FILE"] = str(tmp_path / "bogus_index")
-            got = tracked_files(tmp_path)
+            got = tracked_python.tracked_files(tmp_path)
             if got != [temp_file]:
                 return [
                     f"case 12 failed: want {[str(temp_file)]}, got {[str(p) for p in got]}"
@@ -452,7 +457,7 @@ def check_planted_missing_git() -> list[str]:
     try:
         tracked_python.shutil.which = lambda _cmd: None
         try:
-            tracked_files(ROOT)
+            tracked_python.tracked_files(ROOT)
         except RuntimeError as exc:
             if "git" not in str(exc).lower():
                 fails.append(
