@@ -59,6 +59,16 @@ def case_cmd_list():
     cmd = [tool, "--help"]
     subprocess.check_output(cmd)  # reported: argv list variable
 
+def case_inline():
+    subprocess.run([shutil.which("tool"), "-v"])  # reported: inline which
+
+def case_unrelated_guard():
+    tool = shutil.which("tool")
+    if tool:
+        if os.access("other", os.R_OK):
+            pass
+        subprocess.run([tool, "-v"])  # reported: unrelated guard
+
 def case_negative():
     git = shutil.which("git")
     if git:
@@ -70,9 +80,37 @@ def case_negative_access():
     tool = shutil.which("tool")
     if tool and os.access(tool, os.X_OK):
         subprocess.run([tool, "-v"])
+
+def case_resolve_executable():
+    found = shutil.which("tool")
+    if not found:
+        return None
+    path = pathlib.Path(found).resolve()
+    if not path.is_file() or not os.access(path, os.X_OK):
+        return None
+    subprocess.run([found, "-v"])
+
+def case_resolve_executable_str_path():
+    found = shutil.which("tool")
+    if not found:
+        return None
+    path = pathlib.Path(found).resolve()
+    if not path.is_file() or not os.access(path, os.X_OK):
+        return None
+    subprocess.run([str(path), "-v"])
+
+def case_wrong_mode():
+    tool = shutil.which("tool")
+    if tool and os.access(tool, os.R_OK):
+        subprocess.run([tool, "-v"])  # reported: read mode only
+
+def case_negated_branch():
+    tool = shutil.which("tool")
+    if not os.access(tool, os.X_OK):
+        subprocess.run([tool, "-v"])  # reported: call in failing branch
 """
 
-EXPECTED_HITS = (9, 15, 22, 27)
+EXPECTED_HITS = (9, 15, 22, 27, 30, 37, 72, 77)
 
 
 class ScanError(Exception):
