@@ -209,12 +209,12 @@ fixture_empty()
 pel_first_error()
 {
     awk '
-        tolower($0) ~ /error|failed|cannot/ && $0 !~ /^MESA: warning/ && tolower($0) !~ /warning:/ {
+        tolower($0) ~ /error|failed|cannot/ && $0 !~ /^MESA: warning/ && tolower($0) !~ /warning:|warning-|validation warning/ {
             print substr($0, 1, 160)
             found = 1
             exit
         }
-        !fallback && $0 ~ /[^[:space:]]/ && $0 !~ /^MESA: warning/ && tolower($0) !~ /warning:/ {
+        !fallback && $0 ~ /[^[:space:]]/ && $0 !~ /^MESA: warning/ && tolower($0) !~ /warning:|warning-|validation warning/ {
             fallback = substr($0, 1, 160)
         }
         END {
@@ -228,6 +228,14 @@ fixture_mesa_warning_vulkan_error()
 {
     cat <<'EOT'
 MESA: warning: Support for this platform is experimental with Xe KMD, bug reports may be ignored.
+[Vulkan @ 0x0] Device creation failure: VK_ERROR_INITIALIZATION_FAILED
+EOT
+}
+
+fixture_validation_warning_vulkan_error()
+{
+    cat <<'EOT'
+Validation Warning [ WARNING-cache-file-error ] failed to open pipeline cache file
 [Vulkan @ 0x0] Device creation failure: VK_ERROR_INITIALIZATION_FAILED
 EOT
 }
@@ -263,6 +271,8 @@ self_test()
 
     expect_first_error "skip mesa warning line" fixture_mesa_warning_vulkan_error \
         "[Vulkan @ 0x0] Device creation failure: VK_ERROR_INITIALIZATION_FAILED"
+    expect_first_error "skip validation warning line" fixture_validation_warning_vulkan_error \
+        "[Vulkan @ 0x0] Device creation failure: VK_ERROR_INITIALIZATION_FAILED"
 
     expect_state "kept raw" fixture_kept_raw "kept"
     expect_state "kept carrier" fixture_kept_carrier "kept"
@@ -274,10 +284,8 @@ self_test()
 
     # Two wrapped messages in each wrapped fixture; the others add none.
     {
-        fixture_wrapped_raw
-        fixture_wrapped_carrier
-        fixture_unpreceded_pelorus_hex
-        fixture_x265_info_only
+        fixture_wrapped_raw; fixture_wrapped_carrier
+        fixture_unpreceded_pelorus_hex; fixture_x265_info_only
     } >"$work/log"
     if [[ "$(pel_wrapped_count "$work/log")" != 4 ]]; then
         echo "SELF-TEST FAIL: wrapped count: expected 4, got $(pel_wrapped_count "$work/log")" >&2

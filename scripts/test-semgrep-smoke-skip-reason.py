@@ -57,6 +57,14 @@ pel_skip "probe failed: $(head -n 1 "$log")"
 # Must-flag 5: pel_fail with a direct head -1
 pel_fail "probe failed: $(head -1 "$log")"
 
+# Must-flag 6: continued pel_skip with a direct head -n 1
+pel_skip \\
+    "probe failed: $(head -n 1 "$log")"
+
+# Must-flag 7: continued pel_fail with a direct head -1
+pel_fail \\
+    "probe failed: $(head -1 "$log")"
+
 # Must-pass 1: pel_skip with pel_first_error
 pel_skip "hevc_nvenc cannot encode on this host: $(pel_first_error "$log")"
 
@@ -68,9 +76,13 @@ pel_fail "input clip generation failed: $(pel_first_error "$log")"
 
 # Must-pass 4: plain pel_skip without head command substitution
 pel_skip "no usable Vulkan device found"
+
+# Must-pass 5: continued pel_skip with pel_first_error
+pel_skip \\
+    "hevc_nvenc cannot encode on this host: $(pel_first_error "$log")"
 """
 
-EXPECTED_HITS = (5, 8, 11, 14, 17)
+EXPECTED_HITS = (5, 8, 11, 14, 17, 20, 24)
 
 FIXTURE_MESA_WARNING_VULKAN_ERROR = """\
 MESA: warning: Support for this platform is experimental with Xe KMD, bug reports may be ignored.
@@ -232,6 +244,11 @@ MESA: warning: Support for this platform is experimental with Xe KMD, bug report
 [vost#0:0/hevc_nvenc @ 0x0] Error while opening encoder - maybe incorrect parameters
 """
 
+FIXTURE_VALIDATION_WARNING_BEFORE_DEVICE_ERROR = """\
+Validation Warning [ WARNING-cache-file-error ] failed to open pipeline cache file
+[Vulkan @ 0x0] Device creation failure: VK_ERROR_INITIALIZATION_FAILED
+"""
+
 # (fixture file name, fixture text, expected pel_first_error output)
 HELPER_CASES = (
     (
@@ -249,6 +266,11 @@ HELPER_CASES = (
         "cannot-load.log",
         FIXTURE_CANNOT_LOAD_BEFORE_ENCODER_ERROR,
         "[hevc_nvenc @ 0x0] Cannot load libcuda.so.1",
+    ),
+    (
+        "validation-warning.log",
+        FIXTURE_VALIDATION_WARNING_BEFORE_DEVICE_ERROR,
+        "[Vulkan @ 0x0] Device creation failure: VK_ERROR_INITIALIZATION_FAILED",
     ),
 )
 
