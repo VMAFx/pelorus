@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+from collections.abc import Callable
 import contextlib
 import io
 import json
@@ -476,31 +477,43 @@ def check_planted_missing_git() -> list[str]:
     return fails
 
 
-def check_planted_git_isolation_skip() -> list[str]:
-    """Planted case 14: check_planted_git_isolation skips when git is missing."""
+def _check_planted_git_skip(
+    case_num: int,
+    check_fn: Callable[[], list[str]],
+    expected_skip: str,
+) -> list[str]:
+    """Planted skip helper: check_fn skips and prints expected_skip when git is missing."""
     fails: list[str] = []
     orig_which = shutil.which
     buf = io.StringIO()
     try:
         shutil.which = lambda _cmd, *args, **kwargs: None
         with contextlib.redirect_stdout(buf):
-            res = check_planted_git_isolation()
+            res = check_fn()
         if res != []:
             fails.append(
-                f"case 14 failed: expected empty failures list on missing git, got {res}"
+                f"case {case_num} failed: expected empty failures list on missing git, got {res}"
             )
         output = buf.getvalue()
-        if "[SKIP] case 12" not in output:
+        if expected_skip not in output:
             fails.append(
-                f"case 14 failed: expected output to contain '[SKIP] case 12', got {output!r}"
+                f"case {case_num} failed: expected output to contain {expected_skip!r}, got {output!r}"
             )
     finally:
         shutil.which = orig_which
     return fails
 
 
+def check_planted_git_isolation_skip() -> list[str]:
+    """Planted case 14: check_planted_git_isolation skips when git is missing."""
+    return _check_planted_git_skip(14, check_planted_git_isolation, "[SKIP] case 12")
+
+
 def check_planted_not_a_repo() -> list[str]:
     """Planted case 15: non-git directory raises RuntimeError with stderr details."""
+    if shutil.which("git") is None:
+        print("[SKIP] case 15 not-a-repo: git not found on PATH")
+        return []
     fails: list[str] = []
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
@@ -529,8 +542,17 @@ def check_planted_not_a_repo() -> list[str]:
     return fails
 
 
+def check_planted_not_a_repo_skip() -> list[str]:
+    """Planted case 16: check_planted_not_a_repo skips when git is missing."""
+    return _check_planted_git_skip(
+        16,
+        check_planted_not_a_repo,
+        "[SKIP] case 15 not-a-repo: git not found on PATH",
+    )
+
+
 def run_self_test_planted() -> int:
-    """Run all 15 planted cases in temporary directories; cases 12-13 use throwaway git repos."""
+    """Run all 16 planted cases in temporary directories; cases 12-13 use throwaway git repos."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         sample = Path(tmp_dir) / "sample.py"
         sample.write_text("import subprocess\n", encoding="utf-8")
@@ -546,11 +568,12 @@ def run_self_test_planted() -> int:
         failures.extend(check_planted_missing_git())
         failures.extend(check_planted_git_isolation_skip())
         failures.extend(check_planted_not_a_repo())
+        failures.extend(check_planted_not_a_repo_skip())
         if failures:
             for failure in failures:
                 print(f"SELF-TEST FAIL: {failure}", file=sys.stderr)
             return 1
-    print("subprocess markers self-test: 15 planted cases ok")
+    print("subprocess markers self-test: 16 planted cases ok")
     return 0
 
 
