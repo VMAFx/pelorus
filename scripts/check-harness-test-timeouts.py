@@ -31,6 +31,8 @@ DEFAULT_MESON_BUILD = pathlib.Path(__file__).resolve().parent.parent / "meson.bu
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 MIN_HARNESS_TIMEOUT_S = 150
 TIMEOUT_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*TIMEOUT[A-Z0-9_]*$")
+# Whole name tokens that mark a bound, not a deadline (CAPTURE_ and ADMIN_ stay targets).
+BOUND_TOKENS = frozenset(("MIN", "MAX", "CAP", "CAPS"))
 DESCRIPTION = "Check that script tests in meson.build declare sufficient timeouts."
 
 
@@ -140,7 +142,7 @@ def _is_timeout_target(name: str) -> bool:
     """Return True if name matches TIMEOUT naming without bounds markers."""
     if not TIMEOUT_NAME_RE.match(name):
         return False
-    return not any(marker in name for marker in ("MIN_", "CAP", "MAX_"))
+    return not any(token in BOUND_TOKENS for token in name.split("_"))
 
 
 def _extract_constant_seconds(name: str, value_node: ast.AST | None) -> float | None:
@@ -530,29 +532,59 @@ SELF_TEST_CASES = [
         """,
         True,
     ),
+    (
+        "CAPTURE_TIMEOUT_S = 90 without timeout (fails: CAP is a prefix, not a token)",
+        """
+        test('planted-bound-token',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-capture-90.py'],
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "ADMIN_TIMEOUT_S = 90 without timeout (fails: MIN_ is a substring, not a token)",
+        """
+        test('planted-bound-token',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-admin-90.py'],
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "trailing CAPS and MAX bound tokens without timeout (valid: bounds, not deadlines)",
+        """
+        test('planted-bound-token',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-bound-caps-90.py'],
+             suite: 'fast')
+        """,
+        True,
+    ),
 ]
 
+
+# Script files the self-test cases reference: file name -> content.
+SELF_TEST_FIXTURES = {
+    "test-nvenc-me-hints.py": "import patch_harness\n",
+    "test-grain-accumulator-bounds.py": "X = 1\n",
+    "test-deadline-90.py": "FOO_TIMEOUT_S = 90\n",
+    "test-deadline-30.py": "FOO_TIMEOUT_S = 30\n",
+    "test-docstring-timeout.py": (
+        '"""Module docstring holding deadline string.\nFOO_TIMEOUT_S = 360\n"""\n'
+    ),
+    "test-capture-90.py": "CAPTURE_TIMEOUT_S = 90\n",
+    "test-admin-90.py": "ADMIN_TIMEOUT_S = 90\n",
+    "test-bound-caps-90.py": "FOO_TIMEOUT_CAPS = 90\nFOO_TIMEOUT_MAX = 90\n",
+}
 
 def run_self_test(scripts_dir: pathlib.Path) -> int:
     """Verify that planted defective snippets fail and valid snippets pass."""
     with tempfile.TemporaryDirectory() as tmp_dir_str:
         tmp_dir = pathlib.Path(tmp_dir_str)
-        (tmp_dir / "test-nvenc-me-hints.py").write_text(
-            "import patch_harness\n", encoding="utf-8"
-        )
-        (tmp_dir / "test-grain-accumulator-bounds.py").write_text(
-            "X = 1\n", encoding="utf-8"
-        )
-        (tmp_dir / "test-deadline-90.py").write_text(
-            "FOO_TIMEOUT_S = 90\n", encoding="utf-8"
-        )
-        (tmp_dir / "test-deadline-30.py").write_text(
-            "FOO_TIMEOUT_S = 30\n", encoding="utf-8"
-        )
-        (tmp_dir / "test-docstring-timeout.py").write_text(
-            '"""Module docstring holding deadline string.\nFOO_TIMEOUT_S = 360\n"""\n',
-            encoding="utf-8",
-        )
+        for fixture_name, fixture_text in SELF_TEST_FIXTURES.items():
+            (tmp_dir / fixture_name).write_text(fixture_text, encoding="utf-8")
 
         cases = SELF_TEST_CASES
         failures = 0
