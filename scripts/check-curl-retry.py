@@ -159,18 +159,52 @@ def parse_retry_flag(tok: str, next_tok: str | None) -> tuple[bool, int | None, 
     return False, None, 1
 
 
-# curl 8.23.0 help: "-:, --next  Make next URL use separate options".
-NEXT_OPERATION = frozenset({"--next", "-:"})
+# curl 8.23.0 help: "-:, --next  Make next URL use separate options". curl
+# also reads ":" inside a short-option bundle (-s:) as --next, unless an
+# argument-taking option earlier in the bundle consumed it (-o: names a file).
+def split_bundle(tok: str) -> tuple[list[str | None], bool]:
+    """Split a short-option bundle at ':'; None marks a new operation.
+
+    The flag is True when the bundle ends in an argument-taking option, so the
+    next token is that option's argument.
+    """
+    if not tok.startswith("-") or tok.startswith("--") or len(tok) < 2:
+        return [tok], False
+    pieces: list[str | None] = []
+    start = 1
+    for index in range(1, len(tok)):
+        option = tok[index]
+        if option in SHORT_OPTIONS_WITH_ARGS:
+            pieces.append("-" + tok[start:])
+            return pieces, index == len(tok) - 1
+        if option == ":":
+            if index > start:
+                pieces.append("-" + tok[start:index])
+            pieces.append(None)
+            start = index + 1
+    if start < len(tok):
+        pieces.append("-" + tok[start:])
+    return pieces, False
 
 
 def split_operations(tokens: list[str]) -> list[list[str]]:
-    """Split curl arguments at --next; each part carries its own options."""
+    """Split curl arguments at --next, -: or a bundled ':'; each part has its own options."""
     operations: list[list[str]] = [[]]
+    takes_arg = False
     for tok in tokens:
-        if tok in NEXT_OPERATION:
-            operations.append([])
-        else:
+        if takes_arg:
             operations[-1].append(tok)
+            takes_arg = False
+            continue
+        if tok == "--next":
+            operations.append([])
+            continue
+        pieces, takes_arg = split_bundle(tok)
+        for piece in pieces:
+            if piece is None:
+                operations.append([])
+            else:
+                operations[-1].append(piece)
     return operations
 
 
@@ -354,6 +388,12 @@ def self_test_cases() -> list[tuple[str, str, bool]]:
             'curl --retry 6 --retry-max-time 60 -o out https://example.com/f --next --retry "$N" https://example.com/s\n',
             False,
         ),
+        (
+            "p26",
+            "curl --retry 6 --retry-max-time 60 -o out https://example.com/f -s: -o o2 https://example.com/g\n",
+            True,
+        ),
+        ("p27", "curl -fo -: --retry 6 --retry-max-time 60 https://example.com/f\n", False),
     ]
 
 
