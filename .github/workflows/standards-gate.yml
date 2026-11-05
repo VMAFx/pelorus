@@ -28,8 +28,8 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Load Go version
-        run: grep -E '^GO_VERSION=' build-config.env >> "$GITHUB_ENV"
+      - name: Load build configuration
+        uses: ./.github/actions/load-build-config
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

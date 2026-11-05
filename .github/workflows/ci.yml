@@ -28,8 +28,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Load build configuration
-        run: |
-          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+        uses: ./.github/actions/load-build-config
       - name: Install toolchain
         run: |
           sudo apt-get update
@@ -87,8 +86,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Load build configuration
-        run: |
-          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+        uses: ./.github/actions/load-build-config
       - name: Install native build and Vulkan toolchain
         run: |
           sudo apt-get update
@@ -184,8 +182,7 @@ jobs:
           persist-credentials: false
       - name: Load build configuration
         if: github.event.pull_request.draft != true
-        run: |
-          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+        uses: ./.github/actions/load-build-config
       - name: Install native build toolchain and lavapipe
         if: github.event.pull_request.draft != true
         run: |
@@ -316,8 +313,7 @@ jobs:
           persist-credentials: false
       - name: Load build configuration
         if: github.event.pull_request.draft != true
-        run: |
-          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+        uses: ./.github/actions/load-build-config
       - name: Install native build toolchain and lavapipe
         if: github.event.pull_request.draft != true
         run: |
@@ -470,8 +466,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Load build configuration
-        run: |
-          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+        uses: ./.github/actions/load-build-config
       - name: Install toolchain
         run: |
           sudo apt-get update
@@ -529,8 +524,7 @@ jobs:
             mingw-w64-ucrt-x86_64-glslang
             mingw-w64-ucrt-x86_64-shaderc
       - name: Load build configuration
-        run: |
-          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+        uses: ./.github/actions/load-build-config
       - name: Runner and toolchain receipt
         run: |
           echo "ImageOS=${ImageOS:-unset}"
@@ -595,8 +589,7 @@ jobs:
       - name: Install Meson and Ninja (hash-pinned)
         run: python -m pip install --require-hashes -r .config/msvc-ci/requirements.txt
       - name: Load build configuration
-        run: |
-          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+        uses: ./.github/actions/load-build-config
       - name: Runner and toolchain receipt
         run: |
           echo "ImageOS=${ImageOS:-unset}"
@@ -651,8 +644,7 @@ jobs:
           scripts/check-python-lint.sh --self-test
           scripts/check-python-lint.sh
       - name: Load build configuration
-        run: |
-          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+        uses: ./.github/actions/load-build-config
       - name: Changelog render owed at most 24 h
         if: github.event_name != 'pull_request' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/'))
         run: python3 -I scripts/release/check-changelog-staleness.py
@@ -704,8 +696,6 @@ jobs:
           python3 -I scripts/hardware-reports/check-reports.py
           python3 -I scripts/hardware-reports/generate-index.py --self-test
           python3 -I scripts/hardware-reports/generate-index.py --check
-      - name: Load Go version
-        run: grep -E '^GO_VERSION=' build-config.env >> "$GITHUB_ENV"
       - name: Set up Go for actionlint
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -727,8 +717,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Load build configuration
-        run: |
-          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+        uses: ./.github/actions/load-build-config
       - name: Scan test code for direct float identity comparisons
         run: semgrep scan --config .semgrep.yml --error --metrics=off --disable-version-check
       - name: Verify planted-defect test passes
