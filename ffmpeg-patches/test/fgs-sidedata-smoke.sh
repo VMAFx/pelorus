@@ -205,6 +205,41 @@ fixture_empty()
     :
 }
 
+# First error or failure line of a log, falling back to first non-warning line.
+pel_first_error()
+{
+    awk '
+        tolower($0) ~ /error|failed|cannot/ && $0 !~ /^MESA: warning/ && tolower($0) !~ /warning:|warning-|validation warning/ {
+            print substr($0, 1, 160)
+            found = 1
+            exit
+        }
+        !fallback && $0 ~ /[^[:space:]]/ && $0 !~ /^MESA: warning/ && tolower($0) !~ /warning:|warning-|validation warning/ {
+            fallback = substr($0, 1, 160)
+        }
+        END {
+            if (!found && fallback)
+                print fallback
+        }
+    ' "$1"
+}
+
+fixture_mesa_warning_vulkan_error()
+{
+    cat <<'EOT'
+MESA: warning: Support for this platform is experimental with Xe KMD, bug reports may be ignored.
+[Vulkan @ 0x0] Device creation failure: VK_ERROR_INITIALIZATION_FAILED
+EOT
+}
+
+fixture_validation_warning_vulkan_error()
+{
+    cat <<'EOT'
+Validation Warning [ WARNING-cache-file-error ] failed to open pipeline cache file
+[Vulkan @ 0x0] Device creation failure: VK_ERROR_INITIALIZATION_FAILED
+EOT
+}
+
 self_test()
 {
     local work failures=0
@@ -223,6 +258,22 @@ self_test()
         fi
     }
 
+    expect_first_error()
+    {
+        local name="$1" fn="$2" want="$3" got
+        "$fn" >"$work/errlog"
+        got="$(pel_first_error "$work/errlog")"
+        if [[ "$got" != "$want" ]]; then
+            echo "SELF-TEST FAIL: $name: expected '$want', got '$got'" >&2
+            failures=$((failures + 1))
+        fi
+    }
+
+    expect_first_error "skip mesa warning line" fixture_mesa_warning_vulkan_error \
+        "[Vulkan @ 0x0] Device creation failure: VK_ERROR_INITIALIZATION_FAILED"
+    expect_first_error "skip validation warning line" fixture_validation_warning_vulkan_error \
+        "[Vulkan @ 0x0] Device creation failure: VK_ERROR_INITIALIZATION_FAILED"
+
     expect_state "kept raw" fixture_kept_raw "kept"
     expect_state "kept carrier" fixture_kept_carrier "kept"
     expect_state "wrapped raw" fixture_wrapped_raw "wrapped"
@@ -233,10 +284,8 @@ self_test()
 
     # Two wrapped messages in each wrapped fixture; the others add none.
     {
-        fixture_wrapped_raw
-        fixture_wrapped_carrier
-        fixture_unpreceded_pelorus_hex
-        fixture_x265_info_only
+        fixture_wrapped_raw; fixture_wrapped_carrier
+        fixture_unpreceded_pelorus_hex; fixture_x265_info_only
     } >"$work/log"
     if [[ "$(pel_wrapped_count "$work/log")" != 4 ]]; then
         echo "SELF-TEST FAIL: wrapped count: expected 4, got $(pel_wrapped_count "$work/log")" >&2
@@ -279,12 +328,6 @@ pel_fail()
     echo "FAIL: $*" >&2
     echo "Evidence: $PEL_OUT" >&2
     exit 1
-}
-
-# First error line of a log (empty when there is none).
-pel_first_error()
-{
-    awk 'tolower($0) ~ /error|failed/ { print; exit }' "$1"
 }
 
 # Lines of a log that contain a fixed string.
@@ -334,7 +377,7 @@ grep -Eq ' pelorus_grain_estimate_vulkan ' "$PEL_OUT/filters.txt" ||
     pel_skip "pelorus_grain_estimate_vulkan is not built into $PEL_FFMPEG (no Vulkan SPIR-V compiler)"
 if ! "$PEL_FFMPEG" -hide_banner -loglevel error -init_hw_device "$PEL_DEVICE" \
     -f lavfi -i testsrc2=size=64x64 -frames:v 1 -f null - >"$PEL_OUT/probe-vulkan.log" 2>&1; then
-    pel_skip "no usable Vulkan device ($PEL_DEVICE): $(head -c 160 "$PEL_OUT/probe-vulkan.log" | head -n 1)"
+    pel_skip "no usable Vulkan device ($PEL_DEVICE): $(pel_first_error "$PEL_OUT/probe-vulkan.log")"
 fi
 
 PEL_NOISY="testsrc2=size=320x192:rate=25,format=yuv420p,noise=alls=24:allf=t"
