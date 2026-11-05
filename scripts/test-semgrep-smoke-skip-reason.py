@@ -34,6 +34,15 @@ RULE_FILE = ROOT / ".semgrep.yml"
 HOP_SMOKE = ROOT / "ffmpeg-patches" / "test" / "nvenc-cuda-hop-smoke.sh"
 UDU_SMOKE = ROOT / "ffmpeg-patches" / "test" / "nvenc-udu-sei-smoke.sh"
 FGS_SMOKE = ROOT / "ffmpeg-patches" / "test" / "fgs-sidedata-smoke.sh"
+# Smoke scripts defining pel_first_error when this check was written; fewer
+# means the discovery glob broke.
+MIN_HELPER_SCRIPTS = 5
+# The nvenc and fgs helpers also match "cannot", cut lines at 160 columns and
+# fall back to the first non-warning line; the Vulkan helpers do none of that
+# and leave the fallback to pel_why. These cases bind only the nvenc and fgs
+# helpers; every other case binds every helper.
+FALLBACK_HELPERS = (HOP_SMOKE, UDU_SMOKE, FGS_SMOKE)
+FALLBACK_CASES = frozenset({"fallback.log", "long.log", "cannot-load.log"})
 RULE_ID = "pelorus-smoke-skip-reason-head"
 
 SEMGREP_TIMEOUT_S = 180
@@ -65,6 +74,12 @@ pel_skip \\
 pel_fail \\
     "probe failed: $(head -1 "$log")"
 
+# Must-flag 8: pel_skip with quoted semicolon before head -n 1
+pel_skip "probe failed; see $(head -n 1 "$log")"
+
+# Must-flag 9: quoted command substitution before head -n 1
+pel_fail "probe failed in $(basename "$log"): $(head -n 1 "$log")"
+
 # Must-pass 1: pel_skip with pel_first_error
 pel_skip "hevc_nvenc cannot encode on this host: $(pel_first_error "$log")"
 
@@ -80,9 +95,12 @@ pel_skip "no usable Vulkan device found"
 # Must-pass 5: continued pel_skip with pel_first_error
 pel_skip \\
     "hevc_nvenc cannot encode on this host: $(pel_first_error "$log")"
+
+# Must-pass 6: command separator outside quotes before head -n 1
+pel_skip "no usable Vulkan device found"; y=$(head -n 1 "$log")
 """
 
-EXPECTED_HITS = (5, 8, 11, 14, 17, 20, 24)
+EXPECTED_HITS = (5, 8, 11, 14, 17, 20, 24, 28, 31)
 
 FIXTURE_MESA_WARNING_VULKAN_ERROR = """\
 MESA: warning: Support for this platform is experimental with Xe KMD, bug reports may be ignored.
@@ -249,6 +267,11 @@ Validation Warning [ WARNING-cache-file-error ] failed to open pipeline cache fi
 [Vulkan @ 0x0] Device creation failure: VK_ERROR_INITIALIZATION_FAILED
 """
 
+FIXTURE_MESA_PIPELINE_CACHE_WARNING_BEFORE_DEVICE_ERROR = """\
+MESA: warning: failed to open pipeline cache
+vkCreateDevice failed: VK_ERROR_INITIALIZATION_FAILED
+"""
+
 # (fixture file name, fixture text, expected pel_first_error output)
 HELPER_CASES = (
     (
@@ -271,6 +294,11 @@ HELPER_CASES = (
         "validation-warning.log",
         FIXTURE_VALIDATION_WARNING_BEFORE_DEVICE_ERROR,
         "[Vulkan @ 0x0] Device creation failure: VK_ERROR_INITIALIZATION_FAILED",
+    ),
+    (
+        "pipeline-cache.log",
+        FIXTURE_MESA_PIPELINE_CACHE_WARNING_BEFORE_DEVICE_ERROR,
+        "vkCreateDevice failed: VK_ERROR_INITIALIZATION_FAILED",
     ),
 )
 
@@ -310,6 +338,15 @@ def run_first_error(bash_bin: str, fn_code: str, fixture: pathlib.Path) -> str:
     return proc.stdout.strip()
 
 
+def helper_scripts() -> list[pathlib.Path]:
+    """Every smoke script that defines its own pel_first_error helper."""
+    return sorted(
+        path
+        for path in (ROOT / "ffmpeg-patches" / "test").glob("*.sh")
+        if "pel_first_error()" in path.read_text(encoding="utf-8")
+    )
+
+
 def step_helper_unit_check(tmp: pathlib.Path) -> str | None:
     """(d) unit-check pel_first_error on log fixtures for all smoke scripts."""
     bash_bin = resolve_executable("bash")
@@ -317,12 +354,20 @@ def step_helper_unit_check(tmp: pathlib.Path) -> str | None:
         return "step (d): bash not found"
     for name, text, _ in HELPER_CASES:
         (tmp / name).write_text(text, encoding="utf-8")
-    for script_path in (HOP_SMOKE, UDU_SMOKE, FGS_SMOKE):
+    helpers = helper_scripts()
+    if len(helpers) < MIN_HELPER_SCRIPTS:
+        return (
+            f"step (d): {len(helpers)} pel_first_error definitions found, "
+            f"expected at least {MIN_HELPER_SCRIPTS}"
+        )
+    for script_path in helpers:
         source = script_path.read_text(encoding="utf-8")
         match = re.search(r"(pel_first_error\(\)\s*\{.*?\n\})", source, re.DOTALL)
         if not match:
             return f"step (d): pel_first_error not found in {script_path}"
         for name, _, want in HELPER_CASES:
+            if name in FALLBACK_CASES and script_path not in FALLBACK_HELPERS:
+                continue
             got = run_first_error(bash_bin, match.group(1), tmp / name)
             if got != want:
                 return (

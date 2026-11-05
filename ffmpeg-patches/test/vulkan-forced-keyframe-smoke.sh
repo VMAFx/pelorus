@@ -67,7 +67,7 @@ pel_fail()
 
 pel_first_error()
 {
-    awk 'tolower($0) ~ /error|failed/ && tolower($0) !~ /warning-|validation warning/ { print; exit }' "$1"
+    awk 'tolower($0) ~ /error|failed/ && tolower($0) !~ /warning:|warning-|validation warning/ { print; exit }' "$1"
 }
 
 # pel_why LOG — first error line of LOG, else its last line.

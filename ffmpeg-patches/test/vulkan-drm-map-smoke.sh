@@ -82,7 +82,7 @@ pel_count()
 # First error line of a log (empty when there is none).
 pel_first_error()
 {
-    awk 'tolower($0) ~ /error|failed/ && tolower($0) !~ /warning-|validation warning/ { print; exit }' "$1"
+    awk 'tolower($0) ~ /error|failed/ && tolower($0) !~ /warning:|warning-|validation warning/ { print; exit }' "$1"
 }
 
 # The Vulkan device FFmpeg selected, from a verbose log.
