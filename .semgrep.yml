@@ -193,3 +193,78 @@ rules:
       cpp/equality-on-floats reports the same defect (ADR-0239).
     languages: [c, cpp]
     severity: ERROR
+
+  - id: pelorus-validate-which-executable
+    # Executable found via shutil.which(...) passed to subprocess.run,
+    # subprocess.Popen or subprocess.check_output without validation.
+    # Validate via Path(x).resolve(), is_file(), and os.access(..., os.X_OK).
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Executable found via shutil.which(...) passed to subprocess without
+      validation; resolve-and-validate via Path(x).resolve(), is_file(),
+      and os.access(..., os.X_OK).
+    paths:
+      include:
+        - "*.py"
+        - "**/*.py"
+    patterns:
+      - pattern-inside: |
+          $VAR = shutil.which(...)
+          ...
+      - pattern-either:
+          - pattern: subprocess.run([$VAR, ...], ...)
+          - pattern: subprocess.run($VAR, ...)
+          - pattern: subprocess.Popen([$VAR, ...], ...)
+          - pattern: subprocess.Popen($VAR, ...)
+          - pattern: subprocess.check_output([$VAR, ...], ...)
+          - pattern: subprocess.check_output($VAR, ...)
+          - patterns:
+              - pattern-inside: |
+                  $CMD = [$VAR, ...]
+                  ...
+                  subprocess.$FUNC($CMD, ...)
+              - pattern: subprocess.$FUNC($CMD, ...)
+              - metavariable-regex:
+                  metavariable: $FUNC
+                  regex: '^(run|Popen|check_output)$'
+      - pattern-not-inside: |
+          $VAR = shutil.which(...)
+          ...
+          if <... $P.is_file(...) ...>:
+              ...
+          ...
+          subprocess.$F(...)
+      - pattern-not-inside: |
+          $VAR = shutil.which(...)
+          ...
+          if <... $P.is_file(...) ...>:
+              ...
+              subprocess.$F(...)
+      - pattern-not-inside: |
+          $VAR = shutil.which(...)
+          ...
+          if <... os.access(...) ...>:
+              ...
+          ...
+          subprocess.$F(...)
+      - pattern-not-inside: |
+          $VAR = shutil.which(...)
+          ...
+          if <... os.access(...) ...>:
+              ...
+              subprocess.$F(...)
+      - pattern-not-inside: |
+          $VAR = shutil.which(...)
+          ...
+          if <... os.path.isfile(...) ...>:
+              ...
+          ...
+          subprocess.$F(...)
+      - pattern-not-inside: |
+          $VAR = shutil.which(...)
+          ...
+          if <... os.path.isfile(...) ...>:
+              ...
+              subprocess.$F(...)
+
