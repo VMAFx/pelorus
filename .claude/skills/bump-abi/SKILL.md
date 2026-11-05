@@ -17,7 +17,11 @@ resize, repurpose, or remove a field/section bit.
    (`got`), never by a zero value (ADR-0174 decision 9).
 2. Update the `_Static_assert(sizeof(...) == N)` to the new size — a tripped
    assert means you changed the layout; recompute, don't delete it.
-3. Bump `PELORUS_ABI_MINOR`.
+3. Bump `PELORUS_ABI_MINOR` across `interop.h` and `AGENTS.md`:
+   ```sh
+   python3 -I scripts/bump-abi.py --write --note "<summary>" [--adr NNNN]
+   ```
+   Verify consistency with `python3 -I scripts/bump-abi.py --check`, then run `praetorctl compile-context`.
 4. Extend `libpelorus/test/interop_test.c`: set + read the new field, and assert
    an older consumer (smaller `consumer_known_size`) still parses (R4).
 5. Update `docs/api/interop-abi.md`; add a `changelog.d/added/` fragment.
@@ -26,7 +30,7 @@ resize, repurpose, or remove a field/section bit.
 
 1. Add a new bit to `enum pel_section` (next free bit; never reuse a retired one).
 2. Define `PelorusXxxSection` (flat POD) + its `_Static_assert`.
-3. Bump `PELORUS_ABI_MINOR`; document writer/reader in the §sections table.
+3. Bump `PELORUS_ABI_MINOR` across sites with `python3 -I scripts/bump-abi.py --write --note "<summary>" [--adr NNNN]`, run `praetorctl compile-context`, and document writer/reader in the §sections table.
 4. Extend the conformance fixture; update the ABI doc + changelog.
 5. Write an ADR if the new data changes the interop contract materially.
 

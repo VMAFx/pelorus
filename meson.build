@@ -92,6 +92,34 @@ test('codeql-workflow',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# Issue #502: interop ABI minor bump guard and consistency check across sites.
+test('bump-abi-check',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'bump-abi.py', '--check'],
+     workdir: meson.project_source_root(),
+     timeout: 60,
+     suite: 'fast')
+test('bump-abi-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'bump-abi.py', '--self-test'],
+     workdir: meson.project_source_root(),
+     timeout: 60,
+     suite: 'fast')
+
+# Issue #502: release version synchronization across build definitions, headers and docs.
+test('prepare-release-check',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'prepare-release.py', '--check'],
+     workdir: meson.project_source_root(),
+     timeout: 60,
+     suite: 'fast')
+test('prepare-release-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'prepare-release.py', '--self-test'],
+     workdir: meson.project_source_root(),
+     timeout: 60,
+     suite: 'fast')
+
 # ADR-0176: release tag shape and rc numbering, the candidate legs check and the
 # tester image licence gate. Each --self-test plants a defect per rule and must
 # see it rejected.
