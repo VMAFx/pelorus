@@ -197,13 +197,15 @@ rules:
   - id: pelorus-shell-splice-into-inline-source
     # Splicing a shell expansion directly into inline interpreter source
     # code by closing and reopening the outer single quote (`'"$var"'`,
-    # `'"${var}"'`, `'$var'`, or `'${var}'`) exposes the program to syntax
+    # `'"${var}"'`, `'"prefix-$var"'`, `'$var'`, `'${var}'`, or
+    # `'prefix-$var'`) exposes the program to syntax
     # corruption or code injection when the expanded value contains quotes or
     # special characters (defect fixed in scripts/test-abi-upgrade.sh at
     # commit 4a44da7). This rule inspects shell scripts for inline invocations
-    # of python3, python, perl, ruby, and node (`-c` or `-e`) with single-quoted
-    # programs that perform such quote closures and reopenings. Spliced values
-    # must be passed as argv arguments instead (e.g. sys.argv[1] in Python).
+    # of python3, python, perl, ruby, and node (`-c` or `-e`, including
+    # clustered flags and quoted options) with single-quoted programs that
+    # perform such quote closures and reopenings. Spliced values must be
+    # passed as argv arguments instead (e.g. sys.argv[1] in Python).
     # Plain echo outside any -c program stays quiet because echo is not an
     # inline interpreter command. scripts/test-semgrep-shell-splice.py plants
     # each case.
@@ -216,5 +218,5 @@ rules:
         - "**/*.sh"
         - "/ffmpeg-patches/test/**/*.sh"
     pattern-regex: >-
-      \b(?:python[23]?|perl|ruby|node)(?:\s+[^\n'"]*?)?\s-[A-Za-z]*[ce](?:\s|\\\r?\n)*'(?:'\\''|[^'])*?('"\$[^"\n]*?"'|'\$[^'\n]*?')
+      \b(?:python[23]?|perl|ruby|node)(?:\s+(?:[^\n'"]|"[^"\n]*"|'[^'\n]*')*?)?\s-[A-Za-z]*[ce](?:\s|\\\r?\n)*'(?:'\\''|[^'])*?('"[^"$\n]*\$[^"\n]*?"'|'[^'"$\s\n]*\$[^'\s\n]*?')
 

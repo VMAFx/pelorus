@@ -58,6 +58,12 @@ perl -le 'print "'"$v"'"'
 # Must-flag 6: python3 -Ic cluster with splice
 python3 -Ic 'print("'"$x"'")'
 
+# Must-flag 7: perl with quoted option argument before inline flag
+perl -I "$libdir" -le 'print "'"$v"'"'
+
+# Must-flag 8: literal prefix inside double-quoted splice
+python3 -c 'print("'"prefix-$x"'")'
+
 # Must-pass 1: fixed form passing argv
 python3 -c 'import sys; print(sys.argv[1])' "$st"
 
@@ -76,7 +82,7 @@ python3 -c \\
 perl -le 'print $ARGV[0]' "$v"
 """
 
-EXPECTED_HITS = (7, 13, 16, 19, 23, 26)
+EXPECTED_HITS = (7, 13, 16, 19, 23, 26, 29, 32)
 
 
 class ScanError(Exception):
