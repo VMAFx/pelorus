@@ -12,19 +12,29 @@ Emits benchmark result records conforming to scripts/bench/record.schema.json:
 
 Usage:
   python3 -I scripts/bench/make-record.py --from-result RESULT.json --out RECORD.json
+  python3 -I scripts/bench/make-record.py --render-md RECORD.json
+  python3 -I scripts/bench/make-record.py --render-md RECORD.json --write-md DOC --block NAME
+  python3 -I scripts/bench/make-record.py --render-md RECORD.json --check-md DOC --block NAME
   python3 -I scripts/bench/make-record.py --self-test
 """
 
 import argparse
+import contextlib
 import importlib.util
+import io
 import json
 import math
+import os
+import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_CANNED = HERE / "fixtures" / "canned-run-bench.json"
+DEFAULT_FIXTURE = HERE / "fixtures" / "record-four-arm.json"
+BLOCK_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}\Z")
 
 MANDATORY_ARMS = (
     "nvenc-tuned",
@@ -169,6 +179,206 @@ def make_record(result_data, device=None, clip=None, encoder=None, filter_name=N
     return rec
 
 
+def _format_point_row(arm_name, pt):
+    """Format one rate point into a Markdown table row."""
+    cq_str = str(pt["cq"]) if "cq" in pt else "n/a"
+    br_str = f"{pt['bitrate_kbps']:.1f}" if "bitrate_kbps" in pt else "n/a"
+    s2_str = f"{pt['ssimulacra2']:.2f}" if "ssimulacra2" in pt else "n/a"
+    vmaf_str = f"{pt['vmaf']:.2f}" if pt.get("vmaf") is not None else "n/a"
+    cambi_str = f"{pt['cambi']:.2f}" if pt.get("cambi") is not None else "n/a"
+    return f"| `{arm_name}` | {cq_str} | {br_str} | {s2_str} | {vmaf_str} | {cambi_str} |"
+
+
+def render_record_md(record, validator=None, errors_out=None):
+    """Render a validated benchmark record to a deterministic Markdown table block."""
+    if validator is None:
+        validator = load_validator()
+    errs = validator(record)
+    if errs:
+        if errors_out is not None:
+            errors_out.extend(errs)
+        return None
+
+    clip = record.get("clip", "")
+    ref = record.get("reference", "")
+    arms = record.get("arms", {})
+    dev = ""
+    for name in MANDATORY_ARMS:
+        if name in arms and isinstance(arms[name], dict) and arms[name].get("device"):
+            dev = arms[name]["device"]
+            break
+
+    fixt = ", fixture" if record.get("is_fixture") else ""
+    lines = [
+        f"Record: clip {clip}, reference {ref}, device {dev}{fixt}",
+        "",
+        "| arm | CQ | bitrate (kbps) | SSIMULACRA2 | VMAF | CAMBI |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+
+    ordered_arms = [a for a in MANDATORY_ARMS if a in arms]
+    ordered_arms.extend(sorted(a for a in arms if a not in MANDATORY_ARMS))
+
+    for arm_name in ordered_arms:
+        pts = sorted(arms[arm_name].get("points", []), key=lambda p: p.get("cq", 0))
+        for pt in pts:
+            lines.append(_format_point_row(arm_name, pt))
+
+    return "\n".join(lines) + "\n"
+
+
+def _find_block_bounds(doc_lines, block_name):
+    """Find line indices of begin and end markers for block_name."""
+    begin_marker = f"<!-- make-record:{block_name} begin -->"
+    end_marker = f"<!-- make-record:{block_name} end -->"
+    full_text = "".join(doc_lines)
+    if full_text.count(begin_marker) != 1 or full_text.count(end_marker) != 1:
+        return None
+    begin_indices = [i for i, line in enumerate(doc_lines) if line.strip() == begin_marker]
+    end_indices = [i for i, line in enumerate(doc_lines) if line.strip() == end_marker]
+    if len(begin_indices) != 1 or len(end_indices) != 1 or end_indices[0] <= begin_indices[0]:
+        return None
+    return begin_indices[0], end_indices[0]
+
+
+def _load_block(p, block_name):
+    """Read p and locate block_name; print the reason and return None on any marker or name error."""
+    if not BLOCK_NAME_RE.match(block_name):
+        sys.stderr.write(f"make-record: invalid block name {block_name!r}\n")
+        return None
+    try:
+        lines = p.read_text(encoding="utf-8").splitlines(keepends=True)
+    except (OSError, UnicodeDecodeError) as exc:
+        sys.stderr.write(f"make-record: cannot read {p}: {exc}\n")
+        return None
+    bounds = _find_block_bounds(lines, block_name)
+    if bounds is None:
+        sys.stderr.write(f"make-record: marker error in {p} for block {block_name}\n")
+        return None
+    return lines, bounds
+
+
+def replace_doc_block(doc_path, block_name, rendered_content):
+    """Replace content between markers in doc_path with rendered_content atomically."""
+    p = Path(doc_path)
+    loaded = _load_block(p, block_name)
+    if loaded is None:
+        return 2
+    lines, (begin_idx, end_idx) = loaded
+    begin_line = lines[begin_idx] if lines[begin_idx].endswith("\n") else lines[begin_idx] + "\n"
+    content = rendered_content if rendered_content.endswith("\n") else rendered_content + "\n"
+    new_text = "".join(lines[:begin_idx]) + begin_line + content + "".join(lines[end_idx:])
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", dir=p.parent, delete=False, encoding="utf-8") as tf:
+            tmp_path = Path(tf.name)
+            tf.write(new_text)
+        os.replace(tmp_path, p)
+    except OSError as exc:
+        err_msg = str(exc)
+        if tmp_path and tmp_path.exists():
+            tmp_path.unlink()
+        sys.stderr.write(f"make-record: atomic write failed: {err_msg}\n")
+        return 2
+    return 0
+
+
+def check_doc_block(doc_path, block_name, rendered_content, record_path):
+    """Check if content between markers in doc_path equals rendered_content."""
+    p = Path(doc_path)
+    loaded = _load_block(p, block_name)
+    if loaded is None:
+        return 2
+    lines, (begin_idx, end_idx) = loaded
+    current = "".join(lines[begin_idx + 1 : end_idx])
+    expected = rendered_content if rendered_content.endswith("\n") else rendered_content + "\n"
+    if current == expected:
+        return 0
+    print(f"{doc_path}: block {block_name} drifted from {record_path}")
+    return 1
+
+
+def _handle_render_cli(args):
+    """Handle --render-md, --write-md, and --check-md commands."""
+    if not args.render_md:
+        sys.stderr.write("make-record: --write-md and --check-md require --render-md RECORD.json\n")
+        return 2
+    if args.write_md and args.check_md:
+        sys.stderr.write("make-record: cannot combine --write-md and --check-md\n")
+        return 2
+    if (args.write_md or args.check_md) and not args.block:
+        sys.stderr.write("make-record: --write-md and --check-md require --block NAME\n")
+        return 2
+    if args.block and not (args.write_md or args.check_md):
+        sys.stderr.write("make-record: --block requires --write-md or --check-md\n")
+        return 2
+
+    rec_path = Path(args.render_md)
+    if not rec_path.is_file():
+        sys.stderr.write(f"make-record: file not found: {rec_path}\n")
+        return 1
+    try:
+        rec_data = json.loads(rec_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        sys.stderr.write(f"make-record: JSON parse error in {rec_path}: {exc}\n")
+        return 1
+
+    errs = []
+    rendered = render_record_md(rec_data, errors_out=errs)
+    if rendered is None:
+        sys.stderr.write(f"make-record: {len(errs)} validation error(s) in {rec_path}:\n")
+        for e in errs:
+            sys.stderr.write(f"  - {e}\n")
+        return 1
+
+    if args.write_md:
+        return replace_doc_block(args.write_md, args.block, rendered)
+    if args.check_md:
+        return check_doc_block(args.check_md, args.block, rendered, args.render_md)
+    sys.stdout.write(rendered)
+    return 0
+
+
+def _handle_from_result_cli(args):
+    """Handle --from-result to construct and emit a record.json."""
+    in_path = Path(args.from_result)
+    if not in_path.is_file():
+        sys.stderr.write(f"make-record: file not found: {in_path}\n")
+        return 1
+    try:
+        data = json.loads(in_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        sys.stderr.write(f"make-record: JSON parse error in {in_path}: {exc}\n")
+        return 1
+
+    rec = make_record(
+        data,
+        device=args.device_name,
+        clip=args.clip,
+        encoder=args.encoder,
+        filter_name=args.filter,
+        note=args.note,
+    )
+    validate_record = load_validator()
+    errs = validate_record(rec)
+    if errs:
+        sys.stderr.write(f"make-record: {len(errs)} validation error(s) in emitted record:\n")
+        for e in errs:
+            sys.stderr.write(f"  - {e}\n")
+        return 1
+
+    out_json = json.dumps(rec, indent=2) + "\n"
+    if args.out:
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(out_json, encoding="utf-8")
+        print(f"make-record: wrote valid record to {out_path}")
+    else:
+        sys.stdout.write(out_json)
+    return 0
+
+
 def _evaluate_check(name, ok, detail=""):
     """Format and print check status, returning whether it passed."""
     status = "[PASS]" if ok else "[FAIL]"
@@ -230,22 +440,151 @@ def _run_emitter_cases(canned_data, validate_record):
     return results
 
 
+def _run_render_cases(fixture_data, validate_record):
+    """Execute test cases for Markdown rendering of benchmark records."""
+    results = []
+
+    # 1. render of fixture: 1 header line + 16 data rows, first row arm `nvenc-tuned` cq 22, rendering twice is byte-identical
+    r1 = render_record_md(fixture_data, validator=validate_record)
+    r2 = render_record_md(fixture_data, validator=validate_record)
+    lines = r1.splitlines() if r1 else []
+    headers = [l for l in lines if l.startswith("| arm |")]
+    table_rows = [l for l in lines if l.startswith("| `")]
+    first_ok = len(table_rows) > 0 and "| `nvenc-tuned` | 22 |" in table_rows[0]
+    results.append(
+        _evaluate_check(
+            "render_fixture_table_structure_and_determinism",
+            r1 is not None and r1 == r2 and len(headers) == 1 and len(table_rows) == 16 and first_ok,
+        )
+    )
+
+    # 2. record with points given in descending cq renders ascending
+    rec_desc = json.loads(json.dumps(fixture_data))
+    for arm in rec_desc["arms"].values():
+        arm["points"] = list(reversed(arm["points"]))
+    r_desc = render_record_md(rec_desc, validator=validate_record)
+    desc_rows = [l for l in r_desc.splitlines() if l.startswith("| `")] if r_desc else []
+    cqs = [int(r.split("|")[2].strip()) for r in desc_rows]
+    cqs_asc = len(cqs) == 16 and all(cqs[i] < cqs[i + 1] for i in range(15) if (i + 1) % 4 != 0)
+    results.append(_evaluate_check("render_descending_points_sorted_ascending", cqs_asc))
+
+    # 3. point without cambi -> n/a cell
+    rec_no_cambi = json.loads(json.dumps(fixture_data))
+    for arm in rec_no_cambi["arms"].values():
+        for pt in arm["points"]:
+            pt.pop("cambi", None)
+    r_no_cambi = render_record_md(rec_no_cambi, validator=validate_record)
+    rows_no_cambi = [l for l in r_no_cambi.splitlines() if l.startswith("| `")] if r_no_cambi else []
+    all_na = len(rows_no_cambi) == 16 and all(r.endswith("| n/a |") for r in rows_no_cambi)
+    results.append(_evaluate_check("render_missing_cambi_shows_na", all_na))
+
+    # 4. invalid record (drop an arm) -> render returns failure, no output
+    rec_invalid = json.loads(json.dumps(fixture_data))
+    del rec_invalid["arms"]["nvenc-uhq"]
+    buf_out, buf_err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+        r_invalid = render_record_md(rec_invalid, validator=validate_record)
+    invalid_ok = r_invalid is None and buf_out.getvalue() == "" and buf_err.getvalue() == ""
+    results.append(_evaluate_check("render_invalid_record_fails_no_output", invalid_ok))
+
+    return results
+
+
+def _run_doc_block_cases(fixture_data, rendered_md):
+    """Execute test cases for write-md and check-md doc block management."""
+    results = []
+    before = "# Title\n\nIntroductory section.\n\n"
+    after = "\n\nTrailing notes.\n"
+    blk = "bench-summary"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        doc = tmp / "test-doc.md"
+        rec = tmp / "record.json"
+        rec.write_text(json.dumps(fixture_data), encoding="utf-8")
+        orig_content = f"{before}<!-- make-record:{blk} begin -->\nold\n<!-- make-record:{blk} end -->{after}"
+        doc.write_text(orig_content, encoding="utf-8")
+
+        # 1. write-md -> surrounding byte-identical, check-md then 0
+        w_code = replace_doc_block(doc, blk, rendered_md)
+        doc_text = doc.read_text(encoding="utf-8")
+        surrounding_ok = (
+            w_code == 0
+            and doc_text.startswith(before + f"<!-- make-record:{blk} begin -->\n")
+            and doc_text.endswith(f"<!-- make-record:{blk} end -->{after}")
+        )
+        c_code = check_doc_block(doc, blk, rendered_md, rec)
+        results.append(_evaluate_check("write_md_surrounding_clean_and_check_passes", surrounding_ok and c_code == 0))
+
+        # 2. check-md after editing one number inside block -> 1
+        doc.write_text(doc_text.replace("2450.0", "9999.0", 1), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            drift_code = check_doc_block(doc, blk, rendered_md, rec)
+        results.append(_evaluate_check("check_md_detects_drift", drift_code == 1))
+
+        # 3. doc missing end marker -> write-md 2, file byte-identical
+        missing_end = f"{before}<!-- make-record:{blk} begin -->\nold\n"
+        doc.write_text(missing_end, encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()):
+            m_code = replace_doc_block(doc, blk, rendered_md)
+        results.append(_evaluate_check("write_md_missing_end_marker_fails", m_code == 2 and doc.read_text(encoding="utf-8") == missing_end))
+
+        # 4. duplicate begin marker -> 2
+        dup_begin = f"{before}<!-- make-record:{blk} begin -->\n<!-- make-record:{blk} begin -->\n<!-- make-record:{blk} end -->{after}"
+        doc.write_text(dup_begin, encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()):
+            d_code = replace_doc_block(doc, blk, rendered_md)
+        results.append(_evaluate_check("write_md_duplicate_begin_marker_fails", d_code == 2))
+
+        # 5. bad block name ../x -> 2
+        with contextlib.redirect_stderr(io.StringIO()):
+            bad_code = replace_doc_block(doc, "../x", rendered_md)
+        results.append(_evaluate_check("write_md_bad_block_name_fails", bad_code == 2))
+
+    return results
+
+
+def _run_marker_order_case(rendered_md):
+    """Planted case: an end marker before its begin marker is refused and the file stays unchanged."""
+    blk = "bench-summary"
+    text = f"<!-- make-record:{blk} end -->\nold\n<!-- make-record:{blk} begin -->\n"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        doc = Path(tmpdir) / "test-doc.md"
+        doc.write_text(text, encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()):
+            code = replace_doc_block(doc, blk, rendered_md)
+        unchanged = doc.read_text(encoding="utf-8") == text
+    return [_evaluate_check("write_md_end_before_begin_fails", code == 2 and unchanged)]
+
+
 def run_self_test():
-    """Run self-test: canned result -> check-record accepts; drop one arm -> rejected."""
+    """Run self-tests: emitter validation, Markdown rendering, and doc block check/write."""
     validate_record = load_validator()
 
     canned_path = DEFAULT_CANNED
+    fixture_path = DEFAULT_FIXTURE
     if not canned_path.is_file():
         sys.stderr.write("make-record self-test FAIL: canned fixture not found: %s\n" % canned_path)
+        return 1
+    if not fixture_path.is_file():
+        sys.stderr.write("make-record self-test FAIL: four-arm fixture not found: %s\n" % fixture_path)
         return 1
 
     try:
         canned_data = json.loads(canned_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        sys.stderr.write("make-record self-test FAIL: cannot load canned fixture: %s\n" % exc)
+        fixture_data = json.loads(fixture_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        sys.stderr.write("make-record self-test FAIL: cannot load fixture: %s\n" % exc)
         return 1
 
-    results = _run_emitter_cases(canned_data, validate_record)
+    results = []
+    results.extend(_run_emitter_cases(canned_data, validate_record))
+    results.extend(_run_render_cases(fixture_data, validate_record))
+
+    rendered_md = render_record_md(fixture_data, validator=validate_record)
+    results.extend(_run_doc_block_cases(fixture_data, rendered_md))
+    results.extend(_run_marker_order_case(rendered_md))
+
     passed_count = sum(1 for ok in results if ok)
     total = len(results)
     print(f"\nmake-record self-test summary: {passed_count}/{total} checks passed")
@@ -262,51 +601,21 @@ def main(argv=None):
     ap.add_argument("--encoder", default="hevc_nvenc", help="Encoder name")
     ap.add_argument("--filter", default="pelorus_denoise_vulkan", help="Filter name")
     ap.add_argument("--note", help="Optional context or test note")
+    ap.add_argument("--render-md", help="Path to record.json to render as Markdown table")
+    ap.add_argument("--write-md", help="Path to documentation Markdown file to update")
+    ap.add_argument("--check-md", help="Path to documentation Markdown file to check for drift")
+    ap.add_argument("--block", help="Name of block to update/check between markers")
     args = ap.parse_args(argv)
 
     if args.self_test:
         return run_self_test()
+    if args.render_md or args.write_md or args.check_md:
+        return _handle_render_cli(args)
+    if args.from_result:
+        return _handle_from_result_cli(args)
 
-    if not args.from_result:
-        ap.error("must supply --from-result RESULT.json or --self-test")
-
-    in_path = Path(args.from_result)
-    if not in_path.is_file():
-        sys.stderr.write(f"make-record: file not found: {in_path}\n")
-        return 1
-
-    try:
-        data = json.loads(in_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        sys.stderr.write(f"make-record: JSON parse error in {in_path}: {exc}\n")
-        return 1
-
-    rec = make_record(
-        data,
-        device=args.device_name,
-        clip=args.clip,
-        encoder=args.encoder,
-        filter_name=args.filter,
-        note=args.note,
-    )
-
-    validate_record = load_validator()
-    errs = validate_record(rec)
-    if errs:
-        sys.stderr.write(f"make-record: {len(errs)} validation error(s) in emitted record:\n")
-        for e in errs:
-            sys.stderr.write(f"  - {e}\n")
-        return 1
-
-    out_json = json.dumps(rec, indent=2) + "\n"
-    if args.out:
-        out_path = Path(args.out)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(out_json, encoding="utf-8")
-        print(f"make-record: wrote valid record to {out_path}")
-    else:
-        sys.stdout.write(out_json)
-    return 0
+    ap.error("must supply --from-result RESULT.json, --render-md RECORD.json, or --self-test")
+    return 2
 
 
 if __name__ == "__main__":

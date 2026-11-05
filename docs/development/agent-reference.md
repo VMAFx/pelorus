@@ -106,6 +106,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | native gate | `make verify-native` |
 | governance + native gate | `make verify-all` |
 | install | `ninja -C build install` |
+| render bench record to markdown | `python3 -I scripts/bench/make-record.py --render-md RECORD.json` |
 | fetch + verify shared series | `scripts/fetch-ffmpeg-series.sh /absolute/new-dir` (`--self-test`: planted defects) |
 | regenerate patches | `FFMPEG_REPO=/absolute/path/to/ffmpeg make patches` (or `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh`) |
 | replay stack | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh` |
