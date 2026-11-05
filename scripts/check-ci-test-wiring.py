@@ -26,6 +26,7 @@ import pathlib
 import re
 import sys
 import tempfile
+import tokenize
 from typing import TextIO
 
 _SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
@@ -43,12 +44,12 @@ SUFFIXES = (".sh", ".py", ".c")
 ROOT_GLOBS = (
     ".github/workflows/*.yml",
     ".github/workflows/*.yaml",
-    ".github/actions/**/*.yml",
-    ".github/actions/**/*.yaml",
     "meson.build",
     "libpelorus/**/meson.build",
     "tools/**/meson.build",
 )
+# A composite action runs only when a wired file names it in `uses:`.
+ACTION_GLOBS = (".github/actions/**/*.yml", ".github/actions/**/*.yaml")
 HASH_COMMENT_SUFFIXES = (".sh", ".py", ".yml", ".yaml", ".build")
 
 
@@ -60,8 +61,23 @@ def strip_comment_lines(path: pathlib.Path, text: str) -> str:
 
 
 def read_text(path: pathlib.Path) -> str:
-    """Read a file as UTF-8 with comment lines removed."""
+    """Read a file with comment lines removed; Python honours its coding cookie."""
+    if path.suffix == ".py":
+        with tokenize.open(path) as handle:
+            return strip_comment_lines(path, handle.read())
     return strip_comment_lines(path, path.read_text(encoding="utf-8"))
+
+
+def read_all(repo_root: pathlib.Path, paths: list[pathlib.Path], errors: list[str]) -> dict[pathlib.Path, str]:
+    """Read every path; an unreadable one adds an error and reads as empty text."""
+    texts: dict[pathlib.Path, str] = {}
+    for path in paths:
+        try:
+            texts[path] = read_text(path)
+        except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+            errors.append(f"{path.relative_to(repo_root).as_posix()}:1: cannot read: {exc}")
+            texts[path] = ""
+    return texts
 
 
 def name_pattern(name: str) -> re.Pattern[str]:
@@ -69,11 +85,16 @@ def name_pattern(name: str) -> re.Pattern[str]:
     return re.compile(r"(?<![\w.-])" + re.escape(name) + r"(?![\w-]|\.\w)")
 
 
-def references(text: str, candidate: pathlib.Path) -> bool:
-    """True when text names candidate by file name, or a Python module by stem."""
-    if name_pattern(candidate.name).search(text):
-        return True
-    return candidate.suffix == ".py" and name_pattern(candidate.stem).search(text) is not None
+def node_patterns(repo_root: pathlib.Path, node: pathlib.Path) -> list[re.Pattern[str]]:
+    """Patterns that wire a node: a composite action by its `uses:` directory,
+    a test by file name, a Python module also by stem."""
+    rel = node.relative_to(repo_root)
+    if rel.parts[:2] == (".github", "actions"):
+        return [re.compile(r"\./" + re.escape(rel.parent.as_posix()) + r"(?![\w.-])")]
+    patterns = [name_pattern(node.name)]
+    if node.suffix == ".py":
+        patterns.append(name_pattern(node.stem))
+    return patterns
 
 
 def find_candidates(repo_root: pathlib.Path) -> list[pathlib.Path]:
@@ -82,40 +103,65 @@ def find_candidates(repo_root: pathlib.Path) -> list[pathlib.Path]:
     return sorted(p for p in test_dir.iterdir() if p.is_file() and p.suffix in SUFFIXES)
 
 
-def find_roots(repo_root: pathlib.Path) -> list[pathlib.Path]:
-    """Workflow and composite-action files, sorted and unique."""
+def _glob_files(repo_root: pathlib.Path, patterns: tuple[str, ...]) -> list[pathlib.Path]:
+    """Files matching any pattern, sorted and unique."""
     found: set[pathlib.Path] = set()
-    for pattern in ROOT_GLOBS:
+    for pattern in patterns:
         found.update(p for p in repo_root.glob(pattern) if p.is_file())
     return sorted(found)
+
+
+def find_roots(repo_root: pathlib.Path) -> list[pathlib.Path]:
+    """Workflow and Meson build files, sorted and unique."""
+    return _glob_files(repo_root, ROOT_GLOBS)
+
+
+def find_actions(repo_root: pathlib.Path) -> list[pathlib.Path]:
+    """Composite-action files; wired only when a wired file `uses:` them."""
+    return _glob_files(repo_root, ACTION_GLOBS)
+
+
+def reach(
+    roots: list[str],
+    nodes: dict[pathlib.Path, str],
+    patterns: dict[pathlib.Path, list[re.Pattern[str]]],
+) -> set[pathlib.Path]:
+    """Nodes named by a root text or by an already reached node's text."""
+    pending = list(roots)
+    wired: set[pathlib.Path] = set()
+    # Each root and each newly wired node enters `pending` once.
+    for _ in range(len(roots) + len(nodes)):
+        if not pending:
+            break
+        text = pending.pop()
+        for node, node_text in nodes.items():
+            if node not in wired and any(p.search(text) for p in patterns[node]):
+                wired.add(node)
+                pending.append(node_text)
+    return wired
 
 
 def unwired(repo_root: pathlib.Path) -> tuple[list[str], list[str]]:
     """Return (errors, findings); a finding is `<rel>:1: <message>`."""
     roots = find_roots(repo_root)
-    if not roots:
+    if not any(r.match(".github/workflows/*") for r in roots):
         return [f"no workflow files under {repo_root / '.github'}"], []
     if not (repo_root / TEST_DIR).is_dir():
         return [f"missing test directory {repo_root / TEST_DIR}"], []
-    candidates = find_candidates(repo_root)
-    texts = {c: read_text(c) for c in candidates}
-    pending = [read_text(r) for r in roots]
-    wired: set[pathlib.Path] = set()
-    # Each root and each newly wired candidate enters `pending` once.
-    for _ in range(len(roots) + len(candidates)):
-        if not pending:
-            break
-        text = pending.pop()
-        for cand in candidates:
-            if cand not in wired and references(text, cand):
-                wired.add(cand)
-                pending.append(texts[cand])
+    try:
+        candidates = find_candidates(repo_root)
+    except OSError as exc:
+        return [f"cannot list {repo_root / TEST_DIR}: {exc}"], []
+    errors: list[str] = []
+    nodes = read_all(repo_root, candidates + find_actions(repo_root), errors)
+    patterns = {n: node_patterns(repo_root, n) for n in nodes}
+    wired = reach(list(read_all(repo_root, roots, errors).values()), nodes, patterns)
     findings = [
         f"{c.relative_to(repo_root).as_posix()}:1: no CI workflow runs this test, directly or through a wired test file"
         for c in candidates
         if c not in wired
     ]
-    return [], findings
+    return errors, findings
 
 
 def check(
@@ -134,6 +180,7 @@ def check(
 
 
 def _plant(root: pathlib.Path, files: dict[str, str]) -> None:
+    """Write each planted file under root."""
     for rel, body in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -148,7 +195,12 @@ DEEP_TREE = {
         "      - run: ffmpeg-patches/test/runner.sh\n"
         "      # - run: ffmpeg-patches/test/commented.sh\n"
         "      - run: ffmpeg-patches/test/runner-extra.sh.bak\n"
+        "      - uses: ./.github/actions/used\n"
     ),
+    ".github/actions/used/action.yml": "runs:\n  steps:\n    - run: ffmpeg-patches/test/by-used-action.sh\n",
+    ".github/actions/unused/action.yml": "runs:\n  steps:\n    - run: ffmpeg-patches/test/by-unused-action.sh\n",
+    "ffmpeg-patches/test/by-used-action.sh": "true\n",
+    "ffmpeg-patches/test/by-unused-action.sh": "true\n",
     "ffmpeg-patches/test/runner.sh": 'python3 "$HERE/helper.py"\ninstall "$HERE/unit.c" x\n',
     "ffmpeg-patches/test/helper.py": 'mod = import_module("module-by-stem")\n',
     "ffmpeg-patches/test/module-by-stem.py": "X = 1\n",
@@ -164,10 +216,12 @@ DEEP_ORPHANS = {
     ORPHAN,
     "ffmpeg-patches/test/leaf.sh",
     "ffmpeg-patches/test/runner-extra.sh",
+    "ffmpeg-patches/test/by-unused-action.sh",
 }
 
 
 def _paths(root: pathlib.Path, entries: list[dict[str, str]]) -> set[str]:
+    """Paths of the problems check() reports for the planted tree."""
     return {f.split(":", 1)[0] for f in check(root, entries=entries, today=REF_TODAY, out=io.StringIO())}
 
 
@@ -215,9 +269,43 @@ def _self_test_wide() -> list[str]:
     return failures
 
 
+UNREADABLE_TREE = {
+    ".github/workflows/ci.yml": "run: bad.sh bogus-cookie.py latin1.py good.sh\n",
+    "ffmpeg-patches/test/bad.sh": b"echo \xff\xfe\n",
+    "ffmpeg-patches/test/bogus-cookie.py": b"# -*- coding: no-such-codec -*-\nX = 1\n",
+    "ffmpeg-patches/test/latin1.py": b"# -*- coding: latin-1 -*-\nX = '\xe9'\n",
+    "ffmpeg-patches/test/good.sh": b"true\n",
+    "ffmpeg-patches/test/zz-orphan.sh": b"true\n",
+}
+
+
+def _self_test_unreadable() -> list[str]:
+    """Undecodable files are errors with their path; the scan goes on."""
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp)
+        for rel, body in UNREADABLE_TREE.items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(body, bytes):
+                path.write_bytes(body)
+            else:
+                path.write_text(body, encoding="utf-8")
+        got = check(root, entries=[], today=REF_TODAY, out=io.StringIO())
+        unread = {f.split(":", 1)[0] for f in got if "cannot read" in f}
+        want = {"ffmpeg-patches/test/bad.sh", "ffmpeg-patches/test/bogus-cookie.py"}
+        if unread != want:
+            failures.append(f"unreadable: expected {sorted(want)}, got {got}")
+        if not any(f.startswith("ffmpeg-patches/test/zz-orphan.sh:1: no CI") for f in got):
+            failures.append(f"scan stopped after an unreadable file: {got}")
+        if len(got) != 3:
+            failures.append(f"unreadable tree: expected 3 problems, got {got}")
+    return failures
+
+
 def run_self_test() -> int:
     """Run the planted cases; print each failure."""
-    failures = _self_test_deep() + _self_test_wide()
+    failures = _self_test_deep() + _self_test_wide() + _self_test_unreadable()
     for failure in failures:
         print(f"FAIL self-test: {failure}", file=sys.stderr)
     if failures:
@@ -227,6 +315,7 @@ def run_self_test() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Check the repository, or run the self-test; exit 1 on any problem."""
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("--self-test", action="store_true", help="run planted cases and exit")
     args = parser.parse_args(argv)
