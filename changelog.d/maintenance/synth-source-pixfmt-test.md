@@ -1,0 +1,1 @@
+- `scripts/test-synth-source-pixfmt.py` checks that `run-bench.py --synth` writes 8-bit and 10-bit clips at the right size and sample layout, with a self-test that drops the format filter and must fail ([#300](https://github.com/VMAFx/pelorus/issues/300)).
