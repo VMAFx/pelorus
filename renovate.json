@@ -17,18 +17,15 @@
     },
     {
       "customType": "regex",
-      "description": "Bump the build-config checker's actionlint Go toolchain in the same renovate/go-<major>.x branch as ci.yml's setup-go go-version (mirrors Renovate's actions/setup-go known-action config)",
+      "description": "Bump the Go toolchain in build-config.env",
       "managerFilePatterns": [
-        "/^scripts/check-build-config\\.py$/"
+        "/^build-config\\.env$/"
       ],
       "matchStrings": [
-        "ACTIONLINT_GO_VERSION = \"(?<currentValue>\\d+\\.\\d+\\.x)\""
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\nGO_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"
       ],
-      "depNameTemplate": "go",
-      "packageNameTemplate": "actions/go-versions",
-      "datasourceTemplate": "github-releases",
-      "versioningTemplate": "npm",
-      "extractVersionTemplate": "^(?<version>\\d+\\.\\d+\\.\\d+)(-\\d+)?$"
+      "datasourceTemplate": "golang-version",
+      "depNameTemplate": "go"
     },
     {
       "customType": "regex",
