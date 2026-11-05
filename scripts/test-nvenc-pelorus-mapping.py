@@ -21,6 +21,7 @@ Video Codec SDK 13.1.
 from __future__ import annotations
 
 import importlib.util
+import os
 import pathlib
 import shutil
 import subprocess
@@ -193,17 +194,19 @@ def nvenc_header_source() -> str:
     """Prefer the installed SDK header; fall back to the 13.1 layout mirror."""
     pkg_config = shutil.which("pkg-config")
     if pkg_config:
-        probe = subprocess.run(
-            [pkg_config, "--variable=includedir", "ffnvcodec"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        include_dir = probe.stdout.strip()
-        header = pathlib.Path(include_dir) / "ffnvcodec" / "nvEncodeAPI.h"
-        if probe.returncode == 0 and header.is_file():
-            print(f"using installed SDK header {header}")
-            return f'#include "{header.as_posix()}"\n'
+        pkg_path = pathlib.Path(pkg_config).resolve()
+        if pkg_path.is_file() and os.access(pkg_path, os.X_OK):
+            probe = subprocess.run(
+                [str(pkg_path), "--variable=includedir", "ffnvcodec"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            include_dir = probe.stdout.strip()
+            header = pathlib.Path(include_dir) / "ffnvcodec" / "nvEncodeAPI.h"
+            if probe.returncode == 0 and header.is_file():
+                print(f"using installed SDK header {header}")
+                return f'#include "{header.as_posix()}"\n'
     print("ffnvcodec not found; using the SDK 13.1 struct mirror")
     return MIRROR
 
