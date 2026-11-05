@@ -33,6 +33,6 @@
     {"sha256": "551512ce5a162d393f11625955316f7099d00985d08dee733670e17e250186d4", "tool_version": "0.4.12", "note": "side-data readers judge header_size against the ABI 1.x header prefix and the fixture uses the ABI major from interop.h (#517 review)"},
     {"sha256": "fe2fdf6b79f34947933bcb074ecb571ffe47a242f2f81f63e5dd02f6092e17b5", "tool_version": "0.4.12", "note": "the side-data map fixture derives its offsets from the end of the section directory, so a grown header keeps it consistent (#517 review)"},
     {"sha256": "a8a06fea2de6b149caa7fc3412f075b233337ab56ef6bdaa8f8d294af5095be2", "tool_version": "0.4.12", "note": "the minimum header size is the ABI header (48 bytes) again, and the digest covers interop.h"},
-    {"sha256": "532a72c4e5297749cdc6bdb20df1eac083e45610424ef2b79ea4651e2053e793", "tool_version": "0.4.12", "note": "tool-hash adds --write and --note to append released digests to tool-hashes.json (#502)"}
+    {"sha256": "03932e4e0b6e004673bdd6c13f186fb0ee1edebac0c02d4119d66fd3c5a47f8d", "tool_version": "0.4.12", "note": "tool-hash adds --write and --note to append released digests to tool-hashes.json (#502)"}
   ]
 }

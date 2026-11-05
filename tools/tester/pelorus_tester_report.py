@@ -743,6 +743,10 @@ def update_tool_hashes(path, note, digest=None, version=None):
     target = Path(path)
     text = target.read_bytes().decode("utf-8")
     data = json.loads(text)
+    if not (isinstance(data, dict)
+            and isinstance(data.get("entries"), list)
+            and list(data)[-1] == "entries"):
+        return "conflict", "error: %s: entries must be the last key of the top-level object" % target
     for entry in data.get("entries", []):
         if entry.get("sha256") == digest:
             if entry.get("tool_version") == version:
@@ -1046,6 +1050,35 @@ def self_test_tool_hash_file(expect, tmp, orig_text, orig_data):
     status3, err3 = update_tool_hashes(tmp_file, "diff note", digest=synth_sha, version="10.0.0")
     expect("tool_hash_version_conflict", status3 == "conflict" and bool(err3)
            and tmp_file.read_bytes() == bytes_after)
+
+    self_test_tool_hash_shape(expect, tmp, synth_sha, synth_ver)
+
+
+def self_test_tool_hash_shape(expect, tmp, synth_sha, synth_ver):
+    """Planted cases: tool-hash --write refuses files the text append cannot extend."""
+    # 6. entries not last key refused without writing
+    not_last_file = Path(tmp) / "tool-hashes-not-last.json"
+    not_last_text = '{\n  "entries": [],\n  "archive": [\n  ]\n}\n'
+    not_last_file.write_text(not_last_text, encoding="utf-8")
+    status_nl, err_nl = update_tool_hashes(
+        not_last_file, "planted note", digest=synth_sha, version=synth_ver
+    )
+    expect("tool_hash_refuses_entries_not_last",
+           status_nl == "conflict"
+           and bool(err_nl)
+           and not_last_file.read_bytes() == not_last_text.encode("utf-8"))
+
+    # 7. non-object top-level refused without writing or raising
+    non_obj_file = Path(tmp) / "tool-hashes-non-obj.json"
+    non_obj_text = '[\n  ]\n'
+    non_obj_file.write_text(non_obj_text, encoding="utf-8")
+    status_no, err_no = update_tool_hashes(
+        non_obj_file, "planted note", digest=synth_sha, version=synth_ver
+    )
+    expect("tool_hash_refuses_non_object",
+           status_no == "conflict"
+           and bool(err_no)
+           and non_obj_file.read_bytes() == non_obj_text.encode("utf-8"))
 
 
 def self_test_tool_hash(expect):
