@@ -25,6 +25,8 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
 import tempfile
 import tokenize
@@ -33,7 +35,8 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from tracked_python import is_python, tracked_files  # noqa: E402
+import tracked_python  # noqa: E402
+from tracked_python import is_python, repo_discovery_env, tracked_files  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE_PATH = Path(__file__).resolve().parent / "subprocess-markers-baseline.json"
@@ -385,8 +388,89 @@ def check_planted_11() -> list[str]:
     return fails
 
 
+def _restore_env_var(name: str, old_val: str | None) -> None:
+    """Restore an environment variable to its previous value or remove it."""
+    if old_val is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = old_val
+
+
+def _setup_planted_repo(tmp_path: Path, git: str, clean_env: dict[str, str]) -> Path:
+    """Initialize a git repo with one added file in tmp_path."""
+    temp_file = tmp_path / "planted.py"
+    temp_file.write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
+        [git, "-C", str(tmp_path), "init", "-q"],
+        capture_output=True,
+        check=True,
+        timeout=30.0,
+        env=clean_env,
+    )
+    subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
+        [git, "-C", str(tmp_path), "add", "planted.py"],
+        capture_output=True,
+        check=True,
+        timeout=30.0,
+        env=clean_env,
+    )
+    return temp_file
+
+
+def check_planted_git_isolation() -> list[str]:
+    """Planted case 12: a caller GIT_DIR (decoy repo, never the real one) cannot steer tracked_files."""
+    git = shutil.which("git")
+    if git is None:
+        return ["git not found on PATH"]
+    clean_env = {
+        k: v for k, v in repo_discovery_env().items() if not k.startswith("GIT_")
+    }
+    with tempfile.TemporaryDirectory() as tmp_dir, tempfile.TemporaryDirectory() as decoy_dir:
+        tmp_path = Path(tmp_dir)
+        temp_file = _setup_planted_repo(tmp_path, git, clean_env)
+        _setup_planted_repo(Path(decoy_dir), git, clean_env)
+        old_git_dir = os.environ.get("GIT_DIR")
+        old_index = os.environ.get("GIT_INDEX_FILE")
+        try:
+            os.environ["GIT_DIR"] = str(Path(decoy_dir) / ".git")
+            os.environ["GIT_INDEX_FILE"] = str(tmp_path / "bogus_index")
+            got = tracked_files(tmp_path)
+            if got != [temp_file]:
+                return [
+                    f"case 12 failed: want {[str(temp_file)]}, got {[str(p) for p in got]}"
+                ]
+        finally:
+            _restore_env_var("GIT_DIR", old_git_dir)
+            _restore_env_var("GIT_INDEX_FILE", old_index)
+    return []
+
+
+def check_planted_missing_git() -> list[str]:
+    """Planted case 13: missing git on PATH raises RuntimeError naming git."""
+    fails: list[str] = []
+    orig_which = tracked_python.shutil.which
+    try:
+        tracked_python.shutil.which = lambda _cmd: None
+        try:
+            tracked_files(ROOT)
+        except RuntimeError as exc:
+            if "git" not in str(exc).lower():
+                fails.append(
+                    f"case 13 failed: RuntimeError did not name git: {exc!r}"
+                )
+        except (TypeError, OSError) as exc:
+            fails.append(
+                f"case 13 failed: expected RuntimeError, got {type(exc).__name__}: {exc}"
+            )
+        else:
+            fails.append("case 13 failed: expected RuntimeError, got no exception")
+    finally:
+        tracked_python.shutil.which = orig_which
+    return fails
+
+
 def run_self_test_planted() -> int:
-    """Run all 11 planted cases in a temporary directory without git."""
+    """Run all 13 planted cases in temporary directories; cases 12-13 use throwaway git repos."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         sample = Path(tmp_dir) / "sample.py"
         sample.write_text("import subprocess\n", encoding="utf-8")
@@ -398,17 +482,23 @@ def run_self_test_planted() -> int:
         failures.extend(check_planted_6_to_9())
         failures.extend(check_case_10())
         failures.extend(check_planted_11())
+        failures.extend(check_planted_git_isolation())
+        failures.extend(check_planted_missing_git())
         if failures:
             for failure in failures:
                 print(f"SELF-TEST FAIL: {failure}", file=sys.stderr)
             return 1
-    print("subprocess markers self-test: 11 planted cases ok")
+    print("subprocess markers self-test: 13 planted cases ok")
     return 0
 
 
 def run_check(root: Path, baseline_path: Path) -> int:
     """Check tracked Python files against baseline; exit 1 on growth/tighten."""
-    files = get_tracked_python_files(root)
+    try:
+        files = get_tracked_python_files(root)
+    except RuntimeError as exc:
+        print(f"check-subprocess-markers: {exc}", file=sys.stderr)
+        return 2
     current_counts, diagnostics = scan_all_files(files, root)
     if diagnostics:
         for diag in diagnostics:
@@ -432,7 +522,11 @@ def run_check(root: Path, baseline_path: Path) -> int:
 
 def run_write_baseline(root: Path, baseline_path: Path) -> int:
     """Scan tracked Python files and write current counts to baseline."""
-    files = get_tracked_python_files(root)
+    try:
+        files = get_tracked_python_files(root)
+    except RuntimeError as exc:
+        print(f"check-subprocess-markers: {exc}", file=sys.stderr)
+        return 2
     current_counts, diagnostics = scan_all_files(files, root)
     if diagnostics:
         for diag in diagnostics:
@@ -460,7 +554,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     group.add_argument(
         "--self-test",
         action="store_true",
-        help="run self-test before tree check",
+        help="run planted cases, then the tree check (--check)",
     )
     group.add_argument(
         "--self-test-only",

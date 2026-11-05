@@ -529,7 +529,11 @@ def main(argv: list[str] | None = None) -> int:
         status = self_test()
         if status:
             return status
-    found = scan(ROOT)
+    try:
+        found = scan(ROOT)
+    except RuntimeError as exc:
+        print(f"check-suppression-markers: {exc}", file=sys.stderr)
+        return 2
     for finding in found:
         print(finding, file=sys.stderr)
     if found:

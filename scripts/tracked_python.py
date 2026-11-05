@@ -8,11 +8,21 @@ scripts/check-subprocess-markers.py so both read the same file set.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import shutil
 import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 
 GIT_DEADLINE_S = 60
 PYTHON_SUFFIXES = frozenset({".py", ".pyi"})
+
+
+def _git_executable() -> str:
+    """Resolve git executable path on PATH or raise RuntimeError."""
+    git = shutil.which("git")
+    if git is None:
+        raise RuntimeError("git not found on PATH")
+    return git
 
 
 def is_python(path: Path) -> bool:
@@ -27,13 +37,36 @@ def is_python(path: Path) -> bool:
     return first.startswith(b"#!") and b"python" in first
 
 
-def tracked_files(root: Path) -> list[Path]:
-    """Every file git tracks under root."""
+def repo_discovery_env() -> dict[str, str]:
+    """Return the environment without Git's repository-selecting variables.
+
+    Git exports GIT_DIR and its siblings to hooks; inherited, they make
+    `git -C <dir>` list the invoking repository instead of <dir>, so the
+    pre-push self-test accepted a non-git directory. The list is Git's own
+    (`git rev-parse --local-env-vars`).
+    """
+    git = _git_executable()
     proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
-        ["git", "-C", str(root), "ls-files", "-z"],
+        [git, "rev-parse", "--local-env-vars"],
         capture_output=True,
         check=True,
         timeout=GIT_DEADLINE_S,
+    )
+    names = proc.stdout.decode("utf-8").split()
+    if "GIT_DIR" not in names:
+        raise RuntimeError("git rev-parse --local-env-vars did not list GIT_DIR")
+    return {key: value for key, value in os.environ.items() if key not in names}
+
+
+def tracked_files(root: Path) -> list[Path]:
+    """Every file git tracks under root."""
+    git = _git_executable()
+    proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
+        [git, "-C", str(root), "ls-files", "-z"],
+        capture_output=True,
+        check=True,
+        timeout=GIT_DEADLINE_S,
+        env=repo_discovery_env(),
     )
     names = proc.stdout.decode("utf-8", "surrogateescape").split("\0")
     return [root / name for name in names if name]
