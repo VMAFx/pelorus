@@ -44,6 +44,24 @@ def scrubbed_env() -> dict[str, str]:
     return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
+def _scan_command(semgrep_bin: str, rule_path: pathlib.Path, hermetic: bool) -> list[str]:
+    """Build a local scan command with at most four workers."""
+    cmd = [
+        semgrep_bin,
+        "scan",
+        "--config",
+        str(rule_path),
+        "--error",
+        "--json",
+        "--metrics=off",
+        "--disable-version-check",
+        "-j4",
+    ]
+    if hermetic:
+        cmd += ["--no-git-ignore", "--project-root", "."]
+    return [*cmd, "."]
+
+
 def run_semgrep(
     semgrep_bin: str,
     target_dir: pathlib.Path,
@@ -66,19 +84,7 @@ def run_semgrep(
     env["XDG_CONFIG_HOME"] = str(env_dir)
     env["SEMGREP_SETTINGS_FILE"] = str(env_dir / "semgrep-settings.yaml")
     env["SEMGREP_LOG_FILE"] = str(env_dir / "semgrep.log")
-    cmd = [
-        semgrep_bin,
-        "scan",
-        "--config",
-        str(rule_path),
-        "--error",
-        "--json",
-        "--metrics=off",
-        "--disable-version-check",
-    ]
-    if hermetic:
-        cmd += ["--no-git-ignore", "--project-root", "."]
-    cmd.append(".")
+    cmd = _scan_command(semgrep_bin, rule_path, hermetic)
     try:
         proc = subprocess.run(  # nosec B603 - semgrep resolved from PATH to a file; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - semgrep resolved to an executable file, fixed list argv, no shell, explicit deadline
             cmd,

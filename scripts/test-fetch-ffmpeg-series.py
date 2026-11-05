@@ -165,7 +165,7 @@ def missing_verifier(work: pathlib.Path) -> str:
         found = shutil.which(tool)
         if tool == "gh" or found is None:
             (tools / tool).write_text("#!/bin/sh\nexit 0\n")
-            (tools / tool).chmod(0o755)
+            (tools / tool).chmod(0o500)
         else:
             (tools / tool).symlink_to(found)
     out = root / "out"

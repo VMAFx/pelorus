@@ -501,3 +501,63 @@ rules:
               ...
               subprocess.$F(...)
 
+  - id: pelorus-chmod-owner-only
+    # File permissions must grant access to owner only; CodeQL flags group or
+    # other access bits, and Codacy Opengrep insecure-file-permissions flags
+    # modes >= 0o650 (such as 0o700). Safe modes: 0o600 / 0o400 for data files,
+    # 0o500 for executable stubs; 0o700 is NOT safe.
+    languages: [python]
+    severity: ERROR
+    message: >-
+      File permissions ($MODE) grant group/other access, exceed 0o650, or
+      inherit mode bits via st_mode. Set the mode explicitly. CodeQL flags
+      group or other access bits; Codacy/Opengrep insecure-file-permissions
+      flags modes >= 0o650 (including 0o700). Use owner-only permissions:
+      0o600 or 0o400 for data files, 0o500 for an executable stub; 0o700
+      is NOT safe.
+    paths:
+      include:
+        - "*.py"
+        - "**/*.py"
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: os.chmod($TARGET, $MODE, ...)
+              - pattern: os.lchmod($TARGET, $MODE, ...)
+              - pattern: os.fchmod($TARGET, $MODE, ...)
+              - pattern: $P.chmod($MODE, ...)
+          - metavariable-comparison:
+              metavariable: $MODE
+              comparison: ($MODE & 0o077) != 0 or $MODE >= 0o650
+      - patterns:
+          - pattern-either:
+              - pattern: os.chmod($TARGET, $MODE, ...)
+              - pattern: os.lchmod($TARGET, $MODE, ...)
+              - pattern: os.fchmod($TARGET, $MODE, ...)
+              - pattern: $P.chmod($MODE, ...)
+          - metavariable-pattern:
+              metavariable: $MODE
+              patterns:
+                - pattern-either:
+                    - pattern: <... stat.S_IRGRP ...>
+                    - pattern: <... stat.S_IWGRP ...>
+                    - pattern: <... stat.S_IXGRP ...>
+                    - pattern: <... stat.S_IRWXG ...>
+                    - pattern: <... stat.S_IROTH ...>
+                    - pattern: <... stat.S_IWOTH ...>
+                    - pattern: <... stat.S_IXOTH ...>
+                    - pattern: <... stat.S_IRWXO ...>
+      - patterns:
+          - pattern-either:
+              - pattern: os.chmod($TARGET, $MODE, ...)
+              - pattern: os.lchmod($TARGET, $MODE, ...)
+              - pattern: os.fchmod($TARGET, $MODE, ...)
+              - pattern: $P.chmod($MODE, ...)
+          - metavariable-pattern:
+              metavariable: $MODE
+              patterns:
+                - pattern-either:
+                    - pattern: <... $X.st_mode ...>
+                    - pattern: <... st_mode ...>
+
+

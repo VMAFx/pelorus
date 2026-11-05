@@ -569,6 +569,33 @@ test('python-empty-except-self-test',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# Snapshot cleanup must not chmod a symlink target (PR 538 review). Creating
+# the planted symlink needs a privilege Windows CI does not grant.
+if build_machine.system() != 'windows'
+  test('writable-retry-symlink',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'test-writable-retry.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
+
+# Git-tree scans must skip Windows CI, where git is not on PATH.
+# This source-only check and its planted cases run on every platform.
+test('meson-windows-git',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-meson-windows-git.py'],
+     workdir: meson.project_source_root(),
+     timeout: 60,
+     suite: 'fast')
+
+test('meson-windows-git-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-meson-windows-git.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     timeout: 60,
+     suite: 'fast')
+
 # Every curl download must specify retry >= 5 and retry-max-time to handle
 # transient server 504 errors with exponential backoff (CI run 42044634889).
 if build_machine.system() != 'windows'
@@ -956,12 +983,17 @@ test('dehalo-line-art',
 # Three sequential Semgrep scans at SEMGREP_TIMEOUT_S (180 s) each stay under
 # the 600 s Meson bound, so a hung scan is named by the script, not killed by
 # Meson's 30 s default (a local run takes about 4 s).
-test('semgrep-float-identity',
-     python_prog,
-     args: [meson.project_source_root() / 'scripts' / 'test-semgrep-float-identity.py'],
-     workdir: meson.project_source_root(),
-     timeout: 600,
-     suite: 'fast')
+# This harness calls git, which the MSYS2 UCRT64 leg does not put on PATH
+# (CI runs 41645525072 and 42050155443). Source-only self-tests run there;
+# the Linux jobs exercise git-dependent harnesses on every PR.
+if build_machine.system() != 'windows'
+  test('semgrep-float-identity',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-semgrep-float-identity.py'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
+endif
 
 # Smoke skip reasons name the first error line, not a Mesa warning: the
 # rule pelorus-smoke-skip-reason-head refuses head -n 1 reasons and the
@@ -976,12 +1008,52 @@ test('semgrep-smoke-skip-reason',
 # Executables from shutil.which reach subprocess only after a resolve,
 # is_file and X_OK check: pelorus-validate-which-executable and its
 # planted cases; three Semgrep scans at 180 s each stay under 600 s.
-test('semgrep-which-executable',
+# This harness calls git, which the MSYS2 UCRT64 leg does not put on PATH
+# (CI runs 41645525072 and 42050155443). Source-only self-tests run there;
+# the Linux jobs exercise git-dependent harnesses on every PR.
+if build_machine.system() != 'windows'
+  test('semgrep-which-executable',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-semgrep-which-executable.py'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
+endif
+
+# File permissions set by os.chmod and Path.chmod grant owner access only
+# (0o600/0o400 for data, 0o500 for stubs); pelorus-chmod-owner-only defends
+# against CodeQL and Opengrep mode flags; three Semgrep scans stay under 600 s.
+# This harness calls git, which the MSYS2 UCRT64 leg does not put on PATH
+# (CI runs 41645525072 and 42050155443). Source-only self-tests run there;
+# the Linux jobs exercise git-dependent harnesses on every PR.
+if build_machine.system() != 'windows'
+  test('semgrep-chmod-mode',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-semgrep-chmod-mode.py'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
+endif
+
+# Shared Semgrep test harness enforcement: test scripts must import
+# semgrep_harness and not re-implement its members (ADR-0239/issue #538).
+test('semgrep-harness-use-self-test',
      python_prog,
-     args: [meson.project_source_root() / 'scripts' / 'test-semgrep-which-executable.py'],
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-semgrep-harness.py', '--self-test'],
      workdir: meson.project_source_root(),
-     timeout: 600,
+     timeout: 60,
      suite: 'fast')
+# The tree scan lists files with git, which the MSYS2 UCRT64 leg does not put
+# on PATH (CI runs 41645525072 and 42050155443). The self-test runs there;
+# the Linux jobs scan the tree on every PR.
+if build_machine.system() != 'windows'
+  test('semgrep-harness-use',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-semgrep-harness.py'],
+       workdir: meson.project_source_root(),
+       timeout: 60,
+       suite: 'fast')
+endif
 
 # clang-tidy lane-files.txt generator and synchronization check (ADR-0168).
 # The lane is the Linux build with tests and tools on (the ci.yml core job);

@@ -190,7 +190,7 @@ def _self_test_resolve():
     with tempfile.TemporaryDirectory(prefix="pelorus-bin.") as bin_dir:
         exe = Path(bin_dir) / "pelorus-probe-ffmpeg"
         exe.write_text("#!/bin/sh\n", encoding="utf-8")
-        exe.chmod(0o755)
+        exe.chmod(0o500)
         old_path = os.environ.get("PATH", "")
         os.environ["PATH"] = bin_dir
         try:

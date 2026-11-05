@@ -273,7 +273,7 @@ def init_fixture_repo(
     script_dest = repo / "scripts/release/concat-changelog-fragments.sh"
     script_dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(script_source, script_dest)
-    script_dest.chmod(0o755)
+    script_dest.chmod(0o500)
 
     cl = repo / "CHANGELOG.md"
     cl.write_text(

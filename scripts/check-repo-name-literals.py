@@ -25,6 +25,12 @@ import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
 import tempfile
 
+_SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+import tracked_python  # noqa: E402
+
 DESCRIPTION = "Check for hardcoded upstream repository and container registry name literals."
 
 FORBIDDEN_LITERALS = (
@@ -74,7 +80,12 @@ def get_tracked_files(repo_root: pathlib.Path, git: str) -> list[pathlib.Path]:
         names = proc.stdout.decode("utf-8").split("\0")
     except UnicodeDecodeError as exc:
         raise GitListError(f"git ls-files output is not UTF-8: {exc}") from exc
-    return [repo_root / name for name in names if name]
+    try:
+        return tracked_python.require_files(
+            [repo_root / name for name in names if name], "git ls-files"
+        )
+    except RuntimeError as exc:
+        raise GitListError(str(exc)) from exc
 
 
 def check_file_content(path: pathlib.Path, rel_path: str) -> list[str]:

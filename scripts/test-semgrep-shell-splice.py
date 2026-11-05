@@ -15,20 +15,25 @@ Checks that `pelorus-shell-splice-into-inline-source` in `.semgrep.yml`:
 
 from __future__ import annotations
 
-import json
-import os
+import importlib.util
 import pathlib
-import shutil
-import subprocess  # nosec B404 - fixed semgrep argv, no shell, explicit deadline
 import sys
 import tempfile
+
+# python3 -I drops the script directory from sys.path: load the sibling by path.
+_SPEC = importlib.util.spec_from_file_location(
+    "semgrep_harness", pathlib.Path(__file__).with_name("semgrep_harness.py")
+)
+semgrep_harness = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(semgrep_harness)
+ScanError = semgrep_harness.ScanError
+run_semgrep = semgrep_harness.run_semgrep
+resolve_executable = semgrep_harness.resolve_executable
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RULE_FILE = ROOT / ".semgrep.yml"
 ABI_UPGRADE_SCRIPT = ROOT / "scripts" / "test-abi-upgrade.sh"
 RULE_ID = "pelorus-shell-splice-into-inline-source"
-
-SEMGREP_TIMEOUT_S = 180
 
 PLANTED_SH = """\
 #!/bin/bash
@@ -110,60 +115,6 @@ EXPECTED_HITS = tuple(
 )
 
 
-class ScanError(Exception):
-    """A semgrep run ended with an unexpected status or unreadable output."""
-
-
-def run_semgrep(
-    semgrep_bin: str,
-    target_dir: pathlib.Path,
-    rule_path: pathlib.Path,
-    expected_rc: int,
-    env_dir: pathlib.Path,
-) -> dict:
-    """Scan target_dir with one rule file; return parsed JSON report."""
-    env = dict(os.environ)
-    env["XDG_CONFIG_HOME"] = str(env_dir)
-    env["SEMGREP_SETTINGS_FILE"] = str(env_dir / "semgrep-settings.yaml")
-    env["SEMGREP_LOG_FILE"] = str(env_dir / "semgrep.log")
-    cmd = [
-        semgrep_bin,
-        "scan",
-        "--config",
-        str(rule_path),
-        "--error",
-        "--json",
-        "--metrics=off",
-        "--disable-version-check",
-        ".",
-    ]
-    try:
-        proc = subprocess.run(  # nosec B603 - semgrep resolved from PATH to a file; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - semgrep resolved to an executable file, fixed list argv, no shell, explicit deadline
-            cmd,
-            cwd=str(target_dir),
-            capture_output=True,
-            text=True,
-            env=env,
-            check=False,
-            timeout=SEMGREP_TIMEOUT_S,
-        )
-    except subprocess.TimeoutExpired as err:
-        raise ScanError(
-            f"semgrep scan in {target_dir}: no result after {SEMGREP_TIMEOUT_S} s"
-        ) from err
-    if proc.returncode != expected_rc:
-        raise ScanError(
-            f"semgrep scan in {target_dir}: expected rc={expected_rc}, "
-            f"got rc={proc.returncode}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
-        )
-    try:
-        return json.loads(proc.stdout)
-    except json.JSONDecodeError as err:
-        raise ScanError(
-            f"semgrep json output unreadable: {err}\n{proc.stdout}"
-        ) from err
-
-
 def make_tree(root: pathlib.Path, rel_path: str, source: str) -> pathlib.Path:
     """Lay out root/rel_path with an ignore file that keeps test/."""
     target = root / rel_path
@@ -176,7 +127,7 @@ def make_tree(root: pathlib.Path, rel_path: str, source: str) -> pathlib.Path:
 def step_planted_cases(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
     """(a) Every planted case hits or stays quiet as expected."""
     tree = make_tree(tmp / "planted_repo", "scripts/test_planted.sh", PLANTED_SH)
-    data = run_semgrep(semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg")
+    data = run_semgrep(semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg", hermetic=True)
     results = [
         r
         for r in data.get("results", [])
@@ -197,7 +148,7 @@ def step_planted_revert(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
     replacement = 'with open("\'"$st_corrupt"\'", "r+b") as f:'
     planted = source.replace(needle, replacement, 1)
     tree = make_tree(tmp / "revert_repo", "scripts/test-abi-upgrade.sh", planted)
-    data = run_semgrep(semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg")
+    data = run_semgrep(semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg", hermetic=True)
     results = [
         r
         for r in data.get("results", [])
@@ -213,7 +164,7 @@ def step_planted_revert(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
 
 def step_real_tree(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
     """(c) The real tree is clean, and the scan did read test-abi-upgrade.sh."""
-    data = run_semgrep(semgrep_bin, ROOT, RULE_FILE, 0, tmp / "cfg")
+    data = run_semgrep(semgrep_bin, ROOT, RULE_FILE, 0, tmp / "cfg", hermetic=False)
     scanned = data.get("paths", {}).get("scanned", [])
     if not any(p.endswith("scripts/test-abi-upgrade.sh") for p in scanned):
         return (
@@ -230,20 +181,9 @@ def step_real_tree(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
     return None
 
 
-def resolve_semgrep() -> str | None:
-    """PATH lookup of semgrep, kept only when it is an executable regular file."""
-    found = shutil.which("semgrep")
-    if not found:
-        return None
-    path = pathlib.Path(found).resolve()
-    if not path.is_file() or not os.access(path, os.X_OK):
-        return None
-    return str(path)
-
-
 def main() -> int:
     """Run steps (a) to (c); exit 77 (skip) when semgrep is not installed."""
-    semgrep_bin = resolve_semgrep()
+    semgrep_bin = resolve_executable("semgrep")
     if not semgrep_bin:
         print("SKIP: semgrep not found")
         return 77

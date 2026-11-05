@@ -26,6 +26,7 @@ import json
 import math
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -304,7 +305,7 @@ def replace_doc_block(doc_path, block_name, rendered_content):
         with tempfile.NamedTemporaryFile("w", dir=p.parent, delete=False, encoding="utf-8", newline="") as tf:
             tmp_path = Path(tf.name)
             tf.write(new_text)
-        os.chmod(tmp_path, stat.S_IMODE(p.stat().st_mode))
+        shutil.copymode(p, tmp_path)  # keep the target document's own mode across the replace
         os.replace(tmp_path, p)
     except OSError as exc:
         if tmp_path and tmp_path.exists():

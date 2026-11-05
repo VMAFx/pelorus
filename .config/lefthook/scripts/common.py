@@ -591,11 +591,21 @@ MAX_STALE_SNAPSHOTS = 256
 
 
 def _writable_retry(function, path, _exc):
-    """rmtree onexc: make the parent and the entry writable, then retry the removal once."""
+    """rmtree onexc: make parent/entry writable without following symlinks; retry once."""
     for target in (os.path.dirname(path), path):
+        if os.path.islink(target):
+            continue
         with contextlib.suppress(OSError):
-            os.chmod(target, os.stat(target).st_mode | stat.S_IWUSR | stat.S_IXUSR)
+            os.chmod(target, stat.S_IRWXU)
     function(path)
+
+
+def rmtree_writable(path):
+    """Remove a snapshot with the writable retry on every supported Python version."""
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_writable_retry)
+    else:  # Python 3.10 and 3.11 (the hooks' floor) name the callback onerror
+        shutil.rmtree(path, onerror=_writable_retry)  # pylint: disable=deprecated-argument
 
 
 def sweep_stale_snapshots(root=None, now=None):
@@ -612,12 +622,7 @@ def sweep_stale_snapshots(root=None, now=None):
                 or (hasattr(os, "getuid") and info.st_uid != os.getuid())
             ):
                 continue
-            if sys.version_info >= (3, 12):
-                shutil.rmtree(entry, onexc=_writable_retry)
-            else:  # Python 3.10 and 3.11 (the hooks' floor) name the callback onerror
-                shutil.rmtree(
-                    entry, onerror=_writable_retry
-                )  # pylint: disable=deprecated-argument
+            rmtree_writable(entry)
             removed += 1
     return removed
 

@@ -2705,7 +2705,7 @@ else:
     sys.stdout.write("FFmpeg stub\\n")
 sys.exit(0)
 """)
-    path.chmod(0o755)
+    path.chmod(0o500)
     return path
 
 
@@ -2761,7 +2761,7 @@ import sys
 sys.stdout.write("1/1 interop-abi OK 0.01s\\n")
 sys.exit(0)
 """)
-        suite_pass.chmod(0o755)
+        suite_pass.chmod(0o500)
         ctx_pass = stage_ctx({"PELORUS_SUITE_CMD": str(suite_pass)}, subproc_run)
         ctx_pass["disabled"] = disabled
         status, reason, log, _ = run_libpelorus_suite(ctx_pass, {})
@@ -2774,7 +2774,7 @@ import sys
 sys.stderr.write("Test assertion failed\\n")
 sys.exit(1)
 """)
-        suite_fail.chmod(0o755)
+        suite_fail.chmod(0o500)
         ctx_fail = stage_ctx({"PELORUS_SUITE_CMD": str(suite_fail)}, subproc_run)
         ctx_fail["disabled"] = disabled
         status, reason, log, _ = run_libpelorus_suite(ctx_fail, {})

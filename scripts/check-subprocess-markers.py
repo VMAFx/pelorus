@@ -253,11 +253,12 @@ def save_baseline(
 
 def get_tracked_python_files(root: Path) -> list[Path]:
     """Every git-tracked regular Python file under root, sorted."""
-    return sorted(
+    files = sorted(
         p
         for p in tracked_python.tracked_files(root)
         if p.is_file() and tracked_python.is_python(p)
     )
+    return tracked_python.require_files(files, "tracked Python files")
 
 
 def scan_all_files(
