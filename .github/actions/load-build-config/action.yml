@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: EUPL-1.2
 
 name: Load build configuration
-description: Export the pinned FFmpeg remote, tag and commit from build-config.env to GITHUB_ENV.
+description: Export the pinned FFmpeg and Go build pins from build-config.env to GITHUB_ENV.
 
 runs:
   using: composite
   steps:
-    - name: Export FFmpeg build pins
+    - name: Export build pins
       shell: bash
       run: |
-        grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+        grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT|GO_VERSION)=' build-config.env >> "$GITHUB_ENV"

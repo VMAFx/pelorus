@@ -17,6 +17,7 @@ rules:
       # .github/actions/load-build-config keep `./`.
       - ci.yml
       - release-build.yml
+      - standards-gate.yml
       - tester-publish.yml
       - windows-tester.yml
   # github-env: the load-build-config composite action writes the pins read

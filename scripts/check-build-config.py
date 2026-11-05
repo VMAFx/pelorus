@@ -142,8 +142,6 @@ ACTIONLINT_RENOVATE_TEMPLATES = {
     "depNameTemplate": ACTIONLINT_MODULE,
     "datasourceTemplate": "go",
 }
-# The Go toolchain is pinned in build-config.env and loaded into GITHUB_ENV in CI.
-LOAD_GO_ENV = 'grep -E \'^GO_VERSION=\' build-config.env >> "$GITHUB_ENV"'
 ACTIONLINT_GO_STEP = "- name: Set up Go for actionlint"
 # #228: the hosted lavapipe lane (software Vulkan). It is functional evidence
 # only. The Praetor hosted-gate draft step comes first (HISS-18), every later
@@ -3110,8 +3108,10 @@ LOAD_ACTION_TOKENS = (
     "FFMPEG_REMOTE",
     "FFMPEG_TAG",
     "FFMPEG_COMMIT",
+    "GO_VERSION",
     "GITHUB_ENV",
 )
+FORBIDDEN_LOAD_CONFIG_TRIGGERS = ("pull_request_target", "workflow_run")
 INLINE_BUILD_CONFIG_APPEND = re.compile(
     r'build-config\.env[^\n]*>>\s*"?\$\{?GITHUB_ENV\}?"?'
 )
@@ -3136,8 +3136,36 @@ def validate_load_config_action_text(relative: str, text: str) -> list[str]:
     return errors
 
 
+def workflow_on_section(text: str) -> str:
+    """Return the uncommented lines of the top-level `on:` section."""
+    match = re.search(
+        r"^(?:on|'on'|\"on\"):[ ]*(?P<rest>[^\n]*\n(?:(?:[ ]+[^\n]*|[ ]*)\n)*)",
+        text,
+        re.MULTILINE,
+    )
+    if match is None:
+        return ""
+    return "\n".join(
+        line.split("#", 1)[0]
+        for line in match.group("rest").splitlines()
+        if not line.lstrip().startswith("#")
+    )
+
+
+def _validate_load_config_triggers(relative: str, text: str) -> list[str]:
+    """Refuse pull_request_target and workflow_run in workflows using load-build-config."""
+    if LOAD_CONFIG_ACTION_USES not in text:
+        return []
+    on_section = workflow_on_section(text)
+    return [
+        f"{relative}: workflow using {LOAD_CONFIG_ACTION_USES} must not trigger on {trigger}"
+        for trigger in FORBIDDEN_LOAD_CONFIG_TRIGGERS
+        if re.search(rf"\b{re.escape(trigger)}\b", on_section)
+    ]
+
+
 def _validate_no_inline_build_config(relative: str, text: str) -> list[str]:
-    """Reject any workflow that inlines build-config.env >> "$GITHUB_ENV"."""
+    """Reject inline build-config.env >> GITHUB_ENV and unsafe triggers on action callers."""
     errors: list[str] = []
     for name, block in workflow_job_blocks(text).items():
         executed = job_executed_run_commands(block)
@@ -3151,6 +3179,7 @@ def _validate_no_inline_build_config(relative: str, text: str) -> list[str]:
             f'{relative}: must not inline build-config.env >> "$GITHUB_ENV"; '
             f"use {LOAD_CONFIG_ACTION_USES}"
         )
+    errors.extend(_validate_load_config_triggers(relative, text))
     return errors
 
 
@@ -3283,11 +3312,16 @@ def _validate_ci_docs_job(relative: str, docs: str) -> list[str]:
     errors: list[str] = []
     for token in (
         ACTIONLINT_GO_STEP,
-        LOAD_GO_ENV,
         "go-version: ${{ env.GO_VERSION }}",
     ):
         if token not in docs:
             errors.append(f"{relative}: docs job is missing {token}")
+    load_pos = docs.find(LOAD_CONFIG_ACTION_USES)
+    setup_pos = docs.find("actions/setup-go@")
+    if load_pos < 0 or (setup_pos >= 0 and load_pos > setup_pos):
+        errors.append(
+            f"{relative}: docs job must run {LOAD_CONFIG_ACTION_USES} before setup-go"
+        )
     if docs.count("actions/setup-go@") != 1 or SETUP_GO_PIN.search(docs) is None:
         errors.append(
             f"{relative}: docs job must pin actions/setup-go once by full commit "
@@ -3395,10 +3429,12 @@ def validate_workflow_go_pins(relative: str, text: str) -> list[str]:
     jobs = workflow_job_blocks(text)
     for job_name, job_text in jobs.items():
         if "actions/setup-go@" in job_text:
-            if LOAD_GO_ENV not in job_text:
+            load_pos = job_text.find(LOAD_CONFIG_ACTION_USES)
+            setup_pos = job_text.find("actions/setup-go@")
+            if load_pos < 0 or load_pos > setup_pos:
                 errors.append(
-                    f"{relative}: job {job_name!r} using setup-go must load "
-                    f"GO_VERSION with {LOAD_GO_ENV!r}"
+                    f"{relative}: job {job_name!r} using setup-go must run "
+                    f"{LOAD_CONFIG_ACTION_USES!r} before setup-go"
                 )
             if "go-version: ${{ env.GO_VERSION }}" not in job_text:
                 errors.append(
@@ -5295,18 +5331,33 @@ def _load_step_cases(source: str) -> dict[str, tuple[str, str]]:
             source.replace("name: Load build configuration", "name: Other step", 1),
             "must load build-config.env after checkout",
         ),
+        "load-build-config on pull_request_target": (
+            source.replace("on:\n", "on:\n  pull_request_target:\n", 1),
+            "must not trigger on pull_request_target",
+        ),
+        "load-build-config on workflow_run": (
+            source.replace("on:\n", "on:\n  workflow_run:\n", 1),
+            "must not trigger on workflow_run",
+        ),
     }
 
 
 def _load_action_cases(source: str) -> dict[str, tuple[str, str]]:
     """The composite action selects keys with one grep appended to GITHUB_ENV, no loop."""
-    grep = "grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env"
+    grep = (
+        "grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT|GO_VERSION)=' "
+        "build-config.env"
+    )
     loop = (
         "while IFS= read -r entry; do printf '%s\\n' \"$entry\"; done"
-        " < build-config.env | grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)='"
+        " < build-config.env"
+        " | grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT|GO_VERSION)='"
     )
     step_with_append = f'{grep} >> "$GITHUB_ENV"'
-    echo_load = "echo build-config.env FFMPEG_REMOTE FFMPEG_TAG FFMPEG_COMMIT GITHUB_ENV"
+    echo_load = (
+        "echo build-config.env FFMPEG_REMOTE FFMPEG_TAG FFMPEG_COMMIT "
+        "GO_VERSION GITHUB_ENV"
+    )
     return {
         "looping build-config action": (
             source.replace(grep, loop, 1),
@@ -5315,6 +5366,10 @@ def _load_action_cases(source: str) -> dict[str, tuple[str, str]]:
         "build-config action missing key": (
             source.replace("FFMPEG_COMMIT", "OTHER_KEY", 1),
             "build-config action is missing FFMPEG_COMMIT",
+        ),
+        "build-config action missing GO_VERSION": (
+            source.replace("GO_VERSION", "OTHER_KEY", 1),
+            "build-config action is missing GO_VERSION",
         ),
         "echo build-config action": (
             source.replace(step_with_append, echo_load, 1),
@@ -5370,12 +5425,13 @@ def _ci_toolchain_cases(source: str) -> dict[str, tuple[str, str]]:
             "docs job must set exactly one go-version",
         ),
         "missing Go env load in docs job": (
-            source.replace(
-                LOAD_GO_ENV,
-                "# removed env load",
-                1,
+            replace_in_job(
+                source,
+                "docs",
+                LOAD_CONFIG_ACTION_USES,
+                "# removed action load",
             ),
-            f"docs job is missing {LOAD_GO_ENV}",
+            f"docs job must run {LOAD_CONFIG_ACTION_USES} before setup-go",
         ),
         "versioned Go step name": (
             source.replace(
@@ -5617,6 +5673,19 @@ def go_pin_regressions() -> list[str]:
 
     if validate_workflow_go_pins(rel, source):
         failures.append("go-pin regression: canonical env form was rejected")
+
+    missing_action = source.replace(LOAD_CONFIG_ACTION_USES, "run: echo no-action", 1)
+    if missing_action == source:
+        failures.append(
+            "go-pin regression: removing load-build-config action did not mutate standards-gate.yml"
+        )
+    elif not any(
+        f"must run {LOAD_CONFIG_ACTION_USES!r} before setup-go" in e
+        for e in validate_workflow_go_pins(rel, missing_action)
+    ):
+        failures.append(
+            "go-pin regression: setup-go without load-build-config action was accepted"
+        )
 
     config_text = CONFIG.read_text(encoding="utf-8")
     missing_go = "\n".join(
