@@ -58,9 +58,10 @@ exist.
 
 ## Cut a candidate
 
-1. In the release pull request, bump `meson.build`, `pelorus.h` (string and
-   numbers) and the release line in `README.md` and `AGENTS.md` (then
-   `standardsctl compile-context`) to `X.Y.Z-rc.N`. Rotate the fragments of
+1. In the release pull request, bump the version to `X.Y.Z-rc.N` across all sites
+   (`python3 -I scripts/prepare-release.py --write X.Y.Z-rc.N`, verified by
+   `python3 -I scripts/prepare-release.py --check`), then run
+   `make compile-context`. Rotate the fragments of
    `changelog.d/` into `## [X.Y.Z-rc.N] - YYYY-MM-DD`, write a leading
    `### Highlights` subsection by hand (3 to 6 user-facing bullets drawn from
    the section's own entries; `scripts/release/extract-release-notes.sh` refuses
