@@ -145,12 +145,27 @@ def _is_timeout_target(name: str) -> bool:
     return not any(token in BOUND_TOKENS for token in name.split("_"))
 
 
+class NonLiteralDeadline(ValueError):
+    """A timeout-named constant holds a value other than a number literal."""
+
+
 def _extract_constant_seconds(name: str, value_node: ast.AST | None) -> float | None:
-    """Return numeric seconds for a literal value assigned to name, or None."""
-    if value_node is None or not isinstance(value_node, ast.Constant):
+    """Return numeric seconds for a literal value assigned to name.
+
+    A bare annotation (no value) gives None. Any other value that is not an
+    int or float literal (5 * 60, a call, a name) raises NonLiteralDeadline:
+    the checker cannot read the deadline, so it refuses the script instead of
+    treating it as having none.
+    """
+    if value_node is None:
         return None
-    if type(value_node.value) not in (int, float):
-        return None
+    if not isinstance(value_node, ast.Constant) or type(value_node.value) not in (
+        int,
+        float,
+    ):
+        raise NonLiteralDeadline(
+            f"{name} = {ast.unparse(value_node)} is not a number literal"
+        )
     val = float(value_node.value)
     if name.endswith("_MINUTES"):
         val *= 60.0
@@ -188,6 +203,19 @@ def script_deadline_s(script_path: pathlib.Path) -> float | None:
         if val is not None:
             deadlines.append(val)
     return max(deadlines) if deadlines else None
+
+
+def _script_deadline_or_error(
+    script_path: pathlib.Path, test_name: str, script_name: str
+) -> tuple[float | None, str | None]:
+    """Return (deadline, None), or (None, error) for a non-literal deadline."""
+    try:
+        return script_deadline_s(script_path), None
+    except NonLiteralDeadline as err:
+        return None, (
+            f"test '{test_name}': {script_name}: {err}; write the deadline as an "
+            "int or float literal so the Meson timeout can be checked against it"
+        )
 
 
 def _validate_script_timeout(
@@ -314,7 +342,12 @@ def check_meson_content(
                     script_path = fallback_path
 
             is_harness = script_loads_patch_harness(script_path)
-            deadline = script_deadline_s(script_path)
+            deadline, deadline_err = _script_deadline_or_error(
+                script_path, test_name, script_name
+            )
+            if deadline_err:
+                errors.append(deadline_err)
+                continue
             harness_req = MIN_HARNESS_TIMEOUT_S if is_harness else 0
             required = max(harness_req, deadline or 0.0)
 
@@ -553,6 +586,37 @@ SELF_TEST_CASES = [
         False,
     ),
     (
+        "FOO_TIMEOUT_S = 5 * 60 with timeout 600 (fails: deadline not a literal)",
+        """
+        test('planted-non-literal-deadline',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-deadline-binop.py'],
+             timeout: 600,
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "FOO_TIMEOUT_S: Final = 90 + 30 without timeout (fails: deadline not a literal)",
+        """
+        test('planted-non-literal-annotated',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-deadline-annotated.py'],
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "bare annotation FOO_TIMEOUT_S: float without timeout (valid: no value)",
+        """
+        test('planted-bare-annotation',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-deadline-bare.py'],
+             suite: 'fast')
+        """,
+        True,
+    ),
+    (
         "trailing CAPS and MAX bound tokens without timeout (valid: bounds, not deadlines)",
         """
         test('planted-bound-token',
@@ -577,6 +641,11 @@ SELF_TEST_FIXTURES = {
     "test-capture-90.py": "CAPTURE_TIMEOUT_S = 90\n",
     "test-admin-90.py": "ADMIN_TIMEOUT_S = 90\n",
     "test-bound-caps-90.py": "FOO_TIMEOUT_CAPS = 90\nFOO_TIMEOUT_MAX = 90\n",
+    "test-deadline-binop.py": "FOO_TIMEOUT_S = 5 * 60\n",
+    "test-deadline-annotated.py": (
+        "from typing import Final\nFOO_TIMEOUT_S: Final = 90 + 30\n"
+    ),
+    "test-deadline-bare.py": "FOO_TIMEOUT_S: float\n",
 }
 
 def run_self_test(scripts_dir: pathlib.Path) -> int:
