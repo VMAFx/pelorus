@@ -85,8 +85,7 @@ jobs:
           persist-credentials: false
       - name: Load build configuration
         if: github.event.pull_request.draft != true
-        run: |
-          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+        uses: ./.github/actions/load-build-config
       - name: Licence gate refuses a planted flag
         if: github.event.pull_request.draft != true
         run: bash tools/tester/check-ffmpeg-licence-self-test.sh
@@ -151,8 +150,7 @@ jobs:
           persist-credentials: false
       - name: Load build configuration
         if: github.event.pull_request.draft != true
-        run: |
-          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+        uses: ./.github/actions/load-build-config
       # Licence self-test steps are arch-independent: do NOT duplicate (build job runs them; ADR-0208).
       - name: Install cosign
         if: github.event.pull_request.draft != true
@@ -263,8 +261,7 @@ jobs:
       - name: Compute image name
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
       - name: Load build configuration
-        run: |
-          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+        uses: ./.github/actions/load-build-config
       - name: Name the image tags of this kit
         run: |
           if [ "$KIT" = generic ]; then

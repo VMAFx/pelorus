@@ -2743,7 +2743,9 @@ def validate_windows_msvc_job(relative: str, block: str | None) -> list[str]:
     if autocrlf < 0 or autocrlf > checkout:
         errors.append(f"{prefix} must disable core.autocrlf before checkout")
     for action in USES_LINE.findall(block):
-        if not re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", action):
+        if not action.startswith("./") and not re.fullmatch(
+            r"[\w./-]+@[0-9a-f]{40}", action
+        ):
             errors.append(f"{prefix} must pin {action} by full commit digest")
     for token in WINDOWS_MSVC_BLOCK_TOKENS:
         if token not in block:
@@ -2781,7 +2783,9 @@ def validate_lavapipe_job(relative: str, block: str | None) -> list[str]:
             f"{prefix} must set timeout-minutes of at most {LAVAPIPE_MAX_TIMEOUT_MINUTES}"
         )
     for action in USES_LINE.findall(block):
-        if not re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", action):
+        if not action.startswith("./") and not re.fullmatch(
+            r"[\w./-]+@[0-9a-f]{40}", action
+        ):
             errors.append(f"{prefix} must pin {action} by full commit digest")
     install_start = block.find("sudo apt-get install")
     install_end = block.find("\n      - name:", install_start)
@@ -3088,18 +3092,64 @@ def _step_text(block: str, start: int) -> str:
     return block[start : following.start() if following else len(block)]
 
 
-LOAD_STEP_TOKENS = (
+LOAD_CONFIG_ACTION = (
+    ROOT / ".github" / "actions" / "load-build-config" / "action.yml"
+)
+LOAD_CONFIG_ACTION_USES = "uses: ./.github/actions/load-build-config"
+LOAD_ACTION_TOKENS = (
     "name: Load build configuration",
+    "using: composite",
+    "shell: bash",
     "build-config.env",
     "FFMPEG_REMOTE",
     "FFMPEG_TAG",
     "FFMPEG_COMMIT",
     "GITHUB_ENV",
 )
+INLINE_BUILD_CONFIG_APPEND = re.compile(
+    r'build-config\.env[^\n]*>>\s*"?\$\{?GITHUB_ENV\}?"?'
+)
+
+
+def validate_load_config_action_text(relative: str, text: str) -> list[str]:
+    """Validate the composite action that loads build-config.env into GITHUB_ENV."""
+    errors = [
+        f"{relative}: build-config action is missing {token}"
+        for token in LOAD_ACTION_TOKENS
+        if token not in text
+    ]
+    if not LOAD_STEP_APPEND.search(text):
+        errors.append(f'{relative}: build-config action is missing >> "$GITHUB_ENV"')
+    if not LOAD_STEP_GREP.search(text):
+        errors.append(f"{relative}: build-config action is missing grep")
+    if LOAD_STEP_LOOP.search(text):
+        errors.append(
+            f"{relative}: build-config action must not loop; "
+            "select the keys with one grep"
+        )
+    return errors
+
+
+def _validate_no_inline_build_config(relative: str, text: str) -> list[str]:
+    """Reject any workflow that inlines build-config.env >> "$GITHUB_ENV"."""
+    errors: list[str] = []
+    for name, block in workflow_job_blocks(text).items():
+        executed = job_executed_run_commands(block)
+        if "build-config.env" in executed and LOAD_STEP_APPEND.search(executed):
+            errors.append(
+                f'{relative}: job {name} must not inline build-config.env >> "$GITHUB_ENV"; '
+                f"use {LOAD_CONFIG_ACTION_USES}"
+            )
+    if not errors and INLINE_BUILD_CONFIG_APPEND.search(text):
+        errors.append(
+            f'{relative}: must not inline build-config.env >> "$GITHUB_ENV"; '
+            f"use {LOAD_CONFIG_ACTION_USES}"
+        )
+    return errors
 
 
 def _validate_load_step(relative: str, name: str, block: str) -> list[str]:
-    """A job loads build-config.env after checkout, with one bounded grep."""
+    """A job loads build-config.env after checkout via the local composite action."""
     errors: list[str] = []
     checkout = block.find("uses: actions/checkout@")
     load = block.find("name: Load build configuration")
@@ -3107,19 +3157,15 @@ def _validate_load_step(relative: str, name: str, block: str) -> list[str]:
         errors.append(f"{relative}: job {name} must load build-config.env after checkout")
     if load < 0:
         return errors
-    # Tokens elsewhere in the job prove nothing; only the load step counts.
     step = _step_text(block, load)
-    for token in LOAD_STEP_TOKENS:
-        if token not in step:
-            errors.append(f"{relative}: job {name} build-config step is missing {token}")
-    if not LOAD_STEP_APPEND.search(step):
-        errors.append(f'{relative}: job {name} build-config step is missing >> "$GITHUB_ENV"')
-    if not LOAD_STEP_GREP.search(step):
-        errors.append(f"{relative}: job {name} build-config step is missing grep")
-    if LOAD_STEP_LOOP.search(step):
+    if "build-config.env" in step or LOAD_STEP_APPEND.search(step):
         errors.append(
-            f"{relative}: job {name} build-config step must not loop; "
-            "select the keys with one grep"
+            f'{relative}: job {name} must not inline build-config.env >> "$GITHUB_ENV"; '
+            f"use {LOAD_CONFIG_ACTION_USES}"
+        )
+    if LOAD_CONFIG_ACTION_USES not in step:
+        errors.append(
+            f"{relative}: job {name} build-config step is missing {LOAD_CONFIG_ACTION_USES}"
         )
     return errors
 
@@ -3148,6 +3194,7 @@ def _validate_workflow_structure_and_jobs(
             errors.append(f"{relative}: forbidden workflow token {token}")
     if RELEASE_TAG.search(text):
         errors.append(f"{relative}: contains a copied FFmpeg release tag")
+    errors.extend(_validate_no_inline_build_config(relative, text))
 
     is_ci = Path(relative).name == "ci.yml"
     is_release = Path(relative).name == "release.yml"
@@ -3297,6 +3344,15 @@ def validate_workflow_text(
 def validate_workflows() -> list[str]:
     """Validate all hosted workflow consumers of the build contract."""
     errors: list[str] = []
+    action_rel = LOAD_CONFIG_ACTION.relative_to(ROOT).as_posix()
+    if not LOAD_CONFIG_ACTION.is_file():
+        errors.append(f"{action_rel}: missing")
+    else:
+        errors.extend(
+            validate_load_config_action_text(
+                action_rel, LOAD_CONFIG_ACTION.read_text(encoding="utf-8")
+            )
+        )
     for path in WORKFLOWS:
         relative = path.relative_to(ROOT).as_posix()
         if not path.is_file():
@@ -3304,6 +3360,13 @@ def validate_workflows() -> list[str]:
             continue
         errors.extend(
             validate_workflow_text(relative, path.read_text(encoding="utf-8"))
+        )
+    for path in sorted((ROOT / ".github" / "workflows").glob("*.y*ml")):
+        if path in WORKFLOWS:
+            continue
+        relative = path.relative_to(ROOT).as_posix()
+        errors.extend(
+            _validate_no_inline_build_config(relative, path.read_text(encoding="utf-8"))
         )
     return errors
 
@@ -4029,6 +4092,10 @@ def validate_tester_publish_text(relative: str, text: str) -> list[str]:
         if token in text:
             errors.append(f"{relative}: forbidden workflow token {token}")
     errors.extend(_tester_pins(relative, text))
+    errors.extend(_validate_no_inline_build_config(relative, text))
+    for job_name in ("build", "build-arm64", "publish"):
+        if job_name in jobs:
+            errors.extend(_validate_load_step(relative, job_name, jobs[job_name]))
     # check-candidate-legs.py matches a master dispatch by this run name (ADR-0199).
     if "run-name: tester-publish ${{ github.event_name }} ${{ inputs.ref || github.sha }}\n" not in text:
         errors.append(f"{relative}: run-name must be tester-publish <event> <inputs.ref or github.sha>")
@@ -4372,6 +4439,14 @@ def _tester_job_cases(text: str) -> dict[str, tuple[str, str]]:
         "write permission at top level": (
             text.replace("permissions:\n  contents: read\n", "permissions:\n  contents: write\n", 1),
             "top-level permissions must be contents: read only",
+        ),
+        "inline build-config load": (
+            text.replace(
+                LOAD_CONFIG_ACTION_USES,
+                'run: grep -E "^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=" build-config.env >> "$GITHUB_ENV"',
+                1,
+            ),
+            'must not inline build-config.env >> "$GITHUB_ENV"',
         ),
     }
 
@@ -5129,39 +5204,57 @@ def series_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
 
 
 def _load_step_cases(source: str) -> dict[str, tuple[str, str]]:
-    """The build-config load step is one grep appended to GITHUB_ENV, no loop.
+    """Every workflow job loads build-config.env via the composite action, never inline."""
+    inline = (
+        "run: |\n"
+        "          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' "
+        'build-config.env >> "$GITHUB_ENV"'
+    )
+    return {
+        "inline build-config load in workflow": (
+            source.replace(LOAD_CONFIG_ACTION_USES, inline, 1),
+            'must not inline build-config.env >> "$GITHUB_ENV"',
+        ),
+        "build-config step without local action": (
+            source.replace(LOAD_CONFIG_ACTION_USES, "run: echo ok", 1),
+            f"build-config step is missing {LOAD_CONFIG_ACTION_USES}",
+        ),
+        "missing build-config load step": (
+            source.replace("name: Load build configuration", "name: Other step", 1),
+            "must load build-config.env after checkout",
+        ),
+    }
 
-    The keys and the append must sit in the load step itself; the same words
-    in another step of the job do not count.
-    """
+
+def _load_action_cases(source: str) -> dict[str, tuple[str, str]]:
+    """The composite action selects keys with one grep appended to GITHUB_ENV, no loop."""
     grep = "grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env"
     loop = (
         "while IFS= read -r entry; do printf '%s\\n' \"$entry\"; done"
         " < build-config.env | grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)='"
     )
     step_with_append = f'{grep} >> "$GITHUB_ENV"'
-    tokens_elsewhere = (
-        "grep -E '^(OTHER)=' other.env >> \"$GITHUB_ENV\"\n"
-        "      - name: Leaked tokens\n"
-        "        run: echo build-config.env FFMPEG_REMOTE FFMPEG_TAG FFMPEG_COMMIT GITHUB_ENV"
-    )
     echo_load = "echo build-config.env FFMPEG_REMOTE FFMPEG_TAG FFMPEG_COMMIT GITHUB_ENV"
     return {
-        "looping build-config load": (
+        "looping build-config action": (
             source.replace(grep, loop, 1),
-            "build-config step must not loop",
+            "build-config action must not loop",
         ),
-        "build-config tokens elsewhere": (
-            source.replace(step_with_append, tokens_elsewhere, 1),
-            "build-config step is missing build-config.env",
+        "build-config action missing key": (
+            source.replace("FFMPEG_COMMIT", "OTHER_KEY", 1),
+            "build-config action is missing FFMPEG_COMMIT",
         ),
-        "echo build-config load": (
+        "echo build-config action": (
             source.replace(step_with_append, echo_load, 1),
-            "build-config step is missing grep",
+            "build-config action is missing grep",
         ),
-        "build-config load missing append": (
+        "build-config action missing append": (
             source.replace(step_with_append, grep, 1),
-            'build-config step is missing >> "$GITHUB_ENV"',
+            'build-config action is missing >> "$GITHUB_ENV"',
+        ),
+        "build-config action without bash": (
+            source.replace("shell: bash", "shell: sh", 1),
+            "build-config action is missing shell: bash",
         ),
     }
 
@@ -5413,6 +5506,17 @@ def workflow_validator_regressions() -> list[str]:
         )
 
     failures.extend(release_gate_regressions(source, relative))
+    action_rel = LOAD_CONFIG_ACTION.relative_to(ROOT).as_posix()
+    action_src = LOAD_CONFIG_ACTION.read_text(encoding="utf-8")
+    if validate_load_config_action_text(action_rel, action_src):
+        failures.append(f"workflow regression: current {action_rel} is rejected")
+    for name, (mutated, expected) in _load_action_cases(action_src).items():
+        if mutated == action_src:
+            failures.append(f"workflow regression: {name} mutation changed nothing")
+        elif not any(
+            expected in e for e in validate_load_config_action_text(action_rel, mutated)
+        ):
+            failures.append(f"workflow regression: {name} was accepted")
     return failures
 
 
@@ -6167,6 +6271,9 @@ def validate_windows_tester_workflow(relative: str, text: str) -> list[str]:
     for token in FORBIDDEN_WINDOWS_TESTER_TOKENS:
         if token in text:
             errors.append(f"{relative}: forbidden token '{token}' found")
+    errors.extend(_validate_no_inline_build_config(relative, text))
+    for name, block in workflow_job_blocks(text).items():
+        errors.extend(_validate_load_step(relative, name, block))
 
     return errors
 

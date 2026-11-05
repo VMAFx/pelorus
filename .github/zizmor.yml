@@ -12,3 +12,18 @@ rules:
     ignore:
       - release.yml:18
       - release.yml:29
+      # #501: the same actionlint refusal holds for a step `uses: $/...`
+      # (tested with 1.7.12: "ref is missing"), so the callers of
+      # .github/actions/load-build-config keep `./`.
+      - ci.yml
+      - release-build.yml
+      - tester-publish.yml
+      - windows-tester.yml
+  # github-env: the load-build-config composite action writes the pins read
+  # from the checked-out build-config.env to GITHUB_ENV. zizmor cannot see the
+  # caller triggers from inside an action; every caller runs on push,
+  # pull_request, schedule, workflow_dispatch or workflow_call, never on
+  # pull_request_target or workflow_run (#501).
+  github-env:
+    ignore:
+      - action.yml:12

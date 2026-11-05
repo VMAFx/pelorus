@@ -74,8 +74,7 @@ jobs:
             git
             zip
       - name: Load build configuration
-        run: |
-          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+        uses: ./.github/actions/load-build-config
       - name: Runner and toolchain receipt
         run: |
           echo "ImageOS=${ImageOS:-unset}"
