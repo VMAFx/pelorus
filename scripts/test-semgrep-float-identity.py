@@ -388,13 +388,13 @@ def step_constant_names(_semgrep_bin: str, _tmp: pathlib.Path) -> str | None:
     return None
 
 
-def resolve_semgrep() -> str | None:
-    """PATH lookup of semgrep, kept only when it is an executable regular file.
+def resolve_executable(name: str) -> str | None:
+    """PATH lookup of name, kept only when it is an executable regular file.
 
     The test runs the binary with a fixed argument list and no shell; the PATH
     the build or CI job sets is the trust boundary.
     """
-    found = shutil.which("semgrep")
+    found = shutil.which(name)
     if not found:
         return None
     path = pathlib.Path(found).resolve()
@@ -405,7 +405,7 @@ def resolve_semgrep() -> str | None:
 
 def main() -> int:
     """Run steps (a) to (d); exit 77 (skip) when semgrep is not installed."""
-    semgrep_bin = resolve_semgrep()
+    semgrep_bin = resolve_executable("semgrep")
     if not semgrep_bin:
         print("SKIP: semgrep not found")
         return 77
@@ -416,7 +416,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         (tmp / "cfg").mkdir()
-        git_bin = shutil.which("git")
+        git_bin = resolve_executable("git")
         if git_bin:
             try:
                 proc = subprocess.run(  # nosec B603 - git resolved from PATH to a file; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - git resolved to an executable file, fixed list argv, no shell, explicit deadline
