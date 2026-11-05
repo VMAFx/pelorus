@@ -207,7 +207,7 @@ def self_test() -> int:
             build_parser().parse_args(["--write", "--check"])
             print("self-test failure: --write with --check was not refused", file=sys.stderr)
             return 1
-        except SystemExit:
+        except SystemExit:  # argparse refused the pair: the expected outcome
             pass
 
     print("gen-grain-gate-curve: all self-test cases passed (precomputed rows injected)")
