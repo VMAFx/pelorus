@@ -3210,11 +3210,13 @@ def workflow_on_section(text: str) -> str:
 
 def _validate_load_config_triggers(relative: str, text: str) -> list[str]:
     """Refuse pull_request_target and workflow_run in workflows using load-build-config."""
-    if ".github/actions/load-build-config" not in text:
+    if ".github/actions/load-build-config" not in text and not re.search(
+        r"uses:\s*\./\.github/workflows/", text
+    ):
         return []
     on_section = workflow_on_section(text)
     return [
-        f"{relative}: workflow using {LOAD_CONFIG_ACTION_USES} must not trigger on {trigger}"
+        f"{relative}: workflow using {LOAD_CONFIG_ACTION_USES} or a local reusable workflow must not trigger on {trigger}"
         for trigger in FORBIDDEN_LOAD_CONFIG_TRIGGERS
         if re.search(rf"\b{re.escape(trigger)}\b", on_section)
     ]
@@ -3283,6 +3285,8 @@ def _extract_actions_checkout(block: str) -> tuple[str, list[str]] | None:
                 path = TESTER_PUBLISH_ACTIONS_DIR
             else:
                 path = path_match.group(1).strip()
+            if path != TESTER_PUBLISH_ACTIONS_DIR:
+                errs.append(f"actions checkout must set path: {TESTER_PUBLISH_ACTIONS_DIR}")
             return path, errs
     return None
 
@@ -4938,6 +4942,8 @@ def _tester_publish_load_cases(text: str) -> dict[str, tuple[str, str]]:
     checkout_pat = re.compile(
         r"[ ]+- (?:name: [^\n]*\n[ ]+)?uses: actions/checkout@[^\n]*\n(?:[ ]+(?!- )\S[^\n]*\n)*?[ ]+path: \.actions\n"
     )
+    step_match = checkout_pat.search(text)
+    step = step_match.group(0) if step_match else ""
     return {
         "publish loads un-namespaced load-build-config": (
             text.replace(action, "uses: ./.github/actions/load-build-config", 1),
@@ -4946,6 +4952,26 @@ def _tester_publish_load_cases(text: str) -> dict[str, tuple[str, str]]:
         "publish job without actions checkout": (
             checkout_pat.sub("", text, count=1),
             "job publish must check out workflow actions",
+        ),
+        "publish actions checkout wrong ref": (
+            text.replace(
+                step,
+                step.replace("ref: ${{ github.sha }}", "ref: ${{ needs.validate.outputs.sha }}", 1),
+                1,
+            ),
+            "actions checkout must set ref: ${{ github.sha }}",
+        ),
+        "publish actions checkout persists credentials": (
+            text.replace(
+                step,
+                step.replace("persist-credentials: false", "persist-credentials: true", 1),
+                1,
+            ),
+            "actions checkout must set persist-credentials: false",
+        ),
+        "publish actions checkout wrong path": (
+            text.replace(step, step.replace("path: .actions", "path: .", 1), 1),
+            "actions checkout must set path: .actions",
         ),
     }
 
@@ -5281,6 +5307,20 @@ def _rc_release_cases(release: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def _release_reusable_trigger_cases(release: str) -> dict[str, tuple[str, str]]:
+    """Plant an untrusted trigger on the release workflow that calls local reusable workflows."""
+    return {
+        "release caller on workflow_run": (
+            release.replace(
+                "  workflow_dispatch:\n",
+                "  workflow_dispatch:\n  workflow_run:\n    workflows: [CI]\n",
+                1,
+            ),
+            "must not trigger on workflow_run",
+        ),
+    }
+
+
 def rc_release_regressions() -> list[str]:
     """Prove the ADR-0176 rc rules of release.yml and release-build.yml are pinned."""
     failures: list[str] = []
@@ -5290,7 +5330,7 @@ def rc_release_regressions() -> list[str]:
     build_rel = build_path.relative_to(ROOT).as_posix()
     release_rel = release_path.relative_to(ROOT).as_posix()
     build_cases = _rc_build_cases(build)
-    release_cases = _rc_release_cases(release)
+    release_cases = _rc_release_cases(release) | _release_reusable_trigger_cases(release)
     for name, (mutated, expected) in build_cases.items():
         failures.extend(
             _all_rejected(name, mutated, build, lambda t: validate_workflow_text(build_rel, t), expected)
