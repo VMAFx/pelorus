@@ -228,6 +228,28 @@ python3 -I scripts/bench/run-bench.py \
 
 This runs all four mandatory comparison arms, measures bitrate, SSIMULACRA2, VMAF, and CAMBI against the noisy source, writes `result.json` and `record.json`, and validates the record against `scripts/bench/record.schema.json`.
 
+### Rendering a record into docs
+
+`scripts/bench/make-record.py` renders validated benchmark records into deterministic Markdown tables and manages embedded blocks in documentation:
+
+```bash
+# Print rendered Markdown table to stdout
+python3 -I scripts/bench/make-record.py --render-md RECORD.json
+
+# Update an embedded block in a doc between markers
+python3 -I scripts/bench/make-record.py --render-md RECORD.json --write-md DOC --block NAME
+
+# Check an embedded block for drift (exit 0 up to date, 1 drifted)
+python3 -I scripts/bench/make-record.py --render-md RECORD.json --check-md DOC --block NAME
+```
+
+`--write-md` and `--check-md` exit 2, writing nothing, when the begin or end marker is missing, duplicated or out of order, or when `NAME` does not match `[a-z0-9][a-z0-9-]{0,63}`. The rendered block sits directly between the marker lines:
+
+```markdown
+<!-- make-record:NAME begin -->
+<!-- make-record:NAME end -->
+```
+
 ## Pinned corpus
 
 `scripts/bench/corpus.lock` pins each input by URL + **sha256** + segment +
