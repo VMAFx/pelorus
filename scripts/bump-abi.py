@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import subprocess  # nosec B404 - fixed python argv, no shell, explicit timeout
 import sys
 import tempfile
@@ -199,21 +200,47 @@ def run_write(root: Path, note: str, adr: str | None) -> int:
     return 0
 
 
+def _backup(path: Path) -> Path:
+    """Copy ``path`` to a fresh sibling backup file and return the backup path."""
+    fd, name = tempfile.mkstemp(prefix=path.name + ".", suffix=".bak", dir=path.parent)
+    os.close(fd)
+    shutil.copy2(path, name)
+    return Path(name)
+
+
+def _restore_backups(backups: list[tuple[Path, Path]]) -> None:
+    """Move every backup back over its file with os.replace; name any backup left behind."""
+    left: list[str] = []
+    for path, bak in backups:
+        try:
+            os.replace(bak, path)
+        except OSError as exc:
+            left.append(f"{bak} ({exc})")
+    if left:
+        raise OSError("rollback incomplete, backups kept: " + ", ".join(left))
+
+
 def _write_texts(updates: list[tuple[Path, str]]) -> None:
-    """Write every file through a sibling temp file; restore all originals if one write fails."""
-    originals = [(path, path.read_bytes()) for path, _ in updates]
-    done: list[Path] = []
+    """Replace every file through a sibling temp file; on failure move the backups back.
+
+    Backups stay on disk until every update has succeeded, so a failure during the
+    restore still leaves each original recoverable from its named backup.
+    """
+    backups: list[tuple[Path, Path]] = []
     try:
         for path, text in updates:
+            backups.append((path, _backup(path)))
             tmp = path.with_name(path.name + ".tmp")
             tmp.write_text(text, encoding="utf-8")
             os.replace(tmp, path)
-            done.append(path)
-    except OSError:
-        for path, data in originals:
-            if path in done:
-                path.write_bytes(data)
+    except OSError as exc:
+        try:
+            _restore_backups(backups)
+        except OSError as restore_exc:
+            raise restore_exc from exc
         raise
+    for _, bak in backups:
+        bak.unlink()
 
 
 def _run_cli(argv: list[str]) -> subprocess.CompletedProcess[str]:
@@ -244,7 +271,7 @@ def _copy_tree_files(src_root: Path, dst_root: Path) -> tuple[Path, Path]:
 
 
 def _test_rollback(tmp_root: Path) -> None:
-    """Planted write failure on the second file must restore the first one byte-identical."""
+    """Planted write failure restores originals by moving the backups back; none stay."""
     first, second = tmp_root / "rollback-a.txt", tmp_root / "rollback-b.txt"
     first.write_text("old a\n", encoding="utf-8")
     second.write_text("old b\n", encoding="utf-8")
@@ -257,6 +284,26 @@ def _test_rollback(tmp_root: Path) -> None:
     _expect(raised, "rollback case: planted write failure did not raise")
     _expect(first.read_text(encoding="utf-8") == "old a\n", "rollback case: first file not restored")
     _expect(second.read_text(encoding="utf-8") == "old b\n", "rollback case: second file changed")
+    left = sorted(p.name for p in tmp_root.glob("rollback-*.bak"))
+    _expect(not left, f"rollback case: backups not moved back: {left}")
+    (tmp_root / "rollback-b.txt.tmp").rmdir()
+    _write_texts([(first, "new a\n"), (second, "new b\n")])
+    _expect(first.read_text(encoding="utf-8") == "new a\n", "success case: first file not written")
+    left = sorted(p.name for p in tmp_root.glob("rollback-*.bak"))
+    _expect(not left, f"success case: backups left behind: {left}")
+    lost = tmp_root / "rollback-lost.txt"
+    lost.write_text("x\n", encoding="utf-8")
+    keep = tmp_root / "rollback-keep.txt"
+    keep.write_text("cur\n", encoding="utf-8")
+    keep_bak = _backup(keep)
+    keep.write_text("changed\n", encoding="utf-8")
+    message = ""
+    try:
+        _restore_backups([(lost, tmp_root / "rollback-missing.bak"), (keep, keep_bak)])
+    except OSError as exc:
+        message = str(exc)
+    _expect("rollback-missing.bak" in message, f"restore failure case: backup not named: {message!r}")
+    _expect(keep.read_text(encoding="utf-8") == "cur\n", "restore failure case: later file not restored")
 
 
 def _self_test(real_root: Path) -> int:
