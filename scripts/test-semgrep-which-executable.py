@@ -236,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
         git_bin = resolve_executable("git")
         if git_bin:
             try:
-                subprocess.run(
+                proc = subprocess.run(
                     [git_bin, "init", "-q", str(tmp)],
                     capture_output=True,
                     text=True,
@@ -245,7 +245,11 @@ def main(argv: list[str] | None = None) -> int:
                     timeout=30,
                 )
             except subprocess.TimeoutExpired:
-                pass
+                sys.stderr.write(f"git init -q in {tmp}: no result after 30 s\n")
+                return 1
+            if proc.returncode != 0:
+                sys.stderr.write(f"git init -q in {tmp}: {proc.stderr.strip()}\n")
+                return 1
         try:
             for step in (step_planted_cases, step_planted_revert, step_real_tree):
                 problem = step(semgrep_bin, tmp)
