@@ -41,6 +41,11 @@ WarningsAsErrors: >
 # against FFmpeg's tree and follow FFmpeg conventions, so they are excluded.
 HeaderFilterRegex: '^libpelorus/(include|src|test)/.*\.(h|hpp)$'
 
+# The compile database comes from the gcc build; a gcc-only flag in it (the
+# planted wrap twin's -Wno-stringop-overflow) is unknown to clang and would
+# fail every run under -Werror. Clang-specific checks are unaffected.
+ExtraArgs: ['-Wno-unknown-warning-option']
+
 FormatStyle: file
 
 CheckOptions:
