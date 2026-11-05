@@ -288,7 +288,7 @@ test('gen-grain-gate-curve-check',
      args: ['-I', meson.project_source_root() / 'scripts' / 'gen-grain-gate-curve.py',
             '--check'],
      workdir: meson.project_source_root(),
-     suite: 'fast')
+     suite: 'numpy')
 test('gen-av1-grain-calibration-self-test',
      python_prog,
      args: ['-I', meson.project_source_root() / 'scripts' / 'gen-av1-grain-calibration.py',

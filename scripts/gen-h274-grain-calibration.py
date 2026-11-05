@@ -25,9 +25,10 @@ change libavcodec/h274.c, so the pinned file is the one a build compiles.
 --check compares the regenerated table with the one in the filter source and
 exits 1 on drift. --write updates the table in the filter source (or stats table)
 in-place when drift or grid changes occur, and is a no-op when within tolerance.
-This is a development tool: it needs numpy and an FFmpeg
-checkout, so it is not part of the fast suite. Rerun it after an FFmpeg bump
-or a shared series bump that touches libavcodec/h274.c.
+--self-test needs no numpy or FFmpeg checkout and runs in the fast suite;
+generating, checking or writing the tables needs numpy and an FFmpeg checkout.
+Rerun it after an FFmpeg bump or a shared series bump that touches
+libavcodec/h274.c.
 """
 
 from __future__ import annotations
@@ -38,8 +39,6 @@ import pathlib
 import re
 import subprocess
 import sys
-
-import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FILTER = ROOT / "ffmpeg-patches" / "files" / "vf_pelorus_grain_estimate_vulkan.c"
@@ -89,6 +88,8 @@ class H274Model0:
     """Luma path of ff_h274_apply_film_grain() for one interval, model 0."""
 
     def __init__(self, source: str) -> None:
+        import numpy as np
+
         self.gauss = np.array(parse_table(source, "Gaussian_LUT"), dtype=np.int64)
         self.seeds = parse_table(source, "Seed_LUT")
         self.r64t = np.array(parse_table(source, "R64T"), dtype=np.int64).reshape(64, 64)
@@ -102,6 +103,8 @@ class H274Model0:
         return ((x << 1) | (feedback & 1)) & 0xFFFFFFFF
 
     def pattern(self, h: int, v: int) -> np.ndarray:
+        import numpy as np
+
         if (h, v) in self.db:
             return self.db[(h, v)]
         freq_h = ((h + 3) << 2) - 1
@@ -126,11 +129,14 @@ class H274Model0:
         return out
 
     def render(self, scale: int, cutoff: int, seed: int) -> np.ndarray:
+        import numpy as np
+
         grain = self.grain(scale, cutoff, cutoff, seed, WIDTH, HEIGHT)
         return np.clip(LEVEL + grain, 0, 255)
 
     def grain(self, scale: int, cut_h: int, cut_v: int, seed: int, width: int, height: int):
         """Luma grain field for one cutoff pair, before it is added to the image."""
+        import numpy as np
 
         def int8(a: np.ndarray) -> np.ndarray:
             return ((a + 128) & 0xFF) - 128
@@ -163,6 +169,8 @@ class H274Model0:
 
 def estimator_stats(luma8: np.ndarray) -> tuple[float, float]:
     """Residual RMS (8-bit codes) and residual lag-1 correlation, edge gate open."""
+    import numpy as np
+
     img = luma8.astype(np.float64) / 255.0
     h, w = img.shape
     padded = np.pad(img, ((1, 1), (1, 2)), mode="edge")
@@ -184,6 +192,8 @@ def grain_stats(model: H274Model0) -> list[tuple[int, int, float, float, float]]
     (ADR-0205). Grain is measured before it is added to the image, so no
     clipping and no high-pass filter applies.
     """
+    import numpy as np
+
     rows = []
     for cut_v in STAT_CUTOFFS:
         for cut_h in STAT_CUTOFFS:
@@ -267,6 +277,8 @@ def write_stats(rows: list[tuple[int, int, float, float, float]], source_path: p
 
 
 def calibrate(model: H274Model0) -> list[tuple[int, float, float]]:
+    import numpy as np
+
     rows = []
     for cutoff in CUTOFFS:
         gains, rhos = [], []

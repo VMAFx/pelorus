@@ -27,7 +27,8 @@ filter's default T) and prints one curve per gate below the widest as
 --check compares the regenerated tables and the gate steps with the filter
 source and exits 1 on drift. --write updates the table in the filter source
 in-place when drift or grid changes occur, and is a no-op when within tolerance.
-This is a development tool: it needs numpy, so it is not part of the fast suite.
+--self-test needs no numpy and runs in the fast suite; the drift check needs
+numpy and runs in the 'numpy' suite in the CI core job.
 """
 
 from __future__ import annotations
@@ -36,8 +37,6 @@ import argparse
 import pathlib
 import re
 import sys
-
-import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 C_SOURCE = ROOT / "ffmpeg-patches" / "files" / "vf_pelorus_grain_estimate_vulkan.c"
@@ -59,6 +58,8 @@ TOLERANCE = 0.0015
 
 
 def measure(field: np.ndarray, gate: float) -> tuple[float, float]:
+    import numpy as np
+
     h, w = field.shape
     pad = np.pad(field, 1, mode="edge")
     win = [pad[dy:dy + h, dx:dx + w] for dy in range(3) for dx in range(3)]
@@ -71,6 +72,8 @@ def measure(field: np.ndarray, gate: float) -> tuple[float, float]:
 
 def curves() -> list[list[tuple[float, float]]]:
     """One curve per gate below the widest: the widest gate is never left."""
+    import numpy as np
+
     rng = np.random.default_rng(SEED)
     tables = []
     for k in GATE_STEPS[:-1]:
@@ -163,9 +166,29 @@ def _test_tolerance_no_write(tables: list[list[tuple[float, float]]], tmp_c: pat
     return write_table(tables, source_path=tmp_c) == 0 and tmp_c.read_bytes() == before
 
 
+def parse_tables(source_path: pathlib.Path = C_SOURCE) -> list[list[tuple[float, float]]]:
+    text = source_path.read_text(encoding="utf-8")
+    steps = STEPS.search(text)
+    if steps is None:
+        raise SystemExit(f"{source_path}: pel_grain_gate_step not found")
+    have_steps = tuple(float(v) for v in steps.group(1).split(","))
+    if have_steps != GATE_STEPS:
+        raise SystemExit(f"pel_grain_gate_step {have_steps} differs from {GATE_STEPS}")
+    match = TABLE.search(text)
+    if match is None:
+        raise SystemExit(f"{source_path}: pel_gate_curve table not found")
+    rows = [(float(a), float(b)) for a, b in ROW.findall(match.group(1))]
+    num_tables = len(GATE_STEPS) - 1
+    if len(rows) % num_tables != 0:
+        raise SystemExit(f"row count {len(rows)} not divisible by {num_tables}")
+    stride = len(rows) // num_tables
+    return [rows[i * stride : (i + 1) * stride] for i in range(num_tables)]
+
+
 def self_test() -> int:
     import tempfile
-    tables = curves()
+
+    tables = parse_tables()
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_c = pathlib.Path(tmp_dir) / C_SOURCE.name
         tmp_c.write_text(C_SOURCE.read_text(encoding="utf-8"), encoding="utf-8")
@@ -187,7 +210,7 @@ def self_test() -> int:
         except SystemExit:
             pass
 
-    print("gen-grain-gate-curve: all self-test cases passed")
+    print("gen-grain-gate-curve: all self-test cases passed (precomputed rows injected)")
     return 0
 
 

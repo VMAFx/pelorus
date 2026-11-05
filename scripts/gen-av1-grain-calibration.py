@@ -39,9 +39,10 @@ so the pinned files are the ones a build compiles.
 --check compares the regenerated tables with the ones in the filter source and
 exits 1 on drift. --write updates the tables in the filter source in-place when
 drift or grid changes occur, and is a no-op when within tolerance.
-This is a development tool: it needs numpy and an FFmpeg
-checkout, so it is not part of the fast suite. Rerun it after an FFmpeg bump
-or a shared series bump that touches libavcodec/aom_film_grain*.
+--self-test needs no numpy or FFmpeg checkout and runs in the fast suite;
+generating, checking or writing the tables needs numpy and an FFmpeg checkout.
+Rerun it after an FFmpeg bump or a shared series bump that touches
+libavcodec/aom_film_grain*.
 """
 
 from __future__ import annotations
@@ -52,8 +53,6 @@ import os
 import pathlib
 import re
 import sys
-
-import numpy as np
 
 HERE = pathlib.Path(__file__).resolve().parent
 _SPEC = importlib.util.spec_from_file_location("gen_h274", HERE / "gen-h274-grain-calibration.py")
@@ -84,6 +83,8 @@ class AV1Luma:
     """Luma path of FFmpeg's AV1 film grain synthesis, 8-bit, grain_scale_shift 0."""
 
     def __init__(self, source: str) -> None:
+        import numpy as np
+
         self.gauss = np.array(h274.parse_table(source, "gaussian_sequence"), dtype=np.int64)
         if self.gauss.size != 2048:
             raise SystemExit("aom_film_grain.c: unexpected gaussian_sequence size")
@@ -96,6 +97,8 @@ class AV1Luma:
 
     def template(self, seed: int, a: int) -> np.ndarray:
         """generate_grain_y_c() for ar_coeff_lag 1, coefficients {0, a, 0, a}."""
+        import numpy as np
+
         buf = np.zeros((GRAIN_H, GRAIN_W), dtype=np.int64)
         for y in range(GRAIN_H):
             for x in range(GRAIN_W):
@@ -111,6 +114,8 @@ class AV1Luma:
 
     def field(self, seed: int, a: int, width: int, height: int) -> np.ndarray:
         """Luma grain per pixel as fgy_32x32xn_c() places it, overlap_flag 1."""
+        import numpy as np
+
         lut = self.template(seed, a)
         out = np.zeros((height, width), dtype=np.int64)
 
@@ -161,12 +166,16 @@ class AV1Luma:
 
 def render(field: np.ndarray, scale: int) -> np.ndarray:
     """add_noise_y on a flat frame: scaling_shift 8, full output range."""
+    import numpy as np
+
     return np.clip(LEVEL + round2(scale * field, 8), 0, 255)
 
 
 def gated_sums(luma8: np.ndarray, gate: float) -> np.ndarray:
     """Shader arithmetic at one gate: kept count, total, residual square sum,
     lag-1 pair count and product sum (right neighbour clamped at the edge)."""
+    import numpy as np
+
     img = luma8.astype(np.float64) / 255.0
     h, w = img.shape
     pad = np.pad(img, ((1, 1), (1, 2)), mode="edge")
@@ -183,6 +192,8 @@ def gated_sums(luma8: np.ndarray, gate: float) -> np.ndarray:
 
 
 def gate_rows(field_sets: dict) -> list[tuple[int, int, float, float, float]]:
+    import numpy as np
+
     rows = []
     for g, k in WIDE_GATES:
         for a in AR_GRID:
@@ -199,6 +210,8 @@ def gate_rows(field_sets: dict) -> list[tuple[int, int, float, float, float]]:
 
 
 def calibrate(model: AV1Luma) -> tuple[list[tuple[int, float, float]], list]:
+    import numpy as np
+
     rows, fields = [], {}
     for a in AR_GRID:
         gains, rhos = [], []
