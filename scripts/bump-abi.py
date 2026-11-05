@@ -37,6 +37,11 @@ def _expect(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def _is_agents_release_line(line: str) -> bool:
+    """Return True if line contains both interop ABI and PELORUS_ABI_MINOR."""
+    return bool(_AGENTS_ABI_RE.search(line) and _AGENTS_MINOR_RE.search(line))
+
+
 def _find_minor(text: str) -> tuple[int, int]:
     """Parse PELORUS_ABI_MINOR value and line number from header text."""
     match = _ABI_MINOR_RE.search(text)
@@ -100,7 +105,7 @@ def _check_agents(root: Path, expected_minor: int) -> list[str]:
         return [f"AGENTS.md: failed to read: {exc}"]
     errors: list[str] = []
     expected_ver = f"1.{expected_minor}"
-    hits = [(n, ln) for n, ln in enumerate(lines, 1) if _AGENTS_ABI_RE.search(ln) and _AGENTS_MINOR_RE.search(ln)]
+    hits = [(n, ln) for n, ln in enumerate(lines, 1) if _is_agents_release_line(ln)]
     if len(hits) != 1:
         return [f"AGENTS.md: expected exactly one interop ABI release line, found {len(hits)}"]
     for line_no, line in hits:
@@ -163,9 +168,9 @@ def _update_agents_text(text: str, minor: int, new_minor: int, adr: str | None) 
     out: list[str] = []
     adr_tag = _format_adr(adr) if adr else ""
     for line in lines:
-        if "interop ABI" in line and f"interop ABI 1.{minor}" in line:
-            line = re.sub(rf"interop ABI 1\.{minor}\b", f"interop ABI 1.{new_minor}", line)
-            line = re.sub(rf"(`PELORUS_ABI_MINOR`\s+){minor}\b", rf"\g<1>{new_minor}", line)
+        if _is_agents_release_line(line):
+            line = re.sub(rf"interop ABI 1\.{re.escape(str(minor))}\b", f"interop ABI 1.{new_minor}", line)
+            line = re.sub(rf"(`PELORUS_ABI_MINOR`\s+){re.escape(str(minor))}\b", rf"\g<1>{new_minor}", line)
             if adr_tag:
                 line = re.sub(r"\),\s*append-only\.", f", {adr_tag}), append-only.", line)
         out.append(line)
@@ -351,8 +356,13 @@ def _self_test(real_root: Path) -> int:
         dst_h.write_text(snap_h5.decode("utf-8").replace("#define PELORUS_ABI_MAJOR 1u", "#define PELORUS_ABI_MAJOR 2u"), encoding="utf-8")
         res7 = _run_cli(["--root", str(tmp_root), "--check"])
         _expect(res7.returncode == 1, f"case 7 expected exit 1, got {res7.returncode}")
+        # Case 8: AGENTS non-release line mentioning interop ABI preserved byte-identical
+        second_line = f"See interop ABI 1.{minor} notes.\n"
+        bumped_agents = _update_agents_text(orig_agents.decode("utf-8") + second_line, minor, minor + 1, None)
+        _expect(nxt in bumped_agents, "case 8 bumped release line missing")
+        _expect(second_line in bumped_agents, "case 8 non-release line modified")
         _test_rollback(tmp_root)
-    print("bump-abi: self-test PASS (all 8 planted cases)")
+    print("bump-abi: self-test PASS (all 9 planted cases)")
     return 0
 
 
