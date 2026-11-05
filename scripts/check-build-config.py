@@ -3178,14 +3178,22 @@ def _validate_release_build(relative: str, text: str, jobs: dict[str, str]) -> l
 # The load step selects its keys with one grep; a shell loop over the file
 # has no scalar bound (HISS-02).
 LOAD_STEP_LOOP = re.compile(r"^\s*(?:while|until|for)\s", re.MULTILINE)
-NEXT_STEP = re.compile(r"^\s*- (?:name|uses):", re.MULTILINE)
 LOAD_STEP_APPEND = re.compile(r'>>\s*"?\$GITHUB_ENV"?')
 LOAD_STEP_GREP = re.compile(r"\bgrep\b")
 
 
 def _step_text(block: str, start: int) -> str:
-    """The text of the step whose name starts at `start`, up to the next step."""
-    following = NEXT_STEP.search(block, start + 1)
+    """The text of the step holding offset `start`, up to the next step.
+
+    The next step is the next list item at this step's dash indent, whatever
+    its first key (`- id:`, `- run:`, `- name:`, `- uses:`).
+    """
+    line_start = block.rfind("\n", 0, start) + 1
+    line = block[line_start:start]
+    indent = len(line) - len(line.lstrip(" "))
+    if not line.lstrip(" ").startswith("- "):
+        indent -= 2
+    following = re.compile(rf"^ {{{indent}}}- ", re.MULTILINE).search(block, start)
     return block[start : following.start() if following else len(block)]
 
 
@@ -3710,6 +3718,10 @@ def _step_key(step: str, key: str) -> str | None:
     return None
 
 
+JOB_STEPS_LINE = re.compile(r"^    steps:", re.MULTILINE)
+JOB_STEP_START = re.compile(r"^      - ", re.MULTILINE)
+
+
 def _first_step_using(
     job_text: str, accept: Callable[[str], bool]
 ) -> tuple[int, str]:
@@ -3720,12 +3732,13 @@ def _first_step_using(
     Only the step's uses: key counts; the same text inside a run: command or
     a comment does not.
     """
-    for match in NEXT_STEP.finditer(job_text):
-        # NEXT_STEP's leading \s* can start on a preceding blank line, so the
-        # step ends at the next match after this one's own "- name:" text.
-        following = NEXT_STEP.search(job_text, match.end())
-        end = following.start() if following else len(job_text)
-        step = job_text[match.start() : end].lstrip("\r\n")
+    steps_match = JOB_STEPS_LINE.search(job_text)
+    if not steps_match:
+        return -1, ""
+    matches = list(JOB_STEP_START.finditer(job_text, steps_match.end()))
+    for i, match in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(job_text)
+        step = job_text[match.start() : end]
         head = step.splitlines()[0].strip() if step else ""
         if head.startswith("- uses:"):
             target: str | None = head[len("- uses:") :].split("#", 1)[0].strip()
@@ -6437,6 +6450,85 @@ def _go_pin_action_regressions(rel: str, source: str) -> list[str]:
             "go-pin regression: a run step that only echoes the load-build-config "
             "uses: line was accepted"
         )
+
+    failures.extend(_go_pin_step_boundary_regressions(rel, source))
+    return failures
+
+
+def _step_text_boundary_regressions() -> list[str]:
+    """Prove _step_text ends a step at the next item, whatever its first key."""
+    failures: list[str] = []
+    load = (
+        "      - name: Load build configuration\n"
+        f"        {LOAD_CONFIG_ACTION_USES}\n"
+    )
+    for head in ("- id: next", "- run: echo build-config.env"):
+        block = load + f"      {head}\n        shell: bash\n"
+        step = _step_text(block, block.find("name: Load build configuration"))
+        if head in step:
+            failures.append(f"step-text regression: {head!r} merged into the load step")
+    keyed = "      - id: load\n        name: Load build configuration\n"
+    block = keyed + "      - run: echo x\n"
+    if "run:" in _step_text(block, block.find("name: Load")):
+        failures.append("step-text regression: step after an id-first load step merged")
+    return failures
+
+
+def _go_pin_step_boundary_regressions(rel: str, source: str) -> list[str]:
+    """Prove steps whose first key is id: or run: are split correctly."""
+    failures: list[str] = _step_text_boundary_regressions()
+    orig_setup = (
+        "      - name: Set up Go\n"
+        "        uses: actions/setup-go@"
+    )
+    id_first_setup = (
+        "      - id: go\n"
+        "        uses: actions/setup-go@"
+    )
+    id_first_source = source.replace(orig_setup, id_first_setup, 1)
+    if id_first_source == source:
+        failures.append(
+            "go-pin regression: rewriting setup-go with id first did not mutate standards-gate.yml"
+        )
+    else:
+        if validate_workflow_go_pins(rel, id_first_source):
+            failures.append(
+                "go-pin regression: canonical source with id-first setup-go was rejected"
+            )
+        id_first_missing = id_first_source.replace(
+            LOAD_CONFIG_ACTION_USES, "run: echo no-action", 1
+        )
+        if id_first_missing == id_first_source:
+            failures.append(
+                "go-pin regression: removing load-build-config action from id-first source "
+                "did not mutate standards-gate.yml"
+            )
+        elif not any(
+            f"must run {LOAD_CONFIG_ACTION_USES!r} before setup-go" in e
+            for e in validate_workflow_go_pins(rel, id_first_missing)
+        ):
+            failures.append(
+                "go-pin regression: id-first setup-go without load-build-config action was accepted"
+            )
+
+    run_step = "      - run: echo x\n        if: github.event_name == 'push'\n"
+    load_step = (
+        "      - name: Load build configuration\n"
+        f"        {LOAD_CONFIG_ACTION_USES}\n"
+    )
+    run_after_load = source.replace(load_step, load_step + run_step, 1)
+    if run_after_load == source:
+        failures.append(
+            "go-pin regression: inserting run step after load did not mutate standards-gate.yml"
+        )
+    elif any(
+        "can skip it while setup-go runs" in e
+        for e in validate_workflow_go_pins(rel, run_after_load)
+    ):
+        failures.append(
+            "go-pin regression: run step condition was incorrectly attributed to load step"
+        )
+
     return failures
 
 
