@@ -268,6 +268,13 @@ def _parse_timeout_arg(clean_block: str) -> tuple[int | None, bool]:
     return int(m_int.group(1)), False
 
 
+def _strip_strings_and_kwlabels(clean_block: str) -> str:
+    """Strip Meson quoted strings and keyword labels before identifier scanning."""
+    no_multiline = re.sub(r"'''[\s\S]*?'''", " ", clean_block)
+    no_strings = re.sub(r"'(?:\\.|[^'\\])*'", " ", no_multiline)
+    return re.sub(r"(?<!:)\b[a-zA-Z_][a-zA-Z0-9_]*\s*:(?!:)", " ", no_strings)
+
+
 def check_meson_content(
     content: str, scripts_dir: pathlib.Path
 ) -> tuple[int, list[str]]:
@@ -286,7 +293,8 @@ def check_meson_content(
         test_name = m_name.group(1) if m_name else "<unknown>"
 
         script_refs = extract_script_refs(clean_block)
-        for ident in re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", clean_block):
+        value_block = _strip_strings_and_kwlabels(clean_block)
+        for ident in re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", value_block):
             if ident in var_refs:
                 script_refs.extend(var_refs[ident])
         script_refs = list(dict.fromkeys(script_refs))
@@ -486,6 +494,41 @@ SELF_TEST_CASES = [
              suite: 'fast')
         """,
         False,
+    ),
+    (
+        "variable named args not inherited by args: kwarg (valid)",
+        """
+        args = meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'
+        test('unrelated-with-args-kw',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-grain-accumulator-bounds.py'],
+             timeout: 30,
+             suite: 'fast')
+        """,
+        True,
+    ),
+    (
+        "variable named args genuinely referenced as value with short timeout (fails)",
+        """
+        args = meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'
+        test('genuine-args-var-ref',
+             python_prog,
+             args: args,
+             timeout: 60,
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "identifier only inside quoted string ignored (valid)",
+        """
+        v = meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'
+        test('quoted-var-name-not-ref',
+             python_prog,
+             args: ['v', '''v''', meson.project_source_root() / 'scripts' / 'test-grain-accumulator-bounds.py'],
+             suite: 'fast')
+        """,
+        True,
     ),
 ]
 

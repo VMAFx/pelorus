@@ -278,6 +278,9 @@ rules:
                 - pattern: |
                     if $COND:
                         ...
+                        $BODY
+                        ...
+                - focus-metavariable: $BODY
                 - metavariable-pattern:
                     metavariable: $COND
                     patterns:
@@ -307,6 +310,9 @@ rules:
                 - pattern: |
                     if $COND:
                         ...
+                        $BODY
+                        ...
+                - focus-metavariable: $BODY
                 - metavariable-pattern:
                     metavariable: $COND
                     patterns:
