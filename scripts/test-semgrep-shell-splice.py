@@ -52,6 +52,12 @@ perl -e 'print "'"$v"'";'
 python3 -c \\
     'print("'"$x"'")'
 
+# Must-flag 5: perl -le cluster with splice
+perl -le 'print "'"$v"'"'
+
+# Must-flag 6: python3 -Ic cluster with splice
+python3 -Ic 'print("'"$x"'")'
+
 # Must-pass 1: fixed form passing argv
 python3 -c 'import sys; print(sys.argv[1])' "$st"
 
@@ -65,9 +71,12 @@ python3 -c 'print(1)' "$x"
 # Must-pass 4: backslash-newline continuation with argv
 python3 -c \\
     'import sys; print(sys.argv[1])' "$x"
+
+# Must-pass 5: perl -le passing argv
+perl -le 'print $ARGV[0]' "$v"
 """
 
-EXPECTED_HITS = (7, 13, 16, 19)
+EXPECTED_HITS = (7, 13, 16, 19, 23, 26)
 
 
 class ScanError(Exception):
