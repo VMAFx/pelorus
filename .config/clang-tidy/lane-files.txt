@@ -41,8 +41,8 @@ libpelorus/test/interop_test.c
 libpelorus/test/path_utf8_test.c
 libpelorus/test/quality_loop_test.c
 libpelorus/test/quality_test.c
-libpelorus/test/telemetry_test.c
 libpelorus/test/telemetry_adapter_test.c
+libpelorus/test/telemetry_test.c
 libpelorus/test/x265_csv_characterization_test.c
 tools/abi-upgrade/abi_upgrade_probe.c
 tools/pelorus_qloop.c
