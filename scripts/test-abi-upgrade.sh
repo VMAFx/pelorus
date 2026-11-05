@@ -82,12 +82,13 @@ run_self_test() {
 
     cp "$st_valid" "$st_corrupt"
     timeout 600 python3 -I -B -c '
-with open("'"$st_corrupt"'", "r+b") as f:
+import sys
+with open(sys.argv[1], "r+b") as f:
     f.seek(300)
     b = f.read(1)
     f.seek(300)
     f.write(bytes([b[0] ^ 0xFF]))
-'
+' "$st_corrupt"
     local corrupt_rc=0
     set +e
     local corrupt_out
