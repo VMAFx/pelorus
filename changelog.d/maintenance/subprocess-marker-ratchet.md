@@ -1,0 +1,1 @@
+- The fast suite now refuses new unmarked subprocess imports and calls in tracked Python (`scripts/check-subprocess-markers.py`, baseline `scripts/subprocess-markers-baseline.json`), so a missing Bandit or opengrep marker fails before push instead of only in Codacy on the pull request.

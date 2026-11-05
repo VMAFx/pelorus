@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "files": {
+    ".config/lefthook/scripts/common.py": {
+      "b404": 1,
+      "b603": 3,
+      "semgrep": 3
+    },
+    "scripts/bench/make-record.py": {
+      "b404": 1,
+      "b603": 1,
+      "semgrep": 1
+    },
+    "scripts/bench/run-bench.py": {
+      "b404": 1,
+      "b603": 2,
+      "semgrep": 2
+    },
+    "scripts/check-build-config.py": {
+      "b404": 1,
+      "b603": 17,
+      "semgrep": 17
+    },
+    "scripts/check-interop-constants.py": {
+      "b404": 0,
+      "b603": 0,
+      "semgrep": 2
+    },
+    "scripts/gen-h274-grain-calibration.py": {
+      "b404": 1,
+      "b603": 1,
+      "semgrep": 1
+    },
+    "scripts/release/check-candidate-legs.py": {
+      "b404": 1,
+      "b603": 1,
+      "semgrep": 1
+    },
+    "scripts/release/check-changelog-staleness.py": {
+      "b404": 0,
+      "b603": 0,
+      "semgrep": 16
+    },
+    "scripts/release/release_notes.py": {
+      "b404": 1,
+      "b603": 4,
+      "semgrep": 4
+    },
+    "scripts/release/verify-release.py": {
+      "b404": 1,
+      "b603": 1,
+      "semgrep": 1
+    },
+    "scripts/test-adr-next-free.py": {
+      "b404": 1,
+      "b603": 6,
+      "semgrep": 6
+    },
+    "scripts/test-bd-rate.py": {
+      "b404": 1,
+      "b603": 1,
+      "semgrep": 1
+    },
+    "scripts/test-fetch-corpus.py": {
+      "b404": 1,
+      "b603": 2,
+      "semgrep": 2
+    },
+    "scripts/test-fetch-ffmpeg-series.py": {
+      "b404": 1,
+      "b603": 2,
+      "semgrep": 2
+    },
+    "scripts/test-nvenc-pelorus-mapping.py": {
+      "b404": 1,
+      "b603": 1,
+      "semgrep": 1
+    },
+    "scripts/test-selftest-git-isolation.py": {
+      "b404": 1,
+      "b603": 2,
+      "semgrep": 2
+    },
+    "scripts/windows/check-pe-imports.py": {
+      "b404": 1,
+      "b603": 1,
+      "semgrep": 1
+    },
+    "tools/tester/pelorus_tester_fixtures.py": {
+      "b404": 1,
+      "b603": 1,
+      "semgrep": 1
+    },
+    "tools/tester/pelorus_tester_report.py": {
+      "b404": 1,
+      "b603": 1,
+      "semgrep": 1
+    },
+    "tools/tester/pelorus_tester_stages.py": {
+      "b404": 1,
+      "b603": 1,
+      "semgrep": 1
+    }
+  }
+}

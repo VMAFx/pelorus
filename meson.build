@@ -190,6 +190,23 @@ if build_machine.system() != 'windows'
        workdir: meson.project_source_root(),
        suite: 'fast')
 endif
+# Unmarked subprocess sites otherwise surface only in Codacy on the pull request;
+# block growth before push. --self-test-only runs the planted cases on all platforms;
+# the Linux jobs run --check against scripts/subprocess-markers-baseline.json.
+test('subprocess-markers-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-subprocess-markers.py',
+            '--self-test-only'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+if build_machine.system() != 'windows'
+  test('subprocess-markers-check',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-subprocess-markers.py',
+              '--check'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
 test('telemetry-field-parity-self-test',
      python_prog,
      args: [meson.project_source_root() / 'scripts' / 'check-telemetry-field-parity.py',

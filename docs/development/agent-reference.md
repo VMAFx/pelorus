@@ -112,6 +112,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | compile contexts | `make compile-context` |
 | verify contexts | `make compile-context-verify` |
 | audit baseline | `sh .config/lefthook/engine.sh audit` |
+| subprocess markers check | `python3 scripts/check-subprocess-markers.py --check` (`--self-test`: planted cases) |
 | docs gate (Node 22.12+) | `make docs-lint docs-figures` |
 | licence check | `reuse lint` (reuse 6.x) |
 | explicit hook install | `make hooks-install` |
