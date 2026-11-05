@@ -53,6 +53,10 @@ import os
 import pathlib
 import re
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
 
 HERE = pathlib.Path(__file__).resolve().parent
 _SPEC = importlib.util.spec_from_file_location("gen_h274", HERE / "gen-h274-grain-calibration.py")
@@ -332,9 +336,20 @@ def write_tables(rows: list, gated: list, source_path: pathlib.Path = h274.FILTE
     return check_all(rows, gated, source_path=source_path)
 
 
+def _perturb(text: str, row: tuple[int, float, float], delta: float) -> str | None:
+    a, rho, gain = row
+    orig = format_aom_rows([row]).strip().rstrip(",")
+    if orig not in text:
+        print(f"self-test failure: row literal {orig} not found in source", file=sys.stderr)
+        return None
+    perturbed = format_aom_rows([(a, rho, gain + delta)]).strip().rstrip(",")
+    return text.replace(orig, perturbed, 1)
+
+
 def _test_av1_perturb_restore(rows: list, gated: list, tmp_c: pathlib.Path, orig_bytes: bytes) -> bool:
-    target = "{0, -0.1547f, 0.11946f}"
-    perturbed = tmp_c.read_text(encoding="utf-8").replace(target, "{0, -0.1547f, 0.25000f}", 1)
+    perturbed = _perturb(tmp_c.read_text(encoding="utf-8"), rows[0], 0.15)
+    if perturbed is None:
+        return False
     tmp_c.write_text(perturbed, encoding="utf-8")
     if tmp_c.read_bytes() == orig_bytes:
         return False
@@ -344,8 +359,9 @@ def _test_av1_perturb_restore(rows: list, gated: list, tmp_c: pathlib.Path, orig
 
 
 def _test_av1_tolerance_no_write(rows: list, gated: list, tmp_c: pathlib.Path, orig_bytes: bytes) -> bool:
-    target = "{0, -0.1547f, 0.11946f}"
-    perturbed = tmp_c.read_text(encoding="utf-8").replace(target, "{0, -0.1547f, 0.11950f}", 1)
+    perturbed = _perturb(tmp_c.read_text(encoding="utf-8"), rows[0], h274.GAIN_TOL / 3)
+    if perturbed is None:
+        return False
     tmp_c.write_text(perturbed, encoding="utf-8")
     before = tmp_c.read_bytes()
     if before == orig_bytes:

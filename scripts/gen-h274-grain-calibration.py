@@ -39,6 +39,10 @@ import pathlib
 import re
 import subprocess
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FILTER = ROOT / "ffmpeg-patches" / "files" / "vf_pelorus_grain_estimate_vulkan.c"
@@ -362,8 +366,23 @@ def write_filter(rows: list[tuple[int, float, float]], source_path: pathlib.Path
     return check_filter(rows, source_path=source_path)
 
 
+def _perturb(text: str, row: tuple, delta: float) -> str | None:
+    """Shift the last value of a filter (3-cell) or statistics (5-cell) row."""
+    moved = (*row[:-1], row[-1] + delta)
+    if len(row) == 3:
+        orig, perturbed = (format_h274_rows([r]).strip().rstrip(",") for r in (row, moved))
+    else:
+        orig, perturbed = (format_stats([r])[0].strip().rstrip(",") for r in (row, moved))
+    if orig not in text:
+        print(f"self-test failure: row literal {orig} not found in source", file=sys.stderr)
+        return None
+    return text.replace(orig, perturbed, 1)
+
+
 def _test_h274_perturb_restore(rows: list, tmp_c: pathlib.Path, orig_bytes: bytes) -> bool:
-    perturbed = tmp_c.read_text(encoding="utf-8").replace("{6, 0.5043f, 0.04239f}", "{6, 0.5043f, 0.15000f}", 1)
+    perturbed = _perturb(tmp_c.read_text(encoding="utf-8"), rows[0], 0.15)
+    if perturbed is None:
+        return False
     tmp_c.write_text(perturbed, encoding="utf-8")
     if tmp_c.read_bytes() == orig_bytes:
         return False
@@ -373,7 +392,9 @@ def _test_h274_perturb_restore(rows: list, tmp_c: pathlib.Path, orig_bytes: byte
 
 
 def _test_h274_tolerance_no_write(rows: list, tmp_c: pathlib.Path, orig_bytes: bytes) -> bool:
-    perturbed = tmp_c.read_text(encoding="utf-8").replace("{6, 0.5043f, 0.04239f}", "{6, 0.5043f, 0.04240f}", 1)
+    perturbed = _perturb(tmp_c.read_text(encoding="utf-8"), rows[0], GAIN_TOL / 3)
+    if perturbed is None:
+        return False
     tmp_c.write_text(perturbed, encoding="utf-8")
     before = tmp_c.read_bytes()
     if before == orig_bytes:
@@ -382,8 +403,9 @@ def _test_h274_tolerance_no_write(rows: list, tmp_c: pathlib.Path, orig_bytes: b
 
 
 def _test_stats_perturb_restore(stats_rows: list, tmp_s: pathlib.Path, orig_s_bytes: bytes) -> bool:
-    target = "{ 2,  2, 0.03901f,  0.9156f,  0.8871f}"
-    perturbed = tmp_s.read_text(encoding="utf-8").replace(target, "{ 2,  2, 0.03901f,  0.9156f,  0.9999f}", 1)
+    perturbed = _perturb(tmp_s.read_text(encoding="utf-8"), stats_rows[0], 0.1)
+    if perturbed is None:
+        return False
     tmp_s.write_text(perturbed, encoding="utf-8")
     if tmp_s.read_bytes() == orig_s_bytes:
         return False

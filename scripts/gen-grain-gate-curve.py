@@ -37,6 +37,10 @@ import argparse
 import pathlib
 import re
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 C_SOURCE = ROOT / "ffmpeg-patches" / "files" / "vf_pelorus_grain_estimate_vulkan.c"
@@ -124,6 +128,14 @@ def check(tables: list[list[tuple[float, float]]], source_path: pathlib.Path = C
 
 def write_table(tables: list[list[tuple[float, float]]], source_path: pathlib.Path = C_SOURCE) -> int:
     text = source_path.read_text(encoding="utf-8")
+    steps = STEPS.search(text)
+    if steps is None:
+        print(f"{source_path}: pel_grain_gate_step not found", file=sys.stderr)
+        return 1
+    have_steps = tuple(float(v) for v in steps.group(1).split(","))
+    if have_steps != GATE_STEPS:
+        print(f"pel_grain_gate_step {have_steps} differs from {GATE_STEPS}", file=sys.stderr)
+        return 1
     match = TABLE.search(text)
     if match is None:
         print(f"{source_path}: pel_gate_curve table not found", file=sys.stderr)
@@ -147,8 +159,20 @@ def write_table(tables: list[list[tuple[float, float]]], source_path: pathlib.Pa
     return check(tables, source_path=source_path)
 
 
+def _perturb(text: str, row: tuple[float, float], delta: float) -> str | None:
+    f, q = row
+    orig = render([[row]]).strip().rstrip(",")
+    if orig not in text:
+        print(f"self-test failure: row literal {orig} not found in source", file=sys.stderr)
+        return None
+    perturbed = render([[(f, q + delta)]]).strip().rstrip(",")
+    return text.replace(orig, perturbed, 1)
+
+
 def _test_perturb_restore(tables: list[list[tuple[float, float]]], tmp_c: pathlib.Path, orig_bytes: bytes) -> bool:
-    perturbed_text = tmp_c.read_text(encoding="utf-8").replace("{0.0029f, 0.3009f}", "{0.0029f, 0.4500f}", 1)
+    perturbed_text = _perturb(tmp_c.read_text(encoding="utf-8"), tables[0][0], 0.15)
+    if perturbed_text is None:
+        return False
     tmp_c.write_text(perturbed_text, encoding="utf-8")
     if tmp_c.read_bytes() == orig_bytes:
         return False
@@ -158,12 +182,27 @@ def _test_perturb_restore(tables: list[list[tuple[float, float]]], tmp_c: pathli
 
 
 def _test_tolerance_no_write(tables: list[list[tuple[float, float]]], tmp_c: pathlib.Path, orig_bytes: bytes) -> bool:
-    perturbed = tmp_c.read_text(encoding="utf-8").replace("{0.0029f, 0.3009f}", "{0.0029f, 0.3010f}", 1)
+    perturbed = _perturb(tmp_c.read_text(encoding="utf-8"), tables[0][0], TOLERANCE / 3)
+    if perturbed is None:
+        return False
     tmp_c.write_text(perturbed, encoding="utf-8")
     before = tmp_c.read_bytes()
     if before == orig_bytes:
         return False
     return write_table(tables, source_path=tmp_c) == 0 and tmp_c.read_bytes() == before
+
+
+def _test_mismatched_steps_refused(tables: list[list[tuple[float, float]]], tmp_c: pathlib.Path, orig_text: str) -> bool:
+    m = STEPS.search(orig_text)
+    if m is None:
+        return False
+    perturbed = orig_text[:m.start(1)] + m.group(1).replace("2.0", "3.0", 1) + orig_text[m.end(1):]
+    if perturbed == orig_text:
+        return False
+    tmp_c.write_text(perturbed, encoding="utf-8")
+    before = tmp_c.read_bytes()
+    rc = write_table(tables, source_path=tmp_c)
+    return rc != 0 and tmp_c.read_bytes() == before
 
 
 def parse_tables(source_path: pathlib.Path = C_SOURCE) -> list[list[tuple[float, float]]]:
@@ -189,9 +228,10 @@ def self_test() -> int:
     import tempfile
 
     tables = parse_tables()
+    orig_text = C_SOURCE.read_text(encoding="utf-8")
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_c = pathlib.Path(tmp_dir) / C_SOURCE.name
-        tmp_c.write_text(C_SOURCE.read_text(encoding="utf-8"), encoding="utf-8")
+        tmp_c.write_text(orig_text, encoding="utf-8")
         orig_bytes = tmp_c.read_bytes()
 
         if write_table(tables, source_path=tmp_c) != 0 or tmp_c.read_bytes() != orig_bytes:
@@ -202,6 +242,9 @@ def self_test() -> int:
             return 1
         if not _test_tolerance_no_write(tables, tmp_c, orig_bytes):
             print("self-test failure: write modified file on inside-tolerance drift", file=sys.stderr)
+            return 1
+        if not _test_mismatched_steps_refused(tables, tmp_c, orig_text):
+            print("self-test failure: write accepted mismatched gate steps", file=sys.stderr)
             return 1
         try:
             build_parser().parse_args(["--write", "--check"])
