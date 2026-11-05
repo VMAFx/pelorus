@@ -198,7 +198,8 @@ rules:
     # Splicing a shell expansion directly into inline interpreter source
     # code by closing and reopening the outer single quote (`'"$var"'`,
     # `'"${var}"'`, `'"prefix-$var"'`, `'$var'`, `'${var}'`, or
-    # `'prefix-$var'`) exposes the program to syntax
+    # `'prefix-$var'`, also with quotes inside a braced expansion such as
+    # `'"${var:-"$fallback"}"'`) exposes the program to syntax
     # corruption or code injection when the expanded value contains quotes or
     # special characters (defect fixed in scripts/test-abi-upgrade.sh at
     # commit 4a44da7). This rule inspects shell scripts for inline invocations
@@ -218,5 +219,5 @@ rules:
         - "**/*.sh"
         - "/ffmpeg-patches/test/**/*.sh"
     pattern-regex: >-
-      \b(?:python[23]?|perl|ruby|node)(?:(?:\s|\\\r?\n)(?:[^\n'";|&\\]|\\\r?\n|"[^"\n]*"|'[^'\n]*')*?)?(?:\s|\\\r?\n)-[A-Za-z]*[ce](?:\s|\\\r?\n)*'(?:'\\''|[^'])*?('"(?:[^"$\n\\]|\\[^\r\n])*\$[^"\n]*?"'|'(?:[^'"$\s\n\\]|\\[^\r\n])*\$[^'\s\n]*?')
+      \b(?:python[23]?|perl|ruby|node)(?:(?:\s|\\\r?\n)(?:[^\n'";|&\\]|\\\r?\n|"[^"\n]*"|'[^'\n]*')*?)?(?:\s|\\\r?\n)-[A-Za-z]*[ce](?:\s|\\\r?\n)*'(?:'\\''|[^'])*?('"(?:[^"$\n\\]|\\[^\r\n])*\$(?:\{[^}\n]*\}|[^"\n])*?"'|'(?:[^'"$\s\n\\]|\\[^\r\n])*\$[^'\s\n]*?')
 

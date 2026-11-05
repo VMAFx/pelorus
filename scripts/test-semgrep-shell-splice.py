@@ -68,6 +68,9 @@ python3 -c 'print("'"prefix-$x"'")'
 python3 \\
     -c 'print("'"$x"'")'
 
+# Must-flag 10: quoted fallback inside a braced parameter expansion
+python3 -c 'print("'"${x:-"$fallback"}"'")'
+
 # Must-pass 1: fixed form passing argv
 python3 -c 'import sys; print(sys.argv[1])' "$st"
 
