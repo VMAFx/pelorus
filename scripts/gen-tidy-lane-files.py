@@ -9,7 +9,7 @@ import argparse
 import difflib
 import json
 from pathlib import Path
-import subprocess
+import subprocess  # nosec B404 - runs only this script on a fixture, list argv, no shell, explicit deadline
 import sys
 import tempfile
 import time
@@ -173,7 +173,9 @@ def _run_cli(
         "--build-dir", str(build_dir),
         *args,
     ]
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False, shell=False)
+    return subprocess.run(  # nosec B603 - argv is this interpreter, this script and fixture paths, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is sys.executable plus this script and temp fixture paths, no shell, explicit deadline
+        cmd, capture_output=True, text=True, timeout=60, check=False, shell=False
+    )
 
 
 def _expect(cond: bool, msg: str) -> None:
