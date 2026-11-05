@@ -108,9 +108,39 @@ def case_negated_branch():
     tool = shutil.which("tool")
     if not os.access(tool, os.X_OK):
         subprocess.run([tool, "-v"])  # reported: call in failing branch
+
+def case_else_branch():
+    tool = shutil.which("tool")
+    if os.access(tool, os.X_OK):
+        pass
+    else:
+        subprocess.run([tool, "-v"])  # reported: call in else branch
+
+def case_elif_branch(flag):
+    tool = shutil.which("tool")
+    if os.access(tool, os.X_OK):
+        pass
+    elif flag:
+        subprocess.run([tool, "-v"])  # reported: call in elif branch
+
+def case_path_else_branch():
+    git = shutil.which("git")
+    path = pathlib.Path(git).resolve()
+    if path.is_file() and os.access(path, os.X_OK):
+        pass
+    else:
+        subprocess.run([str(path), "status"])  # reported: Path guard else branch
+
+def case_path_elif_branch(flag):
+    git = shutil.which("git")
+    path = pathlib.Path(git).resolve()
+    if path.is_file() and os.access(path, os.X_OK):
+        pass
+    elif flag:
+        subprocess.run([str(path), "status"])  # reported: Path guard elif branch
 """
 
-EXPECTED_HITS = (9, 15, 22, 27, 30, 37, 72, 77)
+EXPECTED_HITS = (9, 15, 22, 27, 30, 37, 72, 77, 84, 91, 99, 107)
 
 
 class ScanError(Exception):
