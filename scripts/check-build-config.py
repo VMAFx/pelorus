@@ -144,8 +144,6 @@ ACTIONLINT_RENOVATE_TEMPLATES = {
     "depNameTemplate": ACTIONLINT_MODULE,
     "datasourceTemplate": "go",
 }
-# The Go toolchain is pinned in build-config.env and loaded into GITHUB_ENV in CI.
-LOAD_GO_ENV = 'grep -E \'^GO_VERSION=\' build-config.env >> "$GITHUB_ENV"'
 ACTIONLINT_GO_STEP = "- name: Set up Go for actionlint"
 # #228: the hosted lavapipe lane (software Vulkan). It is functional evidence
 # only. The Praetor hosted-gate draft step comes first (HISS-18), every later
@@ -2842,7 +2840,9 @@ def validate_windows_msvc_job(relative: str, block: str | None) -> list[str]:
     if autocrlf < 0 or autocrlf > checkout:
         errors.append(f"{prefix} must disable core.autocrlf before checkout")
     for action in USES_LINE.findall(block):
-        if not re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", action):
+        if not action.startswith("./") and not re.fullmatch(
+            r"[\w./-]+@[0-9a-f]{40}", action
+        ):
             errors.append(f"{prefix} must pin {action} by full commit digest")
     for token in WINDOWS_MSVC_BLOCK_TOKENS:
         if token not in block:
@@ -2880,7 +2880,9 @@ def validate_lavapipe_job(relative: str, block: str | None) -> list[str]:
             f"{prefix} must set timeout-minutes of at most {LAVAPIPE_MAX_TIMEOUT_MINUTES}"
         )
     for action in USES_LINE.findall(block):
-        if not re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", action):
+        if not action.startswith("./") and not re.fullmatch(
+            r"[\w./-]+@[0-9a-f]{40}", action
+        ):
             errors.append(f"{prefix} must pin {action} by full commit digest")
     install_start = block.find("sudo apt-get install")
     install_end = block.find("\n      - name:", install_start)
@@ -3176,29 +3178,256 @@ def _validate_release_build(relative: str, text: str, jobs: dict[str, str]) -> l
 # The load step selects its keys with one grep; a shell loop over the file
 # has no scalar bound (HISS-02).
 LOAD_STEP_LOOP = re.compile(r"^\s*(?:while|until|for)\s", re.MULTILINE)
-NEXT_STEP = re.compile(r"^\s*- (?:name|uses):", re.MULTILINE)
 LOAD_STEP_APPEND = re.compile(r'>>\s*"?\$GITHUB_ENV"?')
 LOAD_STEP_GREP = re.compile(r"\bgrep\b")
 
 
 def _step_text(block: str, start: int) -> str:
-    """The text of the step whose name starts at `start`, up to the next step."""
-    following = NEXT_STEP.search(block, start + 1)
+    """The text of the step holding offset `start`, up to the next step.
+
+    The next step is the next list item at this step's dash indent, whatever
+    its first key (`- id:`, `- run:`, `- name:`, `- uses:`).
+    """
+    line_start = block.rfind("\n", 0, start) + 1
+    line = block[line_start:start]
+    indent = len(line) - len(line.lstrip(" "))
+    if not line.lstrip(" ").startswith("- "):
+        indent -= 2
+    following = re.compile(rf"^ {{{indent}}}- ", re.MULTILINE).search(block, start)
     return block[start : following.start() if following else len(block)]
 
 
-LOAD_STEP_TOKENS = (
+LOAD_CONFIG_ACTION = (
+    ROOT / ".github" / "actions" / "load-build-config" / "action.yml"
+)
+LOAD_CONFIG_ACTION_USES = "uses: ./.github/actions/load-build-config"
+LOAD_ACTION_TOKENS = (
     "name: Load build configuration",
+    "using: composite",
+    "shell: bash",
     "build-config.env",
     "FFMPEG_REMOTE",
     "FFMPEG_TAG",
     "FFMPEG_COMMIT",
+    "GO_VERSION",
     "GITHUB_ENV",
+)
+FORBIDDEN_LOAD_CONFIG_TRIGGERS = ("pull_request_target", "workflow_run")
+INLINE_BUILD_CONFIG_APPEND = re.compile(
+    r'build-config\.env[^\n]*>>\s*"?\$\{?GITHUB_ENV\}?"?'
 )
 
 
+def _action_run_lines(text: str) -> list[str]:
+    """Lines of all run: blocks in the action, preserving indentation and comments."""
+    lines = text.splitlines()
+    run_lines: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        match = re.match(r"^(\s*)run:\s*(.*)$", line)
+        if match:
+            indent = len(match.group(1))
+            first = match.group(2).strip()
+            if first and not first.startswith(("|", ">")):
+                run_lines.append(first)
+            i += 1
+            while i < len(lines):
+                sub = lines[i]
+                if sub.strip() and (len(sub) - len(sub.lstrip(" "))) <= indent:
+                    break
+                if sub.strip():
+                    run_lines.append(sub.strip())
+                i += 1
+            continue
+        i += 1
+    return run_lines
+
+
+def validate_load_config_action_text(relative: str, text: str) -> list[str]:
+    """Validate the composite action that loads build-config.env into GITHUB_ENV."""
+    errors = [
+        f"{relative}: build-config action is missing {token}"
+        for token in LOAD_ACTION_TOKENS
+        if token not in text
+    ]
+    if not LOAD_STEP_APPEND.search(text):
+        errors.append(f'{relative}: build-config action is missing >> "$GITHUB_ENV"')
+    if not LOAD_STEP_GREP.search(text):
+        errors.append(f"{relative}: build-config action is missing grep")
+    if LOAD_STEP_LOOP.search(text):
+        errors.append(
+            f"{relative}: build-config action must not loop; "
+            "select the keys with one grep"
+        )
+    run_lines = _action_run_lines(text)
+    export_lines = [
+        line
+        for line in run_lines
+        if LOAD_STEP_GREP.search(line) and LOAD_STEP_APPEND.search(line)
+    ]
+    if any(
+        line.startswith(("#", '"', "'")) or re.match(r"^\s*(?:echo|printf)\b", line)
+        for line in export_lines
+    ):
+        errors.append(
+            f"{relative}: build-config action must execute the export; "
+            "export inside echo, printf, quotes or comment is refused"
+        )
+    executing = [
+        line
+        for line in run_lines
+        if re.match(r"^\s*grep\b", line)
+        and LOAD_STEP_APPEND.search(line)
+        and "build-config.env" in line
+        and all(
+            k in line
+            for k in ("FFMPEG_REMOTE", "FFMPEG_TAG", "FFMPEG_COMMIT", "GO_VERSION")
+        )
+        and not LOAD_STEP_LOOP.search(line)
+    ]
+    if not executing:
+        errors.append(
+            f"{relative}: build-config action must execute the export in run: body"
+        )
+    return errors
+
+
+def workflow_on_section(text: str) -> str:
+    """Return the uncommented lines of the top-level `on:` section."""
+    match = re.search(
+        r"^(?:on|'on'|\"on\")[ \t]*:[ ]*(?P<rest>[^\n]*\n(?:(?:[ ]+[^\n]*|[ ]*)\n)*)",
+        text,
+        re.MULTILINE,
+    )
+    if match is None:
+        return ""
+    return "\n".join(
+        line.split("#", 1)[0]
+        for line in match.group("rest").splitlines()
+        if not line.lstrip().startswith("#")
+    )
+
+
+def _validate_load_config_triggers(relative: str, text: str) -> list[str]:
+    """Refuse pull_request_target and workflow_run in workflows using load-build-config."""
+    if ".github/actions/load-build-config" not in text and not re.search(
+        r"uses:\s*\./\.github/workflows/", text
+    ):
+        return []
+    on_section = workflow_on_section(text)
+    return [
+        f"{relative}: workflow using {LOAD_CONFIG_ACTION_USES} or a local reusable workflow must not trigger on {trigger}"
+        for trigger in FORBIDDEN_LOAD_CONFIG_TRIGGERS
+        if re.search(rf"\b{re.escape(trigger)}\b", on_section)
+    ]
+
+
+def _validate_no_inline_build_config(relative: str, text: str) -> list[str]:
+    """Reject inline build-config.env >> GITHUB_ENV and unsafe triggers on action callers."""
+    errors: list[str] = []
+    for name, block in workflow_job_blocks(text).items():
+        executed = job_executed_run_commands(block)
+        if "build-config.env" in executed and LOAD_STEP_APPEND.search(executed):
+            errors.append(
+                f'{relative}: job {name} must not inline build-config.env >> "$GITHUB_ENV"; '
+                f"use {LOAD_CONFIG_ACTION_USES}"
+            )
+    if not errors and INLINE_BUILD_CONFIG_APPEND.search(text):
+        errors.append(
+            f'{relative}: must not inline build-config.env >> "$GITHUB_ENV"; '
+            f"use {LOAD_CONFIG_ACTION_USES}"
+        )
+    errors.extend(_validate_load_config_triggers(relative, text))
+    return errors
+
+
+def _step_uses(step: str) -> str | None:
+    """Return the step's own uses: target, or None if not a uses step."""
+    lines = step.splitlines()
+    step_indent: int | None = None
+    for line in lines[1:]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if step_indent is None:
+            step_indent = indent
+        if indent == step_indent:
+            if stripped.startswith("uses:"):
+                target = stripped[len("uses:") :].strip()
+                return target.split("#", 1)[0].strip()
+            if stripped.startswith("run:"):
+                return None
+    return None
+
+
+TESTER_PUBLISH_ACTIONS_DIR = ".actions"
+ACTIONS_CHECKOUT_SPARSE = re.compile(
+    r"^[ ]+sparse-checkout:[ ]*\.github/actions[ ]*(?:#.*)?$", re.MULTILINE
+)
+ACTIONS_CHECKOUT_REF = re.compile(
+    r"^[ ]+ref:[ ]*\$\{\{ github\.sha \}\}[ ]*(?:#.*)?$", re.MULTILINE
+)
+ACTIONS_CHECKOUT_PERSIST = re.compile(
+    r"^[ ]+persist-credentials:[ ]*false[ ]*(?:#.*)?$", re.MULTILINE
+)
+ACTIONS_CHECKOUT_WITH = re.compile(
+    r"^([ ]+)with:[ ]*(?:#.*)?$", re.MULTILINE
+)
+
+
+def _extract_actions_checkout(block: str) -> tuple[str, list[str], int] | None:
+    """Find the sparse actions checkout step in publish job, returning (path, errors, start)."""
+    matches = list(
+        re.finditer(
+            r"uses: actions/checkout@[^\n]*\n(?P<with>(?:[ ]+(?!- )\S[^\n]*\n)*)", block
+        )
+    )
+    for match in matches:
+        step_tail = match.group("with")
+        with_match = ACTIONS_CHECKOUT_WITH.search(step_tail)
+        if with_match:
+            with_indent = len(with_match.group(1))
+            remainder = step_tail[with_match.end() :].lstrip("\r\n")
+            lines: list[str] = []
+            for line in remainder.splitlines(keepends=True):
+                indent = len(line) - len(line.lstrip(" "))
+                if indent <= with_indent:
+                    break
+                lines.append(line)
+            with_block = "".join(lines)
+        else:
+            with_block = ""
+        if ACTIONS_CHECKOUT_SPARSE.search(with_block):
+            errs: list[str] = []
+            if not ACTIONS_CHECKOUT_REF.search(with_block):
+                errs.append("actions checkout must set ref: ${{ github.sha }}")
+            if not ACTIONS_CHECKOUT_PERSIST.search(with_block):
+                errs.append("actions checkout must set persist-credentials: false")
+            path_match = re.search(r"^\s+path:\s*([^\s#]+)", with_block, re.MULTILINE)
+            if not path_match:
+                errs.append("actions checkout must set path")
+                path = TESTER_PUBLISH_ACTIONS_DIR
+            else:
+                path = path_match.group(1).strip()
+            if path != TESTER_PUBLISH_ACTIONS_DIR:
+                errs.append(f"actions checkout must set path: {TESTER_PUBLISH_ACTIONS_DIR}")
+            return path, errs, match.start()
+    return None
+
+
+def _target_checkout_offsets(block: str, actions_start: int) -> list[int]:
+    """Find every uses: actions/checkout@ offset in block other than actions_start."""
+    return [
+        match.start()
+        for match in re.finditer(r"uses: actions/checkout@", block)
+        if match.start() != actions_start
+    ]
+
+
 def _validate_load_step(relative: str, name: str, block: str) -> list[str]:
-    """A job loads build-config.env after checkout, with one bounded grep."""
+    """A job loads build-config.env after checkout via the local composite action."""
     errors: list[str] = []
     checkout = block.find("uses: actions/checkout@")
     load = block.find("name: Load build configuration")
@@ -3206,19 +3435,46 @@ def _validate_load_step(relative: str, name: str, block: str) -> list[str]:
         errors.append(f"{relative}: job {name} must load build-config.env after checkout")
     if load < 0:
         return errors
-    # Tokens elsewhere in the job prove nothing; only the load step counts.
     step = _step_text(block, load)
-    for token in LOAD_STEP_TOKENS:
-        if token not in step:
-            errors.append(f"{relative}: job {name} build-config step is missing {token}")
-    if not LOAD_STEP_APPEND.search(step):
-        errors.append(f'{relative}: job {name} build-config step is missing >> "$GITHUB_ENV"')
-    if not LOAD_STEP_GREP.search(step):
-        errors.append(f"{relative}: job {name} build-config step is missing grep")
-    if LOAD_STEP_LOOP.search(step):
+    if "build-config.env" in step or LOAD_STEP_APPEND.search(step):
         errors.append(
-            f"{relative}: job {name} build-config step must not loop; "
-            "select the keys with one grep"
+            f'{relative}: job {name} must not inline build-config.env >> "$GITHUB_ENV"; '
+            f"use {LOAD_CONFIG_ACTION_USES}"
+        )
+
+    is_tester_publish_publish = (
+        Path(relative).name == "tester-publish.yml" and name == "publish"
+    )
+    if is_tester_publish_publish:
+        actions_checkout = _extract_actions_checkout(block)
+        if not actions_checkout:
+            errors.append(
+                f"{relative}: job {name} must check out workflow actions (.github/actions) "
+                "at github.sha into a separate path"
+            )
+            expected_action = f"./{TESTER_PUBLISH_ACTIONS_DIR}/.github/actions/load-build-config"
+        else:
+            actions_path, errs, actions_start = actions_checkout
+            errors.extend(f"{relative}: job {name} {err}" for err in errs)
+            if any(
+                offset > actions_start
+                for offset in _target_checkout_offsets(block, actions_start)
+            ):
+                errors.append(
+                    f"{relative}: job {name} target checkout must precede the actions checkout"
+                )
+            if actions_start > load:
+                errors.append(
+                    f"{relative}: job {name} actions checkout must precede Load build configuration"
+                )
+            expected_action = f"./{actions_path}/.github/actions/load-build-config"
+    else:
+        expected_action = "./.github/actions/load-build-config"
+
+    step_uses = _step_uses(step)
+    if step_uses != expected_action:
+        errors.append(
+            f"{relative}: job {name} build-config step is missing uses: {expected_action}"
         )
     return errors
 
@@ -3247,6 +3503,7 @@ def _validate_workflow_structure_and_jobs(
             errors.append(f"{relative}: forbidden workflow token {token}")
     if RELEASE_TAG.search(text):
         errors.append(f"{relative}: contains a copied FFmpeg release tag")
+    errors.extend(_validate_no_inline_build_config(relative, text))
 
     is_ci = Path(relative).name == "ci.yml"
     is_release = Path(relative).name == "release.yml"
@@ -3329,11 +3586,16 @@ def _validate_ci_docs_job(relative: str, docs: str) -> list[str]:
     errors: list[str] = []
     for token in (
         ACTIONLINT_GO_STEP,
-        LOAD_GO_ENV,
         "go-version: ${{ env.GO_VERSION }}",
     ):
         if token not in docs:
             errors.append(f"{relative}: docs job is missing {token}")
+    load_pos, _ = _first_step_using(docs, lambda t: t == LOAD_CONFIG_ACTION_TARGET)
+    setup_pos, _ = _first_step_using(docs, lambda t: t.startswith("actions/setup-go@"))
+    if load_pos < 0 or (setup_pos >= 0 and load_pos > setup_pos):
+        errors.append(
+            f"{relative}: docs job must run {LOAD_CONFIG_ACTION_USES} before setup-go"
+        )
     if docs.count("actions/setup-go@") != 1 or SETUP_GO_PIN.search(docs) is None:
         errors.append(
             f"{relative}: docs job must pin actions/setup-go once by full commit "
@@ -3400,6 +3662,15 @@ def validate_workflow_text(
 def validate_workflows() -> list[str]:
     """Validate all hosted workflow consumers of the build contract."""
     errors: list[str] = []
+    action_rel = LOAD_CONFIG_ACTION.relative_to(ROOT).as_posix()
+    if not LOAD_CONFIG_ACTION.is_file():
+        errors.append(f"{action_rel}: missing")
+    else:
+        errors.extend(
+            validate_load_config_action_text(
+                action_rel, LOAD_CONFIG_ACTION.read_text(encoding="utf-8")
+            )
+        )
     for path in WORKFLOWS:
         relative = path.relative_to(ROOT).as_posix()
         if not path.is_file():
@@ -3408,7 +3679,94 @@ def validate_workflows() -> list[str]:
         errors.extend(
             validate_workflow_text(relative, path.read_text(encoding="utf-8"))
         )
+    for path in sorted((ROOT / ".github" / "workflows").glob("*.y*ml")):
+        if path in WORKFLOWS:
+            continue
+        relative = path.relative_to(ROOT).as_posix()
+        errors.extend(
+            _validate_no_inline_build_config(relative, path.read_text(encoding="utf-8"))
+        )
     return errors
+
+
+LOAD_CONFIG_ACTION_TARGET = "./.github/actions/load-build-config"
+
+
+def _step_key(step: str, key: str) -> str | None:
+    """Value of the step's own top-level key (e.g. if:), or None when absent.
+
+    Keys nested under with: or env: sit deeper than the step's own keys and
+    do not count; a trailing " #" comment is dropped.
+    """
+    lines = step.splitlines()
+    if not lines:
+        return None
+    prefix = f"{key}:"
+    head = lines[0].strip()
+    if head.startswith(f"- {prefix}"):
+        return head[len(prefix) + 2 :].split(" #", 1)[0].strip()
+    step_indent: int | None = None
+    for line in lines[1:]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if step_indent is None:
+            step_indent = indent
+        if indent == step_indent and stripped.startswith(prefix):
+            return stripped[len(prefix) :].split(" #", 1)[0].strip()
+    return None
+
+
+JOB_STEPS_LINE = re.compile(r"^    steps:", re.MULTILINE)
+JOB_STEP_START = re.compile(r"^      - ", re.MULTILINE)
+
+
+def _first_step_using(
+    job_text: str, accept: Callable[[str], bool]
+) -> tuple[int, str]:
+    """Offset and text of the first step whose own uses: target passes accept.
+
+    Returns (-1, "") when no step matches.
+
+    Only the step's uses: key counts; the same text inside a run: command or
+    a comment does not.
+    """
+    steps_match = JOB_STEPS_LINE.search(job_text)
+    if not steps_match:
+        return -1, ""
+    matches = list(JOB_STEP_START.finditer(job_text, steps_match.end()))
+    for i, match in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(job_text)
+        step = job_text[match.start() : end]
+        head = step.splitlines()[0].strip() if step else ""
+        if head.startswith("- uses:"):
+            target: str | None = head[len("- uses:") :].split("#", 1)[0].strip()
+        else:
+            target = _step_uses(step)
+        if target is not None and accept(target.strip("'\"")):
+            return match.start(), step
+    return -1, ""
+
+
+def _load_step_condition_errors(
+    relative: str, job_name: str, load_step: str, setup_step: str
+) -> list[str]:
+    """A load step that can be skipped while setup-go runs leaves GO_VERSION unset.
+
+    setup-go then falls back to the runner's preinstalled Go. The load step may
+    carry no if: or the same if: text as the setup-go step; a block-scalar
+    condition cannot be compared and is refused.
+    """
+    load_if = _step_key(load_step, "if") if load_step else None
+    if load_if is None:
+        return []
+    if load_if[:1] in ("|", ">") or load_if != _step_key(setup_step, "if"):
+        return [
+            f"{relative}: job {job_name!r} load step condition {load_if!r} can skip "
+            "it while setup-go runs; drop it or use the setup-go step's condition"
+        ]
+    return []
 
 
 def validate_workflow_go_pins(relative: str, text: str) -> list[str]:
@@ -3424,19 +3782,25 @@ def validate_workflow_go_pins(relative: str, text: str) -> list[str]:
             )
     jobs = workflow_job_blocks(text)
     for job_name, job_text in jobs.items():
-        if "actions/setup-go@" in job_text:
-            load_pos = job_text.find(LOAD_GO_ENV)
-            if load_pos == -1:
+        setup_pos, setup_step = _first_step_using(
+            job_text, lambda target: target.startswith("actions/setup-go@")
+        )
+        if setup_pos >= 0:
+            load_pos, load_step = _first_step_using(
+                job_text, lambda target: target == LOAD_CONFIG_ACTION_TARGET
+            )
+            errors.extend(
+                _load_step_condition_errors(relative, job_name, load_step, setup_step)
+            )
+            if load_pos < 0 or load_pos > setup_pos:
                 errors.append(
-                    f"{relative}: job {job_name!r} using setup-go must load "
-                    f"GO_VERSION with {LOAD_GO_ENV!r}"
+                    f"{relative}: job {job_name!r} using setup-go must run "
+                    f"{LOAD_CONFIG_ACTION_USES!r} before setup-go"
                 )
-            for match in re.finditer(r"actions/setup-go@", job_text):
-                if load_pos != -1 and match.start() < load_pos:
-                    errors.append(
-                        f"{relative}: job {job_name!r} must load GO_VERSION before setup-go"
-                    )
-                    break
+            if load_pos > setup_pos:
+                errors.append(
+                    f"{relative}: job {job_name!r} must load GO_VERSION before setup-go"
+                )
             if "go-version: ${{ env.GO_VERSION }}" not in job_text:
                 errors.append(
                     f"{relative}: job {job_name!r} setup-go step must use "
@@ -4255,6 +4619,10 @@ def validate_tester_publish_text(relative: str, text: str) -> list[str]:
         if token in text:
             errors.append(f"{relative}: forbidden workflow token {token}")
     errors.extend(_tester_pins(relative, text))
+    errors.extend(_validate_no_inline_build_config(relative, text))
+    for job_name in ("build", "build-arm64", "publish"):
+        if job_name in jobs:
+            errors.extend(_validate_load_step(relative, job_name, jobs[job_name]))
     # check-candidate-legs.py matches a master dispatch by this run name (ADR-0199).
     if "run-name: tester-publish ${{ github.event_name }} ${{ inputs.ref || github.sha }}\n" not in text:
         errors.append(f"{relative}: run-name must be tester-publish <event> <inputs.ref or github.sha>")
@@ -4599,6 +4967,14 @@ def _tester_job_cases(text: str) -> dict[str, tuple[str, str]]:
             text.replace("permissions:\n  contents: read\n", "permissions:\n  contents: write\n", 1),
             "top-level permissions must be contents: read only",
         ),
+        "inline build-config load": (
+            text.replace(
+                LOAD_CONFIG_ACTION_USES,
+                'run: grep -E "^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=" build-config.env >> "$GITHUB_ENV"',
+                1,
+            ),
+            'must not inline build-config.env >> "$GITHUB_ENV"',
+        ),
     }
 
 
@@ -4851,6 +5227,148 @@ def _tester_arm64_cases(text: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def _tester_publish_load_cases(text: str) -> dict[str, tuple[str, str]]:
+    """Prove tester-publish publish job requires actions checkout and separate action path."""
+    action = f"uses: ./{TESTER_PUBLISH_ACTIONS_DIR}/.github/actions/load-build-config"
+    checkout_pat = re.compile(
+        r"[ ]+- (?:name: [^\n]*\n[ ]+)?uses: actions/checkout@[^\n]*\n(?:[ ]+(?!- )\S[^\n]*\n)*?[ ]+path: \.actions\n"
+    )
+    step_match = checkout_pat.search(text)
+    step = step_match.group(0) if step_match else ""
+    load_step = (
+        "      - name: Load build configuration\n"
+        "        uses: ./.actions/.github/actions/load-build-config\n"
+    )
+    return {
+        "publish loads un-namespaced load-build-config": (
+            text.replace(action, "uses: ./.github/actions/load-build-config", 1),
+            f"job publish build-config step is missing uses: ./{TESTER_PUBLISH_ACTIONS_DIR}/.github/actions/load-build-config",
+        ),
+        "publish job without actions checkout": (
+            checkout_pat.sub("", text, count=1),
+            "job publish must check out workflow actions",
+        ),
+        "publish actions checkout after load step": (
+            text.replace(step, "", 1).replace(load_step, load_step + step, 1),
+            "actions checkout must precede Load build configuration",
+        ),
+        "publish actions checkout wrong ref": (
+            text.replace(
+                step,
+                step.replace("ref: ${{ github.sha }}", "ref: ${{ needs.validate.outputs.sha }}", 1),
+                1,
+            ),
+            "actions checkout must set ref: ${{ github.sha }}",
+        ),
+        "publish actions checkout persists credentials": (
+            text.replace(
+                step,
+                step.replace("persist-credentials: false", "persist-credentials: true", 1),
+                1,
+            ),
+            "actions checkout must set persist-credentials: false",
+        ),
+        "publish actions checkout wrong path": (
+            text.replace(step, step.replace("path: .actions", "path: .", 1), 1),
+            "actions checkout must set path: .actions",
+        ),
+    }
+
+
+def _move_block_after(text: str, moved: str, anchor: str) -> str:
+    """Remove `moved` and reinsert it after `anchor`; no-op when either is missing."""
+    if not moved or not anchor or moved not in text or anchor not in text:
+        return text
+    return text.replace(moved, "", 1).replace(anchor, anchor + moved, 1)
+
+
+def _tester_publish_checkout_order_cases(text: str) -> dict[str, tuple[str, str]]:
+    """Target checkout after the actions checkout, adjacent or not, must fail."""
+    checkout_pat = re.compile(
+        r"[ ]+- (?:name: [^\n]*\n[ ]+)?uses: actions/checkout@[^\n]*\n(?:[ ]+(?!- )\S[^\n]*\n)*?[ ]+path: \.actions\n"
+    )
+    target_pat = re.compile(
+        r"[ ]+- uses: actions/checkout@[^\n]*\n[ ]+with:\n[ ]+ref: \${{ needs\.validate\.outputs\.sha }}\n[ ]+persist-credentials: false\n"
+    )
+    step_match = checkout_pat.search(text)
+    target_match = target_pat.search(text)
+    step = step_match.group(0) if step_match else ""
+    target_step = target_match.group(0) if target_match else ""
+    spacer = "      # planted spacer between the two checkouts\n"
+    spaced = text.replace(target_step, target_step + spacer, 1) if target_step else text
+    return {
+        "publish target checkout after actions checkout": (
+            _move_block_after(text, target_step, step),
+            "target checkout must precede the actions checkout",
+        ),
+        "publish target checkout after non-adjacent actions checkout": (
+            _move_block_after(spaced, target_step, step),
+            "target checkout must precede the actions checkout",
+        ),
+    }
+
+
+def _tester_publish_checkout_key_cases(text: str) -> dict[str, tuple[str, str]]:
+    """Actions checkout keys inside comments must not satisfy the validator."""
+    checkout_pat = re.compile(
+        r"[ ]+- (?:name: [^\n]*\n[ ]+)?uses: actions/checkout@[^\n]*\n(?:[ ]+(?!- )\S[^\n]*\n)*?[ ]+path: \.actions\n"
+    )
+    step_match = checkout_pat.search(text)
+    step = step_match.group(0) if step_match else ""
+    return {
+        "publish actions checkout persist-credentials only in a comment": (
+            text.replace(
+                step,
+                step.replace(
+                    "          persist-credentials: false\n",
+                    "          # persist-credentials: false\n          persist-credentials: true\n",
+                    1,
+                ),
+                1,
+            ),
+            "actions checkout must set persist-credentials: false",
+        ),
+        "publish actions checkout ref only in a comment": (
+            text.replace(
+                step,
+                step.replace(
+                    "          ref: ${{ github.sha }}\n",
+                    "          # ref: ${{ github.sha }}\n          ref: main\n",
+                    1,
+                ),
+                1,
+            ),
+            "actions checkout must set ref: ${{ github.sha }}",
+        ),
+        "publish actions checkout ref only under env": (
+            text.replace(
+                step,
+                step.replace(
+                    "          ref: ${{ github.sha }}\n",
+                    "          ref: main\n",
+                    1,
+                )
+                + "        env:\n          ref: ${{ github.sha }}\n",
+                1,
+            ),
+            "actions checkout must set ref: ${{ github.sha }}",
+        ),
+        "publish actions checkout persist-credentials only under env": (
+            text.replace(
+                step,
+                step.replace(
+                    "          persist-credentials: false\n",
+                    "          persist-credentials: true\n",
+                    1,
+                )
+                + "        env:\n          persist-credentials: false\n",
+                1,
+            ),
+            "actions checkout must set persist-credentials: false",
+        ),
+    }
+
+
 def _tester_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
     return {
         **_tester_trigger_job_cases(text),
@@ -4859,6 +5377,9 @@ def _tester_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
         **_tester_nightly_cases(text),
         **_tester_gate_cases(text),
         **_tester_publish_cases(text),
+        **_tester_publish_load_cases(text),
+        **_tester_publish_checkout_order_cases(text),
+        **_tester_publish_checkout_key_cases(text),
         **_tester_kit_cases(text),
         **_tester_build_kit_cases(text),
         **_tester_arm64_cases(text),
@@ -5181,6 +5702,20 @@ def _rc_release_cases(release: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def _release_reusable_trigger_cases(release: str) -> dict[str, tuple[str, str]]:
+    """Plant an untrusted trigger on the release workflow that calls local reusable workflows."""
+    return {
+        "release caller on workflow_run": (
+            release.replace(
+                "  workflow_dispatch:\n",
+                "  workflow_dispatch:\n  workflow_run:\n    workflows: [CI]\n",
+                1,
+            ),
+            "must not trigger on workflow_run",
+        ),
+    }
+
+
 def rc_release_regressions() -> list[str]:
     """Prove the ADR-0176 rc rules of release.yml and release-build.yml are pinned."""
     failures: list[str] = []
@@ -5190,7 +5725,7 @@ def rc_release_regressions() -> list[str]:
     build_rel = build_path.relative_to(ROOT).as_posix()
     release_rel = release_path.relative_to(ROOT).as_posix()
     build_cases = _rc_build_cases(build)
-    release_cases = _rc_release_cases(release)
+    release_cases = _rc_release_cases(release) | _release_reusable_trigger_cases(release)
     for name, (mutated, expected) in build_cases.items():
         failures.extend(
             _all_rejected(name, mutated, build, lambda t: validate_workflow_text(build_rel, t), expected)
@@ -5355,39 +5890,119 @@ def series_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
 
 
 def _load_step_cases(source: str) -> dict[str, tuple[str, str]]:
-    """The build-config load step is one grep appended to GITHUB_ENV, no loop.
+    """Every workflow job loads build-config.env via the composite action, never inline."""
+    inline = (
+        "run: |\n"
+        "          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' "
+        'build-config.env >> "$GITHUB_ENV"'
+    )
+    return {
+        "inline build-config load in workflow": (
+            source.replace(LOAD_CONFIG_ACTION_USES, inline, 1),
+            'must not inline build-config.env >> "$GITHUB_ENV"',
+        ),
+        "build-config step without local action": (
+            source.replace(LOAD_CONFIG_ACTION_USES, "run: echo ok", 1),
+            f"build-config step is missing {LOAD_CONFIG_ACTION_USES}",
+        ),
+        "missing build-config load step": (
+            source.replace("name: Load build configuration", "name: Other step", 1),
+            "must load build-config.env after checkout",
+        ),
+        "load-build-config on pull_request_target": (
+            source.replace("on:\n", "on:\n  pull_request_target:\n", 1),
+            "must not trigger on pull_request_target",
+        ),
+        "load-build-config on workflow_run": (
+            source.replace("on:\n", "on:\n  workflow_run:\n", 1),
+            "must not trigger on workflow_run",
+        ),
+        "load-build-config on spaces before colon with workflow_run": (
+            source.replace("on:\n", "on :\n  workflow_run:\n", 1),
+            "must not trigger on workflow_run",
+        ),
+        "echo-in-run build-config action": (
+            source.replace(
+                LOAD_CONFIG_ACTION_USES,
+                f"run: echo '{LOAD_CONFIG_ACTION_USES}'",
+                1,
+            ),
+            f"build-config step is missing {LOAD_CONFIG_ACTION_USES}",
+        ),
+    }
 
-    The keys and the append must sit in the load step itself; the same words
-    in another step of the job do not count.
-    """
-    grep = "grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env"
+
+def _load_action_copy_cases(
+    source: str, step_with_append: str
+) -> dict[str, tuple[str, str]]:
+    """Inert or wrapped copies of the export; each trips one action rule."""
+    return {
+        "echoed copy beside the export in build-config action": (
+            source.replace(
+                step_with_append,
+                f'{step_with_append}\n        echo "{step_with_append}"',
+                1,
+            ),
+            "export inside echo, printf, quotes or comment is refused",
+        ),
+        "commented copy beside the export in build-config action": (
+            source.replace(
+                step_with_append, f"{step_with_append}\n        # {step_with_append}", 1
+            ),
+            "export inside echo, printf, quotes or comment is refused",
+        ),
+        "export behind another command in build-config action": (
+            source.replace(step_with_append, f"true && {step_with_append}", 1),
+            "build-config action must execute the export in run: body",
+        ),
+    }
+
+
+def _load_action_cases(source: str) -> dict[str, tuple[str, str]]:
+    """The composite action selects keys with one grep appended to GITHUB_ENV, no loop."""
+    grep = (
+        "grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT|GO_VERSION)=' "
+        "build-config.env"
+    )
     loop = (
         "while IFS= read -r entry; do printf '%s\\n' \"$entry\"; done"
-        " < build-config.env | grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)='"
+        " < build-config.env"
+        " | grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT|GO_VERSION)='"
     )
     step_with_append = f'{grep} >> "$GITHUB_ENV"'
-    tokens_elsewhere = (
-        "grep -E '^(OTHER)=' other.env >> \"$GITHUB_ENV\"\n"
-        "      - name: Leaked tokens\n"
-        "        run: echo build-config.env FFMPEG_REMOTE FFMPEG_TAG FFMPEG_COMMIT GITHUB_ENV"
+    echo_load = (
+        "echo build-config.env FFMPEG_REMOTE FFMPEG_TAG FFMPEG_COMMIT "
+        "GO_VERSION GITHUB_ENV"
     )
-    echo_load = "echo build-config.env FFMPEG_REMOTE FFMPEG_TAG FFMPEG_COMMIT GITHUB_ENV"
     return {
-        "looping build-config load": (
+        **_load_action_copy_cases(source, step_with_append),
+        "looping build-config action": (
             source.replace(grep, loop, 1),
-            "build-config step must not loop",
+            "build-config action must not loop",
         ),
-        "build-config tokens elsewhere": (
-            source.replace(step_with_append, tokens_elsewhere, 1),
-            "build-config step is missing build-config.env",
+        "build-config action missing key": (
+            source.replace("FFMPEG_COMMIT", "OTHER_KEY", 1),
+            "build-config action is missing FFMPEG_COMMIT",
         ),
-        "echo build-config load": (
+        "build-config action missing GO_VERSION": (
+            source.replace("GO_VERSION", "OTHER_KEY", 1),
+            "build-config action is missing GO_VERSION",
+        ),
+        "echo build-config action": (
             source.replace(step_with_append, echo_load, 1),
-            "build-config step is missing grep",
+            "build-config action is missing grep",
         ),
-        "build-config load missing append": (
+        "echo-only grep in build-config action": (
+            source.replace(step_with_append, f'echo "{step_with_append}"', 1),
+            "export inside echo, printf, quotes or comment is refused",
+        ),
+        "build-config action missing append": (
             source.replace(step_with_append, grep, 1),
-            'build-config step is missing >> "$GITHUB_ENV"',
+            'build-config action is missing >> "$GITHUB_ENV"',
+        ),
+        "build-config action without bash": (
+            source.replace("shell: bash", "shell: sh", 1),
+            "build-config action is missing shell: bash",
         ),
     }
 
@@ -5431,12 +6046,17 @@ def _ci_toolchain_cases(source: str) -> dict[str, tuple[str, str]]:
             "docs job must set exactly one go-version",
         ),
         "missing Go env load in docs job": (
-            source.replace(
-                LOAD_GO_ENV,
-                "# removed env load",
-                1,
+            replace_in_job(source, "docs", LOAD_CONFIG_ACTION_USES, "# removed action load"),
+            f"docs job must run {LOAD_CONFIG_ACTION_USES} before setup-go",
+        ),
+        "Go env load only in a comment before setup-go": (
+            replace_in_job(
+                replace_in_job(source, "docs", LOAD_CONFIG_ACTION_USES, "# removed action load"),
+                "docs",
+                "    steps:\n",
+                f"    steps:\n      # {LOAD_CONFIG_ACTION_USES}\n",
             ),
-            f"docs job is missing {LOAD_GO_ENV}",
+            f"docs job must run {LOAD_CONFIG_ACTION_USES} before setup-go",
         ),
         "versioned Go step name": (
             source.replace(
@@ -5647,6 +6267,17 @@ def workflow_validator_regressions() -> list[str]:
         )
 
     failures.extend(release_gate_regressions(source, relative))
+    action_rel = LOAD_CONFIG_ACTION.relative_to(ROOT).as_posix()
+    action_src = LOAD_CONFIG_ACTION.read_text(encoding="utf-8")
+    if validate_load_config_action_text(action_rel, action_src):
+        failures.append(f"workflow regression: current {action_rel} is rejected")
+    for name, (mutated, expected) in _load_action_cases(action_src).items():
+        if mutated == action_src:
+            failures.append(f"workflow regression: {name} mutation changed nothing")
+        elif not any(
+            expected in e for e in validate_load_config_action_text(action_rel, mutated)
+        ):
+            failures.append(f"workflow regression: {name} was accepted")
     return failures
 
 
@@ -5654,8 +6285,8 @@ def _go_pin_workflow_order_regressions(source: str, rel: str) -> list[str]:
     """Prove setup-go step placed before load step is rejected."""
     failures: list[str] = []
     load_step = (
-        '      - name: Load Go version\n'
-        '        run: grep -E \'^GO_VERSION=\' build-config.env >> "$GITHUB_ENV"\n'
+        '      - name: Load build configuration\n'
+        f'        {LOAD_CONFIG_ACTION_USES}\n'
     )
     setup_step = (
         '      - name: Set up Go\n'
@@ -5664,17 +6295,31 @@ def _go_pin_workflow_order_regressions(source: str, rel: str) -> list[str]:
         '          go-version: ${{ env.GO_VERSION }}\n'
         '          cache: false\n'
     )
-    reordered = source.replace(
-        load_step + "\n" + setup_step,
-        setup_step + "\n" + load_step,
-        1,
-    )
+    reordered = _move_block_after(source, load_step, setup_step)
     if reordered == source:
         failures.append("go-pin regression: swapping load and setup-go did not mutate standards-gate.yml")
     else:
         errs = validate_workflow_go_pins(rel, reordered)
         if not any("must load GO_VERSION before setup-go" in e for e in errs):
             failures.append("go-pin regression: setup-go step placed before load step was accepted")
+    return failures
+
+
+def _go_pin_skipped_load_regressions(source: str, rel: str) -> list[str]:
+    """Prove a load step skippable while setup-go runs is refused, a shared condition passes."""
+    failures: list[str] = []
+    load_head = "      - name: Load build configuration\n"
+    setup_head = "      - name: Set up Go\n"
+    skipped = source.replace(load_head, load_head + "        if: false\n", 1)
+    if skipped == source:
+        failures.append("go-pin regression: planting if: false on the load step did not mutate standards-gate.yml")
+    elif not any("can skip it while setup-go runs" in e for e in validate_workflow_go_pins(rel, skipped)):
+        failures.append("go-pin regression: a load step with if: false before setup-go was accepted")
+    shared = source.replace(load_head, load_head + "        if: always()\n", 1).replace(
+        setup_head, setup_head + "        if: always()\n", 1
+    )
+    if validate_workflow_go_pins(rel, shared):
+        failures.append("go-pin regression: load and setup-go steps with the same condition were rejected")
     return failures
 
 
@@ -5773,6 +6418,120 @@ def _go_pin_script_literal_regressions() -> list[str]:
     return failures
 
 
+def _go_pin_action_regressions(rel: str, source: str) -> list[str]:
+    """Prove setup-go needs a real load-build-config uses: step before it."""
+    failures: list[str] = []
+    missing_action = source.replace(LOAD_CONFIG_ACTION_USES, "run: echo no-action", 1)
+    if missing_action == source:
+        failures.append(
+            "go-pin regression: removing load-build-config action did not mutate standards-gate.yml"
+        )
+    elif not any(
+        f"must run {LOAD_CONFIG_ACTION_USES!r} before setup-go" in e
+        for e in validate_workflow_go_pins(rel, missing_action)
+    ):
+        failures.append(
+            "go-pin regression: setup-go without load-build-config action was accepted"
+        )
+
+    echoed_action = source.replace(
+        LOAD_CONFIG_ACTION_USES, f"run: echo '{LOAD_CONFIG_ACTION_USES}'", 1
+    )
+    if echoed_action == source:
+        failures.append(
+            "go-pin regression: echoing the load-build-config action did not mutate "
+            "standards-gate.yml"
+        )
+    elif not any(
+        f"must run {LOAD_CONFIG_ACTION_USES!r} before setup-go" in e
+        for e in validate_workflow_go_pins(rel, echoed_action)
+    ):
+        failures.append(
+            "go-pin regression: a run step that only echoes the load-build-config "
+            "uses: line was accepted"
+        )
+
+    failures.extend(_go_pin_step_boundary_regressions(rel, source))
+    return failures
+
+
+def _step_text_boundary_regressions() -> list[str]:
+    """Prove _step_text ends a step at the next item, whatever its first key."""
+    failures: list[str] = []
+    load = (
+        "      - name: Load build configuration\n"
+        f"        {LOAD_CONFIG_ACTION_USES}\n"
+    )
+    for head in ("- id: next", "- run: echo build-config.env"):
+        block = load + f"      {head}\n        shell: bash\n"
+        step = _step_text(block, block.find("name: Load build configuration"))
+        if head in step:
+            failures.append(f"step-text regression: {head!r} merged into the load step")
+    keyed = "      - id: load\n        name: Load build configuration\n"
+    block = keyed + "      - run: echo x\n"
+    if "run:" in _step_text(block, block.find("name: Load")):
+        failures.append("step-text regression: step after an id-first load step merged")
+    return failures
+
+
+def _go_pin_step_boundary_regressions(rel: str, source: str) -> list[str]:
+    """Prove steps whose first key is id: or run: are split correctly."""
+    failures: list[str] = _step_text_boundary_regressions()
+    orig_setup = (
+        "      - name: Set up Go\n"
+        "        uses: actions/setup-go@"
+    )
+    id_first_setup = (
+        "      - id: go\n"
+        "        uses: actions/setup-go@"
+    )
+    id_first_source = source.replace(orig_setup, id_first_setup, 1)
+    if id_first_source == source:
+        failures.append(
+            "go-pin regression: rewriting setup-go with id first did not mutate standards-gate.yml"
+        )
+    else:
+        if validate_workflow_go_pins(rel, id_first_source):
+            failures.append(
+                "go-pin regression: canonical source with id-first setup-go was rejected"
+            )
+        id_first_missing = id_first_source.replace(
+            LOAD_CONFIG_ACTION_USES, "run: echo no-action", 1
+        )
+        if id_first_missing == id_first_source:
+            failures.append(
+                "go-pin regression: removing load-build-config action from id-first source "
+                "did not mutate standards-gate.yml"
+            )
+        elif not any(
+            f"must run {LOAD_CONFIG_ACTION_USES!r} before setup-go" in e
+            for e in validate_workflow_go_pins(rel, id_first_missing)
+        ):
+            failures.append(
+                "go-pin regression: id-first setup-go without load-build-config action was accepted"
+            )
+
+    run_step = "      - run: echo x\n        if: github.event_name == 'push'\n"
+    load_step = (
+        "      - name: Load build configuration\n"
+        f"        {LOAD_CONFIG_ACTION_USES}\n"
+    )
+    run_after_load = source.replace(load_step, load_step + run_step, 1)
+    if run_after_load == source:
+        failures.append(
+            "go-pin regression: inserting run step after load did not mutate standards-gate.yml"
+        )
+    elif any(
+        "can skip it while setup-go runs" in e
+        for e in validate_workflow_go_pins(rel, run_after_load)
+    ):
+        failures.append(
+            "go-pin regression: run step condition was incorrectly attributed to load step"
+        )
+
+    return failures
+
+
 def go_pin_regressions() -> list[str]:
     """Prove literal Go version pins are rejected across workflows and build-config."""
     failures: list[str] = []
@@ -5791,6 +6550,8 @@ def go_pin_regressions() -> list[str]:
     if validate_workflow_go_pins(rel, source):
         failures.append("go-pin regression: canonical env form was rejected")
 
+    failures.extend(_go_pin_action_regressions(rel, source))
+
     config_text = CONFIG.read_text(encoding="utf-8")
     missing_go = "\n".join(
         line for line in config_text.splitlines()
@@ -5800,6 +6561,7 @@ def go_pin_regressions() -> list[str]:
         failures.append("go-pin regression: missing GO_VERSION in build-config.env was accepted")
 
     failures.extend(_go_pin_workflow_order_regressions(source, rel))
+    failures.extend(_go_pin_skipped_load_regressions(source, rel))
     failures.extend(_go_pin_workflow_yaml_regressions())
     failures.extend(_go_pin_script_literal_regressions())
     failures.extend(_go_pin_script_discovery_regressions())
@@ -6580,6 +7342,9 @@ def validate_windows_tester_workflow(relative: str, text: str) -> list[str]:
     for token in FORBIDDEN_WINDOWS_TESTER_TOKENS:
         if token in text:
             errors.append(f"{relative}: forbidden token '{token}' found")
+    errors.extend(_validate_no_inline_build_config(relative, text))
+    for name, block in workflow_job_blocks(text).items():
+        errors.extend(_validate_load_step(relative, name, block))
 
     return errors
 
