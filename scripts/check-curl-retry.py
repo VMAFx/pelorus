@@ -112,16 +112,20 @@ def extract_curl_args(line: str) -> list[str]:
     return results
 
 
+# curl writes to stdout for "-o -" (curl 8.23.0 manual, --output); /dev/null discards.
+NON_FILE_TARGETS = frozenset({"/dev/null", "-"})
+
+
 def is_download_flag(tok: str, next_tok: str | None) -> tuple[bool, int]:
     """Check if token indicates a download output, returning (is_download, tokens_consumed)."""
     if tok in ("-O", "--remote-name"):
         return True, 1
     if tok in ("-o", "--output"):
         target = next_tok.strip("'\"") if next_tok else ""
-        return target != "/dev/null", 2
+        return target not in NON_FILE_TARGETS, 2
     if tok.startswith("--output="):
         target = tok.split("=", 1)[1].strip("'\"")
-        return target != "/dev/null", 1
+        return target not in NON_FILE_TARGETS, 1
     if tok.startswith("-") and not tok.startswith("--") and len(tok) > 1:
         is_download = False
         for index, option in enumerate(tok[1:], start=1):
@@ -130,7 +134,7 @@ def is_download_flag(tok: str, next_tok: str | None) -> tuple[bool, int]:
             if option in SHORT_OPTIONS_WITH_ARGS:
                 rest = tok[index + 1 :]
                 target = (rest or next_tok or "").strip("'\"")
-                return is_download or (option == "o" and target != "/dev/null"), 1 if rest else 2
+                return is_download or (option == "o" and target not in NON_FILE_TARGETS), 1 if rest else 2
         return is_download, 1
     return False, 1
 
@@ -308,6 +312,9 @@ def run_self_test() -> int:
         ("p15", 'curl --retry 6 --retry "$N" --retry-max-time 60 -o out https://example.com/file\n', True),
         ("p16", "curl --retry 6 --retry 2 --retry-max-time 60 -o out https://example.com/file\n", True),
         ("p17", 'curl --retry "$N" --retry 6 --retry-max-time 60 -o out https://example.com/file\n', False),
+        ("p18", "curl -fsSLo - https://example.com/status | jq .\n", False),
+        ("p19", "curl -o - https://example.com/status\n", False),
+        ("p20", "curl --output=- https://example.com/status\n", False),
     ]
     failures = 0
     with tempfile.TemporaryDirectory() as tmp_dir:
