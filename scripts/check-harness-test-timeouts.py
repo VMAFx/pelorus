@@ -174,8 +174,12 @@ def _validate_script_timeout(
     is_harness: bool,
     deadline: float | None,
     required: float,
+    *,
+    timeout_non_literal: bool = False,
 ) -> str | None:
     """Return error message if timeout declaration is insufficient, else None."""
+    if timeout_non_literal:
+        return f"test '{test_name}' timeout is not an integer literal"
     if timeout is None and required <= 30:
         return None
 
@@ -206,6 +210,43 @@ def _validate_script_timeout(
     return None
 
 
+def _collect_var_script_refs(clean_content: str) -> dict[str, list[str]]:
+    """Map Meson variable names to scripts/**/*.py paths in their assignments."""
+    var_refs: dict[str, list[str]] = {}
+    assign_re = re.compile(
+        r"^[ \t]*([a-zA-Z_][a-zA-Z0-9_]*)[ \t]*\+?=(?!=)(.*)", re.MULTILINE
+    )
+    for m in assign_re.finditer(clean_content):
+        ident = m.group(1)
+        expr = m.group(2)
+        end = m.end()
+        while end < len(clean_content) and (
+            expr.count("(") > expr.count(")")
+            or expr.count("[") > expr.count("]")
+            or expr.rstrip().endswith(("/", "+", ",", "\\"))
+        ):
+            nl = clean_content.find("\n", end + 1)
+            nl = len(clean_content) if nl == -1 else nl
+            expr += clean_content[end:nl]
+            end = nl
+        refs = extract_script_refs(expr)
+        if refs:
+            prev = var_refs.get(ident, [])
+            var_refs[ident] = list(dict.fromkeys(prev + refs))
+    return var_refs
+
+
+def _parse_timeout_arg(clean_block: str) -> tuple[int | None, bool]:
+    """Return (timeout_value, is_non_literal) from a comment-stripped test() block."""
+    m_kw = re.search(r"\btimeout\s*:\s*", clean_block)
+    if not m_kw:
+        return None, False
+    m_int = re.match(r"(\d+)\s*[,)]", clean_block[m_kw.end() :])
+    if not m_int:
+        return None, True
+    return int(m_int.group(1)), False
+
+
 def check_meson_content(
     content: str, scripts_dir: pathlib.Path
 ) -> tuple[int, list[str]]:
@@ -215,6 +256,7 @@ def check_meson_content(
     """
     errors: list[str] = []
     tests_found = 0
+    var_refs = _collect_var_script_refs(re.sub(r"#.*", "", content))
 
     for test_block in parse_meson_tests(content):
         clean_block = re.sub(r"#.*", "", test_block)
@@ -223,12 +265,15 @@ def check_meson_content(
         test_name = m_name.group(1) if m_name else "<unknown>"
 
         script_refs = extract_script_refs(clean_block)
+        for ident in re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", clean_block):
+            if ident in var_refs:
+                script_refs.extend(var_refs[ident])
+        script_refs = list(dict.fromkeys(script_refs))
         if not script_refs:
             continue
 
         tests_found += 1
-        m_timeout = re.search(r"\btimeout\s*:\s*(\d+)", clean_block)
-        timeout = int(m_timeout.group(1)) if m_timeout else None
+        timeout, non_literal = _parse_timeout_arg(clean_block)
 
         for script_name in script_refs:
             script_path = scripts_dir / script_name
@@ -243,7 +288,13 @@ def check_meson_content(
             required = max(harness_req, deadline or 0.0)
 
             err = _validate_script_timeout(
-                test_name, script_name, timeout, is_harness, deadline, required
+                test_name,
+                script_name,
+                timeout,
+                is_harness,
+                deadline,
+                required,
+                timeout_non_literal=non_literal,
             )
             if err:
                 errors.append(err)
@@ -379,6 +430,41 @@ SELF_TEST_CASES = [
              suite: 'fast')
         """,
         True,
+    ),
+    (
+        "variable indirection without timeout (fails)",
+        """
+        v = meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'
+        test('x',
+             p,
+             args: [v],
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "variable indirection with timeout: 150 (valid)",
+        """
+        v = meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'
+        test('x',
+             p,
+             args: [v],
+             timeout: 150,
+             suite: 'fast')
+        """,
+        True,
+    ),
+    (
+        "timeout: 200 - 60 non-literal (fails)",
+        """
+        test('planted-harness-non-literal-timeout',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'],
+             workdir: meson.project_source_root(),
+             timeout: 200 - 60,
+             suite: 'fast')
+        """,
+        False,
     ),
 ]
 
