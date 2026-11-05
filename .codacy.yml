@@ -30,6 +30,14 @@ engines:
       # (ADR-0241); remove this entry once that check accepts a reasoned C marker.
       # exception: category D, entered 2026-11-04, expires 2027-03-04
       - "libpelorus/test/x265_csv_characterization_test.c"
+      # flawfinder_open (CWE-362) and flawfinder_memcpy (CWE-120) fire on every open() and
+      # memcpy() call. open_write_exclusive (:85) opens with O_CREAT | O_EXCL | O_NOFOLLOW,
+      # open_read_regular (:189) opens with O_RDONLY | O_NOFOLLOW and verifies S_ISREG via
+      # fstat (:196), and mode_read (:267) checks blob_len >= PELORUS_SIDEDATA_UUID_LEN +
+      # sizeof(hdr) (:260) right before memcpy. Inline markers in C are refused by
+      # scripts/check-suppression-markers.py (ADR-0241).
+      # exception: category D, entered 2026-11-05, expires 2027-03-05
+      - "tools/abi-upgrade/abi_upgrade_probe.c"
   opengrep:
     exclude_paths:
       # python urllib urlopen rule, same call and same https-only guard as the bandit entry.
@@ -39,3 +47,7 @@ engines:
       # as the flawfinder entry.
       # exception: category D, entered 2026-11-04, expires 2027-03-04
       - "libpelorus/test/x265_csv_characterization_test.c"
+      # Semgrep_c_misc_rule-fopen-open, same open() calls and O_EXCL | O_NOFOLLOW / fstat
+      # S_ISREG reasoning as the flawfinder entry.
+      # exception: category D, entered 2026-11-05, expires 2027-03-05
+      - "tools/abi-upgrade/abi_upgrade_probe.c"

@@ -52,6 +52,10 @@ jobs:
         # gcc raises -Wmaybe-uninitialized only with the optimiser on, which the
         # default debug build above does not run.
         run: CC=gcc meson setup --werror build-o2 --buildtype=debugoptimized && ninja -C build-o2
+      - name: Release gcc build (-O3, warnings are errors)
+        # -O3 inlining raises -Warray-bounds paths the -O2 build does not see,
+        # so the release build is held to the same zero-warning rule.
+        run: CC=gcc meson setup --werror build-o3 --buildtype=release && ninja -C build-o3
       - name: Test (fast suite — interop ABI + shader compile)
         run: |
           meson test -C build --suite=fast --print-errorlogs
@@ -716,5 +720,7 @@ jobs:
         run: semgrep scan --config .semgrep.yml --error --metrics=off --disable-version-check
       - name: Verify planted-defect test passes
         run: python3 -I scripts/test-semgrep-float-identity.py
+      - name: Verify shell-splice planted-defect test passes
+        run: python3 -I scripts/test-semgrep-shell-splice.py
       - name: Verify the which-executable rule on planted cases
         run: python3 -I scripts/test-semgrep-which-executable.py

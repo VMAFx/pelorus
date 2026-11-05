@@ -676,10 +676,20 @@ if get_option('tests')
       output: 'pelorus_sei_fit_' + rule + '.h',
       command: [python_prog, '-I', plant_header, '@INPUT@', '@OUTPUT@', rule],
     )
+    planted_c_args = ['-DPEL_SEI_FIT_PLANTED="pelorus_sei_fit_' + rule + '.h"']
+    if rule == 'wrap'
+      # The planted header removes the saturating add on purpose; GCC -O3 proves
+      # the wrap statically (array-bounds, stringop-overflow); the runtime check
+      # is what the twin tests.
+      planted_c_args += cc.get_supported_arguments([
+        '-Wno-array-bounds',
+        '-Wno-stringop-overflow',
+      ])
+    endif
     planted_exe = executable(
       'pelorus_sei_fit_planted_' + rule + '_test',
       files('ffmpeg-patches/test/sei_fit_test.c'), planted_h,
-      c_args: ['-DPEL_SEI_FIT_PLANTED="pelorus_sei_fit_' + rule + '.h"'],
+      c_args: planted_c_args,
       include_directories: [include_directories('.'),
                             include_directories('ffmpeg-patches/files')],
       dependencies: [libpelorus_dep, cc.find_library('m', required: false)],
