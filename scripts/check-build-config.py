@@ -3364,6 +3364,9 @@ ACTIONS_CHECKOUT_REF = re.compile(
 ACTIONS_CHECKOUT_PERSIST = re.compile(
     r"^[ ]+persist-credentials:[ ]*false[ ]*(?:#.*)?$", re.MULTILINE
 )
+ACTIONS_CHECKOUT_WITH = re.compile(
+    r"^([ ]+)with:[ ]*(?:#.*)?$", re.MULTILINE
+)
 
 
 def _extract_actions_checkout(block: str) -> tuple[str, list[str], int] | None:
@@ -3374,7 +3377,20 @@ def _extract_actions_checkout(block: str) -> tuple[str, list[str], int] | None:
         )
     )
     for match in matches:
-        with_block = match.group("with")
+        step_tail = match.group("with")
+        with_match = ACTIONS_CHECKOUT_WITH.search(step_tail)
+        if with_match:
+            with_indent = len(with_match.group(1))
+            remainder = step_tail[with_match.end() :].lstrip("\r\n")
+            lines: list[str] = []
+            for line in remainder.splitlines(keepends=True):
+                indent = len(line) - len(line.lstrip(" "))
+                if indent <= with_indent:
+                    break
+                lines.append(line)
+            with_block = "".join(lines)
+        else:
+            with_block = ""
         if ACTIONS_CHECKOUT_SPARSE.search(with_block):
             errs: list[str] = []
             if not ACTIONS_CHECKOUT_REF.search(with_block):
@@ -5310,6 +5326,32 @@ def _tester_publish_checkout_key_cases(text: str) -> dict[str, tuple[str, str]]:
                 1,
             ),
             "actions checkout must set ref: ${{ github.sha }}",
+        ),
+        "publish actions checkout ref only under env": (
+            text.replace(
+                step,
+                step.replace(
+                    "          ref: ${{ github.sha }}\n",
+                    "          ref: main\n",
+                    1,
+                )
+                + "        env:\n          ref: ${{ github.sha }}\n",
+                1,
+            ),
+            "actions checkout must set ref: ${{ github.sha }}",
+        ),
+        "publish actions checkout persist-credentials only under env": (
+            text.replace(
+                step,
+                step.replace(
+                    "          persist-credentials: false\n",
+                    "          persist-credentials: true\n",
+                    1,
+                )
+                + "        env:\n          persist-credentials: false\n",
+                1,
+            ),
+            "actions checkout must set persist-credentials: false",
         ),
     }
 
