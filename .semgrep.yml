@@ -194,6 +194,25 @@ rules:
     languages: [c, cpp]
     severity: ERROR
 
+  - id: pelorus-smoke-skip-reason-head
+    # pel_skip and pel_fail messages must not be derived from
+    # `$(head -n 1 ...)` or `$(head ... | head -n 1)`. Taking the first line of a log often captures
+    # driver initialization warnings (e.g. MESA experimental platform warnings)
+    # rather than the real error (e.g. VK_ERROR_INITIALIZATION_FAILED).
+    # Use pel_first_error instead, which searches for the first error/failed
+    # line and falls back to the first non-warning line.
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      pel_skip and pel_fail messages must not be built from head -n 1 (directly
+      or after a pipe), which takes the first line (often a driver warning) instead of the real error;
+      use pel_first_error instead.
+    paths:
+      include:
+        - /ffmpeg-patches/test/*.sh
+        - /scripts/**/*.sh
+    pattern-regex: >-
+      \bpel_(?:skip|fail)\b(?:[^\n"';\\]|\\\r?\n|"(?:[^\n"\\$]|\\.|\$(?!\()|\$\([^\n)]*\))*"|'[^'\n]*')*?(?:"(?:[^\n"\\$]|\\.|\$(?!\()|\$\([^\n)]*\))*?)?\$\([^\n)]*?\bhead\s+(?:[^\n)|]*?\s)?(?:-n\s*1|-1)\b[^\n)]*?\)
   - id: pelorus-shell-splice-into-inline-source
     # Splicing a shell expansion directly into inline interpreter source
     # code by closing and reopening the outer single quote (`'"$var"'`,
