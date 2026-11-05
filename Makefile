@@ -57,6 +57,8 @@ docs-check:
 	python3 -I scripts/check-cochange.py
 	python3 -I scripts/check-doc-recipes.py --self-test
 	python3 -I scripts/check-doc-recipes.py
+	python3 -I scripts/check-ci-test-wiring.py --self-test
+	python3 -I scripts/check-ci-test-wiring.py
 	python3 -I ffmpeg-patches/test/doc-recipes-smoke.py --self-test
 	python3 -I ffmpeg-patches/test/doc-recipes-smoke.py --check-doc
 	python3 -I scripts/check-filter-stance.py --self-test

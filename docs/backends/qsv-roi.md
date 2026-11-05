@@ -116,8 +116,11 @@ It verifies two simultaneously live frame maps, runtime 1.27 stock fallback
 versus 1.28 dense selection, final CodingOption3 replacement with
 `EnableMBQP` unset versus enabled, aligned storage padding, overlap precedence,
 malformed side data, invalid dimensions, interlaced selection, and both
-compile-time branches. It does not replace an asynchronous on-hardware encode
-test. The harness was also exercised with hostile checkout/applypatch hooks;
+compile-time branches. CI runs it in the `ffmpeg-stack` job of
+`.github/workflows/ci.yml` (step "QSV ROI regression"), and
+`scripts/check-ci-test-wiring.py` fails when a program under
+`ffmpeg-patches/test/` is run by no workflow or Meson test. It does not replace
+an asynchronous on-hardware encode test. The harness was also exercised with hostile checkout/applypatch hooks;
 the hooks did not run and the owned worktree and scratch directory were removed.
 
 See [ADR-0146](../adr/0146-qsv-roi-frame-ownership.md) and the focused
