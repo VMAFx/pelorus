@@ -18,19 +18,30 @@ Checks that `pelorus-smoke-skip-reason-head` in `.semgrep.yml`:
     and caps length at 160 characters across all three smoke scripts;
 (e) requires every helper outside FALLBACK_HELPERS to define pel_why and route
     pel_skip/pel_fail through it, catching a planted reversion in
-    ffmpeg-patches/test/vulkan-drm-map-smoke.sh.
+    ffmpeg-patches/test/vulkan-drm-map-smoke.sh;
+(f) fails discovery with the file named when a smoke script cannot be read
+    or is not UTF-8, caught on a planted non-UTF-8 script.
 """
 
 from __future__ import annotations
 
-import json
+import importlib.util
 import os
 import pathlib
 import re
-import shutil
 import subprocess  # nosec B404 - fixed argv lists, no shell, explicit deadlines
 import sys
 import tempfile
+
+# python3 -I drops the script directory from sys.path: load the sibling by path.
+_SPEC = importlib.util.spec_from_file_location(
+    "semgrep_harness", pathlib.Path(__file__).with_name("semgrep_harness.py")
+)
+semgrep_harness = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(semgrep_harness)
+ScanError = semgrep_harness.ScanError
+run_semgrep = semgrep_harness.run_semgrep
+resolve_executable = semgrep_harness.resolve_executable
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RULE_FILE = ROOT / ".semgrep.yml"
@@ -38,6 +49,7 @@ HOP_SMOKE = ROOT / "ffmpeg-patches" / "test" / "nvenc-cuda-hop-smoke.sh"
 UDU_SMOKE = ROOT / "ffmpeg-patches" / "test" / "nvenc-udu-sei-smoke.sh"
 FGS_SMOKE = ROOT / "ffmpeg-patches" / "test" / "fgs-sidedata-smoke.sh"
 DRM_MAP = ROOT / "ffmpeg-patches" / "test" / "vulkan-drm-map-smoke.sh"
+SMOKE_DIR = ROOT / "ffmpeg-patches" / "test"
 # Smoke scripts defining pel_first_error when this check was written; fewer
 # means the discovery glob broke.
 MIN_HELPER_SCRIPTS = 5
@@ -48,8 +60,6 @@ MIN_HELPER_SCRIPTS = 5
 FALLBACK_HELPERS = (HOP_SMOKE, UDU_SMOKE, FGS_SMOKE)
 FALLBACK_CASES = frozenset({"fallback.log", "long.log", "cannot-load.log"})
 RULE_ID = "pelorus-smoke-skip-reason-head"
-
-SEMGREP_TIMEOUT_S = 180
 
 PLANTED_SH = """\
 #!/bin/bash
@@ -116,60 +126,6 @@ MESA: warning: Support for this platform is experimental with Xe KMD, bug report
 Driver warning: kernel mode driver revision mismatch
 Selected Vulkan device does not support required extensions
 """
-
-
-class ScanError(Exception):
-    """A semgrep run ended with an unexpected status or unreadable output."""
-
-
-def run_semgrep(
-    semgrep_bin: str,
-    target_dir: pathlib.Path,
-    rule_path: pathlib.Path,
-    expected_rc: int,
-    env_dir: pathlib.Path,
-) -> dict:
-    """Scan target_dir with one rule file; return parsed JSON report."""
-    env = dict(os.environ)
-    env["XDG_CONFIG_HOME"] = str(env_dir)
-    env["SEMGREP_SETTINGS_FILE"] = str(env_dir / "semgrep-settings.yaml")
-    env["SEMGREP_LOG_FILE"] = str(env_dir / "semgrep.log")
-    cmd = [
-        semgrep_bin,
-        "scan",
-        "--config",
-        str(rule_path),
-        "--error",
-        "--json",
-        "--metrics=off",
-        "--disable-version-check",
-        ".",
-    ]
-    try:
-        proc = subprocess.run(  # nosec B603 - fixed list argv, no shell, explicit deadline  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - semgrep resolved to an executable file, fixed list argv, no shell, explicit deadline
-            cmd,
-            cwd=str(target_dir),
-            capture_output=True,
-            text=True,
-            env=env,
-            check=False,
-            timeout=SEMGREP_TIMEOUT_S,
-        )
-    except subprocess.TimeoutExpired as err:
-        raise ScanError(
-            f"semgrep scan in {target_dir}: no result after {SEMGREP_TIMEOUT_S} s"
-        ) from err
-    if proc.returncode != expected_rc:
-        raise ScanError(
-            f"semgrep scan in {target_dir}: expected rc={expected_rc}, "
-            f"got rc={proc.returncode}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
-        )
-    try:
-        return json.loads(proc.stdout)
-    except json.JSONDecodeError as err:
-        raise ScanError(
-            f"semgrep json output unreadable: {err}\n{proc.stdout}"
-        ) from err
 
 
 def make_tree(root: pathlib.Path, rel_path: str, source: str) -> pathlib.Path:
@@ -307,17 +263,6 @@ HELPER_CASES = (
 )
 
 
-def resolve_executable(name: str) -> str | None:
-    """PATH lookup of name, kept only when it is an executable regular file."""
-    found = shutil.which(name)
-    if not found:
-        return None
-    path = pathlib.Path(found).resolve()
-    if not path.is_file() or not os.access(path, os.X_OK):
-        return None
-    return str(path)
-
-
 def run_first_error(bash_bin: str, fn_code: str, fixture: pathlib.Path) -> str:
     """Run the extracted pel_first_error on fixture; return its stripped stdout."""
     run_cmd = f'{fn_code}\npel_first_error "$1"'
@@ -342,13 +287,36 @@ def run_first_error(bash_bin: str, fn_code: str, fixture: pathlib.Path) -> str:
     return proc.stdout.strip()
 
 
-def helper_scripts() -> list[pathlib.Path]:
-    """Every smoke script that defines its own pel_first_error helper."""
+def read_smoke(path: pathlib.Path) -> str:
+    """Read one smoke script; an unreadable or non-UTF-8 file raises ScanError naming it."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as err:
+        raise ScanError(f"cannot read smoke script {path}: {err}") from err
+
+
+def helper_scripts(test_dir: pathlib.Path = SMOKE_DIR) -> list[pathlib.Path]:
+    """Every smoke script in test_dir that defines its own pel_first_error helper."""
     return sorted(
         path
-        for path in (ROOT / "ffmpeg-patches" / "test").glob("*.sh")
-        if "pel_first_error()" in path.read_text(encoding="utf-8")
+        for path in test_dir.glob("*.sh")
+        if "pel_first_error()" in read_smoke(path)
     )
+
+
+def step_helper_read_errors(tmp: pathlib.Path) -> str | None:
+    """(f) A planted non-UTF-8 smoke script fails discovery with its path named."""
+    planted_dir = tmp / "unreadable"
+    planted_dir.mkdir()
+    planted = planted_dir / "broken-smoke.sh"
+    planted.write_bytes(b"#!/bin/bash\npel_first_error() {\n\xff\xfe\n}\n")
+    try:
+        helper_scripts(planted_dir)
+    except ScanError as err:
+        if planted.name in str(err):
+            return None
+        return f"step (f): read error does not name {planted.name}: {err}"
+    return f"step (f): non-UTF-8 {planted.name} was not reported"
 
 
 def step_helper_unit_check(tmp: pathlib.Path) -> str | None:
@@ -365,7 +333,7 @@ def step_helper_unit_check(tmp: pathlib.Path) -> str | None:
             f"expected at least {MIN_HELPER_SCRIPTS}"
         )
     for script_path in helpers:
-        source = script_path.read_text(encoding="utf-8")
+        source = read_smoke(script_path)
         match = re.search(r"(pel_first_error\(\)\s*\{.*?\n\})", source, re.DOTALL)
         if not match:
             return f"step (d): pel_first_error not found in {script_path}"
@@ -399,7 +367,7 @@ def scan_helper_why(overrides: dict[pathlib.Path, str]) -> str | None:
     for path in helper_scripts():
         if path in FALLBACK_HELPERS:
             continue
-        text = overrides.get(path) or path.read_text(encoding="utf-8")
+        text = overrides.get(path) or read_smoke(path)
         findings = check_helper_why(text, path.name)
         if findings:
             return f"step (e): {'; '.join(findings)}"
@@ -423,7 +391,7 @@ def step_helper_why_check(_tmp: pathlib.Path) -> str | None:
 
 
 def main() -> int:
-    """Run steps (a) to (e); exit 77 (skip) when semgrep is not installed."""
+    """Run steps (a) to (f); exit 77 (skip) when semgrep is not installed."""
     semgrep_bin = resolve_executable("semgrep")
     if not semgrep_bin:
         print("SKIP: semgrep not found")
@@ -442,6 +410,7 @@ def main() -> int:
                 lambda t: step_planted_revert(semgrep_bin, t),
                 lambda t: step_real_tree(semgrep_bin, t),
                 step_helper_why_check,
+                step_helper_read_errors,
             ):
                 problem = step(tmp)
                 if problem:
@@ -451,7 +420,7 @@ def main() -> int:
             sys.stderr.write(f"{err}\n")
             return 1
     print(
-        "semgrep smoke skip reason: helper units, why check, planted cases, planted revert and real tree ok"
+        "semgrep smoke skip reason: helper units, why check, read errors, planted cases, planted revert and real tree ok"
     )
     return 0
 
