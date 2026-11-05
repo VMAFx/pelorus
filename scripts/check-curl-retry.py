@@ -181,8 +181,8 @@ def check_curl_args(arg_str: str) -> list[str]:
         ret, val, ret_consumed = parse_retry_flag(tok, next_tok)
         if ret:
             has_retry = True
-            if val is not None:
-                retry_val = val
+            # curl uses the last --retry given, so judge the last value.
+            retry_val = val
             i += ret_consumed
             continue
 
@@ -305,6 +305,9 @@ def run_self_test() -> int:
         ("p12", "curl -sH 'X-o: 1' https://example.com/file\n", False),
         ("p13", "curl -fsSL -o out --retry 6 --retry-max-time 60 https://example.com/file\n", False),
         ("p14", "curl --retry 2 -o /dev/null https://example.com/file\n", False),
+        ("p15", 'curl --retry 6 --retry "$N" --retry-max-time 60 -o out https://example.com/file\n', True),
+        ("p16", "curl --retry 6 --retry 2 --retry-max-time 60 -o out https://example.com/file\n", True),
+        ("p17", 'curl --retry "$N" --retry 6 --retry-max-time 60 -o out https://example.com/file\n', False),
     ]
     failures = 0
     with tempfile.TemporaryDirectory() as tmp_dir:
