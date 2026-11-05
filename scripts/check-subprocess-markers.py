@@ -499,8 +499,38 @@ def check_planted_git_isolation_skip() -> list[str]:
     return fails
 
 
+def check_planted_not_a_repo() -> list[str]:
+    """Planted case 15: non-git directory raises RuntimeError with stderr details."""
+    fails: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        old_ceiling = os.environ.get("GIT_CEILING_DIRECTORIES")
+        try:
+            os.environ["GIT_CEILING_DIRECTORIES"] = str(tmp_path.parent)
+            tracked_python.tracked_files(tmp_path)
+        except RuntimeError as exc:
+            msg = str(exc).lower()
+            if "ls-files" not in msg:
+                fails.append(
+                    f"case 15 failed: RuntimeError missing 'ls-files': {exc!r}"
+                )
+            if "not a git repository" not in msg:
+                fails.append(
+                    f"case 15 failed: RuntimeError missing 'not a git repository': {exc!r}"
+                )
+        except Exception as exc:
+            fails.append(
+                f"case 15 failed: expected RuntimeError, got {type(exc).__name__}: {exc}"
+            )
+        else:
+            fails.append("case 15 failed: expected RuntimeError, got no exception")
+        finally:
+            _restore_env_var("GIT_CEILING_DIRECTORIES", old_ceiling)
+    return fails
+
+
 def run_self_test_planted() -> int:
-    """Run all 14 planted cases in temporary directories; cases 12-13 use throwaway git repos."""
+    """Run all 15 planted cases in temporary directories; cases 12-13 use throwaway git repos."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         sample = Path(tmp_dir) / "sample.py"
         sample.write_text("import subprocess\n", encoding="utf-8")
@@ -515,11 +545,12 @@ def run_self_test_planted() -> int:
         failures.extend(check_planted_git_isolation())
         failures.extend(check_planted_missing_git())
         failures.extend(check_planted_git_isolation_skip())
+        failures.extend(check_planted_not_a_repo())
         if failures:
             for failure in failures:
                 print(f"SELF-TEST FAIL: {failure}", file=sys.stderr)
             return 1
-    print("subprocess markers self-test: 14 planted cases ok")
+    print("subprocess markers self-test: 15 planted cases ok")
     return 0
 
 

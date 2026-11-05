@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
+from typing import Any
 
 GIT_DEADLINE_S = 60
 PYTHON_SUFFIXES = frozenset({".py", ".pyi"})
@@ -37,6 +38,39 @@ def is_python(path: Path) -> bool:
     return first.startswith(b"#!") and b"python" in first
 
 
+def _run_git(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[bytes]:
+    """Run git with timeout and error wrapping."""
+    kw.setdefault("capture_output", True)
+    kw.setdefault("check", True)
+    kw.setdefault("timeout", GIT_DEADLINE_S)
+    env = dict(kw.get("env") or os.environ)
+    # C locale keeps git's stderr in English, so callers can name the cause.
+    env["LC_ALL"] = "C"
+    kw["env"] = env
+    try:
+        return subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
+            argv,
+            **kw,
+        )
+    except subprocess.CalledProcessError as exc:
+        raw_err = exc.stderr
+        if isinstance(raw_err, bytes):
+            err_text = raw_err.decode("utf-8", "replace").strip()
+        elif isinstance(raw_err, str):
+            err_text = raw_err.strip()
+        else:
+            err_text = ""
+        raise RuntimeError(
+            f"git {argv[1:]} failed (exit {exc.returncode}): {err_text[:400]}"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"git {argv[1:]} timed out after deadline of {exc.timeout}s"
+        ) from exc
+    except OSError as exc:
+        raise RuntimeError(f"cannot run git: {exc}") from exc
+
+
 def repo_discovery_env() -> dict[str, str]:
     """Return the environment without Git's repository-selecting variables.
 
@@ -46,12 +80,7 @@ def repo_discovery_env() -> dict[str, str]:
     (`git rev-parse --local-env-vars`).
     """
     git = _git_executable()
-    proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
-        [git, "rev-parse", "--local-env-vars"],
-        capture_output=True,
-        check=True,
-        timeout=GIT_DEADLINE_S,
-    )
+    proc = _run_git([git, "rev-parse", "--local-env-vars"])
     names = proc.stdout.decode("utf-8").split()
     if "GIT_DIR" not in names:
         raise RuntimeError("git rev-parse --local-env-vars did not list GIT_DIR")
@@ -61,11 +90,8 @@ def repo_discovery_env() -> dict[str, str]:
 def tracked_files(root: Path) -> list[Path]:
     """Every file git tracks under root."""
     git = _git_executable()
-    proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
+    proc = _run_git(
         [git, "-C", str(root), "ls-files", "-z"],
-        capture_output=True,
-        check=True,
-        timeout=GIT_DEADLINE_S,
         env=repo_discovery_env(),
     )
     names = proc.stdout.decode("utf-8", "surrogateescape").split("\0")
