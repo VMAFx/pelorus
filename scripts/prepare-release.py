@@ -10,6 +10,7 @@ meson.build, pelorus.h, README.md, and AGENTS.md.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess  # nosec B404 - fixed python argv, no shell, explicit timeout
 import sys
@@ -18,7 +19,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-_VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-rc\.([1-9]\d*))?$")
+_VERSION_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-rc\.([1-9][0-9]*))?\Z")
 _MESON_VER_RE = re.compile(r"version:\s*'([^']+)'")
 _PELORUS_MAJ_RE = re.compile(r"#define\s+PELORUS_VERSION_MAJOR\s+(\d+)\b")
 _PELORUS_MIN_RE = re.compile(r"#define\s+PELORUS_VERSION_MINOR\s+(\d+)\b")
@@ -156,25 +157,45 @@ def run_write(root: Path, new_ver: str) -> int:
 
 
 def _write_all(root: Path, new_ver: str, core: tuple[int, int, int]) -> None:
-    """Perform in-place text replacements on all four tracked files."""
+    """Build all four replacement texts first, then write them together."""
     m_path = root / "meson.build"
-    m_path.write_text(_MESON_VER_RE.sub(f"version: '{new_ver}'", m_path.read_text(encoding="utf-8"), count=1), encoding="utf-8")
     h_path = root / "libpelorus/include/pelorus/pelorus.h"
+    r_path = root / "README.md"
+    a_path = root / "AGENTS.md"
     h_text = h_path.read_text(encoding="utf-8")
     h_text = _PELORUS_STR_RE.sub(f'#define PELORUS_VERSION_STR "{new_ver}"', h_text, count=1)
     h_text = _PELORUS_MAJ_RE.sub(f"#define PELORUS_VERSION_MAJOR {core[0]}", h_text, count=1)
     h_text = _PELORUS_MIN_RE.sub(f"#define PELORUS_VERSION_MINOR {core[1]}", h_text, count=1)
     h_text = _PELORUS_PAT_RE.sub(f"#define PELORUS_VERSION_PATCH {core[2]}", h_text, count=1)
-    h_path.write_text(h_text, encoding="utf-8")
-    r_path = root / "README.md"
-    r_path.write_text(_README_VER_RE.sub(f"Pre-1.0 (`v{new_ver}`).", r_path.read_text(encoding="utf-8"), count=1), encoding="utf-8")
-    a_path = root / "AGENTS.md"
-    a_path.write_text(_AGENTS_VER_RE.sub(f"- Release `v{new_ver}` line:", a_path.read_text(encoding="utf-8"), count=1), encoding="utf-8")
+    _write_texts([
+        (m_path, _MESON_VER_RE.sub(f"version: '{new_ver}'", m_path.read_text(encoding="utf-8"), count=1)),
+        (h_path, h_text),
+        (r_path, _README_VER_RE.sub(f"Pre-1.0 (`v{new_ver}`).", r_path.read_text(encoding="utf-8"), count=1)),
+        (a_path, _AGENTS_VER_RE.sub(f"- Release `v{new_ver}` line:", a_path.read_text(encoding="utf-8"), count=1)),
+    ])
+
+def _write_texts(updates: list[tuple[Path, str]]) -> None:
+    """Write every file through a sibling temp file; restore all originals if one write fails."""
+    originals = [(path, path.read_bytes()) for path, _ in updates]
+    done: list[Path] = []
+    try:
+        for path, text in updates:
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, path)
+            done.append(path)
+    except OSError:
+        for path, data in originals:
+            if path in done:
+                path.write_bytes(data)
+        raise
 
 
 def _run_cli(argv: list[str]) -> subprocess.CompletedProcess[str]:
     """Execute prepare-release.py CLI in a subprocess with explicit safety constraints."""
-    cmd = [sys.executable, "-I", str(Path(__file__).resolve())] + argv
+    exe = Path(sys.executable).resolve()
+    _expect(exe.is_file() and os.access(exe, os.X_OK), f"python interpreter not executable: {exe}")
+    cmd = [str(exe), "-I", str(Path(__file__).resolve())] + argv
     return subprocess.run(  # nosec B603 - fixed python argv, no shell, explicit timeout
         cmd,
         shell=False,
@@ -200,6 +221,22 @@ def _copy_tree_files(src: Path, dst: Path) -> list[Path]:
         target.write_bytes((src / rel).read_bytes())
         out.append(target)
     return out
+
+
+def _test_rollback(tmp_root: Path) -> None:
+    """Planted write failure on the second file must restore the first one byte-identical."""
+    first, second = tmp_root / "rollback-a.txt", tmp_root / "rollback-b.txt"
+    first.write_text("old a\n", encoding="utf-8")
+    second.write_text("old b\n", encoding="utf-8")
+    (tmp_root / "rollback-b.txt.tmp").mkdir()
+    raised = False
+    try:
+        _write_texts([(first, "new a\n"), (second, "new b\n")])
+    except OSError:
+        raised = True
+    _expect(raised, "rollback case: planted write failure did not raise")
+    _expect(first.read_text(encoding="utf-8") == "old a\n", "rollback case: first file not restored")
+    _expect(second.read_text(encoding="utf-8") == "old b\n", "rollback case: second file changed")
 
 
 def _self_test(real_root: Path) -> int:
@@ -243,7 +280,13 @@ def _self_test(real_root: Path) -> int:
         res5 = _run_cli(["--root", str(tmp_root), "--write", "1.0.0-rc.0"])
         _expect(res5.returncode == 2, f"case 5 expected exit 2, got {res5.returncode}")
         _expect([f.read_bytes() for f in files] == snap, "case 5 files modified on error")
-    print("prepare-release: self-test PASS (all 5 planted cases)")
+        # Case 6: trailing newline and leading zero -> 2 and files byte-identical
+        for bad in (f"{target}\n", f"{cur_major}.0{nxt_minor}.0"):
+            res6 = _run_cli(["--root", str(tmp_root), "--write", bad])
+            _expect(res6.returncode == 2, f"case 6 {bad!r} expected exit 2, got {res6.returncode}")
+            _expect([f.read_bytes() for f in files] == snap, f"case 6 {bad!r} files modified on error")
+        _test_rollback(tmp_root)
+    print("prepare-release: self-test PASS (all 7 planted cases)")
     return 0
 
 

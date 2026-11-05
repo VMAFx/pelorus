@@ -10,6 +10,7 @@ number, updates the MINOR history block, and prints required manual follow-ups.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess  # nosec B404 - fixed python argv, no shell, explicit timeout
 import sys
@@ -114,7 +115,9 @@ def _check_agents(root: Path, expected_minor: int) -> list[str]:
 def run_check(root: Path, quiet: bool = False) -> tuple[int, int, list[str]]:
     """Verify consistency across interop.h and AGENTS.md."""
     major, minor, errors = _check_interop(root)
-    if not errors and major == 1:
+    if not errors and major != 1:
+        errors.append(f"interop.h: expected ABI major 1, found {major} (MAJOR never bumps)")
+    if not errors:
         errors.extend(_check_agents(root, minor))
     if errors:
         if not quiet:
@@ -173,22 +176,18 @@ def run_write(root: Path, note: str, adr: str | None) -> int:
     if not note or not note.strip():
         print("bump-abi: --note text must not be empty", file=sys.stderr)
         return 2
-    major, minor, errors = run_check(root, quiet=True)
+    _, minor, errors = run_check(root, quiet=True)
     if errors:
         for err in errors:
             print(err, file=sys.stderr)
         print("bump-abi: refusal: consistent ABI check required before write", file=sys.stderr)
-        return 2
-    if major != 1:
-        print(f"bump-abi: refusal: expected ABI major 1, found {major} (MAJOR never bumps)", file=sys.stderr)
         return 2
     new_minor = minor + 1
     header_path = find_interop_h(root / "tools" / "tester")
     agents_path = root / "AGENTS.md"
     new_header = _update_interop_text(header_path.read_text(encoding="utf-8"), minor, new_minor, note, adr)
     new_agents = _update_agents_text(agents_path.read_text(encoding="utf-8"), minor, new_minor, adr)
-    header_path.write_text(new_header, encoding="utf-8")
-    agents_path.write_text(new_agents, encoding="utf-8")
+    _write_texts([(header_path, new_header), (agents_path, new_agents)])
     print(f"bump-abi: bumped ABI 1.{minor} -> 1.{new_minor}:")
     print(f"  {header_path.relative_to(root)}")
     print(f"  {agents_path.relative_to(root)}")
@@ -200,9 +199,28 @@ def run_write(root: Path, note: str, adr: str | None) -> int:
     return 0
 
 
+def _write_texts(updates: list[tuple[Path, str]]) -> None:
+    """Write every file through a sibling temp file; restore all originals if one write fails."""
+    originals = [(path, path.read_bytes()) for path, _ in updates]
+    done: list[Path] = []
+    try:
+        for path, text in updates:
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, path)
+            done.append(path)
+    except OSError:
+        for path, data in originals:
+            if path in done:
+                path.write_bytes(data)
+        raise
+
+
 def _run_cli(argv: list[str]) -> subprocess.CompletedProcess[str]:
     """Execute bump-abi.py CLI in a subprocess with explicit safety constraints."""
-    cmd = [sys.executable, "-I", str(Path(__file__).resolve())] + argv
+    exe = Path(sys.executable).resolve()
+    _expect(exe.is_file() and os.access(exe, os.X_OK), f"python interpreter not executable: {exe}")
+    cmd = [str(exe), "-I", str(Path(__file__).resolve())] + argv
     return subprocess.run(  # nosec B603 - fixed python argv, no shell, explicit timeout
         cmd,
         shell=False,
@@ -223,6 +241,22 @@ def _copy_tree_files(src_root: Path, dst_root: Path) -> tuple[Path, Path]:
     dst_h.write_bytes((src_root / header_rel).read_bytes())
     dst_a.write_bytes((src_root / agents_rel).read_bytes())
     return dst_h, dst_a
+
+
+def _test_rollback(tmp_root: Path) -> None:
+    """Planted write failure on the second file must restore the first one byte-identical."""
+    first, second = tmp_root / "rollback-a.txt", tmp_root / "rollback-b.txt"
+    first.write_text("old a\n", encoding="utf-8")
+    second.write_text("old b\n", encoding="utf-8")
+    (tmp_root / "rollback-b.txt.tmp").mkdir()
+    raised = False
+    try:
+        _write_texts([(first, "new a\n"), (second, "new b\n")])
+    except OSError:
+        raised = True
+    _expect(raised, "rollback case: planted write failure did not raise")
+    _expect(first.read_text(encoding="utf-8") == "old a\n", "rollback case: first file not restored")
+    _expect(second.read_text(encoding="utf-8") == "old b\n", "rollback case: second file changed")
 
 
 def _self_test(real_root: Path) -> int:
@@ -265,7 +299,13 @@ def _self_test(real_root: Path) -> int:
         dst_a.write_text(orig_agents.decode("utf-8").replace(cur, "interop contract"), encoding="utf-8")
         res6 = _run_cli(["--root", str(tmp_root), "--check"])
         _expect(res6.returncode == 1, f"case 6 expected exit 1, got {res6.returncode}")
-    print("bump-abi: self-test PASS (all 6 planted cases)")
+        # Case 7: header declares ABI major 2 -> --check 1
+        dst_a.write_bytes(orig_agents)
+        dst_h.write_text(snap_h5.decode("utf-8").replace("#define PELORUS_ABI_MAJOR 1u", "#define PELORUS_ABI_MAJOR 2u"), encoding="utf-8")
+        res7 = _run_cli(["--root", str(tmp_root), "--check"])
+        _expect(res7.returncode == 1, f"case 7 expected exit 1, got {res7.returncode}")
+        _test_rollback(tmp_root)
+    print("bump-abi: self-test PASS (all 8 planted cases)")
     return 0
 
 
