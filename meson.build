@@ -207,6 +207,14 @@ test('suppression-markers-self-test',
             '--self-test-only'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+# Planted cases must skip by name when git is missing; this runs them without git on Linux too.
+test('suppression-markers-self-test-nogit',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-suppression-markers.py',
+            '--self-test-only'],
+     workdir: meson.project_source_root(),
+     suite: 'fast',
+     env: {'PATH': meson.current_build_dir() / 'nogit-path'})
 # The tree scan lists files with git, which the MSYS2 UCRT64 leg does not put
 # on PATH (CI run 41408892182: FileNotFoundError for git). The planted cases
 # above run there; the Linux jobs scan the tree on every PR.
@@ -215,6 +223,31 @@ if build_machine.system() != 'windows'
        python_prog,
        args: ['-I', meson.project_source_root() / 'scripts' / 'check-suppression-markers.py',
               '--self-test'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
+# Unmarked subprocess sites otherwise surface only in Codacy on the pull request;
+# block growth before push. --self-test-only runs the planted cases on all platforms;
+# the Linux jobs run --check against scripts/subprocess-markers-baseline.json.
+test('subprocess-markers-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-subprocess-markers.py',
+            '--self-test-only'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+# Planted cases must skip by name when git is missing; this runs them without git on Linux too.
+test('subprocess-markers-self-test-nogit',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-subprocess-markers.py',
+            '--self-test-only'],
+     workdir: meson.project_source_root(),
+     suite: 'fast',
+     env: {'PATH': meson.current_build_dir() / 'nogit-path'})
+if build_machine.system() != 'windows'
+  test('subprocess-markers-check',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-subprocess-markers.py',
+              '--check'],
        workdir: meson.project_source_root(),
        suite: 'fast')
 endif

@@ -33,7 +33,6 @@ import io
 import os
 from pathlib import Path
 import re
-import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
 import tempfile
 import tokenize
@@ -44,9 +43,9 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from standards_exceptions import filter_excused, load_entries
+from tracked_python import is_python, tracked_files
 
 ROOT = Path(__file__).resolve().parents[1]
-GIT_DEADLINE_S = 60
 MARKER_WORD = re.compile(r"\bnos(?:emgrep|em|ec)\b", re.IGNORECASE)
 RULE_ID = r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*"
 NOSEMGREP = re.compile(rf"^nosemgrep:[ \t]*({RULE_ID}(?:[ \t]*,[ \t]*{RULE_ID})*)[ \t]+-[ \t]+\S")
@@ -127,31 +126,6 @@ def python_findings(name: str, text: str, local_ids: frozenset[str]) -> list[str
     return found
 
 
-PYTHON_SUFFIXES = frozenset({".py", ".pyi"})
-
-
-def is_python(path: Path) -> bool:
-    """True for a .py or .pyi file or a file whose shebang names python."""
-    if path.suffix in PYTHON_SUFFIXES:
-        return True
-    try:
-        with path.open("rb") as handle:
-            first = handle.readline(128)
-    except OSError:
-        return False
-    return first.startswith(b"#!") and b"python" in first
-
-
-def tracked_files(root: Path) -> list[Path]:
-    """Every file git tracks under root."""
-    proc = subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
-        ["git", "-C", str(root), "ls-files", "-z"],
-        capture_output=True,
-        check=True,
-        timeout=GIT_DEADLINE_S,
-    )
-    names = proc.stdout.decode("utf-8", "surrogateescape").split("\0")
-    return [root / name for name in names if name]
 
 
 def readings(data: bytes) -> list[str]:
@@ -555,7 +529,11 @@ def main(argv: list[str] | None = None) -> int:
         status = self_test()
         if status:
             return status
-    found = scan(ROOT)
+    try:
+        found = scan(ROOT)
+    except RuntimeError as exc:
+        print(f"check-suppression-markers: {exc}", file=sys.stderr)
+        return 2
     for finding in found:
         print(finding, file=sys.stderr)
     if found:

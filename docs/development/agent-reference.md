@@ -116,6 +116,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | bump interop ABI minor | `python3 -I scripts/bump-abi.py --write --note "<text>" [--adr NNNN]` (`--check`, `--self-test`) |
 | prepare release version | `python3 -I scripts/prepare-release.py --write <version>` (`--check`, `--self-test`) |
 | audit baseline | `sh .config/lefthook/engine.sh audit` |
+| subprocess markers check | `python3 scripts/check-subprocess-markers.py --check` (`--self-test`: planted cases) |
 | docs gate (Node 22.12+) | `make docs-lint docs-figures` |
 | licence check | `reuse lint` (reuse 6.x) |
 | explicit hook install | `make hooks-install` |
