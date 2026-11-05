@@ -1,0 +1,1 @@
+- `scripts/bench/make-record.py` adds `--render-md`, `--write-md`, and `--check-md` to format benchmark records as deterministic Markdown tables and check documentation blocks between markers for drift (#502).
