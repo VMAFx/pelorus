@@ -3,10 +3,12 @@
 
 Re-apply / re-test work created for the FFmpeg patch stack after an upstream
 FFmpeg bump or a `libpelorus` ABI change. One entry per change that affects the
-patches (ADR-0108 deliverable #6). An entry describes the stack as it was when
-the entry was written: patch counts, `[PATCH n/m]` subjects and "cumulative on"
-ranges in older entries predate the first entry below (22 patches on the
-shared FFmpeg fix series, number 0021 retired).
+patches (ADR-0108 deliverable #6). `ffmpeg-patches/generate.sh` ends with the
+heading's `regenerates` list: the patches that differ from git HEAD. An entry
+describes the stack as it was when the entry was written: patch counts,
+`[PATCH n/m]` subjects and "cumulative on" ranges in older entries predate the
+first entry below (22 patches on the shared FFmpeg fix series, number 0021
+retired).
 
 ## Unreleased — ROI names clear of the shared `-qpfile` series (regenerates 0012, 0013)
 

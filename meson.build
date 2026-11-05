@@ -305,6 +305,30 @@ test('grain-accumulator-bounds',
             '--self-test'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+test('gen-grain-gate-curve-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'gen-grain-gate-curve.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+test('gen-grain-gate-curve-check',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'gen-grain-gate-curve.py',
+            '--check'],
+     workdir: meson.project_source_root(),
+     suite: 'numpy')
+test('gen-av1-grain-calibration-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'gen-av1-grain-calibration.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+test('gen-h274-grain-calibration-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'gen-h274-grain-calibration.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
 
 # ADR-0111: bd_rate.py must enforce a monotonic guard on RD curves (strictly
 # increasing bitrate and score, >= 2 points) and fail closed on invalid or
@@ -906,3 +930,42 @@ test('semgrep-which-executable',
      workdir: meson.project_source_root(),
      timeout: 600,
      suite: 'fast')
+
+# clang-tidy lane-files.txt generator and synchronization check (ADR-0168).
+# The lane is the Linux build with tests and tools on (the ci.yml core job);
+# Windows and builds with either option off compile a different unit set, so
+# the drift check runs only in that configuration.
+gen_tidy_lane_files = meson.project_source_root() / 'scripts' / 'gen-tidy-lane-files.py'
+test('gen-tidy-lane-files-self-test',
+     python_prog,
+     args: ['-I', gen_tidy_lane_files, '--self-test'],
+     workdir: meson.project_source_root(),
+     timeout: 60,
+     suite: 'fast')
+if host_machine.system() == 'linux' and get_option('tests') and get_option('tools')
+  test('tidy-lane-files-check',
+       python_prog,
+       args: ['-I', gen_tidy_lane_files, '--check', '--build-dir', meson.project_build_root()],
+       workdir: meson.project_source_root(),
+       timeout: 60,
+       suite: 'fast')
+endif
+
+# ffmpeg-patches/generate.sh rebase-notes heading line logic. The test drives
+# git in a throwaway repository, and the MSYS2 UCRT64 leg does not put git on
+# PATH (see series-coexistence above), so both tests run on the other hosts.
+if build_machine.system() != 'windows'
+  test('generate-regen-line',
+       bash_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-generate-regen-line.sh'],
+       workdir: meson.project_source_root(),
+       timeout: 60,
+       suite: 'fast')
+  test('generate-regen-line-selftest-isolation',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-selftest-git-isolation.py',
+              'bash', meson.project_source_root() / 'scripts' / 'test-generate-regen-line.sh'],
+       workdir: meson.project_source_root(),
+       timeout: 120,
+       suite: 'fast')
+endif

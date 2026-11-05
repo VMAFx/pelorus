@@ -828,5 +828,9 @@ for (( pelorus_index = 0; pelorus_index < ${#pelorus_patch_names[@]}; pelorus_in
     mv -- "$pelorus_from" "$pelorus_to"
 done
 
+# shellcheck source=ffmpeg-patches/patch-regen-line.sh
+source "$HERE/patch-regen-line.sh"
+print_patch_regen_line "$ROOT" "ffmpeg-patches/0*.patch"
+
 echo "patch(es) regenerated in $HERE:"
 ls "$HERE"/0*.patch
