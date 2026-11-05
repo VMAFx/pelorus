@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 # Copyright 2026 Lusoris
 # SPDX-License-Identifier: EUPL-1.2
-"""Check that patch-harness test() targets in meson.build have sufficient timeouts.
+"""Check that script test() targets in meson.build have sufficient timeouts.
 
-Each patch harness test executes strict C builds and runs via scripts/patch_harness.py,
-which enforces BUILD_TIMEOUT_S (120 s) and RUN_TIMEOUT_S (30 s) deadlines per call
-(150 s total). If meson.build leaves a harness test at Meson's default 30 s timeout,
-Meson kills the test process before the harness deadline handler can report the
-underlying compiler or binary stall (HISS-02, PR #487).
+Covers every script test whose script defines module-level subprocess deadline
+constants or loads patch_harness. When a meson test() runs a script whose own
+subprocess deadline exceeds Meson's 30 s default (or declared timeout:), Meson
+kills the test before the script can report the underlying stall (HISS-02).
 
-This checker parses meson.build, identifies every test() whose arguments reference a
-script under scripts/test-*.py that imports or loads patch_harness, and requires:
-  - An explicit timeout: attribute
-  - A timeout >= 150 s (the minimum deadline for a single build_and_run cycle).
+This checker parses meson.build, identifies every test() whose arguments reference
+a script under scripts/**/*.py, and requires:
+  - An explicit timeout: attribute if required deadline exceeds Meson's 30 s default
+  - A timeout >= max(patch_harness floor, script deadline constants).
 
 Usage:
     python3 -I scripts/check-harness-test-timeouts.py [path/to/meson.build]
@@ -22,14 +21,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ast
 import pathlib
 import re
 import sys
+import tempfile
 
 DEFAULT_MESON_BUILD = pathlib.Path(__file__).resolve().parent.parent / "meson.build"
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 MIN_HARNESS_TIMEOUT_S = 150
-DESCRIPTION = "Check that patch-harness tests in meson.build declare sufficient timeouts."
+TIMEOUT_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*TIMEOUT[A-Z0-9_]*$")
+# Whole name tokens that mark a bound, not a deadline (CAPTURE_ and ADMIN_ stay targets).
+BOUND_TOKENS = frozenset(("MIN", "MAX", "CAP", "CAPS"))
+DESCRIPTION = "Check that script tests in meson.build declare sufficient timeouts."
 
 
 def parse_meson_tests(content: str) -> list[str]:
@@ -65,23 +69,249 @@ def parse_meson_tests(content: str) -> list[str]:
     return tests
 
 
+def extract_script_refs(clean_block: str) -> list[str]:
+    """Find scripts/**/*.py paths referenced in a test() block."""
+    refs: list[str] = []
+    chain_pat = re.compile(
+        r"['\"]scripts['\"](?:\s*/\s*['\"][^'\"]+['\"])+"
+    )
+    for m in chain_pat.finditer(clean_block):
+        parts = re.findall(r"['\"]([^'\"]+)['\"]", m.group(0))
+        if parts[-1].endswith(".py"):
+            refs.append("/".join(parts[1:]))
+    direct_pat = re.compile(r"['\"]scripts[/\\]([a-zA-Z0-9_/.-]+\.py)['\"]")
+    for m in direct_pat.finditer(clean_block):
+        refs.append(m.group(1))
+    return list(dict.fromkeys(refs))
+
+
+def _names_patch_harness(node: ast.AST) -> bool:
+    """Return True if node imports patch_harness or loads it by module spec."""
+    if isinstance(node, ast.Import):
+        return any(alias.name == "patch_harness" for alias in node.names)
+    if isinstance(node, ast.ImportFrom):
+        return node.module == "patch_harness"
+    if isinstance(node, ast.Call) and node.args:
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        first = node.args[0]
+        return (
+            name == "spec_from_file_location"
+            and isinstance(first, ast.Constant)
+            and first.value == "patch_harness"
+        )
+    return False
+
+
 def script_loads_patch_harness(script_path: pathlib.Path) -> bool:
-    """Return True if script_path imports or loads patch_harness."""
+    """Return True if script_path imports or loads patch_harness.
+
+    Reads the syntax tree, so a script that only names patch_harness in a
+    string or comment (this checker does) is not counted as loading it.
+    """
     try:
         text = script_path.read_text(encoding="utf-8")
     except OSError:
         return False
     except UnicodeDecodeError as err:
         # A script the gate cannot read must fail it, not drop out of the check.
-        raise SystemExit("check-harness-test-timeouts: %s is not UTF-8: %s"
-                         % (script_path, err)) from err
-    return "patch_harness" in text and (
-        "import patch_harness" in text
-        or "from patch_harness" in text
-        or 'spec_from_file_location("patch_harness"' in text
-        or "spec_from_file_location('patch_harness'" in text
-        or "patch_harness.py" in text
+        raise SystemExit(
+            f"check-harness-test-timeouts: {script_path} is not UTF-8: {err}"
+        ) from err
+    try:
+        tree = ast.parse(text, filename=str(script_path))
+    except SyntaxError as err:
+        raise SystemExit(
+            f"check-harness-test-timeouts: {script_path} does not parse: {err}"
+        ) from err
+    return any(_names_patch_harness(node) for node in ast.walk(tree))
+
+
+def _extract_assigned_names(node: ast.AST) -> list[str]:
+    """Return every plain-name target of an Assign or AnnAssign node.
+
+    A chained assignment (A_TIMEOUT_S = B_TIMEOUT_S = 90) names each target.
+    """
+    if isinstance(node, ast.Assign):
+        return [target.id for target in node.targets if isinstance(target, ast.Name)]
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        return [node.target.id]
+    return []
+
+
+def _is_timeout_target(name: str) -> bool:
+    """Return True if name matches TIMEOUT naming without bounds markers."""
+    if not TIMEOUT_NAME_RE.match(name):
+        return False
+    return not any(token in BOUND_TOKENS for token in name.split("_"))
+
+
+class NonLiteralDeadline(ValueError):
+    """A timeout-named constant holds a value other than a number literal."""
+
+
+def _extract_constant_seconds(name: str, value_node: ast.AST | None) -> float | None:
+    """Return numeric seconds for a literal value assigned to name.
+
+    A bare annotation (no value) gives None. Any other value that is not an
+    int or float literal (5 * 60, a call, a name) raises NonLiteralDeadline:
+    the checker cannot read the deadline, so it refuses the script instead of
+    treating it as having none.
+    """
+    if value_node is None:
+        return None
+    if not isinstance(value_node, ast.Constant) or type(value_node.value) not in (
+        int,
+        float,
+    ):
+        raise NonLiteralDeadline(
+            f"{name} = {ast.unparse(value_node)} is not a number literal"
+        )
+    val = float(value_node.value)
+    if name.endswith("_MINUTES"):
+        val *= 60.0
+    return val
+
+
+def _node_deadline_seconds(node: ast.AST) -> float | None:
+    """Return the largest deadline in seconds a module-level assignment sets.
+
+    Each timeout-named target is converted on its own (a _MINUTES name scales
+    by 60); None when no target is timeout-named or the value is absent.
+    """
+    value_node = getattr(node, "value", None)
+    deadlines = [
+        seconds
+        for name in _extract_assigned_names(node)
+        if _is_timeout_target(name)
+        and (seconds := _extract_constant_seconds(name, value_node)) is not None
+    ]
+    return max(deadlines) if deadlines else None
+
+
+def script_deadline_s(script_path: pathlib.Path) -> float | None:
+    """Return max module-level TIMEOUT constant in seconds, or None if none."""
+    try:
+        text = script_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    except UnicodeDecodeError as err:
+        raise SystemExit(
+            f"check-harness-test-timeouts: {script_path} is not UTF-8: {err}"
+        ) from err
+    try:
+        tree = ast.parse(text, filename=str(script_path))
+    except SyntaxError as err:
+        raise SystemExit(
+            f"check-harness-test-timeouts: {script_path} does not parse: {err}"
+        ) from err
+
+    deadlines: list[float] = []
+    for node in tree.body:
+        val = _node_deadline_seconds(node)
+        if val is not None:
+            deadlines.append(val)
+    return max(deadlines) if deadlines else None
+
+
+def _script_deadline_or_error(
+    script_path: pathlib.Path, test_name: str, script_name: str
+) -> tuple[float | None, str | None]:
+    """Return (deadline, None), or (None, error) for a non-literal deadline."""
+    try:
+        return script_deadline_s(script_path), None
+    except NonLiteralDeadline as err:
+        return None, (
+            f"test '{test_name}': {script_name}: {err}; write the deadline as an "
+            "int or float literal so the Meson timeout can be checked against it"
+        )
+
+
+def _validate_script_timeout(
+    test_name: str,
+    script_name: str,
+    timeout: int | None,
+    is_harness: bool,
+    deadline: float | None,
+    required: float,
+    *,
+    timeout_non_literal: bool = False,
+) -> str | None:
+    """Return error message if timeout declaration is insufficient, else None."""
+    if timeout_non_literal:
+        return f"test '{test_name}' timeout is not an integer literal"
+    if timeout is None and required <= 30:
+        return None
+
+    if is_harness and (deadline is None or deadline <= MIN_HARNESS_TIMEOUT_S):
+        if timeout is None:
+            return (
+                f"test '{test_name}' ({script_name}) has no timeout: "
+                f"(needs >= {MIN_HARNESS_TIMEOUT_S} s for patch_harness)"
+            )
+        if timeout < MIN_HARNESS_TIMEOUT_S:
+            return (
+                f"test '{test_name}' ({script_name}) timeout {timeout} s "
+                f"< {MIN_HARNESS_TIMEOUT_S} s (one build+run deadline)"
+            )
+        return None
+
+    c_val = int(required) if isinstance(required, float) and required.is_integer() else required
+    if timeout is None:
+        return (
+            f"test '{test_name}' ({script_name}) has no timeout: "
+            f"(constant {c_val} s exceeds default 30 s, declared timeout: None)"
+        )
+    if timeout < required:
+        return (
+            f"test '{test_name}' ({script_name}) timeout {timeout} s "
+            f"< {c_val} s (script deadline constant {c_val} s)"
+        )
+    return None
+
+
+def _collect_var_script_refs(clean_content: str) -> dict[str, list[str]]:
+    """Map Meson variable names to scripts/**/*.py paths in their assignments."""
+    var_refs: dict[str, list[str]] = {}
+    assign_re = re.compile(
+        r"^[ \t]*([a-zA-Z_][a-zA-Z0-9_]*)[ \t]*\+?=(?!=)(.*)", re.MULTILINE
     )
+    for m in assign_re.finditer(clean_content):
+        ident = m.group(1)
+        expr = m.group(2)
+        end = m.end()
+        while end < len(clean_content) and (
+            expr.count("(") > expr.count(")")
+            or expr.count("[") > expr.count("]")
+            or expr.rstrip().endswith(("/", "+", ",", "\\"))
+        ):
+            nl = clean_content.find("\n", end + 1)
+            nl = len(clean_content) if nl == -1 else nl
+            expr += clean_content[end:nl]
+            end = nl
+        refs = extract_script_refs(expr)
+        if refs:
+            prev = var_refs.get(ident, [])
+            var_refs[ident] = list(dict.fromkeys(prev + refs))
+    return var_refs
+
+
+def _parse_timeout_arg(clean_block: str) -> tuple[int | None, bool]:
+    """Return (timeout_value, is_non_literal) from a comment-stripped test() block."""
+    m_kw = re.search(r"\btimeout\s*:\s*", clean_block)
+    if not m_kw:
+        return None, False
+    m_int = re.match(r"(\d+)\s*[,)]", clean_block[m_kw.end() :])
+    if not m_int:
+        return None, True
+    return int(m_int.group(1)), False
+
+
+def _strip_strings_and_kwlabels(clean_block: str) -> str:
+    """Strip Meson quoted strings and keyword labels before identifier scanning."""
+    no_multiline = re.sub(r"'''[\s\S]*?'''", " ", clean_block)
+    no_strings = re.sub(r"'(?:\\.|[^'\\])*'", " ", no_multiline)
+    return re.sub(r"(?<!:)\b[a-zA-Z_][a-zA-Z0-9_]*\s*:(?!:)", " ", no_strings)
 
 
 def check_meson_content(
@@ -92,21 +322,26 @@ def check_meson_content(
     Returns (inspected_count, errors).
     """
     errors: list[str] = []
-    harness_tests_found = 0
+    tests_found = 0
+    var_refs = _collect_var_script_refs(re.sub(r"#.*", "", content))
 
     for test_block in parse_meson_tests(content):
-        # Strip comments so commented timeout or args are not picked up
         clean_block = re.sub(r"#.*", "", test_block)
 
         m_name = re.search(r"test\s*\(\s*['\"]([^'\"]+)['\"]", clean_block)
         test_name = m_name.group(1) if m_name else "<unknown>"
 
-        # Find scripts referenced in test args
-        script_refs = re.findall(
-            r"['\"](?:scripts[/\\])?(test-[a-zA-Z0-9_-]+\.py)['\"]", clean_block
-        )
+        script_refs = extract_script_refs(clean_block)
+        value_block = _strip_strings_and_kwlabels(clean_block)
+        for ident in re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", value_block):
+            if ident in var_refs:
+                script_refs.extend(var_refs[ident])
+        script_refs = list(dict.fromkeys(script_refs))
         if not script_refs:
             continue
+
+        tests_found += 1
+        timeout, non_literal = _parse_timeout_arg(clean_block)
 
         for script_name in script_refs:
             script_path = scripts_dir / script_name
@@ -115,101 +350,353 @@ def check_meson_content(
                 if fallback_path.is_file():
                     script_path = fallback_path
 
-            if not script_loads_patch_harness(script_path):
+            is_harness = script_loads_patch_harness(script_path)
+            deadline, deadline_err = _script_deadline_or_error(
+                script_path, test_name, script_name
+            )
+            if deadline_err:
+                errors.append(deadline_err)
                 continue
+            harness_req = MIN_HARNESS_TIMEOUT_S if is_harness else 0
+            required = max(harness_req, deadline or 0.0)
 
-            harness_tests_found += 1
-            m_timeout = re.search(r"\btimeout\s*:\s*(\d+)", clean_block)
-            timeout = int(m_timeout.group(1)) if m_timeout else None
+            err = _validate_script_timeout(
+                test_name,
+                script_name,
+                timeout,
+                is_harness,
+                deadline,
+                required,
+                timeout_non_literal=non_literal,
+            )
+            if err:
+                errors.append(err)
 
-            if timeout is None:
-                errors.append(
-                    f"test '{test_name}' ({script_name}) has no timeout: "
-                    f"(needs >= {MIN_HARNESS_TIMEOUT_S} s for patch_harness)"
-                )
-            elif timeout < MIN_HARNESS_TIMEOUT_S:
-                errors.append(
-                    f"test '{test_name}' ({script_name}) timeout {timeout} s "
-                    f"< {MIN_HARNESS_TIMEOUT_S} s (one build+run deadline)"
-                )
-
-    return harness_tests_found, errors
+    return tests_found, errors
 
 
 # (name, planted meson.build snippet, expected to pass)
 SELF_TEST_CASES = [
-        (
-            "missing timeout",
-            """
-            test('planted-harness-no-timeout',
-                 python_prog,
-                 args: [meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'],
-                 workdir: meson.project_source_root(),
-                 suite: 'fast')
-            """,
-            False,
-        ),
-        (
-            "timeout: 300 (valid)",
-            """
-            test('planted-harness-valid-timeout',
-                 python_prog,
-                 args: [meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'],
-                 workdir: meson.project_source_root(),
-                 timeout: 300,
-                 suite: 'fast')
-            """,
-            True,
-        ),
-        (
-            "timeout: 60 (under 150 s floor)",
-            """
-            test('planted-harness-short-timeout',
-                 python_prog,
-                 args: [meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'],
-                 workdir: meson.project_source_root(),
-                 timeout: 60,
-                 suite: 'fast')
-            """,
-            False,
-        ),
-        (
-            "non-harness test without timeout",
-            """
-            test('planted-non-harness',
-                 python_prog,
-                 args: [meson.project_source_root() / 'scripts' / 'test-grain-accumulator-bounds.py'],
-                 workdir: meson.project_source_root(),
-                 suite: 'fast')
-            """,
-            True,
-        ),
-    ]
+    (
+        "missing timeout",
+        """
+        test('planted-harness-no-timeout',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'],
+             workdir: meson.project_source_root(),
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "timeout: 300 (valid)",
+        """
+        test('planted-harness-valid-timeout',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'],
+             workdir: meson.project_source_root(),
+             timeout: 300,
+             suite: 'fast')
+        """,
+        True,
+    ),
+    (
+        "timeout: 60 (under 150 s floor)",
+        """
+        test('planted-harness-short-timeout',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'],
+             workdir: meson.project_source_root(),
+             timeout: 60,
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "non-harness test without timeout",
+        """
+        test('planted-non-harness',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-grain-accumulator-bounds.py'],
+             workdir: meson.project_source_root(),
+             suite: 'fast')
+        """,
+        True,
+    ),
+    (
+        "deadline script without timeout (fails: 90 s > 30 s default)",
+        """
+        test('planted-deadline-no-timeout',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-deadline-90.py'],
+             workdir: meson.project_source_root(),
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "deadline script with timeout: 120 >= 90 (valid)",
+        """
+        test('planted-deadline-valid-timeout',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-deadline-90.py'],
+             workdir: meson.project_source_root(),
+             timeout: 120,
+             suite: 'fast')
+        """,
+        True,
+    ),
+    (
+        "deadline script boundary 30 s without timeout (valid: <= 30 s default)",
+        """
+        test('planted-deadline-boundary-30',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-deadline-30.py'],
+             workdir: meson.project_source_root(),
+             suite: 'fast')
+        """,
+        True,
+    ),
+    (
+        "deadline script with timeout: 89 < 90 (fails)",
+        """
+        test('planted-deadline-under-timeout',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-deadline-90.py'],
+             workdir: meson.project_source_root(),
+             timeout: 89,
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "deadline in docstring without timeout (valid: string literal not constant)",
+        """
+        test('planted-docstring-timeout-no-timeout',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-docstring-timeout.py'],
+             workdir: meson.project_source_root(),
+             suite: 'fast')
+        """,
+        True,
+    ),
+    (
+        "deadline script boundary 30 s with timeout: 1 < 30 (fails)",
+        """
+        test('planted-deadline-30-under-timeout',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-deadline-30.py'],
+             workdir: meson.project_source_root(),
+             timeout: 1,
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "deadline script boundary 30 s with timeout: 30 == 30 (valid)",
+        """
+        test('planted-deadline-30-exact-timeout',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-deadline-30.py'],
+             workdir: meson.project_source_root(),
+             timeout: 30,
+             suite: 'fast')
+        """,
+        True,
+    ),
+    (
+        "variable indirection without timeout (fails)",
+        """
+        v = meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'
+        test('x',
+             p,
+             args: [v],
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "variable indirection with timeout: 150 (valid)",
+        """
+        v = meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'
+        test('x',
+             p,
+             args: [v],
+             timeout: 150,
+             suite: 'fast')
+        """,
+        True,
+    ),
+    (
+        "timeout: 200 - 60 non-literal (fails)",
+        """
+        test('planted-harness-non-literal-timeout',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'],
+             workdir: meson.project_source_root(),
+             timeout: 200 - 60,
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "variable named args not inherited by args: kwarg (valid)",
+        """
+        args = meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'
+        test('unrelated-with-args-kw',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-grain-accumulator-bounds.py'],
+             timeout: 30,
+             suite: 'fast')
+        """,
+        True,
+    ),
+    (
+        "variable named args genuinely referenced as value with short timeout (fails)",
+        """
+        args = meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'
+        test('genuine-args-var-ref',
+             python_prog,
+             args: args,
+             timeout: 60,
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "identifier only inside quoted string ignored (valid)",
+        """
+        v = meson.project_source_root() / 'scripts' / 'test-nvenc-me-hints.py'
+        test('quoted-var-name-not-ref',
+             python_prog,
+             args: ['v', '''v''', meson.project_source_root() / 'scripts' / 'test-grain-accumulator-bounds.py'],
+             suite: 'fast')
+        """,
+        True,
+    ),
+    (
+        "CAPTURE_TIMEOUT_S = 90 without timeout (fails: CAP is a prefix, not a token)",
+        """
+        test('planted-bound-token',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-capture-90.py'],
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "ADMIN_TIMEOUT_S = 90 without timeout (fails: MIN_ is a substring, not a token)",
+        """
+        test('planted-bound-token',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-admin-90.py'],
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "FOO_TIMEOUT_S = 5 * 60 with timeout 600 (fails: deadline not a literal)",
+        """
+        test('planted-non-literal-deadline',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-deadline-binop.py'],
+             timeout: 600,
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "FOO_TIMEOUT_S: Final = 90 + 30 without timeout (fails: deadline not a literal)",
+        """
+        test('planted-non-literal-annotated',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-deadline-annotated.py'],
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "bare annotation FOO_TIMEOUT_S: float without timeout (valid: no value)",
+        """
+        test('planted-bare-annotation',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-deadline-bare.py'],
+             suite: 'fast')
+        """,
+        True,
+    ),
+    (
+        "chained OTHER = FOO_TIMEOUT_S = 90 without timeout (fails: chained target)",
+        """
+        test('planted-chained-deadline',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-deadline-chained.py'],
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
+        "trailing CAPS and MAX bound tokens without timeout (valid: bounds, not deadlines)",
+        """
+        test('planted-bound-token',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-bound-caps-90.py'],
+             suite: 'fast')
+        """,
+        True,
+    ),
+]
 
+
+# Script files the self-test cases reference: file name -> content.
+SELF_TEST_FIXTURES = {
+    "test-nvenc-me-hints.py": "import patch_harness\n",
+    "test-grain-accumulator-bounds.py": "X = 1\n",
+    "test-deadline-90.py": "FOO_TIMEOUT_S = 90\n",
+    "test-deadline-30.py": "FOO_TIMEOUT_S = 30\n",
+    "test-docstring-timeout.py": (
+        '"""Module docstring holding deadline string.\nFOO_TIMEOUT_S = 360\n"""\n'
+    ),
+    "test-capture-90.py": "CAPTURE_TIMEOUT_S = 90\n",
+    "test-admin-90.py": "ADMIN_TIMEOUT_S = 90\n",
+    "test-bound-caps-90.py": "FOO_TIMEOUT_CAPS = 90\nFOO_TIMEOUT_MAX = 90\n",
+    "test-deadline-binop.py": "FOO_TIMEOUT_S = 5 * 60\n",
+    "test-deadline-annotated.py": (
+        "from typing import Final\nFOO_TIMEOUT_S: Final = 90 + 30\n"
+    ),
+    "test-deadline-bare.py": "FOO_TIMEOUT_S: float\n",
+    "test-deadline-chained.py": "OTHER = FOO_TIMEOUT_S = 90\n",
+}
 
 def run_self_test(scripts_dir: pathlib.Path) -> int:
     """Verify that planted defective snippets fail and valid snippets pass."""
-    cases = SELF_TEST_CASES
-    failures = 0
-    for name, snippet, expected_pass in cases:
-        _, errs = check_meson_content(snippet, scripts_dir)
-        passed = len(errs) == 0
-        if passed != expected_pass:
+    with tempfile.TemporaryDirectory() as tmp_dir_str:
+        tmp_dir = pathlib.Path(tmp_dir_str)
+        for fixture_name, fixture_text in SELF_TEST_FIXTURES.items():
+            (tmp_dir / fixture_name).write_text(fixture_text, encoding="utf-8")
+
+        cases = SELF_TEST_CASES
+        failures = 0
+        for name, snippet, expected_pass in cases:
+            _, errs = check_meson_content(snippet, tmp_dir)
+            passed = len(errs) == 0
+            if passed != expected_pass:
+                print(
+                    f"self-test FAIL: case '{name}': got passed={passed}, "
+                    f"expected={expected_pass}; errors: {errs}",
+                    file=sys.stderr,
+                )
+                failures += 1
+
+        if failures:
             print(
-                f"self-test FAIL: case '{name}': got passed={passed}, expected={expected_pass}; errors: {errs}",
+                f"check-harness-test-timeouts self-test: {failures} failures",
                 file=sys.stderr,
             )
-            failures += 1
+            return 1
 
-    if failures:
-        print(
-            f"check-harness-test-timeouts self-test: {failures} failures",
-            file=sys.stderr,
-        )
-        return 1
-
-    print(f"check-harness-test-timeouts self-test: {len(cases)} cases ok")
-    return 0
+        print(f"check-harness-test-timeouts self-test: {len(cases)} cases ok")
+        return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -250,7 +737,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(
-        f"check-harness-test-timeouts: {count} patch-harness tests checked in {args.meson_file.name}, all timeouts valid"
+        f"check-harness-test-timeouts: {count} script tests checked in {args.meson_file.name}, all timeouts valid"
     )
     return 0
 
