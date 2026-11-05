@@ -30,6 +30,7 @@ from tracked_python import tracked_files  # noqa: E402
 
 DESCRIPTION = "Check that curl downloads specify retry >= 5 and retry-max-time."
 SHELL_SUFFIXES = frozenset({".sh", ".bash", ".mk"})
+WORKFLOW_SUFFIXES = frozenset({".yml", ".yaml"})
 
 
 def is_curl_command_prefix(prefix: str) -> bool:
@@ -180,7 +181,9 @@ def check_curl_args(arg_str: str) -> list[str]:
     violations: list[str] = []
     if is_download and not has_retry:
         violations.append("download without --retry")
-    if has_retry and retry_val is not None and retry_val < 5:
+    if has_retry and retry_val is None:
+        violations.append("--retry count is not a literal integer")
+    elif has_retry and retry_val is not None and retry_val < 5:
         violations.append(f"--retry count {retry_val} < 5")
     if has_retry and not has_retry_max_time:
         violations.append("--retry without --retry-max-time")
@@ -243,12 +246,28 @@ def is_scanned(path: pathlib.Path, repo_root: pathlib.Path) -> bool:
     rel = path.relative_to(repo_root)
     if path.suffix in SHELL_SUFFIXES or path.name == "Makefile":
         return True
-    return rel.parent == pathlib.Path(".github/workflows") and path.suffix == ".yml"
+    return rel.parent == pathlib.Path(".github/workflows") and path.suffix in WORKFLOW_SUFFIXES
 
 
 def get_tracked_files(repo_root: pathlib.Path) -> list[pathlib.Path]:
     """Git-tracked shell, make and workflow files (shared tracked_files helper)."""
     return [f for f in tracked_files(repo_root) if is_scanned(f, repo_root)]
+
+
+def self_test_scanned(root: pathlib.Path) -> int:
+    """Planted paths: both workflow suffixes are scanned, other YAML is not."""
+    cases = [
+        (".github/workflows/a.yml", True),
+        (".github/workflows/b.yaml", True),
+        ("docs/c.yaml", False),
+        ("scripts/d.sh", True),
+    ]
+    failures = 0
+    for rel, expected in cases:
+        if is_scanned(root / rel, root) != expected:
+            print(f"FAIL self-test path '{rel}': expected scanned={expected}", file=sys.stderr)
+            failures += 1
+    return failures
 
 
 def run_self_test() -> int:
@@ -264,6 +283,8 @@ def run_self_test() -> int:
         ),
         ("p5", "curl -fsS -o /dev/null https://example.com/probe\n", False),
         ("p6", "# curl --output x https://example.com/file\n", False),
+        ("p7", 'curl --retry "$N" --retry-max-time 60 -o out https://example.com/file\n', True),
+        ("p8", "curl --retry-max-time 60 -o out https://example.com/file --retry\n", True),
     ]
     failures = 0
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -282,6 +303,7 @@ def run_self_test() -> int:
                     file=sys.stderr,
                 )
                 failures += 1
+        failures += self_test_scanned(tmp_path)
 
     if failures:
         print(f"check-curl-retry self-test: {failures} failures", file=sys.stderr)
