@@ -26,6 +26,7 @@ import json
 import math
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,7 @@ HERE = Path(__file__).resolve().parent
 DEFAULT_CANNED = HERE / "fixtures" / "canned-run-bench.json"
 DEFAULT_FIXTURE = HERE / "fixtures" / "record-four-arm.json"
 BLOCK_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}\Z")
+SAFE_ARM_NAME_RE = re.compile(r"^[A-Za-z0-9_.+-]+\Z")
 
 MANDATORY_ARMS = (
     "nvenc-tuned",
@@ -86,6 +88,20 @@ ARM_PARAMETERS = {
         "b_ref_mode": "middle",
     },
 }
+
+
+def _md_text(value):
+    """Sanitize and escape plain text for Markdown table cells and headers."""
+    if value is None:
+        return ""
+    text = "".join(c if c.isprintable() else " " for c in str(value))
+    text = text.replace("&", "&amp;")
+    text = text.replace("\\", "\\\\")
+    text = text.replace("|", "\\|")
+    text = text.replace("`", "\\`")
+    text = text.replace("<", "&lt;")
+    text = text.replace(">", "&gt;")
+    return text
 
 
 def load_validator():
@@ -186,11 +202,16 @@ def _format_point_row(arm_name, pt):
     s2_str = f"{pt['ssimulacra2']:.2f}" if "ssimulacra2" in pt else "n/a"
     vmaf_str = f"{pt['vmaf']:.2f}" if pt.get("vmaf") is not None else "n/a"
     cambi_str = f"{pt['cambi']:.2f}" if pt.get("cambi") is not None else "n/a"
-    return f"| `{arm_name}` | {cq_str} | {br_str} | {s2_str} | {vmaf_str} | {cambi_str} |"
+    arm_str = f"`{arm_name}`" if SAFE_ARM_NAME_RE.match(arm_name) else _md_text(arm_name)
+    return f"| {arm_str} | {cq_str} | {br_str} | {s2_str} | {vmaf_str} | {cambi_str} |"
 
 
 def render_record_md(record, validator=None, errors_out=None):
     """Render a validated benchmark record to a deterministic Markdown table block."""
+    if not isinstance(record, dict):
+        if errors_out is not None:
+            errors_out.append("record must be a JSON object")
+        return None
     if validator is None:
         validator = load_validator()
     errs = validator(record)
@@ -199,13 +220,13 @@ def render_record_md(record, validator=None, errors_out=None):
             errors_out.extend(errs)
         return None
 
-    clip = record.get("clip", "")
-    ref = record.get("reference", "")
+    clip = _md_text(record.get("clip", ""))
+    ref = _md_text(record.get("reference", ""))
     arms = record.get("arms", {})
     dev = ""
     for name in MANDATORY_ARMS:
         if name in arms and isinstance(arms[name], dict) and arms[name].get("device"):
-            dev = arms[name]["device"]
+            dev = _md_text(arms[name]["device"])
             break
 
     fixt = ", fixture" if record.get("is_fixture") else ""
@@ -247,7 +268,7 @@ def _load_block(p, block_name):
         sys.stderr.write(f"make-record: invalid block name {block_name!r}\n")
         return None
     try:
-        lines = p.read_text(encoding="utf-8").splitlines(keepends=True)
+        lines = p.read_bytes().decode("utf-8").splitlines(keepends=True)
     except (OSError, UnicodeDecodeError) as exc:
         sys.stderr.write(f"make-record: cannot read {p}: {exc}\n")
         return None
@@ -265,21 +286,25 @@ def replace_doc_block(doc_path, block_name, rendered_content):
     if loaded is None:
         return 2
     lines, (begin_idx, end_idx) = loaded
-    begin_line = lines[begin_idx] if lines[begin_idx].endswith("\n") else lines[begin_idx] + "\n"
-    content = rendered_content if rendered_content.endswith("\n") else rendered_content + "\n"
+    begin_line = lines[begin_idx]
+    doc_newline = "\r\n" if begin_line.endswith("\r\n") else "\n"
+    if not begin_line.endswith(("\r\n", "\n")):
+        begin_line += doc_newline
+    rendered_lines = rendered_content.splitlines()
+    content = doc_newline.join(rendered_lines) + doc_newline
     new_text = "".join(lines[:begin_idx]) + begin_line + content + "".join(lines[end_idx:])
 
     tmp_path = None
     try:
-        with tempfile.NamedTemporaryFile("w", dir=p.parent, delete=False, encoding="utf-8") as tf:
+        with tempfile.NamedTemporaryFile("w", dir=p.parent, delete=False, encoding="utf-8", newline="") as tf:
             tmp_path = Path(tf.name)
             tf.write(new_text)
+        os.chmod(tmp_path, stat.S_IMODE(p.stat().st_mode))
         os.replace(tmp_path, p)
     except OSError as exc:
-        err_msg = str(exc)
         if tmp_path and tmp_path.exists():
             tmp_path.unlink()
-        sys.stderr.write(f"make-record: atomic write failed: {err_msg}\n")
+        sys.stderr.write(f"make-record: atomic write failed: {exc}\n")
         return 2
     return 0
 
@@ -291,8 +316,11 @@ def check_doc_block(doc_path, block_name, rendered_content, record_path):
     if loaded is None:
         return 2
     lines, (begin_idx, end_idx) = loaded
+    begin_line = lines[begin_idx]
+    doc_newline = "\r\n" if begin_line.endswith("\r\n") else "\n"
+    rendered_lines = rendered_content.splitlines()
+    expected = doc_newline.join(rendered_lines) + doc_newline
     current = "".join(lines[begin_idx + 1 : end_idx])
-    expected = rendered_content if rendered_content.endswith("\n") else rendered_content + "\n"
     if current == expected:
         return 0
     print(f"{doc_path}: block {block_name} drifted from {record_path}")
@@ -557,6 +585,94 @@ def _run_marker_order_case(rendered_md):
     return [_evaluate_check("write_md_end_before_begin_fails", code == 2 and unchanged)]
 
 
+def _run_escaping_cases():
+    """Planted cases: cell escaping preserves columns and escapes HTML markers."""
+    malicious = "a|b\n`<!-- make-record:x end -->"
+    rec = {
+        "schema_version": 1,
+        "clip": malicious,
+        "reference": "noisy-source",
+        "arms": {
+            malicious: {
+                "device": malicious,
+                "points": [{"cq": 22, "bitrate_kbps": 1000.0, "ssimulacra2": 70.0}],
+            }
+        },
+    }
+    rendered = render_record_md(rec, validator=lambda _: [])
+    if rendered is None:
+        return [_evaluate_check("cell_escaping_preserves_columns", False, "render is None")]
+    tbl_lines = [l for l in rendered.splitlines() if l.startswith("|")]
+    col_counts = [len(re.findall(r"(?<!\\)\|", l)) for l in tbl_lines]
+    cols_ok = len(tbl_lines) >= 3 and len(set(col_counts)) == 1
+    no_marker_ok = "<!--" not in rendered
+    return [
+        _evaluate_check("cell_escaping_preserves_columns", cols_ok, f"cols: {col_counts}"),
+        _evaluate_check("header_marker_injection_escaped", no_marker_ok, "found <!--"),
+    ]
+
+
+def _run_non_object_case():
+    """Planted case: non-object record returns validation error without traceback."""
+    errs = []
+    try:
+        r = render_record_md([], errors_out=errs)
+        ok = r is None and "record must be a JSON object" in errs
+    except Exception as exc:
+        ok = False
+        errs.append(str(exc))
+    return [_evaluate_check("render_non_object_record_rejected", ok, repr(errs))]
+
+
+def _run_crlf_case(rendered_md):
+    """Planted case: CRLF doc preserves line endings, prefix/suffix bytes, and check-md passes."""
+    blk = "bench-summary"
+    prefix = b"# Intro CRLF\r\n\r\nParagraph before block.\r\n\r\n"
+    marker_begin = f"<!-- make-record:{blk} begin -->\r\n".encode("utf-8")
+    old_content = b"old content line 1\r\nold content line 2\r\n"
+    marker_end = f"<!-- make-record:{blk} end -->\r\n".encode("utf-8")
+    suffix = b"\r\nTrailing CRLF text.\r\n"
+    initial_bytes = prefix + marker_begin + old_content + marker_end + suffix
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        doc = tmp / "crlf-doc.md"
+        rec = tmp / "record.json"
+        rec.write_text("{}", encoding="utf-8")
+        doc.write_bytes(initial_bytes)
+
+        w_code = replace_doc_block(doc, blk, rendered_md)
+        out_bytes = doc.read_bytes()
+        prefix_ok = out_bytes.startswith(prefix + marker_begin)
+        suffix_ok = out_bytes.endswith(marker_end + suffix)
+        middle = out_bytes[len(prefix + marker_begin) : -len(marker_end + suffix)]
+        crlf_lines_ok = b"\r\n" in middle and not any(
+            line.endswith(b"\n") and not line.endswith(b"\r\n")
+            for line in middle.splitlines(keepends=True)
+        )
+        c_code = check_doc_block(doc, blk, rendered_md, rec)
+        ok = w_code == 0 and prefix_ok and suffix_ok and crlf_lines_ok and c_code == 0
+    return [_evaluate_check("write_md_crlf_preserved_and_check_passes", ok)]
+
+
+def _run_permissions_case(rendered_md):
+    """Planted case: doc file permissions are preserved across write_doc_block."""
+    if os.name == "nt":
+        print("[SKIP] write_md_permissions_preserved (Windows nt)")
+        return [_evaluate_check("write_md_permissions_preserved", True)]
+
+    blk = "bench-summary"
+    content = f"<!-- make-record:{blk} begin -->\nold\n<!-- make-record:{blk} end -->\n"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        doc = Path(tmpdir) / "perm-doc.md"
+        doc.write_text(content, encoding="utf-8")
+        os.chmod(doc, 0o644)
+        w_code = replace_doc_block(doc, blk, rendered_md)
+        current_mode = stat.S_IMODE(doc.stat().st_mode)
+        ok = w_code == 0 and current_mode == 0o644
+    return [_evaluate_check("write_md_permissions_preserved", ok, f"mode: {oct(current_mode)}")]
+
+
 def run_self_test():
     """Run self-tests: emitter validation, Markdown rendering, and doc block check/write."""
     validate_record = load_validator()
@@ -580,10 +696,14 @@ def run_self_test():
     results = []
     results.extend(_run_emitter_cases(canned_data, validate_record))
     results.extend(_run_render_cases(fixture_data, validate_record))
+    results.extend(_run_escaping_cases())
+    results.extend(_run_non_object_case())
 
     rendered_md = render_record_md(fixture_data, validator=validate_record)
     results.extend(_run_doc_block_cases(fixture_data, rendered_md))
     results.extend(_run_marker_order_case(rendered_md))
+    results.extend(_run_crlf_case(rendered_md))
+    results.extend(_run_permissions_case(rendered_md))
 
     passed_count = sum(1 for ok in results if ok)
     total = len(results)
