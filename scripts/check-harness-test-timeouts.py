@@ -387,6 +387,12 @@ def run_self_test(scripts_dir: pathlib.Path) -> int:
     """Verify that planted defective snippets fail and valid snippets pass."""
     with tempfile.TemporaryDirectory() as tmp_dir_str:
         tmp_dir = pathlib.Path(tmp_dir_str)
+        (tmp_dir / "test-nvenc-me-hints.py").write_text(
+            "import patch_harness\n", encoding="utf-8"
+        )
+        (tmp_dir / "test-grain-accumulator-bounds.py").write_text(
+            "X = 1\n", encoding="utf-8"
+        )
         (tmp_dir / "test-deadline-90.py").write_text(
             "FOO_TIMEOUT_S = 90\n", encoding="utf-8"
         )
