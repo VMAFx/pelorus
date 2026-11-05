@@ -3332,11 +3332,18 @@ def validate_workflow_go_pins(relative: str, text: str) -> list[str]:
     jobs = workflow_job_blocks(text)
     for job_name, job_text in jobs.items():
         if "actions/setup-go@" in job_text:
-            if LOAD_GO_ENV not in job_text:
+            load_pos = job_text.find(LOAD_GO_ENV)
+            if load_pos == -1:
                 errors.append(
                     f"{relative}: job {job_name!r} using setup-go must load "
                     f"GO_VERSION with {LOAD_GO_ENV!r}"
                 )
+            for match in re.finditer(r"actions/setup-go@", job_text):
+                if load_pos != -1 and match.start() < load_pos:
+                    errors.append(
+                        f"{relative}: job {job_name!r} must load GO_VERSION before setup-go"
+                    )
+                    break
             if "go-version: ${{ env.GO_VERSION }}" not in job_text:
                 errors.append(
                     f"{relative}: job {job_name!r} setup-go step must use "
@@ -3345,15 +3352,46 @@ def validate_workflow_go_pins(relative: str, text: str) -> list[str]:
     return errors
 
 
-def validate_all_workflow_go_pins() -> list[str]:
+def workflow_paths(workflow_dir: Path) -> list[Path]:
+    """Return all .yml and .yaml workflow files in workflow_dir, sorted."""
+    if not workflow_dir.is_dir():
+        return []
+    files: list[Path] = []
+    for pattern in ("*.yml", "*.yaml"):
+        files.extend(workflow_dir.glob(pattern))
+    return sorted(files)
+
+
+def validate_all_workflow_go_pins(workflow_dir: Path | None = None) -> list[str]:
     """Validate Go toolchain pinning across all repository workflows."""
     errors: list[str] = []
-    workflow_dir = ROOT / ".github" / "workflows"
-    if not workflow_dir.is_dir():
-        return errors
-    for path in sorted(workflow_dir.glob("*.yml")):
-        rel = path.relative_to(ROOT).as_posix()
+    target_dir = workflow_dir if workflow_dir is not None else ROOT / ".github" / "workflows"
+    for path in workflow_paths(target_dir):
+        rel = (
+            path.name
+            if workflow_dir is not None
+            else path.relative_to(ROOT).as_posix()
+        )
         errors.extend(validate_workflow_go_pins(rel, path.read_text(encoding="utf-8")))
+    return errors
+
+
+def validate_script_content_go_pins(rel: str, content: str, suffix: str) -> list[str]:
+    """Validate Go toolchain pinning within script content by file type."""
+    errors: list[str] = []
+    ext = suffix if suffix.startswith(".") else f".{suffix}"
+    if ext == ".py":
+        if re.search(r"^[ \t]*ACTIONLINT_GO_VERSION\s*=", content, re.MULTILINE):
+            errors.append(f"{rel}: literal ACTIONLINT_GO_VERSION forbidden")
+        if re.search(r"^[ \t]*GO_VERSION\s*=\s*['\"][0-9]", content, re.MULTILINE):
+            errors.append(f"{rel}: literal GO_VERSION pin forbidden")
+    elif ext in (".sh", ".bash"):
+        if re.search(
+            r"^[ \t]*(?:export[ \t]+)?GO_VERSION=['\"]?[0-9]",
+            content,
+            re.MULTILINE,
+        ):
+            errors.append(f"{rel}: literal GO_VERSION assignment forbidden")
     return errors
 
 
@@ -3368,15 +3406,11 @@ def validate_no_literal_go_pins() -> list[str]:
             continue
         rel = path.relative_to(ROOT).as_posix()
         content = path.read_text(encoding="utf-8")
-        if re.search(r"^[ ]*ACTIONLINT_GO_VERSION\s*=", content, re.MULTILINE):
-            errors.append(f"{rel}: literal ACTIONLINT_GO_VERSION forbidden")
-        if re.search(r"^[ ]*GO_VERSION\s*=\s*['\"][0-9]+\.[0-9]+", content, re.MULTILINE):
-            errors.append(f"{rel}: literal GO_VERSION pin forbidden")
+        errors.extend(validate_script_content_go_pins(rel, content, path.suffix))
     for path in sorted(scripts_dir.rglob("*.sh")):
         rel = path.relative_to(ROOT).as_posix()
         content = path.read_text(encoding="utf-8")
-        if re.search(r"^[ ]*GO_VERSION=[0-9]+\.[0-9]+", content, re.MULTILINE):
-            errors.append(f"{rel}: literal GO_VERSION assignment forbidden")
+        errors.extend(validate_script_content_go_pins(rel, content, path.suffix))
     return errors
 
 
@@ -5496,6 +5530,85 @@ def workflow_validator_regressions() -> list[str]:
     return failures
 
 
+def _go_pin_workflow_order_regressions(source: str, rel: str) -> list[str]:
+    """Prove setup-go step placed before load step is rejected."""
+    failures: list[str] = []
+    load_step = (
+        '      - name: Load Go version\n'
+        '        run: grep -E \'^GO_VERSION=\' build-config.env >> "$GITHUB_ENV"\n'
+    )
+    setup_step = (
+        '      - name: Set up Go\n'
+        '        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0\n'
+        '        with:\n'
+        '          go-version: ${{ env.GO_VERSION }}\n'
+        '          cache: false\n'
+    )
+    reordered = source.replace(
+        load_step + "\n" + setup_step,
+        setup_step + "\n" + load_step,
+        1,
+    )
+    if reordered == source:
+        failures.append("go-pin regression: swapping load and setup-go did not mutate standards-gate.yml")
+    else:
+        errs = validate_workflow_go_pins(rel, reordered)
+        if not any("must load GO_VERSION before setup-go" in e for e in errs):
+            failures.append("go-pin regression: setup-go step placed before load step was accepted")
+    return failures
+
+
+def _go_pin_workflow_yaml_regressions() -> list[str]:
+    """Prove workflow discovery scans .yaml files alongside .yml files."""
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp_str:
+        tmp_dir = Path(tmp_str)
+        (tmp_dir / "workflow-a.yml").write_text("name: A\n", encoding="utf-8")
+        (tmp_dir / "workflow-b.yaml").write_text("name: B\n", encoding="utf-8")
+        (tmp_dir / "other.txt").write_text("other\n", encoding="utf-8")
+        found = [p.name for p in workflow_paths(tmp_dir)]
+        if found != ["workflow-a.yml", "workflow-b.yaml"]:
+            failures.append(
+                f"go-pin regression: workflow_paths did not pick *.yaml and *.yml: {found}"
+            )
+    return failures
+
+
+def _go_pin_script_literal_regressions() -> list[str]:
+    """Prove literal Go version pins in scripts are rejected while non-literals are permitted."""
+    failures: list[str] = []
+    # Exported shell pin -> error
+    errs = validate_script_content_go_pins("scripts/test.sh", "export GO_VERSION=1.24\n", ".sh")
+    if not any("literal GO_VERSION assignment" in e for e in errs):
+        failures.append("go-pin regression: exported shell pin was accepted")
+
+    # Quoted shell pin -> error
+    errs = validate_script_content_go_pins("scripts/test.sh", 'GO_VERSION="1.24"\n', ".sh")
+    if not any("literal GO_VERSION assignment" in e for e in errs):
+        failures.append("go-pin regression: double-quoted shell pin was accepted")
+    errs = validate_script_content_go_pins("scripts/test.sh", "GO_VERSION='1.24'\n", ".sh")
+    if not any("literal GO_VERSION assignment" in e for e in errs):
+        failures.append("go-pin regression: single-quoted shell pin was accepted")
+
+    # Tab-indented pin -> error
+    errs = validate_script_content_go_pins("scripts/test.sh", "\tGO_VERSION=1.24\n", ".sh")
+    if not any("literal GO_VERSION assignment" in e for e in errs):
+        failures.append("go-pin regression: tab-indented shell pin was accepted")
+    errs = validate_script_content_go_pins("scripts/test.py", '\tGO_VERSION = "1.24"\n', ".py")
+    if not any("literal GO_VERSION pin" in e for e in errs):
+        failures.append("go-pin regression: tab-indented python pin was accepted")
+
+    # Non-literal GO_VERSION="${GO_VERSION}" -> allowed
+    errs = validate_script_content_go_pins("scripts/test.sh", 'GO_VERSION="${GO_VERSION}"\n', ".sh")
+    if errs:
+        failures.append(f"go-pin regression: non-literal shell assignment was rejected: {errs}")
+    errs = validate_script_content_go_pins("scripts/test.sh", 'export GO_VERSION="${GO_VERSION}"\n', ".sh")
+    if errs:
+        failures.append(f"go-pin regression: non-literal export shell assignment was rejected: {errs}")
+
+    return failures
+
+
 def go_pin_regressions() -> list[str]:
     """Prove literal Go version pins are rejected across workflows and build-config."""
     failures: list[str] = []
@@ -5522,6 +5635,9 @@ def go_pin_regressions() -> list[str]:
     if not any("GO_VERSION" in err for err in validate_config(missing_go)):
         failures.append("go-pin regression: missing GO_VERSION in build-config.env was accepted")
 
+    failures.extend(_go_pin_workflow_order_regressions(source, rel))
+    failures.extend(_go_pin_workflow_yaml_regressions())
+    failures.extend(_go_pin_script_literal_regressions())
     return failures
 
 
