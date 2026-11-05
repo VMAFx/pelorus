@@ -92,7 +92,13 @@ python3 script.py; sh -c 'echo "'"$x"'"'
 python3 -c 'print("'"\\$HOME"'")'
 """
 
-EXPECTED_HITS = (7, 13, 16, 19, 23, 26, 29, 32, 35)
+# Each planted defect sits on the line after its "# Must-flag" marker, so the
+# expected lines follow the fixture when a case is added or moved.
+EXPECTED_HITS = tuple(
+    n + 1
+    for n, line in enumerate(PLANTED_SH.splitlines(), 1)
+    if line.startswith("# Must-flag ")
+)
 
 
 class ScanError(Exception):
