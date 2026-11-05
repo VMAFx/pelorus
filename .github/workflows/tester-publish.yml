@@ -258,10 +258,17 @@ jobs:
         with:
           ref: ${{ needs.validate.outputs.sha }}
           persist-credentials: false
+      - name: Check out workflow actions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: .github/actions
+          persist-credentials: false
+          path: .actions
       - name: Compute image name
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
       - name: Load build configuration
-        uses: ./.github/actions/load-build-config
+        uses: ./.actions/.github/actions/load-build-config
       - name: Name the image tags of this kit
         run: |
           if [ "$KIT" = generic ]; then

@@ -3117,6 +3117,32 @@ INLINE_BUILD_CONFIG_APPEND = re.compile(
 )
 
 
+def _action_run_lines(text: str) -> list[str]:
+    """Lines of all run: blocks in the action, preserving indentation and comments."""
+    lines = text.splitlines()
+    run_lines: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        match = re.match(r"^(\s*)run:\s*(.*)$", line)
+        if match:
+            indent = len(match.group(1))
+            first = match.group(2).strip()
+            if first and not first.startswith(("|", ">")):
+                run_lines.append(first)
+            i += 1
+            while i < len(lines):
+                sub = lines[i]
+                if sub.strip() and (len(sub) - len(sub.lstrip(" "))) <= indent:
+                    break
+                if sub.strip():
+                    run_lines.append(sub.strip())
+                i += 1
+            continue
+        i += 1
+    return run_lines
+
+
 def validate_load_config_action_text(relative: str, text: str) -> list[str]:
     """Validate the composite action that loads build-config.env into GITHUB_ENV."""
     errors = [
@@ -3133,13 +3159,43 @@ def validate_load_config_action_text(relative: str, text: str) -> list[str]:
             f"{relative}: build-config action must not loop; "
             "select the keys with one grep"
         )
+    run_lines = _action_run_lines(text)
+    export_lines = [
+        line
+        for line in run_lines
+        if LOAD_STEP_GREP.search(line) and LOAD_STEP_APPEND.search(line)
+    ]
+    if any(
+        line.startswith(("#", '"', "'")) or re.match(r"^\s*(?:echo|printf)\b", line)
+        for line in export_lines
+    ):
+        errors.append(
+            f"{relative}: build-config action must execute the export; "
+            "export inside echo, printf, quotes or comment is refused"
+        )
+    executing = [
+        line
+        for line in run_lines
+        if re.match(r"^\s*grep\b", line)
+        and LOAD_STEP_APPEND.search(line)
+        and "build-config.env" in line
+        and all(
+            k in line
+            for k in ("FFMPEG_REMOTE", "FFMPEG_TAG", "FFMPEG_COMMIT", "GO_VERSION")
+        )
+        and not LOAD_STEP_LOOP.search(line)
+    ]
+    if not executing:
+        errors.append(
+            f"{relative}: build-config action must execute the export in run: body"
+        )
     return errors
 
 
 def workflow_on_section(text: str) -> str:
     """Return the uncommented lines of the top-level `on:` section."""
     match = re.search(
-        r"^(?:on|'on'|\"on\"):[ ]*(?P<rest>[^\n]*\n(?:(?:[ ]+[^\n]*|[ ]*)\n)*)",
+        r"^(?:on|'on'|\"on\")[ \t]*:[ ]*(?P<rest>[^\n]*\n(?:(?:[ ]+[^\n]*|[ ]*)\n)*)",
         text,
         re.MULTILINE,
     )
@@ -3154,7 +3210,7 @@ def workflow_on_section(text: str) -> str:
 
 def _validate_load_config_triggers(relative: str, text: str) -> list[str]:
     """Refuse pull_request_target and workflow_run in workflows using load-build-config."""
-    if LOAD_CONFIG_ACTION_USES not in text:
+    if ".github/actions/load-build-config" not in text:
         return []
     on_section = workflow_on_section(text)
     return [
@@ -3183,6 +3239,54 @@ def _validate_no_inline_build_config(relative: str, text: str) -> list[str]:
     return errors
 
 
+def _step_uses(step: str) -> str | None:
+    """Return the step's own uses: target, or None if not a uses step."""
+    lines = step.splitlines()
+    step_indent: int | None = None
+    for line in lines[1:]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if step_indent is None:
+            step_indent = indent
+        if indent == step_indent:
+            if stripped.startswith("uses:"):
+                target = stripped[len("uses:") :].strip()
+                return target.split("#", 1)[0].strip()
+            if stripped.startswith("run:"):
+                return None
+    return None
+
+
+TESTER_PUBLISH_ACTIONS_DIR = ".actions"
+
+
+def _extract_actions_checkout(block: str) -> tuple[str, list[str]] | None:
+    """Find the sparse actions checkout step in publish job, returning (path, errors)."""
+    matches = list(
+        re.finditer(
+            r"uses: actions/checkout@[^\n]*\n(?P<with>(?:[ ]+(?!- )\S[^\n]*\n)*)", block
+        )
+    )
+    for match in matches:
+        with_block = match.group("with")
+        if "sparse-checkout: .github/actions" in with_block:
+            errs: list[str] = []
+            if "ref: ${{ github.sha }}" not in with_block:
+                errs.append("actions checkout must set ref: ${{ github.sha }}")
+            if "persist-credentials: false" not in with_block:
+                errs.append("actions checkout must set persist-credentials: false")
+            path_match = re.search(r"^\s+path:\s*([^\s#]+)", with_block, re.MULTILINE)
+            if not path_match:
+                errs.append("actions checkout must set path")
+                path = TESTER_PUBLISH_ACTIONS_DIR
+            else:
+                path = path_match.group(1).strip()
+            return path, errs
+    return None
+
+
 def _validate_load_step(relative: str, name: str, block: str) -> list[str]:
     """A job loads build-config.env after checkout via the local composite action."""
     errors: list[str] = []
@@ -3198,9 +3302,29 @@ def _validate_load_step(relative: str, name: str, block: str) -> list[str]:
             f'{relative}: job {name} must not inline build-config.env >> "$GITHUB_ENV"; '
             f"use {LOAD_CONFIG_ACTION_USES}"
         )
-    if LOAD_CONFIG_ACTION_USES not in step:
+
+    is_tester_publish_publish = (
+        Path(relative).name == "tester-publish.yml" and name == "publish"
+    )
+    if is_tester_publish_publish:
+        actions_checkout = _extract_actions_checkout(block)
+        if not actions_checkout:
+            errors.append(
+                f"{relative}: job {name} must check out workflow actions (.github/actions) "
+                "at github.sha into a separate path"
+            )
+            expected_action = f"./{TESTER_PUBLISH_ACTIONS_DIR}/.github/actions/load-build-config"
+        else:
+            actions_path, errs = actions_checkout
+            errors.extend(f"{relative}: job {name} {err}" for err in errs)
+            expected_action = f"./{actions_path}/.github/actions/load-build-config"
+    else:
+        expected_action = "./.github/actions/load-build-config"
+
+    step_uses = _step_uses(step)
+    if step_uses != expected_action:
         errors.append(
-            f"{relative}: job {name} build-config step is missing {LOAD_CONFIG_ACTION_USES}"
+            f"{relative}: job {name} build-config step is missing uses: {expected_action}"
         )
     return errors
 
@@ -4808,6 +4932,24 @@ def _tester_arm64_cases(text: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def _tester_publish_load_cases(text: str) -> dict[str, tuple[str, str]]:
+    """Prove tester-publish publish job requires actions checkout and separate action path."""
+    action = f"uses: ./{TESTER_PUBLISH_ACTIONS_DIR}/.github/actions/load-build-config"
+    checkout_pat = re.compile(
+        r"[ ]+- (?:name: [^\n]*\n[ ]+)?uses: actions/checkout@[^\n]*\n(?:[ ]+(?!- )\S[^\n]*\n)*?[ ]+path: \.actions\n"
+    )
+    return {
+        "publish loads un-namespaced load-build-config": (
+            text.replace(action, "uses: ./.github/actions/load-build-config", 1),
+            f"job publish build-config step is missing uses: ./{TESTER_PUBLISH_ACTIONS_DIR}/.github/actions/load-build-config",
+        ),
+        "publish job without actions checkout": (
+            checkout_pat.sub("", text, count=1),
+            "job publish must check out workflow actions",
+        ),
+    }
+
+
 def _tester_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
     return {
         **_tester_trigger_job_cases(text),
@@ -4816,6 +4958,7 @@ def _tester_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
         **_tester_nightly_cases(text),
         **_tester_gate_cases(text),
         **_tester_publish_cases(text),
+        **_tester_publish_load_cases(text),
         **_tester_kit_cases(text),
         **_tester_build_kit_cases(text),
         **_tester_arm64_cases(text),
@@ -5339,6 +5482,44 @@ def _load_step_cases(source: str) -> dict[str, tuple[str, str]]:
             source.replace("on:\n", "on:\n  workflow_run:\n", 1),
             "must not trigger on workflow_run",
         ),
+        "load-build-config on spaces before colon with workflow_run": (
+            source.replace("on:\n", "on :\n  workflow_run:\n", 1),
+            "must not trigger on workflow_run",
+        ),
+        "echo-in-run build-config action": (
+            source.replace(
+                LOAD_CONFIG_ACTION_USES,
+                f"run: echo '{LOAD_CONFIG_ACTION_USES}'",
+                1,
+            ),
+            f"build-config step is missing {LOAD_CONFIG_ACTION_USES}",
+        ),
+    }
+
+
+def _load_action_copy_cases(
+    source: str, step_with_append: str
+) -> dict[str, tuple[str, str]]:
+    """Inert or wrapped copies of the export; each trips one action rule."""
+    return {
+        "echoed copy beside the export in build-config action": (
+            source.replace(
+                step_with_append,
+                f'{step_with_append}\n        echo "{step_with_append}"',
+                1,
+            ),
+            "export inside echo, printf, quotes or comment is refused",
+        ),
+        "commented copy beside the export in build-config action": (
+            source.replace(
+                step_with_append, f"{step_with_append}\n        # {step_with_append}", 1
+            ),
+            "export inside echo, printf, quotes or comment is refused",
+        ),
+        "export behind another command in build-config action": (
+            source.replace(step_with_append, f"true && {step_with_append}", 1),
+            "build-config action must execute the export in run: body",
+        ),
     }
 
 
@@ -5359,6 +5540,7 @@ def _load_action_cases(source: str) -> dict[str, tuple[str, str]]:
         "GO_VERSION GITHUB_ENV"
     )
     return {
+        **_load_action_copy_cases(source, step_with_append),
         "looping build-config action": (
             source.replace(grep, loop, 1),
             "build-config action must not loop",
@@ -5374,6 +5556,10 @@ def _load_action_cases(source: str) -> dict[str, tuple[str, str]]:
         "echo build-config action": (
             source.replace(step_with_append, echo_load, 1),
             "build-config action is missing grep",
+        ),
+        "echo-only grep in build-config action": (
+            source.replace(step_with_append, f'echo "{step_with_append}"', 1),
+            "export inside echo, printf, quotes or comment is refused",
         ),
         "build-config action missing append": (
             source.replace(step_with_append, grep, 1),
