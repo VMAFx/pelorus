@@ -51,6 +51,12 @@ pel_fail "device creation failed: $(head "$log" | head -n 1)"
 # Must-flag 3: pel_skip with head -n 10 piped to head -1
 pel_skip "probe failed: $(head -n 10 "$log" | head -1)"
 
+# Must-flag 4: pel_skip with a direct head -n 1
+pel_skip "probe failed: $(head -n 1 "$log")"
+
+# Must-flag 5: pel_fail with a direct head -1
+pel_fail "probe failed: $(head -1 "$log")"
+
 # Must-pass 1: pel_skip with pel_first_error
 pel_skip "hevc_nvenc cannot encode on this host: $(pel_first_error "$log")"
 
@@ -64,7 +70,7 @@ pel_fail "input clip generation failed: $(pel_first_error "$log")"
 pel_skip "no usable Vulkan device found"
 """
 
-EXPECTED_HITS = (5, 8, 11)
+EXPECTED_HITS = (5, 8, 11, 14, 17)
 
 FIXTURE_MESA_WARNING_VULKAN_ERROR = """\
 MESA: warning: Support for this platform is experimental with Xe KMD, bug reports may be ignored.
@@ -220,6 +226,12 @@ BASH_TIMEOUT_S = 30
 
 LONG_LINE = "error: " + ("A" * 200)
 
+FIXTURE_CANNOT_LOAD_BEFORE_ENCODER_ERROR = """\
+MESA: warning: Support for this platform is experimental with Xe KMD, bug reports may be ignored.
+[hevc_nvenc @ 0x0] Cannot load libcuda.so.1
+[vost#0:0/hevc_nvenc @ 0x0] Error while opening encoder - maybe incorrect parameters
+"""
+
 # (fixture file name, fixture text, expected pel_first_error output)
 HELPER_CASES = (
     (
@@ -233,6 +245,11 @@ HELPER_CASES = (
         "Selected Vulkan device does not support required extensions",
     ),
     ("long.log", LONG_LINE + "\n", LONG_LINE[:160]),
+    (
+        "cannot-load.log",
+        FIXTURE_CANNOT_LOAD_BEFORE_ENCODER_ERROR,
+        "[hevc_nvenc @ 0x0] Cannot load libcuda.so.1",
+    ),
 )
 
 

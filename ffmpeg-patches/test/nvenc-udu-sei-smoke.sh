@@ -69,7 +69,7 @@ pel_fail()
 pel_first_error()
 {
     awk '
-        tolower($0) ~ /error|failed/ && $0 !~ /^MESA: warning/ && tolower($0) !~ /warning:/ {
+        tolower($0) ~ /error|failed|cannot/ && $0 !~ /^MESA: warning/ && tolower($0) !~ /warning:/ {
             print substr($0, 1, 160)
             found = 1
             exit
