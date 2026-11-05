@@ -666,10 +666,10 @@ def _run_permissions_case(rendered_md):
     with tempfile.TemporaryDirectory() as tmpdir:
         doc = Path(tmpdir) / "perm-doc.md"
         doc.write_text(content, encoding="utf-8")
-        os.chmod(doc, 0o644)
+        os.chmod(doc, 0o640)
         w_code = replace_doc_block(doc, blk, rendered_md)
         current_mode = stat.S_IMODE(doc.stat().st_mode)
-        ok = w_code == 0 and current_mode == 0o644
+        ok = w_code == 0 and current_mode == 0o640
     return [_evaluate_check("write_md_permissions_preserved", ok, f"mode: {oct(current_mode)}")]
 
 
