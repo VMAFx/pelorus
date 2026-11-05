@@ -3567,8 +3567,38 @@ def validate_workflows() -> list[str]:
 LOAD_CONFIG_ACTION_TARGET = "./.github/actions/load-build-config"
 
 
-def _first_step_using(job_text: str, accept: Callable[[str], bool]) -> int:
-    """Offset of the first step whose own uses: target passes accept, or -1.
+def _step_key(step: str, key: str) -> str | None:
+    """Value of the step's own top-level key (e.g. if:), or None when absent.
+
+    Keys nested under with: or env: sit deeper than the step's own keys and
+    do not count; a trailing " #" comment is dropped.
+    """
+    lines = step.splitlines()
+    if not lines:
+        return None
+    prefix = f"{key}:"
+    head = lines[0].strip()
+    if head.startswith(f"- {prefix}"):
+        return head[len(prefix) + 2 :].split(" #", 1)[0].strip()
+    step_indent: int | None = None
+    for line in lines[1:]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if step_indent is None:
+            step_indent = indent
+        if indent == step_indent and stripped.startswith(prefix):
+            return stripped[len(prefix) :].split(" #", 1)[0].strip()
+    return None
+
+
+def _first_step_using(
+    job_text: str, accept: Callable[[str], bool]
+) -> tuple[int, str]:
+    """Offset and text of the first step whose own uses: target passes accept.
+
+    Returns (-1, "") when no step matches.
 
     Only the step's uses: key counts; the same text inside a run: command or
     a comment does not.
@@ -3585,8 +3615,28 @@ def _first_step_using(job_text: str, accept: Callable[[str], bool]) -> int:
         else:
             target = _step_uses(step)
         if target is not None and accept(target.strip("'\"")):
-            return match.start()
-    return -1
+            return match.start(), step
+    return -1, ""
+
+
+def _load_step_condition_errors(
+    relative: str, job_name: str, load_step: str, setup_step: str
+) -> list[str]:
+    """A load step that can be skipped while setup-go runs leaves GO_VERSION unset.
+
+    setup-go then falls back to the runner's preinstalled Go. The load step may
+    carry no if: or the same if: text as the setup-go step; a block-scalar
+    condition cannot be compared and is refused.
+    """
+    load_if = _step_key(load_step, "if") if load_step else None
+    if load_if is None:
+        return []
+    if load_if[:1] in ("|", ">") or load_if != _step_key(setup_step, "if"):
+        return [
+            f"{relative}: job {job_name!r} load step condition {load_if!r} can skip "
+            "it while setup-go runs; drop it or use the setup-go step's condition"
+        ]
+    return []
 
 
 def validate_workflow_go_pins(relative: str, text: str) -> list[str]:
@@ -3602,12 +3652,15 @@ def validate_workflow_go_pins(relative: str, text: str) -> list[str]:
             )
     jobs = workflow_job_blocks(text)
     for job_name, job_text in jobs.items():
-        setup_pos = _first_step_using(
+        setup_pos, setup_step = _first_step_using(
             job_text, lambda target: target.startswith("actions/setup-go@")
         )
         if setup_pos >= 0:
-            load_pos = _first_step_using(
+            load_pos, load_step = _first_step_using(
                 job_text, lambda target: target == LOAD_CONFIG_ACTION_TARGET
+            )
+            errors.extend(
+                _load_step_condition_errors(relative, job_name, load_step, setup_step)
             )
             if load_pos < 0 or load_pos > setup_pos:
                 errors.append(
@@ -6056,6 +6109,24 @@ def _go_pin_workflow_order_regressions(source: str, rel: str) -> list[str]:
     return failures
 
 
+def _go_pin_skipped_load_regressions(source: str, rel: str) -> list[str]:
+    """Prove a load step skippable while setup-go runs is refused, a shared condition passes."""
+    failures: list[str] = []
+    load_head = "      - name: Load build configuration\n"
+    setup_head = "      - name: Set up Go\n"
+    skipped = source.replace(load_head, load_head + "        if: false\n", 1)
+    if skipped == source:
+        failures.append("go-pin regression: planting if: false on the load step did not mutate standards-gate.yml")
+    elif not any("can skip it while setup-go runs" in e for e in validate_workflow_go_pins(rel, skipped)):
+        failures.append("go-pin regression: a load step with if: false before setup-go was accepted")
+    shared = source.replace(load_head, load_head + "        if: always()\n", 1).replace(
+        setup_head, setup_head + "        if: always()\n", 1
+    )
+    if validate_workflow_go_pins(rel, shared):
+        failures.append("go-pin regression: load and setup-go steps with the same condition were rejected")
+    return failures
+
+
 def _go_pin_workflow_yaml_regressions() -> list[str]:
     """Prove workflow discovery scans .yaml files alongside .yml files."""
     failures: list[str] = []
@@ -6215,6 +6286,7 @@ def go_pin_regressions() -> list[str]:
         failures.append("go-pin regression: missing GO_VERSION in build-config.env was accepted")
 
     failures.extend(_go_pin_workflow_order_regressions(source, rel))
+    failures.extend(_go_pin_skipped_load_regressions(source, rel))
     failures.extend(_go_pin_workflow_yaml_regressions())
     failures.extend(_go_pin_script_literal_regressions())
     failures.extend(_go_pin_script_discovery_regressions())
