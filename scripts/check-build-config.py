@@ -3264,8 +3264,8 @@ def _step_uses(step: str) -> str | None:
 TESTER_PUBLISH_ACTIONS_DIR = ".actions"
 
 
-def _extract_actions_checkout(block: str) -> tuple[str, list[str]] | None:
-    """Find the sparse actions checkout step in publish job, returning (path, errors)."""
+def _extract_actions_checkout(block: str) -> tuple[str, list[str], int] | None:
+    """Find the sparse actions checkout step in publish job, returning (path, errors, start)."""
     matches = list(
         re.finditer(
             r"uses: actions/checkout@[^\n]*\n(?P<with>(?:[ ]+(?!- )\S[^\n]*\n)*)", block
@@ -3287,7 +3287,7 @@ def _extract_actions_checkout(block: str) -> tuple[str, list[str]] | None:
                 path = path_match.group(1).strip()
             if path != TESTER_PUBLISH_ACTIONS_DIR:
                 errs.append(f"actions checkout must set path: {TESTER_PUBLISH_ACTIONS_DIR}")
-            return path, errs
+            return path, errs, match.start()
     return None
 
 
@@ -3319,8 +3319,12 @@ def _validate_load_step(relative: str, name: str, block: str) -> list[str]:
             )
             expected_action = f"./{TESTER_PUBLISH_ACTIONS_DIR}/.github/actions/load-build-config"
         else:
-            actions_path, errs = actions_checkout
+            actions_path, errs, actions_start = actions_checkout
             errors.extend(f"{relative}: job {name} {err}" for err in errs)
+            if actions_start > load and load >= 0:
+                errors.append(
+                    f"{relative}: job {name} actions checkout must precede Load build configuration"
+                )
             expected_action = f"./{actions_path}/.github/actions/load-build-config"
     else:
         expected_action = "./.github/actions/load-build-config"
@@ -4944,6 +4948,10 @@ def _tester_publish_load_cases(text: str) -> dict[str, tuple[str, str]]:
     )
     step_match = checkout_pat.search(text)
     step = step_match.group(0) if step_match else ""
+    load_step = (
+        "      - name: Load build configuration\n"
+        "        uses: ./.actions/.github/actions/load-build-config\n"
+    )
     return {
         "publish loads un-namespaced load-build-config": (
             text.replace(action, "uses: ./.github/actions/load-build-config", 1),
@@ -4952,6 +4960,10 @@ def _tester_publish_load_cases(text: str) -> dict[str, tuple[str, str]]:
         "publish job without actions checkout": (
             checkout_pat.sub("", text, count=1),
             "job publish must check out workflow actions",
+        ),
+        "publish actions checkout after load step": (
+            text.replace(step, "", 1).replace(load_step, load_step + step, 1),
+            "actions checkout must precede Load build configuration",
         ),
         "publish actions checkout wrong ref": (
             text.replace(
