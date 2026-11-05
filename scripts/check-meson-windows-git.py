@@ -88,9 +88,10 @@ def test_calls(statement: list[Token]) -> Iterator[list[Token]]:
                 break
 
 
-def meson_tests(source: str) -> Iterator[tuple[list[Token], bool]]:
-    """Track if/elif/else scopes; an exclusion's else branch is not gated."""
+def meson_tests(source: str) -> Iterator[tuple[list[Token], bool, dict[str, str]]]:
+    """Yield calls with source-order bindings and unchanged if/elif/else gates."""
     gates: list[bool] = []
+    variables: dict[str, str] = {}
     for statement in meson_statements(source):
         head = statement[0]
         if head.kind == "word" and head.value == "if":
@@ -103,8 +104,20 @@ def meson_tests(source: str) -> Iterator[tuple[list[Token], bool]]:
             else:
                 gates[-1] = head.value == "elif" and is_windows_gate(statement[1:])
         else:
+            if (
+                len(statement) >= 3
+                and head.kind == "word"
+                and statement[1].kind == "operator"
+                and statement[1].value == "="
+                and statement[2].kind in {"word", "string"}
+            ):
+                refs = script_refs(statement[2:], variables)
+                if refs:
+                    variables[head.value] = refs[-1]
+                else:
+                    variables.pop(head.value, None)
             for call in test_calls(statement):
-                yield call, any(gates)
+                yield call, any(gates), variables.copy()
     if gates:
         raise ValueError("meson.build: unclosed if block")
 
@@ -132,23 +145,6 @@ def script_refs(
             if token.kind == "word" and token.value in variables
         )
     return list(dict.fromkeys(refs))
-
-
-def script_variables(source: str) -> dict[str, str]:
-    """Resolve scalar script-path assignments through the literal path resolver."""
-    variables: dict[str, str] = {}
-    for statement in meson_statements(source):
-        if (
-            len(statement) >= 3
-            and statement[0].kind == "word"
-            and statement[1].kind == "operator"
-            and statement[1].value == "="
-            and statement[2].kind in {"word", "string"}
-        ):
-            refs = script_refs(statement[2:])
-            if refs:
-                variables[statement[0].value] = refs[-1]
-    return variables
 
 
 def command_literals(node: ast.AST) -> Iterator[ast.AST]:
@@ -193,8 +189,7 @@ def check(meson_build: Path, scripts_dir: Path) -> tuple[list[str], int]:
     findings: list[str] = []
     count = 0
     source = meson_build.read_text(encoding="utf-8")
-    variables = script_variables(source)
-    for call, gated in meson_tests(source):
+    for call, gated, variables in meson_tests(source):
         options = {token.value.strip("'\"") for token in call if token.kind == "string"}
         if options & {"--self-test", "--self-test-only"}:
             continue
@@ -256,6 +251,17 @@ def self_test_cases() -> list[tuple[str, str, bool]]:
             False,
         ),
         ("p14 variable no git", variable_test.replace("scan.py", "plain.py"), False),
+        (
+            "p15 later no-git assignment",
+            variable_test + "scan_script = 'scripts' / 'plain.py'\n",
+            True,
+        ),
+        (
+            "p16 later git assignment",
+            variable_test.replace("scan.py", "plain.py")
+            + "scan_script = 'scripts' / 'scan.py'\n",
+            False,
+        ),
     ]
 
 

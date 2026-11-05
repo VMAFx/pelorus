@@ -7,8 +7,9 @@
 the onexc/onerror handler. os.chmod follows symlinks, so an unguarded retry on a link
 inside a read-only snapshot would add execute permission to its target outside
 the snapshot. Separate read-only trees hold only a regular file
-or only a symlink to a 0o600 file outside. Each removal must invoke the retry,
-succeed and leave the outside file at 0o600.
+or only a symlink to a 0o600 file outside. Inject one unlink PermissionError per
+entry so the retry runs even under root or CAP_DAC_OVERRIDE. Each removal must
+invoke the retry, succeed and leave the outside file at 0o600.
 
     python3 -I scripts/test-writable-retry.py
 """
@@ -43,6 +44,21 @@ def load_common():
     return module
 
 
+def fail_unlink_once(entry: pathlib.Path):
+    """Fail the entry's first unlink by basename or full path, then delegate."""
+    unlink = os.unlink
+    failed = False
+
+    def remove(path, *args, **kwargs):
+        nonlocal failed
+        if not failed and os.fspath(path) in (entry.name, str(entry)):
+            failed = True
+            raise PermissionError("planted entry removal failure")
+        return unlink(path, *args, **kwargs)
+
+    return remove
+
+
 def planted_case(base: pathlib.Path, common, symlink: bool) -> list[str]:
     """Remove a single-entry read-only tree; require the entry's retry to run."""
     outside = base / "outside"
@@ -64,7 +80,10 @@ def planted_case(base: pathlib.Path, common, symlink: bool) -> list[str]:
         retried.append(pathlib.Path(path))
         retry(function, path, exc)
 
-    with patch.object(common, "_writable_retry", record_retry):
+    with (
+        patch.object(common, "_writable_retry", record_retry),
+        patch.object(os, "unlink", fail_unlink_once(entry)),
+    ):
         common.rmtree_writable(snap)
     problems: list[str] = []
     if entry not in retried:
