@@ -42,8 +42,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Load build configuration
-        run: |
-          grep -E '^(FFMPEG_REMOTE|FFMPEG_TAG|FFMPEG_COMMIT)=' build-config.env >> "$GITHUB_ENV"
+        uses: ./.github/actions/load-build-config
       - name: Install toolchain
         run: |
           sudo apt-get update
