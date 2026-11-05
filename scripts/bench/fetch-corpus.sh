@@ -140,8 +140,9 @@ while IFS='|' read -r name url sha seek scale pixfmt frames fps licence; do
             # --fail turns an HTTP error into a non-zero exit instead of saving
             # the error page; --max-time bounds every attempt (HISS-02).
             tmp_dl="$(mktemp "$local_dl.XXXXXX.part")"
+            # 6 retries with exponential backoff absorb transient release-asset 504s (run 42044634889).
             if ! curl --fail --show-error --silent --location \
-                --max-time "$CURL_MAX_TIME" --retry 2 --retry-max-time "$CURL_MAX_TIME" \
+                --max-time "$CURL_MAX_TIME" --retry 6 --retry-max-time "$CURL_MAX_TIME" \
                 --output "$tmp_dl" -- "$url"; then
                 rm -f -- "$tmp_dl"
                 echo "  DOWNLOAD FAILED: $name ($url)" >&2

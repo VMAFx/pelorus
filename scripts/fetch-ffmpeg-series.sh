@@ -105,9 +105,12 @@ download() {
         if [[ -n "${FFMPEG_SERIES_FROM:-}" ]]; then
             cp -- "$FFMPEG_SERIES_FROM/$name" "$dir/$name" ||
                 fail "FFMPEG_SERIES_FROM has no $name"
+        # 6 retries with exponential backoff absorb transient release-asset 504s (run 42044634889).
         elif ! curl --fail --silent --show-error --location \
             --proto '=https' --proto-redir '=https' \
-            --max-time "$CURL_MAX_TIME" --retry 2 --output "$dir/$name" \
+            --max-time "$CURL_MAX_TIME" \
+            --retry 6 --retry-max-time "$CURL_MAX_TIME" \
+            --output "$dir/$name" \
             -- "$RELEASE_URL/$name"; then
             fail "download failed: $RELEASE_URL/$name"
         fi
