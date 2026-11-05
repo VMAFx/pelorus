@@ -127,15 +127,16 @@ def script_loads_patch_harness(script_path: pathlib.Path) -> bool:
     return any(_names_patch_harness(node) for node in ast.walk(tree))
 
 
-def _extract_assigned_name(node: ast.AST) -> str | None:
-    """Return target identifier for single-name Assign or AnnAssign, else None."""
-    if isinstance(node, ast.Assign) and len(node.targets) == 1:
-        target = node.targets[0]
-        if isinstance(target, ast.Name):
-            return target.id
-    elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-        return node.target.id
-    return None
+def _extract_assigned_names(node: ast.AST) -> list[str]:
+    """Return every plain-name target of an Assign or AnnAssign node.
+
+    A chained assignment (A_TIMEOUT_S = B_TIMEOUT_S = 90) names each target.
+    """
+    if isinstance(node, ast.Assign):
+        return [target.id for target in node.targets if isinstance(target, ast.Name)]
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        return [node.target.id]
+    return []
 
 
 def _is_timeout_target(name: str) -> bool:
@@ -173,11 +174,19 @@ def _extract_constant_seconds(name: str, value_node: ast.AST | None) -> float | 
 
 
 def _node_deadline_seconds(node: ast.AST) -> float | None:
-    """Return deadline in seconds from a module-level assignment node, or None."""
-    name = _extract_assigned_name(node)
-    if name is None or not _is_timeout_target(name):
-        return None
-    return _extract_constant_seconds(name, getattr(node, "value", None))
+    """Return the largest deadline in seconds a module-level assignment sets.
+
+    Each timeout-named target is converted on its own (a _MINUTES name scales
+    by 60); None when no target is timeout-named or the value is absent.
+    """
+    value_node = getattr(node, "value", None)
+    deadlines = [
+        seconds
+        for name in _extract_assigned_names(node)
+        if _is_timeout_target(name)
+        and (seconds := _extract_constant_seconds(name, value_node)) is not None
+    ]
+    return max(deadlines) if deadlines else None
 
 
 def script_deadline_s(script_path: pathlib.Path) -> float | None:
@@ -617,6 +626,16 @@ SELF_TEST_CASES = [
         True,
     ),
     (
+        "chained OTHER = FOO_TIMEOUT_S = 90 without timeout (fails: chained target)",
+        """
+        test('planted-chained-deadline',
+             python_prog,
+             args: [meson.project_source_root() / 'scripts' / 'test-deadline-chained.py'],
+             suite: 'fast')
+        """,
+        False,
+    ),
+    (
         "trailing CAPS and MAX bound tokens without timeout (valid: bounds, not deadlines)",
         """
         test('planted-bound-token',
@@ -646,6 +665,7 @@ SELF_TEST_FIXTURES = {
         "from typing import Final\nFOO_TIMEOUT_S: Final = 90 + 30\n"
     ),
     "test-deadline-bare.py": "FOO_TIMEOUT_S: float\n",
+    "test-deadline-chained.py": "OTHER = FOO_TIMEOUT_S = 90\n",
 }
 
 def run_self_test(scripts_dir: pathlib.Path) -> int:
