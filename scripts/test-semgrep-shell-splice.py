@@ -127,7 +127,7 @@ def make_tree(root: pathlib.Path, rel_path: str, source: str) -> pathlib.Path:
 def step_planted_cases(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
     """(a) Every planted case hits or stays quiet as expected."""
     tree = make_tree(tmp / "planted_repo", "scripts/test_planted.sh", PLANTED_SH)
-    data = run_semgrep(semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg", hermetic=False)
+    data = run_semgrep(semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg", hermetic=True)
     results = [
         r
         for r in data.get("results", [])
@@ -148,7 +148,7 @@ def step_planted_revert(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
     replacement = 'with open("\'"$st_corrupt"\'", "r+b") as f:'
     planted = source.replace(needle, replacement, 1)
     tree = make_tree(tmp / "revert_repo", "scripts/test-abi-upgrade.sh", planted)
-    data = run_semgrep(semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg", hermetic=False)
+    data = run_semgrep(semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg", hermetic=True)
     results = [
         r
         for r in data.get("results", [])

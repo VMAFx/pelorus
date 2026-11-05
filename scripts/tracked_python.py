@@ -87,6 +87,13 @@ def repo_discovery_env() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if key not in names}
 
 
+def require_files(files: list[Path], label: str) -> list[Path]:
+    """Refuse an empty mandatory scan instead of reporting a vacuous success."""
+    if not files:
+        raise RuntimeError(f"{label}: no files to check")
+    return files
+
+
 def tracked_files(root: Path) -> list[Path]:
     """Every file git tracks under root."""
     git = _git_executable()
@@ -95,4 +102,4 @@ def tracked_files(root: Path) -> list[Path]:
         env=repo_discovery_env(),
     )
     names = proc.stdout.decode("utf-8", "surrogateescape").split("\0")
-    return [root / name for name in names if name]
+    return require_files([root / name for name in names if name], "git ls-files")

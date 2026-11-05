@@ -591,8 +591,10 @@ MAX_STALE_SNAPSHOTS = 256
 
 
 def _writable_retry(function, path, _exc):
-    """rmtree onexc: make the parent and the entry writable, then retry the removal once."""
+    """rmtree onexc: make parent/entry writable without following symlinks; retry once."""
     for target in (os.path.dirname(path), path):
+        if os.path.islink(target):
+            continue
         with contextlib.suppress(OSError):
             os.chmod(target, stat.S_IRWXU)
     function(path)

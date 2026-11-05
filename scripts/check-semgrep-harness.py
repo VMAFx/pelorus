@@ -3,9 +3,8 @@
 # SPDX-License-Identifier: EUPL-1.2
 """Check that all tracked test-semgrep-*.py scripts use scripts/semgrep_harness.py.
 
-Enforces that every tracked Semgrep test script loads semgrep_harness and does
-not define run_semgrep, scrubbed_env, resolve_executable, or ScanError at module
-level.
+Enforces shared harness use, a nonempty tracked test list, and literal hermetic
+flags: False for ROOT/REPO_ROOT scans, True for planted trees.
 """
 
 from __future__ import annotations
@@ -46,6 +45,28 @@ def loads_harness(tree: ast.AST) -> bool:
     return False
 
 
+def check_hermetic_calls(tree: ast.AST, display_path: str) -> list[str]:
+    """Require a literal hermetic flag matching the scan's target argument."""
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
+        if name != "run_semgrep":
+            continue
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+        target = node.args[1] if len(node.args) > 1 else keywords.get("target_dir")
+        real_tree = isinstance(target, ast.Name) and target.id in {"ROOT", "REPO_ROOT"}
+        expected = not real_tree
+        hermetic = keywords.get("hermetic")
+        if not isinstance(hermetic, ast.Constant) or hermetic.value is not expected:
+            violations.append(
+                f"{display_path}:{node.lineno}: run_semgrep must pass hermetic={expected} "
+                f"for {'ROOT/REPO_ROOT' if real_tree else 'a planted-tree target'}"
+            )
+    return violations
+
+
 def check_source(source_bytes: bytes, display_path: str) -> list[str]:
     """Check Python source for semgrep_harness load and banned definitions."""
     try:
@@ -64,7 +85,7 @@ def check_source(source_bytes: bytes, display_path: str) -> list[str]:
                     f"{display_path}:{stmt.lineno}: defines module-level "
                     f"{type(stmt).__name__} '{stmt.name}' instead of using semgrep_harness"
                 )
-    return violations
+    return violations + check_hermetic_calls(tree, display_path)
 
 
 def check_file(path: pathlib.Path, repo_root: pathlib.Path | None = None) -> list[str]:
@@ -85,57 +106,76 @@ def check_file(path: pathlib.Path, repo_root: pathlib.Path | None = None) -> lis
 
 def get_tracked_semgrep_tests(repo_root: pathlib.Path) -> list[pathlib.Path]:
     """Discover git-tracked scripts/test-semgrep-*.py files."""
-    return [
+    return require_test_files([
         path for path in tracked_python.tracked_files(repo_root)
         if path.relative_to(repo_root).match("scripts/test-semgrep-*.py")
+    ])
+
+
+def require_test_files(files: list[pathlib.Path]) -> list[pathlib.Path]:
+    """Refuse an empty Semgrep test selection without invoking Git."""
+    return tracked_python.require_files(files, "tracked scripts/test-semgrep-*.py")
+
+
+def self_test_cases() -> list[tuple[str, str, str | None]]:
+    """Source fixtures cover harness imports, definitions and scan isolation."""
+    harness = "import semgrep_harness\n"
+    planted = "run_semgrep(bin, tree, rules, 1, cfg, hermetic=False)\n"
+    return [
+        ("p1", harness + "def run_semgrep():\n    pass\n",
+         "defines module-level FunctionDef 'run_semgrep'"),
+        ("p2", "def other_func():\n    return 0\n", "does not load semgrep_harness"),
+        ("p3", 'import importlib.util\n'
+         '_SPEC = importlib.util.spec_from_file_location("semgrep_harness", "semgrep_harness.py")\n'
+         'run_semgrep = semgrep_harness.run_semgrep\n', None),
+        ("p5", harness + planted, "must pass hermetic=True"),
+        ("p6", harness + planted.replace("tree,", "ROOT,"), None),
+        ("p7", harness + planted.replace("False", "True"), None),
+        ("p8", harness + planted.replace("tree,", "REPO_ROOT,"), None),
+        ("p9", harness + "semgrep_harness.run_semgrep("
+         "bin, target_dir=tree, rule_path=rules, hermetic=False)\n", "must pass hermetic=True"),
+        ("p10", harness + planted.replace(", hermetic=False", ""), "must pass hermetic=True"),
+        ("p11", harness + planted.replace("False", "flag"), "must pass hermetic=True"),
+        ("p12", harness + planted.replace("tree,", "ROOT,").replace("False", "True"),
+         "must pass hermetic=False"),
+        ("p13", harness + planted.replace("False", "1"), "must pass hermetic=True"),
     ]
+
+
+def check_empty_list_case() -> str | None:
+    """p4: empty discovery must raise; a nonempty selection must survive."""
+    try:
+        require_test_files([])
+    except RuntimeError as exc:
+        if "no files to check" not in str(exc):
+            return f"p4 unexpected empty-list error: {exc}"
+    else:
+        return "p4 empty tracked test list was not refused"
+    paths = [pathlib.Path("scripts/test-semgrep-planted.py")]
+    if require_test_files(paths) != paths:
+        return "p4 nonempty tracked test list was refused"
+    return None
 
 
 def run_self_test() -> int:
     """Run planted self-test cases in a temporary directory."""
+    cases = self_test_cases()
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
-        p1 = tmp / "p1.py"
-        p1.write_text(
-            'import importlib.util\n'
-            '_SPEC = importlib.util.spec_from_file_location("semgrep_harness", "semgrep_harness.py")\n'
-            'def run_semgrep():\n'
-            '    pass\n',
-            encoding="utf-8",
-        )
-        p2 = tmp / "p2.py"
-        p2.write_text(
-            'def other_func():\n'
-            '    return 0\n',
-            encoding="utf-8",
-        )
-        p3 = tmp / "p3.py"
-        p3.write_text(
-            'import importlib.util\n'
-            '_SPEC = importlib.util.spec_from_file_location("semgrep_harness", "semgrep_harness.py")\n'
-            'semgrep_harness = importlib.util.module_from_spec(_SPEC)\n'
-            'run_semgrep = semgrep_harness.run_semgrep\n'
-            'def main():\n'
-            '    return 0\n',
-            encoding="utf-8",
-        )
-
-        v1 = check_file(p1)
-        if not any("defines module-level FunctionDef 'run_semgrep'" in msg for msg in v1):
-            sys.stderr.write("FAIL: p1 defining run_semgrep was not refused\n")
-            return 1
-
-        v2 = check_file(p2)
-        if not any("does not load semgrep_harness" in msg for msg in v2):
-            sys.stderr.write("FAIL: p2 not loading harness was not refused\n")
-            return 1
-
-        v3 = check_file(p3)
-        if v3:
-            sys.stderr.write(f"FAIL: p3 conforming file was refused: {v3}\n")
-            return 1
-
-    print("check-semgrep-harness: self-test (3 cases) ok")
+        for label, source, expected in cases:
+            path = tmp / f"{label}.py"
+            path.write_text(source, encoding="utf-8")
+            findings = check_file(path)
+            if (expected is None and findings) or (
+                expected is not None and not any(expected in msg for msg in findings)
+            ):
+                sys.stderr.write(f"FAIL: {label}: expected {expected!r}, got {findings}\n")
+                return 1
+    problem = check_empty_list_case()
+    if problem:
+        sys.stderr.write(f"FAIL: {problem}\n")
+        return 1
+    print(f"check-semgrep-harness: self-test ({len(cases) + 1} cases) ok")
     return 0
 
 

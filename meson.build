@@ -569,6 +569,16 @@ test('python-empty-except-self-test',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# Snapshot cleanup must not chmod a symlink target (PR 538 review). Creating
+# the planted symlink needs a privilege Windows CI does not grant.
+if build_machine.system() != 'windows'
+  test('writable-retry-symlink',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'test-writable-retry.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
+
 # Git-tree scans must skip Windows CI, where git is not on PATH.
 # This source-only check and its planted cases run on every platform.
 test('meson-windows-git',
