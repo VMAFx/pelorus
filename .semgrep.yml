@@ -213,6 +213,35 @@ rules:
         - /scripts/**/*.sh
     pattern-regex: >-
       \bpel_(?:skip|fail)\b(?:[^\n"';\\]|\\\r?\n|"(?:[^\n"\\$]|\\.|\$(?!\()|\$\([^\n)]*\))*"|'[^'\n]*')*?(?:"(?:[^\n"\\$]|\\.|\$(?!\()|\$\([^\n)]*\))*?)?\$\([^\n)]*?\bhead\s+(?:[^\n)|]*?\s)?(?:-n\s*1|-1)\b[^\n)]*?\)
+  - id: pelorus-shell-splice-into-inline-source
+    # Splicing a shell expansion directly into inline interpreter source
+    # code by closing and reopening the outer single quote (`'"$var"'`,
+    # `'"${var}"'`, `'"prefix-$var"'`, `'$var'`, `'${var}'`, or
+    # `'prefix-$var'`, also with quotes inside a braced expansion such as
+    # `'"${var:-"$fallback"}"'`) exposes the program to syntax
+    # corruption or code injection when the expanded value contains quotes or
+    # special characters (defect fixed in scripts/test-abi-upgrade.sh at
+    # commit 4a44da7). This rule inspects shell scripts for inline invocations
+    # of python3, python, perl, ruby, and node (`-c` or `-e`, including
+    # clustered flags and quoted options) with single-quoted programs that
+    # perform such quote closures and reopenings. Spliced values must be
+    # passed as argv arguments instead (e.g. sys.argv[1] in Python).
+    # Plain echo outside any -c program stays quiet because echo is not an
+    # inline interpreter command. Python stops reading source at its first
+    # -c program and hands later arguments, a second -c included, to
+    # sys.argv, so the Python prefix refuses a -c flag before the match;
+    # perl and ruby run every -e and node runs its last one, so a later -e
+    # stays in scope. scripts/test-semgrep-shell-splice.py plants each case.
+    languages: [generic]
+    severity: ERROR
+    message: Pass the value as an argument (sys.argv) instead.
+    paths:
+      include:
+        - "*.sh"
+        - "**/*.sh"
+        - "/ffmpeg-patches/test/**/*.sh"
+    pattern-regex: >-
+      \b(?:python[23]?(?:(?:\s|\\\r?\n)+(?!-[A-Za-z]*c(?![A-Za-z]))(?:[^\s'";|&\\]|"[^"\n]*"|'[^'\n]*')+)*?|(?:perl|ruby|node)(?:(?:\s|\\\r?\n)(?:[^\n'";|&\\]|\\\r?\n|"[^"\n]*"|'[^'\n]*')*?)?)(?:\s|\\\r?\n)+-[A-Za-z]*[ce](?:\s|\\\r?\n)*'(?:'\\''|[^'])*?('"(?:[^"$\n\\]|\\[^\r\n])*\$(?:\{[^}\n]*\}|[^"\n])*?"'|'(?:[^'"$\s\n\\]|\\[^\r\n])*\$[^'\s\n]*?')
   - id: pelorus-validate-which-executable
     # Executable found via shutil.which(...) passed to subprocess.run,
     # subprocess.Popen, subprocess.check_output, subprocess.call or
