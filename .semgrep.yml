@@ -220,4 +220,262 @@ rules:
         - "/ffmpeg-patches/test/**/*.sh"
     pattern-regex: >-
       \b(?:python[23]?|perl|ruby|node)(?:(?:\s|\\\r?\n)(?:[^\n'";|&\\]|\\\r?\n|"[^"\n]*"|'[^'\n]*')*?)?(?:\s|\\\r?\n)-[A-Za-z]*[ce](?:\s|\\\r?\n)*'(?:'\\''|[^'])*?('"(?:[^"$\n\\]|\\[^\r\n])*\$(?:\{[^}\n]*\}|[^"\n])*?"'|'(?:[^'"$\s\n\\]|\\[^\r\n])*\$[^'\s\n]*?')
+  - id: pelorus-validate-which-executable
+    # Executable found via shutil.which(...) passed to subprocess.run,
+    # subprocess.Popen, subprocess.check_output, subprocess.call or
+    # subprocess.check_call without validation.
+    # Validate via Path(x).resolve(), is_file(), and os.access(..., os.X_OK).
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Executable found via shutil.which(...) passed to subprocess without
+      validation; resolve-and-validate via Path(x).resolve(), is_file(),
+      and os.access(..., os.X_OK).
+    paths:
+      include:
+        - "*.py"
+        - "**/*.py"
+    pattern-either:
+      # Inline shutil.which in subprocess invocation
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.$FUNC([shutil.which(...), ...], ...)
+              - pattern: subprocess.$FUNC(shutil.which(...), ...)
+              - patterns:
+                  - pattern-inside: |
+                      $CMD = [shutil.which(...), ...]
+                      ...
+                      subprocess.$FUNC($CMD, ...)
+                  - pattern: subprocess.$FUNC($CMD, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: '^(run|Popen|check_output|call|check_call)$'
+
+      # Variable holding shutil.which passed to subprocess
+      - patterns:
+          - pattern-inside: |
+              $VAR = shutil.which(...)
+              ...
+          - pattern-either:
+              - pattern: subprocess.$FUNC([$VAR, ...], ...)
+              - pattern: subprocess.$FUNC($VAR, ...)
+              - patterns:
+                  - pattern-inside: |
+                      $CMD = [$VAR, ...]
+                      ...
+                      subprocess.$FUNC($CMD, ...)
+                  - pattern: subprocess.$FUNC($CMD, ...)
+              - patterns:
+                  - pattern-inside: |
+                      $P = <... Path($VAR) ...>
+                      ...
+                      subprocess.$FUNC([str($P), ...], ...)
+                  - pattern: subprocess.$FUNC([str($P), ...], ...)
+              - patterns:
+                  - pattern-inside: |
+                      $P = <... pathlib.Path($VAR) ...>
+                      ...
+                      subprocess.$FUNC([str($P), ...], ...)
+                  - pattern: subprocess.$FUNC([str($P), ...], ...)
+              - patterns:
+                  - pattern-inside: |
+                      $P = <... Path($VAR) ...>
+                      ...
+                      subprocess.$FUNC([$P, ...], ...)
+                  - pattern: subprocess.$FUNC([$P, ...], ...)
+              - patterns:
+                  - pattern-inside: |
+                      $P = <... pathlib.Path($VAR) ...>
+                      ...
+                      subprocess.$FUNC([$P, ...], ...)
+                  - pattern: subprocess.$FUNC([$P, ...], ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: '^(run|Popen|check_output|call|check_call)$'
+          # Guard suppression: call inside a branch whose condition
+          # validates $VAR (or Path($VAR) bound to $P) un-negated:
+          # os.access(..., os.X_OK), is_file() or os.path.isfile().
+          # A call in an `if not <guard>:` branch stays reported, and so
+          # does one whose guard is only one alternative of an `or`.
+          - pattern-not-inside:
+              patterns:
+                - pattern-inside: |
+                    $VAR = shutil.which(...)
+                    ...
+                - pattern: |
+                    if $COND:
+                        ...
+                        $BODY
+                        ...
+                - focus-metavariable: $BODY
+                - metavariable-pattern:
+                    metavariable: $COND
+                    patterns:
+                      - pattern-either:
+                          - pattern: os.access($VAR, <... os.X_OK ...>)
+                          - pattern: os.access(<... Path($VAR) ...>, <... os.X_OK ...>)
+                          - pattern: os.access(<... pathlib.Path($VAR) ...>, <... os.X_OK ...>)
+                          - pattern: Path($VAR).is_file(...)
+                          - pattern: pathlib.Path($VAR).is_file(...)
+                          - pattern: os.path.isfile($VAR)
+                          - pattern: os.path.isfile(<... Path($VAR) ...>)
+                          - pattern: os.path.isfile(<... pathlib.Path($VAR) ...>)
+                      - pattern-not-inside: not $X
+                      - pattern-not-inside: $X or $Y
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        $VAR = shutil.which(...)
+                        ...
+                        $P = <... Path($VAR) ...>
+                        ...
+                    - pattern-inside: |
+                        $VAR = shutil.which(...)
+                        ...
+                        $P = <... pathlib.Path($VAR) ...>
+                        ...
+                - pattern: |
+                    if $COND:
+                        ...
+                        $BODY
+                        ...
+                - focus-metavariable: $BODY
+                - metavariable-pattern:
+                    metavariable: $COND
+                    patterns:
+                      - pattern-either:
+                          - pattern: os.access($P, <... os.X_OK ...>)
+                          - pattern: $P.is_file(...)
+                          - pattern: os.path.isfile($P)
+                      - pattern-not-inside: not $X
+                      - pattern-not-inside: $X or $Y
+          # Guard suppression: call after early-return on negated guard
+          # 4. negated os.access with os.X_OK -> return
+          - pattern-not-inside: |
+              $VAR = shutil.which(...)
+              ...
+              if <... not <... os.access($VAR, <... os.X_OK ...>) ...> ...>:
+                  ...
+                  return ...
+              ...
+              subprocess.$F(...)
+          - pattern-not-inside: |
+              $VAR = shutil.which(...)
+              ...
+              $P = <... Path($VAR) ...>
+              ...
+              if <... not <... os.access($P, <... os.X_OK ...>) ...> ...>:
+                  ...
+                  return ...
+              ...
+              subprocess.$F(...)
+          - pattern-not-inside: |
+              $VAR = shutil.which(...)
+              ...
+              $P = <... pathlib.Path($VAR) ...>
+              ...
+              if <... not <... os.access($P, <... os.X_OK ...>) ...> ...>:
+                  ...
+                  return ...
+              ...
+              subprocess.$F(...)
+          - pattern-not-inside: |
+              $VAR = shutil.which(...)
+              ...
+              if <... not <... os.access(<... Path($VAR) ...>, <... os.X_OK ...>) ...> ...>:
+                  ...
+                  return ...
+              ...
+              subprocess.$F(...)
+          - pattern-not-inside: |
+              $VAR = shutil.which(...)
+              ...
+              if <... not <... os.access(<... pathlib.Path($VAR) ...>, <... os.X_OK ...>) ...> ...>:
+                  ...
+                  return ...
+              ...
+              subprocess.$F(...)
+          # 5. negated is_file() -> return
+          - pattern-not-inside: |
+              $VAR = shutil.which(...)
+              ...
+              $P = <... Path($VAR) ...>
+              ...
+              if <... not <... $P.is_file(...) ...> ...>:
+                  ...
+                  return ...
+              ...
+              subprocess.$F(...)
+          - pattern-not-inside: |
+              $VAR = shutil.which(...)
+              ...
+              $P = <... pathlib.Path($VAR) ...>
+              ...
+              if <... not <... $P.is_file(...) ...> ...>:
+                  ...
+                  return ...
+              ...
+              subprocess.$F(...)
+          - pattern-not-inside: |
+              $VAR = shutil.which(...)
+              ...
+              if <... not <... Path($VAR).is_file(...) ...> ...>:
+                  ...
+                  return ...
+              ...
+              subprocess.$F(...)
+          - pattern-not-inside: |
+              $VAR = shutil.which(...)
+              ...
+              if <... not <... pathlib.Path($VAR).is_file(...) ...> ...>:
+                  ...
+                  return ...
+              ...
+              subprocess.$F(...)
+          # 6. negated os.path.isfile -> return
+          - pattern-not-inside: |
+              $VAR = shutil.which(...)
+              ...
+              if <... not <... os.path.isfile($VAR) ...> ...>:
+                  ...
+                  return ...
+              ...
+              subprocess.$F(...)
+          - pattern-not-inside: |
+              $VAR = shutil.which(...)
+              ...
+              $P = <... Path($VAR) ...>
+              ...
+              if <... not <... os.path.isfile($P) ...> ...>:
+                  ...
+                  return ...
+              ...
+              subprocess.$F(...)
+          - pattern-not-inside: |
+              $VAR = shutil.which(...)
+              ...
+              $P = <... pathlib.Path($VAR) ...>
+              ...
+              if <... not <... os.path.isfile($P) ...> ...>:
+                  ...
+                  return ...
+              ...
+              subprocess.$F(...)
+          - pattern-not-inside: |
+              $VAR = shutil.which(...)
+              ...
+              if <... not <... os.path.isfile(<... Path($VAR) ...>) ...> ...>:
+                  ...
+                  return ...
+              ...
+              subprocess.$F(...)
+          - pattern-not-inside: |
+              $VAR = shutil.which(...)
+              ...
+              if <... not <... os.path.isfile(<... pathlib.Path($VAR) ...>) ...> ...>:
+                  ...
+                  return ...
+              ...
+              subprocess.$F(...)
 

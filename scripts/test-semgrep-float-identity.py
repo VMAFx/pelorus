@@ -6,6 +6,12 @@
 Ported from VMAFx/vmafx test_semgrep_float_identity.py
 (sha 25ee5f3a25aebc97ee453fc3a70f676c68da2a81).
 
+The temporary root is always a git repository, and the planted scans pass
+`--project-root .` and `--no-git-ignore`: inside an enclosing repository semgrep
+otherwise scans only tracked files, finds none in the planted tree and exits 0.
+The real-tree scan passes neither flag, because either one makes semgrep read
+git-ignored files (a stray C file under an ignored folder would fail step (c)).
+
 Checks that `pelorus-test-float-identity` in `.semgrep.yml`:
 (a) reports computed float/double equality comparisons in test sources, while
     allowing literals, macros, k-constants, NaN idioms, integer casts, and calls;
@@ -128,19 +134,27 @@ class ScanError(Exception):
     """A semgrep run ended with an unexpected status or unreadable output."""
 
 
+def scrubbed_env() -> dict[str, str]:
+    """Copy os.environ with all GIT_* keys dropped to prevent repo steering."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def run_semgrep(
     semgrep_bin: str,
     target_dir: pathlib.Path,
     rule_path: pathlib.Path,
     expected_rc: int,
     env_dir: pathlib.Path,
+    *,
+    hermetic: bool,
 ) -> dict:
     """Scan target_dir with one rule file; return the parsed JSON report.
 
     Semgrep's settings live under env_dir so no user configuration leaks in,
-    and an exit code other than expected_rc raises.
+    and an exit code other than expected_rc raises. A hermetic scan passes
+    --project-root . and --no-git-ignore; a real-tree scan keeps git ignores.
     """
-    env = dict(os.environ)
+    env = scrubbed_env()
     env["XDG_CONFIG_HOME"] = str(env_dir)
     env["SEMGREP_SETTINGS_FILE"] = str(env_dir / "semgrep-settings.yaml")
     env["SEMGREP_LOG_FILE"] = str(env_dir / "semgrep.log")
@@ -153,8 +167,10 @@ def run_semgrep(
         "--json",
         "--metrics=off",
         "--disable-version-check",
-        ".",
     ]
+    if hermetic:
+        cmd += ["--no-git-ignore", "--project-root", "."]
+    cmd.append(".")
     try:
         proc = subprocess.run(  # nosec B603 - semgrep resolved from PATH to a file; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - semgrep resolved to an executable file, fixed list argv, no shell, explicit deadline
             cmd,
@@ -194,9 +210,9 @@ def make_tree(root: pathlib.Path, name: str, source: str) -> pathlib.Path:
 def step_planted_cases(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
     """(a) Every planted case hits or stays quiet as its comment says."""
     tree = make_tree(tmp / "planted_repo", "planted.c", PLANTED_C)
-    results = run_semgrep(semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg").get(
-        "results", []
-    )
+    results = run_semgrep(
+        semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg", hermetic=True
+    ).get("results", [])
     lines = sorted(r["start"]["line"] for r in results)
     if lines != list(EXPECTED_HITS):
         return f"step (a): expected hits on lines {list(EXPECTED_HITS)}, got {lines}"
@@ -211,9 +227,9 @@ def step_planted_revert(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
         return f"step (b): needle '{needle}' not in {INTEROP_TEST}"
     planted = source.replace(needle, "CHECK(got_var == var[i])", 1)
     tree = make_tree(tmp / "revert_repo", "interop_test.c", planted)
-    results = run_semgrep(semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg").get(
-        "results", []
-    )
+    results = run_semgrep(
+        semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg", hermetic=True
+    ).get("results", [])
     if len(results) != 1:
         return f"step (b): expected exactly 1 finding, got {len(results)}"
     if not results[0].get("path", "").endswith("libpelorus/test/interop_test.c"):
@@ -223,7 +239,9 @@ def step_planted_revert(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
 
 def step_real_tree(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
     """(c) The real tree is clean, and the scan did read the test sources."""
-    data = run_semgrep(semgrep_bin, ROOT, RULE_FILE, 0, tmp / "cfg")
+    data = run_semgrep(
+        semgrep_bin, ROOT, RULE_FILE, 0, tmp / "cfg", hermetic=False
+    )
     # Semgrep's built-in ignore list skips test/ folders; without the
     # repository .semgrepignore the scan reads nothing and passes empty.
     scanned = data.get("paths", {}).get("scanned", [])
@@ -370,13 +388,13 @@ def step_constant_names(_semgrep_bin: str, _tmp: pathlib.Path) -> str | None:
     return None
 
 
-def resolve_semgrep() -> str | None:
-    """PATH lookup of semgrep, kept only when it is an executable regular file.
+def resolve_executable(name: str) -> str | None:
+    """PATH lookup of name, kept only when it is an executable regular file.
 
     The test runs the binary with a fixed argument list and no shell; the PATH
     the build or CI job sets is the trust boundary.
     """
-    found = shutil.which("semgrep")
+    found = shutil.which(name)
     if not found:
         return None
     path = pathlib.Path(found).resolve()
@@ -387,7 +405,7 @@ def resolve_semgrep() -> str | None:
 
 def main() -> int:
     """Run steps (a) to (d); exit 77 (skip) when semgrep is not installed."""
-    semgrep_bin = resolve_semgrep()
+    semgrep_bin = resolve_executable("semgrep")
     if not semgrep_bin:
         print("SKIP: semgrep not found")
         return 77
@@ -398,6 +416,26 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         (tmp / "cfg").mkdir()
+        git_bin = resolve_executable("git")
+        if git_bin:
+            try:
+                proc = subprocess.run(  # nosec B603 - git resolved from PATH to a file; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - git resolved to an executable file, fixed list argv, no shell, explicit deadline
+                    [git_bin, "init", "-q", str(tmp)],
+                    capture_output=True,
+                    text=True,
+                    env=scrubbed_env(),
+                    check=False,
+                    timeout=30,
+                )
+            except subprocess.TimeoutExpired:
+                sys.stderr.write(f"git init -q in {tmp}: no result after 30 s\n")
+                return 1
+            if proc.returncode != 0:
+                sys.stderr.write(
+                    f"git init -q in {tmp}: expected rc=0, got rc={proc.returncode}\n"
+                    f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}\n"
+                )
+                return 1
         try:
             for step in (
                 step_planted_cases,
