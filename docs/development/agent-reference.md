@@ -108,6 +108,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | install | `ninja -C build install` |
 | fetch + verify shared series | `scripts/fetch-ffmpeg-series.sh /absolute/new-dir` (`--self-test`: planted defects) |
 | regenerate patches | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/generate.sh` |
+| update clang-tidy lane list | `python3 scripts/gen-tidy-lane-files.py --write` |
 | replay stack | `FFMPEG_REPO=/absolute/path/to/ffmpeg ffmpeg-patches/test/build-and-run.sh` |
 | compile contexts | `make compile-context` |
 | verify contexts | `make compile-context-verify` |
