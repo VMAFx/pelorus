@@ -173,57 +173,59 @@ def _run_cli(
         "--build-dir", str(build_dir),
         *args,
     ]
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False, shell=False)
+
+
+def _expect(cond: bool, msg: str) -> None:
+    """Fail a planted case; unlike assert, this still runs under python -O."""
+    if not cond:
+        raise AssertionError(msg)
 
 
 def _self_test_check(source_dir: Path, build_dir: Path, lane_file: Path) -> None:
     """Planted cases 1-3: match, missing unit, extra unit."""
     lane_file.write_text(HEADER + "src/bar.c\nsrc/foo.c\n")
     res = _run_cli(source_dir, lane_file, build_dir, "--check")
-    assert res.returncode == 0, f"Planted match check failed: {res.stderr}\n{res.stdout}"
-    assert "lane-files.txt matches (2 units)" in res.stdout, f"Unexpected stdout: {res.stdout}"
+    _expect(res.returncode == 0, f"Planted match check failed: {res.stderr}\n{res.stdout}")
+    _expect("lane-files.txt matches (2 units)" in res.stdout, f"Unexpected stdout: {res.stdout}")
 
     lane_file.write_text(HEADER + "src/bar.c\n")
     res = _run_cli(source_dir, lane_file, build_dir, "--check")
-    assert res.returncode == 1, f"Planted missing unit should exit 1, got {res.returncode}"
-    assert "+ src/foo.c" in res.stdout, f"Expected '+ src/foo.c' in stdout: {res.stdout}"
+    _expect(res.returncode == 1, f"Planted missing unit should exit 1, got {res.returncode}")
+    _expect("+ src/foo.c" in res.stdout, f"Expected '+ src/foo.c' in stdout: {res.stdout}")
 
     lane_file.write_text(HEADER + "src/bar.c\nsrc/extra.c\nsrc/foo.c\n")
     res = _run_cli(source_dir, lane_file, build_dir, "--check")
-    assert res.returncode == 1, f"Planted extra unit should exit 1, got {res.returncode}"
-    assert "- src/extra.c" in res.stdout, f"Expected '- src/extra.c' in stdout: {res.stdout}"
+    _expect(res.returncode == 1, f"Planted extra unit should exit 1, got {res.returncode}")
+    _expect("- src/extra.c" in res.stdout, f"Expected '- src/extra.c' in stdout: {res.stdout}")
 
 
 def _self_test_write(source_dir: Path, build_dir: Path, lane_file: Path) -> None:
     """Planted cases 4-6: write fixes drift, a second write writes nothing, header kept."""
     res_write = _run_cli(source_dir, lane_file, build_dir, "--write")
-    assert res_write.returncode == 0, f"--write failed: {res_write.stderr}"
+    _expect(res_write.returncode == 0, f"--write failed: {res_write.stderr}")
     res_check = _run_cli(source_dir, lane_file, build_dir, "--check")
-    assert res_check.returncode == 0, f"--check after --write failed: {res_check.stderr}\n{res_check.stdout}"
-    assert "lane-files.txt matches (2 units)" in res_check.stdout
+    _expect(res_check.returncode == 0, f"--check after --write failed: {res_check.stderr}\n{res_check.stdout}")
+    _expect("lane-files.txt matches (2 units)" in res_check.stdout, f"Unexpected stdout: {res_check.stdout}")
 
     time.sleep(0.02)
     before = lane_file.stat()
     res_write2 = _run_cli(source_dir, lane_file, build_dir, "--write")
-    assert res_write2.returncode == 0, f"second write failed: {res_write2.stderr}"
-    assert "nothing written" in res_write2.stdout, f"expected 'nothing written', got {res_write2.stdout}"
+    _expect(res_write2.returncode == 0, f"second write failed: {res_write2.stderr}")
+    _expect("nothing written" in res_write2.stdout, f"expected 'nothing written', got {res_write2.stdout}")
     after = lane_file.stat()
-    assert after.st_mtime_ns == before.st_mtime_ns, (
-        f"second write modified mtime: {before.st_mtime_ns} vs {after.st_mtime_ns}"
-    )
-    assert after.st_size == before.st_size, (
-        f"second write modified size: {before.st_size} vs {after.st_size}"
-    )
+    _expect(after.st_mtime_ns == before.st_mtime_ns, f"second write modified mtime: {before.st_mtime_ns} vs {after.st_mtime_ns}")
+    _expect(after.st_size == before.st_size, f"second write modified size: {before.st_size} vs {after.st_size}")
 
     content = lane_file.read_text()
-    assert content.startswith(HEADER), f"Header comment not preserved: {content}"
+    _expect(content.startswith(HEADER), f"Header comment not preserved: {content}")
 
 
 def _self_test_missing_db(temp_root: Path, source_dir: Path, lane_file: Path) -> None:
     """Planted case 7: a missing compile database exits 2 and names meson setup."""
     res = _run_cli(source_dir, lane_file, temp_root / "nonexistent_build", "--check")
-    assert res.returncode == 2, f"expected exit code 2 for missing compile db, got {res.returncode}"
-    assert "meson setup" in res.stderr, f"expected 'meson setup' in stderr, got: {res.stderr}"
+    _expect(res.returncode == 2, f"expected exit code 2 for missing compile db, got {res.returncode}")
+    _expect("meson setup" in res.stderr, f"expected 'meson setup' in stderr, got: {res.stderr}")
 
 
 def run_self_test() -> int:

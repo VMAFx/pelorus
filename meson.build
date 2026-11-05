@@ -899,14 +899,16 @@ if host_machine.system() == 'linux' and get_option('tests') and get_option('tool
        suite: 'fast')
 endif
 
-# ffmpeg-patches/generate.sh rebase-notes heading line logic.
-test('generate-regen-line',
-     bash_prog,
-     args: [meson.project_source_root() / 'scripts' / 'test-generate-regen-line.sh'],
-     workdir: meson.project_source_root(),
-     timeout: 60,
-     suite: 'fast')
+# ffmpeg-patches/generate.sh rebase-notes heading line logic. The test drives
+# git in a throwaway repository, and the MSYS2 UCRT64 leg does not put git on
+# PATH (see series-coexistence above), so both tests run on the other hosts.
 if build_machine.system() != 'windows'
+  test('generate-regen-line',
+       bash_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-generate-regen-line.sh'],
+       workdir: meson.project_source_root(),
+       timeout: 60,
+       suite: 'fast')
   test('generate-regen-line-selftest-isolation',
        python_prog,
        args: [meson.project_source_root() / 'scripts' / 'test-selftest-git-isolation.py',
