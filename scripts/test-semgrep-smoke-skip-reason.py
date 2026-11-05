@@ -124,7 +124,7 @@ def run_semgrep(
         ".",
     ]
     try:
-        proc = subprocess.run(  # nosec B603 - fixed list argv, no shell, explicit deadline
+        proc = subprocess.run(  # nosec B603 - fixed list argv, no shell, explicit deadline  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - semgrep resolved to an executable file, fixed list argv, no shell, explicit deadline
             cmd,
             cwd=str(target_dir),
             capture_output=True,
@@ -291,7 +291,7 @@ def run_first_error(bash_bin: str, fn_code: str, fixture: pathlib.Path) -> str:
     run_cmd = f'{fn_code}\npel_first_error "$1"'
     env = {"PATH": os.environ.get("PATH", ""), "LC_ALL": "C"}
     try:
-        proc = subprocess.run(  # nosec B603 - fixed list argv, resolved bash, explicit deadline
+        proc = subprocess.run(  # nosec B603 - fixed list argv, resolved bash, explicit deadline  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - bash resolved to an executable file, fixed list argv, script text is the extracted repository helper, explicit deadline
             [bash_bin, "-c", run_cmd, "_", str(fixture)],
             capture_output=True,
             text=True,
