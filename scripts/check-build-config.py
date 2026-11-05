@@ -3455,7 +3455,7 @@ def _validate_load_step(relative: str, name: str, block: str) -> list[str]:
                 errors.append(
                     f"{relative}: job {name} target checkout must precede the actions checkout"
                 )
-            if actions_start > load and load >= 0:
+            if actions_start > load:
                 errors.append(
                     f"{relative}: job {name} actions checkout must precede Load build configuration"
                 )
