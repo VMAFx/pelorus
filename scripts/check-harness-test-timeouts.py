@@ -125,6 +125,44 @@ def script_loads_patch_harness(script_path: pathlib.Path) -> bool:
     return any(_names_patch_harness(node) for node in ast.walk(tree))
 
 
+def _extract_assigned_name(node: ast.AST) -> str | None:
+    """Return target identifier for single-name Assign or AnnAssign, else None."""
+    if isinstance(node, ast.Assign) and len(node.targets) == 1:
+        target = node.targets[0]
+        if isinstance(target, ast.Name):
+            return target.id
+    elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        return node.target.id
+    return None
+
+
+def _is_timeout_target(name: str) -> bool:
+    """Return True if name matches TIMEOUT naming without bounds markers."""
+    if not TIMEOUT_NAME_RE.match(name):
+        return False
+    return not any(marker in name for marker in ("MIN_", "CAP", "MAX_"))
+
+
+def _extract_constant_seconds(name: str, value_node: ast.AST | None) -> float | None:
+    """Return numeric seconds for a literal value assigned to name, or None."""
+    if value_node is None or not isinstance(value_node, ast.Constant):
+        return None
+    if type(value_node.value) not in (int, float):
+        return None
+    val = float(value_node.value)
+    if name.endswith("_MINUTES"):
+        val *= 60.0
+    return val
+
+
+def _node_deadline_seconds(node: ast.AST) -> float | None:
+    """Return deadline in seconds from a module-level assignment node, or None."""
+    name = _extract_assigned_name(node)
+    if name is None or not _is_timeout_target(name):
+        return None
+    return _extract_constant_seconds(name, getattr(node, "value", None))
+
+
 def script_deadline_s(script_path: pathlib.Path) -> float | None:
     """Return max module-level TIMEOUT constant in seconds, or None if none."""
     try:
@@ -144,26 +182,9 @@ def script_deadline_s(script_path: pathlib.Path) -> float | None:
 
     deadlines: list[float] = []
     for node in tree.body:
-        target_name: str | None = None
-        if isinstance(node, ast.Assign) and len(node.targets) == 1:
-            if isinstance(node.targets[0], ast.Name):
-                target_name = node.targets[0].id
-        elif isinstance(node, ast.AnnAssign):
-            if isinstance(node.target, ast.Name):
-                target_name = node.target.id
-
-        if not target_name or not TIMEOUT_NAME_RE.match(target_name):
-            continue
-        if "MIN_" in target_name or "CAP" in target_name or "MAX_" in target_name:
-            continue
-        if node.value is None or not isinstance(node.value, ast.Constant):
-            continue
-        if type(node.value.value) not in (int, float):
-            continue
-        val = float(node.value.value)
-        if target_name.endswith("_MINUTES"):
-            val *= 60.0
-        deadlines.append(val)
+        val = _node_deadline_seconds(node)
+        if val is not None:
+            deadlines.append(val)
     return max(deadlines) if deadlines else None
 
 
