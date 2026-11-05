@@ -26,11 +26,14 @@ SERIES_KEYS = (
     "FFMPEG_SERIES_COMMIT",
     "FFMPEG_SERIES_SHA256",
 )
-EXPECTED_KEYS = set(FFMPEG_KEYS + SERIES_KEYS)
+GO_KEYS = ("GO_VERSION",)
+EXPECTED_KEYS = set(FFMPEG_KEYS + SERIES_KEYS + GO_KEYS)
 RENOVATE_MARKER = "# renovate: datasource=github-tags depName=FFmpeg/FFmpeg"
 SERIES_COMMENT = (
     "# Shared FFmpeg fix series, applied before ffmpeg-patches/series.txt (ADR-0185)."
 )
+GO_RENOVATE_MARKER = "# renovate: datasource=golang-version depName=go"
+CONFIG_RELATIVE = "build-config.env"
 SERIES_REPO = "VMAFx/ffmpeg-patches"
 SERIES_FETCH = '"$ROOT/scripts/fetch-ffmpeg-series.sh"'
 SERIES_TIP_ASSIGN = 'SERIES_TIP="$(git -C "$WORKTREE" rev-parse --verify HEAD)"'
@@ -139,11 +142,8 @@ ACTIONLINT_RENOVATE_TEMPLATES = {
     "depNameTemplate": ACTIONLINT_MODULE,
     "datasourceTemplate": "go",
 }
-# The Go toolchain that runs actionlint in ci.yml's docs job. Renovate's
-# github-actions manager bumps the setup-go go-version input; the regex
-# customManager in renovate.json (validated below) rewrites this literal with
-# the same package identity, so both land in one renovate/go-<major>.x branch.
-ACTIONLINT_GO_VERSION = "1.27.x"
+# The Go toolchain is pinned in build-config.env and loaded into GITHUB_ENV in CI.
+LOAD_GO_ENV = 'grep -E \'^GO_VERSION=\' build-config.env >> "$GITHUB_ENV"'
 ACTIONLINT_GO_STEP = "- name: Set up Go for actionlint"
 # #228: the hosted lavapipe lane (software Vulkan). It is functional evidence
 # only. The Praetor hosted-gate draft step comes first (HISS-18), every later
@@ -179,15 +179,9 @@ LAVAPIPE_TOKENS += SERIES_WORKFLOW_TOKENS
 USES_LINE = re.compile(r"^\s+(?:- )?uses:\s*(\S+)", re.MULTILINE)
 RENOVATE_CONFIG = ROOT / "renovate.json"
 CHECKER_RELATIVE = "scripts/check-build-config.py"
-# Mirrors Renovate's known-action config for actions/setup-go (datasource,
-# package, versioning, extractVersion), so the regex manager's dependency is
-# the same `go` update the github-actions manager proposes.
 GO_RENOVATE_TEMPLATES = {
     "depNameTemplate": "go",
-    "packageNameTemplate": "actions/go-versions",
-    "datasourceTemplate": "github-releases",
-    "versioningTemplate": "npm",
-    "extractVersionTemplate": r"^(?<version>\d+\.\d+\.\d+)(-\d+)?$",
+    "datasourceTemplate": "golang-version",
 }
 RELEASE_TAG = re.compile(r"(?<![A-Za-z0-9_])n\d+\.\d+\.\d+(?![A-Za-z0-9_])")
 FORMAT_PATCH_CONFIG = (
@@ -305,6 +299,10 @@ def validate_config(text: str) -> list[str]:
         errors.append("FFMPEG_SERIES_COMMIT: expected a lowercase 40-hex commit")
     if not re.fullmatch(r"[0-9a-f]{64}", values.get("FFMPEG_SERIES_SHA256", "")):
         errors.append("FFMPEG_SERIES_SHA256: expected a lowercase 64-hex sha256")
+    if GO_RENOVATE_MARKER not in text.splitlines():
+        errors.append("build-config.env: missing Go Renovate marker")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", values.get("GO_VERSION", "")):
+        errors.append("GO_VERSION: expected MAJOR.MINOR.PATCH")
 
     if not errors:
         canonical = "\n".join(
@@ -312,12 +310,15 @@ def validate_config(text: str) -> list[str]:
             + tuple(f"{key}={values[key]}" for key in FFMPEG_KEYS)
             + (SERIES_COMMENT,)
             + tuple(f"{key}={values[key]}" for key in SERIES_KEYS)
+            + (GO_RENOVATE_MARKER,)
+            + tuple(f"{key}={values[key]}" for key in GO_KEYS)
             + ("",)
         )
         if text != canonical:
             errors.append(
                 "build-config.env: assignments must remain in the canonical "
-                "contiguous Renovate block, then the shared series block"
+                "contiguous Renovate block, then the shared series block, "
+                "then the Go block"
             )
 
     return errors
@@ -499,6 +500,8 @@ def validator_regressions() -> list[str]:
             "FFMPEG_SERIES_TAG=v0.1.0-rc.1",
             f"FFMPEG_SERIES_COMMIT={'b' * 40}",
             f"FFMPEG_SERIES_SHA256={'c' * 64}",
+            GO_RENOVATE_MARKER,
+            "GO_VERSION=1.2.3",
             "",
         )
     )
@@ -519,6 +522,9 @@ def validator_regressions() -> list[str]:
             f"FFMPEG_COMMIT={'a' * 40}\n{SERIES_COMMENT}\n", f"{SERIES_COMMENT}\n"
         ).replace(f"FFMPEG_SERIES_SHA256={'c' * 64}\n", f"FFMPEG_SERIES_SHA256={'c' * 64}\nFFMPEG_COMMIT={'a' * 40}\n"),
         "series block without its comment": canonical.replace(SERIES_COMMENT + "\n", ""),
+        "go block without marker": canonical.replace(GO_RENOVATE_MARKER + "\n", ""),
+        "missing GO_VERSION": canonical.replace("GO_VERSION=1.2.3\n", ""),
+        "malformed GO_VERSION": canonical.replace("GO_VERSION=1.2.3", "GO_VERSION=v1.2.3"),
     }
     failures = []
     if validate_config(canonical):
@@ -3230,7 +3236,8 @@ def _validate_ci_docs_job(relative: str, docs: str) -> list[str]:
     errors: list[str] = []
     for token in (
         ACTIONLINT_GO_STEP,
-        f"go-version: '{ACTIONLINT_GO_VERSION}'",
+        LOAD_GO_ENV,
+        "go-version: ${{ env.GO_VERSION }}",
     ):
         if token not in docs:
             errors.append(f"{relative}: docs job is missing {token}")
@@ -3245,11 +3252,14 @@ def _validate_ci_docs_job(relative: str, docs: str) -> list[str]:
             "`go run github.com/rhysd/actionlint/cmd/actionlint@vX.Y.Z` "
             "(exact release tag)"
         )
-    go_versions = re.findall(r"go-version:\s*(\S+)", docs)
-    if go_versions != [f"'{ACTIONLINT_GO_VERSION}'"]:
+    go_versions = [
+        match.group(1).strip()
+        for match in re.finditer(r"^[ ]*go-version:\s*(.*?)\s*$", docs, re.MULTILINE)
+    ]
+    if go_versions != ["${{ env.GO_VERSION }}"]:
         errors.append(
             f"{relative}: docs job must set exactly one go-version, "
-            f"'{ACTIONLINT_GO_VERSION}' (found {go_versions})"
+            f"'${{{{ env.GO_VERSION }}}}' (found {go_versions})"
         )
     return errors
 
@@ -3305,6 +3315,68 @@ def validate_workflows() -> list[str]:
         errors.extend(
             validate_workflow_text(relative, path.read_text(encoding="utf-8"))
         )
+    return errors
+
+
+def validate_workflow_go_pins(relative: str, text: str) -> list[str]:
+    """Ensure setup-go steps and workflows only use ${{ env.GO_VERSION }}."""
+    errors: list[str] = []
+    for match in re.finditer(r"^[ ]*go-version:\s*(.*?)\s*$", text, re.MULTILINE):
+        raw_val = match.group(1).strip()
+        unquoted = raw_val.strip("'\"")
+        if unquoted != "${{ env.GO_VERSION }}":
+            errors.append(
+                f"{relative}: literal go-version {raw_val!r} forbidden; "
+                "must use '${{ env.GO_VERSION }}'"
+            )
+    jobs = workflow_job_blocks(text)
+    for job_name, job_text in jobs.items():
+        if "actions/setup-go@" in job_text:
+            if LOAD_GO_ENV not in job_text:
+                errors.append(
+                    f"{relative}: job {job_name!r} using setup-go must load "
+                    f"GO_VERSION with {LOAD_GO_ENV!r}"
+                )
+            if "go-version: ${{ env.GO_VERSION }}" not in job_text:
+                errors.append(
+                    f"{relative}: job {job_name!r} setup-go step must use "
+                    "'go-version: ${{ env.GO_VERSION }}'"
+                )
+    return errors
+
+
+def validate_all_workflow_go_pins() -> list[str]:
+    """Validate Go toolchain pinning across all repository workflows."""
+    errors: list[str] = []
+    workflow_dir = ROOT / ".github" / "workflows"
+    if not workflow_dir.is_dir():
+        return errors
+    for path in sorted(workflow_dir.glob("*.yml")):
+        rel = path.relative_to(ROOT).as_posix()
+        errors.extend(validate_workflow_go_pins(rel, path.read_text(encoding="utf-8")))
+    return errors
+
+
+def validate_no_literal_go_pins() -> list[str]:
+    """Refuse literal Go version assignments outside build-config.env in scripts."""
+    errors: list[str] = []
+    scripts_dir = ROOT / "scripts"
+    if not scripts_dir.is_dir():
+        return errors
+    for path in sorted(scripts_dir.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        rel = path.relative_to(ROOT).as_posix()
+        content = path.read_text(encoding="utf-8")
+        if re.search(r"^[ ]*ACTIONLINT_GO_VERSION\s*=", content, re.MULTILINE):
+            errors.append(f"{rel}: literal ACTIONLINT_GO_VERSION forbidden")
+        if re.search(r"^[ ]*GO_VERSION\s*=\s*['\"][0-9]+\.[0-9]+", content, re.MULTILINE):
+            errors.append(f"{rel}: literal GO_VERSION pin forbidden")
+    for path in sorted(scripts_dir.rglob("*.sh")):
+        rel = path.relative_to(ROOT).as_posix()
+        content = path.read_text(encoding="utf-8")
+        if re.search(r"^[ ]*GO_VERSION=[0-9]+\.[0-9]+", content, re.MULTILINE):
+            errors.append(f"{rel}: literal GO_VERSION assignment forbidden")
     return errors
 
 
@@ -5192,17 +5264,25 @@ def _ci_toolchain_cases(source: str) -> dict[str, tuple[str, str]]:
         ),
         "stale actionlint Go toolchain": (
             source.replace(
-                f"go-version: '{ACTIONLINT_GO_VERSION}'", "go-version: '1.0.x'", 1
+                "go-version: ${{ env.GO_VERSION }}", "go-version: '1.0.x'", 1
             ),
-            f"docs job is missing go-version: '{ACTIONLINT_GO_VERSION}'",
+            "docs job must set exactly one go-version",
         ),
         "second Go toolchain in docs job": (
             source.replace(
-                f"go-version: '{ACTIONLINT_GO_VERSION}'",
-                f"go-version: '{ACTIONLINT_GO_VERSION}'\n          go-version: '1.0.x'",
+                "go-version: ${{ env.GO_VERSION }}",
+                "go-version: ${{ env.GO_VERSION }}\n          go-version: '1.0.x'",
                 1,
             ),
             "docs job must set exactly one go-version",
+        ),
+        "missing Go env load in docs job": (
+            source.replace(
+                LOAD_GO_ENV,
+                "# removed env load",
+                1,
+            ),
+            f"docs job is missing {LOAD_GO_ENV}",
         ),
         "versioned Go step name": (
             source.replace(
@@ -5416,6 +5496,35 @@ def workflow_validator_regressions() -> list[str]:
     return failures
 
 
+def go_pin_regressions() -> list[str]:
+    """Prove literal Go version pins are rejected across workflows and build-config."""
+    failures: list[str] = []
+    standards_gate = ROOT / ".github" / "workflows" / "standards-gate.yml"
+    source = standards_gate.read_text(encoding="utf-8")
+    rel = ".github/workflows/standards-gate.yml"
+
+    planted = source.replace("go-version: ${{ env.GO_VERSION }}", "go-version: '1.27.3'", 1)
+    if planted == source:
+        failures.append("go-pin regression: planting literal go-version did not mutate standards-gate.yml")
+    else:
+        errs = validate_workflow_go_pins(rel, planted)
+        if not any("literal go-version" in e for e in errs):
+            failures.append("go-pin regression: planted literal go-version: '1.27.3' was accepted")
+
+    if validate_workflow_go_pins(rel, source):
+        failures.append("go-pin regression: canonical env form was rejected")
+
+    config_text = CONFIG.read_text(encoding="utf-8")
+    missing_go = "\n".join(
+        line for line in config_text.splitlines()
+        if not line.startswith("GO_VERSION=") and "datasource=golang-version" not in line
+    ) + "\n"
+    if not any("GO_VERSION" in err for err in validate_config(missing_go)):
+        failures.append("go-pin regression: missing GO_VERSION in build-config.env was accepted")
+
+    return failures
+
+
 class RenovatePatternError(ValueError):
     """A managerFilePatterns entry this checker cannot evaluate like Renovate."""
 
@@ -5601,40 +5710,55 @@ def _single_regex_manager(
     return covering[0], []
 
 
-def _validate_go_manager_text(text: str, checker_source: str) -> list[str]:
-    """Require one regex manager that bumps ACTIONLINT_GO_VERSION as `go`."""
+def _validate_go_manager_text(text: str, config_source: str) -> list[str]:
+    """Require one regex manager that bumps GO_VERSION in build-config.env."""
     try:
         config = json.loads(text)
     except json.JSONDecodeError as exc:
         return [f"renovate.json: invalid JSON: {exc}"]
     managers = config.get("customManagers") if isinstance(config, dict) else None
-    manager, errors = _single_regex_manager(managers, CHECKER_RELATIVE)
-    if manager is None:
-        return errors
+    if not isinstance(managers, list):
+        return ["renovate.json: customManagers must be a list"]
+    try:
+        go_managers = [
+            m
+            for m in managers
+            if isinstance(m, dict)
+            and m.get("customType") == "regex"
+            and isinstance(m.get("managerFilePatterns"), list)
+            and any(
+                renovate_file_pattern_matches(pattern, CONFIG_RELATIVE)
+                for pattern in m["managerFilePatterns"]
+            )
+            and any("GO_VERSION" in str(s) for s in m.get("matchStrings", []))
+        ]
+    except RenovatePatternError as exc:
+        return [f"renovate.json: {exc}"]
+    if len(go_managers) != 1:
+        return [
+            f"renovate.json: expected exactly one regex customManager for "
+            f"{CONFIG_RELATIVE} (GO_VERSION) (found {len(go_managers)})"
+        ]
+    manager = go_managers[0]
     errors = [
-        f"renovate.json: {CHECKER_RELATIVE} manager needs {key} {value!r}"
+        f"renovate.json: {CONFIG_RELATIVE} Go manager needs {key} {value!r}"
         for key, value in GO_RENOVATE_TEMPLATES.items()
         if manager.get(key) != value
     ]
-    literal = f'ACTIONLINT_GO_VERSION = "{ACTIONLINT_GO_VERSION}"'
     match_strings = manager.get("matchStrings")
     if not isinstance(match_strings, list) or len(match_strings) != 1:
-        errors.append(
-            f"renovate.json: {CHECKER_RELATIVE} manager needs one matchString"
-        )
+        errors.append(f"renovate.json: {CONFIG_RELATIVE} Go manager needs one matchString")
         return errors
+    values, _ = parse_assignments(config_source)
+    go_version = values.get("GO_VERSION", "")
     try:
-        matches = list(re.finditer(python_regex(str(match_strings[0])), checker_source))
+        matches = list(re.finditer(python_regex(str(match_strings[0])), config_source))
     except re.error as exc:
-        return errors + [f"renovate.json: {CHECKER_RELATIVE} matchString: {exc}"]
-    if (
-        len(matches) != 1
-        or matches[0].group(0) != literal
-        or matches[0].groupdict().get("currentValue") != ACTIONLINT_GO_VERSION
-    ):
+        return errors + [f"renovate.json: {CONFIG_RELATIVE} Go matchString: {exc}"]
+    if len(matches) != 1 or matches[0].groupdict().get("currentValue") != go_version:
         errors.append(
-            f"renovate.json: {CHECKER_RELATIVE} matchString must capture exactly "
-            f"{literal} as currentValue (found {len(matches)} matches)"
+            f"renovate.json: {CONFIG_RELATIVE} Go matchString must capture exactly "
+            f"GO_VERSION={go_version} as currentValue (found {len(matches)} matches)"
         )
     return errors
 
@@ -5645,7 +5769,10 @@ def _validate_actionlint_manager(managers: object, ci_source: str) -> list[str]:
     manager, errors = _single_regex_manager(managers, CI_RELATIVE)
     if manager is None:
         return errors
-    errors = [
+    for pattern in manager.get("managerFilePatterns", []):
+        if not renovate_file_pattern_matches(pattern, CI_RELATIVE):
+            errors.append(f"{prefix}: pattern {pattern!r} must target {CI_RELATIVE} only")
+    errors += [
         f"{prefix} needs {key} {value!r}"
         for key, value in ACTIONLINT_RENOVATE_TEMPLATES.items()
         if manager.get(key) != value
@@ -5668,9 +5795,9 @@ def _validate_actionlint_manager(managers: object, ci_source: str) -> list[str]:
     return errors
 
 
-def validate_renovate_text(text: str, checker_source: str, ci_source: str) -> list[str]:
-    """Validate the Go-mirroring manager (ADR-0151/0152) and the actionlint manager (ADR-0170)."""
-    errors = _validate_go_manager_text(text, checker_source)
+def validate_renovate_text(text: str, config_source: str, ci_source: str) -> list[str]:
+    """Validate the Go manager and the actionlint manager."""
+    errors = _validate_go_manager_text(text, config_source)
     try:
         config = json.loads(text)
     except json.JSONDecodeError:
@@ -5683,33 +5810,36 @@ def validate_renovate() -> list[str]:
     """Validate the checked-in Renovate config against this checker."""
     if not RENOVATE_CONFIG.is_file():
         return ["renovate.json: missing"]
-    checker = Path(__file__).resolve()
+    if not CONFIG.is_file():
+        return ["build-config.env: missing"]
     return validate_renovate_text(
         RENOVATE_CONFIG.read_text(encoding="utf-8"),
-        checker.read_text(encoding="utf-8"),
+        CONFIG.read_text(encoding="utf-8"),
         (ROOT / CI_RELATIVE).read_text(encoding="utf-8"),
     )
 
 
-def _managers_matching_checker(manager: dict) -> bool:
-    """Whether one renovate customManager targets the checker file."""
+def _go_manager_predicate(manager: dict) -> bool:
+    patterns = manager.get("managerFilePatterns", [])
+    if not isinstance(patterns, list):
+        return False
     return any(
-        renovate_file_pattern_matches(pattern, CHECKER_RELATIVE)
-        for pattern in manager.get("managerFilePatterns", [])
-    )
+        renovate_file_pattern_matches(pattern, CONFIG_RELATIVE)
+        for pattern in patterns
+    ) and any("GO_VERSION" in str(s) for s in manager.get("matchStrings", []))
 
 
-def _without_checker_manager(value: dict) -> dict:
+def _without_go_manager(value: dict) -> dict:
     value["customManagers"] = [
-        manager for manager in value["customManagers"] if not _managers_matching_checker(manager)
+        m for m in value["customManagers"] if not _go_manager_predicate(m)
     ]
     return value
 
 
-def _mutate_checker_manager(key: str, replacement: object):
+def _mutate_go_manager(key: str, replacement: object):
     def mutate(value: dict) -> dict:
         for manager in value["customManagers"]:
-            if _managers_matching_checker(manager):
+            if _go_manager_predicate(manager):
                 manager[key] = replacement
         return value
 
@@ -5738,10 +5868,10 @@ def _without_ci_manager(value: dict) -> dict:
     return value
 
 
-def _ci_manager_also_targets_checker(value: dict) -> dict:
+def _ci_manager_also_targets_config(value: dict) -> dict:
     for manager in value["customManagers"]:
         if _ci_manager(manager):
-            manager["managerFilePatterns"].append("/^scripts/check-build-config\\.py$/")
+            manager["managerFilePatterns"].append("/^build-config\\.env$/")
     return value
 
 
@@ -5751,8 +5881,11 @@ def _with_extra_manager(patterns: list[str]):
             {
                 "customType": "regex",
                 "managerFilePatterns": patterns,
-                "matchStrings": ['GO = "(?<currentValue>[^"]+)"'],
-                "datasourceTemplate": "github-releases",
+                "matchStrings": [
+                    "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\nGO_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+                ],
+                "datasourceTemplate": "golang-version",
+                "depNameTemplate": "go",
             }
         )
         return value
@@ -5771,9 +5904,9 @@ def _actionlint_renovate_cases() -> dict:
             _with_extra_manager(["/^\\.github/workflows/ci\\.yml$/"]),
             f"expected exactly one regex customManager for {CI_RELATIVE}",
         ),
-        "actionlint manager also targets the checker": (
-            _ci_manager_also_targets_checker,
-            f"expected exactly one regex customManager for {CHECKER_RELATIVE}",
+        "actionlint manager also targets build-config.env": (
+            _ci_manager_also_targets_config,
+            f"must target {CI_RELATIVE} only",
         ),
         "actionlint github-tags datasource": (
             _mutate_ci_manager("datasourceTemplate", "github-tags"),
@@ -5796,44 +5929,40 @@ def _renovate_regression_cases() -> dict:
     """Each broken-manager mutation with the diagnostic the validator must give."""
     cases = {
         "second manager via /regex/i": (
-            _with_extra_manager(["/SCRIPTS/CHECK-BUILD-CONFIG\\.PY$/i"]),
+            _with_extra_manager(["/BUILD-CONFIG\\.ENV$/i"]),
             "expected exactly one regex customManager",
         ),
         "second manager via glob": (
-            _with_extra_manager(["**/*.py"]),
+            _with_extra_manager(["**/*.env"]),
             "expected exactly one regex customManager",
         ),
         "unevaluable file pattern": (
-            _with_extra_manager(["scripts/[a-z]*.py"]),
+            _with_extra_manager(["build-[a-z]*.env"]),
             "is not evaluated by this checker",
         ),
         "missing Go manager": (
-            _without_checker_manager,
+            _without_go_manager,
             "expected exactly one regex customManager",
         ),
-        "golang-version datasource": (
-            _mutate_checker_manager("datasourceTemplate", "golang-version"),
-            "needs datasourceTemplate 'github-releases'",
+        "different datasource": (
+            _mutate_go_manager("datasourceTemplate", "github-releases"),
+            "needs datasourceTemplate 'golang-version'",
         ),
         "different depName": (
-            _mutate_checker_manager("depNameTemplate", "golang"),
+            _mutate_go_manager("depNameTemplate", "golang"),
             "needs depNameTemplate 'go'",
         ),
-        "semver versioning": (
-            _mutate_checker_manager("versioningTemplate", "semver"),
-            "needs versioningTemplate 'npm'",
-        ),
         "matchString misses literal": (
-            _mutate_checker_manager(
-                "matchStrings", ['GO_VERSION = "(?<currentValue>\\d+\\.\\d+)"']
+            _mutate_go_manager(
+                "matchStrings", ['GO_VERSION=(?<currentValue>\\d+\\.\\d+)']
             ),
-            "matchString must capture exactly",
+            "Go matchString must capture exactly",
         ),
     }
     return cases | _actionlint_renovate_cases()
 
 
-def _renovate_case_failures(config: dict, checker: str, ci: str) -> list[str]:
+def _renovate_case_failures(config: dict, config_source: str, ci: str) -> list[str]:
     """Run every mutation case and report the ones the validator accepted."""
     failures: list[str] = []
     for name, (mutate, expected) in _renovate_regression_cases().items():
@@ -5845,25 +5974,21 @@ def _renovate_case_failures(config: dict, checker: str, ci: str) -> list[str]:
         if json.loads(mutated) == config:
             failures.append(f"renovate regression: {name} mutation changed nothing")
             continue
-        errors = validate_renovate_text(mutated, checker, ci)
+        errors = validate_renovate_text(mutated, config_source, ci)
         if not any(expected in error for error in errors):
             failures.append(f"renovate regression: {name} was accepted")
     return failures
 
 
 def renovate_validator_regressions() -> list[str]:
-    """Prove that removing or breaking the mirroring Go manager fails (ADR-0152)."""
+    """Prove that removing or breaking the Go manager fails."""
     source = RENOVATE_CONFIG.read_text(encoding="utf-8")
-    checker = Path(__file__).resolve().read_text(encoding="utf-8")
+    config_source = CONFIG.read_text(encoding="utf-8")
     ci = (ROOT / CI_RELATIVE).read_text(encoding="utf-8")
-    failures = _renovate_case_failures(json.loads(source), checker, ci)
-    stale = checker.replace(
-        f'ACTIONLINT_GO_VERSION = "{ACTIONLINT_GO_VERSION}"',
-        'ACTIONLINT_GO_VERSION = "go1.0"',
-        1,
-    )
-    if stale == checker or not validate_renovate_text(source, stale, ci):
-        failures.append("renovate regression: unmatched checker literal was accepted")
+    failures = _renovate_case_failures(json.loads(source), config_source, ci)
+    stale = config_source.replace("GO_VERSION=1.27.3", "GO_VERSION=go1.0", 1)
+    if stale == config_source or not validate_renovate_text(source, stale, ci):
+        failures.append("renovate regression: unmatched build-config literal was accepted")
     return failures
 
 
@@ -5896,6 +6021,8 @@ def validate_consumers() -> list[str]:
             validate_svtav1_roi_patch_text(SVTAV1_ROI_PATCH.read_text(encoding="utf-8"))
         )
     errors.extend(validate_workflows())
+    errors.extend(validate_all_workflow_go_pins())
+    errors.extend(validate_no_literal_go_pins())
     if not PATCH_NOTICE.is_file():
         errors.append("scripts/release/write-patch-notice.sh: missing")
     else:
@@ -6306,6 +6433,7 @@ def main(argv: list[str] | None = None) -> int:
         errors.extend(windows_tester_regressions())
         errors.extend(renovate_pattern_regressions())
         errors.extend(renovate_validator_regressions())
+        errors.extend(go_pin_regressions())
 
     if errors:
         print("\n".join(errors), file=sys.stderr)
