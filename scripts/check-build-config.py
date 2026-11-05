@@ -1192,7 +1192,7 @@ def git_fixture_policy_regression() -> list[str]:
     with tempfile.TemporaryDirectory(prefix="pelorus-hostile-hooks-") as temp_dir:
         hook = Path(temp_dir) / "pre-commit"
         hook.write_text("#!/bin/sh\nexit 91\n", encoding="utf-8")
-        hook.chmod(0o755)
+        hook.chmod(0o500)
         hostile = {
             "GIT_CONFIG_COUNT": "4",
             "GIT_CONFIG_KEY_0": "commit.gpgSign",
@@ -1480,7 +1480,7 @@ def git_worktree_hook_regression() -> list[str]:
         hooks.mkdir()
         hook = hooks / "post-checkout"
         hook.write_text("#!/bin/sh\nexit 91\n", encoding="utf-8")
-        hook.chmod(0o755)
+        hook.chmod(0o500)
 
         errors = run_fixture_commands(
             "worktree hook fixture setup",
@@ -1607,7 +1607,7 @@ def _setup_am_hook_policy(repo: Path, hooks: Path) -> list[str]:
     for name in ("applypatch-msg", "pre-applypatch", "post-applypatch"):
         hook = hooks / name
         hook.write_text("#!/bin/sh\nexit 91\n", encoding="utf-8")
-        hook.chmod(0o755)
+        hook.chmod(0o500)
     return run_fixture_commands(
         "git am hook fixture policy",
         (

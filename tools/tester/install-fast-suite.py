@@ -92,8 +92,11 @@ def install(tests, build, source, destination):
         lines.extend(test_command(test, build, source, destination))
     lines.append(f"printf '%s\\n' 'PASS: {len(selected)} native fast tests'")
     runner = destination / "run-fast-suite.sh"
+    # A runner from an earlier install is owner read+exec only (0o500), so
+    # remove it first; writing over it would fail on a reinstall.
+    runner.unlink(missing_ok=True)
     runner.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    runner.chmod(0o755)
+    runner.chmod(0o500)
     print(f"Installed {len(selected)} native fast tests: {runner}")
 
 

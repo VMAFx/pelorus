@@ -90,7 +90,7 @@ def run_fetch(
         lock = tmpdir / "corpus.lock"
         stub = tmpdir / "ffmpeg-stub"
         stub.write_text(stub_text)
-        stub.chmod(0o755)
+        stub.chmod(0o500)
         url = url or f"http://127.0.0.1:{port}/{name}"
         lock.write_text(f"clip | {url} | {sha} | -ss 0 | 16x16 | yuv420p | 1 | 30{licence}\n")
         env = dict(

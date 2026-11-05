@@ -931,6 +931,16 @@ test('semgrep-which-executable',
      timeout: 600,
      suite: 'fast')
 
+# File permissions set by os.chmod and Path.chmod grant owner access only
+# (0o600/0o400 for data, 0o500 for stubs); pelorus-chmod-owner-only defends
+# against CodeQL and Opengrep mode flags; three Semgrep scans stay under 600 s.
+test('semgrep-chmod-mode',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-semgrep-chmod-mode.py'],
+     workdir: meson.project_source_root(),
+     timeout: 600,
+     suite: 'fast')
+
 # clang-tidy lane-files.txt generator and synchronization check (ADR-0168).
 # The lane is the Linux build with tests and tools on (the ci.yml core job);
 # Windows and builds with either option off compile a different unit set, so
