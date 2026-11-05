@@ -85,6 +85,14 @@ pel_first_error()
     awk 'tolower($0) ~ /error|failed/ && tolower($0) !~ /warning:|warning-|validation warning/ { print; exit }' "$1"
 }
 
+# Reason for a failed step: first error line, else the last log line.
+pel_why()
+{
+    local e
+    e="$(pel_first_error "$1")"
+    echo "${e:-$(tail -n 1 "$1")}"
+}
+
 # The Vulkan device FFmpeg selected, from a verbose log.
 pel_device()
 {
@@ -239,7 +247,7 @@ PEL_DEVS=(-init_hw_device "drm=pel_dr:$PEL_NODE" -init_hw_device vaapi=pel_va@pe
     -init_hw_device vulkan=pel_vk@pel_va -filter_hw_device pel_vk)
 if ! "$FFMPEG_BIN" -hide_banner -v verbose "${PEL_DEVS[@]}" -f lavfi -i testsrc2=s=64x64 \
     -frames:v 1 -vf format=nv12,hwupload -f null - >"$PEL_OUT/probe.log" 2>&1; then
-    pel_skip "no VAAPI + Vulkan pair on $PEL_NODE: $(pel_first_error "$PEL_OUT/probe.log")"
+    pel_skip "no VAAPI + Vulkan pair on $PEL_NODE: $(pel_why "$PEL_OUT/probe.log")"
 fi
 pel_dev="$(pel_device "$PEL_OUT/probe.log")"
 pel_check_device "$PEL_OUT/probe.log" || pel_fail "Vulkan device check failed (see above)"
@@ -275,7 +283,7 @@ pel_readback()
     local name="$1" size="$2" fmt="$3" args="$4"
 
     pel_run "$name-rb-host" "$size" "$fmt" "pelorus_deband_vulkan,hwdownload,format=$fmt" \
-        -f framemd5 || pel_fail "$name: Vulkan readback failed: $(pel_first_error "$PEL_OUT/$name-rb-host.log")"
+        -f framemd5 || pel_fail "$name: Vulkan readback failed: $(pel_why "$PEL_OUT/$name-rb-host.log")"
     pel_run "$name-rb" "$size" "$fmt" \
         "pelorus_deband_vulkan=$args,hwmap=derive_device=vaapi,format=vaapi,hwdownload,format=$fmt" \
         -f framemd5 || return 1
@@ -292,9 +300,9 @@ pel_encode()
     shift 6
 
     pel_run "$name-host" "$size" "$fmt" "pelorus_deband_vulkan,hwdownload,format=$fmt,$host" "$@" ||
-        pel_fail "$name: hwdownload path failed: $(pel_first_error "$PEL_OUT/$name-host.log")"
+        pel_fail "$name: hwdownload path failed: $(pel_why "$PEL_OUT/$name-host.log")"
     pel_run "$name" "$size" "$fmt" "pelorus_deband_vulkan=$args,$zc" "$@" ||
-        pel_fail "$name: zero-copy encode failed: $(pel_first_error "$PEL_OUT/$name.log")"
+        pel_fail "$name: zero-copy encode failed: $(pel_why "$PEL_OUT/$name.log")"
     pel_check_device "$PEL_OUT/$name.log" || pel_fail "$name: device check failed"
     psnr="$(pel_psnr "$PEL_OUT/$name.out" "$PEL_OUT/$name-host.out")"
     pel_check_stream "$name" "$psnr" || pel_fail "$name: encode check failed"
@@ -308,7 +316,7 @@ PEL_H264=(-c:v h264_vaapi -rc_mode CQP -qp 20 -f h264)
 for c in nv12-640x360:640x360 nv12-641x361:641x361; do
     name="${c%%:*}"
     pel_readback "$name" "${c#*:}" nv12 tiling=drm ||
-        pel_fail "$name: $(pel_first_error "$PEL_OUT/$name-rb.log")"
+        pel_fail "$name: $(pel_why "$PEL_OUT/$name-rb.log")"
     pel_check_pool "$name" "$PEL_OUT/$name-rb.log" || pel_fail "pool check failed"
     psnr="$(pel_encode "$name" "${c#*:}" nv12 tiling=drm "$PEL_VA_ZC" "$PEL_VA_HOST" "${PEL_H264[@]}")"
     echo "PASS: $name (readback bit-exact; h264_vaapi PSNR $psnr dB vs hwdownload)"
@@ -321,10 +329,10 @@ if pel_readback p010-640x360 640x360 p010le tiling=drm; then
 elif pel_check_p010_stock "$PEL_OUT/p010-640x360-rb.log"; then
     echo "KNOWN-STOCK: p010-640x360: VAAPI does not import the R16 + GR1616 layers stock FFmpeg exports"
 else
-    pel_fail "p010-640x360: $(pel_first_error "$PEL_OUT/p010-640x360-rb.log")"
+    pel_fail "p010-640x360: $(pel_why "$PEL_OUT/p010-640x360-rb.log")"
 fi
 pel_run p010-drm 640x360 p010le "pelorus_deband_vulkan=tiling=drm,hwmap=derive_device=drm,format=drm_prime" \
-    -f null || pel_fail "p010-drm: $(pel_first_error "$PEL_OUT/p010-drm.log")"
+    -f null || pel_fail "p010-drm: $(pel_why "$PEL_OUT/p010-drm.log")"
 pel_check_pool p010-drm "$PEL_OUT/p010-drm.log" || pel_fail "pool check failed"
 # FFmpeg folds repeated log lines, so count the frames from the progress line.
 [[ "$(pel_count "$PEL_OUT/p010-drm.log" "Mapped AVVkFrame to a DRM object")" -ge 1 ]] ||
@@ -334,7 +342,7 @@ pel_check_pool p010-drm "$PEL_OUT/p010-drm.log" || pel_fail "pool check failed"
 echo "PASS: p010-drm"
 
 pel_readback negative 640x360 nv12 "tiling=drm:drm_modifiers=$PEL_NEG" ||
-    pel_fail "negative: $(pel_first_error "$PEL_OUT/negative-rb.log")"
+    pel_fail "negative: $(pel_why "$PEL_OUT/negative-rb.log")"
 pel_check_pool negative "$PEL_OUT/negative-rb.log" DRM_FORMAT_MOD_LINEAR || pel_fail "pool check failed"
 psnr="$(pel_encode negative 640x360 nv12 "tiling=drm:drm_modifiers=$PEL_NEG" "$PEL_VA_ZC" \
     "$PEL_VA_HOST" "${PEL_H264[@]}")"

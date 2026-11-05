@@ -15,7 +15,10 @@ Checks that `pelorus-smoke-skip-reason-head` in `.semgrep.yml`:
 (d) unit-checks the `pel_first_error` helper on a log fixture starting with a
     MESA experimental warning followed by a Vulkan device creation error,
     confirming it extracts the Vulkan error line, handles non-warning fallbacks,
-    and caps length at 160 characters across all three smoke scripts.
+    and caps length at 160 characters across all three smoke scripts;
+(e) requires every helper outside FALLBACK_HELPERS to define pel_why and route
+    pel_skip/pel_fail through it, catching a planted reversion in
+    ffmpeg-patches/test/vulkan-drm-map-smoke.sh.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ RULE_FILE = ROOT / ".semgrep.yml"
 HOP_SMOKE = ROOT / "ffmpeg-patches" / "test" / "nvenc-cuda-hop-smoke.sh"
 UDU_SMOKE = ROOT / "ffmpeg-patches" / "test" / "nvenc-udu-sei-smoke.sh"
 FGS_SMOKE = ROOT / "ffmpeg-patches" / "test" / "fgs-sidedata-smoke.sh"
+DRM_MAP = ROOT / "ffmpeg-patches" / "test" / "vulkan-drm-map-smoke.sh"
 # Smoke scripts defining pel_first_error when this check was written; fewer
 # means the discovery glob broke.
 MIN_HELPER_SCRIPTS = 5
@@ -377,13 +381,54 @@ def step_helper_unit_check(tmp: pathlib.Path) -> str | None:
     return None
 
 
+def check_helper_why(source: str, name: str) -> list[str]:
+    """Report pel_first_error directly spliced into pel_skip/fail, or missing pel_why."""
+    findings: list[str] = []
+    if "pel_why()" not in source:
+        findings.append(f"{name}: missing pel_why() definition")
+    for lineno, line in enumerate(source.splitlines(), start=1):
+        if ("pel_skip" in line or "pel_fail" in line) and "$(pel_first_error " in line:
+            findings.append(
+                f"{name}:{lineno}: pel_skip/pel_fail calls pel_first_error directly: {line.strip()}"
+            )
+    return findings
+
+
+def scan_helper_why(overrides: dict[pathlib.Path, str]) -> str | None:
+    """Check discovered helpers outside FALLBACK_HELPERS, reading overrides first."""
+    for path in helper_scripts():
+        if path in FALLBACK_HELPERS:
+            continue
+        text = overrides.get(path) or path.read_text(encoding="utf-8")
+        findings = check_helper_why(text, path.name)
+        if findings:
+            return f"step (e): {'; '.join(findings)}"
+    return None
+
+
+def step_helper_why_check(_tmp: pathlib.Path) -> str | None:
+    """(e) Discovered helpers define and route through pel_why; a planted revert is reported."""
+    problem = scan_helper_why({})
+    if problem:
+        return problem
+    source = DRM_MAP.read_text(encoding="utf-8")
+    needle = '$(pel_why "$PEL_OUT/probe.log")'
+    if needle not in source:
+        return f"step (e): needle '{needle}' not in {DRM_MAP}"
+    planted = source.replace(needle, '$(pel_first_error "$PEL_OUT/probe.log")', 1)
+    planted_err = scan_helper_why({DRM_MAP: planted})
+    if not planted_err or "probe.log" not in planted_err:
+        return f"step (e): planted revert on {DRM_MAP.name} not reported: {planted_err}"
+    return None
+
+
 def main() -> int:
-    """Run steps (a) to (d); exit 77 (skip) when semgrep is not installed."""
+    """Run steps (a) to (e); exit 77 (skip) when semgrep is not installed."""
     semgrep_bin = resolve_executable("semgrep")
     if not semgrep_bin:
         print("SKIP: semgrep not found")
         return 77
-    for required in (RULE_FILE, HOP_SMOKE, UDU_SMOKE, FGS_SMOKE):
+    for required in (RULE_FILE, HOP_SMOKE, UDU_SMOKE, FGS_SMOKE, DRM_MAP):
         if not required.is_file():
             sys.stderr.write(f"missing file: {required}\n")
             return 1
@@ -396,6 +441,7 @@ def main() -> int:
                 lambda t: step_planted_cases(semgrep_bin, t),
                 lambda t: step_planted_revert(semgrep_bin, t),
                 lambda t: step_real_tree(semgrep_bin, t),
+                step_helper_why_check,
             ):
                 problem = step(tmp)
                 if problem:
@@ -405,7 +451,7 @@ def main() -> int:
             sys.stderr.write(f"{err}\n")
             return 1
     print(
-        "semgrep smoke skip reason: helper units, planted cases, planted revert and real tree ok"
+        "semgrep smoke skip reason: helper units, why check, planted cases, planted revert and real tree ok"
     )
     return 0
 
