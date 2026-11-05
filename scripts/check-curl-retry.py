@@ -118,7 +118,7 @@ NON_FILE_TARGETS = frozenset({"/dev/null", "-"})
 
 def is_download_flag(tok: str, next_tok: str | None) -> tuple[bool, int]:
     """Check if token indicates a download output, returning (is_download, tokens_consumed)."""
-    if tok in ("-O", "--remote-name"):
+    if tok in ("-O", "--remote-name", "--remote-name-all"):
         return True, 1
     if tok in ("-o", "--output"):
         target = next_tok.strip("'\"") if next_tok else ""
@@ -159,13 +159,35 @@ def parse_retry_flag(tok: str, next_tok: str | None) -> tuple[bool, int | None, 
     return False, None, 1
 
 
+# curl 8.23.0 help: "-:, --next  Make next URL use separate options".
+NEXT_OPERATION = frozenset({"--next", "-:"})
+
+
+def split_operations(tokens: list[str]) -> list[list[str]]:
+    """Split curl arguments at --next; each part carries its own options."""
+    operations: list[list[str]] = [[]]
+    for tok in tokens:
+        if tok in NEXT_OPERATION:
+            operations.append([])
+        else:
+            operations[-1].append(tok)
+    return operations
+
+
 def check_curl_args(arg_str: str) -> list[str]:
-    """Check parsed arguments of a curl invocation for required retry options."""
+    """Check each operation of a curl invocation for required retry options."""
     try:
         tokens = shlex.split(arg_str, posix=True)
     except ValueError:
         tokens = arg_str.split()
+    violations: list[str] = []
+    for operation in split_operations(tokens):
+        violations.extend(v for v in check_operation(operation) if v not in violations)
+    return violations
 
+
+def check_operation(tokens: list[str]) -> list[str]:
+    """Check one curl operation (the options before or between --next) for retry rules."""
     is_download = False
     has_retry = False
     retry_val: int | None = None
@@ -288,9 +310,9 @@ def self_test_scanned(root: pathlib.Path) -> int:
     return failures
 
 
-def run_self_test() -> int:
-    """Run self-test on planted cases in a temporary directory."""
-    cases = [
+def self_test_cases() -> list[tuple[str, str, bool]]:
+    """Planted curl lines and whether the check must refuse them."""
+    return [
         ("p1", "curl --retry 2 --retry-max-time 60 -o out https://example.com/file\n", True),
         ("p2", "curl -o out https://example.com/file\n", True),
         ("p3", "curl --retry 6 -o out https://example.com/file\n", True),
@@ -315,7 +337,29 @@ def run_self_test() -> int:
         ("p18", "curl -fsSLo - https://example.com/status | jq .\n", False),
         ("p19", "curl -o - https://example.com/status\n", False),
         ("p20", "curl --output=- https://example.com/status\n", False),
+        ("p21", "curl --remote-name-all https://example.com/a https://example.com/b\n", True),
+        ("p22", "curl --remote-name-all -o - https://example.com/a https://example.com/b\n", True),
+        (
+            "p23",
+            'curl --retry 6 --retry-max-time 60 -o out https://example.com/f --next --retry "$N" -o o2 https://example.com/g\n',
+            True,
+        ),
+        (
+            "p24",
+            "curl --retry 6 --retry-max-time 60 -o out https://example.com/f -: -o o2 https://example.com/g\n",
+            True,
+        ),
+        (
+            "p25",
+            'curl --retry 6 --retry-max-time 60 -o out https://example.com/f --next --retry "$N" https://example.com/s\n',
+            False,
+        ),
     ]
+
+
+def run_self_test() -> int:
+    """Run self-test on planted cases in a temporary directory."""
+    cases = self_test_cases()
     failures = 0
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = pathlib.Path(tmp_dir)
