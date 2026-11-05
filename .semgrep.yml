@@ -269,7 +269,8 @@ rules:
           # Guard suppression: call inside a branch whose condition
           # validates $VAR (or Path($VAR) bound to $P) un-negated:
           # os.access(..., os.X_OK), is_file() or os.path.isfile().
-          # A call in an `if not <guard>:` branch stays reported.
+          # A call in an `if not <guard>:` branch stays reported, and so
+          # does one whose guard is only one alternative of an `or`.
           - pattern-not-inside:
               patterns:
                 - pattern-inside: |
@@ -294,6 +295,7 @@ rules:
                           - pattern: os.path.isfile(<... Path($VAR) ...>)
                           - pattern: os.path.isfile(<... pathlib.Path($VAR) ...>)
                       - pattern-not-inside: not $X
+                      - pattern-not-inside: $X or $Y
           - pattern-not-inside:
               patterns:
                 - pattern-either:
@@ -321,6 +323,7 @@ rules:
                           - pattern: $P.is_file(...)
                           - pattern: os.path.isfile($P)
                       - pattern-not-inside: not $X
+                      - pattern-not-inside: $X or $Y
           # Guard suppression: call after early-return on negated guard
           # 4. negated os.access with os.X_OK -> return
           - pattern-not-inside: |
