@@ -277,10 +277,10 @@ def scan_all_files(
 
 
 def run_self_test_planted() -> int:
-    """Run planted self-test cases in subprocess_markers_selftest."""
-    import subprocess_markers_selftest  # noqa: E402
+    """Run planted self-test cases in selftest_subprocess_markers."""
+    import selftest_subprocess_markers  # noqa: E402
 
-    return subprocess_markers_selftest.run_self_test_planted(
+    return selftest_subprocess_markers.run_self_test_planted(
         count_file_fn=count_file,
         count_unmarked_sites_fn=count_unmarked_sites,
         compare_counts_fn=compare_counts,
