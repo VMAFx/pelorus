@@ -3,9 +3,12 @@
 # SPDX-License-Identifier: EUPL-1.2
 """Refuse an ffmpeg-patches/test/ program that no CI workflow runs.
 
-A test file counts as wired when a GitHub workflow, a composite action or a
-Meson build file (CI runs `meson test`) names it outside a comment, or when a wired test file names it (a runner script that
-calls a helper, a helper that imports a module by its stem). Every other
+A test file counts as wired when a GitHub workflow names it outside a
+comment; when a composite action that a wired file `uses:` names it; when a
+Meson test() call that a workflow's `meson test` line selects (by suite, by
+name, or all tests) names it or runs an executable built from it; or when a
+wired test file names it (a runner script that calls a helper, a helper that
+imports a module by its stem). Every other
 `*.sh`, `*.py` or `*.c` file directly under ffmpeg-patches/test/ is a finding,
 unless a live `.standards.yaml` exception with rule HISS-15 names its path.
 
@@ -39,14 +42,15 @@ DESCRIPTION = "Refuse an ffmpeg-patches/test/ program that no CI workflow runs."
 RULE = "HISS-15"
 TEST_DIR = pathlib.PurePosixPath("ffmpeg-patches/test")
 SUFFIXES = (".sh", ".py", ".c")
-# CI runs the workflows; its core job runs `meson test --suite=fast`, so the
-# Meson build files that register tests are roots as well.
-ROOT_GLOBS = (
-    ".github/workflows/*.yml",
-    ".github/workflows/*.yaml",
-    "meson.build",
-    "libpelorus/**/meson.build",
-    "tools/**/meson.build",
+ROOT_GLOBS = (".github/workflows/*.yml", ".github/workflows/*.yaml")
+# A Meson file wires a test only through a test() call that a workflow's
+# `meson test` line selects (by suite, by name, or all tests), or through the
+# executable such a call runs.
+MESON_GLOBS = ("meson.build", "libpelorus/**/meson.build", "tools/**/meson.build")
+MESON_TEST_LINE = re.compile(r"\bmeson\s+test\b([^\n&;|]*)")
+SUITE_ARG = re.compile(r"--suite(?:=|\s+)([\w-]+)")
+MESON_VALUE_OPTIONS = frozenset(
+    ("-C", "--setup", "--num-processes", "-j", "--timeout-multiplier", "-t", "--repeat", "--wrapper", "--test-args")
 )
 # A composite action runs only when a wired file names it in `uses:`.
 ACTION_GLOBS = (".github/actions/**/*.yml", ".github/actions/**/*.yaml")
@@ -112,8 +116,90 @@ def _glob_files(repo_root: pathlib.Path, patterns: tuple[str, ...]) -> list[path
 
 
 def find_roots(repo_root: pathlib.Path) -> list[pathlib.Path]:
-    """Workflow and Meson build files, sorted and unique."""
+    """Workflow files, sorted and unique."""
     return _glob_files(repo_root, ROOT_GLOBS)
+
+
+def _positional(args: str) -> list[str]:
+    """Test names on a `meson test` line: tokens that are not options or their values."""
+    names: list[str] = []
+    skip = False
+    for token in args.split():
+        if skip:
+            skip = False
+        elif token in MESON_VALUE_OPTIONS:
+            skip = True
+        elif not token.startswith("-"):
+            names.append(token)
+    return names
+
+
+def meson_selection(workflow_texts: list[str]) -> tuple[set[str], set[str], bool]:
+    """(suites, test names, all tests) that the workflows' `meson test` lines run."""
+    suites: set[str] = set()
+    names: set[str] = set()
+    everything = False
+    for text in workflow_texts:
+        for match in MESON_TEST_LINE.finditer(text):
+            found = SUITE_ARG.findall(match.group(1))
+            suites.update(found)
+            if not found:
+                positional = _positional(match.group(1))
+                names.update(positional)
+                everything = everything or not positional
+    return suites, names, everything
+
+
+def _close_paren(text: str, start: int) -> int:
+    """Index of the parenthesis closing the call opened before start; skips strings and comments."""
+    depth, i, in_str = 1, start, False
+    for _ in range(len(text)):
+        if i >= len(text):
+            break
+        ch = text[i]
+        if in_str:
+            in_str = ch != "'"
+            i += 2 if ch == "\\" else 1
+            continue
+        if ch == "#":
+            newline = text.find("\n", i)
+            i = len(text) if newline < 0 else newline
+            continue
+        in_str = ch == "'"
+        depth += {"(": 1, ")": -1}.get(ch, 0)
+        if depth == 0:
+            return i
+        i += 1
+    return len(text)
+
+
+def call_spans(text: str, func: str) -> list[tuple[str, str]]:
+    """(assigned variable or "", argument text) of each `func(...)` call in Meson text."""
+    spans: list[tuple[str, str]] = []
+    for match in re.finditer(r"(?:\b(\w+)\s*=\s*)?\b" + func + r"\s*\(", text):
+        spans.append((match.group(1) or "", text[match.end() : _close_paren(text, match.end())]))
+    return spans
+
+
+def _selected(body: str, selection: tuple[set[str], set[str], bool]) -> bool:
+    """True when CI's `meson test` lines run the test() call with this argument text."""
+    suites, names, everything = selection
+    suite_arg = re.search(r"\bsuite\s*:\s*(\[[^\]]*\]|'[^']*')", body)
+    body_suites = set(re.findall(r"'([\w-]+)'", suite_arg.group(1))) if suite_arg else set()
+    name = re.match(r"\s*'([^']*)'", body)
+    return everything or bool(body_suites & suites) or (name is not None and name.group(1) in names)
+
+
+def meson_root_text(meson_texts: list[str], selection: tuple[set[str], set[str], bool]) -> str:
+    """The CI-selected test() calls plus the executables they run, as one root text."""
+    tests = [body for text in meson_texts for _, body in call_spans(text, "test") if _selected(body, selection)]
+    exes = [
+        body
+        for text in meson_texts
+        for var, body in call_spans(text, "executable")
+        if var and any(re.search(r"\b" + re.escape(var) + r"\b", t) for t in tests)
+    ]
+    return "\n".join(tests + exes)
 
 
 def find_actions(repo_root: pathlib.Path) -> list[pathlib.Path]:
@@ -144,7 +230,7 @@ def reach(
 def unwired(repo_root: pathlib.Path) -> tuple[list[str], list[str]]:
     """Return (errors, findings); a finding is `<rel>:1: <message>`."""
     roots = find_roots(repo_root)
-    if not any(r.match(".github/workflows/*") for r in roots):
+    if not roots:
         return [f"no workflow files under {repo_root / '.github'}"], []
     if not (repo_root / TEST_DIR).is_dir():
         return [f"missing test directory {repo_root / TEST_DIR}"], []
@@ -155,7 +241,10 @@ def unwired(repo_root: pathlib.Path) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     nodes = read_all(repo_root, candidates + find_actions(repo_root), errors)
     patterns = {n: node_patterns(repo_root, n) for n in nodes}
-    wired = reach(list(read_all(repo_root, roots, errors).values()), nodes, patterns)
+    workflow_texts = list(read_all(repo_root, roots, errors).values())
+    meson_texts = list(read_all(repo_root, _glob_files(repo_root, MESON_GLOBS), errors).values())
+    root_texts = [*workflow_texts, meson_root_text(meson_texts, meson_selection(workflow_texts))]
+    wired = reach(root_texts, nodes, patterns)
     findings = [
         f"{c.relative_to(repo_root).as_posix()}:1: no CI workflow runs this test, directly or through a wired test file"
         for c in candidates
@@ -196,7 +285,23 @@ DEEP_TREE = {
         "      # - run: ffmpeg-patches/test/commented.sh\n"
         "      - run: ffmpeg-patches/test/runner-extra.sh.bak\n"
         "      - uses: ./.github/actions/used\n"
+        "      - run: meson test -C build --suite=fast --print-errorlogs && true\n"
+        "      - run: meson test -C build meson-named --verbose\n"
     ),
+    "meson.build": (
+        "exe_ok = executable('a', files('ffmpeg-patches/test/meson-ok.c'))\n"
+        "test('a', exe_ok,  # a ) in a comment\n     suite: 'fast')\n"
+        "exe_untested = executable('b', files('ffmpeg-patches/test/meson-untested.c'))\n"
+        "exe_slow = executable('c', files('ffmpeg-patches/test/meson-slow.c'))\n"
+        "test('c', exe_slow, suite: ['slow', 'x)'])\n"
+        "test('meson-named', find_program('sh'), args: ['ffmpeg-patches/test/meson-named.sh'])\n"
+        "test('d', python, args: ['ffmpeg-patches/test/meson-script.py'], suite: ['numpy', 'fast'])\n"
+    ),
+    "ffmpeg-patches/test/meson-ok.c": "int main(void) { return 0; }\n",
+    "ffmpeg-patches/test/meson-untested.c": "int main(void) { return 0; }\n",
+    "ffmpeg-patches/test/meson-slow.c": "int main(void) { return 0; }\n",
+    "ffmpeg-patches/test/meson-named.sh": "true\n",
+    "ffmpeg-patches/test/meson-script.py": "X = 1\n",
     ".github/actions/used/action.yml": "runs:\n  steps:\n    - run: ffmpeg-patches/test/by-used-action.sh\n",
     ".github/actions/unused/action.yml": "runs:\n  steps:\n    - run: ffmpeg-patches/test/by-unused-action.sh\n",
     "ffmpeg-patches/test/by-used-action.sh": "true\n",
@@ -217,6 +322,8 @@ DEEP_ORPHANS = {
     "ffmpeg-patches/test/leaf.sh",
     "ffmpeg-patches/test/runner-extra.sh",
     "ffmpeg-patches/test/by-unused-action.sh",
+    "ffmpeg-patches/test/meson-untested.c",
+    "ffmpeg-patches/test/meson-slow.c",
 }
 
 
@@ -255,8 +362,10 @@ def _self_test_wide() -> list[str]:
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp)
         wide = {f".github/workflows/w{i}.yml": "jobs: {}\n" for i in range(1, 6)}
-        wide[".github/workflows/w0.yml"] = "run: ffmpeg-patches/test/only.sh\n"
+        wide[".github/workflows/w0.yml"] = "run: ffmpeg-patches/test/only.sh\nrun: meson test -C build\n"
         wide["ffmpeg-patches/test/only.sh"] = "true\n"
+        wide["meson.build"] = "exe = executable('e', files('ffmpeg-patches/test/any.c'))\ntest('e', exe)\n"
+        wide["ffmpeg-patches/test/any.c"] = "int main(void) { return 0; }\n"
         _plant(root, wide)
         got = check(root, entries=[], today=REF_TODAY, out=io.StringIO())
         if got:
