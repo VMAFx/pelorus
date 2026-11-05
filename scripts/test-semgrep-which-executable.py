@@ -274,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
         git_bin = resolve_executable("git")
         if git_bin:
             try:
-                proc = subprocess.run(
+                proc = subprocess.run(  # nosec B603 - git resolved from PATH to a file; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - git resolved to an executable file, fixed list argv, no shell, explicit deadline
                     [git_bin, "init", "-q", str(tmp)],
                     capture_output=True,
                     text=True,
