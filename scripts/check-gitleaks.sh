@@ -32,7 +32,9 @@
 # Env:
 #   GITLEAKS          gitleaks binary (default: gitleaks on PATH)
 #   GITLEAKS_TIMEOUT  scan deadline in seconds (default 600)
-#   CURL_MAX_TIME     download deadline in seconds (default 120)
+#   CURL_MAX_TIME     per-attempt deadline in seconds (default 120);
+#                     no new retry starts after CURL_MAX_TIME;
+#                     worst case about twice CURL_MAX_TIME.
 set -euo pipefail
 # A failing command inside $(...) must fail the assignment that reads it.
 shopt -s inherit_errexit
@@ -58,8 +60,11 @@ install_gitleaks() {
     local url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}"
     [ ! -e "$dir" ] || fail "--install: $dir already exists"
     mkdir -p "$dir"
+    # 6 retries with exponential backoff absorb transient release-asset 504s (run 42044634889).
     curl --fail --silent --show-error --location --proto '=https' \
-        --max-time "$CURL_MAX_TIME" --output "$dir/$tarball" "$url"
+        --max-time "$CURL_MAX_TIME" \
+        --retry 6 --retry-max-time "$CURL_MAX_TIME" \
+        --output "$dir/$tarball" "$url"
     echo "$GITLEAKS_SHA256  $dir/$tarball" | sha256sum --check --strict --quiet \
         || fail "--install: $tarball does not match pinned sha256 $GITLEAKS_SHA256"
     tar -xzf "$dir/$tarball" -C "$dir" gitleaks

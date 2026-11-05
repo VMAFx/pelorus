@@ -596,6 +596,25 @@ test('meson-windows-git-self-test',
      timeout: 60,
      suite: 'fast')
 
+# Every curl download must specify retry >= 5 and retry-max-time to handle
+# transient server 504 errors with exponential backoff (CI run 42044634889).
+if build_machine.system() != 'windows'
+  test('curl-retry',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-curl-retry.py'],
+       workdir: meson.project_source_root(),
+       timeout: 60,
+       suite: 'fast')
+endif
+
+test('curl-retry-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-curl-retry.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     timeout: 60,
+     suite: 'fast')
+
 # A try block that guards Path.read_text() against OSError must also catch
 # UnicodeDecodeError, or a file with invalid bytes escapes as a traceback.
 # The tree scan lists files with git; see python-empty-except above for why

@@ -11,7 +11,10 @@
 # Makes the bench reproducible from a pinned source on any machine.
 #
 #   FFMPEG=/path/to/ffmpeg CORPUS=.bench-corpus ./fetch-corpus.sh [name...]
-#   CORPUS_LOCK=<file> and CURL_MAX_TIME=<seconds, default 600> override the pin list and deadline.
+#   CORPUS_LOCK=<file> overrides the pin list.
+#   CURL_MAX_TIME=<seconds, default 600> sets the per-attempt deadline;
+#   no new retry starts after CURL_MAX_TIME;
+#   worst case about twice CURL_MAX_TIME.
 #   CORPUS_CATEGORIES=<file> overrides the category list (default: scripts/bench/corpus.categories).
 #   --check-categories verifies category coverage against the lock and exits without downloading.
 #   A category whose clips column reads 'parked #<issue>' has no set by recorded decision: it
@@ -140,8 +143,9 @@ while IFS='|' read -r name url sha seek scale pixfmt frames fps licence; do
             # --fail turns an HTTP error into a non-zero exit instead of saving
             # the error page; --max-time bounds every attempt (HISS-02).
             tmp_dl="$(mktemp "$local_dl.XXXXXX.part")"
+            # 6 retries with exponential backoff absorb transient release-asset 504s (run 42044634889).
             if ! curl --fail --show-error --silent --location \
-                --max-time "$CURL_MAX_TIME" --retry 2 --retry-max-time "$CURL_MAX_TIME" \
+                --max-time "$CURL_MAX_TIME" --retry 6 --retry-max-time "$CURL_MAX_TIME" \
                 --output "$tmp_dl" -- "$url"; then
                 rm -f -- "$tmp_dl"
                 echo "  DOWNLOAD FAILED: $name ($url)" >&2
