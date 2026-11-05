@@ -1,0 +1,2 @@
+- `tools/tester/pelorus_tester_report.py tool-hash` now supports `--write` and `--note TEXT` to append the current tool digest to `tools/tester/tool-hashes.json` in an append-only format, refusing version conflicts and missing notes, with intake check pointing to the new command (#502).
+- `Makefile` adds a `patches` target requiring `FFMPEG_REPO` to regenerate the FFmpeg patch stack via `ffmpeg-patches/generate.sh` (#502).

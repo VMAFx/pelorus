@@ -148,7 +148,7 @@ def tool_list_errors(known, disabled=frozenset()):
     if known.get(digest) == ver:
         return []
     return ["tools/tester digest %s.. (version %s) is not in tool-hashes.json; append it "
-            "with: python3 -I tools/tester/pelorus_tester_report.py tool-hash" % (digest[:12], ver)]
+            "with: python3 -I tools/tester/pelorus_tester_report.py tool-hash --write --note <text>" % (digest[:12], ver)]
 
 
 def check_dir(directory, hashes, disabled=frozenset(), check_tool=True):
