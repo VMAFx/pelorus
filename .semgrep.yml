@@ -509,11 +509,12 @@ rules:
     languages: [python]
     severity: ERROR
     message: >-
-      File permissions ($MODE) grant group/other access or exceed 0o650.
-      CodeQL flags group or other access bits; Codacy/Opengrep
-      insecure-file-permissions flags modes >= 0o650 (including 0o700).
-      Use owner-only permissions: 0o600 or 0o400 for data files, 0o500 for
-      an executable stub; 0o700 is NOT safe.
+      File permissions ($MODE) grant group/other access, exceed 0o650, or
+      inherit mode bits via st_mode. Set the mode explicitly. CodeQL flags
+      group or other access bits; Codacy/Opengrep insecure-file-permissions
+      flags modes >= 0o650 (including 0o700). Use owner-only permissions:
+      0o600 or 0o400 for data files, 0o500 for an executable stub; 0o700
+      is NOT safe.
     paths:
       include:
         - "*.py"
@@ -546,5 +547,17 @@ rules:
                     - pattern: <... stat.S_IWOTH ...>
                     - pattern: <... stat.S_IXOTH ...>
                     - pattern: <... stat.S_IRWXO ...>
+      - patterns:
+          - pattern-either:
+              - pattern: os.chmod($TARGET, $MODE, ...)
+              - pattern: os.lchmod($TARGET, $MODE, ...)
+              - pattern: os.fchmod($TARGET, $MODE, ...)
+              - pattern: $P.chmod($MODE, ...)
+          - metavariable-pattern:
+              metavariable: $MODE
+              patterns:
+                - pattern-either:
+                    - pattern: <... $X.st_mode ...>
+                    - pattern: <... st_mode ...>
 
 

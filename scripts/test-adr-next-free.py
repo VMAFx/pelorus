@@ -17,7 +17,6 @@ from __future__ import annotations
 import os
 import pathlib
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -119,7 +118,7 @@ def init_fixture_repo(
     sdir.mkdir(parents=True)
     fscript = sdir / "next-free.sh"
     shutil.copy2(script_src, fscript)
-    fscript.chmod(fscript.stat().st_mode | stat.S_IXUSR)
+    fscript.chmod(0o500)
     docs_adr = repo_path / "docs" / "adr"
     docs_adr.mkdir(parents=True)
     for i, name in enumerate(adrs, 1):

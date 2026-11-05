@@ -4,8 +4,9 @@
 """Planted-defect recall for the chmod mode Semgrep rule.
 
 Checks that `pelorus-chmod-owner-only` in `.semgrep.yml`:
-(a) reports chmod calls with group/other permissions or mode >= 0o650, while
-    allowing owner-only modes (0, 0o400, 0o500, 0o600, S_IWUSR);
+(a) reports chmod calls with group/other permissions, mode >= 0o650, or
+    inherited mode bits via st_mode, while allowing owner-only modes
+    (0, 0o400, 0o500, 0o600, S_IRWXU, S_IRUSR | S_IWUSR);
 (b) catches a planted regression in tools/tester/install-fast-suite.py when
     runner chmod is reverted to 0o755;
 (c) produces zero findings across all tracked .py files while confirming
@@ -15,20 +16,27 @@ Checks that `pelorus-chmod-owner-only` in `.semgrep.yml`:
 from __future__ import annotations
 
 import argparse
-import json
-import os
+import importlib.util
 import pathlib
-import shutil
-import subprocess  # nosec B404 - fixed semgrep argv, no shell, explicit deadline
+import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
 import tempfile
+
+# python3 -I drops the script directory from sys.path: load the sibling by path.
+_SPEC = importlib.util.spec_from_file_location(
+    "semgrep_harness", pathlib.Path(__file__).with_name("semgrep_harness.py")
+)
+semgrep_harness = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(semgrep_harness)
+ScanError = semgrep_harness.ScanError
+run_semgrep = semgrep_harness.run_semgrep
+resolve_executable = semgrep_harness.resolve_executable
+scrubbed_env = semgrep_harness.scrubbed_env
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RULE_FILE = ROOT / ".semgrep.yml"
 INSTALL_FAST_SUITE_SCRIPT = ROOT / "tools" / "tester" / "install-fast-suite.py"
 RULE_ID = "pelorus-chmod-owner-only"
-
-SEMGREP_TIMEOUT_S = 180
 
 PLANTED_PY = """\
 import os
@@ -36,22 +44,30 @@ import stat
 from pathlib import Path
 
 def case_positive_0o640():
-    os.chmod("f1", 0o640)
+    os.chmod("f1", 0o640)  # reported: group access
 
 def case_positive_0o700():
-    os.chmod("f2", 0o700)
+    os.chmod("f2", 0o700)  # reported: mode >= 0o650
 
 def case_positive_0o755():
-    os.chmod("f3", 0o755)
+    os.chmod("f3", 0o755)  # reported: group and other access
 
 def case_positive_0o604():
-    os.chmod("f4", 0o604)
+    os.chmod("f4", 0o604)  # reported: other access
 
 def case_positive_path_0o750():
-    Path("f5").chmod(0o750)
+    Path("f5").chmod(0o750)  # reported: Path.chmod mode >= 0o650
 
 def case_positive_stat_irgrp():
-    os.chmod("f6", stat.S_IRGRP)
+    os.chmod("f6", stat.S_IRGRP)  # reported: stat.S_IRGRP
+
+def case_positive_stat_iwusr():
+    st_mode = 0
+    os.chmod("s5", st_mode | stat.S_IWUSR)  # reported: inherited mode from local st_mode
+
+def case_positive_path_stat_ixusr():
+    p = Path("f7")
+    p.chmod(p.stat().st_mode | stat.S_IXUSR)  # reported: inherited mode from p.stat().st_mode
 
 def case_negative_0o600():
     os.chmod("s1", 0o600)
@@ -65,86 +81,18 @@ def case_negative_0o500():
 def case_negative_0():
     os.chmod("s4", 0)
 
-def case_negative_stat_iwusr():
-    st_mode = 0
-    os.chmod("s5", st_mode | stat.S_IWUSR)
+def case_negative_stat_irwxu():
+    os.chmod("s6", stat.S_IRWXU)
+
+def case_negative_stat_irusr_iwusr():
+    os.chmod("s7", stat.S_IRUSR | stat.S_IWUSR)
 """
 
-EXPECTED_HITS = (6, 9, 12, 15, 18, 21)
-
-
-class ScanError(Exception):
-    """A semgrep run ended with an unexpected status or unreadable output."""
-
-
-def scrubbed_env() -> dict[str, str]:
-    """Copy os.environ with all GIT_* keys dropped to prevent repo steering."""
-    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-
-
-def resolve_executable(name: str) -> str | None:
-    """PATH lookup of name, kept only when it is an executable regular file."""
-    found = shutil.which(name)
-    if not found:
-        return None
-    path = pathlib.Path(found).resolve()
-    if not path.is_file() or not os.access(path, os.X_OK):
-        return None
-    return str(path)
-
-
-def run_semgrep(
-    semgrep_bin: str,
-    target_dir: pathlib.Path,
-    rule_path: pathlib.Path,
-    expected_rc: int,
-    env_dir: pathlib.Path,
-    *,
-    hermetic: bool = False,
-) -> dict:
-    """Scan target_dir with one rule file; return parsed JSON report."""
-    env = scrubbed_env()
-    env["XDG_CONFIG_HOME"] = str(env_dir)
-    env["SEMGREP_SETTINGS_FILE"] = str(env_dir / "semgrep-settings.yaml")
-    env["SEMGREP_LOG_FILE"] = str(env_dir / "semgrep.log")
-    cmd = [
-        semgrep_bin,
-        "scan",
-        "--config",
-        str(rule_path),
-        "--error",
-        "--json",
-        "--metrics=off",
-        "--disable-version-check",
-    ]
-    if hermetic:
-        cmd += ["--no-git-ignore", "--project-root", "."]
-    cmd.append(".")
-    try:
-        proc = subprocess.run(  # nosec B603 - semgrep resolved from PATH to a file; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - semgrep resolved to an executable file, fixed list argv, no shell, explicit deadline
-            cmd,
-            cwd=str(target_dir),
-            capture_output=True,
-            text=True,
-            env=env,
-            check=False,
-            timeout=SEMGREP_TIMEOUT_S,
-        )
-    except subprocess.TimeoutExpired as err:
-        raise ScanError(
-            f"semgrep scan in {target_dir}: no result after {SEMGREP_TIMEOUT_S} s"
-        ) from err
-    if proc.returncode != expected_rc:
-        raise ScanError(
-            f"semgrep scan in {target_dir}: expected rc={expected_rc}, "
-            f"got rc={proc.returncode}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
-        )
-    try:
-        return json.loads(proc.stdout)
-    except json.JSONDecodeError as err:
-        raise ScanError(
-            f"semgrep json output unreadable: {err}\n{proc.stdout}"
-        ) from err
+# The hit lines follow the `# reported` comments, so a planted line added or
+# moved keeps its expectation.
+EXPECTED_HITS = tuple(
+    n for n, line in enumerate(PLANTED_PY.splitlines(), 1) if "# reported" in line
+)
 
 
 def make_tree(root: pathlib.Path, rel_path: str, source: str) -> pathlib.Path:
@@ -172,13 +120,19 @@ def step_planted_cases(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
 
 
 def step_planted_revert(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
-    """(b) Reverting runner chmod to 0o755 yields exactly one finding."""
-    needle = "runner.chmod(0o500)"
+    """(b) Reverting runner chmod to 0o755 yields exactly one finding.
+
+    The planted line drops the runner's reviewed nosemgrep marker, so the
+    revert is scanned like an unreviewed change.
+    """
+    needle = "runner.chmod(0o555)  # nosemgrep: pelorus-chmod-owner-only"
     source = INSTALL_FAST_SUITE_SCRIPT.read_text(encoding="utf-8")
     if needle not in source:
         return f"step (b): needle '{needle}' not in {INSTALL_FAST_SUITE_SCRIPT}"
     replacement = "runner.chmod(0o755)"
-    planted = source.replace(needle, replacement, 1)
+    start = source.index(needle)
+    end = source.index("\n", start)
+    planted = source[:start] + replacement + source[end:]
     tree = make_tree(
         tmp / "revert_repo", "tools/tester/install-fast-suite.py", planted
     )

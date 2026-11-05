@@ -941,6 +941,21 @@ test('semgrep-chmod-mode',
      timeout: 600,
      suite: 'fast')
 
+# Shared Semgrep test harness enforcement: test scripts must import
+# semgrep_harness and not re-implement its members (ADR-0239/issue #538).
+test('semgrep-harness-use-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-semgrep-harness.py', '--self-test'],
+     workdir: meson.project_source_root(),
+     timeout: 60,
+     suite: 'fast')
+test('semgrep-harness-use',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-semgrep-harness.py'],
+     workdir: meson.project_source_root(),
+     timeout: 60,
+     suite: 'fast')
+
 # clang-tidy lane-files.txt generator and synchronization check (ADR-0168).
 # The lane is the Linux build with tests and tools on (the ci.yml core job);
 # Windows and builds with either option off compile a different unit set, so

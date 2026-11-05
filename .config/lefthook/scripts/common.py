@@ -594,7 +594,7 @@ def _writable_retry(function, path, _exc):
     """rmtree onexc: make the parent and the entry writable, then retry the removal once."""
     for target in (os.path.dirname(path), path):
         with contextlib.suppress(OSError):
-            os.chmod(target, os.stat(target).st_mode | stat.S_IWUSR | stat.S_IXUSR)
+            os.chmod(target, stat.S_IRWXU)
     function(path)
 
 
