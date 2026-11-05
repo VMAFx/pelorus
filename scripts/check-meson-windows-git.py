@@ -88,10 +88,38 @@ def test_calls(statement: list[Token]) -> Iterator[list[Token]]:
                 break
 
 
-def meson_tests(source: str) -> Iterator[tuple[list[Token], bool, dict[str, str]]]:
+Bindings = dict[str, tuple[str, ...]]
+
+
+def bind_script(statement: list[Token], variables: Bindings, conditional: bool) -> None:
+    """Record the scripts a `name = <path>` assignment may bind.
+
+    An assignment inside an if/elif/else branch may or may not run, so it adds
+    to the earlier bindings; an unconditional one replaces them. The result
+    over-approximates: every script a test may run on some branch is checked.
+    """
+    head = statement[0]
+    if not (
+        len(statement) >= 3
+        and head.kind == "word"
+        and statement[1].kind == "operator"
+        and statement[1].value == "="
+        and statement[2].kind in {"word", "string"}
+    ):
+        return
+    refs = tuple(script_refs(statement[2:], variables))
+    if conditional:
+        refs = tuple(dict.fromkeys(variables.get(head.value, ()) + refs))
+    if refs:
+        variables[head.value] = refs
+    else:
+        variables.pop(head.value, None)
+
+
+def meson_tests(source: str) -> Iterator[tuple[list[Token], bool, Bindings]]:
     """Yield calls with source-order bindings and unchanged if/elif/else gates."""
     gates: list[bool] = []
-    variables: dict[str, str] = {}
+    variables: Bindings = {}
     for statement in meson_statements(source):
         head = statement[0]
         if head.kind == "word" and head.value == "if":
@@ -104,27 +132,14 @@ def meson_tests(source: str) -> Iterator[tuple[list[Token], bool, dict[str, str]
             else:
                 gates[-1] = head.value == "elif" and is_windows_gate(statement[1:])
         else:
-            if (
-                len(statement) >= 3
-                and head.kind == "word"
-                and statement[1].kind == "operator"
-                and statement[1].value == "="
-                and statement[2].kind in {"word", "string"}
-            ):
-                refs = script_refs(statement[2:], variables)
-                if refs:
-                    variables[head.value] = refs[-1]
-                else:
-                    variables.pop(head.value, None)
+            bind_script(statement, variables, bool(gates))
             for call in test_calls(statement):
                 yield call, any(gates), variables.copy()
     if gates:
         raise ValueError("meson.build: unclosed if block")
 
 
-def script_refs(
-    call: list[Token], variables: dict[str, str] | None = None
-) -> list[str]:
+def script_refs(call: list[Token], variables: Bindings | None = None) -> list[str]:
     """Find literal script paths and names bound to those paths in a test call."""
     refs: list[str] = []
     for index in range(len(call) - 2):
@@ -139,11 +154,9 @@ def script_refs(
             if name.endswith(".py"):
                 refs.append(name)
     if variables:
-        refs.extend(
-            variables[token.value]
-            for token in call
-            if token.kind == "word" and token.value in variables
-        )
+        for token in call:
+            if token.kind == "word":
+                refs.extend(variables.get(token.value, ()))
     return list(dict.fromkeys(refs))
 
 
@@ -213,11 +226,12 @@ def check(meson_build: Path, scripts_dir: Path) -> tuple[list[str], int]:
 
 def self_test_cases() -> list[tuple[str, str, bool]]:
     """Windows guards, unsafe branches, literal and variable-backed scripts."""
+    return literal_cases() + variable_cases()
+
+
+def literal_cases() -> list[tuple[str, str, bool]]:
+    """Windows guards and unsafe branches around literal script paths."""
     git_test = "test('scan', python, args: ['scripts' / 'scan.py'])\n"
-    variable_test = (
-        "scan_script = meson.project_source_root() / 'scripts' / 'scan.py'\n"
-        "test('scan', python, args: ['-I', scan_script])\n"
-    )
     return [
         ("p1 ungated", git_test, True),
         ("p2 gated", f"{WINDOWS_GATE}\n{git_test}endif\n", False),
@@ -243,6 +257,16 @@ def self_test_cases() -> list[tuple[str, str, bool]]:
             git_test.replace("'scan.py'", "'scan.py', '--self-test-only'"),
             False,
         ),
+    ]
+
+
+def variable_cases() -> list[tuple[str, str, bool]]:
+    """Scripts bound to Meson variables, in source order and across branches."""
+    variable_test = (
+        "scan_script = meson.project_source_root() / 'scripts' / 'scan.py'\n"
+        "test('scan', python, args: ['-I', scan_script])\n"
+    )
+    return [
         ("p12 variable ungated", variable_test, True),
         (
             "p13 variable gated",
@@ -260,6 +284,20 @@ def self_test_cases() -> list[tuple[str, str, bool]]:
             "p16 later git assignment",
             variable_test.replace("scan.py", "plain.py")
             + "scan_script = 'scripts' / 'scan.py'\n",
+            False,
+        ),
+        (
+            "p17 branch assignments",
+            "if enabled\nscan_script = 'scripts' / 'scan.py'\nelse\n"
+            "scan_script = 'scripts' / 'plain.py'\nendif\n"
+            "test('scan', python, args: ['-I', scan_script])\n",
+            True,
+        ),
+        (
+            "p18 branch reassigned",
+            "if enabled\nscan_script = 'scripts' / 'scan.py'\nendif\n"
+            "scan_script = 'scripts' / 'plain.py'\n"
+            "test('scan', python, args: ['-I', scan_script])\n",
             False,
         ),
     ]
