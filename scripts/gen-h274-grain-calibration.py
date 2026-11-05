@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Lusoris
+# SPDX-License-Identifier: EUPL-1.2
 """Regenerate or check the grain estimator's H.274 model-0 calibration table.
 
 The grain estimator (vf_pelorus_grain_estimate_vulkan) maps its measurement to
@@ -17,11 +19,16 @@ change libavcodec/h274.c, so the pinned file is the one a build compiles.
 
     FFMPEG_REPO=/path/to/ffmpeg scripts/gen-h274-grain-calibration.py
     FFMPEG_REPO=/path/to/ffmpeg scripts/gen-h274-grain-calibration.py --check
+    FFMPEG_REPO=/path/to/ffmpeg scripts/gen-h274-grain-calibration.py --write
+    scripts/gen-h274-grain-calibration.py --self-test
 
 --check compares the regenerated table with the one in the filter source and
-exits 1 on drift. This is a development tool: it needs numpy and an FFmpeg
-checkout, so it is not part of the fast suite. Rerun it after an FFmpeg bump
-or a shared series bump that touches libavcodec/h274.c.
+exits 1 on drift. --write updates the table in the filter source (or stats table)
+in-place when drift or grid changes occur, and is a no-op when within tolerance.
+--self-test needs no numpy or FFmpeg checkout and runs in the fast suite;
+generating, checking or writing the tables needs numpy and an FFmpeg checkout.
+Rerun it after an FFmpeg bump or a shared series bump that touches
+libavcodec/h274.c.
 """
 
 from __future__ import annotations
@@ -32,8 +39,10 @@ import pathlib
 import re
 import subprocess
 import sys
+from typing import TYPE_CHECKING
 
-import numpy as np
+if TYPE_CHECKING:
+    import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FILTER = ROOT / "ffmpeg-patches" / "files" / "vf_pelorus_grain_estimate_vulkan.c"
@@ -83,6 +92,8 @@ class H274Model0:
     """Luma path of ff_h274_apply_film_grain() for one interval, model 0."""
 
     def __init__(self, source: str) -> None:
+        import numpy as np
+
         self.gauss = np.array(parse_table(source, "Gaussian_LUT"), dtype=np.int64)
         self.seeds = parse_table(source, "Seed_LUT")
         self.r64t = np.array(parse_table(source, "R64T"), dtype=np.int64).reshape(64, 64)
@@ -96,6 +107,8 @@ class H274Model0:
         return ((x << 1) | (feedback & 1)) & 0xFFFFFFFF
 
     def pattern(self, h: int, v: int) -> np.ndarray:
+        import numpy as np
+
         if (h, v) in self.db:
             return self.db[(h, v)]
         freq_h = ((h + 3) << 2) - 1
@@ -120,11 +133,14 @@ class H274Model0:
         return out
 
     def render(self, scale: int, cutoff: int, seed: int) -> np.ndarray:
+        import numpy as np
+
         grain = self.grain(scale, cutoff, cutoff, seed, WIDTH, HEIGHT)
         return np.clip(LEVEL + grain, 0, 255)
 
     def grain(self, scale: int, cut_h: int, cut_v: int, seed: int, width: int, height: int):
         """Luma grain field for one cutoff pair, before it is added to the image."""
+        import numpy as np
 
         def int8(a: np.ndarray) -> np.ndarray:
             return ((a + 128) & 0xFF) - 128
@@ -157,6 +173,8 @@ class H274Model0:
 
 def estimator_stats(luma8: np.ndarray) -> tuple[float, float]:
     """Residual RMS (8-bit codes) and residual lag-1 correlation, edge gate open."""
+    import numpy as np
+
     img = luma8.astype(np.float64) / 255.0
     h, w = img.shape
     padded = np.pad(img, ((1, 1), (1, 2)), mode="edge")
@@ -178,6 +196,8 @@ def grain_stats(model: H274Model0) -> list[tuple[int, int, float, float, float]]
     (ADR-0205). Grain is measured before it is added to the image, so no
     clipping and no high-pass filter applies.
     """
+    import numpy as np
+
     rows = []
     for cut_v in STAT_CUTOFFS:
         for cut_h in STAT_CUTOFFS:
@@ -204,11 +224,11 @@ def format_stats(rows: list[tuple[int, int, float, float, float]]) -> list[str]:
     ]
 
 
-def parse_stats_table() -> list[tuple[int, int, float, float, float]]:
-    text = STATS_TABLE.read_text()
+def parse_stats_table(source_path: pathlib.Path = STATS_TABLE) -> list[tuple[int, int, float, float, float]]:
+    text = source_path.read_text(encoding="utf-8")
     match = re.search(r"pel_h274_grain_stats\[\]\s*=\s*\{(.*?)\n\};", text, re.S)
     if match is None:
-        raise SystemExit(f"{STATS_TABLE.name}: pel_h274_grain_stats table not found")
+        raise SystemExit(f"{source_path.name}: pel_h274_grain_stats table not found")
     return [
         (int(h), int(v), float(g), float(rh), float(rv))
         for h, v, g, rh, rv in re.findall(
@@ -218,11 +238,14 @@ def parse_stats_table() -> list[tuple[int, int, float, float, float]]:
     ]
 
 
-def check_stats(rows: list[tuple[int, int, float, float, float]]) -> int:
-    committed = parse_stats_table()
-    if [(h, v) for h, v, *_ in committed] != [(h, v) for h, v, *_ in rows]:
-        print("grain statistics cutoff pairs drifted", file=sys.stderr)
-        return 1
+def _check_stats_drift(
+    rows: list[tuple[int, int, float, float, float]], source_path: pathlib.Path = STATS_TABLE
+) -> tuple[int, bool, bool]:
+    committed = parse_stats_table(source_path=source_path)
+    grid_changed = [(h, v) for h, v, *_ in committed] != [(h, v) for h, v, *_ in rows]
+    if grid_changed:
+        print(f"grain statistics cutoff pairs drifted: {len(committed)} -> {len(rows)}", file=sys.stderr)
+        return 1, True, True
     drift = [
         (new, old)
         for new, old in zip(rows, committed)
@@ -232,13 +255,34 @@ def check_stats(rows: list[tuple[int, int, float, float, float]]) -> int:
     ]
     for new, old in drift:
         print(f"cutoff {new[0]},{new[1]}: {old[2:]} -> {new[2:]}", file=sys.stderr)
-    if drift:
-        return 1
-    print("H.274 grain statistics table matches the pinned FFmpeg synthesizer")
-    return 0
+    return (1 if drift else 0), bool(drift), False
+
+
+def check_stats(rows: list[tuple[int, int, float, float, float]], source_path: pathlib.Path = STATS_TABLE) -> int:
+    rc, _, _ = _check_stats_drift(rows, source_path=source_path)
+    if rc == 0:
+        print("H.274 grain statistics table matches the pinned FFmpeg synthesizer")
+    return rc
+
+
+def write_stats(rows: list[tuple[int, int, float, float, float]], source_path: pathlib.Path = STATS_TABLE) -> int:
+    _, drift, grid = _check_stats_drift(rows, source_path=source_path)
+    if not (drift or grid):
+        print("tables match, nothing written")
+        return 0
+    text = source_path.read_text(encoding="utf-8")
+    m = re.search(r"pel_h274_grain_stats\[\]\s*=\s*\{(.*?)\n\};", text, re.S)
+    if m is None:
+        raise SystemExit(f"{source_path.name}: pel_h274_grain_stats table not found")
+    new_body = "\n" + "\n".join(format_stats(rows))
+    text = text[:m.start(1)] + new_body + text[m.end(1):]
+    source_path.write_text(text, encoding="utf-8")
+    return check_stats(rows, source_path=source_path)
 
 
 def calibrate(model: H274Model0) -> list[tuple[int, float, float]]:
+    import numpy as np
+
     rows = []
     for cutoff in CUTOFFS:
         gains, rhos = [], []
@@ -251,12 +295,12 @@ def calibrate(model: H274Model0) -> list[tuple[int, float, float]]:
     return rows
 
 
-def parse_filter_table(table: str = "pel_h274_calib") -> list[tuple[int, float, float]]:
+def parse_filter_table(table: str = "pel_h274_calib", source_path: pathlib.Path = FILTER) -> list[tuple[int, float, float]]:
     """Read the committed `table` rows from the grain filter source."""
-    text = FILTER.read_text()
+    text = source_path.read_text(encoding="utf-8")
     match = re.search(table + r"\[\]\s*=\s*\{(.*?)\n\};", text, re.S)
     if match is None:
-        raise SystemExit(f"{FILTER.name}: {table} table not found")
+        raise SystemExit(f"{source_path.name}: {table} table not found")
     return [
         (int(c), float(r), float(g))
         for c, r, g in re.findall(
@@ -265,34 +309,31 @@ def parse_filter_table(table: str = "pel_h274_calib") -> list[tuple[int, float, 
     ]
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--check", action="store_true", help="compare with the filter table")
-    parser.add_argument(
-        "--stats", action="store_true", help="raw grain statistics table for libpelorus instead"
-    )
-    parser.add_argument("--ffmpeg-repo", default=os.environ.get("FFMPEG_REPO"))
-    args = parser.parse_args()
-    if not args.ffmpeg_repo:
-        print("set FFMPEG_REPO or pass --ffmpeg-repo", file=sys.stderr)
-        return 2
+def format_h274_rows(rows: list[tuple[int, float, float]]) -> str:
+    cells = [f"{{{c}, {r:+.4f}f, {g:.5f}f}},".replace("+", "") for c, r, g in rows]
+    lines = []
+    for i in range(0, len(cells), 3):
+        chunk = cells[i : i + 3]
+        if len(chunk) == 3:
+            s1 = "  " if len(chunk[0]) < 24 else " "
+            s2 = "  " if len(chunk[1]) < 24 else " "
+            lines.append("    " + chunk[0] + s1 + chunk[1] + s2 + chunk[2])
+        elif len(chunk) == 2:
+            s1 = "  " if len(chunk[0]) < 24 else " "
+            lines.append("    " + chunk[0] + s1 + chunk[1])
+        else:
+            lines.append("    " + chunk[0])
+    return "\n".join(lines)
 
-    model = H274Model0(ffmpeg_h274_source(args.ffmpeg_repo))
-    if args.stats:
-        stats = grain_stats(model)
-        print("\n".join(format_stats(stats)))
-        return check_stats(stats) if args.check else 0
 
-    rows = calibrate(model)
-    for cutoff, rho, gain in rows:
-        print(f"    {{{cutoff:2d}, {rho:+.4f}f, {gain:.5f}f}},".replace("+", " "))
-    if not args.check:
-        return 0
-
-    committed = parse_filter_table()
-    if [c for c, _, _ in committed] != [c for c, _, _ in rows]:
-        print("calibration cutoffs drifted", file=sys.stderr)
-        return 1
+def _check_filter_drift(
+    rows: list[tuple[int, float, float]], source_path: pathlib.Path = FILTER
+) -> tuple[int, bool, bool]:
+    committed = parse_filter_table("pel_h274_calib", source_path=source_path)
+    grid_changed = [c for c, _, _ in committed] != [c for c, _, _ in rows]
+    if grid_changed:
+        print(f"calibration cutoffs drifted: {len(committed)} -> {len(rows)}", file=sys.stderr)
+        return 1, True, True
     drift = [
         (c, r0, r1, g0, g1)
         for (c, r0, g0), (_, r1, g1) in zip(committed, rows)
@@ -300,9 +341,158 @@ def main() -> int:
     ]
     for c, r0, r1, g0, g1 in drift:
         print(f"cutoff {c}: rho {r0:+.4f} -> {r1:+.4f}, gain {g0:.5f} -> {g1:.5f}", file=sys.stderr)
-    if drift:
-        return 1
-    print("H.274 calibration table matches the pinned FFmpeg synthesizer")
+    return (1 if drift else 0), bool(drift), False
+
+
+def check_filter(rows: list[tuple[int, float, float]], source_path: pathlib.Path = FILTER) -> int:
+    rc, _, _ = _check_filter_drift(rows, source_path=source_path)
+    if rc == 0:
+        print("H.274 calibration table matches the pinned FFmpeg synthesizer")
+    return rc
+
+
+def write_filter(rows: list[tuple[int, float, float]], source_path: pathlib.Path = FILTER) -> int:
+    _, drift, grid = _check_filter_drift(rows, source_path=source_path)
+    if not (drift or grid):
+        print("tables match, nothing written")
+        return 0
+    text = source_path.read_text(encoding="utf-8")
+    m = re.search(r"pel_h274_calib\[\]\s*=\s*\{(.*?)\n\};", text, re.S)
+    if m is None:
+        raise SystemExit(f"{source_path.name}: pel_h274_calib table not found")
+    new_body = "\n" + format_h274_rows(rows)
+    text = text[:m.start(1)] + new_body + text[m.end(1):]
+    source_path.write_text(text, encoding="utf-8")
+    return check_filter(rows, source_path=source_path)
+
+
+def _perturb(text: str, row: tuple, delta: float) -> str | None:
+    """Shift the last value of a filter (3-cell) or statistics (5-cell) row."""
+    moved = (*row[:-1], row[-1] + delta)
+    if len(row) == 3:
+        orig, perturbed = (format_h274_rows([r]).strip().rstrip(",") for r in (row, moved))
+    else:
+        orig, perturbed = (format_stats([r])[0].strip().rstrip(",") for r in (row, moved))
+    if orig not in text:
+        print(f"self-test failure: row literal {orig} not found in source", file=sys.stderr)
+        return None
+    return text.replace(orig, perturbed, 1)
+
+
+def _test_h274_perturb_restore(rows: list, tmp_c: pathlib.Path, orig_bytes: bytes) -> bool:
+    perturbed = _perturb(tmp_c.read_text(encoding="utf-8"), rows[0], 0.15)
+    if perturbed is None:
+        return False
+    tmp_c.write_text(perturbed, encoding="utf-8")
+    if tmp_c.read_bytes() == orig_bytes:
+        return False
+    if write_filter(rows, source_path=tmp_c) != 0 or tmp_c.read_bytes() != orig_bytes:
+        return False
+    return check_filter(rows, source_path=tmp_c) == 0
+
+
+def _test_h274_tolerance_no_write(rows: list, tmp_c: pathlib.Path, orig_bytes: bytes) -> bool:
+    perturbed = _perturb(tmp_c.read_text(encoding="utf-8"), rows[0], GAIN_TOL / 3)
+    if perturbed is None:
+        return False
+    tmp_c.write_text(perturbed, encoding="utf-8")
+    before = tmp_c.read_bytes()
+    if before == orig_bytes:
+        return False
+    return write_filter(rows, source_path=tmp_c) == 0 and tmp_c.read_bytes() == before
+
+
+def _test_stats_perturb_restore(stats_rows: list, tmp_s: pathlib.Path, orig_s_bytes: bytes) -> bool:
+    perturbed = _perturb(tmp_s.read_text(encoding="utf-8"), stats_rows[0], 0.1)
+    if perturbed is None:
+        return False
+    tmp_s.write_text(perturbed, encoding="utf-8")
+    if tmp_s.read_bytes() == orig_s_bytes:
+        return False
+    if write_stats(stats_rows, source_path=tmp_s) != 0 or tmp_s.read_bytes() != orig_s_bytes:
+        return False
+    return check_stats(stats_rows, source_path=tmp_s) == 0
+
+
+def self_test() -> int:
+    import tempfile
+    rows = parse_filter_table("pel_h274_calib", source_path=FILTER)
+    stats_rows = parse_stats_table(source_path=STATS_TABLE)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_c = pathlib.Path(tmp_dir) / FILTER.name
+        tmp_c.write_text(FILTER.read_text(encoding="utf-8"), encoding="utf-8")
+        orig_bytes = tmp_c.read_bytes()
+
+        if write_filter(rows, source_path=tmp_c) != 0 or tmp_c.read_bytes() != orig_bytes:
+            print("self-test failure: unchanged filter source was modified", file=sys.stderr)
+            return 1
+        if not _test_h274_perturb_restore(rows, tmp_c, orig_bytes):
+            print("self-test failure: write failed to restore perturbed filter row", file=sys.stderr)
+            return 1
+        if not _test_h274_tolerance_no_write(rows, tmp_c, orig_bytes):
+            print("self-test failure: write modified file on inside-tolerance drift", file=sys.stderr)
+            return 1
+
+        tmp_s = pathlib.Path(tmp_dir) / STATS_TABLE.name
+        tmp_s.write_text(STATS_TABLE.read_text(encoding="utf-8"), encoding="utf-8")
+        orig_s_bytes = tmp_s.read_bytes()
+        if write_stats(stats_rows, source_path=tmp_s) != 0 or tmp_s.read_bytes() != orig_s_bytes:
+            print("self-test failure: unchanged stats source was modified", file=sys.stderr)
+            return 1
+        if not _test_stats_perturb_restore(stats_rows, tmp_s, orig_s_bytes):
+            print("self-test failure: write failed to restore perturbed stats row", file=sys.stderr)
+            return 1
+
+        try:
+            build_parser().parse_args(["--write", "--check"])
+            print("self-test failure: --write with --check was not refused", file=sys.stderr)
+            return 1
+        except SystemExit:  # argparse refused the pair: the expected outcome
+            pass
+
+    print("gen-h274-grain-calibration: all self-test cases passed (precomputed rows injected)")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--check", action="store_true", help="compare with the filter table")
+    group.add_argument("--write", action="store_true", help="update filter table on drift")
+    parser.add_argument(
+        "--stats", action="store_true", help="raw grain statistics table for libpelorus instead"
+    )
+    parser.add_argument("--self-test", action="store_true", help="run self-test with planted cases")
+    parser.add_argument("--ffmpeg-repo", default=os.environ.get("FFMPEG_REPO"))
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    if args.self_test:
+        return self_test()
+    if not args.ffmpeg_repo:
+        print("set FFMPEG_REPO or pass --ffmpeg-repo", file=sys.stderr)
+        return 2
+
+    model = H274Model0(ffmpeg_h274_source(args.ffmpeg_repo))
+    if args.stats:
+        stats = grain_stats(model)
+        if args.write:
+            return write_stats(stats)
+        if args.check:
+            return check_stats(stats)
+        print("\n".join(format_stats(stats)))
+        return 0
+
+    rows = calibrate(model)
+    if args.write:
+        return write_filter(rows)
+    if args.check:
+        return check_filter(rows)
+    for cutoff, rho, gain in rows:
+        print(f"    {{{cutoff:2d}, {rho:+.4f}f, {gain:.5f}f}},".replace("+", " "))
     return 0
 
 

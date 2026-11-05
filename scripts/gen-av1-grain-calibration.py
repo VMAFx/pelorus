@@ -33,11 +33,16 @@ so the pinned files are the ones a build compiles.
 
     FFMPEG_REPO=/path/to/ffmpeg scripts/gen-av1-grain-calibration.py
     FFMPEG_REPO=/path/to/ffmpeg scripts/gen-av1-grain-calibration.py --check
+    FFMPEG_REPO=/path/to/ffmpeg scripts/gen-av1-grain-calibration.py --write
+    scripts/gen-av1-grain-calibration.py --self-test
 
 --check compares the regenerated tables with the ones in the filter source and
-exits 1 on drift. This is a development tool: it needs numpy and an FFmpeg
-checkout, so it is not part of the fast suite. Rerun it after an FFmpeg bump
-or a shared series bump that touches libavcodec/aom_film_grain*.
+exits 1 on drift. --write updates the tables in the filter source in-place when
+drift or grid changes occur, and is a no-op when within tolerance.
+--self-test needs no numpy or FFmpeg checkout and runs in the fast suite;
+generating, checking or writing the tables needs numpy and an FFmpeg checkout.
+Rerun it after an FFmpeg bump or a shared series bump that touches
+libavcodec/aom_film_grain*.
 """
 
 from __future__ import annotations
@@ -48,8 +53,10 @@ import os
 import pathlib
 import re
 import sys
+from typing import TYPE_CHECKING
 
-import numpy as np
+if TYPE_CHECKING:
+    import numpy as np
 
 HERE = pathlib.Path(__file__).resolve().parent
 _SPEC = importlib.util.spec_from_file_location("gen_h274", HERE / "gen-h274-grain-calibration.py")
@@ -80,6 +87,8 @@ class AV1Luma:
     """Luma path of FFmpeg's AV1 film grain synthesis, 8-bit, grain_scale_shift 0."""
 
     def __init__(self, source: str) -> None:
+        import numpy as np
+
         self.gauss = np.array(h274.parse_table(source, "gaussian_sequence"), dtype=np.int64)
         if self.gauss.size != 2048:
             raise SystemExit("aom_film_grain.c: unexpected gaussian_sequence size")
@@ -92,6 +101,8 @@ class AV1Luma:
 
     def template(self, seed: int, a: int) -> np.ndarray:
         """generate_grain_y_c() for ar_coeff_lag 1, coefficients {0, a, 0, a}."""
+        import numpy as np
+
         buf = np.zeros((GRAIN_H, GRAIN_W), dtype=np.int64)
         for y in range(GRAIN_H):
             for x in range(GRAIN_W):
@@ -107,6 +118,8 @@ class AV1Luma:
 
     def field(self, seed: int, a: int, width: int, height: int) -> np.ndarray:
         """Luma grain per pixel as fgy_32x32xn_c() places it, overlap_flag 1."""
+        import numpy as np
+
         lut = self.template(seed, a)
         out = np.zeros((height, width), dtype=np.int64)
 
@@ -157,12 +170,16 @@ class AV1Luma:
 
 def render(field: np.ndarray, scale: int) -> np.ndarray:
     """add_noise_y on a flat frame: scaling_shift 8, full output range."""
+    import numpy as np
+
     return np.clip(LEVEL + round2(scale * field, 8), 0, 255)
 
 
 def gated_sums(luma8: np.ndarray, gate: float) -> np.ndarray:
     """Shader arithmetic at one gate: kept count, total, residual square sum,
     lag-1 pair count and product sum (right neighbour clamped at the edge)."""
+    import numpy as np
+
     img = luma8.astype(np.float64) / 255.0
     h, w = img.shape
     pad = np.pad(img, ((1, 1), (1, 2)), mode="edge")
@@ -179,6 +196,8 @@ def gated_sums(luma8: np.ndarray, gate: float) -> np.ndarray:
 
 
 def gate_rows(field_sets: dict) -> list[tuple[int, int, float, float, float]]:
+    import numpy as np
+
     rows = []
     for g, k in WIDE_GATES:
         for a in AR_GRID:
@@ -195,6 +214,8 @@ def gate_rows(field_sets: dict) -> list[tuple[int, int, float, float, float]]:
 
 
 def calibrate(model: AV1Luma) -> tuple[list[tuple[int, float, float]], list]:
+    import numpy as np
+
     rows, fields = [], {}
     for a in AR_GRID:
         gains, rhos = [], []
@@ -208,16 +229,33 @@ def calibrate(model: AV1Luma) -> tuple[list[tuple[int, float, float]], list]:
     return rows, gate_rows(fields)
 
 
+def format_aom_rows(rows: list[tuple[int, float, float]]) -> str:
+    cells = [f"{{{a}, {rho:.4f}f, {gain:.5f}f}}," for a, rho, gain in rows]
+    lines = []
+    for i in range(0, len(cells), 3):
+        chunk = cells[i : i + 3]
+        if len(chunk) == 3:
+            s1 = "  " if len(chunk[0]) < 25 else " "
+            s2 = " " if chunk[2].startswith("{8,") else ("  " if len(chunk[1]) < 25 else " ")
+            lines.append("    " + chunk[0] + s1 + chunk[1] + s2 + chunk[2])
+        elif len(chunk) == 2:
+            s1 = "  " if len(chunk[0]) < 25 else " "
+            lines.append("    " + chunk[0] + s1 + chunk[1])
+        else:
+            lines.append("    " + chunk[0])
+    return "\n".join(lines)
+
+
 def format_gate_rows(rows: list) -> list[str]:
     cells = [f"{{{g}, {a:2d}, {f:.4f}f, {r:+.4f}f, {gn:.5f}f}},".replace("+", "") for g, a, f, r, gn in rows]
     return ["    " + " ".join(cells[i : i + 2]) for i in range(0, len(cells), 2)]
 
 
-def parse_gate_table() -> list[tuple[int, int, float, float, float]]:
-    text = h274.FILTER.read_text()
+def parse_gate_table(source_path: pathlib.Path = h274.FILTER) -> list[tuple[int, int, float, float, float]]:
+    text = source_path.read_text(encoding="utf-8")
     match = re.search(r"pel_aom_gate_calib\[\]\s*=\s*\{(.*?)\n\};", text, re.S)
     if match is None:
-        raise SystemExit(f"{h274.FILTER.name}: pel_aom_gate_calib table not found")
+        raise SystemExit(f"{source_path.name}: pel_aom_gate_calib table not found")
     return [
         (int(g), int(a), float(f), float(r), float(gn))
         for g, a, f, r, gn in re.findall(
@@ -227,11 +265,30 @@ def parse_gate_table() -> list[tuple[int, int, float, float, float]]:
     ]
 
 
-def check_gate_rows(rows: list) -> int:
-    committed = parse_gate_table()
-    if [(g, a) for g, a, *_ in committed] != [(g, a) for g, a, *_ in rows]:
-        print("gate calibration grid drifted", file=sys.stderr)
-        return 1
+def _check_aom_drift(
+    rows: list[tuple[int, float, float]], source_path: pathlib.Path = h274.FILTER
+) -> tuple[int, bool, bool]:
+    committed = h274.parse_filter_table("pel_aom_calib", source_path=source_path)
+    grid_changed = [a for a, _, _ in committed] != [a for a, _, _ in rows]
+    if grid_changed:
+        print(f"calibration AR grid drifted: {len(committed)} -> {len(rows)}", file=sys.stderr)
+        return 1, True, True
+    drift = [
+        (a, r0, r1, g0, g1)
+        for (a, r0, g0), (_, r1, g1) in zip(committed, rows)
+        if abs(r0 - r1) > h274.RHO_TOL or abs(g0 - g1) > h274.GAIN_TOL
+    ]
+    for a, r0, r1, g0, g1 in drift:
+        print(f"a {a}: rho {r0:+.4f} -> {r1:+.4f}, gain {g0:.5f} -> {g1:.5f}", file=sys.stderr)
+    return (1 if drift else 0), bool(drift), False
+
+
+def _check_gate_drift(rows: list, source_path: pathlib.Path = h274.FILTER) -> tuple[int, bool, bool]:
+    committed = parse_gate_table(source_path=source_path)
+    grid_changed = [(g, a) for g, a, *_ in committed] != [(g, a) for g, a, *_ in rows]
+    if grid_changed:
+        print(f"gate calibration grid drifted: {len(committed)} -> {len(rows)}", file=sys.stderr)
+        return 1, True, True
     drift = [
         (old, new)
         for old, new in zip(committed, rows)
@@ -241,40 +298,134 @@ def check_gate_rows(rows: list) -> int:
     ]
     for old, new in drift:
         print(f"gate {old[0]} a {old[1]}: {old[2:]} -> {tuple(round(v, 5) for v in new[2:])}", file=sys.stderr)
-    return 1 if drift else 0
+    return (1 if drift else 0), bool(drift), False
+
+
+def check_all(rows: list, gated: list, source_path: pathlib.Path = h274.FILTER) -> int:
+    rc_aom, _, _ = _check_aom_drift(rows, source_path=source_path)
+    rc_gate, _, _ = _check_gate_drift(gated, source_path=source_path)
+    if rc_aom or rc_gate:
+        return 1
+    print("AV1 calibration tables match the pinned FFmpeg synthesizer")
+    return 0
+
+
+def _replace_table_body(text: str, pattern: str, new_body: str) -> str:
+    m = re.search(pattern, text, re.S)
+    if m is None:
+        raise SystemExit(f"table pattern not found: {pattern}")
+    return text[:m.start(1)] + new_body + text[m.end(1):]
+
+
+def write_tables(rows: list, gated: list, source_path: pathlib.Path = h274.FILTER) -> int:
+    _, aom_drift, aom_grid = _check_aom_drift(rows, source_path=source_path)
+    _, gate_drift, gate_grid = _check_gate_drift(gated, source_path=source_path)
+    if not any((aom_drift, aom_grid, gate_drift, gate_grid)):
+        print("tables match, nothing written")
+        return 0
+
+    text = source_path.read_text(encoding="utf-8")
+    if gate_drift or gate_grid:
+        pattern = r"pel_aom_gate_calib\[\]\s*=\s*\{(.*?)\n\};"
+        text = _replace_table_body(text, pattern, "\n" + "\n".join(format_gate_rows(gated)))
+    if aom_drift or aom_grid:
+        pattern = r"pel_aom_calib\[\]\s*=\s*\{(.*?)\n\};"
+        text = _replace_table_body(text, pattern, "\n" + format_aom_rows(rows))
+
+    source_path.write_text(text, encoding="utf-8")
+    return check_all(rows, gated, source_path=source_path)
+
+
+def _perturb(text: str, row: tuple[int, float, float], delta: float) -> str | None:
+    a, rho, gain = row
+    orig = format_aom_rows([row]).strip().rstrip(",")
+    if orig not in text:
+        print(f"self-test failure: row literal {orig} not found in source", file=sys.stderr)
+        return None
+    perturbed = format_aom_rows([(a, rho, gain + delta)]).strip().rstrip(",")
+    return text.replace(orig, perturbed, 1)
+
+
+def _test_av1_perturb_restore(rows: list, gated: list, tmp_c: pathlib.Path, orig_bytes: bytes) -> bool:
+    perturbed = _perturb(tmp_c.read_text(encoding="utf-8"), rows[0], 0.15)
+    if perturbed is None:
+        return False
+    tmp_c.write_text(perturbed, encoding="utf-8")
+    if tmp_c.read_bytes() == orig_bytes:
+        return False
+    if write_tables(rows, gated, source_path=tmp_c) != 0 or tmp_c.read_bytes() != orig_bytes:
+        return False
+    return check_all(rows, gated, source_path=tmp_c) == 0
+
+
+def _test_av1_tolerance_no_write(rows: list, gated: list, tmp_c: pathlib.Path, orig_bytes: bytes) -> bool:
+    perturbed = _perturb(tmp_c.read_text(encoding="utf-8"), rows[0], h274.GAIN_TOL / 3)
+    if perturbed is None:
+        return False
+    tmp_c.write_text(perturbed, encoding="utf-8")
+    before = tmp_c.read_bytes()
+    if before == orig_bytes:
+        return False
+    return write_tables(rows, gated, source_path=tmp_c) == 0 and tmp_c.read_bytes() == before
+
+
+def self_test() -> int:
+    import tempfile
+    rows = h274.parse_filter_table("pel_aom_calib", source_path=h274.FILTER)
+    gated = parse_gate_table(source_path=h274.FILTER)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_c = pathlib.Path(tmp_dir) / h274.FILTER.name
+        tmp_c.write_text(h274.FILTER.read_text(encoding="utf-8"), encoding="utf-8")
+        orig_bytes = tmp_c.read_bytes()
+
+        if write_tables(rows, gated, source_path=tmp_c) != 0 or tmp_c.read_bytes() != orig_bytes:
+            print("self-test failure: unchanged source was modified", file=sys.stderr)
+            return 1
+        if not _test_av1_perturb_restore(rows, gated, tmp_c, orig_bytes):
+            print("self-test failure: write failed to restore perturbed row", file=sys.stderr)
+            return 1
+        if not _test_av1_tolerance_no_write(rows, gated, tmp_c, orig_bytes):
+            print("self-test failure: write modified file on inside-tolerance drift", file=sys.stderr)
+            return 1
+        try:
+            build_parser().parse_args(["--write", "--check"])
+            print("self-test failure: --write with --check was not refused", file=sys.stderr)
+            return 1
+        except SystemExit:  # argparse refused the pair: the expected outcome
+            pass
+
+    print("gen-av1-grain-calibration: all self-test cases passed (precomputed rows injected)")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--check", action="store_true", help="compare with the filter table")
+    group.add_argument("--write", action="store_true", help="update filter tables on drift")
+    parser.add_argument("--self-test", action="store_true", help="run self-test with planted cases")
+    parser.add_argument("--ffmpeg-repo", default=os.environ.get("FFMPEG_REPO"))
+    return parser
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--check", action="store_true", help="compare with the filter table")
-    parser.add_argument("--ffmpeg-repo", default=os.environ.get("FFMPEG_REPO"))
+    parser = build_parser()
     args = parser.parse_args()
+    if args.self_test:
+        return self_test()
     if not args.ffmpeg_repo:
         print("set FFMPEG_REPO or pass --ffmpeg-repo", file=sys.stderr)
         return 2
 
     model = AV1Luma(h274.ffmpeg_source(args.ffmpeg_repo, "libavcodec/aom_film_grain.c"))
     rows, gated = calibrate(model)
+    if args.write:
+        return write_tables(rows, gated)
+    if args.check:
+        return check_all(rows, gated)
     for a, rho, gain in rows:
         print(f"    {{{a:2d}, {rho:+.4f}f, {gain:.5f}f}},".replace("+", " "))
     print("\n".join(format_gate_rows(gated)))
-    if not args.check:
-        return 0
-
-    committed = h274.parse_filter_table("pel_aom_calib")
-    if [a for a, _, _ in committed] != [a for a, _, _ in rows]:
-        print("calibration AR grid drifted", file=sys.stderr)
-        return 1
-    drift = [
-        (a, r0, r1, g0, g1)
-        for (a, r0, g0), (_, r1, g1) in zip(committed, rows)
-        if abs(r0 - r1) > h274.RHO_TOL or abs(g0 - g1) > h274.GAIN_TOL
-    ]
-    for a, r0, r1, g0, g1 in drift:
-        print(f"a {a}: rho {r0:+.4f} -> {r1:+.4f}, gain {g0:.5f} -> {g1:.5f}", file=sys.stderr)
-    if drift or check_gate_rows(gated):
-        return 1
-    print("AV1 calibration tables match the pinned FFmpeg synthesizer")
     return 0
 
 
