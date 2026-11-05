@@ -221,7 +221,7 @@ def _run_cli(argv: list[str]) -> subprocess.CompletedProcess[str]:
     exe = Path(sys.executable).resolve()
     _expect(exe.is_file() and os.access(exe, os.X_OK), f"python interpreter not executable: {exe}")
     cmd = [str(exe), "-I", str(Path(__file__).resolve())] + argv
-    return subprocess.run(  # nosec B603 - fixed python argv, no shell, explicit timeout
+    return subprocess.run(  # nosec B603 - fixed python argv, no shell, explicit timeout  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is sys.executable plus this script and fixed flags, no shell, explicit timeout
         cmd,
         shell=False,
         capture_output=True,
