@@ -11,6 +11,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import tokenize
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
@@ -3635,6 +3636,21 @@ def workflow_paths(workflow_dir: Path) -> list[Path]:
     return sorted(files)
 
 
+def read_scanned_text(path: Path, rel: str) -> tuple[str, str | None]:
+    """Read one scanned file; an unreadable file becomes a diagnostic, not a crash.
+
+    Python sources go through tokenize.open so a PEP 263 encoding cookie is
+    honoured; every other file is read as UTF-8.
+    """
+    try:
+        if path.suffix == ".py":
+            with tokenize.open(path) as handle:
+                return handle.read(), None
+        return path.read_text(encoding="utf-8"), None
+    except (OSError, UnicodeError, SyntaxError) as error:
+        return "", f"{rel}: could not read: {error}"
+
+
 def validate_all_workflow_go_pins(workflow_dir: Path | None = None) -> list[str]:
     """Validate Go toolchain pinning across all repository workflows."""
     errors: list[str] = []
@@ -3645,7 +3661,11 @@ def validate_all_workflow_go_pins(workflow_dir: Path | None = None) -> list[str]
             if workflow_dir is not None
             else path.relative_to(ROOT).as_posix()
         )
-        errors.extend(validate_workflow_go_pins(rel, path.read_text(encoding="utf-8")))
+        content, read_error = read_scanned_text(path, rel)
+        if read_error is not None:
+            errors.append(read_error)
+            continue
+        errors.extend(validate_workflow_go_pins(rel, content))
     return errors
 
 
@@ -3687,7 +3707,10 @@ def validate_no_literal_go_pins(scripts_dir: Path | None = None) -> list[str]:
     )
     for path in paths:
         rel = path.relative_to(scripts_dir.parent).as_posix()
-        content = path.read_text(encoding="utf-8")
+        content, read_error = read_scanned_text(path, rel)
+        if read_error is not None:
+            errors.append(read_error)
+            continue
         errors.extend(validate_script_content_go_pins(rel, content, path.suffix))
     return errors
 
@@ -6062,10 +6085,34 @@ def _go_pin_script_discovery_regressions() -> list[str]:
         (scripts_dir / "nested").mkdir(parents=True)
         for name, text in planted.items():
             (scripts_dir / "nested" / name).write_text(text, encoding="utf-8")
+        for name in ("bad.py", "bad.sh"):
+            (scripts_dir / "nested" / name).write_bytes(b"GO_VERSION=\xff\xfe\n")
         errs = validate_no_literal_go_pins(scripts_dir)
     for name in planted:
         if not any(f"scripts/nested/{name}:" in e for e in errs):
             failures.append(f"go-pin regression: repository scan missed a literal pin in {name}")
+    for name in ("bad.py", "bad.sh"):
+        if not any(f"scripts/nested/{name}: could not read" in e for e in errs):
+            failures.append(f"go-pin regression: unreadable {name} was not reported")
+    return failures
+
+
+def _go_pin_unreadable_workflow_regressions() -> list[str]:
+    """Prove an undecodable workflow is reported by path and the scan continues."""
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp_str:
+        workflow_dir = Path(tmp_str)
+        (workflow_dir / "a-bad.yml").write_bytes(b"name: \xff\xfe\n")
+        (workflow_dir / "b-good.yml").write_text(
+            "jobs:\n  go:\n    steps:\n      - uses: actions/setup-go@v5\n"
+            "        with:\n          go-version: '1.24'\n",
+            encoding="utf-8",
+        )
+        errs = validate_all_workflow_go_pins(workflow_dir)
+    if not any(e.startswith("a-bad.yml: could not read") for e in errs):
+        failures.append("go-pin regression: undecodable workflow was not reported by path")
+    if not any(e.startswith("b-good.yml:") for e in errs):
+        failures.append("go-pin regression: scan stopped after an unreadable workflow")
     return failures
 
 
@@ -6171,6 +6218,7 @@ def go_pin_regressions() -> list[str]:
     failures.extend(_go_pin_workflow_yaml_regressions())
     failures.extend(_go_pin_script_literal_regressions())
     failures.extend(_go_pin_script_discovery_regressions())
+    failures.extend(_go_pin_unreadable_workflow_regressions())
     return failures
 
 
