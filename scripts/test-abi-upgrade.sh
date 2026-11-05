@@ -7,6 +7,14 @@
 
 set -euo pipefail
 
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+unset GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE
+for _git_var in $(git rev-parse --local-env-vars); do
+    unset "$_git_var"
+done
+unset _git_var
+
 OLD_REF="v0.4.1"
 BUILD_DIR=""
 SELF_TEST=0
@@ -46,7 +54,11 @@ OLD_TREE=""
 cleanup() {
     local rc=$?
     if [[ -n "${OLD_TREE:-}" && -d "${OLD_TREE:-}" ]]; then
-        if ! timeout 600 git -C "$REPO_ROOT" worktree remove --force "$OLD_TREE"; then
+        if ! timeout 600 env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
+            -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+            -u GIT_COMMON_DIR \
+            git -C "$REPO_ROOT" -c core.hooksPath=/dev/null \
+            worktree remove --force "$OLD_TREE"; then
             echo "warning: could not remove worktree $OLD_TREE" >&2
             if [[ $rc -eq 0 ]]; then rc=1; fi
         fi
@@ -78,6 +90,7 @@ run_self_test() {
     local st_corrupt="$BUILD_DIR/self_test_corrupt.bin"
     local st_trunc="$BUILD_DIR/self_test_trunc.bin"
 
+    rm -f "$st_valid" "$st_corrupt" "$st_trunc"
     timeout 600 "$BUILD_DIR/probe_new" pack "$st_valid"
 
     cp "$st_valid" "$st_corrupt"
@@ -122,7 +135,11 @@ if [[ $SELF_TEST -eq 1 ]]; then
 fi
 
 OLD_TREE="$(mktemp -d "${TMPDIR:-/tmp}/pelorus-abi-upgrade-old-XXXXXX")"
-timeout 600 git -C "$REPO_ROOT" worktree add --detach "$OLD_TREE" "$OLD_REF"
+timeout 600 env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
+    -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    -u GIT_COMMON_DIR \
+    git -C "$REPO_ROOT" -c core.hooksPath=/dev/null \
+    worktree add --detach "$OLD_TREE" "$OLD_REF"
 
 build_new_tree
 
@@ -137,6 +154,7 @@ timeout 600 cc -O2 -Wall -Wextra -Werror \
     -o "$BUILD_DIR/probe_old"
 
 # 4 cross cases
+rm -f "$BUILD_DIR/blob_new.bin" "$BUILD_DIR/blob_old.bin"
 echo "case=new-pack->new-read"
 if ! timeout 600 "$BUILD_DIR/probe_new" pack "$BUILD_DIR/blob_new.bin"; then
     echo "error: case new-pack->new-read pack failed" >&2

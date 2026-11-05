@@ -216,5 +216,5 @@ rules:
         - "**/*.sh"
         - "/ffmpeg-patches/test/**/*.sh"
     pattern-regex: >-
-      \b(?:python[23]?|perl|ruby|node)\s+[^\n'"]*?-[ce]\s*'(?:'\\''|[^'])*?('"\$[^"\n]*?"'|'\$[^'\n]*?')
+      \b(?:python[23]?|perl|ruby|node)\s+[^\n'"]*?-[ce](?:\s|\\\r?\n)*'(?:'\\''|[^'])*?('"\$[^"\n]*?"'|'\$[^'\n]*?')
 

@@ -96,6 +96,7 @@ if host_machine.system() != 'windows'
   abi_upgrade_probe = executable(
     'abi_upgrade_probe',
     files('abi-upgrade/abi_upgrade_probe.c'),
+    c_args: ['-D_POSIX_C_SOURCE=200809L'],
     dependencies: [libpelorus_dep],
     install: false,
   )

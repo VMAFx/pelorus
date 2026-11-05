@@ -48,6 +48,10 @@ python3 -c 'print("'"${x}"'")'
 # Must-flag 3: perl -e with double-quoted splice
 perl -e 'print "'"$v"'";'
 
+# Must-flag 4: backslash-newline continuation between -c and quoted program
+python3 -c \\
+    'print("'"$x"'")'
+
 # Must-pass 1: fixed form passing argv
 python3 -c 'import sys; print(sys.argv[1])' "$st"
 
@@ -57,9 +61,13 @@ echo '"$x"'
 
 # Must-pass 3: python3 -c with argv
 python3 -c 'print(1)' "$x"
+
+# Must-pass 4: backslash-newline continuation with argv
+python3 -c \\
+    'import sys; print(sys.argv[1])' "$x"
 """
 
-EXPECTED_HITS = (7, 13, 16)
+EXPECTED_HITS = (7, 13, 16, 19)
 
 
 class ScanError(Exception):

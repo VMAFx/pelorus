@@ -14,6 +14,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#include <share.h>
+#include <sys/stat.h>
+#else
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 typedef struct SectionDesc {
     size_t size;
     enum pel_section id;
@@ -42,6 +53,47 @@ static uint8_t pattern_byte(uint32_t sec_id, size_t off)
 {
     uint32_t v = (((sec_id * 31u) ^ (uint32_t)(off * 17u + 1u)) & 0xFFu);
     return (uint8_t)(v == 0u ? 0x5Au : v);
+}
+
+static FILE *open_write_exclusive(const char *path)
+{
+#ifdef _WIN32
+    const int flags = _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY;
+#ifdef _MSC_VER
+    int fd = -1;
+
+    if (_sopen_s(&fd, path, flags, _SH_DENYNO, _S_IREAD | _S_IWRITE) != 0) {
+        fd = -1;
+    }
+#else
+    const int fd = _open(path, flags, _S_IREAD | _S_IWRITE);
+#endif
+    FILE *fp;
+
+    if (fd < 0) {
+        return NULL;
+    }
+    fp = _fdopen(fd, "wb");
+    if (fp == NULL) {
+        (void)_close(fd);
+    }
+    return fp;
+#else
+    /* O_EXCL fails on any existing name, links included (POSIX open());
+     * O_NOFOLLOW states the same intent for the final component. */
+    const int fd =
+        open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR);
+    FILE *fp;
+
+    if (fd < 0) {
+        return NULL;
+    }
+    fp = fdopen(fd, "wb");
+    if (fp == NULL) {
+        (void)close(fd);
+    }
+    return fp;
+#endif
 }
 
 static int mode_pack(const char *out_path)
@@ -85,9 +137,9 @@ static int mode_pack(const char *out_path)
         return 1;
     }
 
-    f = fopen(out_path, "wb");
+    f = open_write_exclusive(out_path);
     if (f == NULL) {
-        (void)fprintf(stderr, "fopen wb failed for %s\n", out_path);
+        (void)fprintf(stderr, "open wb failed for %s\n", out_path);
         pel_blob_free(blob);
         return 1;
     }
@@ -103,39 +155,82 @@ static int mode_pack(const char *out_path)
     return 0;
 }
 
+static FILE *open_read_regular(const char *path, size_t *out_size)
+{
+#ifdef _WIN32
+    const int flags = _O_RDONLY | _O_BINARY;
+#ifdef _MSC_VER
+    int fd = -1;
+
+    if (_sopen_s(&fd, path, flags, _SH_DENYNO, 0) != 0) {
+        fd = -1;
+    }
+#else
+    const int fd = _open(path, flags);
+#endif
+    struct _stat st;
+    FILE *fp;
+
+    if (fd < 0) {
+        return NULL;
+    }
+    if (_fstat(fd, &st) != 0 || (st.st_mode & _S_IFMT) != _S_IFREG || st.st_size <= 0) {
+        (void)_close(fd);
+        return NULL;
+    }
+    fp = _fdopen(fd, "rb");
+    if (fp == NULL) {
+        (void)_close(fd);
+        return NULL;
+    }
+    *out_size = (size_t)st.st_size;
+    return fp;
+#else
+    const int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    struct stat st;
+    FILE *fp;
+
+    if (fd < 0) {
+        return NULL;
+    }
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) {
+        (void)close(fd);
+        return NULL;
+    }
+    fp = fdopen(fd, "rb");
+    if (fp == NULL) {
+        (void)close(fd);
+        return NULL;
+    }
+    *out_size = (size_t)st.st_size;
+    return fp;
+#endif
+}
+
 static int read_file_bytes(const char *in_path, uint8_t **out_buf, size_t *out_size)
 {
-    FILE *f = fopen(in_path, "rb");
-    long sz;
+    size_t sz = 0;
+    FILE *f = open_read_regular(in_path, &sz);
     size_t nread;
     uint8_t *buf = NULL;
 
     if (f == NULL) {
-        (void)fprintf(stderr, "fopen rb failed for %s\n", in_path);
+        (void)fprintf(stderr, "open rb failed for %s\n", in_path);
         return 1;
     }
-    if (fseek(f, 0, SEEK_END) != 0) {
-        (void)fclose(f);
-        return 1;
-    }
-    sz = ftell(f);
-    if (sz <= 0 || fseek(f, 0, SEEK_SET) != 0) {
-        (void)fclose(f);
-        return 1;
-    }
-    buf = (uint8_t *)malloc((size_t)sz);
+    buf = (uint8_t *)malloc(sz);
     if (buf == NULL) {
         (void)fclose(f);
         return 1;
     }
-    nread = fread(buf, 1, (size_t)sz, f);
+    nread = fread(buf, 1, sz, f);
     (void)fclose(f);
-    if (nread != (size_t)sz) {
+    if (nread != sz) {
         free(buf);
         return 1;
     }
     *out_buf = buf;
-    *out_size = (size_t)sz;
+    *out_size = sz;
     return 0;
 }
 
@@ -162,7 +257,8 @@ static int mode_read(const char *in_path)
         return 1;
     }
 
-    if (!pel_blob_is_present(blob, blob_len)) {
+    if (blob_len < PELORUS_SIDEDATA_UUID_LEN + sizeof(hdr) ||
+        !pel_blob_is_present(blob, blob_len)) {
         (void)fprintf(stderr, "blob not present or truncated in %s\n", in_path);
         free(blob);
         return 1;
