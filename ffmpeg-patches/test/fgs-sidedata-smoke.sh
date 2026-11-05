@@ -205,6 +205,33 @@ fixture_empty()
     :
 }
 
+# First error or failure line of a log, falling back to first non-warning line.
+pel_first_error()
+{
+    awk '
+        tolower($0) ~ /error|failed/ && $0 !~ /^MESA: warning/ && tolower($0) !~ /warning:/ {
+            print substr($0, 1, 160)
+            found = 1
+            exit
+        }
+        !fallback && $0 ~ /[^[:space:]]/ && $0 !~ /^MESA: warning/ && tolower($0) !~ /warning:/ {
+            fallback = substr($0, 1, 160)
+        }
+        END {
+            if (!found && fallback)
+                print fallback
+        }
+    ' "$1"
+}
+
+fixture_mesa_warning_vulkan_error()
+{
+    cat <<'EOT'
+MESA: warning: Support for this platform is experimental with Xe KMD, bug reports may be ignored.
+[Vulkan @ 0x0] Device creation failure: VK_ERROR_INITIALIZATION_FAILED
+EOT
+}
+
 self_test()
 {
     local work failures=0
@@ -222,6 +249,20 @@ self_test()
             failures=$((failures + 1))
         fi
     }
+
+    expect_first_error()
+    {
+        local name="$1" fn="$2" want="$3" got
+        "$fn" >"$work/errlog"
+        got="$(pel_first_error "$work/errlog")"
+        if [[ "$got" != "$want" ]]; then
+            echo "SELF-TEST FAIL: $name: expected '$want', got '$got'" >&2
+            failures=$((failures + 1))
+        fi
+    }
+
+    expect_first_error "skip mesa warning line" fixture_mesa_warning_vulkan_error \
+        "[Vulkan @ 0x0] Device creation failure: VK_ERROR_INITIALIZATION_FAILED"
 
     expect_state "kept raw" fixture_kept_raw "kept"
     expect_state "kept carrier" fixture_kept_carrier "kept"
@@ -281,12 +322,6 @@ pel_fail()
     exit 1
 }
 
-# First error line of a log (empty when there is none).
-pel_first_error()
-{
-    awk 'tolower($0) ~ /error|failed/ { print; exit }' "$1"
-}
-
 # Lines of a log that contain a fixed string.
 pel_count()
 {
@@ -334,7 +369,7 @@ grep -Eq ' pelorus_grain_estimate_vulkan ' "$PEL_OUT/filters.txt" ||
     pel_skip "pelorus_grain_estimate_vulkan is not built into $PEL_FFMPEG (no Vulkan SPIR-V compiler)"
 if ! "$PEL_FFMPEG" -hide_banner -loglevel error -init_hw_device "$PEL_DEVICE" \
     -f lavfi -i testsrc2=size=64x64 -frames:v 1 -f null - >"$PEL_OUT/probe-vulkan.log" 2>&1; then
-    pel_skip "no usable Vulkan device ($PEL_DEVICE): $(head -c 160 "$PEL_OUT/probe-vulkan.log" | head -n 1)"
+    pel_skip "no usable Vulkan device ($PEL_DEVICE): $(pel_first_error "$PEL_OUT/probe-vulkan.log")"
 fi
 
 PEL_NOISY="testsrc2=size=320x192:rate=25,format=yuv420p,noise=alls=24:allf=t"

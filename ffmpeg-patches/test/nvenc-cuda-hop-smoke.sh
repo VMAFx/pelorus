@@ -63,7 +63,20 @@ pel_fail()
 
 pel_first_error()
 {
-    awk 'tolower($0) ~ /error|failed/ { print; exit }' "$1"
+    awk '
+        tolower($0) ~ /error|failed/ && $0 !~ /^MESA: warning/ && tolower($0) !~ /warning:/ {
+            print substr($0, 1, 160)
+            found = 1
+            exit
+        }
+        !fallback && $0 ~ /[^[:space:]]/ && $0 !~ /^MESA: warning/ && tolower($0) !~ /warning:/ {
+            fallback = substr($0, 1, 160)
+        }
+        END {
+            if (!found && fallback)
+                print fallback
+        }
+    ' "$1"
 }
 
 pel_first_cuda_error()
@@ -96,13 +109,13 @@ done
 
 if ! "$PEL_FFMPEG" -nostdin -hide_banner -loglevel error -f lavfi -i testsrc2=size=256x64 \
     -frames:v 1 -c:v hevc_nvenc -f null - >"$PEL_OUT/probe-nvenc.log" 2>&1 < /dev/null; then
-    pel_skip "hevc_nvenc cannot encode on this host: $(head -c 160 "$PEL_OUT/probe-nvenc.log" | head -n 1)"
+    pel_skip "hevc_nvenc cannot encode on this host: $(pel_first_error "$PEL_OUT/probe-nvenc.log")"
 fi
 
 if ! "$PEL_FFMPEG" -nostdin -hide_banner -loglevel error -init_hw_device cuda=cu:0 \
     -init_hw_device vulkan=vk@cu -filter_hw_device vk -f lavfi -i testsrc2=size=64x64 \
     -frames:v 1 -f null - >"$PEL_OUT/probe-devices.log" 2>&1 < /dev/null; then
-    pel_skip "no usable CUDA or Vulkan device: $(head -c 160 "$PEL_OUT/probe-devices.log" | head -n 1)"
+    pel_skip "no usable CUDA or Vulkan device: $(pel_first_error "$PEL_OUT/probe-devices.log")"
 fi
 
 PEL_INPUT="$PEL_OUT/input.mkv"

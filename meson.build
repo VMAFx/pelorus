@@ -848,3 +848,13 @@ test('semgrep-float-identity',
      workdir: meson.project_source_root(),
      timeout: 600,
      suite: 'fast')
+
+# Smoke skip reasons name the first error line, not a Mesa warning: the
+# rule pelorus-smoke-skip-reason-head refuses head -n 1 reasons and the
+# test runs pel_first_error from each smoke on planted log fixtures.
+test('semgrep-smoke-skip-reason',
+     python_prog,
+     args: [meson.project_source_root() / 'scripts' / 'test-semgrep-smoke-skip-reason.py'],
+     workdir: meson.project_source_root(),
+     timeout: 600,
+     suite: 'fast')

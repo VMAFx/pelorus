@@ -65,10 +65,23 @@ pel_fail()
     exit 1
 }
 
-# First error line of a log (empty when there is none).
+# First error or failure line of a log, falling back to first non-warning line.
 pel_first_error()
 {
-    awk 'tolower($0) ~ /error|failed/ { print; exit }' "$1"
+    awk '
+        tolower($0) ~ /error|failed/ && $0 !~ /^MESA: warning/ && tolower($0) !~ /warning:/ {
+            print substr($0, 1, 160)
+            found = 1
+            exit
+        }
+        !fallback && $0 ~ /[^[:space:]]/ && $0 !~ /^MESA: warning/ && tolower($0) !~ /warning:/ {
+            fallback = substr($0, 1, 160)
+        }
+        END {
+            if (!found && fallback)
+                print fallback
+        }
+    ' "$1"
 }
 
 # Decoded pictures in a showinfo log.
@@ -101,11 +114,11 @@ grep -Eq ' pelorus_analyze_vulkan ' "$PEL_OUT/filters.txt" ||
     pel_skip "pelorus_analyze_vulkan is not built into $PEL_FFMPEG (no Vulkan SPIR-V compiler)"
 if ! "$PEL_FFMPEG" -hide_banner -loglevel error -f lavfi -i testsrc2=size=256x64 \
     -frames:v 1 -c:v hevc_nvenc -f null - >"$PEL_OUT/probe-nvenc.log" 2>&1; then
-    pel_skip "hevc_nvenc cannot encode on this host: $(head -c 160 "$PEL_OUT/probe-nvenc.log" | head -n 1)"
+    pel_skip "hevc_nvenc cannot encode on this host: $(pel_first_error "$PEL_OUT/probe-nvenc.log")"
 fi
 if ! "$PEL_FFMPEG" -hide_banner -loglevel error -init_hw_device "$PEL_DEVICE" \
     -f lavfi -i testsrc2=size=64x64 -frames:v 1 -f null - >"$PEL_OUT/probe-vulkan.log" 2>&1; then
-    pel_skip "no usable Vulkan device ($PEL_DEVICE): $(head -c 160 "$PEL_OUT/probe-vulkan.log" | head -n 1)"
+    pel_skip "no usable Vulkan device ($PEL_DEVICE): $(pel_first_error "$PEL_OUT/probe-vulkan.log")"
 fi
 
 # encode NAME SOURCE FRAMES FILTERS [CODEC]: analyze on Vulkan, then
