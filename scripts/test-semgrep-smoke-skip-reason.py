@@ -142,7 +142,7 @@ def step_planted_cases(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
     tree = make_tree(
         tmp / "planted_repo", "ffmpeg-patches/test/test_planted.sh", PLANTED_SH
     )
-    data = run_semgrep(semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg")
+    data = run_semgrep(semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg", hermetic=True)
     results = [
         r
         for r in data.get("results", [])
@@ -173,7 +173,7 @@ def step_planted_revert(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
         "ffmpeg-patches/test/nvenc-cuda-hop-smoke.sh",
         planted,
     )
-    data = run_semgrep(semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg")
+    data = run_semgrep(semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg", hermetic=True)
     results = [
         r
         for r in data.get("results", [])
@@ -189,7 +189,7 @@ def step_planted_revert(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
 
 def step_real_tree(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
     """(c) The real tree is clean, and the scan did read the target scripts."""
-    data = run_semgrep(semgrep_bin, ROOT, RULE_FILE, 0, tmp / "cfg")
+    data = run_semgrep(semgrep_bin, ROOT, RULE_FILE, 0, tmp / "cfg", hermetic=False)
     scanned = data.get("paths", {}).get("scanned", [])
     required_scripts = [
         "ffmpeg-patches/test/nvenc-cuda-hop-smoke.sh",

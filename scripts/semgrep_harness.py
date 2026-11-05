@@ -39,20 +39,30 @@ def resolve_executable(name: str) -> str | None:
     return str(path)
 
 
+def scrubbed_env() -> dict[str, str]:
+    """Copy os.environ without GIT_* keys, so hook-exported GIT_DIR cannot steer a scan."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def run_semgrep(
     semgrep_bin: str,
     target_dir: pathlib.Path,
     rule_path: pathlib.Path,
     expected_rc: int,
     env_dir: pathlib.Path,
+    *,
+    hermetic: bool,
     timeout_s: float = SEMGREP_TIMEOUT_S,
 ) -> dict:
     """Scan target_dir with one rule file; return the parsed JSON report.
 
     Semgrep's settings live under env_dir so no user configuration leaks in,
-    and an exit code other than expected_rc raises ScanError.
+    and an exit code other than expected_rc raises ScanError. A hermetic scan
+    (a planted tree) passes --project-root . and --no-git-ignore, so an
+    enclosing git repository cannot shrink it to tracked files; a real-tree
+    scan keeps git ignores so build output and linked worktrees stay out.
     """
-    env = dict(os.environ)
+    env = scrubbed_env()
     env["XDG_CONFIG_HOME"] = str(env_dir)
     env["SEMGREP_SETTINGS_FILE"] = str(env_dir / "semgrep-settings.yaml")
     env["SEMGREP_LOG_FILE"] = str(env_dir / "semgrep.log")
@@ -65,8 +75,10 @@ def run_semgrep(
         "--json",
         "--metrics=off",
         "--disable-version-check",
-        ".",
     ]
+    if hermetic:
+        cmd += ["--no-git-ignore", "--project-root", "."]
+    cmd.append(".")
     try:
         proc = subprocess.run(  # nosec B603 - semgrep resolved from PATH to a file; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - semgrep resolved to an executable file, fixed list argv, no shell, explicit deadline
             cmd,

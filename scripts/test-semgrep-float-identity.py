@@ -6,6 +6,12 @@
 Ported from VMAFx/vmafx test_semgrep_float_identity.py
 (sha 25ee5f3a25aebc97ee453fc3a70f676c68da2a81).
 
+The temporary root is always a git repository, and the planted scans pass
+`--project-root .` and `--no-git-ignore`: inside an enclosing repository semgrep
+otherwise scans only tracked files, finds none in the planted tree and exits 0.
+The real-tree scan passes neither flag, because either one makes semgrep read
+git-ignored files (a stray C file under an ignored folder would fail step (c)).
+
 Checks that `pelorus-test-float-identity` in `.semgrep.yml`:
 (a) reports computed float/double equality comparisons in test sources, while
     allowing literals, macros, k-constants, NaN idioms, integer casts, and calls;
@@ -21,6 +27,7 @@ from __future__ import annotations
 import importlib.util
 import pathlib
 import re
+import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
 import tempfile
 
@@ -33,6 +40,7 @@ _SPEC.loader.exec_module(semgrep_harness)
 ScanError = semgrep_harness.ScanError
 run_semgrep = semgrep_harness.run_semgrep
 resolve_executable = semgrep_harness.resolve_executable
+scrubbed_env = semgrep_harness.scrubbed_env
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RULE_FILE = ROOT / ".semgrep.yml"
@@ -141,9 +149,9 @@ def make_tree(root: pathlib.Path, name: str, source: str) -> pathlib.Path:
 def step_planted_cases(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
     """(a) Every planted case hits or stays quiet as its comment says."""
     tree = make_tree(tmp / "planted_repo", "planted.c", PLANTED_C)
-    results = run_semgrep(semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg").get(
-        "results", []
-    )
+    results = run_semgrep(
+        semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg", hermetic=True
+    ).get("results", [])
     lines = sorted(r["start"]["line"] for r in results)
     if lines != list(EXPECTED_HITS):
         return f"step (a): expected hits on lines {list(EXPECTED_HITS)}, got {lines}"
@@ -158,9 +166,9 @@ def step_planted_revert(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
         return f"step (b): needle '{needle}' not in {INTEROP_TEST}"
     planted = source.replace(needle, "CHECK(got_var == var[i])", 1)
     tree = make_tree(tmp / "revert_repo", "interop_test.c", planted)
-    results = run_semgrep(semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg").get(
-        "results", []
-    )
+    results = run_semgrep(
+        semgrep_bin, tree, RULE_FILE, 1, tmp / "cfg", hermetic=True
+    ).get("results", [])
     if len(results) != 1:
         return f"step (b): expected exactly 1 finding, got {len(results)}"
     if not results[0].get("path", "").endswith("libpelorus/test/interop_test.c"):
@@ -170,7 +178,9 @@ def step_planted_revert(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
 
 def step_real_tree(semgrep_bin: str, tmp: pathlib.Path) -> str | None:
     """(c) The real tree is clean, and the scan did read the test sources."""
-    data = run_semgrep(semgrep_bin, ROOT, RULE_FILE, 0, tmp / "cfg")
+    data = run_semgrep(
+        semgrep_bin, ROOT, RULE_FILE, 0, tmp / "cfg", hermetic=False
+    )
     # Semgrep's built-in ignore list skips test/ folders; without the
     # repository .semgrepignore the scan reads nothing and passes empty.
     scanned = data.get("paths", {}).get("scanned", [])
@@ -330,6 +340,26 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         (tmp / "cfg").mkdir()
+        git_bin = resolve_executable("git")
+        if git_bin:
+            try:
+                proc = subprocess.run(  # nosec B603 - git resolved from PATH to a file; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - git resolved to an executable file, fixed list argv, no shell, explicit deadline
+                    [git_bin, "init", "-q", str(tmp)],
+                    capture_output=True,
+                    text=True,
+                    env=scrubbed_env(),
+                    check=False,
+                    timeout=30,
+                )
+            except subprocess.TimeoutExpired:
+                sys.stderr.write(f"git init -q in {tmp}: no result after 30 s\n")
+                return 1
+            if proc.returncode != 0:
+                sys.stderr.write(
+                    f"git init -q in {tmp}: expected rc=0, got rc={proc.returncode}\n"
+                    f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}\n"
+                )
+                return 1
         try:
             for step in (
                 step_planted_cases,
