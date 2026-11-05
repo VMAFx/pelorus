@@ -277,6 +277,30 @@ test('grain-accumulator-bounds',
             '--self-test'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+test('gen-grain-gate-curve-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'gen-grain-gate-curve.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+test('gen-grain-gate-curve-check',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'gen-grain-gate-curve.py',
+            '--check'],
+     workdir: meson.project_source_root(),
+     suite: 'numpy')
+test('gen-av1-grain-calibration-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'gen-av1-grain-calibration.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+test('gen-h274-grain-calibration-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'gen-h274-grain-calibration.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
 
 # ADR-0111: bd_rate.py must enforce a monotonic guard on RD curves (strictly
 # increasing bitrate and score, >= 2 points) and fail closed on invalid or

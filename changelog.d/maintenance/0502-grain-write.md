@@ -1,0 +1,1 @@
+- Grain calibration and gate-curve generators (`scripts/gen-grain-gate-curve.py`, `scripts/gen-av1-grain-calibration.py`, `scripts/gen-h274-grain-calibration.py`) add `--write` to update filter and conversion tables in place without churn when checks detect drift, with hermetic `--self-test` coverage (#502).
