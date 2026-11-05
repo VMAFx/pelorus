@@ -12,12 +12,15 @@ from __future__ import annotations
 
 import argparse
 import ast
-import os
 import pathlib
-import shutil
-import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
 import sys
 import tempfile
+
+_SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+import tracked_python  # noqa: E402
 
 BANNED_MODULE_DEFS = frozenset({
     "run_semgrep",
@@ -25,7 +28,6 @@ BANNED_MODULE_DEFS = frozenset({
     "resolve_executable",
     "ScanError",
 })
-GIT_TIMEOUT_S = 30
 
 
 def loads_harness(tree: ast.AST) -> bool:
@@ -83,29 +85,10 @@ def check_file(path: pathlib.Path, repo_root: pathlib.Path | None = None) -> lis
 
 def get_tracked_semgrep_tests(repo_root: pathlib.Path) -> list[pathlib.Path]:
     """Discover git-tracked scripts/test-semgrep-*.py files."""
-    found = shutil.which("git")
-    if not found:
-        raise RuntimeError("git not found on PATH")
-    path = pathlib.Path(found).resolve()
-    if not path.is_file() or not os.access(path, os.X_OK):
-        raise RuntimeError(f"git executable {path} is invalid")
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env["LC_ALL"] = "C"
-    cmd = [str(path), "ls-files", "scripts/test-semgrep-*.py"]
-    try:
-        proc = subprocess.run(  # nosec B603 - fixed git argv, no shell, explicit deadline  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
-            cmd,
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=GIT_TIMEOUT_S,
-            env=env,
-        )
-    except (subprocess.SubprocessError, OSError) as exc:
-        raise RuntimeError(f"git ls-files failed: {exc}") from exc
-    lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
-    return [repo_root / line for line in lines]
+    return [
+        path for path in tracked_python.tracked_files(repo_root)
+        if path.relative_to(repo_root).match("scripts/test-semgrep-*.py")
+    ]
 
 
 def run_self_test() -> int:
@@ -174,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
             files = get_tracked_semgrep_tests(repo_root)
         except RuntimeError as exc:
             sys.stderr.write(f"check-semgrep-harness: {exc}\n")
-            return 1
+            return 2
 
     violations: list[str] = []
     for file_path in files:
