@@ -41,7 +41,9 @@
 #   FFMPEG_SERIES_FROM  directory that already holds the four release files;
 #                       they are copied and verified exactly like a download
 #   GH_TOKEN            gh credential for check 4 (CI: github.token)
-#   CURL_MAX_TIME       per-file download deadline in seconds (default 120)
+#   CURL_MAX_TIME       per-attempt deadline in seconds (default 120);
+#                       no new retry starts after CURL_MAX_TIME;
+#                       worst case about twice CURL_MAX_TIME.
 set -euo pipefail
 # A failing command inside $(...) must fail the assignment that reads it.
 shopt -s inherit_errexit
@@ -105,9 +107,12 @@ download() {
         if [[ -n "${FFMPEG_SERIES_FROM:-}" ]]; then
             cp -- "$FFMPEG_SERIES_FROM/$name" "$dir/$name" ||
                 fail "FFMPEG_SERIES_FROM has no $name"
+        # 6 retries with exponential backoff absorb transient release-asset 504s (run 42044634889).
         elif ! curl --fail --silent --show-error --location \
             --proto '=https' --proto-redir '=https' \
-            --max-time "$CURL_MAX_TIME" --retry 2 --output "$dir/$name" \
+            --max-time "$CURL_MAX_TIME" \
+            --retry 6 --retry-max-time "$CURL_MAX_TIME" \
+            --output "$dir/$name" \
             -- "$RELEASE_URL/$name"; then
             fail "download failed: $RELEASE_URL/$name"
         fi
