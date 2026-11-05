@@ -138,9 +138,20 @@ def case_path_elif_branch(flag):
         pass
     elif flag:
         subprocess.run([str(path), "status"])  # reported: Path guard elif branch
+
+def case_or_guard(force):
+    tool = shutil.which("tool")
+    if os.access(tool, os.X_OK) or force:
+        subprocess.run([tool, "-v"])  # reported: guard is one alternative of or
+
+def case_path_or_guard(force):
+    git = shutil.which("git")
+    path = pathlib.Path(git).resolve()
+    if force or path.is_file():
+        subprocess.run([str(path), "status"])  # reported: Path guard in or
 """
 
-EXPECTED_HITS = (9, 15, 22, 27, 30, 37, 72, 77, 84, 91, 99, 107)
+EXPECTED_HITS = (9, 15, 22, 27, 30, 37, 72, 77, 84, 91, 99, 107, 112, 118)
 
 
 class ScanError(Exception):
