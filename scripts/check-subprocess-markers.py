@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import io
 import json
 import os
@@ -424,7 +425,8 @@ def check_planted_git_isolation() -> list[str]:
     """Planted case 12: a caller GIT_DIR (decoy repo, never the real one) cannot steer tracked_files."""
     git = shutil.which("git")
     if git is None:
-        return ["git not found on PATH"]
+        print("[SKIP] case 12 git isolation: git not found on PATH")
+        return []
     clean_env = {
         k: v
         for k, v in tracked_python.repo_discovery_env().items()
@@ -474,8 +476,31 @@ def check_planted_missing_git() -> list[str]:
     return fails
 
 
+def check_planted_git_isolation_skip() -> list[str]:
+    """Planted case 14: check_planted_git_isolation skips when git is missing."""
+    fails: list[str] = []
+    orig_which = shutil.which
+    buf = io.StringIO()
+    try:
+        shutil.which = lambda _cmd, *args, **kwargs: None
+        with contextlib.redirect_stdout(buf):
+            res = check_planted_git_isolation()
+        if res != []:
+            fails.append(
+                f"case 14 failed: expected empty failures list on missing git, got {res}"
+            )
+        output = buf.getvalue()
+        if "[SKIP] case 12" not in output:
+            fails.append(
+                f"case 14 failed: expected output to contain '[SKIP] case 12', got {output!r}"
+            )
+    finally:
+        shutil.which = orig_which
+    return fails
+
+
 def run_self_test_planted() -> int:
-    """Run all 13 planted cases in temporary directories; cases 12-13 use throwaway git repos."""
+    """Run all 14 planted cases in temporary directories; cases 12-13 use throwaway git repos."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         sample = Path(tmp_dir) / "sample.py"
         sample.write_text("import subprocess\n", encoding="utf-8")
@@ -489,11 +514,12 @@ def run_self_test_planted() -> int:
         failures.extend(check_planted_11())
         failures.extend(check_planted_git_isolation())
         failures.extend(check_planted_missing_git())
+        failures.extend(check_planted_git_isolation_skip())
         if failures:
             for failure in failures:
                 print(f"SELF-TEST FAIL: {failure}", file=sys.stderr)
             return 1
-    print("subprocess markers self-test: 13 planted cases ok")
+    print("subprocess markers self-test: 14 planted cases ok")
     return 0
 
 
