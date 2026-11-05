@@ -3263,6 +3263,15 @@ def _step_uses(step: str) -> str | None:
 
 
 TESTER_PUBLISH_ACTIONS_DIR = ".actions"
+ACTIONS_CHECKOUT_SPARSE = re.compile(
+    r"^[ ]+sparse-checkout:[ ]*\.github/actions[ ]*(?:#.*)?$", re.MULTILINE
+)
+ACTIONS_CHECKOUT_REF = re.compile(
+    r"^[ ]+ref:[ ]*\$\{\{ github\.sha \}\}[ ]*(?:#.*)?$", re.MULTILINE
+)
+ACTIONS_CHECKOUT_PERSIST = re.compile(
+    r"^[ ]+persist-credentials:[ ]*false[ ]*(?:#.*)?$", re.MULTILINE
+)
 
 
 def _extract_actions_checkout(block: str) -> tuple[str, list[str], int] | None:
@@ -3274,11 +3283,11 @@ def _extract_actions_checkout(block: str) -> tuple[str, list[str], int] | None:
     )
     for match in matches:
         with_block = match.group("with")
-        if "sparse-checkout: .github/actions" in with_block:
+        if ACTIONS_CHECKOUT_SPARSE.search(with_block):
             errs: list[str] = []
-            if "ref: ${{ github.sha }}" not in with_block:
+            if not ACTIONS_CHECKOUT_REF.search(with_block):
                 errs.append("actions checkout must set ref: ${{ github.sha }}")
-            if "persist-credentials: false" not in with_block:
+            if not ACTIONS_CHECKOUT_PERSIST.search(with_block):
                 errs.append("actions checkout must set persist-credentials: false")
             path_match = re.search(r"^\s+path:\s*([^\s#]+)", with_block, re.MULTILINE)
             if not path_match:
@@ -3465,8 +3474,8 @@ def _validate_ci_docs_job(relative: str, docs: str) -> list[str]:
     ):
         if token not in docs:
             errors.append(f"{relative}: docs job is missing {token}")
-    load_pos = docs.find(LOAD_CONFIG_ACTION_USES)
-    setup_pos = docs.find("actions/setup-go@")
+    load_pos, _ = _first_step_using(docs, lambda t: t == LOAD_CONFIG_ACTION_TARGET)
+    setup_pos, _ = _first_step_using(docs, lambda t: t.startswith("actions/setup-go@"))
     if load_pos < 0 or (setup_pos >= 0 and load_pos > setup_pos):
         errors.append(
             f"{relative}: docs job must run {LOAD_CONFIG_ACTION_USES} before setup-go"
@@ -5178,6 +5187,41 @@ def _tester_publish_checkout_order_cases(text: str) -> dict[str, tuple[str, str]
     }
 
 
+def _tester_publish_checkout_key_cases(text: str) -> dict[str, tuple[str, str]]:
+    """Actions checkout keys inside comments must not satisfy the validator."""
+    checkout_pat = re.compile(
+        r"[ ]+- (?:name: [^\n]*\n[ ]+)?uses: actions/checkout@[^\n]*\n(?:[ ]+(?!- )\S[^\n]*\n)*?[ ]+path: \.actions\n"
+    )
+    step_match = checkout_pat.search(text)
+    step = step_match.group(0) if step_match else ""
+    return {
+        "publish actions checkout persist-credentials only in a comment": (
+            text.replace(
+                step,
+                step.replace(
+                    "          persist-credentials: false\n",
+                    "          # persist-credentials: false\n          persist-credentials: true\n",
+                    1,
+                ),
+                1,
+            ),
+            "actions checkout must set persist-credentials: false",
+        ),
+        "publish actions checkout ref only in a comment": (
+            text.replace(
+                step,
+                step.replace(
+                    "          ref: ${{ github.sha }}\n",
+                    "          # ref: ${{ github.sha }}\n          ref: main\n",
+                    1,
+                ),
+                1,
+            ),
+            "actions checkout must set ref: ${{ github.sha }}",
+        ),
+    }
+
+
 def _tester_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
     return {
         **_tester_trigger_job_cases(text),
@@ -5188,6 +5232,7 @@ def _tester_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
         **_tester_publish_cases(text),
         **_tester_publish_load_cases(text),
         **_tester_publish_checkout_order_cases(text),
+        **_tester_publish_checkout_key_cases(text),
         **_tester_kit_cases(text),
         **_tester_build_kit_cases(text),
         **_tester_arm64_cases(text),
@@ -5854,11 +5899,15 @@ def _ci_toolchain_cases(source: str) -> dict[str, tuple[str, str]]:
             "docs job must set exactly one go-version",
         ),
         "missing Go env load in docs job": (
+            replace_in_job(source, "docs", LOAD_CONFIG_ACTION_USES, "# removed action load"),
+            f"docs job must run {LOAD_CONFIG_ACTION_USES} before setup-go",
+        ),
+        "Go env load only in a comment before setup-go": (
             replace_in_job(
-                source,
+                replace_in_job(source, "docs", LOAD_CONFIG_ACTION_USES, "# removed action load"),
                 "docs",
-                LOAD_CONFIG_ACTION_USES,
-                "# removed action load",
+                "    steps:\n",
+                f"    steps:\n      # {LOAD_CONFIG_ACTION_USES}\n",
             ),
             f"docs job must run {LOAD_CONFIG_ACTION_USES} before setup-go",
         ),
