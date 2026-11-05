@@ -64,6 +64,10 @@ perl -I "$libdir" -le 'print "'"$v"'"'
 # Must-flag 8: literal prefix inside double-quoted splice
 python3 -c 'print("'"prefix-$x"'")'
 
+# Must-flag 9: backslash-newline continuation before inline flag
+python3 \\
+    -c 'print("'"$x"'")'
+
 # Must-pass 1: fixed form passing argv
 python3 -c 'import sys; print(sys.argv[1])' "$st"
 
@@ -80,9 +84,15 @@ python3 -c \\
 
 # Must-pass 5: perl -le passing argv
 perl -le 'print $ARGV[0]' "$v"
+
+# Must-pass 6: command boundary before non-interpreter -c command
+python3 script.py; sh -c 'echo "'"$x"'"'
+
+# Must-pass 7: escaped literal dollar inside double-quoted splice
+python3 -c 'print("'"\\$HOME"'")'
 """
 
-EXPECTED_HITS = (7, 13, 16, 19, 23, 26, 29, 32)
+EXPECTED_HITS = (7, 13, 16, 19, 23, 26, 29, 32, 35)
 
 
 class ScanError(Exception):
