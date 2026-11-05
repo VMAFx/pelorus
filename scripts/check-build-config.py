@@ -3563,6 +3563,31 @@ def validate_workflows() -> list[str]:
     return errors
 
 
+LOAD_CONFIG_ACTION_TARGET = "./.github/actions/load-build-config"
+
+
+def _first_step_using(job_text: str, accept: Callable[[str], bool]) -> int:
+    """Offset of the first step whose own uses: target passes accept, or -1.
+
+    Only the step's uses: key counts; the same text inside a run: command or
+    a comment does not.
+    """
+    for match in NEXT_STEP.finditer(job_text):
+        # NEXT_STEP's leading \s* can start on a preceding blank line, so the
+        # step ends at the next match after this one's own "- name:" text.
+        following = NEXT_STEP.search(job_text, match.end())
+        end = following.start() if following else len(job_text)
+        step = job_text[match.start() : end].lstrip("\r\n")
+        head = step.splitlines()[0].strip() if step else ""
+        if head.startswith("- uses:"):
+            target: str | None = head[len("- uses:") :].split("#", 1)[0].strip()
+        else:
+            target = _step_uses(step)
+        if target is not None and accept(target.strip("'\"")):
+            return match.start()
+    return -1
+
+
 def validate_workflow_go_pins(relative: str, text: str) -> list[str]:
     """Ensure setup-go steps and workflows only use ${{ env.GO_VERSION }}."""
     errors: list[str] = []
@@ -3576,20 +3601,22 @@ def validate_workflow_go_pins(relative: str, text: str) -> list[str]:
             )
     jobs = workflow_job_blocks(text)
     for job_name, job_text in jobs.items():
-        if "actions/setup-go@" in job_text:
-            load_pos = job_text.find(LOAD_CONFIG_ACTION_USES)
-            setup_pos = job_text.find("actions/setup-go@")
+        setup_pos = _first_step_using(
+            job_text, lambda target: target.startswith("actions/setup-go@")
+        )
+        if setup_pos >= 0:
+            load_pos = _first_step_using(
+                job_text, lambda target: target == LOAD_CONFIG_ACTION_TARGET
+            )
             if load_pos < 0 or load_pos > setup_pos:
                 errors.append(
                     f"{relative}: job {job_name!r} using setup-go must run "
                     f"{LOAD_CONFIG_ACTION_USES!r} before setup-go"
                 )
-            for match in re.finditer(r"actions/setup-go@", job_text):
-                if load_pos != -1 and match.start() < load_pos:
-                    errors.append(
-                        f"{relative}: job {job_name!r} must load GO_VERSION before setup-go"
-                    )
-                    break
+            if load_pos > setup_pos:
+                errors.append(
+                    f"{relative}: job {job_name!r} must load GO_VERSION before setup-go"
+                )
             if "go-version: ${{ env.GO_VERSION }}" not in job_text:
                 errors.append(
                     f"{relative}: job {job_name!r} setup-go step must use "
@@ -6077,6 +6104,41 @@ def _go_pin_script_literal_regressions() -> list[str]:
     return failures
 
 
+def _go_pin_action_regressions(rel: str, source: str) -> list[str]:
+    """Prove setup-go needs a real load-build-config uses: step before it."""
+    failures: list[str] = []
+    missing_action = source.replace(LOAD_CONFIG_ACTION_USES, "run: echo no-action", 1)
+    if missing_action == source:
+        failures.append(
+            "go-pin regression: removing load-build-config action did not mutate standards-gate.yml"
+        )
+    elif not any(
+        f"must run {LOAD_CONFIG_ACTION_USES!r} before setup-go" in e
+        for e in validate_workflow_go_pins(rel, missing_action)
+    ):
+        failures.append(
+            "go-pin regression: setup-go without load-build-config action was accepted"
+        )
+
+    echoed_action = source.replace(
+        LOAD_CONFIG_ACTION_USES, f"run: echo '{LOAD_CONFIG_ACTION_USES}'", 1
+    )
+    if echoed_action == source:
+        failures.append(
+            "go-pin regression: echoing the load-build-config action did not mutate "
+            "standards-gate.yml"
+        )
+    elif not any(
+        f"must run {LOAD_CONFIG_ACTION_USES!r} before setup-go" in e
+        for e in validate_workflow_go_pins(rel, echoed_action)
+    ):
+        failures.append(
+            "go-pin regression: a run step that only echoes the load-build-config "
+            "uses: line was accepted"
+        )
+    return failures
+
+
 def go_pin_regressions() -> list[str]:
     """Prove literal Go version pins are rejected across workflows and build-config."""
     failures: list[str] = []
@@ -6095,18 +6157,7 @@ def go_pin_regressions() -> list[str]:
     if validate_workflow_go_pins(rel, source):
         failures.append("go-pin regression: canonical env form was rejected")
 
-    missing_action = source.replace(LOAD_CONFIG_ACTION_USES, "run: echo no-action", 1)
-    if missing_action == source:
-        failures.append(
-            "go-pin regression: removing load-build-config action did not mutate standards-gate.yml"
-        )
-    elif not any(
-        f"must run {LOAD_CONFIG_ACTION_USES!r} before setup-go" in e
-        for e in validate_workflow_go_pins(rel, missing_action)
-    ):
-        failures.append(
-            "go-pin regression: setup-go without load-build-config action was accepted"
-        )
+    failures.extend(_go_pin_action_regressions(rel, source))
 
     config_text = CONFIG.read_text(encoding="utf-8")
     missing_go = "\n".join(
