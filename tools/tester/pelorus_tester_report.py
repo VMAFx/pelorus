@@ -721,13 +721,19 @@ def cmd_validate(args):
 TOOL_HASHES_TAIL = "\n  ]\n}\n"
 
 
-def append_tool_hash_text(text, entry):
+def append_tool_hash_text(text, entry, newline=None):
     """Return text with entry appended as the last list row; existing bytes stay verbatim."""
-    if not text.endswith(TOOL_HASHES_TAIL):
+    nl = newline or ("\r\n" if "\r\n" in text else "\n")
+    tail = nl + "  ]" + nl + "}" + nl
+    if not text.endswith(tail):
         return None
-    head = text[:-len(TOOL_HASHES_TAIL)]
-    sep = "\n" if head.endswith("[") else ",\n"
-    return head + sep + "    " + json.dumps(entry) + TOOL_HASHES_TAIL
+    head = text[:-len(tail)]
+    if head.rstrip().endswith("["):
+        head = head.rstrip()
+        sep = nl
+    else:
+        sep = "," + nl
+    return head + sep + "    " + json.dumps(entry) + tail
 
 
 def update_tool_hashes(path, note, digest=None, version=None):
@@ -735,7 +741,7 @@ def update_tool_hashes(path, note, digest=None, version=None):
     digest = digest or tool_digest()
     version = version or TOOL_VERSION
     target = Path(path)
-    text = target.read_text(encoding="utf-8")
+    text = target.read_bytes().decode("utf-8")
     data = json.loads(text)
     for entry in data.get("entries", []):
         if entry.get("sha256") == digest:
@@ -746,10 +752,11 @@ def update_tool_hashes(path, note, digest=None, version=None):
                 % (digest, entry.get("tool_version"), version)
             )
     new_entry = {"sha256": digest, "tool_version": version, "note": note}
-    new_text = append_tool_hash_text(text, new_entry)
+    nl = "\r\n" if "\r\n" in text else "\n"
+    new_text = append_tool_hash_text(text, new_entry, newline=nl)
     if new_text is None:
         return "conflict", "error: %s does not end with the entries list close" % target
-    target.write_text(new_text, encoding="utf-8")
+    target.write_bytes(new_text.encode("utf-8"))
     return "appended", None
 
 
@@ -969,6 +976,78 @@ def self_test_user_literal(expect, disabled):
     expect("login_redacted", "kilian" not in red or "redaction" in disabled)
 
 
+def self_test_tool_hash_crlf(expect, tmp, orig_text):
+    """CRLF copy of shipped tool-hashes.json preserved on append."""
+    crlf_file = Path(tmp) / "tool-hashes-crlf.json"
+    crlf_orig_bytes = orig_text.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8")
+    crlf_file.write_bytes(crlf_orig_bytes)
+    crlf_status, crlf_err = update_tool_hashes(
+        crlf_file, "crlf test note", digest="c" * 64, version="9.9.9"
+    )
+    crlf_after_bytes = crlf_file.read_bytes()
+    crlf_tail_bytes = b"\r\n  ]\r\n}\r\n"
+    crlf_head_bytes = crlf_orig_bytes[:-len(crlf_tail_bytes)]
+    try:
+        crlf_data = json.loads(crlf_after_bytes.decode("utf-8"))
+    except ValueError:
+        crlf_data = None
+    crlf_lines = crlf_after_bytes.splitlines(keepends=True)
+    expect("tool_hash_crlf_preserved",
+           crlf_status == "appended"
+           and crlf_err is None
+           and crlf_after_bytes.startswith(crlf_head_bytes)
+           and len(crlf_lines) >= 3 and crlf_lines[-3].endswith(b"\r\n")
+           and b"\n" not in crlf_after_bytes.replace(b"\r\n", b"")
+           and crlf_data is not None)
+
+
+def self_test_tool_hash_file(expect, tmp, orig_text, orig_data):
+    """File-backed mutation and append checks in a temporary directory."""
+    tmp_file = Path(tmp) / "tool-hashes.json"
+    tmp_file.write_text(orig_text, encoding="utf-8")
+
+    # 5. --write without --note refused
+    old_stderr = sys.stderr
+    try:
+        sys.stderr = open(os.devnull, "w")
+        res_no_note = cmd_tool_hash(argparse.Namespace(write=True, note=None), path=tmp_file)
+        res_empty_note = cmd_tool_hash(argparse.Namespace(write=True, note=""), path=tmp_file)
+    finally:
+        sys.stderr.close()
+        sys.stderr = old_stderr
+    expect("tool_hash_write_requires_note", res_no_note != 0 and res_empty_note != 0)
+
+    # 1. append to temp copy
+    synth_sha = "0" * 64
+    synth_ver = "9.9.9"
+    status1, err1 = update_tool_hashes(tmp_file, "planted note", digest=synth_sha, version=synth_ver)
+    text_after_append = tmp_file.read_text(encoding="utf-8")
+    data_after_append = json.loads(text_after_append)
+    expect("tool_hash_append", status1 == "appended" and err1 is None
+           and data_after_append["entries"][-1] == {
+               "sha256": synth_sha, "tool_version": synth_ver, "note": "planted note"
+           })
+
+    # 4. existing entries byte-identical after append
+    orig_lines = orig_text.splitlines()
+    after_lines = text_after_append.splitlines()
+    expect("tool_hash_existing_entries_preserved",
+           data_after_append["entries"][:-1] == orig_data["entries"]
+           and after_lines[:len(orig_lines) - 3] == orig_lines[:len(orig_lines) - 3]
+           and after_lines[len(orig_lines) - 3] == orig_lines[len(orig_lines) - 3] + ",")
+
+    # 2. idempotent second run (bytes identical)
+    bytes_before = tmp_file.read_bytes()
+    status2, err2 = update_tool_hashes(tmp_file, "planted note", digest=synth_sha, version=synth_ver)
+    bytes_after = tmp_file.read_bytes()
+    expect("tool_hash_idempotent", status2 == "already_listed" and bytes_after == bytes_before)
+
+    # 3. version-conflict refusal
+    status3, err3 = update_tool_hashes(tmp_file, "diff note", digest=synth_sha, version="10.0.0")
+    expect("tool_hash_version_conflict", status3 == "conflict" and bool(err3)
+           and tmp_file.read_bytes() == bytes_after)
+
+
 def self_test_tool_hash(expect):
     """Planted cases for tool-hash --write: append, idempotency, conflict, formatting, note check."""
     orig_path = HERE / "tool-hashes.json"
@@ -981,50 +1060,18 @@ def self_test_tool_hash(expect):
            and json.loads(grown)["entries"][0].get("x") == 1)
     expect("tool_hash_refuses_unknown_tail", append_tool_hash_text(extra + " ", {"sha256": "2"}) is None)
 
+    empty_with_blank = '{\n  "entries": [\n\n  ]\n}\n'
+    empty_res = append_tool_hash_text(empty_with_blank, {"sha256": "planted", "tool_version": "0.1", "note": "t"})
+    try:
+        empty_data = json.loads(empty_res) if empty_res else None
+    except ValueError:
+        empty_data = None
+    expect("tool_hash_empty_list_with_blank_line",
+           bool(empty_data and len(empty_data.get("entries", [])) == 1))
+
     with tempfile.TemporaryDirectory(prefix="pelorus-th-") as tmp:
-        tmp_file = Path(tmp) / "tool-hashes.json"
-        tmp_file.write_text(orig_text, encoding="utf-8")
-
-        # 5. --write without --note refused
-        old_stderr = sys.stderr
-        try:
-            sys.stderr = open(os.devnull, "w")
-            res_no_note = cmd_tool_hash(argparse.Namespace(write=True, note=None), path=tmp_file)
-            res_empty_note = cmd_tool_hash(argparse.Namespace(write=True, note=""), path=tmp_file)
-        finally:
-            sys.stderr.close()
-            sys.stderr = old_stderr
-        expect("tool_hash_write_requires_note", res_no_note != 0 and res_empty_note != 0)
-
-        # 1. append to temp copy
-        synth_sha = "0" * 64
-        synth_ver = "9.9.9"
-        status1, err1 = update_tool_hashes(tmp_file, "planted note", digest=synth_sha, version=synth_ver)
-        text_after_append = tmp_file.read_text(encoding="utf-8")
-        data_after_append = json.loads(text_after_append)
-        expect("tool_hash_append", status1 == "appended" and err1 is None
-               and data_after_append["entries"][-1] == {
-                   "sha256": synth_sha, "tool_version": synth_ver, "note": "planted note"
-               })
-
-        # 4. existing entries byte-identical after append
-        orig_lines = orig_text.splitlines()
-        after_lines = text_after_append.splitlines()
-        expect("tool_hash_existing_entries_preserved",
-               data_after_append["entries"][:-1] == orig_data["entries"]
-               and after_lines[:len(orig_lines) - 3] == orig_lines[:len(orig_lines) - 3]
-               and after_lines[len(orig_lines) - 3] == orig_lines[len(orig_lines) - 3] + ",")
-
-        # 2. idempotent second run (bytes identical)
-        bytes_before = tmp_file.read_bytes()
-        status2, err2 = update_tool_hashes(tmp_file, "planted note", digest=synth_sha, version=synth_ver)
-        bytes_after = tmp_file.read_bytes()
-        expect("tool_hash_idempotent", status2 == "already_listed" and bytes_after == bytes_before)
-
-        # 3. version-conflict refusal
-        status3, err3 = update_tool_hashes(tmp_file, "diff note", digest=synth_sha, version="10.0.0")
-        expect("tool_hash_version_conflict", status3 == "conflict" and bool(err3)
-               and tmp_file.read_bytes() == bytes_after)
+        self_test_tool_hash_file(expect, tmp, orig_text, orig_data)
+        self_test_tool_hash_crlf(expect, tmp, orig_text)
 
 
 def self_test(disabled=frozenset()):

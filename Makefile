@@ -103,7 +103,7 @@ audit:
 # FFMPEG_REPO is required and must name a local FFmpeg checkout.
 patches:
 	$(if $(FFMPEG_REPO),,$(error FFMPEG_REPO is required (must name a local FFmpeg checkout)))
-	bash ffmpeg-patches/generate.sh
+	FFMPEG_REPO="$(FFMPEG_REPO)" bash ffmpeg-patches/generate.sh
 
 # Explicit opt-in only. CI never installs hooks; adoption installs them only in
 # a checkout whose lefthook.yml is an unedited Praetor rendering, which this one
