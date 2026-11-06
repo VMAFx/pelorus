@@ -126,11 +126,13 @@ def self_test():
             if got != want:
                 errors.append("%s: rc %d, want %d" % (label, got, want))
         intro.write_text("[]", encoding="utf-8")
+        refused = False
         try:
             check(intro, allow)
-            errors.append("empty intro-tests.json accepted")
         except _SKIPS.Malformed:
-            pass
+            refused = True  # the wanted outcome: an empty file is malformed
+        if not refused:
+            errors.append("empty intro-tests.json accepted")
     for err in errors:
         print("check-skip-listings self-test: FAIL %s" % err)
     return 1 if errors else 0
