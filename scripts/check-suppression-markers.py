@@ -54,6 +54,10 @@ NON_PYTHON_MARKER = re.compile(r"(?:#|//|/\*|--)[ \t]*nos(?:emgrep|em|ec)\b", re
 LOCAL_RULE_ID = re.compile(r"^\s*-\s*id:\s*([A-Za-z0-9_.-]+)\s*$", re.MULTILINE)
 # A registry id has the form <language>.<category>...<rule>: at least two dots.
 REGISTRY_MIN_DOTS = 2
+# A GitLab SAST rule id has the form <language>_<category>_rule-<name>, with no dots.
+# Codacy's Opengrep engine reports these rules (for example
+# python_exec_rule-start-process-with-no-shell) and honours a marker naming them.
+GITLAB_SAST_RULE_ID = re.compile(r"^[a-z0-9]+_[a-z0-9]+_rule-[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 def local_rule_ids(root: Path) -> frozenset[str]:
@@ -71,7 +75,13 @@ def segment_findings(segment: str, local_ids: frozenset[str]) -> list[str]:
         if match is None:
             return ["nosemgrep needs 'nosemgrep: <rule id>[, <rule id>] - <reason>'"]
         ids = [part.strip() for part in match.group(1).split(",")]
-        short = [i for i in ids if i not in local_ids and i.count(".") < REGISTRY_MIN_DOTS]
+        short = [
+            i
+            for i in ids
+            if i not in local_ids
+            and i.count(".") < REGISTRY_MIN_DOTS
+            and GITLAB_SAST_RULE_ID.match(i) is None
+        ]
         if short:
             return [f"nosemgrep names no full rule id: {', '.join(short)}"]
         return []
@@ -220,7 +230,7 @@ VALID = '''\
 import subprocess  # nosec B404 - fixed argv, no shell
 def run(argv):
     return subprocess.run(  # nosec B603 - list argv  # nosemgrep: python.lang.security.audit.x.x - list argv, no shell
-        argv,  # nosemgrep: python.lang.security.audit.y.y, local-rule - argv is fixed
+        argv,  # nosemgrep: python.lang.security.audit.y.y, local-rule, python_exec_rule-start-process-with-no-shell - argv is fixed
         timeout=5,
     )
 TEXT = "# nosemgrep"  # the marker word in a string literal is text
@@ -239,6 +249,10 @@ PLANTED = {
     "bare nosemgrep": ("run(x)  # nosemgrep\n", "nosemgrep needs"),
     "nosemgrep without a reason": ("run(x)  # nosemgrep: python.lang.a.b\n", "nosemgrep needs"),
     "nosemgrep with a short id": ("run(x)  # nosemgrep: a-rule - why\n", "no full rule id"),
+    "nosemgrep with a GitLab-like id missing its rule part": (
+        "run(x)  # nosemgrep: python_exec_start-process - why\n",
+        "no full rule id",
+    ),
     "nosem alias": ("run(x)  # nosem: python.lang.a.b - why\n", "nosem alias"),
     "bare nosec": ("run(x)  # nosec\n", "nosec needs"),
     "nosec without a reason": ("run(x)  # nosec B603\n", "nosec needs"),

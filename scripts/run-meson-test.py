@@ -125,7 +125,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 127
     try:
         # ADR-0246 requires same-process exec so no environment mapping is copied.
-        os.execv(executable, [executable, *command[1:]])  # nosec B606 - validated absolute meson path, no shell  # noqa: S606  # nosemgrep: python.lang.security.audit.dangerous-spawn-process-audit.dangerous-spawn-process-audit - validated absolute meson path plus caller test arguments, no shell
+        os.execv(executable, [executable, *command[1:]])  # nosec B606 - validated absolute meson path, no shell  # noqa: S606  # nosemgrep: python.lang.security.audit.dangerous-os-exec-audit.dangerous-os-exec-audit, python_exec_rule-start-process-with-no-shell - validated absolute meson path plus caller test arguments, no shell
     except OSError as exc:
         print(f"run-meson-test.py: cannot run Meson: {exc.strerror}", file=sys.stderr)
         return 126
