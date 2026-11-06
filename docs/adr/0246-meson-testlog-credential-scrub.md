@@ -17,9 +17,9 @@ Workflow files under `.github/workflows/*.yml` keep their existing `meson test` 
 
 We will implement a two-barrier defense against credential leakage in Meson test environments:
 
-1. `scripts/run-meson-test.py`: A wrapper that strips credential-bearing environment variable names without inspecting values before invoking Meson (via `os.execvp` on POSIX or child process wait on Windows). It scrubs explicit listed names and pattern-matched keys (`TOKEN(?!IZER)`, `SECRET`, `PASSWORD`, `PASSWD`, `CREDENTIAL`, `API_?KEY`, `ACCESS_KEY`, `PRIVATE_KEY`, `_PAT`, and `_AUTH`).
-2. `scripts/check-testlog-credentials.py`: A scanner that walks checkout trees for `meson-logs/testlog*.{txt,json}` and reports lines holding credential-shaped values (GitHub classic and fine-grained tokens, `sk-` API keys, and AWS access key IDs), reporting paths and match counts without printing secrets (exit 0 clean, 1 found, 2 error).
-3. The Makefile `test` target and patch-stack integration harnesses (`ffmpeg-patches/test/build-and-run.sh`, `ffmpeg-patches/test/series-coexistence.sh`) route test runs through `scripts/run-meson-test.py` and run `scripts/check-testlog-credentials.py`.
+1. `scripts/run-meson-test.py`: A wrapper that strips credential-bearing environment variable names without inspecting values before invoking Meson (it resolves Meson to an executable regular file, then `os.execv` on POSIX or a child process wait on Windows). It scrubs explicit listed names and pattern-matched keys (`TOKEN(?!IZER)`, `SECRET`, `PASSWORD`, `PASSWD`, `CREDENTIAL`, `API_?KEY`, `ACCESS_KEY`, `PRIVATE_KEY`, `PASSPHRASE`, a `_KEY` suffix, `_PAT`, and `_AUTH`).
+2. `scripts/check-testlog-credentials.py`: A scanner that walks checkout trees for `meson-logs/testlog*.{txt,json}` and reports lines holding credential-shaped values (GitHub classic and fine-grained tokens, `sk-` API keys, and AWS access key IDs), reporting paths and match counts without printing secrets; a symlinked build directory is scanned through its own `meson-logs` (exit 0 clean, 1 found, 2 error).
+3. The Makefile `test` target and patch-stack integration harnesses (`ffmpeg-patches/test/build-and-run.sh`, `ffmpeg-patches/test/series-coexistence.sh`) route test runs through `scripts/run-meson-test.py` and run `scripts/check-testlog-credentials.py`; `make test` runs the scan even after a test failure and keeps the first failure status.
 
 ## Alternatives considered
 

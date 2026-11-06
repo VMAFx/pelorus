@@ -59,12 +59,17 @@ def test_positive_and_negative_names(run_mod: ModuleType) -> list[str]:
         "OPENAI_API_KEY",
         "LITELLM_API_KEY",
         "MY_PAT",
+        "GPG_PASSPHRASE",
+        "OPENAI_KEY",
+        "STRIPE_KEY",
     ]
     to_keep = [
         "PATH",
         "HOME",
         "TOKENIZERS_PARALLELISM",
         "PATHEXT",
+        "MONKEY",
+        "KEYBOARD_LAYOUT",
     ]
 
     for name in to_remove:
@@ -139,6 +144,34 @@ def _check_symlink_log(check_mod: ModuleType, tmp: Path, log_file: Path) -> list
     return failures
 
 
+def _check_symlinked_build(check_mod: ModuleType) -> list[str]:
+    """A build directory that is a symlink below the root must still be scanned."""
+    failures: list[str] = []
+    with (
+        tempfile.TemporaryDirectory() as outside_str,
+        tempfile.TemporaryDirectory() as root_str,
+    ):
+        real_logs = Path(outside_str) / "real-build" / "meson-logs"
+        real_logs.mkdir(parents=True)
+        (real_logs / "testlog.json").write_text(
+            f"DUMP_PAT={FAKE_GITHUB_TOKEN}\n", encoding="utf-8"
+        )
+        try:
+            (Path(root_str) / "build").symlink_to(
+                real_logs.parent, target_is_directory=True
+            )
+        except OSError as exc:
+            print(f"SKIP: symlink creation not supported: {exc}")
+            return failures
+        code, out_text, _ = _run_check(check_mod, Path(root_str))
+        if code != 1 or "testlog.json: 1 line(s)" not in out_text:
+            _fail(
+                failures,
+                f"symlinked build dir: expected exit 1, got code={code}, out={out_text!r}",
+            )
+    return failures
+
+
 def test_planted_log_and_symlink(check_mod: ModuleType) -> list[str]:
     """Verify testlog scanner catches token shapes, passes clean logs, and refuses symlinks."""
     failures: list[str] = []
@@ -164,6 +197,7 @@ def test_planted_log_and_symlink(check_mod: ModuleType) -> list[str]:
         if code != 0:
             _fail(failures, f"clean log: expected exit 0, got {code}")
         failures.extend(_check_symlink_log(check_mod, tmp, log_file))
+    failures.extend(_check_symlinked_build(check_mod))
     if not failures:
         print("PASS: planted testlog and symlink checks")
     return failures

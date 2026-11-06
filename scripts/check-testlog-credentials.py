@@ -20,7 +20,7 @@ import argparse
 import os
 import re
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 
 # Value shapes, not names: GitHub classic and fine-grained tokens, OpenAI-style
@@ -61,11 +61,33 @@ def _test_logs(root: Path) -> Iterator[Path]:
         subdirectories[:] = [
             name for name in subdirectories if name not in SKIP_DIRECTORIES
         ]
-        if Path(directory).name != "meson-logs":
+        yield from _linked_build_logs(Path(directory), subdirectories)
+        if Path(directory).name == "meson-logs":
+            yield from _logs_in(Path(directory), files)
+
+
+def _logs_in(directory: Path, names: Iterable[str]) -> Iterator[Path]:
+    """Yield the ``testlog*`` files among ``names`` in one ``meson-logs`` directory."""
+    for name in sorted(names):
+        if LOG_NAME_PATTERN.match(name):
+            yield _checked_log(directory / name)
+
+
+def _linked_build_logs(
+    directory: Path, subdirectories: Sequence[str]
+) -> Iterator[Path]:
+    """Yield logs of a symlinked build directory, which ``os.walk`` does not enter.
+
+    Only the link's own ``meson-logs`` is read, so a link to a large tree is not
+    walked; a link straight to a ``meson-logs`` directory counts as well.
+    """
+    for name in subdirectories:
+        link = directory / name
+        if not link.is_symlink():
             continue
-        for name in sorted(files):
-            if LOG_NAME_PATTERN.match(name):
-                yield _checked_log(Path(directory) / name)
+        logs = link if name == "meson-logs" else link / "meson-logs"
+        if logs.is_dir():
+            yield from _logs_in(logs, (entry.name for entry in logs.iterdir()))
 
 
 def count_credential_lines(path: Path) -> int:
