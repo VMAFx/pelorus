@@ -225,7 +225,9 @@ run_logged "configure libpelorus" "$LOG_DIR/pelorus-configure.log" \
 run_logged "build libpelorus" "$LOG_DIR/pelorus-build.log" \
     meson compile -C "$PELORUS_BUILD" -j "$JOBS"
 run_logged "test libpelorus" "$LOG_DIR/pelorus-test.log" \
-    meson test -C "$PELORUS_BUILD" --suite=fast --print-errorlogs
+    python3 -I "$ROOT/scripts/run-meson-test.py" -C "$PELORUS_BUILD" --suite=fast --print-errorlogs
+run_logged "scan libpelorus testlogs" "$LOG_DIR/pelorus-testlog-scan.log" \
+    python3 -I "$ROOT/scripts/check-testlog-credentials.py" "$PELORUS_BUILD"
 run_logged "install libpelorus" "$LOG_DIR/pelorus-install.log" \
     meson install -C "$PELORUS_BUILD"
 
