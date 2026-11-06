@@ -204,6 +204,8 @@ test('mc-sad-reduction',
      python_prog,
      args: ['-I', meson.project_source_root() / 'scripts' / 'check-mc-sad-reduction.py'],
      workdir: meson.project_source_root(),
+     # glslangValidator and spirv-dis run in sequence, 30 s deadline each.
+     timeout: 90,
      suite: 'fast')
 test('mc-sad-reduction-self-test',
      python_prog,

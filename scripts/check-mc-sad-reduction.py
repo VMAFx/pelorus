@@ -53,7 +53,10 @@ DEFAULT_SHADERS = [
 ]
 REF_SHADER = ROOT / "libpelorus" / "shaders" / "pelorus_mc.comp"
 
-HALVING_PATTERN = re.compile(r">>=|/=\s*2|>>\s*1u?\b|/\s*2\b")
+# A halving step in a for header: x >>= 1, x /= 2, x = x >> 1, x = x / 2.
+HALVING_PATTERN = re.compile(
+    r">>=|/=\s*2u?\b|=\s*[A-Za-z_]\w*\s*(?:>>\s*1u?|/\s*2u?)\b"
+)
 SUBGROUP_ADD_PATTERN = re.compile(r"\bsubgroupAdd\s*\(")
 BARRIER_PATTERN = re.compile(r"\bbarrier\s*\(\s*\)")
 LOOP_START_PATTERN = re.compile(r"\b(for|while)\s*\(")
@@ -177,7 +180,12 @@ def check_barrier_count(
 def check_no_stride_halving_loop(
     body: str, body_offset: int, full_text: str
 ) -> tuple[str, int, str] | None:
-    """Rule (c): verify that no for/while loop header halves a stride."""
+    """Rule (c): verify that no for loop step clause halves a stride.
+
+    Only the third clause of a for header is read: a halving in the init or
+    the condition (i = n / 2, i < n >> 1) is no step. A while header holds
+    no step clause; a while-based tree still trips rule (b).
+    """
     for match in LOOP_START_PATTERN.finditer(body):
         start = match.end()
         depth = 1
@@ -193,7 +201,10 @@ def check_no_stride_halving_loop(
                     break
             j += 1
         header = body[start:j]
-        if HALVING_PATTERN.search(header):
+        clauses = header.split(";")
+        if len(clauses) != 3:
+            continue
+        if HALVING_PATTERN.search(clauses[2]):
             line = full_text[: body_offset + match.start()].count("\n") + 1
             return (
                 "c",
@@ -356,6 +367,19 @@ def self_test_cases() -> list[tuple[str, str, set[str]]]:
     return [
         ("current block_sad", VALID_BLOCK_SAD, set()),
         ("barrier tree", BARRIER_TREE_BLOCK_SAD, {"b", "c"}),
+        (
+            "halving outside the step clause",
+            VALID_BLOCK_SAD.replace(
+                "for (uint i = 0u; i < gl_NumSubgroups; i++)",
+                "for (uint i = gl_NumSubgroups / 2u - gl_NumSubgroups / 2u; i < gl_NumSubgroups; i++)",
+            ),
+            set(),
+        ),
+        (
+            "step halving by assignment",
+            BARRIER_TREE_BLOCK_SAD.replace("stride >>= 1u", "stride = stride >> 1u"),
+            {"b", "c"},
+        ),
         (
             "subgroupAdd removed",
             VALID_BLOCK_SAD.replace("subgroupAdd(d)", "d"),
