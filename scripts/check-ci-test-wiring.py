@@ -33,7 +33,7 @@ import re
 import sys
 import tempfile
 import tokenize
-from typing import TextIO
+from typing import NamedTuple, TextIO
 
 _SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -55,30 +55,24 @@ SUITE_ARG = re.compile(r"(?<![\w-])--suite(?:=|\s+)([\w-]+)")
 NO_SUITE_ARG = re.compile(r"(?<![\w-])--no-suite(?:=|\s+)([\w-]+)")
 MESON_VALUE_OPTIONS = frozenset(
     (
-        "-k",
-        "--maxfail",
-        "--repeat",
-        "--gdb-path",
-        "--wrapper",
-        "-C",
-        "--suite",
-        "--no-suite",
-        "--exclude",
-        "--logbase",
-        "-j",
-        "--num-processes",
-        "-t",
-        "--timeout-multiplier",
-        "--setup",
-        "--test-args",
-        "--max-lines",
-        "--slice",
+        "-k", "--maxfail", "--repeat", "--gdb-path", "--wrapper", "-C",
+        "--suite", "--no-suite", "--exclude", "--logbase", "-j",
+        "--num-processes", "-t", "--timeout-multiplier", "--setup",
+        "--test-args", "--max-lines", "--slice",
     )
 )
 # A composite action runs only when a wired file names it in `uses:`.
 ACTION_GLOBS = (".github/actions/**/*.yml", ".github/actions/**/*.yaml")
 HASH_COMMENT_SUFFIXES = (".sh", ".py", ".yml", ".yaml", ".build")
 CALL_PATTERN = re.compile(r"(?:\b(\w+)\s*=\s*)?\b(executable|test)\s*\(")
+
+
+class MesonLine(NamedTuple):
+    suites: set[str]
+    names: set[str]
+    all: bool
+    excluded_suites: set[str]
+    excluded_names: set[str]
 
 
 def _handle_quote_char(ch: str, in_quote: str | None) -> tuple[str | None, int]:
@@ -240,18 +234,14 @@ def read_text(path: pathlib.Path) -> str:
     return text
 
 
-def read_all(
-    repo_root: pathlib.Path, paths: list[pathlib.Path], errors: list[str]
-) -> dict[pathlib.Path, str]:
+def read_all(repo_root: pathlib.Path, paths: list[pathlib.Path], errors: list[str]) -> dict[pathlib.Path, str]:
     """Read every path; an unreadable one adds an error and reads as empty text."""
     texts: dict[pathlib.Path, str] = {}
     for path in paths:
         try:
             texts[path] = read_text(path)
         except (OSError, UnicodeDecodeError, SyntaxError) as exc:
-            errors.append(
-                f"{path.relative_to(repo_root).as_posix()}:1: cannot read: {exc}"
-            )
+            errors.append(f"{path.relative_to(repo_root).as_posix()}:1: cannot read: {exc}")
             texts[path] = ""
     return texts
 
@@ -277,9 +267,7 @@ def node_patterns(
     """Return (file_patterns, stem_patterns) that wire a node."""
     rel = node.relative_to(repo_root)
     if rel.parts[:2] == (".github", "actions"):
-        return [
-            re.compile(r"\./" + re.escape(rel.parent.as_posix()) + r"(?![\w.-])")
-        ], []
+        return [re.compile(r"\./" + re.escape(rel.parent.as_posix()) + r"(?![\w.-])")], []
     file_pats = [name_pattern(node.name)]
     stem_pats = stem_patterns(node.stem) if node.suffix == ".py" else []
     return file_pats, stem_pats
@@ -291,9 +279,7 @@ def find_candidates(repo_root: pathlib.Path) -> list[pathlib.Path]:
     return sorted(p for p in test_dir.iterdir() if p.is_file() and p.suffix in SUFFIXES)
 
 
-def _glob_files(
-    repo_root: pathlib.Path, patterns: tuple[str, ...]
-) -> list[pathlib.Path]:
+def _glob_files(repo_root: pathlib.Path, patterns: tuple[str, ...]) -> list[pathlib.Path]:
     """Files matching any pattern, sorted and unique."""
     found: set[pathlib.Path] = set()
     for pattern in patterns:
@@ -306,9 +292,7 @@ def find_roots(repo_root: pathlib.Path) -> list[pathlib.Path]:
     return _glob_files(repo_root, ROOT_GLOBS)
 
 
-def _record_exclusion(
-    opt: str, val: str, exc_names: set[str], exc_suites: set[str]
-) -> None:
+def _record_exclusion(opt: str, val: str, exc_names: set[str], exc_suites: set[str]) -> None:
     """Record excluded test name or suite."""
     if opt == "--exclude":
         exc_names.add(val)
@@ -339,29 +323,24 @@ def _parse_meson_args(args: str) -> tuple[list[str], set[str], set[str]]:
     return names, excluded_names, excluded_suites
 
 
-def meson_selection(
-    workflow_texts: list[str],
-) -> tuple[set[str], set[str], bool, set[str], set[str]]:
-    """(suites, test names, all tests, excluded suites, excluded names) from `meson test` lines."""
-    suites: set[str] = set()
-    names: set[str] = set()
-    no_suites: set[str] = set()
-    excluded_names: set[str] = set()
-    everything = False
+def _parse_meson_line(args: str) -> MesonLine:
+    """Extract (suites, names, all, excluded suites, excluded names) from one meson test line."""
+    suites = set(SUITE_ARG.findall(args))
+    pos_names, exc_names, exc_suites = _parse_meson_args(args)
+    exc_suites.update(NO_SUITE_ARG.findall(args))
+    names = set(pos_names)
+    all_tests = not suites and not names
+    return MesonLine(suites, names, all_tests, exc_suites, exc_names)
+
+
+def meson_selection(workflow_texts: list[str]) -> list[MesonLine]:
+    """Parse each `meson test` line into one MesonLine record."""
+    records: list[MesonLine] = []
     for raw in workflow_texts:
         text = re.sub(r"\\\r?\n[ \t]*", " ", raw)
         for match in MESON_TEST_LINE.finditer(text):
-            args = match.group(1)
-            found = SUITE_ARG.findall(args)
-            suites.update(found)
-            pos_names, exc_names, exc_suites = _parse_meson_args(args)
-            names.update(pos_names)
-            excluded_names.update(exc_names)
-            no_suites.update(exc_suites)
-            no_suites.update(NO_SUITE_ARG.findall(args))
-            if not found and not pos_names:
-                everything = True
-    return suites, names, everything, no_suites, excluded_names
+            records.append(_parse_meson_line(match.group(1)))
+    return records
 
 
 def _close_paren(text: str, start: int) -> int:
@@ -387,38 +366,28 @@ def _close_paren(text: str, start: int) -> int:
     return len(text)
 
 
-def _is_test_excluded(
-    test_name: str, body_suites: set[str], no_suites: set[str], excluded_names: set[str]
-) -> bool:
-    """True if test name or any suite is excluded."""
-    if test_name and test_name in excluded_names:
-        return True
-    return bool(body_suites and no_suites and (body_suites & no_suites))
+def _line_matches(rec: MesonLine, test_name: str, body_suites: set[str]) -> bool:
+    """True when a single meson test line selects this test without excluding it."""
+    if test_name and test_name in rec.excluded_names:
+        return False
+    if body_suites and (body_suites & rec.excluded_suites):
+        return False
+    return rec.all or bool(body_suites & rec.suites) or (bool(test_name) and test_name in rec.names)
 
 
-def _selected(
-    body: str, selection: tuple[set[str], set[str], bool, set[str], set[str]]
-) -> bool:
-    """True when CI's `meson test` lines run the test() call with this argument text."""
-    suites, names, everything, no_suites, excluded_names = selection
+def _selected(body: str, selection: list[MesonLine]) -> bool:
+    """True when any CI `meson test` line selects this test() call without excluding it."""
     name_m = re.match(r"\s*'([^']*)'", body)
     test_name = name_m.group(1) if name_m else ""
     suite_arg = re.search(r"\bsuite\s*:\s*(\[[^\]]*\]|'[^']*')", body)
-    body_suites = (
-        set(re.findall(r"'([\w-]+)'", suite_arg.group(1))) if suite_arg else set()
-    )
-    if _is_test_excluded(test_name, body_suites, no_suites, excluded_names):
-        return False
-    return (
-        everything
-        or bool(body_suites & suites)
-        or (bool(test_name) and test_name in names)
-    )
+    body_suites = set(re.findall(r"'([\w-]+)'", suite_arg.group(1))) if suite_arg else set()
+    for rec in selection:
+        if _line_matches(rec, test_name, body_suites):
+            return True
+    return False
 
 
-def _meson_file_root_text(
-    text: str, selection: tuple[set[str], set[str], bool, set[str], set[str]]
-) -> list[str]:
+def _meson_file_root_text(text: str, selection: list[MesonLine]) -> list[str]:
     """Selected test() calls and their paired executables from one Meson file in definition order."""
     selected_parts: list[str] = []
     latest_exes: dict[str, str] = {}
@@ -437,10 +406,7 @@ def _meson_file_root_text(
     return selected_parts
 
 
-def meson_root_text(
-    meson_texts: list[str],
-    selection: tuple[set[str], set[str], bool, set[str], set[str]],
-) -> str:
+def meson_root_text(meson_texts: list[str], selection: list[MesonLine]) -> str:
     """The CI-selected test() calls plus the executables they run, as one root text."""
     parts: list[str] = []
     for text in meson_texts:
@@ -496,13 +462,8 @@ def unwired(repo_root: pathlib.Path) -> tuple[list[str], list[str]]:
     nodes = read_all(repo_root, candidates + find_actions(repo_root), errors)
     patterns = {n: node_patterns(repo_root, n) for n in nodes}
     workflow_texts = list(read_all(repo_root, roots, errors).values())
-    meson_texts = list(
-        read_all(repo_root, _glob_files(repo_root, MESON_GLOBS), errors).values()
-    )
-    root_texts = [
-        *workflow_texts,
-        meson_root_text(meson_texts, meson_selection(workflow_texts)),
-    ]
+    meson_texts = list(read_all(repo_root, _glob_files(repo_root, MESON_GLOBS), errors).values())
+    root_texts = [*workflow_texts, meson_root_text(meson_texts, meson_selection(workflow_texts))]
     wired = reach(root_texts, nodes, patterns, repo_root)
     findings = [
         f"{c.relative_to(repo_root).as_posix()}:1: no CI workflow runs this test, directly or through a wired test file"
@@ -527,12 +488,15 @@ def check(
     return errors + filter_excused(findings, entries, RULE, today, out=out)
 
 
-def _plant(root: pathlib.Path, files: dict[str, str]) -> None:
+def _plant(root: pathlib.Path, files: dict[str, str | bytes]) -> None:
     """Write each planted file under root."""
     for rel, body in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(body, encoding="utf-8")
+        if isinstance(body, bytes):
+            path.write_bytes(body)
+        else:
+            path.write_text(body, encoding="utf-8")
 
 
 REF_TODAY = date(2026, 11, 5)
@@ -588,21 +552,7 @@ DEEP_ORPHANS = {
 
 def _paths(root: pathlib.Path, entries: list[dict[str, str]]) -> set[str]:
     """Paths of the problems check() reports for the planted tree."""
-    return {
-        f.split(":", 1)[0]
-        for f in check(root, entries=entries, today=REF_TODAY, out=io.StringIO())
-    }
-
-
-def _check_tree_orphans(tree: dict[str, str], want: set[str], label: str) -> list[str]:
-    """Check that check() on tree reports exactly want orphans."""
-    with tempfile.TemporaryDirectory() as tmp:
-        root = pathlib.Path(tmp)
-        _plant(root, tree)
-        got = _paths(root, [])
-        if got != want:
-            return [f"{label}: expected {sorted(want)}, got {sorted(got)}"]
-    return []
+    return {f.split(":", 1)[0] for f in check(root, entries=entries, today=REF_TODAY, out=io.StringIO())}
 
 
 def _self_test_deep() -> list[str]:
@@ -615,9 +565,7 @@ def _self_test_deep() -> list[str]:
         _plant(root, DEEP_TREE)
         got = _paths(root, [])
         if got != DEEP_ORPHANS:
-            failures.append(
-                f"orphans: expected {sorted(DEEP_ORPHANS)}, got {sorted(got)}"
-            )
+            failures.append(f"orphans: expected {sorted(DEEP_ORPHANS)}, got {sorted(got)}")
         got = _paths(root, [{"rule": RULE, "path": ORPHAN, "expires": future}])
         if got != DEEP_ORPHANS - {ORPHAN}:
             failures.append(f"live exception not applied: {sorted(got)}")
@@ -637,13 +585,9 @@ def _self_test_wide() -> list[str]:
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp)
         wide = {f".github/workflows/w{i}.yml": "jobs: {}\n" for i in range(1, 6)}
-        wide[".github/workflows/w0.yml"] = (
-            "run: ffmpeg-patches/test/only.sh\nrun: meson test -C build\n"
-        )
+        wide[".github/workflows/w0.yml"] = "run: ffmpeg-patches/test/only.sh\nrun: meson test -C build\n"
         wide["ffmpeg-patches/test/only.sh"] = "true\n"
-        wide["meson.build"] = (
-            "exe = executable('e', files('ffmpeg-patches/test/any.c'))\ntest('e', exe)\n"
-        )
+        wide["meson.build"] = "exe = executable('e', files('ffmpeg-patches/test/any.c'))\ntest('e', exe)\n"
         wide["ffmpeg-patches/test/any.c"] = "int main(void) { return 0; }\n"
         _plant(root, wide)
         got = check(root, entries=[], today=REF_TODAY, out=io.StringIO())
@@ -652,10 +596,7 @@ def _self_test_wide() -> list[str]:
         for rel in wide:
             if rel.startswith(".github/"):
                 (root / rel).unlink()
-        if not any(
-            "no workflow files" in f
-            for f in check(root, entries=[], today=REF_TODAY, out=io.StringIO())
-        ):
+        if not any("no workflow files" in f for f in check(root, entries=[], today=REF_TODAY, out=io.StringIO())):
             failures.append("a tree without workflows passed")
     return failures
 
@@ -675,25 +616,28 @@ def _self_test_unreadable() -> list[str]:
     failures: list[str] = []
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp)
-        for rel, body in UNREADABLE_TREE.items():
-            path = root / rel
-            path.parent.mkdir(parents=True, exist_ok=True)
-            if isinstance(body, bytes):
-                path.write_bytes(body)
-            else:
-                path.write_text(body, encoding="utf-8")
+        _plant(root, UNREADABLE_TREE)
         got = check(root, entries=[], today=REF_TODAY, out=io.StringIO())
         unread = {f.split(":", 1)[0] for f in got if "cannot read" in f}
         want = {"ffmpeg-patches/test/bad.sh", "ffmpeg-patches/test/bogus-cookie.py"}
         if unread != want:
             failures.append(f"unreadable: expected {sorted(want)}, got {got}")
-        if not any(
-            f.startswith("ffmpeg-patches/test/zz-orphan.sh:1: no CI") for f in got
-        ):
+        if not any(f.startswith("ffmpeg-patches/test/zz-orphan.sh:1: no CI") for f in got):
             failures.append(f"scan stopped after an unreadable file: {got}")
         if len(got) != 3:
             failures.append(f"unreadable tree: expected 3 problems, got {got}")
     return failures
+
+
+def _check_tree_orphans(tree: dict[str, str], want: set[str], label: str) -> list[str]:
+    """Check that check() on tree reports exactly want orphans."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp)
+        _plant(root, tree)
+        got = _paths(root, [])
+        if got != want:
+            return [f"{label}: expected {sorted(want)}, got {sorted(got)}"]
+    return []
 
 
 def _self_test_f1_stem() -> list[str]:
@@ -707,9 +651,7 @@ def _self_test_f1_stem() -> list[str]:
         "ffmpeg-patches/test/runner.sh": "echo run\n",
         "ffmpeg-patches/test/run.py": "X = 1\n",
     }
-    return _check_tree_orphans(
-        tree, {"ffmpeg-patches/test/run.py"}, "F1 stem plain word"
-    )
+    return _check_tree_orphans(tree, {"ffmpeg-patches/test/run.py"}, "F1 stem plain word")
 
 
 def _self_test_f2_comments() -> list[str]:
@@ -755,9 +697,7 @@ def _self_test_f3_meson_order() -> list[str]:
         "ffmpeg-patches/test/fast.c": "int main(void) { return 0; }\n",
         "ffmpeg-patches/test/slow.c": "int main(void) { return 0; }\n",
     }
-    return _check_tree_orphans(
-        tree, {"ffmpeg-patches/test/slow.c"}, "F3 meson exe order"
-    )
+    return _check_tree_orphans(tree, {"ffmpeg-patches/test/slow.c"}, "F3 meson exe order")
 
 
 def _self_test_f4_continuation() -> list[str]:
@@ -769,7 +709,9 @@ def _self_test_f4_continuation() -> list[str]:
             "          meson test -C build \\\n"
             "            --suite=fast\n"
         ),
-        "meson.build": "test('fast-test', find_program('sh'), args: ['ffmpeg-patches/test/f4-fast.sh'], suite: 'fast')\n",
+        "meson.build": (
+            "test('fast-test', find_program('sh'), args: ['ffmpeg-patches/test/f4-fast.sh'], suite: 'fast')\n"
+        ),
         "ffmpeg-patches/test/f4-fast.sh": "true\n",
     }
     return _check_tree_orphans(tree, set(), "F4 backslash continuation")
@@ -808,11 +750,42 @@ def _self_test_f6_disabled_steps() -> list[str]:
         "ffmpeg-patches/test/f6-disabled.sh": "true\n",
         "ffmpeg-patches/test/f6-disabled-expr.sh": "true\n",
     }
-    want = {
-        "ffmpeg-patches/test/f6-disabled.sh",
-        "ffmpeg-patches/test/f6-disabled-expr.sh",
-    }
+    want = {"ffmpeg-patches/test/f6-disabled.sh", "ffmpeg-patches/test/f6-disabled-expr.sh"}
     return _check_tree_orphans(tree, want, "F6 disabled steps")
+
+
+def _self_test_repro_a() -> list[str]:
+    """Repro A: multiple meson test lines; one line's exclusion does not hide another's selection."""
+    tree = {
+        ".github/workflows/ci.yml": (
+            "jobs:\n  t:\n    steps:\n"
+            "      - run: meson test -C build --suite fast --no-suite gpu\n"
+            "      - run: meson test -C build --suite gpu\n"
+        ),
+        "meson.build": (
+            "g = executable('g', 'ffmpeg-patches/test/gpu.c')\n"
+            "test('g', g, suite: 'gpu')\n"
+        ),
+        "ffmpeg-patches/test/gpu.c": "int main(void) { return 0; }\n",
+    }
+    return _check_tree_orphans(tree, set(), "Repro A line exclusion independence")
+
+
+def _self_test_repro_b() -> list[str]:
+    """Repro B: multiple meson test lines; one line's --exclude does not hide another's named selection."""
+    tree = {
+        ".github/workflows/ci.yml": (
+            "jobs:\n  t:\n    steps:\n"
+            "      - run: meson test -C build --exclude g\n"
+            "      - run: meson test -C build g\n"
+        ),
+        "meson.build": (
+            "g = executable('g', 'ffmpeg-patches/test/gpu.c')\n"
+            "test('g', g)\n"
+        ),
+        "ffmpeg-patches/test/gpu.c": "int main(void) { return 0; }\n",
+    }
+    return _check_tree_orphans(tree, set(), "Repro B name exclusion independence")
 
 
 def run_self_test() -> int:
@@ -827,6 +800,8 @@ def run_self_test() -> int:
         + _self_test_f4_continuation()
         + _self_test_f5_options()
         + _self_test_f6_disabled_steps()
+        + _self_test_repro_a()
+        + _self_test_repro_b()
     )
     for failure in failures:
         print(f"FAIL self-test: {failure}", file=sys.stderr)
@@ -839,9 +814,7 @@ def run_self_test() -> int:
 def main(argv: list[str] | None = None) -> int:
     """Check the repository, or run the self-test; exit 1 on any problem."""
     parser = argparse.ArgumentParser(description=DESCRIPTION)
-    parser.add_argument(
-        "--self-test", action="store_true", help="run planted cases and exit"
-    )
+    parser.add_argument("--self-test", action="store_true", help="run planted cases and exit")
     args = parser.parse_args(argv)
     if args.self_test:
         return run_self_test()
