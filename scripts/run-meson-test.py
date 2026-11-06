@@ -95,7 +95,7 @@ def _run_and_wait(command: list[str]) -> int:
         return 127
     executable = str(resolved)
     # No timeout here: `meson test` enforces its own per-test timeouts.
-    completed = subprocess.run([executable, *command[1:]], check=False)  # nosec B603 - fixed meson argv, no shell  # noqa: S603
+    completed = subprocess.run([executable, *command[1:]], check=False)  # nosec B603 - fixed meson argv, no shell  # noqa: S603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - resolved meson path plus caller test arguments, no shell
     return completed.returncode
 
 

@@ -188,7 +188,7 @@ def _stub_sees(
 ) -> list[str]:
     """Run ``command`` and return failures plus a marker line telling whether ``key`` arrived."""
     dump_path.unlink(missing_ok=True)
-    proc = subprocess.run(  # nosec B603 - fixed list argv, no shell, explicit deadline
+    proc = subprocess.run(  # nosec B603 - fixed list argv, no shell, explicit deadline  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed stub or wrapper argv, no shell, explicit deadline
         command, env=env, capture_output=True, text=True, timeout=60, check=False
     )
     if proc.returncode != 0:
