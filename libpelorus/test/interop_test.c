@@ -2313,7 +2313,9 @@ static double monotonic_sec(void)
 #else
     struct timespec ts;
 
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return -1.0;
+    }
     return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 #endif
 }
@@ -2367,10 +2369,12 @@ static void test_carrier_decode_budget(void)
     CHECK(olen == blen);
 
     t0 = monotonic_sec();
+    CHECK(t0 >= 0.0);
     for (i = 0; i < reps; i++) {
         CHECK(pel_blob_unwrap(carrier, clen, scratch, clen, &out, &olen) == PEL_OK);
     }
     t1 = monotonic_sec();
+    CHECK(t1 >= 0.0);
 
     per_call = (t1 - t0) / (double)reps;
     (void)fprintf(stdout, "carrier decode: %.3f ms / 49 KB (budget %.1f ms, %d reps)\n",
