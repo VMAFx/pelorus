@@ -2320,20 +2320,25 @@ static double monotonic_sec(void)
 #endif
 }
 
-/* ADR-0183 decode budget: pel_blob_unwrap on a 49 KB carrier must finish
- * within the documented budget on a debug build. The budget uses 6x headroom
- * over the 0.17 ms measured on the development host (ADR-0183, research 0183)
- * to tolerate CI runners and loaded hosts; it catches algorithmic regressions
- * (e.g. O(n^2) decode) without flaking on slow hardware. */
+/* ADR-0183 decode budget (seconds). 1.0 ms = 6x the 0.17 ms claim; under ASan
+ * the instrumentation adds ~10x, so 5 ms catches O(n^2) without flaking. */
+#if defined(__SANITIZE_ADDRESS__)
+#define CARRIER_DECODE_BUDGET_SEC 5.0e-3
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define CARRIER_DECODE_BUDGET_SEC 5.0e-3
+#else
+#define CARRIER_DECODE_BUDGET_SEC 1.0e-3
+#endif
+#else
+#define CARRIER_DECODE_BUDGET_SEC 1.0e-3
+#endif
+
 static void test_carrier_decode_budget(void)
 {
     const size_t tail = 49080u; /* 49 144 - 16 (UUID) - 48 (kat_image) */
     const int reps = 200;
-#if defined(__SANITIZE_ADDRESS__) || (defined(__has_feature) && __has_feature(address_sanitizer))
-    const double budget_sec = 5.0e-3; /* ASan adds ~10x; 5 ms catches O(n^2) */
-#else
-    const double budget_sec = 1.0e-3; /* 1.0 ms: 6x the 0.17 ms claim */
-#endif
+    const double budget_sec = CARRIER_DECODE_BUDGET_SEC;
     size_t blen = 0;
     uint8_t *blob = carrier_test_blob(tail, fill_zero, &blen);
     size_t clen = 0;
