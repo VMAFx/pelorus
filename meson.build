@@ -181,6 +181,23 @@ test('test-skips-self-test',
             '--self-test'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+# A skip that the host never takes still has to be listed: a new test that
+# exits 77 without its tool passes where the tool is installed and first fails
+# on a CI lane without it. scripts/check-skip-listings.py reads intro-tests.json
+# and requires a test-skips.json entry for every literal SKIP line that an exit
+# 77 follows; --self-test plants an unlisted and a wrong-reason skip.
+test('skip-listings',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-skip-listings.py',
+            meson.project_build_root() / 'meson-info' / 'intro-tests.json'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+test('skip-listings-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-skip-listings.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
 # Fleet exception category rule: every .standards.yaml exception entry must name
 # its category (A = stated in entry, B <= 3d, C <= 10d, D <= 120d, engine cap 90d).
 # scripts/check-exception-categories.py --self-test judges the live file against
@@ -1037,6 +1054,12 @@ if build_machine.system() != 'windows'
   test('semgrep-chmod-mode',
        python_prog,
        args: [meson.project_source_root() / 'scripts' / 'test-semgrep-chmod-mode.py'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
+  test('semgrep-wall-clock',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-semgrep-wall-clock.py'],
        workdir: meson.project_source_root(),
        timeout: 600,
        suite: 'fast')

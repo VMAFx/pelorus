@@ -199,7 +199,10 @@ two values are two benchmark sessions on a shared host:
 | 2160p, `bsize=8` (129600 blocks) | 1340.8 / 1570.3 ms | 56.3 / 45.7 ms |
 
 Almost all of the old cost was host-side: the O(n²) p95 scan and element-wise
-reads of the mapped GPU buffers.
+reads of the mapped GPU buffers. The fast suite test `mc-stats` asserts linear
+scaling of the host path between the 1080p and 2160p `bsize=8` grids (ratio
+$\le 8$ for a 4× grid) and an absolute 100 ms ceiling at 2160p. It also proves
+the detector on the old quadratic scan each run.
 
 The earlier mandelbrot pan check, which read about 7 px for a 10 px pan, was
 taken with the 4× predictor error and is superseded by the table above.

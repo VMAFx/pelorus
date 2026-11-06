@@ -1,0 +1,1 @@
+- `scripts/check-skip-listings.py` (fast-suite tests `skip-listings` and `skip-listings-self-test`) requires a `.config/test-skips.json` entry for every literal `SKIP:` line that an exit 77 follows in a wired test script, so a new test that skips without its tool fails on the host that has the tool, not first on a CI lane without it.

@@ -1,0 +1,1 @@
+- Fast-suite regression threshold for motion estimation host path (`ffmpeg-patches/test/mc_stats_test.c`, `docs/metrics/mc.md`): asserts linear scaling between 1080p and 2160p `bsize=8` grids (ratio $\le 8$ for a 4× grid) and an absolute 100 ms ceiling at 2160p, verified against a built-in O(n²) detector proof each run ([ADR-0116](docs/adr/0116-pelorus-mc.md)).
