@@ -24,9 +24,13 @@ configure:
 build: configure
 	ninja -C "$(BUILD_DIR)"
 
+# The credential scan runs even when the tests fail; the first failure status wins.
 test: build
-	meson test -C "$(BUILD_DIR)" --suite=fast --print-errorlogs
-	python3 -I scripts/check-test-skips.py "$(BUILD_DIR)/meson-logs/testlog.json"
+	@status=0; \
+	python3 -I scripts/run-meson-test.py -C "$(BUILD_DIR)" --suite=fast --print-errorlogs || status=$$?; \
+	python3 -I scripts/check-test-skips.py "$(BUILD_DIR)/meson-logs/testlog.json" || { rc=$$?; [ "$$status" -ne 0 ] || status=$$rc; }; \
+	python3 -I scripts/check-testlog-credentials.py "$(BUILD_DIR)" || { rc=$$?; [ "$$status" -ne 0 ] || status=$$rc; }; \
+	exit $$status
 
 format-check:
 	clang-format --dry-run --Werror $$(find libpelorus tools -type f \( -name '*.c' -o -name '*.h' \))

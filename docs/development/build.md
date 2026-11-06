@@ -408,6 +408,16 @@ keeps it ([ADR-0188](../adr/0188-named-test-skips.md)).
 `make test` and in every CI fast-suite run. A new skip, or a changed skip message,
 fails until the list names it.
 
+`make test` and patch harnesses run tests through `scripts/run-meson-test.py`
+([ADR-0246](../adr/0246-meson-testlog-credential-scrub.md)), which strips credential-bearing
+keys (tokens, API keys, passwords, and PATs) from the environment before Meson executes,
+preventing secrets from leaking into `meson-logs/testlog.txt` and `testlog.json`.
+`scripts/check-testlog-credentials.py <build>` scans `meson-logs/testlog*.{txt,json}` for
+credential-shaped values (GitHub tokens, `sk-` keys, AWS `AKIA` IDs) and fails if any exist.
+The fast-suite test `meson-testlog-credentials` (`scripts/test-meson-testlog-credentials.py`)
+verifies name filtering, log detection, and end-to-end environment scrubbing against a stub
+Meson runner.
+
 A `# nosemgrep` or `# nosec` marker in tracked Python must sit on the start line
 of the statement or expression it answers and name its rules plus a reason:
 `# nosemgrep: <full rule id>[, <id>] - <reason>` and `# nosec <Bxxx> - <reason>`

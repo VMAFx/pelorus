@@ -460,7 +460,8 @@ build_private_pelorus()
 
     meson setup "$build_dir" "$ROOT" --prefix="$prefix" --libdir=lib || return 1
     meson compile -C "$build_dir" -j "$jobs" || return 1
-    meson test -C "$build_dir" --suite=fast --num-processes "$jobs" --print-errorlogs || return 1
+    python3 -I "$ROOT/scripts/run-meson-test.py" -C "$build_dir" --suite=fast --num-processes "$jobs" --print-errorlogs || return 1
+    python3 -I "$ROOT/scripts/check-testlog-credentials.py" "$build_dir" || return 1
     meson install -C "$build_dir" || return 1
 }
 
