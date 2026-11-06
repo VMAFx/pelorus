@@ -238,6 +238,11 @@ def _handle_step_line(
     return [], -1, False
 
 
+def _is_steps_closing(indent: int, steps_indent: int, line: str) -> bool:
+    """True if line at indent closes a steps block opened at steps_indent."""
+    return indent < steps_indent or (indent == steps_indent and not line.lstrip().startswith("- "))
+
+
 def drop_disabled_steps(text: str) -> str:
     """Drop list items under `steps:` whose `if:` is literal false or ${{ false }}."""
     out: list[str] = []
@@ -248,7 +253,7 @@ def drop_disabled_steps(text: str) -> str:
             _append_blank(out, cur_step, line)
             continue
         indent = len(line) - len(line.lstrip())
-        if in_steps and indent <= steps_indent:
+        if in_steps and _is_steps_closing(indent, steps_indent, line):
             _flush_step(out, cur_step)
             cur_step, in_steps, steps_indent, step_indent = [], False, -1, -1
         if not in_steps:
@@ -926,6 +931,41 @@ def _self_test_r4_nested_dash() -> list[str]:
     return failures
 
 
+def _self_test_r5_same_indent() -> list[str]:
+    """R5-1: Step sequences at same indent as steps: are parsed and closed correctly."""
+    failures: list[str] = []
+    tree_a = {
+        ".github/workflows/ci.yml": (
+            "jobs:\n"
+            "  t:\n"
+            "    steps:\n"
+            "    - if: false\n"
+            "      run: ffmpeg-patches/test/off.sh\n"
+            "    - run: ffmpeg-patches/test/on.sh\n"
+        ),
+        "ffmpeg-patches/test/off.sh": "true\n",
+        "ffmpeg-patches/test/on.sh": "true\n",
+    }
+    failures.extend(_check_tree_orphans(tree_a, {"ffmpeg-patches/test/off.sh"}, "R5-1a same indent steps"))
+    tree_b = {
+        ".github/workflows/ci.yml": (
+            "jobs:\n"
+            "  t:\n"
+            "    steps:\n"
+            "    - if: false\n"
+            "      run: ffmpeg-patches/test/off.sh\n"
+            "    - run: ffmpeg-patches/test/on.sh\n"
+            "    runs-on: x\n"
+            "  later:\n"
+            "    steps:\n"
+            "      - run: ffmpeg-patches/test/later.sh\n"
+        ),
+        "ffmpeg-patches/test/later.sh": "true\n",
+    }
+    failures.extend(_check_tree_orphans(tree_b, set(), "R5-1b same indent closing"))
+    return failures
+
+
 def run_self_test() -> int:
     """Run the planted cases; print each failure."""
     failures = (
@@ -943,6 +983,7 @@ def run_self_test() -> int:
         + _self_test_r3_hash()
         + _self_test_r4_quoted_args()
         + _self_test_r4_nested_dash()
+        + _self_test_r5_same_indent()
     )
     for failure in failures:
         print(f"FAIL self-test: {failure}", file=sys.stderr)
