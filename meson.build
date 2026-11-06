@@ -1033,6 +1033,12 @@ if build_machine.system() != 'windows'
        workdir: meson.project_source_root(),
        timeout: 600,
        suite: 'fast')
+  test('semgrep-wall-clock',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-semgrep-wall-clock.py'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
 endif
 
 # Shared Semgrep test harness enforcement: test scripts must import

@@ -1,0 +1,1 @@
+- The mc host-path timing reads a monotonic clock (`clock_gettime(CLOCK_MONOTONIC)`, or `QueryPerformanceCounter` on Windows) and fails when the clock cannot be read. The Semgrep rule `pelorus-c-wall-clock-elapsed` refuses wall-clock reads in C, and `scripts/test-semgrep-wall-clock.py` proves it on planted cases in the fast suite and in the CI semgrep job.

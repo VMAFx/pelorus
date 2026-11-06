@@ -19,12 +19,23 @@
  * libavutil clip macros spelled out.
  */
 
+/* clock_gettime(CLOCK_MONOTONIC) is POSIX, not C11; Windows uses
+ * QueryPerformanceCounter instead (see mono_now). */
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 #include "pelorus_mc_stats.h"
 #include "test_float_bits.h"
@@ -330,11 +341,35 @@ static void test_bsize_log2_unnamed(TestCtx *t)
 
 typedef void (*bench_fn)(void *userdata);
 
+/* Reads a monotonic clock in seconds. Returns 0 when the clock cannot be read,
+ * so a timing never rests on a failed read or on a wall clock that NTP steps. */
+static int mono_now(double *out)
+{
+#ifdef _WIN32
+    LARGE_INTEGER freq;
+    LARGE_INTEGER now;
+
+    if (!QueryPerformanceFrequency(&freq) || freq.QuadPart <= 0 || !QueryPerformanceCounter(&now)) {
+        return 0;
+    }
+    *out = (double)now.QuadPart / (double)freq.QuadPart;
+#else
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return 0;
+    }
+    *out = (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+#endif
+    return 1;
+}
+
 /* Timing helper: measures the minimum elapsed time per call over R samples
- * using C11 timespec_get(..., TIME_UTC). Each sample loops fn() until at
+ * on the monotonic clock (mono_now). Each sample loops fn() until at
  * least 2 ms has elapsed, then divides elapsed time by call count. Loops are
  * bounded by BENCH_MAX_CALLS per sample and BENCH_R_SAMPLES to satisfy HISS-02.
- * Taking the minimum over samples filters out latency spikes on shared runners. */
+ * Taking the minimum over samples filters out latency spikes on shared runners.
+ * Returns -1.0 when the clock cannot be read. */
 static double measure_min_seconds(bench_fn fn, void *userdata)
 {
     enum { BENCH_R_SAMPLES = 5, BENCH_MAX_CALLS = 1 << 20 };
@@ -343,17 +378,21 @@ static double measure_min_seconds(bench_fn fn, void *userdata)
     int r;
 
     for (r = 0; r < BENCH_R_SAMPLES; r++) {
-        struct timespec t0;
-        struct timespec t1;
+        double t0;
+        double t1;
         int calls = 0;
         double elapsed;
 
-        (void)timespec_get(&t0, TIME_UTC);
+        if (!mono_now(&t0)) {
+            return -1.0;
+        }
         do {
             fn(userdata);
             calls++;
-            (void)timespec_get(&t1, TIME_UTC);
-            elapsed = (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) * 1e-9;
+            if (!mono_now(&t1)) {
+                return -1.0;
+            }
+            elapsed = t1 - t0;
         } while (elapsed < min_sample_sec && calls < BENCH_MAX_CALLS);
 
         if (calls > 0) {
@@ -449,6 +488,7 @@ static void test_host_path_linear(TestCtx *t)
     (void)printf("host path: t(32400)=%.3f ms, t(129600)=%.3f ms, ratio=%.2f\n", t_n1 * 1000.0,
                  t_n2 * 1000.0, ratio);
 
+    CHECK(t_n1 > 0.0 && t_n2 > 0.0); /* -1.0 = monotonic clock unreadable */
     CHECK(ratio <= 8.0);
     CHECK(t_n2 <= 0.100);
 
@@ -520,6 +560,7 @@ static void test_quadratic_detector(TestCtx *t)
                       "(ratio=%.2f < 10.0)\n",
                       ratio);
     }
+    CHECK(t_m1 > 0.0 && t_m2 > 0.0); /* -1.0 = monotonic clock unreadable */
     CHECK(ratio >= 10.0);
 
     free(v1);
