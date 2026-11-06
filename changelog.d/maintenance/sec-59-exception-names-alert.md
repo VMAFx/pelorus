@@ -1,0 +1,1 @@
+- The two engine-file exceptions in `.standards.yaml` (HISS-07 `.config/lefthook/scripts/common.py`, HISS-08 `tools/figures/mkdocs_hook.py`) are renewed for three days while the engine fix in cordanaLLM/praetor#1768 is open, and the HISS-07 entry now names code-scanning alert #59 and the current lines 843 and 866 ([ADR-0241](docs/adr/0241-suppression-marker-binding.md)).
