@@ -242,8 +242,9 @@ shows as a named `not_run` leg, not as a green result.
 #### QSV bitrate-control legs
 
 These legs require an Intel GPU with QSV support (an Intel render node
-with the `iHD` media driver) and are `not_run` on every other host,
-including all current CI runners.  The
+with the `iHD` media driver).  On a host without one the baseline
+constant-QP encode cannot create an MFX session, so both legs are
+`not_run`; no current CI runner has an Intel GPU.  The
 [self-test](#planted-failures) exercises them against a stand-in FFmpeg.
 
 For each QSV encoder in the FFmpeg build (`h264_qsv`, `hevc_qsv`, `av1_qsv` in
