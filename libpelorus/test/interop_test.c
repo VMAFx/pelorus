@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -2299,6 +2300,84 @@ static void test_carrier_truncated_image(void)
                                 &got) == PEL_ERR_TRUNCATED);
 }
 
+/* Monotonic clock in seconds (HISS-02: bounded by platform granularity). */
+static double monotonic_sec(void)
+{
+#ifdef _WIN32
+    LARGE_INTEGER freq;
+    LARGE_INTEGER cnt;
+
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&cnt);
+    return (double)cnt.QuadPart / (double)freq.QuadPart;
+#else
+    struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+#endif
+}
+
+/* ADR-0183 decode budget: pel_blob_unwrap on a 49 KB carrier must finish
+ * within the documented budget on a debug build. The budget uses 6x headroom
+ * over the 0.17 ms measured on the development host (ADR-0183, research 0183)
+ * to tolerate CI runners and loaded hosts; it catches algorithmic regressions
+ * (e.g. O(n^2) decode) without flaking on slow hardware. */
+static void test_carrier_decode_budget(void)
+{
+    const size_t tail = 49080u; /* 49 144 - 16 (UUID) - 48 (kat_image) */
+    const int reps = 200;
+    const double budget_sec = 1.0e-3; /* 1.0 ms: 6x the 0.17 ms claim */
+    size_t blen = 0;
+    uint8_t *blob = carrier_test_blob(tail, fill_zero, &blen);
+    size_t clen = 0;
+    uint8_t *carrier = NULL;
+    uint8_t *scratch = NULL;
+    const uint8_t *out = NULL;
+    size_t olen = 0;
+    double t0;
+    double t1;
+    double per_call;
+    int i;
+
+    CHECK(blob != NULL && blen == 49144u);
+    if (blob == NULL) {
+        return;
+    }
+    carrier = encode_carrier_checked(blob, blen, &clen);
+    CHECK(carrier != NULL && clen > 0u);
+    if (carrier == NULL) {
+        free(blob);
+        return;
+    }
+    scratch = malloc(clen);
+    CHECK(scratch != NULL);
+    if (scratch == NULL) {
+        free(carrier);
+        free(blob);
+        return;
+    }
+
+    /* Warm-up pass (page faults, branch predictor). */
+    CHECK(pel_blob_unwrap(carrier, clen, scratch, clen, &out, &olen) == PEL_OK);
+    CHECK(olen == blen);
+
+    t0 = monotonic_sec();
+    for (i = 0; i < reps; i++) {
+        CHECK(pel_blob_unwrap(carrier, clen, scratch, clen, &out, &olen) == PEL_OK);
+    }
+    t1 = monotonic_sec();
+
+    per_call = (t1 - t0) / (double)reps;
+    (void)fprintf(stdout, "carrier decode: %.3f ms / 49 KB (budget %.1f ms, %d reps)\n",
+                  per_call * 1e3, budget_sec * 1e3, reps);
+    CHECK(per_call < budget_sec);
+
+    free(scratch);
+    free(carrier);
+    free(blob);
+}
+
 int main(void)
 {
     test_roundtrip();
@@ -2334,6 +2413,7 @@ int main(void)
     test_carrier_rejects_arguments();
     test_carrier_encode_rejects();
     test_carrier_truncated_image();
+    test_carrier_decode_budget();
 
     if (g_fail != 0) {
         (void)fprintf(stderr, "%d check(s) failed\n", g_fail);
