@@ -101,6 +101,20 @@ static int bytes_equal(const void *a, const void *b, size_t size)
     return 1;
 }
 
+/* 1 when every byte of the size bytes at p equals value. */
+static int bytes_all(const void *p, unsigned char value, size_t size)
+{
+    const unsigned char *bytes = p;
+    size_t i;
+
+    for (i = 0; i < size; i++) {
+        if (bytes[i] != value) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static int check_x265_frame(const PelorusEncTelemetryInput *frame)
 {
     int failures = 0;
@@ -293,25 +307,29 @@ typedef pel_result (*pel_tlm_adapter_parse_fn)(const char *text, size_t len,
                                                PelorusEncTelemetryInput *out_frames, size_t out_cap,
                                                size_t *out_count);
 
-/* Fills *frame with the 0xa5 canary and copies it into before, which holds
- * sizeof(*frame) bytes. */
-static void init_canary_frame(PelorusEncTelemetryInput *frame,
-                              unsigned char before[sizeof(PelorusEncTelemetryInput)])
+#define CANARY_BYTE 0xa5u
+
+/* Fills *frame with the canary byte; frame_untouched() checks it later. */
+static void init_canary_frame(PelorusEncTelemetryInput *frame)
 {
-    (void)memset(frame, 0xa5, sizeof(*frame));
-    (void)memcpy(before, frame, sizeof(*frame));
+    (void)memset(frame, (int)CANARY_BYTE, sizeof(*frame));
+}
+
+/* 1 when *frame still holds only the canary byte. */
+static int frame_untouched(const PelorusEncTelemetryInput *frame)
+{
+    return bytes_all(frame, (unsigned char)CANARY_BYTE, sizeof(*frame));
 }
 
 static int expect_adapter_parse_error(pel_tlm_adapter_parse_fn parse, const char *tag,
                                       const char *text, size_t len, uint8_t depth, pel_result want)
 {
     PelorusEncTelemetryInput frame;
-    unsigned char before[sizeof(frame)];
     size_t count = 99u;
     pel_result got;
     int failures = 0;
 
-    init_canary_frame(&frame, before);
+    init_canary_frame(&frame);
     got = parse(text, len, depth, &frame, 1u, &count);
     if (got != want) {
         (void)fprintf(stderr, "%s error mismatch: got %d, want %d, text %.80s\n", tag, got, want,
@@ -319,7 +337,7 @@ static int expect_adapter_parse_error(pel_tlm_adapter_parse_fn parse, const char
     }
     CHECK_LABEL(got == want, tag);
     CHECK_LABEL(count == 0u, tag);
-    CHECK_LABEL(bytes_equal(&frame, before, sizeof(frame)), tag);
+    CHECK_LABEL(frame_untouched(&frame), tag);
     return failures;
 }
 
@@ -1948,14 +1966,13 @@ static int test_x264_bounds_and_args(void)
 {
     char line[TEST_TEXT_LINE_OVER_MAX + 1u];
     PelorusEncTelemetryInput frame;
-    unsigned char before[sizeof(frame)];
     size_t count = 99u;
     int failures = 0;
 
-    init_canary_frame(&frame, before);
+    init_canary_frame(&frame);
     CHECK(pel_tlm_parse_x264_stats(X264_ROW X264_ROW, sizeof(X264_ROW X264_ROW) - 1u, 8u, &frame,
                                    1u, &count) == PEL_ERR_RANGE);
-    CHECK(count == 2u && bytes_equal(&frame, before, sizeof(frame)));
+    CHECK(count == 2u && frame_untouched(&frame));
     CHECK(pel_tlm_parse_x264_stats(NULL, 0u, 8u, &frame, 1u, &count) == PEL_ERR_INVALID);
     CHECK(count == 0u);
     CHECK(pel_tlm_parse_x264_stats("", 0u, 8u, NULL, 1u, &count) == PEL_ERR_INVALID);
