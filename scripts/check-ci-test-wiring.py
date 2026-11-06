@@ -64,6 +64,7 @@ MESON_VALUE_OPTIONS = frozenset(
 # A composite action runs only when a wired file names it in `uses:`.
 ACTION_GLOBS = (".github/actions/**/*.yml", ".github/actions/**/*.yaml")
 HASH_COMMENT_SUFFIXES = (".sh", ".py", ".yml", ".yaml", ".build")
+LOOSE_HASH_SUFFIXES = (".py", ".build")
 CALL_PATTERN = re.compile(r"(?:\b(\w+)\s*=\s*)?\b(executable|test)\s*\(")
 
 
@@ -121,7 +122,7 @@ def strip_c_comments(text: str) -> str:
     return "".join(out)
 
 
-def _strip_line_hash(line: str) -> str:
+def _strip_line_hash(line: str, loose: bool = False) -> str:
     """Strip trailing # comment from a line outside single/double quotes."""
     in_quote: str | None = None
     i, n = 0, len(line)
@@ -133,7 +134,7 @@ def _strip_line_hash(line: str) -> str:
         if adv > 0:
             i += adv
             continue
-        if ch == "#" and (i == 0 or line[i - 1] in " \t"):
+        if ch == "#" and (loose or i == 0 or line[i - 1] in " \t"):
             return line[:i]
         i += 1
     return line
@@ -144,7 +145,8 @@ def strip_comment_lines(path: pathlib.Path, text: str) -> str:
     if path.suffix == ".c":
         return strip_c_comments(text)
     if path.suffix in HASH_COMMENT_SUFFIXES:
-        return "\n".join(_strip_line_hash(line) for line in text.splitlines())
+        loose = path.suffix in LOOSE_HASH_SUFFIXES
+        return "\n".join(_strip_line_hash(line, loose=loose) for line in text.splitlines())
     return text
 
 
@@ -788,6 +790,34 @@ def _self_test_repro_b() -> list[str]:
     return _check_tree_orphans(tree, set(), "Repro B name exclusion independence")
 
 
+def _self_test_r3_hash() -> list[str]:
+    """R3: Comment stripping per language; Python/Meson unquoted #; shell preserved."""
+    failures: list[str] = []
+    tree_meson = {
+        ".github/workflows/ci.yml": "jobs:\n  t:\n    steps:\n      - run: meson test -C build\n",
+        "meson.build": (
+            "g = executable('g', 'ffmpeg-patches/test/g.c')\n"
+            "test('g', g)#h = executable('h', 'ffmpeg-patches/test/orphan.c')\n"
+            "test('h', h)\n"
+        ),
+        "ffmpeg-patches/test/g.c": "int main(void) { return 0; }\n",
+        "ffmpeg-patches/test/orphan.c": "int main(void) { return 0; }\n",
+    }
+    failures.extend(_check_tree_orphans(tree_meson, {"ffmpeg-patches/test/orphan.c"}, "R3a meson comment"))
+    tree_py = {
+        ".github/workflows/ci.yml": (
+            "jobs:\n  t:\n    steps:\n      - run: python3 ffmpeg-patches/test/reached.py\n"
+        ),
+        "ffmpeg-patches/test/reached.py": "x = 1#import orphan_stem\n",
+        "ffmpeg-patches/test/orphan_stem.py": "X = 1\n",
+    }
+    failures.extend(_check_tree_orphans(tree_py, {"ffmpeg-patches/test/orphan_stem.py"}, "R3b py comment"))
+    sh_text = "echo ${#x}\necho a#b"
+    if strip_comment_lines(pathlib.Path("test.sh"), sh_text) != sh_text:
+        failures.append("R3c shell hash: unexpected stripping")
+    return failures
+
+
 def run_self_test() -> int:
     """Run the planted cases; print each failure."""
     failures = (
@@ -802,6 +832,7 @@ def run_self_test() -> int:
         + _self_test_f6_disabled_steps()
         + _self_test_repro_a()
         + _self_test_repro_b()
+        + _self_test_r3_hash()
     )
     for failure in failures:
         print(f"FAIL self-test: {failure}", file=sys.stderr)
