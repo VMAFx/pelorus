@@ -25,8 +25,9 @@ build: configure
 	ninja -C "$(BUILD_DIR)"
 
 test: build
-	meson test -C "$(BUILD_DIR)" --suite=fast --print-errorlogs
+	python3 -I scripts/run-meson-test.py -C "$(BUILD_DIR)" --suite=fast --print-errorlogs
 	python3 -I scripts/check-test-skips.py "$(BUILD_DIR)/meson-logs/testlog.json"
+	python3 -I scripts/check-testlog-credentials.py "$(BUILD_DIR)"
 
 format-check:
 	clang-format --dry-run --Werror $$(find libpelorus tools -type f \( -name '*.c' -o -name '*.h' \))
