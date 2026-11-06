@@ -259,6 +259,37 @@ def test_command_arguments(run_mod: ModuleType) -> list[str]:
     return failures
 
 
+def test_refuses_non_executable() -> list[str]:
+    """A --meson-executable that is not an executable regular file must exit 127."""
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp_str:
+        plain = Path(tmp_str) / "not_meson.txt"
+        plain.write_text("not a program\n", encoding="utf-8")
+        plain.chmod(0o600)
+        command = [
+            sys.executable,
+            "-I",
+            str(RUN_MESON_TEST_SCRIPT),
+            "--meson-executable",
+        ]
+        for target in (str(plain), str(Path(tmp_str) / "missing")):
+            proc = subprocess.run(  # nosec B603 - fixed wrapper argv, no shell, explicit deadline  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed wrapper argv, no shell, explicit deadline
+                [*command, target, "-C", "b"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            if proc.returncode != 127:
+                _fail(
+                    failures,
+                    f"non-executable {target}: expected exit 127, got {proc.returncode}",
+                )
+    if not failures:
+        print("PASS: wrapper refuses a non-executable Meson path")
+    return failures
+
+
 def run_tests() -> int:
     """Execute all credential sanitization and scanning test suites."""
     run_mod = _load_module("run_meson_test", RUN_MESON_TEST_SCRIPT)
@@ -269,6 +300,7 @@ def run_tests() -> int:
     failures.extend(test_command_arguments(run_mod))
     failures.extend(test_planted_log_and_symlink(check_mod))
     failures.extend(test_end_to_end_stub_meson())
+    failures.extend(test_refuses_non_executable())
 
     return 1 if failures else 0
 

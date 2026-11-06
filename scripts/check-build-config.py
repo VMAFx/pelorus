@@ -2317,6 +2317,7 @@ def _validate_replay_tokens_and_filters(replay: str) -> list[str]:
         "PKG_CONFIG_PATH": "must prefer the private libpelorus pkg-config file",
         "LD_LIBRARY_PATH": "must load the private libpelorus at runtime",
         "scripts/run-meson-test.py": "must test the current libpelorus worktree",
+        "scripts/check-testlog-credentials.py": "must scan the libpelorus testlogs for credentials",
         "meson install": "must install the current libpelorus worktree",
         "--enable-vulkan": "must enable Vulkan",
         "--enable-libaom": "must compile libaom consumers when available",

@@ -80,6 +80,15 @@ def _command(argv: Sequence[str] | None = None) -> list[str]:
     return [meson_executable, "test", *remainder]
 
 
+def _resolve_executable(name: str) -> str | None:
+    """PATH lookup of ``name``, kept only when it resolves to an executable regular file."""
+    found = shutil.which(name)
+    resolved = Path(found).resolve() if found else None
+    if resolved is None or not resolved.is_file() or not os.access(resolved, os.X_OK):
+        return None
+    return str(resolved)
+
+
 def _run_and_wait(command: list[str]) -> int:
     """Run Meson as a child on Windows and return its exit status (ADR-0246).
 
@@ -88,12 +97,10 @@ def _run_and_wait(command: list[str]) -> int:
     ``meson test`` was still running. The child inherits this process's
     already-sanitized environment block; no mapping is passed or copied.
     """
-    found = shutil.which(command[0])
-    resolved = Path(found).resolve() if found else None
-    if resolved is None or not resolved.is_file() or not os.access(resolved, os.X_OK):
+    executable = _resolve_executable(command[0])
+    if executable is None:
         print("run-meson-test.py: Meson executable not found", file=sys.stderr)
         return 127
-    executable = str(resolved)
     # No timeout here: `meson test` enforces its own per-test timeouts.
     completed = subprocess.run([executable, *command[1:]], check=False)  # nosec B603 - fixed meson argv, no shell  # noqa: S603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - resolved meson path plus caller test arguments, no shell
     return completed.returncode
@@ -112,12 +119,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     sanitize_process_environment(os.environ)
     if os.name == "nt":
         return _run_and_wait(command)
-    try:
-        # ADR-0246 requires same-process exec so no environment mapping is copied.
-        os.execvp(command[0], command)  # noqa: S606
-    except FileNotFoundError:
+    executable = _resolve_executable(command[0])
+    if executable is None:
         print("run-meson-test.py: Meson executable not found", file=sys.stderr)
         return 127
+    try:
+        # ADR-0246 requires same-process exec so no environment mapping is copied.
+        os.execv(executable, [executable, *command[1:]])  # nosec B606 - validated absolute meson path, no shell  # noqa: S606  # nosemgrep: python.lang.security.audit.dangerous-spawn-process-audit.dangerous-spawn-process-audit - validated absolute meson path plus caller test arguments, no shell
+    except OSError as exc:
+        print(f"run-meson-test.py: cannot run Meson: {exc.strerror}", file=sys.stderr)
+        return 126
     return 126
 
 
