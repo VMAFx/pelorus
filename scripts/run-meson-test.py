@@ -30,12 +30,14 @@ CREDENTIAL_ENV_VARS = (
 )
 
 # ADR-0246: a fixed list misses credentials exported under other names (a messaging
-# token, a gateway key, a personal *_PAT, a *_KEY or a passphrase), and Meson then writes them to testlog.txt
+# token, a gateway key, a personal *_PAT, a *_KEY, a passphrase or a database connection URL), and Meson then writes them to testlog.txt
 # and testlog.json. Names matching this pattern are removed as well. Only names are
 # matched; values are never read.
 CREDENTIAL_NAME_PATTERN = re.compile(
     r"TOKEN(?!IZER)|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|ACCESS_KEY|PRIVATE_KEY"
-    r"|PASSPHRASE|_KEY$|(?:^|_)PAT$|(?:^|_)AUTH(?:_|$)",
+    r"|PASSPHRASE|_KEY$|(?:^|_)PAT$|(?:^|_)AUTH(?:_|$)"
+    r"|(?:^|_)(?:DATABASE|DB|POSTGRES(?:QL)?|PG|MYSQL|MARIADB|MONGO(?:DB)?|REDIS|AMQP|RABBITMQ"
+    r"|BROKER|CELERY_BROKER|SQLALCHEMY_DATABASE)_(?:URL|URI)$|(?:^|_)DSN$|CONNECTION_STRING",
     re.IGNORECASE,
 )
 

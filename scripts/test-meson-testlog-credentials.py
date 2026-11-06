@@ -62,6 +62,10 @@ def test_positive_and_negative_names(run_mod: ModuleType) -> list[str]:
         "GPG_PASSPHRASE",
         "OPENAI_KEY",
         "STRIPE_KEY",
+        "DATABASE_URL",
+        "REDIS_URL",
+        "SENTRY_DSN",
+        "AZURE_STORAGE_CONNECTION_STRING",
     ]
     to_keep = [
         "PATH",
@@ -70,6 +74,8 @@ def test_positive_and_negative_names(run_mod: ModuleType) -> list[str]:
         "PATHEXT",
         "MONKEY",
         "KEYBOARD_LAYOUT",
+        "CI_SERVER_URL",
+        "DBUS_SESSION_BUS_ADDRESS",
     ]
 
     for name in to_remove:
@@ -172,6 +178,31 @@ def _check_symlinked_build(check_mod: ModuleType) -> list[str]:
     return failures
 
 
+def _check_password_url(check_mod: ModuleType) -> list[str]:
+    """A connection URL with a password must be found; one without a password must not."""
+    failures: list[str] = []
+    planted = "DATABASE_URL=postgres://user:" + "hunter2" + "@db.example/app\n"
+    with tempfile.TemporaryDirectory() as tmp_str:
+        log_file = Path(tmp_str) / "build" / "meson-logs" / "testlog.txt"
+        log_file.parent.mkdir(parents=True)
+        log_file.write_text(planted, encoding="utf-8")
+        code, out_text, _ = _run_check(check_mod, Path(tmp_str))
+        if code != 1 or "hunter2" in out_text:
+            _fail(
+                failures,
+                f"password URL: expected exit 1 without the value, got code={code}",
+            )
+        log_file.write_text(
+            "CI_SERVER_URL=https://gitlab.example:8443/group\n", encoding="utf-8"
+        )
+        code, _, _ = _run_check(check_mod, Path(tmp_str))
+        if code != 0:
+            _fail(
+                failures, f"URL with a port, no password: expected exit 0, got {code}"
+            )
+    return failures
+
+
 def test_planted_log_and_symlink(check_mod: ModuleType) -> list[str]:
     """Verify testlog scanner catches token shapes, passes clean logs, and refuses symlinks."""
     failures: list[str] = []
@@ -198,6 +229,7 @@ def test_planted_log_and_symlink(check_mod: ModuleType) -> list[str]:
             _fail(failures, f"clean log: expected exit 0, got {code}")
         failures.extend(_check_symlink_log(check_mod, tmp, log_file))
     failures.extend(_check_symlinked_build(check_mod))
+    failures.extend(_check_password_url(check_mod))
     if not failures:
         print("PASS: planted testlog and symlink checks")
     return failures
