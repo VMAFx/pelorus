@@ -293,11 +293,13 @@ typedef pel_result (*pel_tlm_adapter_parse_fn)(const char *text, size_t len,
                                                PelorusEncTelemetryInput *out_frames, size_t out_cap,
                                                size_t *out_count);
 
-static void init_canary_frame(PelorusEncTelemetryInput *frame, unsigned char *before,
-                              size_t before_len)
+/* Fills *frame with the 0xa5 canary and copies it into before, which holds
+ * sizeof(*frame) bytes. */
+static void init_canary_frame(PelorusEncTelemetryInput *frame,
+                              unsigned char before[sizeof(PelorusEncTelemetryInput)])
 {
     (void)memset(frame, 0xa5, sizeof(*frame));
-    (void)memcpy(before, frame, before_len);
+    (void)memcpy(before, frame, sizeof(*frame));
 }
 
 static int expect_adapter_parse_error(pel_tlm_adapter_parse_fn parse, const char *tag,
@@ -309,7 +311,7 @@ static int expect_adapter_parse_error(pel_tlm_adapter_parse_fn parse, const char
     pel_result got;
     int failures = 0;
 
-    init_canary_frame(&frame, before, sizeof(before));
+    init_canary_frame(&frame, before);
     got = parse(text, len, depth, &frame, 1u, &count);
     if (got != want) {
         (void)fprintf(stderr, "%s error mismatch: got %d, want %d, text %.80s\n", tag, got, want,
@@ -326,10 +328,9 @@ static int expect_x265_error(const char *text, size_t len, pel_result want)
     return expect_adapter_parse_error(pel_tlm_parse_x265_csv, "x265", text, len, 8u, want);
 }
 
-static int expect_svt_error(const char *text, pel_result want)
+static int expect_svt_error(const char *text, size_t len, pel_result want)
 {
-    return expect_adapter_parse_error(pel_tlm_parse_svtav1_stat, "svt", text, strlen(text), 8u,
-                                      want);
+    return expect_adapter_parse_error(pel_tlm_parse_svtav1_stat, "svt", text, len, 8u, want);
 }
 
 static int expect_vvenc_error(const char *text, size_t len, uint8_t depth, pel_result want)
@@ -360,10 +361,10 @@ static int test_negative_rows(void)
     failures += expect_x265_error(xtrunc, sizeof(xtrunc) - 1u, PEL_ERR_TRUNCATED);
     failures += expect_x265_error(xshift, sizeof(xshift) - 1u, PEL_ERR_INVALID);
     failures += expect_x265_error(xnul, sizeof(xnul) - 1u, PEL_ERR_INVALID);
-    failures += expect_svt_error(svt_trunc, PEL_ERR_TRUNCATED);
-    failures += expect_svt_error(svt_shift, PEL_ERR_INVALID);
+    failures += expect_svt_error(svt_trunc, sizeof(svt_trunc) - 1u, PEL_ERR_TRUNCATED);
+    failures += expect_svt_error(svt_shift, sizeof(svt_shift) - 1u, PEL_ERR_INVALID);
     failures += expect_x265_error("", 0u, PEL_ERR_ABSENT);
-    failures += expect_svt_error("", PEL_ERR_ABSENT);
+    failures += expect_svt_error("", 0u, PEL_ERR_ABSENT);
     CHECK(pel_tlm_parse_x265_csv(xhdr, strlen(xhdr), 8u, &frame, 1u, &count) == PEL_OK);
     CHECK(count == 0u);
     CHECK(pel_tlm_parse_svtav1_stat("SUMMARY ---\n", 12u, 8u, &frame, 1u, &count) == PEL_OK);
@@ -533,9 +534,9 @@ static int test_svt_nonfinite_psnr(void)
     CHECK(psnr != NULL);
     if (psnr != NULL) {
         (void)memcpy(psnr, "inf  ", 5u);
-        failures += expect_svt_error(row, PEL_ERR_INVALID);
+        failures += expect_svt_error(row, sizeof(row) - 1u, PEL_ERR_INVALID);
         (void)memcpy(psnr, "nan  ", 5u);
-        failures += expect_svt_error(row, PEL_ERR_INVALID);
+        failures += expect_svt_error(row, sizeof(row) - 1u, PEL_ERR_INVALID);
     }
     return failures;
 }
@@ -627,7 +628,7 @@ static int test_svt_average_qp_domain(void)
               PEL_OK);
         CHECK(count == 1u && fabsf(frame.frame.avg_qp - 62.5f) < 0.0001f);
         average[strlen("Average QP: 6")] = '5';
-        failures += expect_svt_error(mutated, PEL_ERR_RANGE);
+        failures += expect_svt_error(mutated, sizeof(mutated) - 1u, PEL_ERR_RANGE);
     }
     return failures;
 }
@@ -1951,7 +1952,7 @@ static int test_x264_bounds_and_args(void)
     size_t count = 99u;
     int failures = 0;
 
-    init_canary_frame(&frame, before, sizeof(before));
+    init_canary_frame(&frame, before);
     CHECK(pel_tlm_parse_x264_stats(X264_ROW X264_ROW, sizeof(X264_ROW X264_ROW) - 1u, 8u, &frame,
                                    1u, &count) == PEL_ERR_RANGE);
     CHECK(count == 2u && bytes_equal(&frame, before, sizeof(frame)));

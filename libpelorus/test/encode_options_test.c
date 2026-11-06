@@ -107,21 +107,41 @@ static void check_digests_equal(const PelorusEncodeOptions *opts1,
     CHECK_LABEL(strcmp(d1, d2) == 0, label);
 }
 
-static void check_alias_pair(pel_encode_options_dialect dialect, const char *s1, const char *s2,
-                             const char *canonical_key, const char *label)
+/* Parses two spellings of one option and checks that both reach the same
+ * canonical key and record digest. Stops before reading either result when
+ * allocation, parsing or the parameter count fails. */
+static void check_alias_pair(pel_encode_options_dialect dialect, const char *s1, size_t len1,
+                             const char *s2, size_t len2, const char *canonical_key,
+                             const char *label)
 {
     PelorusEncodeOptions *opts1 = alloc_opts();
     PelorusEncodeOptions *opts2 = alloc_opts();
+    int ok = opts1 != NULL && opts2 != NULL;
 
-    CHECK_LABEL(pel_encode_options_parse(dialect, s1, strlen(s1), opts1) == PEL_OK, label);
-    CHECK_LABEL(pel_encode_options_parse(dialect, s2, strlen(s2), opts2) == PEL_OK, label);
-    CHECK_LABEL(opts1->nb_params == 1 && opts2->nb_params == 1, label);
-    CHECK_LABEL(strcmp(opts1->params[0].key, canonical_key) == 0, label);
-    CHECK_LABEL(strcmp(opts2->params[0].key, canonical_key) == 0, label);
-    check_digests_equal(opts1, opts2, label);
+    CHECK_LABEL(ok, label);
+    if (ok) {
+        int ok1 = pel_encode_options_parse(dialect, s1, len1, opts1) == PEL_OK;
+        int ok2 = pel_encode_options_parse(dialect, s2, len2, opts2) == PEL_OK;
+
+        CHECK_LABEL(ok1, label);
+        CHECK_LABEL(ok2, label);
+        ok = ok1 && ok2 && opts1->nb_params == 1 && opts2->nb_params == 1;
+        CHECK_LABEL(ok, label);
+    }
+    if (ok) {
+        CHECK_LABEL(strcmp(opts1->params[0].key, canonical_key) == 0, label);
+        CHECK_LABEL(strcmp(opts2->params[0].key, canonical_key) == 0, label);
+        check_digests_equal(opts1, opts2, label);
+    }
     free(opts1);
     free(opts2);
 }
+
+/* The "" concatenation accepts string literals only, so sizeof is the
+ * literal's length and never a pointer size. */
+#define CHECK_ALIAS_PAIR(dialect, s1, s2, key, label)                                              \
+    check_alias_pair((dialect), "" s1 "", sizeof("" s1 "") - 1u, "" s2 "", sizeof("" s2 "") - 1u,  \
+                     (key), (label))
 
 static void test_ordering_and_sorting(void)
 {
@@ -150,9 +170,9 @@ static void test_ordering_and_sorting(void)
 
 static void test_normalisation_aliases(void)
 {
-    check_alias_pair(PEL_ENCODE_OPTIONS_X264, "b_adapt=2", "b-adapt=2", "b-adapt", "alias_b_adapt");
-    check_alias_pair(PEL_ENCODE_OPTIONS_X264, "ref=3", "frameref=3", "ref", "alias_frameref");
-    check_alias_pair(PEL_ENCODE_OPTIONS_X265, "ipratio=1.4", "ip-factor=1.4", "ipratio",
+    CHECK_ALIAS_PAIR(PEL_ENCODE_OPTIONS_X264, "b_adapt=2", "b-adapt=2", "b-adapt", "alias_b_adapt");
+    CHECK_ALIAS_PAIR(PEL_ENCODE_OPTIONS_X264, "ref=3", "frameref=3", "ref", "alias_frameref");
+    CHECK_ALIAS_PAIR(PEL_ENCODE_OPTIONS_X265, "ipratio=1.4", "ip-factor=1.4", "ipratio",
                      "alias_ipratio");
 }
 
