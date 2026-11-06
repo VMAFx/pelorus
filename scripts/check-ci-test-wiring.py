@@ -30,6 +30,7 @@ from datetime import date, timedelta
 import io
 import pathlib
 import re
+import shlex
 import sys
 import tempfile
 import tokenize
@@ -51,8 +52,6 @@ ROOT_GLOBS = (".github/workflows/*.yml", ".github/workflows/*.yaml")
 # executable such a call runs.
 MESON_GLOBS = ("meson.build", "libpelorus/**/meson.build", "tools/**/meson.build")
 MESON_TEST_LINE = re.compile(r"\bmeson\s+test\b([^\n&;|]*)")
-SUITE_ARG = re.compile(r"(?<![\w-])--suite(?:=|\s+)([\w-]+)")
-NO_SUITE_ARG = re.compile(r"(?<![\w-])--no-suite(?:=|\s+)([\w-]+)")
 MESON_VALUE_OPTIONS = frozenset(
     (
         "-k", "--maxfail", "--repeat", "--gdb-path", "--wrapper", "-C",
@@ -150,16 +149,49 @@ def strip_comment_lines(path: pathlib.Path, text: str) -> str:
     return text
 
 
+def _is_false_val(val: str) -> bool:
+    """True if val is a statically false YAML/GitHub Actions expression."""
+    trimmed = val.strip()
+    return trimmed in ("false", "'false'", '"false"') or bool(re.match(r"^\$\{\{\s*false\s*\}\}$", trimmed))
+
+
+def _step_key_indent(first_line: str, step_indent: int) -> int:
+    """Indent of the first mapping key after '- ' in a step item."""
+    lstripped = first_line.lstrip()
+    if lstripped.startswith("- "):
+        after = lstripped[2:]
+        key = after.lstrip()
+        if key:
+            return step_indent + 2 + (len(after) - len(key))
+    return step_indent + 2
+
+
+def _step_if_val(line: str, indent: int, step_indent: int, key_indent: int) -> str | None:
+    """Extract `if:` value when line is at step indent or step-key indent, else None."""
+    lstripped = line.lstrip()
+    if indent == step_indent and lstripped.startswith("- "):
+        m = re.match(r"^-\s+if:\s*(.+)$", lstripped)
+        return m.group(1) if m else None
+    if indent == key_indent and lstripped.startswith("if:"):
+        m = re.match(r"^if:\s*(.+)$", lstripped)
+        return m.group(1) if m else None
+    return None
+
+
 def _is_step_disabled(step_lines: list[str]) -> bool:
-    """True if step has an `if:` property whose value is literal false or ${{ false }}."""
+    """True if step has a step-level `if:` property whose value is statically false."""
+    if not step_lines:
+        return False
+    first = step_lines[0]
+    step_indent = len(first) - len(first.lstrip())
+    key_indent = _step_key_indent(first, step_indent)
     for line in step_lines:
-        m = re.match(r"^\s*(?:-\s+)?if:\s*(.+)$", line)
-        if m:
-            val = m.group(1).strip()
-            if val in ("false", "'false'", '"false"'):
-                return True
-            if re.match(r"^\$\{\{\s*false\s*\}\}$", val):
-                return True
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        val = _step_if_val(line, indent, step_indent, key_indent)
+        if val is not None and _is_false_val(val):
+            return True
     return False
 
 
@@ -185,15 +217,22 @@ def _check_steps_start(line: str, indent: int) -> tuple[bool, int]:
 
 
 def _handle_step_line(
-    line: str, indent: int, cur_indent: int, cur_step: list[str], out: list[str]
+    line: str, indent: int, step_indent: int, cur_step: list[str], out: list[str]
 ) -> tuple[list[str], int, bool]:
-    """Process a line inside steps; returns (cur_step, cur_indent, still_in_steps)."""
-    if line.lstrip().startswith("- "):
+    """Process a line inside steps; returns (cur_step, step_indent, still_in_steps)."""
+    if step_indent < 0:
+        if line.lstrip().startswith("- "):
+            _flush_step(out, cur_step)
+            return [line], indent, True
         _flush_step(out, cur_step)
-        return [line], indent, True
-    if cur_step and indent > cur_indent:
+        out.append(line)
+        return [], -1, False
+    if line.lstrip().startswith("- ") and indent == step_indent:
+        _flush_step(out, cur_step)
+        return [line], step_indent, True
+    if cur_step and indent > step_indent:
         cur_step.append(line)
-        return cur_step, cur_indent, True
+        return cur_step, step_indent, True
     _flush_step(out, cur_step)
     out.append(line)
     return [], -1, False
@@ -202,7 +241,7 @@ def _handle_step_line(
 def drop_disabled_steps(text: str) -> str:
     """Drop list items under `steps:` whose `if:` is literal false or ${{ false }}."""
     out: list[str] = []
-    in_steps, steps_indent, cur_indent = False, -1, -1
+    in_steps, steps_indent, step_indent = False, -1, -1
     cur_step: list[str] = []
     for line in text.splitlines():
         if not line.strip():
@@ -211,14 +250,16 @@ def drop_disabled_steps(text: str) -> str:
         indent = len(line) - len(line.lstrip())
         if in_steps and indent <= steps_indent:
             _flush_step(out, cur_step)
-            cur_step, in_steps, steps_indent = [], False, -1
+            cur_step, in_steps, steps_indent, step_indent = [], False, -1, -1
         if not in_steps:
             in_steps, steps_indent = _check_steps_start(line, indent)
             out.append(line)
             continue
-        cur_step, cur_indent, in_steps = _handle_step_line(
-            line, indent, cur_indent, cur_step, out
+        cur_step, step_indent, in_steps = _handle_step_line(
+            line, indent, step_indent, cur_step, out
         )
+        if not in_steps:
+            steps_indent = -1
     _flush_step(out, cur_step)
     return "\n".join(out)
 
@@ -294,42 +335,62 @@ def find_roots(repo_root: pathlib.Path) -> list[pathlib.Path]:
     return _glob_files(repo_root, ROOT_GLOBS)
 
 
-def _record_exclusion(opt: str, val: str, exc_names: set[str], exc_suites: set[str]) -> None:
-    """Record excluded test name or suite."""
-    if opt == "--exclude":
-        exc_names.add(val)
+def _tokenize_meson_args(args: str) -> list[str]:
+    """Tokenize meson test arguments with shlex, falling back to split on ValueError."""
+    try:
+        return shlex.split(args)
+    except ValueError:
+        return args.split()
+
+
+def _record_meson_option(
+    opt: str,
+    val: str,
+    suites: set[str],
+    exc_suites: set[str],
+    exc_names: set[str],
+) -> None:
+    """Record suite selection or exclusion from a meson option value."""
+    if not val:
+        return
+    if opt == "--suite":
+        suites.add(val)
     elif opt == "--no-suite":
         exc_suites.add(val)
+    elif opt == "--exclude":
+        exc_names.add(val)
 
 
-def _parse_meson_args(args: str) -> tuple[list[str], set[str], set[str]]:
-    """Extract positional test names, excluded test names, and excluded suites."""
+def _parse_meson_args(
+    tokens: list[str],
+) -> tuple[set[str], list[str], set[str], set[str]]:
+    """Extract suites, positional test names, excluded names, and excluded suites."""
+    suites: set[str] = set()
     names: list[str] = []
     excluded_names: set[str] = set()
     excluded_suites: set[str] = set()
     skip = False
     skip_opt = ""
-    for token in args.split():
+    for token in tokens:
         if skip:
-            _record_exclusion(skip_opt, token, excluded_names, excluded_suites)
+            _record_meson_option(skip_opt, token, suites, excluded_suites, excluded_names)
             skip, skip_opt = False, ""
             continue
         opt, has_val, val = token.partition("=")
         if opt in MESON_VALUE_OPTIONS:
             if has_val:
-                _record_exclusion(opt, val, excluded_names, excluded_suites)
+                _record_meson_option(opt, val, suites, excluded_suites, excluded_names)
             else:
                 skip, skip_opt = True, opt
         elif not token.startswith("-"):
             names.append(token)
-    return names, excluded_names, excluded_suites
+    return suites, names, excluded_names, excluded_suites
 
 
 def _parse_meson_line(args: str) -> MesonLine:
     """Extract (suites, names, all, excluded suites, excluded names) from one meson test line."""
-    suites = set(SUITE_ARG.findall(args))
-    pos_names, exc_names, exc_suites = _parse_meson_args(args)
-    exc_suites.update(NO_SUITE_ARG.findall(args))
+    tokens = _tokenize_meson_args(args)
+    suites, pos_names, exc_names, exc_suites = _parse_meson_args(tokens)
     names = set(pos_names)
     all_tests = not suites and not names
     return MesonLine(suites, names, all_tests, exc_suites, exc_names)
@@ -818,6 +879,53 @@ def _self_test_r3_hash() -> list[str]:
     return failures
 
 
+def _self_test_r4_quoted_args() -> list[str]:
+    """R4-1: Quoted arguments in meson test command stay one token."""
+    tree = {
+        ".github/workflows/ci.yml": (
+            "jobs:\n  t:\n    steps:\n"
+            '      - run: meson test -C build --suite fast --test-args "one slow two"\n'
+        ),
+        "meson.build": (
+            "s = executable('s', files('ffmpeg-patches/test/slow.c'))\n"
+            "test('slow', s, suite: 'gpu')\n"
+        ),
+        "ffmpeg-patches/test/slow.c": "int main(void) { return 0; }\n",
+    }
+    return _check_tree_orphans(tree, {"ffmpeg-patches/test/slow.c"}, "R4-1 quoted args")
+
+
+def _self_test_r4_nested_dash() -> list[str]:
+    """R4-2: Nested '- ' in block scalar does not desync step scan or disable step."""
+    failures: list[str] = []
+    tree_a = {
+        ".github/workflows/ci.yml": (
+            "jobs:\n  t:\n    steps:\n"
+            "      - run: |\n"
+            "          cat <<EOF\n"
+            "          - item\n"
+            "          EOF\n"
+            "      - if: false\n"
+            "        run: ffmpeg-patches/test/off.sh\n"
+        ),
+        "ffmpeg-patches/test/off.sh": "true\n",
+    }
+    failures.extend(_check_tree_orphans(tree_a, {"ffmpeg-patches/test/off.sh"}, "R4-2a nested dash off"))
+    tree_b = {
+        ".github/workflows/ci.yml": (
+            "jobs:\n  t:\n    steps:\n"
+            "      - run: |\n"
+            "          ffmpeg-patches/test/on.sh\n"
+            "          cat <<EOF\n"
+            "          - if: false\n"
+            "          EOF\n"
+        ),
+        "ffmpeg-patches/test/on.sh": "true\n",
+    }
+    failures.extend(_check_tree_orphans(tree_b, set(), "R4-2b nested dash on"))
+    return failures
+
+
 def run_self_test() -> int:
     """Run the planted cases; print each failure."""
     failures = (
@@ -833,6 +941,8 @@ def run_self_test() -> int:
         + _self_test_repro_a()
         + _self_test_repro_b()
         + _self_test_r3_hash()
+        + _self_test_r4_quoted_args()
+        + _self_test_r4_nested_dash()
     )
     for failure in failures:
         print(f"FAIL self-test: {failure}", file=sys.stderr)
