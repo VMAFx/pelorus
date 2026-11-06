@@ -198,6 +198,21 @@ test('skip-listings-self-test',
             '--self-test'],
      workdir: meson.project_source_root(),
      suite: 'fast')
+# bench-results v0.19: guard the ~5 % vf_pelorus_mc speedup by refusing a block_sad
+# without its subgroup reduction or with a barrier-tree loop.
+test('mc-sad-reduction',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-mc-sad-reduction.py'],
+     workdir: meson.project_source_root(),
+     # glslangValidator and spirv-dis run in sequence, 30 s deadline each.
+     timeout: 90,
+     suite: 'fast')
+test('mc-sad-reduction-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-mc-sad-reduction.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
 # Fleet exception category rule: every .standards.yaml exception entry must name
 # its category (A = stated in entry, B <= 3d, C <= 10d, D <= 120d, engine cap 90d).
 # scripts/check-exception-categories.py --self-test judges the live file against

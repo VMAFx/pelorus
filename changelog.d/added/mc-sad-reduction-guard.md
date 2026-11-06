@@ -1,0 +1,1 @@
+- The fast suite now guards the ~5 % `vf_pelorus_mc` subgroup SAD speedup (`docs/development/bench-results.md` v0.19): `scripts/check-mc-sad-reduction.py` refuses a `block_sad` in either mc shader without exactly one `subgroupAdd`, with more than two `barrier()` calls or with a stride-halving barrier-tree loop, and requires `OpGroupNonUniformFAdd` in the compiled SPIR-V.

@@ -58,5 +58,15 @@
     "test": "pelorus:synth-source-pixfmt-self-test",
     "reason": "SKIP: ffmpeg not found in PATH and --ffmpeg not provided",
     "issue": "#300: the synthetic source test needs ffmpeg on PATH; the core CI job installs it and requires both tests to run (ADR-0218), so only lanes without ffmpeg skip"
+  },
+  {
+    "test": "pelorus:mc-sad-reduction",
+    "reason": "SKIP: glslang/spirv-dis not found",
+    "issue": "the SPIR-V half of the check needs glslangValidator and spirv-dis; lanes that build shaders have both, the structural rules run before the skip"
+  },
+  {
+    "test": "pelorus:mc-sad-reduction-self-test",
+    "reason": "SKIP: glslang/spirv-dis not found",
+    "issue": "same script as mc-sad-reduction; --self-test returns before the SPIR-V step, so this skip cannot occur, but check-skip-listings reads the script, not the argument"
   }
 ]
