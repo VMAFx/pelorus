@@ -521,10 +521,13 @@ static QuadBench make_quad_bench(const float *v, int n)
 
 /* Built-in detector proof: verifies that the timer can cleanly separate O(n)
  * from O(n^2) scaling on this host. Ascending input gives deterministic break
- * at rank ceil(0.95*m)-1; m1=1000 and m2=4000 (4x) scale at 16x quadratically. */
+ * at rank ceil(0.95*m)-1; m1=1000 and m2=8000 (8x) scale at 64x quadratically
+ * and 8x linearly. The floor of 24 leaves room for noisy runners on both sides:
+ * a Windows runner measured 9.05 for a 4x step (16x in theory). */
 static void test_quadratic_detector(TestCtx *t)
 {
-    enum { M1 = 1000, M2 = 4000 };
+    enum { M1 = 1000, M2 = 8000 };
+    static const double proof_floor = 24.0;
     float *v1 = malloc((size_t)M1 * sizeof(*v1));
     float *v2 = malloc((size_t)M2 * sizeof(*v2));
     QuadBench q1;
@@ -551,17 +554,17 @@ static void test_quadratic_detector(TestCtx *t)
     t_m2 = measure_min_seconds(quad_bench_cb, &q2);
     ratio = t_m1 > 0.0 ? t_m2 / t_m1 : 0.0;
 
-    (void)printf("quadratic proof: t(1000)=%.3f ms, t(4000)=%.3f ms, ratio=%.2f\n", t_m1 * 1000.0,
+    (void)printf("quadratic proof: t(1000)=%.3f ms, t(8000)=%.3f ms, ratio=%.2f\n", t_m1 * 1000.0,
                  t_m2 * 1000.0, ratio);
 
-    if (ratio < 10.0) {
+    if (ratio < proof_floor) {
         (void)fprintf(stderr,
                       "mc_stats_test: timer cannot separate O(n) from O(n^2) on this host "
-                      "(ratio=%.2f < 10.0)\n",
-                      ratio);
+                      "(ratio=%.2f < %.1f)\n",
+                      ratio, proof_floor);
     }
     CHECK(t_m1 > 0.0 && t_m2 > 0.0); /* -1.0 = monotonic clock unreadable */
-    CHECK(ratio >= 10.0);
+    CHECK(ratio >= proof_floor);
 
     free(v1);
     free(v2);
