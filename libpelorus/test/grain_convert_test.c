@@ -25,6 +25,14 @@ static int g_fail;
         }                                                                                          \
     } while (0)
 
+#define CHECK_LABEL(cond, label)                                                                   \
+    do {                                                                                           \
+        if (!(cond)) {                                                                             \
+            (void)fprintf(stderr, "FAIL [%s] %s:%d: %s\n", (label), __FILE__, __LINE__, #cond);    \
+            g_fail++;                                                                              \
+        }                                                                                          \
+    } while (0)
+
 static int check_bytes_same(const void *a, const void *b, size_t size)
 {
     const uint8_t *ba = (const uint8_t *)a;
@@ -216,68 +224,60 @@ static void test_h274_single_interval_to_aom(void)
     CHECK(rel_diff < 0.0005);
 }
 
+static void check_h274_range_err(const PelorusH274GrainParams *h274, const char *label)
+{
+    PelorusGrainDescriptor desc;
+    uint8_t guard[sizeof(PelorusGrainDescriptor)];
+
+    (void)memset(guard, 0xA5, sizeof(guard));
+    (void)memset(&desc, 0xA5, sizeof(desc));
+    CHECK_LABEL(pel_grain_describe_h274(h274, &desc) == PEL_ERR_RANGE, label);
+    CHECK_LABEL(check_bytes_same(&desc, guard, sizeof(desc)), label);
+}
+
 static void test_h274_range_planted_cases(void)
 {
     PelorusH274GrainParams h274;
-    PelorusGrainDescriptor desc;
-    uint8_t guard[sizeof(PelorusGrainDescriptor)];
-    memset(guard, 0xA5, sizeof(guard));
 
     /* model_id 1 */
-    memset(&h274, 0, sizeof(h274));
+    (void)memset(&h274, 0, sizeof(h274));
     h274.log2_scale_factor = 2;
     h274.model_id = 1;
-    memset(&desc, 0xA5, sizeof(desc));
-    CHECK(pel_grain_describe_h274(&h274, &desc) == PEL_ERR_RANGE);
-    CHECK(check_bytes_same(&desc, guard, sizeof(desc)));
+    check_h274_range_err(&h274, "model_id 1");
 
     /* blending 1 */
     h274.model_id = 0;
     h274.blending_mode_id = 1;
-    memset(&desc, 0xA5, sizeof(desc));
-    CHECK(pel_grain_describe_h274(&h274, &desc) == PEL_ERR_RANGE);
-    CHECK(check_bytes_same(&desc, guard, sizeof(desc)));
+    check_h274_range_err(&h274, "blending 1");
 
     /* log2 1 and 8 */
     h274.blending_mode_id = 0;
     h274.log2_scale_factor = 1;
-    memset(&desc, 0xA5, sizeof(desc));
-    CHECK(pel_grain_describe_h274(&h274, &desc) == PEL_ERR_RANGE);
-    CHECK(check_bytes_same(&desc, guard, sizeof(desc)));
+    check_h274_range_err(&h274, "log2 1");
     h274.log2_scale_factor = 8;
-    memset(&desc, 0xA5, sizeof(desc));
-    CHECK(pel_grain_describe_h274(&h274, &desc) == PEL_ERR_RANGE);
-    CHECK(check_bytes_same(&desc, guard, sizeof(desc)));
+    check_h274_range_err(&h274, "log2 8");
 
     /* intervals 0 when present */
     h274.log2_scale_factor = 2;
     h274.component_model_present[0] = 1;
     h274.num_intensity_intervals[0] = 0;
-    memset(&desc, 0xA5, sizeof(desc));
-    CHECK(pel_grain_describe_h274(&h274, &desc) == PEL_ERR_RANGE);
-    CHECK(check_bytes_same(&desc, guard, sizeof(desc)));
+    check_h274_range_err(&h274, "intervals 0 when present");
 
     /* intervals 257 */
     h274.num_intensity_intervals[0] = 257;
-    memset(&desc, 0xA5, sizeof(desc));
-    CHECK(pel_grain_describe_h274(&h274, &desc) == PEL_ERR_RANGE);
-    CHECK(check_bytes_same(&desc, guard, sizeof(desc)));
+    check_h274_range_err(&h274, "intervals 257");
 
     /* num_model_values 7 */
     h274.num_intensity_intervals[0] = 1;
     h274.num_model_values[0] = 7;
-    memset(&desc, 0xA5, sizeof(desc));
-    CHECK(pel_grain_describe_h274(&h274, &desc) == PEL_ERR_RANGE);
-    CHECK(check_bytes_same(&desc, guard, sizeof(desc)));
+    check_h274_range_err(&h274, "num_model_values 7");
 }
 
 static void test_h274_interval_ranges_planted(void)
 {
     PelorusH274GrainParams h274;
-    PelorusGrainDescriptor desc;
-    uint8_t guard[sizeof(PelorusGrainDescriptor)];
-    memset(guard, 0xA5, sizeof(guard));
-    memset(&h274, 0, sizeof(h274));
+
+    (void)memset(&h274, 0, sizeof(h274));
     h274.log2_scale_factor = 2;
     h274.component_model_present[0] = 1;
     h274.num_intensity_intervals[0] = 1;
@@ -288,32 +288,22 @@ static void test_h274_interval_ranges_planted(void)
     h274.intensity_interval_upper_bound[0][0] = 50;
     h274.comp_model_value[0][0][1] = 8;
     h274.comp_model_value[0][0][2] = 8;
-    memset(&desc, 0xA5, sizeof(desc));
-    CHECK(pel_grain_describe_h274(&h274, &desc) == PEL_ERR_RANGE);
-    CHECK(check_bytes_same(&desc, guard, sizeof(desc)));
+    check_h274_range_err(&h274, "lower > upper");
 
     /* scale 256 and -1 */
     h274.intensity_interval_lower_bound[0][0] = 0;
     h274.intensity_interval_upper_bound[0][0] = 100;
     h274.comp_model_value[0][0][0] = 256;
-    memset(&desc, 0xA5, sizeof(desc));
-    CHECK(pel_grain_describe_h274(&h274, &desc) == PEL_ERR_RANGE);
-    CHECK(check_bytes_same(&desc, guard, sizeof(desc)));
+    check_h274_range_err(&h274, "scale 256");
     h274.comp_model_value[0][0][0] = -1;
-    memset(&desc, 0xA5, sizeof(desc));
-    CHECK(pel_grain_describe_h274(&h274, &desc) == PEL_ERR_RANGE);
-    CHECK(check_bytes_same(&desc, guard, sizeof(desc)));
+    check_h274_range_err(&h274, "scale -1");
 
     /* cutoff 1 and 15 */
     h274.comp_model_value[0][0][0] = 40;
     h274.comp_model_value[0][0][1] = 1;
-    memset(&desc, 0xA5, sizeof(desc));
-    CHECK(pel_grain_describe_h274(&h274, &desc) == PEL_ERR_RANGE);
-    CHECK(check_bytes_same(&desc, guard, sizeof(desc)));
+    check_h274_range_err(&h274, "cutoff 1");
     h274.comp_model_value[0][0][1] = 15;
-    memset(&desc, 0xA5, sizeof(desc));
-    CHECK(pel_grain_describe_h274(&h274, &desc) == PEL_ERR_RANGE);
-    CHECK(check_bytes_same(&desc, guard, sizeof(desc)));
+    check_h274_range_err(&h274, "cutoff 15");
 
     /* overlapping intervals [0,100], [100,200] */
     h274.comp_model_value[0][0][1] = 8;
@@ -325,9 +315,7 @@ static void test_h274_interval_ranges_planted(void)
     h274.comp_model_value[0][1][0] = 40;
     h274.comp_model_value[0][1][1] = 8;
     h274.comp_model_value[0][1][2] = 8;
-    memset(&desc, 0xA5, sizeof(desc));
-    CHECK(pel_grain_describe_h274(&h274, &desc) == PEL_ERR_RANGE);
-    CHECK(check_bytes_same(&desc, guard, sizeof(desc)));
+    check_h274_range_err(&h274, "overlapping intervals");
 }
 
 static void test_aom_range_and_null_rejections(void)

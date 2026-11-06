@@ -1,0 +1,1 @@
+- The libpelorus test files for the encoder telemetry adapters, the x265 CSV characterization, the encode options and the grain conversion share their repeated parse-and-check blocks through local helpers; the 10 duplicate groups the dedupe scan reported in these files are gone and every case keeps its expectations.

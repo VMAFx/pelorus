@@ -24,6 +24,14 @@ static int g_fail;
         }                                                                                          \
     } while (0)
 
+#define CHECK_LABEL(cond, label)                                                                   \
+    do {                                                                                           \
+        if (!(cond)) {                                                                             \
+            (void)fprintf(stderr, "FAIL [%s] %s:%d: %s\n", (label), __FILE__, __LINE__, #cond);    \
+            g_fail++;                                                                              \
+        }                                                                                          \
+    } while (0)
+
 static PelorusEncodeOptions *alloc_opts(void)
 {
     PelorusEncodeOptions *opts = (PelorusEncodeOptions *)calloc(1, sizeof(PelorusEncodeOptions));
@@ -79,12 +87,66 @@ static void test_sizeof_options(void)
     CHECK(sizeof(PelorusEncodeOptions) == 278552);
 }
 
+static void check_digests_equal(const PelorusEncodeOptions *opts1,
+                                const PelorusEncodeOptions *opts2, const char *label)
+{
+    char d1[72];
+    char d2[72];
+
+    pel_result r1 = build_digest(opts1, d1);
+    pel_result r2 = build_digest(opts2, d2);
+
+    CHECK_LABEL(r1 == PEL_OK, label);
+    CHECK_LABEL(r2 == PEL_OK, label);
+    if (r1 != PEL_OK || r2 != PEL_OK) {
+        return;
+    }
+    if (strcmp(d1, d2) != 0) {
+        (void)fprintf(stderr, "%s: digest mismatch %s != %s\n", label, d1, d2);
+    }
+    CHECK_LABEL(strcmp(d1, d2) == 0, label);
+}
+
+/* Parses two spellings of one option and checks that both reach the same
+ * canonical key and record digest. Stops before reading either result when
+ * allocation, parsing or the parameter count fails. */
+static void check_alias_pair(pel_encode_options_dialect dialect, const char *s1, size_t len1,
+                             const char *s2, size_t len2, const char *canonical_key,
+                             const char *label)
+{
+    PelorusEncodeOptions *opts1 = alloc_opts();
+    PelorusEncodeOptions *opts2 = alloc_opts();
+    int ok = opts1 != NULL && opts2 != NULL;
+
+    CHECK_LABEL(ok, label);
+    if (ok) {
+        int ok1 = pel_encode_options_parse(dialect, s1, len1, opts1) == PEL_OK;
+        int ok2 = pel_encode_options_parse(dialect, s2, len2, opts2) == PEL_OK;
+
+        CHECK_LABEL(ok1, label);
+        CHECK_LABEL(ok2, label);
+        ok = ok1 && ok2 && opts1->nb_params == 1 && opts2->nb_params == 1;
+        CHECK_LABEL(ok, label);
+    }
+    if (ok) {
+        CHECK_LABEL(strcmp(opts1->params[0].key, canonical_key) == 0, label);
+        CHECK_LABEL(strcmp(opts2->params[0].key, canonical_key) == 0, label);
+        check_digests_equal(opts1, opts2, label);
+    }
+    free(opts1);
+    free(opts2);
+}
+
+/* The "" concatenation accepts string literals only, so sizeof is the
+ * literal's length and never a pointer size. */
+#define CHECK_ALIAS_PAIR(dialect, s1, s2, key, label)                                              \
+    check_alias_pair((dialect), "" s1 "", sizeof("" s1 "") - 1u, "" s2 "", sizeof("" s2 "") - 1u,  \
+                     (key), (label))
+
 static void test_ordering_and_sorting(void)
 {
     PelorusEncodeOptions *opts1 = alloc_opts();
     PelorusEncodeOptions *opts2 = alloc_opts();
-    char d1[72];
-    char d2[72];
     const char s1[] = "ref=3:bframes=2:crf=23";
     const char s2[] = "crf=23:ref=3:bframes=2";
 
@@ -101,52 +163,17 @@ static void test_ordering_and_sorting(void)
     CHECK(strcmp(opts2->params[1].key, "crf") == 0);
     CHECK(strcmp(opts2->params[2].key, "ref") == 0);
 
-    CHECK(build_digest(opts1, d1) == PEL_OK);
-    CHECK(build_digest(opts2, d2) == PEL_OK);
-    CHECK(strcmp(d1, d2) == 0);
+    check_digests_equal(opts1, opts2, "test_ordering_and_sorting");
     free(opts1);
     free(opts2);
 }
 
 static void test_normalisation_aliases(void)
 {
-    PelorusEncodeOptions *opts1 = alloc_opts();
-    PelorusEncodeOptions *opts2 = alloc_opts();
-    char d1[72];
-    char d2[72];
-
-    const char s1[] = "b_adapt=2";
-    const char s2[] = "b-adapt=2";
-    CHECK(pel_encode_options_parse(PEL_ENCODE_OPTIONS_X264, s1, strlen(s1), opts1) == PEL_OK);
-    CHECK(pel_encode_options_parse(PEL_ENCODE_OPTIONS_X264, s2, strlen(s2), opts2) == PEL_OK);
-    CHECK(opts1->nb_params == 1 && opts2->nb_params == 1);
-    CHECK(strcmp(opts1->params[0].key, "b-adapt") == 0);
-    CHECK(strcmp(opts2->params[0].key, "b-adapt") == 0);
-    CHECK(build_digest(opts1, d1) == PEL_OK);
-    CHECK(build_digest(opts2, d2) == PEL_OK);
-    CHECK(strcmp(d1, d2) == 0);
-
-    const char s3[] = "ref=3";
-    const char s4[] = "frameref=3";
-    CHECK(pel_encode_options_parse(PEL_ENCODE_OPTIONS_X264, s3, strlen(s3), opts1) == PEL_OK);
-    CHECK(pel_encode_options_parse(PEL_ENCODE_OPTIONS_X264, s4, strlen(s4), opts2) == PEL_OK);
-    CHECK(strcmp(opts1->params[0].key, "ref") == 0);
-    CHECK(strcmp(opts2->params[0].key, "ref") == 0);
-    CHECK(build_digest(opts1, d1) == PEL_OK);
-    CHECK(build_digest(opts2, d2) == PEL_OK);
-    CHECK(strcmp(d1, d2) == 0);
-
-    const char s5[] = "ipratio=1.4";
-    const char s6[] = "ip-factor=1.4";
-    CHECK(pel_encode_options_parse(PEL_ENCODE_OPTIONS_X265, s5, strlen(s5), opts1) == PEL_OK);
-    CHECK(pel_encode_options_parse(PEL_ENCODE_OPTIONS_X265, s6, strlen(s6), opts2) == PEL_OK);
-    CHECK(strcmp(opts1->params[0].key, "ipratio") == 0);
-    CHECK(strcmp(opts2->params[0].key, "ipratio") == 0);
-    CHECK(build_digest(opts1, d1) == PEL_OK);
-    CHECK(build_digest(opts2, d2) == PEL_OK);
-    CHECK(strcmp(d1, d2) == 0);
-    free(opts1);
-    free(opts2);
+    CHECK_ALIAS_PAIR(PEL_ENCODE_OPTIONS_X264, "b_adapt=2", "b-adapt=2", "b-adapt", "alias_b_adapt");
+    CHECK_ALIAS_PAIR(PEL_ENCODE_OPTIONS_X264, "ref=3", "frameref=3", "ref", "alias_frameref");
+    CHECK_ALIAS_PAIR(PEL_ENCODE_OPTIONS_X265, "ipratio=1.4", "ip-factor=1.4", "ipratio",
+                     "alias_ipratio");
 }
 
 static void test_boolean_and_integer_spellings(void)
