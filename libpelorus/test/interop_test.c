@@ -2327,7 +2327,11 @@ static void test_carrier_decode_budget(void)
 {
     const size_t tail = 49080u; /* 49 144 - 16 (UUID) - 48 (kat_image) */
     const int reps = 200;
+#if defined(__SANITIZE_ADDRESS__) || (defined(__has_feature) && __has_feature(address_sanitizer))
+    const double budget_sec = 5.0e-3; /* ASan adds ~10x; 5 ms catches O(n^2) */
+#else
     const double budget_sec = 1.0e-3; /* 1.0 ms: 6x the 0.17 ms claim */
+#endif
     size_t blen = 0;
     uint8_t *blob = carrier_test_blob(tail, fill_zero, &blen);
     size_t clen = 0;
