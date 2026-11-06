@@ -53,9 +53,10 @@ DEFAULT_SHADERS = [
 ]
 REF_SHADER = ROOT / "libpelorus" / "shaders" / "pelorus_mc.comp"
 
-# A halving step in a for header: x >>= 1, x /= 2, x = x >> 1, x = x / 2.
+# A halving step statement: x >>= 1, x /= 2, x = x >> 1, x = x / 2. Anchored
+# at the statement start, so x += n >> 1 or i <= n >> 1 is no halving step.
 HALVING_PATTERN = re.compile(
-    r">>=|/=\s*2u?\b|=\s*[A-Za-z_]\w*\s*(?:>>\s*1u?|/\s*2u?)\b"
+    r"^[A-Za-z_]\w*\s*(?:>>=|/=\s*2u?\b|=\s*[A-Za-z_]\w*\s*(?:>>\s*1u?|/\s*2u?)\b)"
 )
 SUBGROUP_ADD_PATTERN = re.compile(r"\bsubgroupAdd\s*\(")
 BARRIER_PATTERN = re.compile(r"\bbarrier\s*\(\s*\)")
@@ -177,39 +178,63 @@ def check_barrier_count(
     )
 
 
+def _matching_close(text: str, start: int, opener: str, closer: str) -> int:
+    """Return the index of the closer that balances an opener before start."""
+    depth = 1
+    j = start
+    limit = min(len(text), start + MAX_SCAN_CHARS)
+    while j < limit:
+        if text[j] == opener:
+            depth += 1
+        elif text[j] == closer:
+            depth -= 1
+            if depth == 0:
+                return j
+        j += 1
+    return j
+
+
+def _halving_statement(statements: list[str]) -> str | None:
+    """Return the first statement that halves a variable, if any."""
+    for statement in statements:
+        candidate = statement.strip().lstrip("{}").strip()
+        if HALVING_PATTERN.search(candidate):
+            return candidate
+    return None
+
+
+def _loop_steps(body: str, keyword: str, header_end: int) -> list[str]:
+    """Statements that step a loop: the for step clause or the while body."""
+    header = body[:header_end]
+    if keyword == "for":
+        clauses = header.split(";")
+        return clauses[2].split(",") if len(clauses) == 3 else []
+    rest = body[header_end + 1 :].lstrip()
+    if not rest.startswith("{"):
+        return [rest.split(";", 1)[0]]
+    loop_body = rest[1 : _matching_close(rest, 1, "{", "}")]
+    return re.split(r"[;{}]", loop_body)
+
+
 def check_no_stride_halving_loop(
     body: str, body_offset: int, full_text: str
 ) -> tuple[str, int, str] | None:
-    """Rule (c): verify that no for loop step clause halves a stride.
+    """Rule (c): verify that no loop halves a stride per iteration.
 
-    Only the third clause of a for header is read: a halving in the init or
-    the condition (i = n / 2, i < n >> 1) is no step. A while header holds
-    no step clause; a while-based tree still trips rule (b).
+    A for loop is read in its third header clause only, a while loop in the
+    statements of its body: a halving in a for init or condition
+    (i = n / 2, i < n >> 1) is no step.
     """
     for match in LOOP_START_PATTERN.finditer(body):
-        start = match.end()
-        depth = 1
-        j = start
-        steps = 0
-        while j < len(body) and steps < MAX_SCAN_CHARS:
-            steps += 1
-            if body[j] == "(":
-                depth += 1
-            elif body[j] == ")":
-                depth -= 1
-                if depth == 0:
-                    break
-            j += 1
-        header = body[start:j]
-        clauses = header.split(";")
-        if len(clauses) != 3:
-            continue
-        if HALVING_PATTERN.search(clauses[2]):
+        tail = body[match.end() :]
+        header_end = _matching_close(tail, 0, "(", ")")
+        step = _halving_statement(_loop_steps(tail, match.group(1), header_end))
+        if step is not None:
             line = full_text[: body_offset + match.start()].count("\n") + 1
             return (
                 "c",
                 line,
-                f"rule (c) refused: loop step halves a stride: {header.strip()}",
+                f"rule (c) refused: {match.group(1)} loop halves a stride: {step}",
             )
     return None
 
@@ -379,6 +404,27 @@ def self_test_cases() -> list[tuple[str, str, set[str]]]:
             "step halving by assignment",
             BARRIER_TREE_BLOCK_SAD.replace("stride >>= 1u", "stride = stride >> 1u"),
             {"b", "c"},
+        ),
+        (
+            "while-loop tree with two barriers",
+            BARRIER_TREE_BLOCK_SAD.replace(
+                "for (uint stride = (BLOCK_DIM * BLOCK_DIM) / 2u; stride > 0u; stride >>= 1u) {",
+                "uint stride = (BLOCK_DIM * BLOCK_DIM) / 2u;\n    while (stride > 0u) {",
+            )
+            .replace(
+                "        barrier();\n    }",
+                "        barrier();\n        stride >>= 1u;\n    }",
+            )
+            .replace("    }\n    barrier();\n    float sg", "    }\n    float sg"),
+            {"c"},
+        ),
+        (
+            "while loop without halving",
+            VALID_BLOCK_SAD.replace(
+                "        s_sad0 = t;",
+                "        uint k = 0u;\n        while (k < 2u) { uint h = k >> 1u; t += float(h); k = k + 1u; }\n        s_sad0 = t;",
+            ),
+            set(),
         ),
         (
             "subgroupAdd removed",
