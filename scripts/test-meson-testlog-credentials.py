@@ -200,6 +200,17 @@ def _check_password_url(check_mod: ModuleType) -> list[str]:
             _fail(
                 failures, f"URL with a port, no password: expected exit 0, got {code}"
             )
+        log_file.write_text(
+            "CI_SERVER_URL=https://gitlab.example:8443?email=dev@example.org\n"
+            "DOCS_URL=https://docs.example:443#owner@example.org\n",
+            encoding="utf-8",
+        )
+        code, _, _ = _run_check(check_mod, Path(tmp_str))
+        if code != 0:
+            _fail(
+                failures,
+                f"port, then query or fragment with @: expected exit 0, got {code}",
+            )
     return failures
 
 
