@@ -57,7 +57,9 @@ REGISTRY_MIN_DOTS = 2
 # A GitLab SAST rule id has the form <language>_<category>_rule-<name>, with no dots.
 # Codacy's Opengrep engine reports these rules (for example
 # python_exec_rule-start-process-with-no-shell) and honours a marker naming them.
-GITLAB_SAST_RULE_ID = re.compile(r"^[a-z0-9]+_[a-z0-9]+_rule-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$")
+GITLAB_SAST_RULE_ID = re.compile(
+    r"^[a-z0-9]+_[a-z0-9]+(?:-[a-z0-9]+)*_rule-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+)
 
 
 def local_rule_ids(root: Path) -> frozenset[str]:
@@ -230,7 +232,7 @@ VALID = '''\
 import subprocess  # nosec B404 - fixed argv, no shell
 def run(argv):
     return subprocess.run(  # nosec B603 - list argv  # nosemgrep: python.lang.security.audit.x.x - list argv, no shell
-        argv,  # nosemgrep: python.lang.security.audit.y.y, local-rule, python_exec_rule-start-process-with-no-shell, python_crypto_rule-HTTPConnectionPool - argv is fixed
+        argv,  # nosemgrep: python.lang.security.audit.y.y, local-rule, python_exec_rule-start-process-with-no-shell, python_crypto_rule-HTTPConnectionPool, python_file-permissions_rule-general-bad-permission - argv is fixed
         timeout=5,
     )
 TEXT = "# nosemgrep"  # the marker word in a string literal is text

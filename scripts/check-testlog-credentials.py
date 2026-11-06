@@ -31,8 +31,10 @@ CREDENTIAL_VALUE_PATTERN = re.compile(
     r"|\bgithub_pat_[A-Za-z0-9_]{22,}"
     r"|\bsk-[A-Za-z0-9_-]{20,}"
     r"|\bAKIA[0-9A-Z]{16}\b"
-    # A URL whose userinfo holds a password: scheme://user:password@host.
-    r"|\b[a-z][a-z0-9+.-]{1,30}://[^\s:/?#@]{1,256}:[^\s/?#@]{1,256}@"
+    # A URL whose userinfo holds a password: scheme://user:password@host. The
+    # password may hold an unencoded ? or # (SQLAlchemy accepts that); a port
+    # followed by a query or fragment (host:8443?mail=a@b) is not a password.
+    r"|\b[a-z][a-z0-9+.-]{1,30}://[^\s:/?#@]{1,256}:(?!\d{1,5}[?#])[^\s/@]{1,256}@"
 )
 LOG_NAME_PATTERN = re.compile(r"^testlog.*\.(?:txt|json)$")
 SKIP_DIRECTORIES = frozenset({".git", "node_modules", ".venv", "__pycache__"})

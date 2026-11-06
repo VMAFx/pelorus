@@ -192,6 +192,17 @@ def _check_password_url(check_mod: ModuleType) -> list[str]:
                 failures,
                 f"password URL: expected exit 1 without the value, got code={code}",
             )
+        for secret in ("pa" + "?ss", "pa" + "#ss"):
+            log_file.write_text(
+                "SQLALCHEMY_URL=postgresql://user:" + secret + "@db/app\n",
+                encoding="utf-8",
+            )
+            code, out_text, _ = _run_check(check_mod, Path(tmp_str))
+            if code != 1 or secret in out_text:
+                _fail(
+                    failures,
+                    f"password with ? or #: expected exit 1 without the value, got code={code}",
+                )
         log_file.write_text(
             "CI_SERVER_URL=https://gitlab.example:8443/group\n", encoding="utf-8"
         )
