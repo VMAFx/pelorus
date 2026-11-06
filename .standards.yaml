@@ -63,6 +63,10 @@ exceptions:
     path: .config/lefthook/scripts/common.py
     reason: "category B, 3 days: engine-shipped empty excepts at lines 843 and 866 fail scripts/check-python-empty-except.py and raise code-scanning alert #59 (py/empty-except); engine finding engine-adopted-hook-bot-findings-20261102, fix tracked in cordanaLLM/praetor#1768 (renewed 2026-11-06: still open, engine cd87b5e96469 ships the same file)"
     expires: "2026-11-09"
+  - rule: job-timeout
+    path: .github/workflows/release.yml
+    reason: "category D, capped at the engine maximum of 90 days: jobs ci and build are reusable-workflow callers (uses: ./.github/workflows/ci.yml and release-build.yml); GitHub Actions does not support timeout-minutes on caller jobs — the called workflows' per-job timeouts (ci.yml 15–60 min, release-build.yml 45 min) are the binding constraint"
+    expires: "2027-02-04"
   - rule: HISS-19
     path: libpelorus/src/qp_report_csv.c
     reason: "category D, capped at the engine maximum of 90 days: second x265 CSV reader kept beside pel_tlm_parse_x265_csv because this file is VMAFx-mirrored (libpelorus/mirror-paths.txt:12, ADR-0197) and a shared helper would change the mirrored file; libpelorus/test/x265_csv_characterization_test.c pins both readers; revisit when VMAFx drops the host-C mirror (VMAFx/pelorus#496)"
