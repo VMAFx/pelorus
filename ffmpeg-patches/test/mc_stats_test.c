@@ -19,11 +19,23 @@
  * libavutil clip macros spelled out.
  */
 
+/* clock_gettime(CLOCK_MONOTONIC) is POSIX, not C11; Windows uses
+ * QueryPerformanceCounter instead (see mono_now). */
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 #include "pelorus_mc_stats.h"
 #include "test_float_bits.h"
@@ -327,6 +339,237 @@ static void test_bsize_log2_unnamed(TestCtx *t)
     CHECK(pel_mc_bsize_log2(-8) == 0);
 }
 
+typedef void (*bench_fn)(void *userdata);
+
+/* Reads a monotonic clock in seconds. Returns 0 when the clock cannot be read,
+ * so a timing never rests on a failed read or on a wall clock that NTP steps. */
+static int mono_now(double *out)
+{
+#ifdef _WIN32
+    LARGE_INTEGER freq;
+    LARGE_INTEGER now;
+
+    if (!QueryPerformanceFrequency(&freq) || freq.QuadPart <= 0 || !QueryPerformanceCounter(&now)) {
+        return 0;
+    }
+    *out = (double)now.QuadPart / (double)freq.QuadPart;
+#else
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return 0;
+    }
+    *out = (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+#endif
+    return 1;
+}
+
+/* Timing helper: measures the minimum elapsed time per call over R samples
+ * on the monotonic clock (mono_now). Each sample loops fn() until at
+ * least 2 ms has elapsed, then divides elapsed time by call count. Loops are
+ * bounded by BENCH_MAX_CALLS per sample and BENCH_R_SAMPLES to satisfy HISS-02.
+ * Taking the minimum over samples filters out latency spikes on shared runners.
+ * Returns -1.0 when the clock cannot be read. */
+static double measure_min_seconds(bench_fn fn, void *userdata)
+{
+    enum { BENCH_R_SAMPLES = 5, BENCH_MAX_CALLS = 1 << 20 };
+    static const double min_sample_sec = 0.002;
+    double min_per_call = 1e9;
+    int r;
+
+    for (r = 0; r < BENCH_R_SAMPLES; r++) {
+        double t0;
+        double t1;
+        int calls = 0;
+        double elapsed;
+
+        if (!mono_now(&t0)) {
+            return -1.0;
+        }
+        do {
+            fn(userdata);
+            calls++;
+            if (!mono_now(&t1)) {
+                return -1.0;
+            }
+            elapsed = t1 - t0;
+        } while (elapsed < min_sample_sec && calls < BENCH_MAX_CALLS);
+
+        if (calls > 0) {
+            double per_call = elapsed / (double)calls;
+            if (per_call < min_per_call) {
+                min_per_call = per_call;
+            }
+        }
+    }
+    return min_per_call;
+}
+
+typedef struct HostPathBench {
+    const int32_t *mvx;
+    const int32_t *mvy;
+    float *mags;
+    int32_t *prev;
+    int32_t gx;
+    int32_t gy;
+    volatile float p95;
+    int n;
+} HostPathBench;
+
+/* Host-side per-frame path from vf_pelorus_mc_vulkan (attach_motion):
+ * 1. Compute MV magnitudes in pixels from Q2 vectors.
+ * 2. Select 95th percentile magnitude via O(n) radix select.
+ * 3. Round Q2 MVs to integer-pel predictors for the next frame's search. */
+static void host_frame_path(void *userdata)
+{
+    HostPathBench *b = (HostPathBench *)userdata;
+    int n = b->n;
+    int i;
+
+    for (i = 0; i < n; i++) {
+        b->mags[i] = pel_mc_mv_mag_px(b->mvx[i], b->mvy[i]);
+    }
+    b->p95 = pel_mc_p95_nonneg(b->mags, n);
+    pel_mc_build_predictors(b->mvx, b->mvy, n, b->prev, &b->gx, &b->gy);
+}
+
+static HostPathBench make_host_bench(const int32_t *mvx, const int32_t *mvy, float *mags,
+                                     int32_t *prev, int n)
+{
+    HostPathBench b;
+    memset(&b, 0, sizeof(b));
+    b.mvx = mvx;
+    b.mvy = mvy;
+    b.mags = mags;
+    b.prev = prev;
+    b.n = n;
+    return b;
+}
+
+/* Fast-suite regression threshold: asserts linear scaling of the host path
+ * between 1080p and 2160p bsize=8 grids (ratio <= 8 for a 4x grid) and an
+ * absolute 100 ms ceiling at 2160p to prevent regression to O(n^2) (BUG-014). */
+static void test_host_path_linear(TestCtx *t)
+{
+    enum { N1 = 32400, N2 = 129600 };
+    int32_t *mvx = malloc((size_t)N2 * sizeof(*mvx));
+    int32_t *mvy = malloc((size_t)N2 * sizeof(*mvy));
+    float *mags = malloc((size_t)N2 * sizeof(*mags));
+    int32_t *prev = malloc((size_t)(2 * N2) * sizeof(*prev));
+    HostPathBench b1;
+    HostPathBench b2;
+    double t_n1;
+    double t_n2;
+    double ratio;
+    int i;
+
+    if (!mvx || !mvy || !mags || !prev) {
+        (void)fprintf(stderr, "mc_stats_test: out of memory for host path benchmark\n");
+        t->failures++;
+        free(mvx);
+        free(mvy);
+        free(mags);
+        free(prev);
+        return;
+    }
+
+    for (i = 0; i < N2; i++) {
+        mvx[i] = rng_range(t, -98, 98);
+        mvy[i] = rng_range(t, -98, 98);
+    }
+
+    b1 = make_host_bench(mvx, mvy, mags, prev, N1);
+    b2 = make_host_bench(mvx, mvy, mags, prev, N2);
+
+    t_n1 = measure_min_seconds(host_frame_path, &b1);
+    t_n2 = measure_min_seconds(host_frame_path, &b2);
+    ratio = t_n1 > 0.0 ? t_n2 / t_n1 : 999.0;
+
+    (void)printf("host path: t(32400)=%.3f ms, t(129600)=%.3f ms, ratio=%.2f\n", t_n1 * 1000.0,
+                 t_n2 * 1000.0, ratio);
+
+    CHECK(t_n1 > 0.0 && t_n2 > 0.0); /* -1.0 = monotonic clock unreadable */
+    CHECK(ratio <= 8.0);
+    CHECK(t_n2 <= 0.100);
+
+    free(mvx);
+    free(mvy);
+    free(mags);
+    free(prev);
+}
+
+typedef struct QuadBench {
+    const float *v;
+    volatile float p95;
+    int n;
+} QuadBench;
+
+static void quad_bench_cb(void *userdata)
+{
+    QuadBench *q = (QuadBench *)userdata;
+    q->p95 = ref_p95_quadratic(q->v, q->n);
+}
+
+static QuadBench make_quad_bench(const float *v, int n)
+{
+    QuadBench q;
+    memset(&q, 0, sizeof(q));
+    q.v = v;
+    q.n = n;
+    return q;
+}
+
+/* Built-in detector proof: verifies that the timer can cleanly separate O(n)
+ * from O(n^2) scaling on this host. Ascending input gives deterministic break
+ * at rank ceil(0.95*m)-1; m1=1000 and m2=8000 (8x) scale at 64x quadratically
+ * and 8x linearly. The floor of 24 leaves room for noisy runners on both sides:
+ * a Windows runner measured 9.05 for a 4x step (16x in theory). */
+static void test_quadratic_detector(TestCtx *t)
+{
+    enum { M1 = 1000, M2 = 8000 };
+    static const double proof_floor = 24.0;
+    float *v1 = malloc((size_t)M1 * sizeof(*v1));
+    float *v2 = malloc((size_t)M2 * sizeof(*v2));
+    QuadBench q1;
+    QuadBench q2;
+    double t_m1;
+    double t_m2;
+    double ratio;
+
+    if (!v1 || !v2) {
+        (void)fprintf(stderr, "mc_stats_test: out of memory for quadratic benchmark\n");
+        t->failures++;
+        free(v1);
+        free(v2);
+        return;
+    }
+
+    fill(t, v1, M1, GEN_ASC);
+    fill(t, v2, M2, GEN_ASC);
+
+    q1 = make_quad_bench(v1, M1);
+    q2 = make_quad_bench(v2, M2);
+
+    t_m1 = measure_min_seconds(quad_bench_cb, &q1);
+    t_m2 = measure_min_seconds(quad_bench_cb, &q2);
+    ratio = t_m1 > 0.0 ? t_m2 / t_m1 : 0.0;
+
+    (void)printf("quadratic proof: t(1000)=%.3f ms, t(8000)=%.3f ms, ratio=%.2f\n", t_m1 * 1000.0,
+                 t_m2 * 1000.0, ratio);
+
+    if (ratio < proof_floor) {
+        (void)fprintf(stderr,
+                      "mc_stats_test: timer cannot separate O(n) from O(n^2) on this host "
+                      "(ratio=%.2f < %.1f)\n",
+                      ratio, proof_floor);
+    }
+    CHECK(t_m1 > 0.0 && t_m2 > 0.0); /* -1.0 = monotonic clock unreadable */
+    CHECK(ratio >= proof_floor);
+
+    free(v1);
+    free(v2);
+}
+
 int main(void)
 {
     TestCtx ctx = {0x9E3779B97F4A7C15ull, 0};
@@ -345,6 +588,8 @@ int main(void)
     test_select_every_rank(&ctx);
     test_p95_matches_quadratic(&ctx, v);
     free(v);
+    test_quadratic_detector(&ctx);
+    test_host_path_linear(&ctx);
     if (ctx.failures) {
         (void)fprintf(stderr, "mc_stats_test: %d failure(s)\n", ctx.failures);
         return 1;
