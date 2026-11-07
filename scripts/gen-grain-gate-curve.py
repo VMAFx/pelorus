@@ -159,8 +159,8 @@ def write_table(tables: list[list[tuple[float, float]]], source_path: pathlib.Pa
     new_text = text[:span_start] + new_body + text[span_end:]
     fd, tmp = tempfile.mkstemp(dir=source_path.parent, suffix=".tmp")
     try:
-        os.write(fd, new_text.encode("utf-8"))
-        os.close(fd)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(new_text)
         fd = -1
         os.replace(tmp, source_path)
     except BaseException:

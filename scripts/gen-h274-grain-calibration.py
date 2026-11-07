@@ -279,8 +279,8 @@ def write_stats(rows: list[tuple[int, int, float, float, float]], source_path: p
     text = text[:m.start(1)] + new_body + text[m.end(1):]
     fd, tmp = tempfile.mkstemp(dir=source_path.parent, suffix=".tmp")
     try:
-        os.write(fd, text.encode("utf-8"))
-        os.close(fd)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
         fd = -1
         os.replace(tmp, source_path)
     except BaseException:
@@ -378,8 +378,8 @@ def write_filter(rows: list[tuple[int, float, float]], source_path: pathlib.Path
     text = text[:m.start(1)] + new_body + text[m.end(1):]
     fd, tmp = tempfile.mkstemp(dir=source_path.parent, suffix=".tmp")
     try:
-        os.write(fd, text.encode("utf-8"))
-        os.close(fd)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
         fd = -1
         os.replace(tmp, source_path)
     except BaseException:

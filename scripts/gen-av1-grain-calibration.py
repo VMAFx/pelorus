@@ -335,8 +335,8 @@ def write_tables(rows: list, gated: list, source_path: pathlib.Path = h274.FILTE
 
     fd, tmp = tempfile.mkstemp(dir=source_path.parent, suffix=".tmp")
     try:
-        os.write(fd, text.encode("utf-8"))
-        os.close(fd)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
         fd = -1
         os.replace(tmp, source_path)
     except BaseException:
