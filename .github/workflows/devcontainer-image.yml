@@ -56,8 +56,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Compute image name
+        id: image
         if: github.event.pull_request.draft != true
-        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}-dev" >> "$GITHUB_ENV"
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}-dev"
+          echo "IMAGE=${image}" >> "$GITHUB_ENV"
+          echo "name=${image}" >> "$GITHUB_OUTPUT"
       - name: Set up Docker Buildx
         if: github.event.pull_request.draft != true
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -70,7 +74,7 @@ jobs:
           build-args: |
             PELORUS_COMMIT=${{ github.sha }}
             PELORUS_SOURCE=${{ github.server_url }}/${{ github.repository }}
-          tags: ${{ env.IMAGE }}:pr-${{ github.sha }}
+          tags: ${{ steps.image.outputs.name }}:pr-${{ github.sha }}
           push: false
 
   publish:
@@ -89,7 +93,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Compute image name
-        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}-dev" >> "$GITHUB_ENV"
+        id: image
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}-dev"
+          echo "IMAGE=${image}" >> "$GITHUB_ENV"
+          echo "name=${image}" >> "$GITHUB_OUTPUT"
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Log in to ghcr.io
@@ -108,8 +116,8 @@ jobs:
             PELORUS_COMMIT=${{ github.sha }}
             PELORUS_SOURCE=${{ github.server_url }}/${{ github.repository }}
           tags: |
-            ${{ env.IMAGE }}:${{ github.sha }}
-            ${{ env.IMAGE }}:latest
+            ${{ steps.image.outputs.name }}:${{ github.sha }}
+            ${{ steps.image.outputs.name }}:latest
           push: true
           provenance: false
           sbom: false
@@ -125,6 +133,6 @@ jobs:
       - name: Attest build provenance (SLSA v1.0)
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-name: ${{ env.IMAGE }}
+          subject-name: ${{ steps.image.outputs.name }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true

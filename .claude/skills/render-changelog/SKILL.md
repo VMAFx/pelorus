@@ -15,7 +15,7 @@ batch and at release cut (ADR-0245):
 #    sections = added | changed | deprecated | removed | fixed | security | maintenance
 # 2. Render-only PR lands per landing batch and at release cut:
 bash scripts/release/concat-changelog-fragments.sh --write
-# 3. Check staleness on default branch:
+# 3. Commit the rendered CHANGELOG.md, then check staleness (the script validates HEAD):
 python3 -I scripts/release/check-changelog-staleness.py
 ```
 

@@ -68,7 +68,10 @@ def parse_dll_allow_list(path: Path) -> DllAllowList:
         empty_lines_in_values=False,
     )
     try:
-        parser.read(path, encoding="utf-8")
+        text = "\n".join(
+            line.strip() for line in path.read_text(encoding="utf-8").splitlines()
+        )
+        parser.read_string(text, source=str(path))
     except configparser.MissingSectionHeaderError as exc:
         raise ValueError(
             f"Unexpected entry outside section in {path}: {exc.line.strip()}"

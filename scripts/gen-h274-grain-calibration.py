@@ -39,6 +39,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -276,7 +277,20 @@ def write_stats(rows: list[tuple[int, int, float, float, float]], source_path: p
         raise SystemExit(f"{source_path.name}: pel_h274_grain_stats table not found")
     new_body = "\n" + "\n".join(format_stats(rows))
     text = text[:m.start(1)] + new_body + text[m.end(1):]
-    source_path.write_text(text, encoding="utf-8")
+    fd, tmp = tempfile.mkstemp(dir=source_path.parent, suffix=".tmp")
+    try:
+        os.write(fd, text.encode("utf-8"))
+        os.close(fd)
+        fd = -1
+        os.replace(tmp, source_path)
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.unlink(tmp)
+        except OSError:  # tmp already gone
+            pass
+        raise
     return check_stats(rows, source_path=source_path)
 
 
@@ -362,7 +376,20 @@ def write_filter(rows: list[tuple[int, float, float]], source_path: pathlib.Path
         raise SystemExit(f"{source_path.name}: pel_h274_calib table not found")
     new_body = "\n" + format_h274_rows(rows)
     text = text[:m.start(1)] + new_body + text[m.end(1):]
-    source_path.write_text(text, encoding="utf-8")
+    fd, tmp = tempfile.mkstemp(dir=source_path.parent, suffix=".tmp")
+    try:
+        os.write(fd, text.encode("utf-8"))
+        os.close(fd)
+        fd = -1
+        os.replace(tmp, source_path)
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.unlink(tmp)
+        except OSError:  # tmp already gone
+            pass
+        raise
     return check_filter(rows, source_path=source_path)
 
 

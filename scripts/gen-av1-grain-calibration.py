@@ -53,6 +53,7 @@ import os
 import pathlib
 import re
 import sys
+import tempfile
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -332,7 +333,20 @@ def write_tables(rows: list, gated: list, source_path: pathlib.Path = h274.FILTE
         pattern = r"pel_aom_calib\[\]\s*=\s*\{(.*?)\n\};"
         text = _replace_table_body(text, pattern, "\n" + format_aom_rows(rows))
 
-    source_path.write_text(text, encoding="utf-8")
+    fd, tmp = tempfile.mkstemp(dir=source_path.parent, suffix=".tmp")
+    try:
+        os.write(fd, text.encode("utf-8"))
+        os.close(fd)
+        fd = -1
+        os.replace(tmp, source_path)
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.unlink(tmp)
+        except OSError:  # tmp already gone
+            pass
+        raise
     return check_all(rows, gated, source_path=source_path)
 
 

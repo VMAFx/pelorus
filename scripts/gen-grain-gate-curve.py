@@ -34,9 +34,11 @@ numpy and runs in the 'numpy' suite in the CI core job.
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
 import re
 import sys
+import tempfile
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -155,7 +157,20 @@ def write_table(tables: list[list[tuple[float, float]]], source_path: pathlib.Pa
     span_start, span_end = match.span(1)
     new_body = "\n" + render(tables) + "\n"
     new_text = text[:span_start] + new_body + text[span_end:]
-    source_path.write_text(new_text, encoding="utf-8")
+    fd, tmp = tempfile.mkstemp(dir=source_path.parent, suffix=".tmp")
+    try:
+        os.write(fd, new_text.encode("utf-8"))
+        os.close(fd)
+        fd = -1
+        os.replace(tmp, source_path)
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.unlink(tmp)
+        except OSError:  # tmp already gone
+            pass
+        raise
     return check(tables, source_path=source_path)
 
 

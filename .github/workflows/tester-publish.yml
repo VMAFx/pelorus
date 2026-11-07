@@ -266,7 +266,11 @@ jobs:
           persist-credentials: false
           path: .actions
       - name: Compute image name
-        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+        id: image
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "IMAGE=${image}" >> "$GITHUB_ENV"
+          echo "name=${image}" >> "$GITHUB_OUTPUT"
       - name: Load build configuration
         uses: ./.actions/.github/actions/load-build-config
       - name: Name the image tags of this kit
@@ -353,7 +357,7 @@ jobs:
       - name: SBOM of the tester image (SPDX JSON)
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          image: ${{ env.IMAGE }}@${{ steps.push.outputs.image-digest }}
+          image: ${{ steps.image.outputs.name }}@${{ steps.push.outputs.image-digest }}
           format: spdx-json
           output-file: ${{ runner.temp }}/tester.spdx.json
           upload-artifact: false
@@ -361,20 +365,20 @@ jobs:
       - name: Attest build provenance of the tester image (SLSA v1.0)
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-name: ${{ env.IMAGE }}
+          subject-name: ${{ steps.image.outputs.name }}
           subject-digest: ${{ steps.push.outputs.image-digest }}
           push-to-registry: true
       - name: Attest the SBOM of the tester image
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-name: ${{ env.IMAGE }}
+          subject-name: ${{ steps.image.outputs.name }}
           subject-digest: ${{ steps.push.outputs.image-digest }}
           sbom-path: ${{ runner.temp }}/tester.spdx.json
           push-to-registry: true
       - name: Attest build provenance of the -source image (SLSA v1.0)
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-name: ${{ env.IMAGE }}
+          subject-name: ${{ steps.image.outputs.name }}
           subject-digest: ${{ steps.push.outputs.source-digest }}
           push-to-registry: true
       - name: Sign both images (keyless)
