@@ -333,13 +333,16 @@ def write_tables(rows: list, gated: list, source_path: pathlib.Path = h274.FILTE
         pattern = r"pel_aom_calib\[\]\s*=\s*\{(.*?)\n\};"
         text = _replace_table_body(text, pattern, "\n" + format_aom_rows(rows))
 
-    orig_mode = os.stat(source_path).st_mode
+    st = os.stat(source_path)
+    orig_mode, orig_gid = st.st_mode, st.st_gid
     fd, tmp = tempfile.mkstemp(dir=source_path.parent, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             fd = -1
             f.write(text)
         os.chmod(tmp, orig_mode)
+        if hasattr(os, "chown"):
+            os.chown(tmp, -1, orig_gid)
         os.replace(tmp, source_path)
     except BaseException:
         if fd >= 0:
