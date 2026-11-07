@@ -6808,12 +6808,33 @@ def _validate_go_manager_text(text: str, config_source: str) -> list[str]:
     return errors
 
 
+_NON_ACTIONLINT_DATASOURCES = frozenset({"git-refs"})
+
 def _validate_actionlint_manager(managers: object, ci_source: str) -> list[str]:
     """Require one ci.yml regex manager that bumps the actionlint tag (ADR-0170)."""
     prefix = f"renovate.json: {CI_RELATIVE} manager"
-    manager, errors = _single_regex_manager(managers, CI_RELATIVE)
-    if manager is None:
-        return errors
+    try:
+        covering = [
+            m
+            for m in (managers if isinstance(managers, list) else [])
+            if isinstance(m, dict)
+            and m.get("customType") == "regex"
+            and isinstance(m.get("managerFilePatterns"), list)
+            and any(
+                renovate_file_pattern_matches(pat, CI_RELATIVE)
+                for pat in m["managerFilePatterns"]
+            )
+            and m.get("datasourceTemplate") not in _NON_ACTIONLINT_DATASOURCES
+        ]
+    except RenovatePatternError as exc:
+        return [f"renovate.json: {exc}"]
+    errors: list[str] = []
+    if len(covering) != 1:
+        return [
+            f"renovate.json: expected exactly one regex customManager "
+            f"for {CI_RELATIVE} (found {len(covering)})"
+        ]
+    manager = covering[0]
     for pattern in manager.get("managerFilePatterns", []):
         if not renovate_file_pattern_matches(pattern, CI_RELATIVE):
             errors.append(f"{prefix}: pattern {pattern!r} must target {CI_RELATIVE} only")
@@ -6892,9 +6913,12 @@ def _mutate_go_manager(key: str, replacement: object):
 
 
 def _ci_manager(manager: dict) -> bool:
-    return any(
-        renovate_file_pattern_matches(pattern, CI_RELATIVE)
-        for pattern in manager.get("managerFilePatterns", [])
+    return (
+        manager.get("depNameTemplate") == ACTIONLINT_MODULE
+        and any(
+            renovate_file_pattern_matches(pattern, CI_RELATIVE)
+            for pattern in manager.get("managerFilePatterns", [])
+        )
     )
 
 
@@ -6938,6 +6962,19 @@ def _with_extra_manager(patterns: list[str]):
     return mutate
 
 
+def _with_extra_go_ci_manager(value: dict) -> dict:
+    value["customManagers"].append(
+        {
+            "customType": "regex",
+            "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/"],
+            "matchStrings": ["FAKE=(?<currentValue>\\S+)"],
+            "datasourceTemplate": "go",
+            "depNameTemplate": ACTIONLINT_MODULE,
+        }
+    )
+    return value
+
+
 def _actionlint_renovate_cases() -> dict:
     """Broken-manager mutations for the ci.yml actionlint manager (ADR-0170)."""
     return {
@@ -6946,7 +6983,7 @@ def _actionlint_renovate_cases() -> dict:
             f"expected exactly one regex customManager for {CI_RELATIVE}",
         ),
         "second ci.yml manager": (
-            _with_extra_manager(["/^\\.github/workflows/ci\\.yml$/"]),
+            _with_extra_go_ci_manager,
             f"expected exactly one regex customManager for {CI_RELATIVE}",
         ),
         "actionlint manager also targets build-config.env": (
