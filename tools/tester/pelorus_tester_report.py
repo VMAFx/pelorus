@@ -729,7 +729,6 @@ def append_tool_hash_text(text, entry, newline=None):
         return None
     head = text[:-len(tail)]
     if head.rstrip().endswith("["):
-        head = head.rstrip()
         sep = nl
     else:
         sep = "," + nl
@@ -747,14 +746,19 @@ def update_tool_hashes(path, note, digest=None, version=None):
             and isinstance(data.get("entries"), list)
             and list(data)[-1] == "entries"):
         return "conflict", "error: %s: entries must be the last key of the top-level object" % target
+    found_match = False
     for entry in data.get("entries", []):
+        if not isinstance(entry, dict):
+            return "conflict", "error: %s: entries rows must be JSON objects" % target
         if entry.get("sha256") == digest:
-            if entry.get("tool_version") == version:
-                return "already_listed", None
-            return "conflict", (
-                "error: digest %s is already listed with different version %s (current %s)"
-                % (digest, entry.get("tool_version"), version)
-            )
+            if entry.get("tool_version") != version:
+                return "conflict", (
+                    "error: digest %s is already listed with different version %s (current %s)"
+                    % (digest, entry.get("tool_version"), version)
+                )
+            found_match = True
+    if found_match:
+        return "already_listed", None
     new_entry = {"sha256": digest, "tool_version": version, "note": note}
     nl = "\r\n" if "\r\n" in text else "\n"
     new_text = append_tool_hash_text(text, new_entry, newline=nl)

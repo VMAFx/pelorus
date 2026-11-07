@@ -50,7 +50,15 @@ MARKER_WORD = re.compile(r"\bnos(?:emgrep|em|ec)\b", re.IGNORECASE)
 RULE_ID = r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*"
 NOSEMGREP = re.compile(rf"^nosemgrep:[ \t]*({RULE_ID}(?:[ \t]*,[ \t]*{RULE_ID})*)[ \t]+-[ \t]+\S")
 NOSEC = re.compile(r"^nosec[ \t]+(B\d{3}(?:[ \t]*,[ \t]*B\d{3})*)[ \t]+-[ \t]+\S")
-NON_PYTHON_MARKER = re.compile(r"(?:#|//|/\*|--)[ \t]*nos(?:emgrep|em|ec)\b", re.IGNORECASE)
+NON_PYTHON_MARKER = re.compile(
+    r"(?:#|//|/\*|--)"
+    r"(?:[ \t]*nos(?:emgrep|em|ec)\b"
+    r"|[^\n]*?\b(?:"
+    r"nos(?:emgrep|ec)[ \t]*(?=\n|\Z)"
+    r"|nos(?:emgrep|em)\s*:"
+    r"|nosec\s+B\d{3}))",
+    re.IGNORECASE,
+)
 LOCAL_RULE_ID = re.compile(r"^\s*-\s*id:\s*([A-Za-z0-9_.-]+)\s*$", re.MULTILINE)
 # A registry id has the form <language>.<category>...<rule>: at least two dots.
 REGISTRY_MIN_DOTS = 2
@@ -516,6 +524,18 @@ def self_test() -> int:
         failures.append("planted 'marker in a shell file' not refused")
     else:
         print("refused as expected (marker in a shell file)")
+    if not other_findings("planted.c", "// explanation nosemgrep: rule.id - reason\n"):
+        failures.append("planted 'late marker in a C comment' not refused")
+    else:
+        print("refused as expected (late marker in a C comment)")
+    if not other_findings("planted.c", "call(); // reviewed nosemgrep\n"):
+        failures.append("planted 'bare late marker in a C comment' not refused")
+    else:
+        print("refused as expected (bare late marker in a C comment)")
+    if not other_findings("planted.c", "call(); // reviewed nosec\n"):
+        failures.append("planted 'bare late nosec in a C comment' not refused")
+    else:
+        print("refused as expected (bare late nosec in a C comment)")
     failures.extend(encoding_self_test(local_ids))
     failures.extend(exceptions_self_test())
     for failure in failures:

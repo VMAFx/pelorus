@@ -577,7 +577,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--tag", default=None, help="release tag vX.Y.Z[-rc.N]")
     parser.add_argument("--unwrap", default=None, help="unwrap existing release body file")
     parser.add_argument("positional", nargs="*", help="VERSION [CHANGELOG]")
-    return parser.parse_args(argv)
+    return parser.parse_intermixed_args(argv)
 
 
 def run_self_test() -> int:
