@@ -6,7 +6,9 @@ How Pelorus filters run on the GPU, and how to author a new one.
 ## Prerequisites
 
 - A Vulkan loader + headers (Vulkan 1.2+) and a working ICD for the target GPU
-  (NVIDIA / AMD / Intel).
+  (NVIDIA / AMD / Intel). The project tests NVIDIA RTX 4090, Intel Arc A380
+  (Alchemist) and a Ryzen iGPU; other GPUs rely on
+  [tester programme](../usage/hardware-we-need.md) reports.
 - A **build-time** SPIR-V compiler: `glslc` (or `glslang`/`glslangValidator`) on
   PATH. FFmpeg 9 probes it with `check_glslc` and enables the `spirv_compiler`
   feature; the filters are gated `*_filter_deps="vulkan spirv_compiler"`.
