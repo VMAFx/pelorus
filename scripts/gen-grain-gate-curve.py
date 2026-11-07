@@ -34,15 +34,19 @@ numpy and runs in the 'numpy' suite in the CI core job.
 from __future__ import annotations
 
 import argparse
-import os
 import pathlib
 import re
 import sys
-import tempfile
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import numpy as np
+
+_SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from _fileutil import atomic_write_text
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 C_SOURCE = ROOT / "ffmpeg-patches" / "files" / "vf_pelorus_grain_estimate_vulkan.c"
@@ -157,25 +161,7 @@ def write_table(tables: list[list[tuple[float, float]]], source_path: pathlib.Pa
     span_start, span_end = match.span(1)
     new_body = "\n" + render(tables) + "\n"
     new_text = text[:span_start] + new_body + text[span_end:]
-    st = os.stat(source_path)
-    orig_mode, orig_gid = st.st_mode, st.st_gid
-    fd, tmp = tempfile.mkstemp(dir=source_path.parent, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            fd = -1
-            f.write(new_text)
-        os.chmod(tmp, orig_mode)
-        if hasattr(os, "chown"):
-            os.chown(tmp, -1, orig_gid)
-        os.replace(tmp, source_path)
-    except BaseException:
-        if fd >= 0:
-            os.close(fd)
-        try:
-            os.unlink(tmp)
-        except OSError:  # tmp already gone
-            pass
-        raise
+    atomic_write_text(source_path, new_text)
     return check(tables, source_path=source_path)
 
 
