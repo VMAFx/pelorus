@@ -157,11 +157,13 @@ def write_table(tables: list[list[tuple[float, float]]], source_path: pathlib.Pa
     span_start, span_end = match.span(1)
     new_body = "\n" + render(tables) + "\n"
     new_text = text[:span_start] + new_body + text[span_end:]
+    orig_mode = os.stat(source_path).st_mode
     fd, tmp = tempfile.mkstemp(dir=source_path.parent, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
+            fd = -1
             f.write(new_text)
-        fd = -1
+        os.chmod(tmp, orig_mode)
         os.replace(tmp, source_path)
     except BaseException:
         if fd >= 0:

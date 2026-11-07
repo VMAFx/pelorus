@@ -53,7 +53,8 @@ NOSEC = re.compile(r"^nosec[ \t]+(B\d{3}(?:[ \t]*,[ \t]*B\d{3})*)[ \t]+-[ \t]+\S
 NON_PYTHON_MARKER = re.compile(
     r"(?:#|//|/\*|--)"
     r"(?:[ \t]*nos(?:emgrep|em|ec)\b"       # immediately after delimiter
-    r"|[^\n]*?\bnos(?:emgrep|em|ec)\s*:)",   # later in line, only with colon
+    r"|[^\n]*?\bnos(?:emgrep|em)\s*:"        # semgrep alias later, only with colon
+    r"|[^\n]*?\bnosec\s+B\d{3})",            # bandit alias later, with rule ID
     re.IGNORECASE,
 )
 LOCAL_RULE_ID = re.compile(r"^\s*-\s*id:\s*([A-Za-z0-9_.-]+)\s*$", re.MULTILINE)
