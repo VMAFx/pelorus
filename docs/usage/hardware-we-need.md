@@ -11,7 +11,7 @@ cannot produce itself, and you can be credited for it.
 | Hardware | Why it matters | Package |
 | --- | --- | --- |
 | NVIDIA, Turing to Blackwell (GeForce RTX 20 to 50, RTX professional) | NVENC steering and the Vulkan path on the proprietary driver; the project tests a GeForce RTX 4090 only | NVIDIA GPU image |
-| Intel Arc and Xe graphics (Alchemist, Battlemage, Core Ultra) | QSV steering and Vulkan Video on ANV; the project tests one Arc A380 (Alchemist) only — Battlemage, Core Ultra Xe iGPUs and discrete Xe are untested | Intel GPU image |
+| Intel Arc and Xe graphics (Alchemist, Battlemage, Core Ultra) | QSV steering and Vulkan Video on ANV; the project tests one Arc A380 (Alchemist, Xe-HPG) only — Battlemage (Xe2-HPG) and Core Ultra iGPUs (Xe-LPG / Xe2-LPG) are untested | Intel GPU image |
 | AMD Radeon (RDNA 2 to RDNA 4, Radeon iGPUs) | Vulkan compute and Vulkan Video encode on RADV; the project tests one Ryzen iGPU only | AMD GPU image |
 | Windows 11 with any of the above | the native Windows driver stacks differ from Linux | Windows zip |
 | Any machine without a GPU | software Vulkan (lavapipe) is functional evidence only and never counts as a GPU result, but it shows which stages run without a device | CPU image |
