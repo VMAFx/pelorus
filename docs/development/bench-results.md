@@ -407,12 +407,12 @@ NVENC's. 1280×720, 600 frames, 3 runs each.
 Engagement **confirmed** (not a pass-through): `"Pelorus external ME hints
 enabled: 80x45 16x16 blocks, 1 L0 candidate/block."`
 
-| arm | rtime (s) | fps | speed |
-|---|---:|---:|---:|
-| hints **off** | 5.26 / 5.26 / 5.36 | 114 / 114 / 112 | 3.77× / 3.78× / 3.71× |
-| hints **on** | 5.36 / 5.38 / 5.47 | 112 / 112 / 110 | 3.71× / 3.70× / 3.64× |
+| arm | rtime (s) | mean rtime (s) | mean fps | Δ fps |
+|---|---:|---:|---:|---:|
+| hints **off** | 5.26 / 5.26 / 5.36 | 5.29 | 113.3 | — |
+| hints **on** | 5.36 / 5.38 / 5.47 | 5.40 | 111.0 | **−2.0 %** |
 
-**Verdict: no encode-speed gain — a slight ~2–3% *slowdown*.** With the hints
+**Verdict: no encode-speed gain — a ~2 % *slowdown*.** With the hints
 genuinely engaged, feeding 80×45 candidates/frame costs more (per-frame hint
 upload + NVENC ingesting them) than it saves on Ada's already-fast VDEnc motion
 search at p7. The mc→NVENC round-trip is **functional and correct** (wires in,
