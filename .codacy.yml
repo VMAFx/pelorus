@@ -19,7 +19,7 @@ engines:
       # behind a guard that refuses every URL that is not https (:265 there), so the scheme
       # the rule warns about cannot reach it. The file is engine-managed; the fix belongs
       # upstream in cordanaLLM/praetor#1802. Remove this entry once that fix is adopted.
-      # exception: category B, entered 2026-11-04, expires 2026-11-07
+      # exception: category B, entered 2026-11-08, expires 2026-11-11
       - "tools/figures/mkdocs_hook.py"
   flawfinder:
     exclude_paths:
@@ -41,7 +41,7 @@ engines:
   opengrep:
     exclude_paths:
       # python urllib urlopen rule, same call and same https-only guard as the bandit entry.
-      # exception: category B, entered 2026-11-04, expires 2026-11-07
+      # exception: category B, entered 2026-11-08, expires 2026-11-11
       - "tools/figures/mkdocs_hook.py"
       # Semgrep_c_misc_rule-fopen-open, same call and same O_EXCL | O_NOFOLLOW reasoning
       # as the flawfinder entry.
