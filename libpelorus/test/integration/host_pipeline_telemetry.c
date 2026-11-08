@@ -117,7 +117,8 @@ static void check_telemetry_section_match(const PelorusEncTelemetrySection *got,
 }
 
 /* Pack, encode, unwrap, and verify a single telemetry frame. */
-static void run_single_telemetry_frame(const PelorusEncTelemetryInput *frame, uint8_t *blob_buf,
+static void run_single_telemetry_frame(const PelorusEncTelemetryInput *frame,
+                                       const PelorusEncTelemetrySection *exp, uint8_t *blob_buf,
                                        size_t max_blob_size, uint8_t *carrier_buf,
                                        size_t max_carrier_size)
 {
@@ -160,7 +161,7 @@ static void run_single_telemetry_frame(const PelorusEncTelemetryInput *frame, ui
 
     {
         const PelorusEncTelemetrySection *got = sec_ptr;
-        check_telemetry_section_match(got, &frame->frame);
+        check_telemetry_section_match(got, exp);
     }
 }
 
@@ -236,10 +237,60 @@ static void test_boundary_telemetry_pack(const PelorusEncTelemetryInput *frame)
     free(buf);
 }
 
+typedef struct ExpectedTlmRow {
+    uint32_t decode_index;
+    uint32_t display_index;
+    uint32_t frame_bytes;
+    uint8_t picture_type;
+    uint8_t frame_flags;
+} ExpectedTlmRow;
+
+#define X265_EXPECTED_PRESENT_MASK                                                                 \
+    (PEL_TLM_F_DISPLAY_INDEX | PEL_TLM_F_DECODE_INDEX | PEL_TLM_F_FRAME_BYTES | PEL_TLM_F_AVG_QP | \
+     PEL_TLM_F_AVG_QP_NORM | PEL_TLM_F_PICTURE_TYPE | PEL_TLM_F_KEY_FRAME | PEL_TLM_F_REFERENCE |  \
+     PEL_TLM_F_SHOWN | PEL_TLM_F_SCENE_CUT | PEL_TLM_F_CODED_BIT_DEPTH)
+
+static const ExpectedTlmRow EXPECTED_X265_ROWS[HP_EXPECTED_X265_FRAME_COUNT] = {
+    {0u, 0u, 1880u, PEL_PICTURE_I,
+     (uint8_t)(PEL_TLM_FRAME_SHOWN | PEL_TLM_FRAME_KEY | PEL_TLM_FRAME_REFERENCE)},
+    {1u, 3u, 877u, PEL_PICTURE_P, (uint8_t)(PEL_TLM_FRAME_SHOWN | PEL_TLM_FRAME_REFERENCE)},
+    {2u, 2u, 538u, PEL_PICTURE_B, (uint8_t)(PEL_TLM_FRAME_SHOWN | PEL_TLM_FRAME_REFERENCE)},
+    {3u, 1u, 455u, PEL_PICTURE_B, (uint8_t)PEL_TLM_FRAME_SHOWN},
+    {4u, 5u, 833u, PEL_PICTURE_P, (uint8_t)(PEL_TLM_FRAME_SHOWN | PEL_TLM_FRAME_REFERENCE)},
+    {5u, 4u, 549u, PEL_PICTURE_B, (uint8_t)PEL_TLM_FRAME_SHOWN},
+    {6u, 9u, 925u, PEL_PICTURE_P, (uint8_t)(PEL_TLM_FRAME_SHOWN | PEL_TLM_FRAME_REFERENCE)},
+    {7u, 7u, 470u, PEL_PICTURE_B, (uint8_t)(PEL_TLM_FRAME_SHOWN | PEL_TLM_FRAME_REFERENCE)},
+    {8u, 6u, 533u, PEL_PICTURE_B, (uint8_t)PEL_TLM_FRAME_SHOWN},
+    {9u, 8u, 431u, PEL_PICTURE_B, (uint8_t)PEL_TLM_FRAME_SHOWN},
+};
+
+/* Populate expected telemetry sections for x265 4.3 QP 32 characterization fixture. */
+static void init_expected_telemetry(PelorusEncTelemetrySection *exp, size_t count)
+{
+    for (size_t i = 0; i < count && i < HP_EXPECTED_X265_FRAME_COUNT; i++) {
+        memset(&exp[i], 0, sizeof(exp[i]));
+        exp[i].present_mask = X265_EXPECTED_PRESENT_MASK;
+        exp[i].codec = PEL_TLM_CODEC_HEVC;
+        exp[i].qp_scale = PEL_QP_SCALE_SLICE_QP;
+        exp[i].granularity = PEL_TLM_GRAN_FRAME;
+        exp[i].adapter = PEL_TLM_ADAPTER_X265_CSV;
+        exp[i].coded_bit_depth = 8u;
+        exp[i].metric_source = 0u;
+        exp[i].avg_qp = 32.0f;
+        exp[i].avg_qp_norm = 32.0f;
+        exp[i].decode_index = EXPECTED_X265_ROWS[i].decode_index;
+        exp[i].display_index = EXPECTED_X265_ROWS[i].display_index;
+        exp[i].frame_bytes = EXPECTED_X265_ROWS[i].frame_bytes;
+        exp[i].picture_type = EXPECTED_X265_ROWS[i].picture_type;
+        exp[i].frame_flags = EXPECTED_X265_ROWS[i].frame_flags;
+    }
+}
+
 /* Execute Scenario 2 integration test with x265 telemetry frames. */
 void hp_test_scenario2_telemetry(const char *csv_path)
 {
     PelorusEncTelemetryInput frames[HP_TELEMETRY_FRAME_CAP];
+    PelorusEncTelemetrySection expected[HP_EXPECTED_X265_FRAME_COUNT];
     size_t frame_count = 0;
     size_t max_blob_size = 0;
     uint8_t *blob_buf;
@@ -247,6 +298,7 @@ void hp_test_scenario2_telemetry(const char *csv_path)
     size_t max_carrier_size;
 
     memset(frames, 0, sizeof(frames));
+    init_expected_telemetry(expected, HP_EXPECTED_X265_FRAME_COUNT);
     if (parse_telemetry_fixture(csv_path, frames, &frame_count) != 0) {
         return;
     }
@@ -263,9 +315,10 @@ void hp_test_scenario2_telemetry(const char *csv_path)
     CHECK(carrier_buf != NULL);
 
     if (blob_buf != NULL && carrier_buf != NULL) {
-        for (size_t i = 0; i < frame_count && i < HP_TELEMETRY_FRAME_CAP; i++) {
-            run_single_telemetry_frame(&frames[i], blob_buf, max_blob_size, carrier_buf,
-                                       max_carrier_size);
+        for (size_t i = 0; i < frame_count && i < HP_EXPECTED_X265_FRAME_COUNT; i++) {
+            check_telemetry_section_match(&frames[i].frame, &expected[i]);
+            run_single_telemetry_frame(&frames[i], &expected[i], blob_buf, max_blob_size,
+                                       carrier_buf, max_carrier_size);
         }
         test_boundary_telemetry_pack(&frames[0]);
     }

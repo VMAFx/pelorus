@@ -18,8 +18,8 @@ test(
   'host-pipeline',
   host_pipeline_test,
   args: [
-    meson.current_source_dir() / '..' / 'fixtures' / 'grain' / 'libaom-3.15.2-fgtest1.tbl',
-    meson.current_source_dir() / '..' / 'fixtures' / 'telemetry' / 'x265-4.3-qp32.csv',
+    pelorus_test_fixtures_dir / 'grain' / 'libaom-3.15.2-fgtest1.tbl',
+    pelorus_test_fixtures_dir / 'telemetry' / 'x265-4.3-qp32.csv',
   ],
   suite: ['fast', 'integration'],
 )
