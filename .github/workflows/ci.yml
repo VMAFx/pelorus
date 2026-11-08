@@ -46,6 +46,19 @@ jobs:
           cat /etc/os-release
           glslc --version
           glslangValidator --version
+      - name: Meson floor (declared minimum configures and builds)
+        run: |
+          floor=$(python3 -c "
+          import re, pathlib
+          m = re.search(r\"meson_version\s*:\s*'>=([^']+)'\", pathlib.Path('meson.build').read_text())
+          print(m.group(1))
+          ")
+          python3 -m venv "$RUNNER_TEMP/meson-floor"
+          "$RUNNER_TEMP/meson-floor/bin/pip" install "meson==$floor" ninja
+          "$RUNNER_TEMP/meson-floor/bin/meson" --version | grep -Fxq "$floor"
+          "$RUNNER_TEMP/meson-floor/bin/meson" setup --werror build-floor
+          "$RUNNER_TEMP/meson-floor/bin/ninja" -C build-floor
+          rm -rf build-floor "$RUNNER_TEMP/meson-floor"
       - name: Configure + build
         run: meson setup --werror build && ninja -C build
       - name: Optimised gcc build (-O2, warnings are errors)

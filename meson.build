@@ -11,7 +11,7 @@ project(
     'werror=true',
     'default_library=shared',
   ],
-  meson_version: '>=0.60.0',
+  meson_version: '>=0.57.0',
 )
 
 fs = import('fs')
