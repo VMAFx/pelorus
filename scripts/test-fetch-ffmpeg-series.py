@@ -197,6 +197,7 @@ ACCEPT_POLLS = 240
 def _run_fetch_script(
     script: pathlib.Path, out: pathlib.Path, env: dict[str, str]
 ) -> subprocess.CompletedProcess[str]:
+    """Run a copy of fetch-ffmpeg-series.sh into `out` with `env`, bounded at 30 s."""
     return subprocess.run(  # nosec B603 - fixed bash argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant bash command, no shell, explicit deadline
         ["bash", str(script), str(out)],
         check=False,
@@ -210,6 +211,10 @@ def _run_fetch_script(
 def _write_curl_shim(
     tools: pathlib.Path, log_file: pathlib.Path, real_curl: str, port: int
 ) -> None:
+    """Write a `curl` shim into `tools` that logs each call to `log_file` and sends its URL to the local server.
+
+    With TEST_CURL_SHIM_CAPTURE=1 the shim only logs the call and exits 28.
+    """
     shim_code = f"""#!{sys.executable} -I
 import json
 import os
@@ -277,6 +282,7 @@ def _check_captured_argv(log_file: pathlib.Path) -> str:
 
 
 def _setup_stalled_env(work: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
+    """Lay out a script copy, a shim directory and a pinned build-config.env; return (root, tools, script)."""
     root = work / "stalled-download"
     tools = root / "bin"
     tools.mkdir(parents=True)
@@ -348,6 +354,7 @@ def stalled_download(work: pathlib.Path) -> str:
     stop_event = threading.Event()
 
     def _accept_loop() -> None:
+        """Accept connections and never answer; record each start time, at most ACCEPT_POLLS polls."""
         for _ in range(ACCEPT_POLLS):
             if stop_event.is_set():
                 return
@@ -380,6 +387,7 @@ def stalled_download(work: pathlib.Path) -> str:
 
 
 def main() -> int:
+    """Run the control, every planted defect and the stalled-download case; exit 1 on any failure."""
     failures: list[str] = []
     with tempfile.TemporaryDirectory(prefix="pelorus-series-test-") as tmp:
         work = pathlib.Path(tmp)
