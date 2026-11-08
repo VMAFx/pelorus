@@ -64,9 +64,10 @@ parse dot decimals. Local systems without `de_DE.UTF-8`, `de_DE.utf8` or
 meson test -C build --suite=integration --print-errorlogs
 ```
 
-`pelorus:host-pipeline` (`libpelorus/test/integration/host_pipeline_test.c`,
-also in the `fast` suite) runs the producer and the consumer side of the
-side-data path in one process, through the public headers only:
+`pelorus:host-pipeline` (`libpelorus/test/integration/`: `main` in
+`host_pipeline_test.c`, one unit per stage; also in the `fast` suite) runs the
+producer and the consumer side of the side-data path in one process, through
+the public headers only:
 
 1. **Encode record and film grain.** The producer builds the provenance JSON
    for an x265 option string and a deband filter, hashes it into an
@@ -74,8 +75,10 @@ side-data path in one process, through the public headers only:
    `libpelorus/test/fixtures/grain/libaom-3.15.2-fgtest1.tbl`, packs both
    into one blob and wraps it in the SEI carrier. The consumer unwraps the
    carrier, checks the blob byte for byte and its header fields, verifies the
-   JSON against the record digest, checks every grain field and converts the
-   grain from AV1 to H.274 and back.
+   JSON against the record digest and converts the grain from AV1 to H.274
+   and back. The whole film-grain section, as parsed and again as unwrapped,
+   must equal the values of the decoded stream below, which the test writes
+   out itself instead of taking them from the parser.
 2. **Encoder telemetry.** Each of the 10 frames of
    `libpelorus/test/fixtures/telemetry/x265-4.3-qp32.csv` goes through
    telemetry pack, carrier and unwrap; the unwrapped blob must equal the
@@ -105,7 +108,7 @@ with `-export_side_data film_grain` and printed by `showinfo`. The exported
 more for canonical spacing. Every field matches the decoded stream except
 `limit_output_range`, which the table format does not carry.
 
-The file is also the tracked test under `**/integration/**` that the
+These files are also the tracked test under `**/integration/**` that the
 `native-gpu-systems` profile's integration test level needs; `praetorctl audit`
 reports the level as a gap without it.
 

@@ -1,0 +1,276 @@
+/**
+ *  Copyright 2026 Lusoris
+ *
+ * SPDX-FileCopyrightText: 2026 Lusoris
+ * SPDX-License-Identifier: EUPL-1.2
+ */
+
+#include "host_pipeline.h"
+
+#include "../test_float_bits.h"
+
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* NOLINTBEGIN(modernize-use-nullptr): C translation unit kept buildable by MSVC's
+ * C mode, which has no `nullptr` (same decision as interop_test.c). */
+
+/* Verify common header scalars across telemetry section and input frame. */
+static void check_telemetry_headers(const PelorusEncTelemetrySection *got,
+                                    const PelorusEncTelemetrySection *exp)
+{
+    CHECK(got->present_mask == exp->present_mask);
+    CHECK(got->codec == exp->codec);
+    CHECK(got->qp_scale == exp->qp_scale);
+    CHECK(got->granularity == exp->granularity);
+    CHECK(got->adapter == exp->adapter);
+    CHECK(got->block_size_log2 == exp->block_size_log2);
+    CHECK(got->metric_source == exp->metric_source);
+}
+
+/* Verify display indices, decode indices, and bit counts against presence mask. */
+static void check_telemetry_indices_and_bytes(const PelorusEncTelemetrySection *got,
+                                              const PelorusEncTelemetrySection *exp)
+{
+    uint64_t mask = exp->present_mask;
+
+    if (mask & PEL_TLM_F_DISPLAY_INDEX) {
+        CHECK(got->display_index == exp->display_index);
+    }
+    if (mask & PEL_TLM_F_DECODE_INDEX) {
+        CHECK(got->decode_index == exp->decode_index);
+    }
+    if (mask & PEL_TLM_F_FRAME_BYTES) {
+        CHECK(got->frame_bytes == exp->frame_bytes);
+    }
+    if (mask & PEL_TLM_F_HEADER_BITS) {
+        CHECK(got->header_bits == exp->header_bits);
+    }
+    if (mask & PEL_TLM_F_RESIDUAL_BITS) {
+        CHECK(got->residual_bits == exp->residual_bits);
+    }
+}
+
+/* Verify floating point quality metrics match bit-for-bit against presence mask. */
+static void check_telemetry_metrics(const PelorusEncTelemetrySection *got,
+                                    const PelorusEncTelemetrySection *exp)
+{
+    uint64_t mask = exp->present_mask;
+
+    if (mask & PEL_TLM_F_AVG_QP) {
+        CHECK(float_bits_equal(got->avg_qp, exp->avg_qp));
+    }
+    if (mask & PEL_TLM_F_AVG_QP_NORM) {
+        CHECK(float_bits_equal(got->avg_qp_norm, exp->avg_qp_norm));
+    }
+    if (mask & PEL_TLM_F_PSNR_Y) {
+        CHECK(float_bits_equal(got->psnr_y, exp->psnr_y));
+    }
+    if (mask & PEL_TLM_F_PSNR_U) {
+        CHECK(float_bits_equal(got->psnr_u, exp->psnr_u));
+    }
+    if (mask & PEL_TLM_F_PSNR_V) {
+        CHECK(float_bits_equal(got->psnr_v, exp->psnr_v));
+    }
+    if (mask & PEL_TLM_F_SSIM_Y) {
+        CHECK(float_bits_equal(got->ssim_y, exp->ssim_y));
+    }
+}
+
+/* Verify block fractions, picture types, and frame flags against presence mask. */
+static void check_telemetry_fractions_and_flags(const PelorusEncTelemetrySection *got,
+                                                const PelorusEncTelemetrySection *exp)
+{
+    uint64_t mask = exp->present_mask;
+
+    if (mask & PEL_TLM_F_INTRA_FRACTION) {
+        CHECK(float_bits_equal(got->intra_fraction, exp->intra_fraction));
+    }
+    if (mask & PEL_TLM_F_INTER_FRACTION) {
+        CHECK(float_bits_equal(got->inter_fraction, exp->inter_fraction));
+    }
+    if (mask & PEL_TLM_F_SKIP_FRACTION) {
+        CHECK(float_bits_equal(got->skip_fraction, exp->skip_fraction));
+    }
+    if (mask & PEL_TLM_F_PICTURE_TYPE) {
+        CHECK(got->picture_type == exp->picture_type);
+    }
+    if (mask &
+        (PEL_TLM_F_KEY_FRAME | PEL_TLM_F_REFERENCE | PEL_TLM_F_SHOWN | PEL_TLM_F_SCENE_CUT)) {
+        CHECK(got->frame_flags == exp->frame_flags);
+    }
+    if (mask & PEL_TLM_F_CODED_BIT_DEPTH) {
+        CHECK(got->coded_bit_depth == exp->coded_bit_depth);
+    }
+}
+
+/* Compare all telemetry fields in consumed section against original frame data. */
+static void check_telemetry_section_match(const PelorusEncTelemetrySection *got,
+                                          const PelorusEncTelemetrySection *exp)
+{
+    check_telemetry_headers(got, exp);
+    check_telemetry_indices_and_bytes(got, exp);
+    check_telemetry_metrics(got, exp);
+    check_telemetry_fractions_and_flags(got, exp);
+}
+
+/* Pack, encode, unwrap, and verify a single telemetry frame. */
+static void run_single_telemetry_frame(const PelorusEncTelemetryInput *frame, uint8_t *blob_buf,
+                                       size_t max_blob_size, uint8_t *carrier_buf,
+                                       size_t max_carrier_size)
+{
+    PelorusSideData meta;
+    size_t blob_len = 0;
+    size_t carrier_len = 0;
+    _Alignas(8) uint8_t unwrap_scratch[HP_SCRATCH_SIZE];
+    const uint8_t *unwrapped = NULL;
+    size_t unwrapped_len = 0;
+    const void *sec_ptr = NULL;
+    size_t sec_size = 0;
+
+    memset(&meta, 0, sizeof(meta));
+    meta.frame_pts = frame->frame.display_index;
+    meta.plane_layout = PEL_LAYOUT_420;
+    meta.bit_depth = 8u;
+    meta.producer_id = PLRS_PRODUCER_ID;
+
+    CHECK(pel_enc_telemetry_pack(&meta, frame, blob_buf, max_blob_size, &blob_len) == PEL_OK);
+    CHECK(blob_len > 0u);
+
+    CHECK(pel_blob_carrier_encode(blob_buf, blob_len, carrier_buf, max_carrier_size,
+                                  &carrier_len) == PEL_OK);
+    CHECK(carrier_len > 0u);
+
+    CHECK(pel_blob_unwrap(carrier_buf, carrier_len, unwrap_scratch, sizeof(unwrap_scratch),
+                          &unwrapped, &unwrapped_len) == PEL_OK);
+    CHECK(unwrapped != NULL && unwrapped_len == blob_len);
+    if (unwrapped == NULL) {
+        return;
+    }
+    CHECK(memcmp(unwrapped, blob_buf, blob_len) == 0);
+
+    CHECK(pel_blob_find_section(unwrapped, unwrapped_len, PEL_SEC_ENC_TELEMETRY,
+                                sizeof(PelorusEncTelemetrySection), &sec_ptr, &sec_size) == PEL_OK);
+    CHECK(sec_ptr != NULL && sec_size >= sizeof(PelorusEncTelemetrySection));
+    if (sec_ptr == NULL || sec_size < sizeof(PelorusEncTelemetrySection)) {
+        return;
+    }
+
+    {
+        const PelorusEncTelemetrySection *got = sec_ptr;
+        check_telemetry_section_match(got, &frame->frame);
+    }
+}
+
+/* Find the maximum packed blob size required across an array of telemetry frames. */
+static size_t find_max_telemetry_blob_size(const PelorusEncTelemetryInput *frames, size_t count)
+{
+    size_t max_blob_size = 0;
+
+    for (size_t i = 0; i < count && i < HP_TELEMETRY_FRAME_CAP; i++) {
+        size_t sz = 0;
+        CHECK(pel_enc_telemetry_blob_size(&frames[i], &sz) == PEL_OK);
+        if (sz > max_blob_size) {
+            max_blob_size = sz;
+        }
+    }
+    return max_blob_size;
+}
+
+/* Read CSV fixture and parse telemetry frames into input array. */
+static int parse_telemetry_fixture(const char *csv_path, PelorusEncTelemetryInput *frames,
+                                   size_t *out_count)
+{
+    char *csv_text = malloc(HP_FIXTURE_BUF_CAP);
+    size_t csv_len = 0;
+    size_t frame_count = 0;
+
+    CHECK(csv_text != NULL);
+    if (csv_text == NULL) {
+        return -1;
+    }
+    CHECK(hp_read_fixture(csv_path, csv_text, HP_FIXTURE_BUF_CAP, &csv_len) == 0);
+    CHECK(pel_tlm_parse_x265_csv(csv_text, csv_len, 8u, frames, HP_TELEMETRY_FRAME_CAP,
+                                 &frame_count) == PEL_OK);
+    CHECK(frame_count == HP_EXPECTED_X265_FRAME_COUNT);
+    free(csv_text);
+    *out_count = frame_count;
+    return (frame_count == HP_EXPECTED_X265_FRAME_COUNT) ? 0 : -1;
+}
+
+/* Verify boundary behavior and size query for telemetry packing. */
+static void test_boundary_telemetry_pack(const PelorusEncTelemetryInput *frame)
+{
+    PelorusSideData meta;
+    size_t need = 0;
+    uint8_t *buf;
+    size_t out_len = 0;
+
+    memset(&meta, 0, sizeof(meta));
+    meta.frame_pts = 0u;
+    meta.plane_layout = PEL_LAYOUT_420;
+    meta.bit_depth = 8u;
+    meta.producer_id = PLRS_PRODUCER_ID;
+
+    CHECK(pel_enc_telemetry_blob_size(frame, &need) == PEL_OK);
+    CHECK(need > 0u);
+    if (need == 0u) {
+        return;
+    }
+
+    buf = malloc(need);
+    CHECK(buf != NULL);
+    if (buf == NULL) {
+        return;
+    }
+
+    CHECK(pel_enc_telemetry_pack(&meta, frame, buf, need - 1u, &out_len) == PEL_ERR_RANGE);
+    CHECK(out_len == need);
+
+    out_len = 0;
+    CHECK(pel_enc_telemetry_pack(&meta, frame, buf, need, &out_len) == PEL_OK);
+    CHECK(out_len == need);
+
+    free(buf);
+}
+
+/* Execute Scenario 2 integration test with x265 telemetry frames. */
+void hp_test_scenario2_telemetry(const char *csv_path)
+{
+    PelorusEncTelemetryInput frames[HP_TELEMETRY_FRAME_CAP];
+    size_t frame_count = 0;
+    size_t max_blob_size = 0;
+    uint8_t *blob_buf;
+    uint8_t *carrier_buf;
+    size_t max_carrier_size;
+
+    memset(frames, 0, sizeof(frames));
+    if (parse_telemetry_fixture(csv_path, frames, &frame_count) != 0) {
+        return;
+    }
+
+    max_blob_size = find_max_telemetry_blob_size(frames, frame_count);
+    CHECK(max_blob_size > 0u);
+    if (max_blob_size == 0u) {
+        return;
+    }
+    blob_buf = malloc(max_blob_size);
+    CHECK(blob_buf != NULL);
+    max_carrier_size = PEL_CARRIER_MAX_LEN(max_blob_size);
+    carrier_buf = malloc(max_carrier_size);
+    CHECK(carrier_buf != NULL);
+
+    if (blob_buf != NULL && carrier_buf != NULL) {
+        for (size_t i = 0; i < frame_count && i < HP_TELEMETRY_FRAME_CAP; i++) {
+            run_single_telemetry_frame(&frames[i], blob_buf, max_blob_size, carrier_buf,
+                                       max_carrier_size);
+        }
+        test_boundary_telemetry_pack(&frames[0]);
+    }
+    free(blob_buf);
+    free(carrier_buf);
+}
+
+/* NOLINTEND(modernize-use-nullptr) */
