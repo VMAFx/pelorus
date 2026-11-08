@@ -635,8 +635,8 @@ test('meson-windows-git-self-test',
      timeout: 60,
      suite: 'fast')
 
-# Every curl download must specify retry >= 5 and retry-max-time to handle
-# transient server 504 errors with exponential backoff (CI run 42044634889).
+# Every curl download needs retry >= 5, speed-time, retry-max-time > max-time,
+# so hangs and transient 504s are retried (CI runs 42044634889, 42464703696).
 if build_machine.system() != 'windows'
   test('curl-retry',
        python_prog,

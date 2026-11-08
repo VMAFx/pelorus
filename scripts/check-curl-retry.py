@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # Copyright 2026 Lusoris
 # SPDX-License-Identifier: EUPL-1.2
-"""Check that curl download invocations include robust retry and retry-max-time options.
+"""Check that curl download invocations include robust retry, speed-time, and retry-max-time options.
 
 Every curl download command in shell scripts, Makefiles, and GitHub Actions workflows
-must specify exponential backoff via --retry (with count >= 5) and --retry-max-time
-to absorb transient network drops and server 504 errors.
+must specify exponential backoff via --retry (with count >= 5), --speed-time to detect
+stalled transfers, and --retry-max-time strictly greater than --max-time so hangs do not
+exhaust the retry window.
 
 Usage:
     python3 -I scripts/check-curl-retry.py
@@ -28,7 +29,10 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 from tracked_python import tracked_files  # noqa: E402
 
-DESCRIPTION = "Check that curl downloads specify retry >= 5 and retry-max-time."
+DESCRIPTION = (
+    "Check that curl downloads specify retry >= 5, speed-time, and "
+    "retry-max-time exceeding max-time."
+)
 SHELL_SUFFIXES = frozenset({".sh", ".bash", ".mk"})
 WORKFLOW_SUFFIXES = frozenset({".yml", ".yaml"})
 # Argument-taking short options from curl 8.23.0's `curl --help all`.
@@ -116,47 +120,72 @@ def extract_curl_args(line: str) -> list[str]:
 NON_FILE_TARGETS = frozenset({"/dev/null", "-"})
 
 
-def is_download_flag(tok: str, next_tok: str | None) -> tuple[bool, int]:
-    """Check if token indicates a download output, returning (is_download, tokens_consumed)."""
-    if tok in ("-O", "--remote-name", "--remote-name-all"):
-        return True, 1
-    if tok in ("-o", "--output"):
-        target = next_tok.strip("'\"") if next_tok else ""
-        return target not in NON_FILE_TARGETS, 2
-    if tok.startswith("--output="):
-        target = tok.split("=", 1)[1].strip("'\"")
-        return target not in NON_FILE_TARGETS, 1
-    if tok.startswith("-") and not tok.startswith("--") and len(tok) > 1:
-        is_download = False
-        for index, option in enumerate(tok[1:], start=1):
-            if option == "O":
-                is_download = True
-            if option in SHORT_OPTIONS_WITH_ARGS:
-                rest = tok[index + 1 :]
-                target = (rest or next_tok or "").strip("'\"")
-                return is_download or (option == "o" and target not in NON_FILE_TARGETS), 1 if rest else 2
-        return is_download, 1
-    return False, 1
+# Long options whose value this check reads; each takes the next word unless
+# written as --name=value (curl 8.23.0 manual).
+VALUE_LONG_OPTIONS = frozenset(
+    {"--output", "--retry", "--retry-max-time", "--max-time", "--speed-time"}
+)
+# Short spellings of the options this check reads (curl 8.23.0 `curl --help all`).
+SHORT_ALIASES = {"O": "--remote-name", "m": "--max-time", "o": "--output", "y": "--speed-time"}
+SPEED_TIME_REASON = (
+    "--retry without --speed-time: a stalled transfer runs to --max-time"
+    " and spends the retry window"
+)
+WINDOW_REASON = "--retry-max-time <= --max-time: a hang spends the whole retry window"
 
 
-def parse_retry_flag(tok: str, next_tok: str | None) -> tuple[bool, int | None, int]:
-    """Parse --retry flag, returning (has_retry, count_or_none, tokens_consumed)."""
-    if tok == "--retry":
-        count = None
-        if next_tok:
-            try:
-                count = int(next_tok.strip("'\""))
-            except ValueError:
-                count = None
-        return True, count, 2
-    if tok.startswith("--retry="):
-        count = None
-        try:
-            count = int(tok.split("=", 1)[1].strip("'\""))
-        except ValueError:
-            count = None
-        return True, count, 1
-    return False, None, 1
+def _unquote(value: str | None) -> str | None:
+    """Strip quotes left on a value when shlex could not split the line."""
+    return None if value is None else value.strip("'\"")
+
+
+def _long_pairs(tok: str, next_tok: str | None, pairs: list[tuple[str, str | None]]) -> int:
+    """Append one long option as (name, value); return the words it consumed."""
+    name, sep, value = tok.partition("=")
+    if sep:
+        pairs.append((name, _unquote(value)))
+        return 1
+    if tok in VALUE_LONG_OPTIONS:
+        pairs.append((tok, _unquote(next_tok)))
+        return 2
+    pairs.append((tok, None))
+    return 1
+
+
+def _short_pairs(tok: str, next_tok: str | None, pairs: list[tuple[str, str | None]]) -> int:
+    """Append each option of a short bundle; the first argument-taking one ends it."""
+    for index, option in enumerate(tok[1:], start=1):
+        name = SHORT_ALIASES.get(option, "-" + option)
+        if option in SHORT_OPTIONS_WITH_ARGS:
+            rest = tok[index + 1 :]
+            pairs.append((name, _unquote(rest or next_tok)))
+            return 1 if rest else 2
+        pairs.append((name, None))
+    return 1
+
+
+def option_pairs(tokens: list[str]) -> list[tuple[str, str | None]]:
+    """Read one operation's words as (option, value) pairs, short options under long names."""
+    pairs: list[tuple[str, str | None]] = []
+    i = 0
+    # Every step consumes at least one word, so the loop ends after len(tokens) steps.
+    while i < len(tokens):
+        tok = tokens[i]
+        next_tok = tokens[i + 1] if i + 1 < len(tokens) else None
+        if tok.startswith("--"):
+            i += _long_pairs(tok, next_tok, pairs)
+        elif tok.startswith("-") and len(tok) > 1:
+            i += _short_pairs(tok, next_tok, pairs)
+        else:
+            i += 1
+    return pairs
+
+
+def is_download(name: str, value: str | None) -> bool:
+    """A remote-name option, or an output that is a file rather than stdout or /dev/null."""
+    if name in ("--remote-name", "--remote-name-all"):
+        return True
+    return name == "--output" and value not in NON_FILE_TARGETS
 
 
 # curl 8.23.0 help: "-:, --next  Make next URL use separate options". curl
@@ -220,48 +249,44 @@ def check_curl_args(arg_str: str) -> list[str]:
     return violations
 
 
+def _retry_count_violation(value: str | None) -> str | None:
+    """--retry must be a literal integer of at least 5."""
+    if value is None or not (value.isascii() and value.isdigit()):
+        return "--retry count is not a literal integer"
+    if int(value) < 5:
+        return f"--retry count {int(value)} < 5"
+    return None
+
+
+def window_not_wider(window: str | None, max_time: str | None) -> bool:
+    """True when the retry window is the same word as, or no larger than, the max-time."""
+    if window is None or max_time is None:
+        return False
+    if window == max_time:
+        return True
+    try:
+        return float(window) <= float(max_time)
+    except ValueError:
+        return False
+
+
 def check_operation(tokens: list[str]) -> list[str]:
     """Check one curl operation (the options before or between --next) for retry rules."""
-    is_download = False
-    has_retry = False
-    retry_val: int | None = None
-    has_retry_max_time = False
-
-    i = 0
-    while i < len(tokens):
-        tok = tokens[i]
-        next_tok = tokens[i + 1] if i + 1 < len(tokens) else None
-        dl, dl_consumed = is_download_flag(tok, next_tok)
-        if dl:
-            is_download = True
-        if dl_consumed > 1:
-            i += dl_consumed
-            continue
-
-        ret, val, ret_consumed = parse_retry_flag(tok, next_tok)
-        if ret:
-            has_retry = True
-            # curl uses the last --retry given, so judge the last value.
-            retry_val = val
-            i += ret_consumed
-            continue
-
-        if tok == "--retry-max-time" or tok.startswith("--retry-max-time="):
-            has_retry_max_time = True
-            if tok == "--retry-max-time" and next_tok:
-                i += 1
-        i += 1
-
-    violations: list[str] = []
-    if is_download and not has_retry:
-        violations.append("download without --retry")
-    if is_download and has_retry and retry_val is None:
-        violations.append("--retry count is not a literal integer")
-    elif is_download and has_retry and retry_val is not None and retry_val < 5:
-        violations.append(f"--retry count {retry_val} < 5")
-    if is_download and has_retry and not has_retry_max_time:
-        violations.append("--retry without --retry-max-time")
-    return violations
+    pairs = option_pairs(tokens)
+    if not any(is_download(name, value) for name, value in pairs):
+        return []
+    # curl uses the last occurrence of an option, so judge the last value.
+    last = dict(pairs)
+    if "--retry" not in last:
+        return ["download without --retry"]
+    narrow = window_not_wider(last.get("--retry-max-time"), last.get("--max-time"))
+    candidates = [
+        _retry_count_violation(last["--retry"]),
+        None if "--retry-max-time" in last else "--retry without --retry-max-time",
+        None if "--speed-time" in last else SPEED_TIME_REASON,
+        WINDOW_REASON if narrow else None,
+    ]
+    return [reason for reason in candidates if reason]
 
 
 def check_content(content: str, display_path: str) -> list[str]:
@@ -344,79 +369,131 @@ def self_test_scanned(root: pathlib.Path) -> int:
     return failures
 
 
-def self_test_cases() -> list[tuple[str, str, bool]]:
-    """Planted curl lines and whether the check must refuse them."""
-    return [
-        ("p1", "curl --retry 2 --retry-max-time 60 -o out https://example.com/file\n", True),
-        ("p2", "curl -o out https://example.com/file\n", True),
-        ("p3", "curl --retry 6 -o out https://example.com/file\n", True),
-        (
-            "p4",
-            "curl \\\n  --fail \\\n  --retry 6 \\\n  --retry-max-time 60 \\\n  -o out \\\n  https://example.com/file\n",
-            False,
-        ),
-        ("p5", "curl -fsS -o /dev/null https://example.com/probe\n", False),
-        ("p6", "# curl --output x https://example.com/file\n", False),
-        ("p7", 'curl --retry "$N" --retry-max-time 60 -o out https://example.com/file\n', True),
-        ("p8", "curl --retry-max-time 60 -o out https://example.com/file --retry\n", True),
-        ("p9", "curl -fsSLo out https://example.com/file\n", True),
-        ("p10", "curl -OL https://example.com/file\n", True),
-        ("p11", "curl -fsSLo /dev/null https://example.com/file\n", False),
-        ("p12", "curl -sH 'X-o: 1' https://example.com/file\n", False),
-        ("p13", "curl -fsSL -o out --retry 6 --retry-max-time 60 https://example.com/file\n", False),
-        ("p14", "curl --retry 2 -o /dev/null https://example.com/file\n", False),
-        ("p15", 'curl --retry 6 --retry "$N" --retry-max-time 60 -o out https://example.com/file\n', True),
-        ("p16", "curl --retry 6 --retry 2 --retry-max-time 60 -o out https://example.com/file\n", True),
-        ("p17", 'curl --retry "$N" --retry 6 --retry-max-time 60 -o out https://example.com/file\n', False),
-        ("p18", "curl -fsSLo - https://example.com/status | jq .\n", False),
-        ("p19", "curl -o - https://example.com/status\n", False),
-        ("p20", "curl --output=- https://example.com/status\n", False),
-        ("p21", "curl --remote-name-all https://example.com/a https://example.com/b\n", True),
-        ("p22", "curl --remote-name-all -o - https://example.com/a https://example.com/b\n", True),
-        (
-            "p23",
-            'curl --retry 6 --retry-max-time 60 -o out https://example.com/f --next --retry "$N" -o o2 https://example.com/g\n',
-            True,
-        ),
-        (
-            "p24",
-            "curl --retry 6 --retry-max-time 60 -o out https://example.com/f -: -o o2 https://example.com/g\n",
-            True,
-        ),
-        (
-            "p25",
-            'curl --retry 6 --retry-max-time 60 -o out https://example.com/f --next --retry "$N" https://example.com/s\n',
-            False,
-        ),
-        (
-            "p26",
-            "curl --retry 6 --retry-max-time 60 -o out https://example.com/f -s: -o o2 https://example.com/g\n",
-            True,
-        ),
-        ("p27", "curl -fo -: --retry 6 --retry-max-time 60 https://example.com/f\n", False),
-    ]
+# Planted curl lines and the refusal reason each must produce (None: accepted).
+SELF_TEST_CASES: tuple[tuple[str, str, str | None], ...] = (
+    ("p1", "curl --retry 2 --retry-max-time 60 -o out https://example.com/file\n", "--retry count 2 < 5"),
+    ("p2", "curl -o out https://example.com/file\n", "download without --retry"),
+    ("p3", "curl --retry 6 -o out https://example.com/file\n", "--retry without --retry-max-time"),
+    (
+        "p4",
+        "curl \\\n  --fail \\\n  --speed-time 30 \\\n  --retry 6 \\\n  --retry-max-time 60 \\\n  -o out \\\n  https://example.com/file\n",
+        None,
+    ),
+    ("p5", "curl -fsS -o /dev/null https://example.com/probe\n", None),
+    ("p6", "# curl --output x https://example.com/file\n", None),
+    ("p7", 'curl --retry "$N" --retry-max-time 60 -o out https://example.com/file\n', "--retry count is not a literal integer"),
+    ("p8", "curl --retry-max-time 60 -o out https://example.com/file --retry\n", "--retry count is not a literal integer"),
+    ("p9", "curl -fsSLo out https://example.com/file\n", "download without --retry"),
+    ("p10", "curl -OL https://example.com/file\n", "download without --retry"),
+    ("p11", "curl -fsSLo /dev/null https://example.com/file\n", None),
+    ("p12", "curl -sH 'X-o: 1' https://example.com/file\n", None),
+    ("p13", "curl -fsSL -o out --speed-time 30 --retry 6 --retry-max-time 60 https://example.com/file\n", None),
+    ("p14", "curl --retry 2 -o /dev/null https://example.com/file\n", None),
+    ("p15", 'curl --retry 6 --retry "$N" --retry-max-time 60 -o out https://example.com/file\n', "--retry count is not a literal integer"),
+    ("p16", "curl --retry 6 --retry 2 --retry-max-time 60 -o out https://example.com/file\n", "--retry count 2 < 5"),
+    ("p17", 'curl --speed-time 30 --retry "$N" --retry 6 --retry-max-time 60 -o out https://example.com/file\n', None),
+    ("p18", "curl -fsSLo - https://example.com/status | jq .\n", None),
+    ("p19", "curl -o - https://example.com/status\n", None),
+    ("p20", "curl --output=- https://example.com/status\n", None),
+    ("p21", "curl --remote-name-all https://example.com/a https://example.com/b\n", "download without --retry"),
+    ("p22", "curl --remote-name-all -o - https://example.com/a https://example.com/b\n", "download without --retry"),
+    (
+        "p23",
+        'curl --speed-time 30 --retry 6 --retry-max-time 60 -o out https://example.com/f --next --retry "$N" -o o2 https://example.com/g\n',
+        "--retry count is not a literal integer",
+    ),
+    (
+        "p24",
+        "curl --speed-time 30 --retry 6 --retry-max-time 60 -o out https://example.com/f -: -o o2 https://example.com/g\n",
+        "download without --retry",
+    ),
+    (
+        "p25",
+        'curl --speed-time 30 --retry 6 --retry-max-time 60 -o out https://example.com/f --next --retry "$N" https://example.com/s\n',
+        None,
+    ),
+    (
+        "p26",
+        "curl --speed-time 30 --retry 6 --retry-max-time 60 -o out https://example.com/f -s: -o o2 https://example.com/g\n",
+        "download without --retry",
+    ),
+    ("p27", "curl -fo -: --speed-time 30 --retry 6 --retry-max-time 60 https://example.com/f\n", None),
+    (
+        "p28",
+        'curl --speed-time 30 --max-time "$T" --retry 6 --retry-max-time "$T" -o out https://example.com/f\n',
+        WINDOW_REASON,
+    ),
+    (
+        "p29",
+        "curl --speed-time 30 --max-time 120 --retry 6 --retry-max-time 60 -o out https://example.com/f\n",
+        WINDOW_REASON,
+    ),
+    (
+        "p30",
+        "curl --speed-time 30 --max-time 120 --retry 6 --retry-max-time 120 -o out https://example.com/f\n",
+        WINDOW_REASON,
+    ),
+    (
+        "p31",
+        "curl --max-time 120 --retry 6 --retry-max-time 240 -o out https://example.com/f\n",
+        SPEED_TIME_REASON,
+    ),
+    (
+        "p32",
+        "curl --speed-time=30 --max-time 120 --retry 6 --retry-max-time 240 -o out https://example.com/f\n",
+        None,
+    ),
+    (
+        "p33",
+        "curl -y 30 --max-time 120 --retry 6 --retry-max-time 240 -o out https://example.com/f\n",
+        None,
+    ),
+    (
+        "p34",
+        "curl -sSy 30 --max-time 120 --retry 6 --retry-max-time 240 -o out https://example.com/f\n",
+        None,
+    ),
+    (
+        "p35",
+        "curl -sSy30 --max-time 120 --retry 6 --retry-max-time 240 -o out https://example.com/f\n",
+        None,
+    ),
+    (
+        "p36",
+        "curl --speed-time 30 --retry 6 --retry-max-time 60 -o out https://example.com/f\n",
+        None,
+    ),
+)
 
 
 def run_self_test() -> int:
     """Run self-test on planted cases in a temporary directory."""
-    cases = self_test_cases()
+    cases = SELF_TEST_CASES
     failures = 0
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = pathlib.Path(tmp_dir)
-        for name, content, should_refuse in cases:
+        for name, content, expected_reason in cases:
             test_file = tmp_path / f"{name}.sh"
             test_file.write_text(content, encoding="utf-8")
             diags, violations = check_file(test_file, tmp_path)
             if diags:
                 print(f"FAIL self-test '{name}': unexpected diagnostics: {diags}", file=sys.stderr)
                 failures += 1
-            has_violations = len(violations) > 0
-            if has_violations != should_refuse:
-                print(
-                    f"FAIL self-test '{name}': expected refusal={should_refuse}, got violations={violations}",
-                    file=sys.stderr,
-                )
-                failures += 1
+            if expected_reason is None:
+                if violations:
+                    print(
+                        f"FAIL self-test '{name}': expected acceptance, got violations={violations}",
+                        file=sys.stderr,
+                    )
+                    failures += 1
+            else:
+                matched = any(expected_reason in v for v in violations)
+                if not matched:
+                    print(
+                        f"FAIL self-test '{name}': expected reason '{expected_reason}', got violations={violations}",
+                        file=sys.stderr,
+                    )
+                    failures += 1
         failures += self_test_scanned(tmp_path)
 
     if failures:
