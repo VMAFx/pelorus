@@ -64,6 +64,7 @@ jobs:
           "$RUNNER_TEMP/meson-floor/bin/pip" install "meson==$floor" "ninja==1.13.2"
           "$RUNNER_TEMP/meson-floor/bin/meson" --version | grep -Fxq "$floor"
           "$RUNNER_TEMP/meson-floor/bin/ninja" --version
+          export NINJA="$RUNNER_TEMP/meson-floor/bin/ninja"
           "$RUNNER_TEMP/meson-floor/bin/meson" setup --werror build-floor
           "$RUNNER_TEMP/meson-floor/bin/ninja" -C build-floor
           "$RUNNER_TEMP/meson-floor/bin/meson" test -C build-floor --suite=fast --print-errorlogs
