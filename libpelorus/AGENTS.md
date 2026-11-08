@@ -121,8 +121,9 @@ libpelorus/
     holds bytes release tags emit; append-only: never edit, regenerate or
     delete a released minor's file; a never-released (HEAD-only) minor's
     files + manifest rows leave with the superseding bump, same PR; never
-    change existing values in `test/abi_history/abi_history_values.h`. ABI bump -> fill + check
-    function in `test/abi_history/abi_history.c` gated
+    change existing values in `test/abi_history/abi_history_values.h`.
+    ABI bump -> fill + check function in `test/abi_history/abi_history.c`
+    gated
     `#if PELORUS_ABI_MINOR >= N`, `abi-1.<N>.bin` from
     `scripts/check-interop-abi-history.py --write`, meson writer test
     pointed at it, same PR.

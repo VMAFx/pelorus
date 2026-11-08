@@ -538,13 +538,25 @@ For rational PTS alignment (`pel_quality_align`) and encoder zone emitters (`pel
 
 ## Released-writer fixtures
 
-Persisted binary fixtures (`libpelorus/test/fixtures/interop-history/abi-1.<N>.bin`, plus `-carrier.bin` for ABI ≥ 1.5) capture the exact binary side-data blobs produced by released versions of libpelorus across `PELORUS_ABI_MINOR` 0 through 6 (issue #467, ADR-0247). A manifest (`manifest.json`) records the SHA-256 digests and the released Git tags mapped to each fixture:
+Persisted binary fixtures (`libpelorus/test/fixtures/interop-history/abi-1.<N>.bin`, plus `-carrier.bin` for ABI ≥ 1.5) capture the exact binary side-data blobs that each released `PELORUS_ABI_MINOR` writes (issue #467, ADR-0247). Minors 1 and 2 never reached a release tag, so they have no fixture. A manifest (`manifest.json`) records the SHA-256 digests and the Git tags that write each fixture; every tag listed on one line writes identical bytes:
 
 - `abi-1.0.bin`: `v0.1.0` (ABI 1.0)
-- `abi-1.3.bin`: `v0.2.0`, `v0.2.1`, `v0.2.2`, `v0.3.0` (ABI 1.3; minors 1 and 2 were unreleased)
+- `abi-1.3.bin`: `v0.2.0`, `v0.2.1`, `v0.2.2`, `v0.3.0` (ABI 1.3)
 - `abi-1.4.bin`: `v0.4.0-rc.1` (ABI 1.4)
 - `abi-1.5.bin` and `abi-1.5-carrier.bin`: `v0.4.0-rc.2`, `v0.4.0-rc.3`, `v0.4.0-rc.4`, `v0.4.0`, `v0.4.1` (ABI 1.5)
-- `abi-1.6.bin` and `abi-1.6-carrier.bin`: current tree (`HEAD`, ABI 1.6)
+- `abi-1.6.bin` and `abi-1.6-carrier.bin`: current tree only (`HEAD`, ABI 1.6). Provisional: no release tag writes 1.6 yet, so an ABI bump before the next release removes these files (step 3 below).
+
+### Verify locally
+
+The check needs the full tag history (`git fetch --tags`; CI checks out with `fetch-depth: 0`) and a POSIX C compiler named by `CC` (default `cc`). On Windows it prints a skip line and exits 0.
+
+```sh
+python3 -I scripts/check-interop-abi-history.py --self-test  # planted defects must fail
+python3 -I scripts/check-interop-abi-history.py              # 12 readers x 7 fixtures
+meson test -C build --suite=fast --print-errorlogs 'interop-history-*'
+```
+
+`make docs-check` runs both script calls. The fast suite holds `interop-history-writer` (current writer against the 1.6 fixtures), one `interop-history-read-<fixture>` test per fixture, and the planted `interop-history-planted-value` and `interop-history-planted-dir-size` tests, which must fail.
 
 ### Regeneration on ABI bump
 
@@ -558,7 +570,7 @@ When bumping `PELORUS_ABI_MINOR`:
 
 ### Scope and non-coverage
 
-These fixtures verify the libpelorus C core serialization, backward compatibility (newer readers over older fixtures), and forward compatibility (older readers safely ignoring unknown newer sections per R3/R4 and carrier UUIDs per ADR-0183). Tag sources are compiled without `-Werror` (emitting an informational note line if compiler warnings arise) because release sources are immutable historical artifacts where future compiler diagnostics cannot be fixed retrospectively. They do not test FFmpeg-filter host graph producers or external readers such as vmafx.
+These fixtures verify the libpelorus C core serialization, backward compatibility (newer readers over older fixtures), and forward compatibility (older readers safely ignoring unknown newer sections per R3/R4 and carrier UUIDs per ADR-0183). Each release tag's `interop.c` is compiled without `-Werror` (warnings print an informational note line), because release sources are immutable and a newer compiler's diagnostics cannot be fixed in them; `abi_history.c` and the current tree's `interop.c` keep `-Werror`. They do not test FFmpeg-filter host graph producers or external readers such as vmafx.
 
 ## Stability rules (normative — see interop.h)
 
