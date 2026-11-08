@@ -70,7 +70,7 @@ def _write_curl_shim(tools_dir: pathlib.Path, log_file: pathlib.Path) -> None:
         f"sys.exit(28)\n"
     )
     shim.write_text(code, encoding="utf-8")
-    shim.chmod(0o755)
+    shim.chmod(0o500)
 
 
 def _clean_env(tools_dir: pathlib.Path, overrides: dict[str, str]) -> dict[str, str]:
@@ -155,7 +155,7 @@ def _run_corpus(
         lock_file = work / "corpus.lock"
         ffmpeg_stub = work / "ffmpeg-stub"
         ffmpeg_stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        ffmpeg_stub.chmod(0o755)
+        ffmpeg_stub.chmod(0o500)
         sha = "0" * 64
         lock_file.write_text(
             f"clip | http://127.0.0.1:9/clip.bin | {sha} | -ss 0 | 16x16 | yuv420p | 1 | 30 | CC-BY-4.0\n",
