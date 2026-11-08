@@ -160,13 +160,17 @@ LAVAPIPE_TOKENS = (
     "VK_DRIVER_FILES=",
     "echo \"PELORUS_VALIDATE=1\"",
     "ffmpeg-patches/test/vulkan-lavapipe-guard.sh --self-test --disable",
+)
+# Issue #466 review: a substring check accepts `echo <script>`, so each lane
+# script must run as an executed command with exactly these arguments.
+LAVAPIPE_COMMANDS = (
     "ffmpeg-patches/test/vulkan-lavapipe-filters.sh --self-test",
     "ffmpeg-patches/test/vulkan-lavapipe-report.sh --self-test",
-    "ffmpeg-patches/test/vulkan-lavapipe-guard.sh\n",
-    "ffmpeg-patches/test/vulkan-lavapipe-filters.sh\n",
-    "ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak\n",
-    "ffmpeg-patches/test/vulkan-format-matrix.sh\n",
-    "ffmpeg-patches/test/vulkan-lavapipe-report.sh\n",
+    "ffmpeg-patches/test/vulkan-lavapipe-guard.sh",
+    "ffmpeg-patches/test/vulkan-lavapipe-filters.sh",
+    "ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak",
+    "ffmpeg-patches/test/vulkan-format-matrix.sh",
+    "ffmpeg-patches/test/vulkan-lavapipe-report.sh",
 )
 LAVAPIPE_FORBIDDEN = ("continue-on-error", "PELORUS_VALIDATE=0", "|| true")
 # ADR-0185: every lane that replays or regenerates the stack fetches the shared
@@ -2895,6 +2899,10 @@ def validate_lavapipe_job(relative: str, block: str | None) -> list[str]:
     for token in LAVAPIPE_TOKENS:
         if token not in block:
             errors.append(f"{prefix} is missing {token.strip()}")
+    commands = executed_command_tokens(job_executed_run_commands(block))
+    for command in LAVAPIPE_COMMANDS:
+        if shlex.split(command) not in commands:
+            errors.append(f"{prefix} is missing {command}")
     for token in LAVAPIPE_FORBIDDEN:
         if token in block:
             errors.append(f"{prefix} must not contain {token}")
@@ -5829,29 +5837,9 @@ def lavapipe_step_cases(source: str) -> dict[str, tuple[str, str]]:
             mutate('echo "PELORUS_VALIDATE=1"', 'echo "PELORUS_VALIDATE=0"'),
             "must not contain PELORUS_VALIDATE=0",
         ),
-        "lavapipe device guard dropped": (
-            mutate("ffmpeg-patches/test/vulkan-lavapipe-guard.sh\n", "true\n"),
-            "is missing ffmpeg-patches/test/vulkan-lavapipe-guard.sh",
-        ),
         "lavapipe guard red-proof dropped": (
             mutate("vulkan-lavapipe-guard.sh --self-test --disable", "vulkan-lavapipe-guard.sh --self-test"),
             "is missing ffmpeg-patches/test/vulkan-lavapipe-guard.sh --self-test --disable",
-        ),
-        "lavapipe ten-filter run dropped": (
-            mutate("ffmpeg-patches/test/vulkan-lavapipe-filters.sh\n", "true\n"),
-            "is missing ffmpeg-patches/test/vulkan-lavapipe-filters.sh",
-        ),
-        "lavapipe soak dropped": (
-            mutate("ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak\n", "true\n"),
-            "is missing ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak",
-        ),
-        "lavapipe format matrix dropped": (
-            mutate("ffmpeg-patches/test/vulkan-format-matrix.sh\n", "true\n"),
-            "is missing ffmpeg-patches/test/vulkan-format-matrix.sh",
-        ),
-        "lavapipe report guard dropped": (
-            mutate("ffmpeg-patches/test/vulkan-lavapipe-report.sh\n", "true\n"),
-            "is missing ffmpeg-patches/test/vulkan-lavapipe-report.sh",
         ),
         "lavapipe failure ignored": (
             mutate("vulkan-lavapipe-filters.sh\n", "vulkan-lavapipe-filters.sh || true\n"),
@@ -5864,6 +5852,50 @@ def lavapipe_step_cases(source: str) -> dict[str, tuple[str, str]]:
         "lavapipe binary not kept": (
             mutate("KEEP_DIR=", "KEEP_DIR_REMOVED="),
             "is missing KEEP_DIR=",
+        ),
+    }
+
+
+def lavapipe_command_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Mutations that drop, echo or comment out an executed lavapipe lane command."""
+
+    def mutate(old: str, new: str) -> str:
+        return replace_in_job(source, LAVAPIPE_JOB, old, new)
+
+    return {
+        "lavapipe device guard dropped": (
+            mutate("ffmpeg-patches/test/vulkan-lavapipe-guard.sh\n", "true\n"),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-guard.sh",
+        ),
+        "lavapipe ten-filter run dropped": (
+            mutate("ffmpeg-patches/test/vulkan-lavapipe-filters.sh\n", "true\n"),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-filters.sh",
+        ),
+        "lavapipe soak dropped": (
+            mutate("ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak\n", "true\n"),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak",
+        ),
+        "lavapipe soak echoed, not run": (
+            mutate(
+                "run: ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak\n",
+                "run: echo ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak\n",
+            ),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak",
+        ),
+        "lavapipe report run commented out": (
+            mutate(
+                "run: ffmpeg-patches/test/vulkan-lavapipe-report.sh\n",
+                "run: |\n          # ffmpeg-patches/test/vulkan-lavapipe-report.sh\n          true\n",
+            ),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-report.sh",
+        ),
+        "lavapipe format matrix dropped": (
+            mutate("ffmpeg-patches/test/vulkan-format-matrix.sh\n", "true\n"),
+            "is missing ffmpeg-patches/test/vulkan-format-matrix.sh",
+        ),
+        "lavapipe report guard dropped": (
+            mutate("ffmpeg-patches/test/vulkan-lavapipe-report.sh\n", "true\n"),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-report.sh",
         ),
     }
 
@@ -6020,6 +6052,7 @@ def _ci_toolchain_cases(source: str) -> dict[str, tuple[str, str]]:
         **windows_msvc_workflow_cases(source),
         **lavapipe_workflow_cases(source),
         **lavapipe_step_cases(source),
+        **lavapipe_command_cases(source),
         **series_workflow_cases(source),
         "floating runner": (
             source.replace("ubuntu-26.04", "ubuntu-latest", 1),

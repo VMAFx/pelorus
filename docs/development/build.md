@@ -88,7 +88,8 @@ twice at 320x180 under validation, 300 frames and then 3000 frames. The table
 holds the nine compute filters, `pelorus_denoise_vulkan` with and without its
 causal frame ring, and the `pelorus_mc_vulkan` to `pelorus_denoise_vulkan`
 side-data chain. The source is cut with `trim`, so every frame drains through
-the graph at end of stream. A config fails when:
+the graph at end of stream. Each run needs an executable coreutils `timeout`
+on `PATH`. A config fails when:
 
 - `bench: maxrss` grows by more than `SOAK_RSS_MIB` (default 16 MiB) from the
   short to the long run. On lavapipe, device memory is host memory, so a frame
@@ -101,8 +102,8 @@ the graph at end of stream. A config fails when:
 - the validation layer reports any VUID, including Vulkan objects still alive
   when the device is destroyed;
 - `showinfo` counts a different number of frames, misses the last frame, or
-  counts a different number of Pelorus UUID or AV1 film-grain side-data entries
-  per frame than the table states.
+  counts, on any single frame, a different number of Pelorus UUID or AV1
+  film-grain side-data entries than the table states.
 
 Run-to-run maxrss noise on lavapipe measured up to about 8 MiB (7760 KiB),
 inside the 16 MiB budget. Heap leaks below the floor need a LeakSanitizer build. The soak
