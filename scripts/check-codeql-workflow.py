@@ -17,6 +17,7 @@ REQUIRED_LANGUAGES = ("c-cpp", "python", "actions")
 PINNED_USES_RE = re.compile(
     r"^[ ]+(?:- )?uses:\s+[^@\s]+@[0-9a-f]{40}\s+#\s+v\S+"
 )
+LOCAL_USES_RE = re.compile(r"^[ ]+(?:- )?uses:\s+\./")
 USES_LINE_RE = re.compile(r"^[ ]+(?:- )?uses:\s*(\S+)")
 
 
@@ -74,6 +75,8 @@ def check_pinned_uses(text: str) -> list[str]:
     for line in lines:
         if USES_LINE_RE.search(line):
             uses_count += 1
+            if LOCAL_USES_RE.match(line):
+                continue
             if not PINNED_USES_RE.match(line):
                 errors.append(f"unpinned uses line: {line.strip()}")
     if uses_count == 0:
@@ -139,16 +142,7 @@ def build_self_test_mutations(real_text: str) -> dict[str, tuple[str, str]]:
     draft_step = (
         "      - name: Stop on a draft pull request\n"
         "        if: github.event.pull_request.draft == true\n"
-        "        shell: bash\n"
-        "        env:\n"
-        "          TITLE: Gate not run on a draft\n"
-        "          MESSAGE: >-\n"
-        "            The gate did not run because the pull request is a draft.\n"
-        "            It runs when the pull request is marked ready for review.\n"
-        "        run: |\n"
-        "          echo \"::error title=$TITLE::$MESSAGE\"\n"
-        "          echo \"$MESSAGE\" >> \"$GITHUB_STEP_SUMMARY\"\n"
-        "          exit 1"
+        "        uses: ./.github/actions/draft-gate"
     )
     checkout_step = (
         "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"

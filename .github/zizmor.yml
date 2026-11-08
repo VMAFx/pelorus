@@ -16,7 +16,10 @@ rules:
       # (tested with 1.7.12: "ref is missing"), so the callers of
       # .github/actions/load-build-config keep `./`.
       - ci.yml
+      - codeql.yml
+      - devcontainer-image.yml
       - release-build.yml
+      - reuse.yml
       - standards-gate.yml
       - tester-publish.yml
       - windows-tester.yml
