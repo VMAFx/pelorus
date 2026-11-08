@@ -1,0 +1,1 @@
+- `make test` now runs `scripts/check-tester-kit-install.py`, which installs the fast suite into a temporary tester kit, so a test argument the kit refuses (such as a fixture path with `..`) fails locally instead of only in the tester-publish workflow; self-test `check-tester-kit-install`.
