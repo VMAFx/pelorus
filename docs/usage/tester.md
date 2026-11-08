@@ -36,9 +36,13 @@ mkdir -p report
 docker run --rm --gpus all -v "$PWD/report:/report" ghcr.io/vmafx/pelorus:tester-nvidia-<date>-<sha8>
 ```
 
-- Needs the NVIDIA driver 530.41.03 or newer on the host (the floor of the
-  `nv-codec-headers` `n12.1.14.0` the image is built with) and the
+- Needs an NVIDIA driver on the host and the
   [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/).
+  The declared minimum driver is 530.41.03 on Linux and 531.61 on Windows
+  (`nv-codec-headers` `n12.1.14.0`, the version the image is built with).
+  Neither floor has been tested: the project has not run at these driver
+  versions. Hardware reports from contributors with older drivers are welcome
+  ([hardware reports](../hardware-reports/index.md)).
   The image contains no NVIDIA file: the toolkit mounts `libcuda`,
   `libnvidia-encode` and the Vulkan ICD from the host.
 - The image carries Debian's `libegl1` and `libxext6`: the host's Vulkan ICD
