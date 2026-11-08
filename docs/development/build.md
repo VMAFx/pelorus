@@ -110,7 +110,9 @@ inside the 16 MiB budget. Heap leaks below the floor need a LeakSanitizer build.
 is software Vulkan evidence only. The NVENC side-data path has no soak:
 `ffmpeg-patches/test/nvenc-udu-sei-smoke.sh` needs an NVIDIA host, caps
 `FRAMES` at 64 per case and does not run in CI. `SOAK_CONFIGS=denoise_ring,mc`
-narrows a local run to the named configs, and `--self-test` plants every
+narrows a local run to the named configs. CI runs the script defaults:
+`scripts/check-build-config.py` rejects any `SOAK_` setting in
+`.github/workflows/ci.yml`. `--self-test` plants every
 failure above in a fake ffmpeg and requires each one to fail for its own
 reason.
 
