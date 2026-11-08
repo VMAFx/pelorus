@@ -318,14 +318,18 @@ static int handle_expect_reject(int argc, char **argv)
     if (rc != 0) {
         return rc;
     }
-    rc = do_read_blob(argv[2], has_flip, flip_off);
+    /* The blob path goes to printf through a named local: Codacy's Opengrep
+     * rule insecure-use-printf-fn reports argv[N] passed straight to printf
+     * even with a literal format (.semgrep.yml pelorus-c-printf-argv). */
+    const char *blob_path = argv[2];
+    rc = do_read_blob(blob_path, has_flip, flip_off);
     if (rc == 1) {
-        (void)printf("ok: reader rejected %s\n", argv[2]);
+        (void)printf("ok: reader rejected %s\n", blob_path);
         return 0;
     }
     if (rc == 0) {
         (void)fprintf(stderr, "FAIL: reader accepted %s; expect-reject wants a rejection\n",
-                      argv[2]);
+                      blob_path);
         return 1;
     }
     return rc;

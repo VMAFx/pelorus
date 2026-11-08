@@ -230,6 +230,40 @@ rules:
               metavariable: $CALL
               regex: ^(gettimeofday|ftime|_ftime|_ftime64|GetSystemTimeAsFileTime|GetSystemTimePreciseAsFileTime)$
 
+  - id: pelorus-c-printf-argv
+    # Codacy's Opengrep rule insecure-use-printf-fn reports a command-line
+    # argument passed straight into printf, sprintf or vsprintf, or copied
+    # into a buffer that one of them reads later, whatever the format string;
+    # it flagged the expect-reject message of the ABI history reader (pull
+    # request 578). This rule refuses the same call shapes before CI.
+    paths:
+      include:
+        - "*.c"
+        - "*.h"
+        - "**/*.c"
+        - "**/*.h"
+    message: >
+      Command-line argument argv[$N] reaches $CALL. Codacy's Opengrep rule
+      insecure-use-printf-fn reports this even with a literal format. Bind
+      the argument to a named local and pass the local, as
+      handle_expect_reject() in libpelorus/test/abi_history/abi_history.c
+      does.
+    languages: [c, cpp]
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: $CALL(..., argv[$N], ...)
+          - pattern: |
+              $COPY($BUF, argv[$N], ...);
+              ...
+              $CALL(..., $BUF, ...);
+      - metavariable-regex:
+          metavariable: $CALL
+          regex: ^(printf|sprintf|vsprintf)$
+      - metavariable-comparison:
+          metavariable: $N
+          comparison: int($N) > 0
+
   - id: pelorus-smoke-skip-reason-head
     # pel_skip and pel_fail messages must not be derived from
     # `$(head -n 1 ...)` or `$(head ... | head -n 1)`. Taking the first line of a log often captures

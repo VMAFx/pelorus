@@ -1125,6 +1125,15 @@ if build_machine.system() != 'windows'
        workdir: meson.project_source_root(),
        timeout: 600,
        suite: 'fast')
+  # A command-line argument reaches printf, sprintf or vsprintf only through
+  # a named local: pelorus-c-printf-argv refuses the call shapes Codacy's
+  # Opengrep insecure-use-printf-fn reports (pull request 578).
+  test('semgrep-printf-argv',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'test-semgrep-printf-argv.py'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
 endif
 
 # Shared Semgrep test harness enforcement: test scripts must import
