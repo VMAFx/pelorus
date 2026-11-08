@@ -59,8 +59,9 @@ jobs:
           "$RUNNER_TEMP/meson-floor/bin/ninja" --version
           "$RUNNER_TEMP/meson-floor/bin/meson" setup --werror build-floor
           "$RUNNER_TEMP/meson-floor/bin/ninja" -C build-floor
-          "$RUNNER_TEMP/meson-floor/bin/meson" test -C build-floor --suite=fast --print-errorlogs
-          rm -rf build-floor "$RUNNER_TEMP/meson-floor"
+          rm -rf "$RUNNER_TEMP/meson-floor"
+          meson test -C build-floor --suite=fast --print-errorlogs
+          rm -rf build-floor
       - name: Configure + build
         run: meson setup --werror build && ninja -C build
       - name: Optimised gcc build (-O2, warnings are errors)
