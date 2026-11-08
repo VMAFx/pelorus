@@ -54,7 +54,7 @@ NON_PYTHON_MARKER = re.compile(
     r"(?:#|//|/\*|--)"
     r"(?:[ \t]*nos(?:emgrep|em|ec)\b"
     r"|[^\n]*?\b(?:"
-    r"nos(?:emgrep|ec)[ \t]*(?=\n|\Z)"
+    r"nos(?:emgrep|em|ec)[ \t]*(?:\*+/|(?=\r?\n|\Z))"
     r"|nos(?:emgrep|em)\s*:"
     r"|nosec\s+B\d{3}))",
     re.IGNORECASE,
@@ -536,6 +536,22 @@ def self_test() -> int:
         failures.append("planted 'bare late nosec in a C comment' not refused")
     else:
         print("refused as expected (bare late nosec in a C comment)")
+    if not other_findings("planted.c", "/* late bare nosemgrep */\n"):
+        failures.append("planted 'late bare nosemgrep in a C block comment' not refused")
+    else:
+        print("refused as expected (late bare nosemgrep in a C block comment)")
+    if not other_findings("planted.c", "// late bare nosem\n"):
+        failures.append("planted 'late bare nosem in a C comment' not refused")
+    else:
+        print("refused as expected (late bare nosem in a C comment)")
+    if not other_findings("planted.c", "/* late bare nosemgrep */ do_work();\n"):
+        failures.append("planted 'nosemgrep before code on same line' not refused")
+    else:
+        print("refused as expected (nosemgrep before code on same line)")
+    if not other_findings("planted.c", "// late bare nosem\r\n"):
+        failures.append("planted 'late bare nosem with CRLF' not refused")
+    else:
+        print("refused as expected (late bare nosem with CRLF)")
     failures.extend(encoding_self_test(local_ids))
     failures.extend(exceptions_self_test())
     for failure in failures:
