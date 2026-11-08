@@ -47,11 +47,17 @@ def _make_temp_copy(src: Path, dst: Path) -> Path:
 
 
 def _run_flip(
-    head_bin: Path, blob: Path, offset: str
+    head_bin: Path,
+    blob: Path,
+    offset: str | None = None,
+    mode: str = "read",
 ) -> subprocess.CompletedProcess[str]:
-    """Run the HEAD reader on blob with --flip offset; return the finished process."""
+    """Run the HEAD reader on blob with mode and optional --flip offset; return the finished process."""
+    cmd = [str(head_bin), mode, str(blob)]
+    if offset is not None:
+        cmd.extend(["--flip", offset])
     return subprocess.run(  # nosec B603 - test binary execution without shell, explicit timeout  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a list without shell, explicit timeout
-        [str(head_bin), "read", str(blob), "--flip", offset],
+        cmd,
         capture_output=True,
         text=True,
         timeout=30,
@@ -315,6 +321,41 @@ def _test_plant_13_and_flip_bounds(
     )
 
 
+def _test_plant_14(clean_dir: Path, binaries: dict[str, tuple[Path, int]]) -> None:
+    """Plant P14 (expect-reject inverts only a rejection) and its positive case."""
+    head_bin = binaries["HEAD"][0]
+    p_file = clean_dir / "abi-1.0.bin"
+    neg_cases: list[tuple[Path, str | None, int, str, str]] = [
+        (p_file, None, 1, "FAIL: reader accepted", "accepted blob"),
+        (clean_dir / "absent.bin", None, 2, "IO error", "missing file"),
+        (p_file, "x", 2, "Usage: abi_history expect-reject", "invalid flip"),
+        (
+            p_file,
+            "4294967295",
+            2,
+            "Flip offset 4294967295 >= len",
+            "out-of-range flip",
+        ),
+    ]
+    for target, offset, exp_rc, exp_err, desc in neg_cases:
+        res = _run_flip(head_bin, target, offset, mode="expect-reject")
+        if res.returncode != exp_rc or exp_err not in res.stderr:
+            raise SelfTestError(
+                f"plant P14 ({desc}) failed: expected rc={exp_rc} and {exp_err!r}, "
+                f"got rc={res.returncode}\n{res.stderr}"
+            )
+
+    print("ok: plant P14 rejected: expect-reject inverts only a rejection")
+
+    res_pos = _run_flip(head_bin, p_file, "144", mode="expect-reject")
+    if res_pos.returncode != 0 or "ok: reader rejected" not in res_pos.stdout:
+        raise SelfTestError(
+            f"positive expect-reject failed: expected rc=0 and ok message, "
+            f"got rc={res_pos.returncode}\n{res_pos.stderr}"
+        )
+    print("ok: positive expect-reject passed: reader rejected with rc=0")
+
+
 def run_self_test(
     binaries: dict[str, tuple[Path, int]],
     expected_fixtures: dict[str, dict[str, Any]],
@@ -345,6 +386,7 @@ def run_self_test(
         )
         _test_plants_11_12(test_root, clean_dir, expected_fixtures, write_fixtures_fn)
         _test_plant_13_and_flip_bounds(clean_dir, binaries)
+        _test_plant_14(clean_dir, binaries)
         _test_positives(test_root, clean_dir, expected_fixtures, all_built_writers)
         _test_supersede_positive(
             test_root,
@@ -355,6 +397,6 @@ def run_self_test(
         )
 
     print(
-        "Self-test passed: 13 plants (P1-P13), 3 positives and 2 flip-offset"
+        "Self-test passed: 14 plants (P1-P14), 4 positives and 2 flip-offset"
         " boundary cases verified as expected."
     )

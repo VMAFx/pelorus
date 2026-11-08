@@ -556,7 +556,7 @@ python3 -I scripts/check-interop-abi-history.py              # 12 readers x 7 fi
 meson test -C build --suite=fast --print-errorlogs
 ```
 
-`make docs-check` runs both script calls. The fast suite holds `interop-history-writer` (current writer against the 1.6 fixtures), one `interop-history-read-<fixture>` test per fixture, and the planted `interop-history-planted-value` and `interop-history-planted-dir-size` tests, which must fail.
+`make docs-check` runs both script calls. The fast suite holds `interop-history-writer` (current writer against the 1.6 fixtures), one `interop-history-read-<fixture>` test per fixture, and the planted `interop-history-planted-value` and `interop-history-planted-dir-size` tests. The planted tests run the reader's `expect-reject` mode, which exits 0 only when the reader rejects the flipped blob (reader exit 1) and fails when it accepts the blob or cannot read it. The expectation lives in the binary, not in Meson's `should_fail`, because the tester kit runs the tests without Meson ([ADR-0248](../adr/0248-tester-kit-expected-fail.md)).
 
 ### Regeneration on ABI bump
 

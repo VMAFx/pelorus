@@ -271,38 +271,74 @@ static int handle_check_writer(int argc, char **argv)
 }
 
 /**
+ * Parse arguments for read and expect-reject commands.
+ * Returns 0 on success, 2 on usage error.
+ */
+static int parse_read_args(int argc, char **argv, const char *subcmd, int *has_flip,
+                           uint32_t *flip_off)
+{
+    int ok = argc == 3 || argc == 5;
+    if (ok && argc == 5) {
+        ok = strcmp(argv[3], "--flip") == 0 && parse_uint32(argv[4], flip_off);
+        *has_flip = ok;
+    }
+    if (!ok) {
+        (void)fprintf(
+            stderr,
+            "Usage: abi_history %s <blob.bin> [--flip <byte offset, 0..4294967295, at most 10 digits>]\n",
+            subcmd);
+        return 2;
+    }
+    return 0;
+}
+
+/**
  * Parse arguments and dispatch blob read/verification command.
  */
 static int handle_read(int argc, char **argv)
 {
     int has_flip = 0;
     uint32_t flip_off = 0;
-    if (argc != 3 && argc != 5) {
-        (void)fprintf(
-            stderr,
-            "Usage: abi_history read <blob.bin> [--flip <byte offset, 0..4294967295, at most 10 digits>]\n");
-        return 2;
-    }
-    if (argc == 5) {
-        if (strcmp(argv[3], "--flip") != 0 || !parse_uint32(argv[4], &flip_off)) {
-            (void)fprintf(
-                stderr,
-                "Usage: abi_history read <blob.bin> [--flip <byte offset, 0..4294967295, at most 10 digits>]\n");
-            return 2;
-        }
-        has_flip = 1;
+    int rc = parse_read_args(argc, argv, "read", &has_flip, &flip_off);
+    if (rc != 0) {
+        return rc;
     }
     return do_read_blob(argv[2], has_flip, flip_off);
 }
 
 /**
- * Main entry point for abi_history test tool.
+ * Parse arguments and dispatch expect-reject verification command.
+ * Inverts reader rejection into test success (rc 0).
+ */
+static int handle_expect_reject(int argc, char **argv)
+{
+    int has_flip = 0;
+    uint32_t flip_off = 0;
+    int rc = parse_read_args(argc, argv, "expect-reject", &has_flip, &flip_off);
+    if (rc != 0) {
+        return rc;
+    }
+    rc = do_read_blob(argv[2], has_flip, flip_off);
+    if (rc == 1) {
+        (void)printf("ok: reader rejected %s\n", argv[2]);
+        return 0;
+    }
+    if (rc == 0) {
+        (void)fprintf(stderr, "FAIL: reader accepted %s; expect-reject wants a rejection\n",
+                      argv[2]);
+        return 1;
+    }
+    return rc;
+}
+
+/**
+ * Main entry point for abi_history test tool (emit|check-writer|read|expect-reject).
  * Returns 0 on success, 1 on verification failure, 2 on usage or I/O error.
  */
 int main(int argc, char **argv)
 {
     if (argc < 2) {
-        (void)fprintf(stderr, "Usage: abi_history emit|check-writer|read ...\n");
+        (void)fprintf(stderr, "Usage: abi_history emit|check-writer|read|expect-reject ...\n");
         return 2;
     }
     if (strcmp(argv[1], "emit") == 0) {
@@ -313,6 +349,9 @@ int main(int argc, char **argv)
     }
     if (strcmp(argv[1], "read") == 0) {
         return handle_read(argc, argv);
+    }
+    if (strcmp(argv[1], "expect-reject") == 0) {
+        return handle_expect_reject(argc, argv);
     }
     (void)fprintf(stderr, "Unknown mode: %s\n", argv[1]);
     return 2;

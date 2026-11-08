@@ -65,18 +65,18 @@ foreach fix : interop_history_fixtures
 endforeach
 
 # Planted negative cases on abi-1.0.bin (derived from file layout):
+# expect-reject passes only when the reader rejects the flipped blob; the expectation
+# lives in the binary, not in should_fail, so the tester kit runs it unchanged (ADR-0248).
 # Byte 144: file offset of float field global_banding_risk in the banding section payload
 # (UUID 16 + header 48 + 5*dir 80 = 144). Flipping bit 0 corrupts float value and fails check.
 test('interop-history-planted-value', abi_history_test,
-     args: ['read', interop_history_dir / 'abi-1.0.bin', '--flip', '144'],
-     should_fail: true,
+     args: ['expect-reject', interop_history_dir / 'abi-1.0.bin', '--flip', '144'],
      suite: 'fast')
 
 # Byte 74: byte 2 of dir[0].size (offset 64 + 8 + 2 = 74). Flipping bit 0 changes
 # section size from 24 to 65560, exceeding hdr.total_size (544), triggering PEL_ERR_TRUNCATED.
 test('interop-history-planted-dir-size', abi_history_test,
-     args: ['read', interop_history_dir / 'abi-1.0.bin', '--flip', '74'],
-     should_fail: true,
+     args: ['expect-reject', interop_history_dir / 'abi-1.0.bin', '--flip', '74'],
      suite: 'fast')
 
 # ADR-0149: every libpelorus path argument is UTF-8. Built and run on every
