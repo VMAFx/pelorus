@@ -46,22 +46,28 @@ jobs:
           cat /etc/os-release
           glslc --version
           glslangValidator --version
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        id: floor-py
+        with:
+          python-version: '3.10'
+          update-environment: false
       - name: Meson floor (declared minimum configures and builds)
+        env:
+          FLOOR_PYTHON: ${{ steps.floor-py.outputs.python-path }}
         run: |
           floor=$(python3 -c "
           import re, pathlib
           m = re.search(r\"meson_version\s*:\s*'>=([^']+)'\", pathlib.Path('meson.build').read_text())
           print(m.group(1))
           ")
-          python3 -m venv "$RUNNER_TEMP/meson-floor"
+          "$FLOOR_PYTHON" -m venv "$RUNNER_TEMP/meson-floor"
           "$RUNNER_TEMP/meson-floor/bin/pip" install "meson==$floor" "ninja==1.13.2"
           "$RUNNER_TEMP/meson-floor/bin/meson" --version | grep -Fxq "$floor"
           "$RUNNER_TEMP/meson-floor/bin/ninja" --version
           "$RUNNER_TEMP/meson-floor/bin/meson" setup --werror build-floor
           "$RUNNER_TEMP/meson-floor/bin/ninja" -C build-floor
-          rm -rf "$RUNNER_TEMP/meson-floor"
-          meson test -C build-floor --suite=fast --print-errorlogs
-          rm -rf build-floor
+          "$RUNNER_TEMP/meson-floor/bin/meson" test -C build-floor --suite=fast --print-errorlogs
+          rm -rf build-floor "$RUNNER_TEMP/meson-floor"
       - name: Configure + build
         run: meson setup --werror build && ninja -C build
       - name: Optimised gcc build (-O2, warnings are errors)
