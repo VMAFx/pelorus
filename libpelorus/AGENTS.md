@@ -27,6 +27,8 @@ libpelorus/
 └── test/              interop_test.c — the shared ABI conformance fixture
                        path_utf8_test.c — the UTF-8 path contract (ADR-0149)
                        telemetry tests + recorded adapter fixtures — not mirrored
+                       integration/host_pipeline_test.c — producer -> carrier ->
+                       consumer, public API only; audit integration level
 ```
 
 ## Conventions

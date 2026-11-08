@@ -126,3 +126,4 @@ quality_loop_test = executable(
 )
 test('quality-loop', quality_loop_test, suite: 'fast')
 
+subdir('integration')

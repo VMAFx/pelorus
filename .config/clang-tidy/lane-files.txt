@@ -37,6 +37,7 @@ libpelorus/test/encode_options_test.c
 libpelorus/test/encode_record_test.c
 libpelorus/test/grain_convert_test.c
 libpelorus/test/grain_table_test.c
+libpelorus/test/integration/host_pipeline_test.c
 libpelorus/test/interop_test.c
 libpelorus/test/path_utf8_test.c
 libpelorus/test/quality_loop_test.c
