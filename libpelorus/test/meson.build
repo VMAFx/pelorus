@@ -126,3 +126,6 @@ quality_loop_test = executable(
 )
 test('quality-loop', quality_loop_test, suite: 'fast')
 
+# Lexical fixture path without '..': the tester kit installer refuses '..'.
+pelorus_test_fixtures_dir = meson.current_source_dir() / 'fixtures'
+subdir('integration')

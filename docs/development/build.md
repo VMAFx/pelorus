@@ -58,6 +58,60 @@ parse dot decimals. Local systems without `de_DE.UTF-8`, `de_DE.utf8` or
 [`.config/test-skips.json`](../../.config/test-skips.json); the ordinary
 `pelorus:enc-telemetry-adapters` test still runs all other adapter checks.
 
+### Host-pipeline integration test
+
+```bash
+meson test -C build --suite=integration --print-errorlogs
+```
+
+`pelorus:host-pipeline` (`libpelorus/test/integration/`: `main` in
+`host_pipeline_test.c`, one unit per stage; also in the `fast` suite) runs the
+producer and the consumer side of the side-data path in one process, through
+the public headers only:
+
+1. **Encode record and film grain.** The producer builds the provenance JSON
+   for an x265 option string and a deband filter, hashes it into an
+   encode-record section, reads a film-grain section from
+   `libpelorus/test/fixtures/grain/libaom-3.15.2-fgtest1.tbl`, packs both
+   into one blob and wraps it in the SEI carrier. The consumer unwraps the
+   carrier, checks the blob byte for byte and its header fields, verifies the
+   JSON against the record digest and converts the grain from AV1 to H.274
+   and back. The whole film-grain section, as parsed and again as unwrapped,
+   must equal the values of the decoded stream below, which the test writes
+   out itself instead of taking them from the parser.
+2. **Encoder telemetry.** Each of the 10 frames of
+   `libpelorus/test/fixtures/telemetry/x265-4.3-qp32.csv` goes through
+   telemetry pack, carrier and unwrap; the unwrapped blob must equal the
+   packed one byte for byte, and its telemetry section field for field the
+   section the CSV parser produced.
+
+Negative cases must fail with the named code: a flipped JSON or digest byte
+(`PEL_ERR_MISMATCH`), a 0x00 byte inside the COBS stream or a carrier cut
+inside its first COBS block (`PEL_ERR_ABI`), a foreign UUID, a carrier shorter
+than the UUID or a header-only blob searched for an encode record
+(`PEL_ERR_ABSENT`), and an 8-byte encode-record section (`PEL_ERR_INVALID`).
+Carrier encode, unwrap scratch and telemetry pack each return `PEL_ERR_RANGE`
+one byte below the required size and succeed at it.
+
+The grain conversion is lossy, so the test bounds each fidelity loss at the
+loss measured on this fixture times 1.2, rounded up: AV1 to H.274 below 0.117,
+H.274 to AV1 below 0.136, descriptor comparison below 0.226 and luma sigma
+error below 0.091. Each loss must also be finite and above zero: a NaN sigma
+drops out of the loss maximum and would read as zero loss.
+
+The table is frame 0 of `ffmpeg-patches/test/fixtures/grain-av1-fgs.ivf`
+(libaom 3.15.2 with `film-grain-test=1`,
+[ADR-0212](../adr/0212-grain-scoring-av1-libdav1d.md)), decoded by libdav1d
+with `-export_side_data film_grain` and printed by `showinfo`. The exported
+`uv_mult` and `uv_mult_luma` are converted back to coded values by adding 128,
+`uv_offset` by adding 256, and `pel_grain_table_write` writes the result once
+more for canonical spacing. Every field matches the decoded stream except
+`limit_output_range`, which the table format does not carry.
+
+These files are also the tracked test under `**/integration/**` that the
+`native-gpu-systems` profile's integration test level needs; `praetorctl audit`
+reports the level as a gap without it.
+
 ## Software Vulkan lane (Mesa lavapipe)
 
 The `lavapipe` job of `.github/workflows/ci.yml` runs the real shaders of the
@@ -451,6 +505,15 @@ credential-shaped values (GitHub tokens, `sk-` keys, AWS `AKIA` IDs) and fails i
 The fast-suite test `meson-testlog-credentials` (`scripts/test-meson-testlog-credentials.py`)
 verifies name filtering, log detection, and end-to-end environment scrubbing against a stub
 Meson runner.
+
+`make test` also runs `scripts/check-tester-kit-install.py <build>`. It runs
+`meson introspect --tests` on the build directory and hands the result to
+`tools/tester/install-fast-suite.py`, which installs the fast suite into a temporary directory.
+A fast-suite test whose command or arguments the tester kit cannot install, such as a fixture
+path that contains `..`, then fails `make test` instead of only the tester-publish workflow.
+The fast-suite test `check-tester-kit-install` (`scripts/test-check-tester-kit-install.py`)
+covers an installable argument, a planted `..` path and a path outside the build and source
+trees.
 
 A `# nosemgrep` or `# nosec` marker in tracked Python must sit on the start line
 of the statement or expression it answers and name its rules plus a reason:
