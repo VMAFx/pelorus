@@ -19,6 +19,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define HP_FIXTURE_BUF_CAP ((size_t)1024u * (size_t)1024u)
 #define HP_READ_CHUNK_SIZE 4096u
@@ -67,6 +69,29 @@ typedef struct HpScenario1 {
     PelorusFilmGrainSection expected_grain;
     PelorusEncodeRecordSection rec;
 } HpScenario1;
+
+/* Free the scenario 1 buffers, then reset every pointer, length and section to zero. */
+static inline void hp_scenario1_release(HpScenario1 *sc)
+{
+    if (sc == NULL) {
+        return;
+    }
+    free(sc->carrier);
+    sc->carrier = NULL;
+    sc->carrier_len = 0u;
+
+    pel_blob_free(sc->blob);
+    sc->blob = NULL;
+    sc->blob_len = 0u;
+
+    free(sc->json);
+    sc->json = NULL;
+    sc->json_len = 0u;
+
+    memset(&sc->parsed_grain, 0, sizeof(sc->parsed_grain));
+    memset(&sc->expected_grain, 0, sizeof(sc->expected_grain));
+    memset(&sc->rec, 0, sizeof(sc->rec));
+}
 
 /* Common fixture reading */
 int hp_read_fixture(const char *path, char *buf, size_t cap, size_t *out_len);

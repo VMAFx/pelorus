@@ -8,7 +8,6 @@
 #include "host_pipeline.h"
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 /* NOLINTBEGIN(modernize-use-nullptr): C translation unit kept buildable by MSVC's
@@ -39,7 +38,7 @@ static void run_scenario1(const char *grain_table_path)
     hp_build_provenance_json(&sc.json, &sc.json_len);
     CHECK(sc.json != NULL && sc.json_len > 0u);
     if (sc.json == NULL || sc.json_len == 0u) {
-        free(sc.json);
+        hp_scenario1_release(&sc);
         return;
     }
 
@@ -48,9 +47,7 @@ static void run_scenario1(const char *grain_table_path)
     if (sc.blob != NULL && sc.carrier != NULL && sc.blob_len > 0u && sc.carrier_len > 0u) {
         check_scenario1(&sc);
     }
-    free(sc.carrier);
-    pel_blob_free(sc.blob);
-    free(sc.json);
+    hp_scenario1_release(&sc);
 }
 
 /* Run both host-pipeline scenarios; exit 1 when any check failed. */
