@@ -263,7 +263,7 @@ pel_maps_run()
     local format="$3"
     local options="$4"
 
-    pel_run "$label" -loglevel info -f lavfi -i "$source" -frames:v 1 \
+    pel_run "$label" -nostats -loglevel info -f lavfi -i "$source" -frames:v 1 \
         -vf "format=${format},hwupload,pelorus_analyze_vulkan${options},hwdownload,format=${format},showinfo" \
         -f null -
 }
@@ -344,12 +344,12 @@ done
 for PEL_FILTER in pelorus_analyze_vulkan pelorus_grain_estimate_vulkan \
     pelorus_borderfix_vulkan pelorus_scenecut; do
     if [[ "$PEL_FILTER" == *_vulkan ]]; then
-        PEL_CHAIN="format=yuv420p,setfield=tff,hwupload,${PEL_FILTER},hwdownload,format=yuv420p,showinfo"
+        PEL_CHAIN="format=yuv420p,setfield=tff,hwupload,${PEL_FILTER},hwdownload,format=yuv420p"
     else
-        PEL_CHAIN="format=yuv420p,setfield=tff,${PEL_FILTER},showinfo"
+        PEL_CHAIN="format=yuv420p,setfield=tff,${PEL_FILTER}"
     fi
-    pel_run "interlaced-${PEL_FILTER}" -loglevel info \
-        -f lavfi -i "$PEL_INTERLACED_SRC" -frames:v 1 -vf "$PEL_CHAIN" -f null -
+    pel_run "interlaced-${PEL_FILTER}" -nostats -loglevel info \
+        -f lavfi -i "$PEL_INTERLACED_SRC" -frames:v 1 -vf "${PEL_CHAIN},showinfo" -f null -
     grep -F ' i:T ' "$PEL_OUTPUT_ROOT/interlaced-${PEL_FILTER}.stderr" >/dev/null || \
         pel_fail "interlaced-${PEL_FILTER}: interlaced flag lost"
 done

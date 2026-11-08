@@ -140,7 +140,7 @@ pel_tap()
 {
     local name="$1" frames="$2" codec="${3:-hevc}" pictures blobs carriers
 
-    "$PEL_FFMPEG" -hide_banner -loglevel info -i "$PEL_OUT/$name.$codec" -vf showinfo \
+    "$PEL_FFMPEG" -hide_banner -nostats -loglevel info -i "$PEL_OUT/$name.$codec" -vf showinfo \
         -f null - >"$PEL_OUT/$name-tap.log" 2>&1 || pel_fail "$name: decode of the stream failed"
     pictures="$(pel_pictures "$PEL_OUT/$name-tap.log")"
     blobs="$(pel_count "$PEL_OUT/$name-tap.log" "UUID=$PEL_UUID")"
@@ -224,7 +224,7 @@ pel_text="$(printf '%2000s' '' | tr ' ' 'x')"
 grep -Eq 'byte user data unregistered SEI at pts .*: hevc_nvenc fails a picture|Not writing a [0-9]+-byte SEI of type 5: hevc_nvenc fails' \
     "$PEL_OUT/foreign-encode.log" ||
     pel_fail "foreign: the encoder log does not name the dropped SEI"
-"$PEL_FFMPEG" -hide_banner -loglevel info -i "$PEL_OUT/foreign.hevc" -vf showinfo -f null - \
+"$PEL_FFMPEG" -hide_banner -nostats -loglevel info -i "$PEL_OUT/foreign.hevc" -vf showinfo -f null - \
     >"$PEL_OUT/foreign-tap.log" 2>&1 || pel_fail "foreign: decode of the stream failed"
 if grep -q "UUID=$PEL_FOREIGN_UUID" "$PEL_OUT/foreign-tap.log"; then
     pel_fail "foreign: the over-limit SEI is in the stream"

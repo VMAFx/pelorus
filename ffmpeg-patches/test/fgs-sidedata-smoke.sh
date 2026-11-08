@@ -405,7 +405,7 @@ pel_trace()
     "$PEL_FFMPEG" -hide_banner -loglevel trace -i "$PEL_OUT/$name.hevc" -c:v copy \
         -bsf:v trace_headers -f null - >"$PEL_OUT/$name-trace.log" 2>&1 ||
         pel_fail "$name: trace_headers failed"
-    "$PEL_FFMPEG" -hide_banner -loglevel info -export_side_data film_grain \
+    "$PEL_FFMPEG" -hide_banner -nostats -loglevel info -export_side_data film_grain \
         -i "$PEL_OUT/$name.hevc" -vf showinfo -f null - >"$PEL_OUT/$name-tap.log" 2>&1 ||
         pel_fail "$name: decode failed"
 }
