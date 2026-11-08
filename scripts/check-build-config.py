@@ -164,6 +164,7 @@ LAVAPIPE_TOKENS = (
     "ffmpeg-patches/test/vulkan-lavapipe-report.sh --self-test",
     "ffmpeg-patches/test/vulkan-lavapipe-guard.sh\n",
     "ffmpeg-patches/test/vulkan-lavapipe-filters.sh\n",
+    "ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak\n",
     "ffmpeg-patches/test/vulkan-format-matrix.sh\n",
     "ffmpeg-patches/test/vulkan-lavapipe-report.sh\n",
 )
@@ -5839,6 +5840,10 @@ def lavapipe_step_cases(source: str) -> dict[str, tuple[str, str]]:
         "lavapipe ten-filter run dropped": (
             mutate("ffmpeg-patches/test/vulkan-lavapipe-filters.sh\n", "true\n"),
             "is missing ffmpeg-patches/test/vulkan-lavapipe-filters.sh",
+        ),
+        "lavapipe soak dropped": (
+            mutate("ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak\n", "true\n"),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak",
         ),
         "lavapipe format matrix dropped": (
             mutate("ffmpeg-patches/test/vulkan-format-matrix.sh\n", "true\n"),
