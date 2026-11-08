@@ -529,7 +529,13 @@ The fast-suite test `check-tester-kit-install` (`scripts/test-check-tester-kit-i
 covers installable arguments, planted `..` and outside-tree paths, followed by tiny Meson
 project cases verifying positive execution, negative detection of a planted `should_fail` test,
 boundary rejection of exit 77 skips, and a kit-only `--werror` build failure whose compiler
-message must reach stderr.
+message must reach stderr. A runner that outlives its deadline makes the check exit 124 and
+prints the runner's partial output, decoded, on stderr; the self-test plants a hanging runner
+for that path. On Linux and macOS the self-test fails, rather than skips, when `meson`,
+`ninja` or a C compiler is missing, so a lane without them cannot drop the kit cases while
+reporting a pass; it skips them on Windows only, where `tests/run-fast-suite.sh` cannot run.
+The tiny project declares its options in `meson_options.txt`, the file name every Meson from
+the `meson_version` floor on reads.
 
 A `# nosemgrep` or `# nosec` marker in tracked Python must sit on the start line
 of the statement or expression it answers and name its rules plus a reason:

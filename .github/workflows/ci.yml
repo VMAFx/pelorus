@@ -792,3 +792,7 @@ jobs:
         run: python3 -I scripts/test-semgrep-wall-clock.py
       - name: Verify the printf-argv rule on planted cases
         run: python3 -I scripts/test-semgrep-printf-argv.py
+      - name: Verify the timeout partial-output rule on planted cases
+        run: python3 -I scripts/test-semgrep-timeout-output.py
+      - name: Verify the Meson options file name rule on planted cases
+        run: python3 -I scripts/test-semgrep-meson-options.py

@@ -5,6 +5,9 @@
 
 from __future__ import annotations
 
+import contextlib
+import importlib.util
+import io
 import json
 from pathlib import Path
 import shutil
@@ -12,6 +15,7 @@ import subprocess  # nosec B404 - run test commands and check-tester-kit-install
 import sys
 import tempfile
 import time
+from typing import Callable
 
 ROOT = Path(__file__).resolve().parent.parent
 CHECK_SCRIPT = ROOT / "scripts" / "check-tester-kit-install.py"
@@ -140,23 +144,93 @@ def _test_mock_cases(tmp: Path) -> list[str]:
     return failures
 
 
-def _check_run_kit_prerequisites() -> str | None:
-    """Return skip reason if platform is not POSIX or required tools are missing."""
-    if sys.platform == "win32":
-        return "POSIX-only kit runner (run-fast-suite.sh is /bin/sh)"
-    if not shutil.which("meson"):
-        return "meson executable not found"
-    if not (shutil.which("ninja") or shutil.which("ninja-build")):
-        return "ninja executable not found"
-    if not (shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")):
-        return "C compiler (cc/gcc/clang) not found"
+def _check_run_kit_prerequisites(
+    platform: str = sys.platform,
+    which: Callable[[str], str | None] = shutil.which,
+) -> tuple[str, str] | None:
+    """Return ("skip", reason) on Windows, ("fail", reason) for a missing POSIX tool.
+
+    The kit runner is /bin/sh, so Windows skips. On POSIX the fast suite runs
+    under meson with ninja and a C compiler, so a missing tool means the run-kit
+    cases were lost, and the self-test must fail instead of passing silently.
+    """
+    if platform == "win32":
+        return "skip", "POSIX-only kit runner (run-fast-suite.sh is /bin/sh)"
+    if not which("meson"):
+        return "fail", "meson executable not found"
+    if not (which("ninja") or which("ninja-build")):
+        return "fail", "ninja executable not found"
+    if not (which("cc") or which("gcc") or which("clang")):
+        return "fail", "C compiler (cc/gcc/clang) not found"
     return None
+
+
+def _test_prerequisite_handling() -> list[str]:
+    """Missing tools fail on POSIX and skip on Windows; present tools run the cases."""
+    failures: list[str] = []
+
+    def none_found(_name: str) -> str | None:
+        return None
+
+    def all_found(name: str) -> str | None:
+        return f"/usr/bin/{name}"
+
+    cases = [
+        ("prereq-posix-missing", "linux", none_found, ("fail", "meson executable not found")),
+        ("prereq-windows", "win32", none_found, ("skip", "POSIX-only kit runner (run-fast-suite.sh is /bin/sh)")),
+        ("prereq-posix-present", "linux", all_found, None),
+    ]
+    for name, platform, which, want in cases:
+        got = _check_run_kit_prerequisites(platform, which)
+        if got != want:
+            failures.append(f"{name}: expected {want}, got {got}")
+        else:
+            print(f"case: {name} -> {got}")
+    return failures
+
+
+def _load_check_module():
+    """Load scripts/check-tester-kit-install.py by path (its name has hyphens)."""
+    spec = importlib.util.spec_from_file_location("check_tester_kit_install", CHECK_SCRIPT)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {CHECK_SCRIPT}")
+    module = importlib.util.module_from_spec(spec)
+    # dataclasses look up the defining module in sys.modules while the class body runs.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _test_runner_timeout(tmp: Path) -> list[str]:
+    """A runner that prints a banner and then hangs times out with rc 124 and the banner on stderr.
+
+    On POSIX, TimeoutExpired.stdout holds bytes even with text=True; the check
+    must decode it instead of raising TypeError.
+    """
+    runner = tmp / "hanging_runner.sh"
+    runner.write_text("#!/bin/sh\necho '=== planted_timeout ==='\nexec sleep 30\n", encoding="utf-8")
+    runner.chmod(0o500)
+    check = _load_check_module()
+    captured = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(captured):
+            rc = check._run_kit_runner(runner, tmp, timeout_seconds=2.0)
+    except Exception as exc:  # noqa: BLE001 - any raise is the planted failure under test
+        return [f"runner-timeout: raised {type(exc).__name__}: {exc}"]
+    if rc != 124:
+        return [f"runner-timeout: expected rc 124, got {rc}"]
+    if "=== planted_timeout ===" not in captured.getvalue():
+        return [f"runner-timeout: stderr lacks the banner: {captured.getvalue().strip()}"]
+    print("case: runner-timeout (partial bytes output) -> rc 124, banner on stderr")
+    return []
 
 
 def _write_tiny_project(source_dir: Path, meson_build_content: str) -> None:
     """Write tiny Meson project files to source_dir."""
     source_dir.mkdir(parents=True, exist_ok=True)
-    (source_dir / "meson.options").write_text(_TINY_MESON_OPTIONS, encoding="utf-8")
+    # Meson reads meson_options.txt at every version from the 0.57 floor on;
+    # the newer options file name needs Meson 1.1 (.semgrep.yml pelorus-meson-options-file).
+    (source_dir / "meson_options.txt").write_text(_TINY_MESON_OPTIONS, encoding="utf-8")
     (source_dir / "main.c").write_text(_TINY_MAIN_C, encoding="utf-8")
     (source_dir / "meson.build").write_text(meson_build_content, encoding="utf-8")
 
@@ -371,11 +445,18 @@ def test_tester_kit_install_check() -> list[str]:
     with tempfile.TemporaryDirectory(prefix="pelorus-test-kit-") as tmp_str:
         tmp = Path(tmp_str)
         failures.extend(_test_mock_cases(tmp))
+        failures.extend(_test_prerequisite_handling())
 
-        skip_reason = _check_run_kit_prerequisites()
-        if skip_reason is not None:
-            print(f"skip: run-kit cases ({skip_reason})")
+        problem = _check_run_kit_prerequisites()
+        if problem is not None:
+            kind, reason = problem
+            if kind == "skip":
+                print(f"skip: run-kit cases ({reason})")
+            else:
+                failures.append(f"run-kit cases could not run: {reason}")
             return failures
+
+        failures.extend(_test_runner_timeout(tmp))
 
         failures.extend(_test_run_kit_positive(tmp))
         failures.extend(_test_run_kit_negative(tmp))

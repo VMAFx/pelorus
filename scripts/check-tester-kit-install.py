@@ -225,6 +225,19 @@ def _run_install_check(
     return 0
 
 
+def _partial_text(value: bytes | str | None) -> str:
+    """Return a TimeoutExpired partial output as text.
+
+    subprocess.run fills TimeoutExpired.stdout from the raw pipe on POSIX,
+    so it holds bytes even with text=True; on Windows it holds str.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
 def _print_runner_failure(output: str) -> None:
     """Print the last test banner and the last 20 output lines to stderr."""
     lines = output.splitlines()
@@ -310,7 +323,7 @@ def _run_kit_runner(
             cwd=str(cwd_path),
         )
     except subprocess.TimeoutExpired as exc:
-        _print_runner_failure(exc.stdout or "")
+        _print_runner_failure(_partial_text(exc.stdout))
         print(
             f"check-tester-kit-install.py: kit runner timed out after {timeout_seconds}s",
             file=sys.stderr,
