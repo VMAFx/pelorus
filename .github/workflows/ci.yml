@@ -300,6 +300,9 @@ jobs:
       - name: All ten filters run clean under validation
         if: github.event.pull_request.draft != true
         run: ffmpeg-patches/test/vulkan-lavapipe-filters.sh
+      - name: Filters and side data soak 3000 frames under validation (issue #466)
+        if: github.event.pull_request.draft != true
+        run: ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak
       - name: Format matrix under validation
         if: github.event.pull_request.draft != true
         run: |
@@ -443,6 +446,9 @@ jobs:
       - name: All ten filters run clean under validation
         if: github.event.pull_request.draft != true
         run: ffmpeg-patches/test/vulkan-lavapipe-filters.sh
+      - name: Filters and side data soak 3000 frames under validation (issue #466)
+        if: github.event.pull_request.draft != true
+        run: ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak
       - name: Format matrix under validation
         if: github.event.pull_request.draft != true
         run: |

@@ -160,14 +160,23 @@ LAVAPIPE_TOKENS = (
     "VK_DRIVER_FILES=",
     "echo \"PELORUS_VALIDATE=1\"",
     "ffmpeg-patches/test/vulkan-lavapipe-guard.sh --self-test --disable",
+)
+# Issue #466 review: a substring check accepts `echo <script>`, so each lane
+# script must run as an executed command with exactly these arguments.
+LAVAPIPE_COMMANDS = (
     "ffmpeg-patches/test/vulkan-lavapipe-filters.sh --self-test",
     "ffmpeg-patches/test/vulkan-lavapipe-report.sh --self-test",
-    "ffmpeg-patches/test/vulkan-lavapipe-guard.sh\n",
-    "ffmpeg-patches/test/vulkan-lavapipe-filters.sh\n",
-    "ffmpeg-patches/test/vulkan-format-matrix.sh\n",
-    "ffmpeg-patches/test/vulkan-lavapipe-report.sh\n",
+    "ffmpeg-patches/test/vulkan-lavapipe-guard.sh",
+    "ffmpeg-patches/test/vulkan-lavapipe-filters.sh",
+    "ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak",
+    "ffmpeg-patches/test/vulkan-format-matrix.sh",
+    "ffmpeg-patches/test/vulkan-lavapipe-report.sh",
 )
 LAVAPIPE_FORBIDDEN = ("continue-on-error", "PELORUS_VALIDATE=0", "|| true")
+# Issue #466: the CI soak runs the script's own SOAK_TABLE, frame counts and
+# budgets. Any SOAK_ text in ci.yml (step, job or workflow env, a $GITHUB_ENV
+# write, an inline assignment) could shrink it, so none is allowed.
+SOAK_SETTING = "SOAK_"
 # ADR-0185: every lane that replays or regenerates the stack fetches the shared
 # FFmpeg fix series, so it needs cosign (the release.yml installer pin) and a
 # token for gh attestation verify.
@@ -2894,10 +2903,21 @@ def validate_lavapipe_job(relative: str, block: str | None) -> list[str]:
     for token in LAVAPIPE_TOKENS:
         if token not in block:
             errors.append(f"{prefix} is missing {token.strip()}")
+    commands = executed_command_tokens(job_executed_run_commands(block))
+    for command in LAVAPIPE_COMMANDS:
+        if shlex.split(command) not in commands:
+            errors.append(f"{prefix} is missing {command}")
     for token in LAVAPIPE_FORBIDDEN:
         if token in block:
             errors.append(f"{prefix} must not contain {token}")
     return errors
+
+
+def validate_soak_defaults(relative: str, text: str) -> list[str]:
+    """Reject any SOAK_ setting in ci.yml, so every CI soak runs the script defaults (issue #466)."""
+    if SOAK_SETTING in text:
+        return [f"{relative}: must not set {SOAK_SETTING} variables; the CI soak runs the script defaults"]
+    return []
 
 
 CI_CALL_USES = "uses: ./.github/workflows/ci.yml"
@@ -3634,6 +3654,7 @@ def _validate_workflow_specialized_jobs(
         errors.extend(validate_windows_job(relative, jobs.get(WINDOWS_JOB)))
         errors.extend(validate_windows_msvc_job(relative, jobs.get(WINDOWS_MSVC_JOB)))
         errors.extend(validate_lavapipe_job(relative, jobs.get(LAVAPIPE_JOB)))
+        errors.extend(validate_soak_defaults(relative, text))
         errors.extend(
             validate_ci_check_test_skips(relative, jobs, meson_text=meson_text)
         )
@@ -5828,25 +5849,9 @@ def lavapipe_step_cases(source: str) -> dict[str, tuple[str, str]]:
             mutate('echo "PELORUS_VALIDATE=1"', 'echo "PELORUS_VALIDATE=0"'),
             "must not contain PELORUS_VALIDATE=0",
         ),
-        "lavapipe device guard dropped": (
-            mutate("ffmpeg-patches/test/vulkan-lavapipe-guard.sh\n", "true\n"),
-            "is missing ffmpeg-patches/test/vulkan-lavapipe-guard.sh",
-        ),
         "lavapipe guard red-proof dropped": (
             mutate("vulkan-lavapipe-guard.sh --self-test --disable", "vulkan-lavapipe-guard.sh --self-test"),
             "is missing ffmpeg-patches/test/vulkan-lavapipe-guard.sh --self-test --disable",
-        ),
-        "lavapipe ten-filter run dropped": (
-            mutate("ffmpeg-patches/test/vulkan-lavapipe-filters.sh\n", "true\n"),
-            "is missing ffmpeg-patches/test/vulkan-lavapipe-filters.sh",
-        ),
-        "lavapipe format matrix dropped": (
-            mutate("ffmpeg-patches/test/vulkan-format-matrix.sh\n", "true\n"),
-            "is missing ffmpeg-patches/test/vulkan-format-matrix.sh",
-        ),
-        "lavapipe report guard dropped": (
-            mutate("ffmpeg-patches/test/vulkan-lavapipe-report.sh\n", "true\n"),
-            "is missing ffmpeg-patches/test/vulkan-lavapipe-report.sh",
         ),
         "lavapipe failure ignored": (
             mutate("vulkan-lavapipe-filters.sh\n", "vulkan-lavapipe-filters.sh || true\n"),
@@ -5859,6 +5864,72 @@ def lavapipe_step_cases(source: str) -> dict[str, tuple[str, str]]:
         "lavapipe binary not kept": (
             mutate("KEEP_DIR=", "KEEP_DIR_REMOVED="),
             "is missing KEEP_DIR=",
+        ),
+    }
+
+
+def soak_setting_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Mutations that shrink a CI soak through a SOAK_ setting (issue #466)."""
+    soak_run = "        run: ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak\n"
+    expected = f"must not set {SOAK_SETTING} variables"
+    return {
+        "soak configs narrowed in lavapipe step env": (
+            replace_in_job(
+                source, LAVAPIPE_JOB, soak_run, soak_run + "        env:\n          SOAK_CONFIGS: denoise_ring\n"
+            ),
+            expected,
+        ),
+        "soak frames lowered in workflow env": (
+            source.replace("\njobs:\n", "\nenv:\n  SOAK_FRAMES: '301'\njobs:\n", 1),
+            expected,
+        ),
+        "soak frames lowered in arm64 step env": (
+            replace_in_job(source, "arm64", soak_run, soak_run + "        env:\n          SOAK_FRAMES: '301'\n"),
+            expected,
+        ),
+    }
+
+
+def lavapipe_command_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Mutations that drop, echo or comment out an executed lavapipe lane command."""
+
+    def mutate(old: str, new: str) -> str:
+        return replace_in_job(source, LAVAPIPE_JOB, old, new)
+
+    return {
+        "lavapipe device guard dropped": (
+            mutate("ffmpeg-patches/test/vulkan-lavapipe-guard.sh\n", "true\n"),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-guard.sh",
+        ),
+        "lavapipe ten-filter run dropped": (
+            mutate("ffmpeg-patches/test/vulkan-lavapipe-filters.sh\n", "true\n"),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-filters.sh",
+        ),
+        "lavapipe soak dropped": (
+            mutate("ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak\n", "true\n"),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak",
+        ),
+        "lavapipe soak echoed, not run": (
+            mutate(
+                "run: ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak\n",
+                "run: echo ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak\n",
+            ),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak",
+        ),
+        "lavapipe report run commented out": (
+            mutate(
+                "run: ffmpeg-patches/test/vulkan-lavapipe-report.sh\n",
+                "run: |\n          # ffmpeg-patches/test/vulkan-lavapipe-report.sh\n          true\n",
+            ),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-report.sh",
+        ),
+        "lavapipe format matrix dropped": (
+            mutate("ffmpeg-patches/test/vulkan-format-matrix.sh\n", "true\n"),
+            "is missing ffmpeg-patches/test/vulkan-format-matrix.sh",
+        ),
+        "lavapipe report guard dropped": (
+            mutate("ffmpeg-patches/test/vulkan-lavapipe-report.sh\n", "true\n"),
+            "is missing ffmpeg-patches/test/vulkan-lavapipe-report.sh",
         ),
     }
 
@@ -6015,6 +6086,8 @@ def _ci_toolchain_cases(source: str) -> dict[str, tuple[str, str]]:
         **windows_msvc_workflow_cases(source),
         **lavapipe_workflow_cases(source),
         **lavapipe_step_cases(source),
+        **lavapipe_command_cases(source),
+        **soak_setting_cases(source),
         **series_workflow_cases(source),
         "floating runner": (
             source.replace("ubuntu-26.04", "ubuntu-latest", 1),

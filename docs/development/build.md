@@ -78,9 +78,43 @@ export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json PELORUS_VALIDATE=1 \
   LD_LIBRARY_PATH=$PWD/kept/lib FFMPEG_BIN=$PWD/kept/ffmpeg
 ffmpeg-patches/test/vulkan-lavapipe-guard.sh     # device, extensions, features
 ffmpeg-patches/test/vulkan-lavapipe-filters.sh   # ten filters, zero VUIDs
+ffmpeg-patches/test/vulkan-lavapipe-filters.sh --soak  # 3000-frame soak, side data, leaks
 ffmpeg-patches/test/vulkan-format-matrix.sh
 ffmpeg-patches/test/vulkan-lavapipe-report.sh    # software_vulkan, functional
 ```
+
+The `--soak` step (issue #466) runs each config of the script's `SOAK_TABLE`
+twice at 320x180 under validation, 300 frames and then 3000 frames. The table
+holds the nine compute filters, `pelorus_denoise_vulkan` with and without its
+causal frame ring, and the `pelorus_mc_vulkan` to `pelorus_denoise_vulkan`
+side-data chain. The source is cut with `trim`, so every frame drains through
+the graph at end of stream. Each run needs an executable coreutils `timeout`
+on `PATH`. A config fails when:
+
+- `bench: maxrss` grows by more than `SOAK_RSS_MIB` (default 16 MiB) from the
+  short to the long run. On lavapipe, device memory is host memory, so a frame
+  that is never unreferenced grows RSS. The floor is
+  `SOAK_RSS_MIB` × 1024 / 2700 frames, about 6 KiB per frame; a planted config
+  that keeps every frame grew by 276300 KiB;
+- an ffmpeg run passes `SOAK_TIMEOUT` (default 600 s; SIGKILL follows
+  `SOAK_KILL_AFTER` seconds later), which is how a frame or pool leak that
+  blocks the graph shows;
+- the validation layer reports any VUID, including Vulkan objects still alive
+  when the device is destroyed;
+- `showinfo` counts a different number of frames, misses the last frame, or
+  counts, on any single frame, a different number of Pelorus UUID or AV1
+  film-grain side-data entries than the table states.
+
+Run-to-run maxrss noise on lavapipe measured up to about 8 MiB (7760 KiB),
+inside the 16 MiB budget. Heap leaks below the floor need a LeakSanitizer build. The soak
+is software Vulkan evidence only. The NVENC side-data path has no soak:
+`ffmpeg-patches/test/nvenc-udu-sei-smoke.sh` needs an NVIDIA host, caps
+`FRAMES` at 64 per case and does not run in CI. `SOAK_CONFIGS=denoise_ring,mc`
+narrows a local run to the named configs. CI runs the script defaults:
+`scripts/check-build-config.py` rejects any `SOAK_` setting in
+`.github/workflows/ci.yml`. `--self-test` plants every
+failure above in a fake ffmpeg and requires each one to fail for its own
+reason.
 
 `KEEP_DIR` must be an absolute path that does not exist yet. The guard names
 every missing device extension from
@@ -94,7 +128,7 @@ GitHub-hosted runners ([ADR-0203](../adr/0203-arm64-ci-lane.md), issue #170).
 
 | Scope | Platform coverage |
 | --- | --- |
-| What runs | Native `meson setup --werror build && ninja -C build`, fast suite (including side-data round-trip serialization against the x86-64 known-answer test byte vectors in `libpelorus/test/interop_test.c`), FFmpeg patch stack replay, Mesa lavapipe software Vulkan validation of all ten filters, format matrix, and missing-device `no_device` non-failure tester report assertion |
+| What runs | Native `meson setup --werror build && ninja -C build`, fast suite (including side-data round-trip serialization against the x86-64 known-answer test byte vectors in `libpelorus/test/interop_test.c`), FFmpeg patch stack replay, Mesa lavapipe software Vulkan validation of all ten filters, the 3000-frame filter and side-data soak under validation, format matrix, and missing-device `no_device` non-failure tester report assertion |
 | What does not run | No NEON SIMD kernels exist in Pelorus; no arm64 GPU evidence (lavapipe provides software functional evidence only) |
 | Architecture endianness | Big-endian architectures are unsupported. The Pelorus interop ABI wire format is strictly little-endian ([interop ABI](../api/interop-abi.md#stability-rules-normative--see-interoph), [ADR-0183](../adr/0183-sidedata-zero-free-carrier.md)) |
 
