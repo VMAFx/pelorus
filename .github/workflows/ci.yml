@@ -54,10 +54,12 @@ jobs:
           print(m.group(1))
           ")
           python3 -m venv "$RUNNER_TEMP/meson-floor"
-          "$RUNNER_TEMP/meson-floor/bin/pip" install "meson==$floor" ninja
+          "$RUNNER_TEMP/meson-floor/bin/pip" install "meson==$floor" "ninja==1.13.2"
           "$RUNNER_TEMP/meson-floor/bin/meson" --version | grep -Fxq "$floor"
+          "$RUNNER_TEMP/meson-floor/bin/ninja" --version
           "$RUNNER_TEMP/meson-floor/bin/meson" setup --werror build-floor
           "$RUNNER_TEMP/meson-floor/bin/ninja" -C build-floor
+          "$RUNNER_TEMP/meson-floor/bin/meson" test -C build-floor --suite=fast --print-errorlogs
           rm -rf build-floor "$RUNNER_TEMP/meson-floor"
       - name: Configure + build
         run: meson setup --werror build && ninja -C build
