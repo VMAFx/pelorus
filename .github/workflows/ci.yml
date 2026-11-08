@@ -719,6 +719,27 @@ jobs:
           python3 -I scripts/hardware-reports/check-reports.py
           python3 -I scripts/hardware-reports/generate-index.py --self-test
           python3 -I scripts/hardware-reports/generate-index.py --check
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        id: floor-py-scripts
+        with:
+          python-version: '3.10'
+          update-environment: false
+      - name: Python 3.10 script floor (declared minimum)
+        env:
+          PY310: ${{ steps.floor-py-scripts.outputs.python-path }}
+        run: |
+          "$PY310" --version
+          "$PY310" -I scripts/check-codeql-workflow.py --self-test
+          "$PY310" -I scripts/docs/render-counts.py --self-test
+          "$PY310" -I scripts/adr/check-status.py --self-test
+          "$PY310" -I scripts/check-doc-recipes.py --self-test
+          "$PY310" -I scripts/check-ci-test-wiring.py --self-test
+          "$PY310" -I scripts/check-cochange.py --self-test
+          "$PY310" -I scripts/release/check-changelog-staleness.py --self-test
+          "$PY310" -I ffmpeg-patches/test/doc-recipes-smoke.py --self-test
+          "$PY310" -I tools/tester/pelorus_tester_report.py --self-test
+          "$PY310" -I scripts/hardware-reports/check-reports.py --self-test
+          "$PY310" -I scripts/hardware-reports/generate-index.py --self-test
       - name: Set up Go for actionlint
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
