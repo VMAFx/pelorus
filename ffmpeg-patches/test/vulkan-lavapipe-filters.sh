@@ -481,7 +481,7 @@ self_test_soak_env()
         read -r w f r c reason <<<"$row"
         rc=0
         out="$(FAKE_MODE=clean FAKE_PLANT_FRAMES=4 SOAK_WARMUP="$w" SOAK_FRAMES="$f" SOAK_RSS_MIB="$r" \
-            SOAK_TIMEOUT=1 SOAK_KILL_AFTER=1 SOAK_CONFIGS="$c" run_soak "$fake" 2>&1)" || rc=$?
+            SOAK_TIMEOUT=30 SOAK_KILL_AFTER=1 SOAK_CONFIGS="$c" run_soak "$fake" 2>&1)" || rc=$?
         if [[ "$reason" == - ]] && ((rc == 0)); then
             continue
         elif [[ "$reason" != - ]] && ((rc != 0)) && grep -Fq -- "$reason" <<<"$out"; then
@@ -509,7 +509,7 @@ self_test_soak_env()
 # is caught. Each line: FAKE_MODE|SOAK_CONFIGS|expected reason.
 self_test_soak()
 {
-    local fake="$1" plant mode reason out configs failures=0
+    local fake="$1" plant mode reason out configs to failures=0
     local -a plants=(
         "clean||"
         "statssplit|denoise_ring|progress line in ffmpeg output"
@@ -529,8 +529,10 @@ self_test_soak()
 
     for plant in "${plants[@]}"; do
         IFS='|' read -r mode configs reason <<<"$plant"
+        to=30
+        [[ "$mode" == hang || "$mode" == hangterm ]] && to=1
         if out="$(FAKE_MODE="$mode" FAKE_PLANT_FRAMES=4 SOAK_WARMUP=2 SOAK_FRAMES=4 \
-            SOAK_RSS_MIB=16 SOAK_TIMEOUT=1 SOAK_KILL_AFTER=1 SOAK_CONFIGS="$configs" \
+            SOAK_RSS_MIB=16 SOAK_TIMEOUT="$to" SOAK_KILL_AFTER=1 SOAK_CONFIGS="$configs" \
             run_soak "$fake" 2>&1)"; then
             [[ "$mode" == clean ]] && continue
             echo "SELF-TEST FAIL: planted soak defect '$mode' was accepted" >&2

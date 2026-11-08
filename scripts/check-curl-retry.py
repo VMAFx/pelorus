@@ -27,14 +27,13 @@ _SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
+from shell_scan import command_end, is_shell_file, logical_lines  # noqa: E402
 from tracked_python import tracked_files  # noqa: E402
 
 DESCRIPTION = (
     "Check that curl downloads specify retry >= 5, speed-time, and "
     "retry-max-time exceeding max-time."
 )
-SHELL_SUFFIXES = frozenset({".sh", ".bash", ".mk"})
-WORKFLOW_SUFFIXES = frozenset({".yml", ".yaml"})
 # Argument-taking short options from curl 8.23.0's `curl --help all`.
 SHORT_OPTIONS_WITH_ARGS = frozenset(
     {
@@ -61,49 +60,7 @@ def is_curl_command_prefix(prefix: str) -> bool:
 
 def scan_command_end(rest: str) -> str:
     """Scan forward from after 'curl' to find argument string before command terminator."""
-    arg_chars: list[str] = []
-    quote: str | None = None
-    paren_depth = 0
-    i = 0
-    while i < len(rest):
-        ch = rest[i]
-        if quote:
-            if ch == "\\" and i + 1 < len(rest):
-                arg_chars.extend([ch, rest[i + 1]])
-                i += 1
-            elif ch == quote:
-                quote = None
-                arg_chars.append(ch)
-            else:
-                arg_chars.append(ch)
-        else:
-            if ch == "\\" and i + 1 < len(rest):
-                arg_chars.extend([ch, rest[i + 1]])
-                i += 1
-            elif ch in ('"', "'"):
-                quote = ch
-                arg_chars.append(ch)
-            elif ch == "$" and i + 1 < len(rest) and rest[i + 1] == "(":
-                paren_depth += 1
-                arg_chars.extend([ch, rest[i + 1]])
-                i += 1
-            elif ch == "(":
-                paren_depth += 1
-                arg_chars.append(ch)
-            elif ch == ")":
-                if paren_depth > 0:
-                    paren_depth -= 1
-                    arg_chars.append(ch)
-                else:
-                    break
-            elif ch in (";", "&", "|", "`"):
-                break
-            elif ch == "#" and (i == 0 or rest[i - 1].isspace()):
-                break
-            else:
-                arg_chars.append(ch)
-        i += 1
-    return "".join(arg_chars)
+    return rest[: command_end(rest, 0)[0]]
 
 
 def extract_curl_args(line: str) -> list[str]:
@@ -292,34 +249,10 @@ def check_operation(tokens: list[str]) -> list[str]:
 def check_content(content: str, display_path: str) -> list[str]:
     """Check file content for conforming curl retry configurations."""
     violations: list[str] = []
-    lines = content.splitlines()
-    buffer: list[str] = []
-    start_lineno: int = 1
-
-    for idx, raw_line in enumerate(lines, start=1):
-        clean = raw_line.rstrip("\r\n")
-        if not buffer and clean.lstrip().startswith("#"):
-            continue
-
-        if not buffer:
-            start_lineno = idx
-
-        if clean.endswith("\\"):
-            buffer.append(clean[:-1].rstrip())
-        else:
-            buffer.append(clean)
-            logical_line = " ".join(buffer)
-            buffer = []
-            for arg_str in extract_curl_args(logical_line):
-                for reason in check_curl_args(arg_str):
-                    violations.append(f"{display_path}:{start_lineno}: {reason}")
-
-    if buffer:
-        logical_line = " ".join(buffer)
-        for arg_str in extract_curl_args(logical_line):
+    for line in logical_lines(content):
+        for arg_str in extract_curl_args(line.text):
             for reason in check_curl_args(arg_str):
-                violations.append(f"{display_path}:{start_lineno}: {reason}")
-
+                violations.append(f"{display_path}:{line.first_lineno}: {reason}")
     return violations
 
 
@@ -340,17 +273,14 @@ def check_file(
     return [], check_content(content, display_path)
 
 
-def is_scanned(path: pathlib.Path, repo_root: pathlib.Path) -> bool:
+def is_scanned(path: pathlib.Path) -> bool:
     """Shell scripts, Makefiles and GitHub workflow files carry curl commands."""
-    rel = path.relative_to(repo_root)
-    if path.suffix in SHELL_SUFFIXES or path.name == "Makefile":
-        return True
-    return rel.parent == pathlib.Path(".github/workflows") and path.suffix in WORKFLOW_SUFFIXES
+    return is_shell_file(path)
 
 
 def get_tracked_files(repo_root: pathlib.Path) -> list[pathlib.Path]:
     """Git-tracked shell, make and workflow files (shared tracked_files helper)."""
-    return [f for f in tracked_files(repo_root) if is_scanned(f, repo_root)]
+    return [f for f in tracked_files(repo_root) if is_scanned(f)]
 
 
 def self_test_scanned(root: pathlib.Path) -> int:
@@ -363,7 +293,7 @@ def self_test_scanned(root: pathlib.Path) -> int:
     ]
     failures = 0
     for rel, expected in cases:
-        if is_scanned(root / rel, root) != expected:
+        if is_scanned(root / rel) != expected:
             print(f"FAIL self-test path '{rel}': expected scanned={expected}", file=sys.stderr)
             failures += 1
     return failures
