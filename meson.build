@@ -443,6 +443,15 @@ if build_machine.system() != 'windows'
        args: [meson.project_source_root() / 'scripts' / 'test-fetch-ffmpeg-series.py'],
        workdir: meson.project_source_root(),
        suite: 'fast')
+  # CURL_MAX_TIME, CURL_STALL_TIME and CURL_RETRY_WINDOW: each of the three
+  # download scripts refuses a value that is not a positive decimal integer
+  # before any curl call. Not on Windows, for the native temp paths the
+  # fetch-corpus-fail-closed note above describes.
+  test('curl-env-validation',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-curl-env-validation.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
 endif
 
 # The build-config self-test drives throwaway Git repositories. Started from a
