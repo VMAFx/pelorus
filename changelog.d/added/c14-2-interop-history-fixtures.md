@@ -1,1 +1,1 @@
-- Persisted binary blob fixtures and forward/backward compatibility runner for released interop ABI writers and readers across PELORUS_ABI_MINOR 0 through 6 ([ADR-0247](docs/adr/0247-released-interop-abi-fixtures.md), [#467](https://github.com/VMAFx/pelorus/issues/467)).
+- Persisted binary blob fixtures and forward/backward compatibility runner for released interop ABI writers and readers across PELORUS_ABI_MINOR 0 through 6 ([ADR-0247](docs/adr/0247-interop-abi-history-fixtures.md), [#467](https://github.com/VMAFx/pelorus/issues/467)).

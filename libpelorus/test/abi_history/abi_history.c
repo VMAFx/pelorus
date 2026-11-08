@@ -968,68 +968,81 @@ static int read_file_to_buf(const char *path, uint8_t *buf, size_t cap, size_t *
     return 0;
 }
 
+typedef union AlignedBlob16k {
+    uint64_t align;
+    uint8_t bytes[16384];
+} AlignedBlob16k;
+
+typedef union AlignedBlob32k {
+    uint64_t align;
+    uint8_t bytes[32768];
+} AlignedBlob32k;
+
 static int check_file_match(const char *path, const uint8_t *expected, size_t expected_len)
 {
-    uint8_t buf[16384];
+    AlignedBlob16k buf;
     size_t file_len = 0;
-    int rc = read_file_to_buf(path, buf, sizeof(buf), &file_len);
+    int rc = read_file_to_buf(path, buf.bytes, sizeof(buf.bytes), &file_len);
     if (rc != 0) {
         (void)fprintf(stderr, "FAIL: missing fixture %s\n", path);
         return 1;
     }
-    if (file_len != expected_len || memcmp(buf, expected, expected_len) != 0) {
+    if (file_len != expected_len || memcmp(buf.bytes, expected, expected_len) != 0) {
         (void)fprintf(stderr, "FAIL: %s does not match writer output\n", path);
         return 1;
     }
     return 0;
 }
 
-static int do_check_writer(const char *fixtures_dir)
+#if PELORUS_ABI_MINOR >= 5
+static int do_check_writer(const char *plain_path, const char *carrier_path)
 {
-    uint8_t plain[16384];
+    AlignedBlob16k plain;
+    AlignedBlob32k carrier;
     size_t plain_len = 0;
-    char path[4096];
-    int written;
-    if (pack_history_blob(plain, sizeof(plain), &plain_len) != PEL_OK) {
+    size_t carrier_len = 0;
+    pel_result cr;
+
+    if (pack_history_blob(plain.bytes, sizeof(plain.bytes), &plain_len) != PEL_OK) {
         (void)fprintf(stderr, "FAIL: pack_history_blob failed\n");
         return 1;
     }
-    written =
-        snprintf(path, sizeof(path), "%s/abi-1.%u.bin", fixtures_dir, (unsigned)PELORUS_ABI_MINOR);
-    if (written < 0 || (size_t)written >= sizeof(path)) {
-        return 2;
-    }
-    if (check_file_match(path, plain, plain_len) != 0) {
+    if (check_file_match(plain_path, plain.bytes, plain_len) != 0) {
         return 1;
     }
-#if PELORUS_ABI_MINOR >= 5
-    {
-        uint8_t carrier[32768];
-        size_t carrier_len = 0;
-        pel_result cr =
-            pel_blob_carrier_encode(plain, plain_len, carrier, sizeof(carrier), &carrier_len);
-        if (cr != PEL_OK) {
-            (void)fprintf(stderr, "FAIL: carrier encode failed (rc=%d)\n", (int)cr);
-            return 1;
-        }
-        written = snprintf(path, sizeof(path), "%s/abi-1.%u-carrier.bin", fixtures_dir,
-                           (unsigned)PELORUS_ABI_MINOR);
-        if (written < 0 || (size_t)written >= sizeof(path)) {
-            return 2;
-        }
-        if (check_file_match(path, carrier, carrier_len) != 0) {
-            return 1;
-        }
+    cr = pel_blob_carrier_encode(plain.bytes, plain_len, carrier.bytes, sizeof(carrier.bytes),
+                                 &carrier_len);
+    if (cr != PEL_OK) {
+        (void)fprintf(stderr, "FAIL: carrier encode failed (rc=%d)\n", (int)cr);
+        return 1;
     }
-#endif
+    if (check_file_match(carrier_path, carrier.bytes, carrier_len) != 0) {
+        return 1;
+    }
     return 0;
 }
+#else
+static int do_check_writer(const char *plain_path)
+{
+    AlignedBlob16k plain;
+    size_t plain_len = 0;
+
+    if (pack_history_blob(plain.bytes, sizeof(plain.bytes), &plain_len) != PEL_OK) {
+        (void)fprintf(stderr, "FAIL: pack_history_blob failed\n");
+        return 1;
+    }
+    if (check_file_match(plain_path, plain.bytes, plain_len) != 0) {
+        return 1;
+    }
+    return 0;
+}
+#endif
 
 static int do_read_blob(const char *path, int has_flip, uint32_t flip_off)
 {
-    uint8_t buf[32768];
+    AlignedBlob32k buf;
     size_t len = 0;
-    int rc = read_file_to_buf(path, buf, sizeof(buf), &len);
+    int rc = read_file_to_buf(path, buf.bytes, sizeof(buf.bytes), &len);
     if (rc != 0) {
         (void)fprintf(stderr, "IO error: %s\n", path);
         return 2;
@@ -1039,15 +1052,15 @@ static int do_read_blob(const char *path, int has_flip, uint32_t flip_off)
             (void)fprintf(stderr, "Flip offset %u >= len %zu\n", flip_off, len);
             return 2;
         }
-        buf[flip_off] ^= (uint8_t)0x01u;
+        buf.bytes[flip_off] ^= (uint8_t)0x01u;
     }
-    if (len >= 16 && memcmp(buf, k_carrier_uuid, 16) == 0) {
+    if (len >= 16 && memcmp(buf.bytes, k_carrier_uuid, 16) == 0) {
 #if PELORUS_ABI_MINOR < 5
         const void *p = NULL;
         size_t got = 0;
-        if (pel_blob_is_present(buf, len) == 0 &&
-            pel_blob_find_section(buf, len, PEL_SEC_BANDING, sizeof(PelorusBandingSection), &p,
-                                  &got) != PEL_OK) {
+        if (pel_blob_is_present(buf.bytes, len) == 0 &&
+            pel_blob_find_section(buf.bytes, len, PEL_SEC_BANDING, sizeof(PelorusBandingSection),
+                                  &p, &got) != PEL_OK) {
             return 0;
         }
         (void)fprintf(stderr, "FAIL: carrier not ignored by pre-1.5 reader\n");
@@ -1055,9 +1068,9 @@ static int do_read_blob(const char *path, int has_flip, uint32_t flip_off)
 #else
         const uint8_t *unwrapped = NULL;
         size_t unwrapped_len = 0;
-        uint8_t scratch[32768];
-        pel_result cr =
-            pel_blob_unwrap(buf, len, scratch, sizeof(scratch), &unwrapped, &unwrapped_len);
+        AlignedBlob32k scratch;
+        pel_result cr = pel_blob_unwrap(buf.bytes, len, scratch.bytes, sizeof(scratch.bytes),
+                                        &unwrapped, &unwrapped_len);
         if (cr != PEL_OK) {
             (void)fprintf(stderr, "FAIL: pel_blob_unwrap error %d\n", (int)cr);
             return 1;
@@ -1065,32 +1078,32 @@ static int do_read_blob(const char *path, int has_flip, uint32_t flip_off)
         return read_and_verify_blob(unwrapped, unwrapped_len);
 #endif
     }
-    return read_and_verify_blob(buf, len);
+    return read_and_verify_blob(buf.bytes, len);
 }
 
 static int do_emit(int argc, char **argv)
 {
-    uint8_t plain[16384];
+    AlignedBlob16k plain;
     size_t plain_len = 0;
     if (argc != 3) {
         return 2;
     }
-    if (pack_history_blob(plain, sizeof(plain), &plain_len) != PEL_OK) {
+    if (pack_history_blob(plain.bytes, sizeof(plain.bytes), &plain_len) != PEL_OK) {
         return 1;
     }
     if (strcmp(argv[2], "plain") == 0) {
-        emit_hex(plain, plain_len);
+        emit_hex(plain.bytes, plain_len);
         return 0;
     }
     if (strcmp(argv[2], "carrier") == 0) {
 #if PELORUS_ABI_MINOR >= 5
-        uint8_t carrier[32768];
+        AlignedBlob32k carrier;
         size_t carrier_len = 0;
-        if (pel_blob_carrier_encode(plain, plain_len, carrier, sizeof(carrier), &carrier_len) !=
-            PEL_OK) {
+        if (pel_blob_carrier_encode(plain.bytes, plain_len, carrier.bytes, sizeof(carrier.bytes),
+                                    &carrier_len) != PEL_OK) {
             return 1;
         }
-        emit_hex(carrier, carrier_len);
+        emit_hex(carrier.bytes, carrier_len);
         return 0;
 #else
         (void)fprintf(stderr, "carrier mode requires PELORUS_ABI_MINOR >= 5 (current %u)\n",
@@ -1111,10 +1124,19 @@ int main(int argc, char **argv)
         return do_emit(argc, argv);
     }
     if (strcmp(argv[1], "check-writer") == 0) {
+#if PELORUS_ABI_MINOR >= 5
+        if (argc != 4) {
+            (void)fprintf(stderr, "Usage: abi_history check-writer <plain.bin> <carrier.bin>\n");
+            return 2;
+        }
+        return do_check_writer(argv[2], argv[3]);
+#else
         if (argc != 3) {
+            (void)fprintf(stderr, "Usage: abi_history check-writer <plain.bin>\n");
             return 2;
         }
         return do_check_writer(argv[2]);
+#endif
     }
     if (strcmp(argv[1], "read") == 0) {
         int has_flip = 0;

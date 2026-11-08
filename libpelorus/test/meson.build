@@ -33,8 +33,14 @@ abi_history_test = executable(
 
 interop_history_dir = meson.current_source_dir() / 'fixtures' / 'interop-history'
 
+# Point interop-history-writer at this release line's fixtures.
+# ABI bump -> point at the new minor's files.
 test('interop-history-writer', abi_history_test,
-     args: ['check-writer', interop_history_dir],
+     args: [
+       'check-writer',
+       interop_history_dir / 'abi-1.6.bin',
+       interop_history_dir / 'abi-1.6-carrier.bin',
+     ],
      suite: 'fast')
 
 interop_history_fixtures = [

@@ -550,13 +550,15 @@ Persisted binary fixtures (`libpelorus/test/fixtures/interop-history/abi-1.<N>.b
 
 When bumping `PELORUS_ABI_MINOR`:
 
-1. Tag the release or update `abi_history.c` / `abi_history_values.h` with values for the new section/fields.
-2. Run `python3 -I scripts/check-interop-abi-history.py --write` to regenerate fixtures and `manifest.json`.
-3. The Meson test `interop-history-writer` forces byte-for-byte fidelity against committed fixtures on every fast-suite run.
+1. ABI bump PR adds `fill_<sec>` and `check_<sec>` functions in `libpelorus/test/abi_history/abi_history.c` gated `#if PELORUS_ABI_MINOR >= N`, and new values are appended to `libpelorus/test/abi_history/abi_history_values.h`; existing values must never change (changing an existing value alters every fixture: check fails and `--write` refuses).
+2. Run `python3 -I scripts/check-interop-abi-history.py --write`: this generates the new `abi-1.<N>.bin` (and `abi-1.<N>-carrier.bin` if minor ≥ 5) and rewrites `manifest.json`.
+3. Update `libpelorus/test/meson.build`: point `interop-history-writer` at the new minor's fixture files and add fast-suite read tests for them.
+   If the previous minor never reached a release tag (only the current tree wrote it), delete its `abi-1.<N-1>*.bin` files and their read tests in the same pull request; `--write` already drops its manifest rows. A released minor's files stay forever: the script fails when one is missing.
+4. Release tag push: no manual action required; `scripts/check-interop-abi-history.py` prints an informational note for any unlisted release tag until the next `--write` run records it.
 
 ### Scope and non-coverage
 
-These fixtures verify the libpelorus C core serialization, backward compatibility (newer readers over older fixtures), and forward compatibility (older readers safely ignoring unknown newer sections per R3/R4 and carrier UUIDs per ADR-0183). They do not test FFmpeg-filter host graph producers or external readers such as vmafx.
+These fixtures verify the libpelorus C core serialization, backward compatibility (newer readers over older fixtures), and forward compatibility (older readers safely ignoring unknown newer sections per R3/R4 and carrier UUIDs per ADR-0183). Tag sources are compiled without `-Werror` (emitting an informational note line if compiler warnings arise) because release sources are immutable historical artifacts where future compiler diagnostics cannot be fixed retrospectively. They do not test FFmpeg-filter host graph producers or external readers such as vmafx.
 
 ## Stability rules (normative — see interop.h)
 

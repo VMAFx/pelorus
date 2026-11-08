@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0247: Persisted interop blobs from released ABI writers and readers
 
-- **Status**: Proposed
-- **Implementation**: pending (#467)
+- **Status**: Accepted
 - **Date**: 2026-11-08
 - **Deciders**: Lusoris
 - **Tags**: interop, abi, test, ci
@@ -11,13 +10,15 @@
 
 The interop side-data ABI (ADR-0103) promises that a blob written at one minor version stays readable by a reader built at any other minor of the same major: an older reader ignores section bits it does not know (R3) and reads only the prefix of a grown section that it knows (R4). The conformance test (`libpelorus/test/interop_test.c`, `test_forward_compat`) checks R4 in one process with the current headers only, by passing a smaller consumer size to the current reader. No byte sequence that a released writer produced is kept in the repository, and no released reader is ever run. A change that alters the wire bytes of an existing section, or a reader change that rejects a blob an older release wrote, passes every current test as long as writer and reader change together.
 
-Five minors have shipped in tags: 1.0 (`v0.1.0`), 1.3 (`v0.2.0` to `v0.3.0`), 1.4 (`v0.4.0-rc.1`), 1.5 (`v0.4.0-rc.2` to `v0.4.1`, including the zero-free carrier form of ADR-0183) and 1.6 on `master` (ADR-0214). Minors 1.1 and 1.2 never reached a tag. Each tag's interop code depends only on the C standard library (`libpelorus/AGENTS.md`), so the writer and reader of any tag can be rebuilt from `git archive` without the rest of that tag's tree.
+Four minors have shipped in tags: 1.0 (`v0.1.0`), 1.3 (`v0.2.0` to `v0.3.0`), 1.4 (`v0.4.0-rc.1`) and 1.5 (`v0.4.0-rc.2` to `v0.4.1`, including the zero-free carrier form of ADR-0183). Minor 1.6 (ADR-0214) is on `master` and in no tag yet. Minors 1.1 and 1.2 never reached a tag. Each tag's interop code depends only on the C standard library (`libpelorus/AGENTS.md`), so the writer and reader of any tag can be rebuilt from `git archive` without the rest of that tag's tree.
 
 VMAFx mirrors `interop_test.c` byte for byte, so the new checks cannot live in that file without forcing a matching change in VMAFx.
 
 ## Decision
 
 We will keep one test program, `libpelorus/test/abi_history/abi_history.c`, written once against the current tree and gated on `PELORUS_ABI_MINOR` so it compiles unchanged against every released tag's `interop.h`, `pelorus.h` and `interop.c`. Built against a tag, it is that release's writer (it packs every section and appended map the minor defines from fixed values) and that release's reader (it checks every section it knows against the same values, including the R3 and R4 rules and the carrier form). The bytes each released writer emits are persisted under `libpelorus/test/fixtures/interop-history/`, one file per minor and form, with a manifest naming the tags that produce them. The fast suite runs the current reader over every persisted blob and fails when the current writer's output differs from the fixture for the current minor or that fixture is missing. A script, `scripts/check-interop-abi-history.py`, rebuilds the writer and reader of every release tag in CI, checks that each tag still emits its persisted bytes, and runs every released reader over every persisted blob.
+
+A released minor's fixture is append-only: the script fails when a tag's fixture is missing or differs, and its `--write` mode refuses to overwrite a file whose bytes changed. A fixture for a minor that only `master` writes is provisional: an ABI bump that supersedes that minor before any release removes its files and manifest rows in the same pull request, as minors 1.1 and 1.2 left none. Release sources are rebuilt without `-Werror`, because a newer compiler's warning in an immutable tag cannot be fixed; the current tree keeps `-Werror`.
 
 ## Alternatives considered
 
