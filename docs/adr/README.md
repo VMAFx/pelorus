@@ -159,3 +159,4 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0244](0244-python-argparse-gate.md) | Parse every Python command line with argparse | Accepted |
 | [0245](0245-changelog-render-at-landing.md) | Changelog render at landing | Proposed |
 | [0246](0246-meson-testlog-credential-scrub.md) | Meson testlog credential scrub and scanner | Proposed |
+| [0247](0247-interop-abi-history-fixtures.md) | Persisted interop blobs from released ABI writers and readers | Proposed |
