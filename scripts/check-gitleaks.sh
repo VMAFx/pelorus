@@ -32,9 +32,14 @@
 # Env:
 #   GITLEAKS          gitleaks binary (default: gitleaks on PATH)
 #   GITLEAKS_TIMEOUT  scan deadline in seconds (default 600)
-#   CURL_MAX_TIME     per-attempt deadline in seconds (default 120);
-#                     no new retry starts after CURL_MAX_TIME;
-#                     worst case about twice CURL_MAX_TIME.
+#   CURL_MAX_TIME     per-attempt transfer deadline in seconds (default 120).
+#   CURL_STALL_TIME   seconds without progress before aborting an attempt (default 30).
+#   CURL_RETRY_WINDOW retry window in seconds (default 2 * CURL_MAX_TIME).
+#                     An attempt that receives nothing for CURL_STALL_TIME seconds
+#                     is aborted and retried; no new retry starts once
+#                     CURL_RETRY_WINDOW has passed, but curl checks that before
+#                     its backoff sleep (1, 2, 4 ... s), so the worst case per file
+#                     is about CURL_RETRY_WINDOW + 32 s + CURL_MAX_TIME.
 set -euo pipefail
 # A failing command inside $(...) must fail the assignment that reads it.
 shopt -s inherit_errexit
@@ -45,14 +50,23 @@ GITLEAKS_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GITLEAKS="${GITLEAKS:-gitleaks}"
 GITLEAKS_TIMEOUT="${GITLEAKS_TIMEOUT:-600}"
-CURL_MAX_TIME="${CURL_MAX_TIME:-120}"
-# A config passed through the environment would replace the default rules.
-unset GITLEAKS_CONFIG GITLEAKS_CONFIG_TOML
 
 fail() {
     echo "check-gitleaks: $*" >&2
     exit 1
 }
+
+CURL_MAX_TIME="${CURL_MAX_TIME:-120}"
+[[ "$CURL_MAX_TIME" =~ ^[1-9][0-9]*$ ]] || fail "CURL_MAX_TIME must be a positive decimal integer: $CURL_MAX_TIME"
+
+CURL_STALL_TIME="${CURL_STALL_TIME:-30}"
+[[ "$CURL_STALL_TIME" =~ ^[1-9][0-9]*$ ]] || fail "CURL_STALL_TIME must be a positive decimal integer: $CURL_STALL_TIME"
+
+CURL_RETRY_WINDOW="${CURL_RETRY_WINDOW:-$((2 * CURL_MAX_TIME))}"
+[[ "$CURL_RETRY_WINDOW" =~ ^[1-9][0-9]*$ ]] || fail "CURL_RETRY_WINDOW must be a positive decimal integer: $CURL_RETRY_WINDOW"
+
+# A config passed through the environment would replace the default rules.
+unset GITLEAKS_CONFIG GITLEAKS_CONFIG_TOML
 
 install_gitleaks() {
     local dir="$1"
@@ -61,9 +75,11 @@ install_gitleaks() {
     [ ! -e "$dir" ] || fail "--install: $dir already exists"
     mkdir -p "$dir"
     # 6 retries with exponential backoff absorb transient release-asset 504s (run 42044634889).
+    # Stall detection retries hung transfers before the retry window expires (run 42464703696).
     curl --fail --silent --show-error --location --proto '=https' \
+        --connect-timeout "$CURL_STALL_TIME" --speed-time "$CURL_STALL_TIME" \
         --max-time "$CURL_MAX_TIME" \
-        --retry 6 --retry-max-time "$CURL_MAX_TIME" \
+        --retry 6 --retry-max-time "$CURL_RETRY_WINDOW" \
         --output "$dir/$tarball" "$url"
     echo "$GITLEAKS_SHA256  $dir/$tarball" | sha256sum --check --strict --quiet \
         || fail "--install: $tarball does not match pinned sha256 $GITLEAKS_SHA256"

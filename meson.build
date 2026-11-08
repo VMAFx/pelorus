@@ -443,6 +443,15 @@ if build_machine.system() != 'windows'
        args: [meson.project_source_root() / 'scripts' / 'test-fetch-ffmpeg-series.py'],
        workdir: meson.project_source_root(),
        suite: 'fast')
+  # CURL_MAX_TIME, CURL_STALL_TIME and CURL_RETRY_WINDOW: each of the three
+  # download scripts refuses a value that is not a positive decimal integer
+  # before any curl call. Not on Windows, for the native temp paths the
+  # fetch-corpus-fail-closed note above describes.
+  test('curl-env-validation',
+       python_prog,
+       args: [meson.project_source_root() / 'scripts' / 'test-curl-env-validation.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
 endif
 
 # The build-config self-test drives throwaway Git repositories. Started from a
@@ -642,8 +651,8 @@ test('meson-windows-git-self-test',
      timeout: 60,
      suite: 'fast')
 
-# Every curl download must specify retry >= 5 and retry-max-time to handle
-# transient server 504 errors with exponential backoff (CI run 42044634889).
+# Every curl download needs retry >= 5, speed-time, retry-max-time > max-time,
+# so hangs and transient 504s are retried (CI runs 42044634889, 42464703696).
 if build_machine.system() != 'windows'
   test('curl-retry',
        python_prog,

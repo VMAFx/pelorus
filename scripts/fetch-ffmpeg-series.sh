@@ -41,12 +41,22 @@
 #   FFMPEG_SERIES_FROM  directory that already holds the four release files;
 #                       they are copied and verified exactly like a download
 #   GH_TOKEN            gh credential for check 4 (CI: github.token)
-#   CURL_MAX_TIME       per-attempt deadline in seconds (default 120);
-#                       no new retry starts after CURL_MAX_TIME;
-#                       worst case about twice CURL_MAX_TIME.
+#   CURL_MAX_TIME       per-attempt transfer deadline in seconds (default 120).
+#   CURL_STALL_TIME     seconds without progress before aborting an attempt (default 30).
+#   CURL_RETRY_WINDOW   retry window in seconds (default 2 * CURL_MAX_TIME).
+#                       An attempt that receives nothing for CURL_STALL_TIME seconds
+#                       is aborted and retried; no new retry starts once
+#                       CURL_RETRY_WINDOW has passed, but curl checks that before
+#                       its backoff sleep (1, 2, 4 ... s), so the worst case per file
+#                       is about CURL_RETRY_WINDOW + 32 s + CURL_MAX_TIME.
 set -euo pipefail
 # A failing command inside $(...) must fail the assignment that reads it.
 shopt -s inherit_errexit
+
+fail() {
+    echo "fetch-ffmpeg-series: $*" >&2
+    exit 1
+}
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=build-config.env
@@ -56,6 +66,13 @@ source "$ROOT/build-config.env"
 : "${FFMPEG_SERIES_COMMIT:?build-config.env has no FFMPEG_SERIES_COMMIT}"
 : "${FFMPEG_SERIES_SHA256:?build-config.env has no FFMPEG_SERIES_SHA256}"
 CURL_MAX_TIME="${CURL_MAX_TIME:-120}"
+[[ "$CURL_MAX_TIME" =~ ^[1-9][0-9]*$ ]] || fail "CURL_MAX_TIME must be a positive decimal integer: $CURL_MAX_TIME"
+
+CURL_STALL_TIME="${CURL_STALL_TIME:-30}"
+[[ "$CURL_STALL_TIME" =~ ^[1-9][0-9]*$ ]] || fail "CURL_STALL_TIME must be a positive decimal integer: $CURL_STALL_TIME"
+
+CURL_RETRY_WINDOW="${CURL_RETRY_WINDOW:-$((2 * CURL_MAX_TIME))}"
+[[ "$CURL_RETRY_WINDOW" =~ ^[1-9][0-9]*$ ]] || fail "CURL_RETRY_WINDOW must be a positive decimal integer: $CURL_RETRY_WINDOW"
 
 SERIES_NAME="ffmpeg-patches-${FFMPEG_SERIES_TAG}"
 TARBALL="${SERIES_NAME}.tar.gz"
@@ -64,11 +81,6 @@ RELEASE_URL="https://github.com/${FFMPEG_SERIES_REPO}/releases/download/${FFMPEG
 SIGNER_WORKFLOW="github.com/${FFMPEG_SERIES_REPO}/.github/workflows/release-build.yml"
 OIDC_ISSUER="https://token.actions.githubusercontent.com"
 OWNED_DIR=""
-
-fail() {
-    echo "fetch-ffmpeg-series: $*" >&2
-    exit 1
-}
 
 cleanup() {
     local status=$?
@@ -108,10 +120,12 @@ download() {
             cp -- "$FFMPEG_SERIES_FROM/$name" "$dir/$name" ||
                 fail "FFMPEG_SERIES_FROM has no $name"
         # 6 retries with exponential backoff absorb transient release-asset 504s (run 42044634889).
+        # Stall detection retries hung transfers before the retry window expires (run 42464703696).
         elif ! curl --fail --silent --show-error --location \
             --proto '=https' --proto-redir '=https' \
+            --connect-timeout "$CURL_STALL_TIME" --speed-time "$CURL_STALL_TIME" \
             --max-time "$CURL_MAX_TIME" \
-            --retry 6 --retry-max-time "$CURL_MAX_TIME" \
+            --retry 6 --retry-max-time "$CURL_RETRY_WINDOW" \
             --output "$dir/$name" \
             -- "$RELEASE_URL/$name"; then
             fail "download failed: $RELEASE_URL/$name"

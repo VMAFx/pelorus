@@ -17,20 +17,26 @@ build-config.env next to a copy of the script, and expects:
     be refused, with no output directory left behind;
   - an existing output directory to be refused and left as it is;
   - a full run on a host without cosign to stop at the missing verifier, with
-    no output, even when `gh` would accept everything.
+    no output, even when `gh` would accept everything;
+  - a stalled download to abort within stall timeout and retry before the retry
+    window expires.
 """
 
 from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import pathlib
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = pathlib.Path(
@@ -183,13 +189,210 @@ def missing_verifier(work: pathlib.Path) -> str:
     return ""
 
 
+# The server thread polls accept() every 0.5 s; 240 polls bound it at 120 s,
+# past the two 30 s script runs it serves.
+ACCEPT_POLLS = 240
+
+
+def _run_fetch_script(
+    script: pathlib.Path, out: pathlib.Path, env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    """Run a copy of fetch-ffmpeg-series.sh into `out` with `env`, bounded at 30 s."""
+    return subprocess.run(  # nosec B603 - fixed bash argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant bash command, no shell, explicit deadline
+        ["bash", str(script), str(out)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30.0,
+        env=env,
+    )
+
+
+def _write_curl_shim(
+    tools: pathlib.Path, log_file: pathlib.Path, real_curl: str, port: int
+) -> None:
+    """Write a `curl` shim into `tools` that logs each call to `log_file` and sends its URL to the local server.
+
+    With TEST_CURL_SHIM_CAPTURE=1 the shim only logs the call and exits 28.
+    """
+    shim_code = f"""#!{sys.executable} -I
+import json
+import os
+import sys
+
+log_file = {repr(str(log_file))}
+real_curl = {repr(real_curl)}
+target_port = {port}
+
+with open(log_file, "a", encoding="utf-8") as f:
+    f.write(json.dumps(sys.argv) + "\\n")
+
+if os.environ.get("TEST_CURL_SHIM_CAPTURE") == "1":
+    sys.exit(28)
+
+argv = [real_curl]
+i = 1
+while i < len(sys.argv):
+    tok = sys.argv[i]
+    if tok in ("--proto", "--proto-redir") and i + 1 < len(sys.argv):
+        i += 2
+        continue
+    if tok == "--" and i + 1 < len(sys.argv):
+        argv.append(tok)
+        url = sys.argv[i + 1]
+        name = url.rsplit("/", 1)[-1]
+        argv.append(f"http://127.0.0.1:{{target_port}}/{{name}}")
+        i += 2
+        continue
+    argv.append(tok)
+    i += 1
+
+os.execv(real_curl, argv)
+"""
+    shim = tools / "curl"
+    shim.write_text(shim_code, encoding="utf-8")
+    shim.chmod(0o500)
+
+
+def _option_value(curl_words: list[str], name: str) -> str | None:
+    """Value after the last `name` in a recorded curl call; the script passes option and value as two words."""
+    if name not in curl_words:
+        return None
+    index = len(curl_words) - 1 - curl_words[::-1].index(name)
+    return curl_words[index + 1] if index + 1 < len(curl_words) else None
+
+
+def _check_captured_argv(log_file: pathlib.Path) -> str:
+    """The first logged curl argv must carry --speed-time and a window wider than --max-time."""
+    if not log_file.is_file():
+        return "capture-only: no curl invocation logged"
+    lines = log_file.read_text(encoding="utf-8").splitlines()
+    if not lines:
+        return "capture-only: empty curl log"
+    curl_words = json.loads(lines[0])
+    if "--speed-time" not in curl_words:
+        return "capture-only: --speed-time not in curl argv"
+    max_time = _option_value(curl_words, "--max-time") or ""
+    window = _option_value(curl_words, "--retry-max-time") or ""
+    if not (max_time.isdigit() and window.isdigit()):
+        return f"capture-only: max-time {max_time!r}, retry window {window!r} not both integers"
+    if int(window) <= int(max_time):
+        return f"capture-only: retry window {window} <= max-time {max_time}"
+    return ""
+
+
+def _setup_stalled_env(work: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
+    """Lay out a script copy, a shim directory and a pinned build-config.env; return (root, tools, script)."""
+    root = work / "stalled-download"
+    tools = root / "bin"
+    tools.mkdir(parents=True)
+    (root / "scripts").mkdir(parents=True)
+    script_copy = root / "scripts" / "fetch-ffmpeg-series.sh"
+    shutil.copy(SCRIPT, script_copy)
+    config = dict(FFMPEG, FFMPEG_SERIES_REPO="VMAFx/ffmpeg-patches", FFMPEG_SERIES_TAG=TAG,
+                  FFMPEG_SERIES_COMMIT="b" * 40, FFMPEG_SERIES_SHA256="0" * 64)
+    (root / "build-config.env").write_bytes(base_env(config))
+    return root, tools, script_copy
+
+
+def _check_stalled_run(
+    script: pathlib.Path, out: pathlib.Path, tools: pathlib.Path, connections: list[float]
+) -> str:
+    """Run fetch script under stall conditions and verify retry timing."""
+    env = {
+        **os.environ,
+        "PATH": f"{tools}:{os.environ.get('PATH', '')}",
+        "CURL_MAX_TIME": "6",
+        "CURL_STALL_TIME": "1",
+        "CURL_RETRY_WINDOW": "3",
+    }
+    res = _run_fetch_script(script, out, env)
+    if res.returncode == 0:
+        return "stalled download: expected failure, got exit 0"
+    if "download failed" not in res.stderr:
+        return f"stalled download: 'download failed' not in stderr: {res.stderr.strip()!r}"
+    if len(connections) < 2:
+        return f"stalled download: expected >= 2 connections, got {len(connections)}"
+    delta = connections[1] - connections[0]
+    if delta >= 6.0:
+        return f"stalled download: second connection at {delta:.2f}s >= 6.0s (not aborted by stall detector)"
+    if out.exists():
+        return "stalled download: output directory left behind"
+    return ""
+
+
+def _check_capture_run(
+    script: pathlib.Path, out: pathlib.Path, tools: pathlib.Path, log_file: pathlib.Path
+) -> str:
+    """Run fetch script in capture-only mode and verify default retry options."""
+    env = {
+        **os.environ,
+        "PATH": f"{tools}:{os.environ.get('PATH', '')}",
+        "CURL_MAX_TIME": "6",
+        "TEST_CURL_SHIM_CAPTURE": "1",
+    }
+    _run_fetch_script(script, out, env)
+    return _check_captured_argv(log_file)
+
+
+def stalled_download(work: pathlib.Path) -> str:
+    """A hung transfer must abort within stall timeout and retry before window ends."""
+    real_curl = shutil.which("curl")
+    if not real_curl:
+        print("fetch-ffmpeg-series: stalled-download case skipped: curl not on PATH", file=sys.stderr)
+        return ""
+
+    root, tools, script_copy = _setup_stalled_env(work)
+
+    server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_sock.bind(("127.0.0.1", 0))
+    server_sock.listen(16)
+    server_sock.settimeout(0.5)
+    port = server_sock.getsockname()[1]
+    connections: list[float] = []
+    client_socks: list[socket.socket] = []
+    stop_event = threading.Event()
+
+    def _accept_loop() -> None:
+        """Accept connections and never answer; record each start time, at most ACCEPT_POLLS polls."""
+        for _ in range(ACCEPT_POLLS):
+            if stop_event.is_set():
+                return
+            try:
+                conn, _ = server_sock.accept()
+            except (TimeoutError, OSError):
+                continue
+            connections.append(time.monotonic())
+            client_socks.append(conn)
+
+    server_thread = threading.Thread(target=_accept_loop)
+    server_thread.daemon = True
+    server_thread.start()
+
+    log_file = root / "curl-calls.jsonl"
+    _write_curl_shim(tools, log_file, real_curl, port)
+
+    try:
+        err = _check_stalled_run(script_copy, root / "out1", tools, connections)
+        if err:
+            return err
+        log_file.unlink(missing_ok=True)
+        return _check_capture_run(script_copy, root / "out2", tools, log_file)
+    finally:
+        stop_event.set()
+        server_thread.join(timeout=2.0)
+        for client in client_socks:
+            client.close()
+        server_sock.close()
+
+
 def main() -> int:
+    """Run the control, every planted defect and the stalled-download case; exit 1 on any failure."""
     failures: list[str] = []
     with tempfile.TemporaryDirectory(prefix="pelorus-series-test-") as tmp:
         work = pathlib.Path(tmp)
-        refused = missing_verifier(work)
-        if refused:
-            failures.append(refused)
+        # Each fixture-free case returns its failure text, empty on a pass.
+        failures.extend(filter(None, (missing_verifier(work), stalled_download(work))))
         code, stderr, out = run_case(work, "good", tarball(series()))
         if code != 0 or not (out / "series" / "patches" / PATCH).is_file():
             failures.append(f"positive control: exit {code}, stderr {stderr.strip()!r}")
@@ -209,8 +412,8 @@ def main() -> int:
     for failure in failures:
         print(f"FAIL: {failure}", file=sys.stderr)
     if not failures:
-        print(f"fetch-ffmpeg-series: {len(refusals()) + 2} planted defects refused "
-              "(unpack checks, existing output, missing cosign), control accepted")
+        print(f"fetch-ffmpeg-series: {len(refusals()) + 3} planted defects refused "
+              "(unpack checks, existing output, missing cosign, stalled download), control accepted")
     return 1 if failures else 0
 
 

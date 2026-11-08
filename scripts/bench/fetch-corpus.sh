@@ -12,9 +12,13 @@
 #
 #   FFMPEG=/path/to/ffmpeg CORPUS=.bench-corpus ./fetch-corpus.sh [name...]
 #   CORPUS_LOCK=<file> overrides the pin list.
-#   CURL_MAX_TIME=<seconds, default 600> sets the per-attempt deadline;
-#   no new retry starts after CURL_MAX_TIME;
-#   worst case about twice CURL_MAX_TIME.
+#   CURL_MAX_TIME=<seconds, default 600> sets the per-attempt deadline.
+#   CURL_STALL_TIME=<seconds, default 30> sets seconds without progress before abort.
+#   CURL_RETRY_WINDOW=<seconds, default 2 * CURL_MAX_TIME> sets the retry window.
+#   An attempt that receives nothing for CURL_STALL_TIME seconds is aborted and retried;
+#   no new retry starts once CURL_RETRY_WINDOW has passed, but curl checks that before
+#   its backoff sleep (1, 2, 4 ... s), so the worst case per file is about
+#   CURL_RETRY_WINDOW + 32 s + CURL_MAX_TIME.
 #   CORPUS_CATEGORIES=<file> overrides the category list (default: scripts/bench/corpus.categories).
 #   --check-categories verifies category coverage against the lock and exits without downloading.
 #   A category whose clips column reads 'parked #<issue>' has no set by recorded decision: it
@@ -29,6 +33,22 @@ LOCK="${CORPUS_LOCK:-$HERE/corpus.lock}"
 CATEGORIES="${CORPUS_CATEGORIES:-$HERE/corpus.categories}"
 # Per-attempt transfer deadline in seconds (clips are tens of MB).
 CURL_MAX_TIME="${CURL_MAX_TIME:-600}"
+[[ "$CURL_MAX_TIME" =~ ^[1-9][0-9]*$ ]] || {
+    echo "fetch-corpus: CURL_MAX_TIME must be a positive decimal integer: $CURL_MAX_TIME" >&2
+    exit 1
+}
+
+CURL_STALL_TIME="${CURL_STALL_TIME:-30}"
+[[ "$CURL_STALL_TIME" =~ ^[1-9][0-9]*$ ]] || {
+    echo "fetch-corpus: CURL_STALL_TIME must be a positive decimal integer: $CURL_STALL_TIME" >&2
+    exit 1
+}
+
+CURL_RETRY_WINDOW="${CURL_RETRY_WINDOW:-$((2 * CURL_MAX_TIME))}"
+[[ "$CURL_RETRY_WINDOW" =~ ^[1-9][0-9]*$ ]] || {
+    echo "fetch-corpus: CURL_RETRY_WINDOW must be a positive decimal integer: $CURL_RETRY_WINDOW" >&2
+    exit 1
+}
 
 # Print each non-comment row of the categories file as trimmed cat|clips|used_by.
 category_rows() {
@@ -144,8 +164,10 @@ while IFS='|' read -r name url sha seek scale pixfmt frames fps licence; do
             # the error page; --max-time bounds every attempt (HISS-02).
             tmp_dl="$(mktemp "$local_dl.XXXXXX.part")"
             # 6 retries with exponential backoff absorb transient release-asset 504s (run 42044634889).
+            # Stall detection retries hung transfers before the retry window expires (run 42464703696).
             if ! curl --fail --show-error --silent --location \
-                --max-time "$CURL_MAX_TIME" --retry 6 --retry-max-time "$CURL_MAX_TIME" \
+                --connect-timeout "$CURL_STALL_TIME" --speed-time "$CURL_STALL_TIME" \
+                --max-time "$CURL_MAX_TIME" --retry 6 --retry-max-time "$CURL_RETRY_WINDOW" \
                 --output "$tmp_dl" -- "$url"; then
                 rm -f -- "$tmp_dl"
                 echo "  DOWNLOAD FAILED: $name ($url)" >&2

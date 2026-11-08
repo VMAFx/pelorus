@@ -372,7 +372,9 @@ What you need for the first two: network access, `cosign` on `PATH`, and
 | --- | --- |
 | `GH_TOKEN` | credential of `gh attestation verify`; CI passes `github.token` |
 | `FFMPEG_SERIES_FROM` | directory with the four release files, taken instead of a download and verified the same way |
-| `CURL_MAX_TIME` | download deadline per file in seconds, default 120 |
+| `CURL_MAX_TIME` | download deadline per attempt in seconds, default 120 |
+| `CURL_STALL_TIME` | seconds without progress before aborting an attempt, default 30 |
+| `CURL_RETRY_WINDOW` | retry window in seconds, default 2 * `CURL_MAX_TIME` |
 
 The script fails, and removes its output, when any of these does not hold:
 
