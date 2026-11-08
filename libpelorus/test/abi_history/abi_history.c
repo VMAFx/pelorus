@@ -21,11 +21,17 @@
 static const uint8_t k_carrier_uuid[16] = {0x3f, 0x9b, 0x37, 0xb8, 0xfd, 0x9a, 0x46, 0x21,
                                            0x92, 0x0e, 0x9b, 0x78, 0xb5, 0x5c, 0xf9, 0xb5};
 
+/**
+ * Return the smaller of two size_t values.
+ */
 static inline size_t min_size(size_t a, size_t b)
 {
     return (a < b) ? a : b;
 }
 
+/**
+ * Populate a PelorusBandingSection with deterministic test values.
+ */
 static void fill_banding(PelorusBandingSection *s)
 {
     memset(s, 0, sizeof(*s));
@@ -37,6 +43,9 @@ static void fill_banding(PelorusBandingSection *s)
     s->cell_data_size = (uint32_t)sizeof(val_banding_cell_data);
 }
 
+/**
+ * Populate a PelorusVarianceSection with deterministic test values.
+ */
 static void fill_variance(PelorusVarianceSection *s)
 {
     memset(s, 0, sizeof(*s));
@@ -49,6 +58,9 @@ static void fill_variance(PelorusVarianceSection *s)
     s->edge_cell_size = (uint32_t)sizeof(val_edge_cell_data);
 }
 
+/**
+ * Populate a PelorusDenoiseSection with deterministic test values.
+ */
 static void fill_denoise(PelorusDenoiseSection *s)
 {
     memset(s, 0, sizeof(*s));
@@ -61,6 +73,9 @@ static void fill_denoise(PelorusDenoiseSection *s)
     s->denoiser_id = (uint8_t)VAL_DENOISE_ID;
 }
 
+/**
+ * Populate a PelorusFilmGrainSection with deterministic test values.
+ */
 static void fill_filmgrain(PelorusFilmGrainSection *s)
 {
     memset(s, 0, sizeof(*s));
@@ -93,6 +108,9 @@ static void fill_filmgrain(PelorusFilmGrainSection *s)
     s->ar_coeffs_uv[1][1] = 4;
 }
 
+/**
+ * Populate a PelorusMotionSection with deterministic test values.
+ */
 static void fill_motion(PelorusMotionSection *s)
 {
     memset(s, 0, sizeof(*s));
@@ -109,6 +127,9 @@ static void fill_motion(PelorusMotionSection *s)
 }
 
 #if PELORUS_ABI_MINOR >= 3
+/**
+ * Populate a PelorusQpReportSection with deterministic test values.
+ */
 static void fill_qpreport(PelorusQpReportSection *s)
 {
     memset(s, 0, sizeof(*s));
@@ -128,6 +149,9 @@ static void fill_qpreport(PelorusQpReportSection *s)
     s->qp_cell_size = (uint32_t)sizeof(val_qp_cell_data);
 }
 
+/**
+ * Populate a PelorusMotionConfSection with deterministic test values.
+ */
 static void fill_motion_conf(PelorusMotionConfSection *s)
 {
     memset(s, 0, sizeof(*s));
@@ -136,6 +160,9 @@ static void fill_motion_conf(PelorusMotionConfSection *s)
     s->conf_field_size = (uint32_t)sizeof(val_conf_field_data);
 }
 
+/**
+ * Populate a PelorusComplexitySection with deterministic test values.
+ */
 static void fill_complexity(PelorusComplexitySection *s)
 {
     memset(s, 0, sizeof(*s));
@@ -146,6 +173,12 @@ static void fill_complexity(PelorusComplexitySection *s)
 #endif
 
 #if PELORUS_ABI_MINOR >= 4
+_Static_assert(sizeof(val_record_digest_data) == sizeof(((PelorusEncodeRecordSection *)0)->digest),
+               "val_record_digest_data size matches digest");
+
+/**
+ * Populate a PelorusEncTelemetrySection with deterministic test values.
+ */
 static void fill_enc_telemetry(PelorusEncTelemetrySection *s)
 {
     memset(s, 0, sizeof(*s));
@@ -170,6 +203,9 @@ static void fill_enc_telemetry(PelorusEncTelemetrySection *s)
     s->mode_map_size = (uint32_t)sizeof(val_tlm_mode_map_data);
 }
 
+/**
+ * Populate a PelorusEncodeRecordSection with deterministic test values.
+ */
 static void fill_encode_record(PelorusEncodeRecordSection *s)
 {
     memset(s, 0, sizeof(*s));
@@ -181,6 +217,13 @@ static void fill_encode_record(PelorusEncodeRecordSection *s)
 #endif
 
 #if PELORUS_ABI_MINOR >= 6
+_Static_assert(sizeof(val_quality_model_hash_data) ==
+                   sizeof(((PelorusQualitySection *)0)->model_hash),
+               "val_quality_model_hash_data size matches model_hash");
+
+/**
+ * Populate a PelorusQualitySection with deterministic test values.
+ */
 static void fill_quality(PelorusQualitySection *s)
 {
     memset(s, 0, sizeof(*s));
@@ -198,26 +241,56 @@ static void fill_quality(PelorusQualitySection *s)
 }
 #endif
 
-static uint32_t append_map(uint8_t *blob, size_t cap, uint32_t *end, const void *data,
-                           uint32_t size)
+/**
+ * Append auxiliary map data to the blob buffer at an 8-byte aligned offset.
+ * Returns 0 on success, 1 on buffer overflow or offset wrap.
+ */
+static int append_map(uint8_t *blob, size_t cap, uint32_t *end, const void *data, uint32_t size,
+                      uint32_t *out_off)
 {
+    if (*end > UINT32_MAX - 7u) {
+        return 1;
+    }
     uint32_t off = (*end + 7u) & ~7u;
-    if ((size_t)PELORUS_SIDEDATA_UUID_LEN + off + size > cap) {
-        return 0;
+    if ((size_t)off > UINT32_MAX - size) {
+        return 1;
+    }
+    if ((size_t)PELORUS_SIDEDATA_UUID_LEN + (size_t)off + (size_t)size > cap) {
+        return 1;
     }
     memcpy(blob + PELORUS_SIDEDATA_UUID_LEN + off, data, size);
     *end = off + size;
-    return off;
+    *out_off = off;
+    return 0;
 }
 
-static void patch_section(uint8_t *blob, const void *p, const void *data, size_t size)
+/**
+ * Patch an existing section within the packed blob with updated header data.
+ * Returns 0 on success, 1 on invalid pointer or out-of-bounds offset.
+ */
+static int patch_section(uint8_t *blob, size_t cap, const void *p, size_t got, const void *data,
+                         size_t size)
 {
-    if (blob != NULL && p != NULL && data != NULL) {
-        size_t off = (size_t)((const uint8_t *)p - blob);
-        memcpy(blob + off, data, size);
+    if (blob == NULL || p == NULL || data == NULL) {
+        return 1;
     }
+    if ((const uint8_t *)p < blob || (const uint8_t *)p >= blob + cap) {
+        return 1;
+    }
+    if (size > got) {
+        return 1;
+    }
+    size_t off = (size_t)((const uint8_t *)p - blob);
+    if (off > cap || size > cap - off) {
+        return 1;
+    }
+    memcpy(blob + off, data, size);
+    return 0;
 }
 
+/**
+ * Initialize base sections and populate PelorusPackSection entries.
+ */
 static void pack_sections_setup(PelorusPackSection *secs, int *out_nb, PelorusBandingSection *band,
                                 PelorusVarianceSection *var, PelorusDenoiseSection *den,
                                 PelorusFilmGrainSection *grain, PelorusMotionSection *mo)
@@ -252,6 +325,9 @@ static void pack_sections_setup(PelorusPackSection *secs, int *out_nb, PelorusBa
 }
 
 #if PELORUS_ABI_MINOR >= 3
+/**
+ * Initialize ABI minor 3 sections and append them to pack entries.
+ */
 static void pack_sections_minor3(PelorusPackSection *secs, int *nb, PelorusQpReportSection *qp,
                                  PelorusMotionConfSection *conf, PelorusComplexitySection *cx)
 {
@@ -276,6 +352,9 @@ static void pack_sections_minor3(PelorusPackSection *secs, int *nb, PelorusQpRep
 #endif
 
 #if PELORUS_ABI_MINOR >= 4
+/**
+ * Initialize ABI minor 4 sections and append them to pack entries.
+ */
 static void pack_sections_minor4(PelorusPackSection *secs, int *nb, PelorusEncTelemetrySection *tlm,
                                  PelorusEncodeRecordSection *rec)
 {
@@ -295,6 +374,9 @@ static void pack_sections_minor4(PelorusPackSection *secs, int *nb, PelorusEncTe
 #endif
 
 #if PELORUS_ABI_MINOR >= 6
+/**
+ * Initialize ABI minor 6 sections and append them to pack entries.
+ */
 static void pack_sections_minor6(PelorusPackSection *secs, int *nb, PelorusQualitySection *qual)
 {
     int i = *nb;
@@ -307,60 +389,126 @@ static void pack_sections_minor6(PelorusPackSection *secs, int *nb, PelorusQuali
 }
 #endif
 
-static void append_base_maps(uint8_t *blob, size_t cap, size_t packed_len, uint32_t *end,
-                             PelorusBandingSection *band, PelorusVarianceSection *var,
-                             PelorusMotionSection *mo)
+/**
+ * Append auxiliary maps for base sections and patch section headers.
+ * Returns 0 on success, 1 when a map exceeds the buffer or a section lookup fails.
+ */
+static int append_base_maps(uint8_t *blob, size_t cap, size_t packed_len, uint32_t *end,
+                            PelorusBandingSection *band, PelorusVarianceSection *var,
+                            PelorusMotionSection *mo)
 {
     const void *p = NULL;
     size_t got = 0;
-    band->cell_data_offset =
-        append_map(blob, cap, end, val_banding_cell_data, (uint32_t)sizeof(val_banding_cell_data));
-    (void)pel_blob_find_section(blob, packed_len, PEL_SEC_BANDING, sizeof(*band), &p, &got);
-    patch_section(blob, p, band, sizeof(*band));
 
-    var->var_cell_offset =
-        append_map(blob, cap, end, val_var_cell_data, (uint32_t)sizeof(val_var_cell_data));
-    var->edge_cell_offset =
-        append_map(blob, cap, end, val_edge_cell_data, (uint32_t)sizeof(val_edge_cell_data));
-    (void)pel_blob_find_section(blob, packed_len, PEL_SEC_VARIANCE, sizeof(*var), &p, &got);
-    patch_section(blob, p, var, sizeof(*var));
+    if (append_map(blob, cap, end, val_banding_cell_data, (uint32_t)sizeof(val_banding_cell_data),
+                   &band->cell_data_offset) != 0) {
+        return 1;
+    }
+    if (pel_blob_find_section(blob, packed_len, PEL_SEC_BANDING, sizeof(*band), &p, &got) !=
+        PEL_OK) {
+        return 1;
+    }
+    if (patch_section(blob, cap, p, got, band, sizeof(*band)) != 0) {
+        return 1;
+    }
 
-    mo->mv_field_offset =
-        append_map(blob, cap, end, val_mv_field_data, (uint32_t)sizeof(val_mv_field_data));
-    (void)pel_blob_find_section(blob, packed_len, PEL_SEC_MOTION, sizeof(*mo), &p, &got);
-    patch_section(blob, p, mo, sizeof(*mo));
+    if (append_map(blob, cap, end, val_var_cell_data, (uint32_t)sizeof(val_var_cell_data),
+                   &var->var_cell_offset) != 0) {
+        return 1;
+    }
+    if (append_map(blob, cap, end, val_edge_cell_data, (uint32_t)sizeof(val_edge_cell_data),
+                   &var->edge_cell_offset) != 0) {
+        return 1;
+    }
+    if (pel_blob_find_section(blob, packed_len, PEL_SEC_VARIANCE, sizeof(*var), &p, &got) !=
+        PEL_OK) {
+        return 1;
+    }
+    if (patch_section(blob, cap, p, got, var, sizeof(*var)) != 0) {
+        return 1;
+    }
+
+    if (append_map(blob, cap, end, val_mv_field_data, (uint32_t)sizeof(val_mv_field_data),
+                   &mo->mv_field_offset) != 0) {
+        return 1;
+    }
+    if (pel_blob_find_section(blob, packed_len, PEL_SEC_MOTION, sizeof(*mo), &p, &got) != PEL_OK) {
+        return 1;
+    }
+    if (patch_section(blob, cap, p, got, mo, sizeof(*mo)) != 0) {
+        return 1;
+    }
+
+    return 0;
 }
 
 #if PELORUS_ABI_MINOR >= 3
-static void append_minor3_maps(uint8_t *blob, size_t cap, size_t packed_len, uint32_t *end,
-                               PelorusQpReportSection *qp, PelorusMotionConfSection *conf)
+/**
+ * Append auxiliary maps for minor 3 sections and patch section headers.
+ * Returns 0 on success, 1 when a map exceeds the buffer or a section lookup fails.
+ */
+static int append_minor3_maps(uint8_t *blob, size_t cap, size_t packed_len, uint32_t *end,
+                              PelorusQpReportSection *qp, PelorusMotionConfSection *conf)
 {
     const void *p = NULL;
     size_t got = 0;
-    qp->qp_cell_offset =
-        append_map(blob, cap, end, val_qp_cell_data, (uint32_t)sizeof(val_qp_cell_data));
-    (void)pel_blob_find_section(blob, packed_len, PEL_SEC_QPREPORT, sizeof(*qp), &p, &got);
-    patch_section(blob, p, qp, sizeof(*qp));
 
-    conf->conf_field_offset =
-        append_map(blob, cap, end, val_conf_field_data, (uint32_t)sizeof(val_conf_field_data));
-    (void)pel_blob_find_section(blob, packed_len, PEL_SEC_MOTION_CONF, sizeof(*conf), &p, &got);
-    patch_section(blob, p, conf, sizeof(*conf));
+    if (append_map(blob, cap, end, val_qp_cell_data, (uint32_t)sizeof(val_qp_cell_data),
+                   &qp->qp_cell_offset) != 0) {
+        return 1;
+    }
+    if (pel_blob_find_section(blob, packed_len, PEL_SEC_QPREPORT, sizeof(*qp), &p, &got) !=
+        PEL_OK) {
+        return 1;
+    }
+    if (patch_section(blob, cap, p, got, qp, sizeof(*qp)) != 0) {
+        return 1;
+    }
+
+    if (append_map(blob, cap, end, val_conf_field_data, (uint32_t)sizeof(val_conf_field_data),
+                   &conf->conf_field_offset) != 0) {
+        return 1;
+    }
+    if (pel_blob_find_section(blob, packed_len, PEL_SEC_MOTION_CONF, sizeof(*conf), &p, &got) !=
+        PEL_OK) {
+        return 1;
+    }
+    if (patch_section(blob, cap, p, got, conf, sizeof(*conf)) != 0) {
+        return 1;
+    }
+
+    return 0;
 }
 #endif
 
 #if PELORUS_ABI_MINOR >= 4
-static void append_minor4_maps(uint8_t *blob, size_t cap, size_t packed_len, uint32_t *end,
-                               PelorusEncTelemetrySection *tlm)
+/**
+ * Append auxiliary maps for minor 4 sections and patch section headers.
+ * Returns 0 on success, 1 when a map exceeds the buffer or a section lookup fails.
+ */
+static int append_minor4_maps(uint8_t *blob, size_t cap, size_t packed_len, uint32_t *end,
+                              PelorusEncTelemetrySection *tlm)
 {
     const void *p = NULL;
     size_t got = 0;
-    tlm->qp_map_offset =
-        append_map(blob, cap, end, val_tlm_qp_map_data, (uint32_t)sizeof(val_tlm_qp_map_data));
-    tlm->mode_map_offset =
-        append_map(blob, cap, end, val_tlm_mode_map_data, (uint32_t)sizeof(val_tlm_mode_map_data));
-    (void)pel_blob_find_section(blob, packed_len, PEL_SEC_ENC_TELEMETRY, sizeof(*tlm), &p, &got);
-    patch_section(blob, p, tlm, sizeof(*tlm));
+
+    if (append_map(blob, cap, end, val_tlm_qp_map_data, (uint32_t)sizeof(val_tlm_qp_map_data),
+                   &tlm->qp_map_offset) != 0) {
+        return 1;
+    }
+    if (append_map(blob, cap, end, val_tlm_mode_map_data, (uint32_t)sizeof(val_tlm_mode_map_data),
+                   &tlm->mode_map_offset) != 0) {
+        return 1;
+    }
+    if (pel_blob_find_section(blob, packed_len, PEL_SEC_ENC_TELEMETRY, sizeof(*tlm), &p, &got) !=
+        PEL_OK) {
+        return 1;
+    }
+    if (patch_section(blob, cap, p, got, tlm, sizeof(*tlm)) != 0) {
+        return 1;
+    }
+
+    return 0;
 }
 #endif
 
@@ -384,18 +532,32 @@ typedef struct HistorySections {
 #endif
 } HistorySections;
 
-static void append_all_maps(uint8_t *blob_out, size_t cap, size_t packed_len, uint32_t *end,
-                            HistorySections *s)
+/**
+ * Append all auxiliary maps for all enabled sections and update offsets.
+ * Returns 0 on success, 1 on failure.
+ */
+static int append_all_maps(uint8_t *blob_out, size_t cap, size_t packed_len, uint32_t *end,
+                           HistorySections *s)
 {
-    append_base_maps(blob_out, cap, packed_len, end, &s->band, &s->var, &s->mo);
+    if (append_base_maps(blob_out, cap, packed_len, end, &s->band, &s->var, &s->mo) != 0) {
+        return 1;
+    }
 #if PELORUS_ABI_MINOR >= 3
-    append_minor3_maps(blob_out, cap, packed_len, end, &s->qp, &s->conf);
+    if (append_minor3_maps(blob_out, cap, packed_len, end, &s->qp, &s->conf) != 0) {
+        return 1;
+    }
 #endif
 #if PELORUS_ABI_MINOR >= 4
-    append_minor4_maps(blob_out, cap, packed_len, end, &s->tlm);
+    if (append_minor4_maps(blob_out, cap, packed_len, end, &s->tlm) != 0) {
+        return 1;
+    }
 #endif
+    return 0;
 }
 
+/**
+ * Fill all section descriptors and pack entries for all enabled sections.
+ */
 static void setup_all_sections(PelorusPackSection *secs, int *nb, HistorySections *s)
 {
     pack_sections_setup(secs, nb, &s->band, &s->var, &s->den, &s->grain, &s->mo);
@@ -410,6 +572,9 @@ static void setup_all_sections(PelorusPackSection *secs, int *nb, HistorySection
 #endif
 }
 
+/**
+ * Initialize top-level PelorusSideData metadata with deterministic values.
+ */
 static void init_meta(PelorusSideData *meta)
 {
     memset(meta, 0, sizeof(*meta));
@@ -421,6 +586,10 @@ static void init_meta(PelorusSideData *meta)
     meta->producer_id = VAL_PRODUCER_ID;
 }
 
+/**
+ * Pack metadata and sections into an allocated blob and copy to destination.
+ * Returns PEL_OK on success or an error code on packing/capacity failure.
+ */
 static pel_result invoke_pack(const PelorusSideData *meta, const PelorusPackSection *secs, int nb,
                               uint8_t *blob_out, size_t cap, size_t *out_packed_len)
 {
@@ -441,6 +610,10 @@ static pel_result invoke_pack(const PelorusSideData *meta, const PelorusPackSect
     return PEL_OK;
 }
 
+/**
+ * Construct full deterministic history blob with sections and auxiliary maps.
+ * Returns PEL_OK on success or an error code on packing or bounds error.
+ */
 static pel_result pack_history_blob(uint8_t *blob_out, size_t cap, size_t *out_len)
 {
     PelorusSideData meta;
@@ -459,8 +632,12 @@ static pel_result pack_history_blob(uint8_t *blob_out, size_t cap, size_t *out_l
         return rc;
     }
     end = (uint32_t)(packed_len - PELORUS_SIDEDATA_UUID_LEN);
-    append_all_maps(blob_out, cap, packed_len, &end, &s);
-
+    if (append_all_maps(blob_out, cap, packed_len, &end, &s) != 0) {
+        return PEL_ERR_RANGE;
+    }
+    if (packed_len < (size_t)PELORUS_SIDEDATA_UUID_LEN + sizeof(hdr)) {
+        return PEL_ERR_TRUNCATED;
+    }
     memcpy(&hdr, blob_out + PELORUS_SIDEDATA_UUID_LEN, sizeof(hdr));
     hdr.total_size = end;
     memcpy(blob_out + PELORUS_SIDEDATA_UUID_LEN, &hdr, sizeof(hdr));
@@ -468,6 +645,9 @@ static pel_result pack_history_blob(uint8_t *blob_out, size_t cap, size_t *out_l
     return PEL_OK;
 }
 
+/**
+ * Print binary byte buffer to stdout as a single lowercase hexadecimal line.
+ */
 static void emit_hex(const uint8_t *data, size_t len)
 {
     static const char hex_chars[] = "0123456789abcdef";
@@ -478,25 +658,34 @@ static void emit_hex(const uint8_t *data, size_t len)
     (void)putchar('\n');
 }
 
+/**
+ * Parse an unsigned decimal integer string of at most 10 digits into uint32_t.
+ * Returns 1 on success, 0 on invalid characters, excess length, or overflow.
+ */
 static int parse_uint32(const char *s, uint32_t *out)
 {
     uint64_t val = 0;
+    size_t i;
     if (s == NULL || *s == '\0') {
         return 0;
     }
-    for (size_t i = 0; s[i] != '\0' && i < 16; i++) {
+    for (i = 0; i < 10u && s[i] != '\0'; i++) {
         if (s[i] < '0' || s[i] > '9') {
             return 0;
         }
-        val = val * 10 + (uint64_t)(s[i] - '0');
-        if (val > UINT32_MAX) {
-            return 0;
-        }
+        val = val * 10u + (uint64_t)(s[i] - '0');
+    }
+    if (s[i] != '\0' || val > UINT32_MAX) {
+        return 0;
     }
     *out = (uint32_t)val;
     return 1;
 }
 
+/**
+ * Verify auxiliary map bounds and match against expected reference bytes.
+ * Returns 0 on match, 1 on bounds violation or byte mismatch.
+ */
 static int check_map_bytes(const uint8_t *blob, size_t len, uint32_t offset, uint32_t size,
                            uint32_t elem_count, uint32_t elem_size, const void *expected,
                            const char *name)
@@ -526,6 +715,10 @@ static int check_map_bytes(const uint8_t *blob, size_t len, uint32_t offset, uin
         (void)fprintf(stderr, "FAIL: map %s misaligned offset\n", name);
         return 1;
     }
+    if (len < (size_t)PELORUS_SIDEDATA_UUID_LEN + sizeof(hdr)) {
+        (void)fprintf(stderr, "FAIL: map %s blob too short for header\n", name);
+        return 1;
+    }
     memcpy(&hdr, blob + PELORUS_SIDEDATA_UUID_LEN, sizeof(hdr));
     if ((uint64_t)offset <
         (uint64_t)hdr.header_size + (uint64_t)hdr.section_count * sizeof(PelorusSectionDir)) {
@@ -536,15 +729,22 @@ static int check_map_bytes(const uint8_t *blob, size_t len, uint32_t offset, uin
         (void)fprintf(stderr, "FAIL: map %s outside total_size\n", name);
         return 1;
     }
+    if ((uint64_t)PELORUS_SIDEDATA_UUID_LEN + offset + size > (uint64_t)len) {
+        (void)fprintf(stderr, "FAIL: map %s outside blob\n", name);
+        return 1;
+    }
     if (memcmp(blob + PELORUS_SIDEDATA_UUID_LEN + offset, expected, size) != 0) {
         (void)fprintf(stderr, "FAIL: map %s data mismatch\n", name);
         return 1;
     }
-    (void)len;
     return 0;
 #endif
 }
 
+/**
+ * Verify banding section header fields and referenced auxiliary map.
+ * Returns 0 on match, 1 on absent section or data mismatch.
+ */
 static int check_banding(const uint8_t *blob, size_t len, uint16_t w_minor)
 {
     const void *p = NULL;
@@ -577,6 +777,10 @@ static int check_banding(const uint8_t *blob, size_t len, uint16_t w_minor)
                            "banding");
 }
 
+/**
+ * Verify variance section header fields and referenced auxiliary maps.
+ * Returns 0 on match, 1 on absent section or data mismatch.
+ */
 static int check_variance(const uint8_t *blob, size_t len, uint16_t w_minor)
 {
     const void *p = NULL;
@@ -615,6 +819,10 @@ static int check_variance(const uint8_t *blob, size_t len, uint16_t w_minor)
                            "variance_edge");
 }
 
+/**
+ * Verify denoise section header fields match deterministic test values.
+ * Returns 0 on match, 1 on absent section or data mismatch.
+ */
 static int check_denoise(const uint8_t *blob, size_t len, uint16_t w_minor)
 {
     const void *p = NULL;
@@ -641,6 +849,10 @@ static int check_denoise(const uint8_t *blob, size_t len, uint16_t w_minor)
     return 0;
 }
 
+/**
+ * Verify filmgrain section header fields match deterministic test values.
+ * Returns 0 on match, 1 on absent section or data mismatch.
+ */
 static int check_filmgrain(const uint8_t *blob, size_t len, uint16_t w_minor)
 {
     const void *p = NULL;
@@ -667,6 +879,10 @@ static int check_filmgrain(const uint8_t *blob, size_t len, uint16_t w_minor)
     return 0;
 }
 
+/**
+ * Verify motion section header fields and referenced motion vector map.
+ * Returns 0 on match, 1 on absent section or data mismatch.
+ */
 static int check_motion(const uint8_t *blob, size_t len, uint16_t w_minor)
 {
     const void *p = NULL;
@@ -699,6 +915,10 @@ static int check_motion(const uint8_t *blob, size_t len, uint16_t w_minor)
 }
 
 #if PELORUS_ABI_MINOR >= 3
+/**
+ * Verify qpreport section header fields and referenced qp cell map.
+ * Returns 0 on match or expected absence, 1 on error or mismatch.
+ */
 static int check_qpreport(const uint8_t *blob, size_t len, uint16_t w_minor)
 {
     const void *p = NULL;
@@ -733,6 +953,10 @@ static int check_qpreport(const uint8_t *blob, size_t len, uint16_t w_minor)
                            (uint32_t)sizeof(int8_t), val_qp_cell_data, "qp_report");
 }
 
+/**
+ * Verify motion confidence section header fields and confidence map.
+ * Returns 0 on match or expected absence, 1 on error or mismatch.
+ */
 static int check_motion_conf(const uint8_t *blob, size_t len, uint16_t w_minor)
 {
     const void *p = NULL;
@@ -768,6 +992,10 @@ static int check_motion_conf(const uint8_t *blob, size_t len, uint16_t w_minor)
                            "motion_conf");
 }
 
+/**
+ * Verify complexity section header fields match deterministic test values.
+ * Returns 0 on match or expected absence, 1 on error or mismatch.
+ */
 static int check_complexity(const uint8_t *blob, size_t len, uint16_t w_minor)
 {
     const void *p = NULL;
@@ -799,6 +1027,10 @@ static int check_complexity(const uint8_t *blob, size_t len, uint16_t w_minor)
 #endif
 
 #if PELORUS_ABI_MINOR >= 4
+/**
+ * Verify encoder telemetry section header and referenced telemetry maps.
+ * Returns 0 on match or expected absence, 1 on error or mismatch.
+ */
 static int check_enc_telemetry(const uint8_t *blob, size_t len, uint16_t w_minor)
 {
     const void *p = NULL;
@@ -840,6 +1072,10 @@ static int check_enc_telemetry(const uint8_t *blob, size_t len, uint16_t w_minor
                            "tlm_mode");
 }
 
+/**
+ * Verify encode record section header fields match deterministic test values.
+ * Returns 0 on match or expected absence, 1 on error or mismatch.
+ */
 static int check_encode_record(const uint8_t *blob, size_t len, uint16_t w_minor)
 {
     const void *p = NULL;
@@ -870,6 +1106,10 @@ static int check_encode_record(const uint8_t *blob, size_t len, uint16_t w_minor
 #endif
 
 #if PELORUS_ABI_MINOR >= 6
+/**
+ * Verify quality section header fields match deterministic test values.
+ * Returns 0 on match or expected absence, 1 on error or mismatch.
+ */
 static int check_quality(const uint8_t *blob, size_t len, uint16_t w_minor)
 {
     const void *p = NULL;
@@ -900,6 +1140,10 @@ static int check_quality(const uint8_t *blob, size_t len, uint16_t w_minor)
 }
 #endif
 
+/**
+ * Verify all sections present in blob against expected minor version values.
+ * Returns 0 on success, 1 on any section mismatch.
+ */
 static int check_all_sections(const uint8_t *blob, size_t len, uint16_t w_minor)
 {
     if (check_banding(blob, len, w_minor) != 0 || check_variance(blob, len, w_minor) != 0 ||
@@ -927,6 +1171,10 @@ static int check_all_sections(const uint8_t *blob, size_t len, uint16_t w_minor)
     return 0;
 }
 
+/**
+ * Verify presence, header, UUID, and section contents of an unwrapped blob.
+ * Returns 0 on valid blob matching expectations, 1 on mismatch or corruption.
+ */
 static int read_and_verify_blob(const uint8_t *blob, size_t len)
 {
     PelorusSideData hdr;
@@ -951,6 +1199,10 @@ static int read_and_verify_blob(const uint8_t *blob, size_t len)
     return check_all_sections(blob, len, hdr.abi_minor);
 }
 
+/**
+ * Read the entire contents of a binary file into a preallocated buffer.
+ * Returns 0 on success, 2 on file opening or read error.
+ */
 static int read_file_to_buf(const char *path, uint8_t *buf, size_t cap, size_t *out_len)
 {
     FILE *fp = test_fopen_safe(path, "rb");
@@ -968,16 +1220,18 @@ static int read_file_to_buf(const char *path, uint8_t *buf, size_t cap, size_t *
     return 0;
 }
 
-typedef union AlignedBlob16k {
-    uint64_t align;
-    uint8_t bytes[16384];
+typedef struct AlignedBlob16k {
+    _Alignas(8) uint8_t bytes[16384];
 } AlignedBlob16k;
 
-typedef union AlignedBlob32k {
-    uint64_t align;
-    uint8_t bytes[32768];
+typedef struct AlignedBlob32k {
+    _Alignas(8) uint8_t bytes[32768];
 } AlignedBlob32k;
 
+/**
+ * Compare file contents against expected memory buffer.
+ * Returns 0 on exact match, 1 on file error, size difference, or mismatch.
+ */
 static int check_file_match(const char *path, const uint8_t *expected, size_t expected_len)
 {
     AlignedBlob16k buf;
@@ -994,7 +1248,27 @@ static int check_file_match(const char *path, const uint8_t *expected, size_t ex
     return 0;
 }
 
+/**
+ * Pack the history blob and verify that it matches the plain fixture file.
+ * Returns 0 on success, 1 on mismatch or packing failure.
+ */
+static int check_plain_writer(const char *plain_path, AlignedBlob16k *plain, size_t *plain_len)
+{
+    if (pack_history_blob(plain->bytes, sizeof(plain->bytes), plain_len) != PEL_OK) {
+        (void)fprintf(stderr, "FAIL: pack_history_blob failed\n");
+        return 1;
+    }
+    if (check_file_match(plain_path, plain->bytes, *plain_len) != 0) {
+        return 1;
+    }
+    return 0;
+}
+
 #if PELORUS_ABI_MINOR >= 5
+/**
+ * Check plain and carrier writer output against fixture files.
+ * Returns 0 on success, 1 on mismatch or encoding failure.
+ */
 static int do_check_writer(const char *plain_path, const char *carrier_path)
 {
     AlignedBlob16k plain;
@@ -1003,11 +1277,7 @@ static int do_check_writer(const char *plain_path, const char *carrier_path)
     size_t carrier_len = 0;
     pel_result cr;
 
-    if (pack_history_blob(plain.bytes, sizeof(plain.bytes), &plain_len) != PEL_OK) {
-        (void)fprintf(stderr, "FAIL: pack_history_blob failed\n");
-        return 1;
-    }
-    if (check_file_match(plain_path, plain.bytes, plain_len) != 0) {
+    if (check_plain_writer(plain_path, &plain, &plain_len) != 0) {
         return 1;
     }
     cr = pel_blob_carrier_encode(plain.bytes, plain_len, carrier.bytes, sizeof(carrier.bytes),
@@ -1022,22 +1292,23 @@ static int do_check_writer(const char *plain_path, const char *carrier_path)
     return 0;
 }
 #else
+/**
+ * Check plain writer output against fixture file.
+ * Returns 0 on success, 1 on mismatch.
+ */
 static int do_check_writer(const char *plain_path)
 {
     AlignedBlob16k plain;
     size_t plain_len = 0;
 
-    if (pack_history_blob(plain.bytes, sizeof(plain.bytes), &plain_len) != PEL_OK) {
-        (void)fprintf(stderr, "FAIL: pack_history_blob failed\n");
-        return 1;
-    }
-    if (check_file_match(plain_path, plain.bytes, plain_len) != 0) {
-        return 1;
-    }
-    return 0;
+    return check_plain_writer(plain_path, &plain, &plain_len);
 }
 #endif
 
+/**
+ * Read a blob file, optionally apply single-bit flip, unwrap carrier, and verify.
+ * Returns 0 on verification pass, 1 on content failure, 2 on I/O or flip error.
+ */
 static int do_read_blob(const char *path, int has_flip, uint32_t flip_off)
 {
     AlignedBlob32k buf;
@@ -1081,11 +1352,16 @@ static int do_read_blob(const char *path, int has_flip, uint32_t flip_off)
     return read_and_verify_blob(buf.bytes, len);
 }
 
+/**
+ * Handle "emit" CLI command, packing plain or carrier blob and printing hex.
+ * Returns 0 on success, 1 on packing/carrier error, 2 on usage error.
+ */
 static int do_emit(int argc, char **argv)
 {
     AlignedBlob16k plain;
     size_t plain_len = 0;
     if (argc != 3) {
+        (void)fprintf(stderr, "Usage: abi_history emit plain|carrier\n");
         return 2;
     }
     if (pack_history_blob(plain.bytes, sizeof(plain.bytes), &plain_len) != PEL_OK) {
@@ -1111,9 +1387,14 @@ static int do_emit(int argc, char **argv)
         return 2;
 #endif
     }
+    (void)fprintf(stderr, "Usage: abi_history emit plain|carrier\n");
     return 2;
 }
 
+/**
+ * Main entry point for abi_history test tool.
+ * Returns 0 on success, 1 on verification failure, 2 on usage or I/O error.
+ */
 int main(int argc, char **argv)
 {
     if (argc < 2) {
@@ -1142,10 +1423,16 @@ int main(int argc, char **argv)
         int has_flip = 0;
         uint32_t flip_off = 0;
         if (argc != 3 && argc != 5) {
+            (void)fprintf(
+                stderr,
+                "Usage: abi_history read <blob.bin> [--flip <byte offset, 0..4294967295, at most 10 digits>]\n");
             return 2;
         }
         if (argc == 5) {
             if (strcmp(argv[3], "--flip") != 0 || !parse_uint32(argv[4], &flip_off)) {
+                (void)fprintf(
+                    stderr,
+                    "Usage: abi_history read <blob.bin> [--flip <byte offset, 0..4294967295, at most 10 digits>]\n");
                 return 2;
             }
             has_flip = 1;

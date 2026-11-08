@@ -548,12 +548,12 @@ Persisted binary fixtures (`libpelorus/test/fixtures/interop-history/abi-1.<N>.b
 
 ### Verify locally
 
-The check needs the full tag history (`git fetch --tags`; CI checks out with `fetch-depth: 0`) and a POSIX C compiler named by `CC` (default `cc`). On Windows it prints a skip line and exits 0.
+The check needs the full tag history (`git fetch --tags`; CI checks out with `fetch-depth: 0`) and a POSIX C compiler named by `CC` (default `cc`). `CC` names one compiler executable on `PATH` plus compiler options such as `-O2`; a wrapper command such as `ccache cc` or a non-option word is refused. On Windows it prints a skip line and exits 0.
 
 ```sh
 python3 -I scripts/check-interop-abi-history.py --self-test  # planted defects must fail
 python3 -I scripts/check-interop-abi-history.py              # 12 readers x 7 fixtures
-meson test -C build --suite=fast --print-errorlogs 'interop-history-*'
+meson test -C build --suite=fast --print-errorlogs
 ```
 
 `make docs-check` runs both script calls. The fast suite holds `interop-history-writer` (current writer against the 1.6 fixtures), one `interop-history-read-<fixture>` test per fixture, and the planted `interop-history-planted-value` and `interop-history-planted-dir-size` tests, which must fail.
@@ -565,7 +565,7 @@ When bumping `PELORUS_ABI_MINOR`:
 1. ABI bump PR adds `fill_<sec>` and `check_<sec>` functions in `libpelorus/test/abi_history/abi_history.c` gated `#if PELORUS_ABI_MINOR >= N`, and new values are appended to `libpelorus/test/abi_history/abi_history_values.h`; existing values must never change (changing an existing value alters every fixture: check fails and `--write` refuses).
 2. Run `python3 -I scripts/check-interop-abi-history.py --write`: this generates the new `abi-1.<N>.bin` (and `abi-1.<N>-carrier.bin` if minor ≥ 5) and rewrites `manifest.json`.
 3. Update `libpelorus/test/meson.build`: point `interop-history-writer` at the new minor's fixture files and add fast-suite read tests for them.
-   If the previous minor never reached a release tag (only the current tree wrote it), delete its `abi-1.<N-1>*.bin` files and their read tests in the same pull request; `--write` already drops its manifest rows. A released minor's files stay forever: the script fails when one is missing.
+   If the previous minor never reached a release tag (its manifest rows list only the current tree as writer), `--write` in step 2 deletes its `abi-1.<N-1>*.bin` files and manifest rows; delete their read tests in the same pull request. `--write` refuses, before changing any file, to delete a file that a release tag wrote or that the manifest does not list. A released minor's files stay forever: the script fails when one is missing.
 4. Release tag push: no manual action required; `scripts/check-interop-abi-history.py` prints an informational note for any unlisted release tag until the next `--write` run records it.
 
 ### Scope and non-coverage

@@ -100,19 +100,49 @@ def detect_abi_minor(header_path: Path) -> int:
     raise ValueError(f"PELORUS_ABI_MINOR not found in {header_path}")
 
 
+CC_OPTION_PATTERN = re.compile(r"^-[A-Za-z0-9_+=,./:-]+$")
+
+
 def get_cc() -> list[str]:
-    """Return split compiler command from CC environment variable."""
+    """Return the compiler argv from CC: one executable plus allow-listed options.
+
+    argv[0] keeps the PATH entry's name (absolute, symlink not followed) because
+    compiler drivers dispatch on the name they are called by; only the
+    executable-file check follows the symlink.
+    """
     raw = os.environ.get("CC", "cc")
-    cc = shlex.split(raw)
-    if not cc:
+    tokens = shlex.split(raw)
+    if not tokens:
         raise RuntimeError("CC environment variable is empty")
-    return cc
+    compiler_token = tokens[0]
+    found = shutil.which(compiler_token)
+    if not found:
+        raise RuntimeError(
+            f"CC {raw!r}: compiler token {compiler_token!r} not found on PATH"
+        )
+    compiler = os.path.abspath(found)
+    resolved = Path(compiler).resolve()
+    if not resolved.is_file() or not os.access(resolved, os.X_OK):
+        raise RuntimeError(
+            f"CC {raw!r}: compiler token {compiler_token!r} resolved to {resolved} which is not an executable regular file"
+        )
+    options: list[str] = []
+    for tok in tokens[1:]:
+        if not CC_OPTION_PATTERN.fullmatch(tok):
+            raise RuntimeError(
+                f"CC token {tok!r} is not a compiler option; CC names one compiler plus options"
+            )
+        options.append(tok)
+    return [compiler, *options]
 
 
 def _run_compiler(cmd: list[str]) -> str:
     """Run compiler command; raise RuntimeError with stderr on failure."""
     proc = subprocess.run(  # nosec B603 - compiler command list without shell, explicit timeout  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a list without shell, explicit timeout
-        cmd, capture_output=True, text=True, timeout=60
+        cmd,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - CC resolved to an executable regular file, further tokens allow-listed options, list argv, no shell, explicit deadline
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if proc.returncode != 0:
         raise RuntimeError(
@@ -229,7 +259,7 @@ def compute_expected_fixtures(
                 raise RuntimeError(
                     f"Tags disagree on ABI minor {minor} plain blob: {first_writer} vs {other}"
                 )
-        plain_name = f"abi-1.{minor}.bin"
+        plain_name = fixture_name(minor, "plain")
         fixtures[plain_name] = {
             "abi_minor": minor,
             "form": "plain",
@@ -246,7 +276,7 @@ def compute_expected_fixtures(
                     raise RuntimeError(
                         f"Tags disagree on ABI minor {minor} carrier blob: {first_writer} vs {other}"
                     )
-            carrier_name = f"abi-1.{minor}-carrier.bin"
+            carrier_name = fixture_name(minor, "carrier")
             fixtures[carrier_name] = {
                 "abi_minor": minor,
                 "form": "carrier",
@@ -257,19 +287,73 @@ def compute_expected_fixtures(
     return fixtures
 
 
+def fixture_name(abi_minor: int, form: str) -> str:
+    """Return the fixture file name for one ABI minor and form (plain or carrier)."""
+    suffix = "-carrier" if form == "carrier" else ""
+    return f"abi-1.{abi_minor}{suffix}.bin"
+
+
+def _removable_stale_fixtures(
+    fixtures_dir: Path, expected_fixtures: dict[str, dict[str, Any]]
+) -> list[str]:
+    """Return the fixture files --write may delete; raise before any change otherwise.
+
+    A file no writer produces any more may leave only when manifest.json lists HEAD
+    as its sole writer (a minor that never reached a release tag). A file a release
+    tag wrote, or one the manifest does not list, is refused (ADR-0247).
+    """
+    stale = sorted(
+        p.name
+        for p in fixtures_dir.iterdir()
+        if p.is_file() and p.name.endswith(".bin") and p.name not in expected_fixtures
+    )
+    if not stale:
+        return stale
+    manifest_path = fixtures_dir / "manifest.json"
+    rows = load_manifest_strict(manifest_path) if manifest_path.is_file() else []
+    writers_by_name = {
+        fixture_name(row["abi_minor"], row["form"]): row["writers"] for row in rows
+    }
+    for name in stale:
+        if name not in writers_by_name:
+            raise RuntimeError(
+                f"{name} is not in manifest.json; --write deletes only files it recorded as never released"
+            )
+        if writers_by_name[name] != ["HEAD"]:
+            raise RuntimeError(
+                f"{name} was written by {writers_by_name[name]}; released fixtures never leave (ADR-0247). Fetch full tag history (git fetch --tags) and rerun"
+            )
+    return stale
+
+
+def _check_append_only(
+    fixtures_dir: Path, expected_fixtures: dict[str, dict[str, Any]]
+) -> None:
+    """Raise when an existing fixture's bytes differ from the writer output."""
+    for filename, meta in sorted(expected_fixtures.items()):
+        file_path = fixtures_dir / filename
+        if file_path.is_file() and file_path.read_bytes() != meta["bytes"]:
+            raise RuntimeError(
+                f"{filename} differs from writer output; persisted fixtures are append-only (ADR-0247)"
+            )
+
+
 def write_fixtures(
     fixtures_dir: Path, expected_fixtures: dict[str, dict[str, Any]]
 ) -> None:
-    """Write binary fixtures append-only and rewrite manifest.json from built writers."""
+    """Write binary fixtures append-only and rewrite manifest.json from built writers.
+
+    Removes only superseded fixtures that manifest.json records as written by HEAD
+    alone (never released); released fixtures never leave (ADR-0247). Every check
+    runs before the first file changes.
+    """
     fixtures_dir.mkdir(parents=True, exist_ok=True)
-    for filename, meta in sorted(expected_fixtures.items()):
-        file_path = fixtures_dir / filename
-        if file_path.is_file():
-            existing = file_path.read_bytes()
-            if existing != meta["bytes"]:
-                raise RuntimeError(
-                    f"{filename} differs from writer output; persisted fixtures are append-only (ADR-0247)"
-                )
+    stale = _removable_stale_fixtures(fixtures_dir, expected_fixtures)
+    _check_append_only(fixtures_dir, expected_fixtures)
+
+    for name in stale:
+        (fixtures_dir / name).unlink()
+        print(f"removed {name} (never released, superseded)")
 
     for filename, meta in sorted(expected_fixtures.items()):
         file_path = fixtures_dir / filename
@@ -279,18 +363,16 @@ def write_fixtures(
         else:
             print(f"kept {filename}")
 
-    manifest_rows = []
-    for _, meta in sorted(expected_fixtures.items()):
-        manifest_rows.append(
-            {
-                "abi_minor": meta["abi_minor"],
-                "form": meta["form"],
-                "writers": sorted(meta["writers"]),
-                "sha256": meta["sha256"],
-            }
-        )
-    manifest_path = fixtures_dir / "manifest.json"
-    with open(manifest_path, "w", encoding="utf-8") as f:
+    manifest_rows = [
+        {
+            "abi_minor": meta["abi_minor"],
+            "form": meta["form"],
+            "writers": sorted(meta["writers"]),
+            "sha256": meta["sha256"],
+        }
+        for _, meta in sorted(expected_fixtures.items())
+    ]
+    with open(fixtures_dir / "manifest.json", "w", encoding="utf-8") as f:
         json.dump(manifest_rows, f, indent=2)
         f.write("\n")
     print(f"Wrote manifest.json ({len(manifest_rows)} rows)")
@@ -482,6 +564,42 @@ def _make_temp_copy(src: Path, dst: Path) -> Path:
     return dst
 
 
+def _run_flip(
+    head_bin: Path, blob: Path, offset: str
+) -> subprocess.CompletedProcess[str]:
+    """Run the HEAD reader on blob with --flip offset; return the finished process."""
+    return subprocess.run(  # nosec B603 - test binary execution without shell, explicit timeout  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a list without shell, explicit timeout
+        [str(head_bin), "read", str(blob), "--flip", offset],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def _drop_head_writer(
+    expected_fixtures: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Simulate an ABI bump at HEAD: drop HEAD as writer, and fixtures only HEAD wrote."""
+    sim_expected: dict[str, dict[str, Any]] = {}
+    for name, meta in expected_fixtures.items():
+        writers = [w for w in meta["writers"] if w != "HEAD"]
+        if writers:
+            sim_expected[name] = {**meta, "writers": writers}
+    return sim_expected
+
+
+def _expect_files_unchanged(label: str, clean_dir: Path, plant_dir: Path) -> None:
+    """Raise SelfTestError when a clean-copy file is missing or changed in plant_dir."""
+    for p in clean_dir.iterdir():
+        target = plant_dir / p.name
+        if p.is_file() and (
+            not target.is_file() or target.read_bytes() != p.read_bytes()
+        ):
+            raise SelfTestError(
+                f"plant {label}: {p.name} missing or modified despite rejection"
+            )
+
+
 def _test_plants_1_to_5(
     test_root: Path,
     clean_dir: Path,
@@ -576,12 +694,7 @@ def _test_plants_6_to_10(
 
     head_bin = binaries["HEAD"][0]
     p10_file = clean_dir / "abi-1.0.bin"
-    res10 = subprocess.run(  # nosec B603 - test binary execution without shell, explicit timeout  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a list without shell, explicit timeout
-        [str(head_bin), "read", str(p10_file), "--flip", "144"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    res10 = _run_flip(head_bin, p10_file, "144")
     if res10.returncode != 1:
         raise SelfTestError(f"plant P10 passed: expected rc 1, got {res10.returncode}")
     print("ok: plant P10 rejected: reader returned rc=1 with --flip 144")
@@ -626,27 +739,90 @@ def _test_supersede_positive(
     """Simulate an ABI bump at HEAD: fixtures only HEAD wrote leave, released ones stay."""
     sim_built = dict(all_built_writers)
     sim_built["HEAD"] = all_built_writers["HEAD"] + 1
-    sim_expected: dict[str, dict[str, Any]] = {}
-    for name, meta in expected_fixtures.items():
-        writers = [w for w in meta["writers"] if w != "HEAD"]
-        if writers:
-            sim_expected[name] = {**meta, "writers": writers}
+    sim_expected = _drop_head_writer(expected_fixtures)
     pos3_dir = _make_temp_copy(clean_dir, test_root / "pos3")
     dropped = sorted(set(expected_fixtures) - set(sim_expected))
+    write_fixtures(pos3_dir, sim_expected)
     for name in dropped:
-        (pos3_dir / name).unlink()
-    rows = []
-    for row in load_manifest_strict(pos3_dir / "manifest.json"):
-        writers = [w for w in row["writers"] if w != "HEAD"]
-        if writers:
-            rows.append({**row, "writers": writers})
-    (pos3_dir / "manifest.json").write_text(
-        json.dumps(rows, indent=2) + "\n", encoding="utf-8"
-    )
+        if (pos3_dir / name).exists():
+            raise SelfTestError(
+                f"Dropped file {name} still exists after write_fixtures"
+            )
+    for name in sim_expected:
+        if (pos3_dir / name).read_bytes() != (clean_dir / name).read_bytes():
+            raise SelfTestError(
+                f"Kept file {name} differs from clean_dir after write_fixtures"
+            )
     notes = verify_fixtures_and_manifest(pos3_dir, sim_expected, sim_built)
     if notes:
         raise SelfTestError(f"Superseding bump produced unexpected notes: {notes}")
     print(f"ok: superseding ABI bump passes after dropping never-released {dropped}")
+
+
+def _test_plants_11_12(
+    test_root: Path,
+    clean_dir: Path,
+    expected_fixtures: dict[str, dict[str, Any]],
+) -> None:
+    """Plants P11, P12: --write refuses to delete released or unlisted fixtures."""
+    p11_dir = _make_temp_copy(clean_dir, test_root / "p11")
+    sim_expected_p11 = {
+        k: v for k, v in expected_fixtures.items() if k != "abi-1.0.bin"
+    }
+    _expect_reject("P11", write_fixtures, p11_dir, sim_expected_p11)
+    _expect_files_unchanged("P11", clean_dir, p11_dir)
+
+    p12_dir = _make_temp_copy(clean_dir, test_root / "p12")
+    stray = p12_dir / "abi-1.9.bin"
+    stray.write_bytes(b"\x00" * 32)
+    _expect_reject("P12", write_fixtures, p12_dir, _drop_head_writer(expected_fixtures))
+    if not stray.is_file() or stray.read_bytes() != b"\x00" * 32:
+        raise SelfTestError(
+            "plant P12: abi-1.9.bin was modified or deleted despite rejection"
+        )
+    _expect_files_unchanged("P12", clean_dir, p12_dir)
+
+
+def _test_plant_13_and_flip_bounds(
+    clean_dir: Path, binaries: dict[str, tuple[Path, int]]
+) -> None:
+    """Plant P13 (bad --flip offsets give usage and rc 2) and the offset boundaries."""
+    head_bin = binaries["HEAD"][0]
+    p_file = clean_dir / "abi-1.0.bin"
+    neg_cases = [
+        "",
+        "x",
+        "-1",
+        "+1",
+        " 1",
+        "1x",
+        "4294967296",
+        "00000000001",
+        "00000000000000001x",
+    ]
+    for x in neg_cases:
+        res = _run_flip(head_bin, p_file, x)
+        if res.returncode != 2 or "Usage: abi_history read" not in res.stderr:
+            raise SelfTestError(
+                f"plant P13 passed for {x!r}: expected rc=2 and usage message, got rc={res.returncode}\n{res.stderr}"
+            )
+    print(
+        f"ok: plant P13 rejected: {len(neg_cases)} invalid flip offsets rejected with usage error"
+    )
+
+    res_bnd = _run_flip(head_bin, p_file, "4294967295")
+    if res_bnd.returncode != 2 or "Flip offset 4294967295 >= len" not in res_bnd.stderr:
+        raise SelfTestError(
+            f"positive boundary 4294967295 failed: expected rc=2 and range error, got rc={res_bnd.returncode}\n{res_bnd.stderr}"
+        )
+    res_pad = _run_flip(head_bin, p_file, "0000000144")
+    if res_pad.returncode != 1:
+        raise SelfTestError(
+            f"positive boundary 0000000144 failed: expected rc=1, got rc={res_pad.returncode}\n{res_pad.stderr}"
+        )
+    print(
+        "ok: positive boundary flip offsets verified: 4294967295 range-refused, 0000000144 flipped with rc=1"
+    )
 
 
 def run_self_test(
@@ -671,12 +847,17 @@ def run_self_test(
         _test_plants_6_to_10(
             test_root, clean_dir, binaries, expected_fixtures, all_built_writers
         )
+        _test_plants_11_12(test_root, clean_dir, expected_fixtures)
+        _test_plant_13_and_flip_bounds(clean_dir, binaries)
         _test_positives(test_root, clean_dir, expected_fixtures, all_built_writers)
         _test_supersede_positive(
             test_root, clean_dir, expected_fixtures, all_built_writers
         )
 
-    print("Self-test passed: all plants and positives verified as expected.")
+    print(
+        "Self-test passed: 13 plants (P1-P13), 3 positives and 2 flip-offset"
+        " boundary cases verified as expected."
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
