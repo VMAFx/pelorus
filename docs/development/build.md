@@ -159,6 +159,15 @@ on `PATH`. A config fails when:
   counts, on any single frame, a different number of Pelorus UUID or AV1
   film-grain side-data entries than the table states.
 
+Each soak run passes `-nostats`. Without it, ffmpeg's main thread writes a
+carriage-return progress line while the filter thread writes one showinfo
+side-data line in several log calls. A progress write between those calls cuts
+the line, and that frame counts no entry (CI run 42494841487). A soak run whose
+output holds a carriage return fails with `progress line in ffmpeg output`. The
+fast-suite test `showinfo-nostats` (`scripts/check-showinfo-nostats.py`)
+refuses any tracked ffmpeg command that adds showinfo without `-nostats`, and
+checks each command of a chain on its own.
+
 Run-to-run maxrss noise on lavapipe measured up to about 8 MiB (7760 KiB),
 inside the 16 MiB budget. Heap leaks below the floor need a LeakSanitizer build. The soak
 is software Vulkan evidence only. The NVENC side-data path has no soak:

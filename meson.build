@@ -670,6 +670,37 @@ test('curl-retry-self-test',
      timeout: 60,
      suite: 'fast')
 
+# Every ffmpeg run whose showinfo log is parsed needs -nostats, or the progress
+# line splits side-data lines (CI run 42494841487). The tree scan lists files
+# with git; see python-empty-except above for why it skips Windows.
+if build_machine.system() != 'windows'
+  test('showinfo-nostats',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-showinfo-nostats.py'],
+       workdir: meson.project_source_root(),
+       timeout: 60,
+       suite: 'fast')
+endif
+
+test('showinfo-nostats-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-showinfo-nostats.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     timeout: 60,
+     suite: 'fast')
+
+# Planted soak defects, including a progress-line split (vulkan-lavapipe-filters.sh).
+if build_machine.system() != 'windows'
+  test('vulkan-lavapipe-filters-self-test',
+       bash_prog,
+       args: [meson.project_source_root() / 'ffmpeg-patches' / 'test' / 'vulkan-lavapipe-filters.sh',
+              '--self-test'],
+       workdir: meson.project_source_root(),
+       timeout: 120,
+       suite: 'fast')
+endif
+
 # A try block that guards Path.read_text() against OSError must also catch
 # UnicodeDecodeError, or a file with invalid bytes escapes as a traceback.
 # The tree scan lists files with git; see python-empty-except above for why

@@ -258,8 +258,11 @@ soak_run()
     # drains at EOF (-frames:v alone lets one extra frame through the graph).
     # timeout runs ffmpeg in its own process group; -nostdin keeps ffmpeg off
     # the terminal there, where a tty read or setup would stop it (SIGTTIN/SIGTTOU).
+    # The main thread writes the progress line (\r-terminated) while the filter
+    # thread writes showinfo lines with several log calls each, so a progress write
+    # can cut a side-data line and its frame counts no entry; -nostats drops the progress line.
     out="$(VK_INSTANCE_LAYERS=$LAYER "$TIMEOUT_BIN" -k "$SOAK_KILL_AFTER" "$SOAK_TIMEOUT" \
-        "$ffmpeg_bin" -hide_banner -nostdin -benchmark -loglevel info \
+        "$ffmpeg_bin" -hide_banner -nostdin -nostats -benchmark -loglevel info \
         -init_hw_device vulkan=pelorus_vk -filter_hw_device pelorus_vk \
         -f lavfi -i testsrc2=size=320x180 -frames:v "$frames" \
         -vf "trim=end_frame=$frames,format=yuv420p,hwupload,$chain,hwdownload,format=yuv420p,showinfo" \
@@ -269,6 +272,10 @@ soak_run()
         return 1
     fi
     ((rc == 0)) || { echo "exit status $rc: $(tail -1 <<<"$out")"; return 1; }
+    if [[ "$out" == *$'\r'* ]]; then
+        echo "progress line in ffmpeg output; it can split showinfo side-data lines (run ffmpeg with -nostats)"
+        return 1
+    fi
     vuids="$(vuids_of "$out")"
     [[ -z "$vuids" ]] || { echo "VUIDs: $vuids"; return 1; }
     n_frames="$(count_lines -E 'n: *[0-9]+ pts:' "$out")" || { echo "$n_frames"; return 1; }
@@ -332,7 +339,16 @@ write_fake()
 {
     local fake="$1"
 
-    cat >"$fake" <<'EOF_FAKE'
+    fake_setup >"$fake"
+    fake_frames >>"$fake"
+    chmod +x "$fake"
+}
+
+# The fake's first half: device probe, short runs, and the soak run's
+# arguments, table row and planted mode.
+fake_setup()
+{
+    cat <<'EOF_FAKE'
 #!/usr/bin/env bash
 args="$*"
 if [[ -n "${VK_LOADER_DEBUG:-}" ]]; then
@@ -349,6 +365,9 @@ if [[ "$args" != *showinfo* ]]; then
     exit 0
 fi
 [[ "$args" == *" -nostdin "* ]] || { echo "fake: soak run without -nostdin" >&2; exit 3; }
+nostats=0
+[[ "$args" == *" -nostats "* ]] && nostats=1
+P='frame=    1 fps=0.0 q=-0.0 size=N/A time=00:00:00.04 bitrate=N/A speed=1x elapsed=0:00:00.01    '
 U='[Parsed_showinfo_6 @ 0x1]   side data - H.26[45] User Data Unregistered SEI message: UUID=e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64'
 frames=0 vf=""
 [[ "$args" =~ -frames:v\ ([0-9]+) ]] && frames="${BASH_REMATCH[1]}"
@@ -359,6 +378,8 @@ while IFS='|' read -r _ chain u g; do
 done <"${0%/*}/table"
 mode=clean
 ((frames >= FAKE_PLANT_FRAMES)) && mode="$FAKE_MODE"
+split=$((nostats == 0))
+[[ "$mode" == statssplit ]] && split=1
 case "$mode" in
     hang) exec sleep 30 ;;
     hangterm) trap '' TERM; exec sleep 30 ;;
@@ -367,13 +388,32 @@ esac
 last=$((frames - 1))
 [[ "$mode" == framedrop ]] && last=$((frames - 2))
 [[ "$mode" == sideearly ]] && echo "$U"
+EOF_FAKE
+}
+
+# The fake's second half: one showinfo frame line and its side-data lines per
+# frame, then the benchmark line. Without -nostats (or in mode statssplit) a
+# progress line cuts frame 1's first UUID line after the side-data name, as
+# ffmpeg's main thread does between showinfo's log calls.
+fake_frames()
+{
+    cat <<'EOF_FAKE'
 for ((i = 0; i <= last && i < 100000; i++)); do
+    if ((split == 1 && i == 1 && uuid == 0)); then
+        printf '%s\r' "$P"
+    fi
     echo "[Parsed_showinfo_6 @ 0x1] n: $i pts: $i pts_time:0"
     [[ "$mode" == sidedrop && $i -eq $last ]] && continue
     rep=1
     [[ "$mode" == sidemove ]] && rep=$((i == 0 ? 0 : (i == last ? 2 : 1)))
     for ((k = 0; k < uuid * rep && k < 16; k++)); do
-        echo "$U"
+        if ((split == 1 && i == 1 && k == 0)); then
+            printf '%s' '[Parsed_showinfo_6 @ 0x1]   side data - H.26[45] User Data Unregistered SEI message: '
+            printf '%s\r' "$P"
+            echo '[Parsed_showinfo_6 @ 0x1] UUID=e1d7c4a2-6b93-4f08-9a55-0f3c2db17e64'
+        else
+            echo "$U"
+        fi
     done
     [[ "$mode" == graindrop && $i -eq $last ]] && continue
     for ((k = 0; k < grain * rep && k < 16; k++)); do
@@ -386,7 +426,6 @@ rss=100000
 [[ "$mode" == nobench ]] || echo "bench: maxrss=${rss}KiB"
 exit 0
 EOF_FAKE
-    chmod +x "$fake"
 }
 
 # Default mode against the fake: clean passes, each planted mode fails, and a
@@ -442,7 +481,7 @@ self_test_soak_env()
         read -r w f r c reason <<<"$row"
         rc=0
         out="$(FAKE_MODE=clean FAKE_PLANT_FRAMES=4 SOAK_WARMUP="$w" SOAK_FRAMES="$f" SOAK_RSS_MIB="$r" \
-            SOAK_TIMEOUT=1 SOAK_KILL_AFTER=1 SOAK_CONFIGS="$c" run_soak "$fake" 2>&1)" || rc=$?
+            SOAK_TIMEOUT=30 SOAK_KILL_AFTER=1 SOAK_CONFIGS="$c" run_soak "$fake" 2>&1)" || rc=$?
         if [[ "$reason" == - ]] && ((rc == 0)); then
             continue
         elif [[ "$reason" != - ]] && ((rc != 0)) && grep -Fq -- "$reason" <<<"$out"; then
@@ -470,9 +509,10 @@ self_test_soak_env()
 # is caught. Each line: FAKE_MODE|SOAK_CONFIGS|expected reason.
 self_test_soak()
 {
-    local fake="$1" plant mode reason out configs failures=0
+    local fake="$1" plant mode reason out configs to failures=0
     local -a plants=(
         "clean||"
+        "statssplit|denoise_ring|progress line in ffmpeg output"
         "rssgrow|denoise_ring|grew"
         "sidedrop|denoise_ring|frame n:3 Pelorus side data count 0 != 1"
         "graindrop|grain_estimate|frame n:3 film grain side data count 0 != 1"
@@ -489,8 +529,10 @@ self_test_soak()
 
     for plant in "${plants[@]}"; do
         IFS='|' read -r mode configs reason <<<"$plant"
+        to=30
+        [[ "$mode" == hang || "$mode" == hangterm ]] && to=1
         if out="$(FAKE_MODE="$mode" FAKE_PLANT_FRAMES=4 SOAK_WARMUP=2 SOAK_FRAMES=4 \
-            SOAK_RSS_MIB=16 SOAK_TIMEOUT=1 SOAK_KILL_AFTER=1 SOAK_CONFIGS="$configs" \
+            SOAK_RSS_MIB=16 SOAK_TIMEOUT="$to" SOAK_KILL_AFTER=1 SOAK_CONFIGS="$configs" \
             run_soak "$fake" 2>&1)"; then
             [[ "$mode" == clean ]] && continue
             echo "SELF-TEST FAIL: planted soak defect '$mode' was accepted" >&2
