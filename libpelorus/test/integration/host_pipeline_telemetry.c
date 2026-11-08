@@ -116,11 +116,17 @@ static void check_telemetry_section_match(const PelorusEncTelemetrySection *got,
     check_telemetry_fractions_and_flags(got, exp);
 }
 
+typedef struct HpTlmBuffers {
+    uint8_t *blob;
+    size_t blob_cap;
+    uint8_t *carrier;
+    size_t carrier_cap;
+} HpTlmBuffers;
+
 /* Pack, encode, unwrap, and verify a single telemetry frame. */
 static void run_single_telemetry_frame(const PelorusEncTelemetryInput *frame,
-                                       const PelorusEncTelemetrySection *exp, uint8_t *blob_buf,
-                                       size_t max_blob_size, uint8_t *carrier_buf,
-                                       size_t max_carrier_size)
+                                       const PelorusEncTelemetrySection *exp,
+                                       const HpTlmBuffers *bufs)
 {
     PelorusSideData meta;
     size_t blob_len = 0;
@@ -137,20 +143,20 @@ static void run_single_telemetry_frame(const PelorusEncTelemetryInput *frame,
     meta.bit_depth = 8u;
     meta.producer_id = PLRS_PRODUCER_ID;
 
-    CHECK(pel_enc_telemetry_pack(&meta, frame, blob_buf, max_blob_size, &blob_len) == PEL_OK);
+    CHECK(pel_enc_telemetry_pack(&meta, frame, bufs->blob, bufs->blob_cap, &blob_len) == PEL_OK);
     CHECK(blob_len > 0u);
 
-    CHECK(pel_blob_carrier_encode(blob_buf, blob_len, carrier_buf, max_carrier_size,
+    CHECK(pel_blob_carrier_encode(bufs->blob, blob_len, bufs->carrier, bufs->carrier_cap,
                                   &carrier_len) == PEL_OK);
     CHECK(carrier_len > 0u);
 
-    CHECK(pel_blob_unwrap(carrier_buf, carrier_len, unwrap_scratch, sizeof(unwrap_scratch),
+    CHECK(pel_blob_unwrap(bufs->carrier, carrier_len, unwrap_scratch, sizeof(unwrap_scratch),
                           &unwrapped, &unwrapped_len) == PEL_OK);
     CHECK(unwrapped != NULL && unwrapped_len == blob_len);
     if (unwrapped == NULL) {
         return;
     }
-    CHECK(memcmp(unwrapped, blob_buf, blob_len) == 0);
+    CHECK(memcmp(unwrapped, bufs->blob, blob_len) == 0);
 
     CHECK(pel_blob_find_section(unwrapped, unwrapped_len, PEL_SEC_ENC_TELEMETRY,
                                 sizeof(PelorusEncTelemetrySection), &sec_ptr, &sec_size) == PEL_OK);
@@ -315,10 +321,15 @@ void hp_test_scenario2_telemetry(const char *csv_path)
     CHECK(carrier_buf != NULL);
 
     if (blob_buf != NULL && carrier_buf != NULL) {
+        HpTlmBuffers bufs;
+        bufs.blob = blob_buf;
+        bufs.blob_cap = max_blob_size;
+        bufs.carrier = carrier_buf;
+        bufs.carrier_cap = max_carrier_size;
+
         for (size_t i = 0; i < frame_count && i < HP_EXPECTED_X265_FRAME_COUNT; i++) {
             check_telemetry_section_match(&frames[i].frame, &expected[i]);
-            run_single_telemetry_frame(&frames[i], &expected[i], blob_buf, max_blob_size,
-                                       carrier_buf, max_carrier_size);
+            run_single_telemetry_frame(&frames[i], &expected[i], &bufs);
         }
         test_boundary_telemetry_pack(&frames[0]);
     }

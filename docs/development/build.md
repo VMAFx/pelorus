@@ -506,6 +506,15 @@ The fast-suite test `meson-testlog-credentials` (`scripts/test-meson-testlog-cre
 verifies name filtering, log detection, and end-to-end environment scrubbing against a stub
 Meson runner.
 
+`make test` also runs `scripts/check-tester-kit-install.py <build>`. It runs
+`meson introspect --tests` on the build directory and hands the result to
+`tools/tester/install-fast-suite.py`, which installs the fast suite into a temporary directory.
+A fast-suite test whose command or arguments the tester kit cannot install, such as a fixture
+path that contains `..`, then fails `make test` instead of only the tester-publish workflow.
+The fast-suite test `check-tester-kit-install` (`scripts/test-check-tester-kit-install.py`)
+covers an installable argument, a planted `..` path and a path outside the build and source
+trees.
+
 A `# nosemgrep` or `# nosec` marker in tracked Python must sit on the start line
 of the statement or expression it answers and name its rules plus a reason:
 `# nosemgrep: <full rule id>[, <id>] - <reason>` and `# nosec <Bxxx> - <reason>`
