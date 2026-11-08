@@ -5,7 +5,7 @@ How Pelorus filters run on the GPU, and how to author a new one.
 
 ## Prerequisites
 
-- A Vulkan loader + headers (Vulkan 1.2+) and a working ICD for the target GPU
+- A Vulkan loader + headers (Vulkan 1.3, SDK >= 1.3.277) and a working ICD for the target GPU
   (NVIDIA / AMD / Intel). The project tests NVIDIA RTX 4090, Intel Arc A380
   (Alchemist) and a Ryzen iGPU; other GPUs rely on
   [tester programme](../usage/hardware-we-need.md) reports.
