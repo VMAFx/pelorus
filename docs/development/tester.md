@@ -18,7 +18,7 @@ CI: [#170](https://github.com/VMAFx/pelorus/issues/170),
 | --- | --- | --- | --- |
 | Linux arm64 (`aarch64`, `ubuntu-26.04-arm`) | Fast suite (including round-trip vs x86-64 KAT fixtures), patch replay, lavapipe functional validation, format matrix, native generic tester image build | No NEON kernels exist in Pelorus; no arm64 GPU evidence; vendor tester images (amd64 only); multi-arch image publishing (follow-up) | Issue #170, [ADR-0203](../adr/0203-arm64-ci-lane.md), [ADR-0208](../adr/0208-arm64-tester-image.md). Big-endian is unsupported: interop ABI wire format is strictly little-endian ([interop ABI](../api/interop-abi.md#stability-rules-normative--see-interoph)) |
 
-All three images set `PELORUS_SUITE_CMD=/opt/pelorus/tests/run-fast-suite.sh` and ship the native fast-test binaries, telemetry fixtures, encode-record example and comma-decimal locale; `tools/tester/install-fast-suite.py` generates their arguments, environment and workdir from `meson introspect --tests`, while repository scripts and shader compiler checks remain build-host gates.
+All three images set `PELORUS_SUITE_CMD=/opt/pelorus/tests/run-fast-suite.sh` and ship the native fast-test binaries, telemetry fixtures, encode-record example and comma-decimal locale; `tools/tester/build-fast-suite.py` orchestrates the kit build and `tools/tester/install-fast-suite.py` generates their arguments, environment and workdir from `meson introspect --tests` ([ADR-0248](../adr/0248-tester-kit-expected-fail.md)), while repository scripts and shader compiler checks remain build-host gates.
 
 A tester package is evidence for one `master` commit, named
 `tester-<YYYYMMDD>-<sha8>` (CPU image) or `tester-<kit>-<YYYYMMDD>-<sha8>`

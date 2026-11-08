@@ -30,7 +30,7 @@ test: build
 	python3 -I scripts/run-meson-test.py -C "$(BUILD_DIR)" --suite=fast --print-errorlogs || status=$$?; \
 	python3 -I scripts/check-test-skips.py "$(BUILD_DIR)/meson-logs/testlog.json" || { rc=$$?; [ "$$status" -ne 0 ] || status=$$rc; }; \
 	python3 -I scripts/check-testlog-credentials.py "$(BUILD_DIR)" || { rc=$$?; [ "$$status" -ne 0 ] || status=$$rc; }; \
-	python3 -I scripts/check-tester-kit-install.py "$(BUILD_DIR)" || { rc=$$?; [ "$$status" -ne 0 ] || status=$$rc; }; \
+	python3 -I scripts/check-tester-kit-install.py --run-kit "$(BUILD_DIR)" || { rc=$$?; [ "$$status" -ne 0 ] || status=$$rc; }; \
 	exit $$status
 
 format-check:

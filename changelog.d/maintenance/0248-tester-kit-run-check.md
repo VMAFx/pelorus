@@ -1,0 +1,1 @@
+- `scripts/check-tester-kit-install.py` now supports `--run-kit`, invoked by `make test` to build and execute the relocatable tester-kit suite in a temporary directory, catching fast tests that fail under the kit runner before push ([ADR-0248](docs/adr/0248-tester-kit-expected-fail.md)).
