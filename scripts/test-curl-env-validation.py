@@ -22,18 +22,13 @@ import tempfile
 
 RUN_TIMEOUT = 10
 
+# The scripts under test come from this file's own checkout, never from the
+# environment, so no environment value reaches a subprocess argv. To test a
+# mutated script, copy the tree and run the copied test.
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-FETCH_SERIES_SCRIPT = pathlib.Path(
-    os.environ.get("FETCH_SERIES_SCRIPT", ROOT / "scripts" / "fetch-ffmpeg-series.sh")
-)
-CHECK_GITLEAKS_SCRIPT = pathlib.Path(
-    os.environ.get("CHECK_GITLEAKS_SCRIPT", ROOT / "scripts" / "check-gitleaks.sh")
-)
-FETCH_CORPUS_SCRIPT = pathlib.Path(
-    os.environ.get(
-        "FETCH_CORPUS_SCRIPT", ROOT / "scripts" / "bench" / "fetch-corpus.sh"
-    )
-)
+FETCH_SERIES_SCRIPT = ROOT / "scripts" / "fetch-ffmpeg-series.sh"
+CHECK_GITLEAKS_SCRIPT = ROOT / "scripts" / "check-gitleaks.sh"
+FETCH_CORPUS_SCRIPT = ROOT / "scripts" / "bench" / "fetch-corpus.sh"
 
 VARIABLES: tuple[str, ...] = (
     "CURL_MAX_TIME",
