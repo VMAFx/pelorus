@@ -73,7 +73,7 @@ These older readers safely ignore carrier blobs rather than misinterpreting wrap
 
 ## Limits
 
-- Fixtures are produced by `libpelorus/test/abi_history/abi_history.c` compiled against historical release tag headers and `interop.c` sources, rather than full FFmpeg filter pipeline runs.
+- Fixtures are produced by `libpelorus/test/abi_history/` (`abi_history.c`, `abi_history_fill.c`, `abi_history_pack.c`, `abi_history_check.c`) compiled against historical release tag headers and `interop.c` sources, rather than full FFmpeg filter pipeline runs.
 - External reader implementations such as `vmafx` are not directly driven by this matrix suite; `vmafx` mirrors `interop_test.c` for its ABI verification.
 - Tag sources are compiled without `-Werror` (emitting informational note lines) because historical release sources cannot be retroactively fixed for new compiler warnings.
 - The 1.6 fixtures are provisional: no release tag writes minor 6 yet, so an ABI bump before the next release removes them (ADR-0247). Released minors' fixtures never leave.

@@ -30,9 +30,9 @@ libpelorus/
                        integration/host_pipeline_*.c — producer -> carrier ->
                        consumer, public API only; main in host_pipeline_test.c;
                        audit integration level
-                       abi_history/ — one writer + reader built against
-                       every release tag; blobs in fixtures/interop-history/
-                       (ADR-0247), not mirrored
+                       abi_history/ — one writer + reader in 4 files
+                       built against every release tag; blobs in
+                       fixtures/interop-history/ (ADR-0247), not mirrored
 ```
 
 ## Conventions
@@ -122,8 +122,8 @@ libpelorus/
     delete a released minor's file; a never-released (HEAD-only) minor's
     files + manifest rows leave with the superseding bump, same PR; never
     change existing values in `test/abi_history/abi_history_values.h`.
-    ABI bump -> fill + check function in `test/abi_history/abi_history.c`
-    gated
+    ABI bump -> fill in `test/abi_history/abi_history_fill.c`, pack wiring
+    in `abi_history_pack.c`, check in `abi_history_check.c` gated
     `#if PELORUS_ABI_MINOR >= N`, `abi-1.<N>.bin` from
     `scripts/check-interop-abi-history.py --write`, meson writer test
     pointed at it, same PR.

@@ -38,17 +38,26 @@ engines:
       # scripts/check-suppression-markers.py (ADR-0241).
       # exception: category D, entered 2026-11-05, expires 2027-03-05
       - "tools/abi-upgrade/abi_upgrade_probe.c"
-      # flawfinder_memcpy (CWE-120) fires on every memcpy() call. Each copy here is bounded
-      # first: append_map checks UUID_LEN + off + size <= cap (:258) before :261,
-      # patch_section refuses a pointer outside the blob, a copy longer than the found
-      # section or past cap (:284) before :287, invoke_pack checks packed_len <= cap (:602)
-      # before :607, pack_history_blob checks the header fits (:638) before :641 and :643,
-      # check_map_bytes (:718) and read_and_verify_blob (:1185) check the header fits
-      # before :722 and :1189, and the digest and model-hash copies (:212, :240) copy
-      # sizeof(destination), which _Static_assert (:176, :220) ties to the source size.
-      # Inline markers in C are refused by scripts/check-suppression-markers.py (ADR-0241).
+      # flawfinder_memcpy (CWE-120) fires on every memcpy() call. The digest and model-hash
+      # copies (:198, :226) copy sizeof(destination), which _Static_assert (:162, :206) ties
+      # to the source size. Inline markers in C are refused by
+      # scripts/check-suppression-markers.py (ADR-0241).
       # exception: category D, entered 2026-11-08, expires 2027-03-08
-      - "libpelorus/test/abi_history/abi_history.c"
+      - "libpelorus/test/abi_history/abi_history_fill.c"
+      # flawfinder_memcpy (CWE-120) fires on every memcpy() call. Each copy here is bounded
+      # first: append_map checks UUID_LEN + off + size <= cap (:34) before :37,
+      # patch_section refuses a pointer outside the blob, a copy longer than the found
+      # section or past cap (:60) before :63, invoke_pack checks packed_len <= cap (:417)
+      # before :422, and abih_pack_history_blob checks the header fits (:453) before :456 and
+      # :458. Inline markers in C are refused by scripts/check-suppression-markers.py (ADR-0241).
+      # exception: category D, entered 2026-11-08, expires 2027-03-08
+      - "libpelorus/test/abi_history/abi_history_pack.c"
+      # flawfinder_memcpy (CWE-120) fires on every memcpy() call. Each copy here is bounded
+      # first: validate_map_bounds (:77) and abih_read_and_verify_blob (:577) check the header
+      # fits before :81 and :581. Inline markers in C are refused by
+      # scripts/check-suppression-markers.py (ADR-0241).
+      # exception: category D, entered 2026-11-08, expires 2027-03-08
+      - "libpelorus/test/abi_history/abi_history_check.c"
   opengrep:
     exclude_paths:
       # python urllib urlopen rule, same call and same https-only guard as the bandit entry.
@@ -63,8 +72,17 @@ engines:
       # exception: category D, entered 2026-11-05, expires 2027-03-05
       - "tools/abi-upgrade/abi_upgrade_probe.c"
       # Semgrep_c_buffer_rule-memcpy-CopyMemory, same memcpy() calls and same bound checks
-      # (:258, :284, :602, :638, :718, :1185, _Static_assert :176, :220) as the flawfinder
-      # entry. Inline markers in C are refused by scripts/check-suppression-markers.py
-      # (ADR-0241).
+      # (_Static_assert :162, :206) as the flawfinder entry. Inline markers in C are refused
+      # by scripts/check-suppression-markers.py (ADR-0241).
       # exception: category D, entered 2026-11-08, expires 2027-03-08
-      - "libpelorus/test/abi_history/abi_history.c"
+      - "libpelorus/test/abi_history/abi_history_fill.c"
+      # Semgrep_c_buffer_rule-memcpy-CopyMemory, same memcpy() calls and same bound checks
+      # (:34, :60, :417, :453) as the flawfinder entry. Inline markers in C are refused by
+      # scripts/check-suppression-markers.py (ADR-0241).
+      # exception: category D, entered 2026-11-08, expires 2027-03-08
+      - "libpelorus/test/abi_history/abi_history_pack.c"
+      # Semgrep_c_buffer_rule-memcpy-CopyMemory, same memcpy() calls and same bound checks
+      # (:77, :577) as the flawfinder entry. Inline markers in C are refused by
+      # scripts/check-suppression-markers.py (ADR-0241).
+      # exception: category D, entered 2026-11-08, expires 2027-03-08
+      - "libpelorus/test/abi_history/abi_history_check.c"

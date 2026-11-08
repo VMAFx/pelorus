@@ -34,6 +34,9 @@ libpelorus/src/telemetry.c
 libpelorus/src/telemetry_adapters.c
 libpelorus/src/version.c
 libpelorus/test/abi_history/abi_history.c
+libpelorus/test/abi_history/abi_history_check.c
+libpelorus/test/abi_history/abi_history_fill.c
+libpelorus/test/abi_history/abi_history_pack.c
 libpelorus/test/encode_options_test.c
 libpelorus/test/encode_record_test.c
 libpelorus/test/grain_convert_test.c

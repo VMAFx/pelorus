@@ -562,7 +562,7 @@ meson test -C build --suite=fast --print-errorlogs
 
 When bumping `PELORUS_ABI_MINOR`:
 
-1. ABI bump PR adds `fill_<sec>` and `check_<sec>` functions in `libpelorus/test/abi_history/abi_history.c` gated `#if PELORUS_ABI_MINOR >= N`, and new values are appended to `libpelorus/test/abi_history/abi_history_values.h`; existing values must never change (changing an existing value alters every fixture: check fails and `--write` refuses).
+1. ABI bump PR adds `fill_<sec>` in `libpelorus/test/abi_history/abi_history_fill.c`, pack wiring in `abi_history_pack.c`, and `check_<sec>` in `abi_history_check.c` gated `#if PELORUS_ABI_MINOR >= N`, and new values are appended to `libpelorus/test/abi_history/abi_history_values.h`; existing values must never change (changing an existing value alters every fixture: check fails and `--write` refuses).
 2. Run `python3 -I scripts/check-interop-abi-history.py --write`: this generates the new `abi-1.<N>.bin` (and `abi-1.<N>-carrier.bin` if minor ≥ 5) and rewrites `manifest.json`.
 3. Update `libpelorus/test/meson.build`: point `interop-history-writer` at the new minor's fixture files and add fast-suite read tests for them.
    If the previous minor never reached a release tag (its manifest rows list only the current tree as writer), `--write` in step 2 deletes its `abi-1.<N-1>*.bin` files and manifest rows; delete their read tests in the same pull request. `--write` refuses, before changing any file, to delete a file that a release tag wrote or that the manifest does not list. A released minor's files stay forever: the script fails when one is missing.

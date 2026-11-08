@@ -26,7 +26,12 @@ test('interop-abi', interop_test, suite: 'fast')
 # conformance fixture (interop-abi) above: vmafx mirrors interop_test.c only.
 abi_history_test = executable(
   'pelorus_abi_history',
-  files('abi_history/abi_history.c'),
+  files(
+    'abi_history/abi_history.c',
+    'abi_history/abi_history_check.c',
+    'abi_history/abi_history_fill.c',
+    'abi_history/abi_history_pack.c',
+  ),
   c_args: interop_test_args,
   dependencies: libpelorus_dep,
 )
