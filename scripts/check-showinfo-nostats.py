@@ -177,7 +177,7 @@ def check_python_content(data: bytes, display_path: str) -> tuple[list[str], lis
         lineno = getattr(exc, "lineno", None) or 1
         text = getattr(exc, "msg", None) or str(exc)
         msg = f"{display_path}:{lineno}: python syntax error: {text}"
-        return [msg], [msg]
+        return [msg], []
 
     doc_ids = collect_docstrings(tree)
     violations: list[str] = []
@@ -488,6 +488,9 @@ def _run_self_test_case(
         if name == "workflow_without_repo_root"
         else check_file(test_file, tmp_path)
     )
+    if set(diags) & set(violations):
+        print(f"FAIL self-test '{name}': message reported twice: {diags}", file=sys.stderr)
+        return False
     if expected_reason is None:
         if not diags and not violations:
             return True
