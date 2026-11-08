@@ -1,0 +1,69 @@
+[
+  {
+    "abi_minor": 0,
+    "form": "plain",
+    "writers": [
+      "v0.1.0"
+    ],
+    "sha256": "6bb5c1d82d655547309c0941be100ad3ac11ba15ad067c6eb5f78b3a84bfafd8"
+  },
+  {
+    "abi_minor": 3,
+    "form": "plain",
+    "writers": [
+      "v0.2.0",
+      "v0.2.1",
+      "v0.2.2",
+      "v0.3.0"
+    ],
+    "sha256": "a074b65b57e78cb518d6db9614baca7bad2ef4773d97f1accccbdbe2380e67cd"
+  },
+  {
+    "abi_minor": 4,
+    "form": "plain",
+    "writers": [
+      "v0.4.0-rc.1"
+    ],
+    "sha256": "b2d428cff7098474caa4d6969dda3445f3c37bd5cb2179fd7f8bb72d154040d4"
+  },
+  {
+    "abi_minor": 5,
+    "form": "carrier",
+    "writers": [
+      "v0.4.0",
+      "v0.4.0-rc.2",
+      "v0.4.0-rc.3",
+      "v0.4.0-rc.4",
+      "v0.4.1"
+    ],
+    "sha256": "71efa1b8bda098c1a67434e8be11dd6da760bf877d71a2f0403e7859aa3a2fc5"
+  },
+  {
+    "abi_minor": 5,
+    "form": "plain",
+    "writers": [
+      "v0.4.0",
+      "v0.4.0-rc.2",
+      "v0.4.0-rc.3",
+      "v0.4.0-rc.4",
+      "v0.4.1"
+    ],
+    "sha256": "01fc224bc800defaedfcb14c8160d042d4e918eba60651ce04f2e678eb65e7e2"
+  },
+  {
+    "abi_minor": 6,
+    "form": "carrier",
+    "writers": [
+      "HEAD"
+    ],
+    "sha256": "199e7b030ed16ff413cfa26246d67943deb04c7586bbc8c5dbf2ee6c90370ba9"
+  },
+  {
+    "abi_minor": 6,
+    "form": "plain",
+    "writers": [
+      "HEAD"
+    ],
+    "sha256": "7737063db2456f3c62ce47b32b42eefae260a22a42830b47b1925847352ac14d"
+  }
+]

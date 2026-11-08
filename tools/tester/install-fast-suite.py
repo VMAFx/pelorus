@@ -36,11 +36,14 @@ def copy_argument(value, build, source, destination):
     for root, directory in ((build, "bin"), (source, "fixtures")):
         relative = relative_to(path, root)
         if relative is not None:
-            if ".." in relative.parts or not path.is_file():
+            if ".." in relative.parts or not (path.is_file() or path.is_dir()):
                 raise ValueError(f"missing or unsafe test input: {path}")
             target = destination / directory / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, target)
+            if path.is_dir():
+                shutil.copytree(path, target, dirs_exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, target)
             return '"$suite_root"/' + shlex.quote(f"{directory}/{relative}")
     raise ValueError(f"test input outside build/source trees: {path}")
 

@@ -33,6 +33,7 @@ libpelorus/src/sha256.c
 libpelorus/src/telemetry.c
 libpelorus/src/telemetry_adapters.c
 libpelorus/src/version.c
+libpelorus/test/abi_history/abi_history.c
 libpelorus/test/encode_options_test.c
 libpelorus/test/encode_record_test.c
 libpelorus/test/grain_convert_test.c

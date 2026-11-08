@@ -536,6 +536,28 @@ ABI 1.6 adds:
 
 For rational PTS alignment (`pel_quality_align`) and encoder zone emitters (`pel_zones_*`), see [quality-window.md](quality-window.md).
 
+## Released-writer fixtures
+
+Persisted binary fixtures (`libpelorus/test/fixtures/interop-history/abi-1.<N>.bin`, plus `-carrier.bin` for ABI ≥ 1.5) capture the exact binary side-data blobs produced by released versions of libpelorus across `PELORUS_ABI_MINOR` 0 through 6 (issue #467, ADR-0247). A manifest (`manifest.json`) records the SHA-256 digests and the released Git tags mapped to each fixture:
+
+- `abi-1.0.bin`: `v0.1.0` (ABI 1.0)
+- `abi-1.3.bin`: `v0.2.0`, `v0.2.1`, `v0.2.2`, `v0.3.0` (ABI 1.3; minors 1 and 2 were unreleased)
+- `abi-1.4.bin`: `v0.4.0-rc.1` (ABI 1.4)
+- `abi-1.5.bin` and `abi-1.5-carrier.bin`: `v0.4.0-rc.2`, `v0.4.0-rc.3`, `v0.4.0-rc.4`, `v0.4.0`, `v0.4.1` (ABI 1.5)
+- `abi-1.6.bin` and `abi-1.6-carrier.bin`: current tree (`HEAD`, ABI 1.6)
+
+### Regeneration on ABI bump
+
+When bumping `PELORUS_ABI_MINOR`:
+
+1. Tag the release or update `abi_history.c` / `abi_history_values.h` with values for the new section/fields.
+2. Run `python3 -I scripts/check-interop-abi-history.py --write` to regenerate fixtures and `manifest.json`.
+3. The Meson test `interop-history-writer` forces byte-for-byte fidelity against committed fixtures on every fast-suite run.
+
+### Scope and non-coverage
+
+These fixtures verify the libpelorus C core serialization, backward compatibility (newer readers over older fixtures), and forward compatibility (older readers safely ignoring unknown newer sections per R3/R4 and carrier UUIDs per ADR-0183). They do not test FFmpeg-filter host graph producers or external readers such as vmafx.
+
 ## Stability rules (normative — see interop.h)
 
 - **R1 Append-only**: new fields at the end of a section; new sections take a new

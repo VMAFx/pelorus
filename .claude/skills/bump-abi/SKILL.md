@@ -24,7 +24,8 @@ resize, repurpose, or remove a field/section bit.
    Verify consistency with `python3 -I scripts/bump-abi.py --check`, then run `praetorctl compile-context`.
 4. Extend `libpelorus/test/interop_test.c`: set + read the new field, and assert
    an older consumer (smaller `consumer_known_size`) still parses (R4).
-5. Update `docs/api/interop-abi.md`; add a `changelog.d/added/` fragment.
+5. Regenerate persisted ABI history fixtures with `python3 -I scripts/check-interop-abi-history.py --write` (adds `abi-1.<N>.bin`).
+6. Update `docs/api/interop-abi.md`; add a `changelog.d/added/` fragment.
 
 ## Add a whole new section
 
@@ -32,7 +33,8 @@ resize, repurpose, or remove a field/section bit.
 2. Define `PelorusXxxSection` (flat POD) + its `_Static_assert`.
 3. Bump `PELORUS_ABI_MINOR` across sites with `python3 -I scripts/bump-abi.py --write --note "<summary>" [--adr NNNN]`, run `praetorctl compile-context`, and document writer/reader in the §sections table.
 4. Extend the conformance fixture; update the ABI doc + changelog.
-5. Write an ADR if the new data changes the interop contract materially.
+5. Regenerate persisted ABI history fixtures with `python3 -I scripts/check-interop-abi-history.py --write` (adds `abi-1.<N>.bin`).
+6. Write an ADR if the new data changes the interop contract materially.
 
 ## Rules
 
