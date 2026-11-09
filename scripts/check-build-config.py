@@ -148,6 +148,11 @@ ACTIONLINT_RENOVATE_TEMPLATES = {
     "datasourceTemplate": "go",
 }
 ACTIONLINT_GO_STEP = "- name: Set up Go for actionlint"
+DOCS_PR_RENDER_STEP = "Changelog render owed at most 20 h on pull requests"
+DOCS_PR_RENDER_IF = "if: github.event_name == 'pull_request'"
+DOCS_PR_RENDER_COMMAND = (
+    "python3 -I scripts/release/check-changelog-staleness.py --pull-request --max-age-hours 20"
+)
 # #228: the hosted lavapipe lane (software Vulkan). It is functional evidence
 # only. The Praetor hosted-gate draft step comes first (HISS-18), every later
 # step carries the draft guard, and the lane keeps a bounded budget.
@@ -3671,6 +3676,37 @@ def _validate_ci_ffmpeg_job(relative: str, ffmpeg: str) -> list[str]:
     return errors
 
 
+def _validate_docs_pr_render_step(relative: str, docs: str) -> list[str]:
+    """ADR-0251: docs job must check changelog render debt on pull requests."""
+    errors: list[str] = []
+    matching = [
+        step for _, step in _job_steps(docs) if _step_name(step) == DOCS_PR_RENDER_STEP
+    ]
+    if len(matching) != 1:
+        return [
+            f"{relative}: docs job needs exactly one step named {DOCS_PR_RENDER_STEP!r}"
+        ]
+    step = matching[0]
+    commands = _step_commands(step)
+    if DOCS_PR_RENDER_COMMAND not in commands:
+        errors.append(
+            f"{relative}: docs job step {DOCS_PR_RENDER_STEP!r} must run "
+            f"{DOCS_PR_RENDER_COMMAND!r} as a line of its own run: block"
+        )
+    keys = [key.split(" #", 1)[0].strip() for key in _step_keys(step)]
+    if DOCS_PR_RENDER_IF not in keys:
+        errors.append(
+            f"{relative}: docs job step {DOCS_PR_RENDER_STEP!r} must set "
+            f"{DOCS_PR_RENDER_IF!r}"
+        )
+    errors.extend(
+        _dev_image_step_conditions(
+            relative, "docs", DOCS_PR_RENDER_STEP, step, allowed_if=DOCS_PR_RENDER_IF
+        )
+    )
+    return errors
+
+
 def _validate_ci_docs_job(relative: str, docs: str) -> list[str]:
     """Validate actionlint and go toolchain pins in the docs workflow job."""
     errors: list[str] = []
@@ -3706,6 +3742,7 @@ def _validate_ci_docs_job(relative: str, docs: str) -> list[str]:
             f"{relative}: docs job must set exactly one go-version, "
             f"'${{{{ env.GO_VERSION }}}}' (found {go_versions})"
         )
+    errors.extend(_validate_docs_pr_render_step(relative, docs))
     return errors
 
 
@@ -5875,6 +5912,105 @@ def _docs_pin_shape_cases(source: str) -> dict:
     }
 
 
+def _docs_pr_render_structural_cases(
+    source: str, step_block: str
+) -> dict[str, tuple[str, str]]:
+    """Structural and condition mutations of the PR render step."""
+    return {
+        "pr render step removed": (
+            source.replace(step_block, ""),
+            "docs job needs exactly one step named",
+        ),
+        "pr render step renamed": (
+            source.replace(
+                "name: Changelog render owed at most 20 h on pull requests",
+                "name: Changelog render check",
+            ),
+            "docs job needs exactly one step named",
+        ),
+        "pr render step duplicated": (
+            source.replace(step_block, step_block + step_block),
+            "docs job needs exactly one step named",
+        ),
+        "pr render step if flipped": (
+            source.replace(
+                step_block,
+                step_block.replace(
+                    "if: github.event_name == 'pull_request'",
+                    "if: github.event_name != 'pull_request'",
+                ),
+            ),
+            "must not set if other than",
+        ),
+        "pr render step if dropped": (
+            source.replace(
+                step_block,
+                step_block.replace(
+                    "        if: github.event_name == 'pull_request'\n", ""
+                ),
+            ),
+            "must set",
+        ),
+        "pr render step continue-on-error": (
+            source.replace(step_block, step_block + "        continue-on-error: true\n"),
+            "must not set continue-on-error",
+        ),
+    }
+
+
+def _docs_pr_render_command_cases(
+    source: str, step_block: str
+) -> dict[str, tuple[str, str]]:
+    """Command-line mutations of the PR render step."""
+    return {
+        "pr render step pull-request flag dropped": (
+            source.replace(step_block, step_block.replace(" --pull-request", "")),
+            "must run",
+        ),
+        "pr render step max-age-hours 24": (
+            source.replace(
+                step_block, step_block.replace("--max-age-hours 20", "--max-age-hours 24")
+            ),
+            "must run",
+        ),
+        "pr render step or-true appended": (
+            source.replace(
+                step_block,
+                step_block.replace("--max-age-hours 20", "--max-age-hours 20 || true"),
+            ),
+            "must run",
+        ),
+        "pr render step command moved to echo": (
+            source.replace(
+                step_block, step_block.replace("run: python3 -I", "run: echo python3 -I")
+            ),
+            "must run",
+        ),
+        "pr render step command replaced by comment and true": (
+            source.replace(
+                step_block,
+                step_block.replace(
+                    "run: python3 -I scripts/release/check-changelog-staleness.py --pull-request --max-age-hours 20",
+                    "run: |\n          # python3 -I scripts/release/check-changelog-staleness.py --pull-request --max-age-hours 20\n          true",
+                ),
+            ),
+            "must run",
+        ),
+    }
+
+
+def _docs_pr_render_cases(source: str) -> dict[str, tuple[str, str]]:
+    """Planted mutations of the docs job PR changelog render step (ADR-0251)."""
+    step_block = (
+        "      - name: Changelog render owed at most 20 h on pull requests\n"
+        "        if: github.event_name == 'pull_request'\n"
+        "        run: python3 -I scripts/release/check-changelog-staleness.py --pull-request --max-age-hours 20\n"
+    )
+    cases = _docs_pr_render_structural_cases(source, step_block)
+    cases.update(_docs_pr_render_command_cases(source, step_block))
+    return cases
+
+
 def lavapipe_workflow_cases(source: str) -> dict[str, tuple[str, str]]:
     """Mutations of the #228 lavapipe lane that the validator must reject."""
     lane = workflow_job_blocks(source).get(LAVAPIPE_JOB, "")
@@ -6394,7 +6530,11 @@ def workflow_validator_regressions() -> list[str]:
     ci_path = WORKFLOWS[0]
     source = ci_path.read_text(encoding="utf-8")
     cases = _ci_toolchain_cases(source)
-    cases |= _docs_pin_shape_cases(source) | _load_step_cases(source)
+    cases |= (
+        _docs_pin_shape_cases(source)
+        | _load_step_cases(source)
+        | _docs_pr_render_cases(source)
+    )
     relative = ci_path.relative_to(ROOT).as_posix()
     failures.extend(windows_pin_bump_regression(source, relative))
     failures.extend(sei_fit_planted_rule_regression(source, relative))

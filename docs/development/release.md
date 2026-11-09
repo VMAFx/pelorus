@@ -69,7 +69,11 @@ exist.
    line breaks, rewrites relative documentation links to absolute blob URLs
    at the release tag, and places `### Maintenance` last), and run
    `bash scripts/release/concat-changelog-fragments.sh --write`
-   ([ADR-0245](../adr/0245-changelog-render-at-landing.md)). The section
+   ([ADR-0245](../adr/0245-changelog-render-at-landing.md)). A render pull request
+   carries `CHANGELOG.md` only (plus fragment deletions at a release cut); pull
+   requests fail when the base owes a render for more than 20 h judged on the
+   merge commit's first parent, directing authors to land the render PR first
+   ([ADR-0251](../adr/0251-changelog-render-owed-on-pull-requests.md)). The section
    holds the changes since the previous candidate, or since the previous
    release for `rc.1`.
 2. Run `bash scripts/test-abi-upgrade.sh --old-ref <previous tag> --build-dir build-upgrade`
