@@ -1129,13 +1129,16 @@ gh attestation verify oci://ghcr.io/vmafx/pelorus-dev@sha256:<digest> --repo VMA
 ```
 
 A failed gate, digest comparison or attestation stops `publish` before any tag
-moves. Its per-tag check in `Promote tags` runs after the tags are written, so
-when that check fails a tag may name another digest. The error names the gated
-digest; confirm it with the `gh attestation verify` line above, point the tag
-back at it with the job's own command, and repeat the check:
+moves. Its per-tag check in `Promote tags` runs after both tags are written and
+stops at the first tag that fails, the commit SHA tag before `latest`, so either
+tag may name another digest and the second may be unchecked. The error names
+the gated digest; confirm it with the `gh attestation verify` line above, point
+both tags back at it with the job's own command, and check that each tag now
+prints that digest:
 
 ```bash
-docker buildx imagetools create --prefer-index=false --tag ghcr.io/vmafx/pelorus-dev:latest ghcr.io/vmafx/pelorus-dev@sha256:<digest>
+docker buildx imagetools create --prefer-index=false --tag ghcr.io/vmafx/pelorus-dev:<commit-sha> --tag ghcr.io/vmafx/pelorus-dev:latest ghcr.io/vmafx/pelorus-dev@sha256:<digest>
+docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ghcr.io/vmafx/pelorus-dev:<commit-sha>
 docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ghcr.io/vmafx/pelorus-dev:latest
 ```
 
