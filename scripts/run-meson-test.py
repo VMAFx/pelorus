@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import re
 import shutil
@@ -13,6 +14,15 @@ import subprocess  # nosec B404 - fixed meson argv, no shell
 import sys
 from pathlib import Path
 from collections.abc import MutableMapping, Sequence
+
+# python3 -I drops the script directory from sys.path: load the sibling by path.
+_PROCESS_TREE_SPEC = importlib.util.spec_from_file_location(
+    "pelorus_process_tree", Path(__file__).with_name("process_tree.py")
+)
+if _PROCESS_TREE_SPEC is None or _PROCESS_TREE_SPEC.loader is None:
+    raise ImportError("scripts/process_tree.py not found next to run-meson-test.py")
+process_tree = importlib.util.module_from_spec(_PROCESS_TREE_SPEC)
+_PROCESS_TREE_SPEC.loader.exec_module(process_tree)
 
 CREDENTIAL_ENV_VARS = (
     "GITHUB_PERSONAL_ACCESS_TOKEN",
@@ -46,6 +56,8 @@ CREDENTIAL_NAME_PATTERN = re.compile(
 MESON_RUN_TIMEOUT_S = 1800
 # Exit status for a run stopped at its deadline, as timeout(1) reports it.
 STOPPED_EXIT_STATUS = 124
+# Wait for the stopped process tree's root to be reaped (HISS-02).
+STOP_WAIT_TIMEOUT_S = 30
 
 
 def is_credential_name(name: str) -> bool:
@@ -104,22 +116,35 @@ def _run_and_wait(command: list[str], deadline_s: float = MESON_RUN_TIMEOUT_S) -
     ends this process at once with status 0, so every caller saw success while
     ``meson test`` was still running. The child inherits this process's
     already-sanitized environment block; no mapping is passed or copied. A
-    child still running at ``deadline_s`` is killed and the run fails with
-    status 124.
+    child still running at ``deadline_s`` is stopped together with every test
+    process it started (``process_tree.stop_tree``), and the run fails with
+    status 124. An interrupt stops the tree the same way before it propagates.
     """
     executable = _resolve_executable(command[0])
     if executable is None:
         print("run-meson-test.py: Meson executable not found", file=sys.stderr)
         return 127
+    # POSIX: lead a process group so the stop reaches every descendant. Windows
+    # needs no flag (taskkill /T), and CREATE_NEW_PROCESS_GROUP would turn off
+    # Ctrl+C in the child.
+    proc = subprocess.Popen([executable, *command[1:]], start_new_session=(os.name == "posix"))  # nosec B603 - fixed meson argv, no shell  # noqa: S603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - resolved meson path plus caller test arguments, no shell, deadline below
     try:
-        completed = subprocess.run([executable, *command[1:]], check=False, timeout=deadline_s)  # nosec B603 - fixed meson argv, no shell  # noqa: S603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - resolved meson path plus caller test arguments, no shell
+        return proc.wait(timeout=deadline_s)
     except subprocess.TimeoutExpired:
         print(
             f"run-meson-test.py: meson test still running after {deadline_s:g} s; stopped",
             file=sys.stderr,
         )
         return STOPPED_EXIT_STATUS
-    return completed.returncode
+    finally:
+        # Deadline, interrupt or any other exit while Meson still runs.
+        if proc.poll() is None:
+            process_tree.stop_tree(proc)
+            try:
+                proc.wait(timeout=STOP_WAIT_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                # Root ignores SIGKILL/TerminateProcess: report the stop, do not hang.
+                pass
 
 
 def main(argv: Sequence[str] | None = None) -> int:

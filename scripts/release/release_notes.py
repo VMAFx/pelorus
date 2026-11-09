@@ -490,6 +490,10 @@ def _check_shipped_changelog() -> list[str]:
 
 
 def self_test() -> list[str]:
+    """Check extraction against fixtures, refusals, the ``--unwrap`` CLI and the changelog.
+
+    Returns failure lines; an empty list is a pass.
+    """
     failures: list[str] = []
     wrapped = (FIXTURES_DIR / "wrapped-changelog.md").read_text(encoding="utf-8")
     expected = (FIXTURES_DIR / "expected-release-notes.txt").read_text(encoding="utf-8")

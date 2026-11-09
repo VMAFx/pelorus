@@ -133,7 +133,9 @@ def extract_pe_imports_from_text(text: str) -> list[str]:
 
 
 def make_subprocess_objdump_runner(objdump_bin: str) -> Callable[[Path], list[str]]:
+    """Return a runner that lists a PE file's imports through ``objdump -p``."""
     def runner(path: Path) -> list[str]:
+        """Return the imports ``objdump -p`` reports for ``path``; raise RuntimeError on failure."""
         res = subprocess.run(
             [objdump_bin, "-p", str(path)],
             stdout=subprocess.PIPE,

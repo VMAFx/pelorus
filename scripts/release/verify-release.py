@@ -105,6 +105,7 @@ def check_version(tag: str, meson_version: str, header: str) -> list[str]:
 
 
 def git_tags() -> list[str]:
+    """Return the local tag names (``git tag --list``)."""
     done = subprocess.run(
         ["git", "tag", "--list"],
         check=True,

@@ -10,7 +10,7 @@ Harness table = engine rendering; `not enforced` there = no engine-generated che
 | Rule | Decided here by |
 | --- | --- |
 | HISS-01 | audit `HISS invariant scan` (C scanner) + `c-reviewer`; baseline ratchet. One-level `goto fail` cleanup allowed; other new `goto` rejected |
-| HISS-02 | audit `HISS invariant scan` (unbounded C loops) + `c-reviewer`; baseline ratchet. I/O deadlines not measured for C |
+| HISS-02 | audit `HISS invariant scan`: unbounded C loops; Python `subprocess.run`/`call`/`check_call`/`check_output`, `urllib.request.urlopen` and `requests` verbs without `timeout=` (`Popen` + `wait`, `requests.Session`, `httpx`, `aiohttp`, sockets not decided) + `c-reviewer`; baseline ratchet. `scripts/check-harness-test-timeouts.py`: named `*TIMEOUT*` constants fit their Meson test timeout. I/O deadlines not measured for C |
 | HISS-03 | review only (`c-reviewer`) + tests; no scanner |
 | HISS-04 | LOC <= 60: audit scan + baseline ratchet. Cyclomatic, cognitive, statements: `[REPORT]` only (Go only) + `c-reviewer`; clang-tidy size check advisory |
 | HISS-05 | review only (`c-reviewer`); no analyzer |

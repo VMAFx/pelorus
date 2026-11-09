@@ -40,37 +40,6 @@ HANG_C = "int main(void) { volatile int spin = 1; while (spin) { } return 0; }\n
 STALL_CC = (sys.executable, "-I", "-c", "import time; time.sleep(30)")
 
 
-def _is_pid_gone(pid: int) -> bool:
-    """Return True if pid is gone or a zombie on Linux (HISS-02, HISS-08)."""
-    if sys.platform.startswith("linux"):
-        try:
-            stat_text = pathlib.Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
-            parts = stat_text.rpartition(")")[2].split()
-            if parts and parts[0] == "Z":
-                return True
-        except (OSError, UnicodeDecodeError):
-            # /proc entry vanished or inaccessible: fall through to os.kill(pid, 0) probe.
-            pass
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return True
-    return False
-
-
-def _poll_pid_gone(pid: int, timeout: float = 5.0) -> bool:
-    """Return True if pid exits within timeout (HISS-02, HISS-08)."""
-    deadline = time.monotonic() + timeout
-    limit = int(timeout / 0.05) + 1
-    for _ in range(limit):
-        if _is_pid_gone(pid):
-            return True
-        if time.monotonic() >= deadline:
-            break
-        time.sleep(0.05)
-    return False
-
-
 def _write_stub(path: pathlib.Path) -> None:
     """Write stand-in compiler that spawns long-lived grandchild (HISS-02)."""
     path.write_text(
@@ -125,7 +94,7 @@ def test_stalled_compiler_child() -> bool:
                 if grandchild_pid is None:
                     print("FAIL stalled child: setup, no grandchild pid")
                     return False
-                if not _poll_pid_gone(grandchild_pid):
+                if not harness.process_tree.wait_pid_gone(grandchild_pid):
                     print(f"FAIL stalled child: grandchild {grandchild_pid} still alive after deadline")
                     return False
             return True
