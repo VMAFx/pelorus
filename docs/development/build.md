@@ -519,9 +519,16 @@ Meson runner. On Windows, where the wrapper waits for Meson as a child process, 
 going after `MESON_RUN_TIMEOUT_S` (30 minutes) is stopped and exits with status 124; Meson
 times out each hung test itself. The stop, and an interrupt, end Meson together with every
 test process it started (`scripts/process_tree.py`: `taskkill /T /F` on Windows, `SIGKILL` to
-the process group on POSIX), so no test keeps running after the wrapper returns. The self-test
-checks that a child's exit status passes through, that a child outliving a short deadline is
-stopped, and, on POSIX, that a test process started by that child is stopped with it.
+the process group on POSIX), so no test keeps running after the wrapper returns. The stop runs
+even when Meson itself exited just after the deadline: an unreaped child keeps its pid and
+process group, so its test processes are still reached on POSIX. `taskkill /T` walks the tree
+from a live root only; when it fails, cannot start or hangs, the wrapper names the cause on
+stderr and warns that test processes may still run, instead of falling back silently.
+The fast-suite test `run-meson-deadline` (`scripts/test-run-meson-deadline.py`) runs on every
+platform, Windows included. It checks that a child's exit status passes through, that a child
+outliving a short deadline is stopped together with a test process it started, that the tree
+is stopped when Meson exits after the deadline, that a failed or missing `taskkill` is named,
+and that a reaped child is never signalled.
 
 `make test` also runs `scripts/check-tester-kit-install.py --run-kit <build>`. It runs
 `meson introspect --tests` on the build directory and hands the result to

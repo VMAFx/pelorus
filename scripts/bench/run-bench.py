@@ -18,8 +18,14 @@
 import argparse, json, math, os, subprocess, sys
 from pathlib import Path
 
-def run(cmd, **kw):
-    return subprocess.run(cmd, check=True, capture_output=True, text=True, **kw)
+def run(cmd, *, timeout):
+    """Run one FFmpeg step; raise CalledProcessError or TimeoutExpired.
+
+    The deadline is a required keyword: the HISS-02 scan passes a ** unpack as
+    undecidable, so a deadline left to one is never checked.
+    """
+    return subprocess.run(cmd, check=True, capture_output=True, text=True,
+                          timeout=timeout)
 
 def synth_source(args):
     """Generate a clean, banding-prone OR noisy raw-YUV source."""
@@ -37,7 +43,7 @@ def synth_source(args):
     run([args.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
          "-f", "lavfi", "-i", f"{vf.split(',')[0]}",
          "-vf", ",".join(vf.split(",")[1:]) or "null",
-         "-frames:v", str(args.frames), "-f", "rawvideo", src])
+         "-frames:v", str(args.frames), "-f", "rawvideo", src], timeout=args.ffmpeg_timeout)
     return src
 
 def add_grain(args, src):
@@ -65,7 +71,7 @@ def add_grain(args, src):
          "-f", "rawvideo", "-pix_fmt", args.pixfmt,
          "-s", f"{args.width}x{args.height}", "-r", str(args.fps), "-i", src,
          "-vf", f"noise=alls={args.grain}:allf=t+u:all_seed={args.grain_seed},format={args.pixfmt}",
-         "-frames:v", str(args.frames), "-f", "rawvideo", out])
+         "-frames:v", str(args.frames), "-f", "rawvideo", out], timeout=args.ffmpeg_timeout)
     return out
 
 
@@ -81,7 +87,7 @@ def prefilter_once(args, src):
          "-init_hw_device", f"vulkan={args.device}",
          "-vf", f"format={args.pixfmt},hwupload,{args.filter},"
                 f"hwdownload,format={args.pixfmt}",
-         "-f", "rawvideo", pf])
+         "-f", "rawvideo", pf], timeout=args.ffmpeg_timeout)
     return pf
 
 def encode(args, src, cq, variant):
@@ -117,13 +123,13 @@ def encode(args, src, cq, variant):
     else:
         cmd += ["-c:v", args.encoder, "-preset", args.preset, "-cq", str(cq),
                 "-b:v", "0", out]
-    run(cmd)
+    run(cmd, timeout=args.ffmpeg_timeout)
     return out
 
 def decode(args, mkv):
     dec = mkv.replace(".mkv", ".dec.yuv")
     run([args.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-         "-i", mkv, "-f", "rawvideo", "-pix_fmt", args.pixfmt, dec])
+         "-i", mkv, "-f", "rawvideo", "-pix_fmt", args.pixfmt, dec], timeout=args.ffmpeg_timeout)
     return dec
 
 def score(args, ref, dec):
@@ -181,6 +187,10 @@ def parse_args(argv=None):
                          "filter for removing the impairment (the deband 'wash' bug).")
     ap.add_argument("--vmaf-timeout", dest="vmaf_timeout", type=int, default=300,
                     help="seconds before SIGKILLing vmaf (it hangs after writing its JSON)")
+    ap.add_argument("--ffmpeg-timeout", dest="ffmpeg_timeout", type=int, default=1800,
+                    help="seconds one ffmpeg step (synthesis, grain, pre-filter, encode "
+                         "or decode) may run before it is killed and the run fails "
+                         "(default 1800)")
     ap.add_argument("--prefilter-once", dest="prefilter_once", action="store_true",
                     help="run the Vulkan filter once -> YUV, then a pure-encoder ladder")
     ap.add_argument("--pelorus-src-file", dest="pelorus_src_file", default=None,

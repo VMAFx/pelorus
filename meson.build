@@ -541,6 +541,18 @@ if build_machine.system() != 'windows'
        suite: 'fast')
 endif
 
+# ADR-0246: run-meson-test.py waits for Meson as a child on Windows. Its
+# deadline stops Meson with every test process it started, and a failed tree
+# stop is named on stderr. Live processes on every platform, the Windows legs
+# included (taskkill /T, SYNCHRONIZE-handle probe). Cases wait at most
+# 2 s + 0.5 s + 0.1 s deadlines, 30 s per stop and 10 s per pid file.
+test('run-meson-deadline',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'test-run-meson-deadline.py'],
+     workdir: meson.project_source_root(),
+     timeout: 180,
+     suite: 'fast')
+
 # BUG-007/008/013/025: shader plane loops must `continue` (yuva420p alpha), bayer8 must be
 # the canonical Bayer matrix, and borderfix clamp bounds must be order-safe.
 test('shader-plane-bounds',
@@ -1140,6 +1152,15 @@ if build_machine.system() != 'windows'
   test('semgrep-timeout-output',
        python_prog,
        args: ['-I', meson.project_source_root() / 'scripts' / 'test-semgrep-timeout-output.py'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
+  # The praetor HISS-02 scan passes a subprocess, urlopen or requests call
+  # with a ** unpack as undecidable: pelorus-py-io-unpack-deadline requires
+  # timeout= on such a call, or on the dict first (pull request 579).
+  test('semgrep-io-unpack-deadline',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'test-semgrep-io-unpack-deadline.py'],
        workdir: meson.project_source_root(),
        timeout: 600,
        suite: 'fast')

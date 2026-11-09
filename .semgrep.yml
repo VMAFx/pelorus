@@ -299,6 +299,49 @@ rules:
           regex: ^(stdout|stderr|output)$
       - pattern-not-inside: _partial_text($E.$ATTR)
 
+  - id: pelorus-py-io-unpack-deadline
+    # The praetor HISS-02 Python scan (engine 4e6c6d9cbf9c,
+    # docs/standards/hiss-rule-matching.md) passes a subprocess, urlopen or
+    # requests call with a top-level ** unpack as undecidable. The bench
+    # runner ran every FFmpeg step through run(cmd, **kw) with no deadline
+    # while the audit stayed clean (pull request 579). This rule closes that
+    # gap: an unpacked call must name timeout=, or the dict must get it first.
+    # Not covered: kw.setdefault("timeout", None), which keeps no deadline.
+    paths:
+      include:
+        - "*.py"
+        - "**/*.py"
+    message: >
+      This call passes keyword arguments through a ** unpack and names no
+      timeout=. The praetor HISS-02 scan treats a top-level ** unpack as
+      undecidable and passes it, so a missing deadline stays hidden. Pass
+      timeout= explicitly, as run() in scripts/bench/run-bench.py does, or set
+      it on the dict first with $KW.setdefault("timeout", ...) or
+      $KW["timeout"] = ....
+    languages: [python]
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern: subprocess.$F(..., **$KW, ...)
+              - metavariable-regex:
+                  metavariable: $F
+                  regex: ^(run|call|check_call|check_output)$
+          - patterns:
+              - pattern: requests.$F(..., **$KW, ...)
+              - metavariable-regex:
+                  metavariable: $F
+                  regex: ^(get|post|put|patch|delete|head|options|request)$
+          - pattern: urllib.request.urlopen(..., **$KW, ...)
+          - pattern: urlopen(..., **$KW, ...)
+      - pattern-not: $CALL(..., timeout=$T, ...)
+      - pattern-not-inside: |
+          $KW.setdefault("timeout", ...)
+          ...
+      - pattern-not-inside: |
+          $KW["timeout"] = $V
+          ...
+
   - id: pelorus-meson-options-file
     # meson.build declares meson_version '>=0.57.0'. Meson reads the newer
     # options file name only from 1.1 on, and an older Meson then refuses

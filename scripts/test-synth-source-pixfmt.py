@@ -40,17 +40,6 @@ def load_bench_module(script_path: pathlib.Path) -> Any:
     return mod
 
 
-def install_timeout_guard(mod: Any) -> None:
-    """Ensure every subprocess call made by mod.run has a timeout."""
-    orig_run = mod.run
-
-    def safe_run(cmd: list[str], **kw: Any) -> Any:
-        kw.setdefault("timeout", RUN_TIMEOUT_S)
-        return orig_run(cmd, **kw)
-
-    mod.run = safe_run
-
-
 def make_defect_run(orig_run: Any) -> Any:
     """Wrap run() to strip format=<pixfmt> filter from ffmpeg -vf arguments."""
 
@@ -63,7 +52,6 @@ def make_defect_run(orig_run: Any) -> Any:
                 p for p in vf_val.split(",") if not p.startswith("format=")
             ]
             new_cmd[idx + 1] = ",".join(parts) or "null"
-        kw.setdefault("timeout", RUN_TIMEOUT_S)
         return orig_run(new_cmd, **kw)
 
     return defect_run
@@ -89,6 +77,7 @@ def verify_case(
         frames=frames,
         pixfmt=pixfmt,
         ffmpeg=ffmpeg_path,
+        ffmpeg_timeout=RUN_TIMEOUT_S,
     )
     src_path = mod.synth_source(args)
     actual_size = os.path.getsize(src_path)
@@ -182,7 +171,6 @@ def main(argv: list[str] | None = None) -> int:
         return 77
 
     mod = load_bench_module(args.script)
-    install_timeout_guard(mod)
 
     if args.self_test:
         return run_self_test(mod, ffmpeg_path)

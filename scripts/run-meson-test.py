@@ -128,23 +128,42 @@ def _run_and_wait(command: list[str], deadline_s: float = MESON_RUN_TIMEOUT_S) -
     # needs no flag (taskkill /T), and CREATE_NEW_PROCESS_GROUP would turn off
     # Ctrl+C in the child.
     proc = subprocess.Popen([executable, *command[1:]], start_new_session=(os.name == "posix"))  # nosec B603 - fixed meson argv, no shell  # noqa: S603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - resolved meson path plus caller test arguments, no shell, deadline below
+    return _wait_or_stop(proc, deadline_s)
+
+
+def _wait_or_stop(proc: subprocess.Popen, deadline_s: float) -> int:
+    """Return ``proc``'s exit status, or stop its tree and return 124 at ``deadline_s``.
+
+    A wait that times out reaps nothing, so Meson's pid and process group id stay
+    reserved: the tree is stopped even when Meson exited after the wait gave up,
+    because the tests it started may still run. An interrupt stops the tree the
+    same way before it propagates.
+    """
     try:
         return proc.wait(timeout=deadline_s)
     except subprocess.TimeoutExpired:
+        _stop_and_reap(proc)
         print(
             f"run-meson-test.py: meson test still running after {deadline_s:g} s; stopped",
             file=sys.stderr,
         )
         return STOPPED_EXIT_STATUS
-    finally:
-        # Deadline, interrupt or any other exit while Meson still runs.
-        if proc.poll() is None:
-            process_tree.stop_tree(proc)
-            try:
-                proc.wait(timeout=STOP_WAIT_TIMEOUT_S)
-            except subprocess.TimeoutExpired:
-                # Root ignores SIGKILL/TerminateProcess: report the stop, do not hang.
-                pass
+    except BaseException:
+        _stop_and_reap(proc)
+        raise
+
+
+def _stop_and_reap(proc: subprocess.Popen) -> None:
+    """Stop ``proc`` with every process it started, then reap ``proc`` (HISS-02)."""
+    process_tree.stop_tree(proc)
+    try:
+        proc.wait(timeout=STOP_WAIT_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        print(
+            f"run-meson-test.py: meson pid {proc.pid} still running "
+            f"{STOP_WAIT_TIMEOUT_S} s after the stop; not waiting longer",
+            file=sys.stderr,
+        )
 
 
 def main(argv: Sequence[str] | None = None) -> int:

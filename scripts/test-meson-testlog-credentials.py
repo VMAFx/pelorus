@@ -13,11 +13,8 @@ Tests:
 3. End-to-end with stub Meson: run-meson-test scrubs planted credential
    variables before exec/child launch so the child sees zero secret matches,
    whereas direct invocation sees the planted variable.
-4. Child deadline (HISS-02): the Windows child path passes a child's exit
-   status through and stops a child still running at its deadline with 124,
-   together with the test process that child started (POSIX check; Windows
-   has no safe pid probe). Stopping a tree whose root already exited is a
-   no-op.
+The wrapper's Windows child deadline and process-tree stop have their own
+test, scripts/test-run-meson-deadline.py, which also runs on Windows.
 """
 
 from __future__ import annotations
@@ -29,7 +26,6 @@ import io
 import json
 import os
 from pathlib import Path
-import signal
 import subprocess  # nosec B404 - fixed test and stub argv, no shell, explicit deadline
 import sys
 import tempfile
@@ -43,9 +39,6 @@ CHECK_CREDENTIALS_SCRIPT = ROOT / "scripts" / "check-testlog-credentials.py"
 FAKE_GITHUB_TOKEN = "ghp_" + "A" * 36
 FAKE_FINE_GRAINED_TOKEN = "github_pat_" + "B" * 30
 FAKE_GATEWAY_KEY = "sk-" + "C" * 24
-
-# Deadline for a short self-test child to exit on its own (HISS-02).
-CHILD_WAIT_TIMEOUT_S = 10
 
 
 def _load_module(name: str, path: Path) -> ModuleType:
@@ -396,83 +389,6 @@ def test_refuses_non_executable() -> list[str]:
     return failures
 
 
-def test_child_deadline(run_mod: ModuleType) -> list[str]:
-    """The Windows child path passes a child's status through and stops a hung child."""
-    failures: list[str] = []
-    quick = [sys.executable, "-I", "-c", "raise SystemExit(3)"]
-    if run_mod._run_and_wait(quick, deadline_s=30) != 3:
-        _fail(failures, "child deadline: a quick child's exit status 3 was not passed through")
-    hung = [sys.executable, "-I", "-c", "import time; time.sleep(30)"]
-    stderr = io.StringIO()
-    with contextlib.redirect_stderr(stderr):
-        status = run_mod._run_and_wait(hung, deadline_s=0.5)
-    if status != run_mod.STOPPED_EXIT_STATUS or "still running after 0.5 s" not in stderr.getvalue():
-        _fail(
-            failures,
-            f"child deadline: hung child gave status {status}, stderr {stderr.getvalue()!r}",
-        )
-    if not failures:
-        print("PASS: wrapper stops a child at its deadline")
-    return failures
-
-
-# A stand-in for Meson that starts one long-lived test process, records its
-# pid, then hangs: killing only the direct child would leave the test running.
-_TREE_CHILD = (
-    "import os, subprocess, sys, time\n"
-    "test = subprocess.Popen([sys.executable, '-I', '-c', 'import time; time.sleep(60)'])\n"
-    "with open(sys.argv[1] + '.tmp', 'w', encoding='utf-8') as f:\n"
-    "    f.write(str(test.pid))\n"
-    "os.replace(sys.argv[1] + '.tmp', sys.argv[1])\n"
-    "time.sleep(60)\n"
-)
-
-
-def test_child_tree_deadline(run_mod: ModuleType) -> list[str]:
-    """A test process the hung child started is stopped with it (HISS-02, HISS-08)."""
-    failures: list[str] = []
-    if os.name == "nt":
-        # pid_gone cannot probe on Windows (os.kill terminates); taskkill /T path untested here.
-        print("SKIP: child tree deadline needs a POSIX pid probe")
-        return failures
-    tree = run_mod.process_tree
-    with tempfile.TemporaryDirectory(prefix="pelorus-meson-tree-") as tmp:
-        pid_file = Path(tmp) / "test.pid"
-        child = [sys.executable, "-I", "-c", _TREE_CHILD, str(pid_file)]
-        with contextlib.redirect_stderr(io.StringIO()):
-            status = run_mod._run_and_wait(child, deadline_s=2.0)
-        text = pid_file.read_text(encoding="utf-8").strip() if pid_file.is_file() else ""
-        test_pid = int(text) if text.isdigit() else 0
-        if status != run_mod.STOPPED_EXIT_STATUS or test_pid <= 1:
-            _fail(failures, f"child tree: status {status}, test pid {test_pid}")
-        elif not tree.wait_pid_gone(test_pid):
-            try:
-                os.kill(test_pid, signal.SIGKILL)
-            except ProcessLookupError:
-                # Exited between the last probe and this cleanup kill.
-                pass
-            _fail(failures, f"child tree: test process {test_pid} still running after the deadline")
-    if not failures:
-        print("PASS: wrapper stops the test processes of a hung child")
-    return failures
-
-
-def test_stop_tree_after_exit(run_mod: ModuleType) -> list[str]:
-    """Stopping a tree whose root already exited and was reaped raises nothing."""
-    failures: list[str] = []
-    done = subprocess.Popen(  # nosec B603 - fixed interpreter argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed interpreter argv, no shell, deadline below
-        [sys.executable, "-I", "-c", "pass"], start_new_session=(os.name == "posix")
-    )
-    done.wait(timeout=CHILD_WAIT_TIMEOUT_S)
-    try:
-        run_mod.process_tree.stop_tree(done)
-    except OSError as exc:
-        _fail(failures, f"stop_tree on an exited process raised {exc!r}")
-    if not failures:
-        print("PASS: stopping an exited tree is a no-op")
-    return failures
-
-
 def run_tests() -> int:
     """Execute all credential sanitization and scanning test suites."""
     run_mod = _load_module("run_meson_test", RUN_MESON_TEST_SCRIPT)
@@ -484,9 +400,6 @@ def run_tests() -> int:
     failures.extend(test_planted_log_and_symlink(check_mod))
     failures.extend(test_end_to_end_stub_meson())
     failures.extend(test_refuses_non_executable())
-    failures.extend(test_child_deadline(run_mod))
-    failures.extend(test_child_tree_deadline(run_mod))
-    failures.extend(test_stop_tree_after_exit(run_mod))
 
     return 1 if failures else 0
 
