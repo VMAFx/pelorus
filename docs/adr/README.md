@@ -161,3 +161,4 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0246](0246-meson-testlog-credential-scrub.md) | Meson testlog credential scrub and scanner | Proposed |
 | [0247](0247-interop-abi-history-fixtures.md) | Persisted interop blobs from released ABI writers and readers | Accepted |
 | [0248](0248-tester-kit-expected-fail.md) | Kit-shipped fast tests carry their expectation in the binary | Accepted |
+| [0249](0249-tool-cli-transcript-tests.md) | CLI demonstrators carry golden transcripts run by an in-repo driver | Accepted |

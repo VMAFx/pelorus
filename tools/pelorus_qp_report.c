@@ -17,19 +17,26 @@
  *
  * With --requested-qp N, every frame is treated as having requested a flat QP
  * N and honored_fraction is computed (sign-agreement of requested vs honored
- * per-frame delta-QP). Exits non-zero on any libpelorus error.
+ * per-frame delta-QP). N must satisfy 0.0 <= N <= 69.0 (the x265 QP range);
+ * -0 is normalised to 0.00.
+ *
+ * The report covers up to 4096 frames; if the CSV exceeds 4096 frame rows, a
+ * warning is printed to stderr and the first 4096 frames are processed. Exits
+ * non-zero on argument errors or any libpelorus failure.
  */
 
 #include "pelorus/interop.h"
 #include "pelorus/pelorus.h"
 #include "pelorus_tool_common.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define MAX_FRAMES 4096u
 
+/* Print the error context and pel_result to stderr and return EXIT_FAILURE. */
 static int fail(const char *what, pel_result rc)
 {
     (void)fprintf(stderr, "pelorus_qp_report: %s: %s\n", what, pel_result_str(rc));
@@ -78,7 +85,8 @@ static pel_result roundtrip_and_print(const PelorusQpReportSection *qp, size_t c
     meta.bit_depth = 8;
     meta.grid_cols = 1; /* frame-granular: no per-cell map */
     meta.grid_rows = 1;
-    meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'S');
+    /* PEL_FOURCC (interop.h) shifts by the int constants 8, 16, 24; the result is uint32_t. */
+    meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'S'); // NOLINT(bugprone-signed-bitwise)
 
     sec.id = PEL_SEC_QPREPORT;
     sec.data = qp;
@@ -120,6 +128,66 @@ static float *requested_qp_buffer(double requested_qp, size_t count)
     return buf;
 }
 
+/* Parse and validate command-line arguments. Returns 0 on success, or -1 on error. */
+static int parse_and_validate_args(int argc, char **argv, const char **csv_path,
+                                   double *requested_qp)
+{
+    const PelorusOpt opts[] = {
+        {"--requested-qp", PELORUS_OPT_DOUBLE, requested_qp, 0, NULL, NULL},
+    };
+    const PelorusPositional pos = {"<x265.csv>", csv_path, 1};
+
+    if (pelorus_tool_parse_args("pelorus_qp_report", argc, argv, opts,
+                                sizeof(opts) / sizeof(opts[0]), &pos) != 0) {
+        (void)fprintf(stderr, "usage: %s <x265.csv> [--requested-qp N]\n", argv[0]);
+        return -1;
+    }
+
+    if (!isnan(*requested_qp)) {
+        *requested_qp += 0.0;
+        if (*requested_qp < 0.0 || *requested_qp > 69.0) {
+            (void)fprintf(stderr,
+                          "pelorus_qp_report: --requested-qp %g is outside 0..69 "
+                          "(the x265 QP range)\n",
+                          *requested_qp);
+            (void)fprintf(stderr, "usage: %s <x265.csv> [--requested-qp N]\n", argv[0]);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+/* Allocate and parse frames from CSV. Returns EXIT_SUCCESS or EXIT_FAILURE. */
+static int load_frames(const char *csv_path, PelorusX265Frame **out_frames, size_t *out_count)
+{
+    PelorusX265Frame *frames = malloc(MAX_FRAMES * sizeof(*frames));
+    pel_result rc;
+
+    if (frames == NULL) {
+        return fail("alloc frames", PEL_ERR_NOMEM);
+    }
+
+    rc = pel_x265_csv_parse(csv_path, frames, MAX_FRAMES, out_count);
+    if (rc == PEL_ERR_RANGE) {
+        /* Truncation is named on stderr (no silent fallback); the report continues,
+         * covering the first MAX_FRAMES parsed frames. */
+        (void)fprintf(stderr,
+                      "pelorus_qp_report: warning: %s has more than %u frame rows; "
+                      "the report covers the first %u\n",
+                      csv_path, MAX_FRAMES, MAX_FRAMES);
+    } else if (rc != PEL_OK) {
+        free(frames);
+        return fail("parse csv", rc);
+    }
+    if (*out_count == 0) {
+        free(frames);
+        (void)fprintf(stderr, "no frame rows parsed from %s\n", csv_path);
+        return EXIT_FAILURE;
+    }
+    *out_frames = frames;
+    return EXIT_SUCCESS;
+}
+
 /* Run pelorus_qp_report: parse the x265 CSV named in argv, fold it into a QP report, then round-trip and print the report blob.
  * Returns EXIT_SUCCESS on success or EXIT_FAILURE on error. */
 static int run(int argc, char **argv)
@@ -127,39 +195,20 @@ static int run(int argc, char **argv)
     const char *csv_path = NULL;
     const float *req_ptr = NULL;
     float *req_buf = NULL;
-    double requested_qp = -1.0;
-    PelorusX265Frame *frames;
+    double requested_qp = NAN;
+    PelorusX265Frame *frames = NULL;
     size_t count = 0;
     PelorusQpReportSection qp;
     pel_result rc;
-    const PelorusOpt opts[] = {
-        {"--requested-qp", PELORUS_OPT_DOUBLE, &requested_qp, 0, NULL, NULL},
-    };
-    const PelorusPositional pos = {"<x265.csv>", &csv_path, 1};
 
-    if (pelorus_tool_parse_args("pelorus_qp_report", argc, argv, opts,
-                                sizeof(opts) / sizeof(opts[0]), &pos) != 0) {
-        (void)fprintf(stderr, "usage: %s <x265.csv> [--requested-qp N]\n", argv[0]);
+    if (parse_and_validate_args(argc, argv, &csv_path, &requested_qp) != 0) {
+        return EXIT_FAILURE;
+    }
+    if (load_frames(csv_path, &frames, &count) != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
 
-    frames = malloc(MAX_FRAMES * sizeof(*frames));
-    if (frames == NULL) {
-        return fail("alloc frames", PEL_ERR_NOMEM);
-    }
-
-    rc = pel_x265_csv_parse(csv_path, frames, MAX_FRAMES, &count);
-    if (rc != PEL_OK && rc != PEL_ERR_RANGE) { /* RANGE = truncated, still usable */
-        free(frames);
-        return fail("parse csv", rc);
-    }
-    if (count == 0) {
-        free(frames);
-        (void)fprintf(stderr, "no frame rows parsed from %s\n", csv_path);
-        return EXIT_FAILURE;
-    }
-
-    if (requested_qp >= 0.0) {
+    if (!isnan(requested_qp)) {
         req_buf = requested_qp_buffer(requested_qp, count);
         if (req_buf == NULL) {
             free(frames);
@@ -184,6 +233,7 @@ static int run(int argc, char **argv)
     return EXIT_SUCCESS;
 }
 
+/* Run pelorus_qp_report with UTF-8 command-line arguments and return the exit code. */
 int main(int argc, char **argv)
 {
     return pelorus_tool_main(argc, argv, "pelorus_qp_report: cannot read the command line as UTF-8",

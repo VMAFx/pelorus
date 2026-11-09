@@ -49,13 +49,38 @@ pelorus_tool_test = executable(
 )
 test('tool-argv', pelorus_tool_test, suite: 'fast')
 
-# Fast-suite CLI argument validation per tool (#496).
-_telemetry_csv = meson.project_source_root() / 'libpelorus' / 'test' / 'fixtures' / 'telemetry' / 'x265-4.3-qp32.csv'
-test('tool-qp-report-no-args', pelorus_qp_report, args: [], should_fail: true, suite: 'fast')
-test('tool-qp-report-bad-qp', pelorus_qp_report, args: [_telemetry_csv, '--requested-qp', '1x'], should_fail: true, suite: 'fast')
-test('tool-qp-report-extra-pos', pelorus_qp_report, args: [_telemetry_csv, 'extra.csv'], should_fail: true, suite: 'fast')
-test('tool-qp-report-missing-val', pelorus_qp_report, args: [_telemetry_csv, '--requested-qp'], should_fail: true, suite: 'fast')
-test('tool-qp-report-ok', pelorus_qp_report, args: [_telemetry_csv, '--requested-qp', '32.0'], suite: 'fast')
+_transcript_driver = files('transcript.py')
+_telemetry_fixtures = meson.project_source_root() / 'libpelorus' / 'test' / 'fixtures' / 'telemetry'
+
+test(
+  'tool-qp-report-transcript',
+  python_prog,
+  args: [
+    '-I',
+    _transcript_driver,
+    '--exe', pelorus_qp_report,
+    '--tool', 'pelorus_qp_report',
+    '--fixtures', _telemetry_fixtures,
+    files('transcripts/pelorus_qp_report.t'),
+  ],
+  timeout: 60,
+  suite: 'fast',
+)
+
+test(
+  'tool-transcript-self-test',
+  python_prog,
+  args: [
+    '-I',
+    _transcript_driver,
+    '--exe', pelorus_qp_report,
+    '--tool', 'pelorus_qp_report',
+    '--fixtures', _telemetry_fixtures,
+    '--self-test',
+  ],
+  timeout: 60,
+  suite: 'fast',
+)
 
 test('tool-zones-no-args', pelorus_zones, args: [], should_fail: true, suite: 'fast')
 test('tool-zones-unknown-format', pelorus_zones, args: ['--format', 'invalid'], should_fail: true, suite: 'fast')

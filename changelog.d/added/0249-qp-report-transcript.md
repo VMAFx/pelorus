@@ -1,0 +1,2 @@
+- Add stdlib-only golden transcript runner `tools/transcript.py` and fast-suite test `tools/transcripts/pelorus_qp_report.t` pinning `tools/pelorus_qp_report` stdout, stderr, and exit codes across platforms ([ADR-0249](docs/adr/0249-tool-cli-transcript-tests.md), #469).
+- Add PSNR-enabled telemetry recording `libpelorus/test/fixtures/telemetry/x265-4.3-crf28-psnr.csv` backing multi-channel quality report tests ([ADR-0249](docs/adr/0249-tool-cli-transcript-tests.md), #469).
