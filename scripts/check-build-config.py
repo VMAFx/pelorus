@@ -7369,6 +7369,15 @@ DEV_IMAGE_STEP_USES = {
     "Push by digest": ("docker/build-push-action@", ("push-by-digest=true",)),
     "Attest build provenance (SLSA v1.0)": ("actions/attest-build-provenance@", ("subject-digest: ${{ steps.push.outputs.digest }}",)),
 }
+# A digest step's own env: names where its digests come from. With a swapped
+# source the check compares the pushed digest with itself, or tags a digest
+# that was never attested, and the command line still matches.
+DEV_IMAGE_PUSHED_DIGEST = "${{ steps.push.outputs.digest }}"
+DEV_IMAGE_LOADED_DIGEST = "${{ steps.load.outputs.digest }}"
+DEV_IMAGE_STEP_ENV = {
+    "Verify digest": {"DIGEST": DEV_IMAGE_PUSHED_DIGEST, "LOADED": DEV_IMAGE_LOADED_DIGEST},
+    "Promote tags": {"DIGEST": DEV_IMAGE_PUSHED_DIGEST},
+}
 # The pull request job may skip its gate on a draft only (HISS-18 draft step).
 DEV_IMAGE_BUILD_JOB = "build"
 DEV_IMAGE_BUILD_GATE_IF = "if: github.event.pull_request.draft != true"
@@ -7462,6 +7471,25 @@ def _step_commands(step: str) -> list[str]:
     return commands
 
 
+def _step_mapping(step: str, parent: str) -> dict[str, str]:
+    """The children of the step's own parent: key (key indent + 2), never a comment or a run: block line."""
+    lines = step.splitlines()
+    key_indent = len(lines[0]) - len(lines[0].lstrip(" ")) + 2 if lines else 0
+    mapping: dict[str, str] = {}
+    inside = False
+    for index, line in enumerate(lines):
+        indent = len(line) - len(line.lstrip(" "))
+        text = line.lstrip(" ")[2:] if index == 0 else line.strip()
+        if text.startswith("#") or not text:
+            continue
+        if index == 0 or indent <= key_indent:
+            inside = text.split(" #", 1)[0].strip() == f"{parent}:"
+        elif inside and indent == key_indent + 2 and ":" in text:
+            key, value = text.split(":", 1)
+            mapping[key.strip()] = value.split(" #", 1)[0].strip()
+    return mapping
+
+
 def _dev_image_step_rules(relative: str, job: str, name: str, step: str) -> list[str]:
     """ADR-0250: the named step runs its own command or action, never only its name."""
     where = f"{relative}: {job} job step {name!r}"
@@ -7471,6 +7499,8 @@ def _dev_image_step_rules(relative: str, job: str, name: str, step: str) -> list
         for start, end in DEV_IMAGE_STEP_COMMANDS.get(name, ())
         if not any(command.startswith(start) and command.endswith(end) for command in commands)
     ]
+    env = _step_mapping(step, "env")
+    errors += [f"{where} must set env {key}: {value}" for key, value in DEV_IMAGE_STEP_ENV.get(name, {}).items() if env.get(key) != value]
     if name in DEV_IMAGE_STEP_USES:
         action, keys = DEV_IMAGE_STEP_USES[name]
         uses = next((key[len("uses:") :].split(" #", 1)[0].strip() for key in _step_keys(step) if key.startswith("uses:")), "")
@@ -7718,6 +7748,42 @@ def _dev_image_step_cases(text: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def _dev_image_env_cases(text: str) -> dict[str, tuple[str, str]]:
+    """A digest step keeps its command but reads a digest from the wrong step."""
+    pushed, loaded = DEV_IMAGE_PUSHED_DIGEST, DEV_IMAGE_LOADED_DIGEST
+    verify = f"      - name: Verify digest\n        env:\n          DIGEST: {pushed}\n          LOADED: {loaded}\n"
+    promote = f"      - name: Promote tags\n        env:\n          DIGEST: {pushed}\n"
+    command = '--compare-digests "$LOADED" "$DIGEST"'
+    hidden = f"        run: |\n          cat > /dev/null <<'EOF'\n          LOADED: {loaded}\n          EOF\n          python3 -I scripts/check-devcontainer-image.py {command}\n"
+    where = f"{DEV_IMAGE_PUBLISH_JOB} job step"
+    return {
+        "digest check compares the push with itself": (
+            text.replace(verify, verify.replace(f"LOADED: {loaded}", f"LOADED: {pushed}"), 1),
+            f"{where} 'Verify digest' must set env LOADED: {loaded}",
+        ),
+        "digest check reads the load twice": (
+            text.replace(verify, verify.replace(f"DIGEST: {pushed}", f"DIGEST: {loaded}"), 1),
+            f"{where} 'Verify digest' must set env DIGEST: {pushed}",
+        ),
+        "promotion tags the loaded digest": (
+            text.replace(promote, promote.replace(pushed, loaded), 1),
+            f"{where} 'Promote tags' must set env DIGEST: {pushed}",
+        ),
+        "loaded source only in a comment": (
+            text.replace(verify, verify.replace(f"          LOADED: {loaded}\n", f"          # LOADED: {loaded}\n          LOADED: {pushed}\n"), 1),
+            f"{where} 'Verify digest' must set env LOADED: {loaded}",
+        ),
+        "loaded source only in a run heredoc": (
+            text.replace(
+                f"{verify}        run: python3 -I scripts/check-devcontainer-image.py {command}\n",
+                verify.replace(f"LOADED: {loaded}", f"LOADED: {pushed}") + hidden,
+                1,
+            ),
+            f"{where} 'Verify digest' must set env LOADED: {loaded}",
+        ),
+    }
+
+
 def _dev_image_offline_cases(text: str) -> dict[str, tuple[str, str]]:
     """verify-offline drops one of its steps, keeps only build, or gains a recipe."""
     offline = next((line for line in text.splitlines() if line.startswith("verify-offline:")), "")
@@ -7778,9 +7844,8 @@ def dev_image_regressions() -> list[str]:
     failures += _dev_image_regressions_for(
         "Containerfile", container, _dev_image_cases(container), lambda t: validate_dev_image_text("Containerfile", t, record)
     )
-    failures += _dev_image_regressions_for(
-        "workflow", workflow, _dev_image_workflow_cases(workflow) | _dev_image_step_cases(workflow), lambda t: validate_dev_image_workflow_text("workflow", t)
-    )
+    cases = _dev_image_workflow_cases(workflow) | _dev_image_step_cases(workflow) | _dev_image_env_cases(workflow)
+    failures += _dev_image_regressions_for("workflow", workflow, cases, lambda t: validate_dev_image_workflow_text("workflow", t))
     makefile = DEV_IMAGE_MAKEFILE.read_text(encoding="utf-8")
     if validate_dev_image_makefile_text("Makefile", makefile):
         failures.append("dev image regression: the current Makefile is rejected")
