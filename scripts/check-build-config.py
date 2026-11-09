@@ -3435,6 +3435,23 @@ def _step_uses(step: str) -> str | None:
     return None
 
 
+def _step_name(step: str) -> str | None:
+    """Return the step's own name: value, or None if it has none.
+
+    Only a key at the step's own indent counts (dash column + 2); a comment,
+    or a run: block line naming a step, does not.
+    """
+    lines = step.splitlines()
+    if not lines:
+        return None
+    key_indent = len(lines[0]) - len(lines[0].lstrip(" ")) + 2
+    keys = [lines[0].lstrip(" ")[2:]] + [line[key_indent:] for line in lines[1:] if len(line) - len(line.lstrip(" ")) == key_indent]
+    for key in keys:
+        if key.startswith("name:"):
+            return key[len("name:") :].split(" #", 1)[0].strip().strip("'\"")
+    return None
+
+
 TESTER_PUBLISH_ACTIONS_DIR = ".actions"
 ACTIONS_CHECKOUT_SPARSE = re.compile(
     r"^[ ]+sparse-checkout:[ ]*\.github/actions[ ]*(?:#.*)?$", re.MULTILINE
@@ -3796,6 +3813,20 @@ JOB_STEPS_LINE = re.compile(r"^    steps:", re.MULTILINE)
 JOB_STEP_START = re.compile(r"^      - ", re.MULTILINE)
 
 
+def _job_steps(job_text: str) -> list[tuple[int, str]]:
+    """Offset and text of each list item under the job's steps: key, in order.
+
+    A step runs up to the next list item at the step dash indent, so a
+    comment or a run: line naming another step stays inside its own step.
+    """
+    steps_match = JOB_STEPS_LINE.search(job_text)
+    if not steps_match:
+        return []
+    matches = list(JOB_STEP_START.finditer(job_text, steps_match.end()))
+    ends = [match.start() for match in matches[1:]] + [len(job_text)]
+    return [(match.start(), job_text[match.start() : end]) for match, end in zip(matches, ends)]
+
+
 def _first_step_using(
     job_text: str, accept: Callable[[str], bool]
 ) -> tuple[int, str]:
@@ -3806,20 +3837,14 @@ def _first_step_using(
     Only the step's uses: key counts; the same text inside a run: command or
     a comment does not.
     """
-    steps_match = JOB_STEPS_LINE.search(job_text)
-    if not steps_match:
-        return -1, ""
-    matches = list(JOB_STEP_START.finditer(job_text, steps_match.end()))
-    for i, match in enumerate(matches):
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(job_text)
-        step = job_text[match.start() : end]
+    for start, step in _job_steps(job_text):
         head = step.splitlines()[0].strip() if step else ""
         if head.startswith("- uses:"):
             target: str | None = head[len("- uses:") :].split("#", 1)[0].strip()
         else:
             target = _step_uses(step)
         if target is not None and accept(target.strip("'\"")):
-            return match.start(), step
+            return start, step
     return -1, ""
 
 
@@ -7317,6 +7342,47 @@ DEV_IMAGE_WORKFLOW = ROOT / ".github" / "workflows" / "devcontainer-image.yml"
 DEV_IMAGE_NOTICES_LABEL = "dev.vmafx.pelorus.notices"
 DEV_IMAGE_FROM = re.compile(r"^FROM ubuntu:26\.04@sha256:[0-9a-f]{64} AS assembled$", re.MULTILINE)
 DEV_IMAGE_GATE = ("licensing.py self-test", "licensing.py notices", "licensing.py check")
+# ADR-0250: no consumer tag moves before the gate, the digest check and the attestation.
+DEV_IMAGE_PUBLISH_JOB = "publish"
+# Matched against each step's own name: key, never against comment or run: text.
+DEV_IMAGE_PUBLISH_ORDER = (
+    "Run the offline gate in the image",
+    "Log in to ghcr.io",
+    "Push by digest",
+    "Verify digest",
+    "Attest build provenance (SLSA v1.0)",
+    "Promote tags",
+)
+DEV_IMAGE_GATE_STEP = DEV_IMAGE_PUBLISH_ORDER[0]
+# Each ordered step does its own work: a run: step needs a command line (not a
+# comment) with this start and end, a uses: step this action and these keys.
+DEV_IMAGE_STEP_COMMANDS = {
+    DEV_IMAGE_GATE_STEP: (("docker run --rm --network none ", " python3 -I /src/scripts/check-devcontainer-image.py --source /src"),),
+    "Verify digest": (('python3 -I scripts/check-devcontainer-image.py --compare-digests "$LOADED" "$DIGEST"', ""),),
+    "Promote tags": (
+        ("docker buildx imagetools create --prefer-index=false ", ""),
+        ('python3 -I scripts/check-devcontainer-image.py --compare-digests "$DIGEST" "$tagged"', ""),
+    ),
+}
+DEV_IMAGE_STEP_USES = {
+    "Log in to ghcr.io": ("docker/login-action@", ()),
+    "Push by digest": ("docker/build-push-action@", ("push-by-digest=true",)),
+    "Attest build provenance (SLSA v1.0)": ("actions/attest-build-provenance@", ("subject-digest: ${{ steps.push.outputs.digest }}",)),
+}
+# A digest step's own env: names where its digests come from. With a swapped
+# source the check compares the pushed digest with itself, or tags a digest
+# that was never attested, and the command line still matches.
+DEV_IMAGE_PUSHED_DIGEST = "${{ steps.push.outputs.digest }}"
+DEV_IMAGE_LOADED_DIGEST = "${{ steps.load.outputs.digest }}"
+DEV_IMAGE_STEP_ENV = {
+    "Verify digest": {"DIGEST": DEV_IMAGE_PUSHED_DIGEST, "LOADED": DEV_IMAGE_LOADED_DIGEST},
+    "Promote tags": {"DIGEST": DEV_IMAGE_PUSHED_DIGEST},
+}
+# The pull request job may skip its gate on a draft only (HISS-18 draft step).
+DEV_IMAGE_BUILD_JOB = "build"
+DEV_IMAGE_BUILD_GATE_IF = "if: github.event.pull_request.draft != true"
+DEV_IMAGE_MAKEFILE = ROOT / "Makefile"
+DEV_IMAGE_OFFLINE_STEPS = ("build", "test", "format-check", "tidy", "docs-check")
 DEV_IMAGE_WORKFLOW_TOKENS = (
     "PELORUS_COMMIT=${{ github.sha }}",
     "file: .devcontainer/base/Containerfile",
@@ -7362,10 +7428,152 @@ def validate_dev_image_text(relative: str, text: str, record: dict) -> list[str]
 
 def validate_dev_image_workflow_text(relative: str, text: str) -> list[str]:
     errors = [f"{relative}: missing {token}" for token in DEV_IMAGE_WORKFLOW_TOKENS if token not in text]
-    if text.count("PELORUS_COMMIT=${{ github.sha }}") != 2:
-        errors.append(f"{relative}: both docker build steps must pass PELORUS_COMMIT build-arg")
+    # ADR-0250: the publish job builds twice (load for the gate, then push from cache).
+    steps = text.count("docker/build-push-action@")
+    if steps == 0 or text.count("PELORUS_COMMIT=${{ github.sha }}") != steps:
+        errors.append(f"{relative}: every docker build step must pass PELORUS_COMMIT build-arg")
+    # ADR-0250: the offline gate in the image reads released ABI tags (issue #467).
+    checkouts = text.count("actions/checkout@")
+    if checkouts == 0 or text.count("fetch-depth: 0") != checkouts:
+        errors.append(f"{relative}: every checkout must fetch full history (fetch-depth: 0) for the offline gate")
     if "context:.devcontainer/base" in text.replace(" ", ""):
         errors.append(f"{relative}: the build context must be the repository root, which holds the licence gate")
+    jobs = workflow_job_blocks(text)
+    errors += validate_dev_image_build_job(relative, jobs.get(DEV_IMAGE_BUILD_JOB))
+    return errors + validate_dev_image_publish_job(relative, jobs.get(DEV_IMAGE_PUBLISH_JOB))
+
+
+def _step_keys(step: str) -> list[str]:
+    """The step's own keys (dash column + 2), never a nested or run: block line."""
+    lines = step.splitlines()
+    if not lines:
+        return []
+    key_indent = len(lines[0]) - len(lines[0].lstrip(" ")) + 2
+    return [lines[0].lstrip(" ")[2:]] + [line[key_indent:] for line in lines[1:] if len(line) - len(line.lstrip(" ")) == key_indent]
+
+
+def _step_commands(step: str) -> list[str]:
+    """The step's own run: command lines, stripped, without blank or comment lines."""
+    lines = step.splitlines()
+    key_indent = len(lines[0]) - len(lines[0].lstrip(" ")) + 2 if lines else 0
+    commands: list[str] = []
+    in_run = False
+    for index, line in enumerate(lines):
+        indent = len(line) - len(line.lstrip(" "))
+        if index == 0 or (line.strip() and indent <= key_indent):
+            key = line.lstrip(" ")[2:] if index == 0 else line.strip()
+            value = key[len("run:") :].strip() if key.startswith("run:") else ""
+            in_run = key.startswith("run:") and value[:1] in ("|", ">", "")
+            if key.startswith("run:") and not in_run and not value.startswith("#"):
+                commands.append(value)
+        elif in_run and line.strip() and not line.strip().startswith("#"):
+            commands.append(line.strip())
+    return commands
+
+
+def _step_mapping(step: str, parent: str) -> dict[str, str]:
+    """The children of the step's own parent: key (key indent + 2), never a comment or a run: block line."""
+    lines = step.splitlines()
+    key_indent = len(lines[0]) - len(lines[0].lstrip(" ")) + 2 if lines else 0
+    mapping: dict[str, str] = {}
+    inside = False
+    for index, line in enumerate(lines):
+        indent = len(line) - len(line.lstrip(" "))
+        text = line.lstrip(" ")[2:] if index == 0 else line.strip()
+        if text.startswith("#") or not text:
+            continue
+        if index == 0 or indent <= key_indent:
+            inside = text.split(" #", 1)[0].strip() == f"{parent}:"
+        elif inside and indent == key_indent + 2 and ":" in text:
+            key, value = text.split(":", 1)
+            mapping[key.strip()] = value.split(" #", 1)[0].strip()
+    return mapping
+
+
+def _dev_image_step_rules(relative: str, job: str, name: str, step: str) -> list[str]:
+    """ADR-0250: the named step runs its own command or action, never only its name."""
+    where = f"{relative}: {job} job step {name!r}"
+    commands = _step_commands(step)
+    errors = [
+        f"{where} has no command starting {start!r}" + (f" and ending {end!r}" if end else "")
+        for start, end in DEV_IMAGE_STEP_COMMANDS.get(name, ())
+        if not any(command.startswith(start) and command.endswith(end) for command in commands)
+    ]
+    env = _step_mapping(step, "env")
+    errors += [f"{where} must set env {key}: {value}" for key, value in DEV_IMAGE_STEP_ENV.get(name, {}).items() if env.get(key) != value]
+    if name in DEV_IMAGE_STEP_USES:
+        action, keys = DEV_IMAGE_STEP_USES[name]
+        uses = next((key[len("uses:") :].split(" #", 1)[0].strip() for key in _step_keys(step) if key.startswith("uses:")), "")
+        if not uses.startswith(action):
+            errors.append(f"{where} must use {action}")
+        own = [line.strip() for line in step.splitlines() if not line.strip().startswith("#")]
+        errors.extend(f"{where} must set {key}" for key in keys if not any(key in line for line in own))
+    return errors
+
+
+def _dev_image_step_conditions(relative: str, job: str, name: str, step: str, allowed_if: str = "") -> list[str]:
+    """A condition or continue-on-error on an ordered step lets the job go on without it."""
+    keys = [key.split(" #", 1)[0].strip() for key in _step_keys(step)]
+    errors = [f"{relative}: {job} job step {name!r} must not set continue-on-error" for key in keys if key.startswith("continue-on-error:")]
+    conditions = [key for key in keys if key.startswith("if:")]
+    if conditions not in ([], [allowed_if]):
+        errors.append(f"{relative}: {job} job step {name!r} must not set if" + (f" other than {allowed_if!r}" if allowed_if else ""))
+    return errors
+
+
+def validate_dev_image_build_job(relative: str, block: str | None) -> list[str]:
+    """ADR-0250: the pull request job runs the same gate, skipped on a draft only."""
+    if block is None:
+        return [f"{relative}: missing job {DEV_IMAGE_BUILD_JOB}"]
+    gates = [step for _, step in _job_steps(block) if _step_name(step) == DEV_IMAGE_GATE_STEP]
+    if len(gates) != 1:
+        return [f"{relative}: {DEV_IMAGE_BUILD_JOB} job needs exactly one step named {DEV_IMAGE_GATE_STEP!r}"]
+    return _dev_image_step_rules(relative, DEV_IMAGE_BUILD_JOB, DEV_IMAGE_GATE_STEP, gates[0]) + _dev_image_step_conditions(
+        relative, DEV_IMAGE_BUILD_JOB, DEV_IMAGE_GATE_STEP, gates[0], DEV_IMAGE_BUILD_GATE_IF
+    )
+
+
+def validate_dev_image_publish_job(relative: str, block: str | None) -> list[str]:
+    """ADR-0250: gate, log in, push untagged, verify, attest, then move the tags."""
+    if block is None:
+        return [f"{relative}: missing job {DEV_IMAGE_PUBLISH_JOB}"]
+    steps = [(_step_name(step), step) for _, step in _job_steps(block)]
+    names = [name for name, _ in steps]
+    missing = [name for name in DEV_IMAGE_PUBLISH_ORDER if name not in names]
+    errors = [f"{relative}: publish job has no step named {name!r}" for name in missing]
+    positions = [names.index(name) for name in DEV_IMAGE_PUBLISH_ORDER if name in names]
+    if not missing and positions != sorted(positions):
+        errors.append(f"{relative}: publish job must run the gate, log in, push by digest, verify, attest and promote tags in that order")
+    for name, step in steps:
+        if name in DEV_IMAGE_PUBLISH_ORDER:
+            errors += _dev_image_step_rules(relative, DEV_IMAGE_PUBLISH_JOB, name, step)
+            errors += _dev_image_step_conditions(relative, DEV_IMAGE_PUBLISH_JOB, name, step)
+    if "push: true" in block or "type=registry" in block or block.count("push-by-digest=true") != 1:
+        errors.append(f"{relative}: publish job must push once, by digest and without a tag, before promotion")
+    return errors
+
+
+def make_prerequisites(text: str, target: str) -> tuple[list[str], bool] | None:
+    """Return a Makefile rule's prerequisites and whether it has a recipe."""
+    lines = text.replace("\\\n", " ").splitlines()
+    for index, line in enumerate(lines):
+        match = re.fullmatch(rf"{re.escape(target)}:(?![:=])([^#]*)(?:#.*)?", line)
+        if match:
+            following = lines[index + 1] if index + 1 < len(lines) else ""
+            return match.group(1).split(), following.startswith("\t")
+    return None
+
+
+def validate_dev_image_makefile_text(relative: str, text: str) -> list[str]:
+    """ADR-0250: the image gate runs every native step except the networked lint."""
+    errors: list[str] = []
+    if make_prerequisites(text, "verify-native") != (["verify-offline", "python-lint"], False):
+        errors.append(f"{relative}: verify-native must be exactly verify-offline python-lint, with no recipe of its own")
+    offline = make_prerequisites(text, "verify-offline")
+    missing = [step for step in DEV_IMAGE_OFFLINE_STEPS if offline is None or step not in offline[0]]
+    if offline is None or missing or offline[1] or {"python-lint", "verify-native"} & set(offline[0]):
+        steps = " ".join(DEV_IMAGE_OFFLINE_STEPS)
+        errors.append(f"{relative}: verify-offline must list {steps}, without python-lint or a recipe (missing: {' '.join(missing) or 'none'})")
     return errors
 
 
@@ -7378,6 +7586,7 @@ def validate_dev_image() -> list[str]:
         (
             (DEV_IMAGE_CONTAINERFILE, lambda rel, text: validate_dev_image_text(rel, text, record)),
             (DEV_IMAGE_WORKFLOW, validate_dev_image_workflow_text),
+            (DEV_IMAGE_MAKEFILE, validate_dev_image_makefile_text),
         )
     )
 
@@ -7411,17 +7620,204 @@ def _dev_image_cases(text: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def _move_publish_step(text: str, name: str, after: str) -> str:
+    """Move the publish job's complete step `name` to just after its step `after`."""
+    block = workflow_job_blocks(text).get(DEV_IMAGE_PUBLISH_JOB, "")
+    steps = _job_steps(block)
+    texts = [step if step.endswith("\n") else step + "\n" for _, step in steps]
+    names = [_step_name(step) for step in texts]
+    if name not in names or after not in names:
+        return text
+    moving = texts.pop(names.index(name))
+    names.remove(name)
+    texts.insert(names.index(after) + 1, moving)
+    return text.replace(block, block[: steps[0][0]] + "".join(texts), 1)
+
+
 def _dev_image_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
+    attest = "Attest build provenance (SLSA v1.0)"
+    attest_last = _move_publish_step(text, attest, "Promote tags")
     return {
         "no commit argument": (
             text.replace("PELORUS_COMMIT=${{ github.sha }}", "OTHER=${{ github.sha }}", 1),
-            "both docker build steps must pass",
+            "every docker build step must pass",
+        ),
+        "shallow checkout": (
+            text.replace("fetch-depth: 0", "fetch-depth: 1", 1),
+            "every checkout must fetch full history",
+        ),
+        "build step without commit": (
+            text + "\n      - uses: docker/build-push-action@" + "0" * 40 + "\n",
+            "every docker build step must pass",
         ),
         "gate not a trigger": (text.replace("      - 'tools/tester/licensing.py'\n", "", -1), "missing 'tools/tester/licensing.py'"),
         "context without the gate": (
             text.replace("context: .", "context: .devcontainer/base", 1),
             "the build context must be the repository root",
         ),
+        "log in before the gate": (_move_publish_step(text, "Run the offline gate in the image", "Log in to ghcr.io"), "in that order"),
+        "promote before attest": (attest_last, "in that order"),
+        "attest named only in a comment before promotion": (
+            attest_last.replace("      - name: Promote tags\n", f"      # - name: {attest}\n      - name: Promote tags\n", 1),
+            "in that order",
+        ),
+        "attest named only in a run block before promotion": (
+            attest_last.replace(
+                '--compare-digests "$LOADED" "$DIGEST"\n',
+                f'--compare-digests "$LOADED" "$DIGEST"\n      - name: Note\n        run: |\n          echo "- name: {attest}"\n',
+                1,
+            ),
+            "in that order",
+        ),
+        "attest step renamed": (text.replace(f"- name: {attest}\n", "- name: Attest build provenance\n", 1), f"no step named {attest!r}"),
+        "tagged push": (
+            text.replace(
+                "outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true",
+                "tags: ${{ steps.image.outputs.name }}:latest\n          push: true",
+                1,
+            ),
+            "must push once, by digest",
+        ),
+        "registry output with a tag": (
+            text.replace("- name: Verify digest", "- name: Push latest\n        uses: docker/build-push-action@x\n"
+                         "        with:\n          build-args: PELORUS_COMMIT=${{ github.sha }}\n"
+                         "          outputs: type=registry,name=x:latest\n      - name: Verify digest", 1),
+            "must push once, by digest",
+        ),
+    }
+
+
+def _in_job(text: str, job: str, old: str, new: str) -> str:
+    """Replace the first old with new inside one workflow job only."""
+    block = workflow_job_blocks(text).get(job, "")
+    return text.replace(block, block.replace(old, new, 1), 1) if old and old in block else text
+
+
+def _dev_image_step_cases(text: str) -> dict[str, tuple[str, str]]:
+    """Each ordered step keeps its name but no longer does its work."""
+    gate = f"      - name: {DEV_IMAGE_GATE_STEP}\n"
+    command = next((line for line in text.splitlines() if line.strip().startswith("docker run --rm --network none ")), "")
+    pub, pr = f"{DEV_IMAGE_PUBLISH_JOB} job step", f"{DEV_IMAGE_BUILD_JOB} job step"
+    publish = DEV_IMAGE_PUBLISH_JOB
+    return {
+        "gate runs echo skipped": (_in_job(text, publish, f"        run: |\n{command}\n", "        run: echo skipped\n"), f"{pub} {DEV_IMAGE_GATE_STEP!r} has no command"),
+        "gate command only in a comment": (
+            _in_job(text, publish, command, f"          # {command.strip()}\n          true"),
+            f"{pub} {DEV_IMAGE_GATE_STEP!r} has no command",
+        ),
+        "gate command echoed": (_in_job(text, publish, command, f"          echo {command.strip()}"), f"{pub} {DEV_IMAGE_GATE_STEP!r} has no command"),
+        "gate continues on error": (
+            _in_job(text, publish, gate, gate + "        continue-on-error: true\n"),
+            f"{pub} {DEV_IMAGE_GATE_STEP!r} must not set continue-on-error",
+        ),
+        "gate skipped by a condition": (_in_job(text, publish, gate, gate + "        if: false\n"), f"{pub} {DEV_IMAGE_GATE_STEP!r} must not set if"),
+        "digest check continues on error": (
+            _in_job(text, publish, "      - name: Verify digest\n", "      - name: Verify digest\n        continue-on-error: true\n"),
+            f"{pub} 'Verify digest' must not set continue-on-error",
+        ),
+        "promotion runs always": (
+            _in_job(text, publish, "      - name: Promote tags\n", "      - name: Promote tags\n        if: always()\n"),
+            f"{pub} 'Promote tags' must not set if",
+        ),
+        "log in replaced": (_in_job(text, publish, "uses: docker/login-action@", "uses: docker/other-action@"), "'Log in to ghcr.io' must use docker/login-action@"),
+        "attest another digest": (
+            _in_job(text, publish, "subject-digest: ${{ steps.push.outputs.digest }}", "subject-digest: ${{ steps.load.outputs.digest }}"),
+            "must set subject-digest: ${{ steps.push.outputs.digest }}",
+        ),
+        "pull request gate echoes": (_in_job(text, DEV_IMAGE_BUILD_JOB, command, "          echo skipped"), f"{pr} {DEV_IMAGE_GATE_STEP!r} has no command"),
+        "pull request gate always skipped": (
+            _in_job(text, DEV_IMAGE_BUILD_JOB, f"{gate}        {DEV_IMAGE_BUILD_GATE_IF}\n", f"{gate}        if: false\n"),
+            f"{pr} {DEV_IMAGE_GATE_STEP!r} must not set if other than",
+        ),
+        "pull request gate continues on error": (
+            _in_job(text, DEV_IMAGE_BUILD_JOB, gate, gate + "        continue-on-error: true\n"),
+            f"{pr} {DEV_IMAGE_GATE_STEP!r} must not set continue-on-error",
+        ),
+        "index promotion": (
+            text.replace("imagetools create --prefer-index=false", "imagetools create", 1),
+            "publish job step 'Promote tags' has no command starting 'docker buildx imagetools create --prefer-index=false '",
+        ),
+        "tags not re-checked": (
+            text.replace('--compare-digests "$DIGEST" "$tagged"', "--version", 1),
+            "publish job step 'Promote tags' has no command starting 'python3 -I scripts/check-devcontainer-image.py --compare-digests",
+        ),
+        "no digest check": (
+            text.replace('--compare-digests "$LOADED" "$DIGEST"', "--version", 1),
+            "publish job step 'Verify digest' has no command starting",
+        ),
+    }
+
+
+def _dev_image_env_cases(text: str) -> dict[str, tuple[str, str]]:
+    """A digest step keeps its command but reads a digest from the wrong step."""
+    pushed, loaded = DEV_IMAGE_PUSHED_DIGEST, DEV_IMAGE_LOADED_DIGEST
+    verify = f"      - name: Verify digest\n        env:\n          DIGEST: {pushed}\n          LOADED: {loaded}\n"
+    promote = f"      - name: Promote tags\n        env:\n          DIGEST: {pushed}\n"
+    command = '--compare-digests "$LOADED" "$DIGEST"'
+    hidden = f"        run: |\n          cat > /dev/null <<'EOF'\n          LOADED: {loaded}\n          EOF\n          python3 -I scripts/check-devcontainer-image.py {command}\n"
+    where = f"{DEV_IMAGE_PUBLISH_JOB} job step"
+    return {
+        "digest check compares the push with itself": (
+            text.replace(verify, verify.replace(f"LOADED: {loaded}", f"LOADED: {pushed}"), 1),
+            f"{where} 'Verify digest' must set env LOADED: {loaded}",
+        ),
+        "digest check reads the load twice": (
+            text.replace(verify, verify.replace(f"DIGEST: {pushed}", f"DIGEST: {loaded}"), 1),
+            f"{where} 'Verify digest' must set env DIGEST: {pushed}",
+        ),
+        "promotion tags the loaded digest": (
+            text.replace(promote, promote.replace(pushed, loaded), 1),
+            f"{where} 'Promote tags' must set env DIGEST: {pushed}",
+        ),
+        "loaded source only in a comment": (
+            text.replace(verify, verify.replace(f"          LOADED: {loaded}\n", f"          # LOADED: {loaded}\n          LOADED: {pushed}\n"), 1),
+            f"{where} 'Verify digest' must set env LOADED: {loaded}",
+        ),
+        "loaded source only in a run heredoc": (
+            text.replace(
+                f"{verify}        run: python3 -I scripts/check-devcontainer-image.py {command}\n",
+                verify.replace(f"LOADED: {loaded}", f"LOADED: {pushed}") + hidden,
+                1,
+            ),
+            f"{where} 'Verify digest' must set env LOADED: {loaded}",
+        ),
+    }
+
+
+def _dev_image_offline_cases(text: str) -> dict[str, tuple[str, str]]:
+    """verify-offline drops one of its steps, keeps only build, or gains a recipe."""
+    offline = next((line for line in text.splitlines() if line.startswith("verify-offline:")), "")
+    if not offline:
+        return {"offline rule missing": (text + "\n", "verify-offline must list")}
+    cases = {
+        "offline gate only builds": (text.replace(offline, "verify-offline: build", 1), "(missing: test format-check tidy docs-check)"),
+        "offline gate with a recipe": (text.replace(offline + "\n", offline + "\n\t@true\n", 1), "verify-offline must list"),
+    }
+    for step in DEV_IMAGE_OFFLINE_STEPS:
+        kept = " ".join(word for word in offline.split()[1:] if word != step)
+        cases[f"offline gate without {step}"] = (text.replace(offline, f"verify-offline: {kept}", 1), f"(missing: {step})")
+    return cases
+
+
+def _dev_image_makefile_cases(text: str) -> dict[str, tuple[str, str]]:
+    return _dev_image_offline_cases(text) | {
+        "native lists a step directly": (
+            text.replace("verify-native: verify-offline python-lint", "verify-native: verify-offline python-lint build", 1),
+            "verify-native must be exactly",
+        ),
+        "native without the offline gate": (
+            text.replace("verify-native: verify-offline python-lint", "verify-native: build test python-lint", 1),
+            "verify-native must be exactly",
+        ),
+        "native with a recipe": (
+            text.replace("verify-native: verify-offline python-lint\n", "verify-native: verify-offline python-lint\n\t@true\n", 1),
+            "verify-native must be exactly",
+        ),
+        "offline gate needs the network": (
+            text.replace("verify-offline: build test", "verify-offline: python-lint build test", 1),
+            "verify-offline must list",
+        ),
+        "offline gate missing": (text.replace("verify-offline: build", "verify-offlinex: build", 1), "verify-offline must list"),
     }
 
 
@@ -7448,8 +7844,13 @@ def dev_image_regressions() -> list[str]:
     failures += _dev_image_regressions_for(
         "Containerfile", container, _dev_image_cases(container), lambda t: validate_dev_image_text("Containerfile", t, record)
     )
+    cases = _dev_image_workflow_cases(workflow) | _dev_image_step_cases(workflow) | _dev_image_env_cases(workflow)
+    failures += _dev_image_regressions_for("workflow", workflow, cases, lambda t: validate_dev_image_workflow_text("workflow", t))
+    makefile = DEV_IMAGE_MAKEFILE.read_text(encoding="utf-8")
+    if validate_dev_image_makefile_text("Makefile", makefile):
+        failures.append("dev image regression: the current Makefile is rejected")
     failures += _dev_image_regressions_for(
-        "workflow", workflow, _dev_image_workflow_cases(workflow), lambda t: validate_dev_image_workflow_text("workflow", t)
+        "Makefile", makefile, _dev_image_makefile_cases(makefile), lambda t: validate_dev_image_makefile_text("Makefile", t)
     )
     return failures
 

@@ -103,6 +103,7 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | configure | `meson setup build` |
 | build | `ninja -C build` |
 | fast tests | `meson test -C build --suite=fast --print-errorlogs` |
+| offline native gate | `make verify-offline` |
 | native gate | `make verify-native` |
 | governance + native gate | `make verify-all` |
 | install | `ninja -C build install` |

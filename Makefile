@@ -5,14 +5,19 @@
 include .config/praetor/engine.mk
 BUILD_DIR ?= build
 
-.PHONY: all verify-all verify-native configure build test format-check tidy \
+.PHONY: all verify-all verify-native verify-offline configure build test format-check tidy \
 	docs-check compile-context compile-context-verify audit hooks-install python-lint patches
 
 all: build
 
 verify-all: compile-context-verify audit verify-native
 
-verify-native: build test format-check tidy docs-check python-lint
+# verify-offline runs the native verification steps that require no network access
+# (build, test, format-check, tidy, docs-check). python-lint is left out because
+# it downloads and installs Ruff and zizmor from PyPI into a virtualenv.
+verify-offline: build test format-check tidy docs-check
+
+verify-native: verify-offline python-lint
 
 configure:
 	@if test -f "$(BUILD_DIR)/meson-private/coredata.dat"; then \
@@ -74,6 +79,7 @@ docs-check:
 	python3 -I scripts/check-filter-knob-contracts.py
 	python3 -I tools/tester/pelorus_tester_report.py --self-test
 	python3 -I scripts/windows/check-pe-imports.py --self-test
+	python3 -I scripts/check-devcontainer-image.py --self-test
 	bash ffmpeg-patches/test/fgs-sidedata-smoke.sh --self-test
 	! bash ffmpeg-patches/test/fgs-sidedata-smoke.sh --self-test --disable wrapped >/dev/null 2>&1
 	! bash ffmpeg-patches/test/fgs-sidedata-smoke.sh --self-test --disable kept >/dev/null 2>&1
