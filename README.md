@@ -288,6 +288,7 @@ users also need a copy named `praetorctl` on `PATH`
 
 | Gate | Command | Description |
 | :--- | :--- | :--- |
+| **Offline native verification** | `make verify-offline` | Runs native verification steps that require no network |
 | **Native verification** | `make verify-native` | Builds, tests, formats, lints, and checks changelog rendering |
 | **Full verification** | `make verify-all` | Adds context, HISS, and documentation checks |
 | **HISS audit** | `make audit` | Applies the pinned <!-- gen:baseline-count -->0<!-- /gen:baseline-count -->-finding baseline ratchet |

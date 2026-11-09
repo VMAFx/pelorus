@@ -492,12 +492,14 @@ encoded carrier path is outside this coexistence check.
 
 ```bash
 make verify-native
+make verify-offline
 ```
 
 `make verify-native` is the primary product gate. It configures and builds with
 Meson/Ninja, runs the fast suite, checks C formatting and clang-tidy, and checks
-that `CHANGELOG.md` matches `changelog.d/`. Override `BUILD_DIR` to use another
-Meson tree, for example `BUILD_DIR=build-asan make verify-native`.
+that `CHANGELOG.md` matches `changelog.d/`. `make verify-offline` runs the same
+checks without `python-lint`, requiring no network access. Override `BUILD_DIR`
+to use another Meson tree, for example `BUILD_DIR=build-asan make verify-native`.
 
 A test that exits 77 is a skip, and `meson test` exits 0 for it. The fast suite
 counts a skip as passed only when [`.config/test-skips.json`](../../.config/test-skips.json)
@@ -1102,14 +1104,22 @@ Vulkan headers, and Node.js.
 plain `ubuntu:26.04` image, pinned by digest ([ADR-0179](../adr/0179-dev-image-licence-record.md)),
 not from Microsoft's devcontainers base, which ships a source-built GPL `git`.
 It adds the `vscode` user with `sudo`, the packages the CI jobs install (git is
-Ubuntu's package), Node.js 24, actionlint, and Lefthook, each download checked
-against its published SHA-256. The `Dev container image` workflow
+Ubuntu's package), locales (comma-decimal test), python3-venv, Node.js 24,
+actionlint, and Lefthook, each download checked against its published
+SHA-256. The `Dev container image` workflow
 (`.github/workflows/devcontainer-image.yml`) handles it:
 
 | Trigger | Job | Result |
 | --- | --- | --- |
-| Pull request touching `.devcontainer/base/**` or the workflow | `build` | builds the image, pushes nothing; on a draft its first step fails by design |
-| Push to `master` touching the same paths, or manual dispatch | `publish` | pushes `ghcr.io/vmafx/pelorus-dev` tagged with the commit SHA and `latest`, reads the digest back, attests SLSA build provenance for it |
+| Pull request touching `.devcontainer/base/**`, the licence gate, `scripts/check-devcontainer-image.py`, the `Makefile`, or the workflow | `build` | builds and loads the image, runs `make verify-offline` offline inside it, pushes nothing; on a draft its first step fails by design |
+| Push to `master` touching the same paths, or manual dispatch | `publish` | builds and loads the image, runs `make verify-offline` offline inside it, pushes `ghcr.io/vmafx/pelorus-dev` tagged with the commit SHA and `latest`, compares the loaded and pushed digests, attests SLSA build provenance for it |
+
+To run the same smoke check locally:
+
+```bash
+docker build -f .devcontainer/base/Containerfile -t pelorus-dev:local .
+docker run --rm --network none -v "$PWD:/src:ro" pelorus-dev:local python3 -I /src/scripts/check-devcontainer-image.py --source /src
+```
 
 Only `publish` holds `packages: write`, with `id-token`, `attestations`, and
 `artifact-metadata` for the attestation. Check a published digest with:

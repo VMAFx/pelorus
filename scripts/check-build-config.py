@@ -7362,8 +7362,14 @@ def validate_dev_image_text(relative: str, text: str, record: dict) -> list[str]
 
 def validate_dev_image_workflow_text(relative: str, text: str) -> list[str]:
     errors = [f"{relative}: missing {token}" for token in DEV_IMAGE_WORKFLOW_TOKENS if token not in text]
-    if text.count("PELORUS_COMMIT=${{ github.sha }}") != 2:
-        errors.append(f"{relative}: both docker build steps must pass PELORUS_COMMIT build-arg")
+    # ADR-0250: the publish job builds twice (load for the gate, then push from cache).
+    steps = text.count("docker/build-push-action@")
+    if steps == 0 or text.count("PELORUS_COMMIT=${{ github.sha }}") != steps:
+        errors.append(f"{relative}: every docker build step must pass PELORUS_COMMIT build-arg")
+    # ADR-0250: the offline gate in the image reads released ABI tags (issue #467).
+    checkouts = text.count("actions/checkout@")
+    if checkouts == 0 or text.count("fetch-depth: 0") != checkouts:
+        errors.append(f"{relative}: every checkout must fetch full history (fetch-depth: 0) for the offline gate")
     if "context:.devcontainer/base" in text.replace(" ", ""):
         errors.append(f"{relative}: the build context must be the repository root, which holds the licence gate")
     return errors
@@ -7415,7 +7421,15 @@ def _dev_image_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
     return {
         "no commit argument": (
             text.replace("PELORUS_COMMIT=${{ github.sha }}", "OTHER=${{ github.sha }}", 1),
-            "both docker build steps must pass",
+            "every docker build step must pass",
+        ),
+        "shallow checkout": (
+            text.replace("fetch-depth: 0", "fetch-depth: 1", 1),
+            "every checkout must fetch full history",
+        ),
+        "build step without commit": (
+            text + "\n      - uses: docker/build-push-action@" + "0" * 40 + "\n",
+            "every docker build step must pass",
         ),
         "gate not a trigger": (text.replace("      - 'tools/tester/licensing.py'\n", "", -1), "missing 'tools/tester/licensing.py'"),
         "context without the gate": (

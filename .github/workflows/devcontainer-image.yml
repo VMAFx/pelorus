@@ -1,12 +1,15 @@
 name: Dev container image
 
 # Builds the dev container toolchain base image from
-# .devcontainer/base/Containerfile (ADR-0153, ADR-0235). A pull request that touches the
-# Containerfile, its licence record or the licence gate it runs, or this
-# workflow builds the image and pushes nothing. A push to
-# master that touches them, or a manual run, builds it, pushes
-# the dev container image tagged with the commit SHA and latest, and attests
-# SLSA build provenance for the pushed digest.
+# .devcontainer/base/Containerfile (ADR-0153, ADR-0235, ADR-0250). A pull request that touches the
+# Containerfile, its licence record, the licence gate it runs, the smoke check,
+# the Makefile, or this workflow builds the image, loads it into the local Docker
+# daemon, runs the offline native gate inside the container with network disabled,
+# and pushes nothing. A push to master that touches them, or a manual run, builds
+# and loads the image, runs the offline native gate, logs in to ghcr.io, pushes the
+# image tagged with the commit SHA and latest from the builder cache, asserts that
+# the loaded and pushed digests match, and attests SLSA build provenance for the
+# pushed digest.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -14,6 +17,8 @@ on:
       - '.devcontainer/base/**'
       - 'tools/tester/licensing.py'
       - 'LICENSES/EUPL-1.2.txt'
+      - 'scripts/check-devcontainer-image.py'
+      - 'Makefile'
       - '.github/workflows/devcontainer-image.yml'
   push:
     branches: [master]
@@ -21,6 +26,8 @@ on:
       - '.devcontainer/base/**'
       - 'tools/tester/licensing.py'
       - 'LICENSES/EUPL-1.2.txt'
+      - 'scripts/check-devcontainer-image.py'
+      - 'Makefile'
       - '.github/workflows/devcontainer-image.yml'
   workflow_dispatch:
 
@@ -33,12 +40,13 @@ concurrency:
 
 jobs:
   build:
-    # Pull requests only: build the image, push nothing. The first step is the
-    # Praetor hosted-gate draft step (HISS-18), so a draft does not spend a build.
+    # Pull requests only: build the image, run the offline native gate in it,
+    # push nothing. The first step is the Praetor hosted-gate draft step
+    # (HISS-18), so a draft does not spend a build.
     name: Build pelorus-dev (no push)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Stop on a draft pull request
         if: github.event.pull_request.draft == true
@@ -47,6 +55,8 @@ jobs:
         if: github.event.pull_request.draft != true
         with:
           persist-credentials: false
+          # Full history: the offline gate's scripts/check-interop-abi-history.py reads released ABI tags (issue #467)
+          fetch-depth: 0
       - name: Compute image name
         id: image
         if: github.event.pull_request.draft != true
@@ -58,6 +68,7 @@ jobs:
         if: github.event.pull_request.draft != true
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build
+        id: build
         if: github.event.pull_request.draft != true
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -68,12 +79,22 @@ jobs:
             PELORUS_SOURCE=${{ github.server_url }}/${{ github.repository }}
           tags: ${{ steps.image.outputs.name }}:pr-${{ github.sha }}
           push: false
+          load: true
+          provenance: false
+          sbom: false
+      - name: Run the offline gate in the image
+        if: github.event.pull_request.draft != true
+        timeout-minutes: 25
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.name }}:pr-${{ github.sha }}
+        run: |
+          docker run --rm --network none -v "$GITHUB_WORKSPACE:/src:ro" "$IMAGE_REF" python3 -I /src/scripts/check-devcontainer-image.py --source /src
 
   publish:
     name: Build, push and attest pelorus-dev
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -84,6 +105,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history: the offline gate's scripts/check-interop-abi-history.py reads released ABI tags (issue #467)
+          fetch-depth: 0
       - name: Compute image name
         id: image
         run: |
@@ -92,6 +115,28 @@ jobs:
           echo "name=${image}" >> "$GITHUB_OUTPUT"
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build and load
+        id: load
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: .devcontainer/base/Containerfile
+          build-args: |
+            PELORUS_COMMIT=${{ github.sha }}
+            PELORUS_SOURCE=${{ github.server_url }}/${{ github.repository }}
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ github.sha }}
+            ${{ steps.image.outputs.name }}:latest
+          push: false
+          load: true
+          provenance: false
+          sbom: false
+      - name: Run the offline gate in the image
+        timeout-minutes: 25
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.name }}:${{ github.sha }}
+        run: |
+          docker run --rm --network none -v "$GITHUB_WORKSPACE:/src:ro" "$IMAGE_REF" python3 -I /src/scripts/check-devcontainer-image.py --source /src
       - name: Log in to ghcr.io
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
@@ -116,12 +161,21 @@ jobs:
       - name: Verify digest and record summary
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
+          LOADED: ${{ steps.load.outputs.digest }}
         run: |
           if ! printf '%s\n' "$DIGEST" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
             echo "::error::registry returned no sha256 digest for $IMAGE:$GITHUB_SHA: '$DIGEST'"
             exit 1
           fi
-          printf 'Pushed %s@%s (tags %s, latest).\n' "$IMAGE" "$DIGEST" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          if ! printf '%s\n' "$LOADED" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
+            echo "::error::builder returned no sha256 digest for loaded image: '$LOADED'"
+            exit 1
+          fi
+          if [ "$LOADED" != "$DIGEST" ]; then
+            echo "::error::loaded image digest '$LOADED' does not match pushed digest '$DIGEST'"
+            exit 1
+          fi
+          printf 'Pushed %s@%s (tags %s, latest; offline gate passed in the image before push).\n' "$IMAGE" "$DIGEST" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Attest build provenance (SLSA v1.0)
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:

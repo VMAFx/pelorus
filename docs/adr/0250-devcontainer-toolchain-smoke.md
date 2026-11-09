@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0250: Run the offline native gate inside the dev container image before it is pushed
 
-- **Status**: Proposed
-- **Implementation**: pending (#475)
+- **Status**: Accepted
 - **Date**: 2026-11-09
 - **Deciders**: Lusoris
 - **Tags**: `ci`, `docker`, `devcontainer`, `test`
@@ -16,14 +15,14 @@ Measured on 2026-11-09 against the published image `ghcr.io/vmafx/pelorus-dev@sh
 
 - Every tool the Containerfile installs is on `PATH`, and `pkg-config` reports `vulkan` 1.4.341, `vpl` 2.16, `aom` 3.13.1, `SvtAv1Enc` 2.3.0 and `ffnvcodec` 12.1.14.0. A check that only looks for commands and versions passes.
 - `meson setup --werror`, `ninja`, the fast suite (163 OK, 8 expected fail, 14 listed skips), `make format-check`, `make tidy` and `make docs-check` all exit 0.
-- `make test` still fails, with exit 77: the image has no comma-decimal locale, so `pelorus:enc-telemetry-adapters-locale` skips (a skip `.config/test-skips.json` allows), and the installed tester kit runner (`set -eu`) stops on that skip. The `core` job in `.github/workflows/ci.yml:39-43` installs `locales` and runs `locale-gen de_DE.UTF-8` on the runner; the tester image does the same with `localedef` (`tools/tester/Containerfile:154-155`); the dev image does neither.
+- `make test` still fails: its tester kit step (`scripts/check-tester-kit-install.py --run-kit`) exits 77. The image has no comma-decimal locale, so `pelorus:enc-telemetry-adapters-locale` skips (a skip `.config/test-skips.json` allows), and the installed tester kit runner (`set -eu`) stops on that skip. The `core` job in `.github/workflows/ci.yml:39-43` installs `locales` and runs `locale-gen de_DE.UTF-8` on the runner; the tester image does the same with `localedef` (`tools/tester/Containerfile:154-155`); the dev image does neither.
 - `make python-lint` fails: the image has no `python3-venv`, so `python3 -m venv` cannot import `ensurepip`. The CI jobs get a venv-capable Python from `actions/setup-python`.
 
 So `make verify-native` cannot pass inside the dev container, although every check of the commands themselves passes. Two of the probe's failures came from mounting the checkout read-only: the series coexistence self-tests write under `$ROOT/build`. They pass once the checkout is copied into a directory the container user owns.
 
 ## Decision
 
-We will start the image the workflow just built and run the repository's offline native gate in it before anything is pushed. A new Makefile target `verify-offline` holds the native gate steps that need no network (`build test format-check tidy docs-check`); `verify-native` becomes `verify-offline` plus `python-lint`, so the step list stays in one place. A stdlib-only script, `scripts/check-devcontainer-image.py`, runs inside the container with `--network none` as the image's default user. It checks the commands and `pkg-config` modules the gate does not exercise (the FFmpeg stack build's assemblers and encoder headers, the hook and workflow linters), checks that `python3 -m venv` can create an environment with `pip` (what `scripts/check-python-lint.sh --install` needs from the image), copies the read-only checkout into a private directory, and runs `make verify-offline` there. Every child process has a deadline. The pull request job builds with `load: true` and runs the script. The publish job builds with `load: true`, runs the script, and only then logs in to `ghcr.io`, builds again with `push: true` from the same builder cache, and fails unless the pushed digest equals the loaded one. The Containerfile gains `locales` with a generated `de_DE.UTF-8` locale and `python3-venv`, with the generated locale files recorded in `.devcontainer/base/licensing.json` (ADR-0179).
+We will start the image the workflow just built and run the repository's offline native gate in it before anything is pushed. A new Makefile target `verify-offline` holds the native gate steps that need no network (`build test format-check tidy docs-check`); `verify-native` becomes `verify-offline` plus `python-lint`, so the step list stays in one place. A stdlib-only script, `scripts/check-devcontainer-image.py`, runs inside the container with `--network none` as the image's default user. It checks the commands and `pkg-config` modules the gate does not exercise (the FFmpeg stack build's assemblers and encoder headers, the hook and workflow linters), checks that `python3 -m venv` can create an environment with `pip` (what `scripts/check-python-lint.sh --install` needs from the image), copies the read-only checkout into a private directory, and runs `make verify-offline` there. Every child process has a deadline. The pull request job builds with `load: true` and runs the script. The publish job builds with `load: true`, runs the script, and only then logs in to `ghcr.io`, builds again with `push: true` from the same builder cache, and fails unless the pushed digest equals the loaded one. The Containerfile gains `locales` with a generated `de_DE.UTF-8` locale and `python3-venv`, with the generated locale files recorded in `.devcontainer/base/licensing.json` (ADR-0179). Both image jobs check out full history (`fetch-depth: 0`), as the `core` job does, because the gate's `scripts/check-interop-abi-history.py` reads released ABI tags (issue #467). `scripts/check-build-config.py` refuses the workflow when a `docker/build-push-action` step lacks the `PELORUS_COMMIT` build argument or a checkout is shallow, each rule with a planted case in its self-test.
 
 ## Alternatives considered
 
@@ -38,11 +37,12 @@ We will start the image the workflow just built and run the repository's offline
 ## Consequences
 
 - **Positive**: a dev container image that cannot run the offline native gate fails its pull request and is never pushed. The dev container gains the comma-decimal locale check and a working `make python-lint`.
-- **Negative**: the image jobs run the gate (measured locally: about two minutes on six cores); the job timeouts grow to cover it. A pull request whose code breaks the gate also fails the image job, which reports the same failure as the `core` job.
+- **Negative**: the image jobs run the gate (measured locally: 100 s with the 4 CPUs and 16 GB of a public-repository `ubuntu-26.04` runner, [research digest 0475](../research/0475-devcontainer-toolchain-smoke.md)); the job timeouts grow to cover it. A pull request whose code breaks the gate also fails the image job, which reports the same failure as the `core` job.
 - **Neutral / follow-ups**: `.devcontainer/devcontainer.json` keeps naming the digest it was rendered with until the next Praetor render picks up a newly published digest. The kit runner treating an allowed skip as a failure, and the packages the `ffmpeg-stack` and `sanitizers` jobs install that the image lacks (`libdav1d-dev`, `libclang-rt-dev`), are separate defects tracked outside this decision.
 
 ## References
 
 - Issue #475: start the dev container base image for a toolchain smoke.
+- [Research digest 0475](../research/0475-devcontainer-toolchain-smoke.md): probes, the planted negative, timings and mutants.
 - [ADR-0153](0153-praetor-full-adoption.md) (dev container), [ADR-0179](0179-dev-image-licence-record.md) (licence record), [ADR-0235](0235-docker-build-push-actions.md) (pinned Docker actions).
 - Source: `req` (paraphrased; controller order `pelorus-c9-11-order-1505`, 2026-11-09, frontier rank): start the dev container base image in CI for a toolchain smoke, on its own branch, through the local gate, landed when the pull request is clean.

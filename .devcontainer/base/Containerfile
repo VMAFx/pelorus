@@ -33,9 +33,10 @@ ARG LEFTHOOK_LICENSE_SHA256=bada014d17255e0adcb77f0f3fdc65949fc9623e334999ad1dad
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# core + sanitizers jobs: Meson, Ninja, clang (format, tidy), SPIR-V compilers.
+# core + sanitizers jobs: Meson, Ninja, clang (format, tidy), SPIR-V compilers,
+# locales for the comma-decimal test.
 # ffmpeg-stack job: native build, Vulkan and encoder headers, assemblers.
-# docs job and gates: Python, black, shellcheck.
+# docs job and gates: Python, python3-venv for python-lint, black, shellcheck.
 # DL3008: the CI jobs install the same packages unpinned from the runner's
 # archive; Ubuntu drops superseded versions, so a version pin breaks the build
 # at the next security update. The base image itself is digest-pinned.
@@ -46,7 +47,9 @@ RUN apt-get update \
         meson ninja-build clang clang-format clang-tidy glslc glslang-tools \
         nasm yasm libvulkan-dev libvpl-dev libaom-dev libsvtav1enc-dev \
         libffmpeg-nvenc-dev \
-        python3 black shellcheck \
+        locales python3 python3-venv black shellcheck \
+    && localedef -i de_DE -f UTF-8 de_DE.UTF-8 \
+    && test -s /usr/share/doc/locales/copyright \
     && rm -rf /var/lib/apt/lists/*
 
 # The user the dev container runs as (devcontainer.json remoteUser). Ubuntu's

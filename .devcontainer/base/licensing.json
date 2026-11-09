@@ -267,6 +267,25 @@
       "redistributable": true
     },
     {
+      "id": "generated-locale",
+      "name": "German UTF-8 locale compiled from Ubuntu glibc locale data",
+      "version": "Ubuntu 26.04",
+      "spdx": "LicenseRef-licence-text",
+      "paths": [
+        "usr/lib/locale/locale-archive",
+        "etc/locale.gen",
+        "etc/locale.conf"
+      ],
+      "licence_files": [
+        "usr/share/doc/locales/copyright"
+      ],
+      "source": "https://launchpad.net/ubuntu/+source/glibc",
+      "notes": [
+        "localedef generates locale-archive for the comma-decimal native test, and the locales postinst writes etc/locale.conf (etc/default/locale links to it); generated files need their own ownership record. Ubuntu's locales copyright file carries the locale data terms; the glibc source package is in the Ubuntu archive."
+      ],
+      "redistributable": true
+    },
+    {
       "id": "pelorus-dev-gate",
       "name": "Licence gate of this image",
       "version": "@commit",
