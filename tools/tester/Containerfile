@@ -62,13 +62,10 @@ COPY scripts/fetch-ffmpeg-series.sh /src/pelorus/scripts/
 # Meson writes the planted SEI fit headers with it (ADR-0236).
 COPY scripts/plant-header.py /src/pelorus/scripts/
 COPY docs/api/encode-record.md /src/pelorus/docs/api/
-COPY tools/tester/install-fast-suite.py tools/tester/run-fast-suite.sh.in /src/pelorus/tools/tester/
+COPY tools/tester/build-fast-suite.py tools/tester/install-fast-suite.py tools/tester/run-fast-suite.sh.in /src/pelorus/tools/tester/
 COPY .ffmpeg-series/*.tar.gz /src/ffmpeg-series-release/
-RUN meson setup --werror -Dtests=true -Dtools=false -Dshaders=false --prefix=/opt/pelorus --libdir=lib /src/pelorus-build /src/pelorus \
-    && ninja -C /src/pelorus-build -j"${MAKE_JOBS}" install \
-    && meson introspect --tests /src/pelorus-build > /src/native-fast-tests.json \
-    && python3 -I /src/pelorus/tools/tester/install-fast-suite.py \
-        /src/native-fast-tests.json /src/pelorus-build /src/pelorus /opt/pelorus/tests
+RUN python3 -I /src/pelorus/tools/tester/build-fast-suite.py \
+        --jobs "${MAKE_JOBS}" /src/pelorus /src/pelorus-build /opt/pelorus
 
 # The pinned FFmpeg commit, the shared FFmpeg fix series and then the whole
 # Pelorus series, each applied in order (a per-patch check is not enough,

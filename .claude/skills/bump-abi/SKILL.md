@@ -24,7 +24,8 @@ resize, repurpose, or remove a field/section bit.
    Verify consistency with `python3 -I scripts/bump-abi.py --check`, then run `praetorctl compile-context`.
 4. Extend `libpelorus/test/interop_test.c`: set + read the new field, and assert
    an older consumer (smaller `consumer_known_size`) still parses (R4).
-5. Update `docs/api/interop-abi.md`; add a `changelog.d/added/` fragment.
+5. Update ABI history fixtures: add `fill_<sec>` in `libpelorus/test/abi_history/abi_history_fill.c`, pack wiring in `abi_history_pack.c`, and `check_<sec>` in `abi_history_check.c` gated `#if PELORUS_ABI_MINOR >= N` and append values to `abi_history_values.h`; run `python3 -I scripts/check-interop-abi-history.py --write` (adds `abi-1.<N>.bin`); point `interop-history-writer` in `meson.build` at the new files and add read tests. Previous minor never in a release tag -> delete its `abi-1.<N-1>*.bin` files and read tests in the same PR; a released minor's files stay (ADR-0247).
+6. Update `docs/api/interop-abi.md`; add a `changelog.d/added/` fragment.
 
 ## Add a whole new section
 
@@ -32,7 +33,8 @@ resize, repurpose, or remove a field/section bit.
 2. Define `PelorusXxxSection` (flat POD) + its `_Static_assert`.
 3. Bump `PELORUS_ABI_MINOR` across sites with `python3 -I scripts/bump-abi.py --write --note "<summary>" [--adr NNNN]`, run `praetorctl compile-context`, and document writer/reader in the §sections table.
 4. Extend the conformance fixture; update the ABI doc + changelog.
-5. Write an ADR if the new data changes the interop contract materially.
+5. Update ABI history fixtures: add `fill_<sec>` in `libpelorus/test/abi_history/abi_history_fill.c`, pack wiring in `abi_history_pack.c`, and `check_<sec>` in `abi_history_check.c` gated `#if PELORUS_ABI_MINOR >= N` and append values to `abi_history_values.h`; run `python3 -I scripts/check-interop-abi-history.py --write` (adds `abi-1.<N>.bin`); point `interop-history-writer` in `meson.build` at the new files and add read tests. Previous minor never in a release tag -> delete its `abi-1.<N-1>*.bin` files and read tests in the same PR; a released minor's files stay (ADR-0247).
+6. Write an ADR if the new data changes the interop contract materially.
 
 ## Rules
 

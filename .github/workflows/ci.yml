@@ -27,6 +27,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Fetch full history so scripts/check-interop-abi-history.py can extract released ABI tags (issue #467)
+          fetch-depth: 0
       - name: Load build configuration
         uses: ./.github/actions/load-build-config
       - name: Install toolchain
@@ -86,8 +88,14 @@ jobs:
             --require pelorus:sei-fit-planted-reserve --require pelorus:sei-fit-planted-payload \
             --require pelorus:sei-fit-planted-epb --require pelorus:sei-fit-planted-truncated \
             --require pelorus:sei-fit-planted-charge --require pelorus:sei-fit-planted-wrap \
+            --require pelorus:interop-history-planted-value \
+            --require pelorus:interop-history-planted-dir-size \
             --require pelorus:synth-source-pixfmt --require pelorus:synth-source-pixfmt-self-test \
             build/meson-logs/testlog.json
+      - name: Released interop writers and readers vs persisted blobs (issue #467)
+        run: |
+          python3 -I scripts/check-interop-abi-history.py --self-test && \
+          python3 -I scripts/check-interop-abi-history.py
       - name: Test (numpy suite — grain gate-curve drift)
         run: meson test -C build --suite=numpy --print-errorlogs
       - name: clang-format (touched-tree clean)
@@ -782,3 +790,9 @@ jobs:
         run: python3 -I scripts/test-semgrep-chmod-mode.py
       - name: Verify the wall-clock rule on planted cases
         run: python3 -I scripts/test-semgrep-wall-clock.py
+      - name: Verify the printf-argv rule on planted cases
+        run: python3 -I scripts/test-semgrep-printf-argv.py
+      - name: Verify the timeout partial-output rule on planted cases
+        run: python3 -I scripts/test-semgrep-timeout-output.py
+      - name: Verify the Meson options file name rule on planted cases
+        run: python3 -I scripts/test-semgrep-meson-options.py

@@ -230,6 +230,97 @@ rules:
               metavariable: $CALL
               regex: ^(gettimeofday|ftime|_ftime|_ftime64|GetSystemTimeAsFileTime|GetSystemTimePreciseAsFileTime)$
 
+  - id: pelorus-c-printf-argv
+    # Codacy's Opengrep rule insecure-use-printf-fn reports a command-line
+    # argument passed straight into printf, sprintf or vsprintf, or copied
+    # into a buffer that one of them reads later, whatever the format string;
+    # it flagged the expect-reject message of the ABI history reader (pull
+    # request 578). This rule refuses the same call shapes before CI.
+    paths:
+      include:
+        - "*.c"
+        - "*.h"
+        - "**/*.c"
+        - "**/*.h"
+    message: >
+      Command-line argument argv[$N] reaches $CALL. Codacy's Opengrep rule
+      insecure-use-printf-fn reports this even with a literal format. Bind
+      the argument to a named local and pass the local, as
+      handle_expect_reject() in libpelorus/test/abi_history/abi_history.c
+      does.
+    languages: [c, cpp]
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: $CALL(..., argv[$N], ...)
+          - pattern: |
+              $COPY($BUF, argv[$N], ...);
+              ...
+              $CALL(..., $BUF, ...);
+      - metavariable-regex:
+          metavariable: $CALL
+          regex: ^(printf|sprintf|vsprintf)$
+      - metavariable-comparison:
+          metavariable: $N
+          comparison: int($N) > 0
+
+  - id: pelorus-py-timeout-partial-output
+    # subprocess.run fills TimeoutExpired.stdout and .stderr from the raw pipe
+    # on POSIX, so they hold bytes even with text=True; on Windows they hold
+    # str. The kit runner's timeout path passed the bytes to a str parser and
+    # raised TypeError (pull request 578). Read them through a decoder that
+    # accepts both.
+    paths:
+      include:
+        - "*.py"
+        - "**/*.py"
+    message: >
+      $E.$ATTR of subprocess.TimeoutExpired holds bytes on POSIX even when
+      the call used text=True, and str on Windows. Pass it through
+      _partial_text(), as _run_kit_runner() in
+      scripts/check-tester-kit-install.py does.
+    languages: [python]
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              try:
+                  ...
+              except subprocess.TimeoutExpired as $E:
+                  ...
+          - pattern-inside: |
+              try:
+                  ...
+              except TimeoutExpired as $E:
+                  ...
+      - pattern: $E.$ATTR
+      - metavariable-regex:
+          metavariable: $ATTR
+          regex: ^(stdout|stderr|output)$
+      - pattern-not-inside: _partial_text($E.$ATTR)
+
+  - id: pelorus-meson-options-file
+    # meson.build declares meson_version '>=0.57.0'. Meson reads the newer
+    # options file name only from 1.1 on, and an older Meson then refuses
+    # every -D option the project passes (pull request 578: the tester-kit
+    # self-test wrote it). scripts/test-semgrep-meson-options.py fails once
+    # the floor reaches 1.1, so the rule goes with the floor.
+    paths:
+      include:
+        - "*.py"
+        - "**/*.py"
+        - "*.sh"
+        - "**/*.sh"
+        - "meson.build"
+        - "**/meson.build"
+    message: >
+      Meson reads meson.options only from 1.1 on, and meson.build declares
+      meson_version '>=0.57.0'; an older Meson ignores the file and refuses
+      the project's -D options. Name the file meson_options.txt.
+    languages: [generic]
+    severity: ERROR
+    pattern-regex: \bmeson\.options\b
+
   - id: pelorus-smoke-skip-reason-head
     # pel_skip and pel_fail messages must not be derived from
     # `$(head -n 1 ...)` or `$(head ... | head -n 1)`. Taking the first line of a log often captures

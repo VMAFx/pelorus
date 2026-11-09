@@ -1125,6 +1125,33 @@ if build_machine.system() != 'windows'
        workdir: meson.project_source_root(),
        timeout: 600,
        suite: 'fast')
+  # A command-line argument reaches printf, sprintf or vsprintf only through
+  # a named local: pelorus-c-printf-argv refuses the call shapes Codacy's
+  # Opengrep insecure-use-printf-fn reports (pull request 578).
+  test('semgrep-printf-argv',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'test-semgrep-printf-argv.py'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
+  # The partial output of a caught subprocess.TimeoutExpired is bytes on
+  # POSIX even with text=True: pelorus-py-timeout-partial-output requires
+  # _partial_text() around it (pull request 578).
+  test('semgrep-timeout-output',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'test-semgrep-timeout-output.py'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
+  # Meson below 1.1 ignores the newer options file name and refuses the
+  # project's -D options: pelorus-meson-options-file keeps meson_options.txt
+  # while the meson_version floor stays below 1.1 (pull request 578).
+  test('semgrep-meson-options',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'test-semgrep-meson-options.py'],
+       workdir: meson.project_source_root(),
+       timeout: 600,
+       suite: 'fast')
 endif
 
 # Shared Semgrep test harness enforcement: test scripts must import

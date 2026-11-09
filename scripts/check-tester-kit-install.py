@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright 2026 Lusoris
 # SPDX-License-Identifier: EUPL-1.2
-"""Verify that fast-suite tests and fixtures can be packaged by the tester kit.
+"""Verify that fast-suite tests and fixtures can be packaged and run by the tester kit.
 
 A fast-suite test whose command or arguments cannot be installed into the
 relocatable tester kit passes every local gate and fails only in the
@@ -9,7 +9,12 @@ tester-publish CI workflow. This check introspects the Meson test suite
 for a build directory, runs tools/tester/install-fast-suite.py against a
 throwaway destination, and reports installation failures before push.
 
-Usage: python3 scripts/check-tester-kit-install.py BUILD_DIR
+With --run-kit (ADR-0248), after the installation check passes, it builds
+the kit native suite in a temporary directory via tools/tester/build-fast-suite.py
+and executes <PREFIX>/tests/run-fast-suite.sh to verify that kit-shipped tests
+pass without relying on Meson-only expectations (such as should_fail: true).
+
+Usage: python3 scripts/check-tester-kit-install.py [--run-kit] [--source-dir DIR] BUILD_DIR
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ import argparse
 from dataclasses import dataclass
 import os
 from pathlib import Path
-import subprocess  # nosec B404 - run meson introspect and fast-suite installer subprocesses with explicit timeouts
+import subprocess  # nosec B404 - run meson introspect, kit installer, kit builder, and kit runner subprocesses with explicit timeouts
 import sys
 import tempfile
 
@@ -126,16 +131,25 @@ def _resolve_paths(
     """Validate and resolve required filesystem paths."""
     resolved_build = build_dir.resolve()
     if not resolved_build.is_dir():
-        return None, f"check-tester-kit-install.py: build directory not found: {resolved_build}"
+        return (
+            None,
+            f"check-tester-kit-install.py: build directory not found: {resolved_build}",
+        )
 
     repo_root = Path(__file__).resolve().parent.parent
     resolved_source = source_dir.resolve() if source_dir is not None else repo_root
     if not resolved_source.is_dir():
-        return None, f"check-tester-kit-install.py: source directory not found: {resolved_source}"
+        return (
+            None,
+            f"check-tester-kit-install.py: source directory not found: {resolved_source}",
+        )
 
     installer = repo_root / "tools" / "tester" / "install-fast-suite.py"
     if not installer.is_file():
-        return None, f"check-tester-kit-install.py: installer script not found: {installer}"
+        return (
+            None,
+            f"check-tester-kit-install.py: installer script not found: {installer}",
+        )
 
     return KitPaths(resolved_build, resolved_source, installer, destination), None
 
@@ -150,7 +164,11 @@ def _tests_json(
     if tests_json_path is not None:
         resolved = tests_json_path.resolve()
         if not resolved.is_file():
-            return 1, None, f"check-tester-kit-install.py: tests JSON file not found: {resolved}"
+            return (
+                1,
+                None,
+                f"check-tester-kit-install.py: tests JSON file not found: {resolved}",
+            )
         return 0, resolved, ""
 
     meson_bin = resolve_executable("meson")
@@ -168,19 +186,14 @@ def _tests_json(
     return 0, json_file, ""
 
 
-def run_check(
+def _run_install_check(
+    python_bin: str,
     build_dir: Path,
-    source_dir: Path | None = None,
-    tests_json_path: Path | None = None,
-    timeout_seconds: float = 30.0,
+    source_dir: Path | None,
+    tests_json_path: Path | None,
+    timeout_seconds: float,
 ) -> int:
-    """Run tester kit install verification and return exit code."""
-    try:
-        python_bin = _resolve_python()
-    except RuntimeError as exc:
-        print(f"check-tester-kit-install.py: {exc}", file=sys.stderr)
-        return 127
-
+    """Run the install-only packaging check against a temporary destination."""
     with tempfile.TemporaryDirectory(prefix="pelorus-tester-check-") as tmp_dir:
         tmp_path = Path(tmp_dir)
         temp_dest = tmp_path / "dest"
@@ -212,6 +225,198 @@ def run_check(
     return 0
 
 
+def _partial_text(value: bytes | str | None) -> str:
+    """Return a TimeoutExpired partial output as text.
+
+    subprocess.run fills TimeoutExpired.stdout from the raw pipe on POSIX,
+    so it holds bytes even with text=True; on Windows it holds str.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def _print_runner_failure(output: str) -> None:
+    """Print the last test banner and the last 20 output lines to stderr."""
+    lines = output.splitlines()
+    last_banner = None
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("=== ") and stripped.endswith(" ==="):
+            last_banner = stripped
+    if last_banner is not None:
+        print(last_banner, file=sys.stderr)
+    tail = lines[-20:]
+    for line in tail:
+        print(line, file=sys.stderr)
+
+
+def _run_kit_build(
+    python_bin: str,
+    builder: Path,
+    jobs: int,
+    source_dir: Path,
+    build_dir: Path,
+    prefix_dir: Path,
+    timeout_seconds: float = 1200.0,
+) -> int:
+    """Invoke tools/tester/build-fast-suite.py to build and package the kit suite.
+
+    The default bound stays above the sum of the builder's own step bounds
+    (300 + 600 + 60 + 60 s), so the builder reports which step timed out.
+    """
+    cmd = [
+        python_bin,
+        "-I",
+        str(builder),
+        "--jobs",
+        str(jobs),
+        str(source_dir),
+        str(build_dir),
+        str(prefix_dir),
+    ]
+    try:
+        proc = subprocess.run(  # nosec B603 - kit build-fast-suite argv list, no shell, explicit timeout  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - kit build-fast-suite argv list, no shell, explicit timeout
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            f"check-tester-kit-install.py: build-fast-suite timed out after {timeout_seconds}s",
+            file=sys.stderr,
+        )
+        return 124
+    except OSError as exc:
+        print(
+            f"check-tester-kit-install.py: failed to run build-fast-suite: {exc}",
+            file=sys.stderr,
+        )
+        return 127
+
+    if proc.returncode != 0:
+        err = proc.stderr.strip() or proc.stdout.strip()
+        if err:
+            print(err, file=sys.stderr)
+        return proc.returncode
+    return 0
+
+
+def _run_kit_runner(
+    runner_path: Path,
+    cwd_path: Path,
+    timeout_seconds: float = 600.0,
+) -> int:
+    """Execute the installed kit fast-suite runner and report failures."""
+    try:
+        proc = subprocess.run(  # nosec B603 - kit fast-suite runner argv list, no shell, explicit timeout  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - kit fast-suite runner argv list, no shell, explicit timeout
+            [str(runner_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+            timeout=timeout_seconds,
+            cwd=str(cwd_path),
+        )
+    except subprocess.TimeoutExpired as exc:
+        _print_runner_failure(_partial_text(exc.stdout))
+        print(
+            f"check-tester-kit-install.py: kit runner timed out after {timeout_seconds}s",
+            file=sys.stderr,
+        )
+        return 124
+    except OSError as exc:
+        print(
+            f"check-tester-kit-install.py: failed to execute kit runner: {exc}",
+            file=sys.stderr,
+        )
+        return 127
+
+    if proc.returncode != 0:
+        _print_runner_failure(proc.stdout or "")
+        return proc.returncode
+    return 0
+
+
+def run_kit_check(
+    python_bin: str,
+    source_dir: Path | None = None,
+) -> int:
+    """Build and execute the relocatable tester-kit fast suite."""
+    repo_root = Path(__file__).resolve().parent.parent
+    resolved_source = source_dir.resolve() if source_dir is not None else repo_root
+    builder = repo_root / "tools" / "tester" / "build-fast-suite.py"
+    if not builder.is_file():
+        print(
+            f"check-tester-kit-install.py: builder script not found: {builder}",
+            file=sys.stderr,
+        )
+        return 1
+
+    cpu_count = os.cpu_count() or 1
+    jobs = max(1, cpu_count // 3)
+
+    with tempfile.TemporaryDirectory(prefix="pelorus-run-kit-") as run_kit_tmp:
+        tmp_path = Path(run_kit_tmp)
+        temp_build = tmp_path / "build"
+        temp_prefix = tmp_path / "prefix"
+
+        rc = _run_kit_build(
+            python_bin=python_bin,
+            builder=builder,
+            jobs=jobs,
+            source_dir=resolved_source,
+            build_dir=temp_build,
+            prefix_dir=temp_prefix,
+        )
+        if rc != 0:
+            return rc
+
+        runner_path = temp_prefix / "tests" / "run-fast-suite.sh"
+        if not runner_path.is_file():
+            print(
+                f"check-tester-kit-install.py: kit runner not found: {runner_path}",
+                file=sys.stderr,
+            )
+            return 1
+
+        return _run_kit_runner(runner_path=runner_path, cwd_path=tmp_path)
+
+
+def run_check(
+    build_dir: Path,
+    source_dir: Path | None = None,
+    tests_json_path: Path | None = None,
+    timeout_seconds: float = 30.0,
+    run_kit: bool = False,
+) -> int:
+    """Run tester kit install verification and return exit code."""
+    try:
+        python_bin = _resolve_python()
+    except RuntimeError as exc:
+        print(f"check-tester-kit-install.py: {exc}", file=sys.stderr)
+        return 127
+
+    rc = _run_install_check(
+        python_bin=python_bin,
+        build_dir=build_dir,
+        source_dir=source_dir,
+        tests_json_path=tests_json_path,
+        timeout_seconds=timeout_seconds,
+    )
+    if rc != 0:
+        return rc
+
+    if not run_kit:
+        return 0
+
+    return run_kit_check(python_bin=python_bin, source_dir=source_dir)
+
+
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for check-tester-kit-install."""
     parser = argparse.ArgumentParser(
@@ -230,6 +435,11 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Optional source root directory (defaults to repository root)",
     )
+    parser.add_argument(
+        "--run-kit",
+        action="store_true",
+        help="Build and execute the tester-kit fast suite in a temporary directory (ADR-0248)",
+    )
     return parser.parse_args(argv)
 
 
@@ -240,6 +450,7 @@ def main(argv: list[str] | None = None) -> int:
         build_dir=args.build_dir,
         source_dir=args.source_dir,
         tests_json_path=args.tests_json,
+        run_kit=args.run_kit,
     )
 
 

@@ -517,14 +517,25 @@ The fast-suite test `meson-testlog-credentials` (`scripts/test-meson-testlog-cre
 verifies name filtering, log detection, and end-to-end environment scrubbing against a stub
 Meson runner.
 
-`make test` also runs `scripts/check-tester-kit-install.py <build>`. It runs
+`make test` also runs `scripts/check-tester-kit-install.py --run-kit <build>`. It runs
 `meson introspect --tests` on the build directory and hands the result to
 `tools/tester/install-fast-suite.py`, which installs the fast suite into a temporary directory.
-A fast-suite test whose command or arguments the tester kit cannot install, such as a fixture
-path that contains `..`, then fails `make test` instead of only the tester-publish workflow.
+With `--run-kit`, it then builds the relocatable native kit in a temporary prefix via
+`tools/tester/build-fast-suite.py` and executes `tests/run-fast-suite.sh`. A fast-suite test
+whose command or arguments the tester kit cannot install (such as a fixture path with `..`) or
+that fails under the kit runner (such as relying on Meson `should_fail: true` or exiting 77)
+fails `make test` locally before push ([ADR-0248](../adr/0248-tester-kit-expected-fail.md)).
 The fast-suite test `check-tester-kit-install` (`scripts/test-check-tester-kit-install.py`)
-covers an installable argument, a planted `..` path and a path outside the build and source
-trees.
+covers installable arguments, planted `..` and outside-tree paths, followed by tiny Meson
+project cases verifying positive execution, negative detection of a planted `should_fail` test,
+boundary rejection of exit 77 skips, and a kit-only `--werror` build failure whose compiler
+message must reach stderr. A runner that outlives its deadline makes the check exit 124 and
+prints the runner's partial output, decoded, on stderr; the self-test plants a hanging runner
+for that path. On Linux and macOS the self-test fails, rather than skips, when `meson`,
+`ninja` or a C compiler is missing, so a lane without them cannot drop the kit cases while
+reporting a pass; it skips them on Windows only, where `tests/run-fast-suite.sh` cannot run.
+The tiny project declares its options in `meson_options.txt`, the file name every Meson from
+the `meson_version` floor on reads.
 
 A `# nosemgrep` or `# nosec` marker in tracked Python must sit on the start line
 of the statement or expression it answers and name its rules plus a reason:

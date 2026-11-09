@@ -536,6 +536,42 @@ ABI 1.6 adds:
 
 For rational PTS alignment (`pel_quality_align`) and encoder zone emitters (`pel_zones_*`), see [quality-window.md](quality-window.md).
 
+## Released-writer fixtures
+
+Persisted binary fixtures (`libpelorus/test/fixtures/interop-history/abi-1.<N>.bin`, plus `-carrier.bin` for ABI ≥ 1.5) capture the exact binary side-data blobs that each released `PELORUS_ABI_MINOR` writes (issue #467, ADR-0247). Minors 1 and 2 never reached a release tag, so they have no fixture. A manifest (`manifest.json`) records the SHA-256 digests and the Git tags that write each fixture; every tag listed on one line writes identical bytes:
+
+- `abi-1.0.bin`: `v0.1.0` (ABI 1.0)
+- `abi-1.3.bin`: `v0.2.0`, `v0.2.1`, `v0.2.2`, `v0.3.0` (ABI 1.3)
+- `abi-1.4.bin`: `v0.4.0-rc.1` (ABI 1.4)
+- `abi-1.5.bin` and `abi-1.5-carrier.bin`: `v0.4.0-rc.2`, `v0.4.0-rc.3`, `v0.4.0-rc.4`, `v0.4.0`, `v0.4.1` (ABI 1.5)
+- `abi-1.6.bin` and `abi-1.6-carrier.bin`: current tree only (`HEAD`, ABI 1.6). Provisional: no release tag writes 1.6 yet, so an ABI bump before the next release removes these files (step 3 below).
+
+### Verify locally
+
+The check needs the full tag history (`git fetch --tags`; CI checks out with `fetch-depth: 0`) and a POSIX C compiler named by `CC` (default `cc`). `CC` names one compiler executable on `PATH` plus compiler options such as `-O2`; a wrapper command such as `ccache cc` or a non-option word is refused. On Windows it prints a skip line and exits 0.
+
+```sh
+python3 -I scripts/check-interop-abi-history.py --self-test  # planted defects must fail
+python3 -I scripts/check-interop-abi-history.py              # 12 readers x 7 fixtures
+meson test -C build --suite=fast --print-errorlogs
+```
+
+`make docs-check` runs both script calls. The fast suite holds `interop-history-writer` (current writer against the 1.6 fixtures), one `interop-history-read-<fixture>` test per fixture, and the planted `interop-history-planted-value` and `interop-history-planted-dir-size` tests. The planted tests run the reader's `expect-reject` mode, which exits 0 only when the reader rejects the flipped blob (reader exit 1) and fails when it accepts the blob or cannot read it. The expectation lives in the binary, not in Meson's `should_fail`, because the tester kit runs the tests without Meson ([ADR-0248](../adr/0248-tester-kit-expected-fail.md)).
+
+### Regeneration on ABI bump
+
+When bumping `PELORUS_ABI_MINOR`:
+
+1. ABI bump PR adds `fill_<sec>` in `libpelorus/test/abi_history/abi_history_fill.c`, pack wiring in `abi_history_pack.c`, and `check_<sec>` in `abi_history_check.c` gated `#if PELORUS_ABI_MINOR >= N`, and new values are appended to `libpelorus/test/abi_history/abi_history_values.h`; existing values must never change (changing an existing value alters every fixture: check fails and `--write` refuses).
+2. Run `python3 -I scripts/check-interop-abi-history.py --write`: this generates the new `abi-1.<N>.bin` (and `abi-1.<N>-carrier.bin` if minor ≥ 5) and rewrites `manifest.json`.
+3. Update `libpelorus/test/meson.build`: point `interop-history-writer` at the new minor's fixture files and add fast-suite read tests for them.
+   If the previous minor never reached a release tag (its manifest rows list only the current tree as writer), `--write` in step 2 deletes its `abi-1.<N-1>*.bin` files and manifest rows; delete their read tests in the same pull request. `--write` refuses, before changing any file, to delete a file that a release tag wrote or that the manifest does not list. A released minor's files stay forever: the script fails when one is missing.
+4. Release tag push: no manual action required; `scripts/check-interop-abi-history.py` prints an informational note for any unlisted release tag until the next `--write` run records it.
+
+### Scope and non-coverage
+
+These fixtures verify the libpelorus C core serialization, backward compatibility (newer readers over older fixtures), and forward compatibility (older readers safely ignoring unknown newer sections per R3/R4 and carrier UUIDs per ADR-0183). Each release tag's `interop.c` is compiled without `-Werror` (warnings print an informational note line), because release sources are immutable and a newer compiler's diagnostics cannot be fixed in them; `abi_history.c` and the current tree's `interop.c` keep `-Werror`. They do not test FFmpeg-filter host graph producers or external readers such as vmafx.
+
 ## Stability rules (normative — see interop.h)
 
 - **R1 Append-only**: new fields at the end of a section; new sections take a new
