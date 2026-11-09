@@ -537,7 +537,9 @@ The fast-suite test `run-meson-deadline` (`scripts/test-run-meson-deadline.py`) 
 platform, Windows included. It checks that a child's exit status passes through, that a child
 outliving a short deadline is stopped together with a test process it started, that the tree is
 stopped when Meson exits after the deadline, that a tree step that cannot reach the tree is
-named, and that a reaped child is never signalled. On Windows it also checks that a test process
+named, and that a reaped child is never signalled. The late-exit case sees the stand-in's exit
+as end of file on a pipe only the stand-in holds, so it needs no `os.waitid` (on macOS only from
+Python 3.13), and it requires the stand-in's own exit status 0 after the stop. On Windows it also checks that a test process
 that broke away from a nested job is stopped, and that a child that cannot join its job is
 killed. The `patch-harness` fast test requires the same stop of a stalled compiler's child on
 every platform.
@@ -578,6 +580,14 @@ comment documenting why ignoring the exception is safe. The fast-suite test
 `python-empty-except` (`scripts/check-python-empty-except.py`) scans tracked
 Python files and fails when an except handler with a bare pass carries no comment;
 `python-empty-except-self-test` runs the planted cases.
+
+No Python file may import one module with both `import M` (with or without
+`as`) and `from M import ...`, the class CodeQL reports as
+`py/import-and-import-from`. The fast-suite test `python-dual-import`
+(`scripts/check-python-dual-import.py`) scans tracked Python files with the
+stdlib AST and names the plain import line, as CodeQL does.
+`import M.sub as s` names the module `M.sub` and does not count.
+`python-dual-import-self-test` runs the planted cases on every platform.
 
 Every tracked Python script must parse its command line with stdlib `argparse`
 rather than by indexing `argv`. The fast-suite test `python-argv`

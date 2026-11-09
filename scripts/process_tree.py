@@ -22,7 +22,7 @@ walks the tree down from a live root.
 from __future__ import annotations
 
 import ctypes
-from ctypes import wintypes
+import ctypes.wintypes as wintypes
 import os
 import pathlib
 import signal

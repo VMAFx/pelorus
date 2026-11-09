@@ -636,6 +636,25 @@ test('python-empty-except-self-test',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# No Python file may import one module with both import and from-import
+# (CodeQL py/import-and-import-from, pull request 579). The tree scan lists
+# files with git, which the MSYS2 UCRT64 leg does not put on PATH; the
+# self-test runs on every platform.
+if build_machine.system() != 'windows'
+  test('python-dual-import',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-dual-import.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
+
+test('python-dual-import-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-dual-import.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 # Snapshot cleanup must not chmod a symlink target (PR 538 review). Creating
 # the planted symlink needs a privilege Windows CI does not grant.
 if build_machine.system() != 'windows'

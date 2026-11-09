@@ -306,9 +306,11 @@ rules:
     # runner ran every FFmpeg step through run(cmd, **kw) with no deadline
     # while the audit stayed clean (pull request 579). This rule closes that
     # gap: an unpacked call must name a timeout= other than None, or the dict
-    # must get it first. The engine also passes timeout=None next to a
-    # top-level ** unpack; this rule reports it. Not covered: None set on the
-    # dict (kw["timeout"] = None, kw.setdefault("timeout", None)).
+    # must get it by item assignment first. The engine also passes
+    # timeout=None next to a top-level ** unpack; this rule reports it, and
+    # kw["timeout"] = None too. kw.setdefault("timeout", ...) proves nothing:
+    # it keeps a None the caller passed. Values are not evaluated: a name that
+    # holds None at run time passes (kw["timeout"] = deadline).
     paths:
       include:
         - "*.py"
@@ -318,8 +320,9 @@ rules:
       timeout= other than None. The praetor HISS-02 scan treats a top-level **
       unpack as undecidable and passes it, so a missing deadline stays hidden.
       Pass a timeout= that is not None, as run() in scripts/bench/run-bench.py
-      does, or set it on the dict first with $KW.setdefault("timeout", ...) or
-      $KW["timeout"] = ....
+      does, or set it on the dict first with $KW["timeout"] = ... (not None).
+      $KW.setdefault("timeout", ...) does not count: it keeps a None the
+      caller passed.
     languages: [python]
     severity: ERROR
     patterns:
@@ -341,11 +344,13 @@ rules:
           # timeout=None leaves the call without a deadline.
           - pattern: $CALL(..., timeout=None, ...)
           - patterns:
+              - pattern-inside: |
+                  $KW["timeout"] = None
+                  ...
+              - pattern: $CALL(...)
+          - patterns:
               - pattern: $CALL(...)
               - pattern-not: $CALL(..., timeout=$T, ...)
-              - pattern-not-inside: |
-                  $KW.setdefault("timeout", ...)
-                  ...
               - pattern-not-inside: |
                   $KW["timeout"] = $V
                   ...

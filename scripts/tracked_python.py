@@ -42,7 +42,6 @@ def _run_git(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[bytes]:
     """Run git with timeout and error wrapping."""
     kw.setdefault("capture_output", True)
     kw.setdefault("check", True)
-    kw.setdefault("timeout", GIT_DEADLINE_S)
     env = dict(kw.get("env") or os.environ)
     # C locale keeps git's stderr in English, so callers can name the cause.
     env["LC_ALL"] = "C"
@@ -50,6 +49,7 @@ def _run_git(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[bytes]:
     try:
         return subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
             argv,
+            timeout=GIT_DEADLINE_S,
             **kw,
         )
     except subprocess.CalledProcessError as exc:

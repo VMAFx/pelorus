@@ -4,8 +4,8 @@
 """Check the deadline and process-tree stop of scripts/run-meson-test.py (HISS-02).
 
 On Windows the wrapper waits for ``meson test`` as a child, started through
-``process_tree.TreePopen``. This test runs on Linux and on both Windows CI
-legs, with live processes:
+``process_tree.TreePopen``. This test runs on the Linux CI leg and the three
+Windows legs (MSYS2, clang-cl, MSVC), with live processes:
 
 1. A quick child's exit status passes through; a hung child is stopped at its
    deadline with status 124.
@@ -30,6 +30,7 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import select
 import signal
 import subprocess  # nosec B404 - fixed interpreter argv, no shell, explicit deadline
 import sys
@@ -58,8 +59,10 @@ _TREE_CHILD = (
     "os.replace(sys.argv[1] + '.tmp', sys.argv[1])\n"
     "time.sleep(60)\n"
 )
-# The same stand-in, except that it exits at once and leaves its test running.
-_EXITING_CHILD = _TREE_CHILD.rpartition("time.sleep(60)\n")[0]
+# The same stand-in, except that it exits on its own half a second after its
+# test started and leaves the test running. A probe that reported the exit
+# early would stop a live stand-in, whose status then is not 0.
+_EXITING_CHILD = _TREE_CHILD.rpartition("time.sleep(60)\n")[0] + "time.sleep(0.5)\n"
 # Windows: the stand-in first moves into a nested job with the limits a
 # console-script launcher sets (SILENT_BREAKAWAY_OK 0x1000, KILL_ON_JOB_CLOSE
 # 0x2000, through JobObjectExtendedLimitInformation 9), so its test process
@@ -130,20 +133,54 @@ def _kill_leftover(pid: int) -> None:
         pass
 
 
-def _wait_exited_unreaped(proc: subprocess.Popen, tree: ModuleType) -> bool:
-    """Wait until ``proc`` exits without reaping it, so its pid stays reserved."""
-    waitid = getattr(os, "waitid", None)
+def _wait_exited_unreaped(
+    proc: subprocess.Popen, tree: ModuleType, exit_read: int | None
+) -> bool:
+    """Wait until ``proc`` exits without reaping it, so its pid stays reserved.
+
+    POSIX waits for end of file on ``exit_read``, a pipe whose write end only
+    ``proc`` holds: a process closes its descriptors as it exits, before it is
+    reaped. This needs neither ``os.waitid`` (on macOS only from Python 3.13)
+    nor ``pid_gone`` (an unreaped macOS process still answers ``kill(pid, 0)``),
+    so Linux runs the probe macOS runs. Windows probes the process handle.
+    """
     for _ in range(int(CHILD_WAIT_TIMEOUT_S / PID_FILE_POLL_S) + 1):
-        if waitid is not None:
-            if (
-                waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
-                is not None
-            ):
-                return True
+        if exit_read is not None:
+            if select.select([exit_read], [], [], PID_FILE_POLL_S)[0]:
+                # The stand-in never writes, so a readable end is end of file.
+                return os.read(exit_read, 1) == b""
         elif tree.pid_gone(proc.pid):
             return True
-        time.sleep(PID_FILE_POLL_S)
+        else:
+            time.sleep(PID_FILE_POLL_S)
     return False
+
+
+def _start_exiting_root(
+    tree: ModuleType, pid_file: Path
+) -> tuple[subprocess.Popen, int, bool]:
+    """Start the exiting stand-in; return it, its test pid and whether it exited.
+
+    On POSIX the stand-in alone gets the write end of the exit pipe: its test
+    process starts with ``close_fds`` and does not inherit it.
+    """
+    exit_read, exit_write = (None, None) if os.name == "nt" else os.pipe()
+    popen_kw = {} if exit_write is None else {"pass_fds": (exit_write,)}
+    try:
+        try:
+            proc = tree.TreePopen(
+                [sys.executable, "-I", "-c", _EXITING_CHILD, str(pid_file)],
+                **popen_kw,
+            )
+        finally:
+            if exit_write is not None:
+                os.close(exit_write)
+        test_pid = _read_pid(pid_file)
+        exited = _wait_exited_unreaped(proc, tree, exit_read)
+    finally:
+        if exit_read is not None:
+            os.close(exit_read)
+    return proc, test_pid, exited
 
 
 def _stop_and_capture(tree: ModuleType, proc: subprocess.Popen) -> tuple[bool, str]:
@@ -249,12 +286,7 @@ def test_root_exits_after_deadline(run_mod: ModuleType) -> list[str]:
     failures: list[str] = []
     tree = run_mod.process_tree
     with tempfile.TemporaryDirectory(prefix="pelorus-meson-exited-") as tmp:
-        pid_file = Path(tmp) / "test.pid"
-        proc = tree.TreePopen(
-            [sys.executable, "-I", "-c", _EXITING_CHILD, str(pid_file)]
-        )
-        test_pid = _read_pid(pid_file)
-        exited = _wait_exited_unreaped(proc, tree)
+        proc, test_pid, exited = _start_exiting_root(tree, Path(tmp) / "test.pid")
         real_wait = proc.wait
         timed_out: list[float | None] = []
 
@@ -269,10 +301,17 @@ def test_root_exits_after_deadline(run_mod: ModuleType) -> list[str]:
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             status = run_mod._wait_or_stop(proc, deadline_s=0.1)
-        if not exited or test_pid <= 1 or status != run_mod.STOPPED_EXIT_STATUS:
+        # A root that exited on its own keeps status 0 through the stop.
+        if (
+            not exited
+            or test_pid <= 1
+            or status != run_mod.STOPPED_EXIT_STATUS
+            or proc.returncode != 0
+        ):
             _fail(
                 failures,
-                f"exited root: exited {exited}, test pid {test_pid}, status {status}",
+                f"exited root: exited {exited}, test pid {test_pid}, status {status}, "
+                f"root status {proc.returncode}",
             )
         elif not tree.wait_pid_gone(test_pid):
             _kill_leftover(test_pid)

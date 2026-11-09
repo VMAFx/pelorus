@@ -7,9 +7,11 @@ Checks that `pelorus-py-io-unpack-deadline` in `.semgrep.yml`:
 (a) reports subprocess.run, requests.get, urllib.request.urlopen, an imported
     urlopen and an injected urlopen parameter that pass keyword arguments
     through a ** unpack without timeout=, and an unpacked call whose explicit
-    timeout=None leaves it without a deadline, while allowing an explicit
-    timeout= next to the unpack, a dict given its timeout through setdefault()
-    or item assignment first, a call without an unpack (timeout=None there is
+    timeout=None leaves it without a deadline, a dict given its timeout
+    through setdefault() (a caller's timeout=None survives it) and a dict
+    given timeout None by item assignment, while allowing an explicit
+    timeout= next to the unpack, a dict given a timeout other than None by
+    item assignment first, a call without an unpack (timeout=None there is
     the engine's finding, not this rule's) and subprocess.Popen;
 (b) catches a planted regression in scripts/bench/run-bench.py when run()
     hands its keyword arguments to subprocess.run through **kw again;
@@ -82,10 +84,20 @@ def negative_explicit(cmd, **kw):
     return subprocess.run(cmd, timeout=30, **kw)
 
 
-def negative_setdefault(cmd, **kw):
+def run_setdefault(cmd, **kw):
     kw.setdefault("timeout", 30)
     kw.setdefault("check", True)
-    return subprocess.run(cmd, **kw)
+    return subprocess.run(cmd, **kw)  # reported
+
+
+def caller_passes_none(cmd):
+    # setdefault() keeps this None, so run_setdefault() runs without a deadline.
+    return run_setdefault(cmd, timeout=None)
+
+
+def run_assign_none(cmd, **kw):
+    kw["timeout"] = None
+    return subprocess.check_output(cmd, **kw)  # reported
 
 
 def negative_assign(cmd, **kw):
