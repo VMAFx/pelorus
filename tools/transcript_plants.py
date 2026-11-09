@@ -75,9 +75,13 @@ def capture_plants() -> list[tuple[str, str, str]]:
         ),
         (
             # The child passes its own pipes on explicitly, so it holds them on
-            # Windows as well, where handles are not inherited by default.
+            # Windows as well, where handles are not inherited by default. It
+            # runs outside the self-test directory: Windows refuses to remove a
+            # directory that a live process uses as its working directory.
             "r (child process holds stdout)",
-            "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(15)'], stdout=sys.stdout, stderr=sys.stderr)",
+            "import os, subprocess, sys; subprocess.Popen("
+            "[sys.executable, '-c', 'import time; time.sleep(15)'], "
+            "stdout=sys.stdout, stderr=sys.stderr, cwd=os.path.dirname(sys.executable))",
             "held-stdout",
         ),
     ]
