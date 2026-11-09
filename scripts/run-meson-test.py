@@ -124,10 +124,10 @@ def _run_and_wait(command: list[str], deadline_s: float = MESON_RUN_TIMEOUT_S) -
     if executable is None:
         print("run-meson-test.py: Meson executable not found", file=sys.stderr)
         return 127
-    # POSIX: lead a process group so the stop reaches every descendant. Windows
-    # needs no flag (taskkill /T), and CREATE_NEW_PROCESS_GROUP would turn off
-    # Ctrl+C in the child.
-    proc = subprocess.Popen([executable, *command[1:]], start_new_session=(os.name == "posix"))  # nosec B603 - fixed meson argv, no shell  # noqa: S603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - resolved meson path plus caller test arguments, no shell, deadline below
+    # The child roots a tree the stop reaches whole: a POSIX process group, or
+    # a Windows job object it joins before it runs. No CREATE_NEW_PROCESS_GROUP:
+    # it would turn off Ctrl+C in the child.
+    proc = process_tree.TreePopen([executable, *command[1:]])
     return _wait_or_stop(proc, deadline_s)
 
 

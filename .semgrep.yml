@@ -305,18 +305,20 @@ rules:
     # requests call with a top-level ** unpack as undecidable. The bench
     # runner ran every FFmpeg step through run(cmd, **kw) with no deadline
     # while the audit stayed clean (pull request 579). This rule closes that
-    # gap: an unpacked call must name timeout=, or the dict must get it first.
-    # Not covered: kw.setdefault("timeout", None), which keeps no deadline.
+    # gap: an unpacked call must name a timeout= other than None, or the dict
+    # must get it first. The engine also passes timeout=None next to a
+    # top-level ** unpack; this rule reports it. Not covered: None set on the
+    # dict (kw["timeout"] = None, kw.setdefault("timeout", None)).
     paths:
       include:
         - "*.py"
         - "**/*.py"
     message: >
       This call passes keyword arguments through a ** unpack and names no
-      timeout=. The praetor HISS-02 scan treats a top-level ** unpack as
-      undecidable and passes it, so a missing deadline stays hidden. Pass
-      timeout= explicitly, as run() in scripts/bench/run-bench.py does, or set
-      it on the dict first with $KW.setdefault("timeout", ...) or
+      timeout= other than None. The praetor HISS-02 scan treats a top-level **
+      unpack as undecidable and passes it, so a missing deadline stays hidden.
+      Pass a timeout= that is not None, as run() in scripts/bench/run-bench.py
+      does, or set it on the dict first with $KW.setdefault("timeout", ...) or
       $KW["timeout"] = ....
     languages: [python]
     severity: ERROR
@@ -334,13 +336,19 @@ rules:
                   regex: ^(get|post|put|patch|delete|head|options|request)$
           - pattern: urllib.request.urlopen(..., **$KW, ...)
           - pattern: urlopen(..., **$KW, ...)
-      - pattern-not: $CALL(..., timeout=$T, ...)
-      - pattern-not-inside: |
-          $KW.setdefault("timeout", ...)
-          ...
-      - pattern-not-inside: |
-          $KW["timeout"] = $V
-          ...
+      - pattern-either:
+          # Python refuses a second timeout from the unpack, so an explicit
+          # timeout=None leaves the call without a deadline.
+          - pattern: $CALL(..., timeout=None, ...)
+          - patterns:
+              - pattern: $CALL(...)
+              - pattern-not: $CALL(..., timeout=$T, ...)
+              - pattern-not-inside: |
+                  $KW.setdefault("timeout", ...)
+                  ...
+              - pattern-not-inside: |
+                  $KW["timeout"] = $V
+                  ...
 
   - id: pelorus-meson-options-file
     # meson.build declares meson_version '>=0.57.0'. Meson reads the newer

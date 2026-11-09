@@ -518,17 +518,29 @@ verifies name filtering, log detection, and end-to-end environment scrubbing aga
 Meson runner. On Windows, where the wrapper waits for Meson as a child process, a run still
 going after `MESON_RUN_TIMEOUT_S` (30 minutes) is stopped and exits with status 124; Meson
 times out each hung test itself. The stop, and an interrupt, end Meson together with every
-test process it started (`scripts/process_tree.py`: `taskkill /T /F` on Windows, `SIGKILL` to
-the process group on POSIX), so no test keeps running after the wrapper returns. The stop runs
-even when Meson itself exited just after the deadline: an unreaped child keeps its pid and
-process group, so its test processes are still reached on POSIX. `taskkill /T` walks the tree
-from a live root only; when it fails, cannot start or hangs, the wrapper names the cause on
-stderr and warns that test processes may still run, instead of falling back silently.
+test process it started, so no test keeps running after the wrapper returns
+(`scripts/process_tree.py`: `TreePopen` starts the child, `stop_tree` stops it). On POSIX, Meson
+leads its own process group and the stop sends `SIGKILL` to that group. On Windows, Meson starts
+suspended, joins a job object of its own, and only then runs; the stop calls
+`TerminateJobObject`, which ends every process in that job and in the jobs nested under it. When
+`meson.exe` is the console-script launcher pip installs (distlib `PC/launcher.c`), it puts the
+Python it starts in a nested job that lets that Python's children break away silently. A process
+that breaks away from a nested job moves up to the nearest job that allows no breakaway, and the
+wrapper's job allows none, so Meson's test processes stay in reach. The stop runs even when
+Meson itself exited just after the deadline: an unreaped child keeps its pid and process group
+on POSIX, and the job outlives its first process on Windows. A tree step that cannot reach the
+tree (a child that leads no process group, a child that no job holds, a failed
+`TerminateJobObject`) is named on stderr with a warning that test processes may still run,
+instead of falling back silently. A child that cannot join its job is killed before it runs, and
+the start raises.
 The fast-suite test `run-meson-deadline` (`scripts/test-run-meson-deadline.py`) runs on every
 platform, Windows included. It checks that a child's exit status passes through, that a child
-outliving a short deadline is stopped together with a test process it started, that the tree
-is stopped when Meson exits after the deadline, that a failed or missing `taskkill` is named,
-and that a reaped child is never signalled.
+outliving a short deadline is stopped together with a test process it started, that the tree is
+stopped when Meson exits after the deadline, that a tree step that cannot reach the tree is
+named, and that a reaped child is never signalled. On Windows it also checks that a test process
+that broke away from a nested job is stopped, and that a child that cannot join its job is
+killed. The `patch-harness` fast test requires the same stop of a stalled compiler's child on
+every platform.
 
 `make test` also runs `scripts/check-tester-kit-install.py --run-kit <build>`. It runs
 `meson introspect --tests` on the build directory and hands the result to

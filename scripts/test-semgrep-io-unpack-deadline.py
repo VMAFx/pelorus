@@ -5,10 +5,12 @@
 
 Checks that `pelorus-py-io-unpack-deadline` in `.semgrep.yml`:
 (a) reports subprocess.run, requests.get, urllib.request.urlopen, an imported
-    urlopen and an injected urlopen parameter that pass keyword arguments through a ** unpack without timeout=,
-    while allowing an explicit timeout= next to the unpack, a dict given its
-    timeout through setdefault() or item assignment first, a call without an
-    unpack and subprocess.Popen;
+    urlopen and an injected urlopen parameter that pass keyword arguments
+    through a ** unpack without timeout=, and an unpacked call whose explicit
+    timeout=None leaves it without a deadline, while allowing an explicit
+    timeout= next to the unpack, a dict given its timeout through setdefault()
+    or item assignment first, a call without an unpack (timeout=None there is
+    the engine's finding, not this rule's) and subprocess.Popen;
 (b) catches a planted regression in scripts/bench/run-bench.py when run()
     hands its keyword arguments to subprocess.run through **kw again;
 (c) produces zero findings across the tracked tree while confirming that
@@ -66,6 +68,14 @@ def open_url_name(url, **kw):
 
 def open_url_injected(urlopen, url, **kw):
     return urlopen(url, **kw)  # reported
+
+
+def run_none(cmd, **kw):
+    return subprocess.run(cmd, timeout=None, **kw)  # reported
+
+
+def negative_none_no_unpack(cmd):
+    return subprocess.run(cmd, timeout=None)
 
 
 def negative_explicit(cmd, **kw):

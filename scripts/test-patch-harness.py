@@ -86,17 +86,14 @@ def test_stalled_compiler_child() -> bool:
             if status != 2 or "harness build exceeded" not in output or wall_time >= 15.0:
                 print(f"FAIL stalled child: status {status}, wall {wall_time:.2f} s, out: {output.strip()!r}")
                 return False
-            if os.name == "nt":
-                # On Windows, process liveness check is skipped because taskkill /T terminates the
-                # process tree and wall_time < 15 s proves communicate() did not hang on child pipes.
-                pass
-            else:
-                if grandchild_pid is None:
-                    print("FAIL stalled child: setup, no grandchild pid")
-                    return False
-                if not harness.process_tree.wait_pid_gone(grandchild_pid):
-                    print(f"FAIL stalled child: grandchild {grandchild_pid} still alive after deadline")
-                    return False
+            # Every OS: the grandchild sits in the compiler's process group (POSIX) or
+            # job object (Windows), so the deadline stop must have ended it.
+            if grandchild_pid is None:
+                print("FAIL stalled child: setup, no grandchild pid")
+                return False
+            if not harness.process_tree.wait_pid_gone(grandchild_pid):
+                print(f"FAIL stalled child: grandchild {grandchild_pid} still alive after deadline")
+                return False
             return True
         finally:
             if old_env is None:

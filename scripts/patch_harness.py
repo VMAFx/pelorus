@@ -197,13 +197,17 @@ def _run_with_deadline(
     argv: Sequence[str],
     timeout: float,
 ) -> subprocess.CompletedProcess[str] | None:
-    """Run argv with tree kill on deadline (HISS-02, HISS-08)."""
+    """Run argv with tree kill on deadline (HISS-02, HISS-08).
+
+    ``TreePopen`` puts the child at the root of a process group (POSIX) or a
+    job object (Windows), so ``stop_tree`` reaches every process it started.
+    """
     kwargs: dict[str, object] = (
         {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)}
         if os.name == "nt"
-        else {"start_new_session": True}
+        else {}
     )
-    proc = subprocess.Popen(  # nosec B603 - configured compiler or harness binary; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - configured compiler or harness binary, list argv, no shell, timeout
+    proc = process_tree.TreePopen(
         argv,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
