@@ -58,6 +58,8 @@ Recorded in an isolated temporary working directory with unedited x265 4.3 outpu
 | `p` | Output flood (`capture` stream limit) | 0 | 0 |
 | `q` | Tool executable is a directory | 2 | 2 |
 | `r` | Child process holds stdout after the tool exits (`capture` held-pipe verdict) | 0 | 0 |
+| `s` | `% repeat` output exactly 8 MiB (128-byte header and rows) | 0 | 0 |
+| `t` | `% repeat` output one row over 8 MiB | 1 | 1 |
 
 ### Transcript test matrix
 
@@ -116,7 +118,7 @@ The 27-case transcript was evaluated against six planted mutations (m1–m6) in 
 - The transcript runner supports simple space-separated arguments without quotes or shell escapes. Complex shell pipelines remain in bash integration scripts.
 - The driver reads a transcript as bytes and strips one CR before each LF, so a CRLF checkout reads the same as LF; a CR elsewhere in a line is kept and compared byte for byte, and an expected line cannot end in a literal CR.
 - On Windows each CRLF in the tool's output reads as LF, since the C runtime writes text-mode streams; a lone CR stays.
-- Each tool run is bounded: 30 s wall time, 1 MiB per output stream (the tool is killed at the cap), and 8 MiB per transcript or fixture file, checked on the bytes read before any parse. An output stream a child process still holds 5 s after the tool exits fails the case and is left open, since closing it would wait for that child.
+- Each tool run is bounded: 30 s wall time, 1 MiB per output stream (the tool is killed at the cap), and 8 MiB per transcript or fixture file, checked on the bytes read before any parse. A `% repeat` directive whose output would pass 8 MiB fails the case before anything is allocated. An output stream a child process still holds 5 s after the tool exits fails the case and is left open, since closing it would wait for that child.
 - The fixture was recorded with relative file names, so its Summary row carries no absolute or build-directory path; checked once at recording time with `grep -c` for the temp dir (0).
 
 ## Evidence

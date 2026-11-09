@@ -30,7 +30,14 @@ from transcript_parse import (
     validate_path_token,
     parse_transcript,
 )
-from transcript_plants import capture_plants, parse_plants, runtime_plants
+from transcript_plants import (
+    EXPANSION_FIXTURE,
+    capture_plants,
+    expansion_fixture,
+    expansion_plants,
+    parse_plants,
+    runtime_plants,
+)
 
 MAX_STREAM_BYTES = 1024 * 1024
 RUN_TIMEOUT_SECS = 30
@@ -115,10 +122,14 @@ def _execute_directive(
             )
         hdr = lines[0]
         row = lines[d.line_or_n - 1]
-        out_content = [hdr]
-        for _ in range(d.count):
-            out_content.append(row)
-        dst_path.write_bytes(b"".join(out_content))
+        # Size before allocation: an 8 MiB row repeated MAX_REPEAT_COUNT times
+        # would otherwise build hundreds of GiB before any timeout applies.
+        size = len(hdr) + len(row) * d.count
+        if size > MAX_INPUT_BYTES:
+            raise ValueError(
+                f"repeat of {d.fixture} expands to {size} bytes, over {MAX_INPUT_BYTES}"
+            )
+        dst_path.write_bytes(hdr + row * d.count)
 
 
 def _run_directives(
@@ -399,6 +410,22 @@ def _run_capture_plant(label: str, code: str, want: str, tmp: pathlib.Path) -> b
     return False
 
 
+def _run_expansion_plants(exe: str, tool: str, tmp: pathlib.Path) -> bool:
+    """Run the repeat size-cap plants on a fixture written under tmp; True when all match."""
+    fix = tmp / "expansion-fixtures"
+    fix.mkdir()
+    (fix / EXPANSION_FIXTURE).write_bytes(expansion_fixture())
+    for label, text, expected_rc in expansion_plants(tool, MAX_INPUT_BYTES):
+        rc = _run_string_probe(text, exe, tool, fix)
+        if rc != expected_rc:
+            sys.stderr.write(
+                f"self-test failed for plant {label}: expected rc {expected_rc}, got {rc}\n"
+            )
+            return False
+        print(f"ok: plant {label} -> {rc}")
+    return True
+
+
 def run_self_test(exe_path: str, tool_name: str, fixtures_dir: pathlib.Path) -> int:
     """Run self-test verifying planted failure handling and allow-list reader."""
     runtime = runtime_plants(tool_name)
@@ -418,6 +445,9 @@ def run_self_test(exe_path: str, tool_name: str, fixtures_dir: pathlib.Path) -> 
         for label, code, want in capture_plants():
             if not _run_capture_plant(label, code, want, tmp):
                 return 1
+
+        if not _run_expansion_plants(exe_path, tool_name, tmp):
+            return 1
 
         pass_t = tmp / "pass.t"
         pass_text = [t for lbl, t, _ in runtime if lbl == "pass"][0]
