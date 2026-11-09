@@ -589,6 +589,22 @@ stdlib AST and names the plain import line, as CodeQL does.
 `import M.sub as s` names the module `M.sub` and does not count.
 `python-dual-import-self-test` runs the planted cases on every platform.
 
+No call may name a keyword argument and also forward its function's `**kw`
+unless the function removes that keyword from `kw` first. In
+`def f(**kw): return g(timeout=60, **kw)`, a caller that passes `timeout` gets
+`TypeError: got multiple values for keyword argument`, which an `except`
+written for `g`'s own errors does not catch. The fast-suite test
+`python-kwargs-collision` (`scripts/check-python-kwargs-collision.py`) scans
+tracked Python files with the stdlib AST and names the call line once per
+keyword at risk. A `kw.pop("timeout", ...)` or `del kw["timeout"]` placed
+before the unpack, including an inline pop in an earlier argument, clears that
+keyword. The check does not follow control flow or copies of `kw`, and a pop
+whose key is not a string literal clears nothing. A nested function or lambda
+with its own parameter of the same name is checked as its own scope.
+`python-kwargs-collision-self-test` runs the planted cases on every platform.
+The rule fixed `_run_git` in `scripts/tracked_python.py`: it now takes only a
+keyword-only `env` and keeps its 60 s git deadline fixed.
+
 Every tracked Python script must parse its command line with stdlib `argparse`
 rather than by indexing `argv`. The fast-suite test `python-argv`
 (`scripts/check-python-argv.py`) scans tracked Python files with the stdlib AST

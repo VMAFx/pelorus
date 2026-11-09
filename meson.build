@@ -655,6 +655,26 @@ test('python-dual-import-self-test',
      workdir: meson.project_source_root(),
      suite: 'fast')
 
+# No call may name keyword K and also forward its function's **kw unless K is
+# removed from kw first: a caller passing K gets a TypeError (pull request 579,
+# _run_git in scripts/tracked_python.py). The tree scan lists files with git,
+# which the MSYS2 UCRT64 leg does not put on PATH; the self-test runs on every
+# platform.
+if build_machine.system() != 'windows'
+  test('python-kwargs-collision',
+       python_prog,
+       args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-kwargs-collision.py'],
+       workdir: meson.project_source_root(),
+       suite: 'fast')
+endif
+
+test('python-kwargs-collision-self-test',
+     python_prog,
+     args: ['-I', meson.project_source_root() / 'scripts' / 'check-python-kwargs-collision.py',
+            '--self-test'],
+     workdir: meson.project_source_root(),
+     suite: 'fast')
+
 # Snapshot cleanup must not chmod a symlink target (PR 538 review). Creating
 # the planted symlink needs a privilege Windows CI does not grant.
 if build_machine.system() != 'windows'
