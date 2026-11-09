@@ -6,7 +6,7 @@ These are unedited stat files recorded from the distribution binaries below on 2
 | Fixture | Encoder |
 | --- | --- |
 | `x265-4.3-qp32.csv` | x265 4.3, GCC 16.1.1, 8/10/12-bit build |
-| `x265-4.3-crf28-psnr.csv` | x265 4.3, GCC 16.1.1, 8/10/12-bit build; 24 frames, 176x144, CRF 28, PSNR |
+| `x265-4.3-crf28-psnr.csv` | x265 4.3, GCC 16.1.1, 8/10/12-bit build, recorded 2026-11-09; 24 frames, 176x144, CRF 28, PSNR |
 | `svt-av1-4.2.0-qp34.stat` | SVT-AV1 v4.2.0 (release), library v4.2.0 |
 | `vvenc-1.14.0-qp32.log` | VVenC v1.14.0, release-static |
 | `x264-0.165-qp32.stats` | x264 0.165.3222 b35605a, GCC 16.2.1, recorded 2026-10-16; 30 frames, 320x240, 8-bit |

@@ -84,7 +84,7 @@ static pel_result roundtrip_and_print(const PelorusQpReportSection *qp, size_t c
     meta.bit_depth = 8;
     meta.grid_cols = 1; /* frame-granular: no per-cell map */
     meta.grid_rows = 1;
-    /* PEL_FOURCC is the public interop.h macro; its char literals promote to int. */
+    /* PEL_FOURCC (interop.h) shifts by the int constants 8, 16, 24; the result is uint32_t. */
     meta.producer_id = PEL_FOURCC('P', 'L', 'R', 'S'); // NOLINT(bugprone-signed-bitwise)
 
     sec.id = PEL_SEC_QPREPORT;

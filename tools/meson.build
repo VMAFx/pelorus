@@ -49,7 +49,6 @@ pelorus_tool_test = executable(
 )
 test('tool-argv', pelorus_tool_test, suite: 'fast')
 
-python_prog = find_program('python3', required: true)
 _transcript_driver = files('transcript.py')
 _telemetry_fixtures = meson.project_source_root() / 'libpelorus' / 'test' / 'fixtures' / 'telemetry'
 

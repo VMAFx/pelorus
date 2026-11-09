@@ -33,6 +33,7 @@ tools/
 - New tool: one `executable(... install: false)` entry in `meson.build` plus
   one-line row in scope table above.
 - Tool output or argv change -> transcript in the same change (ADR-0249).
+- transcript driver: no record mode (issue 581); expected text hand-written, read against source.
 
 ## Invariants
 
