@@ -73,8 +73,10 @@ def validate_path_token(
         if not (ch.isalnum() or ch in "._-"):
             raise ValueError(f"invalid {kind} '{token}'")
     if fixtures_dir is not None:
+        # Compare canonical forms on both sides: the caller's spelling of the
+        # directory (a Windows 8.3 TEMP name, a symlink, "sub/..") may differ.
         path = (fixtures_dir / token).resolve()
-        if not path.is_file() or path.parent != fixtures_dir:
+        if not path.is_file() or path.parent != fixtures_dir.resolve():
             raise FileNotFoundError(f"fixture '{token}' not found in {fixtures_dir}")
 
 

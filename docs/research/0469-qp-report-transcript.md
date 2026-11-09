@@ -58,7 +58,7 @@ Recorded in an isolated temporary working directory with unedited x265 4.3 outpu
 | `p` | Output flood (`capture` stream limit) | 0 | 0 |
 | `q` | Tool executable is a directory | 2 | 2 |
 | `r` | Child process holds stdout after the tool exits (`capture` held-pipe verdict) | 0 | 0 |
-| `s` | `% repeat` output exactly 8 MiB (128-byte header and rows) | 0 | 0 |
+| `s` | `% repeat` output exactly 8 MiB (128-byte header and rows), fixtures directory given as `<dir>/sub/..` so fixture lookup must compare resolved paths (a Windows 8.3 `TEMP` name differs from its resolved path the same way) | 0 | 0 |
 | `t` | `% repeat` output one row over 8 MiB | 1 | 1 |
 
 ### Transcript test matrix

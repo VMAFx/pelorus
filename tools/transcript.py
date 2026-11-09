@@ -411,12 +411,19 @@ def _run_capture_plant(label: str, code: str, want: str, tmp: pathlib.Path) -> b
 
 
 def _run_expansion_plants(exe: str, tool: str, tmp: pathlib.Path) -> bool:
-    """Run the repeat size-cap plants on a fixture written under tmp; True when all match."""
+    """Run the repeat size-cap plants on a fixture written under tmp; True when all match.
+
+    The fixtures directory is passed as "<dir>/sub/..", a spelling that differs
+    from its resolved path on every platform, so plant s also proves that
+    fixture lookup compares canonical paths (a Windows 8.3 TEMP name differs
+    the same way).
+    """
     fix = tmp / "expansion-fixtures"
-    fix.mkdir()
+    (fix / "sub").mkdir(parents=True)
     (fix / EXPANSION_FIXTURE).write_bytes(expansion_fixture())
+    alias = fix / "sub" / ".."
     for label, text, expected_rc in expansion_plants(tool, MAX_INPUT_BYTES):
-        rc = _run_string_probe(text, exe, tool, fix)
+        rc = _run_string_probe(text, exe, tool, alias)
         if rc != expected_rc:
             sys.stderr.write(
                 f"self-test failed for plant {label}: expected rc {expected_rc}, got {rc}\n"
