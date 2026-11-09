@@ -157,9 +157,10 @@ sibling keep vmafx's number (e.g. 0100, 0108) for an easy cross-walk.
 | [0242](0242-msvc-clang-cl-ci-leg.md) | Build and test libpelorus with cl.exe and clang-cl in CI | Accepted |
 | [0243](0243-ruff-zizmor-local-gate.md) | Run pinned Ruff and zizmor in the local gate | Accepted |
 | [0244](0244-python-argparse-gate.md) | Parse every Python command line with argparse | Accepted |
-| [0245](0245-changelog-render-at-landing.md) | Changelog render at landing | Proposed |
+| [0245](0245-changelog-render-at-landing.md) | Changelog render at landing | Accepted |
 | [0246](0246-meson-testlog-credential-scrub.md) | Meson testlog credential scrub and scanner | Proposed |
 | [0247](0247-interop-abi-history-fixtures.md) | Persisted interop blobs from released ABI writers and readers | Accepted |
 | [0248](0248-tester-kit-expected-fail.md) | Kit-shipped fast tests carry their expectation in the binary | Accepted |
 | [0249](0249-tool-cli-transcript-tests.md) | CLI demonstrators carry golden transcripts run by an in-repo driver | Accepted |
 | [0250](0250-devcontainer-toolchain-smoke.md) | Run the offline native gate inside the dev container image before it is pushed | Accepted |
+| [0251](0251-changelog-render-owed-on-pull-requests.md) | Pull requests fail while the default branch owes a changelog render for more than 20 h | Proposed |

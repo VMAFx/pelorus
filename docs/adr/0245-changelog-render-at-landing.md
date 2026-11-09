@@ -1,8 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-0245: Changelog render at landing
 
-- **Status**: Proposed
-- **Implementation**: pending (#518)
+- **Status**: Accepted
 - **Date**: 2026-11-04
 - **Deciders**: Lusoris
 - **Tags**: release, docs, ci
