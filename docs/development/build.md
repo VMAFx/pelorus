@@ -1128,6 +1128,17 @@ Only `publish` holds `packages: write`, with `id-token`, `attestations`, and
 gh attestation verify oci://ghcr.io/vmafx/pelorus-dev@sha256:<digest> --repo VMAFx/pelorus
 ```
 
+A failed gate, digest comparison or attestation stops `publish` before any tag
+moves. Its per-tag check in `Promote tags` runs after the tags are written, so
+when that check fails a tag may name another digest. The error names the gated
+digest; confirm it with the `gh attestation verify` line above, point the tag
+back at it with the job's own command, and repeat the check:
+
+```bash
+docker buildx imagetools create --prefer-index=false --tag ghcr.io/vmafx/pelorus-dev:latest ghcr.io/vmafx/pelorus-dev@sha256:<digest>
+docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ghcr.io/vmafx/pelorus-dev:latest
+```
+
 The bundle builds on that image. `.devcontainer/Dockerfile.praetor` and the
 `baseImage` field in `devcontainer.json` name
 `ghcr.io/vmafx/pelorus-dev@sha256:92599aa475c90ef9609d28979f6ee56d85fd995f52ca0af94c27dd4205040498`,
