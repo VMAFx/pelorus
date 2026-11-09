@@ -29,6 +29,8 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FILES = ROOT / "ffmpeg-patches" / "files"
+# HISS-02: deadline for the pkg-config include-dir probe.
+PKG_CONFIG_TIMEOUT_S = 30
 # python3 -I drops the script directory from sys.path: load the sibling by path.
 _SPEC = importlib.util.spec_from_file_location("patch_harness", pathlib.Path(__file__).with_name("patch_harness.py"))
 harness = importlib.util.module_from_spec(_SPEC)
@@ -201,6 +203,7 @@ def nvenc_header_source() -> str:
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=PKG_CONFIG_TIMEOUT_S,
             )
             include_dir = probe.stdout.strip()
             header = pathlib.Path(include_dir) / "ffnvcodec" / "nvEncodeAPI.h"

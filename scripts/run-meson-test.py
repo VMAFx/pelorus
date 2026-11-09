@@ -41,6 +41,12 @@ CREDENTIAL_NAME_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# HISS-02: whole-run deadline for the Windows child. `meson test` stops each
+# hung test at its own timeout; this stops a hung Meson process itself.
+MESON_RUN_TIMEOUT_S = 1800
+# Exit status for a run stopped at its deadline, as timeout(1) reports it.
+STOPPED_EXIT_STATUS = 124
+
 
 def is_credential_name(name: str) -> bool:
     """Return whether ``name`` is a listed or pattern-matched credential key."""
@@ -91,20 +97,28 @@ def _resolve_executable(name: str) -> str | None:
     return str(resolved)
 
 
-def _run_and_wait(command: list[str]) -> int:
+def _run_and_wait(command: list[str], deadline_s: float = MESON_RUN_TIMEOUT_S) -> int:
     """Run Meson as a child on Windows and return its exit status (ADR-0246).
 
     Windows has no exec: the CRT's ``_execvp`` starts the new program and
     ends this process at once with status 0, so every caller saw success while
     ``meson test`` was still running. The child inherits this process's
-    already-sanitized environment block; no mapping is passed or copied.
+    already-sanitized environment block; no mapping is passed or copied. A
+    child still running at ``deadline_s`` is killed and the run fails with
+    status 124.
     """
     executable = _resolve_executable(command[0])
     if executable is None:
         print("run-meson-test.py: Meson executable not found", file=sys.stderr)
         return 127
-    # No timeout here: `meson test` enforces its own per-test timeouts.
-    completed = subprocess.run([executable, *command[1:]], check=False)  # nosec B603 - fixed meson argv, no shell  # noqa: S603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - resolved meson path plus caller test arguments, no shell
+    try:
+        completed = subprocess.run([executable, *command[1:]], check=False, timeout=deadline_s)  # nosec B603 - fixed meson argv, no shell  # noqa: S603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - resolved meson path plus caller test arguments, no shell
+    except subprocess.TimeoutExpired:
+        print(
+            f"run-meson-test.py: meson test still running after {deadline_s:g} s; stopped",
+            file=sys.stderr,
+        )
+        return STOPPED_EXIT_STATUS
     return completed.returncode
 
 

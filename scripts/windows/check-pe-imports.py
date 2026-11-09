@@ -16,6 +16,9 @@ from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DLL_LIST = ROOT / "scripts" / "windows" / "tester-zip-dlls.txt"
+# HISS-02: deadline for one `objdump -p` read of a PE file; callers report a
+# timeout as a file they could not inspect.
+OBJDUMP_TIMEOUT_S = 60
 VULKAN_LOADER_ERROR = (
     "Vulkan loader must come from the GPU driver, not the zip"
 )
@@ -137,6 +140,7 @@ def make_subprocess_objdump_runner(objdump_bin: str) -> Callable[[Path], list[st
             stderr=subprocess.PIPE,
             text=True,
             check=False,
+            timeout=OBJDUMP_TIMEOUT_S,
         )
         if res.returncode != 0:
             raise RuntimeError(

@@ -13,6 +13,8 @@ Tests:
 3. End-to-end with stub Meson: run-meson-test scrubs planted credential
    variables before exec/child launch so the child sees zero secret matches,
    whereas direct invocation sees the planted variable.
+4. Child deadline (HISS-02): the Windows child path passes a child's exit
+   status through and stops a child still running at its deadline with 124.
 """
 
 from __future__ import annotations
@@ -387,6 +389,26 @@ def test_refuses_non_executable() -> list[str]:
     return failures
 
 
+def test_child_deadline(run_mod: ModuleType) -> list[str]:
+    """The Windows child path passes a child's status through and stops a hung child."""
+    failures: list[str] = []
+    quick = [sys.executable, "-I", "-c", "raise SystemExit(3)"]
+    if run_mod._run_and_wait(quick, deadline_s=30) != 3:
+        _fail(failures, "child deadline: a quick child's exit status 3 was not passed through")
+    hung = [sys.executable, "-I", "-c", "import time; time.sleep(30)"]
+    stderr = io.StringIO()
+    with contextlib.redirect_stderr(stderr):
+        status = run_mod._run_and_wait(hung, deadline_s=0.5)
+    if status != run_mod.STOPPED_EXIT_STATUS or "still running after 0.5 s" not in stderr.getvalue():
+        _fail(
+            failures,
+            f"child deadline: hung child gave status {status}, stderr {stderr.getvalue()!r}",
+        )
+    if not failures:
+        print("PASS: wrapper stops a child at its deadline")
+    return failures
+
+
 def run_tests() -> int:
     """Execute all credential sanitization and scanning test suites."""
     run_mod = _load_module("run_meson_test", RUN_MESON_TEST_SCRIPT)
@@ -398,6 +420,7 @@ def run_tests() -> int:
     failures.extend(test_planted_log_and_symlink(check_mod))
     failures.extend(test_end_to_end_stub_meson())
     failures.extend(test_refuses_non_executable())
+    failures.extend(test_child_deadline(run_mod))
 
     return 1 if failures else 0
 

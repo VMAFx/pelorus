@@ -22,6 +22,9 @@ import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+# HISS-02: deadline for each git and allocator run; matches the 60 s Meson
+# timeout of the adr-next-free test.
+SUBPROCESS_TIMEOUT_S = 60
 SCRIPT_UNDER_TEST = pathlib.Path(
     os.environ.get("NEXT_FREE_SCRIPT", ROOT / "scripts" / "adr" / "next-free.sh")
 )
@@ -50,7 +53,7 @@ def git(repo: pathlib.Path, env: dict[str, str], *args: str) -> subprocess.Compl
         text=True,
         check=False,
         env=env,
-        timeout=60,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
     if res.returncode != 0:
         raise RuntimeError(
@@ -72,37 +75,19 @@ def run_allocator(
         text=True,
         check=False,
         env=env,
-        timeout=60,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
 
 
 def snapshot(repo: pathlib.Path, env: dict[str, str]) -> tuple[str, str, str]:
     config_path = repo / ".git" / "config"
     if not config_path.exists():
-        rev_git = subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "--git-common-dir"],
-            capture_output=True,
-            text=True,
-            check=True,
-            env=env,
-        ).stdout.strip()
+        rev_git = git(repo, env, "rev-parse", "--git-common-dir").stdout.strip()
         common_git = (repo / rev_git).resolve()
         config_path = common_git / "config"
     config = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
-    refs = subprocess.run(
-        ["git", "-C", str(repo), "for-each-ref", "--format=%(refname) %(objectname)"],
-        capture_output=True,
-        text=True,
-        check=True,
-        env=env,
-    ).stdout
-    worktrees = subprocess.run(
-        ["git", "-C", str(repo), "worktree", "list", "--porcelain"],
-        capture_output=True,
-        text=True,
-        check=True,
-        env=env,
-    ).stdout
+    refs = git(repo, env, "for-each-ref", "--format=%(refname) %(objectname)").stdout
+    worktrees = git(repo, env, "worktree", "list", "--porcelain").stdout
     return config, refs, worktrees
 
 
@@ -285,6 +270,7 @@ def test_ref_cap(
         capture_output=True,
         env=env,
         check=True,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
 
     r_print = run_allocator(fscript, env, cwd=repo)

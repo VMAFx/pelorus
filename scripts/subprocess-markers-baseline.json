@@ -53,8 +53,8 @@
     },
     "scripts/test-adr-next-free.py": {
       "b404": 1,
-      "b603": 6,
-      "semgrep": 6
+      "b603": 3,
+      "semgrep": 3
     },
     "scripts/test-bd-rate.py": {
       "b404": 1,

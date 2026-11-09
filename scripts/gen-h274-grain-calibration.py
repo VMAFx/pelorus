@@ -53,6 +53,9 @@ from _fileutil import atomic_write_text
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FILTER = ROOT / "ffmpeg-patches" / "files" / "vf_pelorus_grain_estimate_vulkan.c"
 BUILD_CONFIG = ROOT / "build-config.env"
+# HISS-02: deadline for the `git show` read of an FFmpeg source file; within
+# the 30 s Meson default of the gen-h274-grain-calibration-self-test test.
+GIT_TIMEOUT_S = 30
 
 WIDTH, HEIGHT, LEVEL = 1920, 1088, 128
 LOG2_SCALE = 2
@@ -83,6 +86,7 @@ def ffmpeg_source(repo: str, path: str) -> str:
         check=True,
         capture_output=True,
         text=True,
+        timeout=GIT_TIMEOUT_S,
     ).stdout
 
 

@@ -39,6 +39,9 @@ import threading
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+# HISS-02: deadline for each fetch-ffmpeg-series.sh run; within the 30 s Meson
+# default of the fetch-ffmpeg-series-fail-closed test.
+SCRIPT_TIMEOUT_S = 30.0
 SCRIPT = pathlib.Path(
     os.environ.get("FETCH_SERIES_SCRIPT", ROOT / "scripts" / "fetch-ffmpeg-series.sh")
 )
@@ -101,6 +104,7 @@ def run_case(work: pathlib.Path, name: str, body: bytes, pinned: bytes | None = 
     result = subprocess.run(
         ["bash", str(root / "scripts" / "fetch-ffmpeg-series.sh"), "--unpack", str(archive), str(out)],
         check=False, capture_output=True, text=True,
+        timeout=SCRIPT_TIMEOUT_S,
     )
     return result.returncode, result.stderr, out
 
@@ -179,6 +183,7 @@ def missing_verifier(work: pathlib.Path) -> str:
         [str(tools / "bash"), str(root / "scripts" / "fetch-ffmpeg-series.sh"), str(out)],
         check=False, capture_output=True, text=True,
         env={"PATH": str(tools), "FFMPEG_SERIES_FROM": str(release)},
+        timeout=SCRIPT_TIMEOUT_S,
     )
     if result.returncode == 0:
         return "no cosign on PATH: the release was accepted"
@@ -203,7 +208,7 @@ def _run_fetch_script(
         check=False,
         capture_output=True,
         text=True,
-        timeout=30.0,
+        timeout=SCRIPT_TIMEOUT_S,
         env=env,
     )
 

@@ -30,6 +30,9 @@ from pathlib import Path
 
 MIN_HIGHLIGHTS = 3
 MAX_HIGHLIGHTS = 6
+# HISS-02: deadline for each CLI run of --self-test; within the 30 s Meson
+# default of the release-notes test.
+SELF_TEST_TIMEOUT_S = 30
 FENCE_OPEN = re.compile(r"^\s*(`{3,}|~{3,})")
 HEADING_LINE = re.compile(r"^\s*#{1,6}(?:\s|$)")
 LIST_ITEM = re.compile(r"^\s*(?:[-*+] |(?:0|[1-9][0-9]*)\. )")
@@ -519,6 +522,7 @@ def self_test() -> list[str]:
             check=False,
             capture_output=True,
             text=True,
+            timeout=SELF_TEST_TIMEOUT_S,
         )
         expected_unwrap = (
             "### Added\n\n"
@@ -532,6 +536,7 @@ def self_test() -> list[str]:
             check=False,
             capture_output=True,
             text=True,
+            timeout=SELF_TEST_TIMEOUT_S,
         )
         if missing_tag.returncode == 0:
             failures.append("release-notes: --unwrap without --tag did not exit nonzero")
@@ -554,13 +559,19 @@ def _check_cli_repo_env(script: str, raw_file: Path, expected: str) -> list[str]
         capture_output=True,
         text=True,
         env={**base_env, "GITHUB_REPOSITORY": "VMAFx/pelorus"},
+        timeout=SELF_TEST_TIMEOUT_S,
     )
     if with_env.returncode != 0 or with_env.stdout != expected:
         failures.append(
             f"release-notes: GITHUB_REPOSITORY fallback failed: rc={with_env.returncode}"
         )
     without = subprocess.run(
-        cmd, check=False, capture_output=True, text=True, env=base_env
+        cmd,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=base_env,
+        timeout=SELF_TEST_TIMEOUT_S,
     )
     if without.returncode == 0 or "repository not specified" not in without.stderr:
         failures.append("release-notes: CLI without repository was not refused")

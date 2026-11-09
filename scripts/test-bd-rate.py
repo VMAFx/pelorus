@@ -24,6 +24,9 @@ import tempfile
 from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+# HISS-02: deadline for each bd_rate.py CLI run; within the 30 s Meson default
+# of the bd-rate test.
+CLI_TIMEOUT_S = 30
 SCRIPT = pathlib.Path(
     os.environ.get("BD_RATE_SCRIPT", ROOT / "scripts" / "bench" / "bd_rate.py")
 )
@@ -208,6 +211,7 @@ def test_cli(script_path: pathlib.Path) -> list[str]:
             capture_output=True,
             text=True,
             check=False,
+            timeout=CLI_TIMEOUT_S,
         )
         if proc.returncode != 1:
             failures.append(f"CLI non-monotonic: expected exit code 1, got {proc.returncode}")
