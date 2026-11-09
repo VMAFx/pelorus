@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import re
 import shutil
@@ -13,6 +14,15 @@ import subprocess  # nosec B404 - fixed meson argv, no shell
 import sys
 from pathlib import Path
 from collections.abc import MutableMapping, Sequence
+
+# python3 -I drops the script directory from sys.path: load the sibling by path.
+_PROCESS_TREE_SPEC = importlib.util.spec_from_file_location(
+    "pelorus_process_tree", Path(__file__).with_name("process_tree.py")
+)
+if _PROCESS_TREE_SPEC is None or _PROCESS_TREE_SPEC.loader is None:
+    raise ImportError("scripts/process_tree.py not found next to run-meson-test.py")
+process_tree = importlib.util.module_from_spec(_PROCESS_TREE_SPEC)
+_PROCESS_TREE_SPEC.loader.exec_module(process_tree)
 
 CREDENTIAL_ENV_VARS = (
     "GITHUB_PERSONAL_ACCESS_TOKEN",
@@ -40,6 +50,14 @@ CREDENTIAL_NAME_PATTERN = re.compile(
     r"|BROKER|CELERY_BROKER|SQLALCHEMY_DATABASE)_(?:URL|URI)$|(?:^|_)DSN$|CONNECTION_STRING",
     re.IGNORECASE,
 )
+
+# HISS-02: whole-run deadline for the Windows child. `meson test` stops each
+# hung test at its own timeout; this stops a hung Meson process itself.
+MESON_RUN_TIMEOUT_S = 1800
+# Exit status for a run stopped at its deadline, as timeout(1) reports it.
+STOPPED_EXIT_STATUS = 124
+# Wait for the stopped process tree's root to be reaped (HISS-02).
+STOP_WAIT_TIMEOUT_S = 30
 
 
 def is_credential_name(name: str) -> bool:
@@ -91,21 +109,61 @@ def _resolve_executable(name: str) -> str | None:
     return str(resolved)
 
 
-def _run_and_wait(command: list[str]) -> int:
+def _run_and_wait(command: list[str], deadline_s: float = MESON_RUN_TIMEOUT_S) -> int:
     """Run Meson as a child on Windows and return its exit status (ADR-0246).
 
     Windows has no exec: the CRT's ``_execvp`` starts the new program and
     ends this process at once with status 0, so every caller saw success while
     ``meson test`` was still running. The child inherits this process's
-    already-sanitized environment block; no mapping is passed or copied.
+    already-sanitized environment block; no mapping is passed or copied. A
+    child still running at ``deadline_s`` is stopped together with every test
+    process it started (``process_tree.stop_tree``), and the run fails with
+    status 124. An interrupt stops the tree the same way before it propagates.
     """
     executable = _resolve_executable(command[0])
     if executable is None:
         print("run-meson-test.py: Meson executable not found", file=sys.stderr)
         return 127
-    # No timeout here: `meson test` enforces its own per-test timeouts.
-    completed = subprocess.run([executable, *command[1:]], check=False)  # nosec B603 - fixed meson argv, no shell  # noqa: S603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - resolved meson path plus caller test arguments, no shell
-    return completed.returncode
+    # The child roots a tree the stop reaches whole: a POSIX process group, or
+    # a Windows job object it joins before it runs. No CREATE_NEW_PROCESS_GROUP:
+    # it would turn off Ctrl+C in the child.
+    proc = process_tree.TreePopen([executable, *command[1:]])
+    return _wait_or_stop(proc, deadline_s)
+
+
+def _wait_or_stop(proc: subprocess.Popen, deadline_s: float) -> int:
+    """Return ``proc``'s exit status, or stop its tree and return 124 at ``deadline_s``.
+
+    A wait that times out reaps nothing, so Meson's pid and process group id stay
+    reserved: the tree is stopped even when Meson exited after the wait gave up,
+    because the tests it started may still run. An interrupt stops the tree the
+    same way before it propagates.
+    """
+    try:
+        return proc.wait(timeout=deadline_s)
+    except subprocess.TimeoutExpired:
+        _stop_and_reap(proc)
+        print(
+            f"run-meson-test.py: meson test still running after {deadline_s:g} s; stopped",
+            file=sys.stderr,
+        )
+        return STOPPED_EXIT_STATUS
+    except BaseException:
+        _stop_and_reap(proc)
+        raise
+
+
+def _stop_and_reap(proc: subprocess.Popen) -> None:
+    """Stop ``proc`` with every process it started, then reap ``proc`` (HISS-02)."""
+    process_tree.stop_tree(proc)
+    try:
+        proc.wait(timeout=STOP_WAIT_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        print(
+            f"run-meson-test.py: meson pid {proc.pid} still running "
+            f"{STOP_WAIT_TIMEOUT_S} s after the stop; not waiting longer",
+            file=sys.stderr,
+        )
 
 
 def main(argv: Sequence[str] | None = None) -> int:

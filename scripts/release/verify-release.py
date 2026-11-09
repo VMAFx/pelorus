@@ -34,6 +34,9 @@ TAG = re.compile(
 )
 # From this minor on, every X.Y.0 goes through a release candidate (ADR-0176).
 RC_REQUIRED_FROM = (0, 4)
+# HISS-02: deadline for the `git tag --list` read; within the 30 s Meson
+# default of the release-tag-rules test.
+GIT_TIMEOUT_S = 30
 
 
 def parse_tag(tag: str) -> tuple[tuple[int, int, int], int | None] | None:
@@ -102,8 +105,13 @@ def check_version(tag: str, meson_version: str, header: str) -> list[str]:
 
 
 def git_tags() -> list[str]:
+    """Return the local tag names (``git tag --list``)."""
     done = subprocess.run(
-        ["git", "tag", "--list"], check=True, capture_output=True, text=True
+        ["git", "tag", "--list"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=GIT_TIMEOUT_S,
     )
     return done.stdout.split()
 

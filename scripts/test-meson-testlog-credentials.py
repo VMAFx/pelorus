@@ -13,6 +13,8 @@ Tests:
 3. End-to-end with stub Meson: run-meson-test scrubs planted credential
    variables before exec/child launch so the child sees zero secret matches,
    whereas direct invocation sees the planted variable.
+The wrapper's Windows child deadline and process-tree stop have their own
+test, scripts/test-run-meson-deadline.py, which also runs on Windows.
 """
 
 from __future__ import annotations

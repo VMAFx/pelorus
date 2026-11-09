@@ -10,7 +10,7 @@ Harness table = engine rendering; `not enforced` there = no engine-generated che
 | Rule | Decided here by |
 | --- | --- |
 | HISS-01 | audit `HISS invariant scan` (C scanner) + `c-reviewer`; baseline ratchet. One-level `goto fail` cleanup allowed; other new `goto` rejected |
-| HISS-02 | audit `HISS invariant scan` (unbounded C loops) + `c-reviewer`; baseline ratchet. I/O deadlines not measured for C |
+| HISS-02 | audit `HISS invariant scan`: unbounded C loops; Python `subprocess.run`/`call`/`check_call`/`check_output`, `urllib.request.urlopen` and `requests` verbs without a deadline. A deadline is a top-level `timeout=` other than the literal `None`, or `urlopen`'s third positional argument; `timeout=None` and a `**` unpack nested in another argument (`env={**os.environ}`) count as none. A top-level `**` unpack passes as undecidable, even next to `timeout=None` (`run(cmd, timeout=None, **kw)` has no deadline: Python refuses a second `timeout` from the unpack); `Popen` + `wait`, `requests.Session`, `httpx`, `aiohttp` and sockets are not decided (engine `docs/standards/hiss-rule-matching.md`, `internal/hiss/python_io.go`) + `c-reviewer`; baseline ratchet. Semgrep `pelorus-py-io-unpack-deadline` (`.semgrep.yml`, recall test `scripts/test-semgrep-io-unpack-deadline.py`): such a call with a `**` unpack must name a `timeout=` other than `None`, or assign `kw["timeout"]` a value other than `None` first; `kw.setdefault("timeout", ...)` does not count, because it keeps a `None` the caller passed. Neither check evaluates a value: any expression other than the literal `None` passes, even one that is `None` at run time (`timeout=deadline`, `kw["timeout"] = deadline`), and the Semgrep rule reads only calls with a `**` unpack. Neither proves that a call has a deadline at run time. `scripts/check-harness-test-timeouts.py`: named `*TIMEOUT*` constants fit their Meson test timeout. I/O deadlines not measured for C |
 | HISS-03 | review only (`c-reviewer`) + tests; no scanner |
 | HISS-04 | LOC <= 60: audit scan + baseline ratchet. Cyclomatic, cognitive, statements: `[REPORT]` only (Go only) + `c-reviewer`; clang-tidy size check advisory |
 | HISS-05 | review only (`c-reviewer`); no analyzer |
@@ -130,5 +130,5 @@ Hooks: `.claude/hooks/` wired in `.claude/settings.json`; Codex twins in `.codex
 | FFmpeg Vulkan models | `vf_gblur_vulkan.c`, `vf_nlmeans_vulkan.c`, `vf_scdet_vulkan.c` |
 | AV1 grain ABI mirror | `libavutil/film_grain_params.h` |
 | vmafx control plane | `libvmaf_tune`, `/v1/score`, `vmaf-mcp` |
-| Praetor engine | `<!-- gen:engine-pin -->bc50eebf79309c589d10ac1a8c0f82d20af0e822<!-- /gen:engine-pin -->` from `.github/workflows/standards-gate.yml` |
+| Praetor engine | `<!-- gen:engine-pin -->4e6c6d9cbf9cc8e634f2c9e4751706496278cd52<!-- /gen:engine-pin -->` from `.github/workflows/standards-gate.yml` |
 | Go for actionlint (`ci.yml` docs job) | `1.27.x`; change with `ACTIONLINT_GO_VERSION` in `scripts/check-build-config.py`; checker's Renovate manager keeps setup-go's `go` identity ([ADR-0151](../adr/0151-renovate-mirrors-checker-toolchain-pins.md)) |

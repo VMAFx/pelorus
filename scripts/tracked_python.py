@@ -12,7 +12,6 @@ import os
 from pathlib import Path
 import shutil
 import subprocess  # nosec B404 - fixed git argv, no shell, explicit deadline
-from typing import Any
 
 GIT_DEADLINE_S = 60
 PYTHON_SUFFIXES = frozenset({".py", ".pyi"})
@@ -38,19 +37,25 @@ def is_python(path: Path) -> bool:
     return first.startswith(b"#!") and b"python" in first
 
 
-def _run_git(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[bytes]:
-    """Run git with timeout and error wrapping."""
-    kw.setdefault("capture_output", True)
-    kw.setdefault("check", True)
-    kw.setdefault("timeout", GIT_DEADLINE_S)
-    env = dict(kw.get("env") or os.environ)
+def _run_git(
+    argv: list[str], *, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[bytes]:
+    """Run git under GIT_DEADLINE_S with captured output, wrapping every failure.
+
+    The deadline is fixed and the only override is env: a forwarded **kw could
+    carry a second timeout, which Python refuses with a TypeError that the
+    RuntimeError wrapping below would not catch (pull request 579 review).
+    """
+    run_env = dict(env or os.environ)
     # C locale keeps git's stderr in English, so callers can name the cause.
-    env["LC_ALL"] = "C"
-    kw["env"] = env
+    run_env["LC_ALL"] = "C"
     try:
         return subprocess.run(  # nosec B603 - fixed git argv; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv is a constant git command, no shell, explicit deadline
             argv,
-            **kw,
+            capture_output=True,
+            check=True,
+            timeout=GIT_DEADLINE_S,
+            env=run_env,
         )
     except subprocess.CalledProcessError as exc:
         raw_err = exc.stderr

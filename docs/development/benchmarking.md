@@ -228,6 +228,8 @@ python3 -I scripts/bench/run-bench.py \
 
 This runs all four mandatory comparison arms, measures bitrate, SSIMULACRA2, VMAF, and CAMBI against the noisy source, writes `result.json` and `record.json`, and validates the record against `scripts/bench/record.schema.json`.
 
+Each FFmpeg step (synthesis, grain overlay, pre-filter, encode, decode) runs under a deadline: `--ffmpeg-timeout SECONDS` (default 1800). A step still running at its deadline is killed and the run fails with `subprocess.TimeoutExpired`, so a hung encoder never stalls a benchmark lane. Raise it for long or high-resolution clips.
+
 ### Rendering a record into docs
 
 `scripts/bench/make-record.py` renders validated benchmark records into deterministic Markdown tables and manages embedded blocks in documentation:

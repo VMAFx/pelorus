@@ -10,11 +10,11 @@ module by path (importlib), not by import.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import pathlib
 import re
 import shutil
-import signal
 import subprocess  # nosec B404 - compiler and harness argv, no shell, explicit deadline
 import sys
 import tempfile
@@ -22,7 +22,16 @@ import time
 from types import MappingProxyType
 from typing import Callable, Sequence
 
-DEFAULT_CFLAGS = ("-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function")
+# python3 -I drops the script directory from sys.path: load the sibling by path.
+_PROCESS_TREE_SPEC = importlib.util.spec_from_file_location(
+    "pelorus_process_tree", pathlib.Path(__file__).with_name("process_tree.py")
+)
+if _PROCESS_TREE_SPEC is None or _PROCESS_TREE_SPEC.loader is None:
+    raise ImportError("scripts/process_tree.py not found next to patch_harness.py")
+process_tree = importlib.util.module_from_spec(_PROCESS_TREE_SPEC)
+_PROCESS_TREE_SPEC.loader.exec_module(process_tree)
+
+DEFAULT_CFLAGS =("-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function")
 # Deadlines for the harness compiler and the harness binary (HISS-02). A
 # harness is a few hundred lines and runs in milliseconds; a stall is a failure.
 BUILD_TIMEOUT_S = 120.0
@@ -188,13 +197,17 @@ def _run_with_deadline(
     argv: Sequence[str],
     timeout: float,
 ) -> subprocess.CompletedProcess[str] | None:
-    """Run argv with tree kill on deadline (HISS-02, HISS-08)."""
+    """Run argv with tree kill on deadline (HISS-02, HISS-08).
+
+    ``TreePopen`` puts the child at the root of a process group (POSIX) or a
+    job object (Windows), so ``stop_tree`` reaches every process it started.
+    """
     kwargs: dict[str, object] = (
         {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)}
         if os.name == "nt"
-        else {"start_new_session": True}
+        else {}
     )
-    proc = subprocess.Popen(  # nosec B603 - configured compiler or harness binary; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - configured compiler or harness binary, list argv, no shell, timeout
+    proc = process_tree.TreePopen(
         argv,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -205,24 +218,7 @@ def _run_with_deadline(
         stdout, stderr = proc.communicate(timeout=timeout)
         return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - result record only, executes nothing
     except subprocess.TimeoutExpired:
-        if os.name == "nt":
-            try:
-                subprocess.run(  # nosec B603, B607 - taskkill process tree on deadline; list argv, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - taskkill process tree on deadline, list argv, no shell, timeout
-                    ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
-                    capture_output=True,
-                    check=False,
-                    timeout=30,
-                )
-            except (OSError, subprocess.TimeoutExpired):
-                # taskkill missing or hung: proc.kill() below still ends the driver.
-                pass
-            proc.kill()
-        elif proc.pid > 1:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                # Process group already terminated or reaped before SIGKILL.
-                pass
+        process_tree.stop_tree(proc)
         try:
             proc.communicate(timeout=5)
         except subprocess.TimeoutExpired:

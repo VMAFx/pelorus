@@ -22,6 +22,9 @@ import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+# HISS-02: deadline for each git and allocator run; matches the 60 s Meson
+# timeout of the adr-next-free test.
+SUBPROCESS_TIMEOUT_S = 60
 SCRIPT_UNDER_TEST = pathlib.Path(
     os.environ.get("NEXT_FREE_SCRIPT", ROOT / "scripts" / "adr" / "next-free.sh")
 )
@@ -43,6 +46,7 @@ def make_clean_env() -> dict[str, str]:
 
 
 def git(repo: pathlib.Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+    """Run git in ``repo`` with signing off; raise RuntimeError on a non-zero exit."""
     cmd = ["git", "-C", str(repo), "-c", "commit.gpgSign=false", *args]
     res = subprocess.run(
         cmd,
@@ -50,7 +54,7 @@ def git(repo: pathlib.Path, env: dict[str, str], *args: str) -> subprocess.Compl
         text=True,
         check=False,
         env=env,
-        timeout=60,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
     if res.returncode != 0:
         raise RuntimeError(
@@ -65,6 +69,7 @@ def run_allocator(
     *args: str,
     cwd: pathlib.Path,
 ) -> subprocess.CompletedProcess[str]:
+    """Run the ADR allocator script under bash in ``cwd`` and return its result."""
     return subprocess.run(
         ["bash", str(script_path), *args],
         cwd=str(cwd),
@@ -72,37 +77,20 @@ def run_allocator(
         text=True,
         check=False,
         env=env,
-        timeout=60,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
 
 
 def snapshot(repo: pathlib.Path, env: dict[str, str]) -> tuple[str, str, str]:
+    """Return the repo's git config text, refs and worktree list for comparison."""
     config_path = repo / ".git" / "config"
     if not config_path.exists():
-        rev_git = subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "--git-common-dir"],
-            capture_output=True,
-            text=True,
-            check=True,
-            env=env,
-        ).stdout.strip()
+        rev_git = git(repo, env, "rev-parse", "--git-common-dir").stdout.strip()
         common_git = (repo / rev_git).resolve()
         config_path = common_git / "config"
     config = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
-    refs = subprocess.run(
-        ["git", "-C", str(repo), "for-each-ref", "--format=%(refname) %(objectname)"],
-        capture_output=True,
-        text=True,
-        check=True,
-        env=env,
-    ).stdout
-    worktrees = subprocess.run(
-        ["git", "-C", str(repo), "worktree", "list", "--porcelain"],
-        capture_output=True,
-        text=True,
-        check=True,
-        env=env,
-    ).stdout
+    refs = git(repo, env, "for-each-ref", "--format=%(refname) %(objectname)").stdout
+    worktrees = git(repo, env, "worktree", "list", "--porcelain").stdout
     return config, refs, worktrees
 
 
@@ -272,6 +260,7 @@ def test_isolation(
 def test_ref_cap(
     script_src: pathlib.Path, env: dict[str, str], tmp_path: pathlib.Path
 ) -> list[str]:
+    """Past the ref cap (2001 branches) the allocator exits non-zero and creates no stub."""
     failures: list[str] = []
     repo = tmp_path / "ref_cap_repo"
     fscript, docs_adr = init_fixture_repo(repo, env, script_src, ("0001-init.md",))
@@ -285,6 +274,7 @@ def test_ref_cap(
         capture_output=True,
         env=env,
         check=True,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
 
     r_print = run_allocator(fscript, env, cwd=repo)

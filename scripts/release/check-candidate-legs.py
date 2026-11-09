@@ -38,6 +38,10 @@ KINDS = {
     "manual": set(),
 }
 DEFAULT_LEGS = Path(__file__).with_name("candidate-legs.json")
+# HISS-02: deadline for one paginated `gh api` run listing; within the 30 s
+# Meson default of the candidate-legs test. A timeout fails closed, like a
+# failed call.
+GH_API_TIMEOUT_S = 30
 
 
 def _load_json_shape():
@@ -159,6 +163,7 @@ def fetch_runs(repo: str, sha: str, doc: dict) -> list[dict]:
             check=True,
             capture_output=True,
             text=True,
+            timeout=GH_API_TIMEOUT_S,
         )
         for page in json.loads(done.stdout):
             for run in page.get("workflow_runs", []):

@@ -515,7 +515,34 @@ preventing secrets from leaking into `meson-logs/testlog.txt` and `testlog.json`
 credential-shaped values (GitHub tokens, `sk-` keys, AWS `AKIA` IDs) and fails if any exist.
 The fast-suite test `meson-testlog-credentials` (`scripts/test-meson-testlog-credentials.py`)
 verifies name filtering, log detection, and end-to-end environment scrubbing against a stub
-Meson runner.
+Meson runner. On Windows, where the wrapper waits for Meson as a child process, a run still
+going after `MESON_RUN_TIMEOUT_S` (30 minutes) is stopped and exits with status 124; Meson
+times out each hung test itself. The stop, and an interrupt, end Meson together with every
+test process it started, so no test keeps running after the wrapper returns
+(`scripts/process_tree.py`: `TreePopen` starts the child, `stop_tree` stops it). On POSIX, Meson
+leads its own process group and the stop sends `SIGKILL` to that group. On Windows, Meson starts
+suspended, joins a job object of its own, and only then runs; the stop calls
+`TerminateJobObject`, which ends every process in that job and in the jobs nested under it. When
+`meson.exe` is the console-script launcher pip installs (distlib `PC/launcher.c`), it puts the
+Python it starts in a nested job that lets that Python's children break away silently. A process
+that breaks away from a nested job moves up to the nearest job that allows no breakaway, and the
+wrapper's job allows none, so Meson's test processes stay in reach. The stop runs even when
+Meson itself exited just after the deadline: an unreaped child keeps its pid and process group
+on POSIX, and the job outlives its first process on Windows. A tree step that cannot reach the
+tree (a child that leads no process group, a child that no job holds, a failed
+`TerminateJobObject`) is named on stderr with a warning that test processes may still run,
+instead of falling back silently. A child that cannot join its job is killed before it runs, and
+the start raises.
+The fast-suite test `run-meson-deadline` (`scripts/test-run-meson-deadline.py`) runs on every
+platform, Windows included. It checks that a child's exit status passes through, that a child
+outliving a short deadline is stopped together with a test process it started, that the tree is
+stopped when Meson exits after the deadline, that a tree step that cannot reach the tree is
+named, and that a reaped child is never signalled. The late-exit case sees the stand-in's exit
+as end of file on a pipe only the stand-in holds, so it needs no `os.waitid` (on macOS only from
+Python 3.13), and it requires the stand-in's own exit status 0 after the stop. On Windows it also checks that a test process
+that broke away from a nested job is stopped, and that a child that cannot join its job is
+killed. The `patch-harness` fast test requires the same stop of a stalled compiler's child on
+every platform.
 
 `make test` also runs `scripts/check-tester-kit-install.py --run-kit <build>`. It runs
 `meson introspect --tests` on the build directory and hands the result to
@@ -553,6 +580,30 @@ comment documenting why ignoring the exception is safe. The fast-suite test
 `python-empty-except` (`scripts/check-python-empty-except.py`) scans tracked
 Python files and fails when an except handler with a bare pass carries no comment;
 `python-empty-except-self-test` runs the planted cases.
+
+No Python file may import one module with both `import M` (with or without
+`as`) and `from M import ...`, the class CodeQL reports as
+`py/import-and-import-from`. The fast-suite test `python-dual-import`
+(`scripts/check-python-dual-import.py`) scans tracked Python files with the
+stdlib AST and names the plain import line, as CodeQL does.
+`import M.sub as s` names the module `M.sub` and does not count.
+`python-dual-import-self-test` runs the planted cases on every platform.
+
+No call may name a keyword argument and also forward its function's `**kw`
+unless the function removes that keyword from `kw` first. In
+`def f(**kw): return g(timeout=60, **kw)`, a caller that passes `timeout` gets
+`TypeError: got multiple values for keyword argument`, which an `except`
+written for `g`'s own errors does not catch. The fast-suite test
+`python-kwargs-collision` (`scripts/check-python-kwargs-collision.py`) scans
+tracked Python files with the stdlib AST and names the call line once per
+keyword at risk. A `kw.pop("timeout", ...)` or `del kw["timeout"]` placed
+before the unpack, including an inline pop in an earlier argument, clears that
+keyword. The check does not follow control flow or copies of `kw`, and a pop
+whose key is not a string literal clears nothing. A nested function or lambda
+with its own parameter of the same name is checked as its own scope.
+`python-kwargs-collision-self-test` runs the planted cases on every platform.
+The rule fixed `_run_git` in `scripts/tracked_python.py`: it now takes only a
+keyword-only `env` and keeps its 60 s git deadline fixed.
 
 Every tracked Python script must parse its command line with stdlib `argparse`
 rather than by indexing `argv`. The fast-suite test `python-argv`

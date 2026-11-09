@@ -17,7 +17,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "build-config.env"
-FFMPEG_KEYS = ("FFMPEG_REMOTE", "FFMPEG_TAG", "FFMPEG_COMMIT")
+# HISS-02: deadline for each subprocess call in the self-test fixtures; stays
+# within the 30 s Meson default of the build-config-sync test.
+SUBPROCESS_TIMEOUT_S = 30
+FFMPEG_KEYS =("FFMPEG_REMOTE", "FFMPEG_TAG", "FFMPEG_COMMIT")
 # ADR-0185: the shared FFmpeg fix series Pelorus applies before its own stack,
 # pinned by repository, release tag, tagged commit and tarball sha256. Renovate
 # does not track it: a bump moves all four together from a verified release.
@@ -458,6 +461,7 @@ def run_fixture_commands(
                 check=False,
                 capture_output=True,
                 text=True,
+                timeout=SUBPROCESS_TIMEOUT_S,
             )
         except (OSError, subprocess.SubprocessError) as error:
             return [f"{context}: could not run {shlex.join(command)}: {error}"]
@@ -1264,6 +1268,7 @@ def git_tag_ref_regression() -> list[str]:
                 check=False,
                 capture_output=True,
                 text=True,
+                timeout=SUBPROCESS_TIMEOUT_S,
             )
             qualified = subprocess.run(
                 (
@@ -1277,6 +1282,7 @@ def git_tag_ref_regression() -> list[str]:
                 check=False,
                 capture_output=True,
                 text=True,
+                timeout=SUBPROCESS_TIMEOUT_S,
             )
         except (OSError, subprocess.SubprocessError) as error:
             return [f"git tag fixture probe failed: {error}"]
@@ -1298,6 +1304,12 @@ def _probe_dirty_worktree_removal(repo: Path, worktree: Path) -> (
     ]
     | list[str]
 ):
+    """Plant untracked residue, then try a plain and a forced ``git worktree remove``.
+
+    Returns (plain result, worktree still present after it, forced result,
+    ``worktree list`` result, removed after the force), or error lines when a
+    git call cannot run.
+    """
     (worktree / "failure-residue").write_text("untracked\n", encoding="utf-8")
     try:
         non_force = subprocess.run(
@@ -1305,6 +1317,7 @@ def _probe_dirty_worktree_removal(repo: Path, worktree: Path) -> (
             check=False,
             capture_output=True,
             text=True,
+            timeout=SUBPROCESS_TIMEOUT_S,
         )
         still_present = worktree.exists()
         forced = subprocess.run(
@@ -1320,6 +1333,7 @@ def _probe_dirty_worktree_removal(repo: Path, worktree: Path) -> (
             check=False,
             capture_output=True,
             text=True,
+            timeout=SUBPROCESS_TIMEOUT_S,
         )
         removed = not worktree.exists()
         registered = subprocess.run(
@@ -1327,6 +1341,7 @@ def _probe_dirty_worktree_removal(repo: Path, worktree: Path) -> (
             check=False,
             capture_output=True,
             text=True,
+            timeout=SUBPROCESS_TIMEOUT_S,
         )
         return non_force, still_present, forced, registered, removed
     except (OSError, subprocess.SubprocessError) as error:
@@ -1379,6 +1394,7 @@ def git_dirty_worktree_cleanup_regression() -> list[str]:
 def _git_force_remove_worktree(
     repo: Path, worktree: Path
 ) -> subprocess.CompletedProcess:
+    """Force-remove ``worktree`` from ``repo`` with hooks turned off."""
     return subprocess.run(
         (
             "git",
@@ -1394,15 +1410,18 @@ def _git_force_remove_worktree(
         check=False,
         capture_output=True,
         text=True,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
 
 
 def _git_worktree_list(repo: Path) -> subprocess.CompletedProcess:
+    """Return ``git worktree list --porcelain`` for ``repo``."""
     return subprocess.run(
         ("git", "-C", str(repo), "worktree", "list", "--porcelain"),
         check=False,
         capture_output=True,
         text=True,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
 
 
@@ -1411,6 +1430,10 @@ def _probe_ordinary_worktree_hook(repo: Path, ordinary: Path, hooks: Path) -> tu
     subprocess.CompletedProcess,
     subprocess.CompletedProcess,
 ]:
+    """Add a detached worktree with ``hooks`` active, list worktrees, then remove it.
+
+    Returns the add, list and cleanup results.
+    """
     ordinary_add = subprocess.run(
         (
             "git",
@@ -1427,6 +1450,7 @@ def _probe_ordinary_worktree_hook(repo: Path, ordinary: Path, hooks: Path) -> tu
         check=False,
         capture_output=True,
         text=True,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
     ordinary_list = _git_worktree_list(repo)
     ordinary_cleanup = _git_force_remove_worktree(repo, ordinary)
@@ -1439,6 +1463,10 @@ def _probe_hardened_worktree_hook(repo: Path, hardened: Path) -> tuple[
     subprocess.CompletedProcess,
     subprocess.CompletedProcess,
 ]:
+    """Add a worktree with hooks off and no checkout, check it out, then remove it.
+
+    Returns the add, checkout, cleanup and final list results.
+    """
     hardened_add = subprocess.run(
         (
             "git",
@@ -1456,6 +1484,7 @@ def _probe_hardened_worktree_hook(repo: Path, hardened: Path) -> tuple[
         check=False,
         capture_output=True,
         text=True,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
     hardened_checkout = subprocess.run(
         (
@@ -1472,6 +1501,7 @@ def _probe_hardened_worktree_hook(repo: Path, hardened: Path) -> tuple[
         check=False,
         capture_output=True,
         text=True,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
     hardened_cleanup = _git_force_remove_worktree(repo, hardened)
     final_list = _git_worktree_list(repo)
@@ -1539,6 +1569,11 @@ def git_worktree_hook_regression() -> list[str]:
 def _setup_am_hook_repo_and_patch(
     root: Path, repo: Path
 ) -> tuple[Path | None, list[str]]:
+    """Create a one-file fixture repo with a ``base`` branch and one patch commit.
+
+    Returns the ``format-patch`` file under ``root`` and no errors, or None and
+    the error lines.
+    """
     errors = run_fixture_commands(
         "git am hook fixture setup",
         (("git", "init", "-q", str(repo)),),
@@ -1572,6 +1607,7 @@ def _setup_am_hook_repo_and_patch(
         check=False,
         capture_output=True,
         text=True,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
     if patch_result.returncode != 0:
         return None, ["git am hook regression: could not create fixture patch"]
@@ -1659,6 +1695,10 @@ def _setup_am_hook_policy(repo: Path, hooks: Path) -> list[str]:
 def _run_ordinary_am_probe(
     ordinary: Path, patch: Path, hooks: Path, env: dict[str, str]
 ) -> subprocess.CompletedProcess:
+    """Apply ``patch`` with ``git am --3way`` and ``hooks`` active, then abort.
+
+    Returns the ``git am`` result; the abort's own result is not checked.
+    """
     ordinary_am = subprocess.run(
         (
             "git",
@@ -1682,6 +1722,7 @@ def _run_ordinary_am_probe(
         capture_output=True,
         text=True,
         env=env,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
     subprocess.run(
         (
@@ -1696,6 +1737,7 @@ def _run_ordinary_am_probe(
         check=False,
         capture_output=True,
         text=True,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
     return ordinary_am
 
@@ -1703,6 +1745,10 @@ def _run_ordinary_am_probe(
 def _run_hardened_am_probe(
     hardened: Path, patch: Path, env: dict[str, str]
 ) -> tuple[subprocess.CompletedProcess, str]:
+    """Apply ``patch`` with ``git am --3way`` and hooks turned off.
+
+    Returns the ``git am`` result and the patched ``sample.txt`` text.
+    """
     hardened_am = subprocess.run(
         (
             "git",
@@ -1726,6 +1772,7 @@ def _run_hardened_am_probe(
         capture_output=True,
         text=True,
         env=env,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
     patched = (hardened / "sample.txt").read_text(encoding="utf-8")
     return hardened_am, patched
@@ -1819,6 +1866,10 @@ def _probe_smudge_cleanup(repo: Path, worktree: Path) -> tuple[
     subprocess.CompletedProcess,
     subprocess.CompletedProcess,
 ]:
+    """Force-checkout ``worktree`` with hooks off, remove it, and list what ``repo`` keeps.
+
+    Returns the checkout, cleanup and list results.
+    """
     checkout = subprocess.run(
         (
             "git",
@@ -1834,6 +1885,7 @@ def _probe_smudge_cleanup(repo: Path, worktree: Path) -> tuple[
         check=False,
         capture_output=True,
         text=True,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
     cleanup = _git_force_remove_worktree(repo, worktree)
     registered = _git_worktree_list(repo)
@@ -7245,7 +7297,7 @@ def isolate_from_invoking_repository() -> list[str]:
         capture_output=True,
         text=True,
         check=False,
-        timeout=30,
+        timeout=SUBPROCESS_TIMEOUT_S,
     )
     if listed.returncode != 0:
         return [

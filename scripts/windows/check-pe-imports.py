@@ -16,6 +16,9 @@ from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DLL_LIST = ROOT / "scripts" / "windows" / "tester-zip-dlls.txt"
+# HISS-02: deadline for one `objdump -p` read of a PE file; callers report a
+# timeout as a file they could not inspect.
+OBJDUMP_TIMEOUT_S = 60
 VULKAN_LOADER_ERROR = (
     "Vulkan loader must come from the GPU driver, not the zip"
 )
@@ -130,13 +133,16 @@ def extract_pe_imports_from_text(text: str) -> list[str]:
 
 
 def make_subprocess_objdump_runner(objdump_bin: str) -> Callable[[Path], list[str]]:
+    """Return a runner that lists a PE file's imports through ``objdump -p``."""
     def runner(path: Path) -> list[str]:
+        """Return the imports ``objdump -p`` reports for ``path``; raise RuntimeError on failure."""
         res = subprocess.run(
             [objdump_bin, "-p", str(path)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             check=False,
+            timeout=OBJDUMP_TIMEOUT_S,
         )
         if res.returncode != 0:
             raise RuntimeError(
