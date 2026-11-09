@@ -24,7 +24,7 @@ import time
 from typing import Any, Callable
 
 SUBPROCESS_TIMEOUT_S = 120
-VALID_DIFF_STATUSES = frozenset({"A", "C", "D", "M", "R", "T", "U", "X", "B"})
+VALID_DIFF_STATUSES = frozenset({"A", "D", "M", "T"})
 
 
 def _run_git_step(cmd: list[str], env: dict[str, str], what: str) -> None:
@@ -214,8 +214,8 @@ def judge_owed_render(
 
     if age_seconds > max_age_hours * 3600:
         print(
-            f"render owed for {age_hours} h since {first_sha} (limit {max_age_hours} h): "
-            f"{remedy}",
+            f"render owed for {age_hours} h since {first_sha} (limit {max_age_hours} h):",
+            remedy,
             file=sys.stderr,
         )
         return 1
@@ -228,24 +228,14 @@ def _parse_diff_status(
     diff_text: str,
 ) -> tuple[list[tuple[str, str]] | None, str | None]:
     """Parse git diff --name-status output using strict allow-list status validation."""
-    if not diff_text.strip():
+    if not diff_text:
         return [], None
     entries: list[tuple[str, str]] = []
     for line in diff_text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
         parts = line.split("\t", 1)
-        if len(parts) != 2:
-            return None, f"error: invalid diff line shape: {line!r}"
-        status = parts[0].strip()
-        path = parts[1].strip()
-        if status not in VALID_DIFF_STATUSES or not path:
-            return (
-                None,
-                f"error: invalid diff status {status!r} or empty path in {line!r}",
-            )
-        entries.append((status, path))
+        if len(parts) != 2 or parts[0] not in VALID_DIFF_STATUSES or not parts[1]:
+            return None, f"error: invalid diff line: {line}"
+        entries.append((parts[0], parts[1]))
     return entries, None
 
 
@@ -441,6 +431,54 @@ def commit_in_fixture(
         raise RuntimeError(f"commit failed in fixture {repo}: {err}") from exc
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"commit timed out in fixture {repo}") from exc
+
+
+def _fixture_git(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    *args: str,
+) -> None:
+    """Run a git command in the fixture repo; wrap failures to RuntimeError."""
+    cmd = ["git", "-C", str(repo), *args]
+    try:
+        subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
+            cmd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=SUBPROCESS_TIMEOUT_S,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        err = exc.stderr.strip()
+        raise RuntimeError(
+            f"git {' '.join(args)} failed in fixture {repo}: {err}"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"git {' '.join(args)} timed out in fixture {repo}") from exc
+
+
+def _fixture_render(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    script_dest: pathlib.Path,
+) -> None:
+    """Run concat-changelog-fragments.sh --write in the fixture repo."""
+    try:
+        subprocess.run(  # nosec B603 - fixed script argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed script argv
+            ["bash", str(script_dest), "--write"],
+            cwd=str(repo),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=SUBPROCESS_TIMEOUT_S,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        err = exc.stderr.strip()
+        raise RuntimeError(f"render failed in fixture {repo}: {err}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"render timed out in fixture {repo}") from exc
 
 
 def init_fixture_repo(
@@ -693,28 +731,13 @@ def _test_pr_p1(
     now: int,
 ) -> int:
     """Test pull request case p1 (base owes 21 h)."""
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "base-p1", "master"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "base-p1", "master")
     (repo / "changelog.d/added/p1-base.md").write_text("- Base p1.\n", encoding="utf-8")
     commit_in_fixture(repo, env, "Add base p1 21h ago", now - 21 * 3600)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "pr-p1", "base-p1"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "pr-p1", "base-p1")
     (repo / "changelog.d/added/p1-pr.md").write_text("- PR p1.\n", encoding="utf-8")
     commit_in_fixture(repo, env, "Add pr p1", now)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "merge-p1", "base-p1"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p1", "base-p1")
     merge_in_fixture(repo, env, "pr-p1", "Merge pr-p1 into base-p1", now)
     rc1, _, err1 = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
     if rc1 != 1 or "limit 20 h" not in err1 or "land the render PR first" not in err1:
@@ -730,28 +753,13 @@ def _test_pr_p2(
     now: int,
 ) -> int:
     """Test pull request case p2 (base owes 19 h)."""
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "base-p2", "master"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "base-p2", "master")
     (repo / "changelog.d/added/p2-base.md").write_text("- Base p2.\n", encoding="utf-8")
     commit_in_fixture(repo, env, "Add base p2 19h ago", now - 19 * 3600)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "pr-p2", "base-p2"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "pr-p2", "base-p2")
     (repo / "changelog.d/added/p2-pr.md").write_text("- PR p2.\n", encoding="utf-8")
     commit_in_fixture(repo, env, "Add pr p2", now)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "merge-p2", "base-p2"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p2", "base-p2")
     merge_in_fixture(repo, env, "pr-p2", "Merge pr-p2 into base-p2", now)
     rc2, out2, _ = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
     if rc2 != 0 or "warning: render owed since" not in out2:
@@ -768,34 +776,13 @@ def _test_pr_p3(
     now: int,
 ) -> int:
     """Test pull request case p3 (render PR while base owes 21 h)."""
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "base-p3", "master"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "base-p3", "master")
     (repo / "changelog.d/added/p3-base.md").write_text("- Base p3.\n", encoding="utf-8")
     commit_in_fixture(repo, env, "Add base p3 21h ago", now - 21 * 3600)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "pr-p3", "base-p3"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
-    subprocess.run(  # nosec B603 - fixed script argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed script argv
-        ["bash", str(script_dest), "--write"],
-        cwd=str(repo),
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "pr-p3", "base-p3")
+    _fixture_render(repo, env, script_dest)
     commit_in_fixture(repo, env, "Render changelog in PR", now)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "merge-p3", "base-p3"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p3", "base-p3")
     merge_in_fixture(repo, env, "pr-p3", "Merge render PR into base-p3", now)
     rc3, out3, _ = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
     if rc3 != 0 or "changelog render current" not in out3:
@@ -811,20 +798,10 @@ def _test_pr_p4(
     now: int,
 ) -> int:
     """Test pull request case p4 (rerun older merge over current base)."""
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "pr-p4", "master"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "pr-p4", "master")
     (repo / "changelog.d/added/p4.md").write_text("- PR p4.\n", encoding="utf-8")
     commit_in_fixture(repo, env, "Add pr p4 48h ago", now - 48 * 3600)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "merge-p4", "master"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p4", "master")
     merge_in_fixture(repo, env, "pr-p4", "Merge pr-p4 48h ago", now - 48 * 3600)
     rc4, out4, _ = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
     rc4_push, _, _ = _run_captured(check_staleness, repo, "HEAD", 20, env=env)
@@ -845,38 +822,20 @@ def _test_pr_p5(
     now: int,
 ) -> int:
     """Test pull request case p5 (#586 modified fragment)."""
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "base-p5", "master"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "base-p5", "master")
     frag = repo / "changelog.d/fixed/p5.md"
     frag.parent.mkdir(parents=True, exist_ok=True)
     frag.write_text("- Fix p5 original.\n", encoding="utf-8")
     commit_in_fixture(repo, env, "Add fragment 10h ago", now - 10 * 3600)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "pr-p5", "base-p5"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
-    subprocess.run(  # nosec B603 - fixed script argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed script argv
-        ["bash", str(script_dest), "--write"],
-        cwd=str(repo),
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "pr-p5", "base-p5")
     frag.write_text("- Fix p5 modified.\n", encoding="utf-8")
+    _fixture_render(repo, env, script_dest)
     commit_in_fixture(repo, env, "Render and edit fragment", now)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "merge-p5", "base-p5"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p5", "base-p5")
     merge_in_fixture(repo, env, "pr-p5", "Merge pr-p5", now)
+    if not is_tree_current(repo, "HEAD", env):
+        print("self-test FAIL: p5 fixture merged tree not current", file=sys.stderr)
+        return 1
     rc5, _, err5 = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
     if rc5 != 1 or "changelog.d/fixed/p5.md (M)" not in err5:
         print(f"self-test FAIL: p5 failed: rc={rc5}, err={err5!r}", file=sys.stderr)
@@ -892,35 +851,14 @@ def _test_pr_p6(
     now: int,
 ) -> int:
     """Test pull request case p6 (extra file)."""
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "base-p6", "master"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "base-p6", "master")
     (repo / "changelog.d/added/p6.md").write_text("- Add p6.\n", encoding="utf-8")
     commit_in_fixture(repo, env, "Add fragment 10h ago", now - 10 * 3600)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "pr-p6", "base-p6"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
-    subprocess.run(  # nosec B603 - fixed script argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed script argv
-        ["bash", str(script_dest), "--write"],
-        cwd=str(repo),
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "pr-p6", "base-p6")
+    _fixture_render(repo, env, script_dest)
     (repo / "README.md").write_text("# Extra README\n", encoding="utf-8")
     commit_in_fixture(repo, env, "Render and add README", now)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "merge-p6", "base-p6"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p6", "base-p6")
     merge_in_fixture(repo, env, "pr-p6", "Merge pr-p6", now)
     rc6, _, err6 = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
     if rc6 != 1 or "README.md (A)" not in err6:
@@ -940,29 +878,14 @@ def _setup_release_pr(
     now: int,
 ) -> None:
     """Set up a release PR branch with consumed fragment deleted and version updated."""
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", base_name, "master"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", base_name, "master")
     (repo / f"changelog.d/added/{frag_name}").write_text("- Add.\n", encoding="utf-8")
     commit_in_fixture(repo, env, "Add fragment 5h ago", now - 5 * 3600)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", pr_name, base_name],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", pr_name, base_name)
     (repo / "meson.build").write_text(
         "project('p', 'c', version: '0.2.0')\n", encoding="utf-8"
     )
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "rm", "-q", f"changelog.d/added/{frag_name}"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "rm", "-q", f"changelog.d/added/{frag_name}")
     cl = repo / "CHANGELOG.md"
     cl.write_text(
         cl.read_text(encoding="utf-8").replace(
@@ -971,13 +894,7 @@ def _setup_release_pr(
         ),
         encoding="utf-8",
     )
-    subprocess.run(  # nosec B603 - fixed script argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed script argv
-        ["bash", str(script_dest), "--write"],
-        cwd=str(repo),
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_render(repo, env, script_dest)
 
 
 def _test_pr_p7(
@@ -989,12 +906,7 @@ def _test_pr_p7(
     """Test pull request case p7 (release shape deletions)."""
     _setup_release_pr(repo, env, "base-p7", "pr-p7", "p7.md", script_dest, now)
     commit_in_fixture(repo, env, "Release cut 0.2.0", now)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "merge-p7", "base-p7"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p7", "base-p7")
     merge_in_fixture(repo, env, "pr-p7", "Merge release cut", now)
     rc7, out7, _ = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
     if rc7 != 0 or "changelog render current" not in out7:
@@ -1015,14 +927,13 @@ def _test_pr_p8(
     (repo / "changelog.d/added/p8-new.md").write_text(
         "- Add new p8.\n", encoding="utf-8"
     )
+    _fixture_render(repo, env, script_dest)
     commit_in_fixture(repo, env, "Release cut with added fragment", now)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "merge-p8", "base-p8"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p8", "base-p8")
     merge_in_fixture(repo, env, "pr-p8", "Merge release cut p8", now)
+    if not is_tree_current(repo, "HEAD", env):
+        print("self-test FAIL: p8 fixture merged tree not current", file=sys.stderr)
+        return 1
     rc8, _, err8 = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
     if rc8 != 1 or "(A)" not in err8 or "changelog.d/added/p8-new.md (A)" not in err8:
         print(f"self-test FAIL: p8 failed: rc={rc8}, err={err8!r}", file=sys.stderr)
@@ -1038,46 +949,20 @@ def _test_pr_p9(
     now: int,
 ) -> int:
     """Test pull request case p9 (render PR with stale merge tree)."""
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "base-p9", "master"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "base-p9", "master")
     (repo / "changelog.d/added/p9-old.md").write_text(
         "- Add p9 old.\n", encoding="utf-8"
     )
     commit_in_fixture(repo, env, "Add fragment 10h ago", now - 10 * 3600)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "pr-p9", "base-p9"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
-    subprocess.run(  # nosec B603 - fixed script argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed script argv
-        ["bash", str(script_dest), "--write"],
-        cwd=str(repo),
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "pr-p9", "base-p9")
+    _fixture_render(repo, env, script_dest)
     commit_in_fixture(repo, env, "Render changelog in pr-p9", now - 5 * 3600)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "base-p9"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "base-p9")
     (repo / "changelog.d/added/p9-new.md").write_text(
         "- Add p9 new.\n", encoding="utf-8"
     )
     commit_in_fixture(repo, env, "Base advances with new fragment", now - 2 * 3600)
-    subprocess.run(  # nosec B603 - fixed git argv  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - fixed git argv
-        ["git", "-C", str(repo), "checkout", "-q", "-b", "merge-p9", "base-p9"],
-        env=env,
-        check=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
-    )
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p9", "base-p9")
     merge_in_fixture(repo, env, "pr-p9", "Merge stale render PR", now)
     rc9, _, err9 = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
     if rc9 != 1 or "merge the default branch" not in err9:
@@ -1097,13 +982,50 @@ def _test_pr_p10(repo: pathlib.Path, env: dict[str, str]) -> int:
     return 0
 
 
+def _test_pr_p11() -> int:
+    """Test parser case p11 (diff status allow-list)."""
+    if VALID_DIFF_STATUSES != frozenset({"A", "D", "M", "T"}):
+        print(
+            f"self-test FAIL: p11 unexpected VALID_DIFF_STATUSES: {VALID_DIFF_STATUSES!r}",
+            file=sys.stderr,
+        )
+        return 1
+
+    expected_ok = [
+        ("M\tCHANGELOG.md", [("M", "CHANGELOG.md")]),
+        ("", []),
+        ("T\tx", [("T", "x")]),
+    ]
+    for text, expected in expected_ok:
+        entries, err = _parse_diff_status(text)
+        if entries != expected or err is not None:
+            print(
+                f"self-test FAIL: p11 {text!r} failed: {entries!r}, {err!r}",
+                file=sys.stderr,
+            )
+            return 1
+
+    expected_err = ["R100\ta.md\tb.md", "junk", "R\tx"]
+    for text in expected_err:
+        entries, err = _parse_diff_status(text)
+        if entries is not None or err is None:
+            print(
+                f"self-test FAIL: p11 {text!r} expected error, got: {entries!r}",
+                file=sys.stderr,
+            )
+            return 1
+
+    print("self-test ok: p11 diff status allow-list")
+    return 0
+
+
 def _run_pr_self_tests(
     repo: pathlib.Path,
     env: dict[str, str],
     script_dest: pathlib.Path,
     now: int,
 ) -> int:
-    """Run pull request self-test cases p1 through p10."""
+    """Run pull request self-test cases p1 through p11."""
     if _test_pr_p1(repo, env, now) != 0:
         return 1
     if _test_pr_p2(repo, env, now) != 0:
@@ -1123,6 +1045,8 @@ def _run_pr_self_tests(
     if _test_pr_p9(repo, env, script_dest, now) != 0:
         return 1
     if _test_pr_p10(repo, env) != 0:
+        return 1
+    if _test_pr_p11() != 0:
         return 1
     return 0
 
