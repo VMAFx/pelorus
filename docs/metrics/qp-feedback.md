@@ -118,14 +118,34 @@ x265 --input clip.y4m --y4m --qp 32 --aq-mode 0 --psnr \
 pelorus_qp_report x265.csv --requested-qp 32
 ```
 
-The `--requested-qp N` option accepts a flat target QP in the valid x265 range
-`0.0 <= N <= 69.0`; values outside this range are rejected on standard error, and
-`-0` is normalised to `0.00`. The demonstrator allocates up to 4096 frames; if a
-CSV exceeds 4096 frame rows, a warning is printed to standard error and the report
-continues covering the first 4096 frames. Golden command lines, outputs, error
-messages and exit codes are pinned across all platforms by the transcript test
-`tools/transcripts/pelorus_qp_report.t` executed by `tools/transcript.py` under the
-fast test suite ([ADR-0249](../adr/0249-tool-cli-transcript-tests.md)).
+Without x265, run it on the recorded fixture
+`libpelorus/test/fixtures/telemetry/x265-4.3-qp32.csv`.
+
+The usage is `pelorus_qp_report <x265.csv> [--requested-qp N]`; the option may
+come before or after the CSV path and may appear once. Without it, the report
+prints `honored_fraction` as `0.0000  (no requested map supplied)`.
+
+- **Range:** `N` is a flat requested QP in the x265 QP range `0 <= N <= 69`
+  (x265 4.3 `--qpmax` defaults to 69,
+  [research 0469](../research/0469-qp-report-transcript.md)). A value outside it
+  prints `pelorus_qp_report: --requested-qp N is outside 0..69 (the x265 QP
+  range)` and the usage line on stderr, then exits 1. `-1` is rejected the same
+  way; before ADR-0249 the tool silently treated it as "no request". `-0`
+  prints as `0.00`.
+- **Frame cap:** the tool reads at most 4096 frame rows (`MAX_FRAMES` in
+  `tools/pelorus_qp_report.c`). A longer CSV prints `pelorus_qp_report: warning:
+  <csv> has more than 4096 frame rows; the report covers the first 4096` on
+  stderr, and the report covers the first 4096 frames with exit 0.
+- **Exit status:** 0 when a report is printed. 1 on a usage error (missing CSV,
+  extra argument, unknown or repeated option, or a missing, unparseable,
+  non-finite or out-of-range `N`) and on a CSV that cannot be opened or has no
+  frame rows.
+
+The transcript test `tools/transcripts/pelorus_qp_report.t` pins each of these
+command lines with its stdout, stderr and exit code, byte for byte. It runs in
+the fast suite through `tools/transcript.py` on every CI leg
+([ADR-0249](../adr/0249-tool-cli-transcript-tests.md)), and it is the reference
+for the exact report text.
 
 The CSV path is UTF-8 on every platform
 ([ADR-0149](../adr/0149-windows-utf8-paths.md)). On Windows the reader opens it
