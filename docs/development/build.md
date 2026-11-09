@@ -1112,7 +1112,7 @@ SHA-256. The `Dev container image` workflow
 | Trigger | Job | Result |
 | --- | --- | --- |
 | Pull request touching `.devcontainer/base/**`, the licence gate, `scripts/check-devcontainer-image.py`, the `Makefile`, or the workflow | `build` | builds and loads the image, runs `make verify-offline` offline inside it, pushes nothing; on a draft its first step fails by design |
-| Push to `master` touching the same paths, or manual dispatch | `publish` | builds and loads the image, runs `make verify-offline` offline inside it, pushes `ghcr.io/vmafx/pelorus-dev` tagged with the commit SHA and `latest`, compares the loaded and pushed digests, attests SLSA build provenance for it |
+| Push to `master` touching the same paths, or manual dispatch | `publish` | builds and loads the image, runs `make verify-offline` offline inside it, pushes `ghcr.io/vmafx/pelorus-dev` by digest without a tag, requires the pushed digest to equal the loaded one, attests SLSA build provenance for that digest, and only then points the commit SHA and `latest` tags at it |
 
 To run the same smoke check locally:
 

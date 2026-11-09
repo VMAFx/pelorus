@@ -5,7 +5,8 @@
 
 Validates that tools and pkg-config modules needed by CI and offline gates
 resolve inside the dev container base image, and runs the offline native gate
-inside a container-owned directory copy before pushing the image.
+inside a container-owned directory copy before pushing the image. On the runner,
+--compare-digests checks that the pushed and tagged digests equal the gated one.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import argparse
 import io
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess  # nosec B404 - fixed toolchain and gate argv, no shell, explicit timeout
 import sys
@@ -64,6 +66,20 @@ PROBE_TIMEOUT = 60.0
 DEFAULT_GATE_TIMEOUT = 1500.0
 
 RunnerType = Callable[..., tuple[int, str, str]]
+
+DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def compare_digests(expected: str, actual: str) -> list[str]:
+    """Return why ``actual`` is not the well-formed digest ``expected`` (ADR-0250)."""
+    errors = [
+        f"{name} is not a sha256 digest: {value!r}"
+        for name, value in (("expected", expected), ("actual", actual))
+        if not DIGEST.fullmatch(value)
+    ]
+    if not errors and actual != expected:
+        errors.append(f"digest {actual} does not match the gated image {expected}")
+    return errors
 
 
 def default_runner(
@@ -462,6 +478,26 @@ def _run_gate_plants(td: str, stub_bin: str, sys_path: str) -> tuple[int, list[s
     return len(failures), failures
 
 
+def _run_digest_plants() -> list[str]:
+    """Plant (i): a differing, empty or malformed digest is refused."""
+    good = "sha256:" + "a" * 64
+    cases = (
+        ("equal", good, good, ""),
+        ("differing", good, "sha256:" + "b" * 64, "does not match"),
+        ("empty", good, "", "actual is not a sha256 digest"),
+        ("upper case", good.upper(), good, "expected is not a sha256 digest"),
+        ("short", good, good[:-1], "actual is not a sha256 digest"),
+    )
+    failures: list[str] = []
+    for name, expected, actual, needle in cases:
+        errors = compare_digests(expected, actual)
+        if (not needle and errors) or (needle and not any(needle in e for e in errors)):
+            failures.append(f"plant i {name}: got {errors}")
+    if not failures:
+        print("ok: plant i")
+    return failures
+
+
 def run_self_test() -> int:
     """Run hermetic host-only self-test with stubbed bin directory."""
     tmp_parent = os.environ.get("TMPDIR")
@@ -475,7 +511,7 @@ def run_self_test() -> int:
         _, fails_tc = _run_toolchain_plants(td, stub_bin, sys_path)
         _, fails_gate = _run_gate_plants(td, stub_bin, sys_path)
 
-        all_fails = fails_tc + fails_gate + _run_copy_plant(td)
+        all_fails = fails_tc + fails_gate + _run_copy_plant(td) + _run_digest_plants()
         if all_fails:
             for f in all_fails:
                 sys.stderr.write(f"check-devcontainer-image self-test: {f}\n")
@@ -512,9 +548,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Run hermetic self-tests on planted defects.",
     )
+    parser.add_argument(
+        "--compare-digests",
+        nargs=2,
+        metavar=("EXPECTED", "ACTUAL"),
+        help="Exit 1 unless ACTUAL equals the well-formed sha256 digest EXPECTED.",
+    )
     args = parser.parse_args(argv)
-    if not args.self_test and not args.source:
-        parser.error("--source is required when not running --self-test")
+    if not args.self_test and not args.compare_digests and not args.source:
+        parser.error("--source is required without --self-test or --compare-digests")
     return args
 
 
@@ -523,6 +565,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.self_test:
         return run_self_test()
+    if args.compare_digests:
+        errors = compare_digests(*args.compare_digests)
+        for error in errors:
+            sys.stderr.write(f"check-devcontainer-image: {error}\n")
+        return 1 if errors else 0
 
     auto_work = False
     work_dir = args.work

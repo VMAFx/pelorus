@@ -7317,6 +7317,23 @@ DEV_IMAGE_WORKFLOW = ROOT / ".github" / "workflows" / "devcontainer-image.yml"
 DEV_IMAGE_NOTICES_LABEL = "dev.vmafx.pelorus.notices"
 DEV_IMAGE_FROM = re.compile(r"^FROM ubuntu:26\.04@sha256:[0-9a-f]{64} AS assembled$", re.MULTILINE)
 DEV_IMAGE_GATE = ("licensing.py self-test", "licensing.py notices", "licensing.py check")
+# ADR-0250: no consumer tag moves before the gate, the digest check and the attestation.
+DEV_IMAGE_PUBLISH_JOB = "publish"
+DEV_IMAGE_PUBLISH_ORDER = (
+    "- name: Run the offline gate in the image",
+    "- name: Log in to ghcr.io",
+    "- name: Push by digest",
+    "- name: Verify digest",
+    "- name: Attest build provenance",
+    "- name: Promote tags",
+)
+DEV_IMAGE_PUBLISH_TOKENS = (
+    "push-by-digest=true",
+    '--compare-digests "$LOADED" "$DIGEST"',
+    "docker buildx imagetools create --prefer-index=false",
+    '--compare-digests "$DIGEST" "$tagged"',
+)
+DEV_IMAGE_MAKEFILE = ROOT / "Makefile"
 DEV_IMAGE_WORKFLOW_TOKENS = (
     "PELORUS_COMMIT=${{ github.sha }}",
     "file: .devcontainer/base/Containerfile",
@@ -7372,6 +7389,41 @@ def validate_dev_image_workflow_text(relative: str, text: str) -> list[str]:
         errors.append(f"{relative}: every checkout must fetch full history (fetch-depth: 0) for the offline gate")
     if "context:.devcontainer/base" in text.replace(" ", ""):
         errors.append(f"{relative}: the build context must be the repository root, which holds the licence gate")
+    return errors + validate_dev_image_publish_job(relative, workflow_job_blocks(text).get(DEV_IMAGE_PUBLISH_JOB))
+
+
+def validate_dev_image_publish_job(relative: str, block: str | None) -> list[str]:
+    """ADR-0250: gate, log in, push untagged, verify, attest, then move the tags."""
+    if block is None:
+        return [f"{relative}: missing job {DEV_IMAGE_PUBLISH_JOB}"]
+    errors = [f"{relative}: publish job missing {token}" for token in DEV_IMAGE_PUBLISH_TOKENS if token not in block]
+    positions = [block.find(step) for step in DEV_IMAGE_PUBLISH_ORDER]
+    if -1 in positions or positions != sorted(positions):
+        errors.append(f"{relative}: publish job must run the gate, log in, push by digest, verify, attest and promote tags in that order")
+    if "push: true" in block or "type=registry" in block or block.count("push-by-digest=true") != 1:
+        errors.append(f"{relative}: publish job must push once, by digest and without a tag, before promotion")
+    return errors
+
+
+def make_prerequisites(text: str, target: str) -> tuple[list[str], bool] | None:
+    """Return a Makefile rule's prerequisites and whether it has a recipe."""
+    lines = text.replace("\\\n", " ").splitlines()
+    for index, line in enumerate(lines):
+        match = re.fullmatch(rf"{re.escape(target)}:(?![:=])([^#]*)(?:#.*)?", line)
+        if match:
+            following = lines[index + 1] if index + 1 < len(lines) else ""
+            return match.group(1).split(), following.startswith("\t")
+    return None
+
+
+def validate_dev_image_makefile_text(relative: str, text: str) -> list[str]:
+    """ADR-0250: the image gate runs every native step except the networked lint."""
+    errors: list[str] = []
+    if make_prerequisites(text, "verify-native") != (["verify-offline", "python-lint"], False):
+        errors.append(f"{relative}: verify-native must be exactly verify-offline python-lint, with no recipe of its own")
+    offline = make_prerequisites(text, "verify-offline")
+    if offline is None or not offline[0] or offline[1] or {"python-lint", "verify-native"} & set(offline[0]):
+        errors.append(f"{relative}: verify-offline must list the offline native steps, without python-lint or a recipe")
     return errors
 
 
@@ -7384,6 +7436,7 @@ def validate_dev_image() -> list[str]:
         (
             (DEV_IMAGE_CONTAINERFILE, lambda rel, text: validate_dev_image_text(rel, text, record)),
             (DEV_IMAGE_WORKFLOW, validate_dev_image_workflow_text),
+            (DEV_IMAGE_MAKEFILE, validate_dev_image_makefile_text),
         )
     )
 
@@ -7436,6 +7489,57 @@ def _dev_image_workflow_cases(text: str) -> dict[str, tuple[str, str]]:
             text.replace("context: .", "context: .devcontainer/base", 1),
             "the build context must be the repository root",
         ),
+        "log in before the gate": (
+            text.replace("- name: Run the offline gate in the image\n        timeout-minutes", "- name: zzz\n        timeout-minutes", 1)
+            .replace("- name: Log in to ghcr.io", "- name: Run the offline gate in the image", 1)
+            .replace("- name: zzz", "- name: Log in to ghcr.io", 1),
+            "in that order",
+        ),
+        "promote before attest": (
+            text.replace("- name: Attest build provenance", "- name: zzz", 1)
+            .replace("- name: Promote tags", "- name: Attest build provenance", 1)
+            .replace("- name: zzz", "- name: Promote tags", 1),
+            "in that order",
+        ),
+        "tagged push": (
+            text.replace(
+                "outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true",
+                "tags: ${{ steps.image.outputs.name }}:latest\n          push: true",
+                1,
+            ),
+            "must push once, by digest",
+        ),
+        "registry output with a tag": (
+            text.replace("- name: Verify digest", "- name: Push latest\n        uses: docker/build-push-action@x\n"
+                         "        with:\n          build-args: PELORUS_COMMIT=${{ github.sha }}\n"
+                         "          outputs: type=registry,name=x:latest\n      - name: Verify digest", 1),
+            "must push once, by digest",
+        ),
+        "index promotion": (text.replace("imagetools create --prefer-index=false", "imagetools create", 1), "publish job missing docker buildx imagetools create"),
+        "tags not re-checked": (text.replace('--compare-digests "$DIGEST" "$tagged"', '--version', 1), 'missing --compare-digests "$DIGEST" "$tagged"'),
+        "no digest check": (text.replace('--compare-digests "$LOADED" "$DIGEST"', '--version', 1), 'missing --compare-digests "$LOADED" "$DIGEST"'),
+    }
+
+
+def _dev_image_makefile_cases(text: str) -> dict[str, tuple[str, str]]:
+    return {
+        "native lists a step directly": (
+            text.replace("verify-native: verify-offline python-lint", "verify-native: verify-offline python-lint build", 1),
+            "verify-native must be exactly",
+        ),
+        "native without the offline gate": (
+            text.replace("verify-native: verify-offline python-lint", "verify-native: build test python-lint", 1),
+            "verify-native must be exactly",
+        ),
+        "native with a recipe": (
+            text.replace("verify-native: verify-offline python-lint\n", "verify-native: verify-offline python-lint\n\t@true\n", 1),
+            "verify-native must be exactly",
+        ),
+        "offline gate needs the network": (
+            text.replace("verify-offline: build test", "verify-offline: python-lint build test", 1),
+            "verify-offline must list",
+        ),
+        "offline gate missing": (text.replace("verify-offline: build", "verify-offlinex: build", 1), "verify-offline must list"),
     }
 
 
@@ -7464,6 +7568,12 @@ def dev_image_regressions() -> list[str]:
     )
     failures += _dev_image_regressions_for(
         "workflow", workflow, _dev_image_workflow_cases(workflow), lambda t: validate_dev_image_workflow_text("workflow", t)
+    )
+    makefile = DEV_IMAGE_MAKEFILE.read_text(encoding="utf-8")
+    if validate_dev_image_makefile_text("Makefile", makefile):
+        failures.append("dev image regression: the current Makefile is rejected")
+    failures += _dev_image_regressions_for(
+        "Makefile", makefile, _dev_image_makefile_cases(makefile), lambda t: validate_dev_image_makefile_text("Makefile", t)
     )
     return failures
 
