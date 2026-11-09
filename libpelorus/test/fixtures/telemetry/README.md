@@ -6,6 +6,7 @@ These are unedited stat files recorded from the distribution binaries below on 2
 | Fixture | Encoder |
 | --- | --- |
 | `x265-4.3-qp32.csv` | x265 4.3, GCC 16.1.1, 8/10/12-bit build |
+| `x265-4.3-crf28-psnr.csv` | x265 4.3, GCC 16.1.1, 8/10/12-bit build; 24 frames, 176x144, CRF 28, PSNR |
 | `svt-av1-4.2.0-qp34.stat` | SVT-AV1 v4.2.0 (release), library v4.2.0 |
 | `vvenc-1.14.0-qp32.log` | VVenC v1.14.0, release-static |
 | `x264-0.165-qp32.stats` | x264 0.165.3222 b35605a, GCC 16.2.1, recorded 2026-10-16; 30 frames, 320x240, 8-bit |
@@ -36,6 +37,14 @@ x264 --qp 32 --pass 1 --stats libpelorus/test/fixtures/telemetry/x264-0.165-qp32
 ```
 
 No `.mbtree` sidecar is retained; this command disables mbtree (`mbtree=0`). The fixture's copyright and EUPL-1.2 coverage are recorded in `REUSE.toml`, as for the other recorded telemetry data.
+
+The x265 PSNR fixture `x265-4.3-crf28-psnr.csv` provides frame-level Y/U/V PSNR columns for demonstrator tests (`tools/pelorus_qp_report`). Reproduce it with bare file names in an empty working directory:
+
+```console
+/usr/bin/ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=size=176x144:rate=25 -frames:v 24 -pix_fmt yuv420p -f rawvideo -y src.yuv
+/usr/bin/x265 --input src.yuv --input-res 176x144 --fps 25 --frames 24 --crf 28 --psnr --csv x265-crf28-psnr.csv --csv-log-level 1 --output x265-crf28-psnr.hevc --pools 1 --frame-threads 1 --no-progress
+cp x265-crf28-psnr.csv libpelorus/test/fixtures/telemetry/x265-4.3-crf28-psnr.csv
+```
 
 ## libaom C-value fixture
 

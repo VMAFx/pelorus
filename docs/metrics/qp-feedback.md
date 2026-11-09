@@ -118,6 +118,15 @@ x265 --input clip.y4m --y4m --qp 32 --aq-mode 0 --psnr \
 pelorus_qp_report x265.csv --requested-qp 32
 ```
 
+The `--requested-qp N` option accepts a flat target QP in the valid x265 range
+`0.0 <= N <= 69.0`; values outside this range are rejected on standard error, and
+`-0` is normalised to `0.00`. The demonstrator allocates up to 4096 frames; if a
+CSV exceeds 4096 frame rows, a warning is printed to standard error and the report
+continues covering the first 4096 frames. Golden command lines, outputs, error
+messages and exit codes are pinned across all platforms by the transcript test
+`tools/transcripts/pelorus_qp_report.t` executed by `tools/transcript.py` under the
+fast test suite ([ADR-0249](../adr/0249-tool-cli-transcript-tests.md)).
+
 The CSV path is UTF-8 on every platform
 ([ADR-0149](../adr/0149-windows-utf8-paths.md)). On Windows the reader opens it
 through UTF-16 `_wfopen`, and the demonstrator re-reads its own arguments from

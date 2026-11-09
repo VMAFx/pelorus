@@ -11,6 +11,8 @@ deliverable (ADR-0108). Gated by `tools` meson option (default on).
 ```text
 tools/
 ├── pelorus_qp_report.c   x265 --csv -> PEL_SEC_QPREPORT demonstrator (ADR-0122)
+├── transcript.py         CLI golden transcript runner + allow-list parser (ADR-0249)
+├── transcripts/          golden .t transcripts per demonstrator
 └── tester/               tester report program, stage runners, fixtures + lock, schema; Python stdlib only (ADR-0173); image Containerfile per kit (generic, nvidia, intel; ADR-0180) + build-ffmpeg.sh + FFmpeg licence gate (ADR-0176)
 ```
 
@@ -30,6 +32,7 @@ tools/
   not on code page 65001 shows them garbled; accepted, affects messages only.
 - New tool: one `executable(... install: false)` entry in `meson.build` plus
   one-line row in scope table above.
+- Tool output or argv change -> transcript in the same change (ADR-0249).
 
 ## Invariants
 
