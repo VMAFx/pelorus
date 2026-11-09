@@ -53,6 +53,11 @@ Recorded in an isolated temporary working directory with unedited x265 4.3 outpu
 | `l` | Non-ASCII exit code (`[exit ²]`) | 2 | 2 |
 | `m` | Copy non-ASCII filename directive (`% copy x265-4.3-qp32.csv café_文件.csv` + run) | 0 | 0 |
 | `pass` | Valid matching command and streams (no args) | 0 | 0 |
+| `n` | Empty transcript | 2 | 2 |
+| `o` | Comment-only transcript | 2 | 2 |
+| `p` | Output flood (`capture` stream limit) | 0 | 0 |
+| `q` | Tool executable is a directory | 2 | 2 |
+| `r` | Child process holds stdout after the tool exits (`capture` held-pipe verdict) | 0 | 0 |
 
 ### Transcript test matrix
 
@@ -110,10 +115,12 @@ The 27-case transcript was evaluated against six planted mutations (m1–m6) in 
 
 - The transcript runner supports simple space-separated arguments without quotes or shell escapes. Complex shell pipelines remain in bash integration scripts.
 - The driver reads a transcript as bytes and strips one CR before each LF, so a CRLF checkout reads the same as LF; a CR elsewhere in a line is kept and compared byte for byte, and an expected line cannot end in a literal CR.
+- On Windows each CRLF in the tool's output reads as LF, since the C runtime writes text-mode streams; a lone CR stays.
+- Each tool run is bounded: 30 s wall time, 1 MiB per output stream (the tool is killed at the cap), and 8 MiB per transcript or fixture file, checked on the bytes read before any parse. An output stream a child process still holds 5 s after the tool exits fails the case and is left open, since closing it would wait for that child.
 - The fixture was recorded with relative file names, so its Summary row carries no absolute or build-directory path; checked once at recording time with `grep -c` for the temp dir (0).
 
 ## Evidence
 
 - `meson test -C $TMPDIR/b tool-qp-report-transcript tool-transcript-self-test tool-argv --verbose` (3 passed, exit 0).
 - `python3 -I tools/transcript.py --exe $TMPDIR/b/tools/pelorus_qp_report --tool pelorus_qp_report --fixtures libpelorus/test/fixtures/telemetry tools/transcripts/pelorus_qp_report.t` (27 cases passed, exit 0).
-- `python3 -I tools/transcript.py --exe $TMPDIR/b/tools/pelorus_qp_report --tool pelorus_qp_report --fixtures libpelorus/test/fixtures/telemetry --self-test` (14 plants passed, exit 0).
+- `python3 -I tools/transcript.py --exe $TMPDIR/b/tools/pelorus_qp_report --tool pelorus_qp_report --fixtures libpelorus/test/fixtures/telemetry --self-test` (19 plants passed, exit 0).

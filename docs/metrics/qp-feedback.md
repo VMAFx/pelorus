@@ -142,7 +142,9 @@ prints `honored_fraction` as `0.0000  (no requested map supplied)`.
   frame rows.
 
 The transcript test `tools/transcripts/pelorus_qp_report.t` pins each of these
-command lines with its stdout, stderr and exit code, byte for byte. It runs in
+command lines with its stdout, stderr and exit code, byte for byte (on Windows
+each CRLF in the tool's output reads as LF, since the C runtime writes
+text-mode streams; a lone CR stays). It runs in
 the fast suite through `tools/transcript.py` on every CI leg
 ([ADR-0249](../adr/0249-tool-cli-transcript-tests.md)), and it is the reference
 for the exact report text.

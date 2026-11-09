@@ -16,7 +16,7 @@ The fast suite runs on the `core`, `arm64`, `sanitizers`, `windows` (MSYS2 UCRT6
 
 ## Decision
 
-We will test each CLI demonstrator with a golden transcript: a text file of commands and the exact standard output lines, standard error lines and exit code each command must produce. A stdlib-only driver in the repository, `tools/transcript.py`, reads the transcripts with an allow-list parser, runs the built executable directly (no shell) in a fresh temporary directory, compares both streams and the exit code exactly, and prints a unified diff on mismatch. Meson registers one fast test per transcript plus the driver's own self-test of planted failing transcripts. A change to a tool's output or arguments updates its transcript in the same change.
+We will test each CLI demonstrator with a golden transcript: a text file of commands and the exact standard output lines, standard error lines and exit code each command must produce. A stdlib-only driver in the repository, `tools/transcript.py`, reads the transcripts with an allow-list parser, runs the built executable directly (no shell, stdin from the null device) in a fresh temporary directory, compares both streams and the exit code exactly (on Windows each CRLF in the tool's output reads as LF, since the C runtime writes text-mode streams; a lone CR stays), and prints a unified diff on mismatch. Each run is bounded: 30 s wall time, 1 MiB per output stream, 8 MiB per transcript or fixture file, and an output stream a child process still holds 5 s after the tool exits fails the case. Meson registers one fast test per transcript plus the driver's own self-test of planted failing transcripts. A change to a tool's output or arguments updates its transcript in the same change.
 
 ## Alternatives considered
 
@@ -31,10 +31,10 @@ We will test each CLI demonstrator with a golden transcript: a text file of comm
 
 ## Consequences
 
-- **Positive**: Report text, usage text and exit codes of `pelorus_qp_report` are pinned on every CI leg, including the non-ASCII file name path (ADR-0149). The driver is generic over tools, so `pelorus_zones` and `pelorus_qloop` can gain transcripts without new code. The driver's self-test proves it fails on wrong output, wrong exit codes and malformed transcripts.
+- **Positive**: Report text, usage text and exit codes of `pelorus_qp_report` are pinned on every CI leg, including the non-ASCII file name path (ADR-0149). The driver is generic over tools, so `pelorus_zones` and `pelorus_qloop` can gain transcripts without new code. The driver's self-test proves it fails on wrong output, wrong exit codes, malformed or empty transcripts, an output flood, an output stream held by a child process and a tool path that is not an executable.
 - **Negative**: Any intentional output change now needs a transcript edit; the driver has no automatic update mode, so expected text is written and reviewed by hand (record mode: issue #581). One more script to maintain.
 - **Revisit**: pelorus gains a Cargo package in its fast suite, or scrut ships a no-shell runner on crates.io; then re-measure both runners and switch if one meets the no-shell and no-new-toolchain needs.
-- **Neutral / follow-ups**: The five `tool-qp-report-*` exit-code tests are replaced by the transcript. `tools/` stays excluded from the tester kit (`-Dtools=false`, ADR-0248), so the transcript tests do not ship in the kit.
+- **Neutral / follow-ups**: The five `tool-qp-report-*` exit-code tests are replaced by the transcript. `tools/` stays excluded from the tester kit (`-Dtools=false`, ADR-0248), so the transcript tests do not ship in the kit. No CI leg runs macOS (`.github/workflows/*.yml` name no macOS runner), so the transcript tests do not run on macOS in CI; the driver takes the same stdlib `subprocess` path there as on Linux; not measured on macOS.
 
 ## References
 

@@ -36,6 +36,7 @@
 
 #define MAX_FRAMES 4096u
 
+/* Print the error context and pel_result to stderr and return EXIT_FAILURE. */
 static int fail(const char *what, pel_result rc)
 {
     (void)fprintf(stderr, "pelorus_qp_report: %s: %s\n", what, pel_result_str(rc));
@@ -232,6 +233,7 @@ static int run(int argc, char **argv)
     return EXIT_SUCCESS;
 }
 
+/* Run pelorus_qp_report with UTF-8 command-line arguments and return the exit code. */
 int main(int argc, char **argv)
 {
     return pelorus_tool_main(argc, argv, "pelorus_qp_report: cannot read the command line as UTF-8",
