@@ -5,6 +5,7 @@
 
 Usage:
     check-changelog-staleness.py [--ref REF] [--max-age-hours HOURS] [--repo REPO]
+    check-changelog-staleness.py --open-after-hours HOURS [--ref REF] [--repo REPO]
     check-changelog-staleness.py --pull-request [--ref REF] [--max-age-hours HOURS] [--repo REPO]
     check-changelog-staleness.py --self-test
 """
@@ -227,24 +228,44 @@ def is_tree_current(
         return run_fragment_check(pathlib.Path(tmp_a), env=env) == 0
 
 
+def _last_render_commit(
+    repo: pathlib.Path,
+    ref: str,
+    env: dict[str, str] | None = None,
+) -> tuple[str | None, int | None, bool]:
+    """Find the last first-parent CHANGELOG.md commit on ref.
+
+    Returns (sha, committer_time, is_hand_edited).
+    If no commit is found, returns (None, None, False).
+    """
+    output = run_git_log(
+        repo,
+        ["--first-parent", "-1", "--format=%H %ct", ref, "--", "CHANGELOG.md"],
+        env=env,
+    )
+    if not output:
+        return None, None, False
+    parts = output.split()
+    sha = parts[0]
+    committer_time = int(parts[1]) if len(parts) > 1 else None
+    is_hand_edited = not is_tree_current(repo, sha, env=env)
+    return sha, committer_time, is_hand_edited
+
+
 def check_changelog_base(
     repo: pathlib.Path,
     ref: str,
     env: dict[str, str] | None = None,
 ) -> tuple[str | None, int]:
     """Find the last first-parent CHANGELOG.md commit on ref and verify it was not hand-edited."""
-    sha = run_git_log(
-        repo,
-        ["--first-parent", "-1", "--format=%H", ref, "--", "CHANGELOG.md"],
-        env=env,
-    )
+    sha, _, is_hand_edited = _last_render_commit(repo, ref, env=env)
     if not sha:
         print(
             f"error: no commits touching CHANGELOG.md found in {ref}", file=sys.stderr
         )
         return None, 1
 
-    if not is_tree_current(repo, sha, env=env):
+    if is_hand_edited:
         print(
             f"CHANGELOG.md hand-edited or stale at {sha}; render it with --write",
             file=sys.stderr,
@@ -254,15 +275,16 @@ def check_changelog_base(
     return sha, 0
 
 
-def judge_owed_render(
+def _first_owed_commit(
     repo: pathlib.Path,
     sha: str,
     ref: str,
-    max_age_hours: int,
     env: dict[str, str] | None = None,
-    remedy: str = "land a render-only pull request",
-) -> int:
-    """Judge how long a render has been owed since the last rendered CHANGELOG.md."""
+) -> tuple[str | None, int | None]:
+    """Find the first first-parent commit touching changelog.d/ since sha.
+
+    Returns (first_sha, committer_time) or (None, None).
+    """
     log_output = run_git_log(
         repo,
         [
@@ -277,15 +299,28 @@ def judge_owed_render(
     )
     lines = [line for line in log_output.splitlines() if line.strip()]
     if not lines:
+        return None, None
+    first_sha, committer_time_str = lines[0].strip().split()[:2]
+    return first_sha, int(committer_time_str)
+
+
+def judge_owed_render(
+    repo: pathlib.Path,
+    sha: str,
+    ref: str,
+    max_age_hours: int,
+    env: dict[str, str] | None = None,
+    remedy: str = "land a render-only pull request",
+) -> int:
+    """Judge how long a render has been owed since the last rendered CHANGELOG.md."""
+    first_sha, committer_time = _first_owed_commit(repo, sha, ref, env=env)
+    if not first_sha or committer_time is None:
         print(
             f"render owed on {ref}, but no changelog.d/ commits found since {sha}",
             file=sys.stderr,
         )
         return 1
 
-    first_line = lines[0].strip()
-    first_sha, committer_time_str = first_line.split()[:2]
-    committer_time = int(committer_time_str)
     now = int(time.time())
     age_seconds = max(0, now - committer_time)
     age_hours = f"{age_seconds / 3600:.1f}"
@@ -299,6 +334,65 @@ def judge_owed_render(
         return 1
 
     print(f"warning: render owed since {first_sha} ({age_hours} h)")
+    return 0
+
+
+def _emit_decision(
+    current: bool,
+    is_open: bool,
+    owed_since: str,
+    owed_hours: str,
+) -> None:
+    """Print standard four stdout lines and decision repetition to stderr."""
+    cur_str = "true" if current else "false"
+    open_str = "true" if is_open else "false"
+    print(f"current={cur_str}")
+    print(f"open={open_str}")
+    print(f"owed_since={owed_since}")
+    print(f"owed_hours={owed_hours}")
+    print(
+        f"decision: current={cur_str} open={open_str} owed_since={owed_since} owed_hours={owed_hours}",
+        file=sys.stderr,
+    )
+
+
+def decide_render_pr(
+    repo: pathlib.Path,
+    ref: str,
+    open_after_hours: int,
+    env: dict[str, str] | None = None,
+    now: int | None = None,
+) -> int:
+    """Decide whether a scheduled changelog render pull request is due (ADR-0252)."""
+    if is_tree_current(repo, ref, env=env):
+        _emit_decision(current=True, is_open=False, owed_since="", owed_hours="")
+        return 0
+
+    sha, committer_time, is_hand_edited = _last_render_commit(repo, ref, env=env)
+    if not sha:
+        print(f"error: no commits touching CHANGELOG.md found in {ref}", file=sys.stderr)
+        return 1
+
+    if now is None:
+        now = int(time.time())
+    if is_hand_edited:
+        print(f"CHANGELOG.md hand-edited or stale at {sha}; render it with --write", file=sys.stderr)
+        age_seconds = max(0, now - (committer_time or now))
+        age_hours = f"{age_seconds / 3600:.1f}"
+        _emit_decision(current=False, is_open=True, owed_since=sha, owed_hours=age_hours)
+        return 0
+
+    first_sha, first_ct = _first_owed_commit(repo, sha, ref, env=env)
+    if not first_sha or first_ct is None:
+        print(f"render owed on {ref}, but no changelog.d/ commits found since {sha}", file=sys.stderr)
+        return 1
+
+    age_seconds = max(0, now - first_ct)
+    age_hours = f"{age_seconds / 3600:.1f}"
+    is_open = age_seconds >= open_after_hours * 3600
+    msg = f"render owed for {age_hours} h since {first_sha} (threshold {open_after_hours} h): "
+    print(msg + ("render PR is due" if is_open else "render PR not yet due"), file=sys.stderr)
+    _emit_decision(current=False, is_open=is_open, owed_since=first_sha, owed_hours=age_hours)
     return 0
 
 
@@ -1657,8 +1751,149 @@ def run_self_test(repo_root: pathlib.Path) -> int:
         if _run_pr_self_tests(repo, env, script_dest, now, repo_root) != 0:
             return 1
 
+        if _run_decide_self_tests(repo, env, now) != 0:
+            return 1
+
     print("self-test passed")
     return 0
+
+
+def _run_decide(
+    repo: pathlib.Path,
+    ref: str,
+    open_after_hours: int,
+    env: dict[str, str],
+    now: int | None = None,
+) -> tuple[int, list[str]]:
+    """Helper to run decide_render_pr and capture stdout lines."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = decide_render_pr(repo, ref, open_after_hours, env=env, now=now)
+    return rc, buf.getvalue().splitlines()
+
+
+def _test_decide_d1(repo: pathlib.Path, env: dict[str, str], now: int) -> int:
+    """Test case d1: owed 7 h -> open=true."""
+    _fixture_git(repo, env, "checkout", "-q", "-b", "branch-d1", "master")
+    (repo / "changelog.d/added/0001-d1.md").write_text("- Add d1.\n", encoding="utf-8")
+    commit_in_fixture(repo, env, "Add fragment 7h ago", now - 7 * 3600)
+    rc, lines = _run_decide(repo, "branch-d1", 6, env, now=now)
+    sha = run_git_log(repo, ["-1", "--format=%H", "branch-d1"], env=env)
+    expected = ["current=false", "open=true", f"owed_since={sha}", "owed_hours=7.0"]
+    if rc != 0 or lines != expected:
+        print(f"self-test FAIL: d1 failed: rc={rc}, lines={lines!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: d1 owed 7 h -> open=true")
+    return 0
+
+
+def _test_decide_d2(repo: pathlib.Path, env: dict[str, str], now: int) -> int:
+    """Test case d2: owed exactly 6 h (commit at now-6*3600) -> open=true."""
+    _fixture_git(repo, env, "checkout", "-q", "-b", "branch-d2", "master")
+    (repo / "changelog.d/added/0001-d2.md").write_text("- Add d2.\n", encoding="utf-8")
+    commit_in_fixture(repo, env, "Add fragment 6h ago", now - 6 * 3600)
+    rc, lines = _run_decide(repo, "branch-d2", 6, env, now=now)
+    sha = run_git_log(repo, ["-1", "--format=%H", "branch-d2"], env=env)
+    expected = ["current=false", "open=true", f"owed_since={sha}", "owed_hours=6.0"]
+    if rc != 0 or lines != expected:
+        print(f"self-test FAIL: d2 failed: rc={rc}, lines={lines!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: d2 owed exactly 6 h -> open=true")
+    return 0
+
+
+def _test_decide_d3(repo: pathlib.Path, env: dict[str, str], now: int) -> int:
+    """Test case d3: owed 5.9 h -> open=false current=false."""
+    _fixture_git(repo, env, "checkout", "-q", "-b", "branch-d3", "master")
+    (repo / "changelog.d/added/0001-d3.md").write_text("- Add d3.\n", encoding="utf-8")
+    commit_in_fixture(repo, env, "Add fragment 5.9h ago", now - int(5.9 * 3600))
+    rc, lines = _run_decide(repo, "branch-d3", 6, env, now=now)
+    sha = run_git_log(repo, ["-1", "--format=%H", "branch-d3"], env=env)
+    expected = ["current=false", "open=false", f"owed_since={sha}", "owed_hours=5.9"]
+    if rc != 0 or lines != expected:
+        print(f"self-test FAIL: d3 failed: rc={rc}, lines={lines!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: d3 owed 5.9 h -> open=false current=false")
+    return 0
+
+
+def _test_decide_d4(repo: pathlib.Path, env: dict[str, str]) -> int:
+    """Test case d4: base current -> current=true open=false empty owed_*."""
+    rc, lines = _run_decide(repo, "master", 6, env)
+    expected = ["current=true", "open=false", "owed_since=", "owed_hours="]
+    if rc != 0 or lines != expected:
+        print(f"self-test FAIL: d4 failed: rc={rc}, lines={lines!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: d4 base current -> current=true open=false empty owed_*")
+    return 0
+
+
+def _test_decide_d5(repo: pathlib.Path, env: dict[str, str], now: int) -> int:
+    """Test case d5: hand-edited block -> open=true."""
+    _fixture_git(repo, env, "checkout", "-q", "-b", "branch-d5", "master")
+    cl = repo / "CHANGELOG.md"
+    cl_text = cl.read_text(encoding="utf-8")
+    cl.write_text(
+        cl_text.replace("_No unreleased changes._", "Hand edited invalid entry in d5."),
+        encoding="utf-8",
+    )
+    commit_in_fixture(repo, env, "Hand edit CHANGELOG for d5", now)
+    rc, lines = _run_decide(repo, "branch-d5", 6, env, now=now)
+    sha = run_git_log(repo, ["-1", "--format=%H", "branch-d5"], env=env)
+    expected = ["current=false", "open=true", f"owed_since={sha}", "owed_hours=0.0"]
+    if rc != 0 or lines != expected:
+        print(f"self-test FAIL: d5 failed: rc={rc}, lines={lines!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: d5 hand-edited block -> open=true")
+    return 0
+
+
+def _test_decide_d6(repo: pathlib.Path) -> int:
+    """Test case d6: --open-after-hours 0 -> argparse rc 2."""
+    buf_err = io.StringIO()
+    buf_out = io.StringIO()
+    rc = 0
+    try:
+        with contextlib.redirect_stderr(buf_err), contextlib.redirect_stdout(buf_out):
+            main(["--open-after-hours", "0", "--repo", str(repo)])
+    except SystemExit as exc:
+        rc = exc.code if isinstance(exc.code, int) else 1
+    if rc != 2:
+        print(f"self-test FAIL: d6 failed: rc={rc}, want 2", file=sys.stderr)
+        return 1
+    print("self-test ok: d6 --open-after-hours 0 -> argparse rc 2")
+    return 0
+
+
+def _run_decide_self_tests(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    now: int,
+) -> int:
+    """Run scheduled render PR decide self-test cases d1 through d6."""
+    cases: list[Callable[[], int]] = [
+        lambda: _test_decide_d1(repo, env, now),
+        lambda: _test_decide_d2(repo, env, now),
+        lambda: _test_decide_d3(repo, env, now),
+        lambda: _test_decide_d4(repo, env),
+        lambda: _test_decide_d5(repo, env, now),
+        lambda: _test_decide_d6(repo),
+    ]
+    for case in cases:
+        if case() != 0:
+            return 1
+    return 0
+
+
+def _positive_int(val: str) -> int:
+    """Validate positive integer for command-line arguments."""
+    try:
+        ival = int(val)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{val!r} is not an integer") from exc
+    if ival < 1:
+        raise argparse.ArgumentTypeError(f"{val} must be >= 1")
+    return ival
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -1676,10 +1911,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=24,
         help="maximum allowed age in hours for unrendered fragments (default: 24)",
     )
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--pull-request",
         action="store_true",
         help="check pull request merge commit against its first parent",
+    )
+    mode_group.add_argument(
+        "--open-after-hours",
+        type=_positive_int,
+        default=None,
+        metavar="H",
+        help="decide whether a scheduled changelog render pull request is due after H hours",
     )
     parser.add_argument(
         "--self-test",
@@ -1700,6 +1943,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.self_test:
         return run_self_test(args.repo)
+    if args.open_after_hours is not None:
+        return decide_render_pr(args.repo, args.ref, args.open_after_hours)
     if args.pull_request:
         return check_pull_request(args.repo, args.ref, args.max_age_hours)
     return check_staleness(args.repo, args.ref, args.max_age_hours)

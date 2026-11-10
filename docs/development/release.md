@@ -71,7 +71,11 @@ exist.
    rotated into the release section, then run
    `bash scripts/release/concat-changelog-fragments.sh --write` so `[Unreleased]`
    is empty and `--check` passes
-   ([ADR-0245](../adr/0245-changelog-render-at-landing.md)). A plain render pull request
+   ([ADR-0245](../adr/0245-changelog-render-at-landing.md)). The hourly workflow
+   `.github/workflows/changelog-render-pr.yml` opens the render PR as the release-bot
+   App after 6 h owed using a signed API commit, arms squash auto-merge, and closes its
+   own PR when the base renders current
+   ([ADR-0252](../adr/0252-scheduled-changelog-render-pull-request.md)). A plain render pull request
    carries `CHANGELOG.md` only; a release pull request carries `CHANGELOG.md`, optional
    fragment deletions (the check allows a cut with none when prior candidates
    consumed them; the procedure deletes what it rotates), and the release files only
@@ -137,6 +141,7 @@ never publishes. To rehearse the tag steps, push `vX.Y.Z-rc.N` in a fork, or
 test the rules directly: `python3 -I scripts/release/verify-release.py --self-test`,
 `python3 -I scripts/release/check-candidate-legs.py --self-test`,
 `python3 -I scripts/release/check-changelog-staleness.py --self-test`,
+`python3 -I scripts/release/open-render-pr.py --self-test`,
 `bash scripts/release/tag-release.sh --self-test`,
 `bash scripts/release/check-publish-ref.sh --self-test` and
 `bash scripts/release/extract-release-notes.sh --self-test`.
