@@ -371,6 +371,49 @@ def _get_pull_request_parents(
     return parents[0], 0
 
 
+def _judge_render_pr(
+    repo: pathlib.Path,
+    ref: str,
+    env: dict[str, str] | None = None,
+) -> int:
+    """Judge a render pull request; merge tree ref decides whether current."""
+    if is_tree_current(repo, ref, env=env):
+        print("changelog render current")
+        return 0
+    print(
+        "render pull request leaves CHANGELOG.md stale on the merged tree: "
+        "merge the default branch and run concat-changelog-fragments.sh --write again",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def _judge_non_render_pr(
+    repo: pathlib.Path,
+    base: str,
+    ref: str,
+    max_age_hours: int,
+    env: dict[str, str] | None = None,
+) -> int:
+    """Judge a non-render pull request; base tree decides owed render, merge tree decides current when base is current."""
+    if is_tree_current(repo, base, env=env):
+        if is_tree_current(repo, ref, env=env):
+            print("changelog render current")
+            return 0
+        print(
+            f"warning: render owed for this pull request's fragments only (base {base[:12]} renders current)"
+        )
+        return 0
+
+    sha, rc = check_changelog_base(repo, base, env=env)
+    if rc != 0 or sha is None:
+        return rc
+
+    return judge_owed_render(
+        repo, sha, base, max_age_hours, env=env, remedy="land the render PR first"
+    )
+
+
 def check_pull_request(
     repo: pathlib.Path,
     ref: str,
@@ -400,34 +443,12 @@ def check_pull_request(
     if scope_rc != 0:
         return scope_rc
 
-    # c. Merge tree current
-    if is_tree_current(repo, ref, env=env):
-        print("changelog render current")
-        return 0
-
-    # d. Render PR and merge tree not current
+    # c. Render PR path
     if is_render_pr:
-        print(
-            "render pull request leaves CHANGELOG.md stale on the merged tree: "
-            "merge the default branch and run concat-changelog-fragments.sh --write again",
-            file=sys.stderr,
-        )
-        return 1
+        return _judge_render_pr(repo, ref, env=env)
 
-    # e. Else judge the base
-    if is_tree_current(repo, base, env=env):
-        print(
-            f"warning: render owed for this pull request's fragments only (base {base[:12]} renders current)"
-        )
-        return 0
-
-    sha, rc = check_changelog_base(repo, base, env=env)
-    if rc != 0 or sha is None:
-        return rc
-
-    return judge_owed_render(
-        repo, sha, base, max_age_hours, env=env, remedy="land the render PR first"
-    )
+    # d. Non-render PR path
+    return _judge_non_render_pr(repo, base, ref, max_age_hours, env=env)
 
 
 def check_staleness(
@@ -1249,6 +1270,88 @@ def _test_pr_p17(repo_root: pathlib.Path) -> int:
     return 0
 
 
+def _test_pr_p18(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    now: int,
+) -> int:
+    """Test pull request case p18 (base owes 21 h, non-render PR deletes owed fragment)."""
+    _fixture_git(repo, env, "checkout", "-q", "-b", "base-p18", "master")
+    (repo / "changelog.d/added/p18-base.md").write_text(
+        "- Base p18.\n", encoding="utf-8"
+    )
+    commit_in_fixture(repo, env, "Add base p18 21h ago", now - 21 * 3600)
+    _fixture_git(repo, env, "checkout", "-q", "-b", "pr-p18", "base-p18")
+    _fixture_git(repo, env, "rm", "-q", "changelog.d/added/p18-base.md")
+    commit_in_fixture(repo, env, "Delete owed base fragment in PR", now)
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p18", "base-p18")
+    merge_in_fixture(repo, env, "pr-p18", "Merge pr-p18 into base-p18", now)
+    rc18, _, err18 = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
+    if (
+        rc18 != 1
+        or "limit 20 h" not in err18
+        or "land the render PR first" not in err18
+    ):
+        print(f"self-test FAIL: p18 failed: rc={rc18}, err={err18!r}", file=sys.stderr)
+        return 1
+    print(
+        "self-test ok: p18 base owes 21 h, non-render PR deletes owed fragment -> rc 1"
+    )
+    return 0
+
+
+def _test_pr_p19(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    now: int,
+) -> int:
+    """Test pull request case p19 (base owes 19 h, non-render PR deletes owed fragment)."""
+    _fixture_git(repo, env, "checkout", "-q", "-b", "base-p19", "master")
+    (repo / "changelog.d/added/p19-base.md").write_text(
+        "- Base p19.\n", encoding="utf-8"
+    )
+    commit_in_fixture(repo, env, "Add base p19 19h ago", now - 19 * 3600)
+    _fixture_git(repo, env, "checkout", "-q", "-b", "pr-p19", "base-p19")
+    _fixture_git(repo, env, "rm", "-q", "changelog.d/added/p19-base.md")
+    commit_in_fixture(repo, env, "Delete owed base fragment in PR", now)
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p19", "base-p19")
+    merge_in_fixture(repo, env, "pr-p19", "Merge pr-p19 into base-p19", now)
+    rc19, out19, _ = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
+    if (
+        rc19 != 0
+        or "warning: render owed since" not in out19
+        or "changelog render current" in out19
+    ):
+        print(f"self-test FAIL: p19 failed: rc={rc19}, out={out19!r}", file=sys.stderr)
+        return 1
+    print(
+        "self-test ok: p19 base owes 19 h, non-render PR deletes owed fragment -> rc 0"
+    )
+    return 0
+
+
+def _test_pr_p20(
+    repo: pathlib.Path,
+    env: dict[str, str],
+    now: int,
+) -> int:
+    """Test pull request case p20 (base renders current, non-render PR adds code only)."""
+    _fixture_git(repo, env, "checkout", "-q", "-b", "base-p20", "master")
+    _fixture_git(repo, env, "checkout", "-q", "-b", "pr-p20", "base-p20")
+    src = repo / "src/p20.c"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("int p20(void) { return 0; }\n", encoding="utf-8")
+    commit_in_fixture(repo, env, "Add code only in PR", now)
+    _fixture_git(repo, env, "checkout", "-q", "-b", "merge-p20", "base-p20")
+    merge_in_fixture(repo, env, "pr-p20", "Merge pr-p20 into base-p20", now)
+    rc20, out20, _ = _run_captured(check_pull_request, repo, "HEAD", 20, env=env)
+    if rc20 != 0 or "changelog render current" not in out20:
+        print(f"self-test FAIL: p20 failed: rc={rc20}, out={out20!r}", file=sys.stderr)
+        return 1
+    print("self-test ok: p20 base current, non-render PR adds code only -> rc 0")
+    return 0
+
+
 def _run_pr_self_tests(
     repo: pathlib.Path,
     env: dict[str, str],
@@ -1256,7 +1359,7 @@ def _run_pr_self_tests(
     now: int,
     repo_root: pathlib.Path,
 ) -> int:
-    """Run pull request self-test cases p1 through p17."""
+    """Run pull request self-test cases p1 through p20."""
     if _test_pr_p1(repo, env, now) != 0:
         return 1
     if _test_pr_p2(repo, env, now) != 0:
@@ -1290,6 +1393,12 @@ def _run_pr_self_tests(
     if _test_pr_p16(repo, env, script_dest, now) != 0:
         return 1
     if _test_pr_p17(repo_root) != 0:
+        return 1
+    if _test_pr_p18(repo, env, now) != 0:
+        return 1
+    if _test_pr_p19(repo, env, now) != 0:
+        return 1
+    if _test_pr_p20(repo, env, now) != 0:
         return 1
     return 0
 
