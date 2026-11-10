@@ -8239,17 +8239,32 @@ def _raise_python_floor(ci: str, doc: str, floor: str, raised: str) -> tuple[str
     return ci, re.sub(PYTHON_FLOOR_PATTERN, f"Python {raised} or newer", doc, count=1)
 
 
-def _quote_floor_step_ids(ci: str) -> str:
-    """The same workflow with each floor step's id: value double-quoted."""
+def _flip_floor_step_id_quotes(ci: str) -> str:
+    """The same workflow with each floor step id quoted if bare, bare if quoted."""
     for step_id in PYTHON_FLOOR_STEP_IDS:
         ci = re.sub(
-            rf"^([ ]*(?:- )?id:[ ]*){re.escape(step_id)}[ ]*$",
-            rf'\g<1>"{step_id}"',
+            rf"""^([ ]*(?:- )?id:[ ]*)(["']?){re.escape(step_id)}\2[ ]*$""",
+            lambda match, step_id=step_id: (
+                match.group(1) + (step_id if match.group(2) else f'"{step_id}"')
+            ),
             ci,
             count=1,
             flags=re.MULTILINE,
         )
     return ci
+
+
+def _flipped_back_failures(flipped: str, doc: str) -> list[str]:
+    """Flipping again must change the tree and still pass, so quoted real ids work."""
+    back = _flip_floor_step_id_quotes(flipped)
+    if back == flipped:
+        return [
+            "Python floor regression: other id quoting tree: flipping back changed nothing"
+        ]
+    return [
+        f"Python floor regression: other id quoting tree flipped back: {error}"
+        for error in validate_python_floor_text(back, doc)
+    ]
 
 
 def python_floor_regressions() -> list[str]:
@@ -8260,16 +8275,18 @@ def python_floor_regressions() -> list[str]:
     floor, _ = documented_python_floor(doc)
     if floor is None:
         return failures
+    flipped = _flip_floor_step_id_quotes(ci)
     variants = {
         "consistent raise": _raise_python_floor(ci, doc, floor, _raised_minor(floor)),
         "other quote style": _python_floor_passing_cases(ci, doc, floor)["other quote style"],
-        "quoted ids": (_quote_floor_step_ids(ci), doc),
+        "other id quoting": (flipped, doc),
     }
     failures.extend(
         f"Python floor regression: {name} tree: mutation changed nothing"
         for name, variant in variants.items()
         if variant == (ci, doc)
     )
+    failures.extend(_flipped_back_failures(flipped, doc))
     for name, (variant_ci, variant_doc) in variants.items():
         prefix = "Python floor regression: "
         failures.extend(
